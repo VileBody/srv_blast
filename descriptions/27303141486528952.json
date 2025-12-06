@@ -1,0 +1,38 @@
+{
+  "response": {
+    "summary": "Slow dolly movement towards a glowing open door standing alone on a dark beach.",
+    "objects": [
+      "Door",
+      "Beach",
+      "Tree"
+    ],
+    "camera": {
+      "type": "Dolly",
+      "speed": "Slow"
+    },
+    "visuals": {
+      "style": "Dark",
+      "colors": [
+        "Dark Blue",
+        "Orange"
+      ]
+    },
+    "composition": "Top_Clean",
+    "tags": [
+      "Surreal",
+      "Dream",
+      "Mystery",
+      "Portal",
+      "Escape",
+      "Solitude",
+      "Fantasy"
+    ]
+  },
+  "options": [
+    {
+      "file": "27303141486528952_01_dbc96a6ed78e42b8ad529b7f5ff7669c_720w.mp4",
+      "width": 720,
+      "height": 1280
+    }
+  ]
+}

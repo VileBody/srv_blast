@@ -1,0 +1,38 @@
+{
+  "response": {
+    "summary": "A couple relaxes on a sofa looking out at a twilight lake view through a large window.",
+    "objects": [
+      "Couple",
+      "Window",
+      "Lake"
+    ],
+    "camera": {
+      "type": "Static",
+      "speed": "Slow"
+    },
+    "visuals": {
+      "style": "Dark",
+      "colors": [
+        "Dark Blue",
+        "Warm Yellow"
+      ]
+    },
+    "composition": "Center_Clean",
+    "tags": [
+      "Romantic",
+      "Calm",
+      "Intimate",
+      "Relaxing",
+      "Evening",
+      "View",
+      "Chill"
+    ]
+  },
+  "options": [
+    {
+      "file": "65654107063241947_01_48aed2679ffaf500a7f85c530273b431.mp4",
+      "width": 720,
+      "height": 1280
+    }
+  ]
+}

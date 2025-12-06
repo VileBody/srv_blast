@@ -1,0 +1,58 @@
+{
+  "response": {
+    "summary": "A dark silhouette stands in the center of a rapidly glitching digital code tunnel.",
+    "objects": [
+      "Silhouette",
+      "Code",
+      "Tunnel"
+    ],
+    "camera": {
+      "type": "Zoom In",
+      "speed": "Fast"
+    },
+    "visuals": {
+      "style": "B&W",
+      "colors": [
+        "Black",
+        "White"
+      ]
+    },
+    "composition": "Busy",
+    "tags": [
+      "Glitch",
+      "Cyberpunk",
+      "Data",
+      "Matrix",
+      "Hacker",
+      "Digital",
+      "Chaos"
+    ]
+  },
+  "options": [
+    {
+      "file": "178384835298918615_01_80e66a5605f32ab2dc1c96f7368aba40_720w.mp4",
+      "width": 720,
+      "height": 1280
+    },
+    {
+      "file": "178384835298918615_02_80e66a5605f32ab2dc1c96f7368aba40_360w_t1.mp4",
+      "width": 360,
+      "height": 640
+    },
+    {
+      "file": "178384835298918615_03_80e66a5605f32ab2dc1c96f7368aba40_540w_t1.mp4",
+      "width": 540,
+      "height": 960
+    },
+    {
+      "file": "178384835298918615_04_80e66a5605f32ab2dc1c96f7368aba40_540w_t2.mp4",
+      "width": 540,
+      "height": 960
+    },
+    {
+      "file": "178384835298918615_05_80e66a5605f32ab2dc1c96f7368aba40_240w.mp4",
+      "width": 234,
+      "height": 416
+    }
+  ]
+}

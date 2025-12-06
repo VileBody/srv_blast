@@ -1,0 +1,38 @@
+{
+  "response": {
+    "summary": "Shadowy figures move urgently under scaffolding in a hazy yellow industrial tunnel.",
+    "objects": [
+      "Silhouettes",
+      "Scaffolding",
+      "Sidewalk"
+    ],
+    "camera": {
+      "type": "Handheld",
+      "speed": "Fast"
+    },
+    "visuals": {
+      "style": "Dark",
+      "colors": [
+        "Yellow",
+        "Green"
+      ]
+    },
+    "composition": "Busy",
+    "tags": [
+      "Dystopian",
+      "Ominous",
+      "Crowd",
+      "Nightmare",
+      "Urban",
+      "Haze",
+      "Panic"
+    ]
+  },
+  "options": [
+    {
+      "file": "11047961581971319_01_5f7b7e9ee72d513037aa415655b40e9e.mp4",
+      "width": 720,
+      "height": 1280
+    }
+  ]
+}

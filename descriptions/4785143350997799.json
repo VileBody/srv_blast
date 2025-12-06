@@ -1,0 +1,58 @@
+{
+  "response": {
+    "summary": "High-speed, blurry tracking shot of a person wearing a clown mask and red suit running down a city street at night.",
+    "objects": [
+      "Clown",
+      "Mask",
+      "Street Lights"
+    ],
+    "camera": {
+      "type": "Handheld",
+      "speed": "Fast"
+    },
+    "visuals": {
+      "style": "Neon",
+      "colors": [
+        "Red",
+        "Orange"
+      ]
+    },
+    "composition": "Busy",
+    "tags": [
+      "Chase",
+      "Horror",
+      "Speed",
+      "Night",
+      "Panic",
+      "Blur",
+      "Urban"
+    ]
+  },
+  "options": [
+    {
+      "file": "4785143350997799_01_00f07b419d39d800fd9b41a347adf163.mp4",
+      "width": 720,
+      "height": 1280
+    },
+    {
+      "file": "4785143350997799_02_00f07b419d39d800fd9b41a347adf163_240w_t1.mp4",
+      "width": 234,
+      "height": 416
+    },
+    {
+      "file": "4785143350997799_03_00f07b419d39d800fd9b41a347adf163_360w_t1.mp4",
+      "width": 360,
+      "height": 640
+    },
+    {
+      "file": "4785143350997799_04_00f07b419d39d800fd9b41a347adf163_720w_t1.mp4",
+      "width": 720,
+      "height": 1280
+    },
+    {
+      "file": "4785143350997799_05_00f07b419d39d800fd9b41a347adf163_t1.mp4",
+      "width": 234,
+      "height": 416
+    }
+  ]
+}

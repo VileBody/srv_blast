@@ -1,0 +1,39 @@
+{
+  "response": {
+    "summary": "A woman playfully joins a man in bed within a dimly lit modern bedroom.",
+    "objects": [
+      "Woman",
+      "Man",
+      "Bed",
+      "Lamp"
+    ],
+    "camera": {
+      "type": "Static",
+      "speed": "Normal"
+    },
+    "visuals": {
+      "style": "Dark",
+      "colors": [
+        "Beige",
+        "White"
+      ]
+    },
+    "composition": "Top_Clean",
+    "tags": [
+      "Couple",
+      "Intimate",
+      "Bedroom",
+      "Relationship",
+      "Home",
+      "Playful",
+      "Comfort"
+    ]
+  },
+  "options": [
+    {
+      "file": "426575395981433812_01_294f5129bbc683a436da3194c37d874d.mp4",
+      "width": 720,
+      "height": 1280
+    }
+  ]
+}

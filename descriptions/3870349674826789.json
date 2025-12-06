@@ -1,0 +1,38 @@
+{
+  "response": {
+    "summary": "The shadow of a person dancing energetically projected onto a yellow textured wall with clotheslines.",
+    "objects": [
+      "Shadow",
+      "Wall",
+      "Clothesline"
+    ],
+    "camera": {
+      "type": "Static",
+      "speed": "Normal"
+    },
+    "visuals": {
+      "style": "Bright",
+      "colors": [
+        "Yellow",
+        "Black"
+      ]
+    },
+    "composition": "Center_Clean",
+    "tags": [
+      "Dance",
+      "Silhouette",
+      "Freedom",
+      "Summer",
+      "Warm",
+      "Happiness",
+      "Retro"
+    ]
+  },
+  "options": [
+    {
+      "file": "3870349674826789_01_3aa2f44bc6c830f3a8b3a260c16dab51.mp4",
+      "width": 720,
+      "height": 1280
+    }
+  ]
+}

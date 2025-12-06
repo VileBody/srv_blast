@@ -1,0 +1,58 @@
+{
+  "response": {
+    "summary": "A zooming out view of multiple floating screens displaying a silhouette of a man in a red-lit doorway.",
+    "objects": [
+      "Screens",
+      "Silhouette",
+      "Man"
+    ],
+    "camera": {
+      "type": "Zoom Out",
+      "speed": "Normal"
+    },
+    "visuals": {
+      "style": "Neon",
+      "colors": [
+        "Red",
+        "Cyan"
+      ]
+    },
+    "composition": "Texture",
+    "tags": [
+      "Surveillance",
+      "Mystery",
+      "Repetition",
+      "Dark",
+      "Digital",
+      "Psychological",
+      "Trapped"
+    ]
+  },
+  "options": [
+    {
+      "file": "8725793024858247_01_22ecb3b734881718a777572776c93444_720w.mp4",
+      "width": 720,
+      "height": 1280
+    },
+    {
+      "file": "8725793024858247_02_22ecb3b734881718a777572776c93444_240w.mp4",
+      "width": 234,
+      "height": 416
+    },
+    {
+      "file": "8725793024858247_03_22ecb3b734881718a777572776c93444_360w.mp4",
+      "width": 360,
+      "height": 640
+    },
+    {
+      "file": "8725793024858247_04_22ecb3b734881718a777572776c93444_540w.mp4",
+      "width": 540,
+      "height": 960
+    },
+    {
+      "file": "8725793024858247_05_22ecb3b734881718a777572776c93444_720w.mp4",
+      "width": 720,
+      "height": 1280
+    }
+  ]
+}
