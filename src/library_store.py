@@ -2,19 +2,17 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Dict, List, Optional
 
 from pydantic import BaseModel, ValidationError
 
 from .models import VideoAsset, VideoVariant
+from .s3_utils import download_from_s3
 
 log = logging.getLogger(__name__)
 
-
-# --------------------------------------------------------------------------- #
-# Pydantic-модели под descriptions/*.json
-# --------------------------------------------------------------------------- #
 
 class DescriptionOption(BaseModel):
     file: str
@@ -32,63 +30,19 @@ class DescriptionResponse(BaseModel):
 
 
 class DescriptionFile(BaseModel):
-    """
-    Описывает одну запись из descriptions/<prefix>.json.
-
-    Поддерживаем оба варианта:
-    {
-      "response": {...},       # обычный кейс
-      "options": [...]
-    }
-
-    и
-    {
-      "response": [{...}],     # как в 777011741993891093.json
-      "options": [...]
-    }
-    """
     response: Optional[DescriptionResponse | List[DescriptionResponse]] = None
     options: List[DescriptionOption]
-    # на всякий случай, если вдруг где-то есть старое поле
     response_raw: Optional[str] = None
 
 
-# --------------------------------------------------------------------------- #
-# AssetLibrary
-# --------------------------------------------------------------------------- #
-
 class AssetLibrary:
     """
-    Маппинг префикс -> описание и канонический файл.
+    descriptions/ живут локально (репозиторий),
+    pins/ мы используем как локальный кеш для S3.
 
-    Структура на диске:
-
-    pins/
-      4503668372533608_01_....mp4
-      4503668372533608_02_....mp4
-      ...
-
-    descriptions/
-      4503668372533608.json
-      8725793024858247.json
-      ...
-
-    Пример contents файла (см. репу):
-
-    {
-      "response": {
-        "summary": "...",
-        "objects": [...],
-        "camera": {...},
-        "visuals": {...},
-        "composition": "...",
-        "tags": [...]
-      },
-      "options": [
-        { "file": "...mp4", "width": 720, "height": 1280 },
-        ...
-      ]
-    }
+    Пины берём из S3_BUCKET_ASSET_STORAGE:
+      - ключ = opt.file (никаких подпапок).
+      - если файл уже есть в pins_dir — повторно не скачиваем.
     """
 
     def __init__(self, descriptions_dir: Path, pins_dir: Path):
@@ -96,23 +50,18 @@ class AssetLibrary:
         self.pins_dir = pins_dir
         self.assets: Dict[str, VideoAsset] = {}
 
-    # ------------------------------------------------------------------ #
-    # загрузка
-    # ------------------------------------------------------------------ #
+        self.s3_bucket_assets: str | None = os.getenv("S3_BUCKET_ASSET_STORAGE") or None
+        if self.s3_bucket_assets:
+            log.info(
+                "AssetLibrary will use S3 bucket %s as fallback for pins (local is cache)",
+                self.s3_bucket_assets,
+            )
+        else:
+            log.warning(
+                "S3_BUCKET_ASSET_STORAGE is not set; AssetLibrary will not be able to fetch pins from S3"
+            )
 
     def load_from_files(self) -> None:
-        """
-        Загружает все *.json из descriptions_dir,
-        парсит их через Pydantic и сопоставляет с файлами в pins_dir.
-
-        Внутри нормализуем response так, чтобы в self.assets[*].description
-        всегда лежал dict вида:
-
-        {
-          "response": { ... },   # ОДИН объект DescriptionResponse
-          "options": [ ... ]     # список опций
-        }
-        """
         self.assets.clear()
         if not self.descriptions_dir.exists():
             log.warning(
@@ -142,13 +91,26 @@ class AssetLibrary:
                 log.error("Pydantic validation error in %s: %s", path, e)
                 continue
 
-            # --- строим variants из options ---
             variants: List[VideoVariant] = []
+
             for opt in model.options:
                 video_path = self.pins_dir / opt.file
+                video_path.parent.mkdir(parents=True, exist_ok=True)
+
+                if not video_path.exists() and self.s3_bucket_assets:
+                    try:
+                        download_from_s3(self.s3_bucket_assets, opt.file, video_path)
+                    except Exception:
+                        log.warning(
+                            "Failed to fetch %s from S3 bucket %s; asset may be unusable",
+                            opt.file,
+                            self.s3_bucket_assets,
+                        )
+
                 if not video_path.exists():
                     log.warning(
-                        "Video file %s from %s not found in %s",
+                        "Video file %s from %s not found locally (pins_dir=%s) "
+                        "and no S3 bucket or download failed",
                         opt.file,
                         path.name,
                         self.pins_dir,
@@ -159,22 +121,20 @@ class AssetLibrary:
                     path=video_path,
                     width=opt.width,
                     height=opt.height,
-                    duration=0.0,  # при необходимости потом допробиваем ffprobe
+                    duration=0.0,
                 )
                 variants.append(variant)
 
             if not variants:
-                log.warning("No valid variants built for %s; skipping", path)
+                log.warning("No valid variants built for %s; skipping asset", path)
                 continue
 
             canonical = variants[0]
 
-            # --- нормализуем response ---
             resp_obj: Optional[DescriptionResponse] = None
             if isinstance(model.response, DescriptionResponse):
                 resp_obj = model.response
             elif isinstance(model.response, list) and model.response:
-                # кейс, как в 777011741993891093.json
                 resp_obj = model.response[0]
                 log.warning(
                     "Description %s: 'response' is a list, using first element",
@@ -203,30 +163,10 @@ class AssetLibrary:
 
         log.info("Loaded %d assets into library", len(self.assets))
 
-    # ------------------------------------------------------------------ #
-    # доступ
-    # ------------------------------------------------------------------ #
-
     def get_asset(self, prefix: str) -> VideoAsset:
         return self.assets[prefix]
 
     def to_prompt_payload(self) -> list[dict]:
-        """
-        Упрощённое представление библиотеки для Gemini:
-        только то, что нужно для подбора визуала.
-
-        На базе нормализованного description:
-
-        {
-          "prefix": "4503668372533608",
-          "summary": "...",
-          "tags": [...],
-          "options": [
-            {"file": "...mp4", "width": 720, "height": 1280},
-            ...
-          ]
-        }
-        """
         payload: list[dict] = []
 
         for a in self.assets.values():

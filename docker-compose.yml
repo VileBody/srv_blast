@@ -1,12 +1,6 @@
 version: "3.9"
 
 services:
-  redis:
-    image: redis:7
-    container_name: blast-redis
-    ports:
-      - "6379:6379"
-
   ml-core:
     build:
       context: .
@@ -15,24 +9,17 @@ services:
     env_file:
       - .env
     environment:
-      CELERY_BROKER_URL: redis://redis:6379/0
-      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND}
       DESCRIPTIONS_DIR: /app/descriptions
       PINS_DIR: /app/pins
       WORK_DIR: /app/work
       OUTPUT_DIR: /app/output
-      SOCKS_PROXY: ${SOCKS_PROXY:-}
-      ALL_PROXY: ${SOCKS_PROXY:-}
-      HTTPS_PROXY: ${SOCKS_PROXY:-}
-      HTTP_PROXY: ${SOCKS_PROXY:-}
     volumes:
       - ./descriptions:/app/descriptions:ro
-      - ./pins:/app/pins:ro
+      # pins как кеш S3 внутри контейнера
       - ./work:/app/work
       - ./output:/app/output
-      - ./data/audio:/data/audio
-    depends_on:
-      - redis
 
   orchestrator:
     build:
@@ -42,16 +29,17 @@ services:
     env_file:
       - .env
     environment:
-      CELERY_BROKER_URL: redis://redis:6379/0
-      CELERY_RESULT_BACKEND: redis://redis:6379/0
-      AUDIO_DIR: /data/audio
-      SOCKS_PROXY: ${SOCKS_PROXY:-}
-      ALL_PROXY: ${SOCKS_PROXY:-}
-      HTTPS_PROXY: ${SOCKS_PROXY:-}
-      HTTP_PROXY: ${SOCKS_PROXY:-}
-    volumes:
-      - ./data/audio:/data/audio
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND}
     ports:
       - "8000:8000"
+
+  tg-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile.bot
+    container_name: blast-tg-bot
+    env_file:
+      - .env
     depends_on:
-      - redis
+      - orchestrator

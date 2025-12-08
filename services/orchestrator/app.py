@@ -4,12 +4,14 @@ import os
 import uuid
 from enum import Enum
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 from celery import Celery
 from celery.result import AsyncResult
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
+
+from src.s3_utils import upload_bytes_to_s3
 
 app = FastAPI(title="blast-orchestrator", version="1.0.0")
 
@@ -22,8 +24,7 @@ celery_app = Celery(
     backend=CELERY_RESULT_BACKEND,
 )
 
-AUDIO_DIR = Path(os.getenv("AUDIO_DIR", "/data/audio"))
-AUDIO_DIR.mkdir(parents=True, exist_ok=True)
+S3_BUCKET_RAW_AUDIO = os.getenv("S3_BUCKET_RAW_AUDIO")
 
 
 class StepStatus(str, Enum):
@@ -36,7 +37,9 @@ class StepStatus(str, Enum):
 class JobInternal(BaseModel):
     id: str
     name: str
-    audio_path: str
+
+    # S3-key аудио, а не локальный путь
+    audio_key: str
 
     ml_task_id: Optional[str] = None
     render_task_id: Optional[str] = None
@@ -44,7 +47,9 @@ class JobInternal(BaseModel):
     ml_status: StepStatus = StepStatus.PENDING
     render_status: StepStatus = StepStatus.PENDING
 
-    download_url: Optional[str] = None
+    # список ссылок на сегменты
+    segment_urls: List[str] = []
+
     error: Optional[str] = None
 
 
@@ -54,7 +59,14 @@ class JobPublic(BaseModel):
     status: str
     ml_status: StepStatus
     render_status: StepStatus
+
+    # для совместимости — первая ссылка (если нужна)
     download_url: Optional[str] = None
+
+    # полный список ссылок
+    download_urls: List[str] = []
+
+    # сырое сообщение об ошибке (если есть)
     error: Optional[str] = None
 
 
@@ -77,10 +89,16 @@ def _update_from_async_result(job: JobInternal, result: AsyncResult, step: str) 
         setattr(job, field, StepStatus.SUCCESS)
     elif state in {"FAILURE", "REVOKED"}:
         setattr(job, field, StepStatus.FAILED)
-        job.error = str(result.result)
+        try:
+            job.error = str(result.result)
+        except Exception:
+            job.error = "Unknown error"
 
 
 def _maybe_schedule_render(job: JobInternal, ml_result: dict) -> None:
+    """
+    Если ML-план готов и рендер ещё не поставлен — ставим ae.render_from_plan.
+    """
     if job.render_task_id is not None:
         return
 
@@ -97,6 +115,7 @@ def _maybe_schedule_render(job: JobInternal, ml_result: dict) -> None:
 
 
 def _refresh_job_state(job: JobInternal) -> None:
+    # 1) ML-таска
     if job.ml_task_id:
         ml_res = AsyncResult(job.ml_task_id, app=celery_app)
         prev_ml_status = job.ml_status
@@ -106,6 +125,7 @@ def _refresh_job_state(job: JobInternal) -> None:
             ml_payload = ml_res.get()
             _maybe_schedule_render(job, ml_payload)
 
+    # 2) рендер-таска
     if job.render_task_id:
         r_res = AsyncResult(job.render_task_id, app=celery_app)
         prev_render_status = job.render_status
@@ -113,11 +133,17 @@ def _refresh_job_state(job: JobInternal) -> None:
 
         if prev_render_status != StepStatus.SUCCESS and job.render_status == StepStatus.SUCCESS:
             payload = r_res.get() or {}
-            job.download_url = payload.get("s3_url")
+            segments = payload.get("segments") or []
+            urls: List[str] = []
+            for seg in segments:
+                url = seg.get("s3_url")
+                if url:
+                    urls.append(url)
+            job.segment_urls = urls
 
 
 def _derive_overall_status(job: JobInternal) -> str:
-    if job.render_status == StepStatus.SUCCESS and job.download_url:
+    if job.render_status == StepStatus.SUCCESS and job.segment_urls:
         return "DONE"
     if job.render_status in {StepStatus.RUNNING, StepStatus.PENDING} and job.ml_status == StepStatus.SUCCESS:
         return "RENDERING"
@@ -129,15 +155,39 @@ def _derive_overall_status(job: JobInternal) -> str:
 
 
 def _to_public(job: JobInternal) -> JobPublic:
+    urls = job.segment_urls or []
+    first_url = urls[0] if urls else None
     return JobPublic(
         id=job.id,
         name=job.name,
         status=_derive_overall_status(job),
         ml_status=job.ml_status,
         render_status=job.render_status,
-        download_url=job.download_url,
+        download_url=first_url,
+        download_urls=urls,
         error=job.error,
     )
+
+
+def _upload_audio_to_s3(job_id: str, filename: str, data: bytes) -> str:
+    """
+    Заливаем аудио в S3_BUCKET_RAW_AUDIO.
+    Ключ = <job_id><orig_ext>. Возвращаем key.
+    """
+    if not S3_BUCKET_RAW_AUDIO:
+        raise RuntimeError("S3_BUCKET_RAW_AUDIO is not set; cannot upload audio")
+
+    ext = Path(filename or "").suffix or ".m4a"
+    key = f"{job_id}{ext}"
+
+    content_type = "audio/m4a"
+    if ext.lower() == ".mp3":
+        content_type = "audio/mpeg"
+    elif ext.lower() == ".wav":
+        content_type = "audio/wav"
+
+    upload_bytes_to_s3(S3_BUCKET_RAW_AUDIO, key, data, content_type=content_type)
+    return key
 
 
 @app.post("/api/v1/jobs", response_model=JobPublic)
@@ -145,24 +195,29 @@ async def create_job(
     file: UploadFile = File(...),
     name: str = Form("edit"),
 ) -> JobPublic:
+    """
+    Клиент присылает file -> кладём его в S3_BUCKET_RAW_AUDIO, key = <job_id><ext>.
+    """
+    if not S3_BUCKET_RAW_AUDIO:
+        raise HTTPException(
+            status_code=500,
+            detail="S3_BUCKET_RAW_AUDIO is not configured on server",
+        )
+
     job_id = uuid.uuid4().hex
-
-    ext = Path(file.filename or "").suffix or ".m4a"
-    audio_path = AUDIO_DIR / f"{job_id}{ext}"
-
     data = await file.read()
-    audio_path.write_bytes(data)
+    audio_key = _upload_audio_to_s3(job_id, file.filename or "", data)
 
     job = JobInternal(
         id=job_id,
         name=name,
-        audio_path=str(audio_path),
+        audio_key=audio_key,
     )
     _jobs[job_id] = job
 
     async_result = celery_app.send_task(
         "ml_core.build_edit_plan",
-        args=[job_id, str(audio_path), name],
+        args=[job_id, audio_key, name],
     )
     job.ml_task_id = async_result.id
     job.ml_status = StepStatus.PENDING

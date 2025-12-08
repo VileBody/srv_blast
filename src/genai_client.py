@@ -12,18 +12,18 @@ from google.genai import types
 from pydantic import BaseModel, ValidationError
 
 from config import Config
-from .models import AudioSegmentPlan, VisualShotSpec
+from .models import AudioSegmentPlan, VisualShotSpec, SegmentEditPlan
 from .prompts import (
     DESCRIBE_VIDEO_SYSTEM,
     SELECT_AUDIO_HIGHLIGHTS_SYSTEM,
     PLAN_VISUALS_SYSTEM,
     SUBTITLES_SYSTEM,
+    COMBINED_PLANNER_SYSTEM,
 )
 
 log = logging.getLogger(__name__)
 
 # Регистрация корректного MIME для .m4a,
-# чтобы внутренняя логика google-genai смогла его нормально определить
 mimetypes.add_type("audio/mp4", ".m4a")
 
 
@@ -52,6 +52,19 @@ class VisualPlanModel(BaseModel):
     shots: List[VisualShotModel]
 
 
+class CombinedSegmentModel(BaseModel):
+    index: int
+    start_sec: float
+    end_sec: float
+    mood: Optional[str] = ""
+    description: Optional[str] = ""
+    shots: List[VisualShotModel]
+
+
+class CombinedPlanModel(BaseModel):
+    segments: List[CombinedSegmentModel]
+
+
 class VideoOptionModel(BaseModel):
     file: str
     width: int
@@ -59,11 +72,6 @@ class VideoOptionModel(BaseModel):
 
 
 class VideoResponseModel(BaseModel):
-    # формат:
-    # {
-    #   "response": {...},
-    #   "options": [...]
-    # }
     response: dict
     options: List[VideoOptionModel]
 
@@ -74,6 +82,21 @@ class VideoResponseModel(BaseModel):
 
 class GeminiClient:
     def __init__(self, cfg: Config):
+        """
+        cfg.outbound_proxy:
+          - None  -> ходим напрямую
+          - строка (socks5h://host:port или http://...) -> используем как HTTP(S)-прокси
+        """
+        import os as _os
+        if cfg.outbound_proxy:
+            _os.environ["HTTPS_PROXY"] = cfg.outbound_proxy
+            _os.environ["HTTP_PROXY"] = cfg.outbound_proxy
+            log.info("GeminiClient: using outbound proxy %s", cfg.outbound_proxy)
+        else:
+            _os.environ.pop("HTTPS_PROXY", None)
+            _os.environ.pop("HTTP_PROXY", None)
+            log.info("GeminiClient: no outbound proxy")
+
         self.cfg = cfg
         self.client = genai.Client(api_key=cfg.gemini_api_key)
 
@@ -125,12 +148,7 @@ class GeminiClient:
     @staticmethod
     def _extract_text_or_raise(resp: types.GenerateContentResponse, context: str) -> str:
         """
-        Аккуратно достаём текст из ответа SDK.
-
-        - сначала output_text
-        - потом text
-        - потом candidates[*].content.parts[*].text
-        Если ничего нет — логируем весь ответ и швыряем RuntimeError.
+        Аккуратно достаём текст/JSON из ответа SDK.
         """
         raw = getattr(resp, "output_text", None) or getattr(resp, "text", None)
 
@@ -146,19 +164,91 @@ class GeminiClient:
         return raw
 
     # ---------------------------------------------------------------------- #
-    # 1) Описание одного видео (для автогенерации descriptions/*.json)
+    # 0) Новый комбинированный планировщик (аудио-сегменты + шоты)
+    # ---------------------------------------------------------------------- #
+
+    def build_full_plan(
+        self,
+        audio_path: Path,
+        library_payload: list[dict],
+    ) -> List[SegmentEditPlan]:
+        """
+        ОДИН запрос к модели-планировщику:
+
+        - загружаем аудио через Files API;
+        - даём system-промпт COMBINED_PLANNER_SYSTEM + библиотеку клипов (JSON как текст);
+        - получаем JSON формата CombinedPlanModel:
+            segments[*] = { index, start_sec, end_sec, mood, description,
+                            shots[*] = {asset_prefix, target_duration_sec} }
+        - конвертим в список SegmentEditPlan.
+        """
+        file_obj = self.client.files.upload(file=str(audio_path))
+        log.info(
+            "[build_full_plan] Uploaded audio %s (id=%s) for model %s",
+            audio_path,
+            getattr(file_obj, "name", None),
+            self.cfg.gemini_model_planning,
+        )
+
+        log.info(
+            "[build_full_plan] Request config: model=%s, mime=application/json",
+            self.cfg.gemini_model_planning,
+        )
+
+        resp = self.client.models.generate_content(
+            model=self.cfg.gemini_model_planning,
+            contents=[
+                # Просто строки, без Part.from_text — SDK сам их обернёт
+                COMBINED_PLANNER_SYSTEM,
+                json.dumps(library_payload, ensure_ascii=False),
+                file_obj,
+            ],
+            config=types.GenerateContentConfig(
+                temperature=0.7,
+                response_mime_type="application/json",
+            ),
+        )
+
+        raw = self._extract_text_or_raise(resp, "build_full_plan")
+
+        try:
+            parsed = CombinedPlanModel.model_validate_json(raw)
+        except ValidationError as e:
+            log.error("[build_full_plan] Pydantic validation error: %s", e)
+            log.debug("[build_full_plan] Raw JSON that failed: %s", raw)
+            raise
+
+        segment_plans: List[SegmentEditPlan] = []
+        for s in parsed.segments:
+            audio_seg = AudioSegmentPlan(
+                index=s.index,
+                start=s.start_sec,
+                end=s.end_sec,
+                mood=s.mood or "",
+                description=s.description or "",
+            )
+            shots = [
+                VisualShotSpec(
+                    asset_prefix=shot.asset_prefix,
+                    target_duration=float(shot.target_duration_sec),
+                )
+                for shot in s.shots
+            ]
+            segment_plans.append(SegmentEditPlan(audio_segment=audio_seg, shots=shots))
+
+        segment_plans.sort(key=lambda sp: sp.audio_segment.index)
+        log.info(
+            "[build_full_plan] Built %d segments from combined planner: %s",
+            len(segment_plans),
+            [(sp.audio_segment.index, sp.audio_segment.start, sp.audio_segment.end) for sp in segment_plans],
+        )
+        return segment_plans
+
+    # ---------------------------------------------------------------------- #
+    # 1) Описание одного видео (для оффлайна, если надо)
     # ---------------------------------------------------------------------- #
 
     def describe_video(self, video: Path, variants_payload: list[dict]) -> dict:
-        """
-        Проанализировать видео и вернуть JSON формата:
-        {
-          "response": {...},
-          "options": [...]
-        }
-
-        Pydantic здесь только для валидации; наружу возвращаем dict.
-        """
         file_obj = self.client.files.upload(file=str(video))
         log.info(
             "[describe_video] Uploaded video %s (id=%s) for model %s",
@@ -167,32 +257,25 @@ class GeminiClient:
             self.cfg.gemini_model_planning,
         )
 
-        # Видео может долго переходить в ACTIVE — подождём
         file_obj = self._wait_file_active(file_obj, "describe_video")
 
         payload = json.dumps(variants_payload, ensure_ascii=False)
 
         log.info(
-            "[describe_video] Request config: model=%s, thinking_level=low, mime=application/json",
+            "[describe_video] Request config: model=%s, mime=application/json",
             self.cfg.gemini_model_planning,
         )
 
         resp = self.client.models.generate_content(
             model=self.cfg.gemini_model_planning,
             contents=[
-                types.Part.from_text(DESCRIBE_VIDEO_SYSTEM),
-                types.Part.from_text(
-                    "Список доступных вариантов файла (верни их в поле 'options'): "
-                    + payload
-                ),
+                DESCRIBE_VIDEO_SYSTEM,
+                "Список доступных вариантов файла (верни их в поле 'options'): " + payload,
                 file_obj,
             ],
             config=types.GenerateContentConfig(
                 temperature=0.5,
                 response_mime_type="application/json",
-                thinking_config=types.ThinkingConfig(
-                    thinking_level="low",
-                ),
             ),
         )
 
@@ -210,29 +293,10 @@ class GeminiClient:
         return json.loads(parsed.model_dump_json(by_alias=True, exclude_none=True))
 
     # ---------------------------------------------------------------------- #
-    # 2) Выбор 3 хайлайтов аудио (10–20 секунд)
+    # 2) (опционально) старые функции оставляем на всякий случай
     # ---------------------------------------------------------------------- #
 
     def select_audio_highlights(self, audio_path: Path) -> List[AudioSegmentPlan]:
-        """
-        Просим модель выбрать 3 самых 'вайральных' фрагмента аудио
-        длительностью 10–20 секунд.
-
-        Ожидаемый JSON:
-        {
-          "segments": [
-            {
-              "index": 0,
-              "start_sec": 12.3,
-              "end_sec": 25.0,
-              "mood": "...",
-              "description": "..."
-            },
-            ...
-          ]
-        }
-        """
-        # Для дебага — посмотрим, что говорит mimetypes
         mime_type, _ = mimetypes.guess_type(str(audio_path))
         log.info(
             "[select_audio_highlights] Local guess mime_type for %s -> %r",
@@ -240,8 +304,6 @@ class GeminiClient:
             mime_type,
         )
 
-        # Не передаём mime_type в SDK (у Python-метода его нет),
-        # но благодаря add_type("audio/mp4", ".m4a") SDK теперь сможет сам корректно определить тип.
         file_obj = self.client.files.upload(file=str(audio_path))
         log.info(
             "[select_audio_highlights] Uploaded audio %s (id=%s) for model %s",
@@ -251,7 +313,7 @@ class GeminiClient:
         )
 
         log.info(
-            "[select_audio_highlights] Request config: model=%s, thinking_level=low, mime=application/json",
+            "[select_audio_highlights] Request config: model=%s, mime=application/json",
             self.cfg.gemini_model_planning,
         )
 
@@ -261,9 +323,6 @@ class GeminiClient:
             config=types.GenerateContentConfig(
                 temperature=0.7,
                 response_mime_type="application/json",
-                thinking_config=types.ThinkingConfig(
-                    thinking_level="low",
-                ),
             ),
         )
 
@@ -304,27 +363,11 @@ class GeminiClient:
         )
         return segments
 
-    # ---------------------------------------------------------------------- #
-    # 3) Подбор визуалов под один аудиосегмент
-    # ---------------------------------------------------------------------- #
-
     def plan_visuals_for_segment(
         self,
         segment: AudioSegmentPlan,
         library_payload: list[dict],
     ) -> List[VisualShotSpec]:
-        """
-        Разбиваем аудиосегмент на шоты 1.5–3 секунды и выбираем под каждый
-        префикс клипа из библиотеки.
-
-        Ожидаемый JSON:
-        {
-          "shots": [
-            { "asset_prefix": "4503...", "target_duration_sec": 2.1 },
-            ...
-          ]
-        }
-        """
         payload = {
             "segment": {
                 "start_sec": segment.start,
@@ -349,9 +392,6 @@ class GeminiClient:
             contents=[PLAN_VISUALS_SYSTEM, json.dumps(payload, ensure_ascii=False)],
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",
-                thinking_config=types.ThinkingConfig(
-                    thinking_level="low",
-                ),
             ),
         )
 
@@ -384,15 +424,10 @@ class GeminiClient:
         return shots
 
     # ---------------------------------------------------------------------- #
-    # 4) Генерация SRT для итогового видео (когда провайдер сабов = Gemini)
+    # 4) Сабтайтлы
     # ---------------------------------------------------------------------- #
 
     def generate_srt_for_video(self, video_path: Path) -> str:
-        """
-        Просим модель сделать сабы в формате SRT (hh:mm:ss,ms).
-
-        Здесь JSON не нужен — берём чистый текст.
-        """
         file_obj = self.client.files.upload(file=str(video_path))
         log.info(
             "[generate_srt_for_video] Uploaded video %s (id=%s) for model %s",
@@ -401,7 +436,6 @@ class GeminiClient:
             self.cfg.gemini_model_subtitles,
         )
 
-        # ВАЖНО: ждём ACTIVE, иначе 400 FAILED_PRECONDITION
         file_obj = self._wait_file_active(file_obj, "generate_srt_for_video")
 
         resp = self.client.models.generate_content(
@@ -409,9 +443,6 @@ class GeminiClient:
             contents=[SUBTITLES_SYSTEM, file_obj],
             config=types.GenerateContentConfig(
                 temperature=0.3,
-                thinking_config=types.ThinkingConfig(
-                    thinking_level="low",
-                ),
             ),
         )
 
