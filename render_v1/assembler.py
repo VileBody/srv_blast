@@ -4,8 +4,8 @@ import os
 from models import Payload
 
 # === CONFIG ===
-FILE_STYLES   = 'render_v1/text_styles.json'
-FILE_PRESETS  = 'render_v1/footage_presets.json'
+FILE_STYLES   = 'config/styles/text_styles.json'
+FILE_PRESETS  = 'config/styles/footage_presets.json'
 FILE_SCENARIO = 'render_v1/composition.json'
 FILE_TEMPLATE = 'render_v1/engine_template.jsx'
 FILE_OUTPUT   = 'render_v1/render.jsx'

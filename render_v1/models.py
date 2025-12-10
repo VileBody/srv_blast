@@ -1,19 +1,11 @@
 # render_v1/models.py
 from __future__ import annotations
 
-from enum import Enum
 from typing import List, Optional, Union, Literal
 
 from pydantic import BaseModel
 
-
-class FootagePresetId(str, Enum):
-    """
-    Идентификаторы пресетов для футажей (ключи из footage_presets.json).
-    """
-    BG_TRANSFORM = "bg_transform"
-    VERTICAL_FIT = "vertical_fit"
-    SHAKE_ADJ = "shake_adj"
+from src.config.styles import FootagePresetId
 
 
 class Transform(BaseModel):
