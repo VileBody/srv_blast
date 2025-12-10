@@ -5,7 +5,7 @@ from typing import List, Optional, Union, Literal
 
 from pydantic import BaseModel
 
-from src.config.styles import FootagePresetId
+from src.core.config.styles import FootagePresetId
 
 
 class Transform(BaseModel):

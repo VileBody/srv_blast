@@ -5,7 +5,7 @@ from typing import List
 
 from pydantic import BaseModel, Field, field_validator
 
-from src.config.styles import SubtitleStyle
+from src.core.config.styles import SubtitleStyle
 
 
 class SubtitleLine(BaseModel):

@@ -6,14 +6,15 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from config import Config
-from src.logging_setup import setup_logging
-from src.ffmpeg_utils import FFmpegExecutor
-from src.library_store import AssetLibrary
-from src.models import AudioSegmentPlan, VisualShotSpec, SegmentEditPlan
-from src.s3_utils import upload_file_to_s3, generate_presigned_url
-from src.subtitles import SubtitleService
-from src.genai_client import GeminiClient
-from src.elevenlabs_client import ElevenLabsClient
+from src.core.logging import setup_logging
+from src.core.models import AudioSegmentPlan, SegmentEditPlan, VisualShotSpec
+from src.genai.client_base import GenaiClientBase
+from src.genai.subtitles import GeminiSubtitlesClient
+from src.render.ffmpeg.ffmpeg_executor import FFmpegExecutor
+from src.render.subtitles.elevenlabs_client import ElevenLabsClient
+from src.render.subtitles.service import SubtitleService
+from src.storage.library_store import AssetLibrary
+from src.storage.s3 import generate_presigned_url, upload_file_to_s3
 from .planner import _ensure_local_audio  # <- ВАЖНО: используем ту же функцию, что и в planner
 
 log = logging.getLogger(__name__)
@@ -82,7 +83,10 @@ def render_from_plan(job_id: str, plan: Dict[str, Any]) -> Dict[str, Any]:
 
     # Субтитры
     provider = cfg.subtitles_provider
-    gemini = GeminiClient(cfg) if provider == "gemini" else None
+    gemini_client = GenaiClientBase(cfg) if provider == "gemini" else None
+    gemini = (
+        GeminiSubtitlesClient(gemini_client) if gemini_client is not None else None
+    )
     eleven = ElevenLabsClient(cfg) if provider == "elevenlabs" else None
     subs_work_dir = cfg.work_dir / f"subs_{job_id}"
     subtitle_service = SubtitleService(

@@ -7,7 +7,7 @@ from celery.utils.log import get_task_logger
 
 from .celery_app import celery_app
 from .planner import build_edit_plan
-from .render_ae import render_from_plan as render_ae_from_plan
+from src.render.ae.render import render_from_plan as render_ae_from_plan
 
 log = get_task_logger(__name__)
 
