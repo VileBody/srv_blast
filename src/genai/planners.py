@@ -11,7 +11,7 @@ from pydantic import BaseModel, ValidationError
 from src.core.models import AudioSegmentPlan, VisualShotSpec, SegmentEditPlan
 from .client_base import GenaiClientBase
 from .prompts import (
-    AE_EDIT_PLAN_SYSTEM,
+    AE_PROJECT_SYSTEM,
     COMBINED_PLANNER_SYSTEM,
     PLAN_VISUALS_SYSTEM,
     SELECT_AUDIO_HIGHLIGHTS_SYSTEM,
@@ -147,7 +147,7 @@ class AePlanner:
         resp = self.client.client.models.generate_content(
             model=self.cfg.gemini_model_planning,
             contents=[
-                AE_EDIT_PLAN_SYSTEM,
+                AE_PROJECT_SYSTEM,
                 json.dumps(library_payload, ensure_ascii=False),
                 file_obj,
             ],
@@ -164,6 +164,44 @@ class AePlanner:
         except Exception as exc:  # noqa: BLE001
             log.error("[build_ae_edit_plan] Failed to parse JSON: %s", exc)
             log.debug("[build_ae_edit_plan] Raw JSON that failed: %s", raw)
+            raise
+
+    def build_ae_project(
+        self, audio_path: Path, library_payload: list[dict]
+    ) -> dict:
+        file_obj = self.client.client.files.upload(file=str(audio_path))
+        log.info(
+            "[build_ae_project] Uploaded audio %s (id=%s) for model %s",
+            audio_path,
+            getattr(file_obj, "name", None),
+            self.cfg.gemini_model_planning,
+        )
+
+        log.info(
+            "[build_ae_project] Request config: model=%s, mime=application/json",
+            self.cfg.gemini_model_planning,
+        )
+
+        resp = self.client.client.models.generate_content(
+            model=self.cfg.gemini_model_planning,
+            contents=[
+                AE_PROJECT_SYSTEM,
+                json.dumps(library_payload, ensure_ascii=False),
+                file_obj,
+            ],
+            config=types.GenerateContentConfig(
+                temperature=0.6,
+                response_mime_type="application/json",
+            ),
+        )
+
+        raw = self.client.extract_text_or_raise(resp, "build_ae_project")
+
+        try:
+            return json.loads(raw)
+        except Exception as exc:  # noqa: BLE001
+            log.error("[build_ae_project] Failed to parse JSON: %s", exc)
+            log.debug("[build_ae_project] Raw JSON that failed: %s", raw)
             raise
 
     def select_audio_highlights(self, audio_path: Path) -> List[AudioSegmentPlan]:
