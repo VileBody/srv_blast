@@ -8,17 +8,18 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from config import Config
-from render_v1.models import Payload
+from render_v1.assembler_core import build_project_payload_from_composition
 from .ae_client import AeMediaPayload
 
 from src.library_store import AssetLibrary
 from src.s3_utils import generate_presigned_url
 from src.config.styles import FootagePresetId, SubtitleStyle
-from src.config import style_loader
 
 log = logging.getLogger(__name__)
 
 ENGINE_TEMPLATE_PATH = Path("render_v1/engine_template.jsx")
+TEXT_STYLES_PATH = Path("config/styles/text_styles.json")
+FOOTAGE_PRESETS_PATH = Path("config/styles/footage_presets.json")
 
 
 @dataclass
@@ -29,19 +30,27 @@ class AeBuildResult:
     output_s3_key: str
 
 
-def _apply_preset_to_layer(layer: Dict[str, Any], preset_id: FootagePresetId | str) -> None:
-    pid = preset_id.value if isinstance(preset_id, FootagePresetId) else str(preset_id)
-    layer["presetId"] = pid
+_SUBTITLE_STYLE_KEYS = {
+    SubtitleStyle.DEFAULT: "main_subtitle",
+    SubtitleStyle.HIGHLIGHT: "highlight_subtitle",
+}
 
-    preset_cfg = style_loader.get_footage_preset(pid)
-    transform_cfg = preset_cfg.get("transform")
-    if transform_cfg and "transform" not in layer:
-        layer["transform"] = dict(transform_cfg)
+
+def _get_subtitle_style_id(style: SubtitleStyle | str) -> str:
+    if isinstance(style, str):
+        style = (
+            SubtitleStyle(style)
+            if style in SubtitleStyle._value2member_map_  # type: ignore[attr-defined]
+            else SubtitleStyle.DEFAULT
+        )
+
+    return _SUBTITLE_STYLE_KEYS.get(style, "main_subtitle")
 
 
 def build_render_jsx_and_media(job_id: str, plan: Dict[str, Any]) -> AeBuildResult:
     """
-    Из плана (segments + subtitles) собираем PROJECT_DATA и список media
+    Из плана (segments + subtitles) собираем composition.json-подобный объект,
+    прогоняем через общий ассемблер и получаем PROJECT_DATA и список media
     для AE-ноды.
     """
     cfg = Config.from_env()
@@ -186,19 +195,17 @@ def build_render_jsx_and_media(job_id: str, plan: Dict[str, Any]) -> AeBuildResu
             out_p = min(comp_duration, out_p)
 
             style_tag = str(sub.get("style") or SubtitleStyle.DEFAULT.value).lower()
-            style_props = style_loader.get_text_style(style_tag)
-
-            text_doc: Dict[str, Any] = dict(style_props)
-            text_doc["text"] = text
+            style_id = _get_subtitle_style_id(style_tag)
 
             layer = {
                 "type": "text",
+                "styleId": style_id,
+                "content": text,
                 "startTime": float(in_p),
                 "inPoint": float(in_p),
                 "outPoint": float(out_p),
                 "enabled": True,
                 "audioEnabled": False,
-                "textDocument": text_doc,
             }
             text_layers.append(layer)
 
@@ -207,11 +214,7 @@ def build_render_jsx_and_media(job_id: str, plan: Dict[str, Any]) -> AeBuildResu
                 "id": "comp_text",
                 "type": "comp",
                 "name": "Text",
-                "width": cfg.target_width,
                 "height": cfg.target_height,
-                "duration": comp_duration,
-                "fps": float(23.976),
-                "pixelAspect": 1.0,
                 "layers": text_layers,
             }
             items.append(comp_text_item)
@@ -220,13 +223,12 @@ def build_render_jsx_and_media(job_id: str, plan: Dict[str, Any]) -> AeBuildResu
 
     comp_layers: List[Dict[str, Any]] = []
 
-    # аудио
+    # аудио-реф
     comp_layers.append(
         {
             "type": "ref",
             "refId": "audio_main",
             "name": "Audio",
-            "startTime": float(-seg_start),
             "inPoint": 0.0,
             "outPoint": comp_duration,
             "enabled": False,
@@ -236,7 +238,7 @@ def build_render_jsx_and_media(job_id: str, plan: Dict[str, Any]) -> AeBuildResu
 
     # шоты
     t = 0.0
-    for idx, shot in enumerate(shots):
+    for shot in shots:
         asset_prefix = shot.get("asset_prefix")
         if not asset_prefix:
             continue
@@ -254,15 +256,11 @@ def build_render_jsx_and_media(job_id: str, plan: Dict[str, Any]) -> AeBuildResu
         layer: Dict[str, Any] = {
             "type": "ref",
             "refId": asset_prefix,
-            "name": f"Shot {idx + 1}: {asset_prefix}",
-            "startTime": t,
             "inPoint": t,
             "outPoint": out,
-            "enabled": True,
+            "presetId": FootagePresetId.VERTICAL_FIT.value,
             "audioEnabled": False,
         }
-
-        _apply_preset_to_layer(layer, FootagePresetId.VERTICAL_FIT)
 
         comp_layers.append(layer)
         t = out
@@ -276,10 +274,8 @@ def build_render_jsx_and_media(job_id: str, plan: Dict[str, Any]) -> AeBuildResu
                 "type": "ref",
                 "refId": "comp_text",
                 "name": "Text Overlay",
-                "startTime": 0.0,
                 "inPoint": 0.0,
                 "outPoint": comp_duration,
-                "enabled": True,
                 "audioEnabled": False,
             }
         )
@@ -288,25 +284,30 @@ def build_render_jsx_and_media(job_id: str, plan: Dict[str, Any]) -> AeBuildResu
         "id": "comp_main",
         "type": "comp",
         "name": plan.get("name") or f"Job {job_id}",
-        "width": cfg.target_width,
-        "height": cfg.target_height,
-        "duration": comp_duration,
-        "fps": float(23.976),
-        "pixelAspect": 1.0,
         "layers": comp_layers,
     }
     items.append(comp_item)
 
-    raw_payload: Dict[str, Any] = {
-        "project": {
-            "projectName": plan.get("name") or f"Job {job_id}",
-            "items": items,
+    composition: Dict[str, Any] = {
+        "projectSettings": {
+            "name": plan.get("name") or f"Job {job_id}",
+            "defaults": {
+                "width": cfg.target_width,
+                "height": cfg.target_height,
+                "pixelAspect": 1.0,
+                "fps": float(23.976),
+                "duration": comp_duration,
+            },
         },
-        "entryPoint": "comp_main",
+        "items": items,
     }
 
-    payload_model = Payload(**raw_payload)
-    json_str = payload_model.model_dump_json(indent=2, exclude_none=True)
+    _, json_str = build_project_payload_from_composition(
+        styles_path=TEXT_STYLES_PATH,
+        presets_path=FOOTAGE_PRESETS_PATH,
+        composition=composition,
+        entry_point="comp_main",
+    )
 
     template_code = ENGINE_TEMPLATE_PATH.read_text(encoding="utf-8")
     js_variable = f"var PROJECT_DATA = {json_str};\n"
