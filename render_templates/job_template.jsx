@@ -224,7 +224,7 @@
         }
     }
 
-    // STEP 3: open entry comp and render
+    // STEP 3: open entry comp, prepare Render Queue and save .aep
     var entryComp = null;
     if (PROJECT_DATA.entryPoint) {
         entryComp = itemRegistry[PROJECT_DATA.entryPoint];
@@ -236,14 +236,6 @@
     }
 
     if (entryComp) {
-        // save .aep for debug
-        if (APP_DIR) {
-            try {
-                var projFile = new File(APP_DIR + "/debug_" + (JOB_ID || "project") + ".aep");
-                app.project.save(projFile);
-            } catch (eSave) {}
-        }
-
         var outPath = OUTPUT_REL || "work/output.mp4";
         var outFile = null;
         if (APP_DIR) {
@@ -263,7 +255,13 @@
         try { om.applyTemplate("H.264"); } catch (eOM) {}
         om.file = outFile;
 
-        app.project.renderQueue.render();
+        // save .aep for debug / последующего aerender
+        if (APP_DIR) {
+            try {
+                var projFile = new File(APP_DIR + "/debug_" + (JOB_ID || "project") + ".aep");
+                app.project.save(projFile);
+            } catch (eSave) {}
+        }
 
         try {
             if (app.project && typeof CloseOptions !== "undefined") {
