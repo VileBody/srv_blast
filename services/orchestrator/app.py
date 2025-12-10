@@ -109,12 +109,13 @@ def _maybe_schedule_render(job: JobInternal, ml_result: dict) -> None:
     plan = ml_result.get("plan")
 
     # Backward/forward compatibility:
-    # если поля "plan" нет, но есть "segments" — считаем, что ml_result и есть план
+    # если поля "plan" нет, но есть "segments"/"composition"/"project_data" — считаем, что
+    # ml_result и есть готовый план
     if plan is None:
-        if "segments" in ml_result:
+        if any(key in ml_result for key in ("segments", "composition", "project_data")):
             plan = ml_result
         else:
-            raise RuntimeError("ml_core result has no 'plan' field and no 'segments' field")
+            raise RuntimeError("ml_core result has no usable plan fields")
 
     async_result = celery_app.send_task(
         "ae.render_from_plan",

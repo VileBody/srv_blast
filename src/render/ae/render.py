@@ -136,10 +136,17 @@ def render_from_plan(job_id: str, plan: Dict[str, Any]) -> Dict[str, Any]:
     if not response.success:
         raise RuntimeError(f"AE render failed: {response.message}")
 
+    output_url = response.output_url
+    if not output_url:
+        log.warning(
+            "[render_ae] AE node returned empty output_url; generating presigned manually",
+        )
+        output_url = generate_presigned_url(bucket_output, output_s3_key, expires_in=3600 * 24)
+
     result_segment = {
         "index": 0,
         "s3_key": output_s3_key,
-        "s3_url": response.output_url or "",
+        "s3_url": output_url or "",
     }
 
     return {
