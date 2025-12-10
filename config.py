@@ -47,13 +47,13 @@ class Config:
             work_dir=Path(os.getenv("WORK_DIR", "./work")),
             output_dir=Path(os.getenv("OUTPUT_DIR", "./output")),
             gemini_model_planning=os.getenv(
-                "GEMINI_MODEL_PLANNING", "gemini-3-pro-preview"
+                "GEMINI_MODEL_PLANNING", "gemini-2.5-pro"
             ),
             gemini_model_subtitles=os.getenv(
                 "GEMINI_MODEL_SUBS", "gemini-flash-latest"
             ),
             target_width=int(os.getenv("TARGET_WIDTH", "1080")),
-            target_height=int(os.getenv("TARGET_HEIGHT", "1920")),
+            target_height=int(os.getenv("TARGET_HEIGHT", "1080")),
             eleven_api_key=os.getenv("ELEVENLABS_API_KEY", ""),
             eleven_stt_model=os.getenv("ELEVEN_STT_MODEL", "scribe_v1"),
             subtitles_provider=os.getenv("SUBTITLES_PROVIDER", "gemini").lower(),

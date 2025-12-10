@@ -1,13 +1,27 @@
-from pydantic import BaseModel
+# render_v1/models.py
+from __future__ import annotations
+
+from enum import Enum
 from typing import List, Optional, Union, Literal
 
-# --- Sub-components ---
+from pydantic import BaseModel
+
+
+class FootagePresetId(str, Enum):
+    """
+    Идентификаторы пресетов для футажей (ключи из footage_presets.json).
+    """
+    BG_TRANSFORM = "bg_transform"
+    VERTICAL_FIT = "vertical_fit"
+    SHAKE_ADJ = "shake_adj"
+
 
 class Transform(BaseModel):
     scale: Optional[List[float]] = None
     position: Optional[List[float]] = None
     rotation: Optional[float] = None
     opacity: Optional[float] = None
+
 
 class TextDocument(BaseModel):
     text: str
@@ -22,7 +36,6 @@ class TextDocument(BaseModel):
     leading: Optional[float] = None
     justification: Optional[int] = None
 
-# --- Layers ---
 
 class BaseLayer(BaseModel):
     name: Optional[str] = None
@@ -33,47 +46,52 @@ class BaseLayer(BaseModel):
     audioEnabled: Optional[bool] = None
     transform: Optional[Transform] = None
 
+
 class RefLayer(BaseLayer):
-    type: Literal['ref']
+    type: Literal["ref"]
     refId: str
+    presetId: Optional[FootagePresetId] = None
+
 
 class TextLayer(BaseLayer):
-    type: Literal['text']
+    type: Literal["text"]
     textDocument: TextDocument
 
+
 class AdjustmentLayer(BaseLayer):
-    type: Literal['adjustment']
+    type: Literal["adjustment"]
+
 
 LayerType = Union[RefLayer, TextLayer, AdjustmentLayer]
 
-# --- Items ---
 
 class FootageItem(BaseModel):
     id: str
-    type: Literal['footage']
+    type: Literal["footage"]
     name: str
     path: str
     isRef: bool = False
 
+
 class CompItem(BaseModel):
     id: str
-    type: Literal['comp']
+    type: Literal["comp"]
     name: str
-    # Делаем обязательными, но Defaults будут приходить из projectSettings
-    width: int 
+    width: int
     height: int
     duration: float
     fps: float
-    pixelAspect: float # <--- ТЕПЕРЬ ОБЯЗАТЕЛЬНО! (Убрал = 1.0)
+    pixelAspect: float
     layers: List[LayerType] = []
+
 
 ItemType = Union[FootageItem, CompItem]
 
-# --- Root ---
 
 class ProjectStructure(BaseModel):
     projectName: str
     items: List[ItemType]
+
 
 class Payload(BaseModel):
     project: ProjectStructure

@@ -1,10 +1,9 @@
-# src/genai_client.py
 from __future__ import annotations
 
 import json
 import logging
-import time
 import mimetypes
+import time
 from pathlib import Path
 from typing import List, Optional
 
@@ -20,16 +19,17 @@ from .prompts import (
     PLAN_VISUALS_SYSTEM,
     SUBTITLES_SYSTEM,
     COMBINED_PLANNER_SYSTEM,
+    AE_EDIT_PLAN_SYSTEM,
 )
 
 log = logging.getLogger(__name__)
 
-# Регистрация корректного MIME для .m4a
+# Корректный MIME для .m4a
 mimetypes.add_type("audio/mp4", ".m4a")
 
 
 # --------------------------------------------------------------------------- #
-# Pydantic-модели под JSON-ответы
+# Pydantic-модели под JSON-ответы (кроме AeEditPlan — его валидируем в planner)
 # --------------------------------------------------------------------------- #
 
 class SegmentModel(BaseModel):
@@ -153,7 +153,6 @@ class GeminiClient:
         """
         raw = getattr(resp, "output_text", None) or getattr(resp, "text", None)
         if not raw:
-            # страхуемся: пробуем поковырять candidates/parts
             try:
                 for cand in getattr(resp, "candidates", []) or []:
                     content = getattr(cand, "content", None)
@@ -176,7 +175,7 @@ class GeminiClient:
         return raw
 
     # ---------------------------------------------------------------------- #
-    # 0) Новый комбинированный планировщик (аудио-сегменты + шоты)
+    # A) Старый комбинированный планировщик (3 сегмента + шоты)
     # ---------------------------------------------------------------------- #
 
     def build_full_plan(
@@ -184,16 +183,6 @@ class GeminiClient:
         audio_path: Path,
         library_payload: list[dict],
     ) -> List[SegmentEditPlan]:
-        """
-        ОДИН запрос к модели-планировщику:
-
-        - загружаем аудио через Files API;
-        - даём system-промпт COMBINED_PLANNER_SYSTEM + библиотеку клипов (JSON как текст);
-        - получаем JSON формата CombinedPlanModel:
-            segments[*] = { index, start_sec, end_sec, mood, description,
-                            shots[*] = {asset_prefix, target_duration_sec} }
-        - конвертим в список SegmentEditPlan.
-        """
         file_obj = self.client.files.upload(file=str(audio_path))
         log.info(
             "[build_full_plan] Uploaded audio %s (id=%s) for model %s",
@@ -210,7 +199,6 @@ class GeminiClient:
         resp = self.client.models.generate_content(
             model=self.cfg.gemini_model_planning,
             contents=[
-                # Просто строки, без Part.from_text — SDK сам их обернёт
                 COMBINED_PLANNER_SYSTEM,
                 json.dumps(library_payload, ensure_ascii=False),
                 file_obj,
@@ -252,12 +240,75 @@ class GeminiClient:
         log.info(
             "[build_full_plan] Built %d segments from combined planner: %s",
             len(segment_plans),
-            [(sp.audio_segment.index, sp.audio_segment.start, sp.audio_segment.end) for sp in segment_plans],
+            [
+                (sp.audio_segment.index, sp.audio_segment.start, sp.audio_segment.end)
+                for sp in segment_plans
+            ],
         )
         return segment_plans
 
     # ---------------------------------------------------------------------- #
-    # 1) Описание одного видео (для оффлайна, если надо)
+    # B) План AeEditPlan (1 ролик + субтитры)
+    # ---------------------------------------------------------------------- #
+
+    def build_ae_edit_plan(
+        self,
+        audio_path: Path,
+        library_payload: list[dict],
+    ) -> dict:
+        """
+        Один запрос к модели по промпту AE_EDIT_PLAN_SYSTEM.
+
+        Ожидаем JSON со структурой AeEditPlan:
+          {
+            "total_duration_sec": ...,
+            "segments": [...],
+            "subtitles": [...]
+          }
+
+        Здесь мы НЕ навешиваем свою дополнительную Pydantic-схему,
+        а просто возвращаем json.loads(raw). Строгая валидация идёт
+        позже в planner через ae_plan_models.AeEditPlan.
+        """
+        file_obj = self.client.files.upload(file=str(audio_path))
+        log.info(
+            "[build_ae_edit_plan] Uploaded audio %s (id=%s) for model %s",
+            audio_path,
+            getattr(file_obj, "name", None),
+            self.cfg.gemini_model_planning,
+        )
+
+        log.info(
+            "[build_ae_edit_plan] Request config: model=%s, mime=application/json",
+            self.cfg.gemini_model_planning,
+        )
+
+        resp = self.client.models.generate_content(
+            model=self.cfg.gemini_model_planning,
+            contents=[
+                AE_EDIT_PLAN_SYSTEM,
+                json.dumps(library_payload, ensure_ascii=False),
+                file_obj,
+            ],
+            config=types.GenerateContentConfig(
+                temperature=0.6,
+                response_mime_type="application/json",
+            ),
+        )
+
+        raw = self._extract_text_or_raise(resp, "build_ae_edit_plan")
+
+        try:
+            data = json.loads(raw)
+        except Exception as e:
+            log.error("[build_ae_edit_plan] Failed to parse JSON: %s", e)
+            log.debug("[build_ae_edit_plan] Raw JSON that failed: %s", raw)
+            raise
+
+        return data
+
+    # ---------------------------------------------------------------------- #
+    # C) Описание видео
     # ---------------------------------------------------------------------- #
 
     def describe_video(
@@ -265,14 +316,6 @@ class GeminiClient:
         video_path: Path,
         variants_payload: list[dict],
     ) -> dict:
-        """
-        Анализ одного видео (timelapse'ы и т.п.), не завязан на основной пайплайн.
-
-        На вход:
-          - video_path: локальный .mp4
-          - variants_payload: список вариантов файла (file, width, height), чтобы модель
-            вернула их в поле 'options'.
-        """
         mime_type, _ = mimetypes.guess_type(str(video_path))
         log.info(
             "[describe_video] Local guess mime_type for %s -> %r",
@@ -310,8 +353,6 @@ class GeminiClient:
             ),
         )
 
-        log.info("[describe_video] Got response from model %s", self.cfg.gemini_model_planning)
-
         raw = self._extract_text_or_raise(resp, "describe_video")
 
         try:
@@ -324,7 +365,7 @@ class GeminiClient:
         return json.loads(parsed.model_dump_json(by_alias=True, exclude_none=True))
 
     # ---------------------------------------------------------------------- #
-    # 2) (опционально) старые функции оставляем на всякий случай
+    # D) Старые функции (highlights + visuals)
     # ---------------------------------------------------------------------- #
 
     def select_audio_highlights(self, audio_path: Path) -> List[AudioSegmentPlan]:
@@ -355,15 +396,6 @@ class GeminiClient:
                 temperature=0.7,
                 response_mime_type="application/json",
             ),
-        )
-
-        usage = getattr(resp, "usage_metadata", None)
-        log.info(
-            "[select_audio_highlights] Got response from model %s, finish_reason=%s, total_tokens=%s, thoughts_tokens=%s",
-            self.cfg.gemini_model_planning,
-            getattr(resp.candidates[0], "finish_reason", None) if resp.candidates else None,
-            getattr(usage, "total_token_count", None),
-            getattr(usage, "thoughts_token_count", None),
         )
 
         raw = self._extract_text_or_raise(resp, "select_audio_highlights")
@@ -426,11 +458,6 @@ class GeminiClient:
             ),
         )
 
-        log.info(
-            "[plan_visuals_for_segment] Got response from model %s",
-            self.cfg.gemini_model_planning,
-        )
-
         raw = self._extract_text_or_raise(resp, "plan_visuals_for_segment")
 
         try:
@@ -455,7 +482,7 @@ class GeminiClient:
         return shots
 
     # ---------------------------------------------------------------------- #
-    # 4) Сабтайтлы
+    # E) Сабтайтлы как отдельный сервис
     # ---------------------------------------------------------------------- #
 
     def generate_srt_for_video(self, video_path: Path) -> str:
