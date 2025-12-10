@@ -1,3 +1,4 @@
+# src/genai_client.py
 from __future__ import annotations
 
 import json
@@ -23,7 +24,7 @@ from .prompts import (
 
 log = logging.getLogger(__name__)
 
-# Регистрация корректного MIME для .m4a,
+# Регистрация корректного MIME для .m4a
 mimetypes.add_type("audio/mp4", ".m4a")
 
 
@@ -151,14 +152,25 @@ class GeminiClient:
         Аккуратно достаём текст/JSON из ответа SDK.
         """
         raw = getattr(resp, "output_text", None) or getattr(resp, "text", None)
+        if not raw:
+            # страхуемся: пробуем поковырять candidates/parts
+            try:
+                for cand in getattr(resp, "candidates", []) or []:
+                    content = getattr(cand, "content", None)
+                    if not content:
+                        continue
+                    for part in getattr(content, "parts", []) or []:
+                        if getattr(part, "text", None):
+                            raw = part.text
+                            break
+                    if raw:
+                        break
+            except Exception as e:
+                log.warning("[%s] Failed to inspect response parts: %s", context, e)
 
         if not raw:
-            try:
-                as_dict = resp.to_dict() if hasattr(resp, "to_dict") else resp
-            except Exception:
-                as_dict = resp
-            log.error("[%s] Empty response from Gemini. Full object: %r", context, as_dict)
-            raise RuntimeError(f"Gemini вернул пустой ответ в {context}")
+            log.error("[%s] Empty model output: %r", context, resp)
+            raise RuntimeError(f"Empty model output in {context}")
 
         log.debug("[%s] Raw model output (truncated): %s", context, raw[:500])
         return raw
@@ -248,11 +260,30 @@ class GeminiClient:
     # 1) Описание одного видео (для оффлайна, если надо)
     # ---------------------------------------------------------------------- #
 
-    def describe_video(self, video: Path, variants_payload: list[dict]) -> dict:
-        file_obj = self.client.files.upload(file=str(video))
+    def describe_video(
+        self,
+        video_path: Path,
+        variants_payload: list[dict],
+    ) -> dict:
+        """
+        Анализ одного видео (timelapse'ы и т.п.), не завязан на основной пайплайн.
+
+        На вход:
+          - video_path: локальный .mp4
+          - variants_payload: список вариантов файла (file, width, height), чтобы модель
+            вернула их в поле 'options'.
+        """
+        mime_type, _ = mimetypes.guess_type(str(video_path))
+        log.info(
+            "[describe_video] Local guess mime_type for %s -> %r",
+            video_path,
+            mime_type,
+        )
+
+        file_obj = self.client.files.upload(file=str(video_path))
         log.info(
             "[describe_video] Uploaded video %s (id=%s) for model %s",
-            video,
+            video_path,
             getattr(file_obj, "name", None),
             self.cfg.gemini_model_planning,
         )

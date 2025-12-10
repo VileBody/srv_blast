@@ -1,0 +1,11 @@
+{
+  "bg_transform": {
+    "transform": { "scale": [143.35, 143.35] }
+  },
+  "vertical_fit": {
+    "transform": { "scale": [177.7, 177.7] }
+  },
+  "shake_adj": {
+    "transform": { "scale": [100, 100] }
+  }
+}

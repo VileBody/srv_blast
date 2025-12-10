@@ -1,0 +1,23 @@
+{
+  "main_subtitle": {
+    "font": "Point-SemiBold",
+    "fontSize": 100,
+    "applyFill": true,
+    "fillColor": [1, 1, 1],
+    "applyStroke": false,
+    "tracking": -50,
+    "leading": 150,
+    "justification": 1
+  },
+  "highlight_subtitle": {
+    "font": "Point-SemiBold",
+    "fontSize": 100,
+    "applyFill": false,
+    "applyStroke": true,
+    "strokeColor": [1, 1, 1],
+    "strokeWidth": 5,
+    "tracking": -50,
+    "leading": 150,
+    "justification": 1
+  }
+}

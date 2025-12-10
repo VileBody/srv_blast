@@ -98,13 +98,23 @@ def _update_from_async_result(job: JobInternal, result: AsyncResult, step: str) 
 def _maybe_schedule_render(job: JobInternal, ml_result: dict) -> None:
     """
     Если ML-план готов и рендер ещё не поставлен — ставим ae.render_from_plan.
+
+    Поддерживаем два формата ответа от ml-core:
+      1) {"plan": {...}}        — старый вариант
+      2) {..., "segments": ...} — новый вариант, когда сам результат уже план
     """
     if job.render_task_id is not None:
         return
 
     plan = ml_result.get("plan")
-    if not plan:
-        raise RuntimeError("ml_core result has no 'plan' field")
+
+    # Backward/forward compatibility:
+    # если поля "plan" нет, но есть "segments" — считаем, что ml_result и есть план
+    if plan is None:
+        if "segments" in ml_result:
+            plan = ml_result
+        else:
+            raise RuntimeError("ml_core result has no 'plan' field and no 'segments' field")
 
     async_result = celery_app.send_task(
         "ae.render_from_plan",
@@ -112,6 +122,7 @@ def _maybe_schedule_render(job: JobInternal, ml_result: dict) -> None:
     )
     job.render_task_id = async_result.id
     job.render_status = StepStatus.PENDING
+
 
 
 def _refresh_job_state(job: JobInternal) -> None:
