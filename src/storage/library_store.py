@@ -8,8 +8,8 @@ from typing import Dict, List, Optional
 
 from pydantic import BaseModel, ValidationError
 
-from .models import VideoAsset, VideoVariant
-from .s3_utils import download_from_s3
+from src.core.models import VideoAsset, VideoVariant
+from .s3 import download_from_s3
 
 log = logging.getLogger(__name__)
 

@@ -7,10 +7,11 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from config import Config
-from src.genai_client import GeminiClient
-from src.library_store import AssetLibrary
-from src.s3_utils import download_from_s3
-from .ae_plan_models import AeEditPlan, AeSegment, SubtitleLine
+from src.genai.client_base import GenaiClientBase
+from src.genai.planners import AePlanner
+from src.storage.library_store import AssetLibrary
+from src.storage.s3 import download_from_s3
+from src.render.ae.models import AeEditPlan, AeSegment, SubtitleLine
 
 log = logging.getLogger(__name__)
 
@@ -48,8 +49,8 @@ def build_edit_plan(job_id: str, audio_src: str, name: str) -> Dict[str, Any]:
     Главный планировщик под AE:
 
       - приводит audio_src к локальному пути,
-      - дергает GeminiClient.build_ae_edit_plan (AeEditPlan JSON),
-      - валидирует через AeEditPlan из ae_plan_models,
+      - дергает AePlanner.build_ae_edit_plan (AeEditPlan JSON),
+      - валидирует через AeEditPlan из src.render.ae.models,
       - возвращает plan с полями:
           job_id, name, audio_source, segments[], subtitles[], total_duration_sec.
     """
@@ -57,7 +58,8 @@ def build_edit_plan(job_id: str, audio_src: str, name: str) -> Dict[str, Any]:
 
     audio_path = _ensure_local_audio(job_id, audio_src, cfg.work_dir / "ml_core_audio")
 
-    gemini = GeminiClient(cfg)
+    genai_client = GenaiClientBase(cfg)
+    planner = AePlanner(genai_client)
     library = AssetLibrary(cfg.descriptions_dir, cfg.pins_dir)
     library.load_from_files()
 
@@ -69,7 +71,7 @@ def build_edit_plan(job_id: str, audio_src: str, name: str) -> Dict[str, Any]:
 
     library_payload = library.to_prompt_payload()
 
-    raw_plan = gemini.build_ae_edit_plan(audio_path, library_payload)
+    raw_plan = planner.build_ae_edit_plan(audio_path, library_payload)
 
     try:
         ae_plan = AeEditPlan.model_validate(raw_plan)
