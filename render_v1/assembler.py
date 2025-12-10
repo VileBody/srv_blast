@@ -105,9 +105,15 @@ def build_project_payload_from_composition(
     styles_data = load_json(styles_path)
     presets_data = load_json(presets_path)
 
-    project_settings = composition.get("projectSettings", {})
+    project_settings = composition.get("projectSettings", {}) or {}
     defaults = project_settings.get("defaults", {}) or {}
-    global_fit_policy = project_settings.get("fitPolicy")  # "cover"/"contain" или None
+    # Если fitPolicy не задан в composition.json, по умолчанию считаем COVER.
+    # Иначе ref-слои останутся без fitPolicy, и движок в job_template.jsx
+    # не применит авто-скейл: футаж просто «впишется» в композицию.
+    #
+    # Нам же нужно, чтобы вертикальные клипы кадрировали фон (cover),
+    # даже если модель промолчала про fitPolicy.
+    global_fit_policy = project_settings.get("fitPolicy") or "cover"
 
     print(f"Applying Defaults: {defaults}")
     if global_fit_policy:
