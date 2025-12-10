@@ -1,12 +1,27 @@
 # render_v1/models.py
 from __future__ import annotations
 
+from enum import Enum
 from typing import List, Optional, Union, Literal
 
 from pydantic import BaseModel
 
-from src.core.config.styles import FootagePresetId
 
+# --- Enums ---
+
+class FitPolicy(str, Enum):
+    """
+    Политика вписывания футажа в композицию.
+
+    COVER   — масштабировать так, чтобы меньшая сторона кадра была равна
+              соответствующей стороне композиции (обрезка по большей стороне).
+    CONTAIN — вписать целиком, оставляя поля; пока не используем, но оставляем для будущего.
+    """
+    COVER = "cover"
+    CONTAIN = "contain"
+
+
+# --- Sub-components ---
 
 class Transform(BaseModel):
     scale: Optional[List[float]] = None
@@ -29,6 +44,8 @@ class TextDocument(BaseModel):
     justification: Optional[int] = None
 
 
+# --- Layers ---
+
 class BaseLayer(BaseModel):
     name: Optional[str] = None
     startTime: float
@@ -42,7 +59,8 @@ class BaseLayer(BaseModel):
 class RefLayer(BaseLayer):
     type: Literal["ref"]
     refId: str
-    presetId: Optional[FootagePresetId] = None
+    # cover/contain — обрабатывается в движке job_template.jsx
+    fitPolicy: Optional[FitPolicy] = None
 
 
 class TextLayer(BaseLayer):
@@ -56,6 +74,8 @@ class AdjustmentLayer(BaseLayer):
 
 LayerType = Union[RefLayer, TextLayer, AdjustmentLayer]
 
+
+# --- Items ---
 
 class FootageItem(BaseModel):
     id: str
@@ -79,6 +99,8 @@ class CompItem(BaseModel):
 
 ItemType = Union[FootageItem, CompItem]
 
+
+# --- Root ---
 
 class ProjectStructure(BaseModel):
     projectName: str
