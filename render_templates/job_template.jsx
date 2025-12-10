@@ -256,11 +256,21 @@
         om.file = outFile;
 
         // save .aep for debug / последующего aerender
-        if (APP_DIR) {
-            try {
-                var projFile = new File(APP_DIR + "/debug_" + (JOB_ID || "project") + ".aep");
-                app.project.save(projFile);
-            } catch (eSave) {}
+        if (!APP_DIR) {
+            alert("APP_DIR is empty, cannot save AEP.");
+            throw new Error("APP_DIR is empty, cannot save AEP.");
+        }
+
+        var projFile = new File(APP_DIR + "/debug_" + (JOB_ID || "project") + ".aep");
+        if (!projFile.parent.exists) {
+            projFile.parent.create();
+        }
+
+        try {
+            app.project.save(projFile);
+        } catch (eSave) {
+            alert("Failed to save project:\n" + eSave.toString());
+            throw eSave; // важно: пусть процесс упадёт, а ae_sdk увидит ошибку
         }
 
         try {
