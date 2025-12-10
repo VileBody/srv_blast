@@ -131,40 +131,9 @@ class AePlanner:
     def build_ae_edit_plan(
         self, audio_path: Path, library_payload: list[dict]
     ) -> dict:
-        file_obj = self.client.client.files.upload(file=str(audio_path))
-        log.info(
-            "[build_ae_edit_plan] Uploaded audio %s (id=%s) for model %s",
-            audio_path,
-            getattr(file_obj, "name", None),
-            self.cfg.gemini_model_planning,
-        )
-
-        log.info(
-            "[build_ae_edit_plan] Request config: model=%s, mime=application/json",
-            self.cfg.gemini_model_planning,
-        )
-
-        resp = self.client.client.models.generate_content(
-            model=self.cfg.gemini_model_planning,
-            contents=[
-                AE_PROJECT_SYSTEM,
-                json.dumps(library_payload, ensure_ascii=False),
-                file_obj,
-            ],
-            config=types.GenerateContentConfig(
-                temperature=0.6,
-                response_mime_type="application/json",
-            ),
-        )
-
-        raw = self.client.extract_text_or_raise(resp, "build_ae_edit_plan")
-
-        try:
-            return json.loads(raw)
-        except Exception as exc:  # noqa: BLE001
-            log.error("[build_ae_edit_plan] Failed to parse JSON: %s", exc)
-            log.debug("[build_ae_edit_plan] Raw JSON that failed: %s", raw)
-            raise
+        # Для совместимости оставляем метод, но он просто прокидывает в новый конвейер
+        # build_ae_project, который возвращает готовый AE-проект.
+        return self.build_ae_project(audio_path=audio_path, library_payload=library_payload)
 
     def build_ae_project(
         self, audio_path: Path, library_payload: list[dict]
