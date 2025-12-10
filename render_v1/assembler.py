@@ -1,12 +1,13 @@
 from pathlib import Path
 
 from .assembler_core import build_project_payload_from_composition, load_json
+from src.render.ae.template_paths import JOB_TEMPLATE_PATH
 
 # === CONFIG ===
 FILE_STYLES = Path("config/styles/text_styles.json")
 FILE_PRESETS = Path("config/styles/footage_presets.json")
 FILE_SCENARIO = Path("render_v1/composition.json")
-FILE_TEMPLATE = Path("render_v1/engine_template.jsx")
+FILE_TEMPLATE = JOB_TEMPLATE_PATH
 FILE_OUTPUT = Path("render_v1/render.jsx")
 
 

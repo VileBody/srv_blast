@@ -14,10 +14,10 @@ from .ae_client import AeMediaPayload
 from src.library_store import AssetLibrary
 from src.s3_utils import generate_presigned_url
 from src.config.styles import FootagePresetId, SubtitleStyle
+from src.render.ae.template_paths import JOB_TEMPLATE_PATH
 
 log = logging.getLogger(__name__)
 
-ENGINE_TEMPLATE_PATH = Path("render_v1/engine_template.jsx")
 TEXT_STYLES_PATH = Path("config/styles/text_styles.json")
 FOOTAGE_PRESETS_PATH = Path("config/styles/footage_presets.json")
 
@@ -309,7 +309,7 @@ def build_render_jsx_and_media(job_id: str, plan: Dict[str, Any]) -> AeBuildResu
         entry_point="comp_main",
     )
 
-    template_code = ENGINE_TEMPLATE_PATH.read_text(encoding="utf-8")
+    template_code = JOB_TEMPLATE_PATH.read_text(encoding="utf-8")
     js_variable = f"var PROJECT_DATA = {json_str};\n"
     final_jsx = template_code.replace("/*__PYTHON_DATA_INJECT__*/", js_variable)
 

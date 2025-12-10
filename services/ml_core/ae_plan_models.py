@@ -63,7 +63,7 @@ class AeEditPlan(BaseModel):
       - общая длительность ролика,
       - сегменты с shot’ами,
       - субтитры со стилем (default / highlight).
-    Это потом превращается в PROJECT_DATA для engine_template.jsx.
+    Это потом превращается в PROJECT_DATA для job_template.jsx.
     """
 
     total_duration_sec: float = Field(gt=0)
