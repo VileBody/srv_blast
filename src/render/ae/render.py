@@ -1,62 +1,129 @@
 # services/ml_core/render_ae.py
 from __future__ import annotations
 
+import json
 import logging
 import os
-from typing import Any, Dict
+from pathlib import Path
+from typing import Any, Dict, Tuple
 
-from config import Config
-from .client import AeRenderClient
-from .jsx_builder import build_render_jsx_and_media
+from render_v1.assembler_core import build_project_payload_from_composition
+from src.render.ae.template_paths import JOB_TEMPLATE_PATH
+from src.storage.s3 import generate_presigned_url
+
+from .client import AeMediaPayload, AeRenderClient
 
 log = logging.getLogger(__name__)
+
+TEXT_STYLES_PATH = Path("config/styles/text_styles.json")
+FOOTAGE_PRESETS_PATH = Path("config/styles/footage_presets.json")
+DEFAULT_ENTRY_COMP = "comp_main"
+OUTPUT_RELPATH = "work/output.mp4"
+
+
+def _ensure_project_data(plan: Dict[str, Any]) -> Tuple[Dict[str, Any], str, str]:
+    project_data = plan.get("project_data")
+    if project_data:
+        entry_comp = project_data.get("entryPoint", DEFAULT_ENTRY_COMP)
+        json_str = json.dumps(project_data, ensure_ascii=False, indent=2)
+        return project_data, json_str, entry_comp
+
+    composition = plan.get("composition")
+    if not composition:
+        raise RuntimeError("Plan has neither project_data nor composition")
+
+    project_data, json_str = build_project_payload_from_composition(
+        styles_path=TEXT_STYLES_PATH,
+        presets_path=FOOTAGE_PRESETS_PATH,
+        composition=composition,
+        entry_point=DEFAULT_ENTRY_COMP,
+    )
+    entry_comp = project_data.get("entryPoint", DEFAULT_ENTRY_COMP)
+    return project_data, json_str, entry_comp
+
+
+def _build_media_payloads(
+    project_data: Dict[str, Any], audio_source: str
+) -> list[AeMediaPayload]:
+    bucket_audio = os.getenv("S3_BUCKET_RAW_AUDIO")
+    bucket_assets = os.getenv("S3_BUCKET_ASSET_STORAGE")
+
+    if not audio_source:
+        raise RuntimeError("Plan is missing audio_source")
+
+    items = (project_data.get("project") or {}).get("items") or []
+    if not items:
+        raise RuntimeError("Project data has no items to render")
+
+    seen_paths: set[str] = set()
+    media: list[AeMediaPayload] = []
+
+    for item in items:
+        if (item.get("type") or "").lower() != "footage":
+            continue
+
+        path = item.get("path")
+        if not path or path in seen_paths:
+            continue
+
+        if path.startswith("media/audio/"):
+            if audio_source.startswith("http://") or audio_source.startswith("https://"):
+                url = audio_source
+            else:
+                if not bucket_audio:
+                    raise RuntimeError("S3_BUCKET_RAW_AUDIO is not set")
+                url = generate_presigned_url(bucket_audio, audio_source, expires_in=3600 * 24)
+
+            media.append(AeMediaPayload(url=url, relpath=path))
+            seen_paths.add(path)
+            continue
+
+        if path.startswith("media/video/"):
+            key = path[len("media/video/") :]
+            if not bucket_assets:
+                raise RuntimeError("S3_BUCKET_ASSET_STORAGE is not set")
+            url = generate_presigned_url(bucket_assets, key, expires_in=3600 * 24)
+            media.append(AeMediaPayload(url=url, relpath=path))
+            seen_paths.add(path)
+
+    if not media:
+        raise RuntimeError("No media collected for AE render")
+
+    return media
 
 
 def render_from_plan(job_id: str, plan: Dict[str, Any]) -> Dict[str, Any]:
     """
     AE-рендер по готовому плану.
 
-    v1:
-      - Берём первый сегмент из планировщика.
-      - Собираем под него PROJECT_DATA в формате render_v1.Payload (comp_main + ref-слои).
-      - Генерируем единый финальный ролик и кладём его в S3_BUCKET_OUTPUT_VIDEO.
-
-    Контракт по результату совпадает с render_ffmpeg.render_from_plan:
-      {
-        "job_id": str,
-        "segments": [
-          {"index": 0, "s3_key": "...", "s3_url": "..."}
-        ]
-      }
+    План может содержать как project_data (Payload), так и исходную composition.
+    В обоих случаях здесь собирается JSX для AE-ноды и список медиа.
     """
 
-    cfg = Config.from_env()  # пока не обязателен, но может пригодиться для логики дальше
     bucket_output = os.getenv("S3_BUCKET_OUTPUT_VIDEO")
     if not bucket_output:
         raise RuntimeError("S3_BUCKET_OUTPUT_VIDEO is not set")
 
     log.info("[render_ae] Starting AE render for job_id=%s", job_id)
 
-    # AE_NODE_URL берется внутри клиента из env, если base_url не передан
+    project_data, json_str, entry_comp = _ensure_project_data(plan)
+    media = _build_media_payloads(project_data, plan.get("audio_source", ""))
+
+    template_code = JOB_TEMPLATE_PATH.read_text(encoding="utf-8")
+    js_variable = f"var PROJECT_DATA = {json_str};\n"
+    render_jsx = template_code.replace("/*__PYTHON_DATA_INJECT__*/", js_variable)
+
     client = AeRenderClient()
-
-    build = build_render_jsx_and_media(job_id, plan)
-
-    log.debug(
-        "[render_ae] Built AE job for job_id=%s: jsx_len=%d, media_count=%d",
-        job_id,
-        len(build.render_jsx),
-        len(build.media),
-    )
+    output_s3_key = f"{job_id}.mp4"
 
     response = client.render(
         job_id=job_id,
-        render_jsx=build.render_jsx,
-        media=build.media,
-        entry_comp="comp_main",
-        output_relpath=build.output_relpath,
+        render_jsx=render_jsx,
+        media=media,
+        entry_comp=entry_comp or DEFAULT_ENTRY_COMP,
+        output_relpath=OUTPUT_RELPATH,
         output_bucket=bucket_output,
-        output_key=build.output_s3_key,
+        output_key=output_s3_key,
     )
 
     log.info(
@@ -71,7 +138,7 @@ def render_from_plan(job_id: str, plan: Dict[str, Any]) -> Dict[str, Any]:
 
     result_segment = {
         "index": 0,
-        "s3_key": build.output_s3_key,
+        "s3_key": output_s3_key,
         "s3_url": response.output_url or "",
     }
 

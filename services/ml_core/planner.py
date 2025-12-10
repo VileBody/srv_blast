@@ -4,16 +4,20 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 from config import Config
+from render_v1.assembler_core import build_project_payload_from_composition
 from src.genai.client_base import GenaiClientBase
 from src.genai.planners import AePlanner
 from src.storage.library_store import AssetLibrary
 from src.storage.s3 import download_from_s3
-from src.render.ae.models import AeEditPlan, AeSegment, SubtitleLine
 
 log = logging.getLogger(__name__)
+
+
+TEXT_STYLES_PATH = Path("config/styles/text_styles.json")
+FOOTAGE_PRESETS_PATH = Path("config/styles/footage_presets.json")
 
 
 def _ensure_local_audio(job_id: str, audio_src: str, dst_dir: Path) -> Path:
@@ -49,10 +53,10 @@ def build_edit_plan(job_id: str, audio_src: str, name: str) -> Dict[str, Any]:
     Главный планировщик под AE:
 
       - приводит audio_src к локальному пути,
-      - дергает AePlanner.build_ae_edit_plan (AeEditPlan JSON),
-      - валидирует через AeEditPlan из src.render.ae.models,
-      - возвращает plan с полями:
-          job_id, name, audio_source, segments[], subtitles[], total_duration_sec.
+      - дергает AePlanner.build_ae_project (composition.json от модели),
+      - прогоняет composition через ассемблер render_v1 для нормализации,
+      - возвращает план с полями job_id, name, audio_source,
+        composition (сырое от модели) и project_data (нормализованное).
     """
     cfg = Config.from_env()
 
@@ -71,64 +75,27 @@ def build_edit_plan(job_id: str, audio_src: str, name: str) -> Dict[str, Any]:
 
     library_payload = library.to_prompt_payload()
 
-    raw_plan = planner.build_ae_edit_plan(audio_path, library_payload)
+    composition = planner.build_ae_project(audio_path, library_payload)
 
-    try:
-        ae_plan = AeEditPlan.model_validate(raw_plan)
-    except Exception as e:
-        log.error("[ml-core] Failed to validate AeEditPlan: %s", e)
-        # грубый фолбэк
-        ae_plan = AeEditPlan(
-            total_duration_sec=raw_plan.get("total_duration_sec", 0.0),
-            segments=[AeSegment(**s) for s in raw_plan.get("segments", [])],
-            subtitles=[SubtitleLine(**s) for s in raw_plan.get("subtitles", [])],
-        )
-
-    plan_segments: List[Dict[str, Any]] = []
-    for seg in ae_plan.segments:
-        plan_segments.append(
-            {
-                "index": seg.index,
-                "start_sec": seg.start_sec,
-                "end_sec": seg.end_sec,
-                "duration_sec": seg.end_sec - seg.start_sec,
-                "mood": seg.mood,
-                "description": seg.description,
-                "shots": [
-                    {
-                        "asset_prefix": shot.asset_prefix,
-                        "target_duration_sec": shot.end_sec - shot.start_sec,
-                    }
-                    for shot in seg.shots
-                ],
-            }
-        )
-
-    plan_subtitles: List[Dict[str, Any]] = []
-    for sub in ae_plan.subtitles:
-        plan_subtitles.append(
-            {
-                "index": sub.index,
-                "start_sec": sub.start_sec,
-                "end_sec": sub.end_sec,
-                "text": sub.text,
-                "style": sub.style.value,  # "default" / "highlight"
-            }
-        )
+    raw_payload, json_str = build_project_payload_from_composition(
+        styles_path=TEXT_STYLES_PATH,
+        presets_path=FOOTAGE_PRESETS_PATH,
+        composition=composition,
+        entry_point="comp_main",
+    )
 
     plan: Dict[str, Any] = {
         "job_id": job_id,
         "name": name,
         "audio_source": audio_src,
-        "segments": plan_segments,
-        "subtitles": plan_subtitles,
-        "total_duration_sec": ae_plan.total_duration_sec,
+        "composition": composition,
+        "project_data": raw_payload,
+        "project_data_json": json_str,
     }
 
     log.info(
-        "[ml-core] Built AE edit plan for job %s: %d segments, %d subtitles",
+        "[ml-core] Built AE composition for job %s: %d items",
         job_id,
-        len(plan_segments),
-        len(plan_subtitles),
+        len(composition.get("items", [])),
     )
     return plan
