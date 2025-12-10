@@ -21,7 +21,7 @@ if dotenv_path.exists():
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.library_store import DescriptionFile, DescriptionResponse  # noqa: E402
+from src.storage.library_store import DescriptionFile, DescriptionResponse  # noqa: E402
 
 DESCRIPTIONS_DIR = Path(os.getenv("DESCRIPTIONS_DIR", "./descriptions"))
 

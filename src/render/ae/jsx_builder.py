@@ -9,12 +9,12 @@ from typing import Any, Dict, List
 
 from config import Config
 from render_v1.assembler_core import build_project_payload_from_composition
-from .ae_client import AeMediaPayload
+from .client import AeMediaPayload
 
-from src.library_store import AssetLibrary
-from src.s3_utils import generate_presigned_url
-from src.config.styles import FootagePresetId, SubtitleStyle
+from src.core.config.styles import FootagePresetId, SubtitleStyle
 from src.render.ae.template_paths import JOB_TEMPLATE_PATH
+from src.storage.library_store import AssetLibrary
+from src.storage.s3 import generate_presigned_url
 
 log = logging.getLogger(__name__)
 

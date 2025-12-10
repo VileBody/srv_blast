@@ -4,10 +4,10 @@ import logging
 from pathlib import Path
 from typing import List
 
-from .ffmpeg_utils import FFmpegExecutor
-from .genai_client import GeminiClient
-from .library_store import AssetLibrary
-from .models import EditProject, SegmentEditPlan, AudioSegmentPlan, VisualShotSpec
+from src.core.models import AudioSegmentPlan, EditProject, SegmentEditPlan, VisualShotSpec
+from src.genai.planners import AePlanner
+from src.render.ffmpeg.ffmpeg_executor import FFmpegExecutor
+from src.storage.library_store import AssetLibrary
 
 log = logging.getLogger(__name__)
 
@@ -15,7 +15,7 @@ log = logging.getLogger(__name__)
 class EditPlanner:
     def __init__(
         self,
-        gemini: GeminiClient,
+        planner: AePlanner,
         library: AssetLibrary,
         ffmpeg: FFmpegExecutor,
         work_dir: Path,
@@ -23,7 +23,7 @@ class EditPlanner:
         target_width: int,
         target_height: int,
     ):
-        self.gemini = gemini
+        self.planner = planner
         self.library = library
         self.ffmpeg = ffmpeg
         self.work_dir = work_dir
@@ -38,13 +38,13 @@ class EditPlanner:
 
     def build_edit(self, audio_path: Path, name: str) -> EditProject:
         # 1) аудио-сегменты
-        segments = self.gemini.select_audio_highlights(audio_path)
+        segments = self.planner.select_audio_highlights(audio_path)
         segment_plans: List[SegmentEditPlan] = []
 
         library_payload = self.library.to_prompt_payload()
 
         for seg in segments:
-            shots = self.gemini.plan_visuals_for_segment(seg, library_payload)
+            shots = self.planner.plan_visuals_for_segment(seg, library_payload)
             segment_plans.append(SegmentEditPlan(audio_segment=seg, shots=shots))
 
         project = EditProject(audio_path=audio_path, segments=segment_plans)

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List
@@ -28,6 +26,7 @@ class VideoVariant:
 @dataclass
 class VideoAsset:
     """Одна логическая сцена = группа файлов с одинаковым префиксом."""
+
     prefix: str
     canonical: VideoVariant
     variants: List[VideoVariant] = field(default_factory=list)
@@ -58,6 +57,7 @@ class AudioSegmentPlan:
 @dataclass
 class VisualShotSpec:
     """Один визуальный кусочек под отрезок аудио."""
+
     asset_prefix: str
     target_duration: float
 
