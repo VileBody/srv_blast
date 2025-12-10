@@ -1,7 +1,6 @@
 # services/ml_core/ae_jsx_builder.py
 from __future__ import annotations
 
-import json
 import logging
 import os
 from dataclasses import dataclass
@@ -9,17 +8,17 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from config import Config
-from render_v1.models import Payload, FootagePresetId
+from render_v1.models import Payload
 from .ae_client import AeMediaPayload
 
 from src.library_store import AssetLibrary
 from src.s3_utils import generate_presigned_url
+from src.config.styles import FootagePresetId, SubtitleStyle
+from src.config import style_loader
 
 log = logging.getLogger(__name__)
 
 ENGINE_TEMPLATE_PATH = Path("render_v1/engine_template.jsx")
-TEXT_STYLES_PATH = Path("render_v1/text_styles.json")
-FOOTAGE_PRESETS_PATH = Path("render_v1/footage_presets.json")
 
 
 @dataclass
@@ -30,26 +29,11 @@ class AeBuildResult:
     output_s3_key: str
 
 
-def _load_json(path: Path) -> Dict[str, Any]:
-    if not path.is_file():
-        log.warning("[ae_jsx_builder] JSON file not found: %s", path)
-        return {}
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except Exception as e:
-        log.error("[ae_jsx_builder] Failed to load JSON %s: %s", path, e)
-        return {}
-
-
-_TEXT_STYLES = _load_json(TEXT_STYLES_PATH)
-_FOOTAGE_PRESETS = _load_json(FOOTAGE_PRESETS_PATH)
-
-
 def _apply_preset_to_layer(layer: Dict[str, Any], preset_id: FootagePresetId | str) -> None:
     pid = preset_id.value if isinstance(preset_id, FootagePresetId) else str(preset_id)
     layer["presetId"] = pid
 
-    preset_cfg = _FOOTAGE_PRESETS.get(pid) or {}
+    preset_cfg = style_loader.get_footage_preset(pid)
     transform_cfg = preset_cfg.get("transform")
     if transform_cfg and "transform" not in layer:
         layer["transform"] = dict(transform_cfg)
@@ -201,9 +185,8 @@ def build_render_jsx_and_media(job_id: str, plan: Dict[str, Any]) -> AeBuildResu
             in_p = max(0.0, in_p)
             out_p = min(comp_duration, out_p)
 
-            style_tag = str(sub.get("style") or "default").lower()
-            style_key = "highlight_subtitle" if style_tag == "highlight" else "main_subtitle"
-            style_props = _TEXT_STYLES.get(style_key, {})
+            style_tag = str(sub.get("style") or SubtitleStyle.DEFAULT.value).lower()
+            style_props = style_loader.get_text_style(style_tag)
 
             text_doc: Dict[str, Any] = dict(style_props)
             text_doc["text"] = text

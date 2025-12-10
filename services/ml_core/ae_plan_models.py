@@ -1,15 +1,11 @@
 # src/ae_plan_models.py
 from __future__ import annotations
 
-from enum import Enum
 from typing import List
 
 from pydantic import BaseModel, Field, field_validator
 
-
-class SubtitleStyle(str, Enum):
-    DEFAULT = "default"
-    HIGHLIGHT = "highlight"
+from src.config.styles import SubtitleStyle
 
 
 class SubtitleLine(BaseModel):
@@ -69,6 +65,7 @@ class AeEditPlan(BaseModel):
       - субтитры со стилем (default / highlight).
     Это потом превращается в PROJECT_DATA для engine_template.jsx.
     """
+
     total_duration_sec: float = Field(gt=0)
     segments: List[AeSegment]
     subtitles: List[SubtitleLine]
