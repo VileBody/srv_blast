@@ -6,8 +6,8 @@ import os
 from typing import Any, Dict
 
 from config import Config
-from .ae_client import AeRenderClient
-from .ae_jsx_builder import build_render_jsx_and_media
+from .client import AeRenderClient
+from .jsx_builder import build_render_jsx_and_media
 
 log = logging.getLogger(__name__)
 

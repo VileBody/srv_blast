@@ -11,7 +11,7 @@ from celery.result import AsyncResult
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 
-from src.s3_utils import upload_bytes_to_s3
+from src.storage.s3 import upload_bytes_to_s3
 
 app = FastAPI(title="blast-orchestrator", version="1.0.0")
 

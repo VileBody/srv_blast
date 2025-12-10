@@ -4,8 +4,8 @@ import logging
 from pathlib import Path
 from typing import List, Literal
 
-from .ffmpeg_utils import FFmpegExecutor
-from .genai_client import GeminiClient
+from src.genai.subtitles import GeminiSubtitlesClient
+from src.render.ffmpeg.ffmpeg_executor import FFmpegExecutor
 from .elevenlabs_client import ElevenLabsClient, STTWord
 
 log = logging.getLogger(__name__)
@@ -50,7 +50,7 @@ class SubtitleService:
         provider: SubtitlesProvider,
         ffmpeg: FFmpegExecutor,
         work_dir: Path,
-        gemini: GeminiClient | None = None,
+        gemini: GeminiSubtitlesClient | None = None,
         eleven: ElevenLabsClient | None = None,
     ):
         self.provider = provider
@@ -75,7 +75,9 @@ class SubtitleService:
         self, video: Path, output_with_subs: Path | None = None
     ) -> Path:
         if self.gemini is None:
-            raise RuntimeError("Gemini subtitle provider selected, but GeminiClient is None")
+            raise RuntimeError(
+                "Gemini subtitle provider selected, but GeminiSubtitlesClient is None"
+            )
 
         log.info("Generating animated subtitles for %s via Gemini SRT + drawtext", video)
         srt_text = self.gemini.generate_srt_for_video(video)
