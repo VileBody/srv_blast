@@ -11,14 +11,16 @@ from .models import Payload
 
 cfg = Config.from_env()
 
-# Базовые дефолты на случай, если модель что-то не допишет
-BASE_DEFAULTS: Dict[str, Any] = {
-    "width":        getattr(cfg, "target_width", 1080),
-    "height":       getattr(cfg, "target_height", 1920),
-    "pixelAspect":  1.0,
-    "fps":          float(getattr(cfg, "target_fps", 23.976)),
-    "duration":     15.0,
+# Геометрия проекта задаётся конфигом/шаблоном, а не моделью
+ENV_DEFAULTS: Dict[str, Any] = {
+    "width": getattr(cfg, "target_width", 1080),
+    "height": getattr(cfg, "target_height", 1920),
+    "pixelAspect": 1.0,
+    "fps": float(getattr(cfg, "target_fps", 23.976)),
 }
+
+# fallback-длительность, если модель не указала отрезок
+DEFAULT_DURATION: float = 15.0
 
 
 def load_json(path: Path) -> dict:
@@ -30,6 +32,19 @@ def load_json(path: Path) -> dict:
     except Exception as exc:  # noqa: BLE001
         print(f"[ERROR] Decoding {path}: {exc}")
         return {}
+
+
+# project_settings_template.json по аналогии с text_styles / footage_presets
+PROJECT_SETTINGS_TEMPLATE_PATH = Path("config/styles/project_settings_template.json")
+try:
+    _PROJECT_TEMPLATE = load_json(PROJECT_SETTINGS_TEMPLATE_PATH)
+except Exception as exc:  # noqa: BLE001
+    print(f"[assembler_core] WARNING: failed to load {PROJECT_SETTINGS_TEMPLATE_PATH}: {exc}")
+    _PROJECT_TEMPLATE = {}
+
+PROJECT_TEMPLATE_DEFAULTS: Dict[str, Any] = (
+    _PROJECT_TEMPLATE.get("defaults", {}) if isinstance(_PROJECT_TEMPLATE, dict) else {}
+) or {}
 
 
 def process_layer(
@@ -127,8 +142,50 @@ def build_project_payload_from_composition(
     presets_data = load_json(presets_path)
 
     project_settings = composition.get("projectSettings", {}) or {}
-    defaults = dict(BASE_DEFAULTS)
-    defaults.update(project_settings.get("defaults") or {})
+    ps_defaults = project_settings.get("defaults") or {}
+
+    raw_global_start = composition.get("global_start_sec")
+    if raw_global_start is None:
+        raw_global_start = project_settings.get("global_start_sec", 0.0)
+
+    try:
+        global_start_sec = float(raw_global_start or 0.0)
+    except (TypeError, ValueError):
+        global_start_sec = 0.0
+
+    raw_global_end = composition.get("global_end_sec")
+    if raw_global_end is None:
+        raw_global_end = project_settings.get("global_end_sec")
+
+    try:
+        global_end_sec: float | None = (
+            float(raw_global_end) if raw_global_end is not None else None
+        )
+    except (TypeError, ValueError):
+        global_end_sec = None
+
+    audio_ref_id = project_settings.get("audioRefId", "audio_main")
+
+    if global_end_sec is not None and global_end_sec > global_start_sec:
+        duration = float(global_end_sec - global_start_sec)
+        if duration <= 0:
+            duration = DEFAULT_DURATION
+    else:
+        duration = float(ps_defaults.get("duration", DEFAULT_DURATION))
+
+    base_defaults = dict(ENV_DEFAULTS)
+    base_defaults.update(PROJECT_TEMPLATE_DEFAULTS)
+
+    defaults: Dict[str, Any] = {}
+    for key, value in base_defaults.items():
+        defaults[key] = value
+
+    for key, value in ps_defaults.items():
+        if key in {"width", "height", "pixelAspect", "fps", "duration"}:
+            continue
+        defaults.setdefault(key, value)
+
+    defaults["duration"] = duration
 
     # если fitPolicy не указан — по умолчанию считаем cover
     global_fit_policy = project_settings.get("fitPolicy") or "cover"
@@ -136,6 +193,9 @@ def build_project_payload_from_composition(
     print(f"Applying Defaults: {defaults}")
     if global_fit_policy:
         print(f"Global fitPolicy: {global_fit_policy}")
+    print(
+        f"Global segment: start={global_start_sec}, end={global_end_sec}, duration={duration}"
+    )
 
     final_items: List[dict] = []
     raw_items = composition.get("items", []) or []
@@ -156,6 +216,27 @@ def build_project_payload_from_composition(
             item["layers"] = processed_layers
 
         final_items.append(item)
+
+    # сдвигаем аудио-слой в главной композиции по глобальному старту
+    for item in final_items:
+        if (item.get("type") or "").lower() != "comp":
+            continue
+        if item.get("id") != entry_point:
+            continue
+
+        for layer in item.get("layers") or []:
+            if layer.get("type") == "ref" and layer.get("refId") == audio_ref_id:
+                if global_start_sec > 0.0:
+                    layer["startTime"] = -global_start_sec
+
+                layer["enabled"] = True
+                if layer.get("audioEnabled") is not False:
+                    layer["audioEnabled"] = True
+
+                layer.setdefault("inPoint", 0.0)
+                layer.setdefault("outPoint", duration)
+                break
+        break
 
     raw_payload: Dict[str, Any] = {
         "project": {

@@ -1,0 +1,8 @@
+{
+  "defaults": {
+    "width": 1080,
+    "height": 1080,
+    "pixelAspect": 1.0,
+    "fps": 29.97
+  }
+}
