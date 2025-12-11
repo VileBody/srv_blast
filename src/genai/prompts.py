@@ -33,12 +33,13 @@ SELECT_AUDIO_HIGHLIGHTS_SYSTEM = (
     "Формат ответа СТРОГО JSON:\n"
     '{"segments":[{"index":0,"start_sec":12.3,"end_sec":25.0,'
     '"mood":"...", "description":"..."}, ...]}\n'
+    "start_sec / end_sec — это ГЛОБАЛЬНОЕ время в секундах от начала трека.\n"
     "Никакого текста вне JSON."
 )
 
 PLAN_VISUALS_SYSTEM = (
     "Ты видеомонтажёр коротких вертикальных роликов.\n"
-    "Тебе дают описание аудио-сегмента (длительность, настроение) и "
+    "Тебе дают описание аудио-сегмента (start_sec, end_sec, длительность, настроение) и "
     "библиотеку клипов с краткими описаниями.\n"
     "Разбей весь отрезок на последовательность шотов по 1.5–3.5 сек "
     "(можно чуть варьировать) и выбери под каждый подходящий клип.\n\n"
@@ -63,7 +64,8 @@ COMBINED_PLANNER_SYSTEM = (
     "Твоя задача — спланировать ТРИ КОРОТКИХ ролика.\n\n"
     "1) Сначала выбери ТРИ НЕПЕРЕСЕКАЮЩИХСЯ отрезка аудио длительностью 8–20 секунд.\n"
     "   - отрезки должны быть РАЗНООБРАЗНЫМИ по настроению, динамике и структуре;\n"
-    "   - не делай три одинаковых куска припева.\n\n"
+    "   - не делай три одинаковых куска припева.\n"
+    "   - start_sec / end_sec — время в секундах от НАЧАЛА трека.\n\n"
     "2) Для каждого отрезка подбери последовательность видеошотов из библиотеки:\n"
     "   - длительность каждого шота 1.5–3.5 сек (можно чуть варьировать),\n"
     "   - суммарная длительность шотов ≈ длительности аудио-отрезка (можно ±0.3 сек),\n"
@@ -96,6 +98,9 @@ AE_FOOTAGE_STAGE = (
     "У тебя есть полный аудиотрек и библиотека вертикальных клипов (JSON: prefix, summary, tags, options).\n"
     "Твоя задача: выбрать шоты и музыкальные моменты так, чтобы переходы приходились на важные\n"
     "музыкальные акценты (начало фразы, удар барабана, смена гармонии, дроп и т.п.).\n\n"
+    "В этом шаге ты работаешь в ГЛОБАЛЬНОМ времени аудио: start_sec/end_sec — секунды от начала трека.\n"
+    "Позже, при сборке AE-проекта, мы режем аудио по этому окну, и внутри композиции этот срез живёт\n"
+    "от 0 до duration, так что audio_main внутри AE обычно стартует с 0.0.\n\n"
     "Правила монтажа шотов:\n"
     "- Каждый шот — ссылка на один клип из библиотеки (asset_prefix).\n"
     "- В композиции у слоя есть окно воспроизведения: inPoint и outPoint в секундах таймлайна.\n"
@@ -107,8 +112,6 @@ AE_FOOTAGE_STAGE = (
     "      можно поставить startTime=2.5, inPoint=10.0, outPoint=12.5.\n"
     "- НЕ приравнивай автоматически startTime к inPoint для футажей: startTime отвечает за вход\n"
     "  внутри источника, а inPoint/outPoint — за окно в композиции.\n"
-    "- Следи, чтобы визуальные переходы совпадали с переломами в аудио, а клипы по смыслу\n"
-    "  и динамике поддерживали текст и настроение.\n"
 )
 
 AE_SUBTITLES_STAGE = (
@@ -122,7 +125,7 @@ AE_SUBTITLES_STAGE = (
     "- default — обычная строка субтитров.\n"
     "- highlight — ключевые слова/фразы (хуки, сильные эмоциональные строки), которые должны быть\n"
     "  оформлены другим стилем (stroke или другой акцент).\n"
-    "- Время в секундах считаем от начала трека.\n"
+    "- Время в секундах считаем от начала трека (глобально).\n"
 )
 
 AE_COMPOSITION_STAGE = (
@@ -131,57 +134,74 @@ AE_COMPOSITION_STAGE = (
     "с нашей схемой composition.json. Мы потом прогоняем этот JSON через строгий ассемблер и валидатор.\n\n"
     "Структура JSON:\n"
     "{\n"
-    '  "projectSettings": {\n'
-    '    "name": "tg_edit",\n'
-    '    "defaults": {\n'
-    '      "width": 1080,\n'
-    '      "height": 1080,\n'
-    '      "pixelAspect": 1.0,\n'
-    '      "fps": 23.976,\n'
-    '      "duration": 14.0\n'
+    '  \"projectSettings\": {\n'
+    '    \"name\": \"tg_edit\",\n'
+    '    \"defaults\": {\n'
+    '      \"width\": 1080,\n'
+    '      \"height\": 1080,\n'
+    '      \"pixelAspect\": 1.0,\n'
+    '      \"fps\": 23.976,\n'
+    '      \"duration\": 14.0\n'
     "    }\n"
     "  },\n"
-    '  "items": [\n'
+    '  \"items\": [\n'
     "    // Футажи\n"
-    '    { "id": "audio_main", "type": "footage", "name": "Audio Track", "path": "media/audio/track.m4a", "isRef": true },\n'
-    '    { "id": "clip1", "type": "footage", "name": "clip1.mp4", "path": "media/video/clip1.mp4" },\n'
+    '    { \"id\": \"audio_main\", \"type\": \"footage\", \"name\": \"Audio Track\", \"path\": \"media/audio/track.m4a\", \"isRef\": true },\n'
+    '    { \"id\": \"clip1\", \"type\": \"footage\", \"name\": \"clip1.mp4\", \"path\": \"media/video/clip1.mp4\" },\n'
     "    ...,\n"
     "    // Композиция с субтитрами\n"
-    '    {\n'
-    '      "id": "comp_text",\n'
-    '      "type": "comp",\n'
-    '      "name": "Text",\n'
-    '      "height": 1920,\n'
-    '      "layers": [\n'
-    '        { "type": "text", "styleId": "main_subtitle",     "content": "she told my baby", "inPoint": 1.876, "outPoint": 3.044 },\n'
-    '        { "type": "text", "styleId": "highlight_subtitle","content": "she was three",     "inPoint": 3.044, "outPoint": 4.379 },\n'
-    '        { "type": "adjustment", "name": "Text FX 1", "inPoint": 1.876, "outPoint": 4.379 }\n'
+    "    {\n"
+    '      \"id\": \"comp_text\",\n'
+    '      \"type\": \"comp\",\n'
+    '      \"name\": \"Text\",\n'
+    '      \"height\": 1920,\n'
+    '      \"layers\": [\n'
+    '        { \"type\": \"text\", \"styleId\": \"main_subtitle\",     \"content\": \"she told my baby\", \"inPoint\": 1.876, \"outPoint\": 3.044 },\n'
+    '        { \"type\": \"text\", \"styleId\": \"highlight_subtitle\",\"content\": \"she was three\",     \"inPoint\": 3.044, \"outPoint\": 4.379 },\n'
+    '        { \"type\": \"adjustment\", \"name\": \"Text FX 1\", \"inPoint\": 1.876, \"outPoint\": 4.379 }\n'
     "      ]\n"
     "    },\n"
     "    // Главная композиция\n"
-    '    {\n'
-    '      "id": "comp_main",\n'
-    '      "type": "comp",\n'
-    '      "name": "Main Render",\n'
-    '      "layers": [\n'
-    '        { "type": "ref", "refId": "audio_main", "name": "Audio Ref",\n'
-    '          "inPoint": 0.0, "outPoint": 14.0, "enabled": false, "audioEnabled": true },\n'
-    '        { "type": "ref", "refId": "clip1", "inPoint": 0.0, "outPoint": 3.5,\n'
-    '          "presetId": "vertical_fit", "audioEnabled": false },\n'
-    '        { "type": "ref", "refId": "clip2", "inPoint": 3.5, "outPoint": 7.0,\n'
-    '          "presetId": "vertical_fit", "audioEnabled": false },\n'
-    '        { "type": "ref", "refId": "comp_text", "name": "Text Overlay",\n'
-    '          "inPoint": 0.0, "outPoint": 14.0, "audioEnabled": false }\n'
+    "    {\n"
+    '      \"id\": \"comp_main\",\n'
+    '      \"type\": \"comp\",\n'
+    '      \"name\": \"Main Render\",\n'
+    '      \"layers\": [\n'
+    "        // АУДИО: уже вырезанный ffmpeg’ом отрезок трека. Внутри AE он играет целиком.\n"
+    '        { \"type\": \"ref\", \"refId\": \"audio_main\", \"name\": \"Audio Ref\",\n'
+    '          \"inPoint\": 0.0, \"outPoint\": 14.0, \"enabled\": true, \"audioEnabled\": true },\n'
+    "        // Видеошоты\n"
+    '        { \"type\": \"ref\", \"refId\": \"clip1\", \"inPoint\": 0.0, \"outPoint\": 3.5,\n'
+    '          \"presetId\": \"vertical_fit\", \"audioEnabled\": false },\n'
+    '        { \"type\": \"ref\", \"refId\": \"clip2\", \"inPoint\": 3.5, \"outPoint\": 7.0,\n'
+    '          \"presetId\": \"vertical_fit\", \"audioEnabled\": false },\n'
+    "        ...,\n"
+    "        // Оверлей с текстом\n"
+    '        { \"type\": \"ref\", \"refId\": \"comp_text\", \"name\": \"Text Overlay\",\n'
+    '          \"inPoint\": 0.0, \"outPoint\": 14.0, \"audioEnabled\": false }\n'
     "      ]\n"
     "    }\n"
     "  ]\n"
     "}\n\n"
-    "Важные нюансы формата:\n"
-    "- Для comp-айтемов можно опускать width/height/fps/pixelAspect, если они совпадают с defaults —\n"
-    "  наш ассемблер подставит их автоматически.\n"
-    "- Для text-слоёв обязательно используй styleId: \"main_subtitle\" или \"highlight_subtitle\".\n"
-    "- Для футажа используй presetId только из заранее известных: \"vertical_fit\", \"bg_transform\" и т.п.\n"
-    "- Для футажа допускается указывать startTime, чтобы сдвинуть содержимое внутри окна inPoint/outPoint.\n"
+    "ВАЖНО ПРО ТАЙМИНГИ В AE (inPoint/outPoint/startTime):\n"
+    "- В композиции у слоя есть окно воспроизведения: inPoint и outPoint в секундах таймлайна композиции.\n"
+    "- Клип МОЖНО укорачивать и слева, и справа: мы не обязаны показывать его с 0.0.\n"
+    "- Для футажей используй пару:\n"
+    "    * inPoint / outPoint — когда шот виден в композиции;\n"
+    "    * startTime         — откуда по времени брать момент внутри исходного клипа.\n"
+    "      Пример: если интересен фрагмент [2.5, 5.0] исходника, а в композиции он должен идти\n"
+    "      в окне [10.0, 12.5], ставим startTime=2.5, inPoint=10.0, outPoint=12.5.\n"
+    "- НЕ ставь БОЛЬШОЙ ПОЛОЖИТЕЛЬНЫЙ startTime, который уводит слой за пределы таймлайна\n"
+    "  (например, startTime=37.0 при duration=14.0): тогда слой вообще не попадёт в окно 0–14 секунд.\n\n"
+    "ОТДЕЛЬНО ПРО АУДИО (`audio_main`):\n"
+    "- Весь логический «старт трека» ты задаёшь через start_sec/end_sec в ШАГЕ 1 (глобальное время).\n"
+    "  Мы режем аудио до захода в AE, поэтому внутри композиции `audio_main` обычно стартует с 0.0.\n"
+    "- В comp_main аудио-слой должен покрывать ВСЮ композицию: inPoint=0.0, outPoint=duration,\n"
+    "  enabled=true, audioEnabled=true. НЕ нужно двигать его вправо большим положительным startTime.\n"
+    "- Если тебе концептуально нужно, чтобы \"что-то началось ещё до 0.0\" (камера уже в движении,\n"
+    "  текст уже появляется до старта компа), используй ОТРИЦАТЕЛЬНЫЕ startTime для текстовых/FX-слоёв:\n"
+    "  в AE negative startTime означает, что слой начал анимацию до начала компа и в 0.0 мы попадаем\n"
+    "  в середину движения. Для аудио-слоя `audio_main` НИКОДА не используй большой положительный startTime.\n"
 )
 
 AE_PROJECT_HEADER = (

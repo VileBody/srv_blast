@@ -1,14 +1,137 @@
 // render_templates/job_template.jsx
 (function () {
     // ==========================================
+    // 0. ENV + HELPERS
+    // ==========================================
+    function getEnvSafe(name, defValue) {
+        try {
+            var v = $.getenv(name);
+            if (v === null || v === undefined || v === "") return defValue;
+            return v;
+        } catch (e) {
+            return defValue;
+        }
+    }
+
+    var APP_DIR    = getEnvSafe("APP_DIR", "");
+    var OUTPUT_REL = getEnvSafe("OUTPUT_REL", "work/output.mp4"); // сейчас не используем, но пусть живёт
+    var JOB_ID     = getEnvSafe("JOB_ID", "");
+    var COMP_NAME  = getEnvSafe("COMP_NAME", "");
+
+    // Фолбэк: если env не доехал (GUI AE уже открыт) — берём папку, где лежит скрипт.
+    if (!APP_DIR) {
+        try {
+            var jsxFile = new File($.fileName);
+            if (jsxFile && jsxFile.parent) {
+                APP_DIR = jsxFile.parent.fsName;
+            }
+        } catch (e1) {
+            // APP_DIR остаётся пустым — это авария, но пайплайн залогирует
+        }
+    }
+
+    // Фолбэк для JOB_ID: из имени папки перед "app"
+    if (!JOB_ID && APP_DIR) {
+        try {
+            var normPath = APP_DIR.replace(/\\/g, "/");
+            var parts = normPath.split("/");
+            if (parts.length >= 2) {
+                var last = parts[parts.length - 1];
+                if (last.toLowerCase() === "app" && parts.length >= 2) {
+                    JOB_ID = parts[parts.length - 2];
+                } else {
+                    JOB_ID = last;
+                }
+            }
+        } catch (e2) {
+            // останется пустым, будет debug_project.aep
+        }
+    }
+
+    var LOG_FILE    = null;
+    var STATUS_PATH = APP_DIR ? (APP_DIR + "/ae_status.txt") : "";
+
+    function initLog() {
+        if (!APP_DIR) return;
+        try {
+            LOG_FILE = new File(APP_DIR + "/ae_job_log");
+            LOG_FILE.encoding = "UTF-8";
+            if (LOG_FILE.exists) {
+                LOG_FILE.remove();
+            }
+            LOG_FILE.open("w", "TEXT", "????");
+            LOG_FILE.lineFeed = "Unix";
+        } catch (e) {
+            LOG_FILE = null;
+        }
+    }
+
+    function logLine(msg) {
+        var prefix = "";
+        try {
+            prefix = (new Date()).toUTCString() + " ";
+        } catch (e) {}
+        var line = prefix + msg;
+
+        if (LOG_FILE) {
+            try {
+                LOG_FILE.writeln(line);
+                LOG_FILE.flush();
+            } catch (e1) {}
+        }
+        try {
+            $.writeln(line);
+        } catch (e2) {}
+    }
+
+    function closeLog() {
+        try {
+            if (LOG_FILE && LOG_FILE.opened) {
+                LOG_FILE.close();
+            }
+        } catch (e) {}
+    }
+
+    function writeStatus(status, message) {
+        if (!STATUS_PATH) return;
+        try {
+            var f = new File(STATUS_PATH);
+            f.encoding = "UTF-8";
+            if (f.exists) {
+                f.remove();
+            }
+            f.open("w", "TEXT", "????");
+            f.lineFeed = "Unix";
+            f.writeln(status);
+            if (message) {
+                // message может быть многострочным: aep=... \n compName=...
+                var lines = message.split("\n");
+                for (var i = 0; i < lines.length; i++) {
+                    f.writeln(lines[i]);
+                }
+            }
+            f.close();
+        } catch (e) {
+            // статус-файл nice-to-have, не ломаем скрипт
+        }
+    }
+
+    initLog();
+    logLine("JOB START; APP_DIR=" + APP_DIR + "; OUTPUT_REL=" + OUTPUT_REL + "; JOB_ID=" + JOB_ID);
+
+    // ==========================================
     // 1. DATA INJECTION ZONE
     // ==========================================
-    // Python заменит эту строку на var PROJECT_DATA = { ... };
+    // Python заменит эту строку на: var PROJECT_DATA = { ... };
     /*__PYTHON_DATA_INJECT__*/
 
-    var APP_DIR    = $.getenv("APP_DIR")    || "";
-    var OUTPUT_REL = $.getenv("OUTPUT_REL") || "work/output.mp4";
-    var JOB_ID     = $.getenv("JOB_ID")     || "";
+    if (typeof PROJECT_DATA === "undefined" || !PROJECT_DATA) {
+        var errPd = "PROJECT_DATA is not defined";
+        logLine("ERROR: " + errPd);
+        writeStatus("ERROR", errPd);
+        closeLog();
+        return;
+    }
 
     // ==========================================
     // 2. ENGINE CORE
@@ -46,16 +169,23 @@
         var file = new File(conf.path);
         var item = null;
 
+        logLine("Import footage: id=" + (conf.id || "?") + " path=" + conf.path);
+
         if (!file.exists) {
+            logLine("Footage missing, using placeholder: " + conf.path);
             item = app.project.importPlaceholder(conf.name || "missing_file", 1920, 1080, 24, 10);
         } else {
             try {
                 var io = new ImportOptions(file);
                 if (io.canImportAs(ImportAsType.FOOTAGE)) {
                     item = app.project.importFile(io);
+                } else {
+                    logLine("Cannot import as FOOTAGE: " + conf.path);
+                    item = app.project.importPlaceholder(conf.name || "bad_footage", 1920, 1080, 24, 10);
                 }
             } catch (e) {
-                alert("Import Error: " + conf.path + "\n" + e.toString());
+                logLine("Import Error for " + conf.path + ": " + e.toString());
+                item = app.project.importPlaceholder(conf.name || "error_footage", 1920, 1080, 24, 10);
             }
         }
 
@@ -76,6 +206,7 @@
             config.fps
         );
         c.parentFolder = fComps;
+        logLine("Create comp: id=" + (config.id || "?") + " name=" + config.name);
         return c;
     }
 
@@ -142,7 +273,7 @@
             var tr = config.transform;
 
             // Если применяем fitPolicy (cover/contain), scale не трогаем —
-            // auto-fit в applyFitPolicy уже выставил нужный размер.
+            // auto-fit в applyFitPolicy уже выставит нужный размер.
             if (tr.scale && !config.fitPolicy) {
                 setPropValue(layer.transform.scale, tr.scale);
             }
@@ -158,127 +289,145 @@
         if (conf.fitPolicy === "cover" && src && src.width && src.height) {
             var sx = comp.width  / src.width  * 100;
             var sy = comp.height / src.height * 100;
-            var s  = (sx > sy ? sx : sy);
+            var s  = (sx > sy ? sx : sy); // cover: масштаб по минимальной стороне
             layer.property("Scale").setValue([s, s]);
         }
         // 'contain' можно добавить позже
     }
 
-    // ==========================================
-    // 3. PIPELINE EXECUTION
-    // ==========================================
-    var itemsList = [];
-    if (PROJECT_DATA.project && PROJECT_DATA.project.items) itemsList = PROJECT_DATA.project.items;
-    else if (PROJECT_DATA.items) itemsList = PROJECT_DATA.items;
+    function buildProject() {
+        var itemsList = [];
+        if (PROJECT_DATA.project && PROJECT_DATA.project.items) itemsList = PROJECT_DATA.project.items;
+        else if (PROJECT_DATA.items) itemsList = PROJECT_DATA.items;
 
-    // STEP 1: create items
-    for (var i = 0; i < itemsList.length; i++) {
-        var conf = itemsList[i];
-        if (conf.type === "footage") {
-            var itemF = importFootage(conf);
-            if (itemF) itemRegistry[conf.id] = itemF;
-        } else if (conf.type === "comp") {
-            var itemC = createComp(conf);
-            if (itemC) itemRegistry[conf.id] = itemC;
-        }
-    }
+        logLine("PROJECT_DATA items count = " + itemsList.length);
 
-    // STEP 2: create layers inside comps
-    for (var ii = 0; ii < itemsList.length; ii++) {
-        var compConf = itemsList[ii];
-        if (compConf.type !== "comp" || !compConf.layers) continue;
-
-        var comp = itemRegistry[compConf.id];
-        if (!comp) continue;
-
-        for (var j = 0; j < compConf.layers.length; j++) {
-            var lConf = compConf.layers[j];
-            var layer = null;
-
-            if (lConf.type === "ref") {
-                var src = itemRegistry[lConf.refId];
-                if (src) {
-                    layer = comp.layers.add(src);
-                    applyFitPolicy(layer, comp, src, lConf);
-                } else {
-                    layer = comp.layers.addNull();
-                    layer.name = "MISSING: " + lConf.refId;
-                }
-            } else if (lConf.type === "text") {
-                var txtContent = (lConf.textDocument && lConf.textDocument.text)
-                    ? lConf.textDocument.text
-                    : "Text";
-                layer = comp.layers.addText(txtContent);
-                if (lConf.textDocument) {
-                    applyTextSettings(layer, lConf.textDocument);
-                }
-                layer.position.setValue([comp.width / 2, comp.height / 2]);
-            } else if (lConf.type === "adjustment") {
-                layer = comp.layers.addSolid([1, 1, 1], lConf.name || "Adj Layer", comp.width, comp.height, 1);
-                layer.source.parentFolder = fSolids;
-            }
-
-            if (layer) {
-                setupGeneralLayer(layer, lConf);
+        // STEP 1: create items
+        for (var i = 0; i < itemsList.length; i++) {
+            var conf = itemsList[i];
+            if (conf.type === "footage") {
+                var itemF = importFootage(conf);
+                if (itemF) itemRegistry[conf.id] = itemF;
+            } else if (conf.type === "comp") {
+                var itemC = createComp(conf);
+                if (itemC) itemRegistry[conf.id] = itemC;
             }
         }
-    }
 
-    // STEP 3: open entry comp, prepare Render Queue and save .aep
-    var entryComp = null;
-    if (PROJECT_DATA.entryPoint) {
-        entryComp = itemRegistry[PROJECT_DATA.entryPoint];
-    } else {
-        entryComp = itemRegistry["comp_main"];
-    }
-    if (entryComp) {
-        entryComp.openInViewer();
-    }
+        // STEP 2: create layers inside comps
+        for (var ii = 0; ii < itemsList.length; ii++) {
+            var compConf = itemsList[ii];
+            if (compConf.type !== "comp" || !compConf.layers) continue;
 
-    if (entryComp) {
-        var outPath = OUTPUT_REL || "work/output.mp4";
-        var outFile = null;
-        if (APP_DIR) {
-            var sep = (APP_DIR.slice(-1) === "/" || APP_DIR.slice(-1) === "\\") ? "" : "/";
-            outFile = new File(APP_DIR + sep + outPath);
+            var comp = itemRegistry[compConf.id];
+            if (!comp) continue;
+
+            logLine("Populate comp: " + compConf.id + " with " + compConf.layers.length + " layers");
+
+            for (var j = 0; j < compConf.layers.length; j++) {
+                var lConf = compConf.layers[j];
+                var layer = null;
+
+                if (lConf.type === "ref") {
+                    var src = itemRegistry[lConf.refId];
+                    if (src) {
+                        layer = comp.layers.add(src);
+                        applyFitPolicy(layer, comp, src, lConf);
+                    } else {
+                        layer = comp.layers.addNull();
+                        layer.name = "MISSING: " + lConf.refId;
+                    }
+                } else if (lConf.type === "text") {
+                    var txtContent = (lConf.textDocument && lConf.textDocument.text)
+                        ? lConf.textDocument.text
+                        : "Text";
+                    layer = comp.layers.addText(txtContent);
+                    if (lConf.textDocument) {
+                        applyTextSettings(layer, lConf.textDocument);
+                    }
+                    layer.position.setValue([comp.width / 2, comp.height / 2]);
+                } else if (lConf.type === "adjustment") {
+                    layer = comp.layers.addSolid([1, 1, 1], lConf.name || "Adj Layer", comp.width, comp.height, 1);
+                    layer.source.parentFolder = fSolids;
+                }
+
+                if (layer) {
+                    setupGeneralLayer(layer, lConf);
+                }
+            }
+        }
+
+        // STEP 3: entry comp
+        var entryComp = null;
+        if (PROJECT_DATA.entryPoint) {
+            entryComp = itemRegistry[PROJECT_DATA.entryPoint];
+        } else if (COMP_NAME) {
+            entryComp = itemRegistry[COMP_NAME];
         } else {
-            outFile = new File(outPath);
+            entryComp = itemRegistry["comp_main"];
         }
 
-        if (outFile && outFile.parent && !outFile.parent.exists) {
-            outFile.parent.create();
+        if (!entryComp) {
+            var entryName = PROJECT_DATA.entryPoint || COMP_NAME || "comp_main";
+            throw new Error("Entry comp not found: " + entryName);
         }
 
-        var rqItem = app.project.renderQueue.items.add(entryComp);
-        try { rqItem.applyTemplate("Best Settings"); } catch (eBest) {}
-        var om = rqItem.outputModule(1);
-        try { om.applyTemplate("H.264"); } catch (eOM) {}
-        om.file = outFile;
+        logLine("Entry comp: " + entryComp.name);
+        // openInViewer можно включить, если тебе удобно:
+        // entryComp.openInViewer();
 
-        // save .aep for debug / последующего aerender
+        return entryComp;
+    }
+
+    function saveProject(entryComp) {
         if (!APP_DIR) {
-            alert("APP_DIR is empty, cannot save AEP.");
-            throw new Error("APP_DIR is empty, cannot save AEP.");
+            throw new Error("APP_DIR is empty, cannot save AEP");
         }
 
-        var projFile = new File(APP_DIR + "/debug_" + (JOB_ID || "project") + ".aep");
-        if (!projFile.parent.exists) {
+        var projName = "debug_" + (JOB_ID || "project") + ".aep";
+        var projFile = new File(APP_DIR + "/" + projName);
+
+        if (projFile.parent && !projFile.parent.exists) {
             projFile.parent.create();
         }
 
-        try {
-            app.project.save(projFile);
-        } catch (eSave) {
-            alert("Failed to save project:\n" + eSave.toString());
-            throw eSave; // важно: пусть процесс упадёт, а ae_sdk увидит ошибку
-        }
+        app.project.save(projFile);
+        logLine("Project saved: " + projFile.fsName);
+        return projFile;
+    }
 
+    // ==========================================
+    // 3. MAIN
+    // ==========================================
+    var projFile = null;
+    var entryComp = null;
+
+    try {
+        entryComp = buildProject();
+        projFile = saveProject(entryComp);
+
+        var msgLines = [];
+        if (projFile) msgLines.push("aep=" + projFile.fsName);
+        if (entryComp) msgLines.push("compName=" + entryComp.name);
+        var msg = msgLines.join("\n");
+
+        logLine("JOB END (success)");
+        writeStatus("OK", msg);
+    } catch (err) {
+        var errMsg = (err && err.toString ? err.toString() : String(err));
+        logLine("JOB ERROR: " + errMsg);
+        writeStatus("ERROR", errMsg);
+    } finally {
+        // закрываем ПРОЕКТ, но не приложение After Effects
         try {
             if (app.project && typeof CloseOptions !== "undefined") {
                 app.project.close(CloseOptions.DO_NOT_SAVE_CHANGES);
             } else if (app.project) {
                 app.project.close();
             }
-        } catch (eClose) {}
+        } catch (eClose) {
+            logLine("Project close error: " + eClose.toString());
+        }
+        closeLog();
     }
 })();
