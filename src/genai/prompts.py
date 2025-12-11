@@ -194,11 +194,18 @@ AE_COMPOSITION_STAGE = (
     "  исходного трека.\n"
     "- В comp_main у аудио-слоя должны быть enabled=true и audioEnabled=true, inPoint=0.0, outPoint=duration.\n"
     "  startTime можешь не указывать или ставить 0.0 — он всё равно будет переопределён.\n"
+    "- Для ВИДЕО-футажей (ref-слои с refId, отличным от "audio_main") предполагается поведение\n"
+    "  без отдельного time-remap: startTime и inPoint должны совпадать. То есть в текущей версии\n"
+    "  пайплайна мы интерпретируем startTime = inPoint для видео. Не пытайся моделировать ситуации,\n"
+    "  где старт внутреннего фрагмента клипа сильно отличается от inPoint — ассемблер всё равно\n"
+    "  принудительно приведёт startTime к inPoint.\n"
     "- Ширина/высота/fps/pixelAspect берутся из заранее заданного шаблона project_settings_template.json.\n"
     "  В projectSettings.defaults от тебя важнее всего duration; размеры обычно НЕ меняй.\n"
     "- Для text-слоёв обязательно используй styleId: "main_subtitle" или "highlight_subtitle".\n"
     "- Для футажа используй presetId только из заранее известных: "vertical_fit", "bg_transform" и т.п.\n"
-    "- Для футажа допускается указывать startTime, чтобы сдвинуть содержимое внутри окна inPoint/outPoint.\n"
+    "- Для футажа НЕ нужно использовать сложный time-remap: мы ожидаем, что startTime = inPoint,\n"
+    "  а длительность обрезки задаётся inPoint/outPoint. Если тебе нужно просто более короткое окно,\n"
+    "  уменьши outPoint или сдвинь inPoint, но не вводи другую систему координат.\n"
 )
 
 AE_PROJECT_HEADER = (
