@@ -238,6 +238,35 @@ def build_project_payload_from_composition(
                 break
         break
 
+    # 5) Нормализуем startTime для видеофутажей: ожидаем, что startTime == inPoint
+    #    (кроме аудио-рефа, который смещается отдельно). Если LLM выставил другое
+    #    значение, принудительно приводим к inPoint и логируем предупреждение.
+    for item in final_items:
+        if (item.get("type") or "").lower() != "comp":
+            continue
+
+        for layer in item.get("layers") or []:
+            if layer.get("type") != "ref":
+                continue
+
+            if layer.get("refId") == audio_ref_id:
+                continue
+
+            if "inPoint" not in layer:
+                continue
+
+            in_point = layer["inPoint"]
+            current_start = layer.get("startTime")
+
+            if current_start is None or current_start == in_point:
+                continue
+
+            print(
+                f"[ASSEMBLER] WARNING: ref layer {layer.get('refId')} has startTime={current_start} "
+                f"!= inPoint={in_point}, overriding startTime to inPoint"
+            )
+            layer["startTime"] = in_point
+
     raw_payload: Dict[str, Any] = {
         "project": {
             "projectName": project_settings.get("name", "Auto Build"),
