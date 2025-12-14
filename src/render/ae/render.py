@@ -4,10 +4,10 @@ from __future__ import annotations
 import json
 import logging
 import os
-from pathlib import Path
 from typing import Any, Dict, Tuple
 
 from render_v1.assembler_core import build_project_payload_from_composition
+from render_v1.assembler import build_render_jsx_from_project_data_json
 from src.render.ae.template_paths import JOB_TEMPLATE_PATH
 from src.storage.s3 import generate_presigned_url
 
@@ -15,8 +15,6 @@ from .client import AeMediaPayload, AeRenderClient
 
 log = logging.getLogger(__name__)
 
-TEXT_STYLES_PATH = Path("config/styles/text_styles.json")
-FOOTAGE_PRESETS_PATH = Path("config/styles/footage_presets.json")
 DEFAULT_ENTRY_COMP = "comp_main"
 OUTPUT_RELPATH = "work/output.mp4"
 
@@ -32,12 +30,7 @@ def _ensure_project_data(plan: Dict[str, Any]) -> Tuple[Dict[str, Any], str, str
     if not composition:
         raise RuntimeError("Plan has neither project_data nor composition")
 
-    project_data, json_str = build_project_payload_from_composition(
-        styles_path=TEXT_STYLES_PATH,
-        presets_path=FOOTAGE_PRESETS_PATH,
-        composition=composition,
-        entry_point=DEFAULT_ENTRY_COMP,
-    )
+    project_data, json_str = build_project_payload_from_composition(composition)
     entry_comp = project_data.get("entryPoint", DEFAULT_ENTRY_COMP)
     return project_data, json_str, entry_comp
 
@@ -109,9 +102,9 @@ def render_from_plan(job_id: str, plan: Dict[str, Any]) -> Dict[str, Any]:
     project_data, json_str, entry_comp = _ensure_project_data(plan)
     media = _build_media_payloads(project_data, plan.get("audio_source", ""))
 
-    template_code = JOB_TEMPLATE_PATH.read_text(encoding="utf-8")
-    js_variable = f"var PROJECT_DATA = {json_str};\n"
-    render_jsx = template_code.replace("/*__PYTHON_DATA_INJECT__*/", js_variable)
+    render_jsx = build_render_jsx_from_project_data_json(
+        json_str, template_path=JOB_TEMPLATE_PATH
+    )
 
     client = AeRenderClient()
     output_s3_key = f"{job_id}.mp4"

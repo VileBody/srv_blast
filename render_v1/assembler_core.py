@@ -1,299 +1,404 @@
-# render_v1/assembler_core.py
 from __future__ import annotations
 
 import copy
 import json
+import math
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
-from config import Config
-from .models import Payload
+from render_v1.models import Payload
 
-cfg = Config.from_env()
+# -----------------------------
+# Paths
+# -----------------------------
 
-# Геометрия проекта задаётся конфигом/шаблоном, а не моделью
+REPO_ROOT = Path(__file__).resolve().parent.parent
+STYLES_DIR = REPO_ROOT / "config" / "styles"
+
+TEXT_STYLES_PATH = STYLES_DIR / "text_styles.json"
+FOOTAGE_PRESETS_PATH = STYLES_DIR / "footage_presets.json"
+TEXT_MOTION_LIBRARY_PATH = STYLES_DIR / "text_motion_library.json"
+PROJECT_SETTINGS_TEMPLATE_PATH = STYLES_DIR / "project_settings_template.json"
+
+# -----------------------------
+# Defaults (can be overridden by composition['projectSettings']['defaults'])
+# -----------------------------
+
 ENV_DEFAULTS: Dict[str, Any] = {
-    "width": getattr(cfg, "target_width", 1080),
-    "height": getattr(cfg, "target_height", 1920),
-    "pixelAspect": 1.0,
-    "fps": float(getattr(cfg, "target_fps", 23.976)),
+    "duration": 15.0,
+    "global_fit_policy": "cover",
 }
 
-# fallback-длительность, если модель не указала отрезок
-DEFAULT_DURATION: float = 15.0
+
+# -----------------------------
+# Utilities
+# -----------------------------
 
 
-def load_json(path: Path) -> dict:
-    if not path.is_file():
-        print(f"[WARN] File not found: {path}")
-        return {}
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except Exception as exc:  # noqa: BLE001
-        print(f"[ERROR] Decoding {path}: {exc}")
-        return {}
+def _load_json(path: Path) -> Dict[str, Any]:
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
-# project_settings_template.json по аналогии с text_styles / footage_presets
-PROJECT_SETTINGS_TEMPLATE_PATH = Path("config/styles/project_settings_template.json")
-try:
-    _PROJECT_TEMPLATE = load_json(PROJECT_SETTINGS_TEMPLATE_PATH)
-except Exception as exc:  # noqa: BLE001
-    print(f"[assembler_core] WARNING: failed to load {PROJECT_SETTINGS_TEMPLATE_PATH}: {exc}")
-    _PROJECT_TEMPLATE = {}
-
-PROJECT_TEMPLATE_DEFAULTS: Dict[str, Any] = (
-    _PROJECT_TEMPLATE.get("defaults", {}) if isinstance(_PROJECT_TEMPLATE, dict) else {}
-) or {}
+def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+    out = copy.deepcopy(base)
+    for k, v in (override or {}).items():
+        if k in out and isinstance(out[k], dict) and isinstance(v, dict):
+            out[k] = _deep_merge(out[k], v)
+        else:
+            out[k] = copy.deepcopy(v)
+    return out
 
 
-def process_layer(
-    layer: dict,
-    styles_lib: dict,
-    presets_lib: dict,
-    global_fit_policy: str | None = None,
-) -> dict:
-    """
-    Преобразует слой из composition.json-стиля:
-      - styleId + content -> textDocument + стили,
-      - presetId -> transform (с учётом fitPolicy),
-      - global_fit_policy -> fitPolicy для ref-слоёв (если локально не задано),
-      - если есть inPoint, но нет startTime — ставим startTime = inPoint.
-    """
-    if "inPoint" in layer and "startTime" not in layer:
-        layer["startTime"] = layer["inPoint"]
-
-    # TEXT: styleId + content -> textDocument
-    if layer.get("type") == "text" and "styleId" in layer:
-        sid = layer["styleId"]
-        if sid in styles_lib:
-            style_props = copy.deepcopy(styles_lib[sid])
-            if "textDocument" not in layer:
-                layer["textDocument"] = {}
-            for k, v in style_props.items():
-                if k not in layer["textDocument"]:
-                    layer["textDocument"][k] = v
-
-            content = layer.get("content") or layer.get("text")
-            if content:
-                layer["textDocument"]["text"] = content
-            if "content" in layer:
-                del layer["content"]
-            if "text" in layer and not isinstance(layer["text"], dict):
-                del layer["text"]
-        del layer["styleId"]
-
-    # PRESET: presetId -> transform
-    if "presetId" in layer:
-        pid = layer["presetId"]
-
-        # если есть глобальный fitPolicy и это ref-слой — не тащим transform из пресета,
-        # чтобы не мешать автоматическому cover/contain в движке
-        use_preset_transform = not (
-            layer.get("type") == "ref" and global_fit_policy is not None
-        )
-
-        if use_preset_transform and pid in presets_lib:
-            preset_data = presets_lib[pid]
-            if "transform" in preset_data:
-                preset_transform = copy.deepcopy(preset_data["transform"])
-                if "transform" not in layer:
-                    layer["transform"] = {}
-                for k, v in preset_transform.items():
-                    if k not in layer["transform"]:
-                        layer["transform"][k] = v
-
-        # presetId нам дальше не нужен
-        del layer["presetId"]
-
-    # FIT POLICY: глобальный флаг, если локально не указан
-    if layer.get("type") == "ref" and global_fit_policy and "fitPolicy" not in layer:
-        layer["fitPolicy"] = global_fit_policy
-
-    return layer
-
-
-def apply_defaults(item: dict, defaults: dict) -> dict:
-    """
-    Если в item (композиции) не хватает полей width/height/fps/pixelAspect/duration,
-    берём их из defaults (как в composition.json).
-    """
-    if item.get("type") == "comp":
-        for key, val in defaults.items():
-            if key not in item:
-                item[key] = val
-    return item
-
-
-def build_project_payload_from_composition(
-    styles_path: Path,
-    presets_path: Path,
-    composition: dict,
-    entry_point: str = "comp_main",
-) -> Tuple[Dict[str, Any], str]:
-    """
-    Общий ассемблер:
-      - читает text_styles/footage_presets,
-      - берёт projectSettings.defaults и дополняет базовыми дефолтами,
-      - разруливает styleId/presetId/fitPolicy,
-      - собирает Payload (PROJECT_DATA) и валидирует его.
-    """
-    styles_data = load_json(styles_path)
-    presets_data = load_json(presets_path)
-
-    project_settings = composition.get("projectSettings", {}) or {}
-    ps_defaults = project_settings.get("defaults") or {}
-
-    raw_global_start = composition.get("global_start_sec")
-    if raw_global_start is None:
-        raw_global_start = project_settings.get("global_start_sec", 0.0)
-
-    try:
-        global_start_sec = float(raw_global_start or 0.0)
-    except (TypeError, ValueError):
-        global_start_sec = 0.0
-
-    raw_global_end = composition.get("global_end_sec")
-    if raw_global_end is None:
-        raw_global_end = project_settings.get("global_end_sec")
-
-    try:
-        global_end_sec: float | None = (
-            float(raw_global_end) if raw_global_end is not None else None
-        )
-    except (TypeError, ValueError):
-        global_end_sec = None
-
-    audio_ref_id = project_settings.get("audioRefId", "audio_main")
-
-    if global_end_sec is not None and global_end_sec > global_start_sec:
-        duration = float(global_end_sec - global_start_sec)
-        if duration <= 0:
-            duration = DEFAULT_DURATION
-    else:
-        duration = float(ps_defaults.get("duration", DEFAULT_DURATION))
-
-    base_defaults = dict(ENV_DEFAULTS)
-    base_defaults.update(PROJECT_TEMPLATE_DEFAULTS)
-
-    defaults: Dict[str, Any] = {}
-    for key, value in base_defaults.items():
-        defaults[key] = value
-
-    for key, value in ps_defaults.items():
-        if key in {"width", "height", "pixelAspect", "fps", "duration"}:
-            continue
-        defaults.setdefault(key, value)
-
-    defaults["duration"] = duration
-
-    # если fitPolicy не указан — по умолчанию считаем cover
-    global_fit_policy = project_settings.get("fitPolicy") or "cover"
-
-    print(f"Applying Defaults: {defaults}")
-    if global_fit_policy:
-        print(f"Global fitPolicy: {global_fit_policy}")
-    print(
-        f"Global segment: start={global_start_sec}, end={global_end_sec}, duration={duration}"
+def _is_value_data_dict(v: Any) -> bool:
+    return isinstance(v, dict) and (
+        "keys" in v
+        or "expression" in v
+        or "value" in v
+        or "procedural" in v
     )
 
-    final_items: List[dict] = []
-    raw_items = composition.get("items", []) or []
 
-    for item in raw_items:
-        item = apply_defaults(item, defaults)
+def _normalize_property_tree(node: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalize preset trees: convert nested group dicts under 'properties' into child nodes.
 
-        if item.get("type") == "comp" and "layers" in item:
-            processed_layers = []
-            for layer in item["layers"]:
-                processed_layer = process_layer(
-                    layer,
-                    styles_lib=styles_data,
-                    presets_lib=presets_data,
-                    global_fit_policy=global_fit_policy,
-                )
-                processed_layers.append(processed_layer)
-            item["layers"] = processed_layers
+    This lets the JSX engine apply the whole tree uniformly via matchName navigation.
+    """
+    if not isinstance(node, dict):
+        return node
 
-        final_items.append(item)
+    children = list(node.get("children") or [])
+    props = dict(node.get("properties") or {})
 
-    # сдвигаем аудио-слой в главной композиции по глобальному старту
-    for item in final_items:
-        if (item.get("type") or "").lower() != "comp":
+    new_props: Dict[str, Any] = {}
+    for k, v in props.items():
+        if isinstance(v, dict) and not _is_value_data_dict(v):
+            # treat as nested group
+            children.append({
+                "matchName": k,
+                "properties": v,
+            })
+        else:
+            new_props[k] = v
+
+    node["properties"] = new_props if new_props else None
+    node["children"] = children if children else None
+
+    # recurse
+    if node.get("children"):
+        node["children"] = [_normalize_property_tree(c) for c in node["children"]]
+
+    # clean None
+    if node.get("properties") is None:
+        node.pop("properties", None)
+    if node.get("children") is None:
+        node.pop("children", None)
+
+    return node
+
+
+def _tree_find_or_create_child(node: Dict[str, Any], match_name: str) -> Dict[str, Any]:
+    children = node.setdefault("children", [])
+    for ch in children:
+        if isinstance(ch, dict) and ch.get("matchName") == match_name:
+            return ch
+    new_ch = {"matchName": match_name}
+    children.append(new_ch)
+    return new_ch
+
+
+def _tree_set_value(root: Dict[str, Any], match_name_path: str, value: Any) -> None:
+    """Set value in a matchName-based tree at a given path."""
+    segs = [s for s in match_name_path.split("/") if s]
+    if not segs:
+        return
+
+    node = root
+    # Allow path starting with root.matchName
+    if segs and root.get("matchName") == segs[0]:
+        segs = segs[1:]
+
+    if not segs:
+        return
+
+    # Walk groups
+    for seg in segs[:-1]:
+        node = _tree_find_or_create_child(node, seg)
+
+    leaf = segs[-1]
+    props = node.setdefault("properties", {})
+    props[leaf] = value
+
+
+def _expand_procedural(value_data: Any, *, layer_in: float, layer_out: float, fps: float) -> Any:
+    """If value_data contains a 'procedural' spec, bake it to concrete keyframes."""
+    if not isinstance(value_data, dict) or "procedural" not in value_data:
+        return value_data
+
+    spec = value_data.get("procedural") or {}
+    kind = spec.get("kind")
+
+    start = float(spec.get("startTime", layer_in))
+    end = float(spec.get("endTime", layer_out))
+    if end < start:
+        start, end = end, start
+
+    if kind == "ramp":
+        v0 = spec.get("from", 0)
+        v1 = spec.get("to", 100)
+        tpl = spec.get("templateRef")
+        return {
+            "keys": [
+                {"time": start, "value": v0, **({"templateRef": tpl} if tpl else {})},
+                {"time": end, "value": v1, **({"templateRef": tpl} if tpl else {})},
+            ]
+        }
+
+    if kind == "normalized_curve":
+        pts = spec.get("points") or []
+        tpl = spec.get("templateRef")
+        dur = max(1e-6, end - start)
+        keys = []
+        for p in pts:
+            t_norm = float(p.get("t", 0))
+            v = p.get("value")
+            t_abs = start + t_norm * dur
+            k = {"time": t_abs, "value": v}
+            if tpl:
+                k["templateRef"] = tpl
+            keys.append(k)
+        return {"keys": keys}
+
+    if kind == "oscillate":
+        wave = spec.get("wave", "sine")
+        freq = float(spec.get("frequencyHz", 2.0))
+        amp = float(spec.get("amplitude", 10.0))
+        off = float(spec.get("offset", 0.0))
+        phase = float(spec.get("phase", 0.0))
+        sample_rate = float(spec.get("sampleRate", fps))
+        tpl = spec.get("templateRef")
+
+        step = 1.0 / max(1.0, sample_rate)
+        t = start
+        keys = []
+        while t <= end + 1e-6:
+            x = 2.0 * math.pi * freq * (t - start) + phase
+            if wave == "triangle":
+                # triangle in [-1, 1]
+                tri = 2.0 * abs(2.0 * ((x / (2.0 * math.pi)) % 1.0) - 1.0) - 1.0
+                v = off + amp * tri
+            else:
+                v = off + amp * math.sin(x)
+
+            k = {"time": t, "value": v}
+            if tpl:
+                k["templateRef"] = tpl
+            keys.append(k)
+            t += step
+
+        return {"keys": keys}
+
+    # Unknown procedural kind -> passthrough (keeps raw for debugging)
+    return value_data
+
+
+def _resolve_preset_tree(
+    preset: Dict[str, Any],
+    overrides: Dict[str, Any],
+    *,
+    layer_in: float,
+    layer_out: float,
+    fps: float,
+) -> Optional[Dict[str, Any]]:
+    tree = preset.get("propertyTree")
+    if not tree:
+        return None
+
+    tree = _normalize_property_tree(copy.deepcopy(tree))
+
+    exposed = preset.get("exposedParams") or []
+    # exposedParams can be a list[{key, matchNamePath}] or dict[key]=matchNamePath
+    mapping: List[Tuple[str, str]] = []
+    if isinstance(exposed, list):
+        for rec in exposed:
+            if not isinstance(rec, dict):
+                continue
+            k = rec.get("key")
+            p = rec.get("matchNamePath")
+            if k and p:
+                mapping.append((str(k), str(p)))
+    elif isinstance(exposed, dict):
+        for k, p in exposed.items():
+            mapping.append((str(k), str(p)))
+
+    for k, path in mapping:
+        if k not in overrides:
             continue
-        if item.get("id") != entry_point:
+        v = overrides[k]
+        v = _expand_procedural(v, layer_in=layer_in, layer_out=layer_out, fps=fps)
+        _tree_set_value(tree, path, v)
+
+    return tree
+
+
+# -----------------------------
+# Main public API
+# -----------------------------
+
+
+def build_project_payload_from_composition(composition: Dict[str, Any]) -> Tuple[Dict[str, Any], str]:
+    """Transforms LLM composition.json -> PROJECT_DATA (AE engine JSON).
+
+    Returns:
+        raw_payload (dict) and pretty JSON string.
+    """
+    text_styles = _load_json(TEXT_STYLES_PATH)
+    footage_presets = _load_json(FOOTAGE_PRESETS_PATH)
+    motion_lib = _load_json(TEXT_MOTION_LIBRARY_PATH)
+
+    key_templates = motion_lib.get("keyTemplates") or {}
+    text_anim_presets = motion_lib.get("textAnimPresets") or {}
+    transform_presets = motion_lib.get("transformPresets") or {}
+
+    project_settings_tpl = _load_json(PROJECT_SETTINGS_TEMPLATE_PATH)
+
+    # Defaults
+    defaults = copy.deepcopy(ENV_DEFAULTS)
+    defaults = _deep_merge(defaults, (composition.get("projectSettings") or {}).get("defaults") or {})
+    duration = float(defaults.get("duration", 15.0))
+    global_fit_policy = str(defaults.get("global_fit_policy", "cover"))
+
+    # Compose project items
+    items_out: List[Dict[str, Any]] = []
+
+    # Pass through footage items first
+    for it in composition.get("items", []):
+        if it.get("type") != "footage":
+            continue
+        items_out.append({
+            "id": it["id"],
+            "type": "footage",
+            "name": it.get("name", it["id"]),
+            "path": it["path"],
+            "isRef": bool(it.get("isRef", False)),
+        })
+
+    # Comps
+    for it in composition.get("items", []):
+        if it.get("type") != "comp":
             continue
 
-        for layer in item.get("layers") or []:
-            if layer.get("type") == "ref" and layer.get("refId") == audio_ref_id:
-                if global_start_sec > 0.0:
-                    layer["startTime"] = -global_start_sec
+        comp_id = it["id"]
+        comp_name = it.get("name", comp_id)
 
-                layer["enabled"] = True
-                if layer.get("audioEnabled") is not False:
-                    layer["audioEnabled"] = True
+        comp_conf = {
+            "id": comp_id,
+            "type": "comp",
+            "name": comp_name,
+            "width": int(it.get("width", project_settings_tpl["width"])),
+            "height": int(it.get("height", project_settings_tpl["height"])),
+            "duration": float(it.get("duration", duration)),
+            "fps": float(it.get("fps", project_settings_tpl["fps"])),
+            "pixelAspect": float(it.get("pixelAspect", project_settings_tpl.get("pixelAspect", 1.0))),
+            "layers": [],
+        }
 
-                layer.setdefault("inPoint", 0.0)
-                layer.setdefault("outPoint", duration)
-                break
-        break
+        # Layers
+        for layer in it.get("layers", []):
+            ltype = layer.get("type")
+            base = {
+                "type": ltype,
+                "name": layer.get("name"),
+                "inPoint": layer.get("inPoint"),
+                "outPoint": layer.get("outPoint"),
+                "startTime": layer.get("startTime"),
+                "enabled": layer.get("enabled", True),
+                "audioEnabled": layer.get("audioEnabled"),
+                "transform": layer.get("transform"),  # legacy direct transform dict
+            }
 
-    # 5) Нормализуем startTime для видеофутажей: ожидаем, что startTime == inPoint
-    #    (кроме аудио-рефа, который смещается отдельно). Если LLM выставил другое
-    #    значение, принудительно приводим к inPoint и логируем предупреждение.
-    for item in final_items:
-        if (item.get("type") or "").lower() != "comp":
-            continue
+            if ltype == "ref":
+                # Apply footage preset if provided
+                preset_id = layer.get("presetId")
+                if preset_id and preset_id in footage_presets:
+                    base = _deep_merge(base, footage_presets[preset_id])
 
-        for layer in item.get("layers") or []:
-            if layer.get("type") != "ref":
-                continue
+                # Ensure fitPolicy exists (engine uses it for scaling)
+                if "fitPolicy" not in base or base["fitPolicy"] is None:
+                    base["fitPolicy"] = layer.get("fitPolicy") or global_fit_policy
 
-            if layer.get("refId") == audio_ref_id:
-                continue
+                base["refId"] = layer["refId"]
+                base["presetId"] = preset_id
 
-            if "inPoint" not in layer:
-                continue
+            elif ltype == "adjustment":
+                # For now: no extra processing; user can add effects later
+                pass
 
-            in_point = layer["inPoint"]
-            current_start = layer.get("startTime")
+            elif ltype == "text":
+                style_id = layer.get("styleId") or "main_subtitle"
+                content = layer.get("content") if layer.get("content") is not None else layer.get("text", "")
 
-            if current_start is None or current_start == in_point:
-                continue
+                style_doc = copy.deepcopy(text_styles.get(style_id, {}))
+                style_doc["text"] = content
 
-            print(
-                f"[ASSEMBLER] WARNING: ref layer {layer.get('refId')} has startTime={current_start} "
-                f"!= inPoint={in_point}, overriding startTime to inPoint"
-            )
-            layer["startTime"] = in_point
+                base["styleId"] = style_id
+                base["content"] = content
+                base["textDocument"] = style_doc
+
+                overrides = layer.get("overrides") or {}
+
+                # Transform preset -> transformTree
+                transform_id = layer.get("transformId") or layer.get("textTransformId")
+                if transform_id:
+                    preset = transform_presets.get(transform_id)
+                    if preset:
+                        tr_tree = _resolve_preset_tree(
+                            preset, overrides,
+                            layer_in=float(base.get("inPoint") or 0.0),
+                            layer_out=float(base.get("outPoint") or duration),
+                            fps=comp_conf["fps"],
+                        )
+                        if tr_tree:
+                            base["transformTree"] = tr_tree
+                    base["transformId"] = transform_id  # keep for trace/debug
+
+                # Text anim preset -> textAnimTree
+                anim_id = layer.get("animId") or layer.get("textAnimId")
+                if anim_id:
+                    preset = text_anim_presets.get(anim_id)
+                    if preset:
+                        ta_tree = _resolve_preset_tree(
+                            preset, overrides,
+                            layer_in=float(base.get("inPoint") or 0.0),
+                            layer_out=float(base.get("outPoint") or duration),
+                            fps=comp_conf["fps"],
+                        )
+                        if ta_tree:
+                            base["textAnimTree"] = ta_tree
+                    base["animId"] = anim_id  # keep for trace/debug
+
+            remember_layer = base
+
+            # Normalize startTime for non-audio footage layers: if LLM set differently, align to inPoint
+            if remember_layer.get("type") == "ref" and remember_layer.get("refId") != "audio_main":
+                if remember_layer.get("startTime") is not None and remember_layer.get("inPoint") is not None:
+                    remember_layer["startTime"] = remember_layer["inPoint"]
+
+            comp_conf["layers"].append(remember_layer)
+
+        items_out.append(comp_conf)
 
     raw_payload: Dict[str, Any] = {
         "project": {
-            "projectName": project_settings.get("name", "Auto Build"),
-            "items": final_items,
+            "projectName": composition.get("projectName", project_settings_tpl.get("projectName", "AE Project")),
+            "items": items_out,
         },
-        "entryPoint": entry_point,
+        "entryPoint": composition.get("entryPoint", "comp_main"),
+        "libraries": {
+            "keyTemplates": key_templates,
+        },
     }
 
-    # Валидация strict-моделью Payload, плюс диагностика
-    try:
-        model = Payload(**raw_payload)
-    except Exception as exc:  # noqa: BLE001
-        from pprint import pprint
+    payload = Payload(**raw_payload)
+    json_str = payload.model_dump_json(indent=2, exclude_none=True)
 
-        print("[ASSEMBLER] Failed to validate project payload:")
-        print(type(exc), exc)
-        if hasattr(exc, "errors"):
-            try:
-                pprint(exc.errors())
-            except Exception:
-                pass
-        try:
-            print("[ASSEMBLER] Raw payload:")
-            print(json.dumps(raw_payload, ensure_ascii=False, indent=2))
-        except Exception:
-            pass
-        raise
-
-    json_str = model.model_dump_json(indent=2, exclude_none=True)
     return raw_payload, json_str

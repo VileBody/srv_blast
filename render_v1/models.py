@@ -1,112 +1,201 @@
-# render_v1/models.py
 from __future__ import annotations
 
 from enum import Enum
-from typing import List, Optional, Union, Literal
+from typing import Any, Dict, List, Optional, Union, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, ConfigDict
 
 
-# --- Enums ---
+# -----------------------------
+# Keyframe / property primitives
+# -----------------------------
+
+class TemporalEase(BaseModel):
+    speed: float
+    influence: float
+
+
+class KeyTemplate(BaseModel):
+    """Reusable template applied to a keyframe via templateRef."""
+
+    description: Optional[str] = None
+
+    inInterpolationType: Optional[int] = None
+    outInterpolationType: Optional[int] = None
+
+    inTemporalEase: Optional[List[TemporalEase]] = None
+    outTemporalEase: Optional[List[TemporalEase]] = None
+
+    temporalAutoBezier: Optional[bool] = None
+    temporalContinuous: Optional[bool] = None
+
+
+class Keyframe(BaseModel):
+    time: float
+    value: Any
+
+    # Template reference (preferred)
+    templateRef: Optional[str] = None
+
+    # Optional per-key overrides (override template values)
+    inInterpolationType: Optional[int] = None
+    outInterpolationType: Optional[int] = None
+    inTemporalEase: Optional[List[TemporalEase]] = None
+    outTemporalEase: Optional[List[TemporalEase]] = None
+    temporalAutoBezier: Optional[bool] = None
+    temporalContinuous: Optional[bool] = None
+
+
+class KeyframedValue(BaseModel):
+    keys: List[Keyframe]
+
+
+# Note: We deliberately keep PropertyValue permissive (AE has a zoo of value types).
+PropertyValue = Union[
+    int,
+    float,
+    str,
+    bool,
+    List[Any],
+    Dict[str, Any],
+    KeyframedValue,
+]
+
+
+# -----------------------------
+# Generic AE property-tree node
+# -----------------------------
+
+class PropertyTreeNode(BaseModel):
+    """Tree that mirrors AE's matchName hierarchy.
+
+    This is used for:
+      - text animators (ADBE Text Animators)
+      - transform group (ADBE Transform Group)
+      - effects (ADBE Effect Parade) if you decide to add later
+    """
+
+    matchName: str
+    name: Optional[str] = None
+
+    # key: child property matchName, value: scalar / {keys:[...]} / etc.
+    properties: Optional[Dict[str, Any]] = None
+
+    children: Optional[List["PropertyTreeNode"]] = None
+
+
+# -----------------------------
+# Layer / Item models
+# -----------------------------
+
+class ItemType(str, Enum):
+    FOOTAGE = "footage"
+    COMP = "comp"
+
+
+class LayerType(str, Enum):
+    REF = "ref"
+    TEXT = "text"
+    ADJUSTMENT = "adjustment"
+
 
 class FitPolicy(str, Enum):
-    """
-    Политика вписывания футажа в композицию.
-
-    COVER   — масштабировать так, чтобы меньшая сторона кадра была равна
-              соответствующей стороне композиции (обрезка по большей стороне).
-    CONTAIN — вписать целиком, оставляя поля; пока не используем, но оставляем для будущего.
-    """
     COVER = "cover"
     CONTAIN = "contain"
+    STRETCH = "stretch"
 
-
-# --- Sub-components ---
-
-class Transform(BaseModel):
-    scale: Optional[List[float]] = None
-    position: Optional[List[float]] = None
-    rotation: Optional[float] = None
-    opacity: Optional[float] = None
-
-
-class TextDocument(BaseModel):
-    text: str
-    font: Optional[str] = "Arial-BoldMT"
-    fontSize: float = 50
-    applyFill: Optional[bool] = None
-    fillColor: Optional[List[float]] = None
-    applyStroke: Optional[bool] = None
-    strokeColor: Optional[List[float]] = None
-    strokeWidth: Optional[float] = None
-    tracking: Optional[float] = None
-    leading: Optional[float] = None
-    justification: Optional[int] = None
-
-
-# --- Layers ---
 
 class BaseLayer(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    type: LayerType
     name: Optional[str] = None
-    startTime: float
-    inPoint: float
-    outPoint: float
-    enabled: bool = True
+    inPoint: Optional[float] = None
+    outPoint: Optional[float] = None
+    startTime: Optional[float] = None
+    enabled: Optional[bool] = None
     audioEnabled: Optional[bool] = None
-    transform: Optional[Transform] = None
+
+    # Legacy (simple transform dict used by job_template.jsx)
+    transform: Optional[Dict[str, Any]] = None
+
+    # New: matchName-based tree (full fidelity)
+    transformTree: Optional[PropertyTreeNode] = None
 
 
 class RefLayer(BaseLayer):
-    type: Literal["ref"]
+    type: Literal[LayerType.REF] = LayerType.REF
     refId: str
-    # cover/contain — обрабатывается в движке job_template.jsx
     fitPolicy: Optional[FitPolicy] = None
+    presetId: Optional[str] = None
 
 
 class TextLayer(BaseLayer):
-    type: Literal["text"]
-    textDocument: TextDocument
+    type: Literal[LayerType.TEXT] = LayerType.TEXT
+    styleId: Optional[str] = None  # keep for trace/debug
+    content: Optional[str] = None  # keep for trace/debug
+
+    # TextDocument settings are applied via template engine.
+    textDocument: Dict[str, Any]
+
+    # New: serialized Text > ADBE Text Animators tree
+    textAnimTree: Optional[PropertyTreeNode] = None
 
 
 class AdjustmentLayer(BaseLayer):
-    type: Literal["adjustment"]
+    type: Literal[LayerType.ADJUSTMENT] = LayerType.ADJUSTMENT
+
+    # Optional: future-proof if you decide to dump effects as property trees
+    effects: Optional[List[PropertyTreeNode]] = None
 
 
-LayerType = Union[RefLayer, TextLayer, AdjustmentLayer]
+Layer = Union[RefLayer, TextLayer, AdjustmentLayer]
 
-
-# --- Items ---
 
 class FootageItem(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     id: str
-    type: Literal["footage"]
+    type: Literal[ItemType.FOOTAGE] = ItemType.FOOTAGE
     name: str
     path: str
-    isRef: bool = False
+    isRef: Optional[bool] = None
 
 
 class CompItem(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     id: str
-    type: Literal["comp"]
+    type: Literal[ItemType.COMP] = ItemType.COMP
     name: str
+
     width: int
     height: int
     duration: float
     fps: float
-    pixelAspect: float
-    layers: List[LayerType] = []
+
+    pixelAspect: Optional[float] = 1.0
+    layers: List[Layer] = Field(default_factory=list)
+
+    bgColor: Optional[List[float]] = None
 
 
-ItemType = Union[FootageItem, CompItem]
+Item = Union[FootageItem, CompItem]
 
 
-# --- Root ---
-
-class ProjectStructure(BaseModel):
+class Project(BaseModel):
     projectName: str
-    items: List[ItemType]
+    items: List[Item]
+
+
+class Libraries(BaseModel):
+    # TemplateRef -> KeyTemplate
+    keyTemplates: Dict[str, KeyTemplate] = Field(default_factory=dict)
 
 
 class Payload(BaseModel):
-    project: ProjectStructure
+    project: Project
     entryPoint: Optional[str] = None
+
+    # Optional libraries injected for the JSX engine runtime
+    libraries: Optional[Libraries] = None

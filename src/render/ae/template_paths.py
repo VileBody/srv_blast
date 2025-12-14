@@ -1,3 +1,6 @@
 from pathlib import Path
 
-JOB_TEMPLATE_PATH = Path("render_templates/job_template.jsx")
+# NOTE: v2 engine template supports:
+#  - keyTemplates (templateRef) application
+#  - matchName property trees (transformTree / textAnimTree)
+JOB_TEMPLATE_PATH = Path("render_templates/template_engine.jsx")
