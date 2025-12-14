@@ -28,12 +28,12 @@ _TEXT_MOTION_LIBRARY: Dict[str, Any] = {}
 
 def _load_json(path: Path) -> Dict[str, Any]:
     if not path.is_file():
-        log.warning("[style_loader] File not found: %s", path)
+        log.warning("[style_loader] JSON file not found: %s", path)
         return {}
     try:
         return json.loads(path.read_text(encoding="utf-8"))
-    except Exception as e:
-        log.exception("[style_loader] Failed to load %s: %s", path, e)
+    except Exception as exc:  # noqa: BLE001
+        log.error("[style_loader] Failed to load JSON %s: %s", path, exc)
         return {}
 
 

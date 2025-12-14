@@ -1,11 +1,10 @@
 {
-  "libraryVersion": "2.2",
+  "libraryVersion": "2.3",
   "meta": {
-    "description": "Text animation + transform presets and keyframe templates (v2.2)"
+    "description": "Full-fidelity keyframe serialization with template deduplication and strict matchName property trees"
   },
   "keyTemplates": {
     "tpl_linear_hold": {
-      "description": "Linear hold-ish key (no speed)",
       "inInterpolationType": 6612,
       "outInterpolationType": 6612,
       "inTemporalEase": [
@@ -23,8 +22,8 @@
       "temporalAutoBezier": false,
       "temporalContinuous": false
     },
-    "kt_reveal_explosive": {
-      "description": "Used for text reveal (fast outgoing)",
+    "tpl_ease_explosive": {
+      "description": "Used for text reveal, high speed outgoing",
       "inInterpolationType": 6612,
       "outInterpolationType": 6612,
       "inTemporalEase": [
@@ -42,7 +41,7 @@
       "temporalAutoBezier": false,
       "temporalContinuous": false
     },
-    "kt_opacity_fade_out": {
+    "tpl_fade_out": {
       "description": "Standard opacity fade out",
       "inInterpolationType": 6612,
       "outInterpolationType": 6612,
@@ -59,8 +58,8 @@
         }
       ]
     },
-    "kt_opacity_fade_in_stop": {
-      "description": "Incoming key for fade-out (decelerate to stop)",
+    "tpl_fade_in_stop": {
+      "description": "Incoming key for fade out",
       "inInterpolationType": 6612,
       "outInterpolationType": 6612,
       "inTemporalEase": [
@@ -76,27 +75,29 @@
         }
       ]
     },
-    "kt_opacity_fade_out_fast": {
-      "description": "Fast fade-out used by legacy dump (was inline in one key)",
+    "tpl_opacity_fade_end_fast": {
+      "description": "Fast fade out end key extracted from legacy L012",
       "inInterpolationType": 6612,
       "outInterpolationType": 6612,
       "inTemporalEase": [
         {
           "speed": -299.7,
-          "influence": 16.667
+          "influence": 16.666666667
         }
       ],
       "outTemporalEase": [
         {
           "speed": 0,
-          "influence": 16.667
+          "influence": 16.666666667
         }
-      ]
+      ],
+      "temporalAutoBezier": false,
+      "temporalContinuous": false
     }
   },
   "textAnimPresets": {
     "anim_reveal_opacity": {
-      "description": "Typewriter-ish reveal: Range Selector Start anim + Opacity 0%",
+      "description": "Word-based Ramp Up reveal via Opacity. Contains modified Advanced Selector settings.",
       "propertyTree": {
         "matchName": "ADBE Text Animators",
         "children": [
@@ -108,11 +109,16 @@
                 "children": [
                   {
                     "matchName": "ADBE Text Selector",
-                    "properties": {
-                      "ADBE Text Range Advanced": {
-                        "ADBE Text Range Shape": 1
+                    "children": [
+                      {
+                        "matchName": "ADBE Text Range Advanced",
+                        "properties": {
+                          "ADBE Text Range Type2": 3,
+                          "ADBE Text Range Shape": 1,
+                          "ADBE Text Selector Smoothness": 0
+                        }
                       }
-                    }
+                    ]
                   }
                 ]
               },
@@ -138,7 +144,7 @@
       ]
     },
     "anim_static": {
-      "description": "No text animators",
+      "description": "No animation properties",
       "propertyTree": {
         "matchName": "ADBE Text Animators",
         "children": []
@@ -148,7 +154,7 @@
   },
   "transformPresets": {
     "tf_subtitle_base": {
-      "description": "Base subtitle transform (position centered-ish)",
+      "description": "Base Transform Group structure for subtitles",
       "propertyTree": {
         "matchName": "ADBE Transform Group",
         "properties": {
@@ -170,13 +176,5 @@
         }
       ]
     }
-  },
-  "proceduralKeyframes": {
-    "kind_enum": [
-      "oscillate",
-      "normalized_curve",
-      "ramp"
-    ],
-    "notes": "Optional: if overrides.X.procedural is set, python will bake keys into overrides.X.keys."
   }
 }

@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import json
 import math
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -36,7 +37,14 @@ ENV_DEFAULTS: Dict[str, Any] = {
 
 
 def _load_json(path: Path) -> Dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
+    if not path.is_file():
+        print(f"[WARN] File not found: {path}")
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        print(f"[ERROR] Decoding {path}: {exc}")
+        return {}
 
 
 def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
@@ -56,6 +64,20 @@ def _is_value_data_dict(v: Any) -> bool:
         or "value" in v
         or "procedural" in v
     )
+
+
+_SEG_RE = re.compile(r"^(?P<name>.+?)(?:\[(?P<idx>\d+)\])?$")
+
+
+def _parse_segment(seg: str) -> Tuple[str, Optional[int]]:
+    """Supports indices like: "ADBE Text Animator[2]" (1-based)."""
+    seg = (seg or "").strip()
+    m = _SEG_RE.match(seg)
+    if not m:
+        return seg, None
+    name = (m.group("name") or "").strip()
+    idx = m.group("idx")
+    return name, (int(idx) if idx is not None else None)
 
 
 def _normalize_property_tree(node: Dict[str, Any]) -> Dict[str, Any]:
@@ -96,37 +118,43 @@ def _normalize_property_tree(node: Dict[str, Any]) -> Dict[str, Any]:
     return node
 
 
-def _tree_find_or_create_child(node: Dict[str, Any], match_name: str) -> Dict[str, Any]:
+def _tree_find_or_create_child(node: Dict[str, Any], match_name: str, index_1based: int) -> Dict[str, Any]:
+    """Return the N-th (1-based) child with the given matchName, creating siblings if needed."""
+    if index_1based < 1:
+        index_1based = 1
+
     children = node.setdefault("children", [])
-    for ch in children:
-        if isinstance(ch, dict) and ch.get("matchName") == match_name:
-            return ch
-    new_ch = {"matchName": match_name}
-    children.append(new_ch)
-    return new_ch
+    hits = [ch for ch in children if isinstance(ch, dict) and ch.get("matchName") == match_name]
+
+    while len(hits) < index_1based:
+        new_ch = {"matchName": match_name}
+        children.append(new_ch)
+        hits.append(new_ch)
+
+    return hits[index_1based - 1]
 
 
 def _tree_set_value(root: Dict[str, Any], match_name_path: str, value: Any) -> None:
-    """Set value in a matchName-based tree at a given path."""
-    segs = [s for s in match_name_path.split("/") if s]
+    """Set value in a matchName-based tree at a given path (supports [index] segments)."""
+    segs = [s for s in (match_name_path or "").split("/") if s]
     if not segs:
         return
 
     node = root
-    # Allow path starting with root.matchName
-    if segs and root.get("matchName") == segs[0]:
+    root_name, _root_idx = _parse_segment(segs[0])
+    if node.get("matchName") == root_name:
         segs = segs[1:]
 
     if not segs:
         return
 
-    # Walk groups
     for seg in segs[:-1]:
-        node = _tree_find_or_create_child(node, seg)
+        name, idx = _parse_segment(seg)
+        node = _tree_find_or_create_child(node, name, idx or 1)
 
-    leaf = segs[-1]
+    leaf_name, _leaf_idx = _parse_segment(segs[-1])
     props = node.setdefault("properties", {})
-    props[leaf] = value
+    props[leaf_name] = value
 
 
 def _expand_procedural(value_data: Any, *, layer_in: float, layer_out: float, fps: float) -> Any:
@@ -260,6 +288,7 @@ def build_project_payload_from_composition(composition: Dict[str, Any]) -> Tuple
     transform_presets = motion_lib.get("transformPresets") or {}
 
     project_settings_tpl = _load_json(PROJECT_SETTINGS_TEMPLATE_PATH)
+    proj_defaults = project_settings_tpl.get("defaults", {}) if isinstance(project_settings_tpl, dict) else {}
 
     # Defaults
     defaults = copy.deepcopy(ENV_DEFAULTS)
@@ -290,15 +319,18 @@ def build_project_payload_from_composition(composition: Dict[str, Any]) -> Tuple
         comp_id = it["id"]
         comp_name = it.get("name", comp_id)
 
+        comp_duration = float(it.get("duration", duration))
+        comp_fps = float(it.get("fps", proj_defaults.get("fps", 23.976)))
+
         comp_conf = {
             "id": comp_id,
             "type": "comp",
             "name": comp_name,
-            "width": int(it.get("width", project_settings_tpl["width"])),
-            "height": int(it.get("height", project_settings_tpl["height"])),
-            "duration": float(it.get("duration", duration)),
-            "fps": float(it.get("fps", project_settings_tpl["fps"])),
-            "pixelAspect": float(it.get("pixelAspect", project_settings_tpl.get("pixelAspect", 1.0))),
+            "width": int(it.get("width", proj_defaults.get("width", 1080))),
+            "height": int(it.get("height", proj_defaults.get("height", 1080))),
+            "duration": comp_duration,
+            "fps": comp_fps,
+            "pixelAspect": float(it.get("pixelAspect", proj_defaults.get("pixelAspect", 1.0))),
             "layers": [],
         }
 
@@ -354,8 +386,8 @@ def build_project_payload_from_composition(composition: Dict[str, Any]) -> Tuple
                         tr_tree = _resolve_preset_tree(
                             preset, overrides,
                             layer_in=float(base.get("inPoint") or 0.0),
-                            layer_out=float(base.get("outPoint") or duration),
-                            fps=comp_conf["fps"],
+                            layer_out=float(base.get("outPoint") or comp_duration),
+                            fps=comp_fps,
                         )
                         if tr_tree:
                             base["transformTree"] = tr_tree
@@ -369,8 +401,8 @@ def build_project_payload_from_composition(composition: Dict[str, Any]) -> Tuple
                         ta_tree = _resolve_preset_tree(
                             preset, overrides,
                             layer_in=float(base.get("inPoint") or 0.0),
-                            layer_out=float(base.get("outPoint") or duration),
-                            fps=comp_conf["fps"],
+                            layer_out=float(base.get("outPoint") or comp_duration),
+                            fps=comp_fps,
                         )
                         if ta_tree:
                             base["textAnimTree"] = ta_tree
