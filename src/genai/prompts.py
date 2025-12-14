@@ -203,10 +203,11 @@ AE_COMPOSITION_STAGE = (
     '    • overrides: словарь по exposedParams пресета (пример: selector_start, animator_opacity, scale, opacity)\n'
     '      Значения overrides могут быть:\n'
     '        - скаляр/массив (статичное значение)\n'
-    '        - {"keys":[{"time":..,"value":..,"templateRef":"kt_..."}]} (ключи во времени)\n'
+    '        - {"keys":[{"time":..,"value":..,"templateRef":"tpl_..."}]} (ключи во времени)\n'
     '        - {"procedural":{...}} (скорость/частота -> python запечёт в keys)\n'
-    '- templateRef используй только из keyTemplates:\n'
-    '    • tpl_linear_hold, kt_reveal_explosive, kt_opacity_fade_out, kt_opacity_fade_in_stop, kt_opacity_fade_out_fast\n'
+    '- templateRef используй только из keyTemplates (config/styles/text_motion_library.json):\n'
+    '    • tpl_linear_hold, tpl_ease_explosive, tpl_fade_out, tpl_fade_in_stop, tpl_opacity_fade_end_fast\n'
+    '- matchNamePath умеет индексацию: ADBE Text Animator[2], ADBE Text Selector[3] и т.д.\n'
     '- Для футажа используй presetId только из заранее известных: "vertical_fit", "bg_transform" и т.п.\n'
     "- Для футажа допускается указывать startTime, чтобы сдвинуть содержимое внутри окна inPoint/outPoint.\n"
 )

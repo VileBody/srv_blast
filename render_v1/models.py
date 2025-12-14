@@ -135,6 +135,11 @@ class TextLayer(BaseLayer):
     styleId: Optional[str] = None  # keep for trace/debug
     content: Optional[str] = None  # keep for trace/debug
 
+    # Motion preset references (resolved in assembler)
+    animId: Optional[str] = None
+    transformId: Optional[str] = None
+    overrides: Optional[Dict[str, Any]] = None
+
     # TextDocument settings are applied via template engine.
     textDocument: Dict[str, Any]
 

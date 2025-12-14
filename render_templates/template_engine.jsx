@@ -1,4 +1,7 @@
-// render_templates/job_template.jsx
+// render_templates/template_engine.jsx
+// v2 engine:
+//  - applies keyTemplates via templateRef on keyframes
+//  - supports matchName-based property trees (transformTree / textAnimTree)
 (function () {
     // ==========================================
     // 0. ENV + HELPERS
@@ -124,7 +127,6 @@
     // ==========================================
     // Python заменит эту строку на: var PROJECT_DATA = { ... };
     /*__PYTHON_DATA_INJECT__*/
-var KEY_TEMPLATES = (typeof PROJECT_DATA !== "undefined" && PROJECT_DATA && PROJECT_DATA.libraries && PROJECT_DATA.libraries.keyTemplates) ? PROJECT_DATA.libraries.keyTemplates : {};
 
     if (typeof PROJECT_DATA === "undefined" || !PROJECT_DATA) {
         var errPd = "PROJECT_DATA is not defined";
@@ -133,6 +135,10 @@ var KEY_TEMPLATES = (typeof PROJECT_DATA !== "undefined" && PROJECT_DATA && PROJ
         closeLog();
         return;
     }
+
+    var KEY_TEMPLATES = (PROJECT_DATA.libraries && PROJECT_DATA.libraries.keyTemplates)
+        ? PROJECT_DATA.libraries.keyTemplates
+        : {};
 
     // ==========================================
     // 2. ENGINE CORE
@@ -153,229 +159,227 @@ var KEY_TEMPLATES = (typeof PROJECT_DATA !== "undefined" && PROJECT_DATA && PROJ
     var fRef     = getFolder("99_REF");
     var fSolids  = getFolder("00_SOLIDS");
 
-function _cloneArray(arr) {
-  var out = [];
-  for (var i = 0; i < arr.length; i++) out.push(arr[i]);
-  return out;
-}
-
-function _normalizeEaseArray(eases, dims) {
-  if (!eases || eases.length === 0) return null;
-  var out = [];
-  for (var i = 0; i < dims; i++) {
-    var src = eases[Math.min(i, eases.length - 1)];
-    out.push(new KeyframeEase(src.speed, src.influence));
-  }
-  return out;
-}
-
-function _findKeyIndexAtTime(aeProp, t) {
-  var eps = 1e-4;
-  try {
-    for (var i = 1; i <= aeProp.numKeys; i++) {
-      if (Math.abs(aeProp.keyTime(i) - t) < eps) return i;
-    }
-    return aeProp.nearestKeyIndex(t);
-  } catch (e) {
-    return -1;
-  }
-}
-
-function _pickKeyAttr(k, tpl, fieldName) {
-  if (k && k[fieldName] !== undefined) return k[fieldName];
-  if (tpl && tpl[fieldName] !== undefined) return tpl[fieldName];
-  return undefined;
-}
-
-function _applyKeyAttributes(aeProp, keyIndex, k, keyTemplates) {
-  if (!aeProp || keyIndex < 1) return;
-
-  var tpl = null;
-  if (keyTemplates && k && k.templateRef && keyTemplates[k.templateRef]) {
-    tpl = keyTemplates[k.templateRef];
-  }
-
-  // Interpolation
-  var inType = _pickKeyAttr(k, tpl, "inInterpolationType");
-  var outType = _pickKeyAttr(k, tpl, "outInterpolationType");
-  if (inType !== undefined && outType !== undefined) {
-    try {
-      aeProp.setInterpolationTypeAtKey(keyIndex, inType, outType);
-    } catch (e) {
-      // ignore
-    }
-  }
-
-  // Temporal ease (needs per-dimension arrays)
-  var inEaseSpec = _pickKeyAttr(k, tpl, "inTemporalEase");
-  var outEaseSpec = _pickKeyAttr(k, tpl, "outTemporalEase");
-  if (inEaseSpec || outEaseSpec) {
-    var dims = 1;
-    try {
-      var v = aeProp.value;
-      if (v instanceof Array) dims = v.length;
-    } catch (e) {
-      dims = 1;
+    // -----------------------------
+    // Keyframe template helpers
+    // -----------------------------
+    function _cloneArray(arr) {
+        var out = [];
+        for (var i = 0; i < arr.length; i++) out.push(arr[i]);
+        return out;
     }
 
-    var inEaseArr = _normalizeEaseArray(inEaseSpec || outEaseSpec, dims);
-    var outEaseArr = _normalizeEaseArray(outEaseSpec || inEaseSpec, dims);
-
-    if (inEaseArr && outEaseArr) {
-      try {
-        aeProp.setTemporalEaseAtKey(keyIndex, inEaseArr, outEaseArr);
-      } catch (e) {
-        // ignore
-      }
-    }
-  }
-
-  // Flags
-  var autoB = _pickKeyAttr(k, tpl, "temporalAutoBezier");
-  if (autoB !== undefined) {
-    try {
-      aeProp.setTemporalAutoBezierAtKey(keyIndex, autoB);
-    } catch (e) {}
-  }
-
-  var cont = _pickKeyAttr(k, tpl, "temporalContinuous");
-  if (cont !== undefined) {
-    try {
-      aeProp.setTemporalContinuousAtKey(keyIndex, cont);
-    } catch (e) {}
-  }
-}
-
-function setPropValue(aeProp, valueData, keyTemplates) {
-  try {
-    if (!aeProp) return;
-
-    // Expression (optional)
-    if (valueData && typeof valueData === "object" && !(valueData instanceof Array) && valueData.expression !== undefined) {
-      try {
-        aeProp.expression = valueData.expression;
-        aeProp.expressionEnabled = true;
-      } catch (e) {}
-    } else {
-      // If we are setting actual values/keys, disable expressions to avoid surprises.
-      try {
-        aeProp.expression = "";
-        aeProp.expressionEnabled = false;
-      } catch (e) {}
-    }
-
-    // Keyframes
-    if (valueData && typeof valueData === "object" && !(valueData instanceof Array) && valueData.keys && valueData.keys.length) {
-      var keys = _cloneArray(valueData.keys);
-      keys.sort(function (a, b) { return a.time - b.time; });
-
-      for (var i = 0; i < keys.length; i++) {
-        var k = keys[i];
-        if (k.time === undefined) continue;
-
-        aeProp.setValueAtTime(k.time, k.value);
-
-        var idx = _findKeyIndexAtTime(aeProp, k.time);
-        _applyKeyAttributes(aeProp, idx, k, keyTemplates);
-      }
-      return;
-    }
-
-    // Scalar / array / object values
-    if (valueData && typeof valueData === "object" && !(valueData instanceof Array) && valueData.value !== undefined) {
-      aeProp.setValue(valueData.value);
-      return;
-    }
-
-    aeProp.setValue(valueData);
-  } catch (e) {
-    logLine("Error setting property " + (aeProp ? aeProp.matchName : "<null>") + ": " + e.toString());
-  }
-}
-
-// -----------------------------
-// Generic matchName property tree applier
-// -----------------------------
-
-function _getTreeRootOnLayer(layer, treeMatchName) {
-  try {
-    if (treeMatchName === "ADBE Text Animators") {
-      var tg = layer.property("Text");
-      if (!tg) return null;
-      return tg.property("ADBE Text Animators");
-    }
-    return layer.property(treeMatchName);
-  } catch (e) {
-    return null;
-  }
-}
-
-function _applyPropertyTreeNode(aeGroup, node, keyTemplates) {
-  if (!aeGroup || !node) return;
-
-  // Apply properties
-  if (node.properties) {
-    for (var propName in node.properties) {
-      if (!node.properties.hasOwnProperty(propName)) continue;
-      var v = node.properties[propName];
-
-      var aeProp = null;
-      try {
-        // Some groups can add properties (e.g., selectors, animators)
-        if (aeGroup.canAddProperty && aeGroup.canAddProperty(propName)) {
-          aeProp = aeGroup.addProperty(propName);
-        } else {
-          aeProp = aeGroup.property(propName);
+    function _normalizeEaseArray(eases, dims) {
+        if (!eases || eases.length === 0) return null;
+        var out = [];
+        for (var i = 0; i < dims; i++) {
+            var src = eases[Math.min(i, eases.length - 1)];
+            out.push(new KeyframeEase(src.speed, src.influence));
         }
-      } catch (e) {
-        aeProp = null;
-      }
-
-      if (aeProp) {
-        setPropValue(aeProp, v, keyTemplates);
-      } else {
-        logLine("applyPropertyTree: missing prop '" + propName + "' under '" + aeGroup.matchName + "'");
-      }
+        return out;
     }
-  }
 
-  // Recurse into children
-  if (node.children) {
-    for (var i = 0; i < node.children.length; i++) {
-      var ch = node.children[i];
-      if (!ch || !ch.matchName) continue;
-
-      var aeChild = null;
-      try {
-        if (aeGroup.canAddProperty && aeGroup.canAddProperty(ch.matchName)) {
-          aeChild = aeGroup.addProperty(ch.matchName);
-        } else {
-          aeChild = aeGroup.property(ch.matchName);
+    function _findKeyIndexAtTime(aeProp, t) {
+        var eps = 1e-4;
+        try {
+            for (var i = 1; i <= aeProp.numKeys; i++) {
+                if (Math.abs(aeProp.keyTime(i) - t) < eps) return i;
+            }
+            return aeProp.nearestKeyIndex(t);
+        } catch (e) {
+            return -1;
         }
-      } catch (e) {
-        aeChild = null;
-      }
-
-      if (aeChild) {
-        _applyPropertyTreeNode(aeChild, ch, keyTemplates);
-      } else {
-        logLine("applyPropertyTree: missing child '" + ch.matchName + "' under '" + aeGroup.matchName + "'");
-      }
     }
-  }
-}
 
-function applyPropertyTreeOnLayer(layer, tree, keyTemplates) {
-  if (!layer || !tree || !tree.matchName) return;
+    function _pickKeyAttr(k, tpl, fieldName) {
+        if (k && k[fieldName] !== undefined) return k[fieldName];
+        if (tpl && tpl[fieldName] !== undefined) return tpl[fieldName];
+        return undefined;
+    }
 
-  var root = _getTreeRootOnLayer(layer, tree.matchName);
-  if (!root) {
-    logLine("applyPropertyTree: root not found: " + tree.matchName);
-    return;
-  }
+    function _applyKeyAttributes(aeProp, keyIndex, k) {
+        if (!aeProp || keyIndex < 1) return;
 
-  _applyPropertyTreeNode(root, tree, keyTemplates);
-}
+        var tpl = null;
+        if (KEY_TEMPLATES && k && k.templateRef && KEY_TEMPLATES[k.templateRef]) {
+            tpl = KEY_TEMPLATES[k.templateRef];
+        }
+
+        // Interpolation
+        var inType = _pickKeyAttr(k, tpl, "inInterpolationType");
+        var outType = _pickKeyAttr(k, tpl, "outInterpolationType");
+        if (inType !== undefined && outType !== undefined) {
+            try { aeProp.setInterpolationTypeAtKey(keyIndex, inType, outType); } catch (e0) {}
+        }
+
+        // Temporal ease (needs per-dimension arrays)
+        var inEaseSpec = _pickKeyAttr(k, tpl, "inTemporalEase");
+        var outEaseSpec = _pickKeyAttr(k, tpl, "outTemporalEase");
+        if (inEaseSpec || outEaseSpec) {
+            var dims = 1;
+            try {
+                var v = aeProp.value;
+                if (v instanceof Array) dims = v.length;
+            } catch (e1) { dims = 1; }
+
+            var inEaseArr = _normalizeEaseArray(inEaseSpec || outEaseSpec, dims);
+            var outEaseArr = _normalizeEaseArray(outEaseSpec || inEaseSpec, dims);
+            if (inEaseArr && outEaseArr) {
+                try { aeProp.setTemporalEaseAtKey(keyIndex, inEaseArr, outEaseArr); } catch (e2) {}
+            }
+        }
+
+        // Flags
+        var autoB = _pickKeyAttr(k, tpl, "temporalAutoBezier");
+        if (autoB !== undefined) {
+            try { aeProp.setTemporalAutoBezierAtKey(keyIndex, autoB); } catch (e3) {}
+        }
+        var cont = _pickKeyAttr(k, tpl, "temporalContinuous");
+        if (cont !== undefined) {
+            try { aeProp.setTemporalContinuousAtKey(keyIndex, cont); } catch (e4) {}
+        }
+    }
+
+    function setPropValue(aeProp, valueData) {
+        try {
+            if (!aeProp) return;
+
+            // Expression (optional)
+            if (valueData && typeof valueData === "object" && !(valueData instanceof Array) && valueData.expression !== undefined) {
+                try {
+                    aeProp.expression = valueData.expression;
+                    aeProp.expressionEnabled = true;
+                } catch (eExpr) {}
+                return;
+            } else {
+                // If we are setting actual values/keys, disable expressions to avoid surprises.
+                try {
+                    aeProp.expression = "";
+                    aeProp.expressionEnabled = false;
+                } catch (eNoExpr) {}
+            }
+
+            // Keyframes: {"keys":[{time,value,templateRef?...}, ...]}
+            if (valueData && typeof valueData === "object" && !(valueData instanceof Array) && valueData.keys && valueData.keys.length) {
+                var keys = _cloneArray(valueData.keys);
+                keys.sort(function (a, b) { return a.time - b.time; });
+
+                for (var i = 0; i < keys.length; i++) {
+                    var k = keys[i];
+                    if (k.time === undefined) continue;
+
+                    aeProp.setValueAtTime(k.time, k.value);
+
+                    var idx = _findKeyIndexAtTime(aeProp, k.time);
+                    _applyKeyAttributes(aeProp, idx, k);
+                }
+                return;
+            }
+
+            // Scalar / array / {"value": ...}
+            if (valueData && typeof valueData === "object" && !(valueData instanceof Array) && valueData.value !== undefined) {
+                aeProp.setValue(valueData.value);
+                return;
+            }
+
+            aeProp.setValue(valueData);
+        } catch (e) {
+            logLine("Error setting property " + (aeProp ? aeProp.matchName : "<null>") + ": " + e.toString());
+        }
+    }
+
+    // -----------------------------
+    // Generic matchName property tree applier
+    // -----------------------------
+    function _getTextAnimatorsRoot(layer) {
+        try {
+            var tg = null;
+            try { tg = layer.property("Text"); } catch (e1) {}
+            if (!tg) {
+                try { tg = layer.property("ADBE Text Properties"); } catch (e2) {}
+            }
+            if (!tg) return null;
+            return tg.property("ADBE Text Animators");
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function _getTreeRootOnLayer(layer, treeMatchName) {
+        try {
+            if (treeMatchName === "ADBE Text Animators") {
+                return _getTextAnimatorsRoot(layer);
+            }
+            return layer.property(treeMatchName);
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function _applyPropertyTreeNode(aeGroup, node) {
+        if (!aeGroup || !node) return;
+
+        // Apply properties
+        if (node.properties) {
+            for (var propName in node.properties) {
+                if (!node.properties.hasOwnProperty(propName)) continue;
+                var v = node.properties[propName];
+
+                var aeProp = null;
+                try {
+                    if (aeGroup.canAddProperty && aeGroup.canAddProperty(propName)) {
+                        aeProp = aeGroup.addProperty(propName);
+                    } else {
+                        aeProp = aeGroup.property(propName);
+                    }
+                } catch (e0) { aeProp = null; }
+
+                if (aeProp) {
+                    setPropValue(aeProp, v);
+                } else {
+                    logLine("applyPropertyTree: missing prop '" + propName + "' under '" + aeGroup.matchName + "'");
+                }
+            }
+        }
+
+        // Recurse into children
+        if (node.children) {
+            for (var i = 0; i < node.children.length; i++) {
+                var ch = node.children[i];
+                if (!ch || !ch.matchName) continue;
+
+                var aeChild = null;
+                try {
+                    if (aeGroup.canAddProperty && aeGroup.canAddProperty(ch.matchName)) {
+                        aeChild = aeGroup.addProperty(ch.matchName);
+                    } else {
+                        aeChild = aeGroup.property(ch.matchName);
+                    }
+                } catch (e1) { aeChild = null; }
+
+                if (aeChild) {
+                    _applyPropertyTreeNode(aeChild, ch);
+                } else {
+                    logLine("applyPropertyTree: missing child '" + ch.matchName + "' under '" + aeGroup.matchName + "'");
+                }
+            }
+        }
+    }
+
+    function applyPropertyTreeOnLayer(layer, tree) {
+        if (!layer || !tree || !tree.matchName) return;
+
+        var root = _getTreeRootOnLayer(layer, tree.matchName);
+        if (!root) {
+            logLine("applyPropertyTree: root not found: " + tree.matchName);
+            return;
+        }
+
+        _applyPropertyTreeNode(root, tree);
+    }
+
+    // -----------------------------
+    // Text document applier
+    // -----------------------------
     function applyTextSettings(textLayer, textDocConfig) {
         if (!textDocConfig) return;
         var textProp     = textLayer.property("Source Text");
@@ -426,29 +430,29 @@ function applyPropertyTreeOnLayer(layer, tree, keyTemplates) {
             layer.name = config.textDocument.text.replace(/\r/g, " ").substring(0, 15);
         }
 
-        if (config.startTime !== undefined) layer.startTime = config.startTime;
-        if (config.inPoint   !== undefined) layer.inPoint   = config.inPoint;
-        if (config.outPoint  !== undefined) layer.outPoint  = config.outPoint;
+        if (config.startTime !== undefined && config.startTime !== null) layer.startTime = config.startTime;
+        if (config.inPoint   !== undefined && config.inPoint !== null)   layer.inPoint   = config.inPoint;
+        if (config.outPoint  !== undefined && config.outPoint !== null)  layer.outPoint  = config.outPoint;
 
-        if (config.enabled      !== undefined) layer.enabled      = config.enabled;
-        if (config.audioEnabled !== undefined && layer.hasAudio) layer.audioEnabled = config.audioEnabled;
+        if (config.enabled      !== undefined && config.enabled !== null) layer.enabled      = config.enabled;
+        if (config.audioEnabled !== undefined && config.audioEnabled !== null && layer.hasAudio) layer.audioEnabled = config.audioEnabled;
 
         if (config.type === "adjustment") layer.adjustmentLayer = true;
 
         // Apply transform (priority: full-fidelity transformTree > legacy transform dict)
         if (config.transformTree) {
-            applyPropertyTreeOnLayer(layer, config.transformTree, KEY_TEMPLATES);
+            applyPropertyTreeOnLayer(layer, config.transformTree);
         } else if (config.transform) {
             var tr = config.transform;
 
             // Если применяем fitPolicy (cover/contain), scale не трогаем —
             // auto-fit в applyFitPolicy уже выставит нужный размер.
             if (tr.scale && !config.fitPolicy) {
-                setPropValue(layer.transform.scale, tr.scale, KEY_TEMPLATES);
+                setPropValue(layer.transform.scale, tr.scale);
             }
-            if (tr.position) setPropValue(layer.transform.position, tr.position, KEY_TEMPLATES);
-            if (tr.rotation) setPropValue(layer.transform.rotation, tr.rotation, KEY_TEMPLATES);
-            if (tr.opacity !== undefined)  setPropValue(layer.transform.opacity,  tr.opacity, KEY_TEMPLATES);
+            if (tr.position) setPropValue(layer.transform.position, tr.position);
+            if (tr.rotation) setPropValue(layer.transform.rotation, tr.rotation);
+            if (tr.opacity !== undefined) setPropValue(layer.transform.opacity, tr.opacity);
         }
     }
 
@@ -462,6 +466,35 @@ function applyPropertyTreeOnLayer(layer, tree, keyTemplates) {
             layer.property("Scale").setValue([s, s]);
         }
         // 'contain' можно добавить позже
+    }
+
+    function importFootage(config) {
+        try {
+            var file = new File(config.path);
+            if (!file.exists) throw new Error("File missing: " + config.path);
+
+            var io = new ImportOptions(file);
+            var footage = app.project.importFile(io);
+            footage.name = config.name || file.name;
+            footage.parentFolder = config.isRef ? fRef : fFootage;
+            return footage;
+        } catch (e) {
+            logLine("Import footage error: " + e.toString());
+            return null;
+        }
+    }
+
+    function createComp(config) {
+        var comp = app.project.items.addComp(
+            config.name || config.id,
+            config.width || 1080,
+            config.height || 1920,
+            config.pixelAspect || 1.0,
+            config.duration || 10,
+            config.fps || 24
+        );
+        comp.parentFolder = fComps;
+        return comp;
     }
 
     function buildProject() {
@@ -514,9 +547,11 @@ function applyPropertyTreeOnLayer(layer, tree, keyTemplates) {
                     if (lConf.textDocument) {
                         applyTextSettings(layer, lConf.textDocument);
                     }
+                    // text animators (full fidelity)
                     if (lConf.textAnimTree) {
-                        applyPropertyTreeOnLayer(layer, lConf.textAnimTree, KEY_TEMPLATES);
+                        applyPropertyTreeOnLayer(layer, lConf.textAnimTree);
                     }
+                    // ensure a predictable base position (can be overridden by transformTree/transform)
                     layer.position.setValue([comp.width / 2, comp.height / 2]);
                 } else if (lConf.type === "adjustment") {
                     layer = comp.layers.addSolid([1, 1, 1], lConf.name || "Adj Layer", comp.width, comp.height, 1);
@@ -545,9 +580,6 @@ function applyPropertyTreeOnLayer(layer, tree, keyTemplates) {
         }
 
         logLine("Entry comp: " + entryComp.name);
-        // openInViewer можно включить, если тебе удобно:
-        // entryComp.openInViewer();
-
         return entryComp;
     }
 
