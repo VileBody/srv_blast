@@ -4,11 +4,11 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Dict, List
 
 from config import Config
 from render_v1.assembler_core import build_project_payload_from_composition
+from render_v1.assembler import build_render_jsx_from_project_data_json
 from .client import AeMediaPayload
 
 from src.core.config.styles import FootagePresetId, SubtitleStyle
@@ -17,10 +17,6 @@ from src.storage.library_store import AssetLibrary
 from src.storage.s3 import generate_presigned_url
 
 log = logging.getLogger(__name__)
-
-TEXT_STYLES_PATH = Path("config/styles/text_styles.json")
-FOOTAGE_PRESETS_PATH = Path("config/styles/footage_presets.json")
-
 
 @dataclass
 class AeBuildResult:
@@ -302,16 +298,11 @@ def build_render_jsx_and_media(job_id: str, plan: Dict[str, Any]) -> AeBuildResu
         "items": items,
     }
 
-    _, json_str = build_project_payload_from_composition(
-        styles_path=TEXT_STYLES_PATH,
-        presets_path=FOOTAGE_PRESETS_PATH,
-        composition=composition,
-        entry_point="comp_main",
-    )
+    _, json_str = build_project_payload_from_composition(composition)
 
-    template_code = JOB_TEMPLATE_PATH.read_text(encoding="utf-8")
-    js_variable = f"var PROJECT_DATA = {json_str};\n"
-    final_jsx = template_code.replace("/*__PYTHON_DATA_INJECT__*/", js_variable)
+    final_jsx = build_render_jsx_from_project_data_json(
+        json_str, template_path=JOB_TEMPLATE_PATH
+    )
 
     output_relpath = "work/output.mp4"
     output_s3_key = f"{job_id}.mp4"

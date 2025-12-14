@@ -1,0 +1,182 @@
+{
+  "libraryVersion": "2.2",
+  "meta": {
+    "description": "Text animation + transform presets and keyframe templates (v2.2)"
+  },
+  "keyTemplates": {
+    "tpl_linear_hold": {
+      "description": "Linear hold-ish key (no speed)",
+      "inInterpolationType": 6612,
+      "outInterpolationType": 6612,
+      "inTemporalEase": [
+        {
+          "speed": 0,
+          "influence": 16.666666667
+        }
+      ],
+      "outTemporalEase": [
+        {
+          "speed": 0,
+          "influence": 16.666666667
+        }
+      ],
+      "temporalAutoBezier": false,
+      "temporalContinuous": false
+    },
+    "kt_reveal_explosive": {
+      "description": "Used for text reveal (fast outgoing)",
+      "inInterpolationType": 6612,
+      "outInterpolationType": 6612,
+      "inTemporalEase": [
+        {
+          "speed": 0,
+          "influence": 16.666666667
+        }
+      ],
+      "outTemporalEase": [
+        {
+          "speed": 599.4,
+          "influence": 16.666666667
+        }
+      ],
+      "temporalAutoBezier": false,
+      "temporalContinuous": false
+    },
+    "kt_opacity_fade_out": {
+      "description": "Standard opacity fade out",
+      "inInterpolationType": 6612,
+      "outInterpolationType": 6612,
+      "inTemporalEase": [
+        {
+          "speed": 0,
+          "influence": 16.666666667
+        }
+      ],
+      "outTemporalEase": [
+        {
+          "speed": -99.9,
+          "influence": 16.666666667
+        }
+      ]
+    },
+    "kt_opacity_fade_in_stop": {
+      "description": "Incoming key for fade-out (decelerate to stop)",
+      "inInterpolationType": 6612,
+      "outInterpolationType": 6612,
+      "inTemporalEase": [
+        {
+          "speed": -99.9,
+          "influence": 16.666666667
+        }
+      ],
+      "outTemporalEase": [
+        {
+          "speed": 0,
+          "influence": 16.666666667
+        }
+      ]
+    },
+    "kt_opacity_fade_out_fast": {
+      "description": "Fast fade-out used by legacy dump (was inline in one key)",
+      "inInterpolationType": 6612,
+      "outInterpolationType": 6612,
+      "inTemporalEase": [
+        {
+          "speed": -299.7,
+          "influence": 16.667
+        }
+      ],
+      "outTemporalEase": [
+        {
+          "speed": 0,
+          "influence": 16.667
+        }
+      ]
+    }
+  },
+  "textAnimPresets": {
+    "anim_reveal_opacity": {
+      "description": "Typewriter-ish reveal: Range Selector Start anim + Opacity 0%",
+      "propertyTree": {
+        "matchName": "ADBE Text Animators",
+        "children": [
+          {
+            "matchName": "ADBE Text Animator",
+            "children": [
+              {
+                "matchName": "ADBE Text Selectors",
+                "children": [
+                  {
+                    "matchName": "ADBE Text Selector",
+                    "properties": {
+                      "ADBE Text Range Advanced": {
+                        "ADBE Text Range Shape": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "matchName": "ADBE Text Animator Properties",
+                "properties": {
+                  "ADBE Text Opacity": 0
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "exposedParams": [
+        {
+          "key": "selector_start",
+          "matchNamePath": "ADBE Text Animators/ADBE Text Animator/ADBE Text Selectors/ADBE Text Selector/ADBE Text Percent Start"
+        },
+        {
+          "key": "animator_opacity",
+          "matchNamePath": "ADBE Text Animators/ADBE Text Animator/ADBE Text Animator Properties/ADBE Text Opacity"
+        }
+      ]
+    },
+    "anim_static": {
+      "description": "No text animators",
+      "propertyTree": {
+        "matchName": "ADBE Text Animators",
+        "children": []
+      },
+      "exposedParams": []
+    }
+  },
+  "transformPresets": {
+    "tf_subtitle_base": {
+      "description": "Base subtitle transform (position centered-ish)",
+      "propertyTree": {
+        "matchName": "ADBE Transform Group",
+        "properties": {
+          "ADBE Position": [
+            540,
+            960,
+            0
+          ]
+        }
+      },
+      "exposedParams": [
+        {
+          "key": "scale",
+          "matchNamePath": "ADBE Transform Group/ADBE Scale"
+        },
+        {
+          "key": "opacity",
+          "matchNamePath": "ADBE Transform Group/ADBE Opacity"
+        }
+      ]
+    }
+  },
+  "proceduralKeyframes": {
+    "kind_enum": [
+      "oscillate",
+      "normalized_curve",
+      "ramp"
+    ],
+    "notes": "Optional: if overrides.X.procedural is set, python will bake keys into overrides.X.keys."
+  }
+}
