@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any, Dict
 
@@ -12,9 +13,13 @@ log = logging.getLogger(__name__)
 
 # repo_root/config/styles
 STYLES_DIR = Path(__file__).resolve().parents[3] / "config" / "styles"
-TEXT_STYLES_PATH = STYLES_DIR / "text_styles.json"
-FOOTAGE_PRESETS_PATH = STYLES_DIR / "footage_presets.json"
-TEXT_MOTION_LIBRARY_PATH = STYLES_DIR / "text_motion_library.json"
+DEFAULT_STYLE_PACK = "pop-music"
+PACK_NAME = os.getenv("AE_STYLE_PACK") or DEFAULT_STYLE_PACK
+PACK_DIR = (STYLES_DIR / PACK_NAME) if (STYLES_DIR / PACK_NAME).is_dir() else STYLES_DIR
+
+TEXT_STYLES_PATH = PACK_DIR / "text_styles.json"
+FOOTAGE_PRESETS_PATH = PACK_DIR / "footage_presets.json"
+TEXT_MOTION_LIBRARY_PATH = PACK_DIR / "text_motion_library.json"
 
 _SUBTITLE_STYLE_KEYS = {
     SubtitleStyle.DEFAULT: "main_subtitle",
