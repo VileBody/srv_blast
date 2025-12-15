@@ -1,13 +1,12 @@
 # services/ml_core/planner.py
 from __future__ import annotations
-
 import logging
 import os
 from pathlib import Path
 from typing import Any, Dict
 
 from config import Config
-from render_v1.assembler_core import build_project_payload_from_composition
+from render_v1.assembler_core import build_project_payload_from_composition_v2
 from src.genai.client_base import GenaiClientBase
 from src.genai.planners import AePlanner
 from src.storage.library_store import AssetLibrary
@@ -18,6 +17,11 @@ log = logging.getLogger(__name__)
 
 TEXT_STYLES_PATH = Path("config/styles/text_styles.json")
 FOOTAGE_PRESETS_PATH = Path("config/styles/footage_presets.json")
+TEXT_MOTION_LIBRARY_PATH = Path("config/styles/text_motion_library.json")
+PROJECT_SETTINGS_TEMPLATE_PATH = Path("config/styles/project_settings_template.json")
+
+_STYLE_PACK = (os.getenv("AE_STYLE_PACK") or "pop-music").strip()
+_PACK_DIR = Path("config/styles") / _STYLE_PACK
 
 
 def _ensure_local_audio(job_id: str, audio_src: str, dst_dir: Path) -> Path:
@@ -77,11 +81,26 @@ def build_edit_plan(job_id: str, audio_src: str, name: str) -> Dict[str, Any]:
 
     composition = planner.build_ae_project(audio_path, library_payload)
 
-    raw_payload, json_str = build_project_payload_from_composition(
-        styles_path=TEXT_STYLES_PATH,
-        presets_path=FOOTAGE_PRESETS_PATH,
+    # Prefer style-pack folder if present; otherwise fallback to legacy config/styles/*.json
+    if _PACK_DIR.is_dir():
+        styles_path = _PACK_DIR / "text_styles.json"
+        presets_path = _PACK_DIR / "footage_presets.json"
+        motion_path = _PACK_DIR / "text_motion_library.json"
+        proj_path = _PACK_DIR / "project_settings_template.json"
+    else:
+        styles_path = TEXT_STYLES_PATH
+        presets_path = FOOTAGE_PRESETS_PATH
+        motion_path = TEXT_MOTION_LIBRARY_PATH
+        proj_path = PROJECT_SETTINGS_TEMPLATE_PATH
+
+    raw_payload, json_str = build_project_payload_from_composition_v2(
         composition=composition,
+        styles_path=styles_path,
+        presets_path=presets_path,
+        motion_library_path=motion_path,
+        project_settings_template_path=proj_path,
         entry_point="comp_main",
+        style_pack=_STYLE_PACK,
     )
 
     plan: Dict[str, Any] = {
