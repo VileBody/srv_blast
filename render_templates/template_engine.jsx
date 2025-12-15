@@ -315,6 +315,35 @@
         }
     }
 
+    function _getChildByMatchNameIndex(aeGroup, matchName, index1) {
+        if (!aeGroup || !matchName) return null;
+        if (!index1 || index1 < 1) index1 = 1;
+
+        var hits = [];
+        try {
+            for (var i = 1; i <= aeGroup.numProperties; i++) {
+                var p = aeGroup.property(i);
+                if (p && p.matchName === matchName) hits.push(p);
+            }
+        } catch (e0) {}
+
+        while (hits.length < index1) {
+            if (aeGroup.canAddProperty && aeGroup.canAddProperty(matchName)) {
+                try {
+                    var np = aeGroup.addProperty(matchName);
+                    if (np) hits.push(np);
+                } catch (e1) {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+
+        if (hits.length >= index1) return hits[index1 - 1];
+        return null;
+    }
+
     function _applyPropertyTreeNode(aeGroup, node) {
         if (!aeGroup || !node) return;
 
@@ -326,10 +355,10 @@
 
                 var aeProp = null;
                 try {
-                    if (aeGroup.canAddProperty && aeGroup.canAddProperty(propName)) {
+                    // IMPORTANT: try existing prop first to avoid duplicating addable props.
+                    aeProp = aeGroup.property(propName);
+                    if (!aeProp && aeGroup.canAddProperty && aeGroup.canAddProperty(propName)) {
                         aeProp = aeGroup.addProperty(propName);
-                    } else {
-                        aeProp = aeGroup.property(propName);
                     }
                 } catch (e0) { aeProp = null; }
 
@@ -343,18 +372,16 @@
 
         // Recurse into children
         if (node.children) {
+            var seen = {};
             for (var i = 0; i < node.children.length; i++) {
                 var ch = node.children[i];
                 if (!ch || !ch.matchName) continue;
 
-                var aeChild = null;
-                try {
-                    if (aeGroup.canAddProperty && aeGroup.canAddProperty(ch.matchName)) {
-                        aeChild = aeGroup.addProperty(ch.matchName);
-                    } else {
-                        aeChild = aeGroup.property(ch.matchName);
-                    }
-                } catch (e1) { aeChild = null; }
+                var mn = ch.matchName;
+                seen[mn] = (seen[mn] || 0) + 1;
+                var idx1 = seen[mn];
+
+                var aeChild = _getChildByMatchNameIndex(aeGroup, mn, idx1);
 
                 if (aeChild) {
                     _applyPropertyTreeNode(aeChild, ch);

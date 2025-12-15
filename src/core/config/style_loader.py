@@ -11,10 +11,10 @@ from .styles import SubtitleStyle, FootagePresetId
 
 log = logging.getLogger(__name__)
 
-# repo_root/config/styles
+# repo_root/config/styles[/<pack>]
 STYLES_DIR = Path(__file__).resolve().parents[3] / "config" / "styles"
 DEFAULT_STYLE_PACK = "pop-music"
-PACK_NAME = os.getenv("AE_STYLE_PACK") or DEFAULT_STYLE_PACK
+PACK_NAME = (os.getenv("AE_STYLE_PACK") or DEFAULT_STYLE_PACK).strip()
 PACK_DIR = (STYLES_DIR / PACK_NAME) if (STYLES_DIR / PACK_NAME).is_dir() else STYLES_DIR
 
 TEXT_STYLES_PATH = PACK_DIR / "text_styles.json"

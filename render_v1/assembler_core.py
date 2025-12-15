@@ -1,13 +1,19 @@
 from __future__ import annotations
 
 import copy
-from typing import Any, Dict, List, Tuple
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
-from render_v1.ae_motion import resolve_preset_tree
-from render_v1.ae_project_settings import ENV_DEFAULTS, deep_merge, resolve_runtime_defaults, resolve_comp_fields
+from render_v1.ae_project_settings import (
+    ENV_DEFAULTS,
+    deep_merge,
+    resolve_comp_fields,
+    resolve_runtime_defaults,
+)
 from render_v1.ae_text_document import build_text_document
-from render_v1.style_pack import load_style_pack
 from render_v1.models import Payload
+from render_v1.motion_resolver import resolve_preset_tree
+from render_v1.style_pack import load_style_pack
 
 
 # -----------------------------
@@ -15,15 +21,36 @@ from render_v1.models import Payload
 # -----------------------------
 
 
-def build_project_payload_from_composition(composition: Dict[str, Any]) -> Tuple[Dict[str, Any], str]:
-    """Transforms LLM composition.json -> PROJECT_DATA (AE engine JSON).
+def build_project_payload_from_composition(
+    composition: Dict[str, Any],
+    **kwargs: Any,
+) -> Tuple[Dict[str, Any], str]:
+    return build_project_payload_from_composition_v2(composition=composition, **kwargs)
 
-    Returns:
-        raw_payload (dict) and pretty JSON string.
-    """
+
+def build_project_payload_from_composition_v2(
+    *,
+    composition: Dict[str, Any],
+    # Backward-compat kwargs (старый planner.py их всё ещё передаёт)
+    styles_path: Optional[Path] = None,
+    presets_path: Optional[Path] = None,
+    # Optional overrides
+    motion_library_path: Optional[Path] = None,
+    project_settings_template_path: Optional[Path] = None,
+    style_pack: Optional[str] = None,
+    entry_point: Optional[str] = None,
+) -> Tuple[Dict[str, Any], str]:
+    """Transforms LLM composition.json -> PROJECT_DATA (AE engine JSON)."""
+
     ps = composition.get("projectSettings") or {}
-    style_pack_name = ps.get("stylePack")
-    pack = load_style_pack(style_pack_name)
+    style_pack_name = style_pack or ps.get("stylePack")
+    pack = load_style_pack(
+        style_pack=style_pack_name,
+        text_styles_path=styles_path,
+        footage_presets_path=presets_path,
+        text_motion_library_path=motion_library_path,
+        project_settings_template_path=project_settings_template_path,
+    )
 
     text_styles = pack.text_styles
     footage_presets = pack.footage_presets
@@ -39,7 +66,7 @@ def build_project_payload_from_composition(composition: Dict[str, Any]) -> Tuple
 
     global_start_sec = float(runtime_defaults.get("global_start_sec", 0.0))
     audio_ref_id = ps.get("audioRefId", "audio_main")
-    entry_comp_id = composition.get("entryPoint", "comp_main")
+    entry_comp_id = composition.get("entryPoint") or entry_point or "comp_main"
 
     # Compose project items
     items_out: List[Dict[str, Any]] = []
@@ -48,13 +75,15 @@ def build_project_payload_from_composition(composition: Dict[str, Any]) -> Tuple
     for it in composition.get("items", []):
         if it.get("type") != "footage":
             continue
-        items_out.append({
-            "id": it["id"],
-            "type": "footage",
-            "name": it.get("name", it["id"]),
-            "path": it["path"],
-            "isRef": bool(it.get("isRef", False)),
-        })
+        items_out.append(
+            {
+                "id": it["id"],
+                "type": "footage",
+                "name": it.get("name", it["id"]),
+                "path": it["path"],
+                "isRef": bool(it.get("isRef", False)),
+            }
+        )
 
     # Comps
     for it in composition.get("items", []):
@@ -99,6 +128,8 @@ def build_project_payload_from_composition(composition: Dict[str, Any]) -> Tuple
                 base["startTime"] = base["inPoint"]
 
             if ltype == "ref":
+                base["refId"] = layer.get("refId") or ""
+
                 # Apply footage preset if provided
                 preset_id = layer.get("presetId")
                 if preset_id and preset_id in footage_presets:
@@ -109,8 +140,21 @@ def build_project_payload_from_composition(composition: Dict[str, Any]) -> Tuple
                 if "fitPolicy" not in base or base["fitPolicy"] is None:
                     base["fitPolicy"] = layer.get("fitPolicy") or global_fit_policy
 
-                base["refId"] = layer["refId"]
                 base["presetId"] = preset_id
+
+                # Audio alignment: если это audio_main, сдвигаем startTime = -global_start_sec
+                # чтобы 0.0 на таймлайне совпал с global_start_sec в исходном треке.
+                if base.get("refId") == "audio_main":
+                    if base.get("enabled") is None:
+                        base["enabled"] = True
+                    if base.get("audioEnabled") is None:
+                        base["audioEnabled"] = True
+                    if base.get("inPoint") is None:
+                        base["inPoint"] = 0.0
+                    if base.get("outPoint") is None:
+                        base["outPoint"] = comp_duration
+                    if global_start_sec:
+                        base["startTime"] = -float(global_start_sec)
 
             elif ltype == "adjustment":
                 # For now: no extra processing; user can add effects later
@@ -135,7 +179,8 @@ def build_project_payload_from_composition(composition: Dict[str, Any]) -> Tuple
                     preset = transform_presets.get(transform_id)
                     if preset:
                         tr_tree = resolve_preset_tree(
-                            preset, overrides,
+                            preset,
+                            overrides,
                             layer_in=float(base.get("inPoint") or 0.0),
                             layer_out=float(base.get("outPoint") or comp_duration),
                             fps=comp_fps,
@@ -150,7 +195,8 @@ def build_project_payload_from_composition(composition: Dict[str, Any]) -> Tuple
                     preset = text_anim_presets.get(anim_id)
                     if preset:
                         ta_tree = resolve_preset_tree(
-                            preset, overrides,
+                            preset,
+                            overrides,
                             layer_in=float(base.get("inPoint") or 0.0),
                             layer_out=float(base.get("outPoint") or comp_duration),
                             fps=comp_fps,
@@ -189,7 +235,16 @@ def build_project_payload_from_composition(composition: Dict[str, Any]) -> Tuple
 
     raw_payload: Dict[str, Any] = {
         "project": {
-            "projectName": (ps.get("name") or composition.get("projectName") or pack.project_settings_template.get("projectName") or "AE Project"),
+            "projectName": (
+                ps.get("name")
+                or composition.get("projectName")
+                or (
+                    pack.project_settings_template.get("projectName")
+                    if isinstance(pack.project_settings_template, dict)
+                    else "AE Project"
+                )
+                or "AE Project"
+            ),
             "items": items_out,
         },
         "entryPoint": entry_comp_id,
@@ -202,3 +257,4 @@ def build_project_payload_from_composition(composition: Dict[str, Any]) -> Tuple
     json_str = payload.model_dump_json(indent=2, exclude_none=True)
 
     return raw_payload, json_str
+
