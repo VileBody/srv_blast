@@ -8,6 +8,8 @@ from typing import List, Optional
 from google.genai import types
 from pydantic import BaseModel, ValidationError
 
+from .ae_composition_schema import AeComposition
+
 from src.core.models import AudioSegmentPlan, VisualShotSpec, SegmentEditPlan
 from .client_base import GenaiClientBase
 from .prompts import (
@@ -151,6 +153,25 @@ class AePlanner:
             self.cfg.gemini_model_planning,
         )
 
+        # Structured Output (SO) обязателен: просим модель вернуть JSON строго по схеме AeComposition.
+        base_kwargs = {
+            "temperature": 0.6,
+            "response_mime_type": "application/json",
+        }
+
+        # В разных версиях google-genai поле может называться по-разному.
+        # 1) response_schema (pydantic model/class)
+        # 2) response_json_schema (JSON Schema dict)
+        try:
+            gen_cfg = types.GenerateContentConfig(**base_kwargs, response_schema=AeComposition)
+        except TypeError:
+            try:
+                gen_cfg = types.GenerateContentConfig(
+                    **base_kwargs, response_json_schema=AeComposition.model_json_schema()
+                )
+            except TypeError:
+                gen_cfg = types.GenerateContentConfig(**base_kwargs)
+
         resp = self.client.client.models.generate_content(
             model=self.cfg.gemini_model_planning,
             contents=[
@@ -158,20 +179,19 @@ class AePlanner:
                 json.dumps(library_payload, ensure_ascii=False),
                 file_obj,
             ],
-            config=types.GenerateContentConfig(
-                temperature=0.6,
-                response_mime_type="application/json",
-            ),
+            config=gen_cfg,
         )
 
         raw = self.client.extract_text_or_raise(resp, "build_ae_project")
 
         try:
-            return json.loads(raw)
-        except Exception as exc:  # noqa: BLE001
-            log.error("[build_ae_project] Failed to parse JSON: %s", exc)
+            parsed = AeComposition.model_validate_json(raw)
+        except ValidationError as exc:
+            log.error("[build_ae_project] Pydantic validation error: %s", exc)
             log.debug("[build_ae_project] Raw JSON that failed: %s", raw)
             raise
+
+        return parsed.model_dump(by_alias=True, exclude_none=True)
 
     def select_audio_highlights(self, audio_path: Path) -> List[AudioSegmentPlan]:
         log.info(

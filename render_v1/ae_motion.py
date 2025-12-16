@@ -127,6 +127,73 @@ def expand_procedural(value_data: Any, *, layer_in: float, layer_out: float, fps
     if end < start:
         start, end = end, start
 
+    # --- ABS-time shorthands for text reveals / opacity fades ---
+    # IMPORTANT: t_* values are absolute comp time seconds (NOT relative to layer start).
+    if kind == "selector_ramp_abs":
+        start_abs = float(spec.get("t_start", spec.get("startTime", layer_in)))
+        end_abs = float(spec.get("t_end", spec.get("endTime", layer_out)))
+        if end_abs < start_abs:
+            start_abs, end_abs = end_abs, start_abs
+
+        v0 = spec.get("from", 0)
+        v1 = spec.get("to", 100)
+
+        tpl0 = spec.get("tpl_start")
+        tpl1 = spec.get("tpl_end")
+
+        k0 = {"time": start_abs, "value": v0}
+        k1 = {"time": end_abs, "value": v1}
+        if tpl0:
+            k0["templateRef"] = tpl0
+        if tpl1:
+            k1["templateRef"] = tpl1
+        return {"keys": [k0, k1]}
+
+    if kind == "selector_steps_3_abs":
+        t0 = float(spec.get("t0", layer_in))
+        t1 = float(spec.get("t1", (layer_in + layer_out) * 0.5))
+        t2 = float(spec.get("t2", layer_out))
+        if not (t0 <= t1 <= t2):
+            # keep function total-order safe (render is better than crash), but preserve intent
+            t0, t1, t2 = sorted([t0, t1, t2])
+
+        v0 = spec.get("v0", 25)
+        v1 = spec.get("v1", 50)
+        v2 = spec.get("v2", 100)
+
+        tpl0 = spec.get("tpl0")
+        tpl1 = spec.get("tpl1")
+        tpl2 = spec.get("tpl2")
+
+        ks = [{"time": t0, "value": v0}, {"time": t1, "value": v1}, {"time": t2, "value": v2}]
+        if tpl0:
+            ks[0]["templateRef"] = tpl0
+        if tpl1:
+            ks[1]["templateRef"] = tpl1
+        if tpl2:
+            ks[2]["templateRef"] = tpl2
+        return {"keys": ks}
+
+    if kind == "opacity_fade_abs":
+        start_abs = float(spec.get("t_start", spec.get("startTime", layer_in)))
+        end_abs = float(spec.get("t_end", spec.get("endTime", layer_out)))
+        if end_abs < start_abs:
+            start_abs, end_abs = end_abs, start_abs
+
+        v0 = spec.get("from", 100)
+        v1 = spec.get("to", 0)
+
+        tpl0 = spec.get("tpl_start", "tpl_fade_out")
+        tpl1 = spec.get("tpl_end", "tpl_fade_in_stop")
+
+        k0 = {"time": start_abs, "value": v0}
+        k1 = {"time": end_abs, "value": v1}
+        if tpl0:
+            k0["templateRef"] = tpl0
+        if tpl1:
+            k1["templateRef"] = tpl1
+        return {"keys": [k0, k1]}
+
     if kind == "ramp":
         v0 = spec.get("from", 0)
         v1 = spec.get("to", 100)
