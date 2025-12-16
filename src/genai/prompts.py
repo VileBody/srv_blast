@@ -197,17 +197,15 @@ AE_COMPOSITION_STAGE = (
     "- Ширина/высота/fps/pixelAspect берутся из заранее заданного шаблона project_settings_template.json.\n"
     "  В projectSettings.defaults от тебя важнее всего duration; размеры обычно НЕ меняй.\n"
     '- Для text-слоёв обязательно используй styleId: "main_subtitle" или "highlight_subtitle".\n'
-    '- Для text-слоёв можно (желательно) указывать пресеты движения:\n'
-    '    • animId: "anim_reveal_opacity" (появление) или "anim_static" (без аниматоров)\n'
+    '- Для каждого text-слоя (саба) ОБЯЗАТЕЛЬНО укажи motion-параметры (иначе сборка падает):\n'
     '    • transformId: "tf_subtitle_base"\n'
-    '    • overrides: словарь по exposedParams пресета (пример: selector_start, animator_opacity, scale, opacity)\n'
-    '      Значения overrides могут быть:\n'
-    '        - скаляр/массив (статичное значение)\n'
-    '        - {"keys":[{"time":..,"value":..,"templateRef":"tpl_..."}]} (ключи во времени)\n'
-    '        - {"procedural":{...}} (скорость/частота -> python запечёт в keys)\n'
+    '    • animId: "anim_reveal_opacity" или "anim_static"\n'
+    '    • overrides: словарь по exposedParams пресета (overrides обязателен всегда)\n'
+    '      Если animId="anim_reveal_opacity" — overrides.selector_start ОБЯЗАТЕЛЕН и должен быть {"keys":[...]}\n'
+    '      Минимум 2 ключа. В каждом ключе: time/value/templateRef. templateRef — только "tpl_*" из text_motion_library.json\n'
+    '      matchNamePath поддерживает индексацию: ADBE Text Animator[2], ADBE Text Selector[3] и т.д.\n'
     '- templateRef используй только из keyTemplates (config/styles/pop-music/text_motion_library.json):\n'
     '    • tpl_linear_hold, tpl_ease_explosive, tpl_fade_out, tpl_fade_in_stop, tpl_opacity_fade_end_fast\n'
-    '- matchNamePath умеет индексацию: ADBE Text Animator[2], ADBE Text Selector[3] и т.д.\n'
     '- Для футажа используй presetId только из заранее известных: "vertical_fit", "bg_transform" и т.п.\n'
     "- Для футажа допускается указывать startTime, чтобы сдвинуть содержимое внутри окна inPoint/outPoint.\n"
 )

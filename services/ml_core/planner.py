@@ -7,6 +7,7 @@ from typing import Any, Dict
 
 from config import Config
 from render_v1.assembler_core import build_project_payload_from_composition_v2
+from src.genai.ae_composition_schema import AeComposition
 from src.genai.client_base import GenaiClientBase
 from src.genai.planners import AePlanner
 from src.storage.library_store import AssetLibrary
@@ -80,6 +81,8 @@ def build_edit_plan(job_id: str, audio_src: str, name: str) -> Dict[str, Any]:
     library_payload = library.to_prompt_payload()
 
     composition = planner.build_ae_project(audio_path, library_payload)
+    # Validate composition structure (ensures required overrides for motion presets)
+    composition = AeComposition.model_validate(composition).model_dump()
 
     # Prefer style-pack folder if present; otherwise fallback to legacy config/styles/*.json
     if _PACK_DIR.is_dir():
@@ -102,6 +105,15 @@ def build_edit_plan(job_id: str, audio_src: str, name: str) -> Dict[str, Any]:
         entry_point="comp_main",
         style_pack=_STYLE_PACK,
     )
+
+    # Persist normalized payload for debugging
+    try:
+        work_dir = Path(os.getenv("WORK_DIR", "/app/work"))
+        log_dir = work_dir / "llm_logs" / job_id
+        log_dir.mkdir(parents=True, exist_ok=True)
+        (log_dir / "project_data.json").write_text(json_str, encoding="utf-8")
+    except Exception:
+        pass
 
     plan: Dict[str, Any] = {
         "job_id": job_id,
