@@ -163,7 +163,7 @@ TransformParams = Annotated[
 class BaseLayer(BaseModel):
     # We want the LLM contract to be strict: unknown fields should fail fast.
     # This also reduces "Union explosion" noise when a payload is malformed.
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
 
     type: str
     name: Optional[str] = None
@@ -358,7 +358,7 @@ Layer = Annotated[
 
 
 class FootageItem(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
 
     id: str
     type: Literal["footage"] = "footage"
@@ -368,7 +368,7 @@ class FootageItem(BaseModel):
 
 
 class CompItem(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
 
     id: str
     type: Literal["comp"] = "comp"
@@ -388,7 +388,7 @@ Item = Annotated[
 
 
 class ProjectSettings(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
 
     name: Optional[str] = None
     defaults: Optional[Dict[str, Any]] = None
@@ -400,7 +400,7 @@ class ProjectSettings(BaseModel):
 
 
 class AeComposition(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
 
     projectSettings: Optional[ProjectSettings] = None
     entryPoint: Optional[str] = None
