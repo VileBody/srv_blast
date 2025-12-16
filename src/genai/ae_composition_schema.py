@@ -106,7 +106,9 @@ OverrideValue = Union[
 
 
 class BaseLayer(BaseModel):
-    model_config = ConfigDict(extra="allow")
+    # We want the LLM contract to be strict: unknown fields should fail fast.
+    # This also reduces "Union explosion" noise when a payload is malformed.
+    model_config = ConfigDict(extra="forbid")
 
     type: str
     name: Optional[str] = None
@@ -249,11 +251,14 @@ class AdjustmentLayer(BaseLayer):
     type: Literal["adjustment"] = "adjustment"
 
 
-Layer = Union[RefLayer, TextLayer, AdjustmentLayer]
+Layer = Annotated[
+    Union[RefLayer, TextLayer, AdjustmentLayer],
+    Field(discriminator="type"),
+]
 
 
 class FootageItem(BaseModel):
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="forbid")
 
     id: str
     type: Literal["footage"] = "footage"
@@ -263,7 +268,7 @@ class FootageItem(BaseModel):
 
 
 class CompItem(BaseModel):
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="forbid")
 
     id: str
     type: Literal["comp"] = "comp"
@@ -276,11 +281,14 @@ class CompItem(BaseModel):
     layers: List[Layer] = Field(default_factory=list)
 
 
-Item = Union[FootageItem, CompItem]
+Item = Annotated[
+    Union[FootageItem, CompItem],
+    Field(discriminator="type"),
+]
 
 
 class ProjectSettings(BaseModel):
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="forbid")
 
     name: Optional[str] = None
     defaults: Optional[Dict[str, Any]] = None
@@ -292,7 +300,7 @@ class ProjectSettings(BaseModel):
 
 
 class AeComposition(BaseModel):
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="forbid")
 
     projectSettings: Optional[ProjectSettings] = None
     entryPoint: Optional[str] = None
