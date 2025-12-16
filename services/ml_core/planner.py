@@ -1,5 +1,6 @@
 # services/ml_core/planner.py
 from __future__ import annotations
+import json
 import logging
 import os
 from pathlib import Path
@@ -106,12 +107,28 @@ def build_edit_plan(job_id: str, audio_src: str, name: str) -> Dict[str, Any]:
         style_pack=_STYLE_PACK,
     )
 
-    # Persist normalized payload for debugging
+    # Persist LLM + normalized payload for debugging
     try:
         work_dir = Path(os.getenv("WORK_DIR", "/app/work"))
-        log_dir = work_dir / "llm_logs" / job_id
+        # Prefer DEBUG_ARTIFACTS_DIR if set; otherwise fallback to WORK_DIR/llm_logs
+        debug_root = os.getenv("DEBUG_ARTIFACTS_DIR", "").strip()
+        if debug_root:
+            log_dir = Path(debug_root) / job_id
+        else:
+            log_dir = work_dir / "llm_logs" / job_id
         log_dir.mkdir(parents=True, exist_ok=True)
+        # 1) raw LLM output (composition after pydantic validation)
+        (log_dir / "composition.json").write_text(
+            json.dumps(composition, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        # 2) assembled PROJECT_DATA (pretty JSON string)
         (log_dir / "project_data.json").write_text(json_str, encoding="utf-8")
+        # 3) also store dict form for quick grepping
+        (log_dir / "project_data_raw.json").write_text(
+            json.dumps(raw_payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
     except Exception:
         pass
 
