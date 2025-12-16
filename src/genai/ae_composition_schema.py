@@ -105,6 +105,61 @@ OverrideValue = Union[
 ]
 
 
+# ---------------------------------------------------------------------------
+# High-level param overrides (LLM-friendly)
+#
+# LLM should NOT output low-level keyframes for common text presets.
+# Instead it outputs small param objects (absolute comp time), and the assembler
+# converts them into procedural overrides for the motion resolver.
+# ---------------------------------------------------------------------------
+
+
+class AnimRevealRampAbs(BaseModel):
+    kind: Literal["reveal_ramp_abs"] = "reveal_ramp_abs"
+    t_start: float
+    t_end: float
+    # optional tuning knobs (defaults match text_motion_library.json expectations)
+    from_value: float = Field(default=0.0, alias="from")
+    to: float = 100.0
+    tpl_start: str = "tpl_ease_explosive"
+    tpl_end: str = "tpl_opacity_fade_end_fast"
+
+
+class AnimRevealSteps3Abs(BaseModel):
+    kind: Literal["reveal_steps_3_abs"] = "reveal_steps_3_abs"
+    t0: float
+    t1: float
+    t2: float
+    v0: float = 25.0
+    v1: float = 50.0
+    v2: float = 100.0
+    tpl0: str = "tpl_linear_hold"
+    tpl1: str = "tpl_ease_explosive"
+    tpl2: str = "tpl_ease_explosive"
+
+
+AnimParams = Annotated[
+    Union[AnimRevealRampAbs, AnimRevealSteps3Abs],
+    Field(discriminator="kind"),
+]
+
+
+class TransformOpacityFadeAbs(BaseModel):
+    kind: Literal["opacity_fade_abs"] = "opacity_fade_abs"
+    t_start: float
+    t_end: float
+    from_value: float = Field(default=100.0, alias="from")
+    to: float = 0.0
+    tpl_start: str = "tpl_fade_out"
+    tpl_end: str = "tpl_fade_in_stop"
+
+
+TransformParams = Annotated[
+    Union[TransformOpacityFadeAbs],
+    Field(discriminator="kind"),
+]
+
+
 class BaseLayer(BaseModel):
     # We want the LLM contract to be strict: unknown fields should fail fast.
     # This also reduces "Union explosion" noise when a payload is malformed.
@@ -136,17 +191,21 @@ class TextLayer(BaseLayer):
     animId: TextAnimPresetId
     transformId: TransformPresetId
     overrides: Dict[str, OverrideValue] = Field(default_factory=dict)
+    # New (preferred): high-level preset params (ABS comp time).
+    # Assembler will convert these into overrides.* procedural blocks.
+    animParams: Optional[AnimParams] = None
+    transformParams: Optional[TransformParams] = None
 
     @model_validator(mode="after")
     def _validate_required_overrides(self) -> "TextLayer":
-        def _assert_tpl(ref: Optional[str], field: str) -> None:
-            if ref is None:
+        def _assert_tpl(tpl: Optional[str], field: str) -> None:
+            if tpl is None:
                 return
-            if not str(ref).startswith("tpl_"):
+            if not isinstance(tpl, str) or not tpl.startswith("tpl_"):
                 raise ValueError(f"{field}: templateRef must be 'tpl_*' from text_motion_library.json")
 
         def _assert_time_in_range(t: float, field: str) -> None:
-            # IMPORTANT: all keyframe/procedural times are ABSOLUTE comp time (seconds)
+            # IMPORTANT: all times are ABSOLUTE comp time (seconds)
             if self.inPoint is not None and t < float(self.inPoint) - 1e-4:
                 raise ValueError(f"{field}: time {t} is before inPoint {self.inPoint}")
             if self.outPoint is not None and t > float(self.outPoint) + 1e-4:
@@ -170,8 +229,38 @@ class TextLayer(BaseLayer):
 
         if self.animId == TextAnimPresetId.REVEAL_OPACITY:
             v = self.overrides.get("selector_start")
-            if v is None:
-                raise ValueError("anim_reveal_opacity requires overrides.selector_start")
+            if v is None and self.animParams is None:
+                raise ValueError(
+                    "anim_reveal_opacity requires either animParams (preferred) or overrides.selector_start"
+                )
+
+            # Preferred path: animParams
+            if v is None and self.animParams is not None:
+                ap = self.animParams
+                if isinstance(ap, AnimRevealRampAbs):
+                    _assert_time_in_range(float(ap.t_start), "animParams.t_start")
+                    _assert_time_in_range(float(ap.t_end), "animParams.t_end")
+                    _assert_percent(ap.from_value, "animParams.from")
+                    _assert_percent(ap.to, "animParams.to")
+                    _assert_tpl(ap.tpl_start, "animParams.tpl_start")
+                    _assert_tpl(ap.tpl_end, "animParams.tpl_end")
+                    return self
+
+                if isinstance(ap, AnimRevealSteps3Abs):
+                    _assert_time_in_range(float(ap.t0), "animParams.t0")
+                    _assert_time_in_range(float(ap.t1), "animParams.t1")
+                    _assert_time_in_range(float(ap.t2), "animParams.t2")
+                    _assert_percent(ap.v0, "animParams.v0")
+                    _assert_percent(ap.v1, "animParams.v1")
+                    _assert_percent(ap.v2, "animParams.v2")
+                    _assert_tpl(ap.tpl0, "animParams.tpl0")
+                    _assert_tpl(ap.tpl1, "animParams.tpl1")
+                    _assert_tpl(ap.tpl2, "animParams.tpl2")
+                    return self
+
+            # Back-compat: raw overrides.selector_start (keys/procedural) are still accepted
+            # and validated below (existing logic in this module handles it).
+            # If we get here, keep existing validation behavior.
 
             # Variant A: raw keyframes (ABS time)
             if isinstance(v, KeyframedValue):
@@ -223,6 +312,17 @@ class TextLayer(BaseLayer):
                 "anim_reveal_opacity requires overrides.selector_start as {keys:[...]} "
                 "or {procedural:{kind:selector_ramp_abs|selector_steps_3_abs,...}}"
             )
+
+        # Optional: transform opacity fade as high-level params
+        if self.transformParams is not None:
+            tp = self.transformParams
+            if isinstance(tp, TransformOpacityFadeAbs):
+                _assert_time_in_range(float(tp.t_start), "transformParams.t_start")
+                _assert_time_in_range(float(tp.t_end), "transformParams.t_end")
+                _assert_percent(tp.from_value, "transformParams.from")
+                _assert_percent(tp.to, "transformParams.to")
+                _assert_tpl(tp.tpl_start, "transformParams.tpl_start")
+                _assert_tpl(tp.tpl_end, "transformParams.tpl_end")
 
         # Optional: allow procedural ABS fade for transform opacity (tf_subtitle_base exposes 'opacity')
         op = self.overrides.get("opacity")

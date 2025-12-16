@@ -170,7 +170,56 @@ def build_project_payload_from_composition_v2(
                 base["content"] = content
                 base["textDocument"] = style_doc
 
-                overrides = layer.get("overrides") or {}
+                # Overrides (LLM -> preset resolver)
+                # LLM-friendly path: animParams/transformParams (ABS time) -> convert to procedural overrides.
+                overrides = copy.deepcopy(layer.get("overrides") or {})
+
+                anim_params = layer.get("animParams") or {}
+                if isinstance(anim_params, dict) and "selector_start" not in overrides:
+                    kind = anim_params.get("kind")
+                    if kind == "reveal_ramp_abs":
+                        overrides["selector_start"] = {
+                            "procedural": {
+                                "kind": "selector_ramp_abs",
+                                "t_start": anim_params.get("t_start"),
+                                "t_end": anim_params.get("t_end"),
+                                "from": anim_params.get("from", 0),
+                                "to": anim_params.get("to", 100),
+                                "tpl_start": anim_params.get("tpl_start", "tpl_ease_explosive"),
+                                "tpl_end": anim_params.get("tpl_end", "tpl_opacity_fade_end_fast"),
+                            }
+                        }
+                    elif kind == "reveal_steps_3_abs":
+                        overrides["selector_start"] = {
+                            "procedural": {
+                                "kind": "selector_steps_3_abs",
+                                "t0": anim_params.get("t0"),
+                                "t1": anim_params.get("t1"),
+                                "t2": anim_params.get("t2"),
+                                "v0": anim_params.get("v0", 25),
+                                "v1": anim_params.get("v1", 50),
+                                "v2": anim_params.get("v2", 100),
+                                "tpl0": anim_params.get("tpl0", "tpl_linear_hold"),
+                                "tpl1": anim_params.get("tpl1", "tpl_ease_explosive"),
+                                "tpl2": anim_params.get("tpl2", "tpl_ease_explosive"),
+                            }
+                        }
+
+                transform_params = layer.get("transformParams") or {}
+                if isinstance(transform_params, dict) and "opacity" not in overrides:
+                    if transform_params.get("kind") == "opacity_fade_abs":
+                        overrides["opacity"] = {
+                            "procedural": {
+                                "kind": "opacity_fade_abs",
+                                "t_start": transform_params.get("t_start"),
+                                "t_end": transform_params.get("t_end"),
+                                "from": transform_params.get("from", 100),
+                                "to": transform_params.get("to", 0),
+                                "tpl_start": transform_params.get("tpl_start", "tpl_fade_out"),
+                                "tpl_end": transform_params.get("tpl_end", "tpl_fade_in_stop"),
+                            }
+                        }
+
                 base["overrides"] = overrides
 
                 # Transform preset -> transformTree
