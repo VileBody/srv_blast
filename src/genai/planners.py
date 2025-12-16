@@ -9,6 +9,7 @@ from google.genai import types
 from pydantic import BaseModel, ValidationError
 
 from .ae_composition_schema import AeComposition
+from .json_schema_utils import strip_additional_properties
 
 from src.core.models import AudioSegmentPlan, VisualShotSpec, SegmentEditPlan
 from .client_base import GenaiClientBase
@@ -159,18 +160,24 @@ class AePlanner:
             "response_mime_type": "application/json",
         }
 
-        # В разных версиях google-genai поле может называться по-разному.
-        # 1) response_schema (pydantic model/class)
-        # 2) response_json_schema (JSON Schema dict)
+        # IMPORTANT (Gemini SO): google-genai rejects JSON Schema containing
+        # `additionalProperties` anywhere. Pydantic emits it for models with
+        # dict-like fields and/or `extra` config. So we:
+        # 1) generate JSON Schema dict from the Pydantic model
+        # 2) recursively strip `additionalProperties`
+        # 3) pass the resulting dict into the SDK (field name differs by version)
+        response_schema_dict = strip_additional_properties(AeComposition.model_json_schema())
+
         try:
-            gen_cfg = types.GenerateContentConfig(**base_kwargs, response_schema=AeComposition)
+            # Newer SDKs (some builds) expose `response_json_schema`
+            gen_cfg = types.GenerateContentConfig(
+                **base_kwargs, response_json_schema=response_schema_dict
+            )
         except TypeError:
-            try:
-                gen_cfg = types.GenerateContentConfig(
-                    **base_kwargs, response_json_schema=AeComposition.model_json_schema()
-                )
-            except TypeError:
-                gen_cfg = types.GenerateContentConfig(**base_kwargs)
+            # Older SDKs use `response_schema` (and accept dict schema)
+            gen_cfg = types.GenerateContentConfig(
+                **base_kwargs, response_schema=response_schema_dict
+            )
 
         resp = self.client.client.models.generate_content(
             model=self.cfg.gemini_model_planning,
