@@ -71,11 +71,48 @@ def resolve_comp_fields(
     """Resolve comp width/height/fps/pixelAspect/duration from template + runtime defaults."""
     dur = float(runtime_defaults.get("duration", 15.0))
 
+    def _pick(name: str, fallback: Any) -> Any:
+        """
+        Treat explicit nulls from LLM as "missing".
+        comp_item may contain {"width": null} which must fallback to template.
+        """
+        v = comp_item.get(name, None)
+        if v is None:
+            v = project_template_defaults.get(name, fallback)
+        if v is None:
+            v = fallback
+        return v
+
+    def _to_int(v: Any, fallback: int) -> int:
+        try:
+            if v is None:
+                return int(fallback)
+            return int(float(v))
+        except (TypeError, ValueError):
+            return int(fallback)
+
+    def _to_float(v: Any, fallback: float) -> float:
+        try:
+            if v is None:
+                return float(fallback)
+            return float(v)
+        except (TypeError, ValueError):
+            return float(fallback)
+
+    width_v = _pick("width", 1080)
+    height_v = _pick("height", 1080)
+    fps_v = _pick("fps", 23.976)
+    pixel_aspect_v = _pick("pixelAspect", 1.0)
+
+    duration_v = comp_item.get("duration", None)
+    if duration_v is None:
+        duration_v = dur
+
     return {
-        "width": int(comp_item.get("width", project_template_defaults.get("width", 1080))),
-        "height": int(comp_item.get("height", project_template_defaults.get("height", 1080))),
-        "duration": float(comp_item.get("duration", dur)),
-        "fps": float(comp_item.get("fps", project_template_defaults.get("fps", 23.976))),
-        "pixelAspect": float(comp_item.get("pixelAspect", project_template_defaults.get("pixelAspect", 1.0))),
+        "width": _to_int(width_v, int(project_template_defaults.get("width", 1080) or 1080)),
+        "height": _to_int(height_v, int(project_template_defaults.get("height", 1080) or 1080)),
+        "duration": _to_float(duration_v, dur),
+        "fps": _to_float(fps_v, float(project_template_defaults.get("fps", 23.976) or 23.976)),
+        "pixelAspect": _to_float(pixel_aspect_v, float(project_template_defaults.get("pixelAspect", 1.0) or 1.0)),
     }
 
