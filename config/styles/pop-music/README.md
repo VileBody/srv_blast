@@ -114,6 +114,10 @@ LLM генерит `composition.json` и использует **ID-шники**,
 
 ## Мини-пример слоя текста (composition.json)
 
+⚠️ Важно про время ключей:
+- `keys[].time` — **абсолютное** время в секундах на таймлайне текущей композиции (comp time), не “от начала слоя”.
+- Практическое правило: для reveal-анимаций первые ключи обычно ставятся около `inPoint` слоя.
+
 ```json
 {
   "type": "text",
@@ -124,8 +128,8 @@ LLM генерит `composition.json` и использует **ID-шники**,
   "overrides": {
     "selector_start": {
       "keys": [
-        { "time": 0.0, "value": 0, "templateRef": "tpl_linear_hold" },
-        { "time": 0.6, "value": 100, "templateRef": "tpl_ease_explosive" }
+        { "time": 12.50, "value": 0,   "templateRef": "tpl_linear_hold" },
+        { "time": 13.10, "value": 100, "templateRef": "tpl_ease_explosive" }
       ]
     },
     "opacity": 100,
