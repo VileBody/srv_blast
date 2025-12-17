@@ -1,6 +1,11 @@
 # src/genai/prompts.py
 from __future__ import annotations
 
+import json
+
+from render_v1.effects_logic import build_effects_prompt_catalog
+from src.core.config.style_loader import get_effects_library
+
 """
 Сборник системных промптов для Gemini.
 
@@ -137,77 +142,92 @@ AE_SUBTITLES_STAGE = (
 )
 
 AE_COMPOSITION_STAGE = (
-    "ШАГ 3 — СБОРКА AE-ПРОЕКТА (composition.json-стиль).\n"
-    "На основе выбранных шотов и субтитров опиши полный проект After Effects в виде JSON, совместимого\n"
-    "с нашей схемой composition.json. Мы потом прогоняем этот JSON через строгий ассемблер и валидатор.\n\n"
-    "Структура JSON (упрощённо):\n"
-    "{\n"
-    '  "global_start_sec": 37.0,\n'
-    '  "global_end_sec": 52.0,\n'
-    '  "projectSettings": {\n'
-    '    "name": "tg_edit",\n'
-    '    "defaults": {\n'
-    '      "duration": 15.0\n'
-    "    }\n"
-    "  },\n"
-    '  "items": [\n'
-    "    // Футажи\n"
-    '    { "id": "audio_main", "type": "footage", "name": "Audio Track", "path": "media/audio/track.m4a", "isRef": true },\n'
-    '    { "id": "clip1", "type": "footage", "name": "clip1.mp4", "path": "media/video/clip1.mp4" },\n'
-    "    ...,\n"
-    "    // Композиция с субтитрами\n"
-    "    {\n"
-    '      "id": "comp_text",\n'
-    '      "type": "comp",\n'
-    '      "name": "Text",\n'
-    '      "layers": [\n'
-    '        { "type": "text", "styleId": "main_subtitle",      "content": "she told my baby", "inPoint": 1.876, "outPoint": 3.044 },\n'
-    '        { "type": "text", "styleId": "highlight_subtitle", "content": "she was three",    "inPoint": 3.044, "outPoint": 4.379 },\n'
-    '        { "type": "adjustment", "name": "Text FX 1",       "inPoint": 1.876, "outPoint": 4.379 }\n'
-    "      ]\n"
-    "    },\n"
-    "    // Главная композиция\n"
-    "    {\n"
-    '      "id": "comp_main",\n'
-    '      "type": "comp",\n'
-    '      "name": "Main Render",\n'
-    '      "layers": [\n'
-    '        { "type": "ref", "refId": "audio_main", "name": "Audio Ref",\n'
-    '          "inPoint": 0.0, "outPoint": 15.0, "enabled": true, "audioEnabled": true },\n'
-    '        { "type": "ref", "refId": "clip1", "inPoint": 0.0, "outPoint": 3.5,\n'
-    '          "presetId": "vertical_fit", "audioEnabled": false },\n'
-    '        { "type": "ref", "refId": "clip2", "inPoint": 3.5, "outPoint": 7.0,\n'
-    '          "presetId": "vertical_fit", "audioEnabled": false },\n'
-    '        { "type": "ref", "refId": "comp_text", "name": "Text Overlay",\n'
-    '          "inPoint": 0.0, "outPoint": 15.0, "audioEnabled": false }\n'
-    "      ]\n"
-    "    }\n"
-    "  ]\n"
-    "}\n\n"
-    "Интерпретация параметров:\n"
-    "- global_start_sec / global_end_sec — время (в секундах) внутри ПОЛНОГО аудиофайла, откуда и до куда\n"
-    "  длится ролик. Ассемблер сам вычислит duration = global_end_sec - global_start_sec и подставит его\n"
-    "  в projectSettings.defaults.duration и длительность главной композиции. Можешь дублировать это\n"
-    "  значение в defaults.duration, но это необязательно.\n"
-    "- Мы НЕ режем аудиофайл заранее: вместо этого слой с refId="audio_main" будет автоматически\n"
-    "  сдвинут так, чтобы startTime = -global_start_sec, а 0.0 на таймлайне совпадал с global_start_sec\n"
-    "  исходного трека.\n"
-    "- В comp_main у аудио-слоя должны быть enabled=true и audioEnabled=true, inPoint=0.0, outPoint=duration.\n"
-    "  startTime можешь не указывать или ставить 0.0 — он всё равно будет переопределён.\n"
-    "- Для ВИДЕО-футажей (ref-слои с refId, отличным от "audio_main") предполагается поведение\n"
-    "  без отдельного time-remap: startTime и inPoint должны совпадать. То есть в текущей версии\n"
-    "  пайплайна мы интерпретируем startTime = inPoint для видео. Не пытайся моделировать ситуации,\n"
-    "  где старт внутреннего фрагмента клипа сильно отличается от inPoint — ассемблер всё равно\n"
-    "  принудительно приведёт startTime к inPoint.\n"
-    "- Ширина/высота/fps/pixelAspect берутся из заранее заданного шаблона project_settings_template.json.\n"
-    "  В projectSettings.defaults от тебя важнее всего duration; размеры обычно НЕ меняй.\n"
-    "- Для text-слоёв обязательно используй styleId: "main_subtitle" или "highlight_subtitle".\n"
-    "- Для футажа используй presetId только из заранее известных: "vertical_fit", "bg_transform" и т.п.\n"
-    "- Для футажа НЕ нужно использовать сложный time-remap: мы ожидаем, что startTime = inPoint,\n"
-    "  а длительность обрезки задаётся inPoint/outPoint. Если тебе нужно просто более короткое окно,\n"
-    "  уменьши outPoint или сдвинь inPoint, но не вводи другую систему координат.\n"
-)
+    """ШАГ 3 — СБОРКА AE-ПРОЕКТА (composition.json-стиль).
+На основе выбранных шотов и субтитров опиши полный проект After Effects в виде JSON, совместимого
+с нашей схемой composition.json. Мы потом прогоняем этот JSON через строгий ассемблер и валидатор.
 
+Структура JSON (упрощённо):
+{
+  "global_start_sec": 37.0,
+  "global_end_sec": 52.0,
+  "projectSettings": {
+    "name": "tg_edit",
+    "defaults": {
+      "duration": 15.0
+    }
+  },
+  "items": [
+    // Футажи
+    { "id": "audio_main", "type": "footage", "name": "Audio Track", "path": "media/audio/track.m4a", "isRef": true },
+    { "id": "clip1", "type": "footage", "name": "clip1.mp4", "path": "media/video/clip1.mp4" },
+    ...,
+    // Композиция с субтитрами
+    {
+      "id": "comp_text",
+      "type": "comp",
+      "name": "Text",
+      "layers": [
+        { "type": "text", "styleId": "main_subtitle",      "content": "she told my baby", "inPoint": 1.876, "outPoint": 3.044 },
+        { "type": "text", "styleId": "highlight_subtitle", "content": "she was three",    "inPoint": 3.044, "outPoint": 4.379 },
+        { "type": "adjustment", "name": "Text FX 1",       "inPoint": 1.876, "outPoint": 4.379,
+          "effectStyleId": "fx_default_glow_v1",
+          "effectOverrides": {
+            "glow": {
+              "amount": {"keys": [{"t": 0.0, "value": 0}, {"t": 0.15, "value": 45, "templateRef": "tpl_ease_explosive"}, {"t": 1.0, "value": 0}]}
+            }
+          }
+        }
+      ]
+    },
+    // Главная композиция
+    {
+      "id": "comp_main",
+      "type": "comp",
+      "name": "Main Render",
+      "layers": [
+        { "type": "ref", "refId": "audio_main", "name": "Audio Ref",
+          "inPoint": 0.0, "outPoint": 15.0, "enabled": true, "audioEnabled": true },
+        { "type": "ref", "refId": "clip1", "inPoint": 0.0, "outPoint": 3.5,
+          "presetId": "vertical_fit", "audioEnabled": false },
+        { "type": "ref", "refId": "clip2", "inPoint": 3.5, "outPoint": 7.0,
+          "presetId": "vertical_fit", "audioEnabled": false },
+        { "type": "ref", "refId": "comp_text", "name": "Text Overlay",
+          "inPoint": 0.0, "outPoint": 15.0, "audioEnabled": false }
+      ]
+    }
+  ]
+}
+
+Для эффектов на adjustment-слоях:
+- Предпочитай связку effectStyleId + effectOverrides (семантические стили).
+- Или укажи явный стек эффектов: effects: [{id, presetId, enabled, overrides}].
+
+Notes для keyframes в effectOverrides/effects.overrides:
+- Можно использовать абсолютное время "time" или нормализованное "t" (0..1) относительно окна слоя [inPoint..outPoint].
+- procedural-блоки тоже используют нормализованное "t".
+Интерпретация параметров:
+- global_start_sec / global_end_sec — время (в секундах) внутри ПОЛНОГО аудиофайла, откуда и до куда
+  длится ролик. Ассемблер сам вычислит duration = global_end_sec - global_start_sec и подставит его
+  значение в defaults.duration, но это необязательно.
+- Мы НЕ режем аудиофайл заранее: вместо этого слой с refId="audio_main" будет автоматически
+  сдвинут так, чтобы startTime = -global_start_sec, а 0.0 на таймлайне совпадал с global_start_sec
+  исходного трека.
+- В comp_main у аудио-слоя должны быть enabled=true и audioEnabled=true, inPoint=0.0, outPoint=duration.
+  startTime можешь не указывать или ставить 0.0 — он всё равно будет переопределён.
+- Для ВИДЕО-футажей (ref-слои с refId, отличным от "audio_main") предполагается поведение
+  без отдельного time-remap: startTime и inPoint должны совпадать. То есть в текущей версии
+  пайплайна мы интерпретируем startTime = inPoint для видео. Не пытайся моделировать ситуации,
+  где старт внутреннего фрагмента клипа сильно отличается от inPoint — ассемблер всё равно
+  принудительно приведёт startTime к inPoint.
+- Ширина/высота/fps/pixelAspect берутся из заранее заданного шаблона project_settings_template.json.
+  В projectSettings.defaults от тебя важнее всего duration; размеры обычно НЕ меняй.
+- Для text-слоёв обязательно используй styleId: "main_subtitle" или "highlight_subtitle".
+- Для футажа используй presetId только из заранее известных: "vertical_fit", "bg_transform" и т.п.
+- Для футажа НЕ нужно использовать сложный time-remap: мы ожидаем, что startTime = inPoint,
+  а длительность обрезки задаётся inPoint/outPoint. Если тебе нужно просто более короткое окно,
+  уменьши outPoint или сдвинь inPoint, но не вводи другую систему координат.
+"""
+)
 AE_PROJECT_HEADER = (
     "Ты видеомонтажёр TikTok/Reels и субтитровщик, работающий в связке с After Effects.\n"
     "Тебе дают:\n"
@@ -238,11 +258,26 @@ def build_ae_project_system_prompt() -> str:
     Собирает большой system-prompt для задачи:
       аудио + библиотека → (шоты + сабы + composition.json).
     """
+    def _effects_semantic_catalog_json() -> str:
+        try:
+            lib = get_effects_library() or {}
+            catalog = build_effects_prompt_catalog(lib)
+            return json.dumps(catalog, ensure_ascii=False, indent=2)
+        except Exception:
+            return "{}"
+
+    effects_catalog = (
+        "EFFECT SEMANTIC STYLES CATALOG (для adjustment-слоёв)\n"
+        "Используй effectStyleId + effectOverrides с instanceId из списка ниже.\n"
+        + _effects_semantic_catalog_json()
+    )
+
     parts = [
         AE_PROJECT_HEADER,
         AE_FOOTAGE_STAGE,
         AE_SUBTITLES_STAGE,
         AE_COMPOSITION_STAGE,
+        effects_catalog,
         AE_PROJECT_FOOTER,
     ]
     return "\n\n".join(parts)

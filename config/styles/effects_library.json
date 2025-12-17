@@ -1,0 +1,456 @@
+{
+  "libraryVersion": "0.2",
+  "meta": {
+    "name": "AE Effects Library",
+    "notes": "Effect presets + semantic styles for adjustment layers. semanticStyles encode meaning ('when to use') + a fixed effect stack + allowed override params. matchNamePath values use AE matchName strings."
+  },
+  "keyTemplates": {
+    "tpl_linear": {
+      "description": "Linear interpolation (in/out)",
+      "inInterpolationType": 6612,
+      "outInterpolationType": 6612
+    },
+    "tpl_hold": {
+      "description": "Hold keyframes",
+      "inInterpolationType": 6614,
+      "outInterpolationType": 6614
+    },
+    "tpl_ease_in_out_soft": {
+      "description": "Soft ease in/out (Bezier). influence~33",
+      "inInterpolationType": 6613,
+      "outInterpolationType": 6613,
+      "inTemporalEase": [
+        {
+          "speed": 0,
+          "influence": 33.333333
+        }
+      ],
+      "outTemporalEase": [
+        {
+          "speed": 0,
+          "influence": 33.333333
+        }
+      ],
+      "temporalAutoBezier": false,
+      "temporalContinuous": false
+    },
+    "tpl_impact_sharp": {
+      "description": "Sharper impact ease (Bezier). influence high",
+      "inInterpolationType": 6613,
+      "outInterpolationType": 6613,
+      "inTemporalEase": [
+        {
+          "speed": 0,
+          "influence": 80
+        }
+      ],
+      "outTemporalEase": [
+        {
+          "speed": 0,
+          "influence": 80
+        }
+      ],
+      "temporalAutoBezier": false,
+      "temporalContinuous": false
+    },
+    "tpl_shake_oscillation": {
+      "description": "Oscillation-ish (Bezier). Use with dense keys from impact/shake curves",
+      "inInterpolationType": 6613,
+      "outInterpolationType": 6613,
+      "inTemporalEase": [
+        {
+          "speed": 0,
+          "influence": 20
+        }
+      ],
+      "outTemporalEase": [
+        {
+          "speed": 0,
+          "influence": 20
+        }
+      ],
+      "temporalAutoBezier": false,
+      "temporalContinuous": false
+    }
+  },
+  "effectPresets": {
+    "ef_bcc_lens_blur": {
+      "description": "BorisFX BCC Lens Blur (matchName=BCC6LensBlur)",
+      "propertyTree": {
+        "matchName": "BCC6LensBlur"
+      },
+      "exposedParams": [
+        {
+          "key": "iris_scale",
+          "matchNamePath": "BCC6LensBlur-9961714",
+          "type": "number",
+          "animatable": true,
+          "range": [
+            0,
+            10
+          ],
+          "role": "defocus squeeze / hit"
+        },
+        {
+          "key": "gamma",
+          "matchNamePath": "BCC6LensBlur-9961786",
+          "type": "number",
+          "animatable": false,
+          "range": [
+            0.5,
+            2.0
+          ],
+          "role": "look tuning"
+        }
+      ]
+    },
+    "ef_curves": {
+      "description": "Curves (matchName=ADBE CurvesCustom). NOTE: curve shape itself is CUSTOM_VALUE and usually not settable via setValue.",
+      "propertyTree": {
+        "matchName": "ADBE CurvesCustom"
+      },
+      "exposedParams": []
+    },
+    "ef_transform_geo": {
+      "description": "Transform effect (matchName=ADBE Geometry2)",
+      "propertyTree": {
+        "matchName": "ADBE Geometry2"
+      },
+      "exposedParams": [
+        {
+          "key": "position",
+          "matchNamePath": "ADBE Geometry2-0002",
+          "type": "vec2",
+          "animatable": true,
+          "role": "pan / impact shake driver"
+        },
+        {
+          "key": "scale_height",
+          "matchNamePath": "ADBE Geometry2-0003",
+          "type": "number",
+          "animatable": true,
+          "range": [
+            50,
+            400
+          ],
+          "role": "squash/stretch vertical"
+        },
+        {
+          "key": "scale_width",
+          "matchNamePath": "ADBE Geometry2-0004",
+          "type": "number",
+          "animatable": true,
+          "range": [
+            50,
+            400
+          ],
+          "role": "squash/stretch horizontal"
+        },
+        {
+          "key": "rotation",
+          "matchNamePath": "ADBE Geometry2-0007",
+          "type": "number",
+          "animatable": true,
+          "range": [
+            -180,
+            180
+          ],
+          "role": "impact twist"
+        },
+        {
+          "key": "opacity",
+          "matchNamePath": "ADBE Geometry2-0008",
+          "type": "number",
+          "animatable": false,
+          "range": [
+            0,
+            100
+          ],
+          "role": "blend tuning"
+        },
+        {
+          "key": "shutter_angle",
+          "matchNamePath": "ADBE Geometry2-0010",
+          "type": "number",
+          "animatable": false,
+          "range": [
+            0,
+            720
+          ],
+          "role": "motion blur tuning"
+        }
+      ]
+    },
+    "ef_s_blurmotion": {
+      "description": "Sapphire BlurMotion (matchName=S_BlurMotion)",
+      "propertyTree": {
+        "matchName": "S_BlurMotion"
+      },
+      "exposedParams": [
+        {
+          "key": "center_xy",
+          "matchNamePath": "S_BlurMotion-0050",
+          "type": "vec2",
+          "animatable": true,
+          "role": "zoom blur center"
+        },
+        {
+          "key": "z_dist",
+          "matchNamePath": "S_BlurMotion-0051",
+          "type": "number",
+          "animatable": true,
+          "range": [
+            0.0,
+            2.0
+          ],
+          "role": "zoom/velocity amount"
+        }
+      ]
+    },
+    "ef_deep_glow": {
+      "description": "Plugin Everything Deep Glow (matchName=PEDG)",
+      "propertyTree": {
+        "matchName": "PEDG"
+      },
+      "exposedParams": [
+        {
+          "key": "radius",
+          "matchNamePath": "PEDG-0001",
+          "type": "number",
+          "animatable": true,
+          "range": [
+            0,
+            2000
+          ],
+          "role": "glow spread"
+        },
+        {
+          "key": "exposure",
+          "matchNamePath": "PEDG-0002",
+          "type": "number",
+          "animatable": true,
+          "range": [
+            0,
+            5
+          ],
+          "role": "glow intensity"
+        },
+        {
+          "key": "threshold",
+          "matchNamePath": "PEDG-0004",
+          "type": "number",
+          "animatable": true,
+          "range": [
+            0,
+            100
+          ],
+          "role": "glow threshold"
+        }
+      ]
+    },
+    "ef_dir_blur": {
+      "description": "Directional Blur / Направл. разм. (matchName=ADBE Motion Blur in your dump)",
+      "propertyTree": {
+        "matchName": "ADBE Motion Blur"
+      },
+      "exposedParams": [
+        {
+          "key": "direction",
+          "matchNamePath": "ADBE Motion Blur-0001",
+          "type": "number",
+          "animatable": true,
+          "range": [
+            0,
+            360
+          ],
+          "role": "blur direction (deg)"
+        },
+        {
+          "key": "blur_length",
+          "matchNamePath": "ADBE Motion Blur-0002",
+          "type": "number",
+          "animatable": true,
+          "range": [
+            0,
+            500
+          ],
+          "role": "blur amount"
+        }
+      ]
+    }
+  },
+  "semanticStyles": {
+    "fx_none": {
+      "meaning": {
+        "label": "NONE / clean",
+        "useWhen": [
+          "нет акцента, просто читать/смотреть"
+        ],
+        "avoidWhen": [
+          "нужно подчеркнуть пик/удар"
+        ]
+      },
+      "effects": []
+    },
+    "fx_default_glow_v1": {
+      "meaning": {
+        "label": "DEFAULT / consistent glow",
+        "useWhen": [
+          "почти весь трек как базовый look",
+          "нужен мягкий стиль, но без 'ударов'"
+        ],
+        "avoidWhen": [
+          "очень грязный/агрессивный клип, где glow мешает деталям"
+        ]
+      },
+      "effects": [
+        {
+          "id": "deep_glow",
+          "presetId": "ef_deep_glow",
+          "allowedParams": [
+            "radius",
+            "exposure",
+            "threshold"
+          ],
+          "defaultOverrides": {
+            "radius": 750,
+            "exposure": 0.025,
+            "threshold": 0
+          }
+        }
+      ]
+    },
+    "fx_emphasis_soft_v1": {
+      "meaning": {
+        "label": "SOFT EMPHASIS / small accent",
+        "useWhen": [
+          "важное слово без жёсткого конфликта",
+          "лёгкий подъём энергии",
+          "подчеркнуть окончание фразы"
+        ],
+        "avoidWhen": [
+          "жёсткий дроп/обвинение (там нужен DROP)",
+          "момент тишины/шёпота"
+        ]
+      },
+      "effects": [
+        {
+          "id": "transform",
+          "presetId": "ef_transform_geo",
+          "allowedParams": [
+            "scale_height",
+            "scale_width",
+            "rotation"
+          ],
+          "overrideGuidance": {
+            "scale_height": "quick bump: 100 -> (110..140) -> 100 inside window",
+            "rotation": "optional tiny tilt (<= 3deg) if needed"
+          },
+          "defaultOverrides": {
+            "scale_width": 100,
+            "scale_height": 100,
+            "rotation": 0
+          }
+        },
+        {
+          "id": "dir_blur",
+          "presetId": "ef_dir_blur",
+          "allowedParams": [
+            "direction",
+            "blur_length"
+          ],
+          "overrideGuidance": {
+            "blur_length": "short smear on peaks only (0..60)"
+          },
+          "defaultOverrides": {
+            "direction": 90,
+            "blur_length": 0
+          }
+        }
+      ]
+    },
+    "fx_drop_ultrahardbass_v1": {
+      "meaning": {
+        "label": "DROP / удар / 'ультрахардбасс'",
+        "useWhen": [
+          "обвинение/конфликт/надлом",
+          "смысловой удар (drop)",
+          "резкий поворот или кульминация"
+        ],
+        "avoidWhen": [
+          "ровная подача без пиков",
+          "очень длинные спокойные фразы"
+        ]
+      },
+      "effects": [
+        {
+          "id": "lens_blur",
+          "presetId": "ef_bcc_lens_blur",
+          "allowedParams": [
+            "iris_scale",
+            "gamma"
+          ],
+          "overrideGuidance": {
+            "iris_scale": "classic squeeze: high -> 0 -> 0 -> high; hold at 0 across middle",
+            "gamma": "usually keep static"
+          },
+          "defaultOverrides": {
+            "gamma": 1.0
+          }
+        },
+        {
+          "id": "curves",
+          "presetId": "ef_curves",
+          "allowedParams": [],
+          "defaultOverrides": {}
+        },
+        {
+          "id": "transform_main",
+          "presetId": "ef_transform_geo",
+          "allowedParams": [
+            "scale_height",
+            "scale_width"
+          ],
+          "overrideGuidance": {
+            "scale_height": "squash: (200..300) -> 100 -> 100 -> (200..300)",
+            "scale_width": "usually keep 100 unless you want stretch"
+          },
+          "defaultOverrides": {
+            "scale_width": 100,
+            "scale_height": 100
+          }
+        },
+        {
+          "id": "transform_shake",
+          "presetId": "ef_transform_geo",
+          "allowedParams": [
+            "position"
+          ],
+          "overrideGuidance": {
+            "position": "use 2-6 keys around impact; expression does decay"
+          },
+          "defaultOverrides": {
+            "position": {
+              "expression": "n=0;\r\nif (numKeys > 0 ){\r\nn = nearestKey(time) .index;\r\nif (key(n) .time > time ){\r\nn--;\r\n}\r\n}\r\nif (n == 0 ){\r\nt = 0;\r\n}else {\r\nt = time - key(n) .time;\r\n}\r\nif (n > 0 && t < 1){\r\nv = velocityAtTime (key(n) .time - thisComp.frameDuration/10);\r\namp = .02;\r\nfreq = 2.0;\r\ndecay = 6.0;\r\nvalue + v*amp*Math.sin\r\n(freq*t*2*Math.PI)/Math.exp(decay*t);\r\n}else{\r\nvalue;\r\n}"
+            }
+          }
+        },
+        {
+          "id": "zoom_blur",
+          "presetId": "ef_s_blurmotion",
+          "allowedParams": [
+            "z_dist",
+            "center_xy"
+          ],
+          "overrideGuidance": {
+            "z_dist": "zoom pulse: low -> high -> high -> low",
+            "center_xy": "usually stay at comp center; animate only if needed"
+          },
+          "defaultOverrides": {
+            "z_dist": 0.0
+          }
+        }
+      ]
+    }
+  }
+}

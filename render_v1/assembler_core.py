@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 from config import Config
+from render_v1.effects_logic import resolve_effect_stack
 from .models import Payload
 
 cfg = Config.from_env()
@@ -21,6 +22,9 @@ ENV_DEFAULTS: Dict[str, Any] = {
 
 # fallback-длительность, если модель не указала отрезок
 DEFAULT_DURATION: float = 15.0
+
+
+EFFECTS_LIBRARY_PATH = Path("config/styles/effects_library.json")
 
 
 def load_json(path: Path) -> dict:
@@ -45,6 +49,72 @@ except Exception as exc:  # noqa: BLE001
 PROJECT_TEMPLATE_DEFAULTS: Dict[str, Any] = (
     _PROJECT_TEMPLATE.get("defaults", {}) if isinstance(_PROJECT_TEMPLATE, dict) else {}
 ) or {}
+
+
+def _expand_normalized_keys(value_data: Any, start_time: float, end_time: float) -> Any:
+    if not isinstance(value_data, dict) or "keys" not in value_data:
+        return value_data
+
+    keys = value_data.get("keys")
+    if not isinstance(keys, list):
+        return value_data
+
+    dur = max(0.0, end_time - start_time)
+    changed = False
+    norm_keys = []
+    for k in keys:
+        if isinstance(k, dict) and ("time" not in k) and ("t" in k):
+            try:
+                t = float(k.get("t"))
+            except Exception:  # noqa: BLE001
+                norm_keys.append(k)
+                continue
+            kk = dict(k)
+            kk["time"] = start_time + t * dur
+            kk.pop("t", None)
+            norm_keys.append(kk)
+            changed = True
+        else:
+            norm_keys.append(k)
+
+    if not changed:
+        return value_data
+
+    vd = dict(value_data)
+    vd["keys"] = norm_keys
+    return vd
+
+
+def _build_effect_instance(
+    preset: Dict[str, Any], overrides: Dict[str, Any], layer_in: float, layer_out: float
+) -> Dict[str, Any] | None:
+    prop_tree = preset.get("propertyTree") or {}
+    match_name = prop_tree.get("matchName") if isinstance(prop_tree, dict) else None
+    if not isinstance(match_name, str):
+        return None
+
+    exposed = preset.get("exposedParams") or []
+    path_by_key: Dict[str, str] = {}
+    if isinstance(exposed, list):
+        for ep in exposed:
+            if not isinstance(ep, dict):
+                continue
+            key = ep.get("key")
+            path = ep.get("matchNamePath")
+            if isinstance(key, str) and isinstance(path, str):
+                path_by_key[key] = path
+
+    params: Dict[str, Any] = {}
+    for k, v in (overrides or {}).items():
+        path = path_by_key.get(k)
+        if not path:
+            continue
+        params[path] = _expand_normalized_keys(v, layer_in, layer_out)
+
+    out: Dict[str, Any] = {"matchName": match_name}
+    if params:
+        out["params"] = params
+    return out
 
 
 def process_layer(
@@ -140,6 +210,8 @@ def build_project_payload_from_composition(
     """
     styles_data = load_json(styles_path)
     presets_data = load_json(presets_path)
+    effects_library = load_json(EFFECTS_LIBRARY_PATH)
+    effect_presets = effects_library.get("effectPresets", {}) if isinstance(effects_library, dict) else {}
 
     project_settings = composition.get("projectSettings", {}) or {}
     ps_defaults = project_settings.get("defaults") or {}
@@ -212,6 +284,27 @@ def build_project_payload_from_composition(
                     presets_lib=presets_data,
                     global_fit_policy=global_fit_policy,
                 )
+
+                if processed_layer.get("type") == "adjustment":
+                    layer_in = float(processed_layer.get("inPoint", 0.0) or 0.0)
+                    layer_out = float(processed_layer.get("outPoint", layer_in) or layer_in)
+                    stack = resolve_effect_stack(processed_layer, effects_library)
+                    if stack:
+                        fx_list = []
+                        for inst in stack:
+                            if not inst or inst.get("enabled") is False:
+                                continue
+                            preset_id = inst.get("presetId")
+                            preset = effect_presets.get(preset_id) if preset_id else None
+                            if not preset:
+                                continue
+                            overrides = inst.get("overrides") or {}
+                            fx_conf = _build_effect_instance(preset, overrides, layer_in, layer_out)
+                            if fx_conf:
+                                fx_list.append(fx_conf)
+                        if fx_list:
+                            processed_layer["effects"] = fx_list
+
                 processed_layers.append(processed_layer)
             item["layers"] = processed_layers
 

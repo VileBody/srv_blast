@@ -13,6 +13,7 @@ log = logging.getLogger(__name__)
 STYLES_DIR = Path(__file__).resolve().parent.parent.parent / "config" / "styles"
 TEXT_STYLES_PATH = STYLES_DIR / "text_styles.json"
 FOOTAGE_PRESETS_PATH = STYLES_DIR / "footage_presets.json"
+EFFECTS_LIBRARY_PATH = STYLES_DIR / "effects_library.json"
 
 
 def _load_json(path: Path) -> Dict[str, Any]:
@@ -28,6 +29,7 @@ def _load_json(path: Path) -> Dict[str, Any]:
 
 _TEXT_STYLES = _load_json(TEXT_STYLES_PATH)
 _FOOTAGE_PRESETS = _load_json(FOOTAGE_PRESETS_PATH)
+_EFFECTS_LIBRARY = _load_json(EFFECTS_LIBRARY_PATH)
 
 _SUBTITLE_STYLE_KEYS = {
     SubtitleStyle.DEFAULT: "main_subtitle",
@@ -54,3 +56,9 @@ def get_footage_preset(preset_id: FootagePresetId | str) -> Dict[str, Any]:
 
     pid = preset_id.value if isinstance(preset_id, FootagePresetId) else str(preset_id)
     return copy.deepcopy(_FOOTAGE_PRESETS.get(pid, {}))
+
+
+def get_effects_library() -> Dict[str, Any]:
+    """Возвращает полную библиотеку эффектов (как есть)."""
+
+    return copy.deepcopy(_EFFECTS_LIBRARY)

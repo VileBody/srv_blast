@@ -154,14 +154,53 @@
 
     function setPropValue(aeProp, valueData) {
         if (valueData === undefined || valueData === null) return;
-        if (typeof valueData === "object" && valueData.keys && valueData.keys.length > 0) {
-            if (aeProp.canSetExpression) aeProp.expression = "";
+
+        var isObj = (typeof valueData === "object") && !Array.isArray(valueData);
+
+        if (isObj && valueData.expression !== undefined && aeProp.canSetExpression) {
+            try {
+                aeProp.expression = valueData.expression || "";
+            } catch (eExpr) {}
+        }
+
+        if (isObj && valueData.keys && valueData.keys.length > 0) {
+            if (aeProp.canSetExpression) aeProp.expression = valueData.expression || "";
             for (var i = 0; i < valueData.keys.length; i++) {
                 var k = valueData.keys[i];
+                if (k.time === undefined || k.value === undefined) continue;
                 aeProp.setValueAtTime(k.time, k.value);
             }
-        } else {
-            aeProp.setValue(valueData);
+            return;
+        }
+
+        if (isObj && valueData.value !== undefined) {
+            aeProp.setValue(valueData.value);
+            return;
+        }
+
+        aeProp.setValue(valueData);
+    }
+
+    function applyEffects(layer, effectsConf) {
+        if (!effectsConf || !effectsConf.length) return;
+        var parade = layer.property("ADBE Effect Parade");
+        if (!parade) return;
+
+        for (var i = 0; i < effectsConf.length; i++) {
+            var fxConf = effectsConf[i];
+            if (!fxConf || !fxConf.matchName) continue;
+            var fx = null;
+            try {
+                fx = parade.addProperty(fxConf.matchName);
+            } catch (eAdd) {
+                continue;
+            }
+            if (!fx || !fxConf.params) continue;
+            for (var key in fxConf.params) {
+                if (!fxConf.params.hasOwnProperty(key)) continue;
+                var p = fx.property(key);
+                if (p) setPropValue(p, fxConf.params[key]);
+            }
         }
     }
 
@@ -280,6 +319,10 @@
             if (tr.position) setPropValue(layer.transform.position, tr.position);
             if (tr.rotation) setPropValue(layer.transform.rotation, tr.rotation);
             if (tr.opacity)  setPropValue(layer.transform.opacity,  tr.opacity);
+        }
+
+        if (config.effects) {
+            applyEffects(layer, config.effects);
         }
     }
 
