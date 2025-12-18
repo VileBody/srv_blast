@@ -1,0 +1,713 @@
+{
+  "libraryVersion": "0.3",
+  "meta": {
+    "createdAt": "2025-12-17",
+    "notes": [
+      "Semantic catalog of adjustment-layer effect styles.",
+      "LLM выбирает effectStyleId (строго из списка), а keyframes retime'ятся через t∈[0..1] внутри окна слоя.",
+      "Пока не трогаем 'интенсивности' (значения); модель может менять только t/time у keyframes, оставляя value как в пресете."
+    ]
+  },
+  "keyTemplates": {
+    "tpl_linear": {
+      "interp": "linear",
+      "temporalEase": null
+    }
+  },
+  "effectPresets": {
+    "ef_bcc_lens_blur": {
+      "description": "BCC Lens Blur – iris/focus pulse",
+      "propertyTree": {
+        "matchName": "BCC6LensBlur",
+        "name": "BCC Lens Blur"
+      },
+      "exposedParams": [
+        {
+          "key": "iris_scale",
+          "matchNamePath": "BCC6LensBlur-9961714",
+          "meaning": "Iris Scale (blur amount proxy)"
+        },
+        {
+          "key": "gamma",
+          "matchNamePath": "BCC6LensBlur-9961786",
+          "meaning": "Gamma"
+        }
+      ],
+      "paramMeta": {
+        "iris_scale": {
+          "type": "float"
+        },
+        "gamma": {
+          "type": "float"
+        }
+      }
+    },
+    "ef_curves": {
+      "description": "Curves – in AE this is often CUSTOM_VALUE; keep as placeholder for look parity",
+      "propertyTree": {
+        "matchName": "ADBE CurvesCustom",
+        "name": "Curves"
+      },
+      "exposedParams": [],
+      "paramMeta": {}
+    },
+    "ef_transform_geo": {
+      "description": "Transform (Geometry2) – scale/pos/rotation. Used both for squash/stretch and shake driver.",
+      "propertyTree": {
+        "matchName": "ADBE Geometry2",
+        "name": "Transform"
+      },
+      "exposedParams": [
+        {
+          "key": "position",
+          "matchNamePath": "ADBE Geometry2-0002",
+          "meaning": "Position"
+        },
+        {
+          "key": "scale_height",
+          "matchNamePath": "ADBE Geometry2-0003",
+          "meaning": "Scale Height"
+        },
+        {
+          "key": "scale_width",
+          "matchNamePath": "ADBE Geometry2-0004",
+          "meaning": "Scale Width"
+        },
+        {
+          "key": "rotation",
+          "matchNamePath": "ADBE Geometry2-0007",
+          "meaning": "Rotation"
+        }
+      ],
+      "paramMeta": {
+        "position": {
+          "type": "vec2"
+        },
+        "scale_height": {
+          "type": "float"
+        },
+        "scale_width": {
+          "type": "float"
+        },
+        "rotation": {
+          "type": "float"
+        }
+      }
+    },
+    "ef_s_blurmotion": {
+      "description": "Sapphire BlurMotion – zoom/center based blur",
+      "propertyTree": {
+        "matchName": "S_BlurMotion",
+        "name": "S_BlurMotion"
+      },
+      "exposedParams": [
+        {
+          "key": "center",
+          "matchNamePath": "S_BlurMotion-0050",
+          "meaning": "Center"
+        },
+        {
+          "key": "z_dist",
+          "matchNamePath": "S_BlurMotion-0051",
+          "meaning": "From Z Dist (zoom amount)"
+        }
+      ],
+      "paramMeta": {
+        "center": {
+          "type": "vec2"
+        },
+        "z_dist": {
+          "type": "float"
+        }
+      }
+    },
+    "ef_deep_glow": {
+      "description": "Plugin Deep Glow – halo around text",
+      "propertyTree": {
+        "matchName": "PEDG",
+        "name": "Deep Glow"
+      },
+      "exposedParams": [
+        {
+          "key": "radius",
+          "matchNamePath": "PEDG-0001",
+          "meaning": "Radius"
+        },
+        {
+          "key": "exposure",
+          "matchNamePath": "PEDG-0002",
+          "meaning": "Exposure"
+        },
+        {
+          "key": "threshold",
+          "matchNamePath": "PEDG-0004",
+          "meaning": "Threshold"
+        }
+      ],
+      "paramMeta": {
+        "radius": {
+          "type": "float"
+        },
+        "exposure": {
+          "type": "float"
+        },
+        "threshold": {
+          "type": "float"
+        }
+      }
+    },
+    "ef_directional_blur": {
+      "description": "Directional Blur (built-in) – motion smear",
+      "propertyTree": {
+        "matchName": "ADBE Motion Blur",
+        "name": "Directional Blur"
+      },
+      "exposedParams": [
+        {
+          "key": "direction",
+          "matchNamePath": "ADBE Motion Blur-0001",
+          "meaning": "Direction"
+        },
+        {
+          "key": "blur_length",
+          "matchNamePath": "ADBE Motion Blur-0002",
+          "meaning": "Blur Length"
+        }
+      ],
+      "paramMeta": {
+        "direction": {
+          "type": "float"
+        },
+        "blur_length": {
+          "type": "float"
+        }
+      }
+    }
+  },
+  "semanticStyles": {
+    "ftg_al16_default_v1": {
+      "meaning": "FOOTAGE: default 'sandwich' stack (Adjustment Layer 16). LensBlur + Curves + Transform(rot) + Transform(shake+scale) + ZoomBlur.",
+      "applicableTo": [
+        "footage"
+      ],
+      "effects": [
+        {
+          "id": "lens_blur",
+          "presetId": "ef_bcc_lens_blur",
+          "enabled": true
+        },
+        {
+          "id": "curves",
+          "presetId": "ef_curves",
+          "enabled": true
+        },
+        {
+          "id": "transform_rot",
+          "presetId": "ef_transform_geo",
+          "enabled": true
+        },
+        {
+          "id": "transform_shake",
+          "presetId": "ef_transform_geo",
+          "enabled": true
+        },
+        {
+          "id": "zoom_blur",
+          "presetId": "ef_s_blurmotion",
+          "enabled": true
+        }
+      ],
+      "mainAnimParams": [
+        {
+          "instanceId": "lens_blur",
+          "param": "iris_scale",
+          "meaning": "blur pulse"
+        },
+        {
+          "instanceId": "transform_rot",
+          "param": "rotation",
+          "meaning": "micro-tilt oscillation"
+        },
+        {
+          "instanceId": "transform_shake",
+          "param": "position",
+          "meaning": "shake driver (expression + keys)"
+        },
+        {
+          "instanceId": "transform_shake",
+          "param": "scale_height",
+          "meaning": "squeeze / vertical stretch"
+        },
+        {
+          "instanceId": "zoom_blur",
+          "param": "z_dist",
+          "meaning": "zoom intensity pulse"
+        }
+      ],
+      "defaultOverrides": {
+        "lens_blur": {
+          "iris_scale": {
+            "keys": [
+              {
+                "t": 0.0,
+                "value": 7
+              },
+              {
+                "t": 0.140187,
+                "value": 0
+              },
+              {
+                "t": 0.859813,
+                "value": 0
+              },
+              {
+                "t": 1.0,
+                "value": 7
+              }
+            ]
+          }
+        },
+        "transform_rot": {
+          "rotation": {
+            "keys": [
+              {
+                "t": 0.018692,
+                "value": 0
+              },
+              {
+                "t": 0.037383,
+                "value": -2.31173844529328
+              },
+              {
+                "t": 0.065421,
+                "value": 2.35358969922374
+              },
+              {
+                "t": 0.11215,
+                "value": -0.68483235256938
+              },
+              {
+                "t": 0.17757,
+                "value": 2.90471844799356e-07
+              },
+              {
+                "t": 0.831776,
+                "value": 2.90471844799356e-07
+              },
+              {
+                "t": 0.897196,
+                "value": -0.68483235256938
+              },
+              {
+                "t": 0.943925,
+                "value": 2.35358969922374
+              },
+              {
+                "t": 0.971963,
+                "value": -2.31173844529328
+              },
+              {
+                "t": 0.990654,
+                "value": 0
+              }
+            ]
+          }
+        },
+        "transform_shake": {
+          "position": {
+            "expression": "n=0;\r\nif (numKeys > 0 ) {\r\nn = nearestKey(time) .index;\r\nif (key(n) .time > time ){\r\nn--;\r\n}\r\n}\r\nif (n == 0 ){\r\nt = 0;\r\n}else {\r\nt = time - key(n) .time;\r\n}\r\nif (n > 0 && t < 1){\r\nv = velocityAtTime (key(n) .time - thisComp.frameDuration/10);\r\namp = .02;\r\nfreq = 2.0;\r\ndecay = 6.0;\r\nvalue + v*amp*Math.sin\r\n(freq*t*2*Math.PI)/Math.exp(decay*t);\r\n}else{\r\nvalue;\r\n}",
+            "keys": [
+              {
+                "t": 0.018692,
+                "value": [
+                  540,
+                  782
+                ]
+              },
+              {
+                "t": 0.028037,
+                "value": [
+                  540,
+                  540
+                ]
+              }
+            ]
+          },
+          "scale_height": {
+            "keys": [
+              {
+                "t": 0.018692,
+                "value": 265
+              },
+              {
+                "t": 0.158879,
+                "value": 100
+              },
+              {
+                "t": 0.831776,
+                "value": 100
+              },
+              {
+                "t": 0.971963,
+                "value": 265
+              }
+            ]
+          },
+          "scale_width": 100
+        },
+        "zoom_blur": {
+          "z_dist": {
+            "keys": [
+              {
+                "t": 0.009346,
+                "value": 0.5
+              },
+              {
+                "t": 0.056075,
+                "value": 0.8
+              },
+              {
+                "t": 0.934579,
+                "value": 0.8
+              },
+              {
+                "t": 0.981308,
+                "value": 0.5
+              }
+            ]
+          }
+        }
+      }
+    },
+    "txt_soft_v1": {
+      "meaning": "TEXT: default soft lyric line (readable, gentle).",
+      "applicableTo": [
+        "text"
+      ],
+      "effects": [
+        {
+          "id": "glow",
+          "presetId": "ef_deep_glow",
+          "enabled": true
+        },
+        {
+          "id": "transform",
+          "presetId": "ef_transform_geo",
+          "enabled": true
+        }
+      ],
+      "mainAnimParams": [
+        {
+          "instanceId": "transform",
+          "param": "scale_height",
+          "meaning": "subtle breathing"
+        },
+        {
+          "instanceId": "transform",
+          "param": "rotation",
+          "meaning": "tiny tilt"
+        }
+      ],
+      "defaultOverrides": {
+        "glow": {
+          "radius": 750,
+          "exposure": 0.025,
+          "threshold": 0
+        },
+        "transform": {
+          "scale_width": 100,
+          "scale_height": {
+            "keys": [
+              {
+                "t": 0.0,
+                "value": 110
+              },
+              {
+                "t": 0.35,
+                "value": 100
+              },
+              {
+                "t": 1.0,
+                "value": 105
+              }
+            ]
+          },
+          "rotation": {
+            "keys": [
+              {
+                "t": 0.0,
+                "value": -3
+              },
+              {
+                "t": 1.0,
+                "value": 0
+              }
+            ]
+          }
+        }
+      }
+    },
+    "txt_punch_v1": {
+      "meaning": "TEXT: punch/hype (quick squash+stretch + smear).",
+      "applicableTo": [
+        "text"
+      ],
+      "effects": [
+        {
+          "id": "transform",
+          "presetId": "ef_transform_geo",
+          "enabled": true
+        },
+        {
+          "id": "dir_blur",
+          "presetId": "ef_directional_blur",
+          "enabled": true
+        }
+      ],
+      "mainAnimParams": [
+        {
+          "instanceId": "transform",
+          "param": "scale_width",
+          "meaning": "stretch"
+        },
+        {
+          "instanceId": "transform",
+          "param": "scale_height",
+          "meaning": "squash"
+        },
+        {
+          "instanceId": "dir_blur",
+          "param": "blur_length",
+          "meaning": "smear pulse"
+        }
+      ],
+      "defaultOverrides": {
+        "transform": {
+          "scale_width": {
+            "keys": [
+              {
+                "t": 0.0,
+                "value": 100
+              },
+              {
+                "t": 0.15,
+                "value": 150
+              },
+              {
+                "t": 0.35,
+                "value": 100
+              }
+            ]
+          },
+          "scale_height": {
+            "keys": [
+              {
+                "t": 0.0,
+                "value": 100
+              },
+              {
+                "t": 0.15,
+                "value": 75
+              },
+              {
+                "t": 0.35,
+                "value": 100
+              }
+            ]
+          },
+          "rotation": {
+            "keys": [
+              {
+                "t": 0.0,
+                "value": 0
+              },
+              {
+                "t": 0.15,
+                "value": -5
+              },
+              {
+                "t": 0.35,
+                "value": 0
+              }
+            ]
+          }
+        },
+        "dir_blur": {
+          "direction": 90,
+          "blur_length": {
+            "keys": [
+              {
+                "t": 0.0,
+                "value": 0
+              },
+              {
+                "t": 0.15,
+                "value": 50
+              },
+              {
+                "t": 0.35,
+                "value": 0
+              }
+            ]
+          }
+        }
+      }
+    },
+    "txt_drop_v1": {
+      "meaning": "TEXT: drop / hard impact (slam + zoom).",
+      "applicableTo": [
+        "text"
+      ],
+      "effects": [
+        {
+          "id": "glow",
+          "presetId": "ef_deep_glow",
+          "enabled": true
+        },
+        {
+          "id": "transform",
+          "presetId": "ef_transform_geo",
+          "enabled": true
+        },
+        {
+          "id": "dir_blur",
+          "presetId": "ef_directional_blur",
+          "enabled": true
+        },
+        {
+          "id": "zoom_blur",
+          "presetId": "ef_s_blurmotion",
+          "enabled": true
+        }
+      ],
+      "mainAnimParams": [
+        {
+          "instanceId": "transform",
+          "param": "scale_width",
+          "meaning": "stretch"
+        },
+        {
+          "instanceId": "transform",
+          "param": "scale_height",
+          "meaning": "squash"
+        },
+        {
+          "instanceId": "dir_blur",
+          "param": "blur_length",
+          "meaning": "smear pulse"
+        },
+        {
+          "instanceId": "zoom_blur",
+          "param": "z_dist",
+          "meaning": "zoom pulse"
+        }
+      ],
+      "defaultOverrides": {
+        "glow": {
+          "radius": 750,
+          "exposure": 0.035,
+          "threshold": 0
+        },
+        "transform": {
+          "scale_width": {
+            "keys": [
+              {
+                "t": 0.0,
+                "value": 160
+              },
+              {
+                "t": 0.18,
+                "value": 100
+              },
+              {
+                "t": 0.82,
+                "value": 100
+              },
+              {
+                "t": 1.0,
+                "value": 140
+              }
+            ]
+          },
+          "scale_height": {
+            "keys": [
+              {
+                "t": 0.0,
+                "value": 60
+              },
+              {
+                "t": 0.18,
+                "value": 100
+              },
+              {
+                "t": 0.82,
+                "value": 100
+              },
+              {
+                "t": 1.0,
+                "value": 160
+              }
+            ]
+          },
+          "rotation": {
+            "keys": [
+              {
+                "t": 0.0,
+                "value": -12
+              },
+              {
+                "t": 0.18,
+                "value": 0
+              },
+              {
+                "t": 1.0,
+                "value": 6
+              }
+            ]
+          }
+        },
+        "dir_blur": {
+          "direction": 90,
+          "blur_length": {
+            "keys": [
+              {
+                "t": 0.0,
+                "value": 90
+              },
+              {
+                "t": 0.18,
+                "value": 0
+              },
+              {
+                "t": 1.0,
+                "value": 60
+              }
+            ]
+          }
+        },
+        "zoom_blur": {
+          "z_dist": {
+            "keys": [
+              {
+                "t": 0.0,
+                "value": 0.5
+              },
+              {
+                "t": 0.18,
+                "value": 0.8
+              },
+              {
+                "t": 0.82,
+                "value": 0.8
+              },
+              {
+                "t": 1.0,
+                "value": 0.5
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}

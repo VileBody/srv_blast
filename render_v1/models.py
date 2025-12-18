@@ -70,6 +70,7 @@ class TextLayer(BaseLayer):
 
 class AdjustmentLayer(BaseLayer):
     type: Literal["adjustment"]
+    effects: Optional[List[dict]] = None
 
 
 LayerType = Union[RefLayer, TextLayer, AdjustmentLayer]

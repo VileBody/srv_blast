@@ -4,9 +4,10 @@ from __future__ import annotations
 import copy
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from config import Config
+from render_v1.effects_logic import resolve_effect_stack, stack_to_ae_effects_conf
 from .models import Payload
 
 cfg = Config.from_env()
@@ -36,11 +37,18 @@ def load_json(path: Path) -> dict:
 
 # project_settings_template.json по аналогии с text_styles / footage_presets
 PROJECT_SETTINGS_TEMPLATE_PATH = Path("config/styles/project_settings_template.json")
+EFFECTS_LIBRARY_PATH = Path("config/styles/effects_library.json")
 try:
     _PROJECT_TEMPLATE = load_json(PROJECT_SETTINGS_TEMPLATE_PATH)
 except Exception as exc:  # noqa: BLE001
     print(f"[assembler_core] WARNING: failed to load {PROJECT_SETTINGS_TEMPLATE_PATH}: {exc}")
     _PROJECT_TEMPLATE = {}
+
+try:
+    _EFFECTS_LIBRARY = load_json(EFFECTS_LIBRARY_PATH)
+except Exception as exc:  # noqa: BLE001
+    print(f"[assembler_core] WARNING: failed to load {EFFECTS_LIBRARY_PATH}: {exc}")
+    _EFFECTS_LIBRARY = {}
 
 PROJECT_TEMPLATE_DEFAULTS: Dict[str, Any] = (
     _PROJECT_TEMPLATE.get("defaults", {}) if isinstance(_PROJECT_TEMPLATE, dict) else {}
@@ -51,6 +59,7 @@ def process_layer(
     layer: dict,
     styles_lib: dict,
     presets_lib: dict,
+    effects_lib: Optional[dict] = None,
     global_fit_policy: str | None = None,
 ) -> dict:
     """
@@ -59,6 +68,7 @@ def process_layer(
       - presetId -> transform (с учётом fitPolicy),
       - global_fit_policy -> fitPolicy для ref-слоёв (если локально не задано),
       - если есть inPoint, но нет startTime — ставим startTime = inPoint.
+      - effectStyleId/effectOverrides -> effects (для adjustment-слоёв)
     """
     if "inPoint" in layer and "startTime" not in layer:
         layer["startTime"] = layer["inPoint"]
@@ -110,6 +120,49 @@ def process_layer(
     if layer.get("type") == "ref" and global_fit_policy and "fitPolicy" not in layer:
         layer["fitPolicy"] = global_fit_policy
 
+    # EFFECT STYLE: semantic adjustment-layer presets
+    if layer.get("type") == "adjustment" and effects_lib:
+        existing_effects = layer.get("effects")
+        effect_style_id = (
+            layer.get("effectStyleId")
+            or layer.get("fxStyleId")
+            or layer.get("effectsStyleId")
+        )
+        effect_overrides = (
+            layer.get("effectOverrides")
+            or layer.get("fxOverrides")
+            or layer.get("effectsOverrides")
+            or {}
+        )
+
+        if not existing_effects and effect_style_id:
+            layer_in = float(layer.get("inPoint") or layer.get("startTime") or 0.0)
+            layer_out = float(layer.get("outPoint") or layer_in)
+            try:
+                stack = resolve_effect_stack(effect_style_id, effect_overrides, effects_lib)
+                layer["effects"] = stack_to_ae_effects_conf(
+                    stack,
+                    effects_library=effects_lib,
+                    layer_in=layer_in,
+                    layer_out=layer_out,
+                )
+            except Exception as exc:  # noqa: BLE001
+                print(
+                    f"[effects] failed to resolve style={effect_style_id} for layer={layer.get('name')}: {exc}"
+                )
+
+        # Cleanup aux keys to avoid leaking into downstream validators
+        for key in (
+            "effectStyleId",
+            "effectsStyleId",
+            "fxStyleId",
+            "effectOverrides",
+            "effectsOverrides",
+            "fxOverrides",
+        ):
+            if key in layer:
+                layer.pop(key)
+
     return layer
 
 
@@ -140,6 +193,7 @@ def build_project_payload_from_composition(
     """
     styles_data = load_json(styles_path)
     presets_data = load_json(presets_path)
+    effects_data = copy.deepcopy(_EFFECTS_LIBRARY)
 
     project_settings = composition.get("projectSettings", {}) or {}
     ps_defaults = project_settings.get("defaults") or {}
@@ -210,6 +264,7 @@ def build_project_payload_from_composition(
                     layer,
                     styles_lib=styles_data,
                     presets_lib=presets_data,
+                    effects_lib=effects_data,
                     global_fit_policy=global_fit_policy,
                 )
                 processed_layers.append(processed_layer)
