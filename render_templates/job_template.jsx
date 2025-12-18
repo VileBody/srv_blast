@@ -152,16 +152,105 @@
     var fRef     = getFolder("99_REF");
     var fSolids  = getFolder("00_SOLIDS");
 
-    function setPropValue(aeProp, valueData) {
+    function _resolveKeyTime(k, layerCtx) {
+        if (!k) return null;
+        if (k.time !== undefined && k.time !== null) return k.time;
+        if (k.t !== undefined && k.t !== null && layerCtx) {
+            var dur = (layerCtx.outPoint - layerCtx.inPoint);
+            return layerCtx.inPoint + (k.t * dur);
+        }
+        return null;
+    }
+
+    function setPropValue(aeProp, valueData, layerCtx) {
+        if (!aeProp) return;
         if (valueData === undefined || valueData === null) return;
-        if (typeof valueData === "object" && valueData.keys && valueData.keys.length > 0) {
-            if (aeProp.canSetExpression) aeProp.expression = "";
+
+        var isObj = (typeof valueData === "object") && !Array.isArray(valueData);
+
+        // expression first (if any)
+        if (isObj && valueData.expression !== undefined && aeProp.canSetExpression) {
+            try {
+                aeProp.expression = valueData.expression || "";
+            } catch (eExpr) {
+                logLine("WARN: expression set failed: " + eExpr.toString());
+            }
+        }
+
+        // keyframes
+        if (isObj && valueData.keys && valueData.keys.length > 0) {
             for (var i = 0; i < valueData.keys.length; i++) {
                 var k = valueData.keys[i];
-                aeProp.setValueAtTime(k.time, k.value);
+                if (!k) continue;
+                var t = _resolveKeyTime(k, layerCtx);
+                if (t === null || t === undefined) continue;
+                if (k.value === undefined) continue;
+                try {
+                    aeProp.setValueAtTime(t, k.value);
+                } catch (eKey) {
+                    logLine("WARN: setValueAtTime failed: " + eKey.toString());
+                }
             }
-        } else {
+            return;
+        }
+
+        // wrapped value
+        if (isObj && valueData.value !== undefined) {
+            try {
+                aeProp.setValue(valueData.value);
+            } catch (eVal) {
+                logLine("WARN: setValue failed: " + eVal.toString());
+            }
+            return;
+        }
+
+        // raw scalar/array/object
+        try {
             aeProp.setValue(valueData);
+        } catch (eSet) {
+            logLine("WARN: setValue failed: " + eSet.toString());
+        }
+    }
+
+    function applyEffects(layer, effectsConf) {
+        if (!layer || !effectsConf || !effectsConf.length) return;
+        var parade = layer.property("ADBE Effect Parade");
+        if (!parade) {
+            logLine("WARN: no Effect Parade on layer: " + layer.name);
+            return;
+        }
+
+        for (var i = 0; i < effectsConf.length; i++) {
+            var fxConf = effectsConf[i];
+            if (!fxConf || !fxConf.matchName) continue;
+
+            var fx = null;
+            try {
+                fx = parade.addProperty(fxConf.matchName);
+            } catch (eAdd) {
+                logLine("FX ADD FAIL: matchName=" + fxConf.matchName + " err=" + eAdd.toString());
+                continue;
+            }
+            if (!fx) {
+                logLine("FX ADD NULL: matchName=" + fxConf.matchName);
+                continue;
+            }
+
+            var params = fxConf.params || {};
+            for (var key in params) {
+                if (!params.hasOwnProperty(key)) continue;
+                var p = null;
+                try {
+                    p = fx.property(key);
+                } catch (eProp) {
+                    p = null;
+                }
+                if (!p) {
+                    logLine("FX PARAM MISSING: fx=" + fxConf.matchName + " key=" + key);
+                    continue;
+                }
+                setPropValue(p, params[key], layer);
+            }
         }
     }
 
@@ -223,9 +312,24 @@
                 textDocument.font = textDocConfig.font;
                 fontSet = true;
             }
-        } catch (eFont) {}
+        } catch (eFont) {
+            // AE может кинуть исключение, если шрифт отсутствует
+            logLine("FONT SET FAIL: requested='" + textDocConfig.font + "' err=" + eFont.toString());
+        }
+
+        // Даже если исключения нет, AE может молча подменить шрифт.
+        if (textDocConfig.font) {
+            try {
+                if (textDocument.font !== textDocConfig.font) {
+                    logLine("FONT SUBSTITUTED: requested='" + textDocConfig.font + "' got='" + textDocument.font + "'");
+                }
+            } catch (eChk) {}
+        }
         if (!fontSet) {
             try { textDocument.font = "Calibri"; } catch (eFb) {}
+            if (textDocConfig.font) {
+                logLine("FONT FALLBACK: requested='" + textDocConfig.font + "' -> Calibri");
+            }
         }
 
         if (textDocConfig.fontSize)  textDocument.fontSize  = textDocConfig.fontSize;
@@ -275,11 +379,15 @@
             // Если применяем fitPolicy (cover/contain), scale не трогаем —
             // auto-fit в applyFitPolicy уже выставит нужный размер.
             if (tr.scale && !config.fitPolicy) {
-                setPropValue(layer.transform.scale, tr.scale);
+                setPropValue(layer.transform.scale, tr.scale, layer);
             }
-            if (tr.position) setPropValue(layer.transform.position, tr.position);
-            if (tr.rotation) setPropValue(layer.transform.rotation, tr.rotation);
-            if (tr.opacity)  setPropValue(layer.transform.opacity,  tr.opacity);
+            if (tr.position) setPropValue(layer.transform.position, tr.position, layer);
+            if (tr.rotation) setPropValue(layer.transform.rotation, tr.rotation, layer);
+            if (tr.opacity)  setPropValue(layer.transform.opacity,  tr.opacity, layer);
+        }
+
+        if (config.effects) {
+            applyEffects(layer, config.effects);
         }
     }
 
