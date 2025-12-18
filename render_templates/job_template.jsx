@@ -453,6 +453,73 @@
 
             logLine("Populate comp: " + compConf.id + " with " + compConf.layers.length + " layers");
 
+            function _sameWindow(a, b) {
+                if (!a || !b) return false;
+                if (a.inPoint === undefined || b.inPoint === undefined) return false;
+                if (a.outPoint === undefined || b.outPoint === undefined) return false;
+                return (Math.abs(a.inPoint - b.inPoint) < 1e-6) && (Math.abs(a.outPoint - b.outPoint) < 1e-6);
+            }
+
+            // Build "units": either [base, adjustment] or [single]
+            function _normalizeLayerUnits(layers, compId) {
+                var units = [];
+                var i = 0;
+                while (i < layers.length) {
+                    var cur = layers[i];
+                    var nxt = (i + 1 < layers.length) ? layers[i + 1] : null;
+
+                    // Prefer pairing by equal window + one is adjustment
+                    if (cur && nxt && (cur.type === "adjustment" || nxt.type === "adjustment") && _sameWindow(cur, nxt)) {
+                        // ensure order base -> adjustment
+                        if (cur.type === "adjustment" && nxt.type !== "adjustment") {
+                            units.push([nxt, cur]);
+                        } else if (cur.type !== "adjustment" && nxt.type === "adjustment") {
+                            units.push([cur, nxt]);
+                        } else {
+                            // two adjustments or two bases; keep as singles
+                            units.push([cur]);
+                            i += 1;
+                            continue;
+                        }
+                        i += 2;
+                        continue;
+                    }
+
+                    units.push([cur]);
+                    i += 1;
+                }
+
+                // Sort units by base inPoint (stable-ish)
+                units.sort(function (ua, ub) {
+                    var a = ua[0] || {};
+                    var b = ub[0] || {};
+                    var ta = (a.inPoint !== undefined) ? a.inPoint : 0.0;
+                    var tb = (b.inPoint !== undefined) ? b.inPoint : 0.0;
+                    return ta - tb;
+                });
+
+                // In comp_main: keep Audio Ref at very bottom, Text Overlay at very top
+                if (compId === "comp_main") {
+                    var audioUnits = [];
+                    var overlayUnits = [];
+                    var otherUnits = [];
+                    for (var k = 0; k < units.length; k++) {
+                        var u = units[k];
+                        var base = u[0] || {};
+                        if (base.type === "ref" && (base.refId === "audio_main" || base.audioEnabled === true)) {
+                            audioUnits.push(u);
+                        } else if (base.type === "ref" && base.refId === "comp_text") {
+                            overlayUnits.push(u);
+                        } else {
+                            otherUnits.push(u);
+                        }
+                    }
+                    units = audioUnits.concat(otherUnits).concat(overlayUnits);
+                }
+
+                return units;
+            }
+
             function _createLayerFromConf(lConf) {
                 var layer = null;
                 if (lConf.type === "ref") {
@@ -480,33 +547,16 @@
                 return layer;
             }
 
-            // IMPORTANT:
-            // AE adds layers to the TOP when using comp.layers.add(...)
-            // To preserve JSON order visually, we create layers from END -> START,
-            // but keep base+adjustment pairing intact (base then its adjustment).
-            var L = compConf.layers;
-            var j = L.length - 1;
-            while (j >= 0) {
-                var cur = L[j];
-
-                // If we see adjustment and previous is its base layer, create base then adjustment
-                if (cur && cur.type === "adjustment" && j > 0) {
-                    var prev = L[j - 1];
-                    if (prev && prev.type !== "adjustment") {
-                        var baseLayer = _createLayerFromConf(prev);
-                        if (baseLayer) setupGeneralLayer(baseLayer, prev);
-
-                        var adjLayer = _createLayerFromConf(cur);
-                        if (adjLayer) setupGeneralLayer(adjLayer, cur);
-
-                        j -= 2;
-                        continue;
-                    }
+            // Normalize pairs/order FIRST, then create in forward order.
+            // Forward order works well with AE "add to top": last created ends up on top.
+            var units = _normalizeLayerUnits(compConf.layers, compConf.id);
+            for (var ui = 0; ui < units.length; ui++) {
+                var unit = units[ui];
+                for (var li = 0; li < unit.length; li++) {
+                    var conf = unit[li];
+                    var layer = _createLayerFromConf(conf);
+                    if (layer) setupGeneralLayer(layer, conf);
                 }
-
-                var layer = _createLayerFromConf(cur);
-                if (layer) setupGeneralLayer(layer, cur);
-                j -= 1;
             }
         }
 
