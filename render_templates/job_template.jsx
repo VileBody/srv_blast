@@ -1,6 +1,17 @@
 // render_templates/job_template.jsx
 (function () {
     // ==========================================
+    // 0.1. LEGACY JS HELPERS (ExtendScript-safe)
+    // ==========================================
+    function _isArray(v) {
+        try {
+            return (v instanceof Array);
+        } catch (e) {
+            return false;
+        }
+    }
+
+    // ==========================================
     // 0. ENV + HELPERS
     // ==========================================
     function getEnvSafe(name, defValue) {
@@ -166,7 +177,7 @@
         if (!aeProp) return;
         if (valueData === undefined || valueData === null) return;
 
-        var isObj = (typeof valueData === "object") && !Array.isArray(valueData);
+        var isObj = (typeof valueData === "object") && !_isArray(valueData);
 
         // expression first (if any)
         if (isObj && valueData.expression !== undefined && aeProp.canSetExpression) {
