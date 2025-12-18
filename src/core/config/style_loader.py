@@ -6,13 +6,16 @@ import logging
 from pathlib import Path
 from typing import Any, Dict
 
-from .styles import SubtitleStyle, FootagePresetId
+from .styles import (
+    EFFECTS_LIBRARY_PATH,
+    FOOTAGE_PRESETS_PATH,
+    MOTION_LIBRARY_PATH,
+    TEXT_STYLES_PATH,
+    FootagePresetId,
+    SubtitleStyle,
+)
 
 log = logging.getLogger(__name__)
-
-STYLES_DIR = Path(__file__).resolve().parent.parent.parent / "config" / "styles"
-TEXT_STYLES_PATH = STYLES_DIR / "text_styles.json"
-FOOTAGE_PRESETS_PATH = STYLES_DIR / "footage_presets.json"
 
 
 def _load_json(path: Path) -> Dict[str, Any]:
@@ -28,6 +31,8 @@ def _load_json(path: Path) -> Dict[str, Any]:
 
 _TEXT_STYLES = _load_json(TEXT_STYLES_PATH)
 _FOOTAGE_PRESETS = _load_json(FOOTAGE_PRESETS_PATH)
+_MOTION_LIBRARY: Dict[str, Any] | None = None
+_EFFECTS_LIBRARY: Dict[str, Any] | None = None
 
 _SUBTITLE_STYLE_KEYS = {
     SubtitleStyle.DEFAULT: "main_subtitle",
@@ -54,3 +59,21 @@ def get_footage_preset(preset_id: FootagePresetId | str) -> Dict[str, Any]:
 
     pid = preset_id.value if isinstance(preset_id, FootagePresetId) else str(preset_id)
     return copy.deepcopy(_FOOTAGE_PRESETS.get(pid, {}))
+
+
+def get_motion_library() -> Dict[str, Any]:
+    """Полная библиотека motion-профилей (если определена)."""
+    global _MOTION_LIBRARY
+
+    if _MOTION_LIBRARY is None:
+        _MOTION_LIBRARY = _load_json(MOTION_LIBRARY_PATH)
+    return copy.deepcopy(_MOTION_LIBRARY)
+
+
+def get_effects_library() -> Dict[str, Any]:
+    """Semantic adjustment-layer effects library."""
+    global _EFFECTS_LIBRARY
+
+    if _EFFECTS_LIBRARY is None:
+        _EFFECTS_LIBRARY = _load_json(EFFECTS_LIBRARY_PATH)
+    return copy.deepcopy(_EFFECTS_LIBRARY)
