@@ -61,19 +61,36 @@
 
     var LOG_FILE    = null;
     var STATUS_PATH = APP_DIR ? (APP_DIR + "/ae_status.txt") : "";
+    var LOG_PATH    = APP_DIR ? (APP_DIR + "/ae_job_log") : "";
 
     function initLog() {
         if (!APP_DIR) return;
         try {
-            LOG_FILE = new File(APP_DIR + "/ae_job_log");
-            LOG_FILE.encoding = "UTF-8";
-            if (LOG_FILE.exists) {
-                LOG_FILE.remove();
-            }
-            LOG_FILE.open("w", "TEXT", "????");
-            LOG_FILE.lineFeed = "Unix";
+            // Reset log file, but do NOT keep it opened (aerender/AfterFX.com can be picky)
+            var f = new File(LOG_PATH);
+            f.encoding = "UTF-8";
+            if (f.exists) f.remove();
+            f.open("w");
+            f.lineFeed = "Unix";
+            f.writeln("=== AE JOB LOG START ===");
+            f.close();
+            LOG_FILE = true; // marker "logging enabled"
         } catch (e) {
             LOG_FILE = null;
+        }
+    }
+
+    function _appendLog(line) {
+        if (!LOG_PATH) return;
+        try {
+            var f = new File(LOG_PATH);
+            f.encoding = "UTF-8";
+            f.open("a");
+            f.lineFeed = "Unix";
+            f.writeln(line);
+            f.close();
+        } catch (e) {
+            // last resort: console only
         }
     }
 
@@ -84,23 +101,16 @@
         } catch (e) {}
         var line = prefix + msg;
 
-        if (LOG_FILE) {
-            try {
-                LOG_FILE.writeln(line);
-                LOG_FILE.flush();
-            } catch (e1) {}
-        }
+        // Always try to append; avoids "empty file" due to handle issues
+        _appendLog(line);
+
         try {
             $.writeln(line);
         } catch (e2) {}
     }
 
     function closeLog() {
-        try {
-            if (LOG_FILE && LOG_FILE.opened) {
-                LOG_FILE.close();
-            }
-        } catch (e) {}
+        // no-op: we don't keep the file handle open anymore
     }
 
     function writeStatus(status, message) {
@@ -443,10 +453,8 @@
 
             logLine("Populate comp: " + compConf.id + " with " + compConf.layers.length + " layers");
 
-            for (var j = 0; j < compConf.layers.length; j++) {
-                var lConf = compConf.layers[j];
+            function _createLayerFromConf(lConf) {
                 var layer = null;
-
                 if (lConf.type === "ref") {
                     var src = itemRegistry[lConf.refId];
                     if (src) {
@@ -467,12 +475,38 @@
                     layer.position.setValue([comp.width / 2, comp.height / 2]);
                 } else if (lConf.type === "adjustment") {
                     layer = comp.layers.addSolid([1, 1, 1], lConf.name || "Adj Layer", comp.width, comp.height, 1);
-                    layer.source.parentFolder = fSolids;
+                    try { layer.source.parentFolder = fSolids; } catch (eSol) {}
+                }
+                return layer;
+            }
+
+            // IMPORTANT:
+            // AE adds layers to the TOP when using comp.layers.add(...)
+            // To preserve JSON order visually, we create layers from END -> START,
+            // but keep base+adjustment pairing intact (base then its adjustment).
+            var L = compConf.layers;
+            var j = L.length - 1;
+            while (j >= 0) {
+                var cur = L[j];
+
+                // If we see adjustment and previous is its base layer, create base then adjustment
+                if (cur && cur.type === "adjustment" && j > 0) {
+                    var prev = L[j - 1];
+                    if (prev && prev.type !== "adjustment") {
+                        var baseLayer = _createLayerFromConf(prev);
+                        if (baseLayer) setupGeneralLayer(baseLayer, prev);
+
+                        var adjLayer = _createLayerFromConf(cur);
+                        if (adjLayer) setupGeneralLayer(adjLayer, cur);
+
+                        j -= 2;
+                        continue;
+                    }
                 }
 
-                if (layer) {
-                    setupGeneralLayer(layer, lConf);
-                }
+                var layer = _createLayerFromConf(cur);
+                if (layer) setupGeneralLayer(layer, cur);
+                j -= 1;
             }
         }
 
