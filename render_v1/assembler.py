@@ -6,7 +6,10 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
+TEXT_FX_LIBRARY_PATH = Path("config/styles/text_fx_library.json")
+
 from .models import Payload
+from render_v1.text_fx_logic import apply_text_fx_from_layer_fields, apply_text_fx_plan
 
 
 def load_json(path: Path) -> dict:
@@ -135,6 +138,22 @@ def build_project_payload_from_composition(
             item["layers"] = processed_layers
 
         final_items.append(item)
+
+    # Optional: Text FX expansion (text layer effect stacks + text animators)
+    try:
+        text_fx_lib = load_json(TEXT_FX_LIBRARY_PATH)
+        applied_layers = apply_text_fx_from_layer_fields(
+            final_items, text_fx_library=text_fx_lib, cleanup=True
+        )
+        text_fx_plan = composition.get("textFxPlan") or project_settings.get("textFxPlan")
+        if isinstance(text_fx_plan, dict):
+            applied_layers += apply_text_fx_plan(
+                final_items, plan=text_fx_plan, text_fx_library=text_fx_lib, cleanup=False
+            )
+        if applied_layers:
+            print(f"[text_fx] applied combos for {applied_layers} text layers")
+    except Exception as exc:  # noqa: BLE001
+        print(f"[text_fx] WARNING: failed to apply text fx: {exc}")
 
     raw_payload: Dict[str, Any] = {
         "project": {

@@ -1,0 +1,62 @@
+{
+  "defaultCompId": "comp_text",
+  "layers": [
+    {
+      "compId": "comp_text",
+      "layerName": "is not my son",
+      "layerText": "is not my\rson",
+      "inPoint": 15.4738071404738,
+      "outPoint": 18.4351017684351,
+      "comboId": "TXT_GLITCH_MAX_DRAMA",
+      "overrides": {
+        "textAnimatorKeys": {
+          "animatorName": "Animator 1",
+          "selectorName": "Range Selector 1",
+          "propertyMatchName": "ADBE Text Percent Start",
+          "keys": [
+            {
+              "dt": 0.0,
+              "value": 25
+            },
+            {
+              "dt": 0.2919586252919988,
+              "value": 25
+            },
+            {
+              "dt": 0.33366700033369945,
+              "value": 50
+            },
+            {
+              "dt": 0.5422088755421992,
+              "value": 50
+            },
+            {
+              "dt": 0.5839172505838999,
+              "value": 75
+            },
+            {
+              "dt": 0.9175842509176011,
+              "value": 75
+            },
+            {
+              "dt": 0.9592926259592982,
+              "value": 100
+            }
+          ]
+        },
+        "opacity": {
+          "keys": [
+            {
+              "dt": 1.751751751751799,
+              "value": 100
+            },
+            {
+              "dt": 2.7527527527527997,
+              "value": 0
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

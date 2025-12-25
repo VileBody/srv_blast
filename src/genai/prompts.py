@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 
 from render_v1.effects_logic import build_semantic_prompt_catalog
-from src.core.config.style_loader import get_effects_library
+from src.core.config.style_loader import get_effects_library, get_text_fx_library
 
 """
 Сборник системных промптов для Gemini.
@@ -245,6 +245,45 @@ def _effects_semantic_prompt_block() -> str:
     )
 
 
+def _text_fx_catalog_json() -> str:
+    lib = get_text_fx_library() or {}
+    combos = (lib.get("combos") or {}) if isinstance(lib, dict) else {}
+    # keep catalog small for the model (ids + meaning)
+    cat = {
+        "defaultComboId": lib.get("defaultComboId") if isinstance(lib, dict) else None,
+        "combos": {
+            k: {
+                "name": (v or {}).get("name"),
+                "description": (v or {}).get("description"),
+                "overridePolicy": (v or {}).get("overridePolicy"),
+            }
+            for k, v in combos.items()
+        },
+    }
+    return json.dumps(cat, ensure_ascii=False, indent=2)
+
+
+TEXT_FX_STAGE = (
+    "TEXT FX (for TEXT layers only)\n"
+    "- You may optionally attach text-layer effects and text animators using a compact representation.\n"
+    "- Choose a combo id from TEXT_FX_CATALOG.\n"
+    "- Put it directly on the text layer:\n"
+    "    textFxComboId: <comboId>\n"
+    "    textFxOverrides: { ... } (optional)\n\n"
+    "Overrides schema (optional):\n"
+    "- text: override the string (use \\r for line breaks, never \\n)\n"
+    "- textAnimatorKeys: retime keyframes of a selector property\n"
+    "    { animatorName, selectorName, propertyMatchName, keys:[...] }\n"
+    "  keys can be:\n"
+    "    {dt:<sec from layer inPoint>, value:<number>} OR {time:<abs sec>, value:<number>} OR {t:<0..1>, value:<number>}\n"
+    "- opacity: keyframes for transform.opacity\n"
+    "    { keys:[...] } (same key format)\n\n"
+    "Rule: keep VALUES as in the preset/look; mostly override timing (dt/time/t).\n"
+    "If a combo is time-agnostic or uses expressions, do NOT add overrides.\n\n"
+    "TEXT_FX_CATALOG (JSON):\n" + _text_fx_catalog_json()
+)
+
+
 AE_PROJECT_HEADER = (
     "Ты видеомонтажёр TikTok/Reels и субтитровщик, работающий в связке с After Effects.\n"
     "Тебе дают:\n"
@@ -281,6 +320,7 @@ def build_ae_project_system_prompt() -> str:
         AE_SUBTITLES_STAGE,
         AE_COMPOSITION_STAGE,
         _effects_semantic_prompt_block(),
+        TEXT_FX_STAGE,
         AE_PROJECT_FOOTER,
     ]
     return "\n\n".join(parts)

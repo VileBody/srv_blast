@@ -379,6 +379,68 @@
         textProp.setValue(textDocument);
     }
 
+    function applyTextAnimators(textLayer, animatorsConf) {
+        if (!animatorsConf || animatorsConf.length === 0) return;
+        try {
+            var textProps = textLayer.property("ADBE Text Properties");
+            if (!textProps) return;
+            var animatorsGroup = textProps.property("ADBE Text Animators");
+            if (!animatorsGroup) return;
+
+            for (var i = 0; i < animatorsConf.length; i++) {
+                var aConf = animatorsConf[i];
+                if (!aConf) continue;
+
+                var animator = animatorsGroup.addProperty("ADBE Text Animator");
+                if (aConf.name) animator.name = aConf.name;
+
+                // Animator properties (e.g. Text Opacity)
+                var propsGroup = animator.property("ADBE Text Animator Properties");
+                if (propsGroup && aConf.properties) {
+                    for (var pMn in aConf.properties) {
+                        if (!aConf.properties.hasOwnProperty(pMn)) continue;
+                        var p = propsGroup.property(pMn);
+                        if (p) setPropValue(p, aConf.properties[pMn], textLayer);
+                    }
+                }
+
+                // Selectors (Range Selector etc.)
+                var selectorsGroup = animator.property("ADBE Text Selectors");
+                if (selectorsGroup && aConf.selectors) {
+                    for (var s = 0; s < aConf.selectors.length; s++) {
+                        var sConf = aConf.selectors[s];
+                        if (!sConf) continue;
+
+                        var selMatch = sConf.matchName || "ADBE Text Selector";
+                        var selector = selectorsGroup.addProperty(selMatch);
+                        if (sConf.name) selector.name = sConf.name;
+
+                        if (sConf.properties) {
+                            for (var spMn in sConf.properties) {
+                                if (!sConf.properties.hasOwnProperty(spMn)) continue;
+                                var sp = selector.property(spMn);
+                                if (sp) setPropValue(sp, sConf.properties[spMn], textLayer);
+                            }
+                        }
+
+                        if (sConf.advanced) {
+                            var adv = selector.property("ADBE Text Range Advanced");
+                            if (adv) {
+                                for (var apMn in sConf.advanced) {
+                                    if (!sConf.advanced.hasOwnProperty(apMn)) continue;
+                                    var ap = adv.property(apMn);
+                                    if (ap) setPropValue(ap, sConf.advanced[apMn], textLayer);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (eTA) {
+            logLine("applyTextAnimators FAIL: " + eTA.toString());
+        }
+    }
+
     function setupGeneralLayer(layer, config) {
         if (config.name) layer.name = config.name;
         else if (config.textDocument && config.textDocument.text) {
@@ -405,6 +467,11 @@
             if (tr.position) setPropValue(layer.transform.position, tr.position, layer);
             if (tr.rotation) setPropValue(layer.transform.rotation, tr.rotation, layer);
             if (tr.opacity)  setPropValue(layer.transform.opacity,  tr.opacity, layer);
+        }
+
+        // Text Animators (Animator + selectors)
+        if (config.type === "text" && config.textAnimators) {
+            applyTextAnimators(layer, config.textAnimators);
         }
 
         if (config.effects) {
