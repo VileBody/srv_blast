@@ -70,10 +70,12 @@ class RefLayer(BaseLayer):
 class TextLayer(BaseLayer):
     type: Literal["text"]
     textDocument: TextDocument
-    # Optional effect stack directly on the text layer (Effect Parade)
-    effects: Optional[List[dict]] = None
-    # Text animators (Animator + selectors) applied in job_template.jsx
+    # One-of comboId (or omitted -> default in assembler) that defines: effect stack × text animator preset
+    textFxComboId: Optional[str] = None
+    # Text Animators (AE Text Animators + selectors) - structure is ExtendScript-friendly dicts
     textAnimators: Optional[List[dict]] = None
+    # Optional layer-local effects (rare; most TEXT FX live on paired adjustment layers)
+    effects: Optional[List[dict]] = None
 
 
 class AdjustmentLayer(BaseLayer):
