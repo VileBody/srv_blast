@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import copy
-import copy
 import json
 import logging
 from pathlib import Path
@@ -12,6 +11,7 @@ from .styles import (
     TEXT_FX_LIBRARY_PATH,
     FOOTAGE_PRESETS_PATH,
     MOTION_LIBRARY_PATH,
+    TEXT_FX_COMBOS_PATH,
     TEXT_STYLES_PATH,
     FootagePresetId,
     SubtitleStyle,
@@ -36,6 +36,7 @@ _FOOTAGE_PRESETS = _load_json(FOOTAGE_PRESETS_PATH)
 _MOTION_LIBRARY: Dict[str, Any] | None = None
 _EFFECTS_LIBRARY: Dict[str, Any] | None = None
 _TEXT_FX_LIBRARY: Dict[str, Any] | None = None
+_TEXT_FX_COMBOS: Dict[str, Any] | None = None
 
 _SUBTITLE_STYLE_KEYS = {
     SubtitleStyle.DEFAULT: "main_subtitle",
@@ -89,3 +90,12 @@ def get_text_fx_library() -> Dict[str, Any]:
     if _TEXT_FX_LIBRARY is None:
         _TEXT_FX_LIBRARY = _load_json(TEXT_FX_LIBRARY_PATH)
     return copy.deepcopy(_TEXT_FX_LIBRARY)
+
+
+def get_text_fx_combos() -> Dict[str, Any]:
+    """Text-layer FX combos library (new preset catalog)."""
+    global _TEXT_FX_COMBOS
+
+    if _TEXT_FX_COMBOS is None:
+        _TEXT_FX_COMBOS = _load_json(TEXT_FX_COMBOS_PATH)
+    return copy.deepcopy(_TEXT_FX_COMBOS)

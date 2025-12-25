@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 
 from render_v1.effects_logic import build_semantic_prompt_catalog
-from src.core.config.style_loader import get_effects_library, get_text_fx_library
+from src.core.config.style_loader import get_effects_library, get_text_fx_combos
 
 """
 Сборник системных промптов для Gemini.
@@ -246,19 +246,21 @@ def _effects_semantic_prompt_block() -> str:
 
 
 def _text_fx_catalog_json() -> str:
-    lib = get_text_fx_library() or {}
-    combos = (lib.get("combos") or {}) if isinstance(lib, dict) else {}
+    lib = get_text_fx_combos() or {}
+    combos = (lib.get("combos") or []) if isinstance(lib, dict) else []
     # keep catalog small for the model (ids + meaning)
     cat = {
         "defaultComboId": lib.get("defaultComboId") if isinstance(lib, dict) else None,
-        "combos": {
-            k: {
+        "combos": [
+            {
+                "id": (v or {}).get("id"),
                 "name": (v or {}).get("name"),
                 "description": (v or {}).get("description"),
                 "overridePolicy": (v or {}).get("overridePolicy"),
             }
-            for k, v in combos.items()
-        },
+            for v in combos
+            if isinstance(v, dict)
+        ],
     }
     return json.dumps(cat, ensure_ascii=False, indent=2)
 
@@ -281,6 +283,37 @@ TEXT_FX_STAGE = (
     "Rule: keep VALUES as in the preset/look; mostly override timing (dt/time/t).\n"
     "If a combo is time-agnostic or uses expressions, do NOT add overrides.\n\n"
     "TEXT_FX_CATALOG (JSON):\n" + _text_fx_catalog_json()
+)
+
+
+# ---------------------------------------------------------------------------
+# Text FX план: выбор комбо + ключи (больше ничего!)
+# ---------------------------------------------------------------------------
+
+AE_TEXT_FX_STAGE = (
+    "ШАГ 2.5 — TEXT FX (КОМБО + КЛЮЧИ).\n"
+    "Твоя задача: для каждого текстового слоя выбрать РОВНО ОДНО textFxComboId из каталога.\n\n"
+    "Если сомневаешься — не указывай comboId, сборщик применит default.\n\n"
+    "Далее, только если в выбранном комбо есть анимируемые слоты, задай ключи (keys) для них.\n\n"
+    "НЕЛЬЗЯ придумывать новые эффекты/аниматоры: wiggle/blur/etc существуют только если они уже в комбо.\n"
+    "НЕЛЬЗЯ менять baked параметры. Можно менять ТОЛЬКО keyframes (время и/или значения).\n\n"
+    "Формат ответа: JSON. Никакого текста вокруг.\n\n"
+    "Структура (пример):\n"
+    "{\n"
+    "  \"layers\": [\n"
+    "    {\n"
+    "      \"layerIndex\": 3,\n"
+    "      \"textFxComboId\": \"GLITCH_DEFAULT_REVEAL\",\n"
+    "      \"textFxOverrides\": {\n"
+    "        \"revealKeys\": [ { \"t\": 0.0, \"value\": 25 }, ... ],\n"
+    "        \"opacityKeys\": [ { \"t\": 1.2, \"value\": 100 }, { \"t\": 1.6, \"value\": 0 } ],\n"
+    "        \"effectParamKeys\": [\n"
+    "          { \"effectMatchName\": \"ADBE Turbulent Displace\", \"paramMatchName\": \"ADBE Turbulent Displace-0001\", \"keys\": [ ... ] }\n"
+    "        ]\n"
+    "      }\n"
+    "    }\n"
+    "  ]\n"
+    "}\n"
 )
 
 
@@ -318,9 +351,9 @@ def build_ae_project_system_prompt() -> str:
         AE_PROJECT_HEADER,
         AE_FOOTAGE_STAGE,
         AE_SUBTITLES_STAGE,
+        AE_TEXT_FX_STAGE,
         AE_COMPOSITION_STAGE,
         _effects_semantic_prompt_block(),
-        TEXT_FX_STAGE,
         AE_PROJECT_FOOTER,
     ]
     return "\n\n".join(parts)

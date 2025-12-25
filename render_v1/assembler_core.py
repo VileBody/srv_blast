@@ -8,7 +8,6 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from config import Config
 from render_v1.effects_logic import resolve_effect_stack, stack_to_ae_effects_conf
-from render_v1.text_fx_logic import apply_text_fx_from_layer_fields, apply_text_fx_plan
 from .models import Payload
 
 cfg = Config.from_env()
@@ -39,7 +38,7 @@ def load_json(path: Path) -> dict:
 # project_settings_template.json по аналогии с text_styles / footage_presets
 PROJECT_SETTINGS_TEMPLATE_PATH = Path("config/styles/project_settings_template.json")
 EFFECTS_LIBRARY_PATH = Path("config/styles/effects_library.json")
-TEXT_FX_LIBRARY_PATH = Path("config/styles/text_fx_library.json")
+TEXT_FX_COMBOS_PATH = Path("config/styles/text_fx_combos.json")
 try:
     _PROJECT_TEMPLATE = load_json(PROJECT_SETTINGS_TEMPLATE_PATH)
 except Exception as exc:  # noqa: BLE001
@@ -53,14 +52,121 @@ except Exception as exc:  # noqa: BLE001
     _EFFECTS_LIBRARY = {}
 
 try:
-    _TEXT_FX_LIBRARY = load_json(TEXT_FX_LIBRARY_PATH)
+    _TEXT_FX_COMBOS = load_json(TEXT_FX_COMBOS_PATH)
 except Exception as exc:  # noqa: BLE001
-    print(f"[assembler_core] WARNING: failed to load {TEXT_FX_LIBRARY_PATH}: {exc}")
-    _TEXT_FX_LIBRARY = {}
+    print(f"[assembler_core] WARNING: failed to load {TEXT_FX_COMBOS_PATH}: {exc}")
+    _TEXT_FX_COMBOS = {}
 
 PROJECT_TEMPLATE_DEFAULTS: Dict[str, Any] = (
     _PROJECT_TEMPLATE.get("defaults", {}) if isinstance(_PROJECT_TEMPLATE, dict) else {}
 ) or {}
+
+
+
+# --- Text FX combos (preset library) ---
+
+
+def _get_text_fx_catalog() -> dict:
+    if isinstance(_TEXT_FX_COMBOS, dict):
+        return _TEXT_FX_COMBOS
+    return {}
+
+
+def _get_default_combo_id() -> str:
+    catalog = _get_text_fx_catalog()
+    default_id = catalog.get("defaultComboId")
+    if isinstance(default_id, str) and default_id:
+        return default_id
+    return "GLITCH_DEFAULT_REVEAL"
+
+
+def _lookup_combo(combo_id: str) -> Optional[dict]:
+    catalog = _get_text_fx_catalog()
+    combos = catalog.get("combos") or []
+    if not isinstance(combos, list):
+        return None
+    for c in combos:
+        if isinstance(c, dict) and c.get("id") == combo_id:
+            return c
+    return None
+
+
+def _merge_keys_into_value_data(dst: dict, keys: list) -> dict:
+    if not isinstance(dst, dict):
+        dst = {}
+    dst = copy.deepcopy(dst)
+    dst["keys"] = keys
+    return dst
+
+
+def apply_text_fx_combo(layer: dict) -> dict:
+    """Apply baked combo + overrides to a TEXT layer dict."""
+
+    if (layer.get("type") or "").lower() != "text":
+        return layer
+
+    combo_id = layer.get("textFxComboId") or _get_default_combo_id()
+    combo = _lookup_combo(combo_id)
+    if combo is None:
+        raise ValueError(f"Unknown textFxComboId: {combo_id}")
+
+    baked = combo.get("baked") or {}
+    if not isinstance(baked, dict):
+        baked = {}
+
+    baked_anim = baked.get("textAnimators")
+    if baked_anim and "textAnimators" not in layer:
+        layer["textAnimators"] = copy.deepcopy(baked_anim)
+
+    baked_fx = baked.get("effects")
+    if baked_fx and "effects" not in layer:
+        layer["effects"] = copy.deepcopy(baked_fx)
+
+    overrides = layer.get("textFxOverrides") or {}
+    if isinstance(overrides, dict):
+        reveal = overrides.get("revealKeys")
+        if reveal and isinstance(reveal, list):
+            try:
+                anim0 = layer.get("textAnimators", [])[0]
+                sel0 = (anim0.get("selectors") or [])[0]
+                props = sel0.get("properties") or {}
+                prop_name = baked.get("revealProperty") or "ADBE Text Percent Start"
+                props[prop_name] = _merge_keys_into_value_data(
+                    props.get(prop_name) or {}, reveal
+                )
+                sel0["properties"] = props
+            except Exception:
+                pass
+
+        fade = overrides.get("opacityKeys")
+        if fade and isinstance(fade, list):
+            if "transform" not in layer or not isinstance(layer.get("transform"), dict):
+                layer["transform"] = {}
+            tr = layer["transform"]
+            tr["opacity"] = _merge_keys_into_value_data(tr.get("opacity") or {}, fade)
+
+        fx_over = overrides.get("effectParamKeys")
+        if fx_over and isinstance(fx_over, list):
+            if "effects" not in layer or not isinstance(layer.get("effects"), list):
+                layer["effects"] = copy.deepcopy(baked_fx) if isinstance(baked_fx, list) else []
+            for item in fx_over:
+                if not isinstance(item, dict):
+                    continue
+                emn = item.get("effectMatchName")
+                pmn = item.get("paramMatchName")
+                keys = item.get("keys")
+                if not (isinstance(emn, str) and isinstance(pmn, str) and isinstance(keys, list)):
+                    continue
+                for fx in layer["effects"]:
+                    if isinstance(fx, dict) and fx.get("matchName") == emn:
+                        params = fx.get("params") or {}
+                        params[pmn] = _merge_keys_into_value_data(params.get(pmn) or {}, keys)
+                        fx["params"] = params
+                        break
+
+    layer["textFxComboId"] = combo_id
+
+    return layer
 
 
 def process_layer(
@@ -171,6 +277,9 @@ def process_layer(
             if key in layer:
                 layer.pop(key)
 
+    # TEXT FX: apply baked combo + keyframe overrides (if configured)
+    layer = apply_text_fx_combo(layer)
+
     return layer
 
 
@@ -262,12 +371,38 @@ def build_project_payload_from_composition(
     final_items: List[dict] = []
     raw_items = composition.get("items", []) or []
 
+    plan_map: Dict[int, dict] = {}
+    text_fx_plan = (
+        composition.get("textFxPlan")
+        or composition.get("text_fx_plan")
+        or project_settings.get("textFxPlan")
+        or project_settings.get("text_fx_plan")
+        or {}
+    )
+    if isinstance(text_fx_plan, dict):
+        plan_layers = text_fx_plan.get("layers") or []
+        if isinstance(plan_layers, list):
+            for pl in plan_layers:
+                if not isinstance(pl, dict):
+                    continue
+                li = pl.get("layerIndex")
+                if isinstance(li, int):
+                    plan_map[li] = pl
+
     for item in raw_items:
         item = apply_defaults(item, defaults)
 
         if item.get("type") == "comp" and "layers" in item:
             processed_layers = []
-            for layer in item["layers"]:
+            for li, layer in enumerate(item["layers"]):
+                if plan_map and (item.get("id") == "comp_text" or (item.get("name") or "") == "Text"):
+                    pl = plan_map.get(li)
+                    if isinstance(pl, dict):
+                        if pl.get("textFxComboId"):
+                            layer["textFxComboId"] = pl.get("textFxComboId")
+                        if pl.get("textFxOverrides"):
+                            layer["textFxOverrides"] = pl.get("textFxOverrides")
+
                 processed_layer = process_layer(
                     layer,
                     styles_lib=styles_data,
@@ -279,31 +414,6 @@ def build_project_payload_from_composition(
             item["layers"] = processed_layers
 
         final_items.append(item)
-
-    # 4) Text FX: expand per-layer textFxComboId/textFxOverrides and/or composition.textFxPlan
-    #    into layer.effects + layer.textAnimators + transform.keyframes.
-    try:
-        text_fx_lib = copy.deepcopy(_TEXT_FX_LIBRARY)
-        applied_layers = apply_text_fx_from_layer_fields(
-            final_items, text_fx_library=text_fx_lib, cleanup=True
-        )
-        text_fx_plan = (
-            composition.get("textFxPlan")
-            or composition.get("text_fx_plan")
-            or project_settings.get("textFxPlan")
-            or project_settings.get("text_fx_plan")
-        )
-        if isinstance(text_fx_plan, dict):
-            applied_layers += apply_text_fx_plan(
-                final_items,
-                plan=text_fx_plan,
-                text_fx_library=text_fx_lib,
-                cleanup=False,
-            )
-        if applied_layers:
-            print(f"[text_fx] applied combos for {applied_layers} text layers")
-    except Exception as exc:  # noqa: BLE001
-        print(f"[text_fx] WARNING: failed to apply text fx plan: {exc}")
 
     # сдвигаем аудио-слой в главной композиции по глобальному старту
     for item in final_items:
