@@ -1,0 +1,187 @@
+{
+  "libraryVersion": "0.1",
+  "meta": {
+    "createdAt": "2025-12-25",
+    "notes": [
+      "Text FX combos = (effect stack on text layer) + (text animator preset).",
+      "Baked params are manager-defined; LLM may override only timing/keyframes and allowed toggles.",
+      "This library is separate from effects_library.json (semantic adjustment layer styles)."
+    ]
+  },
+  "defaultComboId": "TXT_DEFAULT_REVEAL",
+  "combos": {
+    "TXT_DEFAULT_REVEAL": {
+      "name": "Default reveal (words)",
+      "description": "Стандартный 'pop reveal' по словам: Range Selector по Words, Text Opacity=0, Percent Start двигается ключами. Без обязательных эффектов.",
+      "effectStack": [],
+      "textAnimators": [
+        {
+          "name": "Animator 1",
+          "properties": {
+            "ADBE Text Opacity": 0
+          },
+          "selectors": [
+            {
+              "name": "Range Selector 1",
+              "matchName": "ADBE Text Selector",
+              "properties": {
+                "ADBE Text Percent Start": 0,
+                "ADBE Text Percent End": 100,
+                "ADBE Text Percent Offset": 0
+              },
+              "advanced": {
+                "ADBE Text Range Units": 1,
+                "ADBE Text Range Type2": 3,
+                "ADBE Text Selector Mode": 1,
+                "ADBE Text Selector Max Amount": 100,
+                "ADBE Text Range Shape": 1,
+                "ADBE Text Selector Smoothness": 0,
+                "ADBE Text Levels Max Ease": 0,
+                "ADBE Text Levels Min Ease": 0,
+                "ADBE Text Randomize Order": 0,
+                "ADBE Text Random Seed": 0
+              }
+            }
+          ]
+        }
+      ],
+      "overridePolicy": {
+        "allowText": true,
+        "allowLayerWindow": true,
+        "allowTextAnimatorKeys": true,
+        "allowTextAnimatorAdvanced": false,
+        "allowTransformOpacityKeys": true,
+        "allowEffectStackEnable": true,
+        "allowEffectParamKeys": true
+      }
+    },
+    "TXT_GLITCH_MAX_DRAMA": {
+      "name": "Glitch max drama (turbulent+posterize+minimax+blur)",
+      "description": "Агрессивный глитч-стек на текстовом слое (как в 'is not my son') + reveal по словам. Хорошо под дроп/панч.",
+      "effectStack": [
+        {
+          "matchName": "ADBE Turbulent Displace",
+          "params": {}
+        },
+        {
+          "matchName": "ADBE Posterize Time",
+          "params": {}
+        },
+        {
+          "matchName": "ADBE Minimax",
+          "params": {}
+        },
+        {
+          "matchName": "ADBE Box Blur2",
+          "params": {}
+        }
+      ],
+      "textAnimators": [
+        {
+          "name": "Animator 1",
+          "properties": {
+            "ADBE Text Opacity": 0
+          },
+          "selectors": [
+            {
+              "name": "Range Selector 1",
+              "matchName": "ADBE Text Selector",
+              "properties": {
+                "ADBE Text Percent Start": 0,
+                "ADBE Text Percent End": 100,
+                "ADBE Text Percent Offset": 0
+              },
+              "advanced": {
+                "ADBE Text Range Units": 1,
+                "ADBE Text Range Type2": 3,
+                "ADBE Text Selector Mode": 1,
+                "ADBE Text Selector Max Amount": 100,
+                "ADBE Text Range Shape": 1,
+                "ADBE Text Selector Smoothness": 0,
+                "ADBE Text Levels Max Ease": 0,
+                "ADBE Text Levels Min Ease": 0,
+                "ADBE Text Randomize Order": 0,
+                "ADBE Text Random Seed": 0
+              }
+            }
+          ]
+        }
+      ],
+      "overridePolicy": {
+        "allowText": true,
+        "allowLayerWindow": true,
+        "allowTextAnimatorKeys": true,
+        "allowTextAnimatorAdvanced": false,
+        "allowTransformOpacityKeys": true,
+        "allowEffectStackEnable": true,
+        "allowEffectParamKeys": true
+      }
+    },
+    "TXT_SOFT_FADE": {
+      "name": "Soft fade (no reveal)",
+      "description": "Мягкий стиль для спокойных строк: без reveal-аниматора, только fade-in/out по opacity (обычно через transform.opacity).",
+      "effectStack": [],
+      "textAnimators": [],
+      "overridePolicy": {
+        "allowText": true,
+        "allowLayerWindow": true,
+        "allowTransformOpacityKeys": true,
+        "allowEffectStackEnable": false,
+        "allowTextAnimatorKeys": false
+      }
+    },
+    "TXT_PUNCH_REVEAL": {
+      "name": "Punch reveal (words) + optional glitch",
+      "description": "Reveal по словам + лёгкий эффект-стек (можно включать/выключать). Для хайлайтов.",
+      "effectStack": [
+        {
+          "matchName": "ADBE Posterize Time",
+          "params": {}
+        },
+        {
+          "matchName": "ADBE Turbulent Displace",
+          "params": {}
+        }
+      ],
+      "textAnimators": [
+        {
+          "name": "Animator 1",
+          "properties": {
+            "ADBE Text Opacity": 0
+          },
+          "selectors": [
+            {
+              "name": "Range Selector 1",
+              "matchName": "ADBE Text Selector",
+              "properties": {
+                "ADBE Text Percent Start": 0,
+                "ADBE Text Percent End": 100,
+                "ADBE Text Percent Offset": 0
+              },
+              "advanced": {
+                "ADBE Text Range Units": 1,
+                "ADBE Text Range Type2": 3,
+                "ADBE Text Selector Mode": 1,
+                "ADBE Text Selector Max Amount": 100,
+                "ADBE Text Range Shape": 1,
+                "ADBE Text Selector Smoothness": 0,
+                "ADBE Text Levels Max Ease": 0,
+                "ADBE Text Levels Min Ease": 0,
+                "ADBE Text Randomize Order": 0,
+                "ADBE Text Random Seed": 0
+              }
+            }
+          ]
+        }
+      ],
+      "overridePolicy": {
+        "allowText": true,
+        "allowLayerWindow": true,
+        "allowTextAnimatorKeys": true,
+        "allowTransformOpacityKeys": true,
+        "allowEffectStackEnable": true,
+        "allowEffectParamKeys": true
+      }
+    }
+  }
+}

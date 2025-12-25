@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from config import Config
 from render_v1.effects_logic import resolve_effect_stack, stack_to_ae_effects_conf
+from render_v1.text_fx_logic import apply_text_fx_from_layer_fields, apply_text_fx_plan
 from .models import Payload
 
 cfg = Config.from_env()
@@ -38,6 +39,7 @@ def load_json(path: Path) -> dict:
 # project_settings_template.json по аналогии с text_styles / footage_presets
 PROJECT_SETTINGS_TEMPLATE_PATH = Path("config/styles/project_settings_template.json")
 EFFECTS_LIBRARY_PATH = Path("config/styles/effects_library.json")
+TEXT_FX_LIBRARY_PATH = Path("config/styles/text_fx_library.json")
 try:
     _PROJECT_TEMPLATE = load_json(PROJECT_SETTINGS_TEMPLATE_PATH)
 except Exception as exc:  # noqa: BLE001
@@ -49,6 +51,12 @@ try:
 except Exception as exc:  # noqa: BLE001
     print(f"[assembler_core] WARNING: failed to load {EFFECTS_LIBRARY_PATH}: {exc}")
     _EFFECTS_LIBRARY = {}
+
+try:
+    _TEXT_FX_LIBRARY = load_json(TEXT_FX_LIBRARY_PATH)
+except Exception as exc:  # noqa: BLE001
+    print(f"[assembler_core] WARNING: failed to load {TEXT_FX_LIBRARY_PATH}: {exc}")
+    _TEXT_FX_LIBRARY = {}
 
 PROJECT_TEMPLATE_DEFAULTS: Dict[str, Any] = (
     _PROJECT_TEMPLATE.get("defaults", {}) if isinstance(_PROJECT_TEMPLATE, dict) else {}
@@ -271,6 +279,31 @@ def build_project_payload_from_composition(
             item["layers"] = processed_layers
 
         final_items.append(item)
+
+    # 4) Text FX: expand per-layer textFxComboId/textFxOverrides and/or composition.textFxPlan
+    #    into layer.effects + layer.textAnimators + transform.keyframes.
+    try:
+        text_fx_lib = copy.deepcopy(_TEXT_FX_LIBRARY)
+        applied_layers = apply_text_fx_from_layer_fields(
+            final_items, text_fx_library=text_fx_lib, cleanup=True
+        )
+        text_fx_plan = (
+            composition.get("textFxPlan")
+            or composition.get("text_fx_plan")
+            or project_settings.get("textFxPlan")
+            or project_settings.get("text_fx_plan")
+        )
+        if isinstance(text_fx_plan, dict):
+            applied_layers += apply_text_fx_plan(
+                final_items,
+                plan=text_fx_plan,
+                text_fx_library=text_fx_lib,
+                cleanup=False,
+            )
+        if applied_layers:
+            print(f"[text_fx] applied combos for {applied_layers} text layers")
+    except Exception as exc:  # noqa: BLE001
+        print(f"[text_fx] WARNING: failed to apply text fx plan: {exc}")
 
     # сдвигаем аудио-слой в главной композиции по глобальному старту
     for item in final_items:

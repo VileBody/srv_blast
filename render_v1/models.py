@@ -2,7 +2,11 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import List, Optional, Union, Literal
+from typing import Any, Dict, List, Optional, Union, Literal
+
+# Generic value payload for AE properties.
+# It may be a raw scalar/array, or an object like {"value":..., "keys":[...]} for keyframes.
+ValueData = Union[float, int, List[float], List[int], Dict[str, Any]]
 
 from pydantic import BaseModel
 
@@ -24,10 +28,10 @@ class FitPolicy(str, Enum):
 # --- Sub-components ---
 
 class Transform(BaseModel):
-    scale: Optional[List[float]] = None
-    position: Optional[List[float]] = None
-    rotation: Optional[float] = None
-    opacity: Optional[float] = None
+    scale: Optional[ValueData] = None
+    position: Optional[ValueData] = None
+    rotation: Optional[ValueData] = None
+    opacity: Optional[ValueData] = None
 
 
 class TextDocument(BaseModel):
@@ -66,6 +70,10 @@ class RefLayer(BaseLayer):
 class TextLayer(BaseLayer):
     type: Literal["text"]
     textDocument: TextDocument
+    # Optional effect stack directly on the text layer (Effect Parade)
+    effects: Optional[List[dict]] = None
+    # Text animators (Animator + selectors) applied in job_template.jsx
+    textAnimators: Optional[List[dict]] = None
 
 
 class AdjustmentLayer(BaseLayer):
