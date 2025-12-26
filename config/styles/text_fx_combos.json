@@ -5,7 +5,47 @@
     "REVEAL_STEP_WORDS": {
       "name": "Reveal Step (Words) [DEFAULT]",
       "description": "Ступенчатое проявление по словам. Максимально похоже на монтажёрский стиль.",
-      "effectStack": [],
+      "effectStack": [
+        {
+          "matchName": "ADBE Geometry2",
+          "params": {
+            "ADBE Geometry2-0003": {
+              "keys": [
+                { "t": 0.0,  "value": 100 },
+                { "t": 0.10, "value": 112 },
+                { "t": 0.22, "value": 100 }
+              ]
+            },
+            "ADBE Geometry2-0004": {
+              "keys": [
+                { "t": 0.0,  "value": 100 },
+                { "t": 0.10, "value": 112 },
+                { "t": 0.22, "value": 100 }
+              ]
+            },
+            "ADBE Geometry2-0007": {
+              "keys": [
+                { "t": 0.0,  "value": 0 },
+                { "t": 0.10, "value": -2.5 },
+                { "t": 0.22, "value": 0 }
+              ]
+            }
+          }
+        },
+        {
+          "matchName": "ADBE Motion Blur",
+          "params": {
+            "ADBE Motion Blur-0001": 90,
+            "ADBE Motion Blur-0002": {
+              "keys": [
+                { "t": 0.0,  "value": 0 },
+                { "t": 0.10, "value": 35 },
+                { "t": 0.22, "value": 0 }
+              ]
+            }
+          }
+        }
+      ],
       "textAnimators": [
         {
           "name": "reveal_words_step",
@@ -69,7 +109,51 @@
     "REVEAL_STEP_POP": {
       "name": "Reveal Step + Pop",
       "description": "Ступенчатый reveal + быстрый поп масштаба (акцент/удар).",
-      "effectStack": [],
+      "effectStack": [
+        {
+          "matchName": "ADBE Geometry2",
+          "params": {
+            "ADBE Geometry2-0003": {
+              "keys": [
+                { "t": 0.0,  "value": 100 },
+                { "t": 0.08, "value": 125 },
+                { "t": 0.18, "value": 98 },
+                { "t": 0.26, "value": 100 }
+              ]
+            },
+            "ADBE Geometry2-0004": {
+              "keys": [
+                { "t": 0.0,  "value": 100 },
+                { "t": 0.08, "value": 125 },
+                { "t": 0.18, "value": 98 },
+                { "t": 0.26, "value": 100 }
+              ]
+            },
+            "ADBE Geometry2-0007": {
+              "keys": [
+                { "t": 0.0,  "value": 0 },
+                { "t": 0.08, "value": -4 },
+                { "t": 0.18, "value": 1.5 },
+                { "t": 0.26, "value": 0 }
+              ]
+            }
+          }
+        },
+        {
+          "matchName": "ADBE Motion Blur",
+          "params": {
+            "ADBE Motion Blur-0001": 90,
+            "ADBE Motion Blur-0002": {
+              "keys": [
+                { "t": 0.0,  "value": 0 },
+                { "t": 0.08, "value": 55 },
+                { "t": 0.18, "value": 20 },
+                { "t": 0.26, "value": 0 }
+              ]
+            }
+          }
+        }
+      ],
       "textAnimators": [
         {
           "name": "reveal_words_step",
@@ -148,7 +232,21 @@
     "STATIC_FADE_SOFT": {
       "name": "Static + Soft Fade",
       "description": "Статичное появление + мягкое исчезновение (opacity animator).",
-      "effectStack": [],
+      "effectStack": [
+        {
+          "matchName": "ADBE Motion Blur",
+          "params": {
+            "ADBE Motion Blur-0001": 90,
+            "ADBE Motion Blur-0002": {
+              "keys": [
+                { "t": 0.0,  "value": 0 },
+                { "t": 0.12, "value": 18 },
+                { "t": 0.35, "value": 0 }
+              ]
+            }
+          }
+        }
+      ],
       "textAnimators": [
         {
           "name": "fade_out",
@@ -190,7 +288,25 @@
     "REVEAL_SMOOTH_CHARS_FADE": {
       "name": "Smooth Reveal (Chars) + Fade",
       "description": "Плавное проявление по символам + fade-out.",
-      "effectStack": [],
+      "effectStack": [
+        {
+          "matchName": "ADBE Geometry2",
+          "params": {
+            "ADBE Geometry2-0003": {
+              "keys": [
+                { "t": 0.0,  "value": 102 },
+                { "t": 0.18, "value": 100 }
+              ]
+            },
+            "ADBE Geometry2-0004": {
+              "keys": [
+                { "t": 0.0,  "value": 102 },
+                { "t": 0.18, "value": 100 }
+              ]
+            }
+          }
+        }
+      ],
       "textAnimators": [
         {
           "name": "reveal_chars_smooth",
@@ -264,7 +380,47 @@
     "REVEAL_REVERSE_WORDS": {
       "name": "Reverse Reveal (Words)",
       "description": "Reveal в обратном направлении (через Percent End).",
-      "effectStack": [],
+      "effectStack": [
+        {
+          "matchName": "ADBE Geometry2",
+          "params": {
+            "ADBE Geometry2-0003": {
+              "keys": [
+                { "t": 0.0,  "value": 100 },
+                { "t": 0.10, "value": 110 },
+                { "t": 0.22, "value": 100 }
+              ]
+            },
+            "ADBE Geometry2-0004": {
+              "keys": [
+                { "t": 0.0,  "value": 100 },
+                { "t": 0.10, "value": 110 },
+                { "t": 0.22, "value": 100 }
+              ]
+            },
+            "ADBE Geometry2-0007": {
+              "keys": [
+                { "t": 0.0,  "value": 0 },
+                { "t": 0.10, "value": 2.5 },
+                { "t": 0.22, "value": 0 }
+              ]
+            }
+          }
+        },
+        {
+          "matchName": "ADBE Motion Blur",
+          "params": {
+            "ADBE Motion Blur-0001": 90,
+            "ADBE Motion Blur-0002": {
+              "keys": [
+                { "t": 0.0,  "value": 0 },
+                { "t": 0.10, "value": 35 },
+                { "t": 0.22, "value": 0 }
+              ]
+            }
+          }
+        }
+      ],
       "textAnimators": [
         {
           "name": "reveal_words_reverse",

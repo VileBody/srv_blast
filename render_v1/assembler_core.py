@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import copy
 import json
+from copy import deepcopy
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -104,11 +105,19 @@ def expand_text_fx_combos(items: List[Dict[str, Any]], text_fx_library: Dict[str
             )
 
             base = combos.get(combo_id) or combos.get(default_id)
-            baked = _deep_merge(copy.deepcopy(base), overrides)
+            baked = _deep_merge(deepcopy(base), overrides)
 
             if baked.get("textAnimators"):
                 layer["textAnimators"] = baked["textAnimators"]
                 changed += 1
+
+            # NEW: bake combo effectStack onto TEXT LAYERS as layer.effects (append).
+            # Adjustment layers are untouched by design (we only are in type=='text').
+            eff_stack = baked.get("effectStack") or []
+            if eff_stack:
+                existing = layer.get("effects") or []
+                # keep stable ordering: existing effects first, then combo stack
+                layer["effects"] = list(existing) + list(eff_stack)
 
             # cleanup MVP markers (keep project pure baked)
             layer.pop("textFxComboId", None)

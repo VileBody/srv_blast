@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import List, Optional, Union, Literal
+from typing import Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel
 
@@ -69,10 +69,11 @@ class TextLayer(BaseLayer):
 
     # MVP markers (input): model may set combo + overrides
     textFxComboId: Optional[str] = None
-    textFxOverrides: Optional[dict] = None
+    textFxOverrides: Optional[Dict[str, Any]] = None
 
-    # Baked output (after assembler): exact animator config for JSX
-    textAnimators: Optional[List[dict]] = None
+    # Baked output (after assembler): exact animator/effect config for JSX
+    textAnimators: Optional[List[Dict[str, Any]]] = None
+    effects: Optional[List[Dict[str, Any]]] = None
 
 
 class AdjustmentLayer(BaseLayer):
