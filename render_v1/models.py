@@ -67,6 +67,13 @@ class TextLayer(BaseLayer):
     type: Literal["text"]
     textDocument: TextDocument
 
+    # MVP markers (input): model may set combo + overrides
+    textFxComboId: Optional[str] = None
+    textFxOverrides: Optional[dict] = None
+
+    # Baked output (after assembler): exact animator config for JSX
+    textAnimators: Optional[List[dict]] = None
+
 
 class AdjustmentLayer(BaseLayer):
     type: Literal["adjustment"]

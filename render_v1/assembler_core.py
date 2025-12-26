@@ -25,10 +25,10 @@ DEFAULT_DURATION: float = 15.0
 
 
 def ensure_default_text_fx_combo(items: List[Dict[str, Any]], text_fx_library: Dict[str, Any]) -> int:
-    """MVP: ensure every text layer in comp_text has exactly one combo (default if missing).
+    """MVP: ensure every text layer has exactly one combo (default if missing).
 
     We keep it deliberately conservative:
-    - Only affects comp with id 'comp_text' (Text overlay comp).
+    - Affects ALL comps (all text layers).
     - Only sets layer.textFxComboId if missing/empty.
     """
     default_id = (text_fx_library or {}).get("defaultComboId")
@@ -38,8 +38,6 @@ def ensure_default_text_fx_combo(items: List[Dict[str, Any]], text_fx_library: D
     n = 0
     for it in items:
         if (it.get("type") or "").lower() != "comp":
-            continue
-        if it.get("id") != "comp_text":
             continue
         layers = it.get("layers") or []
         for layer in layers:
@@ -52,6 +50,75 @@ def ensure_default_text_fx_combo(items: List[Dict[str, Any]], text_fx_library: D
                 layer["textFxComboId"] = default_id
                 n += 1
     return n
+
+
+def _deep_merge(a: Any, b: Any) -> Any:
+    """Deep-merge dicts; lists are replaced (MVP-предсказуемо)."""
+    if b is None:
+        return a
+    if isinstance(a, dict) and isinstance(b, dict):
+        out = dict(a)
+        for k, v in b.items():
+            if k in out:
+                out[k] = _deep_merge(out.get(k), v)
+            else:
+                out[k] = v
+        return out
+    if isinstance(b, list):
+        return list(b)
+    return b
+
+
+def expand_text_fx_combos(items: List[Dict[str, Any]], text_fx_library: Dict[str, Any]) -> int:
+    """MVP -> BAKED: textFxComboId (+ overrides) -> layer.textAnimators for ALL text layers.
+
+    After this, JSX should NOT interpret comboId; it must only apply baked `textAnimators`.
+    """
+    default_id = (text_fx_library or {}).get("defaultComboId")
+    combos = (text_fx_library or {}).get("combos") or {}
+    if not default_id or default_id not in combos:
+        return 0
+
+    changed = 0
+    for it in items:
+        if (it.get("type") or "").lower() != "comp":
+            continue
+        layers = it.get("layers") or []
+        for layer in layers:
+            if not isinstance(layer, dict):
+                continue
+            if (layer.get("type") or "").lower() != "text":
+                continue
+
+            combo_id = (
+                layer.get("textFxComboId")
+                or layer.get("text_fx_combo_id")
+                or default_id
+            )
+            overrides = (
+                layer.get("textFxOverrides")
+                or layer.get("text_fx_overrides")
+                or layer.get("textFxOverrideParams")
+                or layer.get("text_fx_override_params")
+                or {}
+            )
+
+            base = combos.get(combo_id) or combos.get(default_id)
+            baked = _deep_merge(copy.deepcopy(base), overrides)
+
+            if baked.get("textAnimators"):
+                layer["textAnimators"] = baked["textAnimators"]
+                changed += 1
+
+            # cleanup MVP markers (keep project pure baked)
+            layer.pop("textFxComboId", None)
+            layer.pop("text_fx_combo_id", None)
+            layer.pop("textFxOverrides", None)
+            layer.pop("text_fx_overrides", None)
+            layer.pop("textFxOverrideParams", None)
+            layer.pop("text_fx_override_params", None)
+
+    return changed
 
 
 def load_json(path: Path) -> dict:
@@ -311,6 +378,7 @@ def build_project_payload_from_composition(
 
     text_fx_lib = copy.deepcopy(_TEXT_FX_LIBRARY)
     ensure_default_text_fx_combo(final_items, text_fx_lib)
+    expand_text_fx_combos(final_items, text_fx_lib)
 
     # сдвигаем аудио-слой в главной композиции по глобальному старту
     for item in final_items:
