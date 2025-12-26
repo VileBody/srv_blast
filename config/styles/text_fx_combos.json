@@ -1,0 +1,325 @@
+{
+  "schemaVersion": "text_fx_combos.v1",
+  "defaultComboId": "REVEAL_STEP_WORDS",
+  "combos": {
+    "REVEAL_STEP_WORDS": {
+      "name": "Reveal Step (Words) [DEFAULT]",
+      "description": "Ступенчатое проявление по словам. Максимально похоже на монтажёрский стиль.",
+      "effectStack": [],
+      "textAnimators": [
+        {
+          "name": "reveal_words_step",
+          "properties": {
+            "ADBE Text Opacity": 0
+          },
+          "selectors": [
+            {
+              "matchName": "ADBE Text Selector",
+              "name": "range",
+              "properties": {
+                "ADBE Text Percent Start": {
+                  "keys": [
+                    {
+                      "t": 0.0,
+                      "value": 25
+                    },
+                    {
+                      "t": 0.3,
+                      "value": 25
+                    },
+                    {
+                      "t": 0.34,
+                      "value": 50
+                    },
+                    {
+                      "t": 0.55,
+                      "value": 50
+                    },
+                    {
+                      "t": 0.59,
+                      "value": 75
+                    },
+                    {
+                      "t": 0.92,
+                      "value": 75
+                    },
+                    {
+                      "t": 0.96,
+                      "value": 100
+                    }
+                  ]
+                },
+                "ADBE Text Percent End": 100,
+                "ADBE Text Range Offset": 0
+              },
+              "advanced": {
+                "ADBE Text Range Units": 1,
+                "ADBE Text Selector Mode": 1,
+                "ADBE Text Range Based On": 3,
+                "ADBE Text Range Shape": 2,
+                "ADBE Text Range Smoothness": 0,
+                "ADBE Text Range Randomize Order": 0,
+                "ADBE Text Random Seed": 0
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "REVEAL_STEP_POP": {
+      "name": "Reveal Step + Pop",
+      "description": "Ступенчатый reveal + быстрый поп масштаба (акцент/удар).",
+      "effectStack": [],
+      "textAnimators": [
+        {
+          "name": "reveal_words_step",
+          "properties": {
+            "ADBE Text Opacity": 0
+          },
+          "selectors": [
+            {
+              "matchName": "ADBE Text Selector",
+              "name": "range",
+              "properties": {
+                "ADBE Text Percent Start": {
+                  "keys": [
+                    {
+                      "t": 0.0,
+                      "value": 25
+                    },
+                    {
+                      "t": 0.25,
+                      "value": 100
+                    }
+                  ]
+                },
+                "ADBE Text Percent End": 100,
+                "ADBE Text Range Offset": 0
+              },
+              "advanced": {
+                "ADBE Text Range Units": 1,
+                "ADBE Text Selector Mode": 1,
+                "ADBE Text Range Based On": 3,
+                "ADBE Text Range Shape": 2,
+                "ADBE Text Range Smoothness": 0
+              }
+            }
+          ]
+        },
+        {
+          "name": "pop_scale",
+          "properties": {
+            "ADBE Text Scale": {
+              "keys": [
+                {
+                  "t": 0.0,
+                  "value": [
+                    110,
+                    110
+                  ]
+                },
+                {
+                  "t": 0.12,
+                  "value": [
+                    100,
+                    100
+                  ]
+                }
+              ]
+            }
+          },
+          "selectors": [
+            {
+              "matchName": "ADBE Text Selector",
+              "name": "all",
+              "properties": {
+                "ADBE Text Percent Start": 0,
+                "ADBE Text Percent End": 100
+              },
+              "advanced": {
+                "ADBE Text Range Based On": 1,
+                "ADBE Text Range Smoothness": 100
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "STATIC_FADE_SOFT": {
+      "name": "Static + Soft Fade",
+      "description": "Статичное появление + мягкое исчезновение (opacity animator).",
+      "effectStack": [],
+      "textAnimators": [
+        {
+          "name": "fade_out",
+          "properties": {
+            "ADBE Text Opacity": {
+              "keys": [
+                {
+                  "t": 0.0,
+                  "value": 100
+                },
+                {
+                  "t": 0.8,
+                  "value": 100
+                },
+                {
+                  "t": 1.0,
+                  "value": 0
+                }
+              ]
+            }
+          },
+          "selectors": [
+            {
+              "matchName": "ADBE Text Selector",
+              "name": "all",
+              "properties": {
+                "ADBE Text Percent Start": 0,
+                "ADBE Text Percent End": 100
+              },
+              "advanced": {
+                "ADBE Text Range Based On": 1,
+                "ADBE Text Range Smoothness": 100
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "REVEAL_SMOOTH_CHARS_FADE": {
+      "name": "Smooth Reveal (Chars) + Fade",
+      "description": "Плавное проявление по символам + fade-out.",
+      "effectStack": [],
+      "textAnimators": [
+        {
+          "name": "reveal_chars_smooth",
+          "properties": {
+            "ADBE Text Opacity": 0
+          },
+          "selectors": [
+            {
+              "matchName": "ADBE Text Selector",
+              "name": "range",
+              "properties": {
+                "ADBE Text Percent Start": {
+                  "keys": [
+                    {
+                      "t": 0.0,
+                      "value": 0
+                    },
+                    {
+                      "t": 0.45,
+                      "value": 100
+                    }
+                  ]
+                },
+                "ADBE Text Percent End": 100,
+                "ADBE Text Range Offset": 0
+              },
+              "advanced": {
+                "ADBE Text Range Based On": 1,
+                "ADBE Text Range Shape": 1,
+                "ADBE Text Range Smoothness": 45
+              }
+            }
+          ]
+        },
+        {
+          "name": "fade_out",
+          "properties": {
+            "ADBE Text Opacity": {
+              "keys": [
+                {
+                  "t": 0.0,
+                  "value": 100
+                },
+                {
+                  "t": 0.75,
+                  "value": 100
+                },
+                {
+                  "t": 1.0,
+                  "value": 0
+                }
+              ]
+            }
+          },
+          "selectors": [
+            {
+              "matchName": "ADBE Text Selector",
+              "name": "all",
+              "properties": {
+                "ADBE Text Percent Start": 0,
+                "ADBE Text Percent End": 100
+              },
+              "advanced": {
+                "ADBE Text Range Smoothness": 100
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "REVEAL_REVERSE_WORDS": {
+      "name": "Reverse Reveal (Words)",
+      "description": "Reveal в обратном направлении (через Percent End).",
+      "effectStack": [],
+      "textAnimators": [
+        {
+          "name": "reveal_words_reverse",
+          "properties": {
+            "ADBE Text Opacity": 0
+          },
+          "selectors": [
+            {
+              "matchName": "ADBE Text Selector",
+              "name": "range",
+              "properties": {
+                "ADBE Text Percent End": {
+                  "keys": [
+                    {
+                      "t": 0.0,
+                      "value": 75
+                    },
+                    {
+                      "t": 0.3,
+                      "value": 75
+                    },
+                    {
+                      "t": 0.34,
+                      "value": 50
+                    },
+                    {
+                      "t": 0.55,
+                      "value": 50
+                    },
+                    {
+                      "t": 0.59,
+                      "value": 25
+                    },
+                    {
+                      "t": 0.92,
+                      "value": 25
+                    },
+                    {
+                      "t": 0.96,
+                      "value": 0
+                    }
+                  ]
+                },
+                "ADBE Text Percent Start": 0,
+                "ADBE Text Range Offset": 0
+              },
+              "advanced": {
+                "ADBE Text Range Based On": 3,
+                "ADBE Text Range Shape": 2,
+                "ADBE Text Range Smoothness": 0
+              }
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
