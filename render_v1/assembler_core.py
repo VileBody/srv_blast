@@ -24,6 +24,36 @@ ENV_DEFAULTS: Dict[str, Any] = {
 DEFAULT_DURATION: float = 15.0
 
 
+def ensure_default_text_fx_combo(items: List[Dict[str, Any]], text_fx_library: Dict[str, Any]) -> int:
+    """MVP: ensure every text layer in comp_text has exactly one combo (default if missing).
+
+    We keep it deliberately conservative:
+    - Only affects comp with id 'comp_text' (Text overlay comp).
+    - Only sets layer.textFxComboId if missing/empty.
+    """
+    default_id = (text_fx_library or {}).get("defaultComboId")
+    combos = (text_fx_library or {}).get("combos") or {}
+    if not default_id or default_id not in combos:
+        return 0
+    n = 0
+    for it in items:
+        if (it.get("type") or "").lower() != "comp":
+            continue
+        if it.get("id") != "comp_text":
+            continue
+        layers = it.get("layers") or []
+        for layer in layers:
+            if not isinstance(layer, dict):
+                continue
+            if (layer.get("type") or "").lower() != "text":
+                continue
+            combo_id = layer.get("textFxComboId") or layer.get("text_fx_combo_id")
+            if not combo_id:
+                layer["textFxComboId"] = default_id
+                n += 1
+    return n
+
+
 def load_json(path: Path) -> dict:
     if not path.is_file():
         print(f"[WARN] File not found: {path}")
@@ -38,6 +68,7 @@ def load_json(path: Path) -> dict:
 # project_settings_template.json по аналогии с text_styles / footage_presets
 PROJECT_SETTINGS_TEMPLATE_PATH = Path("config/styles/project_settings_template.json")
 EFFECTS_LIBRARY_PATH = Path("config/styles/effects_library.json")
+TEXT_FX_LIBRARY_PATH = Path("config/styles/text_fx_combos.json")
 try:
     _PROJECT_TEMPLATE = load_json(PROJECT_SETTINGS_TEMPLATE_PATH)
 except Exception as exc:  # noqa: BLE001
@@ -49,6 +80,12 @@ try:
 except Exception as exc:  # noqa: BLE001
     print(f"[assembler_core] WARNING: failed to load {EFFECTS_LIBRARY_PATH}: {exc}")
     _EFFECTS_LIBRARY = {}
+
+try:
+    _TEXT_FX_LIBRARY = load_json(TEXT_FX_LIBRARY_PATH)
+except Exception as exc:  # noqa: BLE001
+    print(f"[assembler_core] WARNING: failed to load {TEXT_FX_LIBRARY_PATH}: {exc}")
+    _TEXT_FX_LIBRARY = {}
 
 PROJECT_TEMPLATE_DEFAULTS: Dict[str, Any] = (
     _PROJECT_TEMPLATE.get("defaults", {}) if isinstance(_PROJECT_TEMPLATE, dict) else {}
@@ -271,6 +308,9 @@ def build_project_payload_from_composition(
             item["layers"] = processed_layers
 
         final_items.append(item)
+
+    text_fx_lib = copy.deepcopy(_TEXT_FX_LIBRARY)
+    ensure_default_text_fx_combo(final_items, text_fx_lib)
 
     # сдвигаем аудио-слой в главной композиции по глобальному старту
     for item in final_items:
