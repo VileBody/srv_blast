@@ -193,6 +193,9 @@ def expand_text_fx_on_layer(
     if not isinstance(combo, dict):
         return
 
+    combo_apply = combo.get("apply") if isinstance(combo, dict) else None
+    combo_text = combo_apply.get("textLayer") if isinstance(combo_apply, dict) else None
+
     # 1) effect stack (attach to text layer)
     combo_fx = combo.get("effectStack") or []
     if isinstance(combo_fx, list) and combo_fx:
@@ -215,7 +218,9 @@ def expand_text_fx_on_layer(
         layer["effects"] = existing
 
     # 2) text animators (preset)
-    combo_anim = combo.get("textAnimators") or []
+    combo_anim = combo_text.get("textAnimators") if isinstance(combo_text, dict) else None
+    if not isinstance(combo_anim, list):
+        combo_anim = combo.get("textAnimators") or []
     if isinstance(combo_anim, list) and combo_anim:
         # overwrite (preset decides the structure)
         layer["textAnimators"] = copy.deepcopy(combo_anim)
