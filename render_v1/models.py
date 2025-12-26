@@ -76,6 +76,8 @@ class TextLayer(BaseLayer):
     textAnimators: Optional[List[dict]] = None
     # Optional layer-local effects (rare; most TEXT FX live on paired adjustment layers)
     effects: Optional[List[dict]] = None
+    # Optional overrides for the chosen combo (LLM-controlled): timing + keyframes
+    textFxOverrides: Optional[Dict[str, Any]] = None
 
 
 class AdjustmentLayer(BaseLayer):

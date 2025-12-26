@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
-TEXT_FX_LIBRARY_PATH = Path("config/styles/text_fx_library.json")
+TEXT_FX_LIBRARY_PATH = Path("config/styles/text_fx_combos.json")
 
 from .models import Payload
 from render_v1.text_fx_logic import apply_text_fx_from_layer_fields, apply_text_fx_plan

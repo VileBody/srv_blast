@@ -39,7 +39,7 @@ def load_json(path: Path) -> dict:
 # project_settings_template.json по аналогии с text_styles / footage_presets
 PROJECT_SETTINGS_TEMPLATE_PATH = Path("config/styles/project_settings_template.json")
 EFFECTS_LIBRARY_PATH = Path("config/styles/effects_library.json")
-TEXT_FX_LIBRARY_PATH = Path("config/styles/text_fx_library.json")
+TEXT_FX_LIBRARY_PATH = Path("config/styles/text_fx_combos.json")
 try:
     _PROJECT_TEMPLATE = load_json(PROJECT_SETTINGS_TEMPLATE_PATH)
 except Exception as exc:  # noqa: BLE001
