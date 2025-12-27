@@ -141,10 +141,36 @@ def load_json(path: Path) -> dict:
         return {}
 
 
+def _resolve_cfg_path(primary: Path) -> Path:
+    """
+    Support both layouts:
+      legacy: config/styles/<file>.json
+      new:    config/styles/<group>/<file>.json
+    """
+
+    if primary.is_file():
+        return primary
+
+    name = primary.name
+    candidates = [
+        Path("config/styles") / name,
+        Path("config/styles/text") / name,
+        Path("config/styles/footage") / name,
+        Path("config/styles/effects") / name,
+        Path("config/styles/project") / name,
+    ]
+    for c in candidates:
+        if c.is_file():
+            print(f"[WARN] Using fallback config path: {c} (primary missing: {primary})")
+            return c
+
+    return primary
+
+
 # project_settings_template.json по аналогии с text_styles / footage_presets
-PROJECT_SETTINGS_TEMPLATE_PATH = Path("config/styles/project_settings_template.json")
-EFFECTS_LIBRARY_PATH = Path("config/styles/effects_library.json")
-TEXT_FX_LIBRARY_PATH = Path("config/styles/text_fx_combos.json")
+PROJECT_SETTINGS_TEMPLATE_PATH = _resolve_cfg_path(Path("config/styles/project_settings_template.json"))
+EFFECTS_LIBRARY_PATH = _resolve_cfg_path(Path("config/styles/effects_library.json"))
+TEXT_FX_LIBRARY_PATH = _resolve_cfg_path(Path("config/styles/text_fx_combos.json"))
 try:
     _PROJECT_TEMPLATE = load_json(PROJECT_SETTINGS_TEMPLATE_PATH)
 except Exception as exc:  # noqa: BLE001
@@ -186,25 +212,35 @@ def process_layer(
     if "inPoint" in layer and "startTime" not in layer:
         layer["startTime"] = layer["inPoint"]
 
-    # TEXT: styleId + content -> textDocument
-    if layer.get("type") == "text" and "styleId" in layer:
-        sid = layer["styleId"]
-        if sid in styles_lib:
-            style_props = copy.deepcopy(styles_lib[sid])
-            if "textDocument" not in layer:
-                layer["textDocument"] = {}
-            for k, v in style_props.items():
-                if k not in layer["textDocument"]:
-                    layer["textDocument"][k] = v
+    # TEXT: (styleId?) + content -> textDocument
+    # Tolerant mode: if LLM forgot styleId, we inject default style anyway.
+    if layer.get("type") == "text":
+        sid = layer.get("styleId") or "main_subtitle"
+        style_props = {}
+        if isinstance(styles_lib, dict):
+            style_props = copy.deepcopy(styles_lib.get(sid) or styles_lib.get("main_subtitle") or {})
 
-            content = layer.get("content") or layer.get("text")
-            if content:
-                layer["textDocument"]["text"] = content
-            if "content" in layer:
-                del layer["content"]
-            if "text" in layer and not isinstance(layer["text"], dict):
-                del layer["text"]
-        del layer["styleId"]
+        if "textDocument" not in layer or not isinstance(layer.get("textDocument"), dict):
+            layer["textDocument"] = {}
+
+        # Fill defaults if missing
+        for k, v in style_props.items():
+            if k not in layer["textDocument"]:
+                layer["textDocument"][k] = v
+
+        # Ensure "text" is present for pydantic TextDocument
+        content = layer.get("content") or (layer.get("text") if not isinstance(layer.get("text"), dict) else None)
+        if content:
+            layer["textDocument"]["text"] = content
+        else:
+            # last-resort: never let pydantic fail on missing text
+            layer["textDocument"].setdefault("text", "")
+
+        # cleanup authoring keys
+        layer.pop("content", None)
+        if "text" in layer and not isinstance(layer["text"], dict):
+            layer.pop("text", None)
+        layer.pop("styleId", None)
 
     # PRESET: presetId -> transform
     if "presetId" in layer:
