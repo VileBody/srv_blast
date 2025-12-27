@@ -212,35 +212,37 @@ def process_layer(
     if "inPoint" in layer and "startTime" not in layer:
         layer["startTime"] = layer["inPoint"]
 
-    # TEXT: (styleId?) + content -> textDocument
-    # Tolerant mode: if LLM forgot styleId, we inject default style anyway.
+    # TEXT: always bake into `textDocument` (Payload requires it).
+    # If style library is missing / styleId unknown, we still keep text and validate.
     if layer.get("type") == "text":
-        sid = layer.get("styleId") or "main_subtitle"
-        style_props = {}
-        if isinstance(styles_lib, dict):
-            style_props = copy.deepcopy(styles_lib.get(sid) or styles_lib.get("main_subtitle") or {})
+        # 1) extract raw text
+        content = layer.get("content")
+        if content is None and isinstance(layer.get("text"), str):
+            content = layer.get("text")
+        if content is None:
+            content = ""
 
-        if "textDocument" not in layer or not isinstance(layer.get("textDocument"), dict):
-            layer["textDocument"] = {}
-
-        # Fill defaults if missing
-        for k, v in style_props.items():
-            if k not in layer["textDocument"]:
-                layer["textDocument"][k] = v
-
-        # Ensure "text" is present for pydantic TextDocument
-        content = layer.get("content") or (layer.get("text") if not isinstance(layer.get("text"), dict) else None)
-        if content:
-            layer["textDocument"]["text"] = content
+        # 2) ensure textDocument exists
+        if not isinstance(layer.get("textDocument"), dict):
+            layer["textDocument"] = {"text": str(content)}
         else:
-            # last-resort: never let pydantic fail on missing text
-            layer["textDocument"].setdefault("text", "")
+            layer["textDocument"].setdefault("text", str(content))
 
-        # cleanup authoring keys
+        # 3) apply styleId if present & known
+        sid = layer.get("styleId")
+        if sid:
+            style_props = styles_lib.get(sid)
+            if isinstance(style_props, dict) and style_props:
+                for k, v in copy.deepcopy(style_props).items():
+                    layer["textDocument"].setdefault(k, v)
+            else:
+                print(f"[ASSEMBLER] WARNING: unknown styleId={sid!r} for text layer; using defaults")
+            layer.pop("styleId", None)
+
+        # 4) cleanup legacy fields
         layer.pop("content", None)
         if "text" in layer and not isinstance(layer["text"], dict):
             layer.pop("text", None)
-        layer.pop("styleId", None)
 
     # PRESET: presetId -> transform
     if "presetId" in layer:
