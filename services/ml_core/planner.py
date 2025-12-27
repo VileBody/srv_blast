@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Dict
 
 from config import Config
-from render_v1.assembler_core import build_project_payload_from_composition
+from src.render.ae.compiler import build_project_payload_from_composition
 from src.genai.client_base import GenaiClientBase
 from src.genai.planners import AePlanner
 from src.storage.library_store import AssetLibrary

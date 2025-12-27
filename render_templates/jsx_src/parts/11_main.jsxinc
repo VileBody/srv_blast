@@ -1,0 +1,34 @@
+    // 3. MAIN
+    // ==========================================
+    var projFile = null;
+    var entryComp = null;
+
+    try {
+        entryComp = buildProject();
+        projFile = saveProject(entryComp);
+
+        var msgLines = [];
+        if (projFile) msgLines.push("aep=" + projFile.fsName);
+        if (entryComp) msgLines.push("compName=" + entryComp.name);
+        var msg = msgLines.join("\n");
+
+        logLine("JOB END (success)");
+        writeStatus("OK", msg);
+    } catch (err) {
+        var errMsg = (err && err.toString ? err.toString() : String(err));
+        logLine("JOB ERROR: " + errMsg);
+        writeStatus("ERROR", errMsg);
+    } finally {
+        // закрываем ПРОЕКТ, но не приложение After Effects
+        try {
+            if (app.project && typeof CloseOptions !== "undefined") {
+                app.project.close(CloseOptions.DO_NOT_SAVE_CHANGES);
+            } else if (app.project) {
+                app.project.close();
+            }
+        } catch (eClose) {
+            logLine("Project close error: " + eClose.toString());
+        }
+        closeLog();
+    }
+})();

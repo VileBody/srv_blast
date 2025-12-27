@@ -1,0 +1,93 @@
+    function clearTextAnimators(textLayer) {
+        try {
+            var tp = textLayer.property("ADBE Text Properties");
+            if (!tp) return;
+            var anims = tp.property("ADBE Text Animators");
+            if (!anims) return;
+            for (var i = anims.numProperties; i >= 1; i--) {
+                try { anims.property(i).remove(); } catch (eRm) {}
+            }
+        } catch (e) {
+            logLine("WARN: clearTextAnimators failed: " + e.toString());
+        }
+    }
+
+    function applyTextAnimators(textLayer, animatorsConf) {
+        if (!textLayer || !animatorsConf || !animatorsConf.length) return;
+
+        var tp = textLayer.property("ADBE Text Properties");
+        if (!tp) { logLine("WARN: no Text Properties on layer: " + textLayer.name); return; }
+
+        var anims = tp.property("ADBE Text Animators");
+        if (!anims) { logLine("WARN: no Text Animators group on layer: " + textLayer.name); return; }
+
+        // Deterministic: do not accumulate animators across runs
+        clearTextAnimators(textLayer);
+
+        for (var i = 0; i < animatorsConf.length; i++) {
+            var aConf = animatorsConf[i];
+            if (!aConf) continue;
+
+            var animator = null;
+            try { animator = anims.addProperty("ADBE Text Animator"); } catch (eAddA) { animator = null; }
+            if (!animator) { logLine("WARN: cannot add Text Animator on " + textLayer.name); continue; }
+            if (aConf.name) animator.name = aConf.name;
+
+            // Animator properties: dict {matchName: valueData}
+            var aProps = animator.property("ADBE Text Animator Properties");
+            var props = aConf.properties || {};
+            for (var pKey in props) {
+                if (!props.hasOwnProperty(pKey)) continue;
+                var aeP = null;
+                try { aeP = aProps.addProperty(pKey); } catch (eAddP) { aeP = null; }
+                if (!aeP) { logLine("WARN: animator prop add failed: " + pKey); continue; }
+                setPropValue(aeP, props[pKey], textLayer);
+            }
+
+            // Selectors
+            var sels = animator.property("ADBE Text Selectors");
+            var selList = aConf.selectors || [];
+            for (var s = 0; s < selList.length; s++) {
+                var sConf = selList[s];
+                if (!sConf) continue;
+
+                var sel = null;
+                var selMatch = sConf.matchName || "ADBE Text Selector";
+                try { sel = sels.addProperty(selMatch); } catch (eSel) { sel = null; }
+                if (!sel) { logLine("WARN: selector add failed: " + selMatch); continue; }
+                if (sConf.name) sel.name = sConf.name;
+
+                // selector basic props: dict {matchName: valueData}
+                var sp = sConf.properties || {};
+                for (var spKey in sp) {
+                    if (!sp.hasOwnProperty(spKey)) continue;
+                    var pr = null;
+                    try { pr = sel.property(spKey); } catch (e1) { pr = null; }
+                    if (!pr) { logLine("SEL PROP MISSING: " + spKey); continue; }
+                    setPropValue(pr, sp[spKey], textLayer);
+                }
+
+                // advanced props: dict {matchName: valueData}
+                var adv = sConf.advanced || {};
+                if (adv && typeof adv === "object") {
+                    var advGroup = null;
+                    try { advGroup = sel.property("ADBE Text Selector Advanced"); } catch (eA1) { advGroup = null; }
+                    if (!advGroup) {
+                        try { advGroup = sel.property("ADBE Text Range Advanced"); } catch (eA2) { advGroup = null; }
+                    }
+                    if (!advGroup) advGroup = sel;
+
+                    for (var aKey in adv) {
+                        if (!adv.hasOwnProperty(aKey)) continue;
+                        var ap = null;
+                        try { ap = advGroup.property(aKey); } catch (e2) { ap = null; }
+                        if (!ap && advGroup !== sel) {
+                            try { ap = sel.property(aKey); } catch (e3) { ap = null; }
+                        }
+                        if (!ap) { logLine("ADV PROP MISSING: " + aKey); continue; }
+                        setPropValue(ap, adv[aKey], textLayer);
+                    }
+                }
+            }
+        }
+    }

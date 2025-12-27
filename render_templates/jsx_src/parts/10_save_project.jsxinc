@@ -1,0 +1,19 @@
+
+    function saveProject(entryComp) {
+        if (!APP_DIR) {
+            throw new Error("APP_DIR is empty, cannot save AEP");
+        }
+
+        var projName = "debug_" + (JOB_ID || "project") + ".aep";
+        var projFile = new File(APP_DIR + "/" + projName);
+
+        if (projFile.parent && !projFile.parent.exists) {
+            projFile.parent.create();
+        }
+
+        app.project.save(projFile);
+        logLine("Project saved: " + projFile.fsName);
+        return projFile;
+    }
+
+    // ==========================================

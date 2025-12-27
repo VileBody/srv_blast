@@ -1,0 +1,162 @@
+// render_templates/job_template.jsx
+// AUTO-GENERATED (source of truth: render_templates/jsx_src/parts/*.jsxinc)
+// Rebuild: python tools/build_job_template.py
+(function () {
+    // ==========================================
+    // 0.1. LEGACY JS HELPERS (ExtendScript-safe)
+    // ==========================================
+    function _isArray(v) {
+        try {
+            return (v instanceof Array);
+        } catch (e) {
+            return false;
+        }
+    }
+
+    // ==========================================
+    // 0. ENV + HELPERS
+    // ==========================================
+    function getEnvSafe(name, defValue) {
+        try {
+            var v = $.getenv(name);
+            if (v === null || v === undefined || v === "") return defValue;
+            return v;
+        } catch (e) {
+            return defValue;
+        }
+    }
+
+    var APP_DIR    = getEnvSafe("APP_DIR", "");
+    var OUTPUT_REL = getEnvSafe("OUTPUT_REL", "work/output.mp4"); // сейчас не используем, но пусть живёт
+    var JOB_ID     = getEnvSafe("JOB_ID", "");
+    var COMP_NAME  = getEnvSafe("COMP_NAME", "");
+
+    // Фолбэк: если env не доехал (GUI AE уже открыт) — берём папку, где лежит скрипт.
+    if (!APP_DIR) {
+        try {
+            var jsxFile = new File($.fileName);
+            if (jsxFile && jsxFile.parent) {
+                APP_DIR = jsxFile.parent.fsName;
+            }
+        } catch (e1) {
+            // APP_DIR остаётся пустым — это авария, но пайплайн залогирует
+        }
+    }
+
+    // Фолбэк для JOB_ID: из имени папки перед "app"
+    if (!JOB_ID && APP_DIR) {
+        try {
+            var normPath = APP_DIR.replace(/\\/g, "/");
+            var parts = normPath.split("/");
+            if (parts.length >= 2) {
+                var last = parts[parts.length - 1];
+                if (last.toLowerCase() === "app" && parts.length >= 2) {
+                    JOB_ID = parts[parts.length - 2];
+                } else {
+                    JOB_ID = last;
+                }
+            }
+        } catch (e2) {
+            // останется пустым, будет debug_project.aep
+        }
+    }
+
+    var LOG_FILE    = null;
+    var STATUS_PATH = APP_DIR ? (APP_DIR + "/ae_status.txt") : "";
+    var LOG_PATH    = APP_DIR ? (APP_DIR + "/ae_job_log") : "";
+
+    function initLog() {
+        if (!APP_DIR) return;
+        try {
+            // Reset log file, but do NOT keep it opened (aerender/AfterFX.com can be picky)
+            var f = new File(LOG_PATH);
+            f.encoding = "UTF-8";
+            if (f.exists) f.remove();
+            f.open("w");
+            f.lineFeed = "Unix";
+            f.writeln("=== AE JOB LOG START ===");
+            f.close();
+            LOG_FILE = true; // marker "logging enabled"
+        } catch (e) {
+            LOG_FILE = null;
+        }
+    }
+
+    function _appendLog(line) {
+        if (!LOG_PATH) return;
+        try {
+            var f = new File(LOG_PATH);
+            f.encoding = "UTF-8";
+            f.open("a");
+            f.lineFeed = "Unix";
+            f.writeln(line);
+            f.close();
+        } catch (e) {
+            // last resort: console only
+        }
+    }
+
+    function logLine(msg) {
+        var prefix = "";
+        try {
+            prefix = (new Date()).toUTCString() + " ";
+        } catch (e) {}
+        var line = prefix + msg;
+
+        // Always try to append; avoids "empty file" due to handle issues
+        _appendLog(line);
+
+        try {
+            $.writeln(line);
+        } catch (e2) {}
+    }
+
+    function closeLog() {
+        // no-op: we don't keep the file handle open anymore
+    }
+
+    function writeStatus(status, message) {
+        if (!STATUS_PATH) return;
+        try {
+            var f = new File(STATUS_PATH);
+            f.encoding = "UTF-8";
+            if (f.exists) {
+                f.remove();
+            }
+            f.open("w", "TEXT", "????");
+            f.lineFeed = "Unix";
+            f.writeln(status);
+            if (message) {
+                // message может быть многострочным: aep=... \n compName=...
+                var lines = message.split("\n");
+                for (var i = 0; i < lines.length; i++) {
+                    f.writeln(lines[i]);
+                }
+            }
+            f.close();
+        } catch (e) {
+            // статус-файл nice-to-have, не ломаем скрипт
+        }
+    }
+
+    initLog();
+    logLine("JOB START; APP_DIR=" + APP_DIR + "; OUTPUT_REL=" + OUTPUT_REL + "; JOB_ID=" + JOB_ID);
+
+    // ==========================================
+    // 1. DATA INJECTION ZONE
+    // ==========================================
+    // Python заменит эту строку на: var PROJECT_DATA = { ... };
+    /*__PYTHON_DATA_INJECT__*/
+
+    if (typeof PROJECT_DATA === "undefined" || !PROJECT_DATA) {
+        var errPd = "PROJECT_DATA is not defined";
+        logLine("ERROR: " + errPd);
+        writeStatus("ERROR", errPd);
+        closeLog();
+        return;
+    }
+
+    // ==========================================
+    // 2. ENGINE CORE
+    // ==========================================
+    var itemRegistry = {};

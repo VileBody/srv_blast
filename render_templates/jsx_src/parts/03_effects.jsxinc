@@ -1,0 +1,42 @@
+
+    function applyEffects(layer, effectsConf) {
+        if (!layer || !effectsConf || !effectsConf.length) return;
+        var parade = layer.property("ADBE Effect Parade");
+        if (!parade) {
+            logLine("WARN: no Effect Parade on layer: " + layer.name);
+            return;
+        }
+
+        for (var i = 0; i < effectsConf.length; i++) {
+            var fxConf = effectsConf[i];
+            if (!fxConf || !fxConf.matchName) continue;
+
+            var fx = null;
+            try {
+                fx = parade.addProperty(fxConf.matchName);
+            } catch (eAdd) {
+                logLine("FX ADD FAIL: matchName=" + fxConf.matchName + " err=" + eAdd.toString());
+                continue;
+            }
+            if (!fx) {
+                logLine("FX ADD NULL: matchName=" + fxConf.matchName);
+                continue;
+            }
+
+            var params = fxConf.params || {};
+            for (var key in params) {
+                if (!params.hasOwnProperty(key)) continue;
+                var p = null;
+                try {
+                    p = fx.property(key);
+                } catch (eProp) {
+                    p = null;
+                }
+                if (!p) {
+                    logLine("FX PARAM MISSING: fx=" + fxConf.matchName + " key=" + key);
+                    continue;
+                }
+                setPropValue(p, params[key], layer);
+            }
+        }
+    }

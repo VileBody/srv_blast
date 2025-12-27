@@ -1,0 +1,50 @@
+
+    function setupGeneralLayer(layer, config) {
+        if (config.name) layer.name = config.name;
+        else if (config.textDocument && config.textDocument.text) {
+            layer.name = config.textDocument.text.replace(/\r/g, " ").substring(0, 15);
+        }
+
+        if (config.startTime !== undefined) layer.startTime = config.startTime;
+        if (config.inPoint   !== undefined) layer.inPoint   = config.inPoint;
+        if (config.outPoint  !== undefined) layer.outPoint  = config.outPoint;
+
+        if (config.enabled      !== undefined) layer.enabled      = config.enabled;
+        if (config.audioEnabled !== undefined && layer.hasAudio) layer.audioEnabled = config.audioEnabled;
+
+        if (config.type === "adjustment") layer.adjustmentLayer = true;
+
+        if (config.transform) {
+            var tr = config.transform;
+
+            // Если применяем fitPolicy (cover/contain), scale не трогаем —
+            // auto-fit в applyFitPolicy уже выставит нужный размер.
+            if (tr.scale && !config.fitPolicy) {
+                setPropValue(layer.transform.scale, tr.scale, layer);
+            }
+            if (tr.position) setPropValue(layer.transform.position, tr.position, layer);
+            if (tr.rotation) setPropValue(layer.transform.rotation, tr.rotation, layer);
+            if (tr.opacity)  setPropValue(layer.transform.opacity,  tr.opacity, layer);
+        }
+
+        if (config.effects) {
+            applyEffects(layer, config.effects);
+        }
+
+        // Text animators (baked by assembler from text_fx_combos.json)
+        if (config.type === "text" && config.textAnimators && config.textAnimators.length) {
+            applyTextAnimators(layer, config.textAnimators);
+        }
+    }
+
+    function applyFitPolicy(layer, comp, src, conf) {
+        if (!conf || !conf.fitPolicy) return;
+
+        if (conf.fitPolicy === "cover" && src && src.width && src.height) {
+            var sx = comp.width  / src.width  * 100;
+            var sy = comp.height / src.height * 100;
+            var s  = (sx > sy ? sx : sy); // cover: масштаб по минимальной стороне
+            layer.property("Scale").setValue([s, s]);
+        }
+        // 'contain' можно добавить позже
+    }

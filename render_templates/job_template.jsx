@@ -1,4 +1,6 @@
 // render_templates/job_template.jsx
+// AUTO-GENERATED (source of truth: render_templates/jsx_src/parts/*.jsxinc)
+// Rebuild: python tools/build_job_template.py
 (function () {
     // ==========================================
     // 0.1. LEGACY JS HELPERS (ExtendScript-safe)
