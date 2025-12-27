@@ -1,0 +1,14 @@
+
+    function createComp(config) {
+        var c = app.project.items.addComp(
+            config.name,
+            config.width,
+            config.height,
+            config.pixelAspect,
+            config.duration,
+            config.fps
+        );
+        c.parentFolder = fComps;
+        logLine("Create comp: id=" + (config.id || "?") + " name=" + config.name);
+        return c;
+    }

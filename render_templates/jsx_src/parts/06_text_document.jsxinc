@@ -1,0 +1,63 @@
+
+    function applyTextSettings(textLayer, textDocConfig) {
+        if (!textDocConfig) return;
+        var textProp     = textLayer.property("Source Text");
+        var textDocument = textProp.value;
+
+        if (textDocConfig.text) textDocument.text = textDocConfig.text;
+
+        var fontSet = false;
+        try {
+            if (textDocConfig.font) {
+                textDocument.font = textDocConfig.font;
+                fontSet = true;
+            }
+        } catch (eFont) {
+            // AE может кинуть исключение, если шрифт отсутствует
+            logLine("FONT SET FAIL: requested='" + textDocConfig.font + "' err=" + eFont.toString());
+        }
+
+        // Даже если исключения нет, AE может молча подменить шрифт.
+        if (textDocConfig.font) {
+            try {
+                if (textDocument.font !== textDocConfig.font) {
+                    logLine("FONT SUBSTITUTED: requested='" + textDocConfig.font + "' got='" + textDocument.font + "'");
+                }
+            } catch (eChk) {}
+        }
+        if (!fontSet) {
+            try { textDocument.font = "Calibri"; } catch (eFb) {}
+            if (textDocConfig.font) {
+                logLine("FONT FALLBACK: requested='" + textDocConfig.font + "' -> Calibri");
+            }
+        }
+
+        if (textDocConfig.fontSize)  textDocument.fontSize  = textDocConfig.fontSize;
+        if (textDocConfig.tracking)  textDocument.tracking  = textDocConfig.tracking;
+        if (textDocConfig.leading)   textDocument.leading   = textDocConfig.leading;
+
+        if (textDocConfig.justification !== undefined) {
+            var j = textDocConfig.justification;
+            if (j === 1 || j === 7415 || j === "CENTER") textDocument.justification = ParagraphJustification.CENTER_JUSTIFY;
+            else if (j === 0 || j === 7413 || j === "LEFT")  textDocument.justification = ParagraphJustification.LEFT_JUSTIFY;
+            else if (j === 2 || j === 7414 || j === "RIGHT") textDocument.justification = ParagraphJustification.RIGHT_JUSTIFY;
+        }
+
+        if (textDocConfig.fillColor)   textDocument.fillColor   = textDocConfig.fillColor;
+        if (textDocConfig.strokeColor) textDocument.strokeColor = textDocConfig.strokeColor;
+        if (textDocConfig.strokeWidth) textDocument.strokeWidth = textDocConfig.strokeWidth;
+
+        if (textDocConfig.applyFill === true)       textDocument.applyFill = true;
+        else if (textDocConfig.applyFill === false) textDocument.applyFill = false;
+        else if (textDocConfig.fillColor)           textDocument.applyFill = true;
+
+        if (textDocConfig.applyStroke === true)       textDocument.applyStroke = true;
+        else if (textDocConfig.applyStroke === false) textDocument.applyStroke = false;
+        else if (textDocConfig.strokeColor || textDocConfig.strokeWidth) textDocument.applyStroke = true;
+
+        textProp.setValue(textDocument);
+    }
+
+    // ==========================================
+    // 1.X. TEXT ANIMATORS (BAKED APPLY)
+    // ==========================================

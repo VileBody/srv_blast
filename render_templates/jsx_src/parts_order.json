@@ -1,0 +1,17 @@
+{
+  "output": "render_templates/job_template.jsx",
+  "parts": [
+    "00_prelude.jsxinc",
+    "01_registry.jsxinc",
+    "02_prop_engine.jsxinc",
+    "03_effects.jsxinc",
+    "04_import_footage.jsxinc",
+    "05_create_comp.jsxinc",
+    "06_text_document.jsxinc",
+    "07_text_animators.jsxinc",
+    "08_layer_common.jsxinc",
+    "09_build_project.jsxinc",
+    "10_save_project.jsxinc",
+    "11_main.jsxinc"
+  ]
+}

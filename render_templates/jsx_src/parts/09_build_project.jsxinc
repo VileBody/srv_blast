@@ -1,0 +1,158 @@
+
+    function buildProject() {
+        var itemsList = [];
+        if (PROJECT_DATA.project && PROJECT_DATA.project.items) itemsList = PROJECT_DATA.project.items;
+        else if (PROJECT_DATA.items) itemsList = PROJECT_DATA.items;
+
+        logLine("PROJECT_DATA items count = " + itemsList.length);
+
+        // STEP 1: create items
+        for (var i = 0; i < itemsList.length; i++) {
+            var conf = itemsList[i];
+            if (conf.type === "footage") {
+                var itemF = importFootage(conf);
+                if (itemF) itemRegistry[conf.id] = itemF;
+            } else if (conf.type === "comp") {
+                var itemC = createComp(conf);
+                if (itemC) itemRegistry[conf.id] = itemC;
+            }
+        }
+
+        // STEP 2: create layers inside comps
+        for (var ii = 0; ii < itemsList.length; ii++) {
+            var compConf = itemsList[ii];
+            if (compConf.type !== "comp" || !compConf.layers) continue;
+
+            var comp = itemRegistry[compConf.id];
+            if (!comp) continue;
+
+            logLine("Populate comp: " + compConf.id + " with " + compConf.layers.length + " layers");
+
+            function _sameWindow(a, b) {
+                if (!a || !b) return false;
+                if (a.inPoint === undefined || b.inPoint === undefined) return false;
+                if (a.outPoint === undefined || b.outPoint === undefined) return false;
+                return (Math.abs(a.inPoint - b.inPoint) < 1e-6) && (Math.abs(a.outPoint - b.outPoint) < 1e-6);
+            }
+
+            // Build "units": either [base, adjustment] or [single]
+            function _normalizeLayerUnits(layers, compId) {
+                var units = [];
+                var i = 0;
+                while (i < layers.length) {
+                    var cur = layers[i];
+                    var nxt = (i + 1 < layers.length) ? layers[i + 1] : null;
+
+                    // Prefer pairing by equal window + one is adjustment
+                    if (cur && nxt && (cur.type === "adjustment" || nxt.type === "adjustment") && _sameWindow(cur, nxt)) {
+                        // ensure order base -> adjustment
+                        if (cur.type === "adjustment" && nxt.type !== "adjustment") {
+                            units.push([nxt, cur]);
+                        } else if (cur.type !== "adjustment" && nxt.type === "adjustment") {
+                            units.push([cur, nxt]);
+                        } else {
+                            // two adjustments or two bases; keep as singles
+                            units.push([cur]);
+                            i += 1;
+                            continue;
+                        }
+                        i += 2;
+                        continue;
+                    }
+
+                    units.push([cur]);
+                    i += 1;
+                }
+
+                // Sort units by base inPoint (stable-ish)
+                units.sort(function (ua, ub) {
+                    var a = ua[0] || {};
+                    var b = ub[0] || {};
+                    var ta = (a.inPoint !== undefined) ? a.inPoint : 0.0;
+                    var tb = (b.inPoint !== undefined) ? b.inPoint : 0.0;
+                    return ta - tb;
+                });
+
+                // In comp_main: keep Audio Ref at very bottom, Text Overlay at very top
+                if (compId === "comp_main") {
+                    var audioUnits = [];
+                    var overlayUnits = [];
+                    var otherUnits = [];
+                    for (var k = 0; k < units.length; k++) {
+                        var u = units[k];
+                        var base = u[0] || {};
+                        if (base.type === "ref" && (base.refId === "audio_main" || base.audioEnabled === true)) {
+                            audioUnits.push(u);
+                        } else if (base.type === "ref" && base.refId === "comp_text") {
+                            overlayUnits.push(u);
+                        } else {
+                            otherUnits.push(u);
+                        }
+                    }
+                    units = audioUnits.concat(otherUnits).concat(overlayUnits);
+                }
+
+                return units;
+            }
+
+            function _createLayerFromConf(lConf) {
+                var layer = null;
+                if (lConf.type === "ref") {
+                    var src = itemRegistry[lConf.refId];
+                    if (src) {
+                        layer = comp.layers.add(src);
+                        applyFitPolicy(layer, comp, src, lConf);
+                    } else {
+                        layer = comp.layers.addNull();
+                        layer.name = "MISSING: " + lConf.refId;
+                    }
+                } else if (lConf.type === "text") {
+                    var txtContent = (lConf.textDocument && lConf.textDocument.text)
+                        ? lConf.textDocument.text
+                        : "Text";
+                    layer = comp.layers.addText(txtContent);
+                    if (lConf.textDocument) {
+                        applyTextSettings(layer, lConf.textDocument);
+                    }
+                    layer.position.setValue([comp.width / 2, comp.height / 2]);
+                } else if (lConf.type === "adjustment") {
+                    layer = comp.layers.addSolid([1, 1, 1], lConf.name || "Adj Layer", comp.width, comp.height, 1);
+                    try { layer.source.parentFolder = fSolids; } catch (eSol) {}
+                }
+                return layer;
+            }
+
+            // Normalize pairs/order FIRST, then create in forward order.
+            // Forward order works well with AE "add to top": last created ends up on top.
+            var units = _normalizeLayerUnits(compConf.layers, compConf.id);
+            for (var ui = 0; ui < units.length; ui++) {
+                var unit = units[ui];
+                for (var li = 0; li < unit.length; li++) {
+                    var conf = unit[li];
+                    var layer = _createLayerFromConf(conf);
+                    if (layer) setupGeneralLayer(layer, conf);
+                }
+            }
+        }
+
+        // STEP 3: entry comp
+        var entryComp = null;
+        if (PROJECT_DATA.entryPoint) {
+            entryComp = itemRegistry[PROJECT_DATA.entryPoint];
+        } else if (COMP_NAME) {
+            entryComp = itemRegistry[COMP_NAME];
+        } else {
+            entryComp = itemRegistry["comp_main"];
+        }
+
+        if (!entryComp) {
+            var entryName = PROJECT_DATA.entryPoint || COMP_NAME || "comp_main";
+            throw new Error("Entry comp not found: " + entryName);
+        }
+
+        logLine("Entry comp: " + entryComp.name);
+        // openInViewer можно включить, если тебе удобно:
+        // entryComp.openInViewer();
+
+        return entryComp;
+    }

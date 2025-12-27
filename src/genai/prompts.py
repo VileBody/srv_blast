@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 
-from render_v1.effects_logic import build_semantic_prompt_catalog
+from src.render.ae.compiler.effects_logic import build_semantic_prompt_catalog
 from src.core.config.style_loader import get_effects_library
 
 """

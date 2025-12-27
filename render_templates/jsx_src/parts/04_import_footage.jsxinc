@@ -1,0 +1,31 @@
+
+    function importFootage(conf) {
+        var file = new File(conf.path);
+        var item = null;
+
+        logLine("Import footage: id=" + (conf.id || "?") + " path=" + conf.path);
+
+        if (!file.exists) {
+            logLine("Footage missing, using placeholder: " + conf.path);
+            item = app.project.importPlaceholder(conf.name || "missing_file", 1920, 1080, 24, 10);
+        } else {
+            try {
+                var io = new ImportOptions(file);
+                if (io.canImportAs(ImportAsType.FOOTAGE)) {
+                    item = app.project.importFile(io);
+                } else {
+                    logLine("Cannot import as FOOTAGE: " + conf.path);
+                    item = app.project.importPlaceholder(conf.name || "bad_footage", 1920, 1080, 24, 10);
+                }
+            } catch (e) {
+                logLine("Import Error for " + conf.path + ": " + e.toString());
+                item = app.project.importPlaceholder(conf.name || "error_footage", 1920, 1080, 24, 10);
+            }
+        }
+
+        if (item) {
+            if (conf.isRef) item.parentFolder = fRef;
+            else item.parentFolder = fFootage;
+        }
+        return item;
+    }

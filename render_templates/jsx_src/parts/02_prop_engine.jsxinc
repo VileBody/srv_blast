@@ -1,0 +1,60 @@
+
+    function _resolveKeyTime(k, layerCtx) {
+        if (!k) return null;
+        if (k.time !== undefined && k.time !== null) return k.time;
+        if (k.t !== undefined && k.t !== null && layerCtx) {
+            var dur = (layerCtx.outPoint - layerCtx.inPoint);
+            return layerCtx.inPoint + (k.t * dur);
+        }
+        return null;
+    }
+
+    function setPropValue(aeProp, valueData, layerCtx) {
+        if (!aeProp) return;
+        if (valueData === undefined || valueData === null) return;
+
+        var isObj = (typeof valueData === "object") && !_isArray(valueData);
+
+        // expression first (if any)
+        if (isObj && valueData.expression !== undefined && aeProp.canSetExpression) {
+            try {
+                aeProp.expression = valueData.expression || "";
+            } catch (eExpr) {
+                logLine("WARN: expression set failed: " + eExpr.toString());
+            }
+        }
+
+        // keyframes
+        if (isObj && valueData.keys && valueData.keys.length > 0) {
+            for (var i = 0; i < valueData.keys.length; i++) {
+                var k = valueData.keys[i];
+                if (!k) continue;
+                var t = _resolveKeyTime(k, layerCtx);
+                if (t === null || t === undefined) continue;
+                if (k.value === undefined) continue;
+                try {
+                    aeProp.setValueAtTime(t, k.value);
+                } catch (eKey) {
+                    logLine("WARN: setValueAtTime failed: " + eKey.toString());
+                }
+            }
+            return;
+        }
+
+        // wrapped value
+        if (isObj && valueData.value !== undefined) {
+            try {
+                aeProp.setValue(valueData.value);
+            } catch (eVal) {
+                logLine("WARN: setValue failed: " + eVal.toString());
+            }
+            return;
+        }
+
+        // raw scalar/array/object
+        try {
+            aeProp.setValue(valueData);
+        } catch (eSet) {
+            logLine("WARN: setValue failed: " + eSet.toString());
+        }
+    }

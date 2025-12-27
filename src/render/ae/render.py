@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 from typing import Any, Dict, Tuple
 
-from render_v1.assembler_core import build_project_payload_from_composition
+from src.render.ae.compiler import build_project_payload_from_composition
 from src.render.ae.template_paths import JOB_TEMPLATE_PATH
 from src.storage.s3 import generate_presigned_url
 

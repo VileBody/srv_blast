@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from config import Config
-from render_v1.assembler_core import build_project_payload_from_composition
+from src.render.ae.compiler import build_project_payload_from_composition
 from .client import AeMediaPayload
 
 from src.core.config.styles import FootagePresetId, SubtitleStyle
