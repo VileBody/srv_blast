@@ -1,1 +1,397 @@
-{}
+{
+  "schemaVersion": "text_motion_library.v1",
+  "defaultComboId": "REVEAL_STEP_WORDS",
+  "combos": {
+    "REVEAL_STEP_WORDS": {
+      "name": "Reveal Step (Words) [DEFAULT]",
+      "description": "Классическое караоке: слова появляются жестко одно за другим. Тюнится скорость.",
+      "template": {
+        "threeD": true,
+        "textAnimators": [
+          {
+            "name": "reveal_words_step",
+            "properties": {
+              "ADBE Text Opacity": 0
+            },
+            "selectors": [
+              {
+                "matchName": "ADBE Text Selector",
+                "name": "range",
+                "properties": {
+                  "ADBE Text Percent Start": {
+                    "keys": [
+                      {
+                        "t": 0.0,
+                        "value": 0
+                      },
+                      {
+                        "t": 0.5,
+                        "value": 100
+                      }
+                    ]
+                  },
+                  "ADBE Text Percent End": 100,
+                  "ADBE Text Range Offset": 0
+                },
+                "advanced": {
+                  "ADBE Text Range Units": 1,
+                  "ADBE Text Selector Mode": 1,
+                  "ADBE Text Range Based On": 3,
+                  "ADBE Text Range Shape": 1,
+                  "ADBE Text Range Smoothness": 0,
+                  "ADBE Text Range Randomize Order": 0,
+                  "ADBE Text Random Seed": 0
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "defaults": {
+        "end_time": 0.5
+      },
+      "exposedMap": {
+        "end_time": [
+          "textAnimators",
+          0,
+          "selectors",
+          0,
+          "properties",
+          "ADBE Text Percent Start",
+          "keys",
+          1,
+          "t"
+        ]
+      }
+    },
+    "REVEAL_STEP_POP": {
+      "name": "Reveal Step + Pop",
+      "description": "Ступенчатое появление + удар масштабом (Scale Pop).",
+      "template": {
+        "threeD": true,
+        "textAnimators": [
+          {
+            "name": "reveal_words_step",
+            "properties": {
+              "ADBE Text Opacity": 0
+            },
+            "selectors": [
+              {
+                "matchName": "ADBE Text Selector",
+                "name": "range",
+                "properties": {
+                  "ADBE Text Percent Start": {
+                    "keys": [
+                      {
+                        "t": 0.0,
+                        "value": 25
+                      },
+                      {
+                        "t": 0.25,
+                        "value": 100
+                      }
+                    ]
+                  },
+                  "ADBE Text Percent End": 100,
+                  "ADBE Text Range Offset": 0
+                },
+                "advanced": {
+                  "ADBE Text Range Units": 1,
+                  "ADBE Text Selector Mode": 1,
+                  "ADBE Text Range Based On": 3,
+                  "ADBE Text Range Shape": 1,
+                  "ADBE Text Range Smoothness": 0
+                }
+              }
+            ]
+          },
+          {
+            "name": "pop_scale",
+            "properties": {
+              "ADBE Text Scale 3D": {
+                "keys": [
+                  {
+                    "t": 0.0,
+                    "value": [
+                      110,
+                      110,
+                      100
+                    ]
+                  },
+                  {
+                    "t": 0.12,
+                    "value": [
+                      100,
+                      100,
+                      100
+                    ]
+                  }
+                ]
+              }
+            },
+            "selectors": [
+              {
+                "matchName": "ADBE Text Selector",
+                "name": "all",
+                "properties": {
+                  "ADBE Text Percent Start": 0,
+                  "ADBE Text Percent End": 100
+                },
+                "advanced": {
+                  "ADBE Text Range Based On": 1,
+                  "ADBE Text Range Smoothness": 100
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "defaults": {
+        "reveal_end": 0.25
+      },
+      "exposedMap": {
+        "reveal_end": [
+          "textAnimators",
+          0,
+          "selectors",
+          0,
+          "properties",
+          "ADBE Text Percent Start",
+          "keys",
+          1,
+          "t"
+        ]
+      }
+    },
+    "STATIC_FADE_SOFT": {
+      "name": "Static + Soft Fade",
+      "description": "Текст стоит на месте, а в конце плавно исчезает.",
+      "template": {
+        "threeD": true,
+        "textAnimators": [
+          {
+            "name": "fade_out",
+            "properties": {
+              "ADBE Text Opacity": {
+                "keys": [
+                  {
+                    "t": 0.0,
+                    "value": 100
+                  },
+                  {
+                    "t": 0.8,
+                    "value": 100
+                  },
+                  {
+                    "t": 1.0,
+                    "value": 0
+                  }
+                ]
+              }
+            },
+            "selectors": [
+              {
+                "matchName": "ADBE Text Selector",
+                "name": "all",
+                "properties": {
+                  "ADBE Text Percent Start": 0,
+                  "ADBE Text Percent End": 100
+                },
+                "advanced": {
+                  "ADBE Text Range Based On": 1,
+                  "ADBE Text Range Smoothness": 100
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "defaults": {
+        "fade_start": 0.8
+      },
+      "exposedMap": {
+        "fade_start": [
+          "textAnimators",
+          0,
+          "properties",
+          "ADBE Text Opacity",
+          "keys",
+          1,
+          "t"
+        ]
+      }
+    },
+    "REVEAL_SMOOTH_CHARS_FADE": {
+      "name": "Smooth Reveal (Chars) + Fade",
+      "description": "Плавное появление по буквам + исчезновение в конце.",
+      "template": {
+        "threeD": true,
+        "textAnimators": [
+          {
+            "name": "reveal_chars_smooth",
+            "properties": {
+              "ADBE Text Opacity": 0
+            },
+            "selectors": [
+              {
+                "matchName": "ADBE Text Selector",
+                "name": "range",
+                "properties": {
+                  "ADBE Text Percent Start": {
+                    "keys": [
+                      {
+                        "t": 0.0,
+                        "value": 0
+                      },
+                      {
+                        "t": 0.45,
+                        "value": 100
+                      }
+                    ]
+                  },
+                  "ADBE Text Percent End": 100,
+                  "ADBE Text Range Offset": 0
+                },
+                "advanced": {
+                  "ADBE Text Range Based On": 1,
+                  "ADBE Text Range Shape": 1,
+                  "ADBE Text Range Smoothness": 45
+                }
+              }
+            ]
+          },
+          {
+            "name": "fade_out",
+            "properties": {
+              "ADBE Text Opacity": {
+                "keys": [
+                  {
+                    "t": 0.0,
+                    "value": 100
+                  },
+                  {
+                    "t": 0.75,
+                    "value": 100
+                  },
+                  {
+                    "t": 1.0,
+                    "value": 0
+                  }
+                ]
+              }
+            },
+            "selectors": [
+              {
+                "matchName": "ADBE Text Selector",
+                "name": "all",
+                "properties": {
+                  "ADBE Text Percent Start": 0,
+                  "ADBE Text Percent End": 100
+                },
+                "advanced": {
+                  "ADBE Text Range Smoothness": 100
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "defaults": {
+        "reveal_end": 0.45,
+        "fade_start": 0.75
+      },
+      "exposedMap": {
+        "reveal_end": [
+          "textAnimators",
+          0,
+          "selectors",
+          0,
+          "properties",
+          "ADBE Text Percent Start",
+          "keys",
+          1,
+          "t"
+        ],
+        "fade_start": [
+          "textAnimators",
+          1,
+          "properties",
+          "ADBE Text Opacity",
+          "keys",
+          1,
+          "t"
+        ]
+      }
+    },
+    "REVEAL_REVERSE_WORDS": {
+      "name": "Reverse Reveal (Words)",
+      "description": "Появление слов в обратном порядке (с конца).",
+      "template": {
+        "threeD": true,
+        "textAnimators": [
+          {
+            "name": "reveal_words_reverse",
+            "properties": {
+              "ADBE Text Opacity": 0
+            },
+            "selectors": [
+              {
+                "matchName": "ADBE Text Selector",
+                "name": "range",
+                "properties": {
+                  "ADBE Text Percent End": {
+                    "keys": [
+                      {
+                        "t": 0.0,
+                        "value": 0
+                      },
+                      {
+                        "t": 0.5,
+                        "value": 100
+                      }
+                    ]
+                  },
+                  "ADBE Text Percent Start": 0,
+                  "ADBE Text Range Offset": 0
+                },
+                "advanced": {
+                  "ADBE Text Range Based On": 3,
+                  "ADBE Text Range Shape": 1,
+                  "ADBE Text Range Smoothness": 0
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "defaults": {
+        "start_t": 0.0,
+        "end_t": 0.5
+      },
+      "exposedMap": {
+        "start_t": [
+          "textAnimators",
+          0,
+          "selectors",
+          0,
+          "properties",
+          "ADBE Text Percent End",
+          "keys",
+          0,
+          "t"
+        ],
+        "end_t": [
+          "textAnimators",
+          0,
+          "selectors",
+          0,
+          "properties",
+          "ADBE Text Percent End",
+          "keys",
+          1,
+          "t"
+        ]
+      }
+    }
+  }
+}
