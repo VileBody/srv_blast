@@ -60,7 +60,7 @@ def get_footage_preset(preset_id: FootagePresetId | str) -> Dict[str, Any]:
 
 
 def get_motion_library() -> Dict[str, Any]:
-    """Полная библиотека motion-профилей (если определена)."""
+    """Motion-часть textFxComboId: threeD/textAnimators/textMoreOptions + defaults/exposedMap."""
     global _MOTION_LIBRARY
 
     if _MOTION_LIBRARY is None:
@@ -78,7 +78,7 @@ def get_effects_library() -> Dict[str, Any]:
 
 
 def get_text_fx_library() -> Dict[str, Any]:
-    """Library of text animation combos (templates + defaults)."""
+    """Effects-часть textFxComboId: effects + defaults/exposedMap (без textAnimators)."""
     global _TEXT_FX_LIBRARY
 
     if _TEXT_FX_LIBRARY is None:

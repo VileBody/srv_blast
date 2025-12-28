@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import json
 
-from src.core.config.style_loader import get_effects_library, get_text_fx_library
+from src.core.config.style_loader import (
+    get_effects_library,
+    get_motion_library,
+    get_text_fx_library,
+)
 from src.render.ae.compiler.effects_logic import build_semantic_prompt_catalog
 
 from .stages import (
@@ -40,23 +44,38 @@ def _effects_semantic_prompt_block() -> str:
 
 
 def _text_fx_catalog_json() -> str:
-    # Загружаем через геттер, чтобы избежать ImportError с приватной переменной
-    lib = get_text_fx_library() or {}
-    
+    fx = get_text_fx_library() or {}
+    motion = get_motion_library() or {}
+
+    fx_combos = (fx.get("combos") or {}) if isinstance(fx, dict) else {}
+    motion_combos = (motion.get("combos") or {}) if isinstance(motion, dict) else {}
+
+    all_ids = sorted(set(fx_combos.keys()) | set(motion_combos.keys()))
+
     combos_out = {}
-    for cid, cdata in (lib.get("combos") or {}).items():
+    for cid in all_ids:
+        fx_c = fx_combos.get(cid) or {}
+        m_c = motion_combos.get(cid) or {}
+
+        params = {}
+        params.update((m_c.get("defaults") or {}) if isinstance(m_c, dict) else {})
+        params.update((fx_c.get("defaults") or {}) if isinstance(fx_c, dict) else {})
+
         combos_out[cid] = {
-            "description": cdata.get("description", ""),
-            "parameters": cdata.get("defaults", {}) # Показываем, что можно крутить
+            "description": (m_c.get("description") or fx_c.get("description") or ""),
+            "parameters": params,
         }
-    
+
     return json.dumps(combos_out, ensure_ascii=False, indent=2)
 
 
 def _text_fx_prompt_block() -> str:
     return (
-        "TEXT ANIMATION STYLES (textFxComboId)\n"
-        "- Use 'textFxComboId' to apply animation preset.\n"
+        "TEXT PRESETS (textFxComboId)\n"
+        "- Each preset applies BOTH:\n"
+        "  (a) text animators from text_motion_library.json\n"
+        "  (b) text effects from text_fx_combos.json\n"
+        "- Use 'textFxComboId' to apply preset.\n"
         "- Use 'textFxOverrides': { paramName: value } to tweak timing/intensity.\n"
         "AVAILABLE TEXT COMBOS:\n" + _text_fx_catalog_json()
     )

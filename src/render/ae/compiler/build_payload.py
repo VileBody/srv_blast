@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import copy
 import json
-from copy import deepcopy
 from typing import Any, Dict, List, Optional, Tuple
 from pathlib import Path
 
@@ -16,6 +15,7 @@ from src.config.styles.paths import (
     TEXT_FX_LIBRARY_PATH,
     TEXT_STYLES_PATH,
     FOOTAGE_PRESETS_PATH,
+    MOTION_LIBRARY_PATH,
 )
 
 cfg = Config.from_env()
@@ -169,29 +169,84 @@ def expand_text_fx_combos(items: List[Dict[str, Any]], text_fx_library: Dict[str
                 if target_path:
                     set_value_by_path(baked, target_path, param_val)
 
-            # 4. Записываем результат в слой
-            # 3D
-            if baked.get("threeD"):
-                layer["threeD"] = True
-                
-            # Animators
-            if baked.get("textAnimators"):
-                layer["textAnimators"] = baked["textAnimators"]
-                changed += 1
-
-            # Effects (merge with existing)
+            # 4. Записываем результат в слой (EFFECTS-ONLY)
             eff_stack = baked.get("effects") or baked.get("effectStack") or []
             if eff_stack:
                 existing = layer.get("effects") or []
                 layer["effects"] = list(existing) + list(eff_stack)
-            
-            # More Options
-            if baked.get("textMoreOptions"):
-                layer["textMoreOptions"] = baked["textMoreOptions"]
+                changed += 1
 
             # Чистим служебные поля
             for k in ["textFxComboId", "text_fx_combo_id", "textFxOverrides", "text_fx_overrides"]:
                 layer.pop(k, None)
+
+    return changed
+
+
+def expand_text_motion_combos(items: List[Dict[str, Any]], motion_library: Dict[str, Any]) -> int:
+    """
+    MOTION PHASE:
+    Берем textFxComboId + overrides, находим motion-template и сохраняем в layer:
+      - threeD
+      - textAnimators
+      - textMoreOptions
+    """
+    default_id = (motion_library or {}).get("defaultComboId")
+    combos = (motion_library or {}).get("combos") or {}
+    if not default_id or default_id not in combos:
+        return 0
+
+    changed = 0
+    for it in items:
+        if (it.get("type") or "").lower() != "comp":
+            continue
+        layers = it.get("layers") or []
+        for layer in layers:
+            if not isinstance(layer, dict):
+                continue
+            if (layer.get("type") or "").lower() != "text":
+                continue
+
+            combo_id = (
+                layer.get("textFxComboId")
+                or layer.get("text_fx_combo_id")
+                or default_id
+            )
+
+            # STRICT: если чего-то нет — лучше упасть, чем "тихо без motion"
+            if combo_id not in combos:
+                raise KeyError(f"Unknown motion comboId={combo_id!r}. Known: {sorted(combos.keys())}")
+
+            combo_conf = combos[combo_id]
+            raw_template = combo_conf.get("template", combo_conf)
+            baked = copy.deepcopy(raw_template)
+
+            layer_overrides = (
+                layer.get("textFxOverrides")
+                or layer.get("text_fx_overrides")
+                or layer.get("textFxOverrideParams")
+                or layer.get("text_fx_override_params")
+                or {}
+            )
+
+            active_params = copy.deepcopy(combo_conf.get("defaults", {}))
+            active_params.update(layer_overrides)
+
+            mapping = combo_conf.get("exposedMap", {})
+            for param_key, param_val in active_params.items():
+                target_path = mapping.get(param_key)
+                if target_path:
+                    set_value_by_path(baked, target_path, param_val)
+
+            if baked.get("threeD"):
+                layer["threeD"] = True
+
+            if baked.get("textAnimators"):
+                layer["textAnimators"] = baked["textAnimators"]
+                changed += 1
+
+            if baked.get("textMoreOptions"):
+                layer["textMoreOptions"] = baked["textMoreOptions"]
 
     return changed
 
@@ -225,6 +280,12 @@ try:
 except Exception as exc:  # noqa: BLE001
     print(f"[assembler_core] WARNING: failed to load {TEXT_FX_LIBRARY_PATH}: {exc}")
     _TEXT_FX_LIBRARY = {}
+
+try:
+    _MOTION_LIBRARY = load_json(MOTION_LIBRARY_PATH)
+except Exception as exc:  # noqa: BLE001
+    print(f"[assembler_core] WARNING: failed to load {MOTION_LIBRARY_PATH}: {exc}")
+    _MOTION_LIBRARY = {}
 
 PROJECT_TEMPLATE_DEFAULTS: Dict[str, Any] = (
     _PROJECT_TEMPLATE.get("defaults", {}) if isinstance(_PROJECT_TEMPLATE, dict) else {}
@@ -461,7 +522,9 @@ def build_project_payload_from_composition(
         final_items.append(item)
 
     text_fx_lib = copy.deepcopy(_TEXT_FX_LIBRARY)
+    motion_lib = copy.deepcopy(_MOTION_LIBRARY)
     ensure_default_text_fx_combo(final_items, text_fx_lib)
+    expand_text_motion_combos(final_items, motion_lib)
     expand_text_fx_combos(final_items, text_fx_lib)
 
     # сдвигаем аудио-слой в главной композиции по глобальному старту

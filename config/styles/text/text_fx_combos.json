@@ -1,176 +1,253 @@
 {
-  "schemaVersion": "text_fx_combos.v2",
+  "schemaVersion": "text_fx_effects_library.v1",
   "defaultComboId": "REVEAL_STEP_WORDS",
   "combos": {
     "REVEAL_STEP_WORDS": {
       "name": "Reveal Step (Words) [DEFAULT]",
       "description": "Классическое караоке: слова появляются жестко одно за другим. Тюнится скорость.",
-      "defaults": {
-        "end_time": 0.5,
-        "blur_amount": 35
-      },
-      "exposedMap": {
-        "end_time": ["textAnimators", 0, "selectors", 0, "properties", "ADBE Text Percent Start", "keys", 1, "t"],
-        "blur_amount": ["effects", 1, "params", "ADBE Motion Blur-0002", "keys", 1, "value"]
-      },
       "template": {
-        "threeD": true,
         "effects": [
           {
             "matchName": "ADBE Geometry2",
             "params": {
-              "ADBE Geometry2-0003": { "keys": [{ "t": 0.0, "value": 100 }, { "t": 0.1, "value": 112 }, { "t": 0.22, "value": 100 }] },
-              "ADBE Geometry2-0004": { "keys": [{ "t": 0.0, "value": 100 }, { "t": 0.1, "value": 112 }, { "t": 0.22, "value": 100 }] },
-              "ADBE Geometry2-0007": { "keys": [{ "t": 0.0, "value": 0 }, { "t": 0.1, "value": -2.5 }, { "t": 0.22, "value": 0 }] }
+              "ADBE Geometry2-0003": {
+                "keys": [
+                  {
+                    "t": 0.0,
+                    "value": 100
+                  },
+                  {
+                    "t": 0.1,
+                    "value": 112
+                  },
+                  {
+                    "t": 0.22,
+                    "value": 100
+                  }
+                ]
+              },
+              "ADBE Geometry2-0004": {
+                "keys": [
+                  {
+                    "t": 0.0,
+                    "value": 100
+                  },
+                  {
+                    "t": 0.1,
+                    "value": 112
+                  },
+                  {
+                    "t": 0.22,
+                    "value": 100
+                  }
+                ]
+              },
+              "ADBE Geometry2-0007": {
+                "keys": [
+                  {
+                    "t": 0.0,
+                    "value": 0
+                  },
+                  {
+                    "t": 0.1,
+                    "value": -2.5
+                  },
+                  {
+                    "t": 0.22,
+                    "value": 0
+                  }
+                ]
+              }
             }
           },
           {
             "matchName": "ADBE Motion Blur",
             "params": {
               "ADBE Motion Blur-0001": 90,
-              "ADBE Motion Blur-0002": { "keys": [{ "t": 0.0, "value": 0 }, { "t": 0.1, "value": 35 }, { "t": 0.22, "value": 0 }] }
+              "ADBE Motion Blur-0002": {
+                "keys": [
+                  {
+                    "t": 0.0,
+                    "value": 0
+                  },
+                  {
+                    "t": 0.1,
+                    "value": 35
+                  },
+                  {
+                    "t": 0.22,
+                    "value": 0
+                  }
+                ]
+              }
             }
           }
-        ],
-        "textAnimators": [
-          {
-            "name": "reveal_words_step",
-            "properties": { "ADBE Text Opacity": 0 },
-            "selectors": [
-              {
-                "matchName": "ADBE Text Selector",
-                "name": "range",
-                "properties": {
-                  "ADBE Text Percent Start": {
-                    "keys": [
-                      { "t": 0.0, "value": 0 },
-                      { "t": 0.5, "value": 100 }
-                    ]
-                  },
-                  "ADBE Text Percent End": 100,
-                  "ADBE Text Range Offset": 0
-                },
-                "advanced": {
-                  "ADBE Text Range Units": 1,
-                  "ADBE Text Selector Mode": 1,
-                  "ADBE Text Range Based On": 3,
-                  "ADBE Text Range Shape": 1,
-                  "ADBE Text Range Smoothness": 0,
-                  "ADBE Text Range Randomize Order": 0,
-                  "ADBE Text Random Seed": 0
-                }
-              }
-            ]
-          }
+        ]
+      },
+      "defaults": {
+        "blur_amount": 35
+      },
+      "exposedMap": {
+        "blur_amount": [
+          "effects",
+          1,
+          "params",
+          "ADBE Motion Blur-0002",
+          "keys",
+          1,
+          "value"
         ]
       }
     },
     "REVEAL_STEP_POP": {
       "name": "Reveal Step + Pop",
       "description": "Ступенчатое появление + удар масштабом (Scale Pop).",
-      "defaults": {
-        "reveal_end": 0.25,
-        "pop_scale": 125,
-        "pop_time": 0.08
-      },
-      "exposedMap": {
-        "reveal_end": ["textAnimators", 0, "selectors", 0, "properties", "ADBE Text Percent Start", "keys", 1, "t"],
-        "pop_scale": ["effects", 0, "params", "ADBE Geometry2-0003", "keys", 1, "value"],
-        "pop_time": ["effects", 0, "params", "ADBE Geometry2-0003", "keys", 1, "t"]
-      },
       "template": {
-        "threeD": true,
         "effects": [
           {
             "matchName": "ADBE Geometry2",
             "params": {
-              "ADBE Geometry2-0003": { "keys": [{ "t": 0.0, "value": 100 }, { "t": 0.08, "value": 125 }, { "t": 0.18, "value": 98 }, { "t": 0.26, "value": 100 }] },
-              "ADBE Geometry2-0004": { "keys": [{ "t": 0.0, "value": 100 }, { "t": 0.08, "value": 125 }, { "t": 0.18, "value": 98 }, { "t": 0.26, "value": 100 }] },
-              "ADBE Geometry2-0007": { "keys": [{ "t": 0.0, "value": 0 }, { "t": 0.08, "value": -4 }, { "t": 0.18, "value": 1.5 }, { "t": 0.26, "value": 0 }] }
+              "ADBE Geometry2-0003": {
+                "keys": [
+                  {
+                    "t": 0.0,
+                    "value": 100
+                  },
+                  {
+                    "t": 0.08,
+                    "value": 125
+                  },
+                  {
+                    "t": 0.18,
+                    "value": 98
+                  },
+                  {
+                    "t": 0.26,
+                    "value": 100
+                  }
+                ]
+              },
+              "ADBE Geometry2-0004": {
+                "keys": [
+                  {
+                    "t": 0.0,
+                    "value": 100
+                  },
+                  {
+                    "t": 0.08,
+                    "value": 125
+                  },
+                  {
+                    "t": 0.18,
+                    "value": 98
+                  },
+                  {
+                    "t": 0.26,
+                    "value": 100
+                  }
+                ]
+              },
+              "ADBE Geometry2-0007": {
+                "keys": [
+                  {
+                    "t": 0.0,
+                    "value": 0
+                  },
+                  {
+                    "t": 0.08,
+                    "value": -4
+                  },
+                  {
+                    "t": 0.18,
+                    "value": 1.5
+                  },
+                  {
+                    "t": 0.26,
+                    "value": 0
+                  }
+                ]
+              }
             }
           },
           {
             "matchName": "ADBE Motion Blur",
             "params": {
               "ADBE Motion Blur-0001": 90,
-              "ADBE Motion Blur-0002": { "keys": [{ "t": 0.0, "value": 0 }, { "t": 0.08, "value": 55 }, { "t": 0.18, "value": 20 }, { "t": 0.26, "value": 0 }] }
+              "ADBE Motion Blur-0002": {
+                "keys": [
+                  {
+                    "t": 0.0,
+                    "value": 0
+                  },
+                  {
+                    "t": 0.08,
+                    "value": 55
+                  },
+                  {
+                    "t": 0.18,
+                    "value": 20
+                  },
+                  {
+                    "t": 0.26,
+                    "value": 0
+                  }
+                ]
+              }
             }
           }
+        ]
+      },
+      "defaults": {
+        "pop_scale": 125,
+        "pop_time": 0.08
+      },
+      "exposedMap": {
+        "pop_scale": [
+          "effects",
+          0,
+          "params",
+          "ADBE Geometry2-0003",
+          "keys",
+          1,
+          "value"
         ],
-        "textAnimators": [
-          {
-            "name": "reveal_words_step",
-            "properties": { "ADBE Text Opacity": 0 },
-            "selectors": [
-              {
-                "matchName": "ADBE Text Selector",
-                "name": "range",
-                "properties": {
-                  "ADBE Text Percent Start": { "keys": [{ "t": 0.0, "value": 25 }, { "t": 0.25, "value": 100 }] },
-                  "ADBE Text Percent End": 100,
-                  "ADBE Text Range Offset": 0
-                },
-                "advanced": {
-                  "ADBE Text Range Units": 1,
-                  "ADBE Text Selector Mode": 1,
-                  "ADBE Text Range Based On": 3,
-                  "ADBE Text Range Shape": 1,
-                  "ADBE Text Range Smoothness": 0
-                }
-              }
-            ]
-          },
-          {
-            "name": "pop_scale",
-            "properties": {
-              "ADBE Text Scale 3D": { "keys": [{ "t": 0.0, "value": [110, 110, 100] }, { "t": 0.12, "value": [100, 100, 100] }] }
-            },
-            "selectors": [
-              {
-                "matchName": "ADBE Text Selector",
-                "name": "all",
-                "properties": { "ADBE Text Percent Start": 0, "ADBE Text Percent End": 100 },
-                "advanced": { "ADBE Text Range Based On": 1, "ADBE Text Range Smoothness": 100 }
-              }
-            ]
-          }
+        "pop_time": [
+          "effects",
+          0,
+          "params",
+          "ADBE Geometry2-0003",
+          "keys",
+          1,
+          "t"
         ]
       }
     },
     "STATIC_FADE_SOFT": {
       "name": "Static + Soft Fade",
       "description": "Текст стоит на месте, а в конце плавно исчезает.",
-      "defaults": {
-        "fade_start": 0.8
-      },
-      "exposedMap": {
-        "fade_start": ["textAnimators", 0, "properties", "ADBE Text Opacity", "keys", 1, "t"]
-      },
       "template": {
-        "threeD": true,
         "effects": [
           {
             "matchName": "ADBE Motion Blur",
             "params": {
               "ADBE Motion Blur-0001": 90,
-              "ADBE Motion Blur-0002": { "keys": [{ "t": 0.0, "value": 0 }, { "t": 0.12, "value": 18 }, { "t": 0.35, "value": 0 }] }
-            }
-          }
-        ],
-        "textAnimators": [
-          {
-            "name": "fade_out",
-            "properties": {
-              "ADBE Text Opacity": { "keys": [{ "t": 0.0, "value": 100 }, { "t": 0.8, "value": 100 }, { "t": 1.0, "value": 0 }] }
-            },
-            "selectors": [
-              {
-                "matchName": "ADBE Text Selector",
-                "name": "all",
-                "properties": { "ADBE Text Percent Start": 0, "ADBE Text Percent End": 100 },
-                "advanced": { "ADBE Text Range Based On": 1, "ADBE Text Range Smoothness": 100 }
+              "ADBE Motion Blur-0002": {
+                "keys": [
+                  {
+                    "t": 0.0,
+                    "value": 0
+                  },
+                  {
+                    "t": 0.12,
+                    "value": 18
+                  },
+                  {
+                    "t": 0.35,
+                    "value": 0
+                  }
+                ]
               }
-            ]
+            }
           }
         ]
       }
@@ -178,59 +255,36 @@
     "REVEAL_SMOOTH_CHARS_FADE": {
       "name": "Smooth Reveal (Chars) + Fade",
       "description": "Плавное появление по буквам + исчезновение в конце.",
-      "defaults": {
-        "reveal_end": 0.45,
-        "fade_start": 0.75
-      },
-      "exposedMap": {
-        "reveal_end": ["textAnimators", 0, "selectors", 0, "properties", "ADBE Text Percent Start", "keys", 1, "t"],
-        "fade_start": ["textAnimators", 1, "properties", "ADBE Text Opacity", "keys", 1, "t"]
-      },
       "template": {
-        "threeD": true,
         "effects": [
           {
             "matchName": "ADBE Geometry2",
             "params": {
-              "ADBE Geometry2-0003": { "keys": [{ "t": 0.0, "value": 102 }, { "t": 0.18, "value": 100 }] },
-              "ADBE Geometry2-0004": { "keys": [{ "t": 0.0, "value": 102 }, { "t": 0.18, "value": 100 }] }
+              "ADBE Geometry2-0003": {
+                "keys": [
+                  {
+                    "t": 0.0,
+                    "value": 102
+                  },
+                  {
+                    "t": 0.18,
+                    "value": 100
+                  }
+                ]
+              },
+              "ADBE Geometry2-0004": {
+                "keys": [
+                  {
+                    "t": 0.0,
+                    "value": 102
+                  },
+                  {
+                    "t": 0.18,
+                    "value": 100
+                  }
+                ]
+              }
             }
-          }
-        ],
-        "textAnimators": [
-          {
-            "name": "reveal_chars_smooth",
-            "properties": { "ADBE Text Opacity": 0 },
-            "selectors": [
-              {
-                "matchName": "ADBE Text Selector",
-                "name": "range",
-                "properties": {
-                  "ADBE Text Percent Start": { "keys": [{ "t": 0.0, "value": 0 }, { "t": 0.45, "value": 100 }] },
-                  "ADBE Text Percent End": 100,
-                  "ADBE Text Range Offset": 0
-                },
-                "advanced": {
-                  "ADBE Text Range Based On": 1, 
-                  "ADBE Text Range Shape": 1,    
-                  "ADBE Text Range Smoothness": 45
-                }
-              }
-            ]
-          },
-          {
-            "name": "fade_out",
-            "properties": {
-              "ADBE Text Opacity": { "keys": [{ "t": 0.0, "value": 100 }, { "t": 0.75, "value": 100 }, { "t": 1.0, "value": 0 }] }
-            },
-            "selectors": [
-              {
-                "matchName": "ADBE Text Selector",
-                "name": "all",
-                "properties": { "ADBE Text Percent Start": 0, "ADBE Text Percent End": 100 },
-                "advanced": { "ADBE Text Range Smoothness": 100 }
-              }
-            ]
           }
         ]
       }
@@ -238,53 +292,82 @@
     "REVEAL_REVERSE_WORDS": {
       "name": "Reverse Reveal (Words)",
       "description": "Появление слов в обратном порядке (с конца).",
-      "defaults": {
-        "start_t": 0.0,
-        "end_t": 0.5
-      },
-      "exposedMap": {
-        "start_t": ["textAnimators", 0, "selectors", 0, "properties", "ADBE Text Percent End", "keys", 0, "t"],
-        "end_t": ["textAnimators", 0, "selectors", 0, "properties", "ADBE Text Percent End", "keys", 1, "t"]
-      },
       "template": {
-        "threeD": true,
         "effects": [
           {
             "matchName": "ADBE Geometry2",
             "params": {
-              "ADBE Geometry2-0003": { "keys": [{ "t": 0.0, "value": 100 }, { "t": 0.1, "value": 110 }, { "t": 0.22, "value": 100 }] },
-              "ADBE Geometry2-0004": { "keys": [{ "t": 0.0, "value": 100 }, { "t": 0.1, "value": 110 }, { "t": 0.22, "value": 100 }] },
-              "ADBE Geometry2-0007": { "keys": [{ "t": 0.0, "value": 0 }, { "t": 0.1, "value": 2.5 }, { "t": 0.22, "value": 0 }] }
+              "ADBE Geometry2-0003": {
+                "keys": [
+                  {
+                    "t": 0.0,
+                    "value": 100
+                  },
+                  {
+                    "t": 0.1,
+                    "value": 110
+                  },
+                  {
+                    "t": 0.22,
+                    "value": 100
+                  }
+                ]
+              },
+              "ADBE Geometry2-0004": {
+                "keys": [
+                  {
+                    "t": 0.0,
+                    "value": 100
+                  },
+                  {
+                    "t": 0.1,
+                    "value": 110
+                  },
+                  {
+                    "t": 0.22,
+                    "value": 100
+                  }
+                ]
+              },
+              "ADBE Geometry2-0007": {
+                "keys": [
+                  {
+                    "t": 0.0,
+                    "value": 0
+                  },
+                  {
+                    "t": 0.1,
+                    "value": 2.5
+                  },
+                  {
+                    "t": 0.22,
+                    "value": 0
+                  }
+                ]
+              }
             }
           },
           {
             "matchName": "ADBE Motion Blur",
             "params": {
               "ADBE Motion Blur-0001": 90,
-              "ADBE Motion Blur-0002": { "keys": [{ "t": 0.0, "value": 0 }, { "t": 0.1, "value": 35 }, { "t": 0.22, "value": 0 }] }
-            }
-          }
-        ],
-        "textAnimators": [
-          {
-            "name": "reveal_words_reverse",
-            "properties": { "ADBE Text Opacity": 0 },
-            "selectors": [
-              {
-                "matchName": "ADBE Text Selector",
-                "name": "range",
-                "properties": {
-                  "ADBE Text Percent End": { "keys": [{ "t": 0.0, "value": 0 }, { "t": 0.5, "value": 100 }] },
-                  "ADBE Text Percent Start": 0,
-                  "ADBE Text Range Offset": 0
-                },
-                "advanced": {
-                  "ADBE Text Range Based On": 3,
-                  "ADBE Text Range Shape": 1,
-                  "ADBE Text Range Smoothness": 0
-                }
+              "ADBE Motion Blur-0002": {
+                "keys": [
+                  {
+                    "t": 0.0,
+                    "value": 0
+                  },
+                  {
+                    "t": 0.1,
+                    "value": 35
+                  },
+                  {
+                    "t": 0.22,
+                    "value": 0
+                  }
+                ]
               }
-            ]
+            }
           }
         ]
       }
