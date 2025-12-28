@@ -1,5 +1,5 @@
 {
-  "main_subtitle": {
+  "default": {
     "font": "Point-SemiBold",
     "fontSize": 100,
     "applyFill": true,
@@ -9,7 +9,7 @@
     "leading": 150,
     "justification": 1
   },
-  "highlight_subtitle": {
+  "highlight": {
     "font": "Point-SemiBold",
     "fontSize": 100,
     "applyFill": false,

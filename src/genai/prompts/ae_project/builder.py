@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from src.core.config.style_loader import get_effects_library
+from src.core.config.style_loader import get_effects_library, get_text_fx_library
 from src.render.ae.compiler.effects_logic import build_semantic_prompt_catalog
 
 from .stages import (
@@ -39,6 +39,29 @@ def _effects_semantic_prompt_block() -> str:
     )
 
 
+def _text_fx_catalog_json() -> str:
+    # Загружаем через геттер, чтобы избежать ImportError с приватной переменной
+    lib = get_text_fx_library() or {}
+    
+    combos_out = {}
+    for cid, cdata in (lib.get("combos") or {}).items():
+        combos_out[cid] = {
+            "description": cdata.get("description", ""),
+            "parameters": cdata.get("defaults", {}) # Показываем, что можно крутить
+        }
+    
+    return json.dumps(combos_out, ensure_ascii=False, indent=2)
+
+
+def _text_fx_prompt_block() -> str:
+    return (
+        "TEXT ANIMATION STYLES (textFxComboId)\n"
+        "- Use 'textFxComboId' to apply animation preset.\n"
+        "- Use 'textFxOverrides': { paramName: value } to tweak timing/intensity.\n"
+        "AVAILABLE TEXT COMBOS:\n" + _text_fx_catalog_json()
+    )
+
+
 def build_ae_project_system_prompt() -> str:
     """
     Собирает большой system-prompt для задачи:
@@ -50,6 +73,7 @@ def build_ae_project_system_prompt() -> str:
         AE_SUBTITLES_STAGE,
         AE_COMPOSITION_STAGE,
         _effects_semantic_prompt_block(),
+        _text_fx_prompt_block(), 
         AE_PROJECT_FOOTER,
     ]
     return "\n\n".join(parts)

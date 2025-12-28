@@ -17,8 +17,19 @@ class FootagePresetId(str, Enum):
     SHAKE_ADJ = "shake_adj"
 
 
-STYLES_DIR = Path(__file__).resolve().parent.parent.parent / "config" / "styles"
-TEXT_STYLES_PATH = STYLES_DIR / "text_styles.json"
-FOOTAGE_PRESETS_PATH = STYLES_DIR / "footage_presets.json"
-MOTION_LIBRARY_PATH = STYLES_DIR / "text_motion_library.json"
-EFFECTS_LIBRARY_PATH = STYLES_DIR / "effects_library.json"
+# БЫЛО (3 parent): ведет в /app/src
+# STYLES_DIR = Path(__file__).resolve().parent.parent.parent / "config" / "styles"
+
+# СТАЛО (4 parent): ведет в /app (корень), где лежит папка config
+STYLES_DIR = Path(__file__).resolve().parent.parent.parent.parent / "config" / "styles"
+
+# Пути строятся от STYLES_DIR
+TEXT_STYLES_PATH = STYLES_DIR / "text" / "text_styles.json"
+TEXT_FX_LIBRARY_PATH = STYLES_DIR / "text" / "text_fx_combos.json"
+
+FOOTAGE_PRESETS_PATH = STYLES_DIR / "footage" / "footage_presets.json"
+
+MOTION_LIBRARY_PATH = STYLES_DIR / "text" / "text_motion_library.json"
+EFFECTS_LIBRARY_PATH = STYLES_DIR / "effects" / "effects_library.json"
+
+PROJECT_SETTINGS_TEMPLATE_PATH = STYLES_DIR / "project" / "project_settings_template.json"

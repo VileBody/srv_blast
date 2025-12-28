@@ -10,6 +10,13 @@ from typing import Any, Dict, List, Optional, Tuple
 from config import Config
 from .effects_logic import resolve_effect_stack, stack_to_ae_effects_conf
 from src.render.ae.contracts.payload import Payload
+from src.core.config.styles import (
+    PROJECT_SETTINGS_TEMPLATE_PATH,
+    EFFECTS_LIBRARY_PATH,
+    TEXT_FX_LIBRARY_PATH,
+    TEXT_STYLES_PATH, # Добавь, если его нет в списке импорта
+    FOOTAGE_PRESETS_PATH # Добавь, если его нет
+)
 
 cfg = Config.from_env()
 
@@ -23,6 +30,38 @@ ENV_DEFAULTS: Dict[str, Any] = {
 
 # fallback-длительность, если модель не указала отрезок
 DEFAULT_DURATION: float = 15.0
+
+def set_value_by_path(target: Any, path: List[str | int], value: Any) -> None:
+    """
+    Идет по пути path внутри target и устанавливает value в конце.
+    Поддерживает и dict, и list (если ключ в path — int).
+    """
+    ref = target
+    for i, key in enumerate(path[:-1]):
+        if isinstance(ref, list):
+            try:
+                idx = int(key)
+                ref = ref[idx]
+            except (ValueError, IndexError):
+                return # Путь битый, выходим
+        elif isinstance(ref, dict):
+            ref = ref.get(key)
+            if ref is None:
+                return # Путь битый
+        else:
+            return
+    
+    # Установка значения
+    last_key = path[-1]
+    if isinstance(ref, list):
+        try:
+            idx = int(last_key)
+            if 0 <= idx < len(ref):
+                ref[idx] = value
+        except (ValueError, IndexError):
+            pass
+    elif isinstance(ref, dict):
+        ref[last_key] = value
 
 
 def ensure_default_text_fx_combo(items: List[Dict[str, Any]], text_fx_library: Dict[str, Any]) -> int:
@@ -71,9 +110,10 @@ def _deep_merge(a: Any, b: Any) -> Any:
 
 
 def expand_text_fx_combos(items: List[Dict[str, Any]], text_fx_library: Dict[str, Any]) -> int:
-    """MVP -> BAKED: textFxComboId (+ overrides) -> layer.textAnimators for ALL text layers.
-
-    After this, JSX should NOT interpret comboId; it must only apply baked `textAnimators`.
+    """
+    BAKED PHASE:
+    Берем textFxComboId + overrides, находим шаблон, "компилируем" его
+    (подставляем значения в template) и сохраняем результат в layer.
     """
     default_id = (text_fx_library or {}).get("defaultComboId")
     combos = (text_fx_library or {}).get("combos") or {}
@@ -96,36 +136,62 @@ def expand_text_fx_combos(items: List[Dict[str, Any]], text_fx_library: Dict[str
                 or layer.get("text_fx_combo_id")
                 or default_id
             )
-            overrides = (
+            
+            # Если такого стиля нет, фолбэк на дефолт
+            if combo_id not in combos:
+                combo_id = default_id
+
+            combo_conf = combos[combo_id]
+            
+            # 1. Берем template
+            # (Поддержка легаси: если нет template, берем весь конфиг как template)
+            raw_template = combo_conf.get("template", combo_conf)
+            baked = copy.deepcopy(raw_template)
+
+            # 2. Собираем параметры (Defaults + Overrides)
+            # Ищем overrides в разных полях (для совместимости)
+            layer_overrides = (
                 layer.get("textFxOverrides")
                 or layer.get("text_fx_overrides")
                 or layer.get("textFxOverrideParams")
                 or layer.get("text_fx_override_params")
                 or {}
             )
+            
+            # Активные параметры = Defaults из конфига + то, что пришло от LLM
+            active_params = copy.deepcopy(combo_conf.get("defaults", {}))
+            active_params.update(layer_overrides)
 
-            base = combos.get(combo_id) or combos.get(default_id)
-            baked = _deep_merge(deepcopy(base), overrides)
+            # 3. Применяем exposedMap
+            mapping = combo_conf.get("exposedMap", {})
+            for param_key, param_val in active_params.items():
+                target_path = mapping.get(param_key)
+                if target_path:
+                    set_value_by_path(baked, target_path, param_val)
 
+            # 4. Записываем результат в слой
+            # 3D
+            if baked.get("threeD"):
+                layer["threeD"] = True
+                
+            # Animators
             if baked.get("textAnimators"):
                 layer["textAnimators"] = baked["textAnimators"]
                 changed += 1
 
-            # NEW: bake combo effectStack onto TEXT LAYERS as layer.effects (append).
-            # Adjustment layers are untouched by design (we only are in type=='text').
-            eff_stack = baked.get("effectStack") or []
+            # Effects (merge with existing)
+            eff_stack = baked.get("effects") or baked.get("effectStack") or []
             if eff_stack:
                 existing = layer.get("effects") or []
-                # keep stable ordering: existing effects first, then combo stack
                 layer["effects"] = list(existing) + list(eff_stack)
+            
+            # More Options
+            if baked.get("textMoreOptions"):
+                layer["textMoreOptions"] = baked["textMoreOptions"]
 
-            # cleanup MVP markers (keep project pure baked)
-            layer.pop("textFxComboId", None)
-            layer.pop("text_fx_combo_id", None)
-            layer.pop("textFxOverrides", None)
-            layer.pop("text_fx_overrides", None)
-            layer.pop("textFxOverrideParams", None)
-            layer.pop("text_fx_override_params", None)
+            # Чистим служебные поля
+            for k in ["textFxComboId", "text_fx_combo_id", "textFxOverrides", "text_fx_overrides"]:
+                layer.pop(k, None)
 
     return changed
 
@@ -141,36 +207,7 @@ def load_json(path: Path) -> dict:
         return {}
 
 
-def _resolve_cfg_path(primary: Path) -> Path:
-    """
-    Support both layouts:
-      legacy: config/styles/<file>.json
-      new:    config/styles/<group>/<file>.json
-    """
 
-    if primary.is_file():
-        return primary
-
-    name = primary.name
-    candidates = [
-        Path("config/styles") / name,
-        Path("config/styles/text") / name,
-        Path("config/styles/footage") / name,
-        Path("config/styles/effects") / name,
-        Path("config/styles/project") / name,
-    ]
-    for c in candidates:
-        if c.is_file():
-            print(f"[WARN] Using fallback config path: {c} (primary missing: {primary})")
-            return c
-
-    return primary
-
-
-# project_settings_template.json по аналогии с text_styles / footage_presets
-PROJECT_SETTINGS_TEMPLATE_PATH = _resolve_cfg_path(Path("config/styles/project_settings_template.json"))
-EFFECTS_LIBRARY_PATH = _resolve_cfg_path(Path("config/styles/effects_library.json"))
-TEXT_FX_LIBRARY_PATH = _resolve_cfg_path(Path("config/styles/text_fx_combos.json"))
 try:
     _PROJECT_TEMPLATE = load_json(PROJECT_SETTINGS_TEMPLATE_PATH)
 except Exception as exc:  # noqa: BLE001

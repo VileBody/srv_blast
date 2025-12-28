@@ -12,12 +12,9 @@ from src.genai.client_base import GenaiClientBase
 from src.genai.planners import AePlanner
 from src.storage.library_store import AssetLibrary
 from src.storage.s3 import download_from_s3
+from src.core.config.styles import TEXT_STYLES_PATH, FOOTAGE_PRESETS_PATH
 
 log = logging.getLogger(__name__)
-
-
-TEXT_STYLES_PATH = Path("config/styles/text_styles.json")
-FOOTAGE_PRESETS_PATH = Path("config/styles/footage_presets.json")
 
 
 def _ensure_local_audio(job_id: str, audio_src: str, dst_dir: Path) -> Path:

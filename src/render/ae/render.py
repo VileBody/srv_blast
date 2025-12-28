@@ -10,13 +10,13 @@ from typing import Any, Dict, Tuple
 from src.render.ae.compiler import build_project_payload_from_composition
 from src.render.ae.template_paths import JOB_TEMPLATE_PATH
 from src.storage.s3 import generate_presigned_url
+from src.core.config.styles import TEXT_STYLES_PATH, FOOTAGE_PRESETS_PATH
 
 from .client import AeMediaPayload, AeRenderClient
 
 log = logging.getLogger(__name__)
 
-TEXT_STYLES_PATH = Path("config/styles/text_styles.json")
-FOOTAGE_PRESETS_PATH = Path("config/styles/footage_presets.json")
+
 DEFAULT_ENTRY_COMP = "comp_main"
 OUTPUT_RELPATH = "work/output.mp4"
 

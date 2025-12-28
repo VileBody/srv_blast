@@ -11,15 +11,18 @@ from config import Config
 from src.render.ae.compiler import build_project_payload_from_composition
 from .client import AeMediaPayload
 
-from src.core.config.styles import FootagePresetId, SubtitleStyle
+# --- ИМПОРТИРУЕМ ПУТИ ИЗ КОНФИГА (ВМЕСТО ХАРДКОДА) ---
+from src.core.config.styles import (
+    TEXT_STYLES_PATH,
+    FOOTAGE_PRESETS_PATH,
+    FootagePresetId,
+    SubtitleStyle,
+)
 from src.render.ae.template_paths import JOB_TEMPLATE_PATH
 from src.storage.library_store import AssetLibrary
 from src.storage.s3 import generate_presigned_url
 
 log = logging.getLogger(__name__)
-
-TEXT_STYLES_PATH = Path("config/styles/text_styles.json")
-FOOTAGE_PRESETS_PATH = Path("config/styles/footage_presets.json")
 
 
 @dataclass

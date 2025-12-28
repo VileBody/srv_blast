@@ -10,6 +10,7 @@ from .styles import (
     EFFECTS_LIBRARY_PATH,
     FOOTAGE_PRESETS_PATH,
     MOTION_LIBRARY_PATH,
+    TEXT_FX_LIBRARY_PATH,  # <--- Добавлен импорт
     TEXT_STYLES_PATH,
     FootagePresetId,
     SubtitleStyle,
@@ -75,6 +76,7 @@ _TEXT_STYLES = _load_json(TEXT_STYLES_PATH)
 _FOOTAGE_PRESETS = _load_json(FOOTAGE_PRESETS_PATH)
 _MOTION_LIBRARY: Dict[str, Any] | None = None
 _EFFECTS_LIBRARY: Dict[str, Any] | None = None
+_TEXT_FX_LIBRARY: Dict[str, Any] | None = None  # <--- Добавлена переменная
 
 _SUBTITLE_STYLE_KEYS = {
     SubtitleStyle.DEFAULT: "main_subtitle",
@@ -119,3 +121,12 @@ def get_effects_library() -> Dict[str, Any]:
     if _EFFECTS_LIBRARY is None:
         _EFFECTS_LIBRARY = _load_json(EFFECTS_LIBRARY_PATH)
     return copy.deepcopy(_EFFECTS_LIBRARY)
+
+
+def get_text_fx_library() -> Dict[str, Any]:
+    """Library of text animation combos (templates + defaults)."""
+    global _TEXT_FX_LIBRARY
+
+    if _TEXT_FX_LIBRARY is None:
+        _TEXT_FX_LIBRARY = _load_json(TEXT_FX_LIBRARY_PATH)
+    return copy.deepcopy(_TEXT_FX_LIBRARY)
