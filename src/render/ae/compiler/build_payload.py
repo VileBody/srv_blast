@@ -4,18 +4,17 @@ from __future__ import annotations
 import copy
 import json
 from copy import deepcopy
-from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from config import Config
 from .effects_logic import resolve_effect_stack, stack_to_ae_effects_conf
 from src.render.ae.contracts.payload import Payload
-from src.core.config.styles import (
+from src.config.styles.paths import (
     PROJECT_SETTINGS_TEMPLATE_PATH,
     EFFECTS_LIBRARY_PATH,
     TEXT_FX_LIBRARY_PATH,
-    TEXT_STYLES_PATH, # Добавь, если его нет в списке импорта
-    FOOTAGE_PRESETS_PATH # Добавь, если его нет
+    TEXT_STYLES_PATH,
+    FOOTAGE_PRESETS_PATH,
 )
 
 cfg = Config.from_env()

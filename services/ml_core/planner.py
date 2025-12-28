@@ -12,7 +12,7 @@ from src.genai.client_base import GenaiClientBase
 from src.genai.planners import AePlanner
 from src.storage.library_store import AssetLibrary
 from src.storage.s3 import download_from_s3
-from src.core.config.styles import TEXT_STYLES_PATH, FOOTAGE_PRESETS_PATH
+from src.config.styles.paths import TEXT_STYLES_PATH, FOOTAGE_PRESETS_PATH
 
 log = logging.getLogger(__name__)
 

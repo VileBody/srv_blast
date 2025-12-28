@@ -4,7 +4,6 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Dict, List
 
 from config import Config
@@ -12,12 +11,8 @@ from src.render.ae.compiler import build_project_payload_from_composition
 from .client import AeMediaPayload
 
 # --- ИМПОРТИРУЕМ ПУТИ ИЗ КОНФИГА (ВМЕСТО ХАРДКОДА) ---
-from src.core.config.styles import (
-    TEXT_STYLES_PATH,
-    FOOTAGE_PRESETS_PATH,
-    FootagePresetId,
-    SubtitleStyle,
-)
+from src.config.styles.paths import TEXT_STYLES_PATH, FOOTAGE_PRESETS_PATH
+from src.core.config.styles import FootagePresetId, SubtitleStyle
 from src.render.ae.template_paths import JOB_TEMPLATE_PATH
 from src.storage.library_store import AssetLibrary
 from src.storage.s3 import generate_presigned_url

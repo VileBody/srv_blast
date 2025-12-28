@@ -6,70 +6,24 @@ import logging
 from pathlib import Path
 from typing import Any, Dict
 
-from .styles import (
+from src.config.styles.paths import (
     EFFECTS_LIBRARY_PATH,
     FOOTAGE_PRESETS_PATH,
     MOTION_LIBRARY_PATH,
-    TEXT_FX_LIBRARY_PATH,  # <--- Добавлен импорт
+    TEXT_FX_LIBRARY_PATH,
     TEXT_STYLES_PATH,
-    FootagePresetId,
-    SubtitleStyle,
 )
+from .styles import FootagePresetId, SubtitleStyle
 
 log = logging.getLogger(__name__)
 
 
-def _resolve_style_path(primary: Path) -> Path:
-    """
-    Backward/forward compatible resolver for styles paths.
-    We support both:
-      - legacy flat layout: config/styles/*.json
-      - new grouped layout: config/styles/{text,footage,effects,project}/*.json
-    Also protects against accidental "src/config/..." absolute-ish paths.
-    """
-
-    # If primary exists — use it.
-    if primary.is_file():
-        return primary
-
-    # If primary contains ".../src/config/..." (your log shows that), try stripping "src/".
-    try:
-        parts = list(primary.parts)
-        if "src" in parts:
-            i = parts.index("src")
-            alt = Path(*parts[:i], *parts[i + 1 :])
-            if alt.is_file():
-                return alt
-    except Exception:
-        pass
-
-    # Try common fallback candidates under repo root.
-    name = primary.name
-    candidates = [
-        Path("config/styles") / name,
-        Path("config/styles/text") / name,
-        Path("config/styles/footage") / name,
-        Path("config/styles/effects") / name,
-        Path("config/styles/project") / name,
-    ]
-    for c in candidates:
-        if c.is_file():
-            log.warning("[style_loader] Falling back to %s (primary missing: %s)", c, primary)
-            return c
-
-    return primary
-
-
 def _load_json(path: Path) -> Dict[str, Any]:
-    path = _resolve_style_path(path)
-    if not path.is_file():
-        log.warning("[style_loader] JSON file not found: %s", path)
-        return {}
     try:
         return json.loads(path.read_text(encoding="utf-8"))
     except Exception as exc:  # noqa: BLE001
-        log.error("[style_loader] Failed to load JSON %s: %s", path, exc)
-        return {}
+        # STRICT: не глотаем ошибки, иначе ты “тонешь” и не понимаешь, что реально не так
+        raise RuntimeError(f"Failed to load JSON {path}: {exc}") from exc
 
 
 _TEXT_STYLES = _load_json(TEXT_STYLES_PATH)
