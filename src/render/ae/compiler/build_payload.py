@@ -5,6 +5,7 @@ import copy
 import json
 from copy import deepcopy
 from typing import Any, Dict, List, Optional, Tuple
+from pathlib import Path
 
 from config import Config
 from .effects_logic import resolve_effect_stack, stack_to_ae_effects_conf
