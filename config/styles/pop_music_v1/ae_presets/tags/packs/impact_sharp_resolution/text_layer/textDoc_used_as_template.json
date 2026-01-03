@@ -1,0 +1,25 @@
+{
+  "layerId": "L003__is not my son",
+  "used": {
+    "text_document__ADBE_Text_Document": {
+      "ADBE_Text_Document.value.applyFill": true,
+      "ADBE_Text_Document.value.applyStroke": false,
+      "ADBE_Text_Document.value.fillColor[0]": 1,
+      "ADBE_Text_Document.value.fillColor[1]": 1,
+      "ADBE_Text_Document.value.fillColor[2]": 1,
+      "ADBE_Text_Document.value.strokeColor[0]": {
+        "__MISSING__": true
+      },
+      "ADBE_Text_Document.value.strokeColor[1]": {
+        "__MISSING__": true
+      },
+      "ADBE_Text_Document.value.strokeColor[2]": {
+        "__MISSING__": true
+      },
+      "ADBE_Text_Document.value.strokeWidth": {
+        "__MISSING__": true
+      },
+      "ADBE_Text_Document.value.text": "is not my\rson"
+    }
+  }
+}

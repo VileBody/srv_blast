@@ -1,0 +1,63 @@
+{
+  "layerId": "L003__is not my son",
+  "used": {
+    "transform_group__ADBE_Transform_Group": {
+      "ADBE_Opacity#11": {
+        "@time": {
+          "__slug__": "ADBE_Opacity__p11_time",
+          "payload": {
+            "expressionEnabled": false,
+            "keys": [
+              {
+                "inInterpolationType": "6612",
+                "inTemporalEase": [
+                  {
+                    "influence": 16.666666667,
+                    "speed": 0
+                  }
+                ],
+                "index": 1,
+                "isSpatial": false,
+                "keyLabel": 0,
+                "outInterpolationType": "6612",
+                "outTemporalEase": [
+                  {
+                    "influence": 16.666666667,
+                    "speed": -99.9
+                  }
+                ],
+                "temporalAutoBezier": false,
+                "temporalContinuous": false,
+                "time": 17.2255588922256,
+                "value": 100
+              },
+              {
+                "inInterpolationType": "6612",
+                "inTemporalEase": [
+                  {
+                    "influence": 16.666666667,
+                    "speed": -99.9
+                  }
+                ],
+                "index": 2,
+                "isSpatial": false,
+                "keyLabel": 0,
+                "outInterpolationType": "6612",
+                "outTemporalEase": [
+                  {
+                    "influence": 16.666666667,
+                    "speed": 0
+                  }
+                ],
+                "temporalAutoBezier": false,
+                "temporalContinuous": false,
+                "time": 18.2265598932266,
+                "value": 0
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}

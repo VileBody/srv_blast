@@ -1,0 +1,77 @@
+{
+  "canonicalName": "Направл._разм.__ADBE_Motion_Blur",
+  "domain": "effects",
+  "groupKey": "ADBE Motion Blur",
+  "instancesCount": 12,
+  "keyframes": {
+    "paramCount": 0,
+    "params": []
+  },
+  "namesSeen": [
+    "Направл. разм."
+  ],
+  "presentCount": 1,
+  "template": {
+    "constantCount": 4,
+    "paramCount": 4,
+    "params": [
+      {
+        "constantValue": 100,
+        "kind": "constant",
+        "relPath": "ADBE Effect Built In Params#3/ADBE Effect Mask Opacity#2",
+        "samplePayload": 100,
+        "sampleTriplet": {
+          "id": "51381fab",
+          "matchName": "ADBE Effect Mask Opacity",
+          "name": "Непрозр.эффекта",
+          "path": "comp:133/layer:21/effects/E001/ADBE Motion Blur#1/ADBE Effect Built In Params#3/ADBE Effect Mask Opacity#2",
+          "propertyIndex": 2
+        },
+        "slug": "ADBE_Effect_Built_In_Params__p3__ADBE_Effect_Mask_Opacity__p2"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "ADBE Effect Built In Params#3/ADBE Force CPU GPU#3",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "8c3a1ef9",
+          "matchName": "ADBE Force CPU GPU",
+          "name": "Ренд. с исп. ГП",
+          "path": "comp:133/layer:21/effects/E001/ADBE Motion Blur#1/ADBE Effect Built In Params#3/ADBE Force CPU GPU#3",
+          "propertyIndex": 3
+        },
+        "slug": "ADBE_Effect_Built_In_Params__p3__ADBE_Force_CPU_GPU__p3"
+      },
+      {
+        "constantValue": 90,
+        "kind": "constant",
+        "relPath": "ADBE Motion Blur-0001#1",
+        "samplePayload": 90,
+        "sampleTriplet": {
+          "id": "14af0706",
+          "matchName": "ADBE Motion Blur-0001",
+          "name": "Направление",
+          "path": "comp:133/layer:21/effects/E001/ADBE Motion Blur#1/ADBE Motion Blur-0001#1",
+          "propertyIndex": 1
+        },
+        "slug": "ADBE_Motion_Blur-0001__p1"
+      },
+      {
+        "constantValue": 50,
+        "kind": "constant",
+        "relPath": "ADBE Motion Blur-0002#2",
+        "samplePayload": 50,
+        "sampleTriplet": {
+          "id": "2d623042",
+          "matchName": "ADBE Motion Blur-0002",
+          "name": "Длина размытия",
+          "path": "comp:133/layer:21/effects/E001/ADBE Motion Blur#1/ADBE Motion Blur-0002#2",
+          "propertyIndex": 2
+        },
+        "slug": "ADBE_Motion_Blur-0002__p2"
+      }
+    ],
+    "variableCount": 0
+  }
+}

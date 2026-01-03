@@ -1,0 +1,11 @@
+{
+  "layerId": "L023__then she looked at me",
+  "used": {
+    "anim__Animator_1__ADBE_Text_Animator": {
+      "ADBE_Text_Selectors__p1__ADBE_Text_Selector__p1__ADBE_Text_Percent_End__p2": 100,
+      "ADBE_Text_Selectors__p1__ADBE_Text_Selector__p1__ADBE_Text_Percent_Start__p1": {
+        "__MISSING__": true
+      }
+    }
+  }
+}

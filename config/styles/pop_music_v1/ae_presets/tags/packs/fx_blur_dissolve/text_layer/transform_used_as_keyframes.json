@@ -1,0 +1,63 @@
+{
+  "layerId": "L016__of a baby cryin’ 2",
+  "used": {
+    "transform_group__ADBE_Transform_Group": {
+      "ADBE_Opacity#11": {
+        "@time": {
+          "__slug__": "ADBE_Opacity__p11_time",
+          "payload": {
+            "expressionEnabled": false,
+            "keys": [
+              {
+                "inInterpolationType": "6612",
+                "inTemporalEase": [
+                  {
+                    "influence": 16.666666667,
+                    "speed": 0
+                  }
+                ],
+                "index": 1,
+                "isSpatial": false,
+                "keyLabel": 0,
+                "outInterpolationType": "6612",
+                "outTemporalEase": [
+                  {
+                    "influence": 16.666666667,
+                    "speed": -599.4
+                  }
+                ],
+                "temporalAutoBezier": false,
+                "temporalContinuous": false,
+                "time": 7.13213213213213,
+                "value": 100
+              },
+              {
+                "inInterpolationType": "6612",
+                "inTemporalEase": [
+                  {
+                    "influence": 16.666666667,
+                    "speed": -599.4
+                  }
+                ],
+                "index": 2,
+                "isSpatial": false,
+                "keyLabel": 0,
+                "outInterpolationType": "6612",
+                "outTemporalEase": [
+                  {
+                    "influence": 16.666666667,
+                    "speed": 0
+                  }
+                ],
+                "temporalAutoBezier": false,
+                "temporalContinuous": false,
+                "time": 7.29896563229897,
+                "value": 0
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}

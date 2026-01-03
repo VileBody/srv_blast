@@ -1,0 +1,674 @@
+{
+  "canonicalName": "S_BlurMotion__S_BlurMotion",
+  "domain": "effects",
+  "groupKey": "S_BlurMotion",
+  "instancesCount": 4,
+  "keyframes": {
+    "paramCount": 1,
+    "params": [
+      {
+        "keyframeMeta": {
+          "hasExpression": false,
+          "keyCount": 4,
+          "valueTypeHint": "float"
+        },
+        "relPath": "S_BlurMotion-0051#24",
+        "sampleTriplet": {
+          "id": "bddffb82",
+          "matchName": "S_BlurMotion-0051",
+          "name": "From Z Dist",
+          "path": "comp:1/layer:3/effects/E005/S_BlurMotion#5/S_BlurMotion-0051#24",
+          "propertyIndex": 24
+        },
+        "slug": "S_BlurMotion-0051__p24_time"
+      }
+    ]
+  },
+  "namesSeen": [
+    "S_BlurMotion"
+  ],
+  "presentCount": 4,
+  "template": {
+    "constantCount": 45,
+    "paramCount": 45,
+    "params": [
+      {
+        "constantValue": 100,
+        "kind": "constant",
+        "relPath": "ADBE Effect Built In Params#54/ADBE Effect Mask Opacity#2",
+        "samplePayload": 100,
+        "sampleTriplet": {
+          "id": "4da3fd1d",
+          "matchName": "ADBE Effect Mask Opacity",
+          "name": "Непрозр.эффекта",
+          "path": "comp:1/layer:3/effects/E005/S_BlurMotion#5/ADBE Effect Built In Params#54/ADBE Effect Mask Opacity#2",
+          "propertyIndex": 2
+        },
+        "slug": "ADBE_Effect_Built_In_Params__p54__ADBE_Effect_Mask_Opacity__p2"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "ADBE Effect Built In Params#54/ADBE Force CPU GPU#3",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "cd11d137",
+          "matchName": "ADBE Force CPU GPU",
+          "name": "Ренд. с исп. ГП",
+          "path": "comp:1/layer:3/effects/E005/S_BlurMotion#5/ADBE Effect Built In Params#54/ADBE Force CPU GPU#3",
+          "propertyIndex": 3
+        },
+        "slug": "ADBE_Effect_Built_In_Params__p54__ADBE_Force_CPU_GPU__p3"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "S_BlurMotion-0001#3",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "9ab7674c",
+          "matchName": "S_BlurMotion-0001",
+          "name": "Matte from Layer",
+          "path": "comp:1/layer:3/effects/E005/S_BlurMotion#5/S_BlurMotion-0001#3",
+          "propertyIndex": 3
+        },
+        "slug": "S_BlurMotion-0001__p3"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "S_BlurMotion-0002#5",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "b86a9867",
+          "matchName": "S_BlurMotion-0002",
+          "name": "Effect",
+          "path": "comp:1/layer:3/effects/E005/S_BlurMotion#5/S_BlurMotion-0002#5",
+          "propertyIndex": 5
+        },
+        "slug": "S_BlurMotion-0002__p5"
+      },
+      {
+        "constantValue": [
+          960,
+          540
+        ],
+        "kind": "constant",
+        "relPath": "S_BlurMotion-0050#23",
+        "samplePayload": [
+          960,
+          540
+        ],
+        "sampleTriplet": {
+          "id": "ea6eb3fa",
+          "matchName": "S_BlurMotion-0050",
+          "name": "Center XY",
+          "path": "comp:1/layer:3/effects/E005/S_BlurMotion#5/S_BlurMotion-0050#23",
+          "propertyIndex": 23
+        },
+        "slug": "S_BlurMotion-0050__p23"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "S_BlurMotion-0052#25",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "18d2fef2",
+          "matchName": "S_BlurMotion-0052",
+          "name": "From Rotate",
+          "path": "comp:1/layer:3/effects/E005/S_BlurMotion#5/S_BlurMotion-0052#25",
+          "propertyIndex": 25
+        },
+        "slug": "S_BlurMotion-0052__p25"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "S_BlurMotion-0053#26",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "297d5c32",
+          "matchName": "S_BlurMotion-0053",
+          "name": "From Shift X",
+          "path": "comp:1/layer:3/effects/E005/S_BlurMotion#5/S_BlurMotion-0053#26",
+          "propertyIndex": 26
+        },
+        "slug": "S_BlurMotion-0053__p26"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "S_BlurMotion-0054#27",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "6d1f8882",
+          "matchName": "S_BlurMotion-0054",
+          "name": "From Shift Y",
+          "path": "comp:1/layer:3/effects/E005/S_BlurMotion#5/S_BlurMotion-0054#27",
+          "propertyIndex": 27
+        },
+        "slug": "S_BlurMotion-0054__p27"
+      },
+      {
+        "constantValue": 0.79998779296875,
+        "kind": "constant",
+        "relPath": "S_BlurMotion-0055#28",
+        "samplePayload": 0.79998779296875,
+        "sampleTriplet": {
+          "id": "e09038ea",
+          "matchName": "S_BlurMotion-0055",
+          "name": "To Z Dist",
+          "path": "comp:1/layer:3/effects/E005/S_BlurMotion#5/S_BlurMotion-0055#28",
+          "propertyIndex": 28
+        },
+        "slug": "S_BlurMotion-0055__p28"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "S_BlurMotion-0056#29",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "f57fc0fa",
+          "matchName": "S_BlurMotion-0056",
+          "name": "To Rotate",
+          "path": "comp:1/layer:3/effects/E005/S_BlurMotion#5/S_BlurMotion-0056#29",
+          "propertyIndex": 29
+        },
+        "slug": "S_BlurMotion-0056__p29"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "S_BlurMotion-0057#30",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "487f83c5",
+          "matchName": "S_BlurMotion-0057",
+          "name": "To Shift X",
+          "path": "comp:1/layer:3/effects/E005/S_BlurMotion#5/S_BlurMotion-0057#30",
+          "propertyIndex": 30
+        },
+        "slug": "S_BlurMotion-0057__p30"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "S_BlurMotion-0058#31",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "5f2bea19",
+          "matchName": "S_BlurMotion-0058",
+          "name": "To Shift Y",
+          "path": "comp:1/layer:3/effects/E005/S_BlurMotion#5/S_BlurMotion-0058#31",
+          "propertyIndex": 31
+        },
+        "slug": "S_BlurMotion-0058__p31"
+      },
+      {
+        "constantValue": 0.5,
+        "kind": "constant",
+        "relPath": "S_BlurMotion-0059#32",
+        "samplePayload": 0.5,
+        "sampleTriplet": {
+          "id": "699733cd",
+          "matchName": "S_BlurMotion-0059",
+          "name": "Exposure Bias",
+          "path": "comp:1/layer:3/effects/E005/S_BlurMotion#5/S_BlurMotion-0059#32",
+          "propertyIndex": 32
+        },
+        "slug": "S_BlurMotion-0059__p32"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "S_BlurMotion-0060#33",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "49e4074a",
+          "matchName": "S_BlurMotion-0060",
+          "name": "Brightness",
+          "path": "comp:1/layer:3/effects/E005/S_BlurMotion#5/S_BlurMotion-0060#33",
+          "propertyIndex": 33
+        },
+        "slug": "S_BlurMotion-0060__p33"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "S_BlurMotion-0061#34",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "89cbf122",
+          "matchName": "S_BlurMotion-0061",
+          "name": "Wrap X",
+          "path": "comp:1/layer:3/effects/E005/S_BlurMotion#5/S_BlurMotion-0061#34",
+          "propertyIndex": 34
+        },
+        "slug": "S_BlurMotion-0061__p34"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "S_BlurMotion-0062#35",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "3582317a",
+          "matchName": "S_BlurMotion-0062",
+          "name": "Wrap Y",
+          "path": "comp:1/layer:3/effects/E005/S_BlurMotion#5/S_BlurMotion-0062#35",
+          "propertyIndex": 35
+        },
+        "slug": "S_BlurMotion-0062__p35"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "S_BlurMotion-0063#36",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "1ed34d9a",
+          "matchName": "S_BlurMotion-0063",
+          "name": "Blur Res",
+          "path": "comp:1/layer:3/effects/E005/S_BlurMotion#5/S_BlurMotion-0063#36",
+          "propertyIndex": 36
+        },
+        "slug": "S_BlurMotion-0063__p36"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "S_BlurMotion-0064#37",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "cc94dbd2",
+          "matchName": "S_BlurMotion-0064",
+          "name": "Subpixel",
+          "path": "comp:1/layer:3/effects/E005/S_BlurMotion#5/S_BlurMotion-0064#37",
+          "propertyIndex": 37
+        },
+        "slug": "S_BlurMotion-0064__p37"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "S_BlurMotion-0065#38",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "f40c904a",
+          "matchName": "S_BlurMotion-0065",
+          "name": "Blur Matte",
+          "path": "comp:1/layer:3/effects/E005/S_BlurMotion#5/S_BlurMotion-0065#38",
+          "propertyIndex": 38
+        },
+        "slug": "S_BlurMotion-0065__p38"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "S_BlurMotion-0066#39",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "496f8a32",
+          "matchName": "S_BlurMotion-0066",
+          "name": "Invert Matte",
+          "path": "comp:1/layer:3/effects/E005/S_BlurMotion#5/S_BlurMotion-0066#39",
+          "propertyIndex": 39
+        },
+        "slug": "S_BlurMotion-0066__p39"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "S_BlurMotion-0067#40",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "ec6b3a7b",
+          "matchName": "S_BlurMotion-0067",
+          "name": "Matte Use",
+          "path": "comp:1/layer:3/effects/E005/S_BlurMotion#5/S_BlurMotion-0067#40",
+          "propertyIndex": 40
+        },
+        "slug": "S_BlurMotion-0067__p40"
+      },
+      {
+        "constantValue": 2,
+        "kind": "constant",
+        "relPath": "S_BlurMotion-0068#41",
+        "samplePayload": 2,
+        "sampleTriplet": {
+          "id": "24c41583",
+          "matchName": "S_BlurMotion-0068",
+          "name": "Opacity",
+          "path": "comp:1/layer:3/effects/E005/S_BlurMotion#5/S_BlurMotion-0068#41",
+          "propertyIndex": 41
+        },
+        "slug": "S_BlurMotion-0068__p41"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "S_BlurMotion-0200#48",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "1f827714",
+          "matchName": "S_BlurMotion-0200",
+          "name": "Show Center",
+          "path": "comp:1/layer:3/effects/E005/S_BlurMotion#5/S_BlurMotion-0200#48",
+          "propertyIndex": 48
+        },
+        "slug": "S_BlurMotion-0200__p48"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "S_BlurMotion-0201#49",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "beff65a2",
+          "matchName": "S_BlurMotion-0201",
+          "name": "Show From Transfm",
+          "path": "comp:1/layer:3/effects/E005/S_BlurMotion#5/S_BlurMotion-0201#49",
+          "propertyIndex": 49
+        },
+        "slug": "S_BlurMotion-0201__p49"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "S_BlurMotion-0202#50",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "905656cb",
+          "matchName": "S_BlurMotion-0202",
+          "name": "Show To Transform",
+          "path": "comp:1/layer:3/effects/E005/S_BlurMotion#5/S_BlurMotion-0202#50",
+          "propertyIndex": 50
+        },
+        "slug": "S_BlurMotion-0202__p50"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "S_BlurMotion-0203#51",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "b1537905",
+          "matchName": "S_BlurMotion-0203",
+          "name": "Show From Shift",
+          "path": "comp:1/layer:3/effects/E005/S_BlurMotion#5/S_BlurMotion-0203#51",
+          "propertyIndex": 51
+        },
+        "slug": "S_BlurMotion-0203__p51"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "S_BlurMotion-0204#52",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "0cc109bb",
+          "matchName": "S_BlurMotion-0204",
+          "name": "Show To Shift",
+          "path": "comp:1/layer:3/effects/E005/S_BlurMotion#5/S_BlurMotion-0204#52",
+          "propertyIndex": 52
+        },
+        "slug": "S_BlurMotion-0204__p52"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "S_BlurMotion-0235#4",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "34f64d90",
+          "matchName": "S_BlurMotion-0235",
+          "name": "Matte from Path",
+          "path": "comp:1/layer:3/effects/E005/S_BlurMotion#5/S_BlurMotion-0235#4",
+          "propertyIndex": 4
+        },
+        "slug": "S_BlurMotion-0235__p4"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "S_BlurMotion-0502#43",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "63132f58",
+          "matchName": "S_BlurMotion-0502",
+          "name": "Crop Left",
+          "path": "comp:1/layer:3/effects/E005/S_BlurMotion#5/S_BlurMotion-0502#43",
+          "propertyIndex": 43
+        },
+        "slug": "S_BlurMotion-0502__p43"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "S_BlurMotion-0503#44",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "3a847d2c",
+          "matchName": "S_BlurMotion-0503",
+          "name": "Crop Right",
+          "path": "comp:1/layer:3/effects/E005/S_BlurMotion#5/S_BlurMotion-0503#44",
+          "propertyIndex": 44
+        },
+        "slug": "S_BlurMotion-0503__p44"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "S_BlurMotion-0504#45",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "662ebd1c",
+          "matchName": "S_BlurMotion-0504",
+          "name": "Crop Top",
+          "path": "comp:1/layer:3/effects/E005/S_BlurMotion#5/S_BlurMotion-0504#45",
+          "propertyIndex": 45
+        },
+        "slug": "S_BlurMotion-0504__p45"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "S_BlurMotion-0505#46",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "512b9d98",
+          "matchName": "S_BlurMotion-0505",
+          "name": "Crop Bottom",
+          "path": "comp:1/layer:3/effects/E005/S_BlurMotion#5/S_BlurMotion-0505#46",
+          "propertyIndex": 46
+        },
+        "slug": "S_BlurMotion-0505__p46"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "S_BlurMotion-0521#9",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "25caaefb",
+          "matchName": "S_BlurMotion-0521",
+          "name": "Blur Mocha",
+          "path": "comp:1/layer:3/effects/E005/S_BlurMotion#5/S_BlurMotion-0521#9",
+          "propertyIndex": 9
+        },
+        "slug": "S_BlurMotion-0521__p9"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "S_BlurMotion-0522#10",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "daf26bde",
+          "matchName": "S_BlurMotion-0522",
+          "name": "Mocha Opacity",
+          "path": "comp:1/layer:3/effects/E005/S_BlurMotion#5/S_BlurMotion-0522#10",
+          "propertyIndex": 10
+        },
+        "slug": "S_BlurMotion-0522__p10"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "S_BlurMotion-0523#11",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "ad4e25a4",
+          "matchName": "S_BlurMotion-0523",
+          "name": "Invert Mocha",
+          "path": "comp:1/layer:3/effects/E005/S_BlurMotion#5/S_BlurMotion-0523#11",
+          "propertyIndex": 11
+        },
+        "slug": "S_BlurMotion-0523__p11"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "S_BlurMotion-0524#12",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "b1f3f2d2",
+          "matchName": "S_BlurMotion-0524",
+          "name": "Resize Mocha",
+          "path": "comp:1/layer:3/effects/E005/S_BlurMotion#5/S_BlurMotion-0524#12",
+          "propertyIndex": 12
+        },
+        "slug": "S_BlurMotion-0524__p12"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "S_BlurMotion-0525#13",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "36104ab4",
+          "matchName": "S_BlurMotion-0525",
+          "name": "Resize Rel X",
+          "path": "comp:1/layer:3/effects/E005/S_BlurMotion#5/S_BlurMotion-0525#13",
+          "propertyIndex": 13
+        },
+        "slug": "S_BlurMotion-0525__p13"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "S_BlurMotion-0526#14",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "70621ad6",
+          "matchName": "S_BlurMotion-0526",
+          "name": "Resize Rel Y",
+          "path": "comp:1/layer:3/effects/E005/S_BlurMotion#5/S_BlurMotion-0526#14",
+          "propertyIndex": 14
+        },
+        "slug": "S_BlurMotion-0526__p14"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "S_BlurMotion-0527#15",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "124f0c74",
+          "matchName": "S_BlurMotion-0527",
+          "name": "Shift Mocha X",
+          "path": "comp:1/layer:3/effects/E005/S_BlurMotion#5/S_BlurMotion-0527#15",
+          "propertyIndex": 15
+        },
+        "slug": "S_BlurMotion-0527__p15"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "S_BlurMotion-0528#16",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "dd473d62",
+          "matchName": "S_BlurMotion-0528",
+          "name": "Shift Mocha Y",
+          "path": "comp:1/layer:3/effects/E005/S_BlurMotion#5/S_BlurMotion-0528#16",
+          "propertyIndex": 16
+        },
+        "slug": "S_BlurMotion-0528__p16"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "S_BlurMotion-0529#20",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "2062605a",
+          "matchName": "S_BlurMotion-0529",
+          "name": "Show Mocha Only",
+          "path": "comp:1/layer:3/effects/E005/S_BlurMotion#5/S_BlurMotion-0529#20",
+          "propertyIndex": 20
+        },
+        "slug": "S_BlurMotion-0529__p20"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "S_BlurMotion-0530#21",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "4e30af1f",
+          "matchName": "S_BlurMotion-0530",
+          "name": "Combine Masks",
+          "path": "comp:1/layer:3/effects/E005/S_BlurMotion#5/S_BlurMotion-0530#21",
+          "propertyIndex": 21
+        },
+        "slug": "S_BlurMotion-0530__p21"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "S_BlurMotion-0531#19",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "bd4c2709",
+          "matchName": "S_BlurMotion-0531",
+          "name": "Bypass Mocha",
+          "path": "comp:1/layer:3/effects/E005/S_BlurMotion#5/S_BlurMotion-0531#19",
+          "propertyIndex": 19
+        },
+        "slug": "S_BlurMotion-0531__p19"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "S_BlurMotion-0543#17",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "0a56678c",
+          "matchName": "S_BlurMotion-0543",
+          "name": "Dilate Mocha",
+          "path": "comp:1/layer:3/effects/E005/S_BlurMotion#5/S_BlurMotion-0543#17",
+          "propertyIndex": 17
+        },
+        "slug": "S_BlurMotion-0543__p17"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "S_BlurMotion-0544#18",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "da9e9a0a",
+          "matchName": "S_BlurMotion-0544",
+          "name": "Dilation Quality",
+          "path": "comp:1/layer:3/effects/E005/S_BlurMotion#5/S_BlurMotion-0544#18",
+          "propertyIndex": 18
+        },
+        "slug": "S_BlurMotion-0544__p18"
+      }
+    ],
+    "variableCount": 0
+  }
+}

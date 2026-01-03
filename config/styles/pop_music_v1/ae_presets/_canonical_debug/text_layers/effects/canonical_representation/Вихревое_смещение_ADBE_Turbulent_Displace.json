@@ -1,0 +1,247 @@
+{
+  "canonicalName": "Вихревое_смещение__ADBE_Turbulent_Displace",
+  "domain": "effects",
+  "groupKey": "ADBE Turbulent Displace",
+  "instancesCount": 13,
+  "keyframes": {
+    "paramCount": 1,
+    "params": [
+      {
+        "keyframeMeta": {
+          "hasExpression": false,
+          "keyCount": 2,
+          "valueTypeHint": "float"
+        },
+        "relPath": "ADBE Turbulent Displace-0002#2",
+        "sampleTriplet": {
+          "id": "0befce0f",
+          "matchName": "ADBE Turbulent Displace-0002",
+          "name": "Величина",
+          "path": "comp:undefined/layer:12/text_effects/E001/ADBE Turbulent Displace#1/ADBE Turbulent Displace-0002#2",
+          "propertyIndex": 2
+        },
+        "slug": "ADBE_Turbulent_Displace-0002__p2_time"
+      }
+    ]
+  },
+  "namesSeen": [
+    "Вихревое смещение"
+  ],
+  "presentCount": 13,
+  "template": {
+    "constantCount": 13,
+    "paramCount": 14,
+    "params": [
+      {
+        "constantValue": 100,
+        "kind": "constant",
+        "relPath": "ADBE Effect Built In Params#15/ADBE Effect Mask Opacity#2",
+        "samplePayload": 100,
+        "sampleTriplet": {
+          "id": "716439c8",
+          "matchName": "ADBE Effect Mask Opacity",
+          "name": "Непрозр.эффекта",
+          "path": "comp:undefined/layer:3/text_effects/E001/ADBE Turbulent Displace#1/ADBE Effect Built In Params#15/ADBE Effect Mask Opacity#2",
+          "propertyIndex": 2
+        },
+        "slug": "ADBE_Effect_Built_In_Params__p15__ADBE_Effect_Mask_Opacity__p2"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "ADBE Effect Built In Params#15/ADBE Force CPU GPU#3",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "d15f8632",
+          "matchName": "ADBE Force CPU GPU",
+          "name": "Ренд. с исп. ГП",
+          "path": "comp:undefined/layer:3/text_effects/E001/ADBE Turbulent Displace#1/ADBE Effect Built In Params#15/ADBE Force CPU GPU#3",
+          "propertyIndex": 3
+        },
+        "slug": "ADBE_Effect_Built_In_Params__p15__ADBE_Force_CPU_GPU__p3"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "ADBE Turbulent Displace-0001#1",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "46fd4e39",
+          "matchName": "ADBE Turbulent Displace-0001",
+          "name": "Перестановка",
+          "path": "comp:undefined/layer:3/text_effects/E001/ADBE Turbulent Displace#1/ADBE Turbulent Displace-0001#1",
+          "propertyIndex": 1
+        },
+        "slug": "ADBE_Turbulent_Displace-0001__p1"
+      },
+      {
+        "kind": "variable",
+        "relPath": "ADBE Turbulent Displace-0002#2",
+        "samplePayload": 7.5,
+        "sampleTriplet": {
+          "id": "174e8f7d",
+          "matchName": "ADBE Turbulent Displace-0002",
+          "name": "Величина",
+          "path": "comp:undefined/layer:3/text_effects/E001/ADBE Turbulent Displace#1/ADBE Turbulent Displace-0002#2",
+          "propertyIndex": 2
+        },
+        "slug": "ADBE_Turbulent_Displace-0002__p2"
+      },
+      {
+        "constantValue": 50,
+        "kind": "constant",
+        "relPath": "ADBE Turbulent Displace-0003#3",
+        "samplePayload": 50,
+        "sampleTriplet": {
+          "id": "732665e5",
+          "matchName": "ADBE Turbulent Displace-0003",
+          "name": "Размер",
+          "path": "comp:undefined/layer:3/text_effects/E001/ADBE Turbulent Displace#1/ADBE Turbulent Displace-0003#3",
+          "propertyIndex": 3
+        },
+        "slug": "ADBE_Turbulent_Displace-0003__p3"
+      },
+      {
+        "constantValue": [
+          540,
+          960
+        ],
+        "kind": "constant",
+        "relPath": "ADBE Turbulent Displace-0004#4",
+        "samplePayload": [
+          540,
+          960
+        ],
+        "sampleTriplet": {
+          "id": "3c156b51",
+          "matchName": "ADBE Turbulent Displace-0004",
+          "name": "Смещ. (турбул.)",
+          "path": "comp:undefined/layer:3/text_effects/E001/ADBE Turbulent Displace#1/ADBE Turbulent Displace-0004#4",
+          "propertyIndex": 4
+        },
+        "slug": "ADBE_Turbulent_Displace-0004__p4"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "ADBE Turbulent Displace-0005#5",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "2801ac21",
+          "matchName": "ADBE Turbulent Displace-0005",
+          "name": "Сложность",
+          "path": "comp:undefined/layer:3/text_effects/E001/ADBE Turbulent Displace#1/ADBE Turbulent Displace-0005#5",
+          "propertyIndex": 5
+        },
+        "slug": "ADBE_Turbulent_Displace-0005__p5"
+      },
+      {
+        "constantValue": {
+          "expression": "time*500",
+          "expressionEnabled": true,
+          "value": 0
+        },
+        "kind": "constant",
+        "relPath": "ADBE Turbulent Displace-0006#6",
+        "samplePayload": {
+          "expression": "time*500",
+          "expressionEnabled": true,
+          "value": 0
+        },
+        "sampleTriplet": {
+          "id": "dfb363dd",
+          "matchName": "ADBE Turbulent Displace-0006",
+          "name": "Эволюция",
+          "path": "comp:undefined/layer:3/text_effects/E001/ADBE Turbulent Displace#1/ADBE Turbulent Displace-0006#6",
+          "propertyIndex": 6
+        },
+        "slug": "ADBE_Turbulent_Displace-0006__p6"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Turbulent Displace-0008#8",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "ca4764a9",
+          "matchName": "ADBE Turbulent Displace-0008",
+          "name": "Эволюция цикла",
+          "path": "comp:undefined/layer:3/text_effects/E001/ADBE Turbulent Displace#1/ADBE Turbulent Displace-0008#8",
+          "propertyIndex": 8
+        },
+        "slug": "ADBE_Turbulent_Displace-0008__p8"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "ADBE Turbulent Displace-0009#9",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "3632dbf9",
+          "matchName": "ADBE Turbulent Displace-0009",
+          "name": "Цикл (в оборотах)",
+          "path": "comp:undefined/layer:3/text_effects/E001/ADBE Turbulent Displace#1/ADBE Turbulent Displace-0009#9",
+          "propertyIndex": 9
+        },
+        "slug": "ADBE_Turbulent_Displace-0009__p9"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Turbulent Displace-0010#10",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "7916b631",
+          "matchName": "ADBE Turbulent Displace-0010",
+          "name": "Случ. нач. число",
+          "path": "comp:undefined/layer:3/text_effects/E001/ADBE Turbulent Displace#1/ADBE Turbulent Displace-0010#10",
+          "propertyIndex": 10
+        },
+        "slug": "ADBE_Turbulent_Displace-0010__p10"
+      },
+      {
+        "constantValue": 3,
+        "kind": "constant",
+        "relPath": "ADBE Turbulent Displace-0012#12",
+        "samplePayload": 3,
+        "sampleTriplet": {
+          "id": "97a89ee5",
+          "matchName": "ADBE Turbulent Displace-0012",
+          "name": "Пиннинг",
+          "path": "comp:undefined/layer:3/text_effects/E001/ADBE Turbulent Displace#1/ADBE Turbulent Displace-0012#12",
+          "propertyIndex": 12
+        },
+        "slug": "ADBE_Turbulent_Displace-0012__p12"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Turbulent Displace-0013#13",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "400ee0d3",
+          "matchName": "ADBE Turbulent Displace-0013",
+          "name": "Изменить размер слоя",
+          "path": "comp:undefined/layer:3/text_effects/E001/ADBE Turbulent Displace#1/ADBE Turbulent Displace-0013#13",
+          "propertyIndex": 13
+        },
+        "slug": "ADBE_Turbulent_Displace-0013__p13"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "ADBE Turbulent Displace-0014#14",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "9cb9a609",
+          "matchName": "ADBE Turbulent Displace-0014",
+          "name": "Сглаж.лучш.кач.",
+          "path": "comp:undefined/layer:3/text_effects/E001/ADBE Turbulent Displace#1/ADBE Turbulent Displace-0014#14",
+          "propertyIndex": 14
+        },
+        "slug": "ADBE_Turbulent_Displace-0014__p14"
+      }
+    ],
+    "variableCount": 1
+  }
+}

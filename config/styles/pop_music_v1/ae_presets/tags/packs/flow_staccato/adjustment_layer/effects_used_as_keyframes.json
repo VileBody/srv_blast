@@ -1,0 +1,142 @@
+{
+  "layerId": "L006__Adjustment Layer 2",
+  "used": {
+    "Преобразовать__ADBE_Geometry2": {
+      "ADBE_Geometry2-0003#4": {
+        "@time": {
+          "__slug__": "ADBE_Geometry2-0003__p4_time",
+          "payload": {
+            "expressionEnabled": false,
+            "keys": [
+              {
+                "inInterpolationType": "6613",
+                "inTemporalEase": [
+                  {
+                    "influence": 100,
+                    "speed": 0
+                  }
+                ],
+                "index": 1,
+                "isSpatial": false,
+                "keyLabel": 0,
+                "outInterpolationType": "6613",
+                "outTemporalEase": [
+                  {
+                    "influence": 0.17350189250008,
+                    "speed": -2997
+                  }
+                ],
+                "temporalAutoBezier": false,
+                "temporalContinuous": false,
+                "time": 10.6356356356356,
+                "value": 125
+              },
+              {
+                "inInterpolationType": "6613",
+                "inTemporalEase": [
+                  {
+                    "influence": 99.9163966486346,
+                    "speed": -3.15735788454896
+                  }
+                ],
+                "index": 2,
+                "isSpatial": false,
+                "keyLabel": 0,
+                "outInterpolationType": "6613",
+                "outTemporalEase": [
+                  {
+                    "influence": 16,
+                    "speed": 24.888021580357
+                  }
+                ],
+                "temporalAutoBezier": false,
+                "temporalContinuous": false,
+                "time": 12.0954287620954,
+                "value": 102.332406178879
+              },
+              {
+                "inInterpolationType": "6613",
+                "inTemporalEase": [
+                  {
+                    "influence": 29,
+                    "speed": 14.1967908021207
+                  }
+                ],
+                "index": 3,
+                "isSpatial": false,
+                "keyLabel": 0,
+                "outInterpolationType": "6613",
+                "outTemporalEase": [
+                  {
+                    "influence": 16.666666667,
+                    "speed": 0
+                  }
+                ],
+                "temporalAutoBezier": false,
+                "temporalContinuous": false,
+                "time": 13.9723056389723,
+                "value": 115
+              }
+            ]
+          }
+        }
+      },
+      "ADBE_Geometry2-0007#8": {
+        "@time": {
+          "__slug__": "ADBE_Geometry2-0007__p8_time",
+          "payload": {
+            "expressionEnabled": false,
+            "keys": [
+              {
+                "inInterpolationType": "6613",
+                "inTemporalEase": [
+                  {
+                    "influence": 100,
+                    "speed": 0
+                  }
+                ],
+                "index": 1,
+                "isSpatial": false,
+                "keyLabel": 0,
+                "outInterpolationType": "6613",
+                "outTemporalEase": [
+                  {
+                    "influence": 0.1,
+                    "speed": 599.4
+                  }
+                ],
+                "temporalAutoBezier": false,
+                "temporalContinuous": false,
+                "time": 10.6356356356356,
+                "value": -5
+              },
+              {
+                "inInterpolationType": "6613",
+                "inTemporalEase": [
+                  {
+                    "influence": 100,
+                    "speed": 0
+                  }
+                ],
+                "index": 2,
+                "isSpatial": false,
+                "keyLabel": 0,
+                "outInterpolationType": "6613",
+                "outTemporalEase": [
+                  {
+                    "influence": 0.1,
+                    "speed": 0
+                  }
+                ],
+                "temporalAutoBezier": false,
+                "temporalContinuous": false,
+                "time": 13.9723056389723,
+                "value": 0
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}

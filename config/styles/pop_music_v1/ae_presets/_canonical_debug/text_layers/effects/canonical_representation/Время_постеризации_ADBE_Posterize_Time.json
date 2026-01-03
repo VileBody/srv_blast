@@ -1,0 +1,63 @@
+{
+  "canonicalName": "Время_постеризации__ADBE_Posterize_Time",
+  "domain": "effects",
+  "groupKey": "ADBE Posterize Time",
+  "instancesCount": 13,
+  "keyframes": {
+    "paramCount": 0,
+    "params": []
+  },
+  "namesSeen": [
+    "Время постеризации"
+  ],
+  "presentCount": 13,
+  "template": {
+    "constantCount": 3,
+    "paramCount": 3,
+    "params": [
+      {
+        "constantValue": 100,
+        "kind": "constant",
+        "relPath": "ADBE Effect Built In Params#2/ADBE Effect Mask Opacity#2",
+        "samplePayload": 100,
+        "sampleTriplet": {
+          "id": "c4619628",
+          "matchName": "ADBE Effect Mask Opacity",
+          "name": "Непрозр.эффекта",
+          "path": "comp:undefined/layer:3/text_effects/E002/ADBE Posterize Time#2/ADBE Effect Built In Params#2/ADBE Effect Mask Opacity#2",
+          "propertyIndex": 2
+        },
+        "slug": "ADBE_Effect_Built_In_Params__p2__ADBE_Effect_Mask_Opacity__p2"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "ADBE Effect Built In Params#2/ADBE Force CPU GPU#3",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "1babe112",
+          "matchName": "ADBE Force CPU GPU",
+          "name": "Ренд. с исп. ГП",
+          "path": "comp:undefined/layer:3/text_effects/E002/ADBE Posterize Time#2/ADBE Effect Built In Params#2/ADBE Force CPU GPU#3",
+          "propertyIndex": 3
+        },
+        "slug": "ADBE_Effect_Built_In_Params__p2__ADBE_Force_CPU_GPU__p3"
+      },
+      {
+        "constantValue": 5,
+        "kind": "constant",
+        "relPath": "ADBE Posterize Time-0001#1",
+        "samplePayload": 5,
+        "sampleTriplet": {
+          "id": "dd3128bd",
+          "matchName": "ADBE Posterize Time-0001",
+          "name": "Частота кадров",
+          "path": "comp:undefined/layer:3/text_effects/E002/ADBE Posterize Time#2/ADBE Posterize Time-0001#1",
+          "propertyIndex": 1
+        },
+        "slug": "ADBE_Posterize_Time-0001__p1"
+      }
+    ],
+    "variableCount": 0
+  }
+}

@@ -1,0 +1,101 @@
+{
+  "version": "ae_tags_catalog.v1",
+  "styleId": "prism_pop_music_v1",
+  "source": {
+    "out_variants": "/Users/ergin/Desktop/temp2/anal_v3/gpt/out_variants",
+    "out_variants_adj_text": "/Users/ergin/Desktop/temp2/anal_v3/gpt/out_variants_adj_text",
+    "out_variants_adj_footage": "/Users/ergin/Desktop/temp2/anal_v3/gpt/out_variants_adj_footage"
+  },
+  "tags": {
+    "flow_staccato": {
+      "label": "Rhythmic Staccato",
+      "requires_words": true,
+      "path": "packs/flow_staccato/manifest.json",
+      "refs": {
+        "text_layer": "L007_she_says_i_am_the_one",
+        "adjustment_layer_text": "L006_Adjustment_Layer_2"
+      }
+    },
+    "flow_smooth_squash": {
+      "label": "Smooth Landing",
+      "requires_words": false,
+      "path": "packs/flow_smooth_squash/manifest.json",
+      "refs": {
+        "text_layer": "L025_we_d_danced_til_three",
+        "adjustment_layer_text": "L024_Adjustment_Layer_11"
+      }
+    },
+    "flow_neutral": {
+      "label": "Clean Cut",
+      "requires_words": false,
+      "path": "packs/flow_neutral/manifest.json",
+      "refs": {
+        "text_layer": "L019_then_showed_a_photo",
+        "adjustment_layer_text": "L022_Adjustment_Layer_11"
+      }
+    },
+    "tension_vertical_stretch": {
+      "label": "Vertical Stretch",
+      "requires_words": false,
+      "path": "packs/tension_vertical_stretch/manifest.json",
+      "refs": {
+        "text_layer": "L023_then_she_looked_at_me",
+        "adjustment_layer_text": "L022_Adjustment_Layer_11"
+      }
+    },
+    "tension_unfolding": {
+      "label": "Unfolding",
+      "requires_words": false,
+      "path": "packs/tension_unfolding/manifest.json",
+      "refs": {
+        "text_layer": "L027_she_told_my_baby",
+        "adjustment_layer_text": "L026_Adjustment_Layer_11"
+      }
+    },
+    "impact_sharp_resolution": {
+      "label": "Resolution",
+      "requires_words": false,
+      "path": "packs/impact_sharp_resolution/manifest.json",
+      "refs": {
+        "text_layer": "L003_is_not_my_son",
+        "adjustment_layer_text": "L002_Adjustment_Layer_3"
+      }
+    },
+    "impact_heavy_bold": {
+      "label": "The Heavyweight",
+      "requires_words": false,
+      "path": "packs/impact_heavy_bold/manifest.json",
+      "refs": {
+        "text_layer": "L005_but_the_kid",
+        "adjustment_layer_text": "L004_Adjustment_Layer_3"
+      }
+    },
+    "fx_glitch_climax": {
+      "label": "Glitch Chaos",
+      "requires_words": false,
+      "path": "packs/fx_glitch_climax/manifest.json",
+      "refs": {
+        "text_layer": "L012_his_eyes_were_like_3",
+        "adjustment_layer_text": "L011_Adjustment_Layer_10"
+      }
+    },
+    "fx_blur_dissolve": {
+      "label": "Blur Out",
+      "requires_words": false,
+      "path": "packs/fx_blur_dissolve/manifest.json",
+      "refs": {
+        "text_layer": "L016_of_a_baby_cryin_2",
+        "adjustment_layer_text": "L014_Adjustment_Layer_11"
+      }
+    },
+    "fx_unstable_intro": {
+      "label": "Unstable Tilt",
+      "requires_words": false,
+      "path": "packs/fx_unstable_intro/manifest.json",
+      "refs": {
+        "text_layer": "L017_of_a_baby",
+        "adjustment_layer_text": "L014_Adjustment_Layer_11"
+      }
+    }
+  }
+}

@@ -1,0 +1,75 @@
+{
+  "layerId": "L017__of a baby",
+  "used": {
+    "anim__Animator_1__ADBE_Text_Animator": {
+      "ADBE_Text_Selectors#1": {
+        "ADBE_Text_Selector#1": {
+          "ADBE_Text_Percent_End#2": {
+            "@time": {
+              "__slug__": "ADBE_Text_Selectors__p1__ADBE_Text_Selector__p1__ADBE_Text_Percent_End__p2_time",
+              "payload": {
+                "__MISSING__": true
+              }
+            }
+          },
+          "ADBE_Text_Percent_Start#1": {
+            "@time": {
+              "__slug__": "ADBE_Text_Selectors__p1__ADBE_Text_Selector__p1__ADBE_Text_Percent_Start__p1_time",
+              "payload": {
+                "expressionEnabled": false,
+                "keys": [
+                  {
+                    "inInterpolationType": "6612",
+                    "inTemporalEase": [
+                      {
+                        "influence": 16.666666667,
+                        "speed": 0
+                      }
+                    ],
+                    "index": 1,
+                    "isSpatial": false,
+                    "keyLabel": 0,
+                    "outInterpolationType": "6612",
+                    "outTemporalEase": [
+                      {
+                        "influence": 16.666666667,
+                        "speed": 149.85
+                      }
+                    ],
+                    "temporalAutoBezier": false,
+                    "temporalContinuous": false,
+                    "time": 5.83917250583917,
+                    "value": 25
+                  },
+                  {
+                    "inInterpolationType": "6612",
+                    "inTemporalEase": [
+                      {
+                        "influence": 16.666666667,
+                        "speed": 149.85
+                      }
+                    ],
+                    "index": 2,
+                    "isSpatial": false,
+                    "keyLabel": 0,
+                    "outInterpolationType": "6612",
+                    "outTemporalEase": [
+                      {
+                        "influence": 16.666666667,
+                        "speed": 0
+                      }
+                    ],
+                    "temporalAutoBezier": false,
+                    "temporalContinuous": false,
+                    "time": 6.33967300633967,
+                    "value": 100
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

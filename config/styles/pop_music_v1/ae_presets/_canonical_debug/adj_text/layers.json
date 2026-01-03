@@ -1,0 +1,113 @@
+{
+  "compFolder": "C133__Текст",
+  "layers": {
+    "L001__Adjustment Layer 1": {
+      "compId": 133,
+      "compName": "Текст",
+      "id": "L001__Adjustment Layer 1",
+      "inPoint": 0,
+      "layerIndex": 1,
+      "layerName": "Adjustment Layer 1",
+      "outPoint": 18.4351017684351
+    },
+    "L002__Adjustment Layer 3": {
+      "compId": 133,
+      "compName": "Текст",
+      "id": "L002__Adjustment Layer 3",
+      "inPoint": 15.4738071404738,
+      "layerIndex": 2,
+      "layerName": "Adjustment Layer 3",
+      "outPoint": 18.4351017684351
+    },
+    "L004__Adjustment Layer 3": {
+      "compId": 133,
+      "compName": "Текст",
+      "id": "L004__Adjustment Layer 3",
+      "inPoint": 13.9723056389723,
+      "layerIndex": 4,
+      "layerName": "Adjustment Layer 3",
+      "outPoint": 15.4738071404738
+    },
+    "L006__Adjustment Layer 2": {
+      "compId": 133,
+      "compName": "Текст",
+      "id": "L006__Adjustment Layer 2",
+      "inPoint": 10.6356356356356,
+      "layerIndex": 6,
+      "layerName": "Adjustment Layer 2",
+      "outPoint": 13.5969302635969
+    },
+    "L011__Adjustment Layer 10": {
+      "compId": 133,
+      "compName": "Текст",
+      "id": "L011__Adjustment Layer 10",
+      "inPoint": 7.29896563229897,
+      "layerIndex": 11,
+      "layerName": "Adjustment Layer 10",
+      "outPoint": 8.75875875875876
+    },
+    "L014__Adjustment Layer 11": {
+      "compId": 133,
+      "compName": "Текст",
+      "id": "L014__Adjustment Layer 11",
+      "inPoint": 5.83917250583917,
+      "layerIndex": 14,
+      "layerName": "Adjustment Layer 11",
+      "outPoint": 7.29896563229897
+    },
+    "L018__Adjustment Layer 5": {
+      "compId": 133,
+      "compName": "Текст",
+      "id": "L018__Adjustment Layer 5",
+      "inPoint": 5.79746413079746,
+      "layerIndex": 18,
+      "layerName": "Adjustment Layer 5",
+      "outPoint": 5.83917250583917
+    },
+    "L020__Adjustment Layer 5": {
+      "compId": 133,
+      "compName": "Текст",
+      "id": "L020__Adjustment Layer 5",
+      "inPoint": 4.33767100433767,
+      "layerIndex": 20,
+      "layerName": "Adjustment Layer 5",
+      "outPoint": 4.37937937937938
+    },
+    "L021__Adjustment Layer 8": {
+      "compId": 133,
+      "compName": "Текст",
+      "id": "L021__Adjustment Layer 8",
+      "inPoint": 3.003003003003,
+      "layerIndex": 21,
+      "layerName": "Adjustment Layer 8",
+      "outPoint": 3.08641975308642
+    },
+    "L022__Adjustment Layer 11": {
+      "compId": 133,
+      "compName": "Текст",
+      "id": "L022__Adjustment Layer 11",
+      "inPoint": 3.04471137804471,
+      "layerIndex": 22,
+      "layerName": "Adjustment Layer 11",
+      "outPoint": 4.67133800467134
+    },
+    "L024__Adjustment Layer 11": {
+      "compId": 133,
+      "compName": "Текст",
+      "id": "L024__Adjustment Layer 11",
+      "inPoint": 1.87687687687688,
+      "layerIndex": 24,
+      "layerName": "Adjustment Layer 11",
+      "outPoint": 3.5035035035035
+    },
+    "L026__Adjustment Layer 11": {
+      "compId": 133,
+      "compName": "Текст",
+      "id": "L026__Adjustment Layer 11",
+      "inPoint": 0.25025025025025,
+      "layerIndex": 26,
+      "layerName": "Adjustment Layer 11",
+      "outPoint": 1.87687687687688
+    }
+  }
+}

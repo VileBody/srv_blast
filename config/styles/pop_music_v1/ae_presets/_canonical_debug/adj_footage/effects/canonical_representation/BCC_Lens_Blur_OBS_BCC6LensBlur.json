@@ -1,0 +1,1610 @@
+{
+  "canonicalName": "BCC_Lens_Blur_OBS__BCC6LensBlur",
+  "domain": "effects",
+  "groupKey": "BCC6LensBlur",
+  "instancesCount": 4,
+  "keyframes": {
+    "paramCount": 1,
+    "params": [
+      {
+        "keyframeMeta": {
+          "hasExpression": false,
+          "keyCount": 4,
+          "valueTypeHint": "int"
+        },
+        "relPath": "BCC6LensBlur-9961714#9",
+        "sampleTriplet": {
+          "id": "7a3b78ce",
+          "matchName": "BCC6LensBlur-9961714",
+          "name": "Iris Scale",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-9961714#9",
+          "propertyIndex": 9
+        },
+        "slug": "BCC6LensBlur-9961714__p9_time"
+      }
+    ]
+  },
+  "namesSeen": [
+    "BCC Lens Blur OBS"
+  ],
+  "presentCount": 4,
+  "template": {
+    "constantCount": 108,
+    "paramCount": 108,
+    "params": [
+      {
+        "constantValue": 100,
+        "kind": "constant",
+        "relPath": "ADBE Effect Built In Params#130/ADBE Effect Mask Opacity#2",
+        "samplePayload": 100,
+        "sampleTriplet": {
+          "id": "d98de1ac",
+          "matchName": "ADBE Effect Mask Opacity",
+          "name": "Непрозр.эффекта",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/ADBE Effect Built In Params#130/ADBE Effect Mask Opacity#2",
+          "propertyIndex": 2
+        },
+        "slug": "ADBE_Effect_Built_In_Params__p130__ADBE_Effect_Mask_Opacity__p2"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "ADBE Effect Built In Params#130/ADBE Force CPU GPU#3",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "c02774a6",
+          "matchName": "ADBE Force CPU GPU",
+          "name": "Ренд. с исп. ГП",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/ADBE Effect Built In Params#130/ADBE Force CPU GPU#3",
+          "propertyIndex": 3
+        },
+        "slug": "ADBE_Effect_Built_In_Params__p130__ADBE_Force_CPU_GPU__p3"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-0116#49",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "e95462c5",
+          "matchName": "BCC6LensBlur-0116",
+          "name": "Mix with Original",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-0116#49",
+          "propertyIndex": 49
+        },
+        "slug": "BCC6LensBlur-0116__p49"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-10158081#3",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "656330e3",
+          "matchName": "BCC6LensBlur-10158081",
+          "name": "Compare Mode",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-10158081#3",
+          "propertyIndex": 3
+        },
+        "slug": "BCC6LensBlur-10158081__p3"
+      },
+      {
+        "constantValue": 50,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-10158083#4",
+        "samplePayload": 50,
+        "sampleTriplet": {
+          "id": "8becdcf0",
+          "matchName": "BCC6LensBlur-10158083",
+          "name": "Wipe/Slide",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-10158083#4",
+          "propertyIndex": 4
+        },
+        "slug": "BCC6LensBlur-10158083__p4"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-10158084#5",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "5a3e1b0e",
+          "matchName": "BCC6LensBlur-10158084",
+          "name": "Right Offset",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-10158084#5",
+          "propertyIndex": 5
+        },
+        "slug": "BCC6LensBlur-10158084__p5"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-10158087#6",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "da528442",
+          "matchName": "BCC6LensBlur-10158087",
+          "name": "Host Layer",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-10158087#6",
+          "propertyIndex": 6
+        },
+        "slug": "BCC6LensBlur-10158087__p6"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-11010055#53",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "6cd7eab7",
+          "matchName": "BCC6LensBlur-11010055",
+          "name": "PixelChooser",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-11010055#53",
+          "propertyIndex": 53
+        },
+        "slug": "BCC6LensBlur-11010055__p53"
+      },
+      {
+        "constantValue": 100,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-11010057#58",
+        "samplePayload": 100,
+        "sampleTriplet": {
+          "id": "67817ad4",
+          "matchName": "BCC6LensBlur-11010057",
+          "name": "PC Mask Intensity",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-11010057#58",
+          "propertyIndex": 58
+        },
+        "slug": "BCC6LensBlur-11010057__p58"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-11010058#106",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "2cb6dcdf",
+          "matchName": "BCC6LensBlur-11010058",
+          "name": "Render Legacy PixelChooser",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-11010058#106",
+          "propertyIndex": 106
+        },
+        "slug": "BCC6LensBlur-11010058__p106"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-11010059#63",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "5d9ee1fc",
+          "matchName": "BCC6LensBlur-11010059",
+          "name": "Use AE Host Mask",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-11010059#63",
+          "propertyIndex": 63
+        },
+        "slug": "BCC6LensBlur-11010059__p63"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-11010060#64",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "a425ab25",
+          "matchName": "BCC6LensBlur-11010060",
+          "name": "Select Host Mask",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-11010060#64",
+          "propertyIndex": 64
+        },
+        "slug": "BCC6LensBlur-11010060__p64"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-11010061#65",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "6dba0c7f",
+          "matchName": "BCC6LensBlur-11010061",
+          "name": "Name Starts With",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-11010061#65",
+          "propertyIndex": 65
+        },
+        "slug": "BCC6LensBlur-11010061__p65"
+      },
+      {
+        "constantValue": [
+          960,
+          540
+        ],
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-11010062#66",
+        "samplePayload": [
+          960,
+          540
+        ],
+        "sampleTriplet": {
+          "id": "9b32b2c9",
+          "matchName": "BCC6LensBlur-11010062",
+          "name": "Host Mask Offset",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-11010062#66",
+          "propertyIndex": 66
+        },
+        "slug": "BCC6LensBlur-11010062__p66"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-11010067#59",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "7cd1df26",
+          "matchName": "BCC6LensBlur-11010067",
+          "name": "Shape",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-11010067#59",
+          "propertyIndex": 59
+        },
+        "slug": "BCC6LensBlur-11010067__p59"
+      },
+      {
+        "constantValue": [
+          960,
+          540
+        ],
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-11010069#67",
+        "samplePayload": [
+          960,
+          540
+        ],
+        "sampleTriplet": {
+          "id": "f3bd5cfd",
+          "matchName": "BCC6LensBlur-11010069",
+          "name": "Center",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-11010069#67",
+          "propertyIndex": 67
+        },
+        "slug": "BCC6LensBlur-11010069__p67"
+      },
+      {
+        "constantValue": 100,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-11010073#69",
+        "samplePayload": 100,
+        "sampleTriplet": {
+          "id": "8320145a",
+          "matchName": "BCC6LensBlur-11010073",
+          "name": "Scale X",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-11010073#69",
+          "propertyIndex": 69
+        },
+        "slug": "BCC6LensBlur-11010073__p69"
+      },
+      {
+        "constantValue": 100,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-11010074#70",
+        "samplePayload": 100,
+        "sampleTriplet": {
+          "id": "51851477",
+          "matchName": "BCC6LensBlur-11010074",
+          "name": "Scale Y",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-11010074#70",
+          "propertyIndex": 70
+        },
+        "slug": "BCC6LensBlur-11010074__p70"
+      },
+      {
+        "constantValue": 100,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-11010078#68",
+        "samplePayload": 100,
+        "sampleTriplet": {
+          "id": "1bcc41fa",
+          "matchName": "BCC6LensBlur-11010078",
+          "name": "Master Scale",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-11010078#68",
+          "propertyIndex": 68
+        },
+        "slug": "BCC6LensBlur-11010078__p68"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-11010081#62",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "b57837f0",
+          "matchName": "BCC6LensBlur-11010081",
+          "name": "Invert Mask",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-11010081#62",
+          "propertyIndex": 62
+        },
+        "slug": "BCC6LensBlur-11010081__p62"
+      },
+      {
+        "constantValue": [
+          960,
+          540
+        ],
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-11010083#71",
+        "samplePayload": [
+          960,
+          540
+        ],
+        "sampleTriplet": {
+          "id": "3654226e",
+          "matchName": "BCC6LensBlur-11010083",
+          "name": "Gradient Start",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-11010083#71",
+          "propertyIndex": 71
+        },
+        "slug": "BCC6LensBlur-11010083__p71"
+      },
+      {
+        "constantValue": 25,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-11010085#72",
+        "samplePayload": 25,
+        "sampleTriplet": {
+          "id": "b0b6e0a1",
+          "matchName": "BCC6LensBlur-11010085",
+          "name": "Gradient Distance",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-11010085#72",
+          "propertyIndex": 72
+        },
+        "slug": "BCC6LensBlur-11010085__p72"
+      },
+      {
+        "constantValue": 100,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-11010086#73",
+        "samplePayload": 100,
+        "sampleTriplet": {
+          "id": "11b8f80d",
+          "matchName": "BCC6LensBlur-11010086",
+          "name": "Gradation",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-11010086#73",
+          "propertyIndex": 73
+        },
+        "slug": "BCC6LensBlur-11010086__p73"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-11010087#75",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "a3689d8e",
+          "matchName": "BCC6LensBlur-11010087",
+          "name": "Start Angle",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-11010087#75",
+          "propertyIndex": 75
+        },
+        "slug": "BCC6LensBlur-11010087__p75"
+      },
+      {
+        "constantValue": 30,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-11010088#76",
+        "samplePayload": 30,
+        "sampleTriplet": {
+          "id": "5dc4318c",
+          "matchName": "BCC6LensBlur-11010088",
+          "name": "End Angle",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-11010088#76",
+          "propertyIndex": 76
+        },
+        "slug": "BCC6LensBlur-11010088__p76"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-11010090#74",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "6c3e523d",
+          "matchName": "BCC6LensBlur-11010090",
+          "name": "Stretch",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-11010090#74",
+          "propertyIndex": 74
+        },
+        "slug": "BCC6LensBlur-11010090__p74"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-11010091#77",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "d58ea4dd",
+          "matchName": "BCC6LensBlur-11010091",
+          "name": "Rotation",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-11010091#77",
+          "propertyIndex": 77
+        },
+        "slug": "BCC6LensBlur-11010091__p77"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-11010092#61",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "e9626499",
+          "matchName": "BCC6LensBlur-11010092",
+          "name": "Feather",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-11010092#61",
+          "propertyIndex": 61
+        },
+        "slug": "BCC6LensBlur-11010092__p61"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-11010095#83",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "2ab44356",
+          "matchName": "BCC6LensBlur-11010095",
+          "name": "Channel",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-11010095#83",
+          "propertyIndex": 83
+        },
+        "slug": "BCC6LensBlur-11010095__p83"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-11010096#84",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "d0798130",
+          "matchName": "BCC6LensBlur-11010096",
+          "name": "Matte Layer",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-11010096#84",
+          "propertyIndex": 84
+        },
+        "slug": "BCC6LensBlur-11010096__p84"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-11010097#85",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "b88e001e",
+          "matchName": "BCC6LensBlur-11010097",
+          "name": "Matte Type",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-11010097#85",
+          "propertyIndex": 85
+        },
+        "slug": "BCC6LensBlur-11010097__p85"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-11010098#88",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "e91e2736",
+          "matchName": "BCC6LensBlur-11010098",
+          "name": "Black Level",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-11010098#88",
+          "propertyIndex": 88
+        },
+        "slug": "BCC6LensBlur-11010098__p88"
+      },
+      {
+        "constantValue": 100,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-11010099#89",
+        "samplePayload": 100,
+        "sampleTriplet": {
+          "id": "20c6fa5c",
+          "matchName": "BCC6LensBlur-11010099",
+          "name": "White Level",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-11010099#89",
+          "propertyIndex": 89
+        },
+        "slug": "BCC6LensBlur-11010099__p89"
+      },
+      {
+        "constantValue": 50,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-11010100#90",
+        "samplePayload": 50,
+        "sampleTriplet": {
+          "id": "e7fc0251",
+          "matchName": "BCC6LensBlur-11010100",
+          "name": "Threshold",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-11010100#90",
+          "propertyIndex": 90
+        },
+        "slug": "BCC6LensBlur-11010100__p90"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-11010101#91",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "5fb894b3",
+          "matchName": "BCC6LensBlur-11010101",
+          "name": "Range From",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-11010101#91",
+          "propertyIndex": 91
+        },
+        "slug": "BCC6LensBlur-11010101__p91"
+      },
+      {
+        "constantValue": 100,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-11010102#92",
+        "samplePayload": 100,
+        "sampleTriplet": {
+          "id": "3f256235",
+          "matchName": "BCC6LensBlur-11010102",
+          "name": "Range To",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-11010102#92",
+          "propertyIndex": 92
+        },
+        "slug": "BCC6LensBlur-11010102__p92"
+      },
+      {
+        "constantValue": 8,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-11010105#93",
+        "samplePayload": 8,
+        "sampleTriplet": {
+          "id": "e1ca951d",
+          "matchName": "BCC6LensBlur-11010105",
+          "name": "Softness",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-11010105#93",
+          "propertyIndex": 93
+        },
+        "slug": "BCC6LensBlur-11010105__p93"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-11010107#103",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "332d4403",
+          "matchName": "BCC6LensBlur-11010107",
+          "name": "Blur",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-11010107#103",
+          "propertyIndex": 103
+        },
+        "slug": "BCC6LensBlur-11010107__p103"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-11010108#102",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "d2bc6599",
+          "matchName": "BCC6LensBlur-11010108",
+          "name": "Choke",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-11010108#102",
+          "propertyIndex": 102
+        },
+        "slug": "BCC6LensBlur-11010108__p102"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-11010109#104",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "94c9b3cc",
+          "matchName": "BCC6LensBlur-11010109",
+          "name": "Invert Matte",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-11010109#104",
+          "propertyIndex": 104
+        },
+        "slug": "BCC6LensBlur-11010109__p104"
+      },
+      {
+        "constantValue": 45,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-11010126#78",
+        "samplePayload": 45,
+        "sampleTriplet": {
+          "id": "7ac2d8eb",
+          "matchName": "BCC6LensBlur-11010126",
+          "name": "Egg Balance",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-11010126#78",
+          "propertyIndex": 78
+        },
+        "slug": "BCC6LensBlur-11010126__p78"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-11010127#79",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "d8aaf1fd",
+          "matchName": "BCC6LensBlur-11010127",
+          "name": "Rotate Around Shape Center",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-11010127#79",
+          "propertyIndex": 79
+        },
+        "slug": "BCC6LensBlur-11010127__p79"
+      },
+      {
+        "constantValue": [
+          0.66666666666667,
+          0.54901960784314,
+          0.50980392156863,
+          1
+        ],
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-11010144#94",
+        "samplePayload": [
+          0.66666666666667,
+          0.54901960784314,
+          0.50980392156863,
+          1
+        ],
+        "sampleTriplet": {
+          "id": "85c0b735",
+          "matchName": "BCC6LensBlur-11010144",
+          "name": "Color A",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-11010144#94",
+          "propertyIndex": 94
+        },
+        "slug": "BCC6LensBlur-11010144__p94"
+      },
+      {
+        "constantValue": [
+          0.82352941176471,
+          0.58823529411765,
+          0.54901960784314,
+          1
+        ],
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-11010145#95",
+        "samplePayload": [
+          0.82352941176471,
+          0.58823529411765,
+          0.54901960784314,
+          1
+        ],
+        "sampleTriplet": {
+          "id": "e3cfdfb7",
+          "matchName": "BCC6LensBlur-11010145",
+          "name": "Color B",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-11010145#95",
+          "propertyIndex": 95
+        },
+        "slug": "BCC6LensBlur-11010145__p95"
+      },
+      {
+        "constantValue": 25,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-11010146#96",
+        "samplePayload": 25,
+        "sampleTriplet": {
+          "id": "3b3d6a21",
+          "matchName": "BCC6LensBlur-11010146",
+          "name": "Hue Softness",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-11010146#96",
+          "propertyIndex": 96
+        },
+        "slug": "BCC6LensBlur-11010146__p96"
+      },
+      {
+        "constantValue": 25,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-11010147#97",
+        "samplePayload": 25,
+        "sampleTriplet": {
+          "id": "603a92a7",
+          "matchName": "BCC6LensBlur-11010147",
+          "name": "Saturation Softness",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-11010147#97",
+          "propertyIndex": 97
+        },
+        "slug": "BCC6LensBlur-11010147__p97"
+      },
+      {
+        "constantValue": 30,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-11010148#98",
+        "samplePayload": 30,
+        "sampleTriplet": {
+          "id": "2898cd8d",
+          "matchName": "BCC6LensBlur-11010148",
+          "name": "Luma Softness",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-11010148#98",
+          "propertyIndex": 98
+        },
+        "slug": "BCC6LensBlur-11010148__p98"
+      },
+      {
+        "constantValue": 100,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-11010149#82",
+        "samplePayload": 100,
+        "sampleTriplet": {
+          "id": "bb57c907",
+          "matchName": "BCC6LensBlur-11010149",
+          "name": "PC Matte Intensity",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-11010149#82",
+          "propertyIndex": 82
+        },
+        "slug": "BCC6LensBlur-11010149__p82"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-11010150#99",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "5583ffb9",
+          "matchName": "BCC6LensBlur-11010150",
+          "name": "Clip Black",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-11010150#99",
+          "propertyIndex": 99
+        },
+        "slug": "BCC6LensBlur-11010150__p99"
+      },
+      {
+        "constantValue": 100,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-11010151#100",
+        "samplePayload": 100,
+        "sampleTriplet": {
+          "id": "2e9ba44d",
+          "matchName": "BCC6LensBlur-11010151",
+          "name": "Clip White",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-11010151#100",
+          "propertyIndex": 100
+        },
+        "slug": "BCC6LensBlur-11010151__p100"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-11010152#101",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "5a19cce3",
+          "matchName": "BCC6LensBlur-11010152",
+          "name": "Gamma",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-11010152#101",
+          "propertyIndex": 101
+        },
+        "slug": "BCC6LensBlur-11010152__p101"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-11010153#54",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "3ed51bd9",
+          "matchName": "BCC6LensBlur-11010153",
+          "name": "View Mask / Matte",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-11010153#54",
+          "propertyIndex": 54
+        },
+        "slug": "BCC6LensBlur-11010153__p54"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-11010154#86",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "035be86d",
+          "matchName": "BCC6LensBlur-11010154",
+          "name": "Pre Smoothing Amount",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-11010154#86",
+          "propertyIndex": 86
+        },
+        "slug": "BCC6LensBlur-11010154__p86"
+      },
+      {
+        "constantValue": 90,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-11010161#87",
+        "samplePayload": 90,
+        "sampleTriplet": {
+          "id": "b68a3572",
+          "matchName": "BCC6LensBlur-11010161",
+          "name": "Preserve Contrast",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-11010161#87",
+          "propertyIndex": 87
+        },
+        "slug": "BCC6LensBlur-11010161__p87"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-4196399#51",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "bf80c7bf",
+          "matchName": "BCC6LensBlur-4196399",
+          "name": "Apply",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-4196399#51",
+          "propertyIndex": 51
+        },
+        "slug": "BCC6LensBlur-4196399__p51"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-6029344#16",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "33dcd2a7",
+          "matchName": "BCC6LensBlur-6029344",
+          "name": "Iris Curvature",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-6029344#16",
+          "propertyIndex": 16
+        },
+        "slug": "BCC6LensBlur-6029344__p16"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-6029348#17",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "911d5d58",
+          "matchName": "BCC6LensBlur-6029348",
+          "name": "Iris Rotation",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-6029348#17",
+          "propertyIndex": 17
+        },
+        "slug": "BCC6LensBlur-6029348__p17"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-6356996#111",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "16cdc249",
+          "matchName": "BCC6LensBlur-6356996",
+          "name": "Shape",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-6356996#111",
+          "propertyIndex": 111
+        },
+        "slug": "BCC6LensBlur-6356996__p111"
+      },
+      {
+        "constantValue": [
+          960,
+          540
+        ],
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-6356997#112",
+        "samplePayload": [
+          960,
+          540
+        ],
+        "sampleTriplet": {
+          "id": "ea01da4f",
+          "matchName": "BCC6LensBlur-6356997",
+          "name": "Point 1",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-6356997#112",
+          "propertyIndex": 112
+        },
+        "slug": "BCC6LensBlur-6356997__p112"
+      },
+      {
+        "constantValue": [
+          1824,
+          1026
+        ],
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-6356999#113",
+        "samplePayload": [
+          1824,
+          1026
+        ],
+        "sampleTriplet": {
+          "id": "6ca29106",
+          "matchName": "BCC6LensBlur-6356999",
+          "name": "Point 2",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-6356999#113",
+          "propertyIndex": 113
+        },
+        "slug": "BCC6LensBlur-6356999__p113"
+      },
+      {
+        "constantValue": -49.9999847412109,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-6357001#114",
+        "samplePayload": -49.9999847412109,
+        "sampleTriplet": {
+          "id": "c37b9754",
+          "matchName": "BCC6LensBlur-6357001",
+          "name": "From",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-6357001#114",
+          "propertyIndex": 114
+        },
+        "slug": "BCC6LensBlur-6357001__p114"
+      },
+      {
+        "constantValue": 30,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-6357002#115",
+        "samplePayload": 30,
+        "sampleTriplet": {
+          "id": "bb196bfe",
+          "matchName": "BCC6LensBlur-6357002",
+          "name": "To",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-6357002#115",
+          "propertyIndex": 115
+        },
+        "slug": "BCC6LensBlur-6357002__p115"
+      },
+      {
+        "constantValue": 10,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-6357003#118",
+        "samplePayload": 10,
+        "sampleTriplet": {
+          "id": "44bf9406",
+          "matchName": "BCC6LensBlur-6357003",
+          "name": "Region Blend",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-6357003#118",
+          "propertyIndex": 118
+        },
+        "slug": "BCC6LensBlur-6357003__p118"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-6357004#117",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "a5b6fe72",
+          "matchName": "BCC6LensBlur-6357004",
+          "name": "Stretch/Direction",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-6357004#117",
+          "propertyIndex": 117
+        },
+        "slug": "BCC6LensBlur-6357004__p117"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-6357005#119",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "901a2f67",
+          "matchName": "BCC6LensBlur-6357005",
+          "name": "Reverse Range",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-6357005#119",
+          "propertyIndex": 119
+        },
+        "slug": "BCC6LensBlur-6357005__p119"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-6357008#120",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "927504bc",
+          "matchName": "BCC6LensBlur-6357008",
+          "name": "Channel",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-6357008#120",
+          "propertyIndex": 120
+        },
+        "slug": "BCC6LensBlur-6357008__p120"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-6357009#121",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "da0ede48",
+          "matchName": "BCC6LensBlur-6357009",
+          "name": "PC Layer",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-6357009#121",
+          "propertyIndex": 121
+        },
+        "slug": "BCC6LensBlur-6357009__p121"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-6357010#122",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "406c2b0b",
+          "matchName": "BCC6LensBlur-6357010",
+          "name": "Type",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-6357010#122",
+          "propertyIndex": 122
+        },
+        "slug": "BCC6LensBlur-6357010__p122"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-6357011#123",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "61cdd9af",
+          "matchName": "BCC6LensBlur-6357011",
+          "name": "Black/Threshold/From",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-6357011#123",
+          "propertyIndex": 123
+        },
+        "slug": "BCC6LensBlur-6357011__p123"
+      },
+      {
+        "constantValue": 255,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-6357012#124",
+        "samplePayload": 255,
+        "sampleTriplet": {
+          "id": "13124713",
+          "matchName": "BCC6LensBlur-6357012",
+          "name": "White/To",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-6357012#124",
+          "propertyIndex": 124
+        },
+        "slug": "BCC6LensBlur-6357012__p124"
+      },
+      {
+        "constantValue": 20,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-6357013#125",
+        "samplePayload": 20,
+        "sampleTriplet": {
+          "id": "c7c06bbf",
+          "matchName": "BCC6LensBlur-6357013",
+          "name": "Matte Softness",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-6357013#125",
+          "propertyIndex": 125
+        },
+        "slug": "BCC6LensBlur-6357013__p125"
+      },
+      {
+        "constantValue": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-6357014#126",
+        "samplePayload": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "sampleTriplet": {
+          "id": "9104feeb",
+          "matchName": "BCC6LensBlur-6357014",
+          "name": "Color",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-6357014#126",
+          "propertyIndex": 126
+        },
+        "slug": "BCC6LensBlur-6357014__p126"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-6357015#127",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "512f5647",
+          "matchName": "BCC6LensBlur-6357015",
+          "name": "Blur Matte",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-6357015#127",
+          "propertyIndex": 127
+        },
+        "slug": "BCC6LensBlur-6357015__p127"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-6357016#128",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "70523ef3",
+          "matchName": "BCC6LensBlur-6357016",
+          "name": "Choke Matte",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-6357016#128",
+          "propertyIndex": 128
+        },
+        "slug": "BCC6LensBlur-6357016__p128"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-6357017#129",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "a1025fd7",
+          "matchName": "BCC6LensBlur-6357017",
+          "name": "Invert Matte",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-6357017#129",
+          "propertyIndex": 129
+        },
+        "slug": "BCC6LensBlur-6357017__p129"
+      },
+      {
+        "constantValue": 100,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-6357021#109",
+        "samplePayload": 100,
+        "sampleTriplet": {
+          "id": "7fa2b250",
+          "matchName": "BCC6LensBlur-6357021",
+          "name": "PC Intensity",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-6357021#109",
+          "propertyIndex": 109
+        },
+        "slug": "BCC6LensBlur-6357021__p109"
+      },
+      {
+        "constantValue": 100,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-6357023#116",
+        "samplePayload": 100,
+        "sampleTriplet": {
+          "id": "866a53f6",
+          "matchName": "BCC6LensBlur-6357023",
+          "name": "Scale",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-6357023#116",
+          "propertyIndex": 116
+        },
+        "slug": "BCC6LensBlur-6357023__p116"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-6357025#108",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "d44e0b6f",
+          "matchName": "BCC6LensBlur-6357025",
+          "name": "Legacy PixelChooser",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-6357025#108",
+          "propertyIndex": 108
+        },
+        "slug": "BCC6LensBlur-6357025__p108"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-6357027#110",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "bf8e9268",
+          "matchName": "BCC6LensBlur-6357027",
+          "name": "Mask",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-6357027#110",
+          "propertyIndex": 110
+        },
+        "slug": "BCC6LensBlur-6357027__p110"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-8650791#47",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "0b27fa0b",
+          "matchName": "BCC6LensBlur-8650791",
+          "name": "Apply Mode",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-8650791#47",
+          "propertyIndex": 47
+        },
+        "slug": "BCC6LensBlur-8650791__p47"
+      },
+      {
+        "constantValue": 100,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-8650792#48",
+        "samplePayload": 100,
+        "sampleTriplet": {
+          "id": "b5d40aad",
+          "matchName": "BCC6LensBlur-8650792",
+          "name": "Apply Mix",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-8650792#48",
+          "propertyIndex": 48
+        },
+        "slug": "BCC6LensBlur-8650792__p48"
+      },
+      {
+        "constantValue": 100,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-9961717#10",
+        "samplePayload": 100,
+        "sampleTriplet": {
+          "id": "1055acbd",
+          "matchName": "BCC6LensBlur-9961717",
+          "name": "Scale X",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-9961717#10",
+          "propertyIndex": 10
+        },
+        "slug": "BCC6LensBlur-9961717__p10"
+      },
+      {
+        "constantValue": 100,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-9961718#11",
+        "samplePayload": 100,
+        "sampleTriplet": {
+          "id": "ba9da369",
+          "matchName": "BCC6LensBlur-9961718",
+          "name": "Scale Y",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-9961718#11",
+          "propertyIndex": 11
+        },
+        "slug": "BCC6LensBlur-9961718__p11"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-9961735#41",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "6cdd69df",
+          "matchName": "BCC6LensBlur-9961735",
+          "name": "Highlight Boost",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-9961735#41",
+          "propertyIndex": 41
+        },
+        "slug": "BCC6LensBlur-9961735__p41"
+      },
+      {
+        "constantValue": 80,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-9961737#42",
+        "samplePayload": 80,
+        "sampleTriplet": {
+          "id": "951ea7ac",
+          "matchName": "BCC6LensBlur-9961737",
+          "name": "Highlight Threshold",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-9961737#42",
+          "propertyIndex": 42
+        },
+        "slug": "BCC6LensBlur-9961737__p42"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-9961738#43",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "9a6325f8",
+          "matchName": "BCC6LensBlur-9961738",
+          "name": "Suppress Threshold",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-9961738#43",
+          "propertyIndex": 43
+        },
+        "slug": "BCC6LensBlur-9961738__p43"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-9961758#33",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "fbd28f91",
+          "matchName": "BCC6LensBlur-9961758",
+          "name": "Noise Intensity",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-9961758#33",
+          "propertyIndex": 33
+        },
+        "slug": "BCC6LensBlur-9961758__p33"
+      },
+      {
+        "constantValue": 100,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-9961759#34",
+        "samplePayload": 100,
+        "sampleTriplet": {
+          "id": "502f15fd",
+          "matchName": "BCC6LensBlur-9961759",
+          "name": "Noise Scale",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-9961759#34",
+          "propertyIndex": 34
+        },
+        "slug": "BCC6LensBlur-9961759__p34"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-9961760#35",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "d5203736",
+          "matchName": "BCC6LensBlur-9961760",
+          "name": "Noise Stretch",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-9961760#35",
+          "propertyIndex": 35
+        },
+        "slug": "BCC6LensBlur-9961760__p35"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-9961764#37",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "0136506c",
+          "matchName": "BCC6LensBlur-9961764",
+          "name": "Noise Seed",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-9961764#37",
+          "propertyIndex": 37
+        },
+        "slug": "BCC6LensBlur-9961764__p37"
+      },
+      {
+        "constantValue": 10,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-9961765#36",
+        "samplePayload": 10,
+        "sampleTriplet": {
+          "id": "263378f2",
+          "matchName": "BCC6LensBlur-9961765",
+          "name": "Noise Blur",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-9961765#36",
+          "propertyIndex": 36
+        },
+        "slug": "BCC6LensBlur-9961765__p36"
+      },
+      {
+        "constantValue": 4,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-9961769#40",
+        "samplePayload": 4,
+        "sampleTriplet": {
+          "id": "1b8122bb",
+          "matchName": "BCC6LensBlur-9961769",
+          "name": "Boost/Sup Mode",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-9961769#40",
+          "propertyIndex": 40
+        },
+        "slug": "BCC6LensBlur-9961769__p40"
+      },
+      {
+        "constantValue": 220,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-9961786#12",
+        "samplePayload": 220,
+        "sampleTriplet": {
+          "id": "aaf620f5",
+          "matchName": "BCC6LensBlur-9961786",
+          "name": "Gamma",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-9961786#12",
+          "propertyIndex": 12
+        },
+        "slug": "BCC6LensBlur-9961786__p12"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-9961809#13",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "784e57d2",
+          "matchName": "BCC6LensBlur-9961809",
+          "name": "View Iris",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-9961809#13",
+          "propertyIndex": 13
+        },
+        "slug": "BCC6LensBlur-9961809__p13"
+      },
+      {
+        "constantValue": 12,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-9961829#44",
+        "samplePayload": 12,
+        "sampleTriplet": {
+          "id": "0b1f139c",
+          "matchName": "BCC6LensBlur-9961829",
+          "name": "Boost Soften",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-9961829#44",
+          "propertyIndex": 44
+        },
+        "slug": "BCC6LensBlur-9961829__p44"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-9961832#18",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "35968fcd",
+          "matchName": "BCC6LensBlur-9961832",
+          "name": "Bokeh",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-9961832#18",
+          "propertyIndex": 18
+        },
+        "slug": "BCC6LensBlur-9961832__p18"
+      },
+      {
+        "constantValue": 20,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-9961833#19",
+        "samplePayload": 20,
+        "sampleTriplet": {
+          "id": "c9d1bcef",
+          "matchName": "BCC6LensBlur-9961833",
+          "name": "Bokeh Shading",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-9961833#19",
+          "propertyIndex": 19
+        },
+        "slug": "BCC6LensBlur-9961833__p19"
+      },
+      {
+        "constantValue": 5,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-9961839#15",
+        "samplePayload": 5,
+        "sampleTriplet": {
+          "id": "6ad9e9a9",
+          "matchName": "BCC6LensBlur-9961839",
+          "name": "Iris Shape",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-9961839#15",
+          "propertyIndex": 15
+        },
+        "slug": "BCC6LensBlur-9961839__p15"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-9961847#8",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "5e998318",
+          "matchName": "BCC6LensBlur-9961847",
+          "name": "Quality",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-9961847#8",
+          "propertyIndex": 8
+        },
+        "slug": "BCC6LensBlur-9961847__p8"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-9961850#22",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "599324d4",
+          "matchName": "BCC6LensBlur-9961850",
+          "name": "Mode",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-9961850#22",
+          "propertyIndex": 22
+        },
+        "slug": "BCC6LensBlur-9961850__p22"
+      },
+      {
+        "constantValue": 9,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-9961851#23",
+        "samplePayload": 9,
+        "sampleTriplet": {
+          "id": "a57f9ebe",
+          "matchName": "BCC6LensBlur-9961851",
+          "name": "Z Layer",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-9961851#23",
+          "propertyIndex": 23
+        },
+        "slug": "BCC6LensBlur-9961851__p23"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-9961852#24",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "fc1b4ff8",
+          "matchName": "BCC6LensBlur-9961852",
+          "name": "Z Channel",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-9961852#24",
+          "propertyIndex": 24
+        },
+        "slug": "BCC6LensBlur-9961852__p24"
+      },
+      {
+        "constantValue": 50,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-9961853#26",
+        "samplePayload": 50,
+        "sampleTriplet": {
+          "id": "3186ed0b",
+          "matchName": "BCC6LensBlur-9961853",
+          "name": "Focal Point",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-9961853#26",
+          "propertyIndex": 26
+        },
+        "slug": "BCC6LensBlur-9961853__p26"
+      },
+      {
+        "constantValue": 5,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-9961854#27",
+        "samplePayload": 5,
+        "sampleTriplet": {
+          "id": "863622d7",
+          "matchName": "BCC6LensBlur-9961854",
+          "name": "Depth of Field",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-9961854#27",
+          "propertyIndex": 27
+        },
+        "slug": "BCC6LensBlur-9961854__p27"
+      },
+      {
+        "constantValue": 100,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-9961857#28",
+        "samplePayload": 100,
+        "sampleTriplet": {
+          "id": "10d6b2c9",
+          "matchName": "BCC6LensBlur-9961857",
+          "name": "Z-Gamma",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-9961857#28",
+          "propertyIndex": 28
+        },
+        "slug": "BCC6LensBlur-9961857__p28"
+      },
+      {
+        "constantValue": 5,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-9961859#25",
+        "samplePayload": 5,
+        "sampleTriplet": {
+          "id": "8cc0badc",
+          "matchName": "BCC6LensBlur-9961859",
+          "name": "Smoothness",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-9961859#25",
+          "propertyIndex": 25
+        },
+        "slug": "BCC6LensBlur-9961859__p25"
+      },
+      {
+        "constantValue": 100,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-9961863#29",
+        "samplePayload": 100,
+        "sampleTriplet": {
+          "id": "457e7d17",
+          "matchName": "BCC6LensBlur-9961863",
+          "name": "Near Scale",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-9961863#29",
+          "propertyIndex": 29
+        },
+        "slug": "BCC6LensBlur-9961863__p29"
+      },
+      {
+        "constantValue": 100,
+        "kind": "constant",
+        "relPath": "BCC6LensBlur-9961864#30",
+        "samplePayload": 100,
+        "sampleTriplet": {
+          "id": "95dd3bce",
+          "matchName": "BCC6LensBlur-9961864",
+          "name": "Far Scale",
+          "path": "comp:1/layer:3/effects/E001/BCC6LensBlur#1/BCC6LensBlur-9961864#30",
+          "propertyIndex": 30
+        },
+        "slug": "BCC6LensBlur-9961864__p30"
+      }
+    ],
+    "variableCount": 0
+  }
+}

@@ -1,0 +1,121 @@
+{
+  "layerId": "L012__his eyes were like 3",
+  "used": {
+    "Быстрое_размытие_по_рамке__ADBE_Box_Blur2": {
+      "ADBE_Box_Blur2-0001#1": {
+        "@time": {
+          "__slug__": "ADBE_Box_Blur2-0001__p1_time",
+          "payload": {
+            "expressionEnabled": false,
+            "keys": [
+              {
+                "inInterpolationType": "6612",
+                "inTemporalEase": [
+                  {
+                    "influence": 16.666666667,
+                    "speed": 0
+                  }
+                ],
+                "index": 1,
+                "isSpatial": false,
+                "keyLabel": 0,
+                "outInterpolationType": "6612",
+                "outTemporalEase": [
+                  {
+                    "influence": 16.666666667,
+                    "speed": 10.2754285714286
+                  }
+                ],
+                "temporalAutoBezier": false,
+                "temporalContinuous": false,
+                "time": 8.29996663329997,
+                "value": 0
+              },
+              {
+                "inInterpolationType": "6612",
+                "inTemporalEase": [
+                  {
+                    "influence": 16.666666667,
+                    "speed": 10.2754285714286
+                  }
+                ],
+                "index": 2,
+                "isSpatial": false,
+                "keyLabel": 0,
+                "outInterpolationType": "6612",
+                "outTemporalEase": [
+                  {
+                    "influence": 16.666666667,
+                    "speed": 0
+                  }
+                ],
+                "temporalAutoBezier": false,
+                "temporalContinuous": false,
+                "time": 8.59192525859192,
+                "value": 3
+              }
+            ]
+          }
+        }
+      }
+    },
+    "Вихревое_смещение__ADBE_Turbulent_Displace": {
+      "ADBE_Turbulent_Displace-0002#2": {
+        "@time": {
+          "__slug__": "ADBE_Turbulent_Displace-0002__p2_time",
+          "payload": {
+            "expressionEnabled": false,
+            "keys": [
+              {
+                "inInterpolationType": "6612",
+                "inTemporalEase": [
+                  {
+                    "influence": 16.666666667,
+                    "speed": 0
+                  }
+                ],
+                "index": 1,
+                "isSpatial": false,
+                "keyLabel": 0,
+                "outInterpolationType": "6612",
+                "outTemporalEase": [
+                  {
+                    "influence": 16.666666667,
+                    "speed": 1916.5815
+                  }
+                ],
+                "temporalAutoBezier": false,
+                "temporalContinuous": false,
+                "time": 8.17484150817484,
+                "value": 7.5
+              },
+              {
+                "inInterpolationType": "6612",
+                "inTemporalEase": [
+                  {
+                    "influence": 16.666666667,
+                    "speed": 1916.5815
+                  }
+                ],
+                "index": 2,
+                "isSpatial": false,
+                "keyLabel": 0,
+                "outInterpolationType": "6612",
+                "outTemporalEase": [
+                  {
+                    "influence": 16.666666667,
+                    "speed": 0
+                  }
+                ],
+                "temporalAutoBezier": false,
+                "temporalContinuous": false,
+                "time": 8.50850850850851,
+                "value": 647
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}

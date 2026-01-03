@@ -1,0 +1,218 @@
+{
+  "canonicalName": "transform_group__ADBE_Transform_Group",
+  "domain": "transform",
+  "groupKey": "ADBE Transform Group",
+  "instancesCount": 12,
+  "keyframes": {
+    "paramCount": 0,
+    "params": []
+  },
+  "presentCount": 12,
+  "template": {
+    "constantCount": 12,
+    "paramCount": 12,
+    "params": [
+      {
+        "constantValue": [
+          540,
+          960,
+          0
+        ],
+        "kind": "constant",
+        "relPath": "ADBE Anchor Point#1",
+        "samplePayload": [
+          540,
+          960,
+          0
+        ],
+        "sampleTriplet": {
+          "id": "3565ee80",
+          "matchName": "ADBE Anchor Point",
+          "name": "Опорная точка",
+          "path": "comp:133/layer:1/transform/ADBE Transform Group#6/ADBE Anchor Point#1",
+          "propertyIndex": 1
+        },
+        "slug": "ADBE_Anchor_Point__p1"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "ADBE Envir Appear in Reflect#12",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "4e7367a6",
+          "matchName": "ADBE Envir Appear in Reflect",
+          "name": "Отображ. в отраж.",
+          "path": "comp:133/layer:1/transform/ADBE Transform Group#6/ADBE Envir Appear in Reflect#12",
+          "propertyIndex": 12
+        },
+        "slug": "ADBE_Envir_Appear_in_Reflect__p12"
+      },
+      {
+        "constantValue": 100,
+        "kind": "constant",
+        "relPath": "ADBE Opacity#11",
+        "samplePayload": 100,
+        "sampleTriplet": {
+          "id": "83cb6d4b",
+          "matchName": "ADBE Opacity",
+          "name": "Непрозрачность",
+          "path": "comp:133/layer:1/transform/ADBE Transform Group#6/ADBE Opacity#11",
+          "propertyIndex": 11
+        },
+        "slug": "ADBE_Opacity__p11"
+      },
+      {
+        "constantValue": [
+          0,
+          0,
+          0
+        ],
+        "kind": "constant",
+        "relPath": "ADBE Orientation#7",
+        "samplePayload": [
+          0,
+          0,
+          0
+        ],
+        "sampleTriplet": {
+          "id": "a14e3429",
+          "matchName": "ADBE Orientation",
+          "name": "Ориентация",
+          "path": "comp:133/layer:1/transform/ADBE Transform Group#6/ADBE Orientation#7",
+          "propertyIndex": 7
+        },
+        "slug": "ADBE_Orientation__p7"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Position_0#3",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "a0adcd45",
+          "matchName": "ADBE Position_0",
+          "name": "X Положение",
+          "path": "comp:133/layer:1/transform/ADBE Transform Group#6/ADBE Position_0#3",
+          "propertyIndex": 3
+        },
+        "slug": "ADBE_Position_0__p3"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Position_1#4",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "3ed5ed6b",
+          "matchName": "ADBE Position_1",
+          "name": "Y Положение",
+          "path": "comp:133/layer:1/transform/ADBE Transform Group#6/ADBE Position_1#4",
+          "propertyIndex": 4
+        },
+        "slug": "ADBE_Position_1__p4"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Position_2#5",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "f8858565",
+          "matchName": "ADBE Position_2",
+          "name": "Z Положение",
+          "path": "comp:133/layer:1/transform/ADBE Transform Group#6/ADBE Position_2#5",
+          "propertyIndex": 5
+        },
+        "slug": "ADBE_Position_2__p5"
+      },
+      {
+        "constantValue": [
+          540,
+          960,
+          0
+        ],
+        "kind": "constant",
+        "relPath": "ADBE Position#2",
+        "samplePayload": [
+          540,
+          960,
+          0
+        ],
+        "sampleTriplet": {
+          "id": "e271d0b9",
+          "matchName": "ADBE Position",
+          "name": "Положение",
+          "path": "comp:133/layer:1/transform/ADBE Transform Group#6/ADBE Position#2",
+          "propertyIndex": 2
+        },
+        "slug": "ADBE_Position__p2"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Rotate X#8",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "d51ed693",
+          "matchName": "ADBE Rotate X",
+          "name": "Поворот X",
+          "path": "comp:133/layer:1/transform/ADBE Transform Group#6/ADBE Rotate X#8",
+          "propertyIndex": 8
+        },
+        "slug": "ADBE_Rotate_X__p8"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Rotate Y#9",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "40f6c62b",
+          "matchName": "ADBE Rotate Y",
+          "name": "Поворот Y",
+          "path": "comp:133/layer:1/transform/ADBE Transform Group#6/ADBE Rotate Y#9",
+          "propertyIndex": 9
+        },
+        "slug": "ADBE_Rotate_Y__p9"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Rotate Z#10",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "ab07f18e",
+          "matchName": "ADBE Rotate Z",
+          "name": "Поворот",
+          "path": "comp:133/layer:1/transform/ADBE Transform Group#6/ADBE Rotate Z#10",
+          "propertyIndex": 10
+        },
+        "slug": "ADBE_Rotate_Z__p10"
+      },
+      {
+        "constantValue": [
+          100,
+          100,
+          100
+        ],
+        "kind": "constant",
+        "relPath": "ADBE Scale#6",
+        "samplePayload": [
+          100,
+          100,
+          100
+        ],
+        "sampleTriplet": {
+          "id": "b89b9342",
+          "matchName": "ADBE Scale",
+          "name": "Масштаб",
+          "path": "comp:133/layer:1/transform/ADBE Transform Group#6/ADBE Scale#6",
+          "propertyIndex": 6
+        },
+        "slug": "ADBE_Scale__p6"
+      }
+    ],
+    "variableCount": 0
+  }
+}

@@ -1,0 +1,122 @@
+{
+  "canonicalName": "Минимакс__ADBE_Minimax",
+  "domain": "effects",
+  "groupKey": "ADBE Minimax",
+  "instancesCount": 13,
+  "keyframes": {
+    "paramCount": 1,
+    "params": [
+      {
+        "keyframeMeta": {
+          "hasExpression": false,
+          "keyCount": 2,
+          "valueTypeHint": "int"
+        },
+        "relPath": "ADBE Minimax-0002#2",
+        "sampleTriplet": {
+          "id": "98772105",
+          "matchName": "ADBE Minimax-0002",
+          "name": "Радиус",
+          "path": "comp:undefined/layer:3/text_effects/E003/ADBE Minimax#3/ADBE Minimax-0002#2",
+          "propertyIndex": 2
+        },
+        "slug": "ADBE_Minimax-0002__p2_time"
+      }
+    ]
+  },
+  "namesSeen": [
+    "Минимакс"
+  ],
+  "presentCount": 4,
+  "template": {
+    "constantCount": 6,
+    "paramCount": 6,
+    "params": [
+      {
+        "constantValue": 100,
+        "kind": "constant",
+        "relPath": "ADBE Effect Built In Params#6/ADBE Effect Mask Opacity#2",
+        "samplePayload": 100,
+        "sampleTriplet": {
+          "id": "dbc04f4f",
+          "matchName": "ADBE Effect Mask Opacity",
+          "name": "Непрозр.эффекта",
+          "path": "comp:undefined/layer:3/text_effects/E003/ADBE Minimax#3/ADBE Effect Built In Params#6/ADBE Effect Mask Opacity#2",
+          "propertyIndex": 2
+        },
+        "slug": "ADBE_Effect_Built_In_Params__p6__ADBE_Effect_Mask_Opacity__p2"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "ADBE Effect Built In Params#6/ADBE Force CPU GPU#3",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "1701789d",
+          "matchName": "ADBE Force CPU GPU",
+          "name": "Ренд. с исп. ГП",
+          "path": "comp:undefined/layer:3/text_effects/E003/ADBE Minimax#3/ADBE Effect Built In Params#6/ADBE Force CPU GPU#3",
+          "propertyIndex": 3
+        },
+        "slug": "ADBE_Effect_Built_In_Params__p6__ADBE_Force_CPU_GPU__p3"
+      },
+      {
+        "constantValue": 2,
+        "kind": "constant",
+        "relPath": "ADBE Minimax-0001#1",
+        "samplePayload": 2,
+        "sampleTriplet": {
+          "id": "6826dba1",
+          "matchName": "ADBE Minimax-0001",
+          "name": "Операция",
+          "path": "comp:undefined/layer:3/text_effects/E003/ADBE Minimax#3/ADBE Minimax-0001#1",
+          "propertyIndex": 1
+        },
+        "slug": "ADBE_Minimax-0001__p1"
+      },
+      {
+        "constantValue": 2,
+        "kind": "constant",
+        "relPath": "ADBE Minimax-0003#3",
+        "samplePayload": 2,
+        "sampleTriplet": {
+          "id": "94edc40d",
+          "matchName": "ADBE Minimax-0003",
+          "name": "Канал",
+          "path": "comp:undefined/layer:3/text_effects/E003/ADBE Minimax#3/ADBE Minimax-0003#3",
+          "propertyIndex": 3
+        },
+        "slug": "ADBE_Minimax-0003__p3"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "ADBE Minimax-0004#4",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "3d3ec659",
+          "matchName": "ADBE Minimax-0004",
+          "name": "Направление",
+          "path": "comp:undefined/layer:3/text_effects/E003/ADBE Minimax#3/ADBE Minimax-0004#4",
+          "propertyIndex": 4
+        },
+        "slug": "ADBE_Minimax-0004__p4"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Minimax-0005#5",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "288ba369",
+          "matchName": "ADBE Minimax-0005",
+          "name": "Не сжимать края",
+          "path": "comp:undefined/layer:3/text_effects/E003/ADBE Minimax#3/ADBE Minimax-0005#5",
+          "propertyIndex": 5
+        },
+        "slug": "ADBE_Minimax-0005__p5"
+      }
+    ],
+    "variableCount": 0
+  }
+}

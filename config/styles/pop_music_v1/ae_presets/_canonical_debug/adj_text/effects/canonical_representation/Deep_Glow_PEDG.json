@@ -1,0 +1,759 @@
+{
+  "canonicalName": "Deep_Glow__PEDG",
+  "domain": "effects",
+  "groupKey": "PEDG",
+  "instancesCount": 12,
+  "keyframes": {
+    "paramCount": 0,
+    "params": []
+  },
+  "namesSeen": [
+    "Deep Glow"
+  ],
+  "presentCount": 1,
+  "template": {
+    "constantCount": 52,
+    "paramCount": 52,
+    "params": [
+      {
+        "constantValue": 100,
+        "kind": "constant",
+        "relPath": "ADBE Effect Built In Params#90/ADBE Effect Mask Opacity#2",
+        "samplePayload": 100,
+        "sampleTriplet": {
+          "id": "1b7c0d86",
+          "matchName": "ADBE Effect Mask Opacity",
+          "name": "Непрозр.эффекта",
+          "path": "comp:133/layer:1/effects/E001/PEDG#1/ADBE Effect Built In Params#90/ADBE Effect Mask Opacity#2",
+          "propertyIndex": 2
+        },
+        "slug": "ADBE_Effect_Built_In_Params__p90__ADBE_Effect_Mask_Opacity__p2"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "ADBE Effect Built In Params#90/ADBE Force CPU GPU#3",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "cc6e5a54",
+          "matchName": "ADBE Force CPU GPU",
+          "name": "Ренд. с исп. ГП",
+          "path": "comp:133/layer:1/effects/E001/PEDG#1/ADBE Effect Built In Params#90/ADBE Force CPU GPU#3",
+          "propertyIndex": 3
+        },
+        "slug": "ADBE_Effect_Built_In_Params__p90__ADBE_Force_CPU_GPU__p3"
+      },
+      {
+        "constantValue": 750,
+        "kind": "constant",
+        "relPath": "PEDG-0001#21",
+        "samplePayload": 750,
+        "sampleTriplet": {
+          "id": "47509db4",
+          "matchName": "PEDG-0001",
+          "name": "Radius",
+          "path": "comp:133/layer:1/effects/E001/PEDG#1/PEDG-0001#21",
+          "propertyIndex": 21
+        },
+        "slug": "PEDG-0001__p21"
+      },
+      {
+        "constantValue": 0.025,
+        "kind": "constant",
+        "relPath": "PEDG-0002#22",
+        "samplePayload": 0.025,
+        "sampleTriplet": {
+          "id": "859c7746",
+          "matchName": "PEDG-0002",
+          "name": "Exposure",
+          "path": "comp:133/layer:1/effects/E001/PEDG#1/PEDG-0002#22",
+          "propertyIndex": 22
+        },
+        "slug": "PEDG-0002__p22"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "PEDG-0004#24",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "4154d866",
+          "matchName": "PEDG-0004",
+          "name": "Threshold",
+          "path": "comp:133/layer:1/effects/E001/PEDG#1/PEDG-0004#24",
+          "propertyIndex": 24
+        },
+        "slug": "PEDG-0004__p24"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "PEDG-0005#25",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "4b3ddd3c",
+          "matchName": "PEDG-0005",
+          "name": "Threshold Smooth",
+          "path": "comp:133/layer:1/effects/E001/PEDG#1/PEDG-0005#25",
+          "propertyIndex": 25
+        },
+        "slug": "PEDG-0005__p25"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "PEDG-0008#33",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "c7791f1a",
+          "matchName": "PEDG-0008",
+          "name": "Blend Mode",
+          "path": "comp:133/layer:1/effects/E001/PEDG#1/PEDG-0008#33",
+          "propertyIndex": 33
+        },
+        "slug": "PEDG-0008__p33"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "PEDG-0009#38",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "d1b372fe",
+          "matchName": "PEDG-0009",
+          "name": "Gamma Correction",
+          "path": "comp:133/layer:1/effects/E001/PEDG#1/PEDG-0009#38",
+          "propertyIndex": 38
+        },
+        "slug": "PEDG-0009__p38"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "PEDG-0010#42",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "0a362af9",
+          "matchName": "PEDG-0010",
+          "name": "Aspect Ratio",
+          "path": "comp:133/layer:1/effects/E001/PEDG#1/PEDG-0010#42",
+          "propertyIndex": 42
+        },
+        "slug": "PEDG-0010__p42"
+      },
+      {
+        "constantValue": 33,
+        "kind": "constant",
+        "relPath": "PEDG-0011#35",
+        "samplePayload": 33,
+        "sampleTriplet": {
+          "id": "a2e81a16",
+          "matchName": "PEDG-0011",
+          "name": "Spread",
+          "path": "comp:133/layer:1/effects/E001/PEDG#1/PEDG-0011#35",
+          "propertyIndex": 35
+        },
+        "slug": "PEDG-0011__p35"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "PEDG-0013#47",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "42fd5901",
+          "matchName": "PEDG-0013",
+          "name": "Enable",
+          "path": "comp:133/layer:1/effects/E001/PEDG#1/PEDG-0013#47",
+          "propertyIndex": 47
+        },
+        "slug": "PEDG-0013__p47"
+      },
+      {
+        "constantValue": 2,
+        "kind": "constant",
+        "relPath": "PEDG-0014#48",
+        "samplePayload": 2,
+        "sampleTriplet": {
+          "id": "814ab5d7",
+          "matchName": "PEDG-0014",
+          "name": "Channels",
+          "path": "comp:133/layer:1/effects/E001/PEDG#1/PEDG-0014#48",
+          "propertyIndex": 48
+        },
+        "slug": "PEDG-0014__p48"
+      },
+      {
+        "constantValue": 0.25,
+        "kind": "constant",
+        "relPath": "PEDG-0015#49",
+        "samplePayload": 0.25,
+        "sampleTriplet": {
+          "id": "49a1e2b1",
+          "matchName": "PEDG-0015",
+          "name": "Amount",
+          "path": "comp:133/layer:1/effects/E001/PEDG#1/PEDG-0015#49",
+          "propertyIndex": 49
+        },
+        "slug": "PEDG-0015__p49"
+      },
+      {
+        "constantValue": 80,
+        "kind": "constant",
+        "relPath": "PEDG-0019#63",
+        "samplePayload": 80,
+        "sampleTriplet": {
+          "id": "a79ba589",
+          "matchName": "PEDG-0019",
+          "name": "Downsample",
+          "path": "comp:133/layer:1/effects/E001/PEDG#1/PEDG-0019#63",
+          "propertyIndex": 63
+        },
+        "slug": "PEDG-0019__p63"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "PEDG-0020#64",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "c9dc7b30",
+          "matchName": "PEDG-0020",
+          "name": "Steps Multiplier",
+          "path": "comp:133/layer:1/effects/E001/PEDG#1/PEDG-0020#64",
+          "propertyIndex": 64
+        },
+        "slug": "PEDG-0020__p64"
+      },
+      {
+        "constantValue": 6,
+        "kind": "constant",
+        "relPath": "PEDG-0021#66",
+        "samplePayload": 6,
+        "sampleTriplet": {
+          "id": "ba321f83",
+          "matchName": "PEDG-0021",
+          "name": "Glow Iterations",
+          "path": "comp:133/layer:1/effects/E001/PEDG#1/PEDG-0021#66",
+          "propertyIndex": 66
+        },
+        "slug": "PEDG-0021__p66"
+      },
+      {
+        "constantValue": 2,
+        "kind": "constant",
+        "relPath": "PEDG-0023#75",
+        "samplePayload": 2,
+        "sampleTriplet": {
+          "id": "34151459",
+          "matchName": "PEDG-0023",
+          "name": "View",
+          "path": "comp:133/layer:1/effects/E001/PEDG#1/PEDG-0023#75",
+          "propertyIndex": 75
+        },
+        "slug": "PEDG-0023__p75"
+      },
+      {
+        "constantValue": 100,
+        "kind": "constant",
+        "relPath": "PEDG-0024#76",
+        "samplePayload": 100,
+        "sampleTriplet": {
+          "id": "e5b8975f",
+          "matchName": "PEDG-0024",
+          "name": "Source Opacity",
+          "path": "comp:133/layer:1/effects/E001/PEDG#1/PEDG-0024#76",
+          "propertyIndex": 76
+        },
+        "slug": "PEDG-0024__p76"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "PEDG-0025#77",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "8ab68965",
+          "matchName": "PEDG-0025",
+          "name": "Unmult",
+          "path": "comp:133/layer:1/effects/E001/PEDG#1/PEDG-0025#77",
+          "propertyIndex": 77
+        },
+        "slug": "PEDG-0025__p77"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "PEDG-0026#85",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "73ccb12f",
+          "matchName": "PEDG-0026",
+          "name": "Left",
+          "path": "comp:133/layer:1/effects/E001/PEDG#1/PEDG-0026#85",
+          "propertyIndex": 85
+        },
+        "slug": "PEDG-0026__p85"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "PEDG-0027#86",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "2170c537",
+          "matchName": "PEDG-0027",
+          "name": "Top",
+          "path": "comp:133/layer:1/effects/E001/PEDG#1/PEDG-0027#86",
+          "propertyIndex": 86
+        },
+        "slug": "PEDG-0027__p86"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "PEDG-0028#87",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "0b892d2b",
+          "matchName": "PEDG-0028",
+          "name": "Right",
+          "path": "comp:133/layer:1/effects/E001/PEDG#1/PEDG-0028#87",
+          "propertyIndex": 87
+        },
+        "slug": "PEDG-0028__p87"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "PEDG-0029#88",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "248c52fb",
+          "matchName": "PEDG-0029",
+          "name": "Bottom",
+          "path": "comp:133/layer:1/effects/E001/PEDG#1/PEDG-0029#88",
+          "propertyIndex": 88
+        },
+        "slug": "PEDG-0029__p88"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "PEDG-0031#70",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "2943a323",
+          "matchName": "PEDG-0031",
+          "name": "Enable Dither",
+          "path": "comp:133/layer:1/effects/E001/PEDG#1/PEDG-0031#70",
+          "propertyIndex": 70
+        },
+        "slug": "PEDG-0031__p70"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "PEDG-0032#71",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "43f28d4f",
+          "matchName": "PEDG-0032",
+          "name": "Monochromatic",
+          "path": "comp:133/layer:1/effects/E001/PEDG#1/PEDG-0032#71",
+          "propertyIndex": 71
+        },
+        "slug": "PEDG-0032__p71"
+      },
+      {
+        "constantValue": 50,
+        "kind": "constant",
+        "relPath": "PEDG-0033#72",
+        "samplePayload": 50,
+        "sampleTriplet": {
+          "id": "22329c6f",
+          "matchName": "PEDG-0033",
+          "name": "Amount",
+          "path": "comp:133/layer:1/effects/E001/PEDG#1/PEDG-0033#72",
+          "propertyIndex": 72
+        },
+        "slug": "PEDG-0033__p72"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "PEDG-0035#34",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "0b8df98f",
+          "matchName": "PEDG-0035",
+          "name": "Smooth Blending",
+          "path": "comp:133/layer:1/effects/E001/PEDG#1/PEDG-0035#34",
+          "propertyIndex": 34
+        },
+        "slug": "PEDG-0035__p34"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "PEDG-0037#52",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "40d3c901",
+          "matchName": "PEDG-0037",
+          "name": "Enable",
+          "path": "comp:133/layer:1/effects/E001/PEDG#1/PEDG-0037#52",
+          "propertyIndex": 52
+        },
+        "slug": "PEDG-0037__p52"
+      },
+      {
+        "constantValue": [
+          1,
+          0,
+          0,
+          1
+        ],
+        "kind": "constant",
+        "relPath": "PEDG-0038#53",
+        "samplePayload": [
+          1,
+          0,
+          0,
+          1
+        ],
+        "sampleTriplet": {
+          "id": "3c13ba61",
+          "matchName": "PEDG-0038",
+          "name": "Color",
+          "path": "comp:133/layer:1/effects/E001/PEDG#1/PEDG-0038#53",
+          "propertyIndex": 53
+        },
+        "slug": "PEDG-0038__p53"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "PEDG-0039#54",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "a62fe955",
+          "matchName": "PEDG-0039",
+          "name": "Mode",
+          "path": "comp:133/layer:1/effects/E001/PEDG#1/PEDG-0039#54",
+          "propertyIndex": 54
+        },
+        "slug": "PEDG-0039__p54"
+      },
+      {
+        "constantValue": 100,
+        "kind": "constant",
+        "relPath": "PEDG-0041#55",
+        "samplePayload": 100,
+        "sampleTriplet": {
+          "id": "e01db86b",
+          "matchName": "PEDG-0041",
+          "name": "Mix",
+          "path": "comp:133/layer:1/effects/E001/PEDG#1/PEDG-0041#55",
+          "propertyIndex": 55
+        },
+        "slug": "PEDG-0041__p55"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "PEDG-0043#37",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "e91fbb51",
+          "matchName": "PEDG-0043",
+          "name": "Auto Detect Gamma",
+          "path": "comp:133/layer:1/effects/E001/PEDG#1/PEDG-0043#37",
+          "propertyIndex": 37
+        },
+        "slug": "PEDG-0043__p37"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "PEDG-0047#58",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "812b5cc6",
+          "matchName": "PEDG-0047",
+          "name": "Fixed Steps",
+          "path": "comp:133/layer:1/effects/E001/PEDG#1/PEDG-0047#58",
+          "propertyIndex": 58
+        },
+        "slug": "PEDG-0047__p58"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "PEDG-0048#59",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "3bd403b2",
+          "matchName": "PEDG-0048",
+          "name": "Number of Steps",
+          "path": "comp:133/layer:1/effects/E001/PEDG#1/PEDG-0048#59",
+          "propertyIndex": 59
+        },
+        "slug": "PEDG-0048__p59"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "PEDG-0050#65",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "d22fc17e",
+          "matchName": "PEDG-0050",
+          "name": "Auto Iterations",
+          "path": "comp:133/layer:1/effects/E001/PEDG#1/PEDG-0050#65",
+          "propertyIndex": 65
+        },
+        "slug": "PEDG-0050__p65"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "PEDG-0052#43",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "0bb28258",
+          "matchName": "PEDG-0052",
+          "name": "Enable Angle",
+          "path": "comp:133/layer:1/effects/E001/PEDG#1/PEDG-0052#43",
+          "propertyIndex": 43
+        },
+        "slug": "PEDG-0052__p43"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "PEDG-0053#44",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "e323d02c",
+          "matchName": "PEDG-0053",
+          "name": "Aspect Angle",
+          "path": "comp:133/layer:1/effects/E001/PEDG#1/PEDG-0053#44",
+          "propertyIndex": 44
+        },
+        "slug": "PEDG-0053__p44"
+      },
+      {
+        "constantValue": 2,
+        "kind": "constant",
+        "relPath": "PEDG-0055#78",
+        "samplePayload": 2,
+        "sampleTriplet": {
+          "id": "f1c8a569",
+          "matchName": "PEDG-0055",
+          "name": "Edge Behaviour",
+          "path": "comp:133/layer:1/effects/E001/PEDG#1/PEDG-0055#78",
+          "propertyIndex": 78
+        },
+        "slug": "PEDG-0055__p78"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "PEDG-0056#27",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "96726e02",
+          "matchName": "PEDG-0056",
+          "name": "Layer",
+          "path": "comp:133/layer:1/effects/E001/PEDG#1/PEDG-0056#27",
+          "propertyIndex": 27
+        },
+        "slug": "PEDG-0056__p27"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "PEDG-0057#28",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "09e31e6a",
+          "matchName": "PEDG-0057",
+          "name": "Mode",
+          "path": "comp:133/layer:1/effects/E001/PEDG#1/PEDG-0057#28",
+          "propertyIndex": 28
+        },
+        "slug": "PEDG-0057__p28"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "PEDG-0059#29",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "e0df8fa3",
+          "matchName": "PEDG-0059",
+          "name": "Invert",
+          "path": "comp:133/layer:1/effects/E001/PEDG#1/PEDG-0059#29",
+          "propertyIndex": 29
+        },
+        "slug": "PEDG-0059__p29"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "PEDG-0066#80",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "fcaaf0dc",
+          "matchName": "PEDG-0066",
+          "name": "Show Buffers",
+          "path": "comp:133/layer:1/effects/E001/PEDG#1/PEDG-0066#80",
+          "propertyIndex": 80
+        },
+        "slug": "PEDG-0066__p80"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "PEDG-0072#10",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "8391bede",
+          "matchName": "PEDG-0072",
+          "name": "Version",
+          "path": "comp:133/layer:1/effects/E001/PEDG#1/PEDG-0072#10",
+          "propertyIndex": 10
+        },
+        "slug": "PEDG-0072__p10"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "PEDG-0073#11",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "55ed78a4",
+          "matchName": "PEDG-0073",
+          "name": "Vendor",
+          "path": "comp:133/layer:1/effects/E001/PEDG#1/PEDG-0073#11",
+          "propertyIndex": 11
+        },
+        "slug": "PEDG-0073__p11"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "PEDG-0074#12",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "5a9345d2",
+          "matchName": "PEDG-0074",
+          "name": "Renderer",
+          "path": "comp:133/layer:1/effects/E001/PEDG#1/PEDG-0074#12",
+          "propertyIndex": 12
+        },
+        "slug": "PEDG-0074__p12"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "PEDG-0075#13",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "deaf9db4",
+          "matchName": "PEDG-0075",
+          "name": "Shader Version",
+          "path": "comp:133/layer:1/effects/E001/PEDG#1/PEDG-0075#13",
+          "propertyIndex": 13
+        },
+        "slug": "PEDG-0075__p13"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "PEDG-0084#67",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "e8d0ab87",
+          "matchName": "PEDG-0084",
+          "name": "Buffer Expansion",
+          "path": "comp:133/layer:1/effects/E001/PEDG#1/PEDG-0084#67",
+          "propertyIndex": 67
+        },
+        "slug": "PEDG-0084__p67"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "PEDG-0085#68",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "7e4d8a57",
+          "matchName": "PEDG-0085",
+          "name": "Aux Expansion",
+          "path": "comp:133/layer:1/effects/E001/PEDG#1/PEDG-0085#68",
+          "propertyIndex": 68
+        },
+        "slug": "PEDG-0085__p68"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "PEDG-0086#82",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "52ba4688",
+          "matchName": "PEDG-0086",
+          "name": "Output PreRender Rects",
+          "path": "comp:133/layer:1/effects/E001/PEDG#1/PEDG-0086#82",
+          "propertyIndex": 82
+        },
+        "slug": "PEDG-0086__p82"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "PEDG-0087#83",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "01bcc57a",
+          "matchName": "PEDG-0087",
+          "name": "Output Buffer Dims",
+          "path": "comp:133/layer:1/effects/E001/PEDG#1/PEDG-0087#83",
+          "propertyIndex": 83
+        },
+        "slug": "PEDG-0087__p83"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "PEDG-0088#81",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "b916686f",
+          "matchName": "PEDG-0088",
+          "name": "Draw Dimensions Comp UI",
+          "path": "comp:133/layer:1/effects/E001/PEDG#1/PEDG-0088#81",
+          "propertyIndex": 81
+        },
+        "slug": "PEDG-0088__p81"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "PEDG-0089#84",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "1d2a1791",
+          "matchName": "PEDG-0089",
+          "name": "View Input (CPU)",
+          "path": "comp:133/layer:1/effects/E001/PEDG#1/PEDG-0089#84",
+          "propertyIndex": 84
+        },
+        "slug": "PEDG-0089__p84"
+      }
+    ],
+    "variableCount": 0
+  }
+}

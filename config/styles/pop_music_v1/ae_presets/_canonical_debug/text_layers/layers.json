@@ -1,0 +1,148 @@
+{
+  "compFolder": "Cundefined__Текст",
+  "layers": {
+    "L003__is not my son": {
+      "blendingMode": "5212",
+      "compItemIndex": null,
+      "compName": "Текст",
+      "enabled": true,
+      "inPoint": 15.4738071404738,
+      "layerIndex": 3,
+      "layerName": "is not my son",
+      "outPoint": 18.4351017684351,
+      "startTime": 0
+    },
+    "L005__but the kid": {
+      "blendingMode": "5212",
+      "compItemIndex": null,
+      "compName": "Текст",
+      "enabled": true,
+      "inPoint": 13.9723056389723,
+      "layerIndex": 5,
+      "layerName": "but the kid",
+      "outPoint": 15.4738071404738,
+      "startTime": 0
+    },
+    "L007__she says i am the one": {
+      "blendingMode": "5212",
+      "compItemIndex": null,
+      "compName": "Текст",
+      "enabled": true,
+      "inPoint": 10.6356356356356,
+      "layerIndex": 7,
+      "layerName": "she says i am the one",
+      "outPoint": 13.5969302635969,
+      "startTime": 0
+    },
+    "L008__she says i am the one 3": {
+      "blendingMode": "5212",
+      "compItemIndex": null,
+      "compName": "Текст",
+      "enabled": true,
+      "inPoint": 10.6356356356356,
+      "layerIndex": 8,
+      "layerName": "she says i am the one 3",
+      "outPoint": 12.5125125125125,
+      "startTime": 0
+    },
+    "L012__his eyes were like 3": {
+      "blendingMode": "5212",
+      "compItemIndex": null,
+      "compName": "Текст",
+      "enabled": true,
+      "inPoint": 8.00800800800801,
+      "layerIndex": 12,
+      "layerName": "his eyes were like 3",
+      "outPoint": 8.75875875875876,
+      "startTime": -5.38038038038038
+    },
+    "L013__his eyes were": {
+      "blendingMode": "5212",
+      "compItemIndex": null,
+      "compName": "Текст",
+      "enabled": true,
+      "inPoint": 7.67434100767434,
+      "layerIndex": 13,
+      "layerName": "his eyes were ",
+      "outPoint": 8.00800800800801,
+      "startTime": -5.38038038038038
+    },
+    "L015__his eyes": {
+      "blendingMode": "5212",
+      "compItemIndex": null,
+      "compName": "Текст",
+      "enabled": true,
+      "inPoint": 7.29896563229897,
+      "layerIndex": 15,
+      "layerName": "his eyes ",
+      "outPoint": 7.67434100767434,
+      "startTime": -5.38038038038038
+    },
+    "L016__of a baby cryin’ 2": {
+      "blendingMode": "5212",
+      "compItemIndex": null,
+      "compName": "Текст",
+      "enabled": true,
+      "inPoint": 6.54821488154821,
+      "layerIndex": 16,
+      "layerName": "of a baby cryin’ 2",
+      "outPoint": 7.29896563229897,
+      "startTime": -6.13113113113113
+    },
+    "L017__of a baby": {
+      "blendingMode": "5212",
+      "compItemIndex": null,
+      "compName": "Текст",
+      "enabled": true,
+      "inPoint": 5.83917250583917,
+      "layerIndex": 17,
+      "layerName": "of a baby ",
+      "outPoint": 6.54821488154822,
+      "startTime": -6.13113113113113
+    },
+    "L019__then showed a photo": {
+      "blendingMode": "5212",
+      "compItemIndex": null,
+      "compName": "Текст",
+      "enabled": true,
+      "inPoint": 4.42108775442109,
+      "layerIndex": 19,
+      "layerName": "then showed a photo",
+      "outPoint": 5.83917250583917,
+      "startTime": -7.54921588254922
+    },
+    "L023__then she looked at me": {
+      "blendingMode": "5212",
+      "compItemIndex": null,
+      "compName": "Текст",
+      "enabled": true,
+      "inPoint": 3.04471137804471,
+      "layerIndex": 23,
+      "layerName": "then she looked at me",
+      "outPoint": 4.37937937937938,
+      "startTime": -8.92559225892559
+    },
+    "L025__we’d danced ‘til three": {
+      "blendingMode": "5212",
+      "compItemIndex": null,
+      "compName": "Текст",
+      "enabled": true,
+      "inPoint": 1.87687687687688,
+      "layerIndex": 25,
+      "layerName": "we’d danced ‘til three",
+      "outPoint": 3.04471137804471,
+      "startTime": -10.0934267600934
+    },
+    "L027__she told my baby": {
+      "blendingMode": "5212",
+      "compItemIndex": null,
+      "compName": "Текст",
+      "enabled": true,
+      "inPoint": 0.25025025025025,
+      "layerIndex": 27,
+      "layerName": "she told my baby",
+      "outPoint": 1.87687687687688,
+      "startTime": -11.7200533867201
+    }
+  }
+}

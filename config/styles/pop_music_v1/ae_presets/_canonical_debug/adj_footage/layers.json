@@ -1,0 +1,41 @@
+{
+  "compFolder": "C1__Comp 1",
+  "layers": {
+    "L003__Adjustment Layer 16": {
+      "compId": 1,
+      "compName": "Comp 1",
+      "id": "L003__Adjustment Layer 16",
+      "inPoint": 13.9723056389723,
+      "layerIndex": 3,
+      "layerName": "Adjustment Layer 16",
+      "outPoint": 18.4351017684351
+    },
+    "L005__Adjustment Layer 16": {
+      "compId": 1,
+      "compName": "Comp 1",
+      "id": "L005__Adjustment Layer 16",
+      "inPoint": 8.55021688355022,
+      "layerIndex": 5,
+      "layerName": "Adjustment Layer 16",
+      "outPoint": 13.9723056389723
+    },
+    "L007__Adjustment Layer 16": {
+      "compId": 1,
+      "compName": "Comp 1",
+      "id": "L007__Adjustment Layer 16",
+      "inPoint": 4.5045045045045,
+      "layerIndex": 7,
+      "layerName": "Adjustment Layer 16",
+      "outPoint": 8.55021688355022
+    },
+    "L009__Adjustment Layer 16": {
+      "compId": 1,
+      "compName": "Comp 1",
+      "id": "L009__Adjustment Layer 16",
+      "inPoint": 0,
+      "layerIndex": 9,
+      "layerName": "Adjustment Layer 16",
+      "outPoint": 4.5045045045045
+    }
+  }
+}

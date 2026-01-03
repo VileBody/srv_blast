@@ -1,0 +1,190 @@
+{
+  "layerId": "L003__is not my son",
+  "used": {
+    "anim__Animator_1__ADBE_Text_Animator": {
+      "ADBE_Text_Selectors#1": {
+        "ADBE_Text_Selector#1": {
+          "ADBE_Text_Percent_End#2": {
+            "@time": {
+              "__slug__": "ADBE_Text_Selectors__p1__ADBE_Text_Selector__p1__ADBE_Text_Percent_End__p2_time",
+              "payload": {
+                "__MISSING__": true
+              }
+            }
+          },
+          "ADBE_Text_Percent_Start#1": {
+            "@time": {
+              "__slug__": "ADBE_Text_Selectors__p1__ADBE_Text_Selector__p1__ADBE_Text_Percent_Start__p1_time",
+              "payload": {
+                "expressionEnabled": false,
+                "keys": [
+                  {
+                    "inInterpolationType": "6612",
+                    "inTemporalEase": [
+                      {
+                        "influence": 16.666666667,
+                        "speed": 0
+                      }
+                    ],
+                    "index": 1,
+                    "isSpatial": false,
+                    "keyLabel": 0,
+                    "outInterpolationType": "6612",
+                    "outTemporalEase": [
+                      {
+                        "influence": 16.666666667,
+                        "speed": 0
+                      }
+                    ],
+                    "temporalAutoBezier": false,
+                    "temporalContinuous": false,
+                    "time": 15.4738071404738,
+                    "value": 25
+                  },
+                  {
+                    "inInterpolationType": "6612",
+                    "inTemporalEase": [
+                      {
+                        "influence": 16.666666667,
+                        "speed": 0
+                      }
+                    ],
+                    "index": 2,
+                    "isSpatial": false,
+                    "keyLabel": 0,
+                    "outInterpolationType": "6612",
+                    "outTemporalEase": [
+                      {
+                        "influence": 16.666666667,
+                        "speed": 599.4
+                      }
+                    ],
+                    "temporalAutoBezier": false,
+                    "temporalContinuous": false,
+                    "time": 15.7657657657658,
+                    "value": 25
+                  },
+                  {
+                    "inInterpolationType": "6612",
+                    "inTemporalEase": [
+                      {
+                        "influence": 16.666666667,
+                        "speed": 599.4
+                      }
+                    ],
+                    "index": 3,
+                    "isSpatial": false,
+                    "keyLabel": 0,
+                    "outInterpolationType": "6612",
+                    "outTemporalEase": [
+                      {
+                        "influence": 16.666666667,
+                        "speed": 0
+                      }
+                    ],
+                    "temporalAutoBezier": false,
+                    "temporalContinuous": false,
+                    "time": 15.8074741408075,
+                    "value": 50
+                  },
+                  {
+                    "inInterpolationType": "6612",
+                    "inTemporalEase": [
+                      {
+                        "influence": 16.666666667,
+                        "speed": 0
+                      }
+                    ],
+                    "index": 4,
+                    "isSpatial": false,
+                    "keyLabel": 0,
+                    "outInterpolationType": "6612",
+                    "outTemporalEase": [
+                      {
+                        "influence": 16.666666667,
+                        "speed": 599.4
+                      }
+                    ],
+                    "temporalAutoBezier": false,
+                    "temporalContinuous": false,
+                    "time": 16.016016016016,
+                    "value": 50
+                  },
+                  {
+                    "inInterpolationType": "6612",
+                    "inTemporalEase": [
+                      {
+                        "influence": 16.666666667,
+                        "speed": 599.4
+                      }
+                    ],
+                    "index": 5,
+                    "isSpatial": false,
+                    "keyLabel": 0,
+                    "outInterpolationType": "6612",
+                    "outTemporalEase": [
+                      {
+                        "influence": 16.666666667,
+                        "speed": 0
+                      }
+                    ],
+                    "temporalAutoBezier": false,
+                    "temporalContinuous": false,
+                    "time": 16.0577243910577,
+                    "value": 75
+                  },
+                  {
+                    "inInterpolationType": "6612",
+                    "inTemporalEase": [
+                      {
+                        "influence": 16.666666667,
+                        "speed": 0
+                      }
+                    ],
+                    "index": 6,
+                    "isSpatial": false,
+                    "keyLabel": 0,
+                    "outInterpolationType": "6612",
+                    "outTemporalEase": [
+                      {
+                        "influence": 16.666666667,
+                        "speed": 599.4
+                      }
+                    ],
+                    "temporalAutoBezier": false,
+                    "temporalContinuous": false,
+                    "time": 16.3913913913914,
+                    "value": 75
+                  },
+                  {
+                    "inInterpolationType": "6612",
+                    "inTemporalEase": [
+                      {
+                        "influence": 16.666666667,
+                        "speed": 599.4
+                      }
+                    ],
+                    "index": 7,
+                    "isSpatial": false,
+                    "keyLabel": 0,
+                    "outInterpolationType": "6612",
+                    "outTemporalEase": [
+                      {
+                        "influence": 16.666666667,
+                        "speed": 0
+                      }
+                    ],
+                    "temporalAutoBezier": false,
+                    "temporalContinuous": false,
+                    "time": 16.4330997664331,
+                    "value": 100
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

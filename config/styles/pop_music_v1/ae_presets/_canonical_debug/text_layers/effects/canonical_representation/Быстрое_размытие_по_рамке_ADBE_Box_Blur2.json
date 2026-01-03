@@ -1,0 +1,108 @@
+{
+  "canonicalName": "Быстрое_размытие_по_рамке__ADBE_Box_Blur2",
+  "domain": "effects",
+  "groupKey": "ADBE Box Blur2",
+  "instancesCount": 13,
+  "keyframes": {
+    "paramCount": 1,
+    "params": [
+      {
+        "keyframeMeta": {
+          "hasExpression": false,
+          "keyCount": 2,
+          "valueTypeHint": "int"
+        },
+        "relPath": "ADBE Box Blur2-0001#1",
+        "sampleTriplet": {
+          "id": "ca0d7ae5",
+          "matchName": "ADBE Box Blur2-0001",
+          "name": "Радиус размытия",
+          "path": "comp:undefined/layer:3/text_effects/E004/ADBE Box Blur2#4/ADBE Box Blur2-0001#1",
+          "propertyIndex": 1
+        },
+        "slug": "ADBE_Box_Blur2-0001__p1_time"
+      }
+    ]
+  },
+  "namesSeen": [
+    "Быстрое размытие по рамке"
+  ],
+  "presentCount": 4,
+  "template": {
+    "constantCount": 5,
+    "paramCount": 5,
+    "params": [
+      {
+        "constantValue": 3,
+        "kind": "constant",
+        "relPath": "ADBE Box Blur2-0002#2",
+        "samplePayload": 3,
+        "sampleTriplet": {
+          "id": "7a5e89c9",
+          "matchName": "ADBE Box Blur2-0002",
+          "name": "Итерации",
+          "path": "comp:undefined/layer:3/text_effects/E004/ADBE Box Blur2#4/ADBE Box Blur2-0002#2",
+          "propertyIndex": 2
+        },
+        "slug": "ADBE_Box_Blur2-0002__p2"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "ADBE Box Blur2-0003#3",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "f6d46351",
+          "matchName": "ADBE Box Blur2-0003",
+          "name": "Размеры размытия",
+          "path": "comp:undefined/layer:3/text_effects/E004/ADBE Box Blur2#4/ADBE Box Blur2-0003#3",
+          "propertyIndex": 3
+        },
+        "slug": "ADBE_Box_Blur2-0003__p3"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Box Blur2-0004#4",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "1dbc724d",
+          "matchName": "ADBE Box Blur2-0004",
+          "name": "Повторить граничные пиксели",
+          "path": "comp:undefined/layer:3/text_effects/E004/ADBE Box Blur2#4/ADBE Box Blur2-0004#4",
+          "propertyIndex": 4
+        },
+        "slug": "ADBE_Box_Blur2-0004__p4"
+      },
+      {
+        "constantValue": 100,
+        "kind": "constant",
+        "relPath": "ADBE Effect Built In Params#5/ADBE Effect Mask Opacity#2",
+        "samplePayload": 100,
+        "sampleTriplet": {
+          "id": "26cb5feb",
+          "matchName": "ADBE Effect Mask Opacity",
+          "name": "Непрозр.эффекта",
+          "path": "comp:undefined/layer:3/text_effects/E004/ADBE Box Blur2#4/ADBE Effect Built In Params#5/ADBE Effect Mask Opacity#2",
+          "propertyIndex": 2
+        },
+        "slug": "ADBE_Effect_Built_In_Params__p5__ADBE_Effect_Mask_Opacity__p2"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "ADBE Effect Built In Params#5/ADBE Force CPU GPU#3",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "0d89bd39",
+          "matchName": "ADBE Force CPU GPU",
+          "name": "Ренд. с исп. ГП",
+          "path": "comp:undefined/layer:3/text_effects/E004/ADBE Box Blur2#4/ADBE Effect Built In Params#5/ADBE Force CPU GPU#3",
+          "propertyIndex": 3
+        },
+        "slug": "ADBE_Effect_Built_In_Params__p5__ADBE_Force_CPU_GPU__p3"
+      }
+    ],
+    "variableCount": 0
+  }
+}

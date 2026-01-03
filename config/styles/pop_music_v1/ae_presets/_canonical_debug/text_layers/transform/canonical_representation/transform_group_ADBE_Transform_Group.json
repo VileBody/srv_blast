@@ -1,0 +1,224 @@
+{
+  "canonicalName": "transform_group__ADBE_Transform_Group",
+  "domain": "transform",
+  "groupKey": "ADBE Transform Group",
+  "instancesCount": 13,
+  "keyframes": {
+    "paramCount": 1,
+    "params": [
+      {
+        "keyframeMeta": {
+          "hasExpression": false,
+          "keyCount": 2,
+          "valueTypeHint": "int"
+        },
+        "relPath": "ADBE Opacity#11",
+        "sampleTriplet": {
+          "id": "d000839f",
+          "matchName": "ADBE Opacity",
+          "name": "Непрозрачность",
+          "path": "comp:undefined/layer:3/transform/ADBE Transform Group#5/ADBE Opacity#11",
+          "propertyIndex": 11
+        },
+        "slug": "ADBE_Opacity__p11_time"
+      }
+    ]
+  },
+  "presentCount": 13,
+  "template": {
+    "constantCount": 9,
+    "paramCount": 12,
+    "params": [
+      {
+        "kind": "variable",
+        "relPath": "ADBE Anchor Point#1",
+        "samplePayload": [
+          -54.43359375,
+          42.3095703125,
+          0
+        ],
+        "sampleTriplet": {
+          "id": "9a631e4c",
+          "matchName": "ADBE Anchor Point",
+          "name": "Опорная точка",
+          "path": "comp:undefined/layer:3/transform/ADBE Transform Group#5/ADBE Anchor Point#1",
+          "propertyIndex": 1
+        },
+        "slug": "ADBE_Anchor_Point__p1"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "ADBE Envir Appear in Reflect#12",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "b781cbca",
+          "matchName": "ADBE Envir Appear in Reflect",
+          "name": "Отображ. в отраж.",
+          "path": "comp:undefined/layer:3/transform/ADBE Transform Group#5/ADBE Envir Appear in Reflect#12",
+          "propertyIndex": 12
+        },
+        "slug": "ADBE_Envir_Appear_in_Reflect__p12"
+      },
+      {
+        "kind": "variable",
+        "relPath": "ADBE Opacity#11",
+        "samplePayload": 100,
+        "sampleTriplet": {
+          "id": "fa5dda41",
+          "matchName": "ADBE Opacity",
+          "name": "Непрозрачность",
+          "path": "comp:undefined/layer:5/transform/ADBE Transform Group#5/ADBE Opacity#11",
+          "propertyIndex": 11
+        },
+        "slug": "ADBE_Opacity__p11"
+      },
+      {
+        "constantValue": [
+          0,
+          0,
+          0
+        ],
+        "kind": "constant",
+        "relPath": "ADBE Orientation#7",
+        "samplePayload": [
+          0,
+          0,
+          0
+        ],
+        "sampleTriplet": {
+          "id": "12387f05",
+          "matchName": "ADBE Orientation",
+          "name": "Ориентация",
+          "path": "comp:undefined/layer:3/transform/ADBE Transform Group#5/ADBE Orientation#7",
+          "propertyIndex": 7
+        },
+        "slug": "ADBE_Orientation__p7"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Position_0#3",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "f6092501",
+          "matchName": "ADBE Position_0",
+          "name": "X Положение",
+          "path": "comp:undefined/layer:3/transform/ADBE Transform Group#5/ADBE Position_0#3",
+          "propertyIndex": 3
+        },
+        "slug": "ADBE_Position_0__p3"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Position_1#4",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "7c311f5f",
+          "matchName": "ADBE Position_1",
+          "name": "Y Положение",
+          "path": "comp:undefined/layer:3/transform/ADBE Transform Group#5/ADBE Position_1#4",
+          "propertyIndex": 4
+        },
+        "slug": "ADBE_Position_1__p4"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Position_2#5",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "45e0d089",
+          "matchName": "ADBE Position_2",
+          "name": "Z Положение",
+          "path": "comp:undefined/layer:3/transform/ADBE Transform Group#5/ADBE Position_2#5",
+          "propertyIndex": 5
+        },
+        "slug": "ADBE_Position_2__p5"
+      },
+      {
+        "constantValue": [
+          540,
+          960,
+          0
+        ],
+        "kind": "constant",
+        "relPath": "ADBE Position#2",
+        "samplePayload": [
+          540,
+          960,
+          0
+        ],
+        "sampleTriplet": {
+          "id": "d8075d1d",
+          "matchName": "ADBE Position",
+          "name": "Положение",
+          "path": "comp:undefined/layer:3/transform/ADBE Transform Group#5/ADBE Position#2",
+          "propertyIndex": 2
+        },
+        "slug": "ADBE_Position__p2"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Rotate X#8",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "11ab43a7",
+          "matchName": "ADBE Rotate X",
+          "name": "Поворот X",
+          "path": "comp:undefined/layer:3/transform/ADBE Transform Group#5/ADBE Rotate X#8",
+          "propertyIndex": 8
+        },
+        "slug": "ADBE_Rotate_X__p8"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Rotate Y#9",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "7d83333f",
+          "matchName": "ADBE Rotate Y",
+          "name": "Поворот Y",
+          "path": "comp:undefined/layer:3/transform/ADBE Transform Group#5/ADBE Rotate Y#9",
+          "propertyIndex": 9
+        },
+        "slug": "ADBE_Rotate_Y__p9"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Rotate Z#10",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "fc95f73a",
+          "matchName": "ADBE Rotate Z",
+          "name": "Поворот",
+          "path": "comp:undefined/layer:3/transform/ADBE Transform Group#5/ADBE Rotate Z#10",
+          "propertyIndex": 10
+        },
+        "slug": "ADBE_Rotate_Z__p10"
+      },
+      {
+        "kind": "variable",
+        "relPath": "ADBE Scale#6",
+        "samplePayload": [
+          90,
+          90,
+          100
+        ],
+        "sampleTriplet": {
+          "id": "c599cf96",
+          "matchName": "ADBE Scale",
+          "name": "Масштаб",
+          "path": "comp:undefined/layer:3/transform/ADBE Transform Group#5/ADBE Scale#6",
+          "propertyIndex": 6
+        },
+        "slug": "ADBE_Scale__p6"
+      }
+    ],
+    "variableCount": 3
+  }
+}

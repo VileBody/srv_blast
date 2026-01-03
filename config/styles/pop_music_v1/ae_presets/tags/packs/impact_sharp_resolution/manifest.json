@@ -1,0 +1,39 @@
+{
+  "tagId": "impact_sharp_resolution",
+  "label": "Resolution",
+  "requires_words": false,
+  "refs": {
+    "text_layer": "L003_is_not_my_son",
+    "adjustment_layer_text": "L002_Adjustment_Layer_3"
+  },
+  "files": {
+    "text_layer": {
+      "transform": {
+        "template": "transform_used_as_template.json",
+        "keyframes": "transform_used_as_keyframes.json"
+      },
+      "textDoc": {
+        "template": "textDoc_used_as_template.json",
+        "keyframes": "textDoc_used_as_keyframes.json"
+      },
+      "textAnim": {
+        "template": "textAnim_used_as_template.json",
+        "keyframes": "textAnim_used_as_keyframes.json"
+      },
+      "effects": {
+        "template": "effects_used_as_template.json",
+        "keyframes": "effects_used_as_keyframes.json"
+      }
+    },
+    "adjustment_layer": {
+      "transform": {
+        "template": "transform_used_as_template.json",
+        "keyframes": "transform_used_as_keyframes.json"
+      },
+      "effects": {
+        "template": "effects_used_as_template.json",
+        "keyframes": "effects_used_as_keyframes.json"
+      }
+    }
+  }
+}

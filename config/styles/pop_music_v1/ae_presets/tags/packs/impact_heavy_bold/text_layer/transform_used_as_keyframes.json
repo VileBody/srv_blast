@@ -1,0 +1,15 @@
+{
+  "layerId": "L005__but the kid",
+  "used": {
+    "transform_group__ADBE_Transform_Group": {
+      "ADBE_Opacity#11": {
+        "@time": {
+          "__slug__": "ADBE_Opacity__p11_time",
+          "payload": {
+            "__MISSING__": true
+          }
+        }
+      }
+    }
+  }
+}

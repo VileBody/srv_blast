@@ -1,0 +1,188 @@
+{
+  "layerId": "L011__Adjustment Layer 10",
+  "used": {
+    "Преобразовать__ADBE_Geometry2": {
+      "ADBE_Geometry2-0003#4": {
+        "@time": {
+          "__slug__": "ADBE_Geometry2-0003__p4_time",
+          "payload": {
+            "expressionEnabled": false,
+            "keys": [
+              {
+                "inInterpolationType": "6613",
+                "inTemporalEase": [
+                  {
+                    "influence": 95,
+                    "speed": 0
+                  }
+                ],
+                "index": 1,
+                "isSpatial": false,
+                "keyLabel": 0,
+                "outInterpolationType": "6613",
+                "outTemporalEase": [
+                  {
+                    "influence": 33.8028975346529,
+                    "speed": 13.0638461538461
+                  }
+                ],
+                "temporalAutoBezier": false,
+                "temporalContinuous": false,
+                "time": 7.29896563229897,
+                "value": 85
+              },
+              {
+                "inInterpolationType": "6613",
+                "inTemporalEase": [
+                  {
+                    "influence": 35.3669149901138,
+                    "speed": 7.4994799261535
+                  }
+                ],
+                "index": 2,
+                "isSpatial": false,
+                "keyLabel": 0,
+                "outInterpolationType": "6613",
+                "outTemporalEase": [
+                  {
+                    "influence": 18,
+                    "speed": 231.472
+                  }
+                ],
+                "temporalAutoBezier": false,
+                "temporalContinuous": false,
+                "time": 8.38338338338338,
+                "value": 95.2340727890433
+              },
+              {
+                "inInterpolationType": "6613",
+                "inTemporalEase": [
+                  {
+                    "influence": 95,
+                    "speed": 21.9289263157895
+                  }
+                ],
+                "index": 3,
+                "isSpatial": false,
+                "keyLabel": 0,
+                "outInterpolationType": "6613",
+                "outTemporalEase": [
+                  {
+                    "influence": 16.666666667,
+                    "speed": 0
+                  }
+                ],
+                "temporalAutoBezier": false,
+                "temporalContinuous": false,
+                "time": 8.75875875875876,
+                "value": 141.234072789043
+              }
+            ]
+          }
+        }
+      },
+      "ADBE_Geometry2-0007#8": {
+        "@time": {
+          "__slug__": "ADBE_Geometry2-0007__p8_time",
+          "payload": {
+            "expressionEnabled": false,
+            "keys": [
+              {
+                "inInterpolationType": "6612",
+                "inTemporalEase": [
+                  {
+                    "influence": 16.666666667,
+                    "speed": 0
+                  }
+                ],
+                "index": 1,
+                "isSpatial": false,
+                "keyLabel": 0,
+                "outInterpolationType": "6613",
+                "outTemporalEase": [
+                  {
+                    "influence": 3,
+                    "speed": 7032.96000000003
+                  }
+                ],
+                "temporalAutoBezier": false,
+                "temporalContinuous": false,
+                "time": 7.29896563229897,
+                "value": -43
+              },
+              {
+                "inInterpolationType": "6613",
+                "inTemporalEase": [
+                  {
+                    "influence": 95,
+                    "speed": 117.987157894737
+                  }
+                ],
+                "index": 2,
+                "isSpatial": false,
+                "keyLabel": 0,
+                "outInterpolationType": "6613",
+                "outTemporalEase": [
+                  {
+                    "influence": 5.23546630749341,
+                    "speed": -70.2042352941176
+                  }
+                ],
+                "temporalAutoBezier": false,
+                "temporalContinuous": false,
+                "time": 7.38238238238238,
+                "value": 12
+              },
+              {
+                "inInterpolationType": "6613",
+                "inTemporalEase": [
+                  {
+                    "influence": 90.8082057330018,
+                    "speed": -4.06804969474997
+                  }
+                ],
+                "index": 3,
+                "isSpatial": false,
+                "keyLabel": 0,
+                "outInterpolationType": "6613",
+                "outTemporalEase": [
+                  {
+                    "influence": 18,
+                    "speed": -40.256
+                  }
+                ],
+                "temporalAutoBezier": false,
+                "temporalContinuous": false,
+                "time": 8.38338338338338,
+                "value": 0.7773000061402
+              },
+              {
+                "inInterpolationType": "6613",
+                "inTemporalEase": [
+                  {
+                    "influence": 95,
+                    "speed": -3.81372631578948
+                  }
+                ],
+                "index": 4,
+                "isSpatial": false,
+                "keyLabel": 0,
+                "outInterpolationType": "6613",
+                "outTemporalEase": [
+                  {
+                    "influence": 16.666666667,
+                    "speed": 0
+                  }
+                ],
+                "temporalAutoBezier": false,
+                "temporalContinuous": false,
+                "time": 8.75875875875876,
+                "value": -7.2226999938598
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}

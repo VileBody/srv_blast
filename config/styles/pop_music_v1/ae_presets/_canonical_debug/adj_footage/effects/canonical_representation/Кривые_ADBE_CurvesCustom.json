@@ -1,0 +1,80 @@
+{
+  "canonicalName": "Кривые__ADBE_CurvesCustom",
+  "domain": "effects",
+  "groupKey": "ADBE CurvesCustom",
+  "instancesCount": 4,
+  "keyframes": {
+    "paramCount": 1,
+    "params": [
+      {
+        "keyframeMeta": {
+          "hasExpression": false,
+          "keyCount": 4,
+          "valueTypeHint": "null"
+        },
+        "relPath": "ADBE CurvesCustom-0001#2",
+        "sampleTriplet": {
+          "id": "cc776aab",
+          "matchName": "ADBE CurvesCustom-0001",
+          "name": "Кривые",
+          "path": "comp:1/layer:3/effects/E002/ADBE CurvesCustom#2/ADBE CurvesCustom-0001#2",
+          "propertyIndex": 2
+        },
+        "slug": "ADBE_CurvesCustom-0001__p2_time"
+      }
+    ]
+  },
+  "namesSeen": [
+    "Кривые"
+  ],
+  "presentCount": 4,
+  "template": {
+    "constantCount": 3,
+    "paramCount": 3,
+    "params": [
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "ADBE CurvesCustom-0002#1",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "648bf9a7",
+          "matchName": "ADBE CurvesCustom-0002",
+          "name": "Канал:",
+          "path": "comp:1/layer:3/effects/E002/ADBE CurvesCustom#2/ADBE CurvesCustom-0002#1",
+          "propertyIndex": 1
+        },
+        "slug": "ADBE_CurvesCustom-0002__p1"
+      },
+      {
+        "constantValue": 100,
+        "kind": "constant",
+        "relPath": "ADBE Effect Built In Params#3/ADBE Effect Mask Opacity#2",
+        "samplePayload": 100,
+        "sampleTriplet": {
+          "id": "ad6494e1",
+          "matchName": "ADBE Effect Mask Opacity",
+          "name": "Непрозр.эффекта",
+          "path": "comp:1/layer:3/effects/E002/ADBE CurvesCustom#2/ADBE Effect Built In Params#3/ADBE Effect Mask Opacity#2",
+          "propertyIndex": 2
+        },
+        "slug": "ADBE_Effect_Built_In_Params__p3__ADBE_Effect_Mask_Opacity__p2"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "ADBE Effect Built In Params#3/ADBE Force CPU GPU#3",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "7dec68bb",
+          "matchName": "ADBE Force CPU GPU",
+          "name": "Ренд. с исп. ГП",
+          "path": "comp:1/layer:3/effects/E002/ADBE CurvesCustom#2/ADBE Effect Built In Params#3/ADBE Force CPU GPU#3",
+          "propertyIndex": 3
+        },
+        "slug": "ADBE_Effect_Built_In_Params__p3__ADBE_Force_CPU_GPU__p3"
+      }
+    ],
+    "variableCount": 0
+  }
+}

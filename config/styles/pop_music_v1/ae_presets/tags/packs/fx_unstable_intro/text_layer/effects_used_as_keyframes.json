@@ -1,0 +1,15 @@
+{
+  "layerId": "L017__of a baby",
+  "used": {
+    "Вихревое_смещение__ADBE_Turbulent_Displace": {
+      "ADBE_Turbulent_Displace-0002#2": {
+        "@time": {
+          "__slug__": "ADBE_Turbulent_Displace-0002__p2_time",
+          "payload": {
+            "__MISSING__": true
+          }
+        }
+      }
+    }
+  }
+}

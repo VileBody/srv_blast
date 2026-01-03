@@ -1,0 +1,1702 @@
+{
+  "canonicalName": "anim__Animator_1__ADBE_Text_Animator",
+  "domain": "textAnim",
+  "groupKey": "Animator 1::ADBE Text Animator",
+  "instancesCount": 13,
+  "keyframes": {
+    "paramCount": 2,
+    "params": [
+      {
+        "keyframeMeta": {
+          "hasExpression": false,
+          "keyCount": 12,
+          "valueTypeHint": "int"
+        },
+        "relPath": "ADBE Text Selectors#1/ADBE Text Selector#1/ADBE Text Percent End#2",
+        "sampleTriplet": {
+          "id": "e9efa1d7",
+          "matchName": "ADBE Text Percent End",
+          "name": "Конец",
+          "path": "comp:undefined/layer:8/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Selectors#1/ADBE Text Selector#1/ADBE Text Percent End#2",
+          "propertyIndex": 2
+        },
+        "slug": "ADBE_Text_Selectors__p1__ADBE_Text_Selector__p1__ADBE_Text_Percent_End__p2_time"
+      },
+      {
+        "keyframeMeta": {
+          "hasExpression": false,
+          "keyCount": 7,
+          "valueTypeHint": "int"
+        },
+        "relPath": "ADBE Text Selectors#1/ADBE Text Selector#1/ADBE Text Percent Start#1",
+        "sampleTriplet": {
+          "id": "6f9e9c8c",
+          "matchName": "ADBE Text Percent Start",
+          "name": "Начало",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Selectors#1/ADBE Text Selector#1/ADBE Text Percent Start#1",
+          "propertyIndex": 1
+        },
+        "slug": "ADBE_Text_Selectors__p1__ADBE_Text_Selector__p1__ADBE_Text_Percent_Start__p1_time"
+      }
+    ]
+  },
+  "namesSeen": [
+    "Animator 1"
+  ],
+  "presentCount": 9,
+  "template": {
+    "constantCount": 109,
+    "paramCount": 111,
+    "params": [
+      {
+        "constantValue": 100,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE 3DText Back Ambient#73",
+        "samplePayload": 100,
+        "sampleTriplet": {
+          "id": "70ef02d4",
+          "matchName": "ADBE 3DText Back Ambient",
+          "name": "Освещение - сзади",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE 3DText Back Ambient#73",
+          "propertyIndex": 73
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_3DText_Back_Ambient__p73"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE 3DText Back Bright#71",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "3e448b40",
+          "matchName": "ADBE 3DText Back Bright",
+          "name": "Яркость - сзади",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE 3DText Back Bright#71",
+          "propertyIndex": 71
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_3DText_Back_Bright__p71"
+      },
+      {
+        "constantValue": 50,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE 3DText Back Diffuse#74",
+        "samplePayload": 50,
+        "sampleTriplet": {
+          "id": "bbb00c33",
+          "matchName": "ADBE 3DText Back Diffuse",
+          "name": "Диффузия - сзади",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE 3DText Back Diffuse#74",
+          "propertyIndex": 74
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_3DText_Back_Diffuse__p74"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE 3DText Back Fresnel#80",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "4c0712ab",
+          "matchName": "ADBE 3DText Back Fresnel",
+          "name": "Ум.отр.: сзади",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE 3DText Back Fresnel#80",
+          "propertyIndex": 80
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_3DText_Back_Fresnel__p80"
+      },
+      {
+        "constantValue": 100,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE 3DText Back Gloss#79",
+        "samplePayload": 100,
+        "sampleTriplet": {
+          "id": "392146fc",
+          "matchName": "ADBE 3DText Back Gloss",
+          "name": "Резк.отр.: сзади",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE 3DText Back Gloss#79",
+          "propertyIndex": 79
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_3DText_Back_Gloss__p79"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE 3DText Back Hue#69",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "4ee4ffc9",
+          "matchName": "ADBE 3DText Back Hue",
+          "name": "Цветовой тон - сзади",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE 3DText Back Hue#69",
+          "propertyIndex": 69
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_3DText_Back_Hue__p69"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE 3DText Back IOR#83",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "8b349fe1",
+          "matchName": "ADBE 3DText Back IOR",
+          "name": "Инд.прел.:сзад. ",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE 3DText Back IOR#83",
+          "propertyIndex": 83
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_3DText_Back_IOR__p83"
+      },
+      {
+        "constantValue": 100,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE 3DText Back Metal#77",
+        "samplePayload": 100,
+        "sampleTriplet": {
+          "id": "651ec78d",
+          "matchName": "ADBE 3DText Back Metal",
+          "name": "Металл - сзади",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE 3DText Back Metal#77",
+          "propertyIndex": 77
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_3DText_Back_Metal__p77"
+      },
+      {
+        "constantValue": 100,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE 3DText Back Opacity#72",
+        "samplePayload": 100,
+        "sampleTriplet": {
+          "id": "529da230",
+          "matchName": "ADBE 3DText Back Opacity",
+          "name": "Непрозр.: сзади",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE 3DText Back Opacity#72",
+          "propertyIndex": 72
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_3DText_Back_Opacity__p72"
+      },
+      {
+        "constantValue": [
+          1,
+          0,
+          0,
+          1
+        ],
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE 3DText Back RGB#68",
+        "samplePayload": [
+          1,
+          0,
+          0,
+          1
+        ],
+        "sampleTriplet": {
+          "id": "1b932f8d",
+          "matchName": "ADBE 3DText Back RGB",
+          "name": "Цвет фона",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE 3DText Back RGB#68",
+          "propertyIndex": 68
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_3DText_Back_RGB__p68"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE 3DText Back Reflection#78",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "cae40c90",
+          "matchName": "ADBE 3DText Back Reflection",
+          "name": "Инт. отраж.: сзади",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE 3DText Back Reflection#78",
+          "propertyIndex": 78
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_3DText_Back_Reflection__p78"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE 3DText Back Sat#70",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "6d8af62d",
+          "matchName": "ADBE 3DText Back Sat",
+          "name": "Насыщ.: сзади",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE 3DText Back Sat#70",
+          "propertyIndex": 70
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_3DText_Back_Sat__p70"
+      },
+      {
+        "constantValue": 5,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE 3DText Back Shininess#76",
+        "samplePayload": 5,
+        "sampleTriplet": {
+          "id": "4ed0f68f",
+          "matchName": "ADBE 3DText Back Shininess",
+          "name": "Зерк.бл.: сзади",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE 3DText Back Shininess#76",
+          "propertyIndex": 76
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_3DText_Back_Shininess__p76"
+      },
+      {
+        "constantValue": 50,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE 3DText Back Specular#75",
+        "samplePayload": 50,
+        "sampleTriplet": {
+          "id": "c3e7131b",
+          "matchName": "ADBE 3DText Back Specular",
+          "name": "Инт.зерк.отр.:зад.",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE 3DText Back Specular#75",
+          "propertyIndex": 75
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_3DText_Back_Specular__p75"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE 3DText Back XparRoll#82",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "1e329922",
+          "matchName": "ADBE 3DText Back XparRoll",
+          "name": "Умен.проз.:сзади",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE 3DText Back XparRoll#82",
+          "propertyIndex": 82
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_3DText_Back_XparRoll__p82"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE 3DText Back Xparency#81",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "5ba31377",
+          "matchName": "ADBE 3DText Back Xparency",
+          "name": "Прозр.: сзади",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE 3DText Back Xparency#81",
+          "propertyIndex": 81
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_3DText_Back_Xparency__p81"
+      },
+      {
+        "constantValue": 100,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE 3DText Bevel Ambient#41",
+        "samplePayload": 100,
+        "sampleTriplet": {
+          "id": "1baebe64",
+          "matchName": "ADBE 3DText Bevel Ambient",
+          "name": "Фаска - освещение",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE 3DText Bevel Ambient#41",
+          "propertyIndex": 41
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_3DText_Bevel_Ambient__p41"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE 3DText Bevel Bright#39",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "48660337",
+          "matchName": "ADBE 3DText Bevel Bright",
+          "name": "Фаска - яркость",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE 3DText Bevel Bright#39",
+          "propertyIndex": 39
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_3DText_Bevel_Bright__p39"
+      },
+      {
+        "constantValue": 2,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE 3DText Bevel Depth#84",
+        "samplePayload": 2,
+        "sampleTriplet": {
+          "id": "4c5900f0",
+          "matchName": "ADBE 3DText Bevel Depth",
+          "name": "Глубина фаски",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE 3DText Bevel Depth#84",
+          "propertyIndex": 84
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_3DText_Bevel_Depth__p84"
+      },
+      {
+        "constantValue": 50,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE 3DText Bevel Diffuse#42",
+        "samplePayload": 50,
+        "sampleTriplet": {
+          "id": "d0ebb553",
+          "matchName": "ADBE 3DText Bevel Diffuse",
+          "name": "Фаска - диффузия",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE 3DText Bevel Diffuse#42",
+          "propertyIndex": 42
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_3DText_Bevel_Diffuse__p42"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE 3DText Bevel Fresnel#48",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "08af1a12",
+          "matchName": "ADBE 3DText Bevel Fresnel",
+          "name": "Фаска: ум.отр.",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE 3DText Bevel Fresnel#48",
+          "propertyIndex": 48
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_3DText_Bevel_Fresnel__p48"
+      },
+      {
+        "constantValue": 100,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE 3DText Bevel Gloss#47",
+        "samplePayload": 100,
+        "sampleTriplet": {
+          "id": "0d0564cc",
+          "matchName": "ADBE 3DText Bevel Gloss",
+          "name": "Фаска: резк.отр.",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE 3DText Bevel Gloss#47",
+          "propertyIndex": 47
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_3DText_Bevel_Gloss__p47"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE 3DText Bevel Hue#37",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "f7a72f53",
+          "matchName": "ADBE 3DText Bevel Hue",
+          "name": "Фаска - тон",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE 3DText Bevel Hue#37",
+          "propertyIndex": 37
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_3DText_Bevel_Hue__p37"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE 3DText Bevel IOR#51",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "53f777ab",
+          "matchName": "ADBE 3DText Bevel IOR",
+          "name": "Фаска: инд.прел.",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE 3DText Bevel IOR#51",
+          "propertyIndex": 51
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_3DText_Bevel_IOR__p51"
+      },
+      {
+        "constantValue": 100,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE 3DText Bevel Metal#45",
+        "samplePayload": 100,
+        "sampleTriplet": {
+          "id": "158a2275",
+          "matchName": "ADBE 3DText Bevel Metal",
+          "name": "Фаска - металл",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE 3DText Bevel Metal#45",
+          "propertyIndex": 45
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_3DText_Bevel_Metal__p45"
+      },
+      {
+        "constantValue": 100,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE 3DText Bevel Opacity#40",
+        "samplePayload": 100,
+        "sampleTriplet": {
+          "id": "8ca8f060",
+          "matchName": "ADBE 3DText Bevel Opacity",
+          "name": "Фаска: непрозр.",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE 3DText Bevel Opacity#40",
+          "propertyIndex": 40
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_3DText_Bevel_Opacity__p40"
+      },
+      {
+        "constantValue": [
+          1,
+          0,
+          0,
+          1
+        ],
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE 3DText Bevel RGB#36",
+        "samplePayload": [
+          1,
+          0,
+          0,
+          1
+        ],
+        "sampleTriplet": {
+          "id": "ba9067c3",
+          "matchName": "ADBE 3DText Bevel RGB",
+          "name": "Фаска - цвет",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE 3DText Bevel RGB#36",
+          "propertyIndex": 36
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_3DText_Bevel_RGB__p36"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE 3DText Bevel Reflection#46",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "125b3172",
+          "matchName": "ADBE 3DText Bevel Reflection",
+          "name": "Фаска: инт.отр.",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE 3DText Bevel Reflection#46",
+          "propertyIndex": 46
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_3DText_Bevel_Reflection__p46"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE 3DText Bevel Sat#38",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "d82d1220",
+          "matchName": "ADBE 3DText Bevel Sat",
+          "name": "Фаска: насыщ.",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE 3DText Bevel Sat#38",
+          "propertyIndex": 38
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_3DText_Bevel_Sat__p38"
+      },
+      {
+        "constantValue": 5,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE 3DText Bevel Shininess#44",
+        "samplePayload": 5,
+        "sampleTriplet": {
+          "id": "720124ab",
+          "matchName": "ADBE 3DText Bevel Shininess",
+          "name": "Фаска: зерк.блеск",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE 3DText Bevel Shininess#44",
+          "propertyIndex": 44
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_3DText_Bevel_Shininess__p44"
+      },
+      {
+        "constantValue": 50,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE 3DText Bevel Specular#43",
+        "samplePayload": 50,
+        "sampleTriplet": {
+          "id": "5c2fc91d",
+          "matchName": "ADBE 3DText Bevel Specular",
+          "name": "Фаска: инт.з.отр.",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE 3DText Bevel Specular#43",
+          "propertyIndex": 43
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_3DText_Bevel_Specular__p43"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE 3DText Bevel XparRoll#50",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "01dda91a",
+          "matchName": "ADBE 3DText Bevel XparRoll",
+          "name": "Фаска: ум.прозр.",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE 3DText Bevel XparRoll#50",
+          "propertyIndex": 50
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_3DText_Bevel_XparRoll__p50"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE 3DText Bevel Xparency#49",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "5e834c10",
+          "matchName": "ADBE 3DText Bevel Xparency",
+          "name": "Фаска: прозр.",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE 3DText Bevel Xparency#49",
+          "propertyIndex": 49
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_3DText_Bevel_Xparency__p49"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE 3DText Extrude Depth#85",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "2fd4f254",
+          "matchName": "ADBE 3DText Extrude Depth",
+          "name": "Глуб. экструзии",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE 3DText Extrude Depth#85",
+          "propertyIndex": 85
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_3DText_Extrude_Depth__p85"
+      },
+      {
+        "constantValue": 100,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE 3DText Front Ambient#25",
+        "samplePayload": 100,
+        "sampleTriplet": {
+          "id": "49477da3",
+          "matchName": "ADBE 3DText Front Ambient",
+          "name": "Пер.план: освещ.",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE 3DText Front Ambient#25",
+          "propertyIndex": 25
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_3DText_Front_Ambient__p25"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE 3DText Front Bright#23",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "e492b74f",
+          "matchName": "ADBE 3DText Front Bright",
+          "name": "Пер.план: яркость",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE 3DText Front Bright#23",
+          "propertyIndex": 23
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_3DText_Front_Bright__p23"
+      },
+      {
+        "constantValue": 50,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE 3DText Front Diffuse#26",
+        "samplePayload": 50,
+        "sampleTriplet": {
+          "id": "6a0fe1bc",
+          "matchName": "ADBE 3DText Front Diffuse",
+          "name": "Пер.пл.:диффуз.",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE 3DText Front Diffuse#26",
+          "propertyIndex": 26
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_3DText_Front_Diffuse__p26"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE 3DText Front Fresnel#32",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "84b56f22",
+          "matchName": "ADBE 3DText Front Fresnel",
+          "name": "Отр.спер.:умен.",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE 3DText Front Fresnel#32",
+          "propertyIndex": 32
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_3DText_Front_Fresnel__p32"
+      },
+      {
+        "constantValue": 100,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE 3DText Front Gloss#31",
+        "samplePayload": 100,
+        "sampleTriplet": {
+          "id": "a149f894",
+          "matchName": "ADBE 3DText Front Gloss",
+          "name": "Отраж.спе.-резк.",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE 3DText Front Gloss#31",
+          "propertyIndex": 31
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_3DText_Front_Gloss__p31"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE 3DText Front Hue#21",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "82620009",
+          "matchName": "ADBE 3DText Front Hue",
+          "name": "Передний план - цветовой тон",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE 3DText Front Hue#21",
+          "propertyIndex": 21
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_3DText_Front_Hue__p21"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE 3DText Front IOR#35",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "b7c18700",
+          "matchName": "ADBE 3DText Front IOR",
+          "name": "Инд.прел.:спер.",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE 3DText Front IOR#35",
+          "propertyIndex": 35
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_3DText_Front_IOR__p35"
+      },
+      {
+        "constantValue": 100,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE 3DText Front Metal#29",
+        "samplePayload": 100,
+        "sampleTriplet": {
+          "id": "be18e406",
+          "matchName": "ADBE 3DText Front Metal",
+          "name": "Металл — спереди",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE 3DText Front Metal#29",
+          "propertyIndex": 29
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_3DText_Front_Metal__p29"
+      },
+      {
+        "constantValue": 100,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE 3DText Front Opacity#24",
+        "samplePayload": 100,
+        "sampleTriplet": {
+          "id": "0512a4fb",
+          "matchName": "ADBE 3DText Front Opacity",
+          "name": "Пер.пл.: непрозр.",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE 3DText Front Opacity#24",
+          "propertyIndex": 24
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_3DText_Front_Opacity__p24"
+      },
+      {
+        "constantValue": [
+          1,
+          0,
+          0,
+          1
+        ],
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE 3DText Front RGB#20",
+        "samplePayload": [
+          1,
+          0,
+          0,
+          1
+        ],
+        "sampleTriplet": {
+          "id": "31313125",
+          "matchName": "ADBE 3DText Front RGB",
+          "name": "Пер.план: цвет",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE 3DText Front RGB#20",
+          "propertyIndex": 20
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_3DText_Front_RGB__p20"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE 3DText Front Reflection#30",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "ac46c9b8",
+          "matchName": "ADBE 3DText Front Reflection",
+          "name": "Инт.отр.: спер.",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE 3DText Front Reflection#30",
+          "propertyIndex": 30
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_3DText_Front_Reflection__p30"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE 3DText Front Sat#22",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "7970e88a",
+          "matchName": "ADBE 3DText Front Sat",
+          "name": "Пер.план: насыщ.",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE 3DText Front Sat#22",
+          "propertyIndex": 22
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_3DText_Front_Sat__p22"
+      },
+      {
+        "constantValue": 5,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE 3DText Front Shininess#28",
+        "samplePayload": 5,
+        "sampleTriplet": {
+          "id": "9967dec0",
+          "matchName": "ADBE 3DText Front Shininess",
+          "name": "Пер.план:зерк.бл.",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE 3DText Front Shininess#28",
+          "propertyIndex": 28
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_3DText_Front_Shininess__p28"
+      },
+      {
+        "constantValue": 50,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE 3DText Front Specular#27",
+        "samplePayload": 50,
+        "sampleTriplet": {
+          "id": "cc7475f0",
+          "matchName": "ADBE 3DText Front Specular",
+          "name": "П.пл.:инт.з.отр.",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE 3DText Front Specular#27",
+          "propertyIndex": 27
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_3DText_Front_Specular__p27"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE 3DText Front XparRoll#34",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "b1d47967",
+          "matchName": "ADBE 3DText Front XparRoll",
+          "name": "Прозр.спер.:умен.",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE 3DText Front XparRoll#34",
+          "propertyIndex": 34
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_3DText_Front_XparRoll__p34"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE 3DText Front Xparency#33",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "aebc7fde",
+          "matchName": "ADBE 3DText Front Xparency",
+          "name": "Прозр.: спереди",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE 3DText Front Xparency#33",
+          "propertyIndex": 33
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_3DText_Front_Xparency__p33"
+      },
+      {
+        "constantValue": 100,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE 3DText Side Ambient#57",
+        "samplePayload": 100,
+        "sampleTriplet": {
+          "id": "459b8c56",
+          "matchName": "ADBE 3DText Side Ambient",
+          "name": "Освещ.: бока",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE 3DText Side Ambient#57",
+          "propertyIndex": 57
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_3DText_Side_Ambient__p57"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE 3DText Side Bright#55",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "a598de6a",
+          "matchName": "ADBE 3DText Side Bright",
+          "name": "Яркость: бока",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE 3DText Side Bright#55",
+          "propertyIndex": 55
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_3DText_Side_Bright__p55"
+      },
+      {
+        "constantValue": 50,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE 3DText Side Diffuse#58",
+        "samplePayload": 50,
+        "sampleTriplet": {
+          "id": "d0ece325",
+          "matchName": "ADBE 3DText Side Diffuse",
+          "name": "Диффузия: бока",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE 3DText Side Diffuse#58",
+          "propertyIndex": 58
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_3DText_Side_Diffuse__p58"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE 3DText Side Fresnel#64",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "e22e33a9",
+          "matchName": "ADBE 3DText Side Fresnel",
+          "name": "Умен.отраж.: бока",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE 3DText Side Fresnel#64",
+          "propertyIndex": 64
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_3DText_Side_Fresnel__p64"
+      },
+      {
+        "constantValue": 100,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE 3DText Side Gloss#63",
+        "samplePayload": 100,
+        "sampleTriplet": {
+          "id": "dbf587bb",
+          "matchName": "ADBE 3DText Side Gloss",
+          "name": "Резк.отраж.: бока",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE 3DText Side Gloss#63",
+          "propertyIndex": 63
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_3DText_Side_Gloss__p63"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE 3DText Side Hue#53",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "5beb319c",
+          "matchName": "ADBE 3DText Side Hue",
+          "name": "Тон - по бокам",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE 3DText Side Hue#53",
+          "propertyIndex": 53
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_3DText_Side_Hue__p53"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE 3DText Side IOR#67",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "f27b241f",
+          "matchName": "ADBE 3DText Side IOR",
+          "name": "Инд. прелом.: бока",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE 3DText Side IOR#67",
+          "propertyIndex": 67
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_3DText_Side_IOR__p67"
+      },
+      {
+        "constantValue": 100,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE 3DText Side Metal#61",
+        "samplePayload": 100,
+        "sampleTriplet": {
+          "id": "a5b9d1ce",
+          "matchName": "ADBE 3DText Side Metal",
+          "name": "Металл - по бокам",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE 3DText Side Metal#61",
+          "propertyIndex": 61
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_3DText_Side_Metal__p61"
+      },
+      {
+        "constantValue": 100,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE 3DText Side Opacity#56",
+        "samplePayload": 100,
+        "sampleTriplet": {
+          "id": "a40a83ce",
+          "matchName": "ADBE 3DText Side Opacity",
+          "name": "Непрозр.: бока",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE 3DText Side Opacity#56",
+          "propertyIndex": 56
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_3DText_Side_Opacity__p56"
+      },
+      {
+        "constantValue": [
+          1,
+          0,
+          0,
+          1
+        ],
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE 3DText Side RGB#52",
+        "samplePayload": [
+          1,
+          0,
+          0,
+          1
+        ],
+        "sampleTriplet": {
+          "id": "2560b628",
+          "matchName": "ADBE 3DText Side RGB",
+          "name": "Цвет - по бокам",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE 3DText Side RGB#52",
+          "propertyIndex": 52
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_3DText_Side_RGB__p52"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE 3DText Side Reflection#62",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "35677fdb",
+          "matchName": "ADBE 3DText Side Reflection",
+          "name": "Инт. отраж.: бока",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE 3DText Side Reflection#62",
+          "propertyIndex": 62
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_3DText_Side_Reflection__p62"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE 3DText Side Sat#54",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "9e70ef43",
+          "matchName": "ADBE 3DText Side Sat",
+          "name": "Насыщ.: бок",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE 3DText Side Sat#54",
+          "propertyIndex": 54
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_3DText_Side_Sat__p54"
+      },
+      {
+        "constantValue": 5,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE 3DText Side Shininess#60",
+        "samplePayload": 5,
+        "sampleTriplet": {
+          "id": "ca935d70",
+          "matchName": "ADBE 3DText Side Shininess",
+          "name": "Зерк. блеск: бока",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE 3DText Side Shininess#60",
+          "propertyIndex": 60
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_3DText_Side_Shininess__p60"
+      },
+      {
+        "constantValue": 50,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE 3DText Side Specular#59",
+        "samplePayload": 50,
+        "sampleTriplet": {
+          "id": "32058c41",
+          "matchName": "ADBE 3DText Side Specular",
+          "name": "Инт.зер.отр.:бок",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE 3DText Side Specular#59",
+          "propertyIndex": 59
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_3DText_Side_Specular__p59"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE 3DText Side XparRoll#66",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "db7772c0",
+          "matchName": "ADBE 3DText Side XparRoll",
+          "name": "Умен.прозр.: бока",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE 3DText Side XparRoll#66",
+          "propertyIndex": 66
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_3DText_Side_XparRoll__p66"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE 3DText Side Xparency#65",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "47aac911",
+          "matchName": "ADBE 3DText Side Xparency",
+          "name": "Прозр.: бока",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE 3DText Side Xparency#65",
+          "propertyIndex": 65
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_3DText_Side_Xparency__p65"
+      },
+      {
+        "constantValue": [
+          0,
+          0,
+          0
+        ],
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE Text Anchor Point 3D#1",
+        "samplePayload": [
+          0,
+          0,
+          0
+        ],
+        "sampleTriplet": {
+          "id": "13cf7337",
+          "matchName": "ADBE Text Anchor Point 3D",
+          "name": "Опорная точка",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE Text Anchor Point 3D#1",
+          "propertyIndex": 1
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_Text_Anchor_Point_3D__p1"
+      },
+      {
+        "constantValue": [
+          0,
+          0
+        ],
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE Text Blur#95",
+        "samplePayload": [
+          0,
+          0
+        ],
+        "sampleTriplet": {
+          "id": "2447216d",
+          "matchName": "ADBE Text Blur",
+          "name": "Размытие",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE Text Blur#95",
+          "propertyIndex": 95
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_Text_Blur__p95"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE Text Character Change Type#90",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "42c2a6e6",
+          "matchName": "ADBE Text Character Change Type",
+          "name": "Выравн. символов",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE Text Character Change Type#90",
+          "propertyIndex": 90
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_Text_Character_Change_Type__p90"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE Text Character Offset#93",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "7bdd7b1a",
+          "matchName": "ADBE Text Character Offset",
+          "name": "Смещ. символов",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE Text Character Offset#93",
+          "propertyIndex": 93
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_Text_Character_Offset__p93"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE Text Character Range#91",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "a46fdeae",
+          "matchName": "ADBE Text Character Range",
+          "name": "Диап. символов",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE Text Character Range#91",
+          "propertyIndex": 91
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_Text_Character_Range__p91"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE Text Character Replace#92",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "6c455bf4",
+          "matchName": "ADBE Text Character Replace",
+          "name": "Значение символа",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE Text Character Replace#92",
+          "propertyIndex": 92
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_Text_Character_Replace__p92"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE Text Fill Brightness#18",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "c3c962eb",
+          "matchName": "ADBE Text Fill Brightness",
+          "name": "Яркость заливки",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE Text Fill Brightness#18",
+          "propertyIndex": 18
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_Text_Fill_Brightness__p18"
+      },
+      {
+        "constantValue": [
+          1,
+          0,
+          0,
+          1
+        ],
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE Text Fill Color#12",
+        "samplePayload": [
+          1,
+          0,
+          0,
+          1
+        ],
+        "sampleTriplet": {
+          "id": "bf60da6d",
+          "matchName": "ADBE Text Fill Color",
+          "name": "Цвет заливки",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE Text Fill Color#12",
+          "propertyIndex": 12
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_Text_Fill_Color__p12"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE Text Fill Hue#14",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "87c2419c",
+          "matchName": "ADBE Text Fill Hue",
+          "name": "Цветовой тон заливки",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE Text Fill Hue#14",
+          "propertyIndex": 14
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_Text_Fill_Hue__p14"
+      },
+      {
+        "constantValue": 100,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE Text Fill Opacity#10",
+        "samplePayload": 100,
+        "sampleTriplet": {
+          "id": "1db56bfd",
+          "matchName": "ADBE Text Fill Opacity",
+          "name": "Непрозр.заливки",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE Text Fill Opacity#10",
+          "propertyIndex": 10
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_Text_Fill_Opacity__p10"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE Text Fill Saturation#16",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "2f21a3a4",
+          "matchName": "ADBE Text Fill Saturation",
+          "name": "Насыщ. заливки",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE Text Fill Saturation#16",
+          "propertyIndex": 16
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_Text_Fill_Saturation__p16"
+      },
+      {
+        "constantValue": 50,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE Text Line Anchor#87",
+        "samplePayload": 50,
+        "sampleTriplet": {
+          "id": "b31af0a2",
+          "matchName": "ADBE Text Line Anchor",
+          "name": "Лин. привязка",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE Text Line Anchor#87",
+          "propertyIndex": 87
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_Text_Line_Anchor__p87"
+      },
+      {
+        "constantValue": [
+          0,
+          0
+        ],
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE Text Line Spacing#94",
+        "samplePayload": [
+          0,
+          0
+        ],
+        "sampleTriplet": {
+          "id": "7498d90c",
+          "matchName": "ADBE Text Line Spacing",
+          "name": "Межстр. интервал",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE Text Line Spacing#94",
+          "propertyIndex": 94
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_Text_Line_Spacing__p94"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE Text Opacity#9",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "d1b69248",
+          "matchName": "ADBE Text Opacity",
+          "name": "Непрозрачность",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE Text Opacity#9",
+          "propertyIndex": 9
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_Text_Opacity__p9"
+      },
+      {
+        "constantValue": [
+          0,
+          0,
+          0
+        ],
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE Text Position 3D#2",
+        "samplePayload": [
+          0,
+          0,
+          0
+        ],
+        "sampleTriplet": {
+          "id": "16848f9a",
+          "matchName": "ADBE Text Position 3D",
+          "name": "Положение",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE Text Position 3D#2",
+          "propertyIndex": 2
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_Text_Position_3D__p2"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE Text Rotation X#6",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "88a7e174",
+          "matchName": "ADBE Text Rotation X",
+          "name": "Поворот X",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE Text Rotation X#6",
+          "propertyIndex": 6
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_Text_Rotation_X__p6"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE Text Rotation Y#7",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "1d5a3ae4",
+          "matchName": "ADBE Text Rotation Y",
+          "name": "Поворот Y",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE Text Rotation Y#7",
+          "propertyIndex": 7
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_Text_Rotation_Y__p7"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE Text Rotation#8",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "75ba1a66",
+          "matchName": "ADBE Text Rotation",
+          "name": "Поворот",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE Text Rotation#8",
+          "propertyIndex": 8
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_Text_Rotation__p8"
+      },
+      {
+        "constantValue": [
+          100,
+          100,
+          100
+        ],
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE Text Scale 3D#3",
+        "samplePayload": [
+          100,
+          100,
+          100
+        ],
+        "sampleTriplet": {
+          "id": "d306b5d4",
+          "matchName": "ADBE Text Scale 3D",
+          "name": "Масштаб",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE Text Scale 3D#3",
+          "propertyIndex": 3
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_Text_Scale_3D__p3"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE Text Skew Axis#5",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "c58ba8d6",
+          "matchName": "ADBE Text Skew Axis",
+          "name": "Ось наклона",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE Text Skew Axis#5",
+          "propertyIndex": 5
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_Text_Skew_Axis__p5"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE Text Skew#4",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "32e1dd56",
+          "matchName": "ADBE Text Skew",
+          "name": "Наклон",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE Text Skew#4",
+          "propertyIndex": 4
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_Text_Skew__p4"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE Text Stroke Brightness#19",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "47e72f69",
+          "matchName": "ADBE Text Stroke Brightness",
+          "name": "Яркость обводки",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE Text Stroke Brightness#19",
+          "propertyIndex": 19
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_Text_Stroke_Brightness__p19"
+      },
+      {
+        "constantValue": [
+          1,
+          0,
+          0,
+          1
+        ],
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE Text Stroke Color#13",
+        "samplePayload": [
+          1,
+          0,
+          0,
+          1
+        ],
+        "sampleTriplet": {
+          "id": "9a998c0d",
+          "matchName": "ADBE Text Stroke Color",
+          "name": "Цвет обводки",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE Text Stroke Color#13",
+          "propertyIndex": 13
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_Text_Stroke_Color__p13"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE Text Stroke Hue#15",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "d38e468c",
+          "matchName": "ADBE Text Stroke Hue",
+          "name": "Цветовой тон обводки",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE Text Stroke Hue#15",
+          "propertyIndex": 15
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_Text_Stroke_Hue__p15"
+      },
+      {
+        "constantValue": 100,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE Text Stroke Opacity#11",
+        "samplePayload": 100,
+        "sampleTriplet": {
+          "id": "56b05a6d",
+          "matchName": "ADBE Text Stroke Opacity",
+          "name": "Непрозр.обв.",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE Text Stroke Opacity#11",
+          "propertyIndex": 11
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_Text_Stroke_Opacity__p11"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE Text Stroke Saturation#17",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "885fa452",
+          "matchName": "ADBE Text Stroke Saturation",
+          "name": "Насыщ. обводки",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE Text Stroke Saturation#17",
+          "propertyIndex": 17
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_Text_Stroke_Saturation__p17"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE Text Stroke Width#86",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "40b93052",
+          "matchName": "ADBE Text Stroke Width",
+          "name": "Ширина обводки",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE Text Stroke Width#86",
+          "propertyIndex": 86
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_Text_Stroke_Width__p86"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE Text Track Type#88",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "1d9138d7",
+          "matchName": "ADBE Text Track Type",
+          "name": "Тип отслеживания",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE Text Track Type#88",
+          "propertyIndex": 88
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_Text_Track_Type__p88"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Text Animator Properties#2/ADBE Text Tracking Amount#89",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "fe5098e4",
+          "matchName": "ADBE Text Tracking Amount",
+          "name": "Степень отслеживания",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Animator Properties#2/ADBE Text Tracking Amount#89",
+          "propertyIndex": 89
+        },
+        "slug": "ADBE_Text_Animator_Properties__p2__ADBE_Text_Tracking_Amount__p89"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Text Selectors#1/ADBE Text Selector#1/ADBE Text Index End#5",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "ad2296e4",
+          "matchName": "ADBE Text Index End",
+          "name": "Конец",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Selectors#1/ADBE Text Selector#1/ADBE Text Index End#5",
+          "propertyIndex": 5
+        },
+        "slug": "ADBE_Text_Selectors__p1__ADBE_Text_Selector__p1__ADBE_Text_Index_End__p5"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Text Selectors#1/ADBE Text Selector#1/ADBE Text Index Offset#6",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "bdd6ce7d",
+          "matchName": "ADBE Text Index Offset",
+          "name": "Смещение",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Selectors#1/ADBE Text Selector#1/ADBE Text Index Offset#6",
+          "propertyIndex": 6
+        },
+        "slug": "ADBE_Text_Selectors__p1__ADBE_Text_Selector__p1__ADBE_Text_Index_Offset__p6"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Text Selectors#1/ADBE Text Selector#1/ADBE Text Index Start#4",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "f76be196",
+          "matchName": "ADBE Text Index Start",
+          "name": "Начало",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Selectors#1/ADBE Text Selector#1/ADBE Text Index Start#4",
+          "propertyIndex": 4
+        },
+        "slug": "ADBE_Text_Selectors__p1__ADBE_Text_Selector__p1__ADBE_Text_Index_Start__p4"
+      },
+      {
+        "kind": "variable",
+        "relPath": "ADBE Text Selectors#1/ADBE Text Selector#1/ADBE Text Percent End#2",
+        "samplePayload": 100,
+        "sampleTriplet": {
+          "id": "3a41da48",
+          "matchName": "ADBE Text Percent End",
+          "name": "Конец",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Selectors#1/ADBE Text Selector#1/ADBE Text Percent End#2",
+          "propertyIndex": 2
+        },
+        "slug": "ADBE_Text_Selectors__p1__ADBE_Text_Selector__p1__ADBE_Text_Percent_End__p2"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Text Selectors#1/ADBE Text Selector#1/ADBE Text Percent Offset#3",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "2e1b1ec1",
+          "matchName": "ADBE Text Percent Offset",
+          "name": "Смещение",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Selectors#1/ADBE Text Selector#1/ADBE Text Percent Offset#3",
+          "propertyIndex": 3
+        },
+        "slug": "ADBE_Text_Selectors__p1__ADBE_Text_Selector__p1__ADBE_Text_Percent_Offset__p3"
+      },
+      {
+        "kind": "variable",
+        "relPath": "ADBE Text Selectors#1/ADBE Text Selector#1/ADBE Text Percent Start#1",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "847cb813",
+          "matchName": "ADBE Text Percent Start",
+          "name": "Начало",
+          "path": "comp:undefined/layer:8/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Selectors#1/ADBE Text Selector#1/ADBE Text Percent Start#1",
+          "propertyIndex": 1
+        },
+        "slug": "ADBE_Text_Selectors__p1__ADBE_Text_Selector__p1__ADBE_Text_Percent_Start__p1"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Text Selectors#1/ADBE Text Selector#1/ADBE Text Range Advanced#7/ADBE Text Levels Max Ease#7",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "fc5543db",
+          "matchName": "ADBE Text Levels Max Ease",
+          "name": "Выс. ур. замедл.",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Selectors#1/ADBE Text Selector#1/ADBE Text Range Advanced#7/ADBE Text Levels Max Ease#7",
+          "propertyIndex": 7
+        },
+        "slug": "ADBE_Text_Selectors__p1__ADBE_Text_Selector__p1__ADBE_Text_Range_Advanced__p7__ADBE_Text_Levels_Max_Ease__p7"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Text Selectors#1/ADBE Text Selector#1/ADBE Text Range Advanced#7/ADBE Text Levels Min Ease#8",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "b5107544",
+          "matchName": "ADBE Text Levels Min Ease",
+          "name": "Низк.ур.замедл.",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Selectors#1/ADBE Text Selector#1/ADBE Text Range Advanced#7/ADBE Text Levels Min Ease#8",
+          "propertyIndex": 8
+        },
+        "slug": "ADBE_Text_Selectors__p1__ADBE_Text_Selector__p1__ADBE_Text_Range_Advanced__p7__ADBE_Text_Levels_Min_Ease__p8"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Text Selectors#1/ADBE Text Selector#1/ADBE Text Range Advanced#7/ADBE Text Random Seed#10",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "46feccf4",
+          "matchName": "ADBE Text Random Seed",
+          "name": "Случ. нач. число",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Selectors#1/ADBE Text Selector#1/ADBE Text Range Advanced#7/ADBE Text Random Seed#10",
+          "propertyIndex": 10
+        },
+        "slug": "ADBE_Text_Selectors__p1__ADBE_Text_Selector__p1__ADBE_Text_Range_Advanced__p7__ADBE_Text_Random_Seed__p10"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Text Selectors#1/ADBE Text Selector#1/ADBE Text Range Advanced#7/ADBE Text Randomize Order#9",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "e368234f",
+          "matchName": "ADBE Text Randomize Order",
+          "name": "Произвольный порядок",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Selectors#1/ADBE Text Selector#1/ADBE Text Range Advanced#7/ADBE Text Randomize Order#9",
+          "propertyIndex": 9
+        },
+        "slug": "ADBE_Text_Selectors__p1__ADBE_Text_Selector__p1__ADBE_Text_Range_Advanced__p7__ADBE_Text_Randomize_Order__p9"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "ADBE Text Selectors#1/ADBE Text Selector#1/ADBE Text Range Advanced#7/ADBE Text Range Shape#5",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "6f29df94",
+          "matchName": "ADBE Text Range Shape",
+          "name": "Фигура",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Selectors#1/ADBE Text Selector#1/ADBE Text Range Advanced#7/ADBE Text Range Shape#5",
+          "propertyIndex": 5
+        },
+        "slug": "ADBE_Text_Selectors__p1__ADBE_Text_Selector__p1__ADBE_Text_Range_Advanced__p7__ADBE_Text_Range_Shape__p5"
+      },
+      {
+        "constantValue": 3,
+        "kind": "constant",
+        "relPath": "ADBE Text Selectors#1/ADBE Text Selector#1/ADBE Text Range Advanced#7/ADBE Text Range Type2#2",
+        "samplePayload": 3,
+        "sampleTriplet": {
+          "id": "bdf3fbca",
+          "matchName": "ADBE Text Range Type2",
+          "name": "На основе",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Selectors#1/ADBE Text Selector#1/ADBE Text Range Advanced#7/ADBE Text Range Type2#2",
+          "propertyIndex": 2
+        },
+        "slug": "ADBE_Text_Selectors__p1__ADBE_Text_Selector__p1__ADBE_Text_Range_Advanced__p7__ADBE_Text_Range_Type2__p2"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "ADBE Text Selectors#1/ADBE Text Selector#1/ADBE Text Range Advanced#7/ADBE Text Range Units#1",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "b69cc5c6",
+          "matchName": "ADBE Text Range Units",
+          "name": "Единицы",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Selectors#1/ADBE Text Selector#1/ADBE Text Range Advanced#7/ADBE Text Range Units#1",
+          "propertyIndex": 1
+        },
+        "slug": "ADBE_Text_Selectors__p1__ADBE_Text_Selector__p1__ADBE_Text_Range_Advanced__p7__ADBE_Text_Range_Units__p1"
+      },
+      {
+        "constantValue": 100,
+        "kind": "constant",
+        "relPath": "ADBE Text Selectors#1/ADBE Text Selector#1/ADBE Text Range Advanced#7/ADBE Text Selector Max Amount#4",
+        "samplePayload": 100,
+        "sampleTriplet": {
+          "id": "88efb326",
+          "matchName": "ADBE Text Selector Max Amount",
+          "name": "Величина",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Selectors#1/ADBE Text Selector#1/ADBE Text Range Advanced#7/ADBE Text Selector Max Amount#4",
+          "propertyIndex": 4
+        },
+        "slug": "ADBE_Text_Selectors__p1__ADBE_Text_Selector__p1__ADBE_Text_Range_Advanced__p7__ADBE_Text_Selector_Max_Amount__p4"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "ADBE Text Selectors#1/ADBE Text Selector#1/ADBE Text Range Advanced#7/ADBE Text Selector Mode#3",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "6e1281fe",
+          "matchName": "ADBE Text Selector Mode",
+          "name": "Режим",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Selectors#1/ADBE Text Selector#1/ADBE Text Range Advanced#7/ADBE Text Selector Mode#3",
+          "propertyIndex": 3
+        },
+        "slug": "ADBE_Text_Selectors__p1__ADBE_Text_Selector__p1__ADBE_Text_Range_Advanced__p7__ADBE_Text_Selector_Mode__p3"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Text Selectors#1/ADBE Text Selector#1/ADBE Text Range Advanced#7/ADBE Text Selector Smoothness#6",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "8102b9f7",
+          "matchName": "ADBE Text Selector Smoothness",
+          "name": "Сглаживание",
+          "path": "comp:undefined/layer:3/text_animators/ADBE Text Animators#4/ADBE Text Animator#1/ADBE Text Selectors#1/ADBE Text Selector#1/ADBE Text Range Advanced#7/ADBE Text Selector Smoothness#6",
+          "propertyIndex": 6
+        },
+        "slug": "ADBE_Text_Selectors__p1__ADBE_Text_Selector__p1__ADBE_Text_Range_Advanced__p7__ADBE_Text_Selector_Smoothness__p6"
+      }
+    ],
+    "variableCount": 2
+  }
+}

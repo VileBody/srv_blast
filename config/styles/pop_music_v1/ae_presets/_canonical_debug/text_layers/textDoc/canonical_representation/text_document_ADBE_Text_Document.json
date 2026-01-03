@@ -1,0 +1,316 @@
+{
+  "canonicalName": "text_document__ADBE_Text_Document",
+  "domain": "textDoc",
+  "groupKey": "ADBE Text Document",
+  "instancesCount": 13,
+  "keyframes": {
+    "paramCount": 0,
+    "params": []
+  },
+  "presentCount": 13,
+  "template": {
+    "constantCount": 12,
+    "paramCount": 22,
+    "params": [
+      {
+        "kind": "variable",
+        "relPath": "ADBE_Text_Document.value.applyFill",
+        "samplePayload": true,
+        "sampleTriplet": {
+          "id": "edcf0e9c",
+          "matchName": "ADBE Text Document",
+          "name": "Исходный текст",
+          "path": "comp:undefined/layer:3/text_document/ADBE Text Document#1",
+          "propertyIndex": 1
+        },
+        "slug": "ADBE_Text_Document.value.applyFill"
+      },
+      {
+        "kind": "variable",
+        "relPath": "ADBE_Text_Document.value.applyStroke",
+        "samplePayload": false,
+        "sampleTriplet": {
+          "id": "edcf0e9c",
+          "matchName": "ADBE Text Document",
+          "name": "Исходный текст",
+          "path": "comp:undefined/layer:3/text_document/ADBE Text Document#1",
+          "propertyIndex": 1
+        },
+        "slug": "ADBE_Text_Document.value.applyStroke"
+      },
+      {
+        "constantValue": false,
+        "kind": "constant",
+        "relPath": "ADBE_Text_Document.value.autoLeading",
+        "samplePayload": false,
+        "sampleTriplet": {
+          "id": "edcf0e9c",
+          "matchName": "ADBE Text Document",
+          "name": "Исходный текст",
+          "path": "comp:undefined/layer:3/text_document/ADBE Text Document#1",
+          "propertyIndex": 1
+        },
+        "slug": "ADBE_Text_Document.value.autoLeading"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE_Text_Document.value.baselineShift",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "edcf0e9c",
+          "matchName": "ADBE Text Document",
+          "name": "Исходный текст",
+          "path": "comp:undefined/layer:3/text_document/ADBE Text Document#1",
+          "propertyIndex": 1
+        },
+        "slug": "ADBE_Text_Document.value.baselineShift"
+      },
+      {
+        "constantValue": false,
+        "kind": "constant",
+        "relPath": "ADBE_Text_Document.value.fauxBold",
+        "samplePayload": false,
+        "sampleTriplet": {
+          "id": "edcf0e9c",
+          "matchName": "ADBE Text Document",
+          "name": "Исходный текст",
+          "path": "comp:undefined/layer:3/text_document/ADBE Text Document#1",
+          "propertyIndex": 1
+        },
+        "slug": "ADBE_Text_Document.value.fauxBold"
+      },
+      {
+        "constantValue": false,
+        "kind": "constant",
+        "relPath": "ADBE_Text_Document.value.fauxItalic",
+        "samplePayload": false,
+        "sampleTriplet": {
+          "id": "edcf0e9c",
+          "matchName": "ADBE Text Document",
+          "name": "Исходный текст",
+          "path": "comp:undefined/layer:3/text_document/ADBE Text Document#1",
+          "propertyIndex": 1
+        },
+        "slug": "ADBE_Text_Document.value.fauxItalic"
+      },
+      {
+        "kind": "variable",
+        "relPath": "ADBE_Text_Document.value.fillColor[0]",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "edcf0e9c",
+          "matchName": "ADBE Text Document",
+          "name": "Исходный текст",
+          "path": "comp:undefined/layer:3/text_document/ADBE Text Document#1",
+          "propertyIndex": 1
+        },
+        "slug": "ADBE_Text_Document.value.fillColor[0]"
+      },
+      {
+        "kind": "variable",
+        "relPath": "ADBE_Text_Document.value.fillColor[1]",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "edcf0e9c",
+          "matchName": "ADBE Text Document",
+          "name": "Исходный текст",
+          "path": "comp:undefined/layer:3/text_document/ADBE Text Document#1",
+          "propertyIndex": 1
+        },
+        "slug": "ADBE_Text_Document.value.fillColor[1]"
+      },
+      {
+        "kind": "variable",
+        "relPath": "ADBE_Text_Document.value.fillColor[2]",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "edcf0e9c",
+          "matchName": "ADBE Text Document",
+          "name": "Исходный текст",
+          "path": "comp:undefined/layer:3/text_document/ADBE Text Document#1",
+          "propertyIndex": 1
+        },
+        "slug": "ADBE_Text_Document.value.fillColor[2]"
+      },
+      {
+        "constantValue": "Point-SemiBold",
+        "kind": "constant",
+        "relPath": "ADBE_Text_Document.value.font",
+        "samplePayload": "Point-SemiBold",
+        "sampleTriplet": {
+          "id": "edcf0e9c",
+          "matchName": "ADBE Text Document",
+          "name": "Исходный текст",
+          "path": "comp:undefined/layer:3/text_document/ADBE Text Document#1",
+          "propertyIndex": 1
+        },
+        "slug": "ADBE_Text_Document.value.font"
+      },
+      {
+        "constantValue": 100,
+        "kind": "constant",
+        "relPath": "ADBE_Text_Document.value.fontSize",
+        "samplePayload": 100,
+        "sampleTriplet": {
+          "id": "edcf0e9c",
+          "matchName": "ADBE Text Document",
+          "name": "Исходный текст",
+          "path": "comp:undefined/layer:3/text_document/ADBE Text Document#1",
+          "propertyIndex": 1
+        },
+        "slug": "ADBE_Text_Document.value.fontSize"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "ADBE_Text_Document.value.horizontalScale",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "edcf0e9c",
+          "matchName": "ADBE Text Document",
+          "name": "Исходный текст",
+          "path": "comp:undefined/layer:3/text_document/ADBE Text Document#1",
+          "propertyIndex": 1
+        },
+        "slug": "ADBE_Text_Document.value.horizontalScale"
+      },
+      {
+        "constantValue": "7415",
+        "kind": "constant",
+        "relPath": "ADBE_Text_Document.value.justification",
+        "samplePayload": "7415",
+        "sampleTriplet": {
+          "id": "edcf0e9c",
+          "matchName": "ADBE Text Document",
+          "name": "Исходный текст",
+          "path": "comp:undefined/layer:3/text_document/ADBE Text Document#1",
+          "propertyIndex": 1
+        },
+        "slug": "ADBE_Text_Document.value.justification"
+      },
+      {
+        "constantValue": 150,
+        "kind": "constant",
+        "relPath": "ADBE_Text_Document.value.leading",
+        "samplePayload": 150,
+        "sampleTriplet": {
+          "id": "edcf0e9c",
+          "matchName": "ADBE Text Document",
+          "name": "Исходный текст",
+          "path": "comp:undefined/layer:3/text_document/ADBE Text Document#1",
+          "propertyIndex": 1
+        },
+        "slug": "ADBE_Text_Document.value.leading"
+      },
+      {
+        "kind": "variable",
+        "relPath": "ADBE_Text_Document.value.strokeColor[0]",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "816856d3",
+          "matchName": "ADBE Text Document",
+          "name": "Исходный текст",
+          "path": "comp:undefined/layer:8/text_document/ADBE Text Document#1",
+          "propertyIndex": 1
+        },
+        "slug": "ADBE_Text_Document.value.strokeColor[0]"
+      },
+      {
+        "kind": "variable",
+        "relPath": "ADBE_Text_Document.value.strokeColor[1]",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "816856d3",
+          "matchName": "ADBE Text Document",
+          "name": "Исходный текст",
+          "path": "comp:undefined/layer:8/text_document/ADBE Text Document#1",
+          "propertyIndex": 1
+        },
+        "slug": "ADBE_Text_Document.value.strokeColor[1]"
+      },
+      {
+        "kind": "variable",
+        "relPath": "ADBE_Text_Document.value.strokeColor[2]",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "816856d3",
+          "matchName": "ADBE Text Document",
+          "name": "Исходный текст",
+          "path": "comp:undefined/layer:8/text_document/ADBE Text Document#1",
+          "propertyIndex": 1
+        },
+        "slug": "ADBE_Text_Document.value.strokeColor[2]"
+      },
+      {
+        "kind": "variable",
+        "relPath": "ADBE_Text_Document.value.strokeWidth",
+        "samplePayload": 5,
+        "sampleTriplet": {
+          "id": "816856d3",
+          "matchName": "ADBE Text Document",
+          "name": "Исходный текст",
+          "path": "comp:undefined/layer:8/text_document/ADBE Text Document#1",
+          "propertyIndex": 1
+        },
+        "slug": "ADBE_Text_Document.value.strokeWidth"
+      },
+      {
+        "kind": "variable",
+        "relPath": "ADBE_Text_Document.value.text",
+        "samplePayload": "is not my\rson",
+        "sampleTriplet": {
+          "id": "edcf0e9c",
+          "matchName": "ADBE Text Document",
+          "name": "Исходный текст",
+          "path": "comp:undefined/layer:3/text_document/ADBE Text Document#1",
+          "propertyIndex": 1
+        },
+        "slug": "ADBE_Text_Document.value.text"
+      },
+      {
+        "constantValue": -50,
+        "kind": "constant",
+        "relPath": "ADBE_Text_Document.value.tracking",
+        "samplePayload": -50,
+        "sampleTriplet": {
+          "id": "edcf0e9c",
+          "matchName": "ADBE Text Document",
+          "name": "Исходный текст",
+          "path": "comp:undefined/layer:3/text_document/ADBE Text Document#1",
+          "propertyIndex": 1
+        },
+        "slug": "ADBE_Text_Document.value.tracking"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE_Text_Document.value.tsume",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "edcf0e9c",
+          "matchName": "ADBE Text Document",
+          "name": "Исходный текст",
+          "path": "comp:undefined/layer:3/text_document/ADBE Text Document#1",
+          "propertyIndex": 1
+        },
+        "slug": "ADBE_Text_Document.value.tsume"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "ADBE_Text_Document.value.verticalScale",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "edcf0e9c",
+          "matchName": "ADBE Text Document",
+          "name": "Исходный текст",
+          "path": "comp:undefined/layer:3/text_document/ADBE Text Document#1",
+          "propertyIndex": 1
+        },
+        "slug": "ADBE_Text_Document.value.verticalScale"
+      }
+    ],
+    "variableCount": 10
+  }
+}

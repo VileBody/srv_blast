@@ -1,0 +1,73 @@
+{
+  "layerId": "L007__she says i am the one",
+  "used": {
+    "Быстрое_размытие_по_рамке__ADBE_Box_Blur2": {
+      "ADBE_Box_Blur2-0001#1": {
+        "@time": {
+          "__slug__": "ADBE_Box_Blur2-0001__p1_time",
+          "payload": {
+            "expressionEnabled": false,
+            "keys": [
+              {
+                "inInterpolationType": "6612",
+                "inTemporalEase": [
+                  {
+                    "influence": 16.666666667,
+                    "speed": 0
+                  }
+                ],
+                "index": 1,
+                "isSpatial": false,
+                "keyLabel": 0,
+                "outInterpolationType": "6612",
+                "outTemporalEase": [
+                  {
+                    "influence": 16.666666667,
+                    "speed": 4.4955
+                  }
+                ],
+                "temporalAutoBezier": false,
+                "temporalContinuous": false,
+                "time": 12.8461795128462,
+                "value": 0
+              },
+              {
+                "inInterpolationType": "6612",
+                "inTemporalEase": [
+                  {
+                    "influence": 16.666666667,
+                    "speed": 4.4955
+                  }
+                ],
+                "index": 2,
+                "isSpatial": false,
+                "keyLabel": 0,
+                "outInterpolationType": "6612",
+                "outTemporalEase": [
+                  {
+                    "influence": 16.666666667,
+                    "speed": 0
+                  }
+                ],
+                "temporalAutoBezier": false,
+                "temporalContinuous": false,
+                "time": 13.5135135135135,
+                "value": 3
+              }
+            ]
+          }
+        }
+      }
+    },
+    "Вихревое_смещение__ADBE_Turbulent_Displace": {
+      "ADBE_Turbulent_Displace-0002#2": {
+        "@time": {
+          "__slug__": "ADBE_Turbulent_Displace-0002__p2_time",
+          "payload": {
+            "__MISSING__": true
+          }
+        }
+      }
+    }
+  }
+}

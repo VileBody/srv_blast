@@ -1,0 +1,63 @@
+{
+  "layerId": "L007__she says i am the one",
+  "used": {
+    "transform_group__ADBE_Transform_Group": {
+      "ADBE_Opacity#11": {
+        "@time": {
+          "__slug__": "ADBE_Opacity__p11_time",
+          "payload": {
+            "expressionEnabled": false,
+            "keys": [
+              {
+                "inInterpolationType": "6612",
+                "inTemporalEase": [
+                  {
+                    "influence": 16.666666667,
+                    "speed": 0
+                  }
+                ],
+                "index": 1,
+                "isSpatial": false,
+                "keyLabel": 0,
+                "outInterpolationType": "6612",
+                "outTemporalEase": [
+                  {
+                    "influence": 16.666666667,
+                    "speed": -119.88
+                  }
+                ],
+                "temporalAutoBezier": false,
+                "temporalContinuous": false,
+                "time": 12.7627627627628,
+                "value": 100
+              },
+              {
+                "inInterpolationType": "6612",
+                "inTemporalEase": [
+                  {
+                    "influence": 16.666666667,
+                    "speed": -119.88
+                  }
+                ],
+                "index": 2,
+                "isSpatial": false,
+                "keyLabel": 0,
+                "outInterpolationType": "6612",
+                "outTemporalEase": [
+                  {
+                    "influence": 16.666666667,
+                    "speed": 0
+                  }
+                ],
+                "temporalAutoBezier": false,
+                "temporalContinuous": false,
+                "time": 13.5969302635969,
+                "value": 0
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}

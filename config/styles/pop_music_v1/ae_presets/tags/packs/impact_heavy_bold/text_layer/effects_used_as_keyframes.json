@@ -1,0 +1,73 @@
+{
+  "layerId": "L005__but the kid",
+  "used": {
+    "Вихревое_смещение__ADBE_Turbulent_Displace": {
+      "ADBE_Turbulent_Displace-0002#2": {
+        "@time": {
+          "__slug__": "ADBE_Turbulent_Displace-0002__p2_time",
+          "payload": {
+            "__MISSING__": true
+          }
+        }
+      }
+    },
+    "Минимакс__ADBE_Minimax": {
+      "ADBE_Minimax-0002#2": {
+        "@time": {
+          "__slug__": "ADBE_Minimax-0002__p2_time",
+          "payload": {
+            "expressionEnabled": false,
+            "keys": [
+              {
+                "inInterpolationType": "6612",
+                "inTemporalEase": [
+                  {
+                    "influence": 16.666666667,
+                    "speed": 0
+                  }
+                ],
+                "index": 1,
+                "isSpatial": false,
+                "keyLabel": 0,
+                "outInterpolationType": "6612",
+                "outTemporalEase": [
+                  {
+                    "influence": 16.666666667,
+                    "speed": 767.232
+                  }
+                ],
+                "temporalAutoBezier": false,
+                "temporalContinuous": false,
+                "time": 15.3903903903904,
+                "value": 0
+              },
+              {
+                "inInterpolationType": "6612",
+                "inTemporalEase": [
+                  {
+                    "influence": 16.666666667,
+                    "speed": 767.232
+                  }
+                ],
+                "index": 2,
+                "isSpatial": false,
+                "keyLabel": 0,
+                "outInterpolationType": "6612",
+                "outTemporalEase": [
+                  {
+                    "influence": 16.666666667,
+                    "speed": 0
+                  }
+                ],
+                "temporalAutoBezier": false,
+                "temporalContinuous": false,
+                "time": 15.4320987654321,
+                "value": 32
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}

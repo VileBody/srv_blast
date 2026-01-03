@@ -1,0 +1,20 @@
+{
+  "layerId": "L007__she says i am the one",
+  "used": {
+    "transform_group__ADBE_Transform_Group": {
+      "ADBE_Anchor_Point__p1": [
+        -64.00390625,
+        41.7119140625,
+        0
+      ],
+      "ADBE_Opacity__p11": {
+        "__MISSING__": true
+      },
+      "ADBE_Scale__p6": [
+        75,
+        75,
+        100
+      ]
+    }
+  }
+}

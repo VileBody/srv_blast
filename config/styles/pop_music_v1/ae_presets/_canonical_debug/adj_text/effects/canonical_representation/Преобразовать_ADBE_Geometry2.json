@@ -1,0 +1,258 @@
+{
+  "canonicalName": "Преобразовать__ADBE_Geometry2",
+  "domain": "effects",
+  "groupKey": "ADBE Geometry2",
+  "instancesCount": 12,
+  "keyframes": {
+    "paramCount": 2,
+    "params": [
+      {
+        "keyframeMeta": {
+          "hasExpression": false,
+          "keyCount": 2,
+          "valueTypeHint": "int"
+        },
+        "relPath": "ADBE Geometry2-0003#4",
+        "sampleTriplet": {
+          "id": "8eccae1c",
+          "matchName": "ADBE Geometry2-0003",
+          "name": "Масш. высоту",
+          "path": "comp:133/layer:2/effects/E001/ADBE Geometry2#1/ADBE Geometry2-0003#4",
+          "propertyIndex": 4
+        },
+        "slug": "ADBE_Geometry2-0003__p4_time"
+      },
+      {
+        "keyframeMeta": {
+          "hasExpression": false,
+          "keyCount": 2,
+          "valueTypeHint": "int"
+        },
+        "relPath": "ADBE Geometry2-0007#8",
+        "sampleTriplet": {
+          "id": "b33c9d92",
+          "matchName": "ADBE Geometry2-0007",
+          "name": "Поворот",
+          "path": "comp:133/layer:4/effects/E001/ADBE Geometry2#1/ADBE Geometry2-0007#8",
+          "propertyIndex": 8
+        },
+        "slug": "ADBE_Geometry2-0007__p8_time"
+      }
+    ]
+  },
+  "namesSeen": [
+    "Преобразовать"
+  ],
+  "presentCount": 10,
+  "template": {
+    "constantCount": 10,
+    "paramCount": 14,
+    "params": [
+      {
+        "constantValue": 100,
+        "kind": "constant",
+        "relPath": "ADBE Effect Built In Params#13/ADBE Effect Mask Opacity#2",
+        "samplePayload": 100,
+        "sampleTriplet": {
+          "id": "23408620",
+          "matchName": "ADBE Effect Mask Opacity",
+          "name": "Непрозр.эффекта",
+          "path": "comp:133/layer:2/effects/E001/ADBE Geometry2#1/ADBE Effect Built In Params#13/ADBE Effect Mask Opacity#2",
+          "propertyIndex": 2
+        },
+        "slug": "ADBE_Effect_Built_In_Params__p13__ADBE_Effect_Mask_Opacity__p2"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "ADBE Effect Built In Params#13/ADBE Force CPU GPU#3",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "15193d0a",
+          "matchName": "ADBE Force CPU GPU",
+          "name": "Ренд. с исп. ГП",
+          "path": "comp:133/layer:2/effects/E001/ADBE Geometry2#1/ADBE Effect Built In Params#13/ADBE Force CPU GPU#3",
+          "propertyIndex": 3
+        },
+        "slug": "ADBE_Effect_Built_In_Params__p13__ADBE_Force_CPU_GPU__p3"
+      },
+      {
+        "constantValue": [
+          540,
+          960
+        ],
+        "kind": "constant",
+        "relPath": "ADBE Geometry2-0001#1",
+        "samplePayload": [
+          540,
+          960
+        ],
+        "sampleTriplet": {
+          "id": "0242617d",
+          "matchName": "ADBE Geometry2-0001",
+          "name": "Опорная точка",
+          "path": "comp:133/layer:2/effects/E001/ADBE Geometry2#1/ADBE Geometry2-0001#1",
+          "propertyIndex": 1
+        },
+        "slug": "ADBE_Geometry2-0001__p1"
+      },
+      {
+        "constantValue": [
+          540,
+          960
+        ],
+        "kind": "constant",
+        "relPath": "ADBE Geometry2-0002#2",
+        "samplePayload": [
+          540,
+          960
+        ],
+        "sampleTriplet": {
+          "id": "b2937061",
+          "matchName": "ADBE Geometry2-0002",
+          "name": "Положение",
+          "path": "comp:133/layer:2/effects/E001/ADBE Geometry2#1/ADBE Geometry2-0002#2",
+          "propertyIndex": 2
+        },
+        "slug": "ADBE_Geometry2-0002__p2"
+      },
+      {
+        "kind": "variable",
+        "relPath": "ADBE Geometry2-0003#4",
+        "samplePayload": 100,
+        "sampleTriplet": {
+          "id": "8d63acf5",
+          "matchName": "ADBE Geometry2-0003",
+          "name": "Масш. высоту",
+          "path": "comp:133/layer:18/effects/E001/ADBE Geometry2#1/ADBE Geometry2-0003#4",
+          "propertyIndex": 4
+        },
+        "slug": "ADBE_Geometry2-0003__p4"
+      },
+      {
+        "kind": "variable",
+        "relPath": "ADBE Geometry2-0004#5",
+        "samplePayload": 100,
+        "sampleTriplet": {
+          "id": "34f124f2",
+          "matchName": "ADBE Geometry2-0004",
+          "name": "Масш. ширину",
+          "path": "comp:133/layer:2/effects/E001/ADBE Geometry2#1/ADBE Geometry2-0004#5",
+          "propertyIndex": 5
+        },
+        "slug": "ADBE_Geometry2-0004__p5"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Geometry2-0005#6",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "1edd629c",
+          "matchName": "ADBE Geometry2-0005",
+          "name": "Наклон",
+          "path": "comp:133/layer:2/effects/E001/ADBE Geometry2#1/ADBE Geometry2-0005#6",
+          "propertyIndex": 6
+        },
+        "slug": "ADBE_Geometry2-0005__p6"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Geometry2-0006#7",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "692dd0ee",
+          "matchName": "ADBE Geometry2-0006",
+          "name": "Ось наклона",
+          "path": "comp:133/layer:2/effects/E001/ADBE Geometry2#1/ADBE Geometry2-0006#7",
+          "propertyIndex": 7
+        },
+        "slug": "ADBE_Geometry2-0006__p7"
+      },
+      {
+        "kind": "variable",
+        "relPath": "ADBE Geometry2-0007#8",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "4e671cd4",
+          "matchName": "ADBE Geometry2-0007",
+          "name": "Поворот",
+          "path": "comp:133/layer:2/effects/E001/ADBE Geometry2#1/ADBE Geometry2-0007#8",
+          "propertyIndex": 8
+        },
+        "slug": "ADBE_Geometry2-0007__p8"
+      },
+      {
+        "constantValue": 100,
+        "kind": "constant",
+        "relPath": "ADBE Geometry2-0008#9",
+        "samplePayload": 100,
+        "sampleTriplet": {
+          "id": "748c5d2a",
+          "matchName": "ADBE Geometry2-0008",
+          "name": "Непрозрачность",
+          "path": "comp:133/layer:2/effects/E001/ADBE Geometry2#1/ADBE Geometry2-0008#9",
+          "propertyIndex": 9
+        },
+        "slug": "ADBE_Geometry2-0008__p9"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "ADBE Geometry2-0009#10",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "e2e504df",
+          "matchName": "ADBE Geometry2-0009",
+          "name": "Использовать угол затвора композиции",
+          "path": "comp:133/layer:2/effects/E001/ADBE Geometry2#1/ADBE Geometry2-0009#10",
+          "propertyIndex": 10
+        },
+        "slug": "ADBE_Geometry2-0009__p10"
+      },
+      {
+        "constantValue": 0,
+        "kind": "constant",
+        "relPath": "ADBE Geometry2-0010#11",
+        "samplePayload": 0,
+        "sampleTriplet": {
+          "id": "162ab14a",
+          "matchName": "ADBE Geometry2-0010",
+          "name": "Угол затвора",
+          "path": "comp:133/layer:2/effects/E001/ADBE Geometry2#1/ADBE Geometry2-0010#11",
+          "propertyIndex": 11
+        },
+        "slug": "ADBE_Geometry2-0010__p11"
+      },
+      {
+        "kind": "variable",
+        "relPath": "ADBE Geometry2-0011#3",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "c3312b2a",
+          "matchName": "ADBE Geometry2-0011",
+          "name": "Равн. масштаб",
+          "path": "comp:133/layer:2/effects/E001/ADBE Geometry2#1/ADBE Geometry2-0011#3",
+          "propertyIndex": 3
+        },
+        "slug": "ADBE_Geometry2-0011__p3"
+      },
+      {
+        "constantValue": 1,
+        "kind": "constant",
+        "relPath": "ADBE Geometry2-0012#12",
+        "samplePayload": 1,
+        "sampleTriplet": {
+          "id": "347f6711",
+          "matchName": "ADBE Geometry2-0012",
+          "name": "Создание выборки",
+          "path": "comp:133/layer:2/effects/E001/ADBE Geometry2#1/ADBE Geometry2-0012#12",
+          "propertyIndex": 12
+        },
+        "slug": "ADBE_Geometry2-0012__p12"
+      }
+    ],
+    "variableCount": 4
+  }
+}

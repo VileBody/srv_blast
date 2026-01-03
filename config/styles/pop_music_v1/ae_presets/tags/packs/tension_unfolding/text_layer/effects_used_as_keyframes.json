@@ -1,0 +1,73 @@
+{
+  "layerId": "L027__she told my baby",
+  "used": {
+    "Вихревое_смещение__ADBE_Turbulent_Displace": {
+      "ADBE_Turbulent_Displace-0002#2": {
+        "@time": {
+          "__slug__": "ADBE_Turbulent_Displace-0002__p2_time",
+          "payload": {
+            "__MISSING__": true
+          }
+        }
+      }
+    },
+    "Минимакс__ADBE_Minimax": {
+      "ADBE_Minimax-0002#2": {
+        "@time": {
+          "__slug__": "ADBE_Minimax-0002__p2_time",
+          "payload": {
+            "expressionEnabled": false,
+            "keys": [
+              {
+                "inInterpolationType": "6612",
+                "inTemporalEase": [
+                  {
+                    "influence": 16.666666667,
+                    "speed": 0
+                  }
+                ],
+                "index": 1,
+                "isSpatial": false,
+                "keyLabel": 0,
+                "outInterpolationType": "6612",
+                "outTemporalEase": [
+                  {
+                    "influence": 16.666666667,
+                    "speed": -359.64
+                  }
+                ],
+                "temporalAutoBezier": false,
+                "temporalContinuous": false,
+                "time": 0.25025025025025,
+                "value": 15
+              },
+              {
+                "inInterpolationType": "6612",
+                "inTemporalEase": [
+                  {
+                    "influence": 16.666666667,
+                    "speed": -359.64
+                  }
+                ],
+                "index": 2,
+                "isSpatial": false,
+                "keyLabel": 0,
+                "outInterpolationType": "6612",
+                "outTemporalEase": [
+                  {
+                    "influence": 16.666666667,
+                    "speed": 0
+                  }
+                ],
+                "temporalAutoBezier": false,
+                "temporalContinuous": false,
+                "time": 0.29195862529196,
+                "value": 0
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}

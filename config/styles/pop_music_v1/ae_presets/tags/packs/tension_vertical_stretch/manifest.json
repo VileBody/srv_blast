@@ -1,0 +1,39 @@
+{
+  "tagId": "tension_vertical_stretch",
+  "label": "Vertical Stretch",
+  "requires_words": false,
+  "refs": {
+    "text_layer": "L023_then_she_looked_at_me",
+    "adjustment_layer_text": "L022_Adjustment_Layer_11"
+  },
+  "files": {
+    "text_layer": {
+      "transform": {
+        "template": "transform_used_as_template.json",
+        "keyframes": "transform_used_as_keyframes.json"
+      },
+      "textDoc": {
+        "template": "textDoc_used_as_template.json",
+        "keyframes": "textDoc_used_as_keyframes.json"
+      },
+      "textAnim": {
+        "template": "textAnim_used_as_template.json",
+        "keyframes": "textAnim_used_as_keyframes.json"
+      },
+      "effects": {
+        "template": "effects_used_as_template.json",
+        "keyframes": "effects_used_as_keyframes.json"
+      }
+    },
+    "adjustment_layer": {
+      "transform": {
+        "template": "transform_used_as_template.json",
+        "keyframes": "transform_used_as_keyframes.json"
+      },
+      "effects": {
+        "template": "effects_used_as_template.json",
+        "keyframes": "effects_used_as_keyframes.json"
+      }
+    }
+  }
+}
