@@ -14,6 +14,13 @@
 
         if (config.type === "adjustment") layer.adjustmentLayer = true;
 
+        // 3D switch (needed for some text animator presets)
+        if (config.threeDLayer === true || config.threeD === true) {
+            try { layer.threeDLayer = true; } catch (e3d1) {}
+        } else if (config.threeDLayer === false || config.threeD === false) {
+            try { layer.threeDLayer = false; } catch (e3d2) {}
+        }
+
         if (config.transform) {
             var tr = config.transform;
 

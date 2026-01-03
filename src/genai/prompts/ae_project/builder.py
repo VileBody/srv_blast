@@ -6,6 +6,7 @@ from src.core.config.style_loader import (
     get_effects_library,
     get_motion_library,
     get_text_fx_library,
+    get_tags_catalog,
 )
 from src.render.ae.compiler.effects_logic import build_semantic_prompt_catalog
 
@@ -81,6 +82,35 @@ def _text_fx_prompt_block() -> str:
     )
 
 
+def _tags_catalog_json() -> str:
+    """
+    Каталог тегов может быть в любом формате (зависит от того, как вы соберёте config),
+    поэтому мы просто сериализуем то, что есть.
+    """
+    tags = get_tags_catalog() or {}
+    return json.dumps(tags, ensure_ascii=False, indent=2)
+
+
+def _tags_prompt_block() -> str:
+    tags = get_tags_catalog() or {}
+    # Пытаемся извлечь "плоский" список id, если структура сложнее
+    if isinstance(tags, dict):
+        if "tag_catalog" in tags and isinstance(tags["tag_catalog"], dict):
+            allowed = ", ".join(sorted(tags["tag_catalog"].keys()))
+        elif "tags" in tags and isinstance(tags["tags"], dict):
+            allowed = ", ".join(sorted(tags["tags"].keys()))
+        else:
+            allowed = ", ".join(sorted(tags.keys()))
+    else:
+        allowed = ""
+    return (
+        "TEXT TAGS (optional)\n"
+        "- You MAY set subtitle.tag/tagId for each subtitle line.\n"
+        "- tag/tagId must be from this union: [" + allowed + "]\n"
+        "TAGS_CATALOG (JSON):\n" + _tags_catalog_json()
+    )
+
+
 def build_ae_project_system_prompt() -> str:
     """
     Собирает большой system-prompt для задачи:
@@ -92,7 +122,8 @@ def build_ae_project_system_prompt() -> str:
         AE_SUBTITLES_STAGE,
         AE_COMPOSITION_STAGE,
         _effects_semantic_prompt_block(),
-        _text_fx_prompt_block(), 
+        _text_fx_prompt_block(),
+        _tags_prompt_block(),
         AE_PROJECT_FOOTER,
     ]
     return "\n\n".join(parts)

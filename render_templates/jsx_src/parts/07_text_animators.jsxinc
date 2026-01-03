@@ -61,8 +61,7 @@
                 var sp = sConf.properties || {};
                 for (var spKey in sp) {
                     if (!sp.hasOwnProperty(spKey)) continue;
-                    var pr = null;
-                    try { pr = sel.property(spKey); } catch (e1) { pr = null; }
+                    var pr = resolvePropByPath(sel, spKey);
                     if (!pr) { logLine("SEL PROP MISSING: " + spKey); continue; }
                     setPropValue(pr, sp[spKey], textLayer);
                 }
@@ -79,10 +78,9 @@
 
                     for (var aKey in adv) {
                         if (!adv.hasOwnProperty(aKey)) continue;
-                        var ap = null;
-                        try { ap = advGroup.property(aKey); } catch (e2) { ap = null; }
+                        var ap = resolvePropByPath(advGroup, aKey);
                         if (!ap && advGroup !== sel) {
-                            try { ap = sel.property(aKey); } catch (e3) { ap = null; }
+                            ap = resolvePropByPath(sel, aKey);
                         }
                         if (!ap) { logLine("ADV PROP MISSING: " + aKey); continue; }
                         setPropValue(ap, adv[aKey], textLayer);

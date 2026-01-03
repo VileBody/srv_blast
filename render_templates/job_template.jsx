@@ -185,6 +185,32 @@
         return null;
     }
 
+    // Resolve AE property by either:
+    //  - string matchName/key
+    //  - array path: ["Group", "Subgroup", "Prop"] or [1,2,3]
+    function resolvePropByPath(root, path) {
+        if (!root || path === undefined || path === null) return null;
+
+        if (typeof path === "string") {
+            try { return root.property(path); } catch (e1) { return null; }
+        }
+
+        if (_isArray(path)) {
+            var cur = root;
+            for (var i = 0; i < path.length; i++) {
+                var seg = path[i];
+                if (seg === undefined || seg === null) return null;
+                try { cur = cur.property(seg); }
+                catch (e2) {
+                    try { cur = cur.property(parseInt(seg, 10)); } catch (e3) { return null; }
+                }
+                if (!cur) return null;
+            }
+            return cur;
+        }
+        return null;
+    }
+
     function setPropValue(aeProp, valueData, layerCtx) {
         if (!aeProp) return;
         if (valueData === undefined || valueData === null) return;
@@ -260,19 +286,29 @@
             }
 
             var params = fxConf.params || {};
-            for (var key in params) {
-                if (!params.hasOwnProperty(key)) continue;
-                var p = null;
-                try {
-                    p = fx.property(key);
-                } catch (eProp) {
-                    p = null;
+            if (_isArray(params)) {
+                for (var pi = 0; pi < params.length; pi++) {
+                    var entry = params[pi];
+                    if (!entry) continue;
+                    var path = entry.path !== undefined ? entry.path : entry.key;
+                    var val = entry.value;
+                    var p2 = resolvePropByPath(fx, path);
+                    if (!p2) {
+                        logLine("FX PARAM MISSING: fx=" + fxConf.matchName + " path=" + path);
+                        continue;
+                    }
+                    setPropValue(p2, val, layer);
                 }
-                if (!p) {
-                    logLine("FX PARAM MISSING: fx=" + fxConf.matchName + " key=" + key);
-                    continue;
+            } else {
+                for (var key in params) {
+                    if (!params.hasOwnProperty(key)) continue;
+                    var p = resolvePropByPath(fx, key);
+                    if (!p) {
+                        logLine("FX PARAM MISSING: fx=" + fxConf.matchName + " key=" + key);
+                        continue;
+                    }
+                    setPropValue(p, params[key], layer);
                 }
-                setPropValue(p, params[key], layer);
             }
         }
     }
@@ -447,8 +483,7 @@
                 var sp = sConf.properties || {};
                 for (var spKey in sp) {
                     if (!sp.hasOwnProperty(spKey)) continue;
-                    var pr = null;
-                    try { pr = sel.property(spKey); } catch (e1) { pr = null; }
+                    var pr = resolvePropByPath(sel, spKey);
                     if (!pr) { logLine("SEL PROP MISSING: " + spKey); continue; }
                     setPropValue(pr, sp[spKey], textLayer);
                 }
@@ -465,10 +500,9 @@
 
                     for (var aKey in adv) {
                         if (!adv.hasOwnProperty(aKey)) continue;
-                        var ap = null;
-                        try { ap = advGroup.property(aKey); } catch (e2) { ap = null; }
+                        var ap = resolvePropByPath(advGroup, aKey);
                         if (!ap && advGroup !== sel) {
-                            try { ap = sel.property(aKey); } catch (e3) { ap = null; }
+                            ap = resolvePropByPath(sel, aKey);
                         }
                         if (!ap) { logLine("ADV PROP MISSING: " + aKey); continue; }
                         setPropValue(ap, adv[aKey], textLayer);
@@ -492,6 +526,12 @@
         if (config.audioEnabled !== undefined && layer.hasAudio) layer.audioEnabled = config.audioEnabled;
 
         if (config.type === "adjustment") layer.adjustmentLayer = true;
+
+        if (config.threeDLayer === true || config.threeD === true) {
+            try { layer.threeDLayer = true; } catch (e3d1) {}
+        } else if (config.threeDLayer === false || config.threeD === false) {
+            try { layer.threeDLayer = false; } catch (e3d2) {}
+        }
 
         if (config.transform) {
             var tr = config.transform;

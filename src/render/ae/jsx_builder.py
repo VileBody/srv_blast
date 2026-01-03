@@ -192,8 +192,10 @@ def build_render_jsx_and_media(job_id: str, plan: Dict[str, Any]) -> AeBuildResu
             in_p = max(0.0, in_p)
             out_p = min(comp_duration, out_p)
 
+            # Legacy style fallback (used only when tagId is not provided)
+            tag_id = sub.get("tagId") or sub.get("tag") or sub.get("textTag") or sub.get("fxTag")
             style_tag = str(sub.get("style") or SubtitleStyle.DEFAULT.value).lower()
-            style_id = _get_subtitle_style_id(style_tag)
+            style_id = _get_subtitle_style_id(style_tag) if not tag_id else _get_subtitle_style_id(SubtitleStyle.DEFAULT.value)
 
             layer = {
                 "type": "text",
@@ -205,6 +207,19 @@ def build_render_jsx_and_media(job_id: str, plan: Dict[str, Any]) -> AeBuildResu
                 "enabled": True,
                 "audioEnabled": False,
             }
+
+            # Tag-based styling (optional)
+            if tag_id:
+                layer["tagId"] = str(tag_id)
+                tag_plan = sub.get("tagPlan") or sub.get("timing") or sub.get("timingPlan") or {}
+                if isinstance(tag_plan, dict) and tag_plan:
+                    layer["tagPlan"] = tag_plan
+                # Allow "words" directly on subtitle item
+                if "words" in sub:
+                    layer.setdefault("tagPlan", {})
+                    if isinstance(layer["tagPlan"], dict) and "words" not in layer["tagPlan"]:
+                        layer["tagPlan"]["words"] = sub["words"]
+
             text_layers.append(layer)
 
         if text_layers:

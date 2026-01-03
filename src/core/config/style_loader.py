@@ -4,7 +4,7 @@ import copy
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from src.config.styles.paths import (
     EFFECTS_LIBRARY_PATH,
@@ -12,6 +12,10 @@ from src.config.styles.paths import (
     MOTION_LIBRARY_PATH,
     TEXT_FX_LIBRARY_PATH,
     TEXT_STYLES_PATH,
+    TAGS_CATALOG_PATH,
+    TAGS_DIR,
+    TAGS_PACKS_DIR,
+    tag_pack_path,
 )
 from .styles import FootagePresetId, SubtitleStyle
 
@@ -26,11 +30,13 @@ def _load_json(path: Path) -> Dict[str, Any]:
         raise RuntimeError(f"Failed to load JSON {path}: {exc}") from exc
 
 
-_TEXT_STYLES = _load_json(TEXT_STYLES_PATH)
-_FOOTAGE_PRESETS = _load_json(FOOTAGE_PRESETS_PATH)
+_TEXT_STYLES: Optional[Dict[str, Any]] = None
+_FOOTAGE_PRESETS: Optional[Dict[str, Any]] = None
 _MOTION_LIBRARY: Dict[str, Any] | None = None
 _EFFECTS_LIBRARY: Dict[str, Any] | None = None
 _TEXT_FX_LIBRARY: Dict[str, Any] | None = None  # <--- Добавлена переменная
+_TAGS_CATALOG: Dict[str, Any] | None = None
+_TAG_PACK_CACHE: Dict[str, Dict[str, Any]] = {}
 
 _SUBTITLE_STYLE_KEYS = {
     SubtitleStyle.DEFAULT: "main_subtitle",
@@ -41,6 +47,10 @@ _SUBTITLE_STYLE_KEYS = {
 def get_text_style(style: SubtitleStyle | str) -> Dict[str, Any]:
     """Возвращает копию настроек текста для заданного стиля субтитров."""
 
+    global _TEXT_STYLES
+    if _TEXT_STYLES is None:
+        _TEXT_STYLES = _load_json(TEXT_STYLES_PATH)
+
     if isinstance(style, str):
         style = (
             SubtitleStyle(style)
@@ -49,14 +59,18 @@ def get_text_style(style: SubtitleStyle | str) -> Dict[str, Any]:
         )
 
     style_key = _SUBTITLE_STYLE_KEYS.get(style, "main_subtitle")
-    return copy.deepcopy(_TEXT_STYLES.get(style_key, {}))
+    return copy.deepcopy((_TEXT_STYLES or {}).get(style_key, {}))
 
 
 def get_footage_preset(preset_id: FootagePresetId | str) -> Dict[str, Any]:
     """Возвращает копию настроек пресета для футажа."""
 
+    global _FOOTAGE_PRESETS
+    if _FOOTAGE_PRESETS is None:
+        _FOOTAGE_PRESETS = _load_json(FOOTAGE_PRESETS_PATH)
+
     pid = preset_id.value if isinstance(preset_id, FootagePresetId) else str(preset_id)
-    return copy.deepcopy(_FOOTAGE_PRESETS.get(pid, {}))
+    return copy.deepcopy((_FOOTAGE_PRESETS or {}).get(pid, {}))
 
 
 def get_motion_library() -> Dict[str, Any]:
@@ -84,3 +98,56 @@ def get_text_fx_library() -> Dict[str, Any]:
     if _TEXT_FX_LIBRARY is None:
         _TEXT_FX_LIBRARY = _load_json(TEXT_FX_LIBRARY_PATH)
     return copy.deepcopy(_TEXT_FX_LIBRARY)
+
+
+# ---------------------------
+# TAGS (optional)
+# ---------------------------
+
+
+def get_tags_catalog() -> Dict[str, Any]:
+    """
+    Возвращает JSON-каталог тегов (если есть).
+    Формат каталога оставляем гибким: это может быть как {tagId: {...}}, так и
+    объект с ключом "tag_catalog" / "tags".
+    """
+    global _TAGS_CATALOG
+    if _TAGS_CATALOG is None:
+        if TAGS_CATALOG_PATH is None:
+            _TAGS_CATALOG = {}
+        else:
+            _TAGS_CATALOG = _load_json(TAGS_CATALOG_PATH)
+    return copy.deepcopy(_TAGS_CATALOG or {})
+
+
+def get_tag_pack(tag_id: str) -> Dict[str, Any]:
+    """
+    Загружает tag pack (если есть).
+    Поддерживаем несколько layout'ов, чтобы миграции не были болезненными.
+    """
+    if not tag_id:
+        return {}
+
+    if tag_id in _TAG_PACK_CACHE:
+        return copy.deepcopy(_TAG_PACK_CACHE[tag_id])
+
+    candidates = [
+        # preferred
+        tag_pack_path(tag_id),
+        # alt layouts
+        (TAGS_PACKS_DIR / f"{tag_id}.json").resolve(),
+        (TAGS_DIR / f"{tag_id}.json").resolve(),
+        (TAGS_DIR / tag_id / "tag_pack.json").resolve(),
+    ]
+
+    for p in candidates:
+        try:
+            if p.is_file():
+                data = _load_json(p)
+                _TAG_PACK_CACHE[tag_id] = data
+                return copy.deepcopy(data)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("[style_loader] Failed to load tag pack %s from %s: %s", tag_id, p, exc)
+
+    _TAG_PACK_CACHE[tag_id] = {}
+    return {}

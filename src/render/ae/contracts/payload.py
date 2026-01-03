@@ -54,6 +54,7 @@ class BaseLayer(BaseModel):
     enabled: bool = True
     audioEnabled: Optional[bool] = None
     transform: Optional[Transform] = None
+    threeDLayer: Optional[bool] = None
 
 
 class RefLayer(BaseLayer):

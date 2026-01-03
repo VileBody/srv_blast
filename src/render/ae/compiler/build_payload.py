@@ -3,11 +3,14 @@ from __future__ import annotations
 
 import copy
 import json
+import logging
 from typing import Any, Dict, List, Optional, Tuple
 from pathlib import Path
+from functools import lru_cache
 
 from config import Config
 from .effects_logic import resolve_effect_stack, stack_to_ae_effects_conf
+from .tag_styles import ensure_tag_adjustment_layers, apply_tag_styles
 from src.render.ae.contracts.payload import Payload
 from src.config.styles.paths import (
     PROJECT_SETTINGS_TEMPLATE_PATH,
@@ -17,8 +20,10 @@ from src.config.styles.paths import (
     FOOTAGE_PRESETS_PATH,
     MOTION_LIBRARY_PATH,
 )
+from src.core.config.style_loader import get_tags_catalog
 
 cfg = Config.from_env()
+log = logging.getLogger(__name__)
 
 # Геометрия проекта задаётся конфигом/шаблоном, а не моделью
 ENV_DEFAULTS: Dict[str, Any] = {
@@ -85,6 +90,11 @@ def ensure_default_text_fx_combo(items: List[Dict[str, Any]], text_fx_library: D
                 continue
             if (layer.get("type") or "").lower() != "text":
                 continue
+            # Skip: tag-based layers or already baked layers
+            if layer.get("tagId") or layer.get("tag") or layer.get("textTag") or layer.get("fxTag"):
+                continue
+            if layer.get("textAnimators") or layer.get("effects"):
+                continue
             combo_id = layer.get("textFxComboId") or layer.get("text_fx_combo_id")
             if not combo_id:
                 layer["textFxComboId"] = default_id
@@ -129,6 +139,11 @@ def expand_text_fx_combos(items: List[Dict[str, Any]], text_fx_library: Dict[str
             if not isinstance(layer, dict):
                 continue
             if (layer.get("type") or "").lower() != "text":
+                continue
+            # Skip: tag-based layers or already baked effects
+            if layer.get("tagId") or layer.get("tag") or layer.get("textTag") or layer.get("fxTag"):
+                continue
+            if layer.get("effects"):
                 continue
 
             combo_id = (
@@ -206,6 +221,11 @@ def expand_text_motion_combos(items: List[Dict[str, Any]], motion_library: Dict[
                 continue
             if (layer.get("type") or "").lower() != "text":
                 continue
+            # Skip: tag-based layers or already baked animators
+            if layer.get("tagId") or layer.get("tag") or layer.get("textTag") or layer.get("fxTag"):
+                continue
+            if layer.get("textAnimators"):
+                continue
 
             combo_id = (
                 layer.get("textFxComboId")
@@ -263,33 +283,9 @@ def load_json(path: Path) -> dict:
 
 
 
-try:
-    _PROJECT_TEMPLATE = load_json(PROJECT_SETTINGS_TEMPLATE_PATH)
-except Exception as exc:  # noqa: BLE001
-    print(f"[assembler_core] WARNING: failed to load {PROJECT_SETTINGS_TEMPLATE_PATH}: {exc}")
-    _PROJECT_TEMPLATE = {}
-
-try:
-    _EFFECTS_LIBRARY = load_json(EFFECTS_LIBRARY_PATH)
-except Exception as exc:  # noqa: BLE001
-    print(f"[assembler_core] WARNING: failed to load {EFFECTS_LIBRARY_PATH}: {exc}")
-    _EFFECTS_LIBRARY = {}
-
-try:
-    _TEXT_FX_LIBRARY = load_json(TEXT_FX_LIBRARY_PATH)
-except Exception as exc:  # noqa: BLE001
-    print(f"[assembler_core] WARNING: failed to load {TEXT_FX_LIBRARY_PATH}: {exc}")
-    _TEXT_FX_LIBRARY = {}
-
-try:
-    _MOTION_LIBRARY = load_json(MOTION_LIBRARY_PATH)
-except Exception as exc:  # noqa: BLE001
-    print(f"[assembler_core] WARNING: failed to load {MOTION_LIBRARY_PATH}: {exc}")
-    _MOTION_LIBRARY = {}
-
-PROJECT_TEMPLATE_DEFAULTS: Dict[str, Any] = (
-    _PROJECT_TEMPLATE.get("defaults", {}) if isinstance(_PROJECT_TEMPLATE, dict) else {}
-) or {}
+@lru_cache(maxsize=64)
+def _load_json_cached(path: str) -> dict:
+    return load_json(Path(path))
 
 
 def process_layer(
@@ -442,7 +438,7 @@ def build_project_payload_from_composition(
     """
     styles_data = load_json(styles_path)
     presets_data = load_json(presets_path)
-    effects_data = copy.deepcopy(_EFFECTS_LIBRARY)
+    effects_data = copy.deepcopy(_load_json_cached(str(EFFECTS_LIBRARY_PATH)))
 
     project_settings = composition.get("projectSettings", {}) or {}
     ps_defaults = project_settings.get("defaults") or {}
@@ -476,8 +472,11 @@ def build_project_payload_from_composition(
     else:
         duration = float(ps_defaults.get("duration", DEFAULT_DURATION))
 
+    project_template = _load_json_cached(str(PROJECT_SETTINGS_TEMPLATE_PATH))
+    project_template_defaults: Dict[str, Any] = (project_template.get("defaults", {}) if isinstance(project_template, dict) else {}) or {}
+
     base_defaults = dict(ENV_DEFAULTS)
-    base_defaults.update(PROJECT_TEMPLATE_DEFAULTS)
+    base_defaults.update(project_template_defaults)
 
     defaults: Dict[str, Any] = {}
     for key, value in base_defaults.items():
@@ -521,8 +520,24 @@ def build_project_payload_from_composition(
 
         final_items.append(item)
 
-    text_fx_lib = copy.deepcopy(_TEXT_FX_LIBRARY)
-    motion_lib = copy.deepcopy(_MOTION_LIBRARY)
+    # ---------------------------
+    # TAG-BASED STYLES (optional)
+    # ---------------------------
+    tags_catalog = get_tags_catalog() or {}
+    if tags_catalog:
+        try:
+            ensure_tag_adjustment_layers(final_items, tags_catalog)
+            apply_tag_styles(
+                final_items,
+                tags_catalog,
+                fps=float(defaults.get("fps") or ENV_DEFAULTS.get("fps") or 23.976),
+                global_start_sec=global_start_sec,
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning("[assembler] tag styles failed: %s", exc)
+
+    text_fx_lib = copy.deepcopy(_load_json_cached(str(TEXT_FX_LIBRARY_PATH)))
+    motion_lib = copy.deepcopy(_load_json_cached(str(MOTION_LIBRARY_PATH)))
     ensure_default_text_fx_combo(final_items, text_fx_lib)
     expand_text_motion_combos(final_items, motion_lib)
     expand_text_fx_combos(final_items, text_fx_lib)
