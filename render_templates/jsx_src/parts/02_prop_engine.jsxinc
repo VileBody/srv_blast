@@ -1,10 +1,39 @@
 
-    function _resolveKeyTime(k, layerCtx) {
+function _resolveKeyTime(k, layerCtx) {
         if (!k) return null;
         if (k.time !== undefined && k.time !== null) return k.time;
         if (k.t !== undefined && k.t !== null && layerCtx) {
             var dur = (layerCtx.outPoint - layerCtx.inPoint);
             return layerCtx.inPoint + (k.t * dur);
+        }
+        return null;
+    }
+
+    // Resolve AE property by either:
+    //  - string matchName/key
+    //  - array path: ["Group", "Subgroup", "Prop"] or [1,2,3]
+    function resolvePropByPath(root, path) {
+        if (!root || path === undefined || path === null) return null;
+
+        // simple
+        if (typeof path === "string") {
+            try { return root.property(path); } catch (e1) { return null; }
+        }
+
+        // array path
+        if (_isArray(path)) {
+            var cur = root;
+            for (var i = 0; i < path.length; i++) {
+                var seg = path[i];
+                if (seg === undefined || seg === null) return null;
+                try {
+                    cur = cur.property(seg);
+                } catch (e2) {
+                    try { cur = cur.property(parseInt(seg, 10)); } catch (e3) { return null; }
+                }
+                if (!cur) return null;
+            }
+            return cur;
         }
         return null;
     }

@@ -24,19 +24,33 @@
             }
 
             var params = fxConf.params || {};
-            for (var key in params) {
-                if (!params.hasOwnProperty(key)) continue;
-                var p = null;
-                try {
-                    p = fx.property(key);
-                } catch (eProp) {
-                    p = null;
+
+            // Support both formats:
+            //  (A) dict: { "ADBE Motion Blur-0002": {...}, ... }
+            //  (B) list: [{path: "ADBE Motion Blur-0002", value: {...}}, {path: ["Group","Prop"], value: ...}]
+            if (_isArray(params)) {
+                for (var pi = 0; pi < params.length; pi++) {
+                    var entry = params[pi];
+                    if (!entry) continue;
+                    var path = entry.path !== undefined ? entry.path : entry.key;
+                    var val = entry.value;
+                    var p2 = resolvePropByPath(fx, path);
+                    if (!p2) {
+                        logLine("FX PARAM MISSING: fx=" + fxConf.matchName + " path=" + path);
+                        continue;
+                    }
+                    setPropValue(p2, val, layer);
                 }
-                if (!p) {
-                    logLine("FX PARAM MISSING: fx=" + fxConf.matchName + " key=" + key);
-                    continue;
+            } else {
+                for (var key in params) {
+                    if (!params.hasOwnProperty(key)) continue;
+                    var p = resolvePropByPath(fx, key);
+                    if (!p) {
+                        logLine("FX PARAM MISSING: fx=" + fxConf.matchName + " key=" + key);
+                        continue;
+                    }
+                    setPropValue(p, params[key], layer);
                 }
-                setPropValue(p, params[key], layer);
             }
         }
     }

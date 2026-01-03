@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Optional
 
 
 def _repo_root() -> Path:
@@ -34,6 +35,14 @@ def _must_exist(p: Path) -> Path:
     return p
 
 
+def _maybe_file(p: Path) -> Optional[Path]:
+    """
+    SOFT: для опциональных ассетов (например, tags), чтобы импорт модулей не падал,
+    если папку config собирают отдельно.
+    """
+    return p if p.is_file() else None
+
+
 PROJECT_SETTINGS_TEMPLATE_PATH: Path = _must_exist(
     STYLES_DIR / "project" / "project_settings_template.json"
 )
@@ -57,3 +66,21 @@ MOTION_LIBRARY_PATH: Path = _must_exist(
 EFFECTS_LIBRARY_PATH: Path = _must_exist(
     STYLES_DIR / "effects" / "effects_library.json"
 )
+
+# ---------------------------
+# Optional: TAGS (text tag packs)
+# ---------------------------
+TAGS_DIR: Path = (STYLES_DIR / "tags").resolve()
+TAGS_PACKS_DIR: Path = (TAGS_DIR / "packs").resolve()
+
+# Возможные имена каталога (держим гибко, чтобы не ломать миграции)
+TAGS_CATALOG_PATH: Optional[Path] = (
+    _maybe_file(TAGS_DIR / "preset_catalog_v2.json")
+    or _maybe_file(TAGS_DIR / "tags_catalog.json")
+    or _maybe_file(TAGS_DIR / "tag_catalog.json")
+)
+
+
+def tag_pack_path(tag_id: str) -> Path:
+    """Стандартное место для tag pack (может не существовать — валидируем позже)."""
+    return (TAGS_PACKS_DIR / f"{tag_id}.json").resolve()
