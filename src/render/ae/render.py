@@ -6,7 +6,6 @@ import logging
 import os
 from typing import Any, Dict, Tuple
 
-from src.config.styles.paths import TEXT_STYLES_PATH, FOOTAGE_PRESETS_PATH
 from src.render.ae.compiler import build_project_payload_from_composition
 from src.render.ae.template_paths import JOB_TEMPLATE_PATH
 from src.storage.s3 import generate_presigned_url
@@ -31,11 +30,11 @@ def _ensure_project_data(plan: Dict[str, Any]) -> Tuple[Dict[str, Any], str, str
     if not composition:
         raise RuntimeError("Plan has neither project_data nor composition")
 
+    style_id = (composition.get("projectSettings") or {}).get("styleId") or composition.get("styleId")
     project_data, json_str = build_project_payload_from_composition(
-        styles_path=TEXT_STYLES_PATH,
-        presets_path=FOOTAGE_PRESETS_PATH,
         composition=composition,
         entry_point=DEFAULT_ENTRY_COMP,
+        style_id=style_id,
     )
     entry_comp = project_data.get("entryPoint", DEFAULT_ENTRY_COMP)
     return project_data, json_str, entry_comp

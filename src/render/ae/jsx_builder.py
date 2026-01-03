@@ -10,8 +10,7 @@ from config import Config
 from src.render.ae.compiler import build_project_payload_from_composition
 from .client import AeMediaPayload
 
-# --- ИМПОРТИРУЕМ ПУТИ ИЗ КОНФИГА (ВМЕСТО ХАРДКОДА) ---
-from src.config.styles.paths import TEXT_STYLES_PATH, FOOTAGE_PRESETS_PATH
+# --- STYLE PATHS ---
 from src.core.config.styles import FootagePresetId, SubtitleStyle
 from src.render.ae.template_paths import JOB_TEMPLATE_PATH
 from src.storage.library_store import AssetLibrary
@@ -304,6 +303,8 @@ def build_render_jsx_and_media(job_id: str, plan: Dict[str, Any]) -> AeBuildResu
     composition: Dict[str, Any] = {
         "projectSettings": {
             "name": plan.get("name") or f"Job {job_id}",
+            # styleId может прийти извне
+            "styleId": plan.get("styleId") or plan.get("style_id"),
             "defaults": {
                 "width": cfg.target_width,
                 "height": cfg.target_height,
@@ -315,11 +316,13 @@ def build_render_jsx_and_media(job_id: str, plan: Dict[str, Any]) -> AeBuildResu
         "items": items,
     }
 
+    # resolve style paths once (if styleId missing -> auto-detect first valid)
+    style_id = composition.get("projectSettings", {}).get("styleId")
+    # build payload using style-aware resolver
     _, json_str = build_project_payload_from_composition(
-        styles_path=TEXT_STYLES_PATH,
-        presets_path=FOOTAGE_PRESETS_PATH,
         composition=composition,
         entry_point="comp_main",
+        style_id=style_id,
     )
 
     template_code = JOB_TEMPLATE_PATH.read_text(encoding="utf-8")
