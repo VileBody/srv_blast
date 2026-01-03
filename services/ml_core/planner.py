@@ -12,7 +12,6 @@ from src.genai.client_base import GenaiClientBase
 from src.genai.planners import AePlanner
 from src.storage.library_store import AssetLibrary
 from src.storage.s3 import download_from_s3
-from src.config.styles.paths import TEXT_STYLES_PATH, FOOTAGE_PRESETS_PATH
 
 log = logging.getLogger(__name__)
 
@@ -75,10 +74,10 @@ def build_edit_plan(job_id: str, audio_src: str, name: str) -> Dict[str, Any]:
     composition = planner.build_ae_project(audio_path, library_payload)
 
     raw_payload, json_str = build_project_payload_from_composition(
-        styles_path=TEXT_STYLES_PATH,
-        presets_path=FOOTAGE_PRESETS_PATH,
         composition=composition,
         entry_point="comp_main",
+        style_id=(composition.get("projectSettings") or {}).get("styleId")
+        or composition.get("styleId"),
     )
 
     plan: Dict[str, Any] = {

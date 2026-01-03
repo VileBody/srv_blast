@@ -4,22 +4,15 @@ from __future__ import annotations
 import copy
 import json
 import logging
-from typing import Any, Dict, List, Optional, Tuple
-from pathlib import Path
 from functools import lru_cache
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
 from config import Config
 from .effects_logic import resolve_effect_stack, stack_to_ae_effects_conf
 from .tag_styles import ensure_tag_adjustment_layers, apply_tag_styles
 from src.render.ae.contracts.payload import Payload
-from src.config.styles.paths import (
-    PROJECT_SETTINGS_TEMPLATE_PATH,
-    EFFECTS_LIBRARY_PATH,
-    TEXT_FX_LIBRARY_PATH,
-    TEXT_STYLES_PATH,
-    FOOTAGE_PRESETS_PATH,
-    MOTION_LIBRARY_PATH,
-)
+from src.config.styles.paths import get_style_paths
 from src.core.config.style_loader import get_tags_catalog
 
 cfg = Config.from_env()
@@ -285,6 +278,7 @@ def load_json(path: Path) -> dict:
 
 @lru_cache(maxsize=64)
 def _load_json_cached(path: str) -> dict:
+    from pathlib import Path
     return load_json(Path(path))
 
 
@@ -424,23 +418,33 @@ def apply_defaults(item: dict, defaults: dict) -> dict:
 
 
 def build_project_payload_from_composition(
-    styles_path: Path,
-    presets_path: Path,
     composition: dict,
     entry_point: str = "comp_main",
+    *,
+    style_id: Optional[str] = None,
 ) -> Tuple[Dict[str, Any], str]:
     """
     Общий ассемблер:
-      - читает text_styles/footage_presets,
+      - резолвит style root по style_id (или авто),
+      - читает text_styles/footage_presets/effects/motion/text_fx,
       - берёт projectSettings.defaults и дополняет базовыми дефолтами,
       - разруливает styleId/presetId/fitPolicy,
       - собирает Payload (PROJECT_DATA) и валидирует его.
     """
-    styles_data = load_json(styles_path)
-    presets_data = load_json(presets_path)
-    effects_data = copy.deepcopy(_load_json_cached(str(EFFECTS_LIBRARY_PATH)))
-
+    # style_id: явный аргумент имеет приоритет, затем projectSettings.styleId, затем composition.styleId
     project_settings = composition.get("projectSettings", {}) or {}
+    inferred_style_id = (
+        style_id
+        or project_settings.get("styleId")
+        or composition.get("styleId")
+        or None
+    )
+
+    paths = get_style_paths(inferred_style_id)
+
+    styles_data = load_json(paths["text_styles"])
+    presets_data = load_json(paths["footage"])
+    effects_data = copy.deepcopy(_load_json_cached(str(paths["effects"])))
     ps_defaults = project_settings.get("defaults") or {}
 
     raw_global_start = composition.get("global_start_sec")
@@ -472,7 +476,7 @@ def build_project_payload_from_composition(
     else:
         duration = float(ps_defaults.get("duration", DEFAULT_DURATION))
 
-    project_template = _load_json_cached(str(PROJECT_SETTINGS_TEMPLATE_PATH))
+    project_template = _load_json_cached(str(paths["project_settings"]))
     project_template_defaults: Dict[str, Any] = (project_template.get("defaults", {}) if isinstance(project_template, dict) else {}) or {}
 
     base_defaults = dict(ENV_DEFAULTS)
@@ -536,8 +540,8 @@ def build_project_payload_from_composition(
         except Exception as exc:  # noqa: BLE001
             log.warning("[assembler] tag styles failed: %s", exc)
 
-    text_fx_lib = copy.deepcopy(_load_json_cached(str(TEXT_FX_LIBRARY_PATH)))
-    motion_lib = copy.deepcopy(_load_json_cached(str(MOTION_LIBRARY_PATH)))
+    text_fx_lib = copy.deepcopy(_load_json_cached(str(paths["text_fx"])))
+    motion_lib = copy.deepcopy(_load_json_cached(str(paths["motion"])))
     ensure_default_text_fx_combo(final_items, text_fx_lib)
     expand_text_motion_combos(final_items, motion_lib)
     expand_text_fx_combos(final_items, text_fx_lib)
