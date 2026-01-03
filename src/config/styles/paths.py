@@ -1,86 +1,64 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
-from typing import Optional
-
+from typing import Optional, Dict
 
 def _repo_root() -> Path:
-    """
-    Определяем корень репозитория (/app в контейнере) по расположению файла:
-    src/config/styles/paths.py -> parents[3] == <repo_root>
-    """
     return Path(__file__).resolve().parents[3]
 
+STYLES_BASE_DIR: Path = (_repo_root() / "config" / "styles").resolve()
 
-STYLES_DIR: Path = (_repo_root() / "config" / "styles").resolve()
+_REQUIRED_REL = [
+    "project/project_settings_template.json",
+    "text/text_styles.json",
+    "text/text_fx_combos.json",
+    "text/text_motion_library.json",
+    "footage/footage_presets.json",
+    "effects/effects_library.json",
+]
 
+def _is_valid_styles_root(root: Path) -> bool:
+    return all((root / rel).is_file() for rel in _REQUIRED_REL)
 
-def _must_exist(p: Path) -> Path:
-    """
-    STRICT: если файла нет — падаем сразу и громко,
-    чтобы миграция плоская->деревянная не скрывала ошибки.
-    """
-    if not p.is_file():
-        raise FileNotFoundError(
-            "Missing styles asset.\n"
-            f"Expected: {p}\n"
-            f"Styles root: {STYLES_DIR}\n"
-            "Expected tree layout:\n"
-            "  config/styles/project/project_settings_template.json\n"
-            "  config/styles/text/text_styles.json\n"
-            "  config/styles/text/text_fx_combos.json\n"
-            "  config/styles/footage/footage_presets.json\n"
-            "  config/styles/effects/effects_library.json\n"
-        )
-    return p
+def _auto_detect_styles_root() -> Path:
+    # 1) legacy flat
+    if _is_valid_styles_root(STYLES_BASE_DIR):
+        return STYLES_BASE_DIR
 
+    # 2) foreach style_id (sorted = deterministic)
+    if STYLES_BASE_DIR.is_dir():
+        for d in sorted(STYLES_BASE_DIR.iterdir()):
+            if d.is_dir() and _is_valid_styles_root(d):
+                return d
 
-def _maybe_file(p: Path) -> Optional[Path]:
-    """
-    SOFT: для опциональных ассетов (например, tags), чтобы импорт модулей не падал,
-    если папку config собирают отдельно.
-    """
-    return p if p.is_file() else None
+    raise FileNotFoundError(
+        "Missing styles asset.\n"
+        f"Styles base: {STYLES_BASE_DIR}\n"
+        "Expected either:\n"
+        "  config/styles/project/... (legacy flat)\n"
+        "or:\n"
+        "  config/styles/<style_id>/project/... (multi-style)\n"
+    )
 
+def get_styles_root(style_id: Optional[str] = None) -> Path:
+    if style_id:
+        cand = (STYLES_BASE_DIR / style_id).resolve()
+        if _is_valid_styles_root(cand):
+            return cand
+        raise FileNotFoundError(f"Style '{style_id}' not found or incomplete under {STYLES_BASE_DIR}")
+    return _auto_detect_styles_root()
 
-PROJECT_SETTINGS_TEMPLATE_PATH: Path = _must_exist(
-    STYLES_DIR / "project" / "project_settings_template.json"
-)
-
-TEXT_STYLES_PATH: Path = _must_exist(
-    STYLES_DIR / "text" / "text_styles.json"
-)
-
-TEXT_FX_LIBRARY_PATH: Path = _must_exist(
-    STYLES_DIR / "text" / "text_fx_combos.json"
-)
-
-FOOTAGE_PRESETS_PATH: Path = _must_exist(
-    STYLES_DIR / "footage" / "footage_presets.json"
-)
-
-MOTION_LIBRARY_PATH: Path = _must_exist(
-    STYLES_DIR / "text" / "text_motion_library.json"
-)
-
-EFFECTS_LIBRARY_PATH: Path = _must_exist(
-    STYLES_DIR / "effects" / "effects_library.json"
-)
-
-# ---------------------------
-# Optional: TAGS (text tag packs)
-# ---------------------------
-TAGS_DIR: Path = (STYLES_DIR / "tags").resolve()
-TAGS_PACKS_DIR: Path = (TAGS_DIR / "packs").resolve()
-
-# Возможные имена каталога (держим гибко, чтобы не ломать миграции)
-TAGS_CATALOG_PATH: Optional[Path] = (
-    _maybe_file(TAGS_DIR / "preset_catalog_v2.json")
-    or _maybe_file(TAGS_DIR / "tags_catalog.json")
-    or _maybe_file(TAGS_DIR / "tag_catalog.json")
-)
-
-
-def tag_pack_path(tag_id: str) -> Path:
-    """Стандартное место для tag pack (может не существовать — валидируем позже)."""
-    return (TAGS_PACKS_DIR / f"{tag_id}.json").resolve()
+def get_style_paths(style_id: Optional[str] = None) -> Dict[str, Path]:
+    root = get_styles_root(style_id)
+    return {
+        "root": root,
+        "project_settings": root / "project" / "project_settings_template.json",
+        "text_styles": root / "text" / "text_styles.json",
+        "text_fx": root / "text" / "text_fx_combos.json",
+        "motion": root / "text" / "text_motion_library.json",
+        "footage": root / "footage" / "footage_presets.json",
+        "effects": root / "effects" / "effects_library.json",
+        "tags_dir": root / "tags",
+        "tags_packs_dir": root / "tags" / "packs",
+    }

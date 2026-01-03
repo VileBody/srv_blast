@@ -175,7 +175,7 @@
     var fRef     = getFolder("99_REF");
     var fSolids  = getFolder("00_SOLIDS");
 
-    function _resolveKeyTime(k, layerCtx) {
+function _resolveKeyTime(k, layerCtx) {
         if (!k) return null;
         if (k.time !== undefined && k.time !== null) return k.time;
         if (k.t !== undefined && k.t !== null && layerCtx) {
@@ -191,17 +191,20 @@
     function resolvePropByPath(root, path) {
         if (!root || path === undefined || path === null) return null;
 
+        // simple
         if (typeof path === "string") {
             try { return root.property(path); } catch (e1) { return null; }
         }
 
+        // array path
         if (_isArray(path)) {
             var cur = root;
             for (var i = 0; i < path.length; i++) {
                 var seg = path[i];
                 if (seg === undefined || seg === null) return null;
-                try { cur = cur.property(seg); }
-                catch (e2) {
+                try {
+                    cur = cur.property(seg);
+                } catch (e2) {
                     try { cur = cur.property(parseInt(seg, 10)); } catch (e3) { return null; }
                 }
                 if (!cur) return null;
@@ -286,6 +289,10 @@
             }
 
             var params = fxConf.params || {};
+
+            // Support both formats:
+            //  (A) dict: { "ADBE Motion Blur-0002": {...}, ... }
+            //  (B) list: [{path: "ADBE Motion Blur-0002", value: {...}}, {path: ["Group","Prop"], value: ...}]
             if (_isArray(params)) {
                 for (var pi = 0; pi < params.length; pi++) {
                     var entry = params[pi];
@@ -527,6 +534,7 @@
 
         if (config.type === "adjustment") layer.adjustmentLayer = true;
 
+        // 3D switch (needed for some text animator presets)
         if (config.threeDLayer === true || config.threeD === true) {
             try { layer.threeDLayer = true; } catch (e3d1) {}
         } else if (config.threeDLayer === false || config.threeD === false) {

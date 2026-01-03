@@ -4,19 +4,9 @@ import copy
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
-from src.config.styles.paths import (
-    EFFECTS_LIBRARY_PATH,
-    FOOTAGE_PRESETS_PATH,
-    MOTION_LIBRARY_PATH,
-    TEXT_FX_LIBRARY_PATH,
-    TEXT_STYLES_PATH,
-    TAGS_CATALOG_PATH,
-    TAGS_DIR,
-    TAGS_PACKS_DIR,
-    tag_pack_path,
-)
+from src.config.styles.paths import get_style_paths
 from .styles import FootagePresetId, SubtitleStyle
 
 log = logging.getLogger(__name__)
@@ -26,17 +16,22 @@ def _load_json(path: Path) -> Dict[str, Any]:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
     except Exception as exc:  # noqa: BLE001
-        # STRICT: не глотаем ошибки, иначе ты “тонешь” и не понимаешь, что реально не так
         raise RuntimeError(f"Failed to load JSON {path}: {exc}") from exc
 
 
-_TEXT_STYLES: Optional[Dict[str, Any]] = None
-_FOOTAGE_PRESETS: Optional[Dict[str, Any]] = None
-_MOTION_LIBRARY: Dict[str, Any] | None = None
-_EFFECTS_LIBRARY: Dict[str, Any] | None = None
-_TEXT_FX_LIBRARY: Dict[str, Any] | None = None  # <--- Добавлена переменная
-_TAGS_CATALOG: Dict[str, Any] | None = None
-_TAG_PACK_CACHE: Dict[str, Dict[str, Any]] = {}
+# ---------------------------
+# Per-style caches
+# key = styles_root.as_posix()
+# ---------------------------
+
+_TEXT_STYLES_BY_ROOT: Dict[str, Dict[str, Any]] = {}
+_FOOTAGE_PRESETS_BY_ROOT: Dict[str, Dict[str, Any]] = {}
+_MOTION_LIBRARY_BY_ROOT: Dict[str, Dict[str, Any]] = {}
+_EFFECTS_LIBRARY_BY_ROOT: Dict[str, Dict[str, Any]] = {}
+_TEXT_FX_LIBRARY_BY_ROOT: Dict[str, Dict[str, Any]] = {}
+
+_TAGS_CATALOG_BY_ROOT: Dict[str, Dict[str, Any]] = {}
+_TAG_PACK_CACHE_BY_ROOT: Dict[Tuple[str, str], Dict[str, Any]] = {}  # (root_key, tag_id) -> pack
 
 _SUBTITLE_STYLE_KEYS = {
     SubtitleStyle.DEFAULT: "main_subtitle",
@@ -44,12 +39,30 @@ _SUBTITLE_STYLE_KEYS = {
 }
 
 
-def get_text_style(style: SubtitleStyle | str) -> Dict[str, Any]:
-    """Возвращает копию настроек текста для заданного стиля субтитров."""
+def _root_key(style_id: Optional[str] = None) -> Tuple[str, Dict[str, Path]]:
+    """
+    Resolves style paths and returns:
+      - cache key (styles root path string)
+      - resolved paths dict
+    """
+    paths = get_style_paths(style_id)
+    root = paths["root"]
+    return root.as_posix(), paths
 
-    global _TEXT_STYLES
-    if _TEXT_STYLES is None:
-        _TEXT_STYLES = _load_json(TEXT_STYLES_PATH)
+
+# ---------------------------
+# Base libraries
+# ---------------------------
+
+def get_text_style(style: SubtitleStyle | str, *, style_id: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Возвращает копию настроек текста для заданного стиля субтитров.
+    Читает из text/text_styles.json выбранного style root.
+    """
+    rkey, paths = _root_key(style_id)
+
+    if rkey not in _TEXT_STYLES_BY_ROOT:
+        _TEXT_STYLES_BY_ROOT[rkey] = _load_json(paths["text_styles"])
 
     if isinstance(style, str):
         style = (
@@ -59,95 +72,130 @@ def get_text_style(style: SubtitleStyle | str) -> Dict[str, Any]:
         )
 
     style_key = _SUBTITLE_STYLE_KEYS.get(style, "main_subtitle")
-    return copy.deepcopy((_TEXT_STYLES or {}).get(style_key, {}))
+    return copy.deepcopy((_TEXT_STYLES_BY_ROOT.get(rkey) or {}).get(style_key, {}))
 
 
-def get_footage_preset(preset_id: FootagePresetId | str) -> Dict[str, Any]:
-    """Возвращает копию настроек пресета для футажа."""
+def get_footage_preset(preset_id: FootagePresetId | str, *, style_id: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Возвращает копию настроек пресета для футажа из footage/footage_presets.json выбранного style root.
+    """
+    rkey, paths = _root_key(style_id)
 
-    global _FOOTAGE_PRESETS
-    if _FOOTAGE_PRESETS is None:
-        _FOOTAGE_PRESETS = _load_json(FOOTAGE_PRESETS_PATH)
+    if rkey not in _FOOTAGE_PRESETS_BY_ROOT:
+        _FOOTAGE_PRESETS_BY_ROOT[rkey] = _load_json(paths["footage"])
 
     pid = preset_id.value if isinstance(preset_id, FootagePresetId) else str(preset_id)
-    return copy.deepcopy((_FOOTAGE_PRESETS or {}).get(pid, {}))
+    return copy.deepcopy((_FOOTAGE_PRESETS_BY_ROOT.get(rkey) or {}).get(pid, {}))
 
 
-def get_motion_library() -> Dict[str, Any]:
-    """Motion-часть textFxComboId: threeD/textAnimators/textMoreOptions + defaults/exposedMap."""
-    global _MOTION_LIBRARY
-
-    if _MOTION_LIBRARY is None:
-        _MOTION_LIBRARY = _load_json(MOTION_LIBRARY_PATH)
-    return copy.deepcopy(_MOTION_LIBRARY)
-
-
-def get_effects_library() -> Dict[str, Any]:
-    """Semantic adjustment-layer effects library."""
-    global _EFFECTS_LIBRARY
-
-    if _EFFECTS_LIBRARY is None:
-        _EFFECTS_LIBRARY = _load_json(EFFECTS_LIBRARY_PATH)
-    return copy.deepcopy(_EFFECTS_LIBRARY)
+def get_motion_library(*, style_id: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Motion-часть textFxComboId: threeD/textAnimators/textMoreOptions + defaults/exposedMap.
+    """
+    rkey, paths = _root_key(style_id)
+    if rkey not in _MOTION_LIBRARY_BY_ROOT:
+        _MOTION_LIBRARY_BY_ROOT[rkey] = _load_json(paths["motion"])
+    return copy.deepcopy(_MOTION_LIBRARY_BY_ROOT[rkey])
 
 
-def get_text_fx_library() -> Dict[str, Any]:
-    """Effects-часть textFxComboId: effects + defaults/exposedMap (без textAnimators)."""
-    global _TEXT_FX_LIBRARY
+def get_effects_library(*, style_id: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Semantic adjustment-layer effects library.
+    """
+    rkey, paths = _root_key(style_id)
+    if rkey not in _EFFECTS_LIBRARY_BY_ROOT:
+        _EFFECTS_LIBRARY_BY_ROOT[rkey] = _load_json(paths["effects"])
+    return copy.deepcopy(_EFFECTS_LIBRARY_BY_ROOT[rkey])
 
-    if _TEXT_FX_LIBRARY is None:
-        _TEXT_FX_LIBRARY = _load_json(TEXT_FX_LIBRARY_PATH)
-    return copy.deepcopy(_TEXT_FX_LIBRARY)
+
+def get_text_fx_library(*, style_id: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Effects-часть textFxComboId: effects + defaults/exposedMap (без textAnimators).
+    """
+    rkey, paths = _root_key(style_id)
+    if rkey not in _TEXT_FX_LIBRARY_BY_ROOT:
+        _TEXT_FX_LIBRARY_BY_ROOT[rkey] = _load_json(paths["text_fx"])
+    return copy.deepcopy(_TEXT_FX_LIBRARY_BY_ROOT[rkey])
 
 
 # ---------------------------
 # TAGS (optional)
 # ---------------------------
 
+def get_tags_catalog(*, style_id: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Возвращает JSON-каталог тегов (если есть) для выбранного style root.
 
-def get_tags_catalog() -> Dict[str, Any]:
+    Мы не привязываемся к одному имени, ищем несколько вариантов:
+      tags/preset_catalog_v2.json
+      tags/tags_catalog.json
+      tags/tag_catalog.json
+      tags/catalog.json
     """
-    Возвращает JSON-каталог тегов (если есть).
-    Формат каталога оставляем гибким: это может быть как {tagId: {...}}, так и
-    объект с ключом "tag_catalog" / "tags".
-    """
-    global _TAGS_CATALOG
-    if _TAGS_CATALOG is None:
-        if TAGS_CATALOG_PATH is None:
-            _TAGS_CATALOG = {}
-        else:
-            _TAGS_CATALOG = _load_json(TAGS_CATALOG_PATH)
-    return copy.deepcopy(_TAGS_CATALOG or {})
+    rkey, paths = _root_key(style_id)
+    if rkey in _TAGS_CATALOG_BY_ROOT:
+        return copy.deepcopy(_TAGS_CATALOG_BY_ROOT[rkey])
 
-
-def get_tag_pack(tag_id: str) -> Dict[str, Any]:
-    """
-    Загружает tag pack (если есть).
-    Поддерживаем несколько layout'ов, чтобы миграции не были болезненными.
-    """
-    if not tag_id:
+    tags_dir = paths.get("tags_dir")
+    if not tags_dir or not isinstance(tags_dir, Path):
+        _TAGS_CATALOG_BY_ROOT[rkey] = {}
         return {}
 
-    if tag_id in _TAG_PACK_CACHE:
-        return copy.deepcopy(_TAG_PACK_CACHE[tag_id])
-
     candidates = [
-        # preferred
-        tag_pack_path(tag_id),
-        # alt layouts
-        (TAGS_PACKS_DIR / f"{tag_id}.json").resolve(),
-        (TAGS_DIR / f"{tag_id}.json").resolve(),
-        (TAGS_DIR / tag_id / "tag_pack.json").resolve(),
+        tags_dir / "preset_catalog_v2.json",
+        tags_dir / "tags_catalog.json",
+        tags_dir / "tag_catalog.json",
+        tags_dir / "catalog.json",
     ]
 
     for p in candidates:
         try:
             if p.is_file():
                 data = _load_json(p)
-                _TAG_PACK_CACHE[tag_id] = data
+                _TAGS_CATALOG_BY_ROOT[rkey] = data
+                return copy.deepcopy(data)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("[style_loader] Failed to load tags catalog from %s: %s", p, exc)
+
+    _TAGS_CATALOG_BY_ROOT[rkey] = {}
+    return {}
+
+
+def get_tag_pack(tag_id: str, *, style_id: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Загружает tag pack (если есть) для выбранного style root.
+
+    Ищем в порядке:
+      tags/packs/<tag_id>.json
+      tags/<tag_id>.json
+      tags/<tag_id>/tag_pack.json
+    """
+    if not tag_id:
+        return {}
+
+    rkey, paths = _root_key(style_id)
+    cache_key = (rkey, tag_id)
+    if cache_key in _TAG_PACK_CACHE_BY_ROOT:
+        return copy.deepcopy(_TAG_PACK_CACHE_BY_ROOT[cache_key])
+
+    tags_dir = paths.get("tags_dir")
+    packs_dir = paths.get("tags_packs_dir")
+
+    candidates = []
+    if isinstance(packs_dir, Path):
+        candidates.append((packs_dir / f"{tag_id}.json").resolve())
+    if isinstance(tags_dir, Path):
+        candidates.append((tags_dir / f"{tag_id}.json").resolve())
+        candidates.append((tags_dir / tag_id / "tag_pack.json").resolve())
+
+    for p in candidates:
+        try:
+            if p.is_file():
+                data = _load_json(p)
+                _TAG_PACK_CACHE_BY_ROOT[cache_key] = data
                 return copy.deepcopy(data)
         except Exception as exc:  # noqa: BLE001
             log.warning("[style_loader] Failed to load tag pack %s from %s: %s", tag_id, p, exc)
 
-    _TAG_PACK_CACHE[tag_id] = {}
+    _TAG_PACK_CACHE_BY_ROOT[cache_key] = {}
     return {}
