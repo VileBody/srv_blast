@@ -323,6 +323,7 @@ def apply_tag_styles(
     *,
     fps: float,
     global_start_sec: Optional[float] = None,
+    style_id: Optional[str] = None,
 ) -> int:
     """
     Для слоёв с tagId подмешиваем шаблон из tag pack:
@@ -354,7 +355,7 @@ def apply_tag_styles(
             if not role:
                 continue
 
-            tag_pack = get_tag_pack(tag_id)
+            tag_pack = get_tag_pack(tag_id, style_id=style_id)
             if not tag_pack:
                 log.warning("[tag_styles] Tag pack not found for tagId=%r (layer=%r)", tag_id, layer.get("name"))
                 continue
@@ -384,6 +385,13 @@ def apply_tag_styles(
 
             # Apply template to layer
             if role == "text":
+                # ae_presets-only: keep baked raw blocks; real apply happens in tag_baked_apply.py
+                if isinstance(baked_tpl, dict) and "__raw__" in baked_tpl:
+                    layer["tagBaked"] = baked_tpl["__raw__"]
+                    changed += 1
+                    _cleanup_tag_fields(layer)
+                    continue
+
                 # threeDLayer
                 if "threeDLayer" in baked_tpl:
                     layer["threeDLayer"] = bool(baked_tpl["threeDLayer"])
@@ -424,8 +432,14 @@ def apply_tag_styles(
                     layer.pop(k, None)
 
                 changed += 1
-
+            
             elif role == "adjustment":
+                if isinstance(baked_tpl, dict) and "__raw__" in baked_tpl:
+                    layer["tagBaked"] = baked_tpl["__raw__"]
+                    changed += 1
+                    _cleanup_tag_fields(layer)
+                    continue
+
                 if isinstance(baked_tpl.get("transform"), dict):
                     layer.setdefault("transform", {})
                     for k, v in baked_tpl["transform"].items():

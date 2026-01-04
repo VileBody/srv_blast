@@ -16,17 +16,15 @@ STYLES_BASE_DIR: Path = (_repo_root() / "config" / "styles").resolve()
 
 # Минимальный набор файлов, по которому мы считаем style root валидным.
 _REQUIRED_REL: List[str] = [
-    "project/project_settings_template.json",
-    "text/text_styles.json",
-    "text/text_fx_combos.json",
-    "text/text_motion_library.json",
-    "footage/footage_presets.json",
-    "effects/effects_library.json",
+    "ae_presets/tags/catalog.json",
 ]
 
 
 def _is_valid_styles_root(root: Path) -> bool:
-    return all((root / rel).is_file() for rel in _REQUIRED_REL)
+    if not all((root / rel).is_file() for rel in _REQUIRED_REL):
+        return False
+    packs_dir = root / "ae_presets" / "tags" / "packs"
+    return packs_dir.is_dir()
 
 
 def list_style_ids() -> List[str]:
@@ -51,21 +49,15 @@ def _auto_detect_styles_root() -> Path:
 
     Никаких падений на import — проверка происходит только при вызове.
     """
-    # legacy-flat (если вдруг у кого-то останется)
-    if _is_valid_styles_root(STYLES_BASE_DIR):
-        return STYLES_BASE_DIR
-
     for sid in list_style_ids():
         return (STYLES_BASE_DIR / sid).resolve()
 
     raise FileNotFoundError(
         "Missing styles assets.\n"
         f"Styles base: {STYLES_BASE_DIR}\n"
-        "Expected either:\n"
-        "  config/styles/<style_id>/{project,text,footage,effects}/...\n"
-        "or (not recommended):\n"
-        "  config/styles/{project,text,footage,effects}/... (legacy-flat)\n"
-        "Required files:\n  - " + "\n  - ".join(_REQUIRED_REL)
+        "Expected:\n"
+        "  config/styles/<style_id>/ae_presets/tags/catalog.json\n"
+        "  config/styles/<style_id>/ae_presets/tags/packs/\n"
     )
 
 
@@ -89,18 +81,17 @@ def get_styles_root(style_id: Optional[str] = None) -> Path:
 
 def get_style_paths(style_id: Optional[str] = None) -> Dict[str, Path]:
     """
-    Главная точка входа для всего кода.
-    Возвращает пути к JSON-библиотекам и tag-папкам.
+    Главная точка входа для всего кода (новая схема стилей).
+    Возвращает пути для ae_presets/tag packs.
     """
     root = get_styles_root(style_id)
+    ae_presets = root / "ae_presets"
+    tags_dir = ae_presets / "tags"
     return {
         "root": root,
-        "project_settings": root / "project" / "project_settings_template.json",
-        "text_styles": root / "text" / "text_styles.json",
-        "text_fx": root / "text" / "text_fx_combos.json",
-        "motion": root / "text" / "text_motion_library.json",
-        "footage": root / "footage" / "footage_presets.json",
-        "effects": root / "effects" / "effects_library.json",
-        "tags_dir": root / "tags",
-        "tags_packs_dir": root / "tags" / "packs",
+        "ae_presets_dir": ae_presets,
+        "tags_dir": tags_dir,
+        "tags_catalog": tags_dir / "catalog.json",
+        "tags_packs_dir": tags_dir / "packs",
+        "canonical_debug_dir": ae_presets / "_canonical_debug",
     }

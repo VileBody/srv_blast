@@ -24,19 +24,8 @@ def _load_json(path: Path) -> Dict[str, Any]:
 # key = styles_root.as_posix()
 # ---------------------------
 
-_TEXT_STYLES_BY_ROOT: Dict[str, Dict[str, Any]] = {}
-_FOOTAGE_PRESETS_BY_ROOT: Dict[str, Dict[str, Any]] = {}
-_MOTION_LIBRARY_BY_ROOT: Dict[str, Dict[str, Any]] = {}
-_EFFECTS_LIBRARY_BY_ROOT: Dict[str, Dict[str, Any]] = {}
-_TEXT_FX_LIBRARY_BY_ROOT: Dict[str, Dict[str, Any]] = {}
-
 _TAGS_CATALOG_BY_ROOT: Dict[str, Dict[str, Any]] = {}
 _TAG_PACK_CACHE_BY_ROOT: Dict[Tuple[str, str], Dict[str, Any]] = {}  # (root_key, tag_id) -> pack
-
-_SUBTITLE_STYLE_KEYS = {
-    SubtitleStyle.DEFAULT: "main_subtitle",
-    SubtitleStyle.HIGHLIGHT: "highlight_subtitle",
-}
 
 
 def _root_key(style_id: Optional[str] = None) -> Tuple[str, Dict[str, Path]]:
@@ -55,120 +44,59 @@ def _root_key(style_id: Optional[str] = None) -> Tuple[str, Dict[str, Path]]:
 # ---------------------------
 
 def get_text_style(style: SubtitleStyle | str, *, style_id: Optional[str] = None) -> Dict[str, Any]:
-    """
-    Возвращает копию настроек текста для заданного стиля субтитров.
-    Читает из text/text_styles.json выбранного style root.
-    """
-    rkey, paths = _root_key(style_id)
-
-    if rkey not in _TEXT_STYLES_BY_ROOT:
-        _TEXT_STYLES_BY_ROOT[rkey] = _load_json(paths["text_styles"])
-
-    if isinstance(style, str):
-        style = (
-            SubtitleStyle(style)
-            if style in SubtitleStyle._value2member_map_  # type: ignore[attr-defined]
-            else SubtitleStyle.DEFAULT
-        )
-
-    style_key = _SUBTITLE_STYLE_KEYS.get(style, "main_subtitle")
-    return copy.deepcopy((_TEXT_STYLES_BY_ROOT.get(rkey) or {}).get(style_key, {}))
+    raise RuntimeError("Legacy text styles are not supported in ae_presets-only mode.")
 
 
 def get_footage_preset(preset_id: FootagePresetId | str, *, style_id: Optional[str] = None) -> Dict[str, Any]:
-    """
-    Возвращает копию настроек пресета для футажа из footage/footage_presets.json выбранного style root.
-    """
-    rkey, paths = _root_key(style_id)
-
-    if rkey not in _FOOTAGE_PRESETS_BY_ROOT:
-        _FOOTAGE_PRESETS_BY_ROOT[rkey] = _load_json(paths["footage"])
-
-    pid = preset_id.value if isinstance(preset_id, FootagePresetId) else str(preset_id)
-    return copy.deepcopy((_FOOTAGE_PRESETS_BY_ROOT.get(rkey) or {}).get(pid, {}))
+    raise RuntimeError("Legacy footage presets are not supported in ae_presets-only mode.")
 
 
 def get_motion_library(*, style_id: Optional[str] = None) -> Dict[str, Any]:
-    """
-    Motion-часть textFxComboId: threeD/textAnimators/textMoreOptions + defaults/exposedMap.
-    """
-    rkey, paths = _root_key(style_id)
-    if rkey not in _MOTION_LIBRARY_BY_ROOT:
-        _MOTION_LIBRARY_BY_ROOT[rkey] = _load_json(paths["motion"])
-    return copy.deepcopy(_MOTION_LIBRARY_BY_ROOT[rkey])
+    raise RuntimeError("Legacy motion library is not supported in ae_presets-only mode.")
 
 
 def get_effects_library(*, style_id: Optional[str] = None) -> Dict[str, Any]:
-    """
-    Semantic adjustment-layer effects library.
-    """
-    rkey, paths = _root_key(style_id)
-    if rkey not in _EFFECTS_LIBRARY_BY_ROOT:
-        _EFFECTS_LIBRARY_BY_ROOT[rkey] = _load_json(paths["effects"])
-    return copy.deepcopy(_EFFECTS_LIBRARY_BY_ROOT[rkey])
+    raise RuntimeError("Legacy effects library is not supported in ae_presets-only mode.")
 
 
 def get_text_fx_library(*, style_id: Optional[str] = None) -> Dict[str, Any]:
-    """
-    Effects-часть textFxComboId: effects + defaults/exposedMap (без textAnimators).
-    """
-    rkey, paths = _root_key(style_id)
-    if rkey not in _TEXT_FX_LIBRARY_BY_ROOT:
-        _TEXT_FX_LIBRARY_BY_ROOT[rkey] = _load_json(paths["text_fx"])
-    return copy.deepcopy(_TEXT_FX_LIBRARY_BY_ROOT[rkey])
+    raise RuntimeError("Legacy text FX library is not supported in ae_presets-only mode.")
 
 
 # ---------------------------
-# TAGS (optional)
+# TAGS (ae_presets-only)
 # ---------------------------
+
+
+def _load_pair(base_dir: Path, rel_dir: str, fname: str) -> Optional[Dict[str, Any]]:
+    p = (base_dir / rel_dir / fname).resolve()
+    if p.is_file():
+        return _load_json(p)
+    return None
+
 
 def get_tags_catalog(*, style_id: Optional[str] = None) -> Dict[str, Any]:
     """
-    Возвращает JSON-каталог тегов (если есть) для выбранного style root.
-
-    Мы не привязываемся к одному имени, ищем несколько вариантов:
-      tags/preset_catalog_v2.json
-      tags/tags_catalog.json
-      tags/tag_catalog.json
-      tags/catalog.json
+    Возвращает tags/catalog.json из ae_presets.
     """
     rkey, paths = _root_key(style_id)
     if rkey in _TAGS_CATALOG_BY_ROOT:
         return copy.deepcopy(_TAGS_CATALOG_BY_ROOT[rkey])
 
-    tags_dir = paths.get("tags_dir")
-    if not tags_dir or not isinstance(tags_dir, Path):
+    cat_path = paths.get("tags_catalog")
+    if not isinstance(cat_path, Path) or not cat_path.is_file():
         _TAGS_CATALOG_BY_ROOT[rkey] = {}
         return {}
 
-    candidates = [
-        tags_dir / "preset_catalog_v2.json",
-        tags_dir / "tags_catalog.json",
-        tags_dir / "tag_catalog.json",
-        tags_dir / "catalog.json",
-    ]
-
-    for p in candidates:
-        try:
-            if p.is_file():
-                data = _load_json(p)
-                _TAGS_CATALOG_BY_ROOT[rkey] = data
-                return copy.deepcopy(data)
-        except Exception as exc:  # noqa: BLE001
-            log.warning("[style_loader] Failed to load tags catalog from %s: %s", p, exc)
-
-    _TAGS_CATALOG_BY_ROOT[rkey] = {}
-    return {}
+    data = _load_json(cat_path)
+    _TAGS_CATALOG_BY_ROOT[rkey] = data
+    return copy.deepcopy(data)
 
 
 def get_tag_pack(tag_id: str, *, style_id: Optional[str] = None) -> Dict[str, Any]:
     """
-    Загружает tag pack (если есть) для выбранного style root.
-
-    Ищем в порядке:
-      tags/packs/<tag_id>.json
-      tags/<tag_id>.json
-      tags/<tag_id>/tag_pack.json
+    Возвращает runtime tag pack (manifest + loaded files) из:
+      ae_presets/tags/packs/<tag_id>/manifest.json
     """
     if not tag_id:
         return {}
@@ -178,24 +106,58 @@ def get_tag_pack(tag_id: str, *, style_id: Optional[str] = None) -> Dict[str, An
     if cache_key in _TAG_PACK_CACHE_BY_ROOT:
         return copy.deepcopy(_TAG_PACK_CACHE_BY_ROOT[cache_key])
 
-    tags_dir = paths.get("tags_dir")
     packs_dir = paths.get("tags_packs_dir")
+    if not isinstance(packs_dir, Path):
+        _TAG_PACK_CACHE_BY_ROOT[cache_key] = {}
+        return {}
 
-    candidates = []
-    if isinstance(packs_dir, Path):
-        candidates.append((packs_dir / f"{tag_id}.json").resolve())
-    if isinstance(tags_dir, Path):
-        candidates.append((tags_dir / f"{tag_id}.json").resolve())
-        candidates.append((tags_dir / tag_id / "tag_pack.json").resolve())
+    base_dir = (packs_dir / tag_id).resolve()
+    manifest_path = (base_dir / "manifest.json").resolve()
+    if not manifest_path.is_file():
+        _TAG_PACK_CACHE_BY_ROOT[cache_key] = {}
+        return {}
 
-    for p in candidates:
-        try:
-            if p.is_file():
-                data = _load_json(p)
-                _TAG_PACK_CACHE_BY_ROOT[cache_key] = data
-                return copy.deepcopy(data)
-        except Exception as exc:  # noqa: BLE001
-            log.warning("[style_loader] Failed to load tag pack %s from %s: %s", tag_id, p, exc)
+    manifest = _load_json(manifest_path)
+    files = manifest.get("files") or {}
+    text_files = (files.get("text_layer") or {}) if isinstance(files, dict) else {}
+    adj_files = (files.get("adjustment_layer") or {}) if isinstance(files, dict) else {}
 
-    _TAG_PACK_CACHE_BY_ROOT[cache_key] = {}
-    return {}
+    def load_domain(role_dir: str, domain_name: str) -> Dict[str, Any]:
+        spec = (text_files if role_dir == "text_layer" else adj_files).get(domain_name) or {}
+        if not isinstance(spec, dict):
+            return {}
+        out: Dict[str, Any] = {}
+        tpl = spec.get("template")
+        kf = spec.get("keyframes")
+        if isinstance(tpl, str) and tpl:
+            out["template"] = _load_pair(base_dir, role_dir, tpl) or {}
+        if isinstance(kf, str) and kf:
+            out["keyframes"] = _load_pair(base_dir, role_dir, kf) or {}
+        return out
+
+    pack: Dict[str, Any] = {
+        "tagId": manifest.get("tagId") or tag_id,
+        "label": manifest.get("label") or tag_id,
+        "requires_words": bool(manifest.get("requires_words", False)),
+        "refs": manifest.get("refs") or {},
+        "manifest": manifest,
+        "layers": {
+            "text": {
+                "__raw__": {
+                    "transform": load_domain("text_layer", "transform"),
+                    "textDoc": load_domain("text_layer", "textDoc"),
+                    "textAnim": load_domain("text_layer", "textAnim"),
+                    "effects": load_domain("text_layer", "effects"),
+                },
+            },
+            "adjustment": {
+                "__raw__": {
+                    "transform": load_domain("adjustment_layer", "transform"),
+                    "effects": load_domain("adjustment_layer", "effects"),
+                },
+            },
+        },
+    }
+
+    _TAG_PACK_CACHE_BY_ROOT[cache_key] = pack
+    return copy.deepcopy(pack)
