@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from pathlib import Path
 from typing import Any, Dict, Tuple
 
 from src.render.ae.compiler import build_project_payload_from_composition
@@ -17,6 +18,20 @@ log = logging.getLogger(__name__)
 
 DEFAULT_ENTRY_COMP = "comp_main"
 OUTPUT_RELPATH = "work/output.mp4"
+
+
+def _debug_dump(job_id: str, filename: str, content: str) -> None:
+    base = os.getenv("JSX_DUMP_DIR", "/app/jsx").strip() or "/app/jsx"
+    try:
+        base_path = Path(base)
+        base_path.mkdir(parents=True, exist_ok=True)
+        job_dir = base_path / str(job_id)
+        job_dir.mkdir(parents=True, exist_ok=True)
+        out_path = job_dir / filename
+        out_path.write_text(content, encoding="utf-8")
+        log.info("[debug_dump] wrote %s", out_path.as_posix())
+    except Exception as exc:  # noqa: BLE001
+        log.warning("[debug_dump] failed to write %s for job_id=%s: %s", filename, job_id, exc)
 
 
 def _ensure_project_data(plan: Dict[str, Any]) -> Tuple[Dict[str, Any], str, str]:
@@ -107,9 +122,15 @@ def render_from_plan(job_id: str, plan: Dict[str, Any]) -> Dict[str, Any]:
     project_data, json_str, entry_comp = _ensure_project_data(plan)
     media = _build_media_payloads(project_data, plan.get("audio_source", ""))
 
+    # dump PROJECT_DATA actually used by renderer (post-ensure)
+    _debug_dump(job_id, "project_data_render.json", json_str)
+
     template_code = JOB_TEMPLATE_PATH.read_text(encoding="utf-8")
     js_variable = f"var PROJECT_DATA = {json_str};\n"
     render_jsx = template_code.replace("/*__PYTHON_DATA_INJECT__*/", js_variable)
+
+    # dump final JSX that is sent to AE node
+    _debug_dump(job_id, "render.jsx", render_jsx)
 
     client = AeRenderClient()
     output_s3_key = f"{job_id}.mp4"

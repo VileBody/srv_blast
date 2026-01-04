@@ -1,0 +1,5 @@
+# Debug dumps (raw LLM output, assembled PROJECT_DATA, final JSX)
+jsx/
+jsx/**
+
+# keep existing ignores below...

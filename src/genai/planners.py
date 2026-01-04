@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 from typing import List, Optional
 
@@ -136,7 +137,7 @@ class AePlanner:
         return self.build_ae_project(audio_path=audio_path, library_payload=library_payload)
 
     def build_ae_project(
-        self, audio_path: Path, library_payload: list[dict]
+        self, audio_path: Path, library_payload: list[dict], job_id: str | None = None
     ) -> dict:
         # ae_presets-only: строим промпт через функцию; styleId может прийти извне позже.
         system_prompt = build_ae_project_system_prompt(None)
@@ -168,6 +169,19 @@ class AePlanner:
         )
 
         raw = self.client.extract_text_or_raise(resp, "build_ae_project")
+
+        # --- Debug dump: raw model output (exact text) ---
+        dump_dir = os.getenv("JSX_DUMP_DIR", "/app/jsx").strip() or "/app/jsx"
+        if job_id:
+            try:
+                base = Path(dump_dir)
+                base.mkdir(parents=True, exist_ok=True)
+                job_dir = base / str(job_id)
+                job_dir.mkdir(parents=True, exist_ok=True)
+                (job_dir / "gemini_raw_response.json").write_text(raw, encoding="utf-8")
+                log.info("[debug_dump] wrote %s", (job_dir / "gemini_raw_response.json").as_posix())
+            except Exception as exc:  # noqa: BLE001
+                log.warning("[debug_dump] failed to dump gemini raw response: %s", exc)
 
         try:
             return json.loads(raw)
