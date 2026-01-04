@@ -12,6 +12,7 @@ from src.config.styles.paths import get_style_paths
 log = logging.getLogger(__name__)
 _DEBUG = os.getenv("TAG_APPLY_DEBUG", "").strip() in {"1", "true", "TRUE", "yes", "YES"}
 _STATS = os.getenv("TAG_APPLY_STATS", "").strip() in {"1", "true", "TRUE", "yes", "YES"}
+_STRICT = os.getenv("TAG_APPLY_STRICT", "").strip() in {"1", "true", "TRUE", "yes", "YES"}
 
 
 def _safe_read_json(p: Path) -> dict:
@@ -36,6 +37,24 @@ def _parse_relpath_to_segments(rel_path: str) -> List[Union[str, int]]:
         else:
             out.append(seg)
     return out
+
+
+def _leaf_key(meta: Dict[str, Any], segs: List[Union[str, int]]) -> Optional[str]:
+    """
+    Prefer canonical matchName from canonical_debug.
+    Strict mode: if matchName missing -> None (skip).
+    Non-strict: fallback to last string segment from relPath.
+    """
+
+    m = meta.get("matchName") or ""
+    if isinstance(m, str) and m.strip():
+        return m.strip()
+    if _STRICT:
+        return None
+    for s in reversed(segs):
+        if isinstance(s, str) and s.strip():
+            return s.strip()
+    return None
 
 
 @dataclass
@@ -198,15 +217,23 @@ def _build_effects_from_baked(
             total += 1
             meta = canon.slug_meta.get((obj_name, slug)) or {}
             rel_path = meta.get("relPath") or ""
+            if not rel_path and _STRICT:
+                skipped += 1
+                missing += 1
+                continue
+
+            segs = _parse_relpath_to_segments(rel_path) if rel_path else []
             if rel_path:
-                path = _parse_relpath_to_segments(rel_path)
+                path = segs
             else:
-                m = meta.get("matchName") or slug
-                path = [m]
+                # non-strict fallback
+                lk = _leaf_key(meta, segs) or str(slug)
+                path = [lk]
+
             if not path:
                 skipped += 1
                 continue
-            if not rel_path and not meta.get("matchName"):
+            if not rel_path:
                 missing += 1
             params_list.append({"path": path, "value": payload})
             applied += 1
@@ -255,7 +282,11 @@ def _apply_transform_from_baked(
     unknown = 0
     for slug, payload in merged.items():
         meta = canon.slug_meta.get((obj_name, slug)) or {}
-        m = (meta.get("matchName") or "").lower()
+        m_raw = (meta.get("matchName") or "")
+        if not m_raw and _STRICT:
+            unknown += 1
+            continue
+        m = str(m_raw).lower()
         if "position" in m:
             tr["position"] = payload
             applied += 1
@@ -303,6 +334,9 @@ def _apply_textdoc_from_baked(layer: Dict[str, Any], baked: Dict[str, Any], stat
             skipped += 1
             continue
         key = slug[len(prefix) :]
+        # strict: only whitelist fields we know how to apply
+        # (keyframed textDocument fields are ignored here intentionally)
+        # text itself already comes from layer.textDocument.text
         if key in {
             "font",
             "fontSize",
@@ -377,13 +411,12 @@ def _build_text_animators_from_baked(
         for slug, payload in merged.items():
             meta = canon.slug_meta.get((obj_name, slug)) or {}
             rel = meta.get("relPath") or ""
-            leaf_match = meta.get("matchName") or ""
             segs = _parse_relpath_to_segments(rel)
-            if not leaf_match:
-                for s in reversed(segs):
-                    if isinstance(s, str):
-                        leaf_match = s
-                        break
+            leaf_match = _leaf_key(meta, segs)
+            if leaf_match is None:
+                # strict: skip; non-strict: _leaf_key already tried relPath fallback
+                unknown += 1
+                continue
             kind, sel_idx, sel_match = _route_textanim_param(segs)
             if kind == "animator_prop":
                 if leaf_match:
@@ -398,7 +431,7 @@ def _build_text_animators_from_baked(
                     sel_idx,
                     {
                         "matchName": sel_match or "ADBE Text Selector",
-                        "name": "sel#" + str(sel_idx),
+                        "name": (sel_match or "ADBE Text Selector") + "#" + str(sel_idx),
                         "properties": {},
                         "advanced": {},
                     },
@@ -415,7 +448,9 @@ def _build_text_animators_from_baked(
                     sel["properties"][leaf_match] = payload
                     applied_sel_props += 1
             else:
-                if leaf_match:
+                # strict: don't silently stuff into animator.properties
+                # non-strict: we can still try to keep it
+                if not _STRICT:
                     animator["properties"][leaf_match] = payload
                 unknown += 1
         if sels:
