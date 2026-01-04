@@ -89,6 +89,77 @@ class ApplyStats:
     layers_with_baked: int = 0
 
 
+def _read_tagplan(layer: Dict[str, Any]) -> Dict[str, Any]:
+    v = layer.get("tagPlan")
+    return v if isinstance(v, dict) else {}
+
+
+def _override_key_times_absolute(
+    *,
+    layer_name: str,
+    tag_id: str,
+    obj_name: str,
+    slug_time: str,
+    value_data: Dict[str, Any],
+    plan: Dict[str, Any],
+) -> Dict[str, Any]:
+    """
+    Strict absolute override:
+      plan["keyframes"][obj_name][slug_time] must be a list of absolute seconds (comp timeline),
+      with length == len(value_data["keys"]).
+    """
+    keys = value_data.get("keys")
+    if not isinstance(keys, list) or not keys:
+        return value_data
+
+    if plan.get("mode") != "absolute":
+        raise RuntimeError(
+            f"[tag_apply] tagPlan.mode must be 'absolute' (layer={layer_name} tag={tag_id})"
+        )
+
+    kf = plan.get("keyframes")
+    if not isinstance(kf, dict):
+        raise RuntimeError(
+            f"[tag_apply] missing tagPlan.keyframes (layer={layer_name} tag={tag_id})"
+        )
+    obj_map = kf.get(obj_name)
+    if not isinstance(obj_map, dict):
+        raise RuntimeError(
+            f"[tag_apply] missing tagPlan.keyframes[{obj_name!r}] for layer={layer_name} tag={tag_id}"
+        )
+    times = obj_map.get(slug_time)
+    if not isinstance(times, list):
+        raise RuntimeError(
+            f"[tag_apply] missing tagPlan.keyframes[{obj_name!r}][{slug_time!r}] for layer={layer_name} tag={tag_id}"
+        )
+
+    if len(times) != len(keys):
+        raise RuntimeError(
+            f"[tag_apply] keyframes override length mismatch: "
+            f"layer={layer_name} tag={tag_id} obj={obj_name} slug={slug_time} "
+            f"expected={len(keys)} got={len(times)}"
+        )
+
+    out = dict(value_data)
+    out_keys: List[Dict[str, Any]] = []
+    for i in range(len(keys)):
+        k = keys[i]
+        if not isinstance(k, dict):
+            continue
+        t = times[i]
+        if not isinstance(t, (int, float)):
+            raise RuntimeError(
+                f"[tag_apply] non-numeric time override at index={i}: "
+                f"layer={layer_name} tag={tag_id} obj={obj_name} slug={slug_time} value={t!r}"
+            )
+        k2 = dict(k)
+        k2["time"] = float(t)
+        k2.pop("t", None)
+        out_keys.append(k2)
+    out["keys"] = out_keys
+    return out
+
+
 class CanonIndex:
     def __init__(self) -> None:
         self.by_object: Dict[str, dict] = {}
@@ -186,6 +257,10 @@ def _build_effects_from_baked(
     style_id: Optional[str],
     role: str,
     stats: Optional[ApplyStats] = None,
+    *,
+    tag_id: str,
+    tag_plan: Dict[str, Any],
+    layer_name: str,
 ) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
     dom = baked.get("effects") or {}
@@ -235,6 +310,19 @@ def _build_effects_from_baked(
                 continue
             if not rel_path:
                 missing += 1
+
+            # STRICT absolute override for keyframed params (slug_time)
+            if isinstance(payload, dict) and isinstance(payload.get("keys"), list):
+                # here `slug` is the canonical slug; for time override we use the same slug if it endswith _time
+                if isinstance(slug, str) and slug.endswith("_time"):
+                    payload = _override_key_times_absolute(
+                        layer_name=layer_name,
+                        tag_id=tag_id,
+                        obj_name=obj_name,
+                        slug_time=slug,
+                        value_data=payload,
+                        plan=tag_plan,
+                    )
             params_list.append({"path": path, "value": payload})
             applied += 1
 
@@ -263,6 +351,10 @@ def _apply_transform_from_baked(
     style_id: Optional[str],
     role: str,
     stats: Optional[ApplyStats] = None,
+    *,
+    tag_id: str,
+    tag_plan: Dict[str, Any],
+    layer_name: str,
 ) -> None:
     dom = baked.get("transform") or {}
     tpl_doc = dom.get("template") or {}
@@ -288,15 +380,23 @@ def _apply_transform_from_baked(
             continue
         m = str(m_raw).lower()
         if "position" in m:
+            if isinstance(payload, dict) and isinstance(payload.get("keys"), list) and isinstance(slug, str) and slug.endswith("_time"):
+                payload = _override_key_times_absolute(layer_name=layer_name, tag_id=tag_id, obj_name=obj_name, slug_time=slug, value_data=payload, plan=tag_plan)
             tr["position"] = payload
             applied += 1
         elif "scale" in m:
+            if isinstance(payload, dict) and isinstance(payload.get("keys"), list) and isinstance(slug, str) and slug.endswith("_time"):
+                payload = _override_key_times_absolute(layer_name=layer_name, tag_id=tag_id, obj_name=obj_name, slug_time=slug, value_data=payload, plan=tag_plan)
             tr["scale"] = payload
             applied += 1
         elif "rotation" in m:
+            if isinstance(payload, dict) and isinstance(payload.get("keys"), list) and isinstance(slug, str) and slug.endswith("_time"):
+                payload = _override_key_times_absolute(layer_name=layer_name, tag_id=tag_id, obj_name=obj_name, slug_time=slug, value_data=payload, plan=tag_plan)
             tr["rotation"] = payload
             applied += 1
         elif "opacity" in m:
+            if isinstance(payload, dict) and isinstance(payload.get("keys"), list) and isinstance(slug, str) and slug.endswith("_time"):
+                payload = _override_key_times_absolute(layer_name=layer_name, tag_id=tag_id, obj_name=obj_name, slug_time=slug, value_data=payload, plan=tag_plan)
             tr["opacity"] = payload
             applied += 1
         else:
@@ -456,6 +556,10 @@ def _build_text_animators_from_baked(
     style_id: Optional[str],
     role: str,
     stats: Optional[ApplyStats] = None,
+    *,
+    tag_id: str,
+    tag_plan: Dict[str, Any],
+    layer_name: str,
 ) -> List[Dict[str, Any]]:
     dom = baked.get("textAnim") or {}
     tpl_doc = dom.get("template") or {}
@@ -483,6 +587,13 @@ def _build_text_animators_from_baked(
                 # strict: skip; non-strict: _leaf_key already tried relPath fallback
                 unknown += 1
                 continue
+
+            # STRICT absolute override for selector/animator keyframes payloads (slug_time)
+            if isinstance(payload, dict) and isinstance(payload.get("keys"), list):
+                if isinstance(slug, str) and slug.endswith("_time"):
+                    payload = _override_key_times_absolute(
+                        layer_name=layer_name, tag_id=tag_id, obj_name=obj_name, slug_time=slug, value_data=payload, plan=tag_plan
+                    )
             kind, sel_idx, sel_match = _route_textanim_param(segs)
             if kind == "animator_prop":
                 if leaf_match:
@@ -555,27 +666,49 @@ def apply_tag_baked_to_layers(items: List[Dict[str, Any]], *, style_id: Optional
             baked = layer.get("tagBaked")
             if not isinstance(baked, dict):
                 continue
+
+            # Strict: require tagId + tagPlan for any baked layer
+            tag_id = ""
+            if isinstance(layer.get("name"), str) and layer["name"].startswith("TagFX:"):
+                tag_id = layer["name"][len("TagFX:"):]
+            if not tag_id and isinstance(layer.get("tagId"), str):
+                tag_id = layer["tagId"]
+            plan = _read_tagplan(layer)
+            if _STRICT and (not tag_id or not plan):
+                raise RuntimeError(f"[tag_apply] missing tagId/tagPlan for baked layer={layer.get('name')!r}")
+
             stats.layers_with_baked += 1
             ltype = (layer.get("type") or "").lower()
             role = "text_layers" if ltype == "text" else ("adj_text" if ltype == "adjustment" else "")
             if not role:
                 continue
+
+            layer_name = str(layer.get("name") or layer.get("textDocument", {}).get("text") or "<unnamed>")
+
             before_fx = len(layer.get("effects") or []) if isinstance(layer.get("effects"), list) else 0
             before_an = len(layer.get("textAnimators") or []) if isinstance(layer.get("textAnimators"), list) else 0
-            fx = _build_effects_from_baked(baked, style_id, role, stats=stats)
+            fx = _build_effects_from_baked(baked, style_id, role, stats=stats, tag_id=tag_id, tag_plan=plan, layer_name=layer_name)
             if fx:
                 layer["effects"] = fx
-            _apply_transform_from_baked(layer, baked, style_id, role, stats=stats)
+            _apply_transform_from_baked(layer, baked, style_id, role, stats=stats, tag_id=tag_id, tag_plan=plan, layer_name=layer_name)
             if ltype == "text":
                 _apply_textdoc_from_baked(layer, baked, stats=stats)
-                anims = _build_text_animators_from_baked(baked, style_id, "text_layers", stats=stats)
+                anims = _build_text_animators_from_baked(
+                    baked,
+                    style_id,
+                    "text_layers",
+                    stats=stats,
+                    tag_id=tag_id,
+                    tag_plan=plan,
+                    layer_name=layer_name,
+                )
                 if anims:
                     layer["textAnimators"] = anims
             after_fx = len(layer.get("effects") or []) if isinstance(layer.get("effects"), list) else 0
             after_an = len(layer.get("textAnimators") or []) if isinstance(layer.get("textAnimators"), list) else 0
             log.info(
                 "[tag_apply] layer=%s type=%s effects=%d->%d animators=%d->%d",
-                layer.get("name") or layer.get("textDocument", {}).get("text", "<unnamed>"),
+                layer_name,
                 ltype,
                 before_fx,
                 after_fx,
@@ -584,6 +717,8 @@ def apply_tag_baked_to_layers(items: List[Dict[str, Any]], *, style_id: Optional
             )
             # Do not leak raw baked blobs further.
             layer.pop("tagBaked", None)
+            # and plan (it is only for compilation stage)
+            layer.pop("tagPlan", None)
             changed += 1
 
     if _STATS:
