@@ -5,6 +5,7 @@ from enum import Enum
 from typing import Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel
+from pydantic.config import ConfigDict
 
 
 # --- Enums ---
@@ -23,25 +24,59 @@ class FitPolicy(str, Enum):
 
 # --- Sub-components ---
 
+
+class Keyframe(BaseModel):
+    """
+    AE keyframe payload is verbose. We only require `time` and `value`.
+    Everything else (eases, interpolation, labels) is allowed but not enforced.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    time: float
+    value: Any
+
+
+class ValueData(BaseModel):
+    """
+    Generic AE "value data" carrier:
+      - constant value: { value: ... }
+      - expression: { expressionEnabled: true, expression: "...", value: ... }
+      - keyframed: { expressionEnabled: false, keys: [ {time, value, ...}, ... ] }
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    expressionEnabled: Optional[bool] = None
+    expression: Optional[str] = None
+    value: Optional[Any] = None
+    keys: Optional[List[Keyframe]] = None
+
+
+ScalarOrValueData = Union[float, int, ValueData]
+VecOrValueData = Union[List[float], ValueData]
+
+
 class Transform(BaseModel):
-    scale: Optional[List[float]] = None
-    position: Optional[List[float]] = None
-    rotation: Optional[float] = None
-    opacity: Optional[float] = None
+    # Allow animated transforms (ValueData) in addition to plain numbers.
+    scale: Optional[VecOrValueData] = None
+    position: Optional[VecOrValueData] = None
+    rotation: Optional[ScalarOrValueData] = None
+    opacity: Optional[ScalarOrValueData] = None
 
 
 class TextDocument(BaseModel):
     text: str
     font: Optional[str] = "Arial-BoldMT"
-    fontSize: float = 50
+    fontSize: Union[float, int, ValueData] = 50
     applyFill: Optional[bool] = None
-    fillColor: Optional[List[float]] = None
+    fillColor: Optional[Union[List[float], ValueData]] = None
     applyStroke: Optional[bool] = None
-    strokeColor: Optional[List[float]] = None
-    strokeWidth: Optional[float] = None
-    tracking: Optional[float] = None
-    leading: Optional[float] = None
-    justification: Optional[int] = None
+    strokeColor: Optional[Union[List[float], ValueData]] = None
+    strokeWidth: Optional[Union[float, int, ValueData]] = None
+    tracking: Optional[Union[float, int, ValueData]] = None
+    leading: Optional[Union[float, int, ValueData]] = None
+    justification: Optional[Union[int, ValueData]] = None
 
 
 # --- Layers ---
