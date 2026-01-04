@@ -16,6 +16,8 @@ services:
       WORK_DIR: /app/work
       OUTPUT_DIR: /app/output
     volumes:
+      # Debug dumps (raw LLM output, composition, PROJECT_DATA, final JSX)
+      - ./jsx:/app/jsx
       - ./config:/app/config:ro
       - ./descriptions:/app/descriptions:ro
       # pins как кеш S3 внутри контейнера

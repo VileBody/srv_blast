@@ -1,6 +1,7 @@
 # services/ml_core/planner.py
 from __future__ import annotations
 
+import json
 import logging
 import os
 from pathlib import Path
@@ -14,6 +15,25 @@ from src.storage.library_store import AssetLibrary
 from src.storage.s3 import download_from_s3
 
 log = logging.getLogger(__name__)
+
+
+def _debug_dump(job_id: str, filename: str, content: str) -> None:
+    """
+    Writes debug artifacts to JSX_DUMP_DIR/<job_id>/<filename>
+    Enabled when JSX_DUMP_DIR is set (or default /app/jsx exists).
+    """
+    base = os.getenv("JSX_DUMP_DIR", "/app/jsx").strip() or "/app/jsx"
+    try:
+        base_path = Path(base)
+        # only dump if directory exists or is mountable
+        base_path.mkdir(parents=True, exist_ok=True)
+        job_dir = base_path / str(job_id)
+        job_dir.mkdir(parents=True, exist_ok=True)
+        out_path = job_dir / filename
+        out_path.write_text(content, encoding="utf-8")
+        log.info("[debug_dump] wrote %s", out_path.as_posix())
+    except Exception as exc:  # noqa: BLE001
+        log.warning("[debug_dump] failed to write %s for job_id=%s: %s", filename, job_id, exc)
 
 
 def _ensure_local_audio(job_id: str, audio_src: str, dst_dir: Path) -> Path:
@@ -71,7 +91,13 @@ def build_edit_plan(job_id: str, audio_src: str, name: str) -> Dict[str, Any]:
 
     library_payload = library.to_prompt_payload()
 
-    composition = planner.build_ae_project(audio_path, library_payload)
+    # dump raw model output inside AePlanner (needs job_id)
+    composition = planner.build_ae_project(audio_path, library_payload, job_id=job_id)
+
+    # dump model composition (normalized dict as returned by json.loads)
+    _debug_dump(
+        job_id, "composition_from_llm.json", json.dumps(composition, ensure_ascii=False, indent=2)
+    )
 
     raw_payload, json_str = build_project_payload_from_composition(
         composition=composition,
@@ -79,6 +105,9 @@ def build_edit_plan(job_id: str, audio_src: str, name: str) -> Dict[str, Any]:
         style_id=(composition.get("projectSettings") or {}).get("styleId")
         or composition.get("styleId"),
     )
+
+    # dump final PROJECT_DATA (validated)
+    _debug_dump(job_id, "project_data.json", json_str)
 
     plan: Dict[str, Any] = {
         "job_id": job_id,
