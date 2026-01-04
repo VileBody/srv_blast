@@ -328,12 +328,52 @@ def _apply_textdoc_from_baked(layer: Dict[str, Any], baked: Dict[str, Any], stat
     applied = 0
     skipped = 0
     total = 0
+    # Collect indexed colors: fillColor[0..2], strokeColor[0..2]
+    fill_parts: Dict[int, float] = {}
+    stroke_parts: Dict[int, float] = {}
+
+    def parse_indexed_color(key: str) -> Optional[Tuple[str, int]]:
+        # e.g. "fillColor[2]" -> ("fillColor", 2)
+        if not key.endswith("]") or "[" not in key:
+            return None
+        base, idx_s = key[:-1].split("[", 1)
+        base = base.strip()
+        try:
+            idx = int(idx_s)
+        except Exception:
+            return None
+        if base not in {"fillColor", "strokeColor"}:
+            return None
+        if idx < 0 or idx > 3:
+            return None
+        return base, idx
+
     for slug, payload in fields.items():
         total += 1
         if not isinstance(slug, str) or not slug.startswith(prefix):
             skipped += 1
             continue
         key = slug[len(prefix) :]
+
+        # Hard rule: __MISSING__ NEVER propagates
+        if _is_missing_payload(payload):
+            skipped += 1
+            continue
+
+        # Handle fillColor[0]/strokeColor[0] style keys
+        idx_info = parse_indexed_color(key)
+        if idx_info is not None:
+            base, idx = idx_info
+            if isinstance(payload, (int, float)):
+                if base == "fillColor":
+                    fill_parts[idx] = float(payload)
+                else:
+                    stroke_parts[idx] = float(payload)
+                applied += 1
+            else:
+                skipped += 1
+            continue
+
         # strict: only whitelist fields we know how to apply
         # (keyframed textDocument fields are ignored here intentionally)
         # text itself already comes from layer.textDocument.text
@@ -352,10 +392,36 @@ def _apply_textdoc_from_baked(layer: Dict[str, Any], baked: Dict[str, Any], stat
             if isinstance(payload, dict) and ("keys" in payload or "expression" in payload):
                 skipped += 1
                 continue
+
+            # Normalize justification if it comes as numeric string (canonical_debug sometimes does)
+            if key == "justification" and isinstance(payload, str) and payload.strip().isdigit():
+                payload = int(payload.strip())
+
             td[key] = payload
             applied += 1
         else:
             skipped += 1
+
+    # Materialize collected colors
+    def materialize_color(existing: Any, parts: Dict[int, float]) -> Optional[List[float]]:
+        if not parts:
+            return None
+        base: List[float]
+        if isinstance(existing, list) and len(existing) >= 3:
+            base = [float(existing[0]), float(existing[1]), float(existing[2])]
+        else:
+            base = [1.0, 1.0, 1.0]
+        for i, v in parts.items():
+            if 0 <= i <= 2:
+                base[i] = float(v)
+        return base
+
+    fill = materialize_color(td.get("fillColor"), fill_parts)
+    if fill is not None:
+        td["fillColor"] = fill
+    stroke = materialize_color(td.get("strokeColor"), stroke_parts)
+    if stroke is not None:
+        td["strokeColor"] = stroke
     if real_text is not None:
         td["text"] = real_text
     layer["textDocument"] = td
@@ -516,6 +582,8 @@ def apply_tag_baked_to_layers(items: List[Dict[str, Any]], *, style_id: Optional
                 before_an,
                 after_an,
             )
+            # Do not leak raw baked blobs further.
+            layer.pop("tagBaked", None)
             changed += 1
 
     if _STATS:
