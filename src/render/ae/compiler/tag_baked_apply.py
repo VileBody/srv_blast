@@ -4,12 +4,14 @@ import os
 import logging
 import json
 from pathlib import Path
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 from src.config.styles.paths import get_style_paths
 
 log = logging.getLogger(__name__)
 _DEBUG = os.getenv("TAG_APPLY_DEBUG", "").strip() in {"1", "true", "TRUE", "yes", "YES"}
+_STATS = os.getenv("TAG_APPLY_STATS", "").strip() in {"1", "true", "TRUE", "yes", "YES"}
 
 
 def _safe_read_json(p: Path) -> dict:
@@ -34,6 +36,38 @@ def _parse_relpath_to_segments(rel_path: str) -> List[Union[str, int]]:
         else:
             out.append(seg)
     return out
+
+
+@dataclass
+class ApplyStats:
+    # effects
+    fx_objects: int = 0
+    fx_params_total: int = 0
+    fx_params_applied: int = 0
+    fx_params_missing: int = 0
+    fx_params_skipped: int = 0
+
+    # transform
+    tr_layers: int = 0
+    tr_assignments: int = 0
+    tr_unknown: int = 0
+
+    # textDoc
+    td_layers: int = 0
+    td_fields_total: int = 0
+    td_fields_applied: int = 0
+    td_fields_skipped: int = 0  # keyframed/expr/unknown fields ignored
+
+    # textAnim
+    ta_animators: int = 0
+    ta_props: int = 0
+    ta_sel_props: int = 0
+    ta_sel_adv: int = 0
+    ta_unknown: int = 0
+
+    # layers processed
+    layers_total: int = 0
+    layers_with_baked: int = 0
 
 
 class CanonIndex:
@@ -128,7 +162,12 @@ def _merge_template_and_keyframes(tpl_map: Dict[str, Any], kf_tree: Any) -> Dict
     return merged
 
 
-def _build_effects_from_baked(baked: Dict[str, Any], style_id: Optional[str], role: str) -> List[Dict[str, Any]]:
+def _build_effects_from_baked(
+    baked: Dict[str, Any],
+    style_id: Optional[str],
+    role: str,
+    stats: Optional[ApplyStats] = None,
+) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
     dom = baked.get("effects") or {}
     tpl_doc = dom.get("template") or {}
@@ -138,6 +177,8 @@ def _build_effects_from_baked(baked: Dict[str, Any], style_id: Optional[str], ro
     kf_trees = kf_doc.get("used") if isinstance(kf_doc, dict) else {}
 
     for obj_name, slug_map in tpl_used.items():
+        if stats:
+            stats.fx_objects += 1
         if not isinstance(slug_map, dict):
             continue
         obj_canon = canon.by_object.get(obj_name) or {}
@@ -151,7 +192,10 @@ def _build_effects_from_baked(baked: Dict[str, Any], style_id: Optional[str], ro
         params_list: List[Dict[str, Any]] = []
         applied = 0
         skipped = 0
+        missing = 0
+        total = 0
         for slug, payload in merged.items():
+            total += 1
             meta = canon.slug_meta.get((obj_name, slug)) or {}
             rel_path = meta.get("relPath") or ""
             if rel_path:
@@ -162,6 +206,8 @@ def _build_effects_from_baked(baked: Dict[str, Any], style_id: Optional[str], ro
             if not path:
                 skipped += 1
                 continue
+            if not rel_path and not meta.get("matchName"):
+                missing += 1
             params_list.append({"path": path, "value": payload})
             applied += 1
 
@@ -174,12 +220,23 @@ def _build_effects_from_baked(baked: Dict[str, Any], style_id: Optional[str], ro
                 applied,
                 skipped,
             )
+        if stats:
+            stats.fx_params_total += total
+            stats.fx_params_applied += applied
+            stats.fx_params_skipped += skipped
+            stats.fx_params_missing += missing
         out.append({"matchName": match_name, "params": params_list})
 
     return out
 
 
-def _apply_transform_from_baked(layer: Dict[str, Any], baked: Dict[str, Any], style_id: Optional[str], role: str) -> None:
+def _apply_transform_from_baked(
+    layer: Dict[str, Any],
+    baked: Dict[str, Any],
+    style_id: Optional[str],
+    role: str,
+    stats: Optional[ApplyStats] = None,
+) -> None:
     dom = baked.get("transform") or {}
     tpl_doc = dom.get("template") or {}
     kf_doc = dom.get("keyframes") or {}
@@ -188,11 +245,14 @@ def _apply_transform_from_baked(layer: Dict[str, Any], baked: Dict[str, Any], st
     canon = _load_canon_index(style_id, "transform", role)
     if not tpl_used:
         return
+    if stats:
+        stats.tr_layers += 1
     obj_name = next(iter(tpl_used.keys()))
     tree = (kf_trees or {}).get(obj_name)
     merged = _merge_template_and_keyframes((tpl_used.get(obj_name) or {}), tree)
     tr: Dict[str, Any] = layer.get("transform") if isinstance(layer.get("transform"), dict) else {}
     applied = 0
+    unknown = 0
     for slug, payload in merged.items():
         meta = canon.slug_meta.get((obj_name, slug)) or {}
         m = (meta.get("matchName") or "").lower()
@@ -208,18 +268,25 @@ def _apply_transform_from_baked(layer: Dict[str, Any], baked: Dict[str, Any], st
         elif "opacity" in m:
             tr["opacity"] = payload
             applied += 1
+        else:
+            unknown += 1
     if tr:
         layer["transform"] = tr
     if _DEBUG:
         log.debug("[tag_apply][transform] layer=%s applied=%d", layer.get("name"), applied)
+    if stats:
+        stats.tr_assignments += applied
+        stats.tr_unknown += unknown
 
 
-def _apply_textdoc_from_baked(layer: Dict[str, Any], baked: Dict[str, Any]) -> None:
+def _apply_textdoc_from_baked(layer: Dict[str, Any], baked: Dict[str, Any], stats: Optional[ApplyStats] = None) -> None:
     dom = baked.get("textDoc") or {}
     tpl_doc = dom.get("template") or {}
     tpl_used = _used_map_from_used_file(tpl_doc)
     if not tpl_used:
         return
+    if stats:
+        stats.td_layers += 1
     obj_name = next(iter(tpl_used.keys()))
     fields = tpl_used.get(obj_name) or {}
     if not isinstance(fields, dict):
@@ -228,8 +295,12 @@ def _apply_textdoc_from_baked(layer: Dict[str, Any], baked: Dict[str, Any]) -> N
     real_text = td.get("text")
     prefix = "ADBE_Text_Document.value."
     applied = 0
+    skipped = 0
+    total = 0
     for slug, payload in fields.items():
+        total += 1
         if not isinstance(slug, str) or not slug.startswith(prefix):
+            skipped += 1
             continue
         key = slug[len(prefix) :]
         if key in {
@@ -245,14 +316,21 @@ def _apply_textdoc_from_baked(layer: Dict[str, Any], baked: Dict[str, Any]) -> N
             "strokeWidth",
         }:
             if isinstance(payload, dict) and ("keys" in payload or "expression" in payload):
+                skipped += 1
                 continue
             td[key] = payload
             applied += 1
+        else:
+            skipped += 1
     if real_text is not None:
         td["text"] = real_text
     layer["textDocument"] = td
     if _DEBUG:
         log.debug("[tag_apply][textDoc] layer=%s applied=%d", layer.get("name"), applied)
+    if stats:
+        stats.td_fields_total += total
+        stats.td_fields_applied += applied
+        stats.td_fields_skipped += skipped
 
 
 def _route_textanim_param(segs: List[Union[str, int]]) -> Tuple[str, Optional[int], Optional[str]]:
@@ -273,7 +351,12 @@ def _route_textanim_param(segs: List[Union[str, int]]) -> Tuple[str, Optional[in
     return ("unknown", None, None)
 
 
-def _build_text_animators_from_baked(baked: Dict[str, Any], style_id: Optional[str], role: str) -> List[Dict[str, Any]]:
+def _build_text_animators_from_baked(
+    baked: Dict[str, Any],
+    style_id: Optional[str],
+    role: str,
+    stats: Optional[ApplyStats] = None,
+) -> List[Dict[str, Any]]:
     dom = baked.get("textAnim") or {}
     tpl_doc = dom.get("template") or {}
     kf_doc = dom.get("keyframes") or {}
@@ -284,6 +367,8 @@ def _build_text_animators_from_baked(baked: Dict[str, Any], style_id: Optional[s
     for obj_name, slug_map in tpl_used.items():
         if not isinstance(slug_map, dict):
             continue
+        if stats:
+            stats.ta_animators += 1
         tree = (kf_trees or {}).get(obj_name)
         merged = _merge_template_and_keyframes(slug_map, tree)
         animator = {"name": obj_name, "properties": {}, "selectors": []}
@@ -294,6 +379,11 @@ def _build_text_animators_from_baked(baked: Dict[str, Any], style_id: Optional[s
             rel = meta.get("relPath") or ""
             leaf_match = meta.get("matchName") or ""
             segs = _parse_relpath_to_segments(rel)
+            if not leaf_match:
+                for s in reversed(segs):
+                    if isinstance(s, str):
+                        leaf_match = s
+                        break
             kind, sel_idx, sel_match = _route_textanim_param(segs)
             if kind == "animator_prop":
                 if leaf_match:
@@ -340,10 +430,16 @@ def _build_text_animators_from_baked(baked: Dict[str, Any], style_id: Optional[s
                 applied_sel_adv,
                 unknown,
             )
+        if stats:
+            stats.ta_props += applied_props
+            stats.ta_sel_props += applied_sel_props
+            stats.ta_sel_adv += applied_sel_adv
+            stats.ta_unknown += unknown
     return animators_out
 
 
 def apply_tag_baked_to_layers(items: List[Dict[str, Any]], *, style_id: Optional[str]) -> int:
+    stats = ApplyStats()
     changed = 0
     for it in items:
         if (it.get("type") or "").lower() != "comp":
@@ -352,24 +448,26 @@ def apply_tag_baked_to_layers(items: List[Dict[str, Any]], *, style_id: Optional
         if not isinstance(layers, list):
             continue
         for layer in layers:
+            stats.layers_total += 1
             if not isinstance(layer, dict):
                 continue
             baked = layer.get("tagBaked")
             if not isinstance(baked, dict):
                 continue
+            stats.layers_with_baked += 1
             ltype = (layer.get("type") or "").lower()
             role = "text_layers" if ltype == "text" else ("adj_text" if ltype == "adjustment" else "")
             if not role:
                 continue
             before_fx = len(layer.get("effects") or []) if isinstance(layer.get("effects"), list) else 0
             before_an = len(layer.get("textAnimators") or []) if isinstance(layer.get("textAnimators"), list) else 0
-            fx = _build_effects_from_baked(baked, style_id, role)
+            fx = _build_effects_from_baked(baked, style_id, role, stats=stats)
             if fx:
                 layer["effects"] = fx
-            _apply_transform_from_baked(layer, baked, style_id, role)
+            _apply_transform_from_baked(layer, baked, style_id, role, stats=stats)
             if ltype == "text":
-                _apply_textdoc_from_baked(layer, baked)
-                anims = _build_text_animators_from_baked(baked, style_id, "text_layers")
+                _apply_textdoc_from_baked(layer, baked, stats=stats)
+                anims = _build_text_animators_from_baked(baked, style_id, "text_layers", stats=stats)
                 if anims:
                     layer["textAnimators"] = anims
             after_fx = len(layer.get("effects") or []) if isinstance(layer.get("effects"), list) else 0
@@ -384,4 +482,41 @@ def apply_tag_baked_to_layers(items: List[Dict[str, Any]], *, style_id: Optional
                 after_an,
             )
             changed += 1
+
+    if _STATS:
+        log.info(
+            "[tag_apply][stats] layers: total=%d with_tagBaked=%d changed=%d",
+            stats.layers_total,
+            stats.layers_with_baked,
+            changed,
+        )
+        log.info(
+            "[tag_apply][stats] effects: objects=%d params_total=%d applied=%d skipped=%d missing_map=%d",
+            stats.fx_objects,
+            stats.fx_params_total,
+            stats.fx_params_applied,
+            stats.fx_params_skipped,
+            stats.fx_params_missing,
+        )
+        log.info(
+            "[tag_apply][stats] transform: layers=%d assignments=%d unknown=%d",
+            stats.tr_layers,
+            stats.tr_assignments,
+            stats.tr_unknown,
+        )
+        log.info(
+            "[tag_apply][stats] textDoc: layers=%d fields_total=%d applied=%d skipped=%d",
+            stats.td_layers,
+            stats.td_fields_total,
+            stats.td_fields_applied,
+            stats.td_fields_skipped,
+        )
+        log.info(
+            "[tag_apply][stats] textAnim: animators=%d props=%d sel_props=%d sel_adv=%d unknown=%d",
+            stats.ta_animators,
+            stats.ta_props,
+            stats.ta_sel_props,
+            stats.ta_sel_adv,
+            stats.ta_unknown,
+        )
     return changed
