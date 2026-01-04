@@ -44,6 +44,7 @@ def process_layer(
     layer: dict,
     *,
     global_fit_policy: str | None = None,
+    audio_ref_id: str | None = None,
 ) -> dict:
     """
     ae_presets-only:
@@ -74,8 +75,15 @@ def process_layer(
     if "presetId" in layer:
         layer.pop("presetId", None)
 
-    if layer.get("type") == "ref" and global_fit_policy and "fitPolicy" not in layer:
-        layer["fitPolicy"] = global_fit_policy
+    # STRICT: never apply fitPolicy to audio ref (AE audio footage has width/height==0 -> divide by zero in JSX).
+    if layer.get("type") == "ref":
+        ref_id = layer.get("refId")
+        if audio_ref_id and ref_id == audio_ref_id:
+            # even if model set it, drop it deterministically
+            layer.pop("fitPolicy", None)
+        else:
+            if global_fit_policy and "fitPolicy" not in layer:
+                layer["fitPolicy"] = global_fit_policy
 
     for key in ("styleId", "effectStyleId", "effectsStyleId", "fxStyleId", "effectOverrides", "effectsOverrides", "fxOverrides"):
         layer.pop(key, None)
@@ -180,6 +188,7 @@ def build_project_payload_from_composition(
                 processed_layer = process_layer(
                     layer,
                     global_fit_policy=global_fit_policy,
+                    audio_ref_id=audio_ref_id,
                 )
                 processed_layers.append(processed_layer)
             item["layers"] = processed_layers
