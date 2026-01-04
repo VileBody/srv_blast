@@ -16,8 +16,10 @@ services:
       WORK_DIR: /app/work
       OUTPUT_DIR: /app/output
     volumes:
+      - ./config:/app/config:ro
       - ./descriptions:/app/descriptions:ro
       # pins как кеш S3 внутри контейнера
+      - ./pins:/app/pins
       - ./work:/app/work
       - ./output:/app/output
 

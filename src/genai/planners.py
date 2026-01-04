@@ -11,10 +11,10 @@ from pydantic import BaseModel, ValidationError
 from src.core.models import AudioSegmentPlan, VisualShotSpec, SegmentEditPlan
 from .client_base import GenaiClientBase
 from .prompts import (
-    AE_PROJECT_SYSTEM,
     COMBINED_PLANNER_SYSTEM,
     PLAN_VISUALS_SYSTEM,
     SELECT_AUDIO_HIGHLIGHTS_SYSTEM,
+    build_ae_project_system_prompt,
 )
 
 log = logging.getLogger(__name__)
@@ -138,6 +138,9 @@ class AePlanner:
     def build_ae_project(
         self, audio_path: Path, library_payload: list[dict]
     ) -> dict:
+        # ae_presets-only: строим промпт через функцию; styleId может прийти извне позже.
+        system_prompt = build_ae_project_system_prompt(None)
+
         file_obj = self.client.client.files.upload(file=str(audio_path))
         log.info(
             "[build_ae_project] Uploaded audio %s (id=%s) for model %s",
@@ -154,7 +157,7 @@ class AePlanner:
         resp = self.client.client.models.generate_content(
             model=self.cfg.gemini_model_planning,
             contents=[
-                AE_PROJECT_SYSTEM,
+                system_prompt,
                 json.dumps(library_payload, ensure_ascii=False),
                 file_obj,
             ],

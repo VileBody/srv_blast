@@ -1,16 +1,14 @@
 # src/render/ae/compiler/build_payload.py
 from __future__ import annotations
 
-import copy
 import json
 import logging
-from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from config import Config
-from .effects_logic import resolve_effect_stack, stack_to_ae_effects_conf
 from .tag_styles import ensure_tag_adjustment_layers, apply_tag_styles
+from .tag_baked_apply import apply_tag_baked_to_layers
 from src.render.ae.contracts.payload import Payload
 from src.config.styles.paths import get_style_paths
 from src.core.config.style_loader import get_tags_catalog
@@ -29,240 +27,6 @@ ENV_DEFAULTS: Dict[str, Any] = {
 # fallback-длительность, если модель не указала отрезок
 DEFAULT_DURATION: float = 15.0
 
-def set_value_by_path(target: Any, path: List[str | int], value: Any) -> None:
-    """
-    Идет по пути path внутри target и устанавливает value в конце.
-    Поддерживает и dict, и list (если ключ в path — int).
-    """
-    ref = target
-    for i, key in enumerate(path[:-1]):
-        if isinstance(ref, list):
-            try:
-                idx = int(key)
-                ref = ref[idx]
-            except (ValueError, IndexError):
-                return # Путь битый, выходим
-        elif isinstance(ref, dict):
-            ref = ref.get(key)
-            if ref is None:
-                return # Путь битый
-        else:
-            return
-    
-    # Установка значения
-    last_key = path[-1]
-    if isinstance(ref, list):
-        try:
-            idx = int(last_key)
-            if 0 <= idx < len(ref):
-                ref[idx] = value
-        except (ValueError, IndexError):
-            pass
-    elif isinstance(ref, dict):
-        ref[last_key] = value
-
-
-def ensure_default_text_fx_combo(items: List[Dict[str, Any]], text_fx_library: Dict[str, Any]) -> int:
-    """MVP: ensure every text layer has exactly one combo (default if missing).
-
-    We keep it deliberately conservative:
-    - Affects ALL comps (all text layers).
-    - Only sets layer.textFxComboId if missing/empty.
-    """
-    default_id = (text_fx_library or {}).get("defaultComboId")
-    combos = (text_fx_library or {}).get("combos") or {}
-    if not default_id or default_id not in combos:
-        return 0
-    n = 0
-    for it in items:
-        if (it.get("type") or "").lower() != "comp":
-            continue
-        layers = it.get("layers") or []
-        for layer in layers:
-            if not isinstance(layer, dict):
-                continue
-            if (layer.get("type") or "").lower() != "text":
-                continue
-            # Skip: tag-based layers or already baked layers
-            if layer.get("tagId") or layer.get("tag") or layer.get("textTag") or layer.get("fxTag"):
-                continue
-            if layer.get("textAnimators") or layer.get("effects"):
-                continue
-            combo_id = layer.get("textFxComboId") or layer.get("text_fx_combo_id")
-            if not combo_id:
-                layer["textFxComboId"] = default_id
-                n += 1
-    return n
-
-
-def _deep_merge(a: Any, b: Any) -> Any:
-    """Deep-merge dicts; lists are replaced (MVP-предсказуемо)."""
-    if b is None:
-        return a
-    if isinstance(a, dict) and isinstance(b, dict):
-        out = dict(a)
-        for k, v in b.items():
-            if k in out:
-                out[k] = _deep_merge(out.get(k), v)
-            else:
-                out[k] = v
-        return out
-    if isinstance(b, list):
-        return list(b)
-    return b
-
-
-def expand_text_fx_combos(items: List[Dict[str, Any]], text_fx_library: Dict[str, Any]) -> int:
-    """
-    BAKED PHASE:
-    Берем textFxComboId + overrides, находим шаблон, "компилируем" его
-    (подставляем значения в template) и сохраняем результат в layer.
-    """
-    default_id = (text_fx_library or {}).get("defaultComboId")
-    combos = (text_fx_library or {}).get("combos") or {}
-    if not default_id or default_id not in combos:
-        return 0
-
-    changed = 0
-    for it in items:
-        if (it.get("type") or "").lower() != "comp":
-            continue
-        layers = it.get("layers") or []
-        for layer in layers:
-            if not isinstance(layer, dict):
-                continue
-            if (layer.get("type") or "").lower() != "text":
-                continue
-            # Skip: tag-based layers or already baked effects
-            if layer.get("tagId") or layer.get("tag") or layer.get("textTag") or layer.get("fxTag"):
-                continue
-            if layer.get("effects"):
-                continue
-
-            combo_id = (
-                layer.get("textFxComboId")
-                or layer.get("text_fx_combo_id")
-                or default_id
-            )
-            
-            # Если такого стиля нет, фолбэк на дефолт
-            if combo_id not in combos:
-                combo_id = default_id
-
-            combo_conf = combos[combo_id]
-            
-            # 1. Берем template
-            # (Поддержка легаси: если нет template, берем весь конфиг как template)
-            raw_template = combo_conf.get("template", combo_conf)
-            baked = copy.deepcopy(raw_template)
-
-            # 2. Собираем параметры (Defaults + Overrides)
-            # Ищем overrides в разных полях (для совместимости)
-            layer_overrides = (
-                layer.get("textFxOverrides")
-                or layer.get("text_fx_overrides")
-                or layer.get("textFxOverrideParams")
-                or layer.get("text_fx_override_params")
-                or {}
-            )
-            
-            # Активные параметры = Defaults из конфига + то, что пришло от LLM
-            active_params = copy.deepcopy(combo_conf.get("defaults", {}))
-            active_params.update(layer_overrides)
-
-            # 3. Применяем exposedMap
-            mapping = combo_conf.get("exposedMap", {})
-            for param_key, param_val in active_params.items():
-                target_path = mapping.get(param_key)
-                if target_path:
-                    set_value_by_path(baked, target_path, param_val)
-
-            # 4. Записываем результат в слой (EFFECTS-ONLY)
-            eff_stack = baked.get("effects") or baked.get("effectStack") or []
-            if eff_stack:
-                existing = layer.get("effects") or []
-                layer["effects"] = list(existing) + list(eff_stack)
-                changed += 1
-
-            # Чистим служебные поля
-            for k in ["textFxComboId", "text_fx_combo_id", "textFxOverrides", "text_fx_overrides"]:
-                layer.pop(k, None)
-
-    return changed
-
-
-def expand_text_motion_combos(items: List[Dict[str, Any]], motion_library: Dict[str, Any]) -> int:
-    """
-    MOTION PHASE:
-    Берем textFxComboId + overrides, находим motion-template и сохраняем в layer:
-      - threeD
-      - textAnimators
-      - textMoreOptions
-    """
-    default_id = (motion_library or {}).get("defaultComboId")
-    combos = (motion_library or {}).get("combos") or {}
-    if not default_id or default_id not in combos:
-        return 0
-
-    changed = 0
-    for it in items:
-        if (it.get("type") or "").lower() != "comp":
-            continue
-        layers = it.get("layers") or []
-        for layer in layers:
-            if not isinstance(layer, dict):
-                continue
-            if (layer.get("type") or "").lower() != "text":
-                continue
-            # Skip: tag-based layers or already baked animators
-            if layer.get("tagId") or layer.get("tag") or layer.get("textTag") or layer.get("fxTag"):
-                continue
-            if layer.get("textAnimators"):
-                continue
-
-            combo_id = (
-                layer.get("textFxComboId")
-                or layer.get("text_fx_combo_id")
-                or default_id
-            )
-
-            # STRICT: если чего-то нет — лучше упасть, чем "тихо без motion"
-            if combo_id not in combos:
-                raise KeyError(f"Unknown motion comboId={combo_id!r}. Known: {sorted(combos.keys())}")
-
-            combo_conf = combos[combo_id]
-            raw_template = combo_conf.get("template", combo_conf)
-            baked = copy.deepcopy(raw_template)
-
-            layer_overrides = (
-                layer.get("textFxOverrides")
-                or layer.get("text_fx_overrides")
-                or layer.get("textFxOverrideParams")
-                or layer.get("text_fx_override_params")
-                or {}
-            )
-
-            active_params = copy.deepcopy(combo_conf.get("defaults", {}))
-            active_params.update(layer_overrides)
-
-            mapping = combo_conf.get("exposedMap", {})
-            for param_key, param_val in active_params.items():
-                target_path = mapping.get(param_key)
-                if target_path:
-                    set_value_by_path(baked, target_path, param_val)
-
-            if baked.get("threeD"):
-                layer["threeD"] = True
-
-            if baked.get("textAnimators"):
-                layer["textAnimators"] = baked["textAnimators"]
-                changed += 1
-
-            if baked.get("textMoreOptions"):
-                layer["textMoreOptions"] = baked["textMoreOptions"]
-
-    return changed
-
 
 def load_json(path: Path) -> dict:
     if not path.is_file():
@@ -276,131 +40,45 @@ def load_json(path: Path) -> dict:
 
 
 
-@lru_cache(maxsize=64)
-def _load_json_cached(path: str) -> dict:
-    from pathlib import Path
-    return load_json(Path(path))
-
-
 def process_layer(
     layer: dict,
-    styles_lib: dict,
-    presets_lib: dict,
-    effects_lib: Optional[dict] = None,
+    *,
     global_fit_policy: str | None = None,
 ) -> dict:
     """
-    Преобразует слой из composition.json-стиля:
-      - styleId + content -> textDocument + стили,
-      - presetId -> transform (с учётом fitPolicy),
-      - global_fit_policy -> fitPolicy для ref-слоёв (если локально не задано),
-      - если есть inPoint, но нет startTime — ставим startTime = inPoint.
-      - effectStyleId/effectOverrides -> effects (для adjustment-слоёв)
+    ae_presets-only:
+      - гарантируем startTime
+      - text: content -> textDocument.text (остальные поля придут из tagBaked apply)
+      - ref: fitPolicy default
+      - presetId/styleId/effectStyleId игнорируем
     """
     if "inPoint" in layer and "startTime" not in layer:
         layer["startTime"] = layer["inPoint"]
 
-    # TEXT: always bake into `textDocument` (Payload requires it).
-    # If style library is missing / styleId unknown, we still keep text and validate.
     if layer.get("type") == "text":
-        # 1) extract raw text
         content = layer.get("content")
         if content is None and isinstance(layer.get("text"), str):
             content = layer.get("text")
         if content is None:
             content = ""
 
-        # 2) ensure textDocument exists
         if not isinstance(layer.get("textDocument"), dict):
             layer["textDocument"] = {"text": str(content)}
         else:
             layer["textDocument"].setdefault("text", str(content))
 
-        # 3) apply styleId if present & known
-        sid = layer.get("styleId")
-        if sid:
-            style_props = styles_lib.get(sid)
-            if isinstance(style_props, dict) and style_props:
-                for k, v in copy.deepcopy(style_props).items():
-                    layer["textDocument"].setdefault(k, v)
-            else:
-                print(f"[ASSEMBLER] WARNING: unknown styleId={sid!r} for text layer; using defaults")
-            layer.pop("styleId", None)
-
-        # 4) cleanup legacy fields
         layer.pop("content", None)
         if "text" in layer and not isinstance(layer["text"], dict):
             layer.pop("text", None)
 
-    # PRESET: presetId -> transform
     if "presetId" in layer:
-        pid = layer["presetId"]
+        layer.pop("presetId", None)
 
-        # если есть глобальный fitPolicy и это ref-слой — не тащим transform из пресета,
-        # чтобы не мешать автоматическому cover/contain в движке
-        use_preset_transform = not (
-            layer.get("type") == "ref" and global_fit_policy is not None
-        )
-
-        if use_preset_transform and pid in presets_lib:
-            preset_data = presets_lib[pid]
-            if "transform" in preset_data:
-                preset_transform = copy.deepcopy(preset_data["transform"])
-                if "transform" not in layer:
-                    layer["transform"] = {}
-                for k, v in preset_transform.items():
-                    if k not in layer["transform"]:
-                        layer["transform"][k] = v
-
-        # presetId нам дальше не нужен
-        del layer["presetId"]
-
-    # FIT POLICY: глобальный флаг, если локально не указан
     if layer.get("type") == "ref" and global_fit_policy and "fitPolicy" not in layer:
         layer["fitPolicy"] = global_fit_policy
 
-    # EFFECT STYLE: semantic adjustment-layer presets
-    if layer.get("type") == "adjustment" and effects_lib:
-        existing_effects = layer.get("effects")
-        effect_style_id = (
-            layer.get("effectStyleId")
-            or layer.get("fxStyleId")
-            or layer.get("effectsStyleId")
-        )
-        effect_overrides = (
-            layer.get("effectOverrides")
-            or layer.get("fxOverrides")
-            or layer.get("effectsOverrides")
-            or {}
-        )
-
-        if not existing_effects and effect_style_id:
-            layer_in = float(layer.get("inPoint") or layer.get("startTime") or 0.0)
-            layer_out = float(layer.get("outPoint") or layer_in)
-            try:
-                stack = resolve_effect_stack(effect_style_id, effect_overrides, effects_lib)
-                layer["effects"] = stack_to_ae_effects_conf(
-                    stack,
-                    effects_library=effects_lib,
-                    layer_in=layer_in,
-                    layer_out=layer_out,
-                )
-            except Exception as exc:  # noqa: BLE001
-                print(
-                    f"[effects] failed to resolve style={effect_style_id} for layer={layer.get('name')}: {exc}"
-                )
-
-        # Cleanup aux keys to avoid leaking into downstream validators
-        for key in (
-            "effectStyleId",
-            "effectsStyleId",
-            "fxStyleId",
-            "effectOverrides",
-            "effectsOverrides",
-            "fxOverrides",
-        ):
-            if key in layer:
-                layer.pop(key)
+    for key in ("styleId", "effectStyleId", "effectsStyleId", "fxStyleId", "effectOverrides", "effectsOverrides", "fxOverrides"):
+        layer.pop(key, None)
 
     return layer
 
@@ -426,12 +104,8 @@ def build_project_payload_from_composition(
     """
     Общий ассемблер:
       - резолвит style root по style_id (или авто),
-      - читает text_styles/footage_presets/effects/motion/text_fx,
-      - берёт projectSettings.defaults и дополняет базовыми дефолтами,
-      - разруливает styleId/presetId/fitPolicy,
       - собирает Payload (PROJECT_DATA) и валидирует его.
     """
-    # style_id: явный аргумент имеет приоритет, затем projectSettings.styleId, затем composition.styleId
     project_settings = composition.get("projectSettings", {}) or {}
     inferred_style_id = (
         style_id
@@ -441,10 +115,6 @@ def build_project_payload_from_composition(
     )
 
     paths = get_style_paths(inferred_style_id)
-
-    styles_data = load_json(paths["text_styles"])
-    presets_data = load_json(paths["footage"])
-    effects_data = copy.deepcopy(_load_json_cached(str(paths["effects"])))
     ps_defaults = project_settings.get("defaults") or {}
 
     raw_global_start = composition.get("global_start_sec")
@@ -476,11 +146,7 @@ def build_project_payload_from_composition(
     else:
         duration = float(ps_defaults.get("duration", DEFAULT_DURATION))
 
-    project_template = _load_json_cached(str(paths["project_settings"]))
-    project_template_defaults: Dict[str, Any] = (project_template.get("defaults", {}) if isinstance(project_template, dict) else {}) or {}
-
     base_defaults = dict(ENV_DEFAULTS)
-    base_defaults.update(project_template_defaults)
 
     defaults: Dict[str, Any] = {}
     for key, value in base_defaults.items():
@@ -493,7 +159,6 @@ def build_project_payload_from_composition(
 
     defaults["duration"] = duration
 
-    # если fitPolicy не указан — по умолчанию считаем cover
     global_fit_policy = project_settings.get("fitPolicy") or "cover"
 
     print(f"Applying Defaults: {defaults}")
@@ -514,9 +179,6 @@ def build_project_payload_from_composition(
             for layer in item["layers"]:
                 processed_layer = process_layer(
                     layer,
-                    styles_lib=styles_data,
-                    presets_lib=presets_data,
-                    effects_lib=effects_data,
                     global_fit_policy=global_fit_policy,
                 )
                 processed_layers.append(processed_layer)
@@ -527,7 +189,7 @@ def build_project_payload_from_composition(
     # ---------------------------
     # TAG-BASED STYLES (optional)
     # ---------------------------
-    tags_catalog = get_tags_catalog() or {}
+    tags_catalog = get_tags_catalog(style_id=inferred_style_id) or {}
     if tags_catalog:
         try:
             ensure_tag_adjustment_layers(final_items, tags_catalog)
@@ -536,15 +198,13 @@ def build_project_payload_from_composition(
                 tags_catalog,
                 fps=float(defaults.get("fps") or ENV_DEFAULTS.get("fps") or 23.976),
                 global_start_sec=global_start_sec,
+                style_id=inferred_style_id,
             )
+            apply_tag_baked_to_layers(final_items, style_id=inferred_style_id)
         except Exception as exc:  # noqa: BLE001
             log.warning("[assembler] tag styles failed: %s", exc)
 
-    text_fx_lib = copy.deepcopy(_load_json_cached(str(paths["text_fx"])))
-    motion_lib = copy.deepcopy(_load_json_cached(str(paths["motion"])))
-    ensure_default_text_fx_combo(final_items, text_fx_lib)
-    expand_text_motion_combos(final_items, motion_lib)
-    expand_text_fx_combos(final_items, text_fx_lib)
+    # ae_presets-only: no legacy text_fx/motion/effects stages
 
     # сдвигаем аудио-слой в главной композиции по глобальному старту
     for item in final_items:
