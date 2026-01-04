@@ -381,13 +381,18 @@ def apply_tag_styles(
                 global_start_sec=global_start_sec,
             )
 
-            baked_tpl = _retime_recursive(copy.deepcopy(tpl), word_starts_norm=word_starts_norm, fps=fps, layer_dur=layer_dur)
+            # STRICT: we DO NOT retime keyframes here (no normalized t).
+            # Keyframe time override happens later in tag_baked_apply.py using tagPlan.keyframes (absolute times).
+            baked_tpl = copy.deepcopy(tpl)
 
             # Apply template to layer
             if role == "text":
                 # ae_presets-only: keep baked raw blocks; real apply happens in tag_baked_apply.py
                 if isinstance(baked_tpl, dict) and "__raw__" in baked_tpl:
                     layer["tagBaked"] = baked_tpl["__raw__"]
+                    # preserve plan for strict absolute override
+                    if tag_plan:
+                        layer["tagPlan"] = tag_plan
                     changed += 1
                     _cleanup_tag_fields(layer)
                     continue
@@ -436,6 +441,9 @@ def apply_tag_styles(
             elif role == "adjustment":
                 if isinstance(baked_tpl, dict) and "__raw__" in baked_tpl:
                     layer["tagBaked"] = baked_tpl["__raw__"]
+                    # preserve plan for strict absolute override
+                    if tag_plan:
+                        layer["tagPlan"] = tag_plan
                     changed += 1
                     _cleanup_tag_fields(layer)
                     continue

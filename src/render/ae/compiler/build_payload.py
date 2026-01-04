@@ -72,6 +72,8 @@ def process_layer(
         if "text" in layer and not isinstance(layer["text"], dict):
             layer.pop("text", None)
 
+    # keep tagPlan for tag_baked_apply strict timing override (it will be removed there)
+
     if "presetId" in layer:
         layer.pop("presetId", None)
 
