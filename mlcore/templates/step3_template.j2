@@ -1,0 +1,73 @@
+{# mlcore/templates/step3_template.j2 #}
+{
+  "version": "v1",
+  "main_comp_name": "Comp 1",
+
+  "main_comp_w": {{ main_comp_w }},
+  "main_comp_h": {{ main_comp_h }},
+
+  "text_dur_hint": {{ text_dur_hint }},
+
+  "adjustment_preset": {{ adjustment_preset | tojson }},
+
+  "layers": [
+    {# --- Footage clips --- #}
+    {%- for c in footage.clips %}
+    {
+      "type": "footage",
+      "name": {{ c.file_name | tojson }},
+      "file_name": {{ c.file_name | tojson }},
+      "file_path": {{ assets_map[c.file_name].file_path | tojson }},
+
+      "src_w": {{ assets_map[c.file_name].src_w }},
+      "src_h": {{ assets_map[c.file_name].src_h }},
+      "fit_mode": {{ c.fit_mode | tojson }},
+
+      "in_point": {{ c.in_point }},
+      "out_point": {{ c.out_point }},
+      "start_time": {{ c.start_time }},
+
+      "enabled": true,
+      "audio_enabled": false,
+      "video_enabled": true,
+      "target_comp": "Comp 1"
+    }{% if not loop.last %},{% endif %}
+    {%- endfor %}
+
+    ,
+
+    {# --- Adj16 copies (static logic) --- #}
+    {%- for c in footage.clips %}
+    {
+      "type": "adjustment",
+      "name": "Adjustment Layer 16",
+      "preset": {{ adjustment_preset.id | tojson }},
+      "in_point": {{ c.in_point }},
+      "out_point": {{ c.out_point }},
+      "start_time": {{ c.in_point + base_adj_start_time }},
+      "enabled": true,
+      "target_comp": "Comp 1"
+    }{% if not loop.last %},{% endif %}
+    {%- endfor %}
+
+    ,
+
+    {# --- AUDIO LAYER (must have real file_path + enabled true) --- #}
+    {
+      "type": "audio_only",
+      "name": "реф",
+      "file_name": {{ audio_file_name | tojson }},
+      "file_path": {{ audio_file_path | tojson }},
+
+      "in_point": {{ audio.layer_in_point }},
+      "out_point": {{ audio.layer_out_point }},
+      "start_time": {{ audio.layer_start_time }},
+
+      "enabled": true,
+      "audio_enabled": true,
+      "video_enabled": false,
+      "moment_of_interest_sec": {% if audio.moment_of_interest_sec is none %}null{% else %}{{ audio.moment_of_interest_sec }}{% endif %},
+      "target_comp": "Comp 1"
+    }
+  ]
+}

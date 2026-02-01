@@ -1,0 +1,58 @@
+{
+  "response": {
+    "summary": "Fast-paced black and white montage featuring rapid cuts of urban motion, vehicles, and silhouettes.",
+    "objects": [
+      "Airplane",
+      "Motorcycle",
+      "Silhouette"
+    ],
+    "camera": {
+      "type": "Pan",
+      "speed": "Fast"
+    },
+    "visuals": {
+      "style": "B&W",
+      "colors": [
+        "Black",
+        "White"
+      ]
+    },
+    "composition": "Texture",
+    "tags": [
+      "Speed",
+      "Montage",
+      "Urban",
+      "Noir",
+      "Chaos",
+      "Rush",
+      "Travel"
+    ]
+  },
+  "options": [
+    {
+      "file": "13721973860903973_01_f97367956e98147923601a0e0c8921f4.mp4",
+      "width": 720,
+      "height": 1280
+    },
+    {
+      "file": "13721973860903973_02_f97367956e98147923601a0e0c8921f4_t1.mp4",
+      "width": 234,
+      "height": 416
+    },
+    {
+      "file": "13721973860903973_03_f97367956e98147923601a0e0c8921f4_t2.mp4",
+      "width": 360,
+      "height": 640
+    },
+    {
+      "file": "13721973860903973_04_f97367956e98147923601a0e0c8921f4_t3.mp4",
+      "width": 486,
+      "height": 864
+    },
+    {
+      "file": "13721973860903973_05_f97367956e98147923601a0e0c8921f4_t4.mp4",
+      "width": 648,
+      "height": 1152
+    }
+  ]
+}

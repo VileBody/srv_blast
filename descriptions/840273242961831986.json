@@ -1,0 +1,37 @@
+{
+  "response": {
+    "summary": "Panning shot of a vast city skyline at night with illuminated skyscrapers visible through haze.",
+    "objects": [
+      "Skyscraper",
+      "City",
+      "Harbor"
+    ],
+    "camera": {
+      "type": "Pan",
+      "speed": "Normal"
+    },
+    "visuals": {
+      "style": "Dark",
+      "colors": [
+        "Gold",
+        "Dark Grey"
+      ]
+    },
+    "composition": "Top_Clean",
+    "tags": [
+      "Urban",
+      "Night",
+      "Scenic",
+      "View",
+      "Calm",
+      "Vast"
+    ]
+  },
+  "options": [
+    {
+      "file": "840273242961831986_01_69701fa9812735f63b74aaab72139e61.mp4",
+      "width": 1080,
+      "height": 1920
+    }
+  ]
+}

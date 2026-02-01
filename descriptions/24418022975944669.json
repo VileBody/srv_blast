@@ -1,0 +1,38 @@
+{
+  "response": {
+    "summary": "A graphic animation showing a silhouette figure falling into a black void beneath a giant face profile against a red sky.",
+    "objects": [
+      "Falling Man",
+      "Face Silhouette",
+      "Rain"
+    ],
+    "camera": {
+      "type": "Static",
+      "speed": "Fast"
+    },
+    "visuals": {
+      "style": "Dark",
+      "colors": [
+        "Red",
+        "Black"
+      ]
+    },
+    "composition": "Top_Clean",
+    "tags": [
+      "Falling",
+      "Despair",
+      "Noir",
+      "Surreal",
+      "Nightmare",
+      "Vertigo",
+      "Danger"
+    ]
+  },
+  "options": [
+    {
+      "file": "24418022975944669_01_6c3c0f11024544849a1d24ca3fa39408_720w.mp4",
+      "width": 720,
+      "height": 900
+    }
+  ]
+}

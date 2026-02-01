@@ -1,0 +1,314 @@
+# services/orchestrator/tasks.py
+from __future__ import annotations
+
+import json
+import os
+import shlex
+import subprocess
+import time
+import urllib.request
+from pathlib import Path
+from typing import Any, Dict
+
+from .artifacts import make_job_paths
+from .celery_app import celery_app
+from .config import SETTINGS
+from .job_store import JobStore
+from .render_manifest import build_windows_job_payload
+from .windows_client import WindowsRenderClient
+
+
+def _is_remote_url(u: str) -> bool:
+    s = (u or "").strip().lower()
+    return s.startswith("http://") or s.startswith("https://") or s.startswith("s3://")
+
+
+def _download(url: str, dest: Path, *, timeout_s: float = 300.0) -> None:
+    # NOTE: сюда приходит presigned https (или другой http). Локальные пути — ошибка выше по стеку.
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    with urllib.request.urlopen(url, timeout=float(timeout_s)) as resp:
+        data = resp.read()
+    dest.write_bytes(data)
+
+
+def _ensure_shared_catalog(repo_root: Path) -> None:
+    """
+    inventory + bundle are SHARED and must exist before we call Gemini.
+    If missing -> run `python footage_config.py` once.
+    """
+    inv_path_s = (os.environ.get("FOOTAGE_INVENTORY_JSON") or "").strip()
+    bun_path_s = (os.environ.get("DESCRIPTIONS_BUNDLE_PATH") or "").strip()
+
+    if not inv_path_s:
+        inv_path_s = (os.environ.get("FOOTAGE_INVENTORY_OUT") or "").strip()
+    if not bun_path_s:
+        bun_path_s = (os.environ.get("DESCRIPTIONS_BUNDLE_OUT") or "").strip()
+
+    if not inv_path_s:
+        inv_path_s = str((repo_root / "data" / "footage_inventory.json").resolve())
+        os.environ["FOOTAGE_INVENTORY_JSON"] = inv_path_s
+    if not bun_path_s:
+        bun_path_s = str((repo_root / "pins" / "descriptions_bundle.json").resolve())
+        os.environ["DESCRIPTIONS_BUNDLE_PATH"] = bun_path_s
+
+    inv_path = Path(inv_path_s).expanduser()
+    if not inv_path.is_absolute():
+        inv_path = (repo_root / inv_path).resolve()
+
+    bun_path = Path(bun_path_s).expanduser()
+    if not bun_path.is_absolute():
+        bun_path = (repo_root / bun_path).resolve()
+
+    if inv_path.exists() and bun_path.exists():
+        return
+
+    cmd = os.environ.get("FOOTAGE_CATALOG_CMD", "python footage_config.py").strip() or "python footage_config.py"
+    print(f"[catalog] missing -> generating via: {cmd}")
+    args = shlex.split(cmd)
+    subprocess.check_call(args, cwd=str(repo_root))
+
+    if not inv_path.exists():
+        raise RuntimeError(f"[catalog] inventory still missing after build: {inv_path}")
+    if not bun_path.exists():
+        raise RuntimeError(f"[catalog] bundle still missing after build: {bun_path}")
+
+    print(f"[catalog] ok inventory={inv_path} bundle={bun_path}")
+
+
+def _patch_audio_layer_to_remote(footage_config_path: Path, *, audio_url: str) -> None:
+    """
+    Keep footage_config relocatable by injecting remote audio url into the audio_only layer.
+    (This does NOT rebuild JSX; it's mainly for debugging / determinism.)
+    """
+    if not audio_url:
+        return
+    if not _is_remote_url(audio_url):
+        # we refuse to write local paths here
+        raise RuntimeError(f"audio_url is not remote, refusing to patch: {audio_url!r}")
+
+    d = json.loads(footage_config_path.read_text(encoding="utf-8"))
+    layers = d.get("layers")
+    if not isinstance(layers, list):
+        return
+
+    audio_name = (audio_url.split("?")[0].rstrip("/").split("/")[-1] or "audio").strip()
+
+    changed = False
+    for it in layers:
+        if not isinstance(it, dict):
+            continue
+        if str(it.get("type")) != "audio_only":
+            continue
+
+        if it.get("file_name") != audio_name:
+            it["file_name"] = audio_name
+            changed = True
+
+        if it.get("file_path") != audio_url:
+            it["file_path"] = audio_url
+            changed = True
+
+        if bool(it.get("enabled", True)) is not True:
+            it["enabled"] = True
+            changed = True
+        if bool(it.get("audio_enabled", True)) is not True:
+            it["audio_enabled"] = True
+            changed = True
+        if bool(it.get("video_enabled", False)) is not False:
+            it["video_enabled"] = False
+            changed = True
+
+    if changed:
+        footage_config_path.write_text(json.dumps(d, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _looks_like_gemini_internal_500(text: str) -> bool:
+    if not text:
+        return False
+    return (
+        ("google.genai.errors.ServerError" in text)
+        and ("500 INTERNAL" in text)
+        and ("An internal error has occurred" in text)
+    )
+
+
+@celery_app.task(name="orchestrator.build_job", bind=True, max_retries=8)
+def build_job(self, job_id: str) -> Dict[str, Any]:
+    store = JobStore.from_env()
+    st = store.get(job_id)
+    if not st:
+        raise RuntimeError(f"job not found: {job_id}")
+
+    store.set_status(job_id, "RUNNING", stage="build")
+
+    repo_root = Path(__file__).resolve().parents[2].resolve()
+    _ensure_shared_catalog(repo_root)
+
+    paths = make_job_paths(work_dir=SETTINGS.work_dir, output_dir=SETTINGS.output_dir, job_id=job_id)
+
+    req = st.request or {}
+    audio_url = str(req.get("audio_s3_url") or "").strip()
+    if not audio_url:
+        raise RuntimeError("missing audio_s3_url")
+    if not _is_remote_url(audio_url):
+        # Вот тут “строгость”: не позволяем запускать пайплайн с локальным путём
+        raise RuntimeError(f"audio_s3_url must be remote (http/https/s3). got={audio_url!r}")
+
+    audio_name = (audio_url.split("?")[0].rstrip("/").split("/")[-1] or "audio").strip()
+    local_audio = paths.data_dir / "inputs" / "audio" / audio_name
+    _download(audio_url, local_audio, timeout_s=600.0)
+
+    mode = str(req.get("mode") or "with_gemini")
+    cmd = (
+        f"{SETTINGS.pipeline_cmd} "
+        f"--out-dir {paths.out_dir.as_posix()} "
+        f"--full-edit {paths.data_dir.as_posix()}/full_edit_config.json "
+        f"--footage {paths.data_dir.as_posix()}/footage_config.json"
+    )
+    if mode == "no_gemini":
+        cmd = cmd + " --skip-llm"
+
+    env = os.environ.copy()
+    env["DATA_DIR"] = str(paths.data_dir)
+    env["OUT_DIR"] = str(paths.out_dir)
+
+    # make pipeline use THIS job audio
+    env["AUDIO_FILE_PATH"] = str(local_audio)
+    env["AUDIO_DIR"] = str(local_audio.parent)
+
+    args = shlex.split(cmd)
+    proc = subprocess.run(args, cwd=str(repo_root), env=env, capture_output=True, text=True)
+    out = proc.stdout or ""
+    err = proc.stderr or ""
+
+    if proc.returncode != 0:
+        blob = out + "\n" + err
+        if _looks_like_gemini_internal_500(blob):
+            attempt = int(getattr(self.request, "retries", 0)) + 1
+            backoff = min(300.0, float(10 * (2 ** max(0, attempt - 1))))
+            raise self.retry(countdown=backoff, exc=RuntimeError("gemini_internal_500"))
+
+        raise RuntimeError(
+            f"pipeline_failed rc={proc.returncode}\ncmd={cmd}\n"
+            f"--- stdout (tail) ---\n{out[-8000:]}\n"
+            f"--- stderr (tail) ---\n{err[-8000:]}\n"
+        )
+
+    # Best-effort: keep configs consistent
+    _patch_audio_layer_to_remote(paths.footage_config, audio_url=audio_url)
+
+    store.set_status(
+        job_id,
+        "RUNNING",
+        stage="dispatch",
+        result={
+            "build": {
+                "audio_url_remote": audio_url,
+                "audio_path_local": str(local_audio),
+            }
+        },
+    )
+    dispatch_to_windows.delay(job_id)
+    return {"ok": True, "stage": "build_done", "paths": paths.manifest()}
+
+
+@celery_app.task(name="orchestrator.dispatch_to_windows")
+def dispatch_to_windows(job_id: str) -> Dict[str, Any]:
+    store = JobStore.from_env()
+    st = store.get(job_id)
+    if not st:
+        raise RuntimeError("job_not_found")
+
+    if not SETTINGS.windows_base_url:
+        raise RuntimeError("WINDOWS_RENDER_URL is not set")
+
+    req = st.request or {}
+    audio_url = str(req.get("audio_s3_url") or "").strip()
+    if not audio_url:
+        raise RuntimeError("missing audio_s3_url in job request (needed for windows media download)")
+
+    # 🔥 строгая проверка — больше никаких “/app/...”
+    if not _is_remote_url(audio_url):
+        raise RuntimeError(
+            "dispatch_to_windows requires remote audio URL (http/https/s3). "
+            f"got={audio_url!r}. "
+            "This usually means your API client sent a local path, or you are running an old worker container."
+        )
+
+    paths = make_job_paths(work_dir=SETTINGS.work_dir, output_dir=SETTINGS.output_dir, job_id=job_id)
+
+    win_payload = build_windows_job_payload(
+        job_id=job_id,
+        render_jsx_path=paths.render_jsx,
+        render_payload_path=paths.render_payload,
+        audio_url=audio_url,
+        entry_comp="Main Render",
+        output_relpath="work/output.mp4",
+        output_s3_bucket=os.environ.get("S3_BUCKET_OUTPUT_VIDEO", ""),
+        output_s3_key=f"renders/{job_id}/output.mp4",
+    )
+
+    store.set_status(
+        job_id,
+        "RUNNING",
+        stage="dispatch",
+        result={"dispatch": {"windows_url": SETTINGS.windows_base_url, "audio_url_used": audio_url}},
+    )
+
+    client = WindowsRenderClient(SETTINGS.windows_base_url, timeout_s=SETTINGS.windows_timeout_s)
+    res = client.dispatch_render(win_payload)
+
+    if isinstance(res, dict) and res.get("_api") == "jobs":
+        ok = bool(res.get("success", False))
+        if ok:
+            out_url = res.get("output_url") or res.get("output_s3_url") or None
+            store.set_status(job_id, "SUCCEEDED", stage="render", result={"windows": res, "output_url": out_url})
+            return {"ok": True, "mode": "sync_jobs", "windows": res}
+        raise RuntimeError(f"windows_failed(sync_jobs): {res}")
+
+    if not isinstance(res, dict):
+        raise RuntimeError(f"windows_bad_response: {res!r}")
+
+    render_id = str(res.get("render_id") or "").strip()
+    if not render_id:
+        raise RuntimeError(f"windows_bad_response(no render_id): {res}")
+
+    store.set_status(job_id, "RUNNING", stage="poll", result={"render_id": render_id, "windows": res})
+    poll_windows_render.apply_async(args=[job_id, render_id], countdown=float(SETTINGS.windows_poll_interval_s))
+    return {"ok": True, "mode": "async_render", "render_id": render_id, "windows": res}
+
+
+@celery_app.task(name="orchestrator.poll_windows_render")
+def poll_windows_render(job_id: str, render_id: str) -> Dict[str, Any]:
+    store = JobStore.from_env()
+    st = store.get(job_id)
+    if not st:
+        raise RuntimeError("job_not_found")
+
+    if not SETTINGS.windows_base_url:
+        raise RuntimeError("WINDOWS_RENDER_URL is not set")
+
+    client = WindowsRenderClient(SETTINGS.windows_base_url, timeout_s=SETTINGS.windows_timeout_s)
+
+    started_at = float(st.started_at or st.updated_at or time.time())
+    now = time.time()
+    if (now - started_at) > float(SETTINGS.windows_poll_timeout_s):
+        raise RuntimeError(f"windows_poll_timeout render_id={render_id}")
+
+    res = client.get_render_status(render_id)
+    if not isinstance(res, dict):
+        raise RuntimeError(f"windows_poll_bad_response: {res!r}")
+
+    status = str(res.get("status") or "").lower()
+
+    if status in {"succeeded", "success", "done", "ok"}:
+        out_url = res.get("output_url") or res.get("output_s3_url") or None
+        store.set_status(job_id, "SUCCEEDED", stage="render", result={"render_id": render_id, "windows": res, "output_url": out_url})
+        return {"ok": True, "status": "succeeded", "windows": res}
+
+    if status in {"failed", "error"}:
+        raise RuntimeError(f"windows_failed(async_render): {res}")
+
+    poll_windows_render.apply_async(args=[job_id, render_id], countdown=float(SETTINGS.windows_poll_interval_s))
+    store.set_status(job_id, "RUNNING", stage="poll", result={"render_id": render_id, "windows": res})
+    return {"ok": True, "status": "running", "windows": res}

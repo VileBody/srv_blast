@@ -1,0 +1,37 @@
+{
+  "response": {
+    "summary": "Fast-paced urban montage featuring a rapper with glitch effects, crowd shots, and aggressive editing.",
+    "objects": [
+      "Man",
+      "Crowd",
+      "Grillz"
+    ],
+    "camera": {
+      "type": "Handheld",
+      "speed": "Fast"
+    },
+    "visuals": {
+      "style": "Flash",
+      "colors": [
+        "Black",
+        "Red"
+      ]
+    },
+    "composition": "Busy",
+    "tags": [
+      "Glitch",
+      "Urban",
+      "Energy",
+      "Aggressive",
+      "Chaos",
+      "Hype"
+    ]
+  },
+  "options": [
+    {
+      "file": "1149051292430624460_01_c3b6148b2eca91be4f933d142292fe7c_720w.mp4",
+      "width": 720,
+      "height": 1280
+    }
+  ]
+}

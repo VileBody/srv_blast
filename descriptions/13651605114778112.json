@@ -1,0 +1,58 @@
+{
+  "response": {
+    "summary": "A person sleeping in bed with tropical palm trees swaying outside a large window.",
+    "objects": [
+      "Woman",
+      "Bed",
+      "Palm Tree"
+    ],
+    "camera": {
+      "type": "Static",
+      "speed": "Slow"
+    },
+    "visuals": {
+      "style": "Dark",
+      "colors": [
+        "White",
+        "Green"
+      ]
+    },
+    "composition": "Bottom_Clean",
+    "tags": [
+      "Morning",
+      "Relax",
+      "Tropical",
+      "Sleep",
+      "Vacation",
+      "Peaceful",
+      "Intimate"
+    ]
+  },
+  "options": [
+    {
+      "file": "13651605114778112_01_2f47c3602f872380932fb66d88138e01_240w.mp4",
+      "width": 234,
+      "height": 416
+    },
+    {
+      "file": "13651605114778112_02_2f47c3602f872380932fb66d88138e01_360w.mp4",
+      "width": 360,
+      "height": 640
+    },
+    {
+      "file": "13651605114778112_03_2f47c3602f872380932fb66d88138e01_540w.mp4",
+      "width": 540,
+      "height": 960
+    },
+    {
+      "file": "13651605114778112_04_2f47c3602f872380932fb66d88138e01_720w.mp4",
+      "width": 720,
+      "height": 1280
+    },
+    {
+      "file": "13651605114778112_05_2f47c3602f872380932fb66d88138e01_240w.mp4",
+      "width": 234,
+      "height": 416
+    }
+  ]
+}

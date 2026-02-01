@@ -1,0 +1,58 @@
+{
+  "response": {
+    "summary": "Rapid glitch montage of a person in a Nike Tech fleece with silhouette and strobe effects.",
+    "objects": [
+      "Hoodie",
+      "Silhouette",
+      "Logo"
+    ],
+    "camera": {
+      "type": "Handheld",
+      "speed": "Hyper_Fast"
+    },
+    "visuals": {
+      "style": "Flash",
+      "colors": [
+        "Dark Green",
+        "Neon Green"
+      ]
+    },
+    "composition": "Busy",
+    "tags": [
+      "Aggressive",
+      "Glitch",
+      "Urban",
+      "Drill",
+      "Chaos",
+      "Speed",
+      "Dark"
+    ]
+  },
+  "options": [
+    {
+      "file": "32158584834605474_01_1d95722fbde1f8325d066d617207b28a.mp4",
+      "width": 720,
+      "height": 1280
+    },
+    {
+      "file": "32158584834605474_02_1d95722fbde1f8325d066d617207b28a_240w.mp4",
+      "width": 234,
+      "height": 416
+    },
+    {
+      "file": "32158584834605474_03_1d95722fbde1f8325d066d617207b28a_360w.mp4",
+      "width": 360,
+      "height": 640
+    },
+    {
+      "file": "32158584834605474_04_1d95722fbde1f8325d066d617207b28a_540w.mp4",
+      "width": 540,
+      "height": 960
+    },
+    {
+      "file": "32158584834605474_05_1d95722fbde1f8325d066d617207b28a_720w.mp4",
+      "width": 720,
+      "height": 1280
+    }
+  ]
+}

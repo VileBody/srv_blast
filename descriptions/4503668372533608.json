@@ -1,0 +1,38 @@
+{
+  "response": {
+    "summary": "A hyper-fast tracking shot of a dark silhouetted figure running through a neon-lit city street with heavy motion blur.",
+    "objects": [
+      "Silhouette",
+      "Neon Light",
+      "Street"
+    ],
+    "camera": {
+      "type": "Dolly",
+      "speed": "Hyper_Fast"
+    },
+    "visuals": {
+      "style": "Neon",
+      "colors": [
+        "Cyan",
+        "Red"
+      ]
+    },
+    "composition": "Busy",
+    "tags": [
+      "Cyberpunk",
+      "Rush",
+      "Speed",
+      "Chaos",
+      "Urban",
+      "Nightlife",
+      "Abstract"
+    ]
+  },
+  "options": [
+    {
+      "file": "4503668372533608_01_2ac90e4f448de9cad72be118ebd66a7b.mp4",
+      "width": 720,
+      "height": 1280
+    }
+  ]
+}

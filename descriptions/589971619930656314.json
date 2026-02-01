@@ -1,0 +1,58 @@
+{
+  "response": {
+    "summary": "Nighttime POV shot from a moving vehicle passing a modern city skyline.",
+    "objects": [
+      "Skyscraper",
+      "Highway",
+      "Car"
+    ],
+    "camera": {
+      "type": "Dolly",
+      "speed": "Normal"
+    },
+    "visuals": {
+      "style": "Dark",
+      "colors": [
+        "Dark Blue",
+        "Orange"
+      ]
+    },
+    "composition": "Top_Clean",
+    "tags": [
+      "Urban",
+      "Night",
+      "Driving",
+      "City",
+      "Travel",
+      "Atmospheric",
+      "Cruise"
+    ]
+  },
+  "options": [
+    {
+      "file": "589971619930656314_01_f38f6abaf24239f540c83313e2d9bc53.mp4",
+      "width": 720,
+      "height": 1280
+    },
+    {
+      "file": "589971619930656314_02_f38f6abaf24239f540c83313e2d9bc53_t1.mp4",
+      "width": 234,
+      "height": 416
+    },
+    {
+      "file": "589971619930656314_03_f38f6abaf24239f540c83313e2d9bc53_t2.mp4",
+      "width": 360,
+      "height": 640
+    },
+    {
+      "file": "589971619930656314_04_f38f6abaf24239f540c83313e2d9bc53_t3.mp4",
+      "width": 486,
+      "height": 864
+    },
+    {
+      "file": "589971619930656314_05_f38f6abaf24239f540c83313e2d9bc53_t4.mp4",
+      "width": 648,
+      "height": 1152
+    }
+  ]
+}

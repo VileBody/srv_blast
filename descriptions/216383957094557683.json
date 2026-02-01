@@ -1,0 +1,38 @@
+{
+  "response": {
+    "summary": "Stop-motion timelapse of a couple cuddling and moving around in a cozy wooden cabin bed.",
+    "objects": [
+      "Couple",
+      "Bed",
+      "Window"
+    ],
+    "camera": {
+      "type": "Static",
+      "speed": "Hyper_Fast"
+    },
+    "visuals": {
+      "style": "Bright",
+      "colors": [
+        "Brown",
+        "White"
+      ]
+    },
+    "composition": "Busy",
+    "tags": [
+      "Romance",
+      "Morning",
+      "Cozy",
+      "Lifestyle",
+      "Intimate",
+      "Together",
+      "Love"
+    ]
+  },
+  "options": [
+    {
+      "file": "216383957094557683_01_c2c5fb1a7d06e2cfcb09f1d6fc036fea.mp4",
+      "width": 720,
+      "height": 1280
+    }
+  ]
+}

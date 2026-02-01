@@ -1,0 +1,58 @@
+{
+  "response": {
+    "summary": "POV shot from the driver's seat of a sports car driving fast at night, focusing on the steering wheel and gear shifting.",
+    "objects": [
+      "Steering Wheel",
+      "Dashboard",
+      "Hand"
+    ],
+    "camera": {
+      "type": "Handheld",
+      "speed": "Fast"
+    },
+    "visuals": {
+      "style": "Dark",
+      "colors": [
+        "Black",
+        "Red"
+      ]
+    },
+    "composition": "Busy",
+    "tags": [
+      "Driving",
+      "Night",
+      "Speed",
+      "POV",
+      "Racing",
+      "Adrenaline",
+      "Cockpit"
+    ]
+  },
+  "options": [
+    {
+      "file": "702702348142030776_01_1bb3a09802a4d09011692d4fa8deb0c9.mp4",
+      "width": 720,
+      "height": 1280
+    },
+    {
+      "file": "702702348142030776_02_1bb3a09802a4d09011692d4fa8deb0c9_t1.mp4",
+      "width": 234,
+      "height": 416
+    },
+    {
+      "file": "702702348142030776_03_1bb3a09802a4d09011692d4fa8deb0c9_t2.mp4",
+      "width": 360,
+      "height": 640
+    },
+    {
+      "file": "702702348142030776_04_1bb3a09802a4d09011692d4fa8deb0c9_t3.mp4",
+      "width": 486,
+      "height": 864
+    },
+    {
+      "file": "702702348142030776_05_1bb3a09802a4d09011692d4fa8deb0c9_t4.mp4",
+      "width": 648,
+      "height": 1152
+    }
+  ]
+}

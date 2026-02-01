@@ -1,0 +1,344 @@
+# mlcore/gemini_postprocess.py
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any, Dict, List
+import os
+
+from jinja2 import Environment, FileSystemLoader
+
+from mlcore.cr_patch import patch_payload_dict_inplace
+from mlcore.timing_calc import compute_timings
+from mlcore.models.full_plan import FullPlanPayload
+from mlcore.models.subtitles_tokens import BlocksTokensPayload, Token
+
+
+# -------------------------
+# Jinja env
+# -------------------------
+def _tojson_filter(v: Any) -> str:
+    return json.dumps(v, ensure_ascii=False, separators=(",", ":"))
+
+
+def _env(repo_root: Path) -> Environment:
+    env = Environment(
+        loader=FileSystemLoader(str(repo_root / "mlcore" / "templates")),
+        autoescape=False,
+    )
+    env.filters["tojson"] = _tojson_filter
+    return env
+
+
+# -------------------------
+# Audio source resolver
+# -------------------------
+def _pick_audio_files(audio_dir: Path) -> List[Path]:
+    exts = {".wav", ".mp3", ".m4a", ".aac", ".flac", ".ogg", ".mov", ".mp4"}
+    if not audio_dir.exists():
+        return []
+    files = [p for p in sorted(audio_dir.iterdir()) if p.is_file() and p.suffix.lower() in exts]
+    return files
+
+
+def _resolve_audio_source(repo_root: Path) -> tuple[str, str]:
+    """
+    Returns: (file_name, file_path)
+    Priority:
+      1) AUDIO_FILE_PATH env (explicit)
+      2) first file found in AUDIO_DIR (defaults to repo_root/audio)
+    """
+    env_path = (os.environ.get("AUDIO_FILE_PATH") or "").strip()
+    if env_path:
+        p = Path(env_path).expanduser()
+        if not p.is_absolute():
+            p = (repo_root / p).resolve()
+        if not p.exists():
+            raise FileNotFoundError(f"AUDIO_FILE_PATH points to missing file: {p}")
+        return p.name, str(p)
+
+    audio_dir = Path(os.environ.get("AUDIO_DIR", str(repo_root / "audio"))).resolve()
+    files = _pick_audio_files(audio_dir)
+    if not files:
+        raise FileNotFoundError(
+            "No audio file found. Set AUDIO_FILE_PATH in .env "
+            "or put an audio file into repo_root/audio/"
+        )
+    p0 = files[0].resolve()
+    return p0.name, str(p0)
+
+
+# -------------------------
+# Subtitles sanitation (minimal + deterministic)
+# -------------------------
+def _sanitize_trailing(tokens: List[Dict[str, Any]]) -> None:
+    if not tokens:
+        return
+    for i, t in enumerate(tokens):
+        tr = t.get("trailing", " ")
+        if tr not in (" ", "\r", ""):
+            tr = " "
+        if tr == "" and i != len(tokens) - 1:
+            tr = " "
+        t["trailing"] = tr
+    tokens[-1]["trailing"] = ""
+
+
+def _recon_phrase(tokens: List[Dict[str, Any]]) -> str:
+    return "".join(str(t.get("text", "")) + str(t.get("trailing", "")) for t in tokens)
+
+
+def _sanitize_segment(seg: Dict[str, Any]) -> None:
+    tok = seg.get("tokens")
+    if not isinstance(tok, list) or not tok or not all(isinstance(x, dict) for x in tok):
+        return
+    _sanitize_trailing(tok)
+    seg["phrase"] = _recon_phrase(tok)
+    seg["tokens"] = tok
+
+
+def sanitize_subtitles_dict_inplace(d: Dict[str, Any]) -> Dict[str, Any]:
+    if isinstance(d.get("block_1"), dict):
+        _sanitize_segment(d["block_1"])
+
+    b2 = d.get("block_2")
+    if isinstance(b2, dict):
+        if isinstance(b2.get("p1"), dict):
+            _sanitize_segment(b2["p1"])
+        if isinstance(b2.get("p2"), dict):
+            _sanitize_segment(b2["p2"])
+
+    if isinstance(d.get("block_3"), dict):
+        _sanitize_segment(d["block_3"])
+
+    b4 = d.get("block_4")
+    if isinstance(b4, dict):
+        if isinstance(b4.get("p1"), dict):
+            _sanitize_segment(b4["p1"])
+        if isinstance(b4.get("p2"), dict):
+            _sanitize_segment(b4["p2"])
+
+    b5 = d.get("block_5")
+    if isinstance(b5, dict):
+        for k in ("slowly_in", "fast_reveal", "glitch_peak"):
+            if isinstance(b5.get(k), dict):
+                _sanitize_segment(b5[k])
+
+    if isinstance(d.get("block_6"), dict):
+        _sanitize_segment(d["block_6"])
+
+    b7 = d.get("block_7")
+    if isinstance(b7, dict):
+        if isinstance(b7.get("part1"), dict):
+            _sanitize_segment(b7["part1"])
+        if isinstance(b7.get("part2"), dict):
+            _sanitize_segment(b7["part2"])
+
+    patch_payload_dict_inplace(d)
+    return d
+
+
+def _shift_token(t: Token, delta: float) -> Token:
+    return Token(
+        text=t.text,
+        t_start=float(t.t_start) - delta,
+        t_end=float(t.t_end) - delta,
+        trailing=t.trailing,
+    )
+
+
+def normalize_subtitles_to_clip_zero(payload_abs: BlocksTokensPayload, clip_start_abs: float, clip_end_abs: float) -> BlocksTokensPayload:
+    clip_start = float(clip_start_abs)
+    clip_end = float(clip_end_abs)
+    clip_dur = clip_end - clip_start
+
+    def seg_phrase_tokens(seg):
+        return {"phrase": seg.phrase, "tokens": [_shift_token(t, clip_start) for t in seg.tokens]}
+
+    norm_dict: Dict[str, Any] = {
+        "clip": {"start": 0.0, "end": float(clip_dur)},
+
+        "block_1": {"phrase": payload_abs.block_1.phrase, "tokens": [_shift_token(t, clip_start) for t in payload_abs.block_1.tokens]},
+        "block_2": {"p1": seg_phrase_tokens(payload_abs.block_2.p1), "p2": seg_phrase_tokens(payload_abs.block_2.p2)},
+        "block_3": {"phrase": payload_abs.block_3.phrase, "tokens": [_shift_token(t, clip_start) for t in payload_abs.block_3.tokens]},
+        "block_4": {"p1": seg_phrase_tokens(payload_abs.block_4.p1), "p2": seg_phrase_tokens(payload_abs.block_4.p2)},
+        "block_5": {
+            "slowly_in": seg_phrase_tokens(payload_abs.block_5.slowly_in),
+            "fast_reveal": seg_phrase_tokens(payload_abs.block_5.fast_reveal),
+            "glitch_peak": seg_phrase_tokens(payload_abs.block_5.glitch_peak),
+            "mine_drop": {
+                "text": payload_abs.block_5.mine_drop.text,
+                "t_start": float(payload_abs.block_5.mine_drop.t_start) - clip_start,
+                "t_end": float(payload_abs.block_5.mine_drop.t_end) - clip_start,
+            },
+        },
+        "block_6": {"phrase": payload_abs.block_6.phrase, "tokens": [_shift_token(t, clip_start) for t in payload_abs.block_6.tokens]},
+        "block_7": {"part1": seg_phrase_tokens(payload_abs.block_7.part1), "part2": seg_phrase_tokens(payload_abs.block_7.part2)},
+    }
+
+    return BlocksTokensPayload.model_validate(norm_dict)
+
+
+# -------------------------
+# Footage inventory helpers
+# -------------------------
+def load_assets_map_from_inventory(footage_inventory_json: Path) -> Dict[str, Dict[str, Any]]:
+    inv = json.loads(footage_inventory_json.read_text(encoding="utf-8"))
+
+    assets = inv.get("assets")
+    if isinstance(assets, list):
+        out: Dict[str, Dict[str, Any]] = {}
+        for it in assets:
+            if not isinstance(it, dict):
+                continue
+            fn = str(it.get("file_name") or "").strip()
+            fp = str(it.get("file_path") or "").strip()
+            sw = it.get("src_w")
+            sh = it.get("src_h")
+            if not fn or not fp or sw is None or sh is None:
+                continue
+            out[fn] = {"file_name": fn, "file_path": fp, "src_w": int(sw), "src_h": int(sh)}
+        return out
+
+    layers = list(inv.get("layers") or [])
+    out2: Dict[str, Dict[str, Any]] = {}
+    for it in layers:
+        if not isinstance(it, dict):
+            continue
+        if str(it.get("type")) != "footage":
+            continue
+        fn = str(it.get("file_name") or it.get("name") or "").strip()
+        fp = str(it.get("file_path") or "").strip()
+        sw = it.get("src_w")
+        sh = it.get("src_h")
+        if not fn or not fp or sw is None or sh is None:
+            continue
+        if fn not in out2:
+            out2[fn] = {"file_name": fn, "file_path": fp, "src_w": int(sw), "src_h": int(sh)}
+    return out2
+
+
+def read_adjustment_preset_from_inventory(footage_inventory_json: Path) -> Dict[str, Any]:
+    inv = json.loads(footage_inventory_json.read_text(encoding="utf-8"))
+    preset = inv.get("adjustment_preset") or {}
+    if not isinstance(preset, dict) or not preset:
+        preset = {
+            "id": "ADJ_LAYER_16",
+            "name": "Adjustment Layer 16",
+            "dump_file": "data/0_4.504505__Adjustment Layer 16__adjustment.json",
+            "time_warp_mode": "pin_edges_v1",
+        }
+    return preset
+
+
+def read_adj16_base_start_time(repo_root: Path, dump_file: str) -> float:
+    p = (repo_root / dump_file).resolve()
+    d = json.loads(p.read_text(encoding="utf-8"))
+    return float(d["meta"]["startTime"])
+
+
+def _resolve_data_dir(repo_root: Path, data_dir: Path | None) -> Path:
+    """
+    Priority:
+      1) explicit param data_dir
+      2) env DATA_DIR
+      3) repo_root/data
+    """
+    if data_dir is not None:
+        return data_dir.resolve()
+
+    raw = (os.environ.get("DATA_DIR") or "").strip()
+    if raw:
+        p = Path(raw).expanduser()
+        if not p.is_absolute():
+            p = (repo_root / p).resolve()
+        return p.resolve()
+
+    return (repo_root / "data").resolve()
+
+
+def render_all_steps(
+    *,
+    repo_root: Path,
+    plan: FullPlanPayload,
+    footage_inventory_json: Path,
+    out_dir: Path,
+    data_dir: Path | None = None,
+) -> Dict[str, Path]:
+    repo_root = repo_root.resolve()
+    out_dir = out_dir.resolve()
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    data_dir = _resolve_data_dir(repo_root, data_dir)
+    data_dir.mkdir(parents=True, exist_ok=True)
+
+    env = _env(repo_root)
+
+    # STEP 1
+    t1 = env.get_template("step1_template.j2")
+    audio_json_str = t1.render(audio=plan.audio)
+    audio_obj = json.loads(audio_json_str)
+
+    # STEP 2
+    subs_dict = plan.subtitles.model_dump(mode="json")
+    sanitize_subtitles_dict_inplace(subs_dict)
+    subs_abs = BlocksTokensPayload.model_validate(subs_dict)
+
+    subs_clip_zero = normalize_subtitles_to_clip_zero(
+        subs_abs,
+        clip_start_abs=float(plan.audio.clip_start_abs),
+        clip_end_abs=float(plan.audio.clip_end_abs),
+    )
+
+    timings, comp_dur = compute_timings(subs_clip_zero)
+
+    t2 = env.get_template("step2_template.j2")
+    full_edit_str = t2.render(
+        fps=23.9759979248047,
+        comp_dur=float(comp_dur),
+        t=timings,
+        blocks=subs_clip_zero.model_dump(mode="json"),
+    )
+    full_edit_obj = json.loads(full_edit_str)
+
+    # STEP 3
+    assets_map = load_assets_map_from_inventory(footage_inventory_json)
+    preset = read_adjustment_preset_from_inventory(footage_inventory_json)
+    dump_file = str(preset.get("dump_file") or "data/0_4.504505__Adjustment Layer 16__adjustment.json")
+    base_adj_start = read_adj16_base_start_time(repo_root, dump_file)
+
+    audio_file_name, audio_file_path = _resolve_audio_source(repo_root)
+
+    t3 = env.get_template("step3_template.j2")
+    footage_str = t3.render(
+        main_comp_w=1080,
+        main_comp_h=1080,
+        text_dur_hint=float(comp_dur),
+        adjustment_preset=preset,
+        base_adj_start_time=float(base_adj_start),
+        footage=plan.footage,
+        assets_map=assets_map,
+        audio=plan.audio,
+        audio_file_name=audio_file_name,
+        audio_file_path=audio_file_path,
+    )
+    footage_obj = json.loads(footage_str)
+
+    # Write to DATA_DIR + mirror to OUT_DIR
+    p_audio = data_dir / "audio_plan.json"
+    p_step2 = data_dir / "full_edit_config.json"
+    p_step3 = data_dir / "footage_config.json"
+
+    p_audio.write_text(json.dumps(audio_obj, ensure_ascii=False, indent=2), encoding="utf-8")
+    p_step2.write_text(json.dumps(full_edit_obj, ensure_ascii=False, indent=2), encoding="utf-8")
+    p_step3.write_text(json.dumps(footage_obj, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    (out_dir / "audio_plan.json").write_text(json.dumps(audio_obj, ensure_ascii=False, indent=2), encoding="utf-8")
+    (out_dir / "full_edit_config.json").write_text(json.dumps(full_edit_obj, ensure_ascii=False, indent=2), encoding="utf-8")
+    (out_dir / "footage_config.json").write_text(json.dumps(footage_obj, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    return {
+        "audio_plan": p_audio,
+        "full_edit_config": p_step2,
+        "footage_config": p_step3,
+    }

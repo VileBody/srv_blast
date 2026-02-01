@@ -1,0 +1,854 @@
+{# templates/project_template.j2 #}
+(function () {
+  app.beginUndoGroup("AE_TEXTLIB_FULL_PROJECT");
+
+  // ==========================================================
+  // 0) ENV / STATUS helpers (for Windows AE node contract)
+  // ==========================================================
+  var __APP_DIR = "";
+  try { __APP_DIR = $.getenv("APP_DIR"); } catch(e) { __APP_DIR = ""; }
+  if (!__APP_DIR || __APP_DIR === "") {
+    // fallback: script folder (best effort)
+    try {
+      if ($.fileName) {
+        var __f = new File($.fileName);
+        __APP_DIR = __f.parent.fsName;
+      }
+    } catch(_) {}
+  }
+  if (!__APP_DIR || __APP_DIR === "") {
+    try { __APP_DIR = Folder.temp.fsName; } catch(_) { __APP_DIR = ""; }
+  }
+
+  function __ensureFolderByPath(fsPath) {
+    try {
+      var fld = new Folder(fsPath);
+      if (!fld.exists) fld.create();
+      return fld.exists;
+    } catch(e) { return false; }
+  }
+
+  function __writeAeStatusOk(aepFsName, compName) {
+    try {
+      var st = new File(__APP_DIR + "/ae_status.txt");
+      st.encoding = "UTF-8";
+      if (st.open("w")) {
+        st.writeln("OK");
+        st.writeln("aep=" + String(aepFsName || ""));
+        st.writeln("compName=" + String(compName || ""));
+        st.close();
+      }
+    } catch(e) {}
+  }
+
+  function __writeAeStatusErr(msg) {
+    try {
+      var st = new File(__APP_DIR + "/ae_status.txt");
+      st.encoding = "UTF-8";
+      if (st.open("w")) {
+        st.writeln("ERROR");
+        st.writeln(String(msg || "unknown error"));
+        st.close();
+      }
+    } catch(e) {}
+  }
+
+  try {
+
+  var projectSpec = {{ project | tojson }};
+  var compsSpec = {{ comps | tojson }};
+  var footage_layers = {{ footage_layers | tojson }};
+  var text_layers = {{ text_layers | tojson }};
+
+  // ==========================================================
+  // 0) LOGGER (FILE + CONSOLE) 1:1 with your original
+  // ==========================================================
+  function pad2(n) { return (n < 10) ? ("0" + n) : ("" + n); }
+  function nowStamp() {
+    var d = new Date();
+    return (
+      d.getFullYear() + "-" +
+      pad2(d.getMonth() + 1) + "-" +
+      pad2(d.getDate()) + "__" +
+      pad2(d.getHours()) + "-" +
+      pad2(d.getMinutes()) + "-" +
+      pad2(d.getSeconds())
+    );
+  }
+
+  var __LOG_ENABLED = true;
+  var __LOG_FILE = null;
+  var __LOG_SEQ = 0;
+
+  function getScriptFolder() {
+    try {
+      if ($.fileName) {
+        var f = new File($.fileName);
+        return f.parent;
+      }
+    } catch(e) {}
+    return null;
+  }
+
+  function ensureFolder(folder) {
+    try {
+      if (folder && !folder.exists) folder.create();
+      return folder && folder.exists;
+    } catch(e) { return false; }
+  }
+
+  function initLogger() {
+    try {
+      var scriptFolder = getScriptFolder();
+      var base = scriptFolder ? scriptFolder : Folder.userData;
+
+      var logsFolder = new Folder(base.fsName + "/logs");
+      if (!ensureFolder(logsFolder)) {
+        logsFolder = new Folder(Folder.temp.fsName + "/ae_textlib_logs");
+        ensureFolder(logsFolder);
+      }
+
+      var logPath = logsFolder.fsName + "/render_full_" + nowStamp() + ".log";
+      __LOG_FILE = new File(logPath);
+      __LOG_FILE.encoding = "UTF-8";
+
+      if (__LOG_FILE.open("a")) {
+        __LOG_FILE.writeln("=== AE FULL PROJECT LOG START ===");
+        __LOG_FILE.writeln("time=" + (new Date()).toUTCString());
+        __LOG_FILE.writeln("script=" + ($.fileName ? $.fileName : "<unknown>"));
+        __LOG_FILE.writeln("logs_dir=" + logsFolder.fsName);
+        __LOG_FILE.writeln("ae_version=" + app.version);
+        __LOG_FILE.writeln("=================================");
+        __LOG_FILE.close();
+      }
+    } catch(e) {
+      __LOG_ENABLED = false;
+    }
+  }
+
+  function _writeToFile(line) {
+    if (!__LOG_ENABLED || !__LOG_FILE) return;
+    try {
+      if (__LOG_FILE.open("a")) {
+        __LOG_FILE.writeln(line);
+        __LOG_FILE.close();
+      }
+    } catch(e) {
+      __LOG_ENABLED = false;
+    }
+  }
+
+  function logLine(level, msg) {
+    __LOG_SEQ += 1;
+    var line = "[" + level + "][" + __LOG_SEQ + "] " + msg;
+    try { $.writeln(line); } catch(e) {}
+    _writeToFile(line);
+  }
+
+  function logErr(prefix, e) {
+    var s = prefix + ": " + (e && e.toString ? e.toString() : String(e));
+    logLine("ERR", s);
+    try {
+      if (e && e.line) logLine("ERR", "line=" + e.line);
+      if (e && e.fileName) logLine("ERR", "file=" + e.fileName);
+    } catch(_) {}
+  }
+
+  function safeJson(v, maxLen) {
+    var s = "";
+    try { s = JSON.stringify(v); }
+    catch(e) { try { s = String(v); } catch(_) { s = "<unstringifiable>"; } }
+    if (maxLen && s.length > maxLen) s = s.substring(0, maxLen) + "...<trunc>";
+    return s;
+  }
+
+  function pick(obj, a, b) {
+    if (obj && obj[a] !== undefined && obj[a] !== null) return obj[a];
+    if (obj && obj[b] !== undefined && obj[b] !== null) return obj[b];
+    return undefined;
+  }
+
+  function fmtNum(n) {
+    if (n === undefined) return "undefined";
+    if (n === null) return "null";
+    try { return Number(n).toFixed(6); } catch(e) { return String(n); }
+  }
+
+  initLogger();
+  logLine("INFO", "start FULL footage_layers=" + (footage_layers ? footage_layers.length : 0) + " text_layers=" + (text_layers ? text_layers.length : 0));
+  logLine("DBG", "projectSpec=" + safeJson(projectSpec, 400));
+  logLine("DBG", "compsSpec=" + safeJson(compsSpec, 400));
+  logLine("DBG", "APP_DIR=" + String(__APP_DIR));
+
+  // ==========================================================
+  // 1) PROJECT + COMPS
+  // ==========================================================
+  var project = app.project;
+  if (!project) { logLine("ERR", "no app.project"); throw new Error("no app.project"); }
+
+  function findCompByName(name) {
+    try {
+      for (var i = 1; i <= project.numItems; i++) {
+        var it = project.item(i);
+        if (it instanceof CompItem && it.name === name) return it;
+      }
+    } catch(e) {}
+    return null;
+  }
+
+  function findFootageByName(name) {
+    try {
+      for (var i = 1; i <= project.numItems; i++) {
+        var it = project.item(i);
+        if (it instanceof FootageItem && it.name === name) return it;
+      }
+    } catch(e) {}
+    return null;
+  }
+
+  function ensureComp(spec) {
+    var c = findCompByName(spec.name);
+    if (!c) {
+      try {
+        var pa = (spec.pixelAspect !== undefined && spec.pixelAspect !== null) ? spec.pixelAspect : 1.0;
+        c = project.items.addComp(spec.name, spec.w, spec.h, pa, spec.dur, spec.fps);
+        logLine("INFO", "comp created name=" + spec.name);
+      } catch(e) {
+        logErr("create comp failed name=" + spec.name, e);
+        return null;
+      }
+    }
+    try { if (spec.fps !== undefined) c.frameRate = spec.fps; } catch(_) {}
+    try { if (spec.dur !== undefined) c.duration = spec.dur; } catch(_) {}
+    try { if (spec.workAreaStart !== undefined) c.workAreaStart = spec.workAreaStart; } catch(_) {}
+    try { if (spec.workAreaDuration !== undefined) c.workAreaDuration = spec.workAreaDuration; } catch(_) {}
+    try { if (spec.displayStartTime !== undefined) c.displayStartTime = spec.displayStartTime; } catch(_) {}
+    try { if (spec.bgColor && spec.bgColor.length === 3) c.bgColor = spec.bgColor; } catch(_) {}
+    return c;
+  }
+
+  var __COMPS = {};
+  for (var ci = 0; ci < compsSpec.length; ci++) {
+    var cc = ensureComp(compsSpec[ci]);
+    if (cc) __COMPS[cc.name] = cc;
+  }
+
+  var MAIN_COMP = __COMPS[projectSpec.mainCompName] || findCompByName(projectSpec.mainCompName);
+  if (!MAIN_COMP) { logLine("ERR", "main comp missing=" + projectSpec.mainCompName); throw new Error("main comp missing"); }
+  try { MAIN_COMP.openInViewer(); } catch(_) {}
+
+  // ==========================================================
+  // 1.05) EXPAND PRECOMP NODES INSIDE text_layers (SAFE PLACE)
+  // ==========================================================
+  function ensureCompByNameStrict(meta) {
+    if (!meta || !meta.name) return null;
+
+    var c = __COMPS[String(meta.name)] || findCompByName(String(meta.name));
+    if (c) { __COMPS[c.name] = c; return c; }
+
+    try {
+      c = project.items.addComp(
+        String(meta.name),
+        Number(meta.w || 1080),
+        Number(meta.h || 1920),
+        1.0,
+        Number(meta.dur || 5.0),
+        Number(meta.fps || 23.976)
+      );
+      try { if (meta.fps !== undefined) c.frameRate = meta.fps; } catch(_) {}
+      try { if (meta.dur !== undefined) c.duration = meta.dur; } catch(_) {}
+      __COMPS[c.name] = c;
+      logLine("INFO", "precomp created (node) name=" + c.name + " id=" + c.id);
+      return c;
+    } catch(e) {
+      logErr("precomp create failed (node) name=" + String(meta.name), e);
+      return null;
+    }
+  }
+
+  function expandPrecompNodes(list) {
+    var out = [];
+    try {
+      for (var i = 0; i < list.length; i++) {
+        var it = list[i];
+
+        // Node: {type:"precomp", comp:{...}, layers:[...]}
+        if (it && it.type === "precomp" && it.comp && it.layers && it.layers.length !== undefined) {
+          var pc = ensureCompByNameStrict(it.comp);
+          if (!pc) continue;
+
+          for (var j = 0; j < it.layers.length; j++) {
+            var inner = it.layers[j];
+            if (!inner) continue;
+
+            if (!inner.text_data) inner.text_data = {};
+            if (!inner.text_data.layer_meta) inner.text_data.layer_meta = {};
+            inner.text_data.layer_meta.comp_name_target = pc.name;
+
+            out.push(inner);
+          }
+          continue;
+        }
+
+        out.push(it);
+      }
+    } catch(eExp) {
+      logErr("expandPrecompNodes failed", eExp);
+      return list;
+    }
+    return out;
+  }
+
+  text_layers = expandPrecompNodes(text_layers);
+  logLine("INFO", "text_layers expanded=" + (text_layers ? text_layers.length : 0));
+
+  // ==========================================================
+  // 1.1) Import footage if needed
+  //    NEW contract for Windows node:
+  //      - media is already downloaded to APP_DIR/media/{video|audio}/<file_name>
+  //      - so we resolve local path from APP_DIR directly (no assets_resolve.json)
+  // ==========================================================
+  var __AUDIO_EXTS = {".wav":1, ".mp3":1, ".m4a":1, ".aac":1, ".flac":1, ".ogg":1};
+
+  function _extLower(name) {
+    try {
+      var s = String(name || "");
+      var idx = s.lastIndexOf(".");
+      if (idx === -1) return "";
+      return s.substring(idx).toLowerCase();
+    } catch(e) { return ""; }
+  }
+
+  function _isAudioName(name) {
+    var ex = _extLower(name);
+    return (__AUDIO_EXTS[ex] === 1);
+  }
+
+  function _localMediaPathByName(fileName) {
+    var base = String(__APP_DIR || "");
+    if (!base) return "";
+    // normalize slashes (AE обычно переваривает / на Windows)
+    var isA = _isAudioName(fileName);
+    var sub = isA ? "/media/audio/" : "/media/video/";
+    return base + sub + String(fileName);
+  }
+
+  function ensureFootageItem(src) {
+    if (!src) return null;
+    var nm = src.file_name;
+    var fp = src.file_path;
+
+    var existing = findFootageByName(nm);
+    if (existing) return existing;
+
+    // If file_path is empty OR looks like URL, use local media path inside APP_DIR.
+    if (!fp || fp === "" || String(fp).indexOf("http") === 0 || String(fp).indexOf("s3://") === 0) {
+      var local = _localMediaPathByName(nm);
+      if (local && local !== "") {
+        fp = local;
+        logLine("INFO", "resolved local media path via APP_DIR name=" + nm + " -> " + fp);
+      } else {
+        logLine("ERR", "footage missing local path and APP_DIR resolve failed name=" + nm + " fp=" + String(fp));
+        return null;
+      }
+    }
+
+    try {
+      var f = new File(fp);
+      if (!f.exists) {
+        logLine("ERR", "footage file not found path=" + fp + " name=" + nm);
+        return null;
+      }
+      var io = new ImportOptions(f);
+      var it = project.importFile(io);
+      try { it.name = nm; } catch(_) {}
+      logLine("INFO", "footage imported name=" + nm + " path=" + fp);
+      return it;
+    } catch(e) {
+      logErr("import footage failed name=" + nm + " path=" + fp, e);
+      return null;
+    }
+  }
+
+  // ==========================================================
+  // 2) UTILS
+  // ==========================================================
+  function interpFromCode(code) {
+    if (code === "6614") return KeyframeInterpolationType.HOLD;
+    if (code === "6612") return KeyframeInterpolationType.LINEAR;
+    return KeyframeInterpolationType.BEZIER;
+  }
+
+  function applyValue(prop, data, ctx) {
+    if (!prop || !data) return;
+
+    if (data.expression && (!data.keyframes || data.keyframes.length === 0) && data.value === null) {
+      try { prop.expression = data.expression; }
+      catch(e) { logErr("expr set failed ctx=" + ctx, e); }
+      return;
+    }
+
+    if (data.value !== null && (!data.keyframes || data.keyframes.length === 0)) {
+      try {
+        if (data.expression) prop.expression = data.expression;
+        else prop.setValue(data.value);
+      } catch(e2) { logErr("value set failed ctx=" + ctx, e2); }
+      return;
+    }
+
+    if (data.keyframes && data.keyframes.length > 0) {
+      try { while (prop.numKeys > 0) prop.removeKey(1); } catch(_) {}
+
+      for (var k = 0; k < data.keyframes.length; k++) {
+        var kf = data.keyframes[k];
+        try {
+          var keyIdx = prop.addKey(kf.t);
+          prop.setValueAtKey(keyIdx, kf.v);
+
+          var inInterp = interpFromCode(kf.iit);
+          var outInterp = interpFromCode(kf.oit);
+          try { prop.setInterpolationTypeAtKey(keyIdx, inInterp, outInterp); } catch(_) {}
+
+          try {
+            var easesIn = [];
+            var easesOut = [];
+
+            if (kf.ease_in && kf.ease_in.length > 0) {
+              for (var ei = 0; ei < kf.ease_in.length; ei++) {
+                easesIn.push(new KeyframeEase(kf.ease_in[ei].speed, kf.ease_in[ei].influence));
+              }
+            }
+            if (kf.ease_out && kf.ease_out.length > 0) {
+              for (var eo = 0; eo < kf.ease_out.length; eo++) {
+                easesOut.push(new KeyframeEase(kf.ease_out[eo].speed, kf.ease_out[eo].influence));
+              }
+            }
+
+            if (easesIn.length > 0 || easesOut.length > 0) {
+              if (easesIn.length === 0) easesIn = easesOut;
+              if (easesOut.length === 0) easesOut = easesIn;
+              prop.setTemporalEaseAtKey(keyIdx, easesIn, easesOut);
+            }
+          } catch(_) {}
+
+        } catch(e3) {
+          logErr("kf set failed ctx=" + ctx + " k=" + k, e3);
+        }
+      }
+    }
+  }
+
+  function resolveBlendingModeByCode(code) {
+    try {
+      if (String(code) === "5212") return BlendingMode.NORMAL;
+    } catch(e) {}
+    return null;
+  }
+
+  function resolveJustificationByCode(code) {
+    try {
+      if (String(code) === "7415") return ParagraphJustification.CENTER_JUSTIFY;
+    } catch(e) {}
+    return null;
+  }
+
+  function safeProp(group, matchOrName) {
+    if (!group) return null;
+    try { return group.property(matchOrName); } catch (_) { return null; }
+  }
+
+  // ==========================================================
+  // 2.1) TextDocument apply (BASE + PER-CHAR)
+  // ==========================================================
+  function applyTextBaseAndCharStyles(layer, lData) {
+    if (!layer || !lData || lData.type !== "text") return;
+
+    var td = (lData.text_data ? lData.text_data : null);
+    if (!td) return;
+
+    var textProps = null;
+    try { textProps = layer.property("ADBE Text Properties"); } catch(e) { textProps = null; }
+    if (!textProps) { logLine("ERR", "no Text Properties layer=" + layer.name); return; }
+
+    var textDocProp = safeProp(textProps, "ADBE Text Document");
+    if (!textDocProp) { logLine("ERR", "no Text Document prop layer=" + layer.name); return; }
+
+    var base = td.text_base;
+    var chars = td.char_styles_ungrouped;
+    if (!base && !chars) return;
+
+    try {
+      var textDoc = textDocProp.value;
+
+      if (base) {
+        try { if (base.font !== undefined) textDoc.font = base.font; } catch(_) {}
+        try { if (base.fontSize !== undefined) textDoc.fontSize = base.fontSize; } catch(_) {}
+        try { if (base.applyFill !== undefined) textDoc.applyFill = !!base.applyFill; } catch(_) {}
+        try { if (base.fillColor !== undefined) textDoc.fillColor = base.fillColor; } catch(_) {}
+        try { if (base.applyStroke !== undefined) textDoc.applyStroke = !!base.applyStroke; } catch(_) {}
+        try { if (base.strokeWidth !== undefined) textDoc.strokeWidth = base.strokeWidth; } catch(_) {}
+        try { if (base.strokeColor !== undefined) textDoc.strokeColor = base.strokeColor; } catch(_) {}
+        try { if (base.tracking !== undefined) textDoc.tracking = base.tracking; } catch(_) {}
+        try { if (base.leading !== undefined) textDoc.leading = base.leading; } catch(_) {}
+        try { if (base.autoLeading !== undefined) textDoc.autoLeading = !!base.autoLeading; } catch(_) {}
+        try { if (base.allCaps !== undefined) textDoc.allCaps = !!base.allCaps; } catch(_) {}
+
+        // Paragraph indents
+        try { if (base.leftIndent !== undefined) textDoc.leftIndent = base.leftIndent; } catch(_) {}
+        try { if (base.rightIndent !== undefined) textDoc.rightIndent = base.rightIndent; } catch(_) {}
+        try { if (base.firstLineIndent !== undefined) textDoc.firstLineIndent = base.firstLineIndent; } catch(_) {}
+        try { if (base.spaceBefore !== undefined) textDoc.spaceBefore = base.spaceBefore; } catch(_) {}
+        try { if (base.spaceAfter !== undefined) textDoc.spaceAfter = base.spaceAfter; } catch(_) {}
+
+        try {
+          if (base.justificationCode !== undefined) {
+            var j = resolveJustificationByCode(base.justificationCode);
+            if (j !== null) textDoc.justification = j;
+            else logLine("ERR", "unknown justificationCode=" + String(base.justificationCode) + " layer=" + layer.name);
+          }
+        } catch(_) {}
+      }
+
+      textDocProp.setValue(textDoc);
+
+      if (chars && chars.length) {
+        textDoc = textDocProp.value;
+        for (var i = 0; i < chars.length; i++) {
+          var cs = chars[i];
+          try {
+            var idx = cs.i;
+            var r = textDoc.characterRange(idx, idx + 1);
+            if (cs.font !== undefined) r.font = cs.font;
+            if (cs.fontSize !== undefined) r.fontSize = cs.fontSize;
+            if (cs.fauxItalic !== undefined) r.fauxItalic = !!cs.fauxItalic;
+          } catch(eChar) {
+            logErr("charStyle failed layer=" + layer.name + " i=" + i, eChar);
+          }
+        }
+
+        if (base && base.justificationCode !== undefined) {
+          try {
+            var jj = resolveJustificationByCode(base.justificationCode);
+            if (jj !== null) textDoc.justification = jj;
+          } catch(_) {}
+        }
+
+        textDocProp.setValue(textDoc);
+      }
+    } catch(e) {
+      logErr("applyTextBaseAndCharStyles failed layer=" + layer.name, e);
+    }
+  }
+
+  // ==========================================================
+  // 2.2) Text Animator apply
+  // ==========================================================
+  function findAndRemoveAnimatorByName(textAnimators, name) {
+    try {
+      for (var i = textAnimators.numProperties; i >= 1; i--) {
+        var a = textAnimators.property(i);
+        if (a && a.name === name) {
+          try { a.remove(); } catch(_) {}
+        }
+      }
+    } catch(e) {}
+  }
+
+  function applyTextAnimatorFromBlueprint(layer, lData) {
+    if (!layer || !lData || lData.type !== "text") return;
+
+    var td = (lData.text_data ? lData.text_data : null);
+    if (td && td.no_text_animator) {
+      logLine("DBG", "skip animator by no_text_animator layer=" + layer.name);
+      return;
+    }
+
+    var propsDict = lData.props || null;
+    var hasReveal = (propsDict && propsDict.reveal && propsDict.reveal.match_name === "ADBE Text Percent Start");
+    var hasRevealEnd = (propsDict && propsDict.reveal_end && propsDict.reveal_end.match_name === "ADBE Text Percent End");
+    var hasAnimOpacityProp = (propsDict && propsDict.anim_opacity && propsDict.anim_opacity.match_name === "ADBE Opacity");
+
+    if (!hasReveal && !hasRevealEnd && !hasAnimOpacityProp) return;
+
+    var cfg = (td && td.text_animator) ? td.text_animator : null;
+    if (!cfg) {
+      logLine("ERR", "missing text_data.text_animator but reveal/reveal_end present, layer=" + layer.name);
+      return;
+    }
+
+    var textProps = null;
+    try { textProps = layer.property("ADBE Text Properties"); } catch(e) { textProps = null; }
+    if (!textProps) { logLine("ERR", "no Text Properties layer=" + layer.name); return; }
+
+    var animators = safeProp(textProps, "ADBE Text Animators");
+    if (!animators) { logLine("ERR", "no Text Animators group layer=" + layer.name); return; }
+
+    var animName = (cfg && cfg.name) ? cfg.name : "Animator 1";
+    findAndRemoveAnimatorByName(animators, animName);
+
+    var animator = null;
+    try { animator = animators.addProperty("ADBE Text Animator"); } catch(e2) { animator = null; }
+    if (!animator) { logLine("ERR", "failed to add Text Animator layer=" + layer.name); return; }
+    try { animator.name = animName; } catch(_) {}
+
+    var animatorProps = safeProp(animator, "ADBE Text Animator Properties");
+    if (!animatorProps) { logLine("ERR", "no Animator Properties layer=" + layer.name); return; }
+
+    var aOpacity = null;
+    try { aOpacity = animatorProps.addProperty("ADBE Text Opacity"); } catch(_) { aOpacity = null; }
+    if (!aOpacity) { logLine("ERR", "failed to add Text Opacity prop layer=" + layer.name); return; }
+
+    if (hasAnimOpacityProp) applyValue(aOpacity, propsDict.anim_opacity, "Animator.TextOpacity layer=" + layer.name);
+    else if (cfg.opacity !== undefined) { try { aOpacity.setValue(cfg.opacity); } catch(_) {} }
+
+    var selectors = safeProp(animator, "ADBE Text Selectors");
+    if (!selectors) { logLine("ERR", "no Text Selectors group layer=" + layer.name); return; }
+
+    var sel = null;
+    try { sel = selectors.addProperty("ADBE Text Selector"); } catch(e3) { sel = null; }
+    if (!sel) { logLine("ERR", "failed to add Text Selector layer=" + layer.name); return; }
+    try { sel.name = (cfg.selector && cfg.selector.name) ? cfg.selector.name : "Range Selector 1"; } catch(_) {}
+
+    var adv = safeProp(sel, "ADBE Text Range Advanced");
+    if (!adv) { logLine("ERR", "no ADBE Text Range Advanced layer=" + layer.name); return; }
+
+    var advCfg = (cfg.selector && cfg.selector.advanced) ? cfg.selector.advanced : null;
+    if (!advCfg) { logLine("ERR", "missing selector.advanced in cfg layer=" + layer.name); return; }
+
+    try { safeProp(adv, "ADBE Text Range Units").setValue(advCfg.units); } catch(_) {}
+    try { safeProp(adv, "ADBE Text Range Type2").setValue(advCfg.basedOn); } catch(_) {}
+    try { safeProp(adv, "ADBE Text Selector Mode").setValue(advCfg.mode); } catch(_) {}
+    try { safeProp(adv, "ADBE Text Selector Max Amount").setValue(advCfg.maxAmount); } catch(_) {}
+    try { safeProp(adv, "ADBE Text Range Shape").setValue(advCfg.shape); } catch(_) {}
+    try { safeProp(adv, "ADBE Text Selector Smoothness").setValue(advCfg.smoothness); } catch(_) {}
+    try { safeProp(adv, "ADBE Text Levels Max Ease").setValue(advCfg.hiEase); } catch(_) {}
+    try { safeProp(adv, "ADBE Text Levels Min Ease").setValue(advCfg.loEase); } catch(_) {}
+    try { safeProp(adv, "ADBE Text Randomize Order").setValue(advCfg.randomizeOrder); } catch(_) {}
+
+    if (hasReveal) {
+      var ps = safeProp(sel, "ADBE Text Percent Start");
+      if (!ps) { logLine("ERR", "no Percent Start prop layer=" + layer.name); return; }
+      applyValue(ps, propsDict.reveal, "RS.PercentStart layer=" + layer.name);
+    }
+    if (hasRevealEnd) {
+      var pe = safeProp(sel, "ADBE Text Percent End");
+      if (!pe) { logLine("ERR", "no Percent End prop layer=" + layer.name); return; }
+      applyValue(pe, propsDict.reveal_end, "RS.PercentEnd layer=" + layer.name);
+    } else if (cfg.selector && cfg.selector.percentEnd !== undefined) {
+      var pe2 = safeProp(sel, "ADBE Text Percent End");
+      if (pe2) { try { pe2.setValue(cfg.selector.percentEnd); } catch(_) {} }
+    }
+    if (cfg.selector && cfg.selector.percentStart !== undefined) {
+      var ps2 = safeProp(sel, "ADBE Text Percent Start");
+      if (ps2) { try { ps2.setValue(cfg.selector.percentStart); } catch(_) {} }
+    }
+  }
+
+  // ==========================================================
+  // 3) layer creation by blueprint (FULL)
+  // ==========================================================
+  function getCompTarget(meta) {
+    if (meta && meta.comp_name_target) {
+      return __COMPS[meta.comp_name_target] || findCompByName(meta.comp_name_target);
+    }
+    return MAIN_COMP;
+  }
+
+  function createLayerFromBlueprint(lData) {
+    var td = (lData.text_data ? lData.text_data : null);
+    var meta = (td && td.layer_meta) ? td.layer_meta : null;
+    var target = getCompTarget(meta);
+    if (!target) {
+      logLine("ERR", "target comp missing for layer=" + lData.name);
+      return;
+    }
+
+    var inT = pick(lData, "in_point", "inPoint");
+    var outT = pick(lData, "out_point", "outPoint");
+
+    logLine("INFO", "CREATE name=" + lData.name + " type=" + lData.type + " target=" + target.name +
+      " in=" + fmtNum(inT) + " out=" + fmtNum(outT)
+    );
+
+    var layer = null;
+
+    try {
+      if (lData.type === "text") {
+        layer = target.layers.addText(lData.text.replace(/\r/g, "\r"));
+
+      } else if (lData.type === "adjustment") {
+        layer = target.layers.addSolid([1,1,1], lData.name, target.width, target.height, 1.0, target.duration);
+        layer.adjustmentLayer = true;
+
+      } else if (lData.type === "precomp") {
+        var srcName = null;
+        if (lData.comp_name) srcName = lData.comp_name;
+        else if (td && td.precomp_source) srcName = td.precomp_source.comp_name;
+
+        var srcComp = srcName ? (__COMPS[srcName] || findCompByName(srcName)) : null;
+        if (!srcComp) { logLine("ERR", "precomp source missing name=" + String(srcName) + " layer=" + lData.name); return; }
+        layer = target.layers.add(srcComp);
+
+      } else if (lData.type === "footage") {
+        var src = (td && td.source_footage) ? td.source_footage : null;
+        var item = ensureFootageItem(src);
+        if (!item) { logLine("ERR", "footage item missing layer=" + lData.name); return; }
+        layer = target.layers.add(item);
+
+      } else {
+        logLine("ERR", "unknown layer type=" + lData.type + " layer=" + lData.name);
+        return;
+      }
+    } catch(e) {
+      logErr("create layer failed name=" + lData.name, e);
+      return;
+    }
+
+    if (!layer) return;
+
+    try { layer.name = lData.name; } catch(_) {}
+
+    // startTime BEFORE in/out (critical)
+    try {
+      if (meta && meta.startTime !== undefined && meta.startTime !== null) layer.startTime = meta.startTime;
+    } catch(eST) { logErr("set startTime failed layer=" + layer.name, eST); }
+
+    try { if (inT !== undefined) layer.inPoint = inT; } catch(eIn) { logErr("set inPoint failed layer=" + layer.name, eIn); }
+    try { if (outT !== undefined) layer.outPoint = outT; } catch(eOut) { logErr("set outPoint failed layer=" + layer.name, eOut); }
+
+    // meta toggles
+    try {
+      if (meta) {
+        if (meta.enabled !== undefined) layer.enabled = !!meta.enabled;
+        if (meta.audioEnabled !== undefined) layer.audioEnabled = !!meta.audioEnabled;
+        if (meta.motionBlur !== undefined) layer.motionBlur = !!meta.motionBlur;
+        if (meta.collapseTransformation !== undefined) layer.collapseTransformation = !!meta.collapseTransformation;
+
+        if (meta.blendingModeCode !== undefined && meta.blendingModeCode !== null) {
+          var bm = resolveBlendingModeByCode(meta.blendingModeCode);
+          if (bm !== null) { try { layer.blendingMode = bm; } catch(eBM) { logErr("set blendingMode failed layer=" + layer.name, eBM); } }
+        }
+      }
+    } catch(eMeta) { logErr("apply meta toggles failed layer=" + layer.name, eMeta); }
+
+    // effects
+    if (lData.effects) {
+      try {
+        var fxParade = layer.property("ADBE Effect Parade");
+        for (var fxKey in lData.effects) {
+          var fxData = lData.effects[fxKey];
+          var eff = null;
+          try { eff = fxParade.addProperty(fxKey); } catch(eAdd) { eff = null; }
+          if (!eff) { logLine("ERR", "add effect failed fx=" + fxKey + " layer=" + layer.name); continue; }
+
+          for (var paramKey in fxData) {
+            var pData = fxData[paramKey];
+            try {
+              var p = eff.property(pData.match_name);
+              if (!p) { logLine("ERR", "fx param missing match=" + pData.match_name + " fx=" + fxKey + " layer=" + layer.name); continue; }
+              applyValue(p, pData, "fx=" + fxKey + " param=" + pData.match_name + " layer=" + layer.name);
+            } catch(eFx) { logErr("fx param apply failed fx=" + fxKey + " layer=" + layer.name, eFx); }
+          }
+        }
+      } catch(eEff) { logErr("effects apply failed layer=" + layer.name, eEff); }
+    }
+
+    // transforms
+    if (lData.props) {
+      try {
+        var tf = layer.property("ADBE Transform Group");
+        for (var pk in lData.props) {
+          if (pk === "reveal" || pk === "reveal_end" || pk === "anim_opacity") continue;
+
+          var pd = lData.props[pk];
+          var pr = tf ? tf.property(pd.match_name) : null;
+          if (!pr) {
+            logLine("ERR", "transform prop not found match=" + pd.match_name + " key=" + pk + " layer=" + layer.name);
+            continue;
+          }
+          applyValue(pr, pd, "tf=" + pd.match_name + " key=" + pk + " layer=" + layer.name);
+        }
+      } catch(eTf) { logErr("transform apply failed layer=" + layer.name, eTf); }
+    }
+
+    // text styles + animator
+    if (lData.type === "text") {
+      applyTextBaseAndCharStyles(layer, lData);
+      applyTextAnimatorFromBlueprint(layer, lData);
+    }
+
+    // snapshot
+    try {
+      var tf2 = layer.property("ADBE Transform Group");
+      var pos = tf2.property("ADBE Position").value;
+      var sc = tf2.property("ADBE Scale").value;
+      var rot = tf2.property("ADBE Rotate Z").value;
+      var op = tf2.property("ADBE Opacity").value;
+
+      logLine("INFO", "SNAP layer=" + layer.name +
+        " comp=" + target.name +
+        " in=" + fmtNum(layer.inPoint) +
+        " out=" + fmtNum(layer.outPoint) +
+        " st=" + fmtNum(layer.startTime) +
+        " pos=" + safeJson(pos, 120) +
+        " sc=" + safeJson(sc, 120) +
+        " rot=" + safeJson(rot, 120) +
+        " op=" + safeJson(op, 120)
+      );
+    } catch(eSnap) { logErr("snapshot failed layer=" + layer.name, eSnap); }
+  }
+
+  // ==========================================================
+  // 4) FOOTAGE PART
+  // ==========================================================
+  logLine("INFO", "FOOTAGE_TEMPLATE: layers=" + (footage_layers ? footage_layers.length : 0));
+  for (var fi = footage_layers.length - 1; fi >= 0; fi--) {
+    createLayerFromBlueprint(footage_layers[fi]);
+  }
+
+  // ==========================================================
+  // 5) TEXT PART (include)
+  // ==========================================================
+  {% include "text_template.j2" %}
+
+  // ==========================================================
+  // 6) SAVE PROJECT (.aep) + WRITE ae_status.txt for Windows node
+  // ==========================================================
+  try {
+    var workDir = __APP_DIR + "/work";
+    __ensureFolderByPath(workDir);
+
+    var aepPath = workDir + "/project.aep";
+    var aepFile = new File(aepPath);
+
+    // save project
+    try {
+      project.save(aepFile);
+      logLine("INFO", "project saved aep=" + aepFile.fsName);
+    } catch(eSave) {
+      logErr("project.save failed", eSave);
+      // still write status with empty aep, but this is fatal for aerender
+      throw eSave;
+    }
+
+    // write status OK
+    __writeAeStatusOk(aepFile.fsName, MAIN_COMP.name);
+    logLine("INFO", "ae_status.txt written OK aep=" + aepFile.fsName + " compName=" + MAIN_COMP.name);
+  } catch(eStat) {
+    logErr("status/aep write failed", eStat);
+    __writeAeStatusErr("status/aep write failed: " + (eStat && eStat.toString ? eStat.toString() : String(eStat)));
+    throw eStat;
+  }
+
+  logLine("INFO", "done FULL project.");
+  app.endUndoGroup();
+
+  } catch(eTop) {
+    // top-level catch: make sure AE node gets ae_status.txt
+    try {
+      __writeAeStatusErr("top-level error: " + (eTop && eTop.toString ? eTop.toString() : String(eTop)));
+    } catch(_) {}
+    try { app.endUndoGroup(); } catch(_) {}
+    throw eTop;
+  }
+})();

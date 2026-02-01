@@ -1,0 +1,21 @@
+# requirements.txt
+# Core API
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+
+# Queue / background jobs
+celery>=5.4.0
+redis>=5.0.0
+
+# Config / templates
+python-dotenv>=1.0.1
+jinja2>=3.1.4
+
+# Models / validation
+pydantic>=2.7.0
+
+# Gemini client (google.genai)
+google-genai>=0.6.0
+
+# Retries
+tenacity>=8.2.3

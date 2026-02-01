@@ -1,0 +1,113 @@
+services:
+  orchestrator-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: orchestrator-api
+    env_file:
+      - .env
+    environment:
+      WORK_DIR: /app/work
+      OUTPUT_DIR: /app/output
+      PINS_DIR: /app/pins
+      DESCRIPTIONS_DIR: /app/descriptions
+
+      # shared artifacts paths
+      FOOTAGE_INVENTORY_OUT: /app/data/footage_inventory.json
+      DESCRIPTIONS_BUNDLE_OUT: /app/pins/descriptions_bundle.json
+
+      # inputs
+      FOOTAGE_DIR: /app/footage
+      FOOTAGE_DESCRIPTIONS_DIR: /app/descriptions
+
+      # point mlcore to shared paths
+      FOOTAGE_INVENTORY_JSON: /app/data/footage_inventory.json
+      DESCRIPTIONS_BUNDLE_PATH: /app/pins/descriptions_bundle.json
+    volumes:
+      - ./work:/app/work
+      - ./output:/app/output
+      - ./out:/app/out
+      - ./data:/app/data
+      - ./pins:/app/pins
+      - ./descriptions:/app/descriptions:ro
+      - ./footage:/app/footage:ro
+      - ./audio:/app/audio:ro
+    ports:
+      - "8000:8000"
+    command: >
+      bash -lc "python footage_config.py && python -m services.orchestrator.run_uvicorn"
+    restart: unless-stopped
+
+  worker-build:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: worker-build
+    env_file:
+      - .env
+    environment:
+      WORK_DIR: /app/work
+      OUTPUT_DIR: /app/output
+      PINS_DIR: /app/pins
+      DESCRIPTIONS_DIR: /app/descriptions
+
+      # shared artifacts paths
+      FOOTAGE_INVENTORY_OUT: /app/data/footage_inventory.json
+      DESCRIPTIONS_BUNDLE_OUT: /app/pins/descriptions_bundle.json
+
+      # inputs
+      FOOTAGE_DIR: /app/footage
+      FOOTAGE_DESCRIPTIONS_DIR: /app/descriptions
+
+      # point mlcore to shared paths
+      FOOTAGE_INVENTORY_JSON: /app/data/footage_inventory.json
+      DESCRIPTIONS_BUNDLE_PATH: /app/pins/descriptions_bundle.json
+    volumes:
+      - ./work:/app/work
+      - ./output:/app/output
+      - ./out:/app/out
+      - ./data:/app/data
+      - ./pins:/app/pins
+      - ./descriptions:/app/descriptions:ro
+      - ./footage:/app/footage:ro
+      - ./audio:/app/audio:ro
+    command: >
+      bash -lc "python footage_config.py && celery -A services.orchestrator.celery_app:celery_app worker -l INFO --concurrency=4 -Q build"
+    restart: unless-stopped
+
+  worker-render:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: worker-render
+    env_file:
+      - .env
+    environment:
+      WORK_DIR: /app/work
+      OUTPUT_DIR: /app/output
+      PINS_DIR: /app/pins
+      DESCRIPTIONS_DIR: /app/descriptions
+
+      # shared artifacts paths
+      FOOTAGE_INVENTORY_OUT: /app/data/footage_inventory.json
+      DESCRIPTIONS_BUNDLE_OUT: /app/pins/descriptions_bundle.json
+
+      # inputs
+      FOOTAGE_DIR: /app/footage
+      FOOTAGE_DESCRIPTIONS_DIR: /app/descriptions
+
+      # point mlcore to shared paths
+      FOOTAGE_INVENTORY_JSON: /app/data/footage_inventory.json
+      DESCRIPTIONS_BUNDLE_PATH: /app/pins/descriptions_bundle.json
+    volumes:
+      - ./work:/app/work
+      - ./output:/app/output
+      - ./out:/app/out
+      - ./data:/app/data
+      - ./pins:/app/pins
+      - ./descriptions:/app/descriptions:ro
+      - ./footage:/app/footage:ro
+      - ./audio:/app/audio:ro
+    command: >
+      bash -lc "python footage_config.py && celery -A services.orchestrator.celery_app:celery_app worker -l INFO --concurrency=1 -Q render"
+    restart: unless-stopped

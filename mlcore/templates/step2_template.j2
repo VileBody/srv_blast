@@ -1,0 +1,188 @@
+{# mlcore/step2_template.j2 #}
+{
+  "composition": {
+    "name": "Текст",
+    "w": 1080,
+    "h": 1920,
+    "fps": {{ fps }},
+    "dur": {{ comp_dur }}
+  },
+  "macro_blocks": [
+    {
+      "id": "01_intro",
+      "type": "INTRO_ZOOM",
+      "in_out": [{{ t.block_1.in_p }}, {{ t.block_1.out_p }}],
+      "phrase": {{ blocks.block_1.phrase | tojson }},
+      "s_rect": {
+        "t": {{ t.block_1.in_p }},
+        "left": -368.4716796875,
+        "top": -68.212890625,
+        "width": 624.072265625,
+        "height": 218.212890625
+      },
+      "tokens": {{ blocks.block_1.tokens | tojson }}
+    },
+
+    {
+      "id": "02_waltz",
+      "type": "WALTZ_BRIDGE",
+      "p1": {
+        "phrase": {{ blocks.block_2.p1.phrase | tojson }},
+        "in_out": [{{ t.block_2.p1.in_p }}, {{ t.block_2.p1.out_p }}],
+        "s_rect": {
+          "t": {{ t.block_2.p1.in_p }},
+          "left": -487.0,
+          "top": -72.3,
+          "width": 853.6,
+          "height": 222.3
+        },
+        "tokens": {{ blocks.block_2.p1.tokens | tojson }}
+      },
+      "p2": {
+        "phrase": {{ blocks.block_2.p2.phrase | tojson }},
+        "in_out": [{{ t.block_2.p2.in_p }}, {{ t.block_2.p2.out_p }}],
+        "s_rect": {
+          "t": {{ t.block_2.p2.in_p }},
+          "left": -495.8,
+          "top": -68.2,
+          "width": 869.0,
+          "height": 218.2
+        },
+        "tokens": {{ blocks.block_2.p2.tokens | tojson }}
+      }
+    },
+
+    {
+      "id": "03_photo",
+      "type": "SOLO_PHOTO",
+      "phrase": {{ blocks.block_3.phrase | tojson }},
+      "in_out": [{{ t.block_3.in_p }}, {{ t.block_3.out_p }}],
+      "s_rect": {
+        "t": {{ t.block_3.in_p }},
+        "left": -457.4,
+        "top": -68.3,
+        "width": 799.5,
+        "height": 220.9
+      },
+      "tokens": {{ blocks.block_3.tokens | tojson }}
+    },
+
+    {
+      "id": "04_baby",
+      "type": "BABY_BUILD",
+      "p1": {
+        "phrase": {{ blocks.block_4.p1.phrase | tojson }},
+        "in_out": [{{ t.block_4.p1.in_p }}, {{ t.block_4.p1.out_p }}],
+        "s_rect": {
+          "t": {{ t.block_4.p1.in_p }},
+          "left": -296.0,
+          "top": -68.2,
+          "width": 492.1,
+          "height": 69.4
+        },
+        "tokens": {{ blocks.block_4.p1.tokens | tojson }}
+      },
+      "p2": {
+        "phrase": {{ blocks.block_4.p2.phrase | tojson }},
+        "in_out": [{{ t.block_4.p2.in_p }}, {{ t.block_4.p2.out_p }}],
+        "s_rect": {
+          "t": {{ t.block_4.p2.in_p }},
+          "left": -383.7,
+          "top": -68.2,
+          "width": 650.5,
+          "height": 220.8
+        },
+        "tokens": {{ blocks.block_4.p2.tokens | tojson }}
+      }
+    },
+
+    {
+      "id": "05_glitch",
+      "type": "GLITCH_CRESCENDO",
+      "layers": {
+        "slowly_in": {
+          "phrase": {{ blocks.block_5.slowly_in.phrase | tojson }},
+          "in_out": [{{ t.block_5.slowly_in.in_p }}, {{ t.block_5.slowly_in.out_p }}],
+          "s_rect": {
+            "t": {{ t.block_5.slowly_in.in_p }},
+            "left": -256.3,
+            "top": -68.2,
+            "width": 397.2,
+            "height": 69.4
+          },
+          "tokens": {{ blocks.block_5.slowly_in.tokens | tojson }}
+        },
+        "fast_reveal": {
+          "phrase": {{ blocks.block_5.fast_reveal.phrase | tojson }},
+          "in_out": [{{ t.block_5.fast_reveal.in_p }}, {{ t.block_5.fast_reveal.out_p }}],
+          "s_rect": {
+            "t": {{ t.block_5.fast_reveal.in_p }},
+            "left": -404.4,
+            "top": -68.2,
+            "width": 691.4,
+            "height": 69.4
+          },
+          "tokens": {{ blocks.block_5.fast_reveal.tokens | tojson }}
+        },
+        "glitch_peak": {
+          "phrase": {{ blocks.block_5.glitch_peak.phrase | tojson }},
+          "in_out": [{{ t.block_5.glitch_peak.in_p }}, {{ t.block_5.glitch_peak.out_p }}],
+          "s_rect": {
+            "t": {{ t.block_5.glitch_peak.in_p }},
+            "left": -404.4,
+            "top": -68.2,
+            "width": 691.4,
+            "height": 218.2
+          },
+          "tokens": {{ blocks.block_5.glitch_peak.tokens | tojson }}
+        },
+
+        "mine_drop": {{ blocks.block_5.mine_drop | tojson }}
+      }
+    },
+
+    {
+      "id": "06_dual_truth",
+      "type": "DUAL_TRUTH",
+      "in_out": [{{ t.block_6.in_p }}, {{ t.block_6.out_p }}],
+      "phrase": {{ blocks.block_6.phrase | tojson }},
+      "s_rect": {
+        "t": {{ t.block_6.in_p }},
+        "left": -480.2,
+        "top": -73.2,
+        "width": 833.0,
+        "height": 232.8
+      },
+      "tokens": {{ blocks.block_6.tokens | tojson }}
+    },
+
+    {
+      "id": "07_finale",
+      "type": "FINALE",
+      "part1": {
+        "phrase": {{ blocks.block_7.part1.phrase | tojson }},
+        "in_out": [{{ t.block_7.part1.in_p }}, {{ t.block_7.part1.out_p }}],
+        "s_rect": {
+          "t": {{ t.block_7.part1.in_p }},
+          "left": -245.9,
+          "top": -66.9,
+          "width": 374.2,
+          "height": 217.1
+        },
+        "tokens": {{ blocks.block_7.part1.tokens | tojson }}
+      },
+      "part2": {
+        "phrase": {{ blocks.block_7.part2.phrase | tojson }},
+        "in_out": [{{ t.block_7.part2.in_p }}, {{ t.block_7.part2.out_p }}],
+        "s_rect": {
+          "t": {{ t.block_7.part2.in_p }},
+          "left": -285.1,
+          "top": -68.2,
+          "width": 461.4,
+          "height": 221.0
+        },
+        "tokens": {{ blocks.block_7.part2.tokens | tojson }}
+      }
+    }
+  ]
+}
