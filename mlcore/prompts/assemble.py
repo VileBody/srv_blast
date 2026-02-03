@@ -28,18 +28,18 @@ def build_system_instruction() -> str:
 def build_user_prompt(*, assets: List[Dict], schema_name: str = "FullPlanPayload") -> str:
     """
     USER prompt strategy:
-      - Keep the allow-list catalog directly in the prompt (small + deterministic).
-      - Detailed descriptions (summary/tags/camera/visuals/etc) are provided as ONE attached file
-        (e.g., descriptions_bundle.json). The model should use that file for semantic matching.
+      - Keep prompt SMALL.
+      - Allow-list (assets catalog) is provided as an attached JSON file.
+      - Detailed per-file descriptions are provided as an attached JSON file.
     """
-    assets_json = json.dumps(assets, ensure_ascii=False, separators=(",", ":"))
-
     return (
         f"Return ONLY JSON matching schema: {schema_name}\n\n"
-        "ALLOWED FOOTAGE CATALOG (you MUST choose file_name ONLY from this list; do not invent new names):\n"
-        f"{assets_json}\n\n"
-        "You will ALSO receive an attached descriptions bundle file (JSON) containing per-file metadata.\n"
-        "Use it to pick footage semantically.\n\n"
+        "You will receive TWO attached JSON files:\n"
+        "1) ASSETS_CATALOG_JSON: array of assets with file_name (+ optional duration_sec/src_w/src_h)\n"
+        "2) DESCRIPTIONS_BUNDLE_JSON: array of per-file metadata (summary/tags/etc)\n\n"
+        "Hard rule:\n"
+        "- For footage planning you MUST choose file_name ONLY from ASSETS_CATALOG_JSON.\n"
+        "- Do NOT invent new file_name.\n\n"
         "Notes:\n"
         "- Use the same audio track for all steps.\n"
         "- Token times MUST be ABSOLUTE seconds on full track.\n"

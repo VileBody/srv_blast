@@ -46,6 +46,7 @@ def call_full_plan_once(
     system_instruction: str,
     user_prompt: str,
     audio_paths: List[Path],
+    extra_file_paths: Optional[List[Path]] = None,
     # NOTE: we no longer upload descriptions bundle as a File (to avoid Files API issues).
     descriptions_bundle_text: Optional[str] = None,
     raw_response_path: Optional[Path] = None,
@@ -60,7 +61,7 @@ def call_full_plan_once(
       schema = FullPlanPayload
 
     IMPORTANT:
-      - descriptions bundle is injected into user prompt as text (NOT uploaded file).
+      - optional: you may attach extra JSON files (assets catalog / descriptions bundle) as files.
       - audio is uploaded as file for alignment.
       - prompt/system can be dumped to disk for debugging.
     """
@@ -73,6 +74,13 @@ def call_full_plan_once(
     else:
         if audio_paths:
             files.extend(client.upload_files(audio_paths))
+
+    # Upload extra JSON context files (assets catalog, descriptions bundle, etc.)
+    if extra_file_paths:
+        if cache_path is not None:
+            files.extend(client.upload_files_cached(extra_file_paths, cache_path=cache_path))
+        else:
+            files.extend(client.upload_files(extra_file_paths))
 
     prompt = user_prompt
     if descriptions_bundle_text:

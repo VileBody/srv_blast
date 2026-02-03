@@ -123,6 +123,15 @@ def _read_bundle_inline(bundle_path: Path, *, max_chars: int) -> str:
     return s[:max_chars]
 
 
+def _write_assets_catalog_file(path: Path, assets_for_prompt: List[Dict[str, Any]]) -> Path:
+    """
+    Write compact assets catalog as JSON file to attach to Gemini (saves prompt tokens).
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(assets_for_prompt, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+    return path
+
+
 def build_all_via_gemini_one_call() -> Dict[str, Path]:
     api_key = os.environ.get("GEMINI_API_KEY", "").strip()
     model = os.environ.get("GEMINI_MODEL", "").strip()
@@ -130,7 +139,28 @@ def build_all_via_gemini_one_call() -> Dict[str, Path]:
     temperature = float(os.environ.get("GEMINI_TEMPERATURE", "0") or "0")
 
     logger = _get_logger()
-    logger.info("start build_all_via_gemini_one_call model=%s", model)
+
+    # Celery retry-aware model fallback:
+    # tasks.py should set CELERY_RETRY_COUNT = self.request.retries
+    retry_n_raw = (os.environ.get("CELERY_RETRY_COUNT") or "0").strip()
+    try:
+        retry_n = int(retry_n_raw)
+    except Exception:
+        retry_n = 0
+
+    fallback_after = int((os.environ.get("GEMINI_FALLBACK_AFTER_RETRIES") or "6").strip() or "6")
+    model_fallback = (os.environ.get("GEMINI_MODEL_FALLBACK") or "").strip()
+    if model_fallback and retry_n >= fallback_after:
+        logger.info(
+            "gemini_model_fallback retry_n=%d >= %d model=%s -> %s",
+            retry_n,
+            fallback_after,
+            model,
+            model_fallback,
+        )
+        model = model_fallback
+
+    logger.info("start build_all_via_gemini_one_call model=%s retry_n=%d", model, retry_n)
 
     if not api_key:
         raise RuntimeError("Missing GEMINI_API_KEY in env")
@@ -175,11 +205,8 @@ def build_all_via_gemini_one_call() -> Dict[str, Path]:
             max_assets=max_assets,
         )
 
-    # INLINE bundle text (instead of Files API upload)
-    cap_env = (os.environ.get("DESCRIPTIONS_BUNDLE_INLINE_MAX_CHARS") or "").strip()
-    cap = int(cap_env) if cap_env else 250_000
-    bundle_inline = _read_bundle_inline(bundle_path, max_chars=cap)
-    logger.info("bundle_inline chars=%d path=%s", len(bundle_inline), str(bundle_path))
+    # New default: DO NOT inline huge JSON. Attach as file instead.
+    bundle_inline: Optional[str] = None
 
     system_instruction = build_system_instruction()
     user_prompt = build_user_prompt(assets=assets_for_prompt, schema_name="FullPlanPayload")
@@ -195,9 +222,13 @@ def build_all_via_gemini_one_call() -> Dict[str, Path]:
 
     raw_path = logs_dir / f"gemini_raw_fullplan_{_stamp()}.json"
 
-    # NEW: dump exact system + prompt we send
+    # dump exact system + prompt we send
     sys_dump = logs_dir / f"gemini_system_fullplan_{_stamp()}.txt"
     prompt_dump = logs_dir / f"gemini_prompt_fullplan_{_stamp()}.txt"
+
+    # Write assets catalog as an attached file (saves prompt tokens)
+    assets_catalog_path = logs_dir / f"assets_catalog_{_stamp()}.json"
+    _write_assets_catalog_file(assets_catalog_path, assets_for_prompt)
 
     # Also dump a small meta json (helps quick debugging)
     meta_dump = logs_dir / f"gemini_meta_fullplan_{_stamp()}.json"
@@ -206,9 +237,11 @@ def build_all_via_gemini_one_call() -> Dict[str, Path]:
             {
                 "model": model,
                 "temperature": temperature,
+                "retry_n": retry_n,
                 "audio_files": [str(p) for p in audio_files],
                 "bundle_path": str(bundle_path),
-                "bundle_inline_chars": len(bundle_inline),
+                "bundle_inline_chars": 0,
+                "assets_catalog_path": str(assets_catalog_path),
                 "cache_path": str(cache_path) if cache_path else None,
                 "raw_response_path": str(raw_path),
                 "system_dump": str(sys_dump),
@@ -220,7 +253,7 @@ def build_all_via_gemini_one_call() -> Dict[str, Path]:
         encoding="utf-8",
     )
 
-    logger.info("context audio_files=%d bundle_inline=yes", len(audio_files))
+    logger.info("context audio_files=%d bundle_inline=no extra_files=2", len(audio_files))
     logger.info("gemini_call_start raw=%s", str(raw_path))
     logger.info("gemini_debug_dumps sys=%s prompt=%s meta=%s", str(sys_dump), str(prompt_dump), str(meta_dump))
 
@@ -231,6 +264,7 @@ def build_all_via_gemini_one_call() -> Dict[str, Path]:
             system_instruction=system_instruction,
             user_prompt=user_prompt,
             audio_paths=audio_files,
+            extra_file_paths=[assets_catalog_path, bundle_path],
             descriptions_bundle_text=bundle_inline,
             raw_response_path=raw_path,
             cache_path=cache_path,
