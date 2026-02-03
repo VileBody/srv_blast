@@ -463,6 +463,7 @@ def render_all_steps(
         main_comp_w=1080,
         main_comp_h=1080,
         text_dur_hint=float(comp_dur),
+        main_comp_fps=23.9759979248047,
         adjustment_preset=preset,
         base_adj_start_time=float(base_adj_start),
         footage=footage_clip_zero,
