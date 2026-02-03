@@ -27,18 +27,26 @@ def build_system_instruction() -> str:
 
 def build_user_prompt(*, assets: List[Dict], schema_name: str = "FullPlanPayload") -> str:
     """
-    USER prompt strategy:
-      - Keep prompt SMALL.
-      - Allow-list (assets catalog) is provided as an attached JSON file.
-      - Detailed per-file descriptions are provided as an attached JSON file.
+    USER prompt strategy (SINGLE SOURCE OF TRUTH):
+      - We provide ONE descriptions bundle that also acts as the allow-list.
+      - It may be provided either:
+          (A) INLINE in the prompt (DESCRIPTIONS_BUNDLE_JSON),
+          (B) as an attached TEXT file containing JSON (also named DESCRIPTIONS_BUNDLE_JSON).
+      - Model must choose file_name ONLY from that bundle.
+
+    NOTE: 'assets' arg is kept for backward compatibility with existing call sites,
+          but we intentionally do NOT embed it in the prompt to avoid token bloat.
     """
     return (
         f"Return ONLY JSON matching schema: {schema_name}\n\n"
-        "You will receive TWO attached JSON files:\n"
-        "1) ASSETS_CATALOG_JSON: array of assets with file_name (+ optional duration_sec/src_w/src_h)\n"
-        "2) DESCRIPTIONS_BUNDLE_JSON: array of per-file metadata (summary/tags/etc)\n\n"
+        "You will receive ONE descriptions bundle in JSON format, either inline or as an attached TEXT file.\n"
+        "Bundle name: DESCRIPTIONS_BUNDLE_JSON.\n\n"
+        "DESCRIPTIONS_BUNDLE_JSON format:\n"
+        "- JSON array of objects.\n"
+        "- Each object MUST contain at least: file_name, src_w, src_h.\n"
+        "- It MAY contain: duration_sec, summary, tags, objects, camera, visuals, composition.\n\n"
         "Hard rule:\n"
-        "- For footage planning you MUST choose file_name ONLY from ASSETS_CATALOG_JSON.\n"
+        "- For footage planning you MUST choose file_name ONLY from DESCRIPTIONS_BUNDLE_JSON.\n"
         "- Do NOT invent new file_name.\n\n"
         "Notes:\n"
         "- Use the same audio track for all steps.\n"

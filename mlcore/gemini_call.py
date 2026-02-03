@@ -47,27 +47,31 @@ def call_full_plan_once(
     user_prompt: str,
     audio_paths: List[Path],
     extra_file_paths: Optional[List[Path]] = None,
-    # NOTE: we no longer upload descriptions bundle as a File (to avoid Files API issues).
+    # If provided: descriptions bundle is injected into user prompt as text.
+    # (We keep this because it is the most reliable "inplace" mode.)
     descriptions_bundle_text: Optional[str] = None,
     raw_response_path: Optional[Path] = None,
     cache_path: Optional[Path] = None,
-    # NEW: log what we actually send
+    # log what we actually send
     prompt_dump_path: Optional[Path] = None,
     system_dump_path: Optional[Path] = None,
 ) -> FullPlanPayload:
     """
     One Gemini call:
-      contents = [audio files] + [user_prompt (+ bundle text)]
+      contents = [uploaded files...] + [prompt_text]
       schema = FullPlanPayload
 
+    Typical modes:
+      - Mode A (inplace): descriptions_bundle_text is provided -> appended inline to prompt.
+      - Mode B (as txt): extra_file_paths includes a .txt that contains JSON bundle.
+
     IMPORTANT:
-      - optional: you may attach extra JSON files (assets catalog / descriptions bundle) as files.
       - audio is uploaded as file for alignment.
       - prompt/system can be dumped to disk for debugging.
     """
     files: List[types.File] = []
 
-    # Upload ONLY audio files
+    # Upload audio files
     if cache_path is not None:
         if audio_paths:
             files.extend(client.upload_files_cached(audio_paths, cache_path=cache_path))
@@ -75,7 +79,7 @@ def call_full_plan_once(
         if audio_paths:
             files.extend(client.upload_files(audio_paths))
 
-    # Upload extra JSON context files (assets catalog, descriptions bundle, etc.)
+    # Upload extra context files (optional)
     if extra_file_paths:
         if cache_path is not None:
             files.extend(client.upload_files_cached(extra_file_paths, cache_path=cache_path))
@@ -84,7 +88,6 @@ def call_full_plan_once(
 
     prompt = user_prompt
     if descriptions_bundle_text:
-        # keep it clearly separated and machine-readable
         prompt = (
             prompt
             + "\n\n"
