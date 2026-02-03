@@ -1,7 +1,7 @@
 # mlcore/models/subtitles_tokens.py
 from __future__ import annotations
 
-from typing import List, Literal, Optional
+from typing import List, Literal
 from pydantic import BaseModel, Field, model_validator
 
 Trailing = Literal[" ", "\r", ""]
@@ -39,17 +39,54 @@ class Segment(BaseModel):
     tokens: List[Token] = Field(min_length=1)
 
 
-class MineDrop(BaseModel):
-    text: str = Field(min_length=1)
-    t_start: float = Field(ge=0.0)
-    t_end: float = Field(ge=0.0)
+class MineSegment(BaseModel):
+    """
+    NEW CONTRACT (variant A):
+    Mine is a dedicated drop segment inside block_5.
+    It is NOT a subset of glitch_peak anymore.
+
+    Constraints:
+      - exactly 1 token
+      - token.trailing == ""
+      - token.text is a single "word" (no spaces, no \\r/\\n/\\t)
+      - phrase must equal token.text OR "\\r" + token.text (to allow line-break feel)
+      - phrase must NOT contain "\\n"
+    """
+    phrase: str = Field(min_length=1)
+    tokens: List[Token] = Field(min_length=1, max_length=1)
 
     @model_validator(mode="after")
-    def _check_time(self) -> "MineDrop":
-        if self.t_end <= self.t_start:
-            raise ValueError(f"mine_drop.t_end must be > t_start (got {self.t_start}..{self.t_end})")
-        if (" " in self.text) or ("\r" in self.text) or ("\n" in self.text) or ("\t" in self.text):
-            raise ValueError(f"mine_drop.text must be a single word (got {self.text!r})")
+    def _check_mine(self) -> "MineSegment":
+        if not self.tokens or len(self.tokens) != 1:
+            raise ValueError("mine.tokens must contain exactly 1 token")
+        tok = self.tokens[0]
+
+        if tok.trailing != "":
+            raise ValueError(f"mine token trailing must be '' (got {tok.trailing!r})")
+
+        if (" " in tok.text) or ("\r" in tok.text) or ("\n" in tok.text) or ("\t" in tok.text):
+            raise ValueError(f"mine token text must be a single word (got {tok.text!r})")
+
+        if "\n" in self.phrase:
+            raise ValueError("mine.phrase must not contain \\n")
+
+        # allow either "ты!" or "\rты!"
+        p = self.phrase
+        if p.startswith("\r"):
+            p2 = p[1:]
+        else:
+            p2 = p
+
+        if p2 != tok.text:
+            raise ValueError(
+                "mine.phrase must equal mine token text (optionally prefixed with '\\r'). "
+                f"phrase={self.phrase!r} token={tok.text!r}"
+            )
+
+        # also forbid spaces / tabs / newlines inside phrase (except leading \r)
+        if (" " in p2) or ("\r" in p2) or ("\n" in p2) or ("\t" in p2):
+            raise ValueError(f"mine.phrase must be a single word (got {self.phrase!r})")
+
         return self
 
 
@@ -74,25 +111,37 @@ class Block4Baby(BaseModel):
 
 
 class Block5Glitch(BaseModel):
+    """
+    NEW CONTRACT (variant A):
+      - mine is REQUIRED and lives separately from glitch_peak
+      - glitch_peak MUST NOT include mine token at all
+    """
     slowly_in: Segment
     fast_reveal: Segment
     glitch_peak: Segment
-    mine_drop: MineDrop
+    mine: MineSegment
 
     @model_validator(mode="after")
-    def _mine_drop_matches_last_token_if_possible(self) -> "Block5Glitch":
-        if self.glitch_peak.tokens:
-            last = self.glitch_peak.tokens[-1]
-            if last.text != self.mine_drop.text:
+    def _no_mine_token_inside_glitch_peak(self) -> "Block5Glitch":
+        mine_tok = self.mine.tokens[0]
+
+        # forbid any token with same text in glitch_peak (strict, to avoid double "ты")
+        for i, t in enumerate(self.glitch_peak.tokens):
+            if t.text == mine_tok.text:
                 raise ValueError(
-                    "mine_drop.text must equal glitch_peak last token text exactly. "
-                    f"mine_drop={self.mine_drop.text!r} last={last.text!r}"
+                    "glitch_peak must NOT contain mine token (duplicate word). "
+                    f"mine={mine_tok.text!r} found in glitch_peak.tokens[{i}]"
                 )
-            if abs(float(last.t_start) - float(self.mine_drop.t_start)) > 1e-6 or abs(float(last.t_end) - float(self.mine_drop.t_end)) > 1e-6:
-                raise ValueError(
-                    "mine_drop timings must equal glitch_peak last token timings. "
-                    f"mine_drop={self.mine_drop.t_start}..{self.mine_drop.t_end} last={last.t_start}..{last.t_end}"
-                )
+
+        # also forbid the mine word appearing inside glitch_peak.phrase (extra guard)
+        gp_plain = self.glitch_peak.phrase.replace("\r", " ")
+        mine_plain = mine_tok.text
+        if mine_plain and mine_plain in gp_plain:
+            raise ValueError(
+                "glitch_peak.phrase must NOT include mine token text. "
+                f"mine={mine_plain!r} glitch_peak.phrase={self.glitch_peak.phrase!r}"
+            )
+
         return self
 
 
@@ -136,13 +185,11 @@ class BlocksTokensPayload(BaseModel):
         _check_tokens(self.block_3.tokens, "block_3")
         _check_tokens(self.block_4.p1.tokens, "block_4.p1")
         _check_tokens(self.block_4.p2.tokens, "block_4.p2")
+
         _check_tokens(self.block_5.slowly_in.tokens, "block_5.slowly_in")
         _check_tokens(self.block_5.fast_reveal.tokens, "block_5.fast_reveal")
         _check_tokens(self.block_5.glitch_peak.tokens, "block_5.glitch_peak")
-
-        md = self.block_5.mine_drop
-        if md.t_start < cs - 1e-6 or md.t_end > ce + 1e-6:
-            raise ValueError(f"mine_drop out of clip: {md.t_start}..{md.t_end} not in [{cs}..{ce}]")
+        _check_tokens(self.block_5.mine.tokens, "block_5.mine")
 
         _check_tokens(self.block_6.tokens, "block_6")
         _check_tokens(self.block_7.part1.tokens, "block_7.part1")

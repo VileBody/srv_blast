@@ -137,7 +137,18 @@
           "tokens": {{ blocks.block_5.glitch_peak.tokens | tojson }}
         },
 
-        "mine_drop": {{ blocks.block_5.mine_drop | tojson }}
+        "mine": {
+          "phrase": {{ blocks.block_5.mine.phrase | tojson }},
+          "in_out": [{{ t.block_5.mine.in_p }}, {{ t.block_5.mine.out_p }}],
+          "s_rect": {
+            "t": {{ t.block_5.mine.in_p }},
+            "left": -404.4,
+            "top": -68.2,
+            "width": 691.4,
+            "height": 218.2
+          },
+          "tokens": {{ blocks.block_5.mine.tokens | tojson }}
+        }
       }
     },
 

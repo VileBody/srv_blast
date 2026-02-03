@@ -6,24 +6,49 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 
+def _as_float(v: Any) -> Optional[float]:
+    if v is None:
+        return None
+    try:
+        x = float(v)
+        if x <= 0:
+            return None
+        return x
+    except Exception:
+        return None
+
+
 def _extract_meta(asset: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Inventory asset example:
+    Inventory asset example (flexible):
       {
         "file_name": "...mp4",
         "file_path": "...",
         "src_w": 720,
         "src_h": 1280,
-        "meta": {...}
+        "duration_sec": 12.34,          # optional
+        "meta": {...}                    # optional
       }
 
     We keep ONLY what helps LLM make semantic picks.
     """
     meta = asset.get("meta") if isinstance(asset.get("meta"), dict) else {}
+
+    # duration can live either top-level or inside meta
+    dur = _as_float(asset.get("duration_sec"))
+    if dur is None:
+        dur = _as_float(asset.get("duration"))
+    if dur is None:
+        dur = _as_float(meta.get("duration_sec"))
+    if dur is None:
+        dur = _as_float(meta.get("duration"))
+
     out: Dict[str, Any] = {
         "file_name": str(asset.get("file_name") or "").strip(),
         "src_w": int(asset.get("src_w") or 0),
         "src_h": int(asset.get("src_h") or 0),
+        "duration_sec": dur,
+
         "summary": meta.get("summary"),
         "tags": meta.get("tags"),
         "objects": meta.get("objects"),
@@ -54,7 +79,7 @@ def build_descriptions_bundle_from_inventory(
 
     Output format: JSON array of objects:
       [
-        {"file_name": "...", "src_w":..., "src_h":..., "summary":..., "tags":[...], ...},
+        {"file_name":"...", "src_w":..., "src_h":..., "duration_sec":..., "summary":..., "tags":[...], ...},
         ...
       ]
 
@@ -83,6 +108,7 @@ def build_descriptions_bundle_from_inventory(
         if int(row.get("src_w") or 0) <= 0 or int(row.get("src_h") or 0) <= 0:
             continue
 
+        # duration_sec is optional but recommended; we won't drop the row if missing
         rows.append(row)
 
         if max_assets is not None and len(rows) >= int(max_assets):

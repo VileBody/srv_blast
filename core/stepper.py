@@ -1,8 +1,9 @@
+# core/stepper.py
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Literal, Optional
+from typing import List, Literal
 
 from core.types import KeyframeData, KeyframeEase
 
@@ -16,9 +17,8 @@ class Token:
     Word-level token from SRT / aligner.
 
     text: token text (word)
-    t_start/t_end: absolute times (seconds) for that token
-    trailing: optional, the character that follows this token in the phrase (" ", "\\r", "", etc.)
-              (kept for future, does not affect percent-by-words mode)
+    t_start/t_end: absolute times (seconds)
+    trailing: optional, the character that follows this token in the phrase (" ", "\r", "", etc.)
     """
     text: str
     t_start: float
@@ -41,21 +41,31 @@ class StepperConfig:
 
     start_word:
       - index of first token that produces an initial visible percent.
-        start_word=0 => first token => 100*(1/N)
-        start_word=1 => second token => 100*(2/N), etc.
 
     hold:
-      - True: hold+jump pattern (2 keys per transition, 1 key for first step)
-      - False: 1 key per token step
+      - True: hold+jump pattern (DUMP-V1 exact), 1 + 2*(n-1) keys
+      - False: 1 key per token step (no hold keys)
 
     fps/jump_frames:
-      - jump spacing for hold->jump is jump_frames/fps seconds
+      - dt = jump_frames/fps seconds
+        DUMP-V1 uses jump_frames=1 always.
+
+    last_jump_advance_frames:
+      - IMPORTANT for AE boundary behavior:
+        If anchor=="end", the last token's jump at t_end can land exactly on layer.outPoint,
+        making the last word invisible (0 drawn frames).
+        To match real editorial behavior, we advance the LAST jump by N frames (default 1).
+
+        Example:
+          last token end = 2.500000
+          fps ~ 23.976 => dt ~ 0.041708
+          last jump becomes 2.458292 (visible for ~1 frame before outPoint=2.5)
 
     ease:
-      - by default 599.4/16.6666 (matches your dumps)
+      - speed 599.4 / influence 16.666666667 matches dumps
 
     iit/oit:
-      - interpolation codes (default linear 6612)
+      - default linear 6612
     """
     percent_prop: PercentProp = "start"
     anchor: Anchor = "end"
@@ -63,22 +73,22 @@ class StepperConfig:
     hold: bool = True
     fps: float = 23.9759979248047
     jump_frames: int = 1
+    last_jump_advance_frames: int = 0  # <--- key fix
     ease_speed: float = 599.4
     ease_influence: float = 16.666666667
     iit: str = "6612"
     oit: str = "6612"
 
 
-def _dt(cfg: StepperConfig) -> float:
+def _dt(cfg: StepperConfig, frames: int) -> float:
     if cfg.fps <= 0:
         raise ValueError("StepperConfig.fps must be > 0")
-    if cfg.jump_frames <= 0:
-        raise ValueError("StepperConfig.jump_frames must be > 0")
-    return float(cfg.jump_frames) / float(cfg.fps)
+    if frames <= 0:
+        raise ValueError("frames must be > 0")
+    return float(frames) / float(cfg.fps)
 
 
 def _pct(i: int, n: int) -> float:
-    # i is token index, n total tokens
     return 100.0 * (float(i + 1) / float(n))
 
 
@@ -86,18 +96,33 @@ def _time(tok: Token, anchor: Anchor) -> float:
     return float(tok.t_start) if anchor == "start" else float(tok.t_end)
 
 
-def build_percent_keyframes_by_words(
-    tokens: List[Token],
-    cfg: StepperConfig,
-) -> List[KeyframeData]:
+def _kfe(speed: float, influence: float) -> KeyframeEase:
+    return KeyframeEase(speed=float(speed), influence=float(influence))
+
+
+def _push_after(t: float, *, prev_t: float, eps: float) -> float:
     """
-    Build keyframes for Percent Start/End based ONLY on number of tokens.
+    Ensure strictly increasing time.
+    """
+    t = float(t)
+    if t <= float(prev_t) + float(eps):
+        return float(prev_t) + float(eps)
+    return t
 
-    Output list is keyframes for the chosen percent property:
-      - cfg.percent_prop == "start" => ADBE Text Percent Start
-      - cfg.percent_prop == "end"   => ADBE Text Percent End
 
-    You will still set match_name separately in PropertyData.
+def build_percent_keyframes_by_words(tokens: List[Token], cfg: StepperConfig) -> List[KeyframeData]:
+    """
+    Build keyframes for Percent Start/End.
+
+    DUMP-V1 shape when cfg.hold=True:
+      - first key at time(start_word) with v=pct(start_word)
+      - for each next token i:
+          HOLD at (time_i - dt): v=pct(i-1), ease_out=599.4
+          JUMP at time_i: v=pct(i), ease_in=599.4
+
+    With our AE-safe tweak:
+      - if i is last token AND cfg.anchor=="end" AND cfg.last_jump_advance_frames>0
+        then JUMP time is advanced by N frames so it lands before outPoint.
     """
     if not tokens:
         raise ValueError("tokens must be non-empty")
@@ -106,50 +131,72 @@ def build_percent_keyframes_by_words(
     if cfg.start_word < 0 or cfg.start_word >= n:
         raise ValueError(f"start_word out of range: {cfg.start_word} for n={n}")
 
-    # Anchor times per token
     times = [_time(tok, cfg.anchor) for tok in tokens]
-    dt_sec = _dt(cfg)
 
-    def kf(t: float, v: float, ease_in: bool, ease_out: bool) -> KeyframeData:
+    dt_sec = _dt(cfg, cfg.jump_frames)
+    last_adv_sec = 0.0
+    if cfg.anchor == "end" and cfg.last_jump_advance_frames > 0:
+        last_adv_sec = _dt(cfg, cfg.last_jump_advance_frames)
+
+    # tiny epsilon for ordering protection (should almost never trigger in clean data)
+    eps = (1.0 / float(cfg.fps)) / 10.0
+
+    def kf0(t: float, v: float) -> KeyframeData:
         kd = KeyframeData(t=float(t), v=float(v), iit=cfg.iit, oit=cfg.oit)
-        if ease_in:
-            kd.ease_in = [KeyframeEase(speed=cfg.ease_speed, influence=cfg.ease_influence)]
-        if ease_out:
-            kd.ease_out = [KeyframeEase(speed=cfg.ease_speed, influence=cfg.ease_influence)]
+        kd.ease_in = [_kfe(0.0, cfg.ease_influence)]
+        kd.ease_out = [_kfe(0.0, cfg.ease_influence)]
+        return kd
+
+    def kf_hold(t: float, v: float) -> KeyframeData:
+        kd = KeyframeData(t=float(t), v=float(v), iit=cfg.iit, oit=cfg.oit)
+        kd.ease_in = [_kfe(0.0, cfg.ease_influence)]
+        kd.ease_out = [_kfe(cfg.ease_speed, cfg.ease_influence)]
+        return kd
+
+    def kf_jump(t: float, v: float) -> KeyframeData:
+        kd = KeyframeData(t=float(t), v=float(v), iit=cfg.iit, oit=cfg.oit)
+        kd.ease_in = [_kfe(cfg.ease_speed, cfg.ease_influence)]
+        kd.ease_out = [_kfe(0.0, cfg.ease_influence)]
         return kd
 
     kfs: List[KeyframeData] = []
 
-    # First visible step at start_word
     i0 = cfg.start_word
-    kfs.append(kf(times[i0], _pct(i0, n), ease_in=False, ease_out=False))
+    t0 = float(times[i0])
+    kfs.append(kf0(t0, _pct(i0, n)))
 
     if not cfg.hold:
-        # one key per subsequent word
         for i in range(i0 + 1, n):
-            kfs.append(kf(times[i], _pct(i, n), ease_in=False, ease_out=False))
+            t_raw = float(times[i])
+            # AE-safe: advance the LAST key if anchor=end
+            if i == n - 1 and last_adv_sec > 0.0:
+                t_raw = t_raw - float(last_adv_sec)
+
+            t = _push_after(t_raw, prev_t=float(kfs[-1].t), eps=eps)
+            kfs.append(KeyframeData(t=float(t), v=float(_pct(i, n)), iit=cfg.iit, oit=cfg.oit))
         return kfs
 
-    # hold+jump pattern:
-    # for each subsequent token i:
-    #   hold at (times[i] - dt) with prev percent, ease_out
-    #   jump at times[i] with new percent, ease_in
+    # DUMP-V1 hold+jump with AE-safe last-jump advance
     for i in range(i0 + 1, n):
         prev_v = _pct(i - 1, n)
-        hold_t = times[i] - dt_sec
 
-        # if hold would land before previous time, clamp
-        if hold_t < times[i - 1]:
-            hold_t = times[i - 1]
+        jump_t_raw = float(times[i])
 
-        kfs.append(kf(hold_t, prev_v, ease_in=False, ease_out=True))
-        kfs.append(kf(times[i], _pct(i, n), ease_in=True, ease_out=False))
+        # AE-safe: if this is the LAST token and anchor=end, move jump earlier by N frames
+        if i == n - 1 and last_adv_sec > 0.0:
+            jump_t_raw = jump_t_raw - float(last_adv_sec)
+
+        hold_t_raw = jump_t_raw - float(dt_sec)
+
+        # preserve order strictly: hold then jump
+        hold_t = _push_after(hold_t_raw, prev_t=float(kfs[-1].t), eps=eps)
+        jump_t = _push_after(jump_t_raw, prev_t=float(hold_t), eps=eps)
+
+        kfs.append(kf_hold(hold_t, prev_v))
+        kfs.append(kf_jump(jump_t, _pct(i, n)))
 
     return kfs
 
 
 def keyframe_match_name(cfg: StepperConfig) -> str:
-    """
-    Convenience: which AE property this set of keyframes should map to.
-    """
     return "ADBE Text Percent Start" if cfg.percent_prop == "start" else "ADBE Text Percent End"

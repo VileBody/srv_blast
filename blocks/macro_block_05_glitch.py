@@ -65,10 +65,6 @@ def _clip_tail_start_by_fraction(*, in_p: float, out_p: float, tail_start: float
     tail_start = (out - N frames) по классике.
     min_frac = минимальная доля окна, после которой разрешаем стартовать (например 0.60).
     Итог: max(tail_start, in + (out-in)*min_frac)
-
-    Почему:
-      - когда prefix-окно короткое (например 0.5s), out-11f ≈ in+1f -> разнос почти сразу.
-      - хотим, чтобы prefix хоть чуть-чуть "пожил" чистым текстом перед разносом.
     """
     in_p = float(in_p)
     out_p = float(out_p)
@@ -162,39 +158,13 @@ def fx_turbulent_baseline(
 
 
 # =============================================================================
-# Token helpers for splitting "Это всё\rты!" -> "Это всё" + Mine("ты!")
-# =============================================================================
-
-def _tokens_from_seg(seg: Dict[str, Any]) -> List[Dict[str, Any]]:
-    t = seg.get("tokens") or []
-    return [x for x in t if isinstance(x, dict) and isinstance(x.get("text"), str)]
-
-
-def _recon_phrase(tokens: List[Dict[str, Any]]) -> str:
-    return "".join(str(t.get("text", "")) + str(t.get("trailing", "")) for t in tokens)
-
-
-def _prefix_tokens(tokens: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """
-    Take all tokens except last, and fix trailing so:
-      - last token trailing becomes "" (no '\r' at end)
-    """
-    if len(tokens) <= 1:
-        return []
-    out = [dict(x) for x in tokens[:-1]]
-    if out:
-        out[-1]["trailing"] = ""
-    return out
-
-
-# =============================================================================
 # Presets
 # =============================================================================
 
 class GlitchTextPreset(Enum):
     SLOW = "slow"
     FAST = "fast"
-    PEAK_PREFIX = "peak_prefix"  # "Это всё" only (no "ты")
+    PEAK_PREFIX = "peak_prefix"  # main peak text WITHOUT mine
 
 
 # =============================================================================
@@ -221,7 +191,7 @@ class TextLayerGlitch:
     TURB_START_FRAMES_PEAK: int = 11
     TURB_END_FRAMES_PEAK: int = 3
 
-    # NEW: don't start chaos too early on short prefix windows
+    # NEW: don't start chaos too early on short windows
     PEAK_MIN_FRACTION: float = 0.60  # start no earlier than last 40% of window
 
     def __post_init__(self) -> None:
@@ -273,7 +243,7 @@ class TextLayerGlitch:
             self.blueprint.effects["ADBE Posterize Time"] = fx_posterize_5()
 
         else:
-            # PEAK_PREFIX: "Это всё" lives only until Mine starts (out_p == mine_drop.t_start)
+            # PEAK_PREFIX: main peak text (MUST NOT contain Mine phrase)
             in_p = float(self.in_p)
             out_p = float(self.out_p)
 
@@ -303,7 +273,7 @@ class TextLayerGlitch:
             t_t0 = _clip_tail_start_by_fraction(
                 in_p=in_p, out_p=out_p, tail_start=raw_t0, min_frac=self.PEAK_MIN_FRACTION
             )
-            t_t1 = max(raw_t1, t_t0)  # keep ordering
+            t_t1 = max(raw_t1, t_t0)
             if t_t1 > out_p:
                 t_t1 = out_p
 
@@ -383,7 +353,7 @@ class AdjGlitchPhysics:
 
 # =============================================================================
 # Mine: TWO precomp instances in comp "Текст"
-# Must appear ONLY during mine_drop window (word "ты")
+# Must appear ONLY during mine window
 # =============================================================================
 
 @dataclass
@@ -427,7 +397,6 @@ class VideoLayerMineBlur:
         t1 = float(self.out_p)
         t_mid = t0 + self.SCALE_U * dur if dur > 1e-6 else t0
 
-        # keep inside window and not identical to t0
         if t_mid <= t0 + 1e-6:
             t_mid = min(t1, t0 + _dt())
         if t_mid > t1:
@@ -484,7 +453,7 @@ class VideoLayerMineMain:
 
 
 # =============================================================================
-# Inner text inside compId=88 ("ты")
+# Inner text inside compId=88 (Mine text)
 # =============================================================================
 
 @dataclass
@@ -575,6 +544,14 @@ class MineInnerDistributor:
 # =============================================================================
 
 class GlitchCrescendoDistributor:
+    """
+    NEW CONTRACT (variant A):
+      data["layers"] MUST contain:
+        - slowly_in
+        - fast_reveal
+        - glitch_peak   (MUST NOT contain Mine phrase)
+        - mine          (mandatory Mine drop: phrase + in_out)
+    """
     def __init__(self, data: Dict[str, Any]):
         l = data["layers"]
 
@@ -582,32 +559,34 @@ class GlitchCrescendoDistributor:
         fast = l["fast_reveal"]
         peak = l["glitch_peak"]
 
-        mine_drop = l.get("mine_drop")
-        if not isinstance(mine_drop, dict):
-            pt = _tokens_from_seg(peak)
-            if not pt:
-                mine_drop = {"text": "mine", "t_start": float(peak["in_out"][0]), "t_end": float(peak["in_out"][0]) + 0.2}
-            else:
-                last = pt[-1]
-                mine_drop = {"text": str(last.get("text", "")), "t_start": float(last.get("t_start")), "t_end": float(last.get("t_end"))}
+        mine = l.get("mine")
+        if not isinstance(mine, dict):
+            raise ValueError('GLITCH_CRESCENDO: layers.mine is required (dict with phrase + in_out).')
 
-        mine_in = float(mine_drop["t_start"])
-        mine_out = float(mine_drop["t_end"])
+        mine_phrase_raw = str(mine.get("phrase", "") or "")
+        mine_phrase = mine_phrase_raw.replace("\r", "").strip()
+        if not mine_phrase:
+            raise ValueError('GLITCH_CRESCENDO: layers.mine.phrase must be non-empty.')
 
-        # Split peak into prefix (everything except last token) and Mine window
-        peak_tokens = _tokens_from_seg(peak)
-        prefix_tokens = _prefix_tokens(peak_tokens)
-        prefix_phrase = _recon_phrase(prefix_tokens) if prefix_tokens else str(peak.get("phrase", ""))
+        mine_in_out = mine.get("in_out")
+        if not (isinstance(mine_in_out, (list, tuple)) and len(mine_in_out) == 2):
+            raise ValueError('GLITCH_CRESCENDO: layers.mine.in_out must be [t0, t1].')
 
-        peak_in = float(peak["in_out"][0])
-        prefix_out = max(peak_in, mine_in)
+        mine_in = float(mine_in_out[0])
+        mine_out = float(mine_in_out[1])
+        if mine_out <= mine_in:
+            # protect against zero window
+            mine_out = mine_in + _dt()
 
-        # fallback if weird
-        if prefix_out <= peak_in + 1e-9:
-            prefix_phrase = str(peak.get("phrase", ""))
-            prefix_out = float(peak["in_out"][1])
+        # Peak text must NOT include Mine phrase (contract), but we still hard-guard
+        peak_phrase = str(peak.get("phrase", "") or "")
+        if mine_phrase and mine_phrase in peak_phrase.replace("\r", ""):
+            raise ValueError(
+                'GLITCH_CRESCENDO: layers.glitch_peak.phrase contains mine.phrase. '
+                'Contract violation: peak must NOT contain Mine text.'
+            )
 
-        # layers
+        # layers (texts)
         self.txt1 = TextLayerGlitch(
             phrase=str(slow["phrase"]),
             in_p=float(slow["in_out"][0]),
@@ -631,33 +610,36 @@ class GlitchCrescendoDistributor:
         ).blueprint
         _apply_dump_truth(self.txt2, DUMP_HIS_EYES_WERE)
 
-        self.txt3_prefix = TextLayerGlitch(
-            phrase=prefix_phrase,
-            in_p=peak_in,
-            out_p=prefix_out,  # ends exactly at Mine start -> no remnants under "ты"
+        # main peak text (no Mine)
+        self.txt3_peak = TextLayerGlitch(
+            phrase=str(peak["phrase"]),
+            in_p=float(peak["in_out"][0]),
+            out_p=float(peak["in_out"][1]),
             z_index=12,
             source_rect=peak["s_rect"],
             tf_key="GLITCH_HIS_EYES_WERE_LIKE",
             preset=GlitchTextPreset.PEAK_PREFIX,
-            layer_name="glitch_peak_prefix",
+            layer_name="glitch_peak_prefix",  # keep name for compatibility
         ).blueprint
-        _apply_dump_truth(self.txt3_prefix, DUMP_HIS_EYES_WERE_LIKE)
+        _apply_dump_truth(self.txt3_peak, DUMP_HIS_EYES_WERE_LIKE)
 
-        # adj spans whole crescendo including Mine
+        # adj spans whole crescendo INCLUDING Mine
         adj_in = float(slow["in_out"][0])
         adj_out = max(float(peak["in_out"][1]), mine_out)
         self.adj = AdjGlitchPhysics(adj_in, adj_out).blueprint
 
-        # Mine only during "ты"
+        # Mine only during mine window
         self.mine_bg = VideoLayerMineBlur(mine_in, mine_out).blueprint
         self.mine_fg = VideoLayerMineMain(mine_in, mine_out).blueprint
+
+        mine_drop = {"text": mine_phrase, "t_start": mine_in, "t_end": mine_out}
         self.mine_inner = MineInnerDistributor(mine_drop, nest_in=mine_in, mine_comp_dur=MINE_COMP_DUR)
 
         self.layers = [
             self.mine_bg,
             self.mine_fg,
             self.adj,
-            self.txt3_prefix,
+            self.txt3_peak,
             self.txt2,
             self.txt1,
             *self.mine_inner.layers,

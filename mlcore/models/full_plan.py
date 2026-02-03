@@ -11,9 +11,14 @@ from .footage_plan import FootageSelectionPayload
 class FullPlanPayload(BaseModel):
     """
     Single Gemini call output:
-      - audio window (absolute + AE layer params)
-      - subtitles tokens payload (absolute token times inside audio window)
-      - footage plan (comp timeline clips)
+      - audio: absolute window on the full track (Step 1)
+      - subtitles: absolute token times on the full track, inside that window (Step 2)
+      - footage: comp timeline clips (Step 3)
+
+    IMPORTANT:
+      - AE audio layer params are NOT produced by Gemini anymore.
+        They are derived deterministically in postprocess from audio.clip_start_abs / clip_end_abs.
+      - In postprocess we shift subtitles to clip-zero by subtracting clip_start_abs.
     """
     audio: AudioClipPlan
     subtitles: BlocksTokensPayload

@@ -43,6 +43,6 @@ def build_user_prompt(*, assets: List[Dict], schema_name: str = "FullPlanPayload
         "Notes:\n"
         "- Use the same audio track for all steps.\n"
         "- Token times MUST be ABSOLUTE seconds on full track.\n"
-        "- Footage clip times MUST be COMP seconds.\n"
+        "- Footage clip times MUST be ABSOLUTE seconds on full track (inside the chosen audio window).\n"
         "- For footage planning: you output only file_name + timings; file_path/src_w/src_h will be resolved later.\n"
     )

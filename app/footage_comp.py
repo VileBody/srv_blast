@@ -253,12 +253,32 @@ def _warp_effects_adj16_pin_edges(
 # -----------------------------
 # Footage fit: COVER (scale-to-fill)
 # -----------------------------
-def _compute_cover_transform(comp_w: int, comp_h: int, src_w: int, src_h: int) -> Tuple[List[float], List[float], List[float]]:
-    s = max(float(comp_w) / float(src_w), float(comp_h) / float(src_h))
+def _compute_cover_transform(
+    comp_w: int,
+    comp_h: int,
+    src_w: int,
+    src_h: int,
+) -> Tuple[List[float], List[float], List[float]]:
+    """
+    COVER (scale-to-fill) with a small overscan to prevent black edges when
+    adjustment layers apply blur/warp/motion/rotation (sampling outside frame).
+
+    Example:
+      src 720x1280 into comp 1080x1080
+      pure cover = 150%
+      with overscan 1.0166666667 -> 152.5% (matches your reference dump)
+    """
+    # Small overscan factor (tune if needed)
+    OVERSCAN: float = 1.0166666667
+
+    s_cover = max(float(comp_w) / float(src_w), float(comp_h) / float(src_h))
+    s = s_cover * float(OVERSCAN)
+
     scale = [s * 100.0, s * 100.0, 100.0]
     anchor = [src_w / 2.0, src_h / 2.0, 0.0]
     pos = [comp_w / 2.0, comp_h / 2.0, 0.0]
     return anchor, pos, scale
+
 
 
 # -----------------------------

@@ -149,6 +149,8 @@ def _sanitize_segment(seg: Dict[str, Any]) -> Dict[str, Any]:
       1) fix trailing
       2) if phrase had \r but tokens didn't, restore \r in trailing when safe
       3) set phrase := recon(tokens)
+
+    NOTE: Mine segment is special and handled separately (to keep optional leading '\r').
     """
     if not isinstance(seg, dict):
         return seg
@@ -163,9 +165,39 @@ def _sanitize_segment(seg: Dict[str, Any]) -> Dict[str, Any]:
     return seg
 
 
+def _sanitize_mine_segment(seg: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Mine: 1 token, trailing MUST be "", phrase may be "word" or "\rword".
+    Do NOT overwrite phrase with recon(tokens), иначе потеряем ведущий '\r'.
+    """
+    if not isinstance(seg, dict):
+        return seg
+    tokens = seg.get("tokens")
+    if not isinstance(tokens, list) or len(tokens) != 1 or not isinstance(tokens[0], dict):
+        return seg
+
+    t0 = tokens[0]
+    txt = str(t0.get("text", "") or "")
+    if not txt:
+        return seg
+
+    t0["trailing"] = ""
+    seg["tokens"] = [t0]
+
+    phrase = str(seg.get("phrase", "") or "")
+    if phrase.startswith("\r"):
+        if phrase[1:] != txt:
+            seg["phrase"] = "\r" + txt
+    else:
+        if phrase != txt:
+            seg["phrase"] = txt
+    return seg
+
+
 def _sanitize_payload_dict(d: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Apply _sanitize_segment everywhere it fits + normalize mine_drop from glitch_peak last token.
+    Apply _sanitize_segment everywhere it fits.
+    Additionally: repair legacy mine_drop -> mine when possible (variant A).
     """
     def at(path: List[str]) -> None:
         cur: Any = d
@@ -190,16 +222,22 @@ def _sanitize_payload_dict(d: Dict[str, Any]) -> Dict[str, Any]:
     at(["block_7", "part1"])
     at(["block_7", "part2"])
 
-    # mine_drop canonicalization: last token of glitch_peak
+    # ---- Legacy repair: mine_drop -> mine (variant A)
     try:
-        peak_tokens = d["block_5"]["glitch_peak"]["tokens"]
-        if isinstance(peak_tokens, list) and peak_tokens and isinstance(peak_tokens[-1], dict):
-            last = peak_tokens[-1]
-            d["block_5"]["mine_drop"] = {
-                "text": str(last.get("text", "")),
-                "t_start": float(last.get("t_start")),
-                "t_end": float(last.get("t_end")),
-            }
+        b5 = d.get("block_5")
+        if isinstance(b5, dict):
+            if not isinstance(b5.get("mine"), dict) and isinstance(b5.get("mine_drop"), dict):
+                md = b5["mine_drop"]
+                txt = str(md.get("text", "") or "")
+                t0 = float(md.get("t_start"))
+                t1 = float(md.get("t_end"))
+                b5["mine"] = {
+                    "phrase": "\r" + txt if txt else "",
+                    "tokens": [{"text": txt, "t_start": t0, "t_end": t1, "trailing": ""}],
+                }
+
+            if isinstance(b5.get("mine"), dict):
+                b5["mine"] = _sanitize_mine_segment(b5["mine"])
     except Exception:
         pass
 
@@ -366,10 +404,6 @@ class GeminiClient:
     # ==========================================================
 
     def probe_text(self, text: str = "u alive?") -> str:
-        """
-        One-shot lightweight probe call (no files, no JSON schema).
-        Useful for debugging transient 5xx.
-        """
         cfg = types.GenerateContentConfig(
             temperature=0.0,
             response_mime_type="text/plain",
@@ -395,12 +429,6 @@ class GeminiClient:
         system_instruction: Optional[str] = None,
         raw_response_path: Optional[Path] = None,
     ) -> BlocksTokensPayload:
-        """
-        Single attempt. No internal retries.
-        Postprocess:
-          - canonicalize trailing
-          - canonicalize phrase (derived from tokens)
-        """
         contents: List[object] = []
         if files:
             contents.extend(files)
@@ -457,10 +485,6 @@ class GeminiClient:
         system_instruction: Optional[str] = None,
         raw_response_path: Optional[Path] = None,
     ) -> BaseModel:
-        """
-        Generic structured JSON call with arbitrary Pydantic schema.
-        Single attempt. No internal retries.
-        """
         contents: List[object] = []
         if files:
             contents.extend(files)

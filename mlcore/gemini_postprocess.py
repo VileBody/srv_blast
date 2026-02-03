@@ -12,6 +12,7 @@ from mlcore.cr_patch import patch_payload_dict_inplace
 from mlcore.timing_calc import compute_timings
 from mlcore.models.full_plan import FullPlanPayload
 from mlcore.models.subtitles_tokens import BlocksTokensPayload, Token
+from mlcore.models.footage_plan import FootageSelectionPayload
 
 
 # -------------------------
@@ -97,7 +98,68 @@ def _sanitize_segment(seg: Dict[str, Any]) -> None:
     seg["tokens"] = tok
 
 
+def _sanitize_mine_segment(seg: Dict[str, Any]) -> None:
+    """
+    Mine особенный:
+      - tokens: ровно 1 токен
+      - token.trailing MUST be ""
+      - phrase может быть "ты!" или "\rты!"
+    ВАЖНО: НЕ делаем phrase := recon(tokens), иначе потеряем ведущий '\r'.
+    """
+    tok = seg.get("tokens")
+    if not isinstance(tok, list) or len(tok) != 1 or not isinstance(tok[0], dict):
+        return
+
+    t0 = tok[0]
+    t0["trailing"] = ""
+
+    txt = str(t0.get("text", "") or "")
+    if not txt:
+        return
+
+    phrase = str(seg.get("phrase", "") or "")
+    if phrase.startswith("\r"):
+        if phrase[1:] != txt:
+            seg["phrase"] = "\r" + txt
+    else:
+        if phrase != txt:
+            seg["phrase"] = txt
+
+    seg["tokens"] = [t0]
+
+
+def _legacy_repair_mine_drop_to_mine(d: Dict[str, Any]) -> None:
+    """
+    Если вдруг где-то прилетел старый формат mine_drop, конвертим в новый mine.
+    Это не должно срабатывать в норме, но спасает пайплайн от "LLM опять чудит".
+    """
+    b5 = d.get("block_5")
+    if not isinstance(b5, dict):
+        return
+
+    if isinstance(b5.get("mine"), dict):
+        return
+
+    md = b5.get("mine_drop")
+    if not isinstance(md, dict):
+        return
+
+    txt = str(md.get("text", "") or "")
+    try:
+        t0 = float(md.get("t_start"))
+        t1 = float(md.get("t_end"))
+    except Exception:
+        return
+
+    b5["mine"] = {
+        "phrase": ("\r" + txt) if txt else "",
+        "tokens": [{"text": txt, "t_start": t0, "t_end": t1, "trailing": ""}],
+    }
+
+
 def sanitize_subtitles_dict_inplace(d: Dict[str, Any]) -> Dict[str, Any]:
+    _legacy_repair_mine_drop_to_mine(d)
+
     if isinstance(d.get("block_1"), dict):
         _sanitize_segment(d["block_1"])
 
@@ -123,6 +185,8 @@ def sanitize_subtitles_dict_inplace(d: Dict[str, Any]) -> Dict[str, Any]:
         for k in ("slowly_in", "fast_reveal", "glitch_peak"):
             if isinstance(b5.get(k), dict):
                 _sanitize_segment(b5[k])
+        if isinstance(b5.get("mine"), dict):
+            _sanitize_mine_segment(b5["mine"])
 
     if isinstance(d.get("block_6"), dict):
         _sanitize_segment(d["block_6"])
@@ -134,6 +198,7 @@ def sanitize_subtitles_dict_inplace(d: Dict[str, Any]) -> Dict[str, Any]:
         if isinstance(b7.get("part2"), dict):
             _sanitize_segment(b7["part2"])
 
+    # keep your deterministic CR patch for multiword segments (NOT mine)
     patch_payload_dict_inplace(d)
     return d
 
@@ -148,6 +213,10 @@ def _shift_token(t: Token, delta: float) -> Token:
 
 
 def normalize_subtitles_to_clip_zero(payload_abs: BlocksTokensPayload, clip_start_abs: float, clip_end_abs: float) -> BlocksTokensPayload:
+    """
+    Convert ABSOLUTE (full-track) token times to CLIP-ZERO times by subtracting clip_start_abs.
+    The resulting payload.clip becomes [0..clip_duration].
+    """
     clip_start = float(clip_start_abs)
     clip_end = float(clip_end_abs)
     clip_dur = clip_end - clip_start
@@ -166,11 +235,7 @@ def normalize_subtitles_to_clip_zero(payload_abs: BlocksTokensPayload, clip_star
             "slowly_in": seg_phrase_tokens(payload_abs.block_5.slowly_in),
             "fast_reveal": seg_phrase_tokens(payload_abs.block_5.fast_reveal),
             "glitch_peak": seg_phrase_tokens(payload_abs.block_5.glitch_peak),
-            "mine_drop": {
-                "text": payload_abs.block_5.mine_drop.text,
-                "t_start": float(payload_abs.block_5.mine_drop.t_start) - clip_start,
-                "t_end": float(payload_abs.block_5.mine_drop.t_end) - clip_start,
-            },
+            "mine": seg_phrase_tokens(payload_abs.block_5.mine),
         },
         "block_6": {"phrase": payload_abs.block_6.phrase, "tokens": [_shift_token(t, clip_start) for t in payload_abs.block_6.tokens]},
         "block_7": {"part1": seg_phrase_tokens(payload_abs.block_7.part1), "part2": seg_phrase_tokens(payload_abs.block_7.part2)},
@@ -180,8 +245,70 @@ def normalize_subtitles_to_clip_zero(payload_abs: BlocksTokensPayload, clip_star
 
 
 # -------------------------
-# Footage inventory helpers
+# Footage: absolute -> clip-zero (comp) + coverage checks
 # -------------------------
+def _shift_footage_to_clip_zero(
+    footage_abs: FootageSelectionPayload,
+    *,
+    clip_start_abs: float,
+    clip_end_abs: float,
+) -> FootageSelectionPayload:
+    cs = float(clip_start_abs)
+    ce = float(clip_end_abs)
+    dur = ce - cs
+    if dur <= 0:
+        raise ValueError(f"Invalid clip window for footage shift: {cs}..{ce}")
+
+    clips_in = list(footage_abs.clips)
+    clips_in.sort(key=lambda c: float(c.in_point))
+
+    shifted_clips: List[Dict[str, Any]] = []
+    for c in clips_in:
+        in0 = float(c.in_point) - cs
+        out0 = float(c.out_point) - cs
+
+        if in0 < -1e-6 or out0 > dur + 1e-6:
+            raise ValueError(
+                f"Footage clip out of audio window after shift: "
+                f"abs={c.in_point}..{c.out_point} window={cs}..{ce} -> rel={in0}..{out0}"
+            )
+
+        shifted_clips.append(
+            {
+                "file_name": c.file_name,
+                "fit_mode": c.fit_mode,
+                "in_point": in0,
+                "out_point": out0,
+                "start_time": in0,
+            }
+        )
+
+    payload = {"clips": shifted_clips, "allow_gaps": bool(footage_abs.allow_gaps)}
+    shifted = FootageSelectionPayload.model_validate(payload)
+
+    if not shifted.allow_gaps:
+        clips = list(shifted.clips)
+        clips.sort(key=lambda c: float(c.in_point))
+        if not clips:
+            raise ValueError("FootageSelectionPayload.clips is empty after shift")
+
+        if abs(float(clips[0].in_point) - 0.0) > 1e-6:
+            raise ValueError(f"Footage must start at 0.0 (got {clips[0].in_point})")
+
+        for i in range(len(clips) - 1):
+            a = clips[i]
+            b = clips[i + 1]
+            if abs(float(b.in_point) - float(a.out_point)) > 1e-6:
+                raise ValueError(
+                    f"Footage gap/overlap detected: clip[{i}].out={a.out_point} != clip[{i+1}].in={b.in_point}"
+                )
+
+        if abs(float(clips[-1].out_point) - float(dur)) > 1e-6:
+            raise ValueError(f"Footage must end at duration={dur} (got {clips[-1].out_point})")
+
+    return shifted
+
+
 def load_assets_map_from_inventory(footage_inventory_json: Path) -> Dict[str, Dict[str, Any]]:
     inv = json.loads(footage_inventory_json.read_text(encoding="utf-8"))
 
@@ -238,12 +365,6 @@ def read_adj16_base_start_time(repo_root: Path, dump_file: str) -> float:
 
 
 def _resolve_data_dir(repo_root: Path, data_dir: Path | None) -> Path:
-    """
-    Priority:
-      1) explicit param data_dir
-      2) env DATA_DIR
-      3) repo_root/data
-    """
     if data_dir is not None:
         return data_dir.resolve()
 
@@ -274,20 +395,37 @@ def render_all_steps(
 
     env = _env(repo_root)
 
-    # STEP 1
-    t1 = env.get_template("step1_template.j2")
-    audio_json_str = t1.render(audio=plan.audio)
-    audio_obj = json.loads(audio_json_str)
+    # -------------------------
+    # STEP 1 (deterministic AE mapping)
+    # -------------------------
+    clip_start = float(plan.audio.clip_start_abs)
+    clip_end = float(plan.audio.clip_end_abs)
+    clip_dur = clip_end - clip_start
+    if clip_dur <= 0:
+        raise ValueError(f"Invalid audio clip window: {clip_start}..{clip_end}")
 
-    # STEP 2
+    audio_obj = {
+        "audio": {
+            "clip_start_abs": clip_start,
+            "clip_end_abs": clip_end,
+            "layer_start_time": -clip_start,
+            "layer_in_point": 0.0,
+            "layer_out_point": float(clip_dur),
+            "moment_of_interest_sec": plan.audio.moment_of_interest_sec,
+        }
+    }
+
+    # -------------------------
+    # STEP 2 (absolute -> clip-zero)
+    # -------------------------
     subs_dict = plan.subtitles.model_dump(mode="json")
     sanitize_subtitles_dict_inplace(subs_dict)
     subs_abs = BlocksTokensPayload.model_validate(subs_dict)
 
     subs_clip_zero = normalize_subtitles_to_clip_zero(
         subs_abs,
-        clip_start_abs=float(plan.audio.clip_start_abs),
-        clip_end_abs=float(plan.audio.clip_end_abs),
+        clip_start_abs=clip_start,
+        clip_end_abs=clip_end,
     )
 
     timings, comp_dur = compute_timings(subs_clip_zero)
@@ -301,7 +439,18 @@ def render_all_steps(
     )
     full_edit_obj = json.loads(full_edit_str)
 
-    # STEP 3
+    # -------------------------
+    # STEP 3 (footage): absolute -> clip-zero (comp)
+    # -------------------------
+    footage_clip_zero = _shift_footage_to_clip_zero(
+        plan.footage,
+        clip_start_abs=clip_start,
+        clip_end_abs=clip_end,
+    )
+
+    # -------------------------
+    # Render footage_config.json for AE
+    # -------------------------
     assets_map = load_assets_map_from_inventory(footage_inventory_json)
     preset = read_adjustment_preset_from_inventory(footage_inventory_json)
     dump_file = str(preset.get("dump_file") or "data/0_4.504505__Adjustment Layer 16__adjustment.json")
@@ -316,15 +465,17 @@ def render_all_steps(
         text_dur_hint=float(comp_dur),
         adjustment_preset=preset,
         base_adj_start_time=float(base_adj_start),
-        footage=plan.footage,
+        footage=footage_clip_zero,
         assets_map=assets_map,
-        audio=plan.audio,
+        audio=audio_obj["audio"],
         audio_file_name=audio_file_name,
         audio_file_path=audio_file_path,
     )
     footage_obj = json.loads(footage_str)
 
+    # -------------------------
     # Write to DATA_DIR + mirror to OUT_DIR
+    # -------------------------
     p_audio = data_dir / "audio_plan.json"
     p_step2 = data_dir / "full_edit_config.json"
     p_step3 = data_dir / "footage_config.json"

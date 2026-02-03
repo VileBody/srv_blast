@@ -3,9 +3,6 @@
   "audio": {
     "clip_start_abs": {{ audio.clip_start_abs }},
     "clip_end_abs": {{ audio.clip_end_abs }},
-    "layer_start_time": {{ audio.layer_start_time }},
-    "layer_in_point": {{ audio.layer_in_point }},
-    "layer_out_point": {{ audio.layer_out_point }},
     "moment_of_interest_sec": {% if audio.moment_of_interest_sec is none %}null{% else %}{{ audio.moment_of_interest_sec }}{% endif %}
   }
 }

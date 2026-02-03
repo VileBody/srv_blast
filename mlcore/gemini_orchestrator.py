@@ -56,7 +56,23 @@ def _load_footage_inventory(inv_path: Path) -> Dict[str, Any]:
     return d
 
 
+def _as_float(v: Any) -> Optional[float]:
+    if v is None:
+        return None
+    try:
+        x = float(v)
+        if x <= 0:
+            return None
+        return x
+    except Exception:
+        return None
+
+
 def _compact_assets_for_prompt(inv: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """
+    Compact assets list is embedded directly into the user prompt.
+    We include duration_sec so Gemini can obey no-gaps feasibility.
+    """
     out: List[Dict[str, Any]] = []
     for it in (inv.get("assets") or []):
         if not isinstance(it, dict):
@@ -69,7 +85,21 @@ def _compact_assets_for_prompt(inv: Dict[str, Any]) -> List[Dict[str, Any]]:
         if not fn or sw is None or sh is None:
             continue
 
-        out.append({"file_name": fn, "src_w": int(sw), "src_h": int(sh)})
+        meta = it.get("meta") if isinstance(it.get("meta"), dict) else {}
+
+        dur = _as_float(it.get("duration_sec"))
+        if dur is None:
+            dur = _as_float(it.get("duration"))
+        if dur is None:
+            dur = _as_float(meta.get("duration_sec"))
+        if dur is None:
+            dur = _as_float(meta.get("duration"))
+
+        row: Dict[str, Any] = {"file_name": fn, "src_w": int(sw), "src_h": int(sh)}
+        if dur is not None:
+            row["duration_sec"] = float(dur)
+
+        out.append(row)
 
     if not out:
         raise RuntimeError("No valid assets in footage inventory")
@@ -77,12 +107,6 @@ def _compact_assets_for_prompt(inv: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 
 def _resolve_bundle_path(out_dir_hint: Path) -> Path:
-    """
-    Global bundle path.
-    Priority:
-      1) DESCRIPTIONS_BUNDLE_PATH env (absolute or relative)
-      2) fallback: out_dir_hint/descriptions_bundle.json
-    """
     raw = (os.environ.get("DESCRIPTIONS_BUNDLE_PATH") or "").strip()
     if raw:
         p = Path(raw).expanduser()
@@ -93,16 +117,9 @@ def _resolve_bundle_path(out_dir_hint: Path) -> Path:
 
 
 def _read_bundle_inline(bundle_path: Path, *, max_chars: int) -> str:
-    """
-    Read bundle JSON as inline text. Hard-cap by characters for safety.
-    We keep it raw JSON (already compact in your generator).
-    """
     s = bundle_path.read_text(encoding="utf-8")
     if len(s) <= max_chars:
         return s
-
-    # Truncate safely (still valid JSON? not guaranteed). We keep it as "partial bundle".
-    # Better: keep beginning which usually contains many entries (sorted by filename).
     return s[:max_chars]
 
 
@@ -159,7 +176,6 @@ def build_all_via_gemini_one_call() -> Dict[str, Path]:
         )
 
     # INLINE bundle text (instead of Files API upload)
-    # Default cap: 250k chars (tune via env if needed)
     cap_env = (os.environ.get("DESCRIPTIONS_BUNDLE_INLINE_MAX_CHARS") or "").strip()
     cap = int(cap_env) if cap_env else 250_000
     bundle_inline = _read_bundle_inline(bundle_path, max_chars=cap)
@@ -168,16 +184,45 @@ def build_all_via_gemini_one_call() -> Dict[str, Path]:
     system_instruction = build_system_instruction()
     user_prompt = build_user_prompt(assets=assets_for_prompt, schema_name="FullPlanPayload")
 
+    # IMPORTANT: pick EXACTLY ONE audio file
     audio_dir = Path(os.environ.get("AUDIO_DIR", str(ROOT / "audio"))).resolve()
     audio_files = pick_audio_files(audio_dir)
+
+    logger.info("audio_files_selected n=%d files=%s", len(audio_files), [p.name for p in audio_files])
 
     use_cache = (os.environ.get("GEMINI_UPLOAD_CACHE", "1") or "1").strip() not in {"0", "false", "False", "no", "NO"}
     cache_path = (out_dir / "gemini_files_cache.json") if use_cache else None
 
     raw_path = logs_dir / f"gemini_raw_fullplan_{_stamp()}.json"
 
+    # NEW: dump exact system + prompt we send
+    sys_dump = logs_dir / f"gemini_system_fullplan_{_stamp()}.txt"
+    prompt_dump = logs_dir / f"gemini_prompt_fullplan_{_stamp()}.txt"
+
+    # Also dump a small meta json (helps quick debugging)
+    meta_dump = logs_dir / f"gemini_meta_fullplan_{_stamp()}.json"
+    meta_dump.write_text(
+        json.dumps(
+            {
+                "model": model,
+                "temperature": temperature,
+                "audio_files": [str(p) for p in audio_files],
+                "bundle_path": str(bundle_path),
+                "bundle_inline_chars": len(bundle_inline),
+                "cache_path": str(cache_path) if cache_path else None,
+                "raw_response_path": str(raw_path),
+                "system_dump": str(sys_dump),
+                "prompt_dump": str(prompt_dump),
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
     logger.info("context audio_files=%d bundle_inline=yes", len(audio_files))
     logger.info("gemini_call_start raw=%s", str(raw_path))
+    logger.info("gemini_debug_dumps sys=%s prompt=%s meta=%s", str(sys_dump), str(prompt_dump), str(meta_dump))
 
     try:
         plan = call_full_plan_once(
@@ -189,6 +234,8 @@ def build_all_via_gemini_one_call() -> Dict[str, Path]:
             descriptions_bundle_text=bundle_inline,
             raw_response_path=raw_path,
             cache_path=cache_path,
+            prompt_dump_path=prompt_dump,
+            system_dump_path=sys_dump,
         )
     except Exception as e:
         logger.warning("gemini_fullplan_failed err=%r -> probe text-only 'u alive?'", e)

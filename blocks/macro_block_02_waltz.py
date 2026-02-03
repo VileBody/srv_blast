@@ -103,7 +103,7 @@ class TextLayerWaltz:
 
         cfg = StepperConfig(
             percent_prop="start",
-            anchor="end",
+            anchor="start",
             start_word=0,
             hold=True,
             fps=float(FPS),

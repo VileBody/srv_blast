@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from typing import List, Literal
+
 from pydantic import BaseModel, Field, model_validator
 
 
@@ -16,10 +17,23 @@ class FootageAsset(BaseModel):
 
 
 class FootageClipPick(BaseModel):
+    """
+    Step 3 output (Gemini):
+      - clip timings are ABSOLUTE seconds on the FULL TRACK timeline,
+        and MUST lie inside [audio.clip_start_abs .. audio.clip_end_abs]
+      - start_time MUST equal in_point exactly (we do not time-remap here)
+    Postprocess:
+      - we shift to clip-zero by subtracting clip_start_abs
+      - then it becomes COMP timeline 0..duration for AE
+    """
     file_name: str = Field(min_length=1)
     fit_mode: FitMode = "cover"
+
+    # ABSOLUTE full-track seconds (not comp seconds)
     in_point: float = Field(ge=0.0)
     out_point: float = Field(ge=0.0)
+
+    # MUST equal in_point exactly
     start_time: float
 
     @model_validator(mode="after")
@@ -32,5 +46,10 @@ class FootageClipPick(BaseModel):
 
 
 class FootageSelectionPayload(BaseModel):
+    """
+    Step 3 output:
+      - list of clips (absolute times)
+      - allow_gaps: if false, postprocess will enforce continuous coverage
+    """
     clips: List[FootageClipPick] = Field(min_length=1)
     allow_gaps: bool = False
