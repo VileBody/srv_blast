@@ -14,6 +14,9 @@ from mlcore.models.full_plan import FullPlanPayload
 from mlcore.models.subtitles_tokens import BlocksTokensPayload, Token
 from mlcore.models.footage_plan import FootageSelectionPayload
 
+# ✅ single source of truth for FPS (matches AE dump)
+from app.config import FPS as AE_FPS
+
 
 # -------------------------
 # Jinja env
@@ -67,6 +70,20 @@ def _resolve_audio_source(repo_root: Path) -> tuple[str, str]:
         )
     p0 = files[0].resolve()
     return p0.name, str(p0)
+
+
+def _media_mode() -> str:
+    """
+    Controls how we emit file_path for audio in step3 template.
+
+    Modes:
+      - "local" (default): keep absolute local path from container (/app/..)
+      - "appdir"/"windows"/"win": emit empty file_path so JSX resolves via APP_DIR/media/audio/<file_name>
+    """
+    s = (os.environ.get("AE_MEDIA_MODE") or "").strip().lower()
+    if not s:
+        return "local"
+    return s
 
 
 # -------------------------
@@ -131,7 +148,6 @@ def _sanitize_mine_segment(seg: Dict[str, Any]) -> None:
 def _legacy_repair_mine_drop_to_mine(d: Dict[str, Any]) -> None:
     """
     Если вдруг где-то прилетел старый формат mine_drop, конвертим в новый mine.
-    Это не должно срабатывать в норме, но спасает пайплайн от "LLM опять чудит".
     """
     b5 = d.get("block_5")
     if not isinstance(b5, dict):
@@ -432,7 +448,7 @@ def render_all_steps(
 
     t2 = env.get_template("step2_template.j2")
     full_edit_str = t2.render(
-        fps=23.9759979248047,
+        fps=float(AE_FPS),
         comp_dur=float(comp_dur),
         t=timings,
         blocks=subs_clip_zero.model_dump(mode="json"),
@@ -456,14 +472,21 @@ def render_all_steps(
     dump_file = str(preset.get("dump_file") or "data/0_4.504505__Adjustment Layer 16__adjustment.json")
     base_adj_start = read_adj16_base_start_time(repo_root, dump_file)
 
-    audio_file_name, audio_file_path = _resolve_audio_source(repo_root)
+    audio_file_name, audio_file_path_local = _resolve_audio_source(repo_root)
+
+    # ✅ Windows/appdir mode: keep file_name, but blank file_path so JSX resolves via APP_DIR/media/audio/<file_name>
+    mode = _media_mode()
+    if mode in {"appdir", "win", "windows"}:
+        audio_file_path = ""
+    else:
+        audio_file_path = audio_file_path_local
 
     t3 = env.get_template("step3_template.j2")
     footage_str = t3.render(
         main_comp_w=1080,
         main_comp_h=1080,
+        main_comp_fps=float(AE_FPS),  # ✅ FIX: was missing (caused UndefinedError)
         text_dur_hint=float(comp_dur),
-        main_comp_fps=23.9759979248047,
         adjustment_preset=preset,
         base_adj_start_time=float(base_adj_start),
         footage=footage_clip_zero,

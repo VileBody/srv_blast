@@ -176,6 +176,9 @@ def build_job(self, job_id: str) -> Dict[str, Any]:
     env["AUDIO_FILE_PATH"] = str(local_audio)
     env["AUDIO_DIR"] = str(local_audio.parent)
 
+    env["AE_MEDIA_MODE"] = "appdir"
+
+
     args = shlex.split(cmd)
     proc = subprocess.run(args, cwd=str(repo_root), env=env, capture_output=True, text=True)
     out = proc.stdout or ""
