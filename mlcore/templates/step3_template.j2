@@ -5,15 +5,36 @@
 
   "main_comp_w": {{ main_comp_w }},
   "main_comp_h": {{ main_comp_h }},
+  "main_comp_fps": {{ main_comp_fps }},
 
   "text_dur_hint": {{ text_dur_hint }},
 
   "adjustment_preset": {{ adjustment_preset | tojson }},
 
+  "diagnostics": {
+    "enabled": {% if diagnostics is defined and diagnostics.enabled %}true{% else %}false{% endif %},
+    "app_dir": {% if diagnostics is defined and diagnostics.app_dir is defined %}{{ diagnostics.app_dir | tojson }}{% else %}null{% endif %},
+
+    "hb_file": {% if diagnostics is defined and diagnostics.hb_file is defined %}{{ diagnostics.hb_file | tojson }}{% else %}"hb.txt"{% endif %},
+    "live_log_file": {% if diagnostics is defined and diagnostics.live_log_file is defined %}{{ diagnostics.live_log_file | tojson }}{% else %}"run_live.log"{% endif %},
+
+    "timeout_total_sec": {% if diagnostics is defined and diagnostics.timeout_total_sec is defined %}{{ diagnostics.timeout_total_sec }}{% else %}0{% endif %},
+    "timeout_per_layer_sec": {% if diagnostics is defined and diagnostics.timeout_per_layer_sec is defined %}{{ diagnostics.timeout_per_layer_sec }}{% else %}0{% endif %},
+    "abort_on_timeout": {% if diagnostics is defined and diagnostics.abort_on_timeout %}true{% else %}false{% endif %}
+  },
+
+  "limits": {
+    "min_layer_dur_frames": {% if limits is defined and limits.min_layer_dur_frames is defined %}{{ limits.min_layer_dur_frames }}{% else %}1{% endif %}
+  },
+
   "layers": [
     {# --- Footage clips --- #}
+    {%- set eps = (1.0 / main_comp_fps) %}
     {%- for c in footage.clips %}
     {
+      "layer_id": {{ ("footage_" ~ loop.index0) | tojson }},
+      "diag_tag": {{ ("FOOTAGE[" ~ loop.index0 ~ "] " ~ c.file_name) | tojson }},
+
       "type": "footage",
       "name": {{ c.file_name | tojson }},
       "file_name": {{ c.file_name | tojson }},
@@ -24,7 +45,7 @@
       "fit_mode": {{ c.fit_mode | tojson }},
 
       "in_point": {{ c.in_point }},
-      "out_point": {{ c.out_point }},
+      "out_point": {% if c.out_point <= c.in_point %}{{ c.in_point + eps }}{% else %}{{ c.out_point }}{% endif %},
       "start_time": {{ c.start_time }},
 
       "enabled": true,
@@ -39,12 +60,17 @@
     {# --- Adj16 copies (static logic) --- #}
     {%- for c in footage.clips %}
     {
+      "layer_id": {{ ("adj16_" ~ loop.index0) | tojson }},
+      "diag_tag": {{ ("ADJ16[" ~ loop.index0 ~ "]") | tojson }},
+
       "type": "adjustment",
       "name": "Adjustment Layer 16",
       "preset": {{ adjustment_preset.id | tojson }},
+
       "in_point": {{ c.in_point }},
-      "out_point": {{ c.out_point }},
+      "out_point": {% if c.out_point <= c.in_point %}{{ c.in_point + eps }}{% else %}{{ c.out_point }}{% endif %},
       "start_time": {{ c.in_point + base_adj_start_time }},
+
       "enabled": true,
       "target_comp": "Comp 1"
     }{% if not loop.last %},{% endif %}
@@ -54,13 +80,16 @@
 
     {# --- AUDIO LAYER (must have real file_path + enabled true) --- #}
     {
+      "layer_id": "audio_ref",
+      "diag_tag": "AUDIO реф",
+
       "type": "audio_only",
       "name": "реф",
       "file_name": {{ audio_file_name | tojson }},
       "file_path": {{ audio_file_path | tojson }},
 
       "in_point": {{ audio.layer_in_point }},
-      "out_point": {{ audio.layer_out_point }},
+      "out_point": {% if audio.layer_out_point <= audio.layer_in_point %}{{ audio.layer_in_point + eps }}{% else %}{{ audio.layer_out_point }}{% endif %},
       "start_time": {{ audio.layer_start_time }},
 
       "enabled": true,
