@@ -82,6 +82,9 @@
 
     var __LOG_ENABLED = true;
     var __LOG_FILE = null;
+    var __LIVE_LOG_FILE = null;
+    var __HB_FILE = null;
+    var __LAST_HB = "";
     var __LOG_SEQ = 0;
 
     function getScriptFolder() {
@@ -115,6 +118,10 @@
         var logPath = logsFolder.fsName + "/render_full_" + nowStamp() + ".log";
         __LOG_FILE = new File(logPath);
         __LOG_FILE.encoding = "UTF-8";
+        __LIVE_LOG_FILE = new File(String(__APP_DIR || "") + "/run_live.log");
+        __LIVE_LOG_FILE.encoding = "UTF-8";
+        __HB_FILE = new File(String(__APP_DIR || "") + "/hb.txt");
+        __HB_FILE.encoding = "UTF-8";
 
         if (__LOG_FILE.open("a")) {
           __LOG_FILE.writeln("=== AE FULL PROJECT LOG START ===");
@@ -124,6 +131,11 @@
           __LOG_FILE.writeln("ae_version=" + app.version);
           __LOG_FILE.writeln("=================================");
           __LOG_FILE.close();
+        }
+        if (__LIVE_LOG_FILE && __LIVE_LOG_FILE.open("w")) {
+          __LIVE_LOG_FILE.writeln("=== AE LIVE LOG START ===");
+          __LIVE_LOG_FILE.writeln("time=" + (new Date()).toUTCString());
+          __LIVE_LOG_FILE.close();
         }
       } catch(e) {
         __LOG_ENABLED = false;
@@ -142,11 +154,45 @@
       }
     }
 
+    function _writeLive(line) {
+      if (!__LIVE_LOG_FILE) return;
+      try {
+        if (__LIVE_LOG_FILE.open("a")) {
+          __LIVE_LOG_FILE.writeln(line);
+          __LIVE_LOG_FILE.close();
+        }
+      } catch(_) {}
+    }
+
+    function _writeHeartbeat(layerName, phase) {
+      try {
+        __LAST_HB = "layer=" + String(layerName || "") + " phase=" + String(phase || "") + " ts=" + (new Date()).toUTCString();
+        if (__HB_FILE && __HB_FILE.open("w")) {
+          __HB_FILE.writeln(__LAST_HB);
+          __HB_FILE.close();
+        }
+        _writeLive("[HB] " + __LAST_HB);
+      } catch(_) {}
+    }
+
+    function phaseStart(layerName, phase) {
+      var msg = "PHASE_START layer=" + String(layerName || "") + " phase=" + String(phase || "");
+      logLine("INFO", msg);
+      _writeHeartbeat(layerName, phase);
+    }
+
+    function phaseDone(layerName, phase) {
+      var msg = "PHASE_DONE layer=" + String(layerName || "") + " phase=" + String(phase || "");
+      logLine("INFO", msg);
+      _writeHeartbeat(layerName, phase + "_done");
+    }
+
     function logLine(level, msg) {
       __LOG_SEQ += 1;
       var line = "[" + level + "][" + __LOG_SEQ + "] " + msg;
       try { $.writeln(line); } catch(e) {}
       _writeToFile(line);
+      _writeLive(line);
     }
 
     function logErr(prefix, e) {
@@ -332,6 +378,21 @@
       return base + sub + String(fileName);
     }
 
+    function _singleAudioPathInMedia() {
+      try {
+        var dir = new Folder(String(__APP_DIR || "") + "/media/audio");
+        if (!dir.exists) return "";
+        var files = dir.getFiles(function (f) {
+          try {
+            if (!(f instanceof File)) return false;
+            return _isAudioName(f.name);
+          } catch(_) { return false; }
+        });
+        if (!files || files.length !== 1) return "";
+        return files[0].fsName;
+      } catch(e) { return ""; }
+    }
+
     // ✅ PATH FIX: treat "/app/..." as invalid local path on Windows -> resolve via APP_DIR
     function _looksLikeUnixAbsPath(p) {
       try {
@@ -370,6 +431,15 @@
 
       try {
         var f = new File(fp);
+        // Audio hardening: if exact expected name is missing, but there is exactly one
+        // audio file in media/audio, use it as fallback.
+        if (!f.exists && _isAudioName(nm)) {
+          var alt = _singleAudioPathInMedia();
+          if (alt && alt !== "") {
+            logLine("WARN", "audio fallback by single media/audio file expected=" + nm + " actual=" + alt);
+            f = new File(alt);
+          }
+        }
         if (!f.exists) {
           logLine("ERR", "footage file not found path=" + fp + " name=" + nm);
           return null;
@@ -532,6 +602,7 @@
             try {
               var idx = cs.i;
               if (idx < 0 || idx >= L) continue; // OOB guard
+              if (s.charAt(idx) === "\r") continue; // avoid range edits on line-break glyph
               var r = textDoc.characterRange(idx, idx + 1);
               if (cs.font !== undefined) r.font = cs.font;
               if (cs.fontSize !== undefined) r.fontSize = cs.fontSize;
@@ -697,10 +768,13 @@
       logLine("INFO", "CREATE name=" + lData.name + " type=" + lData.type + " target=" + target.name +
         " in=" + fmtNum(inT) + " out=" + fmtNum(outT)
       );
+      logLine("INFO", "LAYER_BEGIN name=" + lData.name + " type=" + lData.type);
+      _writeHeartbeat(lData.name, "layer_begin");
 
       var layer = null;
 
       try {
+        phaseStart(lData.name, "create");
         if (lData.type === "text") {
           layer = target.layers.addText(String(lData.text || "").replace(/\r/g, "\r"));
 
@@ -725,9 +799,12 @@
 
         } else {
           logLine("ERR", "unknown layer type=" + lData.type + " layer=" + lData.name);
+          logLine("ERR", "LAYER_FAIL name=" + lData.name + " phase=create");
           return;
         }
+        phaseDone(lData.name, "create");
       } catch(e) {
+        logLine("ERR", "LAYER_FAIL name=" + lData.name + " phase=create");
         logErr("create layer failed name=" + lData.name, e);
         return;
       }
@@ -770,6 +847,7 @@
       // effects (you said "похуй на параметры": errors are logged and ignored)
       if (lData.effects) {
         try {
+          phaseStart(layer.name, "effects");
           var fxParade = layer.property("ADBE Effect Parade");
           for (var fxKey in lData.effects) {
             var fxData = lData.effects[fxKey];
@@ -786,12 +864,14 @@
               } catch(eFx) { logErr("fx param apply failed fx=" + fxKey + " layer=" + layer.name, eFx); }
             }
           }
+          phaseDone(layer.name, "effects");
         } catch(eEff) { logErr("effects apply failed layer=" + layer.name, eEff); }
       }
 
       // transforms
       if (lData.props) {
         try {
+          phaseStart(layer.name, "transforms");
           var tf = layer.property("ADBE Transform Group");
           for (var pk in lData.props) {
             if (pk === "reveal" || pk === "reveal_end" || pk === "anim_opacity") continue;
@@ -804,13 +884,18 @@
             }
             applyValue(pr, pd, "tf=" + pd.match_name + " key=" + pk + " layer=" + layer.name);
           }
+          phaseDone(layer.name, "transforms");
         } catch(eTf) { logErr("transform apply failed layer=" + layer.name, eTf); }
       }
 
       // text styles + animator
       if (lData.type === "text") {
+        phaseStart(layer.name, "text_document");
         applyTextBaseAndCharStyles(layer, lData);
+        phaseDone(layer.name, "text_document");
+        phaseStart(layer.name, "text_animator");
         applyTextAnimatorFromBlueprint(layer, lData);
+        phaseDone(layer.name, "text_animator");
       }
 
       // snapshot
@@ -832,6 +917,8 @@
           " op=" + safeJson(op, 120)
         );
       } catch(eSnap) { logErr("snapshot failed layer=" + layer.name, eSnap); }
+      logLine("INFO", "LAYER_OK name=" + layer.name);
+      _writeHeartbeat(layer.name, "layer_ok");
     }
 
     // ==========================================================
@@ -876,7 +963,7 @@
     app.endUndoGroup();
 
   } catch(eTop) {
-    try { __writeAeStatusErr("top-level error: " + (eTop && eTop.toString ? eTop.toString() : String(eTop))); } catch(_) {}
+    try { __writeAeStatusErr("top-level error: " + (eTop && eTop.toString ? eTop.toString() : String(eTop)) + " | last_hb=" + String(__LAST_HB || "")); } catch(_) {}
     try { app.endSuppressDialogs(false); } catch(_) {}
     try { app.endUndoGroup(); } catch(_) {}
     throw eTop;

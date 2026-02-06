@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+import os
 from typing import Any, Dict, List
 
 from app.orchestrator import ProjectOrchestrator
@@ -33,6 +35,100 @@ def _normalize_layer_dict(l: Dict[str, Any], *, text_comp_name: str, mine_comp_n
         meta["comp_name_target"] = text_comp_name
 
 
+def _iter_property_dicts(layer: Dict[str, Any]) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    props = layer.get("props")
+    if isinstance(props, dict):
+        for pd in props.values():
+            if isinstance(pd, dict):
+                out.append(pd)
+    effects = layer.get("effects")
+    if isinstance(effects, dict):
+        for params in effects.values():
+            if isinstance(params, dict):
+                for pd in params.values():
+                    if isinstance(pd, dict):
+                        out.append(pd)
+    return out
+
+
+def _preflight_clamp_text_layers(
+    layers: List[Dict[str, Any]],
+    *,
+    fps: float,
+    strict: bool,
+) -> None:
+    if fps <= 0:
+        fps = 23.9759979248047
+    dt = 1.0 / float(fps)
+    eps = dt / 10.0
+
+    for l in layers:
+        if not isinstance(l, dict):
+            continue
+        tpe = str(l.get("type") or "")
+        if tpe not in {"text", "adjustment"}:
+            continue
+
+        try:
+            in_p = float(l.get("in_point"))
+            out_p = float(l.get("out_point"))
+        except Exception:
+            if strict:
+                raise ValueError(f"Preflight: invalid in/out in layer {l.get('name')!r}")
+            continue
+        if out_p <= in_p:
+            if strict:
+                raise ValueError(f"Preflight: out<=in in layer {l.get('name')!r}: {in_p}..{out_p}")
+            out_p = in_p + dt
+            l["out_point"] = out_p
+
+        max_t = out_p - dt
+        if max_t < in_p:
+            max_t = in_p
+
+        for pd in _iter_property_dicts(l):
+            kfs = pd.get("keyframes")
+            if not isinstance(kfs, list) or not kfs:
+                continue
+
+            cleaned: List[Dict[str, Any]] = []
+            for kf in kfs:
+                if not isinstance(kf, dict):
+                    continue
+                t = kf.get("t")
+                try:
+                    tf = float(t)
+                except Exception:
+                    if strict:
+                        raise ValueError(f"Preflight: non-float keyframe time in layer {l.get('name')!r}")
+                    continue
+                if not math.isfinite(tf):
+                    if strict:
+                        raise ValueError(f"Preflight: non-finite keyframe time in layer {l.get('name')!r}")
+                    continue
+                if tf < in_p:
+                    tf = in_p
+                if tf > max_t:
+                    tf = max_t
+                nkf = dict(kf)
+                nkf["t"] = tf
+                cleaned.append(nkf)
+
+            cleaned.sort(key=lambda x: float(x.get("t", 0.0)))
+            prev_t = in_p - eps
+            for nkf in cleaned:
+                t0 = float(nkf["t"])
+                if t0 <= prev_t:
+                    t0 = prev_t + eps
+                if t0 > max_t:
+                    t0 = max_t
+                nkf["t"] = t0
+                prev_t = t0
+
+            pd["keyframes"] = cleaned
+
+
 def build_text_layers(*, full_edit_config: Dict[str, Any], text_comp_name: str, mine_comp_name: str) -> List[Dict[str, Any]]:
     orch = ProjectOrchestrator(full_edit_config)
     orch.build()
@@ -51,5 +147,14 @@ def build_text_layers(*, full_edit_config: Dict[str, Any], text_comp_name: str, 
 
         if isinstance(l, dict):
             _normalize_layer_dict(l, text_comp_name=text_comp_name, mine_comp_name=mine_comp_name)
+
+    comp = full_edit_config.get("composition") if isinstance(full_edit_config, dict) else {}
+    fps_raw = comp.get("fps", 23.9759979248047) if isinstance(comp, dict) else 23.9759979248047
+    try:
+        fps = float(fps_raw)
+    except Exception:
+        fps = 23.9759979248047
+    strict = (os.environ.get("TEXT_PREFLIGHT_STRICT", "1").strip() != "0")
+    _preflight_clamp_text_layers(layers, fps=fps, strict=strict)
 
     return layers

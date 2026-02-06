@@ -8,11 +8,12 @@ import os
 
 from jinja2 import Environment, FileSystemLoader
 
-from mlcore.cr_patch import patch_payload_dict_inplace
+from mlcore.cr_patch import normalize_segment_inplace, patch_payload_dict_inplace
 from mlcore.timing_calc import compute_timings
 from mlcore.models.full_plan import FullPlanPayload
 from mlcore.models.subtitles_tokens import BlocksTokensPayload, Token
 from mlcore.models.footage_plan import FootageSelectionPayload
+from core.runtime_mode import MODE_DEV, get_runtime_mode
 
 # ✅ single source of truth for FPS (matches AE dump)
 from app.config import FPS as AE_FPS
@@ -81,70 +82,15 @@ def _media_mode() -> str:
       - "appdir"/"windows"/"win": emit empty file_path so JSX resolves via APP_DIR/media/audio/<file_name>
     """
     s = (os.environ.get("AE_MEDIA_MODE") or "").strip().lower()
-    if not s:
-        return "local"
-    return s
+    if s:
+        return s
+    mode = get_runtime_mode()
+    return "local" if mode == MODE_DEV else "appdir"
 
 
 # -------------------------
 # Subtitles sanitation (minimal + deterministic)
 # -------------------------
-def _sanitize_trailing(tokens: List[Dict[str, Any]]) -> None:
-    if not tokens:
-        return
-    for i, t in enumerate(tokens):
-        tr = t.get("trailing", " ")
-        if tr not in (" ", "\r", ""):
-            tr = " "
-        if tr == "" and i != len(tokens) - 1:
-            tr = " "
-        t["trailing"] = tr
-    tokens[-1]["trailing"] = ""
-
-
-def _recon_phrase(tokens: List[Dict[str, Any]]) -> str:
-    return "".join(str(t.get("text", "")) + str(t.get("trailing", "")) for t in tokens)
-
-
-def _sanitize_segment(seg: Dict[str, Any]) -> None:
-    tok = seg.get("tokens")
-    if not isinstance(tok, list) or not tok or not all(isinstance(x, dict) for x in tok):
-        return
-    _sanitize_trailing(tok)
-    seg["phrase"] = _recon_phrase(tok)
-    seg["tokens"] = tok
-
-
-def _sanitize_mine_segment(seg: Dict[str, Any]) -> None:
-    """
-    Mine особенный:
-      - tokens: ровно 1 токен
-      - token.trailing MUST be ""
-      - phrase может быть "ты!" или "\rты!"
-    ВАЖНО: НЕ делаем phrase := recon(tokens), иначе потеряем ведущий '\r'.
-    """
-    tok = seg.get("tokens")
-    if not isinstance(tok, list) or len(tok) != 1 or not isinstance(tok[0], dict):
-        return
-
-    t0 = tok[0]
-    t0["trailing"] = ""
-
-    txt = str(t0.get("text", "") or "")
-    if not txt:
-        return
-
-    phrase = str(seg.get("phrase", "") or "")
-    if phrase.startswith("\r"):
-        if phrase[1:] != txt:
-            seg["phrase"] = "\r" + txt
-    else:
-        if phrase != txt:
-            seg["phrase"] = txt
-
-    seg["tokens"] = [t0]
-
-
 def _legacy_repair_mine_drop_to_mine(d: Dict[str, Any]) -> None:
     """
     Если вдруг где-то прилетел старый формат mine_drop, конвертим в новый mine.
@@ -177,44 +123,46 @@ def sanitize_subtitles_dict_inplace(d: Dict[str, Any]) -> Dict[str, Any]:
     _legacy_repair_mine_drop_to_mine(d)
 
     if isinstance(d.get("block_1"), dict):
-        _sanitize_segment(d["block_1"])
+        normalize_segment_inplace(d["block_1"], force_two_line=False, mine_mode=False)
 
     b2 = d.get("block_2")
     if isinstance(b2, dict):
         if isinstance(b2.get("p1"), dict):
-            _sanitize_segment(b2["p1"])
+            normalize_segment_inplace(b2["p1"], force_two_line=False, mine_mode=False)
         if isinstance(b2.get("p2"), dict):
-            _sanitize_segment(b2["p2"])
+            normalize_segment_inplace(b2["p2"], force_two_line=False, mine_mode=False)
 
     if isinstance(d.get("block_3"), dict):
-        _sanitize_segment(d["block_3"])
+        normalize_segment_inplace(d["block_3"], force_two_line=False, mine_mode=False)
 
     b4 = d.get("block_4")
     if isinstance(b4, dict):
         if isinstance(b4.get("p1"), dict):
-            _sanitize_segment(b4["p1"])
+            normalize_segment_inplace(b4["p1"], force_two_line=False, mine_mode=False)
         if isinstance(b4.get("p2"), dict):
-            _sanitize_segment(b4["p2"])
+            normalize_segment_inplace(b4["p2"], force_two_line=False, mine_mode=False)
 
     b5 = d.get("block_5")
     if isinstance(b5, dict):
         for k in ("slowly_in", "fast_reveal", "glitch_peak"):
             if isinstance(b5.get(k), dict):
-                _sanitize_segment(b5[k])
+                normalize_segment_inplace(b5[k], force_two_line=False, mine_mode=False)
         if isinstance(b5.get("mine"), dict):
-            _sanitize_mine_segment(b5["mine"])
+            normalize_segment_inplace(b5["mine"], force_two_line=False, mine_mode=True)
 
     if isinstance(d.get("block_6"), dict):
-        _sanitize_segment(d["block_6"])
+        normalize_segment_inplace(d["block_6"], force_two_line=False, mine_mode=False)
 
     b7 = d.get("block_7")
     if isinstance(b7, dict):
         if isinstance(b7.get("part1"), dict):
-            _sanitize_segment(b7["part1"])
+            normalize_segment_inplace(b7["part1"], force_two_line=False, mine_mode=False)
         if isinstance(b7.get("part2"), dict):
-            _sanitize_segment(b7["part2"])
+            normalize_segment_inplace(b7["part2"], force_two_line=False, mine_mode=False)
 
-    # keep your deterministic CR patch for multiword segments (NOT mine)
+    # deterministic layout pass:
+    # - puts \r only where style contract expects it
+    # - recomputes trailing from token words
     patch_payload_dict_inplace(d)
     return d
 

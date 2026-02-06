@@ -560,6 +560,13 @@ class GlitchCrescendoDistributor:
         peak = l["glitch_peak"]
 
         mine = l.get("mine")
+        # backward-compat: accept legacy mine_drop shape
+        if not isinstance(mine, dict) and isinstance(l.get("mine_drop"), dict):
+            md = l["mine_drop"]
+            mine = {
+                "phrase": str(md.get("text", "") or ""),
+                "in_out": [float(md.get("t_start", 0.0)), float(md.get("t_end", 0.0))],
+            }
         if not isinstance(mine, dict):
             raise ValueError('GLITCH_CRESCENDO: layers.mine is required (dict with phrase + in_out).')
 

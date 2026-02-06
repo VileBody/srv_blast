@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from google import genai
 from google.genai import types
 
+from mlcore.cr_patch import normalize_segment_inplace
 from mlcore.models import BlocksTokensPayload
 
 
@@ -144,53 +145,14 @@ def _push_r_from_phrase_into_trailing_if_safe(seg: Dict[str, Any]) -> None:
 
 
 def _sanitize_segment(seg: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Canonicalize one {phrase, tokens[]} segment:
-      1) fix trailing
-      2) if phrase had \r but tokens didn't, restore \r in trailing when safe
-      3) set phrase := recon(tokens)
-
-    NOTE: Mine segment is special and handled separately (to keep optional leading '\r').
-    """
-    if not isinstance(seg, dict):
-        return seg
-    tokens = seg.get("tokens")
-    if not isinstance(tokens, list) or not tokens or not all(isinstance(x, dict) for x in tokens):
-        return seg
-
-    _push_r_from_phrase_into_trailing_if_safe(seg)
-    _sanitize_trailing(tokens)
-    seg["phrase"] = _recon_phrase(tokens)
-    seg["tokens"] = tokens
+    if isinstance(seg, dict):
+        normalize_segment_inplace(seg, force_two_line=False, mine_mode=False)
     return seg
 
 
 def _sanitize_mine_segment(seg: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Mine: 1 token, trailing MUST be "", phrase may be "word" or "\rword".
-    Do NOT overwrite phrase with recon(tokens), иначе потеряем ведущий '\r'.
-    """
-    if not isinstance(seg, dict):
-        return seg
-    tokens = seg.get("tokens")
-    if not isinstance(tokens, list) or len(tokens) != 1 or not isinstance(tokens[0], dict):
-        return seg
-
-    t0 = tokens[0]
-    txt = str(t0.get("text", "") or "")
-    if not txt:
-        return seg
-
-    t0["trailing"] = ""
-    seg["tokens"] = [t0]
-
-    phrase = str(seg.get("phrase", "") or "")
-    if phrase.startswith("\r"):
-        if phrase[1:] != txt:
-            seg["phrase"] = "\r" + txt
-    else:
-        if phrase != txt:
-            seg["phrase"] = txt
+    if isinstance(seg, dict):
+        normalize_segment_inplace(seg, force_two_line=False, mine_mode=True)
     return seg
 
 
@@ -238,6 +200,30 @@ def _sanitize_payload_dict(d: Dict[str, Any]) -> Dict[str, Any]:
 
             if isinstance(b5.get("mine"), dict):
                 b5["mine"] = _sanitize_mine_segment(b5["mine"])
+
+            # Strict repair for block_5 contract:
+            # if mine token is duplicated inside glitch_peak tokens, remove duplicates,
+            # then rebuild phrase from filtered tokens.
+            gp = b5.get("glitch_peak")
+            mine = b5.get("mine")
+            if isinstance(gp, dict) and isinstance(mine, dict):
+                mtoks = mine.get("tokens")
+                gtoks = gp.get("tokens")
+                if (
+                    isinstance(mtoks, list)
+                    and len(mtoks) == 1
+                    and isinstance(mtoks[0], dict)
+                    and isinstance(gtoks, list)
+                    and all(isinstance(x, dict) for x in gtoks)
+                ):
+                    mine_txt = str(mtoks[0].get("text", "") or "")
+                    if mine_txt:
+                        filtered = [t for t in gtoks if str(t.get("text", "") or "") != mine_txt]
+                        if filtered and len(filtered) != len(gtoks):
+                            _sanitize_trailing(filtered)
+                            gp["tokens"] = filtered
+                            gp["phrase"] = _recon_phrase(filtered)
+                            b5["glitch_peak"] = gp
     except Exception:
         pass
 

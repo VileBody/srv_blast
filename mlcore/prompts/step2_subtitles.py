@@ -19,12 +19,12 @@ Rules:
 - Use high precision (>= 3 decimals, more OK).
 
 Token <-> phrase invariants:
-- phrase == concat(tokens[i].text + tokens[i].trailing)
-- trailing must be exactly one of: " ", "\r", ""
-- last token trailing MUST be "".
-- Use "\r" at most once per phrase (0 or 1). Never use "\n".
-- Punctuation must live inside token.text if present.
-- Tokens MUST match phrase words exactly (split by " " and "\r") — same count, same order.
+- Return plain words with timings only.
+- token.text must be a single word (no spaces, no "\r", no "\n", no "\t").
+- Do NOT add punctuation to token.text.
+- Do NOT rely on manual line breaks ("\r") in phrase.
+- trailing will be normalized downstream; keep it simple (space for non-last token, empty for last is preferred).
+- phrase may be plain-space text assembled from tokens; final layout and "\r" are deterministic postprocess logic.
 
 Block meanings:
 - Keep the existing 7-block structure (intro/waltz/photo/baby/glitch/dual/finale).
@@ -38,13 +38,8 @@ GLITCH BLOCK (block_5) — NEW CONTRACT (variant A):
 
 Mine rules:
 - block_5.mine.tokens MUST contain exactly 1 token.
-- The mine token trailing MUST be "".
 - mine token text must be a single word (no spaces, no "\r", no "\n", no "\t").
-- block_5.mine.phrase may be either:
-    token.text
-  or
-    "\r" + token.text
-  (to allow a leading line break feel)
+- block_5.mine.phrase should equal token.text (line-break styling is handled downstream).
 - glitch_peak.tokens MUST NOT contain the mine token text anywhere.
 - glitch_peak.phrase MUST NOT include the mine token text.
 
