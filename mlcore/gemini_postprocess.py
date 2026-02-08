@@ -247,28 +247,27 @@ def _shift_footage_to_clip_zero(
             }
         )
 
-    payload = {"clips": shifted_clips, "allow_gaps": bool(footage_abs.allow_gaps)}
+    payload = {"clips": shifted_clips, "allow_gaps": False}
     shifted = FootageSelectionPayload.model_validate(payload)
 
-    if not shifted.allow_gaps:
-        clips = list(shifted.clips)
-        clips.sort(key=lambda c: float(c.in_point))
-        if not clips:
-            raise ValueError("FootageSelectionPayload.clips is empty after shift")
+    clips = list(shifted.clips)
+    clips.sort(key=lambda c: float(c.in_point))
+    if not clips:
+        raise ValueError("FootageSelectionPayload.clips is empty after shift")
 
-        if abs(float(clips[0].in_point) - 0.0) > 1e-6:
-            raise ValueError(f"Footage must start at 0.0 (got {clips[0].in_point})")
+    if abs(float(clips[0].in_point) - 0.0) > 1e-6:
+        raise ValueError(f"Footage must start at 0.0 (got {clips[0].in_point})")
 
-        for i in range(len(clips) - 1):
-            a = clips[i]
-            b = clips[i + 1]
-            if abs(float(b.in_point) - float(a.out_point)) > 1e-6:
-                raise ValueError(
-                    f"Footage gap/overlap detected: clip[{i}].out={a.out_point} != clip[{i+1}].in={b.in_point}"
-                )
+    for i in range(len(clips) - 1):
+        a = clips[i]
+        b = clips[i + 1]
+        if abs(float(b.in_point) - float(a.out_point)) > 1e-6:
+            raise ValueError(
+                f"Footage gap/overlap detected: clip[{i}].out={a.out_point} != clip[{i+1}].in={b.in_point}"
+            )
 
-        if abs(float(clips[-1].out_point) - float(dur)) > 1e-6:
-            raise ValueError(f"Footage must end at duration={dur} (got {clips[-1].out_point})")
+    if abs(float(clips[-1].out_point) - float(dur)) > 1e-6:
+        raise ValueError(f"Footage must end at duration={dur} (got {clips[-1].out_point})")
 
     return shifted
 
@@ -432,7 +431,7 @@ def render_all_steps(
     t3 = env.get_template("step3_template.j2")
     footage_str = t3.render(
         main_comp_w=1080,
-        main_comp_h=1080,
+        main_comp_h=1960,
         main_comp_fps=float(AE_FPS),  # ✅ FIX: was missing (caused UndefinedError)
         text_dur_hint=float(comp_dur),
         adjustment_preset=preset,

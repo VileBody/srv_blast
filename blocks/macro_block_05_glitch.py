@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+import logging
 from typing import Any, Dict, List, Optional
 
 from app.config import FPS, INTRO_BLENDING_MODE_CODE, INTRO_TEXT_BASE
@@ -10,6 +11,8 @@ from core.text_rules import apply_style_rule
 from core.types import KeyframeData, KeyframeEase, LayerBlueprint, PropertyData
 
 from .common import apply_tf_from_config
+
+_LOG = logging.getLogger("blocks.macro_block_05_glitch")
 
 
 # =============================================================================
@@ -571,9 +574,18 @@ class GlitchCrescendoDistributor:
             raise ValueError('GLITCH_CRESCENDO: layers.mine is required (dict with phrase + in_out).')
 
         mine_phrase_raw = str(mine.get("phrase", "") or "")
-        mine_phrase = mine_phrase_raw.replace("\r", "").strip()
+        mine_phrase = mine_phrase_raw.replace("\r", " ").strip()
         if not mine_phrase:
             raise ValueError('GLITCH_CRESCENDO: layers.mine.phrase must be non-empty.')
+        mine_words = [w for w in mine_phrase.split(" ") if w]
+        mine_word = mine_words[-1]
+        mine_prefix = " ".join(mine_words[:-1]).strip()
+        if mine_prefix:
+            _LOG.info(
+                "mine_multiword_split_applied prefix=%s mine_word=%s",
+                mine_prefix,
+                mine_word,
+            )
 
         mine_in_out = mine.get("in_out")
         if not (isinstance(mine_in_out, (list, tuple)) and len(mine_in_out) == 2):
@@ -585,13 +597,18 @@ class GlitchCrescendoDistributor:
             # protect against zero window
             mine_out = mine_in + _dt()
 
-        # Peak text must NOT include Mine phrase (contract), but we still hard-guard
-        peak_phrase = str(peak.get("phrase", "") or "")
-        if mine_phrase and mine_phrase in peak_phrase.replace("\r", ""):
-            raise ValueError(
-                'GLITCH_CRESCENDO: layers.glitch_peak.phrase contains mine.phrase. '
-                'Contract violation: peak must NOT contain Mine text.'
+        # Peak text ideally should NOT include Mine word (style contract), but repeated words
+        # across the track are normal. Enforce separation by TIME (handled upstream) rather
+        # than by raw text containment here.
+        peak_phrase_base = str(peak.get("phrase", "") or "").replace("\r", " ").strip()
+        if mine_word and mine_word in peak_phrase_base:
+            _LOG.warning(
+                "GLITCH_CRESCENDO: peak phrase contains mine word by text (allowed). "
+                "mine_word=%r peak_phrase=%r",
+                mine_word,
+                peak_phrase_base,
             )
+        peak_phrase = (peak_phrase_base + (" " + mine_prefix if mine_prefix else "")).strip()
 
         # layers (texts)
         self.txt1 = TextLayerGlitch(
@@ -619,7 +636,7 @@ class GlitchCrescendoDistributor:
 
         # main peak text (no Mine)
         self.txt3_peak = TextLayerGlitch(
-            phrase=str(peak["phrase"]),
+            phrase=peak_phrase,
             in_p=float(peak["in_out"][0]),
             out_p=float(peak["in_out"][1]),
             z_index=12,
@@ -639,7 +656,7 @@ class GlitchCrescendoDistributor:
         self.mine_bg = VideoLayerMineBlur(mine_in, mine_out).blueprint
         self.mine_fg = VideoLayerMineMain(mine_in, mine_out).blueprint
 
-        mine_drop = {"text": mine_phrase, "t_start": mine_in, "t_end": mine_out}
+        mine_drop = {"text": mine_word, "t_start": mine_in, "t_end": mine_out}
         self.mine_inner = MineInnerDistributor(mine_drop, nest_in=mine_in, mine_comp_dur=MINE_COMP_DUR)
 
         self.layers = [

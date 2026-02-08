@@ -22,6 +22,6 @@ You must output an object "audio" with fields:
 - moment_of_interest_sec: number|null (optional marker on FULL TRACK)
 
 Hard constraints:
-- Duration MUST be 15..25 seconds (prefer 18..20 if uncertain).
+- Duration MUST be 13..18 seconds (prefer 14..17 if uncertain).
 - clip_end_abs > clip_start_abs.
 """

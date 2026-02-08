@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Optional, Tuple
 
 from dotenv import load_dotenv
+from core.runtime_mode import MODE_DEV, get_runtime_mode
 
 REPO_ROOT = Path(__file__).resolve().parent
 if str(REPO_ROOT) not in sys.path:
@@ -30,6 +31,14 @@ def _require_env(key: str) -> str:
     if not v:
         raise RuntimeError(f"Missing required env var: {key}")
     return v
+
+
+def _require_any_env(*keys: str) -> str:
+    for k in keys:
+        v = (os.environ.get(k, "") or "").strip()
+        if v:
+            return v
+    raise RuntimeError(f"Missing required env var (one of): {', '.join(keys)}")
 
 
 def _path(p: str) -> Path:
@@ -135,6 +144,7 @@ def main() -> int:
     args = parser.parse_args()
 
     _load_env()
+    mode = get_runtime_mode()
 
     full_edit_config_path = _path(args.full_edit)
     footage_config_path = _path(args.footage)
@@ -144,7 +154,53 @@ def main() -> int:
     # 1) LLM step: generate configs
     if not args.skip_llm:
         _require_env("GEMINI_API_KEY")
-        _require_env("GEMINI_MODEL")
+        _require_any_env("GEMINI_MODEL_STAGE1_ASR", "GEMINI_MODEL_STAGE1")
+        _require_env("GEMINI_MODEL_SUBTITLES")
+        _require_env("GEMINI_MODEL_FOOTAGE")
+
+        # Self-healing for stale local inventory: rebuild once if durations are missing.
+        if mode == MODE_DEV:
+            inv_path = Path(
+                os.environ.get("FOOTAGE_INVENTORY_JSON", str(REPO_ROOT / "data" / "footage_inventory.json"))
+            ).resolve()
+            try:
+                inv = json.loads(inv_path.read_text(encoding="utf-8"))
+                assets = inv.get("assets") if isinstance(inv, dict) else []
+                durations_ok = 0
+                if isinstance(assets, list):
+                    for it in assets:
+                        if not isinstance(it, dict):
+                            continue
+                        v = it.get("duration_sec")
+                        try:
+                            if float(v) > 0:
+                                durations_ok += 1
+                        except Exception:
+                            pass
+                if isinstance(assets, list) and assets and durations_ok == 0:
+                    from footage_config import build_inventory_and_bundle  # noqa: E402
+
+                    footage_dir = Path(os.environ.get("FOOTAGE_DIR", str(REPO_ROOT / "footage"))).resolve()
+                    desc_dir = Path(
+                        os.environ.get("FOOTAGE_DESCRIPTIONS_DIR", str(REPO_ROOT / "descriptions"))
+                    ).resolve()
+                    inv_out = Path(
+                        os.environ.get("FOOTAGE_INVENTORY_OUT", str(REPO_ROOT / "data" / "footage_inventory.json"))
+                    ).resolve()
+                    bun_out = Path(
+                        os.environ.get("DESCRIPTIONS_BUNDLE_OUT", str(REPO_ROOT / "pins" / "descriptions_bundle.json"))
+                    ).resolve()
+
+                    build_inventory_and_bundle(
+                        repo_root=REPO_ROOT,
+                        footage_dir=footage_dir,
+                        descriptions_dir=desc_dir,
+                        inventory_out_path=inv_out,
+                        bundle_out_path=bun_out,
+                    )
+                    print(f"[catalog] rebuilt local inventory with durations: {inv_out}")
+            except Exception as e:
+                print(f"[catalog] warning: inventory preflight skipped: {e}")
 
         from mlcore.gemini_orchestrator import build_all_via_gemini_one_call  # noqa: E402
 

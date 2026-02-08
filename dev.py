@@ -14,6 +14,7 @@ import time
 import uuid
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
+from core.runtime_mode import MODE_DEV, MODE_PROD, get_runtime_mode
 
 # -----------------------------------------------------------------------------
 # Paths (repo root)
@@ -21,6 +22,7 @@ from typing import Any, Dict, Optional, Tuple
 REPO_ROOT = Path(__file__).resolve().parent
 WORK_ROOT = Path(os.environ.get("WORK_DIR", str(REPO_ROOT / "work"))).resolve()
 OUT_ROOT = Path(os.environ.get("OUTPUT_DIR", str(REPO_ROOT / "output"))).resolve()
+PY_BIN = sys.executable or "python3"
 
 # -----------------------------------------------------------------------------
 # .env loader (strict enough, no surprises)
@@ -85,6 +87,64 @@ def make_job_dirs(job_id: str) -> Tuple[Path, Path, Path]:
     data_dir.mkdir(parents=True, exist_ok=True)
     logs_dir.mkdir(parents=True, exist_ok=True)
     return data_dir, out_dir, logs_dir
+
+
+def _read_json(path: Path) -> Dict[str, Any]:
+    obj = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(obj, dict):
+        raise RuntimeError(f"Expected JSON object in {path}")
+    return obj
+
+
+def _is_audio_name(name: str) -> bool:
+    ext = Path(name).suffix.lower()
+    return ext in {".wav", ".mp3", ".m4a", ".aac", ".flac", ".ogg"}
+
+
+def _expected_audio_name_from_render_payload(render_payload_path: Path) -> str:
+    d = _read_json(render_payload_path)
+    layers = d.get("footage_layers")
+    if not isinstance(layers, list):
+        return ""
+    for layer in layers:
+        if not isinstance(layer, dict):
+            continue
+        td = layer.get("text_data") if isinstance(layer.get("text_data"), dict) else {}
+        meta = td.get("layer_meta") if isinstance(td.get("layer_meta"), dict) else {}
+        src = td.get("source_footage") if isinstance(td.get("source_footage"), dict) else {}
+        fn = str(src.get("file_name") or "").strip()
+        if not fn:
+            continue
+        if bool(meta.get("audioEnabled")) or _is_audio_name(fn):
+            return fn
+    return ""
+
+
+def _preflight_render_audio(
+    *,
+    render_jsx_path: Path,
+    render_payload_path: Path,
+    windows_payload: Dict[str, Any],
+) -> None:
+    jsx = render_jsx_path.read_text(encoding="utf-8")
+    if "media/audio/" not in jsx:
+        raise RuntimeError("preflight failed: render_full.jsx does not reference media/audio path resolution")
+
+    expected_name = _expected_audio_name_from_render_payload(render_payload_path)
+    if not expected_name:
+        raise RuntimeError("preflight failed: cannot determine expected audio file_name from render payload")
+
+    media = windows_payload.get("media")
+    if not isinstance(media, list):
+        raise RuntimeError("preflight failed: windows payload has no media[]")
+
+    expected_rel = f"media/audio/{expected_name}"
+    found = any(isinstance(it, dict) and str(it.get("relpath") or "") == expected_rel for it in media)
+    if not found:
+        raise RuntimeError(
+            f"preflight failed: audio relpath mismatch, expected {expected_rel}, "
+            f"actual={[str(it.get('relpath')) for it in media if isinstance(it, dict)]}"
+        )
 
 # -----------------------------------------------------------------------------
 # Optional: upload audio to S3 and get presigned https url (like your .test.py)
@@ -157,9 +217,11 @@ def run_gemini_only(*, job_id: str, audio_local_path: Path) -> Tuple[Path, Path]
     # Make Gemini use THIS audio
     env["AUDIO_FILE_PATH"] = str(audio_local_path)
     env["AUDIO_DIR"] = str(audio_local_path.parent)
+    mode = get_runtime_mode()
+    env["AE_MEDIA_MODE"] = "local" if mode == MODE_DEV else "appdir"
 
     cmd = (
-        "python run.py "
+        f"{PY_BIN} run.py "
         f"--skip-ae "
         f"--out-dir {out_dir.as_posix()} "
         f"--full-edit {data_dir.as_posix()}/full_edit_config.json "
@@ -190,9 +252,11 @@ def run_builder_only(*, job_id: str, full_edit: Path, footage: Path, audio_local
     if audio_local_path is not None:
         env["AUDIO_FILE_PATH"] = str(audio_local_path)
         env["AUDIO_DIR"] = str(audio_local_path.parent)
+    mode = get_runtime_mode()
+    env["AE_MEDIA_MODE"] = "local" if mode == MODE_DEV else "appdir"
 
     cmd = (
-        "python run.py "
+        f"{PY_BIN} run.py "
         f"--skip-llm "
         f"--out-dir {out_dir.as_posix()} "
         f"--full-edit {full_edit_dst.as_posix()} "
@@ -214,6 +278,8 @@ def dispatch_to_windows_sync(*, job_id: str, audio_url: str, windows_timeout_s: 
     """
     from services.orchestrator.render_manifest import build_windows_job_payload
     from services.orchestrator.windows_client import WindowsRenderClient
+    if get_runtime_mode() != MODE_PROD:
+        raise RuntimeError("dispatch is allowed only in MODE=prod")
 
     data_dir, out_dir, _ = make_job_dirs(job_id)
 
@@ -221,15 +287,23 @@ def dispatch_to_windows_sync(*, job_id: str, audio_url: str, windows_timeout_s: 
     if not windows_url:
         raise RuntimeError("WINDOWS_RENDER_URL is not set")
 
+    render_jsx_path = out_dir / "render_full.jsx"
+    render_payload_path = out_dir / "final_render_instructions_full.json"
+
     payload = build_windows_job_payload(
         job_id=job_id,
-        render_jsx_path=out_dir / "render_full.jsx",
-        render_payload_path=out_dir / "final_render_instructions_full.json",
+        render_jsx_path=render_jsx_path,
+        render_payload_path=render_payload_path,
         audio_url=audio_url,
         entry_comp="Main Render",
         output_relpath="work/output.mp4",
         output_s3_bucket=os.environ.get("S3_BUCKET_OUTPUT_VIDEO", ""),
         output_s3_key=f"renders/{job_id}/output.mp4",
+    )
+    _preflight_render_audio(
+        render_jsx_path=render_jsx_path,
+        render_payload_path=render_payload_path,
+        windows_payload=payload,
     )
 
     print(f"[win] dispatch -> {windows_url} timeout_s={windows_timeout_s}")
@@ -242,6 +316,7 @@ def dispatch_to_windows_sync(*, job_id: str, audio_url: str, windows_timeout_s: 
 # -----------------------------------------------------------------------------
 def main() -> int:
     load_env()
+    mode = get_runtime_mode()
 
     ap = argparse.ArgumentParser("dev.py — local debug runner (no celery)")
     ap.add_argument("--mode", required=True, choices=["builder", "gemini", "full", "dispatch"], help="What to run")
@@ -294,6 +369,8 @@ def main() -> int:
 
     # 3) dispatch-only (assumes out/render_* already exist for job_id)
     if args.mode == "dispatch":
+        if mode != MODE_PROD:
+            raise RuntimeError("MODE=dev: dispatch disabled. Use --mode builder and run JSX locally in AE.")
         if not audio_url:
             raise RuntimeError("dispatch needs audio URL. Use --upload-audio or set AUDIO_REMOTE_URL in env")
         res = dispatch_to_windows_sync(job_id=job_id, audio_url=audio_url, windows_timeout_s=args.windows_timeout_s)
@@ -318,12 +395,15 @@ def main() -> int:
         print(f"  - payload: {payload}")
         print(f"  - jsx:     {jsx}")
 
-        # step C: dispatch (needs url)
-        if not audio_url:
-            raise RuntimeError("full mode needs audio URL for Windows. Use --upload-audio or set AUDIO_REMOTE_URL")
-        res = dispatch_to_windows_sync(job_id=job_id, audio_url=audio_url, windows_timeout_s=args.windows_timeout_s)
-        print("[ok] windows response:")
-        print(json.dumps(res, ensure_ascii=False, indent=2))
+        # step C: dispatch only in prod mode
+        if mode == MODE_PROD:
+            if not audio_url:
+                raise RuntimeError("MODE=prod full mode needs audio URL. Use --upload-audio or set AUDIO_REMOTE_URL")
+            res = dispatch_to_windows_sync(job_id=job_id, audio_url=audio_url, windows_timeout_s=args.windows_timeout_s)
+            print("[ok] windows response:")
+            print(json.dumps(res, ensure_ascii=False, indent=2))
+        else:
+            print("[ok] MODE=dev -> dispatch skipped (use built JSX locally in AE)")
         return 0
 
     raise RuntimeError("unreachable")

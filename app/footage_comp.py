@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import json
+import os
+import logging
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from core.types import KeyframeData, KeyframeEase, LayerBlueprint, PropertyData
+
+LOGGER = logging.getLogger("app.footage_comp")
 
 
 def _looks_like_url(s: str) -> bool:
@@ -60,10 +64,19 @@ def _extract_effects_from_adjustment_dump(dump: Dict[str, Any]) -> Dict[str, Dic
     parade = effect_parades[0]
     effects_out: Dict[str, Dict[str, PropertyData]] = {}
 
-    for eff in (parade.get("children") or []):
+    for eff_i, eff in enumerate((parade.get("children") or [])):
         eff_match = eff.get("matchName")
         if not eff_match:
             continue
+
+        # IMPORTANT:
+        # Some layers (notably "Adjustment Layer 16") contain duplicate effect matchNames
+        # (e.g. two "ADBE Geometry2" instances: "Transform" and "Transform 2").
+        # A plain dict keyed by matchName would overwrite earlier instances and change the look.
+        #
+        # We keep deterministic order by prefixing with the original effect index.
+        # JSX template strips the prefix when calling fxParade.addProperty().
+        eff_key = f"{eff_i:04d}:{eff_match}"
 
         params: Dict[str, PropertyData] = {}
         p_idx = 0
@@ -91,7 +104,7 @@ def _extract_effects_from_adjustment_dump(dump: Dict[str, Any]) -> Dict[str, Dic
             p_idx += 1
 
         if params:
-            effects_out[eff_match] = params
+            effects_out[eff_key] = params
 
     return effects_out
 
@@ -189,6 +202,121 @@ _ADJ16_RULES: Dict[str, Dict[str, float]] = {
     "S_BlurMotion-0051": {"head": 0.250250250250, "tail": 0.291958625292},
 }
 
+def _adj16_amplitude_mult() -> float:
+    raw = (os.environ.get("ADJ16_AMPLITUDE_MULT") or "").strip()
+    if not raw:
+        return 0.85
+    try:
+        v = float(raw)
+    except Exception:
+        return 0.85
+    return max(0.0, min(1.0, v))
+
+
+_ADJ16_AMP_MULT = _adj16_amplitude_mult()
+_ADJ16_AMP_NEUTRAL: Dict[str, float] = {
+    "ADBE Geometry2-0003": 100.0,  # scale-like
+    "ADBE Geometry2-0007": 0.0,    # rotation
+}
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = (os.environ.get(name) or "").strip().lower()
+    if not raw:
+        return default
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _env_pos_float(name: str, default: float) -> float:
+    raw = (os.environ.get(name) or "").strip()
+    if not raw:
+        return float(default)
+    try:
+        v = float(raw)
+    except Exception:
+        return float(default)
+    return v if v > 0.0 else float(default)
+
+
+_ADJ16_FIT_TO_COMP1 = _env_bool("ADJ16_FIT_TO_COMP1", True)
+_ADJ16_REF_W = _env_pos_float("ADJ16_REF_W", 1080.0)
+_ADJ16_REF_H = _env_pos_float("ADJ16_REF_H", 1080.0)
+
+
+def _looks_like_coord_pair(v: Any, *, ref_h: float) -> bool:
+    if not (isinstance(v, list) and len(v) == 2):
+        return False
+    if not (isinstance(v[0], (int, float)) and isinstance(v[1], (int, float))):
+        return False
+    # Skip normalized pairs (0..1-ish). Keep comp-space-like values.
+    if abs(float(v[0])) <= 2.0 and abs(float(v[1])) <= 2.0:
+        return False
+    # Heuristic: Y should be in visible comp-space range, not tiny utility values.
+    return abs(float(v[1])) >= (float(ref_h) * 0.30)
+
+
+def _scale_pair(v: List[float], *, sx: float, sy: float) -> List[float]:
+    return [float(v[0]) * float(sx), float(v[1]) * float(sy)]
+
+
+def _resize_effects_adj16_to_comp(
+    effects: Dict[str, Dict[str, PropertyData]],
+    *,
+    comp_w: int,
+    comp_h: int,
+    ref_w: float,
+    ref_h: float,
+) -> Tuple[Dict[str, Dict[str, PropertyData]], Dict[str, int]]:
+    sx = float(comp_w) / float(ref_w)
+    sy = float(comp_h) / float(ref_h)
+    if abs(sx - 1.0) < 1e-9 and abs(sy - 1.0) < 1e-9:
+        return effects, {"scaled_values": 0, "scaled_keyframes": 0}
+
+    out: Dict[str, Dict[str, PropertyData]] = {}
+    scaled_values = 0
+    scaled_keyframes = 0
+    for eff_k, params in effects.items():
+        out_params: Dict[str, PropertyData] = {}
+        for pk, pd in params.items():
+            val = pd.value
+            if _looks_like_coord_pair(val, ref_h=ref_h):
+                val = _scale_pair(val, sx=sx, sy=sy)
+                scaled_values += 1
+
+            kfs: List[KeyframeData] = []
+            for k in (pd.keyframes or []):
+                kv = k.v
+                if _looks_like_coord_pair(kv, ref_h=ref_h):
+                    kv = _scale_pair(kv, sx=sx, sy=sy)
+                    scaled_keyframes += 1
+                kfs.append(
+                    KeyframeData(
+                        t=float(k.t),
+                        v=kv,
+                        iit=k.iit,
+                        oit=k.oit,
+                        ease_in=list(k.ease_in or []),
+                        ease_out=list(k.ease_out or []),
+                    )
+                )
+            out_params[pk] = PropertyData(match_name=pd.match_name, value=val, keyframes=kfs, expression=pd.expression)
+        out[eff_k] = out_params
+    return out, {"scaled_values": scaled_values, "scaled_keyframes": scaled_keyframes}
+
+
+def _dampen_adj16_value(match_name: str, value: Any) -> Any:
+    neutral = _ADJ16_AMP_NEUTRAL.get(match_name)
+    if neutral is None:
+        return value
+    if not isinstance(value, (int, float)):
+        return value
+
+    out = float(neutral) + (float(value) - float(neutral)) * float(_ADJ16_AMP_MULT)
+    if match_name == "ADBE Geometry2-0003":
+        return max(0.01, out)
+    if match_name == "ADBE Geometry2-0007":
+        return max(-360.0, min(360.0, out))
+    return out
+
 
 def _warp_propertydata_adj16(
     pd: PropertyData,
@@ -228,6 +356,10 @@ def _warp_propertydata_adj16(
                 ease_out=list(k.ease_out or []),
             )
         )
+
+    # Soften aggressive transition spikes on scale/rotation while preserving timing shape.
+    for k in warped:
+        k.v = _dampen_adj16_value(pd.match_name, k.v)
 
     warped = _recompute_ease_speed_by_dvdt(warped)
     return PropertyData(match_name=pd.match_name, keyframes=warped, expression=pd.expression)
@@ -319,11 +451,12 @@ def _footage_bp(
     else:
         bp.text_data["source_footage"] = {"file_name": file_name, "file_path": raw_path}
 
-    # cover mode
-    fit_mode = str(it.get("fit_mode") or "cover")
+    # Always fill the target comp (cover), regardless of incoming fit_mode.
+    # This prevents black bars when source aspect differs from 9:16.
+    fit_mode = "cover"
     sw = it.get("src_w")
     sh = it.get("src_h")
-    if fit_mode == "cover" and sw is not None and sh is not None:
+    if sw is not None and sh is not None:
         sw_i = int(sw)
         sh_i = int(sh)
         anchor, pos, scale = _compute_cover_transform(comp_w, comp_h, sw_i, sh_i)
@@ -414,7 +547,7 @@ def build_footage_layers(
       Footages
     """
     comp_w = int(footage_cfg.get("main_comp_w", 1080))
-    comp_h = int(footage_cfg.get("main_comp_h", 1080))
+    comp_h = int(footage_cfg.get("main_comp_h", 1960))
 
     layers_cfg = list(footage_cfg.get("layers") or [])
 
@@ -430,6 +563,23 @@ def build_footage_layers(
         base_in = float(dump["meta"]["inPoint"])
         base_out = float(dump["meta"]["outPoint"])
         base_effects = _extract_effects_from_adjustment_dump(dump)
+        if base_effects and _ADJ16_FIT_TO_COMP1:
+            base_effects, resize_stats = _resize_effects_adj16_to_comp(
+                base_effects,
+                comp_w=comp_w,
+                comp_h=comp_h,
+                ref_w=_ADJ16_REF_W,
+                ref_h=_ADJ16_REF_H,
+            )
+            LOGGER.info(
+                "adj16_resize_applied ref=%sx%s comp=%sx%s scaled_values=%s scaled_keyframes=%s",
+                _ADJ16_REF_W,
+                _ADJ16_REF_H,
+                comp_w,
+                comp_h,
+                resize_stats["scaled_values"],
+                resize_stats["scaled_keyframes"],
+            )
 
     out: List[LayerBlueprint] = []
 

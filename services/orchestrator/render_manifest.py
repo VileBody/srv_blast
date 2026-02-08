@@ -30,6 +30,20 @@ def _is_audio_by_ext(file_name: str) -> bool:
     return Path(file_name).suffix.lower() in _AUDIO_EXTS
 
 
+def _expected_audio_name_from_payload(footage_layers: List[Dict[str, Any]]) -> str:
+    for layer in footage_layers:
+        if not isinstance(layer, dict):
+            continue
+        td = layer.get("text_data") if isinstance(layer.get("text_data"), dict) else {}
+        src = td.get("source_footage") if isinstance(td.get("source_footage"), dict) else {}
+        fn = str(src.get("file_name") or "").strip()
+        if not fn:
+            continue
+        if _is_audio_by_meta(layer) or _is_audio_by_ext(fn):
+            return fn
+    return ""
+
+
 def collect_media_urls_from_render_payload(
     render_payload_path: Path,
     *,
@@ -48,7 +62,10 @@ def collect_media_urls_from_render_payload(
     if aurl:
         if not _is_remote(aurl):
             raise RuntimeError(f"audio_url must be remote (http/https/s3). got={aurl!r}")
-        audio_name = (aurl.split("?")[0].rstrip("/").split("/")[-1] or "audio").strip()
+        # Use the same name that JSX expects in source_footage.file_name.
+        audio_name = _expected_audio_name_from_payload(footage_layers)
+        if not audio_name:
+            audio_name = (aurl.split("?")[0].rstrip("/").split("/")[-1] or "audio").strip()
         rel_audio = f"media/audio/{audio_name}"
         out.append({"url": aurl, "relpath": rel_audio})
         seen.add(rel_audio)

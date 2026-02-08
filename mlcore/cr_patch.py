@@ -22,6 +22,10 @@ _PHRASE_TARGETS: Tuple[Tuple[str, ...], ...] = (
     ("block_7", "part2"),
 )
 
+_LINE2_WEIGHT: float = 2.0
+_MAX_TOP_LINE_CHARS: int = 18
+_NON_FORCE_BREAK_TRIGGER: int = 16
+
 
 def _clean_phrase(s: str) -> str:
     s = s.replace(CR, " ")
@@ -95,55 +99,75 @@ def _filtered_tokens(tokens: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return out
 
 
-def _weighted_len(words: List[str], *, line2_weight: float = 2.0) -> float:
+def _weighted_len(words: List[str], *, line2_weight: float = _LINE2_WEIGHT) -> float:
     # visual proxy: line2 is 2x size, so weight chars accordingly
     return float(sum(len(w) for w in words)) * float(line2_weight)
 
 
-def _choose_break(words: List[str], *, line2_weight: float = 2.0) -> int:
+def _choose_break(
+    words: List[str],
+    *,
+    line2_weight: float = _LINE2_WEIGHT,
+    force: bool = False,
+    prefer_last_word: bool = True,
+    max_top_chars: int = _MAX_TOP_LINE_CHARS,
+) -> int:
     """
     Returns split index k where:
       line1 = words[:k]
       line2 = words[k:]
 
-    Valid split must satisfy "top line visually wider than bottom line":
-      len(line1) > len(line2) * line2_weight
-
-    Preference:
-      1) if last-word accent (k=n-1) is valid, use it
-      2) otherwise use any valid k with minimal positive width diff
-      3) if no valid k -> no break (k=0)
+    Score is soft:
+      - prefer keeping top visually wider than bottom*weight,
+      - avoid very long top line,
+      - keep weighted max compact,
+      - optionally prefer last-word accent.
+    If force=False, break is applied only when it improves readability enough.
     """
     n = len(words)
     if n <= 1:
         return 0
 
-    if n == 2:
-        l1 = _weighted_len(words[:1], line2_weight=1.0)
-        l2 = _weighted_len(words[1:], line2_weight=line2_weight)
-        return 1 if l1 > l2 else 0
+    single = _weighted_len(words, line2_weight=1.0)
 
-    # Prefer "last word accent" when valid
-    k_last = n - 1
-    l1_last = _weighted_len(words[:k_last], line2_weight=1.0)
-    l2_last = _weighted_len(words[k_last:], line2_weight=line2_weight)
-    if l1_last > l2_last:
-        return k_last
-
-    best_k: Optional[int] = None
-    best_diff: Optional[float] = None
+    best_k = 0
+    best_score: Optional[Tuple[int, int, float, float, int]] = None
 
     for k in range(1, n):
         l1 = _weighted_len(words[:k], line2_weight=1.0)
         l2 = _weighted_len(words[k:], line2_weight=line2_weight)
-        diff = l1 - l2
-        if diff > 0 and (best_diff is None or diff < best_diff):
-            best_k, best_diff = k, diff
+        ratio_ok = 1 if l1 > l2 else 0
+        top_over = max(0.0, l1 - float(max_top_chars))
+        weighted_max = max(l1, l2)
+        balance = abs(l1 - l2)
+        # Lower is better:
+        # 1) prefer ratio_ok
+        # 2) avoid top overflow
+        # 3) reduce weighted max / imbalance
+        # 4) slight preference for last-word accent
+        last_penalty = 0 if (prefer_last_word and k == n - 1) else 1
+        score = (0 if ratio_ok else 1, 0 if top_over == 0 else 1, top_over, weighted_max + 0.25 * balance, last_penalty)
+        if best_score is None or score < best_score:
+            best_score = score
+            best_k = k
 
-    if best_k is not None:
-        return best_k
+    if best_k == 0:
+        return 0
 
-    return 0
+    # Non-forced mode: only split if single line is long enough and split gives meaningful gain.
+    if not force:
+        l1_b = _weighted_len(words[:best_k], line2_weight=1.0)
+        l2_b = _weighted_len(words[best_k:], line2_weight=line2_weight)
+        best_weighted = max(l1_b, l2_b)
+        if int(single) < _NON_FORCE_BREAK_TRIGGER:
+            return 0
+        # Require at least 10% reduction of weighted max or top overflow fix.
+        top_over_single = max(0.0, single - float(max_top_chars))
+        top_over_best = max(0.0, l1_b - float(max_top_chars))
+        if (best_weighted > 0.90 * single) and not (top_over_best < top_over_single):
+            return 0
+
+    return best_k
 
 
 def _set_phrase_and_trailing(tokens: List[Dict[str, Any]], *, break_idx: int = 0) -> str:
@@ -177,7 +201,23 @@ def normalize_segment_inplace(seg: Dict[str, Any], *, force_two_line: bool, mine
 
     break_idx = 0
     if force_two_line:
-        break_idx = _choose_break(words, line2_weight=2.0)
+        break_idx = _choose_break(
+            words,
+            line2_weight=_LINE2_WEIGHT,
+            force=True,
+            prefer_last_word=True,
+            max_top_chars=_MAX_TOP_LINE_CHARS,
+        )
+        if break_idx > 0 and break_idx < len(words):
+            words[break_idx] = _capitalize_word(words[break_idx])
+    else:
+        break_idx = _choose_break(
+            words,
+            line2_weight=_LINE2_WEIGHT,
+            force=False,
+            prefer_last_word=False,
+            max_top_chars=_MAX_TOP_LINE_CHARS,
+        )
         if break_idx > 0 and break_idx < len(words):
             words[break_idx] = _capitalize_word(words[break_idx])
 

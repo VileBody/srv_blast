@@ -16,8 +16,8 @@ class ClipWindow(BaseModel):
         if self.end <= self.start:
             raise ValueError(f"clip.end must be > clip.start (got {self.start}..{self.end})")
         dur = self.end - self.start
-        if dur < 15.0 or dur > 25.0:
-            raise ValueError(f"clip duration must be 15..25 seconds (got {dur})")
+        if dur < 13.0 or dur > 18.0:
+            raise ValueError(f"clip duration must be 13..18 seconds (got {dur})")
         return self
 
 
@@ -125,22 +125,23 @@ class Block5Glitch(BaseModel):
     def _no_mine_token_inside_glitch_peak(self) -> "Block5Glitch":
         mine_tok = self.mine.tokens[0]
 
-        # forbid any token with same text in glitch_peak (strict, to avoid double "ты")
-        for i, t in enumerate(self.glitch_peak.tokens):
-            if t.text == mine_tok.text:
-                raise ValueError(
-                    "glitch_peak must NOT contain mine token (duplicate word). "
-                    f"mine={mine_tok.text!r} found in glitch_peak.tokens[{i}]"
-                )
+        # IMPORTANT:
+        # Repeated words across segments are normal (e.g. "не сошлись, не сошлись...").
+        # We only want to forbid the *same timed token* being present in both glitch_peak and mine,
+        # i.e. overlap in time (which would imply an index/span overlap in our materialization).
+        ms = float(mine_tok.t_start)
+        me = float(mine_tok.t_end)
+        eps = 1e-6
 
-        # also forbid the mine word appearing inside glitch_peak.phrase (extra guard)
-        gp_plain = self.glitch_peak.phrase.replace("\r", " ")
-        mine_plain = mine_tok.text
-        if mine_plain and mine_plain in gp_plain:
-            raise ValueError(
-                "glitch_peak.phrase must NOT include mine token text. "
-                f"mine={mine_plain!r} glitch_peak.phrase={self.glitch_peak.phrase!r}"
-            )
+        for i, t in enumerate(self.glitch_peak.tokens):
+            gs = float(t.t_start)
+            ge = float(t.t_end)
+            overlaps = (ms < ge - eps) and (gs < me - eps)
+            if overlaps:
+                raise ValueError(
+                    "mine token must NOT overlap in time with any glitch_peak token. "
+                    f"mine={mine_tok.text!r} {ms}..{me} overlaps glitch_peak.tokens[{i}]={t.text!r} {gs}..{ge}"
+                )
 
         return self
 

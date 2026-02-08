@@ -16,6 +16,7 @@ from .config import SETTINGS
 from .job_store import JobStore
 from .render_manifest import build_windows_job_payload
 from .windows_client import WindowsRenderClient
+from core.runtime_mode import MODE_PROD, get_runtime_mode
 
 
 def _is_remote_url(u: str) -> bool:
@@ -134,6 +135,9 @@ def _looks_like_gemini_internal_500(text: str) -> bool:
 
 @celery_app.task(name="orchestrator.build_job", bind=True, max_retries=8)
 def build_job(self, job_id: str) -> Dict[str, Any]:
+    if get_runtime_mode() != MODE_PROD:
+        raise RuntimeError("Celery build_job is allowed only in MODE=prod")
+
     store = JobStore.from_env()
     st = store.get(job_id)
     if not st:
@@ -159,14 +163,13 @@ def build_job(self, job_id: str) -> Dict[str, Any]:
     _download(audio_url, local_audio, timeout_s=600.0)
 
     mode = str(req.get("mode") or "with_gemini")
-    cmd = (
+    build_cmd = (
         f"{SETTINGS.pipeline_cmd} "
         f"--out-dir {paths.out_dir.as_posix()} "
         f"--full-edit {paths.data_dir.as_posix()}/full_edit_config.json "
-        f"--footage {paths.data_dir.as_posix()}/footage_config.json"
+        f"--footage {paths.data_dir.as_posix()}/footage_config.json "
+        f"--skip-llm"
     )
-    if mode == "no_gemini":
-        cmd = cmd + " --skip-llm"
 
     env = os.environ.copy()
     env["DATA_DIR"] = str(paths.data_dir)
@@ -178,8 +181,36 @@ def build_job(self, job_id: str) -> Dict[str, Any]:
 
     env["AE_MEDIA_MODE"] = "appdir"
 
+    if mode != "no_gemini":
+        from mlcore.gemini_orchestrator import build_all_via_gemini_one_call
 
-    args = shlex.split(cmd)
+        store.set_status(job_id, "RUNNING", stage="llm_stage1")
+        backup: Dict[str, str | None] = {}
+        for k in ("DATA_DIR", "OUT_DIR", "AUDIO_FILE_PATH", "AUDIO_DIR", "AE_MEDIA_MODE"):
+            backup[k] = os.environ.get(k)
+            os.environ[k] = env[k]
+
+        try:
+            build_all_via_gemini_one_call(
+                progress_cb=lambda stage: store.set_status(job_id, "RUNNING", stage=str(stage))
+            )
+        except Exception as e:
+            text = repr(e)
+            if _looks_like_gemini_internal_500(text):
+                attempt = int(getattr(self.request, "retries", 0)) + 1
+                backoff = min(300.0, float(10 * (2 ** max(0, attempt - 1))))
+                raise self.retry(countdown=backoff, exc=RuntimeError("gemini_internal_500"))
+            raise
+        finally:
+            for k, old in backup.items():
+                if old is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = old
+
+    store.set_status(job_id, "RUNNING", stage="build")
+
+    args = shlex.split(build_cmd)
     proc = subprocess.run(args, cwd=str(repo_root), env=env, capture_output=True, text=True)
     out = proc.stdout or ""
     err = proc.stderr or ""
@@ -192,7 +223,7 @@ def build_job(self, job_id: str) -> Dict[str, Any]:
             raise self.retry(countdown=backoff, exc=RuntimeError("gemini_internal_500"))
 
         raise RuntimeError(
-            f"pipeline_failed rc={proc.returncode}\ncmd={cmd}\n"
+            f"pipeline_failed rc={proc.returncode}\ncmd={build_cmd}\n"
             f"--- stdout (tail) ---\n{out[-8000:]}\n"
             f"--- stderr (tail) ---\n{err[-8000:]}\n"
         )

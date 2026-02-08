@@ -268,6 +268,19 @@
           return null;
         }
       }
+      // Keep comp dimensions in sync with the spec even if the comp already existed
+      // (e.g. when re-running JSX in the same AE project after switching from 1:1 -> 9:16).
+      try {
+        if (spec.w !== undefined && spec.h !== undefined) {
+          var _w0 = Number(c.width), _h0 = Number(c.height);
+          var _w1 = Number(spec.w), _h1 = Number(spec.h);
+          if (!isNaN(_w0) && !isNaN(_h0) && !isNaN(_w1) && !isNaN(_h1) && (_w0 !== _w1 || _h0 !== _h1)) {
+            try { c.width = _w1; } catch(_) {}
+            try { c.height = _h1; } catch(_) {}
+            logLine("INFO", "comp resized name=" + spec.name + " " + _w0 + "x" + _h0 + " -> " + _w1 + "x" + _h1);
+          }
+        }
+      } catch(_) {}
       try { if (spec.fps !== undefined) c.frameRate = spec.fps; } catch(_) {}
       try { if (spec.dur !== undefined) c.duration = spec.dur; } catch(_) {}
       try { if (spec.workAreaStart !== undefined) c.workAreaStart = spec.workAreaStart; } catch(_) {}
@@ -295,7 +308,20 @@
       if (!meta || !meta.name) return null;
 
       var c = __COMPS[String(meta.name)] || findCompByName(String(meta.name));
-      if (c) { __COMPS[c.name] = c; return c; }
+      if (c) {
+        // Same as ensureComp(): keep node precomp dimensions in sync when re-running scripts.
+        try {
+          var _mw = Number(meta.w || 1080), _mh = Number(meta.h || 1920);
+          var _w0 = Number(c.width), _h0 = Number(c.height);
+          if (!isNaN(_w0) && !isNaN(_h0) && !isNaN(_mw) && !isNaN(_mh) && (_w0 !== _mw || _h0 !== _mh)) {
+            try { c.width = _mw; } catch(_) {}
+            try { c.height = _mh; } catch(_) {}
+            logLine("INFO", "precomp resized (node) name=" + c.name + " " + _w0 + "x" + _h0 + " -> " + _mw + "x" + _mh);
+          }
+        } catch(_) {}
+        __COMPS[c.name] = c;
+        return c;
+      }
 
       try {
         c = project.items.addComp(
@@ -401,12 +427,21 @@
       } catch(e) { return false; }
     }
 
+    function _isWindowsHost() {
+      try {
+        var os = String($.os || "").toLowerCase();
+        return os.indexOf("windows") !== -1;
+      } catch(_) { return false; }
+    }
+
     function _shouldResolveViaAppDir(filePath) {
       var fp = String(filePath || "");
       if (!fp || fp === "") return true;
       if (fp.indexOf("http://") === 0 || fp.indexOf("https://") === 0) return true;
       if (fp.indexOf("s3://") === 0) return true;
-      if (_looksLikeUnixAbsPath(fp)) return true;
+      // Linux-style absolute paths like /app/... are invalid on Windows render node,
+      // but valid on macOS local AE. Only force APP_DIR mapping on Windows host.
+      if (_looksLikeUnixAbsPath(fp) && _isWindowsHost()) return true;
       return false;
     }
 
@@ -849,18 +884,36 @@
         try {
           phaseStart(layer.name, "effects");
           var fxParade = layer.property("ADBE Effect Parade");
-          for (var fxKey in lData.effects) {
+          // Support deterministic ordered + duplicate effects by allowing keys like:
+          //   "0002:ADBE Geometry2" (order prefix + matchName)
+          // while also supporting plain keys like:
+          //   "ADBE Turbulent Displace"
+          var fxKeys = [];
+          var hasOrderPrefix = false;
+          for (var kFx in lData.effects) {
+            fxKeys.push(kFx);
+            if (String(kFx).indexOf(":") >= 0) hasOrderPrefix = true;
+          }
+          if (hasOrderPrefix) {
+            fxKeys.sort(); // lexicographic sort => respects 0000:,0001:,... ordering
+          }
+
+          for (var kfi = 0; kfi < fxKeys.length; kfi++) {
+            var fxKey = fxKeys[kfi];
             var fxData = lData.effects[fxKey];
+            var fxMatch = String(fxKey);
+            var colon = fxMatch.indexOf(":");
+            if (colon >= 0) fxMatch = fxMatch.substring(colon + 1);
             var eff = null;
-            try { eff = fxParade.addProperty(fxKey); } catch(eAdd) { eff = null; }
-            if (!eff) { logLine("ERR", "add effect failed fx=" + fxKey + " layer=" + layer.name); continue; }
+            try { eff = fxParade.addProperty(fxMatch); } catch(eAdd) { eff = null; }
+            if (!eff) { logLine("ERR", "add effect failed fx=" + fxMatch + " key=" + fxKey + " layer=" + layer.name); continue; }
 
             for (var paramKey in fxData) {
               var pData = fxData[paramKey];
               try {
                 var p = eff.property(pData.match_name);
                 if (!p) { logLine("ERR", "fx param missing match=" + pData.match_name + " fx=" + fxKey + " layer=" + layer.name); continue; }
-                applyValue(p, pData, "fx=" + fxKey + " param=" + pData.match_name + " layer=" + layer.name);
+                applyValue(p, pData, "fx=" + fxMatch + " key=" + fxKey + " param=" + pData.match_name + " layer=" + layer.name);
               } catch(eFx) { logErr("fx param apply failed fx=" + fxKey + " layer=" + layer.name, eFx); }
             }
           }

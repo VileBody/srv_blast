@@ -54,6 +54,10 @@ help:
 > @echo "  make gemini  AUDIO=...         # run ONLY Gemini step (configs) into $(DATA_DIR) + $(OUT_DIR)"
 > @echo "  make builder AUDIO=...         # run ONLY AE builder step (no Gemini), uses existing configs"
 > @echo "  make dispatch [WINDOWS=...]    # send existing out/render_full.jsx + final_render_instructions_full.json to Windows node"
+> @echo "  make dev-gemini AUDIO=...      # no-queue local runner via dev.py (Gemini only)"
+> @echo "  make dev-builder AUDIO=...     # no-queue local runner via dev.py (builder only)"
+> @echo "  make dev-full AUDIO=...        # no-queue local runner via dev.py (gemini->build->dispatch)"
+> @echo "  make test-smoke                # lightweight smoke checks"
 > @echo ""
 > @echo "Notes:"
 > @echo "  - .env is sourced automatically (if exists)."
@@ -115,3 +119,23 @@ builder: _env _ensure_dirs
 dispatch: _env _ensure_dirs
 > if [[ -z "$(WINDOWS)" ]]; then echo "[ERR] WINDOWS is required (or set WINDOWS_RENDER_URL in .env). Example: make dispatch WINDOWS=http://217.199.253.173:8000"; exit 2; fi
 > $(PY) - <<'PY'\nimport json, os\nfrom pathlib import Path\n\nfrom services.orchestrator.render_manifest import build_windows_job_payload\nfrom services.orchestrator.windows_client import WindowsRenderClient\n\nrepo = Path('.').resolve()\ndata_dir = Path(os.environ.get('DATA_DIR','./data')).resolve()\nout_dir  = Path(os.environ.get('OUT_DIR','./out')).resolve()\nwindows  = (os.environ.get('WINDOWS') or os.environ.get('WINDOWS_RENDER_URL') or '').rstrip('/')\n\nrender_jsx = out_dir / 'render_full.jsx'\nrender_payload = out_dir / 'final_render_instructions_full.json'\n\nif not render_jsx.exists():\n    raise SystemExit(f'[ERR] missing {render_jsx}')\nif not render_payload.exists():\n    raise SystemExit(f'[ERR] missing {render_payload}')\n\n# Auto-pick audio_url from footage_config.json (audio_only layer)\nfootage_cfg = data_dir / 'footage_config.json'\nif not footage_cfg.exists():\n    raise SystemExit(f'[ERR] missing {footage_cfg} (needed to auto-pick audio_url)')\n\nd = json.loads(footage_cfg.read_text(encoding='utf-8'))\naudio_url = None\nfor layer in d.get('layers', []) or []:\n    if isinstance(layer, dict) and str(layer.get('type')) == 'audio_only':\n        audio_url = (layer.get('file_path') or '').strip()\n        break\nif not audio_url:\n    raise SystemExit('[ERR] could not find audio_only.file_path in footage_config.json')\n\njob_id = os.environ.get('JOB_ID') or 'manual_dispatch'\n\npayload = build_windows_job_payload(\n    job_id=job_id,\n    render_jsx_path=render_jsx,\n    render_payload_path=render_payload,\n    audio_url=audio_url,\n    entry_comp='Main Render',\n    output_relpath='work/output.mp4',\n    output_s3_bucket=os.environ.get('S3_BUCKET_OUTPUT_VIDEO',''),\n    output_s3_key=f'renders/{job_id}/output.mp4',\n)\n\nprint(f'[dispatch] windows={windows}')\nprint(f'[dispatch] audio_url={audio_url[:120]}...')\nprint(f'[dispatch] jsx={render_jsx}')\nprint(f'[dispatch] payload={render_payload}')\n\nclient = WindowsRenderClient(windows, timeout_s=float(os.environ.get('WINDOWS_TIMEOUT_S','300')))\nres = client.dispatch_render(payload)\nprint('\\n=== WINDOWS RESPONSE ===')\nprint(json.dumps(res, ensure_ascii=False, indent=2))\nPY
+
+# 4) dev.py no-queue wrappers
+.PHONY: dev-gemini
+dev-gemini: _env
+> if [[ -z "$(AUDIO)" ]]; then echo "[ERR] AUDIO is required: make dev-gemini AUDIO=./audio/file.mp3"; exit 2; fi
+> .venv/bin/python dev.py --mode gemini --audio "$(AUDIO)"
+
+.PHONY: dev-builder
+dev-builder: _env
+> if [[ -z "$(AUDIO)" ]]; then echo "[ERR] AUDIO is required: make dev-builder AUDIO=./audio/file.mp3"; exit 2; fi
+> .venv/bin/python dev.py --mode builder --audio "$(AUDIO)" --full-edit "$(DATA_DIR)/full_edit_config.json" --footage "$(DATA_DIR)/footage_config.json"
+
+.PHONY: dev-full
+dev-full: _env
+> if [[ -z "$(AUDIO)" ]]; then echo "[ERR] AUDIO is required: make dev-full AUDIO=./audio/file.mp3"; exit 2; fi
+> .venv/bin/python dev.py --mode full --audio "$(AUDIO)" --upload-audio --windows-timeout-s "$(WINDOWS_TIMEOUT_S)"
+
+.PHONY: test-smoke
+test-smoke:
+> .venv/bin/python - <<'PY'\nfrom pathlib import Path\nimport json\nimport tempfile\nfrom services.orchestrator.render_manifest import collect_media_urls_from_render_payload\nfrom mlcore.gemini_orchestrator import _run_stage2_parallel\n\nwith tempfile.TemporaryDirectory() as td:\n    p = Path(td)/'render_payload.json'\n    p.write_text(json.dumps({"footage_layers":[{"type":"footage","text_data":{"layer_meta":{"audioEnabled":True},"source_footage":{"file_name":"expected.mp3","file_path":""}}}]}, ensure_ascii=False), encoding='utf-8')\n    media = collect_media_urls_from_render_payload(p, audio_url='https://example.com/audio/other_name.mp3?sig=1')\n    assert media[0]['relpath'] == 'media/audio/expected.mp3', media\n\ntry:\n    _run_stage2_parallel(lambda: 'ok', lambda: (_ for _ in ()).throw(RuntimeError('boom')))\nexcept RuntimeError as e:\n    assert str(e) == 'boom'\nelse:\n    raise AssertionError('stage2 parallel did not fail-fast')\n\nprint('smoke checks: OK')\nPY

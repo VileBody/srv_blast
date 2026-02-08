@@ -13,6 +13,7 @@ from blocks import (
     DualTruthDistributor,
     FinaleDistributor,
 )
+from core.text_rules import apply_style_rule
 
 BLOCK_MAP: Dict[str, Any] = {
     "INTRO_ZOOM": IntroDistributor,
@@ -42,6 +43,7 @@ class ProjectOrchestrator:
     SOFTNESS: float = 0.92
     MIN_SCALE_MULT: float = 0.60
     SKIP_TEXTS_LOWER = {"mine"}
+    REBREAK_TRIGGER_CHARS: int = 16
 
     # do NOT autoscale inside precomp nodes (mine must be 1:1)
     SKIP_AUTOSCALE_NODE_TYPES = {"precomp"}
@@ -149,6 +151,86 @@ class ProjectOrchestrator:
         return "".join(ch for ch in s if ch not in bad)
 
     @classmethod
+    def _split_words(cls, phrase: str) -> List[str]:
+        return [w for w in phrase.replace("\r", " ").split(" ") if w]
+
+    @classmethod
+    def _weighted_max_after_break(cls, words: List[str], k: int, w2: float) -> float:
+        l1 = len("".join(words[:k]))
+        l2 = len("".join(words[k:]))
+        return max(float(l1), float(l2) * float(w2))
+
+    @classmethod
+    def _choose_rebreak_idx(cls, phrase: str) -> int:
+        words = cls._split_words(phrase)
+        n = len(words)
+        if n < 3:
+            return 0
+        single = float(len("".join(words)))
+        if int(single) < int(cls.REBREAK_TRIGGER_CHARS):
+            return 0
+
+        best_k = 0
+        best_score: float | None = None
+        for k in range(1, n):
+            wm = cls._weighted_max_after_break(words, k, cls.LINE2_WEIGHT)
+            # Penalize very long top line, keep weighted max compact
+            top = float(len("".join(words[:k])))
+            score = wm + max(0.0, top - 18.0) * 0.5
+            if best_score is None or score < best_score:
+                best_score = score
+                best_k = k
+
+        if best_k <= 0:
+            return 0
+
+        best_wm = cls._weighted_max_after_break(words, best_k, cls.LINE2_WEIGHT)
+        # Require meaningful readability gain
+        if best_wm > 0.98 * single:
+            return 0
+        return best_k
+
+    @classmethod
+    def _current_break_idx(cls, phrase: str) -> int:
+        if "\r" not in phrase:
+            return 0
+        parts = phrase.split("\r", 1)
+        left_words = [w for w in parts[0].split(" ") if w]
+        return len(left_words)
+
+    @classmethod
+    def _maybe_rebreak_phrase(cls, phrase: str) -> str:
+        if not phrase:
+            return phrase
+
+        plain = phrase.replace("\r", " ").strip()
+        words = cls._split_words(plain)
+        if len(words) < 3:
+            return phrase
+
+        k = cls._choose_rebreak_idx(plain)
+        if k <= 0:
+            return phrase
+
+        # If phrase already has a break, rebalance only when materially better.
+        cur_k = cls._current_break_idx(phrase)
+        if cur_k > 0:
+            cur_wm = cls._weighted_max_after_break(words, cur_k, cls.LINE2_WEIGHT)
+            new_wm = cls._weighted_max_after_break(words, k, cls.LINE2_WEIGHT)
+            if new_wm >= 0.92 * cur_wm:
+                return phrase
+
+        return " ".join(words[:k]) + "\r" + " ".join(words[k:])
+
+    @staticmethod
+    def _style_rule_for_layer(layer: Dict[str, Any]) -> str:
+        td = layer.get("text_data") if isinstance(layer.get("text_data"), dict) else {}
+        base = td.get("text_base") if isinstance(td.get("text_base"), dict) else {}
+        if bool(base.get("applyFill", True)) is False and bool(base.get("applyStroke", False)) is True:
+            return "dual_outline"
+        return "break_after_r"
+
+    @classmethod
     def _weighted_max_len(cls, phrase: str, w2: float) -> float:
         lines = phrase.split("\r") if phrase else [""]
         if len(lines) == 1:
@@ -203,6 +285,17 @@ class ProjectOrchestrator:
                 continue
             if phrase.strip().lower() in self.SKIP_TEXTS_LOWER:
                 continue
+
+            # Fallback line-layout pass for builder-only mode (--skip-llm):
+            # if phrase arrived as long one-liner, adaptively insert one \r.
+            rb = self._maybe_rebreak_phrase(phrase)
+            if rb != phrase:
+                layer["text"] = rb
+                phrase = rb
+                td = layer.get("text_data")
+                if isinstance(td, dict):
+                    td["char_styles_ungrouped"] = apply_style_rule(rb, self._style_rule_for_layer(layer))
+                    layer["text_data"] = td
 
             mult = self._scale_mult_for_phrase(phrase)
             if mult >= 0.999999:

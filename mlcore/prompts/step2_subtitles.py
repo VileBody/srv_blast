@@ -28,6 +28,12 @@ Token <-> phrase invariants:
 
 Block meanings:
 - Keep the existing 7-block structure (intro/waltz/photo/baby/glitch/dual/finale).
+- Segment boundaries are editorially fixed by block parts.
+- DO NOT move words between segments/parts/blocks.
+- Keep each segment concise from the start:
+  target <= 6 words per segment and avoid very long single lines
+  (prefer splitting content naturally between existing neighboring segments,
+  but without violating fixed segment boundaries).
 
 GLITCH BLOCK (block_5) — NEW CONTRACT (variant A):
 - block_5 has FOUR parts:

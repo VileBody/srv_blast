@@ -200,30 +200,6 @@ def _sanitize_payload_dict(d: Dict[str, Any]) -> Dict[str, Any]:
 
             if isinstance(b5.get("mine"), dict):
                 b5["mine"] = _sanitize_mine_segment(b5["mine"])
-
-            # Strict repair for block_5 contract:
-            # if mine token is duplicated inside glitch_peak tokens, remove duplicates,
-            # then rebuild phrase from filtered tokens.
-            gp = b5.get("glitch_peak")
-            mine = b5.get("mine")
-            if isinstance(gp, dict) and isinstance(mine, dict):
-                mtoks = mine.get("tokens")
-                gtoks = gp.get("tokens")
-                if (
-                    isinstance(mtoks, list)
-                    and len(mtoks) == 1
-                    and isinstance(mtoks[0], dict)
-                    and isinstance(gtoks, list)
-                    and all(isinstance(x, dict) for x in gtoks)
-                ):
-                    mine_txt = str(mtoks[0].get("text", "") or "")
-                    if mine_txt:
-                        filtered = [t for t in gtoks if str(t.get("text", "") or "") != mine_txt]
-                        if filtered and len(filtered) != len(gtoks):
-                            _sanitize_trailing(filtered)
-                            gp["tokens"] = filtered
-                            gp["phrase"] = _recon_phrase(filtered)
-                            b5["glitch_peak"] = gp
     except Exception:
         pass
 

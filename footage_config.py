@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+from core.runtime_mode import MODE_DEV, MODE_PROD, get_runtime_mode
 
 
 # -----------------------------------------------------------------------------
@@ -19,6 +21,7 @@ class FootageAssetRow:
     file_path: str  # local absolute path OR s3://bucket/key locator
     src_w: int
     src_h: int
+    duration_sec: Optional[float]
     meta: Dict[str, Any]
 
 
@@ -28,18 +31,6 @@ class FootageAssetRow:
 
 def _env(key: str, default: str = "") -> str:
     return (os.environ.get(key, default) or "").strip()
-
-
-def _env_bool(key: str, default: str = "0") -> bool:
-    v = _env(key, default).lower()
-    return v in {"1", "true", "yes", "y", "on"}
-
-
-def s3_enabled() -> bool:
-    """
-    True iff S3_ENABLED is true-ish.
-    """
-    return _env_bool("S3_ENABLED", "0")
 
 
 def _s3_bucket_assets() -> str:
@@ -107,6 +98,42 @@ def _tojson_compact(v: Any) -> str:
     return json.dumps(v, ensure_ascii=False, separators=(",", ":"))
 
 
+def _ffprobe_bin() -> str:
+    return _env("FFPROBE_BIN", "ffprobe")
+
+
+def _probe_duration_sec(local_path: Path) -> Optional[float]:
+    """
+    Read media duration with ffprobe.
+    Returns None if probing fails or duration is invalid.
+    """
+    if not local_path.exists():
+        return None
+    try:
+        cmd = [
+            _ffprobe_bin(),
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            str(local_path),
+        ]
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        if proc.returncode != 0:
+            return None
+        s = (proc.stdout or "").strip()
+        if not s:
+            return None
+        v = float(s)
+        if v <= 0:
+            return None
+        return v
+    except Exception:
+        return None
+
+
 # -----------------------------------------------------------------------------
 # Builders
 # -----------------------------------------------------------------------------
@@ -127,7 +154,7 @@ def build_inventory_and_bundle(
       2) bundle: LLM-friendly meta list (no file_path)
 
     S3 mode:
-      - enabled when S3_ENABLED=true
+      - enabled when MODE=prod
       - file_path becomes s3://bucket/prefix/filename
       - we do NOT verify existence (no HEAD, no presign)
 
@@ -188,7 +215,8 @@ def build_inventory_and_bundle(
             raw_opts.append((fn, w_i, h_i, meta))
 
     # 2) Build inventory rows (dedupe by filename)
-    mode = "s3" if s3_enabled() else "local"
+    runtime_mode = get_runtime_mode()
+    mode = "local" if runtime_mode == MODE_DEV else "s3"
     assets_map: Dict[str, FootageAssetRow] = {}
     missing_files_local: List[str] = []
 
@@ -196,12 +224,14 @@ def build_inventory_and_bundle(
         if fn in assets_map:
             continue
 
+        local_fp = (footage_dir / fn).resolve()
+        duration_sec = _probe_duration_sec(local_fp)
+
         if mode == "s3":
             file_path = _s3_locator_for_filename(fn)
         else:
-            fp = (footage_dir / fn).resolve()
-            file_path = str(fp)
-            if not fp.exists():
+            file_path = str(local_fp)
+            if not local_fp.exists():
                 missing_files_local.append(fn)
 
         assets_map[fn] = FootageAssetRow(
@@ -209,6 +239,7 @@ def build_inventory_and_bundle(
             file_path=file_path,
             src_w=w_i,
             src_h=h_i,
+            duration_sec=duration_sec,
             meta=meta,
         )
 
@@ -220,6 +251,7 @@ def build_inventory_and_bundle(
                 "file_path": row.file_path,
                 "src_w": row.src_w,
                 "src_h": row.src_h,
+                "duration_sec": row.duration_sec,
                 "meta": row.meta,
             }
         )
@@ -259,6 +291,7 @@ def build_inventory_and_bundle(
             "file_name": fn,
             "src_w": sw,
             "src_h": sh,
+            "duration_sec": it.get("duration_sec"),
             "summary": meta.get("summary"),
             "tags": meta.get("tags"),
             "objects": meta.get("objects"),
@@ -311,7 +344,7 @@ def main() -> None:
         max_assets_in_bundle=max_assets,
     )
 
-    mode = "s3" if s3_enabled() else "local"
+    mode = "s3" if get_runtime_mode() == MODE_PROD else "local"
     print(f"[OK] mode:      {mode}")
     print(f"[OK] inventory: {inv_p}")
     print(f"[OK] bundle:    {bun_p}")

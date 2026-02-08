@@ -2,22 +2,39 @@ from __future__ import annotations
 
 SYSTEM_PART = r"""
 ========================
-STAGE 2A — SUBTITLES ONLY
+STAGE 2A — SUBTITLES (TOKENS ALIGNMENT)
 ========================
 You receive:
-- stage1 result (audio window + transcript words + draft blocks)
-- the same audio track
+- stage1 result:
+  - audio clip window
+  - draft_blocks (scenario phrases per segment)
+  - transcript_words (word-level ASR with ABSOLUTE times)
 
 Task:
 - Produce ONLY subtitles payload matching BlocksTokensPayload schema.
 
 Hard constraints:
-- Token times MUST be ABSOLUTE full-track seconds.
-- All tokens MUST be inside [clip.start, clip.end].
-- clip.start == stage1.audio.clip_start_abs.
-- clip.end == stage1.audio.clip_end_abs.
-- Return plain words with timings only:
-  no punctuation in token.text, no explicit "\r" layout decisions.
-- trailing will be normalized downstream (space for non-last, empty for last is preferred).
-- Keep 7-block structure and block_5 split with required mine semantics.
+- Use ONLY tokens from stage1.transcript_words.
+  - For every output token: copy text + t_start + t_end EXACTLY from stage1.transcript_words.
+  - Do NOT invent words or timings.
+- All token times are ABSOLUTE seconds on full-track timeline.
+- clip.start MUST equal stage1.audio.clip_start_abs EXACTLY.
+- clip.end MUST equal stage1.audio.clip_end_abs EXACTLY.
+- Keep 7-block structure and block_5 split:
+  - slowly_in / fast_reveal / glitch_peak / mine
+- phrase fields:
+  - copy phrase text from stage1.draft_blocks for the corresponding segment (join phrase lists with single spaces).
+  - phrase is for readability; actual layout (\r) and trailing will be applied deterministically downstream.
+- trailing:
+  - you may output only " " or "" (do NOT use "\r" or "\n")
+  - last token in each segment MUST have trailing ""
+- No re-use / no overlap:
+  - tokens across different segments MUST NOT overlap in time and MUST NOT be re-used.
+  - segments must follow the transcript order (timeline order).
+- block_5.mine:
+  - MUST be exactly ONE token.
+  - MUST NOT overlap in time with any block_5.glitch_peak token.
+- Keep segments concise (best effort):
+  - target <= 6 words,
+  - hard cap <= 8 words.
 """
