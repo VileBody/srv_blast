@@ -345,6 +345,19 @@ def build_job(self, job_id: str) -> Dict[str, Any]:
             f"--- stderr (tail) ---\n{err[-8000:]}\n"
         )
 
+    # Hard contract: build must emit artifacts for Windows dispatch.
+    if not paths.render_jsx.exists() or not paths.render_payload.exists():
+        raise RuntimeError(
+            "pipeline_ok_but_missing_artifacts: "
+            f"render_jsx_exists={paths.render_jsx.exists()} "
+            f"render_payload_exists={paths.render_payload.exists()} "
+            f"expected_render_jsx={str(paths.render_jsx)} "
+            f"expected_render_payload={str(paths.render_payload)}\n"
+            f"cmd={build_cmd}\n"
+            f"--- stdout (tail) ---\n{out[-8000:]}\n"
+            f"--- stderr (tail) ---\n{err[-8000:]}\n"
+        )
+
     # Best-effort: keep configs consistent
     _patch_audio_layer_to_remote(paths.footage_config, audio_url=audio_url)
 

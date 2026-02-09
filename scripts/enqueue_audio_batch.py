@@ -136,6 +136,7 @@ def upload_audio_and_presign(audio_path: Path) -> str:
     secret_key = _require_env("S3_SECRET_ACCESS_KEY")
     bucket = _require_env("S3_BUCKET_RAW_AUDIO")
     region = (os.environ.get("S3_REGION", "ru-1") or "ru-1").strip()
+    presign_expires_s = int((os.environ.get("S3_PRESIGN_EXPIRES_S", "") or "86400").strip() or "86400")
 
     sha1 = _sha1_file(audio_path)[:12]
     ext = audio_path.suffix.lower() or ".bin"
@@ -162,7 +163,7 @@ def upload_audio_and_presign(audio_path: Path) -> str:
         s3.generate_presigned_url(
             ClientMethod="get_object",
             Params={"Bucket": bucket, "Key": key},
-            ExpiresIn=60 * 60,  # 1 hour
+            ExpiresIn=int(presign_expires_s),
         )
     )
 
