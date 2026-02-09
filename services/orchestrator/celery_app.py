@@ -112,7 +112,13 @@ celery_app.conf.update(
     task_serializer="json",
     accept_content=["json"],
     result_serializer="json",
-    task_track_started=True,
+    # We persist job state in our own Redis JobStore. Celery's own result backend
+    # (especially STARTED state) is an extra Redis dependency and can fail the task
+    # *before* executing its body if Redis drops the connection.
+    # Keep behavior deterministic: do not rely on Celery result backend at all.
+    task_track_started=False,
+    task_ignore_result=True,
+    task_store_errors_even_if_ignored=False,
     worker_prefetch_multiplier=1,
     task_acks_late=True,
     broker_connection_retry_on_startup=True,
