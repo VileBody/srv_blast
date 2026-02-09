@@ -7,6 +7,7 @@ import shlex
 import subprocess
 import time
 import urllib.request
+import urllib.error
 from pathlib import Path
 from typing import Any, Dict
 
@@ -133,6 +134,70 @@ def _looks_like_gemini_internal_500(text: str) -> bool:
     )
 
 
+def _looks_like_gemini_overloaded_503(text: str) -> bool:
+    """
+    Gemini transient overload / high demand.
+    Example:
+      google.genai.errors.ServerError: 503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently experiencing high demand...'}}
+    """
+    if not text:
+        return False
+    return (
+        ("google.genai.errors.ServerError" in text)
+        and ("503" in text)
+        and ("UNAVAILABLE" in text or "'code': 503" in text or "\"code\": 503" in text)
+    )
+
+
+def _looks_like_gemini_rate_limited_429(text: str) -> bool:
+    """
+    Gemini transient rate limits.
+    We keep matching explicit keywords to avoid false positives.
+    """
+    if not text:
+        return False
+    if "429" not in text:
+        return False
+    return (
+        ("google.genai.errors" in text)
+        and ("RESOURCE_EXHAUSTED" in text or "Too Many Requests" in text or "'code': 429" in text or "\"code\": 429" in text)
+    )
+
+
+def _retry_backoff_s(*, attempt: int, base_s: float, cap_s: float) -> float:
+    """
+    Deterministic exponential backoff.
+    attempt is 1-based.
+    """
+    a = max(1, int(attempt))
+    return min(float(cap_s), float(base_s) * float(2 ** max(0, a - 1)))
+
+
+def _is_transient_windows_error(e: BaseException) -> bool:
+    # Network / transport issues.
+    if isinstance(e, urllib.error.URLError):
+        return True
+    if isinstance(e, TimeoutError):
+        return True
+    if isinstance(e, (ConnectionResetError, BrokenPipeError)):
+        return True
+    if isinstance(e, OSError):
+        msg = (str(e) or "").lower()
+        if "broken pipe" in msg or "connection reset" in msg or "timed out" in msg:
+            return True
+
+    # Retry on 5xx from Windows node.
+    if isinstance(e, urllib.error.HTTPError):
+        try:
+            code = int(getattr(e, "code", 0) or 0)
+        except Exception:
+            code = 0
+        if 500 <= code <= 599:
+            return True
+
+    return False
+
+
 @celery_app.task(name="orchestrator.build_job", bind=True, max_retries=8)
 def build_job(self, job_id: str) -> Dict[str, Any]:
     if get_runtime_mode() != MODE_PROD:
@@ -198,8 +263,16 @@ def build_job(self, job_id: str) -> Dict[str, Any]:
             text = repr(e)
             if _looks_like_gemini_internal_500(text):
                 attempt = int(getattr(self.request, "retries", 0)) + 1
-                backoff = min(300.0, float(10 * (2 ** max(0, attempt - 1))))
+                backoff = _retry_backoff_s(attempt=attempt, base_s=10.0, cap_s=300.0)
                 raise self.retry(countdown=backoff, exc=RuntimeError("gemini_internal_500"))
+            if _looks_like_gemini_overloaded_503(text):
+                attempt = int(getattr(self.request, "retries", 0)) + 1
+                backoff = _retry_backoff_s(attempt=attempt, base_s=30.0, cap_s=900.0)
+                raise self.retry(countdown=backoff, exc=RuntimeError("gemini_overloaded_503"))
+            if _looks_like_gemini_rate_limited_429(text):
+                attempt = int(getattr(self.request, "retries", 0)) + 1
+                backoff = _retry_backoff_s(attempt=attempt, base_s=15.0, cap_s=600.0)
+                raise self.retry(countdown=backoff, exc=RuntimeError("gemini_rate_limited_429"))
             raise
         finally:
             for k, old in backup.items():
@@ -219,7 +292,7 @@ def build_job(self, job_id: str) -> Dict[str, Any]:
         blob = out + "\n" + err
         if _looks_like_gemini_internal_500(blob):
             attempt = int(getattr(self.request, "retries", 0)) + 1
-            backoff = min(300.0, float(10 * (2 ** max(0, attempt - 1))))
+            backoff = _retry_backoff_s(attempt=attempt, base_s=10.0, cap_s=300.0)
             raise self.retry(countdown=backoff, exc=RuntimeError("gemini_internal_500"))
 
         raise RuntimeError(
@@ -246,8 +319,8 @@ def build_job(self, job_id: str) -> Dict[str, Any]:
     return {"ok": True, "stage": "build_done", "paths": paths.manifest()}
 
 
-@celery_app.task(name="orchestrator.dispatch_to_windows")
-def dispatch_to_windows(job_id: str) -> Dict[str, Any]:
+@celery_app.task(name="orchestrator.dispatch_to_windows", bind=True, max_retries=10)
+def dispatch_to_windows(self, job_id: str) -> Dict[str, Any]:
     store = JobStore.from_env()
     st = store.get(job_id)
     if not st:
@@ -290,7 +363,14 @@ def dispatch_to_windows(job_id: str) -> Dict[str, Any]:
     )
 
     client = WindowsRenderClient(SETTINGS.windows_base_url, timeout_s=SETTINGS.windows_timeout_s)
-    res = client.dispatch_render(win_payload)
+    try:
+        res = client.dispatch_render(win_payload)
+    except Exception as e:
+        if _is_transient_windows_error(e):
+            attempt = int(getattr(self.request, "retries", 0)) + 1
+            backoff = _retry_backoff_s(attempt=attempt, base_s=5.0, cap_s=120.0)
+            raise self.retry(countdown=backoff, exc=RuntimeError(f"windows_dispatch_transient: {e!r}"))
+        raise
 
     if isinstance(res, dict) and res.get("_api") == "jobs":
         ok = bool(res.get("success", False))
@@ -312,8 +392,8 @@ def dispatch_to_windows(job_id: str) -> Dict[str, Any]:
     return {"ok": True, "mode": "async_render", "render_id": render_id, "windows": res}
 
 
-@celery_app.task(name="orchestrator.poll_windows_render")
-def poll_windows_render(job_id: str, render_id: str) -> Dict[str, Any]:
+@celery_app.task(name="orchestrator.poll_windows_render", bind=True, max_retries=50)
+def poll_windows_render(self, job_id: str, render_id: str) -> Dict[str, Any]:
     store = JobStore.from_env()
     st = store.get(job_id)
     if not st:
@@ -329,7 +409,18 @@ def poll_windows_render(job_id: str, render_id: str) -> Dict[str, Any]:
     if (now - started_at) > float(SETTINGS.windows_poll_timeout_s):
         raise RuntimeError(f"windows_poll_timeout render_id={render_id}")
 
-    res = client.get_render_status(render_id)
+    try:
+        res = client.get_render_status(render_id)
+    except Exception as e:
+        if _is_transient_windows_error(e):
+            attempt = int(getattr(self.request, "retries", 0)) + 1
+            remaining = float(SETTINGS.windows_poll_timeout_s) - (time.time() - started_at)
+            if remaining <= 0:
+                raise RuntimeError(f"windows_poll_timeout(render_status) render_id={render_id}") from e
+            backoff = _retry_backoff_s(attempt=attempt, base_s=2.0, cap_s=30.0)
+            backoff = min(backoff, max(1.0, remaining))
+            raise self.retry(countdown=backoff, exc=RuntimeError(f"windows_poll_transient: {e!r}"))
+        raise
     if not isinstance(res, dict):
         raise RuntimeError(f"windows_poll_bad_response: {res!r}")
 
