@@ -361,11 +361,32 @@ def render_all_steps(
     # -------------------------
     # STEP 1 (deterministic AE mapping)
     # -------------------------
-    clip_start = float(plan.audio.clip_start_abs)
-    clip_end = float(plan.audio.clip_end_abs)
+    # IMPORTANT: Stage3 must treat Stage2 subtitles clip window as the single source of truth.
+    # Stage1 audio window may be stale if Stage2 was re-generated/edited.
+    subs_dict = plan.subtitles.model_dump(mode="json")
+    sanitize_subtitles_dict_inplace(subs_dict)
+    subs_abs = BlocksTokensPayload.model_validate(subs_dict)
+
+    clip_start = float(subs_abs.clip.start)
+    clip_end = float(subs_abs.clip.end)
     clip_dur = clip_end - clip_start
     if clip_dur <= 0:
-        raise ValueError(f"Invalid audio clip window: {clip_start}..{clip_end}")
+        raise ValueError(f"Invalid subtitles clip window: {clip_start}..{clip_end}")
+
+    # Deterministic diagnostics: log mismatch, but always follow Stage2.
+    try:
+        s1s = float(plan.audio.clip_start_abs)
+        s1e = float(plan.audio.clip_end_abs)
+        if abs(s1s - clip_start) > 1e-6 or abs(s1e - clip_end) > 1e-6:
+            print(
+                "[stage3] clip window override: "
+                f"stage1_audio={s1s}..{s1e} "
+                f"stage2_subtitles={clip_start}..{clip_end} "
+                "(using stage2_subtitles)"
+            )
+    except Exception:
+        # Never fail Stage3 due to diagnostics.
+        pass
 
     audio_obj = {
         "audio": {
@@ -381,10 +402,6 @@ def render_all_steps(
     # -------------------------
     # STEP 2 (absolute -> clip-zero)
     # -------------------------
-    subs_dict = plan.subtitles.model_dump(mode="json")
-    sanitize_subtitles_dict_inplace(subs_dict)
-    subs_abs = BlocksTokensPayload.model_validate(subs_dict)
-
     subs_clip_zero = normalize_subtitles_to_clip_zero(
         subs_abs,
         clip_start_abs=clip_start,

@@ -86,6 +86,14 @@ def _extract_effects_from_adjustment_dump(dump: Dict[str, Any]) -> Dict[str, Dic
             if not pm:
                 continue
 
+            # Layer-index dropdowns (PropertyValueType.LAYER_INDEX) are not portable across comps.
+            # The dump may refer to a layer number that does not exist in the generated comp,
+            # causing AE setValue() errors and visual artifacts (black bars).
+            if str(p.get("propertyValueType") or "") == "6421":
+                params[f"{p_idx:04d}"] = PropertyData(match_name=pm, value=0)
+                p_idx += 1
+                continue
+
             keys = p.get("keys") or []
             if keys:
                 kfs = [_key_to_kf(k) for k in keys]
@@ -564,17 +572,33 @@ def build_footage_layers(
         base_out = float(dump["meta"]["outPoint"])
         base_effects = _extract_effects_from_adjustment_dump(dump)
         if base_effects and _ADJ16_FIT_TO_COMP1:
+            # Prefer the reference adjustment layer size from the dump itself (sourceRectAtInPoint),
+            # fallback to env-based defaults if missing. This avoids hardcoding 1080x1080.
+            ref_w = float(_ADJ16_REF_W)
+            ref_h = float(_ADJ16_REF_H)
+            try:
+                sr = (dump.get("meta") or {}).get("sourceRectAtInPoint") or {}
+                if isinstance(sr, dict):
+                    rw = sr.get("width")
+                    rh = sr.get("height")
+                    if rw is not None and float(rw) > 0:
+                        ref_w = float(rw)
+                    if rh is not None and float(rh) > 0:
+                        ref_h = float(rh)
+            except Exception:
+                pass
+
             base_effects, resize_stats = _resize_effects_adj16_to_comp(
                 base_effects,
                 comp_w=comp_w,
                 comp_h=comp_h,
-                ref_w=_ADJ16_REF_W,
-                ref_h=_ADJ16_REF_H,
+                ref_w=ref_w,
+                ref_h=ref_h,
             )
             LOGGER.info(
                 "adj16_resize_applied ref=%sx%s comp=%sx%s scaled_values=%s scaled_keyframes=%s",
-                _ADJ16_REF_W,
-                _ADJ16_REF_H,
+                ref_w,
+                ref_h,
                 comp_w,
                 comp_h,
                 resize_stats["scaled_values"],
