@@ -174,6 +174,24 @@ def _list_audio_files(audio_dir: Path) -> List[Path]:
     return files
 
 
+def _normalize_files(files: Iterable[str]) -> List[Path]:
+    out: List[Path] = []
+    for raw in files:
+        p = Path(str(raw)).expanduser()
+        if not p.is_absolute():
+            p = (ROOT / p).resolve()
+        else:
+            p = p.resolve()
+        if not p.exists() or not p.is_file():
+            raise RuntimeError(f"--file not found: {p}")
+        if p.suffix.lower() not in _AUDIO_EXTS:
+            raise RuntimeError(f"--file unsupported extension: {p}")
+        out.append(p)
+    # stable order + dedupe
+    uniq = sorted({str(p): p for p in out}.values(), key=lambda x: str(x))
+    return uniq
+
+
 def enqueue_job(*, orch_base_url: str, audio_url: str, job_mode: str, timeout_s: float) -> Dict[str, Any]:
     payload = {
         "audio_s3_url": audio_url,
@@ -232,6 +250,12 @@ def main() -> int:
     ap = argparse.ArgumentParser("enqueue_audio_batch.py — upload local audio files to S3 and enqueue jobs")
     ap.add_argument("--orch", default=os.environ.get("ORCHESTRATOR_PUBLIC_URL", "http://localhost:8000"), help="Orchestrator public URL")
     ap.add_argument("--audio-dir", default=str(ROOT / "audio"), help="Directory with audio files to enqueue")
+    ap.add_argument(
+        "--file",
+        action="append",
+        default=[],
+        help="Audio file path to enqueue (repeatable). If provided, ignores --audio-dir.",
+    )
     ap.add_argument("--job-mode", choices=["with_gemini", "no_gemini"], default="with_gemini", help="Pipeline mode for jobs")
     ap.add_argument("--concurrency", type=int, default=5, help="How many files to upload/enqueue in parallel")
     ap.add_argument("--timeout-s", type=float, default=30.0, help="HTTP timeout for orchestrator enqueue")
@@ -242,9 +266,14 @@ def main() -> int:
     args = ap.parse_args()
 
     audio_dir = Path(args.audio_dir).expanduser().resolve()
-    files = _list_audio_files(audio_dir)
-    if not files:
-        raise SystemExit(f"[ERR] no audio files in: {audio_dir}")
+    if args.file:
+        files = _normalize_files(args.file)
+        if not files:
+            raise SystemExit("[ERR] no --file values provided")
+    else:
+        files = _list_audio_files(audio_dir)
+        if not files:
+            raise SystemExit(f"[ERR] no audio files in: {audio_dir}")
 
     # strict: prod pipeline requires remote URL; this script always uploads to S3
     # so we must have S3 vars configured.
@@ -257,7 +286,10 @@ def main() -> int:
         raise SystemExit("[ERR] --concurrency must be > 0")
 
     print(f"[orch] base={orch}")
-    print(f"[audio] dir={audio_dir} files={len(files)}")
+    if args.file:
+        print(f"[audio] files={len(files)} (via --file)")
+    else:
+        print(f"[audio] dir={audio_dir} files={len(files)}")
     print(
         f"[job] mode={args.job_mode} concurrency={conc} dry_run={('yes' if args.dry_run else 'no')} "
         f"poll={('yes' if args.poll else 'no')}"
