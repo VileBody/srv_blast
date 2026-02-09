@@ -127,11 +127,12 @@ def _patch_audio_layer_to_remote(footage_config_path: Path, *, audio_url: str) -
 def _looks_like_gemini_internal_500(text: str) -> bool:
     if not text:
         return False
-    return (
-        ("google.genai.errors.ServerError" in text)
-        and ("500 INTERNAL" in text)
-        and ("An internal error has occurred" in text)
-    )
+    # Depending on how the exception is rendered, it can be either:
+    # - "google.genai.errors.ServerError: 500 INTERNAL ..."
+    # - "ServerError('500 INTERNAL ...')"
+    if "500" not in text:
+        return False
+    return ("INTERNAL" in text) and ("internal error has occurred" in text.lower())
 
 
 def _looks_like_gemini_overloaded_503(text: str) -> bool:
@@ -142,11 +143,14 @@ def _looks_like_gemini_overloaded_503(text: str) -> bool:
     """
     if not text:
         return False
-    return (
-        ("google.genai.errors.ServerError" in text)
-        and ("503" in text)
-        and ("UNAVAILABLE" in text or "'code': 503" in text or "\"code\": 503" in text)
-    )
+    if "503" not in text:
+        return False
+    lo = text.lower()
+    if "unavailable" not in lo:
+        return False
+    # Typical message contains either "503 UNAVAILABLE" or "code: 503" and often "high demand".
+    # We accept any of these stable indicators to avoid missing retries due to string escaping.
+    return ("503 unavailable" in lo) or ("code" in lo) or ("high demand" in lo)
 
 
 def _looks_like_gemini_rate_limited_429(text: str) -> bool:
@@ -158,10 +162,26 @@ def _looks_like_gemini_rate_limited_429(text: str) -> bool:
         return False
     if "429" not in text:
         return False
-    return (
-        ("google.genai.errors" in text)
-        and ("RESOURCE_EXHAUSTED" in text or "Too Many Requests" in text or "'code': 429" in text or "\"code\": 429" in text)
-    )
+    # Can surface as ClientError/ServerError; we key off explicit code+keyword.
+    lo = text.lower()
+    return ("resource_exhausted" in lo or "too many requests" in lo) and ("429" in lo)
+
+
+def _exc_text(e: BaseException) -> str:
+    """
+    Normalize exception into a stable text blob for our retry matchers.
+    IMPORTANT: do not rely only on repr(e) since it may escape quotes (\\').
+    """
+    parts: list[str] = [type(e).__name__]
+    try:
+        parts.append(str(e))
+    except Exception:
+        pass
+    try:
+        parts.append(repr(e))
+    except Exception:
+        pass
+    return "\n".join([p for p in parts if p])
 
 
 def _retry_backoff_s(*, attempt: int, base_s: float, cap_s: float) -> float:
@@ -284,7 +304,7 @@ def build_job(self, job_id: str) -> Dict[str, Any]:
                 progress_cb=lambda stage: store.set_status(job_id, "RUNNING", stage=str(stage))
             )
         except Exception as e:
-            text = repr(e)
+            text = _exc_text(e)
             if _looks_like_gemini_internal_500(text):
                 attempt = int(getattr(self.request, "retries", 0)) + 1
                 backoff = _retry_backoff_s(attempt=attempt, base_s=10.0, cap_s=300.0)
