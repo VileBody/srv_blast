@@ -45,6 +45,10 @@ class JobBoundTask(Task):
     def _set_failed(self, job_id: str, *, error: str) -> None:
         try:
             store = JobStore.from_env()
+            st = store.get(job_id)
+            # Once SUCCEEDED, do not let subsequent task failures overwrite it.
+            if st and st.status == "SUCCEEDED":
+                return
             store.set_status(job_id, "FAILED", stage=self._stage_name(), error=error)
         except Exception:
             pass
@@ -52,6 +56,10 @@ class JobBoundTask(Task):
     def _set_retrying(self, job_id: str, *, error: str) -> None:
         try:
             store = JobStore.from_env()
+            st = store.get(job_id)
+            # Once SUCCEEDED, do not let retries move it back to RUNNING.
+            if st and st.status == "SUCCEEDED":
+                return
             store.set_status(job_id, "RUNNING", stage=f"{self._stage_name()}_retry", error=error)
         except Exception:
             pass

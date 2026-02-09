@@ -198,6 +198,30 @@ def _is_transient_windows_error(e: BaseException) -> bool:
     return False
 
 
+def _poll_started_at_from_state(st: Any) -> float:
+    """
+    Windows polling timeout should start from dispatch/poll, not from build start.
+    We store poll_started_at into JobState.result on first transition to stage="poll".
+    """
+    try:
+        res = st.result if hasattr(st, "result") else None
+        if isinstance(res, dict):
+            v = res.get("poll_started_at") or res.get("dispatch_started_at")
+            if v is not None:
+                return float(v)
+    except Exception:
+        pass
+
+    try:
+        v2 = getattr(st, "started_at", None) or getattr(st, "updated_at", None)
+        if v2 is not None:
+            return float(v2)
+    except Exception:
+        pass
+
+    return time.time()
+
+
 @celery_app.task(name="orchestrator.build_job", bind=True, max_retries=8)
 def build_job(self, job_id: str) -> Dict[str, Any]:
     if get_runtime_mode() != MODE_PROD:
@@ -344,6 +368,18 @@ def dispatch_to_windows(self, job_id: str) -> Dict[str, Any]:
 
     paths = make_job_paths(work_dir=SETTINGS.work_dir, output_dir=SETTINGS.output_dir, job_id=job_id)
 
+    # Preflight: artifacts MUST exist (worker-build and worker-render must share /app/output).
+    if not paths.render_jsx.exists() or not paths.render_payload.exists():
+        raise RuntimeError(
+            "missing_render_artifacts: "
+            f"render_jsx_exists={paths.render_jsx.exists()} "
+            f"render_payload_exists={paths.render_payload.exists()} "
+            f"expected_render_jsx={str(paths.render_jsx)} "
+            f"expected_render_payload={str(paths.render_payload)}. "
+            "This usually means your containers do not share the same /app/output volume, "
+            "or the build stage did not produce these files."
+        )
+
     win_payload = build_windows_job_payload(
         job_id=job_id,
         render_jsx_path=paths.render_jsx,
@@ -359,7 +395,10 @@ def dispatch_to_windows(self, job_id: str) -> Dict[str, Any]:
         job_id,
         "RUNNING",
         stage="dispatch",
-        result={"dispatch": {"windows_url": SETTINGS.windows_base_url, "audio_url_used": audio_url}},
+        result={
+            "dispatch": {"windows_url": SETTINGS.windows_base_url, "audio_url_used": audio_url},
+            "dispatch_started_at": time.time(),
+        },
     )
 
     client = WindowsRenderClient(SETTINGS.windows_base_url, timeout_s=SETTINGS.windows_timeout_s)
@@ -387,7 +426,13 @@ def dispatch_to_windows(self, job_id: str) -> Dict[str, Any]:
     if not render_id:
         raise RuntimeError(f"windows_bad_response(no render_id): {res}")
 
-    store.set_status(job_id, "RUNNING", stage="poll", result={"render_id": render_id, "windows": res})
+    # Start poll timeout clock from HERE (not from build start).
+    store.set_status(
+        job_id,
+        "RUNNING",
+        stage="poll",
+        result={"render_id": render_id, "windows": res, "poll_started_at": time.time()},
+    )
     poll_windows_render.apply_async(args=[job_id, render_id], countdown=float(SETTINGS.windows_poll_interval_s))
     return {"ok": True, "mode": "async_render", "render_id": render_id, "windows": res}
 
@@ -404,7 +449,7 @@ def poll_windows_render(self, job_id: str, render_id: str) -> Dict[str, Any]:
 
     client = WindowsRenderClient(SETTINGS.windows_base_url, timeout_s=SETTINGS.windows_timeout_s)
 
-    started_at = float(st.started_at or st.updated_at or time.time())
+    started_at = _poll_started_at_from_state(st)
     now = time.time()
     if (now - started_at) > float(SETTINGS.windows_poll_timeout_s):
         raise RuntimeError(f"windows_poll_timeout render_id={render_id}")
