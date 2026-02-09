@@ -2,14 +2,18 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 import uuid
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, Optional, Tuple, TypeVar
 
 import redis
 
 from .schemas import JobState, JobStatus
+
+
+log = logging.getLogger(__name__)
 
 
 def _now() -> float:
@@ -37,6 +41,9 @@ def _redis_client_from_env() -> redis.Redis:
     )
 
 
+T = TypeVar("T")
+
+
 @dataclass(frozen=True)
 class JobStore:
     """
@@ -60,12 +67,51 @@ class JobStore:
     def _k_idem(self, idem_key: str) -> str:
         return f"{self.key_prefix}:idem:{idem_key}"
 
+    def _redis_max_attempts(self) -> int:
+        try:
+            return max(1, int(_env("JOBSTORE_REDIS_MAX_ATTEMPTS", "5") or "5"))
+        except Exception:
+            return 5
+
+    def _redis_backoff_s(self) -> float:
+        try:
+            return max(0.0, float(_env("JOBSTORE_REDIS_BACKOFF_S", "0.5") or "0.5"))
+        except Exception:
+            return 0.5
+
+    def _redis_call(self, op: str, fn: Callable[[], T]) -> T:
+        """
+        Deterministic retry for transient Redis disconnects/timeouts.
+        We do NOT swallow errors: after N attempts we raise with context.
+        """
+        max_attempts = self._redis_max_attempts()
+        backoff_s = self._redis_backoff_s()
+
+        last: BaseException | None = None
+        for attempt in range(1, max_attempts + 1):
+            try:
+                return fn()
+            except (redis.exceptions.ConnectionError, redis.exceptions.TimeoutError, OSError) as e:
+                last = e
+                if attempt >= max_attempts:
+                    break
+                sleep_s = min(5.0, backoff_s * (2 ** (attempt - 1)))
+                log.warning("redis transient error op=%s attempt=%d/%d sleep=%.2fs err=%r", op, attempt, max_attempts, sleep_s, e)
+                try:
+                    # Force reconnect on next call.
+                    self.r.connection_pool.disconnect()
+                except Exception:
+                    pass
+                time.sleep(sleep_s)
+
+        raise RuntimeError(f"redis_op_failed op={op} attempts={max_attempts} err={last!r}") from last
+
     # -------------------------
     # Core ops
     # -------------------------
 
     def get(self, job_id: str) -> Optional[JobState]:
-        raw = self.r.get(self._k_job(job_id))
+        raw = self._redis_call("get", lambda: self.r.get(self._k_job(job_id)))
         if not raw:
             return None
         try:
@@ -75,7 +121,7 @@ class JobStore:
             return None
 
     def _put(self, st: JobState) -> JobState:
-        self.r.set(self._k_job(st.job_id), st.model_dump_json())
+        self._redis_call("set", lambda: self.r.set(self._k_job(st.job_id), st.model_dump_json()))
         return st
 
     def new_job(
@@ -90,13 +136,13 @@ class JobStore:
         """
         if idempotency_key:
             idem_k = self._k_idem(idempotency_key)
-            existing_job_id = self.r.get(idem_k)
+            existing_job_id = self._redis_call("get_idem", lambda: self.r.get(idem_k))
             if existing_job_id:
                 st = self.get(existing_job_id)
                 if st:
                     return st, False
                 # stale mapping -> delete and continue
-                self.r.delete(idem_k)
+                self._redis_call("delete_idem", lambda: self.r.delete(idem_k))
 
         job_id = uuid.uuid4().hex
         now = _now()
@@ -120,7 +166,7 @@ class JobStore:
 
         if idempotency_key:
             # idempotency mapping (no TTL by default)
-            self.r.set(self._k_idem(idempotency_key), job_id)
+            self._redis_call("set_idem", lambda: self.r.set(self._k_idem(idempotency_key), job_id))
 
         return st, True
 
