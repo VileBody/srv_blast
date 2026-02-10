@@ -176,7 +176,8 @@ def build_inventory_and_bundle(
     }
 
     # 1) Parse descriptions -> collect options
-    raw_opts: List[Tuple[str, int, int, Dict[str, Any]]] = []
+    # (file_name, width, height, duration_sec, meta)
+    raw_opts: List[Tuple[str, int, int, Optional[float], Dict[str, Any]]] = []
 
     for jf in _iter_description_json(descriptions_dir):
         d = _read_json(jf)
@@ -202,6 +203,15 @@ def build_inventory_and_bundle(
             except Exception:
                 continue
 
+            duration_sec: Optional[float] = None
+            if opt.get("duration_sec") is not None:
+                try:
+                    v = float(opt.get("duration_sec"))
+                    if v > 0:
+                        duration_sec = v
+                except Exception:
+                    duration_sec = None
+
             meta = {
                 "description_file": str(jf.relative_to(repo_root)) if repo_root in jf.resolve().parents else str(jf),
                 "summary": resp.get("summary"),
@@ -212,7 +222,7 @@ def build_inventory_and_bundle(
                 "composition": resp.get("composition"),
             }
 
-            raw_opts.append((fn, w_i, h_i, meta))
+            raw_opts.append((fn, w_i, h_i, duration_sec, meta))
 
     # 2) Build inventory rows (dedupe by filename)
     runtime_mode = get_runtime_mode()
@@ -220,12 +230,16 @@ def build_inventory_and_bundle(
     assets_map: Dict[str, FootageAssetRow] = {}
     missing_files_local: List[str] = []
 
-    for fn, w_i, h_i, meta in raw_opts:
+    for fn, w_i, h_i, desc_duration_sec, meta in raw_opts:
         if fn in assets_map:
             continue
 
         local_fp = (footage_dir / fn).resolve()
-        duration_sec = _probe_duration_sec(local_fp)
+        duration_sec = desc_duration_sec
+        if duration_sec is None and mode != "s3":
+            # In local mode, try to probe as best-effort.
+            # In s3 mode, probing local paths is not reliable/expected.
+            duration_sec = _probe_duration_sec(local_fp)
 
         if mode == "s3":
             file_path = _s3_locator_for_filename(fn)
