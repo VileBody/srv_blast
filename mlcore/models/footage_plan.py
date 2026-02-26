@@ -18,7 +18,7 @@ class FootageAsset(BaseModel):
 
 class FootageClipPick(BaseModel):
     """
-    Step 3 output (Gemini):
+    Footage clip contract (produced by deterministic picker code):
       - clip timings are ABSOLUTE seconds on the FULL TRACK timeline,
         and MUST lie inside [audio.clip_start_abs .. audio.clip_end_abs]
       - start_time MUST equal in_point exactly (we do not time-remap here)
@@ -47,7 +47,7 @@ class FootageClipPick(BaseModel):
 
 class FootageSelectionPayload(BaseModel):
     """
-    Step 3 output:
+    Footage selection payload:
       - list of clips (absolute times)
       - allow_gaps: if false, postprocess will enforce continuous coverage
     """

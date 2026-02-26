@@ -6,21 +6,28 @@ import os
 from concurrent.futures import FIRST_EXCEPTION, Future, ThreadPoolExecutor, wait
 from datetime import datetime, timezone
 from pathlib import Path
+import hashlib
 from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar
 import logging
 
-from mlcore.descriptions_bundle import build_descriptions_bundle_from_inventory
 from mlcore.gemini_call import (
-    call_footage_plan_once,
+    call_footage_style_once,
     call_stage1_asr_once,
     call_stage1_scenario_once,
     call_subtitles_plan_once,
-    call_subtitles_spans_once,
     pick_audio_files,
 )
 from mlcore.gemini_client import GeminiClient, GeminiSettings
+from mlcore.footage_picker import (
+    FootagePickerDiagnostics,
+    build_style_groups_from_assets,
+    load_picker_assets_from_inventory,
+    pick_footage_clips_deterministic,
+    validate_style_pick_in_groups,
+)
 from mlcore.gemini_postprocess import render_all_steps
 from mlcore.models.footage_plan import FootageSelectionPayload
+from mlcore.models.footage_style import FootageStylePickPayload
 from mlcore.models.full_plan import FullPlanPayload
 from mlcore.models.stage1_asr import Stage1AsrPayload
 from mlcore.models.stage1_plan import Stage1PlanPayload
@@ -83,92 +90,6 @@ def _load_footage_inventory(inv_path: Path) -> Dict[str, Any]:
     return d
 
 
-def _as_float(v: Any) -> Optional[float]:
-    if v is None:
-        return None
-    try:
-        x = float(v)
-        if x <= 0:
-            return None
-        return x
-    except Exception:
-        return None
-
-
-def _assets_with_duration_for_footage_prompt(inv: Dict[str, Any], *, logger: logging.Logger) -> List[Dict[str, Any]]:
-    fallback_dur = _as_float(os.environ.get("FOOTAGE_DURATION_FALLBACK_SEC"))
-    if fallback_dur is None:
-        fallback_dur = 60.0
-
-    out: List[Dict[str, Any]] = []
-    missing_duration_count = 0
-    for it in (inv.get("assets") or []):
-        if not isinstance(it, dict):
-            continue
-
-        fn = str(it.get("file_name") or "").strip()
-        sw = it.get("src_w")
-        sh = it.get("src_h")
-        if not fn or sw is None or sh is None:
-            continue
-
-        meta = it.get("meta") if isinstance(it.get("meta"), dict) else {}
-
-        dur = _as_float(it.get("duration_sec"))
-        if dur is None:
-            dur = _as_float(it.get("duration"))
-        if dur is None:
-            dur = _as_float(meta.get("duration_sec"))
-        if dur is None:
-            dur = _as_float(meta.get("duration"))
-
-        if dur is None:
-            missing_duration_count += 1
-            dur = fallback_dur
-
-        out.append(
-            {
-                "file_name": fn,
-                "src_w": int(sw),
-                "src_h": int(sh),
-                "duration_sec": float(dur),
-            }
-        )
-
-    if not out:
-        raise RuntimeError("No valid assets in footage inventory")
-
-    if missing_duration_count > 0:
-        logger.warning(
-            "footage_inventory_missing_duration count=%d fallback_duration_sec=%.3f",
-            missing_duration_count,
-            fallback_dur,
-        )
-
-    return out
-
-
-def _resolve_bundle_path(out_dir_hint: Path) -> Path:
-    raw = (os.environ.get("DESCRIPTIONS_BUNDLE_PATH") or "").strip()
-    if raw:
-        p = Path(raw).expanduser()
-        if not p.is_absolute():
-            p = (ROOT / p).resolve()
-        return p.resolve()
-    return (out_dir_hint / "descriptions_bundle.json").resolve()
-
-
-def _read_text(path: Path) -> str:
-    return path.read_text(encoding="utf-8")
-
-
-def _read_bundle_inline(bundle_path: Path, *, max_chars: int) -> str:
-    s = _read_text(bundle_path)
-    if len(s) <= max_chars:
-        return s
-    return s[:max_chars]
-
-
 def _require_model(key: str) -> str:
     v = (os.environ.get(key) or "").strip()
     if not v:
@@ -176,17 +97,34 @@ def _require_model(key: str) -> str:
     return v
 
 
-def _resolve_model(*, key: str, fallback_keys: Optional[List[str]] = None, default: Optional[str] = None) -> str:
-    v = (os.environ.get(key) or "").strip()
-    if v:
-        return v
-    for fk in (fallback_keys or []):
-        vv = (os.environ.get(fk) or "").strip()
-        if vv:
-            return vv
-    if default:
-        return str(default).strip()
-    raise RuntimeError(f"Missing required env var: {key}")
+def _seed_from_key_material(seed_key: str) -> int:
+    d = hashlib.sha256(seed_key.encode("utf-8")).digest()
+    return int.from_bytes(d[:8], byteorder="big", signed=False)
+
+
+def _resolve_footage_seed_key(*, out_dir: Path, logger: logging.Logger) -> str:
+    """
+    Deterministic seed priority:
+      1) STAGE2_SELECTION_SEED (explicit override)
+      2) JOB_ID
+      3) OUT_DIR absolute path
+    """
+    key = (os.environ.get("STAGE2_SELECTION_SEED") or "").strip()
+    source = "STAGE2_SELECTION_SEED"
+    if not key:
+        key = (os.environ.get("JOB_ID") or "").strip()
+        source = "JOB_ID"
+    if not key:
+        key = str(out_dir.resolve())
+        source = "OUT_DIR"
+    seed_value = _seed_from_key_material(key)
+    logger.info(
+        "footage_seed_resolved source=%s key=%s seed=%d",
+        source,
+        key,
+        seed_value,
+    )
+    return key
 
 
 def _make_client(*, api_key: str, model: str, proxy: str, temperature: float, timeout_s: float, logger: logging.Logger) -> GeminiClient:
@@ -586,6 +524,27 @@ def _validate_footage_coverage_abs(
         raise ValueError(f"last.out_point != clip_end_abs ({clips[-1].out_point} != {ce})")
 
 
+def _log_footage_picker_diagnostics(*, logger: logging.Logger, diagnostics: FootagePickerDiagnostics) -> None:
+    logger.info(
+        "footage_picker style=%s/%s target_duration=%.3f primary_pool_duration=%.3f selected_pool_duration=%.3f "
+        "widen=%s repeats=%s seed=%d seed_key=%s",
+        diagnostics.genre,
+        diagnostics.tag,
+        diagnostics.target_duration_sec,
+        diagnostics.primary_pool_duration_sec,
+        diagnostics.selected_pool_duration_sec,
+        diagnostics.widened_to_genre,
+        diagnostics.repeats_used,
+        diagnostics.deterministic_seed,
+        diagnostics.seed_key,
+    )
+    logger.info(
+        "footage_picker selected_file_names_count=%d file_names=%s",
+        len(diagnostics.selected_file_names),
+        diagnostics.selected_file_names,
+    )
+
+
 def build_all_via_gemini_one_call(*, progress_cb: Optional[Callable[[str], None]] = None) -> Dict[str, Path]:
     """
     Backward-compatible function name; implementation is now staged:
@@ -655,22 +614,12 @@ def build_all_via_gemini_one_call(*, progress_cb: Optional[Callable[[str], None]
         raise FileNotFoundError(f"FOOTAGE_INVENTORY_JSON missing: {inv_path}")
 
     inv = _load_footage_inventory(inv_path)
-    assets_for_footage = _assets_with_duration_for_footage_prompt(inv, logger=logger)
+    picker_assets = load_picker_assets_from_inventory(inv)
+    style_groups = build_style_groups_from_assets(picker_assets)
 
     out_dir = Path(os.environ.get("OUT_DIR", str(ROOT / "out"))).resolve()
     logs_dir = out_dir / "logs"
     logs_dir.mkdir(parents=True, exist_ok=True)
-
-    bundle_path = _resolve_bundle_path(out_dir)
-    if not bundle_path.exists():
-        logger.info("bundle missing -> building fallback bundle=%s", str(bundle_path))
-        max_assets_env = (os.environ.get("DESCRIPTIONS_BUNDLE_MAX_ASSETS", "") or "").strip()
-        max_assets: Optional[int] = int(max_assets_env) if max_assets_env else None
-        build_descriptions_bundle_from_inventory(
-            inventory_json=inv_path,
-            out_path=bundle_path,
-            max_assets=max_assets,
-        )
 
     audio_dir = Path(os.environ.get("AUDIO_DIR", str(ROOT / "audio"))).resolve()
     audio_files = pick_audio_files(audio_dir)
@@ -680,9 +629,6 @@ def build_all_via_gemini_one_call(*, progress_cb: Optional[Callable[[str], None]
     cache_path = (out_dir / "gemini_files_cache.json") if use_cache else None
 
     stamp = _stamp()
-    cap_env = (os.environ.get("DESCRIPTIONS_BUNDLE_INLINE_MAX_CHARS") or "").strip()
-    cap = int(cap_env) if cap_env else 250_000
-    bundle_inline = _read_bundle_inline(bundle_path, max_chars=cap)
 
     _emit(progress_cb, "llm_stage1a_asr")
     logger.info("stage1a_start model=%s", model_stage1_asr)
@@ -797,7 +743,12 @@ def build_all_via_gemini_one_call(*, progress_cb: Optional[Callable[[str], None]
     )
 
     _emit(progress_cb, "llm_stage2_parallel")
-    logger.info("stage2_start subtitles_model=%s footage_model=%s", model_subtitles, model_footage)
+    logger.info(
+        "stage2_start subtitles_model=%s footage_style_model=%s style_groups=%d",
+        model_subtitles,
+        model_footage,
+        len(style_groups),
+    )
 
     sub_system = build_stage2_subtitles_system_instruction()
     sub_prompt = build_stage2_subtitles_user_prompt(stage1_json=stage1_json, schema_name="BlocksTokensPayload")
@@ -808,17 +759,12 @@ def build_all_via_gemini_one_call(*, progress_cb: Optional[Callable[[str], None]
     foot_system = build_stage2_footage_system_instruction()
     foot_prompt = build_stage2_footage_user_prompt(
         stage1_json=stage1_json,
-        assets_with_duration=assets_for_footage,
-        schema_name="FootageSelectionPayload",
+        style_groups=style_groups,
+        schema_name="FootageStylePickPayload",
     )
-    foot_prompt = (
-        foot_prompt
-        + "\n\nDESCRIPTIONS_BUNDLE_JSON:\n"
-        + bundle_inline
-    )
-    foot_raw = logs_dir / f"gemini_raw_stage2_footage_{stamp}.json"
-    foot_sys = logs_dir / f"gemini_system_stage2_footage_{stamp}.txt"
-    foot_user = logs_dir / f"gemini_prompt_stage2_footage_{stamp}.txt"
+    foot_raw = logs_dir / f"gemini_raw_stage2_style_{stamp}.json"
+    foot_sys = logs_dir / f"gemini_system_stage2_style_{stamp}.txt"
+    foot_user = logs_dir / f"gemini_prompt_stage2_style_{stamp}.txt"
 
     def _run_subtitles(*, strict: bool) -> BlocksTokensPayload:
         strict_retry_addendum = (
@@ -859,22 +805,22 @@ def build_all_via_gemini_one_call(*, progress_cb: Optional[Callable[[str], None]
         _log_subtitles_token_metrics(payload)
         return payload
 
-    def _run_footage(*, strict: bool) -> FootageSelectionPayload:
+    def _run_style(*, strict: bool) -> FootageStylePickPayload:
         strict_retry_addendum = (
             "\n\nSTRICT_RETRY_RULES:\n"
-            "- Coverage is mandatory: first.in_point==clip_start_abs, last.out_point==clip_end_abs, exact seams.\n"
-            "- Do not output allow_gaps=true.\n"
-            "- Keep clip durations feasible and split into more clips if needed.\n"
+            "- Output only genre + tag from STYLE_POOL_GROUPS_JSON.\n"
+            "- Do NOT output clip timings or file names.\n"
+            "- Prefer style groups with enough aggregate duration to cover stage1 audio window.\n"
         )
         prompt = foot_prompt + strict_retry_addendum if strict else foot_prompt
-        raw_path = (logs_dir / f"gemini_raw_stage2_footage_retry_{stamp}.json") if strict else foot_raw
-        prompt_path = (logs_dir / f"gemini_prompt_stage2_footage_retry_{stamp}.txt") if strict else foot_user
+        raw_path = (logs_dir / f"gemini_raw_stage2_style_retry_{stamp}.json") if strict else foot_raw
+        prompt_path = (logs_dir / f"gemini_prompt_stage2_style_retry_{stamp}.txt") if strict else foot_user
 
-        payload = call_footage_plan_once(
+        payload = call_footage_style_once(
             client=client_footage,
             system_instruction=foot_system,
             user_prompt=str(prompt),
-            # Footage selection needs only the stage1 clip window + assets allow-list (+ descriptions bundle).
+            # Style selection needs only Stage1 context + style pool groups.
             audio_paths=[],
             extra_file_paths=None,
             raw_response_path=raw_path,
@@ -882,21 +828,17 @@ def build_all_via_gemini_one_call(*, progress_cb: Optional[Callable[[str], None]
             prompt_dump_path=prompt_path,
             system_dump_path=foot_sys,
         )
-        _validate_footage_coverage_abs(
-            payload,
-            clip_start_abs=float(stage1.audio.clip_start_abs),
-            clip_end_abs=float(stage1.audio.clip_end_abs),
-        )
+        validate_style_pick_in_groups(payload, style_groups)
         return payload
 
     stage2_last_exc: Exception | None = None
     subtitles_payload: BlocksTokensPayload | None = None
-    footage_payload: FootageSelectionPayload | None = None
+    style_payload: FootageStylePickPayload | None = None
     for stage2_attempt, strict in enumerate((False, True), start=1):
         try:
-            subtitles_payload, footage_payload = _run_stage2_parallel(
+            subtitles_payload, style_payload = _run_stage2_parallel(
                 lambda strict=strict: _run_subtitles(strict=strict),
-                lambda strict=strict: _run_footage(strict=strict),
+                lambda strict=strict: _run_style(strict=strict),
             )
             break
         except Exception as e:
@@ -905,13 +847,33 @@ def build_all_via_gemini_one_call(*, progress_cb: Optional[Callable[[str], None]
             if stage2_attempt >= 2:
                 break
 
-    if subtitles_payload is None or footage_payload is None:
+    if subtitles_payload is None or style_payload is None:
         raise RuntimeError(f"Stage2 failed after one retry: {stage2_last_exc}")
+
+    seed_key = _resolve_footage_seed_key(out_dir=out_dir, logger=logger)
+    footage_payload, pick_diag = pick_footage_clips_deterministic(
+        style_pick=style_payload,
+        assets=picker_assets,
+        clip_start_abs=float(stage1.audio.clip_start_abs),
+        clip_end_abs=float(stage1.audio.clip_end_abs),
+        seed_key=seed_key,
+        fit_mode="cover",
+    )
+    _validate_footage_coverage_abs(
+        footage_payload,
+        clip_start_abs=float(stage1.audio.clip_start_abs),
+        clip_end_abs=float(stage1.audio.clip_end_abs),
+    )
+    _log_footage_picker_diagnostics(logger=logger, diagnostics=pick_diag)
 
     # Debug artifacts (like Stage1): dump parsed Stage2 payloads so we can inspect what the model returned
     # without digging into the raw response wrapper.
     (logs_dir / f"stage2_subtitles_{stamp}.json").write_text(
         json.dumps(subtitles_payload.model_dump(mode="json"), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    (logs_dir / f"stage2_style_{stamp}.json").write_text(
+        json.dumps(style_payload.model_dump(mode="json"), ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
     (logs_dir / f"stage2_footage_{stamp}.json").write_text(
@@ -921,6 +883,10 @@ def build_all_via_gemini_one_call(*, progress_cb: Optional[Callable[[str], None]
     # Convenience "latest" names (per job OUT_DIR).
     (logs_dir / "stage2_subtitles.json").write_text(
         json.dumps(subtitles_payload.model_dump(mode="json"), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    (logs_dir / "stage2_style.json").write_text(
+        json.dumps(style_payload.model_dump(mode="json"), ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
     (logs_dir / "stage2_footage.json").write_text(

@@ -321,12 +321,6 @@ def read_adjustment_preset_from_inventory(footage_inventory_json: Path) -> Dict[
     return preset
 
 
-def read_adj16_base_start_time(repo_root: Path, dump_file: str) -> float:
-    p = (repo_root / dump_file).resolve()
-    d = json.loads(p.read_text(encoding="utf-8"))
-    return float(d["meta"]["startTime"])
-
-
 def _resolve_data_dir(repo_root: Path, data_dir: Path | None) -> Path:
     if data_dir is not None:
         return data_dir.resolve()
@@ -433,8 +427,6 @@ def render_all_steps(
     # -------------------------
     assets_map = load_assets_map_from_inventory(footage_inventory_json)
     preset = read_adjustment_preset_from_inventory(footage_inventory_json)
-    dump_file = str(preset.get("dump_file") or "data/0_4.504505__Adjustment Layer 16__adjustment.json")
-    base_adj_start = read_adj16_base_start_time(repo_root, dump_file)
 
     audio_file_name, audio_file_path_local = _resolve_audio_source(repo_root)
 
@@ -452,7 +444,6 @@ def render_all_steps(
         main_comp_fps=float(AE_FPS),  # ✅ FIX: was missing (caused UndefinedError)
         text_dur_hint=float(comp_dur),
         adjustment_preset=preset,
-        base_adj_start_time=float(base_adj_start),
         footage=footage_clip_zero,
         assets_map=assets_map,
         audio=audio_obj["audio"],

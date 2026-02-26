@@ -11,7 +11,7 @@ from .step1_asr_scenario import SYSTEM_PART as STAGE1
 from .step1a_asr_only import SYSTEM_PART as STAGE1A_ASR
 from .step1b_scenario_only import SYSTEM_PART as STAGE1B_SCENARIO
 from .step2_subtitles_only import SYSTEM_PART as STAGE2_SUBS
-from .step2_footage_only import SYSTEM_PART as STAGE2_FOOTAGE
+from .stage2_footage_style_only import SYSTEM_PART as STAGE2_FOOTAGE_STYLE
 
 
 def build_system_instruction() -> str:
@@ -49,7 +49,7 @@ def build_user_prompt(*, assets: List[Dict], schema_name: str = "FullPlanPayload
         "DESCRIPTIONS_BUNDLE_JSON format:\n"
         "- JSON array of objects.\n"
         "- Each object MUST contain at least: file_name, src_w, src_h.\n"
-        "- It MAY contain: duration_sec, summary, tags, objects, camera, visuals, composition.\n\n"
+        "- It MAY contain technical fields: duration_sec, genre, tag, dominant_color, palette_bins.\n\n"
         "Hard rule:\n"
         "- For footage planning you MUST choose file_name ONLY from DESCRIPTIONS_BUNDLE_JSON.\n"
         "- Do NOT invent new file_name.\n\n"
@@ -164,9 +164,9 @@ def build_stage2_subtitles_user_prompt(
 
 def build_stage2_footage_system_instruction() -> str:
     return (
-        "You are a footage planner for an After Effects pipeline.\n"
+        "You are a footage style picker for an After Effects pipeline.\n"
         "Return ONLY valid JSON matching the provided schema. No markdown. No comments. No extra keys.\n\n"
-        + STAGE2_FOOTAGE.strip()
+        + STAGE2_FOOTAGE_STYLE.strip()
         + "\n"
     )
 
@@ -174,13 +174,13 @@ def build_stage2_footage_system_instruction() -> str:
 def build_stage2_footage_user_prompt(
     *,
     stage1_json: Dict[str, object],
-    assets_with_duration: List[Dict[str, object]],
-    schema_name: str = "FootageSelectionPayload",
+    style_groups: List[Dict[str, object]],
+    schema_name: str = "FootageStylePickPayload",
 ) -> str:
     return (
         f"Return ONLY JSON matching schema: {schema_name}\n\n"
-        "STAGE1_JSON:\n"
+        "STAGE1_CONTEXT_JSON:\n"
         + json.dumps(stage1_json, ensure_ascii=False)
-        + "\n\nASSETS_ALLOW_LIST_JSON:\n"
-        + json.dumps(assets_with_duration, ensure_ascii=False)
+        + "\n\nSTYLE_POOL_GROUPS_JSON:\n"
+        + json.dumps(style_groups, ensure_ascii=False)
     )

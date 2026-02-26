@@ -14,6 +14,7 @@ from mlcore.gemini_client import GeminiClient
 from mlcore.models import BlocksTokensPayload
 from mlcore.models.subtitles_spans import BlocksTokenSpansPayload
 from mlcore.models.footage_plan import FootageSelectionPayload
+from mlcore.models.footage_style import FootageStylePickPayload
 from mlcore.models.full_plan import FullPlanPayload
 from mlcore.models.stage1_asr import Stage1AsrPayload
 from mlcore.models.stage1_plan import Stage1PlanPayload
@@ -385,6 +386,51 @@ def call_footage_plan_once(
 
     payload = client.generate_structured(
         schema_model=FootageSelectionPayload,
+        prompt=user_prompt,
+        files=files,
+        system_instruction=system_instruction,
+        raw_response_path=raw_response_path,
+    )
+    return payload
+
+
+def call_footage_style_once(
+    *,
+    client: GeminiClient,
+    system_instruction: str,
+    user_prompt: str,
+    audio_paths: List[Path],
+    extra_file_paths: Optional[List[Path]] = None,
+    raw_response_path: Optional[Path] = None,
+    cache_path: Optional[Path] = None,
+    prompt_dump_path: Optional[Path] = None,
+    system_dump_path: Optional[Path] = None,
+) -> FootageStylePickPayload:
+    files: List[types.File] = []
+    audio_upload_paths = _prepare_upload_paths(audio_paths)
+
+    if cache_path is not None:
+        if audio_paths:
+            files.extend(client.upload_files_cached(audio_upload_paths, cache_path=cache_path))
+    else:
+        if audio_paths:
+            files.extend(client.upload_files(audio_upload_paths))
+
+    if extra_file_paths:
+        if cache_path is not None:
+            files.extend(client.upload_files_cached(extra_file_paths, cache_path=cache_path))
+        else:
+            files.extend(client.upload_files(extra_file_paths))
+
+    if system_dump_path is not None:
+        system_dump_path.parent.mkdir(parents=True, exist_ok=True)
+        system_dump_path.write_text(system_instruction or "", encoding="utf-8")
+    if prompt_dump_path is not None:
+        prompt_dump_path.parent.mkdir(parents=True, exist_ok=True)
+        prompt_dump_path.write_text(user_prompt, encoding="utf-8")
+
+    payload = client.generate_structured(
+        schema_model=FootageStylePickPayload,
         prompt=user_prompt,
         files=files,
         system_instruction=system_instruction,

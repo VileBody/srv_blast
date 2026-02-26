@@ -283,6 +283,7 @@ def build_job(self, job_id: str) -> Dict[str, Any]:
     env = os.environ.copy()
     env["DATA_DIR"] = str(paths.data_dir)
     env["OUT_DIR"] = str(paths.out_dir)
+    env["JOB_ID"] = str(job_id)
 
     # make pipeline use THIS job audio
     env["AUDIO_FILE_PATH"] = str(local_audio)
@@ -295,7 +296,7 @@ def build_job(self, job_id: str) -> Dict[str, Any]:
 
         store.set_status(job_id, "RUNNING", stage="llm_stage1")
         backup: Dict[str, str | None] = {}
-        for k in ("DATA_DIR", "OUT_DIR", "AUDIO_FILE_PATH", "AUDIO_DIR", "AE_MEDIA_MODE"):
+        for k in ("DATA_DIR", "OUT_DIR", "AUDIO_FILE_PATH", "AUDIO_DIR", "AE_MEDIA_MODE", "JOB_ID"):
             backup[k] = os.environ.get(k)
             os.environ[k] = env[k]
 

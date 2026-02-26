@@ -10,10 +10,10 @@ from .footage_plan import FootageSelectionPayload
 
 class FullPlanPayload(BaseModel):
     """
-    Single Gemini call output:
-      - audio: absolute window on the full track (Step 1)
-      - subtitles: absolute token times on the full track, inside that window (Step 2)
-      - footage: comp timeline clips (Step 3)
+    Final merged payload for render:
+      - audio: absolute window on the full track (Stage1)
+      - subtitles: absolute token times on the full track, inside that window (Stage2A)
+      - footage: absolute clips selected by deterministic picker (Stage2B style + code picker)
 
     IMPORTANT:
       - AE audio layer params are NOT produced by Gemini anymore.

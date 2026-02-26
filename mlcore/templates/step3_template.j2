@@ -57,29 +57,8 @@
       "target_comp": "Comp 1"
     }{% if not loop.last %},{% endif %}
     {%- endfor %}
-
-    ,
-
-    {# --- Adj16 copies (static logic) --- #}
-    {%- for c in footage.clips %}
-    {
-      "layer_id": {{ ("adj16_" ~ loop.index0) | tojson }},
-      "diag_tag": {{ ("ADJ16[" ~ loop.index0 ~ "]") | tojson }},
-
-      "type": "adjustment",
-      "name": "Adjustment Layer 16",
-      "preset": {{ adjustment_preset.id | tojson }},
-
-      "in_point": {{ c.in_point }},
-      "out_point": {% if c.out_point <= c.in_point %}{{ c.in_point + eps }}{% else %}{{ c.out_point }}{% endif %},
-      "start_time": {{ c.in_point + base_adj_start_time }},
-
-      "enabled": true,
-      "target_comp": "Comp 1"
-    }{% if not loop.last %},{% endif %}
-    {%- endfor %}
-
-    ,
+    {% if footage.clips | length > 0 %},
+    {% endif %}
 
     {# --- AUDIO LAYER (Windows-relocatable mode supported via audio_file_path) --- #}
     {

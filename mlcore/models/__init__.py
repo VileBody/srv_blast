@@ -5,6 +5,7 @@ from .audio_window import AudioClipPlan
 from .subtitles_tokens import BlocksTokensPayload, Token, Segment
 from .subtitles_spans import BlocksTokenSpansPayload, TokenSpan
 from .footage_plan import FootageSelectionPayload, FootageAsset, FootageClipPick
+from .footage_style import FootageStylePickPayload
 from .full_plan import FullPlanPayload
 from .stage1_plan import Stage1PlanPayload, Stage1AudioWindow, TranscriptWord
 from .stage1_asr import Stage1AsrPayload, SrtItem
@@ -20,6 +21,7 @@ __all__ = [
     "FootageSelectionPayload",
     "FootageAsset",
     "FootageClipPick",
+    "FootageStylePickPayload",
     "FullPlanPayload",
     "Stage1PlanPayload",
     "Stage1AudioWindow",

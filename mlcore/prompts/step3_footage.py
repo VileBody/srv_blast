@@ -17,8 +17,8 @@ You will be given:
 - audio clip window (absolute)
 - a list of available footage assets ("assets"), each has:
   { file_name, src_w, src_h, duration_sec }
-- ONE attached descriptions bundle file (JSON) with metadata by file_name
-  (summary/tags/camera/visuals/objects/composition + duration_sec)
+- ONE attached technical bundle file (JSON) with metadata by file_name
+  (genre/tag/duration_sec/resolution/color bins)
 
 Output requirements:
 - Use ONLY file_name values from the provided assets list.
@@ -43,7 +43,7 @@ DURATION FEASIBILITY RULE (IMPORTANT):
   Increase the number of clips until all clip durations are feasible.
 
 Soft goals:
-- Use descriptions bundle to match mood/meaning.
+- Use technical bundle style metadata (genre/tag/colors) to keep visual coherence.
 - Avoid overly busy footage under dense text.
 - Keep number of clips reasonable (typically 3–8 for 15–25s), BUT
   if duration constraints force more clips, prefer correctness (no gaps) over fewer clips.

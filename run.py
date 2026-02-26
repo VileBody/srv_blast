@@ -181,8 +181,8 @@ def main() -> int:
                     from footage_config import build_inventory_and_bundle  # noqa: E402
 
                     footage_dir = Path(os.environ.get("FOOTAGE_DIR", str(REPO_ROOT / "footage"))).resolve()
-                    desc_dir = Path(
-                        os.environ.get("FOOTAGE_DESCRIPTIONS_DIR", str(REPO_ROOT / "descriptions"))
+                    static_index = Path(
+                        os.environ.get("STATIC_ASSETS_INDEX_JSON", str(REPO_ROOT / "data" / "static_assets_index.json"))
                     ).resolve()
                     inv_out = Path(
                         os.environ.get("FOOTAGE_INVENTORY_OUT", str(REPO_ROOT / "data" / "footage_inventory.json"))
@@ -194,7 +194,7 @@ def main() -> int:
                     build_inventory_and_bundle(
                         repo_root=REPO_ROOT,
                         footage_dir=footage_dir,
-                        descriptions_dir=desc_dir,
+                        static_assets_index_path=static_index,
                         inventory_out_path=inv_out,
                         bundle_out_path=bun_out,
                     )
