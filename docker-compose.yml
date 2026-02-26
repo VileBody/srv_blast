@@ -74,7 +74,7 @@ services:
       - ./footage:/app/footage:ro
       - ./audio:/app/audio:ro
     command: >
-      bash -lc "python footage_config.py && celery -A services.orchestrator.celery_app:celery_app worker -l INFO --concurrency=4 -Q build"
+      bash -lc "python footage_config.py && celery -A services.orchestrator.celery_app:celery_app worker -l INFO --concurrency=4 -Q ${CELERY_QUEUE_BUILD:-build}"
     restart: unless-stopped
 
   worker-render:
@@ -112,5 +112,5 @@ services:
       - ./footage:/app/footage:ro
       - ./audio:/app/audio:ro
     command: >
-      bash -lc "python footage_config.py && celery -A services.orchestrator.celery_app:celery_app worker -l INFO --concurrency=1 -Q render"
+      bash -lc "python footage_config.py && celery -A services.orchestrator.celery_app:celery_app worker -l INFO --concurrency=1 -Q ${CELERY_QUEUE_RENDER:-render}"
     restart: unless-stopped
