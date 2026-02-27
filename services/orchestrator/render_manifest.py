@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any, Dict, List
+from urllib.parse import unquote
 
 _AUDIO_EXTS = {".wav", ".mp3", ".m4a", ".aac", ".flac", ".ogg"}
 
@@ -65,7 +66,8 @@ def collect_media_urls_from_render_payload(
         # Use the same name that JSX expects in source_footage.file_name.
         audio_name = _expected_audio_name_from_payload(footage_layers)
         if not audio_name:
-            audio_name = (aurl.split("?")[0].rstrip("/").split("/")[-1] or "audio").strip()
+            raw_name = (aurl.split("?")[0].rstrip("/").split("/")[-1] or "audio").strip()
+            audio_name = (unquote(raw_name) or raw_name).strip()
         rel_audio = f"media/audio/{audio_name}"
         out.append({"url": aurl, "relpath": rel_audio})
         seen.add(rel_audio)

@@ -48,7 +48,11 @@ def test_stage3_uses_stage2_subtitles_clip_window() -> None:
         dummy_audio = tmp_path / "audio.mp3"
         dummy_audio.write_bytes(b"fake")
 
-        with _temp_environ(AUDIO_FILE_PATH=str(dummy_audio), AUDIO_DIR=str(dummy_audio.parent)):
+        with _temp_environ(
+            AUDIO_FILE_PATH=str(dummy_audio),
+            AUDIO_DIR=str(dummy_audio.parent),
+            AUDIO_FILE_NAME="audio_source.mp3",
+        ):
             subs_clip_start = 100.0
             subs_clip_end = 115.0
 
@@ -147,6 +151,11 @@ def test_stage3_uses_stage2_subtitles_clip_window() -> None:
             _assert_close(audio_plan["audio"]["clip_start_abs"], subs_clip_start)
             _assert_close(audio_plan["audio"]["clip_end_abs"], subs_clip_end)
             _assert_close(audio_plan["audio"]["layer_start_time"], -subs_clip_start)
+
+            footage_cfg = json.loads((out_dir / "footage_config.json").read_text(encoding="utf-8"))
+            audio_layers = [it for it in footage_cfg.get("layers", []) if isinstance(it, dict) and it.get("type") == "audio_only"]
+            assert audio_layers, "audio_only layer missing"
+            assert audio_layers[0]["file_name"] == "audio_source.mp3"
 
 
 if __name__ == "__main__":

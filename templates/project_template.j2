@@ -419,6 +419,52 @@
       } catch(e) { return ""; }
     }
 
+    function _normalizeMediaNameForMatch(name) {
+      try {
+        var s = String(name || "");
+        s = s.toLowerCase();
+        // Windows can normalize away trailing spaces/dots in names.
+        s = s.replace(/\s+\./g, ".");
+        s = s.replace(/[ .]+$/g, "");
+        s = s.replace(/\s+/g, " ");
+        return s;
+      } catch(_) { return ""; }
+    }
+
+    function _findMediaPathByNameFallback(expectedName, isAudio) {
+      try {
+        var dirPath = String(__APP_DIR || "") + (isAudio ? "/media/audio" : "/media/video");
+        var dir = new Folder(dirPath);
+        if (!dir.exists) return "";
+
+        var files = dir.getFiles(function (f) {
+          try { return (f instanceof File); } catch(_) { return false; }
+        });
+        if (!files || files.length === 0) return "";
+
+        var expectedLower = String(expectedName || "").toLowerCase();
+        for (var i = 0; i < files.length; i++) {
+          try {
+            if (String(files[i].name || "").toLowerCase() === expectedLower) {
+              return files[i].fsName;
+            }
+          } catch(_) {}
+        }
+
+        var expectedNorm = _normalizeMediaNameForMatch(expectedName);
+        if (!expectedNorm) return "";
+        var matched = [];
+        for (var j = 0; j < files.length; j++) {
+          try {
+            var candNorm = _normalizeMediaNameForMatch(files[j].name || "");
+            if (candNorm === expectedNorm) matched.push(files[j]);
+          } catch(_) {}
+        }
+        if (matched.length === 1) return matched[0].fsName;
+      } catch(_) {}
+      return "";
+    }
+
     // ✅ PATH FIX: treat "/app/..." as invalid local path on Windows -> resolve via APP_DIR
     function _looksLikeUnixAbsPath(p) {
       try {
@@ -466,6 +512,13 @@
 
       try {
         var f = new File(fp);
+        if (!f.exists) {
+          var altAny = _findMediaPathByNameFallback(nm, _isAudioName(nm));
+          if (altAny && altAny !== "") {
+            logLine("WARN", "media fallback by normalized filename expected=" + nm + " actual=" + altAny);
+            f = new File(altAny);
+          }
+        }
         // Audio hardening: if exact expected name is missing, but there is exactly one
         // audio file in media/audio, use it as fallback.
         if (!f.exists && _isAudioName(nm)) {
