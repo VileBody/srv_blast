@@ -153,6 +153,7 @@ def build_stage2_subtitles_user_prompt(
         "audio": stage1_json.get("audio"),
         "draft_blocks": stage1_json.get("draft_blocks"),
         "transcript_words": words_out,
+        "lyrics_text": str(stage1_json.get("lyrics_text") or ""),
     }
 
     return (

@@ -9,6 +9,7 @@ You receive:
   - audio clip window
   - draft_blocks (scenario phrases per segment)
   - transcript_words (word-level ASR with ABSOLUTE times)
+  - optional lyrics_text (plain lyrics string; use only as disambiguation context)
 
 Task:
 - Produce ONLY subtitles payload matching BlocksTokensPayload schema.
@@ -17,6 +18,7 @@ Hard constraints:
 - Use ONLY tokens from stage1.transcript_words.
   - For every output token: copy text + t_start + t_end EXACTLY from stage1.transcript_words.
   - Do NOT invent words or timings.
+  - If transcript tokenization is ambiguous, you may use lyrics_text only to choose between existing transcript words.
 - All token times are ABSOLUTE seconds on full-track timeline.
 - clip.start MUST equal stage1.audio.clip_start_abs EXACTLY.
 - clip.end MUST equal stage1.audio.clip_end_abs EXACTLY.

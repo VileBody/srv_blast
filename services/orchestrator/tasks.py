@@ -8,6 +8,7 @@ import subprocess
 import time
 import urllib.request
 import urllib.error
+from urllib.parse import unquote
 from pathlib import Path
 from typing import Any, Dict
 
@@ -93,7 +94,8 @@ def _patch_audio_layer_to_remote(footage_config_path: Path, *, audio_url: str) -
     if not isinstance(layers, list):
         return
 
-    audio_name = (audio_url.split("?")[0].rstrip("/").split("/")[-1] or "audio").strip()
+    audio_name_raw = (audio_url.split("?")[0].rstrip("/").split("/")[-1] or "audio").strip()
+    audio_name = (unquote(audio_name_raw) or audio_name_raw).strip()
 
     changed = False
     for it in layers:
@@ -261,13 +263,15 @@ def build_job(self, job_id: str) -> Dict[str, Any]:
 
     req = st.request or {}
     audio_url = str(req.get("audio_s3_url") or "").strip()
+    lyrics_text = str(req.get("lyrics_text") or "")
     if not audio_url:
         raise RuntimeError("missing audio_s3_url")
     if not _is_remote_url(audio_url):
         # Вот тут “строгость”: не позволяем запускать пайплайн с локальным путём
         raise RuntimeError(f"audio_s3_url must be remote (http/https/s3). got={audio_url!r}")
 
-    audio_name = (audio_url.split("?")[0].rstrip("/").split("/")[-1] or "audio").strip()
+    audio_name_raw = (audio_url.split("?")[0].rstrip("/").split("/")[-1] or "audio").strip()
+    audio_name = (unquote(audio_name_raw) or audio_name_raw).strip()
     local_audio = paths.data_dir / "inputs" / "audio" / audio_name
     _download(audio_url, local_audio, timeout_s=600.0)
 
@@ -288,15 +292,30 @@ def build_job(self, job_id: str) -> Dict[str, Any]:
     # make pipeline use THIS job audio
     env["AUDIO_FILE_PATH"] = str(local_audio)
     env["AUDIO_DIR"] = str(local_audio.parent)
+    # Keep the final AE audio file_name deterministic and filesystem-safe on Windows.
+    audio_ext = (Path(audio_name).suffix or Path(audio_name_raw).suffix or ".mp3").lower()
+    if not audio_ext.startswith("."):
+        audio_ext = f".{audio_ext}"
+    env["AUDIO_FILE_NAME"] = f"audio_source{audio_ext}"
 
     env["AE_MEDIA_MODE"] = "appdir"
+    env["LYRICS_TEXT"] = lyrics_text
 
     if mode != "no_gemini":
         from mlcore.gemini_orchestrator import build_all_via_gemini_one_call
 
         store.set_status(job_id, "RUNNING", stage="llm_stage1")
         backup: Dict[str, str | None] = {}
-        for k in ("DATA_DIR", "OUT_DIR", "AUDIO_FILE_PATH", "AUDIO_DIR", "AE_MEDIA_MODE", "JOB_ID"):
+        for k in (
+            "DATA_DIR",
+            "OUT_DIR",
+            "AUDIO_FILE_PATH",
+            "AUDIO_DIR",
+            "AUDIO_FILE_NAME",
+            "AE_MEDIA_MODE",
+            "JOB_ID",
+            "LYRICS_TEXT",
+        ):
             backup[k] = os.environ.get(k)
             os.environ[k] = env[k]
 
@@ -370,6 +389,7 @@ def build_job(self, job_id: str) -> Dict[str, Any]:
             "build": {
                 "audio_url_remote": audio_url,
                 "audio_path_local": str(local_audio),
+                "audio_file_name": env["AUDIO_FILE_NAME"],
             }
         },
     )

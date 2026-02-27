@@ -114,3 +114,23 @@ services:
     command: >
       bash -lc "python footage_config.py && celery -A services.orchestrator.celery_app:celery_app worker -l INFO --concurrency=1 -Q ${CELERY_QUEUE_RENDER:-render}"
     restart: unless-stopped
+
+  tg-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile.tg-bot
+    container_name: tg-bot
+    env_file:
+      - .env
+    environment:
+      ORCHESTRATOR_PUBLIC_URL: ${ORCHESTRATOR_PUBLIC_URL:-http://orchestrator-api:8000}
+      BOT_POLL_INTERVAL_S: ${BOT_POLL_INTERVAL_S:-5}
+      BOT_TMP_DIR: ${BOT_TMP_DIR:-/app/work/tg_tmp}
+      BOT_MAX_AUDIO_MB: ${BOT_MAX_AUDIO_MB:-5}
+    volumes:
+      - ./work:/app/work
+    command: >
+      bash -lc "python -m services.tg_bot_botapi.app"
+    depends_on:
+      - orchestrator-api
+    restart: unless-stopped

@@ -732,6 +732,7 @@ def build_all_via_gemini_one_call(*, progress_cb: Optional[Callable[[str], None]
         raise RuntimeError(f"Stage1 scenario validation failed after retry: {stage1_last_exc}")
 
     stage1_json = stage1.model_dump(mode="json")
+    stage1_json["lyrics_text"] = str(os.environ.get("LYRICS_TEXT") or "")
     (logs_dir / f"stage1_plan_merged_{stamp}.json").write_text(
         json.dumps(stage1_json, ensure_ascii=False, indent=2),
         encoding="utf-8",

@@ -19,6 +19,7 @@ class SendAudioS3Request(BaseModel):
     project_id: Optional[str] = None
     mode: Literal["with_gemini", "no_gemini"] = "with_gemini"
     idempotency_key: Optional[str] = Field(default=None, min_length=1)
+    lyrics_text: str = ""
 
 
 class EnqueueJobResponse(BaseModel):
