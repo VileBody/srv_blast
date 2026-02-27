@@ -11,6 +11,8 @@ import urllib.error
 from urllib.parse import unquote
 from pathlib import Path
 from typing import Any, Dict
+import boto3
+from botocore.config import Config
 
 from .artifacts import make_job_paths
 from .celery_app import celery_app
@@ -26,9 +28,53 @@ def _is_remote_url(u: str) -> bool:
     return s.startswith("http://") or s.startswith("https://") or s.startswith("s3://")
 
 
+def _parse_s3_url(url: str) -> tuple[str, str]:
+    u = (url or "").strip()
+    if not u.startswith("s3://"):
+        raise RuntimeError(f"expected s3:// url, got {url!r}")
+    tail = u[5:]
+    if "/" not in tail:
+        raise RuntimeError(f"invalid s3 url (missing key): {url!r}")
+    bucket, key = tail.split("/", 1)
+    bucket = bucket.strip()
+    key = key.strip()
+    if not bucket or not key:
+        raise RuntimeError(f"invalid s3 url: {url!r}")
+    return bucket, key
+
+
+def _make_s3_client():
+    endpoint = (os.environ.get("S3_ENDPOINT_URL") or "").strip() or None
+    access_key = (os.environ.get("S3_ACCESS_KEY_ID") or "").strip()
+    secret_key = (os.environ.get("S3_SECRET_ACCESS_KEY") or "").strip()
+    region = (os.environ.get("S3_REGION") or "ru-1").strip() or "ru-1"
+
+    if bool(access_key) != bool(secret_key):
+        raise RuntimeError("S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY must be both set or both empty")
+
+    kwargs: Dict[str, Any] = {
+        "service_name": "s3",
+        "region_name": region,
+        "config": Config(signature_version="s3v4"),
+    }
+    if endpoint is not None:
+        kwargs["endpoint_url"] = endpoint
+    if access_key and secret_key:
+        kwargs["aws_access_key_id"] = access_key
+        kwargs["aws_secret_access_key"] = secret_key
+
+    return boto3.client(**kwargs)
+
+
 def _download(url: str, dest: Path, *, timeout_s: float = 300.0) -> None:
-    # NOTE: сюда приходит presigned https (или другой http). Локальные пути — ошибка выше по стеку.
     dest.parent.mkdir(parents=True, exist_ok=True)
+
+    if (url or "").strip().lower().startswith("s3://"):
+        bucket, key = _parse_s3_url(url)
+        c = _make_s3_client()
+        c.download_file(bucket, key, str(dest))
+        return
+
     with urllib.request.urlopen(url, timeout=float(timeout_s)) as resp:
         data = resp.read()
     dest.write_bytes(data)
