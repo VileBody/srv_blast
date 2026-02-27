@@ -54,13 +54,14 @@ def _resolve_audio_source(repo_root: Path) -> tuple[str, str]:
       2) first file found in AUDIO_DIR (defaults to repo_root/audio)
     """
     env_path = (os.environ.get("AUDIO_FILE_PATH") or "").strip()
+    env_name = (os.environ.get("AUDIO_FILE_NAME") or "").strip()
     if env_path:
         p = Path(env_path).expanduser()
         if not p.is_absolute():
             p = (repo_root / p).resolve()
         if not p.exists():
             raise FileNotFoundError(f"AUDIO_FILE_PATH points to missing file: {p}")
-        return p.name, str(p)
+        return (env_name or p.name), str(p)
 
     audio_dir = Path(os.environ.get("AUDIO_DIR", str(repo_root / "audio"))).resolve()
     files = _pick_audio_files(audio_dir)
@@ -70,7 +71,7 @@ def _resolve_audio_source(repo_root: Path) -> tuple[str, str]:
             "or put an audio file into repo_root/audio/"
         )
     p0 = files[0].resolve()
-    return p0.name, str(p0)
+    return (env_name or p0.name), str(p0)
 
 
 def _media_mode() -> str:
@@ -159,6 +160,44 @@ def sanitize_subtitles_dict_inplace(d: Dict[str, Any]) -> Dict[str, Any]:
             normalize_segment_inplace(b7["part1"], force_two_line=False, mine_mode=False)
         if isinstance(b7.get("part2"), dict):
             normalize_segment_inplace(b7["part2"], force_two_line=False, mine_mode=False)
+
+    def _uppercase_segment(seg: Dict[str, Any]) -> None:
+        phrase = seg.get("phrase")
+        if phrase is not None:
+            seg["phrase"] = str(phrase).upper()
+        toks = seg.get("tokens")
+        if isinstance(toks, list):
+            for t in toks:
+                if not isinstance(t, dict):
+                    continue
+                if "text" in t and t.get("text") is not None:
+                    t["text"] = str(t.get("text")).upper()
+
+    if isinstance(d.get("block_1"), dict):
+        _uppercase_segment(d["block_1"])
+    if isinstance(b2, dict):
+        if isinstance(b2.get("p1"), dict):
+            _uppercase_segment(b2["p1"])
+        if isinstance(b2.get("p2"), dict):
+            _uppercase_segment(b2["p2"])
+    if isinstance(d.get("block_3"), dict):
+        _uppercase_segment(d["block_3"])
+    if isinstance(b4, dict):
+        if isinstance(b4.get("p1"), dict):
+            _uppercase_segment(b4["p1"])
+        if isinstance(b4.get("p2"), dict):
+            _uppercase_segment(b4["p2"])
+    if isinstance(b5, dict):
+        for k in ("slowly_in", "fast_reveal", "glitch_peak", "mine"):
+            if isinstance(b5.get(k), dict):
+                _uppercase_segment(b5[k])
+    if isinstance(d.get("block_6"), dict):
+        _uppercase_segment(d["block_6"])
+    if isinstance(b7, dict):
+        if isinstance(b7.get("part1"), dict):
+            _uppercase_segment(b7["part1"])
+        if isinstance(b7.get("part2"), dict):
+            _uppercase_segment(b7["part2"])
 
     # deterministic layout pass:
     # - puts \r only where style contract expects it

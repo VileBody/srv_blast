@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import os
 import logging
+import re
+import hashlib
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -15,6 +17,99 @@ LOGGER = logging.getLogger("app.footage_comp")
 def _looks_like_url(s: str) -> bool:
     s = (s or "").strip().lower()
     return s.startswith("http://") or s.startswith("https://") or s.startswith("s3://")
+
+
+def _as_pos_float(v: Any) -> float | None:
+    try:
+        x = float(v)
+    except Exception:
+        return None
+    if x <= 0:
+        return None
+    return x
+
+
+_WIN_BAD_CHARS_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+_MULTI_WS_RE = re.compile(r"\s+")
+
+
+def _sanitize_media_file_name(name: str) -> str:
+    """
+    Normalize media filename to a Windows-safe deterministic variant while
+    preserving extension when possible.
+    """
+    raw = str(name or "")
+    s = raw.strip()
+    if not s:
+        return "media.bin"
+
+    # Windows-forbidden chars and path separators.
+    s = _WIN_BAD_CHARS_RE.sub("_", s)
+
+    base, ext = os.path.splitext(s)
+    base = _MULTI_WS_RE.sub(" ", base).rstrip(" .")
+    ext = _MULTI_WS_RE.sub("", ext).strip()
+
+    if not base:
+        base = "media"
+    out = f"{base}{ext}"
+    out = out.strip().rstrip(".")
+    return out or "media.bin"
+
+
+def _resolve_safe_media_name(
+    *,
+    original: str,
+    used_names: set[str],
+    by_original: Dict[str, str],
+) -> str:
+    # Repeated same source file should keep the same safe name.
+    existing = by_original.get(original)
+    if existing:
+        return existing
+
+    candidate = _sanitize_media_file_name(original)
+    resolved = candidate
+    if resolved in used_names:
+        stem, ext = os.path.splitext(candidate)
+        digest = hashlib.sha1(original.encode("utf-8")).hexdigest()[:8]
+        resolved = f"{stem}__{digest}{ext}"
+        idx = 2
+        while resolved in used_names:
+            resolved = f"{stem}__{digest}_{idx}{ext}"
+            idx += 1
+
+    used_names.add(resolved)
+    by_original[original] = resolved
+    return resolved
+
+
+def _resolve_text_duration_sec(*, footage_cfg: Dict[str, Any], layers_cfg: List[Dict[str, Any]]) -> float:
+    """
+    Resolve factual text/main composition duration.
+    Priority:
+      1) explicit text_dur_hint (if valid)
+      2) max out_point from layers[]
+      3) legacy fallback
+    """
+    hint = _as_pos_float(footage_cfg.get("text_dur_hint"))
+    if hint is not None:
+        return float(hint)
+
+    max_out = 0.0
+    for it in layers_cfg:
+        if not isinstance(it, dict):
+            continue
+        out_point = _as_pos_float(it.get("out_point"))
+        if out_point is None:
+            continue
+        if out_point > max_out:
+            max_out = float(out_point)
+
+    if max_out > 0:
+        return float(max_out)
+
+    return 18.4351017684351
 
 
 # -----------------------------
@@ -451,7 +546,7 @@ def _footage_bp(
         "blendingModeCode": "5212",
     }
 
-    file_name = str(it["file_name"])
+    file_name = str(it.get("_safe_file_name") or it["file_name"])
     raw_path = str(it.get("file_path") or "")
     if _looks_like_url(raw_path):
         # RELocatable: keep remote_url, clear file_path for JSX (will be resolved by assets_resolve.json on Win)
@@ -525,7 +620,7 @@ def _audio_only_bp(*, it: Dict[str, Any], z_index: int) -> LayerBlueprint:
         "blendingModeCode": "5212",
     }
 
-    file_name = str(it["file_name"])
+    file_name = str(it.get("_safe_file_name") or it["file_name"])
     raw_path = str(it.get("file_path") or "")
     if _looks_like_url(raw_path):
         bp.text_data["source_footage"] = {"file_name": file_name, "file_path": "", "remote_url": raw_path}
@@ -558,6 +653,23 @@ def build_footage_layers(
     comp_h = int(footage_cfg.get("main_comp_h", 1960))
 
     layers_cfg = list(footage_cfg.get("layers") or [])
+    used_media_names: set[str] = set()
+    safe_name_by_original: Dict[str, str] = {}
+    for it in layers_cfg:
+        if not isinstance(it, dict):
+            continue
+        if str(it.get("type")) not in {"footage", "audio_only"}:
+            continue
+        original_name = str(it.get("file_name") or "").strip()
+        if not original_name:
+            continue
+        it["_safe_file_name"] = _resolve_safe_media_name(
+            original=original_name,
+            used_names=used_media_names,
+            by_original=safe_name_by_original,
+        )
+
+    text_dur_sec = _resolve_text_duration_sec(footage_cfg=footage_cfg, layers_cfg=layers_cfg)
 
     # --- base effects preset for Adj16 ---
     adj_preset = footage_cfg.get("adjustment_preset") or {}
@@ -612,7 +724,7 @@ def build_footage_layers(
         name=text_comp_name,
         type="precomp",
         in_point=0.0,
-        out_point=float(footage_cfg.get("text_dur_hint", 18.4351017684351)),
+        out_point=float(text_dur_sec),
         z_index=1,
         comp_id=None,
     )

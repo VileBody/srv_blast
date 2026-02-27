@@ -13,13 +13,6 @@ from app.footage_comp import build_footage_layers
 from app.text_comp import build_text_layers
 
 
-def _safe_float(x: Any, default: float) -> float:
-    try:
-        return float(x)
-    except Exception:
-        return float(default)
-
-
 def _apply_comp_duration_overrides(
     *,
     comps: list[Dict[str, Any]],
@@ -45,9 +38,9 @@ def _apply_comp_duration_overrides(
             cc.setdefault("displayStartTime", 0.0)
 
         if name == main_comp_name:
-            wa = _safe_float(cc.get("workAreaDuration"), 0.0)
-            if wa < comp_dur:
-                cc["workAreaDuration"] = comp_dur
+            # Keep main comp timing strictly aligned with the actual built text/footage duration.
+            cc["dur"] = comp_dur
+            cc["workAreaDuration"] = comp_dur
             cc.setdefault("workAreaStart", 0.0)
             cc.setdefault("displayStartTime", 0.0)
 

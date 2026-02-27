@@ -9,6 +9,7 @@ from mlcore.models.footage_style import FootageStylePickPayload
 
 
 _EPS = 1e-6
+_MAX_SWITCH_SEC = 4.0
 
 
 @dataclass(frozen=True)
@@ -95,7 +96,7 @@ def build_style_groups_from_assets(assets: List[Dict[str, Any]]) -> List[Dict[st
             row = {"genre": genre, "tag": tag, "assets_count": 0, "total_duration_sec": 0.0}
             agg[key] = row
         row["assets_count"] = int(row["assets_count"]) + 1
-        row["total_duration_sec"] = float(row["total_duration_sec"]) + float(dur)
+        row["total_duration_sec"] = float(row["total_duration_sec"]) + float(min(dur, _MAX_SWITCH_SEC))
 
     out = list(agg.values())
     out.sort(key=lambda x: (str(x["genre"]).lower(), str(x["tag"]).lower()))
@@ -130,7 +131,7 @@ def deterministic_seed_from_key(seed_key: str) -> int:
 
 
 def _duration_sum(pool: List[Dict[str, Any]]) -> float:
-    return float(sum(float(it["duration_sec"]) for it in pool))
+    return float(sum(min(float(it["duration_sec"]), _MAX_SWITCH_SEC) for it in pool))
 
 
 def _deterministic_sort_assets(pool: List[Dict[str, Any]], *, seed_value: int) -> List[Dict[str, Any]]:
@@ -201,12 +202,15 @@ def pick_footage_clips_deterministic(
         file_dur = float(asset["duration_sec"])
         if file_dur <= _EPS:
             raise RuntimeError(f"Non-positive asset duration: {asset['file_name']!r}")
+        slot_dur = min(file_dur, _MAX_SWITCH_SEC)
+        if slot_dur <= _EPS:
+            raise RuntimeError(f"Non-positive effective slot duration: {asset['file_name']!r}")
 
         remaining = ce - cursor
-        if remaining <= file_dur + _EPS:
+        if remaining <= slot_dur + _EPS:
             out_point = ce
         else:
-            out_point = cursor + file_dur
+            out_point = cursor + slot_dur
 
         if out_point <= cursor + _EPS:
             raise RuntimeError(f"Failed to allocate positive clip duration for {asset['file_name']!r}")

@@ -84,7 +84,7 @@ def test_picker_covers_window_without_gaps_and_with_asset_duration_caps() -> Non
     _assert_no_gaps(payload, clip_start=10.0, clip_end=19.0)
     for c in payload.clips:
         clip_len = float(c.out_point) - float(c.in_point)
-        assert clip_len <= by_name[c.file_name] + 1e-6
+        assert clip_len <= min(by_name[c.file_name], 4.0) + 1e-6
         assert abs(float(c.start_time) - float(c.in_point)) <= 1e-6
 
 
@@ -127,3 +127,34 @@ def test_insufficient_genre_total_enables_repeats() -> None:
 
     counts = Counter(c.file_name for c in payload.clips)
     assert any(v > 1 for v in counts.values())
+
+
+def test_long_asset_is_split_by_4_second_rule() -> None:
+    assets = [
+        {"file_name": "long.mp4", "genre": "Rock", "tag": "dark_forest", "duration_sec": 12.0, "src_w": 720, "src_h": 1280},
+    ]
+    style = FootageStylePickPayload.model_validate({"genre": "Rock", "tag": "dark_forest"})
+    payload, diag = pick_footage_clips_deterministic(
+        style_pick=style,
+        assets=assets,
+        clip_start_abs=0.0,
+        clip_end_abs=9.0,
+        seed_key="job-long-split",
+    )
+    _assert_no_gaps(payload, clip_start=0.0, clip_end=9.0)
+    assert diag.repeats_used is True
+    lengths = [float(c.out_point) - float(c.in_point) for c in payload.clips]
+    assert lengths == [4.0, 4.0, 1.0]
+
+
+def test_style_group_duration_uses_effective_4_second_budget() -> None:
+    groups = build_style_groups_from_assets(
+        [
+            {"file_name": "a.mp4", "genre": "Rock", "tag": "dark_forest", "duration_sec": 10.0, "src_w": 720, "src_h": 1280},
+            {"file_name": "b.mp4", "genre": "Rock", "tag": "dark_forest", "duration_sec": 2.0, "src_w": 720, "src_h": 1280},
+        ]
+    )
+    row = groups[0]
+    assert row["genre"] == "Rock"
+    assert row["tag"] == "dark_forest"
+    assert abs(float(row["total_duration_sec"]) - 6.0) <= 1e-6
