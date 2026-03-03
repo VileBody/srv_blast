@@ -134,3 +134,20 @@ services:
     depends_on:
       - orchestrator-api
     restart: unless-stopped
+
+  minio:
+    image: minio/minio:latest
+    container_name: minio
+    env_file:
+      - .env
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_REGION: ${MINIO_REGION}
+    command: server /data --console-address ":9001"
+    volumes:
+      - ./work/minio-data:/data
+    ports:
+      - "${MINIO_BIND_HOST:-127.0.0.1}:${MINIO_API_PORT:-19100}:9000"
+      - "${MINIO_BIND_HOST:-127.0.0.1}:${MINIO_CONSOLE_PORT:-19101}:9001"
+    restart: unless-stopped
