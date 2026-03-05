@@ -251,6 +251,32 @@ def _run_stage2_parallel(
         return f_sub.result(), f_foot.result()
 
 
+def _run_stage2_parallel_collect(
+    subtitles_fn: Callable[[], T],
+    footage_fn: Callable[[], U],
+) -> Tuple[Optional[T], Optional[U], Dict[str, BaseException]]:
+    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="gemini_stage2") as ex:
+        f_sub: Future[T] = ex.submit(subtitles_fn)
+        f_foot: Future[U] = ex.submit(footage_fn)
+        wait({f_sub, f_foot})
+
+        subtitles_payload: Optional[T] = None
+        footage_payload: Optional[U] = None
+        errors: Dict[str, BaseException] = {}
+
+        try:
+            subtitles_payload = f_sub.result()
+        except Exception as e:  # noqa: BLE001
+            errors["stage2_subtitles"] = e
+
+        try:
+            footage_payload = f_foot.result()
+        except Exception as e:  # noqa: BLE001
+            errors["stage2_style"] = e
+
+        return subtitles_payload, footage_payload, errors
+
+
 def _sanitize_token_text(s: str) -> str:
     keep = []
     for ch in str(s or ""):
@@ -825,8 +851,6 @@ def build_all_via_gemini_one_call(
     stage1b_sys = logs_dir / f"gemini_system_stage1_scenario_{stamp}.txt"
     stage1b_raw = logs_dir / f"gemini_raw_stage1_scenario_{stamp}.json"
     stage1b_user = logs_dir / f"gemini_prompt_stage1_scenario_{stamp}.txt"
-    stage1b_raw_retry = logs_dir / f"gemini_raw_stage1_scenario_retry_{stamp}.json"
-    stage1b_user_retry = logs_dir / f"gemini_prompt_stage1_scenario_retry_{stamp}.txt"
 
     stage1: Stage1PlanPayload | None = None
     stage1_cached = resume_state.get("stage1_plan")
@@ -838,72 +862,52 @@ def build_all_via_gemini_one_call(
             logger.warning("llm_resume_bad stage=stage1b_scenario err=%s", str(e))
             resume_state.pop("stage1_plan", None)
 
-    stage1_last_exc: Exception | None = None
     if stage1 is None:
-        for attempt, strict in enumerate((False, True), start=1):
-            strict_addendum = (
-                "\n\nSTRICT_RETRY_RULES:\n"
-                "- Every draft phrase must be copy-pasted from transcript words (no paraphrase).\n"
-                "- Keep selected window in 13..18 sec and preserve 1..5 development, 6 fixation, 7 exit arc.\n"
-                "- Keep block phrases concise and balanced (target <=6 words, hard cap <=8).\n"
-                "- Avoid dangling leftovers: split only at natural phrase boundaries.\n"
-                "- Repeats are OK in songs.\n"
+        try:
+            stage1_scenario: Stage1ScenarioPayload = call_stage1_scenario_once(
+                client=client_stage1_scenario,
+                openrouter_client=openrouter_stage1_scenario,
+                provider_mode=provider_mode,
+                hedge_delay_s=hedge_delay_s,
+                logger=logger,
+                system_instruction=stage1b_system,
+                user_prompt=stage1b_base_prompt,
+                # IMPORTANT:
+                # Stage1B is scenario planning based on Stage1A transcript_words.
+                # We do NOT attach audio here to avoid the model "re-listening" and drifting from transcript.
+                audio_paths=[],
+                raw_response_path=stage1b_raw,
+                cache_path=cache_path,
+                prompt_dump_path=stage1b_user,
+                system_dump_path=stage1b_sys,
             )
-            prompt = stage1b_base_prompt + strict_addendum if strict else stage1b_base_prompt
-            raw_path = stage1b_raw_retry if strict else stage1b_raw
-            prompt_path = stage1b_user_retry if strict else stage1b_user
+
+            stage1_candidate = Stage1PlanPayload.model_validate(
+                {
+                    "audio": stage1_scenario.audio.model_dump(mode="json"),
+                    "transcript_words": stage1_asr.transcript_words,
+                    "draft_blocks": stage1_scenario.draft_blocks.model_dump(mode="json"),
+                }
+            )
+            stage1 = stage1_candidate
+            # Best-effort alignment report (useful for debugging), but do not fail Stage1 if it can't be aligned.
+            report_path = logs_dir / f"stage1_report_{stamp}.txt"
             try:
-                stage1_scenario: Stage1ScenarioPayload = call_stage1_scenario_once(
-                    client=client_stage1_scenario,
-                    openrouter_client=openrouter_stage1_scenario,
-                    provider_mode=provider_mode,
-                    hedge_delay_s=hedge_delay_s,
-                    logger=logger,
-                    system_instruction=stage1b_system,
-                    user_prompt=prompt,
-                    # IMPORTANT:
-                    # Stage1B is scenario planning based on Stage1A transcript_words.
-                    # We do NOT attach audio here to avoid the model "re-listening" and drifting from transcript.
-                    audio_paths=[],
-                    raw_response_path=raw_path,
-                    cache_path=cache_path,
-                    prompt_dump_path=prompt_path,
-                    system_dump_path=stage1b_sys,
-                )
-
-                stage1_candidate = Stage1PlanPayload.model_validate(
-                    {
-                        "audio": stage1_scenario.audio.model_dump(mode="json"),
-                        "transcript_words": stage1_asr.transcript_words,
-                        "draft_blocks": stage1_scenario.draft_blocks.model_dump(mode="json"),
-                    }
-                )
-                stage1 = stage1_candidate
-                # Best-effort alignment report (useful for debugging), but do not fail Stage1 if it can't be aligned.
-                report_path = logs_dir / f"stage1_report_{stamp}.txt"
-                try:
-                    align_rows = align_stage1_draft_to_transcript(stage1_candidate)
-                    report_path.write_text(build_stage1_report(stage1_candidate, align_rows), encoding="utf-8")
-                except Exception as e:
-                    logger.warning("stage1b_align_warning err=%s", str(e))
-                    report_path.write_text(
-                        "STAGE1 ALIGNMENT WARNING (non-fatal)\n"
-                        f"err={e}\n\n"
-                        "DRAFT_BLOCKS_JSON:\n"
-                        + json.dumps(stage1_scenario.draft_blocks.model_dump(mode="json"), ensure_ascii=False, indent=2),
-                        encoding="utf-8",
-                    )
-                resume_state["stage1_plan"] = stage1.model_dump(mode="json")
-                _save_resume_state(resume_state_path, logger=logger, state=resume_state)
-                break
+                align_rows = align_stage1_draft_to_transcript(stage1_candidate)
+                report_path.write_text(build_stage1_report(stage1_candidate, align_rows), encoding="utf-8")
             except Exception as e:
-                stage1_last_exc = e
-                logger.warning("stage1b_scenario_invalid attempt=%d strict=%s err=%s", attempt, strict, str(e))
-                if attempt >= 2:
-                    break
-
-    if stage1 is None:
-        raise RuntimeError(f"Stage1 scenario validation failed after retry: {stage1_last_exc}")
+                logger.warning("stage1b_align_warning err=%s", str(e))
+                report_path.write_text(
+                    "STAGE1 ALIGNMENT WARNING (non-fatal)\n"
+                    f"err={e}\n\n"
+                    "DRAFT_BLOCKS_JSON:\n"
+                    + json.dumps(stage1_scenario.draft_blocks.model_dump(mode="json"), ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+            resume_state["stage1_plan"] = stage1.model_dump(mode="json")
+            _save_resume_state(resume_state_path, logger=logger, state=resume_state)
+        except Exception as e:
+            raise RuntimeError(f"Stage1 scenario validation failed: {e}") from e
 
     stage1_json = stage1.model_dump(mode="json")
     stage1_json["lyrics_text"] = str(os.environ.get("LYRICS_TEXT") or "")
@@ -941,22 +945,7 @@ def build_all_via_gemini_one_call(
     foot_sys = logs_dir / f"gemini_system_stage2_style_{stamp}.txt"
     foot_user = logs_dir / f"gemini_prompt_stage2_style_{stamp}.txt"
 
-    def _run_subtitles(*, strict: bool) -> BlocksTokensPayload:
-        strict_retry_addendum = (
-            "\n\nSTRICT_RETRY_RULES:\n"
-            "- Output tokens only (text + ABS t_start/t_end) copied from stage1.transcript_words.\n"
-            "- Do NOT invent words or timings.\n"
-            "- Do NOT reuse the same timed word across segments.\n"
-            "- Segments must be strictly increasing in timeline order.\n"
-            "- block_5.mine must contain exactly ONE token.\n"
-            "- trailing: only \" \" or \"\"; last token trailing must be \"\".\n"
-            "- Keep each segment short: target <= 6 words, hard cap <= 8 words.\n"
-            "- Keep first line concise: target <= 24 chars.\n"
-        )
-        prompt = sub_prompt + strict_retry_addendum if strict else sub_prompt
-        raw_path = (logs_dir / f"gemini_raw_stage2_subtitles_retry_{stamp}.json") if strict else sub_raw
-        prompt_path = (logs_dir / f"gemini_prompt_stage2_subtitles_retry_{stamp}.txt") if strict else sub_user
-
+    def _run_subtitles() -> BlocksTokensPayload:
         payload = call_subtitles_plan_once(
             client=client_subtitles,
             openrouter_client=openrouter_subtitles,
@@ -964,14 +953,14 @@ def build_all_via_gemini_one_call(
             hedge_delay_s=hedge_delay_s,
             logger=logger,
             system_instruction=sub_system,
-            user_prompt=str(prompt),
+            user_prompt=str(sub_prompt),
             # IMPORTANT:
             # Subtitles alignment is done strictly against stage1.transcript_words (ABS timings).
             # Do not attach audio to reduce ambiguity and cost.
             audio_paths=[],
-            raw_response_path=raw_path,
+            raw_response_path=sub_raw,
             cache_path=cache_path,
-            prompt_dump_path=prompt_path,
+            prompt_dump_path=sub_user,
             system_dump_path=sub_sys,
         )
 
@@ -984,17 +973,7 @@ def build_all_via_gemini_one_call(
         _log_subtitles_token_metrics(payload)
         return payload
 
-    def _run_style(*, strict: bool) -> FootageStylePickPayload:
-        strict_retry_addendum = (
-            "\n\nSTRICT_RETRY_RULES:\n"
-            "- Output only genre + tag from STYLE_POOL_GROUPS_JSON.\n"
-            "- Do NOT output clip timings or file names.\n"
-            "- Prefer style groups with enough aggregate duration to cover stage1 audio window.\n"
-        )
-        prompt = foot_prompt + strict_retry_addendum if strict else foot_prompt
-        raw_path = (logs_dir / f"gemini_raw_stage2_style_retry_{stamp}.json") if strict else foot_raw
-        prompt_path = (logs_dir / f"gemini_prompt_stage2_style_retry_{stamp}.txt") if strict else foot_user
-
+    def _run_style() -> FootageStylePickPayload:
         payload = call_footage_style_once(
             client=client_footage,
             openrouter_client=openrouter_footage,
@@ -1002,25 +981,27 @@ def build_all_via_gemini_one_call(
             hedge_delay_s=hedge_delay_s,
             logger=logger,
             system_instruction=foot_system,
-            user_prompt=str(prompt),
+            user_prompt=str(foot_prompt),
             # Style selection needs only Stage1 context + style pool groups.
             audio_paths=[],
             extra_file_paths=None,
-            raw_response_path=raw_path,
+            raw_response_path=foot_raw,
             cache_path=cache_path,
-            prompt_dump_path=prompt_path,
+            prompt_dump_path=foot_user,
             system_dump_path=foot_sys,
         )
         validate_style_pick_in_groups(payload, style_groups)
         return payload
 
-    stage2_last_exc: Exception | None = None
     subtitles_payload: BlocksTokensPayload | None = None
     style_payload: FootageStylePickPayload | None = None
+    subtitles_from_resume = False
+    style_from_resume = False
     subtitles_cached = resume_state.get("stage2_subtitles")
     if isinstance(subtitles_cached, dict):
         try:
             subtitles_payload = BlocksTokensPayload.model_validate(subtitles_cached)
+            subtitles_from_resume = True
             logger.info("llm_resume_hit stage=stage2_subtitles")
         except Exception as e:
             logger.warning("llm_resume_bad stage=stage2_subtitles err=%s", str(e))
@@ -1031,53 +1012,48 @@ def build_all_via_gemini_one_call(
         try:
             style_payload = FootageStylePickPayload.model_validate(style_cached)
             validate_style_pick_in_groups(style_payload, style_groups)
+            style_from_resume = True
             logger.info("llm_resume_hit stage=stage2_style")
         except Exception as e:
             logger.warning("llm_resume_bad stage=stage2_style err=%s", str(e))
             resume_state.pop("stage2_style", None)
 
+    stage2_errors: Dict[str, BaseException] = {}
     if subtitles_payload is None and style_payload is None:
-        for stage2_attempt, strict in enumerate((False, True), start=1):
-            try:
-                subtitles_payload, style_payload = _run_stage2_parallel(
-                    lambda strict=strict: _run_subtitles(strict=strict),
-                    lambda strict=strict: _run_style(strict=strict),
-                )
-                break
-            except Exception as e:
-                stage2_last_exc = e
-                logger.warning(
-                    "stage2_full_attempt_failed attempt=%d strict=%s err=%s",
-                    stage2_attempt,
-                    strict,
-                    str(e),
-                )
-                if stage2_attempt >= 2:
-                    break
+        subtitles_payload, style_payload, stage2_errors = _run_stage2_parallel_collect(
+            _run_subtitles,
+            _run_style,
+        )
     else:
-        for stage2_attempt, strict in enumerate((False, True), start=1):
+        if subtitles_payload is None:
             try:
-                if subtitles_payload is None:
-                    subtitles_payload = _run_subtitles(strict=strict)
-                if style_payload is None:
-                    style_payload = _run_style(strict=strict)
-                break
-            except Exception as e:
-                stage2_last_exc = e
-                logger.warning(
-                    "stage2_partial_attempt_failed attempt=%d strict=%s err=%s",
-                    stage2_attempt,
-                    strict,
-                    str(e),
-                )
-                if stage2_attempt >= 2:
-                    break
+                subtitles_payload = _run_subtitles()
+            except Exception as e:  # noqa: BLE001
+                stage2_errors["stage2_subtitles"] = e
+        if style_payload is None:
+            try:
+                style_payload = _run_style()
+            except Exception as e:  # noqa: BLE001
+                stage2_errors["stage2_style"] = e
+
+    state_dirty = False
+    if subtitles_payload is not None and not subtitles_from_resume:
+        resume_state["stage2_subtitles"] = subtitles_payload.model_dump(mode="json")
+        state_dirty = True
+    if style_payload is not None and not style_from_resume:
+        resume_state["stage2_style"] = style_payload.model_dump(mode="json")
+        state_dirty = True
+    if state_dirty:
+        _save_resume_state(resume_state_path, logger=logger, state=resume_state)
+
+    if stage2_errors:
+        detail = "; ".join(
+            f"{name}={type(err).__name__}: {err}" for name, err in stage2_errors.items()
+        )
+        raise RuntimeError(f"Stage2 failed: {detail}")
 
     if subtitles_payload is None or style_payload is None:
-        raise RuntimeError(f"Stage2 failed after one retry: {stage2_last_exc}")
-    resume_state["stage2_subtitles"] = subtitles_payload.model_dump(mode="json")
-    resume_state["stage2_style"] = style_payload.model_dump(mode="json")
-    _save_resume_state(resume_state_path, logger=logger, state=resume_state)
+        raise RuntimeError("Stage2 failed: missing payloads after execution")
 
     seed_key = _resolve_footage_seed_key(out_dir=out_dir, logger=logger)
     footage_payload, pick_diag = pick_footage_clips_deterministic(

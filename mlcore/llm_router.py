@@ -71,7 +71,8 @@ def run_routed_call(
         raise RuntimeError("LLM_HEDGE_DELAY_S must be >= 0")
 
     errors: Dict[str, BaseException] = {}
-    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="llm_hedge") as ex:
+    ex = ThreadPoolExecutor(max_workers=2, thread_name_prefix="llm_hedge")
+    try:
         futures: Dict[str, Future[T]] = {
             PROVIDER_MODE_GEMINI: ex.submit(gemini_call),
         }
@@ -135,3 +136,5 @@ def run_routed_call(
             f"{name}={_format_exc(errors[name])}" for name in ordered if name in errors
         )
         raise RuntimeError(f"llm_hedged_all_failed stage={stage} errors=[{detail}]")
+    finally:
+        ex.shutdown(wait=False, cancel_futures=True)

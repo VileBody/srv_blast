@@ -30,12 +30,13 @@ def test_hedged_gemini_wins_before_delay_and_openrouter_not_started() -> None:
 
 def test_hedged_openrouter_wins_after_delay() -> None:
     def _gemini() -> str:
-        time.sleep(0.3)
+        time.sleep(0.6)
         return "gemini-ok"
 
     def _openrouter() -> str:
         return "openrouter-ok"
 
+    t0 = time.monotonic()
     out = run_routed_call(
         mode="hedged",
         stage="unit",
@@ -43,8 +44,10 @@ def test_hedged_openrouter_wins_after_delay() -> None:
         gemini_call=_gemini,
         openrouter_call=_openrouter,
     )
+    elapsed = time.monotonic() - t0
     assert out.provider == "openrouter"
     assert out.value == "openrouter-ok"
+    assert elapsed < 0.25
 
 
 def test_hedged_first_failure_second_success() -> None:
@@ -86,4 +89,3 @@ def test_hedged_both_fail_reports_both_errors() -> None:
         assert "llm_hedged_all_failed" in msg
         assert "gemini" in msg
         assert "openrouter" in msg
-

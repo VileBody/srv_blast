@@ -256,7 +256,20 @@ def _looks_like_llm_schema_validation_error(text: str) -> bool:
         return True
     if "openrouter_tokens_schema_validation_failed" in lo:
         return True
+    if "stage1 scenario validation failed" in lo:
+        return True
     if "stage1 scenario validation failed after retry" in lo:
+        return True
+    if "stage2 failed:" in lo and (
+        "validation" in lo
+        or "schema" in lo
+        or "subtitles.clip." in lo
+        or "must equal stage1.audio" in lo
+        or "mine must contain exactly one token" in lo
+        or "end_idx out of range" in lo
+        or "style pick" in lo
+        or "style_pool_groups_json" in lo
+    ):
         return True
     if "llm_hedged_all_failed" in lo and ("validation" in lo or "schema" in lo):
         return True

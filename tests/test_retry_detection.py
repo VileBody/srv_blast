@@ -55,6 +55,19 @@ def test_detects_llm_schema_validation_error_from_hedged_summary() -> None:
     assert _looks_like_llm_schema_validation_error(s) is True
 
 
+def test_detects_llm_schema_validation_error_from_stage1_marker() -> None:
+    s = "RuntimeError: Stage1 scenario validation failed: ValidationError(...)"
+    assert _looks_like_llm_schema_validation_error(s) is True
+
+
+def test_detects_llm_schema_validation_error_from_stage2_marker() -> None:
+    s = (
+        "RuntimeError: Stage2 failed: "
+        "stage2_subtitles=ValueError: subtitles.clip.start must equal stage1.audio.clip_start_abs"
+    )
+    assert _looks_like_llm_schema_validation_error(s) is True
+
+
 def test_detects_build_preflight_validation_error() -> None:
     s = "ValueError: Preflight: out<=in in layer 'Adjustment Layer 10': 15.01..5.6"
     assert _looks_like_build_preflight_validation_error(s) is True

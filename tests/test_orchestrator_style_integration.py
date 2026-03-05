@@ -4,6 +4,8 @@ import json
 import os
 from pathlib import Path
 
+import pytest
+
 from mlcore import gemini_orchestrator as go
 from mlcore.models.footage_style import FootageStylePickPayload
 from mlcore.models.stage1_asr import Stage1AsrPayload
@@ -390,3 +392,124 @@ def test_resume_state_skips_stage1_llm_calls(monkeypatch, tmp_path: Path) -> Non
     state_after = json.loads(resume_state_path.read_text(encoding="utf-8"))
     assert "stage2_subtitles" in state_after
     assert "stage2_style" in state_after
+
+
+def test_resume_state_keeps_partial_stage2_and_runs_only_missing_call(monkeypatch, tmp_path: Path) -> None:
+    audio_path = tmp_path / "audio.mp3"
+    audio_path.write_bytes(b"fake")
+
+    inv_path = tmp_path / "inventory.json"
+    inv_path.write_text(
+        json.dumps(
+            {
+                "assets": [
+                    {
+                        "file_name": "f1.mp4",
+                        "file_path": "s3://bucket/pinterest_collection/Rock/dark_forest/f1.mp4",
+                        "src_w": 720,
+                        "src_h": 1280,
+                        "duration_sec": 15.0,
+                        "genre": "Rock",
+                        "tag": "dark_forest",
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    out_dir = tmp_path / "out"
+    resume_state_path = tmp_path / "llm_resume_state.json"
+
+    stage1_asr = Stage1AsrPayload.model_validate(
+        {
+            "transcript_words": [
+                {"text": "a", "t_start": 0.0, "t_end": 0.5},
+                {"text": "b", "t_start": 0.5, "t_end": 1.0},
+            ],
+            "srt_items": [],
+        }
+    )
+    stage1_plan = {
+        "audio": {"clip_start_abs": 0.0, "clip_end_abs": 14.0},
+        "transcript_words": stage1_asr.model_dump(mode="json")["transcript_words"],
+        "draft_blocks": _draft_blocks(),
+    }
+    resume_state_path.write_text(
+        json.dumps(
+            {
+                "stage1_asr": stage1_asr.model_dump(mode="json"),
+                "stage1_plan": stage1_plan,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("MODE", "dev")
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    monkeypatch.setenv("GEMINI_MODEL_STAGE1", "m1")
+    monkeypatch.setenv("GEMINI_MODEL_SUBTITLES", "m2")
+    monkeypatch.setenv("GEMINI_MODEL_FOOTAGE", "m3")
+    monkeypatch.setenv("FOOTAGE_INVENTORY_JSON", str(inv_path))
+    monkeypatch.setenv("OUT_DIR", str(out_dir))
+    monkeypatch.setenv("AUDIO_FILE_PATH", str(audio_path))
+    monkeypatch.setenv("AUDIO_DIR", str(audio_path.parent))
+    monkeypatch.setenv("JOB_ID", "job_resume_partial")
+
+    monkeypatch.setattr(go, "_make_client", lambda **kwargs: object())
+    monkeypatch.setattr(go, "pick_audio_files", lambda _audio_dir: [audio_path])
+
+    def _should_not_call_stage1(**kwargs):
+        raise AssertionError("stage1 call must be skipped from resume state")
+
+    monkeypatch.setattr(go, "call_stage1_asr_once", _should_not_call_stage1)
+    monkeypatch.setattr(go, "call_stage1_scenario_once", _should_not_call_stage1)
+    monkeypatch.setattr(
+        go,
+        "render_all_steps",
+        lambda **kwargs: {
+            "audio_plan": tmp_path / "audio_plan.json",
+            "full_edit_config": tmp_path / "full_edit_config.json",
+            "footage_config": tmp_path / "footage_config.json",
+        },
+    )
+
+    calls = {"subtitles": 0, "style": 0}
+
+    def _subs_first(**kwargs):
+        calls["subtitles"] += 1
+        return _subtitles_payload()
+
+    def _style_fail(**kwargs):
+        calls["style"] += 1
+        raise RuntimeError("openrouter_schema_validation_failed err=ValidationError(...)")
+
+    monkeypatch.setattr(go, "call_subtitles_plan_once", _subs_first)
+    monkeypatch.setattr(go, "call_footage_style_once", _style_fail)
+
+    with pytest.raises(RuntimeError, match="Stage2 failed"):
+        go.build_all_via_gemini_one_call(resume_state_path=resume_state_path)
+
+    assert calls == {"subtitles": 1, "style": 1}
+
+    state_after_first = json.loads(resume_state_path.read_text(encoding="utf-8"))
+    assert "stage2_subtitles" in state_after_first
+    assert "stage2_style" not in state_after_first
+
+    def _subs_should_not_run(**kwargs):
+        raise AssertionError("subtitles should be reused from resume state")
+
+    def _style_ok(**kwargs):
+        calls["style"] += 1
+        return FootageStylePickPayload.model_validate({"genre": "Rock", "tag": "dark_forest"})
+
+    monkeypatch.setattr(go, "call_subtitles_plan_once", _subs_should_not_run)
+    monkeypatch.setattr(go, "call_footage_style_once", _style_ok)
+
+    out = go.build_all_via_gemini_one_call(resume_state_path=resume_state_path)
+    assert set(out.keys()) == {"audio_plan", "full_edit_config", "footage_config"}
+    assert calls["subtitles"] == 1
+    assert calls["style"] == 2
