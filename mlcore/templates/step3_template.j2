@@ -60,6 +60,34 @@
     {% if footage.clips | length > 0 %},
     {% endif %}
 
+    {# --- Overlay clips (optional) --- #}
+    {%- for o in (overlay_layers | default([])) %}
+    {
+      "layer_id": {{ o.layer_id | tojson }},
+      "diag_tag": {{ ("OVERLAY[" ~ loop.index0 ~ "] " ~ o.file_name) | tojson }},
+
+      "type": "overlay",
+      "name": {{ o.name | tojson }},
+      "file_name": {{ o.file_name | tojson }},
+      "file_path": {{ o.file_path | tojson }},
+
+      "src_w": {{ o.src_w }},
+      "src_h": {{ o.src_h }},
+      "fit_mode": {{ o.fit_mode | tojson }},
+
+      "in_point": {{ o.in_point }},
+      "out_point": {% if o.out_point <= o.in_point %}{{ o.in_point + eps }}{% else %}{{ o.out_point }}{% endif %},
+      "start_time": {{ o.start_time }},
+
+      "enabled": true,
+      "audio_enabled": false,
+      "video_enabled": true,
+      "target_comp": "Comp 1"
+    }{% if not loop.last %},{% endif %}
+    {%- endfor %}
+    {% if (overlay_layers | default([]) | length) > 0 %},
+    {% endif %}
+
     {# --- AUDIO LAYER (Windows-relocatable mode supported via audio_file_path) --- #}
     {
       "layer_id": "audio_ref",

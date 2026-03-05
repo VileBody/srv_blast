@@ -384,6 +384,20 @@ def _env_nonneg_float(name: str, default: float) -> float:
     return v if v >= 0.0 else float(default)
 
 
+def _env_overlay_opacity_percent(name: str = "OVERLAY_OPACITY", default: float = 30.0) -> float:
+    raw = (os.environ.get(name) or "").strip()
+    if not raw:
+        v = float(default)
+    else:
+        try:
+            v = float(raw)
+        except Exception as e:
+            raise RuntimeError(f"Invalid {name}: {raw!r}") from e
+    if v < 0.0 or v > 100.0:
+        raise RuntimeError(f"{name} must be in [0..100], got {v}")
+    return float(v)
+
+
 _ADJ16_FIT_TO_COMP1 = _env_bool("ADJ16_FIT_TO_COMP1", True)
 _ADJ16_REF_W = _env_pos_float("ADJ16_REF_W", 1080.0)
 _ADJ16_REF_H = _env_pos_float("ADJ16_REF_H", 1080.0)
@@ -616,6 +630,25 @@ def _footage_bp(
     return bp
 
 
+def _overlay_bp(
+    *,
+    it: Dict[str, Any],
+    z_index: int,
+    comp_w: int,
+    comp_h: int,
+    opacity_percent: float,
+) -> LayerBlueprint:
+    bp = _footage_bp(
+        it=it,
+        z_index=int(z_index),
+        comp_w=comp_w,
+        comp_h=comp_h,
+    )
+    bp.props["tf_opacity"] = PropertyData("ADBE Opacity", value=float(opacity_percent))
+    bp.text_data["layer_meta"]["isOverlay"] = True
+    return bp
+
+
 def _adjustment_bp(
     *,
     it: Dict[str, Any],
@@ -698,8 +731,9 @@ def build_footage_layers(
 ) -> List[Dict[str, Any]]:
     """
     Desired final stack (top -> bottom):
-      audio (optional)
       TEXT precomp
+      overlays (optional)
+      audio (optional, video off)
       Adjustments
       Footages
     """
@@ -712,7 +746,7 @@ def build_footage_layers(
     for it in layers_cfg:
         if not isinstance(it, dict):
             continue
-        if str(it.get("type")) not in {"footage", "audio_only"}:
+        if str(it.get("type")) not in {"footage", "overlay", "audio_only"}:
             continue
         original_name = str(it.get("file_name") or "").strip()
         if not original_name:
@@ -810,12 +844,29 @@ def build_footage_layers(
 
     out.append(pre)
 
-    # (2) Audio-only
+    # (2) Overlay footage (between text and regular footage stack)
+    overlay_items = [it for it in layers_cfg if str(it.get("type")) == "overlay"]
+    if overlay_items:
+        overlay_opacity = _env_overlay_opacity_percent()
+        z_overlay = 5
+        for it in overlay_items:
+            out.append(
+                _overlay_bp(
+                    it=it,
+                    z_index=z_overlay,
+                    comp_w=comp_w,
+                    comp_h=comp_h,
+                    opacity_percent=overlay_opacity,
+                )
+            )
+            z_overlay += 1
+
+    # (3) Audio-only
     for it in layers_cfg:
         if str(it.get("type")) == "audio_only":
             out.append(_audio_only_bp(it=it, z_index=2))
 
-    # (3) Adjustments
+    # (4) Adjustments
     adj_items = [it for it in layers_cfg if str(it.get("type")) == "adjustment"]
     z_adj = 10
     for it in adj_items:
@@ -829,7 +880,7 @@ def build_footage_layers(
         out.append(_adjustment_bp(it=it, z_index=z_adj, effects=effects, comp_w=comp_w, comp_h=comp_h))
         z_adj += 1
 
-    # (4) Footages
+    # (5) Footages
     footage_items = [it for it in layers_cfg if str(it.get("type")) == "footage"]
     base_z_foot = 100
     n = len(footage_items)

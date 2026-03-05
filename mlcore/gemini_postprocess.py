@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Tuple
 import os
 
 from jinja2 import Environment, FileSystemLoader
@@ -87,6 +88,210 @@ def _media_mode() -> str:
         return s
     mode = get_runtime_mode()
     return "local" if mode == MODE_DEV else "appdir"
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = (os.environ.get(name) or "").strip().lower()
+    if not raw:
+        return bool(default)
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    raise RuntimeError(f"Invalid {name}: {raw!r}")
+
+
+def _overlay_enabled() -> bool:
+    return _env_bool("OVERLAY_ENABLED", False)
+
+
+def _overlay_match_mode() -> str:
+    raw = (os.environ.get("OVERLAY_MATCH_MODE") or "by_style").strip().lower()
+    if raw not in {"by_style", "global"}:
+        raise RuntimeError("OVERLAY_MATCH_MODE must be one of: by_style | global")
+    return raw
+
+
+def _resolve_overlay_inventory_path(repo_root: Path) -> Path:
+    raw = (os.environ.get("OVERLAY_INVENTORY_JSON") or "").strip()
+    if not raw:
+        raise RuntimeError("OVERLAY_ENABLED=1 but OVERLAY_INVENTORY_JSON is empty")
+    p = Path(raw).expanduser()
+    if not p.is_absolute():
+        p = (repo_root / p).resolve()
+    if not p.exists():
+        raise FileNotFoundError(f"OVERLAY_INVENTORY_JSON missing: {p}")
+    return p.resolve()
+
+
+def _overlay_seed_key(out_dir: Path) -> str:
+    key = (os.environ.get("OVERLAY_SELECTION_SEED") or "").strip()
+    if key:
+        return key
+    key = (os.environ.get("STAGE2_SELECTION_SEED") or "").strip()
+    if key:
+        return key
+    key = (os.environ.get("JOB_ID") or "").strip()
+    if key:
+        return key
+    return str(out_dir.resolve())
+
+
+def _as_pos_float(v: Any) -> Optional[float]:
+    try:
+        x = float(v)
+    except Exception:
+        return None
+    if x <= 0.0:
+        return None
+    return x
+
+
+def _style_from_file_path(file_path: str) -> Optional[Tuple[str, str]]:
+    parts = [p for p in str(file_path or "").replace("\\", "/").split("/") if p]
+    if not parts:
+        return None
+    if "pinterest_collection" in parts:
+        i = parts.index("pinterest_collection")
+        if len(parts) > i + 2:
+            return parts[i + 1], parts[i + 2]
+    return None
+
+
+def load_overlay_assets_from_inventory(overlay_inventory_json: Path) -> List[Dict[str, Any]]:
+    inv = json.loads(overlay_inventory_json.read_text(encoding="utf-8"))
+    assets = inv.get("assets")
+    if not isinstance(assets, list):
+        raise RuntimeError(f"Overlay inventory must contain assets[]: {overlay_inventory_json}")
+
+    out: List[Dict[str, Any]] = []
+    for it in assets:
+        if not isinstance(it, dict):
+            continue
+        file_name = str(it.get("file_name") or "").strip()
+        file_path = str(it.get("file_path") or "").strip()
+        src_w = int(it.get("src_w") or 0)
+        src_h = int(it.get("src_h") or 0)
+        duration_sec = _as_pos_float(it.get("duration_sec"))
+        if not file_name or not file_path:
+            continue
+        if src_w <= 0 or src_h <= 0:
+            continue
+        if duration_sec is None:
+            continue
+
+        genre = str(it.get("genre") or "").strip() or None
+        tag = str(it.get("tag") or "").strip() or None
+        if genre is None or tag is None:
+            parsed = _style_from_file_path(file_path)
+            if parsed is not None:
+                genre, tag = parsed
+
+        out.append(
+            {
+                "file_name": file_name,
+                "file_path": file_path,
+                "src_w": int(src_w),
+                "src_h": int(src_h),
+                "duration_sec": float(duration_sec),
+                "genre": genre,
+                "tag": tag,
+            }
+        )
+
+    if not out:
+        raise RuntimeError(f"No valid overlay assets in {overlay_inventory_json}")
+    return out
+
+
+def _resolve_selected_footage_style_key(
+    *,
+    footage_abs: FootageSelectionPayload,
+    assets_map: Dict[str, Dict[str, Any]],
+) -> Tuple[str, str]:
+    clips = sorted(list(footage_abs.clips), key=lambda c: float(c.in_point))
+    for clip in clips:
+        asset = assets_map.get(str(clip.file_name))
+        if not isinstance(asset, dict):
+            continue
+        style_key = _style_from_file_path(str(asset.get("file_path") or ""))
+        if style_key is not None:
+            return style_key
+    raise RuntimeError(
+        "OVERLAY_MATCH_MODE=by_style requires style-resolvable footage file_path (genre/tag) "
+        "for the selected footage clips"
+    )
+
+
+def pick_overlay_asset_deterministic(
+    *,
+    overlay_assets: List[Dict[str, Any]],
+    match_mode: str,
+    target_style_key: Optional[Tuple[str, str]],
+    seed_key: str,
+) -> Dict[str, Any]:
+    if match_mode == "global":
+        pool = list(overlay_assets)
+    elif match_mode == "by_style":
+        if target_style_key is None:
+            raise RuntimeError("OVERLAY_MATCH_MODE=by_style requires target style key")
+        g, t = target_style_key
+        pool = [
+            a for a in overlay_assets
+            if str(a.get("genre") or "") == str(g) and str(a.get("tag") or "") == str(t)
+        ]
+        if not pool:
+            raise RuntimeError(
+                f"No overlays for style genre={g!r} tag={t!r} in OVERLAY_INVENTORY_JSON"
+            )
+    else:
+        raise RuntimeError(f"Unsupported overlay match mode: {match_mode!r}")
+
+    digest = hashlib.sha256(f"{seed_key}|overlay".encode("utf-8")).digest()
+    idx = int.from_bytes(digest[:8], byteorder="big", signed=False) % len(pool)
+    return dict(pool[idx])
+
+
+def build_overlay_tiled_layers(*, overlay_asset: Dict[str, Any], clip_dur: float) -> List[Dict[str, Any]]:
+    dur = _as_pos_float(overlay_asset.get("duration_sec"))
+    if dur is None:
+        raise RuntimeError(f"overlay duration_sec must be > 0: {overlay_asset!r}")
+    if clip_dur <= 0.0:
+        raise RuntimeError(f"clip_dur must be > 0, got {clip_dur}")
+
+    file_name = str(overlay_asset.get("file_name") or "").strip()
+    file_path = str(overlay_asset.get("file_path") or "").strip()
+    src_w = int(overlay_asset.get("src_w") or 0)
+    src_h = int(overlay_asset.get("src_h") or 0)
+    if not file_name or not file_path or src_w <= 0 or src_h <= 0:
+        raise RuntimeError(f"Invalid overlay asset payload: {overlay_asset!r}")
+
+    out: List[Dict[str, Any]] = []
+    t0 = 0.0
+    idx = 0
+    while t0 < float(clip_dur) - 1e-9:
+        t1 = min(float(clip_dur), float(t0 + dur))
+        out.append(
+            {
+                "layer_id": f"overlay_{idx}",
+                "name": f"overlay_{idx}_{file_name}",
+                "file_name": file_name,
+                "file_path": file_path,
+                "src_w": int(src_w),
+                "src_h": int(src_h),
+                "fit_mode": "cover",
+                "in_point": float(t0),
+                "out_point": float(t1),
+                "start_time": float(t0),
+                "enabled": True,
+                "audio_enabled": False,
+                "video_enabled": True,
+                "target_comp": "Comp 1",
+            }
+        )
+        idx += 1
+        t0 = t1
+    return out
 
 
 # -------------------------
@@ -466,6 +671,29 @@ def render_all_steps(
     # -------------------------
     assets_map = load_assets_map_from_inventory(footage_inventory_json)
     preset = read_adjustment_preset_from_inventory(footage_inventory_json)
+    overlay_layers: List[Dict[str, Any]] = []
+
+    if _overlay_enabled():
+        overlay_inventory_path = _resolve_overlay_inventory_path(repo_root)
+        overlay_assets = load_overlay_assets_from_inventory(overlay_inventory_path)
+        overlay_mode = _overlay_match_mode()
+        target_style_key: Optional[Tuple[str, str]] = None
+        if overlay_mode == "by_style":
+            target_style_key = _resolve_selected_footage_style_key(
+                footage_abs=footage_clip_zero,
+                assets_map=assets_map,
+            )
+        seed_key = _overlay_seed_key(out_dir)
+        overlay_asset = pick_overlay_asset_deterministic(
+            overlay_assets=overlay_assets,
+            match_mode=overlay_mode,
+            target_style_key=target_style_key,
+            seed_key=seed_key,
+        )
+        overlay_layers = build_overlay_tiled_layers(
+            overlay_asset=overlay_asset,
+            clip_dur=float(clip_dur),
+        )
 
     audio_file_name, audio_file_path_local = _resolve_audio_source(repo_root)
 
@@ -485,6 +713,7 @@ def render_all_steps(
         adjustment_preset=preset,
         footage=footage_clip_zero,
         assets_map=assets_map,
+        overlay_layers=overlay_layers,
         audio=audio_obj["audio"],
         audio_file_name=audio_file_name,
         audio_file_path=audio_file_path,
