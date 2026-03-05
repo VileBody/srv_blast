@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from app.footage_comp import build_footage_layers
+import mlcore.gemini_postprocess as gp
 from mlcore.gemini_postprocess import render_all_steps
 from mlcore.models.full_plan import FullPlanPayload
 
@@ -146,6 +147,7 @@ def test_stage3_overlay_enabled_requires_inventory_env(monkeypatch, tmp_path: Pa
     monkeypatch.setenv("AUDIO_DIR", str(dummy_audio.parent))
     monkeypatch.setenv("AUDIO_FILE_NAME", "audio_source.mp3")
     monkeypatch.setenv("OVERLAY_ENABLED", "1")
+    monkeypatch.setenv("OVERLAY_SOURCE_MODE", "inventory")
     monkeypatch.delenv("OVERLAY_INVENTORY_JSON", raising=False)
 
     with pytest.raises(RuntimeError, match="OVERLAY_INVENTORY_JSON"):
@@ -156,6 +158,69 @@ def test_stage3_overlay_enabled_requires_inventory_env(monkeypatch, tmp_path: Pa
             out_dir=tmp_path / "out",
             data_dir=tmp_path / "data",
         )
+
+
+def test_stage3_overlay_enabled_s3_prefix_global(monkeypatch, tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parent.parent
+    dummy_audio = tmp_path / "audio.mp3"
+    dummy_audio.write_bytes(b"fake")
+
+    inv = {
+        "assets": [
+            {
+                "file_name": "clip1.mp4",
+                "file_path": "s3://bucket/pinterest_collection/Rock/dark_forest/clip1.mp4",
+                "src_w": 720,
+                "src_h": 1280,
+                "duration_sec": 10.0,
+            }
+        ]
+    }
+    inv_path = tmp_path / "inv.json"
+    inv_path.write_text(json.dumps(inv, ensure_ascii=False), encoding="utf-8")
+
+    class _FakeS3:
+        def list_objects_v2(self, **kwargs):
+            del kwargs
+            return {
+                "IsTruncated": False,
+                "Contents": [
+                    {"Key": "overlays/ovA.mp4"},
+                    {"Key": "overlays/ovB.mp4"},
+                ],
+            }
+
+    monkeypatch.setattr(gp, "_make_overlay_s3_client", lambda: _FakeS3())
+
+    monkeypatch.setenv("MODE", "dev")
+    monkeypatch.setenv("AUDIO_FILE_PATH", str(dummy_audio))
+    monkeypatch.setenv("AUDIO_DIR", str(dummy_audio.parent))
+    monkeypatch.setenv("AUDIO_FILE_NAME", "audio_source.mp3")
+    monkeypatch.setenv("OVERLAY_ENABLED", "1")
+    monkeypatch.setenv("OVERLAY_SOURCE_MODE", "s3_prefix")
+    monkeypatch.setenv("OVERLAY_S3_BUCKET", "bucket")
+    monkeypatch.setenv("OVERLAY_S3_PREFIX", "overlays/")
+    monkeypatch.setenv("OVERLAY_MATCH_MODE", "global")
+    monkeypatch.setenv("OVERLAY_SELECTION_SEED", "seed-s3")
+    monkeypatch.delenv("OVERLAY_INVENTORY_JSON", raising=False)
+
+    out_dir = tmp_path / "out"
+    data_dir = tmp_path / "data"
+    render_all_steps(
+        repo_root=repo_root,
+        plan=_plan(100.0, 115.0),
+        footage_inventory_json=inv_path,
+        out_dir=out_dir,
+        data_dir=data_dir,
+    )
+
+    footage_cfg = json.loads((out_dir / "footage_config.json").read_text(encoding="utf-8"))
+    overlays = [x for x in footage_cfg.get("layers", []) if isinstance(x, dict) and x.get("type") == "overlay"]
+    assert len(overlays) == 1
+    ov = overlays[0]
+    assert str(ov.get("file_path", "")).startswith("s3://bucket/overlays/")
+    assert float(ov.get("in_point", 0.0)) == 0.0
+    assert float(ov.get("out_point", 0.0)) == 15.0
 
 
 def test_overlay_blueprint_uses_opacity_from_env(monkeypatch) -> None:

@@ -105,11 +105,43 @@ def _overlay_enabled() -> bool:
     return _env_bool("OVERLAY_ENABLED", False)
 
 
+def _overlay_source_mode() -> str:
+    raw = (os.environ.get("OVERLAY_SOURCE_MODE") or "inventory").strip().lower()
+    if raw not in {"inventory", "s3_prefix"}:
+        raise RuntimeError("OVERLAY_SOURCE_MODE must be one of: inventory | s3_prefix")
+    return raw
+
+
 def _overlay_match_mode() -> str:
     raw = (os.environ.get("OVERLAY_MATCH_MODE") or "by_style").strip().lower()
     if raw not in {"by_style", "global"}:
         raise RuntimeError("OVERLAY_MATCH_MODE must be one of: by_style | global")
     return raw
+
+
+def _overlay_s3_bucket() -> str:
+    direct = (os.environ.get("OVERLAY_S3_BUCKET") or "").strip()
+    if direct:
+        return direct
+    inherited = (os.environ.get("S3_BUCKET_ASSET_STORAGE") or "").strip()
+    if inherited:
+        return inherited
+    raise RuntimeError("OVERLAY_SOURCE_MODE=s3_prefix requires OVERLAY_S3_BUCKET or S3_BUCKET_ASSET_STORAGE")
+
+
+def _overlay_s3_prefix() -> str:
+    raw = (os.environ.get("OVERLAY_S3_PREFIX") or "overlays/").strip().strip("/")
+    if not raw:
+        raise RuntimeError("OVERLAY_SOURCE_MODE=s3_prefix requires non-empty OVERLAY_S3_PREFIX")
+    return raw + "/"
+
+
+def _overlay_target_size() -> Tuple[int, int]:
+    tw = int((os.environ.get("TARGET_WIDTH") or "1080").strip() or "1080")
+    th = int((os.environ.get("TARGET_HEIGHT") or "1920").strip() or "1920")
+    if tw <= 0 or th <= 0:
+        raise RuntimeError(f"TARGET_WIDTH/TARGET_HEIGHT must be positive, got {tw}x{th}")
+    return tw, th
 
 
 def _resolve_overlay_inventory_path(repo_root: Path) -> Path:
@@ -156,6 +188,169 @@ def _style_from_file_path(file_path: str) -> Optional[Tuple[str, str]]:
         if len(parts) > i + 2:
             return parts[i + 1], parts[i + 2]
     return None
+
+
+def _make_overlay_s3_client():
+    # Lazy import so local/dev runs without overlay s3 mode don't require boto3 at import time.
+    import boto3  # type: ignore
+    from botocore.config import Config  # type: ignore
+
+    endpoint = (os.environ.get("S3_ENDPOINT_URL") or "").strip() or None
+    access_key = (os.environ.get("S3_ACCESS_KEY_ID") or "").strip()
+    secret_key = (os.environ.get("S3_SECRET_ACCESS_KEY") or "").strip()
+    region = (os.environ.get("S3_REGION") or "ru-1").strip() or "ru-1"
+
+    if bool(access_key) != bool(secret_key):
+        raise RuntimeError("S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY must be both set or both empty")
+
+    kwargs: Dict[str, Any] = {
+        "service_name": "s3",
+        "region_name": region,
+        "config": Config(signature_version="s3v4"),
+    }
+    if endpoint is not None:
+        kwargs["endpoint_url"] = endpoint
+    if access_key and secret_key:
+        kwargs["aws_access_key_id"] = access_key
+        kwargs["aws_secret_access_key"] = secret_key
+    return boto3.client(**kwargs)
+
+
+def _iter_overlay_s3_keys(*, s3_client: Any, bucket: str, prefix: str) -> List[str]:
+    video_exts = {".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm"}
+    out: List[str] = []
+    token: Optional[str] = None
+
+    while True:
+        req: Dict[str, Any] = {"Bucket": bucket, "Prefix": prefix, "MaxKeys": 1000}
+        if token:
+            req["ContinuationToken"] = token
+        resp = s3_client.list_objects_v2(**req)
+        contents = resp.get("Contents")
+        if isinstance(contents, list):
+            for row in contents:
+                key = str((row or {}).get("Key") or "").strip()
+                if not key or key.endswith("/"):
+                    continue
+                if Path(key).suffix.lower() not in video_exts:
+                    continue
+                out.append(key)
+
+        if not bool(resp.get("IsTruncated")):
+            break
+        token = str(resp.get("NextContinuationToken") or "").strip() or None
+        if token is None:
+            break
+
+    return out
+
+
+def _collect_overlay_metadata_indexes(repo_root: Path) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, Dict[str, Any]]]:
+    by_url: Dict[str, Dict[str, Any]] = {}
+    by_name: Dict[str, Dict[str, Any]] = {}
+
+    candidates = [
+        (os.environ.get("FOOTAGE_INVENTORY_JSON") or "").strip(),
+        (os.environ.get("STATIC_ASSETS_INDEX_JSON") or "").strip(),
+        str((repo_root / "data" / "footage_inventory.json").resolve()),
+        str((repo_root / "data" / "static_assets_index.json").resolve()),
+    ]
+
+    seen: set[str] = set()
+    for raw in candidates:
+        if not raw:
+            continue
+        p = Path(raw).expanduser()
+        if not p.is_absolute():
+            p = (repo_root / p).resolve()
+        key = str(p.resolve())
+        if key in seen:
+            continue
+        seen.add(key)
+        if not p.exists():
+            continue
+
+        obj = json.loads(p.read_text(encoding="utf-8"))
+        assets = obj.get("assets") if isinstance(obj, dict) else None
+        if not isinstance(assets, list):
+            continue
+
+        for it in assets:
+            if not isinstance(it, dict):
+                continue
+            file_name = str(it.get("file_name") or "").strip()
+            file_path = str(it.get("file_path") or "").strip()
+            if not file_name and not file_path:
+                continue
+
+            src_w = int(it.get("src_w") or 0)
+            src_h = int(it.get("src_h") or 0)
+            duration_sec = _as_pos_float(it.get("duration_sec"))
+
+            genre = str(it.get("genre") or "").strip() or None
+            tag = str(it.get("tag") or "").strip() or None
+            if (genre is None or tag is None) and file_path:
+                parsed = _style_from_file_path(file_path)
+                if parsed is not None:
+                    genre, tag = parsed
+
+            meta = {
+                "src_w": src_w,
+                "src_h": src_h,
+                "duration_sec": duration_sec,
+                "genre": genre,
+                "tag": tag,
+            }
+
+            if file_path.startswith("s3://"):
+                by_url[file_path] = meta
+            if file_name and file_name not in by_name:
+                by_name[file_name] = meta
+
+    return by_url, by_name
+
+
+def load_overlay_assets_from_s3_prefix(*, repo_root: Path, bucket: str, prefix: str) -> List[Dict[str, Any]]:
+    s3_client = _make_overlay_s3_client()
+    keys = _iter_overlay_s3_keys(s3_client=s3_client, bucket=bucket, prefix=prefix)
+    if not keys:
+        raise RuntimeError(f"No overlay videos found in s3://{bucket}/{prefix}")
+
+    by_url, by_name = _collect_overlay_metadata_indexes(repo_root)
+    out: List[Dict[str, Any]] = []
+
+    for key in sorted(set(keys)):
+        file_name = Path(key).name
+        if not file_name:
+            continue
+        file_path = f"s3://{bucket}/{key}"
+
+        meta = by_url.get(file_path) or by_name.get(file_name) or {}
+        src_w = int(meta.get("src_w") or 0)
+        src_h = int(meta.get("src_h") or 0)
+        duration_sec = _as_pos_float(meta.get("duration_sec"))
+        genre = str(meta.get("genre") or "").strip() or None
+        tag = str(meta.get("tag") or "").strip() or None
+        if (genre is None or tag is None):
+            parsed = _style_from_file_path(file_path)
+            if parsed is not None:
+                genre, tag = parsed
+
+        out.append(
+            {
+                "file_name": file_name,
+                "file_path": file_path,
+                "src_w": src_w,
+                "src_h": src_h,
+                "duration_sec": float(duration_sec) if duration_sec is not None else None,
+                "genre": genre,
+                "tag": tag,
+            }
+        )
+
+    if not out:
+        raise RuntimeError(f"No valid overlay assets in s3://{bucket}/{prefix}")
+    return out
 
 
 def load_overlay_assets_from_inventory(overlay_inventory_json: Path) -> List[Dict[str, Any]]:
@@ -242,7 +437,7 @@ def pick_overlay_asset_deterministic(
         ]
         if not pool:
             raise RuntimeError(
-                f"No overlays for style genre={g!r} tag={t!r} in OVERLAY_INVENTORY_JSON"
+                f"No overlays for style genre={g!r} tag={t!r} in overlay assets source"
             )
     else:
         raise RuntimeError(f"Unsupported overlay match mode: {match_mode!r}")
@@ -254,16 +449,21 @@ def pick_overlay_asset_deterministic(
 
 def build_overlay_tiled_layers(*, overlay_asset: Dict[str, Any], clip_dur: float) -> List[Dict[str, Any]]:
     dur = _as_pos_float(overlay_asset.get("duration_sec"))
-    if dur is None:
-        raise RuntimeError(f"overlay duration_sec must be > 0: {overlay_asset!r}")
     if clip_dur <= 0.0:
         raise RuntimeError(f"clip_dur must be > 0, got {clip_dur}")
+    if dur is None:
+        # Metadata may be absent when overlay list is loaded directly from S3 prefix.
+        # In that case we keep one segment for the full clip duration.
+        dur = float(clip_dur)
 
     file_name = str(overlay_asset.get("file_name") or "").strip()
     file_path = str(overlay_asset.get("file_path") or "").strip()
     src_w = int(overlay_asset.get("src_w") or 0)
     src_h = int(overlay_asset.get("src_h") or 0)
-    if not file_name or not file_path or src_w <= 0 or src_h <= 0:
+    if src_w <= 0 or src_h <= 0:
+        tw, th = _overlay_target_size()
+        src_w, src_h = int(tw), int(th)
+    if not file_name or not file_path:
         raise RuntimeError(f"Invalid overlay asset payload: {overlay_asset!r}")
 
     out: List[Dict[str, Any]] = []
@@ -674,8 +874,19 @@ def render_all_steps(
     overlay_layers: List[Dict[str, Any]] = []
 
     if _overlay_enabled():
-        overlay_inventory_path = _resolve_overlay_inventory_path(repo_root)
-        overlay_assets = load_overlay_assets_from_inventory(overlay_inventory_path)
+        overlay_source_mode = _overlay_source_mode()
+        if overlay_source_mode == "inventory":
+            overlay_inventory_path = _resolve_overlay_inventory_path(repo_root)
+            overlay_assets = load_overlay_assets_from_inventory(overlay_inventory_path)
+        elif overlay_source_mode == "s3_prefix":
+            overlay_assets = load_overlay_assets_from_s3_prefix(
+                repo_root=repo_root,
+                bucket=_overlay_s3_bucket(),
+                prefix=_overlay_s3_prefix(),
+            )
+        else:
+            raise RuntimeError(f"Unsupported OVERLAY_SOURCE_MODE: {overlay_source_mode!r}")
+
         overlay_mode = _overlay_match_mode()
         target_style_key: Optional[Tuple[str, str]] = None
         if overlay_mode == "by_style":
