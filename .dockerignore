@@ -1,0 +1,27 @@
+.git
+.gitignore
+.DS_Store
+
+.env
+.env.*
+!.env.example
+
+.venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+
+# Runtime/generated data (mounted as volumes in compose)
+work/
+output/
+out/
+ml_logs/
+tmp/
+
+# Local media not required in build context
+audio/
+footage/
+
+# Local artifacts
+repomix-output.xml
