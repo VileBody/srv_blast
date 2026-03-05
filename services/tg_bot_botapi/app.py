@@ -7,7 +7,6 @@ import time
 import uuid
 from pathlib import Path
 from typing import Any, Optional, Tuple
-from urllib.parse import urlparse
 
 import httpx
 from aiogram import Bot, Dispatcher, Router
@@ -147,32 +146,6 @@ def _resolve_job_project_archive_source(job: dict[str, Any]) -> str:
         if u:
             return u
     return ""
-
-
-def _archive_suffix_from_source(source: str) -> str:
-    src = str(source or "").strip()
-    if not src:
-        return ".bin"
-
-    name = ""
-    if src.startswith("s3://"):
-        tail = src[5:]
-        if "/" in tail:
-            name = tail.split("/", 1)[1].split("/")[-1]
-    elif src.startswith("http://") or src.startswith("https://"):
-        name = Path(urlparse(src).path).name
-
-    low = str(name or "").lower()
-    if low.endswith(".tar.gz"):
-        return ".tar.gz"
-    if low.endswith(".tgz"):
-        return ".tgz"
-    if low.endswith(".zip"):
-        return ".zip"
-    if low.endswith(".tar"):
-        return ".tar"
-    suffix = Path(low).suffix
-    return suffix or ".bin"
 
 
 class BlastBotApp:
@@ -500,7 +473,6 @@ class BlastBotApp:
 
         file_sent = False
         send_file_error = ""
-        archive_path: Path | None = None
 
         try:
             await self._download_result_video(source=source, dest=video_path)
@@ -526,30 +498,13 @@ class BlastBotApp:
         if self.settings.tg_send_project_archive:
             archive_source = _resolve_job_project_archive_source(job)
             if archive_source:
-                archive_suffix = _archive_suffix_from_source(archive_source)
-                archive_path = self.settings.tmp_dir / str(st.chat_id) / "result" / f"{job_id}_project{archive_suffix}"
-                archive_sent = False
-                archive_error = ""
-                try:
-                    await self._download_result_video(source=archive_source, dest=archive_path)
-                    await bot.send_document(
-                        chat_id=st.chat_id,
-                        document=FSInputFile(str(archive_path)),
-                        caption="Архив проекта (AEP + ресурсы).",
-                    )
-                    archive_sent = True
-                except Exception as e:
-                    archive_error = str(e)
-                    log.warning("send archive failed chat=%s job=%s err=%s", st.chat_id, job_id, archive_error)
-
-                if not archive_sent:
-                    archive_link = await self._build_fallback_link(archive_source)
-                    msg = "Не смог отправить архив проекта."
-                    if archive_link:
-                        msg += f"\nСсылка: {archive_link}"
-                    if archive_error:
-                        msg += f"\nОшибка: {archive_error}"
-                    await bot.send_message(st.chat_id, msg)
+                archive_link = await self._build_fallback_link(archive_source)
+                if not archive_link:
+                    archive_link = archive_source
+                await bot.send_message(
+                    st.chat_id,
+                    f"Проект (AEP + ресурсы): {archive_link}",
+                )
             else:
                 await bot.send_message(
                     st.chat_id,
@@ -574,11 +529,6 @@ class BlastBotApp:
         try:
             if video_path.exists():
                 video_path.unlink()
-        except Exception:
-            pass
-        try:
-            if archive_path is not None and archive_path.exists():
-                archive_path.unlink()
         except Exception:
             pass
 

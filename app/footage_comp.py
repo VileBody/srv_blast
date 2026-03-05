@@ -644,6 +644,33 @@ def _overlay_bp(
         comp_w=comp_w,
         comp_h=comp_h,
     )
+
+    # Force robust "cover" on overlay using actual imported footage dimensions.
+    # This avoids reliance on inventory metadata that may be missing/wrong for S3 prefix overlays.
+    bp.props["tf_anchor"] = PropertyData(
+        "ADBE Anchor Point",
+        value=[0.0, 0.0, 0.0],
+        expression=(
+            "var sw=(thisLayer.source&&thisLayer.source.width)?thisLayer.source.width:0;\n"
+            "var sh=(thisLayer.source&&thisLayer.source.height)?thisLayer.source.height:0;\n"
+            "[sw/2,sh/2,0];"
+        ),
+    )
+    bp.props["tf_position"] = PropertyData(
+        "ADBE Position",
+        value=[float(comp_w) / 2.0, float(comp_h) / 2.0, 0.0],
+        expression="[thisComp.width/2,thisComp.height/2,0];",
+    )
+    bp.props["tf_scale"] = PropertyData(
+        "ADBE Scale",
+        value=[100.0, 100.0, 100.0],
+        expression=(
+            "var sw=(thisLayer.source&&thisLayer.source.width)?thisLayer.source.width:0;\n"
+            "var sh=(thisLayer.source&&thisLayer.source.height)?thisLayer.source.height:0;\n"
+            "if (sw<=0 || sh<=0) value;\n"
+            "else { var s=Math.max(thisComp.width/sw,thisComp.height/sh)*100; [s,s,100]; }"
+        ),
+    )
     bp.props["tf_opacity"] = PropertyData("ADBE Opacity", value=float(opacity_percent))
     bp.text_data["layer_meta"]["isOverlay"] = True
     return bp
