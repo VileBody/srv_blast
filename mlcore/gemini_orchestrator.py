@@ -18,6 +18,13 @@ from mlcore.gemini_call import (
     pick_audio_files,
 )
 from mlcore.gemini_client import GeminiClient, GeminiSettings
+from mlcore.llm_router import (
+    PROVIDER_MODE_GEMINI,
+    PROVIDER_MODE_HEDGED,
+    PROVIDER_MODE_OPENROUTER,
+    normalize_provider_mode,
+)
+from mlcore.openrouter_client import OpenRouterClient, OpenRouterSettings
 from mlcore.footage_picker import (
     FootagePickerDiagnostics,
     build_style_groups_from_assets,
@@ -54,6 +61,32 @@ ROOT = Path(__file__).resolve().parent.parent
 
 def _stamp() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+
+
+def _load_resume_state(path: Optional[Path], logger: logging.Logger) -> Dict[str, Any]:
+    if path is None:
+        return {}
+    if not path.exists():
+        return {}
+    try:
+        obj = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as e:
+        logger.warning("llm_resume_state_read_failed path=%s err=%s", str(path), str(e))
+        return {}
+    if not isinstance(obj, dict):
+        logger.warning("llm_resume_state_invalid_root path=%s", str(path))
+        return {}
+    return obj
+
+
+def _save_resume_state(path: Optional[Path], logger: logging.Logger, state: Dict[str, Any]) -> None:
+    if path is None:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(path)
+    logger.info("llm_resume_state_saved path=%s keys=%s", str(path), sorted(state.keys()))
 
 
 def _get_logger() -> logging.Logger:
@@ -139,6 +172,47 @@ def _make_client(*, api_key: str, model: str, proxy: str, temperature: float, ti
         ),
         logger=logger,
     )
+
+
+def _make_openrouter_client(
+    *,
+    api_key: str,
+    model: str,
+    temperature: float,
+    timeout_s: float,
+    logger: logging.Logger,
+) -> OpenRouterClient:
+    return OpenRouterClient(
+        OpenRouterSettings(
+            api_key=api_key,
+            model=model,
+            temperature=temperature,
+            timeout_s=timeout_s,
+        ),
+        logger=logger,
+    )
+
+
+def _float_env(name: str, default: float) -> float:
+    raw = (os.environ.get(name) or "").strip()
+    if not raw:
+        return float(default)
+    try:
+        return float(raw)
+    except Exception as e:
+        raise RuntimeError(f"Invalid {name}: {raw!r}") from e
+
+
+def _openrouter_model_from_gemini(gemini_model: str) -> str:
+    model = (gemini_model or "").strip()
+    if not model:
+        raise RuntimeError("Gemini model is empty")
+    if "/" in model:
+        raise RuntimeError(
+            "OpenRouter auto-mapping requires bare Gemini model id without '/': "
+            f"got {model!r}"
+        )
+    return f"google/{model}"
 
 
 def _emit(progress_cb: Optional[Callable[[str], None]], stage: str) -> None:
@@ -545,25 +619,33 @@ def _log_footage_picker_diagnostics(*, logger: logging.Logger, diagnostics: Foot
     )
 
 
-def build_all_via_gemini_one_call(*, progress_cb: Optional[Callable[[str], None]] = None) -> Dict[str, Path]:
+def build_all_via_gemini_one_call(
+    *,
+    progress_cb: Optional[Callable[[str], None]] = None,
+    resume_state_path: Optional[Path] = None,
+) -> Dict[str, Path]:
     """
     Backward-compatible function name; implementation is now staged:
       - stage1: ASR + audio window + scenario draft
       - stage2 (parallel): subtitles and footage
       - stage3: merge -> FullPlanPayload -> render_all_steps
     """
-    api_key = os.environ.get("GEMINI_API_KEY", "").strip()
+    gemini_api_key = os.environ.get("GEMINI_API_KEY", "").strip()
     proxy = os.environ.get("OUTBOUND_PROXY", "").strip()
-    temperature = float(os.environ.get("GEMINI_TEMPERATURE", "0") or "0")
-    timeout_s = float(os.environ.get("GEMINI_TIMEOUT_S", "120") or "120")
+    temperature = _float_env("GEMINI_TEMPERATURE", 0.0)
+    timeout_s = _float_env("GEMINI_TIMEOUT_S", 120.0)
+    provider_mode = normalize_provider_mode(os.environ.get("LLM_PROVIDER_MODE", PROVIDER_MODE_GEMINI))
+    hedge_delay_s = _float_env("LLM_HEDGE_DELAY_S", 60.0)
 
     logger = _get_logger()
     mode = get_runtime_mode()
     if mode not in {MODE_DEV, MODE_PROD}:
         raise RuntimeError(f"Unsupported MODE={mode!r}")
 
-    if not api_key:
-        raise RuntimeError("Missing GEMINI_API_KEY in env")
+    if provider_mode in {PROVIDER_MODE_GEMINI, PROVIDER_MODE_HEDGED} and not gemini_api_key:
+        raise RuntimeError(
+            "Missing GEMINI_API_KEY in env for LLM_PROVIDER_MODE=gemini|hedged"
+        )
 
     # Explicit-only model contract:
     # - GEMINI_MODEL_STAGE1 is required (base).
@@ -573,39 +655,92 @@ def build_all_via_gemini_one_call(*, progress_cb: Optional[Callable[[str], None]
     model_stage1_scenario = (os.environ.get("GEMINI_MODEL_STAGE1_SCENARIO") or model_stage1_base).strip()
     model_subtitles = _require_model("GEMINI_MODEL_SUBTITLES")
     model_footage = _require_model("GEMINI_MODEL_FOOTAGE")
+    openrouter_api_key = (os.environ.get("OPENROUTER_API_KEY") or "").strip()
+    openrouter_timeout_s = _float_env("OPENROUTER_TIMEOUT_S", timeout_s)
+    if provider_mode in {PROVIDER_MODE_OPENROUTER, PROVIDER_MODE_HEDGED} and not openrouter_api_key:
+        raise RuntimeError(
+            "Missing OPENROUTER_API_KEY in env for LLM_PROVIDER_MODE=openrouter|hedged"
+        )
 
-    client_stage1_asr = _make_client(
-        api_key=api_key,
-        model=model_stage1_asr,
-        proxy=proxy,
-        temperature=temperature,
-        timeout_s=timeout_s,
-        logger=logger,
+    logger.info(
+        "llm_provider_config mode=%s hedge_delay_s=%s gemini_timeout_s=%s openrouter_timeout_s=%s",
+        provider_mode,
+        hedge_delay_s,
+        timeout_s,
+        openrouter_timeout_s,
     )
-    client_stage1_scenario = _make_client(
-        api_key=api_key,
-        model=model_stage1_scenario,
-        proxy=proxy,
-        temperature=temperature,
-        timeout_s=timeout_s,
-        logger=logger,
-    )
-    client_subtitles = _make_client(
-        api_key=api_key,
-        model=model_subtitles,
-        proxy=proxy,
-        temperature=temperature,
-        timeout_s=timeout_s,
-        logger=logger,
-    )
-    client_footage = _make_client(
-        api_key=api_key,
-        model=model_footage,
-        proxy=proxy,
-        temperature=temperature,
-        timeout_s=timeout_s,
-        logger=logger,
-    )
+
+    client_stage1_asr: Optional[GeminiClient] = None
+    client_stage1_scenario: Optional[GeminiClient] = None
+    client_subtitles: Optional[GeminiClient] = None
+    client_footage: Optional[GeminiClient] = None
+    if provider_mode in {PROVIDER_MODE_GEMINI, PROVIDER_MODE_HEDGED}:
+        client_stage1_asr = _make_client(
+            api_key=gemini_api_key,
+            model=model_stage1_asr,
+            proxy=proxy,
+            temperature=temperature,
+            timeout_s=timeout_s,
+            logger=logger,
+        )
+        client_stage1_scenario = _make_client(
+            api_key=gemini_api_key,
+            model=model_stage1_scenario,
+            proxy=proxy,
+            temperature=temperature,
+            timeout_s=timeout_s,
+            logger=logger,
+        )
+        client_subtitles = _make_client(
+            api_key=gemini_api_key,
+            model=model_subtitles,
+            proxy=proxy,
+            temperature=temperature,
+            timeout_s=timeout_s,
+            logger=logger,
+        )
+        client_footage = _make_client(
+            api_key=gemini_api_key,
+            model=model_footage,
+            proxy=proxy,
+            temperature=temperature,
+            timeout_s=timeout_s,
+            logger=logger,
+        )
+
+    openrouter_stage1_asr: Optional[OpenRouterClient] = None
+    openrouter_stage1_scenario: Optional[OpenRouterClient] = None
+    openrouter_subtitles: Optional[OpenRouterClient] = None
+    openrouter_footage: Optional[OpenRouterClient] = None
+    if provider_mode in {PROVIDER_MODE_OPENROUTER, PROVIDER_MODE_HEDGED}:
+        openrouter_stage1_asr = _make_openrouter_client(
+            api_key=openrouter_api_key,
+            model=_openrouter_model_from_gemini(model_stage1_asr),
+            temperature=temperature,
+            timeout_s=openrouter_timeout_s,
+            logger=logger,
+        )
+        openrouter_stage1_scenario = _make_openrouter_client(
+            api_key=openrouter_api_key,
+            model=_openrouter_model_from_gemini(model_stage1_scenario),
+            temperature=temperature,
+            timeout_s=openrouter_timeout_s,
+            logger=logger,
+        )
+        openrouter_subtitles = _make_openrouter_client(
+            api_key=openrouter_api_key,
+            model=_openrouter_model_from_gemini(model_subtitles),
+            temperature=temperature,
+            timeout_s=openrouter_timeout_s,
+            logger=logger,
+        )
+        openrouter_footage = _make_openrouter_client(
+            api_key=openrouter_api_key,
+            model=_openrouter_model_from_gemini(model_footage),
+            temperature=temperature,
+            timeout_s=openrouter_timeout_s,
+            logger=logger,
+        )
 
     inv_path = Path(
         os.environ.get("FOOTAGE_INVENTORY_JSON", str(ROOT / "data" / "footage_inventory.json"))
@@ -620,6 +755,13 @@ def build_all_via_gemini_one_call(*, progress_cb: Optional[Callable[[str], None]
     out_dir = Path(os.environ.get("OUT_DIR", str(ROOT / "out"))).resolve()
     logs_dir = out_dir / "logs"
     logs_dir.mkdir(parents=True, exist_ok=True)
+    resume_state = _load_resume_state(resume_state_path, logger=logger)
+    if resume_state:
+        logger.info(
+            "llm_resume_state_loaded path=%s keys=%s",
+            str(resume_state_path),
+            sorted(resume_state.keys()),
+        )
 
     audio_dir = Path(os.environ.get("AUDIO_DIR", str(ROOT / "audio"))).resolve()
     audio_files = pick_audio_files(audio_dir)
@@ -638,17 +780,33 @@ def build_all_via_gemini_one_call(*, progress_cb: Optional[Callable[[str], None]
     stage1a_raw = logs_dir / f"gemini_raw_stage1_asr_{stamp}.json"
     stage1a_sys = logs_dir / f"gemini_system_stage1_asr_{stamp}.txt"
     stage1a_user = logs_dir / f"gemini_prompt_stage1_asr_{stamp}.txt"
+    stage1_asr: Stage1AsrPayload | None = None
+    stage1_asr_cached = resume_state.get("stage1_asr")
+    if isinstance(stage1_asr_cached, dict):
+        try:
+            stage1_asr = Stage1AsrPayload.model_validate(stage1_asr_cached)
+            logger.info("llm_resume_hit stage=stage1a_asr")
+        except Exception as e:
+            logger.warning("llm_resume_bad stage=stage1a_asr err=%s", str(e))
+            resume_state.pop("stage1_asr", None)
 
-    stage1_asr: Stage1AsrPayload = call_stage1_asr_once(
-        client=client_stage1_asr,
-        system_instruction=stage1a_system,
-        user_prompt=stage1a_prompt,
-        audio_paths=audio_files,
-        raw_response_path=stage1a_raw,
-        cache_path=cache_path,
-        prompt_dump_path=stage1a_user,
-        system_dump_path=stage1a_sys,
-    )
+    if stage1_asr is None:
+        stage1_asr = call_stage1_asr_once(
+            client=client_stage1_asr,
+            openrouter_client=openrouter_stage1_asr,
+            provider_mode=provider_mode,
+            hedge_delay_s=hedge_delay_s,
+            logger=logger,
+            system_instruction=stage1a_system,
+            user_prompt=stage1a_prompt,
+            audio_paths=audio_files,
+            raw_response_path=stage1a_raw,
+            cache_path=cache_path,
+            prompt_dump_path=stage1a_user,
+            system_dump_path=stage1a_sys,
+        )
+        resume_state["stage1_asr"] = stage1_asr.model_dump(mode="json")
+        _save_resume_state(resume_state_path, logger=logger, state=resume_state)
 
     stage1_asr_json = stage1_asr.model_dump(mode="json")
     (logs_dir / f"stage1_asr_{stamp}.json").write_text(
@@ -671,62 +829,78 @@ def build_all_via_gemini_one_call(*, progress_cb: Optional[Callable[[str], None]
     stage1b_user_retry = logs_dir / f"gemini_prompt_stage1_scenario_retry_{stamp}.txt"
 
     stage1: Stage1PlanPayload | None = None
-    stage1_last_exc: Exception | None = None
-    for attempt, strict in enumerate((False, True), start=1):
-        strict_addendum = (
-            "\n\nSTRICT_RETRY_RULES:\n"
-            "- Every draft phrase must be copy-pasted from transcript words (no paraphrase).\n"
-            "- Keep selected window in 13..18 sec and preserve 1..5 development, 6 fixation, 7 exit arc.\n"
-            "- Keep block phrases concise and balanced (target <=6 words, hard cap <=8).\n"
-            "- Avoid dangling leftovers: split only at natural phrase boundaries.\n"
-            "- Repeats are OK in songs.\n"
-        )
-        prompt = stage1b_base_prompt + strict_addendum if strict else stage1b_base_prompt
-        raw_path = stage1b_raw_retry if strict else stage1b_raw
-        prompt_path = stage1b_user_retry if strict else stage1b_user
+    stage1_cached = resume_state.get("stage1_plan")
+    if isinstance(stage1_cached, dict):
         try:
-            stage1_scenario: Stage1ScenarioPayload = call_stage1_scenario_once(
-                client=client_stage1_scenario,
-                system_instruction=stage1b_system,
-                user_prompt=prompt,
-                # IMPORTANT:
-                # Stage1B is scenario planning based on Stage1A transcript_words.
-                # We do NOT attach audio here to avoid the model "re-listening" and drifting from transcript.
-                audio_paths=[],
-                raw_response_path=raw_path,
-                cache_path=cache_path,
-                prompt_dump_path=prompt_path,
-                system_dump_path=stage1b_sys,
-            )
-
-            stage1_candidate = Stage1PlanPayload.model_validate(
-                {
-                    "audio": stage1_scenario.audio.model_dump(mode="json"),
-                    "transcript_words": stage1_asr.transcript_words,
-                    "draft_blocks": stage1_scenario.draft_blocks.model_dump(mode="json"),
-                }
-            )
-            stage1 = stage1_candidate
-            # Best-effort alignment report (useful for debugging), but do not fail Stage1 if it can't be aligned.
-            report_path = logs_dir / f"stage1_report_{stamp}.txt"
-            try:
-                align_rows = align_stage1_draft_to_transcript(stage1_candidate)
-                report_path.write_text(build_stage1_report(stage1_candidate, align_rows), encoding="utf-8")
-            except Exception as e:
-                logger.warning("stage1b_align_warning err=%s", str(e))
-                report_path.write_text(
-                    "STAGE1 ALIGNMENT WARNING (non-fatal)\n"
-                    f"err={e}\n\n"
-                    "DRAFT_BLOCKS_JSON:\n"
-                    + json.dumps(stage1_scenario.draft_blocks.model_dump(mode="json"), ensure_ascii=False, indent=2),
-                    encoding="utf-8",
-                )
-            break
+            stage1 = Stage1PlanPayload.model_validate(stage1_cached)
+            logger.info("llm_resume_hit stage=stage1b_scenario")
         except Exception as e:
-            stage1_last_exc = e
-            logger.warning("stage1b_scenario_invalid attempt=%d strict=%s err=%s", attempt, strict, str(e))
-            if attempt >= 2:
+            logger.warning("llm_resume_bad stage=stage1b_scenario err=%s", str(e))
+            resume_state.pop("stage1_plan", None)
+
+    stage1_last_exc: Exception | None = None
+    if stage1 is None:
+        for attempt, strict in enumerate((False, True), start=1):
+            strict_addendum = (
+                "\n\nSTRICT_RETRY_RULES:\n"
+                "- Every draft phrase must be copy-pasted from transcript words (no paraphrase).\n"
+                "- Keep selected window in 13..18 sec and preserve 1..5 development, 6 fixation, 7 exit arc.\n"
+                "- Keep block phrases concise and balanced (target <=6 words, hard cap <=8).\n"
+                "- Avoid dangling leftovers: split only at natural phrase boundaries.\n"
+                "- Repeats are OK in songs.\n"
+            )
+            prompt = stage1b_base_prompt + strict_addendum if strict else stage1b_base_prompt
+            raw_path = stage1b_raw_retry if strict else stage1b_raw
+            prompt_path = stage1b_user_retry if strict else stage1b_user
+            try:
+                stage1_scenario: Stage1ScenarioPayload = call_stage1_scenario_once(
+                    client=client_stage1_scenario,
+                    openrouter_client=openrouter_stage1_scenario,
+                    provider_mode=provider_mode,
+                    hedge_delay_s=hedge_delay_s,
+                    logger=logger,
+                    system_instruction=stage1b_system,
+                    user_prompt=prompt,
+                    # IMPORTANT:
+                    # Stage1B is scenario planning based on Stage1A transcript_words.
+                    # We do NOT attach audio here to avoid the model "re-listening" and drifting from transcript.
+                    audio_paths=[],
+                    raw_response_path=raw_path,
+                    cache_path=cache_path,
+                    prompt_dump_path=prompt_path,
+                    system_dump_path=stage1b_sys,
+                )
+
+                stage1_candidate = Stage1PlanPayload.model_validate(
+                    {
+                        "audio": stage1_scenario.audio.model_dump(mode="json"),
+                        "transcript_words": stage1_asr.transcript_words,
+                        "draft_blocks": stage1_scenario.draft_blocks.model_dump(mode="json"),
+                    }
+                )
+                stage1 = stage1_candidate
+                # Best-effort alignment report (useful for debugging), but do not fail Stage1 if it can't be aligned.
+                report_path = logs_dir / f"stage1_report_{stamp}.txt"
+                try:
+                    align_rows = align_stage1_draft_to_transcript(stage1_candidate)
+                    report_path.write_text(build_stage1_report(stage1_candidate, align_rows), encoding="utf-8")
+                except Exception as e:
+                    logger.warning("stage1b_align_warning err=%s", str(e))
+                    report_path.write_text(
+                        "STAGE1 ALIGNMENT WARNING (non-fatal)\n"
+                        f"err={e}\n\n"
+                        "DRAFT_BLOCKS_JSON:\n"
+                        + json.dumps(stage1_scenario.draft_blocks.model_dump(mode="json"), ensure_ascii=False, indent=2),
+                        encoding="utf-8",
+                    )
+                resume_state["stage1_plan"] = stage1.model_dump(mode="json")
+                _save_resume_state(resume_state_path, logger=logger, state=resume_state)
                 break
+            except Exception as e:
+                stage1_last_exc = e
+                logger.warning("stage1b_scenario_invalid attempt=%d strict=%s err=%s", attempt, strict, str(e))
+                if attempt >= 2:
+                    break
 
     if stage1 is None:
         raise RuntimeError(f"Stage1 scenario validation failed after retry: {stage1_last_exc}")
@@ -785,6 +959,10 @@ def build_all_via_gemini_one_call(*, progress_cb: Optional[Callable[[str], None]
 
         payload = call_subtitles_plan_once(
             client=client_subtitles,
+            openrouter_client=openrouter_subtitles,
+            provider_mode=provider_mode,
+            hedge_delay_s=hedge_delay_s,
+            logger=logger,
             system_instruction=sub_system,
             user_prompt=str(prompt),
             # IMPORTANT:
@@ -819,6 +997,10 @@ def build_all_via_gemini_one_call(*, progress_cb: Optional[Callable[[str], None]
 
         payload = call_footage_style_once(
             client=client_footage,
+            openrouter_client=openrouter_footage,
+            provider_mode=provider_mode,
+            hedge_delay_s=hedge_delay_s,
+            logger=logger,
             system_instruction=foot_system,
             user_prompt=str(prompt),
             # Style selection needs only Stage1 context + style pool groups.
@@ -835,21 +1017,67 @@ def build_all_via_gemini_one_call(*, progress_cb: Optional[Callable[[str], None]
     stage2_last_exc: Exception | None = None
     subtitles_payload: BlocksTokensPayload | None = None
     style_payload: FootageStylePickPayload | None = None
-    for stage2_attempt, strict in enumerate((False, True), start=1):
+    subtitles_cached = resume_state.get("stage2_subtitles")
+    if isinstance(subtitles_cached, dict):
         try:
-            subtitles_payload, style_payload = _run_stage2_parallel(
-                lambda strict=strict: _run_subtitles(strict=strict),
-                lambda strict=strict: _run_style(strict=strict),
-            )
-            break
+            subtitles_payload = BlocksTokensPayload.model_validate(subtitles_cached)
+            logger.info("llm_resume_hit stage=stage2_subtitles")
         except Exception as e:
-            stage2_last_exc = e
-            logger.warning("stage2_full_attempt_failed attempt=%d strict=%s err=%s", stage2_attempt, strict, str(e))
-            if stage2_attempt >= 2:
+            logger.warning("llm_resume_bad stage=stage2_subtitles err=%s", str(e))
+            resume_state.pop("stage2_subtitles", None)
+
+    style_cached = resume_state.get("stage2_style")
+    if isinstance(style_cached, dict):
+        try:
+            style_payload = FootageStylePickPayload.model_validate(style_cached)
+            validate_style_pick_in_groups(style_payload, style_groups)
+            logger.info("llm_resume_hit stage=stage2_style")
+        except Exception as e:
+            logger.warning("llm_resume_bad stage=stage2_style err=%s", str(e))
+            resume_state.pop("stage2_style", None)
+
+    if subtitles_payload is None and style_payload is None:
+        for stage2_attempt, strict in enumerate((False, True), start=1):
+            try:
+                subtitles_payload, style_payload = _run_stage2_parallel(
+                    lambda strict=strict: _run_subtitles(strict=strict),
+                    lambda strict=strict: _run_style(strict=strict),
+                )
                 break
+            except Exception as e:
+                stage2_last_exc = e
+                logger.warning(
+                    "stage2_full_attempt_failed attempt=%d strict=%s err=%s",
+                    stage2_attempt,
+                    strict,
+                    str(e),
+                )
+                if stage2_attempt >= 2:
+                    break
+    else:
+        for stage2_attempt, strict in enumerate((False, True), start=1):
+            try:
+                if subtitles_payload is None:
+                    subtitles_payload = _run_subtitles(strict=strict)
+                if style_payload is None:
+                    style_payload = _run_style(strict=strict)
+                break
+            except Exception as e:
+                stage2_last_exc = e
+                logger.warning(
+                    "stage2_partial_attempt_failed attempt=%d strict=%s err=%s",
+                    stage2_attempt,
+                    strict,
+                    str(e),
+                )
+                if stage2_attempt >= 2:
+                    break
 
     if subtitles_payload is None or style_payload is None:
         raise RuntimeError(f"Stage2 failed after one retry: {stage2_last_exc}")
+    resume_state["stage2_subtitles"] = subtitles_payload.model_dump(mode="json")
+    resume_state["stage2_style"] = style_payload.model_dump(mode="json")
+    _save_resume_state(resume_state_path, logger=logger, state=resume_state)
 
     seed_key = _resolve_footage_seed_key(out_dir=out_dir, logger=logger)
     footage_payload, pick_diag = pick_footage_clips_deterministic(

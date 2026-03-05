@@ -34,7 +34,7 @@ services:
       - ./footage:/app/footage:ro
       - ./audio:/app/audio:ro
     ports:
-      - "8000:8000"
+      - "127.0.0.1:18000:8000"
     command: >
       bash -lc "python footage_config.py && python -m services.orchestrator.run_uvicorn"
     restart: unless-stopped

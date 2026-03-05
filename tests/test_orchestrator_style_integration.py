@@ -171,3 +171,222 @@ def test_with_gemini_stage2_style_and_deterministic_picker(monkeypatch, tmp_path
     assert style_obj == {"genre": "Rock", "tag": "dark_forest"}
 
     assert os.environ.get("JOB_ID") == "job_123"
+
+
+def test_hedged_mode_wires_openrouter_for_all_stage_calls(monkeypatch, tmp_path: Path) -> None:
+    audio_path = tmp_path / "audio.mp3"
+    audio_path.write_bytes(b"fake")
+
+    inv_path = tmp_path / "inventory.json"
+    inv_path.write_text(
+        json.dumps(
+            {
+                "assets": [
+                    {
+                        "file_name": "f1.mp4",
+                        "file_path": "s3://bucket/pinterest_collection/Rock/dark_forest/f1.mp4",
+                        "src_w": 720,
+                        "src_h": 1280,
+                        "duration_sec": 15.0,
+                        "genre": "Rock",
+                        "tag": "dark_forest",
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    out_dir = tmp_path / "out"
+    monkeypatch.setenv("MODE", "dev")
+    monkeypatch.setenv("GEMINI_API_KEY", "gk")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "ork")
+    monkeypatch.setenv("LLM_PROVIDER_MODE", "hedged")
+    monkeypatch.setenv("LLM_HEDGE_DELAY_S", "60")
+    monkeypatch.setenv("GEMINI_MODEL_STAGE1", "gemini-2.5-pro")
+    monkeypatch.setenv("GEMINI_MODEL_SUBTITLES", "gemini-3-pro-preview")
+    monkeypatch.setenv("GEMINI_MODEL_FOOTAGE", "gemini-3-flash-preview")
+    monkeypatch.setenv("FOOTAGE_INVENTORY_JSON", str(inv_path))
+    monkeypatch.setenv("OUT_DIR", str(out_dir))
+    monkeypatch.setenv("AUDIO_FILE_PATH", str(audio_path))
+    monkeypatch.setenv("AUDIO_DIR", str(audio_path.parent))
+    monkeypatch.setenv("JOB_ID", "job_hedged")
+
+    gemini_clients: list[object] = []
+    openrouter_clients: list[object] = []
+
+    def _mk_gemini(**kwargs):
+        c = object()
+        gemini_clients.append(c)
+        return c
+
+    def _mk_openrouter(**kwargs):
+        c = object()
+        openrouter_clients.append(c)
+        return c
+
+    monkeypatch.setattr(go, "_make_client", _mk_gemini)
+    monkeypatch.setattr(go, "_make_openrouter_client", _mk_openrouter)
+    monkeypatch.setattr(go, "pick_audio_files", lambda _audio_dir: [audio_path])
+
+    seen: dict[str, dict] = {}
+
+    def _remember(name: str, kwargs: dict) -> None:
+        seen[name] = kwargs
+        assert kwargs["provider_mode"] == "hedged"
+        assert float(kwargs["hedge_delay_s"]) == 60.0
+        assert kwargs["openrouter_client"] is not None
+        assert kwargs["client"] is not None
+
+    def _asr(**kwargs):
+        _remember("asr", kwargs)
+        return Stage1AsrPayload.model_validate(
+            {
+                "transcript_words": [
+                    {"text": "a", "t_start": 0.0, "t_end": 0.5},
+                    {"text": "b", "t_start": 0.5, "t_end": 1.0},
+                ],
+                "srt_items": [],
+            }
+        )
+
+    def _scenario(**kwargs):
+        _remember("scenario", kwargs)
+        return Stage1ScenarioPayload.model_validate(
+            {"audio": {"clip_start_abs": 0.0, "clip_end_abs": 14.0}, "draft_blocks": _draft_blocks()}
+        )
+
+    def _subs(**kwargs):
+        _remember("subtitles", kwargs)
+        return _subtitles_payload()
+
+    def _style(**kwargs):
+        _remember("style", kwargs)
+        return FootageStylePickPayload.model_validate({"genre": "Rock", "tag": "dark_forest"})
+
+    monkeypatch.setattr(go, "call_stage1_asr_once", _asr)
+    monkeypatch.setattr(go, "call_stage1_scenario_once", _scenario)
+    monkeypatch.setattr(go, "call_subtitles_plan_once", _subs)
+    monkeypatch.setattr(go, "call_footage_style_once", _style)
+
+    monkeypatch.setattr(
+        go,
+        "render_all_steps",
+        lambda **kwargs: {
+            "audio_plan": tmp_path / "audio_plan.json",
+            "full_edit_config": tmp_path / "full_edit_config.json",
+            "footage_config": tmp_path / "footage_config.json",
+        },
+    )
+
+    out = go.build_all_via_gemini_one_call()
+    assert set(out.keys()) == {"audio_plan", "full_edit_config", "footage_config"}
+    assert set(seen.keys()) == {"asr", "scenario", "subtitles", "style"}
+    assert len(gemini_clients) == 4
+    assert len(openrouter_clients) == 4
+
+
+def test_resume_state_skips_stage1_llm_calls(monkeypatch, tmp_path: Path) -> None:
+    audio_path = tmp_path / "audio.mp3"
+    audio_path.write_bytes(b"fake")
+
+    inv_path = tmp_path / "inventory.json"
+    inv_path.write_text(
+        json.dumps(
+            {
+                "assets": [
+                    {
+                        "file_name": "f1.mp4",
+                        "file_path": "s3://bucket/pinterest_collection/Rock/dark_forest/f1.mp4",
+                        "src_w": 720,
+                        "src_h": 1280,
+                        "duration_sec": 15.0,
+                        "genre": "Rock",
+                        "tag": "dark_forest",
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    out_dir = tmp_path / "out"
+    resume_state_path = tmp_path / "llm_resume_state.json"
+
+    stage1_asr = Stage1AsrPayload.model_validate(
+        {
+            "transcript_words": [
+                {"text": "a", "t_start": 0.0, "t_end": 0.5},
+                {"text": "b", "t_start": 0.5, "t_end": 1.0},
+            ],
+            "srt_items": [],
+        }
+    )
+    stage1_plan = {
+        "audio": {"clip_start_abs": 0.0, "clip_end_abs": 14.0},
+        "transcript_words": stage1_asr.model_dump(mode="json")["transcript_words"],
+        "draft_blocks": _draft_blocks(),
+    }
+    resume_state_path.write_text(
+        json.dumps(
+            {
+                "stage1_asr": stage1_asr.model_dump(mode="json"),
+                "stage1_plan": stage1_plan,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("MODE", "dev")
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    monkeypatch.setenv("GEMINI_MODEL_STAGE1", "m1")
+    monkeypatch.setenv("GEMINI_MODEL_SUBTITLES", "m2")
+    monkeypatch.setenv("GEMINI_MODEL_FOOTAGE", "m3")
+    monkeypatch.setenv("FOOTAGE_INVENTORY_JSON", str(inv_path))
+    monkeypatch.setenv("OUT_DIR", str(out_dir))
+    monkeypatch.setenv("AUDIO_FILE_PATH", str(audio_path))
+    monkeypatch.setenv("AUDIO_DIR", str(audio_path.parent))
+    monkeypatch.setenv("JOB_ID", "job_resume")
+
+    monkeypatch.setattr(go, "_make_client", lambda **kwargs: object())
+    monkeypatch.setattr(go, "pick_audio_files", lambda _audio_dir: [audio_path])
+
+    def _should_not_call(**kwargs):
+        raise AssertionError("stage1 call must be skipped from resume state")
+
+    monkeypatch.setattr(go, "call_stage1_asr_once", _should_not_call)
+    monkeypatch.setattr(go, "call_stage1_scenario_once", _should_not_call)
+
+    calls = {"subtitles": 0, "style": 0}
+
+    def _subs(**kwargs):
+        calls["subtitles"] += 1
+        return _subtitles_payload()
+
+    def _style(**kwargs):
+        calls["style"] += 1
+        return FootageStylePickPayload.model_validate({"genre": "Rock", "tag": "dark_forest"})
+
+    monkeypatch.setattr(go, "call_subtitles_plan_once", _subs)
+    monkeypatch.setattr(go, "call_footage_style_once", _style)
+    monkeypatch.setattr(
+        go,
+        "render_all_steps",
+        lambda **kwargs: {
+            "audio_plan": tmp_path / "audio_plan.json",
+            "full_edit_config": tmp_path / "full_edit_config.json",
+            "footage_config": tmp_path / "footage_config.json",
+        },
+    )
+
+    out = go.build_all_via_gemini_one_call(resume_state_path=resume_state_path)
+    assert set(out.keys()) == {"audio_plan", "full_edit_config", "footage_config"}
+    assert calls == {"subtitles": 1, "style": 1}
+
+    state_after = json.loads(resume_state_path.read_text(encoding="utf-8"))
+    assert "stage2_subtitles" in state_after
+    assert "stage2_style" in state_after

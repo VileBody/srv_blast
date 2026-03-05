@@ -215,6 +215,69 @@ def _looks_like_gemini_rate_limited_429(text: str) -> bool:
     return ("resource_exhausted" in lo or "too many requests" in lo) and ("429" in lo)
 
 
+def _looks_like_openrouter_timeout(text: str) -> bool:
+    if not text:
+        return False
+    lo = text.lower()
+    if "openrouter_timeout" in lo:
+        return True
+    return ("openrouter" in lo) and ("timeout" in lo or "timed out" in lo)
+
+
+def _looks_like_openrouter_overloaded_503(text: str) -> bool:
+    if not text:
+        return False
+    lo = text.lower()
+    if "openrouter_http_error" in lo and "status=503" in lo:
+        return True
+    return ("openrouter" in lo) and ("503" in lo) and ("unavailable" in lo or "overloaded" in lo)
+
+
+def _looks_like_openrouter_rate_limited_429(text: str) -> bool:
+    if not text:
+        return False
+    lo = text.lower()
+    if "openrouter_http_error" in lo and "status=429" in lo:
+        return True
+    return ("openrouter" in lo) and ("429" in lo) and (
+        "rate limit" in lo or "too many requests" in lo
+    )
+
+
+def _looks_like_llm_schema_validation_error(text: str) -> bool:
+    """
+    LLM produced syntactically/structurally invalid payload for our schema.
+    We retry the whole build task so both providers can be queried again.
+    """
+    if not text:
+        return False
+    lo = text.lower()
+    if "openrouter_schema_validation_failed" in lo:
+        return True
+    if "openrouter_tokens_schema_validation_failed" in lo:
+        return True
+    if "stage1 scenario validation failed after retry" in lo:
+        return True
+    if "llm_hedged_all_failed" in lo and ("validation" in lo or "schema" in lo):
+        return True
+    if "validationerror" in lo and ("pydantic" in lo or "schema" in lo):
+        return True
+    return False
+
+
+def _looks_like_build_preflight_validation_error(text: str) -> bool:
+    """
+    Deterministic builder preflight rejects impossible timing/layout.
+    Typically caused by malformed/generated config; we retry full build.
+    """
+    if not text:
+        return False
+    lo = text.lower()
+    if "preflight:" in lo and "out<=in" in lo:
+        return True
+    return "preflight_clamp_text_layers" in lo
+
+
 def _exc_text(e: BaseException) -> str:
     """
     Normalize exception into a stable text blob for our retry matchers.
@@ -306,6 +369,7 @@ def build_job(self, job_id: str) -> Dict[str, Any]:
     _ensure_shared_catalog(repo_root)
 
     paths = make_job_paths(work_dir=SETTINGS.work_dir, output_dir=SETTINGS.output_dir, job_id=job_id)
+    llm_resume_state_path = paths.data_dir / "llm_resume_state.json"
 
     req = st.request or {}
     audio_url = str(req.get("audio_s3_url") or "").strip()
@@ -367,7 +431,8 @@ def build_job(self, job_id: str) -> Dict[str, Any]:
 
         try:
             build_all_via_gemini_one_call(
-                progress_cb=lambda stage: store.set_status(job_id, "RUNNING", stage=str(stage))
+                progress_cb=lambda stage: store.set_status(job_id, "RUNNING", stage=str(stage)),
+                resume_state_path=llm_resume_state_path,
             )
         except Exception as e:
             text = _exc_text(e)
@@ -383,6 +448,22 @@ def build_job(self, job_id: str) -> Dict[str, Any]:
                 attempt = int(getattr(self.request, "retries", 0)) + 1
                 backoff = _retry_backoff_s(attempt=attempt, base_s=15.0, cap_s=600.0)
                 raise self.retry(countdown=backoff, exc=RuntimeError("gemini_rate_limited_429"))
+            if _looks_like_openrouter_timeout(text):
+                attempt = int(getattr(self.request, "retries", 0)) + 1
+                backoff = _retry_backoff_s(attempt=attempt, base_s=10.0, cap_s=300.0)
+                raise self.retry(countdown=backoff, exc=RuntimeError("openrouter_timeout"))
+            if _looks_like_openrouter_overloaded_503(text):
+                attempt = int(getattr(self.request, "retries", 0)) + 1
+                backoff = _retry_backoff_s(attempt=attempt, base_s=30.0, cap_s=900.0)
+                raise self.retry(countdown=backoff, exc=RuntimeError("openrouter_overloaded_503"))
+            if _looks_like_openrouter_rate_limited_429(text):
+                attempt = int(getattr(self.request, "retries", 0)) + 1
+                backoff = _retry_backoff_s(attempt=attempt, base_s=15.0, cap_s=600.0)
+                raise self.retry(countdown=backoff, exc=RuntimeError("openrouter_rate_limited_429"))
+            if _looks_like_llm_schema_validation_error(text):
+                attempt = int(getattr(self.request, "retries", 0)) + 1
+                backoff = _retry_backoff_s(attempt=attempt, base_s=8.0, cap_s=180.0)
+                raise self.retry(countdown=backoff, exc=RuntimeError("llm_schema_validation_error"))
             raise
         finally:
             for k, old in backup.items():
@@ -404,6 +485,33 @@ def build_job(self, job_id: str) -> Dict[str, Any]:
             attempt = int(getattr(self.request, "retries", 0)) + 1
             backoff = _retry_backoff_s(attempt=attempt, base_s=10.0, cap_s=300.0)
             raise self.retry(countdown=backoff, exc=RuntimeError("gemini_internal_500"))
+        if _looks_like_openrouter_timeout(blob):
+            attempt = int(getattr(self.request, "retries", 0)) + 1
+            backoff = _retry_backoff_s(attempt=attempt, base_s=10.0, cap_s=300.0)
+            raise self.retry(countdown=backoff, exc=RuntimeError("openrouter_timeout"))
+        if _looks_like_openrouter_overloaded_503(blob):
+            attempt = int(getattr(self.request, "retries", 0)) + 1
+            backoff = _retry_backoff_s(attempt=attempt, base_s=30.0, cap_s=900.0)
+            raise self.retry(countdown=backoff, exc=RuntimeError("openrouter_overloaded_503"))
+        if _looks_like_openrouter_rate_limited_429(blob):
+            attempt = int(getattr(self.request, "retries", 0)) + 1
+            backoff = _retry_backoff_s(attempt=attempt, base_s=15.0, cap_s=600.0)
+            raise self.retry(countdown=backoff, exc=RuntimeError("openrouter_rate_limited_429"))
+        if _looks_like_llm_schema_validation_error(blob):
+            attempt = int(getattr(self.request, "retries", 0)) + 1
+            backoff = _retry_backoff_s(attempt=attempt, base_s=8.0, cap_s=180.0)
+            raise self.retry(countdown=backoff, exc=RuntimeError("llm_schema_validation_error"))
+        if _looks_like_build_preflight_validation_error(blob):
+            # Generated config is structurally invalid for builder preflight:
+            # force fresh LLM generation on next retry instead of resuming stale checkpoint.
+            try:
+                if llm_resume_state_path.exists():
+                    llm_resume_state_path.unlink()
+            except Exception:
+                pass
+            attempt = int(getattr(self.request, "retries", 0)) + 1
+            backoff = _retry_backoff_s(attempt=attempt, base_s=8.0, cap_s=180.0)
+            raise self.retry(countdown=backoff, exc=RuntimeError("build_preflight_validation_error"))
 
         raise RuntimeError(
             f"pipeline_failed rc={proc.returncode}\ncmd={build_cmd}\n"
