@@ -30,6 +30,9 @@ class ChatState(BaseModel):
     active_job_id: str = ""
     active_job_started_at: float = 0.0
     last_status_msg_at: float = 0.0
+    poll_attempts: int = 0
+    last_job_stage: str = ""
+    last_job_error: str = ""
 
     # Sticky result source for fallback links if file send fails repeatedly.
     last_result_url: str = ""

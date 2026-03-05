@@ -45,6 +45,7 @@ BTN_NEXT = "Сделать следующий"
 
 
 _AUDIO_EXTS = {".wav", ".mp3", ".m4a", ".aac", ".flac", ".ogg"}
+_RE_CELERY_RETRIES = re.compile(r"\bretries=(\d+)\b")
 
 
 def _kb(*rows: list[str]) -> ReplyKeyboardMarkup:
@@ -146,6 +147,23 @@ def _resolve_job_project_archive_source(job: dict[str, Any]) -> str:
         if u:
             return u
     return ""
+
+
+def _compact_text(s: str, *, limit: int = 500) -> str:
+    t = " ".join(str(s or "").split())
+    if len(t) <= limit:
+        return t
+    return t[: max(0, limit - 3)] + "..."
+
+
+def _extract_celery_retries(error_text: str) -> Optional[int]:
+    m = _RE_CELERY_RETRIES.search(str(error_text or ""))
+    if not m:
+        return None
+    try:
+        return int(m.group(1))
+    except Exception:
+        return None
 
 
 class BlastBotApp:
@@ -380,7 +398,10 @@ class BlastBotApp:
             st.stage = STAGE_PROCESSING
             st.active_job_id = job_id
             st.active_job_started_at = time.time()
-            st.last_status_msg_at = time.time()
+            st.last_status_msg_at = 0.0
+            st.poll_attempts = 0
+            st.last_job_stage = ""
+            st.last_job_error = ""
             st.last_result_url = ""
             await self.store.set(st)
 
@@ -406,6 +427,39 @@ class BlastBotApp:
         safe = _safe_name(file_name)
         return f"{self.settings.s3_raw_audio_prefix.strip('/')}/{chat_id}/{_now_tag()}_{uuid.uuid4().hex[:10]}_{safe}"
 
+    def _progress_interval_s(self) -> float:
+        return max(1.0, float(self.settings.bot_status_update_interval_s))
+
+    def _progress_message(
+        self,
+        *,
+        status: str,
+        stage: str,
+        poll_attempts: int,
+        error_text: str,
+    ) -> str:
+        retries = _extract_celery_retries(error_text)
+        lines = [
+            "Прогресс задачи:",
+            f"status={status or 'UNKNOWN'}",
+            f"stage={stage or '-'}",
+            f"poll_attempts={max(0, int(poll_attempts))}",
+        ]
+        if retries is not None:
+            lines.append(f"celery_retries={retries}")
+        if error_text:
+            lines.append(f"last_error={_compact_text(error_text, limit=380)}")
+        return "\n".join(lines)
+
+    def _reset_processing_state(self, st: ChatState) -> None:
+        st.stage = STAGE_WAIT_NEXT
+        st.active_job_id = ""
+        st.active_job_started_at = 0.0
+        st.last_status_msg_at = 0.0
+        st.poll_attempts = 0
+        st.last_job_stage = ""
+        st.last_job_error = ""
+
     async def _processing_loop(self) -> None:
         while True:
             try:
@@ -425,30 +479,71 @@ class BlastBotApp:
     async def _process_chat_job(self, st: ChatState) -> None:
         job_id = str(st.active_job_id or "").strip()
         if not job_id:
-            st.stage = STAGE_WAIT_NEXT
+            self._reset_processing_state(st)
             await self.store.set(st)
             return
 
+        bot = self._require_bot()
         job = await self.orchestrator.get_job(job_id)
         status = str(job.get("status") or "").upper()
+        stage = str(job.get("stage") or "").strip()
+        error_text = str(job.get("error") or "").strip()
+
+        prev_stage = str(st.last_job_stage or "").strip()
+        prev_error = str(st.last_job_error or "").strip()
+
+        st.poll_attempts = max(0, int(st.poll_attempts)) + 1
+        if stage:
+            st.last_job_stage = stage
+        if error_text:
+            st.last_job_error = error_text
 
         if status not in {"SUCCEEDED", "FAILED"}:
+            now = time.time()
+            stage_for_msg = stage or prev_stage
+            error_for_msg = error_text or prev_error
+            should_send = (
+                st.poll_attempts == 1
+                or (stage and stage != prev_stage)
+                or (error_text and error_text != prev_error)
+                or (now - float(st.last_status_msg_at or 0.0)) >= self._progress_interval_s()
+            )
+            if should_send:
+                await bot.send_message(
+                    st.chat_id,
+                    self._progress_message(
+                        status=status,
+                        stage=stage_for_msg,
+                        poll_attempts=st.poll_attempts,
+                        error_text=error_for_msg,
+                    ),
+                )
+                st.last_status_msg_at = now
+
+            await self.store.set(st)
             return
 
-        bot = self._require_bot()
-
         if status == "FAILED":
-            error_text = str(job.get("error") or "").strip()
-            tail = error_text[-1000:] if error_text else ""
+            final_stage = stage or st.last_job_stage
+            final_error = error_text or st.last_job_error
+            retries = _extract_celery_retries(final_error)
+            fail_lines = [
+                "Задача завершилась с ошибкой.",
+                f"Стадия: {final_stage or '-'}",
+                f"Проверок статуса: {st.poll_attempts}",
+            ]
+            if retries is not None:
+                fail_lines.append(f"Celery retries: {retries}")
+            if final_error:
+                fail_lines.append(f"Последняя ошибка: {_compact_text(final_error, limit=1000)}")
+            else:
+                fail_lines.append("Последняя ошибка: без деталей.")
             await bot.send_message(
                 st.chat_id,
-                "Задача завершилась с ошибкой.\n"
-                + (f"Детали: {tail}" if tail else "Без деталей."),
+                "\n".join(fail_lines),
                 reply_markup=_kb([BTN_NEXT]),
             )
-            st.stage = STAGE_WAIT_NEXT
-            st.active_job_id = ""
-            st.active_job_started_at = 0.0
+            self._reset_processing_state(st)
             await self.store.set(st)
             return
 
@@ -459,9 +554,7 @@ class BlastBotApp:
                 "Готово, но не нашёл ссылку на видео в ответе оркестратора.",
                 reply_markup=_kb([BTN_NEXT]),
             )
-            st.stage = STAGE_WAIT_NEXT
-            st.active_job_id = ""
-            st.active_job_started_at = 0.0
+            self._reset_processing_state(st)
             await self.store.set(st)
             return
 
@@ -517,9 +610,7 @@ class BlastBotApp:
             reply_markup=_kb([BTN_NEXT]),
         )
 
-        st.stage = STAGE_WAIT_NEXT
-        st.active_job_id = ""
-        st.active_job_started_at = 0.0
+        self._reset_processing_state(st)
         st.prepared_audio_local_path = ""
         st.pending_audio_file_id = ""
         st.pending_audio_filename = ""
