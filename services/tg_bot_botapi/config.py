@@ -25,6 +25,15 @@ def _float_env(name: str, default: float) -> float:
         return default
 
 
+def _bool_env(name: str, default: bool) -> bool:
+    raw = _env(name, "1" if default else "0").lower()
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    return bool(default)
+
+
 @dataclass(frozen=True)
 class Settings:
     tg_bot_token: str = _env("TG_BOT_TOKEN", "")
@@ -53,6 +62,7 @@ class Settings:
     s3_bucket_output_video: str = _env("S3_BUCKET_OUTPUT_VIDEO", "")
     s3_raw_audio_prefix: str = _env("S3_RAW_AUDIO_PREFIX", "raw_audio")
     s3_presign_expires_s: int = _int_env("S3_PRESIGN_EXPIRES_S", 86400)
+    tg_send_project_archive: bool = _bool_env("TG_SEND_PROJECT_ARCHIVE", False)
 
     @property
     def tmp_dir(self) -> Path:

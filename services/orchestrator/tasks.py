@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import subprocess
 import time
@@ -26,6 +27,33 @@ from core.runtime_mode import MODE_PROD, get_runtime_mode
 def _is_remote_url(u: str) -> bool:
     s = (u or "").strip().lower()
     return s.startswith("http://") or s.startswith("https://") or s.startswith("s3://")
+
+
+def _extract_artifacts_source(payload: Dict[str, Any]) -> str:
+    if not isinstance(payload, dict):
+        return ""
+
+    direct_candidates = [
+        payload.get("project_archive_url"),
+        payload.get("artifacts_s3_uri"),
+        payload.get("artifacts_s3_url"),
+        payload.get("artifacts_url"),
+    ]
+    for raw in direct_candidates:
+        u = str(raw or "").strip()
+        if _is_remote_url(u):
+            return u
+
+    # Backward-compatible parser for windows message like:
+    # "ok; artifacts=s3://bucket/key.tar.gz; local_job_dir_deleted=1"
+    msg = str(payload.get("message") or "").strip()
+    if not msg:
+        return ""
+    m = re.search(r"artifacts=(s3://[^;\s]+|https?://[^;\s]+)", msg, flags=re.IGNORECASE)
+    if not m:
+        return ""
+    u = str(m.group(1) or "").strip().rstrip(".,;")
+    return u if _is_remote_url(u) else ""
 
 
 def _parse_s3_url(url: str) -> tuple[str, str]:
@@ -636,7 +664,11 @@ def dispatch_to_windows(self, job_id: str) -> Dict[str, Any]:
         ok = bool(res.get("success", False))
         if ok:
             out_url = res.get("output_url") or res.get("output_s3_url") or None
-            store.set_status(job_id, "SUCCEEDED", stage="render", result={"windows": res, "output_url": out_url})
+            artifacts_url = _extract_artifacts_source(res) or None
+            result_payload: Dict[str, Any] = {"windows": res, "output_url": out_url}
+            if artifacts_url:
+                result_payload["project_archive_url"] = artifacts_url
+            store.set_status(job_id, "SUCCEEDED", stage="render", result=result_payload)
             return {"ok": True, "mode": "sync_jobs", "windows": res}
         raise RuntimeError(f"windows_failed(sync_jobs): {res}")
 
@@ -694,7 +726,11 @@ def poll_windows_render(self, job_id: str, render_id: str) -> Dict[str, Any]:
 
     if status in {"succeeded", "success", "done", "ok"}:
         out_url = res.get("output_url") or res.get("output_s3_url") or None
-        store.set_status(job_id, "SUCCEEDED", stage="render", result={"render_id": render_id, "windows": res, "output_url": out_url})
+        artifacts_url = _extract_artifacts_source(res) or None
+        result_payload: Dict[str, Any] = {"render_id": render_id, "windows": res, "output_url": out_url}
+        if artifacts_url:
+            result_payload["project_archive_url"] = artifacts_url
+        store.set_status(job_id, "SUCCEEDED", stage="render", result=result_payload)
         return {"ok": True, "status": "succeeded", "windows": res}
 
     if status in {"failed", "error"}:
