@@ -505,6 +505,9 @@ class MineInnerTextLayer:
         base["autoLeading"] = False
         base["allCaps"] = True
         base["justificationCode"] = "7415"
+        # Mine must be visually centered; inherited default first-line indent (-60)
+        # shifts single-line text to the left even with CENTER_JUSTIFY.
+        base["firstLineIndent"] = 0
         self.blueprint.text_data["text_base"] = base
 
         self.blueprint.text_data["char_styles_ungrouped"] = [

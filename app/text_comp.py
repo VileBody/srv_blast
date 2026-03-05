@@ -7,6 +7,16 @@ from typing import Any, Dict, List
 from app.orchestrator import ProjectOrchestrator
 
 
+def _env_float(name: str, default: float) -> float:
+    raw = (os.environ.get(name) or "").strip()
+    if not raw:
+        return float(default)
+    try:
+        return float(raw)
+    except Exception:
+        return float(default)
+
+
 def _normalize_layer_dict(l: Dict[str, Any], *, text_comp_name: str, mine_comp_name: str) -> None:
     td = l.get("text_data") or {}
     meta = td.get("layer_meta") or {}
@@ -129,6 +139,39 @@ def _preflight_clamp_text_layers(
             pd["keyframes"] = cleaned
 
 
+def _apply_text_time_shift(layers: List[Dict[str, Any]], *, shift_s: float) -> None:
+    shift = float(shift_s)
+    if abs(shift) <= 1e-12:
+        return
+
+    for l in layers:
+        if not isinstance(l, dict):
+            continue
+        if str(l.get("type") or "") != "text":
+            continue
+
+        try:
+            in_p = float(l.get("in_point"))
+            out_p = float(l.get("out_point"))
+        except Exception:
+            continue
+
+        l["in_point"] = in_p - shift
+        l["out_point"] = out_p - shift
+
+        for pd in _iter_property_dicts(l):
+            kfs = pd.get("keyframes")
+            if not isinstance(kfs, list):
+                continue
+            for kf in kfs:
+                if not isinstance(kf, dict):
+                    continue
+                try:
+                    kf["t"] = float(kf.get("t")) - shift
+                except Exception:
+                    continue
+
+
 def build_text_layers(*, full_edit_config: Dict[str, Any], text_comp_name: str, mine_comp_name: str) -> List[Dict[str, Any]]:
     orch = ProjectOrchestrator(full_edit_config)
     orch.build()
@@ -154,6 +197,8 @@ def build_text_layers(*, full_edit_config: Dict[str, Any], text_comp_name: str, 
         fps = float(fps_raw)
     except Exception:
         fps = 23.9759979248047
+    shift_s = _env_float("TEXT_LAYER_TIME_SHIFT_S", 0.3)
+    _apply_text_time_shift(layers, shift_s=shift_s)
     strict = (os.environ.get("TEXT_PREFLIGHT_STRICT", "1").strip() != "0")
     _preflight_clamp_text_layers(layers, fps=fps, strict=strict)
 

@@ -29,6 +29,13 @@ def _as_pos_float(v: Any) -> float | None:
     return x
 
 
+def _as_float(v: Any) -> float | None:
+    try:
+        return float(v)
+    except Exception:
+        return None
+
+
 _WIN_BAD_CHARS_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _MULTI_WS_RE = re.compile(r"\s+")
 
@@ -84,16 +91,30 @@ def _resolve_safe_media_name(
     return resolved
 
 
-def _resolve_text_duration_sec(*, footage_cfg: Dict[str, Any], layers_cfg: List[Dict[str, Any]]) -> float:
+def resolve_text_duration_sec(
+    *,
+    composition_dur: Any = None,
+    footage_cfg: Dict[str, Any],
+    layers_cfg: List[Dict[str, Any]],
+) -> float:
     """
     Resolve factual text/main composition duration.
     Priority:
-      1) explicit text_dur_hint (if valid)
-      2) max out_point from layers[]
-      3) legacy fallback
+      1) full_edit_config composition.dur (if valid)
+      2) explicit text_dur_hint (if valid)
+      3) max out_point from layers[]
+      4) fail fast with explicit error
     """
+    comp_dur = _as_pos_float(composition_dur)
+    if comp_dur is not None:
+        return float(comp_dur)
+
     hint = _as_pos_float(footage_cfg.get("text_dur_hint"))
     if hint is not None:
+        LOGGER.warning(
+            "comp_duration_fallback used=text_dur_hint value=%s reason=missing_or_invalid_composition_dur",
+            float(hint),
+        )
         return float(hint)
 
     max_out = 0.0
@@ -107,9 +128,21 @@ def _resolve_text_duration_sec(*, footage_cfg: Dict[str, Any], layers_cfg: List[
             max_out = float(out_point)
 
     if max_out > 0:
+        LOGGER.warning(
+            "comp_duration_fallback used=max_out_point value=%s reason=missing_or_invalid_composition_dur_and_text_dur_hint",
+            float(max_out),
+        )
         return float(max_out)
 
-    return 18.4351017684351
+    raise RuntimeError(
+        "Unable to resolve composition duration: "
+        "missing/invalid full_edit composition.dur, text_dur_hint, and layers[*].out_point"
+    )
+
+
+def _resolve_text_duration_sec(*, footage_cfg: Dict[str, Any], layers_cfg: List[Dict[str, Any]]) -> float:
+    # Backward-compatible alias for internal callers/tests.
+    return resolve_text_duration_sec(footage_cfg=footage_cfg, layers_cfg=layers_cfg)
 
 
 # -----------------------------
@@ -338,6 +371,17 @@ def _env_pos_float(name: str, default: float) -> float:
     except Exception:
         return float(default)
     return v if v > 0.0 else float(default)
+
+
+def _env_nonneg_float(name: str, default: float) -> float:
+    raw = (os.environ.get(name) or "").strip()
+    if not raw:
+        return float(default)
+    try:
+        v = float(raw)
+    except Exception:
+        return float(default)
+    return v if v >= 0.0 else float(default)
 
 
 _ADJ16_FIT_TO_COMP1 = _env_bool("ADJ16_FIT_TO_COMP1", True)
@@ -627,6 +671,15 @@ def _audio_only_bp(*, it: Dict[str, Any], z_index: int) -> LayerBlueprint:
     else:
         bp.text_data["source_footage"] = {"file_name": file_name, "file_path": raw_path}
 
+    min_db = _as_float(os.environ.get("AUDIO_FADE_MIN_DB"))
+    if min_db is None:
+        min_db = -48.0
+    bp.text_data["audio_envelope"] = {
+        "fade_in_s": _env_nonneg_float("AUDIO_FADE_IN_S", 0.5),
+        "fade_out_s": _env_nonneg_float("AUDIO_FADE_OUT_S", 0.5),
+        "min_db": float(min_db),
+    }
+
     return bp
 
 
@@ -639,6 +692,7 @@ def build_footage_layers(
     footage_cfg: Dict[str, Any],
     main_comp_name: str,
     text_comp_name: str,
+    composition_dur: Any = None,
     precomp_z_index: int = 100,
     precomp_placement: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
@@ -669,7 +723,11 @@ def build_footage_layers(
             by_original=safe_name_by_original,
         )
 
-    text_dur_sec = _resolve_text_duration_sec(footage_cfg=footage_cfg, layers_cfg=layers_cfg)
+    text_dur_sec = resolve_text_duration_sec(
+        composition_dur=composition_dur,
+        footage_cfg=footage_cfg,
+        layers_cfg=layers_cfg,
+    )
 
     # --- base effects preset for Adj16 ---
     adj_preset = footage_cfg.get("adjustment_preset") or {}

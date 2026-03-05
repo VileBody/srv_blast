@@ -31,7 +31,6 @@ services:
       - ./data:/app/data
       - ./pins:/app/pins
       - ./descriptions:/app/descriptions:ro
-      - ./footage:/app/footage:ro
       - ./audio:/app/audio:ro
     ports:
       - "127.0.0.1:18000:8000"
@@ -71,7 +70,6 @@ services:
       - ./data:/app/data
       - ./pins:/app/pins
       - ./descriptions:/app/descriptions:ro
-      - ./footage:/app/footage:ro
       - ./audio:/app/audio:ro
     command: >
       bash -lc "python footage_config.py && celery -A services.orchestrator.celery_app:celery_app worker -l INFO --concurrency=4 -Q ${CELERY_QUEUE_BUILD:-build}"
@@ -109,7 +107,6 @@ services:
       - ./data:/app/data
       - ./pins:/app/pins
       - ./descriptions:/app/descriptions:ro
-      - ./footage:/app/footage:ro
       - ./audio:/app/audio:ro
     command: >
       bash -lc "python footage_config.py && celery -A services.orchestrator.celery_app:celery_app worker -l INFO --concurrency=1 -Q ${CELERY_QUEUE_RENDER:-render}"

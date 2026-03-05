@@ -818,6 +818,158 @@
       }
     }
 
+    function _setPropConstant3D(prop, x, y, z) {
+      if (!prop) return;
+      var v = [x, y, z];
+      try {
+        if (prop.numKeys && prop.numKeys > 0) {
+          for (var i = 1; i <= prop.numKeys; i++) {
+            prop.setValueAtKey(i, v);
+          }
+        } else {
+          prop.setValue(v);
+        }
+      } catch(e) { logErr("setPropConstant3D failed", e); }
+    }
+
+    function _scaleLayerUniform2D(layer, mult) {
+      if (!(mult > 0) || Math.abs(mult - 1.0) < 1e-6) return;
+      try {
+        var tf = layer.property("ADBE Transform Group");
+        var sc = safeProp(tf, "ADBE Scale");
+        if (!sc) return;
+        if (sc.numKeys && sc.numKeys > 0) {
+          for (var i = 1; i <= sc.numKeys; i++) {
+            var kv = sc.keyValue(i);
+            if (kv && kv.length >= 2) {
+              var z = (kv.length >= 3) ? kv[2] : 100;
+              sc.setValueAtKey(i, [Number(kv[0]) * mult, Number(kv[1]) * mult, z]);
+            }
+          }
+        } else {
+          var v = sc.value;
+          if (v && v.length >= 2) {
+            var z0 = (v.length >= 3) ? v[2] : 100;
+            sc.setValue([Number(v[0]) * mult, Number(v[1]) * mult, z0]);
+          }
+        }
+      } catch(e) { logErr("scaleLayerUniform2D failed layer=" + layer.name, e); }
+    }
+
+    function _measureTextWidthPx(layer, t) {
+      try {
+        var sr = layer.sourceRectAtTime(t, false);
+        var tf = layer.property("ADBE Transform Group");
+        var sc = safeProp(tf, "ADBE Scale");
+        var sx = 100.0;
+        if (sc) {
+          try {
+            var sv = (sc.numKeys && sc.numKeys > 0) ? sc.valueAtTime(t, false) : sc.value;
+            if (sv && sv.length >= 1) sx = Number(sv[0]);
+          } catch(_) {}
+        }
+        return {"ok": true, "widthPx": Math.abs(Number(sr.width)) * Math.abs(sx) / 100.0, "sr": sr, "t": t};
+      } catch(e) {
+        return {"ok": false, "widthPx": 0.0, "sr": null, "t": t};
+      }
+    }
+
+    function applyFinalTextLayoutPass(layer, lData, targetComp) {
+      if (!layer || !lData || lData.type !== "text" || !targetComp) return;
+      var marginX = 0.05;
+      var maxWidth = Number(targetComp.width) * (1.0 - 2.0 * marginX);
+      if (!(maxWidth > 0)) return;
+
+      var fps = Number(targetComp.frameRate || 25);
+      if (!(fps > 0)) fps = 25;
+      var dt = 1.0 / fps;
+      var t0 = Number(layer.inPoint || 0);
+      var t1 = Number(layer.outPoint || (t0 + dt));
+      var t2 = (t0 + t1) * 0.5;
+      var t3 = Math.max(t0, t1 - dt);
+      var samples = [t0, t2, t3];
+
+      var best = {"widthPx": 0.0, "sr": null, "t": t2};
+      for (var i = 0; i < samples.length; i++) {
+        var m = _measureTextWidthPx(layer, samples[i]);
+        if (m.ok && m.widthPx >= best.widthPx) best = m;
+      }
+
+      if (best.sr && best.widthPx > maxWidth + 1e-3) {
+        _scaleLayerUniform2D(layer, maxWidth / best.widthPx);
+        best = {"widthPx": 0.0, "sr": null, "t": t2};
+        for (var j = 0; j < samples.length; j++) {
+          var m2 = _measureTextWidthPx(layer, samples[j]);
+          if (m2.ok && m2.widthPx >= best.widthPx) best = m2;
+        }
+      }
+
+      if (!best.sr) return;
+
+      var sr = best.sr;
+      var centerX = Number(sr.left) + Number(sr.width) / 2.0;
+      var centerY = Number(sr.top) + Number(sr.height) / 2.0;
+      var compCenterX = Number(targetComp.width) / 2.0;
+      var compCenterY = Number(targetComp.height) / 2.0;
+
+      try {
+        var tf = layer.property("ADBE Transform Group");
+        var ap = safeProp(tf, "ADBE Anchor Point");
+        var pos = safeProp(tf, "ADBE Position");
+
+        var apZ = 0.0;
+        if (ap) {
+          try {
+            var av = (ap.numKeys && ap.numKeys > 0) ? ap.valueAtTime(best.t, false) : ap.value;
+            if (av && av.length >= 3) apZ = Number(av[2]);
+          } catch(_) {}
+          _setPropConstant3D(ap, centerX, centerY, apZ);
+        }
+
+        var posZ = 0.0;
+        if (pos) {
+          try {
+            var pv = (pos.numKeys && pos.numKeys > 0) ? pos.valueAtTime(best.t, false) : pos.value;
+            if (pv && pv.length >= 3) posZ = Number(pv[2]);
+          } catch(_) {}
+          _setPropConstant3D(pos, compCenterX, compCenterY, posZ);
+        }
+      } catch(eTf) { logErr("final text layout failed layer=" + layer.name, eTf); }
+    }
+
+    function applyAudioEnvelopeFromBlueprint(layer, lData) {
+      if (!layer || !lData || lData.type !== "footage") return;
+      var td = (lData.text_data ? lData.text_data : null);
+      if (!td || !td.audio_envelope) return;
+
+      var cfg = td.audio_envelope;
+      var fadeIn = Number(cfg.fade_in_s);
+      var fadeOut = Number(cfg.fade_out_s);
+      var minDb = Number(cfg.min_db);
+      if (!isFinite(fadeIn) || fadeIn < 0) fadeIn = 0;
+      if (!isFinite(fadeOut) || fadeOut < 0) fadeOut = 0;
+      if (!isFinite(minDb)) minDb = -48;
+
+      try {
+        var ag = layer.property("ADBE Audio Group");
+        var lv = safeProp(ag, "ADBE Audio Levels");
+        if (!lv) return;
+
+        var expr = ""
+          + "var fadeIn=" + String(fadeIn) + ";\n"
+          + "var fadeOut=" + String(fadeOut) + ";\n"
+          + "var minDb=" + String(minDb) + ";\n"
+          + "var t=time-inPoint;\n"
+          + "var dur=Math.max(0.0001,outPoint-inPoint);\n"
+          + "var a=1.0;\n"
+          + "if (fadeIn>0){var x=Math.min(Math.max(t/fadeIn,0),1);a=Math.min(a,Math.sin(x*Math.PI*0.5));}\n"
+          + "if (fadeOut>0){var y=Math.min(Math.max((dur-t)/fadeOut,0),1);a=Math.min(a,Math.sin(y*Math.PI*0.5));}\n"
+          + "var db=minDb+(0-minDb)*a;\n"
+          + "[db,db];";
+        lv.expression = expr;
+      } catch(e) { logErr("apply audio envelope failed layer=" + layer.name, e); }
+    }
+
     // ==========================================================
     // 3) layer creation by blueprint
     // ==========================================================
@@ -932,6 +1084,11 @@
         }
       } catch(eMeta) { logErr("apply meta toggles failed layer=" + layer.name, eMeta); }
 
+      // audio envelope (if requested on audio footage layer)
+      if (lData.type === "footage") {
+        applyAudioEnvelopeFromBlueprint(layer, lData);
+      }
+
       // effects (you said "похуй на параметры": errors are logged and ignored)
       if (lData.effects) {
         try {
@@ -1002,6 +1159,9 @@
         phaseStart(layer.name, "text_animator");
         applyTextAnimatorFromBlueprint(layer, lData);
         phaseDone(layer.name, "text_animator");
+        phaseStart(layer.name, "text_layout");
+        applyFinalTextLayoutPass(layer, lData, target);
+        phaseDone(layer.name, "text_layout");
       }
 
       // snapshot

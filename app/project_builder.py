@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Any, Dict, Tuple
 
 from jinja2 import Environment, FileSystemLoader
 
 from app.project_config import AE_PROJECT
-from app.footage_comp import build_footage_layers
+from app.footage_comp import build_footage_layers, resolve_text_duration_sec
 from app.text_comp import build_text_layers
+
+LOGGER = logging.getLogger("app.project_builder")
 
 
 def _apply_comp_duration_overrides(
@@ -87,23 +90,25 @@ def build_full_project(
     mine_name = str(mine_comp["name"])
 
     # ----------------------------------------------------------
-    # Align compsSpec duration with full_edit_config composition.dur
+    # Resolve factual composition duration (explicit + logged fallbacks).
     # ----------------------------------------------------------
     comp_meta = full_edit_config.get("composition") if isinstance(full_edit_config, dict) else None
-    comp_dur = None
+    composition_dur = None
     if isinstance(comp_meta, dict):
         d = comp_meta.get("dur")
         if d is not None:
             try:
-                comp_dur = float(d)
+                composition_dur = float(d)
             except Exception:
-                comp_dur = None
+                composition_dur = None
+                LOGGER.warning("composition.dur is present but invalid: %r", d)
 
-    if comp_dur is None:
-        try:
-            comp_dur = float(footage_cfg.get("text_dur_hint", text_comp.get("dur", 0.0)))
-        except Exception:
-            comp_dur = float(text_comp.get("dur", 0.0))
+    layers_cfg = list(footage_cfg.get("layers") or [])
+    comp_dur = resolve_text_duration_sec(
+        composition_dur=composition_dur,
+        footage_cfg=footage_cfg,
+        layers_cfg=layers_cfg,
+    )
 
     comps_list = [main_comp, text_comp, mine_comp]
     comps_list = _apply_comp_duration_overrides(
@@ -123,6 +128,7 @@ def build_full_project(
         footage_cfg=footage_cfg,
         main_comp_name=main_name,
         text_comp_name=text_name,
+        composition_dur=comp_dur,
         precomp_z_index=int(AE_PROJECT.get("root_precomp_z_index", 9999)),
         precomp_placement=AE_PROJECT.get("root_precomp_placement"),
     )
