@@ -275,7 +275,8 @@ def _looks_like_openrouter_rate_limited_429(text: str) -> bool:
 def _looks_like_llm_schema_validation_error(text: str) -> bool:
     """
     LLM produced syntactically/structurally invalid payload for our schema.
-    We retry the whole build task so both providers can be queried again.
+    This is terminal at Celery layer; stage-local retries are handled inside
+    the LLM orchestrator.
     """
     if not text:
         return False
@@ -309,7 +310,7 @@ def _looks_like_llm_schema_validation_error(text: str) -> bool:
 def _looks_like_build_preflight_validation_error(text: str) -> bool:
     """
     Deterministic builder preflight rejects impossible timing/layout.
-    Typically caused by malformed/generated config; we retry full build.
+    We allow one immediate local build-step retry in-process, then fail.
     """
     if not text:
         return False
@@ -343,6 +344,28 @@ def _retry_backoff_s(*, attempt: int, base_s: float, cap_s: float) -> float:
     """
     a = max(1, int(attempt))
     return min(float(cap_s), float(base_s) * float(2 ** max(0, a - 1)))
+
+
+def _drop_resume_stage_key(path: Path, *, key: str) -> bool:
+    """
+    Remove one stage entry from LLM resume-state file.
+    Returns True if key existed and file was updated.
+    """
+    try:
+        if not path.exists():
+            return False
+        obj = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(obj, dict):
+            return False
+        if key not in obj:
+            return False
+        obj.pop(key, None)
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        tmp.write_text(json.dumps(obj, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.replace(path)
+        return True
+    except Exception:
+        return False
 
 
 def _is_transient_windows_error(e: BaseException) -> bool:
@@ -452,8 +475,10 @@ def build_job(self, job_id: str) -> Dict[str, Any]:
     env["AE_MEDIA_MODE"] = "appdir"
     env["LYRICS_TEXT"] = lyrics_text
 
+    build_all_fn = None
     if mode != "no_gemini":
         from mlcore.gemini_orchestrator import build_all_via_gemini_one_call
+        build_all_fn = build_all_via_gemini_one_call
 
         store.set_status(job_id, "RUNNING", stage="llm_stage1")
         backup: Dict[str, str | None] = {}
@@ -471,7 +496,7 @@ def build_job(self, job_id: str) -> Dict[str, Any]:
             os.environ[k] = env[k]
 
         try:
-            build_all_via_gemini_one_call(
+            build_all_fn(
                 progress_cb=lambda stage: store.set_status(job_id, "RUNNING", stage=str(stage)),
                 resume_state_path=llm_resume_state_path,
             )
@@ -501,10 +526,6 @@ def build_job(self, job_id: str) -> Dict[str, Any]:
                 attempt = int(getattr(self.request, "retries", 0)) + 1
                 backoff = _retry_backoff_s(attempt=attempt, base_s=15.0, cap_s=600.0)
                 raise self.retry(countdown=backoff, exc=RuntimeError("openrouter_rate_limited_429"))
-            if _looks_like_llm_schema_validation_error(text):
-                attempt = int(getattr(self.request, "retries", 0)) + 1
-                backoff = _retry_backoff_s(attempt=attempt, base_s=8.0, cap_s=180.0)
-                raise self.retry(countdown=backoff, exc=RuntimeError("llm_schema_validation_error"))
             raise
         finally:
             for k, old in backup.items():
@@ -516,12 +537,11 @@ def build_job(self, job_id: str) -> Dict[str, Any]:
     store.set_status(job_id, "RUNNING", stage="build")
 
     args = shlex.split(build_cmd)
-    proc = subprocess.run(args, cwd=str(repo_root), env=env, capture_output=True, text=True)
-    out = proc.stdout or ""
-    err = proc.stderr or ""
 
-    if proc.returncode != 0:
-        blob = out + "\n" + err
+    def _run_build_subprocess_once() -> subprocess.CompletedProcess[str]:
+        return subprocess.run(args, cwd=str(repo_root), env=env, capture_output=True, text=True)
+
+    def _maybe_retry_transient(blob: str) -> None:
         if _looks_like_gemini_internal_500(blob):
             attempt = int(getattr(self.request, "retries", 0)) + 1
             backoff = _retry_backoff_s(attempt=attempt, base_s=10.0, cap_s=300.0)
@@ -538,21 +558,117 @@ def build_job(self, job_id: str) -> Dict[str, Any]:
             attempt = int(getattr(self.request, "retries", 0)) + 1
             backoff = _retry_backoff_s(attempt=attempt, base_s=15.0, cap_s=600.0)
             raise self.retry(countdown=backoff, exc=RuntimeError("openrouter_rate_limited_429"))
-        if _looks_like_llm_schema_validation_error(blob):
-            attempt = int(getattr(self.request, "retries", 0)) + 1
-            backoff = _retry_backoff_s(attempt=attempt, base_s=8.0, cap_s=180.0)
-            raise self.retry(countdown=backoff, exc=RuntimeError("llm_schema_validation_error"))
-        if _looks_like_build_preflight_validation_error(blob):
-            # Generated config is structurally invalid for builder preflight:
-            # force fresh LLM generation on next retry instead of resuming stale checkpoint.
-            try:
-                if llm_resume_state_path.exists():
-                    llm_resume_state_path.unlink()
-            except Exception:
-                pass
-            attempt = int(getattr(self.request, "retries", 0)) + 1
-            backoff = _retry_backoff_s(attempt=attempt, base_s=8.0, cap_s=180.0)
-            raise self.retry(countdown=backoff, exc=RuntimeError("build_preflight_validation_error"))
+
+    proc = _run_build_subprocess_once()
+    out = proc.stdout or ""
+    err = proc.stderr or ""
+
+    if proc.returncode != 0:
+        blob_first = out + "\n" + err
+        _maybe_retry_transient(blob_first)
+
+        # Preflight validation:
+        # - with_gemini: targeted subtitles rerun (+retry hint), then one immediate local build retry
+        # - no_gemini: one immediate local build retry
+        if _looks_like_build_preflight_validation_error(blob_first):
+            if build_all_fn is not None:
+                store.set_status(job_id, "RUNNING", stage="llm_stage2_subtitles_retry")
+                _drop_resume_stage_key(llm_resume_state_path, key="stage2_subtitles")
+                retry_hint = (
+                    "Previous build preflight failed with impossible layer timings (e.g. out<=in). "
+                    "Regenerate subtitles to keep timings strictly valid and monotonic. "
+                    "Do not change stage1 clip window; preserve transcript word order; ensure each token t_end > t_start."
+                )
+                llm_env_keys = (
+                    "DATA_DIR",
+                    "OUT_DIR",
+                    "AUDIO_FILE_PATH",
+                    "AUDIO_DIR",
+                    "AUDIO_FILE_NAME",
+                    "AE_MEDIA_MODE",
+                    "JOB_ID",
+                    "LYRICS_TEXT",
+                )
+                llm_backup: Dict[str, str | None] = {}
+                for k in llm_env_keys:
+                    llm_backup[k] = os.environ.get(k)
+                    os.environ[k] = env[k]
+                old_retry_hint = os.environ.get("STAGE2_SUBTITLES_RETRY_HINT")
+                try:
+                    os.environ["STAGE2_SUBTITLES_RETRY_HINT"] = retry_hint
+                    try:
+                        build_all_fn(
+                            progress_cb=lambda stage: store.set_status(job_id, "RUNNING", stage=str(stage)),
+                            resume_state_path=llm_resume_state_path,
+                        )
+                    except Exception as e:
+                        text = _exc_text(e)
+                        if _looks_like_gemini_internal_500(text):
+                            attempt = int(getattr(self.request, "retries", 0)) + 1
+                            backoff = _retry_backoff_s(attempt=attempt, base_s=10.0, cap_s=300.0)
+                            raise self.retry(countdown=backoff, exc=RuntimeError("gemini_internal_500"))
+                        if _looks_like_gemini_overloaded_503(text):
+                            attempt = int(getattr(self.request, "retries", 0)) + 1
+                            backoff = _retry_backoff_s(attempt=attempt, base_s=30.0, cap_s=900.0)
+                            raise self.retry(countdown=backoff, exc=RuntimeError("gemini_overloaded_503"))
+                        if _looks_like_gemini_rate_limited_429(text):
+                            attempt = int(getattr(self.request, "retries", 0)) + 1
+                            backoff = _retry_backoff_s(attempt=attempt, base_s=15.0, cap_s=600.0)
+                            raise self.retry(countdown=backoff, exc=RuntimeError("gemini_rate_limited_429"))
+                        if _looks_like_openrouter_timeout(text):
+                            attempt = int(getattr(self.request, "retries", 0)) + 1
+                            backoff = _retry_backoff_s(attempt=attempt, base_s=10.0, cap_s=300.0)
+                            raise self.retry(countdown=backoff, exc=RuntimeError("openrouter_timeout"))
+                        if _looks_like_openrouter_overloaded_503(text):
+                            attempt = int(getattr(self.request, "retries", 0)) + 1
+                            backoff = _retry_backoff_s(attempt=attempt, base_s=30.0, cap_s=900.0)
+                            raise self.retry(countdown=backoff, exc=RuntimeError("openrouter_overloaded_503"))
+                        if _looks_like_openrouter_rate_limited_429(text):
+                            attempt = int(getattr(self.request, "retries", 0)) + 1
+                            backoff = _retry_backoff_s(attempt=attempt, base_s=15.0, cap_s=600.0)
+                            raise self.retry(countdown=backoff, exc=RuntimeError("openrouter_rate_limited_429"))
+                        raise
+                finally:
+                    if old_retry_hint is None:
+                        os.environ.pop("STAGE2_SUBTITLES_RETRY_HINT", None)
+                    else:
+                        os.environ["STAGE2_SUBTITLES_RETRY_HINT"] = old_retry_hint
+                    for k, old in llm_backup.items():
+                        if old is None:
+                            os.environ.pop(k, None)
+                        else:
+                            os.environ[k] = old
+
+                store.set_status(job_id, "RUNNING", stage="build")
+
+            proc_retry = _run_build_subprocess_once()
+            out_retry = proc_retry.stdout or ""
+            err_retry = proc_retry.stderr or ""
+
+            if proc_retry.returncode == 0:
+                proc = proc_retry
+                out = out_retry
+                err = err_retry
+            else:
+                blob_retry = out_retry + "\n" + err_retry
+                if _looks_like_build_preflight_validation_error(blob_retry):
+                    raise RuntimeError(
+                        "build_preflight_validation_error_after_immediate_retry\n"
+                        f"cmd={build_cmd}\n"
+                        f"--- first stdout (tail) ---\n{out[-8000:]}\n"
+                        f"--- first stderr (tail) ---\n{err[-8000:]}\n"
+                        f"--- second stdout (tail) ---\n{out_retry[-8000:]}\n"
+                        f"--- second stderr (tail) ---\n{err_retry[-8000:]}\n"
+                    )
+                _maybe_retry_transient(blob_retry)
+                raise RuntimeError(
+                    "pipeline_failed_after_immediate_preflight_retry "
+                    f"rc={proc_retry.returncode}\ncmd={build_cmd}\n"
+                    f"--- first stdout (tail) ---\n{out[-8000:]}\n"
+                    f"--- first stderr (tail) ---\n{err[-8000:]}\n"
+                    f"--- second stdout (tail) ---\n{out_retry[-8000:]}\n"
+                    f"--- second stderr (tail) ---\n{err_retry[-8000:]}\n"
+                )
 
         raise RuntimeError(
             f"pipeline_failed rc={proc.returncode}\ncmd={build_cmd}\n"

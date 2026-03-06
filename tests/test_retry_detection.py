@@ -5,6 +5,7 @@ import urllib.error
 from services.orchestrator.tasks import (
     _is_transient_windows_error,
     _looks_like_build_preflight_validation_error,
+    _looks_like_gemini_internal_500,
     _looks_like_gemini_overloaded_503,
     _looks_like_gemini_rate_limited_429,
     _looks_like_llm_schema_validation_error,
@@ -66,6 +67,17 @@ def test_detects_llm_schema_validation_error_from_stage2_marker() -> None:
         "stage2_subtitles=ValueError: subtitles.clip.start must equal stage1.audio.clip_start_abs"
     )
     assert _looks_like_llm_schema_validation_error(s) is True
+
+
+def test_schema_validation_marker_is_not_transient_retriable() -> None:
+    s = "RuntimeError: openrouter_schema_validation_failed err=ValidationError(...)"
+    assert _looks_like_llm_schema_validation_error(s) is True
+    assert _looks_like_gemini_internal_500(s) is False
+    assert _looks_like_gemini_overloaded_503(s) is False
+    assert _looks_like_gemini_rate_limited_429(s) is False
+    assert _looks_like_openrouter_timeout(s) is False
+    assert _looks_like_openrouter_overloaded_503(s) is False
+    assert _looks_like_openrouter_rate_limited_429(s) is False
 
 
 def test_detects_build_preflight_validation_error() -> None:

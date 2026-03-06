@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from json import JSONDecodeError
 import os
 from concurrent.futures import FIRST_EXCEPTION, Future, ThreadPoolExecutor, wait
 from datetime import datetime, timezone
@@ -9,6 +10,7 @@ from pathlib import Path
 import hashlib
 from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar
 import logging
+from pydantic import ValidationError
 
 from mlcore.gemini_call import (
     call_footage_style_once,
@@ -57,6 +59,7 @@ from core.runtime_mode import get_runtime_mode, MODE_DEV, MODE_PROD
 
 
 ROOT = Path(__file__).resolve().parent.parent
+MODEL_VALIDATION_IMMEDIATE_RETRIES = 2
 
 
 def _stamp() -> str:
@@ -226,6 +229,72 @@ def _emit(progress_cb: Optional[Callable[[str], None]], stage: str) -> None:
 
 T = TypeVar("T")
 U = TypeVar("U")
+
+
+def _exc_blob(exc: BaseException) -> str:
+    parts: List[str] = [type(exc).__name__]
+    try:
+        parts.append(str(exc))
+    except Exception:
+        pass
+    try:
+        parts.append(repr(exc))
+    except Exception:
+        pass
+    return "\n".join(p for p in parts if p)
+
+
+def _looks_like_model_validation_error_text(text: str) -> bool:
+    if not text:
+        return False
+    lo = text.lower()
+    if "openrouter_schema_validation_failed" in lo:
+        return True
+    if "openrouter_tokens_schema_validation_failed" in lo:
+        return True
+    if "failed to validate gemini json against blockstokenspayload" in lo:
+        return True
+    if "llm_hedged_all_failed" in lo and "validationerror" in lo:
+        return True
+    if "gemini style pick is not present in style pool" in lo:
+        return True
+    if "jsondecodeerror" in lo:
+        return True
+    return False
+
+
+def _is_model_validation_error(exc: BaseException) -> bool:
+    if isinstance(exc, (ValidationError, JSONDecodeError)):
+        return True
+    return _looks_like_model_validation_error_text(_exc_blob(exc))
+
+
+def _run_stage_with_model_validation_retries(
+    *,
+    stage_name: str,
+    logger: logging.Logger,
+    fn: Callable[[], T],
+) -> T:
+    max_retries = int(MODEL_VALIDATION_IMMEDIATE_RETRIES)
+    total_attempts = 1 + max(0, max_retries)
+
+    for attempt in range(1, total_attempts + 1):
+        try:
+            return fn()
+        except Exception as e:  # noqa: BLE001
+            if (not _is_model_validation_error(e)) or attempt >= total_attempts:
+                raise
+            retry_no = attempt
+            logger.warning(
+                "stage_model_validation_retry stage=%s retry=%d/%d err=%s",
+                stage_name,
+                retry_no,
+                max_retries,
+                str(e),
+            )
+
+    # unreachable
+    raise RuntimeError(f"stage_model_validation_retry_unreachable stage={stage_name}")
 
 
 def _run_stage2_parallel(
@@ -817,19 +886,23 @@ def build_all_via_gemini_one_call(
             resume_state.pop("stage1_asr", None)
 
     if stage1_asr is None:
-        stage1_asr = call_stage1_asr_once(
-            client=client_stage1_asr,
-            openrouter_client=openrouter_stage1_asr,
-            provider_mode=provider_mode,
-            hedge_delay_s=hedge_delay_s,
+        stage1_asr = _run_stage_with_model_validation_retries(
+            stage_name="stage1_asr",
             logger=logger,
-            system_instruction=stage1a_system,
-            user_prompt=stage1a_prompt,
-            audio_paths=audio_files,
-            raw_response_path=stage1a_raw,
-            cache_path=cache_path,
-            prompt_dump_path=stage1a_user,
-            system_dump_path=stage1a_sys,
+            fn=lambda: call_stage1_asr_once(
+                client=client_stage1_asr,
+                openrouter_client=openrouter_stage1_asr,
+                provider_mode=provider_mode,
+                hedge_delay_s=hedge_delay_s,
+                logger=logger,
+                system_instruction=stage1a_system,
+                user_prompt=stage1a_prompt,
+                audio_paths=audio_files,
+                raw_response_path=stage1a_raw,
+                cache_path=cache_path,
+                prompt_dump_path=stage1a_user,
+                system_dump_path=stage1a_sys,
+            ),
         )
         resume_state["stage1_asr"] = stage1_asr.model_dump(mode="json")
         _save_resume_state(resume_state_path, logger=logger, state=resume_state)
@@ -863,8 +936,8 @@ def build_all_via_gemini_one_call(
             resume_state.pop("stage1_plan", None)
 
     if stage1 is None:
-        try:
-            stage1_scenario: Stage1ScenarioPayload = call_stage1_scenario_once(
+        def _run_stage1_scenario_once() -> Tuple[Stage1PlanPayload, Stage1ScenarioPayload]:
+            stage1_scenario = call_stage1_scenario_once(
                 client=client_stage1_scenario,
                 openrouter_client=openrouter_stage1_scenario,
                 provider_mode=provider_mode,
@@ -889,25 +962,30 @@ def build_all_via_gemini_one_call(
                     "draft_blocks": stage1_scenario.draft_blocks.model_dump(mode="json"),
                 }
             )
-            stage1 = stage1_candidate
-            # Best-effort alignment report (useful for debugging), but do not fail Stage1 if it can't be aligned.
-            report_path = logs_dir / f"stage1_report_{stamp}.txt"
-            try:
-                align_rows = align_stage1_draft_to_transcript(stage1_candidate)
-                report_path.write_text(build_stage1_report(stage1_candidate, align_rows), encoding="utf-8")
-            except Exception as e:
-                logger.warning("stage1b_align_warning err=%s", str(e))
-                report_path.write_text(
-                    "STAGE1 ALIGNMENT WARNING (non-fatal)\n"
-                    f"err={e}\n\n"
-                    "DRAFT_BLOCKS_JSON:\n"
-                    + json.dumps(stage1_scenario.draft_blocks.model_dump(mode="json"), ensure_ascii=False, indent=2),
-                    encoding="utf-8",
-                )
-            resume_state["stage1_plan"] = stage1.model_dump(mode="json")
-            _save_resume_state(resume_state_path, logger=logger, state=resume_state)
+            return stage1_candidate, stage1_scenario
+
+        stage1, stage1_scenario = _run_stage_with_model_validation_retries(
+            stage_name="stage1_scenario",
+            logger=logger,
+            fn=_run_stage1_scenario_once,
+        )
+
+        # Best-effort alignment report (useful for debugging), but do not fail Stage1 if it can't be aligned.
+        report_path = logs_dir / f"stage1_report_{stamp}.txt"
+        try:
+            align_rows = align_stage1_draft_to_transcript(stage1)
+            report_path.write_text(build_stage1_report(stage1, align_rows), encoding="utf-8")
         except Exception as e:
-            raise RuntimeError(f"Stage1 scenario validation failed: {e}") from e
+            logger.warning("stage1b_align_warning err=%s", str(e))
+            report_path.write_text(
+                "STAGE1 ALIGNMENT WARNING (non-fatal)\n"
+                f"err={e}\n\n"
+                "DRAFT_BLOCKS_JSON:\n"
+                + json.dumps(stage1_scenario.draft_blocks.model_dump(mode="json"), ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        resume_state["stage1_plan"] = stage1.model_dump(mode="json")
+        _save_resume_state(resume_state_path, logger=logger, state=resume_state)
 
     stage1_json = stage1.model_dump(mode="json")
     stage1_json["lyrics_text"] = str(os.environ.get("LYRICS_TEXT") or "")
@@ -931,6 +1009,15 @@ def build_all_via_gemini_one_call(
 
     sub_system = build_stage2_subtitles_system_instruction()
     sub_prompt = build_stage2_subtitles_user_prompt(stage1_json=stage1_json, schema_name="BlocksTokensPayload")
+    subtitles_retry_hint = (os.environ.get("STAGE2_SUBTITLES_RETRY_HINT") or "").strip()
+    if subtitles_retry_hint:
+        sub_prompt = (
+            str(sub_prompt)
+            + "\n\nSUBTITLES_RETRY_HINT:\n"
+            + subtitles_retry_hint
+            + "\n"
+        )
+        logger.info("stage2_subtitles_retry_hint_applied chars=%d", len(subtitles_retry_hint))
     sub_raw = logs_dir / f"gemini_raw_stage2_subtitles_{stamp}.json"
     sub_sys = logs_dir / f"gemini_system_stage2_subtitles_{stamp}.txt"
     sub_user = logs_dir / f"gemini_prompt_stage2_subtitles_{stamp}.txt"
@@ -945,7 +1032,7 @@ def build_all_via_gemini_one_call(
     foot_sys = logs_dir / f"gemini_system_stage2_style_{stamp}.txt"
     foot_user = logs_dir / f"gemini_prompt_stage2_style_{stamp}.txt"
 
-    def _run_subtitles() -> BlocksTokensPayload:
+    def _run_subtitles_once() -> BlocksTokensPayload:
         payload = call_subtitles_plan_once(
             client=client_subtitles,
             openrouter_client=openrouter_subtitles,
@@ -973,7 +1060,14 @@ def build_all_via_gemini_one_call(
         _log_subtitles_token_metrics(payload)
         return payload
 
-    def _run_style() -> FootageStylePickPayload:
+    def _run_subtitles() -> BlocksTokensPayload:
+        return _run_stage_with_model_validation_retries(
+            stage_name="stage2_subtitles",
+            logger=logger,
+            fn=_run_subtitles_once,
+        )
+
+    def _run_style_once() -> FootageStylePickPayload:
         payload = call_footage_style_once(
             client=client_footage,
             openrouter_client=openrouter_footage,
@@ -992,6 +1086,13 @@ def build_all_via_gemini_one_call(
         )
         validate_style_pick_in_groups(payload, style_groups)
         return payload
+
+    def _run_style() -> FootageStylePickPayload:
+        return _run_stage_with_model_validation_retries(
+            stage_name="stage2_style",
+            logger=logger,
+            fn=_run_style_once,
+        )
 
     subtitles_payload: BlocksTokensPayload | None = None
     style_payload: FootageStylePickPayload | None = None
