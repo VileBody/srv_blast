@@ -231,6 +231,41 @@ def _norm_compact(s: str) -> str:
     return " ".join(str(s or "").split())
 
 
+def _is_fragment_target_exact_mismatch(
+    *,
+    target_fragment: str,
+    analytics: FragmentAnalytics | None,
+) -> bool:
+    tf = _norm_compact(target_fragment)
+    if not tf or analytics is None:
+        return False
+    af = _norm_compact(analytics.target_fragment)
+    if not af:
+        return False
+    return af != tf
+
+
+def _build_stage1b_fragment_exact_retry_hint(
+    *,
+    target_fragment: str,
+    got_fragment: str,
+) -> str:
+    return (
+        "\n\nTARGET_FRAGMENT_TEXT_CORRECTION=ON\n"
+        "PREVIOUS_ATTEMPT_WARNING:\n"
+        "- You used different words in fragment_analytics.target_fragment.\n"
+        "- Editor note: you picked wrong words, edit them.\n"
+        "- Copy USER_TARGET_FRAGMENT words exactly; no paraphrase/rewrite.\n"
+        "EXPECTED_USER_TARGET_FRAGMENT:\n"
+        + str(target_fragment or "")
+        + "\n"
+        "PREVIOUS_FRAGMENT_ANALYTICS_TARGET:\n"
+        + str(got_fragment or "")
+        + "\n"
+        "Keep all other constraints unchanged.\n"
+    )
+
+
 def _validate_fragment_analytics_for_target(
     *,
     target_fragment: str,
@@ -1027,51 +1062,86 @@ def build_all_via_gemini_one_call(
 
     if stage1 is None:
         def _run_stage1_scenario_once() -> Tuple[Stage1PlanPayload, Stage1ScenarioPayload]:
-            stage1_scenario = call_stage1_scenario_once(
-                client=client_stage1_scenario,
-                openrouter_client=openrouter_stage1_scenario,
-                provider_mode=provider_mode,
-                hedge_delay_s=hedge_delay_s,
-                logger=logger,
-                system_instruction=stage1b_system,
-                user_prompt=stage1b_base_prompt,
-                # IMPORTANT:
-                # Stage1B is scenario planning based on Stage1A transcript_words.
-                # We do NOT attach audio here to avoid the model "re-listening" and drifting from transcript.
-                audio_paths=[],
-                raw_response_path=stage1b_raw,
-                cache_path=cache_path,
-                prompt_dump_path=stage1b_user,
-                system_dump_path=stage1b_sys,
-            )
+            prompt = stage1b_base_prompt
+            exact_retry_used = False
 
-            audio_obj = stage1_scenario.audio.model_dump(mode="json")
-            if fragment_branch_on:
-                forced_start, forced_end = _validate_fragment_analytics_for_target(
-                    target_fragment=target_fragment,
-                    audio_start_abs=float(stage1_scenario.audio.clip_start_abs),
-                    audio_end_abs=float(stage1_scenario.audio.clip_end_abs),
-                    analytics=stage1_scenario.fragment_analytics,
+            while True:
+                stage1_scenario = call_stage1_scenario_once(
+                    client=client_stage1_scenario,
+                    openrouter_client=openrouter_stage1_scenario,
+                    provider_mode=provider_mode,
+                    hedge_delay_s=hedge_delay_s,
                     logger=logger,
+                    system_instruction=stage1b_system,
+                    user_prompt=prompt,
+                    # IMPORTANT:
+                    # Stage1B is scenario planning based on Stage1A transcript_words.
+                    # We do NOT attach audio here to avoid the model "re-listening" and drifting from transcript.
+                    audio_paths=[],
+                    raw_response_path=stage1b_raw,
+                    cache_path=cache_path,
+                    prompt_dump_path=stage1b_user,
+                    system_dump_path=stage1b_sys,
                 )
-                # Keep clip window deterministic in target-fragment branch:
-                # always use analytics-confirmed working window.
-                audio_obj["clip_start_abs"] = float(forced_start)
-                audio_obj["clip_end_abs"] = float(forced_end)
 
-            stage1_candidate = Stage1PlanPayload.model_validate(
-                {
-                    "audio": audio_obj,
-                    "transcript_words": stage1_asr.transcript_words,
-                    "draft_blocks": stage1_scenario.draft_blocks.model_dump(mode="json"),
-                    "fragment_analytics": (
-                        stage1_scenario.fragment_analytics.model_dump(mode="json")
-                        if stage1_scenario.fragment_analytics is not None
-                        else None
-                    ),
-                }
-            )
-            return stage1_candidate, stage1_scenario
+                audio_obj = stage1_scenario.audio.model_dump(mode="json")
+                if fragment_branch_on:
+                    forced_start, forced_end = _validate_fragment_analytics_for_target(
+                        target_fragment=target_fragment,
+                        audio_start_abs=float(stage1_scenario.audio.clip_start_abs),
+                        audio_end_abs=float(stage1_scenario.audio.clip_end_abs),
+                        analytics=stage1_scenario.fragment_analytics,
+                        logger=logger,
+                    )
+                    # Keep clip window deterministic in target-fragment branch:
+                    # always use analytics-confirmed working window.
+                    audio_obj["clip_start_abs"] = float(forced_start)
+                    audio_obj["clip_end_abs"] = float(forced_end)
+
+                    mismatch = _is_fragment_target_exact_mismatch(
+                        target_fragment=target_fragment,
+                        analytics=stage1_scenario.fragment_analytics,
+                    )
+                    if mismatch and not exact_retry_used:
+                        got_fragment = ""
+                        if stage1_scenario.fragment_analytics is not None:
+                            got_fragment = str(stage1_scenario.fragment_analytics.target_fragment or "")
+                        retry_hint = _build_stage1b_fragment_exact_retry_hint(
+                            target_fragment=target_fragment,
+                            got_fragment=got_fragment,
+                        )
+                        logger.warning(
+                            "stage1b_fragment_exact_retry_hint_applied expected=%r got=%r hint_chars=%d",
+                            target_fragment,
+                            got_fragment,
+                            len(retry_hint),
+                        )
+                        prompt = stage1b_base_prompt + retry_hint
+                        exact_retry_used = True
+                        continue
+                    if mismatch:
+                        got_fragment = ""
+                        if stage1_scenario.fragment_analytics is not None:
+                            got_fragment = str(stage1_scenario.fragment_analytics.target_fragment or "")
+                        logger.warning(
+                            "stage1b_fragment_target_mismatch_persisted expected=%r got=%r (continuing)",
+                            target_fragment,
+                            got_fragment,
+                        )
+
+                stage1_candidate = Stage1PlanPayload.model_validate(
+                    {
+                        "audio": audio_obj,
+                        "transcript_words": stage1_asr.transcript_words,
+                        "draft_blocks": stage1_scenario.draft_blocks.model_dump(mode="json"),
+                        "fragment_analytics": (
+                            stage1_scenario.fragment_analytics.model_dump(mode="json")
+                            if stage1_scenario.fragment_analytics is not None
+                            else None
+                        ),
+                    }
+                )
+                return stage1_candidate, stage1_scenario
 
         stage1, stage1_scenario = _run_stage_with_model_validation_retries(
             stage_name="stage1_scenario",

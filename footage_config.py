@@ -34,6 +34,13 @@ def _s3_bucket_assets() -> str:
     return bucket
 
 
+def _s3_assets_prefix() -> str:
+    raw = _env("S3_ASSET_PREFIX", "pinterest_collection").strip().strip("/")
+    if get_runtime_mode() == MODE_PROD and not raw:
+        raise RuntimeError("MODE=prod requires non-empty S3_ASSET_PREFIX")
+    return raw
+
+
 def _read_json(path: Path) -> Dict[str, Any]:
     obj = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(obj, dict):
@@ -53,7 +60,8 @@ def _as_pos_float(v: Any) -> Optional[float]:
 
 def _s3_locator_for_asset(*, file_name: str, genre: str, tag: str) -> str:
     bucket = _s3_bucket_assets()
-    return f"s3://{bucket}/pinterest_collection/{genre}/{tag}/{file_name}"
+    prefix = _s3_assets_prefix()
+    return f"s3://{bucket}/{prefix}/{genre}/{tag}/{file_name}"
 
 
 def _to_compact_json(v: Any) -> str:
@@ -260,6 +268,8 @@ def main() -> None:
 
     mode = "s3" if get_runtime_mode() == MODE_PROD else "local"
     print(f"[OK] mode: {mode}")
+    if mode == "s3":
+        print(f"[OK] s3 asset prefix: {_s3_assets_prefix()}")
     print(f"[OK] static index: {static_assets_index_path}")
     print(f"[OK] inventory: {inv_p}")
     print(f"[OK] bundle: {bun_p}")

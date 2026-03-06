@@ -20,6 +20,7 @@ services:
       FOOTAGE_DIR: /app/footage
       FOOTAGE_DESCRIPTIONS_DIR: /app/descriptions
       STATIC_ASSETS_INDEX_JSON: /app/data/footage_inventory_selected.json
+      S3_ASSET_PREFIX: pinterest_collection/selected
 
       # point mlcore to shared paths
       FOOTAGE_INVENTORY_JSON: /app/data/footage_inventory_selected.json
@@ -59,6 +60,7 @@ services:
       FOOTAGE_DIR: /app/footage
       FOOTAGE_DESCRIPTIONS_DIR: /app/descriptions
       STATIC_ASSETS_INDEX_JSON: /app/data/footage_inventory_selected.json
+      S3_ASSET_PREFIX: pinterest_collection/selected
 
       # point mlcore to shared paths
       FOOTAGE_INVENTORY_JSON: /app/data/footage_inventory_selected.json
@@ -96,6 +98,7 @@ services:
       FOOTAGE_DIR: /app/footage
       FOOTAGE_DESCRIPTIONS_DIR: /app/descriptions
       STATIC_ASSETS_INDEX_JSON: /app/data/footage_inventory_selected.json
+      S3_ASSET_PREFIX: pinterest_collection/selected
 
       # point mlcore to shared paths
       FOOTAGE_INVENTORY_JSON: /app/data/footage_inventory_selected.json
