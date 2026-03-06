@@ -317,6 +317,10 @@ def _looks_like_model_validation_error_text(text: str) -> bool:
     lo = text.lower()
     if "fragment_analytics" in lo and "target_fragment" in lo:
         return True
+    if "fragment_analytics.chosen_action is inconsistent with relation_to_target" in lo:
+        return True
+    if "fragment_analytics.relation_to_target unsupported" in lo:
+        return True
     if "openrouter_schema_validation_failed" in lo:
         return True
     if "openrouter_tokens_schema_validation_failed" in lo:
