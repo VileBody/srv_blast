@@ -399,16 +399,25 @@ class BlastBotApp:
             st.active_job_id = job_id
             st.active_job_started_at = time.time()
             st.last_status_msg_at = 0.0
+            st.status_message_id = 0
+            st.last_status_text = ""
             st.poll_attempts = 0
             st.last_job_stage = ""
             st.last_job_error = ""
             st.last_result_url = ""
-            await self.store.set(st)
 
-            await message.answer(
-                f"Запустил. job_id={job_id}\n"
-                "Трек в процессе, напишу когда видео будет готово."
+            initial_text = self._job_progress_message(
+                job_id=job_id,
+                status="QUEUED",
+                stage="build",
+                poll_attempts=0,
+                error_text="",
             )
+            sent = await message.answer(initial_text)
+            st.status_message_id = int(getattr(sent, "message_id", 0) or 0)
+            st.last_status_text = initial_text
+            st.last_status_msg_at = time.time()
+            await self.store.set(st)
         except Exception as e:
             await message.answer(f"Не удалось запустить задачу: {e}")
 
@@ -451,11 +460,72 @@ class BlastBotApp:
             lines.append(f"last_error={_compact_text(error_text, limit=380)}")
         return "\n".join(lines)
 
+    def _job_progress_message(
+        self,
+        *,
+        job_id: str,
+        status: str,
+        stage: str,
+        poll_attempts: int,
+        error_text: str,
+    ) -> str:
+        jid = str(job_id or "").strip() or "-"
+        return "\n".join(
+            [
+                f"job_id={jid}",
+                self._progress_message(
+                    status=status,
+                    stage=stage,
+                    poll_attempts=poll_attempts,
+                    error_text=error_text,
+                ),
+            ]
+        )
+
+    async def _upsert_status_message(self, *, bot: Bot, st: ChatState, text: str) -> None:
+        new_text = str(text or "").strip()
+        if not new_text:
+            return
+
+        if new_text == str(st.last_status_text or "") and int(st.status_message_id or 0) > 0:
+            return
+
+        msg_id = int(st.status_message_id or 0)
+        if msg_id > 0:
+            try:
+                await bot.edit_message_text(
+                    chat_id=st.chat_id,
+                    message_id=msg_id,
+                    text=new_text,
+                )
+                st.last_status_text = new_text
+                return
+            except Exception as e:
+                em = str(e).lower()
+                if "message is not modified" in em:
+                    st.last_status_text = new_text
+                    return
+                log.warning(
+                    "status_message_edit_failed chat=%s msg_id=%s err=%s",
+                    st.chat_id,
+                    msg_id,
+                    str(e),
+                )
+
+        try:
+            sent = await bot.send_message(st.chat_id, new_text)
+            st.status_message_id = int(getattr(sent, "message_id", 0) or 0)
+            st.last_status_text = new_text
+        except Exception as e:
+            log.warning("status_message_send_failed chat=%s err=%s", st.chat_id, str(e))
+
     def _reset_processing_state(self, st: ChatState) -> None:
         st.stage = STAGE_WAIT_NEXT
         st.active_job_id = ""
         st.active_job_started_at = 0.0
         st.last_status_msg_at = 0.0
+        st.status_message_id = 0
+        st.last_status_text = ""
         st.poll_attempts = 0
         st.last_job_stage = ""
         st.last_job_error = ""
@@ -509,9 +579,11 @@ class BlastBotApp:
                 or (now - float(st.last_status_msg_at or 0.0)) >= self._progress_interval_s()
             )
             if should_send:
-                await bot.send_message(
-                    st.chat_id,
-                    self._progress_message(
+                await self._upsert_status_message(
+                    bot=bot,
+                    st=st,
+                    text=self._job_progress_message(
+                        job_id=job_id,
                         status=status,
                         stage=stage_for_msg,
                         poll_attempts=st.poll_attempts,
@@ -526,6 +598,17 @@ class BlastBotApp:
         if status == "FAILED":
             final_stage = stage or st.last_job_stage
             final_error = error_text or st.last_job_error
+            await self._upsert_status_message(
+                bot=bot,
+                st=st,
+                text=self._job_progress_message(
+                    job_id=job_id,
+                    status="FAILED",
+                    stage=final_stage,
+                    poll_attempts=st.poll_attempts,
+                    error_text=final_error,
+                ),
+            )
             retries = _extract_celery_retries(final_error)
             fail_lines = [
                 "Задача завершилась с ошибкой.",
@@ -546,6 +629,19 @@ class BlastBotApp:
             self._reset_processing_state(st)
             await self.store.set(st)
             return
+
+        final_stage_ok = stage or st.last_job_stage
+        await self._upsert_status_message(
+            bot=bot,
+            st=st,
+            text=self._job_progress_message(
+                job_id=job_id,
+                status="SUCCEEDED",
+                stage=final_stage_ok,
+                poll_attempts=st.poll_attempts,
+                error_text="",
+            ),
+        )
 
         source = _resolve_job_video_source(job, self.settings)
         if not source:

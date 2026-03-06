@@ -30,6 +30,8 @@ class ChatState(BaseModel):
     active_job_id: str = ""
     active_job_started_at: float = 0.0
     last_status_msg_at: float = 0.0
+    status_message_id: int = 0
+    last_status_text: str = ""
     poll_attempts: int = 0
     last_job_stage: str = ""
     last_job_error: str = ""
