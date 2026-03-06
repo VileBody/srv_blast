@@ -191,7 +191,6 @@ def test_stage3_overlay_enabled_s3_prefix_global(monkeypatch, tmp_path: Path) ->
             }
 
     monkeypatch.setattr(gp, "_make_overlay_s3_client", lambda: _FakeS3())
-    monkeypatch.setattr(gp, "_probe_s3_duration_sec", lambda **kwargs: 4.0)
 
     monkeypatch.setenv("MODE", "dev")
     monkeypatch.setenv("AUDIO_FILE_PATH", str(dummy_audio))
@@ -217,13 +216,13 @@ def test_stage3_overlay_enabled_s3_prefix_global(monkeypatch, tmp_path: Path) ->
 
     footage_cfg = json.loads((out_dir / "footage_config.json").read_text(encoding="utf-8"))
     overlays = [x for x in footage_cfg.get("layers", []) if isinstance(x, dict) and x.get("type") == "overlay"]
-    assert len(overlays) == 4
+    assert len(overlays) == 1
     ov = overlays[0]
     assert str(ov.get("file_path", "")).startswith("s3://bucket/overlays/")
     assert float(ov.get("in_point", 0.0)) == 0.0
-    assert float(overlays[-1].get("out_point", 0.0)) == 15.0
-    for i in range(len(overlays) - 1):
-        assert abs(float(overlays[i]["out_point"]) - float(overlays[i + 1]["in_point"])) <= 1e-6
+    assert float(ov.get("out_point", 0.0)) == 15.0
+    assert bool(ov.get("tile_in_ae")) is True
+    assert int(ov.get("tile_max_repeats", 0)) == 100
 
 
 def test_overlay_blueprint_uses_opacity_from_env(monkeypatch) -> None:
@@ -277,6 +276,47 @@ def test_overlay_blueprint_uses_opacity_from_env(monkeypatch) -> None:
     assert float(tf_opacity.get("value")) == 35.0
 
 
+def test_overlay_blueprint_propagates_ae_tiling_meta(monkeypatch) -> None:
+    monkeypatch.setenv("OVERLAY_OPACITY", "30")
+    cfg = {
+        "text_dur_hint": 10.0,
+        "layers": [
+            {
+                "type": "overlay",
+                "name": "ov",
+                "file_name": "ov.mp4",
+                "file_path": "s3://bucket/overlays/ov.mp4",
+                "src_w": 1080,
+                "src_h": 1920,
+                "in_point": 0.0,
+                "out_point": 10.0,
+                "start_time": 0.0,
+                "tile_in_ae": True,
+                "tile_max_repeats": 100,
+                "enabled": True,
+            }
+        ],
+    }
+    layers = build_footage_layers(
+        repo_root=Path("."),
+        footage_cfg=cfg,
+        main_comp_name="Comp 1",
+        text_comp_name="Text",
+    )
+    overlay_layers = []
+    for it in layers:
+        td = it.get("text_data") if isinstance(it.get("text_data"), dict) else {}
+        meta = td.get("layer_meta") if isinstance(td.get("layer_meta"), dict) else {}
+        if bool(meta.get("isOverlay")):
+            overlay_layers.append(it)
+    assert len(overlay_layers) == 1
+    ov = overlay_layers[0]
+    td = ov.get("text_data") if isinstance(ov.get("text_data"), dict) else {}
+    meta = td.get("layer_meta") if isinstance(td.get("layer_meta"), dict) else {}
+    assert bool(meta.get("overlayTileInAe")) is True
+    assert int(meta.get("overlayTileMaxRepeats", 0)) == 100
+
+
 def test_overlay_tiling_exceeds_repeat_limit_raises() -> None:
     asset = {
         "file_name": "ov.mp4",
@@ -289,8 +329,7 @@ def test_overlay_tiling_exceeds_repeat_limit_raises() -> None:
         gp.build_overlay_tiled_layers(overlay_asset=asset, clip_dur=2.0)
 
 
-def test_overlay_duration_missing_and_probe_fails_raises(monkeypatch) -> None:
-    monkeypatch.setattr(gp, "_probe_s3_duration_sec", lambda **kwargs: None)
+def test_overlay_duration_missing_uses_ae_tiling_marker() -> None:
     asset = {
         "file_name": "ov.mp4",
         "file_path": "s3://bucket/overlays/ov.mp4",
@@ -298,5 +337,10 @@ def test_overlay_duration_missing_and_probe_fails_raises(monkeypatch) -> None:
         "src_h": 1920,
         "duration_sec": None,
     }
-    with pytest.raises(RuntimeError, match="overlay duration probe failed"):
-        gp.build_overlay_tiled_layers(overlay_asset=asset, clip_dur=15.0)
+    layers = gp.build_overlay_tiled_layers(overlay_asset=asset, clip_dur=15.0)
+    assert len(layers) == 1
+    ov = layers[0]
+    assert bool(ov.get("tile_in_ae")) is True
+    assert int(ov.get("tile_max_repeats", 0)) == 100
+    assert float(ov.get("in_point", 0.0)) == 0.0
+    assert float(ov.get("out_point", 0.0)) == 15.0

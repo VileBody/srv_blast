@@ -673,6 +673,16 @@ def _overlay_bp(
     )
     bp.props["tf_opacity"] = PropertyData("ADBE Opacity", value=float(opacity_percent))
     bp.text_data["layer_meta"]["isOverlay"] = True
+    if bool(it.get("tile_in_ae")):
+        bp.text_data["layer_meta"]["overlayTileInAe"] = True
+        max_rep = it.get("tile_max_repeats")
+        try:
+            max_rep_i = int(max_rep)
+        except Exception:
+            max_rep_i = 100
+        if max_rep_i <= 0:
+            max_rep_i = 100
+        bp.text_data["layer_meta"]["overlayTileMaxRepeats"] = int(max_rep_i)
     return bp
 
 

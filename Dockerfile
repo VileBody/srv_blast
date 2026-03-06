@@ -11,7 +11,6 @@ WORKDIR /app
 # minimal system deps (расширишь по мере надобности)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
-    ffmpeg \
   && rm -rf /var/lib/apt/lists/*
 
 # deps first (кешируется лучше)

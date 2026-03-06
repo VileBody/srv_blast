@@ -970,6 +970,70 @@
       } catch(e) { logErr("apply audio envelope failed layer=" + layer.name, e); }
     }
 
+    function tileOverlayLayerInAe(layer, lData) {
+      if (!layer || !lData || lData.type !== "footage") return;
+      var td = (lData.text_data ? lData.text_data : null);
+      var meta = (td && td.layer_meta) ? td.layer_meta : null;
+      if (!meta || meta.isOverlay !== true || meta.overlayTileInAe !== true) return;
+
+      var repMax = Number(meta.overlayTileMaxRepeats);
+      if (!isFinite(repMax) || repMax <= 0) repMax = 100;
+      repMax = Math.floor(repMax);
+      if (repMax > 500) repMax = 500;
+
+      var clipIn = Number(layer.inPoint);
+      var clipOut = Number(layer.outPoint);
+      if (!isFinite(clipIn) || !isFinite(clipOut) || clipOut <= clipIn) return;
+
+      var segDur = 0.0;
+      try {
+        if (layer.source && layer.source.duration !== undefined && layer.source.duration !== null) {
+          segDur = Number(layer.source.duration);
+        }
+      } catch(_) {}
+      if (!isFinite(segDur) || segDur <= 0.0) {
+        throw new Error("overlay source.duration is invalid for layer=" + layer.name);
+      }
+
+      try {
+        layer.startTime = clipIn;
+        layer.inPoint = clipIn;
+        layer.outPoint = Math.min(clipOut, clipIn + segDur);
+      } catch(e0) {
+        throw new Error("overlay base tile setup failed layer=" + layer.name + " err=" + e0);
+      }
+
+      var dt = 1.0 / Number(layer.containingComp.frameRate || 25);
+      var t = Number(layer.outPoint);
+      var count = 1;
+      while (t < clipOut - dt) {
+        if (count >= repMax) {
+          throw new Error(
+            "overlay tiling exceeded max repeats layer=" + layer.name +
+            " repeats=" + repMax + " clipOut=" + fmtNum(clipOut) + " t=" + fmtNum(t)
+          );
+        }
+        var dup = null;
+        try { dup = layer.duplicate(); } catch(eDup) {
+          throw new Error("overlay duplicate failed layer=" + layer.name + " err=" + eDup);
+        }
+        if (!dup) {
+          throw new Error("overlay duplicate returned null layer=" + layer.name);
+        }
+        try {
+          dup.startTime = t;
+          dup.inPoint = t;
+          dup.outPoint = Math.min(clipOut, t + segDur);
+        } catch(eSet) {
+          throw new Error("overlay duplicate timing apply failed layer=" + layer.name + " err=" + eSet);
+        }
+        t = Number(dup.outPoint);
+        count += 1;
+      }
+
+      logLine("INFO", "overlay tiled in AE layer=" + layer.name + " repeats=" + count + " segDur=" + fmtNum(segDur));
+    }
+
     // ==========================================================
     // 3) layer creation by blueprint
     // ==========================================================
@@ -1087,6 +1151,7 @@
       // audio envelope (if requested on audio footage layer)
       if (lData.type === "footage") {
         applyAudioEnvelopeFromBlueprint(layer, lData);
+        tileOverlayLayerInAe(layer, lData);
       }
 
       // effects (you said "похуй на параметры": errors are logged and ignored)
