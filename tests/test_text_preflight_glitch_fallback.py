@@ -81,3 +81,27 @@ def test_preflight_keeps_strict_failure_for_non_glitch_out_le_in() -> None:
             strict=True,
             mine_comp_name=MINE_COMP_NAME,
         )
+
+
+def test_preflight_allows_zero_duration_adjustment_in_strict_mode() -> None:
+    layers = [
+        {
+            "type": "adjustment",
+            "name": "Adjustment Layer 3",
+            "in_point": 15.59,
+            "out_point": 15.59,
+            "text_data": {"layer_meta": {"comp_name_target": "Текст"}},
+            "props": {},
+            "effects": {},
+        }
+    ]
+
+    _preflight_clamp_text_layers(
+        layers,
+        fps=23.9759979248047,
+        strict=True,
+        mine_comp_name=MINE_COMP_NAME,
+    )
+
+    assert float(layers[0]["in_point"]) == pytest.approx(15.59)
+    assert float(layers[0]["out_point"]) == pytest.approx(15.59)

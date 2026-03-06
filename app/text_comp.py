@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import math
 import os
 from typing import Any, Dict, List
@@ -133,6 +134,7 @@ def _preflight_clamp_text_layers(
     strict: bool,
     mine_comp_name: str,
 ) -> None:
+    log = logging.getLogger("app.text_comp")
     if fps <= 0:
         fps = 23.9759979248047
     dt = 1.0 / float(fps)
@@ -159,6 +161,10 @@ def _preflight_clamp_text_layers(
                     glitch_layer=l,
                     mine_comp_name=mine_comp_name,
                 )
+            elif tpe == "adjustment" and abs(out_p - in_p) <= eps:
+                # Some dumped adjustment layers can collapse to a zero-length seam after
+                # rounding/clamping; keep them as-is and let AE evaluate the layer boundary.
+                log.warning("preflight_allow_zero_adjustment layer=%r t=%.6f", l.get("name"), in_p)
             elif strict:
                 raise ValueError(f"Preflight: out<=in in layer {l.get('name')!r}: {in_p}..{out_p}")
             else:
