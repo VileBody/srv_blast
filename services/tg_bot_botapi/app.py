@@ -6,7 +6,7 @@ import re
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 from aiogram import Bot, Dispatcher, Router
@@ -29,6 +29,7 @@ from .state_store import (
     STAGE_WAIT_LYRICS_CHOICE,
     STAGE_WAIT_LYRICS_TEXT,
     STAGE_WAIT_NEXT,
+    STAGE_WAIT_VERSIONS,
 )
 
 
@@ -46,6 +47,12 @@ BTN_SEND_FRAGMENT = "Отправить интересующий фрагмен�
 BTN_SKIP_FRAGMENT = "На усмотрение ИИ"
 BTN_LAUNCH = "Запустить"
 BTN_NEXT = "Сделать следующий"
+BTN_VER_1 = "1"
+BTN_VER_2 = "2"
+BTN_VER_3 = "3"
+BTN_VER_4 = "4"
+BTN_VER_5 = "5"
+VERSION_BUTTONS = [BTN_VER_1, BTN_VER_2, BTN_VER_3, BTN_VER_4, BTN_VER_5]
 
 
 _AUDIO_EXTS = {".wav", ".mp3", ".m4a", ".aac", ".flac", ".ogg"}
@@ -170,6 +177,33 @@ def _extract_celery_retries(error_text: str) -> Optional[int]:
         return None
 
 
+def _parse_versions_choice(text: str) -> Optional[int]:
+    raw = str(text or "").strip()
+    if raw in VERSION_BUTTONS:
+        try:
+            n = int(raw)
+        except Exception:
+            return None
+        if 1 <= n <= 5:
+            return n
+    return None
+
+
+def _normalize_username(raw: str) -> str:
+    u = str(raw or "").strip().lower()
+    if not u:
+        return ""
+    if not u.startswith("@"):
+        u = "@" + u
+    return u
+
+
+def _is_username_allowed(*, username: str, allowlist: Tuple[str, ...]) -> bool:
+    if not allowlist:
+        return False
+    return _normalize_username(username) in set(allowlist)
+
+
 class BlastBotApp:
     def __init__(self, settings: Settings):
         self.settings = settings
@@ -188,6 +222,28 @@ class BlastBotApp:
         self.dp.startup.register(self._on_startup)
         self.dp.shutdown.register(self._on_shutdown)
 
+    def _allow_archive_for_state(self, st: ChatState) -> bool:
+        return _is_username_allowed(
+            username=st.chat_username,
+            allowlist=tuple(self.settings.artifacts_allowlist or tuple()),
+        )
+
+    def _version_num_for_job(self, st: ChatState, job_id: str) -> int:
+        ids = list(st.active_job_ids or [])
+        try:
+            return ids.index(str(job_id)) + 1
+        except Exception:
+            return 0
+
+    def _sync_state_user_from_message(self, st: ChatState, message: Message) -> bool:
+        username = ""
+        if message.from_user is not None:
+            username = _normalize_username(getattr(message.from_user, "username", "") or "")
+        if username and username != str(st.chat_username or ""):
+            st.chat_username = username
+            return True
+        return False
+
     def _register_handlers(self) -> None:
         @self.router.message(CommandStart())
         async def _on_start(message: Message) -> None:
@@ -195,6 +251,9 @@ class BlastBotApp:
                 return
             chat_id = int(message.chat.id)
             st = await self.store.get(chat_id)
+            user_changed = self._sync_state_user_from_message(st, message)
+            if user_changed:
+                await self.store.set(st)
             if st.stage == STAGE_PROCESSING:
                 await message.answer("Трек в процессе, подожди завершения.")
                 return
@@ -206,6 +265,9 @@ class BlastBotApp:
                 return
             chat_id = int(message.chat.id)
             st = await self.store.get(chat_id)
+            user_changed = self._sync_state_user_from_message(st, message)
+            if user_changed:
+                await self.store.set(st)
 
             if st.stage == STAGE_PROCESSING:
                 await message.answer("Трек в процессе, подожди завершения.")
@@ -233,6 +295,10 @@ class BlastBotApp:
 
             if st.stage == STAGE_WAIT_FRAGMENT_TEXT:
                 await self._handle_wait_fragment_text(message, st)
+                return
+
+            if st.stage == STAGE_WAIT_VERSIONS:
+                await self._handle_wait_versions(message, st)
                 return
 
             if st.stage == STAGE_WAIT_CONFIRM:
@@ -283,6 +349,14 @@ class BlastBotApp:
         )
         await message.answer("Пришли аудио (audio/document).")
 
+    async def _ask_versions(self, message: Message, st: ChatState) -> None:
+        st.stage = STAGE_WAIT_VERSIONS
+        await self.store.set(st)
+        await message.answer(
+            "Сколько версий сгенерировать?",
+            reply_markup=_kb([BTN_VER_1, BTN_VER_2, BTN_VER_3, BTN_VER_4, BTN_VER_5]),
+        )
+
     async def _handle_wait_audio(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()
         if text == BTN_SEND_TRACK:
@@ -330,6 +404,10 @@ class BlastBotApp:
         st.prepared_audio_local_path = str(prep.output_path)
         st.lyrics_text = ""
         st.target_fragment = ""
+        st.versions_count = 1
+        st.active_job_id = ""
+        st.active_job_ids = []
+        st.completed_job_ids = []
         st.stage = STAGE_WAIT_LYRICS_CHOICE
         await self.store.set(st)
 
@@ -352,9 +430,7 @@ class BlastBotApp:
         if text == BTN_SKIP_LYRICS:
             st.lyrics_text = ""
             st.target_fragment = ""
-            st.stage = STAGE_WAIT_CONFIRM
-            await self.store.set(st)
-            await message.answer("Запустить генерацию?", reply_markup=_kb([BTN_LAUNCH]))
+            await self._ask_versions(message, st)
             return
 
         await message.answer("Выбери кнопку: «Отправить текст» или «Не присылать текст».")
@@ -387,9 +463,7 @@ class BlastBotApp:
 
         if text == BTN_SKIP_FRAGMENT:
             st.target_fragment = ""
-            st.stage = STAGE_WAIT_CONFIRM
-            await self.store.set(st)
-            await message.answer("Запустить генерацию?", reply_markup=_kb([BTN_LAUNCH]))
+            await self._ask_versions(message, st)
             return
 
         await message.answer("Выбери кнопку: «Отправить интересующий фрагмент» или «На усмотрение ИИ».")
@@ -401,9 +475,20 @@ class BlastBotApp:
             return
 
         st.target_fragment = text
+        await self._ask_versions(message, st)
+
+    async def _handle_wait_versions(self, message: Message, st: ChatState) -> None:
+        n = _parse_versions_choice(message.text or "")
+        if n is None:
+            await message.answer("Выбери количество версий: 1, 2, 3, 4 или 5.")
+            return
+        st.versions_count = int(n)
         st.stage = STAGE_WAIT_CONFIRM
         await self.store.set(st)
-        await message.answer("Фрагмент получил. Запустить генерацию?", reply_markup=_kb([BTN_LAUNCH]))
+        await message.answer(
+            f"Ок, версий: {n}. Запустить генерацию?",
+            reply_markup=_kb([BTN_LAUNCH]),
+        )
 
     async def _handle_wait_confirm(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()
@@ -423,7 +508,8 @@ class BlastBotApp:
 
         key = self._build_raw_audio_key(chat_id=chat_id, file_name=prepared_path.name)
         try:
-            await message.answer("Заливаю аудио в S3 и ставлю задачу в очередь…")
+            versions = max(1, min(5, int(st.versions_count or 1)))
+            await message.answer(f"Заливаю аудио в S3 и ставлю задачи в очередь… (версий: {versions})")
             audio_s3_url = await asyncio.to_thread(
                 self.s3.upload_file,
                 path=prepared_path,
@@ -432,21 +518,28 @@ class BlastBotApp:
                 content_type="audio/mpeg",
             )
 
-            idem = f"tg-{chat_id}-{uuid.uuid4().hex[:12]}"
-            enqueue = await self.orchestrator.send_audio_s3(
-                audio_s3_url=audio_s3_url,
-                mode="with_gemini",
-                lyrics_text=st.lyrics_text,
-                target_fragment=st.target_fragment,
-                idempotency_key=idem,
-                project_id=None,
-            )
-            job_id = str(enqueue.get("job_id") or "").strip()
-            if not job_id:
-                raise RuntimeError(f"enqueue response has no job_id: {enqueue}")
+            job_ids: List[str] = []
+            for i in range(versions):
+                idem = f"tg-{chat_id}-v{i + 1}-{uuid.uuid4().hex[:12]}"
+                enqueue = await self.orchestrator.send_audio_s3(
+                    audio_s3_url=audio_s3_url,
+                    mode="with_gemini",
+                    lyrics_text=st.lyrics_text,
+                    target_fragment=st.target_fragment,
+                    idempotency_key=idem,
+                    project_id=None,
+                )
+                job_id = str(enqueue.get("job_id") or "").strip()
+                if not job_id:
+                    raise RuntimeError(f"enqueue response has no job_id: {enqueue}")
+                job_ids.append(job_id)
+            if not job_ids:
+                raise RuntimeError("no jobs enqueued")
 
             st.stage = STAGE_PROCESSING
-            st.active_job_id = job_id
+            st.active_job_id = job_ids[0]
+            st.active_job_ids = list(job_ids)
+            st.completed_job_ids = []
             st.active_job_started_at = time.time()
             st.last_status_msg_at = 0.0
             st.status_message_id = 0
@@ -456,12 +549,13 @@ class BlastBotApp:
             st.last_job_error = ""
             st.last_result_url = ""
 
-            initial_text = self._job_progress_message(
-                job_id=job_id,
-                status="QUEUED",
-                stage="build",
+            initial_rows = [
+                {"job_id": jid, "status": "QUEUED", "stage": "build", "error": ""}
+                for jid in job_ids
+            ]
+            initial_text = self._jobs_progress_message(
+                rows=initial_rows,
                 poll_attempts=0,
-                error_text="",
             )
             sent = await message.answer(initial_text)
             st.status_message_id = int(getattr(sent, "message_id", 0) or 0)
@@ -489,48 +583,36 @@ class BlastBotApp:
     def _progress_interval_s(self) -> float:
         return max(1.0, float(self.settings.bot_status_update_interval_s))
 
-    def _progress_message(
-        self,
-        *,
-        status: str,
-        stage: str,
-        poll_attempts: int,
-        error_text: str,
-    ) -> str:
-        retries = _extract_celery_retries(error_text)
+    def _jobs_progress_message(self, *, rows: List[Dict[str, Any]], poll_attempts: int) -> str:
+        total = len(rows)
+        succ = 0
+        fail = 0
+        active = 0
+        for r in rows:
+            status = str(r.get("status") or "").upper()
+            if status == "SUCCEEDED":
+                succ += 1
+            elif status == "FAILED":
+                fail += 1
+            else:
+                active += 1
+
+        done = succ + fail
         lines = [
-            "Прогресс задачи:",
-            f"status={status or 'UNKNOWN'}",
-            f"stage={stage or '-'}",
+            "Прогресс задач:",
+            f"versions={done}/{total} ok={succ} fail={fail} active={active}",
             f"poll_attempts={max(0, int(poll_attempts))}",
         ]
-        if retries is not None:
-            lines.append(f"celery_retries={retries}")
-        if error_text:
-            lines.append(f"last_error={_compact_text(error_text, limit=380)}")
-        return "\n".join(lines)
+        for i, r in enumerate(rows, start=1):
+            status = str(r.get("status") or "UNKNOWN").upper()
+            stage = str(r.get("stage") or "-")
+            err = str(r.get("error") or "")
+            line = f"v{i}: {status} / {stage}"
+            if status == "FAILED" and err:
+                line += f" / err={_compact_text(err, limit=120)}"
+            lines.append(line)
 
-    def _job_progress_message(
-        self,
-        *,
-        job_id: str,
-        status: str,
-        stage: str,
-        poll_attempts: int,
-        error_text: str,
-    ) -> str:
-        jid = str(job_id or "").strip() or "-"
-        return "\n".join(
-            [
-                f"job_id={jid}",
-                self._progress_message(
-                    status=status,
-                    stage=stage,
-                    poll_attempts=poll_attempts,
-                    error_text=error_text,
-                ),
-            ]
-        )
+        return "\n".join(lines)
 
     async def _upsert_status_message(self, *, bot: Bot, st: ChatState, text: str) -> None:
         new_text = str(text or "").strip()
@@ -572,6 +654,8 @@ class BlastBotApp:
     def _reset_processing_state(self, st: ChatState) -> None:
         st.stage = STAGE_WAIT_NEXT
         st.active_job_id = ""
+        st.active_job_ids = []
+        st.completed_job_ids = []
         st.active_job_started_at = 0.0
         st.last_status_msg_at = 0.0
         st.status_message_id = 0
@@ -597,129 +681,65 @@ class BlastBotApp:
 
             await asyncio.sleep(max(1.0, float(self.settings.bot_poll_interval_s)))
 
-    async def _process_chat_job(self, st: ChatState) -> None:
-        job_id = str(st.active_job_id or "").strip()
-        if not job_id:
-            self._reset_processing_state(st)
-            await self.store.set(st)
-            return
+    def _current_job_ids(self, st: ChatState) -> List[str]:
+        raw = list(st.active_job_ids or [])
+        if not raw and st.active_job_id:
+            raw = [str(st.active_job_id)]
+        out: List[str] = []
+        seen: set[str] = set()
+        for it in raw:
+            jid = str(it or "").strip()
+            if not jid or jid in seen:
+                continue
+            seen.add(jid)
+            out.append(jid)
+        return out
 
-        bot = self._require_bot()
-        job = await self.orchestrator.get_job(job_id)
+    async def _finalize_one_job(self, *, bot: Bot, st: ChatState, job_id: str, job: Dict[str, Any]) -> None:
+        total = max(1, len(st.active_job_ids or []))
+        ver = self._version_num_for_job(st, job_id)
+        ver_label = f"Версия {ver}/{total}" if ver > 0 else f"job_id={job_id}"
+
         status = str(job.get("status") or "").upper()
         stage = str(job.get("stage") or "").strip()
         error_text = str(job.get("error") or "").strip()
 
-        prev_stage = str(st.last_job_stage or "").strip()
-        prev_error = str(st.last_job_error or "").strip()
-
-        st.poll_attempts = max(0, int(st.poll_attempts)) + 1
-        if stage:
-            st.last_job_stage = stage
-        if error_text:
-            st.last_job_error = error_text
-
-        if status not in {"SUCCEEDED", "FAILED"}:
-            now = time.time()
-            stage_for_msg = stage or prev_stage
-            error_for_msg = error_text or prev_error
-            should_send = (
-                st.poll_attempts == 1
-                or (stage and stage != prev_stage)
-                or (error_text and error_text != prev_error)
-                or (now - float(st.last_status_msg_at or 0.0)) >= self._progress_interval_s()
-            )
-            if should_send:
-                await self._upsert_status_message(
-                    bot=bot,
-                    st=st,
-                    text=self._job_progress_message(
-                        job_id=job_id,
-                        status=status,
-                        stage=stage_for_msg,
-                        poll_attempts=st.poll_attempts,
-                        error_text=error_for_msg,
-                    ),
-                )
-                st.last_status_msg_at = now
-
-            await self.store.set(st)
-            return
-
         if status == "FAILED":
-            final_stage = stage or st.last_job_stage
-            final_error = error_text or st.last_job_error
-            await self._upsert_status_message(
-                bot=bot,
-                st=st,
-                text=self._job_progress_message(
-                    job_id=job_id,
-                    status="FAILED",
-                    stage=final_stage,
-                    poll_attempts=st.poll_attempts,
-                    error_text=final_error,
-                ),
-            )
-            retries = _extract_celery_retries(final_error)
+            retries = _extract_celery_retries(error_text)
             fail_lines = [
-                "Задача завершилась с ошибкой.",
-                f"Стадия: {final_stage or '-'}",
-                f"Проверок статуса: {st.poll_attempts}",
+                f"{ver_label}: задача завершилась с ошибкой.",
+                f"Стадия: {stage or '-'}",
             ]
             if retries is not None:
                 fail_lines.append(f"Celery retries: {retries}")
-            if final_error:
-                fail_lines.append(f"Последняя ошибка: {_compact_text(final_error, limit=1000)}")
+            if error_text:
+                fail_lines.append(f"Последняя ошибка: {_compact_text(error_text, limit=1000)}")
             else:
                 fail_lines.append("Последняя ошибка: без деталей.")
-            await bot.send_message(
-                st.chat_id,
-                "\n".join(fail_lines),
-                reply_markup=_kb([BTN_NEXT]),
-            )
-            self._reset_processing_state(st)
-            await self.store.set(st)
+            await bot.send_message(st.chat_id, "\n".join(fail_lines))
             return
-
-        final_stage_ok = stage or st.last_job_stage
-        await self._upsert_status_message(
-            bot=bot,
-            st=st,
-            text=self._job_progress_message(
-                job_id=job_id,
-                status="SUCCEEDED",
-                stage=final_stage_ok,
-                poll_attempts=st.poll_attempts,
-                error_text="",
-            ),
-        )
 
         source = _resolve_job_video_source(job, self.settings)
         if not source:
             await bot.send_message(
                 st.chat_id,
-                "Готово, но не нашёл ссылку на видео в ответе оркестратора.",
-                reply_markup=_kb([BTN_NEXT]),
+                f"{ver_label}: готово, но не нашёл ссылку на видео в ответе оркестратора.",
             )
-            self._reset_processing_state(st)
-            await self.store.set(st)
             return
 
         st.last_result_url = source
-        await self.store.set(st)
 
         video_path = self.settings.tmp_dir / str(st.chat_id) / "result" / f"{job_id}.mp4"
         video_path.parent.mkdir(parents=True, exist_ok=True)
 
         file_sent = False
         send_file_error = ""
-
         try:
             await self._download_result_video(source=source, dest=video_path)
             await bot.send_document(
                 chat_id=st.chat_id,
                 document=FSInputFile(str(video_path)),
-                caption="Вот твой трек.",
+                caption=f"{ver_label}: вот твой трек.",
             )
             file_sent = True
         except Exception as e:
@@ -728,14 +748,14 @@ class BlastBotApp:
 
         if not file_sent:
             fallback_link = await self._build_fallback_link(source)
-            msg = "Не смог отправить файл видео."
+            msg = f"{ver_label}: не смог отправить файл видео."
             if fallback_link:
                 msg += f"\nСсылка: {fallback_link}"
             if send_file_error:
                 msg += f"\nОшибка: {send_file_error}"
             await bot.send_message(st.chat_id, msg)
 
-        if self.settings.tg_send_project_archive:
+        if self.settings.tg_send_project_archive and self._allow_archive_for_state(st):
             archive_source = _resolve_job_project_archive_source(job)
             if archive_source:
                 archive_link = await self._build_fallback_link(archive_source)
@@ -743,13 +763,75 @@ class BlastBotApp:
                     archive_link = archive_source
                 await bot.send_message(
                     st.chat_id,
-                    f"Проект (AEP + ресурсы): {archive_link}",
+                    f"{ver_label}: проект (AEP + ресурсы): {archive_link}",
                 )
             else:
                 await bot.send_message(
                     st.chat_id,
-                    "Видео готово, но ссылка на архив проекта в ответе рендера не найдена.",
+                    f"{ver_label}: видео готово, но ссылка на архив проекта в ответе рендера не найдена.",
                 )
+
+        try:
+            if video_path.exists():
+                video_path.unlink()
+        except Exception:
+            pass
+
+    async def _process_chat_job(self, st: ChatState) -> None:
+        job_ids = self._current_job_ids(st)
+        if not job_ids:
+            self._reset_processing_state(st)
+            await self.store.set(st)
+            return
+        st.active_job_ids = list(job_ids)
+        st.active_job_id = job_ids[0]
+
+        bot = self._require_bot()
+        completed: set[str] = {str(x) for x in (st.completed_job_ids or []) if str(x)}
+        rows: List[Dict[str, Any]] = []
+        new_finals: List[Tuple[str, Dict[str, Any]]] = []
+
+        st.poll_attempts = max(0, int(st.poll_attempts)) + 1
+        for jid in job_ids:
+            job = await self.orchestrator.get_job(jid)
+            status = str(job.get("status") or "").upper()
+            stage = str(job.get("stage") or "").strip()
+            error_text = str(job.get("error") or "").strip()
+            rows.append(
+                {
+                    "job_id": jid,
+                    "status": status,
+                    "stage": stage,
+                    "error": error_text,
+                }
+            )
+            if stage:
+                st.last_job_stage = stage
+            if error_text:
+                st.last_job_error = error_text
+            if status in {"SUCCEEDED", "FAILED"} and jid not in completed:
+                new_finals.append((jid, job))
+
+        status_text = self._jobs_progress_message(rows=rows, poll_attempts=st.poll_attempts)
+        now = time.time()
+        should_send = (
+            st.poll_attempts == 1
+            or status_text != str(st.last_status_text or "")
+            or (now - float(st.last_status_msg_at or 0.0)) >= self._progress_interval_s()
+        )
+        if should_send:
+            await self._upsert_status_message(bot=bot, st=st, text=status_text)
+            st.last_status_msg_at = now
+
+        for jid, job in new_finals:
+            await self._finalize_one_job(bot=bot, st=st, job_id=jid, job=job)
+            completed.add(jid)
+
+        st.completed_job_ids = [jid for jid in job_ids if jid in completed]
+        all_done = len(st.completed_job_ids) >= len(job_ids)
+        if not all_done:
+            await self.store.set(st)
+            return
 
         await bot.send_message(
             st.chat_id,
@@ -763,13 +845,8 @@ class BlastBotApp:
         st.pending_audio_filename = ""
         st.lyrics_text = ""
         st.target_fragment = ""
+        st.versions_count = 1
         await self.store.set(st)
-
-        try:
-            if video_path.exists():
-                video_path.unlink()
-        except Exception:
-            pass
 
     async def _download_result_video(self, *, source: str, dest: Path) -> None:
         src = str(source or "").strip()

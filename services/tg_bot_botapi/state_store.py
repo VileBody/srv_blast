@@ -15,6 +15,7 @@ STAGE_WAIT_LYRICS_CHOICE = "WAIT_LYRICS_CHOICE"
 STAGE_WAIT_LYRICS_TEXT = "WAIT_LYRICS_TEXT"
 STAGE_WAIT_FRAGMENT_CHOICE = "WAIT_FRAGMENT_CHOICE"
 STAGE_WAIT_FRAGMENT_TEXT = "WAIT_FRAGMENT_TEXT"
+STAGE_WAIT_VERSIONS = "WAIT_VERSIONS"
 STAGE_WAIT_CONFIRM = "WAIT_CONFIRM"
 STAGE_PROCESSING = "PROCESSING"
 STAGE_WAIT_NEXT = "WAIT_NEXT"
@@ -23,14 +24,20 @@ STAGE_WAIT_NEXT = "WAIT_NEXT"
 class ChatState(BaseModel):
     chat_id: int
     stage: str = STAGE_IDLE
+    chat_username: str = ""
 
     pending_audio_file_id: str = ""
     pending_audio_filename: str = ""
     prepared_audio_local_path: str = ""
     lyrics_text: str = ""
     target_fragment: str = ""
+    versions_count: int = 1
 
+    # legacy single-job fields (kept for backward compatibility)
     active_job_id: str = ""
+    # current multi-job fields
+    active_job_ids: List[str] = []
+    completed_job_ids: List[str] = []
     active_job_started_at: float = 0.0
     last_status_msg_at: float = 0.0
     status_message_id: int = 0
@@ -98,7 +105,8 @@ class RedisChatStateStore:
                 st = ChatState.model_validate(obj)
             except Exception:
                 continue
-            if st.stage == STAGE_PROCESSING and st.active_job_id:
+            has_jobs = bool(st.active_job_ids) or bool(st.active_job_id)
+            if st.stage == STAGE_PROCESSING and has_jobs:
                 out.append(st)
         return out
 

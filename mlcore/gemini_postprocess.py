@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import json
 import hashlib
+import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 import os
@@ -214,6 +216,113 @@ def _make_overlay_s3_client():
         kwargs["aws_access_key_id"] = access_key
         kwargs["aws_secret_access_key"] = secret_key
     return boto3.client(**kwargs)
+
+
+def _ffprobe_bin() -> str:
+    raw = (os.environ.get("FFPROBE_BIN") or "ffprobe").strip()
+    return raw or "ffprobe"
+
+
+def _parse_s3_url(url: str) -> Tuple[str, str]:
+    u = str(url or "").strip()
+    if not u.startswith("s3://"):
+        raise RuntimeError(f"not an s3 url: {url!r}")
+    tail = u[5:]
+    if "/" not in tail:
+        raise RuntimeError(f"invalid s3 url (missing key): {url!r}")
+    bucket, key = tail.split("/", 1)
+    bucket = bucket.strip()
+    key = key.strip()
+    if not bucket or not key:
+        raise RuntimeError(f"invalid s3 url: {url!r}")
+    return bucket, key
+
+
+def _ffprobe_duration_sec(*, media_path: Path, ffprobe_bin: str) -> Optional[float]:
+    p = media_path.expanduser().resolve()
+    if not p.exists():
+        return None
+    try:
+        proc = subprocess.run(
+            [
+                ffprobe_bin,
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                str(p),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except Exception:
+        return None
+    if int(proc.returncode) != 0:
+        return None
+    out = str(proc.stdout or "").strip()
+    if not out:
+        return None
+    try:
+        val = float(out)
+    except Exception:
+        return None
+    if val <= 0.0:
+        return None
+    return float(val)
+
+
+def _probe_s3_duration_sec(*, s3_url: str, ffprobe_bin: str) -> Optional[float]:
+    bucket, key = _parse_s3_url(s3_url)
+    client = _make_overlay_s3_client()
+    suffix = Path(key).suffix or ".bin"
+    tmp_path: Optional[Path] = None
+    try:
+        fd, tmp = tempfile.mkstemp(prefix="overlay_probe_", suffix=suffix)
+        os.close(fd)
+        tmp_path = Path(tmp).resolve()
+        client.download_file(bucket, key, str(tmp_path))
+        return _ffprobe_duration_sec(media_path=tmp_path, ffprobe_bin=ffprobe_bin)
+    except Exception:
+        return None
+    finally:
+        if tmp_path is not None:
+            try:
+                if tmp_path.exists():
+                    tmp_path.unlink()
+            except Exception:
+                pass
+
+
+def _resolve_overlay_duration_sec(overlay_asset: Dict[str, Any]) -> float:
+    dur = _as_pos_float(overlay_asset.get("duration_sec"))
+    if dur is not None:
+        return float(dur)
+
+    fp = str(overlay_asset.get("file_path") or "").strip()
+    if not fp:
+        raise RuntimeError(f"Overlay asset has no file_path: {overlay_asset!r}")
+
+    ffprobe_bin = _ffprobe_bin()
+    if fp.startswith("s3://"):
+        probed = _probe_s3_duration_sec(s3_url=fp, ffprobe_bin=ffprobe_bin)
+        if probed is not None:
+            return float(probed)
+        raise RuntimeError(f"overlay duration probe failed for {fp!r} via ffprobe={ffprobe_bin!r}")
+
+    p = Path(fp).expanduser()
+    if p.exists():
+        probed = _ffprobe_duration_sec(media_path=p, ffprobe_bin=ffprobe_bin)
+        if probed is not None:
+            return float(probed)
+        raise RuntimeError(f"overlay duration probe failed for local file {str(p)!r} via ffprobe={ffprobe_bin!r}")
+
+    raise RuntimeError(
+        "overlay duration is missing and file_path is neither s3:// nor existing local path: "
+        f"{fp!r}"
+    )
 
 
 def _iter_overlay_s3_keys(*, s3_client: Any, bucket: str, prefix: str) -> List[str]:
@@ -448,13 +557,11 @@ def pick_overlay_asset_deterministic(
 
 
 def build_overlay_tiled_layers(*, overlay_asset: Dict[str, Any], clip_dur: float) -> List[Dict[str, Any]]:
-    dur = _as_pos_float(overlay_asset.get("duration_sec"))
     if clip_dur <= 0.0:
         raise RuntimeError(f"clip_dur must be > 0, got {clip_dur}")
-    if dur is None:
-        # Metadata may be absent when overlay list is loaded directly from S3 prefix.
-        # In that case we keep one segment for the full clip duration.
-        dur = float(clip_dur)
+    dur = _resolve_overlay_duration_sec(overlay_asset)
+    if dur <= 0.0:
+        raise RuntimeError(f"overlay duration must be > 0, got {dur}")
 
     file_name = str(overlay_asset.get("file_name") or "").strip()
     file_path = str(overlay_asset.get("file_path") or "").strip()
@@ -470,6 +577,11 @@ def build_overlay_tiled_layers(*, overlay_asset: Dict[str, Any], clip_dur: float
     t0 = 0.0
     idx = 0
     while t0 < float(clip_dur) - 1e-9:
+        if idx >= 100:
+            raise RuntimeError(
+                f"overlay tiling exceeded limit=100 before covering clip_dur={clip_dur} "
+                f"(last_t0={t0}, dur={dur}, file={file_name!r})"
+            )
         t1 = min(float(clip_dur), float(t0 + dur))
         out.append(
             {

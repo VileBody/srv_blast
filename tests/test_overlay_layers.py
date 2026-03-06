@@ -191,6 +191,7 @@ def test_stage3_overlay_enabled_s3_prefix_global(monkeypatch, tmp_path: Path) ->
             }
 
     monkeypatch.setattr(gp, "_make_overlay_s3_client", lambda: _FakeS3())
+    monkeypatch.setattr(gp, "_probe_s3_duration_sec", lambda **kwargs: 4.0)
 
     monkeypatch.setenv("MODE", "dev")
     monkeypatch.setenv("AUDIO_FILE_PATH", str(dummy_audio))
@@ -216,11 +217,13 @@ def test_stage3_overlay_enabled_s3_prefix_global(monkeypatch, tmp_path: Path) ->
 
     footage_cfg = json.loads((out_dir / "footage_config.json").read_text(encoding="utf-8"))
     overlays = [x for x in footage_cfg.get("layers", []) if isinstance(x, dict) and x.get("type") == "overlay"]
-    assert len(overlays) == 1
+    assert len(overlays) == 4
     ov = overlays[0]
     assert str(ov.get("file_path", "")).startswith("s3://bucket/overlays/")
     assert float(ov.get("in_point", 0.0)) == 0.0
-    assert float(ov.get("out_point", 0.0)) == 15.0
+    assert float(overlays[-1].get("out_point", 0.0)) == 15.0
+    for i in range(len(overlays) - 1):
+        assert abs(float(overlays[i]["out_point"]) - float(overlays[i + 1]["in_point"])) <= 1e-6
 
 
 def test_overlay_blueprint_uses_opacity_from_env(monkeypatch) -> None:
@@ -272,3 +275,28 @@ def test_overlay_blueprint_uses_opacity_from_env(monkeypatch) -> None:
     overlay = overlay_layers[0]
     tf_opacity = overlay.get("props", {}).get("tf_opacity", {})
     assert float(tf_opacity.get("value")) == 35.0
+
+
+def test_overlay_tiling_exceeds_repeat_limit_raises() -> None:
+    asset = {
+        "file_name": "ov.mp4",
+        "file_path": "s3://bucket/overlays/ov.mp4",
+        "src_w": 1080,
+        "src_h": 1920,
+        "duration_sec": 0.01,
+    }
+    with pytest.raises(RuntimeError, match="exceeded limit=100"):
+        gp.build_overlay_tiled_layers(overlay_asset=asset, clip_dur=2.0)
+
+
+def test_overlay_duration_missing_and_probe_fails_raises(monkeypatch) -> None:
+    monkeypatch.setattr(gp, "_probe_s3_duration_sec", lambda **kwargs: None)
+    asset = {
+        "file_name": "ov.mp4",
+        "file_path": "s3://bucket/overlays/ov.mp4",
+        "src_w": 1080,
+        "src_h": 1920,
+        "duration_sec": None,
+    }
+    with pytest.raises(RuntimeError, match="overlay duration probe failed"):
+        gp.build_overlay_tiled_layers(overlay_asset=asset, clip_dur=15.0)
