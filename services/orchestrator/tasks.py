@@ -438,6 +438,7 @@ def build_job(self, job_id: str) -> Dict[str, Any]:
     req = st.request or {}
     audio_url = str(req.get("audio_s3_url") or "").strip()
     lyrics_text = str(req.get("lyrics_text") or "")
+    target_fragment = str(req.get("target_fragment") or "")
     if not audio_url:
         raise RuntimeError("missing audio_s3_url")
     if not _is_remote_url(audio_url):
@@ -474,6 +475,7 @@ def build_job(self, job_id: str) -> Dict[str, Any]:
 
     env["AE_MEDIA_MODE"] = "appdir"
     env["LYRICS_TEXT"] = lyrics_text
+    env["TARGET_FRAGMENT"] = target_fragment
 
     build_all_fn = None
     if mode != "no_gemini":
@@ -491,6 +493,7 @@ def build_job(self, job_id: str) -> Dict[str, Any]:
             "AE_MEDIA_MODE",
             "JOB_ID",
             "LYRICS_TEXT",
+            "TARGET_FRAGMENT",
         ):
             backup[k] = os.environ.get(k)
             os.environ[k] = env[k]
@@ -588,6 +591,7 @@ def build_job(self, job_id: str) -> Dict[str, Any]:
                     "AE_MEDIA_MODE",
                     "JOB_ID",
                     "LYRICS_TEXT",
+                    "TARGET_FRAGMENT",
                 )
                 llm_backup: Dict[str, str | None] = {}
                 for k in llm_env_keys:

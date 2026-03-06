@@ -21,6 +21,7 @@ class OrchestratorClient:
         audio_s3_url: str,
         mode: str,
         lyrics_text: str,
+        target_fragment: str,
         idempotency_key: str | None = None,
         project_id: str | None = None,
     ) -> Dict[str, Any]:
@@ -28,6 +29,7 @@ class OrchestratorClient:
             "audio_s3_url": str(audio_s3_url),
             "mode": str(mode),
             "lyrics_text": str(lyrics_text or ""),
+            "target_fragment": str(target_fragment or ""),
             "idempotency_key": idempotency_key,
             "project_id": project_id,
         }

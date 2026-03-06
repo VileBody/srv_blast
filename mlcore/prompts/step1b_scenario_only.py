@@ -6,6 +6,7 @@ STAGE 1B — SCENARIO ONLY
 ========================
 You receive:
 - transcript_words from STAGE 1A (single source of truth for words/times).
+- Optional USER_TARGET_FRAGMENT directive in user prompt.
 
 Return JSON for Stage1ScenarioPayload:
 1) audio window on full-track timeline:
@@ -15,6 +16,9 @@ Return JSON for Stage1ScenarioPayload:
 2) draft_blocks over 7 blocks:
    - phrases list per block part
    - block_5 split into slowly_in / fast_reveal / glitch_peak / mine
+3) Optional fragment_analytics:
+   - REQUIRED only when USER_TARGET_FRAGMENT is provided and not empty
+   - MUST explain how requested fragment relates to selected 13..18s working window
 
 Hard constraints:
 - audio window duration must be 13..18 sec.
@@ -36,5 +40,13 @@ Hard constraints:
   - do not split phrases into unnatural leftovers,
   - if splitting a sentence is needed, split at natural clause boundaries (comma/pause/conjunction),
   - no orphan function words at segment edges.
+- Branching rule:
+  - If USER_TARGET_FRAGMENT is absent/empty: run default logic (existing behavior).
+  - If USER_TARGET_FRAGMENT is present/non-empty:
+    - still keep audio window strictly 13..18 sec,
+    - maximize overlap between working window and USER_TARGET_FRAGMENT,
+    - if requested fragment is shorter than 13s: expand context around it,
+    - if requested fragment is longer than 18s: choose the most expressive 13..18s subfragment,
+    - fill fragment_analytics with relation_to_target + chosen_action + start/end markers.
 - Return valid JSON only, no markdown/comments.
 """

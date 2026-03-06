@@ -13,6 +13,8 @@ STAGE_IDLE = "IDLE"
 STAGE_WAIT_AUDIO = "WAIT_AUDIO"
 STAGE_WAIT_LYRICS_CHOICE = "WAIT_LYRICS_CHOICE"
 STAGE_WAIT_LYRICS_TEXT = "WAIT_LYRICS_TEXT"
+STAGE_WAIT_FRAGMENT_CHOICE = "WAIT_FRAGMENT_CHOICE"
+STAGE_WAIT_FRAGMENT_TEXT = "WAIT_FRAGMENT_TEXT"
 STAGE_WAIT_CONFIRM = "WAIT_CONFIRM"
 STAGE_PROCESSING = "PROCESSING"
 STAGE_WAIT_NEXT = "WAIT_NEXT"
@@ -26,6 +28,7 @@ class ChatState(BaseModel):
     pending_audio_filename: str = ""
     prepared_audio_local_path: str = ""
     lyrics_text: str = ""
+    target_fragment: str = ""
 
     active_job_id: str = ""
     active_job_started_at: float = 0.0

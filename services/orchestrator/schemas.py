@@ -20,6 +20,7 @@ class SendAudioS3Request(BaseModel):
     mode: Literal["with_gemini", "no_gemini"] = "with_gemini"
     idempotency_key: Optional[str] = Field(default=None, min_length=1)
     lyrics_text: str = ""
+    target_fragment: str = ""
 
 
 class EnqueueJobResponse(BaseModel):

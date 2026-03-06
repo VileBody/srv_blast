@@ -39,7 +39,7 @@ from mlcore.models.footage_plan import FootageSelectionPayload
 from mlcore.models.footage_style import FootageStylePickPayload
 from mlcore.models.full_plan import FullPlanPayload
 from mlcore.models.stage1_asr import Stage1AsrPayload
-from mlcore.models.stage1_plan import Stage1PlanPayload
+from mlcore.models.stage1_plan import FragmentAnalytics, Stage1PlanPayload
 from mlcore.models.stage1_plan import TranscriptWord
 from mlcore.models.stage1_scenario import Stage1ScenarioPayload
 from mlcore.models.subtitles_spans import BlocksTokenSpansPayload, TokenSpan
@@ -227,6 +227,73 @@ def _emit(progress_cb: Optional[Callable[[str], None]], stage: str) -> None:
         pass
 
 
+def _norm_compact(s: str) -> str:
+    return " ".join(str(s or "").split())
+
+
+def _validate_fragment_analytics_for_target(
+    *,
+    target_fragment: str,
+    audio_start_abs: float,
+    audio_end_abs: float,
+    analytics: FragmentAnalytics | None,
+    logger: logging.Logger,
+) -> Tuple[float, float]:
+    tf = _norm_compact(target_fragment)
+    if not tf:
+        return float(audio_start_abs), float(audio_end_abs)
+
+    if analytics is None:
+        raise ValueError("target_fragment branch requires fragment_analytics in Stage1ScenarioPayload")
+
+    af = _norm_compact(analytics.target_fragment)
+    if not af:
+        raise ValueError("fragment_analytics.target_fragment is empty")
+    if af != tf:
+        raise ValueError(
+            "fragment_analytics.target_fragment must exactly match USER_TARGET_FRAGMENT "
+            f"(got={analytics.target_fragment!r} expected={target_fragment!r})"
+        )
+
+    forced_start = float(analytics.working_start_abs)
+    forced_end = float(analytics.working_end_abs)
+    if abs(float(audio_start_abs) - forced_start) > 1e-6 or abs(float(audio_end_abs) - forced_end) > 1e-6:
+        logger.warning(
+            "stage1b_fragment_window_forced audio=%.3f..%.3f analytics=%.3f..%.3f",
+            float(audio_start_abs),
+            float(audio_end_abs),
+            forced_start,
+            forced_end,
+        )
+
+    relation = str(analytics.relation_to_target)
+    action = str(analytics.chosen_action)
+    expected = {
+        "inside_13_18": "none",
+        "wider": "expand",
+        "narrower": "select_subfragment",
+    }
+    exp = expected.get(relation)
+    if exp is None:
+        raise ValueError(f"fragment_analytics.relation_to_target unsupported: {relation!r}")
+    if action != exp:
+        raise ValueError(
+            "fragment_analytics.chosen_action is inconsistent with relation_to_target "
+            f"(relation={relation!r} action={action!r} expected={exp!r})"
+        )
+
+    logger.info(
+        "stage1b_fragment_analytics relation=%s action=%s start=%.3f end=%.3f start_text=%r end_text=%r",
+        relation,
+        action,
+        forced_start,
+        forced_end,
+        analytics.working_start_text,
+        analytics.working_end_text,
+    )
+    return forced_start, forced_end
+
+
 T = TypeVar("T")
 U = TypeVar("U")
 
@@ -248,6 +315,8 @@ def _looks_like_model_validation_error_text(text: str) -> bool:
     if not text:
         return False
     lo = text.lower()
+    if "fragment_analytics" in lo and "target_fragment" in lo:
+        return True
     if "openrouter_schema_validation_failed" in lo:
         return True
     if "openrouter_tokens_schema_validation_failed" in lo:
@@ -915,10 +984,18 @@ def build_all_via_gemini_one_call(
 
     _emit(progress_cb, "llm_stage1b_scenario")
     logger.info("stage1b_start model=%s", model_stage1_scenario)
+    target_fragment = str(os.environ.get("TARGET_FRAGMENT") or "").strip()
+    fragment_branch_on = bool(target_fragment)
+    logger.info(
+        "stage1b_fragment_branch enabled=%s target_fragment_chars=%d",
+        fragment_branch_on,
+        len(target_fragment),
+    )
 
     stage1b_system = build_stage1b_scenario_system_instruction()
     stage1b_base_prompt = build_stage1b_scenario_user_prompt(
         asr_json=stage1_asr_json,
+        target_fragment=target_fragment,
         schema_name="Stage1ScenarioPayload",
     )
     stage1b_sys = logs_dir / f"gemini_system_stage1_scenario_{stamp}.txt"
@@ -930,6 +1007,14 @@ def build_all_via_gemini_one_call(
     if isinstance(stage1_cached, dict):
         try:
             stage1 = Stage1PlanPayload.model_validate(stage1_cached)
+            if fragment_branch_on:
+                _validate_fragment_analytics_for_target(
+                    target_fragment=target_fragment,
+                    audio_start_abs=float(stage1.audio.clip_start_abs),
+                    audio_end_abs=float(stage1.audio.clip_end_abs),
+                    analytics=stage1.fragment_analytics,
+                    logger=logger,
+                )
             logger.info("llm_resume_hit stage=stage1b_scenario")
         except Exception as e:
             logger.warning("llm_resume_bad stage=stage1b_scenario err=%s", str(e))
@@ -955,11 +1040,30 @@ def build_all_via_gemini_one_call(
                 system_dump_path=stage1b_sys,
             )
 
+            audio_obj = stage1_scenario.audio.model_dump(mode="json")
+            if fragment_branch_on:
+                forced_start, forced_end = _validate_fragment_analytics_for_target(
+                    target_fragment=target_fragment,
+                    audio_start_abs=float(stage1_scenario.audio.clip_start_abs),
+                    audio_end_abs=float(stage1_scenario.audio.clip_end_abs),
+                    analytics=stage1_scenario.fragment_analytics,
+                    logger=logger,
+                )
+                # Keep clip window deterministic in target-fragment branch:
+                # always use analytics-confirmed working window.
+                audio_obj["clip_start_abs"] = float(forced_start)
+                audio_obj["clip_end_abs"] = float(forced_end)
+
             stage1_candidate = Stage1PlanPayload.model_validate(
                 {
-                    "audio": stage1_scenario.audio.model_dump(mode="json"),
+                    "audio": audio_obj,
                     "transcript_words": stage1_asr.transcript_words,
                     "draft_blocks": stage1_scenario.draft_blocks.model_dump(mode="json"),
+                    "fragment_analytics": (
+                        stage1_scenario.fragment_analytics.model_dump(mode="json")
+                        if stage1_scenario.fragment_analytics is not None
+                        else None
+                    ),
                 }
             )
             return stage1_candidate, stage1_scenario
@@ -989,6 +1093,7 @@ def build_all_via_gemini_one_call(
 
     stage1_json = stage1.model_dump(mode="json")
     stage1_json["lyrics_text"] = str(os.environ.get("LYRICS_TEXT") or "")
+    stage1_json["target_fragment"] = target_fragment
     (logs_dir / f"stage1_plan_merged_{stamp}.json").write_text(
         json.dumps(stage1_json, ensure_ascii=False, indent=2),
         encoding="utf-8",

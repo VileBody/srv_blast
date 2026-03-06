@@ -107,13 +107,31 @@ def build_stage1b_scenario_system_instruction() -> str:
 def build_stage1b_scenario_user_prompt(
     *,
     asr_json: Dict[str, object],
+    target_fragment: str = "",
     schema_name: str = "Stage1ScenarioPayload",
 ) -> str:
-    return (
+    base = (
         f"Return ONLY JSON matching schema: {schema_name}\n\n"
         "STAGE1A_ASR_JSON:\n"
         + json.dumps(asr_json, ensure_ascii=False)
     )
+    tf = str(target_fragment or "").strip()
+    if not tf:
+        return base
+
+    branch = (
+        "\n\nUSER_TARGET_FRAGMENT_BRANCH=ON\n"
+        "USER_TARGET_FRAGMENT:\n"
+        + tf
+        + "\n\n"
+        "UNIVERSAL_RULES_FOR_TARGET_FRAGMENT:\n"
+        "- Working audio window MUST remain 13..18 seconds.\n"
+        "- Maximize overlap of the selected working window with USER_TARGET_FRAGMENT.\n"
+        "- If requested fragment is shorter than 13s: expand context around it (left/right as needed) while keeping overlap.\n"
+        "- If requested fragment is longer than 18s: choose the most expressive 13..18s subfragment.\n"
+        "- Return fragment_analytics and ensure it is consistent with selected audio.clip_start_abs/audio.clip_end_abs.\n"
+    )
+    return base + branch
 
 
 def build_stage2_subtitles_system_instruction() -> str:

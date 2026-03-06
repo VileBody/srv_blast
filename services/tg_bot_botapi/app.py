@@ -24,6 +24,8 @@ from .state_store import (
     STAGE_PROCESSING,
     STAGE_WAIT_AUDIO,
     STAGE_WAIT_CONFIRM,
+    STAGE_WAIT_FRAGMENT_CHOICE,
+    STAGE_WAIT_FRAGMENT_TEXT,
     STAGE_WAIT_LYRICS_CHOICE,
     STAGE_WAIT_LYRICS_TEXT,
     STAGE_WAIT_NEXT,
@@ -40,6 +42,8 @@ log = logging.getLogger("tg_bot")
 BTN_SEND_TRACK = "Отправить трек"
 BTN_SEND_LYRICS = "Отправить текст"
 BTN_SKIP_LYRICS = "Не присылать текст"
+BTN_SEND_FRAGMENT = "Отправить интересующий фрагмент"
+BTN_SKIP_FRAGMENT = "На усмотрение ИИ"
 BTN_LAUNCH = "Запустить"
 BTN_NEXT = "Сделать следующий"
 
@@ -223,6 +227,14 @@ class BlastBotApp:
                 await self._handle_wait_lyrics_text(message, st)
                 return
 
+            if st.stage == STAGE_WAIT_FRAGMENT_CHOICE:
+                await self._handle_wait_fragment_choice(message, st)
+                return
+
+            if st.stage == STAGE_WAIT_FRAGMENT_TEXT:
+                await self._handle_wait_fragment_text(message, st)
+                return
+
             if st.stage == STAGE_WAIT_CONFIRM:
                 await self._handle_wait_confirm(message, st)
                 return
@@ -317,6 +329,7 @@ class BlastBotApp:
         st.pending_audio_filename = _safe_name(original_name)
         st.prepared_audio_local_path = str(prep.output_path)
         st.lyrics_text = ""
+        st.target_fragment = ""
         st.stage = STAGE_WAIT_LYRICS_CHOICE
         await self.store.set(st)
 
@@ -338,6 +351,7 @@ class BlastBotApp:
 
         if text == BTN_SKIP_LYRICS:
             st.lyrics_text = ""
+            st.target_fragment = ""
             st.stage = STAGE_WAIT_CONFIRM
             await self.store.set(st)
             await message.answer("Запустить генерацию?", reply_markup=_kb([BTN_LAUNCH]))
@@ -352,9 +366,44 @@ class BlastBotApp:
             return
 
         st.lyrics_text = text
+        st.target_fragment = ""
+        st.stage = STAGE_WAIT_FRAGMENT_CHOICE
+        await self.store.set(st)
+        await message.answer(
+            "Текст получил. Хочешь указать интересующий фрагмент?",
+            reply_markup=_kb([BTN_SEND_FRAGMENT, BTN_SKIP_FRAGMENT]),
+        )
+
+    async def _handle_wait_fragment_choice(self, message: Message, st: ChatState) -> None:
+        text = str(message.text or "").strip()
+        if text == BTN_SEND_FRAGMENT:
+            st.stage = STAGE_WAIT_FRAGMENT_TEXT
+            await self.store.set(st)
+            await message.answer(
+                "Пришли интересующий фрагмент текста. "
+                "Рабочее окно всё равно будет 13..18с, но модель постарается максимизировать overlap."
+            )
+            return
+
+        if text == BTN_SKIP_FRAGMENT:
+            st.target_fragment = ""
+            st.stage = STAGE_WAIT_CONFIRM
+            await self.store.set(st)
+            await message.answer("Запустить генерацию?", reply_markup=_kb([BTN_LAUNCH]))
+            return
+
+        await message.answer("Выбери кнопку: «Отправить интересующий фрагмент» или «На усмотрение ИИ».")
+
+    async def _handle_wait_fragment_text(self, message: Message, st: ChatState) -> None:
+        text = str(message.text or "").strip()
+        if not text:
+            await message.answer("Жду интересующий фрагмент обычным текстовым сообщением.")
+            return
+
+        st.target_fragment = text
         st.stage = STAGE_WAIT_CONFIRM
         await self.store.set(st)
-        await message.answer("Текст получил. Запустить генерацию?", reply_markup=_kb([BTN_LAUNCH]))
+        await message.answer("Фрагмент получил. Запустить генерацию?", reply_markup=_kb([BTN_LAUNCH]))
 
     async def _handle_wait_confirm(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()
@@ -388,6 +437,7 @@ class BlastBotApp:
                 audio_s3_url=audio_s3_url,
                 mode="with_gemini",
                 lyrics_text=st.lyrics_text,
+                target_fragment=st.target_fragment,
                 idempotency_key=idem,
                 project_id=None,
             )
@@ -529,6 +579,7 @@ class BlastBotApp:
         st.poll_attempts = 0
         st.last_job_stage = ""
         st.last_job_error = ""
+        st.target_fragment = ""
 
     async def _processing_loop(self) -> None:
         while True:
@@ -711,6 +762,7 @@ class BlastBotApp:
         st.pending_audio_file_id = ""
         st.pending_audio_filename = ""
         st.lyrics_text = ""
+        st.target_fragment = ""
         await self.store.set(st)
 
         try:

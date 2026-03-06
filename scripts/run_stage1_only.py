@@ -62,6 +62,10 @@ def _make_client(*, api_key: str, model: str, proxy: str, temperature: float, ti
     )
 
 
+def _norm_compact(s: str) -> str:
+    return " ".join(str(s or "").split())
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Run only Stage1 pipeline (ASR + scenario), no stage2/3, no AE build.")
     ap.add_argument("--audio", required=True, help="Path to local audio file")
@@ -69,6 +73,11 @@ def main() -> int:
     ap.add_argument("--asr-model", default="", help="Override ASR model")
     ap.add_argument("--scenario-model", default="", help="Override scenario model")
     ap.add_argument("--dump-srt", action="store_true", help="Write stage1_srt.json if available")
+    ap.add_argument(
+        "--target-fragment",
+        default="",
+        help="Optional requested fragment text; Stage1B keeps 13..18s window and maximizes overlap.",
+    )
     args = ap.parse_args()
 
     _load_env()
@@ -126,7 +135,12 @@ def main() -> int:
             json.dumps(asr_json.get("srt_items", []), ensure_ascii=False, indent=2), encoding="utf-8"
         )
 
-    base_prompt = build_stage1b_scenario_user_prompt(asr_json=asr_json, schema_name="Stage1ScenarioPayload")
+    target_fragment = str(args.target_fragment or "").strip()
+    base_prompt = build_stage1b_scenario_user_prompt(
+        asr_json=asr_json,
+        target_fragment=target_fragment,
+        schema_name="Stage1ScenarioPayload",
+    )
     stage1_plan: Stage1PlanPayload | None = None
     last_exc: Exception | None = None
     for attempt, strict in enumerate((False, True), start=1):
@@ -155,11 +169,29 @@ def main() -> int:
             json.dumps(scenario_json, ensure_ascii=False, indent=2), encoding="utf-8"
         )
         try:
+            audio_obj = dict(scenario_json["audio"])
+            fa = scenario_json.get("fragment_analytics")
+            if target_fragment:
+                if not isinstance(fa, dict):
+                    raise RuntimeError("target_fragment branch requires fragment_analytics from Stage1B")
+                af = _norm_compact(str(fa.get("target_fragment") or ""))
+                tf = _norm_compact(target_fragment)
+                if af != tf:
+                    raise RuntimeError(
+                        "fragment_analytics.target_fragment mismatch "
+                        f"(got={af!r} expected={tf!r})"
+                    )
+                fs = float(fa.get("working_start_abs"))
+                fe = float(fa.get("working_end_abs"))
+                audio_obj["clip_start_abs"] = fs
+                audio_obj["clip_end_abs"] = fe
+
             candidate = Stage1PlanPayload.model_validate(
                 {
-                    "audio": scenario_json["audio"],
+                    "audio": audio_obj,
                     "draft_blocks": scenario_json["draft_blocks"],
                     "transcript_words": asr_json["transcript_words"],
+                    "fragment_analytics": scenario_json.get("fragment_analytics"),
                 }
             )
             stage1_plan = candidate

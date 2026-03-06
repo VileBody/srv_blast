@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -29,6 +29,30 @@ class Stage1AudioWindow(BaseModel):
         dur = float(self.clip_end_abs) - float(self.clip_start_abs)
         if dur < 13.0 or dur > 18.0:
             raise ValueError(f"clip duration must be 13..18 seconds (got {dur})")
+        return self
+
+
+class FragmentAnalytics(BaseModel):
+    target_fragment: str = Field(min_length=1)
+    working_fragment: str = Field(min_length=1)
+
+    # Must mirror selected audio window in Stage1B output.
+    working_start_abs: float = Field(ge=0.0)
+    working_end_abs: float = Field(ge=0.0)
+
+    # Text labels for traceability in logs/UI.
+    working_start_text: str = Field(min_length=1)
+    working_end_text: str = Field(min_length=1)
+
+    # Relation between requested fragment and selected 13..18s window.
+    relation_to_target: Literal["wider", "narrower", "inside_13_18"]
+    chosen_action: Literal["expand", "select_subfragment", "none"]
+    rationale: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _check(self) -> "FragmentAnalytics":
+        if self.working_end_abs <= self.working_start_abs:
+            raise ValueError("working_end_abs must be > working_start_abs")
         return self
 
 
@@ -72,3 +96,4 @@ class Stage1PlanPayload(BaseModel):
     audio: Stage1AudioWindow
     transcript_words: List[TranscriptWord] = Field(min_length=1)
     draft_blocks: Stage1DraftBlocks
+    fragment_analytics: Optional[FragmentAnalytics] = None
