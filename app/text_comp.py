@@ -62,11 +62,76 @@ def _iter_property_dicts(layer: Dict[str, Any]) -> List[Dict[str, Any]]:
     return out
 
 
+def _is_glitch_peak_zero_window_layer(layer: Dict[str, Any]) -> bool:
+    return str(layer.get("name") or "").strip().lower() == "glitch_peak_prefix"
+
+
+def _find_mine_inner_text_layer(layers: List[Dict[str, Any]], *, mine_comp_name: str) -> Dict[str, Any] | None:
+    target = str(mine_comp_name or "").strip()
+    for l in layers:
+        if not isinstance(l, dict):
+            continue
+        if str(l.get("type") or "") != "text":
+            continue
+        if str(l.get("name") or "").strip().lower() != "mine":
+            continue
+        td = l.get("text_data")
+        if not isinstance(td, dict):
+            continue
+        meta = td.get("layer_meta")
+        if not isinstance(meta, dict):
+            continue
+        comp_target = str(meta.get("comp_name_target") or "").strip()
+        comp_id_target = int(meta.get("comp_id_target") or 0)
+        if (target and comp_target == target) or comp_id_target == 88:
+            return l
+    return None
+
+
+def _merge_glitch_peak_into_mine(
+    *,
+    layers: List[Dict[str, Any]],
+    glitch_layer: Dict[str, Any],
+    mine_comp_name: str,
+) -> None:
+    mine_layer = _find_mine_inner_text_layer(layers, mine_comp_name=mine_comp_name)
+    if isinstance(mine_layer, dict):
+        peak_text = str(glitch_layer.get("text") or "").strip()
+        mine_text = str(mine_layer.get("text") or "").strip()
+        if peak_text and mine_text:
+            merged = f"{peak_text}\r{mine_text}"
+        else:
+            merged = peak_text or mine_text
+        mine_layer["text"] = merged
+
+        td = mine_layer.get("text_data")
+        if not isinstance(td, dict):
+            td = {}
+            mine_layer["text_data"] = td
+        td["char_styles_ungrouped"] = [
+            {"i": i, "font": "Point-ExtraBold", "fontSize": 100}
+            for i in range(len(merged))
+        ]
+
+    glitch_layer["text"] = ""
+    gtd = glitch_layer.get("text_data")
+    if not isinstance(gtd, dict):
+        gtd = {}
+        glitch_layer["text_data"] = gtd
+    gmeta = gtd.get("layer_meta")
+    if not isinstance(gmeta, dict):
+        gmeta = {}
+        gtd["layer_meta"] = gmeta
+    gmeta["enabled"] = False
+    gtd["char_styles_ungrouped"] = []
+
+
 def _preflight_clamp_text_layers(
     layers: List[Dict[str, Any]],
     *,
     fps: float,
     strict: bool,
+    mine_comp_name: str,
 ) -> None:
     if fps <= 0:
         fps = 23.9759979248047
@@ -88,10 +153,17 @@ def _preflight_clamp_text_layers(
                 raise ValueError(f"Preflight: invalid in/out in layer {l.get('name')!r}")
             continue
         if out_p <= in_p:
-            if strict:
+            if _is_glitch_peak_zero_window_layer(l):
+                _merge_glitch_peak_into_mine(
+                    layers=layers,
+                    glitch_layer=l,
+                    mine_comp_name=mine_comp_name,
+                )
+            elif strict:
                 raise ValueError(f"Preflight: out<=in in layer {l.get('name')!r}: {in_p}..{out_p}")
-            out_p = in_p + dt
-            l["out_point"] = out_p
+            else:
+                out_p = in_p + dt
+                l["out_point"] = out_p
 
         max_t = out_p - dt
         if max_t < in_p:
@@ -200,6 +272,11 @@ def build_text_layers(*, full_edit_config: Dict[str, Any], text_comp_name: str, 
     shift_s = _env_float("TEXT_LAYER_TIME_SHIFT_S", 0.3)
     _apply_text_time_shift(layers, shift_s=shift_s)
     strict = (os.environ.get("TEXT_PREFLIGHT_STRICT", "1").strip() != "0")
-    _preflight_clamp_text_layers(layers, fps=fps, strict=strict)
+    _preflight_clamp_text_layers(
+        layers,
+        fps=fps,
+        strict=strict,
+        mine_comp_name=mine_comp_name,
+    )
 
     return layers
