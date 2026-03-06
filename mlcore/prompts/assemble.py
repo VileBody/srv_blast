@@ -129,6 +129,9 @@ def build_stage1b_scenario_user_prompt(
         "- Maximize overlap of the selected working window with USER_TARGET_FRAGMENT.\n"
         "- If requested fragment is shorter than 13s: expand context around it (left/right as needed) while keeping overlap.\n"
         "- If requested fragment is longer than 18s: choose the most expressive 13..18s subfragment.\n"
+        "- USER_TARGET_FRAGMENT is lexical source of truth for wording in this branch.\n"
+        "- If transcript has recognition mistakes, fix wording in draft_blocks to match USER_TARGET_FRAGMENT while preserving timeline/order.\n"
+        "- fragment_analytics.target_fragment MUST copy USER_TARGET_FRAGMENT wording exactly (no paraphrase).\n"
         "- Return fragment_analytics and ensure it is consistent with selected audio.clip_start_abs/audio.clip_end_abs.\n"
     )
     return base + branch
@@ -172,6 +175,8 @@ def build_stage2_subtitles_user_prompt(
         "draft_blocks": stage1_json.get("draft_blocks"),
         "transcript_words": words_out,
         "lyrics_text": str(stage1_json.get("lyrics_text") or ""),
+        "target_fragment": str(stage1_json.get("target_fragment") or ""),
+        "fragment_analytics": stage1_json.get("fragment_analytics"),
     }
 
     return (

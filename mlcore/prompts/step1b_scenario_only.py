@@ -23,7 +23,8 @@ Return JSON for Stage1ScenarioPayload:
 Hard constraints:
 - audio window duration must be 13..18 sec.
 - clip_end_abs > clip_start_abs.
-- draft phrase words MUST be copied from transcript_words (no paraphrase, no invented words).
+- default branch (no USER_TARGET_FRAGMENT):
+  - draft phrase words MUST be copied from transcript_words (no paraphrase, no invented words).
 - keep phrase order consistent with transcript order.
 - target arc inside the selected window:
   - blocks 1..5 = development,
@@ -47,6 +48,10 @@ Hard constraints:
     - maximize overlap between working window and USER_TARGET_FRAGMENT,
     - if requested fragment is shorter than 13s: expand context around it,
     - if requested fragment is longer than 18s: choose the most expressive 13..18s subfragment,
+    - treat USER_TARGET_FRAGMENT as lexical source of truth for wording:
+      - you MAY correct ASR recognition mistakes in draft_blocks wording to match USER_TARGET_FRAGMENT,
+      - keep order/timeline grounded in transcript_words timings (no invented timeline),
+    - fragment_analytics.target_fragment MUST copy USER_TARGET_FRAGMENT wording exactly,
     - fill fragment_analytics with relation_to_target + chosen_action + start/end markers.
 - Return valid JSON only, no markdown/comments.
 """

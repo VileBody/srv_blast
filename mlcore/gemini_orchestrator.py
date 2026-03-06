@@ -4,10 +4,12 @@ from __future__ import annotations
 import json
 from json import JSONDecodeError
 import os
+import re
 from concurrent.futures import FIRST_EXCEPTION, Future, ThreadPoolExecutor, wait
 from datetime import datetime, timezone
 from pathlib import Path
 import hashlib
+from collections import Counter
 from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar
 import logging
 from pydantic import ValidationError
@@ -520,6 +522,63 @@ def _ordered_named_token_lists(payload: BlocksTokensPayload) -> List[Tuple[str, 
         ("block_7.part1", list(payload.block_7.part1.tokens)),
         ("block_7.part2", list(payload.block_7.part2.tokens)),
     ]
+
+
+def _norm_words_for_lex_compare(s: str) -> List[str]:
+    out: List[str] = []
+    text = str(s or "").lower().replace("ё", "е").replace("\r", " ")
+    for raw in text.split():
+        w = re.sub(r"[^\w\-]+", "", raw, flags=re.UNICODE).strip("_")
+        if w:
+            out.append(w)
+    return out
+
+
+def _subtitles_words_for_lex_compare(payload: BlocksTokensPayload) -> List[str]:
+    out: List[str] = []
+    for _, tokens in _ordered_named_token_lists(payload):
+        for t in tokens:
+            out.extend(_norm_words_for_lex_compare(getattr(t, "text", "")))
+    return out
+
+
+def _log_target_fragment_subtitles_alignment(
+    *,
+    payload: BlocksTokensPayload,
+    target_fragment: str,
+    logger: logging.Logger,
+) -> None:
+    target_words = _norm_words_for_lex_compare(target_fragment)
+    if not target_words:
+        return
+
+    subtitle_words = _subtitles_words_for_lex_compare(payload)
+    target_cnt = Counter(target_words)
+    sub_cnt = Counter(subtitle_words)
+    matched = sum(min(int(v), int(sub_cnt.get(k, 0))) for k, v in target_cnt.items())
+    missing = list((target_cnt - sub_cnt).elements())
+    extra = list((sub_cnt - target_cnt).elements())
+    overlap = (float(matched) / float(len(target_words))) if target_words else 1.0
+
+    logger.info(
+        "subtitles_target_fragment_alignment overlap=%.3f target_words=%d subtitle_words=%d matched=%d missing=%d extra=%d",
+        overlap,
+        len(target_words),
+        len(subtitle_words),
+        matched,
+        len(missing),
+        len(extra),
+    )
+    if missing:
+        logger.warning(
+            "subtitles_target_fragment_missing_words sample=%s",
+            missing[:20],
+        )
+    if extra:
+        logger.info(
+            "subtitles_target_fragment_extra_words sample=%s",
+            extra[:20],
+        )
 
 
 def _log_subtitles_token_metrics(payload: BlocksTokensPayload) -> None:
@@ -1238,6 +1297,12 @@ def build_all_via_gemini_one_call(
             raise ValueError("subtitles.clip.end must equal stage1.audio.clip_end_abs")
 
         _log_subtitles_token_metrics(payload)
+        if target_fragment:
+            _log_target_fragment_subtitles_alignment(
+                payload=payload,
+                target_fragment=target_fragment,
+                logger=logger,
+            )
         return payload
 
     def _run_subtitles() -> BlocksTokensPayload:

@@ -33,3 +33,5 @@ def test_stage1b_prompt_includes_target_fragment_branch_rules() -> None:
     assert "SHE IS NOT MY LOVER" in prompt
     assert "Working audio window MUST remain 13..18 seconds." in prompt
     assert "Maximize overlap of the selected working window with USER_TARGET_FRAGMENT." in prompt
+    assert "USER_TARGET_FRAGMENT is lexical source of truth for wording in this branch." in prompt
+    assert "fragment_analytics.target_fragment MUST copy USER_TARGET_FRAGMENT wording exactly" in prompt
