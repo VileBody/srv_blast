@@ -3,6 +3,7 @@ from __future__ import annotations
 import urllib.error
 
 from services.orchestrator.tasks import (
+    _extract_preflight_out_le_in_issue,
     _is_transient_windows_error,
     _looks_like_build_preflight_validation_error,
     _looks_like_gemini_internal_500,
@@ -83,6 +84,19 @@ def test_schema_validation_marker_is_not_transient_retriable() -> None:
 def test_detects_build_preflight_validation_error() -> None:
     s = "ValueError: Preflight: out<=in in layer 'Adjustment Layer 10': 15.01..5.6"
     assert _looks_like_build_preflight_validation_error(s) is True
+
+
+def test_extracts_preflight_out_le_in_issue_details() -> None:
+    s = "ValueError: Preflight: out<=in in layer 'Adjustment Layer 10': 15.01..5.6"
+    issue = _extract_preflight_out_le_in_issue(s)
+    assert isinstance(issue, dict)
+    assert issue["layer_name"] == "Adjustment Layer 10"
+    assert abs(float(issue["in_point"]) - 15.01) <= 1e-9
+    assert abs(float(issue["out_point"]) - 5.6) <= 1e-9
+
+
+def test_extract_preflight_out_le_in_issue_returns_none_when_missing() -> None:
+    assert _extract_preflight_out_le_in_issue("RuntimeError: something else") is None
 
 
 def test_transient_windows_error_urlerror() -> None:

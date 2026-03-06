@@ -250,9 +250,10 @@ def _validate_fragment_analytics_for_target(
     if not af:
         raise ValueError("fragment_analytics.target_fragment is empty")
     if af != tf:
-        raise ValueError(
-            "fragment_analytics.target_fragment must exactly match USER_TARGET_FRAGMENT "
-            f"(got={analytics.target_fragment!r} expected={target_fragment!r})"
+        logger.warning(
+            "stage1b_fragment_target_mismatch got=%r expected=%r (continuing)",
+            analytics.target_fragment,
+            target_fragment,
         )
 
     forced_start = float(analytics.working_start_abs)

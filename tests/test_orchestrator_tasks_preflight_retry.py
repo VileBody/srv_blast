@@ -278,6 +278,10 @@ def test_build_job_preflight_with_gemini_triggers_targeted_subtitles_rerun(
     assert len(llm_calls) == 2
     assert llm_calls[0]["hint"] is None
     assert isinstance(llm_calls[1]["hint"], str) and "impossible layer timings" in llm_calls[1]["hint"]
+    assert "DETECTED_PREFLIGHT_ISSUE" in llm_calls[1]["hint"]
+    assert "layer_name: X" in llm_calls[1]["hint"]
+    assert "layer_in_point: 2.000000" in llm_calls[1]["hint"]
+    assert "layer_out_point: 1.000000" in llm_calls[1]["hint"]
     state_after_drop = llm_calls[1]["resume_state"]
     assert "stage2_subtitles" not in state_after_drop
     assert "stage2_style" in state_after_drop

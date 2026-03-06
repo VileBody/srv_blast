@@ -320,6 +320,55 @@ def _looks_like_build_preflight_validation_error(text: str) -> bool:
     return "preflight_clamp_text_layers" in lo
 
 
+def _extract_preflight_out_le_in_issue(text: str) -> Dict[str, Any] | None:
+    """
+    Parse first builder preflight out<=in marker from traceback blob.
+    Expected shape (from app/text_comp.py):
+      Preflight: out<=in in layer 'Layer Name': 8.51..8.51
+    """
+    if not text:
+        return None
+    m = re.search(
+        r"Preflight:\s*out<=in\s*in\s*layer\s*['\"](?P<layer>[^'\"]+)['\"]\s*:\s*(?P<in>[-+0-9.eE]+)\.\.(?P<out>[-+0-9.eE]+)",
+        str(text),
+        flags=re.IGNORECASE,
+    )
+    if not m:
+        return None
+    try:
+        in_p = float(str(m.group("in") or ""))
+        out_p = float(str(m.group("out") or ""))
+    except Exception:
+        return None
+    return {
+        "layer_name": str(m.group("layer") or "").strip(),
+        "in_point": in_p,
+        "out_point": out_p,
+    }
+
+
+def _build_stage2_subtitles_retry_hint(preflight_blob: str) -> str:
+    base = (
+        "Previous build preflight failed with impossible layer timings (e.g. out<=in). "
+        "Regenerate subtitles to keep timings strictly valid and monotonic. "
+        "Do not change stage1 clip window; preserve transcript word order; ensure each token t_end > t_start."
+    )
+    issue = _extract_preflight_out_le_in_issue(preflight_blob)
+    if not isinstance(issue, dict):
+        return base
+
+    return (
+        base
+        + "\n\nDETECTED_PREFLIGHT_ISSUE:\n"
+        + f"- error_type: out<=in\n"
+        + f"- layer_name: {issue['layer_name']}\n"
+        + f"- layer_in_point: {float(issue['in_point']):.6f}\n"
+        + f"- layer_out_point: {float(issue['out_point']):.6f}\n"
+        + "- required_fix: regenerate subtitles timing so this layer has strictly positive duration "
+        + "(out_point must be > in_point) while preserving stage1 clip window."
+    )
+
+
 def _exc_text(e: BaseException) -> str:
     """
     Normalize exception into a stable text blob for our retry matchers.
@@ -577,11 +626,7 @@ def build_job(self, job_id: str) -> Dict[str, Any]:
             if build_all_fn is not None:
                 store.set_status(job_id, "RUNNING", stage="llm_stage2_subtitles_retry")
                 _drop_resume_stage_key(llm_resume_state_path, key="stage2_subtitles")
-                retry_hint = (
-                    "Previous build preflight failed with impossible layer timings (e.g. out<=in). "
-                    "Regenerate subtitles to keep timings strictly valid and monotonic. "
-                    "Do not change stage1 clip window; preserve transcript word order; ensure each token t_end > t_start."
-                )
+                retry_hint = _build_stage2_subtitles_retry_hint(blob_first)
                 llm_env_keys = (
                     "DATA_DIR",
                     "OUT_DIR",
@@ -674,11 +719,12 @@ def build_job(self, job_id: str) -> Dict[str, Any]:
                     f"--- second stderr (tail) ---\n{err_retry[-8000:]}\n"
                 )
 
-        raise RuntimeError(
-            f"pipeline_failed rc={proc.returncode}\ncmd={build_cmd}\n"
-            f"--- stdout (tail) ---\n{out[-8000:]}\n"
-            f"--- stderr (tail) ---\n{err[-8000:]}\n"
-        )
+        else:
+            raise RuntimeError(
+                f"pipeline_failed rc={proc.returncode}\ncmd={build_cmd}\n"
+                f"--- stdout (tail) ---\n{out[-8000:]}\n"
+                f"--- stderr (tail) ---\n{err[-8000:]}\n"
+            )
 
     # Hard contract: build must emit artifacts for Windows dispatch.
     if not paths.render_jsx.exists() or not paths.render_payload.exists():
