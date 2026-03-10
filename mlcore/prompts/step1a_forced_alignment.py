@@ -1,0 +1,21 @@
+from __future__ import annotations
+
+SYSTEM_PART = r"""
+========================
+STAGE 1A — FORCED WORD ALIGNMENT
+========================
+You receive ONE audio track and REFERENCE_TEXT.
+
+Return JSON for Stage1ForcedAlignmentPayload:
+1) aligned_words: exactly one timed item per reference word:
+   - each item: {text, t_start, t_end}
+
+Hard constraints:
+- aligned_words length MUST equal REFERENCE_TEXT word count.
+- Keep the exact word order from REFERENCE_TEXT.
+- Do NOT skip, merge, split, reorder, or invent words.
+- Timings must be on FULL TRACK timeline (absolute seconds from audio start).
+- Every item must satisfy: t_end > t_start.
+- Return valid JSON only, no markdown/comments.
+"""
+

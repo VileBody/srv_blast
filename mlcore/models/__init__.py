@@ -9,6 +9,7 @@ from .footage_style import FootageStylePickPayload
 from .full_plan import FullPlanPayload
 from .stage1_plan import FragmentAnalytics, Stage1PlanPayload, Stage1AudioWindow, TranscriptWord
 from .stage1_asr import Stage1AsrPayload, SrtItem
+from .stage1_forced_alignment import Stage1ForcedAlignmentPayload, ForcedAlignedWord
 from .stage1_scenario import Stage1ScenarioPayload
 
 __all__ = [
@@ -29,5 +30,7 @@ __all__ = [
     "FragmentAnalytics",
     "Stage1AsrPayload",
     "SrtItem",
+    "Stage1ForcedAlignmentPayload",
+    "ForcedAlignedWord",
     "Stage1ScenarioPayload",
 ]

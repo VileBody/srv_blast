@@ -22,6 +22,7 @@ from mlcore.models.footage_plan import FootageSelectionPayload
 from mlcore.models.footage_style import FootageStylePickPayload
 from mlcore.models.full_plan import FullPlanPayload
 from mlcore.models.stage1_asr import Stage1AsrPayload
+from mlcore.models.stage1_forced_alignment import Stage1ForcedAlignmentPayload
 from mlcore.models.stage1_plan import Stage1PlanPayload
 from mlcore.models.stage1_scenario import Stage1ScenarioPayload
 from mlcore.openrouter_client import OpenRouterClient
@@ -312,6 +313,72 @@ def call_stage1_asr_once(
     )
     _sync_canonical_raw_path(raw_response_path=raw_response_path, routed=routed)
     return Stage1AsrPayload.model_validate(routed.value)
+
+
+def call_stage1_forced_alignment_once(
+    *,
+    client: Optional[GeminiClient],
+    openrouter_client: Optional[OpenRouterClient] = None,
+    provider_mode: str = "gemini",
+    hedge_delay_s: float = 60.0,
+    logger: Optional[logging.Logger] = None,
+    system_instruction: str,
+    user_prompt: str,
+    audio_paths: List[Path],
+    raw_response_path: Optional[Path] = None,
+    cache_path: Optional[Path] = None,
+    prompt_dump_path: Optional[Path] = None,
+    system_dump_path: Optional[Path] = None,
+) -> Stage1ForcedAlignmentPayload:
+    audio_upload_paths = _prepare_upload_paths(audio_paths)
+
+    if system_dump_path is not None:
+        system_dump_path.parent.mkdir(parents=True, exist_ok=True)
+        system_dump_path.write_text(system_instruction or "", encoding="utf-8")
+    if prompt_dump_path is not None:
+        prompt_dump_path.parent.mkdir(parents=True, exist_ok=True)
+        prompt_dump_path.write_text(user_prompt, encoding="utf-8")
+
+    def _gemini_call() -> Stage1ForcedAlignmentPayload:
+        if client is None:
+            raise RuntimeError("Gemini client is required for provider mode with gemini")
+        files: List[types.File] = []
+        if cache_path is not None:
+            if audio_upload_paths:
+                files.extend(client.upload_files_cached(audio_upload_paths, cache_path=cache_path))
+        else:
+            if audio_upload_paths:
+                files.extend(client.upload_files(audio_upload_paths))
+        return client.generate_structured(
+            schema_model=Stage1ForcedAlignmentPayload,
+            prompt=user_prompt,
+            files=files,
+            system_instruction=system_instruction,
+            raw_response_path=_provider_raw_path(raw_response_path, provider="gemini"),
+        )
+
+    def _openrouter_call() -> Stage1ForcedAlignmentPayload:
+        if openrouter_client is None:
+            raise RuntimeError("OpenRouter client is required for provider mode with openrouter")
+        out = openrouter_client.generate_structured(
+            schema_model=Stage1ForcedAlignmentPayload,
+            prompt=user_prompt,
+            audio_paths=audio_upload_paths,
+            system_instruction=system_instruction,
+            raw_response_path=_provider_raw_path(raw_response_path, provider="openrouter"),
+        )
+        return Stage1ForcedAlignmentPayload.model_validate(out)
+
+    routed = _run_routed(
+        stage_name="stage1_forced_alignment",
+        provider_mode=provider_mode,
+        hedge_delay_s=hedge_delay_s,
+        logger=logger,
+        gemini_call=_gemini_call,
+        openrouter_call=_openrouter_call,
+    )
+    _sync_canonical_raw_path(raw_response_path=raw_response_path, routed=routed)
+    return Stage1ForcedAlignmentPayload.model_validate(routed.value)
 
 
 def call_stage1_scenario_once(

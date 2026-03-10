@@ -9,6 +9,7 @@ from .step2_subtitles import SYSTEM_PART as S2
 from .step3_footage import SYSTEM_PART as S3
 from .step1_asr_scenario import SYSTEM_PART as STAGE1
 from .step1a_asr_only import SYSTEM_PART as STAGE1A_ASR
+from .step1a_forced_alignment import SYSTEM_PART as STAGE1A_FORCED_ALIGNMENT
 from .step1b_scenario_only import SYSTEM_PART as STAGE1B_SCENARIO
 from .step2_subtitles_only import SYSTEM_PART as STAGE2_SUBS
 from .stage2_footage_style_only import SYSTEM_PART as STAGE2_FOOTAGE_STYLE
@@ -92,6 +93,33 @@ def build_stage1a_asr_user_prompt(*, schema_name: str = "Stage1AsrPayload") -> s
         f"Return ONLY JSON matching schema: {schema_name}\n\n"
         "Use the attached audio as the source of truth.\n"
         "Output transcript_words for the full track and optional srt_items.\n"
+    )
+
+
+def build_stage1a_forced_alignment_system_instruction() -> str:
+    return (
+        "You are a forced-alignment ASR assistant for an After Effects pipeline.\n"
+        "Return ONLY valid JSON matching the provided schema. No markdown. No comments. No extra keys.\n\n"
+        + STAGE1A_FORCED_ALIGNMENT.strip()
+        + "\n"
+    )
+
+
+def build_stage1a_forced_alignment_user_prompt(
+    *,
+    reference_text: str,
+    schema_name: str = "Stage1ForcedAlignmentPayload",
+) -> str:
+    ref = str(reference_text or "").strip()
+    if not ref:
+        raise ValueError("reference_text must be non-empty for forced alignment prompt")
+    return (
+        f"Return ONLY JSON matching schema: {schema_name}\n\n"
+        "Use the attached audio as the source of truth.\n"
+        "Align every word in REFERENCE_TEXT and return one timed item per word.\n\n"
+        "REFERENCE_TEXT:\n"
+        + ref
+        + "\n"
     )
 
 

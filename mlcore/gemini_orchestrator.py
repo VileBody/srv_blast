@@ -17,6 +17,7 @@ from pydantic import ValidationError
 from mlcore.gemini_call import (
     call_footage_style_once,
     call_stage1_asr_once,
+    call_stage1_forced_alignment_once,
     call_stage1_scenario_once,
     call_subtitles_plan_once,
     pick_audio_files,
@@ -41,6 +42,7 @@ from mlcore.models.footage_plan import FootageSelectionPayload
 from mlcore.models.footage_style import FootageStylePickPayload
 from mlcore.models.full_plan import FullPlanPayload
 from mlcore.models.stage1_asr import Stage1AsrPayload
+from mlcore.models.stage1_forced_alignment import Stage1ForcedAlignmentPayload
 from mlcore.models.stage1_plan import FragmentAnalytics, Stage1PlanPayload
 from mlcore.models.stage1_plan import TranscriptWord
 from mlcore.models.stage1_scenario import Stage1ScenarioPayload
@@ -49,6 +51,8 @@ from mlcore.models.subtitles_tokens import BlocksTokensPayload
 from mlcore.prompts import (
     build_stage1a_asr_system_instruction,
     build_stage1a_asr_user_prompt,
+    build_stage1a_forced_alignment_system_instruction,
+    build_stage1a_forced_alignment_user_prompt,
     build_stage1b_scenario_system_instruction,
     build_stage1b_scenario_user_prompt,
     build_stage2_footage_system_instruction,
@@ -231,6 +235,70 @@ def _emit(progress_cb: Optional[Callable[[str], None]], stage: str) -> None:
 
 def _norm_compact(s: str) -> str:
     return " ".join(str(s or "").split())
+
+
+def _normalize_forced_word_compare(token: str) -> str:
+    t = str(token or "").lower().replace("ё", "е")
+    t = re.sub(r"^[^\w]+|[^\w]+$", "", t, flags=re.UNICODE)
+    return t.strip()
+
+
+def _reference_words_from_user_text(text: str) -> List[str]:
+    out: List[str] = []
+    for raw in str(text or "").replace("\r", " ").split():
+        w = re.sub(r"^[^\w]+|[^\w]+$", "", raw, flags=re.UNICODE).strip()
+        if w:
+            out.append(w)
+    return out
+
+
+def _validate_forced_alignment_payload(
+    *,
+    payload: Stage1ForcedAlignmentPayload,
+    reference_words: List[str],
+    logger: logging.Logger,
+) -> None:
+    if len(payload.aligned_words) != len(reference_words):
+        logger.warning(
+            "stage1a_forced_word_count_mismatch got=%d expected=%d (continuing)",
+            len(payload.aligned_words),
+            len(reference_words),
+        )
+    mismatch_count = 0
+    for idx, (got, expected) in enumerate(zip(payload.aligned_words, reference_words)):
+        got_norm = _normalize_forced_word_compare(got.text)
+        exp_norm = _normalize_forced_word_compare(expected)
+        if not got_norm:
+            logger.warning("stage1a_forced_empty_word idx=%d got=%r (continuing)", idx, got.text)
+            mismatch_count += 1
+            continue
+        if got_norm != exp_norm:
+            logger.warning(
+                "stage1a_forced_text_mismatch idx=%d got=%r expected=%r (continuing)",
+                idx,
+                got.text,
+                expected,
+            )
+            mismatch_count += 1
+    if mismatch_count > 0:
+        logger.warning("stage1a_forced_text_mismatch_total count=%d (continuing)", mismatch_count)
+
+
+def _stage1_asr_from_forced_alignment(payload: Stage1ForcedAlignmentPayload) -> Stage1AsrPayload:
+    transcript_words = [
+        {
+            "text": str(w.text),
+            "t_start": float(w.t_start),
+            "t_end": float(w.t_end),
+        }
+        for w in payload.aligned_words
+    ]
+    return Stage1AsrPayload.model_validate(
+        {
+            "transcript_words": transcript_words,
+            "srt_items": [],
+        }
+    )
 
 
 def _is_fragment_target_exact_mismatch(
@@ -934,6 +1002,7 @@ def build_all_via_gemini_one_call(
     )
 
     client_stage1_asr: Optional[GeminiClient] = None
+    client_stage1_forced: Optional[GeminiClient] = None
     client_stage1_scenario: Optional[GeminiClient] = None
     client_subtitles: Optional[GeminiClient] = None
     client_footage: Optional[GeminiClient] = None
@@ -943,6 +1012,14 @@ def build_all_via_gemini_one_call(
             model=model_stage1_asr,
             proxy=proxy,
             temperature=temperature,
+            timeout_s=timeout_s,
+            logger=logger,
+        )
+        client_stage1_forced = _make_client(
+            api_key=gemini_api_key,
+            model=model_stage1_asr,
+            proxy=proxy,
+            temperature=0.0,
             timeout_s=timeout_s,
             logger=logger,
         )
@@ -972,6 +1049,7 @@ def build_all_via_gemini_one_call(
         )
 
     openrouter_stage1_asr: Optional[OpenRouterClient] = None
+    openrouter_stage1_forced: Optional[OpenRouterClient] = None
     openrouter_stage1_scenario: Optional[OpenRouterClient] = None
     openrouter_subtitles: Optional[OpenRouterClient] = None
     openrouter_footage: Optional[OpenRouterClient] = None
@@ -980,6 +1058,13 @@ def build_all_via_gemini_one_call(
             api_key=openrouter_api_key,
             model=_openrouter_model_from_gemini(model_stage1_asr),
             temperature=temperature,
+            timeout_s=openrouter_timeout_s,
+            logger=logger,
+        )
+        openrouter_stage1_forced = _make_openrouter_client(
+            api_key=openrouter_api_key,
+            model=_openrouter_model_from_gemini(model_stage1_asr),
+            temperature=0.0,
             timeout_s=openrouter_timeout_s,
             logger=logger,
         )
@@ -1034,17 +1119,67 @@ def build_all_via_gemini_one_call(
     cache_path = (out_dir / "gemini_files_cache.json") if use_cache else None
 
     stamp = _stamp()
+    lyrics_text = str(os.environ.get("LYRICS_TEXT") or "").strip()
+    target_fragment = str(os.environ.get("TARGET_FRAGMENT") or "").strip()
+    forced_reference_text = lyrics_text or target_fragment
+    forced_reference_words = _reference_words_from_user_text(forced_reference_text)
+    if forced_reference_text and not forced_reference_words:
+        raise RuntimeError(
+            "Reference text for forced alignment is present but empty after tokenization "
+            "(LYRICS_TEXT/TARGET_FRAGMENT)."
+        )
+    use_forced_alignment = bool(forced_reference_words)
+    stage1a_mode = "forced_alignment" if use_forced_alignment else "asr"
 
     _emit(progress_cb, "llm_stage1a_asr")
-    logger.info("stage1a_start model=%s", model_stage1_asr)
+    logger.info(
+        "stage1a_start mode=%s model=%s reference_words=%d",
+        stage1a_mode,
+        model_stage1_asr,
+        len(forced_reference_words),
+    )
 
-    stage1a_system = build_stage1a_asr_system_instruction()
-    stage1a_prompt = build_stage1a_asr_user_prompt(schema_name="Stage1AsrPayload")
-    stage1a_raw = logs_dir / f"gemini_raw_stage1_asr_{stamp}.json"
-    stage1a_sys = logs_dir / f"gemini_system_stage1_asr_{stamp}.txt"
-    stage1a_user = logs_dir / f"gemini_prompt_stage1_asr_{stamp}.txt"
+    if use_forced_alignment:
+        stage1a_system = build_stage1a_forced_alignment_system_instruction()
+        stage1a_prompt = build_stage1a_forced_alignment_user_prompt(
+            reference_text=forced_reference_text,
+            schema_name="Stage1ForcedAlignmentPayload",
+        )
+        stage1a_raw = logs_dir / f"gemini_raw_stage1_forced_alignment_{stamp}.json"
+        stage1a_sys = logs_dir / f"gemini_system_stage1_forced_alignment_{stamp}.txt"
+        stage1a_user = logs_dir / f"gemini_prompt_stage1_forced_alignment_{stamp}.txt"
+    else:
+        stage1a_system = build_stage1a_asr_system_instruction()
+        stage1a_prompt = build_stage1a_asr_user_prompt(schema_name="Stage1AsrPayload")
+        stage1a_raw = logs_dir / f"gemini_raw_stage1_asr_{stamp}.json"
+        stage1a_sys = logs_dir / f"gemini_system_stage1_asr_{stamp}.txt"
+        stage1a_user = logs_dir / f"gemini_prompt_stage1_asr_{stamp}.txt"
+
     stage1_asr: Stage1AsrPayload | None = None
     stage1_asr_cached = resume_state.get("stage1_asr")
+    stage1_asr_mode_cached = str(resume_state.get("stage1_asr_mode") or "").strip()
+    stage1_asr_reference_cached = str(resume_state.get("stage1_asr_reference_text") or "")
+    if isinstance(stage1_asr_cached, dict):
+        cache_compatible = True
+        if use_forced_alignment:
+            if stage1_asr_mode_cached != "forced_alignment":
+                cache_compatible = False
+            if stage1_asr_reference_cached != forced_reference_text:
+                cache_compatible = False
+        elif stage1_asr_mode_cached and stage1_asr_mode_cached != "asr":
+            cache_compatible = False
+        if not cache_compatible:
+            logger.info(
+                "llm_resume_skip stage=stage1a_asr reason=mode_or_reference_mismatch "
+                "cached_mode=%r current_mode=%r cached_ref_chars=%d current_ref_chars=%d",
+                stage1_asr_mode_cached,
+                stage1a_mode,
+                len(stage1_asr_reference_cached),
+                len(forced_reference_text),
+            )
+            resume_state.pop("stage1_asr", None)
+            stage1_asr_cached = None
+
     if isinstance(stage1_asr_cached, dict):
         try:
             stage1_asr = Stage1AsrPayload.model_validate(stage1_asr_cached)
@@ -1054,25 +1189,57 @@ def build_all_via_gemini_one_call(
             resume_state.pop("stage1_asr", None)
 
     if stage1_asr is None:
-        stage1_asr = _run_stage_with_model_validation_retries(
-            stage_name="stage1_asr",
-            logger=logger,
-            fn=lambda: call_stage1_asr_once(
-                client=client_stage1_asr,
-                openrouter_client=openrouter_stage1_asr,
-                provider_mode=provider_mode,
-                hedge_delay_s=hedge_delay_s,
+        if use_forced_alignment:
+            stage1_forced = _run_stage_with_model_validation_retries(
+                stage_name="stage1_forced_alignment",
                 logger=logger,
-                system_instruction=stage1a_system,
-                user_prompt=stage1a_prompt,
-                audio_paths=audio_files,
-                raw_response_path=stage1a_raw,
-                cache_path=cache_path,
-                prompt_dump_path=stage1a_user,
-                system_dump_path=stage1a_sys,
-            ),
-        )
+                fn=lambda: call_stage1_forced_alignment_once(
+                    client=client_stage1_forced,
+                    openrouter_client=openrouter_stage1_forced,
+                    provider_mode=provider_mode,
+                    hedge_delay_s=hedge_delay_s,
+                    logger=logger,
+                    system_instruction=stage1a_system,
+                    user_prompt=stage1a_prompt,
+                    audio_paths=audio_files,
+                    raw_response_path=stage1a_raw,
+                    cache_path=cache_path,
+                    prompt_dump_path=stage1a_user,
+                    system_dump_path=stage1a_sys,
+                ),
+            )
+            _validate_forced_alignment_payload(
+                payload=stage1_forced,
+                reference_words=forced_reference_words,
+                logger=logger,
+            )
+            stage1_asr = _stage1_asr_from_forced_alignment(stage1_forced)
+            (logs_dir / f"stage1_forced_alignment_{stamp}.json").write_text(
+                json.dumps(stage1_forced.model_dump(mode="json"), ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        else:
+            stage1_asr = _run_stage_with_model_validation_retries(
+                stage_name="stage1_asr",
+                logger=logger,
+                fn=lambda: call_stage1_asr_once(
+                    client=client_stage1_asr,
+                    openrouter_client=openrouter_stage1_asr,
+                    provider_mode=provider_mode,
+                    hedge_delay_s=hedge_delay_s,
+                    logger=logger,
+                    system_instruction=stage1a_system,
+                    user_prompt=stage1a_prompt,
+                    audio_paths=audio_files,
+                    raw_response_path=stage1a_raw,
+                    cache_path=cache_path,
+                    prompt_dump_path=stage1a_user,
+                    system_dump_path=stage1a_sys,
+                ),
+            )
         resume_state["stage1_asr"] = stage1_asr.model_dump(mode="json")
+        resume_state["stage1_asr_mode"] = stage1a_mode
+        resume_state["stage1_asr_reference_text"] = forced_reference_text if use_forced_alignment else ""
         _save_resume_state(resume_state_path, logger=logger, state=resume_state)
 
     stage1_asr_json = stage1_asr.model_dump(mode="json")
@@ -1083,7 +1250,6 @@ def build_all_via_gemini_one_call(
 
     _emit(progress_cb, "llm_stage1b_scenario")
     logger.info("stage1b_start model=%s", model_stage1_scenario)
-    target_fragment = str(os.environ.get("TARGET_FRAGMENT") or "").strip()
     fragment_branch_on = bool(target_fragment)
     logger.info(
         "stage1b_fragment_branch enabled=%s target_fragment_chars=%d",
@@ -1093,7 +1259,9 @@ def build_all_via_gemini_one_call(
 
     stage1b_system = build_stage1b_scenario_system_instruction()
     stage1b_base_prompt = build_stage1b_scenario_user_prompt(
-        asr_json=stage1_asr_json,
+        asr_json={
+            "transcript_words": stage1_asr_json.get("transcript_words", []),
+        },
         target_fragment=target_fragment,
         schema_name="Stage1ScenarioPayload",
     )
@@ -1226,7 +1394,7 @@ def build_all_via_gemini_one_call(
         _save_resume_state(resume_state_path, logger=logger, state=resume_state)
 
     stage1_json = stage1.model_dump(mode="json")
-    stage1_json["lyrics_text"] = str(os.environ.get("LYRICS_TEXT") or "")
+    stage1_json["lyrics_text"] = lyrics_text
     stage1_json["target_fragment"] = target_fragment
     (logs_dir / f"stage1_plan_merged_{stamp}.json").write_text(
         json.dumps(stage1_json, ensure_ascii=False, indent=2),
