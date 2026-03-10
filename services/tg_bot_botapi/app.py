@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 from aiogram import Bot, Dispatcher, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import CommandStart
 from aiogram.types import FSInputFile, KeyboardButton, Message, ReplyKeyboardMarkup, ReplyKeyboardRemove
 
@@ -106,6 +107,11 @@ def _extract_audio_spec(message: Message) -> Optional[Tuple[str, str]]:
             return file_id, file_name
 
     return None
+
+
+def _is_tg_file_too_big_error(err: Exception) -> bool:
+    msg = str(err or "").lower()
+    return "file is too big" in msg
 
 
 def _resolve_job_video_source(job: dict[str, Any], settings: Settings) -> str:
@@ -409,7 +415,30 @@ class BlastBotApp:
                 ffmpeg_bin=self.settings.ffmpeg_bin,
                 max_audio_mb=self.settings.bot_max_audio_mb,
             )
+        except TelegramBadRequest as e:
+            log.exception(
+                "audio_prepare_tg_bad_request chat=%s file_id=%s name=%s err=%s",
+                chat_id,
+                file_id,
+                original_name,
+                str(e),
+            )
+            if _is_tg_file_too_big_error(e):
+                await message.answer(
+                    "Не удалось подготовить аудио: Telegram не дает скачать этот файл (слишком большой).\n"
+                    "Пришли, пожалуйста, более легкий файл: лучше mp3/m4a или обрезанный фрагмент."
+                )
+            else:
+                await message.answer(f"Не удалось подготовить аудио (Telegram): {e}")
+            return
         except Exception as e:
+            log.exception(
+                "audio_prepare_failed chat=%s file_id=%s name=%s err=%s",
+                chat_id,
+                file_id,
+                original_name,
+                str(e),
+            )
             await message.answer(f"Не удалось подготовить аудио: {e}")
             return
 
