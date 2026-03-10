@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from services.tg_bot_botapi.app import _is_username_allowed, _parse_versions_choice
+from services.tg_bot_botapi.app import _is_control_button_text, _is_username_allowed, _parse_versions_choice
 from services.tg_bot_botapi.config import _normalize_username, _username_allowlist_env
 
 
@@ -33,3 +33,10 @@ def test_is_username_allowed_case_insensitive() -> None:
     assert _is_username_allowed(username="NikitaImpulse", allowlist=allow) is True
     assert _is_username_allowed(username="@WhoIsTvoidiller", allowlist=allow) is True
     assert _is_username_allowed(username="random_user", allowlist=allow) is False
+
+
+def test_control_button_text_detection() -> None:
+    assert _is_control_button_text("Отправить текст") is True
+    assert _is_control_button_text("Отправить интересующий фрагмент") is True
+    assert _is_control_button_text(" 3 ") is True
+    assert _is_control_button_text("Это реальный текст песни") is False

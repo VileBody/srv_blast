@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import httpx
 from aiogram import Bot, Dispatcher, Router
 from aiogram.filters import CommandStart
-from aiogram.types import FSInputFile, KeyboardButton, Message, ReplyKeyboardMarkup
+from aiogram.types import FSInputFile, KeyboardButton, Message, ReplyKeyboardMarkup, ReplyKeyboardRemove
 
 from .audio_prepare import AudioPrepareResult, prepare_audio_best_effort
 from .config import SETTINGS, Settings
@@ -53,6 +53,16 @@ BTN_VER_3 = "3"
 BTN_VER_4 = "4"
 BTN_VER_5 = "5"
 VERSION_BUTTONS = [BTN_VER_1, BTN_VER_2, BTN_VER_3, BTN_VER_4, BTN_VER_5]
+_CONTROL_BUTTONS = {
+    BTN_SEND_TRACK,
+    BTN_SEND_LYRICS,
+    BTN_SKIP_LYRICS,
+    BTN_SEND_FRAGMENT,
+    BTN_SKIP_FRAGMENT,
+    BTN_LAUNCH,
+    BTN_NEXT,
+    *VERSION_BUTTONS,
+}
 
 
 _AUDIO_EXTS = {".wav", ".mp3", ".m4a", ".aac", ".flac", ".ogg"}
@@ -202,6 +212,10 @@ def _is_username_allowed(*, username: str, allowlist: Tuple[str, ...]) -> bool:
     if not allowlist:
         return False
     return _normalize_username(username) in set(allowlist)
+
+
+def _is_control_button_text(text: str) -> bool:
+    return str(text or "").strip() in _CONTROL_BUTTONS
 
 
 class BlastBotApp:
@@ -424,7 +438,10 @@ class BlastBotApp:
         if text == BTN_SEND_LYRICS:
             st.stage = STAGE_WAIT_LYRICS_TEXT
             await self.store.set(st)
-            await message.answer("Пришли текст песни одним или несколькими сообщениями (сохраняю последнее).")
+            await message.answer(
+                "Пришли текст песни обычным сообщением (не кнопкой).",
+                reply_markup=ReplyKeyboardRemove(),
+            )
             return
 
         if text == BTN_SKIP_LYRICS:
@@ -439,6 +456,9 @@ class BlastBotApp:
         text = str(message.text or "").strip()
         if not text:
             await message.answer("Жду текст песни сообщением.")
+            return
+        if _is_control_button_text(text):
+            await message.answer("Нужен именно текст песни сообщением. После этого перейду к следующему шагу.")
             return
 
         st.lyrics_text = text
@@ -457,7 +477,8 @@ class BlastBotApp:
             await self.store.set(st)
             await message.answer(
                 "Пришли интересующий фрагмент текста. "
-                "Рабочее окно всё равно будет 13..18с, но модель постарается максимизировать overlap."
+                "Рабочее окно всё равно будет 13..18с, но модель постарается максимизировать overlap.",
+                reply_markup=ReplyKeyboardRemove(),
             )
             return
 
@@ -472,6 +493,9 @@ class BlastBotApp:
         text = str(message.text or "").strip()
         if not text:
             await message.answer("Жду интересующий фрагмент обычным текстовым сообщением.")
+            return
+        if _is_control_button_text(text):
+            await message.answer("Нужен именно текст фрагмента сообщением. После этого перейду к следующему шагу.")
             return
 
         st.target_fragment = text
