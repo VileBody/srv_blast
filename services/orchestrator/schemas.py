@@ -21,6 +21,7 @@ class SendAudioS3Request(BaseModel):
     idempotency_key: Optional[str] = Field(default=None, min_length=1)
     lyrics_text: str = ""
     target_fragment: str = ""
+    text_preset: Literal["classic", "impulse"] = "classic"
 
 
 class EnqueueJobResponse(BaseModel):

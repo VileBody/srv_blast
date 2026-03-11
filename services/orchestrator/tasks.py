@@ -488,6 +488,9 @@ def build_job(self, job_id: str) -> Dict[str, Any]:
     audio_url = str(req.get("audio_s3_url") or "").strip()
     lyrics_text = str(req.get("lyrics_text") or "")
     target_fragment = str(req.get("target_fragment") or "")
+    text_preset = str(req.get("text_preset") or "classic").strip().lower()
+    if text_preset not in {"classic", "impulse"}:
+        raise RuntimeError(f"invalid text_preset: {text_preset!r}; allowed=['classic','impulse']")
     if not audio_url:
         raise RuntimeError("missing audio_s3_url")
     if not _is_remote_url(audio_url):
@@ -525,6 +528,7 @@ def build_job(self, job_id: str) -> Dict[str, Any]:
     env["AE_MEDIA_MODE"] = "appdir"
     env["LYRICS_TEXT"] = lyrics_text
     env["TARGET_FRAGMENT"] = target_fragment
+    env["TEXT_SUBTITLE_PRESET"] = text_preset
 
     build_all_fn = None
     if mode != "no_gemini":
@@ -543,6 +547,7 @@ def build_job(self, job_id: str) -> Dict[str, Any]:
             "JOB_ID",
             "LYRICS_TEXT",
             "TARGET_FRAGMENT",
+            "TEXT_SUBTITLE_PRESET",
         ):
             backup[k] = os.environ.get(k)
             os.environ[k] = env[k]
@@ -637,6 +642,7 @@ def build_job(self, job_id: str) -> Dict[str, Any]:
                     "JOB_ID",
                     "LYRICS_TEXT",
                     "TARGET_FRAGMENT",
+                    "TEXT_SUBTITLE_PRESET",
                 )
                 llm_backup: Dict[str, str | None] = {}
                 for k in llm_env_keys:

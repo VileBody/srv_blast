@@ -22,6 +22,7 @@ class OrchestratorClient:
         mode: str,
         lyrics_text: str,
         target_fragment: str,
+        text_preset: str,
         idempotency_key: str | None = None,
         project_id: str | None = None,
     ) -> Dict[str, Any]:
@@ -30,6 +31,7 @@ class OrchestratorClient:
             "mode": str(mode),
             "lyrics_text": str(lyrics_text or ""),
             "target_fragment": str(target_fragment or ""),
+            "text_preset": str(text_preset or "classic"),
             "idempotency_key": idempotency_key,
             "project_id": project_id,
         }

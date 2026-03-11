@@ -30,6 +30,7 @@ from .state_store import (
     STAGE_WAIT_LYRICS_CHOICE,
     STAGE_WAIT_LYRICS_TEXT,
     STAGE_WAIT_NEXT,
+    STAGE_WAIT_TEXT_STYLE,
     STAGE_WAIT_VERSIONS,
 )
 
@@ -53,7 +54,10 @@ BTN_VER_2 = "2"
 BTN_VER_3 = "3"
 BTN_VER_4 = "4"
 BTN_VER_5 = "5"
+BTN_STYLE_CLASSIC = "Сабы: Classic"
+BTN_STYLE_IMPULSE = "Сабы: Impulse"
 VERSION_BUTTONS = [BTN_VER_1, BTN_VER_2, BTN_VER_3, BTN_VER_4, BTN_VER_5]
+TEXT_STYLE_BUTTONS = [BTN_STYLE_CLASSIC, BTN_STYLE_IMPULSE]
 _CONTROL_BUTTONS = {
     BTN_SEND_TRACK,
     BTN_SEND_LYRICS,
@@ -63,6 +67,7 @@ _CONTROL_BUTTONS = {
     BTN_LAUNCH,
     BTN_NEXT,
     *VERSION_BUTTONS,
+    *TEXT_STYLE_BUTTONS,
 }
 
 
@@ -205,6 +210,15 @@ def _parse_versions_choice(text: str) -> Optional[int]:
     return None
 
 
+def _parse_text_preset_choice(text: str) -> Optional[str]:
+    raw = str(text or "").strip()
+    if raw == BTN_STYLE_CLASSIC:
+        return "classic"
+    if raw == BTN_STYLE_IMPULSE:
+        return "impulse"
+    return None
+
+
 def _normalize_username(raw: str) -> str:
     u = str(raw or "").strip().lower()
     if not u:
@@ -321,6 +335,10 @@ class BlastBotApp:
                 await self._handle_wait_versions(message, st)
                 return
 
+            if st.stage == STAGE_WAIT_TEXT_STYLE:
+                await self._handle_wait_text_style(message, st)
+                return
+
             if st.stage == STAGE_WAIT_CONFIRM:
                 await self._handle_wait_confirm(message, st)
                 return
@@ -375,6 +393,14 @@ class BlastBotApp:
         await message.answer(
             "Сколько версий сгенерировать?",
             reply_markup=_kb([BTN_VER_1, BTN_VER_2, BTN_VER_3, BTN_VER_4, BTN_VER_5]),
+        )
+
+    async def _ask_text_style(self, message: Message, st: ChatState) -> None:
+        st.stage = STAGE_WAIT_TEXT_STYLE
+        await self.store.set(st)
+        await message.answer(
+            "Выбери стиль субтитров:",
+            reply_markup=_kb([BTN_STYLE_CLASSIC], [BTN_STYLE_IMPULSE]),
         )
 
     async def _handle_wait_audio(self, message: Message, st: ChatState) -> None:
@@ -448,6 +474,7 @@ class BlastBotApp:
         st.lyrics_text = ""
         st.target_fragment = ""
         st.versions_count = 1
+        st.text_preset = "classic"
         st.active_job_id = ""
         st.active_job_ids = []
         st.completed_job_ids = []
@@ -536,10 +563,18 @@ class BlastBotApp:
             await message.answer("Выбери количество версий: 1, 2, 3, 4 или 5.")
             return
         st.versions_count = int(n)
+        await self._ask_text_style(message, st)
+
+    async def _handle_wait_text_style(self, message: Message, st: ChatState) -> None:
+        style = _parse_text_preset_choice(message.text or "")
+        if style is None:
+            await message.answer("Выбери стиль субтитров кнопкой: Classic или Impulse.")
+            return
+        st.text_preset = style
         st.stage = STAGE_WAIT_CONFIRM
         await self.store.set(st)
         await message.answer(
-            f"Ок, версий: {n}. Запустить генерацию?",
+            f"Ок, версий: {int(st.versions_count or 1)}, стиль сабов: {style}. Запустить генерацию?",
             reply_markup=_kb([BTN_LAUNCH]),
         )
 
@@ -562,7 +597,12 @@ class BlastBotApp:
         key = self._build_raw_audio_key(chat_id=chat_id, file_name=prepared_path.name)
         try:
             versions = max(1, min(5, int(st.versions_count or 1)))
-            await message.answer(f"Заливаю аудио в S3 и ставлю задачи в очередь… (версий: {versions})")
+            text_preset = str(st.text_preset or "classic").strip().lower()
+            if text_preset not in {"classic", "impulse"}:
+                raise RuntimeError(f"invalid text preset in chat state: {text_preset!r}")
+            await message.answer(
+                f"Заливаю аудио в S3 и ставлю задачи в очередь… (версий: {versions}, сабы: {text_preset})"
+            )
             audio_s3_url = await asyncio.to_thread(
                 self.s3.upload_file,
                 path=prepared_path,
@@ -579,6 +619,7 @@ class BlastBotApp:
                     mode="with_gemini",
                     lyrics_text=st.lyrics_text,
                     target_fragment=st.target_fragment,
+                    text_preset=text_preset,
                     idempotency_key=idem,
                     project_id=None,
                 )

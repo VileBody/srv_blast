@@ -63,6 +63,7 @@
     var compsSpec = {{ comps | tojson }};
     var footage_layers = {{ footage_layers | tojson }};
     var text_layers = {{ text_layers | tojson }};
+    var text_preset = {{ text_preset | tojson }};
 
     // ==========================================================
     // 0) LOGGER
@@ -818,6 +819,262 @@
       }
     }
 
+    function isTextCompTargetLayer(lData) {
+      try {
+        var td = (lData && lData.text_data) ? lData.text_data : null;
+        var meta = (td && td.layer_meta) ? td.layer_meta : null;
+        var targetName = "";
+        if (meta && meta.comp_name_target) targetName = String(meta.comp_name_target);
+        else targetName = String(projectSpec.mainCompName || "");
+        return targetName === String(projectSpec.textCompName || "");
+      } catch(_) {
+        return false;
+      }
+    }
+
+    function impulseBuildExpr(delay) {
+      var d = Number(delay || 0.05).toFixed(4);
+      return "delay = " + d + ";\n" +
+             "myDelay = delay*textIndex;\n" +
+             "t = (time - inPoint) - myDelay;\n" +
+             "if (t >= 0){\n" +
+             "  freq = 2; amplitude = 100; decay = 8.0;\n" +
+             "  s = amplitude*Math.cos(freq*t*2*Math.PI)/Math.exp(decay*t);\n" +
+             "  [s,s]\n" +
+             "} else { value }";
+    }
+
+    function impulseCleanText(raw) {
+      var src = String(raw || "").toLowerCase();
+      var clean = "";
+      for (var i = 0; i < src.length; i++) {
+        var ch = src.charAt(i);
+        if (ch === "'" || ch === "-") {
+          var prev = (i > 0) ? src.charAt(i - 1) : " ";
+          var next = (i + 1 < src.length) ? src.charAt(i + 1) : " ";
+          var prevLetter = /[a-zа-яё]/i.test(prev);
+          var nextLetter = /[a-zа-яё]/i.test(next);
+          if (prevLetter && nextLetter) clean += ch;
+        } else if (/[.,!?;:"«»()\\\/—–]/.test(ch)) {
+          // strip punctuation
+        } else {
+          clean += ch;
+        }
+      }
+      clean = clean.replace(/\s+/g, " ").replace(/^\s+|\s+$/g, "");
+      return clean;
+    }
+
+    function impulseClearKeys(prop) {
+      if (!prop) return;
+      try {
+        while (prop.numKeys > 0) prop.removeKey(1);
+      } catch(_) {}
+    }
+
+    function impulseClearEffects(layer) {
+      var fx = null;
+      try { fx = layer.property("ADBE Effect Parade"); } catch(_) { fx = null; }
+      if (!fx) return;
+      try {
+        for (var i = fx.numProperties; i >= 1; i--) {
+          try { fx.property(i).remove(); } catch(_) {}
+        }
+      } catch(_) {}
+    }
+
+    function impulseInstallDropShadows(layer) {
+      var fx = null;
+      try { fx = layer.property("ADBE Effect Parade"); } catch(_) { fx = null; }
+      if (!fx) return;
+
+      var ds1 = null;
+      try { ds1 = fx.addProperty("ADBE Drop Shadow"); } catch(_) { ds1 = null; }
+      if (ds1) {
+        try { ds1.property("ADBE Drop Shadow-0001").setValue([0, 0, 0, 1]); } catch(_) {}
+        try { ds1.property("ADBE Drop Shadow-0002").setValue(255); } catch(_) {}
+        try { ds1.property("ADBE Drop Shadow-0003").setValue(180); } catch(_) {}
+        try { ds1.property("ADBE Drop Shadow-0004").setValue(3); } catch(_) {}
+        try { ds1.property("ADBE Drop Shadow-0005").setValue(0); } catch(_) {}
+      }
+
+      var ds2 = null;
+      try { ds2 = fx.addProperty("ADBE Drop Shadow"); } catch(_) { ds2 = null; }
+      if (ds2) {
+        try { ds2.property("ADBE Drop Shadow-0001").setValue([0, 0, 0, 1]); } catch(_) {}
+        try { ds2.property("ADBE Drop Shadow-0002").setValue(255); } catch(_) {}
+        try { ds2.property("ADBE Drop Shadow-0003").setValue(180); } catch(_) {}
+        try { ds2.property("ADBE Drop Shadow-0004").setValue(0); } catch(_) {}
+        try { ds2.property("ADBE Drop Shadow-0005").setValue(25); } catch(_) {}
+      }
+
+      var ds3 = null;
+      try { ds3 = fx.addProperty("ADBE Drop Shadow"); } catch(_) { ds3 = null; }
+      if (ds3) {
+        try { ds3.property("ADBE Drop Shadow-0001").setValue([0, 0, 0, 1]); } catch(_) {}
+        try { ds3.property("ADBE Drop Shadow-0002").setValue(127.5); } catch(_) {}
+        try { ds3.property("ADBE Drop Shadow-0003").setValue(180); } catch(_) {}
+        try { ds3.property("ADBE Drop Shadow-0004").setValue(0); } catch(_) {}
+        try { ds3.property("ADBE Drop Shadow-0005").setValue(50); } catch(_) {}
+      }
+    }
+
+    function impulseInstallAnimator(layer, delay) {
+      var textProps = null;
+      try { textProps = layer.property("ADBE Text Properties"); } catch(_) { textProps = null; }
+      if (!textProps) return;
+
+      var animators = safeProp(textProps, "ADBE Text Animators");
+      if (!animators) return;
+
+      try {
+        for (var i = animators.numProperties; i >= 1; i--) {
+          try { animators.property(i).remove(); } catch(_) {}
+        }
+      } catch(_) {}
+
+      var anim = null;
+      try { anim = animators.addProperty("ADBE Text Animator"); } catch(_) { anim = null; }
+      if (!anim) return;
+      try { anim.name = "Animator 1"; } catch(_) {}
+
+      var ap = safeProp(anim, "ADBE Text Animator Properties");
+      if (ap) {
+        try { ap.addProperty("ADBE Text Position 3D").setValue([0, 25, 0]); } catch(_) {}
+        try { ap.addProperty("ADBE Text Scale 3D").setValue([50, 50, 100]); } catch(_) {}
+        try { ap.addProperty("ADBE Text Rotation").setValue(15); } catch(_) {}
+        try { ap.addProperty("ADBE Text Opacity").setValue(0); } catch(_) {}
+        try { ap.addProperty("ADBE Text Blur").setValue([15, 15]); } catch(_) {}
+      }
+
+      var sels = safeProp(anim, "ADBE Text Selectors");
+      if (!sels) return;
+
+      var ranSel = null;
+      try { ranSel = sels.addProperty("ADBE Text Selector"); } catch(_) { ranSel = null; }
+      if (ranSel) {
+        try { safeProp(ranSel, "ADBE Text Percent Start").setValue(0); } catch(_) {}
+        try { safeProp(ranSel, "ADBE Text Percent End").setValue(100); } catch(_) {}
+        var adv = safeProp(ranSel, "ADBE Text Range Advanced");
+        if (adv) {
+          try { safeProp(adv, "ADBE Text Range Units").setValue(1); } catch(_) {}
+          try { safeProp(adv, "ADBE Text Range Type2").setValue(1); } catch(_) {}
+          try { safeProp(adv, "ADBE Text Selector Mode").setValue(1); } catch(_) {}
+          try { safeProp(adv, "ADBE Text Selector Max Amount").setValue(100); } catch(_) {}
+          try { safeProp(adv, "ADBE Text Range Shape").setValue(1); } catch(_) {}
+          try { safeProp(adv, "ADBE Text Selector Smoothness").setValue(100); } catch(_) {}
+          try { safeProp(adv, "ADBE Text Levels Max Ease").setValue(0); } catch(_) {}
+          try { safeProp(adv, "ADBE Text Levels Min Ease").setValue(0); } catch(_) {}
+        }
+      }
+
+      var exprSel = null;
+      try { exprSel = sels.addProperty("ADBE Text Expressible Selector"); } catch(_) { exprSel = null; }
+      if (exprSel) {
+        try { safeProp(exprSel, "ADBE Text Range Type2").setValue(1); } catch(_) {}
+        var amount = safeProp(exprSel, "ADBE Text Expressible Amount");
+        if (amount) {
+          try { amount.expression = impulseBuildExpr(delay); } catch(_) {}
+        }
+      }
+    }
+
+    function applyImpulseTextPreset(layer, lData) {
+      if (!layer || !lData || lData.type !== "text") return;
+      if (!isTextCompTargetLayer(lData)) return;
+
+      var inT = Number(layer.inPoint || 0);
+      var outT = Number(layer.outPoint || 0);
+      var dur = outT - inT;
+      if (!(dur > 0.0)) return;
+
+      var fps = Number(layer.containingComp ? layer.containingComp.frameRate : 23.976);
+      if (!(fps > 0)) fps = 23.976;
+      var isLong = dur >= 1.0;
+
+      var cleanText = impulseCleanText(lData.text || "");
+      if (!cleanText) cleanText = String(lData.text || "");
+
+      var textProps = null;
+      try { textProps = layer.property("ADBE Text Properties"); } catch(_) { textProps = null; }
+      var tdProp = textProps ? safeProp(textProps, "ADBE Text Document") : null;
+      if (!tdProp) return;
+
+      var td = null;
+      try { td = tdProp.value; } catch(_) { td = null; }
+      if (!td) return;
+
+      try { td.resetCharStyle(); } catch(_) {}
+      try { td.text = cleanText; } catch(_) {}
+      try { td.font = "Point-Light"; } catch(_) {}
+      try { td.fontSize = 100; } catch(_) {}
+      try { td.fillColor = [1, 1, 1]; } catch(_) {}
+      try { td.applyFill = true; } catch(_) {}
+      try { td.strokeColor = [1, 1, 1]; } catch(_) {}
+      try { td.applyStroke = true; } catch(_) {}
+      try { td.strokeWidth = 3; } catch(_) {}
+      try { td.tracking = -25; } catch(_) {}
+      try { td.leading = 250; } catch(_) {}
+      try { td.justification = ParagraphJustification.CENTER_JUSTIFY; } catch(_) {}
+      try { tdProp.setValue(td); } catch(_) {}
+
+      var tf = null;
+      try { tf = layer.property("ADBE Transform Group"); } catch(_) { tf = null; }
+      if (!tf) return;
+      var pos = safeProp(tf, "ADBE Position");
+      var anc = safeProp(tf, "ADBE Anchor Point");
+      var scale = safeProp(tf, "ADBE Scale");
+      var opacity = safeProp(tf, "ADBE Opacity");
+
+      try { if (pos) pos.setValue([540, 960, 0]); } catch(_) {}
+      try { if (anc) anc.setValue([0.564, -23.213, 0]); } catch(_) {}
+      try { layer.motionBlur = true; } catch(_) {}
+
+      impulseClearEffects(layer);
+      impulseInstallDropShadows(layer);
+
+      var chars = Math.max(1, cleanText.length);
+      var exprDelay = 0.05;
+      if (isLong) {
+        var exitTime = 7.0 / fps;
+        var minHold = 0.10;
+        var available = dur - exitTime - minHold;
+        exprDelay = (chars > 1) ? Math.min(0.05, available / (chars - 1)) : 0.05;
+        if (exprDelay < 0.005) exprDelay = 0.005;
+      }
+      impulseInstallAnimator(layer, exprDelay);
+
+      impulseClearKeys(scale);
+      impulseClearKeys(opacity);
+
+      if (!scale || !opacity) return;
+
+      if (isLong) {
+        var scaleExitT = Math.max(inT, outT - 7.0 / fps);
+        var opacityExitT = Math.max(inT, outT - 4.0 / fps);
+        try { scale.setValueAtTime(scaleExitT, [75, 75, 100]); } catch(_) {}
+        try { scale.setValueAtTime(outT, [0, 0, 100]); } catch(_) {}
+        try { opacity.setValueAtTime(opacityExitT, 100); } catch(_) {}
+        try { opacity.setValueAtTime(outT, 0); } catch(_) {}
+      } else {
+        var totalF = Math.max(1, Math.round(dur * fps));
+        var peakF = Math.max(1, Math.round(totalF * 0.5));
+        var peakByDur = Math.round(190 + (1.0 - dur) * 180);
+        var safeWidth = Number(layer.containingComp ? layer.containingComp.width : 1080) * 0.85;
+        var textWidth = Math.max(1, chars * 62);
+        var peakByChar = Math.round((safeWidth / textWidth) * 100);
+        var peakVal = Math.min(peakByDur, peakByChar);
+        if (peakVal < 150) peakVal = 150;
+        try { scale.setValueAtTime(inT, [75, 75, 100]); } catch(_) {}
+        try { scale.setValueAtTime(inT + peakF / fps, [peakVal, peakVal, 100]); } catch(_) {}
+        try { scale.setValueAtTime(outT, [0, 0, 100]); } catch(_) {}
+        try { opacity.setValueAtTime(Math.max(inT, outT - 3.0 / fps), 100); } catch(_) {}
+        try { opacity.setValueAtTime(outT, 0); } catch(_) {}
+      }
+
+      try { lData.text = cleanText; } catch(_) {}
+    }
+
     function _setPropConstant3D(prop, x, y, z) {
       if (!prop) return;
       var v = [x, y, z];
@@ -1250,6 +1507,19 @@
       } catch(eSnap) { logErr("snapshot failed layer=" + layer.name, eSnap); }
       logLine("INFO", "LAYER_OK name=" + layer.name);
       _writeHeartbeat(layer.name, "layer_ok");
+      return layer;
+    }
+
+    function createTextLayerFromPreset(lData) {
+      var layer = createLayerFromBlueprint(lData);
+      if (!layer) return;
+      if (String(text_preset || "classic") !== "impulse") return;
+      if (!lData || lData.type !== "text") return;
+      try {
+        applyImpulseTextPreset(layer, lData);
+      } catch(eImpulse) {
+        logErr("impulse text preset failed layer=" + layer.name, eImpulse);
+      }
     }
 
     // ==========================================================
@@ -1263,9 +1533,9 @@
     // ==========================================================
     // 5) TEXT PART
     // ==========================================================
-    logLine("INFO", "TEXT_TEMPLATE: layers=" + (text_layers ? text_layers.length : 0));
+    logLine("INFO", "TEXT_TEMPLATE: layers=" + (text_layers ? text_layers.length : 0) + " preset=" + String(text_preset || "classic"));
     for (var i = text_layers.length - 1; i >= 0; i--) {
-      createLayerFromBlueprint(text_layers[i]);
+      createTextLayerFromPreset(text_layers[i]);
     }
 
     // ==========================================================

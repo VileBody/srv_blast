@@ -16,6 +16,7 @@ STAGE_WAIT_LYRICS_TEXT = "WAIT_LYRICS_TEXT"
 STAGE_WAIT_FRAGMENT_CHOICE = "WAIT_FRAGMENT_CHOICE"
 STAGE_WAIT_FRAGMENT_TEXT = "WAIT_FRAGMENT_TEXT"
 STAGE_WAIT_VERSIONS = "WAIT_VERSIONS"
+STAGE_WAIT_TEXT_STYLE = "WAIT_TEXT_STYLE"
 STAGE_WAIT_CONFIRM = "WAIT_CONFIRM"
 STAGE_PROCESSING = "PROCESSING"
 STAGE_WAIT_NEXT = "WAIT_NEXT"
@@ -32,6 +33,7 @@ class ChatState(BaseModel):
     lyrics_text: str = ""
     target_fragment: str = ""
     versions_count: int = 1
+    text_preset: str = "classic"
 
     # legacy single-job fields (kept for backward compatibility)
     active_job_id: str = ""

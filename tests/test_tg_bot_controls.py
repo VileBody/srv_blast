@@ -1,6 +1,13 @@
 from __future__ import annotations
 
-from services.tg_bot_botapi.app import _is_control_button_text, _is_username_allowed, _parse_versions_choice
+from services.tg_bot_botapi.app import (
+    BTN_STYLE_CLASSIC,
+    BTN_STYLE_IMPULSE,
+    _is_control_button_text,
+    _is_username_allowed,
+    _parse_text_preset_choice,
+    _parse_versions_choice,
+)
 from services.tg_bot_botapi.config import _normalize_username, _username_allowlist_env
 
 
@@ -39,4 +46,12 @@ def test_control_button_text_detection() -> None:
     assert _is_control_button_text("Отправить текст") is True
     assert _is_control_button_text("Отправить интересующий фрагмент") is True
     assert _is_control_button_text(" 3 ") is True
+    assert _is_control_button_text(BTN_STYLE_CLASSIC) is True
+    assert _is_control_button_text(BTN_STYLE_IMPULSE) is True
     assert _is_control_button_text("Это реальный текст песни") is False
+
+
+def test_parse_text_preset_choice() -> None:
+    assert _parse_text_preset_choice(BTN_STYLE_CLASSIC) == "classic"
+    assert _parse_text_preset_choice(BTN_STYLE_IMPULSE) == "impulse"
+    assert _parse_text_preset_choice("classic") is None

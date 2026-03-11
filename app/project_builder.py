@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any, Dict, Tuple
 
@@ -14,6 +15,21 @@ from app.footage_comp import build_footage_layers, resolve_text_duration_sec
 from app.text_comp import build_text_layers
 
 LOGGER = logging.getLogger("app.project_builder")
+TEXT_PRESET_CLASSIC = "classic"
+TEXT_PRESET_IMPULSE = "impulse"
+_ALLOWED_TEXT_PRESETS = {TEXT_PRESET_CLASSIC, TEXT_PRESET_IMPULSE}
+
+
+def _resolve_text_preset() -> str:
+    raw = (os.environ.get("TEXT_SUBTITLE_PRESET") or "").strip().lower()
+    if not raw:
+        return TEXT_PRESET_CLASSIC
+    if raw not in _ALLOWED_TEXT_PRESETS:
+        raise RuntimeError(
+            "Invalid TEXT_SUBTITLE_PRESET="
+            f"{raw!r}; allowed={sorted(_ALLOWED_TEXT_PRESETS)}"
+        )
+    return raw
 
 
 def _apply_comp_duration_overrides(
@@ -80,6 +96,7 @@ def build_full_project(
 
     full_edit_config = json.loads(full_edit_config_path.read_text(encoding="utf-8"))
     footage_cfg = json.loads(footage_config_path.read_text(encoding="utf-8"))
+    text_preset = _resolve_text_preset()
 
     main_comp = dict(AE_PROJECT["main_comp"])
     text_comp = dict(AE_PROJECT["text_comp"])
@@ -141,10 +158,11 @@ def build_full_project(
     )
 
     payload: Dict[str, Any] = {
-        "project": {"mainCompName": main_name},
+        "project": {"mainCompName": main_name, "textCompName": text_name},
         "comps": [main_comp, text_comp, mine_comp],
         "footage_layers": footage_layers,
         "text_layers": text_layers,
+        "text_preset": text_preset,
     }
 
     out_dir.mkdir(parents=True, exist_ok=True)
