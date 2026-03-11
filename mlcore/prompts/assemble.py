@@ -13,6 +13,13 @@ from .step1a_forced_alignment import SYSTEM_PART as STAGE1A_FORCED_ALIGNMENT
 from .step1b_scenario_only import SYSTEM_PART as STAGE1B_SCENARIO
 from .step2_subtitles_only import SYSTEM_PART as STAGE2_SUBS
 from .stage2_footage_style_only import SYSTEM_PART as STAGE2_FOOTAGE_STYLE
+from .stage2_timing_switches import (
+    SYSTEM_BASE_JSON as STAGE2_TIMING_BASE_JSON,
+    SYSTEM_FAST_START_BY_BEAT as STAGE2_TIMING_FAST_START,
+    SYSTEM_SEMANTIC_AFTER_FAST_START as STAGE2_TIMING_SEMANTIC_AFTER,
+    SYSTEM_TIMING_ANALYSIS as STAGE2_TIMING_ANALYSIS,
+    SYSTEM_TIMING_CUTS as STAGE2_TIMING_CUTS,
+)
 
 
 def build_system_instruction() -> str:
@@ -235,4 +242,144 @@ def build_stage2_footage_user_prompt(
         + json.dumps(stage1_json, ensure_ascii=False)
         + "\n\nSTYLE_POOL_GROUPS_JSON:\n"
         + json.dumps(style_groups, ensure_ascii=False)
+    )
+
+
+def _timing_semantic_context_from_subtitles(subtitles_json: Dict[str, object]) -> Dict[str, object]:
+    out_segments: List[Dict[str, object]] = []
+
+    for key in ["block_1", "block_3", "block_6"]:
+        seg = subtitles_json.get(key)
+        if not isinstance(seg, dict):
+            continue
+        toks = seg.get("tokens")
+        if not isinstance(toks, list) or not toks:
+            continue
+        first = toks[0] if isinstance(toks[0], dict) else {}
+        out_segments.append(
+            {
+                "where": key,
+                "phrase": str(seg.get("phrase") or ""),
+                "start_abs": float((first or {}).get("t_start") or 0.0),
+            }
+        )
+
+    for key, sub_key in [
+        ("block_2", "p1"),
+        ("block_2", "p2"),
+        ("block_4", "p1"),
+        ("block_4", "p2"),
+        ("block_5", "slowly_in"),
+        ("block_5", "fast_reveal"),
+        ("block_5", "glitch_peak"),
+        ("block_5", "mine"),
+        ("block_7", "part1"),
+        ("block_7", "part2"),
+    ]:
+        seg_root = subtitles_json.get(key)
+        if not isinstance(seg_root, dict):
+            continue
+        seg = seg_root.get(sub_key)
+        if not isinstance(seg, dict):
+            continue
+        toks = seg.get("tokens")
+        if not isinstance(toks, list) or not toks:
+            continue
+        first = toks[0] if isinstance(toks[0], dict) else {}
+        out_segments.append(
+            {
+                "where": f"{key}.{sub_key}",
+                "phrase": str(seg.get("phrase") or ""),
+                "start_abs": float((first or {}).get("t_start") or 0.0),
+            }
+        )
+
+    out_segments.sort(key=lambda x: (float(x.get("start_abs") or 0.0), str(x.get("where") or "")))
+    return {"segments": out_segments}
+
+
+def build_stage2_timing_analysis_system_instruction() -> str:
+    return (
+        "You are an audio timing analyst for an After Effects pipeline.\n"
+        + STAGE2_TIMING_BASE_JSON.strip()
+        + "\n\n"
+        + STAGE2_TIMING_FAST_START.strip()
+        + "\n\n"
+        + STAGE2_TIMING_SEMANTIC_AFTER.strip()
+        + "\n\n"
+        + STAGE2_TIMING_ANALYSIS.strip()
+        + "\n"
+    )
+
+
+def build_stage2_timing_analysis_user_prompt(
+    *,
+    stage1_json: Dict[str, object],
+    subtitles_json: Dict[str, object],
+    bpm: float,
+    fast_start_seconds: float,
+    timing_mode: str,
+    schema_name: str = "Stage2TimingAnalysisPayload",
+) -> str:
+    clip = ((stage1_json or {}).get("audio") or {}) if isinstance(stage1_json, dict) else {}
+    semantic_ctx = _timing_semantic_context_from_subtitles(subtitles_json)
+    return (
+        f"Return ONLY JSON matching schema: {schema_name}\n\n"
+        "TIMING_MODE:\n"
+        + json.dumps({"mode": str(timing_mode)}, ensure_ascii=False)
+        + "\n\nAUDIO_CLIP_JSON:\n"
+        + json.dumps(
+            {
+                "clip_start_abs": float(clip.get("clip_start_abs") or 0.0),
+                "clip_end_abs": float(clip.get("clip_end_abs") or 0.0),
+                "bpm_librosa": float(bpm),
+                "fast_start_seconds": float(fast_start_seconds),
+            },
+            ensure_ascii=False,
+        )
+        + "\n\nSEMANTIC_SUBTITLES_CONTEXT_JSON:\n"
+        + json.dumps(semantic_ctx, ensure_ascii=False)
+    )
+
+
+def build_stage2_timing_cuts_system_instruction() -> str:
+    return (
+        "You are an editing timing director for an After Effects pipeline.\n"
+        + STAGE2_TIMING_BASE_JSON.strip()
+        + "\n\n"
+        + STAGE2_TIMING_FAST_START.strip()
+        + "\n\n"
+        + STAGE2_TIMING_SEMANTIC_AFTER.strip()
+        + "\n\n"
+        + STAGE2_TIMING_CUTS.strip()
+        + "\n"
+    )
+
+
+def build_stage2_timing_cuts_user_prompt(
+    *,
+    stage1_json: Dict[str, object],
+    timing_analysis_json: Dict[str, object],
+    bpm: float,
+    fast_start_seconds: float,
+    timing_mode: str,
+    schema_name: str = "Stage2TimingCutsPayload",
+) -> str:
+    clip = ((stage1_json or {}).get("audio") or {}) if isinstance(stage1_json, dict) else {}
+    return (
+        f"Return ONLY JSON matching schema: {schema_name}\n\n"
+        "TIMING_MODE:\n"
+        + json.dumps({"mode": str(timing_mode)}, ensure_ascii=False)
+        + "\n\nAUDIO_CLIP_JSON:\n"
+        + json.dumps(
+            {
+                "clip_start_abs": float(clip.get("clip_start_abs") or 0.0),
+                "clip_end_abs": float(clip.get("clip_end_abs") or 0.0),
+                "bpm_librosa": float(bpm),
+                "fast_start_seconds": float(fast_start_seconds),
+            },
+            ensure_ascii=False,
+        )
+        + "\n\nTIMING_ANALYSIS_JSON:\n"
+        + json.dumps(timing_analysis_json, ensure_ascii=False)
     )

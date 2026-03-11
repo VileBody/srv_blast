@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from typing import Callable
 
 import pytest
 
@@ -11,6 +12,7 @@ from mlcore.models.footage_style import FootageStylePickPayload
 from mlcore.models.stage1_asr import Stage1AsrPayload
 from mlcore.models.stage1_scenario import Stage1ScenarioPayload
 from mlcore.models.subtitles_tokens import BlocksTokensPayload
+from mlcore.models.switch_timing import Stage2TimingAnalysisPayload, Stage2TimingCutsPayload
 
 
 def _draft_blocks() -> dict:
@@ -59,6 +61,61 @@ def _subtitles_payload() -> BlocksTokensPayload:
         },
     }
     return BlocksTokensPayload.model_validate(obj)
+
+
+def _timing_analysis_payload() -> Stage2TimingAnalysisPayload:
+    return Stage2TimingAnalysisPayload.model_validate(
+        {
+            "selected_rule": "Dynamic Contrast",
+            "reason": "test",
+            "raw_timings": {
+                "kick_bass": [0.5, 1.0, 1.5],
+                "snare_clap": [0.75, 1.25],
+                "vocal_phrases": [2.0, 4.0, 7.0],
+                "semantic_peaks": [3.0, 6.0, 10.0],
+            },
+        }
+    )
+
+
+def _timing_cuts_payload() -> Stage2TimingCutsPayload:
+    return Stage2TimingCutsPayload.model_validate(
+        {
+            "applied_rule": "Dynamic Contrast",
+            "final_cut_timings": [0.8, 1.6, 3.5, 6.2, 9.4, 12.0],
+        }
+    )
+
+
+def _set_stage2_timing_env(monkeypatch: pytest.MonkeyPatch, *, mode: str = "prompts") -> None:
+    monkeypatch.setenv("STAGE2_TIMING_MODE", mode)
+    monkeypatch.setenv("STAGE2_FAST_START_SECONDS", "6")
+
+
+def _patch_stage2_timing_calls(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    calls: dict[str, int] | None = None,
+    remember: Callable[[str, dict], None] | None = None,
+) -> None:
+    monkeypatch.setattr(go, "detect_bpm_librosa", lambda **kwargs: 120.0)
+
+    def _analysis(**kwargs):
+        if calls is not None:
+            calls["timing_analysis"] = int(calls.get("timing_analysis", 0)) + 1
+        if remember is not None:
+            remember("timing_analysis", kwargs)
+        return _timing_analysis_payload()
+
+    def _cuts(**kwargs):
+        if calls is not None:
+            calls["timing_cuts"] = int(calls.get("timing_cuts", 0)) + 1
+        if remember is not None:
+            remember("timing_cuts", kwargs)
+        return _timing_cuts_payload()
+
+    monkeypatch.setattr(go, "call_timing_analysis_once", _analysis)
+    monkeypatch.setattr(go, "call_timing_cuts_once", _cuts)
 
 
 def test_with_gemini_stage2_style_and_deterministic_picker(monkeypatch, tmp_path: Path) -> None:
@@ -112,6 +169,7 @@ def test_with_gemini_stage2_style_and_deterministic_picker(monkeypatch, tmp_path
     monkeypatch.setenv("AUDIO_FILE_PATH", str(audio_path))
     monkeypatch.setenv("AUDIO_DIR", str(audio_path.parent))
     monkeypatch.setenv("JOB_ID", "job_123")
+    _set_stage2_timing_env(monkeypatch)
 
     monkeypatch.setattr(go, "_make_client", lambda **kwargs: object())
     monkeypatch.setattr(go, "pick_audio_files", lambda _audio_dir: [audio_path])
@@ -142,6 +200,7 @@ def test_with_gemini_stage2_style_and_deterministic_picker(monkeypatch, tmp_path
         "call_footage_style_once",
         lambda **kwargs: FootageStylePickPayload.model_validate({"genre": "Rock", "tag": "dark_forest"}),
     )
+    _patch_stage2_timing_calls(monkeypatch)
 
     captured: dict = {}
 
@@ -214,6 +273,7 @@ def test_hedged_mode_wires_openrouter_for_all_stage_calls(monkeypatch, tmp_path:
     monkeypatch.setenv("AUDIO_FILE_PATH", str(audio_path))
     monkeypatch.setenv("AUDIO_DIR", str(audio_path.parent))
     monkeypatch.setenv("JOB_ID", "job_hedged")
+    _set_stage2_timing_env(monkeypatch)
 
     gemini_clients: list[object] = []
     openrouter_clients: list[object] = []
@@ -271,6 +331,7 @@ def test_hedged_mode_wires_openrouter_for_all_stage_calls(monkeypatch, tmp_path:
     monkeypatch.setattr(go, "call_stage1_scenario_once", _scenario)
     monkeypatch.setattr(go, "call_subtitles_plan_once", _subs)
     monkeypatch.setattr(go, "call_footage_style_once", _style)
+    _patch_stage2_timing_calls(monkeypatch, remember=_remember)
 
     monkeypatch.setattr(
         go,
@@ -284,9 +345,9 @@ def test_hedged_mode_wires_openrouter_for_all_stage_calls(monkeypatch, tmp_path:
 
     out = go.build_all_via_gemini_one_call()
     assert set(out.keys()) == {"audio_plan", "full_edit_config", "footage_config"}
-    assert set(seen.keys()) == {"asr", "scenario", "subtitles", "style"}
-    assert len(gemini_clients) == 4
-    assert len(openrouter_clients) == 4
+    assert set(seen.keys()) == {"asr", "scenario", "subtitles", "style", "timing_analysis", "timing_cuts"}
+    assert len(gemini_clients) == 6
+    assert len(openrouter_clients) == 6
 
 
 def test_resume_state_skips_stage1_llm_calls(monkeypatch, tmp_path: Path) -> None:
@@ -353,6 +414,7 @@ def test_resume_state_skips_stage1_llm_calls(monkeypatch, tmp_path: Path) -> Non
     monkeypatch.setenv("AUDIO_FILE_PATH", str(audio_path))
     monkeypatch.setenv("AUDIO_DIR", str(audio_path.parent))
     monkeypatch.setenv("JOB_ID", "job_resume")
+    _set_stage2_timing_env(monkeypatch)
 
     monkeypatch.setattr(go, "_make_client", lambda **kwargs: object())
     monkeypatch.setattr(go, "pick_audio_files", lambda _audio_dir: [audio_path])
@@ -363,7 +425,7 @@ def test_resume_state_skips_stage1_llm_calls(monkeypatch, tmp_path: Path) -> Non
     monkeypatch.setattr(go, "call_stage1_asr_once", _should_not_call)
     monkeypatch.setattr(go, "call_stage1_scenario_once", _should_not_call)
 
-    calls = {"subtitles": 0, "style": 0}
+    calls = {"subtitles": 0, "style": 0, "timing_analysis": 0, "timing_cuts": 0}
 
     def _subs(**kwargs):
         calls["subtitles"] += 1
@@ -375,6 +437,7 @@ def test_resume_state_skips_stage1_llm_calls(monkeypatch, tmp_path: Path) -> Non
 
     monkeypatch.setattr(go, "call_subtitles_plan_once", _subs)
     monkeypatch.setattr(go, "call_footage_style_once", _style)
+    _patch_stage2_timing_calls(monkeypatch, calls=calls)
     monkeypatch.setattr(
         go,
         "render_all_steps",
@@ -387,11 +450,12 @@ def test_resume_state_skips_stage1_llm_calls(monkeypatch, tmp_path: Path) -> Non
 
     out = go.build_all_via_gemini_one_call(resume_state_path=resume_state_path)
     assert set(out.keys()) == {"audio_plan", "full_edit_config", "footage_config"}
-    assert calls == {"subtitles": 1, "style": 1}
+    assert calls == {"subtitles": 1, "style": 1, "timing_analysis": 1, "timing_cuts": 1}
 
     state_after = json.loads(resume_state_path.read_text(encoding="utf-8"))
     assert "stage2_subtitles" in state_after
     assert "stage2_style" in state_after
+    assert "stage2_switch_timestamps" in state_after
 
 
 def test_resume_state_keeps_partial_stage2_and_runs_only_missing_call(monkeypatch, tmp_path: Path) -> None:
@@ -458,6 +522,7 @@ def test_resume_state_keeps_partial_stage2_and_runs_only_missing_call(monkeypatc
     monkeypatch.setenv("AUDIO_FILE_PATH", str(audio_path))
     monkeypatch.setenv("AUDIO_DIR", str(audio_path.parent))
     monkeypatch.setenv("JOB_ID", "job_resume_partial")
+    _set_stage2_timing_env(monkeypatch)
 
     monkeypatch.setattr(go, "_make_client", lambda **kwargs: object())
     monkeypatch.setattr(go, "pick_audio_files", lambda _audio_dir: [audio_path])
@@ -477,7 +542,7 @@ def test_resume_state_keeps_partial_stage2_and_runs_only_missing_call(monkeypatc
         },
     )
 
-    calls = {"subtitles": 0, "style": 0}
+    calls = {"subtitles": 0, "style": 0, "timing_analysis": 0, "timing_cuts": 0}
 
     def _subs_first(**kwargs):
         calls["subtitles"] += 1
@@ -489,11 +554,12 @@ def test_resume_state_keeps_partial_stage2_and_runs_only_missing_call(monkeypatc
 
     monkeypatch.setattr(go, "call_subtitles_plan_once", _subs_first)
     monkeypatch.setattr(go, "call_footage_style_once", _style_fail)
+    _patch_stage2_timing_calls(monkeypatch, calls=calls)
 
     with pytest.raises(RuntimeError, match="Stage2 failed"):
         go.build_all_via_gemini_one_call(resume_state_path=resume_state_path)
 
-    assert calls == {"subtitles": 1, "style": 1}
+    assert calls == {"subtitles": 1, "style": 3, "timing_analysis": 0, "timing_cuts": 0}
 
     state_after_first = json.loads(resume_state_path.read_text(encoding="utf-8"))
     assert "stage2_subtitles" in state_after_first
@@ -512,7 +578,9 @@ def test_resume_state_keeps_partial_stage2_and_runs_only_missing_call(monkeypatc
     out = go.build_all_via_gemini_one_call(resume_state_path=resume_state_path)
     assert set(out.keys()) == {"audio_plan", "full_edit_config", "footage_config"}
     assert calls["subtitles"] == 1
-    assert calls["style"] == 2
+    assert calls["style"] == 4
+    assert calls["timing_analysis"] == 1
+    assert calls["timing_cuts"] == 1
 
 
 def test_stage_local_model_validation_retry_retries_only_failed_stage(monkeypatch, tmp_path: Path) -> None:
@@ -552,11 +620,12 @@ def test_stage_local_model_validation_retry_retries_only_failed_stage(monkeypatc
     monkeypatch.setenv("AUDIO_FILE_PATH", str(audio_path))
     monkeypatch.setenv("AUDIO_DIR", str(audio_path.parent))
     monkeypatch.setenv("JOB_ID", "job_stage_local_retry_ok")
+    _set_stage2_timing_env(monkeypatch)
 
     monkeypatch.setattr(go, "_make_client", lambda **kwargs: object())
     monkeypatch.setattr(go, "pick_audio_files", lambda _audio_dir: [audio_path])
 
-    calls = {"asr": 0, "scenario": 0, "subtitles": 0, "style": 0}
+    calls = {"asr": 0, "scenario": 0, "subtitles": 0, "style": 0, "timing_analysis": 0, "timing_cuts": 0}
 
     def _asr(**kwargs):
         calls["asr"] += 1
@@ -590,6 +659,7 @@ def test_stage_local_model_validation_retry_retries_only_failed_stage(monkeypatc
     monkeypatch.setattr(go, "call_stage1_scenario_once", _scenario)
     monkeypatch.setattr(go, "call_subtitles_plan_once", _subtitles)
     monkeypatch.setattr(go, "call_footage_style_once", _style)
+    _patch_stage2_timing_calls(monkeypatch, calls=calls)
     monkeypatch.setattr(
         go,
         "render_all_steps",
@@ -602,7 +672,7 @@ def test_stage_local_model_validation_retry_retries_only_failed_stage(monkeypatc
 
     out = go.build_all_via_gemini_one_call()
     assert set(out.keys()) == {"audio_plan", "full_edit_config", "footage_config"}
-    assert calls == {"asr": 1, "scenario": 1, "subtitles": 3, "style": 1}
+    assert calls == {"asr": 1, "scenario": 1, "subtitles": 3, "style": 1, "timing_analysis": 1, "timing_cuts": 1}
 
 
 def test_stage_local_model_validation_retry_exhausted_fails_without_celery_marker(
@@ -644,11 +714,12 @@ def test_stage_local_model_validation_retry_exhausted_fails_without_celery_marke
     monkeypatch.setenv("AUDIO_FILE_PATH", str(audio_path))
     monkeypatch.setenv("AUDIO_DIR", str(audio_path.parent))
     monkeypatch.setenv("JOB_ID", "job_stage_local_retry_fail")
+    _set_stage2_timing_env(monkeypatch)
 
     monkeypatch.setattr(go, "_make_client", lambda **kwargs: object())
     monkeypatch.setattr(go, "pick_audio_files", lambda _audio_dir: [audio_path])
 
-    calls = {"asr": 0, "scenario": 0, "subtitles": 0, "style": 0}
+    calls = {"asr": 0, "scenario": 0, "subtitles": 0, "style": 0, "timing_analysis": 0, "timing_cuts": 0}
 
     def _asr(**kwargs):
         calls["asr"] += 1
@@ -680,6 +751,7 @@ def test_stage_local_model_validation_retry_exhausted_fails_without_celery_marke
     monkeypatch.setattr(go, "call_stage1_scenario_once", _scenario)
     monkeypatch.setattr(go, "call_subtitles_plan_once", _subtitles)
     monkeypatch.setattr(go, "call_footage_style_once", _style)
+    _patch_stage2_timing_calls(monkeypatch, calls=calls)
     monkeypatch.setattr(
         go,
         "render_all_steps",
@@ -693,5 +765,5 @@ def test_stage_local_model_validation_retry_exhausted_fails_without_celery_marke
     with pytest.raises(RuntimeError, match="Stage2 failed") as ei:
         go.build_all_via_gemini_one_call()
 
-    assert calls == {"asr": 1, "scenario": 1, "subtitles": 3, "style": 1}
+    assert calls == {"asr": 1, "scenario": 1, "subtitles": 3, "style": 1, "timing_analysis": 0, "timing_cuts": 0}
     assert "llm_schema_validation_error" not in str(ei.value)

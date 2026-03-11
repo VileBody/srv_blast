@@ -6,6 +6,8 @@ from typing import Dict, Tuple
 
 from mlcore.models import BlocksTokensPayload, Segment
 
+_MIN_SEG_DUR_S = 1e-3
+
 
 @dataclass(frozen=True)
 class Timing:
@@ -120,8 +122,11 @@ def compute_timings(payload: BlocksTokensPayload) -> Tuple[Dict[str, object], fl
     b5_m_in = float(mine_tok.t_start)
     b5_m_out = float(mine_tok.t_end)
 
-    # IMPORTANT: glitch_peak.out == mine.in (clamped, never earlier than glitch_peak.in)
-    b5_g_out = max(b5_g_in, b5_m_in)
+    # IMPORTANT:
+    # Normally glitch_peak.out == mine.in.
+    # But if mine starts exactly at glitch_peak start marker (or earlier due model oddity),
+    # we must keep a tiny positive duration to pass strict preflight (out > in).
+    b5_g_out = max(b5_m_in, b5_g_in + _MIN_SEG_DUR_S)
 
     # block 7 internal seam
     b7_p1_in = b7_in

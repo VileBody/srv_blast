@@ -19,9 +19,12 @@ from mlcore.gemini_call import (
     call_stage1_asr_once,
     call_stage1_forced_alignment_once,
     call_stage1_scenario_once,
+    call_timing_analysis_once,
+    call_timing_cuts_once,
     call_subtitles_plan_once,
     pick_audio_files,
 )
+from mlcore.audio_bpm import detect_bpm_librosa
 from mlcore.gemini_client import GeminiClient, GeminiSettings
 from mlcore.llm_router import (
     PROVIDER_MODE_GEMINI,
@@ -31,10 +34,11 @@ from mlcore.llm_router import (
 )
 from mlcore.openrouter_client import OpenRouterClient, OpenRouterSettings
 from mlcore.footage_picker import (
-    FootagePickerDiagnostics,
+    FootageIntervalPickerDiagnostics,
     build_style_groups_from_assets,
+    build_intervals_from_switch_points,
     load_picker_assets_from_inventory,
-    pick_footage_clips_deterministic,
+    pick_footage_clips_by_intervals_deterministic,
     validate_style_pick_in_groups,
 )
 from mlcore.gemini_postprocess import render_all_steps
@@ -48,6 +52,12 @@ from mlcore.models.stage1_plan import TranscriptWord
 from mlcore.models.stage1_scenario import Stage1ScenarioPayload
 from mlcore.models.subtitles_spans import BlocksTokenSpansPayload, TokenSpan
 from mlcore.models.subtitles_tokens import BlocksTokensPayload
+from mlcore.models.switch_timing import (
+    Stage2TimingAnalysisPayload,
+    Stage2TimingCutsPayload,
+    SwitchTimingPayload,
+    normalize_switch_points,
+)
 from mlcore.prompts import (
     build_stage1a_asr_system_instruction,
     build_stage1a_asr_user_prompt,
@@ -59,6 +69,10 @@ from mlcore.prompts import (
     build_stage2_footage_user_prompt,
     build_stage2_subtitles_system_instruction,
     build_stage2_subtitles_user_prompt,
+    build_stage2_timing_analysis_system_instruction,
+    build_stage2_timing_analysis_user_prompt,
+    build_stage2_timing_cuts_system_instruction,
+    build_stage2_timing_cuts_user_prompt,
 )
 from mlcore.stage1_tools import align_stage1_draft_to_transcript, build_stage1_report
 from core.runtime_mode import get_runtime_mode, MODE_DEV, MODE_PROD
@@ -212,6 +226,25 @@ def _float_env(name: str, default: float) -> float:
         raise RuntimeError(f"Invalid {name}: {raw!r}") from e
 
 
+def _require_float_env(name: str) -> float:
+    raw = (os.environ.get(name) or "").strip()
+    if not raw:
+        raise RuntimeError(f"Missing required env var: {name}")
+    try:
+        return float(raw)
+    except Exception as e:
+        raise RuntimeError(f"Invalid {name}: {raw!r}") from e
+
+
+def _require_choice_env(name: str, *, allowed: List[str]) -> str:
+    raw = (os.environ.get(name) or "").strip()
+    if not raw:
+        raise RuntimeError(f"Missing required env var: {name}")
+    if raw not in allowed:
+        raise RuntimeError(f"Invalid {name}: {raw!r}; allowed={allowed}")
+    return raw
+
+
 def _openrouter_model_from_gemini(gemini_model: str) -> str:
     model = (gemini_model or "").strip()
     if not model:
@@ -231,6 +264,34 @@ def _emit(progress_cb: Optional[Callable[[str], None]], stage: str) -> None:
         progress_cb(stage)
     except Exception:
         pass
+
+
+def _hybrid_fast_start_switch_points(
+    *,
+    clip_start_abs: float,
+    clip_end_abs: float,
+    fast_start_seconds: float,
+    bpm: float,
+) -> List[float]:
+    cs = float(clip_start_abs)
+    ce = float(clip_end_abs)
+    if ce <= cs + 1e-6:
+        return []
+
+    fast_end = min(ce, cs + max(0.0, float(fast_start_seconds)))
+    if fast_end <= cs + 1e-6:
+        return []
+
+    # Keep dense but stable cadence in [0.5 .. 1.5] sec.
+    period = 60.0 / float(bpm)
+    period = min(1.5, max(0.5, period))
+
+    out: List[float] = []
+    t = cs + period
+    while t < fast_end - 1e-6:
+        out.append(float(t))
+        t += period
+    return out
 
 
 def _norm_compact(s: str) -> str:
@@ -929,22 +990,26 @@ def _validate_footage_coverage_abs(
         raise ValueError(f"last.out_point != clip_end_abs ({clips[-1].out_point} != {ce})")
 
 
-def _log_footage_picker_diagnostics(*, logger: logging.Logger, diagnostics: FootagePickerDiagnostics) -> None:
+def _log_footage_interval_picker_diagnostics(
+    *,
+    logger: logging.Logger,
+    diagnostics: FootageIntervalPickerDiagnostics,
+) -> None:
     logger.info(
-        "footage_picker style=%s/%s target_duration=%.3f primary_pool_duration=%.3f selected_pool_duration=%.3f "
-        "widen=%s repeats=%s seed=%d seed_key=%s",
+        "footage_interval_picker style=%s/%s intervals=%d max_interval=%.3f "
+        "pool_primary=%d pool_selected=%d widen=%s seed=%d seed_key=%s",
         diagnostics.genre,
         diagnostics.tag,
-        diagnostics.target_duration_sec,
-        diagnostics.primary_pool_duration_sec,
-        diagnostics.selected_pool_duration_sec,
+        diagnostics.intervals_count,
+        diagnostics.max_interval_sec,
+        diagnostics.primary_pool_count,
+        diagnostics.selected_pool_count,
         diagnostics.widened_to_genre,
-        diagnostics.repeats_used,
         diagnostics.deterministic_seed,
         diagnostics.seed_key,
     )
     logger.info(
-        "footage_picker selected_file_names_count=%d file_names=%s",
+        "footage_interval_picker selected_file_names_count=%d file_names=%s",
         len(diagnostics.selected_file_names),
         diagnostics.selected_file_names,
     )
@@ -958,7 +1023,7 @@ def build_all_via_gemini_one_call(
     """
     Backward-compatible function name; implementation is now staged:
       - stage1: ASR + audio window + scenario draft
-      - stage2 (parallel): subtitles and footage
+      - stage2: subtitles + style + timing + interval footage picking
       - stage3: merge -> FullPlanPayload -> render_all_steps
     """
     gemini_api_key = os.environ.get("GEMINI_API_KEY", "").strip()
@@ -967,6 +1032,10 @@ def build_all_via_gemini_one_call(
     timeout_s = _float_env("GEMINI_TIMEOUT_S", 120.0)
     provider_mode = normalize_provider_mode(os.environ.get("LLM_PROVIDER_MODE", PROVIDER_MODE_GEMINI))
     hedge_delay_s = _float_env("LLM_HEDGE_DELAY_S", 60.0)
+    timing_mode = _require_choice_env("STAGE2_TIMING_MODE", allowed=["prompts", "hybrid"])
+    fast_start_seconds = _require_float_env("STAGE2_FAST_START_SECONDS")
+    if fast_start_seconds < 0.0:
+        raise RuntimeError(f"Invalid STAGE2_FAST_START_SECONDS: {fast_start_seconds!r}")
 
     logger = _get_logger()
     mode = get_runtime_mode()
@@ -994,11 +1063,14 @@ def build_all_via_gemini_one_call(
         )
 
     logger.info(
-        "llm_provider_config mode=%s hedge_delay_s=%s gemini_timeout_s=%s openrouter_timeout_s=%s",
+        "llm_provider_config mode=%s hedge_delay_s=%s gemini_timeout_s=%s openrouter_timeout_s=%s "
+        "timing_mode=%s fast_start_seconds=%.3f",
         provider_mode,
         hedge_delay_s,
         timeout_s,
         openrouter_timeout_s,
+        timing_mode,
+        fast_start_seconds,
     )
 
     client_stage1_asr: Optional[GeminiClient] = None
@@ -1006,6 +1078,7 @@ def build_all_via_gemini_one_call(
     client_stage1_scenario: Optional[GeminiClient] = None
     client_subtitles: Optional[GeminiClient] = None
     client_footage: Optional[GeminiClient] = None
+    client_timing: Optional[GeminiClient] = None
     if provider_mode in {PROVIDER_MODE_GEMINI, PROVIDER_MODE_HEDGED}:
         client_stage1_asr = _make_client(
             api_key=gemini_api_key,
@@ -1047,12 +1120,21 @@ def build_all_via_gemini_one_call(
             timeout_s=timeout_s,
             logger=logger,
         )
+        client_timing = _make_client(
+            api_key=gemini_api_key,
+            model=model_stage1_base,
+            proxy=proxy,
+            temperature=temperature,
+            timeout_s=timeout_s,
+            logger=logger,
+        )
 
     openrouter_stage1_asr: Optional[OpenRouterClient] = None
     openrouter_stage1_forced: Optional[OpenRouterClient] = None
     openrouter_stage1_scenario: Optional[OpenRouterClient] = None
     openrouter_subtitles: Optional[OpenRouterClient] = None
     openrouter_footage: Optional[OpenRouterClient] = None
+    openrouter_timing: Optional[OpenRouterClient] = None
     if provider_mode in {PROVIDER_MODE_OPENROUTER, PROVIDER_MODE_HEDGED}:
         openrouter_stage1_asr = _make_openrouter_client(
             api_key=openrouter_api_key,
@@ -1085,6 +1167,13 @@ def build_all_via_gemini_one_call(
         openrouter_footage = _make_openrouter_client(
             api_key=openrouter_api_key,
             model=_openrouter_model_from_gemini(model_footage),
+            temperature=temperature,
+            timeout_s=openrouter_timeout_s,
+            logger=logger,
+        )
+        openrouter_timing = _make_openrouter_client(
+            api_key=openrouter_api_key,
+            model=_openrouter_model_from_gemini(model_stage1_base),
             temperature=temperature,
             timeout_s=openrouter_timeout_s,
             logger=logger,
@@ -1408,9 +1497,11 @@ def build_all_via_gemini_one_call(
 
     _emit(progress_cb, "llm_stage2_parallel")
     logger.info(
-        "stage2_start subtitles_model=%s footage_style_model=%s style_groups=%d",
+        "stage2_start subtitles_model=%s footage_style_model=%s timing_model=%s timing_mode=%s style_groups=%d",
         model_subtitles,
         model_footage,
+        model_stage1_base,
+        timing_mode,
         len(style_groups),
     )
 
@@ -1438,6 +1529,15 @@ def build_all_via_gemini_one_call(
     foot_raw = logs_dir / f"gemini_raw_stage2_style_{stamp}.json"
     foot_sys = logs_dir / f"gemini_system_stage2_style_{stamp}.txt"
     foot_user = logs_dir / f"gemini_prompt_stage2_style_{stamp}.txt"
+
+    timing_analysis_system = build_stage2_timing_analysis_system_instruction()
+    timing_cuts_system = build_stage2_timing_cuts_system_instruction()
+    timing_analysis_raw = logs_dir / f"gemini_raw_stage2_timing_analysis_{stamp}.json"
+    timing_analysis_sys = logs_dir / f"gemini_system_stage2_timing_analysis_{stamp}.txt"
+    timing_analysis_user = logs_dir / f"gemini_prompt_stage2_timing_analysis_{stamp}.txt"
+    timing_cuts_raw = logs_dir / f"gemini_raw_stage2_timing_cuts_{stamp}.json"
+    timing_cuts_sys = logs_dir / f"gemini_system_stage2_timing_cuts_{stamp}.txt"
+    timing_cuts_user = logs_dir / f"gemini_prompt_stage2_timing_cuts_{stamp}.txt"
 
     def _run_subtitles_once() -> BlocksTokensPayload:
         payload = call_subtitles_plan_once(
@@ -1569,21 +1669,171 @@ def build_all_via_gemini_one_call(
     if subtitles_payload is None or style_payload is None:
         raise RuntimeError("Stage2 failed: missing payloads after execution")
 
+    clip_start_abs = float(stage1.audio.clip_start_abs)
+    clip_end_abs = float(stage1.audio.clip_end_abs)
+    if not audio_files:
+        raise RuntimeError("No audio files available for BPM detection")
+    bpm = detect_bpm_librosa(
+        audio_path=audio_files[0],
+        clip_start_abs=clip_start_abs,
+        clip_end_abs=clip_end_abs,
+    )
+    bpm_obj = {
+        "audio_file": str(audio_files[0]),
+        "clip_start_abs": clip_start_abs,
+        "clip_end_abs": clip_end_abs,
+        "bpm": float(bpm),
+    }
+    (logs_dir / f"stage2_bpm_librosa_{stamp}.json").write_text(
+        json.dumps(bpm_obj, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    (logs_dir / "stage2_bpm_librosa.json").write_text(
+        json.dumps(bpm_obj, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    switch_payload: SwitchTimingPayload | None = None
+    switch_cached = resume_state.get("stage2_switch_timestamps")
+    switch_mode_cached = str(resume_state.get("stage2_timing_mode") or "").strip()
+    switch_fast_cached = resume_state.get("stage2_fast_start_seconds")
+    if isinstance(switch_cached, dict):
+        try:
+            if switch_mode_cached != timing_mode:
+                raise RuntimeError("timing mode mismatch in resume state")
+            if float(switch_fast_cached) != float(fast_start_seconds):
+                raise RuntimeError("fast-start seconds mismatch in resume state")
+            switch_payload = SwitchTimingPayload.model_validate(switch_cached)
+            if abs(float(switch_payload.clip_start_abs) - clip_start_abs) > 1e-6:
+                raise RuntimeError("clip_start_abs mismatch in resume stage2_switch_timestamps")
+            if abs(float(switch_payload.clip_end_abs) - clip_end_abs) > 1e-6:
+                raise RuntimeError("clip_end_abs mismatch in resume stage2_switch_timestamps")
+            logger.info("llm_resume_hit stage=stage2_switch_timestamps")
+        except Exception as e:
+            logger.warning("llm_resume_bad stage=stage2_switch_timestamps err=%s", str(e))
+            resume_state.pop("stage2_switch_timestamps", None)
+
+    timing_analysis_payload: Stage2TimingAnalysisPayload | None = None
+    timing_cuts_payload: Stage2TimingCutsPayload | None = None
+    if switch_payload is None:
+        timing_analysis_prompt = build_stage2_timing_analysis_user_prompt(
+            stage1_json=stage1_json,
+            subtitles_json=subtitles_payload.model_dump(mode="json"),
+            bpm=float(bpm),
+            fast_start_seconds=float(fast_start_seconds),
+            timing_mode=timing_mode,
+            schema_name="Stage2TimingAnalysisPayload",
+        )
+
+        timing_analysis_payload = _run_stage_with_model_validation_retries(
+            stage_name="stage2_timing_analysis",
+            logger=logger,
+            fn=lambda: call_timing_analysis_once(
+                client=client_timing,
+                openrouter_client=openrouter_timing,
+                provider_mode=provider_mode,
+                hedge_delay_s=hedge_delay_s,
+                logger=logger,
+                system_instruction=timing_analysis_system,
+                user_prompt=timing_analysis_prompt,
+                audio_paths=[],
+                raw_response_path=timing_analysis_raw,
+                cache_path=cache_path,
+                prompt_dump_path=timing_analysis_user,
+                system_dump_path=timing_analysis_sys,
+            ),
+        )
+
+        timing_cuts_prompt = build_stage2_timing_cuts_user_prompt(
+            stage1_json=stage1_json,
+            timing_analysis_json=timing_analysis_payload.model_dump(mode="json"),
+            bpm=float(bpm),
+            fast_start_seconds=float(fast_start_seconds),
+            timing_mode=timing_mode,
+            schema_name="Stage2TimingCutsPayload",
+        )
+
+        timing_cuts_payload = _run_stage_with_model_validation_retries(
+            stage_name="stage2_timing_cuts",
+            logger=logger,
+            fn=lambda: call_timing_cuts_once(
+                client=client_timing,
+                openrouter_client=openrouter_timing,
+                provider_mode=provider_mode,
+                hedge_delay_s=hedge_delay_s,
+                logger=logger,
+                system_instruction=timing_cuts_system,
+                user_prompt=timing_cuts_prompt,
+                audio_paths=[],
+                raw_response_path=timing_cuts_raw,
+                cache_path=cache_path,
+                prompt_dump_path=timing_cuts_user,
+                system_dump_path=timing_cuts_sys,
+            ),
+        )
+        if timing_cuts_payload.applied_rule != timing_analysis_payload.selected_rule:
+            raise RuntimeError(
+                "stage2_timing_cuts.applied_rule must match stage2_timing_analysis.selected_rule "
+                f"({timing_cuts_payload.applied_rule!r} != {timing_analysis_payload.selected_rule!r})"
+            )
+
+        switch_points = normalize_switch_points(
+            raw_cut_timings=list(timing_cuts_payload.final_cut_timings),
+            clip_start_abs=clip_start_abs,
+            clip_end_abs=clip_end_abs,
+            merge_gap_sec=0.2,
+            min_segment_sec=0.3,
+        )
+        if timing_mode == "hybrid":
+            fast_points = _hybrid_fast_start_switch_points(
+                clip_start_abs=clip_start_abs,
+                clip_end_abs=clip_end_abs,
+                fast_start_seconds=float(fast_start_seconds),
+                bpm=float(bpm),
+            )
+            fast_end_abs = min(clip_end_abs, clip_start_abs + float(fast_start_seconds))
+            semantic_tail = [x for x in switch_points if x >= fast_end_abs - 1e-6]
+            switch_points = normalize_switch_points(
+                raw_cut_timings=sorted(list(fast_points) + list(semantic_tail)),
+                clip_start_abs=clip_start_abs,
+                clip_end_abs=clip_end_abs,
+                merge_gap_sec=0.2,
+                min_segment_sec=0.3,
+            )
+
+        switch_payload = SwitchTimingPayload.model_validate(
+            {
+                "clip_start_abs": clip_start_abs,
+                "clip_end_abs": clip_end_abs,
+                "fast_start_seconds": float(fast_start_seconds),
+                "bpm": float(bpm),
+                "switch_points_abs": switch_points,
+            }
+        )
+        resume_state["stage2_timing_mode"] = timing_mode
+        resume_state["stage2_fast_start_seconds"] = float(fast_start_seconds)
+        resume_state["stage2_switch_timestamps"] = switch_payload.model_dump(mode="json")
+        _save_resume_state(resume_state_path, logger=logger, state=resume_state)
+
+    if switch_payload is None:
+        raise RuntimeError("Stage2 failed: switch timing payload is empty")
+
     seed_key = _resolve_footage_seed_key(out_dir=out_dir, logger=logger)
-    footage_payload, pick_diag = pick_footage_clips_deterministic(
+    footage_payload, interval_diag = pick_footage_clips_by_intervals_deterministic(
         style_pick=style_payload,
         assets=picker_assets,
-        clip_start_abs=float(stage1.audio.clip_start_abs),
-        clip_end_abs=float(stage1.audio.clip_end_abs),
+        clip_start_abs=clip_start_abs,
+        clip_end_abs=clip_end_abs,
+        switch_points_abs=list(switch_payload.switch_points_abs),
         seed_key=seed_key,
         fit_mode="cover",
     )
     _validate_footage_coverage_abs(
         footage_payload,
-        clip_start_abs=float(stage1.audio.clip_start_abs),
-        clip_end_abs=float(stage1.audio.clip_end_abs),
+        clip_start_abs=clip_start_abs,
+        clip_end_abs=clip_end_abs,
     )
-    _log_footage_picker_diagnostics(logger=logger, diagnostics=pick_diag)
+    _log_footage_interval_picker_diagnostics(logger=logger, diagnostics=interval_diag)
 
     # Debug artifacts (like Stage1): dump parsed Stage2 payloads so we can inspect what the model returned
     # without digging into the raw response wrapper.
@@ -1595,8 +1845,48 @@ def build_all_via_gemini_one_call(
         json.dumps(style_payload.model_dump(mode="json"), ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    if timing_analysis_payload is not None:
+        (logs_dir / f"stage2_timing_analysis_{stamp}.json").write_text(
+            json.dumps(timing_analysis_payload.model_dump(mode="json"), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    if timing_cuts_payload is not None:
+        (logs_dir / f"stage2_timing_cuts_{stamp}.json").write_text(
+            json.dumps(timing_cuts_payload.model_dump(mode="json"), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    (logs_dir / f"stage2_switch_timestamps_{stamp}.json").write_text(
+        json.dumps(switch_payload.model_dump(mode="json"), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
     (logs_dir / f"stage2_footage_{stamp}.json").write_text(
         json.dumps(footage_payload.model_dump(mode="json"), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    intervals = build_intervals_from_switch_points(
+        clip_start_abs=clip_start_abs,
+        clip_end_abs=clip_end_abs,
+        switch_points_abs=list(switch_payload.switch_points_abs),
+    )
+    interval_rows: List[Dict[str, Any]] = []
+    clips_sorted = sorted(footage_payload.clips, key=lambda c: float(c.in_point))
+    if len(clips_sorted) != len(intervals):
+        raise RuntimeError(
+            f"Internal mismatch: clips={len(clips_sorted)} intervals={len(intervals)}"
+        )
+    for idx, (a, b) in enumerate(intervals):
+        clip = clips_sorted[idx]
+        interval_rows.append(
+            {
+                "in_point": float(a),
+                "out_point": float(b),
+                "duration": float(b - a),
+                "file_name": str(clip.file_name),
+            }
+        )
+    interval_obj = {"timing_mode": timing_mode, "intervals": interval_rows}
+    (logs_dir / f"stage2_footage_intervals_{stamp}.json").write_text(
+        json.dumps(interval_obj, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
     # Convenience "latest" names (per job OUT_DIR).
@@ -1606,6 +1896,14 @@ def build_all_via_gemini_one_call(
     )
     (logs_dir / "stage2_style.json").write_text(
         json.dumps(style_payload.model_dump(mode="json"), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    (logs_dir / "stage2_switch_timestamps.json").write_text(
+        json.dumps(switch_payload.model_dump(mode="json"), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    (logs_dir / "stage2_footage_intervals.json").write_text(
+        json.dumps(interval_obj, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
     (logs_dir / "stage2_footage.json").write_text(

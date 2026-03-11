@@ -26,6 +26,20 @@ class FootagePickerDiagnostics:
     selected_file_names: List[str]
 
 
+@dataclass(frozen=True)
+class FootageIntervalPickerDiagnostics:
+    genre: str
+    tag: str
+    intervals_count: int
+    max_interval_sec: float
+    primary_pool_count: int
+    selected_pool_count: int
+    widened_to_genre: bool
+    deterministic_seed: int
+    seed_key: str
+    selected_file_names: List[str]
+
+
 def _as_pos_float(v: Any) -> float:
     try:
         x = float(v)
@@ -241,3 +255,151 @@ def pick_footage_clips_deterministic(
         selected_file_names=selected_file_names,
     )
     return payload, diagnostics
+
+
+def build_intervals_from_switch_points(
+    *,
+    clip_start_abs: float,
+    clip_end_abs: float,
+    switch_points_abs: List[float],
+) -> List[Tuple[float, float]]:
+    cs = float(clip_start_abs)
+    ce = float(clip_end_abs)
+    if ce <= cs + _EPS:
+        raise RuntimeError(f"Invalid clip window: {cs}..{ce}")
+
+    pts = [float(x) for x in switch_points_abs]
+    prev = cs
+    for idx, p in enumerate(pts):
+        if p <= cs + _EPS or p >= ce - _EPS:
+            raise RuntimeError(f"switch_points_abs[{idx}] outside clip window: {p}")
+        if p <= prev + _EPS:
+            raise RuntimeError("switch_points_abs must be strictly increasing")
+        prev = p
+
+    bounds = [cs] + pts + [ce]
+    intervals: List[Tuple[float, float]] = []
+    for i in range(len(bounds) - 1):
+        a = float(bounds[i])
+        b = float(bounds[i + 1])
+        if b <= a + _EPS:
+            raise RuntimeError(f"Non-positive interval at index={i}: {a}..{b}")
+        intervals.append((a, b))
+    return intervals
+
+
+def _fits_interval(asset: Dict[str, Any], *, interval_len: float) -> bool:
+    try:
+        dur = float(asset["duration_sec"])
+    except Exception:
+        return False
+    return dur + _EPS >= float(interval_len)
+
+
+def _deterministic_choose(
+    *,
+    candidates: List[Dict[str, Any]],
+    seed_value: int,
+    interval_idx: int,
+    interval_start: float,
+) -> Dict[str, Any]:
+    if not candidates:
+        raise RuntimeError("deterministic choose candidates is empty")
+
+    def _sort_key(it: Dict[str, Any]) -> Tuple[str, str]:
+        file_name = str(it["file_name"])
+        material = f"{seed_value}:{interval_idx}:{interval_start:.6f}:{file_name}"
+        h = hashlib.sha256(material.encode("utf-8")).hexdigest()
+        return h, file_name
+
+    return sorted(candidates, key=_sort_key)[0]
+
+
+def pick_footage_clips_by_intervals_deterministic(
+    *,
+    style_pick: FootageStylePickPayload,
+    assets: List[Dict[str, Any]],
+    clip_start_abs: float,
+    clip_end_abs: float,
+    switch_points_abs: List[float],
+    seed_key: str,
+    fit_mode: str = "cover",
+) -> Tuple[FootageSelectionPayload, FootageIntervalPickerDiagnostics]:
+    genre = str(style_pick.genre).strip()
+    tag = str(style_pick.tag).strip()
+    if not genre or not tag:
+        raise RuntimeError("Style pick must contain non-empty genre and tag")
+
+    intervals = build_intervals_from_switch_points(
+        clip_start_abs=clip_start_abs,
+        clip_end_abs=clip_end_abs,
+        switch_points_abs=switch_points_abs,
+    )
+    if not intervals:
+        raise RuntimeError("No intervals were built from switch points")
+
+    primary_pool = [it for it in assets if str(it["genre"]) == genre and str(it["tag"]) == tag]
+    if not primary_pool:
+        raise RuntimeError(f"No assets for selected style genre={genre!r} tag={tag!r}")
+
+    widened_to_genre = False
+    selected_pool = list(primary_pool)
+
+    def _all_intervals_covered(pool: List[Dict[str, Any]]) -> bool:
+        for a, b in intervals:
+            need = float(b - a)
+            if not any(_fits_interval(it, interval_len=need) for it in pool):
+                return False
+        return True
+
+    if not _all_intervals_covered(selected_pool):
+        widen_pool = [it for it in assets if str(it["genre"]) == genre and str(it["tag"]) != tag]
+        if widen_pool:
+            selected_pool.extend(widen_pool)
+            widened_to_genre = True
+
+    if not _all_intervals_covered(selected_pool):
+        max_need = max(float(b - a) for a, b in intervals)
+        raise RuntimeError(
+            "No footage asset can cover at least one interval. "
+            f"genre={genre!r} tag={tag!r} max_interval_sec={max_need:.3f}"
+        )
+
+    seed_value = deterministic_seed_from_key(seed_key)
+
+    clips: List[Dict[str, Any]] = []
+    selected_file_names: List[str] = []
+    for idx, (a, b) in enumerate(intervals):
+        need = float(b - a)
+        candidates = [it for it in selected_pool if _fits_interval(it, interval_len=need)]
+        chosen = _deterministic_choose(
+            candidates=candidates,
+            seed_value=seed_value,
+            interval_idx=idx,
+            interval_start=float(a),
+        )
+        clips.append(
+            {
+                "file_name": str(chosen["file_name"]),
+                "fit_mode": fit_mode,
+                "in_point": float(a),
+                "out_point": float(b),
+                "start_time": float(a),
+            }
+        )
+        selected_file_names.append(str(chosen["file_name"]))
+
+    payload = FootageSelectionPayload.model_validate({"clips": clips, "allow_gaps": False})
+    diag = FootageIntervalPickerDiagnostics(
+        genre=genre,
+        tag=tag,
+        intervals_count=len(intervals),
+        max_interval_sec=max(float(b - a) for a, b in intervals),
+        primary_pool_count=len(primary_pool),
+        selected_pool_count=len(selected_pool),
+        widened_to_genre=bool(widened_to_genre),
+        deterministic_seed=int(seed_value),
+        seed_key=str(seed_key),
+        selected_file_names=selected_file_names,
+    )
+    return payload, diag
