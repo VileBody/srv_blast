@@ -88,6 +88,7 @@ def normalize_switch_points(
     clip_end_abs: float,
     merge_gap_sec: float = 0.2,
     min_segment_sec: float = 0.3,
+    compact_short_segments: bool = False,
 ) -> List[float]:
     """
     Keep only internal cut points, merge near-duplicates, and enforce min segment duration.
@@ -113,6 +114,26 @@ def normalize_switch_points(
             continue
         merged.append(x)
 
+    if compact_short_segments:
+        compacted: List[float] = []
+        prev = cs
+        for x in merged:
+            if (x - prev) < float(min_segment_sec) - _EPS:
+                continue
+            compacted.append(x)
+            prev = x
+
+        # Ensure the last kept cut does not create an invalid tail.
+        while compacted and (ce - compacted[-1]) < float(min_segment_sec) - _EPS:
+            compacted.pop()
+
+        if merged and not compacted:
+            raise ValueError(
+                "final_cut_timings violates min segment "
+                f"{min_segment_sec}s: all points were dropped after compaction"
+            )
+        return compacted
+
     prev = cs
     for idx, x in enumerate(merged):
         if (x - prev) < float(min_segment_sec) - _EPS:
@@ -127,4 +148,3 @@ def normalize_switch_points(
         )
 
     return merged
-

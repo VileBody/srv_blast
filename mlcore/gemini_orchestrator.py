@@ -1783,6 +1783,7 @@ def build_all_via_gemini_one_call(
             clip_end_abs=clip_end_abs,
             merge_gap_sec=0.2,
             min_segment_sec=0.3,
+            compact_short_segments=True,
         )
         if timing_mode == "hybrid":
             fast_points = _hybrid_fast_start_switch_points(
@@ -1799,6 +1800,7 @@ def build_all_via_gemini_one_call(
                 clip_end_abs=clip_end_abs,
                 merge_gap_sec=0.2,
                 min_segment_sec=0.3,
+                compact_short_segments=True,
             )
 
         switch_payload = SwitchTimingPayload.model_validate(
