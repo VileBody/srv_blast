@@ -31,6 +31,18 @@ def test_switch_timing_payload_rejects_unsorted_points() -> None:
         )
 
 
+def test_switch_timing_payload_allows_missing_bpm_for_gemini_only_mode() -> None:
+    payload = SwitchTimingPayload.model_validate(
+        {
+            "clip_start_abs": 0.0,
+            "clip_end_abs": 10.0,
+            "fast_start_seconds": 6.0,
+            "switch_points_abs": [1.0, 2.0, 3.0],
+        }
+    )
+    assert payload.bpm is None
+
+
 def test_normalize_switch_points_merges_near_points() -> None:
     out = normalize_switch_points(
         raw_cut_timings=[0.5, 0.62, 2.0, 2.1, 4.0],

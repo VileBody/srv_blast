@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import List, Literal
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -61,7 +61,7 @@ class SwitchTimingPayload(BaseModel):
     clip_start_abs: float = Field(ge=0.0)
     clip_end_abs: float = Field(ge=0.0)
     fast_start_seconds: float = Field(ge=0.0)
-    bpm: float = Field(gt=0.0)
+    bpm: Optional[float] = None
     switch_points_abs: List[float] = Field(default_factory=list)
 
     @model_validator(mode="after")
@@ -72,6 +72,8 @@ class SwitchTimingPayload(BaseModel):
             raise ValueError("clip_end_abs must be > clip_start_abs")
         if float(self.fast_start_seconds) > (ce - cs) + _EPS:
             raise ValueError("fast_start_seconds must be <= clip duration")
+        if self.bpm is not None and float(self.bpm) <= 0.0:
+            raise ValueError("bpm must be > 0 when provided")
 
         pts = _validate_sorted_unique_non_negative(self.switch_points_abs, field_name="switch_points_abs")
         for idx, p in enumerate(pts):

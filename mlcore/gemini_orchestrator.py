@@ -1530,8 +1530,8 @@ def build_all_via_gemini_one_call(
     foot_sys = logs_dir / f"gemini_system_stage2_style_{stamp}.txt"
     foot_user = logs_dir / f"gemini_prompt_stage2_style_{stamp}.txt"
 
-    timing_analysis_system = build_stage2_timing_analysis_system_instruction()
-    timing_cuts_system = build_stage2_timing_cuts_system_instruction()
+    timing_analysis_system = build_stage2_timing_analysis_system_instruction(timing_mode=timing_mode)
+    timing_cuts_system = build_stage2_timing_cuts_system_instruction(timing_mode=timing_mode)
     timing_analysis_raw = logs_dir / f"gemini_raw_stage2_timing_analysis_{stamp}.json"
     timing_analysis_sys = logs_dir / f"gemini_system_stage2_timing_analysis_{stamp}.txt"
     timing_analysis_user = logs_dir / f"gemini_prompt_stage2_timing_analysis_{stamp}.txt"
@@ -1671,27 +1671,31 @@ def build_all_via_gemini_one_call(
 
     clip_start_abs = float(stage1.audio.clip_start_abs)
     clip_end_abs = float(stage1.audio.clip_end_abs)
-    if not audio_files:
-        raise RuntimeError("No audio files available for BPM detection")
-    bpm = detect_bpm_librosa(
-        audio_path=audio_files[0],
-        clip_start_abs=clip_start_abs,
-        clip_end_abs=clip_end_abs,
-    )
-    bpm_obj = {
-        "audio_file": str(audio_files[0]),
-        "clip_start_abs": clip_start_abs,
-        "clip_end_abs": clip_end_abs,
-        "bpm": float(bpm),
-    }
-    (logs_dir / f"stage2_bpm_librosa_{stamp}.json").write_text(
-        json.dumps(bpm_obj, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-    (logs_dir / "stage2_bpm_librosa.json").write_text(
-        json.dumps(bpm_obj, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    bpm: Optional[float] = None
+    if timing_mode == "hybrid":
+        if not audio_files:
+            raise RuntimeError("No audio files available for BPM detection in STAGE2_TIMING_MODE=hybrid")
+        bpm = detect_bpm_librosa(
+            audio_path=audio_files[0],
+            clip_start_abs=clip_start_abs,
+            clip_end_abs=clip_end_abs,
+        )
+        bpm_obj = {
+            "audio_file": str(audio_files[0]),
+            "clip_start_abs": clip_start_abs,
+            "clip_end_abs": clip_end_abs,
+            "bpm": float(bpm),
+        }
+        (logs_dir / f"stage2_bpm_librosa_{stamp}.json").write_text(
+            json.dumps(bpm_obj, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        (logs_dir / "stage2_bpm_librosa.json").write_text(
+            json.dumps(bpm_obj, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    else:
+        logger.info("stage2_bpm_skipped mode=%s source=gemini_only", timing_mode)
 
     switch_payload: SwitchTimingPayload | None = None
     switch_cached = resume_state.get("stage2_switch_timestamps")
@@ -1719,7 +1723,7 @@ def build_all_via_gemini_one_call(
         timing_analysis_prompt = build_stage2_timing_analysis_user_prompt(
             stage1_json=stage1_json,
             subtitles_json=subtitles_payload.model_dump(mode="json"),
-            bpm=float(bpm),
+            bpm=bpm,
             fast_start_seconds=float(fast_start_seconds),
             timing_mode=timing_mode,
             schema_name="Stage2TimingAnalysisPayload",
@@ -1747,7 +1751,7 @@ def build_all_via_gemini_one_call(
         timing_cuts_prompt = build_stage2_timing_cuts_user_prompt(
             stage1_json=stage1_json,
             timing_analysis_json=timing_analysis_payload.model_dump(mode="json"),
-            bpm=float(bpm),
+            bpm=bpm,
             fast_start_seconds=float(fast_start_seconds),
             timing_mode=timing_mode,
             schema_name="Stage2TimingCutsPayload",
@@ -1786,6 +1790,8 @@ def build_all_via_gemini_one_call(
             compact_short_segments=True,
         )
         if timing_mode == "hybrid":
+            if bpm is None:
+                raise RuntimeError("Hybrid timing mode requires librosa BPM before fast-start beat synthesis")
             fast_points = _hybrid_fast_start_switch_points(
                 clip_start_abs=clip_start_abs,
                 clip_end_abs=clip_end_abs,
@@ -1808,7 +1814,7 @@ def build_all_via_gemini_one_call(
                 "clip_start_abs": clip_start_abs,
                 "clip_end_abs": clip_end_abs,
                 "fast_start_seconds": float(fast_start_seconds),
-                "bpm": float(bpm),
+                "bpm": float(bpm) if bpm is not None else None,
                 "switch_points_abs": switch_points,
             }
         )

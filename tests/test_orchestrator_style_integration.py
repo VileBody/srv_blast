@@ -97,8 +97,14 @@ def _patch_stage2_timing_calls(
     *,
     calls: dict[str, int] | None = None,
     remember: Callable[[str, dict], None] | None = None,
+    allow_librosa_bpm: bool = True,
 ) -> None:
-    monkeypatch.setattr(go, "detect_bpm_librosa", lambda **kwargs: 120.0)
+    if allow_librosa_bpm:
+        monkeypatch.setattr(go, "detect_bpm_librosa", lambda **kwargs: 120.0)
+    else:
+        def _forbid_bpm(**kwargs):
+            raise AssertionError("detect_bpm_librosa must not be called in prompts mode")
+        monkeypatch.setattr(go, "detect_bpm_librosa", _forbid_bpm)
 
     def _analysis(**kwargs):
         if calls is not None:
@@ -232,6 +238,90 @@ def test_with_gemini_stage2_style_and_deterministic_picker(monkeypatch, tmp_path
     assert style_obj == {"genre": "Rock", "tag": "dark_forest"}
 
     assert os.environ.get("JOB_ID") == "job_123"
+
+
+def test_prompts_mode_is_gemini_only_without_librosa(monkeypatch, tmp_path: Path) -> None:
+    audio_path = tmp_path / "audio.mp3"
+    audio_path.write_bytes(b"fake")
+
+    inv_path = tmp_path / "inventory.json"
+    inv_path.write_text(
+        json.dumps(
+            {
+                "assets": [
+                    {
+                        "file_name": "f1.mp4",
+                        "file_path": "s3://bucket/pinterest_collection/Rock/dark_forest/f1.mp4",
+                        "src_w": 720,
+                        "src_h": 1280,
+                        "duration_sec": 15.0,
+                        "genre": "Rock",
+                        "tag": "dark_forest",
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    out_dir = tmp_path / "out"
+    logs_dir = out_dir / "logs"
+
+    monkeypatch.setenv("MODE", "dev")
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    monkeypatch.setenv("GEMINI_MODEL_STAGE1", "m1")
+    monkeypatch.setenv("GEMINI_MODEL_SUBTITLES", "m2")
+    monkeypatch.setenv("GEMINI_MODEL_FOOTAGE", "m3")
+    monkeypatch.setenv("FOOTAGE_INVENTORY_JSON", str(inv_path))
+    monkeypatch.setenv("OUT_DIR", str(out_dir))
+    monkeypatch.setenv("AUDIO_FILE_PATH", str(audio_path))
+    monkeypatch.setenv("AUDIO_DIR", str(audio_path.parent))
+    monkeypatch.setenv("JOB_ID", "job_prompts_only")
+    _set_stage2_timing_env(monkeypatch, mode="prompts")
+
+    monkeypatch.setattr(go, "_make_client", lambda **kwargs: object())
+    monkeypatch.setattr(go, "pick_audio_files", lambda _audio_dir: [audio_path])
+    monkeypatch.setattr(
+        go,
+        "call_stage1_asr_once",
+        lambda **kwargs: Stage1AsrPayload.model_validate(
+            {
+                "transcript_words": [
+                    {"text": "a", "t_start": 0.0, "t_end": 0.5},
+                    {"text": "b", "t_start": 0.5, "t_end": 1.0},
+                ],
+                "srt_items": [],
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        go,
+        "call_stage1_scenario_once",
+        lambda **kwargs: Stage1ScenarioPayload.model_validate(
+            {"audio": {"clip_start_abs": 0.0, "clip_end_abs": 14.0}, "draft_blocks": _draft_blocks()}
+        ),
+    )
+    monkeypatch.setattr(go, "call_subtitles_plan_once", lambda **kwargs: _subtitles_payload())
+    monkeypatch.setattr(
+        go,
+        "call_footage_style_once",
+        lambda **kwargs: FootageStylePickPayload.model_validate({"genre": "Rock", "tag": "dark_forest"}),
+    )
+    _patch_stage2_timing_calls(monkeypatch, allow_librosa_bpm=False)
+    monkeypatch.setattr(
+        go,
+        "render_all_steps",
+        lambda **kwargs: {
+            "audio_plan": tmp_path / "audio_plan.json",
+            "full_edit_config": tmp_path / "full_edit_config.json",
+            "footage_config": tmp_path / "footage_config.json",
+        },
+    )
+
+    out = go.build_all_via_gemini_one_call()
+    assert set(out.keys()) == {"audio_plan", "full_edit_config", "footage_config"}
+    assert not (logs_dir / "stage2_bpm_librosa.json").exists()
 
 
 def test_hedged_mode_wires_openrouter_for_all_stage_calls(monkeypatch, tmp_path: Path) -> None:

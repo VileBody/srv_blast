@@ -298,14 +298,22 @@ def _timing_semantic_context_from_subtitles(subtitles_json: Dict[str, object]) -
     return {"segments": out_segments}
 
 
-def build_stage2_timing_analysis_system_instruction() -> str:
+def _build_stage2_timing_modules(*, timing_mode: str) -> str:
+    mode = str(timing_mode or "").strip()
+    if mode not in {"prompts", "hybrid"}:
+        raise ValueError(f"Unsupported timing_mode for prompt assembly: {mode!r}")
+    parts = [STAGE2_TIMING_SEMANTIC_AFTER.strip()]
+    if mode == "hybrid":
+        parts.insert(0, STAGE2_TIMING_FAST_START.strip())
+    return "\n\n".join(parts)
+
+
+def build_stage2_timing_analysis_system_instruction(*, timing_mode: str) -> str:
     return (
         "You are an audio timing analyst for an After Effects pipeline.\n"
         + STAGE2_TIMING_BASE_JSON.strip()
         + "\n\n"
-        + STAGE2_TIMING_FAST_START.strip()
-        + "\n\n"
-        + STAGE2_TIMING_SEMANTIC_AFTER.strip()
+        + _build_stage2_timing_modules(timing_mode=timing_mode)
         + "\n\n"
         + STAGE2_TIMING_ANALYSIS.strip()
         + "\n"
@@ -316,40 +324,37 @@ def build_stage2_timing_analysis_user_prompt(
     *,
     stage1_json: Dict[str, object],
     subtitles_json: Dict[str, object],
-    bpm: float,
+    bpm: float | None,
     fast_start_seconds: float,
     timing_mode: str,
     schema_name: str = "Stage2TimingAnalysisPayload",
 ) -> str:
     clip = ((stage1_json or {}).get("audio") or {}) if isinstance(stage1_json, dict) else {}
     semantic_ctx = _timing_semantic_context_from_subtitles(subtitles_json)
+    clip_ctx = {
+        "clip_start_abs": float(clip.get("clip_start_abs") or 0.0),
+        "clip_end_abs": float(clip.get("clip_end_abs") or 0.0),
+        "fast_start_seconds": float(fast_start_seconds),
+    }
+    if bpm is not None:
+        clip_ctx["bpm_librosa"] = float(bpm)
     return (
         f"Return ONLY JSON matching schema: {schema_name}\n\n"
         "TIMING_MODE:\n"
         + json.dumps({"mode": str(timing_mode)}, ensure_ascii=False)
         + "\n\nAUDIO_CLIP_JSON:\n"
-        + json.dumps(
-            {
-                "clip_start_abs": float(clip.get("clip_start_abs") or 0.0),
-                "clip_end_abs": float(clip.get("clip_end_abs") or 0.0),
-                "bpm_librosa": float(bpm),
-                "fast_start_seconds": float(fast_start_seconds),
-            },
-            ensure_ascii=False,
-        )
+        + json.dumps(clip_ctx, ensure_ascii=False)
         + "\n\nSEMANTIC_SUBTITLES_CONTEXT_JSON:\n"
         + json.dumps(semantic_ctx, ensure_ascii=False)
     )
 
 
-def build_stage2_timing_cuts_system_instruction() -> str:
+def build_stage2_timing_cuts_system_instruction(*, timing_mode: str) -> str:
     return (
         "You are an editing timing director for an After Effects pipeline.\n"
         + STAGE2_TIMING_BASE_JSON.strip()
         + "\n\n"
-        + STAGE2_TIMING_FAST_START.strip()
-        + "\n\n"
-        + STAGE2_TIMING_SEMANTIC_AFTER.strip()
+        + _build_stage2_timing_modules(timing_mode=timing_mode)
         + "\n\n"
         + STAGE2_TIMING_CUTS.strip()
         + "\n"
@@ -360,26 +365,25 @@ def build_stage2_timing_cuts_user_prompt(
     *,
     stage1_json: Dict[str, object],
     timing_analysis_json: Dict[str, object],
-    bpm: float,
+    bpm: float | None,
     fast_start_seconds: float,
     timing_mode: str,
     schema_name: str = "Stage2TimingCutsPayload",
 ) -> str:
     clip = ((stage1_json or {}).get("audio") or {}) if isinstance(stage1_json, dict) else {}
+    clip_ctx = {
+        "clip_start_abs": float(clip.get("clip_start_abs") or 0.0),
+        "clip_end_abs": float(clip.get("clip_end_abs") or 0.0),
+        "fast_start_seconds": float(fast_start_seconds),
+    }
+    if bpm is not None:
+        clip_ctx["bpm_librosa"] = float(bpm)
     return (
         f"Return ONLY JSON matching schema: {schema_name}\n\n"
         "TIMING_MODE:\n"
         + json.dumps({"mode": str(timing_mode)}, ensure_ascii=False)
         + "\n\nAUDIO_CLIP_JSON:\n"
-        + json.dumps(
-            {
-                "clip_start_abs": float(clip.get("clip_start_abs") or 0.0),
-                "clip_end_abs": float(clip.get("clip_end_abs") or 0.0),
-                "bpm_librosa": float(bpm),
-                "fast_start_seconds": float(fast_start_seconds),
-            },
-            ensure_ascii=False,
-        )
+        + json.dumps(clip_ctx, ensure_ascii=False)
         + "\n\nTIMING_ANALYSIS_JSON:\n"
         + json.dumps(timing_analysis_json, ensure_ascii=False)
     )
