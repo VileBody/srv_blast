@@ -262,11 +262,106 @@ def _apply_text_time_shift(layers: List[Dict[str, Any]], *, shift_s: float) -> N
                     continue
 
 
-def build_text_layers(*, full_edit_config: Dict[str, Any], text_comp_name: str, mine_comp_name: str) -> List[Dict[str, Any]]:
-    orch = ProjectOrchestrator(full_edit_config)
-    orch.build()
+def _build_layers_from_subtitle_segments(
+    *,
+    full_edit_config: Dict[str, Any],
+    text_comp_name: str,
+) -> List[Dict[str, Any]]:
+    segments = list(full_edit_config.get("subtitle_segments") or [])
+    parsed: List[Dict[str, Any]] = []
+    for idx, seg in enumerate(segments):
+        if not isinstance(seg, dict):
+            continue
+        text = str(seg.get("text") or "").strip()
+        tag = str(seg.get("tag") or "").strip().lower()
+        in_raw = seg.get("in_point")
+        out_raw = seg.get("out_point")
+        if in_raw is None:
+            in_raw = seg.get("in")
+        if out_raw is None:
+            out_raw = seg.get("out")
+        try:
+            in_p = float(in_raw)
+            out_p = float(out_raw)
+        except Exception:
+            continue
+        if not text or out_p <= in_p:
+            continue
+        if tag not in {"long", "short"}:
+            tag = "long" if (out_p - in_p) >= 1.0 else "short"
+        parsed.append(
+            {
+                "idx": int(idx),
+                "text": text,
+                "tag": tag,
+                "in_point": float(in_p),
+                "out_point": float(out_p),
+                "exit_t": seg.get("exit_t"),
+            }
+        )
 
-    layers: List[Dict[str, Any]] = list(orch.final_stack)
+    parsed.sort(key=lambda x: (float(x["in_point"]), int(x["idx"])))
+
+    layers: List[Dict[str, Any]] = []
+    for i, seg in enumerate(parsed):
+        in_p = float(seg["in_point"])
+        out_p = float(seg["out_point"])
+        tag = str(seg["tag"])
+
+        exit_t: float | None = None
+        if tag == "long":
+            raw_exit_t = seg.get("exit_t")
+            if raw_exit_t is not None:
+                try:
+                    exit_t = float(raw_exit_t)
+                except Exception:
+                    exit_t = None
+            for nxt in parsed[i + 1:]:
+                nxt_in = float(nxt["in_point"])
+                if nxt_in <= in_p + 1e-6:
+                    continue
+                if nxt_in > out_p + 1e-6:
+                    break
+                if str(nxt["tag"]) == "short":
+                    if exit_t is None:
+                        exit_t = nxt_in
+                    break
+
+        layer_meta: Dict[str, Any] = {
+            "comp_name_target": text_comp_name,
+            "startTime": 0.0,
+            "subtitle_tag": tag,
+        }
+        if exit_t is not None:
+            layer_meta["impulse_exit_t"] = float(exit_t)
+
+        layers.append(
+            {
+                "name": f"subtitle_{i + 1:03d}",
+                "type": "text",
+                "in_point": in_p,
+                "out_point": out_p,
+                "z_index": 1000 + i,
+                "text": str(seg["text"]),
+                "props": {},
+                "effects": {},
+                "text_data": {"layer_meta": layer_meta},
+            }
+        )
+
+    return layers
+
+
+def build_text_layers(*, full_edit_config: Dict[str, Any], text_comp_name: str, mine_comp_name: str) -> List[Dict[str, Any]]:
+    if isinstance(full_edit_config.get("subtitle_segments"), list):
+        layers = _build_layers_from_subtitle_segments(
+            full_edit_config=full_edit_config,
+            text_comp_name=text_comp_name,
+        )
+    else:
+        orch = ProjectOrchestrator(full_edit_config)
+        orch.build()
+        layers = list(orch.final_stack)
 
     for l in layers:
         # precomp node: нормализуем ВНУТРЕННИЕ слои тоже (на будущее, и чтобы было железобетонно)

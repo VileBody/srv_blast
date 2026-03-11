@@ -12,6 +12,7 @@ from .step1a_asr_only import SYSTEM_PART as STAGE1A_ASR
 from .step1a_forced_alignment import SYSTEM_PART as STAGE1A_FORCED_ALIGNMENT
 from .step1b_scenario_only import SYSTEM_PART as STAGE1B_SCENARIO
 from .step2_subtitles_only import SYSTEM_PART as STAGE2_SUBS
+from .stage2_subtitles_tagged import SYSTEM_PART as STAGE2_SUBS_TAGGED
 from .stage2_footage_style_only import SYSTEM_PART as STAGE2_FOOTAGE_STYLE
 from .stage2_timing_switches import (
     SYSTEM_BASE_JSON as STAGE2_TIMING_BASE_JSON,
@@ -181,6 +182,15 @@ def build_stage2_subtitles_system_instruction() -> str:
     )
 
 
+def build_stage2_subtitles_tagged_system_instruction() -> str:
+    return (
+        "You are a subtitle tagging assistant for an After Effects pipeline.\n"
+        "Return ONLY valid JSON matching the provided schema. No markdown. No comments. No extra keys.\n\n"
+        + STAGE2_SUBS_TAGGED.strip()
+        + "\n"
+    )
+
+
 def build_stage2_subtitles_user_prompt(
     *,
     stage1_json: Dict[str, object],
@@ -221,6 +231,42 @@ def build_stage2_subtitles_user_prompt(
     )
 
 
+def build_stage2_subtitles_tagged_user_prompt(
+    *,
+    stage1_json: Dict[str, object],
+    schema_name: str = "TaggedSubtitlesPayload",
+) -> str:
+    audio = stage1_json.get("audio") if isinstance(stage1_json, dict) else None
+    cs = float((audio or {}).get("clip_start_abs") or 0.0)
+    ce = float((audio or {}).get("clip_end_abs") or 0.0)
+    words_in = stage1_json.get("transcript_words") if isinstance(stage1_json, dict) else None
+    words_out: List[Dict[str, object]] = []
+    if isinstance(words_in, list):
+        for w in words_in:
+            if not isinstance(w, dict):
+                continue
+            try:
+                ts = float(w.get("t_start") or 0.0)
+                te = float(w.get("t_end") or 0.0)
+            except Exception:
+                continue
+            if ts >= cs - 1e-6 and te <= ce + 1e-6:
+                words_out.append(w)
+
+    ctx = {
+        "clip_start_abs": cs,
+        "clip_end_abs": ce,
+        "transcript_words": words_out,
+        "lyrics_text": str(stage1_json.get("lyrics_text") or ""),
+        "target_fragment": str(stage1_json.get("target_fragment") or ""),
+    }
+    return (
+        f"Return ONLY JSON matching schema: {schema_name}\n\n"
+        "STAGE1_TAGGED_SUBTITLES_CONTEXT_JSON:\n"
+        + json.dumps(ctx, ensure_ascii=False)
+    )
+
+
 def build_stage2_footage_system_instruction() -> str:
     return (
         "You are a footage style picker for an After Effects pipeline.\n"
@@ -247,6 +293,37 @@ def build_stage2_footage_user_prompt(
 
 def _timing_semantic_context_from_subtitles(subtitles_json: Dict[str, object]) -> Dict[str, object]:
     out_segments: List[Dict[str, object]] = []
+
+    # Impulse-tagged subtitles flow (no macro blocks):
+    # {
+    #   "subtitles": [{"text": "...", "tag": "long|short", "in": 0.0, "out": 1.2}, ...]
+    # }
+    tagged_list = subtitles_json.get("subtitles")
+    if isinstance(tagged_list, list):
+        for idx, seg in enumerate(tagged_list):
+            if not isinstance(seg, dict):
+                continue
+            start_raw = seg.get("in")
+            if start_raw is None:
+                start_raw = seg.get("in_abs")
+            try:
+                start_abs = float(start_raw)
+            except Exception:
+                continue
+            phrase = str(seg.get("text") or "").strip()
+            if not phrase:
+                continue
+            tag = str(seg.get("tag") or "").strip().lower()
+            out_segments.append(
+                {
+                    "where": f"subtitle[{idx}]",
+                    "phrase": phrase,
+                    "tag": tag,
+                    "start_abs": start_abs,
+                }
+            )
+        out_segments.sort(key=lambda x: (float(x.get("start_abs") or 0.0), str(x.get("where") or "")))
+        return {"segments": out_segments}
 
     for key in ["block_1", "block_3", "block_6"]:
         seg = subtitles_json.get(key)

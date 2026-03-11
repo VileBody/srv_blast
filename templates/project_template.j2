@@ -990,7 +990,9 @@
 
       var fps = Number(layer.containingComp ? layer.containingComp.frameRate : 23.976);
       if (!(fps > 0)) fps = 23.976;
-      var isLong = dur >= 1.0;
+      var tdMeta = (lData.text_data && lData.text_data.layer_meta) ? lData.text_data.layer_meta : null;
+      var tagRaw = tdMeta && tdMeta.subtitle_tag ? String(tdMeta.subtitle_tag).toLowerCase() : "";
+      var isLong = (tagRaw === "long") ? true : ((tagRaw === "short") ? false : (dur >= 1.0));
 
       var cleanText = impulseCleanText(lData.text || "");
       if (!cleanText) cleanText = String(lData.text || "");
@@ -1051,7 +1053,16 @@
 
       if (isLong) {
         var scaleExitT = Math.max(inT, outT - 7.0 / fps);
-        var opacityExitT = Math.max(inT, outT - 4.0 / fps);
+        if (tdMeta && tdMeta.impulse_exit_t !== undefined && tdMeta.impulse_exit_t !== null) {
+          try {
+            var exitT = Number(tdMeta.impulse_exit_t);
+            if (!isNaN(exitT) && exitT > inT && exitT < outT) {
+              scaleExitT = Math.min(scaleExitT, exitT);
+            }
+          } catch(_) {}
+        }
+        if (scaleExitT < inT) scaleExitT = inT;
+        var opacityExitT = Math.max(inT, Math.min(outT, scaleExitT + 3.0 / fps));
         try { scale.setValueAtTime(scaleExitT, [75, 75, 100]); } catch(_) {}
         try { scale.setValueAtTime(outT, [0, 0, 100]); } catch(_) {}
         try { opacity.setValueAtTime(opacityExitT, 100); } catch(_) {}

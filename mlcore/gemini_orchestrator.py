@@ -19,6 +19,7 @@ from mlcore.gemini_call import (
     call_stage1_asr_once,
     call_stage1_forced_alignment_once,
     call_stage1_scenario_once,
+    call_subtitles_tagged_once,
     call_timing_analysis_once,
     call_timing_cuts_once,
     call_subtitles_plan_once,
@@ -52,6 +53,7 @@ from mlcore.models.stage1_plan import TranscriptWord
 from mlcore.models.stage1_scenario import Stage1ScenarioPayload
 from mlcore.models.subtitles_spans import BlocksTokenSpansPayload, TokenSpan
 from mlcore.models.subtitles_tokens import BlocksTokensPayload
+from mlcore.models.tagged_subtitles import TaggedSubtitlesPayload
 from mlcore.models.switch_timing import (
     Stage2TimingAnalysisPayload,
     Stage2TimingCutsPayload,
@@ -68,6 +70,8 @@ from mlcore.prompts import (
     build_stage2_footage_system_instruction,
     build_stage2_footage_user_prompt,
     build_stage2_subtitles_system_instruction,
+    build_stage2_subtitles_tagged_system_instruction,
+    build_stage2_subtitles_tagged_user_prompt,
     build_stage2_subtitles_user_prompt,
     build_stage2_timing_analysis_system_instruction,
     build_stage2_timing_analysis_user_prompt,
@@ -242,6 +246,15 @@ def _require_choice_env(name: str, *, allowed: List[str]) -> str:
         raise RuntimeError(f"Missing required env var: {name}")
     if raw not in allowed:
         raise RuntimeError(f"Invalid {name}: {raw!r}; allowed={allowed}")
+    return raw
+
+
+def _resolve_text_subtitle_preset() -> str:
+    raw = (os.environ.get("TEXT_SUBTITLE_PRESET") or "classic").strip().lower()
+    if raw not in {"classic", "impulse"}:
+        raise RuntimeError(
+            f"Invalid TEXT_SUBTITLE_PRESET: {raw!r}; allowed=['classic','impulse']"
+        )
     return raw
 
 
@@ -773,6 +786,179 @@ def _log_subtitles_token_metrics(payload: BlocksTokensPayload) -> None:
         log.warning("subtitles_layout_warning %s", msg)
 
 
+def _log_tagged_subtitles_metrics(payload: TaggedSubtitlesPayload) -> None:
+    log = logging.getLogger("mlcore.gemini_orchestrator")
+    items = list(payload.subtitles)
+    log.info(
+        "tagged_subtitles_summary count=%d clip=%.3f..%.3f",
+        len(items),
+        float(payload.clip_start_abs),
+        float(payload.clip_end_abs),
+    )
+    for i, it in enumerate(items):
+        log.info(
+            "tagged_subtitle[%d] tag=%s in=%.3f out=%.3f text=%r",
+            i,
+            str(it.tag),
+            float(it.in_abs),
+            float(it.out_abs),
+            str(it.text),
+        )
+
+
+def _first_token_word(text: str) -> str:
+    words = _norm_words_for_lex_compare(text)
+    if words:
+        return str(words[0])
+    fallback = re.sub(r"\s+", " ", str(text or "")).strip().lower()
+    return fallback or "word"
+
+
+def _tagged_item_to_segment_dict(
+    *,
+    item: Any,
+    clip_start_abs: float,
+    clip_end_abs: float,
+    trailing: str,
+) -> Dict[str, Any]:
+    t_start = max(float(clip_start_abs), float(item.in_abs))
+    t_end = min(float(clip_end_abs), float(item.out_abs))
+    if t_end <= t_start + 1e-6:
+        t_end = min(float(clip_end_abs), t_start + 0.05)
+        if t_end <= t_start + 1e-6:
+            t_start = max(float(clip_start_abs), float(clip_end_abs) - 0.06)
+            t_end = float(clip_end_abs) - 0.01
+    tok_text = _first_token_word(str(item.text))
+    return {
+        "phrase": str(item.text),
+        "tokens": [
+            {
+                "text": tok_text,
+                "t_start": float(t_start),
+                "t_end": float(t_end),
+                "trailing": trailing,
+            }
+        ],
+    }
+
+
+def _build_proxy_blocks_from_tagged(
+    *,
+    payload: TaggedSubtitlesPayload,
+    clip_start_abs: float,
+    clip_end_abs: float,
+) -> BlocksTokensPayload:
+    items = list(payload.subtitles)
+    if not items:
+        raise ValueError("Tagged subtitles are empty")
+
+    def pick(idx: int) -> Any:
+        if idx < len(items):
+            return items[idx]
+        return items[-1]
+
+    b5_glitch_item = pick(8)
+    b5_glitch_seg = _tagged_item_to_segment_dict(
+        item=b5_glitch_item,
+        clip_start_abs=clip_start_abs,
+        clip_end_abs=clip_end_abs,
+        trailing=" ",
+    )
+
+    g = b5_glitch_seg["tokens"][0]
+    gs = float(g["t_start"])
+    ge = float(g["t_end"])
+    eps = 1e-6
+
+    mine_item = None
+    for cand in items:
+        cs = float(cand.in_abs)
+        ce = float(cand.out_abs)
+        overlaps = (cs < ge - eps) and (gs < ce - eps)
+        if not overlaps:
+            mine_item = cand
+            break
+
+    if mine_item is None:
+        mine_start = max(float(clip_start_abs), float(clip_end_abs) - 0.12)
+        mine_end = min(float(clip_end_abs), mine_start + 0.08)
+        if mine_end <= mine_start + 1e-6:
+            mine_end = min(float(clip_end_abs), mine_start + 0.05)
+        mine_word = "mine"
+        mine_seg = {
+            "phrase": mine_word,
+            "tokens": [
+                {
+                    "text": mine_word,
+                    "t_start": float(mine_start),
+                    "t_end": float(mine_end),
+                    "trailing": "",
+                }
+            ],
+        }
+    else:
+        mine_seg = _tagged_item_to_segment_dict(
+            item=mine_item,
+            clip_start_abs=clip_start_abs,
+            clip_end_abs=clip_end_abs,
+            trailing="",
+        )
+        mine_word = _first_token_word(str(mine_item.text))
+        mine_seg["phrase"] = mine_word
+        mine_seg["tokens"][0]["text"] = mine_word
+
+    obj: Dict[str, Any] = {
+        "clip": {
+            "start": float(clip_start_abs),
+            "end": float(clip_end_abs),
+        },
+        "block_1": _tagged_item_to_segment_dict(
+            item=pick(0), clip_start_abs=clip_start_abs, clip_end_abs=clip_end_abs, trailing=" "
+        ),
+        "block_2": {
+            "p1": _tagged_item_to_segment_dict(
+                item=pick(1), clip_start_abs=clip_start_abs, clip_end_abs=clip_end_abs, trailing=" "
+            ),
+            "p2": _tagged_item_to_segment_dict(
+                item=pick(2), clip_start_abs=clip_start_abs, clip_end_abs=clip_end_abs, trailing=" "
+            ),
+        },
+        "block_3": _tagged_item_to_segment_dict(
+            item=pick(3), clip_start_abs=clip_start_abs, clip_end_abs=clip_end_abs, trailing=" "
+        ),
+        "block_4": {
+            "p1": _tagged_item_to_segment_dict(
+                item=pick(4), clip_start_abs=clip_start_abs, clip_end_abs=clip_end_abs, trailing=" "
+            ),
+            "p2": _tagged_item_to_segment_dict(
+                item=pick(5), clip_start_abs=clip_start_abs, clip_end_abs=clip_end_abs, trailing=" "
+            ),
+        },
+        "block_5": {
+            "slowly_in": _tagged_item_to_segment_dict(
+                item=pick(6), clip_start_abs=clip_start_abs, clip_end_abs=clip_end_abs, trailing=" "
+            ),
+            "fast_reveal": _tagged_item_to_segment_dict(
+                item=pick(7), clip_start_abs=clip_start_abs, clip_end_abs=clip_end_abs, trailing=" "
+            ),
+            "glitch_peak": b5_glitch_seg,
+            "mine": mine_seg,
+        },
+        "block_6": _tagged_item_to_segment_dict(
+            item=pick(9), clip_start_abs=clip_start_abs, clip_end_abs=clip_end_abs, trailing=" "
+        ),
+        "block_7": {
+            "part1": _tagged_item_to_segment_dict(
+                item=pick(10), clip_start_abs=clip_start_abs, clip_end_abs=clip_end_abs, trailing=" "
+            ),
+            "part2": _tagged_item_to_segment_dict(
+                item=pick(11), clip_start_abs=clip_start_abs, clip_end_abs=clip_end_abs, trailing=" "
+            ),
+        },
+    }
+    return BlocksTokensPayload.model_validate(obj)
+
+
 def _ordered_named_spans(spans: BlocksTokenSpansPayload) -> List[Tuple[str, TokenSpan]]:
     return [
         ("block_1", spans.block_1),
@@ -1034,6 +1220,7 @@ def build_all_via_gemini_one_call(
     hedge_delay_s = _float_env("LLM_HEDGE_DELAY_S", 60.0)
     timing_mode = _require_choice_env("STAGE2_TIMING_MODE", allowed=["prompts", "hybrid"])
     fast_start_seconds = _require_float_env("STAGE2_FAST_START_SECONDS")
+    text_subtitle_preset = _resolve_text_subtitle_preset()
     if fast_start_seconds < 0.0:
         raise RuntimeError(f"Invalid STAGE2_FAST_START_SECONDS: {fast_start_seconds!r}")
 
@@ -1064,13 +1251,14 @@ def build_all_via_gemini_one_call(
 
     logger.info(
         "llm_provider_config mode=%s hedge_delay_s=%s gemini_timeout_s=%s openrouter_timeout_s=%s "
-        "timing_mode=%s fast_start_seconds=%.3f",
+        "timing_mode=%s fast_start_seconds=%.3f text_preset=%s",
         provider_mode,
         hedge_delay_s,
         timeout_s,
         openrouter_timeout_s,
         timing_mode,
         fast_start_seconds,
+        text_subtitle_preset,
     )
 
     client_stage1_asr: Optional[GeminiClient] = None
@@ -1497,16 +1685,32 @@ def build_all_via_gemini_one_call(
 
     _emit(progress_cb, "llm_stage2_parallel")
     logger.info(
-        "stage2_start subtitles_model=%s footage_style_model=%s timing_model=%s timing_mode=%s style_groups=%d",
+        "stage2_start subtitles_model=%s footage_style_model=%s timing_model=%s timing_mode=%s text_preset=%s style_groups=%d",
         model_subtitles,
         model_footage,
         model_stage1_base,
         timing_mode,
+        text_subtitle_preset,
         len(style_groups),
     )
 
-    sub_system = build_stage2_subtitles_system_instruction()
-    sub_prompt = build_stage2_subtitles_user_prompt(stage1_json=stage1_json, schema_name="BlocksTokensPayload")
+    use_tagged_subtitles = (text_subtitle_preset == "impulse")
+    if use_tagged_subtitles:
+        sub_system = build_stage2_subtitles_tagged_system_instruction()
+        sub_prompt = build_stage2_subtitles_tagged_user_prompt(
+            stage1_json=stage1_json,
+            schema_name="TaggedSubtitlesPayload",
+        )
+        sub_raw = logs_dir / f"gemini_raw_stage2_subtitles_tagged_{stamp}.json"
+        sub_sys = logs_dir / f"gemini_system_stage2_subtitles_tagged_{stamp}.txt"
+        sub_user = logs_dir / f"gemini_prompt_stage2_subtitles_tagged_{stamp}.txt"
+    else:
+        sub_system = build_stage2_subtitles_system_instruction()
+        sub_prompt = build_stage2_subtitles_user_prompt(stage1_json=stage1_json, schema_name="BlocksTokensPayload")
+        sub_raw = logs_dir / f"gemini_raw_stage2_subtitles_{stamp}.json"
+        sub_sys = logs_dir / f"gemini_system_stage2_subtitles_{stamp}.txt"
+        sub_user = logs_dir / f"gemini_prompt_stage2_subtitles_{stamp}.txt"
+
     subtitles_retry_hint = (os.environ.get("STAGE2_SUBTITLES_RETRY_HINT") or "").strip()
     if subtitles_retry_hint:
         sub_prompt = (
@@ -1515,10 +1719,11 @@ def build_all_via_gemini_one_call(
             + subtitles_retry_hint
             + "\n"
         )
-        logger.info("stage2_subtitles_retry_hint_applied chars=%d", len(subtitles_retry_hint))
-    sub_raw = logs_dir / f"gemini_raw_stage2_subtitles_{stamp}.json"
-    sub_sys = logs_dir / f"gemini_system_stage2_subtitles_{stamp}.txt"
-    sub_user = logs_dir / f"gemini_prompt_stage2_subtitles_{stamp}.txt"
+        logger.info(
+            "stage2_subtitles_retry_hint_applied mode=%s chars=%d",
+            "tagged" if use_tagged_subtitles else "classic",
+            len(subtitles_retry_hint),
+        )
 
     foot_system = build_stage2_footage_system_instruction()
     foot_prompt = build_stage2_footage_user_prompt(
@@ -1539,7 +1744,7 @@ def build_all_via_gemini_one_call(
     timing_cuts_sys = logs_dir / f"gemini_system_stage2_timing_cuts_{stamp}.txt"
     timing_cuts_user = logs_dir / f"gemini_prompt_stage2_timing_cuts_{stamp}.txt"
 
-    def _run_subtitles_once() -> BlocksTokensPayload:
+    def _run_subtitles_once_classic() -> BlocksTokensPayload:
         payload = call_subtitles_plan_once(
             client=client_subtitles,
             openrouter_client=openrouter_subtitles,
@@ -1573,12 +1778,46 @@ def build_all_via_gemini_one_call(
             )
         return payload
 
-    def _run_subtitles() -> BlocksTokensPayload:
+    def _run_subtitles_classic() -> BlocksTokensPayload:
         return _run_stage_with_model_validation_retries(
             stage_name="stage2_subtitles",
             logger=logger,
-            fn=_run_subtitles_once,
+            fn=_run_subtitles_once_classic,
         )
+
+    def _run_subtitles_once_tagged() -> TaggedSubtitlesPayload:
+        payload = call_subtitles_tagged_once(
+            client=client_subtitles,
+            openrouter_client=openrouter_subtitles,
+            provider_mode=provider_mode,
+            hedge_delay_s=hedge_delay_s,
+            logger=logger,
+            system_instruction=sub_system,
+            user_prompt=str(sub_prompt),
+            audio_paths=[],
+            raw_response_path=sub_raw,
+            cache_path=cache_path,
+            prompt_dump_path=sub_user,
+            system_dump_path=sub_sys,
+        )
+        if abs(float(payload.clip_start_abs) - float(stage1.audio.clip_start_abs)) > 1e-6:
+            raise ValueError("tagged_subtitles.clip_start_abs must equal stage1.audio.clip_start_abs")
+        if abs(float(payload.clip_end_abs) - float(stage1.audio.clip_end_abs)) > 1e-6:
+            raise ValueError("tagged_subtitles.clip_end_abs must equal stage1.audio.clip_end_abs")
+        _log_tagged_subtitles_metrics(payload)
+        return payload
+
+    def _run_subtitles_tagged() -> TaggedSubtitlesPayload:
+        return _run_stage_with_model_validation_retries(
+            stage_name="stage2_subtitles_tagged",
+            logger=logger,
+            fn=_run_subtitles_once_tagged,
+        )
+
+    def _run_subtitles_any() -> Any:
+        if use_tagged_subtitles:
+            return _run_subtitles_tagged()
+        return _run_subtitles_classic()
 
     def _run_style_once() -> FootageStylePickPayload:
         payload = call_footage_style_once(
@@ -1608,18 +1847,35 @@ def build_all_via_gemini_one_call(
         )
 
     subtitles_payload: BlocksTokensPayload | None = None
+    tagged_subtitles_payload: TaggedSubtitlesPayload | None = None
     style_payload: FootageStylePickPayload | None = None
     subtitles_from_resume = False
     style_from_resume = False
-    subtitles_cached = resume_state.get("stage2_subtitles")
-    if isinstance(subtitles_cached, dict):
-        try:
-            subtitles_payload = BlocksTokensPayload.model_validate(subtitles_cached)
-            subtitles_from_resume = True
-            logger.info("llm_resume_hit stage=stage2_subtitles")
-        except Exception as e:
-            logger.warning("llm_resume_bad stage=stage2_subtitles err=%s", str(e))
-            resume_state.pop("stage2_subtitles", None)
+    if use_tagged_subtitles:
+        subtitles_cached = resume_state.get("stage2_subtitles_tagged")
+        if isinstance(subtitles_cached, dict):
+            try:
+                tagged_subtitles_payload = TaggedSubtitlesPayload.model_validate(subtitles_cached)
+                subtitles_payload = _build_proxy_blocks_from_tagged(
+                    payload=tagged_subtitles_payload,
+                    clip_start_abs=float(stage1.audio.clip_start_abs),
+                    clip_end_abs=float(stage1.audio.clip_end_abs),
+                )
+                subtitles_from_resume = True
+                logger.info("llm_resume_hit stage=stage2_subtitles_tagged")
+            except Exception as e:
+                logger.warning("llm_resume_bad stage=stage2_subtitles_tagged err=%s", str(e))
+                resume_state.pop("stage2_subtitles_tagged", None)
+    else:
+        subtitles_cached = resume_state.get("stage2_subtitles")
+        if isinstance(subtitles_cached, dict):
+            try:
+                subtitles_payload = BlocksTokensPayload.model_validate(subtitles_cached)
+                subtitles_from_resume = True
+                logger.info("llm_resume_hit stage=stage2_subtitles")
+            except Exception as e:
+                logger.warning("llm_resume_bad stage=stage2_subtitles err=%s", str(e))
+                resume_state.pop("stage2_subtitles", None)
 
     style_cached = resume_state.get("stage2_style")
     if isinstance(style_cached, dict):
@@ -1633,27 +1889,54 @@ def build_all_via_gemini_one_call(
             resume_state.pop("stage2_style", None)
 
     stage2_errors: Dict[str, BaseException] = {}
-    if subtitles_payload is None and style_payload is None:
-        subtitles_payload, style_payload, stage2_errors = _run_stage2_parallel_collect(
-            _run_subtitles,
+    if subtitles_payload is None and tagged_subtitles_payload is None and style_payload is None:
+        subtitles_any, style_payload, stage2_errors = _run_stage2_parallel_collect(
+            _run_subtitles_any,
             _run_style,
         )
+        if subtitles_any is not None:
+            if use_tagged_subtitles:
+                tagged_subtitles_payload = TaggedSubtitlesPayload.model_validate(subtitles_any)
+                subtitles_payload = _build_proxy_blocks_from_tagged(
+                    payload=tagged_subtitles_payload,
+                    clip_start_abs=float(stage1.audio.clip_start_abs),
+                    clip_end_abs=float(stage1.audio.clip_end_abs),
+                )
+            else:
+                subtitles_payload = BlocksTokensPayload.model_validate(subtitles_any)
     else:
-        if subtitles_payload is None:
+        if subtitles_payload is None and tagged_subtitles_payload is None:
             try:
-                subtitles_payload = _run_subtitles()
+                subtitles_any = _run_subtitles_any()
+                if use_tagged_subtitles:
+                    tagged_subtitles_payload = TaggedSubtitlesPayload.model_validate(subtitles_any)
+                    subtitles_payload = _build_proxy_blocks_from_tagged(
+                        payload=tagged_subtitles_payload,
+                        clip_start_abs=float(stage1.audio.clip_start_abs),
+                        clip_end_abs=float(stage1.audio.clip_end_abs),
+                    )
+                else:
+                    subtitles_payload = BlocksTokensPayload.model_validate(subtitles_any)
             except Exception as e:  # noqa: BLE001
-                stage2_errors["stage2_subtitles"] = e
+                stage2_errors["stage2_subtitles_tagged" if use_tagged_subtitles else "stage2_subtitles"] = e
         if style_payload is None:
             try:
                 style_payload = _run_style()
             except Exception as e:  # noqa: BLE001
                 stage2_errors["stage2_style"] = e
 
+    if use_tagged_subtitles and "stage2_subtitles" in stage2_errors:
+        stage2_errors["stage2_subtitles_tagged"] = stage2_errors.pop("stage2_subtitles")
+
     state_dirty = False
-    if subtitles_payload is not None and not subtitles_from_resume:
-        resume_state["stage2_subtitles"] = subtitles_payload.model_dump(mode="json")
-        state_dirty = True
+    if use_tagged_subtitles:
+        if tagged_subtitles_payload is not None and not subtitles_from_resume:
+            resume_state["stage2_subtitles_tagged"] = tagged_subtitles_payload.model_dump(mode="json")
+            state_dirty = True
+    else:
+        if subtitles_payload is not None and not subtitles_from_resume:
+            resume_state["stage2_subtitles"] = subtitles_payload.model_dump(mode="json")
+            state_dirty = True
     if style_payload is not None and not style_from_resume:
         resume_state["stage2_style"] = style_payload.model_dump(mode="json")
         state_dirty = True
@@ -1720,9 +2003,14 @@ def build_all_via_gemini_one_call(
     timing_analysis_payload: Stage2TimingAnalysisPayload | None = None
     timing_cuts_payload: Stage2TimingCutsPayload | None = None
     if switch_payload is None:
+        timing_semantic_subtitles_json = (
+            tagged_subtitles_payload.model_dump(mode="json")
+            if tagged_subtitles_payload is not None
+            else subtitles_payload.model_dump(mode="json")
+        )
         timing_analysis_prompt = build_stage2_timing_analysis_user_prompt(
             stage1_json=stage1_json,
-            subtitles_json=subtitles_payload.model_dump(mode="json"),
+            subtitles_json=timing_semantic_subtitles_json,
             bpm=bpm,
             fast_start_seconds=float(fast_start_seconds),
             timing_mode=timing_mode,
@@ -1849,6 +2137,11 @@ def build_all_via_gemini_one_call(
         json.dumps(subtitles_payload.model_dump(mode="json"), ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    if tagged_subtitles_payload is not None:
+        (logs_dir / f"stage2_subtitles_tagged_{stamp}.json").write_text(
+            json.dumps(tagged_subtitles_payload.model_dump(mode="json"), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
     (logs_dir / f"stage2_style_{stamp}.json").write_text(
         json.dumps(style_payload.model_dump(mode="json"), ensure_ascii=False, indent=2),
         encoding="utf-8",
@@ -1902,6 +2195,11 @@ def build_all_via_gemini_one_call(
         json.dumps(subtitles_payload.model_dump(mode="json"), ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    if tagged_subtitles_payload is not None:
+        (logs_dir / "stage2_subtitles_tagged.json").write_text(
+            json.dumps(tagged_subtitles_payload.model_dump(mode="json"), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
     (logs_dir / "stage2_style.json").write_text(
         json.dumps(style_payload.model_dump(mode="json"), ensure_ascii=False, indent=2),
         encoding="utf-8",
@@ -1922,13 +2220,14 @@ def build_all_via_gemini_one_call(
     _emit(progress_cb, "llm_merge")
     logger.info("stage3_merge_start")
 
-    full_payload = FullPlanPayload.model_validate(
-        {
-            "audio": stage1_json["audio"],
-            "subtitles": subtitles_payload.model_dump(mode="json"),
-            "footage": footage_payload.model_dump(mode="json"),
-        }
-    )
+    full_payload_obj: Dict[str, Any] = {
+        "audio": stage1_json["audio"],
+        "subtitles": subtitles_payload.model_dump(mode="json"),
+        "footage": footage_payload.model_dump(mode="json"),
+    }
+    if tagged_subtitles_payload is not None:
+        full_payload_obj["tagged_subtitles"] = tagged_subtitles_payload.model_dump(mode="json")
+    full_payload = FullPlanPayload.model_validate(full_payload_obj)
 
     (logs_dir / f"gemini_full_plan_merged_{stamp}.json").write_text(
         json.dumps(full_payload.model_dump(mode="json"), ensure_ascii=False, indent=2),
