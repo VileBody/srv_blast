@@ -27,3 +27,18 @@ def test_detect_bpm_librosa_from_synthetic_click_track() -> None:
 
     bpm = detect_bpm_librosa_from_signal(y=y, sr=sr)
     assert 116.0 <= bpm <= 124.0
+
+
+def test_detect_bpm_accepts_numpy_tempo_array(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _FakeBeat:
+        @staticmethod
+        def beat_track(*, y, sr):
+            return np.array([128.5], dtype=np.float32), np.array([1, 2, 3], dtype=np.int64)
+
+    class _FakeLibrosa:
+        beat = _FakeBeat()
+
+    monkeypatch.setattr("mlcore.audio_bpm._load_librosa", lambda: _FakeLibrosa())
+    y = np.zeros(1024, dtype=np.float32)
+    bpm = detect_bpm_librosa_from_signal(y=y, sr=22050)
+    assert bpm == pytest.approx(128.5)

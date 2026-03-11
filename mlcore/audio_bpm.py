@@ -32,12 +32,10 @@ def detect_bpm_librosa_from_signal(*, y: "np.ndarray", sr: int) -> float:
         raise ValueError("audio signal is too short for BPM detection")
 
     tempo, _beats = librosa.beat.beat_track(y=y, sr=int(sr))
-    if isinstance(tempo, (list, tuple)):
-        if not tempo:
-            raise RuntimeError("librosa returned empty tempo result")
-        bpm = float(tempo[0])
-    else:
-        bpm = float(tempo)
+    tempo_arr = np.asarray(tempo).reshape(-1)
+    if tempo_arr.size == 0:
+        raise RuntimeError("librosa returned empty tempo result")
+    bpm = float(tempo_arr[0])
 
     if bpm <= 0.0:
         raise RuntimeError(f"Invalid BPM detected by librosa: {bpm!r}")
