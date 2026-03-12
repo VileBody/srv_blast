@@ -123,7 +123,8 @@ def build_stage1a_forced_alignment_user_prompt(
     return (
         f"Return ONLY JSON matching schema: {schema_name}\n\n"
         "Use the attached audio as the source of truth.\n"
-        "Align every word in REFERENCE_TEXT and return one timed item per word.\n\n"
+        "Align every word in REFERENCE_TEXT and return one timed item per word.\n"
+        "REFERENCE_TEXT is the only allowed word source (no extra backing/ad-lib words).\n\n"
         "REFERENCE_TEXT:\n"
         + ref
         + "\n"

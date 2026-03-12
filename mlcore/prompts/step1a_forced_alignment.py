@@ -14,8 +14,8 @@ Hard constraints:
 - aligned_words length MUST equal REFERENCE_TEXT word count.
 - Keep the exact word order from REFERENCE_TEXT.
 - Do NOT skip, merge, split, reorder, or invent words.
+- Do NOT add backing/ad-lib words that are absent in REFERENCE_TEXT.
 - Timings must be on FULL TRACK timeline (absolute seconds from audio start).
 - Every item must satisfy: t_end > t_start.
 - Return valid JSON only, no markdown/comments.
 """
-
