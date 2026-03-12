@@ -18,18 +18,6 @@ def _env_float(name: str, default: float) -> float:
         return float(default)
 
 
-def _resolve_text_layer_shift_s() -> float:
-    preset = (os.environ.get("TEXT_SUBTITLE_PRESET") or "classic").strip().lower()
-    if preset == "classic":
-        return _env_float("TEXT_LAYER_TIME_SHIFT_S", 0.3)
-    if preset == "impulse":
-        return 0.0
-    raise RuntimeError(
-        "Invalid TEXT_SUBTITLE_PRESET="
-        f"{preset!r}; allowed=['classic','impulse']"
-    )
-
-
 def _normalize_layer_dict(l: Dict[str, Any], *, text_comp_name: str, mine_comp_name: str) -> None:
     td = l.get("text_data") or {}
     meta = td.get("layer_meta") or {}
@@ -287,7 +275,7 @@ def build_text_layers(*, full_edit_config: Dict[str, Any], text_comp_name: str, 
         fps = float(fps_raw)
     except Exception:
         fps = 23.9759979248047
-    shift_s = _resolve_text_layer_shift_s()
+    shift_s = _env_float("TEXT_LAYER_TIME_SHIFT_S", 0.3)
     _apply_text_time_shift(layers, shift_s=shift_s)
     strict = (os.environ.get("TEXT_PREFLIGHT_STRICT", "1").strip() != "0")
     _preflight_clamp_text_layers(
