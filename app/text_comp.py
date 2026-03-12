@@ -5,7 +5,10 @@ import math
 import os
 from typing import Any, Dict, List
 
+from core.subtitles_mode import SUBTITLES_MODE_LEGACY_BLOCKS, normalize_subtitles_mode
 from app.orchestrator import ProjectOrchestrator
+from app.text_flow_renderer import TextFlowRendererFactory
+from mlcore.models.subtitles_flow import SubtitleFlowPlan
 
 
 def _env_float(name: str, default: float) -> float:
@@ -250,11 +253,40 @@ def _apply_text_time_shift(layers: List[Dict[str, Any]], *, shift_s: float) -> N
                     continue
 
 
-def build_text_layers(*, full_edit_config: Dict[str, Any], text_comp_name: str, mine_comp_name: str) -> List[Dict[str, Any]]:
-    orch = ProjectOrchestrator(full_edit_config)
-    orch.build()
+def _resolve_subtitles_mode(full_edit_config: Dict[str, Any]) -> str:
+    raw = ""
+    if isinstance(full_edit_config, dict):
+        raw = str(full_edit_config.get("subtitles_mode") or "").strip()
+    return normalize_subtitles_mode(raw, default=SUBTITLES_MODE_LEGACY_BLOCKS)
 
-    layers: List[Dict[str, Any]] = list(orch.final_stack)
+
+def _require_flow_plan(full_edit_config: Dict[str, Any], *, mode: str) -> SubtitleFlowPlan:
+    obj = full_edit_config.get("subtitle_flow_plan")
+    if not isinstance(obj, dict):
+        raise RuntimeError(
+            f"subtitles_mode={mode!r} requires subtitle_flow_plan object in full_edit_config"
+        )
+    flow = SubtitleFlowPlan.model_validate(obj)
+    if str(flow.mode) != str(mode):
+        raise RuntimeError(
+            f"subtitle_flow_plan.mode mismatch: {flow.mode!r} != {mode!r}"
+        )
+    return flow
+
+
+def build_text_layers(*, full_edit_config: Dict[str, Any], text_comp_name: str, mine_comp_name: str) -> List[Dict[str, Any]]:
+    mode = _resolve_subtitles_mode(full_edit_config)
+    if mode == SUBTITLES_MODE_LEGACY_BLOCKS:
+        orch = ProjectOrchestrator(full_edit_config)
+        orch.build()
+        layers: List[Dict[str, Any]] = list(orch.final_stack)
+    else:
+        flow = _require_flow_plan(full_edit_config, mode=mode)
+        flow_renderer = TextFlowRendererFactory.create(mode)
+        layers = flow_renderer.render(
+            flow_plan=flow,
+            text_comp_name=text_comp_name,
+        )
 
     for l in layers:
         # precomp node: нормализуем ВНУТРЕННИЕ слои тоже (на будущее, и чтобы было железобетонно)

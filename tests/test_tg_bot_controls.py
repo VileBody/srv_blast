@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from services.tg_bot_botapi.app import _is_control_button_text, _is_username_allowed, _parse_versions_choice
+from services.tg_bot_botapi.app import (
+    _is_control_button_text,
+    _is_username_allowed,
+    _parse_subtitles_mode_choice,
+    _parse_versions_choice,
+)
 from services.tg_bot_botapi.config import _normalize_username, _username_allowlist_env
 
 
@@ -38,5 +43,13 @@ def test_is_username_allowed_case_insensitive() -> None:
 def test_control_button_text_detection() -> None:
     assert _is_control_button_text("Отправить текст") is True
     assert _is_control_button_text("Отправить интересующий фрагмент") is True
+    assert _is_control_button_text("Impulse 2nd") is True
     assert _is_control_button_text(" 3 ") is True
     assert _is_control_button_text("Это реальный текст песни") is False
+
+
+def test_subtitles_mode_choice_parser() -> None:
+    assert _parse_subtitles_mode_choice("Обычные blocks") == "legacy_blocks"
+    assert _parse_subtitles_mode_choice("Impulse 2nd") == "impulse_2nd"
+    assert _parse_subtitles_mode_choice("Scenes 3rd") == "scenes_3rd"
+    assert _parse_subtitles_mode_choice("unknown") is None

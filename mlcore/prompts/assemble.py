@@ -4,6 +4,12 @@ from __future__ import annotations
 from typing import Dict, List
 import json
 
+from core.subtitles_mode import (
+    SUBTITLES_MODE_IMPULSE_2ND,
+    SUBTITLES_MODE_LEGACY_BLOCKS,
+    SUBTITLES_MODE_SCENES_3RD,
+    normalize_subtitles_mode,
+)
 from .step1_audio_window import SYSTEM_PART as S1
 from .step2_subtitles import SYSTEM_PART as S2
 from .step3_footage import SYSTEM_PART as S3
@@ -12,6 +18,8 @@ from .step1a_asr_only import SYSTEM_PART as STAGE1A_ASR
 from .step1a_forced_alignment import SYSTEM_PART as STAGE1A_FORCED_ALIGNMENT
 from .step1b_scenario_only import SYSTEM_PART as STAGE1B_SCENARIO
 from .step2_subtitles_only import SYSTEM_PART as STAGE2_SUBS
+from .stage2_subtitles_impulse_2nd import SYSTEM_PART as STAGE2_SUBS_IMPULSE_2ND
+from .stage2_subtitles_scenes_3rd import SYSTEM_PART as STAGE2_SUBS_SCENES_3RD
 from .stage2_footage_style_only import SYSTEM_PART as STAGE2_FOOTAGE_STYLE
 from .stage2_timing_switches import (
     SYSTEM_BASE_JSON as STAGE2_TIMING_BASE_JSON,
@@ -173,11 +181,23 @@ def build_stage1b_scenario_user_prompt(
     return base + branch
 
 
-def build_stage2_subtitles_system_instruction() -> str:
+def _stage2_subtitles_system_by_mode(mode: str) -> str:
+    resolved = normalize_subtitles_mode(mode)
+    if resolved == SUBTITLES_MODE_LEGACY_BLOCKS:
+        return STAGE2_SUBS
+    if resolved == SUBTITLES_MODE_IMPULSE_2ND:
+        return STAGE2_SUBS_IMPULSE_2ND
+    if resolved == SUBTITLES_MODE_SCENES_3RD:
+        return STAGE2_SUBS_SCENES_3RD
+    raise ValueError(f"Unsupported subtitles mode: {mode!r}")
+
+
+def build_stage2_subtitles_system_instruction(*, subtitles_mode: str = SUBTITLES_MODE_LEGACY_BLOCKS) -> str:
     return (
         "You are a subtitle alignment assistant for an After Effects pipeline.\n"
-        "Return ONLY valid JSON matching the provided schema. No markdown. No comments. No extra keys.\n\n"
-        + STAGE2_SUBS.strip()
+        "Return ONLY valid JSON matching the provided schema. No markdown. No comments. No extra keys.\n"
+        + f"Mode: {normalize_subtitles_mode(subtitles_mode)}\n\n"
+        + _stage2_subtitles_system_by_mode(subtitles_mode).strip()
         + "\n"
     )
 
@@ -186,6 +206,7 @@ def build_stage2_subtitles_user_prompt(
     *,
     stage1_json: Dict[str, object],
     schema_name: str = "BlocksTokensPayload",
+    subtitles_mode: str = SUBTITLES_MODE_LEGACY_BLOCKS,
 ) -> str:
     # Stage2 subtitles should only deal with the chosen clip window; reduce ambiguity by passing
     # only transcript words that lie inside that window (ABS times).
@@ -217,6 +238,9 @@ def build_stage2_subtitles_user_prompt(
 
     return (
         f"Return ONLY JSON matching schema: {schema_name}\n\n"
+        "SUBTITLES_MODE:\n"
+        + json.dumps({"mode": normalize_subtitles_mode(subtitles_mode)}, ensure_ascii=False)
+        + "\n\n"
         "STAGE1_SUBTITLES_CONTEXT_JSON:\n"
         + json.dumps(ctx, ensure_ascii=False)
     )
@@ -248,6 +272,33 @@ def build_stage2_footage_user_prompt(
 
 def _timing_semantic_context_from_subtitles(subtitles_json: Dict[str, object]) -> Dict[str, object]:
     out_segments: List[Dict[str, object]] = []
+
+    segments = subtitles_json.get("segments") if isinstance(subtitles_json, dict) else None
+    if isinstance(segments, list) and segments:
+        for idx, seg in enumerate(segments, start=1):
+            if not isinstance(seg, dict):
+                continue
+            where = str(seg.get("segment_id") or seg.get("id") or f"segment_{idx}")
+            phrase = str(seg.get("text") or "").strip()
+            if not phrase:
+                phrase = " ".join(str(x).strip() for x in (seg.get("words") or []) if str(x).strip())
+            start_abs = seg.get("in_point")
+            if start_abs is None:
+                start_abs = seg.get("start")
+            try:
+                start = float(start_abs or 0.0)
+            except Exception:
+                start = 0.0
+            out_segments.append(
+                {
+                    "where": where,
+                    "phrase": phrase,
+                    "start_abs": start,
+                }
+            )
+
+        out_segments.sort(key=lambda x: (float(x.get("start_abs") or 0.0), str(x.get("where") or "")))
+        return {"segments": out_segments}
 
     for key in ["block_1", "block_3", "block_6"]:
         seg = subtitles_json.get(key)

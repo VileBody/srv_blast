@@ -6,6 +6,7 @@ from typing import List
 from pydantic import BaseModel
 from redis.asyncio import Redis
 
+from core.subtitles_mode import SUBTITLES_MODE_LEGACY_BLOCKS
 from .config import Settings
 
 
@@ -15,6 +16,7 @@ STAGE_WAIT_LYRICS_CHOICE = "WAIT_LYRICS_CHOICE"
 STAGE_WAIT_LYRICS_TEXT = "WAIT_LYRICS_TEXT"
 STAGE_WAIT_FRAGMENT_CHOICE = "WAIT_FRAGMENT_CHOICE"
 STAGE_WAIT_FRAGMENT_TEXT = "WAIT_FRAGMENT_TEXT"
+STAGE_WAIT_SUBTITLES_MODE = "WAIT_SUBTITLES_MODE"
 STAGE_WAIT_VERSIONS = "WAIT_VERSIONS"
 STAGE_WAIT_CONFIRM = "WAIT_CONFIRM"
 STAGE_PROCESSING = "PROCESSING"
@@ -31,6 +33,7 @@ class ChatState(BaseModel):
     prepared_audio_local_path: str = ""
     lyrics_text: str = ""
     target_fragment: str = ""
+    subtitles_mode: str = SUBTITLES_MODE_LEGACY_BLOCKS
     versions_count: int = 1
 
     # legacy single-job fields (kept for backward compatibility)

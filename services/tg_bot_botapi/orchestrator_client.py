@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Dict
 
 import httpx
+from core.subtitles_mode import SUBTITLES_MODE_LEGACY_BLOCKS
 
 
 class OrchestratorClient:
@@ -22,6 +23,7 @@ class OrchestratorClient:
         mode: str,
         lyrics_text: str,
         target_fragment: str,
+        subtitles_mode: str = SUBTITLES_MODE_LEGACY_BLOCKS,
         idempotency_key: str | None = None,
         project_id: str | None = None,
     ) -> Dict[str, Any]:
@@ -30,6 +32,7 @@ class OrchestratorClient:
             "mode": str(mode),
             "lyrics_text": str(lyrics_text or ""),
             "target_fragment": str(target_fragment or ""),
+            "subtitles_mode": str(subtitles_mode or SUBTITLES_MODE_LEGACY_BLOCKS),
             "idempotency_key": idempotency_key,
             "project_id": project_id,
         }

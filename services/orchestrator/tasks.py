@@ -21,6 +21,7 @@ from .config import SETTINGS
 from .job_store import JobStore
 from .render_manifest import build_windows_job_payload
 from .windows_client import WindowsRenderClient
+from core.subtitles_mode import SUBTITLES_MODE_LEGACY_BLOCKS, normalize_subtitles_mode
 from core.runtime_mode import MODE_PROD, get_runtime_mode
 
 
@@ -406,9 +407,12 @@ def _drop_resume_stage_key(path: Path, *, key: str) -> bool:
         obj = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(obj, dict):
             return False
-        if key not in obj:
-            return False
+        had_key = key in obj
         obj.pop(key, None)
+        if key == "stage2_subtitles":
+            obj.pop("stage2_subtitles_mode", None)
+        if not had_key:
+            return False
         tmp = path.with_suffix(path.suffix + ".tmp")
         tmp.write_text(json.dumps(obj, ensure_ascii=False, indent=2), encoding="utf-8")
         tmp.replace(path)
@@ -488,6 +492,10 @@ def build_job(self, job_id: str) -> Dict[str, Any]:
     audio_url = str(req.get("audio_s3_url") or "").strip()
     lyrics_text = str(req.get("lyrics_text") or "")
     target_fragment = str(req.get("target_fragment") or "")
+    subtitles_mode = normalize_subtitles_mode(
+        str(req.get("subtitles_mode") or ""),
+        default=SUBTITLES_MODE_LEGACY_BLOCKS,
+    )
     if not audio_url:
         raise RuntimeError("missing audio_s3_url")
     if not _is_remote_url(audio_url):
@@ -525,6 +533,7 @@ def build_job(self, job_id: str) -> Dict[str, Any]:
     env["AE_MEDIA_MODE"] = "appdir"
     env["LYRICS_TEXT"] = lyrics_text
     env["TARGET_FRAGMENT"] = target_fragment
+    env["SUBTITLES_MODE"] = subtitles_mode
 
     build_all_fn = None
     if mode != "no_gemini":
@@ -543,6 +552,7 @@ def build_job(self, job_id: str) -> Dict[str, Any]:
             "JOB_ID",
             "LYRICS_TEXT",
             "TARGET_FRAGMENT",
+            "SUBTITLES_MODE",
         ):
             backup[k] = os.environ.get(k)
             os.environ[k] = env[k]
@@ -637,6 +647,7 @@ def build_job(self, job_id: str) -> Dict[str, Any]:
                     "JOB_ID",
                     "LYRICS_TEXT",
                     "TARGET_FRAGMENT",
+                    "SUBTITLES_MODE",
                 )
                 llm_backup: Dict[str, str | None] = {}
                 for k in llm_env_keys:

@@ -9,9 +9,11 @@ import os
 
 from jinja2 import Environment, FileSystemLoader
 
+from core.subtitles_mode import SUBTITLES_MODE_LEGACY_BLOCKS, normalize_subtitles_mode
 from mlcore.cr_patch import normalize_segment_inplace, patch_payload_dict_inplace
 from mlcore.timing_calc import compute_timings
 from mlcore.models.full_plan import FullPlanPayload
+from mlcore.models.subtitles_flow import SubtitleFlowPlan
 from mlcore.models.subtitles_tokens import BlocksTokensPayload, Token
 from mlcore.models.footage_plan import FootageSelectionPayload
 from core.runtime_mode import MODE_DEV, get_runtime_mode
@@ -677,6 +679,51 @@ def normalize_subtitles_to_clip_zero(payload_abs: BlocksTokensPayload, clip_star
     return BlocksTokensPayload.model_validate(norm_dict)
 
 
+def normalize_subtitle_flow_to_clip_zero(
+    payload_abs: SubtitleFlowPlan,
+    *,
+    clip_start_abs: float,
+    clip_end_abs: float,
+) -> SubtitleFlowPlan:
+    clip_start = float(clip_start_abs)
+    clip_end = float(clip_end_abs)
+    clip_dur = clip_end - clip_start
+    if clip_dur <= 0.0:
+        raise ValueError(f"Invalid clip window for subtitle flow shift: {clip_start}..{clip_end}")
+
+    segments: List[Dict[str, Any]] = []
+    for seg in payload_abs.segments:
+        tokens = [
+            {
+                "text": str(t.text),
+                "t_start": float(t.t_start) - clip_start,
+                "t_end": float(t.t_end) - clip_start,
+            }
+            for t in seg.tokens
+        ]
+        segments.append(
+            {
+                "id": str(seg.segment_id),
+                "text": str(seg.text),
+                "in_point": float(seg.in_point) - clip_start,
+                "out_point": float(seg.out_point) - clip_start,
+                "style_tag": str(seg.style_tag),
+                "lines": [str(x) for x in seg.lines],
+                "tokens": tokens,
+                "focus_word": seg.focus_word,
+                "focus_style": seg.focus_style,
+            }
+        )
+
+    return SubtitleFlowPlan.model_validate(
+        {
+            "mode": str(payload_abs.mode),
+            "clip": {"start": 0.0, "end": float(clip_dur)},
+            "segments": segments,
+        }
+    )
+
+
 # -------------------------
 # Footage: absolute -> clip-zero (comp) + coverage checks
 # -------------------------
@@ -821,17 +868,38 @@ def render_all_steps(
 
     env = _env(repo_root)
 
+    subtitles_mode = normalize_subtitles_mode(
+        str(getattr(plan, "subtitles_mode", "") or ""),
+        default=SUBTITLES_MODE_LEGACY_BLOCKS,
+    )
+
     # -------------------------
     # STEP 1 (deterministic AE mapping)
     # -------------------------
     # IMPORTANT: Stage3 must treat Stage2 subtitles clip window as the single source of truth.
     # Stage1 audio window may be stale if Stage2 was re-generated/edited.
-    subs_dict = plan.subtitles.model_dump(mode="json")
-    sanitize_subtitles_dict_inplace(subs_dict)
-    subs_abs = BlocksTokensPayload.model_validate(subs_dict)
+    subs_abs_legacy: BlocksTokensPayload | None = None
+    flow_abs: SubtitleFlowPlan | None = None
 
-    clip_start = float(subs_abs.clip.start)
-    clip_end = float(subs_abs.clip.end)
+    if subtitles_mode == SUBTITLES_MODE_LEGACY_BLOCKS:
+        subs_dict = plan.subtitles.model_dump(mode="json")
+        sanitize_subtitles_dict_inplace(subs_dict)
+        subs_abs_legacy = BlocksTokensPayload.model_validate(subs_dict)
+        clip_start = float(subs_abs_legacy.clip.start)
+        clip_end = float(subs_abs_legacy.clip.end)
+    else:
+        if not isinstance(plan.subtitles, SubtitleFlowPlan):
+            raise RuntimeError(
+                f"subtitles_mode={subtitles_mode!r} requires SubtitleFlowPlan payload at stage3"
+            )
+        flow_abs = plan.subtitles
+        if str(flow_abs.mode) != subtitles_mode:
+            raise RuntimeError(
+                f"subtitle flow mode mismatch at stage3: payload={flow_abs.mode!r} expected={subtitles_mode!r}"
+            )
+        clip_start = float(flow_abs.clip.start)
+        clip_end = float(flow_abs.clip.end)
+
     clip_dur = clip_end - clip_start
     if clip_dur <= 0:
         raise ValueError(f"Invalid subtitles clip window: {clip_start}..{clip_end}")
@@ -865,22 +933,43 @@ def render_all_steps(
     # -------------------------
     # STEP 2 (absolute -> clip-zero)
     # -------------------------
-    subs_clip_zero = normalize_subtitles_to_clip_zero(
-        subs_abs,
-        clip_start_abs=clip_start,
-        clip_end_abs=clip_end,
-    )
+    if subtitles_mode == SUBTITLES_MODE_LEGACY_BLOCKS:
+        if subs_abs_legacy is None:
+            raise RuntimeError("legacy subtitles payload is empty at stage3")
+        subs_clip_zero = normalize_subtitles_to_clip_zero(
+            subs_abs_legacy,
+            clip_start_abs=clip_start,
+            clip_end_abs=clip_end,
+        )
 
-    timings, comp_dur = compute_timings(subs_clip_zero)
+        timings, comp_dur = compute_timings(subs_clip_zero)
 
-    t2 = env.get_template("step2_template.j2")
-    full_edit_str = t2.render(
-        fps=float(AE_FPS),
-        comp_dur=float(comp_dur),
-        t=timings,
-        blocks=subs_clip_zero.model_dump(mode="json"),
-    )
-    full_edit_obj = json.loads(full_edit_str)
+        t2 = env.get_template("step2_template.j2")
+        full_edit_str = t2.render(
+            fps=float(AE_FPS),
+            comp_dur=float(comp_dur),
+            t=timings,
+            blocks=subs_clip_zero.model_dump(mode="json"),
+        )
+        full_edit_obj = json.loads(full_edit_str)
+    else:
+        if flow_abs is None:
+            raise RuntimeError("subtitle flow payload is empty at stage3")
+        flow_clip_zero = normalize_subtitle_flow_to_clip_zero(
+            flow_abs,
+            clip_start_abs=clip_start,
+            clip_end_abs=clip_end,
+        )
+        comp_dur = float(clip_dur)
+        full_edit_obj = {
+            "composition": {
+                "fps": float(AE_FPS),
+                "dur": float(comp_dur),
+            },
+            "subtitles_mode": subtitles_mode,
+            "subtitle_flow_plan": flow_clip_zero.model_dump(mode="json"),
+            "macro_blocks": [],
+        }
 
     # -------------------------
     # STEP 3 (footage): absolute -> clip-zero (comp)

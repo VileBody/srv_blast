@@ -13,6 +13,12 @@ from aiogram import Bot, Dispatcher, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import CommandStart
 from aiogram.types import FSInputFile, KeyboardButton, Message, ReplyKeyboardMarkup, ReplyKeyboardRemove
+from core.subtitles_mode import (
+    SUBTITLES_MODE_IMPULSE_2ND,
+    SUBTITLES_MODE_LEGACY_BLOCKS,
+    SUBTITLES_MODE_SCENES_3RD,
+    normalize_subtitles_mode,
+)
 
 from .audio_prepare import AudioPrepareResult, prepare_audio_best_effort
 from .config import SETTINGS, Settings
@@ -30,6 +36,7 @@ from .state_store import (
     STAGE_WAIT_LYRICS_CHOICE,
     STAGE_WAIT_LYRICS_TEXT,
     STAGE_WAIT_NEXT,
+    STAGE_WAIT_SUBTITLES_MODE,
     STAGE_WAIT_VERSIONS,
 )
 
@@ -53,13 +60,29 @@ BTN_VER_2 = "2"
 BTN_VER_3 = "3"
 BTN_VER_4 = "4"
 BTN_VER_5 = "5"
+BTN_SUB_MODE_LEGACY = "Обычные blocks"
+BTN_SUB_MODE_IMPULSE = "Impulse 2nd"
+BTN_SUB_MODE_SCENES = "Scenes 3rd"
 VERSION_BUTTONS = [BTN_VER_1, BTN_VER_2, BTN_VER_3, BTN_VER_4, BTN_VER_5]
+SUBTITLES_MODE_BUTTONS = [
+    BTN_SUB_MODE_LEGACY,
+    BTN_SUB_MODE_IMPULSE,
+    BTN_SUB_MODE_SCENES,
+]
+_SUBTITLES_MODE_BY_BUTTON = {
+    BTN_SUB_MODE_LEGACY: SUBTITLES_MODE_LEGACY_BLOCKS,
+    BTN_SUB_MODE_IMPULSE: SUBTITLES_MODE_IMPULSE_2ND,
+    BTN_SUB_MODE_SCENES: SUBTITLES_MODE_SCENES_3RD,
+}
 _CONTROL_BUTTONS = {
     BTN_SEND_TRACK,
     BTN_SEND_LYRICS,
     BTN_SKIP_LYRICS,
     BTN_SEND_FRAGMENT,
     BTN_SKIP_FRAGMENT,
+    BTN_SUB_MODE_LEGACY,
+    BTN_SUB_MODE_IMPULSE,
+    BTN_SUB_MODE_SCENES,
     BTN_LAUNCH,
     BTN_NEXT,
     *VERSION_BUTTONS,
@@ -205,6 +228,14 @@ def _parse_versions_choice(text: str) -> Optional[int]:
     return None
 
 
+def _parse_subtitles_mode_choice(text: str) -> Optional[str]:
+    raw = str(text or "").strip()
+    mode = _SUBTITLES_MODE_BY_BUTTON.get(raw)
+    if not mode:
+        return None
+    return normalize_subtitles_mode(mode, default=SUBTITLES_MODE_LEGACY_BLOCKS)
+
+
 def _normalize_username(raw: str) -> str:
     u = str(raw or "").strip().lower()
     if not u:
@@ -317,6 +348,10 @@ class BlastBotApp:
                 await self._handle_wait_fragment_text(message, st)
                 return
 
+            if st.stage == STAGE_WAIT_SUBTITLES_MODE:
+                await self._handle_wait_subtitles_mode(message, st)
+                return
+
             if st.stage == STAGE_WAIT_VERSIONS:
                 await self._handle_wait_versions(message, st)
                 return
@@ -375,6 +410,20 @@ class BlastBotApp:
         await message.answer(
             "Сколько версий сгенерировать?",
             reply_markup=_kb([BTN_VER_1, BTN_VER_2, BTN_VER_3, BTN_VER_4, BTN_VER_5]),
+        )
+
+    async def _ask_subtitles_mode(self, message: Message, st: ChatState) -> None:
+        st.stage = STAGE_WAIT_SUBTITLES_MODE
+        if not str(st.subtitles_mode or "").strip():
+            st.subtitles_mode = SUBTITLES_MODE_LEGACY_BLOCKS
+        await self.store.set(st)
+        await message.answer(
+            "Выбери режим субтитров:",
+            reply_markup=_kb(
+                [BTN_SUB_MODE_LEGACY],
+                [BTN_SUB_MODE_IMPULSE],
+                [BTN_SUB_MODE_SCENES],
+            ),
         )
 
     async def _handle_wait_audio(self, message: Message, st: ChatState) -> None:
@@ -447,6 +496,7 @@ class BlastBotApp:
         st.prepared_audio_local_path = str(prep.output_path)
         st.lyrics_text = ""
         st.target_fragment = ""
+        st.subtitles_mode = SUBTITLES_MODE_LEGACY_BLOCKS
         st.versions_count = 1
         st.active_job_id = ""
         st.active_job_ids = []
@@ -476,7 +526,7 @@ class BlastBotApp:
         if text == BTN_SKIP_LYRICS:
             st.lyrics_text = ""
             st.target_fragment = ""
-            await self._ask_versions(message, st)
+            await self._ask_subtitles_mode(message, st)
             return
 
         await message.answer("Выбери кнопку: «Отправить текст» или «Не присылать текст».")
@@ -513,7 +563,7 @@ class BlastBotApp:
 
         if text == BTN_SKIP_FRAGMENT:
             st.target_fragment = ""
-            await self._ask_versions(message, st)
+            await self._ask_subtitles_mode(message, st)
             return
 
         await message.answer("Выбери кнопку: «Отправить интересующий фрагмент» или «На усмотрение ИИ».")
@@ -528,6 +578,14 @@ class BlastBotApp:
             return
 
         st.target_fragment = text
+        await self._ask_subtitles_mode(message, st)
+
+    async def _handle_wait_subtitles_mode(self, message: Message, st: ChatState) -> None:
+        mode = _parse_subtitles_mode_choice(message.text or "")
+        if mode is None:
+            await message.answer("Выбери режим кнопкой: «Обычные blocks», «Impulse 2nd» или «Scenes 3rd».")
+            return
+        st.subtitles_mode = mode
         await self._ask_versions(message, st)
 
     async def _handle_wait_versions(self, message: Message, st: ChatState) -> None:
@@ -539,7 +597,7 @@ class BlastBotApp:
         st.stage = STAGE_WAIT_CONFIRM
         await self.store.set(st)
         await message.answer(
-            f"Ок, версий: {n}. Запустить генерацию?",
+            f"Ок, режим субтитров: {st.subtitles_mode}, версий: {n}. Запустить генерацию?",
             reply_markup=_kb([BTN_LAUNCH]),
         )
 
@@ -579,6 +637,7 @@ class BlastBotApp:
                     mode="with_gemini",
                     lyrics_text=st.lyrics_text,
                     target_fragment=st.target_fragment,
+                    subtitles_mode=st.subtitles_mode,
                     idempotency_key=idem,
                     project_id=None,
                 )
@@ -717,6 +776,7 @@ class BlastBotApp:
         st.last_job_stage = ""
         st.last_job_error = ""
         st.target_fragment = ""
+        st.subtitles_mode = SUBTITLES_MODE_LEGACY_BLOCKS
 
     async def _processing_loop(self) -> None:
         while True:

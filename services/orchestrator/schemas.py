@@ -4,6 +4,8 @@ from __future__ import annotations
 from typing import Any, Dict, Optional, Literal
 from pydantic import BaseModel, Field
 
+from core.subtitles_mode import SUBTITLES_MODE_LEGACY_BLOCKS
+
 
 JobStatus = Literal["NEW", "QUEUED", "RUNNING", "SUCCEEDED", "FAILED"]
 
@@ -21,6 +23,7 @@ class SendAudioS3Request(BaseModel):
     idempotency_key: Optional[str] = Field(default=None, min_length=1)
     lyrics_text: str = ""
     target_fragment: str = ""
+    subtitles_mode: Literal["legacy_blocks", "impulse_2nd", "scenes_3rd"] = SUBTITLES_MODE_LEGACY_BLOCKS
 
 
 class EnqueueJobResponse(BaseModel):

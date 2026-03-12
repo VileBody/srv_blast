@@ -5,11 +5,12 @@ import hashlib
 import shutil
 import tempfile
 from pathlib import Path
-from typing import Callable, List, Optional, TypeVar
+from typing import Callable, List, Optional, Type, TypeVar
 import os
 import logging
 
 from google.genai import types
+from pydantic import BaseModel
 
 from mlcore.gemini_client import GeminiClient
 from mlcore.llm_router import (
@@ -91,6 +92,7 @@ def pick_audio_files(audio_dir: Path) -> List[Path]:
 
 
 T = TypeVar("T")
+S = TypeVar("S", bound=BaseModel)
 
 
 def _provider_raw_path(raw_response_path: Optional[Path], *, provider: str) -> Optional[Path]:
@@ -510,6 +512,92 @@ def call_subtitles_plan_once(
     )
     _sync_canonical_raw_path(raw_response_path=raw_response_path, routed=routed)
     return BlocksTokensPayload.model_validate(routed.value)
+
+
+def call_subtitles_plan_model_once(
+    *,
+    client: Optional[GeminiClient],
+    schema_model: Type[S],
+    openrouter_client: Optional[OpenRouterClient] = None,
+    provider_mode: str = "gemini",
+    hedge_delay_s: float = 60.0,
+    logger: Optional[logging.Logger] = None,
+    system_instruction: str,
+    user_prompt: str,
+    audio_paths: List[Path],
+    raw_response_path: Optional[Path] = None,
+    cache_path: Optional[Path] = None,
+    prompt_dump_path: Optional[Path] = None,
+    system_dump_path: Optional[Path] = None,
+    stage_name: str = "stage2_subtitles",
+) -> S:
+    if schema_model is BlocksTokensPayload:
+        out = call_subtitles_plan_once(
+            client=client,
+            openrouter_client=openrouter_client,
+            provider_mode=provider_mode,
+            hedge_delay_s=hedge_delay_s,
+            logger=logger,
+            system_instruction=system_instruction,
+            user_prompt=user_prompt,
+            audio_paths=audio_paths,
+            raw_response_path=raw_response_path,
+            cache_path=cache_path,
+            prompt_dump_path=prompt_dump_path,
+            system_dump_path=system_dump_path,
+        )
+        return schema_model.model_validate(out.model_dump(mode="json"))
+
+    audio_upload_paths = _prepare_upload_paths(audio_paths)
+
+    if system_dump_path is not None:
+        system_dump_path.parent.mkdir(parents=True, exist_ok=True)
+        system_dump_path.write_text(system_instruction or "", encoding="utf-8")
+    if prompt_dump_path is not None:
+        prompt_dump_path.parent.mkdir(parents=True, exist_ok=True)
+        prompt_dump_path.write_text(user_prompt, encoding="utf-8")
+
+    def _gemini_call() -> S:
+        if client is None:
+            raise RuntimeError("Gemini client is required for provider mode with gemini")
+        files: List[types.File] = []
+        if cache_path is not None:
+            if audio_upload_paths:
+                files.extend(client.upload_files_cached(audio_upload_paths, cache_path=cache_path))
+        else:
+            if audio_upload_paths:
+                files.extend(client.upload_files(audio_upload_paths))
+        out = client.generate_structured(
+            schema_model=schema_model,
+            prompt=user_prompt,
+            files=files,
+            system_instruction=system_instruction,
+            raw_response_path=_provider_raw_path(raw_response_path, provider="gemini"),
+        )
+        return schema_model.model_validate(out.model_dump(mode="json"))
+
+    def _openrouter_call() -> S:
+        if openrouter_client is None:
+            raise RuntimeError("OpenRouter client is required for provider mode with openrouter")
+        out = openrouter_client.generate_structured(
+            schema_model=schema_model,
+            prompt=user_prompt,
+            audio_paths=audio_upload_paths,
+            system_instruction=system_instruction,
+            raw_response_path=_provider_raw_path(raw_response_path, provider="openrouter"),
+        )
+        return schema_model.model_validate(out.model_dump(mode="json"))
+
+    routed = _run_routed(
+        stage_name=stage_name,
+        provider_mode=provider_mode,
+        hedge_delay_s=hedge_delay_s,
+        logger=logger,
+        gemini_call=_gemini_call,
+        openrouter_call=_openrouter_call,
+    )
+    _sync_canonical_raw_path(raw_response_path=raw_response_path, routed=routed)
+    return schema_model.model_validate(routed.value.model_dump(mode="json"))
 
 
 def call_subtitles_spans_once(
