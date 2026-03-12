@@ -19,19 +19,3 @@ class ForcedAlignedWord(BaseModel):
 
 class Stage1ForcedAlignmentPayload(BaseModel):
     aligned_words: List[ForcedAlignedWord] = Field(min_length=1)
-
-    @model_validator(mode="after")
-    def _check_monotonic(self) -> "Stage1ForcedAlignmentPayload":
-        prev_start = -1.0
-        prev_end = -1.0
-        for i, w in enumerate(self.aligned_words):
-            ts = float(w.t_start)
-            te = float(w.t_end)
-            if i > 0 and ts < prev_start:
-                raise ValueError(f"aligned_words must be monotonic by t_start (idx={i}, {ts} < {prev_start})")
-            if i > 0 and te < prev_end:
-                raise ValueError(f"aligned_words must be monotonic by t_end (idx={i}, {te} < {prev_end})")
-            prev_start = ts
-            prev_end = te
-        return self
-

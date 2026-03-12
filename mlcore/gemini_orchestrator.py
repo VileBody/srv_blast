@@ -326,14 +326,18 @@ def _validate_forced_alignment_payload(
             len(reference_words),
         )
     mismatch_count = 0
-    for idx, (got, expected) in enumerate(zip(payload.aligned_words, reference_words)):
+    non_monotonic_count = 0
+    prev_start = -1.0
+    prev_end = -1.0
+
+    for idx, got in enumerate(payload.aligned_words):
+        expected = reference_words[idx] if idx < len(reference_words) else ""
         got_norm = _normalize_forced_word_compare(got.text)
-        exp_norm = _normalize_forced_word_compare(expected)
+        exp_norm = _normalize_forced_word_compare(expected) if expected else ""
         if not got_norm:
             logger.warning("stage1a_forced_empty_word idx=%d got=%r (continuing)", idx, got.text)
             mismatch_count += 1
-            continue
-        if got_norm != exp_norm:
+        elif exp_norm and got_norm != exp_norm:
             logger.warning(
                 "stage1a_forced_text_mismatch idx=%d got=%r expected=%r (continuing)",
                 idx,
@@ -341,8 +345,32 @@ def _validate_forced_alignment_payload(
                 expected,
             )
             mismatch_count += 1
+
+        ts = float(got.t_start)
+        te = float(got.t_end)
+        if idx > 0 and ts < prev_start:
+            logger.warning(
+                "stage1a_forced_non_monotonic_t_start idx=%d ts=%s prev_start=%s (continuing)",
+                idx,
+                ts,
+                prev_start,
+            )
+            non_monotonic_count += 1
+        if idx > 0 and te < prev_end:
+            logger.warning(
+                "stage1a_forced_non_monotonic_t_end idx=%d te=%s prev_end=%s (continuing)",
+                idx,
+                te,
+                prev_end,
+            )
+            non_monotonic_count += 1
+        prev_start = ts
+        prev_end = te
+
     if mismatch_count > 0:
         logger.warning("stage1a_forced_text_mismatch_total count=%d (continuing)", mismatch_count)
+    if non_monotonic_count > 0:
+        logger.warning("stage1a_forced_non_monotonic_total count=%d (continuing)", non_monotonic_count)
 
 
 def _stage1_asr_from_forced_alignment(payload: Stage1ForcedAlignmentPayload) -> Stage1AsrPayload:
