@@ -26,7 +26,6 @@ from mlcore.models.stage1_forced_alignment import Stage1ForcedAlignmentPayload
 from mlcore.models.stage1_plan import Stage1PlanPayload
 from mlcore.models.stage1_scenario import Stage1ScenarioPayload
 from mlcore.models.switch_timing import Stage2TimingAnalysisPayload, Stage2TimingCutsPayload
-from mlcore.models.tagged_subtitles import TaggedSubtitlesPayload
 from mlcore.openrouter_client import OpenRouterClient
 
 
@@ -511,73 +510,6 @@ def call_subtitles_plan_once(
     )
     _sync_canonical_raw_path(raw_response_path=raw_response_path, routed=routed)
     return BlocksTokensPayload.model_validate(routed.value)
-
-
-def call_subtitles_tagged_once(
-    *,
-    client: Optional[GeminiClient],
-    openrouter_client: Optional[OpenRouterClient] = None,
-    provider_mode: str = "gemini",
-    hedge_delay_s: float = 60.0,
-    logger: Optional[logging.Logger] = None,
-    system_instruction: str,
-    user_prompt: str,
-    audio_paths: List[Path],
-    raw_response_path: Optional[Path] = None,
-    cache_path: Optional[Path] = None,
-    prompt_dump_path: Optional[Path] = None,
-    system_dump_path: Optional[Path] = None,
-) -> TaggedSubtitlesPayload:
-    audio_upload_paths = _prepare_upload_paths(audio_paths)
-
-    if system_dump_path is not None:
-        system_dump_path.parent.mkdir(parents=True, exist_ok=True)
-        system_dump_path.write_text(system_instruction or "", encoding="utf-8")
-    if prompt_dump_path is not None:
-        prompt_dump_path.parent.mkdir(parents=True, exist_ok=True)
-        prompt_dump_path.write_text(user_prompt, encoding="utf-8")
-
-    def _gemini_call() -> TaggedSubtitlesPayload:
-        if client is None:
-            raise RuntimeError("Gemini client is required for provider mode with gemini")
-        files: List[types.File] = []
-        if cache_path is not None:
-            if audio_upload_paths:
-                files.extend(client.upload_files_cached(audio_upload_paths, cache_path=cache_path))
-        else:
-            if audio_upload_paths:
-                files.extend(client.upload_files(audio_upload_paths))
-        out = client.generate_structured(
-            schema_model=TaggedSubtitlesPayload,
-            prompt=user_prompt,
-            files=files,
-            system_instruction=system_instruction,
-            raw_response_path=_provider_raw_path(raw_response_path, provider="gemini"),
-        )
-        return TaggedSubtitlesPayload.model_validate(out)
-
-    def _openrouter_call() -> TaggedSubtitlesPayload:
-        if openrouter_client is None:
-            raise RuntimeError("OpenRouter client is required for provider mode with openrouter")
-        out = openrouter_client.generate_structured(
-            schema_model=TaggedSubtitlesPayload,
-            prompt=user_prompt,
-            audio_paths=audio_upload_paths,
-            system_instruction=system_instruction,
-            raw_response_path=_provider_raw_path(raw_response_path, provider="openrouter"),
-        )
-        return TaggedSubtitlesPayload.model_validate(out)
-
-    routed = _run_routed(
-        stage_name="stage2_subtitles_tagged",
-        provider_mode=provider_mode,
-        hedge_delay_s=hedge_delay_s,
-        logger=logger,
-        gemini_call=_gemini_call,
-        openrouter_call=_openrouter_call,
-    )
-    _sync_canonical_raw_path(raw_response_path=raw_response_path, routed=routed)
-    return TaggedSubtitlesPayload.model_validate(routed.value)
 
 
 def call_subtitles_spans_once(

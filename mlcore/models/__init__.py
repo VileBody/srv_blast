@@ -18,7 +18,6 @@ from .switch_timing import (
     SwitchTimingPayload,
     normalize_switch_points,
 )
-from .tagged_subtitles import TaggedSubtitlesPayload, TaggedSubtitleItem, SubtitleTag
 
 __all__ = [
     "AudioClipPlan",
@@ -46,7 +45,4 @@ __all__ = [
     "Stage2TimingCutsPayload",
     "SwitchTimingPayload",
     "normalize_switch_points",
-    "TaggedSubtitlesPayload",
-    "TaggedSubtitleItem",
-    "SubtitleTag",
 ]

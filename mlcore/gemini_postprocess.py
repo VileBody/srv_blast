@@ -14,7 +14,6 @@ from mlcore.timing_calc import compute_timings
 from mlcore.models.full_plan import FullPlanPayload
 from mlcore.models.subtitles_tokens import BlocksTokensPayload, Token
 from mlcore.models.footage_plan import FootageSelectionPayload
-from mlcore.models.tagged_subtitles import TaggedSubtitlesPayload
 from core.runtime_mode import MODE_DEV, get_runtime_mode
 
 # ✅ single source of truth for FPS (matches AE dump)
@@ -805,72 +804,6 @@ def _resolve_data_dir(repo_root: Path, data_dir: Path | None) -> Path:
     return (repo_root / "data").resolve()
 
 
-def _resolve_text_subtitle_preset() -> str:
-    raw = (os.environ.get("TEXT_SUBTITLE_PRESET") or "classic").strip().lower()
-    if raw not in {"classic", "impulse"}:
-        raise RuntimeError(
-            "Invalid TEXT_SUBTITLE_PRESET="
-            f"{raw!r}; allowed=['classic','impulse']"
-        )
-    return raw
-
-
-def _build_full_edit_from_tagged_subtitles(
-    *,
-    tagged_abs: TaggedSubtitlesPayload,
-    clip_start_abs: float,
-    clip_end_abs: float,
-    fps: float,
-) -> Dict[str, Any]:
-    clip_start = float(clip_start_abs)
-    clip_end = float(clip_end_abs)
-    clip_dur = clip_end - clip_start
-    if clip_dur <= 0:
-        raise ValueError(f"Invalid tagged clip window: {clip_start}..{clip_end}")
-
-    items = sorted(tagged_abs.subtitles, key=lambda s: float(s.in_abs))
-    segments: List[Dict[str, Any]] = []
-    for i, seg in enumerate(items):
-        in_p = float(seg.in_abs) - clip_start
-        out_p = float(seg.out_abs) - clip_start
-        if out_p <= in_p:
-            raise ValueError(f"Invalid tagged subtitle duration at index={i}: {in_p}..{out_p}")
-
-        tag = str(seg.tag)
-        exit_t: Optional[float] = None
-        if tag == "long":
-            for nxt in items[i + 1:]:
-                nxt_in = float(nxt.in_abs)
-                if nxt_in <= float(seg.in_abs) + 1e-6:
-                    continue
-                if nxt_in > float(seg.out_abs) + 1e-6:
-                    break
-                if str(nxt.tag) == "short":
-                    exit_t = nxt_in - clip_start
-                    break
-
-        item: Dict[str, Any] = {
-            "text": str(seg.text),
-            "tag": tag,
-            "in_point": in_p,
-            "out_point": out_p,
-        }
-        if exit_t is not None:
-            item["exit_t"] = float(exit_t)
-        segments.append(item)
-
-    return {
-        "composition": {
-            "name": "Текст",
-            "w": 1080,
-            "h": 1920,
-            "fps": float(fps),
-            "dur": float(clip_dur),
-        },
-        "subtitle_segments": segments,
-    }
-
-
 def render_all_steps(
     *,
     repo_root: Path,
@@ -887,36 +820,18 @@ def render_all_steps(
     data_dir.mkdir(parents=True, exist_ok=True)
 
     env = _env(repo_root)
-    text_preset = _resolve_text_subtitle_preset()
-    if text_preset == "impulse" and plan.tagged_subtitles is None:
-        raise RuntimeError(
-            "TEXT_SUBTITLE_PRESET=impulse requires tagged_subtitles in FullPlanPayload"
-        )
 
     # -------------------------
     # STEP 1 (deterministic AE mapping)
     # -------------------------
-    use_tagged_subtitles = (
-        text_preset == "impulse"
-        and plan.tagged_subtitles is not None
-    )
+    # IMPORTANT: Stage3 must treat Stage2 subtitles clip window as the single source of truth.
+    # Stage1 audio window may be stale if Stage2 was re-generated/edited.
+    subs_dict = plan.subtitles.model_dump(mode="json")
+    sanitize_subtitles_dict_inplace(subs_dict)
+    subs_abs = BlocksTokensPayload.model_validate(subs_dict)
 
-    subs_abs: Optional[BlocksTokensPayload] = None
-    tagged_abs: Optional[TaggedSubtitlesPayload] = None
-
-    if use_tagged_subtitles:
-        tagged_abs = TaggedSubtitlesPayload.model_validate(plan.tagged_subtitles.model_dump(mode="json"))
-        clip_start = float(tagged_abs.clip_start_abs)
-        clip_end = float(tagged_abs.clip_end_abs)
-    else:
-        # IMPORTANT: Stage3 must treat Stage2 subtitles clip window as the single source of truth.
-        # Stage1 audio window may be stale if Stage2 was re-generated/edited.
-        subs_dict = plan.subtitles.model_dump(mode="json")
-        sanitize_subtitles_dict_inplace(subs_dict)
-        subs_abs = BlocksTokensPayload.model_validate(subs_dict)
-        clip_start = float(subs_abs.clip.start)
-        clip_end = float(subs_abs.clip.end)
-
+    clip_start = float(subs_abs.clip.start)
+    clip_end = float(subs_abs.clip.end)
     clip_dur = clip_end - clip_start
     if clip_dur <= 0:
         raise ValueError(f"Invalid subtitles clip window: {clip_start}..{clip_end}")
@@ -930,7 +845,7 @@ def render_all_steps(
                 "[stage3] clip window override: "
                 f"stage1_audio={s1s}..{s1e} "
                 f"stage2_subtitles={clip_start}..{clip_end} "
-                f"(using {'stage2_tagged_subtitles' if use_tagged_subtitles else 'stage2_subtitles'})"
+                "(using stage2_subtitles)"
             )
     except Exception:
         # Never fail Stage3 due to diagnostics.
@@ -950,34 +865,22 @@ def render_all_steps(
     # -------------------------
     # STEP 2 (absolute -> clip-zero)
     # -------------------------
-    if use_tagged_subtitles:
-        if tagged_abs is None:
-            raise RuntimeError("Tagged subtitles branch selected but payload is missing")
-        full_edit_obj = _build_full_edit_from_tagged_subtitles(
-            tagged_abs=tagged_abs,
-            clip_start_abs=clip_start,
-            clip_end_abs=clip_end,
-            fps=float(AE_FPS),
-        )
-    else:
-        if subs_abs is None:
-            raise RuntimeError("Classic subtitles branch selected but payload is missing")
-        subs_clip_zero = normalize_subtitles_to_clip_zero(
-            subs_abs,
-            clip_start_abs=clip_start,
-            clip_end_abs=clip_end,
-        )
+    subs_clip_zero = normalize_subtitles_to_clip_zero(
+        subs_abs,
+        clip_start_abs=clip_start,
+        clip_end_abs=clip_end,
+    )
 
-        timings, comp_dur = compute_timings(subs_clip_zero)
+    timings, comp_dur = compute_timings(subs_clip_zero)
 
-        t2 = env.get_template("step2_template.j2")
-        full_edit_str = t2.render(
-            fps=float(AE_FPS),
-            comp_dur=float(comp_dur),
-            t=timings,
-            blocks=subs_clip_zero.model_dump(mode="json"),
-        )
-        full_edit_obj = json.loads(full_edit_str)
+    t2 = env.get_template("step2_template.j2")
+    full_edit_str = t2.render(
+        fps=float(AE_FPS),
+        comp_dur=float(comp_dur),
+        t=timings,
+        blocks=subs_clip_zero.model_dump(mode="json"),
+    )
+    full_edit_obj = json.loads(full_edit_str)
 
     # -------------------------
     # STEP 3 (footage): absolute -> clip-zero (comp)

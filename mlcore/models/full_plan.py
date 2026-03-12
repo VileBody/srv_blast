@@ -1,14 +1,11 @@
 # mlcore/models/full_plan.py
 from __future__ import annotations
 
-from typing import Optional
-
 from pydantic import BaseModel
 
 from .audio_window import AudioClipPlan
 from .subtitles_tokens import BlocksTokensPayload
 from .footage_plan import FootageSelectionPayload
-from .tagged_subtitles import TaggedSubtitlesPayload
 
 
 class FullPlanPayload(BaseModel):
@@ -26,4 +23,3 @@ class FullPlanPayload(BaseModel):
     audio: AudioClipPlan
     subtitles: BlocksTokensPayload
     footage: FootageSelectionPayload
-    tagged_subtitles: Optional[TaggedSubtitlesPayload] = None
