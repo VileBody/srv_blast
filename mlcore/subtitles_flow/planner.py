@@ -428,6 +428,67 @@ class Scenes3rdPlanner(_FlowPlannerBase):
     schema_model = Scenes3rdPayload
     use_tokens_structured = False
 
+    def _validate_reference_scene_contract(self, scene: Scene3rdPayloadScene) -> None:
+        words = [str(w).strip() for w in scene.words if str(w).strip()]
+        if not words:
+            raise ValueError(f"scene has no words (id={scene.id})")
+        if len(words) > 5:
+            raise ValueError(f"scene has >5 words (id={scene.id}, words={len(words)})")
+
+        lines: List[List[str]] = []
+        for row in scene.lines:
+            row_words = [str(w).strip() for w in row if str(w).strip()]
+            if row_words:
+                lines.append(row_words)
+
+        if lines:
+            flat = [w for row in lines for w in row]
+            if flat != words:
+                raise ValueError(
+                    "scene.lines must flatten to scene.words in the same order "
+                    f"(id={scene.id}, flat={flat!r}, words={words!r})"
+                )
+
+        if scene.word_timings:
+            wt_words = [str(wt.word).strip() for wt in scene.word_timings]
+            if wt_words != words:
+                raise ValueError(
+                    "scene.word_timings words mismatch scene.words "
+                    f"(id={scene.id}, wt={wt_words!r}, words={words!r})"
+                )
+            if abs(float(scene.start) - float(scene.word_timings[0].start)) > 1e-6:
+                raise ValueError(f"scene.start must equal first word_timing.start (id={scene.id})")
+            if abs(float(scene.end) - float(scene.word_timings[-1].end)) > 1e-6:
+                raise ValueError(f"scene.end must equal last word_timing.end (id={scene.id})")
+
+        t = str(scene.type)
+        dur = float(scene.end) - float(scene.start)
+
+        if t == "TYPE_4":
+            if len(words) not in {1, 2}:
+                raise ValueError(f"TYPE_4 must have 1-2 words (id={scene.id})")
+            if len(lines) > 1:
+                raise ValueError(f"TYPE_4 must stay on one line (id={scene.id})")
+
+        elif t == "TYPE_5":
+            if len(words) not in {4, 5}:
+                raise ValueError(f"TYPE_5 must have 4-5 words (id={scene.id})")
+            if dur <= 3.0:
+                raise ValueError(f"TYPE_5 must be >3.0s (id={scene.id}, dur={dur:.3f})")
+
+        elif t == "TYPE_3":
+            if len(words) not in {3, 4}:
+                raise ValueError(f"TYPE_3 must have 3-4 words (id={scene.id})")
+            if len(lines) > 1:
+                raise ValueError(f"TYPE_3 must be single-line (id={scene.id})")
+            last_len = len(words[-1])
+            if last_len < 3 or last_len > 8:
+                raise ValueError(f"TYPE_3 last word must be 3..8 chars (id={scene.id})")
+            if len(scene.word_timings) >= 2:
+                last_gap = float(scene.word_timings[-1].start) - float(scene.word_timings[-2].end)
+                if last_gap < 0.25 - 1e-6:
+                    raise ValueError(f"TYPE_3 last_gap must be >=0.25s (id={scene.id}, gap={last_gap:.3f})")
+
     def _lines_for_scene(self, scene: Scene3rdPayloadScene) -> List[str]:
         out: List[str] = []
         if scene.lines:
@@ -458,6 +519,7 @@ class Scenes3rdPlanner(_FlowPlannerBase):
         warnings: List[SubtitleFlowWarning] = []
         segments: List[SubtitleFlowSegment] = []
         for scene in payload.scenes:
+            self._validate_reference_scene_contract(scene)
             seg_id = f"scene_{int(scene.id):03d}"
             seg_in = self._minor_clamp(
                 value=float(scene.start),
