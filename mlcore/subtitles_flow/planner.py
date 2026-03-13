@@ -464,6 +464,33 @@ class Scenes3rdPlanner(_FlowPlannerBase):
     schema_model = Scenes3rdPayload
     use_tokens_structured = False
 
+    def _maybe_fallback_type3_last_gap_to_type1(
+        self,
+        *,
+        scene: Scene3rdPayloadScene,
+        segment_id: str,
+        warnings: List[SubtitleFlowWarning],
+    ) -> None:
+        if str(scene.type) != "TYPE_3":
+            return
+        if len(scene.word_timings) < 2:
+            return
+        last_gap = float(scene.word_timings[-1].start) - float(scene.word_timings[-2].end)
+        if last_gap >= 0.25 - 1e-6:
+            return
+
+        scene.type = "TYPE_1"
+        scene.focus_word = None
+        scene.focus_style = None
+        warnings.append(
+            SubtitleFlowWarning(
+                mode=self.mode,
+                segment_id=segment_id,
+                reason="type3_last_gap_fallback_type1",
+                action=f"last_gap={last_gap:.3f}",
+            )
+        )
+
     def _validate_reference_scene_contract(self, scene: Scene3rdPayloadScene) -> None:
         words = [str(w).strip() for w in scene.words if str(w).strip()]
         if not words:
@@ -555,8 +582,13 @@ class Scenes3rdPlanner(_FlowPlannerBase):
         warnings: List[SubtitleFlowWarning] = []
         segments: List[SubtitleFlowSegment] = []
         for scene in payload.scenes:
-            self._validate_reference_scene_contract(scene)
             seg_id = f"scene_{int(scene.id):03d}"
+            self._maybe_fallback_type3_last_gap_to_type1(
+                scene=scene,
+                segment_id=seg_id,
+                warnings=warnings,
+            )
+            self._validate_reference_scene_contract(scene)
             seg_in = self._minor_clamp(
                 value=float(scene.start),
                 low=float(clip.start),

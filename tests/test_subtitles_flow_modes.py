@@ -497,22 +497,6 @@ def test_scenes_planner_fail_fast_on_word_timings_words_mismatch() -> None:
     [
         (
             {
-                "id": 3,
-                "type": "TYPE_3",
-                "words": ["we", "will", "away"],
-                "start": 10.0,
-                "end": 11.2,
-                "lines": [["we", "will", "away"]],
-                "word_timings": [
-                    {"word": "we", "start": 10.0, "end": 10.3},
-                    {"word": "will", "start": 10.35, "end": 10.7},
-                    {"word": "away", "start": 10.8, "end": 11.2},
-                ],
-            },
-            "TYPE_3 last_gap must be >=0.25s",
-        ),
-        (
-            {
                 "id": 4,
                 "type": "TYPE_4",
                 "words": ["boom", "now"],
@@ -555,6 +539,36 @@ def test_scenes_planner_fail_fast_on_reference_type_rules(scene_obj: dict, match
     )
     with pytest.raises(ValueError, match=match):
         planner.normalize_payload(payload=payload, stage1=_stage1(), logger=logging.getLogger("test"))
+
+
+def test_scenes_planner_fallback_type3_last_gap_to_type1(caplog) -> None:
+    planner = SubtitlesPlannerFactory.create("scenes_3rd")
+    payload = Scenes3rdPayload.model_validate(
+        {
+            "clip": {"start": 10.0, "end": 24.0},
+            "scenes": [
+                {
+                    "id": 1,
+                    "type": "TYPE_3",
+                    "words": ["we", "will", "away"],
+                    "start": 10.0,
+                    "end": 11.2,
+                    "lines": [["we", "will", "away"]],
+                    "word_timings": [
+                        {"word": "we", "start": 10.0, "end": 10.3},
+                        {"word": "will", "start": 10.35, "end": 10.7},
+                        {"word": "away", "start": 10.7, "end": 11.2},  # last_gap=0.0 -> fallback
+                    ],
+                }
+            ],
+        }
+    )
+    caplog.set_level(logging.WARNING, logger="test")
+    flow = planner.normalize_payload(payload=payload, stage1=_stage1(), logger=logging.getLogger("test"))
+    assert len(flow.segments) == 1
+    assert str(flow.segments[0].style_tag) == "TYPE_1"
+    msgs = [r.message for r in caplog.records]
+    assert any("reason=type3_last_gap_fallback_type1" in m for m in msgs)
 
 
 def test_impulse_mode_ignores_global_text_shift_and_keeps_drop_shadows(monkeypatch) -> None:
