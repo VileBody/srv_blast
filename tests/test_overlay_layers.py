@@ -274,6 +274,44 @@ def test_overlay_blueprint_uses_opacity_from_env(monkeypatch) -> None:
     overlay = overlay_layers[0]
     tf_opacity = overlay.get("props", {}).get("tf_opacity", {})
     assert float(tf_opacity.get("value")) == 35.0
+    td = overlay.get("text_data") if isinstance(overlay.get("text_data"), dict) else {}
+    meta = td.get("layer_meta") if isinstance(td.get("layer_meta"), dict) else {}
+    assert str(meta.get("blendingModeCode")) == "screen"
+
+
+def test_overlay_blueprint_uses_default_opacity_15(monkeypatch) -> None:
+    monkeypatch.delenv("OVERLAY_OPACITY", raising=False)
+    cfg = {
+        "text_dur_hint": 5.0,
+        "layers": [
+            {
+                "type": "overlay",
+                "name": "ov",
+                "file_name": "ov.mp4",
+                "file_path": "s3://bucket/overlays/ov.mp4",
+                "src_w": 1080,
+                "src_h": 1920,
+                "in_point": 0.0,
+                "out_point": 5.0,
+                "start_time": 0.0,
+                "enabled": True,
+            }
+        ],
+    }
+    layers = build_footage_layers(
+        repo_root=Path("."),
+        footage_cfg=cfg,
+        main_comp_name="Comp 1",
+        text_comp_name="Text",
+    )
+    overlay = layers[0]
+    assert str(overlay.get("type")) == "footage"
+    tf_opacity = overlay.get("props", {}).get("tf_opacity", {})
+    assert float(tf_opacity.get("value")) == 15.0
+    td = overlay.get("text_data") if isinstance(overlay.get("text_data"), dict) else {}
+    meta = td.get("layer_meta") if isinstance(td.get("layer_meta"), dict) else {}
+    assert bool(meta.get("isOverlay")) is True
+    assert str(meta.get("blendingModeCode")) == "screen"
 
 
 def test_overlay_blueprint_propagates_ae_tiling_meta(monkeypatch) -> None:

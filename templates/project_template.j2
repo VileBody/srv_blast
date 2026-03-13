@@ -613,6 +613,7 @@
 
     function resolveBlendingModeByCode(code) {
       try { if (String(code) === "5212") return BlendingMode.NORMAL; } catch(e) {}
+      try { if (String(code).toLowerCase() === "screen") return BlendingMode.SCREEN; } catch(e2) {}
       return null;
     }
 

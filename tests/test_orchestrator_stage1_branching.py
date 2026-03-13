@@ -159,4 +159,5 @@ def test_non_legacy_uses_stage1a_selected_fragment_and_skips_stage1b(
     plan = captured["plan"]
     assert abs(float(plan.audio.clip_start_abs) - 2.0) < 1e-6
     assert abs(float(plan.audio.clip_end_abs) - 16.0) < 1e-6
+    assert [w.text for w in plan.transcript_words] == ["hello", "world"]
     assert str(plan.subtitles.mode) == "impulse_2nd"

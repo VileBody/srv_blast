@@ -498,6 +498,12 @@ def _build_stage1_plan_from_selected_fragment(
 
     selected_words = list(selected.transcript_words)
     if not selected_words:
+        logger.warning(
+            "stage1a_selected_fragment_empty_words fallback=full_transcript_window clip=%s..%s full_words=%d",
+            audio_obj["clip_start_abs"],
+            audio_obj["clip_end_abs"],
+            len(stage1_asr.transcript_words),
+        )
         selected_words = _words_in_window(
             words=list(stage1_asr.transcript_words),
             start_abs=float(audio_obj["clip_start_abs"]),
@@ -510,7 +516,9 @@ def _build_stage1_plan_from_selected_fragment(
     return Stage1PlanPayload.model_validate(
         {
             "audio": audio_obj,
-            "transcript_words": stage1_asr.transcript_words,
+            # Non-legacy Stage2 consumes the selected fragment, so stage1 plan should
+            # carry fragment-local transcript words rather than full-track words.
+            "transcript_words": selected_words,
             "draft_blocks": fallback_blocks,
             "fragment_analytics": (
                 fragment_analytics.model_dump(mode="json")
@@ -1762,6 +1770,28 @@ def build_all_via_gemini_one_call(
         subtitles_mode,
         subtitles_planner.schema_model.__name__,
     )
+
+    stage1_words_in_clip = _words_in_window(
+        words=list(stage1.transcript_words),
+        start_abs=float(stage1.audio.clip_start_abs),
+        end_abs=float(stage1.audio.clip_end_abs),
+    )
+    if not stage1_words_in_clip:
+        logger.warning(
+            "stage2_context_empty_transcript_words clip=%s..%s stage1_words_total=%d subtitles_mode=%s stage1_plan_source=%s",
+            stage1.audio.clip_start_abs,
+            stage1.audio.clip_end_abs,
+            len(stage1.transcript_words),
+            subtitles_mode,
+            expected_stage1_plan_source,
+        )
+    else:
+        logger.info(
+            "stage2_context_words_in_clip count=%d clip=%s..%s",
+            len(stage1_words_in_clip),
+            stage1.audio.clip_start_abs,
+            stage1.audio.clip_end_abs,
+        )
 
     sub_system = subtitles_planner.build_system_instruction()
     sub_prompt = subtitles_planner.build_user_prompt(stage1_json=stage1_json)

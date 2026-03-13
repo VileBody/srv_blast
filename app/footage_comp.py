@@ -384,7 +384,7 @@ def _env_nonneg_float(name: str, default: float) -> float:
     return v if v >= 0.0 else float(default)
 
 
-def _env_overlay_opacity_percent(name: str = "OVERLAY_OPACITY", default: float = 30.0) -> float:
+def _env_overlay_opacity_percent(name: str = "OVERLAY_OPACITY", default: float = 15.0) -> float:
     raw = (os.environ.get(name) or "").strip()
     if not raw:
         v = float(default)
@@ -673,6 +673,8 @@ def _overlay_bp(
     )
     bp.props["tf_opacity"] = PropertyData("ADBE Opacity", value=float(opacity_percent))
     bp.text_data["layer_meta"]["isOverlay"] = True
+    # Overlays should always blend additively against footage/text stack.
+    bp.text_data["layer_meta"]["blendingModeCode"] = "screen"
     if bool(it.get("tile_in_ae")):
         bp.text_data["layer_meta"]["overlayTileInAe"] = True
         max_rep = it.get("tile_max_repeats")
