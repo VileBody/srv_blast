@@ -1213,10 +1213,4 @@ def build_scenes_3rd_reference_layers(
 
     layers = build_all_layers(scenes, word_timings=None)
 
-    # Keep reference timing/layout untouched by the universal post-layout pass.
-    for layer in layers:
-        if str(layer.get("type")) == "text":
-            td = layer.setdefault("text_data", {})
-            td["no_layout_pass"] = True
-
     return layers

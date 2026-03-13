@@ -191,7 +191,7 @@ def test_scenes_mode_planner_and_renderer(monkeypatch) -> None:
     scene_props = scene_text.get("props") or {}
     assert isinstance(scene_props.get("reveal"), dict)
     assert scene_props["reveal"].get("match_name") == "ADBE Text Percent Start"
-    assert (scene_text.get("text_data") or {}).get("no_layout_pass") is True
+    assert (scene_text.get("text_data") or {}).get("no_layout_pass") is not True
 
     mine_layer = next(x for x in text_layers if str(x.get("name")).lower() == "mine")
     mine_td = mine_layer.get("text_data") or {}
@@ -255,7 +255,7 @@ def test_scenes_type3_builds_progressive_layers(monkeypatch) -> None:
         assert "reveal" not in props
         td = layer.get("text_data") or {}
         assert td.get("no_text_animator") is True
-        assert td.get("no_layout_pass") is True
+        assert td.get("no_layout_pass") is not True
     assert "ADBE Box Blur2" in (text_layers[-1].get("effects") or {})
     _assert_keyframes_within_bounds(layers)
 
@@ -311,7 +311,7 @@ def test_scenes_type5_builds_outline_and_fill(monkeypatch) -> None:
         td = layer.get("text_data") or {}
         assert isinstance(td.get("text_animator"), dict)
         assert td.get("no_text_animator") is not True
-        assert td.get("no_layout_pass") is True
+        assert td.get("no_layout_pass") is not True
     _assert_keyframes_within_bounds(layers)
 
 
@@ -393,7 +393,7 @@ def test_scenes_type2_builds_focus_italic_styles(monkeypatch) -> None:
     assert len(adjustments) == 1
     assert len(text_layers) == 1
     td = text_layers[0].get("text_data") or {}
-    assert td.get("no_layout_pass") is True
+    assert td.get("no_layout_pass") is not True
     styles = td.get("char_styles_ungrouped") or []
     assert any(bool(s.get("fauxItalic")) for s in styles if isinstance(s, dict))
 
@@ -436,7 +436,7 @@ def test_scenes_type6_builds_adjustment_and_grouped_text(monkeypatch) -> None:
     assert len(adjustments) == 1
     assert len(text_layers) == 1
     td = text_layers[0].get("text_data") or {}
-    assert td.get("no_layout_pass") is True
+    assert td.get("no_layout_pass") is not True
     assert isinstance((text_layers[0].get("props") or {}).get("reveal"), dict)
 
 
