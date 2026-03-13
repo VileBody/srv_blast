@@ -1088,7 +1088,7 @@ def build_all_via_gemini_one_call(
     temperature = _float_env("GEMINI_TEMPERATURE", 0.0)
     timeout_s = _float_env("GEMINI_TIMEOUT_S", 120.0)
     max_output_tokens = _optional_int_env("GEMINI_MAX_OUTPUT_TOKENS", None)
-    max_thinking_tokens = _optional_int_env("GEMINI_MAX_THINKING_TOKENS", 15000)
+    max_thinking_tokens = _optional_int_env("GEMINI_MAX_THINKING_TOKENS", 40000)
     provider_mode = normalize_provider_mode(os.environ.get("LLM_PROVIDER_MODE", PROVIDER_MODE_GEMINI))
     hedge_delay_s = _float_env("LLM_HEDGE_DELAY_S", 60.0)
     timing_mode = _require_choice_env("STAGE2_TIMING_MODE", allowed=["prompts", "hybrid"])
