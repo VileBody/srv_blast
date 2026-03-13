@@ -8,7 +8,7 @@ from .footage_plan import FootageSelectionPayload, FootageAsset, FootageClipPick
 from .footage_style import FootageStylePickPayload
 from .full_plan import FullPlanPayload
 from .stage1_plan import FragmentAnalytics, Stage1PlanPayload, Stage1AudioWindow, TranscriptWord
-from .stage1_asr import Stage1AsrPayload, SrtItem
+from .stage1_asr import Stage1AsrPayload, Stage1AsrSelectedFragment, SrtItem
 from .stage1_forced_alignment import Stage1ForcedAlignmentPayload, ForcedAlignedWord
 from .stage1_scenario import Stage1ScenarioPayload
 from .subtitles_flow import (
@@ -50,6 +50,7 @@ __all__ = [
     "TranscriptWord",
     "FragmentAnalytics",
     "Stage1AsrPayload",
+    "Stage1AsrSelectedFragment",
     "SrtItem",
     "Stage1ForcedAlignmentPayload",
     "ForcedAlignedWord",

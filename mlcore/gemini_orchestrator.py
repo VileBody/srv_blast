@@ -46,7 +46,7 @@ from mlcore.gemini_postprocess import render_all_steps
 from mlcore.models.footage_plan import FootageSelectionPayload
 from mlcore.models.footage_style import FootageStylePickPayload
 from mlcore.models.full_plan import FullPlanPayload
-from mlcore.models.stage1_asr import Stage1AsrPayload
+from mlcore.models.stage1_asr import Stage1AsrPayload, Stage1AsrSelectedFragment
 from mlcore.models.stage1_forced_alignment import Stage1ForcedAlignmentPayload
 from mlcore.models.stage1_plan import FragmentAnalytics, Stage1PlanPayload
 from mlcore.models.stage1_plan import TranscriptWord
@@ -413,10 +413,110 @@ def _stage1_asr_from_forced_alignment(payload: Stage1ForcedAlignmentPayload) -> 
         }
         for w in payload.aligned_words
     ]
-    return Stage1AsrPayload.model_validate(
+    out: Dict[str, Any] = {
+        "transcript_words": transcript_words,
+        "srt_items": [],
+    }
+    if payload.selected_fragment is not None:
+        out["selected_fragment"] = payload.selected_fragment.model_dump(mode="json")
+    return Stage1AsrPayload.model_validate(out)
+
+
+def _words_in_window(
+    *,
+    words: List[TranscriptWord],
+    start_abs: float,
+    end_abs: float,
+) -> List[TranscriptWord]:
+    out: List[TranscriptWord] = []
+    for w in words:
+        ts = float(w.t_start)
+        te = float(w.t_end)
+        if ts >= float(start_abs) - 1e-6 and te <= float(end_abs) + 1e-6:
+            out.append(w)
+    return out
+
+
+def _fallback_draft_blocks_from_words(words: List[str]) -> Dict[str, Any]:
+    clean = [str(w).strip() for w in words if str(w).strip()]
+    if not clean:
+        clean = ["word"]
+
+    # Keep deterministic placeholders for non-legacy flow where draft_blocks are not consumed.
+    # We still need a valid Stage1PlanPayload contract for shared pipeline interfaces.
+    total = 13
+    phrases: List[str] = []
+    cursor = 0
+    for i in range(total):
+        remaining_parts = total - i
+        remaining_words = max(0, len(clean) - cursor)
+        take = max(1, remaining_words // remaining_parts) if remaining_parts > 0 else 1
+        chunk = clean[cursor: cursor + take]
+        if not chunk:
+            chunk = [clean[-1]]
+        phrases.append(" ".join(chunk))
+        cursor = min(len(clean), cursor + take)
+
+    mine_word = phrases[9].split(" ")[0]
+    return {
+        "block_1": {"phrases": [phrases[0]]},
+        "block_2": {"p1": {"phrases": [phrases[1]]}, "p2": {"phrases": [phrases[2]]}},
+        "block_3": {"phrases": [phrases[3]]},
+        "block_4": {"p1": {"phrases": [phrases[4]]}, "p2": {"phrases": [phrases[5]]}},
+        "block_5": {
+            "slowly_in": {"phrases": [phrases[6]]},
+            "fast_reveal": {"phrases": [phrases[7]]},
+            "glitch_peak": {"phrases": [phrases[8]]},
+            "mine": {"phrases": [mine_word]},
+        },
+        "block_6": {"phrases": [phrases[10]]},
+        "block_7": {"part1": {"phrases": [phrases[11]]}, "part2": {"phrases": [phrases[12]]}},
+    }
+
+
+def _build_stage1_plan_from_selected_fragment(
+    *,
+    stage1_asr: Stage1AsrPayload,
+    selected: Stage1AsrSelectedFragment,
+    target_fragment: str,
+    logger: logging.Logger,
+) -> Stage1PlanPayload:
+    audio_obj = selected.audio.model_dump(mode="json")
+    fragment_analytics = selected.fragment_analytics
+
+    if target_fragment:
+        forced_start, forced_end = _validate_fragment_analytics_for_target(
+            target_fragment=target_fragment,
+            audio_start_abs=float(selected.audio.clip_start_abs),
+            audio_end_abs=float(selected.audio.clip_end_abs),
+            analytics=fragment_analytics,
+            logger=logger,
+        )
+        # Keep clip deterministic in target-fragment branch.
+        audio_obj["clip_start_abs"] = float(forced_start)
+        audio_obj["clip_end_abs"] = float(forced_end)
+
+    selected_words = list(selected.transcript_words)
+    if not selected_words:
+        selected_words = _words_in_window(
+            words=list(stage1_asr.transcript_words),
+            start_abs=float(audio_obj["clip_start_abs"]),
+            end_abs=float(audio_obj["clip_end_abs"]),
+        )
+    if not selected_words:
+        raise ValueError("selected_fragment produced empty transcript_words")
+
+    fallback_blocks = _fallback_draft_blocks_from_words([str(w.text) for w in selected_words])
+    return Stage1PlanPayload.model_validate(
         {
-            "transcript_words": transcript_words,
-            "srt_items": [],
+            "audio": audio_obj,
+            "transcript_words": stage1_asr.transcript_words,
+            "draft_blocks": fallback_blocks,
+            "fragment_analytics": (
+                fragment_analytics.model_dump(mode="json")
+                if fragment_analytics is not None
+                else None
+            ),
         }
     )
 
@@ -1297,6 +1397,11 @@ def build_all_via_gemini_one_call(
     stamp = _stamp()
     lyrics_text = str(os.environ.get("LYRICS_TEXT") or "").strip()
     target_fragment = str(os.environ.get("TARGET_FRAGMENT") or "").strip()
+    subtitles_mode = normalize_subtitles_mode(
+        os.environ.get("SUBTITLES_MODE"),
+        default=SUBTITLES_MODE_LEGACY_BLOCKS,
+    )
+    use_stage1b_scenario = subtitles_mode == SUBTITLES_MODE_LEGACY_BLOCKS
     forced_reference_text = lyrics_text or target_fragment
     forced_reference_words = _reference_words_from_user_text(forced_reference_text)
     if forced_reference_text and not forced_reference_words:
@@ -1309,10 +1414,12 @@ def build_all_via_gemini_one_call(
 
     _emit(progress_cb, "llm_stage1a_asr")
     logger.info(
-        "stage1a_start mode=%s model=%s reference_words=%d",
+        "stage1a_start mode=%s model=%s reference_words=%d subtitles_mode=%s selected_fragment_required=%s",
         stage1a_mode,
         model_stage1_asr,
         len(forced_reference_words),
+        subtitles_mode,
+        (not use_stage1b_scenario),
     )
 
     if use_forced_alignment:
@@ -1320,13 +1427,19 @@ def build_all_via_gemini_one_call(
         stage1a_prompt = build_stage1a_forced_alignment_user_prompt(
             reference_text=forced_reference_text,
             schema_name="Stage1ForcedAlignmentPayload",
+            require_selected_fragment=(not use_stage1b_scenario),
+            target_fragment=target_fragment,
         )
         stage1a_raw = logs_dir / f"gemini_raw_stage1_forced_alignment_{stamp}.json"
         stage1a_sys = logs_dir / f"gemini_system_stage1_forced_alignment_{stamp}.txt"
         stage1a_user = logs_dir / f"gemini_prompt_stage1_forced_alignment_{stamp}.txt"
     else:
         stage1a_system = build_stage1a_asr_system_instruction()
-        stage1a_prompt = build_stage1a_asr_user_prompt(schema_name="Stage1AsrPayload")
+        stage1a_prompt = build_stage1a_asr_user_prompt(
+            schema_name="Stage1AsrPayload",
+            require_selected_fragment=(not use_stage1b_scenario),
+            target_fragment=target_fragment,
+        )
         stage1a_raw = logs_dir / f"gemini_raw_stage1_asr_{stamp}.json"
         stage1a_sys = logs_dir / f"gemini_system_stage1_asr_{stamp}.txt"
         stage1a_user = logs_dir / f"gemini_prompt_stage1_asr_{stamp}.txt"
@@ -1359,7 +1472,14 @@ def build_all_via_gemini_one_call(
     if isinstance(stage1_asr_cached, dict):
         try:
             stage1_asr = Stage1AsrPayload.model_validate(stage1_asr_cached)
-            logger.info("llm_resume_hit stage=stage1a_asr")
+            if (not use_stage1b_scenario) and stage1_asr.selected_fragment is None:
+                logger.info(
+                    "llm_resume_skip stage=stage1a_asr reason=missing_selected_fragment_for_non_legacy_mode"
+                )
+                stage1_asr = None
+                resume_state.pop("stage1_asr", None)
+            else:
+                logger.info("llm_resume_hit stage=stage1a_asr")
         except Exception as e:
             logger.warning("llm_resume_bad stage=stage1a_asr err=%s", str(e))
             resume_state.pop("stage1_asr", None)
@@ -1424,46 +1544,66 @@ def build_all_via_gemini_one_call(
         encoding="utf-8",
     )
 
-    _emit(progress_cb, "llm_stage1b_scenario")
-    logger.info("stage1b_start model=%s", model_stage1_scenario)
     fragment_branch_on = bool(target_fragment)
-    logger.info(
-        "stage1b_fragment_branch enabled=%s target_fragment_chars=%d",
-        fragment_branch_on,
-        len(target_fragment),
-    )
-
-    stage1b_system = build_stage1b_scenario_system_instruction()
-    stage1b_base_prompt = build_stage1b_scenario_user_prompt(
-        asr_json={
-            "transcript_words": stage1_asr_json.get("transcript_words", []),
-        },
-        target_fragment=target_fragment,
-        schema_name="Stage1ScenarioPayload",
-    )
-    stage1b_sys = logs_dir / f"gemini_system_stage1_scenario_{stamp}.txt"
-    stage1b_raw = logs_dir / f"gemini_raw_stage1_scenario_{stamp}.json"
-    stage1b_user = logs_dir / f"gemini_prompt_stage1_scenario_{stamp}.txt"
+    expected_stage1_plan_source = "stage1b_scenario" if use_stage1b_scenario else "stage1a_selected_fragment"
 
     stage1: Stage1PlanPayload | None = None
     stage1_cached = resume_state.get("stage1_plan")
+    stage1_plan_source_cached = str(resume_state.get("stage1_plan_source") or "").strip()
     if isinstance(stage1_cached, dict):
-        try:
-            stage1 = Stage1PlanPayload.model_validate(stage1_cached)
-            if fragment_branch_on:
-                _validate_fragment_analytics_for_target(
-                    target_fragment=target_fragment,
-                    audio_start_abs=float(stage1.audio.clip_start_abs),
-                    audio_end_abs=float(stage1.audio.clip_end_abs),
-                    analytics=stage1.fragment_analytics,
-                    logger=logger,
-                )
-            logger.info("llm_resume_hit stage=stage1b_scenario")
-        except Exception as e:
-            logger.warning("llm_resume_bad stage=stage1b_scenario err=%s", str(e))
+        source_compatible = True
+        if use_stage1b_scenario:
+            if stage1_plan_source_cached and stage1_plan_source_cached != expected_stage1_plan_source:
+                source_compatible = False
+        else:
+            # Non-legacy flow must use Stage1A-selected fragment plan.
+            source_compatible = stage1_plan_source_cached == expected_stage1_plan_source
+        if not source_compatible:
+            logger.info(
+                "llm_resume_skip stage=stage1_plan reason=source_mismatch cached=%r expected=%r",
+                stage1_plan_source_cached,
+                expected_stage1_plan_source,
+            )
             resume_state.pop("stage1_plan", None)
+            resume_state.pop("stage1_plan_source", None)
+        else:
+            try:
+                stage1 = Stage1PlanPayload.model_validate(stage1_cached)
+                if fragment_branch_on:
+                    _validate_fragment_analytics_for_target(
+                        target_fragment=target_fragment,
+                        audio_start_abs=float(stage1.audio.clip_start_abs),
+                        audio_end_abs=float(stage1.audio.clip_end_abs),
+                        analytics=stage1.fragment_analytics,
+                        logger=logger,
+                    )
+                logger.info("llm_resume_hit stage=stage1_plan source=%s", expected_stage1_plan_source)
+            except Exception as e:
+                logger.warning("llm_resume_bad stage=stage1_plan err=%s", str(e))
+                resume_state.pop("stage1_plan", None)
+                resume_state.pop("stage1_plan_source", None)
 
-    if stage1 is None:
+    if stage1 is None and use_stage1b_scenario:
+        _emit(progress_cb, "llm_stage1b_scenario")
+        logger.info("stage1b_start model=%s", model_stage1_scenario)
+        logger.info(
+            "stage1b_fragment_branch enabled=%s target_fragment_chars=%d",
+            fragment_branch_on,
+            len(target_fragment),
+        )
+
+        stage1b_system = build_stage1b_scenario_system_instruction()
+        stage1b_base_prompt = build_stage1b_scenario_user_prompt(
+            asr_json={
+                "transcript_words": stage1_asr_json.get("transcript_words", []),
+            },
+            target_fragment=target_fragment,
+            schema_name="Stage1ScenarioPayload",
+        )
+        stage1b_sys = logs_dir / f"gemini_system_stage1_scenario_{stamp}.txt"
+        stage1b_raw = logs_dir / f"gemini_raw_stage1_scenario_{stamp}.json"
+        stage1b_user = logs_dir / f"gemini_prompt_stage1_scenario_{stamp}.txt"
+
         def _run_stage1_scenario_once() -> Tuple[Stage1PlanPayload, Stage1ScenarioPayload]:
             prompt = stage1b_base_prompt
             exact_retry_used = False
@@ -1567,8 +1707,36 @@ def build_all_via_gemini_one_call(
                 encoding="utf-8",
             )
         resume_state["stage1_plan"] = stage1.model_dump(mode="json")
+        resume_state["stage1_plan_source"] = expected_stage1_plan_source
         _save_resume_state(resume_state_path, logger=logger, state=resume_state)
 
+    if stage1 is None and (not use_stage1b_scenario):
+        _emit(progress_cb, "llm_stage1a_fragment_select")
+        logger.info(
+            "stage1b_skip mode=%s reason=non_legacy_uses_stage1a_selected_fragment",
+            subtitles_mode,
+        )
+        selected = stage1_asr.selected_fragment
+        if selected is None:
+            raise ValueError(
+                f"subtitles_mode={subtitles_mode!r} requires Stage1A.selected_fragment, got null"
+            )
+        stage1 = _build_stage1_plan_from_selected_fragment(
+            stage1_asr=stage1_asr,
+            selected=selected,
+            target_fragment=target_fragment,
+            logger=logger,
+        )
+        (logs_dir / f"stage1a_selected_fragment_{stamp}.json").write_text(
+            json.dumps(selected.model_dump(mode="json"), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        resume_state["stage1_plan"] = stage1.model_dump(mode="json")
+        resume_state["stage1_plan_source"] = expected_stage1_plan_source
+        _save_resume_state(resume_state_path, logger=logger, state=resume_state)
+
+    if stage1 is None:
+        raise RuntimeError("stage1 plan is empty after stage1 processing")
     stage1_json = stage1.model_dump(mode="json")
     stage1_json["lyrics_text"] = lyrics_text
     stage1_json["target_fragment"] = target_fragment
@@ -1583,10 +1751,6 @@ def build_all_via_gemini_one_call(
     )
 
     _emit(progress_cb, "llm_stage2_parallel")
-    subtitles_mode = normalize_subtitles_mode(
-        os.environ.get("SUBTITLES_MODE"),
-        default=SUBTITLES_MODE_LEGACY_BLOCKS,
-    )
     subtitles_planner = SubtitlesPlannerFactory.create(subtitles_mode)
     logger.info(
         "stage2_start subtitles_model=%s footage_style_model=%s timing_model=%s timing_mode=%s style_groups=%d subtitles_mode=%s subtitles_schema=%s",

@@ -103,12 +103,52 @@ def build_stage1a_asr_system_instruction() -> str:
     )
 
 
-def build_stage1a_asr_user_prompt(*, schema_name: str = "Stage1AsrPayload") -> str:
-    return (
+def build_stage1a_asr_user_prompt(
+    *,
+    schema_name: str = "Stage1AsrPayload",
+    require_selected_fragment: bool = False,
+    target_fragment: str = "",
+) -> str:
+    base = (
         f"Return ONLY JSON matching schema: {schema_name}\n\n"
         "Use the attached audio as the source of truth.\n"
         "Output transcript_words for the full track and optional srt_items.\n"
     )
+    if not require_selected_fragment:
+        return base
+
+    tf = str(target_fragment or "").strip()
+    if tf:
+        branch = (
+            "\nSELECT_FRAGMENT_BRANCH=ON\n"
+            "USER_TARGET_FRAGMENT_BRANCH=ON\n"
+            "USER_TARGET_FRAGMENT:\n"
+            + tf
+            + "\n\n"
+            "Additionally output selected_fragment with:\n"
+            "- audio.clip_start_abs / clip_end_abs in 13..18 seconds total duration;\n"
+            "- selected_fragment.transcript_words only inside that clip window;\n"
+            "- selected_fragment.srt_items only inside that clip window (optional);\n"
+            "- selected_fragment.fragment_analytics is REQUIRED and target_fragment must copy USER_TARGET_FRAGMENT exactly.\n"
+            "Selection rules:\n"
+            "- maximize overlap of selected clip with USER_TARGET_FRAGMENT;\n"
+            "- if USER_TARGET_FRAGMENT is shorter than 13s: expand context around it;\n"
+            "- if USER_TARGET_FRAGMENT is longer than 18s: choose most expressive 13..18s subfragment.\n"
+            "- do not perform phrase grouping/draft blocks at this stage.\n"
+        )
+    else:
+        branch = (
+            "\nSELECT_FRAGMENT_BRANCH=ON\n"
+            "USER_TARGET_FRAGMENT_BRANCH=OFF\n"
+            "Additionally output selected_fragment with:\n"
+            "- audio.clip_start_abs / clip_end_abs in 13..18 seconds total duration;\n"
+            "- selected_fragment.transcript_words only inside that clip window;\n"
+            "- selected_fragment.srt_items only inside that clip window (optional).\n"
+            "Selection rule:\n"
+            "- choose the most memorable/expressive 13..18s moment in the track.\n"
+            "- do not perform phrase grouping/draft blocks at this stage.\n"
+        )
+    return base + branch
 
 
 def build_stage1a_forced_alignment_system_instruction() -> str:
@@ -124,11 +164,13 @@ def build_stage1a_forced_alignment_user_prompt(
     *,
     reference_text: str,
     schema_name: str = "Stage1ForcedAlignmentPayload",
+    require_selected_fragment: bool = False,
+    target_fragment: str = "",
 ) -> str:
     ref = str(reference_text or "").strip()
     if not ref:
         raise ValueError("reference_text must be non-empty for forced alignment prompt")
-    return (
+    base = (
         f"Return ONLY JSON matching schema: {schema_name}\n\n"
         "Use the attached audio as the source of truth.\n"
         "Align every word in REFERENCE_TEXT and return one timed item per word.\n"
@@ -137,6 +179,41 @@ def build_stage1a_forced_alignment_user_prompt(
         + ref
         + "\n"
     )
+    if not require_selected_fragment:
+        return base
+
+    tf = str(target_fragment or "").strip()
+    if tf:
+        branch = (
+            "\nSELECT_FRAGMENT_BRANCH=ON\n"
+            "USER_TARGET_FRAGMENT_BRANCH=ON\n"
+            "USER_TARGET_FRAGMENT:\n"
+            + tf
+            + "\n\n"
+            "Additionally output selected_fragment with:\n"
+            "- audio.clip_start_abs / clip_end_abs in 13..18 seconds total duration;\n"
+            "- selected_fragment.transcript_words only inside that clip window;\n"
+            "- selected_fragment.srt_items only inside that clip window (optional);\n"
+            "- selected_fragment.fragment_analytics is REQUIRED and target_fragment must copy USER_TARGET_FRAGMENT exactly.\n"
+            "Selection rules:\n"
+            "- maximize overlap of selected clip with USER_TARGET_FRAGMENT;\n"
+            "- if USER_TARGET_FRAGMENT is shorter than 13s: expand context around it;\n"
+            "- if USER_TARGET_FRAGMENT is longer than 18s: choose most expressive 13..18s subfragment.\n"
+            "- do not perform phrase grouping/draft blocks at this stage.\n"
+        )
+    else:
+        branch = (
+            "\nSELECT_FRAGMENT_BRANCH=ON\n"
+            "USER_TARGET_FRAGMENT_BRANCH=OFF\n"
+            "Additionally output selected_fragment with:\n"
+            "- audio.clip_start_abs / clip_end_abs in 13..18 seconds total duration;\n"
+            "- selected_fragment.transcript_words only inside that clip window;\n"
+            "- selected_fragment.srt_items only inside that clip window (optional).\n"
+            "Selection rule:\n"
+            "- choose the most memorable/expressive 13..18s moment in the track.\n"
+            "- do not perform phrase grouping/draft blocks at this stage.\n"
+        )
+    return base + branch
 
 
 def build_stage1b_scenario_system_instruction() -> str:

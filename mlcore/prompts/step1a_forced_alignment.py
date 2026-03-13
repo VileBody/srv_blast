@@ -9,6 +9,11 @@ You receive ONE audio track and REFERENCE_TEXT.
 Return JSON for Stage1ForcedAlignmentPayload:
 1) aligned_words: exactly one timed item per reference word:
    - each item: {text, t_start, t_end}
+2) optional selected_fragment (enabled by user prompt branch):
+   - audio: {clip_start_abs, clip_end_abs, moment_of_interest_sec?}
+   - transcript_words: word-level timings INSIDE selected clip
+   - optional srt_items inside selected clip
+   - optional fragment_analytics
 
 Hard constraints:
 - aligned_words length MUST equal REFERENCE_TEXT word count.

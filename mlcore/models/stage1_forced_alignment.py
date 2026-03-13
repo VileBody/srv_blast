@@ -4,6 +4,8 @@ from typing import List
 
 from pydantic import BaseModel, Field, model_validator
 
+from .stage1_asr import Stage1AsrSelectedFragment
+
 
 class ForcedAlignedWord(BaseModel):
     text: str = Field(min_length=1)
@@ -19,3 +21,4 @@ class ForcedAlignedWord(BaseModel):
 
 class Stage1ForcedAlignmentPayload(BaseModel):
     aligned_words: List[ForcedAlignedWord] = Field(min_length=1)
+    selected_fragment: Stage1AsrSelectedFragment | None = None

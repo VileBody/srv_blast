@@ -11,11 +11,15 @@ Return JSON for Stage1AsrPayload:
    - each item: {text, t_start, t_end}
 2) optional srt_items for debug:
    - each item: {start, end, text}
+3) optional selected_fragment (enabled by user prompt branch):
+   - audio: {clip_start_abs, clip_end_abs, moment_of_interest_sec?}
+   - transcript_words: word-level timings INSIDE selected clip
+   - optional srt_items inside selected clip
+   - optional fragment_analytics
 
 Hard constraints:
 - transcript must be in FULL TRACK timeline (absolute seconds from audio start).
 - transcript word timings must be monotonic and valid (t_end > t_start).
-- Do NOT output scenario blocks or clip window here.
+- Do NOT output scenario blocks/draft grouping here.
 - Return valid JSON only, no markdown/comments.
 """
-
