@@ -738,13 +738,17 @@
       }
 
       var propsDict = lData.props || null;
+      var cfg = (td && td.text_animator) ? td.text_animator : null;
       var hasReveal = (propsDict && propsDict.reveal && propsDict.reveal.match_name === "ADBE Text Percent Start");
       var hasRevealEnd = (propsDict && propsDict.reveal_end && propsDict.reveal_end.match_name === "ADBE Text Percent End");
       var hasAnimOpacityProp = (propsDict && propsDict.anim_opacity && propsDict.anim_opacity.match_name === "ADBE Opacity");
+      var hasCfgProps = !!(cfg && (
+        (cfg.properties && cfg.properties.length > 0) ||
+        (cfg.expressible_selector && cfg.expressible_selector.amount)
+      ));
 
-      if (!hasReveal && !hasRevealEnd && !hasAnimOpacityProp) return;
+      if (!hasReveal && !hasRevealEnd && !hasAnimOpacityProp && !hasCfgProps) return;
 
-      var cfg = (td && td.text_animator) ? td.text_animator : null;
       if (!cfg) {
         logLine("ERR", "missing text_data.text_animator but reveal/reveal_end present, layer=" + layer.name);
         return;
@@ -774,6 +778,20 @@
 
       if (hasAnimOpacityProp) applyValue(aOpacity, propsDict.anim_opacity, "Animator.TextOpacity layer=" + layer.name);
       else if (cfg.opacity !== undefined) { try { aOpacity.setValue(cfg.opacity); } catch(_) {} }
+
+      if (cfg.properties && cfg.properties.length) {
+        for (var pi = 0; pi < cfg.properties.length; pi++) {
+          var pData = cfg.properties[pi];
+          if (!pData || !pData.match_name) continue;
+          var aProp = null;
+          try { aProp = animatorProps.addProperty(pData.match_name); } catch(_) { aProp = null; }
+          if (!aProp) {
+            logLine("ERR", "failed to add animator prop match=" + pData.match_name + " layer=" + layer.name);
+            continue;
+          }
+          applyValue(aProp, pData, "Animator.Prop match=" + pData.match_name + " layer=" + layer.name);
+        }
+      }
 
       var selectors = safeProp(animator, "ADBE Text Selectors");
       if (!selectors) { logLine("ERR", "no Text Selectors group layer=" + layer.name); return; }
@@ -815,6 +833,27 @@
       if (cfg.selector && cfg.selector.percentStart !== undefined) {
         var ps2 = safeProp(sel, "ADBE Text Percent Start");
         if (ps2) { try { ps2.setValue(cfg.selector.percentStart); } catch(_) {} }
+      }
+
+      var exprCfg = (cfg && cfg.expressible_selector) ? cfg.expressible_selector : null;
+      if (exprCfg && exprCfg.amount) {
+        var exprSel = null;
+        try { exprSel = selectors.addProperty("ADBE Text Expressible Selector"); } catch(_) { exprSel = null; }
+        if (!exprSel) {
+          logLine("ERR", "failed to add Text Expressible Selector layer=" + layer.name);
+        } else {
+          try {
+            if (exprCfg.rangeType2 !== undefined) {
+              safeProp(exprSel, "ADBE Text Range Type2").setValue(exprCfg.rangeType2);
+            }
+          } catch(_) {}
+          var exprAmount = safeProp(exprSel, "ADBE Text Expressible Amount");
+          if (!exprAmount) {
+            logLine("ERR", "no Text Expressible Amount layer=" + layer.name);
+          } else {
+            applyValue(exprAmount, exprCfg.amount, "ExprSel.Amount layer=" + layer.name);
+          }
+        }
       }
     }
 
@@ -876,6 +915,8 @@
 
     function applyFinalTextLayoutPass(layer, lData, targetComp) {
       if (!layer || !lData || lData.type !== "text" || !targetComp) return;
+      var td = (lData.text_data ? lData.text_data : null);
+      if (td && td.no_layout_pass) return;
       var marginX = 0.05;
       var maxWidth = Number(targetComp.width) * (1.0 - 2.0 * marginX);
       if (!(maxWidth > 0)) return;

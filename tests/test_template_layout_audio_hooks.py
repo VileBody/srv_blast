@@ -15,3 +15,10 @@ def test_template_contains_audio_levels_envelope_hook() -> None:
     assert "function applyAudioEnvelopeFromBlueprint(layer, lData)" in tpl
     assert "ADBE Audio Levels" in tpl
     assert "Math.sin(x*Math.PI*0.5)" in tpl
+
+
+def test_template_contains_text_animator_expressible_and_layout_skip_hooks() -> None:
+    tpl = Path("templates/project_template.j2").read_text(encoding="utf-8")
+    assert "cfg.expressible_selector" in tpl
+    assert "ADBE Text Expressible Selector" in tpl
+    assert "if (td && td.no_layout_pass) return;" in tpl

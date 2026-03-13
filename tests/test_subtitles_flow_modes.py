@@ -69,13 +69,14 @@ def test_impulse_mode_planner_and_renderer(monkeypatch) -> None:
             "clip": {"start": 10.0, "end": 24.0},
             "segments": [
                 {
-                    "text": "hello world",
+                    "text": "Hello, I'm world!",
                     "in": 10.0,
                     "out": 11.5,
                     "type": "long",
                     "word_timings": [
                         {"word": "hello", "start": 10.0, "end": 10.4},
-                        {"word": "world", "start": 10.5, "end": 11.0},
+                        {"word": "i'm", "start": 10.45, "end": 10.75},
+                        {"word": "world", "start": 10.8, "end": 11.0},
                     ],
                 },
                 {
@@ -105,7 +106,23 @@ def test_impulse_mode_planner_and_renderer(monkeypatch) -> None:
         text_comp_name="Текст",
         mine_comp_name='Текст "Mine"',
     )
-    assert len([x for x in layers if str(x.get("type")) == "text"]) == 2
+    text_layers = [x for x in layers if str(x.get("type")) == "text"]
+    assert len(text_layers) == 2
+    assert str(text_layers[0].get("text")) == "hello i'm world"
+    for layer in text_layers:
+        props = layer.get("props") or {}
+        assert "reveal" not in props
+        assert "reveal_end" not in props
+        td = layer.get("text_data") or {}
+        assert td.get("no_text_animator") is not True
+        assert td.get("no_layout_pass") is True
+        anim = td.get("text_animator")
+        assert isinstance(anim, dict)
+        ex = anim.get("expressible_selector") if isinstance(anim, dict) else None
+        assert isinstance(ex, dict)
+        amount = ex.get("amount") if isinstance(ex, dict) else None
+        assert isinstance(amount, dict)
+        assert isinstance(amount.get("expression"), str) and "delay" in amount.get("expression")
     _assert_keyframes_within_bounds(layers)
 
 
@@ -160,4 +177,203 @@ def test_scenes_mode_planner_and_renderer(monkeypatch) -> None:
     )
     text_layers = [x for x in layers if str(x.get("type")) == "text"]
     assert len(text_layers) == 2
+    scene_text = next(x for x in text_layers if str(x.get("name")) == "scene_001")
+    scene_props = scene_text.get("props") or {}
+    assert isinstance(scene_props.get("reveal"), dict)
+    assert scene_props["reveal"].get("match_name") == "ADBE Text Percent Start"
+
+    mine_layer = next(x for x in text_layers if str(x.get("name")).lower() == "mine")
+    mine_td = mine_layer.get("text_data") or {}
+    assert mine_td.get("no_text_animator") is True
+
+    precomp_layers = [x for x in layers if str(x.get("type")) == "precomp"]
+    precomp_names = {str(x.get("name")) for x in precomp_layers}
+    assert 'Текст "Mine"' in precomp_names
+    assert 'Текст "Mine" glow' in precomp_names
     _assert_keyframes_within_bounds(layers)
+
+
+def test_scenes_type3_builds_progressive_layers(monkeypatch) -> None:
+    planner = SubtitlesPlannerFactory.create("scenes_3rd")
+    payload = Scenes3rdPayload.model_validate(
+        {
+            "clip": {"start": 10.0, "end": 24.0},
+            "scenes": [
+                {
+                    "id": 1,
+                    "type": "TYPE_3",
+                    "words": ["we", "will", "go"],
+                    "start": 10.0,
+                    "end": 11.6,
+                    "lines": [["we", "will", "go"]],
+                    "word_timings": [
+                        {"word": "we", "start": 10.0, "end": 10.3},
+                        {"word": "will", "start": 10.4, "end": 10.8},
+                        {"word": "go", "start": 10.9, "end": 11.2},
+                    ],
+                }
+            ],
+        }
+    )
+    flow = planner.normalize_payload(payload=payload, stage1=_stage1(), logger=logging.getLogger("test"))
+    monkeypatch.setenv("TEXT_LAYER_TIME_SHIFT_S", "0.3")
+    layers = build_text_layers(
+        full_edit_config={
+            "subtitles_mode": "scenes_3rd",
+            "subtitle_flow_plan": flow.model_dump(mode="json"),
+            "composition": {"fps": 23.976, "dur": 14.0},
+        },
+        text_comp_name="Текст",
+        mine_comp_name='Текст "Mine"',
+    )
+    adjustments = [x for x in layers if str(x.get("type")) == "adjustment"]
+    text_layers = [x for x in layers if str(x.get("type")) == "text"]
+    assert len(adjustments) == 1
+    assert len(text_layers) == 3
+    names = [str(x.get("name")) for x in text_layers]
+    assert names == ["scene_001_01", "scene_001_02", "scene_001_03"]
+    for layer in text_layers:
+        props = layer.get("props") or {}
+        assert "reveal" not in props
+        td = layer.get("text_data") or {}
+        assert td.get("no_text_animator") is True
+    assert "ADBE Box Blur2" in (text_layers[-1].get("effects") or {})
+    _assert_keyframes_within_bounds(layers)
+
+
+def test_scenes_type5_builds_outline_and_fill(monkeypatch) -> None:
+    planner = SubtitlesPlannerFactory.create("scenes_3rd")
+    payload = Scenes3rdPayload.model_validate(
+        {
+            "clip": {"start": 10.0, "end": 24.0},
+            "scenes": [
+                {
+                    "id": 1,
+                    "type": "TYPE_5",
+                    "words": ["stay", "with", "me"],
+                    "start": 10.0,
+                    "end": 11.2,
+                    "lines": [["stay", "with", "me"]],
+                    "word_timings": [
+                        {"word": "stay", "start": 10.0, "end": 10.2},
+                        {"word": "with", "start": 10.3, "end": 10.6},
+                        {"word": "me", "start": 10.7, "end": 11.0},
+                    ],
+                }
+            ],
+        }
+    )
+    flow = planner.normalize_payload(payload=payload, stage1=_stage1(), logger=logging.getLogger("test"))
+    monkeypatch.setenv("TEXT_LAYER_TIME_SHIFT_S", "0.3")
+    layers = build_text_layers(
+        full_edit_config={
+            "subtitles_mode": "scenes_3rd",
+            "subtitle_flow_plan": flow.model_dump(mode="json"),
+            "composition": {"fps": 23.976, "dur": 14.0},
+        },
+        text_comp_name="Текст",
+        mine_comp_name='Текст "Mine"',
+    )
+    adjustments = [x for x in layers if str(x.get("type")) == "adjustment"]
+    text_layers = [x for x in layers if str(x.get("type")) == "text"]
+    assert len(adjustments) == 1
+    assert len(text_layers) == 2
+    outline = next(x for x in text_layers if str(x.get("name")).endswith("_outline"))
+    fill = next(x for x in text_layers if str(x.get("name")) == "scene_001")
+
+    outline_props = outline.get("props") or {}
+    assert "reveal_end" in outline_props
+    assert "reveal" not in outline_props
+    fill_props = fill.get("props") or {}
+    assert "reveal" in fill_props
+    assert "ADBE Box Blur2" in (fill.get("effects") or {})
+    for layer in (outline, fill):
+        td = layer.get("text_data") or {}
+        assert isinstance(td.get("text_animator"), dict)
+        assert td.get("no_text_animator") is not True
+    _assert_keyframes_within_bounds(layers)
+
+
+def test_flow_modes_ignore_global_text_shift(monkeypatch) -> None:
+    planner = SubtitlesPlannerFactory.create("scenes_3rd")
+    payload = Scenes3rdPayload.model_validate(
+        {
+            "clip": {"start": 10.0, "end": 24.0},
+            "scenes": [
+                {
+                    "id": 1,
+                    "type": "TYPE_1",
+                    "words": ["hello"],
+                    "start": 10.0,
+                    "end": 10.8,
+                    "lines": [["hello"]],
+                    "word_timings": [{"word": "hello", "start": 10.0, "end": 10.6}],
+                }
+            ],
+        }
+    )
+    flow = planner.normalize_payload(payload=payload, stage1=_stage1(), logger=logging.getLogger("test"))
+    monkeypatch.setenv("TEXT_LAYER_TIME_SHIFT_S", "0.3")
+    layers = build_text_layers(
+        full_edit_config={
+            "subtitles_mode": "scenes_3rd",
+            "subtitle_flow_plan": flow.model_dump(mode="json"),
+            "composition": {"fps": 23.976, "dur": 14.0},
+        },
+        text_comp_name="Текст",
+        mine_comp_name='Текст "Mine"',
+    )
+    scene_text = next(x for x in layers if str(x.get("name")) == "scene_001")
+    assert abs(float(scene_text.get("in_point")) - 10.0) < 1e-6
+
+
+def test_impulse_mode_ignores_global_text_shift_and_keeps_drop_shadows(monkeypatch) -> None:
+    planner = SubtitlesPlannerFactory.create("impulse_2nd")
+    payload = Impulse2ndPayload.model_validate(
+        {
+            "clip": {"start": 10.0, "end": 24.0},
+            "segments": [
+                {
+                    "text": "Long phrase",
+                    "in": 10.0,
+                    "out": 11.3,
+                    "type": "long",
+                    "word_timings": [
+                        {"word": "long", "start": 10.0, "end": 10.4},
+                        {"word": "phrase", "start": 10.5, "end": 11.0},
+                    ],
+                }
+            ],
+        }
+    )
+    flow = planner.normalize_payload(payload=payload, stage1=_stage1(), logger=logging.getLogger("test"))
+    monkeypatch.setenv("TEXT_LAYER_TIME_SHIFT_S", "0.3")
+    layers_shifted = build_text_layers(
+        full_edit_config={
+            "subtitles_mode": "impulse_2nd",
+            "subtitle_flow_plan": flow.model_dump(mode="json"),
+            "composition": {"fps": 23.976, "dur": 14.0},
+        },
+        text_comp_name="Текст",
+        mine_comp_name='Текст "Mine"',
+    )
+
+    monkeypatch.setenv("TEXT_LAYER_TIME_SHIFT_S", "0")
+    layers_plain = build_text_layers(
+        full_edit_config={
+            "subtitles_mode": "impulse_2nd",
+            "subtitle_flow_plan": flow.model_dump(mode="json"),
+            "composition": {"fps": 23.976, "dur": 14.0},
+        },
+        text_comp_name="Текст",
+        mine_comp_name='Текст "Mine"',
+    )
+
+    layer = next(x for x in layers_shifted if str(x.get("type")) == "text")
+    layer_plain = next(x for x in layers_plain if str(x.get("type")) == "text")
+    assert abs(float(layer.get("in_point")) - float(layer_plain.get("in_point"))) < 1e-6
+    effects = layer.get("effects") or {}
+    keys = set(effects.keys())
+    assert "0001:ADBE Drop Shadow" in keys
+    assert "0002:ADBE Drop Shadow" in keys
+    assert "0003:ADBE Drop Shadow" in keys

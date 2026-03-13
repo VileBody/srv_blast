@@ -286,6 +286,7 @@ def build_text_layers(*, full_edit_config: Dict[str, Any], text_comp_name: str, 
         layers = flow_renderer.render(
             flow_plan=flow,
             text_comp_name=text_comp_name,
+            mine_comp_name=mine_comp_name,
         )
 
     for l in layers:
@@ -307,7 +308,10 @@ def build_text_layers(*, full_edit_config: Dict[str, Any], text_comp_name: str, 
         fps = float(fps_raw)
     except Exception:
         fps = 23.9759979248047
-    shift_s = _env_float("TEXT_LAYER_TIME_SHIFT_S", 0.3)
+    if mode == SUBTITLES_MODE_LEGACY_BLOCKS:
+        shift_s = _env_float("TEXT_LAYER_TIME_SHIFT_S", 0.3)
+    else:
+        shift_s = 0.0
     _apply_text_time_shift(layers, shift_s=shift_s)
     strict = (os.environ.get("TEXT_PREFLIGHT_STRICT", "1").strip() != "0")
     _preflight_clamp_text_layers(
