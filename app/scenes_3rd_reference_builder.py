@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from typing import Any, Dict, List, Optional, Tuple
 
 from mlcore.models.subtitles_flow import SubtitleFlowPlan
@@ -39,6 +40,10 @@ TYPE1_LEADING = int((RENDER["size_base"] + RENDER["size_line2"]) / 2 * 1.15)  # 
 
 
 FRAME = 1.0 / RENDER["fps"]   # ~0.04171s
+_GAP_HOLD_MIN_FRAC = 0.03
+_GAP_HOLD_MAX_FRAC = 0.18
+_GAP_HOLD_MAX_S = 0.45
+_GAP_HOLD_MAX_WORD_MULT = 0.50
 
 # ---------------------------------------------------------------------------
 # Утилиты
@@ -1122,6 +1127,75 @@ def _words_with_linebreaks(sub_words: List[str], scene_lines: List[List[str]]) -
     return "".join(parts)
 
 
+def _scene_last_word_duration(scene: Dict[str, Any]) -> float:
+    wt = scene.get("word_timings")
+    if isinstance(wt, list) and wt:
+        last = wt[-1] if isinstance(wt[-1], dict) else None
+        if isinstance(last, dict):
+            try:
+                st = float(last.get("start"))
+                en = float(last.get("end"))
+            except Exception:
+                st = 0.0
+                en = 0.0
+            if en > st:
+                return en - st
+    words = scene.get("words") or []
+    n_words = max(1, len(list(words)))
+    dur = max(0.0, float(scene.get("end") or 0.0) - float(scene.get("start") or 0.0))
+    return dur / float(n_words)
+
+
+def _gap_to_hold_transfer(*, gap: float, word_dur: float) -> float:
+    if gap <= FRAME + 1e-9:
+        return 0.0
+    wd = max(float(word_dur), FRAME)
+    ratio = max(0.0, float(gap) / wd)
+    frac = _GAP_HOLD_MIN_FRAC + (_GAP_HOLD_MAX_FRAC - _GAP_HOLD_MIN_FRAC) * (1.0 - math.exp(-ratio))
+    transfer = float(gap) * frac
+    transfer = min(
+        transfer,
+        float(gap) - FRAME,  # never eat the entire boundary gap
+        _GAP_HOLD_MAX_S,     # hard cap to avoid excessive drift
+        wd * _GAP_HOLD_MAX_WORD_MULT,
+    )
+    return max(0.0, float(transfer))
+
+
+def _postprocess_scene_boundaries_for_hold(scenes: List[Dict[str, Any]]) -> None:
+    if len(scenes) < 2:
+        return
+    for i in range(len(scenes) - 1):
+        cur = scenes[i]
+        nxt = scenes[i + 1]
+        cur_end = float(cur.get("end") or 0.0)
+        next_start = float(nxt.get("start") or 0.0)
+        gap = next_start - cur_end
+        if gap <= FRAME + 1e-9:
+            continue
+
+        wd = _scene_last_word_duration(cur)
+        transfer = _gap_to_hold_transfer(gap=gap, word_dur=wd)
+        if transfer <= 1e-9:
+            continue
+
+        new_end = min(cur_end + transfer, next_start - FRAME)
+        if new_end <= cur_end + 1e-9:
+            continue
+
+        cur["end"] = float(new_end)
+        _LOG.info(
+            "scenes3_post_gap_hold scene_id=%s scene_type=%s word_dur=%.3f gap=%.3f transfer=%.3f end=%.3f->%.3f",
+            cur.get("id"),
+            cur.get("type"),
+            float(wd),
+            float(gap),
+            float(new_end - cur_end),
+            float(cur_end),
+            float(new_end),
+        )
+
+
 # ---------------------------------------------------------------------------
 # Главная функция конвертации
 # ---------------------------------------------------------------------------
@@ -1210,6 +1284,7 @@ def build_scenes_3rd_reference_layers(
 
     scenes = [_scene_from_segment(seg) for seg in flow_plan.segments]
     scenes.sort(key=lambda s: (float(s["start"]), int(s["id"])))
+    _postprocess_scene_boundaries_for_hold(scenes)
 
     layers = build_all_layers(scenes, word_timings=None)
 
