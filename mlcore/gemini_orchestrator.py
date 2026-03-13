@@ -187,7 +187,17 @@ def _resolve_footage_seed_key(*, out_dir: Path, logger: logging.Logger) -> str:
     return key
 
 
-def _make_client(*, api_key: str, model: str, proxy: str, temperature: float, timeout_s: float, logger: logging.Logger) -> GeminiClient:
+def _make_client(
+    *,
+    api_key: str,
+    model: str,
+    proxy: str,
+    temperature: float,
+    timeout_s: float,
+    logger: logging.Logger,
+    max_output_tokens: Optional[int] = None,
+    max_thinking_tokens: Optional[int] = None,
+) -> GeminiClient:
     return GeminiClient(
         GeminiSettings(
             api_key=api_key,
@@ -195,6 +205,8 @@ def _make_client(*, api_key: str, model: str, proxy: str, temperature: float, ti
             temperature=temperature,
             proxy=proxy,
             timeout_s=timeout_s,
+            max_output_tokens=max_output_tokens,
+            max_thinking_tokens=max_thinking_tokens,
             max_attempts=1,
         ),
         logger=logger,
@@ -228,6 +240,19 @@ def _float_env(name: str, default: float) -> float:
         return float(raw)
     except Exception as e:
         raise RuntimeError(f"Invalid {name}: {raw!r}") from e
+
+
+def _optional_int_env(name: str, default: Optional[int] = None) -> Optional[int]:
+    raw = (os.environ.get(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        v = int(raw)
+    except Exception as e:
+        raise RuntimeError(f"Invalid {name}: {raw!r}") from e
+    if v <= 0:
+        raise RuntimeError(f"{name} must be > 0, got {v!r}")
+    return v
 
 
 def _require_float_env(name: str) -> float:
@@ -1062,6 +1087,8 @@ def build_all_via_gemini_one_call(
     proxy = os.environ.get("OUTBOUND_PROXY", "").strip()
     temperature = _float_env("GEMINI_TEMPERATURE", 0.0)
     timeout_s = _float_env("GEMINI_TIMEOUT_S", 120.0)
+    max_output_tokens = _optional_int_env("GEMINI_MAX_OUTPUT_TOKENS", None)
+    max_thinking_tokens = _optional_int_env("GEMINI_MAX_THINKING_TOKENS", 15000)
     provider_mode = normalize_provider_mode(os.environ.get("LLM_PROVIDER_MODE", PROVIDER_MODE_GEMINI))
     hedge_delay_s = _float_env("LLM_HEDGE_DELAY_S", 60.0)
     timing_mode = _require_choice_env("STAGE2_TIMING_MODE", allowed=["prompts", "hybrid"])
@@ -1096,13 +1123,15 @@ def build_all_via_gemini_one_call(
 
     logger.info(
         "llm_provider_config mode=%s hedge_delay_s=%s gemini_timeout_s=%s openrouter_timeout_s=%s "
-        "timing_mode=%s fast_start_seconds=%.3f",
+        "timing_mode=%s fast_start_seconds=%.3f gemini_max_output_tokens=%s gemini_max_thinking_tokens=%s",
         provider_mode,
         hedge_delay_s,
         timeout_s,
         openrouter_timeout_s,
         timing_mode,
         fast_start_seconds,
+        str(max_output_tokens),
+        str(max_thinking_tokens),
     )
 
     client_stage1_asr: Optional[GeminiClient] = None
@@ -1119,6 +1148,8 @@ def build_all_via_gemini_one_call(
             temperature=temperature,
             timeout_s=timeout_s,
             logger=logger,
+            max_output_tokens=max_output_tokens,
+            max_thinking_tokens=max_thinking_tokens,
         )
         client_stage1_forced = _make_client(
             api_key=gemini_api_key,
@@ -1127,6 +1158,8 @@ def build_all_via_gemini_one_call(
             temperature=0.0,
             timeout_s=timeout_s,
             logger=logger,
+            max_output_tokens=max_output_tokens,
+            max_thinking_tokens=max_thinking_tokens,
         )
         client_stage1_scenario = _make_client(
             api_key=gemini_api_key,
@@ -1135,6 +1168,8 @@ def build_all_via_gemini_one_call(
             temperature=temperature,
             timeout_s=timeout_s,
             logger=logger,
+            max_output_tokens=max_output_tokens,
+            max_thinking_tokens=max_thinking_tokens,
         )
         client_subtitles = _make_client(
             api_key=gemini_api_key,
@@ -1143,6 +1178,8 @@ def build_all_via_gemini_one_call(
             temperature=temperature,
             timeout_s=timeout_s,
             logger=logger,
+            max_output_tokens=max_output_tokens,
+            max_thinking_tokens=max_thinking_tokens,
         )
         client_footage = _make_client(
             api_key=gemini_api_key,
@@ -1151,6 +1188,8 @@ def build_all_via_gemini_one_call(
             temperature=temperature,
             timeout_s=timeout_s,
             logger=logger,
+            max_output_tokens=max_output_tokens,
+            max_thinking_tokens=max_thinking_tokens,
         )
         client_timing = _make_client(
             api_key=gemini_api_key,
@@ -1159,6 +1198,8 @@ def build_all_via_gemini_one_call(
             temperature=temperature,
             timeout_s=timeout_s,
             logger=logger,
+            max_output_tokens=max_output_tokens,
+            max_thinking_tokens=max_thinking_tokens,
         )
 
     openrouter_stage1_asr: Optional[OpenRouterClient] = None

@@ -54,6 +54,8 @@ class GeminiSettings:
     temperature: float = 0.0
     proxy: str = ""
     timeout_s: float = 120.0
+    max_output_tokens: Optional[int] = None
+    max_thinking_tokens: Optional[int] = None
     max_attempts: int = 1  # NOTE: kept for compat; retries handled by Celery now
 
 
@@ -223,7 +225,57 @@ class GeminiClient:
         self._model = settings.model
         self._temperature = float(settings.temperature)
         self._timeout_s = float(settings.timeout_s)
+        self._max_output_tokens: Optional[int] = None
+        self._max_thinking_tokens: Optional[int] = None
+        if settings.max_output_tokens is not None:
+            mot = int(settings.max_output_tokens)
+            if mot <= 0:
+                raise RuntimeError(f"max_output_tokens must be > 0, got {settings.max_output_tokens!r}")
+            self._max_output_tokens = mot
+        if settings.max_thinking_tokens is not None:
+            mtt = int(settings.max_thinking_tokens)
+            if mtt <= 0:
+                raise RuntimeError(f"max_thinking_tokens must be > 0, got {settings.max_thinking_tokens!r}")
+            self._max_thinking_tokens = mtt
+        self._thinking_config = self._build_thinking_config()
         self._max_attempts = int(settings.max_attempts)
+
+    def _build_thinking_config(self) -> Optional[types.ThinkingConfig]:
+        if self._max_thinking_tokens is None:
+            return None
+        fields = set(getattr(types.ThinkingConfig, "model_fields", {}).keys())
+        kwargs: Dict[str, Any]
+        if "thinking_budget" in fields:
+            kwargs = {"thinking_budget": int(self._max_thinking_tokens)}
+        elif "thinkingBudget" in fields:
+            kwargs = {"thinkingBudget": int(self._max_thinking_tokens)}
+        else:
+            self._logger.warning(
+                "gemini_thinking_budget_unsupported sdk_thinking_fields=%s requested=%s; "
+                "continuing without thinking budget cap",
+                sorted(fields),
+                self._max_thinking_tokens,
+            )
+            return None
+        return types.ThinkingConfig(**kwargs)
+
+    def _json_generate_cfg(
+        self,
+        *,
+        schema_model: type[BaseModel],
+        system_instruction: Optional[str],
+    ) -> types.GenerateContentConfig:
+        kwargs: Dict[str, Any] = {
+            "temperature": self._temperature,
+            "response_mime_type": "application/json",
+            "response_json_schema": schema_model.model_json_schema(),
+            "system_instruction": system_instruction,
+        }
+        if self._max_output_tokens is not None:
+            kwargs["max_output_tokens"] = int(self._max_output_tokens)
+        if self._thinking_config is not None:
+            kwargs["thinking_config"] = self._thinking_config
+        return types.GenerateContentConfig(**kwargs)
 
     # ==========================================================
     # Files API helpers (get + wait ACTIVE)
@@ -396,15 +448,20 @@ class GeminiClient:
             contents.extend(files)
         contents.append(prompt)
 
-        cfg = types.GenerateContentConfig(
-            temperature=self._temperature,
-            response_mime_type="application/json",
-            response_json_schema=BlocksTokensPayload.model_json_schema(),
+        cfg = self._json_generate_cfg(
+            schema_model=BlocksTokensPayload,
             system_instruction=system_instruction,
         )
 
         log = self._logger
-        log.info("gemini_call_tokens model=%s timeout_s=%s temperature=%s", self._model, self._timeout_s, self._temperature)
+        log.info(
+            "gemini_call_tokens model=%s timeout_s=%s temperature=%s max_output_tokens=%s max_thinking_tokens=%s",
+            self._model,
+            self._timeout_s,
+            self._temperature,
+            str(self._max_output_tokens),
+            str(self._max_thinking_tokens),
+        )
 
         resp = self._client.models.generate_content(
             model=self._model,
@@ -452,15 +509,18 @@ class GeminiClient:
             contents.extend(files)
         contents.append(prompt)
 
-        cfg = types.GenerateContentConfig(
-            temperature=self._temperature,
-            response_mime_type="application/json",
-            response_json_schema=schema_model.model_json_schema(),
+        cfg = self._json_generate_cfg(
+            schema_model=schema_model,
             system_instruction=system_instruction,
         )
 
         log = self._logger
-        log.info("gemini_call_generic model=%s", self._model)
+        log.info(
+            "gemini_call_generic model=%s max_output_tokens=%s max_thinking_tokens=%s",
+            self._model,
+            str(self._max_output_tokens),
+            str(self._max_thinking_tokens),
+        )
 
         resp = self._client.models.generate_content(
             model=self._model,
