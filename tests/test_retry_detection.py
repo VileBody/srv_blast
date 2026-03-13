@@ -13,6 +13,7 @@ from services.orchestrator.tasks import (
     _looks_like_openrouter_overloaded_503,
     _looks_like_openrouter_rate_limited_429,
     _looks_like_openrouter_timeout,
+    _overloaded_retry_backoff_s,
 )
 
 
@@ -102,3 +103,8 @@ def test_extract_preflight_out_le_in_issue_returns_none_when_missing() -> None:
 def test_transient_windows_error_urlerror() -> None:
     e = urllib.error.URLError("broken pipe")
     assert _is_transient_windows_error(e) is True
+
+
+def test_overloaded_retry_backoff_is_powers_of_two_capped_at_64s() -> None:
+    seq = [_overloaded_retry_backoff_s(attempt=i) for i in range(1, 10)]
+    assert seq == [2.0, 4.0, 8.0, 16.0, 32.0, 64.0, 64.0, 64.0, 64.0]

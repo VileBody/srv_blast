@@ -191,6 +191,7 @@ def _make_client(
     *,
     api_key: str,
     model: str,
+    fallback_model: Optional[str],
     proxy: str,
     temperature: float,
     timeout_s: float,
@@ -202,6 +203,7 @@ def _make_client(
         GeminiSettings(
             api_key=api_key,
             model=model,
+            fallback_model=fallback_model,
             temperature=temperature,
             proxy=proxy,
             timeout_s=timeout_s,
@@ -1114,6 +1116,10 @@ def build_all_via_gemini_one_call(
     model_stage1_scenario = (os.environ.get("GEMINI_MODEL_STAGE1_SCENARIO") or model_stage1_base).strip()
     model_subtitles = _require_model("GEMINI_MODEL_SUBTITLES")
     model_footage = _require_model("GEMINI_MODEL_FOOTAGE")
+    model_fallback_raw = (os.environ.get("GEMINI_MODEL_FALLBACK") or "gemini-3-flash-preview").strip()
+    model_fallback = model_fallback_raw
+    if model_fallback.lower() in {"off", "none", "disabled", "disable", "0"}:
+        model_fallback = ""
     openrouter_api_key = (os.environ.get("OPENROUTER_API_KEY") or "").strip()
     openrouter_timeout_s = _float_env("OPENROUTER_TIMEOUT_S", timeout_s)
     if provider_mode in {PROVIDER_MODE_OPENROUTER, PROVIDER_MODE_HEDGED} and not openrouter_api_key:
@@ -1123,7 +1129,8 @@ def build_all_via_gemini_one_call(
 
     logger.info(
         "llm_provider_config mode=%s hedge_delay_s=%s gemini_timeout_s=%s openrouter_timeout_s=%s "
-        "timing_mode=%s fast_start_seconds=%.3f gemini_max_output_tokens=%s gemini_max_thinking_tokens=%s",
+        "timing_mode=%s fast_start_seconds=%.3f gemini_max_output_tokens=%s "
+        "gemini_max_thinking_tokens=%s gemini_fallback_model=%s",
         provider_mode,
         hedge_delay_s,
         timeout_s,
@@ -1132,6 +1139,7 @@ def build_all_via_gemini_one_call(
         fast_start_seconds,
         str(max_output_tokens),
         str(max_thinking_tokens),
+        (model_fallback or "<disabled>"),
     )
 
     client_stage1_asr: Optional[GeminiClient] = None
@@ -1144,6 +1152,7 @@ def build_all_via_gemini_one_call(
         client_stage1_asr = _make_client(
             api_key=gemini_api_key,
             model=model_stage1_asr,
+            fallback_model=model_fallback or None,
             proxy=proxy,
             temperature=temperature,
             timeout_s=timeout_s,
@@ -1154,6 +1163,7 @@ def build_all_via_gemini_one_call(
         client_stage1_forced = _make_client(
             api_key=gemini_api_key,
             model=model_stage1_asr,
+            fallback_model=model_fallback or None,
             proxy=proxy,
             temperature=0.0,
             timeout_s=timeout_s,
@@ -1164,6 +1174,7 @@ def build_all_via_gemini_one_call(
         client_stage1_scenario = _make_client(
             api_key=gemini_api_key,
             model=model_stage1_scenario,
+            fallback_model=model_fallback or None,
             proxy=proxy,
             temperature=temperature,
             timeout_s=timeout_s,
@@ -1174,6 +1185,7 @@ def build_all_via_gemini_one_call(
         client_subtitles = _make_client(
             api_key=gemini_api_key,
             model=model_subtitles,
+            fallback_model=model_fallback or None,
             proxy=proxy,
             temperature=temperature,
             timeout_s=timeout_s,
@@ -1184,6 +1196,7 @@ def build_all_via_gemini_one_call(
         client_footage = _make_client(
             api_key=gemini_api_key,
             model=model_footage,
+            fallback_model=model_fallback or None,
             proxy=proxy,
             temperature=temperature,
             timeout_s=timeout_s,
@@ -1194,6 +1207,7 @@ def build_all_via_gemini_one_call(
         client_timing = _make_client(
             api_key=gemini_api_key,
             model=model_stage1_base,
+            fallback_model=model_fallback or None,
             proxy=proxy,
             temperature=temperature,
             timeout_s=timeout_s,

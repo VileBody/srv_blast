@@ -396,6 +396,22 @@ def _retry_backoff_s(*, attempt: int, base_s: float, cap_s: float) -> float:
     return min(float(cap_s), float(base_s) * float(2 ** max(0, a - 1)))
 
 
+_OVERLOADED_RETRY_BASE_S = 2.0
+_OVERLOADED_RETRY_CAP_S = 64.0
+
+
+def _overloaded_retry_backoff_s(*, attempt: int) -> float:
+    """
+    Fast overload backoff for model/provider 503 bursts:
+    2, 4, 8, 16, 32, 64, 64, ...
+    """
+    return _retry_backoff_s(
+        attempt=attempt,
+        base_s=_OVERLOADED_RETRY_BASE_S,
+        cap_s=_OVERLOADED_RETRY_CAP_S,
+    )
+
+
 def _drop_resume_stage_key(path: Path, *, key: str) -> bool:
     """
     Remove one stage entry from LLM resume-state file.
@@ -570,7 +586,7 @@ def build_job(self, job_id: str) -> Dict[str, Any]:
                 raise self.retry(countdown=backoff, exc=RuntimeError("gemini_internal_500"))
             if _looks_like_gemini_overloaded_503(text):
                 attempt = int(getattr(self.request, "retries", 0)) + 1
-                backoff = _retry_backoff_s(attempt=attempt, base_s=30.0, cap_s=900.0)
+                backoff = _overloaded_retry_backoff_s(attempt=attempt)
                 raise self.retry(countdown=backoff, exc=RuntimeError("gemini_overloaded_503"))
             if _looks_like_gemini_rate_limited_429(text):
                 attempt = int(getattr(self.request, "retries", 0)) + 1
@@ -582,7 +598,7 @@ def build_job(self, job_id: str) -> Dict[str, Any]:
                 raise self.retry(countdown=backoff, exc=RuntimeError("openrouter_timeout"))
             if _looks_like_openrouter_overloaded_503(text):
                 attempt = int(getattr(self.request, "retries", 0)) + 1
-                backoff = _retry_backoff_s(attempt=attempt, base_s=30.0, cap_s=900.0)
+                backoff = _overloaded_retry_backoff_s(attempt=attempt)
                 raise self.retry(countdown=backoff, exc=RuntimeError("openrouter_overloaded_503"))
             if _looks_like_openrouter_rate_limited_429(text):
                 attempt = int(getattr(self.request, "retries", 0)) + 1
@@ -614,7 +630,7 @@ def build_job(self, job_id: str) -> Dict[str, Any]:
             raise self.retry(countdown=backoff, exc=RuntimeError("openrouter_timeout"))
         if _looks_like_openrouter_overloaded_503(blob):
             attempt = int(getattr(self.request, "retries", 0)) + 1
-            backoff = _retry_backoff_s(attempt=attempt, base_s=30.0, cap_s=900.0)
+            backoff = _overloaded_retry_backoff_s(attempt=attempt)
             raise self.retry(countdown=backoff, exc=RuntimeError("openrouter_overloaded_503"))
         if _looks_like_openrouter_rate_limited_429(blob):
             attempt = int(getattr(self.request, "retries", 0)) + 1
@@ -669,7 +685,7 @@ def build_job(self, job_id: str) -> Dict[str, Any]:
                             raise self.retry(countdown=backoff, exc=RuntimeError("gemini_internal_500"))
                         if _looks_like_gemini_overloaded_503(text):
                             attempt = int(getattr(self.request, "retries", 0)) + 1
-                            backoff = _retry_backoff_s(attempt=attempt, base_s=30.0, cap_s=900.0)
+                            backoff = _overloaded_retry_backoff_s(attempt=attempt)
                             raise self.retry(countdown=backoff, exc=RuntimeError("gemini_overloaded_503"))
                         if _looks_like_gemini_rate_limited_429(text):
                             attempt = int(getattr(self.request, "retries", 0)) + 1
@@ -681,7 +697,7 @@ def build_job(self, job_id: str) -> Dict[str, Any]:
                             raise self.retry(countdown=backoff, exc=RuntimeError("openrouter_timeout"))
                         if _looks_like_openrouter_overloaded_503(text):
                             attempt = int(getattr(self.request, "retries", 0)) + 1
-                            backoff = _retry_backoff_s(attempt=attempt, base_s=30.0, cap_s=900.0)
+                            backoff = _overloaded_retry_backoff_s(attempt=attempt)
                             raise self.retry(countdown=backoff, exc=RuntimeError("openrouter_overloaded_503"))
                         if _looks_like_openrouter_rate_limited_429(text):
                             attempt = int(getattr(self.request, "retries", 0)) + 1

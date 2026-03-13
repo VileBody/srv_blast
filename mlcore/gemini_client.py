@@ -51,6 +51,7 @@ def make_client(*, api_key: str, proxy: str, timeout_s: float) -> genai.Client:
 class GeminiSettings:
     api_key: str
     model: str
+    fallback_model: Optional[str] = None
     temperature: float = 0.0
     proxy: str = ""
     timeout_s: float = 120.0
@@ -215,7 +216,9 @@ def _sanitize_payload_dict(d: Dict[str, Any]) -> Dict[str, Any]:
 class GeminiClient:
     """
     IMPORTANT POLICY:
-      - No internal retries here.
+      - No internal retry loops here.
+      - Optional single-shot fallback to another Gemini model is allowed
+        only for transient capacity/rate-limit failures.
       - If Gemini fails transiently, Celery should retry the whole job.
     """
 
@@ -223,6 +226,15 @@ class GeminiClient:
         self._logger = logger or logging.getLogger("mlcore.gemini_client")
         self._client = make_client(api_key=settings.api_key, proxy=settings.proxy, timeout_s=float(settings.timeout_s))
         self._model = settings.model
+        fm = str(settings.fallback_model or "").strip()
+        self._fallback_model: Optional[str] = fm if (fm and fm != self._model) else None
+        self._fallback_client: Optional[genai.Client] = None
+        if self._fallback_model is not None:
+            self._fallback_client = make_client(
+                api_key=settings.api_key,
+                proxy=settings.proxy,
+                timeout_s=float(settings.timeout_s),
+            )
         self._temperature = float(settings.temperature)
         self._timeout_s = float(settings.timeout_s)
         self._max_output_tokens: Optional[int] = None
@@ -239,6 +251,85 @@ class GeminiClient:
             self._max_thinking_tokens = mtt
         self._thinking_config = self._build_thinking_config()
         self._max_attempts = int(settings.max_attempts)
+
+    def _exc_text(self, exc: BaseException) -> str:
+        parts: List[str] = [type(exc).__name__]
+        try:
+            parts.append(str(exc))
+        except Exception:
+            pass
+        try:
+            parts.append(repr(exc))
+        except Exception:
+            pass
+        return "\n".join([p for p in parts if p])
+
+    def _is_transient_capacity_error(self, exc: BaseException) -> bool:
+        text = self._exc_text(exc)
+        if not text:
+            return False
+        lo = text.lower()
+        if "503" in lo and "unavailable" in lo:
+            return True
+        if "429" in lo and (
+            "resource_exhausted" in lo
+            or "too many requests" in lo
+            or "rate limit" in lo
+        ):
+            return True
+        return False
+
+    def _generate_content_with_optional_fallback(
+        self,
+        *,
+        contents: List[object],
+        config: types.GenerateContentConfig,
+        call_kind: str,
+    ) -> Any:
+        try:
+            return self._client.models.generate_content(
+                model=self._model,
+                contents=contents,
+                config=config,
+            )
+        except Exception as primary_exc:  # noqa: BLE001
+            if self._fallback_model is None:
+                raise
+            if self._fallback_client is None:
+                raise
+            if not self._is_transient_capacity_error(primary_exc):
+                raise
+
+            self._logger.warning(
+                "gemini_model_fallback_triggered kind=%s primary=%s fallback=%s reason=%s",
+                call_kind,
+                self._model,
+                self._fallback_model,
+                self._exc_text(primary_exc),
+            )
+            try:
+                resp = self._fallback_client.models.generate_content(
+                    model=self._fallback_model,
+                    contents=contents,
+                    config=config,
+                )
+                self._logger.info(
+                    "gemini_model_fallback_success kind=%s primary=%s fallback=%s",
+                    call_kind,
+                    self._model,
+                    self._fallback_model,
+                )
+                return resp
+            except Exception as fallback_exc:  # noqa: BLE001
+                self._logger.warning(
+                    "gemini_model_fallback_failed kind=%s primary=%s fallback=%s primary_err=%s fallback_err=%s",
+                    call_kind,
+                    self._model,
+                    self._fallback_model,
+                    self._exc_text(primary_exc),
+                    self._exc_text(fallback_exc),
+                )
+                raise fallback_exc from primary_exc
 
     def _build_thinking_config(self) -> Optional[types.ThinkingConfig]:
         if self._max_thinking_tokens is None:
@@ -463,10 +554,10 @@ class GeminiClient:
             str(self._max_thinking_tokens),
         )
 
-        resp = self._client.models.generate_content(
-            model=self._model,
+        resp = self._generate_content_with_optional_fallback(
             contents=contents,
             config=cfg,
+            call_kind="tokens_structured",
         )
         text = getattr(resp, "text", None)
         if not text or not isinstance(text, str):
@@ -522,10 +613,10 @@ class GeminiClient:
             str(self._max_thinking_tokens),
         )
 
-        resp = self._client.models.generate_content(
-            model=self._model,
+        resp = self._generate_content_with_optional_fallback(
             contents=contents,
             config=cfg,
+            call_kind="generic_structured",
         )
         text = getattr(resp, "text", None)
         if not text or not isinstance(text, str):
