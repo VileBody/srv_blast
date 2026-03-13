@@ -133,6 +133,45 @@ class Impulse2ndPayload(BaseModel):
         return SUBTITLES_MODE_IMPULSE_2ND
 
 
+class Impulse2ndRawWordTiming(BaseModel):
+    word: str = Field(min_length=1)
+    start: float
+    end: float
+
+    @model_validator(mode="after")
+    def _check_time(self) -> "Impulse2ndRawWordTiming":
+        if self.end <= self.start:
+            raise ValueError(f"word_timing.end must be > start (got {self.start}..{self.end})")
+        return self
+
+
+class Impulse2ndRawSegmentPayload(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    text: str = Field(min_length=1)
+    in_point: float = Field(alias="in")
+    out_point: float = Field(alias="out")
+    type: Literal["long", "short"]
+    word_timings: List[Impulse2ndRawWordTiming] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _check_time(self) -> "Impulse2ndRawSegmentPayload":
+        if self.out_point <= self.in_point:
+            raise ValueError(f"segment.out must be > segment.in (got {self.in_point}..{self.out_point})")
+        return self
+
+
+class Impulse2ndRawPayload(BaseModel):
+    # Absolute full-track anchor for denormalizing normalized impulse timings.
+    anchor_in_abs: float
+    word_timings: List[Impulse2ndRawWordTiming] = Field(default_factory=list)
+    segments: List[Impulse2ndRawSegmentPayload] = Field(min_length=1)
+
+    @property
+    def mode(self) -> str:
+        return SUBTITLES_MODE_IMPULSE_2ND
+
+
 class SceneWordTimingPayload(BaseModel):
     word: str = Field(min_length=1)
     start: float = Field(ge=0.0)

@@ -5,6 +5,10 @@ from .planner import (
     Scenes3rdPlanner,
     SubtitlesPlannerFactory,
 )
+from .impulse_adapter import (
+    build_impulse_raw_context,
+    flow_to_impulse_raw_payload,
+)
 
 __all__ = [
     "BaseSubtitlesPlanner",
@@ -12,4 +16,6 @@ __all__ = [
     "Impulse2ndPlanner",
     "Scenes3rdPlanner",
     "SubtitlesPlannerFactory",
+    "build_impulse_raw_context",
+    "flow_to_impulse_raw_payload",
 ]

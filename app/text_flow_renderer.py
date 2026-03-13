@@ -840,14 +840,24 @@ class FlowTextLayerRenderer:
         return [adj, outline, fill]
 
     def _impulse_clean_text(self, text: str) -> str:
+        def _is_letter(ch: str) -> bool:
+            c = str(ch or "").lower()
+            if len(c) != 1:
+                return False
+            if "a" <= c <= "z":
+                return True
+            if "а" <= c <= "я":
+                return True
+            return c == "ё"
+
         raw = str(text or "").lower()
         out: List[str] = []
         for i, ch in enumerate(raw):
             if ch in {"'", "-"}:
                 prev = raw[i - 1] if i > 0 else " "
                 nxt = raw[i + 1] if i < (len(raw) - 1) else " "
-                prev_letter = prev.isalpha()
-                next_letter = nxt.isalpha()
+                prev_letter = _is_letter(prev)
+                next_letter = _is_letter(nxt)
                 if prev_letter and next_letter:
                     out.append(ch)
                 continue
@@ -907,12 +917,12 @@ class FlowTextLayerRenderer:
         return out
 
     def _impulse_peak_scale(self, *, text: str, dur: float, comp_width: float = 1080.0) -> float:
-        chars = max(1, len(str(text or "")))
+        chars = len(str(text or ""))
         peak_by_dur = round(190 + (1.0 - float(dur)) * 180)
         avg_char_w = 62.0
         safe_width = float(comp_width) * 0.85
         text_width = float(chars) * avg_char_w
-        peak_by_char = round((safe_width / max(1.0, text_width)) * 100)
+        peak_by_char = round((safe_width / text_width) * 100)
         peak_val = min(peak_by_dur, peak_by_char)
         return float(max(150, peak_val))
 
@@ -951,7 +961,6 @@ class FlowTextLayerRenderer:
         exits = self._impulse_exit_times(segs)
         out: List[Dict[str, Any]] = []
         z = 1000
-        prev_out: float | None = None
         fps = 23.976
 
         for idx, seg in enumerate(segs):
@@ -960,33 +969,27 @@ class FlowTextLayerRenderer:
             style = str(seg.style_tag or "").strip().lower()
             is_long = style == "long"
             raw_text = str(seg.text or "")
-            clean_text = self._impulse_clean_text(raw_text) or str(seg.segment_id).lower()
-            chars = max(1, len(raw_text))
+            clean_text = self._impulse_clean_text(raw_text)
+            chars = len(raw_text)
             expr_delay = self._impulse_expr_delay(
                 track_in=track_in,
                 out_t=out_t,
                 chars=chars,
                 is_long=is_long,
             )
-            reveal_time = expr_delay * float(max(0, chars - 1)) if is_long else 0.0
+            reveal_time = expr_delay * float(chars - 1) if is_long else 0.0
             in_t = max(0.0, track_in - reveal_time * 0.25)
-            if prev_out is not None:
-                in_t = max(in_t, float(prev_out))
-            if out_t <= in_t:
-                out_t = in_t + _FRAME_SEC
             dur = out_t - in_t
-            total_f = max(1, int(round(dur * fps)))
+            total_f = int(round(dur * fps))
 
             if is_long:
                 exit_t = exits[idx]
                 if exit_t is not None:
-                    scale_exit = min(out_t, max(in_t, float(exit_t)))
-                    opacity_exit = min(out_t, max(in_t, float(exit_t) + 3.0 / fps))
+                    scale_exit = float(exit_t)
+                    opacity_exit = float(exit_t) + 3.0 / fps
                 else:
-                    scale_exit = min(out_t, in_t + max(0, total_f - 7) / fps)
-                    opacity_exit = min(out_t, in_t + max(0, total_f - 4) / fps)
-                scale_exit = min(out_t, max(in_t, scale_exit))
-                opacity_exit = min(out_t, max(in_t, opacity_exit))
+                    scale_exit = in_t + float(total_f - 7) / fps
+                    opacity_exit = in_t + float(total_f - 4) / fps
                 scale_kfs = [
                     _kf(t=scale_exit, value=[75, 75, 100], interpolation="bezier"),
                     _kf(t=out_t, value=[0, 0, 100], interpolation="bezier"),
@@ -997,9 +1000,9 @@ class FlowTextLayerRenderer:
                 ]
             else:
                 peak_f = int(round(total_f * 0.5))
-                peak_t = min(out_t, in_t + float(peak_f) / fps)
+                peak_t = in_t + float(peak_f) / fps
                 peak_val = self._impulse_peak_scale(text=raw_text, dur=dur)
-                op_in = max(in_t, out_t - 3.0 / fps)
+                op_in = in_t + float(total_f - 3) / fps
                 scale_kfs = [
                     _kf(t=in_t, value=[75, 75, 100], interpolation="bezier"),
                     _kf(t=peak_t, value=[peak_val, peak_val, 100], interpolation="bezier"),
@@ -1096,7 +1099,6 @@ class FlowTextLayerRenderer:
             }
             out.append(layer)
             z -= 1
-            prev_out = out_t
         return out
 
     def _type4_layers(

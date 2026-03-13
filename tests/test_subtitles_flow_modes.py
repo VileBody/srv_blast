@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import logging
+import pytest
 
 from app.text_comp import build_text_layers
 from mlcore.models.stage1_plan import Stage1PlanPayload
-from mlcore.models.subtitles_flow import Impulse2ndPayload, Scenes3rdPayload
+from mlcore.models.subtitles_flow import Impulse2ndRawPayload, Scenes3rdPayload
 from mlcore.subtitles_flow import SubtitlesPlannerFactory
 
 
@@ -64,28 +65,34 @@ def _assert_keyframes_within_bounds(layers: list[dict]) -> None:
 
 def test_impulse_mode_planner_and_renderer(monkeypatch) -> None:
     planner = SubtitlesPlannerFactory.create("impulse_2nd")
-    payload = Impulse2ndPayload.model_validate(
+    payload = Impulse2ndRawPayload.model_validate(
         {
-            "clip": {"start": 10.0, "end": 24.0},
+            "anchor_in_abs": 10.0,
+            "word_timings": [
+                {"word": "hello", "start": 0.0, "end": 0.4},
+                {"word": "i'm", "start": 0.45, "end": 0.75},
+                {"word": "world", "start": 0.8, "end": 1.0},
+                {"word": "boom", "start": 1.6, "end": 1.9},
+            ],
             "segments": [
                 {
                     "text": "Hello, I'm world!",
-                    "in": 10.0,
-                    "out": 11.5,
+                    "in": 0.0,
+                    "out": 1.5,
                     "type": "long",
                     "word_timings": [
-                        {"word": "hello", "start": 10.0, "end": 10.4},
-                        {"word": "i'm", "start": 10.45, "end": 10.75},
-                        {"word": "world", "start": 10.8, "end": 11.0},
+                        {"word": "hello", "start": 0.0, "end": 0.4},
+                        {"word": "i'm", "start": 0.45, "end": 0.75},
+                        {"word": "world", "start": 0.8, "end": 1.0},
                     ],
                 },
                 {
                     "text": "boom",
-                    "in": 11.6,
-                    "out": 12.1,
+                    "in": 1.6,
+                    "out": 2.1,
                     "type": "short",
                     "word_timings": [
-                        {"word": "boom", "start": 11.6, "end": 11.9},
+                        {"word": "boom", "start": 1.6, "end": 1.9},
                     ],
                 },
             ],
@@ -329,18 +336,22 @@ def test_flow_modes_ignore_global_text_shift(monkeypatch) -> None:
 
 def test_impulse_mode_ignores_global_text_shift_and_keeps_drop_shadows(monkeypatch) -> None:
     planner = SubtitlesPlannerFactory.create("impulse_2nd")
-    payload = Impulse2ndPayload.model_validate(
+    payload = Impulse2ndRawPayload.model_validate(
         {
-            "clip": {"start": 10.0, "end": 24.0},
+            "anchor_in_abs": 10.0,
+            "word_timings": [
+                {"word": "long", "start": 0.0, "end": 0.4},
+                {"word": "phrase", "start": 0.5, "end": 1.0},
+            ],
             "segments": [
                 {
                     "text": "Long phrase",
-                    "in": 10.0,
-                    "out": 11.3,
+                    "in": 0.0,
+                    "out": 1.3,
                     "type": "long",
                     "word_timings": [
-                        {"word": "long", "start": 10.0, "end": 10.4},
-                        {"word": "phrase", "start": 10.5, "end": 11.0},
+                        {"word": "long", "start": 0.0, "end": 0.4},
+                        {"word": "phrase", "start": 0.5, "end": 1.0},
                     ],
                 }
             ],
@@ -377,3 +388,127 @@ def test_impulse_mode_ignores_global_text_shift_and_keeps_drop_shadows(monkeypat
     assert "0001:ADBE Drop Shadow" in keys
     assert "0002:ADBE Drop Shadow" in keys
     assert "0003:ADBE Drop Shadow" in keys
+
+
+def test_impulse_raw_anchor_adapter_converts_to_absolute() -> None:
+    planner = SubtitlesPlannerFactory.create("impulse_2nd")
+    payload = Impulse2ndRawPayload.model_validate(
+        {
+            "anchor_in_abs": 12.5,
+            "word_timings": [{"word": "hello", "start": 0.3, "end": 0.6}],
+            "segments": [
+                {
+                    "text": "hello",
+                    "in": 0.3,
+                    "out": 0.9,
+                    "type": "long",
+                    "word_timings": [{"word": "hello", "start": 0.3, "end": 0.6}],
+                }
+            ],
+        }
+    )
+    flow = planner.normalize_payload(payload=payload, stage1=_stage1(), logger=logging.getLogger("test"))
+    seg = flow.segments[0]
+    assert abs(float(seg.in_point) - 12.8) < 1e-6
+    assert abs(float(seg.out_point) - 13.4) < 1e-6
+    tok = seg.tokens[0]
+    assert abs(float(tok.t_start) - 12.8) < 1e-6
+    assert abs(float(tok.t_end) - 13.1) < 1e-6
+
+
+def test_impulse_adapter_warns_and_repairs_minor_issues(caplog) -> None:
+    planner = SubtitlesPlannerFactory.create("impulse_2nd")
+    payload = Impulse2ndRawPayload.model_validate(
+        {
+            "anchor_in_abs": 10.0,
+            "word_timings": [
+                {"word": "go", "start": -0.02, "end": 0.10},
+                {"word": "away", "start": 0.33, "end": 0.60},
+            ],
+            "segments": [
+                {"text": "go go", "in": -0.02, "out": 0.30, "type": "long", "word_timings": []},
+                {"text": "away", "in": 0.31, "out": 0.70, "type": "short", "word_timings": []},
+            ],
+        }
+    )
+    caplog.set_level(logging.WARNING, logger="test")
+    flow = planner.normalize_payload(payload=payload, stage1=_stage1(), logger=logging.getLogger("test"))
+    assert len(flow.segments) == 2
+    msgs = [r.message for r in caplog.records]
+    assert any("reason=segment_in_out_of_clip" in m for m in msgs)
+    assert any("reason=segment_tokens_from_global_word_timings" in m for m in msgs)
+    assert any("reason=repeated_word" in m for m in msgs)
+    assert any("reason=close_boundary" in m for m in msgs)
+
+
+def test_impulse_adapter_fail_fast_cases() -> None:
+    planner = SubtitlesPlannerFactory.create("impulse_2nd")
+
+    with pytest.raises(Exception):
+        Impulse2ndRawPayload.model_validate(
+            {
+                "segments": [{"text": "x", "in": 0.0, "out": 0.3, "type": "long"}],
+            }
+        )
+
+    payload_overlap = Impulse2ndRawPayload.model_validate(
+        {
+            "anchor_in_abs": 10.0,
+            "word_timings": [],
+            "segments": [
+                {"text": "one", "in": 0.0, "out": 1.0, "type": "long"},
+                {"text": "two", "in": 0.5, "out": 1.1, "type": "long"},
+            ],
+        }
+    )
+    with pytest.raises(ValueError):
+        planner.normalize_payload(payload=payload_overlap, stage1=_stage1(), logger=logging.getLogger("test"))
+
+    with pytest.raises(Exception):
+        Impulse2ndRawPayload.model_validate(
+            {
+                "anchor_in_abs": 10.0,
+                "segments": [{"text": "bad", "in": 1.0, "out": 0.4, "type": "long"}],
+            }
+        )
+
+
+def test_impulse_renderer_keeps_template_prev_out_quirk(monkeypatch) -> None:
+    planner = SubtitlesPlannerFactory.create("impulse_2nd")
+    payload = Impulse2ndRawPayload.model_validate(
+        {
+            "anchor_in_abs": 10.0,
+            "segments": [
+                {
+                    "text": "alpha beta gamma",
+                    "in": 0.0,
+                    "out": 1.0,
+                    "type": "long",
+                    "word_timings": [{"word": "alpha", "start": 0.0, "end": 0.4}],
+                },
+                {
+                    "text": "delta echo",
+                    "in": 1.02,
+                    "out": 1.6,
+                    "type": "long",
+                    "word_timings": [{"word": "delta", "start": 1.02, "end": 1.3}],
+                },
+            ],
+        }
+    )
+    flow = planner.normalize_payload(payload=payload, stage1=_stage1(), logger=logging.getLogger("test"))
+    monkeypatch.setenv("TEXT_LAYER_TIME_SHIFT_S", "0")
+    layers = build_text_layers(
+        full_edit_config={
+            "subtitles_mode": "impulse_2nd",
+            "subtitle_flow_plan": flow.model_dump(mode="json"),
+            "composition": {"fps": 23.976, "dur": 14.0},
+        },
+        text_comp_name="Текст",
+        mine_comp_name='Текст "Mine"',
+    )
+    text_layers = [x for x in layers if str(x.get("type")) == "text"]
+    assert len(text_layers) == 2
+    first = next(x for x in text_layers if str(x.get("text")) == "alpha beta gamma")
+    second = next(x for x in text_layers if str(x.get("text")) == "delta echo")
+    assert float(second.get("in_point")) < float(first.get("out_point"))

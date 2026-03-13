@@ -208,6 +208,7 @@ def build_stage2_subtitles_user_prompt(
     schema_name: str = "BlocksTokensPayload",
     subtitles_mode: str = SUBTITLES_MODE_LEGACY_BLOCKS,
 ) -> str:
+    resolved_mode = normalize_subtitles_mode(subtitles_mode)
     # Stage2 subtitles should only deal with the chosen clip window; reduce ambiguity by passing
     # only transcript words that lie inside that window (ABS times).
     audio = stage1_json.get("audio") if isinstance(stage1_json, dict) else None
@@ -235,11 +236,20 @@ def build_stage2_subtitles_user_prompt(
         "target_fragment": str(stage1_json.get("target_fragment") or ""),
         "fragment_analytics": stage1_json.get("fragment_analytics"),
     }
+    if resolved_mode == SUBTITLES_MODE_IMPULSE_2ND:
+        from mlcore.subtitles_flow.impulse_adapter import build_impulse_raw_context
+
+        ctx["impulse_raw_context"] = build_impulse_raw_context(stage1_json)
+        ctx["impulse_raw_context"]["required_output_keys"] = [
+            "anchor_in_abs",
+            "word_timings",
+            "segments",
+        ]
 
     return (
         f"Return ONLY JSON matching schema: {schema_name}\n\n"
         "SUBTITLES_MODE:\n"
-        + json.dumps({"mode": normalize_subtitles_mode(subtitles_mode)}, ensure_ascii=False)
+        + json.dumps({"mode": resolved_mode}, ensure_ascii=False)
         + "\n\n"
         "STAGE1_SUBTITLES_CONTEXT_JSON:\n"
         + json.dumps(ctx, ensure_ascii=False)

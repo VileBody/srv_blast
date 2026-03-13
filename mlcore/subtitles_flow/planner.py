@@ -14,7 +14,7 @@ from core.subtitles_mode import (
 )
 from mlcore.models.stage1_plan import Stage1PlanPayload
 from mlcore.models.subtitles_flow import (
-    Impulse2ndPayload,
+    Impulse2ndRawPayload,
     Scene3rdPayloadScene,
     Scenes3rdPayload,
     SubtitleFlowPlan,
@@ -26,6 +26,7 @@ from mlcore.prompts import (
     build_stage2_subtitles_system_instruction,
     build_stage2_subtitles_user_prompt,
 )
+from .impulse_adapter import flow_to_impulse_raw_payload
 
 
 _MINOR_CLAMP_EPS = 0.06
@@ -255,7 +256,7 @@ class _FlowPlannerBase(BaseSubtitlesPlanner):
 
 class Impulse2ndPlanner(_FlowPlannerBase):
     mode = SUBTITLES_MODE_IMPULSE_2ND
-    schema_model = Impulse2ndPayload
+    schema_model = Impulse2ndRawPayload
     use_tokens_structured = False
 
     def normalize_payload(
@@ -265,21 +266,58 @@ class Impulse2ndPlanner(_FlowPlannerBase):
         stage1: Stage1PlanPayload,
         logger: logging.Logger,
     ) -> SubtitleFlowPlan:
-        if not isinstance(payload, Impulse2ndPayload):
-            payload = Impulse2ndPayload.model_validate(payload.model_dump(mode="json"))
+        if not isinstance(payload, Impulse2ndRawPayload):
+            payload = Impulse2ndRawPayload.model_validate(payload.model_dump(mode="json"))
 
         clip = self._clip_from_stage1(stage1)
-        if abs(float(payload.clip.start) - float(clip.start)) > 1e-6:
-            raise ValueError("subtitles.clip.start must equal stage1.audio.clip_start_abs")
-        if abs(float(payload.clip.end) - float(clip.end)) > 1e-6:
-            raise ValueError("subtitles.clip.end must equal stage1.audio.clip_end_abs")
-
         warnings: List[SubtitleFlowWarning] = []
+
+        anchor_in_abs = self._minor_clamp(
+            value=float(payload.anchor_in_abs),
+            low=float(clip.start),
+            high=float(clip.end),
+            segment_id="anchor",
+            reason="anchor_out_of_clip",
+            warnings=warnings,
+        )
+
+        if payload.segments and abs(float(payload.segments[0].in_point)) > _CLOSE_GAP_EPS:
+            warnings.append(
+                SubtitleFlowWarning(
+                    mode=self.mode,
+                    segment_id="anchor",
+                    reason="anchor_offset_nonzero",
+                    action=f"kept first_segment_in={float(payload.segments[0].in_point):.6f}",
+                )
+            )
+
+        global_tokens: List[SubtitleFlowToken] = []
+        for wt in payload.word_timings:
+            t_start = self._minor_clamp(
+                value=anchor_in_abs + float(wt.start),
+                low=float(clip.start),
+                high=float(clip.end),
+                segment_id="global_word_timings",
+                reason="global_token_start_out_of_clip",
+                warnings=warnings,
+            )
+            t_end = self._minor_clamp(
+                value=anchor_in_abs + float(wt.end),
+                low=float(clip.start),
+                high=float(clip.end),
+                segment_id="global_word_timings",
+                reason="global_token_end_out_of_clip",
+                warnings=warnings,
+            )
+            if t_end <= t_start:
+                raise ValueError(f"global token has non-positive duration ({wt.word!r}, {t_start}..{t_end})")
+            global_tokens.append(SubtitleFlowToken(text=str(wt.word), t_start=t_start, t_end=t_end))
+
         segments: List[SubtitleFlowSegment] = []
         for i, seg in enumerate(payload.segments, start=1):
             seg_id = f"impulse_{i:03d}"
             seg_in = self._minor_clamp(
-                value=float(seg.in_point),
+                value=anchor_in_abs + float(seg.in_point),
                 low=float(clip.start),
                 high=float(clip.end),
                 segment_id=seg_id,
@@ -287,7 +325,7 @@ class Impulse2ndPlanner(_FlowPlannerBase):
                 warnings=warnings,
             )
             seg_out = self._minor_clamp(
-                value=float(seg.out_point),
+                value=anchor_in_abs + float(seg.out_point),
                 low=float(clip.start),
                 high=float(clip.end),
                 segment_id=seg_id,
@@ -310,28 +348,48 @@ class Impulse2ndPlanner(_FlowPlannerBase):
                 )
 
             tokens: List[SubtitleFlowToken] = []
-            for wt in seg.word_timings:
-                t_start = self._minor_clamp(
-                    value=float(wt.start),
-                    low=float(clip.start),
-                    high=float(clip.end),
-                    segment_id=seg_id,
-                    reason="token_start_out_of_clip",
-                    warnings=warnings,
-                )
-                t_end = self._minor_clamp(
-                    value=float(wt.end),
-                    low=float(clip.start),
-                    high=float(clip.end),
-                    segment_id=seg_id,
-                    reason="token_end_out_of_clip",
-                    warnings=warnings,
-                )
-                if t_end <= t_start:
-                    raise ValueError(
-                        f"token has non-positive duration (segment_id={seg_id}, {wt.word!r}, {t_start}..{t_end})"
+            if seg.word_timings:
+                for wt in seg.word_timings:
+                    t_start = self._minor_clamp(
+                        value=anchor_in_abs + float(wt.start),
+                        low=float(clip.start),
+                        high=float(clip.end),
+                        segment_id=seg_id,
+                        reason="token_start_out_of_clip",
+                        warnings=warnings,
                     )
-                tokens.append(SubtitleFlowToken(text=str(wt.word), t_start=t_start, t_end=t_end))
+                    t_end = self._minor_clamp(
+                        value=anchor_in_abs + float(wt.end),
+                        low=float(clip.start),
+                        high=float(clip.end),
+                        segment_id=seg_id,
+                        reason="token_end_out_of_clip",
+                        warnings=warnings,
+                    )
+                    if t_end <= t_start:
+                        raise ValueError(
+                            f"token has non-positive duration (segment_id={seg_id}, {wt.word!r}, {t_start}..{t_end})"
+                        )
+                    tokens.append(SubtitleFlowToken(text=str(wt.word), t_start=t_start, t_end=t_end))
+            elif global_tokens:
+                for tok in global_tokens:
+                    if float(tok.t_start) >= seg_in - 1e-6 and float(tok.t_end) <= seg_out + 1e-6:
+                        tokens.append(
+                            SubtitleFlowToken(
+                                text=str(tok.text),
+                                t_start=float(tok.t_start),
+                                t_end=float(tok.t_end),
+                            )
+                        )
+                if tokens:
+                    warnings.append(
+                        SubtitleFlowWarning(
+                            mode=self.mode,
+                            segment_id=seg_id,
+                            reason="segment_tokens_from_global_word_timings",
+                            action=f"attached_tokens={len(tokens)}",
+                        )
+                    )
 
             segments.append(
                 SubtitleFlowSegment.model_validate(
@@ -347,12 +405,22 @@ class Impulse2ndPlanner(_FlowPlannerBase):
                 )
             )
 
-        return self._finalize_flow(
+        flow = self._finalize_flow(
             clip=clip,
             segments=segments,
             warnings=warnings,
             logger=logger,
         )
+        try:
+            rt = flow_to_impulse_raw_payload(flow)
+            logger.info(
+                "impulse_adapter_roundtrip_ok anchor_in_abs=%.6f segments=%d",
+                float(rt.anchor_in_abs),
+                len(rt.segments),
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("impulse_adapter_roundtrip_failed err=%s", str(e))
+        return flow
 
 
 class Scenes3rdPlanner(_FlowPlannerBase):
