@@ -664,6 +664,39 @@ def test_impulse_adapter_warns_and_repairs_minor_issues(caplog) -> None:
     assert any("reason=close_boundary" in m for m in msgs)
 
 
+def test_impulse_adapter_extends_clip_for_last_segment_tail_pad(caplog) -> None:
+    planner = SubtitlesPlannerFactory.create("impulse_2nd")
+    stage1 = Stage1PlanPayload.model_validate(
+        {
+            "audio": {"clip_start_abs": 3.0, "clip_end_abs": 17.0},
+            "transcript_words": [{"text": "пролог", "t_start": 16.3, "t_end": 17.0}],
+            "draft_blocks": _draft_blocks(),
+        }
+    )
+    payload = Impulse2ndRawPayload.model_validate(
+        {
+            "anchor_in_abs": 6.2,
+            "word_timings": [{"word": "пролог", "start": 10.1, "end": 10.8}],
+            "segments": [
+                {
+                    "text": "пролог",
+                    "in": 10.1,
+                    "out": 11.3,  # template rule: last out = last word end + 0.5
+                    "type": "short",
+                    "word_timings": [{"word": "пролог", "start": 10.1, "end": 10.8}],
+                }
+            ],
+        }
+    )
+    caplog.set_level(logging.WARNING, logger="test")
+    flow = planner.normalize_payload(payload=payload, stage1=stage1, logger=logging.getLogger("test"))
+    assert len(flow.segments) == 1
+    assert abs(float(flow.segments[0].out_point) - 17.5) < 1e-6
+    assert abs(float(flow.clip.end) - 17.5) < 1e-6
+    msgs = [r.message for r in caplog.records]
+    assert any("reason=segment_out_tail_pad_extend_clip" in m for m in msgs)
+
+
 def test_impulse_adapter_fail_fast_cases() -> None:
     planner = SubtitlesPlannerFactory.create("impulse_2nd")
 
@@ -694,6 +727,22 @@ def test_impulse_adapter_fail_fast_cases() -> None:
                 "segments": [{"text": "bad", "in": 1.0, "out": 0.4, "type": "long"}],
             }
         )
+
+    stage1 = Stage1PlanPayload.model_validate(
+        {
+            "audio": {"clip_start_abs": 3.0, "clip_end_abs": 17.0},
+            "transcript_words": [{"text": "x", "t_start": 10.0, "t_end": 10.2}],
+            "draft_blocks": _draft_blocks(),
+        }
+    )
+    payload_far = Impulse2ndRawPayload.model_validate(
+        {
+            "anchor_in_abs": 6.2,
+            "segments": [{"text": "far", "in": 10.1, "out": 12.5, "type": "short"}],
+        }
+    )
+    with pytest.raises(ValueError):
+        planner.normalize_payload(payload=payload_far, stage1=stage1, logger=logging.getLogger("test"))
 
 
 def test_impulse_renderer_keeps_template_prev_out_quirk(monkeypatch) -> None:

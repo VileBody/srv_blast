@@ -33,6 +33,7 @@ _MINOR_CLAMP_EPS = 0.06
 _CLOSE_GAP_EPS = 0.08
 _MIN_SEGMENT_DUR = 0.12
 _MAX_LINE_CHARS_WARNING = 24
+_IMPULSE_LAST_SEGMENT_TAIL_PAD_EPS = 0.55
 
 
 @dataclass(frozen=True)
@@ -314,6 +315,8 @@ class Impulse2ndPlanner(_FlowPlannerBase):
             global_tokens.append(SubtitleFlowToken(text=str(wt.word), t_start=t_start, t_end=t_end))
 
         segments: List[SubtitleFlowSegment] = []
+        effective_clip_end = float(clip.end)
+        total_segments = len(payload.segments)
         for i, seg in enumerate(payload.segments, start=1):
             seg_id = f"impulse_{i:03d}"
             seg_in = self._minor_clamp(
@@ -324,14 +327,38 @@ class Impulse2ndPlanner(_FlowPlannerBase):
                 reason="segment_in_out_of_clip",
                 warnings=warnings,
             )
-            seg_out = self._minor_clamp(
-                value=anchor_in_abs + float(seg.out_point),
-                low=float(clip.start),
-                high=float(clip.end),
-                segment_id=seg_id,
-                reason="segment_out_out_of_clip",
-                warnings=warnings,
-            )
+            seg_out_abs = anchor_in_abs + float(seg.out_point)
+            if i == total_segments and seg_out_abs > float(clip.end):
+                overshoot = float(seg_out_abs) - float(clip.end)
+                if overshoot <= _IMPULSE_LAST_SEGMENT_TAIL_PAD_EPS:
+                    seg_out = float(seg_out_abs)
+                    effective_clip_end = max(float(effective_clip_end), float(seg_out))
+                    warnings.append(
+                        SubtitleFlowWarning(
+                            mode=self.mode,
+                            segment_id=seg_id,
+                            reason="segment_out_tail_pad_extend_clip",
+                            action=f"extended_clip_end_to={effective_clip_end:.6f} overshoot={overshoot:.3f}",
+                        )
+                    )
+                else:
+                    seg_out = self._minor_clamp(
+                        value=seg_out_abs,
+                        low=float(clip.start),
+                        high=float(clip.end),
+                        segment_id=seg_id,
+                        reason="segment_out_out_of_clip",
+                        warnings=warnings,
+                    )
+            else:
+                seg_out = self._minor_clamp(
+                    value=seg_out_abs,
+                    low=float(clip.start),
+                    high=float(clip.end),
+                    segment_id=seg_id,
+                    reason="segment_out_out_of_clip",
+                    warnings=warnings,
+                )
             if seg_out <= seg_in:
                 if (seg_in - seg_out) > _MINOR_CLAMP_EPS:
                     raise ValueError(
@@ -402,11 +429,20 @@ class Impulse2ndPlanner(_FlowPlannerBase):
                         "lines": [str(seg.text)],
                         "tokens": [t.model_dump(mode="json") for t in tokens],
                     }
-                )
+                            )
+                        )
+
+        flow_clip = clip
+        if effective_clip_end > float(clip.end) + 1e-9:
+            flow_clip = ClipWindow.model_validate(
+                {
+                    "start": float(clip.start),
+                    "end": float(effective_clip_end),
+                }
             )
 
         flow = self._finalize_flow(
-            clip=clip,
+            clip=flow_clip,
             segments=segments,
             warnings=warnings,
             logger=logger,

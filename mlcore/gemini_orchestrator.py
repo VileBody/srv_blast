@@ -1990,6 +1990,27 @@ def build_all_via_gemini_one_call(
 
     clip_start_abs = float(stage1.audio.clip_start_abs)
     clip_end_abs = float(stage1.audio.clip_end_abs)
+    if isinstance(subtitles_payload, SubtitleFlowPlan):
+        sub_clip_start_abs = float(subtitles_payload.clip.start)
+        sub_clip_end_abs = float(subtitles_payload.clip.end)
+        if abs(sub_clip_start_abs - clip_start_abs) > 1e-6 or abs(sub_clip_end_abs - clip_end_abs) > 1e-6:
+            logger.info(
+                "stage2_effective_clip_from_subtitles mode=%s stage1=%s..%s subtitles=%s..%s",
+                subtitles_mode,
+                clip_start_abs,
+                clip_end_abs,
+                sub_clip_start_abs,
+                sub_clip_end_abs,
+            )
+        clip_start_abs = sub_clip_start_abs
+        clip_end_abs = sub_clip_end_abs
+
+    stage1_timing_json = dict(stage1_json)
+    stage1_timing_audio = dict(stage1_timing_json.get("audio") or {})
+    stage1_timing_audio["clip_start_abs"] = float(clip_start_abs)
+    stage1_timing_audio["clip_end_abs"] = float(clip_end_abs)
+    stage1_timing_json["audio"] = stage1_timing_audio
+
     bpm: Optional[float] = None
     if timing_mode == "hybrid":
         if not audio_files:
@@ -2040,7 +2061,7 @@ def build_all_via_gemini_one_call(
     timing_cuts_payload: Stage2TimingCutsPayload | None = None
     if switch_payload is None:
         timing_analysis_prompt = build_stage2_timing_analysis_user_prompt(
-            stage1_json=stage1_json,
+            stage1_json=stage1_timing_json,
             subtitles_json=subtitles_payload.model_dump(mode="json"),
             bpm=bpm,
             fast_start_seconds=float(fast_start_seconds),
@@ -2068,7 +2089,7 @@ def build_all_via_gemini_one_call(
         )
 
         timing_cuts_prompt = build_stage2_timing_cuts_user_prompt(
-            stage1_json=stage1_json,
+            stage1_json=stage1_timing_json,
             timing_analysis_json=timing_analysis_payload.model_dump(mode="json"),
             bpm=bpm,
             fast_start_seconds=float(fast_start_seconds),
