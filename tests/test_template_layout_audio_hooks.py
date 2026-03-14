@@ -28,3 +28,9 @@ def test_template_contains_screen_blending_mapping() -> None:
     tpl = Path("templates/project_template.j2").read_text(encoding="utf-8")
     assert 'String(code).toLowerCase() === "screen"' in tpl
     assert "BlendingMode.SCREEN" in tpl
+
+
+def test_template_uses_strict_audio_file_match_no_auto_fallback() -> None:
+    tpl = Path("templates/project_template.j2").read_text(encoding="utf-8")
+    assert "audio strict missing expected file" in tpl
+    assert "audio fallback by single media/audio file" not in tpl

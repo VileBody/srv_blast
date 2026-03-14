@@ -512,21 +512,18 @@
 
       try {
         var f = new File(fp);
-        if (!f.exists) {
+        var isAudio = _isAudioName(nm);
+        if (!f.exists && !isAudio) {
           var altAny = _findMediaPathByNameFallback(nm, _isAudioName(nm));
           if (altAny && altAny !== "") {
             logLine("WARN", "media fallback by normalized filename expected=" + nm + " actual=" + altAny);
             f = new File(altAny);
           }
         }
-        // Audio hardening: if exact expected name is missing, but there is exactly one
-        // audio file in media/audio, use it as fallback.
-        if (!f.exists && _isAudioName(nm)) {
-          var alt = _singleAudioPathInMedia();
-          if (alt && alt !== "") {
-            logLine("WARN", "audio fallback by single media/audio file expected=" + nm + " actual=" + alt);
-            f = new File(alt);
-          }
+        // Strict audio contract: never auto-substitute a different audio file.
+        if (!f.exists && isAudio) {
+          logLine("ERR", "audio strict missing expected file name=" + nm + " path=" + fp);
+          return null;
         }
         if (!f.exists) {
           logLine("ERR", "footage file not found path=" + fp + " name=" + nm);
