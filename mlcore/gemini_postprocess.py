@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import math
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 import os
@@ -464,61 +465,35 @@ def build_overlay_tiled_layers(*, overlay_asset: Dict[str, Any], clip_dur: float
     if not file_name or not file_path:
         raise RuntimeError(f"Invalid overlay asset payload: {overlay_asset!r}")
 
-    if dur is None:
-        # Duration unknown at stage3 side (common for raw S3 prefix overlays without metadata).
-        # We keep one full-clip blueprint and let AE duplicate by source.duration with max repeats.
-        return [
-            {
-                "layer_id": "overlay_0",
-                "name": f"overlay_0_{file_name}",
-                "file_name": file_name,
-                "file_path": file_path,
-                "src_w": int(src_w),
-                "src_h": int(src_h),
-                "fit_mode": "cover",
-                "in_point": 0.0,
-                "out_point": float(clip_dur),
-                "start_time": 0.0,
-                "enabled": True,
-                "audio_enabled": False,
-                "video_enabled": True,
-                "target_comp": "Comp 1",
-                "tile_in_ae": True,
-                "tile_max_repeats": 100,
-            }
-        ]
+    # Always tile overlays in AE using actual imported source.duration.
+    # This avoids black seams when metadata duration drifts from factual media duration.
+    # If metadata duration is known, keep it as a fallback hint for AE-side tiling.
+    max_repeats = 100
+    if dur is not None and dur > 0.0:
+        needed = int(math.ceil(float(clip_dur) / float(dur))) + 2
+        max_repeats = max(100, min(500, needed))
 
-    out: List[Dict[str, Any]] = []
-    t0 = 0.0
-    idx = 0
-    while t0 < float(clip_dur) - 1e-9:
-        if idx >= 100:
-            raise RuntimeError(
-                f"overlay tiling exceeded limit=100 before covering clip_dur={clip_dur} "
-                f"(last_t0={t0}, dur={dur}, file={file_name!r})"
-            )
-        t1 = min(float(clip_dur), float(t0 + dur))
-        out.append(
-            {
-                "layer_id": f"overlay_{idx}",
-                "name": f"overlay_{idx}_{file_name}",
-                "file_name": file_name,
-                "file_path": file_path,
-                "src_w": int(src_w),
-                "src_h": int(src_h),
-                "fit_mode": "cover",
-                "in_point": float(t0),
-                "out_point": float(t1),
-                "start_time": float(t0),
-                "enabled": True,
-                "audio_enabled": False,
-                "video_enabled": True,
-                "target_comp": "Comp 1",
-            }
-        )
-        idx += 1
-        t0 = t1
-    return out
+    return [
+        {
+            "layer_id": "overlay_0",
+            "name": f"overlay_0_{file_name}",
+            "file_name": file_name,
+            "file_path": file_path,
+            "src_w": int(src_w),
+            "src_h": int(src_h),
+            "duration_sec": float(dur) if dur is not None else None,
+            "fit_mode": "cover",
+            "in_point": 0.0,
+            "out_point": float(clip_dur),
+            "start_time": 0.0,
+            "enabled": True,
+            "audio_enabled": False,
+            "video_enabled": True,
+            "target_comp": "Comp 1",
+            "tile_in_ae": True,
+            "tile_max_repeats": int(max_repeats),
+        }
+    ]
 
 
 # -------------------------

@@ -73,11 +73,14 @@
 
       "src_w": {{ o.src_w }},
       "src_h": {{ o.src_h }},
+      "duration_sec": {% if o.duration_sec is defined and o.duration_sec is not none %}{{ o.duration_sec }}{% else %}null{% endif %},
       "fit_mode": {{ o.fit_mode | tojson }},
 
       "in_point": {{ o.in_point }},
       "out_point": {% if o.out_point <= o.in_point %}{{ o.in_point + eps }}{% else %}{{ o.out_point }}{% endif %},
       "start_time": {{ o.start_time }},
+      "tile_in_ae": {% if o.tile_in_ae is defined and o.tile_in_ae %}true{% else %}false{% endif %},
+      "tile_max_repeats": {% if o.tile_max_repeats is defined %}{{ o.tile_max_repeats }}{% else %}100{% endif %},
 
       "enabled": true,
       "audio_enabled": false,

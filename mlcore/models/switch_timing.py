@@ -54,6 +54,8 @@ class Stage2TimingCutsPayload(BaseModel):
             self.final_cut_timings,
             field_name="final_cut_timings",
         )
+        if not self.final_cut_timings:
+            raise ValueError("final_cut_timings must contain at least one cut point")
         return self
 
 

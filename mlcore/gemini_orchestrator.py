@@ -1283,7 +1283,7 @@ def _log_footage_interval_picker_diagnostics(
 ) -> None:
     logger.info(
         "footage_interval_picker style=%s/%s intervals=%d max_interval=%.3f "
-        "pool_primary=%d pool_selected=%d widen=%s seed=%d seed_key=%s",
+        "pool_primary=%d pool_selected=%d widen_genre=%s widen_global=%s repeats_used=%s seed=%d seed_key=%s",
         diagnostics.genre,
         diagnostics.tag,
         diagnostics.intervals_count,
@@ -1291,6 +1291,8 @@ def _log_footage_interval_picker_diagnostics(
         diagnostics.primary_pool_count,
         diagnostics.selected_pool_count,
         diagnostics.widened_to_genre,
+        diagnostics.widened_to_global,
+        diagnostics.repeats_used,
         diagnostics.deterministic_seed,
         diagnostics.seed_key,
     )

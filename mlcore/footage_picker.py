@@ -35,6 +35,8 @@ class FootageIntervalPickerDiagnostics:
     primary_pool_count: int
     selected_pool_count: int
     widened_to_genre: bool
+    widened_to_global: bool
+    repeats_used: bool
     deterministic_seed: int
     seed_key: str
     selected_file_names: List[str]
@@ -302,6 +304,7 @@ def _deterministic_choose(
     seed_value: int,
     interval_idx: int,
     interval_start: float,
+    avoid_file_name: str | None = None,
 ) -> Dict[str, Any]:
     if not candidates:
         raise RuntimeError("deterministic choose candidates is empty")
@@ -312,7 +315,105 @@ def _deterministic_choose(
         h = hashlib.sha256(material.encode("utf-8")).hexdigest()
         return h, file_name
 
-    return sorted(candidates, key=_sort_key)[0]
+    ranked = sorted(candidates, key=_sort_key)
+    avoid = str(avoid_file_name or "").strip()
+    if avoid and len(ranked) > 1:
+        for it in ranked:
+            if str(it.get("file_name") or "") != avoid:
+                return it
+    return ranked[0]
+
+
+def _dedupe_assets_by_file_name(pool: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    seen: set[str] = set()
+    for it in pool:
+        name = str(it.get("file_name") or "").strip()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        out.append(it)
+    return out
+
+
+def _deterministic_file_name_order(
+    *,
+    file_names: List[str],
+    seed_value: int,
+    interval_idx: int,
+    interval_start: float,
+) -> List[str]:
+    def _key(name: str) -> Tuple[str, str]:
+        material = f"{seed_value}:{interval_idx}:{interval_start:.6f}:{name}"
+        h = hashlib.sha256(material.encode("utf-8")).hexdigest()
+        return h, name
+
+    return sorted(file_names, key=_key)
+
+
+def _assign_unique_file_names_for_intervals(
+    *,
+    intervals: List[Tuple[float, float]],
+    pool: List[Dict[str, Any]],
+    seed_value: int,
+) -> List[str]:
+    if not intervals:
+        raise RuntimeError("No intervals were built from switch points")
+    by_name: Dict[str, Dict[str, Any]] = {}
+    for it in pool:
+        name = str(it.get("file_name") or "").strip()
+        if name:
+            by_name[name] = it
+    if len(by_name) < len(intervals):
+        raise RuntimeError(
+            "insufficient unique assets for strict no-repeat policy: "
+            f"need={len(intervals)} have={len(by_name)}"
+        )
+
+    candidates: List[List[str]] = []
+    for idx, (a, b) in enumerate(intervals):
+        need = float(b - a)
+        names = [n for n, it in by_name.items() if _fits_interval(it, interval_len=need)]
+        if not names:
+            raise RuntimeError(
+                "no asset can cover interval for strict no-repeat policy: "
+                f"idx={idx} interval={a:.3f}..{b:.3f} dur={need:.3f}"
+            )
+        candidates.append(
+            _deterministic_file_name_order(
+                file_names=names,
+                seed_value=seed_value,
+                interval_idx=idx,
+                interval_start=float(a),
+            )
+        )
+
+    order = sorted(range(len(intervals)), key=lambda i: (len(candidates[i]), i))
+    matched_name_to_interval: Dict[str, int] = {}
+
+    def _try_match(interval_idx: int, seen_names: set[str]) -> bool:
+        for nm in candidates[interval_idx]:
+            if nm in seen_names:
+                continue
+            seen_names.add(nm)
+            prev_interval = matched_name_to_interval.get(nm)
+            if prev_interval is None or _try_match(prev_interval, seen_names):
+                matched_name_to_interval[nm] = interval_idx
+                return True
+        return False
+
+    for i in order:
+        if not _try_match(i, set()):
+            raise RuntimeError(
+                "cannot assign unique assets to all intervals under strict no-repeat policy"
+            )
+
+    out = [""] * len(intervals)
+    for nm, i in matched_name_to_interval.items():
+        out[i] = nm
+    if any(not x for x in out):
+        raise RuntimeError("internal matching failure for strict no-repeat policy")
+    return out
 
 
 def pick_footage_clips_by_intervals_deterministic(
@@ -343,51 +444,88 @@ def pick_footage_clips_by_intervals_deterministic(
         raise RuntimeError(f"No assets for selected style genre={genre!r} tag={tag!r}")
 
     widened_to_genre = False
-    selected_pool = list(primary_pool)
-
-    def _all_intervals_covered(pool: List[Dict[str, Any]]) -> bool:
-        for a, b in intervals:
-            need = float(b - a)
-            if not any(_fits_interval(it, interval_len=need) for it in pool):
-                return False
-        return True
-
-    if not _all_intervals_covered(selected_pool):
-        widen_pool = [it for it in assets if str(it["genre"]) == genre and str(it["tag"]) != tag]
-        if widen_pool:
-            selected_pool.extend(widen_pool)
-            widened_to_genre = True
-
-    if not _all_intervals_covered(selected_pool):
-        max_need = max(float(b - a) for a, b in intervals)
-        raise RuntimeError(
-            "No footage asset can cover at least one interval. "
-            f"genre={genre!r} tag={tag!r} max_interval_sec={max_need:.3f}"
-        )
-
+    widened_to_global = False
     seed_value = deterministic_seed_from_key(seed_key)
 
+    selected_pool = _dedupe_assets_by_file_name(list(primary_pool))
+    assignment_err: str | None = None
+
+    def _try_assign(pool: List[Dict[str, Any]]) -> List[str] | None:
+        nonlocal assignment_err
+        try:
+            return _assign_unique_file_names_for_intervals(
+                intervals=intervals,
+                pool=pool,
+                seed_value=seed_value,
+            )
+        except RuntimeError as e:
+            assignment_err = str(e)
+            return None
+
+    assigned_file_names = _try_assign(selected_pool)
+
+    if assigned_file_names is None:
+        widen_pool = [it for it in assets if str(it["genre"]) == genre and str(it["tag"]) != tag]
+        if widen_pool:
+            selected_pool = _dedupe_assets_by_file_name(selected_pool + widen_pool)
+            widened_to_genre = True
+            assigned_file_names = _try_assign(selected_pool)
+
+    if assigned_file_names is None:
+        global_pool = [it for it in assets if str(it["genre"]) != genre]
+        if global_pool:
+            selected_pool = _dedupe_assets_by_file_name(selected_pool + global_pool)
+            widened_to_global = True
+            assigned_file_names = _try_assign(selected_pool)
+
+    by_name = {str(it["file_name"]): it for it in selected_pool}
     clips: List[Dict[str, Any]] = []
-    selected_file_names: List[str] = []
-    for idx, (a, b) in enumerate(intervals):
-        need = float(b - a)
-        candidates = [it for it in selected_pool if _fits_interval(it, interval_len=need)]
-        chosen = _deterministic_choose(
-            candidates=candidates,
-            seed_value=seed_value,
-            interval_idx=idx,
-            interval_start=float(a),
-        )
-        clips.append(
-            {
-                "file_name": str(chosen["file_name"]),
-                "fit_mode": fit_mode,
-                "in_point": float(a),
-                "out_point": float(b),
-                "start_time": float(a),
-            }
-        )
-        selected_file_names.append(str(chosen["file_name"]))
+    repeats_used = False
+
+    if assigned_file_names is None:
+        repeats_used = True
+        prev_file_name: str | None = None
+        for idx, (a, b) in enumerate(intervals):
+            need = float(b - a)
+            candidates = [it for it in selected_pool if _fits_interval(it, interval_len=need)]
+            if not candidates:
+                raise RuntimeError(
+                    "No footage asset can cover interval after pool enrichment "
+                    f"(idx={idx}, interval={a:.3f}..{b:.3f}, dur={need:.3f})"
+                )
+            chosen = _deterministic_choose(
+                candidates=candidates,
+                seed_value=seed_value,
+                interval_idx=idx,
+                interval_start=float(a),
+                avoid_file_name=prev_file_name,
+            )
+            chosen_name = str(chosen["file_name"])
+            clips.append(
+                {
+                    "file_name": chosen_name,
+                    "fit_mode": fit_mode,
+                    "in_point": float(a),
+                    "out_point": float(b),
+                    "start_time": float(a),
+                }
+            )
+            prev_file_name = chosen_name
+        assigned_file_names = [str(c["file_name"]) for c in clips]
+    else:
+        for idx, (a, b) in enumerate(intervals):
+            chosen_name = str(assigned_file_names[idx])
+            if chosen_name not in by_name:
+                raise RuntimeError(f"assigned file_name not present in selected pool: {chosen_name!r}")
+            clips.append(
+                {
+                    "file_name": chosen_name,
+                    "fit_mode": fit_mode,
+                    "in_point": float(a),
+                    "out_point": float(b),
+                    "start_time": float(a),
+                }
+            )
 
     payload = FootageSelectionPayload.model_validate({"clips": clips, "allow_gaps": False})
     diag = FootageIntervalPickerDiagnostics(
@@ -398,8 +536,10 @@ def pick_footage_clips_by_intervals_deterministic(
         primary_pool_count=len(primary_pool),
         selected_pool_count=len(selected_pool),
         widened_to_genre=bool(widened_to_genre),
+        widened_to_global=bool(widened_to_global),
+        repeats_used=bool(repeats_used),
         deterministic_seed=int(seed_value),
         seed_key=str(seed_key),
-        selected_file_names=selected_file_names,
+        selected_file_names=[str(x) for x in assigned_file_names],
     )
     return payload, diag

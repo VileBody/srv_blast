@@ -607,6 +607,34 @@ def test_scenes_planner_fail_fast_on_reference_type_rules(scene_obj: dict, match
         planner.normalize_payload(payload=payload, stage1=_stage1(), logger=logging.getLogger("test"))
 
 
+def test_scenes_planner_warns_on_short_type4_duration(caplog) -> None:
+    planner = SubtitlesPlannerFactory.create("scenes_3rd")
+    payload = Scenes3rdPayload.model_validate(
+        {
+            "clip": {"start": 10.0, "end": 24.0},
+            "scenes": [
+                {
+                    "id": 6,
+                    "type": "TYPE_4",
+                    "words": ["boom"],
+                    "start": 10.0,
+                    "end": 10.3,
+                    "lines": [["boom"]],
+                    "word_timings": [
+                        {"word": "boom", "start": 10.0, "end": 10.3},
+                    ],
+                }
+            ],
+        }
+    )
+    caplog.set_level(logging.WARNING, logger="test")
+    flow = planner.normalize_payload(payload=payload, stage1=_stage1(), logger=logging.getLogger("test"))
+    assert len(flow.segments) == 1
+    assert str(flow.segments[0].style_tag) == "TYPE_4"
+    msgs = [r.message for r in caplog.records]
+    assert any("reason=type4_short_duration" in m for m in msgs)
+
+
 def test_scenes_planner_fallback_type3_last_gap_to_type1(caplog) -> None:
     planner = SubtitlesPlannerFactory.create("scenes_3rd")
     payload = Scenes3rdPayload.model_validate(

@@ -1033,6 +1033,15 @@
           segDur = Number(layer.source.duration);
         }
       } catch(_) {}
+      var segDurMeta = Number(meta.overlayDurationSec);
+      if (isFinite(segDurMeta) && segDurMeta > 0) {
+        if (!isFinite(segDur) || segDur <= 0.0) {
+          segDur = segDurMeta;
+          logLine("WARN", "overlay source.duration invalid; using overlayDurationSec layer=" + layer.name + " dur=" + fmtNum(segDur));
+        } else if (Math.abs(segDur - segDurMeta) > 0.02) {
+          logLine("WARN", "overlay duration mismatch source=" + fmtNum(segDur) + " meta=" + fmtNum(segDurMeta) + " layer=" + layer.name);
+        }
+      }
       if (!isFinite(segDur) || segDur <= 0.0) {
         throw new Error("overlay source.duration is invalid for layer=" + layer.name);
       }

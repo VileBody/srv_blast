@@ -115,12 +115,12 @@ def test_stage3_overlay_enabled_by_style_tiling(monkeypatch, tmp_path: Path) -> 
 
     footage_cfg = json.loads((out_dir / "footage_config.json").read_text(encoding="utf-8"))
     overlays = [x for x in footage_cfg.get("layers", []) if isinstance(x, dict) and x.get("type") == "overlay"]
-    assert len(overlays) == 5
+    assert len(overlays) == 1
     assert overlays[0]["in_point"] == 0.0
-    assert overlays[0]["out_point"] == 3.0
-    assert overlays[-1]["out_point"] == 15.0
-    for i in range(len(overlays) - 1):
-        assert abs(float(overlays[i]["out_point"]) - float(overlays[i + 1]["in_point"])) <= 1e-6
+    assert overlays[0]["out_point"] == 15.0
+    assert overlays[0]["duration_sec"] == 3.0
+    assert bool(overlays[0].get("tile_in_ae")) is True
+    assert int(overlays[0].get("tile_max_repeats", 0)) >= 100
 
 
 def test_stage3_overlay_enabled_requires_inventory_env(monkeypatch, tmp_path: Path) -> None:
@@ -304,7 +304,11 @@ def test_overlay_blueprint_uses_default_opacity_15(monkeypatch) -> None:
         main_comp_name="Comp 1",
         text_comp_name="Text",
     )
-    overlay = layers[0]
+    overlay = next(
+        it
+        for it in layers
+        if bool(((it.get("text_data") or {}).get("layer_meta") or {}).get("isOverlay"))
+    )
     assert str(overlay.get("type")) == "footage"
     tf_opacity = overlay.get("props", {}).get("tf_opacity", {})
     assert float(tf_opacity.get("value")) == 15.0
@@ -355,7 +359,7 @@ def test_overlay_blueprint_propagates_ae_tiling_meta(monkeypatch) -> None:
     assert int(meta.get("overlayTileMaxRepeats", 0)) == 100
 
 
-def test_overlay_tiling_exceeds_repeat_limit_raises() -> None:
+def test_overlay_tiling_uses_ae_repeat_marker_for_short_known_duration() -> None:
     asset = {
         "file_name": "ov.mp4",
         "file_path": "s3://bucket/overlays/ov.mp4",
@@ -363,8 +367,13 @@ def test_overlay_tiling_exceeds_repeat_limit_raises() -> None:
         "src_h": 1920,
         "duration_sec": 0.01,
     }
-    with pytest.raises(RuntimeError, match="exceeded limit=100"):
-        gp.build_overlay_tiled_layers(overlay_asset=asset, clip_dur=2.0)
+    layers = gp.build_overlay_tiled_layers(overlay_asset=asset, clip_dur=2.0)
+    assert len(layers) == 1
+    ov = layers[0]
+    assert bool(ov.get("tile_in_ae")) is True
+    assert int(ov.get("tile_max_repeats", 0)) >= 200
+    assert int(ov.get("tile_max_repeats", 0)) <= 500
+    assert float(ov.get("duration_sec")) == pytest.approx(0.01)
 
 
 def test_overlay_duration_missing_uses_ae_tiling_marker() -> None:

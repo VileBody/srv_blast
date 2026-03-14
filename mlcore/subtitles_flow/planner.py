@@ -599,6 +599,17 @@ class Scenes3rdPlanner(_FlowPlannerBase):
                 warnings=warnings,
             )
             self._validate_reference_scene_contract(scene)
+            if str(scene.type) == "TYPE_4":
+                seg_dur = float(scene.end) - float(scene.start)
+                if seg_dur < 0.44 - 1e-6:
+                    warnings.append(
+                        SubtitleFlowWarning(
+                            mode=self.mode,
+                            segment_id=seg_id,
+                            reason="type4_short_duration",
+                            action=f"kept dur={seg_dur:.3f}",
+                        )
+                    )
             seg_in = self._minor_clamp(
                 value=float(scene.start),
                 low=float(clip.start),

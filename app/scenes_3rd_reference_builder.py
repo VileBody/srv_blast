@@ -40,10 +40,13 @@ TYPE1_LEADING = int((RENDER["size_base"] + RENDER["size_line2"]) / 2 * 1.15)  # 
 
 
 FRAME = 1.0 / RENDER["fps"]   # ~0.04171s
-_GAP_HOLD_MIN_FRAC = 0.03
-_GAP_HOLD_MAX_FRAC = 0.18
-_GAP_HOLD_MAX_S = 0.45
-_GAP_HOLD_MAX_WORD_MULT = 0.50
+_GAP_HOLD_MIN_FRAC = 0.08
+_GAP_HOLD_MAX_FRAC = 0.36
+_GAP_HOLD_MAX_S = 1.20
+_GAP_HOLD_MAX_WORD_MULT = 2.00
+_GAP_HOLD_TYPE4_BONUS_MULT = 1.15
+_GAP_HOLD_TYPE4_MIN_GAP_FRAC = 0.20
+_GAP_HOLD_TYPE4_MIN_WORD_MULT = 0.50
 
 # ---------------------------------------------------------------------------
 # Утилиты
@@ -1146,13 +1149,19 @@ def _scene_last_word_duration(scene: Dict[str, Any]) -> float:
     return dur / float(n_words)
 
 
-def _gap_to_hold_transfer(*, gap: float, word_dur: float) -> float:
+def _gap_to_hold_transfer(*, gap: float, word_dur: float, scene_type: str | None = None) -> float:
     if gap <= FRAME + 1e-9:
         return 0.0
     wd = max(float(word_dur), FRAME)
     ratio = max(0.0, float(gap) / wd)
     frac = _GAP_HOLD_MIN_FRAC + (_GAP_HOLD_MAX_FRAC - _GAP_HOLD_MIN_FRAC) * (1.0 - math.exp(-ratio))
     transfer = float(gap) * frac
+    if str(scene_type or "") == "TYPE_4":
+        min_type4_transfer = max(
+            wd * _GAP_HOLD_TYPE4_MIN_WORD_MULT,
+            float(gap) * _GAP_HOLD_TYPE4_MIN_GAP_FRAC,
+        )
+        transfer = max(transfer * _GAP_HOLD_TYPE4_BONUS_MULT, min_type4_transfer)
     transfer = min(
         transfer,
         float(gap) - FRAME,  # never eat the entire boundary gap
@@ -1175,7 +1184,7 @@ def _postprocess_scene_boundaries_for_hold(scenes: List[Dict[str, Any]]) -> None
             continue
 
         wd = _scene_last_word_duration(cur)
-        transfer = _gap_to_hold_transfer(gap=gap, word_dur=wd)
+        transfer = _gap_to_hold_transfer(gap=gap, word_dur=wd, scene_type=str(cur.get("type") or ""))
         if transfer <= 1e-9:
             continue
 

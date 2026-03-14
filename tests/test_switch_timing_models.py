@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from mlcore.models.switch_timing import SwitchTimingPayload, normalize_switch_points
+from mlcore.models.switch_timing import Stage2TimingCutsPayload, SwitchTimingPayload, normalize_switch_points
 
 
 def test_switch_timing_payload_validates_internal_points() -> None:
@@ -41,6 +41,16 @@ def test_switch_timing_payload_allows_missing_bpm_for_gemini_only_mode() -> None
         }
     )
     assert payload.bpm is None
+
+
+def test_stage2_timing_cuts_payload_rejects_empty_cuts() -> None:
+    with pytest.raises(ValueError, match="must contain at least one cut point"):
+        Stage2TimingCutsPayload.model_validate(
+            {
+                "applied_rule": "Dynamic Contrast",
+                "final_cut_timings": [],
+            }
+        )
 
 
 def test_normalize_switch_points_merges_near_points() -> None:

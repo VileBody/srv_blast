@@ -673,6 +673,12 @@ def _overlay_bp(
     )
     bp.props["tf_opacity"] = PropertyData("ADBE Opacity", value=float(opacity_percent))
     bp.text_data["layer_meta"]["isOverlay"] = True
+    try:
+        dur_hint = _as_pos_float(it.get("duration_sec"))
+    except Exception:
+        dur_hint = None
+    if dur_hint is not None:
+        bp.text_data["layer_meta"]["overlayDurationSec"] = float(dur_hint)
     # Overlays should always blend additively against footage/text stack.
     bp.text_data["layer_meta"]["blendingModeCode"] = "screen"
     if bool(it.get("tile_in_ae")):
