@@ -805,6 +805,40 @@ def test_impulse_adapter_extends_clip_for_last_segment_tail_pad(caplog) -> None:
     assert any("reason=segment_out_tail_pad_extend_clip" in m for m in msgs)
 
 
+def test_impulse_adapter_allows_effective_clip_over_18s_for_tail_pad(caplog) -> None:
+    planner = SubtitlesPlannerFactory.create("impulse_2nd")
+    stage1 = Stage1PlanPayload.model_validate(
+        {
+            "audio": {"clip_start_abs": 155.0, "clip_end_abs": 173.0},  # exactly 18.0s
+            "transcript_words": [{"text": "финал", "t_start": 172.4, "t_end": 173.0}],
+            "draft_blocks": _draft_blocks(),
+        }
+    )
+    payload = Impulse2ndRawPayload.model_validate(
+        {
+            "anchor_in_abs": 155.0,
+            "word_timings": [{"word": "финал", "start": 17.4, "end": 18.0}],
+            "segments": [
+                {
+                    "text": "финал",
+                    "in": 17.4,
+                    "out": 18.31,
+                    "type": "short",
+                    "word_timings": [{"word": "финал", "start": 17.4, "end": 18.0}],
+                }
+            ],
+        }
+    )
+    caplog.set_level(logging.WARNING, logger="test")
+    flow = planner.normalize_payload(payload=payload, stage1=stage1, logger=logging.getLogger("test"))
+    assert abs(float(flow.clip.start) - 155.0) < 1e-6
+    assert abs(float(flow.clip.end) - 173.31) < 1e-6
+    assert abs(float(flow.segments[0].out_point) - 173.31) < 1e-6
+    msgs = [r.message for r in caplog.records]
+    assert any("reason=segment_out_tail_pad_extend_clip" in m for m in msgs)
+    assert any("reason=clip_duration_over_18" in m for m in msgs)
+
+
 def test_impulse_adapter_fail_fast_cases() -> None:
     planner = SubtitlesPlannerFactory.create("impulse_2nd")
 

@@ -16,8 +16,11 @@ class ClipWindow(BaseModel):
         if self.end <= self.start:
             raise ValueError(f"clip.end must be > clip.start (got {self.start}..{self.end})")
         dur = self.end - self.start
-        if dur < 13.0 or dur > 18.0:
-            raise ValueError(f"clip duration must be 13..18 seconds (got {dur})")
+        # Stage1 selects 13..18s windows. Subtitles flow may extend effective clip
+        # a bit (for example impulse tail pad on the last segment), so only the
+        # lower bound is strict here.
+        if dur < 13.0:
+            raise ValueError(f"clip duration must be >= 13 seconds (got {dur})")
         return self
 
 

@@ -450,6 +450,16 @@ class Impulse2ndPlanner(_FlowPlannerBase):
                     "end": float(effective_clip_end),
                 }
             )
+        flow_dur = float(flow_clip.end) - float(flow_clip.start)
+        if flow_dur > 18.0 + 1e-6:
+            warnings.append(
+                SubtitleFlowWarning(
+                    mode=self.mode,
+                    segment_id="clip",
+                    reason="clip_duration_over_18",
+                    action=f"kept duration={flow_dur:.3f}",
+                )
+            )
 
         flow = self._finalize_flow(
             clip=flow_clip,
