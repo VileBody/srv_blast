@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from services.tg_bot_botapi.app import (
+    _build_subtitles_debug_text,
     _is_control_button_text,
     _is_username_allowed,
     _parse_subtitles_mode_choice,
@@ -53,3 +54,62 @@ def test_subtitles_mode_choice_parser() -> None:
     assert _parse_subtitles_mode_choice("Impulse 2nd") == "impulse_2nd"
     assert _parse_subtitles_mode_choice("Scenes 3rd") == "scenes_3rd"
     assert _parse_subtitles_mode_choice("unknown") is None
+
+
+def test_build_impulse_debug_text_uses_reason_from_raw_payload() -> None:
+    final_payload = {
+        "mode": "impulse_2nd",
+        "clip": {"start": 10.0, "end": 12.0},
+        "segments": [
+            {"segment_id": "impulse_001", "text": "мы станем", "in_point": 10.0, "out_point": 11.2, "style_tag": "long"},
+            {"segment_id": "impulse_002", "text": "чужими", "in_point": 11.2, "out_point": 12.0, "style_tag": "short"},
+        ],
+    }
+    raw_payload = {
+        "anchor_in_abs": 10.0,
+        "segments": [
+            {"text": "мы станем", "in": 0.0, "out": 1.2, "type": "long", "reason": "base phrase"},
+            {"text": "чужими", "in": 1.2, "out": 2.0, "type": "short", "reason": "accent word"},
+        ],
+    }
+
+    text = _build_subtitles_debug_text(
+        ver_label="Версия 1/1",
+        final_payload=final_payload,
+        raw_payload=raw_payload,
+    )
+
+    assert "Разметка Impulse 2nd" in text
+    assert "SHORT" in text
+    assert "reason:" in text
+    assert "accent word" in text
+
+
+def test_build_scenes_debug_text_contains_type_and_focus() -> None:
+    final_payload = {
+        "mode": "scenes_3rd",
+        "clip": {"start": 100.0, "end": 104.0},
+        "segments": [
+            {
+                "segment_id": "scene_001",
+                "text": "она кричала",
+                "in_point": 100.0,
+                "out_point": 101.3,
+                "style_tag": "TYPE_4",
+                "lines": ["она кричала"],
+                "focus_word": "кричала",
+                "focus_style": "red",
+            }
+        ],
+    }
+
+    text = _build_subtitles_debug_text(
+        ver_label="Версия 1/1",
+        final_payload=final_payload,
+        raw_payload=None,
+    )
+
+    assert "Разметка Scenes 3rd" in text
+    assert "TYPE_4" in text
+    assert "focus=" in text
+    assert "кричала:red" in text

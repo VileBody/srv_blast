@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import html
+import json
 import logging
+import os
 import re
 import time
 import uuid
@@ -214,6 +217,380 @@ def _extract_celery_retries(error_text: str) -> Optional[int]:
         return int(m.group(1))
     except Exception:
         return None
+
+
+_SCENES_STYLE_TAGS = {"TYPE_1", "TYPE_2", "TYPE_3", "TYPE_4", "TYPE_5", "TYPE_6"}
+_IMPULSE_STYLE_TAGS = {"long", "short"}
+
+
+def _to_float_or_none(v: Any) -> Optional[float]:
+    try:
+        return float(v)
+    except Exception:
+        return None
+
+
+def _fmt_sec(v: Any) -> str:
+    n = _to_float_or_none(v)
+    if n is None:
+        return "n/a"
+    return f"{n:.3f}"
+
+
+def _load_json_dict(path: Path) -> Optional[Dict[str, Any]]:
+    try:
+        if not path.exists():
+            return None
+        raw = path.read_text(encoding="utf-8")
+        obj = json.loads(raw)
+        if isinstance(obj, dict):
+            return obj
+        return None
+    except Exception:
+        return None
+
+
+def _logs_dir_candidates_for_job(job_id: str) -> List[Path]:
+    jid = str(job_id or "").strip()
+    if not jid:
+        return []
+
+    roots: List[Path] = []
+    raw_env_root = str(os.environ.get("BOT_JOBS_OUTPUT_DIR") or "").strip()
+    if raw_env_root:
+        roots.append(Path(raw_env_root).expanduser())
+    roots.append(Path("/app/output/jobs"))
+    roots.append(Path.cwd() / "output" / "jobs")
+
+    seen: set[str] = set()
+    out: List[Path] = []
+    for root in roots:
+        key = str(root)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(root / jid / "out" / "logs")
+    return out
+
+
+def _latest_file_by_pattern(*, directory: Path, pattern: str) -> Optional[Path]:
+    try:
+        matches = [p for p in directory.glob(pattern) if p.is_file()]
+    except Exception:
+        return None
+    if not matches:
+        return None
+    matches.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    return matches[0]
+
+
+def _pick_stage2_payload_files_for_job(job_id: str) -> Tuple[Optional[Path], Optional[Path]]:
+    for logs_dir in _logs_dir_candidates_for_job(job_id):
+        if not logs_dir.exists() or not logs_dir.is_dir():
+            continue
+
+        final_path = logs_dir / "stage2_subtitles.json"
+        if not final_path.exists():
+            final_path = _latest_file_by_pattern(directory=logs_dir, pattern="stage2_subtitles_*.json") or final_path
+            if not final_path.exists():
+                final_path = None
+
+        raw_path = _latest_file_by_pattern(directory=logs_dir, pattern="gemini_raw_stage2_subtitles_*.json")
+        if final_path is not None or raw_path is not None:
+            return final_path, raw_path
+    return None, None
+
+
+def _detect_subtitles_debug_mode(payload: Optional[Dict[str, Any]]) -> Optional[str]:
+    if not isinstance(payload, dict):
+        return None
+    mode = str(payload.get("mode") or "").strip()
+    if mode in {SUBTITLES_MODE_IMPULSE_2ND, SUBTITLES_MODE_SCENES_3RD}:
+        return mode
+
+    scenes = payload.get("scenes")
+    if isinstance(scenes, list) and scenes:
+        return SUBTITLES_MODE_SCENES_3RD
+
+    segs = payload.get("segments")
+    if not isinstance(segs, list) or not segs:
+        return None
+    first = segs[0] if isinstance(segs[0], dict) else {}
+    style = str(first.get("style_tag") or first.get("type") or "").strip()
+    if style in _IMPULSE_STYLE_TAGS:
+        return SUBTITLES_MODE_IMPULSE_2ND
+    if style in _SCENES_STYLE_TAGS:
+        return SUBTITLES_MODE_SCENES_3RD
+    if payload.get("anchor_in_abs") is not None:
+        return SUBTITLES_MODE_IMPULSE_2ND
+    return None
+
+
+def _normalize_impulse_rows(
+    *,
+    payload: Dict[str, Any],
+    raw_payload: Optional[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    segs = payload.get("segments")
+    if not isinstance(segs, list) or not segs:
+        segs = raw_payload.get("segments") if isinstance(raw_payload, dict) else []
+    raw_segments = raw_payload.get("segments") if isinstance(raw_payload, dict) else []
+    if not isinstance(raw_segments, list):
+        raw_segments = []
+
+    out: List[Dict[str, Any]] = []
+    for idx, seg in enumerate(segs):
+        if not isinstance(seg, dict):
+            continue
+        text = str(seg.get("text") or "").strip()
+        if not text:
+            continue
+        in_point = _to_float_or_none(seg.get("in"))
+        if in_point is None:
+            in_point = _to_float_or_none(seg.get("in_point"))
+        out_point = _to_float_or_none(seg.get("out"))
+        if out_point is None:
+            out_point = _to_float_or_none(seg.get("out_point"))
+        if in_point is None or out_point is None:
+            continue
+
+        style = str(seg.get("type") or seg.get("style_tag") or "").strip().lower()
+        if style not in _IMPULSE_STYLE_TAGS:
+            style = "long"
+
+        reason = str(seg.get("reason") or "").strip()
+        if not reason and idx < len(raw_segments) and isinstance(raw_segments[idx], dict):
+            reason = str(raw_segments[idx].get("reason") or "").strip()
+
+        out.append(
+            {
+                "idx": idx + 1,
+                "style": style,
+                "text": _compact_text(text, limit=220),
+                "in_point": float(in_point),
+                "out_point": float(out_point),
+                "reason": _compact_text(reason, limit=180) if reason else "",
+            }
+        )
+    out.sort(key=lambda x: (float(x["in_point"]), int(x["idx"])))
+    return out
+
+
+def _normalize_scene_rows(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+
+    def _lines_to_text(lines_obj: Any) -> str:
+        if not isinstance(lines_obj, list):
+            return ""
+        if lines_obj and isinstance(lines_obj[0], list):
+            rows: List[str] = []
+            for row in lines_obj:
+                if not isinstance(row, list):
+                    continue
+                text = " ".join(str(w).strip() for w in row if str(w).strip())
+                if text:
+                    rows.append(text)
+            return " / ".join(rows)
+        rows2 = [str(x).strip() for x in lines_obj if str(x).strip()]
+        return " / ".join(rows2)
+
+    scenes = payload.get("scenes")
+    if isinstance(scenes, list) and scenes:
+        for idx, sc in enumerate(scenes, start=1):
+            if not isinstance(sc, dict):
+                continue
+            in_point = _to_float_or_none(sc.get("start"))
+            out_point = _to_float_or_none(sc.get("end"))
+            if in_point is None or out_point is None:
+                continue
+            text = _lines_to_text(sc.get("lines"))
+            if not text:
+                words = sc.get("words")
+                if isinstance(words, list):
+                    text = " ".join(str(w).strip() for w in words if str(w).strip())
+            if not text:
+                text = str(sc.get("text") or "").strip()
+            if not text:
+                continue
+            out.append(
+                {
+                    "idx": int(sc.get("id") or idx),
+                    "style": str(sc.get("type") or "").strip() or "TYPE_1",
+                    "text": _compact_text(text, limit=220),
+                    "in_point": float(in_point),
+                    "out_point": float(out_point),
+                    "focus_word": str(sc.get("focus_word") or "").strip(),
+                    "focus_style": str(sc.get("focus_style") or "").strip(),
+                }
+            )
+        out.sort(key=lambda x: (float(x["in_point"]), int(x["idx"])))
+        return out
+
+    segs = payload.get("segments")
+    if not isinstance(segs, list):
+        return out
+    for idx, seg in enumerate(segs, start=1):
+        if not isinstance(seg, dict):
+            continue
+        in_point = _to_float_or_none(seg.get("in_point"))
+        out_point = _to_float_or_none(seg.get("out_point"))
+        if in_point is None or out_point is None:
+            continue
+        text = _lines_to_text(seg.get("lines"))
+        if not text:
+            text = str(seg.get("text") or "").strip()
+        if not text:
+            continue
+        seg_id = str(seg.get("segment_id") or seg.get("id") or "")
+        seg_num = idx
+        if seg_id:
+            m = re.search(r"(\d+)$", seg_id)
+            if m:
+                try:
+                    seg_num = int(m.group(1))
+                except Exception:
+                    seg_num = idx
+        out.append(
+            {
+                "idx": seg_num,
+                "style": str(seg.get("style_tag") or seg.get("type") or "").strip() or "TYPE_1",
+                "text": _compact_text(text, limit=220),
+                "in_point": float(in_point),
+                "out_point": float(out_point),
+                "focus_word": str(seg.get("focus_word") or "").strip(),
+                "focus_style": str(seg.get("focus_style") or "").strip(),
+            }
+        )
+    out.sort(key=lambda x: (float(x["in_point"]), int(x["idx"])))
+    return out
+
+
+def _resolve_clip_bounds(payload: Optional[Dict[str, Any]], rows: List[Dict[str, Any]]) -> Tuple[Optional[float], Optional[float]]:
+    clip = payload.get("clip") if isinstance(payload, dict) and isinstance(payload.get("clip"), dict) else {}
+    clip_start = _to_float_or_none(clip.get("start")) if isinstance(clip, dict) else None
+    clip_end = _to_float_or_none(clip.get("end")) if isinstance(clip, dict) else None
+    if clip_start is not None and clip_end is not None:
+        return clip_start, clip_end
+    if not rows:
+        return None, None
+    starts = [float(r["in_point"]) for r in rows]
+    ends = [float(r["out_point"]) for r in rows]
+    return min(starts), max(ends)
+
+
+def _build_impulse_debug_text(
+    *,
+    ver_label: str,
+    payload: Dict[str, Any],
+    raw_payload: Optional[Dict[str, Any]],
+) -> str:
+    rows = _normalize_impulse_rows(payload=payload, raw_payload=raw_payload)
+    if not rows:
+        return ""
+    clip_start, clip_end = _resolve_clip_bounds(payload, rows)
+    lines = [
+        f"<b>{html.escape(ver_label)}</b>: <b>Разметка Impulse 2nd</b>",
+    ]
+    if clip_start is not None and clip_end is not None:
+        lines.append(
+            f"clip: <code>{_fmt_sec(clip_start)}..{_fmt_sec(clip_end)}</code> "
+            f"dur=<code>{_fmt_sec(float(clip_end) - float(clip_start))}s</code>"
+        )
+    lines.append(f"segments: <code>{len(rows)}</code>")
+    lines.append("Критерий: <b>SHORT</b> = акцент/рефрен, <b>LONG</b> = основная строка.")
+    for row in rows:
+        seg_dur = float(row["out_point"]) - float(row["in_point"])
+        lines.append(
+            f"{int(row['idx']):02d}. <b>{str(row['style']).upper()}</b> "
+            f"<code>{_fmt_sec(row['in_point'])}..{_fmt_sec(row['out_point'])}</code> "
+            f"(<code>{_fmt_sec(seg_dur)}s</code>) — {html.escape(str(row['text']))}"
+        )
+        reason = str(row.get("reason") or "").strip()
+        if reason:
+            lines.append(f"    reason: <code>{html.escape(reason)}</code>")
+    return "\n".join(lines)
+
+
+def _build_scenes_debug_text(*, ver_label: str, payload: Dict[str, Any]) -> str:
+    rows = _normalize_scene_rows(payload)
+    if not rows:
+        return ""
+    clip_start, clip_end = _resolve_clip_bounds(payload, rows)
+    lines = [
+        f"<b>{html.escape(ver_label)}</b>: <b>Разметка Scenes 3rd</b>",
+    ]
+    if clip_start is not None and clip_end is not None:
+        lines.append(
+            f"clip: <code>{_fmt_sec(clip_start)}..{_fmt_sec(clip_end)}</code> "
+            f"dur=<code>{_fmt_sec(float(clip_end) - float(clip_start))}s</code>"
+        )
+    lines.append(f"scenes: <code>{len(rows)}</code>")
+    lines.append("Критерий: TYPE_4 = red focus, TYPE_2 = italic focus, остальные TYPE_* = композиционные сцены.")
+    for row in rows:
+        seg_dur = float(row["out_point"]) - float(row["in_point"])
+        line = (
+            f"{int(row['idx']):02d}. <b>{html.escape(str(row['style']))}</b> "
+            f"<code>{_fmt_sec(row['in_point'])}..{_fmt_sec(row['out_point'])}</code> "
+            f"(<code>{_fmt_sec(seg_dur)}s</code>) — {html.escape(str(row['text']))}"
+        )
+        focus_word = str(row.get("focus_word") or "").strip()
+        focus_style = str(row.get("focus_style") or "").strip()
+        if focus_word:
+            if focus_style:
+                line += f" | focus=<code>{html.escape(focus_word)}:{html.escape(focus_style)}</code>"
+            else:
+                line += f" | focus=<code>{html.escape(focus_word)}</code>"
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def _build_subtitles_debug_text(
+    *,
+    ver_label: str,
+    final_payload: Optional[Dict[str, Any]],
+    raw_payload: Optional[Dict[str, Any]],
+) -> str:
+    mode = _detect_subtitles_debug_mode(final_payload) or _detect_subtitles_debug_mode(raw_payload)
+    if mode == SUBTITLES_MODE_IMPULSE_2ND:
+        payload = final_payload if isinstance(final_payload, dict) else (raw_payload or {})
+        return _build_impulse_debug_text(ver_label=ver_label, payload=payload, raw_payload=raw_payload)
+    if mode == SUBTITLES_MODE_SCENES_3RD:
+        payload = final_payload if isinstance(final_payload, dict) else (raw_payload or {})
+        return _build_scenes_debug_text(ver_label=ver_label, payload=payload)
+    return ""
+
+
+def _build_subtitles_debug_text_for_job(*, job_id: str, ver_label: str) -> str:
+    final_path, raw_path = _pick_stage2_payload_files_for_job(job_id)
+    final_payload = _load_json_dict(final_path) if isinstance(final_path, Path) else None
+    raw_payload = _load_json_dict(raw_path) if isinstance(raw_path, Path) else None
+    return _build_subtitles_debug_text(
+        ver_label=ver_label,
+        final_payload=final_payload,
+        raw_payload=raw_payload,
+    )
+
+
+def _split_telegram_chunks(text: str, *, max_chars: int = 3600) -> List[str]:
+    raw = str(text or "").strip()
+    if not raw:
+        return []
+    out: List[str] = []
+    buf: List[str] = []
+    cur = 0
+    for line in raw.splitlines():
+        ln = line.rstrip()
+        add = len(ln) + (1 if buf else 0)
+        if cur + add > max_chars and buf:
+            out.append("\n".join(buf))
+            buf = [ln]
+            cur = len(ln)
+        else:
+            buf.append(ln)
+            cur += add
+    if buf:
+        out.append("\n".join(buf))
+    return out
 
 
 def _parse_versions_choice(text: str) -> Optional[int]:
@@ -778,6 +1155,13 @@ class BlastBotApp:
         st.target_fragment = ""
         st.subtitles_mode = SUBTITLES_MODE_LEGACY_BLOCKS
 
+    async def _send_long_html_message(self, *, bot: Bot, chat_id: int, text: str) -> None:
+        chunks = _split_telegram_chunks(text)
+        for part in chunks:
+            if not part:
+                continue
+            await bot.send_message(chat_id=chat_id, text=part, parse_mode="HTML", disable_web_page_preview=True)
+
     async def _processing_loop(self) -> None:
         while True:
             try:
@@ -883,6 +1267,14 @@ class BlastBotApp:
                     st.chat_id,
                     f"{ver_label}: видео готово, но ссылка на архив проекта в ответе рендера не найдена.",
                 )
+
+        if self._allow_archive_for_state(st):
+            try:
+                dbg_text = _build_subtitles_debug_text_for_job(job_id=job_id, ver_label=ver_label)
+                if dbg_text:
+                    await self._send_long_html_message(bot=bot, chat_id=st.chat_id, text=dbg_text)
+            except Exception as e:
+                log.warning("subtitles_debug_send_failed chat=%s job=%s err=%s", st.chat_id, job_id, str(e))
 
         try:
             if video_path.exists():
