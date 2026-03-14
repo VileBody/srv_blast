@@ -5,6 +5,7 @@ import json
 from json import JSONDecodeError
 import os
 import re
+import subprocess
 from concurrent.futures import FIRST_EXCEPTION, Future, ThreadPoolExecutor, wait
 from datetime import datetime, timezone
 from pathlib import Path
@@ -84,6 +85,7 @@ from core.runtime_mode import get_runtime_mode, MODE_DEV, MODE_PROD
 
 ROOT = Path(__file__).resolve().parent.parent
 MODEL_VALIDATION_IMMEDIATE_RETRIES = 2
+_STRUCTURAL_TAG_TOKEN_RE = re.compile(r"^\[[a-zа-яё0-9_\-:+./]+\]$", flags=re.IGNORECASE)
 
 
 def _stamp() -> str:
@@ -335,9 +337,33 @@ def _normalize_forced_word_compare(token: str) -> str:
     return t.strip()
 
 
+def _token_probe_for_structural_tag(raw_token: str) -> str:
+    return str(raw_token or "").strip().strip(",.!?;:\"'«»(){}")
+
+
+def _is_structural_tag_token(raw_token: str) -> bool:
+    probe = _token_probe_for_structural_tag(raw_token)
+    if not probe:
+        return False
+    return bool(_STRUCTURAL_TAG_TOKEN_RE.fullmatch(probe))
+
+
+def _strip_structural_tags_from_text(text: str) -> tuple[str, int]:
+    kept: List[str] = []
+    dropped = 0
+    for raw in str(text or "").replace("\r", " ").split():
+        if _is_structural_tag_token(raw):
+            dropped += 1
+            continue
+        kept.append(raw)
+    return " ".join(kept), dropped
+
+
 def _reference_words_from_user_text(text: str) -> List[str]:
     out: List[str] = []
     for raw in str(text or "").replace("\r", " ").split():
+        if _is_structural_tag_token(raw):
+            continue
         w = re.sub(r"^[^\w]+|[^\w]+$", "", raw, flags=re.UNICODE).strip()
         if w:
             out.append(w)
@@ -420,6 +446,99 @@ def _stage1_asr_from_forced_alignment(payload: Stage1ForcedAlignmentPayload) -> 
     if payload.selected_fragment is not None:
         out["selected_fragment"] = payload.selected_fragment.model_dump(mode="json")
     return Stage1AsrPayload.model_validate(out)
+
+
+def _ffprobe_duration_sec(*, media_path: Path, ffprobe_bin: str = "ffprobe") -> Optional[float]:
+    if not media_path.exists():
+        return None
+    try:
+        cmd = [
+            str(ffprobe_bin),
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            str(media_path),
+        ]
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        if proc.returncode != 0:
+            return None
+        raw = str(proc.stdout or "").strip()
+        if not raw:
+            return None
+        v = float(raw)
+        if v <= 0.0:
+            return None
+        return float(v)
+    except Exception:
+        return None
+
+
+def _transcribed_duration_sec(stage1_asr: Stage1AsrPayload) -> Optional[float]:
+    if not stage1_asr.transcript_words:
+        return None
+    max_end = 0.0
+    for w in stage1_asr.transcript_words:
+        te = float(w.t_end)
+        if te > max_end:
+            max_end = te
+    if max_end <= 0.0:
+        return None
+    return float(max_end)
+
+
+def _should_retry_stage1a_duration_drift(
+    *,
+    reference_words_count: int,
+    fact_dur: float,
+    transcribed_dur: float,
+) -> bool:
+    # Enabled only for long forced-reference texts to avoid false positives on short quotes.
+    try:
+        min_words = int(os.environ.get("STAGE1A_DURATION_DRIFT_MIN_WORDS", "80"))
+    except Exception:
+        min_words = 80
+    if reference_words_count < max(1, min_words):
+        return False
+
+    try:
+        abs_threshold = float(os.environ.get("STAGE1A_DURATION_DRIFT_ABS_SEC", "12.0"))
+    except Exception:
+        abs_threshold = 12.0
+    try:
+        rel_threshold = float(os.environ.get("STAGE1A_DURATION_DRIFT_REL", "0.20"))
+    except Exception:
+        rel_threshold = 0.20
+
+    drift = abs(float(fact_dur) - float(transcribed_dur))
+    limit = max(float(abs_threshold), float(fact_dur) * max(0.0, float(rel_threshold)))
+    return drift > limit
+
+
+def _build_stage1a_duration_rework_hint(
+    *,
+    fact_dur: float,
+    transcribed_dur: float,
+    transcribe_attempt_1: Dict[str, Any],
+) -> str:
+    return (
+        "\n\nTRANSCRIBE_REWORK=ON\n"
+        "You must correct timing drift from TRANSCRIBE_ATTEMPT_1.\n"
+        "audio: attached source track (same file)\n"
+        "comment:\n"
+        + f"- fact_dur={float(fact_dur):.3f}\n"
+        + f"- transcribed_dur={float(transcribed_dur):.3f}\n"
+        + f"- delta={abs(float(fact_dur) - float(transcribed_dur)):.3f}\n"
+        "Hard correction rules:\n"
+        "- Keep lexical content and order identical to REFERENCE_TEXT constraints.\n"
+        "- Re-align timings to full-track timeline consistency.\n"
+        "- Preserve all schema requirements.\n"
+        "TRANSCRIBE_ATTEMPT_1_JSON:\n"
+        + json.dumps(transcribe_attempt_1, ensure_ascii=False)
+        + "\n"
+    )
 
 
 def _words_in_window(
@@ -1398,6 +1517,23 @@ def build_all_via_gemini_one_call(
     audio_dir = Path(os.environ.get("AUDIO_DIR", str(ROOT / "audio"))).resolve()
     audio_files = pick_audio_files(audio_dir)
     logger.info("audio_files_selected n=%d files=%s", len(audio_files), [p.name for p in audio_files])
+    ffprobe_bin = str(os.environ.get("FFPROBE_BIN", "ffprobe") or "ffprobe").strip()
+    audio_fact_dur: Optional[float] = None
+    if audio_files:
+        audio_fact_dur = _ffprobe_duration_sec(media_path=audio_files[0], ffprobe_bin=ffprobe_bin)
+        if audio_fact_dur is not None:
+            logger.info(
+                "stage1a_audio_duration fact_dur=%.3f ffprobe_bin=%s file=%s",
+                float(audio_fact_dur),
+                ffprobe_bin,
+                audio_files[0].name,
+            )
+        else:
+            logger.warning(
+                "stage1a_audio_duration_unavailable ffprobe_bin=%s file=%s",
+                ffprobe_bin,
+                audio_files[0].name,
+            )
 
     use_cache = (os.environ.get("GEMINI_UPLOAD_CACHE", "1") or "1").strip() not in {"0", "false", "False", "no", "NO"}
     cache_path = (out_dir / "gemini_files_cache.json") if use_cache else None
@@ -1410,9 +1546,12 @@ def build_all_via_gemini_one_call(
         default=SUBTITLES_MODE_LEGACY_BLOCKS,
     )
     use_stage1b_scenario = subtitles_mode == SUBTITLES_MODE_LEGACY_BLOCKS
-    forced_reference_text = lyrics_text or target_fragment
+    forced_reference_text_raw = lyrics_text or target_fragment
+    forced_reference_text, dropped_structural_tags = _strip_structural_tags_from_text(
+        forced_reference_text_raw
+    )
     forced_reference_words = _reference_words_from_user_text(forced_reference_text)
-    if forced_reference_text and not forced_reference_words:
+    if forced_reference_text_raw and not forced_reference_words:
         raise RuntimeError(
             "Reference text for forced alignment is present but empty after tokenization "
             "(LYRICS_TEXT/TARGET_FRAGMENT)."
@@ -1422,10 +1561,12 @@ def build_all_via_gemini_one_call(
 
     _emit(progress_cb, "llm_stage1a_asr")
     logger.info(
-        "stage1a_start mode=%s model=%s reference_words=%d subtitles_mode=%s selected_fragment_required=%s",
+        "stage1a_start mode=%s model=%s reference_words=%d structural_tags_ignored=%d "
+        "subtitles_mode=%s selected_fragment_required=%s",
         stage1a_mode,
         model_stage1_asr,
         len(forced_reference_words),
+        dropped_structural_tags,
         subtitles_mode,
         (not use_stage1b_scenario),
     )
@@ -1461,7 +1602,7 @@ def build_all_via_gemini_one_call(
         if use_forced_alignment:
             if stage1_asr_mode_cached != "forced_alignment":
                 cache_compatible = False
-            if stage1_asr_reference_cached != forced_reference_text:
+            if stage1_asr_reference_cached != forced_reference_text_raw:
                 cache_compatible = False
         elif stage1_asr_mode_cached and stage1_asr_mode_cached != "asr":
             cache_compatible = False
@@ -1472,7 +1613,7 @@ def build_all_via_gemini_one_call(
                 stage1_asr_mode_cached,
                 stage1a_mode,
                 len(stage1_asr_reference_cached),
-                len(forced_reference_text),
+                len(forced_reference_text_raw),
             )
             resume_state.pop("stage1_asr", None)
             stage1_asr_cached = None
@@ -1517,7 +1658,64 @@ def build_all_via_gemini_one_call(
                 reference_words=forced_reference_words,
                 logger=logger,
             )
+            stage1_forced_attempt_1 = stage1_forced.model_dump(mode="json")
             stage1_asr = _stage1_asr_from_forced_alignment(stage1_forced)
+            transcribed_dur = _transcribed_duration_sec(stage1_asr)
+            if (
+                audio_fact_dur is not None
+                and transcribed_dur is not None
+                and _should_retry_stage1a_duration_drift(
+                    reference_words_count=len(forced_reference_words),
+                    fact_dur=float(audio_fact_dur),
+                    transcribed_dur=float(transcribed_dur),
+                )
+            ):
+                logger.warning(
+                    "stage1a_forced_duration_drift_rework fact_dur=%.3f transcribed_dur=%.3f words=%d",
+                    float(audio_fact_dur),
+                    float(transcribed_dur),
+                    len(forced_reference_words),
+                )
+                rework_hint = _build_stage1a_duration_rework_hint(
+                    fact_dur=float(audio_fact_dur),
+                    transcribed_dur=float(transcribed_dur),
+                    transcribe_attempt_1=stage1_forced_attempt_1,
+                )
+                stage1a_raw_retry = logs_dir / f"gemini_raw_stage1_forced_alignment_rework_{stamp}.json"
+                stage1a_sys_retry = logs_dir / f"gemini_system_stage1_forced_alignment_rework_{stamp}.txt"
+                stage1a_user_retry = logs_dir / f"gemini_prompt_stage1_forced_alignment_rework_{stamp}.txt"
+                stage1_forced = _run_stage_with_model_validation_retries(
+                    stage_name="stage1_forced_alignment_rework",
+                    logger=logger,
+                    fn=lambda: call_stage1_forced_alignment_once(
+                        client=client_stage1_forced,
+                        openrouter_client=openrouter_stage1_forced,
+                        provider_mode=provider_mode,
+                        hedge_delay_s=hedge_delay_s,
+                        logger=logger,
+                        system_instruction=stage1a_system,
+                        user_prompt=stage1a_prompt + rework_hint,
+                        audio_paths=audio_files,
+                        raw_response_path=stage1a_raw_retry,
+                        cache_path=cache_path,
+                        prompt_dump_path=stage1a_user_retry,
+                        system_dump_path=stage1a_sys_retry,
+                    ),
+                )
+                _validate_forced_alignment_payload(
+                    payload=stage1_forced,
+                    reference_words=forced_reference_words,
+                    logger=logger,
+                )
+                stage1_asr = _stage1_asr_from_forced_alignment(stage1_forced)
+                (logs_dir / f"stage1_forced_alignment_attempt_1_{stamp}.json").write_text(
+                    json.dumps(stage1_forced_attempt_1, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+                (logs_dir / f"stage1_forced_alignment_attempt_2_{stamp}.json").write_text(
+                    json.dumps(stage1_forced.model_dump(mode="json"), ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
             (logs_dir / f"stage1_forced_alignment_{stamp}.json").write_text(
                 json.dumps(stage1_forced.model_dump(mode="json"), ensure_ascii=False, indent=2),
                 encoding="utf-8",
@@ -1543,7 +1741,9 @@ def build_all_via_gemini_one_call(
             )
         resume_state["stage1_asr"] = stage1_asr.model_dump(mode="json")
         resume_state["stage1_asr_mode"] = stage1a_mode
-        resume_state["stage1_asr_reference_text"] = forced_reference_text if use_forced_alignment else ""
+        resume_state["stage1_asr_reference_text"] = (
+            forced_reference_text_raw if use_forced_alignment else ""
+        )
         _save_resume_state(resume_state_path, logger=logger, state=resume_state)
 
     stage1_asr_json = stage1_asr.model_dump(mode="json")

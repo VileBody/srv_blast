@@ -20,6 +20,8 @@ Hard constraints:
 - Keep the exact word order from REFERENCE_TEXT.
 - Do NOT skip, merge, split, reorder, or invent words.
 - Do NOT add backing/ad-lib words that are absent in REFERENCE_TEXT.
+- Structural tags such as [pause], [bridge], [hook], [verse] are hints, not words.
+- Do NOT output structural tags in aligned_words.
 - Timings must be on FULL TRACK timeline (absolute seconds from audio start).
 - Every item must satisfy: t_end > t_start.
 - Return valid JSON only, no markdown/comments.
