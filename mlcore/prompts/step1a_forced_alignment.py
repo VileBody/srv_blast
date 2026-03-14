@@ -12,7 +12,9 @@ Return JSON for Stage1ForcedAlignmentPayload:
 2) optional selected_fragment (enabled by user prompt branch):
    - audio: {clip_start_abs, clip_end_abs, moment_of_interest_sec?}
    - transcript_words: word-level timings INSIDE selected clip
+     (timestamps must remain ABSOLUTE full-track seconds; do not normalize to clip start)
    - optional srt_items inside selected clip
+     (timestamps must remain ABSOLUTE full-track seconds)
    - optional fragment_analytics
 
 Hard constraints:
@@ -23,6 +25,7 @@ Hard constraints:
 - Structural tags such as [pause], [bridge], [hook], [verse] are hints, not words.
 - Do NOT output structural tags in aligned_words.
 - Timings must be on FULL TRACK timeline (absolute seconds from audio start).
+- selected_fragment transcript_words/srt_items (if present) must also stay in FULL TRACK timeline.
 - Every item must satisfy: t_end > t_start.
 - Return valid JSON only, no markdown/comments.
 """

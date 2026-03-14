@@ -728,11 +728,18 @@ def _validate_fragment_analytics_for_target(
     }
     exp = expected.get(relation)
     if exp is None:
-        raise ValueError(f"fragment_analytics.relation_to_target unsupported: {relation!r}")
-    if action != exp:
-        raise ValueError(
-            "fragment_analytics.chosen_action is inconsistent with relation_to_target "
-            f"(relation={relation!r} action={action!r} expected={exp!r})"
+        logger.warning(
+            "stage1b_fragment_analytics_unknown_relation relation=%r action=%r (continuing)",
+            relation,
+            action,
+        )
+    elif action != exp:
+        # Keep fragment_analytics descriptive (non-blocking): selected segment timing is the source of truth.
+        logger.warning(
+            "stage1b_fragment_analytics_noncanonical_action relation=%r action=%r expected=%r (continuing)",
+            relation,
+            action,
+            exp,
         )
 
     logger.info(
@@ -769,10 +776,6 @@ def _looks_like_model_validation_error_text(text: str) -> bool:
         return False
     lo = text.lower()
     if "fragment_analytics" in lo and "target_fragment" in lo:
-        return True
-    if "fragment_analytics.chosen_action is inconsistent with relation_to_target" in lo:
-        return True
-    if "fragment_analytics.relation_to_target unsupported" in lo:
         return True
     if "openrouter_schema_validation_failed" in lo:
         return True

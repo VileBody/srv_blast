@@ -17,6 +17,9 @@ def test_stage1a_asr_prompt_can_require_selected_fragment_with_target() -> None:
     assert "USER_TARGET_FRAGMENT:\nyou and me forever\n" in prompt
     assert "selected_fragment" in prompt
     assert "13..18" in prompt
+    assert "ABSOLUTE full-track seconds" in prompt
+    assert "relation_to_target must be one of: wider | narrower | inside_13_18" in prompt
+    assert "chosen_action must be one of: expand | select_subfragment | none" in prompt
 
 
 def test_stage1a_forced_prompt_can_require_selected_fragment_without_target() -> None:
@@ -30,3 +33,4 @@ def test_stage1a_forced_prompt_can_require_selected_fragment_without_target() ->
     assert "USER_TARGET_FRAGMENT_BRANCH=OFF" in prompt
     assert "most memorable/expressive 13..18s moment" in prompt
     assert "selected_fragment" in prompt
+    assert "ABSOLUTE full-track seconds" in prompt
