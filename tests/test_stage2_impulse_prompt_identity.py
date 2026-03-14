@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 from mlcore.prompts.assemble import build_stage2_subtitles_user_prompt
-from mlcore.prompts.stage2_subtitles_impulse_2nd import IMPULSE_PROMPT_BODY
+from mlcore.prompts.stage2_subtitles_impulse_2nd import IMPULSE_PROMPT_BODY, SYSTEM_PART
 
 
 def test_impulse_prompt_body_is_literal_reference_copy() -> None:
@@ -38,3 +38,7 @@ def test_impulse_user_prompt_contains_raw_adapter_context() -> None:
     assert abs(float(word_timings[0]["start"]) - 0.0) < 1e-6
     assert abs(float(word_timings[1]["start"]) - 0.4) < 1e-6
 
+
+def test_impulse_system_prompt_includes_decision_reason_contract() -> None:
+    assert '"reason": "..."' in SYSTEM_PART
+    assert 'Include "reason" for every segment.' in SYSTEM_PART

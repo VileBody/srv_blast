@@ -130,6 +130,13 @@ def test_impulse_mode_planner_and_renderer(monkeypatch) -> None:
         amount = ex.get("amount") if isinstance(ex, dict) else None
         assert isinstance(amount, dict)
         assert isinstance(amount.get("expression"), str) and "delay" in amount.get("expression")
+
+    short_layer = next(x for x in text_layers if str(x.get("text")) == "boom")
+    short_scale_kfs = (((short_layer.get("props") or {}).get("tf_scale") or {}).get("keyframes") or [])
+    assert len(short_scale_kfs) >= 4
+    # quick-exit keyframe should exist between peak and final collapse
+    assert float(short_scale_kfs[2]["t"]) > float(short_scale_kfs[1]["t"])
+    assert float(short_scale_kfs[2]["t"]) < float(short_scale_kfs[-1]["t"])
     _assert_keyframes_within_bounds(layers)
 
 

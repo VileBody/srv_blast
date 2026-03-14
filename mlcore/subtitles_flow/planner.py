@@ -319,6 +319,16 @@ class Impulse2ndPlanner(_FlowPlannerBase):
         total_segments = len(payload.segments)
         for i, seg in enumerate(payload.segments, start=1):
             seg_id = f"impulse_{i:03d}"
+            reason = str(seg.reason or "").strip()
+            if not reason:
+                warnings.append(
+                    SubtitleFlowWarning(
+                        mode=self.mode,
+                        segment_id=seg_id,
+                        reason="decision_reason_missing",
+                        action="kept without reason",
+                    )
+                )
             seg_in = self._minor_clamp(
                 value=anchor_in_abs + float(seg.in_point),
                 low=float(clip.start),

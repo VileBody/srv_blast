@@ -13,8 +13,12 @@ TECHNICAL PIPELINE CONTRACT (mandatory):
   {
     "anchor_in_abs": <float>,
     "word_timings": [{"word": "...", "start": <float>, "end": <float>}, ...],
-    "segments": [{"text": "...", "in": <float>, "out": <float>, "type": "long|short", "word_timings": [...]}, ...]
+    "segments": [{"text": "...", "in": <float>, "out": <float>, "type": "long|short", "reason": "...", "word_timings": [...]}, ...]
   }
+- Include "reason" for every segment.
+  Recommended reason tags:
+  - For short: "emphasis_word", "refrain", "imperative"
+  - For long: "descriptive_phrase", "timing_constraint", "line_integrity", "quota_limit"
 - anchor_in_abs is ABSOLUTE full-track seconds for the first subtitle-layer in-point before normalization.
 - Every start/end/in/out in word_timings and segments MUST be normalized:
   normalized_time = absolute_time - anchor_in_abs
@@ -24,4 +28,3 @@ TECHNICAL PIPELINE CONTRACT (mandatory):
 """
 
 SYSTEM_PART = IMPULSE_PROMPT_BODY.rstrip() + "\n\n" + _TECH_APPENDIX.strip() + "\n"
-

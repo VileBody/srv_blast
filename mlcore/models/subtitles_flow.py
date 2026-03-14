@@ -152,12 +152,18 @@ class Impulse2ndRawSegmentPayload(BaseModel):
     in_point: float = Field(alias="in")
     out_point: float = Field(alias="out")
     type: Literal["long", "short"]
+    # Why this segment was tagged as long/short (debugging aid for Stage2 decisions).
+    reason: Optional[str] = Field(default=None, min_length=1)
     word_timings: List[Impulse2ndRawWordTiming] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _check_time(self) -> "Impulse2ndRawSegmentPayload":
         if self.out_point <= self.in_point:
             raise ValueError(f"segment.out must be > segment.in (got {self.in_point}..{self.out_point})")
+        if self.reason is not None:
+            self.reason = str(self.reason).strip()
+            if not self.reason:
+                raise ValueError("segment.reason must be non-empty when provided")
         return self
 
 
