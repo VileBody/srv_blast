@@ -665,6 +665,38 @@ def test_scenes_planner_fallback_type3_last_gap_to_type1(caplog) -> None:
     assert any("reason=type3_last_gap_fallback_type1" in m for m in msgs)
 
 
+def test_scenes_planner_fallback_type3_word_count_to_type1(caplog) -> None:
+    planner = SubtitlesPlannerFactory.create("scenes_3rd")
+    payload = Scenes3rdPayload.model_validate(
+        {
+            "clip": {"start": 10.0, "end": 24.0},
+            "scenes": [
+                {
+                    "id": 9,
+                    "type": "TYPE_3",
+                    "words": ["we", "will", "run", "away", "tonight"],  # 5 words -> fallback
+                    "start": 10.0,
+                    "end": 12.2,
+                    "lines": [["we", "will", "run", "away", "tonight"]],
+                    "word_timings": [
+                        {"word": "we", "start": 10.0, "end": 10.3},
+                        {"word": "will", "start": 10.35, "end": 10.7},
+                        {"word": "run", "start": 10.75, "end": 11.0},
+                        {"word": "away", "start": 11.05, "end": 11.6},
+                        {"word": "tonight", "start": 11.9, "end": 12.2},
+                    ],
+                }
+            ],
+        }
+    )
+    caplog.set_level(logging.WARNING, logger="test")
+    flow = planner.normalize_payload(payload=payload, stage1=_stage1(), logger=logging.getLogger("test"))
+    assert len(flow.segments) == 1
+    assert str(flow.segments[0].style_tag) == "TYPE_1"
+    msgs = [r.message for r in caplog.records]
+    assert any("reason=type3_word_count_fallback_type1" in m for m in msgs)
+
+
 def test_impulse_mode_ignores_global_text_shift_and_keeps_drop_shadows(monkeypatch) -> None:
     planner = SubtitlesPlannerFactory.create("impulse_2nd")
     payload = Impulse2ndRawPayload.model_validate(
