@@ -359,6 +359,74 @@ def test_overlay_blueprint_propagates_ae_tiling_meta(monkeypatch) -> None:
     assert int(meta.get("overlayTileMaxRepeats", 0)) == 100
 
 
+def test_footage_blueprint_enables_shake_expression_by_default(monkeypatch) -> None:
+    monkeypatch.delenv("FOOTAGE_SHAKE_ENABLED", raising=False)
+    cfg = {
+        "text_dur_hint": 5.0,
+        "layers": [
+            {
+                "type": "footage",
+                "name": "bg",
+                "file_name": "bg.mp4",
+                "file_path": "s3://bucket/bg.mp4",
+                "src_w": 720,
+                "src_h": 1280,
+                "in_point": 0.0,
+                "out_point": 5.0,
+                "start_time": 0.0,
+                "enabled": True,
+            }
+        ],
+    }
+    layers = build_footage_layers(
+        repo_root=Path("."),
+        footage_cfg=cfg,
+        main_comp_name="Comp 1",
+        text_comp_name="Text",
+    )
+    footage = next(it for it in layers if str(it.get("name")) == "bg")
+    tf_position = (footage.get("props") or {}).get("tf_position") or {}
+    expr = str(tf_position.get("expression") or "")
+    assert "intro=0.63" in expr
+    assert "outro=0.63" in expr
+
+
+def test_overlay_blueprint_does_not_use_footage_shake_expression(monkeypatch) -> None:
+    monkeypatch.setenv("FOOTAGE_SHAKE_ENABLED", "1")
+    cfg = {
+        "text_dur_hint": 5.0,
+        "layers": [
+            {
+                "type": "overlay",
+                "name": "ov",
+                "file_name": "ov.mp4",
+                "file_path": "s3://bucket/overlays/ov.mp4",
+                "src_w": 1080,
+                "src_h": 1920,
+                "in_point": 0.0,
+                "out_point": 5.0,
+                "start_time": 0.0,
+                "enabled": True,
+            }
+        ],
+    }
+    layers = build_footage_layers(
+        repo_root=Path("."),
+        footage_cfg=cfg,
+        main_comp_name="Comp 1",
+        text_comp_name="Text",
+    )
+    overlay = next(
+        it
+        for it in layers
+        if bool((((it.get("text_data") or {}).get("layer_meta") or {}).get("isOverlay")))
+    )
+    tf_position = (overlay.get("props") or {}).get("tf_position") or {}
+    expr = str(tf_position.get("expression") or "")
+    assert expr == "[thisComp.width/2,thisComp.height/2,0];"
+    assert "intro=0.63" not in expr
+
+
 def test_overlay_tiling_uses_ae_repeat_marker_for_short_known_duration() -> None:
     asset = {
         "file_name": "ov.mp4",

@@ -14,6 +14,43 @@ from core.types import KeyframeData, KeyframeEase, LayerBlueprint, PropertyData
 LOGGER = logging.getLogger("app.footage_comp")
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return bool(default)
+    val = str(raw).strip().lower()
+    if val in {"1", "true", "yes", "on"}:
+        return True
+    if val in {"0", "false", "no", "off"}:
+        return False
+    return bool(default)
+
+
+def _footage_shake_position_expression() -> str:
+    # Deterministic intro/outro shake on footage transform position.
+    return (
+        "var intro=0.63;\n"
+        "var outro=0.63;\n"
+        "var amp=22.0;\n"
+        "var freq=3.6;\n"
+        "var t=time-inPoint;\n"
+        "var dur=Math.max(thisComp.frameDuration,outPoint-inPoint);\n"
+        "var base=value;\n"
+        "var z=(base.length>2)?base[2]:0;\n"
+        "var k=0.0;\n"
+        "if (t>=0 && t<intro){\n"
+        "  var p=Math.min(1,Math.max(0,t/intro));\n"
+        "  k=Math.sin(p*Math.PI)*Math.exp(-2.4*p);\n"
+        "} else if (t>dur-outro && t<=dur){\n"
+        "  var r=Math.min(1,Math.max(0,(dur-t)/outro));\n"
+        "  k=Math.sin(r*Math.PI)*Math.exp(-2.4*r);\n"
+        "}\n"
+        "var x=amp*k*Math.sin(2*Math.PI*freq*t);\n"
+        "var y=amp*0.68*k*Math.cos(2*Math.PI*(freq*0.82)*t);\n"
+        "[base[0]+x,base[1]+y,z];"
+    )
+
+
 def _looks_like_url(s: str) -> bool:
     s = (s or "").strip().lower()
     return s.startswith("http://") or s.startswith("https://") or s.startswith("s3://")
@@ -583,6 +620,7 @@ def _footage_bp(
     z_index: int,
     comp_w: int,
     comp_h: int,
+    apply_shake: bool = True,
 ) -> LayerBlueprint:
     # audio OFF hard
     audio_enabled = False
@@ -622,7 +660,15 @@ def _footage_bp(
         sh_i = int(sh)
         anchor, pos, scale = _compute_cover_transform(comp_w, comp_h, sw_i, sh_i)
         bp.props["tf_anchor"] = PropertyData("ADBE Anchor Point", value=anchor)
-        bp.props["tf_position"] = PropertyData("ADBE Position", value=pos)
+        shake_on = bool(apply_shake) and _env_bool("FOOTAGE_SHAKE_ENABLED", True)
+        if shake_on:
+            bp.props["tf_position"] = PropertyData(
+                "ADBE Position",
+                value=pos,
+                expression=_footage_shake_position_expression(),
+            )
+        else:
+            bp.props["tf_position"] = PropertyData("ADBE Position", value=pos)
         bp.props["tf_scale"] = PropertyData("ADBE Scale", value=scale)
         bp.props["tf_rotation"] = PropertyData("ADBE Rotate Z", value=0)
         bp.props["tf_opacity"] = PropertyData("ADBE Opacity", value=100)
@@ -643,6 +689,7 @@ def _overlay_bp(
         z_index=int(z_index),
         comp_w=comp_w,
         comp_h=comp_h,
+        apply_shake=False,
     )
 
     # Force robust "cover" on overlay using actual imported footage dimensions.
