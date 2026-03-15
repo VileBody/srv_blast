@@ -1,15 +1,22 @@
 from __future__ import annotations
 
 import hashlib
+import json
+from pathlib import Path
+import re
 from dataclasses import dataclass
 from typing import Any, Dict, List, Tuple
 
 from mlcore.models.footage_plan import FootageSelectionPayload
-from mlcore.models.footage_style import FootageStylePickPayload
+from mlcore.models.footage_style import FootageStylePickPayload, FootageStyleRawPayload
 
 
 _EPS = 1e-6
 _MAX_SWITCH_SEC = 4.0
+_STYLE_COLOR_ALLOWED = {"dark", "light", "warm", "cold", "neutral"}
+_STYLE_MOOD_ALLOWED = {"major", "minor"}
+_STYLE_PEOPLE_ALLOWED = {"none", "girls", "guys", "couple", "crowd", "driver"}
+_CLIP_ID_RE = re.compile(r"(\d{8,})")
 
 
 @dataclass(frozen=True)
@@ -43,6 +50,23 @@ class FootageIntervalPickerDiagnostics:
     deterministic_seed: int
     seed_key: str
     selected_file_names: List[str]
+
+
+@dataclass(frozen=True)
+class FootageStyleRawAdapterDiagnostics:
+    total_assets: int
+    metadata_rows_merged: int
+    mapped_assets: int
+    unmapped_assets: int
+    mood_filtered_out: int
+    exclude_filtered_out: int
+    scored_assets: int
+    selected_genre: str
+    selected_tag: str
+    selected_group_score: float
+    selected_group_duration_sec: float
+    selected_group_assets_count: int
+    top_groups: List[Dict[str, Any]]
 
 
 def _as_pos_float(v: Any) -> float:
@@ -571,3 +595,271 @@ def pick_footage_clips_by_intervals_deterministic(
         selected_file_names=[str(x) for x in assigned_file_names],
     )
     return payload, diag
+
+
+def _extract_clip_id(value: Any) -> str | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    m = _CLIP_ID_RE.search(raw)
+    if not m:
+        return None
+    out = str(m.group(1) or "").strip()
+    return out or None
+
+
+def _normalize_theme_tag(v: Any) -> str:
+    return " ".join(str(v or "").strip().lower().split())
+
+
+def _normalize_people_type(v: Any) -> str:
+    out = _normalize_theme_tag(v)
+    if out == "guy":
+        out = "guys"
+    if out not in _STYLE_PEOPLE_ALLOWED:
+        return ""
+    return out
+
+
+def _normalize_color_tone(v: Any) -> str:
+    out = _normalize_theme_tag(v)
+    if out not in _STYLE_COLOR_ALLOWED:
+        return ""
+    return out
+
+
+def _normalize_mood(v: Any) -> str:
+    out = _normalize_theme_tag(v)
+    if out not in _STYLE_MOOD_ALLOWED:
+        return ""
+    return out
+
+
+def load_footage_style_metadata_rows(
+    *,
+    db_paths: List[Path],
+) -> List[Dict[str, Any]]:
+    rows: List[Dict[str, Any]] = []
+    for path in list(db_paths or []):
+        p = Path(path).expanduser().resolve()
+        if not p.exists():
+            raise FileNotFoundError(f"Style metadata db missing: {p}")
+        obj = json.loads(p.read_text(encoding="utf-8"))
+        items = obj if isinstance(obj, list) else (obj.get("items") or obj.get("videos") or obj.get("assets") or [])
+        if not isinstance(items, list):
+            raise RuntimeError(f"Style metadata db root must contain list rows: {p}")
+        for idx, it in enumerate(items):
+            if not isinstance(it, dict):
+                continue
+            clip_id = _extract_clip_id(it.get("video_key")) or _extract_clip_id(it.get("video_path"))
+            if not clip_id:
+                continue
+            mood = _normalize_mood(it.get("mood"))
+            color_tone = _normalize_color_tone(it.get("color_tone"))
+            people_type = _normalize_people_type(it.get("people_type"))
+            tags_seen: set[str] = set()
+            tags: List[str] = []
+            for t in list(it.get("theme_tags") or []):
+                tv = _normalize_theme_tag(t)
+                if tv and tv not in tags_seen:
+                    tags_seen.add(tv)
+                    tags.append(tv)
+            rows.append(
+                {
+                    "clip_id": clip_id,
+                    "mood": mood,
+                    "color_tone": color_tone,
+                    "people_type": people_type or "none",
+                    "theme_tags": tags,
+                    "source_path": str(p),
+                    "source_row": int(idx),
+                }
+            )
+    return rows
+
+
+def merge_footage_style_metadata_rows(
+    rows: List[Dict[str, Any]],
+) -> Dict[str, Dict[str, Any]]:
+    merged: Dict[str, Dict[str, Any]] = {}
+    for row in list(rows or []):
+        if not isinstance(row, dict):
+            continue
+        clip_id = str(row.get("clip_id") or "").strip()
+        if not clip_id:
+            continue
+        current = merged.get(clip_id)
+        if current is None:
+            current = {
+                "clip_id": clip_id,
+                "mood": str(row.get("mood") or "").strip(),
+                "color_tone": str(row.get("color_tone") or "").strip(),
+                "people_type": str(row.get("people_type") or "").strip() or "none",
+                "theme_tags": [],
+            }
+            merged[clip_id] = current
+        else:
+            if not str(current.get("mood") or "").strip():
+                current["mood"] = str(row.get("mood") or "").strip()
+            if not str(current.get("color_tone") or "").strip():
+                current["color_tone"] = str(row.get("color_tone") or "").strip()
+            if str(current.get("people_type") or "").strip() in {"", "none"}:
+                cand_people = str(row.get("people_type") or "").strip()
+                if cand_people:
+                    current["people_type"] = cand_people
+        seen = {str(x).strip() for x in list(current.get("theme_tags") or []) if str(x).strip()}
+        for t in list(row.get("theme_tags") or []):
+            tv = str(t).strip()
+            if tv and tv not in seen:
+                seen.add(tv)
+                current.setdefault("theme_tags", []).append(tv)
+        current["theme_tags"] = list(current.get("theme_tags") or [])
+    return merged
+
+
+def map_inventory_assets_with_style_metadata(
+    *,
+    assets: List[Dict[str, Any]],
+    metadata_index: Dict[str, Dict[str, Any]],
+) -> Tuple[List[Dict[str, Any]], List[str]]:
+    mapped: List[Dict[str, Any]] = []
+    unmapped: List[str] = []
+    for it in list(assets or []):
+        if not isinstance(it, dict):
+            continue
+        file_name = str(it.get("file_name") or "").strip()
+        if not file_name:
+            continue
+        clip_id = _extract_clip_id(file_name)
+        meta = metadata_index.get(str(clip_id or "").strip()) if clip_id else None
+        if not isinstance(meta, dict):
+            unmapped.append(file_name)
+            continue
+        mapped.append(
+            {
+                **it,
+                "clip_id": str(clip_id),
+                "meta_mood": str(meta.get("mood") or "").strip(),
+                "meta_color_tone": str(meta.get("color_tone") or "").strip(),
+                "meta_people_type": str(meta.get("people_type") or "").strip() or "none",
+                "meta_theme_tags": list(meta.get("theme_tags") or []),
+            }
+        )
+    return mapped, unmapped
+
+
+def resolve_style_pick_from_raw_filters(
+    *,
+    raw_pick: FootageStyleRawPayload,
+    mapped_assets: List[Dict[str, Any]],
+    seed_key: str,
+    total_assets: int | None = None,
+    unmapped_assets: int = 0,
+    metadata_rows_merged: int = 0,
+) -> Tuple[FootageStylePickPayload, FootageStyleRawAdapterDiagnostics]:
+    total = int(total_assets if total_assets is not None else len(list(mapped_assets or [])))
+    if total <= 0:
+        raise RuntimeError("No mapped assets available for raw Stage2B adapter")
+
+    mood = _normalize_mood(raw_pick.mood)
+    candidates_mood = [it for it in mapped_assets if _normalize_mood(it.get("meta_mood")) == mood]
+    if not candidates_mood:
+        raise RuntimeError(f"No mapped assets match mood={mood!r}")
+
+    exclude_set = {_normalize_people_type(x) for x in list(raw_pick.filters.exclude or [])}
+    exclude_set.discard("")
+    candidates_people = [
+        it for it in candidates_mood if _normalize_people_type(it.get("meta_people_type")) not in exclude_set
+    ]
+    if not candidates_people:
+        raise RuntimeError(
+            f"No mapped assets remain after people exclusion for mood={mood!r}, exclude={sorted(exclude_set)!r}"
+        )
+
+    priority_tags = {_normalize_theme_tag(x) for x in list(raw_pick.filters.priority_theme_tags or [])}
+    priority_tags.discard("")
+    color_priority = {_normalize_color_tone(x) for x in list(raw_pick.filters.color_priority or [])}
+    color_priority.discard("")
+
+    grouped: Dict[Tuple[str, str], Dict[str, Any]] = {}
+    for it in candidates_people:
+        genre = str(it.get("genre") or "").strip()
+        tag = str(it.get("tag") or "").strip()
+        if not genre or not tag:
+            continue
+        tags = {_normalize_theme_tag(x) for x in list(it.get("meta_theme_tags") or [])}
+        tags.discard("")
+        overlap = int(len(priority_tags.intersection(tags)))
+        color_hit = 1 if _normalize_color_tone(it.get("meta_color_tone")) in color_priority else 0
+        score = float(overlap * 100 + color_hit * 15)
+        key = (genre, tag)
+        row = grouped.get(key)
+        if row is None:
+            row = {
+                "genre": genre,
+                "tag": tag,
+                "score": 0.0,
+                "duration": 0.0,
+                "assets_count": 0,
+                "overlap_sum": 0,
+                "color_hits": 0,
+            }
+            grouped[key] = row
+        row["score"] = float(row["score"]) + float(score)
+        row["duration"] = float(row["duration"]) + float(min(float(it.get("duration_sec") or 0.0), _MAX_SWITCH_SEC))
+        row["assets_count"] = int(row["assets_count"]) + 1
+        row["overlap_sum"] = int(row["overlap_sum"]) + int(overlap)
+        row["color_hits"] = int(row["color_hits"]) + int(color_hit)
+
+    if not grouped:
+        raise RuntimeError("No valid genre/tag groups produced after raw Stage2B scoring")
+
+    seed_value = deterministic_seed_from_key(seed_key)
+
+    def _tie_hash(genre: str, tag: str) -> str:
+        material = f"{seed_value}:{genre}:{tag}"
+        return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+    rows = list(grouped.values())
+    rows.sort(
+        key=lambda r: (
+            -float(r["score"]),
+            -float(r["duration"]),
+            -int(r["assets_count"]),
+            _tie_hash(str(r["genre"]), str(r["tag"])),
+            str(r["genre"]),
+            str(r["tag"]),
+        )
+    )
+    best = rows[0]
+    pick = FootageStylePickPayload.model_validate(
+        {"genre": str(best["genre"]), "tag": str(best["tag"])}
+    )
+
+    diag = FootageStyleRawAdapterDiagnostics(
+        total_assets=int(total),
+        metadata_rows_merged=int(metadata_rows_merged),
+        mapped_assets=int(len(mapped_assets)),
+        unmapped_assets=int(unmapped_assets),
+        mood_filtered_out=int(total - len(candidates_mood)),
+        exclude_filtered_out=int(len(candidates_mood) - len(candidates_people)),
+        scored_assets=int(len(candidates_people)),
+        selected_genre=str(best["genre"]),
+        selected_tag=str(best["tag"]),
+        selected_group_score=float(best["score"]),
+        selected_group_duration_sec=float(best["duration"]),
+        selected_group_assets_count=int(best["assets_count"]),
+        top_groups=[
+            {
+                "genre": str(r["genre"]),
+                "tag": str(r["tag"]),
+                "score": float(r["score"]),
+                "duration_sec": float(r["duration"]),
+                "assets_count": int(r["assets_count"]),
+                "overlap_sum": int(r["overlap_sum"]),
+                "color_hits": int(r["color_hits"]),
+            }
+            for r in rows[:10]
+        ],
+    )
+    return pick, diag

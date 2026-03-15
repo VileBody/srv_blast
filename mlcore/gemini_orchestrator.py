@@ -37,15 +37,20 @@ from mlcore.llm_router import (
 from mlcore.openrouter_client import OpenRouterClient, OpenRouterSettings
 from mlcore.footage_picker import (
     FootageIntervalPickerDiagnostics,
+    FootageStyleRawAdapterDiagnostics,
     build_style_groups_from_assets,
     build_intervals_from_switch_points,
     load_picker_assets_from_inventory,
+    load_footage_style_metadata_rows,
+    map_inventory_assets_with_style_metadata,
+    merge_footage_style_metadata_rows,
     pick_footage_clips_by_intervals_deterministic,
+    resolve_style_pick_from_raw_filters,
     validate_style_pick_in_groups,
 )
 from mlcore.gemini_postprocess import render_all_steps
 from mlcore.models.footage_plan import FootageSelectionPayload
-from mlcore.models.footage_style import FootageStylePickPayload
+from mlcore.models.footage_style import FootageStylePickPayload, FootageStyleRawPayload
 from mlcore.models.full_plan import FullPlanPayload
 from mlcore.models.stage1_asr import Stage1AsrPayload, Stage1AsrSelectedFragment
 from mlcore.models.stage1_forced_alignment import Stage1ForcedAlignmentPayload
@@ -187,6 +192,28 @@ def _resolve_footage_seed_key(*, out_dir: Path, logger: logging.Logger) -> str:
         seed_value,
     )
     return key
+
+
+def _resolve_style_metadata_db_paths(*, root: Path) -> List[Path]:
+    raw = (os.environ.get("FOOTAGE_STYLE_METADATA_DB_PATHS_JSON") or "").strip()
+    if raw:
+        try:
+            parsed = json.loads(raw)
+        except Exception as e:
+            raise RuntimeError(f"Invalid FOOTAGE_STYLE_METADATA_DB_PATHS_JSON: {e!r}") from e
+        if not isinstance(parsed, list) or not parsed:
+            raise RuntimeError("FOOTAGE_STYLE_METADATA_DB_PATHS_JSON must be a non-empty JSON list")
+        paths = [Path(str(p)).expanduser().resolve() for p in parsed]
+    else:
+        paths = [
+            (root / "2nd_footage_selection_prompt" / "video_database (2).json").resolve(),
+            (root / "2nd_footage_selection_prompt" / "video_database2.json").resolve(),
+        ]
+
+    missing = [str(p) for p in paths if not p.exists()]
+    if missing:
+        raise FileNotFoundError(f"Style metadata db files missing: {missing}")
+    return paths
 
 
 def _make_client(
@@ -1507,10 +1534,33 @@ def build_all_via_gemini_one_call(
     inv = _load_footage_inventory(inv_path)
     picker_assets = load_picker_assets_from_inventory(inv)
     style_groups = build_style_groups_from_assets(picker_assets)
+    style_metadata_paths = _resolve_style_metadata_db_paths(root=ROOT)
+    style_metadata_rows = load_footage_style_metadata_rows(db_paths=style_metadata_paths)
+    style_metadata_index = merge_footage_style_metadata_rows(style_metadata_rows)
+    mapped_picker_assets, unmapped_picker_file_names = map_inventory_assets_with_style_metadata(
+        assets=picker_assets,
+        metadata_index=style_metadata_index,
+    )
 
     out_dir = Path(os.environ.get("OUT_DIR", str(ROOT / "out"))).resolve()
     logs_dir = out_dir / "logs"
     logs_dir.mkdir(parents=True, exist_ok=True)
+    selection_seed_key = _resolve_footage_seed_key(out_dir=out_dir, logger=logger)
+
+    if not mapped_picker_assets:
+        raise RuntimeError(
+            "No inventory assets are mapped to style metadata. "
+            "Check merged metadata dbs and inventory filename clip ids."
+        )
+    logger.info(
+        "style_metadata_loaded db_files=%s rows=%d merged_ids=%d inventory_assets=%d mapped=%d unmapped=%d",
+        [str(p) for p in style_metadata_paths],
+        len(style_metadata_rows),
+        len(style_metadata_index),
+        len(picker_assets),
+        len(mapped_picker_assets),
+        len(unmapped_picker_file_names),
+    )
     resume_state = _load_resume_state(resume_state_path, logger=logger)
     if resume_state:
         logger.info(
@@ -2017,7 +2067,7 @@ def build_all_via_gemini_one_call(
     foot_prompt = build_stage2_footage_user_prompt(
         stage1_json=stage1_json,
         style_groups=style_groups,
-        schema_name="FootageStylePickPayload",
+        schema_name="FootageStyleRawPayload",
     )
     foot_raw = logs_dir / f"gemini_raw_stage2_style_{stamp}.json"
     foot_sys = logs_dir / f"gemini_system_stage2_style_{stamp}.txt"
@@ -2097,8 +2147,13 @@ def build_all_via_gemini_one_call(
             fn=_run_subtitles_once,
         )
 
+    style_raw_payload: Optional[FootageStyleRawPayload] = None
+    style_adapter_diag: Optional[FootageStyleRawAdapterDiagnostics] = None
+
     def _run_style_once() -> FootageStylePickPayload:
-        payload = call_footage_style_once(
+        nonlocal style_raw_payload, style_adapter_diag
+
+        payload_any = call_footage_style_once(
             client=client_footage,
             openrouter_client=openrouter_footage,
             provider_mode=provider_mode,
@@ -2113,9 +2168,43 @@ def build_all_via_gemini_one_call(
             cache_path=cache_path,
             prompt_dump_path=foot_user,
             system_dump_path=foot_sys,
+            schema_model=FootageStyleRawPayload,
         )
-        validate_style_pick_in_groups(payload, style_groups)
-        return payload
+
+        if isinstance(payload_any, FootageStylePickPayload):
+            # Backward-compatible path (e.g. tests/legacy resume data).
+            style_raw_payload = None
+            style_adapter_diag = None
+            validate_style_pick_in_groups(payload_any, style_groups)
+            return payload_any
+
+        raw_payload = (
+            payload_any
+            if isinstance(payload_any, FootageStyleRawPayload)
+            else FootageStyleRawPayload.model_validate(payload_any)
+        )
+
+        resolved, diag = resolve_style_pick_from_raw_filters(
+            raw_pick=raw_payload,
+            mapped_assets=mapped_picker_assets,
+            seed_key=selection_seed_key,
+            total_assets=len(picker_assets),
+            unmapped_assets=len(unmapped_picker_file_names),
+            metadata_rows_merged=len(style_metadata_index),
+        )
+        validate_style_pick_in_groups(resolved, style_groups)
+        style_raw_payload = raw_payload
+        style_adapter_diag = diag
+        logger.info(
+            "stage2_style_adapter_selected theme=%s mood=%s genre=%s tag=%s mapped=%d unmapped=%d",
+            raw_payload.theme,
+            raw_payload.mood,
+            resolved.genre,
+            resolved.tag,
+            len(mapped_picker_assets),
+            len(unmapped_picker_file_names),
+        )
+        return resolved
 
     def _run_style() -> FootageStylePickPayload:
         return _run_stage_with_model_validation_retries(
@@ -2394,14 +2483,13 @@ def build_all_via_gemini_one_call(
             exclude_file_names,
         )
 
-    seed_key = _resolve_footage_seed_key(out_dir=out_dir, logger=logger)
     footage_payload, interval_diag = pick_footage_clips_by_intervals_deterministic(
         style_pick=style_payload,
         assets=picker_assets,
         clip_start_abs=clip_start_abs,
         clip_end_abs=clip_end_abs,
         switch_points_abs=list(switch_payload.switch_points_abs),
-        seed_key=seed_key,
+        seed_key=selection_seed_key,
         fit_mode="cover",
         exclude_file_names=exclude_file_names,
     )
@@ -2428,6 +2516,34 @@ def build_all_via_gemini_one_call(
         json.dumps(style_payload.model_dump(mode="json"), ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    if style_raw_payload is not None:
+        (logs_dir / f"stage2_style_raw_{stamp}.json").write_text(
+            json.dumps(style_raw_payload.model_dump(mode="json"), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    if style_adapter_diag is not None:
+        style_diag_obj = {
+            "seed_key": selection_seed_key,
+            "seed": _seed_from_key_material(selection_seed_key),
+            "total_assets": int(style_adapter_diag.total_assets),
+            "metadata_rows_merged": int(style_adapter_diag.metadata_rows_merged),
+            "mapped_assets": int(style_adapter_diag.mapped_assets),
+            "unmapped_assets": int(style_adapter_diag.unmapped_assets),
+            "unmapped_file_names": list(unmapped_picker_file_names),
+            "mood_filtered_out": int(style_adapter_diag.mood_filtered_out),
+            "exclude_filtered_out": int(style_adapter_diag.exclude_filtered_out),
+            "scored_assets": int(style_adapter_diag.scored_assets),
+            "selected_genre": style_adapter_diag.selected_genre,
+            "selected_tag": style_adapter_diag.selected_tag,
+            "selected_group_score": float(style_adapter_diag.selected_group_score),
+            "selected_group_duration_sec": float(style_adapter_diag.selected_group_duration_sec),
+            "selected_group_assets_count": int(style_adapter_diag.selected_group_assets_count),
+            "top_groups": list(style_adapter_diag.top_groups),
+        }
+        (logs_dir / f"stage2_style_adapter_diag_{stamp}.json").write_text(
+            json.dumps(style_diag_obj, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
     if timing_analysis_payload is not None:
         (logs_dir / f"stage2_timing_analysis_{stamp}.json").write_text(
             json.dumps(timing_analysis_payload.model_dump(mode="json"), ensure_ascii=False, indent=2),
@@ -2481,6 +2597,34 @@ def build_all_via_gemini_one_call(
         json.dumps(style_payload.model_dump(mode="json"), ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    if style_raw_payload is not None:
+        (logs_dir / "stage2_style_raw.json").write_text(
+            json.dumps(style_raw_payload.model_dump(mode="json"), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    if style_adapter_diag is not None:
+        style_diag_obj_latest = {
+            "seed_key": selection_seed_key,
+            "seed": _seed_from_key_material(selection_seed_key),
+            "total_assets": int(style_adapter_diag.total_assets),
+            "metadata_rows_merged": int(style_adapter_diag.metadata_rows_merged),
+            "mapped_assets": int(style_adapter_diag.mapped_assets),
+            "unmapped_assets": int(style_adapter_diag.unmapped_assets),
+            "unmapped_file_names": list(unmapped_picker_file_names),
+            "mood_filtered_out": int(style_adapter_diag.mood_filtered_out),
+            "exclude_filtered_out": int(style_adapter_diag.exclude_filtered_out),
+            "scored_assets": int(style_adapter_diag.scored_assets),
+            "selected_genre": style_adapter_diag.selected_genre,
+            "selected_tag": style_adapter_diag.selected_tag,
+            "selected_group_score": float(style_adapter_diag.selected_group_score),
+            "selected_group_duration_sec": float(style_adapter_diag.selected_group_duration_sec),
+            "selected_group_assets_count": int(style_adapter_diag.selected_group_assets_count),
+            "top_groups": list(style_adapter_diag.top_groups),
+        }
+        (logs_dir / "stage2_style_adapter_diag.json").write_text(
+            json.dumps(style_diag_obj_latest, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
     (logs_dir / "stage2_switch_timestamps.json").write_text(
         json.dumps(switch_payload.model_dump(mode="json"), ensure_ascii=False, indent=2),
         encoding="utf-8",

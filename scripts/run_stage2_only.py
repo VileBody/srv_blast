@@ -17,13 +17,18 @@ if str(ROOT) not in sys.path:
 
 from mlcore.footage_picker import (  # noqa: E402
     build_style_groups_from_assets,
+    load_footage_style_metadata_rows,
     load_picker_assets_from_inventory,
+    map_inventory_assets_with_style_metadata,
     pick_footage_clips_deterministic,
+    merge_footage_style_metadata_rows,
+    resolve_style_pick_from_raw_filters,
     validate_style_pick_in_groups,
 )
 from mlcore.gemini_call import call_footage_style_once, call_subtitles_plan_once  # noqa: E402
 from mlcore.gemini_client import GeminiClient, GeminiSettings  # noqa: E402
 from mlcore.models.footage_plan import FootageSelectionPayload  # noqa: E402
+from mlcore.models.footage_style import FootageStylePickPayload, FootageStyleRawPayload  # noqa: E402
 from mlcore.models.stage1_plan import Stage1PlanPayload  # noqa: E402
 from mlcore.prompts import (  # noqa: E402
     build_stage2_footage_system_instruction,
@@ -89,6 +94,24 @@ def _resolve_seed_key(*, stage1_path: Path, out_dir: Path) -> str:
     if job_id:
         return job_id
     return f"{stage1_path.resolve()}::{out_dir.resolve()}"
+
+
+def _resolve_style_metadata_db_paths() -> List[Path]:
+    raw = (os.environ.get("FOOTAGE_STYLE_METADATA_DB_PATHS_JSON") or "").strip()
+    if raw:
+        parsed = json.loads(raw)
+        if not isinstance(parsed, list) or not parsed:
+            raise RuntimeError("FOOTAGE_STYLE_METADATA_DB_PATHS_JSON must be a non-empty JSON list")
+        out = [Path(str(p)).expanduser().resolve() for p in parsed]
+    else:
+        out = [
+            (ROOT / "2nd_footage_selection_prompt" / "video_database (2).json").resolve(),
+            (ROOT / "2nd_footage_selection_prompt" / "video_database2.json").resolve(),
+        ]
+    missing = [str(p) for p in out if not p.exists()]
+    if missing:
+        raise FileNotFoundError(f"Style metadata db files missing: {missing}")
+    return out
 
 
 def main() -> int:
@@ -187,7 +210,7 @@ def main() -> int:
             style_groups=style_groups,
             schema_name="FootageStylePickPayload",
         )
-        style_payload = call_footage_style_once(
+        style_any = call_footage_style_once(
             client=c_style,
             system_instruction=build_stage2_footage_system_instruction(),
             user_prompt=style_prompt,
@@ -197,7 +220,34 @@ def main() -> int:
             cache_path=cache_path,
             prompt_dump_path=logs_dir / f"gemini_prompt_stage2_style_{stamp}.txt",
             system_dump_path=logs_dir / f"gemini_system_stage2_style_{stamp}.txt",
+            schema_model=FootageStyleRawPayload,
         )
+        if isinstance(style_any, FootageStylePickPayload):
+            style_payload = style_any
+        else:
+            style_raw = (
+                style_any
+                if isinstance(style_any, FootageStyleRawPayload)
+                else FootageStyleRawPayload.model_validate(style_any)
+            )
+            db_rows = load_footage_style_metadata_rows(db_paths=_resolve_style_metadata_db_paths())
+            db_idx = merge_footage_style_metadata_rows(db_rows)
+            mapped_assets, unmapped_assets = map_inventory_assets_with_style_metadata(
+                assets=picker_assets,
+                metadata_index=db_idx,
+            )
+            if not mapped_assets:
+                raise RuntimeError(
+                    "No mapped assets available for raw Stage2B adapter in run_stage2_only"
+                )
+            style_payload, _diag = resolve_style_pick_from_raw_filters(
+                raw_pick=style_raw,
+                mapped_assets=mapped_assets,
+                seed_key=_resolve_seed_key(stage1_path=stage1_path, out_dir=out_dir),
+                total_assets=len(picker_assets),
+                unmapped_assets=len(unmapped_assets),
+                metadata_rows_merged=len(db_idx),
+            )
         validate_style_pick_in_groups(style_payload, style_groups)
 
         seed_key = _resolve_seed_key(stage1_path=stage1_path, out_dir=out_dir)

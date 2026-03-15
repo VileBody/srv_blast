@@ -371,14 +371,16 @@ def build_stage2_footage_user_prompt(
     *,
     stage1_json: Dict[str, object],
     style_groups: List[Dict[str, object]],
-    schema_name: str = "FootageStylePickPayload",
+    schema_name: str = "FootageStyleRawPayload",
 ) -> str:
     return (
         f"Return ONLY JSON matching schema: {schema_name}\n\n"
         "STAGE1_CONTEXT_JSON:\n"
         + json.dumps(stage1_json, ensure_ascii=False)
-        + "\n\nSTYLE_POOL_GROUPS_JSON:\n"
-        + json.dumps(style_groups, ensure_ascii=False)
+        + "\n\n"
+        "NOTE:\n"
+        "Return raw style filters only (`theme/mood/filters`).\n"
+        "Do not resolve inventory genre/tag at this stage.\n"
     )
 
 

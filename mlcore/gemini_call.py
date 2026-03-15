@@ -830,7 +830,8 @@ def call_footage_style_once(
     cache_path: Optional[Path] = None,
     prompt_dump_path: Optional[Path] = None,
     system_dump_path: Optional[Path] = None,
-) -> FootageStylePickPayload:
+    schema_model: Type[BaseModel] = FootageStylePickPayload,
+) -> BaseModel:
     audio_upload_paths = _prepare_upload_paths(audio_paths)
 
     if system_dump_path is not None:
@@ -840,7 +841,7 @@ def call_footage_style_once(
         prompt_dump_path.parent.mkdir(parents=True, exist_ok=True)
         prompt_dump_path.write_text(user_prompt, encoding="utf-8")
 
-    def _gemini_call() -> FootageStylePickPayload:
+    def _gemini_call() -> BaseModel:
         if client is None:
             raise RuntimeError("Gemini client is required for provider mode with gemini")
         files: List[types.File] = []
@@ -857,14 +858,14 @@ def call_footage_style_once(
                 files.extend(client.upload_files(extra_file_paths))
 
         return client.generate_structured(
-            schema_model=FootageStylePickPayload,
+            schema_model=schema_model,
             prompt=user_prompt,
             files=files,
             system_instruction=system_instruction,
             raw_response_path=_provider_raw_path(raw_response_path, provider="gemini"),
         )
 
-    def _openrouter_call() -> FootageStylePickPayload:
+    def _openrouter_call() -> BaseModel:
         if openrouter_client is None:
             raise RuntimeError("OpenRouter client is required for provider mode with openrouter")
         if extra_file_paths:
@@ -872,13 +873,13 @@ def call_footage_style_once(
                 "OpenRouter path for call_footage_style_once does not support extra_file_paths"
             )
         out = openrouter_client.generate_structured(
-            schema_model=FootageStylePickPayload,
+            schema_model=schema_model,
             prompt=user_prompt,
             audio_paths=audio_upload_paths,
             system_instruction=system_instruction,
             raw_response_path=_provider_raw_path(raw_response_path, provider="openrouter"),
         )
-        return FootageStylePickPayload.model_validate(out)
+        return schema_model.model_validate(out)
 
     routed = _run_routed(
         stage_name="stage2_style",
@@ -889,4 +890,4 @@ def call_footage_style_once(
         openrouter_call=_openrouter_call,
     )
     _sync_canonical_raw_path(raw_response_path=raw_response_path, routed=routed)
-    return FootageStylePickPayload.model_validate(routed.value)
+    return schema_model.model_validate(routed.value)
