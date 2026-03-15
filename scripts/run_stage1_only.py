@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from core.clip_window import CLIP_WINDOW_RANGE_LABEL, CLIP_WINDOW_RANGE_S_LABEL  # noqa: E402
 from mlcore.gemini_call import call_stage1_asr_once, call_stage1_scenario_once  # noqa: E402
 from mlcore.gemini_client import GeminiClient, GeminiSettings  # noqa: E402
 from mlcore.models.stage1_plan import Stage1PlanPayload  # noqa: E402
@@ -76,7 +77,7 @@ def main() -> int:
     ap.add_argument(
         "--target-fragment",
         default="",
-        help="Optional requested fragment text; Stage1B keeps 13..18s window and maximizes overlap.",
+        help=f"Optional requested fragment text; Stage1B keeps {CLIP_WINDOW_RANGE_S_LABEL} window and maximizes overlap.",
     )
     args = ap.parse_args()
 
@@ -147,7 +148,7 @@ def main() -> int:
         strict_addendum = (
             "\n\nSTRICT_RETRY_RULES:\n"
             "- Every draft phrase must be copied from transcript words.\n"
-            "- Keep selected window in 13..18 sec with arc: 1..5 development, 6 fixation, 7 exit.\n"
+            + f"- Keep selected window in {CLIP_WINDOW_RANGE_LABEL} sec with arc: 1..5 development, 6 fixation, 7 exit.\n"
             "- Keep segments balanced and concise (target <=6 words, hard cap <=8).\n"
             "- Avoid dangling leftovers: split only at natural phrase boundaries.\n"
             "- Repeats are OK in songs.\n"

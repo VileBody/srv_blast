@@ -16,6 +16,7 @@ from aiogram import Bot, Dispatcher, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import CommandStart
 from aiogram.types import FSInputFile, KeyboardButton, Message, ReplyKeyboardMarkup, ReplyKeyboardRemove
+from core.clip_window import CLIP_WINDOW_RANGE_S_LABEL
 from core.subtitles_mode import (
     SUBTITLES_MODE_IMPULSE_2ND,
     SUBTITLES_MODE_LEGACY_BLOCKS,
@@ -988,7 +989,7 @@ class BlastBotApp:
             await self.store.set(st)
             await message.answer(
                 "Пришли интересующий фрагмент текста. "
-                "Рабочее окно всё равно будет 13..18с, но модель постарается максимизировать overlap.",
+                f"Рабочее окно всё равно будет {CLIP_WINDOW_RANGE_S_LABEL}, но модель постарается максимизировать overlap.",
                 reply_markup=ReplyKeyboardRemove(),
             )
             return

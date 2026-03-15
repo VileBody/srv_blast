@@ -1,7 +1,10 @@
 # mlcore/prompts/step1_audio_window.py
 from __future__ import annotations
 
-SYSTEM_PART = r"""
+from core.clip_window import CLIP_WINDOW_RANGE_LABEL
+
+
+SYSTEM_PART = f"""
 ========================
 STEP 1 — AUDIO WINDOW
 ========================
@@ -22,6 +25,6 @@ You must output an object "audio" with fields:
 - moment_of_interest_sec: number|null (optional marker on FULL TRACK)
 
 Hard constraints:
-- Duration MUST be 13..18 seconds (prefer 14..17 if uncertain).
+- Duration MUST be {CLIP_WINDOW_RANGE_LABEL} seconds.
 - clip_end_abs > clip_start_abs.
 """

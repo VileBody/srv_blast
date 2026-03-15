@@ -4,6 +4,13 @@ from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
+from core.clip_window import (
+    CLIP_WINDOW_MAX_LABEL,
+    CLIP_WINDOW_MAX_SECONDS,
+    CLIP_WINDOW_MIN_LABEL,
+    CLIP_WINDOW_MIN_SECONDS,
+)
+
 
 class TranscriptWord(BaseModel):
     text: str = Field(min_length=1)
@@ -27,8 +34,10 @@ class Stage1AudioWindow(BaseModel):
         if self.clip_end_abs <= self.clip_start_abs:
             raise ValueError("clip_end_abs must be > clip_start_abs")
         dur = float(self.clip_end_abs) - float(self.clip_start_abs)
-        if dur < 13.0 or dur > 18.0:
-            raise ValueError(f"clip duration must be 13..18 seconds (got {dur})")
+        if dur < CLIP_WINDOW_MIN_SECONDS or dur > CLIP_WINDOW_MAX_SECONDS:
+            raise ValueError(
+                f"clip duration must be {CLIP_WINDOW_MIN_LABEL}..{CLIP_WINDOW_MAX_LABEL} seconds (got {dur})"
+            )
         return self
 
 
@@ -44,7 +53,7 @@ class FragmentAnalytics(BaseModel):
     working_start_text: str = Field(min_length=1)
     working_end_text: str = Field(min_length=1)
 
-    # Relation between requested fragment and selected 13..18s window.
+    # Relation between requested fragment and selected working window.
     relation_to_target: Literal["wider", "narrower", "inside_13_18"]
     chosen_action: Literal["expand", "select_subfragment", "none"]
     rationale: str = Field(min_length=1)

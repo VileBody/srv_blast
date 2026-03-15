@@ -6,6 +6,7 @@ from typing import Any, List, Sequence, Type
 
 from pydantic import BaseModel
 
+from core.clip_window import CLIP_WINDOW_MAX_LABEL, CLIP_WINDOW_MAX_SECONDS
 from core.subtitles_mode import (
     SUBTITLES_MODE_IMPULSE_2ND,
     SUBTITLES_MODE_LEGACY_BLOCKS,
@@ -451,13 +452,13 @@ class Impulse2ndPlanner(_FlowPlannerBase):
                 }
             )
         flow_dur = float(flow_clip.end) - float(flow_clip.start)
-        if flow_dur > 18.0 + 1e-6:
+        if flow_dur > CLIP_WINDOW_MAX_SECONDS + 1e-6:
             warnings.append(
                 SubtitleFlowWarning(
                     mode=self.mode,
                     segment_id="clip",
-                    reason="clip_duration_over_18",
-                    action=f"kept duration={flow_dur:.3f}",
+                    reason="clip_duration_over_max",
+                    action=f"kept duration={flow_dur:.3f} max={CLIP_WINDOW_MAX_LABEL}",
                 )
             )
 

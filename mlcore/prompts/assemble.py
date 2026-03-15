@@ -4,6 +4,11 @@ from __future__ import annotations
 from typing import Dict, List
 import json
 
+from core.clip_window import (
+    CLIP_WINDOW_MAX_LABEL,
+    CLIP_WINDOW_MIN_LABEL,
+    CLIP_WINDOW_RANGE_LABEL,
+)
 from core.subtitles_mode import (
     SUBTITLES_MODE_IMPULSE_2ND,
     SUBTITLES_MODE_LEGACY_BLOCKS,
@@ -127,7 +132,7 @@ def build_stage1a_asr_user_prompt(
             + tf
             + "\n\n"
             "Additionally output selected_fragment with:\n"
-            "- audio.clip_start_abs / clip_end_abs in 13..18 seconds total duration;\n"
+            + f"- audio.clip_start_abs / clip_end_abs in {CLIP_WINDOW_RANGE_LABEL} seconds total duration;\n"
             "- selected_fragment.transcript_words only inside that clip window;\n"
             "- selected_fragment.srt_items only inside that clip window (optional);\n"
             "- selected_fragment.transcript_words/srt_items timings MUST stay ABSOLUTE full-track seconds "
@@ -139,8 +144,8 @@ def build_stage1a_asr_user_prompt(
             "- relation_to_target/chosen_action must describe your FINAL selected segment.\n"
             "Selection rules:\n"
             "- maximize overlap of selected clip with USER_TARGET_FRAGMENT;\n"
-            "- if USER_TARGET_FRAGMENT is shorter than 13s: expand context around it;\n"
-            "- if USER_TARGET_FRAGMENT is longer than 18s: choose most expressive 13..18s subfragment.\n"
+            + f"- if USER_TARGET_FRAGMENT is shorter than {CLIP_WINDOW_MIN_LABEL}s: expand context around it;\n"
+            + f"- if USER_TARGET_FRAGMENT is longer than {CLIP_WINDOW_MAX_LABEL}s: choose most expressive {CLIP_WINDOW_RANGE_LABEL}s subfragment.\n"
             "- do not perform phrase grouping/draft blocks at this stage.\n"
         )
     else:
@@ -148,13 +153,13 @@ def build_stage1a_asr_user_prompt(
             "\nSELECT_FRAGMENT_BRANCH=ON\n"
             "USER_TARGET_FRAGMENT_BRANCH=OFF\n"
             "Additionally output selected_fragment with:\n"
-            "- audio.clip_start_abs / clip_end_abs in 13..18 seconds total duration;\n"
+            + f"- audio.clip_start_abs / clip_end_abs in {CLIP_WINDOW_RANGE_LABEL} seconds total duration;\n"
             "- selected_fragment.transcript_words only inside that clip window;\n"
             "- selected_fragment.srt_items only inside that clip window (optional).\n"
             "- selected_fragment.transcript_words/srt_items timings MUST stay ABSOLUTE full-track seconds "
             "(same global timeline as transcript_words; do NOT normalize to clip start).\n"
             "Selection rule:\n"
-            "- choose the most memorable/expressive 13..18s moment in the track.\n"
+            + f"- choose the most memorable/expressive {CLIP_WINDOW_RANGE_LABEL}s moment in the track.\n"
             "- do not perform phrase grouping/draft blocks at this stage.\n"
         )
     return base + branch
@@ -203,7 +208,7 @@ def build_stage1a_forced_alignment_user_prompt(
             + tf
             + "\n\n"
             "Additionally output selected_fragment with:\n"
-            "- audio.clip_start_abs / clip_end_abs in 13..18 seconds total duration;\n"
+            + f"- audio.clip_start_abs / clip_end_abs in {CLIP_WINDOW_RANGE_LABEL} seconds total duration;\n"
             "- selected_fragment.transcript_words only inside that clip window;\n"
             "- selected_fragment.srt_items only inside that clip window (optional);\n"
             "- selected_fragment.transcript_words/srt_items timings MUST stay ABSOLUTE full-track seconds "
@@ -215,8 +220,8 @@ def build_stage1a_forced_alignment_user_prompt(
             "- relation_to_target/chosen_action must describe your FINAL selected segment.\n"
             "Selection rules:\n"
             "- maximize overlap of selected clip with USER_TARGET_FRAGMENT;\n"
-            "- if USER_TARGET_FRAGMENT is shorter than 13s: expand context around it;\n"
-            "- if USER_TARGET_FRAGMENT is longer than 18s: choose most expressive 13..18s subfragment.\n"
+            + f"- if USER_TARGET_FRAGMENT is shorter than {CLIP_WINDOW_MIN_LABEL}s: expand context around it;\n"
+            + f"- if USER_TARGET_FRAGMENT is longer than {CLIP_WINDOW_MAX_LABEL}s: choose most expressive {CLIP_WINDOW_RANGE_LABEL}s subfragment.\n"
             "- do not perform phrase grouping/draft blocks at this stage.\n"
         )
     else:
@@ -224,13 +229,13 @@ def build_stage1a_forced_alignment_user_prompt(
             "\nSELECT_FRAGMENT_BRANCH=ON\n"
             "USER_TARGET_FRAGMENT_BRANCH=OFF\n"
             "Additionally output selected_fragment with:\n"
-            "- audio.clip_start_abs / clip_end_abs in 13..18 seconds total duration;\n"
+            + f"- audio.clip_start_abs / clip_end_abs in {CLIP_WINDOW_RANGE_LABEL} seconds total duration;\n"
             "- selected_fragment.transcript_words only inside that clip window;\n"
             "- selected_fragment.srt_items only inside that clip window (optional).\n"
             "- selected_fragment.transcript_words/srt_items timings MUST stay ABSOLUTE full-track seconds "
             "(same global timeline as aligned_words; do NOT normalize to clip start).\n"
             "Selection rule:\n"
-            "- choose the most memorable/expressive 13..18s moment in the track.\n"
+            + f"- choose the most memorable/expressive {CLIP_WINDOW_RANGE_LABEL}s moment in the track.\n"
             "- do not perform phrase grouping/draft blocks at this stage.\n"
         )
     return base + branch
@@ -266,10 +271,10 @@ def build_stage1b_scenario_user_prompt(
         + tf
         + "\n\n"
         "UNIVERSAL_RULES_FOR_TARGET_FRAGMENT:\n"
-        "- Working audio window MUST remain 13..18 seconds.\n"
+        + f"- Working audio window MUST remain {CLIP_WINDOW_RANGE_LABEL} seconds.\n"
         "- Maximize overlap of the selected working window with USER_TARGET_FRAGMENT.\n"
-        "- If requested fragment is shorter than 13s: expand context around it (left/right as needed) while keeping overlap.\n"
-        "- If requested fragment is longer than 18s: choose the most expressive 13..18s subfragment.\n"
+        + f"- If requested fragment is shorter than {CLIP_WINDOW_MIN_LABEL}s: expand context around it (left/right as needed) while keeping overlap.\n"
+        + f"- If requested fragment is longer than {CLIP_WINDOW_MAX_LABEL}s: choose the most expressive {CLIP_WINDOW_RANGE_LABEL}s subfragment.\n"
         "- USER_TARGET_FRAGMENT is lexical source of truth for wording in this branch.\n"
         "- If transcript has recognition mistakes, fix wording in draft_blocks to match USER_TARGET_FRAGMENT while preserving timeline/order.\n"
         "- fragment_analytics.target_fragment MUST copy USER_TARGET_FRAGMENT wording exactly (no paraphrase).\n"

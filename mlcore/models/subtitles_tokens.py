@@ -4,6 +4,8 @@ from __future__ import annotations
 from typing import List, Literal
 from pydantic import BaseModel, Field, model_validator
 
+from core.clip_window import CLIP_WINDOW_MIN_LABEL, CLIP_WINDOW_MIN_SECONDS
+
 Trailing = Literal[" ", "\r", ""]
 
 
@@ -16,11 +18,11 @@ class ClipWindow(BaseModel):
         if self.end <= self.start:
             raise ValueError(f"clip.end must be > clip.start (got {self.start}..{self.end})")
         dur = self.end - self.start
-        # Stage1 selects 13..18s windows. Subtitles flow may extend effective clip
+        # Stage1 selects a bounded window. Subtitles flow may extend effective clip
         # a bit (for example impulse tail pad on the last segment), so only the
         # lower bound is strict here.
-        if dur < 13.0:
-            raise ValueError(f"clip duration must be >= 13 seconds (got {dur})")
+        if dur < CLIP_WINDOW_MIN_SECONDS:
+            raise ValueError(f"clip duration must be >= {CLIP_WINDOW_MIN_LABEL} seconds (got {dur})")
         return self
 
 

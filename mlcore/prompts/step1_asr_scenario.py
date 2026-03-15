@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-SYSTEM_PART = r"""
+from core.clip_window import CLIP_WINDOW_RANGE_S_LABEL
+
+
+SYSTEM_PART = f"""
 ========================
 STAGE 1 — ASR + SCENARIO DRAFT
 ========================
@@ -18,7 +21,7 @@ Return JSON for Stage1PlanPayload:
    - block_5 must be split to slowly_in / fast_reveal / glitch_peak / mine
 
 Hard constraints:
-- audio window duration must be 13..18 sec.
+- audio window duration must be {CLIP_WINDOW_RANGE_S_LABEL}.
 - clip_end_abs > clip_start_abs.
 - transcript word timings must be monotonic and valid (t_end > t_start).
 - Return valid JSON only, no markdown/comments.
