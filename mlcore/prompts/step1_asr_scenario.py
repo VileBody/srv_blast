@@ -15,7 +15,7 @@ Return JSON for Stage1PlanPayload:
    - audio.clip_end_abs
    - audio.moment_of_interest_sec (optional)
 2) transcript_words: word-level ASR list for the full-track timeline:
-   - each item: {text, t_start, t_end}
+   - each item: {{text, t_start, t_end}}
 3) draft_blocks: rough editorial scenario over 7 blocks:
    - phrases list per block part
    - block_5 must be split to slowly_in / fast_reveal / glitch_peak / mine
