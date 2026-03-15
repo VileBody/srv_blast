@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from services.tg_bot_botapi.app import (
     _build_subtitles_debug_text,
+    _extract_footage_file_names,
     _is_control_button_text,
     _is_username_allowed,
+    _load_used_footage_file_names_for_job,
     _parse_subtitles_mode_choice,
     _parse_versions_choice,
 )
@@ -113,3 +115,28 @@ def test_build_scenes_debug_text_contains_type_and_focus() -> None:
     assert "TYPE_4" in text
     assert "focus=" in text
     assert "кричала:red" in text
+
+
+def test_extract_footage_file_names_dedupes_and_skips_empty() -> None:
+    payload = {
+        "clips": [
+            {"file_name": "a.mp4"},
+            {"file_name": "b.mp4"},
+            {"file_name": "a.mp4"},
+            {"file_name": ""},
+            {},
+        ]
+    }
+    assert _extract_footage_file_names(payload) == ["a.mp4", "b.mp4"]
+
+
+def test_load_used_footage_file_names_for_job_reads_stage2_footage(monkeypatch, tmp_path) -> None:
+    job_id = "job123"
+    logs = tmp_path / job_id / "out" / "logs"
+    logs.mkdir(parents=True, exist_ok=True)
+    (logs / "stage2_footage.json").write_text(
+        '{"clips":[{"file_name":"x.mp4"},{"file_name":"y.mp4"},{"file_name":"x.mp4"}]}',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("BOT_JOBS_OUTPUT_DIR", str(tmp_path))
+    assert _load_used_footage_file_names_for_job(job_id) == ["x.mp4", "y.mp4"]

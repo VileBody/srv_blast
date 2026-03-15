@@ -94,3 +94,38 @@ def test_interval_picker_uses_repeats_when_unique_assets_not_enough() -> None:
     assert len(names) == 5
     assert len(set(names)) < len(names)
     assert diag.repeats_used is True
+
+
+def test_interval_picker_respects_exclude_file_names_when_possible() -> None:
+    style = FootageStylePickPayload.model_validate({"genre": "Rock", "tag": "dark_forest"})
+    payload, diag = pick_footage_clips_by_intervals_deterministic(
+        style_pick=style,
+        assets=_assets(),
+        clip_start_abs=0.0,
+        clip_end_abs=4.0,
+        switch_points_abs=[1.0, 2.5],  # 3 intervals
+        seed_key="job-int-exclude-ok",
+        exclude_file_names=["a.mp4"],
+    )
+    names = [str(c.file_name) for c in sorted(payload.clips, key=lambda c: float(c.in_point))]
+    assert len(names) == 3
+    assert "a.mp4" not in names
+    assert diag.exclude_relaxed is False
+    assert diag.selected_excluded_count == 0
+
+
+def test_interval_picker_relaxes_exclude_file_names_when_pool_insufficient() -> None:
+    style = FootageStylePickPayload.model_validate({"genre": "Rock", "tag": "dark_forest"})
+    payload, diag = pick_footage_clips_by_intervals_deterministic(
+        style_pick=style,
+        assets=_assets(),
+        clip_start_abs=0.0,
+        clip_end_abs=6.0,
+        switch_points_abs=[1.0, 2.5, 4.0],  # 4 intervals
+        seed_key="job-int-exclude-relax",
+        exclude_file_names=["a.mp4", "b.mp4", "c.mp4"],
+    )
+    names = [str(c.file_name) for c in sorted(payload.clips, key=lambda c: float(c.in_point))]
+    assert len(names) == 4
+    assert diag.exclude_relaxed is True
+    assert diag.selected_excluded_count >= 1

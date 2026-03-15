@@ -1,7 +1,7 @@
 # services/orchestrator/schemas.py
 from __future__ import annotations
 
-from typing import Any, Dict, Optional, Literal
+from typing import Any, Dict, Optional, Literal, List
 from pydantic import BaseModel, Field
 
 from core.subtitles_mode import SUBTITLES_MODE_LEGACY_BLOCKS
@@ -24,6 +24,11 @@ class SendAudioS3Request(BaseModel):
     lyrics_text: str = ""
     target_fragment: str = ""
     subtitles_mode: Literal["legacy_blocks", "impulse_2nd", "scenes_3rd"] = SUBTITLES_MODE_LEGACY_BLOCKS
+    # Optional internal batch controls for multi-version generation.
+    reuse_text_job_id: Optional[str] = None
+    exclude_file_names: List[str] = Field(default_factory=list)
+    variant_index: Optional[int] = None
+    variants_total: Optional[int] = None
 
 
 class EnqueueJobResponse(BaseModel):

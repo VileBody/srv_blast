@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import List
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from redis.asyncio import Redis
 
 from core.subtitles_mode import SUBTITLES_MODE_LEGACY_BLOCKS
@@ -35,12 +35,20 @@ class ChatState(BaseModel):
     target_fragment: str = ""
     subtitles_mode: str = SUBTITLES_MODE_LEGACY_BLOCKS
     versions_count: int = 1
+    # Batch metadata for sequential multi-version generation.
+    batch_id: str = ""
+    batch_audio_s3_url: str = ""
+    batch_total_versions: int = 1
+    next_version_to_enqueue: int = 1
+    master_job_id: str = ""
+    job_order: List[str] = Field(default_factory=list)
+    used_footage_file_names: List[str] = Field(default_factory=list)
 
     # legacy single-job fields (kept for backward compatibility)
     active_job_id: str = ""
     # current multi-job fields
-    active_job_ids: List[str] = []
-    completed_job_ids: List[str] = []
+    active_job_ids: List[str] = Field(default_factory=list)
+    completed_job_ids: List[str] = Field(default_factory=list)
     active_job_started_at: float = 0.0
     last_status_msg_at: float = 0.0
     status_message_id: int = 0

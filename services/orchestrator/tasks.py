@@ -11,7 +11,7 @@ import urllib.request
 import urllib.error
 from urllib.parse import unquote
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 import boto3
 from botocore.config import Config
 
@@ -23,6 +23,20 @@ from .render_manifest import build_windows_job_payload
 from .windows_client import WindowsRenderClient
 from core.subtitles_mode import SUBTITLES_MODE_LEGACY_BLOCKS, normalize_subtitles_mode
 from core.runtime_mode import MODE_PROD, get_runtime_mode
+
+
+_REUSE_RESUME_STATE_KEYS = (
+    "stage1_asr",
+    "stage1_asr_mode",
+    "stage1_asr_reference_text",
+    "stage1_plan",
+    "stage1_plan_source",
+    "stage2_subtitles",
+    "stage2_subtitles_mode",
+    "stage2_switch_timestamps",
+    "stage2_timing_mode",
+    "stage2_fast_start_seconds",
+)
 
 
 def _is_remote_url(u: str) -> bool:
@@ -462,6 +476,60 @@ def _is_transient_windows_error(e: BaseException) -> bool:
     return False
 
 
+def _job_resume_state_path(*, work_dir: str, job_id: str) -> Path:
+    return Path(work_dir).resolve() / "jobs" / str(job_id).strip() / "data" / "llm_resume_state.json"
+
+
+def _seed_resume_state_from_source_job(
+    *,
+    work_dir: str,
+    source_job_id: str,
+    target_resume_state_path: Path,
+) -> None:
+    src_job = str(source_job_id or "").strip()
+    if not src_job:
+        raise RuntimeError("reuse_text_job_id is empty")
+
+    src_path = _job_resume_state_path(work_dir=work_dir, job_id=src_job)
+    if not src_path.exists():
+        raise RuntimeError(f"reuse_text_source_resume_missing source_job_id={src_job!r} path={src_path}")
+
+    try:
+        src_obj = json.loads(src_path.read_text(encoding="utf-8"))
+    except Exception as e:
+        raise RuntimeError(f"reuse_text_source_resume_unreadable source_job_id={src_job!r} err={e!r}") from e
+    if not isinstance(src_obj, dict):
+        raise RuntimeError(f"reuse_text_source_resume_invalid source_job_id={src_job!r} expected JSON object")
+
+    missing = [k for k in _REUSE_RESUME_STATE_KEYS if k not in src_obj]
+    if missing:
+        raise RuntimeError(
+            "reuse_text_source_resume_missing_keys "
+            f"source_job_id={src_job!r} missing={missing!r}"
+        )
+
+    dst_obj: Dict[str, Any] = {}
+    if target_resume_state_path.exists():
+        try:
+            old_obj = json.loads(target_resume_state_path.read_text(encoding="utf-8"))
+            if isinstance(old_obj, dict):
+                dst_obj.update(old_obj)
+        except Exception:
+            dst_obj = {}
+
+    for k in _REUSE_RESUME_STATE_KEYS:
+        dst_obj[k] = src_obj[k]
+    # Force footage/style re-selection for variant diversification.
+    dst_obj.pop("stage2_style", None)
+    dst_obj.pop("stage2_footage", None)
+
+    target_resume_state_path.parent.mkdir(parents=True, exist_ok=True)
+    target_resume_state_path.write_text(
+        json.dumps(dst_obj, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
 def _poll_started_at_from_state(st: Any) -> float:
     """
     Windows polling timeout should start from dispatch/poll, not from build start.
@@ -506,8 +574,42 @@ def build_job(self, job_id: str) -> Dict[str, Any]:
 
     req = st.request or {}
     audio_url = str(req.get("audio_s3_url") or "").strip()
+    project_id = str(req.get("project_id") or "").strip()
     lyrics_text = str(req.get("lyrics_text") or "")
     target_fragment = str(req.get("target_fragment") or "")
+    reuse_text_job_id = str(req.get("reuse_text_job_id") or "").strip()
+    exclude_raw = req.get("exclude_file_names")
+    exclude_file_names: List[str] = []
+    if isinstance(exclude_raw, list):
+        seen_exclude: set[str] = set()
+        for it in exclude_raw:
+            name = str(it or "").strip()
+            if not name or name in seen_exclude:
+                continue
+            seen_exclude.add(name)
+            exclude_file_names.append(name)
+
+    variant_index: Optional[int] = None
+    variant_total: Optional[int] = None
+    try:
+        if req.get("variant_index") is not None:
+            variant_index = int(req.get("variant_index"))
+    except Exception:
+        variant_index = None
+    try:
+        if req.get("variants_total") is not None:
+            variant_total = int(req.get("variants_total"))
+    except Exception:
+        variant_total = None
+    if variant_index is not None and variant_index <= 0:
+        raise RuntimeError(f"variant_index must be > 0, got {variant_index!r}")
+    if variant_total is not None and variant_total <= 0:
+        raise RuntimeError(f"variants_total must be > 0, got {variant_total!r}")
+    if variant_index is not None and variant_total is not None and variant_index > variant_total:
+        raise RuntimeError(
+            f"variant_index must be <= variants_total (got {variant_index} > {variant_total})"
+        )
+
     subtitles_mode = normalize_subtitles_mode(
         str(req.get("subtitles_mode") or ""),
         default=SUBTITLES_MODE_LEGACY_BLOCKS,
@@ -550,6 +652,16 @@ def build_job(self, job_id: str) -> Dict[str, Any]:
     env["LYRICS_TEXT"] = lyrics_text
     env["TARGET_FRAGMENT"] = target_fragment
     env["SUBTITLES_MODE"] = subtitles_mode
+    if exclude_file_names:
+        env["FOOTAGE_EXCLUDE_FILE_NAMES_JSON"] = json.dumps(exclude_file_names, ensure_ascii=False)
+    seed_variant = variant_index if variant_index is not None else 1
+    seed_base = project_id or f"job-{job_id}"
+    env["STAGE2_SELECTION_SEED"] = f"{seed_base}:v{seed_variant}"
+    env["BATCH_VARIANT_INDEX"] = str(seed_variant)
+    if variant_total is not None:
+        env["BATCH_VARIANTS_TOTAL"] = str(int(variant_total))
+    if reuse_text_job_id:
+        env["REUSE_TEXT_JOB_ID"] = reuse_text_job_id
 
     build_all_fn = None
     if mode != "no_gemini":
@@ -569,11 +681,26 @@ def build_job(self, job_id: str) -> Dict[str, Any]:
             "LYRICS_TEXT",
             "TARGET_FRAGMENT",
             "SUBTITLES_MODE",
+            "FOOTAGE_EXCLUDE_FILE_NAMES_JSON",
+            "STAGE2_SELECTION_SEED",
+            "BATCH_VARIANT_INDEX",
+            "BATCH_VARIANTS_TOTAL",
+            "REUSE_TEXT_JOB_ID",
         ):
             backup[k] = os.environ.get(k)
-            os.environ[k] = env[k]
+            if k in env:
+                os.environ[k] = env[k]
+            else:
+                os.environ.pop(k, None)
 
         try:
+            if reuse_text_job_id:
+                store.set_status(job_id, "RUNNING", stage="llm_seed_reuse_text")
+                _seed_resume_state_from_source_job(
+                    work_dir=SETTINGS.work_dir,
+                    source_job_id=reuse_text_job_id,
+                    target_resume_state_path=llm_resume_state_path,
+                )
             build_all_fn(
                 progress_cb=lambda stage: store.set_status(job_id, "RUNNING", stage=str(stage)),
                 resume_state_path=llm_resume_state_path,
@@ -664,6 +791,11 @@ def build_job(self, job_id: str) -> Dict[str, Any]:
                     "LYRICS_TEXT",
                     "TARGET_FRAGMENT",
                     "SUBTITLES_MODE",
+                    "FOOTAGE_EXCLUDE_FILE_NAMES_JSON",
+                    "STAGE2_SELECTION_SEED",
+                    "BATCH_VARIANT_INDEX",
+                    "BATCH_VARIANTS_TOTAL",
+                    "REUSE_TEXT_JOB_ID",
                 )
                 llm_backup: Dict[str, str | None] = {}
                 for k in llm_env_keys:

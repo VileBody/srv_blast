@@ -2371,6 +2371,29 @@ def build_all_via_gemini_one_call(
     if switch_payload is None:
         raise RuntimeError("Stage2 failed: switch timing payload is empty")
 
+    exclude_file_names: List[str] = []
+    exclude_raw = (os.environ.get("FOOTAGE_EXCLUDE_FILE_NAMES_JSON") or "").strip()
+    if exclude_raw:
+        try:
+            parsed = json.loads(exclude_raw)
+        except Exception as e:
+            raise RuntimeError(f"Invalid FOOTAGE_EXCLUDE_FILE_NAMES_JSON: {e!r}") from e
+        if not isinstance(parsed, list):
+            raise RuntimeError("FOOTAGE_EXCLUDE_FILE_NAMES_JSON must be a JSON list")
+        seen_excluded: set[str] = set()
+        for it in parsed:
+            name = str(it or "").strip()
+            if not name or name in seen_excluded:
+                continue
+            seen_excluded.add(name)
+            exclude_file_names.append(name)
+    if exclude_file_names:
+        logger.info(
+            "footage_exclude_input count=%d names=%s",
+            len(exclude_file_names),
+            exclude_file_names,
+        )
+
     seed_key = _resolve_footage_seed_key(out_dir=out_dir, logger=logger)
     footage_payload, interval_diag = pick_footage_clips_by_intervals_deterministic(
         style_pick=style_payload,
@@ -2380,7 +2403,14 @@ def build_all_via_gemini_one_call(
         switch_points_abs=list(switch_payload.switch_points_abs),
         seed_key=seed_key,
         fit_mode="cover",
+        exclude_file_names=exclude_file_names,
     )
+    if getattr(interval_diag, "exclude_relaxed", False):
+        logger.warning(
+            "footage_exclude_relaxed excluded_count=%d selected_excluded_count=%d",
+            int(getattr(interval_diag, "excluded_input_count", 0)),
+            int(getattr(interval_diag, "selected_excluded_count", 0)),
+        )
     _validate_footage_coverage_abs(
         footage_payload,
         clip_start_abs=clip_start_abs,

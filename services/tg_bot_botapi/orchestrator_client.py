@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 import httpx
 from core.subtitles_mode import SUBTITLES_MODE_LEGACY_BLOCKS
@@ -26,6 +26,10 @@ class OrchestratorClient:
         subtitles_mode: str = SUBTITLES_MODE_LEGACY_BLOCKS,
         idempotency_key: str | None = None,
         project_id: str | None = None,
+        reuse_text_job_id: str | None = None,
+        exclude_file_names: List[str] | None = None,
+        variant_index: int | None = None,
+        variants_total: int | None = None,
     ) -> Dict[str, Any]:
         payload = {
             "audio_s3_url": str(audio_s3_url),
@@ -35,6 +39,10 @@ class OrchestratorClient:
             "subtitles_mode": str(subtitles_mode or SUBTITLES_MODE_LEGACY_BLOCKS),
             "idempotency_key": idempotency_key,
             "project_id": project_id,
+            "reuse_text_job_id": str(reuse_text_job_id or "") or None,
+            "exclude_file_names": [str(x).strip() for x in list(exclude_file_names or []) if str(x).strip()],
+            "variant_index": int(variant_index) if variant_index is not None else None,
+            "variants_total": int(variants_total) if variants_total is not None else None,
         }
         resp = await self._client.post(f"{self._base_url}/send_audio_s3", json=payload)
         if resp.status_code >= 300:

@@ -301,6 +301,49 @@ def _pick_stage2_payload_files_for_job(job_id: str) -> Tuple[Optional[Path], Opt
     return None, None
 
 
+def _pick_stage2_footage_file_for_job(job_id: str) -> Optional[Path]:
+    for logs_dir in _logs_dir_candidates_for_job(job_id):
+        if not logs_dir.exists() or not logs_dir.is_dir():
+            continue
+
+        final_path = logs_dir / "stage2_footage.json"
+        if not final_path.exists():
+            final_path = _latest_file_by_pattern(directory=logs_dir, pattern="stage2_footage_*.json") or final_path
+            if not final_path.exists():
+                final_path = None
+        if final_path is not None:
+            return final_path
+    return None
+
+
+def _extract_footage_file_names(payload: Optional[Dict[str, Any]]) -> List[str]:
+    if not isinstance(payload, dict):
+        return []
+    clips = payload.get("clips")
+    if not isinstance(clips, list):
+        return []
+
+    out: List[str] = []
+    seen: set[str] = set()
+    for it in clips:
+        if not isinstance(it, dict):
+            continue
+        name = str(it.get("file_name") or "").strip()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        out.append(name)
+    return out
+
+
+def _load_used_footage_file_names_for_job(job_id: str) -> List[str]:
+    fp = _pick_stage2_footage_file_for_job(job_id)
+    if not isinstance(fp, Path):
+        return []
+    payload = _load_json_dict(fp)
+    return _extract_footage_file_names(payload)
+
+
 def _detect_subtitles_debug_mode(payload: Optional[Dict[str, Any]]) -> Optional[str]:
     if not isinstance(payload, dict):
         return None
@@ -657,9 +700,14 @@ class BlastBotApp:
         )
 
     def _version_num_for_job(self, st: ChatState, job_id: str) -> int:
-        ids = list(st.active_job_ids or [])
+        jid = str(job_id or "").strip()
+        if not jid:
+            return 0
+        ids = list(st.job_order or [])
+        if not ids:
+            ids = list(st.active_job_ids or [])
         try:
-            return ids.index(str(job_id)) + 1
+            return ids.index(jid) + 1
         except Exception:
             return 0
 
@@ -875,6 +923,13 @@ class BlastBotApp:
         st.target_fragment = ""
         st.subtitles_mode = SUBTITLES_MODE_LEGACY_BLOCKS
         st.versions_count = 1
+        st.batch_id = ""
+        st.batch_audio_s3_url = ""
+        st.batch_total_versions = 1
+        st.next_version_to_enqueue = 1
+        st.master_job_id = ""
+        st.job_order = []
+        st.used_footage_file_names = []
         st.active_job_id = ""
         st.active_job_ids = []
         st.completed_job_ids = []
@@ -1006,28 +1061,27 @@ class BlastBotApp:
                 content_type="audio/mpeg",
             )
 
-            job_ids: List[str] = []
-            for i in range(versions):
-                idem = f"tg-{chat_id}-v{i + 1}-{uuid.uuid4().hex[:12]}"
-                enqueue = await self.orchestrator.send_audio_s3(
-                    audio_s3_url=audio_s3_url,
-                    mode="with_gemini",
-                    lyrics_text=st.lyrics_text,
-                    target_fragment=st.target_fragment,
-                    subtitles_mode=st.subtitles_mode,
-                    idempotency_key=idem,
-                    project_id=None,
-                )
-                job_id = str(enqueue.get("job_id") or "").strip()
-                if not job_id:
-                    raise RuntimeError(f"enqueue response has no job_id: {enqueue}")
-                job_ids.append(job_id)
-            if not job_ids:
-                raise RuntimeError("no jobs enqueued")
+            batch_id = f"tg-{chat_id}-{uuid.uuid4().hex[:12]}"
+            master_job_id = await self._enqueue_batch_version(
+                st=st,
+                audio_s3_url=audio_s3_url,
+                version_index=1,
+                versions_total=versions,
+                batch_id=batch_id,
+                reuse_text_job_id="",
+                exclude_file_names=[],
+            )
 
             st.stage = STAGE_PROCESSING
-            st.active_job_id = job_ids[0]
-            st.active_job_ids = list(job_ids)
+            st.batch_id = batch_id
+            st.batch_audio_s3_url = audio_s3_url
+            st.batch_total_versions = int(versions)
+            st.next_version_to_enqueue = 2
+            st.master_job_id = master_job_id
+            st.job_order = [master_job_id]
+            st.used_footage_file_names = []
+            st.active_job_id = master_job_id
+            st.active_job_ids = [master_job_id]
             st.completed_job_ids = []
             st.active_job_started_at = time.time()
             st.last_status_msg_at = 0.0
@@ -1039,12 +1093,12 @@ class BlastBotApp:
             st.last_result_url = ""
 
             initial_rows = [
-                {"job_id": jid, "status": "QUEUED", "stage": "build", "error": ""}
-                for jid in job_ids
+                {"job_id": master_job_id, "status": "QUEUED", "stage": "build", "error": "", "version": 1}
             ]
             initial_text = self._jobs_progress_message(
                 rows=initial_rows,
                 poll_attempts=0,
+                total_versions=versions,
             )
             sent = await message.answer(initial_text)
             st.status_message_id = int(getattr(sent, "message_id", 0) or 0)
@@ -1069,11 +1123,47 @@ class BlastBotApp:
         safe = _safe_name(file_name)
         return f"{self.settings.s3_raw_audio_prefix.strip('/')}/{chat_id}/{_now_tag()}_{uuid.uuid4().hex[:10]}_{safe}"
 
+    async def _enqueue_batch_version(
+        self,
+        *,
+        st: ChatState,
+        audio_s3_url: str,
+        version_index: int,
+        versions_total: int,
+        batch_id: str,
+        reuse_text_job_id: str = "",
+        exclude_file_names: Optional[List[str]] = None,
+    ) -> str:
+        idem = f"tg-{st.chat_id}-batch-{batch_id}-v{int(version_index)}-{uuid.uuid4().hex[:12]}"
+        enqueue = await self.orchestrator.send_audio_s3(
+            audio_s3_url=audio_s3_url,
+            mode="with_gemini",
+            lyrics_text=st.lyrics_text,
+            target_fragment=st.target_fragment,
+            subtitles_mode=st.subtitles_mode,
+            idempotency_key=idem,
+            project_id=batch_id or None,
+            reuse_text_job_id=str(reuse_text_job_id or "") or None,
+            exclude_file_names=list(exclude_file_names or []),
+            variant_index=int(version_index),
+            variants_total=int(versions_total),
+        )
+        job_id = str(enqueue.get("job_id") or "").strip()
+        if not job_id:
+            raise RuntimeError(f"enqueue response has no job_id: {enqueue}")
+        return job_id
+
     def _progress_interval_s(self) -> float:
         return max(1.0, float(self.settings.bot_status_update_interval_s))
 
-    def _jobs_progress_message(self, *, rows: List[Dict[str, Any]], poll_attempts: int) -> str:
-        total = len(rows)
+    def _jobs_progress_message(
+        self,
+        *,
+        rows: List[Dict[str, Any]],
+        poll_attempts: int,
+        total_versions: int,
+    ) -> str:
+        total = max(1, int(total_versions))
         succ = 0
         fail = 0
         active = 0
@@ -1087,16 +1177,18 @@ class BlastBotApp:
                 active += 1
 
         done = succ + fail
+        pending = max(0, total - done - active)
         lines = [
             "Прогресс задач:",
-            f"versions={done}/{total} ok={succ} fail={fail} active={active}",
+            f"versions={done}/{total} ok={succ} fail={fail} active={active} pending={pending}",
             f"poll_attempts={max(0, int(poll_attempts))}",
         ]
         for i, r in enumerate(rows, start=1):
+            ver = int(r.get("version") or i)
             status = str(r.get("status") or "UNKNOWN").upper()
             stage = str(r.get("stage") or "-")
             err = str(r.get("error") or "")
-            line = f"v{i}: {status} / {stage}"
+            line = f"v{ver}: {status} / {stage}"
             if status == "FAILED" and err:
                 line += f" / err={_compact_text(err, limit=120)}"
             lines.append(line)
@@ -1145,6 +1237,13 @@ class BlastBotApp:
         st.active_job_id = ""
         st.active_job_ids = []
         st.completed_job_ids = []
+        st.job_order = []
+        st.batch_id = ""
+        st.batch_audio_s3_url = ""
+        st.batch_total_versions = 1
+        st.next_version_to_enqueue = 1
+        st.master_job_id = ""
+        st.used_footage_file_names = []
         st.active_job_started_at = 0.0
         st.last_status_msg_at = 0.0
         st.status_message_id = 0
@@ -1193,7 +1292,7 @@ class BlastBotApp:
         return out
 
     async def _finalize_one_job(self, *, bot: Bot, st: ChatState, job_id: str, job: Dict[str, Any]) -> None:
-        total = max(1, len(st.active_job_ids or []))
+        total = max(1, int(st.batch_total_versions or len(st.job_order or st.active_job_ids or []) or 1))
         ver = self._version_num_for_job(st, job_id)
         ver_label = f"Версия {ver}/{total}" if ver > 0 else f"job_id={job_id}"
 
@@ -1290,6 +1389,10 @@ class BlastBotApp:
             return
         st.active_job_ids = list(job_ids)
         st.active_job_id = job_ids[0]
+        if not st.job_order:
+            st.job_order = list(job_ids)
+        total_versions = max(1, int(st.batch_total_versions or st.versions_count or len(st.job_order) or len(job_ids)))
+        st.batch_total_versions = total_versions
 
         bot = self._require_bot()
         completed: set[str] = {str(x) for x in (st.completed_job_ids or []) if str(x)}
@@ -1308,6 +1411,7 @@ class BlastBotApp:
                     "status": status,
                     "stage": stage,
                     "error": error_text,
+                    "version": self._version_num_for_job(st, jid),
                 }
             )
             if stage:
@@ -1317,7 +1421,11 @@ class BlastBotApp:
             if status in {"SUCCEEDED", "FAILED"} and jid not in completed:
                 new_finals.append((jid, job))
 
-        status_text = self._jobs_progress_message(rows=rows, poll_attempts=st.poll_attempts)
+        status_text = self._jobs_progress_message(
+            rows=rows,
+            poll_attempts=st.poll_attempts,
+            total_versions=total_versions,
+        )
         now = time.time()
         should_send = (
             st.poll_attempts == 1
@@ -1331,12 +1439,76 @@ class BlastBotApp:
         for jid, job in new_finals:
             await self._finalize_one_job(bot=bot, st=st, job_id=jid, job=job)
             completed.add(jid)
+            if str(job.get("status") or "").upper() == "SUCCEEDED":
+                used_now = _load_used_footage_file_names_for_job(jid)
+                if used_now:
+                    seen_used = set(st.used_footage_file_names or [])
+                    added_count = 0
+                    for nm in used_now:
+                        if nm in seen_used:
+                            continue
+                        seen_used.add(nm)
+                        st.used_footage_file_names.append(nm)
+                        added_count += 1
+                    log.info(
+                        "batch_used_footage_update chat=%s job=%s added=%d total=%d",
+                        st.chat_id,
+                        jid,
+                        added_count,
+                        len(st.used_footage_file_names or []),
+                    )
 
         st.completed_job_ids = [jid for jid in job_ids if jid in completed]
-        all_done = len(st.completed_job_ids) >= len(job_ids)
-        if not all_done:
+        all_done_enqueued = len(st.completed_job_ids) >= len(job_ids)
+        if not all_done_enqueued:
             await self.store.set(st)
             return
+
+        master_status = ""
+        if st.master_job_id:
+            for r in rows:
+                if str(r.get("job_id") or "") == str(st.master_job_id):
+                    master_status = str(r.get("status") or "").upper()
+                    break
+
+        next_ver = max(1, int(st.next_version_to_enqueue or 1))
+        can_enqueue_more = next_ver <= total_versions
+        if can_enqueue_more:
+            if master_status == "FAILED":
+                await bot.send_message(
+                    st.chat_id,
+                    f"Версия 1/{total_versions} завершилась ошибкой, остальные версии не запускаю.",
+                )
+                st.next_version_to_enqueue = total_versions + 1
+            else:
+                try:
+                    new_job_id = await self._enqueue_batch_version(
+                        st=st,
+                        audio_s3_url=str(st.batch_audio_s3_url or ""),
+                        version_index=next_ver,
+                        versions_total=total_versions,
+                        batch_id=str(st.batch_id or f"tg-{st.chat_id}"),
+                        reuse_text_job_id=str(st.master_job_id or ""),
+                        exclude_file_names=list(st.used_footage_file_names or []),
+                    )
+                    if new_job_id not in st.active_job_ids:
+                        st.active_job_ids.append(new_job_id)
+                    if new_job_id not in st.job_order:
+                        st.job_order.append(new_job_id)
+                    st.active_job_id = new_job_id
+                    st.next_version_to_enqueue = next_ver + 1
+                    await bot.send_message(
+                        st.chat_id,
+                        f"Версия {next_ver}/{total_versions}: поставил в очередь (exclude={len(st.used_footage_file_names or [])}).",
+                    )
+                    await self.store.set(st)
+                    return
+                except Exception as e:
+                    await bot.send_message(
+                        st.chat_id,
+                        f"Не удалось поставить в очередь Версию {next_ver}/{total_versions}: {e}",
+                    )
+                    st.next_version_to_enqueue = total_versions + 1
 
         await bot.send_message(
             st.chat_id,

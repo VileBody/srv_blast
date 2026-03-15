@@ -37,6 +37,9 @@ class FootageIntervalPickerDiagnostics:
     widened_to_genre: bool
     widened_to_global: bool
     repeats_used: bool
+    excluded_input_count: int
+    selected_excluded_count: int
+    exclude_relaxed: bool
     deterministic_seed: int
     seed_key: str
     selected_file_names: List[str]
@@ -425,6 +428,7 @@ def pick_footage_clips_by_intervals_deterministic(
     switch_points_abs: List[float],
     seed_key: str,
     fit_mode: str = "cover",
+    exclude_file_names: List[str] | None = None,
 ) -> Tuple[FootageSelectionPayload, FootageIntervalPickerDiagnostics]:
     genre = str(style_pick.genre).strip()
     tag = str(style_pick.tag).strip()
@@ -447,8 +451,11 @@ def pick_footage_clips_by_intervals_deterministic(
     widened_to_global = False
     seed_value = deterministic_seed_from_key(seed_key)
 
-    selected_pool = _dedupe_assets_by_file_name(list(primary_pool))
+    selected_pool_all = _dedupe_assets_by_file_name(list(primary_pool))
+    excluded_names = {str(x).strip() for x in list(exclude_file_names or []) if str(x).strip()}
+    selected_pool = [it for it in selected_pool_all if str(it.get("file_name") or "") not in excluded_names]
     assignment_err: str | None = None
+    exclude_relaxed = False
 
     def _try_assign(pool: List[Dict[str, Any]]) -> List[str] | None:
         nonlocal assignment_err
@@ -467,27 +474,41 @@ def pick_footage_clips_by_intervals_deterministic(
     if assigned_file_names is None:
         widen_pool = [it for it in assets if str(it["genre"]) == genre and str(it["tag"]) != tag]
         if widen_pool:
-            selected_pool = _dedupe_assets_by_file_name(selected_pool + widen_pool)
+            selected_pool_all = _dedupe_assets_by_file_name(selected_pool_all + widen_pool)
+            selected_pool = [it for it in selected_pool_all if str(it.get("file_name") or "") not in excluded_names]
             widened_to_genre = True
             assigned_file_names = _try_assign(selected_pool)
 
     if assigned_file_names is None:
         global_pool = [it for it in assets if str(it["genre"]) != genre]
         if global_pool:
-            selected_pool = _dedupe_assets_by_file_name(selected_pool + global_pool)
+            selected_pool_all = _dedupe_assets_by_file_name(selected_pool_all + global_pool)
+            selected_pool = [it for it in selected_pool_all if str(it.get("file_name") or "") not in excluded_names]
             widened_to_global = True
             assigned_file_names = _try_assign(selected_pool)
 
-    by_name = {str(it["file_name"]): it for it in selected_pool}
+    if assigned_file_names is None and excluded_names:
+        exclude_relaxed = True
+        assigned_file_names = _try_assign(selected_pool_all)
+
+    by_name = {str(it["file_name"]): it for it in selected_pool_all}
     clips: List[Dict[str, Any]] = []
     repeats_used = False
 
     if assigned_file_names is None:
         repeats_used = True
         prev_file_name: str | None = None
+        pool_for_repeats = selected_pool
+        if not pool_for_repeats and excluded_names:
+            exclude_relaxed = True
+            pool_for_repeats = selected_pool_all
         for idx, (a, b) in enumerate(intervals):
             need = float(b - a)
-            candidates = [it for it in selected_pool if _fits_interval(it, interval_len=need)]
+            candidates = [it for it in pool_for_repeats if _fits_interval(it, interval_len=need)]
+            if not candidates and excluded_names and not exclude_relaxed:
+                exclude_relaxed = True
+                pool_for_repeats = selected_pool_all
+                candidates = [it for it in pool_for_repeats if _fits_interval(it, interval_len=need)]
             if not candidates:
                 raise RuntimeError(
                     "No footage asset can cover interval after pool enrichment "
@@ -511,7 +532,7 @@ def pick_footage_clips_by_intervals_deterministic(
                 }
             )
             prev_file_name = chosen_name
-        assigned_file_names = [str(c["file_name"]) for c in clips]
+            assigned_file_names = [str(c["file_name"]) for c in clips]
     else:
         for idx, (a, b) in enumerate(intervals):
             chosen_name = str(assigned_file_names[idx])
@@ -527,6 +548,10 @@ def pick_footage_clips_by_intervals_deterministic(
                 }
             )
 
+    selected_excluded_count = 0
+    if excluded_names:
+        selected_excluded_count = sum(1 for x in assigned_file_names if str(x) in excluded_names)
+
     payload = FootageSelectionPayload.model_validate({"clips": clips, "allow_gaps": False})
     diag = FootageIntervalPickerDiagnostics(
         genre=genre,
@@ -534,10 +559,13 @@ def pick_footage_clips_by_intervals_deterministic(
         intervals_count=len(intervals),
         max_interval_sec=max(float(b - a) for a, b in intervals),
         primary_pool_count=len(primary_pool),
-        selected_pool_count=len(selected_pool),
+        selected_pool_count=len(selected_pool_all),
         widened_to_genre=bool(widened_to_genre),
         widened_to_global=bool(widened_to_global),
         repeats_used=bool(repeats_used),
+        excluded_input_count=len(excluded_names),
+        selected_excluded_count=int(selected_excluded_count),
+        exclude_relaxed=bool(exclude_relaxed),
         deterministic_seed=int(seed_value),
         seed_key=str(seed_key),
         selected_file_names=[str(x) for x in assigned_file_names],
