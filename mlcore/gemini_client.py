@@ -7,6 +7,7 @@ from typing import Any, Dict, Iterable, List, Optional
 import hashlib
 import json
 import mimetypes
+import os
 import time
 import logging
 
@@ -251,6 +252,47 @@ class GeminiClient:
             self._max_thinking_tokens = mtt
         self._thinking_config = self._build_thinking_config()
         self._max_attempts = int(settings.max_attempts)
+        self._upload_max_attempts = self._env_int("GEMINI_UPLOAD_MAX_ATTEMPTS", 4, min_value=1)
+        self._upload_backoff_max_s = float(self._env_float("GEMINI_UPLOAD_BACKOFF_MAX_S", 8.0, min_value=0.1))
+        self._upload_backoff_base_s = float(self._env_float("GEMINI_UPLOAD_BACKOFF_BASE_S", 1.0, min_value=0.1))
+
+    def _env_int(self, name: str, default: int, *, min_value: int) -> int:
+        raw = (os.environ.get(name) or "").strip()
+        if not raw:
+            return int(default)
+        try:
+            val = int(raw)
+        except Exception:
+            self._logger.warning("gemini_env_parse_failed name=%s value=%r using_default=%s", name, raw, default)
+            return int(default)
+        if val < min_value:
+            self._logger.warning(
+                "gemini_env_out_of_range name=%s value=%s min=%s using_min",
+                name,
+                val,
+                min_value,
+            )
+            return int(min_value)
+        return int(val)
+
+    def _env_float(self, name: str, default: float, *, min_value: float) -> float:
+        raw = (os.environ.get(name) or "").strip()
+        if not raw:
+            return float(default)
+        try:
+            val = float(raw)
+        except Exception:
+            self._logger.warning("gemini_env_parse_failed name=%s value=%r using_default=%s", name, raw, default)
+            return float(default)
+        if val < min_value:
+            self._logger.warning(
+                "gemini_env_out_of_range name=%s value=%s min=%s using_min",
+                name,
+                val,
+                min_value,
+            )
+            return float(min_value)
+        return float(val)
 
     def _exc_text(self, exc: BaseException) -> str:
         parts: List[str] = [type(exc).__name__]
@@ -278,6 +320,57 @@ class GeminiClient:
         ):
             return True
         return False
+
+    def _is_transient_upload_error(self, exc: BaseException) -> bool:
+        text = self._exc_text(exc)
+        lo = text.lower()
+        transient_markers = [
+            "connection reset by peer",
+            "remoteprotocolerror",
+            "server disconnected without sending a response",
+            "readerror",
+            "connecterror",
+            "read timeout",
+            "timed out",
+            "temporarily unavailable",
+            "connection aborted",
+            "eof occurred in violation of protocol",
+            "broken pipe",
+        ]
+        for marker in transient_markers:
+            if marker in lo:
+                return True
+        if "503" in lo or "429" in lo:
+            return True
+        return False
+
+    def _upload_file_with_retry(self, p: Path, *, sha_short: Optional[str] = None) -> types.File:
+        attempts = int(self._upload_max_attempts)
+        base_sleep = float(self._upload_backoff_base_s)
+        max_sleep = float(self._upload_backoff_max_s)
+        last_exc: Optional[BaseException] = None
+        sha_label = str(sha_short or "-")
+        for attempt in range(1, attempts + 1):
+            try:
+                return self._client.files.upload(file=str(p))
+            except Exception as exc:  # noqa: BLE001
+                last_exc = exc
+                if (not self._is_transient_upload_error(exc)) or attempt >= attempts:
+                    raise
+                sleep_s = min(max_sleep, base_sleep * (2 ** (attempt - 1)))
+                self._logger.warning(
+                    "gemini_upload_retry file=%s sha=%s attempt=%d/%d sleep_s=%.2f err=%s",
+                    str(p),
+                    sha_label,
+                    attempt,
+                    attempts,
+                    sleep_s,
+                    self._exc_text(exc),
+                )
+                time.sleep(sleep_s)
+        if last_exc is not None:
+            raise last_exc
+        raise RuntimeError(f"gemini_upload_unreachable file={p}")
 
     def _generate_content_with_optional_fallback(
         self,
@@ -471,7 +564,7 @@ class GeminiClient:
                 self._logger.info("gemini_cache_stale sha=%s name=%s -> reupload", sha[:12], cached_name)
 
             self._logger.info("uploading file=%s sha=%s", str(p), sha[:12])
-            uploaded = self._client.files.upload(file=str(p))
+            uploaded = self._upload_file_with_retry(p, sha_short=sha[:12])
             uploaded = self._wait_file_active(uploaded)
 
             up_name = getattr(uploaded, "name", None)
@@ -499,7 +592,7 @@ class GeminiClient:
             if not p.exists():
                 raise FileNotFoundError(str(p))
             self._logger.info("uploading file=%s", str(p))
-            f = self._client.files.upload(file=str(p))
+            f = self._upload_file_with_retry(p)
             f = self._wait_file_active(f)
             out.append(f)
         return out
