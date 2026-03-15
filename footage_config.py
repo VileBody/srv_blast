@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -83,6 +84,39 @@ def _clean_palette_bins(v: Any) -> Optional[List[Dict[str, Any]]]:
     return out or None
 
 
+def _build_color_meta_map(assets: Any) -> Dict[str, Dict[str, Any]]:
+    out: Dict[str, Dict[str, Any]] = {}
+    if not isinstance(assets, list):
+        return out
+    for it in assets:
+        if not isinstance(it, dict):
+            continue
+        file_name = str(it.get("file_name") or "").strip()
+        if not file_name:
+            continue
+        dominant_color = str(it.get("dominant_color") or "").strip() or None
+        palette_bins = _clean_palette_bins(it.get("palette_bins"))
+        if not dominant_color and not palette_bins:
+            continue
+        out[file_name] = {
+            "dominant_color": dominant_color,
+            "palette_bins": palette_bins,
+        }
+    return out
+
+
+def _normalize_asset_file_name(v: str) -> str:
+    return unicodedata.normalize("NFKC", str(v or "").strip())
+
+
+def _strip_copy_suffix(file_name: str) -> str:
+    stem, ext = os.path.splitext(str(file_name or ""))
+    for suffix in (" — копия", " - копия", "_copy", " copy"):
+        if stem.endswith(suffix):
+            return f"{stem[:-len(suffix)]}{ext}"
+    return str(file_name or "")
+
+
 def _require_str(it: Dict[str, Any], key: str) -> str:
     s = str(it.get(key) or "").strip()
     if not s:
@@ -128,11 +162,29 @@ def build_inventory_and_bundle(
     if not isinstance(source_assets, list):
         raise RuntimeError(f"Invalid static assets index (missing assets[]): {static_assets_index_path}")
 
+    fallback_meta_path_raw = _env("STATIC_ASSETS_ENRICH_INDEX_JSON", str(repo_root / "data" / "static_assets_index.json"))
+    fallback_meta_path = Path(fallback_meta_path_raw).resolve()
+    fallback_color_meta: Dict[str, Dict[str, Any]] = {}
+    fallback_color_meta_norm: Dict[str, Dict[str, Any]] = {}
+    fallback_meta_error: Optional[str] = None
+    if fallback_meta_path != static_assets_index_path:
+        try:
+            if fallback_meta_path.exists():
+                fb_obj = _read_json(fallback_meta_path)
+                fallback_color_meta = _build_color_meta_map(fb_obj.get("assets"))
+                for k, meta in fallback_color_meta.items():
+                    kn = _normalize_asset_file_name(k)
+                    if kn and kn not in fallback_color_meta_norm:
+                        fallback_color_meta_norm[kn] = meta
+        except Exception as e:
+            fallback_meta_error = str(e)
+
     runtime_mode = get_runtime_mode()
     mode = "local" if runtime_mode == MODE_DEV else "s3"
 
     assets_map: Dict[str, FootageAssetRow] = {}
     invalid_rows = 0
+    color_meta_enriched_rows = 0
     missing_local_files: List[str] = []
 
     for it in source_assets:
@@ -166,6 +218,30 @@ def build_inventory_and_bundle(
 
         dominant_color = str(it.get("dominant_color") or "").strip() or None
         palette_bins = _clean_palette_bins(it.get("palette_bins"))
+        if (not dominant_color or not palette_bins) and fallback_color_meta:
+            meta = fallback_color_meta.get(file_name)
+            if not isinstance(meta, dict):
+                meta = fallback_color_meta_norm.get(_normalize_asset_file_name(file_name))
+            if not isinstance(meta, dict):
+                alias = _strip_copy_suffix(file_name)
+                if alias != file_name:
+                    meta = fallback_color_meta.get(alias)
+                    if not isinstance(meta, dict):
+                        meta = fallback_color_meta_norm.get(_normalize_asset_file_name(alias))
+            if isinstance(meta, dict):
+                changed = False
+                if not dominant_color:
+                    dom2 = str(meta.get("dominant_color") or "").strip() or None
+                    if dom2:
+                        dominant_color = dom2
+                        changed = True
+                if not palette_bins:
+                    bins2 = _clean_palette_bins(meta.get("palette_bins"))
+                    if bins2:
+                        palette_bins = bins2
+                        changed = True
+                if changed:
+                    color_meta_enriched_rows += 1
 
         assets_map[file_name] = FootageAssetRow(
             file_name=file_name,
@@ -209,6 +285,12 @@ def build_inventory_and_bundle(
             "missing_files": sorted(set(missing_local_files)) if mode == "local" else [],
         },
     }
+    if fallback_meta_path != static_assets_index_path:
+        inv_obj["warnings"]["color_meta_enrich_source"] = str(fallback_meta_path)
+        inv_obj["warnings"]["color_meta_enriched_rows"] = int(color_meta_enriched_rows)
+        inv_obj["warnings"]["color_meta_enrich_source_rows"] = int(len(fallback_color_meta))
+        if fallback_meta_error:
+            inv_obj["warnings"]["color_meta_enrich_error"] = fallback_meta_error
     if mode == "s3":
         inv_obj["warnings"]["s3_bucket"] = _s3_bucket_assets()
 
