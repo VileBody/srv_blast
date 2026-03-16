@@ -8,6 +8,7 @@ from mlcore.gemini_orchestrator import _validate_fragment_analytics_for_target
 from mlcore.gemini_orchestrator import _looks_like_model_validation_error_text
 from mlcore.gemini_orchestrator import _is_fragment_target_exact_mismatch
 from mlcore.gemini_orchestrator import _build_stage1b_fragment_exact_retry_hint
+from mlcore.gemini_orchestrator import _warn_stage1_clip_over_max
 from mlcore.models.stage1_plan import FragmentAnalytics
 
 
@@ -114,3 +115,14 @@ def test_fragment_target_retry_hint_contains_expected_and_previous_values() -> N
     assert "PREVIOUS_FRAGMENT_ANALYTICS_TARGET" in hint
     assert "SHE IS NOT MY LOVE" in hint
     assert "SHE IS NOT MY LOVER" in hint
+
+
+def test_stage1_clip_over_max_is_warning_only(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.WARNING):
+        _warn_stage1_clip_over_max(
+            clip_start_abs=10.0,
+            clip_end_abs=42.4,
+            logger=logging.getLogger("tests.fragment_analytics"),
+            source="stage1a_selected_fragment",
+        )
+    assert "stage1_clip_duration_over_max" in caplog.text

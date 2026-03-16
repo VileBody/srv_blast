@@ -44,9 +44,13 @@ _GAP_HOLD_MIN_FRAC = 0.08
 _GAP_HOLD_MAX_FRAC = 0.36
 _GAP_HOLD_MAX_S = 1.20
 _GAP_HOLD_MAX_WORD_MULT = 2.00
-_GAP_HOLD_TYPE4_BONUS_MULT = 1.15
-_GAP_HOLD_TYPE4_MIN_GAP_FRAC = 0.20
-_GAP_HOLD_TYPE4_MIN_WORD_MULT = 0.50
+_GAP_HOLD_TYPE4_BONUS_MULT = 1.40
+_GAP_HOLD_TYPE4_MIN_GAP_FRAC = 0.35
+_GAP_HOLD_TYPE4_MIN_WORD_MULT = 1.20
+_GAP_HOLD_TYPE4_WORD_DUR_FLOOR = 0.35
+_GAP_HOLD_TYPE4_MAX_S = 2.20
+_GAP_HOLD_TYPE4_MAX_WORD_MULT = 4.00
+_TYPE4_MIN_HOLD_S = 0.44
 
 # ---------------------------------------------------------------------------
 # Утилиты
@@ -1152,21 +1156,31 @@ def _scene_last_word_duration(scene: Dict[str, Any]) -> float:
 def _gap_to_hold_transfer(*, gap: float, word_dur: float, scene_type: str | None = None) -> float:
     if gap <= FRAME + 1e-9:
         return 0.0
+    is_type4 = str(scene_type or "") == "TYPE_4"
     wd = max(float(word_dur), FRAME)
+    if is_type4:
+        # TYPE_4 can come from very short raw word timings (e.g. 0.01s), which
+        # would otherwise cap hold transfer too aggressively and make red-word
+        # precomp almost invisible.
+        wd = max(wd, _GAP_HOLD_TYPE4_WORD_DUR_FLOOR)
     ratio = max(0.0, float(gap) / wd)
     frac = _GAP_HOLD_MIN_FRAC + (_GAP_HOLD_MAX_FRAC - _GAP_HOLD_MIN_FRAC) * (1.0 - math.exp(-ratio))
     transfer = float(gap) * frac
-    if str(scene_type or "") == "TYPE_4":
+    cap_s = _GAP_HOLD_MAX_S
+    cap_word_mult = _GAP_HOLD_MAX_WORD_MULT
+    if is_type4:
         min_type4_transfer = max(
             wd * _GAP_HOLD_TYPE4_MIN_WORD_MULT,
             float(gap) * _GAP_HOLD_TYPE4_MIN_GAP_FRAC,
         )
         transfer = max(transfer * _GAP_HOLD_TYPE4_BONUS_MULT, min_type4_transfer)
+        cap_s = _GAP_HOLD_TYPE4_MAX_S
+        cap_word_mult = _GAP_HOLD_TYPE4_MAX_WORD_MULT
     transfer = min(
         transfer,
         float(gap) - FRAME,  # never eat the entire boundary gap
-        _GAP_HOLD_MAX_S,     # hard cap to avoid excessive drift
-        wd * _GAP_HOLD_MAX_WORD_MULT,
+        cap_s,               # hard cap to avoid excessive drift
+        wd * cap_word_mult,
     )
     return max(0.0, float(transfer))
 
@@ -1185,6 +1199,11 @@ def _postprocess_scene_boundaries_for_hold(scenes: List[Dict[str, Any]]) -> None
 
         wd = _scene_last_word_duration(cur)
         transfer = _gap_to_hold_transfer(gap=gap, word_dur=wd, scene_type=str(cur.get("type") or ""))
+        if str(cur.get("type") or "") == "TYPE_4":
+            cur_dur = max(0.0, cur_end - float(cur.get("start") or 0.0))
+            min_transfer = max(0.0, _TYPE4_MIN_HOLD_S - cur_dur)
+            transfer = max(transfer, min_transfer)
+            transfer = min(transfer, float(gap) - FRAME)
         if transfer <= 1e-9:
             continue
 

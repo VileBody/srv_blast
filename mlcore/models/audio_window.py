@@ -6,8 +6,6 @@ from typing import Optional
 from pydantic import BaseModel, Field, model_validator
 
 from core.clip_window import (
-    CLIP_WINDOW_MAX_LABEL,
-    CLIP_WINDOW_MAX_SECONDS,
     CLIP_WINDOW_MIN_LABEL,
     CLIP_WINDOW_MIN_SECONDS,
 )
@@ -33,9 +31,9 @@ class AudioClipPlan(BaseModel):
             raise ValueError("clip_end_abs must be > clip_start_abs")
 
         dur = float(self.clip_end_abs) - float(self.clip_start_abs)
-        if dur < CLIP_WINDOW_MIN_SECONDS or dur > CLIP_WINDOW_MAX_SECONDS:
+        if dur < CLIP_WINDOW_MIN_SECONDS:
             raise ValueError(
-                f"clip duration must be {CLIP_WINDOW_MIN_LABEL}..{CLIP_WINDOW_MAX_LABEL} seconds (got {dur})"
+                f"clip duration must be >= {CLIP_WINDOW_MIN_LABEL} seconds (got {dur})"
             )
 
         return self

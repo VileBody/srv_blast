@@ -3,7 +3,6 @@ from __future__ import annotations
 from core.clip_window import (
     CLIP_WINDOW_MAX_LABEL,
     CLIP_WINDOW_MIN_LABEL,
-    CLIP_WINDOW_RANGE_LABEL,
     CLIP_WINDOW_RANGE_S_LABEL,
 )
 
@@ -29,7 +28,7 @@ Return JSON for Stage1ScenarioPayload:
    - MUST explain how requested fragment relates to selected {CLIP_WINDOW_RANGE_S_LABEL} working window
 
 Hard constraints:
-- audio window duration must be {CLIP_WINDOW_RANGE_S_LABEL}.
+- audio window duration must be >= {CLIP_WINDOW_MIN_LABEL}s.
 - clip_end_abs > clip_start_abs.
 - default branch (no USER_TARGET_FRAGMENT):
   - draft phrase words MUST be copied from transcript_words (no paraphrase, no invented words).
@@ -52,10 +51,11 @@ Hard constraints:
 - Branching rule:
   - If USER_TARGET_FRAGMENT is absent/empty: run default logic (existing behavior).
   - If USER_TARGET_FRAGMENT is present/non-empty:
-    - still keep audio window strictly {CLIP_WINDOW_RANGE_S_LABEL},
+    - keep audio window at least {CLIP_WINDOW_MIN_LABEL}s,
+    - audio window MAY exceed {CLIP_WINDOW_MAX_LABEL}s when needed to keep USER_TARGET_FRAGMENT fully covered,
     - maximize overlap between working window and USER_TARGET_FRAGMENT,
     - if requested fragment is shorter than {CLIP_WINDOW_MIN_LABEL}s: expand context around it,
-    - if requested fragment is longer than {CLIP_WINDOW_MAX_LABEL}s: choose the most expressive {CLIP_WINDOW_RANGE_LABEL}s subfragment,
+    - if requested fragment is longer than {CLIP_WINDOW_MAX_LABEL}s: keep the full fragment (do NOT narrow/select subfragment),
     - treat USER_TARGET_FRAGMENT as lexical source of truth for wording:
       - you MAY correct ASR recognition mistakes in draft_blocks wording to match USER_TARGET_FRAGMENT,
       - keep order/timeline grounded in transcript_words timings (no invented timeline),

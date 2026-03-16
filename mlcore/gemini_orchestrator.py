@@ -86,6 +86,7 @@ from mlcore.prompts import (
 from mlcore.stage1_tools import align_stage1_draft_to_transcript, build_stage1_report
 from core.subtitles_mode import SUBTITLES_MODE_LEGACY_BLOCKS, normalize_subtitles_mode
 from core.runtime_mode import get_runtime_mode, MODE_DEV, MODE_PROD
+from core.clip_window import CLIP_WINDOW_MAX_LABEL, CLIP_WINDOW_MAX_SECONDS
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -620,6 +621,26 @@ def _fallback_draft_blocks_from_words(words: List[str]) -> Dict[str, Any]:
     }
 
 
+def _warn_stage1_clip_over_max(
+    *,
+    clip_start_abs: float,
+    clip_end_abs: float,
+    logger: logging.Logger,
+    source: str,
+) -> None:
+    dur = float(clip_end_abs) - float(clip_start_abs)
+    if dur <= CLIP_WINDOW_MAX_SECONDS + 1e-6:
+        return
+    logger.warning(
+        "stage1_clip_duration_over_max source=%s clip=%.3f..%.3f dur=%.3f max=%s action=kept_no_narrowing",
+        source,
+        float(clip_start_abs),
+        float(clip_end_abs),
+        float(dur),
+        CLIP_WINDOW_MAX_LABEL,
+    )
+
+
 def _build_stage1_plan_from_selected_fragment(
     *,
     stage1_asr: Stage1AsrPayload,
@@ -657,6 +678,13 @@ def _build_stage1_plan_from_selected_fragment(
         )
     if not selected_words:
         raise ValueError("selected_fragment produced empty transcript_words")
+
+    _warn_stage1_clip_over_max(
+        clip_start_abs=float(audio_obj["clip_start_abs"]),
+        clip_end_abs=float(audio_obj["clip_end_abs"]),
+        logger=logger,
+        source="stage1a_selected_fragment",
+    )
 
     fallback_blocks = _fallback_draft_blocks_from_words([str(w.text) for w in selected_words])
     return Stage1PlanPayload.model_validate(
@@ -748,8 +776,17 @@ def _validate_fragment_analytics_for_target(
 
     relation = str(analytics.relation_to_target)
     action = str(analytics.chosen_action)
+    if relation == "narrower":
+        logger.warning(
+            "stage1_fragment_narrowing_detected relation=%r action=%r clip=%.3f..%.3f (continuing)",
+            relation,
+            action,
+            forced_start,
+            forced_end,
+        )
     expected = {
         "inside_13_18": "none",
+        "inside_13_30": "none",
         "wider": "expand",
         "narrower": "select_subfragment",
     }
@@ -2000,6 +2037,12 @@ def build_all_via_gemini_one_call(
 
     if stage1 is None:
         raise RuntimeError("stage1 plan is empty after stage1 processing")
+    _warn_stage1_clip_over_max(
+        clip_start_abs=float(stage1.audio.clip_start_abs),
+        clip_end_abs=float(stage1.audio.clip_end_abs),
+        logger=logger,
+        source=expected_stage1_plan_source,
+    )
     stage1_json = stage1.model_dump(mode="json")
     stage1_json["lyrics_text"] = lyrics_text
     stage1_json["target_fragment"] = target_fragment
