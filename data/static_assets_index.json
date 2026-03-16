@@ -1,7 +1,7 @@
 {
   "version": "v1",
   "source_root": "/Users/ergin/Desktop/pinterest_parser/pinterest_collection",
-  "assets_count": 3034,
+  "assets_count": 3041,
   "assets": [
     {
       "file_name": "1001276929637034910_.mp4",
@@ -76288,6 +76288,76 @@
           "weight": 0.111111
         }
       ]
+    },
+    {
+      "type": "overlay",
+      "overlay_version": "v2",
+      "overlay_updated_at_utc": "2026-03-16T16:49:11.686565+00:00",
+      "file_name": "35b346a965b82430efbd8fbd47c90112.mp4",
+      "file_path": "s3://f7cef916-asset-storage/overlays/35b346a965b82430efbd8fbd47c90112.mp4",
+      "src_w": 720,
+      "src_h": 1280,
+      "duration_sec": 33.203
+    },
+    {
+      "type": "overlay",
+      "overlay_version": "v2",
+      "overlay_updated_at_utc": "2026-03-16T16:49:11.686565+00:00",
+      "file_name": "3f0c48373afd351c9df38d5526c3cdfb_720w.mp4",
+      "file_path": "s3://f7cef916-asset-storage/overlays/3f0c48373afd351c9df38d5526c3cdfb_720w.mp4",
+      "src_w": 720,
+      "src_h": 1280,
+      "duration_sec": 5.967
+    },
+    {
+      "type": "overlay",
+      "overlay_version": "v2",
+      "overlay_updated_at_utc": "2026-03-16T16:49:11.686565+00:00",
+      "file_name": "6597e5d2dccc9749329e0fdc52c9347d_t4.mp4",
+      "file_path": "s3://f7cef916-asset-storage/overlays/6597e5d2dccc9749329e0fdc52c9347d_t4.mp4",
+      "src_w": 720,
+      "src_h": 1280,
+      "duration_sec": 30.433
+    },
+    {
+      "type": "overlay",
+      "overlay_version": "v2",
+      "overlay_updated_at_utc": "2026-03-16T16:49:11.686565+00:00",
+      "file_name": "80defa74610c3479c772b5b233119b1c_720w.mp4",
+      "file_path": "s3://f7cef916-asset-storage/overlays/80defa74610c3479c772b5b233119b1c_720w.mp4",
+      "src_w": 720,
+      "src_h": 1300,
+      "duration_sec": 10.133
+    },
+    {
+      "type": "overlay",
+      "overlay_version": "v2",
+      "overlay_updated_at_utc": "2026-03-16T16:49:11.686565+00:00",
+      "file_name": "9659aea325b393fbacbe4d0f16eb88c1.mp4",
+      "file_path": "s3://f7cef916-asset-storage/overlays/9659aea325b393fbacbe4d0f16eb88c1.mp4",
+      "src_w": 720,
+      "src_h": 1280,
+      "duration_sec": 15.0
+    },
+    {
+      "type": "overlay",
+      "overlay_version": "v2",
+      "overlay_updated_at_utc": "2026-03-16T16:49:11.686565+00:00",
+      "file_name": "c4f64101938f76d1efcbbcd4e477dfba_720w.mp4",
+      "file_path": "s3://f7cef916-asset-storage/overlays/c4f64101938f76d1efcbbcd4e477dfba_720w.mp4",
+      "src_w": 720,
+      "src_h": 1280,
+      "duration_sec": 8.7
+    },
+    {
+      "type": "overlay",
+      "overlay_version": "v2",
+      "overlay_updated_at_utc": "2026-03-16T16:49:11.686565+00:00",
+      "file_name": "f9f88885b77e53b158516fa73bcba7b4_720w.mp4",
+      "file_path": "s3://f7cef916-asset-storage/overlays/f9f88885b77e53b158516fa73bcba7b4_720w.mp4",
+      "src_w": 720,
+      "src_h": 1280,
+      "duration_sec": 18.204
     }
   ]
 }
