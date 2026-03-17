@@ -40,8 +40,8 @@ def test_validate_forced_alignment_strict() -> None:
     payload = Stage1ForcedAlignmentPayload.model_validate(
         {
             "aligned_words": [
-                {"text": "Привет,", "t_start": 0.10, "t_end": 0.30},
-                {"text": "мир!", "t_start": 0.31, "t_end": 0.55},
+                {"text": "Привет,", "t_start": "00:00.100", "t_end": "00:00.300"},
+                {"text": "мир!", "t_start": "00:00.310", "t_end": "00:00.550"},
             ]
         }
     )
@@ -50,7 +50,7 @@ def test_validate_forced_alignment_strict() -> None:
     assert warnings == []
 
     out2, warnings2 = validate_forced_alignment_strict(
-        {"aligned_words": [{"text": "привет", "t_start": 0.0, "t_end": 0.2}]},
+        {"aligned_words": [{"text": "привет", "t_start": "00:00.000", "t_end": "00:00.200"}]},
         ["привет", "мир"],
     )
     assert len(out2) == 1
@@ -60,8 +60,8 @@ def test_validate_forced_alignment_strict() -> None:
         validate_forced_alignment_strict(
             {
                 "aligned_words": [
-                    {"text": "привет", "t_start": 0.2, "t_end": 0.2},
-                    {"text": "мир", "t_start": 0.3, "t_end": 0.5},
+                    {"text": "привет", "t_start": "00:00.200", "t_end": "00:00.200"},
+                    {"text": "мир", "t_start": "00:00.300", "t_end": "00:00.500"},
                 ]
             },
             ["привет", "мир"],

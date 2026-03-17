@@ -190,7 +190,11 @@ def build_stage1a_forced_alignment_user_prompt(
         "Use the attached audio as the source of truth.\n"
         "Align every word in REFERENCE_TEXT and return one timed item per word.\n"
         "REFERENCE_TEXT is the only allowed word source (no extra backing/ad-lib words).\n\n"
-        "All returned timestamps must be ABSOLUTE full-track seconds.\n\n"
+        "For aligned_words use string timestamps in mm:ss.mmm format (absolute full-track timeline).\n"
+        "When silence gap between neighboring words is > 1.0s, also emit pause_spans items "
+        "with text=\"[pause]\" and t_start/t_end in mm:ss.mmm format.\n"
+        "pause_spans are not words and must stay between neighboring aligned words.\n\n"
+        "aligned_words/pause_spans timestamps must stay on ABSOLUTE full-track timeline.\n\n"
         "Structural markers like [pause], [bridge], [hook], [verse] are not spoken words.\n"
         "Do not output these markers in aligned_words.\n\n"
         "REFERENCE_TEXT:\n"
@@ -212,8 +216,9 @@ def build_stage1a_forced_alignment_user_prompt(
             + f"- audio.clip_start_abs / clip_end_abs duration MUST be >= {CLIP_WINDOW_MIN_LABEL}s;\n"
             + f"- duration MAY exceed {CLIP_WINDOW_MAX_LABEL}s when needed to keep USER_TARGET_FRAGMENT fully covered;\n"
             "- selected_fragment.transcript_words only inside that clip window;\n"
+            "- selected_fragment.pause_spans only inside that clip window (optional);\n"
             "- selected_fragment.srt_items only inside that clip window (optional);\n"
-            "- selected_fragment.transcript_words/srt_items timings MUST stay ABSOLUTE full-track seconds "
+            "- selected_fragment.transcript_words/pause_spans/srt_items timings MUST stay ABSOLUTE full-track seconds "
             "(same global timeline as aligned_words; do NOT normalize to clip start).\n"
             "- selected_fragment.fragment_analytics is REQUIRED and target_fragment must copy USER_TARGET_FRAGMENT exactly.\n"
             "fragment_analytics semantics:\n"
@@ -233,8 +238,9 @@ def build_stage1a_forced_alignment_user_prompt(
             "Additionally output selected_fragment with:\n"
             + f"- audio.clip_start_abs / clip_end_abs in {CLIP_WINDOW_RANGE_LABEL} seconds total duration;\n"
             "- selected_fragment.transcript_words only inside that clip window;\n"
+            "- selected_fragment.pause_spans only inside that clip window (optional).\n"
             "- selected_fragment.srt_items only inside that clip window (optional).\n"
-            "- selected_fragment.transcript_words/srt_items timings MUST stay ABSOLUTE full-track seconds "
+            "- selected_fragment.transcript_words/pause_spans/srt_items timings MUST stay ABSOLUTE full-track seconds "
             "(same global timeline as aligned_words; do NOT normalize to clip start).\n"
             "Selection rule:\n"
             + f"- choose the most memorable/expressive {CLIP_WINDOW_RANGE_LABEL}s moment in the track.\n"
@@ -332,11 +338,25 @@ def build_stage2_subtitles_user_prompt(
                 continue
             if ts >= cs - 1e-6 and te <= ce + 1e-6:
                 words_out.append(w)
+    pauses_in = stage1_json.get("pause_spans") if isinstance(stage1_json, dict) else None
+    pauses_out: List[Dict[str, object]] = []
+    if isinstance(pauses_in, list):
+        for p in pauses_in:
+            if not isinstance(p, dict):
+                continue
+            try:
+                ts = float(p.get("t_start") or 0.0)
+                te = float(p.get("t_end") or 0.0)
+            except Exception:
+                continue
+            if ts >= cs - 1e-6 and te <= ce + 1e-6:
+                pauses_out.append(p)
 
     ctx = {
         "audio": stage1_json.get("audio"),
         "draft_blocks": stage1_json.get("draft_blocks"),
         "transcript_words": words_out,
+        "pause_spans": pauses_out,
         "lyrics_text": str(stage1_json.get("lyrics_text") or ""),
         "target_fragment": str(stage1_json.get("target_fragment") or ""),
         "fragment_analytics": stage1_json.get("fragment_analytics"),

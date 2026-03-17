@@ -9,10 +9,17 @@ You receive ONE audio track and REFERENCE_TEXT.
 Return JSON for Stage1ForcedAlignmentPayload:
 1) aligned_words: exactly one timed item per reference word:
    - each item: {text, t_start, t_end}
-2) optional selected_fragment (enabled by user prompt branch):
+   - t_start/t_end MUST be strings in format mm:ss.mmm (absolute full-track timeline)
+2) pause_spans: optional pauses not present in REFERENCE_TEXT:
+   - emit item only when silence gap between neighboring words is > 1.0s
+   - each item: {text:"[pause]", t_start, t_end}
+   - t_start/t_end MUST be strings in format mm:ss.mmm (absolute full-track timeline)
+3) optional selected_fragment (enabled by user prompt branch):
    - audio: {clip_start_abs, clip_end_abs, moment_of_interest_sec?}
    - transcript_words: word-level timings INSIDE selected clip
      (timestamps must remain ABSOLUTE full-track seconds; do not normalize to clip start)
+   - optional pause_spans inside selected clip
+     (timestamps must remain ABSOLUTE full-track seconds)
    - optional srt_items inside selected clip
      (timestamps must remain ABSOLUTE full-track seconds)
    - optional fragment_analytics
@@ -24,8 +31,9 @@ Hard constraints:
 - Do NOT add backing/ad-lib words that are absent in REFERENCE_TEXT.
 - Structural tags such as [pause], [bridge], [hook], [verse] are hints, not words.
 - Do NOT output structural tags in aligned_words.
-- Timings must be on FULL TRACK timeline (absolute seconds from audio start).
-- selected_fragment transcript_words/srt_items (if present) must also stay in FULL TRACK timeline.
+- pause_spans are allowed only for real silences (>1.0s) and MUST stay between neighboring words.
+- aligned_words/pause_spans timings must be on FULL TRACK timeline and encoded as mm:ss.mmm strings.
+- selected_fragment transcript_words/pause_spans/srt_items (if present) must also stay in FULL TRACK timeline.
 - Every item must satisfy: t_end > t_start.
 - Return valid JSON only, no markdown/comments.
 """

@@ -53,8 +53,8 @@ from mlcore.models.footage_plan import FootageSelectionPayload
 from mlcore.models.footage_style import FootageStylePickPayload, FootageStyleRawPayload
 from mlcore.models.full_plan import FullPlanPayload
 from mlcore.models.stage1_asr import Stage1AsrPayload, Stage1AsrSelectedFragment
-from mlcore.models.stage1_forced_alignment import Stage1ForcedAlignmentPayload
-from mlcore.models.stage1_plan import FragmentAnalytics, Stage1PlanPayload
+from mlcore.models.stage1_forced_alignment import Stage1ForcedAlignmentPayload, parse_forced_timecode_mmss_mmm
+from mlcore.models.stage1_plan import FragmentAnalytics, PauseSpan, Stage1PlanPayload
 from mlcore.models.stage1_plan import TranscriptWord
 from mlcore.models.stage1_scenario import Stage1ScenarioPayload
 from mlcore.models.subtitles_spans import BlocksTokenSpansPayload, TokenSpan
@@ -398,6 +398,62 @@ def _reference_words_from_user_text(text: str) -> List[str]:
     return out
 
 
+def _stage1a_pause_min_gap_sec() -> float:
+    try:
+        v = float(os.environ.get("STAGE1A_PAUSE_MIN_GAP_S", "1.0"))
+    except Exception:
+        v = 1.0
+    return max(0.1, float(v))
+
+
+def _derive_pause_spans_from_aligned_words(
+    *,
+    aligned_words: List[Any],
+    min_gap_sec: float,
+) -> List[Dict[str, float | str]]:
+    out: List[Dict[str, float | str]] = []
+    if len(aligned_words) < 2:
+        return out
+
+    for i in range(len(aligned_words) - 1):
+        cur = aligned_words[i]
+        nxt = aligned_words[i + 1]
+        try:
+            cur_end = float(getattr(cur, "t_end_sec"))
+            next_start = float(getattr(nxt, "t_start_sec"))
+        except Exception:
+            try:
+                cur_end = parse_forced_timecode_mmss_mmm(str(getattr(cur, "t_end")))
+                next_start = parse_forced_timecode_mmss_mmm(str(getattr(nxt, "t_start")))
+            except Exception:
+                continue
+        gap = next_start - cur_end
+        if gap > float(min_gap_sec) + 1e-6:
+            out.append(
+                {
+                    "text": "[pause]",
+                    "t_start": float(cur_end),
+                    "t_end": float(next_start),
+                }
+            )
+    return out
+
+
+def _pause_spans_in_window(
+    *,
+    pause_spans: List[PauseSpan],
+    start_abs: float,
+    end_abs: float,
+) -> List[PauseSpan]:
+    out: List[PauseSpan] = []
+    for p in pause_spans:
+        ps = float(p.t_start)
+        pe = float(p.t_end)
+        if ps >= float(start_abs) - 1e-6 and pe <= float(end_abs) + 1e-6:
+            out.append(p)
+    return out
+
+
 def _validate_forced_alignment_payload(
     *,
     payload: Stage1ForcedAlignmentPayload,
@@ -431,8 +487,8 @@ def _validate_forced_alignment_payload(
             )
             mismatch_count += 1
 
-        ts = float(got.t_start)
-        te = float(got.t_end)
+        ts = float(got.t_start_sec)
+        te = float(got.t_end_sec)
         if idx > 0 and ts < prev_start:
             logger.warning(
                 "stage1a_forced_non_monotonic_t_start idx=%d ts=%s prev_start=%s (continuing)",
@@ -457,22 +513,88 @@ def _validate_forced_alignment_payload(
     if non_monotonic_count > 0:
         logger.warning("stage1a_forced_non_monotonic_total count=%d (continuing)", non_monotonic_count)
 
+    min_gap_sec = _stage1a_pause_min_gap_sec()
+    if payload.pause_spans:
+        short_count = 0
+        for idx, p in enumerate(payload.pause_spans):
+            dur = float(p.t_end_sec) - float(p.t_start_sec)
+            if dur + 1e-6 < min_gap_sec:
+                logger.warning(
+                    "stage1a_forced_pause_short idx=%d dur=%.3f threshold=%.3f (continuing)",
+                    idx,
+                    dur,
+                    min_gap_sec,
+                )
+                short_count += 1
+        if short_count > 0:
+            logger.warning("stage1a_forced_pause_short_total count=%d (continuing)", short_count)
+
+    derived = _derive_pause_spans_from_aligned_words(
+        aligned_words=list(payload.aligned_words),
+        min_gap_sec=min_gap_sec,
+    )
+    if derived and not payload.pause_spans:
+        logger.warning(
+            "stage1a_forced_pause_spans_missing expected=%d threshold=%.3f action=derive_postprocess",
+            len(derived),
+            min_gap_sec,
+        )
+    logger.info(
+        "stage1a_forced_pause_spans counts payload=%d derived=%d threshold=%.3f",
+        len(payload.pause_spans),
+        len(derived),
+        min_gap_sec,
+    )
+
 
 def _stage1_asr_from_forced_alignment(payload: Stage1ForcedAlignmentPayload) -> Stage1AsrPayload:
+    min_gap_sec = _stage1a_pause_min_gap_sec()
     transcript_words = [
         {
             "text": str(w.text),
-            "t_start": float(w.t_start),
-            "t_end": float(w.t_end),
+            "t_start": float(w.t_start_sec),
+            "t_end": float(w.t_end_sec),
         }
         for w in payload.aligned_words
     ]
+    pause_spans = [
+        {
+            "text": "[pause]",
+            "t_start": float(p.t_start_sec),
+            "t_end": float(p.t_end_sec),
+        }
+        for p in payload.pause_spans
+    ]
+    if not pause_spans:
+        pause_spans = _derive_pause_spans_from_aligned_words(
+            aligned_words=list(payload.aligned_words),
+            min_gap_sec=min_gap_sec,
+        )
     out: Dict[str, Any] = {
         "transcript_words": transcript_words,
+        "pause_spans": pause_spans,
         "srt_items": [],
     }
     if payload.selected_fragment is not None:
-        out["selected_fragment"] = payload.selected_fragment.model_dump(mode="json")
+        selected_obj = payload.selected_fragment.model_dump(mode="json")
+        selected_audio = payload.selected_fragment.audio
+        if not selected_obj.get("pause_spans"):
+            selected_obj["pause_spans"] = [
+                {
+                    "text": "[pause]",
+                    "t_start": float(p.t_start),
+                    "t_end": float(p.t_end),
+                }
+                for p in _pause_spans_in_window(
+                    pause_spans=[
+                        PauseSpan.model_validate(p)
+                        for p in pause_spans
+                    ],
+                    start_abs=float(selected_audio.clip_start_abs),
+                    end_abs=float(selected_audio.clip_end_abs),
+                )
+            ]
+        out["selected_fragment"] = selected_obj
     return Stage1AsrPayload.model_validate(out)
 
 
@@ -664,6 +786,7 @@ def _build_stage1_plan_from_selected_fragment(
         audio_obj["clip_end_abs"] = float(forced_end)
 
     selected_words = list(selected.transcript_words)
+    selected_pauses = list(selected.pause_spans)
     if not selected_words:
         logger.warning(
             "stage1a_selected_fragment_empty_words fallback=full_transcript_window clip=%s..%s full_words=%d",
@@ -678,6 +801,12 @@ def _build_stage1_plan_from_selected_fragment(
         )
     if not selected_words:
         raise ValueError("selected_fragment produced empty transcript_words")
+    if not selected_pauses and stage1_asr.pause_spans:
+        selected_pauses = _pause_spans_in_window(
+            pause_spans=list(stage1_asr.pause_spans),
+            start_abs=float(audio_obj["clip_start_abs"]),
+            end_abs=float(audio_obj["clip_end_abs"]),
+        )
 
     _warn_stage1_clip_over_max(
         clip_start_abs=float(audio_obj["clip_start_abs"]),
@@ -693,6 +822,7 @@ def _build_stage1_plan_from_selected_fragment(
             # Non-legacy Stage2 consumes the selected fragment, so stage1 plan should
             # carry fragment-local transcript words rather than full-track words.
             "transcript_words": selected_words,
+            "pause_spans": selected_pauses,
             "draft_blocks": fallback_blocks,
             "fragment_analytics": (
                 fragment_analytics.model_dump(mode="json")
@@ -1976,6 +2106,7 @@ def build_all_via_gemini_one_call(
                     {
                         "audio": audio_obj,
                         "transcript_words": stage1_asr.transcript_words,
+                        "pause_spans": stage1_asr.pause_spans,
                         "draft_blocks": stage1_scenario.draft_blocks.model_dump(mode="json"),
                         "fragment_analytics": (
                             stage1_scenario.fragment_analytics.model_dump(mode="json")
