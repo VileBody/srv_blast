@@ -103,6 +103,8 @@ TYPE_4
   2. Gap to the next scene >= 0.14s. If gap < 0.14s -> merge both into one TYPE_4
      (if total <= 2 words) or reassign the second to TYPE_1.
   3. Two consecutive TYPE_4 scenes with gap < 0.14s is always wrong — fix it.
+  4. Renderer guard: short TYPE_4 (<0.44s) degrades visual intro quality and will be
+     flagged downstream. Prefer TYPE_1 unless the hook is absolutely critical.
 
 TYPE_5
   When:     narrative/descriptive, no peak word, even flow

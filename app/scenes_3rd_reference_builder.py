@@ -791,6 +791,20 @@ class LayerFactory:
 
         mine_in  = t_in - 0.3
         mine_out = t_out + 0.1
+        glow_intro_dur = 0.5
+        if dur < _TYPE4_MIN_HOLD_S - 1e-6:
+            # Keep scene boundaries intact (no extension), but compress TYPE_4 intro
+            # so very short hooks become visible faster.
+            glow_intro_dur = max(FRAME, min(0.5, dur * 0.35))
+            _LOG.warning(
+                "scenes3_type4_short_duration scene_id=%s text=%s in=%.3f out=%.3f dur=%.3f intro_dur=%.3f action=compress_intro",
+                scene.get("id"),
+                word,
+                float(t_in),
+                float(t_out),
+                float(dur),
+                float(glow_intro_dur),
+            )
         mine_text = {
             "name":             "mine",
             "type":             "text",
@@ -897,7 +911,7 @@ class LayerFactory:
                     kf(t_in,          [150.0, 150.0, 100.0], iit="6613", oit="6613",
                        ease_in=[{"speed": 0.0, "influence": 95.0}] * 3,
                        ease_out=[{"speed": 1045.1, "influence": 4.0}] * 2 + [{"speed": 0.0, "influence": 4.0}]),
-                    kf(t_in + 0.5,    [250.0, 250.0, 100.0], iit="6613", oit="6613",
+                    kf(t_in + glow_intro_dur,    [250.0, 250.0, 100.0], iit="6613", oit="6613",
                        ease_in=[{"speed": 5.82, "influence": 95.0}] * 2 + [{"speed": 0.0, "influence": 95.0}],
                        ease_out=[{"speed": 0.0, "influence": 4.0}] * 3),
                 ]),
