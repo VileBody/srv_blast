@@ -453,6 +453,7 @@ def pick_footage_clips_by_intervals_deterministic(
     seed_key: str,
     fit_mode: str = "cover",
     exclude_file_names: List[str] | None = None,
+    raw_pick: FootageStyleRawPayload | None = None,
 ) -> Tuple[FootageSelectionPayload, FootageIntervalPickerDiagnostics]:
     genre = str(style_pick.genre).strip()
     tag = str(style_pick.tag).strip()
@@ -467,9 +468,48 @@ def pick_footage_clips_by_intervals_deterministic(
     if not intervals:
         raise RuntimeError("No intervals were built from switch points")
 
-    primary_pool = [it for it in assets if str(it["genre"]) == genre and str(it["tag"]) == tag]
-    if not primary_pool:
-        raise RuntimeError(f"No assets for selected style genre={genre!r} tag={tag!r}")
+    use_raw_global = raw_pick is not None
+
+    if use_raw_global:
+        mood = _normalize_mood(raw_pick.mood)
+        candidates_mood = [it for it in assets if _normalize_mood(it.get("meta_mood")) == mood]
+        if not candidates_mood:
+            raise RuntimeError(f"No mapped assets match mood={mood!r} for raw footage selection")
+
+        exclude_people = {_normalize_people_type(x) for x in list(raw_pick.filters.exclude or [])}
+        exclude_people.discard("")
+        candidates_people = [
+            it for it in candidates_mood if _normalize_people_type(it.get("meta_people_type")) not in exclude_people
+        ]
+        if not candidates_people:
+            raise RuntimeError(
+                "No mapped assets remain after people exclusion for raw footage selection "
+                f"(mood={mood!r}, exclude={sorted(exclude_people)!r})"
+            )
+
+        priority_tags = {_normalize_theme_tag(x) for x in list(raw_pick.filters.priority_theme_tags or [])}
+        priority_tags.discard("")
+        color_priority = {_normalize_color_tone(x) for x in list(raw_pick.filters.color_priority or [])}
+        color_priority.discard("")
+
+        # Raw tag-first mode: candidate must satisfy BOTH semantic tag overlap and requested color tone.
+        primary_pool = []
+        for it in candidates_people:
+            meta_tags = {_normalize_theme_tag(x) for x in list(it.get("meta_theme_tags") or [])}
+            meta_tags.discard("")
+            has_tag_overlap = bool(priority_tags.intersection(meta_tags))
+            color_ok = _normalize_color_tone(it.get("meta_color_tone")) in color_priority
+            if has_tag_overlap and color_ok:
+                primary_pool.append(it)
+        if not primary_pool:
+            raise RuntimeError(
+                "No mapped assets satisfy raw filters (mood+exclude+priority_theme_tags+color_priority) "
+                f"mood={mood!r} tags={sorted(priority_tags)!r} colors={sorted(color_priority)!r}"
+            )
+    else:
+        primary_pool = [it for it in assets if str(it["genre"]) == genre and str(it["tag"]) == tag]
+        if not primary_pool:
+            raise RuntimeError(f"No assets for selected style genre={genre!r} tag={tag!r}")
 
     widened_to_genre = False
     widened_to_global = False
@@ -495,7 +535,7 @@ def pick_footage_clips_by_intervals_deterministic(
 
     assigned_file_names = _try_assign(selected_pool)
 
-    if assigned_file_names is None:
+    if assigned_file_names is None and not use_raw_global:
         widen_pool = [it for it in assets if str(it["genre"]) == genre and str(it["tag"]) != tag]
         if widen_pool:
             selected_pool_all = _dedupe_assets_by_file_name(selected_pool_all + widen_pool)
@@ -503,7 +543,7 @@ def pick_footage_clips_by_intervals_deterministic(
             widened_to_genre = True
             assigned_file_names = _try_assign(selected_pool)
 
-    if assigned_file_names is None:
+    if assigned_file_names is None and not use_raw_global:
         global_pool = [it for it in assets if str(it["genre"]) != genre]
         if global_pool:
             selected_pool_all = _dedupe_assets_by_file_name(selected_pool_all + global_pool)
@@ -576,10 +616,16 @@ def pick_footage_clips_by_intervals_deterministic(
     if excluded_names:
         selected_excluded_count = sum(1 for x in assigned_file_names if str(x) in excluded_names)
 
+    diag_genre = genre
+    diag_tag = tag
+    if use_raw_global and raw_pick is not None:
+        diag_genre = "__raw_global__"
+        diag_tag = str(raw_pick.theme)
+
     payload = FootageSelectionPayload.model_validate({"clips": clips, "allow_gaps": False})
     diag = FootageIntervalPickerDiagnostics(
-        genre=genre,
-        tag=tag,
+        genre=diag_genre,
+        tag=diag_tag,
         intervals_count=len(intervals),
         max_interval_sec=max(float(b - a) for a, b in intervals),
         primary_pool_count=len(primary_pool),

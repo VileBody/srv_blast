@@ -3004,15 +3004,22 @@ def build_all_via_gemini_one_call(
             exclude_file_names,
         )
 
+    selection_assets = mapped_picker_assets if style_raw_payload is not None else picker_assets
+    if style_raw_payload is not None:
+        logger.info(
+            "footage_selection_mode mode=raw_filters_global mapped_assets=%d",
+            len(selection_assets),
+        )
     footage_payload, interval_diag = pick_footage_clips_by_intervals_deterministic(
         style_pick=style_payload,
-        assets=picker_assets,
+        assets=selection_assets,
         clip_start_abs=clip_start_abs,
         clip_end_abs=clip_end_abs,
         switch_points_abs=list(switch_payload.switch_points_abs),
         seed_key=selection_seed_key,
         fit_mode="cover",
         exclude_file_names=exclude_file_names,
+        raw_pick=style_raw_payload,
     )
     if getattr(interval_diag, "exclude_relaxed", False):
         logger.warning(

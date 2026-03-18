@@ -7,7 +7,7 @@ from mlcore.footage_picker import (
     build_intervals_from_switch_points,
     pick_footage_clips_by_intervals_deterministic,
 )
-from mlcore.models.footage_style import FootageStylePickPayload
+from mlcore.models.footage_style import FootageStylePickPayload, FootageStyleRawPayload
 
 
 def _assets() -> list[dict]:
@@ -129,3 +129,73 @@ def test_interval_picker_relaxes_exclude_file_names_when_pool_insufficient() -> 
     assert len(names) == 4
     assert diag.exclude_relaxed is True
     assert diag.selected_excluded_count >= 1
+
+
+def test_interval_picker_raw_filters_selects_global_candidates_across_tags() -> None:
+    style = FootageStylePickPayload.model_validate({"genre": "Rock", "tag": "dark_forest"})
+    raw = FootageStyleRawPayload.model_validate(
+        {
+            "theme": "betrayal_minor",
+            "mood": "minor",
+            "filters": {
+                "color_priority": ["dark", "cold"],
+                "exclude": ["couple", "crowd"],
+                "priority_theme_tags": ["night city", "neon lights"],
+            },
+        }
+    )
+    mapped_assets = [
+        {
+            "file_name": "r1.mp4",
+            "genre": "Rock",
+            "tag": "dark_forest",
+            "duration_sec": 2.0,
+            "src_w": 720,
+            "src_h": 1280,
+            "meta_mood": "minor",
+            "meta_color_tone": "dark",
+            "meta_people_type": "guys",
+            "meta_theme_tags": ["night city"],
+        },
+        {
+            "file_name": "r2.mp4",
+            "genre": "Pop",
+            "tag": "dream_aesthetic",
+            "duration_sec": 2.0,
+            "src_w": 720,
+            "src_h": 1280,
+            "meta_mood": "minor",
+            "meta_color_tone": "cold",
+            "meta_people_type": "none",
+            "meta_theme_tags": ["neon lights"],
+        },
+        {
+            "file_name": "r3.mp4",
+            "genre": "Hip-Hop",
+            "tag": "neon_city_night",
+            "duration_sec": 2.0,
+            "src_w": 720,
+            "src_h": 1280,
+            "meta_mood": "minor",
+            "meta_color_tone": "dark",
+            "meta_people_type": "guys",
+            "meta_theme_tags": ["night city", "streets"],
+        },
+    ]
+
+    payload, diag = pick_footage_clips_by_intervals_deterministic(
+        style_pick=style,
+        assets=mapped_assets,
+        clip_start_abs=0.0,
+        clip_end_abs=3.0,
+        switch_points_abs=[1.0, 2.0],
+        seed_key="job-int-raw-global",
+        raw_pick=raw,
+    )
+    clips = sorted(payload.clips, key=lambda c: float(c.in_point))
+    assert len(clips) == 3
+    names = [str(c.file_name) for c in clips]
+    assert set(names).issubset({"r1.mp4", "r2.mp4", "r3.mp4"})
+    assert diag.genre == "__raw_global__"
+    assert diag.widened_to_genre is False
+    assert diag.widened_to_global is False
