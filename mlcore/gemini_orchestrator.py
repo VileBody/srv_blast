@@ -813,6 +813,64 @@ def _build_stage1_plan_from_selected_fragment(
             end_abs=float(audio_obj["clip_end_abs"]),
         )
 
+    # Guardrail: in target-fragment branch we sometimes get an oversized clip window
+    # while selected_fragment transcript words/pause spans only cover a much shorter range
+    # (e.g. 68s clip with ~28s words due model time formatting drift).
+    # Keep deterministic "no hidden fallback": clamp only when the mismatch is clearly inconsistent
+    # with selected content and words actually fit in <= max clip span.
+    if target_fragment and selected_words:
+        clip_start = float(audio_obj["clip_start_abs"])
+        clip_end = float(audio_obj["clip_end_abs"])
+        clip_dur = clip_end - clip_start
+
+        words_start = min(float(w.t_start) for w in selected_words)
+        words_end = max(float(w.t_end) for w in selected_words)
+        content_start = words_start
+        content_end = words_end
+        if selected_pauses:
+            content_start = min(content_start, min(float(p.t_start) for p in selected_pauses))
+            content_end = max(content_end, max(float(p.t_end) for p in selected_pauses))
+        content_dur = content_end - content_start
+
+        # Clamp only if clip is oversized and selected content itself fits within max window.
+        if clip_dur > CLIP_WINDOW_MAX_SECONDS + 1e-6 and content_dur <= CLIP_WINDOW_MAX_SECONDS + 1e-6:
+            new_start = float(content_start)
+            new_end = float(content_end)
+
+            # Keep Stage1 min duration invariant by expanding within original selected clip when needed.
+            if (new_end - new_start) < CLIP_WINDOW_MIN_SECONDS - 1e-6:
+                need = CLIP_WINDOW_MIN_SECONDS - (new_end - new_start)
+                left_cap = max(0.0, new_start - clip_start)
+                right_cap = max(0.0, clip_end - new_end)
+                add_left = min(left_cap, need / 2.0)
+                add_right = min(right_cap, need - add_left)
+                rem = need - (add_left + add_right)
+                if rem > 1e-9:
+                    extra_left = min(max(0.0, left_cap - add_left), rem)
+                    add_left += extra_left
+                    rem -= extra_left
+                if rem > 1e-9:
+                    extra_right = min(max(0.0, right_cap - add_right), rem)
+                    add_right += extra_right
+                new_start -= add_left
+                new_end += add_right
+
+            logger.warning(
+                "stage1a_selected_fragment_clip_content_mismatch clip=%.3f..%.3f dur=%.3f "
+                "content=%.3f..%.3f dur=%.3f action=clamp_to_content result=%.3f..%.3f dur=%.3f",
+                clip_start,
+                clip_end,
+                clip_dur,
+                content_start,
+                content_end,
+                content_dur,
+                new_start,
+                new_end,
+                float(new_end - new_start),
+            )
+            audio_obj["clip_start_abs"] = float(new_start)
+            audio_obj["clip_end_abs"] = float(new_end)
+
     _warn_stage1_clip_over_max(
         clip_start_abs=float(audio_obj["clip_start_abs"]),
         clip_end_abs=float(audio_obj["clip_end_abs"]),

@@ -8,7 +8,9 @@ from mlcore.gemini_orchestrator import _validate_fragment_analytics_for_target
 from mlcore.gemini_orchestrator import _looks_like_model_validation_error_text
 from mlcore.gemini_orchestrator import _is_fragment_target_exact_mismatch
 from mlcore.gemini_orchestrator import _build_stage1b_fragment_exact_retry_hint
+from mlcore.gemini_orchestrator import _build_stage1_plan_from_selected_fragment
 from mlcore.gemini_orchestrator import _warn_stage1_clip_over_max
+from mlcore.models.stage1_asr import Stage1AsrPayload
 from mlcore.models.stage1_plan import FragmentAnalytics
 
 
@@ -188,3 +190,53 @@ def test_fragment_analytics_window_mismatch_uses_union(
     assert abs(float(start) - 1.0) <= 1e-9
     assert abs(float(end) - 18.0) <= 1e-9
     assert "stage1b_fragment_window_mismatch" in caplog.text
+
+
+def test_stage1a_selected_fragment_clip_is_clamped_to_content_when_oversized() -> None:
+    # Simulate mismatch seen in production:
+    # selected clip says 42.881..111.081 (~68s) while selected words end near 71.081 (~28.2s content).
+    selected_fragment = {
+        "audio": {
+            "clip_start_abs": 42.881,
+            "clip_end_abs": 111.081,
+            "moment_of_interest_sec": None,
+        },
+        "transcript_words": [
+            {"text": "солдат", "t_start": 42.881, "t_end": 43.281},
+            {"text": "груди", "t_start": 70.481, "t_end": 71.081},
+        ],
+        "pause_spans": [],
+        "srt_items": [],
+        "fragment_analytics": {
+            "target_fragment": "солдат ... груди",
+            "working_fragment": "солдат ... груди",
+            "working_start_abs": 42.881,
+            "working_end_abs": 111.081,
+            "working_start_text": "солдат",
+            "working_end_text": "груди",
+            "relation_to_target": "inside_13_30",
+            "chosen_action": "none",
+            "rationale": "kept",
+        },
+    }
+    stage1_asr = Stage1AsrPayload.model_validate(
+        {
+            "transcript_words": list(selected_fragment["transcript_words"]),
+            "pause_spans": [],
+            "srt_items": [],
+            "selected_fragment": selected_fragment,
+        }
+    )
+    selected = stage1_asr.selected_fragment
+    assert selected is not None
+
+    plan = _build_stage1_plan_from_selected_fragment(
+        stage1_asr=stage1_asr,
+        selected=selected,
+        target_fragment="солдат ... груди",
+        logger=logging.getLogger("tests.stage1_clip_clamp"),
+    )
+
+    # Clip is clamped to actual selected content range, not oversized analytics window.
+    assert abs(float(plan.audio.clip_start_abs) - 42.881) <= 1e-9
+    assert abs(float(plan.audio.clip_end_abs) - 71.081) <= 1e-9
