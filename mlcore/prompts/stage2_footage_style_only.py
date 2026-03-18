@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 def _extract_reference_prompt_body() -> str:
-    src = Path(__file__).resolve().parents[2] / "2nd_footage_selection_prompt" / "ai_studio_code.py"
+    src = Path(__file__).resolve().parents[2] / "3rd_footage_selection_prompt" / "prompt.md"
     if not src.exists():
         raise RuntimeError(f"Stage2B reference prompt source missing: {src}")
     raw = src.read_text(encoding="utf-8")
@@ -18,7 +18,7 @@ def _extract_reference_prompt_body() -> str:
     if not body:
         raise RuntimeError(f"Empty SYSTEM_PART body in {src}")
 
-    # Canonical field name for v2 contract.
+    # Canonical field name for stage2 style contract.
     body = body.replace("exclude_people", "exclude")
     return body
 

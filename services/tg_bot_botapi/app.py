@@ -21,6 +21,8 @@ from core.subtitles_mode import (
     SUBTITLES_MODE_IMPULSE_2ND,
     SUBTITLES_MODE_LEGACY_BLOCKS,
     SUBTITLES_MODE_SCENES_3RD,
+    SUBTITLES_MODE_SCENES_3RD_SINGLE_STEP,
+    SUBTITLES_MODE_TEMPLATE_4TH,
     normalize_subtitles_mode,
 )
 
@@ -67,16 +69,22 @@ BTN_VER_5 = "5"
 BTN_SUB_MODE_LEGACY = "Обычные blocks"
 BTN_SUB_MODE_IMPULSE = "Impulse 2nd"
 BTN_SUB_MODE_SCENES = "Scenes 3rd"
+BTN_SUB_MODE_SCENES_SINGLE = "Scenes 3rd Single-Step"
+BTN_SUB_MODE_4TH = "Template 4th"
 VERSION_BUTTONS = [BTN_VER_1, BTN_VER_2, BTN_VER_3, BTN_VER_4, BTN_VER_5]
 SUBTITLES_MODE_BUTTONS = [
     BTN_SUB_MODE_LEGACY,
     BTN_SUB_MODE_IMPULSE,
     BTN_SUB_MODE_SCENES,
+    BTN_SUB_MODE_SCENES_SINGLE,
+    BTN_SUB_MODE_4TH,
 ]
 _SUBTITLES_MODE_BY_BUTTON = {
     BTN_SUB_MODE_LEGACY: SUBTITLES_MODE_LEGACY_BLOCKS,
     BTN_SUB_MODE_IMPULSE: SUBTITLES_MODE_IMPULSE_2ND,
     BTN_SUB_MODE_SCENES: SUBTITLES_MODE_SCENES_3RD,
+    BTN_SUB_MODE_SCENES_SINGLE: SUBTITLES_MODE_SCENES_3RD_SINGLE_STEP,
+    BTN_SUB_MODE_4TH: SUBTITLES_MODE_TEMPLATE_4TH,
 }
 _CONTROL_BUTTONS = {
     BTN_SEND_TRACK,
@@ -87,6 +95,8 @@ _CONTROL_BUTTONS = {
     BTN_SUB_MODE_LEGACY,
     BTN_SUB_MODE_IMPULSE,
     BTN_SUB_MODE_SCENES,
+    BTN_SUB_MODE_SCENES_SINGLE,
+    BTN_SUB_MODE_4TH,
     BTN_LAUNCH,
     BTN_NEXT,
     *VERSION_BUTTONS,
@@ -222,6 +232,7 @@ def _extract_celery_retries(error_text: str) -> Optional[int]:
 
 _SCENES_STYLE_TAGS = {"TYPE_1", "TYPE_2", "TYPE_3", "TYPE_4", "TYPE_5", "TYPE_6"}
 _IMPULSE_STYLE_TAGS = {"long", "short"}
+_TEMPLATE_4TH_STYLE_TAGS = {"TAPE_4TH"}
 
 
 def _to_float_or_none(v: Any) -> Optional[float]:
@@ -349,7 +360,12 @@ def _detect_subtitles_debug_mode(payload: Optional[Dict[str, Any]]) -> Optional[
     if not isinstance(payload, dict):
         return None
     mode = str(payload.get("mode") or "").strip()
-    if mode in {SUBTITLES_MODE_IMPULSE_2ND, SUBTITLES_MODE_SCENES_3RD}:
+    if mode in {
+        SUBTITLES_MODE_IMPULSE_2ND,
+        SUBTITLES_MODE_SCENES_3RD,
+        SUBTITLES_MODE_SCENES_3RD_SINGLE_STEP,
+        SUBTITLES_MODE_TEMPLATE_4TH,
+    }:
         return mode
 
     scenes = payload.get("scenes")
@@ -365,6 +381,8 @@ def _detect_subtitles_debug_mode(payload: Optional[Dict[str, Any]]) -> Optional[
         return SUBTITLES_MODE_IMPULSE_2ND
     if style in _SCENES_STYLE_TAGS:
         return SUBTITLES_MODE_SCENES_3RD
+    if style in _TEMPLATE_4TH_STYLE_TAGS:
+        return SUBTITLES_MODE_TEMPLATE_4TH
     if payload.get("anchor_in_abs") is not None:
         return SUBTITLES_MODE_IMPULSE_2ND
     return None
@@ -598,7 +616,7 @@ def _build_subtitles_debug_text(
     if mode == SUBTITLES_MODE_IMPULSE_2ND:
         payload = final_payload if isinstance(final_payload, dict) else (raw_payload or {})
         return _build_impulse_debug_text(ver_label=ver_label, payload=payload, raw_payload=raw_payload)
-    if mode == SUBTITLES_MODE_SCENES_3RD:
+    if mode in {SUBTITLES_MODE_SCENES_3RD, SUBTITLES_MODE_SCENES_3RD_SINGLE_STEP, SUBTITLES_MODE_TEMPLATE_4TH}:
         payload = final_payload if isinstance(final_payload, dict) else (raw_payload or {})
         return _build_scenes_debug_text(ver_label=ver_label, payload=payload)
     return ""
@@ -849,6 +867,8 @@ class BlastBotApp:
                 [BTN_SUB_MODE_LEGACY],
                 [BTN_SUB_MODE_IMPULSE],
                 [BTN_SUB_MODE_SCENES],
+                [BTN_SUB_MODE_SCENES_SINGLE],
+                [BTN_SUB_MODE_4TH],
             ),
         )
 
@@ -1016,7 +1036,10 @@ class BlastBotApp:
     async def _handle_wait_subtitles_mode(self, message: Message, st: ChatState) -> None:
         mode = _parse_subtitles_mode_choice(message.text or "")
         if mode is None:
-            await message.answer("Выбери режим кнопкой: «Обычные blocks», «Impulse 2nd» или «Scenes 3rd».")
+            await message.answer(
+                "Выбери режим кнопкой: «Обычные blocks», «Impulse 2nd», "
+                "«Scenes 3rd», «Scenes 3rd Single-Step» или «Template 4th»."
+            )
             return
         st.subtitles_mode = mode
         await self._ask_versions(message, st)

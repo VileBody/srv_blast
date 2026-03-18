@@ -47,6 +47,8 @@ def test_control_button_text_detection() -> None:
     assert _is_control_button_text("Отправить текст") is True
     assert _is_control_button_text("Отправить интересующий фрагмент") is True
     assert _is_control_button_text("Impulse 2nd") is True
+    assert _is_control_button_text("Scenes 3rd Single-Step") is True
+    assert _is_control_button_text("Template 4th") is True
     assert _is_control_button_text(" 3 ") is True
     assert _is_control_button_text("Это реальный текст песни") is False
 
@@ -55,6 +57,8 @@ def test_subtitles_mode_choice_parser() -> None:
     assert _parse_subtitles_mode_choice("Обычные blocks") == "legacy_blocks"
     assert _parse_subtitles_mode_choice("Impulse 2nd") == "impulse_2nd"
     assert _parse_subtitles_mode_choice("Scenes 3rd") == "scenes_3rd"
+    assert _parse_subtitles_mode_choice("Scenes 3rd Single-Step") == "scenes_3rd_single_step"
+    assert _parse_subtitles_mode_choice("Template 4th") == "template_4th"
     assert _parse_subtitles_mode_choice("unknown") is None
 
 

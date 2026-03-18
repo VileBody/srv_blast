@@ -20,8 +20,8 @@ def test_stage2_footage_prompt_uses_reference_and_exclude_field() -> None:
 
     src = (
         Path(__file__).resolve().parents[1]
-        / "2nd_footage_selection_prompt"
-        / "ai_studio_code.py"
+        / "3rd_footage_selection_prompt"
+        / "prompt.md"
     )
     text = src.read_text(encoding="utf-8")
 
