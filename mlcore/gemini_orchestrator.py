@@ -635,8 +635,8 @@ def _stage1_asr_from_forced_alignment(payload: Stage1ForcedAlignmentPayload) -> 
                         PauseSpan.model_validate(p)
                         for p in pause_spans
                     ],
-                    start_abs=float(selected_audio.clip_start_abs),
-                    end_abs=float(selected_audio.clip_end_abs),
+                    start_abs=float(selected_audio.clip_start_abs_sec),
+                    end_abs=float(selected_audio.clip_end_abs_sec),
                 )
             ]
         out["selected_fragment"] = selected_obj
