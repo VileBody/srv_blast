@@ -86,8 +86,10 @@ TYPE_3
 TYPE_4
   When:     single peak word OR inseparable 2-word phrase
   Words:    1–2, ALWAYS on one line, never split
-  Duration: any
+  Duration: target >= 3.0s (prefer extending by safe semantic merge if needed)
   Focus:    focus_word = word(s), focus_style = "red"
+  Reason:   REQUIRED field "reason" describing why TYPE_4 was chosen and, when
+            duration < 3.0s, why it could not be extended without harming semantics.
 
   2-word TYPE_4 — only two cases:
   Case A MERGE: two adjacent peak-word candidates, gap <= 0.1s, each < 1.2s duration
@@ -99,11 +101,13 @@ TYPE_4
   HARD RULE: never two consecutive single-word TYPE_4 scenes when they belong together.
 
   HARD CONSTRAINTS — verify before assigning TYPE_4:
-  1. Scene duration >= 0.44s. If shorter -> use TYPE_1 instead.
-  2. Gap to the next scene >= 0.14s. If gap < 0.14s -> merge both into one TYPE_4
+  1. Scene duration target >= 3.0s. If < 3.0s, keep only if it is truly hook-critical and
+     include explicit "reason" (e.g. hook_critical_short, no_safe_merge_short).
+  2. Absolute minimum guard: Scene duration >= 0.44s. If shorter -> use TYPE_1 instead.
+  3. Gap to the next scene >= 0.14s. If gap < 0.14s -> merge both into one TYPE_4
      (if total <= 2 words) or reassign the second to TYPE_1.
-  3. Two consecutive TYPE_4 scenes with gap < 0.14s is always wrong — fix it.
-  4. Renderer guard: short TYPE_4 (<0.44s) degrades visual intro quality and will be
+  4. Two consecutive TYPE_4 scenes with gap < 0.14s is always wrong — fix it.
+  5. Renderer guard: short TYPE_4 (<0.44s) degrades visual intro quality and will be
      flagged downstream. Prefer TYPE_1 unless the hook is absolutely critical.
 
 TYPE_5
@@ -149,6 +153,7 @@ Structure:
 - TYPE_5: words 4–5 AND duration > 3.0s. If not -> TYPE_1.
 - TYPE_3: single line only. last_gap >= 0.25s. last word >= 3 chars.
 - TYPE_4: 1–2 words on one line. Never split across lines.
+- TYPE_4: target duration >= 3.0s. If <3.0s, include explicit reason why it must stay short.
 - TYPE_4: duration >= 0.44s. If shorter -> reassign to TYPE_1.
 - TYPE_4: gap to next scene >= 0.14s. If shorter -> merge or reassign to TYPE_1.
 - TYPE_4 + TYPE_4 consecutive with gap < 0.14s -> always a mistake, fix before output.
@@ -176,8 +181,9 @@ Hard constraints:
 - All scene/start/end/word_timings values are ABSOLUTE full-track seconds.
 - Scenes must be timeline-ordered and non-overlapping.
 - Every scene must contain:
-  id, type, words, start, end, lines, focus_word, focus_style, word_timings.
+  id, type, words, start, end, lines, focus_word, focus_style, reason, word_timings.
 - type is strictly one of: TYPE_1, TYPE_2, TYPE_3, TYPE_4, TYPE_5, TYPE_6.
+- For TYPE_4, reason MUST be non-empty and explain selection/shortness tradeoff.
 
 """ + SCENES_REFERENCE_PROMPT_BODY.strip() + r"""
 
@@ -194,6 +200,7 @@ Output schema (Scenes3rdPayload):
       "lines": [["word1"], ["word2"]],
       "focus_word": <string|null>,
       "focus_style": "italic"|"red"|null,
+      "reason": <string|null>,
       "word_timings": [
         {"word": "word1", "start": <float>, "end": <float>}
       ]

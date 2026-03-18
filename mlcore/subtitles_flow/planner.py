@@ -643,6 +643,24 @@ class Scenes3rdPlanner(_FlowPlannerBase):
             self._validate_reference_scene_contract(scene)
             if str(scene.type) == "TYPE_4":
                 seg_dur = float(scene.end) - float(scene.start)
+                if seg_dur < 3.0 - 1e-6:
+                    warnings.append(
+                        SubtitleFlowWarning(
+                            mode=self.mode,
+                            segment_id=seg_id,
+                            reason="type4_duration_below_target3",
+                            action=f"kept dur={seg_dur:.3f}",
+                        )
+                    )
+                if not str(scene.reason or "").strip():
+                    warnings.append(
+                        SubtitleFlowWarning(
+                            mode=self.mode,
+                            segment_id=seg_id,
+                            reason="type4_reason_missing",
+                            action="kept without explicit reason",
+                        )
+                    )
                 if seg_dur < 0.44 - 1e-6:
                     warnings.append(
                         SubtitleFlowWarning(
@@ -720,6 +738,7 @@ class Scenes3rdPlanner(_FlowPlannerBase):
                         "tokens": [t.model_dump(mode="json") for t in tokens],
                         "focus_word": scene.focus_word,
                         "focus_style": scene.focus_style,
+                        "reason": scene.reason,
                     }
                 )
             )

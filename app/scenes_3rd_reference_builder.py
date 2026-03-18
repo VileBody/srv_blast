@@ -51,6 +51,7 @@ _GAP_HOLD_TYPE4_WORD_DUR_FLOOR = 0.35
 _GAP_HOLD_TYPE4_MAX_S = 2.20
 _GAP_HOLD_TYPE4_MAX_WORD_MULT = 4.00
 _TYPE4_MIN_HOLD_S = 0.44
+_TYPE4_MIN_ACTIVE_S = 1.00
 
 # ---------------------------------------------------------------------------
 # Утилиты
@@ -786,11 +787,9 @@ class LayerFactory:
         t_out  = scene["end"]
         dur    = t_out - t_in
 
-        fade_dur   = min(0.5, dur * 0.2)
-        fade_start = t_out - fade_dur
-
         mine_in  = t_in - 0.3
         mine_out = t_out + 0.1
+        fade_dur = min(0.5, dur * 0.2)
         glow_intro_dur = 0.5
         if dur < _TYPE4_MIN_HOLD_S - 1e-6:
             # Keep scene boundaries intact (no extension), but compress TYPE_4 intro
@@ -804,6 +803,45 @@ class LayerFactory:
                 float(t_out),
                 float(dur),
                 float(glow_intro_dur),
+            )
+
+        # Post-process: linearly accelerate both appearance and exit if active window
+        # would be shorter than the target minimum.
+        base_intro = float(glow_intro_dur)
+        base_exit = float(fade_dur)
+        non_active = base_intro + base_exit
+        non_active_budget = max(0.0, float(dur) - _TYPE4_MIN_ACTIVE_S)
+        if non_active > non_active_budget + 1e-9 and non_active > 1e-9:
+            scale = max(0.0, non_active_budget / non_active)
+            glow_intro_dur = base_intro * scale
+            fade_dur = base_exit * scale
+            _LOG.warning(
+                "scenes3_type4_retime scene_id=%s text=%s dur=%.3f intro=%.3f->%.3f exit=%.3f->%.3f active_before=%.3f active_after=%.3f target_active=%.3f",
+                scene.get("id"),
+                word,
+                float(dur),
+                float(base_intro),
+                float(glow_intro_dur),
+                float(base_exit),
+                float(fade_dur),
+                float(max(0.0, dur - base_intro - base_exit)),
+                float(max(0.0, dur - glow_intro_dur - fade_dur)),
+                float(_TYPE4_MIN_ACTIVE_S),
+            )
+
+        glow_scale_kfs = [
+            kf(t_in, [150.0, 150.0, 100.0], iit="6613", oit="6613",
+               ease_in=[{"speed": 0.0, "influence": 95.0}] * 3,
+               ease_out=[{"speed": 1045.1, "influence": 4.0}] * 2 + [{"speed": 0.0, "influence": 4.0}]),
+        ]
+        if glow_intro_dur <= 1e-9:
+            # For ultra-short windows skip the growth ramp (instant full scale).
+            glow_scale_kfs[0]["v"] = [250.0, 250.0, 100.0]
+        else:
+            glow_scale_kfs.append(
+                kf(t_in + glow_intro_dur, [250.0, 250.0, 100.0], iit="6613", oit="6613",
+                   ease_in=[{"speed": 5.82, "influence": 95.0}] * 2 + [{"speed": 0.0, "influence": 95.0}],
+                   ease_out=[{"speed": 0.0, "influence": 4.0}] * 3)
             )
         mine_text = {
             "name":             "mine",
@@ -907,14 +945,7 @@ class LayerFactory:
             "props": {
                 "tf_anchor":   prop("ADBE Anchor Point",  [540, 960, 0]),
                 "tf_position": prop("ADBE Position",      [540, 960, 0]),
-                "tf_scale":    prop("ADBE Scale", keyframes=[
-                    kf(t_in,          [150.0, 150.0, 100.0], iit="6613", oit="6613",
-                       ease_in=[{"speed": 0.0, "influence": 95.0}] * 3,
-                       ease_out=[{"speed": 1045.1, "influence": 4.0}] * 2 + [{"speed": 0.0, "influence": 4.0}]),
-                    kf(t_in + glow_intro_dur,    [250.0, 250.0, 100.0], iit="6613", oit="6613",
-                       ease_in=[{"speed": 5.82, "influence": 95.0}] * 2 + [{"speed": 0.0, "influence": 95.0}],
-                       ease_out=[{"speed": 0.0, "influence": 4.0}] * 3),
-                ]),
+                "tf_scale":    prop("ADBE Scale", keyframes=glow_scale_kfs),
                 "tf_rotation": prop("ADBE Rotate Z", 0),
                 "tf_opacity":  prop("ADBE Opacity",  40),
             },

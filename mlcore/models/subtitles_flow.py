@@ -36,6 +36,7 @@ class SubtitleFlowSegment(BaseModel):
     tokens: List[SubtitleFlowToken] = Field(default_factory=list)
     focus_word: Optional[str] = None
     focus_style: Optional[str] = None
+    reason: Optional[str] = None
 
     @model_validator(mode="after")
     def _check_timing(self) -> "SubtitleFlowSegment":
@@ -46,6 +47,10 @@ class SubtitleFlowSegment(BaseModel):
             )
         if not self.lines:
             self.lines = [self.text]
+        if self.reason is not None:
+            self.reason = str(self.reason).strip()
+            if not self.reason:
+                raise ValueError("segment.reason must be non-empty when provided")
         return self
 
 
@@ -199,6 +204,7 @@ class Scene3rdPayloadScene(BaseModel):
     lines: List[List[str]] = Field(default_factory=list)
     focus_word: Optional[str] = None
     focus_style: Optional[Literal["italic", "red"]] = None
+    reason: Optional[str] = None
     word_timings: List[SceneWordTimingPayload] = Field(default_factory=list)
 
     @model_validator(mode="after")
@@ -207,6 +213,10 @@ class Scene3rdPayloadScene(BaseModel):
             raise ValueError(f"scene.end must be > scene.start (id={self.id}, {self.start}..{self.end})")
         if not self.lines:
             self.lines = [list(self.words)]
+        if self.reason is not None:
+            self.reason = str(self.reason).strip()
+            if not self.reason:
+                raise ValueError("scene.reason must be non-empty when provided")
         return self
 
 
