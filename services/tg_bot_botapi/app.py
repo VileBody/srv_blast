@@ -680,7 +680,13 @@ def _parse_subtitles_mode_choice(text: str) -> Optional[str]:
     mode = _SUBTITLES_MODE_BY_BUTTON.get(raw)
     if not mode:
         return None
-    return normalize_subtitles_mode(mode, default=SUBTITLES_MODE_LEGACY_BLOCKS)
+    try:
+        return normalize_subtitles_mode(mode, default=SUBTITLES_MODE_LEGACY_BLOCKS)
+    except Exception:
+        # Forward-compatibility: bot may be newer than core subtitles_mode values.
+        # Keep selected mode and let downstream schema/runtime decide support explicitly.
+        log.warning("subtitles_mode_forward_compat mode=%s", mode)
+        return str(mode).strip() or None
 
 
 def _normalize_username(raw: str) -> str:
