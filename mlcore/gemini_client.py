@@ -217,9 +217,11 @@ def _sanitize_payload_dict(d: Dict[str, Any]) -> Dict[str, Any]:
 class GeminiClient:
     """
     IMPORTANT POLICY:
-      - No internal retry loops here.
+      - No general internal retry loops here.
       - Optional single-shot fallback to another Gemini model is allowed
         only for transient capacity/rate-limit failures.
+      - Targeted single-shot retry is allowed only for:
+        empty/non-text response + finish_reason=MAX_TOKENS.
       - If Gemini fails transiently, Celery should retry the whole job.
     """
 
@@ -255,6 +257,10 @@ class GeminiClient:
         self._upload_max_attempts = self._env_int("GEMINI_UPLOAD_MAX_ATTEMPTS", 4, min_value=1)
         self._upload_backoff_max_s = float(self._env_float("GEMINI_UPLOAD_BACKOFF_MAX_S", 8.0, min_value=0.1))
         self._upload_backoff_base_s = float(self._env_float("GEMINI_UPLOAD_BACKOFF_BASE_S", 1.0, min_value=0.1))
+        self._empty_max_tokens_retry_enabled = self._env_bool("GEMINI_EMPTY_MAXTOKENS_RETRY_ENABLED", True)
+        retry_budget = self._env_int("GEMINI_EMPTY_MAXTOKENS_RETRY_THINKING_TOKENS", 2048, min_value=128)
+        self._empty_max_tokens_retry_thinking_tokens = min(32768, max(128, int(retry_budget)))
+        self._structured_disable_afc = self._env_bool("GEMINI_DISABLE_AFC_FOR_STRUCTURED", True)
 
     def _env_int(self, name: str, default: int, *, min_value: int) -> int:
         raw = (os.environ.get(name) or "").strip()
@@ -293,6 +299,17 @@ class GeminiClient:
             )
             return float(min_value)
         return float(val)
+
+    def _env_bool(self, name: str, default: bool) -> bool:
+        raw = (os.environ.get(name) or "").strip().lower()
+        if not raw:
+            return bool(default)
+        if raw in {"1", "true", "yes", "on"}:
+            return True
+        if raw in {"0", "false", "no", "off"}:
+            return False
+        self._logger.warning("gemini_env_parse_failed name=%s value=%r using_default=%s", name, raw, default)
+        return bool(default)
 
     def _exc_text(self, exc: BaseException) -> str:
         parts: List[str] = [type(exc).__name__]
@@ -427,21 +444,41 @@ class GeminiClient:
     def _build_thinking_config(self) -> Optional[types.ThinkingConfig]:
         if self._max_thinking_tokens is None:
             return None
+        return self._make_thinking_config(int(self._max_thinking_tokens))
+
+    def _make_thinking_config(self, budget: int) -> Optional[types.ThinkingConfig]:
         fields = set(getattr(types.ThinkingConfig, "model_fields", {}).keys())
-        kwargs: Dict[str, Any]
+        kwargs: Dict[str, Any] = {}
         if "thinking_budget" in fields:
-            kwargs = {"thinking_budget": int(self._max_thinking_tokens)}
+            kwargs["thinking_budget"] = int(budget)
         elif "thinkingBudget" in fields:
-            kwargs = {"thinkingBudget": int(self._max_thinking_tokens)}
+            kwargs["thinkingBudget"] = int(budget)
         else:
             self._logger.warning(
                 "gemini_thinking_budget_unsupported sdk_thinking_fields=%s requested=%s; "
                 "continuing without thinking budget cap",
                 sorted(fields),
-                self._max_thinking_tokens,
+                budget,
             )
             return None
         return types.ThinkingConfig(**kwargs)
+
+    def _build_afc_disable_config(self) -> Optional[types.AutomaticFunctionCallingConfig]:
+        fields = set(getattr(types.AutomaticFunctionCallingConfig, "model_fields", {}).keys())
+        if not fields:
+            return None
+        kwargs: Dict[str, Any] = {}
+        if "disable" in fields:
+            kwargs["disable"] = True
+        if "maximum_remote_calls" in fields:
+            kwargs["maximum_remote_calls"] = 0
+        elif "maximumRemoteCalls" in fields:
+            kwargs["maximumRemoteCalls"] = 0
+        try:
+            return types.AutomaticFunctionCallingConfig(**kwargs)
+        except Exception:
+            self._logger.warning("gemini_afc_disable_build_failed sdk_afc_fields=%s", sorted(fields))
+            return None
 
     def _json_generate_cfg(
         self,
@@ -459,7 +496,66 @@ class GeminiClient:
             kwargs["max_output_tokens"] = int(self._max_output_tokens)
         if self._thinking_config is not None:
             kwargs["thinking_config"] = self._thinking_config
+        if self._structured_disable_afc:
+            afc_cfg = self._build_afc_disable_config()
+            if afc_cfg is not None:
+                kwargs["automatic_function_calling"] = afc_cfg
         return types.GenerateContentConfig(**kwargs)
+
+    def _response_text_or_none(self, resp: Any) -> Optional[str]:
+        text = getattr(resp, "text", None)
+        if isinstance(text, str) and text.strip():
+            return text
+        return None
+
+    def _is_empty_non_text_max_tokens_response(self, resp: Any) -> bool:
+        if self._response_text_or_none(resp) is not None:
+            return False
+        candidates = getattr(resp, "candidates", None)
+        if not isinstance(candidates, list) or not candidates:
+            return False
+        for c in candidates:
+            fr = str(getattr(c, "finish_reason", "") or "")
+            if "MAX_TOKENS" in fr:
+                return True
+        return False
+
+    def _build_empty_max_tokens_retry_cfg(self, cfg: types.GenerateContentConfig) -> types.GenerateContentConfig:
+        retry_cfg = cfg.model_copy(deep=True)
+        retry_cfg.thinking_config = self._make_thinking_config(self._empty_max_tokens_retry_thinking_tokens)
+        if self._structured_disable_afc:
+            afc_cfg = self._build_afc_disable_config()
+            if afc_cfg is not None:
+                retry_cfg.automatic_function_calling = afc_cfg
+        return retry_cfg
+
+    def _generate_structured_with_targeted_retry(
+        self,
+        *,
+        contents: List[object],
+        config: types.GenerateContentConfig,
+        call_kind: str,
+    ) -> Any:
+        resp = self._generate_content_with_optional_fallback(
+            contents=contents,
+            config=config,
+            call_kind=call_kind,
+        )
+        if (not self._empty_max_tokens_retry_enabled) or (not self._is_empty_non_text_max_tokens_response(resp)):
+            return resp
+
+        retry_cfg = self._build_empty_max_tokens_retry_cfg(config)
+        self._logger.warning(
+            "gemini_empty_max_tokens_retry kind=%s model=%s retry_thinking_tokens=%s",
+            call_kind,
+            self._model,
+            self._empty_max_tokens_retry_thinking_tokens,
+        )
+        return self._generate_content_with_optional_fallback(
+            contents=contents,
+            config=retry_cfg,
+            call_kind=f"{call_kind}_empty_retry",
+        )
 
     # ==========================================================
     # Files API helpers (get + wait ACTIVE)
@@ -647,13 +743,13 @@ class GeminiClient:
             str(self._max_thinking_tokens),
         )
 
-        resp = self._generate_content_with_optional_fallback(
+        resp = self._generate_structured_with_targeted_retry(
             contents=contents,
             config=cfg,
             call_kind="tokens_structured",
         )
-        text = getattr(resp, "text", None)
-        if not text or not isinstance(text, str):
+        text = self._response_text_or_none(resp)
+        if text is None:
             raise RuntimeError(f"Gemini returned empty/non-text response. resp={resp!r}")
 
         if raw_response_path is not None:
@@ -706,13 +802,13 @@ class GeminiClient:
             str(self._max_thinking_tokens),
         )
 
-        resp = self._generate_content_with_optional_fallback(
+        resp = self._generate_structured_with_targeted_retry(
             contents=contents,
             config=cfg,
             call_kind="generic_structured",
         )
-        text = getattr(resp, "text", None)
-        if not text or not isinstance(text, str):
+        text = self._response_text_or_none(resp)
+        if text is None:
             raise RuntimeError(f"Gemini returned empty/non-text response. resp={resp!r}")
 
         if raw_response_path is not None:
