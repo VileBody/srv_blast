@@ -86,7 +86,12 @@ from mlcore.prompts import (
 from mlcore.stage1_tools import align_stage1_draft_to_transcript, build_stage1_report
 from core.subtitles_mode import SUBTITLES_MODE_LEGACY_BLOCKS, normalize_subtitles_mode
 from core.runtime_mode import get_runtime_mode, MODE_DEV, MODE_PROD
-from core.clip_window import CLIP_WINDOW_MAX_LABEL, CLIP_WINDOW_MAX_SECONDS
+from core.clip_window import (
+    CLIP_WINDOW_MAX_LABEL,
+    CLIP_WINDOW_MAX_SECONDS,
+    CLIP_WINDOW_MIN_LABEL,
+    CLIP_WINDOW_MIN_SECONDS,
+)
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -893,16 +898,38 @@ def _validate_fragment_analytics_for_target(
             target_fragment,
         )
 
+    audio_start = float(audio_start_abs)
+    audio_end = float(audio_end_abs)
     forced_start = float(analytics.working_start_abs)
     forced_end = float(analytics.working_end_abs)
-    if abs(float(audio_start_abs) - forced_start) > 1e-6 or abs(float(audio_end_abs) - forced_end) > 1e-6:
+    forced_dur = float(forced_end) - float(forced_start)
+    if forced_dur < CLIP_WINDOW_MIN_SECONDS - 1e-6:
+        # Do not allow fragment_analytics to shrink a valid selected window below min clip size.
         logger.warning(
-            "stage1b_fragment_window_forced audio=%.3f..%.3f analytics=%.3f..%.3f",
-            float(audio_start_abs),
-            float(audio_end_abs),
+            "stage1b_fragment_analytics_window_too_short analytics=%.3f..%.3f dur=%.3f min=%s action=use_audio_window",
             forced_start,
             forced_end,
+            forced_dur,
+            CLIP_WINDOW_MIN_LABEL,
         )
+        forced_start = audio_start
+        forced_end = audio_end
+    elif abs(audio_start - forced_start) > 1e-6 or abs(audio_end - forced_end) > 1e-6:
+        # Keep overlap-safe deterministic behavior: never narrow by analytics mismatch.
+        # If analytics is wider, we preserve it by taking union with the audio window.
+        union_start = min(audio_start, forced_start)
+        union_end = max(audio_end, forced_end)
+        logger.warning(
+            "stage1b_fragment_window_mismatch audio=%.3f..%.3f analytics=%.3f..%.3f action=use_union result=%.3f..%.3f",
+            audio_start,
+            audio_end,
+            forced_start,
+            forced_end,
+            union_start,
+            union_end,
+        )
+        forced_start = union_start
+        forced_end = union_end
 
     relation = str(analytics.relation_to_target)
     action = str(analytics.chosen_action)

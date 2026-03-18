@@ -126,3 +126,65 @@ def test_stage1_clip_over_max_is_warning_only(caplog: pytest.LogCaptureFixture) 
             source="stage1a_selected_fragment",
         )
     assert "stage1_clip_duration_over_max" in caplog.text
+
+
+def test_fragment_analytics_too_short_window_uses_audio_window(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    analytics = FragmentAnalytics.model_validate(
+        {
+            "target_fragment": "WHY LOVE",
+            "working_fragment": "WHY LOVE",
+            "working_start_abs": 64.494,
+            "working_end_abs": 76.654,  # 12.16s (<13s)
+            "working_start_text": "Почему",
+            "working_end_text": "любовь",
+            "relation_to_target": "wider",
+            "chosen_action": "expand",
+            "rationale": "expand around target words",
+        }
+    )
+
+    with caplog.at_level(logging.WARNING):
+        start, end = _validate_fragment_analytics_for_target(
+            target_fragment="WHY LOVE",
+            audio_start_abs=64.044,
+            audio_end_abs=77.104,  # 13.06s valid
+            analytics=analytics,
+            logger=logging.getLogger("tests.fragment_analytics"),
+        )
+
+    assert abs(float(start) - 64.044) <= 1e-9
+    assert abs(float(end) - 77.104) <= 1e-9
+    assert "stage1b_fragment_analytics_window_too_short" in caplog.text
+
+
+def test_fragment_analytics_window_mismatch_uses_union(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    analytics = FragmentAnalytics.model_validate(
+        {
+            "target_fragment": "SHE IS NOT MY LOVER",
+            "working_fragment": "SHE IS NOT MY LOVER",
+            "working_start_abs": 1.0,
+            "working_end_abs": 18.0,
+            "working_start_text": "SHE",
+            "working_end_text": "LOVER",
+            "relation_to_target": "wider",
+            "chosen_action": "expand",
+            "rationale": "wider context",
+        }
+    )
+
+    with caplog.at_level(logging.WARNING):
+        start, end = _validate_fragment_analytics_for_target(
+            target_fragment="SHE IS NOT MY LOVER",
+            audio_start_abs=2.5,
+            audio_end_abs=16.8,
+            analytics=analytics,
+            logger=logging.getLogger("tests.fragment_analytics"),
+        )
+
+    assert abs(float(start) - 1.0) <= 1e-9
+    assert abs(float(end) - 18.0) <= 1e-9
+    assert "stage1b_fragment_window_mismatch" in caplog.text
