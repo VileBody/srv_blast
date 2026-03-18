@@ -6,17 +6,23 @@ from typing import Literal
 SUBTITLES_MODE_LEGACY_BLOCKS = "legacy_blocks"
 SUBTITLES_MODE_IMPULSE_2ND = "impulse_2nd"
 SUBTITLES_MODE_SCENES_3RD = "scenes_3rd"
+SUBTITLES_MODE_SCENES_3RD_SINGLE_STEP = "scenes_3rd_single_step"
+SUBTITLES_MODE_TEMPLATE_4TH = "template_4th"
 
 SUBTITLES_MODE_VALUES = (
     SUBTITLES_MODE_LEGACY_BLOCKS,
     SUBTITLES_MODE_IMPULSE_2ND,
     SUBTITLES_MODE_SCENES_3RD,
+    SUBTITLES_MODE_SCENES_3RD_SINGLE_STEP,
+    SUBTITLES_MODE_TEMPLATE_4TH,
 )
 
 SubtitlesMode = Literal[
     "legacy_blocks",
     "impulse_2nd",
     "scenes_3rd",
+    "scenes_3rd_single_step",
+    "template_4th",
 ]
 
 

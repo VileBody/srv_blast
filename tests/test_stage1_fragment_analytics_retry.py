@@ -8,9 +8,13 @@ from mlcore.gemini_orchestrator import _validate_fragment_analytics_for_target
 from mlcore.gemini_orchestrator import _looks_like_model_validation_error_text
 from mlcore.gemini_orchestrator import _is_fragment_target_exact_mismatch
 from mlcore.gemini_orchestrator import _build_stage1b_fragment_exact_retry_hint
+from mlcore.gemini_orchestrator import _build_stage1a_precision_rework_hint
+from mlcore.gemini_orchestrator import _analyze_stage1a_timecode_precision
+from mlcore.gemini_orchestrator import _should_retry_stage1a_suspicious_precision
 from mlcore.gemini_orchestrator import _build_stage1_plan_from_selected_fragment
 from mlcore.gemini_orchestrator import _warn_stage1_clip_over_max
 from mlcore.models.stage1_asr import Stage1AsrPayload
+from mlcore.models.stage1_forced_alignment import Stage1ForcedAlignmentPayload
 from mlcore.models.stage1_plan import FragmentAnalytics
 
 
@@ -240,3 +244,81 @@ def test_stage1a_selected_fragment_clip_is_clamped_to_content_when_oversized() -
     # Clip is clamped to actual selected content range, not oversized analytics window.
     assert abs(float(plan.audio.clip_start_abs) - 42.881) <= 1e-9
     assert abs(float(plan.audio.clip_end_abs) - 71.081) <= 1e-9
+
+
+def _fmt_mmss_mmm(total_ms: int) -> str:
+    mins = int(total_ms // 60000)
+    rem = int(total_ms % 60000)
+    secs = int(rem // 1000)
+    millis = int(rem % 1000)
+    return f"{mins:02d}:{secs:02d}.{millis:03d}"
+
+
+def test_stage1a_precision_detector_flags_coarse_grid() -> None:
+    aligned_words = []
+    start_ms = 10_000
+    for i in range(60):
+        end_ms = start_ms + 250
+        aligned_words.append(
+            {
+                "text": f"w{i}",
+                "t_start": _fmt_mmss_mmm(start_ms),
+                "t_end": _fmt_mmss_mmm(end_ms),
+            }
+        )
+        start_ms = end_ms + 50
+
+    payload = Stage1ForcedAlignmentPayload.model_validate(
+        {
+            "aligned_words": aligned_words,
+            "pause_spans": [],
+        }
+    )
+    diag = _analyze_stage1a_timecode_precision(payload=payload)
+    assert diag["suspicious"] is True
+    assert "coarse_50ms_grid" in list(diag["reasons"])
+    assert _should_retry_stage1a_suspicious_precision(
+        reference_words_count=60,
+        precision_diag=diag,
+    ) is True
+
+    hint = _build_stage1a_precision_rework_hint(
+        precision_diag=diag,
+        transcribe_attempt_1=payload.model_dump(mode="json"),
+        target_fragment="you and me",
+    )
+    assert "TIMECODE_PRECISION_REWORK=ON" in hint
+    assert "НЕ ЛЕНИСЬ" in hint
+    assert "TARGET_FRAGMENT_EXAMPLE" in hint
+
+
+def test_stage1a_precision_detector_accepts_fine_grained_timings() -> None:
+    aligned_words = []
+    start_ms = 8_000
+    dur_seq = [173, 221, 264, 187, 209]
+    gap_seq = [63, 47, 89, 31, 77]
+    for i in range(45):
+        dur_ms = dur_seq[i % len(dur_seq)]
+        gap_ms = gap_seq[i % len(gap_seq)]
+        end_ms = start_ms + dur_ms
+        aligned_words.append(
+            {
+                "text": f"w{i}",
+                "t_start": _fmt_mmss_mmm(start_ms),
+                "t_end": _fmt_mmss_mmm(end_ms),
+            }
+        )
+        start_ms = end_ms + gap_ms
+
+    payload = Stage1ForcedAlignmentPayload.model_validate(
+        {
+            "aligned_words": aligned_words,
+            "pause_spans": [],
+        }
+    )
+    diag = _analyze_stage1a_timecode_precision(payload=payload)
+    assert diag["suspicious"] is False
+    assert _should_retry_stage1a_suspicious_precision(
+        reference_words_count=45,
+        precision_diag=diag,
+    ) is False

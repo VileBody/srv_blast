@@ -23,7 +23,13 @@ class SendAudioS3Request(BaseModel):
     idempotency_key: Optional[str] = Field(default=None, min_length=1)
     lyrics_text: str = ""
     target_fragment: str = ""
-    subtitles_mode: Literal["legacy_blocks", "impulse_2nd", "scenes_3rd"] = SUBTITLES_MODE_LEGACY_BLOCKS
+    subtitles_mode: Literal[
+        "legacy_blocks",
+        "impulse_2nd",
+        "scenes_3rd",
+        "scenes_3rd_single_step",
+        "template_4th",
+    ] = SUBTITLES_MODE_LEGACY_BLOCKS
     # Optional internal batch controls for multi-version generation.
     reuse_text_job_id: Optional[str] = None
     exclude_file_names: List[str] = Field(default_factory=list)

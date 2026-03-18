@@ -15,6 +15,11 @@ def test_stage2_subtitles_prompt_contains_lyrics_text_and_filtered_words() -> No
             {"text": "in2", "t_start": 2.0, "t_end": 2.5},
             {"text": "after", "t_start": 3.1, "t_end": 3.2},
         ],
+        "pause_spans": [
+            {"text": "[pause]", "t_start": 0.6, "t_end": 1.1},
+            {"text": "[pause]", "t_start": 1.7, "t_end": 1.9},
+            {"text": "[pause]", "t_start": 3.2, "t_end": 3.6},
+        ],
         "lyrics_text": "REAL LYRICS",
     }
 
@@ -25,6 +30,8 @@ def test_stage2_subtitles_prompt_contains_lyrics_text_and_filtered_words() -> No
     ctx = json.loads(prompt.split(marker, 1)[1])
     assert ctx["lyrics_text"] == "REAL LYRICS"
     assert [w["text"] for w in ctx["transcript_words"]] == ["in", "in2"]
+    assert len(ctx["pause_spans"]) == 1
+    assert ctx["pause_spans"][0]["t_start"] == 1.7
 
 
 def test_stage2_subtitles_prompt_contains_target_fragment_when_present() -> None:

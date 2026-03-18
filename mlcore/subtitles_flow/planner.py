@@ -11,13 +11,17 @@ from core.subtitles_mode import (
     SUBTITLES_MODE_IMPULSE_2ND,
     SUBTITLES_MODE_LEGACY_BLOCKS,
     SUBTITLES_MODE_SCENES_3RD,
+    SUBTITLES_MODE_SCENES_3RD_SINGLE_STEP,
+    SUBTITLES_MODE_TEMPLATE_4TH,
     normalize_subtitles_mode,
 )
 from mlcore.models.stage1_plan import Stage1PlanPayload
 from mlcore.models.subtitles_flow import (
     Impulse2ndRawPayload,
     Scene3rdPayloadScene,
+    Scenes3rdSingleStepPayload,
     Scenes3rdPayload,
+    Template4Payload,
     SubtitleFlowPlan,
     SubtitleFlowSegment,
     SubtitleFlowToken,
@@ -49,6 +53,7 @@ class BaseSubtitlesPlanner:
     mode: str
     schema_model: Type[BaseModel]
     use_tokens_structured: bool = False
+    attach_audio_for_stage2: bool = False
 
     def build_system_instruction(self) -> str:
         return build_stage2_subtitles_system_instruction(subtitles_mode=self.mode)
@@ -751,6 +756,163 @@ class Scenes3rdPlanner(_FlowPlannerBase):
         )
 
 
+class Scenes3rdSingleStepPlanner(Scenes3rdPlanner):
+    mode = SUBTITLES_MODE_SCENES_3RD_SINGLE_STEP
+    schema_model = Scenes3rdSingleStepPayload
+    attach_audio_for_stage2 = True
+
+
+class Template4Planner(_FlowPlannerBase):
+    mode = SUBTITLES_MODE_TEMPLATE_4TH
+    schema_model = Template4Payload
+    use_tokens_structured = False
+
+    def normalize_payload(
+        self,
+        *,
+        payload: BaseModel,
+        stage1: Stage1PlanPayload,
+        logger: logging.Logger,
+    ) -> SubtitleFlowPlan:
+        if not isinstance(payload, Template4Payload):
+            payload = Template4Payload.model_validate(payload.model_dump(mode="json"))
+
+        clip = self._clip_from_stage1(stage1)
+        warnings: List[SubtitleFlowWarning] = []
+
+        global_words = sorted(
+            list(payload.word_timings),
+            key=lambda w: (float(w.start), float(w.end), str(w.word)),
+        )
+
+        segments: List[SubtitleFlowSegment] = []
+        for i, sub in enumerate(payload.subtitles, start=1):
+            seg_id = f"t4_{i:03d}"
+
+            seg_in = self._minor_clamp(
+                value=float(sub.in_point),
+                low=float(clip.start),
+                high=float(clip.end),
+                segment_id=seg_id,
+                reason="subtitle_in_out_of_clip",
+                warnings=warnings,
+            )
+            seg_out = self._minor_clamp(
+                value=float(sub.out_point),
+                low=float(clip.start),
+                high=float(clip.end),
+                segment_id=seg_id,
+                reason="subtitle_out_out_of_clip",
+                warnings=warnings,
+            )
+            if seg_out <= seg_in:
+                if (seg_in - seg_out) > _MINOR_CLAMP_EPS:
+                    raise ValueError(
+                        f"invalid subtitle duration after clamp (segment_id={seg_id}, {seg_in}..{seg_out})"
+                    )
+                seg_out = seg_in + _MIN_SEGMENT_DUR
+                warnings.append(
+                    SubtitleFlowWarning(
+                        mode=self.mode,
+                        segment_id=seg_id,
+                        reason="minor_duration_clamp",
+                        action=f"extended out_point to {seg_out:.6f}",
+                    )
+                )
+
+            text = str(sub.text or "").strip()
+            if not text:
+                raise ValueError(f"empty subtitle text (segment_id={seg_id})")
+
+            tokens: List[SubtitleFlowToken] = []
+            for wt in global_words:
+                if float(wt.start) < seg_in - 1e-6 or float(wt.end) > seg_out + 1e-6:
+                    continue
+                t_start = self._minor_clamp(
+                    value=float(wt.start),
+                    low=float(clip.start),
+                    high=float(clip.end),
+                    segment_id=seg_id,
+                    reason="token_start_out_of_clip",
+                    warnings=warnings,
+                )
+                t_end = self._minor_clamp(
+                    value=float(wt.end),
+                    low=float(clip.start),
+                    high=float(clip.end),
+                    segment_id=seg_id,
+                    reason="token_end_out_of_clip",
+                    warnings=warnings,
+                )
+                if t_end <= t_start:
+                    raise ValueError(
+                        f"token has non-positive duration (segment_id={seg_id}, {wt.word!r}, {t_start}..{t_end})"
+                    )
+                tokens.append(
+                    SubtitleFlowToken(
+                        text=str(wt.word),
+                        t_start=t_start,
+                        t_end=t_end,
+                        focus=bool(wt.focus),
+                    )
+                )
+
+            if not tokens:
+                words = [w for w in text.replace("\r", " ").split(" ") if w]
+                if not words:
+                    words = [text]
+                dur = float(seg_out - seg_in)
+                step = dur / float(max(1, len(words)))
+                for idx, word in enumerate(words):
+                    ws = seg_in + float(idx) * step
+                    we = min(seg_out, ws + max(step * 0.9, _FRAME_SEC))
+                    if we <= ws:
+                        we = min(seg_out, ws + _FRAME_SEC)
+                    if we <= ws:
+                        continue
+                    tokens.append(SubtitleFlowToken(text=str(word), t_start=ws, t_end=we, focus=False))
+                warnings.append(
+                    SubtitleFlowWarning(
+                        mode=self.mode,
+                        segment_id=seg_id,
+                        reason="segment_tokens_synthesized",
+                        action=f"count={len(tokens)}",
+                    )
+                )
+
+            focus_count = sum(1 for t in tokens if bool(t.focus))
+            if focus_count > 2:
+                warnings.append(
+                    SubtitleFlowWarning(
+                        mode=self.mode,
+                        segment_id=seg_id,
+                        reason="focus_words_over_limit",
+                        action=f"kept count={focus_count}",
+                    )
+                )
+
+            segments.append(
+                SubtitleFlowSegment.model_validate(
+                    {
+                        "id": seg_id,
+                        "text": text,
+                        "in_point": seg_in,
+                        "out_point": seg_out,
+                        "style_tag": "TAPE_4TH",
+                        "lines": [text],
+                        "tokens": [t.model_dump(mode="json") for t in tokens],
+                    }
+                )
+            )
+
+        return self._finalize_flow(
+            clip=clip,
+            segments=segments,
+            warnings=warnings,
+            logger=logger,
+        )
+
+
 class SubtitlesPlannerFactory:
     @staticmethod
     def create(mode: str) -> BaseSubtitlesPlanner:
@@ -761,4 +923,8 @@ class SubtitlesPlannerFactory:
             return Impulse2ndPlanner()
         if resolved == SUBTITLES_MODE_SCENES_3RD:
             return Scenes3rdPlanner()
+        if resolved == SUBTITLES_MODE_SCENES_3RD_SINGLE_STEP:
+            return Scenes3rdSingleStepPlanner()
+        if resolved == SUBTITLES_MODE_TEMPLATE_4TH:
+            return Template4Planner()
         raise RuntimeError(f"Unknown subtitles mode: {mode!r}")

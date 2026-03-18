@@ -13,6 +13,8 @@ from core.subtitles_mode import (
     SUBTITLES_MODE_IMPULSE_2ND,
     SUBTITLES_MODE_LEGACY_BLOCKS,
     SUBTITLES_MODE_SCENES_3RD,
+    SUBTITLES_MODE_SCENES_3RD_SINGLE_STEP,
+    SUBTITLES_MODE_TEMPLATE_4TH,
     normalize_subtitles_mode,
 )
 from .step1_audio_window import SYSTEM_PART as S1
@@ -25,6 +27,8 @@ from .step1b_scenario_only import SYSTEM_PART as STAGE1B_SCENARIO
 from .step2_subtitles_only import SYSTEM_PART as STAGE2_SUBS
 from .stage2_subtitles_impulse_2nd import SYSTEM_PART as STAGE2_SUBS_IMPULSE_2ND
 from .stage2_subtitles_scenes_3rd import SYSTEM_PART as STAGE2_SUBS_SCENES_3RD
+from .stage2_subtitles_scenes_3rd_single_step import SYSTEM_PART as STAGE2_SUBS_SCENES_3RD_SINGLE_STEP
+from .stage2_subtitles_template_4th import SYSTEM_PART as STAGE2_SUBS_TEMPLATE_4TH
 from .stage2_footage_style_only import SYSTEM_PART as STAGE2_FOOTAGE_STYLE
 from .stage2_timing_switches import (
     SYSTEM_BASE_JSON as STAGE2_TIMING_BASE_JSON,
@@ -191,6 +195,9 @@ def build_stage1a_forced_alignment_user_prompt(
         "Align every word in REFERENCE_TEXT and return one timed item per word.\n"
         "REFERENCE_TEXT is the only allowed word source (no extra backing/ad-lib words).\n\n"
         "For aligned_words use string timestamps in mm:ss.mmm format (absolute full-track timeline).\n"
+        "mm:ss.mmm means EXACTLY 3 digits after dot.\n"
+        "Do not quantize timestamps to coarse buckets (.000/.050/.100/.250/etc.) unless acoustically exact.\n"
+        "Use real measured boundaries from audio; avoid synthetic uniform timing grids.\n"
         "When silence gap between neighboring words is > 1.0s, also emit pause_spans items "
         "with text=\"[pause]\" and t_start/t_end in mm:ss.mmm format.\n"
         "pause_spans are not words and must stay between neighboring aligned words.\n\n"
@@ -304,6 +311,10 @@ def _stage2_subtitles_system_by_mode(mode: str) -> str:
         return STAGE2_SUBS_IMPULSE_2ND
     if resolved == SUBTITLES_MODE_SCENES_3RD:
         return STAGE2_SUBS_SCENES_3RD
+    if resolved == SUBTITLES_MODE_SCENES_3RD_SINGLE_STEP:
+        return STAGE2_SUBS_SCENES_3RD_SINGLE_STEP
+    if resolved == SUBTITLES_MODE_TEMPLATE_4TH:
+        return STAGE2_SUBS_TEMPLATE_4TH
     raise ValueError(f"Unsupported subtitles mode: {mode!r}")
 
 
@@ -374,6 +385,45 @@ def build_stage2_subtitles_user_prompt(
             "word_timings",
             "segments",
         ]
+
+    if resolved_mode == SUBTITLES_MODE_SCENES_3RD_SINGLE_STEP:
+        reference_text = " ".join(str(w.get("text") or "").strip() for w in words_out if str(w.get("text") or "").strip())
+        if not reference_text:
+            reference_text = str(stage1_json.get("target_fragment") or stage1_json.get("lyrics_text") or "").strip()
+        return (
+            f"Return ONLY JSON matching schema: {schema_name}\n\n"
+            "SUBTITLES_MODE:\n"
+            + json.dumps({"mode": resolved_mode}, ensure_ascii=False)
+            + "\n\n"
+            "Use attached audio as source-of-truth for timing.\n"
+            "REFERENCE_TEXT (lexical source):\n"
+            + reference_text
+            + "\n\n"
+            "STAGE1_CLIP_JSON:\n"
+            + json.dumps({"audio": stage1_json.get("audio")}, ensure_ascii=False)
+            + "\n\n"
+            "USER_CONTEXT_JSON:\n"
+            + json.dumps(
+                {
+                    "target_fragment": str(stage1_json.get("target_fragment") or ""),
+                    "lyrics_text": str(stage1_json.get("lyrics_text") or ""),
+                },
+                ensure_ascii=False,
+            )
+        )
+
+    if resolved_mode == SUBTITLES_MODE_TEMPLATE_4TH:
+        return (
+            f"Return ONLY JSON matching schema: {schema_name}\n\n"
+            "SUBTITLES_MODE:\n"
+            + json.dumps({"mode": resolved_mode}, ensure_ascii=False)
+            + "\n\n"
+            "INPUT_TRANSCRIPT_WITH_TIMECODES_JSON:\n"
+            + json.dumps(words_out, ensure_ascii=False)
+            + "\n\n"
+            "STAGE1_CLIP_JSON:\n"
+            + json.dumps({"audio": stage1_json.get("audio")}, ensure_ascii=False)
+        )
 
     return (
         f"Return ONLY JSON matching schema: {schema_name}\n\n"

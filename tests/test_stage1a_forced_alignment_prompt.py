@@ -9,5 +9,7 @@ def test_stage1a_forced_alignment_prompt_forbids_extra_words() -> None:
     assert "pause_spans" in prompt
     assert "silence gap between neighboring words is > 1.0s" in prompt
     assert "mm:ss.mmm" in prompt
+    assert "EXACTLY 3 digits after dot" in prompt
+    assert "Do not quantize timestamps to coarse buckets" in prompt
     assert "Structural markers like [pause], [bridge], [hook], [verse] are not spoken words." in prompt
     assert "REFERENCE_TEXT:\nHello world\n" in prompt

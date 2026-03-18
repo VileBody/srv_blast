@@ -9,10 +9,13 @@ from core.subtitles_mode import (
     SUBTITLES_MODE_IMPULSE_2ND,
     SUBTITLES_MODE_LEGACY_BLOCKS,
     SUBTITLES_MODE_SCENES_3RD,
+    SUBTITLES_MODE_SCENES_3RD_SINGLE_STEP,
+    SUBTITLES_MODE_TEMPLATE_4TH,
     normalize_subtitles_mode,
 )
 from app.orchestrator import ProjectOrchestrator
 from app.scenes_3rd_reference_builder import build_scenes_3rd_reference_layers
+from app.template_4th_reference_builder import build_template_4th_reference_layers
 from app.text_flow_renderer import TextFlowRendererFactory
 from mlcore.models.subtitles_flow import SubtitleFlowPlan
 
@@ -296,7 +299,7 @@ def build_text_layers(*, full_edit_config: Dict[str, Any], text_comp_name: str, 
         orch = ProjectOrchestrator(full_edit_config)
         orch.build()
         layers: List[Dict[str, Any]] = list(orch.final_stack)
-    elif mode == SUBTITLES_MODE_SCENES_3RD:
+    elif mode in {SUBTITLES_MODE_SCENES_3RD, SUBTITLES_MODE_SCENES_3RD_SINGLE_STEP}:
         flow = _require_flow_plan(full_edit_config, mode=mode)
         layers = build_scenes_3rd_reference_layers(
             flow_plan=flow,
@@ -307,6 +310,13 @@ def build_text_layers(*, full_edit_config: Dict[str, Any], text_comp_name: str, 
         flow = _require_flow_plan(full_edit_config, mode=mode)
         flow_renderer = TextFlowRendererFactory.create(mode)
         layers = flow_renderer.render(
+            flow_plan=flow,
+            text_comp_name=text_comp_name,
+            mine_comp_name=mine_comp_name,
+        )
+    elif mode == SUBTITLES_MODE_TEMPLATE_4TH:
+        flow = _require_flow_plan(full_edit_config, mode=mode)
+        layers = build_template_4th_reference_layers(
             flow_plan=flow,
             text_comp_name=text_comp_name,
             mine_comp_name=mine_comp_name,
@@ -344,7 +354,7 @@ def build_text_layers(*, full_edit_config: Dict[str, Any], text_comp_name: str, 
         fps=fps,
         strict=strict,
         mine_comp_name=mine_comp_name,
-        preserve_adjustment_effect_curves=(mode == SUBTITLES_MODE_SCENES_3RD),
+        preserve_adjustment_effect_curves=(mode in {SUBTITLES_MODE_SCENES_3RD, SUBTITLES_MODE_SCENES_3RD_SINGLE_STEP}),
     )
 
     return layers
