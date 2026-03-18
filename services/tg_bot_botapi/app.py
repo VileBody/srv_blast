@@ -17,14 +17,22 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import CommandStart
 from aiogram.types import FSInputFile, KeyboardButton, Message, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from core.clip_window import CLIP_WINDOW_RANGE_S_LABEL
-from core.subtitles_mode import (
-    SUBTITLES_MODE_IMPULSE_2ND,
-    SUBTITLES_MODE_LEGACY_BLOCKS,
-    SUBTITLES_MODE_SCENES_3RD,
-    SUBTITLES_MODE_SCENES_3RD_SINGLE_STEP,
-    SUBTITLES_MODE_TEMPLATE_4TH,
-    normalize_subtitles_mode,
+from core import subtitles_mode as _subtitles_mode
+
+SUBTITLES_MODE_IMPULSE_2ND = _subtitles_mode.SUBTITLES_MODE_IMPULSE_2ND
+SUBTITLES_MODE_LEGACY_BLOCKS = _subtitles_mode.SUBTITLES_MODE_LEGACY_BLOCKS
+SUBTITLES_MODE_SCENES_3RD = _subtitles_mode.SUBTITLES_MODE_SCENES_3RD
+SUBTITLES_MODE_SCENES_3RD_SINGLE_STEP = getattr(
+    _subtitles_mode,
+    "SUBTITLES_MODE_SCENES_3RD_SINGLE_STEP",
+    "scenes_3rd_single_step",
 )
+SUBTITLES_MODE_TEMPLATE_4TH = getattr(
+    _subtitles_mode,
+    "SUBTITLES_MODE_TEMPLATE_4TH",
+    "template_4th",
+)
+normalize_subtitles_mode = _subtitles_mode.normalize_subtitles_mode
 
 from .audio_prepare import AudioPrepareResult, prepare_audio_best_effort
 from .config import SETTINGS, Settings
