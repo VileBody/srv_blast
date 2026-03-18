@@ -22,6 +22,20 @@ class TranscriptWord(BaseModel):
         return self
 
 
+class PauseSpan(BaseModel):
+    text: str = Field(default="[pause]", min_length=1)
+    t_start: float = Field(ge=0.0)
+    t_end: float = Field(ge=0.0)
+
+    @model_validator(mode="after")
+    def _check(self) -> "PauseSpan":
+        if self.t_end <= self.t_start:
+            raise ValueError(f"pause t_end must be > t_start (got {self.t_start}..{self.t_end})")
+        # Keep a canonical marker so downstream logs/debugs are deterministic.
+        self.text = "[pause]"
+        return self
+
+
 class Stage1AudioWindow(BaseModel):
     clip_start_abs: float = Field(ge=0.0)
     clip_end_abs: float = Field(ge=0.0)
@@ -102,5 +116,6 @@ class Stage1DraftBlocks(BaseModel):
 class Stage1PlanPayload(BaseModel):
     audio: Stage1AudioWindow
     transcript_words: List[TranscriptWord] = Field(min_length=1)
+    pause_spans: List[PauseSpan] = Field(default_factory=list)
     draft_blocks: Stage1DraftBlocks
     fragment_analytics: Optional[FragmentAnalytics] = None
