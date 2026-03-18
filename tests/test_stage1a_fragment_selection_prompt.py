@@ -36,4 +36,5 @@ def test_stage1a_forced_prompt_can_require_selected_fragment_without_target() ->
     assert "USER_TARGET_FRAGMENT_BRANCH=OFF" in prompt
     assert f"most memorable/expressive {CLIP_WINDOW_RANGE_LABEL}s moment" in prompt
     assert "selected_fragment" in prompt
-    assert "ABSOLUTE full-track seconds" in prompt
+    assert "ABSOLUTE full-track timeline" in prompt
+    assert "mm:ss.mmm strings" in prompt

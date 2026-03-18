@@ -34,3 +34,30 @@ def test_selected_fragment_pause_spans_must_stay_inside_clip() -> None:
                 "pause_spans": [{"text": "[pause]", "t_start": 24.1, "t_end": 24.9}],
             }
         )
+
+
+def test_stage1a_forced_alignment_selected_fragment_timecodes_are_converted_to_seconds() -> None:
+    payload = Stage1ForcedAlignmentPayload.model_validate(
+        {
+            "aligned_words": [
+                {"text": "hello", "t_start": "01:00.100", "t_end": "01:00.300"},
+                {"text": "world", "t_start": "01:11.000", "t_end": "01:11.300"},
+            ],
+            "selected_fragment": {
+                "audio": {
+                    "clip_start_abs": "01:00.000",
+                    "clip_end_abs": "01:13.000",
+                },
+                "transcript_words": [
+                    {"text": "hello", "t_start": "01:00.100", "t_end": "01:00.300"},
+                    {"text": "world", "t_start": "01:11.000", "t_end": "01:11.300"},
+                ],
+            },
+        }
+    )
+
+    stage1_asr = go._stage1_asr_from_forced_alignment(payload)
+    assert stage1_asr.selected_fragment is not None
+    assert stage1_asr.selected_fragment.audio.clip_start_abs == pytest.approx(60.0)
+    assert stage1_asr.selected_fragment.audio.clip_end_abs == pytest.approx(73.0)
+    assert stage1_asr.selected_fragment.transcript_words[-1].t_start == pytest.approx(71.0)

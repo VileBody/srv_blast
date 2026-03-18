@@ -581,8 +581,48 @@ def _stage1_asr_from_forced_alignment(payload: Stage1ForcedAlignmentPayload) -> 
         "srt_items": [],
     }
     if payload.selected_fragment is not None:
-        selected_obj = payload.selected_fragment.model_dump(mode="json")
-        selected_audio = payload.selected_fragment.audio
+        sf = payload.selected_fragment
+        selected_audio = sf.audio
+        selected_obj: Dict[str, Any] = {
+            "audio": {
+                "clip_start_abs": float(selected_audio.clip_start_abs_sec),
+                "clip_end_abs": float(selected_audio.clip_end_abs_sec),
+                "moment_of_interest_sec": (
+                    float(selected_audio.moment_of_interest_sec_value)
+                    if selected_audio.moment_of_interest_sec_value is not None
+                    else None
+                ),
+            },
+            "transcript_words": [
+                {
+                    "text": str(w.text),
+                    "t_start": float(w.t_start_sec),
+                    "t_end": float(w.t_end_sec),
+                }
+                for w in sf.transcript_words
+            ],
+            "pause_spans": [
+                {
+                    "text": "[pause]",
+                    "t_start": float(p.t_start_sec),
+                    "t_end": float(p.t_end_sec),
+                }
+                for p in sf.pause_spans
+            ],
+            "srt_items": [
+                {
+                    "start": float(it.start_sec),
+                    "end": float(it.end_sec),
+                    "text": str(it.text),
+                }
+                for it in sf.srt_items
+            ],
+            "fragment_analytics": (
+                sf.fragment_analytics.model_dump(mode="json")
+                if sf.fragment_analytics is not None
+                else None
+            ),
+        }
         if not selected_obj.get("pause_spans"):
             selected_obj["pause_spans"] = [
                 {
