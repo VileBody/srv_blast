@@ -201,7 +201,7 @@ def test_interval_picker_raw_filters_selects_global_candidates_across_tags() -> 
     assert diag.widened_to_global is False
 
 
-def test_interval_picker_raw_filters_penalizes_excluded_people_type() -> None:
+def test_interval_picker_raw_filters_applies_strict_exclude_ban() -> None:
     style = FootageStylePickPayload.model_validate({"genre": "Rock", "tag": "dark_forest"})
     raw = FootageStyleRawPayload.model_validate(
         {
@@ -225,7 +225,7 @@ def test_interval_picker_raw_filters_penalizes_excluded_people_type() -> None:
             "meta_mood": "minor",
             "meta_color_tone": "dark",
             "meta_people_type": "crowd",
-            "meta_theme_tags": ["night"],
+            "meta_theme_tags": ["night", "city"],
         },
         {
             "file_name": "x_ok.mp4",
@@ -253,3 +253,57 @@ def test_interval_picker_raw_filters_penalizes_excluded_people_type() -> None:
     clips = sorted(payload.clips, key=lambda c: float(c.in_point))
     assert len(clips) == 1
     assert str(clips[0].file_name) == "x_ok.mp4"
+
+
+def test_interval_picker_raw_filters_exclude_bans_by_metadata_tag() -> None:
+    style = FootageStylePickPayload.model_validate({"genre": "Rock", "tag": "dark_forest"})
+    raw = FootageStyleRawPayload.model_validate(
+        {
+            "theme": "heartbreak_minor",
+            "mood": "minor",
+            "filters": {
+                "color_priority": ["dark"],
+                "exclude": ["crowd"],
+                "priority_theme_tags": ["night"],
+            },
+        }
+    )
+    mapped_assets = [
+        {
+            "file_name": "z_excluded_by_tag.mp4",
+            "genre": "Rock",
+            "tag": "dark_forest",
+            "duration_sec": 2.0,
+            "src_w": 720,
+            "src_h": 1280,
+            "meta_mood": "minor",
+            "meta_color_tone": "dark",
+            "meta_people_type": "none",
+            "meta_theme_tags": ["night", "crowd"],
+        },
+        {
+            "file_name": "z_ok.mp4",
+            "genre": "Rock",
+            "tag": "dark_forest",
+            "duration_sec": 2.0,
+            "src_w": 720,
+            "src_h": 1280,
+            "meta_mood": "minor",
+            "meta_color_tone": "dark",
+            "meta_people_type": "none",
+            "meta_theme_tags": ["night"],
+        },
+    ]
+
+    payload, _diag = pick_footage_clips_by_intervals_deterministic(
+        style_pick=style,
+        assets=mapped_assets,
+        clip_start_abs=0.0,
+        clip_end_abs=1.0,
+        switch_points_abs=[],
+        seed_key="job-int-raw-exclude-tag",
+        raw_pick=raw,
+    )
+    clips = sorted(payload.clips, key=lambda c: float(c.in_point))
+    assert len(clips) == 1
+    assert str(clips[0].file_name) == "z_ok.mp4"

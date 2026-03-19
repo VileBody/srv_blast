@@ -500,8 +500,12 @@ def pick_footage_clips_by_intervals_deterministic(
             raise RuntimeError("Raw footage selection requires non-empty priority_theme_tags")
         exclude_people = {_normalize_people_type(x) for x in list(raw_pick.filters.exclude or [])}
         exclude_people.discard("")
+        exclude_terms = {_normalize_theme_tag(x) for x in list(raw_pick.filters.exclude or [])}
+        exclude_terms.discard("")
 
-        # Raw tag-first mode: score by tag overlap, subtract penalty for excluded people types.
+        # Raw tag-first mode:
+        # - strict ban if asset matches exclude (people type OR metadata tag OR inventory tag),
+        # - score is pure overlap count with priority_theme_tags.
         primary_pool = []
         for it in assets:
             meta_tags = {_normalize_theme_tag(x) for x in list(it.get("meta_theme_tags") or [])}
@@ -510,15 +514,23 @@ def pick_footage_clips_by_intervals_deterministic(
             if overlap <= 0:
                 continue
             people = _normalize_people_type(it.get("meta_people_type"))
-            penalty = 1 if (people and people in exclude_people) else 0
-            score = float(overlap - penalty)
+            inv_tag = _normalize_theme_tag(it.get("tag"))
+            excluded = bool(
+                (people and people in exclude_people)
+                or (exclude_terms.intersection(meta_tags))
+                or (inv_tag and inv_tag in exclude_terms)
+            )
+            if excluded:
+                continue
+            score = float(overlap)
             row = dict(it)
             row[_SELECTION_RANK_SCORE_KEY] = score
             primary_pool.append(row)
         if not primary_pool:
             raise RuntimeError(
-                "No mapped assets satisfy raw filters (priority_theme_tags overlap required) "
-                f"tags={sorted(priority_tags)!r}"
+                "No mapped assets satisfy raw filters after strict exclude ban "
+                "(priority_theme_tags overlap required) "
+                f"tags={sorted(priority_tags)!r} exclude={sorted(exclude_terms)!r}"
             )
     else:
         primary_pool = [it for it in assets if str(it["genre"]) == genre and str(it["tag"]) == tag]
