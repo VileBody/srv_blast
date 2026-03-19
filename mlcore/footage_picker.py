@@ -17,6 +17,7 @@ _STYLE_COLOR_ALLOWED = {"dark", "light", "warm", "cold", "neutral"}
 _STYLE_MOOD_ALLOWED = {"major", "minor"}
 _STYLE_PEOPLE_ALLOWED = {"none", "girls", "guys", "couple", "crowd", "driver"}
 _CLIP_ID_RE = re.compile(r"(\d{8,})")
+_SELECTION_RANK_SCORE_KEY = "_selection_rank_score"
 
 
 @dataclass(frozen=True)
@@ -336,11 +337,17 @@ def _deterministic_choose(
     if not candidates:
         raise RuntimeError("deterministic choose candidates is empty")
 
-    def _sort_key(it: Dict[str, Any]) -> Tuple[str, str]:
+    def _score(it: Dict[str, Any]) -> float:
+        try:
+            return float(it.get(_SELECTION_RANK_SCORE_KEY) or 0.0)
+        except Exception:
+            return 0.0
+
+    def _sort_key(it: Dict[str, Any]) -> Tuple[float, str, str]:
         file_name = str(it["file_name"])
         material = f"{seed_value}:{interval_idx}:{interval_start:.6f}:{file_name}"
         h = hashlib.sha256(material.encode("utf-8")).hexdigest()
-        return h, file_name
+        return -_score(it), h, file_name
 
     ranked = sorted(candidates, key=_sort_key)
     avoid = str(avoid_file_name or "").strip()
@@ -369,11 +376,20 @@ def _deterministic_file_name_order(
     seed_value: int,
     interval_idx: int,
     interval_start: float,
+    scores_by_name: Dict[str, float] | None = None,
 ) -> List[str]:
-    def _key(name: str) -> Tuple[str, str]:
+    def _score(name: str) -> float:
+        if not scores_by_name:
+            return 0.0
+        try:
+            return float(scores_by_name.get(name) or 0.0)
+        except Exception:
+            return 0.0
+
+    def _key(name: str) -> Tuple[float, str, str]:
         material = f"{seed_value}:{interval_idx}:{interval_start:.6f}:{name}"
         h = hashlib.sha256(material.encode("utf-8")).hexdigest()
-        return h, name
+        return -_score(name), h, name
 
     return sorted(file_names, key=_key)
 
@@ -396,6 +412,12 @@ def _assign_unique_file_names_for_intervals(
             "insufficient unique assets for strict no-repeat policy: "
             f"need={len(intervals)} have={len(by_name)}"
         )
+    scores_by_name: Dict[str, float] = {}
+    for nm, it in by_name.items():
+        try:
+            scores_by_name[nm] = float(it.get(_SELECTION_RANK_SCORE_KEY) or 0.0)
+        except Exception:
+            scores_by_name[nm] = 0.0
 
     candidates: List[List[str]] = []
     for idx, (a, b) in enumerate(intervals):
@@ -412,6 +434,7 @@ def _assign_unique_file_names_for_intervals(
                 seed_value=seed_value,
                 interval_idx=idx,
                 interval_start=float(a),
+                scores_by_name=scores_by_name,
             )
         )
 
@@ -471,40 +494,31 @@ def pick_footage_clips_by_intervals_deterministic(
     use_raw_global = raw_pick is not None
 
     if use_raw_global:
-        mood = _normalize_mood(raw_pick.mood)
-        candidates_mood = [it for it in assets if _normalize_mood(it.get("meta_mood")) == mood]
-        if not candidates_mood:
-            raise RuntimeError(f"No mapped assets match mood={mood!r} for raw footage selection")
-
-        exclude_people = {_normalize_people_type(x) for x in list(raw_pick.filters.exclude or [])}
-        exclude_people.discard("")
-        candidates_people = [
-            it for it in candidates_mood if _normalize_people_type(it.get("meta_people_type")) not in exclude_people
-        ]
-        if not candidates_people:
-            raise RuntimeError(
-                "No mapped assets remain after people exclusion for raw footage selection "
-                f"(mood={mood!r}, exclude={sorted(exclude_people)!r})"
-            )
-
         priority_tags = {_normalize_theme_tag(x) for x in list(raw_pick.filters.priority_theme_tags or [])}
         priority_tags.discard("")
-        color_priority = {_normalize_color_tone(x) for x in list(raw_pick.filters.color_priority or [])}
-        color_priority.discard("")
+        if not priority_tags:
+            raise RuntimeError("Raw footage selection requires non-empty priority_theme_tags")
+        exclude_people = {_normalize_people_type(x) for x in list(raw_pick.filters.exclude or [])}
+        exclude_people.discard("")
 
-        # Raw tag-first mode: candidate must satisfy BOTH semantic tag overlap and requested color tone.
+        # Raw tag-first mode: score by tag overlap, subtract penalty for excluded people types.
         primary_pool = []
-        for it in candidates_people:
+        for it in assets:
             meta_tags = {_normalize_theme_tag(x) for x in list(it.get("meta_theme_tags") or [])}
             meta_tags.discard("")
-            has_tag_overlap = bool(priority_tags.intersection(meta_tags))
-            color_ok = _normalize_color_tone(it.get("meta_color_tone")) in color_priority
-            if has_tag_overlap and color_ok:
-                primary_pool.append(it)
+            overlap = int(len(priority_tags.intersection(meta_tags)))
+            if overlap <= 0:
+                continue
+            people = _normalize_people_type(it.get("meta_people_type"))
+            penalty = 1 if (people and people in exclude_people) else 0
+            score = float(overlap - penalty)
+            row = dict(it)
+            row[_SELECTION_RANK_SCORE_KEY] = score
+            primary_pool.append(row)
         if not primary_pool:
             raise RuntimeError(
-                "No mapped assets satisfy raw filters (mood+exclude+priority_theme_tags+color_priority) "
-                f"mood={mood!r} tags={sorted(priority_tags)!r} colors={sorted(color_priority)!r}"
+                "No mapped assets satisfy raw filters (priority_theme_tags overlap required) "
+                f"tags={sorted(priority_tags)!r}"
             )
     else:
         primary_pool = [it for it in assets if str(it["genre"]) == genre and str(it["tag"]) == tag]
