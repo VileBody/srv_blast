@@ -3017,6 +3017,9 @@ def build_all_via_gemini_one_call(
         raise RuntimeError("Stage2 failed: switch timing payload is empty")
 
     exclude_file_names: List[str] = []
+    seen_excluded: set[str] = set()
+
+    # Source 1: inline JSON list via env var (per-job overrides).
     exclude_raw = (os.environ.get("FOOTAGE_EXCLUDE_FILE_NAMES_JSON") or "").strip()
     if exclude_raw:
         try:
@@ -3025,13 +3028,34 @@ def build_all_via_gemini_one_call(
             raise RuntimeError(f"Invalid FOOTAGE_EXCLUDE_FILE_NAMES_JSON: {e!r}") from e
         if not isinstance(parsed, list):
             raise RuntimeError("FOOTAGE_EXCLUDE_FILE_NAMES_JSON must be a JSON list")
-        seen_excluded: set[str] = set()
         for it in parsed:
             name = str(it or "").strip()
             if not name or name in seen_excluded:
                 continue
             seen_excluded.add(name)
             exclude_file_names.append(name)
+
+    # Source 2: persistent blacklist file (FOOTAGE_BLACKLIST_PATH).
+    blacklist_path = (os.environ.get("FOOTAGE_BLACKLIST_PATH") or "").strip()
+    if blacklist_path:
+        bl_file = Path(blacklist_path)
+        if bl_file.exists():
+            try:
+                bl_data = json.loads(bl_file.read_text(encoding="utf-8"))
+                if isinstance(bl_data, list):
+                    for it in bl_data:
+                        name = str(it or "").strip()
+                        if not name or name in seen_excluded:
+                            continue
+                        seen_excluded.add(name)
+                        exclude_file_names.append(name)
+                else:
+                    logger.warning("footage_blacklist_invalid path=%s (expected JSON list)", blacklist_path)
+            except Exception as e:
+                logger.warning("footage_blacklist_load_error path=%s err=%r", blacklist_path, e)
+        else:
+            logger.warning("footage_blacklist_missing path=%s", blacklist_path)
+
     if exclude_file_names:
         logger.info(
             "footage_exclude_input count=%d names=%s",
@@ -3156,6 +3180,12 @@ def build_all_via_gemini_one_call(
     interval_obj = {"timing_mode": timing_mode, "intervals": interval_rows}
     (logs_dir / f"stage2_footage_intervals_{stamp}.json").write_text(
         json.dumps(interval_obj, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    # clips_manifest.json — human-readable list of clips used in this job.
+    # Use this to identify bad clips by timestamp and add them to FOOTAGE_BLACKLIST_PATH.
+    (logs_dir / "clips_manifest.json").write_text(
+        json.dumps(interval_rows, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
     # Convenience "latest" names (per job OUT_DIR).
