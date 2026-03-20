@@ -2693,18 +2693,7 @@ def build_all_via_gemini_one_call(
             schema_model=FootageStyleRotation,
         )
 
-        if isinstance(payload_any, FootageStylePickPayload):
-            # Backward-compatible path (e.g. tests/legacy resume data).
-            style_raw_payload = None
-            style_adapter_diag = None
-            style_rotation_payload = None
-            validate_style_pick_in_groups(payload_any, style_groups)
-            return payload_any
-
-        # Normalise: single subgroup → wrap in rotation for uniform handling.
-        if isinstance(payload_any, FootageStyleRawPayload):
-            rotation = FootageStyleRotation(subgroups=[payload_any])
-        elif isinstance(payload_any, FootageStyleRotation):
+        if isinstance(payload_any, FootageStyleRotation):
             rotation = payload_any
         else:
             rotation = FootageStyleRotation.model_validate(payload_any)
@@ -2722,7 +2711,7 @@ def build_all_via_gemini_one_call(
         validate_style_pick_in_groups(resolved, style_groups)
         style_raw_payload = base_raw  # enables mapped_picker_assets selection path
         style_adapter_diag = diag
-        style_rotation_payload = rotation if len(rotation.subgroups) > 1 else None
+        style_rotation_payload = rotation
         logger.info(
             "stage2_style_adapter_selected theme=%s mood=%s subgroups=%d genre=%s tag=%s mapped=%d unmapped=%d",
             base_raw.theme,
@@ -2763,15 +2752,33 @@ def build_all_via_gemini_one_call(
             resume_state.pop("stage2_subtitles_mode", None)
 
     style_cached = resume_state.get("stage2_style")
+    style_rotation_cached = resume_state.get("stage2_style_rotation")
     if isinstance(style_cached, dict):
         try:
+            if not isinstance(style_rotation_cached, dict):
+                raise RuntimeError("missing stage2_style_rotation in resume state")
             style_payload = FootageStylePickPayload.model_validate(style_cached)
             validate_style_pick_in_groups(style_payload, style_groups)
+            style_rotation_payload = FootageStyleRotation.model_validate(style_rotation_cached)
+            if not style_rotation_payload.subgroups:
+                raise RuntimeError("stage2_style_rotation.subgroups is empty in resume state")
+            style_raw_payload = style_rotation_payload.subgroups[0]
             style_from_resume = True
-            logger.info("llm_resume_hit stage=stage2_style")
+            logger.info(
+                "llm_resume_hit stage=stage2_style subgroups=%d",
+                len(style_rotation_payload.subgroups),
+            )
         except Exception as e:
             logger.warning("llm_resume_bad stage=stage2_style err=%s", str(e))
             resume_state.pop("stage2_style", None)
+            resume_state.pop("stage2_style_rotation", None)
+            style_raw_payload = None
+            style_rotation_payload = None
+    elif style_rotation_cached is not None:
+        logger.warning(
+            "llm_resume_bad stage=stage2_style err=stage2_style_rotation present without stage2_style"
+        )
+        resume_state.pop("stage2_style_rotation", None)
 
     subtitles_only = os.environ.get("SUBTITLES_ONLY", "").strip() in ("1", "true", "yes")
     if subtitles_only and style_payload is None:
@@ -2784,6 +2791,7 @@ def build_all_via_gemini_one_call(
             tag=str(first_asset.get("tag", "dark_aesthetic")),
         )
         style_raw_payload = None
+        style_rotation_payload = None
         logger.info("subtitles_only_mode genre=%s tag=%s", style_payload.genre, style_payload.tag)
 
     stage2_errors: Dict[str, BaseException] = {}
@@ -2811,6 +2819,10 @@ def build_all_via_gemini_one_call(
         state_dirty = True
     if style_payload is not None and not style_from_resume:
         resume_state["stage2_style"] = style_payload.model_dump(mode="json")
+        if style_rotation_payload is not None:
+            resume_state["stage2_style_rotation"] = style_rotation_payload.model_dump(mode="json")
+        else:
+            resume_state.pop("stage2_style_rotation", None)
         state_dirty = True
     if state_dirty:
         _save_resume_state(resume_state_path, logger=logger, state=resume_state)
@@ -2823,6 +2835,8 @@ def build_all_via_gemini_one_call(
 
     if subtitles_payload is None or style_payload is None:
         raise RuntimeError("Stage2 failed: missing payloads after execution")
+    if not subtitles_only and style_rotation_payload is None:
+        raise RuntimeError("Stage2 failed: style rotation payload is empty")
 
     clip_start_abs = float(stage1.audio.clip_start_abs)
     clip_end_abs = float(stage1.audio.clip_end_abs)
@@ -3025,14 +3039,12 @@ def build_all_via_gemini_one_call(
             exclude_file_names,
         )
 
-    selection_assets = mapped_picker_assets if style_raw_payload is not None else picker_assets
-    if style_raw_payload is not None:
-        _mode = "raw_rotation" if style_rotation_payload is not None else "raw_filters_global"
+    selection_assets = mapped_picker_assets if style_rotation_payload is not None else picker_assets
+    if style_rotation_payload is not None:
         logger.info(
-            "footage_selection_mode mode=%s mapped_assets=%d subgroups=%d",
-            _mode,
+            "footage_selection_mode mode=raw_rotation mapped_assets=%d subgroups=%d",
             len(selection_assets),
-            len(style_rotation_payload.subgroups) if style_rotation_payload is not None else 1,
+            len(style_rotation_payload.subgroups),
         )
     footage_payload, interval_diag = pick_footage_clips_by_intervals_deterministic(
         style_pick=style_payload,
@@ -3043,7 +3055,7 @@ def build_all_via_gemini_one_call(
         seed_key=selection_seed_key,
         fit_mode="cover",
         exclude_file_names=exclude_file_names,
-        raw_pick=style_raw_payload if style_rotation_payload is None else None,
+        raw_pick=None,
         raw_picks=style_rotation_payload.subgroups if style_rotation_payload is not None else None,
     )
     if getattr(interval_diag, "exclude_relaxed", False):
@@ -3069,6 +3081,11 @@ def build_all_via_gemini_one_call(
         json.dumps(style_payload.model_dump(mode="json"), ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    if style_rotation_payload is not None:
+        (logs_dir / f"stage2_style_rotation_{stamp}.json").write_text(
+            json.dumps(style_rotation_payload.model_dump(mode="json"), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
     if style_raw_payload is not None:
         (logs_dir / f"stage2_style_raw_{stamp}.json").write_text(
             json.dumps(style_raw_payload.model_dump(mode="json"), ensure_ascii=False, indent=2),
@@ -3150,6 +3167,11 @@ def build_all_via_gemini_one_call(
         json.dumps(style_payload.model_dump(mode="json"), ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    if style_rotation_payload is not None:
+        (logs_dir / "stage2_style_rotation.json").write_text(
+            json.dumps(style_rotation_payload.model_dump(mode="json"), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
     if style_raw_payload is not None:
         (logs_dir / "stage2_style_raw.json").write_text(
             json.dumps(style_raw_payload.model_dump(mode="json"), ensure_ascii=False, indent=2),

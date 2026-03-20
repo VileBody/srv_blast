@@ -5,6 +5,7 @@ import json
 import math
 from pathlib import Path
 import re
+import warnings
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -25,17 +26,35 @@ def _load_global_ban_tags() -> frozenset:
 
     Reads the line:
         NEVER use these globally banned tags: tag1, tag2, tag3.
-    Falls back to an empty set if the file or pattern is missing.
+    Falls back to an empty set if the file or pattern is missing, and emits
+    a warning so operators can see that global-ban filtering is disabled.
     """
     src = Path(__file__).resolve().parents[1] / "3rd_footage_selection_prompt" / "prompt.md"
     if not src.exists():
+        warnings.warn(
+            f"Global ban tags source is missing: {src}",
+            RuntimeWarning,
+            stacklevel=2,
+        )
         return frozenset()
     text = src.read_text(encoding="utf-8")
     match = re.search(r"NEVER use these globally banned tags:\s*(.+)", text)
     if not match:
+        warnings.warn(
+            f"Global ban tags line is missing in prompt: {src}",
+            RuntimeWarning,
+            stacklevel=2,
+        )
         return frozenset()
     raw = match.group(1).rstrip(".").strip()
-    return frozenset(t.strip().lower() for t in raw.split(",") if t.strip())
+    tags = frozenset(t.strip().lower() for t in raw.split(",") if t.strip())
+    if not tags:
+        warnings.warn(
+            f"Global ban tags parsed as empty from prompt: {src}",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+    return tags
 
 
 _GLOBAL_BAN_TAGS: frozenset = _load_global_ban_tags()
@@ -612,10 +631,15 @@ def _assign_rotation_file_names(
 
         if block_assigned is None:
             # Last resort: allow repeats via deterministic choice
+            fallback_pool = pool or merged
+            if not fallback_pool:
+                raise RuntimeError(
+                    "No assets available for rotation block after applying exclusions "
+                    f"(block={block_idx}, block_intervals={len(block_intervals)}, excluded={len(excluded_names)})"
+                )
             repeats_used = True
             block_assigned = []
             prev: Optional[str] = all_assigned[-1] if all_assigned else None
-            fallback_pool = pool or merged
             for gi, (a, b) in enumerate(block_intervals):
                 need = float(b - a)
                 candidates = [it for it in fallback_pool if _fits_interval(it, interval_len=need)]
@@ -686,6 +710,11 @@ def pick_footage_clips_by_intervals_deterministic(
             seed_value=seed_value,
             excluded_names=excluded_names,
         )
+        if len(assigned_file_names) != len(intervals):
+            raise RuntimeError(
+                "Internal mismatch in rotation assignment: "
+                f"assigned={len(assigned_file_names)} intervals={len(intervals)}"
+            )
 
         by_name: Dict[str, Dict[str, Any]] = {}
         for p in subgroup_pools:
