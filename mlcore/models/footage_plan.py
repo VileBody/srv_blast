@@ -21,10 +21,13 @@ class FootageClipPick(BaseModel):
     Footage clip contract (produced by deterministic picker code):
       - clip timings are ABSOLUTE seconds on the FULL TRACK timeline,
         and MUST lie inside [audio.clip_start_abs .. audio.clip_end_abs]
-      - start_time MUST equal in_point exactly (we do not time-remap here)
+      - start_time MUST equal in_point - source_offset_sec
+        (when source_offset_sec=0, this equals in_point, same as before)
     Postprocess:
       - we shift to clip-zero by subtracting clip_start_abs
       - then it becomes COMP timeline 0..duration for AE
+      - source_offset_sec is preserved so AE layer.startTime stays negative enough
+        to play from an internal point of the source file
     """
     file_name: str = Field(min_length=1)
     fit_mode: FitMode = "cover"
@@ -33,15 +36,22 @@ class FootageClipPick(BaseModel):
     in_point: float = Field(ge=0.0)
     out_point: float = Field(ge=0.0)
 
-    # MUST equal in_point exactly
+    # MUST equal in_point - source_offset_sec
     start_time: float
+
+    # How many seconds into the source file to start playback (0 = from the beginning)
+    source_offset_sec: float = Field(default=0.0, ge=0.0)
 
     @model_validator(mode="after")
     def _check(self) -> "FootageClipPick":
         if self.out_point <= self.in_point:
             raise ValueError("out_point must be > in_point")
-        if abs(float(self.start_time) - float(self.in_point)) > 1e-6:
-            raise ValueError("start_time must equal in_point exactly")
+        expected = float(self.in_point) - float(self.source_offset_sec)
+        if abs(float(self.start_time) - expected) > 1e-4:
+            raise ValueError(
+                f"start_time must equal in_point - source_offset_sec "
+                f"(expected {expected:.6f}, got {self.start_time:.6f})"
+            )
         return self
 
 

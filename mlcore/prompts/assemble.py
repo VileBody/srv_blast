@@ -13,6 +13,8 @@ from core.subtitles_mode import (
     SUBTITLES_MODE_IMPULSE_2ND,
     SUBTITLES_MODE_LEGACY_BLOCKS,
     SUBTITLES_MODE_SCENES_3RD,
+    SUBTITLES_MODE_SCENES_3RD_SINGLE_STEP,
+    SUBTITLES_MODE_TEMPLATE_4TH,
     normalize_subtitles_mode,
 )
 from .step1_audio_window import SYSTEM_PART as S1
@@ -25,6 +27,8 @@ from .step1b_scenario_only import SYSTEM_PART as STAGE1B_SCENARIO
 from .step2_subtitles_only import SYSTEM_PART as STAGE2_SUBS
 from .stage2_subtitles_impulse_2nd import SYSTEM_PART as STAGE2_SUBS_IMPULSE_2ND
 from .stage2_subtitles_scenes_3rd import SYSTEM_PART as STAGE2_SUBS_SCENES_3RD
+from .stage2_subtitles_scenes_3rd_single_step import SYSTEM_PART as STAGE2_SUBS_SCENES_3RD_SINGLE_STEP
+from .stage2_subtitles_template_4th import SYSTEM_PART as STAGE2_SUBS_TEMPLATE_4TH
 from .stage2_footage_style_only import SYSTEM_PART as STAGE2_FOOTAGE_STYLE
 from .stage2_timing_switches import (
     SYSTEM_BASE_JSON as STAGE2_TIMING_BASE_JSON,
@@ -132,20 +136,21 @@ def build_stage1a_asr_user_prompt(
             + tf
             + "\n\n"
             "Additionally output selected_fragment with:\n"
-            + f"- audio.clip_start_abs / clip_end_abs in {CLIP_WINDOW_RANGE_LABEL} seconds total duration;\n"
+            + f"- audio.clip_start_abs / clip_end_abs duration MUST be >= {CLIP_WINDOW_MIN_LABEL}s;\n"
+            + f"- duration MAY exceed {CLIP_WINDOW_MAX_LABEL}s when needed to keep USER_TARGET_FRAGMENT fully covered;\n"
             "- selected_fragment.transcript_words only inside that clip window;\n"
             "- selected_fragment.srt_items only inside that clip window (optional);\n"
             "- selected_fragment.transcript_words/srt_items timings MUST stay ABSOLUTE full-track seconds "
             "(same global timeline as transcript_words; do NOT normalize to clip start).\n"
             "- selected_fragment.fragment_analytics is REQUIRED and target_fragment must copy USER_TARGET_FRAGMENT exactly.\n"
             "fragment_analytics semantics:\n"
-            "- relation_to_target must be one of: wider | narrower | inside_13_18;\n"
-            "- chosen_action must be one of: expand | select_subfragment | none;\n"
+            "- relation_to_target must be one of: wider | inside_13_30;\n"
+            "- chosen_action must be one of: expand | none;\n"
             "- relation_to_target/chosen_action must describe your FINAL selected segment.\n"
             "Selection rules:\n"
             "- maximize overlap of selected clip with USER_TARGET_FRAGMENT;\n"
             + f"- if USER_TARGET_FRAGMENT is shorter than {CLIP_WINDOW_MIN_LABEL}s: expand context around it;\n"
-            + f"- if USER_TARGET_FRAGMENT is longer than {CLIP_WINDOW_MAX_LABEL}s: choose most expressive {CLIP_WINDOW_RANGE_LABEL}s subfragment.\n"
+            + f"- if USER_TARGET_FRAGMENT is longer than {CLIP_WINDOW_MAX_LABEL}s: keep the full fragment (do NOT narrow/select subfragment).\n"
             "- do not perform phrase grouping/draft blocks at this stage.\n"
         )
     else:
@@ -189,7 +194,14 @@ def build_stage1a_forced_alignment_user_prompt(
         "Use the attached audio as the source of truth.\n"
         "Align every word in REFERENCE_TEXT and return one timed item per word.\n"
         "REFERENCE_TEXT is the only allowed word source (no extra backing/ad-lib words).\n\n"
-        "All returned timestamps must be ABSOLUTE full-track seconds.\n\n"
+        "For aligned_words use string timestamps in mm:ss.mmm format (absolute full-track timeline).\n"
+        "mm:ss.mmm means EXACTLY 3 digits after dot.\n"
+        "Do not quantize timestamps to coarse buckets (.000/.050/.100/.250/etc.) unless acoustically exact.\n"
+        "Use real measured boundaries from audio; avoid synthetic uniform timing grids.\n"
+        "When silence gap between neighboring words is > 1.0s, also emit pause_spans items "
+        "with text=\"[pause]\" and t_start/t_end in mm:ss.mmm format.\n"
+        "pause_spans are not words and must stay between neighboring aligned words.\n\n"
+        "aligned_words/pause_spans timestamps must stay on ABSOLUTE full-track timeline.\n\n"
         "Structural markers like [pause], [bridge], [hook], [verse] are not spoken words.\n"
         "Do not output these markers in aligned_words.\n\n"
         "REFERENCE_TEXT:\n"
@@ -208,20 +220,24 @@ def build_stage1a_forced_alignment_user_prompt(
             + tf
             + "\n\n"
             "Additionally output selected_fragment with:\n"
-            + f"- audio.clip_start_abs / clip_end_abs in {CLIP_WINDOW_RANGE_LABEL} seconds total duration;\n"
+            + f"- audio.clip_start_abs / clip_end_abs duration MUST be >= {CLIP_WINDOW_MIN_LABEL}s;\n"
+            + f"- duration MAY exceed {CLIP_WINDOW_MAX_LABEL}s when needed to keep USER_TARGET_FRAGMENT fully covered;\n"
+            "- selected_fragment.audio.clip_start_abs / clip_end_abs / moment_of_interest_sec (if present) MUST use mm:ss.mmm strings;\n"
             "- selected_fragment.transcript_words only inside that clip window;\n"
+            "- selected_fragment.pause_spans only inside that clip window (optional);\n"
             "- selected_fragment.srt_items only inside that clip window (optional);\n"
-            "- selected_fragment.transcript_words/srt_items timings MUST stay ABSOLUTE full-track seconds "
+            "- selected_fragment.transcript_words.t_start/t_end, pause_spans.t_start/t_end, srt_items.start/end "
+            "MUST use mm:ss.mmm strings on ABSOLUTE full-track timeline "
             "(same global timeline as aligned_words; do NOT normalize to clip start).\n"
             "- selected_fragment.fragment_analytics is REQUIRED and target_fragment must copy USER_TARGET_FRAGMENT exactly.\n"
             "fragment_analytics semantics:\n"
-            "- relation_to_target must be one of: wider | narrower | inside_13_18;\n"
-            "- chosen_action must be one of: expand | select_subfragment | none;\n"
+            "- relation_to_target must be one of: wider | inside_13_30;\n"
+            "- chosen_action must be one of: expand | none;\n"
             "- relation_to_target/chosen_action must describe your FINAL selected segment.\n"
             "Selection rules:\n"
             "- maximize overlap of selected clip with USER_TARGET_FRAGMENT;\n"
             + f"- if USER_TARGET_FRAGMENT is shorter than {CLIP_WINDOW_MIN_LABEL}s: expand context around it;\n"
-            + f"- if USER_TARGET_FRAGMENT is longer than {CLIP_WINDOW_MAX_LABEL}s: choose most expressive {CLIP_WINDOW_RANGE_LABEL}s subfragment.\n"
+            + f"- if USER_TARGET_FRAGMENT is longer than {CLIP_WINDOW_MAX_LABEL}s: keep the full fragment (do NOT narrow/select subfragment).\n"
             "- do not perform phrase grouping/draft blocks at this stage.\n"
         )
     else:
@@ -230,9 +246,12 @@ def build_stage1a_forced_alignment_user_prompt(
             "USER_TARGET_FRAGMENT_BRANCH=OFF\n"
             "Additionally output selected_fragment with:\n"
             + f"- audio.clip_start_abs / clip_end_abs in {CLIP_WINDOW_RANGE_LABEL} seconds total duration;\n"
+            "- selected_fragment.audio.clip_start_abs / clip_end_abs / moment_of_interest_sec (if present) MUST use mm:ss.mmm strings;\n"
             "- selected_fragment.transcript_words only inside that clip window;\n"
+            "- selected_fragment.pause_spans only inside that clip window (optional).\n"
             "- selected_fragment.srt_items only inside that clip window (optional).\n"
-            "- selected_fragment.transcript_words/srt_items timings MUST stay ABSOLUTE full-track seconds "
+            "- selected_fragment.transcript_words.t_start/t_end, pause_spans.t_start/t_end, srt_items.start/end "
+            "MUST use mm:ss.mmm strings on ABSOLUTE full-track timeline "
             "(same global timeline as aligned_words; do NOT normalize to clip start).\n"
             "Selection rule:\n"
             + f"- choose the most memorable/expressive {CLIP_WINDOW_RANGE_LABEL}s moment in the track.\n"
@@ -271,10 +290,11 @@ def build_stage1b_scenario_user_prompt(
         + tf
         + "\n\n"
         "UNIVERSAL_RULES_FOR_TARGET_FRAGMENT:\n"
-        + f"- Working audio window MUST remain {CLIP_WINDOW_RANGE_LABEL} seconds.\n"
+        + f"- Working audio window MUST be >= {CLIP_WINDOW_MIN_LABEL}s.\n"
+        + f"- Working audio window MAY exceed {CLIP_WINDOW_MAX_LABEL}s when needed to keep USER_TARGET_FRAGMENT fully covered.\n"
         "- Maximize overlap of the selected working window with USER_TARGET_FRAGMENT.\n"
         + f"- If requested fragment is shorter than {CLIP_WINDOW_MIN_LABEL}s: expand context around it (left/right as needed) while keeping overlap.\n"
-        + f"- If requested fragment is longer than {CLIP_WINDOW_MAX_LABEL}s: choose the most expressive {CLIP_WINDOW_RANGE_LABEL}s subfragment.\n"
+        + f"- If requested fragment is longer than {CLIP_WINDOW_MAX_LABEL}s: keep the full fragment (do NOT narrow/select subfragment).\n"
         "- USER_TARGET_FRAGMENT is lexical source of truth for wording in this branch.\n"
         "- If transcript has recognition mistakes, fix wording in draft_blocks to match USER_TARGET_FRAGMENT while preserving timeline/order.\n"
         "- fragment_analytics.target_fragment MUST copy USER_TARGET_FRAGMENT wording exactly (no paraphrase).\n"
@@ -291,6 +311,10 @@ def _stage2_subtitles_system_by_mode(mode: str) -> str:
         return STAGE2_SUBS_IMPULSE_2ND
     if resolved == SUBTITLES_MODE_SCENES_3RD:
         return STAGE2_SUBS_SCENES_3RD
+    if resolved == SUBTITLES_MODE_SCENES_3RD_SINGLE_STEP:
+        return STAGE2_SUBS_SCENES_3RD_SINGLE_STEP
+    if resolved == SUBTITLES_MODE_TEMPLATE_4TH:
+        return STAGE2_SUBS_TEMPLATE_4TH
     raise ValueError(f"Unsupported subtitles mode: {mode!r}")
 
 
@@ -329,11 +353,25 @@ def build_stage2_subtitles_user_prompt(
                 continue
             if ts >= cs - 1e-6 and te <= ce + 1e-6:
                 words_out.append(w)
+    pauses_in = stage1_json.get("pause_spans") if isinstance(stage1_json, dict) else None
+    pauses_out: List[Dict[str, object]] = []
+    if isinstance(pauses_in, list):
+        for p in pauses_in:
+            if not isinstance(p, dict):
+                continue
+            try:
+                ts = float(p.get("t_start") or 0.0)
+                te = float(p.get("t_end") or 0.0)
+            except Exception:
+                continue
+            if ts >= cs - 1e-6 and te <= ce + 1e-6:
+                pauses_out.append(p)
 
     ctx = {
         "audio": stage1_json.get("audio"),
         "draft_blocks": stage1_json.get("draft_blocks"),
         "transcript_words": words_out,
+        "pause_spans": pauses_out,
         "lyrics_text": str(stage1_json.get("lyrics_text") or ""),
         "target_fragment": str(stage1_json.get("target_fragment") or ""),
         "fragment_analytics": stage1_json.get("fragment_analytics"),
@@ -347,6 +385,45 @@ def build_stage2_subtitles_user_prompt(
             "word_timings",
             "segments",
         ]
+
+    if resolved_mode == SUBTITLES_MODE_SCENES_3RD_SINGLE_STEP:
+        reference_text = " ".join(str(w.get("text") or "").strip() for w in words_out if str(w.get("text") or "").strip())
+        if not reference_text:
+            reference_text = str(stage1_json.get("target_fragment") or stage1_json.get("lyrics_text") or "").strip()
+        return (
+            f"Return ONLY JSON matching schema: {schema_name}\n\n"
+            "SUBTITLES_MODE:\n"
+            + json.dumps({"mode": resolved_mode}, ensure_ascii=False)
+            + "\n\n"
+            "Use attached audio as source-of-truth for timing.\n"
+            "REFERENCE_TEXT (lexical source):\n"
+            + reference_text
+            + "\n\n"
+            "STAGE1_CLIP_JSON:\n"
+            + json.dumps({"audio": stage1_json.get("audio")}, ensure_ascii=False)
+            + "\n\n"
+            "USER_CONTEXT_JSON:\n"
+            + json.dumps(
+                {
+                    "target_fragment": str(stage1_json.get("target_fragment") or ""),
+                    "lyrics_text": str(stage1_json.get("lyrics_text") or ""),
+                },
+                ensure_ascii=False,
+            )
+        )
+
+    if resolved_mode == SUBTITLES_MODE_TEMPLATE_4TH:
+        return (
+            f"Return ONLY JSON matching schema: {schema_name}\n\n"
+            "SUBTITLES_MODE:\n"
+            + json.dumps({"mode": resolved_mode}, ensure_ascii=False)
+            + "\n\n"
+            "INPUT_TRANSCRIPT_WITH_TIMECODES_JSON:\n"
+            + json.dumps(words_out, ensure_ascii=False)
+            + "\n\n"
+            "STAGE1_CLIP_JSON:\n"
+            + json.dumps({"audio": stage1_json.get("audio")}, ensure_ascii=False)
+        )
 
     return (
         f"Return ONLY JSON matching schema: {schema_name}\n\n"

@@ -728,13 +728,15 @@ def _shift_footage_to_clip_zero(
                 f"abs={c.in_point}..{c.out_point} window={cs}..{ce} -> rel={in0}..{out0}"
             )
 
+        src_off = float(getattr(c, "source_offset_sec", 0.0) or 0.0)
         shifted_clips.append(
             {
                 "file_name": c.file_name,
                 "fit_mode": c.fit_mode,
                 "in_point": in0,
                 "out_point": out0,
-                "start_time": in0,
+                "source_offset_sec": src_off,
+                "start_time": in0 - src_off,
             }
         )
 

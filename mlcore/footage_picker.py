@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from pathlib import Path
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from mlcore.models.footage_plan import FootageSelectionPayload
 from mlcore.models.footage_style import FootageStylePickPayload, FootageStyleRawPayload
@@ -17,6 +18,28 @@ _STYLE_COLOR_ALLOWED = {"dark", "light", "warm", "cold", "neutral"}
 _STYLE_MOOD_ALLOWED = {"major", "minor"}
 _STYLE_PEOPLE_ALLOWED = {"none", "girls", "guys", "couple", "crowd", "driver"}
 _CLIP_ID_RE = re.compile(r"(\d{8,})")
+
+
+def _load_global_ban_tags() -> frozenset:
+    """Parse globally banned tags from the footage selection prompt.
+
+    Reads the line:
+        NEVER use these globally banned tags: tag1, tag2, tag3.
+    Falls back to an empty set if the file or pattern is missing.
+    """
+    src = Path(__file__).resolve().parents[1] / "3rd_footage_selection_prompt" / "prompt.md"
+    if not src.exists():
+        return frozenset()
+    text = src.read_text(encoding="utf-8")
+    match = re.search(r"NEVER use these globally banned tags:\s*(.+)", text)
+    if not match:
+        return frozenset()
+    raw = match.group(1).rstrip(".").strip()
+    return frozenset(t.strip().lower() for t in raw.split(",") if t.strip())
+
+
+_GLOBAL_BAN_TAGS: frozenset = _load_global_ban_tags()
+_SELECTION_RANK_SCORE_KEY = "_selection_rank_score"
 
 
 @dataclass(frozen=True)
@@ -336,11 +359,17 @@ def _deterministic_choose(
     if not candidates:
         raise RuntimeError("deterministic choose candidates is empty")
 
-    def _sort_key(it: Dict[str, Any]) -> Tuple[str, str]:
+    def _score(it: Dict[str, Any]) -> float:
+        try:
+            return float(it.get(_SELECTION_RANK_SCORE_KEY) or 0.0)
+        except Exception:
+            return 0.0
+
+    def _sort_key(it: Dict[str, Any]) -> Tuple[float, str, str]:
         file_name = str(it["file_name"])
         material = f"{seed_value}:{interval_idx}:{interval_start:.6f}:{file_name}"
         h = hashlib.sha256(material.encode("utf-8")).hexdigest()
-        return h, file_name
+        return -_score(it), h, file_name
 
     ranked = sorted(candidates, key=_sort_key)
     avoid = str(avoid_file_name or "").strip()
@@ -369,11 +398,20 @@ def _deterministic_file_name_order(
     seed_value: int,
     interval_idx: int,
     interval_start: float,
+    scores_by_name: Dict[str, float] | None = None,
 ) -> List[str]:
-    def _key(name: str) -> Tuple[str, str]:
+    def _score(name: str) -> float:
+        if not scores_by_name:
+            return 0.0
+        try:
+            return float(scores_by_name.get(name) or 0.0)
+        except Exception:
+            return 0.0
+
+    def _key(name: str) -> Tuple[float, str, str]:
         material = f"{seed_value}:{interval_idx}:{interval_start:.6f}:{name}"
         h = hashlib.sha256(material.encode("utf-8")).hexdigest()
-        return h, name
+        return -_score(name), h, name
 
     return sorted(file_names, key=_key)
 
@@ -396,6 +434,12 @@ def _assign_unique_file_names_for_intervals(
             "insufficient unique assets for strict no-repeat policy: "
             f"need={len(intervals)} have={len(by_name)}"
         )
+    scores_by_name: Dict[str, float] = {}
+    for nm, it in by_name.items():
+        try:
+            scores_by_name[nm] = float(it.get(_SELECTION_RANK_SCORE_KEY) or 0.0)
+        except Exception:
+            scores_by_name[nm] = 0.0
 
     candidates: List[List[str]] = []
     for idx, (a, b) in enumerate(intervals):
@@ -412,6 +456,7 @@ def _assign_unique_file_names_for_intervals(
                 seed_value=seed_value,
                 interval_idx=idx,
                 interval_start=float(a),
+                scores_by_name=scores_by_name,
             )
         )
 
@@ -443,6 +488,155 @@ def _assign_unique_file_names_for_intervals(
     return out
 
 
+def _build_raw_pool(
+    raw_pick: FootageStyleRawPayload,
+    assets: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Build a scored clip pool from a single raw subgroup payload."""
+    priority_tags = {_normalize_theme_tag(x) for x in raw_pick.filters.priority_theme_tags}
+    priority_tags.discard("")
+    exclude_people = {_normalize_people_type(x) for x in (raw_pick.filters.exclude or [])}
+    exclude_people.discard("")
+    exclude_terms = {_normalize_theme_tag(x) for x in (raw_pick.filters.exclude_tags or [])}
+    exclude_terms.discard("")
+    require_people = _normalize_people_type(raw_pick.filters.require_people or "") or None
+
+    pool: List[Dict[str, Any]] = []
+    for it in assets:
+        meta_tags = {_normalize_theme_tag(x) for x in (it.get("meta_theme_tags") or [])}
+        meta_tags.discard("")
+        overlap = len(priority_tags.intersection(meta_tags))
+        if overlap <= 0:
+            continue
+        people = _normalize_people_type(it.get("meta_people_type"))
+        inv_tag = _normalize_theme_tag(it.get("tag"))
+        if (
+            (people and people in exclude_people)
+            or exclude_terms.intersection(meta_tags)
+            or (inv_tag and inv_tag in exclude_terms)
+            or _GLOBAL_BAN_TAGS.intersection(meta_tags)
+        ):
+            continue
+        if require_people and people != require_people:
+            continue
+        row = dict(it)
+        row[_SELECTION_RANK_SCORE_KEY] = float(overlap)
+        pool.append(row)
+    return pool
+
+
+def _source_offset_enabled() -> bool:
+    import os
+    return os.environ.get("FOOTAGE_SOURCE_OFFSET_ENABLED", "1").strip() not in ("0", "false", "no", "off")
+
+
+def _deterministic_source_offset(
+    *,
+    file_name: str,
+    asset_duration_sec: float,
+    interval_len: float,
+    seed_value: int,
+    interval_idx: int,
+) -> float:
+    """Return a deterministic random start offset within the source video.
+
+    The offset is clamped so that the source has enough remaining footage to
+    cover the full interval duration.  A small safety margin (0.1 s) is kept.
+    Returns 0.0 when there is no room to offset.
+    """
+    safety = 0.1
+    max_offset = float(asset_duration_sec) - float(interval_len) - safety
+    if max_offset < safety:
+        return 0.0
+    material = f"srcoff:{seed_value}:{interval_idx}:{file_name}"
+    h = int(hashlib.sha256(material.encode("utf-8")).hexdigest()[:16], 16)
+    frac = h / (2 ** 64)
+    return round(frac * max_offset, 3)
+
+
+def _assign_rotation_file_names(
+    *,
+    intervals: List[Tuple[float, float]],
+    subgroup_pools: List[List[Dict[str, Any]]],
+    seed_value: int,
+    excluded_names: set,
+) -> Tuple[List[str], bool]:
+    """
+    Assign file names to intervals using per-block subgroup rotation.
+
+    Intervals are split into len(subgroup_pools) roughly equal blocks.
+    Each block pulls from its subgroup's pool first; falls back to merged pool,
+    then allows repeats as last resort.
+
+    Returns (assigned_file_names, repeats_used).
+    """
+    n = len(intervals)
+    k = len(subgroup_pools)
+    block_size = math.ceil(n / k)
+
+    # Merged fallback pool (all subgroups combined, deduped)
+    merged_all = _dedupe_assets_by_file_name([it for pool in subgroup_pools for it in pool])
+    merged = [it for it in merged_all if str(it.get("file_name") or "") not in excluded_names]
+
+    all_assigned: List[str] = []
+    repeats_used = False
+
+    for block_idx in range(k):
+        start = block_idx * block_size
+        end = min(start + block_size, n)
+        if start >= n:
+            break
+        block_intervals = intervals[start:end]
+
+        pool_all = _dedupe_assets_by_file_name(subgroup_pools[block_idx])
+        pool = [it for it in pool_all if str(it.get("file_name") or "") not in excluded_names]
+
+        # Prefer assets not already used in previous blocks
+        used = set(all_assigned)
+        pool_fresh = [it for it in pool if str(it.get("file_name") or "") not in used]
+        merged_fresh = [it for it in merged if str(it.get("file_name") or "") not in used]
+
+        block_assigned: Optional[List[str]] = None
+        for candidate_pool in [pool_fresh, pool, merged_fresh, merged]:
+            if not candidate_pool:
+                continue
+            try:
+                block_assigned = _assign_unique_file_names_for_intervals(
+                    intervals=block_intervals,
+                    pool=candidate_pool,
+                    seed_value=seed_value,
+                )
+                break
+            except RuntimeError:
+                continue
+
+        if block_assigned is None:
+            # Last resort: allow repeats via deterministic choice
+            repeats_used = True
+            block_assigned = []
+            prev: Optional[str] = all_assigned[-1] if all_assigned else None
+            fallback_pool = pool or merged
+            for gi, (a, b) in enumerate(block_intervals):
+                need = float(b - a)
+                candidates = [it for it in fallback_pool if _fits_interval(it, interval_len=need)]
+                if not candidates:
+                    candidates = fallback_pool
+                chosen = _deterministic_choose(
+                    candidates=candidates,
+                    seed_value=seed_value,
+                    interval_idx=start + gi,
+                    interval_start=float(a),
+                    avoid_file_name=prev,
+                )
+                nm = str(chosen["file_name"])
+                block_assigned.append(nm)
+                prev = nm
+
+        all_assigned.extend(block_assigned)
+
+    return all_assigned, repeats_used
+
+
 def pick_footage_clips_by_intervals_deterministic(
     *,
     style_pick: FootageStylePickPayload,
@@ -453,6 +647,8 @@ def pick_footage_clips_by_intervals_deterministic(
     seed_key: str,
     fit_mode: str = "cover",
     exclude_file_names: List[str] | None = None,
+    raw_pick: FootageStyleRawPayload | None = None,
+    raw_picks: List[FootageStyleRawPayload] | None = None,
 ) -> Tuple[FootageSelectionPayload, FootageIntervalPickerDiagnostics]:
     genre = str(style_pick.genre).strip()
     tag = str(style_pick.tag).strip()
@@ -467,9 +663,144 @@ def pick_footage_clips_by_intervals_deterministic(
     if not intervals:
         raise RuntimeError("No intervals were built from switch points")
 
-    primary_pool = [it for it in assets if str(it["genre"]) == genre and str(it["tag"]) == tag]
-    if not primary_pool:
-        raise RuntimeError(f"No assets for selected style genre={genre!r} tag={tag!r}")
+    # ── Subgroup rotation path ────────────────────────────────────────────────
+    if raw_picks is not None and len(raw_picks) > 0:
+        seed_value = deterministic_seed_from_key(seed_key)
+        excluded_names = {str(x).strip() for x in list(exclude_file_names or []) if str(x).strip()}
+
+        subgroup_pools = [_build_raw_pool(rp, assets) for rp in raw_picks]
+        non_empty = [p for p in subgroup_pools if p]
+        if not non_empty:
+            raise RuntimeError(
+                "No assets satisfy any subgroup filters in raw_picks rotation "
+                f"(subgroups={len(raw_picks)})"
+            )
+        # If some pools are empty — fill them with the merged non-empty pool
+        # so every block still has candidates.
+        merged_fallback = _dedupe_assets_by_file_name([it for p in non_empty for it in p])
+        subgroup_pools = [p if p else list(merged_fallback) for p in subgroup_pools]
+
+        assigned_file_names, repeats_used = _assign_rotation_file_names(
+            intervals=intervals,
+            subgroup_pools=subgroup_pools,
+            seed_value=seed_value,
+            excluded_names=excluded_names,
+        )
+
+        by_name: Dict[str, Dict[str, Any]] = {}
+        for p in subgroup_pools:
+            for it in p:
+                nm = str(it.get("file_name") or "").strip()
+                if nm and nm not in by_name:
+                    by_name[nm] = it
+        # also include excluded-pool assets for clip building (they may appear via relaxed fallback)
+        for it in assets:
+            nm = str(it.get("file_name") or "").strip()
+            if nm and nm not in by_name:
+                by_name[nm] = it
+
+        offset_enabled = _source_offset_enabled()
+        clips: List[Dict[str, Any]] = []
+        for idx, (a, b) in enumerate(intervals):
+            chosen_name = str(assigned_file_names[idx])
+            asset_dur = float((by_name.get(chosen_name) or {}).get("duration_sec") or 0.0)
+            src_off = (
+                _deterministic_source_offset(
+                    file_name=chosen_name,
+                    asset_duration_sec=asset_dur,
+                    interval_len=float(b - a),
+                    seed_value=seed_value,
+                    interval_idx=idx,
+                )
+                if offset_enabled and asset_dur > 0
+                else 0.0
+            )
+            clips.append(
+                {
+                    "file_name": chosen_name,
+                    "fit_mode": fit_mode,
+                    "in_point": float(a),
+                    "out_point": float(b),
+                    "source_offset_sec": src_off,
+                    "start_time": float(a) - src_off,
+                }
+            )
+
+        selected_excluded_count = sum(1 for x in assigned_file_names if str(x) in excluded_names)
+        payload = FootageSelectionPayload.model_validate({"clips": clips, "allow_gaps": False})
+        diag = FootageIntervalPickerDiagnostics(
+            genre="__raw_rotation__",
+            tag=str(raw_picks[0].theme),
+            intervals_count=len(intervals),
+            max_interval_sec=max(float(b - a) for a, b in intervals),
+            primary_pool_count=sum(len(p) for p in subgroup_pools),
+            selected_pool_count=len(by_name),
+            widened_to_genre=False,
+            widened_to_global=False,
+            repeats_used=bool(repeats_used),
+            excluded_input_count=len(excluded_names),
+            selected_excluded_count=int(selected_excluded_count),
+            exclude_relaxed=False,
+            deterministic_seed=int(seed_value),
+            seed_key=str(seed_key),
+            selected_file_names=[str(x) for x in assigned_file_names],
+        )
+        return payload, diag
+    # ── End rotation path ─────────────────────────────────────────────────────
+
+    use_raw_global = raw_pick is not None
+
+    if use_raw_global:
+        priority_tags = {_normalize_theme_tag(x) for x in list(raw_pick.filters.priority_theme_tags or [])}
+        priority_tags.discard("")
+        if not priority_tags:
+            raise RuntimeError("Raw footage selection requires non-empty priority_theme_tags")
+        exclude_people = {_normalize_people_type(x) for x in list(raw_pick.filters.exclude or [])}
+        exclude_people.discard("")
+        exclude_terms = {_normalize_theme_tag(x) for x in list(raw_pick.filters.exclude_tags or [])}
+        exclude_terms.discard("")
+        require_people = _normalize_people_type(raw_pick.filters.require_people or "") or None
+
+        # Raw tag-first mode:
+        # - strict ban if asset matches exclude (people type OR metadata tag OR inventory tag),
+        # - score is pure overlap count with priority_theme_tags.
+        primary_pool = []
+        for it in assets:
+            meta_tags = {_normalize_theme_tag(x) for x in list(it.get("meta_theme_tags") or [])}
+            meta_tags.discard("")
+            overlap = int(len(priority_tags.intersection(meta_tags)))
+            if overlap <= 0:
+                continue
+            people = _normalize_people_type(it.get("meta_people_type"))
+            inv_tag = _normalize_theme_tag(it.get("tag"))
+            excluded = bool(
+                (people and people in exclude_people)
+                or (exclude_terms.intersection(meta_tags))
+                or (inv_tag and inv_tag in exclude_terms)
+                or bool(_GLOBAL_BAN_TAGS.intersection(meta_tags))
+            )
+            if excluded:
+                continue
+            if require_people and people != require_people:
+                continue
+            score = float(overlap)
+            row = dict(it)
+            row[_SELECTION_RANK_SCORE_KEY] = score
+            primary_pool.append(row)
+        if not primary_pool:
+            raise RuntimeError(
+                "No mapped assets satisfy raw filters after strict exclude ban "
+                "(priority_theme_tags overlap required) "
+                f"tags={sorted(priority_tags)!r} exclude={sorted(exclude_terms)!r}"
+            )
+    else:
+        primary_pool = [
+            it for it in assets
+            if str(it["genre"]) == genre and str(it["tag"]) == tag
+            and not _GLOBAL_BAN_TAGS.intersection({_normalize_theme_tag(x) for x in list(it.get("meta_theme_tags") or [])})
+        ]
+        if not primary_pool:
+            raise RuntimeError(f"No assets for selected style genre={genre!r} tag={tag!r}")
 
     widened_to_genre = False
     widened_to_global = False
@@ -495,7 +826,7 @@ def pick_footage_clips_by_intervals_deterministic(
 
     assigned_file_names = _try_assign(selected_pool)
 
-    if assigned_file_names is None:
+    if assigned_file_names is None and not use_raw_global:
         widen_pool = [it for it in assets if str(it["genre"]) == genre and str(it["tag"]) != tag]
         if widen_pool:
             selected_pool_all = _dedupe_assets_by_file_name(selected_pool_all + widen_pool)
@@ -503,7 +834,7 @@ def pick_footage_clips_by_intervals_deterministic(
             widened_to_genre = True
             assigned_file_names = _try_assign(selected_pool)
 
-    if assigned_file_names is None:
+    if assigned_file_names is None and not use_raw_global:
         global_pool = [it for it in assets if str(it["genre"]) != genre]
         if global_pool:
             selected_pool_all = _dedupe_assets_by_file_name(selected_pool_all + global_pool)
@@ -518,6 +849,7 @@ def pick_footage_clips_by_intervals_deterministic(
     by_name = {str(it["file_name"]): it for it in selected_pool_all}
     clips: List[Dict[str, Any]] = []
     repeats_used = False
+    offset_enabled = _source_offset_enabled()
 
     if assigned_file_names is None:
         repeats_used = True
@@ -546,13 +878,26 @@ def pick_footage_clips_by_intervals_deterministic(
                 avoid_file_name=prev_file_name,
             )
             chosen_name = str(chosen["file_name"])
+            asset_dur = float(chosen.get("duration_sec") or 0.0)
+            src_off = (
+                _deterministic_source_offset(
+                    file_name=chosen_name,
+                    asset_duration_sec=asset_dur,
+                    interval_len=need,
+                    seed_value=seed_value,
+                    interval_idx=idx,
+                )
+                if offset_enabled and asset_dur > 0
+                else 0.0
+            )
             clips.append(
                 {
                     "file_name": chosen_name,
                     "fit_mode": fit_mode,
                     "in_point": float(a),
                     "out_point": float(b),
-                    "start_time": float(a),
+                    "source_offset_sec": src_off,
+                    "start_time": float(a) - src_off,
                 }
             )
             prev_file_name = chosen_name
@@ -562,13 +907,26 @@ def pick_footage_clips_by_intervals_deterministic(
             chosen_name = str(assigned_file_names[idx])
             if chosen_name not in by_name:
                 raise RuntimeError(f"assigned file_name not present in selected pool: {chosen_name!r}")
+            asset_dur = float((by_name.get(chosen_name) or {}).get("duration_sec") or 0.0)
+            src_off = (
+                _deterministic_source_offset(
+                    file_name=chosen_name,
+                    asset_duration_sec=asset_dur,
+                    interval_len=float(b - a),
+                    seed_value=seed_value,
+                    interval_idx=idx,
+                )
+                if offset_enabled and asset_dur > 0
+                else 0.0
+            )
             clips.append(
                 {
                     "file_name": chosen_name,
                     "fit_mode": fit_mode,
                     "in_point": float(a),
                     "out_point": float(b),
-                    "start_time": float(a),
+                    "source_offset_sec": src_off,
+                    "start_time": float(a) - src_off,
                 }
             )
 
@@ -576,10 +934,16 @@ def pick_footage_clips_by_intervals_deterministic(
     if excluded_names:
         selected_excluded_count = sum(1 for x in assigned_file_names if str(x) in excluded_names)
 
+    diag_genre = genre
+    diag_tag = tag
+    if use_raw_global and raw_pick is not None:
+        diag_genre = "__raw_global__"
+        diag_tag = str(raw_pick.theme)
+
     payload = FootageSelectionPayload.model_validate({"clips": clips, "allow_gaps": False})
     diag = FootageIntervalPickerDiagnostics(
-        genre=genre,
-        tag=tag,
+        genre=diag_genre,
+        tag=diag_tag,
         intervals_count=len(intervals),
         max_interval_sec=max(float(b - a) for a, b in intervals),
         primary_pool_count=len(primary_pool),

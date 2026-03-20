@@ -277,6 +277,132 @@ def test_scenes_reference_postprocess_extends_boundary_from_gap(monkeypatch) -> 
     assert float(mine_precomp.get("out_point")) < 12.0 - (1.0 / 23.976) + 1e-6
 
 
+def test_scenes_type4_short_word_gets_min_hold_when_gap_allows(monkeypatch) -> None:
+    planner = SubtitlesPlannerFactory.create("scenes_3rd")
+    payload = Scenes3rdPayload.model_validate(
+        {
+            "clip": {"start": 10.0, "end": 24.0},
+            "scenes": [
+                {
+                    "id": 1,
+                    "type": "TYPE_4",
+                    "words": ["boom"],
+                    "start": 10.0,
+                    "end": 10.05,
+                    "lines": [["boom"]],
+                    "focus_word": "boom",
+                    "focus_style": "red",
+                    "word_timings": [
+                        {"word": "boom", "start": 10.0, "end": 10.05},
+                    ],
+                },
+                {
+                    "id": 2,
+                    "type": "TYPE_1",
+                    "words": ["stay", "with", "me"],
+                    "start": 12.0,
+                    "end": 13.0,
+                    "lines": [["stay", "with"], ["me"]],
+                    "word_timings": [
+                        {"word": "stay", "start": 12.0, "end": 12.3},
+                        {"word": "with", "start": 12.35, "end": 12.65},
+                        {"word": "me", "start": 12.7, "end": 13.0},
+                    ],
+                },
+            ],
+        }
+    )
+    flow = planner.normalize_payload(payload=payload, stage1=_stage1(), logger=logging.getLogger("test"))
+    monkeypatch.setenv("TEXT_LAYER_TIME_SHIFT_S", "0")
+    layers = build_text_layers(
+        full_edit_config={
+            "subtitles_mode": "scenes_3rd",
+            "subtitle_flow_plan": flow.model_dump(mode="json"),
+            "composition": {"fps": 23.976, "dur": 14.0},
+        },
+        text_comp_name="Текст",
+        mine_comp_name='Текст "Mine"',
+    )
+
+    mine_precomp = next(
+        x
+        for x in layers
+        if str(x.get("type")) == "precomp"
+        and str(x.get("name")) == 'Текст "Mine"'
+        and abs(float(x.get("in_point")) - 10.0) < 1e-6
+    )
+    assert float(mine_precomp.get("out_point")) >= 10.44 - 1e-6
+    assert float(mine_precomp.get("out_point")) < 12.0 - (1.0 / 23.976) + 1e-6
+
+
+def test_scenes_type4_retimes_intro_and_exit_to_keep_active_window(monkeypatch) -> None:
+    planner = SubtitlesPlannerFactory.create("scenes_3rd")
+    payload = Scenes3rdPayload.model_validate(
+        {
+            "clip": {"start": 10.0, "end": 24.0},
+            "scenes": [
+                {
+                    "id": 1,
+                    "type": "TYPE_4",
+                    "words": ["boom", "now"],
+                    "start": 10.0,
+                    "end": 11.27,
+                    "lines": [["boom", "now"]],
+                    "focus_word": "boom now",
+                    "focus_style": "red",
+                    "word_timings": [
+                        {"word": "boom", "start": 10.0, "end": 10.5},
+                        {"word": "now", "start": 10.5, "end": 11.27},
+                    ],
+                },
+            ],
+        }
+    )
+    flow = planner.normalize_payload(payload=payload, stage1=_stage1(), logger=logging.getLogger("test"))
+    monkeypatch.setenv("TEXT_LAYER_TIME_SHIFT_S", "0")
+    layers = build_text_layers(
+        full_edit_config={
+            "subtitles_mode": "scenes_3rd",
+            "subtitle_flow_plan": flow.model_dump(mode="json"),
+            "composition": {"fps": 23.976, "dur": 14.0},
+        },
+        text_comp_name="Текст",
+        mine_comp_name='Текст "Mine"',
+    )
+
+    mine_precomp = next(
+        x
+        for x in layers
+        if str(x.get("type")) == "precomp"
+        and str(x.get("name")) == 'Текст "Mine"'
+    )
+    glow_precomp = next(
+        x
+        for x in layers
+        if str(x.get("type")) == "precomp"
+        and str(x.get("name")) == 'Текст "Mine" glow'
+    )
+    mine_text = next(
+        x
+        for x in layers
+        if str(x.get("type")) == "text"
+        and str(x.get("name")) == "mine"
+    )
+
+    glow_kfs = (((glow_precomp.get("props") or {}).get("tf_scale") or {}).get("keyframes") or [])
+    assert len(glow_kfs) >= 2
+    appearance_end = float(glow_kfs[1]["t"])
+    # Base intro is 0.5s in reference; retimed intro should be shorter for this short window.
+    assert appearance_end - float(mine_precomp.get("in_point")) < 0.5 - 1e-6
+
+    mine_opacity_kfs = (((mine_text.get("props") or {}).get("layer_opacity") or {}).get("keyframes") or [])
+    assert len(mine_opacity_kfs) >= 2
+    fade_start = float(mine_opacity_kfs[0]["t"])
+
+    active_window = fade_start - appearance_end
+    assert active_window >= 1.0 - 1e-6
+
+
 def test_scenes_type3_builds_progressive_layers(monkeypatch) -> None:
     planner = SubtitlesPlannerFactory.create("scenes_3rd")
     payload = Scenes3rdPayload.model_validate(

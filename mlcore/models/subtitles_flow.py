@@ -7,6 +7,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from core.subtitles_mode import (
     SUBTITLES_MODE_IMPULSE_2ND,
     SUBTITLES_MODE_SCENES_3RD,
+    SUBTITLES_MODE_SCENES_3RD_SINGLE_STEP,
+    SUBTITLES_MODE_TEMPLATE_4TH,
     SubtitlesMode,
 )
 from .subtitles_tokens import ClipWindow
@@ -16,6 +18,7 @@ class SubtitleFlowToken(BaseModel):
     text: str = Field(min_length=1)
     t_start: float = Field(ge=0.0)
     t_end: float = Field(ge=0.0)
+    focus: bool = False
 
     @model_validator(mode="after")
     def _check_time(self) -> "SubtitleFlowToken":
@@ -36,6 +39,7 @@ class SubtitleFlowSegment(BaseModel):
     tokens: List[SubtitleFlowToken] = Field(default_factory=list)
     focus_word: Optional[str] = None
     focus_style: Optional[str] = None
+    reason: Optional[str] = None
 
     @model_validator(mode="after")
     def _check_timing(self) -> "SubtitleFlowSegment":
@@ -46,6 +50,10 @@ class SubtitleFlowSegment(BaseModel):
             )
         if not self.lines:
             self.lines = [self.text]
+        if self.reason is not None:
+            self.reason = str(self.reason).strip()
+            if not self.reason:
+                raise ValueError("segment.reason must be non-empty when provided")
         return self
 
 
@@ -199,6 +207,7 @@ class Scene3rdPayloadScene(BaseModel):
     lines: List[List[str]] = Field(default_factory=list)
     focus_word: Optional[str] = None
     focus_style: Optional[Literal["italic", "red"]] = None
+    reason: Optional[str] = None
     word_timings: List[SceneWordTimingPayload] = Field(default_factory=list)
 
     @model_validator(mode="after")
@@ -207,6 +216,10 @@ class Scene3rdPayloadScene(BaseModel):
             raise ValueError(f"scene.end must be > scene.start (id={self.id}, {self.start}..{self.end})")
         if not self.lines:
             self.lines = [list(self.words)]
+        if self.reason is not None:
+            self.reason = str(self.reason).strip()
+            if not self.reason:
+                raise ValueError("scene.reason must be non-empty when provided")
         return self
 
 
@@ -217,3 +230,45 @@ class Scenes3rdPayload(BaseModel):
     @property
     def mode(self) -> str:
         return SUBTITLES_MODE_SCENES_3RD
+
+
+class Template4WordTimingPayload(BaseModel):
+    word: str = Field(min_length=1)
+    start: float = Field(ge=0.0)
+    end: float = Field(ge=0.0)
+    focus: bool = False
+
+    @model_validator(mode="after")
+    def _check_time(self) -> "Template4WordTimingPayload":
+        if self.end <= self.start:
+            raise ValueError(f"word_timing.end must be > start (got {self.start}..{self.end})")
+        return self
+
+
+class Template4SubtitlePayload(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    text: str = Field(min_length=1)
+    in_point: float = Field(alias="in", ge=0.0)
+    out_point: float = Field(alias="out", ge=0.0)
+
+    @model_validator(mode="after")
+    def _check_time(self) -> "Template4SubtitlePayload":
+        if self.out_point <= self.in_point:
+            raise ValueError(f"subtitle.out must be > subtitle.in (got {self.in_point}..{self.out_point})")
+        return self
+
+
+class Template4Payload(BaseModel):
+    word_timings: List[Template4WordTimingPayload] = Field(default_factory=list)
+    subtitles: List[Template4SubtitlePayload] = Field(min_length=1)
+
+    @property
+    def mode(self) -> str:
+        return SUBTITLES_MODE_TEMPLATE_4TH
+
+
+class Scenes3rdSingleStepPayload(Scenes3rdPayload):
+    @property
+    def mode(self) -> str:
+        return SUBTITLES_MODE_SCENES_3RD_SINGLE_STEP

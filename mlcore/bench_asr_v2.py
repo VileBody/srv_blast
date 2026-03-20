@@ -4,7 +4,10 @@ from dataclasses import dataclass
 import re
 from typing import Any, Iterable, List, Sequence, Tuple
 
-from mlcore.models.stage1_forced_alignment import ForcedAlignedWord, Stage1ForcedAlignmentPayload
+from mlcore.models.stage1_forced_alignment import (
+    ForcedAlignedWord,
+    Stage1ForcedAlignmentPayload,
+)
 
 _RE_LEFT_TRIM = re.compile(r"^[^\w]+", flags=re.UNICODE)
 _RE_RIGHT_TRIM = re.compile(r"[^\w]+$", flags=re.UNICODE)
@@ -222,8 +225,8 @@ def validate_forced_alignment_strict(
             raise ValueError(f"aligned_words[{idx}] normalized text is empty")
         if ref_word and norm != ref_word:
             warnings.append(f"aligned_words[{idx}] mismatch: got={norm!r} expected={ref_word!r}")
-        ts = float(word.t_start)
-        te = float(word.t_end)
+        ts = float(word.t_start_sec)
+        te = float(word.t_end_sec)
         if te <= ts:
             raise ValueError(f"aligned_words[{idx}] invalid timing: {ts}..{te}")
         if idx > 0 and ts < prev_start:

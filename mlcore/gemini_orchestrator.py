@@ -50,11 +50,11 @@ from mlcore.footage_picker import (
 )
 from mlcore.gemini_postprocess import render_all_steps
 from mlcore.models.footage_plan import FootageSelectionPayload
-from mlcore.models.footage_style import FootageStylePickPayload, FootageStyleRawPayload
+from mlcore.models.footage_style import FootageStylePickPayload, FootageStyleRawPayload, FootageStyleRotation
 from mlcore.models.full_plan import FullPlanPayload
 from mlcore.models.stage1_asr import Stage1AsrPayload, Stage1AsrSelectedFragment
-from mlcore.models.stage1_forced_alignment import Stage1ForcedAlignmentPayload
-from mlcore.models.stage1_plan import FragmentAnalytics, Stage1PlanPayload
+from mlcore.models.stage1_forced_alignment import Stage1ForcedAlignmentPayload, parse_forced_timecode_mmss_mmm
+from mlcore.models.stage1_plan import FragmentAnalytics, PauseSpan, Stage1PlanPayload
 from mlcore.models.stage1_plan import TranscriptWord
 from mlcore.models.stage1_scenario import Stage1ScenarioPayload
 from mlcore.models.subtitles_spans import BlocksTokenSpansPayload, TokenSpan
@@ -84,13 +84,24 @@ from mlcore.prompts import (
     build_stage2_timing_cuts_user_prompt,
 )
 from mlcore.stage1_tools import align_stage1_draft_to_transcript, build_stage1_report
-from core.subtitles_mode import SUBTITLES_MODE_LEGACY_BLOCKS, normalize_subtitles_mode
+from core.subtitles_mode import (
+    SUBTITLES_MODE_LEGACY_BLOCKS,
+    SUBTITLES_MODE_SCENES_3RD_SINGLE_STEP,
+    normalize_subtitles_mode,
+)
 from core.runtime_mode import get_runtime_mode, MODE_DEV, MODE_PROD
+from core.clip_window import (
+    CLIP_WINDOW_MAX_LABEL,
+    CLIP_WINDOW_MAX_SECONDS,
+    CLIP_WINDOW_MIN_LABEL,
+    CLIP_WINDOW_MIN_SECONDS,
+)
 
 
 ROOT = Path(__file__).resolve().parent.parent
 MODEL_VALIDATION_IMMEDIATE_RETRIES = 2
 _STRUCTURAL_TAG_TOKEN_RE = re.compile(r"^\[[a-zа-яё0-9_\-:+./]+\]$", flags=re.IGNORECASE)
+_SCENES_3RD_SINGLE_STEP_MODEL = "gemini-2.5-pro"
 
 
 def _stamp() -> str:
@@ -397,6 +408,62 @@ def _reference_words_from_user_text(text: str) -> List[str]:
     return out
 
 
+def _stage1a_pause_min_gap_sec() -> float:
+    try:
+        v = float(os.environ.get("STAGE1A_PAUSE_MIN_GAP_S", "1.0"))
+    except Exception:
+        v = 1.0
+    return max(0.1, float(v))
+
+
+def _derive_pause_spans_from_aligned_words(
+    *,
+    aligned_words: List[Any],
+    min_gap_sec: float,
+) -> List[Dict[str, float | str]]:
+    out: List[Dict[str, float | str]] = []
+    if len(aligned_words) < 2:
+        return out
+
+    for i in range(len(aligned_words) - 1):
+        cur = aligned_words[i]
+        nxt = aligned_words[i + 1]
+        try:
+            cur_end = float(getattr(cur, "t_end_sec"))
+            next_start = float(getattr(nxt, "t_start_sec"))
+        except Exception:
+            try:
+                cur_end = parse_forced_timecode_mmss_mmm(str(getattr(cur, "t_end")))
+                next_start = parse_forced_timecode_mmss_mmm(str(getattr(nxt, "t_start")))
+            except Exception:
+                continue
+        gap = next_start - cur_end
+        if gap > float(min_gap_sec) + 1e-6:
+            out.append(
+                {
+                    "text": "[pause]",
+                    "t_start": float(cur_end),
+                    "t_end": float(next_start),
+                }
+            )
+    return out
+
+
+def _pause_spans_in_window(
+    *,
+    pause_spans: List[PauseSpan],
+    start_abs: float,
+    end_abs: float,
+) -> List[PauseSpan]:
+    out: List[PauseSpan] = []
+    for p in pause_spans:
+        ps = float(p.t_start)
+        pe = float(p.t_end)
+        if ps >= float(start_abs) - 1e-6 and pe <= float(end_abs) + 1e-6:
+            out.append(p)
+    return out
+
+
 def _validate_forced_alignment_payload(
     *,
     payload: Stage1ForcedAlignmentPayload,
@@ -430,8 +497,8 @@ def _validate_forced_alignment_payload(
             )
             mismatch_count += 1
 
-        ts = float(got.t_start)
-        te = float(got.t_end)
+        ts = float(got.t_start_sec)
+        te = float(got.t_end_sec)
         if idx > 0 and ts < prev_start:
             logger.warning(
                 "stage1a_forced_non_monotonic_t_start idx=%d ts=%s prev_start=%s (continuing)",
@@ -456,22 +523,128 @@ def _validate_forced_alignment_payload(
     if non_monotonic_count > 0:
         logger.warning("stage1a_forced_non_monotonic_total count=%d (continuing)", non_monotonic_count)
 
+    min_gap_sec = _stage1a_pause_min_gap_sec()
+    if payload.pause_spans:
+        short_count = 0
+        for idx, p in enumerate(payload.pause_spans):
+            dur = float(p.t_end_sec) - float(p.t_start_sec)
+            if dur + 1e-6 < min_gap_sec:
+                logger.warning(
+                    "stage1a_forced_pause_short idx=%d dur=%.3f threshold=%.3f (continuing)",
+                    idx,
+                    dur,
+                    min_gap_sec,
+                )
+                short_count += 1
+        if short_count > 0:
+            logger.warning("stage1a_forced_pause_short_total count=%d (continuing)", short_count)
+
+    derived = _derive_pause_spans_from_aligned_words(
+        aligned_words=list(payload.aligned_words),
+        min_gap_sec=min_gap_sec,
+    )
+    if derived and not payload.pause_spans:
+        logger.warning(
+            "stage1a_forced_pause_spans_missing expected=%d threshold=%.3f action=derive_postprocess",
+            len(derived),
+            min_gap_sec,
+        )
+    logger.info(
+        "stage1a_forced_pause_spans counts payload=%d derived=%d threshold=%.3f",
+        len(payload.pause_spans),
+        len(derived),
+        min_gap_sec,
+    )
+
 
 def _stage1_asr_from_forced_alignment(payload: Stage1ForcedAlignmentPayload) -> Stage1AsrPayload:
+    min_gap_sec = _stage1a_pause_min_gap_sec()
     transcript_words = [
         {
             "text": str(w.text),
-            "t_start": float(w.t_start),
-            "t_end": float(w.t_end),
+            "t_start": float(w.t_start_sec),
+            "t_end": float(w.t_end_sec),
         }
         for w in payload.aligned_words
     ]
+    pause_spans = [
+        {
+            "text": "[pause]",
+            "t_start": float(p.t_start_sec),
+            "t_end": float(p.t_end_sec),
+        }
+        for p in payload.pause_spans
+    ]
+    if not pause_spans:
+        pause_spans = _derive_pause_spans_from_aligned_words(
+            aligned_words=list(payload.aligned_words),
+            min_gap_sec=min_gap_sec,
+        )
     out: Dict[str, Any] = {
         "transcript_words": transcript_words,
+        "pause_spans": pause_spans,
         "srt_items": [],
     }
     if payload.selected_fragment is not None:
-        out["selected_fragment"] = payload.selected_fragment.model_dump(mode="json")
+        sf = payload.selected_fragment
+        selected_audio = sf.audio
+        selected_obj: Dict[str, Any] = {
+            "audio": {
+                "clip_start_abs": float(selected_audio.clip_start_abs_sec),
+                "clip_end_abs": float(selected_audio.clip_end_abs_sec),
+                "moment_of_interest_sec": (
+                    float(selected_audio.moment_of_interest_sec_value)
+                    if selected_audio.moment_of_interest_sec_value is not None
+                    else None
+                ),
+            },
+            "transcript_words": [
+                {
+                    "text": str(w.text),
+                    "t_start": float(w.t_start_sec),
+                    "t_end": float(w.t_end_sec),
+                }
+                for w in sf.transcript_words
+            ],
+            "pause_spans": [
+                {
+                    "text": "[pause]",
+                    "t_start": float(p.t_start_sec),
+                    "t_end": float(p.t_end_sec),
+                }
+                for p in sf.pause_spans
+            ],
+            "srt_items": [
+                {
+                    "start": float(it.start_sec),
+                    "end": float(it.end_sec),
+                    "text": str(it.text),
+                }
+                for it in sf.srt_items
+            ],
+            "fragment_analytics": (
+                sf.fragment_analytics.model_dump(mode="json")
+                if sf.fragment_analytics is not None
+                else None
+            ),
+        }
+        if not selected_obj.get("pause_spans"):
+            selected_obj["pause_spans"] = [
+                {
+                    "text": "[pause]",
+                    "t_start": float(p.t_start),
+                    "t_end": float(p.t_end),
+                }
+                for p in _pause_spans_in_window(
+                    pause_spans=[
+                        PauseSpan.model_validate(p)
+                        for p in pause_spans
+                    ],
+                    start_abs=float(selected_audio.clip_start_abs_sec),
+                    end_abs=float(selected_audio.clip_end_abs_sec),
+                )
+            ]
+        out["selected_fragment"] = selected_obj
     return Stage1AsrPayload.model_validate(out)
 
 
@@ -568,6 +741,146 @@ def _build_stage1a_duration_rework_hint(
     )
 
 
+def _timecode_ms_part(value: str) -> int:
+    raw = str(value or "").strip()
+    if "." not in raw:
+        return -1
+    try:
+        ms_raw = raw.rsplit(".", 1)[1]
+        if len(ms_raw) != 3:
+            return -1
+        return int(ms_raw)
+    except Exception:
+        return -1
+
+
+def _analyze_stage1a_timecode_precision(
+    *,
+    payload: Stage1ForcedAlignmentPayload,
+) -> Dict[str, Any]:
+    words = list(payload.aligned_words or [])
+    if not words:
+        return {
+            "words": 0,
+            "points": 0,
+            "unique_ms": 0,
+            "quantized_50_ratio": 0.0,
+            "zero_ms_ratio": 0.0,
+            "mode_duration_ms": 0,
+            "mode_duration_share": 0.0,
+            "unique_durations": 0,
+            "suspicious": False,
+            "reasons": [],
+        }
+
+    ms_parts: List[int] = []
+    dur_ms: List[int] = []
+    for w in words:
+        s_ms = _timecode_ms_part(str(w.t_start))
+        e_ms = _timecode_ms_part(str(w.t_end))
+        if s_ms >= 0:
+            ms_parts.append(s_ms)
+        if e_ms >= 0:
+            ms_parts.append(e_ms)
+        try:
+            d = max(1, int(round((float(w.t_end_sec) - float(w.t_start_sec)) * 1000.0)))
+            dur_ms.append(d)
+        except Exception:
+            continue
+
+    points = len(ms_parts)
+    if points <= 0 or not dur_ms:
+        return {
+            "words": len(words),
+            "points": points,
+            "unique_ms": 0,
+            "quantized_50_ratio": 0.0,
+            "zero_ms_ratio": 0.0,
+            "mode_duration_ms": 0,
+            "mode_duration_share": 0.0,
+            "unique_durations": 0,
+            "suspicious": False,
+            "reasons": [],
+        }
+
+    quantized_50 = sum(1 for x in ms_parts if x % 50 == 0)
+    zero_ms = sum(1 for x in ms_parts if x == 0)
+    unique_ms = len(set(ms_parts))
+
+    dur_hist = Counter(dur_ms)
+    mode_duration_ms, mode_duration_count = dur_hist.most_common(1)[0]
+    mode_duration_share = float(mode_duration_count) / float(max(1, len(dur_ms)))
+    unique_durations = len(dur_hist)
+
+    reasons: List[str] = []
+    if (float(quantized_50) / float(max(1, points))) >= 0.90 and unique_ms <= 8:
+        reasons.append("coarse_50ms_grid")
+    if (float(zero_ms) / float(max(1, points))) >= 0.55:
+        reasons.append("too_many_xxx_000")
+    if mode_duration_share >= 0.70 and unique_durations <= 6:
+        reasons.append("duration_histogram_too_peaked")
+
+    return {
+        "words": len(words),
+        "points": points,
+        "unique_ms": unique_ms,
+        "quantized_50_ratio": float(quantized_50) / float(max(1, points)),
+        "zero_ms_ratio": float(zero_ms) / float(max(1, points)),
+        "mode_duration_ms": int(mode_duration_ms),
+        "mode_duration_share": float(mode_duration_share),
+        "unique_durations": int(unique_durations),
+        "suspicious": bool(reasons),
+        "reasons": reasons,
+    }
+
+
+def _should_retry_stage1a_suspicious_precision(
+    *,
+    reference_words_count: int,
+    precision_diag: Dict[str, Any],
+) -> bool:
+    try:
+        min_words = int(os.environ.get("STAGE1A_PRECISION_REWORK_MIN_WORDS", "40"))
+    except Exception:
+        min_words = 40
+    if reference_words_count < max(1, min_words):
+        return False
+    return bool(precision_diag.get("suspicious"))
+
+
+def _build_stage1a_precision_rework_hint(
+    *,
+    precision_diag: Dict[str, Any],
+    transcribe_attempt_1: Dict[str, Any],
+    target_fragment: str,
+) -> str:
+    target = str(target_fragment or "").strip()
+    target_block = ""
+    if target:
+        target_block = (
+            "TARGET_FRAGMENT_EXAMPLE:\n"
+            + target
+            + "\n"
+            "Use fine-grained per-word boundaries around this fragment. "
+            "Example format: 01:43.127 -> 01:43.386 (not coarse 01:43.000 -> 01:43.250).\n"
+        )
+    return (
+        "\n\nTIMECODE_PRECISION_REWORK=ON\n"
+        "PREVIOUS_ATTEMPT_WARNING:\n"
+        "- Timing looks suspiciously rounded/coarse.\n"
+        "- НЕ ЛЕНИСЬ: align every timestamp to real spoken boundaries in audio.\n"
+        "- Keep mm:ss.mmm with EXACTLY 3 digits after dot in every time field.\n"
+        "- Do not quantize timestamps to coarse buckets (.000/.050/.100/.250/etc.) unless acoustically exact.\n"
+        "PRECISION_DIAGNOSTICS:\n"
+        + json.dumps(precision_diag, ensure_ascii=False)
+        + "\n"
+        + target_block
+        + "TRANSCRIBE_ATTEMPT_1_JSON:\n"
+        + json.dumps(transcribe_attempt_1, ensure_ascii=False)
+        + "\n"
+    )
+
+
 def _words_in_window(
     *,
     words: List[TranscriptWord],
@@ -620,6 +933,26 @@ def _fallback_draft_blocks_from_words(words: List[str]) -> Dict[str, Any]:
     }
 
 
+def _warn_stage1_clip_over_max(
+    *,
+    clip_start_abs: float,
+    clip_end_abs: float,
+    logger: logging.Logger,
+    source: str,
+) -> None:
+    dur = float(clip_end_abs) - float(clip_start_abs)
+    if dur <= CLIP_WINDOW_MAX_SECONDS + 1e-6:
+        return
+    logger.warning(
+        "stage1_clip_duration_over_max source=%s clip=%.3f..%.3f dur=%.3f max=%s action=kept_no_narrowing",
+        source,
+        float(clip_start_abs),
+        float(clip_end_abs),
+        float(dur),
+        CLIP_WINDOW_MAX_LABEL,
+    )
+
+
 def _build_stage1_plan_from_selected_fragment(
     *,
     stage1_asr: Stage1AsrPayload,
@@ -643,6 +976,7 @@ def _build_stage1_plan_from_selected_fragment(
         audio_obj["clip_end_abs"] = float(forced_end)
 
     selected_words = list(selected.transcript_words)
+    selected_pauses = list(selected.pause_spans)
     if not selected_words:
         logger.warning(
             "stage1a_selected_fragment_empty_words fallback=full_transcript_window clip=%s..%s full_words=%d",
@@ -657,6 +991,77 @@ def _build_stage1_plan_from_selected_fragment(
         )
     if not selected_words:
         raise ValueError("selected_fragment produced empty transcript_words")
+    if not selected_pauses and stage1_asr.pause_spans:
+        selected_pauses = _pause_spans_in_window(
+            pause_spans=list(stage1_asr.pause_spans),
+            start_abs=float(audio_obj["clip_start_abs"]),
+            end_abs=float(audio_obj["clip_end_abs"]),
+        )
+
+    # Guardrail: in target-fragment branch we sometimes get an oversized clip window
+    # while selected_fragment transcript words/pause spans only cover a much shorter range
+    # (e.g. 68s clip with ~28s words due model time formatting drift).
+    # Keep deterministic "no hidden fallback": clamp only when the mismatch is clearly inconsistent
+    # with selected content and words actually fit in <= max clip span.
+    if target_fragment and selected_words:
+        clip_start = float(audio_obj["clip_start_abs"])
+        clip_end = float(audio_obj["clip_end_abs"])
+        clip_dur = clip_end - clip_start
+
+        words_start = min(float(w.t_start) for w in selected_words)
+        words_end = max(float(w.t_end) for w in selected_words)
+        content_start = words_start
+        content_end = words_end
+        if selected_pauses:
+            content_start = min(content_start, min(float(p.t_start) for p in selected_pauses))
+            content_end = max(content_end, max(float(p.t_end) for p in selected_pauses))
+        content_dur = content_end - content_start
+
+        # Clamp only if clip is oversized and selected content itself fits within max window.
+        if clip_dur > CLIP_WINDOW_MAX_SECONDS + 1e-6 and content_dur <= CLIP_WINDOW_MAX_SECONDS + 1e-6:
+            new_start = float(content_start)
+            new_end = float(content_end)
+
+            # Keep Stage1 min duration invariant by expanding within original selected clip when needed.
+            if (new_end - new_start) < CLIP_WINDOW_MIN_SECONDS - 1e-6:
+                need = CLIP_WINDOW_MIN_SECONDS - (new_end - new_start)
+                left_cap = max(0.0, new_start - clip_start)
+                right_cap = max(0.0, clip_end - new_end)
+                add_left = min(left_cap, need / 2.0)
+                add_right = min(right_cap, need - add_left)
+                rem = need - (add_left + add_right)
+                if rem > 1e-9:
+                    extra_left = min(max(0.0, left_cap - add_left), rem)
+                    add_left += extra_left
+                    rem -= extra_left
+                if rem > 1e-9:
+                    extra_right = min(max(0.0, right_cap - add_right), rem)
+                    add_right += extra_right
+                new_start -= add_left
+                new_end += add_right
+
+            logger.warning(
+                "stage1a_selected_fragment_clip_content_mismatch clip=%.3f..%.3f dur=%.3f "
+                "content=%.3f..%.3f dur=%.3f action=clamp_to_content result=%.3f..%.3f dur=%.3f",
+                clip_start,
+                clip_end,
+                clip_dur,
+                content_start,
+                content_end,
+                content_dur,
+                new_start,
+                new_end,
+                float(new_end - new_start),
+            )
+            audio_obj["clip_start_abs"] = float(new_start)
+            audio_obj["clip_end_abs"] = float(new_end)
+
+    _warn_stage1_clip_over_max(
+        clip_start_abs=float(audio_obj["clip_start_abs"]),
+        clip_end_abs=float(audio_obj["clip_end_abs"]),
+        logger=logger,
+        source="stage1a_selected_fragment",
+    )
 
     fallback_blocks = _fallback_draft_blocks_from_words([str(w.text) for w in selected_words])
     return Stage1PlanPayload.model_validate(
@@ -665,6 +1070,7 @@ def _build_stage1_plan_from_selected_fragment(
             # Non-legacy Stage2 consumes the selected fragment, so stage1 plan should
             # carry fragment-local transcript words rather than full-track words.
             "transcript_words": selected_words,
+            "pause_spans": selected_pauses,
             "draft_blocks": fallback_blocks,
             "fragment_analytics": (
                 fragment_analytics.model_dump(mode="json")
@@ -735,21 +1141,52 @@ def _validate_fragment_analytics_for_target(
             target_fragment,
         )
 
+    audio_start = float(audio_start_abs)
+    audio_end = float(audio_end_abs)
     forced_start = float(analytics.working_start_abs)
     forced_end = float(analytics.working_end_abs)
-    if abs(float(audio_start_abs) - forced_start) > 1e-6 or abs(float(audio_end_abs) - forced_end) > 1e-6:
+    forced_dur = float(forced_end) - float(forced_start)
+    if forced_dur < CLIP_WINDOW_MIN_SECONDS - 1e-6:
+        # Do not allow fragment_analytics to shrink a valid selected window below min clip size.
         logger.warning(
-            "stage1b_fragment_window_forced audio=%.3f..%.3f analytics=%.3f..%.3f",
-            float(audio_start_abs),
-            float(audio_end_abs),
+            "stage1b_fragment_analytics_window_too_short analytics=%.3f..%.3f dur=%.3f min=%s action=use_audio_window",
             forced_start,
             forced_end,
+            forced_dur,
+            CLIP_WINDOW_MIN_LABEL,
         )
+        forced_start = audio_start
+        forced_end = audio_end
+    elif abs(audio_start - forced_start) > 1e-6 or abs(audio_end - forced_end) > 1e-6:
+        # Keep overlap-safe deterministic behavior: never narrow by analytics mismatch.
+        # If analytics is wider, we preserve it by taking union with the audio window.
+        union_start = min(audio_start, forced_start)
+        union_end = max(audio_end, forced_end)
+        logger.warning(
+            "stage1b_fragment_window_mismatch audio=%.3f..%.3f analytics=%.3f..%.3f action=use_union result=%.3f..%.3f",
+            audio_start,
+            audio_end,
+            forced_start,
+            forced_end,
+            union_start,
+            union_end,
+        )
+        forced_start = union_start
+        forced_end = union_end
 
     relation = str(analytics.relation_to_target)
     action = str(analytics.chosen_action)
+    if relation == "narrower":
+        logger.warning(
+            "stage1_fragment_narrowing_detected relation=%r action=%r clip=%.3f..%.3f (continuing)",
+            relation,
+            action,
+            forced_start,
+            forced_end,
+        )
     expected = {
         "inside_13_18": "none",
+        "inside_13_30": "none",
         "wider": "expand",
         "narrower": "select_subfragment",
     }
@@ -1405,6 +1842,7 @@ def build_all_via_gemini_one_call(
     client_stage1_forced: Optional[GeminiClient] = None
     client_stage1_scenario: Optional[GeminiClient] = None
     client_subtitles: Optional[GeminiClient] = None
+    client_subtitles_single_step: Optional[GeminiClient] = None
     client_footage: Optional[GeminiClient] = None
     client_timing: Optional[GeminiClient] = None
     if provider_mode in {PROVIDER_MODE_GEMINI, PROVIDER_MODE_HEDGED}:
@@ -1452,6 +1890,17 @@ def build_all_via_gemini_one_call(
             max_output_tokens=max_output_tokens,
             max_thinking_tokens=max_thinking_tokens,
         )
+        client_subtitles_single_step = _make_client(
+            api_key=gemini_api_key,
+            model=_SCENES_3RD_SINGLE_STEP_MODEL,
+            fallback_model=model_fallback or None,
+            proxy=proxy,
+            temperature=temperature,
+            timeout_s=timeout_s,
+            logger=logger,
+            max_output_tokens=max_output_tokens,
+            max_thinking_tokens=max_thinking_tokens,
+        )
         client_footage = _make_client(
             api_key=gemini_api_key,
             model=model_footage,
@@ -1479,6 +1928,7 @@ def build_all_via_gemini_one_call(
     openrouter_stage1_forced: Optional[OpenRouterClient] = None
     openrouter_stage1_scenario: Optional[OpenRouterClient] = None
     openrouter_subtitles: Optional[OpenRouterClient] = None
+    openrouter_subtitles_single_step: Optional[OpenRouterClient] = None
     openrouter_footage: Optional[OpenRouterClient] = None
     openrouter_timing: Optional[OpenRouterClient] = None
     if provider_mode in {PROVIDER_MODE_OPENROUTER, PROVIDER_MODE_HEDGED}:
@@ -1506,6 +1956,13 @@ def build_all_via_gemini_one_call(
         openrouter_subtitles = _make_openrouter_client(
             api_key=openrouter_api_key,
             model=_openrouter_model_from_gemini(model_subtitles),
+            temperature=temperature,
+            timeout_s=openrouter_timeout_s,
+            logger=logger,
+        )
+        openrouter_subtitles_single_step = _make_openrouter_client(
+            api_key=openrouter_api_key,
+            model=_openrouter_model_from_gemini(_SCENES_3RD_SINGLE_STEP_MODEL),
             temperature=temperature,
             timeout_s=openrouter_timeout_s,
             logger=logger,
@@ -1716,6 +2173,23 @@ def build_all_via_gemini_one_call(
             stage1_forced_attempt_1 = stage1_forced.model_dump(mode="json")
             stage1_asr = _stage1_asr_from_forced_alignment(stage1_forced)
             transcribed_dur = _transcribed_duration_sec(stage1_asr)
+            precision_diag = _analyze_stage1a_timecode_precision(payload=stage1_forced)
+            logger.info(
+                "stage1a_forced_timecode_precision words=%d points=%d unique_ms=%d quantized_50_ratio=%.3f "
+                "zero_ms_ratio=%.3f mode_duration_ms=%d mode_duration_share=%.3f unique_durations=%d suspicious=%s reasons=%s",
+                int(precision_diag.get("words") or 0),
+                int(precision_diag.get("points") or 0),
+                int(precision_diag.get("unique_ms") or 0),
+                float(precision_diag.get("quantized_50_ratio") or 0.0),
+                float(precision_diag.get("zero_ms_ratio") or 0.0),
+                int(precision_diag.get("mode_duration_ms") or 0),
+                float(precision_diag.get("mode_duration_share") or 0.0),
+                int(precision_diag.get("unique_durations") or 0),
+                bool(precision_diag.get("suspicious")),
+                list(precision_diag.get("reasons") or []),
+            )
+
+            rework_hints: List[str] = []
             if (
                 audio_fact_dur is not None
                 and transcribed_dur is not None
@@ -1731,11 +2205,35 @@ def build_all_via_gemini_one_call(
                     float(transcribed_dur),
                     len(forced_reference_words),
                 )
-                rework_hint = _build_stage1a_duration_rework_hint(
-                    fact_dur=float(audio_fact_dur),
-                    transcribed_dur=float(transcribed_dur),
-                    transcribe_attempt_1=stage1_forced_attempt_1,
+                rework_hints.append(
+                    _build_stage1a_duration_rework_hint(
+                        fact_dur=float(audio_fact_dur),
+                        transcribed_dur=float(transcribed_dur),
+                        transcribe_attempt_1=stage1_forced_attempt_1,
+                    )
                 )
+            if _should_retry_stage1a_suspicious_precision(
+                reference_words_count=len(forced_reference_words),
+                precision_diag=precision_diag,
+            ):
+                logger.warning(
+                    "stage1a_forced_precision_rework reasons=%s words=%d unique_ms=%d quantized_50_ratio=%.3f mode_duration_share=%.3f",
+                    list(precision_diag.get("reasons") or []),
+                    len(forced_reference_words),
+                    int(precision_diag.get("unique_ms") or 0),
+                    float(precision_diag.get("quantized_50_ratio") or 0.0),
+                    float(precision_diag.get("mode_duration_share") or 0.0),
+                )
+                rework_hints.append(
+                    _build_stage1a_precision_rework_hint(
+                        precision_diag=precision_diag,
+                        transcribe_attempt_1=stage1_forced_attempt_1,
+                        target_fragment=target_fragment,
+                    )
+                )
+
+            if rework_hints:
+                rework_hint = "".join(rework_hints)
                 stage1a_raw_retry = logs_dir / f"gemini_raw_stage1_forced_alignment_rework_{stamp}.json"
                 stage1a_sys_retry = logs_dir / f"gemini_system_stage1_forced_alignment_rework_{stamp}.txt"
                 stage1a_user_retry = logs_dir / f"gemini_prompt_stage1_forced_alignment_rework_{stamp}.txt"
@@ -1939,6 +2437,7 @@ def build_all_via_gemini_one_call(
                     {
                         "audio": audio_obj,
                         "transcript_words": stage1_asr.transcript_words,
+                        "pause_spans": stage1_asr.pause_spans,
                         "draft_blocks": stage1_scenario.draft_blocks.model_dump(mode="json"),
                         "fragment_analytics": (
                             stage1_scenario.fragment_analytics.model_dump(mode="json")
@@ -2000,6 +2499,12 @@ def build_all_via_gemini_one_call(
 
     if stage1 is None:
         raise RuntimeError("stage1 plan is empty after stage1 processing")
+    _warn_stage1_clip_over_max(
+        clip_start_abs=float(stage1.audio.clip_start_abs),
+        clip_end_abs=float(stage1.audio.clip_end_abs),
+        logger=logger,
+        source=expected_stage1_plan_source,
+    )
     stage1_json = stage1.model_dump(mode="json")
     stage1_json["lyrics_text"] = lyrics_text
     stage1_json["target_fragment"] = target_fragment
@@ -2015,9 +2520,14 @@ def build_all_via_gemini_one_call(
 
     _emit(progress_cb, "llm_stage2_parallel")
     subtitles_planner = SubtitlesPlannerFactory.create(subtitles_mode)
+    subtitles_model_effective = (
+        _SCENES_3RD_SINGLE_STEP_MODEL
+        if subtitles_mode == SUBTITLES_MODE_SCENES_3RD_SINGLE_STEP
+        else model_subtitles
+    )
     logger.info(
         "stage2_start subtitles_model=%s footage_style_model=%s timing_model=%s timing_mode=%s style_groups=%d subtitles_mode=%s subtitles_schema=%s",
-        model_subtitles,
+        subtitles_model_effective,
         model_footage,
         model_stage1_base,
         timing_mode,
@@ -2067,7 +2577,7 @@ def build_all_via_gemini_one_call(
     foot_prompt = build_stage2_footage_user_prompt(
         stage1_json=stage1_json,
         style_groups=style_groups,
-        schema_name="FootageStyleRawPayload",
+        schema_name="FootageStyleRotation",
     )
     foot_raw = logs_dir / f"gemini_raw_stage2_style_{stamp}.json"
     foot_sys = logs_dir / f"gemini_system_stage2_style_{stamp}.txt"
@@ -2083,16 +2593,27 @@ def build_all_via_gemini_one_call(
     timing_cuts_user = logs_dir / f"gemini_prompt_stage2_timing_cuts_{stamp}.txt"
 
     def _run_subtitles_once() -> BlocksTokensPayload | SubtitleFlowPlan:
+        subtitles_audio_paths = list(audio_files) if subtitles_planner.attach_audio_for_stage2 else []
+        subtitles_client = (
+            client_subtitles_single_step
+            if subtitles_mode == SUBTITLES_MODE_SCENES_3RD_SINGLE_STEP
+            else client_subtitles
+        )
+        subtitles_openrouter_client = (
+            openrouter_subtitles_single_step
+            if subtitles_mode == SUBTITLES_MODE_SCENES_3RD_SINGLE_STEP
+            else openrouter_subtitles
+        )
         if subtitles_planner.use_tokens_structured:
             raw_payload = call_subtitles_plan_once(
-                client=client_subtitles,
-                openrouter_client=openrouter_subtitles,
+                client=subtitles_client,
+                openrouter_client=subtitles_openrouter_client,
                 provider_mode=provider_mode,
                 hedge_delay_s=hedge_delay_s,
                 logger=logger,
                 system_instruction=sub_system,
                 user_prompt=str(sub_prompt),
-                audio_paths=[],
+                audio_paths=subtitles_audio_paths,
                 raw_response_path=sub_raw,
                 cache_path=cache_path,
                 prompt_dump_path=sub_user,
@@ -2100,15 +2621,15 @@ def build_all_via_gemini_one_call(
             )
         else:
             raw_payload = call_subtitles_plan_model_once(
-                client=client_subtitles,
+                client=subtitles_client,
                 schema_model=subtitles_planner.schema_model,
-                openrouter_client=openrouter_subtitles,
+                openrouter_client=subtitles_openrouter_client,
                 provider_mode=provider_mode,
                 hedge_delay_s=hedge_delay_s,
                 logger=logger,
                 system_instruction=sub_system,
                 user_prompt=str(sub_prompt),
-                audio_paths=[],
+                audio_paths=subtitles_audio_paths,
                 raw_response_path=sub_raw,
                 cache_path=cache_path,
                 prompt_dump_path=sub_user,
@@ -2149,9 +2670,10 @@ def build_all_via_gemini_one_call(
 
     style_raw_payload: Optional[FootageStyleRawPayload] = None
     style_adapter_diag: Optional[FootageStyleRawAdapterDiagnostics] = None
+    style_rotation_payload: Optional[FootageStyleRotation] = None
 
     def _run_style_once() -> FootageStylePickPayload:
-        nonlocal style_raw_payload, style_adapter_diag
+        nonlocal style_raw_payload, style_adapter_diag, style_rotation_payload
 
         payload_any = call_footage_style_once(
             client=client_footage,
@@ -2168,24 +2690,29 @@ def build_all_via_gemini_one_call(
             cache_path=cache_path,
             prompt_dump_path=foot_user,
             system_dump_path=foot_sys,
-            schema_model=FootageStyleRawPayload,
+            schema_model=FootageStyleRotation,
         )
 
         if isinstance(payload_any, FootageStylePickPayload):
             # Backward-compatible path (e.g. tests/legacy resume data).
             style_raw_payload = None
             style_adapter_diag = None
+            style_rotation_payload = None
             validate_style_pick_in_groups(payload_any, style_groups)
             return payload_any
 
-        raw_payload = (
-            payload_any
-            if isinstance(payload_any, FootageStyleRawPayload)
-            else FootageStyleRawPayload.model_validate(payload_any)
-        )
+        # Normalise: single subgroup → wrap in rotation for uniform handling.
+        if isinstance(payload_any, FootageStyleRawPayload):
+            rotation = FootageStyleRotation(subgroups=[payload_any])
+        elif isinstance(payload_any, FootageStyleRotation):
+            rotation = payload_any
+        else:
+            rotation = FootageStyleRotation.model_validate(payload_any)
 
+        # Resolve genre/tag from first subgroup (needed for style_payload).
+        base_raw = rotation.subgroups[0]
         resolved, diag = resolve_style_pick_from_raw_filters(
-            raw_pick=raw_payload,
+            raw_pick=base_raw,
             mapped_assets=mapped_picker_assets,
             seed_key=selection_seed_key,
             total_assets=len(picker_assets),
@@ -2193,12 +2720,14 @@ def build_all_via_gemini_one_call(
             metadata_rows_merged=len(style_metadata_index),
         )
         validate_style_pick_in_groups(resolved, style_groups)
-        style_raw_payload = raw_payload
+        style_raw_payload = base_raw  # enables mapped_picker_assets selection path
         style_adapter_diag = diag
+        style_rotation_payload = rotation if len(rotation.subgroups) > 1 else None
         logger.info(
-            "stage2_style_adapter_selected theme=%s mood=%s genre=%s tag=%s mapped=%d unmapped=%d",
-            raw_payload.theme,
-            raw_payload.mood,
+            "stage2_style_adapter_selected theme=%s mood=%s subgroups=%d genre=%s tag=%s mapped=%d unmapped=%d",
+            base_raw.theme,
+            base_raw.mood,
+            len(rotation.subgroups),
             resolved.genre,
             resolved.tag,
             len(mapped_picker_assets),
@@ -2243,6 +2772,19 @@ def build_all_via_gemini_one_call(
         except Exception as e:
             logger.warning("llm_resume_bad stage=stage2_style err=%s", str(e))
             resume_state.pop("stage2_style", None)
+
+    subtitles_only = os.environ.get("SUBTITLES_ONLY", "").strip() in ("1", "true", "yes")
+    if subtitles_only and style_payload is None:
+        # Pick the first available genre/tag from inventory — no Gemini call, no tag filtering.
+        first_asset = next(iter(picker_assets), None)
+        if first_asset is None:
+            raise RuntimeError("subtitles_only=True but inventory is empty")
+        style_payload = FootageStylePickPayload(
+            genre=str(first_asset.get("genre", "Alternative")),
+            tag=str(first_asset.get("tag", "dark_aesthetic")),
+        )
+        style_raw_payload = None
+        logger.info("subtitles_only_mode genre=%s tag=%s", style_payload.genre, style_payload.tag)
 
     stage2_errors: Dict[str, BaseException] = {}
     if subtitles_payload is None and style_payload is None:
@@ -2483,15 +3025,26 @@ def build_all_via_gemini_one_call(
             exclude_file_names,
         )
 
+    selection_assets = mapped_picker_assets if style_raw_payload is not None else picker_assets
+    if style_raw_payload is not None:
+        _mode = "raw_rotation" if style_rotation_payload is not None else "raw_filters_global"
+        logger.info(
+            "footage_selection_mode mode=%s mapped_assets=%d subgroups=%d",
+            _mode,
+            len(selection_assets),
+            len(style_rotation_payload.subgroups) if style_rotation_payload is not None else 1,
+        )
     footage_payload, interval_diag = pick_footage_clips_by_intervals_deterministic(
         style_pick=style_payload,
-        assets=picker_assets,
+        assets=selection_assets,
         clip_start_abs=clip_start_abs,
         clip_end_abs=clip_end_abs,
         switch_points_abs=list(switch_payload.switch_points_abs),
         seed_key=selection_seed_key,
         fit_mode="cover",
         exclude_file_names=exclude_file_names,
+        raw_pick=style_raw_payload if style_rotation_payload is None else None,
+        raw_picks=style_rotation_payload.subgroups if style_rotation_payload is not None else None,
     )
     if getattr(interval_diag, "exclude_relaxed", False):
         logger.warning(

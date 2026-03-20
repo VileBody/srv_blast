@@ -1,13 +1,28 @@
-from __future__ import annotations
+#!/usr/bin/env python3
+"""
+build_layers.py — конвертирует scenes.json в text_layers для render.jsx
 
-import logging
-import math
+Использование:
+    python build_layers.py --scenes scenes.json --jsx render_template.jsx --out render_out.jsx
+
+    # Только вывести text_layers как JSON (для отладки):
+    python build_layers.py --scenes scenes.json --dump
+
+Типы сцен:
+    TYPE_1  — 3–4 слова, две строки, нет акцента
+    TYPE_2  — 4–5 слов, одно фокус-слово курсивом (ExtraBold)
+    TYPE_3  — нарастающие слои: "his" → "his eyes" → "his eyes were"
+    TYPE_4  — одно слово, красный цвет, precomp-структура
+    TYPE_5  — 4–5 слов, outline + fill layers, поэтапное наполнение
+    TYPE_6  — 2 группы, поочерёдное появление без выбивания
+"""
+
+import argparse
+import json
+import re
+import sys
+from copy import deepcopy
 from typing import Any, Dict, List, Optional, Tuple
-
-from mlcore.models.subtitles_flow import SubtitleFlowPlan
-
-
-_LOG = logging.getLogger("app.scenes_3rd_reference_builder")
 
 # ---------------------------------------------------------------------------
 # Константы рендера
@@ -39,19 +54,20 @@ RENDER = {
 TYPE1_LEADING = int((RENDER["size_base"] + RENDER["size_line2"]) / 2 * 1.15)  # = 115
 
 
+def compute_comp_dur(scenes: List[Dict], tail_buffer: float = 2.0) -> float:
+    """
+    Вычисляет длительность компа из таймингов сцен.
+    tail_buffer — секунды после последней сцены (чтобы не обрезало).
+    """
+    if not scenes:
+        return 10.0
+    max_end = max(s["end"] for s in scenes)
+    # Округляем вверх до кратного кадру
+    frames = int(max_end * RENDER["fps"]) + int(tail_buffer * RENDER["fps"]) + 1
+    return round(frames / RENDER["fps"], 6)
+
+
 FRAME = 1.0 / RENDER["fps"]   # ~0.04171s
-_GAP_HOLD_MIN_FRAC = 0.08
-_GAP_HOLD_MAX_FRAC = 0.36
-_GAP_HOLD_MAX_S = 1.20
-_GAP_HOLD_MAX_WORD_MULT = 2.00
-_GAP_HOLD_TYPE4_BONUS_MULT = 1.40
-_GAP_HOLD_TYPE4_MIN_GAP_FRAC = 0.35
-_GAP_HOLD_TYPE4_MIN_WORD_MULT = 1.20
-_GAP_HOLD_TYPE4_WORD_DUR_FLOOR = 0.35
-_GAP_HOLD_TYPE4_MAX_S = 2.20
-_GAP_HOLD_TYPE4_MAX_WORD_MULT = 4.00
-_TYPE4_MIN_HOLD_S = 0.44
-_TYPE4_MIN_ACTIVE_S = 1.00
 
 # ---------------------------------------------------------------------------
 # Утилиты
@@ -787,62 +803,11 @@ class LayerFactory:
         t_out  = scene["end"]
         dur    = t_out - t_in
 
+        fade_dur   = min(0.5, dur * 0.2)
+        fade_start = t_out - fade_dur
+
         mine_in  = t_in - 0.3
         mine_out = t_out + 0.1
-        fade_dur = min(0.5, dur * 0.2)
-        glow_intro_dur = 0.5
-        if dur < _TYPE4_MIN_HOLD_S - 1e-6:
-            # Keep scene boundaries intact (no extension), but compress TYPE_4 intro
-            # so very short hooks become visible faster.
-            glow_intro_dur = max(FRAME, min(0.5, dur * 0.35))
-            _LOG.warning(
-                "scenes3_type4_short_duration scene_id=%s text=%s in=%.3f out=%.3f dur=%.3f intro_dur=%.3f action=compress_intro",
-                scene.get("id"),
-                word,
-                float(t_in),
-                float(t_out),
-                float(dur),
-                float(glow_intro_dur),
-            )
-
-        # Post-process: linearly accelerate both appearance and exit if active window
-        # would be shorter than the target minimum.
-        base_intro = float(glow_intro_dur)
-        base_exit = float(fade_dur)
-        non_active = base_intro + base_exit
-        non_active_budget = max(0.0, float(dur) - _TYPE4_MIN_ACTIVE_S)
-        if non_active > non_active_budget + 1e-9 and non_active > 1e-9:
-            scale = max(0.0, non_active_budget / non_active)
-            glow_intro_dur = base_intro * scale
-            fade_dur = base_exit * scale
-            _LOG.warning(
-                "scenes3_type4_retime scene_id=%s text=%s dur=%.3f intro=%.3f->%.3f exit=%.3f->%.3f active_before=%.3f active_after=%.3f target_active=%.3f",
-                scene.get("id"),
-                word,
-                float(dur),
-                float(base_intro),
-                float(glow_intro_dur),
-                float(base_exit),
-                float(fade_dur),
-                float(max(0.0, dur - base_intro - base_exit)),
-                float(max(0.0, dur - glow_intro_dur - fade_dur)),
-                float(_TYPE4_MIN_ACTIVE_S),
-            )
-
-        glow_scale_kfs = [
-            kf(t_in, [150.0, 150.0, 100.0], iit="6613", oit="6613",
-               ease_in=[{"speed": 0.0, "influence": 95.0}] * 3,
-               ease_out=[{"speed": 1045.1, "influence": 4.0}] * 2 + [{"speed": 0.0, "influence": 4.0}]),
-        ]
-        if glow_intro_dur <= 1e-9:
-            # For ultra-short windows skip the growth ramp (instant full scale).
-            glow_scale_kfs[0]["v"] = [250.0, 250.0, 100.0]
-        else:
-            glow_scale_kfs.append(
-                kf(t_in + glow_intro_dur, [250.0, 250.0, 100.0], iit="6613", oit="6613",
-                   ease_in=[{"speed": 5.82, "influence": 95.0}] * 2 + [{"speed": 0.0, "influence": 95.0}],
-                   ease_out=[{"speed": 0.0, "influence": 4.0}] * 3)
-            )
         mine_text = {
             "name":             "mine",
             "type":             "text",
@@ -945,7 +910,14 @@ class LayerFactory:
             "props": {
                 "tf_anchor":   prop("ADBE Anchor Point",  [540, 960, 0]),
                 "tf_position": prop("ADBE Position",      [540, 960, 0]),
-                "tf_scale":    prop("ADBE Scale", keyframes=glow_scale_kfs),
+                "tf_scale":    prop("ADBE Scale", keyframes=[
+                    kf(t_in,          [150.0, 150.0, 100.0], iit="6613", oit="6613",
+                       ease_in=[{"speed": 0.0, "influence": 95.0}] * 3,
+                       ease_out=[{"speed": 1045.1, "influence": 4.0}] * 2 + [{"speed": 0.0, "influence": 4.0}]),
+                    kf(t_in + 0.5,    [250.0, 250.0, 100.0], iit="6613", oit="6613",
+                       ease_in=[{"speed": 5.82, "influence": 95.0}] * 2 + [{"speed": 0.0, "influence": 95.0}],
+                       ease_out=[{"speed": 0.0, "influence": 4.0}] * 3),
+                ]),
                 "tf_rotation": prop("ADBE Rotate Z", 0),
                 "tf_opacity":  prop("ADBE Opacity",  40),
             },
@@ -1179,96 +1151,6 @@ def _words_with_linebreaks(sub_words: List[str], scene_lines: List[List[str]]) -
     return "".join(parts)
 
 
-def _scene_last_word_duration(scene: Dict[str, Any]) -> float:
-    wt = scene.get("word_timings")
-    if isinstance(wt, list) and wt:
-        last = wt[-1] if isinstance(wt[-1], dict) else None
-        if isinstance(last, dict):
-            try:
-                st = float(last.get("start"))
-                en = float(last.get("end"))
-            except Exception:
-                st = 0.0
-                en = 0.0
-            if en > st:
-                return en - st
-    words = scene.get("words") or []
-    n_words = max(1, len(list(words)))
-    dur = max(0.0, float(scene.get("end") or 0.0) - float(scene.get("start") or 0.0))
-    return dur / float(n_words)
-
-
-def _gap_to_hold_transfer(*, gap: float, word_dur: float, scene_type: str | None = None) -> float:
-    if gap <= FRAME + 1e-9:
-        return 0.0
-    is_type4 = str(scene_type or "") == "TYPE_4"
-    wd = max(float(word_dur), FRAME)
-    if is_type4:
-        # TYPE_4 can come from very short raw word timings (e.g. 0.01s), which
-        # would otherwise cap hold transfer too aggressively and make red-word
-        # precomp almost invisible.
-        wd = max(wd, _GAP_HOLD_TYPE4_WORD_DUR_FLOOR)
-    ratio = max(0.0, float(gap) / wd)
-    frac = _GAP_HOLD_MIN_FRAC + (_GAP_HOLD_MAX_FRAC - _GAP_HOLD_MIN_FRAC) * (1.0 - math.exp(-ratio))
-    transfer = float(gap) * frac
-    cap_s = _GAP_HOLD_MAX_S
-    cap_word_mult = _GAP_HOLD_MAX_WORD_MULT
-    if is_type4:
-        min_type4_transfer = max(
-            wd * _GAP_HOLD_TYPE4_MIN_WORD_MULT,
-            float(gap) * _GAP_HOLD_TYPE4_MIN_GAP_FRAC,
-        )
-        transfer = max(transfer * _GAP_HOLD_TYPE4_BONUS_MULT, min_type4_transfer)
-        cap_s = _GAP_HOLD_TYPE4_MAX_S
-        cap_word_mult = _GAP_HOLD_TYPE4_MAX_WORD_MULT
-    transfer = min(
-        transfer,
-        float(gap) - FRAME,  # never eat the entire boundary gap
-        cap_s,               # hard cap to avoid excessive drift
-        wd * cap_word_mult,
-    )
-    return max(0.0, float(transfer))
-
-
-def _postprocess_scene_boundaries_for_hold(scenes: List[Dict[str, Any]]) -> None:
-    if len(scenes) < 2:
-        return
-    for i in range(len(scenes) - 1):
-        cur = scenes[i]
-        nxt = scenes[i + 1]
-        cur_end = float(cur.get("end") or 0.0)
-        next_start = float(nxt.get("start") or 0.0)
-        gap = next_start - cur_end
-        if gap <= FRAME + 1e-9:
-            continue
-
-        wd = _scene_last_word_duration(cur)
-        transfer = _gap_to_hold_transfer(gap=gap, word_dur=wd, scene_type=str(cur.get("type") or ""))
-        if str(cur.get("type") or "") == "TYPE_4":
-            cur_dur = max(0.0, cur_end - float(cur.get("start") or 0.0))
-            min_transfer = max(0.0, _TYPE4_MIN_HOLD_S - cur_dur)
-            transfer = max(transfer, min_transfer)
-            transfer = min(transfer, float(gap) - FRAME)
-        if transfer <= 1e-9:
-            continue
-
-        new_end = min(cur_end + transfer, next_start - FRAME)
-        if new_end <= cur_end + 1e-9:
-            continue
-
-        cur["end"] = float(new_end)
-        _LOG.info(
-            "scenes3_post_gap_hold scene_id=%s scene_type=%s word_dur=%.3f gap=%.3f transfer=%.3f end=%.3f->%.3f",
-            cur.get("id"),
-            cur.get("type"),
-            float(wd),
-            float(gap),
-            float(new_end - cur_end),
-            float(cur_end),
-            float(new_end),
-        )
-
-
 # ---------------------------------------------------------------------------
 # Главная функция конвертации
 # ---------------------------------------------------------------------------
@@ -1280,7 +1162,7 @@ def build_all_layers(scenes: List[Dict],
 
     sorted_scenes = sorted(scenes, key=lambda s: s["start"])
 
-    for scene in sorted_scenes:
+    for idx, scene in enumerate(sorted_scenes):
         scene_type = scene.get("type", "TYPE_1")
         builders = {
             "TYPE_1": factory.build_type1,
@@ -1292,7 +1174,8 @@ def build_all_layers(scenes: List[Dict],
         }
         builder = builders.get(scene_type)
         if not builder:
-            _LOG.warning("unknown scene type skipped id=%s type=%s", scene.get("id"), scene_type)
+            print(f"WARN: unknown type {scene_type} scene={scene.get('id')} — skipping",
+                  file=sys.stderr)
             continue
 
         if scene_type == "TYPE_4":
@@ -1301,64 +1184,153 @@ def build_all_layers(scenes: List[Dict],
             layers = builder(scene, word_timings)
 
         all_layers.extend(layers)
+        print(f"OK  scene {scene.get('id'):>2} {scene_type}  "
+              f"[{scene['start']:.3f}–{scene['end']:.3f}]  "
+              f"words={scene['words']}  → {len(layers)} layers")
 
     return all_layers
 
-def _scene_from_segment(seg: Any) -> Dict[str, Any]:
-    lines_words: List[List[str]] = []
-    for ln in list(seg.lines or []):
-        row = [w for w in str(ln).strip().split(" ") if w]
-        if row:
-            lines_words.append(row)
 
-    if not lines_words:
-        lines_words = [[w for w in str(seg.text).strip().split(" ") if w]]
+# ---------------------------------------------------------------------------
+# Инжект в render.jsx
+# ---------------------------------------------------------------------------
 
-    words: List[str] = []
-    for row in lines_words:
-        words.extend(row)
+def inject_into_jsx(layers: List[Dict], jsx_path: str, out_path: str,
+                    comp_dur: Optional[float] = None,
+                    comp_text: Optional[str] = None,
+                    comp_mine: Optional[str] = None):
+    content = open(jsx_path, encoding="utf-8").read()
 
-    if not words:
-        words = [w for w in str(seg.text).strip().split(" ") if w]
+    # --- 1. Патч text_layers ---
+    m = re.search(r'var text_layers = (\[.*?\]);', content, re.DOTALL)
+    if not m:
+        raise ValueError("var text_layers not found in JSX file")
+    layers_json = json.dumps(layers, ensure_ascii=False, separators=(',', ':'))
+    content = content[:m.start()] + f'var text_layers = {layers_json};' + content[m.end():]
 
-    try:
-        scene_id = int(str(seg.segment_id).split("_")[-1])
-    except Exception:
-        scene_id = 1
+    # --- 2. Патч compsSpec: обновляем dur и workAreaDuration по имени компа ---
+    if comp_dur is not None:
+        cs_m = re.search(r'var compsSpec = (\[.*?\]);', content, re.DOTALL)
+        if cs_m:
+            try:
+                specs = json.loads(cs_m.group(1))
+                for spec in specs:
+                    name = spec.get("name", "")
+                    # Патчим ВСЕ компы на полную длину трека (включая Mine-комп)
+                    spec["dur"]              = comp_dur
+                    spec["workAreaDuration"] = comp_dur
+                new_specs = json.dumps(specs, ensure_ascii=False, separators=(',', ':'))
+                content = (content[:cs_m.start()]
+                           + f'var compsSpec = {new_specs};'
+                           + content[cs_m.end():])
+                print(f"Patched compsSpec: main/text comp dur = {comp_dur:.3f}s")
+            except Exception as e:
+                print(f"WARN: compsSpec patch failed: {e}", file=sys.stderr)
 
-    return {
-        "id": scene_id,
-        "type": str(seg.style_tag),
-        "words": words,
-        "start": float(seg.in_point),
-        "end": float(seg.out_point),
-        "lines": lines_words,
-        "focus_word": seg.focus_word,
-        "focus_style": seg.focus_style,
-        "word_timings": [
-            {
-                "word": str(tok.text),
-                "start": float(tok.t_start),
-                "end": float(tok.t_end),
-            }
-            for tok in seg.tokens
-        ],
-    }
+    # --- 3. Переименование компов (если переданы кастомные имена) ---
+    if comp_text and comp_text != RENDER["comp_text"]:
+        content = content.replace(
+            json.dumps(RENDER["comp_text"]),
+            json.dumps(comp_text)
+        )
+        print(f"Renamed comp_text: '{RENDER['comp_text']}' → '{comp_text}'")
+
+    if comp_mine and comp_mine != RENDER["comp_mine"]:
+        content = content.replace(
+            json.dumps(RENDER["comp_mine"]),
+            json.dumps(comp_mine)
+        )
+        print(f"Renamed comp_mine: '{RENDER['comp_mine']}' → '{comp_mine}'")
+
+    # --- 4. Валидация скобок ---
+    opens  = content.count('{')
+    closes = content.count('}')
+    if opens != closes:
+        raise ValueError(f"Brace mismatch after inject: {{ {opens} / }} {closes}")
+
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write(content)
+    print(f"Injected {len(layers)} layers → {out_path}  (braces OK)")
 
 
-def build_scenes_3rd_reference_layers(
-    *,
-    flow_plan: SubtitleFlowPlan,
-    text_comp_name: str,
-    mine_comp_name: str,
-) -> List[Dict[str, Any]]:
-    RENDER["comp_text"] = str(text_comp_name)
-    RENDER["comp_mine"] = str(mine_comp_name)
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
 
-    scenes = [_scene_from_segment(seg) for seg in flow_plan.segments]
-    scenes.sort(key=lambda s: (float(s["start"]), int(s["id"])))
-    _postprocess_scene_boundaries_for_hold(scenes)
+def main():
+    parser = argparse.ArgumentParser(description="scenes.json → text_layers → render.jsx")
+    parser.add_argument("--scenes",    required=True, help="Путь к scenes.json")
+    parser.add_argument("--timings",   default=None,  help="Путь к word_timings.json (опционально)")
+    parser.add_argument("--jsx",       default=None,  help="Путь к render_template.jsx")
+    parser.add_argument("--out",       default=None,  help="Выходной JSX (по умолчанию render_out.jsx)")
+    parser.add_argument("--dump",      action="store_true",
+                        help="Только вывести text_layers JSON без записи JSX")
+    parser.add_argument("--comp-text", default=None,
+                        help=f"Имя основного текстового компа (по умолч.: '{RENDER['comp_text']}')")
+    parser.add_argument("--comp-mine", default=None,
+                        help=f"Имя Mine-компа (по умолч.: '{RENDER['comp_mine']}')")
+    parser.add_argument("--tail",      type=float, default=2.0,
+                        help="Буфер в секундах после последней сцены (по умолч.: 2.0)")
+    parser.add_argument("--offset",    type=float, default=0.0,
+                        help="Вычесть это значение из всех start/end (по умолч.: 0). "
+                             "Используй если тайминги сцен в абсолютном времени аудио, "
+                             "а AE-комп начинается от 0. Например: --offset 56.409")
+    args = parser.parse_args()
 
-    layers = build_all_layers(scenes, word_timings=None)
+    # Переопределяем имена компов если переданы
+    if args.comp_text:
+        RENDER["comp_text"] = args.comp_text
+    if args.comp_mine:
+        RENDER["comp_mine"] = args.comp_mine
 
-    return layers
+    # Читаем scenes
+    with open(args.scenes, encoding="utf-8") as f:
+        data = json.load(f)
+    scenes = data.get("scenes") or data  # поддержка обоих форматов
+
+    # Вычисляем длительность компа из таймингов
+    comp_dur = compute_comp_dur(scenes, tail_buffer=args.tail)
+    print(f"Comp duration from scenes: {comp_dur:.3f}s  "
+          f"(last scene end={max(s['end'] for s in scenes):.3f}s + {args.tail}s buffer)")
+
+    # Читаем тайминги слов (опционально)
+    word_timings = None
+    if args.timings:
+        with open(args.timings, encoding="utf-8") as f:
+            word_timings = json.load(f)
+
+    # Применяем offset (сдвиг таймлайна)
+    if args.offset != 0.0:
+        print(f"Applying time offset: −{args.offset:.3f}s to all scenes")
+        for sc in scenes:
+            sc["start"] -= args.offset
+            sc["end"]   -= args.offset
+            if sc.get("word_timings"):
+                for wt in sc["word_timings"]:
+                    wt["start"] -= args.offset
+                    wt["end"]   -= args.offset
+
+    # Строим слои
+    layers = build_all_layers(scenes, word_timings)
+    print(f"\nВсего слоёв: {len(layers)}")
+
+    if args.dump:
+        print("\n--- text_layers JSON ---")
+        print(json.dumps(layers, ensure_ascii=False, indent=2))
+        return
+
+    if not args.jsx:
+        print("ERROR: укажи --jsx <template.jsx> или используй --dump", file=sys.stderr)
+        sys.exit(1)
+
+    out_path = args.out or "render_out.jsx"
+    inject_into_jsx(
+        layers, args.jsx, out_path,
+        comp_dur=comp_dur,
+        comp_text=args.comp_text,
+        comp_mine=args.comp_mine,
+    )
+
+
+if __name__ == "__main__":
+    main()

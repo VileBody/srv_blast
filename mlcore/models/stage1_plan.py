@@ -5,8 +5,6 @@ from typing import List, Literal, Optional
 from pydantic import BaseModel, Field, model_validator
 
 from core.clip_window import (
-    CLIP_WINDOW_MAX_LABEL,
-    CLIP_WINDOW_MAX_SECONDS,
     CLIP_WINDOW_MIN_LABEL,
     CLIP_WINDOW_MIN_SECONDS,
 )
@@ -24,6 +22,20 @@ class TranscriptWord(BaseModel):
         return self
 
 
+class PauseSpan(BaseModel):
+    text: str = Field(default="[pause]", min_length=1)
+    t_start: float = Field(ge=0.0)
+    t_end: float = Field(ge=0.0)
+
+    @model_validator(mode="after")
+    def _check(self) -> "PauseSpan":
+        if self.t_end <= self.t_start:
+            raise ValueError(f"pause t_end must be > t_start (got {self.t_start}..{self.t_end})")
+        # Keep a canonical marker so downstream logs/debugs are deterministic.
+        self.text = "[pause]"
+        return self
+
+
 class Stage1AudioWindow(BaseModel):
     clip_start_abs: float = Field(ge=0.0)
     clip_end_abs: float = Field(ge=0.0)
@@ -34,9 +46,9 @@ class Stage1AudioWindow(BaseModel):
         if self.clip_end_abs <= self.clip_start_abs:
             raise ValueError("clip_end_abs must be > clip_start_abs")
         dur = float(self.clip_end_abs) - float(self.clip_start_abs)
-        if dur < CLIP_WINDOW_MIN_SECONDS or dur > CLIP_WINDOW_MAX_SECONDS:
+        if dur < CLIP_WINDOW_MIN_SECONDS:
             raise ValueError(
-                f"clip duration must be {CLIP_WINDOW_MIN_LABEL}..{CLIP_WINDOW_MAX_LABEL} seconds (got {dur})"
+                f"clip duration must be >= {CLIP_WINDOW_MIN_LABEL} seconds (got {dur})"
             )
         return self
 
@@ -54,7 +66,7 @@ class FragmentAnalytics(BaseModel):
     working_end_text: str = Field(min_length=1)
 
     # Relation between requested fragment and selected working window.
-    relation_to_target: Literal["wider", "narrower", "inside_13_18"]
+    relation_to_target: Literal["wider", "narrower", "inside_13_18", "inside_13_30"]
     chosen_action: Literal["expand", "select_subfragment", "none"]
     rationale: str = Field(min_length=1)
 
@@ -104,5 +116,6 @@ class Stage1DraftBlocks(BaseModel):
 class Stage1PlanPayload(BaseModel):
     audio: Stage1AudioWindow
     transcript_words: List[TranscriptWord] = Field(min_length=1)
+    pause_spans: List[PauseSpan] = Field(default_factory=list)
     draft_blocks: Stage1DraftBlocks
     fragment_analytics: Optional[FragmentAnalytics] = None
