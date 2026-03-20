@@ -10,6 +10,7 @@ import time
 import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import quote
 
 import httpx
 from aiogram import Bot, Dispatcher, Router
@@ -105,6 +106,9 @@ _CONTROL_BUTTONS = {
 
 _AUDIO_EXTS = {".wav", ".mp3", ".m4a", ".aac", ".flac", ".ogg"}
 _RE_CELERY_RETRIES = re.compile(r"\bretries=(\d+)\b")
+_TG_AUDIO_DOWNLOAD_RETRIES = 3
+_TG_AUDIO_DOWNLOAD_TIMEOUT_S = 180.0
+_TG_AUDIO_DOWNLOAD_BACKOFF_BASE_S = 2.0
 
 
 def _kb(*rows: list[str]) -> ReplyKeyboardMarkup:
@@ -899,9 +903,13 @@ class BlastBotApp:
 
         try:
             await message.answer("Скачиваю файл и готовлю mp3…")
-            tg_file = await message.bot.get_file(file_id)
-            with open(src_path, "wb") as f:
-                await message.bot.download_file(tg_file.file_path, destination=f)
+            await self._download_telegram_audio_with_retry(
+                bot=message.bot,
+                file_id=file_id,
+                dest=src_path,
+                chat_id=chat_id,
+                original_name=original_name,
+            )
 
             prep: AudioPrepareResult = await asyncio.to_thread(
                 prepare_audio_best_effort,
@@ -1563,6 +1571,98 @@ class BlastBotApp:
             return
 
         raise RuntimeError(f"unsupported output source: {src!r}")
+
+    async def _download_telegram_audio_with_retry(
+        self,
+        *,
+        bot: Bot,
+        file_id: str,
+        dest: Path,
+        chat_id: int,
+        original_name: str,
+    ) -> None:
+        retries = max(1, int(_TG_AUDIO_DOWNLOAD_RETRIES))
+        last_err: Exception | None = None
+        tg_proxy = str(self.settings.tg_file_proxy_url or "").strip()
+
+        for attempt in range(1, retries + 1):
+            try:
+                tg_file = await bot.get_file(file_id)
+                if tg_proxy:
+                    await self._download_telegram_file_via_http(
+                        file_path=str(tg_file.file_path or ""),
+                        dest=dest,
+                        proxy_url=tg_proxy,
+                    )
+                else:
+                    with open(dest, "wb") as f:
+                        await bot.download_file(
+                            tg_file.file_path,
+                            destination=f,
+                            timeout=float(_TG_AUDIO_DOWNLOAD_TIMEOUT_S),
+                        )
+                size = int(dest.stat().st_size) if dest.exists() else 0
+                if size <= 0:
+                    raise RuntimeError("telegram download produced empty file")
+                return
+            except TelegramBadRequest:
+                raise
+            except Exception as e:  # noqa: BLE001
+                last_err = e
+                try:
+                    if dest.exists():
+                        dest.unlink()
+                except Exception:
+                    pass
+
+                if attempt >= retries:
+                    break
+
+                delay_s = float(_TG_AUDIO_DOWNLOAD_BACKOFF_BASE_S) * float(attempt)
+                log.warning(
+                    "audio_download_retry chat=%s file_id=%s name=%s via_proxy=%s attempt=%d/%d delay_s=%.1f err=%r",
+                    chat_id,
+                    file_id,
+                    original_name,
+                    bool(tg_proxy),
+                    attempt,
+                    retries,
+                    delay_s,
+                    e,
+                )
+                await asyncio.sleep(delay_s)
+
+        assert last_err is not None
+        raise RuntimeError(
+            f"telegram download failed after {retries} attempts: {type(last_err).__name__}: {last_err!r}"
+        ) from last_err
+
+    async def _download_telegram_file_via_http(
+        self,
+        *,
+        file_path: str,
+        dest: Path,
+        proxy_url: str,
+    ) -> None:
+        path = str(file_path or "").strip().lstrip("/")
+        if not path:
+            raise RuntimeError("telegram file_path is empty")
+
+        encoded_path = quote(path, safe="/")
+        url = f"https://api.telegram.org/file/bot{self.settings.tg_bot_token}/{encoded_path}"
+
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        timeout = httpx.Timeout(float(_TG_AUDIO_DOWNLOAD_TIMEOUT_S))
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True, proxy=str(proxy_url)) as client:
+            async with client.stream("GET", url) as resp:
+                if resp.status_code >= 300:
+                    raise RuntimeError(
+                        f"telegram file download failed status={resp.status_code} path={path!r}"
+                    )
+                with open(dest, "wb") as f:
+                    async for chunk in resp.aiter_bytes(chunk_size=1024 * 1024):
+                        if chunk:
+                            f.write(chunk)
 
     async def _download_http(self, *, url: str, dest: Path) -> None:
         dest.parent.mkdir(parents=True, exist_ok=True)

@@ -61,6 +61,7 @@ def _username_allowlist_env(name: str) -> tuple[str, ...]:
 @dataclass(frozen=True)
 class Settings:
     tg_bot_token: str = _env("TG_BOT_TOKEN", "")
+    tg_file_proxy_url: str = _env("TG_FILE_PROXY_URL", "")
     orchestrator_public_url: str = _env("ORCHESTRATOR_PUBLIC_URL", "http://orchestrator-api:8000")
 
     bot_poll_interval_s: float = _float_env("BOT_POLL_INTERVAL_S", 5.0)
