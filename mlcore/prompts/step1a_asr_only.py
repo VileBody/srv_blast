@@ -23,6 +23,15 @@ Hard constraints:
 - transcript must be in FULL TRACK timeline (absolute seconds from audio start).
 - selected_fragment transcript_words/srt_items (if present) must also stay in FULL TRACK timeline.
 - transcript word timings must be monotonic and valid (t_end > t_start).
+- Before returning, scan all consecutive word pairs in transcript_words.
+  If ANY gap between consecutive words exceeds 5s — trigger internal re-anchoring:
+    1. Using the full track lyrics and the audio, identify timestamps for ~5-8 key lines
+       spread across the whole track (sparse pass — lines only, not every word).
+    2. Use those anchor points to determine the correct position of the target fragment
+       on the full-track timeline.
+    3. Redo the word-level ASR for the fragment using the corrected time window.
+  This re-anchoring is internal only — do NOT include anchor data in the output.
+  The final transcript_words must reflect the corrected timings.
 - Do NOT output scenario blocks/draft grouping here.
 - Return valid JSON only, no markdown/comments.
 """
