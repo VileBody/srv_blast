@@ -10,6 +10,7 @@ import time
 import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import quote
 
 import httpx
 from aiogram import Bot, Dispatcher, Router
@@ -1582,16 +1583,24 @@ class BlastBotApp:
     ) -> None:
         retries = max(1, int(_TG_AUDIO_DOWNLOAD_RETRIES))
         last_err: Exception | None = None
+        tg_proxy = str(self.settings.tg_file_proxy_url or "").strip()
 
         for attempt in range(1, retries + 1):
             try:
                 tg_file = await bot.get_file(file_id)
-                with open(dest, "wb") as f:
-                    await bot.download_file(
-                        tg_file.file_path,
-                        destination=f,
-                        timeout=float(_TG_AUDIO_DOWNLOAD_TIMEOUT_S),
+                if tg_proxy:
+                    await self._download_telegram_file_via_http(
+                        file_path=str(tg_file.file_path or ""),
+                        dest=dest,
+                        proxy_url=tg_proxy,
                     )
+                else:
+                    with open(dest, "wb") as f:
+                        await bot.download_file(
+                            tg_file.file_path,
+                            destination=f,
+                            timeout=float(_TG_AUDIO_DOWNLOAD_TIMEOUT_S),
+                        )
                 size = int(dest.stat().st_size) if dest.exists() else 0
                 if size <= 0:
                     raise RuntimeError("telegram download produced empty file")
@@ -1611,10 +1620,11 @@ class BlastBotApp:
 
                 delay_s = float(_TG_AUDIO_DOWNLOAD_BACKOFF_BASE_S) * float(attempt)
                 log.warning(
-                    "audio_download_retry chat=%s file_id=%s name=%s attempt=%d/%d delay_s=%.1f err=%r",
+                    "audio_download_retry chat=%s file_id=%s name=%s via_proxy=%s attempt=%d/%d delay_s=%.1f err=%r",
                     chat_id,
                     file_id,
                     original_name,
+                    bool(tg_proxy),
                     attempt,
                     retries,
                     delay_s,
@@ -1626,6 +1636,33 @@ class BlastBotApp:
         raise RuntimeError(
             f"telegram download failed after {retries} attempts: {type(last_err).__name__}: {last_err!r}"
         ) from last_err
+
+    async def _download_telegram_file_via_http(
+        self,
+        *,
+        file_path: str,
+        dest: Path,
+        proxy_url: str,
+    ) -> None:
+        path = str(file_path or "").strip().lstrip("/")
+        if not path:
+            raise RuntimeError("telegram file_path is empty")
+
+        encoded_path = quote(path, safe="/")
+        url = f"https://api.telegram.org/file/bot{self.settings.tg_bot_token}/{encoded_path}"
+
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        timeout = httpx.Timeout(float(_TG_AUDIO_DOWNLOAD_TIMEOUT_S))
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True, proxy=str(proxy_url)) as client:
+            async with client.stream("GET", url) as resp:
+                if resp.status_code >= 300:
+                    raise RuntimeError(
+                        f"telegram file download failed status={resp.status_code} path={path!r}"
+                    )
+                with open(dest, "wb") as f:
+                    async for chunk in resp.aiter_bytes(chunk_size=1024 * 1024):
+                        if chunk:
+                            f.write(chunk)
 
     async def _download_http(self, *, url: str, dest: Path) -> None:
         dest.parent.mkdir(parents=True, exist_ok=True)
