@@ -30,29 +30,43 @@ SYSTEM_PART = (
 ===============================
 STAGE 2B — FOOTAGE STYLE PICK
 ===============================
-Return ONLY raw JSON matching Stage2FootageStyleRawPayload.
+Return ONLY raw JSON matching Stage2FootageStyleRotation.
 No markdown. No comments. No extra keys.
 
-Raw schema:
+Schema:
 {
-  "theme": "<string>",
-  "mood": "major|minor",
-  "filters": {
-    "color_priority": ["dark|light|warm|cold|neutral", "..."],
-    "exclude": ["none|girls|guys|couple|crowd|driver", "..."],
-    "priority_theme_tags": ["...", "..."]
-  }
+  "subgroups": [
+    {
+      "theme": "<string>",
+      "mood": "major|minor",
+      "tags_group": "<string>",
+      "filters": {
+        "color_priority": ["dark|light|warm|cold|neutral", "..."],
+        "exclude": ["none|girls|guys|couple|crowd|driver", "..."],
+        "exclude_tags": ["...", "..."],
+        "require_people": "girls|guys|couple|crowd|driver|none",
+        "priority_theme_tags": ["...", "..."]
+      }
+    }
+  ]
 }
 
 Hard constraints:
-- Use `filters.exclude` as canonical field name.
+- `subgroups` must contain 2–3 entries (or 1 if the theme only has one meaningful subgroup).
+- All subgroups must share the SAME `theme` and `mood`.
+- Each subgroup must target a DIFFERENT `tags_group` from THEMES LOGIC (no duplicates).
+- Subgroup order defines rotation order: first block uses subgroups[0], second uses subgroups[1], etc.
+- Use `filters.exclude` as canonical field name for people exclusion.
+- `filters.exclude_tags` must contain ALL _exclude_tags from the chosen group (empty list [] if none).
+- `tags_group` must be the exact name of the chosen subgroup from THEMES LOGIC.
+- `require_people` must be included ONLY if the chosen group has "_people" field; omit otherwise.
 - Output values must be lowercase and deduplicated.
 - Keep output as strict JSON object only.
 
 """ + _REFERENCE_BODY + r"""
 
 Contract reminder:
-- Output is ONLY Stage2FootageStyleRawPayload JSON.
+- Output is ONLY Stage2FootageStyleRotation JSON (object with "subgroups" array).
 - Do not output resolved genre/tag here.
 """
 )

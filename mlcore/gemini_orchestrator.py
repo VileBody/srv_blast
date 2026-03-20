@@ -50,7 +50,7 @@ from mlcore.footage_picker import (
 )
 from mlcore.gemini_postprocess import render_all_steps
 from mlcore.models.footage_plan import FootageSelectionPayload
-from mlcore.models.footage_style import FootageStylePickPayload, FootageStyleRawPayload
+from mlcore.models.footage_style import FootageStylePickPayload, FootageStyleRawPayload, FootageStyleRotation
 from mlcore.models.full_plan import FullPlanPayload
 from mlcore.models.stage1_asr import Stage1AsrPayload, Stage1AsrSelectedFragment
 from mlcore.models.stage1_forced_alignment import Stage1ForcedAlignmentPayload, parse_forced_timecode_mmss_mmm
@@ -2577,7 +2577,7 @@ def build_all_via_gemini_one_call(
     foot_prompt = build_stage2_footage_user_prompt(
         stage1_json=stage1_json,
         style_groups=style_groups,
-        schema_name="FootageStyleRawPayload",
+        schema_name="FootageStyleRotation",
     )
     foot_raw = logs_dir / f"gemini_raw_stage2_style_{stamp}.json"
     foot_sys = logs_dir / f"gemini_system_stage2_style_{stamp}.txt"
@@ -2670,9 +2670,10 @@ def build_all_via_gemini_one_call(
 
     style_raw_payload: Optional[FootageStyleRawPayload] = None
     style_adapter_diag: Optional[FootageStyleRawAdapterDiagnostics] = None
+    style_rotation_payload: Optional[FootageStyleRotation] = None
 
     def _run_style_once() -> FootageStylePickPayload:
-        nonlocal style_raw_payload, style_adapter_diag
+        nonlocal style_raw_payload, style_adapter_diag, style_rotation_payload
 
         payload_any = call_footage_style_once(
             client=client_footage,
@@ -2689,24 +2690,29 @@ def build_all_via_gemini_one_call(
             cache_path=cache_path,
             prompt_dump_path=foot_user,
             system_dump_path=foot_sys,
-            schema_model=FootageStyleRawPayload,
+            schema_model=FootageStyleRotation,
         )
 
         if isinstance(payload_any, FootageStylePickPayload):
             # Backward-compatible path (e.g. tests/legacy resume data).
             style_raw_payload = None
             style_adapter_diag = None
+            style_rotation_payload = None
             validate_style_pick_in_groups(payload_any, style_groups)
             return payload_any
 
-        raw_payload = (
-            payload_any
-            if isinstance(payload_any, FootageStyleRawPayload)
-            else FootageStyleRawPayload.model_validate(payload_any)
-        )
+        # Normalise: single subgroup → wrap in rotation for uniform handling.
+        if isinstance(payload_any, FootageStyleRawPayload):
+            rotation = FootageStyleRotation(subgroups=[payload_any])
+        elif isinstance(payload_any, FootageStyleRotation):
+            rotation = payload_any
+        else:
+            rotation = FootageStyleRotation.model_validate(payload_any)
 
+        # Resolve genre/tag from first subgroup (needed for style_payload).
+        base_raw = rotation.subgroups[0]
         resolved, diag = resolve_style_pick_from_raw_filters(
-            raw_pick=raw_payload,
+            raw_pick=base_raw,
             mapped_assets=mapped_picker_assets,
             seed_key=selection_seed_key,
             total_assets=len(picker_assets),
@@ -2714,12 +2720,14 @@ def build_all_via_gemini_one_call(
             metadata_rows_merged=len(style_metadata_index),
         )
         validate_style_pick_in_groups(resolved, style_groups)
-        style_raw_payload = raw_payload
+        style_raw_payload = base_raw  # enables mapped_picker_assets selection path
         style_adapter_diag = diag
+        style_rotation_payload = rotation if len(rotation.subgroups) > 1 else None
         logger.info(
-            "stage2_style_adapter_selected theme=%s mood=%s genre=%s tag=%s mapped=%d unmapped=%d",
-            raw_payload.theme,
-            raw_payload.mood,
+            "stage2_style_adapter_selected theme=%s mood=%s subgroups=%d genre=%s tag=%s mapped=%d unmapped=%d",
+            base_raw.theme,
+            base_raw.mood,
+            len(rotation.subgroups),
             resolved.genre,
             resolved.tag,
             len(mapped_picker_assets),
@@ -2764,6 +2772,19 @@ def build_all_via_gemini_one_call(
         except Exception as e:
             logger.warning("llm_resume_bad stage=stage2_style err=%s", str(e))
             resume_state.pop("stage2_style", None)
+
+    subtitles_only = os.environ.get("SUBTITLES_ONLY", "").strip() in ("1", "true", "yes")
+    if subtitles_only and style_payload is None:
+        # Pick the first available genre/tag from inventory — no Gemini call, no tag filtering.
+        first_asset = next(iter(picker_assets), None)
+        if first_asset is None:
+            raise RuntimeError("subtitles_only=True but inventory is empty")
+        style_payload = FootageStylePickPayload(
+            genre=str(first_asset.get("genre", "Alternative")),
+            tag=str(first_asset.get("tag", "dark_aesthetic")),
+        )
+        style_raw_payload = None
+        logger.info("subtitles_only_mode genre=%s tag=%s", style_payload.genre, style_payload.tag)
 
     stage2_errors: Dict[str, BaseException] = {}
     if subtitles_payload is None and style_payload is None:
@@ -3006,9 +3027,12 @@ def build_all_via_gemini_one_call(
 
     selection_assets = mapped_picker_assets if style_raw_payload is not None else picker_assets
     if style_raw_payload is not None:
+        _mode = "raw_rotation" if style_rotation_payload is not None else "raw_filters_global"
         logger.info(
-            "footage_selection_mode mode=raw_filters_global mapped_assets=%d",
+            "footage_selection_mode mode=%s mapped_assets=%d subgroups=%d",
+            _mode,
             len(selection_assets),
+            len(style_rotation_payload.subgroups) if style_rotation_payload is not None else 1,
         )
     footage_payload, interval_diag = pick_footage_clips_by_intervals_deterministic(
         style_pick=style_payload,
@@ -3019,7 +3043,8 @@ def build_all_via_gemini_one_call(
         seed_key=selection_seed_key,
         fit_mode="cover",
         exclude_file_names=exclude_file_names,
-        raw_pick=style_raw_payload,
+        raw_pick=style_raw_payload if style_rotation_payload is None else None,
+        raw_picks=style_rotation_payload.subgroups if style_rotation_payload is not None else None,
     )
     if getattr(interval_diag, "exclude_relaxed", False):
         logger.warning(

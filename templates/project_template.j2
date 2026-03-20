@@ -647,6 +647,7 @@
 
       try {
         var textDoc = textDocProp.value;
+        try { textDoc.resetCharStyle(); } catch(_) {}
 
         if (base) {
           try { if (base.font !== undefined) textDoc.font = base.font; } catch(_) {}
@@ -1141,6 +1142,7 @@
 
           var srcComp = srcName ? (__COMPS[srcName] || findCompByName(srcName)) : null;
           if (!srcComp) { logLine("ERR", "precomp source missing name=" + String(srcName) + " layer=" + lData.name); return; }
+          try { target.time = 0; } catch(_) {}  // reset CTI so layers.add() defaults inPoint to 0
           layer = target.layers.add(srcComp);
 
         } else if (lData.type === "footage") {

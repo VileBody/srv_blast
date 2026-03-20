@@ -1002,38 +1002,16 @@ class FlowTextLayerRenderer:
                 peak_f = int(round(total_f * 0.5))
                 peak_t = in_t + float(peak_f) / fps
                 peak_val = self._impulse_peak_scale(text=raw_text, dur=dur)
-                quick_exit_f = int(round(total_f * 0.78))
-                quick_exit_t = in_t + float(quick_exit_f) / fps
-                min_t = peak_t + (1.0 / fps)
-                max_t = out_t - (2.0 / fps)
-                can_quick_exit = total_f >= 8 and max_t > min_t + 1e-6
-
-                if can_quick_exit:
-                    quick_exit_t = max(min_t, min(float(quick_exit_t), max_t))
-                    quick_exit_val = max(55.0, float(peak_val) * 0.55)
-                    scale_kfs = [
-                        _kf(t=in_t, value=[75, 75, 100], interpolation="bezier"),
-                        _kf(t=peak_t, value=[peak_val, peak_val, 100], interpolation="bezier"),
-                        _kf(t=quick_exit_t, value=[quick_exit_val, quick_exit_val, 100], interpolation="bezier"),
-                        _kf(t=out_t, value=[0, 0, 100], interpolation="bezier"),
-                    ]
-
-                    fade_start_t = max(quick_exit_t, out_t - (4.0 / fps))
-                    opacity_kfs = [
-                        _kf(t=fade_start_t, value=100, interpolation="bezier"),
-                        _kf(t=out_t, value=0, interpolation="bezier"),
-                    ]
-                else:
-                    op_in = in_t + float(total_f - 3) / fps
-                    scale_kfs = [
-                        _kf(t=in_t, value=[75, 75, 100], interpolation="bezier"),
-                        _kf(t=peak_t, value=[peak_val, peak_val, 100], interpolation="bezier"),
-                        _kf(t=out_t, value=[0, 0, 100], interpolation="bezier"),
-                    ]
-                    opacity_kfs = [
-                        _kf(t=op_in, value=100, interpolation="bezier"),
-                        _kf(t=out_t, value=0, interpolation="bezier"),
-                    ]
+                op_in = in_t + float(total_f - 3) / fps
+                scale_kfs = [
+                    _kf(t=in_t, value=[75, 75, 100], interpolation="bezier"),
+                    _kf(t=peak_t, value=[peak_val, peak_val, 100], interpolation="bezier"),
+                    _kf(t=out_t, value=[0, 0, 100], interpolation="bezier"),
+                ]
+                opacity_kfs = [
+                    _kf(t=op_in, value=100, interpolation="bezier"),
+                    _kf(t=out_t, value=0, interpolation="bezier"),
+                ]
 
             layer = {
                 "name": clean_text,
