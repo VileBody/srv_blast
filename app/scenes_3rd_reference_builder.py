@@ -51,7 +51,7 @@ _GAP_HOLD_TYPE4_WORD_DUR_FLOOR = 0.35
 _GAP_HOLD_TYPE4_MAX_S = 2.20
 _GAP_HOLD_TYPE4_MAX_WORD_MULT = 4.00
 _TYPE4_MIN_HOLD_S = 0.44
-_TYPE4_MIN_ACTIVE_S = 1.00
+_TYPE4_MIN_ACTIVE_S = 0.44
 
 # ---------------------------------------------------------------------------
 # Утилиты
