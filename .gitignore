@@ -23,6 +23,7 @@ pins/
 
 # Local generated data
 data/footage_inventory.json
+data/footage_inventory_selected.json
 video_database.json
 
 # Local packed context dumps
