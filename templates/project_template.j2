@@ -1,0 +1,1352 @@
+{# templates/project_template.j2 #}
+(function () {
+  app.beginUndoGroup("AE_TEXTLIB_FULL_PROJECT");
+
+  // ==========================================================
+  // 0) ENV / STATUS helpers
+  // ==========================================================
+  var __APP_DIR = "";
+  try { __APP_DIR = $.getenv("APP_DIR"); } catch(e) { __APP_DIR = ""; }
+  if (!__APP_DIR || __APP_DIR === "") {
+    try {
+      if ($.fileName) {
+        var __f = new File($.fileName);
+        __APP_DIR = __f.parent.fsName;
+      }
+    } catch(_) {}
+  }
+  if (!__APP_DIR || __APP_DIR === "") {
+    try { __APP_DIR = Folder.temp.fsName; } catch(_) { __APP_DIR = ""; }
+  }
+
+  function __ensureFolderByPath(fsPath) {
+    try {
+      var fld = new Folder(fsPath);
+      if (!fld.exists) fld.create();
+      return fld.exists;
+    } catch(e) { return false; }
+  }
+
+  function __writeAeStatusOk(aepFsName, compName) {
+    try {
+      var st = new File(__APP_DIR + "/ae_status.txt");
+      st.encoding = "UTF-8";
+      if (st.open("w")) {
+        st.writeln("OK");
+        st.writeln("aep=" + String(aepFsName || ""));
+        st.writeln("compName=" + String(compName || ""));
+        st.close();
+      }
+    } catch(e) {}
+  }
+
+  function __writeAeStatusErr(msg) {
+    try {
+      var st = new File(__APP_DIR + "/ae_status.txt");
+      st.encoding = "UTF-8";
+      if (st.open("w")) {
+        st.writeln("ERROR");
+        st.writeln(String(msg || "unknown error"));
+        st.close();
+      }
+    } catch(e) {}
+  }
+
+  // suppress hidden modal dialogs (helps with BCC trial/alerts etc.)
+  try { app.beginSuppressDialogs(); } catch(_) {}
+
+  try {
+    // ==========================================================
+    // 0) PAYLOAD FROM PYTHON
+    // ==========================================================
+    var projectSpec = {{ project | tojson }};
+    var compsSpec = {{ comps | tojson }};
+    var footage_layers = {{ footage_layers | tojson }};
+    var text_layers = {{ text_layers | tojson }};
+
+    // ==========================================================
+    // 0) LOGGER
+    // ==========================================================
+    function pad2(n) { return (n < 10) ? ("0" + n) : ("" + n); }
+    function nowStamp() {
+      var d = new Date();
+      return (
+        d.getFullYear() + "-" +
+        pad2(d.getMonth() + 1) + "-" +
+        pad2(d.getDate()) + "__" +
+        pad2(d.getHours()) + "-" +
+        pad2(d.getMinutes()) + "-" +
+        pad2(d.getSeconds())
+      );
+    }
+
+    var __LOG_ENABLED = true;
+    var __LOG_FILE = null;
+    var __LIVE_LOG_FILE = null;
+    var __HB_FILE = null;
+    var __LAST_HB = "";
+    var __LOG_SEQ = 0;
+
+    function getScriptFolder() {
+      try {
+        if ($.fileName) {
+          var f = new File($.fileName);
+          return f.parent;
+        }
+      } catch(e) {}
+      return null;
+    }
+
+    function ensureFolder(folder) {
+      try {
+        if (folder && !folder.exists) folder.create();
+        return folder && folder.exists;
+      } catch(e) { return false; }
+    }
+
+    function initLogger() {
+      try {
+        var scriptFolder = getScriptFolder();
+        var base = scriptFolder ? scriptFolder : Folder.userData;
+
+        var logsFolder = new Folder(base.fsName + "/logs");
+        if (!ensureFolder(logsFolder)) {
+          logsFolder = new Folder(Folder.temp.fsName + "/ae_textlib_logs");
+          ensureFolder(logsFolder);
+        }
+
+        var logPath = logsFolder.fsName + "/render_full_" + nowStamp() + ".log";
+        __LOG_FILE = new File(logPath);
+        __LOG_FILE.encoding = "UTF-8";
+        __LIVE_LOG_FILE = new File(String(__APP_DIR || "") + "/run_live.log");
+        __LIVE_LOG_FILE.encoding = "UTF-8";
+        __HB_FILE = new File(String(__APP_DIR || "") + "/hb.txt");
+        __HB_FILE.encoding = "UTF-8";
+
+        if (__LOG_FILE.open("a")) {
+          __LOG_FILE.writeln("=== AE FULL PROJECT LOG START ===");
+          __LOG_FILE.writeln("time=" + (new Date()).toUTCString());
+          __LOG_FILE.writeln("script=" + ($.fileName ? $.fileName : "<unknown>"));
+          __LOG_FILE.writeln("logs_dir=" + logsFolder.fsName);
+          __LOG_FILE.writeln("ae_version=" + app.version);
+          __LOG_FILE.writeln("=================================");
+          __LOG_FILE.close();
+        }
+        if (__LIVE_LOG_FILE && __LIVE_LOG_FILE.open("w")) {
+          __LIVE_LOG_FILE.writeln("=== AE LIVE LOG START ===");
+          __LIVE_LOG_FILE.writeln("time=" + (new Date()).toUTCString());
+          __LIVE_LOG_FILE.close();
+        }
+      } catch(e) {
+        __LOG_ENABLED = false;
+      }
+    }
+
+    function _writeToFile(line) {
+      if (!__LOG_ENABLED || !__LOG_FILE) return;
+      try {
+        if (__LOG_FILE.open("a")) {
+          __LOG_FILE.writeln(line);
+          __LOG_FILE.close();
+        }
+      } catch(e) {
+        __LOG_ENABLED = false;
+      }
+    }
+
+    function _writeLive(line) {
+      if (!__LIVE_LOG_FILE) return;
+      try {
+        if (__LIVE_LOG_FILE.open("a")) {
+          __LIVE_LOG_FILE.writeln(line);
+          __LIVE_LOG_FILE.close();
+        }
+      } catch(_) {}
+    }
+
+    function _writeHeartbeat(layerName, phase) {
+      try {
+        __LAST_HB = "layer=" + String(layerName || "") + " phase=" + String(phase || "") + " ts=" + (new Date()).toUTCString();
+        if (__HB_FILE && __HB_FILE.open("w")) {
+          __HB_FILE.writeln(__LAST_HB);
+          __HB_FILE.close();
+        }
+        _writeLive("[HB] " + __LAST_HB);
+      } catch(_) {}
+    }
+
+    function phaseStart(layerName, phase) {
+      var msg = "PHASE_START layer=" + String(layerName || "") + " phase=" + String(phase || "");
+      logLine("INFO", msg);
+      _writeHeartbeat(layerName, phase);
+    }
+
+    function phaseDone(layerName, phase) {
+      var msg = "PHASE_DONE layer=" + String(layerName || "") + " phase=" + String(phase || "");
+      logLine("INFO", msg);
+      _writeHeartbeat(layerName, phase + "_done");
+    }
+
+    function logLine(level, msg) {
+      __LOG_SEQ += 1;
+      var line = "[" + level + "][" + __LOG_SEQ + "] " + msg;
+      try { $.writeln(line); } catch(e) {}
+      _writeToFile(line);
+      _writeLive(line);
+    }
+
+    function logErr(prefix, e) {
+      var s = prefix + ": " + (e && e.toString ? e.toString() : String(e));
+      logLine("ERR", s);
+      try {
+        if (e && e.line) logLine("ERR", "line=" + e.line);
+        if (e && e.fileName) logLine("ERR", "file=" + e.fileName);
+      } catch(_) {}
+    }
+
+    function safeJson(v, maxLen) {
+      var s = "";
+      try { s = JSON.stringify(v); }
+      catch(e) { try { s = String(v); } catch(_) { s = "<unstringifiable>"; } }
+      if (maxLen && s.length > maxLen) s = s.substring(0, maxLen) + "...<trunc>";
+      return s;
+    }
+
+    function pick(obj, a, b) {
+      if (obj && obj[a] !== undefined && obj[a] !== null) return obj[a];
+      if (obj && obj[b] !== undefined && obj[b] !== null) return obj[b];
+      return undefined;
+    }
+
+    function fmtNum(n) {
+      if (n === undefined) return "undefined";
+      if (n === null) return "null";
+      try { return Number(n).toFixed(6); } catch(e) { return String(n); }
+    }
+
+    initLogger();
+    logLine("INFO", "start FULL footage_layers=" + (footage_layers ? footage_layers.length : 0) + " text_layers=" + (text_layers ? text_layers.length : 0));
+    logLine("DBG", "projectSpec=" + safeJson(projectSpec, 400));
+    logLine("DBG", "compsSpec=" + safeJson(compsSpec, 400));
+    logLine("DBG", "APP_DIR=" + String(__APP_DIR));
+
+    // ==========================================================
+    // 1) PROJECT + COMPS
+    // ==========================================================
+    var project = app.project;
+    if (!project) { logLine("ERR", "no app.project"); throw new Error("no app.project"); }
+
+    function findCompByName(name) {
+      try {
+        for (var i = 1; i <= project.numItems; i++) {
+          var it = project.item(i);
+          if (it instanceof CompItem && it.name === name) return it;
+        }
+      } catch(e) {}
+      return null;
+    }
+
+    function findFootageByName(name) {
+      try {
+        for (var i = 1; i <= project.numItems; i++) {
+          var it = project.item(i);
+          if (it instanceof FootageItem && it.name === name) return it;
+        }
+      } catch(e) {}
+      return null;
+    }
+
+    function ensureComp(spec) {
+      var c = findCompByName(spec.name);
+      if (!c) {
+        try {
+          var pa = (spec.pixelAspect !== undefined && spec.pixelAspect !== null) ? spec.pixelAspect : 1.0;
+          c = project.items.addComp(spec.name, spec.w, spec.h, pa, spec.dur, spec.fps);
+          logLine("INFO", "comp created name=" + spec.name);
+        } catch(e) {
+          logErr("create comp failed name=" + spec.name, e);
+          return null;
+        }
+      }
+      // Keep comp dimensions in sync with the spec even if the comp already existed
+      // (e.g. when re-running JSX in the same AE project after switching from 1:1 -> 9:16).
+      try {
+        if (spec.w !== undefined && spec.h !== undefined) {
+          var _w0 = Number(c.width), _h0 = Number(c.height);
+          var _w1 = Number(spec.w), _h1 = Number(spec.h);
+          if (!isNaN(_w0) && !isNaN(_h0) && !isNaN(_w1) && !isNaN(_h1) && (_w0 !== _w1 || _h0 !== _h1)) {
+            try { c.width = _w1; } catch(_) {}
+            try { c.height = _h1; } catch(_) {}
+            logLine("INFO", "comp resized name=" + spec.name + " " + _w0 + "x" + _h0 + " -> " + _w1 + "x" + _h1);
+          }
+        }
+      } catch(_) {}
+      try { if (spec.fps !== undefined) c.frameRate = spec.fps; } catch(_) {}
+      try { if (spec.dur !== undefined) c.duration = spec.dur; } catch(_) {}
+      try { if (spec.workAreaStart !== undefined) c.workAreaStart = spec.workAreaStart; } catch(_) {}
+      try { if (spec.workAreaDuration !== undefined) c.workAreaDuration = spec.workAreaDuration; } catch(_) {}
+      try { if (spec.displayStartTime !== undefined) c.displayStartTime = spec.displayStartTime; } catch(_) {}
+      try { if (spec.bgColor && spec.bgColor.length === 3) c.bgColor = spec.bgColor; } catch(_) {}
+      return c;
+    }
+
+    var __COMPS = {};
+    for (var ci = 0; ci < compsSpec.length; ci++) {
+      var cc = ensureComp(compsSpec[ci]);
+      if (cc) __COMPS[cc.name] = cc;
+    }
+
+    var MAIN_COMP = __COMPS[projectSpec.mainCompName] || findCompByName(projectSpec.mainCompName);
+    if (!MAIN_COMP) { logLine("ERR", "main comp missing=" + projectSpec.mainCompName); throw new Error("main comp missing"); }
+
+    // IMPORTANT: no openInViewer() on render nodes
+
+    // ==========================================================
+    // 1.05) Expand precomp nodes in text_layers
+    // ==========================================================
+    function ensureCompByNameStrict(meta) {
+      if (!meta || !meta.name) return null;
+
+      var c = __COMPS[String(meta.name)] || findCompByName(String(meta.name));
+      if (c) {
+        // Same as ensureComp(): keep node precomp dimensions in sync when re-running scripts.
+        try {
+          var _mw = Number(meta.w || 1080), _mh = Number(meta.h || 1920);
+          var _w0 = Number(c.width), _h0 = Number(c.height);
+          if (!isNaN(_w0) && !isNaN(_h0) && !isNaN(_mw) && !isNaN(_mh) && (_w0 !== _mw || _h0 !== _mh)) {
+            try { c.width = _mw; } catch(_) {}
+            try { c.height = _mh; } catch(_) {}
+            logLine("INFO", "precomp resized (node) name=" + c.name + " " + _w0 + "x" + _h0 + " -> " + _mw + "x" + _mh);
+          }
+        } catch(_) {}
+        __COMPS[c.name] = c;
+        return c;
+      }
+
+      try {
+        c = project.items.addComp(
+          String(meta.name),
+          Number(meta.w || 1080),
+          Number(meta.h || 1920),
+          1.0,
+          Number(meta.dur || 5.0),
+          Number(meta.fps || 23.976)
+        );
+        try { if (meta.fps !== undefined) c.frameRate = meta.fps; } catch(_) {}
+        try { if (meta.dur !== undefined) c.duration = meta.dur; } catch(_) {}
+        __COMPS[c.name] = c;
+        logLine("INFO", "precomp created (node) name=" + c.name + " id=" + c.id);
+        return c;
+      } catch(e) {
+        logErr("precomp create failed (node) name=" + String(meta.name), e);
+        return null;
+      }
+    }
+
+    function expandPrecompNodes(list) {
+      var out = [];
+      try {
+        for (var i = 0; i < list.length; i++) {
+          var it = list[i];
+
+          if (it && it.type === "precomp" && it.comp && it.layers && it.layers.length !== undefined) {
+            var pc = ensureCompByNameStrict(it.comp);
+            if (!pc) continue;
+
+            for (var j = 0; j < it.layers.length; j++) {
+              var inner = it.layers[j];
+              if (!inner) continue;
+
+              if (!inner.text_data) inner.text_data = {};
+              if (!inner.text_data.layer_meta) inner.text_data.layer_meta = {};
+              inner.text_data.layer_meta.comp_name_target = pc.name;
+
+              out.push(inner);
+            }
+            continue;
+          }
+          out.push(it);
+        }
+      } catch(eExp) {
+        logErr("expandPrecompNodes failed", eExp);
+        return list;
+      }
+      return out;
+    }
+
+    text_layers = expandPrecompNodes(text_layers);
+    logLine("INFO", "text_layers expanded=" + (text_layers ? text_layers.length : 0));
+
+    // ==========================================================
+    // 1.1) Footage import helpers
+    // ==========================================================
+    var __AUDIO_EXTS = {".wav":1, ".mp3":1, ".m4a":1, ".aac":1, ".flac":1, ".ogg":1};
+
+    function _extLower(name) {
+      try {
+        var s = String(name || "");
+        var idx = s.lastIndexOf(".");
+        if (idx === -1) return "";
+        return s.substring(idx).toLowerCase();
+      } catch(e) { return ""; }
+    }
+
+    function _isAudioName(name) {
+      var ex = _extLower(name);
+      return (__AUDIO_EXTS[ex] === 1);
+    }
+
+    function _localMediaPathByName(fileName) {
+      var base = String(__APP_DIR || "");
+      if (!base) return "";
+      var isA = _isAudioName(fileName);
+      var sub = isA ? "/media/audio/" : "/media/video/";
+      return base + sub + String(fileName);
+    }
+
+    function _singleAudioPathInMedia() {
+      try {
+        var dir = new Folder(String(__APP_DIR || "") + "/media/audio");
+        if (!dir.exists) return "";
+        var files = dir.getFiles(function (f) {
+          try {
+            if (!(f instanceof File)) return false;
+            return _isAudioName(f.name);
+          } catch(_) { return false; }
+        });
+        if (!files || files.length !== 1) return "";
+        return files[0].fsName;
+      } catch(e) { return ""; }
+    }
+
+    function _normalizeMediaNameForMatch(name) {
+      try {
+        var s = String(name || "");
+        s = s.toLowerCase();
+        // Windows can normalize away trailing spaces/dots in names.
+        s = s.replace(/\s+\./g, ".");
+        s = s.replace(/[ .]+$/g, "");
+        s = s.replace(/\s+/g, " ");
+        return s;
+      } catch(_) { return ""; }
+    }
+
+    function _findMediaPathByNameFallback(expectedName, isAudio) {
+      try {
+        var dirPath = String(__APP_DIR || "") + (isAudio ? "/media/audio" : "/media/video");
+        var dir = new Folder(dirPath);
+        if (!dir.exists) return "";
+
+        var files = dir.getFiles(function (f) {
+          try { return (f instanceof File); } catch(_) { return false; }
+        });
+        if (!files || files.length === 0) return "";
+
+        var expectedLower = String(expectedName || "").toLowerCase();
+        for (var i = 0; i < files.length; i++) {
+          try {
+            if (String(files[i].name || "").toLowerCase() === expectedLower) {
+              return files[i].fsName;
+            }
+          } catch(_) {}
+        }
+
+        var expectedNorm = _normalizeMediaNameForMatch(expectedName);
+        if (!expectedNorm) return "";
+        var matched = [];
+        for (var j = 0; j < files.length; j++) {
+          try {
+            var candNorm = _normalizeMediaNameForMatch(files[j].name || "");
+            if (candNorm === expectedNorm) matched.push(files[j]);
+          } catch(_) {}
+        }
+        if (matched.length === 1) return matched[0].fsName;
+      } catch(_) {}
+      return "";
+    }
+
+    // ✅ PATH FIX: treat "/app/..." as invalid local path on Windows -> resolve via APP_DIR
+    function _looksLikeUnixAbsPath(p) {
+      try {
+        var s = String(p || "");
+        return (s.length >= 2 && s.charAt(0) === "/" && s.indexOf(":\\") === -1);
+      } catch(e) { return false; }
+    }
+
+    function _isWindowsHost() {
+      try {
+        var os = String($.os || "").toLowerCase();
+        return os.indexOf("windows") !== -1;
+      } catch(_) { return false; }
+    }
+
+    function _shouldResolveViaAppDir(filePath) {
+      var fp = String(filePath || "");
+      if (!fp || fp === "") return true;
+      if (fp.indexOf("http://") === 0 || fp.indexOf("https://") === 0) return true;
+      if (fp.indexOf("s3://") === 0) return true;
+      // Linux-style absolute paths like /app/... are invalid on Windows render node,
+      // but valid on macOS local AE. Only force APP_DIR mapping on Windows host.
+      if (_looksLikeUnixAbsPath(fp) && _isWindowsHost()) return true;
+      return false;
+    }
+
+    function ensureFootageItem(src) {
+      if (!src) return null;
+      var nm = src.file_name;
+      var fp = src.file_path;
+
+      var existing = findFootageByName(nm);
+      if (existing) return existing;
+
+      if (_shouldResolveViaAppDir(fp)) {
+        var local = _localMediaPathByName(nm);
+        if (local && local !== "") {
+          fp = local;
+          logLine("INFO", "resolved local media path via APP_DIR name=" + nm + " -> " + fp);
+        } else {
+          logLine("ERR", "footage missing local path and APP_DIR resolve failed name=" + nm + " fp=" + String(fp));
+          return null;
+        }
+      }
+
+      try {
+        var f = new File(fp);
+        var isAudio = _isAudioName(nm);
+        if (!f.exists && !isAudio) {
+          var altAny = _findMediaPathByNameFallback(nm, _isAudioName(nm));
+          if (altAny && altAny !== "") {
+            logLine("WARN", "media fallback by normalized filename expected=" + nm + " actual=" + altAny);
+            f = new File(altAny);
+          }
+        }
+        // Strict audio contract: never auto-substitute a different audio file.
+        if (!f.exists && isAudio) {
+          logLine("ERR", "audio strict missing expected file name=" + nm + " path=" + fp);
+          return null;
+        }
+        if (!f.exists) {
+          logLine("ERR", "footage file not found path=" + fp + " name=" + nm);
+          return null;
+        }
+        var io = new ImportOptions(f);
+        var it = project.importFile(io);
+        try { it.name = nm; } catch(_) {}
+        logLine("INFO", "footage imported name=" + nm + " path=" + fp);
+        return it;
+      } catch(e) {
+        logErr("import footage failed name=" + nm + " path=" + fp, e);
+        return null;
+      }
+    }
+
+    // ==========================================================
+    // 2) Helpers
+    // ==========================================================
+    function interpFromCode(code) {
+      if (code === "6614") return KeyframeInterpolationType.HOLD;
+      if (code === "6612") return KeyframeInterpolationType.LINEAR;
+      return KeyframeInterpolationType.BEZIER;
+    }
+
+    function applyValue(prop, data, ctx) {
+      if (!prop || !data) return;
+
+      if (data.expression && (!data.keyframes || data.keyframes.length === 0) && data.value === null) {
+        try { prop.expression = data.expression; }
+        catch(e) { logErr("expr set failed ctx=" + ctx, e); }
+        return;
+      }
+
+      if (data.value !== null && (!data.keyframes || data.keyframes.length === 0)) {
+        try {
+          if (data.expression) prop.expression = data.expression;
+          else prop.setValue(data.value);
+        } catch(e2) { logErr("value set failed ctx=" + ctx, e2); }
+        return;
+      }
+
+      if (data.keyframes && data.keyframes.length > 0) {
+        try { while (prop.numKeys > 0) prop.removeKey(1); } catch(_) {}
+
+        for (var k = 0; k < data.keyframes.length; k++) {
+          var kf = data.keyframes[k];
+          try {
+            var keyIdx = prop.addKey(kf.t);
+            prop.setValueAtKey(keyIdx, kf.v);
+
+            var inInterp = interpFromCode(kf.iit);
+            var outInterp = interpFromCode(kf.oit);
+            try { prop.setInterpolationTypeAtKey(keyIdx, inInterp, outInterp); } catch(_) {}
+
+            try {
+              var easesIn = [];
+              var easesOut = [];
+
+              if (kf.ease_in && kf.ease_in.length > 0) {
+                for (var ei = 0; ei < kf.ease_in.length; ei++) {
+                  easesIn.push(new KeyframeEase(kf.ease_in[ei].speed, kf.ease_in[ei].influence));
+                }
+              }
+              if (kf.ease_out && kf.ease_out.length > 0) {
+                for (var eo = 0; eo < kf.ease_out.length; eo++) {
+                  easesOut.push(new KeyframeEase(kf.ease_out[eo].speed, kf.ease_out[eo].influence));
+                }
+              }
+
+              if (easesIn.length > 0 || easesOut.length > 0) {
+                if (easesIn.length === 0) easesIn = easesOut;
+                if (easesOut.length === 0) easesOut = easesIn;
+                prop.setTemporalEaseAtKey(keyIdx, easesIn, easesOut);
+              }
+            } catch(_) {}
+
+          } catch(e3) {
+            logErr("kf set failed ctx=" + ctx + " k=" + k, e3);
+          }
+        }
+      }
+    }
+
+    function resolveBlendingModeByCode(code) {
+      try { if (String(code) === "5212") return BlendingMode.NORMAL; } catch(e) {}
+      try { if (String(code).toLowerCase() === "screen") return BlendingMode.SCREEN; } catch(e2) {}
+      return null;
+    }
+
+    function resolveJustificationByCode(code) {
+      try { if (String(code) === "7415") return ParagraphJustification.CENTER_JUSTIFY; } catch(e) {}
+      return null;
+    }
+
+    function safeProp(group, matchOrName) {
+      if (!group) return null;
+      try { return group.property(matchOrName); } catch (_) { return null; }
+    }
+
+    // ==========================================================
+    // 2.1) TextDocument apply (BASE + PER-CHAR)
+    // (kept as-is; your pipeline already handles it)
+    // ==========================================================
+    function applyTextBaseAndCharStyles(layer, lData) {
+      if (!layer || !lData || lData.type !== "text") return;
+
+      var td = (lData.text_data ? lData.text_data : null);
+      if (!td) return;
+
+      var textProps = null;
+      try { textProps = layer.property("ADBE Text Properties"); } catch(e) { textProps = null; }
+      if (!textProps) { logLine("ERR", "no Text Properties layer=" + layer.name); return; }
+
+      var textDocProp = safeProp(textProps, "ADBE Text Document");
+      if (!textDocProp) { logLine("ERR", "no Text Document prop layer=" + layer.name); return; }
+
+      var base = td.text_base;
+      var chars = td.char_styles_ungrouped;
+      if (!base && !chars) return;
+
+      try {
+        var textDoc = textDocProp.value;
+        try { textDoc.resetCharStyle(); } catch(_) {}
+
+        if (base) {
+          try { if (base.font !== undefined) textDoc.font = base.font; } catch(_) {}
+          try { if (base.fontSize !== undefined) textDoc.fontSize = base.fontSize; } catch(_) {}
+          try { if (base.applyFill !== undefined) textDoc.applyFill = !!base.applyFill; } catch(_) {}
+          try { if (base.fillColor !== undefined) textDoc.fillColor = base.fillColor; } catch(_) {}
+          try { if (base.applyStroke !== undefined) textDoc.applyStroke = !!base.applyStroke; } catch(_) {}
+          try { if (base.strokeWidth !== undefined) textDoc.strokeWidth = base.strokeWidth; } catch(_) {}
+          try { if (base.strokeColor !== undefined) textDoc.strokeColor = base.strokeColor; } catch(_) {}
+          try { if (base.tracking !== undefined) textDoc.tracking = base.tracking; } catch(_) {}
+          try { if (base.leading !== undefined) textDoc.leading = base.leading; } catch(_) {}
+          try { if (base.autoLeading !== undefined) textDoc.autoLeading = !!base.autoLeading; } catch(_) {}
+          try { if (base.allCaps !== undefined) textDoc.allCaps = !!base.allCaps; } catch(_) {}
+
+          try { if (base.leftIndent !== undefined) textDoc.leftIndent = base.leftIndent; } catch(_) {}
+          try { if (base.rightIndent !== undefined) textDoc.rightIndent = base.rightIndent; } catch(_) {}
+          try { if (base.firstLineIndent !== undefined) textDoc.firstLineIndent = base.firstLineIndent; } catch(_) {}
+          try { if (base.spaceBefore !== undefined) textDoc.spaceBefore = base.spaceBefore; } catch(_) {}
+          try { if (base.spaceAfter !== undefined) textDoc.spaceAfter = base.spaceAfter; } catch(_) {}
+
+          try {
+            if (base.justificationCode !== undefined) {
+              var j = resolveJustificationByCode(base.justificationCode);
+              if (j !== null) textDoc.justification = j;
+              else logLine("ERR", "unknown justificationCode=" + String(base.justificationCode) + " layer=" + layer.name);
+            }
+          } catch(_) {}
+        }
+
+        textDocProp.setValue(textDoc);
+
+        if (chars && chars.length) {
+          textDoc = textDocProp.value;
+          var s = String(lData.text || "");
+          var L = s.length;
+
+          for (var i = 0; i < chars.length; i++) {
+            var cs = chars[i];
+            try {
+              var idx = cs.i;
+              if (idx < 0 || idx >= L) continue; // OOB guard
+              if (s.charAt(idx) === "\r") continue; // avoid range edits on line-break glyph
+              var r = textDoc.characterRange(idx, idx + 1);
+              if (cs.font !== undefined) r.font = cs.font;
+              if (cs.fontSize !== undefined) r.fontSize = cs.fontSize;
+              if (cs.fauxItalic !== undefined) r.fauxItalic = !!cs.fauxItalic;
+            } catch(eChar) {
+              logErr("charStyle failed layer=" + layer.name + " i=" + i, eChar);
+            }
+          }
+
+          if (base && base.justificationCode !== undefined) {
+            try {
+              var jj = resolveJustificationByCode(base.justificationCode);
+              if (jj !== null) textDoc.justification = jj;
+            } catch(_) {}
+          }
+
+          textDocProp.setValue(textDoc);
+        }
+      } catch(e) {
+        logErr("applyTextBaseAndCharStyles failed layer=" + layer.name, e);
+      }
+    }
+
+    // ==========================================================
+    // 2.2) Text Animator apply (kept)
+    // ==========================================================
+    function findAndRemoveAnimatorByName(textAnimators, name) {
+      try {
+        for (var i = textAnimators.numProperties; i >= 1; i--) {
+          var a = textAnimators.property(i);
+          if (a && a.name === name) {
+            try { a.remove(); } catch(_) {}
+          }
+        }
+      } catch(e) {}
+    }
+
+    function applyTextAnimatorFromBlueprint(layer, lData) {
+      if (!layer || !lData || lData.type !== "text") return;
+
+      var td = (lData.text_data ? lData.text_data : null);
+      if (td && td.no_text_animator) {
+        logLine("DBG", "skip animator by no_text_animator layer=" + layer.name);
+        return;
+      }
+
+      var propsDict = lData.props || null;
+      var cfg = (td && td.text_animator) ? td.text_animator : null;
+      var hasReveal = (propsDict && propsDict.reveal && propsDict.reveal.match_name === "ADBE Text Percent Start");
+      var hasRevealEnd = (propsDict && propsDict.reveal_end && propsDict.reveal_end.match_name === "ADBE Text Percent End");
+      var hasAnimOpacityProp = (propsDict && propsDict.anim_opacity && propsDict.anim_opacity.match_name === "ADBE Opacity");
+      var hasCfgProps = !!(cfg && (
+        (cfg.properties && cfg.properties.length > 0) ||
+        (cfg.expressible_selector && cfg.expressible_selector.amount)
+      ));
+
+      if (!hasReveal && !hasRevealEnd && !hasAnimOpacityProp && !hasCfgProps) return;
+
+      if (!cfg) {
+        logLine("ERR", "missing text_data.text_animator but reveal/reveal_end present, layer=" + layer.name);
+        return;
+      }
+
+      var textProps = null;
+      try { textProps = layer.property("ADBE Text Properties"); } catch(e) { textProps = null; }
+      if (!textProps) { logLine("ERR", "no Text Properties layer=" + layer.name); return; }
+
+      var animators = safeProp(textProps, "ADBE Text Animators");
+      if (!animators) { logLine("ERR", "no Text Animators group layer=" + layer.name); return; }
+
+      var animName = (cfg && cfg.name) ? cfg.name : "Animator 1";
+      findAndRemoveAnimatorByName(animators, animName);
+
+      var animator = null;
+      try { animator = animators.addProperty("ADBE Text Animator"); } catch(e2) { animator = null; }
+      if (!animator) { logLine("ERR", "failed to add Text Animator layer=" + layer.name); return; }
+      try { animator.name = animName; } catch(_) {}
+
+      var animatorProps = safeProp(animator, "ADBE Text Animator Properties");
+      if (!animatorProps) { logLine("ERR", "no Animator Properties layer=" + layer.name); return; }
+
+      var aOpacity = null;
+      try { aOpacity = animatorProps.addProperty("ADBE Text Opacity"); } catch(_) { aOpacity = null; }
+      if (!aOpacity) { logLine("ERR", "failed to add Text Opacity prop layer=" + layer.name); return; }
+
+      if (hasAnimOpacityProp) applyValue(aOpacity, propsDict.anim_opacity, "Animator.TextOpacity layer=" + layer.name);
+      else if (cfg.opacity !== undefined) { try { aOpacity.setValue(cfg.opacity); } catch(_) {} }
+
+      if (cfg.properties && cfg.properties.length) {
+        for (var pi = 0; pi < cfg.properties.length; pi++) {
+          var pData = cfg.properties[pi];
+          if (!pData || !pData.match_name) continue;
+          var aProp = null;
+          try { aProp = animatorProps.addProperty(pData.match_name); } catch(_) { aProp = null; }
+          if (!aProp) {
+            logLine("ERR", "failed to add animator prop match=" + pData.match_name + " layer=" + layer.name);
+            continue;
+          }
+          applyValue(aProp, pData, "Animator.Prop match=" + pData.match_name + " layer=" + layer.name);
+        }
+      }
+
+      var selectors = safeProp(animator, "ADBE Text Selectors");
+      if (!selectors) { logLine("ERR", "no Text Selectors group layer=" + layer.name); return; }
+
+      var sel = null;
+      try { sel = selectors.addProperty("ADBE Text Selector"); } catch(e3) { sel = null; }
+      if (!sel) { logLine("ERR", "failed to add Text Selector layer=" + layer.name); return; }
+      try { sel.name = (cfg.selector && cfg.selector.name) ? cfg.selector.name : "Range Selector 1"; } catch(_) {}
+
+      var adv = safeProp(sel, "ADBE Text Range Advanced");
+      if (!adv) { logLine("ERR", "no ADBE Text Range Advanced layer=" + layer.name); return; }
+
+      var advCfg = (cfg.selector && cfg.selector.advanced) ? cfg.selector.advanced : null;
+      if (!advCfg) { logLine("ERR", "missing selector.advanced in cfg layer=" + layer.name); return; }
+
+      try { safeProp(adv, "ADBE Text Range Units").setValue(advCfg.units); } catch(_) {}
+      try { safeProp(adv, "ADBE Text Range Type2").setValue(advCfg.basedOn); } catch(_) {}
+      try { safeProp(adv, "ADBE Text Selector Mode").setValue(advCfg.mode); } catch(_) {}
+      try { safeProp(adv, "ADBE Text Selector Max Amount").setValue(advCfg.maxAmount); } catch(_) {}
+      try { safeProp(adv, "ADBE Text Range Shape").setValue(advCfg.shape); } catch(_) {}
+      try { safeProp(adv, "ADBE Text Selector Smoothness").setValue(advCfg.smoothness); } catch(_) {}
+      try { safeProp(adv, "ADBE Text Levels Max Ease").setValue(advCfg.hiEase); } catch(_) {}
+      try { safeProp(adv, "ADBE Text Levels Min Ease").setValue(advCfg.loEase); } catch(_) {}
+      try { safeProp(adv, "ADBE Text Randomize Order").setValue(advCfg.randomizeOrder); } catch(_) {}
+
+      if (hasReveal) {
+        var ps = safeProp(sel, "ADBE Text Percent Start");
+        if (!ps) { logLine("ERR", "no Percent Start prop layer=" + layer.name); return; }
+        applyValue(ps, propsDict.reveal, "RS.PercentStart layer=" + layer.name);
+      }
+      if (hasRevealEnd) {
+        var pe = safeProp(sel, "ADBE Text Percent End");
+        if (!pe) { logLine("ERR", "no Percent End prop layer=" + layer.name); return; }
+        applyValue(pe, propsDict.reveal_end, "RS.PercentEnd layer=" + layer.name);
+      } else if (cfg.selector && cfg.selector.percentEnd !== undefined) {
+        var pe2 = safeProp(sel, "ADBE Text Percent End");
+        if (pe2) { try { pe2.setValue(cfg.selector.percentEnd); } catch(_) {} }
+      }
+      if (cfg.selector && cfg.selector.percentStart !== undefined) {
+        var ps2 = safeProp(sel, "ADBE Text Percent Start");
+        if (ps2) { try { ps2.setValue(cfg.selector.percentStart); } catch(_) {} }
+      }
+
+      var exprCfg = (cfg && cfg.expressible_selector) ? cfg.expressible_selector : null;
+      if (exprCfg && exprCfg.amount) {
+        var exprSel = null;
+        try { exprSel = selectors.addProperty("ADBE Text Expressible Selector"); } catch(_) { exprSel = null; }
+        if (!exprSel) {
+          logLine("ERR", "failed to add Text Expressible Selector layer=" + layer.name);
+        } else {
+          try {
+            if (exprCfg.rangeType2 !== undefined) {
+              safeProp(exprSel, "ADBE Text Range Type2").setValue(exprCfg.rangeType2);
+            }
+          } catch(_) {}
+          var exprAmount = safeProp(exprSel, "ADBE Text Expressible Amount");
+          if (!exprAmount) {
+            logLine("ERR", "no Text Expressible Amount layer=" + layer.name);
+          } else {
+            applyValue(exprAmount, exprCfg.amount, "ExprSel.Amount layer=" + layer.name);
+          }
+        }
+      }
+    }
+
+    function _setPropConstant3D(prop, x, y, z) {
+      if (!prop) return;
+      var v = [x, y, z];
+      try {
+        if (prop.numKeys && prop.numKeys > 0) {
+          for (var i = 1; i <= prop.numKeys; i++) {
+            prop.setValueAtKey(i, v);
+          }
+        } else {
+          prop.setValue(v);
+        }
+      } catch(e) { logErr("setPropConstant3D failed", e); }
+    }
+
+    function _scaleLayerUniform2D(layer, mult) {
+      if (!(mult > 0) || Math.abs(mult - 1.0) < 1e-6) return;
+      try {
+        var tf = layer.property("ADBE Transform Group");
+        var sc = safeProp(tf, "ADBE Scale");
+        if (!sc) return;
+        if (sc.numKeys && sc.numKeys > 0) {
+          for (var i = 1; i <= sc.numKeys; i++) {
+            var kv = sc.keyValue(i);
+            if (kv && kv.length >= 2) {
+              var z = (kv.length >= 3) ? kv[2] : 100;
+              sc.setValueAtKey(i, [Number(kv[0]) * mult, Number(kv[1]) * mult, z]);
+            }
+          }
+        } else {
+          var v = sc.value;
+          if (v && v.length >= 2) {
+            var z0 = (v.length >= 3) ? v[2] : 100;
+            sc.setValue([Number(v[0]) * mult, Number(v[1]) * mult, z0]);
+          }
+        }
+      } catch(e) { logErr("scaleLayerUniform2D failed layer=" + layer.name, e); }
+    }
+
+    function _measureTextWidthPx(layer, t) {
+      try {
+        var sr = layer.sourceRectAtTime(t, false);
+        var tf = layer.property("ADBE Transform Group");
+        var sc = safeProp(tf, "ADBE Scale");
+        var sx = 100.0;
+        if (sc) {
+          try {
+            var sv = (sc.numKeys && sc.numKeys > 0) ? sc.valueAtTime(t, false) : sc.value;
+            if (sv && sv.length >= 1) sx = Number(sv[0]);
+          } catch(_) {}
+        }
+        return {"ok": true, "widthPx": Math.abs(Number(sr.width)) * Math.abs(sx) / 100.0, "sr": sr, "t": t};
+      } catch(e) {
+        return {"ok": false, "widthPx": 0.0, "sr": null, "t": t};
+      }
+    }
+
+    function applyFinalTextLayoutPass(layer, lData, targetComp) {
+      if (!layer || !lData || lData.type !== "text" || !targetComp) return;
+      var td = (lData.text_data ? lData.text_data : null);
+      if (td && td.no_layout_pass) return;
+      var marginX = 0.05;
+      var maxWidth = Number(targetComp.width) * (1.0 - 2.0 * marginX);
+      if (!(maxWidth > 0)) return;
+
+      var fps = Number(targetComp.frameRate || 25);
+      if (!(fps > 0)) fps = 25;
+      var dt = 1.0 / fps;
+      var t0 = Number(layer.inPoint || 0);
+      var t1 = Number(layer.outPoint || (t0 + dt));
+      var t2 = (t0 + t1) * 0.5;
+      var t3 = Math.max(t0, t1 - dt);
+      var samples = [t0, t2, t3];
+
+      var best = {"widthPx": 0.0, "sr": null, "t": t2};
+      for (var i = 0; i < samples.length; i++) {
+        var m = _measureTextWidthPx(layer, samples[i]);
+        if (m.ok && m.widthPx >= best.widthPx) best = m;
+      }
+
+      if (best.sr && best.widthPx > maxWidth + 1e-3) {
+        _scaleLayerUniform2D(layer, maxWidth / best.widthPx);
+        best = {"widthPx": 0.0, "sr": null, "t": t2};
+        for (var j = 0; j < samples.length; j++) {
+          var m2 = _measureTextWidthPx(layer, samples[j]);
+          if (m2.ok && m2.widthPx >= best.widthPx) best = m2;
+        }
+      }
+
+      if (!best.sr) return;
+
+      var sr = best.sr;
+      var centerX = Number(sr.left) + Number(sr.width) / 2.0;
+      var centerY = Number(sr.top) + Number(sr.height) / 2.0;
+      var compCenterX = Number(targetComp.width) / 2.0;
+      var compCenterY = Number(targetComp.height) / 2.0;
+
+      try {
+        var tf = layer.property("ADBE Transform Group");
+        var ap = safeProp(tf, "ADBE Anchor Point");
+        var pos = safeProp(tf, "ADBE Position");
+
+        var apZ = 0.0;
+        if (ap) {
+          try {
+            var av = (ap.numKeys && ap.numKeys > 0) ? ap.valueAtTime(best.t, false) : ap.value;
+            if (av && av.length >= 3) apZ = Number(av[2]);
+          } catch(_) {}
+          _setPropConstant3D(ap, centerX, centerY, apZ);
+        }
+
+        var posZ = 0.0;
+        if (pos) {
+          try {
+            var pv = (pos.numKeys && pos.numKeys > 0) ? pos.valueAtTime(best.t, false) : pos.value;
+            if (pv && pv.length >= 3) posZ = Number(pv[2]);
+          } catch(_) {}
+          _setPropConstant3D(pos, compCenterX, compCenterY, posZ);
+        }
+      } catch(eTf) { logErr("final text layout failed layer=" + layer.name, eTf); }
+    }
+
+    function applyAudioEnvelopeFromBlueprint(layer, lData) {
+      if (!layer || !lData || lData.type !== "footage") return;
+      var td = (lData.text_data ? lData.text_data : null);
+      if (!td || !td.audio_envelope) return;
+
+      var cfg = td.audio_envelope;
+      var fadeIn = Number(cfg.fade_in_s);
+      var fadeOut = Number(cfg.fade_out_s);
+      var minDb = Number(cfg.min_db);
+      if (!isFinite(fadeIn) || fadeIn < 0) fadeIn = 0;
+      if (!isFinite(fadeOut) || fadeOut < 0) fadeOut = 0;
+      if (!isFinite(minDb)) minDb = -48;
+
+      try {
+        var ag = layer.property("ADBE Audio Group");
+        var lv = safeProp(ag, "ADBE Audio Levels");
+        if (!lv) return;
+
+        var expr = ""
+          + "var fadeIn=" + String(fadeIn) + ";\n"
+          + "var fadeOut=" + String(fadeOut) + ";\n"
+          + "var minDb=" + String(minDb) + ";\n"
+          + "var t=time-inPoint;\n"
+          + "var dur=Math.max(0.0001,outPoint-inPoint);\n"
+          + "var a=1.0;\n"
+          + "if (fadeIn>0){var x=Math.min(Math.max(t/fadeIn,0),1);a=Math.min(a,Math.sin(x*Math.PI*0.5));}\n"
+          + "if (fadeOut>0){var y=Math.min(Math.max((dur-t)/fadeOut,0),1);a=Math.min(a,Math.sin(y*Math.PI*0.5));}\n"
+          + "var db=minDb+(0-minDb)*a;\n"
+          + "[db,db];";
+        lv.expression = expr;
+      } catch(e) { logErr("apply audio envelope failed layer=" + layer.name, e); }
+    }
+
+    function tileOverlayLayerInAe(layer, lData) {
+      if (!layer || !lData || lData.type !== "footage") return;
+      var td = (lData.text_data ? lData.text_data : null);
+      var meta = (td && td.layer_meta) ? td.layer_meta : null;
+      if (!meta || meta.isOverlay !== true || meta.overlayTileInAe !== true) return;
+
+      var repMax = Number(meta.overlayTileMaxRepeats);
+      if (!isFinite(repMax) || repMax <= 0) repMax = 100;
+      repMax = Math.floor(repMax);
+      if (repMax > 500) repMax = 500;
+
+      var clipIn = Number(layer.inPoint);
+      var clipOut = Number(layer.outPoint);
+      if (!isFinite(clipIn) || !isFinite(clipOut) || clipOut <= clipIn) return;
+
+      var segDur = 0.0;
+      try {
+        if (layer.source && layer.source.duration !== undefined && layer.source.duration !== null) {
+          segDur = Number(layer.source.duration);
+        }
+      } catch(_) {}
+      var segDurMeta = Number(meta.overlayDurationSec);
+      if (isFinite(segDurMeta) && segDurMeta > 0) {
+        if (!isFinite(segDur) || segDur <= 0.0) {
+          segDur = segDurMeta;
+          logLine("WARN", "overlay source.duration invalid; using overlayDurationSec layer=" + layer.name + " dur=" + fmtNum(segDur));
+        } else if (Math.abs(segDur - segDurMeta) > 0.02) {
+          logLine("WARN", "overlay duration mismatch source=" + fmtNum(segDur) + " meta=" + fmtNum(segDurMeta) + " layer=" + layer.name);
+        }
+      }
+      if (!isFinite(segDur) || segDur <= 0.0) {
+        throw new Error("overlay source.duration is invalid for layer=" + layer.name);
+      }
+
+      try {
+        layer.startTime = clipIn;
+        layer.inPoint = clipIn;
+        layer.outPoint = Math.min(clipOut, clipIn + segDur);
+      } catch(e0) {
+        throw new Error("overlay base tile setup failed layer=" + layer.name + " err=" + e0);
+      }
+
+      var dt = 1.0 / Number(layer.containingComp.frameRate || 25);
+      var t = Number(layer.outPoint);
+      var count = 1;
+      while (t < clipOut - dt) {
+        if (count >= repMax) {
+          throw new Error(
+            "overlay tiling exceeded max repeats layer=" + layer.name +
+            " repeats=" + repMax + " clipOut=" + fmtNum(clipOut) + " t=" + fmtNum(t)
+          );
+        }
+        var dup = null;
+        try { dup = layer.duplicate(); } catch(eDup) {
+          throw new Error("overlay duplicate failed layer=" + layer.name + " err=" + eDup);
+        }
+        if (!dup) {
+          throw new Error("overlay duplicate returned null layer=" + layer.name);
+        }
+        try {
+          dup.startTime = t;
+          dup.inPoint = t;
+          dup.outPoint = Math.min(clipOut, t + segDur);
+        } catch(eSet) {
+          throw new Error("overlay duplicate timing apply failed layer=" + layer.name + " err=" + eSet);
+        }
+        t = Number(dup.outPoint);
+        count += 1;
+      }
+
+      logLine("INFO", "overlay tiled in AE layer=" + layer.name + " repeats=" + count + " segDur=" + fmtNum(segDur));
+    }
+
+    // ==========================================================
+    // 3) layer creation by blueprint
+    // ==========================================================
+    function getCompTarget(meta) {
+      if (meta && meta.comp_name_target) {
+        return __COMPS[meta.comp_name_target] || findCompByName(meta.comp_name_target);
+      }
+      return MAIN_COMP;
+    }
+
+    function createLayerFromBlueprint(lData) {
+      var td = (lData.text_data ? lData.text_data : null);
+      var meta = (td && td.layer_meta) ? td.layer_meta : null;
+      var target = getCompTarget(meta);
+      if (!target) {
+        logLine("ERR", "target comp missing for layer=" + lData.name);
+        return;
+      }
+
+      var inT = pick(lData, "in_point", "inPoint");
+      var outT = pick(lData, "out_point", "outPoint");
+
+      // ✅ FIX: out<=in => 1 frame duration (kills glitch_peak_prefix zero window)
+      try {
+        if (inT !== undefined && outT !== undefined) {
+          var _in = Number(inT);
+          var _out = Number(outT);
+          if (!isNaN(_in) && !isNaN(_out) && _out <= _in) {
+            var dt = 1.0 / Number(target.frameRate || 25);
+            outT = _in + dt;
+            logLine("WARN", "fixed out<=in to 1 frame layer=" + lData.name + " in=" + fmtNum(_in) + " out=" + fmtNum(outT));
+          }
+        }
+      } catch(_) {}
+
+      logLine("INFO", "CREATE name=" + lData.name + " type=" + lData.type + " target=" + target.name +
+        " in=" + fmtNum(inT) + " out=" + fmtNum(outT)
+      );
+      logLine("INFO", "LAYER_BEGIN name=" + lData.name + " type=" + lData.type);
+      _writeHeartbeat(lData.name, "layer_begin");
+
+      var layer = null;
+
+      try {
+        phaseStart(lData.name, "create");
+        if (lData.type === "text") {
+          layer = target.layers.addText(String(lData.text || "").replace(/\r/g, "\r"));
+
+        } else if (lData.type === "adjustment") {
+          layer = target.layers.addSolid([1,1,1], lData.name, target.width, target.height, 1.0, target.duration);
+          layer.adjustmentLayer = true;
+
+        } else if (lData.type === "precomp") {
+          var srcName = null;
+          if (lData.comp_name) srcName = lData.comp_name;
+          else if (td && td.precomp_source) srcName = td.precomp_source.comp_name;
+
+          var srcComp = srcName ? (__COMPS[srcName] || findCompByName(srcName)) : null;
+          if (!srcComp) { logLine("ERR", "precomp source missing name=" + String(srcName) + " layer=" + lData.name); return; }
+          try { target.time = 0; } catch(_) {}  // reset CTI so layers.add() defaults inPoint to 0
+          layer = target.layers.add(srcComp);
+
+        } else if (lData.type === "footage") {
+          var src = (td && td.source_footage) ? td.source_footage : null;
+          var item = ensureFootageItem(src);
+          if (!item) { logLine("ERR", "footage item missing layer=" + lData.name); return; }
+          layer = target.layers.add(item);
+
+        } else {
+          logLine("ERR", "unknown layer type=" + lData.type + " layer=" + lData.name);
+          logLine("ERR", "LAYER_FAIL name=" + lData.name + " phase=create");
+          return;
+        }
+        phaseDone(lData.name, "create");
+      } catch(e) {
+        logLine("ERR", "LAYER_FAIL name=" + lData.name + " phase=create");
+        logErr("create layer failed name=" + lData.name, e);
+        return;
+      }
+
+      if (!layer) return;
+
+      try { layer.name = lData.name; } catch(_) {}
+
+      // startTime BEFORE in/out
+      try {
+        if (meta && meta.startTime !== undefined && meta.startTime !== null) layer.startTime = meta.startTime;
+      } catch(eST) { logErr("set startTime failed layer=" + layer.name, eST); }
+
+      try { if (inT !== undefined) layer.inPoint = inT; } catch(eIn) { logErr("set inPoint failed layer=" + layer.name, eIn); }
+      try { if (outT !== undefined) layer.outPoint = outT; } catch(eOut) { logErr("set outPoint failed layer=" + layer.name, eOut); }
+
+      // meta toggles (SAFE)
+      try {
+        if (meta) {
+          if (meta.enabled !== undefined) { try { layer.enabled = !!meta.enabled; } catch(_) {} }
+          if (meta.audioEnabled !== undefined) { try { layer.audioEnabled = !!meta.audioEnabled; } catch(_) {} }
+          if (meta.motionBlur !== undefined) { try { layer.motionBlur = !!meta.motionBlur; } catch(_) {} }
+
+          // ✅ FIX: collapseTransformation only if supported
+          if (meta.collapseTransformation !== undefined) {
+            try {
+              if (layer.canSetCollapseTransformation) {
+                layer.collapseTransformation = !!meta.collapseTransformation;
+              }
+            } catch(_) {}
+          }
+
+          if (meta.blendingModeCode !== undefined && meta.blendingModeCode !== null) {
+            var bm = resolveBlendingModeByCode(meta.blendingModeCode);
+            if (bm !== null) { try { layer.blendingMode = bm; } catch(eBM) { logErr("set blendingMode failed layer=" + layer.name, eBM); } }
+          }
+        }
+      } catch(eMeta) { logErr("apply meta toggles failed layer=" + layer.name, eMeta); }
+
+      // audio envelope (if requested on audio footage layer)
+      if (lData.type === "footage") {
+        applyAudioEnvelopeFromBlueprint(layer, lData);
+        tileOverlayLayerInAe(layer, lData);
+      }
+
+      // effects (you said "похуй на параметры": errors are logged and ignored)
+      if (lData.effects) {
+        try {
+          phaseStart(layer.name, "effects");
+          var fxParade = layer.property("ADBE Effect Parade");
+          // Support deterministic ordered + duplicate effects by allowing keys like:
+          //   "0002:ADBE Geometry2" (order prefix + matchName)
+          // while also supporting plain keys like:
+          //   "ADBE Turbulent Displace"
+          var fxKeys = [];
+          var hasOrderPrefix = false;
+          for (var kFx in lData.effects) {
+            fxKeys.push(kFx);
+            if (String(kFx).indexOf(":") >= 0) hasOrderPrefix = true;
+          }
+          if (hasOrderPrefix) {
+            fxKeys.sort(); // lexicographic sort => respects 0000:,0001:,... ordering
+          }
+
+          for (var kfi = 0; kfi < fxKeys.length; kfi++) {
+            var fxKey = fxKeys[kfi];
+            var fxData = lData.effects[fxKey];
+            var fxMatch = String(fxKey);
+            var colon = fxMatch.indexOf(":");
+            if (colon >= 0) fxMatch = fxMatch.substring(colon + 1);
+            var eff = null;
+            try { eff = fxParade.addProperty(fxMatch); } catch(eAdd) { eff = null; }
+            if (!eff) { logLine("ERR", "add effect failed fx=" + fxMatch + " key=" + fxKey + " layer=" + layer.name); continue; }
+
+            for (var paramKey in fxData) {
+              var pData = fxData[paramKey];
+              try {
+                var p = eff.property(pData.match_name);
+                if (!p) { logLine("ERR", "fx param missing match=" + pData.match_name + " fx=" + fxKey + " layer=" + layer.name); continue; }
+                applyValue(p, pData, "fx=" + fxMatch + " key=" + fxKey + " param=" + pData.match_name + " layer=" + layer.name);
+              } catch(eFx) { logErr("fx param apply failed fx=" + fxKey + " layer=" + layer.name, eFx); }
+            }
+          }
+          phaseDone(layer.name, "effects");
+        } catch(eEff) { logErr("effects apply failed layer=" + layer.name, eEff); }
+      }
+
+      // transforms
+      if (lData.props) {
+        try {
+          phaseStart(layer.name, "transforms");
+          var tf = layer.property("ADBE Transform Group");
+          for (var pk in lData.props) {
+            if (pk === "reveal" || pk === "reveal_end" || pk === "anim_opacity") continue;
+
+            var pd = lData.props[pk];
+            var pr = tf ? tf.property(pd.match_name) : null;
+            if (!pr) {
+              logLine("ERR", "transform prop not found match=" + pd.match_name + " key=" + pk + " layer=" + layer.name);
+              continue;
+            }
+            applyValue(pr, pd, "tf=" + pd.match_name + " key=" + pk + " layer=" + layer.name);
+          }
+          phaseDone(layer.name, "transforms");
+        } catch(eTf) { logErr("transform apply failed layer=" + layer.name, eTf); }
+      }
+
+      // text styles + animator
+      if (lData.type === "text") {
+        phaseStart(layer.name, "text_document");
+        applyTextBaseAndCharStyles(layer, lData);
+        phaseDone(layer.name, "text_document");
+        phaseStart(layer.name, "text_animator");
+        applyTextAnimatorFromBlueprint(layer, lData);
+        phaseDone(layer.name, "text_animator");
+        phaseStart(layer.name, "text_layout");
+        applyFinalTextLayoutPass(layer, lData, target);
+        phaseDone(layer.name, "text_layout");
+      }
+
+      // snapshot
+      try {
+        var tf2 = layer.property("ADBE Transform Group");
+        var pos = tf2.property("ADBE Position").value;
+        var sc = tf2.property("ADBE Scale").value;
+        var rot = tf2.property("ADBE Rotate Z").value;
+        var op = tf2.property("ADBE Opacity").value;
+
+        logLine("INFO", "SNAP layer=" + layer.name +
+          " comp=" + target.name +
+          " in=" + fmtNum(layer.inPoint) +
+          " out=" + fmtNum(layer.outPoint) +
+          " st=" + fmtNum(layer.startTime) +
+          " pos=" + safeJson(pos, 120) +
+          " sc=" + safeJson(sc, 120) +
+          " rot=" + safeJson(rot, 120) +
+          " op=" + safeJson(op, 120)
+        );
+      } catch(eSnap) { logErr("snapshot failed layer=" + layer.name, eSnap); }
+      logLine("INFO", "LAYER_OK name=" + layer.name);
+      _writeHeartbeat(layer.name, "layer_ok");
+    }
+
+    // ==========================================================
+    // 4) FOOTAGE PART
+    // ==========================================================
+    logLine("INFO", "FOOTAGE_TEMPLATE: layers=" + (footage_layers ? footage_layers.length : 0));
+    for (var fi = footage_layers.length - 1; fi >= 0; fi--) {
+      createLayerFromBlueprint(footage_layers[fi]);
+    }
+
+    // ==========================================================
+    // 5) TEXT PART
+    // ==========================================================
+    logLine("INFO", "TEXT_TEMPLATE: layers=" + (text_layers ? text_layers.length : 0));
+    for (var i = text_layers.length - 1; i >= 0; i--) {
+      createLayerFromBlueprint(text_layers[i]);
+    }
+
+    // ==========================================================
+    // 6) SAVE PROJECT
+    // ==========================================================
+    try {
+      var workDir = __APP_DIR + "/work";
+      __ensureFolderByPath(workDir);
+
+      var aepPath = workDir + "/project.aep";
+      var aepFile = new File(aepPath);
+
+      project.save(aepFile);
+      logLine("INFO", "project saved aep=" + aepFile.fsName);
+
+      __writeAeStatusOk(aepFile.fsName, MAIN_COMP.name);
+      logLine("INFO", "ae_status.txt written OK aep=" + aepFile.fsName + " compName=" + MAIN_COMP.name);
+    } catch(eStat) {
+      logErr("status/aep write failed", eStat);
+      __writeAeStatusErr("status/aep write failed: " + (eStat && eStat.toString ? eStat.toString() : String(eStat)));
+      throw eStat;
+    }
+
+    logLine("INFO", "done FULL project.");
+    try { app.endSuppressDialogs(false); } catch(_) {}
+    app.endUndoGroup();
+
+  } catch(eTop) {
+    try { __writeAeStatusErr("top-level error: " + (eTop && eTop.toString ? eTop.toString() : String(eTop)) + " | last_hb=" + String(__LAST_HB || "")); } catch(_) {}
+    try { app.endSuppressDialogs(false); } catch(_) {}
+    try { app.endUndoGroup(); } catch(_) {}
+    throw eTop;
+  }
+})();

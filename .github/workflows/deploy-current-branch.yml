@@ -1,0 +1,43 @@
+name: Deploy Current Branch
+
+on:
+  push:
+    branches:
+      - "**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-${{ github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Deploy On Self-Hosted Runner
+    runs-on: [self-hosted, blast-deploy]
+    timeout-minutes: 30
+    steps:
+      - name: Validate Runner Repo Path
+        env:
+          REPO_DIR: ${{ vars.BLAST_REPO_DIR }}
+        run: |
+          set -euo pipefail
+          if [ -z "${REPO_DIR:-}" ]; then
+            echo "Repository variable BLAST_REPO_DIR is not set"
+            exit 1
+          fi
+          if [ ! -d "$REPO_DIR/.git" ]; then
+            echo "BLAST_REPO_DIR does not point to a git repo: $REPO_DIR"
+            exit 1
+          fi
+
+      - name: Deploy Branch
+        env:
+          REPO_DIR: ${{ vars.BLAST_REPO_DIR }}
+          BRANCH: ${{ github.ref_name }}
+          GIT_AUTH_TOKEN: ${{ secrets.DEPLOY_GH_TOKEN }}
+          GITHUB_TOKEN_FALLBACK: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          bash "$REPO_DIR/infra/runners/deploy_branch.sh" "$BRANCH"

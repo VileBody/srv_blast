@@ -1,45 +1,155 @@
-version: "3.9"
-
 services:
-  ml-core:
+  orchestrator-api:
     build:
       context: .
-      dockerfile: Dockerfile.ml-core
-    container_name: blast-ml-core
+      dockerfile: Dockerfile
+    container_name: orchestrator-api
     env_file:
       - .env
     environment:
-      CELERY_BROKER_URL: ${CELERY_BROKER_URL}
-      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND}
-      DESCRIPTIONS_DIR: /app/descriptions
-      PINS_DIR: /app/pins
       WORK_DIR: /app/work
       OUTPUT_DIR: /app/output
+      PINS_DIR: /app/pins
+      DESCRIPTIONS_DIR: /app/descriptions
+
+      # shared artifacts paths
+      FOOTAGE_INVENTORY_OUT: /app/data/footage_inventory_selected.json
+      DESCRIPTIONS_BUNDLE_OUT: /app/pins/descriptions_bundle_selected.json
+
+      # inputs
+      FOOTAGE_DIR: /app/footage
+      FOOTAGE_DESCRIPTIONS_DIR: /app/descriptions
+      STATIC_ASSETS_INDEX_JSON: /app/data/footage_inventory_selected.json
+      S3_ASSET_PREFIX: pinterest_collection/selected
+
+      # point mlcore to shared paths
+      FOOTAGE_INVENTORY_JSON: /app/data/footage_inventory_selected.json
+      DESCRIPTIONS_BUNDLE_PATH: /app/pins/descriptions_bundle_selected.json
     volumes:
-      - ./descriptions:/app/descriptions:ro
-      # pins как кеш S3 внутри контейнера
       - ./work:/app/work
       - ./output:/app/output
+      - ./out:/app/out
+      - ./data:/app/data
+      - ./pins:/app/pins
+      - ./descriptions:/app/descriptions:ro
+      - ./audio:/app/audio:ro
+    ports:
+      - "127.0.0.1:18000:8000"
+    command: >
+      bash -lc "python footage_config.py && python -m services.orchestrator.run_uvicorn"
+    restart: unless-stopped
 
-  orchestrator:
+  worker-build:
     build:
       context: .
-      dockerfile: Dockerfile.orchestrator
-    container_name: blast-orchestrator
+      dockerfile: Dockerfile
+    container_name: worker-build
     env_file:
       - .env
     environment:
-      CELERY_BROKER_URL: ${CELERY_BROKER_URL}
-      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND}
-    ports:
-      - "8000:8000"
+      WORK_DIR: /app/work
+      OUTPUT_DIR: /app/output
+      PINS_DIR: /app/pins
+      DESCRIPTIONS_DIR: /app/descriptions
+
+      # shared artifacts paths
+      FOOTAGE_INVENTORY_OUT: /app/data/footage_inventory_selected.json
+      DESCRIPTIONS_BUNDLE_OUT: /app/pins/descriptions_bundle_selected.json
+
+      # inputs
+      FOOTAGE_DIR: /app/footage
+      FOOTAGE_DESCRIPTIONS_DIR: /app/descriptions
+      STATIC_ASSETS_INDEX_JSON: /app/data/footage_inventory_selected.json
+      S3_ASSET_PREFIX: pinterest_collection/selected
+
+      # point mlcore to shared paths
+      FOOTAGE_INVENTORY_JSON: /app/data/footage_inventory_selected.json
+      DESCRIPTIONS_BUNDLE_PATH: /app/pins/descriptions_bundle_selected.json
+    volumes:
+      - ./work:/app/work
+      - ./output:/app/output
+      - ./out:/app/out
+      - ./data:/app/data
+      - ./pins:/app/pins
+      - ./descriptions:/app/descriptions:ro
+      - ./audio:/app/audio:ro
+    command: >
+      bash -lc "python footage_config.py && celery -A services.orchestrator.celery_app:celery_app worker -l INFO --concurrency=4 -Q ${CELERY_QUEUE_BUILD:-build}"
+    restart: unless-stopped
+
+  worker-render:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: worker-render
+    env_file:
+      - .env
+    environment:
+      WORK_DIR: /app/work
+      OUTPUT_DIR: /app/output
+      PINS_DIR: /app/pins
+      DESCRIPTIONS_DIR: /app/descriptions
+
+      # shared artifacts paths
+      FOOTAGE_INVENTORY_OUT: /app/data/footage_inventory_selected.json
+      DESCRIPTIONS_BUNDLE_OUT: /app/pins/descriptions_bundle_selected.json
+
+      # inputs
+      FOOTAGE_DIR: /app/footage
+      FOOTAGE_DESCRIPTIONS_DIR: /app/descriptions
+      STATIC_ASSETS_INDEX_JSON: /app/data/footage_inventory_selected.json
+      S3_ASSET_PREFIX: pinterest_collection/selected
+
+      # point mlcore to shared paths
+      FOOTAGE_INVENTORY_JSON: /app/data/footage_inventory_selected.json
+      DESCRIPTIONS_BUNDLE_PATH: /app/pins/descriptions_bundle_selected.json
+    volumes:
+      - ./work:/app/work
+      - ./output:/app/output
+      - ./out:/app/out
+      - ./data:/app/data
+      - ./pins:/app/pins
+      - ./descriptions:/app/descriptions:ro
+      - ./audio:/app/audio:ro
+    command: >
+      bash -lc "python footage_config.py && celery -A services.orchestrator.celery_app:celery_app worker -l INFO --concurrency=1 -Q ${CELERY_QUEUE_RENDER:-render}"
+    restart: unless-stopped
 
   tg-bot:
     build:
       context: .
-      dockerfile: Dockerfile.bot
-    container_name: blast-tg-bot
+      dockerfile: Dockerfile.tg-bot
+    container_name: tg-bot
     env_file:
       - .env
+    environment:
+      ORCHESTRATOR_PUBLIC_URL: ${ORCHESTRATOR_PUBLIC_URL:-http://orchestrator-api:8000}
+      BOT_POLL_INTERVAL_S: ${BOT_POLL_INTERVAL_S:-5}
+      BOT_TMP_DIR: ${BOT_TMP_DIR:-/app/work/tg_tmp}
+      BOT_MAX_AUDIO_MB: ${BOT_MAX_AUDIO_MB:-5}
+    volumes:
+      - ./work:/app/work
+    command: >
+      bash -lc "python -m services.tg_bot_botapi.app"
     depends_on:
-      - orchestrator
+      - orchestrator-api
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio:latest
+    container_name: minio
+    profiles:
+      - storage
+    env_file:
+      - .env
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_REGION: ${MINIO_REGION}
+    command: server /data --console-address ":9001"
+    volumes:
+      - ./work/minio-data:/data
+    ports:
+      - "${MINIO_BIND_HOST:-127.0.0.1}:${MINIO_API_PORT:-19100}:9000"
+      - "${MINIO_BIND_HOST:-127.0.0.1}:${MINIO_CONSOLE_PORT:-19101}:9001"
+    restart: unless-stopped

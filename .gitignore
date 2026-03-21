@@ -1,0 +1,32 @@
+# OS
+.DS_Store
+
+# Local env
+.env
+infra/runners/.env.github-runner
+infra/runners/.env.dozzle
+
+# Python caches
+__pycache__/
+*.py[cod]
+
+# Tool caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Runtime artifacts
+output/
+work/
+ml_logs/
+pins/
+
+# Local generated data
+data/footage_inventory.json
+video_database.json
+
+# Local packed context dumps
+repomix_*_flow.md
+
+# Infra runtime secrets/state
+infra/runners/dozzle_data/
