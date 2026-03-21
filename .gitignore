@@ -3,6 +3,8 @@
 
 # Local env
 .env
+infra/runners/.env.github-runner
+infra/runners/.env.dozzle
 
 # Python caches
 __pycache__/
@@ -25,3 +27,6 @@ video_database.json
 
 # Local packed context dumps
 repomix_*_flow.md
+
+# Infra runtime secrets/state
+infra/runners/dozzle_data/
