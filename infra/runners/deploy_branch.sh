@@ -53,6 +53,7 @@ git_run() {
 }
 
 git_run fetch origin "$BRANCH"
+git stash --include-untracked || true
 git_run checkout "$BRANCH"
 git_run pull --ff-only origin "$BRANCH"
 
