@@ -52,6 +52,17 @@ git_run() {
   fi
 }
 
+# In older branch states this runtime-generated file was tracked and may be
+# modified by running services. Normalize it before checkout/pull so deploy can
+# fast-forward cleanly without broad auto-stash.
+RUNTIME_TRACKED_FILE="data/footage_inventory_selected.json"
+if git ls-files --error-unmatch "$RUNTIME_TRACKED_FILE" >/dev/null 2>&1; then
+  if ! git diff --quiet -- "$RUNTIME_TRACKED_FILE" || ! git diff --cached --quiet -- "$RUNTIME_TRACKED_FILE"; then
+    echo "[deploy] reset modified runtime file: $RUNTIME_TRACKED_FILE"
+    git_run restore --staged --worktree -- "$RUNTIME_TRACKED_FILE"
+  fi
+fi
+
 git_run fetch origin "$BRANCH"
 git_run checkout "$BRANCH"
 git_run pull --ff-only origin "$BRANCH"
