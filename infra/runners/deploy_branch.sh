@@ -20,18 +20,32 @@ cd "$REPO_DIR"
 
 echo "[deploy] repo=$REPO_DIR branch=$BRANCH"
 
+# Prefer an explicit PAT secret, then fallback to the workflow token.
+AUTH_TOKEN="${GIT_AUTH_TOKEN:-${GITHUB_TOKEN_FALLBACK:-}}"
+
 # Self-hosted runner containers may run under a different UID than the
 # mounted repository owner. Mark repo as safe to avoid "dubious ownership".
 if ! git config --global --get-all safe.directory 2>/dev/null | grep -Fxq "$REPO_DIR"; then
   git config --global --add safe.directory "$REPO_DIR"
 fi
 
+REMOTE_URL="$(git remote get-url origin)"
+case "$REMOTE_URL" in
+  git@github.com:*|ssh://git@github.com/*|https://github.com/*)
+    if [[ -z "$AUTH_TOKEN" ]]; then
+      echo "GitHub token is missing for non-interactive deploy."
+      echo "Set repository secret DEPLOY_GH_TOKEN or ensure github.token is available."
+      exit 1
+    fi
+    ;;
+esac
+
 git_run() {
-  if [[ -n "${GIT_AUTH_TOKEN:-}" ]]; then
+  if [[ -n "$AUTH_TOKEN" ]]; then
     git \
-      -c "url.https://x-access-token:${GIT_AUTH_TOKEN}@github.com/.insteadof=git@github.com:" \
-      -c "url.https://x-access-token:${GIT_AUTH_TOKEN}@github.com/.insteadof=ssh://git@github.com/" \
-      -c "url.https://x-access-token:${GIT_AUTH_TOKEN}@github.com/.insteadof=https://github.com/" \
+      -c "url.https://x-access-token:${AUTH_TOKEN}@github.com/.insteadof=git@github.com:" \
+      -c "url.https://x-access-token:${AUTH_TOKEN}@github.com/.insteadof=ssh://git@github.com/" \
+      -c "url.https://x-access-token:${AUTH_TOKEN}@github.com/.insteadof=https://github.com/" \
       "$@"
   else
     git "$@"

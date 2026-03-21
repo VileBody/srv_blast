@@ -36,7 +36,8 @@ jobs:
         env:
           REPO_DIR: ${{ vars.BLAST_REPO_DIR }}
           BRANCH: ${{ github.ref_name }}
-          GIT_AUTH_TOKEN: ${{ github.token }}
+          GIT_AUTH_TOKEN: ${{ secrets.DEPLOY_GH_TOKEN }}
+          GITHUB_TOKEN_FALLBACK: ${{ github.token }}
         run: |
           set -euo pipefail
           bash "$REPO_DIR/infra/runners/deploy_branch.sh" "$BRANCH"
