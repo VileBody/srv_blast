@@ -46,4 +46,8 @@ jobs:
           GITHUB_TOKEN_FALLBACK: ${{ github.token }}
         run: |
           set -euo pipefail
+          # Bootstrap for legacy server states where this runtime file was tracked and modified.
+          if git -C "$REPO_DIR" ls-files --error-unmatch data/footage_inventory_selected.json >/dev/null 2>&1; then
+            git -C "$REPO_DIR" restore --staged --worktree -- data/footage_inventory_selected.json || true
+          fi
           bash "$REPO_DIR/infra/runners/deploy_branch.sh" "$BRANCH"
