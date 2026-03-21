@@ -124,6 +124,7 @@ def build_full_project(
         comps=comps_list,
         main_comp_name=main_name,
         text_comp_name=text_name,
+        mine_comp_name=mine_name,
         comp_dur=float(comp_dur),
     )
 
