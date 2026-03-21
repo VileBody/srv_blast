@@ -19,6 +19,13 @@ fi
 cd "$REPO_DIR"
 
 echo "[deploy] repo=$REPO_DIR branch=$BRANCH"
+
+# Self-hosted runner containers may run under a different UID than the
+# mounted repository owner. Mark repo as safe to avoid "dubious ownership".
+if ! git config --global --get-all safe.directory 2>/dev/null | grep -Fxq "$REPO_DIR"; then
+  git config --global --add safe.directory "$REPO_DIR"
+fi
+
 git fetch origin "$BRANCH"
 git checkout "$BRANCH"
 git pull --ff-only origin "$BRANCH"
@@ -28,4 +35,3 @@ docker compose up -d --build
 
 echo "[deploy] docker compose ps"
 docker compose ps
-
