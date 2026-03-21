@@ -688,45 +688,61 @@ def pick_footage_clips_by_intervals_deterministic(
         raise RuntimeError("No intervals were built from switch points")
 
     # ── Subgroup rotation path ────────────────────────────────────────────────
+    # One subgroup per rendered video: pick subgroup by (seed % k) so every
+    # clip inside one job comes from the same visual pool. Rotation across jobs
+    # happens naturally because each job has a unique seed (derived from JOB_ID).
     if raw_picks is not None and len(raw_picks) > 0:
         seed_value = deterministic_seed_from_key(seed_key)
         excluded_names = {str(x).strip() for x in list(exclude_file_names or []) if str(x).strip()}
 
-        subgroup_pools = [_build_raw_pool(rp, assets) for rp in raw_picks]
-        non_empty = [p for p in subgroup_pools if p]
-        if not non_empty:
-            raise RuntimeError(
-                "No assets satisfy any subgroup filters in raw_picks rotation "
-                f"(subgroups={len(raw_picks)})"
-            )
-        # If some pools are empty — fill them with the merged non-empty pool
-        # so every block still has candidates.
-        merged_fallback = _dedupe_assets_by_file_name([it for p in non_empty for it in p])
-        subgroup_pools = [p if p else list(merged_fallback) for p in subgroup_pools]
+        k = len(raw_picks)
+        subgroup_idx = seed_value % k
+        chosen_pool = _build_raw_pool(raw_picks[subgroup_idx], assets)
+        if not chosen_pool:
+            # Chosen subgroup is empty — fall back to merged pool of all non-empty subgroups.
+            all_pools = [_build_raw_pool(rp, assets) for rp in raw_picks]
+            non_empty = [p for p in all_pools if p]
+            if not non_empty:
+                raise RuntimeError(
+                    "No assets satisfy any subgroup filters in raw_picks rotation "
+                    f"(subgroups={k})"
+                )
+            chosen_pool = _dedupe_assets_by_file_name([it for p in non_empty for it in p])
 
-        assigned_file_names, repeats_used = _assign_rotation_file_names(
-            intervals=intervals,
-            subgroup_pools=subgroup_pools,
-            seed_value=seed_value,
-            excluded_names=excluded_names,
-        )
-        if len(assigned_file_names) != len(intervals):
-            raise RuntimeError(
-                "Internal mismatch in rotation assignment: "
-                f"assigned={len(assigned_file_names)} intervals={len(intervals)}"
-            )
+        pool = [it for it in chosen_pool if str(it.get("file_name") or "") not in excluded_names]
+        if not pool:
+            pool = list(chosen_pool)  # relax exclusion when everything is excluded
 
-        by_name: Dict[str, Dict[str, Any]] = {}
-        for p in subgroup_pools:
-            for it in p:
-                nm = str(it.get("file_name") or "").strip()
-                if nm and nm not in by_name:
-                    by_name[nm] = it
-        # also include excluded-pool assets for clip building (they may appear via relaxed fallback)
-        for it in assets:
-            nm = str(it.get("file_name") or "").strip()
-            if nm and nm not in by_name:
-                by_name[nm] = it
+        repeats_used = False
+        try:
+            assigned_file_names = _assign_unique_file_names_for_intervals(
+                intervals=intervals,
+                pool=pool,
+                seed_value=seed_value,
+            )
+        except RuntimeError:
+            repeats_used = True
+            assigned_file_names = []
+            prev_name: Optional[str] = None
+            for gi, (a, b) in enumerate(intervals):
+                need = float(b - a)
+                candidates = [it for it in pool if _fits_interval(it, interval_len=need)] or pool
+                chosen = _deterministic_choose(
+                    candidates=candidates,
+                    seed_value=seed_value,
+                    interval_idx=gi,
+                    interval_start=float(a),
+                    avoid_file_name=prev_name,
+                )
+                nm = str(chosen["file_name"])
+                assigned_file_names.append(nm)
+                prev_name = nm
+
+        by_name: Dict[str, Dict[str, Any]] = {
+            str(it.get("file_name") or "").strip(): it
+            for it in assets
+            if str(it.get("file_name") or "").strip()
+        }
 
         offset_enabled = _source_offset_enabled()
         clips: List[Dict[str, Any]] = []
@@ -759,11 +775,11 @@ def pick_footage_clips_by_intervals_deterministic(
         payload = FootageSelectionPayload.model_validate({"clips": clips, "allow_gaps": False})
         diag = FootageIntervalPickerDiagnostics(
             genre="__raw_rotation__",
-            tag=str(raw_picks[0].theme),
+            tag=str(raw_picks[subgroup_idx].theme),
             intervals_count=len(intervals),
             max_interval_sec=max(float(b - a) for a, b in intervals),
-            primary_pool_count=sum(len(p) for p in subgroup_pools),
-            selected_pool_count=len(by_name),
+            primary_pool_count=len(chosen_pool),
+            selected_pool_count=len(pool),
             widened_to_genre=False,
             widened_to_global=False,
             repeats_used=bool(repeats_used),

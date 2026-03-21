@@ -21,6 +21,7 @@ def _apply_comp_duration_overrides(
     comps: list[Dict[str, Any]],
     main_comp_name: str,
     text_comp_name: str,
+    mine_comp_name: str = "",
     comp_dur: float,
 ) -> list[Dict[str, Any]]:
     comp_dur = float(comp_dur)
@@ -42,6 +43,14 @@ def _apply_comp_duration_overrides(
 
         if name == main_comp_name:
             # Keep main comp timing strictly aligned with the actual built text/footage duration.
+            cc["dur"] = comp_dur
+            cc["workAreaDuration"] = comp_dur
+            cc.setdefault("workAreaStart", 0.0)
+            cc.setdefault("displayStartTime", 0.0)
+
+        if mine_comp_name and name == mine_comp_name:
+            # Mine comp must be at least as long as the main comp so TYPE_4 layers
+            # placed at absolute time t (e.g. 13s) fit inside the comp timeline.
             cc["dur"] = comp_dur
             cc["workAreaDuration"] = comp_dur
             cc.setdefault("workAreaStart", 0.0)
@@ -115,6 +124,7 @@ def build_full_project(
         comps=comps_list,
         main_comp_name=main_name,
         text_comp_name=text_name,
+        mine_comp_name=mine_name,
         comp_dur=float(comp_dur),
     )
 
