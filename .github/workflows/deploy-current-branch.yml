@@ -5,6 +5,9 @@ on:
     branches:
       - "**"
 
+permissions:
+  contents: read
+
 concurrency:
   group: deploy-${{ github.ref_name }}
   cancel-in-progress: true
@@ -33,6 +36,7 @@ jobs:
         env:
           REPO_DIR: ${{ vars.BLAST_REPO_DIR }}
           BRANCH: ${{ github.ref_name }}
+          GIT_AUTH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           bash "$REPO_DIR/infra/runners/deploy_branch.sh" "$BRANCH"

@@ -26,9 +26,21 @@ if ! git config --global --get-all safe.directory 2>/dev/null | grep -Fxq "$REPO
   git config --global --add safe.directory "$REPO_DIR"
 fi
 
-git fetch origin "$BRANCH"
-git checkout "$BRANCH"
-git pull --ff-only origin "$BRANCH"
+git_run() {
+  if [[ -n "${GIT_AUTH_TOKEN:-}" ]]; then
+    git \
+      -c "url.https://x-access-token:${GIT_AUTH_TOKEN}@github.com/.insteadof=git@github.com:" \
+      -c "url.https://x-access-token:${GIT_AUTH_TOKEN}@github.com/.insteadof=ssh://git@github.com/" \
+      -c "url.https://x-access-token:${GIT_AUTH_TOKEN}@github.com/.insteadof=https://github.com/" \
+      "$@"
+  else
+    git "$@"
+  fi
+}
+
+git_run fetch origin "$BRANCH"
+git_run checkout "$BRANCH"
+git_run pull --ff-only origin "$BRANCH"
 
 echo "[deploy] docker compose up -d --build"
 docker compose up -d --build
