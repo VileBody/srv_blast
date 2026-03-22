@@ -14,6 +14,7 @@ from urllib.parse import quote
 
 import httpx
 from aiogram import Bot, Dispatcher, Router
+from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import CommandStart
 from aiogram.types import FSInputFile, KeyboardButton, Message, ReplyKeyboardMarkup, ReplyKeyboardRemove
@@ -232,6 +233,22 @@ def _extract_celery_retries(error_text: str) -> Optional[int]:
         return int(m.group(1))
     except Exception:
         return None
+
+
+def _mask_proxy_url(raw: str) -> str:
+    proxy = str(raw or "").strip()
+    if not proxy:
+        return ""
+    # Keep only scheme/host[:port] in logs to avoid leaking credentials.
+    m = re.match(r"^(?P<scheme>[a-zA-Z][a-zA-Z0-9+.-]*):\/\/(?P<rest>.+)$", proxy)
+    if not m:
+        return "<redacted>"
+    scheme = str(m.group("scheme") or "").lower()
+    rest = str(m.group("rest") or "")
+    if "@" in rest:
+        rest = rest.split("@", 1)[1]
+    host_port = rest.split("/", 1)[0]
+    return f"{scheme}://{host_port}"
 
 
 _SCENES_STYLE_TAGS = {"TYPE_1", "TYPE_2", "TYPE_3", "TYPE_4", "TYPE_5", "TYPE_6"}
@@ -1695,7 +1712,12 @@ class BlastBotApp:
         return self._bot
 
     async def run(self) -> None:
-        bot = Bot(token=self.settings.tg_bot_token)
+        tg_proxy = str(self.settings.tg_file_proxy_url or "").strip()
+        if tg_proxy:
+            bot = Bot(token=self.settings.tg_bot_token, session=AiohttpSession(proxy=tg_proxy))
+            log.info("bot_api_proxy_enabled proxy=%s", _mask_proxy_url(tg_proxy))
+        else:
+            bot = Bot(token=self.settings.tg_bot_token)
         await self.dp.start_polling(bot)
 
 
