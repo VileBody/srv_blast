@@ -19,8 +19,12 @@ services:
       # inputs
       FOOTAGE_DIR: /app/footage
       FOOTAGE_DESCRIPTIONS_DIR: /app/descriptions
-      STATIC_ASSETS_INDEX_JSON: /app/data/static_assets_index.json
+      STATIC_ASSETS_SOURCE_INDEX_JSON: /app/data/static_assets_index.json
+      STATIC_ASSETS_SELECTED_OUT: /app/data/footage_inventory_selected.json
+      STATIC_ASSETS_INDEX_JSON: /app/data/footage_inventory_selected.json
+      STATIC_ASSETS_ENRICH_INDEX_JSON: /app/data/static_assets_index.json
       S3_ASSET_PREFIX: pinterest_collection/selected
+      FOOTAGE_S3_PREFLIGHT_MODE: strict
 
       # point mlcore to shared paths
       FOOTAGE_INVENTORY_JSON: /app/data/footage_inventory.json
@@ -36,7 +40,7 @@ services:
     ports:
       - "127.0.0.1:18000:8000"
     command: >
-      bash -lc "python footage_config.py && python -m services.orchestrator.run_uvicorn"
+      bash -lc "python scripts/build_selected_index.py && python footage_config.py && python -m services.orchestrator.run_uvicorn"
     restart: unless-stopped
 
   worker-build:
@@ -59,8 +63,12 @@ services:
       # inputs
       FOOTAGE_DIR: /app/footage
       FOOTAGE_DESCRIPTIONS_DIR: /app/descriptions
-      STATIC_ASSETS_INDEX_JSON: /app/data/static_assets_index.json
+      STATIC_ASSETS_SOURCE_INDEX_JSON: /app/data/static_assets_index.json
+      STATIC_ASSETS_SELECTED_OUT: /app/data/footage_inventory_selected.json
+      STATIC_ASSETS_INDEX_JSON: /app/data/footage_inventory_selected.json
+      STATIC_ASSETS_ENRICH_INDEX_JSON: /app/data/static_assets_index.json
       S3_ASSET_PREFIX: pinterest_collection/selected
+      FOOTAGE_S3_PREFLIGHT_MODE: strict
 
       # point mlcore to shared paths
       FOOTAGE_INVENTORY_JSON: /app/data/footage_inventory.json
@@ -74,7 +82,7 @@ services:
       - ./descriptions:/app/descriptions:ro
       - ./audio:/app/audio:ro
     command: >
-      bash -lc "python footage_config.py && celery -A services.orchestrator.celery_app:celery_app worker -l INFO --concurrency=4 -Q ${CELERY_QUEUE_BUILD:-build}"
+      bash -lc "python scripts/build_selected_index.py && python footage_config.py && celery -A services.orchestrator.celery_app:celery_app worker -l INFO --concurrency=4 -Q ${CELERY_QUEUE_BUILD:-build}"
     restart: unless-stopped
 
   worker-render:
@@ -97,8 +105,12 @@ services:
       # inputs
       FOOTAGE_DIR: /app/footage
       FOOTAGE_DESCRIPTIONS_DIR: /app/descriptions
-      STATIC_ASSETS_INDEX_JSON: /app/data/static_assets_index.json
+      STATIC_ASSETS_SOURCE_INDEX_JSON: /app/data/static_assets_index.json
+      STATIC_ASSETS_SELECTED_OUT: /app/data/footage_inventory_selected.json
+      STATIC_ASSETS_INDEX_JSON: /app/data/footage_inventory_selected.json
+      STATIC_ASSETS_ENRICH_INDEX_JSON: /app/data/static_assets_index.json
       S3_ASSET_PREFIX: pinterest_collection/selected
+      FOOTAGE_S3_PREFLIGHT_MODE: strict
 
       # point mlcore to shared paths
       FOOTAGE_INVENTORY_JSON: /app/data/footage_inventory.json
@@ -112,7 +124,7 @@ services:
       - ./descriptions:/app/descriptions:ro
       - ./audio:/app/audio:ro
     command: >
-      bash -lc "python footage_config.py && celery -A services.orchestrator.celery_app:celery_app worker -l INFO --concurrency=1 -Q ${CELERY_QUEUE_RENDER:-render}"
+      bash -lc "python scripts/build_selected_index.py && python footage_config.py && celery -A services.orchestrator.celery_app:celery_app worker -l INFO --concurrency=1 -Q ${CELERY_QUEUE_RENDER:-render}"
     restart: unless-stopped
 
   tg-bot:
