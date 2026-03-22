@@ -10,6 +10,7 @@ def test_inventory_uses_s3_asset_prefix_in_prod(tmp_path: Path, monkeypatch) -> 
     monkeypatch.setenv("MODE", "prod")
     monkeypatch.setenv("S3_BUCKET_ASSET_STORAGE", "bucket")
     monkeypatch.setenv("S3_ASSET_PREFIX", "pinterest_collection/selected")
+    monkeypatch.setenv("FOOTAGE_S3_PREFLIGHT_MODE", "off")
 
     src = {
         "assets": [
@@ -50,6 +51,7 @@ def test_inventory_enriches_color_meta_from_fallback_index(tmp_path: Path, monke
     monkeypatch.setenv("MODE", "prod")
     monkeypatch.setenv("S3_BUCKET_ASSET_STORAGE", "bucket")
     monkeypatch.setenv("S3_ASSET_PREFIX", "pinterest_collection/selected")
+    monkeypatch.setenv("FOOTAGE_S3_PREFLIGHT_MODE", "off")
 
     selected_like = {
         "assets": [
@@ -106,6 +108,7 @@ def test_inventory_enriches_color_meta_with_normalized_filename_lookup(tmp_path:
     monkeypatch.setenv("MODE", "prod")
     monkeypatch.setenv("S3_BUCKET_ASSET_STORAGE", "bucket")
     monkeypatch.setenv("S3_ASSET_PREFIX", "pinterest_collection/selected")
+    monkeypatch.setenv("FOOTAGE_S3_PREFLIGHT_MODE", "off")
 
     selected_like = {
         "assets": [
@@ -160,6 +163,7 @@ def test_inventory_enriches_color_meta_with_copy_suffix_alias(tmp_path: Path, mo
     monkeypatch.setenv("MODE", "prod")
     monkeypatch.setenv("S3_BUCKET_ASSET_STORAGE", "bucket")
     monkeypatch.setenv("S3_ASSET_PREFIX", "pinterest_collection/selected")
+    monkeypatch.setenv("FOOTAGE_S3_PREFLIGHT_MODE", "off")
 
     selected_like = {
         "assets": [

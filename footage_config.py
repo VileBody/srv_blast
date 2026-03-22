@@ -42,6 +42,89 @@ def _s3_assets_prefix() -> str:
     return raw
 
 
+def _s3_preflight_mode() -> str:
+    default_mode = "strict" if get_runtime_mode() == MODE_PROD else "off"
+    raw = _env("FOOTAGE_S3_PREFLIGHT_MODE", default_mode).strip().lower()
+    if raw not in {"off", "strict"}:
+        raise RuntimeError(
+            "Invalid FOOTAGE_S3_PREFLIGHT_MODE. Expected one of: off | strict. "
+            f"Got: {raw!r}"
+        )
+    return raw
+
+
+def _s3_asset_key(*, file_name: str, genre: str, tag: str) -> str:
+    prefix = _s3_assets_prefix()
+    return f"{prefix}/{genre}/{tag}/{file_name}" if prefix else f"{genre}/{tag}/{file_name}"
+
+
+def _make_s3_client():
+    try:
+        import boto3  # type: ignore
+        from botocore.config import Config  # type: ignore
+    except Exception as e:
+        raise RuntimeError(
+            "boto3 is required for FOOTAGE_S3_PREFLIGHT_MODE=strict.\n"
+            "Install: pip install boto3\n"
+            f"Import error: {e!r}"
+        ) from e
+
+    endpoint = _env("S3_ENDPOINT_URL", "") or None
+    access_key = _env("S3_ACCESS_KEY_ID", "")
+    secret_key = _env("S3_SECRET_ACCESS_KEY", "")
+    region = _env("S3_REGION", "ru-1") or "ru-1"
+
+    if bool(access_key) != bool(secret_key):
+        raise RuntimeError("S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY must be both set or both empty")
+
+    kwargs: Dict[str, Any] = {
+        "service_name": "s3",
+        "region_name": region,
+        "config": Config(signature_version="s3v4"),
+    }
+    if endpoint:
+        kwargs["endpoint_url"] = endpoint
+    if access_key and secret_key:
+        kwargs["aws_access_key_id"] = access_key
+        kwargs["aws_secret_access_key"] = secret_key
+
+    return boto3.client(**kwargs)
+
+
+def _is_s3_not_found_error(exc: Exception) -> bool:
+    code = ""
+    response = getattr(exc, "response", None)
+    if isinstance(response, dict):
+        code = str((response.get("Error") or {}).get("Code") or "").strip()
+    return code in {"404", "NoSuchKey", "NotFound"}
+
+
+def _s3_missing_asset_rows(rows: List[Tuple[str, str, str, str]]) -> List[Tuple[str, str, str, str]]:
+    """
+    rows tuple layout:
+      (file_name, genre, tag, s3_key_without_bucket)
+    """
+    if not rows:
+        return []
+
+    bucket = _s3_bucket_assets()
+    s3 = _make_s3_client()
+
+    missing: List[Tuple[str, str, str, str]] = []
+    for file_name, genre, tag, key in rows:
+        try:
+            s3.head_object(Bucket=bucket, Key=key)
+        except Exception as e:
+            if _is_s3_not_found_error(e):
+                missing.append((file_name, genre, tag, key))
+                continue
+            raise RuntimeError(
+                "S3 preflight request failed: "
+                f"bucket={bucket!r} key={key!r} file_name={file_name!r} err={e!r}"
+            ) from e
+    return missing
+
+
 def _read_json(path: Path) -> Dict[str, Any]:
     obj = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(obj, dict):
@@ -61,8 +144,8 @@ def _as_pos_float(v: Any) -> Optional[float]:
 
 def _s3_locator_for_asset(*, file_name: str, genre: str, tag: str) -> str:
     bucket = _s3_bucket_assets()
-    prefix = _s3_assets_prefix()
-    return f"s3://{bucket}/{prefix}/{genre}/{tag}/{file_name}"
+    key = _s3_asset_key(file_name=file_name, genre=genre, tag=tag)
+    return f"s3://{bucket}/{key}"
 
 
 def _to_compact_json(v: Any) -> str:
@@ -181,11 +264,13 @@ def build_inventory_and_bundle(
 
     runtime_mode = get_runtime_mode()
     mode = "local" if runtime_mode == MODE_DEV else "s3"
+    s3_preflight_mode = _s3_preflight_mode() if mode == "s3" else "off"
 
     assets_map: Dict[str, FootageAssetRow] = {}
     invalid_rows = 0
     color_meta_enriched_rows = 0
     missing_local_files: List[str] = []
+    s3_preflight_rows: List[Tuple[str, str, str, str]] = []
 
     for it in source_assets:
         if not isinstance(it, dict):
@@ -209,7 +294,9 @@ def build_inventory_and_bundle(
             continue
 
         if mode == "s3":
-            file_path = _s3_locator_for_asset(file_name=file_name, genre=genre, tag=tag)
+            s3_key = _s3_asset_key(file_name=file_name, genre=genre, tag=tag)
+            file_path = f"s3://{_s3_bucket_assets()}/{s3_key}"
+            s3_preflight_rows.append((file_name, genre, tag, s3_key))
         else:
             local_fp = (footage_dir / file_name).resolve()
             file_path = str(local_fp)
@@ -255,6 +342,23 @@ def build_inventory_and_bundle(
             palette_bins=palette_bins,
         )
 
+    if mode == "s3" and s3_preflight_mode == "strict":
+        missing_s3_assets = _s3_missing_asset_rows(s3_preflight_rows)
+        if missing_s3_assets:
+            sample_rows = missing_s3_assets[:20]
+            sample_text = "\n".join(
+                f"- file_name={file_name!r} genre={genre!r} tag={tag!r} key={key!r}"
+                for file_name, genre, tag, key in sample_rows
+            )
+            raise RuntimeError(
+                "missing_s3_assets_in_selected_source\n"
+                f"source_index={static_assets_index_path}\n"
+                f"s3_bucket={_s3_bucket_assets()}\n"
+                f"s3_prefix={_s3_assets_prefix()}\n"
+                f"total_missing={len(missing_s3_assets)}\n"
+                f"sample_missing:\n{sample_text}"
+            )
+
     assets: List[Dict[str, Any]] = []
     for file_name, row in sorted(assets_map.items(), key=lambda kv: kv[0]):
         obj: Dict[str, Any] = {
@@ -293,6 +397,7 @@ def build_inventory_and_bundle(
             inv_obj["warnings"]["color_meta_enrich_error"] = fallback_meta_error
     if mode == "s3":
         inv_obj["warnings"]["s3_bucket"] = _s3_bucket_assets()
+        inv_obj["warnings"]["s3_preflight_mode"] = s3_preflight_mode
 
     inventory_out_path.parent.mkdir(parents=True, exist_ok=True)
     inventory_out_path.write_text(json.dumps(inv_obj, ensure_ascii=False, indent=2), encoding="utf-8")
