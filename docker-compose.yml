@@ -13,17 +13,17 @@ services:
       DESCRIPTIONS_DIR: /app/descriptions
 
       # shared artifacts paths
-      FOOTAGE_INVENTORY_OUT: /app/data/footage_inventory_selected.json
+      FOOTAGE_INVENTORY_OUT: /app/data/footage_inventory.json
       DESCRIPTIONS_BUNDLE_OUT: /app/pins/descriptions_bundle_selected.json
 
       # inputs
       FOOTAGE_DIR: /app/footage
       FOOTAGE_DESCRIPTIONS_DIR: /app/descriptions
-      STATIC_ASSETS_INDEX_JSON: /app/data/footage_inventory_selected.json
+      STATIC_ASSETS_INDEX_JSON: /app/data/static_assets_index.json
       S3_ASSET_PREFIX: pinterest_collection/selected
 
       # point mlcore to shared paths
-      FOOTAGE_INVENTORY_JSON: /app/data/footage_inventory_selected.json
+      FOOTAGE_INVENTORY_JSON: /app/data/footage_inventory.json
       DESCRIPTIONS_BUNDLE_PATH: /app/pins/descriptions_bundle_selected.json
     volumes:
       - ./work:/app/work
@@ -53,17 +53,17 @@ services:
       DESCRIPTIONS_DIR: /app/descriptions
 
       # shared artifacts paths
-      FOOTAGE_INVENTORY_OUT: /app/data/footage_inventory_selected.json
+      FOOTAGE_INVENTORY_OUT: /app/data/footage_inventory.json
       DESCRIPTIONS_BUNDLE_OUT: /app/pins/descriptions_bundle_selected.json
 
       # inputs
       FOOTAGE_DIR: /app/footage
       FOOTAGE_DESCRIPTIONS_DIR: /app/descriptions
-      STATIC_ASSETS_INDEX_JSON: /app/data/footage_inventory_selected.json
+      STATIC_ASSETS_INDEX_JSON: /app/data/static_assets_index.json
       S3_ASSET_PREFIX: pinterest_collection/selected
 
       # point mlcore to shared paths
-      FOOTAGE_INVENTORY_JSON: /app/data/footage_inventory_selected.json
+      FOOTAGE_INVENTORY_JSON: /app/data/footage_inventory.json
       DESCRIPTIONS_BUNDLE_PATH: /app/pins/descriptions_bundle_selected.json
     volumes:
       - ./work:/app/work
@@ -91,17 +91,17 @@ services:
       DESCRIPTIONS_DIR: /app/descriptions
 
       # shared artifacts paths
-      FOOTAGE_INVENTORY_OUT: /app/data/footage_inventory_selected.json
+      FOOTAGE_INVENTORY_OUT: /app/data/footage_inventory.json
       DESCRIPTIONS_BUNDLE_OUT: /app/pins/descriptions_bundle_selected.json
 
       # inputs
       FOOTAGE_DIR: /app/footage
       FOOTAGE_DESCRIPTIONS_DIR: /app/descriptions
-      STATIC_ASSETS_INDEX_JSON: /app/data/footage_inventory_selected.json
+      STATIC_ASSETS_INDEX_JSON: /app/data/static_assets_index.json
       S3_ASSET_PREFIX: pinterest_collection/selected
 
       # point mlcore to shared paths
-      FOOTAGE_INVENTORY_JSON: /app/data/footage_inventory_selected.json
+      FOOTAGE_INVENTORY_JSON: /app/data/footage_inventory.json
       DESCRIPTIONS_BUNDLE_PATH: /app/pins/descriptions_bundle_selected.json
     volumes:
       - ./work:/app/work
