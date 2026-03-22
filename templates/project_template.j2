@@ -1001,9 +1001,10 @@
           + "var minDb=" + String(minDb) + ";\n"
           + "var t=time-inPoint;\n"
           + "var dur=Math.max(0.0001,outPoint-inPoint);\n"
-          + "var db=0;\n"
-          + "if (fadeIn>0){var x=Math.min(Math.max(t/fadeIn,0),1);var a=Math.sin(x*Math.PI*0.5);db=Math.min(db,(a>0.00001)?(20*Math.log(a)/Math.LN10):minDb);}\n"
-          + "if (fadeOut>0){var y=Math.min(Math.max((dur-t)/fadeOut,0),1);var b=Math.sin(y*Math.PI*0.5);db=Math.min(db,(b>0.00001)?(20*Math.log(b)/Math.LN10):minDb);}\n"
+          + "var a=1.0;\n"
+          + "if (fadeIn>0){var x=Math.min(Math.max(t/fadeIn,0),1);a=Math.min(a,Math.sin(x*Math.PI*0.5));}\n"
+          + "if (fadeOut>0){var y=Math.min(Math.max((dur-t)/fadeOut,0),1);a=Math.min(a,Math.sin(y*Math.PI*0.5));}\n"
+          + "var db=minDb+(0-minDb)*a;\n"
           + "[db,db];";
         lv.expression = expr;
       } catch(e) { logErr("apply audio envelope failed layer=" + layer.name, e); }

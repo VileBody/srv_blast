@@ -696,8 +696,7 @@ def pick_footage_clips_by_intervals_deterministic(
         excluded_names = {str(x).strip() for x in list(exclude_file_names or []) if str(x).strip()}
 
         k = len(raw_picks)
-        _vi = os.environ.get("BATCH_VARIANT_INDEX", "").strip()
-        subgroup_idx = ((int(_vi) - 1) % k) if _vi.isdigit() else (seed_value % k)
+        subgroup_idx = seed_value % k
         chosen_pool = _build_raw_pool(raw_picks[subgroup_idx], assets)
         if not chosen_pool:
             # Chosen subgroup is empty — fall back to merged pool of all non-empty subgroups.

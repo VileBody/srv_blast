@@ -843,12 +843,6 @@ class LayerFactory:
                    ease_in=[{"speed": 5.82, "influence": 95.0}] * 2 + [{"speed": 0.0, "influence": 95.0}],
                    ease_out=[{"speed": 0.0, "influence": 4.0}] * 3)
             )
-        # Динамический scale: при длинных словах уменьшаем, чтобы фон не выходил за рамки
-        _CHAR_PX_EST = 50   # ~ширина одного заглавного символа Point-ExtraBold при size_base=80
-        _MAX_W_PX    = 920  # безопасная ширина в 1080px композиции
-        _est_w = len(word) * _CHAR_PX_EST
-        mine_scale = min(100, int(_MAX_W_PX / _est_w * 100)) if _est_w > _MAX_W_PX else 100
-
         mine_text = {
             "name":             "mine",
             "type":             "text",
@@ -861,7 +855,7 @@ class LayerFactory:
             "props": {
                 "tf_anchor":   prop("ADBE Anchor Point",  [0, -33.5, 0]),
                 "tf_position": prop("ADBE Position",      [540, 960, 0]),
-                "tf_scale":    prop("ADBE Scale",         [mine_scale, mine_scale, 100]),
+                "tf_scale":    prop("ADBE Scale",         [100, 100, 100]),
                 "tf_rotation": prop("ADBE Rotate Z",      0),
                 "layer_opacity": prop("ADBE Opacity", keyframes=[
                     kf_ease(t_out - fade_dur,  100, speed_out=-99.9),
