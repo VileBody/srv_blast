@@ -12,6 +12,7 @@ from jinja2 import Environment, FileSystemLoader
 from app.project_config import AE_PROJECT
 from app.footage_comp import build_footage_layers, resolve_text_duration_sec
 from app.text_comp import build_text_layers
+from core.subtitles_mode import SUBTITLES_MODE_LEGACY_BLOCKS, normalize_subtitles_mode
 
 LOGGER = logging.getLogger("app.project_builder")
 
@@ -89,6 +90,10 @@ def build_full_project(
 
     full_edit_config = json.loads(full_edit_config_path.read_text(encoding="utf-8"))
     footage_cfg = json.loads(footage_config_path.read_text(encoding="utf-8"))
+    subtitles_mode = normalize_subtitles_mode(
+        str(full_edit_config.get("subtitles_mode") or ""),
+        default=SUBTITLES_MODE_LEGACY_BLOCKS,
+    )
 
     main_comp = dict(AE_PROJECT["main_comp"])
     text_comp = dict(AE_PROJECT["text_comp"])
@@ -141,6 +146,7 @@ def build_full_project(
         composition_dur=comp_dur,
         precomp_z_index=int(AE_PROJECT.get("root_precomp_z_index", 9999)),
         precomp_placement=AE_PROJECT.get("root_precomp_placement"),
+        subtitles_mode=subtitles_mode,
     )
 
     # 2) Text layers
@@ -151,7 +157,7 @@ def build_full_project(
     )
 
     payload: Dict[str, Any] = {
-        "project": {"mainCompName": main_name},
+        "project": {"mainCompName": main_name, "subtitlesMode": subtitles_mode},
         "comps": [main_comp, text_comp, mine_comp],
         "footage_layers": footage_layers,
         "text_layers": text_layers,

@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from app.footage_comp import build_footage_layers
+from core.subtitles_mode import SUBTITLES_MODE_TEMPLATE_4TH
 import mlcore.gemini_postprocess as gp
 from mlcore.gemini_postprocess import render_all_steps
 from mlcore.models.full_plan import FullPlanPayload
@@ -424,6 +425,39 @@ def test_overlay_blueprint_does_not_use_footage_shake_expression(monkeypatch) ->
     tf_position = (overlay.get("props") or {}).get("tf_position") or {}
     expr = str(tf_position.get("expression") or "")
     assert expr == "[thisComp.width/2,thisComp.height/2,0];"
+    assert "intro=0.63" not in expr
+
+
+def test_footage_blueprint_disables_shake_for_template_4th(monkeypatch) -> None:
+    monkeypatch.setenv("FOOTAGE_SHAKE_ENABLED", "1")
+    cfg = {
+        "text_dur_hint": 5.0,
+        "layers": [
+            {
+                "type": "footage",
+                "name": "bg",
+                "file_name": "bg.mp4",
+                "file_path": "s3://bucket/bg.mp4",
+                "src_w": 720,
+                "src_h": 1280,
+                "in_point": 0.0,
+                "out_point": 5.0,
+                "start_time": 0.0,
+                "enabled": True,
+            }
+        ],
+    }
+    layers = build_footage_layers(
+        repo_root=Path("."),
+        footage_cfg=cfg,
+        main_comp_name="Comp 1",
+        text_comp_name="Text",
+        subtitles_mode=SUBTITLES_MODE_TEMPLATE_4TH,
+    )
+    footage = next(it for it in layers if str(it.get("name")) == "bg")
+    tf_position = (footage.get("props") or {}).get("tf_position") or {}
+    expr = str(tf_position.get("expression") or "")
+    assert expr == ""
     assert "intro=0.63" not in expr
 
 
