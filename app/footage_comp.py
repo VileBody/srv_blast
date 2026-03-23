@@ -9,6 +9,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from core.subtitles_mode import SUBTITLES_MODE_TEMPLATE_4TH
 from core.types import KeyframeData, KeyframeEase, LayerBlueprint, PropertyData
 
 LOGGER = logging.getLogger("app.footage_comp")
@@ -820,6 +821,7 @@ def build_footage_layers(
     composition_dur: Any = None,
     precomp_z_index: int = 100,
     precomp_placement: Optional[Dict[str, Any]] = None,
+    subtitles_mode: str = "",
 ) -> List[Dict[str, Any]]:
     """
     Desired final stack (top -> bottom):
@@ -976,8 +978,17 @@ def build_footage_layers(
     footage_items = [it for it in layers_cfg if str(it.get("type")) == "footage"]
     base_z_foot = 100
     n = len(footage_items)
+    disable_footage_shake = str(subtitles_mode or "").strip() == SUBTITLES_MODE_TEMPLATE_4TH
     for i, it in enumerate(footage_items):
         z = base_z_foot + (n - 1 - i)
-        out.append(_footage_bp(it=it, z_index=z, comp_w=comp_w, comp_h=comp_h))
+        out.append(
+            _footage_bp(
+                it=it,
+                z_index=z,
+                comp_w=comp_w,
+                comp_h=comp_h,
+                apply_shake=(not disable_footage_shake),
+            )
+        )
 
     return [asdict(x) for x in sorted(out, key=lambda b: int(b.z_index))]
