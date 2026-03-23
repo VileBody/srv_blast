@@ -11,12 +11,10 @@
 <body>
 
   <!-- NAVBAR -->
-  <div class="navbar-outer">
+  <div class="navbar-wrap">
     <header class="navbar">
-      <div class="navbar-glow"></div>
       <a href="#" class="navbar-logo">
-        <img src="assets/logo.svg" alt="Blast" width="32" height="32" />
-        <span>Blast</span>
+        <img src="assets/logo.svg" alt="Blast" width="42" height="40" loading="eager" />
       </a>
       <nav class="navbar-links">
         <a href="#how-it-works">Как работает</a>
@@ -32,7 +30,7 @@
       <a href="#how-it-works">Как работает</a>
       <a href="#examples">Примеры</a>
       <a href="#features">Преимущества</a>
-      <a href="https://t.me/blast808bot" class="mobile-menu-cta" target="_blank" rel="noopener">Попробовать</a>
+      <a href="https://t.me/blast808bot" class="mobile-cta" target="_blank" rel="noopener">Попробовать</a>
     </div>
   </div>
 
@@ -43,27 +41,32 @@
       <div class="container">
         <div class="hero-inner">
 
-          <!-- Left: text (Текст group, 478px) -->
+          <!-- Left: text -->
           <div class="hero-left">
-            <h1 class="hero-title">Сделай трек — <em>вирусным</em> за 60 секунд!</h1>
+            <h1 class="hero-h1">
+              <span class="hero-h1-regular">Сделай трек </span><span class="hero-h1-italic">— вирусным<br /></span><span class="hero-h1-regular">за 60 секунд!</span>
+            </h1>
             <div class="hero-badge">
-              <svg width="16" height="16" viewBox="0 0 18 18" fill="none"><path d="M9 1L11.09 6.26L17 7.27L13 11.14L13.97 17L9 14.27L4.03 17L5 11.14L1 7.27L6.91 6.26L9 1Z" fill="#A080FF"/></svg>
+              <img src="assets/logo-badge.svg" alt="" width="16" height="12" />
               <span>Co-pilot в продвижении музыки</span>
             </div>
-            <p class="hero-desc">Blast — AI-агент для артистов:<br>создаёт контент под трек с нуля</p>
+            <p class="hero-desc">
+              <span class="hero-desc-white">Blast — AI-агент для артистов:</span><span class="hero-desc-muted"> создаёт контент под трек с нуля</span>
+            </p>
           </div>
 
-          <!-- Right: phone + CTA (Интерактив group, 600px) -->
-          <div class="hero-card">
-            <div class="hero-card-phone">
-              <img src="assets/phone-hero.png" alt="Blast app" />
-            </div>
-            <div class="hero-card-cta">
-              <p class="hero-card-label">Попробуй бесплатно:</p>
-              <p class="hero-card-text">Пришли трек в тг-бот&nbsp;— получи 3 видео!</p>
-              <a href="https://t.me/blast808bot" class="btn-pill" target="_blank" rel="noopener">
-                Загрузить трек
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M22 2L11 13" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M22 2L15 22L11 13L2 9L22 2Z" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <!-- Right: dark card with phone + CTA -->
+          <div class="hero-right">
+            <img class="hero-phone" src="assets/phone-hero.png" alt="Blast app" />
+            <div class="hero-right-overlay"></div>
+            <div class="hero-right-cta">
+              <div class="hero-right-texts">
+                <p class="hero-cta-title">Попробуй бесплатно:</p>
+                <p class="hero-cta-sub">Пришли трек в тг-бот — получи 3 видео!</p>
+              </div>
+              <a href="https://t.me/blast808bot" class="btn" target="_blank" rel="noopener">
+                <span>Загрузить трек</span>
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M22 2L11 13" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M22 2L15 22L11 13L2 9L22 2Z" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
               </a>
             </div>
           </div>
@@ -76,191 +79,190 @@
     <section class="social" id="social">
       <div class="container">
         <div class="social-inner">
-          <p class="social-label">
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M8 1L9.854 5.756L15 6.584L11.5 9.996L12.326 15L8 12.5L3.674 15L4.5 9.996L1 6.584L6.146 5.756L8 1Z" fill="#A080FF"/></svg>
-            Нам доверяют:
-          </p>
-          <div class="social-row">
-            <div class="social-item">
-              <div class="social-avatars">
-                <img src="assets/artists-avatars.png" alt="Артисты" />
-              </div>
-              <span>500+ артистов</span>
+          <p class="social-label">Нам доверяют:</p>
+          <div class="social-artists">
+            <div class="social-avatars">
+              <img src="assets/avatar-1.svg" class="avatar-circle" alt="" width="50" height="50" />
+              <img src="assets/avatar-2.svg" class="avatar-circle" alt="" width="50" height="50" />
+              <img src="assets/avatar-3.svg" class="avatar-circle" alt="" width="50" height="50" />
+              <img src="assets/avatar-4.svg" class="avatar-circle" alt="" width="50" height="50" />
+              <img src="assets/avatar-5.svg" class="avatar-circle" alt="" width="50" height="50" />
             </div>
-            <div class="social-sep"></div>
-            <div class="social-item">
-              <div class="social-logos">
-                <img src="assets/labels-logos.png" alt="Лейблы" />
-              </div>
-              <span>15+ лейблов, студий и партнёров</span>
+            <span class="social-count">500+ артистов</span>
+          </div>
+          <div class="social-sep"></div>
+          <div class="social-labels">
+            <div class="social-logos">
+              <img src="assets/label-1.svg" class="label-circle" alt="" width="50" height="50" />
+              <img src="assets/label-2.svg" class="label-circle" alt="" width="50" height="50" />
+              <img src="assets/label-3.svg" class="label-circle" alt="" width="50" height="50" />
             </div>
+            <span class="social-count">15+ лейблов, студий и партнёров</span>
           </div>
         </div>
       </div>
     </section>
 
-    <!-- HOW IT WORKS HEADING -->
-    <div class="section-head center" id="how-it-works">
+    <!-- HOW IT WORKS -->
+    <section class="section-block" id="how-it-works">
       <div class="container">
-        <p class="eyebrow">Как это работает</p>
-        <h2>Как работает генерация?</h2>
-      </div>
-    </div>
-
-    <!-- STEPS -->
-    <section class="steps">
-      <div class="container">
+        <div class="section-head">
+          <p class="eyebrow">Создавай видео — без съёмки</p>
+          <h2 class="section-h2">Как работает генерация?</h2>
+        </div>
         <div class="steps-card">
           <div class="steps-left">
-            <div class="step">
-              <span class="step-num">01</span>
-              <div>
-                <h3>Загрузи трек.</h3>
-                <p>Отправь аудио в тг-бот — Blast анализирует музыку и текст</p>
-              </div>
-            </div>
-            <div class="step">
-              <span class="step-num">02</span>
-              <div>
-                <h3>Настрой видео.</h3>
-                <p>Выбери стиль, формат и платформу — TikTok, Reels, Shorts</p>
-              </div>
-            </div>
-            <div class="step">
-              <span class="step-num">03</span>
-              <div>
-                <h3>Получи контент.</h3>
-                <p>Готовые ролики с кадрами, текстом и синхронизацией</p>
-              </div>
-            </div>
+            <p class="steps-text">
+              <span class="steps-muted">Загрузи трек.<br />Настрой видео.<br /></span><span class="steps-white">Получи контент.</span>
+            </p>
           </div>
           <div class="steps-right">
-            <div class="steps-phone steps-phone--before">
+            <div class="steps-phone-wrap">
               <img src="assets/phone-steps.png" alt="До Blast" />
-              <div class="steps-stats">
-                <span>👁 481</span>
-                <span>♥ 28</span>
+              <div class="steps-stat-card steps-stat-card--before">
+                <div class="stat-label">Видео А</div>
+                <div class="stat-row"><span class="stat-num">481</span><span class="stat-lbl">Просмотры</span></div>
+                <div class="stat-row"><span class="stat-num">28</span><span class="stat-lbl">Лайков</span></div>
+                <div class="stat-row"><span class="stat-num">1,2</span><span class="stat-lbl">Удержание, %</span></div>
               </div>
-              <span class="steps-badge">До Blast</span>
             </div>
             <div class="steps-arrow">→</div>
-            <div class="steps-phone steps-phone--after">
+            <div class="steps-phone-wrap">
               <img src="assets/phone-steps-after.png" alt="После Blast" />
-              <div class="steps-stats steps-stats--hot">
-                <span>👁 5.1К</span>
-                <span>♥ 1.2К</span>
+              <div class="steps-stat-card steps-stat-card--after">
+                <div class="stat-label">Видео Б</div>
+                <div class="stat-row"><span class="stat-num stat-num--hot">5.1K</span><span class="stat-lbl">Просмотры</span></div>
+                <div class="stat-row"><span class="stat-num stat-num--hot">1.2K</span><span class="stat-lbl">Лайков</span></div>
+                <div class="stat-row"><span class="stat-num stat-num--hot">4,8</span><span class="stat-lbl">Удержание, %</span></div>
               </div>
-              <span class="steps-badge steps-badge--hot">После Blast</span>
             </div>
           </div>
         </div>
       </div>
     </section>
-
-    <!-- EXAMPLES HEADING -->
-    <div class="section-head center" id="examples">
-      <div class="container">
-        <p class="eyebrow">Результаты</p>
-        <h2>Примеры роликов</h2>
-      </div>
-    </div>
 
     <!-- EXAMPLES -->
-    <section class="examples">
+    <section class="section-block" id="examples">
       <div class="container">
+        <div class="section-head section-head--left">
+          <p class="eyebrow">&nbsp;</p>
+          <h2 class="section-h2">Примеры роликов:</h2>
+        </div>
         <div class="examples-scroll">
-          <div class="example-card">
-            <div class="example-thumb"><img src="assets/video-hiphop.png" alt="Хип-хоп" /><span class="example-views">👁 700К</span></div>
-            <p class="example-genre">Хип-хоп</p>
-            <a href="https://t.me/blast808bot" class="example-link" target="_blank" rel="noopener">Ссылка ↗</a>
+          <div class="example-col">
+            <div class="example-slide">
+              <img src="assets/video-hiphop.png" alt="хип-хоп" />
+              <div class="example-badge">
+                <span class="example-views">700К | <a href="https://t.me/blast808bot" target="_blank" rel="noopener">Ссылка</a></span>
+              </div>
+            </div>
+            <span class="example-genre">хип-хоп</span>
           </div>
-          <div class="example-card">
-            <div class="example-thumb"><img src="assets/video-pop.png" alt="Поп" /><span class="example-views">👁 1.1М</span></div>
-            <p class="example-genre">Поп</p>
-            <a href="https://t.me/blast808bot" class="example-link" target="_blank" rel="noopener">Ссылка ↗</a>
+          <div class="example-col">
+            <div class="example-slide">
+              <img src="assets/video-pop.png" alt="поп" />
+              <div class="example-badge">
+                <span class="example-views">1.1M | <a href="https://t.me/blast808bot" target="_blank" rel="noopener">Ссылка</a></span>
+              </div>
+            </div>
+            <span class="example-genre">поп</span>
           </div>
-          <div class="example-card">
-            <div class="example-thumb"><img src="assets/video-rock.png" alt="Рок" /><span class="example-views">👁 1.2М</span></div>
-            <p class="example-genre">Рок</p>
-            <a href="https://t.me/blast808bot" class="example-link" target="_blank" rel="noopener">Ссылка ↗</a>
+          <div class="example-col">
+            <div class="example-slide">
+              <img src="assets/video-rock.png" alt="рок" />
+              <div class="example-badge">
+                <span class="example-views">1.2M | <a href="https://t.me/blast808bot" target="_blank" rel="noopener">Ссылка</a></span>
+              </div>
+            </div>
+            <span class="example-genre">рок</span>
           </div>
-          <div class="example-card">
-            <div class="example-thumb"><img src="assets/video-alt.png" alt="Альтернатива" /><span class="example-views">👁 467К</span></div>
-            <p class="example-genre">Альтернатива</p>
-            <a href="https://t.me/blast808bot" class="example-link" target="_blank" rel="noopener">Ссылка ↗</a>
+          <div class="example-col">
+            <div class="example-slide">
+              <img src="assets/video-alt.png" alt="альтернатива" />
+              <div class="example-badge">
+                <span class="example-views">487К | <a href="https://t.me/blast808bot" target="_blank" rel="noopener">Ссылка</a></span>
+              </div>
+            </div>
+            <span class="example-genre">альтернатива</span>
           </div>
-          <div class="example-card">
-            <div class="example-thumb"><img src="assets/video-soundcloud.png" alt="SoundCloud" /><span class="example-views">👁 2.4М</span></div>
-            <p class="example-genre">SoundCloud</p>
-            <a href="https://t.me/blast808bot" class="example-link" target="_blank" rel="noopener">Ссылка ↗</a>
+          <div class="example-col">
+            <div class="example-slide">
+              <img src="assets/video-soundcloud.png" alt="саундклауд" />
+              <div class="example-badge">
+                <span class="example-views">2.4M | <a href="https://t.me/blast808bot" target="_blank" rel="noopener">Ссылка</a></span>
+              </div>
+            </div>
+            <span class="example-genre">саундклауд</span>
           </div>
         </div>
       </div>
     </section>
 
-    <!-- FEATURES HEADING -->
-    <div class="section-head center" id="features">
+    <!-- FEATURES -->
+    <section class="section-block" id="features">
       <div class="container">
-        <p class="eyebrow">Зачем Blast</p>
-        <h2>Больше никаких препятствий</h2>
-      </div>
-    </div>
-
-    <!-- FEATURE CARDS -->
-    <section class="features">
-      <div class="container">
-        <div class="features-grid">
-
-          <div class="feat-card">
-            <div class="feat-card-visual">
-              <div class="feat-compare">
-                <div class="feat-compare-item feat-compare-item--before">
-                  <span class="feat-compare-label">До</span>
-                  <span class="feat-compare-val">1 час</span>
-                </div>
-                <span class="feat-compare-arrow">→</span>
-                <div class="feat-compare-item feat-compare-item--after">
-                  <span class="feat-compare-label">После</span>
-                  <span class="feat-compare-val">3 клика = ролик</span>
-                </div>
+        <div class="section-head section-head--right">
+          <p class="eyebrow">Новый виток в «продвижении» музыки</p>
+          <h2 class="section-h2 section-h2--right">Больше никаких препятствий</h2>
+        </div>
+        <div class="feat-card">
+          <!-- Col 1: before/after -->
+          <div class="feat-col">
+            <div class="feat-visual feat-visual--time">
+              <div class="feat-before">
+                <span class="feat-tag-label">До:</span>
+                <div class="feat-tag feat-tag--dim"><span>1 час</span></div>
+              </div>
+              <div class="feat-after">
+                <span class="feat-tag-label">После:</span>
+                <div class="feat-tag feat-tag--accent"><span>3 клика</span></div>
+              </div>
+              <div class="feat-eq">
+                <span class="feat-tag-label">=</span>
+                <div class="feat-tag feat-tag--dim"><span>ролик</span></div>
               </div>
             </div>
-            <h3>Ты — делаешь музыку, Blast — делает контент</h3>
-            <p>Без камеры, монтажа, навыков и напряга</p>
+            <p class="feat-title">Ты — делаешь музыку, Бласт — делает контент</p>
+            <p class="feat-desc">Без камеры, монтажа, навыков и напряга</p>
           </div>
-
-          <div class="feat-card">
-            <div class="feat-card-visual">
+          <!-- Col 2: mindmap -->
+          <div class="feat-col feat-col--mid">
+            <div class="feat-visual feat-visual--mindmap">
               <div class="feat-mindmap">
-                <div class="feat-mindmap-center">Blast</div>
-                <span>trends</span>
-                <span>lyrics</span>
-                <span>pov</span>
-                <span>edits</span>
-                <span>story</span>
+                <div class="feat-mindmap-tags">
+                  <span class="feat-pill">pov</span>
+                  <span class="feat-pill">edits</span>
+                  <span class="feat-pill">lyrics</span>
+                  <span class="feat-pill">trends</span>
+                  <span class="feat-pill">story</span>
+                </div>
               </div>
             </div>
-            <h3>Не один ролик — а система форматов</h3>
-            <p>Комбинации из видео повышают виральность</p>
+            <p class="feat-title">Не один ролик — <br />а система форматов</p>
+            <p class="feat-desc">Комбинации из видео повышают виральность</p>
           </div>
-
-          <div class="feat-card">
-            <div class="feat-card-visual">
-              <table class="feat-table">
-                <thead>
-                  <tr><th></th><th>Blast</th><th>Агентство</th></tr>
-                </thead>
-                <tbody>
-                  <tr><td>Цена</td><td class="good">от 990₽</td><td class="bad">от 30 000₽</td></tr>
-                  <tr><td>Скорость</td><td class="good">60 сек</td><td class="bad">2–4 нед.</td></tr>
-                  <tr><td>Правки</td><td class="good">мгновенно</td><td class="bad">дни</td></tr>
-                </tbody>
-              </table>
+          <!-- Col 3: comparison table -->
+          <div class="feat-col">
+            <div class="feat-visual feat-visual--table">
+              <div class="feat-compare">
+                <div class="feat-compare-blast">
+                  <span class="feat-compare-name gradient-text">Бласт</span>
+                  <span class="feat-compare-val">Авто</span>
+                  <span class="feat-compare-val">60 секунд</span>
+                  <span class="feat-compare-val">0₽ старт</span>
+                </div>
+                <div class="feat-compare-sep"></div>
+                <div class="feat-compare-agency">
+                  <span class="feat-compare-name">Агентство</span>
+                  <span class="feat-compare-val feat-compare-val--dim">Менеджер</span>
+                  <span class="feat-compare-val feat-compare-val--dim">14–21 дней</span>
+                  <span class="feat-compare-val feat-compare-val--dim">20–50 тыс ₽</span>
+                </div>
+              </div>
             </div>
-            <h3>Контент — без конских бюджетов</h3>
-            <p>В 10 раз дешевле, в сотни раз быстрее</p>
+            <p class="feat-title">Контент — без конских бюджетов</p>
+            <p class="feat-desc">В 10 раз дешевле, <br />в сотни раз быстрее</p>
           </div>
-
         </div>
       </div>
     </section>
@@ -268,24 +270,24 @@
     <!-- CTA -->
     <section class="cta-section" id="cta">
       <div class="container">
+        <div class="cta-head">
+          <p class="eyebrow">Сгенерируй видео — прямо сейчас</p>
+          <h2 class="section-h2">Затести Бласт<br />на своём треке</h2>
+        </div>
         <div class="cta-card">
-          <div class="cta-bg-text" aria-hidden="true">Blast</div>
-          <div class="cta-left">
-            <p class="eyebrow">Сгенерируй видео — прямо сейчас</p>
-            <h2>Затести Blast<br>на своём треке</h2>
+          <div class="cta-deco" aria-hidden="true">Marketing</div>
+          <div class="cta-phones">
+            <img src="assets/phone-cta-1.png" class="cta-ph cta-ph--1" alt="" />
+            <img src="assets/phone-cta-2.png" class="cta-ph cta-ph--2" alt="" />
+            <img src="assets/phone-hero.png"   class="cta-ph cta-ph--3" alt="" />
+            <img src="assets/phone-steps.png"  class="cta-ph cta-ph--4" alt="" />
           </div>
-          <div class="cta-right">
-            <div class="cta-phones">
-              <img src="assets/phone-cta-1.png" alt="" class="cta-phone-1" />
-              <img src="assets/phone-cta-2.png" alt="" class="cta-phone-2" />
-            </div>
-            <div class="cta-action">
-              <p>Отправь трек в тг-бота — получи 3 видео!</p>
-              <a href="https://t.me/blast808bot" class="btn-pill btn-pill--large" target="_blank" rel="noopener">
-                Загрузить трек
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M22 2L11 13" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M22 2L15 22L11 13L2 9L22 2Z" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-              </a>
-            </div>
+          <div class="cta-action">
+            <p class="cta-action-text">Отправь трек в тг-бота — получи 3 видео!</p>
+            <a href="https://t.me/blast808bot" class="btn btn--large" target="_blank" rel="noopener">
+              <span>Загрузить трек</span>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M22 2L11 13" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M22 2L15 22L11 13L2 9L22 2Z" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </a>
           </div>
         </div>
       </div>
@@ -297,31 +299,29 @@
   <footer class="footer">
     <div class="container footer-inner">
       <div class="footer-brand">
-        <a href="#" class="footer-logo">
-          <img src="assets/logo.svg" alt="Blast" width="28" height="28" />
-          <span>Blast</span>
-        </a>
-        <p>AI-агент для музыкантов</p>
+        <img src="assets/logo.svg" alt="Blast" width="42" height="40" loading="lazy" />
       </div>
       <div class="footer-social">
-        <a href="https://t.me/impulsemarketing" target="_blank" rel="noopener" aria-label="Telegram">
+        <span class="footer-social-label">Соц. сети</span>
+        <a href="https://t.me/impulsemarketing" target="_blank" rel="noopener">
           <img src="assets/tg-icon.svg" alt="Telegram" width="22" height="22" />
+          <span>Telegram</span>
         </a>
-        <a href="#" target="_blank" rel="noopener" aria-label="Instagram">
+        <a href="#" target="_blank" rel="noopener">
           <img src="assets/ig-icon.svg" alt="Instagram" width="22" height="22" />
+          <span>Instagram</span>
         </a>
-        <a href="https://vk.com/impulsemarketing" target="_blank" rel="noopener" aria-label="VK">
+        <a href="https://vk.com/impulsemarketing" target="_blank" rel="noopener">
           <img src="assets/vk-icon.svg" alt="VK" width="22" height="22" />
+          <span>VK</span>
         </a>
       </div>
       <div class="footer-legal">
         <p>ООО «Импульс Промо» © 2026</p>
-        <div class="footer-links">
-          <a href="/privacy">Политика конфиденциальности</a>
-          <a href="/personal-data">Обработка персональных данных</a>
-          <a href="/cookies">Файлы cookie</a>
-          <a href="/data-protection">Защита данных</a>
-        </div>
+        <a href="/privacy">Политика конфиденциальности</a>
+        <a href="/personal-data">Обработка персональных данных</a>
+        <a href="/cookies">Файлы cookie</a>
+        <a href="/data-protection">Защита данных</a>
       </div>
     </div>
   </footer>

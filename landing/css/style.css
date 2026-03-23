@@ -1,147 +1,148 @@
 /* ═══════════════════════════════════════════════════════════
    Blast Landing — style.css
-   Desktop base: 1440px (content 1200px, padding 120px/side)
+   Values from Figma Dev Mode export (blast.html / .web-landing.css)
+   Desktop: 1440px (container 1200px, pad 120px)
    Mobile: 375px
    ═══════════════════════════════════════════════════════════ */
 
-/* ─── Fonts ─────────────────────────────────────────────── */
-/* Point-Book ≈ weight 400-450, Point-SemiBold covers 500-600 (no Medium file) */
-@font-face { font-family:'Point'; src:url('../fonts/Point-Regular.ttf')       format('truetype'); font-weight:400;     font-style:normal;  font-display:swap; }
-@font-face { font-family:'Point'; src:url('../fonts/Point-Book.ttf')          format('truetype'); font-weight:450;     font-style:normal;  font-display:swap; }
-@font-face { font-family:'Point'; src:url('../fonts/Point-SemiBold.ttf')      format('truetype'); font-weight:500 600; font-style:normal;  font-display:swap; }
-@font-face { font-family:'Point'; src:url('../fonts/Point-MediumItalic.ttf')  format('truetype'); font-weight:500 600; font-style:italic;  font-display:swap; }
-@font-face { font-family:'Point'; src:url('../fonts/PointBold.ttf')           format('truetype'); font-weight:700;     font-style:normal;  font-display:swap; }
-@font-face { font-family:'Point'; src:url('../fonts/Point-BoldItalic.ttf')    format('truetype'); font-weight:700;     font-style:italic;  font-display:swap; }
-@font-face { font-family:'DriveHearts'; src:url('../fonts/Drive-Hearts.ttf')  format('truetype'); font-weight:400;     font-display:swap; }
+/* ─── Fonts ──────────────────────────────────────────────── */
+@font-face { font-family:'Point'; src:url('../fonts/Point-Regular.ttf')      format('truetype'); font-weight:400; font-style:normal;  font-display:swap; }
+@font-face { font-family:'Point'; src:url('../fonts/Point-Book.ttf')         format('truetype'); font-weight:350; font-style:normal;  font-display:swap; }
+@font-face { font-family:'Point'; src:url('../fonts/Point-MediumItalic.ttf') format('truetype'); font-weight:500; font-style:italic;  font-display:swap; }
+@font-face { font-family:'Point'; src:url('../fonts/PointBold.ttf')          format('truetype'); font-weight:700; font-style:normal;  font-display:swap; }
+@font-face { font-family:'DriveHearts'; src:url('../fonts/Drive-Hearts.ttf') format('truetype'); font-weight:400; font-display:swap; }
 
-/* ─── Variables ─────────────────────────────────────────── */
+/* ─── Variables ──────────────────────────────────────────── */
 :root {
-  --bg:          #05010F;
-  --bg-nav:      #11052D;
-  --accent:      #5F42B9;
-  --accent80:    rgba(95,66,185,0.8);
-  --purple:      #7B3FE4;
-  --purple-btn:  #9B6DFF;
-  --purple-text: #A080FF;
-  --white:       #FFFFFF;
-  --off-white:   #F6F5FD;
-  --muted:       rgba(246,245,253,0.5);
-  --card-bg:     #0E0829;
-  --card-bg2:    #0A051F;
+  --bg:           #05010f;
+  --nav-bg:       #10052c;
+  --hero-r-bg:    #150f25;
+  --card-bg:      #060114;
+  --text:         #f6f5fd;
+  --text-80:      rgba(246,245,253,.8);
+  --text-60:      rgba(246,245,253,.6);
+  --text-40:      rgba(246,245,253,.4);
+  --g-start:      rgba(139,111,230,1);   /* #8b6fe6 */
+  --g-end:        rgba(95, 66,185,1);    /* #5f42b9 */
+  --accent:       #5f42b9;
+  --accent-80:    rgba(95,66,185,.8);
+  --accent-20:    rgba(95,66,185,.2);
+  --pill-border:  #8b6fe6;
 
-  --r20: 20px;
-  --r14: 14px;
-  --r12: 12px;
-  --r100: 100px;
+  --r20:  20px;
+  --r15:  15px;
+  --r12:  12px;
+  --r40:  40px;
+
+  --font:       'Point', -apple-system, sans-serif;
+  --font-deco:  'DriveHearts', cursive;
 
   --container: 1200px;
-  --side-pad:  120px;
-  --font:      'Point', -apple-system, sans-serif;
-  --font-deco: 'DriveHearts', cursive;
+  --side:      120px;
 }
 
-/* ─── Reset ─────────────────────────────────────────────── */
-*,*::before,*::after { box-sizing:border-box; margin:0; padding:0; }
-html { scroll-behavior:smooth; }
+/* ─── Gradient text utility ──────────────────────────────── */
+.gradient-text {
+  background: linear-gradient(175deg, var(--g-start) 0%, var(--g-end) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* ─── Reset ──────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-behavior: smooth; }
 body {
   background: var(--bg);
-  color: var(--off-white);
+  color: var(--text);
   font-family: var(--font);
-  font-size: 16px;
-  font-weight: 500;
-  line-height: 1.5;
+  font-size: 24px;          /* Figma base: 24px */
+  font-weight: 400;
+  line-height: normal;
   -webkit-font-smoothing: antialiased;
 }
-img  { display:block; max-width:100%; }
-a    { text-decoration:none; color:inherit; }
-ul   { list-style:none; }
+img  { display: block; max-width: 100%; }
+a    { text-decoration: none; color: inherit; }
 
-/* ─── Container ─────────────────────────────────────────── */
+/* ─── Container ──────────────────────────────────────────── */
 .container {
   max-width: var(--container);
   margin: 0 auto;
-  padding: 0 var(--side-pad);
+  padding: 0 var(--side);
 }
-@media (max-width:1280px) { .container { padding: 0 40px; } }
-@media (max-width:768px)  { .container { padding: 0 20px; } }
+@media (max-width: 1280px) { .container { padding: 0 40px; } }
+@media (max-width: 768px)  { .container { padding: 0 20px; } }
 
-/* ═══════════════════════════════════════════════════════════
+/* ════════════════════════════════════════════════════════════
    NAVBAR
-   1200×80px, radius 20px, fill #11052D, margin-top 31px
-   ═══════════════════════════════════════════════════════════ */
-.navbar-outer {
+   Figma: 1200×80px, bg #10052c, radius 20, top 31px, blur 50px
+   ════════════════════════════════════════════════════════════ */
+.navbar-wrap {
   position: sticky;
   top: 20px;
   z-index: 200;
-  /* Side padding to center the 1200px navbar inside 1440px */
-  padding: 0 120px;
+  padding: 0 var(--side);
 }
-@media (max-width:1280px) { .navbar-outer { padding: 0 40px; } }
-@media (max-width:768px)  { .navbar-outer { padding: 0 16px; } }
+@media (max-width: 1280px) { .navbar-wrap { padding: 0 40px; } }
+@media (max-width: 768px)  { .navbar-wrap { padding: 0 16px; } }
 
 .navbar {
   position: relative;
   display: flex;
   align-items: center;
   height: 80px;
-  padding: 0 40px;
-  background: var(--bg-nav);
+  padding: 0 48px;
+  background-color: var(--nav-bg);
   border-radius: var(--r20);
   overflow: hidden;
+  backdrop-filter: blur(50px);
+  -webkit-backdrop-filter: blur(50px);
 }
 
-/* Purple radial glow at centre of navbar */
-.navbar-glow {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%,-50%);
-  width: 520px;
-  height: 120px;
-  background: radial-gradient(ellipse at center, rgba(123,63,228,0.6) 0%, transparent 65%);
-  pointer-events: none;
-}
-
+/* Figma: logo group at left:30, 42×40 */
 .navbar-logo {
   display: flex;
   align-items: center;
-  gap: 10px;
-  font-size: 20px;
-  font-weight: 700;
-  color: var(--white);
   flex-shrink: 0;
   z-index: 1;
 }
 
+/* Figma: links group at left:334, gap:30, opacity:0.8, font 24px */
 .navbar-links {
   display: flex;
   align-items: center;
-  gap: 40px;
+  gap: 30px;
   position: absolute;
   left: 50%;
   transform: translateX(-50%);
   z-index: 1;
 }
 .navbar-links a {
-  font-size: 15px;
-  font-weight: 500;
-  color: rgba(246,245,253,0.7);
-  transition: color .2s;
+  font-size: 24px;
+  font-weight: 400;
+  color: var(--text);
+  opacity: 0.8;
+  transition: opacity .2s;
+  white-space: nowrap;
 }
 .navbar-links a:hover,
-.navbar-links a.active { color: var(--white); }
+.navbar-links a.active { opacity: 1; }
 
+/* Figma: "Попробовать" at right:48, gradient text, 24px */
 .navbar-cta {
   margin-left: auto;
-  font-size: 16px;
-  font-weight: 600;
-  color: var(--purple-text);
+  font-size: 24px;
+  font-weight: 400;
   z-index: 1;
+  background: linear-gradient(142deg, var(--g-start) 0%, var(--g-end) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
   transition: opacity .2s;
 }
 .navbar-cta:hover { opacity: 0.8; }
 
-/* Burger (mobile) */
+/* Burger */
 .burger {
   display: none;
   flex-direction: column;
@@ -155,22 +156,16 @@ ul   { list-style:none; }
   z-index: 1;
   padding: 5px;
 }
-.burger span {
-  display: block;
-  height: 2px;
-  background: var(--white);
-  border-radius: 2px;
-  transition: transform .25s, opacity .25s;
-}
+.burger span { display: block; height: 2px; background: var(--text); border-radius: 2px; transition: transform .25s, opacity .25s; }
 .burger.open span:nth-child(1) { transform: translateY(7px) rotate(45deg); }
 .burger.open span:nth-child(2) { opacity: 0; }
 .burger.open span:nth-child(3) { transform: translateY(-7px) rotate(-45deg); }
 
-/* Mobile menu dropdown */
+/* Mobile menu */
 .mobile-menu {
   display: none;
   flex-direction: column;
-  background: var(--bg-nav);
+  background: var(--nav-bg);
   border-radius: 0 0 var(--r20) var(--r20);
   padding: 0 24px;
   max-height: 0;
@@ -178,607 +173,724 @@ ul   { list-style:none; }
   transition: max-height .3s ease, padding .3s ease;
 }
 .mobile-menu.open { max-height: 300px; padding: 12px 24px 20px; }
-.mobile-menu a {
-  padding: 12px 0;
-  font-size: 16px;
-  font-weight: 500;
-  color: rgba(246,245,253,0.7);
-  border-bottom: 1px solid rgba(255,255,255,.07);
-  transition: color .2s;
-}
-.mobile-menu a:hover { color: var(--white); }
-.mobile-menu-cta {
-  color: var(--purple-text) !important;
-  font-weight: 600 !important;
-  border-bottom: none !important;
-}
+.mobile-menu a { padding: 12px 0; font-size: 24px; color: rgba(246,245,253,.7); border-bottom: 1px solid rgba(255,255,255,.07); }
+.mobile-menu a:hover { color: var(--text); }
+.mobile-cta { color: var(--g-start) !important; border-bottom: none !important; }
 
-/* ═══════════════════════════════════════════════════════════
+/* ════════════════════════════════════════════════════════════
    BUTTONS
-   pill shape, gradient purple
-   ═══════════════════════════════════════════════════════════ */
-.btn-pill {
+   Figma: gradient, radius 40px, height 70px, font 24px
+   ════════════════════════════════════════════════════════════ */
+.btn {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 10px;
-  padding: 16px 32px;
-  border-radius: var(--r100);
-  background: linear-gradient(90deg, #9B6DFF 0%, #7B3FE4 100%);
-  color: var(--white);
+  height: 70px;
+  padding: 0 40px;
+  border-radius: var(--r40);
+  background: linear-gradient(90deg, var(--g-start) 0%, var(--g-end) 100%);
+  color: var(--text);
   font-family: var(--font);
-  font-size: 16px;
-  font-weight: 600;
+  font-size: 24px;
+  font-weight: 400;
   border: none;
   cursor: pointer;
-  transition: opacity .2s, transform .15s;
   white-space: nowrap;
+  transition: opacity .2s, transform .15s;
+  overflow: hidden;
+  position: relative;
 }
-.btn-pill:hover  { opacity: .88; transform: translateY(-1px); }
-.btn-pill:active { transform: none; }
-.btn-pill--large { padding: 18px 36px; font-size: 17px; }
+/* subtle glow effect matching Figma group-4 background */
+.btn::before {
+  content: '';
+  position: absolute;
+  inset: -100px;
+  background: radial-gradient(ellipse at center, rgba(139,111,230,.5) 0%, transparent 60%);
+  pointer-events: none;
+}
+.btn:hover  { opacity: .88; transform: translateY(-1px); }
+.btn:active { transform: none; }
+.btn--large { height: 70px; padding: 0 44px; }
 
-/* ═══════════════════════════════════════════════════════════
+/* ════════════════════════════════════════════════════════════
    HERO
-   Group 1710: 1200×390px, Y:211 (100px below navbar bottom)
-   Left (Текст): 478×379px  |  Right (Интерактив): 600×390px
-   ═══════════════════════════════════════════════════════════ */
+   Figma: group at top 211px, display flex, gap 118px
+   Left (view): 482×379px  |  Right (element-2): 600×390px bg #150f25
+   ════════════════════════════════════════════════════════════ */
 .hero {
-  /* 100px gap between navbar bottom and hero card top */
   padding-top: 100px;
-  padding-bottom: 0;
 }
-
 .hero-inner {
   display: flex;
-  align-items: stretch;
-  /* Exact Figma height */
-  height: 390px;
-  border: 1px solid var(--accent80);
-  border-radius: var(--r20);
-  overflow: hidden;
-  background: transparent;
+  align-items: flex-start;
+  gap: 118px;
 }
 
-/* ── Left column: Текст ── */
+/* Left column */
 .hero-left {
-  /* 478px / 1200px = 39.8% */
-  flex: 0 0 478px;
+  flex: 0 0 482px;
+  width: 482px;
   display: flex;
   flex-direction: column;
-  justify-content: center;
-  /* Figma: Текст group = 478px, H1 = W Fixed 478px. Minimal horizontal padding */
-  padding: 40px 0 40px 24px;
-  gap: 20px;
-  position: relative;
-  z-index: 1;
+  padding-top: 5px;
 }
 
-/* H1 – exactly from Figma: 64px, w500, #F6F5FD, line-height normal */
-.hero-title {
+/* Figma: H1 = 64px, Point-Regular w400, color #f6f5fd, width 478px, height 231px */
+.hero-h1 {
+  width: 478px;
   font-size: 64px;
-  font-weight: 500;
-  line-height: 1.15;
-  color: var(--off-white);   /* #F6F5FD */
-  letter-spacing: -0.01em;
+  font-weight: 400;
+  color: var(--text);
+  line-height: normal;
+  letter-spacing: 0;
 }
-/* "вирусным" – italic, same weight/size */
-.hero-title em {
-  font-style: italic;
+.hero-h1-regular {
+  font-family: var(--font);
+  font-weight: 400;
+  color: var(--text);
+}
+/* Figma: "— вирусным" = Point-MediumItalic w500 italic */
+.hero-h1-italic {
+  font-family: var(--font);
   font-weight: 500;
-  color: var(--off-white);
+  font-style: italic;
+  color: var(--text);
 }
 
+/* Figma: badge = 455×45px, bg #05010f, border #5f42b9cc, radius 12px, mt 20px */
 .hero-badge {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 20px;
-  border-radius: var(--r100);
-  background: rgba(95,66,185,0.18);
-  border: 1.5px solid var(--accent);
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--purple-text);
-  width: fit-content;
+  gap: 10px;
+  width: 455px;
+  height: 45px;
+  margin-top: 20px;
+  padding: 0 15px;
+  background-color: var(--bg);
+  border-radius: var(--r12);
+  border: 1px solid rgba(95,66,185,.8);
   flex-shrink: 0;
 }
-
-.hero-desc {
-  font-size: 17px;
+.hero-badge img { flex-shrink: 0; }
+/* Figma: badge text = 24px, gradient text */
+.hero-badge span {
+  font-size: 24px;
   font-weight: 400;
-  color: var(--muted);
-  line-height: 1.55;
+  background: linear-gradient(175deg, var(--g-start) 0%, var(--g-end) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
 }
 
-/* ── Right column: Интерактив ── */
-.hero-card {
-  flex: 1;                /* fills remaining 722px (slightly wider than Figma's 600 for flexibility) */
-  display: flex;
-  align-items: center;
-  gap: 28px;
-  padding: 20px 28px;
-  /* gradient bg to separate from left side */
-  background: linear-gradient(105deg, rgba(14,8,41,0) 0%, rgba(14,8,41,0.85) 25%, #0A051F 100%);
+/* Figma: blast-AI = 444×58px, 24px, mt 25px */
+.hero-desc {
+  width: 444px;
+  font-size: 24px;
+  font-weight: 400;
+  margin-top: 25px;
+  line-height: normal;
+}
+.hero-desc-white { color: var(--text); }
+.hero-desc-muted { color: var(--text-80); }
+
+/* Right column — dark card */
+/* Figma: element-2 = 600×390px, bg #150f25, radius 20px, overflow hidden */
+.hero-right {
+  flex: 0 0 600px;
+  width: 600px;
+  height: 390px;
+  background-color: var(--hero-r-bg);
+  border-radius: var(--r20);
+  overflow: hidden;
   position: relative;
 }
 
-/* Purple glow behind phone */
-.hero-card::before {
-  content: '';
+/* Figma: iphone-pro = width 138%, top 40px, left -38%, height 945px */
+.hero-phone {
   position: absolute;
-  left: 50%;
-  top: 50%;
-  transform: translate(-60%, -50%);
-  width: 260px;
-  height: 260px;
-  background: radial-gradient(ellipse, rgba(123,63,228,0.45) 0%, transparent 70%);
+  width: 138%;
+  height: 945px;
+  top: 40px;
+  left: -38%;
+  object-fit: cover;
+  border-radius: 0;
+}
+
+/* Figma: rectangle = full width, bottom 0, height 160px, gradient overlay */
+.hero-right-overlay {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 100%;
+  height: 160px;
+  background: linear-gradient(0deg, rgba(21,15,37,1) 0%, rgba(21,15,37,0) 100%);
   pointer-events: none;
 }
 
-.hero-card-phone {
-  flex-shrink: 0;
-  width: 185px;
-  position: relative;
-  z-index: 1;
-}
-.hero-card-phone img {
-  width: 100%;
-  border-radius: 18px;
-  object-fit: cover;
-  filter: drop-shadow(0 8px 32px rgba(123,63,228,0.5));
-}
-
-.hero-card-cta {
+/* Figma: group-2 = left 267px, bottom 99px, 278×192px */
+.hero-right-cta {
+  position: absolute;
+  left: 267px;
+  bottom: 99px;
+  width: 278px;
   display: flex;
   flex-direction: column;
+  justify-content: space-between;
   gap: 10px;
-  position: relative;
-  z-index: 1;
-}
-.hero-card-label {
-  font-size: 17px;
-  font-weight: 600;
-  color: var(--white);
-}
-.hero-card-text {
-  font-size: 15px;
-  font-weight: 400;
-  color: rgba(246,245,253,0.6);
-  line-height: 1.5;
-  margin-bottom: 4px;
 }
 
-/* ═══════════════════════════════════════════════════════════
+.hero-right-texts {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+/* Figma: text-wrapper-5 = 268×29px, 24px, #f6f5fd */
+.hero-cta-title {
+  font-size: 24px;
+  font-weight: 400;
+  color: var(--text);
+  text-align: right;
+}
+
+/* Figma: p = 266×58px, Point-Book, #f6f5fdcc, 24px */
+.hero-cta-sub {
+  font-size: 24px;
+  font-weight: 350;
+  color: var(--text-80);
+  line-height: normal;
+  text-align: right;
+}
+
+/* Figma: frame = height 70px, radius 40px, gradient, overflow hidden */
+.hero-right-cta .btn {
+  width: 100%;
+}
+
+/* ════════════════════════════════════════════════════════════
    SOCIAL PROOF
-   Group 1715: 1200×179px, Y:701 (100px below hero bottom)
-   ═══════════════════════════════════════════════════════════ */
+   Figma: group-6 = 1200×179px, 100px below hero, flex column gap 50px
+   ════════════════════════════════════════════════════════════ */
 .social {
   margin-top: 100px;
-  padding: 0;
 }
-.social > .container > * {
-  /* inner content of social */
-}
-
 .social-inner {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 36px 48px;
-  border: 1px solid rgba(95,66,185,0.2);
-  border-radius: var(--r20);
-  gap: 32px;
+  justify-content: center;
+  gap: 60px;
 }
 
+/* Figma: text-wrapper-7 = Point-Book 24px #f6f5fd, centered */
 .social-label {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--purple-text);
-  letter-spacing: .06em;
-  text-transform: uppercase;
-  white-space: nowrap;
+  font-size: 24px;
+  font-weight: 350;
+  color: var(--text);
   flex-shrink: 0;
 }
 
-.social-row {
+.social-artists,
+.social-labels {
   display: flex;
   align-items: center;
-  gap: 40px;
-  flex: 1;
+  gap: 20px;
 }
 
-.social-item {
+/* Figma: individual 100x100 circle avatars overlapping */
+.social-avatars,
+.social-logos {
   display: flex;
   align-items: center;
-  gap: 16px;
-  font-size: 15px;
-  font-weight: 500;
-  color: var(--off-white);
+  position: relative;
 }
-.social-item img { height: 38px; width: auto; }
-.social-avatars img { height: 40px; width: auto; }
-.social-logos img  { height: 28px; width: auto; }
+.avatar-circle,
+.label-circle {
+  width: 50px;
+  height: 50px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  border: 2px solid var(--bg);
+  margin-left: -10px;
+}
+.avatar-circle:first-child,
+.label-circle:first-child { margin-left: 0; }
+
+/* Figma: "500+ артистов", "15+ лейблов" = Point-Book 24px #f6f5fd */
+.social-count {
+  font-size: 24px;
+  font-weight: 350;
+  color: var(--text);
+  white-space: nowrap;
+}
 
 .social-sep {
   width: 1px;
   height: 44px;
-  background: rgba(95,66,185,0.35);
+  background: rgba(95,66,185,.35);
   flex-shrink: 0;
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ════════════════════════════════════════════════════════════
    SECTION HEADINGS
-   Standard eyebrow + H2, centered, 164px top margin
-   ═══════════════════════════════════════════════════════════ */
+   Figma: H2 = 64px Point-Regular w400, eyebrow = 24px gradient
+   ════════════════════════════════════════════════════════════ */
+.section-block { margin-top: 163px; }
+
 .section-head {
-  padding: 164px 0 40px;
+  text-align: center;
+  margin-bottom: 40px;
 }
-.section-head.center { text-align: center; }
+.section-head--left  { text-align: left; }
+.section-head--right { text-align: right; }
 
+/* Figma: eyebrow = 24px gradient text */
 .eyebrow {
-  font-size: 12px;
-  font-weight: 500;
-  letter-spacing: .12em;
-  text-transform: uppercase;
-  color: var(--purple-text);
-  margin-bottom: 14px;
+  font-size: 24px;
+  font-weight: 400;
+  background: linear-gradient(175deg, var(--g-start) 0%, var(--g-end) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  margin-bottom: 0;
 }
 
-.section-head h2 {
-  font-size: 48px;
-  font-weight: 700;
-  line-height: 1.1;
-  color: var(--white);
-  letter-spacing: -0.01em;
+/* Figma: section H2 = 64px Point-Regular w400 #f6f5fd */
+.section-h2 {
+  font-size: 64px;
+  font-weight: 400;
+  color: var(--text);
+  line-height: normal;
+  letter-spacing: 0;
 }
+.section-h2--right { text-align: right; }
 
-/* ═══════════════════════════════════════════════════════════
-   STEPS
-   1200×400px at Y:1287
-   ═══════════════════════════════════════════════════════════ */
-.steps {
-  padding-bottom: 0;
-}
-/* Tighter gap between heading and steps card */
-.steps .container { margin-top: -12px; }
-
+/* ════════════════════════════════════════════════════════════
+   STEPS CARD
+   Figma: view-wrapper = 1200×400px, top 1287, radius 20, bg SVG
+   view-3 inside, has left text and phones right
+   ════════════════════════════════════════════════════════════ */
 .steps-card {
   display: flex;
   align-items: center;
-  gap: 48px;
-  background: var(--card-bg);
-  border: 1px solid rgba(95,66,185,0.25);
   border-radius: var(--r20);
-  padding: 56px 56px 56px 56px;
-  min-height: 400px;
   overflow: hidden;
-  position: relative;
+  min-height: 400px;
+  background: linear-gradient(135deg, #0d0828 0%, #0a0520 50%, #080318 100%);
+  border: 1px solid rgba(95,66,185,.25);
+  padding: 60px;
+  gap: 60px;
 }
 
 .steps-left {
   flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 36px;
 }
 
-.step {
-  display: flex;
-  gap: 20px;
-  align-items: flex-start;
-}
-.step-num {
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--purple-text);
-  letter-spacing: .1em;
-  text-transform: uppercase;
-  flex-shrink: 0;
-  padding-top: 6px;
-  min-width: 24px;
-}
-.step h3 {
-  font-size: 28px;
-  font-weight: 700;
-  color: var(--white);
-  line-height: 1.2;
-  margin-bottom: 6px;
-}
-.step p {
-  font-size: 15px;
+/* Figma: div-2 = 64px, Point-Regular, two colors */
+.steps-text {
+  font-size: 64px;
   font-weight: 400;
-  color: var(--muted);
-  line-height: 1.55;
+  line-height: normal;
 }
+/* Figma: text-wrapper-10 = #f6f5fd99 (60% opacity) */
+.steps-muted { color: var(--text-60); }
+/* Figma: text-wrapper-3 = #f6f5fd */
+.steps-white { color: var(--text); }
 
 .steps-right {
   display: flex;
   align-items: flex-end;
-  gap: 16px;
+  gap: 20px;
   flex-shrink: 0;
-  position: relative;
 }
 
-.steps-phone {
+.steps-phone-wrap {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
+  position: relative;
 }
-.steps-phone img {
-  height: 280px;
+.steps-phone-wrap img {
+  height: 220px;
   width: auto;
   border-radius: 16px;
-  filter: drop-shadow(0 8px 24px rgba(123,63,228,.4));
+  filter: drop-shadow(0 8px 24px rgba(123,63,228,.35));
 }
-.steps-stats {
+
+/* Figma: frame-2 / frame-3 = 180×154px, bg #060114, radius 20, border #f6f5fd40 */
+.steps-stat-card {
+  width: 180px;
+  background-color: var(--card-bg);
+  border-radius: var(--r20);
+  border: 1px solid var(--text-40);
+  padding: 15px 17px 17px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.steps-stat-card--after { border-color: var(--text-40); }
+
+/* Figma: text-wrapper-11/19 = 20px #f6f5fdcc */
+.stat-label {
+  font-size: 20px;
+  font-weight: 400;
+  color: var(--text-80);
+  padding-bottom: 4px;
+  border-bottom: 1px solid rgba(246,245,253,.15);
+}
+
+.stat-row {
   display: flex;
   gap: 10px;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--muted);
+  align-items: center;
 }
-.steps-stats--hot { color: var(--purple-text); }
+/* Figma: stat numbers = 16px Point-Regular #f6f5fd */
+.stat-num {
+  font-size: 16px;
+  font-weight: 400;
+  color: var(--text);
+  white-space: nowrap;
+}
+/* Figma: hot numbers = var(--grad) = rgba(139,111,230,1) */
+.stat-num--hot { color: var(--g-start); }
 
-.steps-badge {
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: .08em;
-  color: var(--muted);
+/* Figma: stat labels = 16px Point-Book #f6f5fdcc */
+.stat-lbl {
+  font-size: 16px;
+  font-weight: 350;
+  color: var(--text-80);
+  white-space: nowrap;
 }
-.steps-badge--hot { color: var(--purple-text); }
 
 .steps-arrow {
-  font-size: 24px;
-  color: var(--accent);
+  font-size: 28px;
+  color: rgba(95,66,185,.7);
   align-self: center;
-  margin-bottom: 52px;
   flex-shrink: 0;
-  opacity: 0.7;
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ════════════════════════════════════════════════════════════
    EXAMPLES
-   1200×499px at Y:1837 (150px below steps bottom)
-   Horizontal scroll of 5 phone cards
-   ═══════════════════════════════════════════════════════════ */
-.examples { padding-bottom: 0; }
-
+   Figma: div-wrapper = 1200×499px, group-24 = slides abs
+   Slides: 366×206 rotate(90deg) → appear portrait ~206×366
+   ════════════════════════════════════════════════════════════ */
 .examples-scroll {
   display: flex;
-  gap: 20px;
+  gap: 24px;
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
-  padding-bottom: 12px;
   scroll-snap-type: x mandatory;
+  padding-bottom: 12px;
   scrollbar-width: thin;
-  scrollbar-color: rgba(95,66,185,0.4) transparent;
+  scrollbar-color: rgba(95,66,185,.4) transparent;
 }
 .examples-scroll::-webkit-scrollbar { height: 4px; }
-.examples-scroll::-webkit-scrollbar-thumb { background: rgba(95,66,185,0.4); border-radius: 4px; }
+.examples-scroll::-webkit-scrollbar-thumb { background: rgba(95,66,185,.4); border-radius: 4px; }
 
-.example-card {
+.example-col {
+  flex-shrink: 0;
+  /* Figma: each slide ≈ 206px wide (after rotation) — using 220px */
+  width: 220px;
   display: flex;
   flex-direction: column;
   gap: 12px;
-  flex-shrink: 0;
-  /* 5 cards, 1200px wide, 20px gaps: (1200 - 4*20) / 5 = 224px per card */
-  width: 220px;
   scroll-snap-align: start;
 }
 
-.example-thumb {
-  position: relative;
-  border-radius: var(--r14);
-  overflow: hidden;
+/* Figma: white card bg, 15px radius, rotated landscape */
+.example-slide {
+  width: 100%;
   aspect-ratio: 9/16;
-  background: var(--card-bg);
-  border: 1px solid rgba(95,66,185,.25);
+  background-color: #fff;
+  border-radius: var(--r15);
+  overflow: hidden;
+  position: relative;
+  border: 1px solid rgba(95,66,185,.2);
 }
-.example-thumb img {
+.example-slide img {
   width: 100%;
   height: 100%;
   object-fit: cover;
 }
-.example-views {
+
+/* Figma: views + ссылка = 14px gradient text, inside slide */
+.example-badge {
   position: absolute;
   bottom: 10px;
-  left: 10px;
-  background: rgba(5,1,15,.8);
-  backdrop-filter: blur(6px);
-  padding: 4px 10px;
-  border-radius: var(--r100);
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--white);
-}
-
-.example-genre {
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--off-white);
-}
-.example-link {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--purple-text);
-  transition: opacity .2s;
-}
-.example-link:hover { opacity: .7; }
-
-/* ═══════════════════════════════════════════════════════════
-   FEATURE CARDS
-   1200×400px at Y:2730 (150px below examples bottom)
-   3 equal cards in a row
-   ═══════════════════════════════════════════════════════════ */
-.features { padding-bottom: 0; }
-
-.features-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 20px;
-}
-
-.feat-card {
-  background: var(--card-bg);
-  border: 1px solid rgba(95,66,185,.2);
-  border-radius: var(--r20);
-  padding: 32px 28px;
+  left: 0;
+  right: 0;
   display: flex;
-  flex-direction: column;
-  gap: 20px;
-  position: relative;
-  overflow: hidden;
-}
-
-.feat-card-visual {
-  min-height: 144px;
-  display: flex;
-  align-items: center;
   justify-content: center;
 }
+.example-views {
+  display: inline-block;
+  padding: 3px 10px;
+  background: rgba(5,1,15,.7);
+  backdrop-filter: blur(4px);
+  border-radius: 20px;
+  font-size: 14px;
+  font-weight: 400;
+  background: linear-gradient(147deg, var(--g-start) 0%, var(--g-end) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.example-views a { color: inherit; }
 
-/* Card 1 — before/after compare */
-.feat-compare {
+/* Figma: genre label = Point-Book 24px #f6f5fd */
+.example-genre {
+  font-size: 24px;
+  font-weight: 350;
+  color: var(--text);
+}
+
+/* ════════════════════════════════════════════════════════════
+   FEATURE CARDS
+   Figma: frame-4 = 1200×400px, radius 20, 3 columns with dividers
+   Each col ≈ 400px wide (dividers at left:400 and left:800)
+   ════════════════════════════════════════════════════════════ */
+.feat-card {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  border-radius: var(--r20);
+  overflow: hidden;
+  min-height: 400px;
+  background: linear-gradient(135deg, #0d0828 0%, #0a0520 50%, #080318 100%);
+  border: 1px solid rgba(95,66,185,.2);
+}
+
+.feat-col {
+  padding: 40px 50px 40px 50px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  position: relative;
+}
+/* Vertical dividers at col 2 and 3 */
+.feat-col--mid {
+  border-left: 1px solid rgba(95,66,185,.25);
+  border-right: 1px solid rgba(95,66,185,.25);
+}
+
+.feat-visual {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  padding-bottom: 20px;
+}
+
+/* Card 1 — before/after timeline */
+.feat-visual--time {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 16px;
+}
+.feat-before, .feat-after, .feat-eq {
   display: flex;
   align-items: center;
   gap: 10px;
-  width: 100%;
-}
-.feat-compare-item {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  padding: 14px 8px;
-  border-radius: var(--r12);
-  text-align: center;
-}
-.feat-compare-item--before {
-  background: rgba(255,255,255,.04);
-  border: 1px solid rgba(255,255,255,.1);
-}
-.feat-compare-item--after {
-  background: rgba(123,63,228,.2);
-  border: 1px solid var(--accent);
-}
-.feat-compare-label {
-  font-size: 10px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: .1em;
-  color: var(--muted);
-}
-.feat-compare-val {
-  font-size: 13px;
-  font-weight: 700;
-  color: var(--white);
-}
-.feat-compare-arrow {
-  font-size: 18px;
-  color: var(--accent);
-  flex-shrink: 0;
 }
 
-/* Card 2 — mindmap tags */
-.feat-mindmap {
+/* Figma: "До:", "После:", "=" = 24px gradient text */
+.feat-tag-label {
+  font-size: 24px;
+  font-weight: 350;
+  background: linear-gradient(170deg, rgba(246,245,253,.95) 0%, rgba(246,245,253,1) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  min-width: 80px;
+}
+
+/* Figma: rectangle-6 = dim bg #d9d9d933, radius 6px; rectangle-7 = border #8b6fe6 */
+.feat-tag {
+  height: 37px;
+  padding: 0 12px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+}
+.feat-tag--dim {
+  background-color: rgba(217,217,217,.2);
+  border: 1px solid transparent;
+}
+.feat-tag--dim span {
+  font-size: 24px;
+  font-weight: 350;
+  background: linear-gradient(170deg, rgba(246,245,253,.95) 0%, rgba(246,245,253,1) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  opacity: 0.6;
+}
+.feat-tag--accent {
+  background-color: rgba(217,217,217,.2);
+  border: 1px solid var(--pill-border);
+}
+.feat-tag--accent span {
+  font-size: 24px;
+  font-weight: 350;
+  background: linear-gradient(132deg, var(--g-start) 0%, var(--g-end) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Card 2 — mindmap pills */
+.feat-visual--mindmap { justify-content: center; }
+.feat-mindmap-tags {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  align-items: center;
   justify-content: center;
-  padding: 8px;
 }
-.feat-mindmap span {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--purple-text);
-  background: rgba(160,128,255,.1);
-  border: 1px solid rgba(160,128,255,.25);
-  padding: 5px 12px;
-  border-radius: var(--r100);
+/* Figma: pill tags = rect with border #8b6fe6, bg #d9d9d933, blur */
+.feat-pill {
+  height: 37px;
+  padding: 0 14px;
+  display: inline-flex;
+  align-items: center;
+  background-color: rgba(217,217,217,.2);
+  border: 1px solid var(--pill-border);
+  border-radius: 6px;
+  font-size: 24px;
+  font-weight: 350;
+  background-image: linear-gradient(170deg, rgba(246,245,253,.95) 0%, rgba(246,245,253,1) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  opacity: 0.6;
+  backdrop-filter: blur(5px);
 }
-.feat-mindmap-center {
-  background: linear-gradient(135deg, var(--purple-btn), var(--purple));
-  border-radius: var(--r12);
-  padding: 10px 18px;
-  font-size: 14px;
-  font-weight: 700;
-  color: var(--white);
-  order: -1;
+
+/* Card 3 — Blast vs Agency */
+.feat-visual--table { align-items: center; }
+.feat-compare {
+  display: flex;
+  gap: 0;
   width: 100%;
-  text-align: center;
-  margin-bottom: 4px;
 }
 
-/* Card 3 — comparison table */
-.feat-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 13px;
-}
-.feat-table th {
-  font-size: 10px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: .08em;
-  color: var(--muted);
-  padding: 5px 8px;
-  text-align: left;
-}
-.feat-table td {
-  padding: 8px;
-  border-top: 1px solid rgba(255,255,255,.06);
-  color: var(--off-white);
-}
-.feat-table .good { color: #6EE7A0; font-weight: 600; }
-.feat-table .bad  { color: var(--muted); }
-
-.feat-card h3 {
-  font-size: 20px;
-  font-weight: 700;
-  line-height: 1.3;
-  color: var(--white);
-}
-.feat-card p {
-  font-size: 14px;
-  font-weight: 400;
-  color: var(--muted);
-  line-height: 1.6;
+/* Figma: rectangle-14 (Blast side) = left half, border #8b6fe6, radius 15px 0 0 15px */
+.feat-compare-blast {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 14px;
+  border: 1px solid var(--pill-border);
+  border-radius: 15px 0 0 15px;
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* Figma: rectangle-13 (Agency side) = right half, dashed border #6c6c6c, radius 0 15px 15px 0 */
+.feat-compare-sep { display: none; }
+.feat-compare-agency {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 14px;
+  border: 1px dashed #6c6c6c;
+  border-left: none;
+  border-radius: 0 15px 15px 0;
+}
+
+/* Figma: column headers = 16px gradient text (Blast) or text-80 (Agency) */
+.feat-compare-name {
+  font-size: 16px;
+  font-weight: 350;
+  white-space: nowrap;
+}
+/* Blast column header is gradient */
+.feat-compare-blast .feat-compare-name {
+  background: linear-gradient(176deg, var(--g-start) 0%, var(--g-end) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+/* Agency column header is text-80 */
+.feat-compare-agency .feat-compare-name {
+  background: linear-gradient(170deg, rgba(246,245,253,.95) 0%, rgba(246,245,253,1) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  opacity: 0.8;
+}
+
+/* Values 16px */
+.feat-compare-val {
+  font-size: 16px;
+  font-weight: 350;
+  background: linear-gradient(170deg, rgba(246,245,253,.95) 0%, rgba(246,245,253,1) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  white-space: nowrap;
+}
+.feat-compare-val--dim { opacity: 0.6; }
+
+/* Feature text */
+.feat-title {
+  font-size: 24px;
+  font-weight: 350;
+  background: linear-gradient(170deg, rgba(246,245,253,.95) 0%, rgba(246,245,253,1) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  line-height: normal;
+  margin-top: 20px;
+}
+.feat-desc {
+  font-size: 24px;
+  font-weight: 350;
+  background: linear-gradient(170deg, rgba(246,245,253,.95) 0%, rgba(246,245,253,1) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  opacity: 0.6;
+  line-height: normal;
+  margin-top: 15px;
+}
+
+/* ════════════════════════════════════════════════════════════
    CTA SECTION
-   1200×643px at Y:3294 (164px below features bottom)
-   ═══════════════════════════════════════════════════════════ */
-.cta-section {
-  padding-bottom: 0;
+   Figma: group-63 = 1200×643px, top 3294px
+   text-wrapper-59 "Marketing" = Drive Hearts 900px, gradient, decorative
+   frame-5 = 1200×400px, bg SVG, gap 129px
+   ════════════════════════════════════════════════════════════ */
+.cta-section { margin-top: 163px; }
+
+.cta-head {
+  text-align: left;
+  margin-bottom: 50px;
 }
 
 .cta-card {
   position: relative;
-  overflow: hidden;
-  background: linear-gradient(135deg, #1C0A52 0%, #0D0628 60%, #080420 100%);
-  border: 1px solid var(--accent);
+  height: 400px;
   border-radius: var(--r20);
-  padding: 72px 64px;
+  overflow: hidden;
+  background: linear-gradient(135deg, #0d0828 0%, #0a0520 50%, #080318 100%);
+  border: 1px solid rgba(95,66,185,.25);
   display: flex;
   align-items: center;
-  gap: 48px;
-  min-height: 400px;
+  gap: 129px;
+  padding-left: 93px;
 }
 
-/* Drive Hearts decorative background text */
-.cta-bg-text {
+/* Figma: "Marketing" = Drive Hearts 900px, gradient text, centered absolute */
+.cta-deco {
   position: absolute;
   font-family: var(--font-deco);
-  font-size: 280px;
-  color: rgba(123,63,228,.06);
+  font-size: 420px;
+  font-weight: 400;
+  background: linear-gradient(176deg, var(--g-start) 0%, var(--g-end) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  opacity: 0.07;
   pointer-events: none;
   user-select: none;
   top: 50%;
@@ -789,71 +901,57 @@ ul   { list-style:none; }
   z-index: 0;
 }
 
-.cta-left {
-  flex: 1;
-  position: relative;
-  z-index: 1;
-}
-.cta-left .eyebrow {
-  margin-bottom: 16px;
-}
-.cta-left h2 {
-  font-size: 52px;
-  font-weight: 700;
-  line-height: 1.1;
-  color: var(--white);
-  letter-spacing: -0.01em;
-}
-
-.cta-right {
-  display: flex;
-  align-items: center;
-  gap: 36px;
-  position: relative;
-  z-index: 1;
-  flex-shrink: 0;
-}
-
+/* Figma: group-65 = 545px wide, 4 phone images overlapping */
 .cta-phones {
   position: relative;
-  width: 190px;
-  height: 300px;
+  width: 380px;
+  height: 350px;
   flex-shrink: 0;
+  z-index: 1;
 }
-.cta-phone-1, .cta-phone-2 {
+/* Figma: 4 phone images overlapping — image-15 at left:0, image-16 at left:144, image-18 at left:278 */
+.cta-ph {
   position: absolute;
-  max-height: 270px;
-  width: auto;
-  border-radius: 18px;
-  filter: drop-shadow(0 8px 32px rgba(123,63,228,.45));
+  width: 190px;
+  height: 340px;
+  object-fit: cover;
+  border-radius: 16px;
+  filter: drop-shadow(0 8px 32px rgba(123,63,228,.4));
 }
-.cta-phone-1 { left: 0;  top: 15px; z-index: 1; }
-.cta-phone-2 { left: 60px; top: 0;   z-index: 2; }
+.cta-ph--1 { left: 0;    top: 40px; z-index: 1; opacity: .5; }
+.cta-ph--2 { left: 90px; top: 20px; z-index: 2; opacity: .7; }
+.cta-ph--3 { left: 180px;top: 0;    z-index: 3; }
+.cta-ph--4 { left: 270px;top: 20px; z-index: 2; opacity: .7; }
 
+/* Figma: group-66 = align-self flex-end, 290×153px */
 .cta-action {
   display: flex;
   flex-direction: column;
+  justify-content: space-between;
+  width: 290px;
   gap: 16px;
-  max-width: 270px;
-}
-.cta-action p {
-  font-size: 16px;
-  font-weight: 400;
-  color: rgba(246,245,253,0.7);
-  line-height: 1.55;
+  z-index: 1;
+  flex-shrink: 0;
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* Figma: text-wrapper-61 = Point-Book 24px #f6f5fdcc */
+.cta-action-text {
+  font-size: 24px;
+  font-weight: 350;
+  color: var(--text-80);
+  line-height: normal;
+}
+
+/* ════════════════════════════════════════════════════════════
    FOOTER
-   Y:4087 (150px below CTA bottom)
-   ═══════════════════════════════════════════════════════════ */
+   Figma: top 4087px, legal at left 897, social at left 682
+   All text = Point-Book 24px, gradient or 0.6 opacity
+   ════════════════════════════════════════════════════════════ */
 .footer {
-  margin-top: 150px;
-  background: var(--bg-nav);
-  border-top: 1px solid rgba(95,66,185,.2);
-  padding: 48px 0;
+  margin-top: 160px;
+  padding: 60px 0 60px;
+  border-top: 1px solid rgba(95,66,185,.15);
 }
-
 .footer-inner {
   display: flex;
   align-items: flex-start;
@@ -864,167 +962,294 @@ ul   { list-style:none; }
 
 .footer-brand {
   display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.footer-logo {
-  display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 18px;
-  font-weight: 700;
-  color: var(--white);
-}
-.footer-brand > p {
-  font-size: 13px;
-  font-weight: 400;
-  color: var(--muted);
 }
 
+/* Figma: "Соц. сети" + links column, 24px Point-Book */
 .footer-social {
   display: flex;
-  align-items: center;
-  gap: 12px;
+  flex-direction: column;
+  gap: 16px;
+}
+.footer-social-label {
+  font-size: 24px;
+  font-weight: 350;
+  background: linear-gradient(170deg, rgba(246,245,253,.95) 0%, rgba(246,245,253,1) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
 }
 .footer-social a {
   display: flex;
   align-items: center;
-  justify-content: center;
-  width: 44px;
-  height: 44px;
-  border-radius: 50%;
-  background: rgba(95,66,185,.12);
-  border: 1px solid rgba(95,66,185,.3);
-  transition: background .2s;
+  gap: 10px;
+  font-size: 24px;
+  font-weight: 350;
+  background: linear-gradient(170deg, rgba(246,245,253,.95) 0%, rgba(246,245,253,1) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  opacity: 0.6;
+  transition: opacity .2s;
 }
-.footer-social a:hover { background: rgba(123,63,228,.28); }
+.footer-social a img { flex-shrink: 0; }
+.footer-social a:hover { opacity: 1; }
 
+/* Figma: legal = flex column, 24px, various opacities */
 .footer-legal {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  gap: 10px;
+  gap: 0;
 }
-.footer-legal > p { font-size: 13px; font-weight: 400; color: var(--muted); }
-.footer-links {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 16px;
-  justify-content: flex-end;
+.footer-legal p {
+  font-size: 24px;
+  font-weight: 350;
+  background: linear-gradient(170deg, rgba(246,245,253,.95) 0%, rgba(246,245,253,1) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  margin-bottom: 20px;
 }
-.footer-links a {
-  font-size: 12px;
-  font-weight: 400;
-  color: var(--muted);
-  transition: color .2s;
+.footer-legal a {
+  display: block;
+  font-size: 24px;
+  font-weight: 350;
+  background: linear-gradient(170deg, rgba(246,245,253,.95) 0%, rgba(246,245,253,1) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  opacity: 0.6;
+  margin-top: 15px;
+  text-align: right;
+  transition: opacity .2s;
 }
-.footer-links a:hover { color: var(--off-white); }
+.footer-legal a:hover { opacity: 1; }
 
-/* ═══════════════════════════════════════════════════════════
-   RESPONSIVE ≤ 1024px (intermediate)
-   ═══════════════════════════════════════════════════════════ */
-@media (max-width:1024px) {
-  .hero-title { font-size: 52px; }
-  .hero-left { flex: 0 0 400px; padding: 32px 36px; }
-  .section-head h2 { font-size: 40px; }
-  .cta-left h2 { font-size: 42px; }
-  .features-grid { grid-template-columns: 1fr 1fr; }
-  .cta-phones { display: none; }
+/* ════════════════════════════════════════════════════════════
+   RESPONSIVE ≤ 1280px
+   ════════════════════════════════════════════════════════════ */
+@media (max-width: 1280px) {
+  .hero-inner  { gap: 60px; }
+  .hero-left   { flex: 0 0 420px; width: 420px; }
+  .hero-right  { flex: 0 0 520px; width: 520px; }
+  .hero-h1     { width: 100%; font-size: 52px; }
+  .hero-badge  { width: 100%; }
+  .hero-desc   { width: 100%; }
+  .hero-right-cta { left: 200px; }
+  .section-h2  { font-size: 52px; }
+  .steps-text  { font-size: 52px; }
+  .feat-col    { padding: 32px 32px; }
 }
 
-/* ═══════════════════════════════════════════════════════════
-   RESPONSIVE ≤ 768px — Mobile (375px target)
-   ═══════════════════════════════════════════════════════════ */
-@media (max-width:768px) {
+/* ════════════════════════════════════════════════════════════
+   RESPONSIVE ≤ 1024px
+   ════════════════════════════════════════════════════════════ */
+@media (max-width: 1024px) {
+  .hero-inner  { flex-direction: column; gap: 40px; }
+  .hero-left   { flex: none; width: 100%; }
+  .hero-right  { flex: none; width: 100%; height: 360px; }
+  .hero-h1     { font-size: 48px; }
+  .hero-badge  { width: auto; }
+  .hero-right-cta { left: auto; right: 40px; bottom: 40px; width: 260px; }
+  .feat-card   { grid-template-columns: 1fr; }
+  .feat-col--mid { border-left: none; border-right: none; border-top: 1px solid rgba(95,66,185,.25); border-bottom: 1px solid rgba(95,66,185,.25); }
+  .cta-phones  { display: none; }
+  .cta-card    { gap: 0; padding: 60px; justify-content: space-between; }
+  .cta-action  { width: 100%; max-width: 400px; }
+  .section-h2  { font-size: 44px; }
+  .steps-text  { font-size: 44px; }
+}
 
-  /* ── Navbar ── */
-  .navbar { padding: 0 20px; height: 60px; }
+/* ════════════════════════════════════════════════════════════
+   RESPONSIVE ≤ 768px — Mobile 375px
+   Figma mobile: min-width 375px, font sizes from .mobile-landing CSS
+   ════════════════════════════════════════════════════════════ */
+@media (max-width: 768px) {
+
+  /* Figma mobile body: 14px base (Point-Book/Regular) */
+  body { font-size: 14px; }
+
+  /* ── Navbar ──────────────────────────────────────────────
+     Figma: .header = 315px wide, 50px tall, radius 10px, centered
+     ─────────────────────────────────────────────────────── */
+  .navbar-wrap { padding: 0 30px; }
+  .navbar {
+    height: 50px;
+    border-radius: 10px;
+    padding: 0 18px;
+  }
   .navbar-links, .navbar-cta { display: none; }
   .burger { display: flex; }
   .mobile-menu { display: flex; }
+  .mobile-menu a { font-size: 14px; }
 
-  /* ── Hero ── */
-  .hero { padding-top: 28px; }
-  .hero-inner {
-    flex-direction: column;
-    height: auto;
-    min-height: auto;
-  }
-  .hero-left {
-    flex: none;
-    width: 100%;
-    padding: 32px 24px 20px;
-    gap: 16px;
-  }
-  .hero-title { font-size: 40px; line-height: 1.15; letter-spacing: -0.01em; }
-  .hero-badge { font-size: 13px; padding: 8px 16px; }
-  .hero-desc  { font-size: 15px; }
-  .hero-card {
-    flex-direction: column;
-    padding: 20px 24px 28px;
-    gap: 16px;
-    /* On mobile, show CTA only (hide phone or make it small) */
-    background: linear-gradient(180deg, rgba(14,8,41,0.6) 0%, #0A051F 100%);
-  }
-  .hero-card::before { display: none; }
-  .hero-card-phone { width: 120px; align-self: center; }
+  /* ── Hero ────────────────────────────────────────────────
+     Figma: .element-3 = 32px, badge 270x35 radius 10, desc 14px
+     ─────────────────────────────────────────────────────── */
+  .hero { padding-top: 20px; }
+  /* hero-inner column layout from 1024px breakpoint applies */
 
-  /* ── Social ── */
-  .social { margin-top: 40px; }
-  .social-inner {
-    flex-direction: column;
-    align-items: flex-start;
-    padding: 28px 20px;
-    gap: 20px;
+  /* Figma: H1 = 32px (element-3 font-size: 32px) */
+  .hero-h1 { font-size: 32px; width: 100%; }
+
+  /* Figma: badge = 270px x 35px, border-radius 10px, border #5f42b9cc */
+  .hero-badge {
+    width: 270px;
+    height: 35px;
+    border-radius: 10px;
+    padding: 0 10px;
+    margin-top: 16px;
+    border-color: rgba(95,66,185,.8);
   }
-  .social-row { flex-direction: column; align-items: flex-start; gap: 16px; }
+  /* Figma: badge text = 14px gradient */
+  .hero-badge span { font-size: 14px; }
+
+  /* Figma: blast-AI desc = 14px */
+  .hero-desc { font-size: 14px; margin-top: 16px; width: 100%; }
+
+  /* Figma: hero-right card = radius 15px on mobile, .group-wrapper height 160px */
+  .hero-right { height: 380px; border-radius: var(--r15); }
+  /* CTA overlay on the right card */
+  .hero-right-cta {
+    left: auto;
+    right: 20px;
+    bottom: 20px;
+    width: 210px;
+  }
+  .hero-cta-title { font-size: 14px; }
+  .hero-cta-sub { font-size: 14px; }
+
+  /* Figma: button on mobile = radius 30px, font 16px */
+  .hero-right-cta .btn {
+    height: 50px;
+    font-size: 16px;
+    padding: 0 20px;
+    border-radius: 30px;
+  }
+
+  /* ── Social proof ────────────────────────────────────────
+     Figma: stacked column, label+avatars+count, 14px
+     ─────────────────────────────────────────────────────── */
+  .social { margin-top: 48px; }
+  .social-inner { flex-direction: column; align-items: flex-start; gap: 20px; }
   .social-sep { display: none; }
-  .social-item { font-size: 14px; }
+  /* Figma: text-wrapper-3 = 14px Point-Book */
+  .social-label { font-size: 14px; font-weight: 350; }
+  .social-count { font-size: 14px; }
+  /* Figma: avatars = 50x50 circles */
+  .avatar-circle, .label-circle { width: 50px; height: 50px; }
 
-  /* ── Section headings ── */
-  .section-head { padding: 64px 0 28px; text-align: left; }
-  .section-head h2 { font-size: 32px; }
+  /* ── Section headings ────────────────────────────────────
+     Figma: .text-wrapper-10 / .text-wrapper-12 = 32px
+     ─────────────────────────────────────────────────────── */
+  .section-block { margin-top: 60px; }
+  .section-head  { margin-bottom: 20px; }
+  /* Figma: eyebrow = 14px gradient */
+  .eyebrow       { font-size: 14px; }
+  /* Figma: H2 mobile = 32px */
+  .section-h2    { font-size: 32px; }
+  .section-h2--right { text-align: left; }
+  .section-head--right { text-align: left; }
 
-  /* ── Steps ── */
+  /* ── Steps card ──────────────────────────────────────────
+     Figma: .frame = 315x480px, radius 20, bg SVG
+     .div-2 = 32px
+     ─────────────────────────────────────────────────────── */
   .steps-card {
     flex-direction: column;
+    align-items: flex-start;
     padding: 28px 20px;
     gap: 28px;
-    min-height: auto;
+    min-height: 480px;
   }
-  .steps .container { margin-top: 0; }
-  .step h3 { font-size: 22px; }
-  .steps-right { justify-content: center; gap: 12px; }
-  .steps-phone img { height: 200px; }
-  .steps-arrow { margin-bottom: 36px; }
+  /* Figma: .div-2 font-size: 32px */
+  .steps-text { font-size: 32px; }
+  .steps-right { width: 100%; justify-content: center; gap: 12px; }
+  .steps-phone-wrap img { height: 160px; }
 
-  /* ── Examples ── */
-  .example-card { width: 155px; }
+  /* Figma: stat cards = 180x154px, radius 20px (same size, but in mobile layout) */
+  .steps-stat-card { width: 150px; padding: 12px; }
+  /* Figma: stat num/lbl = 16px and 16px */
+  .stat-label { font-size: 14px; }
+  .stat-num   { font-size: 16px; }
+  .stat-lbl   { font-size: 14px; }
 
-  /* ── Features ── */
-  .features-grid { grid-template-columns: 1fr; gap: 14px; }
-  .feat-card { padding: 24px 20px; }
-  .feat-card-visual { min-height: auto; }
-  .feat-card h3 { font-size: 18px; }
+  /* ── Examples ────────────────────────────────────────────
+     Figma: slides rotated 90deg, 261px wide container, horizontal scroll
+     ─────────────────────────────────────────────────────── */
+  .example-col { width: 130px; }
+  .example-genre { font-size: 14px; }
+  .example-views { font-size: 12px; }
 
-  /* ── CTA ── */
+  /* ── Feature cards ───────────────────────────────────────
+     Figma: 3 separate stacked frames, each 300px tall, gap 20px
+     .frame-5/.frame-6/.frame-7
+     ─────────────────────────────────────────────────────── */
+  .feat-card {
+    grid-template-columns: 1fr;
+    border-radius: var(--r20);
+    border: none;
+    background: none;
+    gap: 20px;
+  }
+  .feat-col {
+    padding: 28px 24px;
+    border-radius: var(--r20);
+    background: linear-gradient(135deg, #0d0828 0%, #0a0520 50%, #080318 100%);
+    border: 1px solid rgba(95,66,185,.2);
+    min-height: 300px;
+  }
+  .feat-col--mid {
+    border-left: 1px solid rgba(95,66,185,.2);
+    border-right: 1px solid rgba(95,66,185,.2);
+    border-top: 1px solid rgba(95,66,185,.2);
+    border-bottom: 1px solid rgba(95,66,185,.2);
+  }
+  /* Figma: feat title/desc on mobile = 14px */
+  .feat-title  { font-size: 14px; }
+  .feat-desc   { font-size: 14px; }
+  /* Figma: feat tag font = 24px → on mobile use 16px */
+  .feat-tag    { height: 37px; }
+  .feat-tag--dim span, .feat-tag--accent span { font-size: 16px; }
+  .feat-tag-label { font-size: 16px; min-width: 60px; }
+  .feat-pill   { font-size: 16px; height: 37px; }
+  .feat-compare-name { font-size: 14px; }
+  .feat-compare-val  { font-size: 14px; }
+
+  /* ── CTA ─────────────────────────────────────────────────
+     Figma: .frame-4 = 315x480px, border #f6f5fd21, radius 20
+     ─────────────────────────────────────────────────────── */
+  .cta-section  { margin-top: 60px; }
   .cta-card {
+    height: auto;
+    min-height: 480px;
+    padding: 32px 24px;
     flex-direction: column;
-    align-items: flex-start;
-    padding: 40px 24px;
     gap: 24px;
-    min-height: auto;
+    border-color: rgba(246,245,253,.13);
   }
-  .cta-left h2 { font-size: 36px; }
-  .cta-phones  { display: none; }
-  .cta-right   { flex-direction: column; width: 100%; gap: 16px; }
-  .cta-action  { max-width: 100%; }
-  .cta-bg-text { font-size: 110px; }
-  .btn-pill--large { font-size: 16px; padding: 16px 28px; width: 100%; justify-content: center; }
+  .cta-deco     { font-size: 100px; }
+  .cta-phones   { display: none; }
+  .cta-action   { width: 100%; }
+  /* Figma: cta text = 14px Point-Book */
+  .cta-action-text { font-size: 14px; }
+  /* Figma: CTA button = radius 30px, font 16px */
+  .btn--large {
+    width: 100%;
+    font-size: 16px;
+    height: 50px;
+    border-radius: 30px;
+    justify-content: center;
+  }
 
-  /* ── Footer ── */
-  .footer { margin-top: 60px; }
-  .footer-inner { flex-direction: column; gap: 28px; }
+  /* ── Footer ──────────────────────────────────────────────
+     Figma: stacked column, all text 14px
+     ─────────────────────────────────────────────────────── */
+  .footer       { margin-top: 60px; padding: 40px 0; }
+  .footer-inner { flex-direction: column; gap: 24px; }
   .footer-legal { align-items: flex-start; }
-  .footer-links { justify-content: flex-start; }
+  .footer-legal p, .footer-legal a { font-size: 14px; text-align: left; }
+  .footer-social-label { font-size: 14px; }
+  .footer-social a { font-size: 14px; }
 }
