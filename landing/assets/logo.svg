@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36" fill="none">
+  <!-- Blast logo — snowflake / star shape -->
+  <circle cx="18" cy="18" r="18" fill="#11052D"/>
+  <!-- 6-point star burst -->
+  <g stroke="#7B3FE4" stroke-width="2" stroke-linecap="round">
+    <line x1="18" y1="6"  x2="18" y2="30"/>
+    <line x1="6"  y1="18" x2="30" y2="18"/>
+    <line x1="9.5"  y1="9.5"  x2="26.5" y2="26.5"/>
+    <line x1="26.5" y1="9.5"  x2="9.5"  y2="26.5"/>
+  </g>
+  <!-- Center dot -->
+  <circle cx="18" cy="18" r="3" fill="#A080FF"/>
+  <!-- Outer dots -->
+  <circle cx="18" cy="6"  r="1.5" fill="#7B3FE4"/>
+  <circle cx="18" cy="30" r="1.5" fill="#7B3FE4"/>
+  <circle cx="6"  cy="18" r="1.5" fill="#7B3FE4"/>
+  <circle cx="30" cy="18" r="1.5" fill="#7B3FE4"/>
+  <circle cx="9.5"  cy="9.5"  r="1.5" fill="#7B3FE4"/>
+  <circle cx="26.5" cy="9.5"  r="1.5" fill="#7B3FE4"/>
+  <circle cx="26.5" cy="26.5" r="1.5" fill="#7B3FE4"/>
+  <circle cx="9.5"  cy="26.5" r="1.5" fill="#7B3FE4"/>
+</svg>

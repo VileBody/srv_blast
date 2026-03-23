@@ -135,6 +135,18 @@ services:
       - orchestrator-api
     restart: unless-stopped
 
+  nginx:
+    image: nginx:alpine
+    container_name: nginx-landing
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./landing:/usr/share/nginx/html:ro
+      - ./infra/nginx/blast808.conf:/etc/nginx/conf.d/default.conf:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+    restart: unless-stopped
+
   minio:
     image: minio/minio:latest
     container_name: minio
