@@ -123,6 +123,79 @@ def _download(url: str, dest: Path, *, timeout_s: float = 300.0) -> None:
     dest.write_bytes(data)
 
 
+def _non_negative_int_env(name: str, default: int) -> int:
+    raw = (os.environ.get(name) or "").strip()
+    if not raw:
+        return int(default)
+    try:
+        val = int(raw)
+    except Exception as e:
+        raise RuntimeError(f"Invalid {name}: {raw!r}") from e
+    if val < 0:
+        raise RuntimeError(f"{name} must be >= 0, got {val!r}")
+    return val
+
+
+def _cleanup_old_job_logs(
+    *,
+    output_dir: str,
+    current_job_id: str,
+    now_ts: Optional[float] = None,
+) -> Dict[str, int]:
+    """
+    Best-effort cleanup for local per-job logs.
+    Removes files older than JOB_LOG_RETENTION_SECONDS from:
+      output/jobs/<job_id>/out/logs/**/*
+    Current job is skipped.
+    """
+    ttl_s = _non_negative_int_env("JOB_LOG_RETENTION_SECONDS", 3600)
+    out: Dict[str, int] = {
+        "ttl_s": int(ttl_s),
+        "scanned_job_logs_dirs": 0,
+        "deleted_files": 0,
+        "skipped_current_job": 0,
+    }
+    if ttl_s <= 0:
+        return out
+
+    output_root = Path(output_dir).expanduser().resolve()
+    jobs_root = output_root / "jobs"
+    if not jobs_root.exists() or not jobs_root.is_dir():
+        return out
+
+    ref_now = float(now_ts) if now_ts is not None else time.time()
+    cutoff_ts = ref_now - float(ttl_s)
+
+    for job_dir in jobs_root.iterdir():
+        if not job_dir.is_dir():
+            continue
+        if current_job_id and job_dir.name == str(current_job_id):
+            out["skipped_current_job"] += 1
+            continue
+
+        logs_dir = job_dir / "out" / "logs"
+        if not logs_dir.exists() or not logs_dir.is_dir():
+            continue
+        out["scanned_job_logs_dirs"] += 1
+
+        for p in logs_dir.rglob("*"):
+            if not p.is_file():
+                continue
+            try:
+                mtime = float(p.stat().st_mtime)
+            except FileNotFoundError:
+                continue
+            if mtime >= cutoff_ts:
+                continue
+            try:
+                p.unlink()
+                out["deleted_files"] += 1
+            except FileNotFoundError:
+                continue
+
+    return out
+
+
 def _ensure_shared_catalog(repo_root: Path) -> None:
     """
     inventory + bundle are SHARED and must exist before we call Gemini.
@@ -570,6 +643,19 @@ def build_job(self, job_id: str) -> Dict[str, Any]:
     _ensure_shared_catalog(repo_root)
 
     paths = make_job_paths(work_dir=SETTINGS.work_dir, output_dir=SETTINGS.output_dir, job_id=job_id)
+    try:
+        cleanup_info = _cleanup_old_job_logs(output_dir=SETTINGS.output_dir, current_job_id=str(job_id))
+        deleted = int(cleanup_info.get("deleted_files", 0))
+        if deleted > 0:
+            print(
+                "[cleanup] removed_old_job_logs "
+                f"files={deleted} "
+                f"scanned_dirs={int(cleanup_info.get('scanned_job_logs_dirs', 0))} "
+                f"ttl_s={int(cleanup_info.get('ttl_s', 0))}"
+            )
+    except Exception as e:
+        print(f"[cleanup][WARN] old job logs cleanup skipped: {e}")
+
     llm_resume_state_path = paths.data_dir / "llm_resume_state.json"
 
     req = st.request or {}
