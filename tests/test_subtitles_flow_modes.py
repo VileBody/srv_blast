@@ -684,6 +684,33 @@ def test_scenes_planner_fail_fast_on_word_timings_words_mismatch() -> None:
         planner.normalize_payload(payload=payload, stage1=_stage1(), logger=logging.getLogger("test"))
 
 
+@pytest.mark.parametrize("mode", ["scenes_3rd", "scenes_3rd_single_step"])
+def test_scenes_planner_limits_lines_to_two(mode: str) -> None:
+    planner = SubtitlesPlannerFactory.create(mode)
+    payload = Scenes3rdPayload.model_validate(
+        {
+            "clip": {"start": 10.0, "end": 24.0},
+            "scenes": [
+                {
+                    "id": 1,
+                    "type": "TYPE_1",
+                    "words": ["one", "two", "three"],
+                    "start": 10.0,
+                    "end": 11.2,
+                    "lines": [["one"], ["two"], ["three"]],
+                    "word_timings": [
+                        {"word": "one", "start": 10.0, "end": 10.3},
+                        {"word": "two", "start": 10.35, "end": 10.7},
+                        {"word": "three", "start": 10.8, "end": 11.2},
+                    ],
+                }
+            ],
+        }
+    )
+    with pytest.raises(ValueError, match="scene must have at most 2 lines"):
+        planner.normalize_payload(payload=payload, stage1=_stage1(), logger=logging.getLogger("test"))
+
+
 @pytest.mark.parametrize(
     ("scene_obj", "match"),
     [
