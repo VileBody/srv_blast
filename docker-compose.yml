@@ -144,6 +144,24 @@ services:
       - orchestrator-api
     restart: unless-stopped
 
+  asset-ui:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: asset-ui
+    env_file:
+      - .env
+    environment:
+      ASSET_UI_PORT: ${ASSET_UI_PORT:?ASSET_UI_PORT is required}
+      ASSET_UI_UPLOAD_MAX_MB: ${ASSET_UI_UPLOAD_MAX_MB:?ASSET_UI_UPLOAD_MAX_MB is required}
+      ASSET_UI_TRASH_PREFIX: ${ASSET_UI_TRASH_PREFIX:?ASSET_UI_TRASH_PREFIX is required}
+      ASSET_UI_PRESIGN_TTL_S: ${ASSET_UI_PRESIGN_TTL_S:?ASSET_UI_PRESIGN_TTL_S is required}
+    ports:
+      - "127.0.0.1:18173:${ASSET_UI_PORT:?ASSET_UI_PORT is required}"
+    command: >
+      bash -lc "python -m services.asset_ui.run_uvicorn"
+    restart: unless-stopped
+
   minio:
     image: minio/minio:latest
     container_name: minio

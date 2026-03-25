@@ -1,0 +1,356 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{{ title }}</title>
+    <style>
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        margin: 0;
+        padding: 20px;
+        background: #f6f7f9;
+        color: #101217;
+      }
+      .card {
+        background: #fff;
+        border: 1px solid #d9dee8;
+        border-radius: 12px;
+        padding: 16px;
+        margin-bottom: 16px;
+      }
+      .row {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+      input[type="text"], input[type="number"] {
+        border: 1px solid #c9cfdb;
+        border-radius: 8px;
+        padding: 8px 10px;
+      }
+      button {
+        border: 1px solid #0a58ca;
+        background: #0a58ca;
+        color: #fff;
+        border-radius: 8px;
+        padding: 8px 12px;
+        cursor: pointer;
+      }
+      button.secondary {
+        background: #fff;
+        color: #0a58ca;
+      }
+      button.danger {
+        background: #c41e3a;
+        border-color: #c41e3a;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      th, td {
+        border-bottom: 1px solid #e5e9f1;
+        padding: 8px 6px;
+        font-size: 13px;
+        text-align: left;
+        vertical-align: top;
+      }
+      .mono {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      }
+      #status {
+        font-size: 13px;
+        color: #314059;
+      }
+      #previewBox img, #previewBox video {
+        max-width: 360px;
+        max-height: 640px;
+        border-radius: 8px;
+        border: 1px solid #d9dee8;
+      }
+      #previewBox audio {
+        width: 360px;
+      }
+      .pill {
+        display: inline-block;
+        border: 1px solid #c9cfdb;
+        border-radius: 999px;
+        padding: 2px 8px;
+        font-size: 12px;
+        margin-right: 6px;
+      }
+      @media (max-width: 720px) {
+        #previewBox img, #previewBox video, #previewBox audio {
+          width: 100%;
+          max-width: 100%;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h2 style="margin-top: 0">S3 Asset UI</h2>
+      <div class="row">
+        <span class="pill">Trash Prefix: <span class="mono">{{ trash_prefix }}</span></span>
+        <span class="pill">Presign TTL: {{ presign_ttl_s }}s</span>
+        <span class="pill">Upload Limit: {{ upload_max_mb }} MB</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="row" style="margin-bottom: 8px">
+        <label for="prefixInput">Prefix</label>
+        <input id="prefixInput" type="text" size="42" />
+        <label for="limitInput">Limit</label>
+        <input id="limitInput" type="number" min="1" max="1000" value="{{ default_limit }}" />
+        <label>
+          <input id="trashToggle" type="checkbox" />
+          show trash
+        </label>
+        <button id="loadBtn">Load</button>
+        <button id="upBtn" class="secondary">Up</button>
+      </div>
+      <div class="row">
+        <form id="uploadForm" class="row">
+          <input id="uploadFile" type="file" required />
+          <button type="submit">Upload</button>
+        </form>
+      </div>
+      <p id="status"></p>
+    </div>
+
+    <div class="card">
+      <h3 style="margin-top: 0">Folders</h3>
+      <div id="folders"></div>
+      <h3>Objects</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>Key</th>
+            <th>Size</th>
+            <th>Type</th>
+            <th>Updated</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="objectsBody"></tbody>
+      </table>
+      <div style="margin-top: 10px">
+        <button id="nextBtn" class="secondary">Next page</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3 style="margin-top: 0">Preview</h3>
+      <div id="previewMeta" class="mono" style="margin-bottom: 8px"></div>
+      <div id="previewBox"></div>
+    </div>
+
+    <script>
+      const initialPayload = {{ initial_payload | tojson }};
+      const state = {
+        payload: initialPayload,
+        cursor: initialPayload.next_cursor || "",
+      };
+
+      const prefixInput = document.getElementById("prefixInput");
+      const limitInput = document.getElementById("limitInput");
+      const trashToggle = document.getElementById("trashToggle");
+      const statusEl = document.getElementById("status");
+      const foldersEl = document.getElementById("folders");
+      const objectsBody = document.getElementById("objectsBody");
+      const nextBtn = document.getElementById("nextBtn");
+      const previewMeta = document.getElementById("previewMeta");
+      const previewBox = document.getElementById("previewBox");
+
+      function setStatus(text, isError = false) {
+        statusEl.textContent = text;
+        statusEl.style.color = isError ? "#c41e3a" : "#314059";
+      }
+
+      function bytesToHuman(size) {
+        if (size < 1024) return `${size} B`;
+        if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+        if (size < 1024 * 1024 * 1024) return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+        return `${(size / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+      }
+
+      function updateControls(payload) {
+        prefixInput.value = payload.prefix || "";
+        trashToggle.checked = !!payload.include_trash;
+      }
+
+      function render(payload) {
+        updateControls(payload);
+        foldersEl.innerHTML = "";
+        objectsBody.innerHTML = "";
+
+        if (payload.parent_prefix !== "") {
+          const up = document.createElement("button");
+          up.className = "secondary";
+          up.textContent = `.. (${payload.parent_prefix})`;
+          up.onclick = () => loadObjects({ prefix: payload.parent_prefix, cursor: "" });
+          foldersEl.appendChild(up);
+        }
+
+        payload.prefixes.forEach((p) => {
+          const btn = document.createElement("button");
+          btn.className = "secondary";
+          btn.textContent = p;
+          btn.style.marginRight = "6px";
+          btn.style.marginBottom = "6px";
+          btn.onclick = () => loadObjects({ prefix: p, cursor: "" });
+          foldersEl.appendChild(btn);
+        });
+
+        payload.objects.forEach((obj) => {
+          const tr = document.createElement("tr");
+          const keyTd = document.createElement("td");
+          keyTd.className = "mono";
+          keyTd.textContent = obj.key;
+          tr.appendChild(keyTd);
+
+          const sizeTd = document.createElement("td");
+          sizeTd.textContent = bytesToHuman(obj.size);
+          tr.appendChild(sizeTd);
+
+          const typeTd = document.createElement("td");
+          typeTd.textContent = obj.content_type_guess || "-";
+          tr.appendChild(typeTd);
+
+          const updatedTd = document.createElement("td");
+          updatedTd.textContent = obj.last_modified || "-";
+          tr.appendChild(updatedTd);
+
+          const actions = document.createElement("td");
+          tr.appendChild(actions);
+
+          const previewBtn = document.createElement("button");
+          previewBtn.textContent = "Preview";
+          previewBtn.className = "secondary";
+          previewBtn.style.marginRight = "6px";
+          previewBtn.onclick = () => previewObject(obj.key);
+          actions.appendChild(previewBtn);
+
+          const delBtn = document.createElement("button");
+          delBtn.textContent = "Delete";
+          delBtn.className = "danger";
+          delBtn.onclick = () => deleteObject(obj.key);
+          actions.appendChild(delBtn);
+
+          objectsBody.appendChild(tr);
+        });
+
+        state.payload = payload;
+        state.cursor = payload.next_cursor || "";
+        nextBtn.disabled = !state.cursor;
+        setStatus(`Loaded: folders=${payload.prefixes.length}, objects=${payload.objects.length}`);
+      }
+
+      async function loadObjects({ prefix, cursor }) {
+        const params = new URLSearchParams();
+        params.set("prefix", prefix ?? prefixInput.value);
+        params.set("cursor", cursor ?? "");
+        params.set("limit", limitInput.value || "{{ default_limit }}");
+        params.set("include_trash", trashToggle.checked ? "1" : "0");
+
+        const res = await fetch(`/api/objects?${params.toString()}`);
+        if (!res.ok) {
+          const err = await res.json();
+          setStatus(`Failed to load objects: ${err.detail || res.statusText}`, true);
+          return;
+        }
+        const payload = await res.json();
+        render(payload);
+      }
+
+      async function previewObject(key) {
+        previewMeta.textContent = "";
+        previewBox.innerHTML = "";
+
+        const params = new URLSearchParams();
+        params.set("key", key);
+        params.set("include_trash", trashToggle.checked ? "1" : "0");
+        const res = await fetch(`/api/preview-url?${params.toString()}`);
+        if (!res.ok) {
+          const err = await res.json();
+          setStatus(`Preview error: ${err.detail || res.statusText}`, true);
+          return;
+        }
+
+        const data = await res.json();
+        previewMeta.textContent = `${data.kind} | ${data.content_type || "-"} | ${data.key}`;
+
+        if (data.kind === "image") {
+          const el = document.createElement("img");
+          el.src = data.url;
+          previewBox.appendChild(el);
+        } else if (data.kind === "video") {
+          const el = document.createElement("video");
+          el.controls = true;
+          el.src = data.url;
+          previewBox.appendChild(el);
+        } else if (data.kind === "audio") {
+          const el = document.createElement("audio");
+          el.controls = true;
+          el.src = data.url;
+          previewBox.appendChild(el);
+        }
+      }
+
+      async function deleteObject(key) {
+        if (!window.confirm(`Move to trash?\n${key}`)) return;
+
+        const res = await fetch("/api/delete", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ key }),
+        });
+        if (!res.ok) {
+          const err = await res.json();
+          setStatus(`Delete error: ${err.detail || res.statusText}`, true);
+          return;
+        }
+        const data = await res.json();
+        setStatus(`Moved to trash: ${data.trash_key}`);
+        await loadObjects({ prefix: state.payload.prefix, cursor: "" });
+      }
+
+      document.getElementById("loadBtn").onclick = () => {
+        loadObjects({ prefix: prefixInput.value, cursor: "" });
+      };
+
+      document.getElementById("upBtn").onclick = () => {
+        loadObjects({ prefix: state.payload.parent_prefix || "", cursor: "" });
+      };
+
+      nextBtn.onclick = () => {
+        loadObjects({ prefix: state.payload.prefix, cursor: state.cursor });
+      };
+
+      document.getElementById("uploadForm").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const f = document.getElementById("uploadFile").files[0];
+        if (!f) return;
+        const fd = new FormData();
+        fd.append("prefix", prefixInput.value);
+        fd.append("file", f);
+
+        const res = await fetch("/api/upload", { method: "POST", body: fd });
+        if (!res.ok) {
+          const err = await res.json();
+          setStatus(`Upload error: ${err.detail || res.statusText}`, true);
+          return;
+        }
+        const data = await res.json();
+        setStatus(`Uploaded: ${data.key} (${bytesToHuman(data.size)})`);
+        document.getElementById("uploadFile").value = "";
+        await loadObjects({ prefix: state.payload.prefix, cursor: "" });
+      });
+
+      render(initialPayload);
+    </script>
+  </body>
+  </html>
