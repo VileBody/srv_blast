@@ -81,6 +81,48 @@
         font-size: 12px;
         margin-right: 6px;
       }
+      .modal-backdrop {
+        position: fixed;
+        inset: 0;
+        background: rgba(16, 18, 23, 0.64);
+        display: none;
+        align-items: center;
+        justify-content: center;
+        z-index: 2000;
+        padding: 16px;
+      }
+      .modal-backdrop.open {
+        display: flex;
+      }
+      .modal-card {
+        background: #fff;
+        border: 1px solid #d9dee8;
+        border-radius: 12px;
+        width: min(860px, 100%);
+        max-height: 90vh;
+        overflow: auto;
+        padding: 16px;
+      }
+      .modal-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 8px;
+      }
+      .modal-body {
+        display: flex;
+        justify-content: center;
+      }
+      .modal-body img, .modal-body video {
+        max-width: 100%;
+        max-height: 74vh;
+        border-radius: 8px;
+        border: 1px solid #d9dee8;
+      }
+      .modal-body audio {
+        width: min(700px, 100%);
+      }
       @media (max-width: 720px) {
         #previewBox img, #previewBox video, #previewBox audio {
           width: 100%;
@@ -111,6 +153,7 @@
         </label>
         <button id="loadBtn">Load</button>
         <button id="upBtn" class="secondary">Up</button>
+        <button id="rootBtn" class="secondary">Root</button>
       </div>
       <div class="row">
         <form id="uploadForm" class="row">
@@ -123,6 +166,10 @@
 
     <div class="card">
       <h3 style="margin-top: 0">Folders</h3>
+      <div class="row" style="margin-bottom: 8px">
+        <button id="foldersRootBtn" class="secondary">/ root</button>
+        <span id="currentPrefix" class="mono"></span>
+      </div>
       <div id="folders"></div>
       <h3>Objects</h3>
       <table>
@@ -142,10 +189,14 @@
       </div>
     </div>
 
-    <div class="card">
-      <h3 style="margin-top: 0">Preview</h3>
-      <div id="previewMeta" class="mono" style="margin-bottom: 8px"></div>
-      <div id="previewBox"></div>
+    <div id="previewModal" class="modal-backdrop" aria-hidden="true">
+      <div class="modal-card" role="dialog" aria-modal="true" aria-label="Preview">
+        <div class="modal-head">
+          <div id="previewMeta" class="mono"></div>
+          <button id="previewCloseBtn" class="secondary" type="button">Close</button>
+        </div>
+        <div id="previewBox" class="modal-body"></div>
+      </div>
     </div>
 
     <script>
@@ -162,8 +213,11 @@
       const foldersEl = document.getElementById("folders");
       const objectsBody = document.getElementById("objectsBody");
       const nextBtn = document.getElementById("nextBtn");
+      const currentPrefixEl = document.getElementById("currentPrefix");
       const previewMeta = document.getElementById("previewMeta");
       const previewBox = document.getElementById("previewBox");
+      const previewModal = document.getElementById("previewModal");
+      const previewCloseBtn = document.getElementById("previewCloseBtn");
 
       function setStatus(text, isError = false) {
         statusEl.textContent = text;
@@ -191,6 +245,19 @@
       function updateControls(payload) {
         prefixInput.value = payload.prefix || "";
         trashToggle.checked = !!payload.include_trash;
+        currentPrefixEl.textContent = payload.prefix || "/ (root)";
+      }
+
+      function openPreviewModal() {
+        previewModal.classList.add("open");
+        previewModal.setAttribute("aria-hidden", "false");
+      }
+
+      function closePreviewModal() {
+        previewModal.classList.remove("open");
+        previewModal.setAttribute("aria-hidden", "true");
+        previewMeta.textContent = "";
+        previewBox.innerHTML = "";
       }
 
       function render(payload) {
@@ -198,11 +265,14 @@
         foldersEl.innerHTML = "";
         objectsBody.innerHTML = "";
 
-        if (payload.parent_prefix !== "") {
+        if (payload.prefix !== "") {
+          const upPrefix = payload.parent_prefix || "";
           const up = document.createElement("button");
           up.className = "secondary";
-          up.textContent = `.. (${payload.parent_prefix})`;
-          up.onclick = () => loadObjects({ prefix: payload.parent_prefix, cursor: "" });
+          up.textContent = upPrefix ? `.. (${upPrefix})` : ".. (root)";
+          up.onclick = () => loadObjects({ prefix: upPrefix, cursor: "" });
+          up.style.marginRight = "6px";
+          up.style.marginBottom = "6px";
           foldersEl.appendChild(up);
         }
 
@@ -278,7 +348,8 @@
       }
 
       async function previewObject(key) {
-        previewMeta.textContent = "";
+        openPreviewModal();
+        previewMeta.textContent = "Loading preview...";
         previewBox.innerHTML = "";
 
         const params = new URLSearchParams();
@@ -287,6 +358,7 @@
         const res = await fetch(`api/preview-url?${params.toString()}`);
         if (!res.ok) {
           const detail = await readErrorDetail(res);
+          closePreviewModal();
           setStatus(`Preview error: ${detail}`, true);
           return;
         }
@@ -337,9 +409,33 @@
         loadObjects({ prefix: state.payload.parent_prefix || "", cursor: "" });
       };
 
+      document.getElementById("rootBtn").onclick = () => {
+        loadObjects({ prefix: "", cursor: "" });
+      };
+
+      document.getElementById("foldersRootBtn").onclick = () => {
+        loadObjects({ prefix: "", cursor: "" });
+      };
+
       nextBtn.onclick = () => {
         loadObjects({ prefix: state.payload.prefix, cursor: state.cursor });
       };
+
+      previewCloseBtn.onclick = () => {
+        closePreviewModal();
+      };
+
+      previewModal.onclick = (e) => {
+        if (e.target === previewModal) {
+          closePreviewModal();
+        }
+      };
+
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape" && previewModal.classList.contains("open")) {
+          closePreviewModal();
+        }
+      });
 
       document.getElementById("uploadForm").addEventListener("submit", async (e) => {
         e.preventDefault();
