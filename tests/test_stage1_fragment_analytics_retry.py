@@ -246,6 +246,88 @@ def test_stage1a_selected_fragment_clip_is_clamped_to_content_when_oversized() -
     assert abs(float(plan.audio.clip_end_abs) - 71.081) <= 1e-9
 
 
+def test_stage1_selected_fragment_shifts_clip_when_leading_silence_is_1_to_2s() -> None:
+    selected_fragment = {
+        "audio": {
+            "clip_start_abs": 10.0,
+            "clip_end_abs": 24.0,
+            "moment_of_interest_sec": None,
+        },
+        "transcript_words": [
+            {"text": "hello", "t_start": 11.8, "t_end": 12.1},
+            {"text": "world", "t_start": 12.3, "t_end": 12.7},
+        ],
+        "pause_spans": [
+            {"text": "[pause]", "t_start": 10.2, "t_end": 11.1},
+            {"text": "[pause]", "t_start": 12.9, "t_end": 13.4},
+        ],
+        "srt_items": [],
+        "fragment_analytics": None,
+    }
+    stage1_asr = Stage1AsrPayload.model_validate(
+        {
+            "transcript_words": list(selected_fragment["transcript_words"]),
+            "pause_spans": list(selected_fragment["pause_spans"]),
+            "srt_items": [],
+            "selected_fragment": selected_fragment,
+        }
+    )
+    selected = stage1_asr.selected_fragment
+    assert selected is not None
+
+    plan = _build_stage1_plan_from_selected_fragment(
+        stage1_asr=stage1_asr,
+        selected=selected,
+        target_fragment="",
+        logger=logging.getLogger("tests.stage1_clip_shift"),
+    )
+
+    # first word starts at 11.8, so new clip start should be near 11.3 (0.5s preroll).
+    assert abs(float(plan.audio.clip_start_abs) - 11.3) <= 1e-9
+    # Keep window duration (14s) by shifting end by the same delta.
+    assert abs(float(plan.audio.clip_end_abs) - 25.3) <= 1e-9
+    # Pause before new clip start must be dropped.
+    assert len(plan.pause_spans) == 1
+    assert abs(float(plan.pause_spans[0].t_start) - 12.9) <= 1e-9
+
+
+def test_stage1_selected_fragment_does_not_shift_when_leading_silence_is_below_1s() -> None:
+    selected_fragment = {
+        "audio": {
+            "clip_start_abs": 10.0,
+            "clip_end_abs": 24.0,
+            "moment_of_interest_sec": None,
+        },
+        "transcript_words": [
+            {"text": "hello", "t_start": 10.8, "t_end": 11.1},
+            {"text": "world", "t_start": 11.3, "t_end": 11.7},
+        ],
+        "pause_spans": [],
+        "srt_items": [],
+        "fragment_analytics": None,
+    }
+    stage1_asr = Stage1AsrPayload.model_validate(
+        {
+            "transcript_words": list(selected_fragment["transcript_words"]),
+            "pause_spans": [],
+            "srt_items": [],
+            "selected_fragment": selected_fragment,
+        }
+    )
+    selected = stage1_asr.selected_fragment
+    assert selected is not None
+
+    plan = _build_stage1_plan_from_selected_fragment(
+        stage1_asr=stage1_asr,
+        selected=selected,
+        target_fragment="",
+        logger=logging.getLogger("tests.stage1_clip_shift"),
+    )
+
+    assert abs(float(plan.audio.clip_start_abs) - 10.0) <= 1e-9
+    assert abs(float(plan.audio.clip_end_abs) - 24.0) <= 1e-9
+
+
 def _fmt_mmss_mmm(total_ms: int) -> str:
     mins = int(total_ms // 60000)
     rem = int(total_ms % 60000)
