@@ -67,6 +67,7 @@ def test_root_renders(monkeypatch) -> None:
     res = client.get("/")
     assert res.status_code == 200
     assert "S3 Asset UI" in res.text
+    assert "const API_BASE = \"\"" in res.text
 
 
 def test_api_upload_and_size_limit(monkeypatch) -> None:
@@ -155,4 +156,3 @@ def test_api_preview_media_and_unsupported(monkeypatch) -> None:
 
     missing = client.get("/api/preview-url", params={"key": "x.missing"})
     assert missing.status_code == 404
-

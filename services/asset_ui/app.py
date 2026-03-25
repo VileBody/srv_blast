@@ -197,6 +197,7 @@ def create_app(settings: AssetUISettings) -> FastAPI:
             context={
                 "title": "S3 Asset UI",
                 "initial_payload": payload.model_dump(mode="json"),
+                "api_base_path": request.url.path.rstrip("/"),
                 "default_limit": limit,
                 "trash_prefix": settings.trash_prefix,
                 "presign_ttl_s": settings.presign_ttl_s,
