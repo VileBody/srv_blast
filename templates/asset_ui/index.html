@@ -150,7 +150,6 @@
 
     <script>
       const initialPayload = {{ initial_payload | tojson }};
-      const API_BASE = {{ api_base_path | tojson }};
       const state = {
         payload: initialPayload,
         cursor: initialPayload.next_cursor || "",
@@ -169,11 +168,6 @@
       function setStatus(text, isError = false) {
         statusEl.textContent = text;
         statusEl.style.color = isError ? "#c41e3a" : "#314059";
-      }
-
-      function apiUrl(path) {
-        if (!API_BASE) return path;
-        return `${API_BASE}${path}`;
       }
 
       async function readErrorDetail(res) {
@@ -273,7 +267,7 @@
         params.set("limit", limitInput.value || "{{ default_limit }}");
         params.set("include_trash", trashToggle.checked ? "1" : "0");
 
-        const res = await fetch(apiUrl(`/api/objects?${params.toString()}`));
+        const res = await fetch(`api/objects?${params.toString()}`);
         if (!res.ok) {
           const detail = await readErrorDetail(res);
           setStatus(`Failed to load objects: ${detail}`, true);
@@ -290,7 +284,7 @@
         const params = new URLSearchParams();
         params.set("key", key);
         params.set("include_trash", trashToggle.checked ? "1" : "0");
-        const res = await fetch(apiUrl(`/api/preview-url?${params.toString()}`));
+        const res = await fetch(`api/preview-url?${params.toString()}`);
         if (!res.ok) {
           const detail = await readErrorDetail(res);
           setStatus(`Preview error: ${detail}`, true);
@@ -320,7 +314,7 @@
       async function deleteObject(key) {
         if (!window.confirm(`Move to trash?\n${key}`)) return;
 
-        const res = await fetch(apiUrl("/api/delete"), {
+        const res = await fetch("api/delete", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ key }),
@@ -355,7 +349,7 @@
         fd.append("prefix", prefixInput.value);
         fd.append("file", f);
 
-        const res = await fetch(apiUrl("/api/upload"), { method: "POST", body: fd });
+        const res = await fetch("api/upload", { method: "POST", body: fd });
         if (!res.ok) {
           const detail = await readErrorDetail(res);
           setStatus(`Upload error: ${detail}`, true);
