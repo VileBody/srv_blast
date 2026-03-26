@@ -31,6 +31,8 @@ pins2/
 # Landing local import artifacts (do not deploy / do not track)
 landing/*.rar
 landing/tmp/
+landing/tmp_rar_extract/
+landing/assets/*.mp4
 
 # Local packed context dumps
 repomix_*_flow.md
