@@ -1,0 +1,1255 @@
+/* ═══════════════════════════════════════════════════════════
+   Blast Landing — style.css
+   Values from Figma Dev Mode export (blast.html / .web-landing.css)
+   Desktop: 1440px (container 1200px, pad 120px)
+   Mobile: 375px
+   ═══════════════════════════════════════════════════════════ */
+
+/* ─── Fonts ──────────────────────────────────────────────── */
+@font-face { font-family:'Point'; src:url('../fonts/Point-Regular.ttf')      format('truetype'); font-weight:400; font-style:normal;  font-display:swap; }
+@font-face { font-family:'Point'; src:url('../fonts/Point-Book.ttf')         format('truetype'); font-weight:350; font-style:normal;  font-display:swap; }
+@font-face { font-family:'Point'; src:url('../fonts/Point-MediumItalic.ttf') format('truetype'); font-weight:500; font-style:italic;  font-display:swap; }
+@font-face { font-family:'Point'; src:url('../fonts/PointBold.ttf')          format('truetype'); font-weight:700; font-style:normal;  font-display:swap; }
+@font-face { font-family:'DriveHearts'; src:url('../fonts/Drive-Hearts.ttf') format('truetype'); font-weight:400; font-display:swap; }
+
+/* ─── Variables ──────────────────────────────────────────── */
+:root {
+  --bg:           #05010f;
+  --nav-bg:       #10052c;
+  --hero-r-bg:    #150f25;
+  --card-bg:      #060114;
+  --text:         #f6f5fd;
+  --text-80:      rgba(246,245,253,.8);
+  --text-60:      rgba(246,245,253,.6);
+  --text-40:      rgba(246,245,253,.4);
+  --g-start:      rgba(139,111,230,1);   /* #8b6fe6 */
+  --g-end:        rgba(95, 66,185,1);    /* #5f42b9 */
+  --accent:       #5f42b9;
+  --accent-80:    rgba(95,66,185,.8);
+  --accent-20:    rgba(95,66,185,.2);
+  --pill-border:  #8b6fe6;
+
+  --r20:  20px;
+  --r15:  15px;
+  --r12:  12px;
+  --r40:  40px;
+
+  --font:       'Point', -apple-system, sans-serif;
+  --font-deco:  'DriveHearts', cursive;
+
+  --container: 1200px;
+  --side:      120px;
+}
+
+/* ─── Gradient text utility ──────────────────────────────── */
+.gradient-text {
+  background: linear-gradient(175deg, var(--g-start) 0%, var(--g-end) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* ─── Reset ──────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-behavior: smooth; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 24px;          /* Figma base: 24px */
+  font-weight: 400;
+  line-height: normal;
+  -webkit-font-smoothing: antialiased;
+}
+img  { display: block; max-width: 100%; }
+a    { text-decoration: none; color: inherit; }
+
+/* ─── Container ──────────────────────────────────────────── */
+.container {
+  max-width: var(--container);
+  margin: 0 auto;
+  padding: 0 var(--side);
+}
+@media (max-width: 1280px) { .container { padding: 0 40px; } }
+@media (max-width: 768px)  { .container { padding: 0 20px; } }
+
+/* ════════════════════════════════════════════════════════════
+   NAVBAR
+   Figma: 1200×80px, bg #10052c, radius 20, top 31px, blur 50px
+   ════════════════════════════════════════════════════════════ */
+.navbar-wrap {
+  position: sticky;
+  top: 20px;
+  z-index: 200;
+  padding: 0 var(--side);
+}
+@media (max-width: 1280px) { .navbar-wrap { padding: 0 40px; } }
+@media (max-width: 768px)  { .navbar-wrap { padding: 0 16px; } }
+
+.navbar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: 80px;
+  padding: 0 48px;
+  background-color: var(--nav-bg);
+  border-radius: var(--r20);
+  overflow: hidden;
+  backdrop-filter: blur(50px);
+  -webkit-backdrop-filter: blur(50px);
+}
+
+/* Figma: logo group at left:30, 42×40 */
+.navbar-logo {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  z-index: 1;
+}
+
+/* Figma: links group at left:334, gap:30, opacity:0.8, font 24px */
+.navbar-links {
+  display: flex;
+  align-items: center;
+  gap: 30px;
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1;
+}
+.navbar-links a {
+  font-size: 24px;
+  font-weight: 400;
+  color: var(--text);
+  opacity: 0.8;
+  transition: opacity .2s;
+  white-space: nowrap;
+}
+.navbar-links a:hover,
+.navbar-links a.active { opacity: 1; }
+
+/* Figma: "Попробовать" at right:48, gradient text, 24px */
+.navbar-cta {
+  margin-left: auto;
+  font-size: 24px;
+  font-weight: 400;
+  z-index: 1;
+  background: linear-gradient(142deg, var(--g-start) 0%, var(--g-end) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  transition: opacity .2s;
+}
+.navbar-cta:hover { opacity: 0.8; }
+
+/* Burger */
+.burger {
+  display: none;
+  flex-direction: column;
+  gap: 5px;
+  width: 36px;
+  height: 36px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  margin-left: auto;
+  z-index: 1;
+  padding: 5px;
+}
+.burger span { display: block; height: 2px; background: var(--text); border-radius: 2px; transition: transform .25s, opacity .25s; }
+.burger.open span:nth-child(1) { transform: translateY(7px) rotate(45deg); }
+.burger.open span:nth-child(2) { opacity: 0; }
+.burger.open span:nth-child(3) { transform: translateY(-7px) rotate(-45deg); }
+
+/* Mobile menu */
+.mobile-menu {
+  display: none;
+  flex-direction: column;
+  background: var(--nav-bg);
+  border-radius: 0 0 var(--r20) var(--r20);
+  padding: 0 24px;
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height .3s ease, padding .3s ease;
+}
+.mobile-menu.open { max-height: 300px; padding: 12px 24px 20px; }
+.mobile-menu a { padding: 12px 0; font-size: 24px; color: rgba(246,245,253,.7); border-bottom: 1px solid rgba(255,255,255,.07); }
+.mobile-menu a:hover { color: var(--text); }
+.mobile-cta { color: var(--g-start) !important; border-bottom: none !important; }
+
+/* ════════════════════════════════════════════════════════════
+   BUTTONS
+   Figma: gradient, radius 40px, height 70px, font 24px
+   ════════════════════════════════════════════════════════════ */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  height: 70px;
+  padding: 0 40px;
+  border-radius: var(--r40);
+  background: linear-gradient(90deg, var(--g-start) 0%, var(--g-end) 100%);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 24px;
+  font-weight: 400;
+  border: none;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: opacity .2s, transform .15s;
+  overflow: hidden;
+  position: relative;
+}
+/* subtle glow effect matching Figma group-4 background */
+.btn::before {
+  content: '';
+  position: absolute;
+  inset: -100px;
+  background: radial-gradient(ellipse at center, rgba(139,111,230,.5) 0%, transparent 60%);
+  pointer-events: none;
+}
+.btn:hover  { opacity: .88; transform: translateY(-1px); }
+.btn:active { transform: none; }
+.btn--large { height: 70px; padding: 0 44px; }
+
+/* ════════════════════════════════════════════════════════════
+   HERO
+   Figma: group at top 211px, display flex, gap 118px
+   Left (view): 482×379px  |  Right (element-2): 600×390px bg #150f25
+   ════════════════════════════════════════════════════════════ */
+.hero {
+  padding-top: 100px;
+}
+.hero-inner {
+  display: flex;
+  align-items: flex-start;
+  gap: 118px;
+}
+
+/* Left column */
+.hero-left {
+  flex: 0 0 482px;
+  width: 482px;
+  display: flex;
+  flex-direction: column;
+  padding-top: 5px;
+}
+
+/* Figma: H1 = 64px, Point-Regular w400, color #f6f5fd, width 478px, height 231px */
+.hero-h1 {
+  width: 478px;
+  font-size: 64px;
+  font-weight: 400;
+  color: var(--text);
+  line-height: normal;
+  letter-spacing: 0;
+}
+.hero-h1-regular {
+  font-family: var(--font);
+  font-weight: 400;
+  color: var(--text);
+}
+/* Figma: "— вирусным" = Point-MediumItalic w500 italic */
+.hero-h1-italic {
+  font-family: var(--font);
+  font-weight: 500;
+  font-style: italic;
+  color: var(--text);
+}
+
+/* Figma: badge = 455×45px, bg #05010f, border #5f42b9cc, radius 12px, mt 20px */
+.hero-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  width: 455px;
+  height: 45px;
+  margin-top: 20px;
+  padding: 0 15px;
+  background-color: var(--bg);
+  border-radius: var(--r12);
+  border: 1px solid rgba(95,66,185,.8);
+  flex-shrink: 0;
+}
+.hero-badge img { flex-shrink: 0; }
+/* Figma: badge text = 24px, gradient text */
+.hero-badge span {
+  font-size: 24px;
+  font-weight: 400;
+  background: linear-gradient(175deg, var(--g-start) 0%, var(--g-end) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Figma: blast-AI = 444×58px, 24px, mt 25px */
+.hero-desc {
+  width: 444px;
+  font-size: 24px;
+  font-weight: 400;
+  margin-top: 25px;
+  line-height: normal;
+}
+.hero-desc-white { color: var(--text); }
+.hero-desc-muted { color: var(--text-80); }
+
+/* Right column — dark card */
+/* Figma: element-2 = 600×390px, bg #150f25, radius 20px, overflow hidden */
+.hero-right {
+  flex: 0 0 600px;
+  width: 600px;
+  height: 390px;
+  background-color: var(--hero-r-bg);
+  border-radius: var(--r20);
+  overflow: hidden;
+  position: relative;
+}
+
+/* Figma: iphone-pro = width 138%, top 40px, left -38%, height 945px */
+.hero-phone {
+  position: absolute;
+  width: 138%;
+  height: 945px;
+  top: 40px;
+  left: -38%;
+  object-fit: cover;
+  border-radius: 0;
+}
+
+/* Figma: rectangle = full width, bottom 0, height 160px, gradient overlay */
+.hero-right-overlay {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 100%;
+  height: 160px;
+  background: linear-gradient(0deg, rgba(21,15,37,1) 0%, rgba(21,15,37,0) 100%);
+  pointer-events: none;
+}
+
+/* Figma: group-2 = left 267px, bottom 99px, 278×192px */
+.hero-right-cta {
+  position: absolute;
+  left: 267px;
+  bottom: 99px;
+  width: 278px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.hero-right-texts {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+/* Figma: text-wrapper-5 = 268×29px, 24px, #f6f5fd */
+.hero-cta-title {
+  font-size: 24px;
+  font-weight: 400;
+  color: var(--text);
+  text-align: right;
+}
+
+/* Figma: p = 266×58px, Point-Book, #f6f5fdcc, 24px */
+.hero-cta-sub {
+  font-size: 24px;
+  font-weight: 350;
+  color: var(--text-80);
+  line-height: normal;
+  text-align: right;
+}
+
+/* Figma: frame = height 70px, radius 40px, gradient, overflow hidden */
+.hero-right-cta .btn {
+  width: 100%;
+}
+
+/* ════════════════════════════════════════════════════════════
+   SOCIAL PROOF
+   Figma: group-6 = 1200×179px, 100px below hero, flex column gap 50px
+   ════════════════════════════════════════════════════════════ */
+.social {
+  margin-top: 100px;
+}
+.social-inner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 60px;
+}
+
+/* Figma: text-wrapper-7 = Point-Book 24px #f6f5fd, centered */
+.social-label {
+  font-size: 24px;
+  font-weight: 350;
+  color: var(--text);
+  flex-shrink: 0;
+}
+
+.social-artists,
+.social-labels {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+/* Figma: individual 100x100 circle avatars overlapping */
+.social-avatars,
+.social-logos {
+  display: flex;
+  align-items: center;
+  position: relative;
+}
+.avatar-circle,
+.label-circle {
+  width: 50px;
+  height: 50px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  border: 2px solid var(--bg);
+  margin-left: -10px;
+}
+.avatar-circle:first-child,
+.label-circle:first-child { margin-left: 0; }
+
+/* Figma: "500+ артистов", "15+ лейблов" = Point-Book 24px #f6f5fd */
+.social-count {
+  font-size: 24px;
+  font-weight: 350;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.social-sep {
+  width: 1px;
+  height: 44px;
+  background: rgba(95,66,185,.35);
+  flex-shrink: 0;
+}
+
+/* ════════════════════════════════════════════════════════════
+   SECTION HEADINGS
+   Figma: H2 = 64px Point-Regular w400, eyebrow = 24px gradient
+   ════════════════════════════════════════════════════════════ */
+.section-block { margin-top: 163px; }
+
+.section-head {
+  text-align: center;
+  margin-bottom: 40px;
+}
+.section-head--left  { text-align: left; }
+.section-head--right { text-align: right; }
+
+/* Figma: eyebrow = 24px gradient text */
+.eyebrow {
+  font-size: 24px;
+  font-weight: 400;
+  background: linear-gradient(175deg, var(--g-start) 0%, var(--g-end) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  margin-bottom: 0;
+}
+
+/* Figma: section H2 = 64px Point-Regular w400 #f6f5fd */
+.section-h2 {
+  font-size: 64px;
+  font-weight: 400;
+  color: var(--text);
+  line-height: normal;
+  letter-spacing: 0;
+}
+.section-h2--right { text-align: right; }
+
+/* ════════════════════════════════════════════════════════════
+   STEPS CARD
+   Figma: view-wrapper = 1200×400px, top 1287, radius 20, bg SVG
+   view-3 inside, has left text and phones right
+   ════════════════════════════════════════════════════════════ */
+.steps-card {
+  display: flex;
+  align-items: center;
+  border-radius: var(--r20);
+  overflow: hidden;
+  min-height: 400px;
+  background: linear-gradient(135deg, #0d0828 0%, #0a0520 50%, #080318 100%);
+  border: 1px solid rgba(95,66,185,.25);
+  padding: 60px;
+  gap: 60px;
+}
+
+.steps-left {
+  flex: 1;
+}
+
+/* Figma: div-2 = 64px, Point-Regular, two colors */
+.steps-text {
+  font-size: 64px;
+  font-weight: 400;
+  line-height: normal;
+}
+/* Figma: text-wrapper-10 = #f6f5fd99 (60% opacity) */
+.steps-muted { color: var(--text-60); }
+/* Figma: text-wrapper-3 = #f6f5fd */
+.steps-white { color: var(--text); }
+
+.steps-right {
+  display: flex;
+  align-items: flex-end;
+  gap: 20px;
+  flex-shrink: 0;
+}
+
+.steps-phone-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  position: relative;
+}
+.steps-phone-wrap img {
+  height: 220px;
+  width: auto;
+  border-radius: 16px;
+  filter: drop-shadow(0 8px 24px rgba(123,63,228,.35));
+}
+
+/* Figma: frame-2 / frame-3 = 180×154px, bg #060114, radius 20, border #f6f5fd40 */
+.steps-stat-card {
+  width: 180px;
+  background-color: var(--card-bg);
+  border-radius: var(--r20);
+  border: 1px solid var(--text-40);
+  padding: 15px 17px 17px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.steps-stat-card--after { border-color: var(--text-40); }
+
+/* Figma: text-wrapper-11/19 = 20px #f6f5fdcc */
+.stat-label {
+  font-size: 20px;
+  font-weight: 400;
+  color: var(--text-80);
+  padding-bottom: 4px;
+  border-bottom: 1px solid rgba(246,245,253,.15);
+}
+
+.stat-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+/* Figma: stat numbers = 16px Point-Regular #f6f5fd */
+.stat-num {
+  font-size: 16px;
+  font-weight: 400;
+  color: var(--text);
+  white-space: nowrap;
+}
+/* Figma: hot numbers = var(--grad) = rgba(139,111,230,1) */
+.stat-num--hot { color: var(--g-start); }
+
+/* Figma: stat labels = 16px Point-Book #f6f5fdcc */
+.stat-lbl {
+  font-size: 16px;
+  font-weight: 350;
+  color: var(--text-80);
+  white-space: nowrap;
+}
+
+.steps-arrow {
+  font-size: 28px;
+  color: rgba(95,66,185,.7);
+  align-self: center;
+  flex-shrink: 0;
+}
+
+/* ════════════════════════════════════════════════════════════
+   EXAMPLES
+   Figma: div-wrapper = 1200×499px, group-24 = slides abs
+   Slides: 366×206 rotate(90deg) → appear portrait ~206×366
+   ════════════════════════════════════════════════════════════ */
+.examples-scroll {
+  display: flex;
+  gap: 24px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scroll-snap-type: x mandatory;
+  padding-bottom: 12px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(95,66,185,.4) transparent;
+}
+.examples-scroll::-webkit-scrollbar { height: 4px; }
+.examples-scroll::-webkit-scrollbar-thumb { background: rgba(95,66,185,.4); border-radius: 4px; }
+
+.example-col {
+  flex-shrink: 0;
+  /* Figma: each slide ≈ 206px wide (after rotation) — using 220px */
+  width: 220px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  scroll-snap-align: start;
+}
+
+/* Figma: white card bg, 15px radius, rotated landscape */
+.example-slide {
+  width: 100%;
+  aspect-ratio: 9/16;
+  background-color: #fff;
+  border-radius: var(--r15);
+  overflow: hidden;
+  position: relative;
+  border: 1px solid rgba(95,66,185,.2);
+}
+.example-slide img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* Figma: views + ссылка = 14px gradient text, inside slide */
+.example-badge {
+  position: absolute;
+  bottom: 10px;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: center;
+}
+.example-views {
+  display: inline-block;
+  padding: 3px 10px;
+  background: rgba(5,1,15,.7);
+  backdrop-filter: blur(4px);
+  border-radius: 20px;
+  font-size: 14px;
+  font-weight: 400;
+  background: linear-gradient(147deg, var(--g-start) 0%, var(--g-end) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.example-views a { color: inherit; }
+
+/* Figma: genre label = Point-Book 24px #f6f5fd */
+.example-genre {
+  font-size: 24px;
+  font-weight: 350;
+  color: var(--text);
+}
+
+/* ════════════════════════════════════════════════════════════
+   FEATURE CARDS
+   Figma: frame-4 = 1200×400px, radius 20, 3 columns with dividers
+   Each col ≈ 400px wide (dividers at left:400 and left:800)
+   ════════════════════════════════════════════════════════════ */
+.feat-card {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  border-radius: var(--r20);
+  overflow: hidden;
+  min-height: 400px;
+  background: linear-gradient(135deg, #0d0828 0%, #0a0520 50%, #080318 100%);
+  border: 1px solid rgba(95,66,185,.2);
+}
+
+.feat-col {
+  padding: 40px 50px 40px 50px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  position: relative;
+}
+/* Vertical dividers at col 2 and 3 */
+.feat-col--mid {
+  border-left: 1px solid rgba(95,66,185,.25);
+  border-right: 1px solid rgba(95,66,185,.25);
+}
+
+.feat-visual {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  padding-bottom: 20px;
+}
+
+/* Card 1 — before/after timeline */
+.feat-visual--time {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 16px;
+}
+.feat-before, .feat-after, .feat-eq {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Figma: "До:", "После:", "=" = 24px gradient text */
+.feat-tag-label {
+  font-size: 24px;
+  font-weight: 350;
+  background: linear-gradient(170deg, rgba(246,245,253,.95) 0%, rgba(246,245,253,1) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  min-width: 80px;
+}
+
+/* Figma: rectangle-6 = dim bg #d9d9d933, radius 6px; rectangle-7 = border #8b6fe6 */
+.feat-tag {
+  height: 37px;
+  padding: 0 12px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+}
+.feat-tag--dim {
+  background-color: rgba(217,217,217,.2);
+  border: 1px solid transparent;
+}
+.feat-tag--dim span {
+  font-size: 24px;
+  font-weight: 350;
+  background: linear-gradient(170deg, rgba(246,245,253,.95) 0%, rgba(246,245,253,1) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  opacity: 0.6;
+}
+.feat-tag--accent {
+  background-color: rgba(217,217,217,.2);
+  border: 1px solid var(--pill-border);
+}
+.feat-tag--accent span {
+  font-size: 24px;
+  font-weight: 350;
+  background: linear-gradient(132deg, var(--g-start) 0%, var(--g-end) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Card 2 — mindmap pills */
+.feat-visual--mindmap { justify-content: center; }
+.feat-mindmap-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+}
+/* Figma: pill tags = rect with border #8b6fe6, bg #d9d9d933, blur */
+.feat-pill {
+  height: 37px;
+  padding: 0 14px;
+  display: inline-flex;
+  align-items: center;
+  background-color: rgba(217,217,217,.2);
+  border: 1px solid var(--pill-border);
+  border-radius: 6px;
+  font-size: 24px;
+  font-weight: 350;
+  background-image: linear-gradient(170deg, rgba(246,245,253,.95) 0%, rgba(246,245,253,1) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  opacity: 0.6;
+  backdrop-filter: blur(5px);
+}
+
+/* Card 3 — Blast vs Agency */
+.feat-visual--table { align-items: center; }
+.feat-compare {
+  display: flex;
+  gap: 0;
+  width: 100%;
+}
+
+/* Figma: rectangle-14 (Blast side) = left half, border #8b6fe6, radius 15px 0 0 15px */
+.feat-compare-blast {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 14px;
+  border: 1px solid var(--pill-border);
+  border-radius: 15px 0 0 15px;
+}
+
+/* Figma: rectangle-13 (Agency side) = right half, dashed border #6c6c6c, radius 0 15px 15px 0 */
+.feat-compare-sep { display: none; }
+.feat-compare-agency {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 14px;
+  border: 1px dashed #6c6c6c;
+  border-left: none;
+  border-radius: 0 15px 15px 0;
+}
+
+/* Figma: column headers = 16px gradient text (Blast) or text-80 (Agency) */
+.feat-compare-name {
+  font-size: 16px;
+  font-weight: 350;
+  white-space: nowrap;
+}
+/* Blast column header is gradient */
+.feat-compare-blast .feat-compare-name {
+  background: linear-gradient(176deg, var(--g-start) 0%, var(--g-end) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+/* Agency column header is text-80 */
+.feat-compare-agency .feat-compare-name {
+  background: linear-gradient(170deg, rgba(246,245,253,.95) 0%, rgba(246,245,253,1) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  opacity: 0.8;
+}
+
+/* Values 16px */
+.feat-compare-val {
+  font-size: 16px;
+  font-weight: 350;
+  background: linear-gradient(170deg, rgba(246,245,253,.95) 0%, rgba(246,245,253,1) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  white-space: nowrap;
+}
+.feat-compare-val--dim { opacity: 0.6; }
+
+/* Feature text */
+.feat-title {
+  font-size: 24px;
+  font-weight: 350;
+  background: linear-gradient(170deg, rgba(246,245,253,.95) 0%, rgba(246,245,253,1) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  line-height: normal;
+  margin-top: 20px;
+}
+.feat-desc {
+  font-size: 24px;
+  font-weight: 350;
+  background: linear-gradient(170deg, rgba(246,245,253,.95) 0%, rgba(246,245,253,1) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  opacity: 0.6;
+  line-height: normal;
+  margin-top: 15px;
+}
+
+/* ════════════════════════════════════════════════════════════
+   CTA SECTION
+   Figma: group-63 = 1200×643px, top 3294px
+   text-wrapper-59 "Marketing" = Drive Hearts 900px, gradient, decorative
+   frame-5 = 1200×400px, bg SVG, gap 129px
+   ════════════════════════════════════════════════════════════ */
+.cta-section { margin-top: 163px; }
+
+.cta-head {
+  text-align: left;
+  margin-bottom: 50px;
+}
+
+.cta-card {
+  position: relative;
+  height: 400px;
+  border-radius: var(--r20);
+  overflow: hidden;
+  background: linear-gradient(135deg, #0d0828 0%, #0a0520 50%, #080318 100%);
+  border: 1px solid rgba(95,66,185,.25);
+  display: flex;
+  align-items: center;
+  gap: 129px;
+  padding-left: 93px;
+}
+
+/* Figma: "Marketing" = Drive Hearts 900px, gradient text, centered absolute */
+.cta-deco {
+  position: absolute;
+  font-family: var(--font-deco);
+  font-size: 420px;
+  font-weight: 400;
+  background: linear-gradient(176deg, var(--g-start) 0%, var(--g-end) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  opacity: 0.07;
+  pointer-events: none;
+  user-select: none;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -48%);
+  white-space: nowrap;
+  line-height: 1;
+  z-index: 0;
+}
+
+/* Figma: group-65 = 545px wide, 4 phone images overlapping */
+.cta-phones {
+  position: relative;
+  width: 380px;
+  height: 350px;
+  flex-shrink: 0;
+  z-index: 1;
+}
+/* Figma: 4 phone images overlapping — image-15 at left:0, image-16 at left:144, image-18 at left:278 */
+.cta-ph {
+  position: absolute;
+  width: 190px;
+  height: 340px;
+  object-fit: cover;
+  border-radius: 16px;
+  filter: drop-shadow(0 8px 32px rgba(123,63,228,.4));
+}
+.cta-ph--1 { left: 0;    top: 40px; z-index: 1; opacity: .5; }
+.cta-ph--2 { left: 90px; top: 20px; z-index: 2; opacity: .7; }
+.cta-ph--3 { left: 180px;top: 0;    z-index: 3; }
+.cta-ph--4 { left: 270px;top: 20px; z-index: 2; opacity: .7; }
+
+/* Figma: group-66 = align-self flex-end, 290×153px */
+.cta-action {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  width: 290px;
+  gap: 16px;
+  z-index: 1;
+  flex-shrink: 0;
+}
+
+/* Figma: text-wrapper-61 = Point-Book 24px #f6f5fdcc */
+.cta-action-text {
+  font-size: 24px;
+  font-weight: 350;
+  color: var(--text-80);
+  line-height: normal;
+}
+
+/* ════════════════════════════════════════════════════════════
+   FOOTER
+   Figma: top 4087px, legal at left 897, social at left 682
+   All text = Point-Book 24px, gradient or 0.6 opacity
+   ════════════════════════════════════════════════════════════ */
+.footer {
+  margin-top: 160px;
+  padding: 60px 0 60px;
+  border-top: 1px solid rgba(95,66,185,.15);
+}
+.footer-inner {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 40px;
+  flex-wrap: wrap;
+}
+
+.footer-brand {
+  display: flex;
+  align-items: center;
+}
+
+/* Figma: "Соц. сети" + links column, 24px Point-Book */
+.footer-social {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.footer-social-label {
+  font-size: 24px;
+  font-weight: 350;
+  background: linear-gradient(170deg, rgba(246,245,253,.95) 0%, rgba(246,245,253,1) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.footer-social a {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 24px;
+  font-weight: 350;
+  background: linear-gradient(170deg, rgba(246,245,253,.95) 0%, rgba(246,245,253,1) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  opacity: 0.6;
+  transition: opacity .2s;
+}
+.footer-social a img { flex-shrink: 0; }
+.footer-social a:hover { opacity: 1; }
+
+/* Figma: legal = flex column, 24px, various opacities */
+.footer-legal {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0;
+}
+.footer-legal p {
+  font-size: 24px;
+  font-weight: 350;
+  background: linear-gradient(170deg, rgba(246,245,253,.95) 0%, rgba(246,245,253,1) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  margin-bottom: 20px;
+}
+.footer-legal a {
+  display: block;
+  font-size: 24px;
+  font-weight: 350;
+  background: linear-gradient(170deg, rgba(246,245,253,.95) 0%, rgba(246,245,253,1) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  opacity: 0.6;
+  margin-top: 15px;
+  text-align: right;
+  transition: opacity .2s;
+}
+.footer-legal a:hover { opacity: 1; }
+
+/* ════════════════════════════════════════════════════════════
+   RESPONSIVE ≤ 1280px
+   ════════════════════════════════════════════════════════════ */
+@media (max-width: 1280px) {
+  .hero-inner  { gap: 60px; }
+  .hero-left   { flex: 0 0 420px; width: 420px; }
+  .hero-right  { flex: 0 0 520px; width: 520px; }
+  .hero-h1     { width: 100%; font-size: 52px; }
+  .hero-badge  { width: 100%; }
+  .hero-desc   { width: 100%; }
+  .hero-right-cta { left: 200px; }
+  .section-h2  { font-size: 52px; }
+  .steps-text  { font-size: 52px; }
+  .feat-col    { padding: 32px 32px; }
+}
+
+/* ════════════════════════════════════════════════════════════
+   RESPONSIVE ≤ 1024px
+   ════════════════════════════════════════════════════════════ */
+@media (max-width: 1024px) {
+  .hero-inner  { flex-direction: column; gap: 40px; }
+  .hero-left   { flex: none; width: 100%; }
+  .hero-right  { flex: none; width: 100%; height: 360px; }
+  .hero-h1     { font-size: 48px; }
+  .hero-badge  { width: auto; }
+  .hero-right-cta { left: auto; right: 40px; bottom: 40px; width: 260px; }
+  .feat-card   { grid-template-columns: 1fr; }
+  .feat-col--mid { border-left: none; border-right: none; border-top: 1px solid rgba(95,66,185,.25); border-bottom: 1px solid rgba(95,66,185,.25); }
+  .cta-phones  { display: none; }
+  .cta-card    { gap: 0; padding: 60px; justify-content: space-between; }
+  .cta-action  { width: 100%; max-width: 400px; }
+  .section-h2  { font-size: 44px; }
+  .steps-text  { font-size: 44px; }
+}
+
+/* ════════════════════════════════════════════════════════════
+   RESPONSIVE ≤ 768px — Mobile 375px
+   Figma mobile: min-width 375px, font sizes from .mobile-landing CSS
+   ════════════════════════════════════════════════════════════ */
+@media (max-width: 768px) {
+
+  /* Figma mobile body: 14px base (Point-Book/Regular) */
+  body { font-size: 14px; }
+
+  /* ── Navbar ──────────────────────────────────────────────
+     Figma: .header = 315px wide, 50px tall, radius 10px, centered
+     ─────────────────────────────────────────────────────── */
+  .navbar-wrap { padding: 0 30px; }
+  .navbar {
+    height: 50px;
+    border-radius: 10px;
+    padding: 0 18px;
+  }
+  .navbar-links, .navbar-cta { display: none; }
+  .burger { display: flex; }
+  .mobile-menu { display: flex; }
+  .mobile-menu a { font-size: 14px; }
+
+  /* ── Hero ────────────────────────────────────────────────
+     Figma: .element-3 = 32px, badge 270x35 radius 10, desc 14px
+     ─────────────────────────────────────────────────────── */
+  .hero { padding-top: 20px; }
+  /* hero-inner column layout from 1024px breakpoint applies */
+
+  /* Figma: H1 = 32px (element-3 font-size: 32px) */
+  .hero-h1 { font-size: 32px; width: 100%; }
+
+  /* Figma: badge = 270px x 35px, border-radius 10px, border #5f42b9cc */
+  .hero-badge {
+    width: 270px;
+    height: 35px;
+    border-radius: 10px;
+    padding: 0 10px;
+    margin-top: 16px;
+    border-color: rgba(95,66,185,.8);
+  }
+  /* Figma: badge text = 14px gradient */
+  .hero-badge span { font-size: 14px; }
+
+  /* Figma: blast-AI desc = 14px */
+  .hero-desc { font-size: 14px; margin-top: 16px; width: 100%; }
+
+  /* Figma: hero-right card = radius 15px on mobile, .group-wrapper height 160px */
+  .hero-right { height: 380px; border-radius: var(--r15); }
+  /* CTA overlay on the right card */
+  .hero-right-cta {
+    left: auto;
+    right: 20px;
+    bottom: 20px;
+    width: 210px;
+  }
+  .hero-cta-title { font-size: 14px; }
+  .hero-cta-sub { font-size: 14px; }
+
+  /* Figma: button on mobile = radius 30px, font 16px */
+  .hero-right-cta .btn {
+    height: 50px;
+    font-size: 16px;
+    padding: 0 20px;
+    border-radius: 30px;
+  }
+
+  /* ── Social proof ────────────────────────────────────────
+     Figma: stacked column, label+avatars+count, 14px
+     ─────────────────────────────────────────────────────── */
+  .social { margin-top: 48px; }
+  .social-inner { flex-direction: column; align-items: flex-start; gap: 20px; }
+  .social-sep { display: none; }
+  /* Figma: text-wrapper-3 = 14px Point-Book */
+  .social-label { font-size: 14px; font-weight: 350; }
+  .social-count { font-size: 14px; }
+  /* Figma: avatars = 50x50 circles */
+  .avatar-circle, .label-circle { width: 50px; height: 50px; }
+
+  /* ── Section headings ────────────────────────────────────
+     Figma: .text-wrapper-10 / .text-wrapper-12 = 32px
+     ─────────────────────────────────────────────────────── */
+  .section-block { margin-top: 60px; }
+  .section-head  { margin-bottom: 20px; }
+  /* Figma: eyebrow = 14px gradient */
+  .eyebrow       { font-size: 14px; }
+  /* Figma: H2 mobile = 32px */
+  .section-h2    { font-size: 32px; }
+  .section-h2--right { text-align: left; }
+  .section-head--right { text-align: left; }
+
+  /* ── Steps card ──────────────────────────────────────────
+     Figma: .frame = 315x480px, radius 20, bg SVG
+     .div-2 = 32px
+     ─────────────────────────────────────────────────────── */
+  .steps-card {
+    flex-direction: column;
+    align-items: flex-start;
+    padding: 28px 20px;
+    gap: 28px;
+    min-height: 480px;
+  }
+  /* Figma: .div-2 font-size: 32px */
+  .steps-text { font-size: 32px; }
+  .steps-right { width: 100%; justify-content: center; gap: 12px; }
+  .steps-phone-wrap img { height: 160px; }
+
+  /* Figma: stat cards = 180x154px, radius 20px (same size, but in mobile layout) */
+  .steps-stat-card { width: 150px; padding: 12px; }
+  /* Figma: stat num/lbl = 16px and 16px */
+  .stat-label { font-size: 14px; }
+  .stat-num   { font-size: 16px; }
+  .stat-lbl   { font-size: 14px; }
+
+  /* ── Examples ────────────────────────────────────────────
+     Figma: slides rotated 90deg, 261px wide container, horizontal scroll
+     ─────────────────────────────────────────────────────── */
+  .example-col { width: 130px; }
+  .example-genre { font-size: 14px; }
+  .example-views { font-size: 12px; }
+
+  /* ── Feature cards ───────────────────────────────────────
+     Figma: 3 separate stacked frames, each 300px tall, gap 20px
+     .frame-5/.frame-6/.frame-7
+     ─────────────────────────────────────────────────────── */
+  .feat-card {
+    grid-template-columns: 1fr;
+    border-radius: var(--r20);
+    border: none;
+    background: none;
+    gap: 20px;
+  }
+  .feat-col {
+    padding: 28px 24px;
+    border-radius: var(--r20);
+    background: linear-gradient(135deg, #0d0828 0%, #0a0520 50%, #080318 100%);
+    border: 1px solid rgba(95,66,185,.2);
+    min-height: 300px;
+  }
+  .feat-col--mid {
+    border-left: 1px solid rgba(95,66,185,.2);
+    border-right: 1px solid rgba(95,66,185,.2);
+    border-top: 1px solid rgba(95,66,185,.2);
+    border-bottom: 1px solid rgba(95,66,185,.2);
+  }
+  /* Figma: feat title/desc on mobile = 14px */
+  .feat-title  { font-size: 14px; }
+  .feat-desc   { font-size: 14px; }
+  /* Figma: feat tag font = 24px → on mobile use 16px */
+  .feat-tag    { height: 37px; }
+  .feat-tag--dim span, .feat-tag--accent span { font-size: 16px; }
+  .feat-tag-label { font-size: 16px; min-width: 60px; }
+  .feat-pill   { font-size: 16px; height: 37px; }
+  .feat-compare-name { font-size: 14px; }
+  .feat-compare-val  { font-size: 14px; }
+
+  /* ── CTA ─────────────────────────────────────────────────
+     Figma: .frame-4 = 315x480px, border #f6f5fd21, radius 20
+     ─────────────────────────────────────────────────────── */
+  .cta-section  { margin-top: 60px; }
+  .cta-card {
+    height: auto;
+    min-height: 480px;
+    padding: 32px 24px;
+    flex-direction: column;
+    gap: 24px;
+    border-color: rgba(246,245,253,.13);
+  }
+  .cta-deco     { font-size: 100px; }
+  .cta-phones   { display: none; }
+  .cta-action   { width: 100%; }
+  /* Figma: cta text = 14px Point-Book */
+  .cta-action-text { font-size: 14px; }
+  /* Figma: CTA button = radius 30px, font 16px */
+  .btn--large {
+    width: 100%;
+    font-size: 16px;
+    height: 50px;
+    border-radius: 30px;
+    justify-content: center;
+  }
+
+  /* ── Footer ──────────────────────────────────────────────
+     Figma: stacked column, all text 14px
+     ─────────────────────────────────────────────────────── */
+  .footer       { margin-top: 60px; padding: 40px 0; }
+  .footer-inner { flex-direction: column; gap: 24px; }
+  .footer-legal { align-items: flex-start; }
+  .footer-legal p, .footer-legal a { font-size: 14px; text-align: left; }
+  .footer-social-label { font-size: 14px; }
+  .footer-social a { font-size: 14px; }
+}

@@ -21,11 +21,16 @@ work/
 ml_logs/
 pins/
 pins_2/
+
 # Local generated data
 data/footage_inventory.json
 data/footage_inventory_selected.json
 video_database.json
 pins2/
+
+# Landing local import artifacts (do not deploy / do not track)
+landing/*.rar
+landing/tmp/
 
 # Local packed context dumps
 repomix_*_flow.md
