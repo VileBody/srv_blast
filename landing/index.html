@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Blast — AI-агент для музыкантов</title>
+  <meta name="description" content="Blast — AI-агент для артистов: создаёт вирусный контент под трек с нуля за 60 секунд." />
+  <link rel="icon" type="image/svg+xml" href="assets/logo.svg" />
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+
+  <!-- NAVBAR -->
+  <div class="navbar-wrap">
+    <header class="navbar">
+      <img src="assets/backforheader.png" class="navbar-back" aria-hidden="true" />
+      <a href="#" class="navbar-logo">
+        <img src="assets/impulselogo.svg" alt="Blast" width="42" height="40" loading="eager" />
+      </a>
+      <nav class="navbar-links">
+        <a href="#how-it-works">Как работает</a>
+        <a href="#examples">Примеры</a>
+        <a href="#features">Преимущества</a>
+      </nav>
+      <a href="https://t.me/blast808bot" class="navbar-cta" target="_blank" rel="noopener">Попробовать</a>
+      <button class="burger" aria-label="Меню" aria-expanded="false">
+        <span></span><span></span><span></span>
+      </button>
+    </header>
+    <div class="mobile-menu">
+      <a href="#how-it-works">Как работает</a>
+      <a href="#examples">Примеры</a>
+      <a href="#features">Преимущества</a>
+      <a href="https://t.me/blast808bot" class="mobile-cta" target="_blank" rel="noopener">Попробовать</a>
+    </div>
+  </div>
+
+  <main>
+
+    <!-- HERO -->
+    <section class="hero" id="hero">
+      <div class="container">
+        <div class="hero-inner">
+
+          <!-- Left: text -->
+          <div class="hero-left">
+            <h1 class="hero-h1">
+              <span class="hero-h1-regular">Сделай трек </span><br class="hero-h1-mob-br" /><span class="hero-h1-italic">— вирусным<br /></span><span class="hero-h1-regular">за 60 секунд!</span>
+            </h1>
+            <div class="hero-badge">
+              <img src="assets/blastmainlogo.svg" alt="" width="24" height="18" />
+              <span>Co-pilot в продвижении музыки</span>
+            </div>
+            <p class="hero-desc">
+              <span class="hero-desc-white">Blast — AI-агент для артистов:</span><br /><span class="hero-desc-muted">создаёт контент под трек с нуля</span>
+            </p>
+          </div>
+
+          <!-- Right: dark card with phone + CTA -->
+          <div class="hero-right">
+            <img src="assets/containerblur.png" class="hero-container-blur" aria-hidden="true" />
+            <div class="hero-phone-wrap">
+              <img class="hero-phone-frame" src="assets/herophone.png" alt="" />
+              <div class="hero-screen">
+                <video class="hero-video" data-media-key="hero_phone" muted loop playsinline preload="metadata"></video>
+              </div>
+            </div>
+            <div class="hero-right-overlay"></div>
+            <img src="assets/heroblur.png" class="hero-mobile-blur" aria-hidden="true" />
+            <div class="hero-right-cta">
+              <div class="hero-right-texts">
+                <p class="hero-cta-title">Попробуй бесплатно:</p>
+                <p class="hero-cta-sub">Пришли трек в тг-бот<br class="mob-br" /> — получи 3 видео!</p>
+              </div>
+              <a href="https://t.me/blast808bot" class="btn" target="_blank" rel="noopener">
+                <img src="assets/backforbutton.png" class="btn-back" aria-hidden="true" />
+                <span>Загрузить трек</span>
+                <img src="assets/tgvector2.svg" alt="" width="17" height="15" />
+              </a>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </section>
+
+    <!-- SOCIAL PROOF -->
+    <section class="social" id="social">
+      <div class="container">
+        <div class="social-header">
+          <img src="assets/sublogoblast.svg" alt="" class="social-sublogo" width="20" height="20" />
+          <p class="social-label">Нам доверяют:</p>
+        </div>
+        <div class="social-inner">
+          <div class="social-artists">
+            <div class="social-avatars">
+              <img src="assets/person0.svg" class="avatar-circle" alt="" width="50" height="50" />
+              <img src="assets/person1.svg" class="avatar-circle" alt="" width="50" height="50" />
+              <img src="assets/person2.svg" class="avatar-circle" alt="" width="50" height="50" />
+              <img src="assets/person3.svg" class="avatar-circle" alt="" width="50" height="50" />
+              <img src="assets/person4.svg" class="avatar-circle" alt="" width="50" height="50" />
+              <img src="assets/person5.svg" class="avatar-circle" alt="" width="50" height="50" />
+            </div>
+            <span class="social-count"><span class="gradient-text">500+</span> артистов</span>
+          </div>
+          <div class="social-labels">
+            <div class="social-logos">
+              <img src="assets/labelA.svg" class="label-circle" alt="" width="50" height="50" />
+              <img src="assets/labelY.svg" class="label-circle" alt="" width="50" height="50" />
+              <img src="assets/labelR.svg" class="label-circle" alt="" width="50" height="50" />
+            </div>
+            <span class="social-count"><span class="gradient-text">15+</span><span class="social-text-desktop"> лейблов, студий и партнёров</span><span class="social-text-mob"> лейблов и партнёров</span></span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- HOW IT WORKS -->
+    <section class="section-block" id="how-it-works">
+      <div class="container">
+        <div class="steps-scroll-wrapper">
+          <div class="steps-sticky-area">
+            <img src="assets/howworkblur.png" class="steps-bg-blur" aria-hidden="true" />
+            <img src="assets/biglogo.png" class="steps-bg-logo" aria-hidden="true" />
+            <div class="section-head section-head--left">
+              <p class="eyebrow">Создавай видео — без съёмки</p>
+              <h2 class="section-h2">Как работает генерация?</h2>
+            </div>
+          <div class="steps-card">
+            <div class="steps-left">
+              <p class="steps-text">
+                <span class="steps-line active" data-step="0">Загрузи трек.</span>
+                <span class="steps-line" data-step="1">Настрой видео.</span>
+                <span class="steps-line" data-step="2">Получи контент.</span>
+              </p>
+            </div>
+            <div class="steps-right">
+              <img class="steps-stage steps-stage--desktop active" src="assets/workstage1.png" alt="Шаг 1" data-step="0" />
+              <img class="steps-stage steps-stage--desktop" src="assets/workstage2.png" alt="Шаг 2" data-step="1" />
+              <img class="steps-stage steps-stage--mob active" src="assets/workstage1-mob.png" alt="Шаг 1" data-step="0" />
+              <img class="steps-stage steps-stage--mob" src="assets/workstage2-mob.png" alt="Шаг 2" data-step="1" />
+              <div class="steps-stage steps-stage--3" data-step="2">
+                <img class="steps-stage3-desktop" src="assets/workstage3.png" alt="Шаг 3" />
+                <img class="steps-stage3-mob" src="assets/workstage3-mob.png" alt="Шаг 3" />
+                <div class="stage3-glare stage3-glare--glow"></div>
+                <div class="stage3-glare stage3-glare--core"></div>
+                <div class="steps-stat-overlay steps-stat-overlay--desktop">
+                  <div class="steps-stat-card steps-stat-card--before">
+                    <div class="stat-label">Видео А</div>
+                    <div class="stat-row"><span class="stat-num">481</span><span class="stat-lbl">Просмотры</span></div>
+                    <div class="stat-row"><span class="stat-num">28</span><span class="stat-lbl">Лайков</span></div>
+                    <div class="stat-row"><span class="stat-num">1,2</span><span class="stat-lbl">Удержание, %</span></div>
+                  </div>
+                  <div class="steps-stat-card steps-stat-card--after">
+                    <div class="stat-label">Видео Б</div>
+                    <div class="stat-row"><span class="stat-num stat-num--hot">5.1K</span><span class="stat-lbl">Просмотры</span></div>
+                    <div class="stat-row"><span class="stat-num stat-num--hot">1.2K</span><span class="stat-lbl">Лайков</span></div>
+                    <div class="stat-row"><span class="stat-num stat-num--hot">4,8</span><span class="stat-lbl">Удержание, %</span></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="steps-stat-overlay steps-stat-overlay--mob">
+            <div class="steps-stat-card steps-stat-card--before">
+              <div class="stat-label">Видео А</div>
+              <div class="stat-row"><span class="stat-num">481</span><span class="stat-lbl">Просмотры</span></div>
+              <div class="stat-row"><span class="stat-num">28</span><span class="stat-lbl">Лайков</span></div>
+              <div class="stat-row"><span class="stat-num">1,2</span><span class="stat-lbl">Удержание, %</span></div>
+            </div>
+            <div class="steps-stat-card steps-stat-card--after">
+              <div class="stat-label">Видео Б</div>
+              <div class="stat-row"><span class="stat-num stat-num--hot">5.1K</span><span class="stat-lbl">Просмотры</span></div>
+              <div class="stat-row"><span class="stat-num stat-num--hot">1.2K</span><span class="stat-lbl">Лайков</span></div>
+              <div class="stat-row"><span class="stat-num stat-num--hot">4,8</span><span class="stat-lbl">Удержание, %</span></div>
+            </div>
+          </div>
+          </div><!-- /steps-sticky-area -->
+        </div>
+      </div>
+    </section>
+
+    <!-- EXAMPLES -->
+    <section class="section-block" id="examples">
+      <div class="container">
+        <div class="examples-header">
+          <img src="assets/cut.svg" alt="" class="examples-icon" width="24" height="24" />
+          <p class="social-label">Примеры роликов:</p>
+        </div>
+        <div class="examples-scroll">
+          <div class="example-col">
+            <div class="example-slide" data-media-key="example_impulse1" data-portrait="true">
+              <video class="example-preview-video" muted loop playsinline preload="none"></video>
+              <div class="example-play-btn" aria-label="Смотреть"></div>
+            </div>
+            <span class="example-genre">Impulse</span>
+          </div>
+          <div class="example-col">
+            <div class="example-slide" data-media-key="example_tape">
+              <video class="example-preview-video" muted loop playsinline preload="none"></video>
+              <div class="example-play-btn" aria-label="Смотреть"></div>
+            </div>
+            <span class="example-genre">Тape</span>
+          </div>
+          <div class="example-col">
+            <div class="example-slide" data-media-key="example_jakson">
+              <video class="example-preview-video" muted loop playsinline preload="none"></video>
+              <div class="example-play-btn" aria-label="Смотреть"></div>
+            </div>
+            <span class="example-genre">Jakson</span>
+          </div>
+          <div class="example-col">
+            <div class="example-slide" data-media-key="example_billie">
+              <video class="example-preview-video" muted loop playsinline preload="none"></video>
+              <div class="example-play-btn" aria-label="Смотреть"></div>
+            </div>
+            <span class="example-genre">Billie</span>
+          </div>
+          <div class="example-col">
+            <div class="example-slide" data-media-key="example_alter">
+              <video class="example-preview-video" muted loop playsinline preload="none"></video>
+              <div class="example-play-btn" aria-label="Смотреть"></div>
+            </div>
+            <span class="example-genre">Alter</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- FEATURES -->
+    <section class="section-block" id="features">
+      <img src="assets/featblur.png" class="feat-bg-blur" aria-hidden="true" />
+      <img src="assets/backlineblur.png" class="feat-bg-backlineblur" aria-hidden="true" />
+      <img src="assets/backline.svg" class="feat-bg-line" aria-hidden="true" />
+      <div class="container">
+        <div class="section-head section-head--right">
+          <p class="eyebrow">Новый виток в «продвижении» музыки</p>
+          <h2 class="section-h2 section-h2--right">Больше никаких<br />препятствий</h2>
+        </div>
+        <div class="feat-card">
+          <!-- Col 1: before/after -->
+          <div class="feat-col">
+            <div class="feat-visual feat-visual--time">
+              <div class="feat-before">
+                <span class="feat-tag-label">До:</span>
+                <div class="feat-tag feat-tag--dim"><span>1 час</span></div>
+              </div>
+              <div class="feat-after">
+                <span class="feat-tag-label">После:</span>
+                <div class="feat-tag feat-tag--accent"><span>3 клика</span></div>
+              </div>
+              <div class="feat-eq">
+                <span class="feat-tag-label">=</span>
+                <div class="feat-tag feat-tag--dim"><span>ролик</span></div>
+              </div>
+            </div>
+            <p class="feat-title">Ты — делаешь музыку,<br class="mob-br" /> Бласт — делает контент</p>
+            <p class="feat-desc">Без камеры, монтажа,<br class="mob-br" /> навыков и напряга</p>
+          </div>
+          <!-- Col 2: mindmap -->
+          <div class="feat-col feat-col--mid">
+            <div class="feat-visual feat-visual--mindmap">
+              <div class="feat-mindmap">
+                <img src="assets/formatlines.svg" class="feat-formatlines" alt="" />
+                <div class="feat-mindmap-tags">
+                  <span class="feat-pill feat-pill--trends">trends</span>
+                  <span class="feat-pill feat-pill--lyrics">lyrics</span>
+                  <span class="feat-pill feat-pill--pov">pov</span>
+                  <span class="feat-pill feat-pill--edits">edits</span>
+                  <span class="feat-pill feat-pill--story">story</span>
+                </div>
+              </div>
+            </div>
+            <p class="feat-title">Не один ролик — <br />а система форматов</p>
+            <p class="feat-desc">Комбинации из видео<br class="mob-br" /> повышают виральность</p>
+          </div>
+          <!-- Col 3: comparison table -->
+          <div class="feat-col">
+            <div class="feat-visual feat-visual--table">
+              <div class="feat-compare">
+                <div class="feat-compare-blast">
+                  <span class="feat-compare-name gradient-text"><img src="assets/blastmainlogo.svg" class="feat-compare-icon" alt="" />Бласт</span>
+                  <span class="feat-compare-val">Авто</span>
+                  <span class="feat-compare-val">60 секунд</span>
+                  <span class="feat-compare-val">0₽ старт</span>
+                </div>
+                <div class="feat-compare-sep"></div>
+                <div class="feat-compare-agency">
+                  <span class="feat-compare-name">Агентство</span>
+                  <span class="feat-compare-val feat-compare-val--dim">Менеджер</span>
+                  <span class="feat-compare-val feat-compare-val--dim">14–21 дней</span>
+                  <span class="feat-compare-val feat-compare-val--dim">20–50 тыс ₽</span>
+                </div>
+              </div>
+            </div>
+            <p class="feat-title">Контент — без<br />конских бюджетов</p>
+            <p class="feat-desc">В 10 раз дешевле, <br />в сотни раз быстрее</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- CTA -->
+    <section class="cta-section" id="cta">
+      <img src="assets/marketingblur.png" class="cta-bg-blur" aria-hidden="true" />
+      <div class="container">
+        <div class="cta-head">
+          <p class="eyebrow">Сгенерируй видео — прямо сейчас</p>
+          <h2 class="section-h2">Затести Бласт<br />на своём треке</h2>
+        </div>
+        <div class="cta-card">
+          <img src="assets/cta.png" class="cta-illustration" alt="" />
+          <div class="cta-action">
+            <p class="cta-action-label">Попробуй бесплатно:</p>
+            <p class="cta-action-text">Пришли трек в тг-бот<br class="mob-br" /> — получи 3 видео!</p>
+            <a href="https://t.me/blast808bot" class="btn btn--large" target="_blank" rel="noopener">
+              <span>Загрузить трек</span>
+              <img src="assets/arrow1.svg" width="16" height="16" alt="" />
+            </a>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- FOOTER -->
+  <footer class="footer">
+    <div class="container footer-inner">
+      <div class="footer-brand">
+        <img src="assets/footer.png" alt="Blast" loading="lazy" />
+      </div>
+      <div class="footer-legal">
+        <p>ООО «Импульс Промо» © 2026</p>
+        <div class="footer-social">
+          <a href="https://t.me/impulsemarketing" target="_blank" rel="noopener">
+            <img src="assets/tgvector.svg" alt="Telegram" width="17" height="15" style="position:relative;top:-1px;" />
+            <span>Telegram</span>
+          </a>
+          <a href="#" target="_blank" rel="noopener">
+            <img src="assets/igvector.svg" alt="Instagram" width="20" height="20" style="position:relative;top:-2px;" />
+            <span>Instagram</span>
+          </a>
+          <a href="https://vk.com/impulsemarketing" target="_blank" rel="noopener">
+            <img src="assets/vkvector.svg" alt="VK" width="20" height="20" style="position:relative;top:-2px;" />
+            <span>VK</span>
+          </a>
+        </div>
+      </div>
+    </div>
+  </footer>
+
+<script src="js/media-config.js"></script>
+<script src="js/main.js" defer></script>
+
+  <!-- VIDEO MODAL -->
+  <div class="video-modal" id="videoModal" aria-hidden="true">
+    <div class="video-modal-backdrop"></div>
+    <div class="video-modal-inner">
+      <button class="video-modal-close" aria-label="Закрыть">&#x2715;</button>
+      <video class="video-modal-player" controls playsinline></video>
+    </div>
+  </div>
+</body>
+</html>

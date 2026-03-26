@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import logging
 import os
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import boto3
 from botocore.config import Config as BotoConfig
@@ -11,6 +13,15 @@ from botocore.exceptions import BotoCoreError, ClientError
 log = logging.getLogger(__name__)
 
 _S3_CLIENT = None
+
+
+class S3ObjectNotFoundError(RuntimeError):
+    """Raised when object lookup/move targets a missing S3 key."""
+
+
+def _is_not_found_error(exc: ClientError) -> bool:
+    code = str((exc.response or {}).get("Error", {}).get("Code", "")).strip()
+    return code in {"404", "NoSuchKey", "NotFound"}
 
 
 def get_s3_client():
@@ -50,6 +61,93 @@ def get_s3_client():
     _S3_CLIENT = session.client("s3", endpoint_url=endpoint, config=boto_config)
     log.info("Initialized S3 client (endpoint=%s, region=%s)", endpoint, region)
     return _S3_CLIENT
+
+
+def list_s3_objects(
+    bucket: str,
+    *,
+    prefix: str = "",
+    continuation_token: str | None = None,
+    max_keys: int = 200,
+    delimiter: str = "/",
+) -> dict[str, Any]:
+    """
+    List objects/prefixes under s3://bucket/prefix with pagination.
+    """
+    if max_keys < 1 or max_keys > 1000:
+        raise RuntimeError(f"max_keys must be in [1,1000], got {max_keys}")
+
+    s3 = get_s3_client()
+    kwargs: dict[str, Any] = {
+        "Bucket": bucket,
+        "Prefix": prefix,
+        "MaxKeys": max_keys,
+        "Delimiter": delimiter,
+    }
+    if continuation_token:
+        kwargs["ContinuationToken"] = continuation_token
+
+    try:
+        resp = s3.list_objects_v2(**kwargs)
+    except (BotoCoreError, ClientError):
+        log.exception("Failed to list objects bucket=%s prefix=%s", bucket, prefix)
+        raise
+
+    objects: list[dict[str, Any]] = []
+    for item in resp.get("Contents") or []:
+        key = str(item.get("Key") or "")
+        if not key:
+            continue
+        last_modified = item.get("LastModified")
+        objects.append(
+            {
+                "key": key,
+                "size": int(item.get("Size") or 0),
+                "etag": str(item.get("ETag") or "").strip('"'),
+                "last_modified": (
+                    last_modified.isoformat() if hasattr(last_modified, "isoformat") else None
+                ),
+            }
+        )
+
+    prefixes = [
+        str(p.get("Prefix") or "")
+        for p in (resp.get("CommonPrefixes") or [])
+        if str(p.get("Prefix") or "")
+    ]
+
+    return {
+        "objects": objects,
+        "prefixes": prefixes,
+        "next_continuation_token": str(resp.get("NextContinuationToken") or "") or None,
+        "is_truncated": bool(resp.get("IsTruncated")),
+    }
+
+
+def head_s3_object(bucket: str, key: str) -> dict[str, Any]:
+    """
+    Head object metadata for s3://bucket/key.
+    """
+    s3 = get_s3_client()
+    try:
+        resp = s3.head_object(Bucket=bucket, Key=key)
+    except ClientError as e:
+        if _is_not_found_error(e):
+            raise S3ObjectNotFoundError(f"Object not found: s3://{bucket}/{key}") from e
+        raise
+    except BotoCoreError:
+        log.exception("Failed to head object s3://%s/%s", bucket, key)
+        raise
+
+    last_modified = resp.get("LastModified")
+    return {
+        "content_type": str(resp.get("ContentType") or "").strip() or None,
+        "content_length": int(resp.get("ContentLength") or 0),
+        "etag": str(resp.get("ETag") or "").strip('"') or None,
+        "last_modified": (
+            last_modified.isoformat() if hasattr(last_modified, "isoformat") else None
+        ),
+    }
 
 
 def download_from_s3(bucket: str, key: str, dest: Path) -> Path:
@@ -140,3 +238,45 @@ def generate_presigned_url(bucket: str, key: str, expires_in: int = 3600) -> str
         raise
     log.info("Generated presigned URL for s3://%s/%s", bucket, key)
     return url
+
+
+def soft_delete_s3_object(bucket: str, key: str, *, trash_prefix: str) -> str:
+    """
+    Soft-delete object by moving it to trash prefix:
+    s3://bucket/<trash_prefix>/<YYYY-MM-DD>/<original-key>.
+    """
+    clean_key = str(key or "").strip().lstrip("/")
+    if not clean_key:
+        raise RuntimeError("soft_delete_s3_object requires non-empty key")
+
+    clean_trash_prefix = str(trash_prefix or "").strip().strip("/")
+    if not clean_trash_prefix:
+        raise RuntimeError("soft_delete_s3_object requires non-empty trash_prefix")
+
+    date_part = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    trash_key = f"{clean_trash_prefix}/{date_part}/{clean_key}"
+
+    s3 = get_s3_client()
+    try:
+        s3.copy_object(
+            Bucket=bucket,
+            Key=trash_key,
+            CopySource={"Bucket": bucket, "Key": clean_key},
+            MetadataDirective="COPY",
+        )
+    except ClientError as e:
+        if _is_not_found_error(e):
+            raise S3ObjectNotFoundError(f"Object not found: s3://{bucket}/{clean_key}") from e
+        raise
+    except BotoCoreError:
+        log.exception("Failed to copy object to trash s3://%s/%s", bucket, clean_key)
+        raise
+
+    try:
+        s3.delete_object(Bucket=bucket, Key=clean_key)
+    except (BotoCoreError, ClientError):
+        log.exception("Failed to delete original after trash copy s3://%s/%s", bucket, clean_key)
+        raise
+
+    log.info("Soft-deleted s3://%s/%s -> s3://%s/%s", bucket, clean_key, bucket, trash_key)
+    return trash_key

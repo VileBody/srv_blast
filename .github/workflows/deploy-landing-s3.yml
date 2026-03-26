@@ -1,0 +1,212 @@
+name: Deploy Landing To S3
+
+on:
+  push:
+    branches:
+      - "**"
+    paths:
+      - "landing/**"
+      - "scripts/landing_validate.py"
+      - "scripts/landing_s3_deploy.py"
+      - ".github/workflows/deploy-landing-s3.yml"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Deploy mode"
+        required: true
+        type: choice
+        options:
+          - preview
+          - release
+          - promote
+          - rollback
+      release_sha:
+        description: "Release SHA for promote/rollback"
+        required: false
+        type: string
+      branch:
+        description: "Branch name for preview mode (optional)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: landing-${{ github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  deploy-landing:
+    name: Validate + Deploy Landing
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      LANDING_S3_BASE_PREFIX: ${{ vars.LANDING_S3_BASE_PREFIX }}
+      LANDING_MAIN_BRANCH: ${{ vars.LANDING_MAIN_BRANCH }}
+      S3_ENDPOINT_URL: ${{ secrets.S3_ENDPOINT_URL }}
+      S3_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
+      S3_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
+      S3_REGION: ${{ secrets.S3_REGION }}
+      S3_BUCKET_ASSET_STORAGE: ${{ secrets.S3_BUCKET_ASSET_STORAGE }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install boto3
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install boto3
+
+      - name: Validate CI contract
+        run: |
+          set -euo pipefail
+          required=(
+            LANDING_S3_BASE_PREFIX
+            LANDING_MAIN_BRANCH
+            S3_ENDPOINT_URL
+            S3_ACCESS_KEY_ID
+            S3_SECRET_ACCESS_KEY
+            S3_REGION
+            S3_BUCKET_ASSET_STORAGE
+          )
+          for name in "${required[@]}"; do
+            if [ -z "${!name:-}" ]; then
+              echo "Missing required variable/secret: $name"
+              exit 1
+            fi
+          done
+
+      - name: Validate landing files
+        run: |
+          set -euo pipefail
+          python scripts/landing_validate.py --root landing
+
+      - name: Resolve deploy mode
+        id: resolve
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_MODE: ${{ github.event.inputs.mode }}
+          INPUT_RELEASE_SHA: ${{ github.event.inputs.release_sha }}
+          INPUT_BRANCH: ${{ github.event.inputs.branch }}
+          REF_NAME: ${{ github.ref_name }}
+          GIT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            MODE="$INPUT_MODE"
+          else
+            if [ "$REF_NAME" = "$LANDING_MAIN_BRANCH" ]; then
+              MODE="release_then_promote"
+            else
+              MODE="preview"
+            fi
+          fi
+
+          BRANCH_NAME="$REF_NAME"
+          if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ -n "${INPUT_BRANCH:-}" ]; then
+            BRANCH_NAME="$INPUT_BRANCH"
+          fi
+
+          SHORT_SHA="$(printf '%s' "$GIT_SHA" | cut -c1-8)"
+
+          echo "mode=$MODE" >> "$GITHUB_OUTPUT"
+          echo "branch_name=$BRANCH_NAME" >> "$GITHUB_OUTPUT"
+          echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
+          echo "full_sha=$GIT_SHA" >> "$GITHUB_OUTPUT"
+          echo "release_sha_input=${INPUT_RELEASE_SHA:-}" >> "$GITHUB_OUTPUT"
+
+      - name: Dry-run + Deploy
+        env:
+          MODE: ${{ steps.resolve.outputs.mode }}
+          BRANCH_NAME: ${{ steps.resolve.outputs.branch_name }}
+          SHORT_SHA: ${{ steps.resolve.outputs.short_sha }}
+          FULL_SHA: ${{ steps.resolve.outputs.full_sha }}
+          RELEASE_SHA_INPUT: ${{ steps.resolve.outputs.release_sha_input }}
+        run: |
+          set -euo pipefail
+
+          run_sync_mode() {
+            local mode="$1"
+            local dry_flag="$2"
+            local smoke_flag="$3"
+            python scripts/landing_s3_deploy.py \
+              --mode "$mode" \
+              --source-dir landing \
+              --bucket "$S3_BUCKET_ASSET_STORAGE" \
+              --base-prefix "$LANDING_S3_BASE_PREFIX" \
+              --branch "$BRANCH_NAME" \
+              --sha "$FULL_SHA" \
+              $dry_flag \
+              $smoke_flag
+          }
+
+          run_promote_mode() {
+            local mode="$1"
+            local release_sha="$2"
+            local dry_flag="$3"
+            local smoke_flag="$4"
+            python scripts/landing_s3_deploy.py \
+              --mode "$mode" \
+              --bucket "$S3_BUCKET_ASSET_STORAGE" \
+              --base-prefix "$LANDING_S3_BASE_PREFIX" \
+              --release-sha "$release_sha" \
+              $dry_flag \
+              $smoke_flag
+          }
+
+          case "$MODE" in
+            preview)
+              run_sync_mode preview "--dry-run" ""
+              run_sync_mode preview "" "--smoke"
+              ;;
+            release)
+              run_sync_mode release "--dry-run" ""
+              run_sync_mode release "" "--smoke"
+              ;;
+            release_then_promote)
+              run_sync_mode release "--dry-run" ""
+              run_sync_mode release "" "--smoke"
+              run_promote_mode promote "$FULL_SHA" "--dry-run" ""
+              run_promote_mode promote "$FULL_SHA" "" "--smoke"
+              ;;
+            promote|rollback)
+              if [ -z "${RELEASE_SHA_INPUT:-}" ]; then
+                echo "release_sha is required for mode=$MODE"
+                exit 1
+              fi
+              run_promote_mode "$MODE" "$RELEASE_SHA_INPUT" "--dry-run" ""
+              run_promote_mode "$MODE" "$RELEASE_SHA_INPUT" "" "--smoke"
+              ;;
+            *)
+              echo "Unsupported resolved mode: $MODE"
+              exit 1
+              ;;
+          esac
+
+      - name: Deployment summary
+        env:
+          MODE: ${{ steps.resolve.outputs.mode }}
+          BRANCH_NAME: ${{ steps.resolve.outputs.branch_name }}
+          SHORT_SHA: ${{ steps.resolve.outputs.short_sha }}
+          FULL_SHA: ${{ steps.resolve.outputs.full_sha }}
+        run: |
+          set -euo pipefail
+          {
+            echo "# Landing deploy"
+            echo
+            echo "- mode: $MODE"
+            echo "- branch: $BRANCH_NAME"
+            echo "- short_sha: $SHORT_SHA"
+            echo "- full_sha: $FULL_SHA"
+            echo "- bucket: $S3_BUCKET_ASSET_STORAGE"
+            echo "- base_prefix: $LANDING_S3_BASE_PREFIX"
+          } >> "$GITHUB_STEP_SUMMARY"
