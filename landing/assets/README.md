@@ -11,11 +11,12 @@ Export the following images from Figma at **@2x PNG** before deploying.
 | `phone-cta-2.png` | CTA | Right phone |
 | `artists-avatars.png` | Social proof | Stacked avatars |
 | `labels-logos.png` | Social proof | Label / partner logos |
-| `video-hiphop.png` | Examples | Hip-hop video thumb (9:16) |
-| `video-pop.png` | Examples | Pop video thumb |
-| `video-rock.png` | Examples | Rock video thumb |
-| `video-alt.png` | Examples | Alternative video thumb |
-| `video-soundcloud.png` | Examples | SoundCloud video thumb |
+| `video-hiphop.mp4` | Examples | Hip-hop video loop |
+| `video-pop.mp4` | Examples | Pop video loop |
+| `video-rock.mp4` | Examples | Rock video loop |
+| `video-alt.mp4` | Examples | Alternative video loop |
+| `video-soundcloud.mp4` | Examples | SoundCloud video loop |
+| `video-*.png` | Examples | Poster/fallback image for each video |
 
 **SVG icons** (`logo.svg`, `tg-icon.svg`, `ig-icon.svg`, `vk-icon.svg`) are already created.
 

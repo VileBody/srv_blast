@@ -603,16 +603,17 @@ a    { text-decoration: none; color: inherit; }
 .example-slide {
   width: 100%;
   aspect-ratio: 9/16;
-  background-color: #fff;
+  background-color: #0b0620;
   border-radius: var(--r15);
   overflow: hidden;
   position: relative;
   border: 1px solid rgba(95,66,185,.2);
 }
-.example-slide img {
+.example-media {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  display: block;
 }
 
 /* Figma: views + ссылка = 14px gradient text, inside slide */

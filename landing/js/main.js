@@ -49,7 +49,7 @@
       const target = document.querySelector(targetId);
       if (!target) return;
       e.preventDefault();
-      const navHeight = document.querySelector('.navbar-wrapper')?.offsetHeight || 0;
+      const navHeight = document.querySelector('.navbar-wrap')?.offsetHeight || 0;
       const top = target.getBoundingClientRect().top + window.scrollY - navHeight - 16;
       window.scrollTo({ top, behavior: 'smooth' });
     });
@@ -78,5 +78,40 @@
   const styleEl = document.createElement('style');
   styleEl.textContent = `.navbar-links a.active { opacity: 1; color: #A080FF; }`;
   document.head.appendChild(styleEl);
+
+  /* ─── Example videos autoplay only in viewport ───────────── */
+  const exampleVideos = Array.from(document.querySelectorAll('.example-video'));
+  if (exampleVideos.length) {
+    const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    const safePlay = (video) => {
+      if (!video) return;
+      if (prefersReducedMotion) return;
+      const promise = video.play();
+      if (promise && typeof promise.catch === 'function') {
+        promise.catch(() => {});
+      }
+    };
+
+    if (!('IntersectionObserver' in window)) {
+      exampleVideos.forEach(safePlay);
+    } else {
+      const videoObserver = new IntersectionObserver((entries) => {
+        entries.forEach((entry) => {
+          const video = entry.target;
+          if (!(video instanceof HTMLVideoElement)) return;
+          if (entry.isIntersecting) {
+            safePlay(video);
+          } else {
+            video.pause();
+          }
+        });
+      }, { threshold: 0.5 });
+
+      exampleVideos.forEach((video) => {
+        videoObserver.observe(video);
+      });
+    }
+  }
 
 })();
