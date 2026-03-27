@@ -135,6 +135,29 @@ services:
       - orchestrator-api
     restart: unless-stopped
 
+  tg-bot-public:
+    build:
+      context: .
+      dockerfile: Dockerfile.tg-bot-public
+    container_name: tg-bot-public
+    env_file:
+      - .env
+    environment:
+      TG_BOT_TOKEN: ${TG_BOT_PUBLIC_TOKEN}
+      TG_STATE_PREFIX: blast:tg:public:chat_state
+      SUBSCRIPTION_CHANNEL: ${SUBSCRIPTION_CHANNEL:-@impulsemarketing}
+      ORCHESTRATOR_PUBLIC_URL: ${ORCHESTRATOR_PUBLIC_URL:-http://orchestrator-api:8000}
+      BOT_POLL_INTERVAL_S: ${BOT_POLL_INTERVAL_S:-5}
+      BOT_TMP_DIR: ${BOT_TMP_DIR:-/app/work/tg_tmp_public}
+      BOT_MAX_AUDIO_MB: ${BOT_MAX_AUDIO_MB:-5}
+    volumes:
+      - ./work:/app/work
+    command: >
+      bash -lc "python -m services.tg_bot_public.app"
+    depends_on:
+      - orchestrator-api
+    restart: unless-stopped
+
   minio:
     image: minio/minio:latest
     container_name: minio
