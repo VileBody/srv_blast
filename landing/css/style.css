@@ -67,6 +67,20 @@ img  { display: block; max-width: 100%; }
    ANIMATIONS & INTERACTIONS
    ════════════════════════════════════════════════════════════ */
 
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(24px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.load-fade {
+  opacity: 0;
+  animation: fadeUp 0.7s ease forwards;
+}
+.load-fade-d1 { animation-delay: 0.05s; }
+.load-fade-d2 { animation-delay: 0.15s; }
+.load-fade-d3 { animation-delay: 0.25s; }
+.load-fade-d4 { animation-delay: 0.35s; }
+.load-fade-d5 { animation-delay: 0.45s; }
+
 /* 1. Reveal on scroll */
 .reveal {
   opacity: 0;
@@ -1454,7 +1468,7 @@ a    { text-decoration: none; color: inherit; }
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  gap: 0;
+  gap: 16px;
 }
 .footer-legal .footer-social {
   align-items: flex-end;
@@ -1473,7 +1487,6 @@ a    { text-decoration: none; color: inherit; }
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
-  margin-bottom: 20px;
 }
 .footer-legal a {
   display: block;
@@ -1484,11 +1497,101 @@ a    { text-decoration: none; color: inherit; }
   -webkit-text-fill-color: transparent;
   background-clip: text;
   opacity: 0.6;
-  margin-top: 15px;
   text-align: right;
   transition: opacity .2s;
 }
 .footer-legal a:hover { opacity: 1; }
+
+.legal-popup {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity .3s, visibility .3s;
+}
+.legal-popup.is-open {
+  opacity: 1;
+  visibility: visible;
+}
+.legal-popup-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, .75);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+.legal-popup-body {
+  position: relative;
+  width: 90%;
+  max-width: 720px;
+  max-height: 85vh;
+  background: #1a1528;
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 24px;
+  padding: 48px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255,255,255,.15) transparent;
+}
+.legal-popup-body::-webkit-scrollbar { width: 6px; }
+.legal-popup-body::-webkit-scrollbar-track { background: transparent; }
+.legal-popup-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,.15); border-radius: 3px; }
+.legal-popup-close {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  width: 36px;
+  height: 36px;
+  border: none;
+  background: rgba(255,255,255,.08);
+  border-radius: 50%;
+  color: #fff;
+  font-size: 16px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background .2s;
+}
+.legal-popup-close:hover { background: rgba(255,255,255,.16); }
+.legal-popup-body h2 {
+  font-size: 28px;
+  font-weight: 600;
+  color: #fff;
+  margin-bottom: 24px;
+}
+.legal-popup-body h3 {
+  font-size: 18px;
+  font-weight: 600;
+  color: rgba(255,255,255,.9);
+  margin-top: 24px;
+  margin-bottom: 8px;
+}
+.legal-popup-body h4 {
+  font-size: 16px;
+  font-weight: 600;
+  color: rgba(255,255,255,.8);
+  margin-top: 16px;
+  margin-bottom: 6px;
+}
+.legal-popup-content p {
+  font-size: 15px;
+  font-weight: 350;
+  line-height: 1.6;
+  color: rgba(255,255,255,.6);
+  margin-bottom: 12px;
+}
+.legal-popup-content a {
+  color: #9B7AFF;
+  text-decoration: none;
+  transition: opacity .2s;
+}
+.legal-popup-content a:hover { opacity: .7; }
+.legal-popup-content strong { color: rgba(255,255,255,.85); }
 
 /* ════════════════════════════════════════════════════════════
    RESPONSIVE ≤ 1280px
@@ -1943,4 +2046,9 @@ a    { text-decoration: none; color: inherit; }
   .footer-social-label { font-size: 14px; }
   .footer-social a { font-size: 14px; }
   .footer-legal .footer-social { align-items: flex-start; }
+  .legal-popup-body { padding: 32px 20px; width: 95%; }
+  .legal-popup-body h2 { font-size: 22px; margin-bottom: 16px; }
+  .legal-popup-body h3 { font-size: 16px; }
+  .legal-popup-body h4 { font-size: 14px; }
+  .legal-popup-content p { font-size: 13px; }
 }

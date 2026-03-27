@@ -156,9 +156,10 @@
   }
 
   /* ─── 1. Reveal on scroll ────────────────────────────────── */
-  const revealTargets = document.querySelectorAll(
+  const autoRevealTargets = document.querySelectorAll(
     '.section-head, .feat-col, .example-col, .steps-card, .cta-head, .cta-card'
   );
+  const manualRevealTargets = document.querySelectorAll('.reveal');
   const revealObs = new IntersectionObserver((entries) => {
     entries.forEach(entry => {
       if (entry.isIntersecting) {
@@ -167,9 +168,12 @@
       }
     });
   }, { threshold: 0.12 });
-  revealTargets.forEach((el, i) => {
+  autoRevealTargets.forEach((el, i) => {
     el.classList.add('reveal');
     el.style.transitionDelay = (i % 3) * 80 + 'ms';
+    revealObs.observe(el);
+  });
+  manualRevealTargets.forEach((el) => {
     revealObs.observe(el);
   });
 
@@ -351,5 +355,29 @@
     modalBackdrop.addEventListener('click', closeVideoModal);
     document.addEventListener('keydown', e => { if (e.key === 'Escape') closeVideoModal(); });
   }
+
+  /* ─── Legal popups ──────────────────────────────────────── */
+  document.querySelectorAll('[data-popup]').forEach(link => {
+    link.addEventListener('click', e => {
+      e.preventDefault();
+      const popup = document.getElementById(link.dataset.popup);
+      if (popup) {
+        popup.classList.add('is-open');
+        popup.setAttribute('aria-hidden', 'false');
+        document.body.style.overflow = 'hidden';
+      }
+    });
+  });
+
+  document.querySelectorAll('.legal-popup').forEach(popup => {
+    const close = () => {
+      popup.classList.remove('is-open');
+      popup.setAttribute('aria-hidden', 'true');
+      document.body.style.overflow = '';
+    };
+    popup.querySelector('.legal-popup-close')?.addEventListener('click', close);
+    popup.querySelector('.legal-popup-backdrop')?.addEventListener('click', close);
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') close(); });
+  });
 
 })();
