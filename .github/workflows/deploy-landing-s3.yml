@@ -8,6 +8,7 @@ on:
       - "landing/**"
       - "scripts/landing_validate.py"
       - "scripts/landing_s3_deploy.py"
+      - "scripts/landing_public_check.py"
       - ".github/workflows/deploy-landing-s3.yml"
   workflow_dispatch:
     inputs:
@@ -44,6 +45,8 @@ jobs:
     env:
       LANDING_S3_BASE_PREFIX: ${{ vars.LANDING_S3_BASE_PREFIX }}
       LANDING_MAIN_BRANCH: ${{ vars.LANDING_MAIN_BRANCH }}
+      LANDING_PUBLIC_URL: ${{ vars.LANDING_PUBLIC_URL }}
+      LANDING_PUBLIC_URL_WWW: ${{ vars.LANDING_PUBLIC_URL_WWW }}
       S3_ENDPOINT_URL: ${{ secrets.S3_ENDPOINT_URL }}
       S3_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
       S3_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
@@ -191,6 +194,25 @@ jobs:
               exit 1
               ;;
           esac
+
+      - name: Public landing smoke
+        env:
+          MODE: ${{ steps.resolve.outputs.mode }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$MODE" != "release_then_promote" && "$MODE" != "promote" && "$MODE" != "rollback" ]]; then
+            echo "[landing-public-check] skip: mode=$MODE does not target live"
+            exit 0
+          fi
+
+          URL_MAIN="${LANDING_PUBLIC_URL:-https://blast808.com}"
+          URL_WWW="${LANDING_PUBLIC_URL_WWW:-https://www.blast808.com}"
+
+          python scripts/landing_public_check.py \
+            --url "$URL_MAIN" \
+            --url "$URL_WWW" \
+            --contains 'href="https://www.instagram.com/impulsemarketing/"'
 
       - name: Deployment summary
         env:

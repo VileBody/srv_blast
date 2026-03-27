@@ -40,6 +40,8 @@ Required repository **variables**:
 
 - `LANDING_S3_BASE_PREFIX` (example: `landing/blast808`)
 - `LANDING_MAIN_BRANCH` (example: `main`)
+- `LANDING_PUBLIC_URL` (optional, default: `https://blast808.com`)
+- `LANDING_PUBLIC_URL_WWW` (optional, default: `https://www.blast808.com`)
 
 ## Validation and deploy scripts
 
@@ -54,6 +56,10 @@ Required repository **variables**:
   - performs 1:1 sync (upload/update + delete extra keys)
   - sets `Content-Type` and `Cache-Control`
   - can run dry-run and smoke checks (presigned HTTP GET for index + assets)
+
+- `scripts/landing_public_check.py`
+  - verifies live public domains after promote/rollback
+  - fails if required marker is missing from returned HTML
 
 ## One-time Timeweb DNS/TLS setup
 
