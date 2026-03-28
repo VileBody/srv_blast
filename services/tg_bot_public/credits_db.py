@@ -90,8 +90,6 @@ CREATE TABLE IF NOT EXISTS payments (
 CREATE INDEX IF NOT EXISTS idx_pay_tg_id       ON payments(tg_id);
 CREATE INDEX IF NOT EXISTS idx_pay_status      ON payments(status);
 CREATE INDEX IF NOT EXISTS idx_pay_payment_id  ON payments(payment_id);
-CREATE INDEX IF NOT EXISTS idx_pay_utm_source  ON payments(utm_source);
-CREATE INDEX IF NOT EXISTS idx_pay_utm_campaign ON payments(utm_campaign);
 
 CREATE TABLE IF NOT EXISTS utm_touches (
     id             BIGSERIAL PRIMARY KEY,
@@ -190,6 +188,8 @@ class CreditsDB:
         await conn.execute("ALTER TABLE payments ADD COLUMN IF NOT EXISTS utm_content TEXT NOT NULL DEFAULT ''")
         await conn.execute("ALTER TABLE payments ADD COLUMN IF NOT EXISTS utm_term TEXT NOT NULL DEFAULT ''")
         await conn.execute("ALTER TABLE payments ADD COLUMN IF NOT EXISTS utm_payload TEXT NOT NULL DEFAULT ''")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_pay_utm_source ON payments(utm_source)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_pay_utm_campaign ON payments(utm_campaign)")
 
         await conn.execute("CREATE TABLE IF NOT EXISTS utm_touches ("
                            "id BIGSERIAL PRIMARY KEY,"
