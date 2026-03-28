@@ -46,6 +46,30 @@ jobs:
           GITHUB_TOKEN_FALLBACK: ${{ github.token }}
         run: |
           set -euo pipefail
+          AUTH_TOKEN="${GIT_AUTH_TOKEN:-${GITHUB_TOKEN_FALLBACK:-}}"
+          if [ -z "${AUTH_TOKEN:-}" ]; then
+            echo "GitHub token is missing for non-interactive deploy."
+            exit 1
+          fi
+
+          git_run() {
+            git -C "$REPO_DIR" \
+              -c "url.https://x-access-token:${AUTH_TOKEN}@github.com/.insteadof=git@github.com:" \
+              -c "url.https://x-access-token:${AUTH_TOKEN}@github.com/.insteadof=ssh://git@github.com/" \
+              -c "url.https://x-access-token:${AUTH_TOKEN}@github.com/.insteadof=https://github.com/" \
+              "$@"
+          }
+
+          # Force repo state to exact remote branch tip on the self-hosted runner.
+          # This prevents ff-only pull failures when local commits drift on server.
+          git_run fetch origin "$BRANCH"
+          if git -C "$REPO_DIR" show-ref --verify --quiet "refs/heads/$BRANCH"; then
+            git_run checkout -f "$BRANCH"
+          else
+            git_run checkout -B "$BRANCH" "origin/$BRANCH"
+          fi
+          git_run reset --hard "origin/$BRANCH"
+
           # Bootstrap for legacy server states where this runtime file was tracked and modified.
           if git -C "$REPO_DIR" ls-files --error-unmatch data/footage_inventory_selected.json >/dev/null 2>&1; then
             git -C "$REPO_DIR" restore --staged --worktree -- data/footage_inventory_selected.json || true
