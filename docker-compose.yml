@@ -179,7 +179,7 @@ services:
     volumes:
       - ./work:/app/work
     ports:
-      - "127.0.0.1:18080:${ADMIN_PANEL_PORT:-8080}"
+      - "127.0.0.1:${TG_BOT_PUBLIC_ADMIN_BIND_PORT:-18081}:${ADMIN_PANEL_PORT:-8080}"
     command: >
       bash -lc "python -m services.tg_bot_public.app"
     depends_on:
