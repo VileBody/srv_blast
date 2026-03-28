@@ -1,9 +1,9 @@
-name: Deploy Current Branch
+name: Deploy Main
 
 on:
   push:
     branches:
-      - "**"
+      - "main"
   workflow_dispatch:
     inputs:
       branch:
