@@ -61,6 +61,7 @@ jobs:
           LANDING_NGINX_MAIN_BRANCH: ${{ vars.LANDING_NGINX_MAIN_BRANCH }}
           LANDING_NGINX_DOCROOT: ${{ vars.LANDING_NGINX_DOCROOT }}
           LANDING_NGINX_RELOAD_CMD: ${{ vars.LANDING_NGINX_RELOAD_CMD }}
+          LANDING_NGINX_SYNC_MODE: ${{ vars.LANDING_NGINX_SYNC_MODE }}
         run: |
           set -euo pipefail
           bash "$REPO_DIR/infra/runners/deploy_landing_to_nginx.sh" "$BRANCH"

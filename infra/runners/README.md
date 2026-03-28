@@ -58,10 +58,12 @@ Workflow использует эту переменную, чтобы выпол
 - `LANDING_NGINX_MAIN_ONLY=true` (рекомендуется)
 - `LANDING_NGINX_MAIN_BRANCH=main`
 - `LANDING_NGINX_RELOAD_CMD=sudo nginx -t && sudo systemctl reload nginx` (опционально)
+- `LANDING_NGINX_SYNC_MODE=auto` (или `docker-host`, если runner работает в Docker)
 
 Поведение:
 
 - синк `REPO_DIR/landing/` -> `LANDING_NGINX_DOCROOT` через `rsync -a --delete`
+- `sync_mode=auto` пытается использовать `docker-host`, если доступен `/var/run/docker.sock`
 - исключает `*.rar` и `tmp/`
 - по умолчанию обновляет только `main`
 - проверяет маркер в `index.html` после синка
