@@ -51,3 +51,16 @@ jobs:
             git -C "$REPO_DIR" restore --staged --worktree -- data/footage_inventory_selected.json || true
           fi
           bash "$REPO_DIR/infra/runners/deploy_branch.sh" "$BRANCH"
+
+      - name: Deploy Landing To Nginx (optional)
+        env:
+          REPO_DIR: ${{ vars.BLAST_REPO_DIR }}
+          BRANCH: ${{ inputs.branch != '' && inputs.branch || github.ref_name }}
+          LANDING_NGINX_DEPLOY_ENABLED: ${{ vars.LANDING_NGINX_DEPLOY_ENABLED }}
+          LANDING_NGINX_MAIN_ONLY: ${{ vars.LANDING_NGINX_MAIN_ONLY }}
+          LANDING_NGINX_MAIN_BRANCH: ${{ vars.LANDING_NGINX_MAIN_BRANCH }}
+          LANDING_NGINX_DOCROOT: ${{ vars.LANDING_NGINX_DOCROOT }}
+          LANDING_NGINX_RELOAD_CMD: ${{ vars.LANDING_NGINX_RELOAD_CMD }}
+        run: |
+          set -euo pipefail
+          bash "$REPO_DIR/infra/runners/deploy_landing_to_nginx.sh" "$BRANCH"

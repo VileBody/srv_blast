@@ -44,6 +44,28 @@ Workflow использует эту переменную, чтобы выпол
    - `git pull --ff-only`
    - `docker compose up -d --build`
 
+## 3.1) Опционально: отдельный деплой `landing/` в Ubuntu nginx
+
+Если прод-домен обслуживается локальным nginx (а не S3/CDN), можно включить отдельный sync после deploy:
+
+- Скрипт: `infra/runners/deploy_landing_to_nginx.sh`
+- Workflow step: `.github/workflows/deploy-current-branch.yml` (`Deploy Landing To Nginx (optional)`)
+
+Нужные `Repository variables`:
+
+- `LANDING_NGINX_DEPLOY_ENABLED=true`
+- `LANDING_NGINX_DOCROOT=/var/www/blast808.com` (пример)
+- `LANDING_NGINX_MAIN_ONLY=true` (рекомендуется)
+- `LANDING_NGINX_MAIN_BRANCH=main`
+- `LANDING_NGINX_RELOAD_CMD=sudo nginx -t && sudo systemctl reload nginx` (опционально)
+
+Поведение:
+
+- синк `REPO_DIR/landing/` -> `LANDING_NGINX_DOCROOT` через `rsync -a --delete`
+- исключает `*.rar` и `tmp/`
+- по умолчанию обновляет только `main`
+- проверяет маркер в `index.html` после синка
+
 ## 4) Web UI логов по всем контейнерам (Dozzle + пароль)
 
 На сервере:
