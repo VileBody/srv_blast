@@ -17,21 +17,190 @@ log = logging.getLogger(__name__)
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _STATIC_INDEX = _REPO_ROOT / "data" / "static_assets_index.json"
 _OVERRIDES_PATH = _REPO_ROOT / "data" / "asset_tag_overrides.json"
+_VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm"}
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 _assets_cache: Optional[List[Dict[str, Any]]] = None
+_index_meta_by_triplet_cache: Optional[Dict[tuple[str, str, str], Dict[str, Any]]] = None
+_index_meta_by_file_name_cache: Optional[Dict[str, List[Dict[str, Any]]]] = None
+
+
+def _normalize_prefix(raw: str) -> str:
+    return str(raw or "").strip().strip("/")
+
+
+def _asset_ui_source_prefix() -> str:
+    """
+    React Asset UI must browse only one concrete top-level S3 folder.
+    By default we pin this to the first-level `pinterest_collection`.
+
+    Override via ASSET_UI_SOURCE_PREFIX if needed.
+    """
+    explicit = _normalize_prefix(os.getenv("ASSET_UI_SOURCE_PREFIX", ""))
+    if explicit:
+        return explicit
+
+    s3_prefix = _normalize_prefix(os.getenv("S3_ASSET_PREFIX", ""))
+    if s3_prefix:
+        # Keep only first-level folder from active S3 prefix.
+        return s3_prefix.split("/", 1)[0]
+    return "pinterest_collection"
+
+
+def _load_assets_index_metadata() -> tuple[Dict[tuple[str, str, str], Dict[str, Any]], Dict[str, List[Dict[str, Any]]]]:
+    global _index_meta_by_triplet_cache
+    global _index_meta_by_file_name_cache
+
+    if _index_meta_by_triplet_cache is not None and _index_meta_by_file_name_cache is not None:
+        return _index_meta_by_triplet_cache, _index_meta_by_file_name_cache
+
+    idx_path = Path(os.getenv("STATIC_ASSETS_INDEX_JSON", str(_STATIC_INDEX)))
+    data = json.loads(idx_path.read_text(encoding="utf-8"))
+    assets = data.get("assets", [])
+
+    by_triplet: Dict[tuple[str, str, str], Dict[str, Any]] = {}
+    by_file_name: Dict[str, List[Dict[str, Any]]] = {}
+    for raw in assets:
+        if not isinstance(raw, dict):
+            continue
+        file_name = str(raw.get("file_name") or "").strip()
+        genre = str(raw.get("genre") or "").strip()
+        tag = str(raw.get("tag") or "").strip()
+        if not file_name:
+            continue
+
+        if genre and tag:
+            by_triplet[(genre.lower(), tag.lower(), file_name)] = raw
+        by_file_name.setdefault(file_name, []).append(raw)
+
+    _index_meta_by_triplet_cache = by_triplet
+    _index_meta_by_file_name_cache = by_file_name
+    return by_triplet, by_file_name
+
+
+def _list_s3_video_keys(*, bucket: str, prefix: str) -> List[str]:
+    from src.storage.s3 import list_s3_objects
+
+    keys: List[str] = []
+    continuation_token: Optional[str] = None
+    normalized_prefix = _normalize_prefix(prefix)
+    prefix_for_list = f"{normalized_prefix}/" if normalized_prefix else ""
+
+    while True:
+        page = list_s3_objects(
+            bucket,
+            prefix=prefix_for_list,
+            continuation_token=continuation_token,
+            max_keys=1000,
+            delimiter="",
+        )
+        for obj in page.get("objects") or []:
+            key = str(obj.get("key") or "").strip().lstrip("/")
+            if not key or key.endswith("/"):
+                continue
+            if Path(key).suffix.lower() not in _VIDEO_EXTENSIONS:
+                continue
+            keys.append(key)
+
+        continuation_token = page.get("next_continuation_token")
+        if not page.get("is_truncated") or not continuation_token:
+            break
+
+    return keys
+
+
+def _safe_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _asset_from_s3_key(
+    key: str,
+    *,
+    source_prefix: str,
+    meta_by_triplet: Dict[tuple[str, str, str], Dict[str, Any]],
+    meta_by_file_name: Dict[str, List[Dict[str, Any]]],
+) -> Dict[str, Any]:
+    normalized_key = str(key).strip().lstrip("/")
+    source_prefix_norm = _normalize_prefix(source_prefix)
+    source_prefix_slash = f"{source_prefix_norm}/" if source_prefix_norm else ""
+
+    rel = normalized_key
+    if source_prefix_slash and normalized_key.startswith(source_prefix_slash):
+        rel = normalized_key[len(source_prefix_slash):]
+    parts = [p for p in rel.split("/") if p]
+
+    file_name = parts[-1] if parts else Path(normalized_key).name
+    genre = parts[-3] if len(parts) >= 3 else ""
+    tag = parts[-2] if len(parts) >= 2 else ""
+
+    meta = meta_by_triplet.get((genre.lower(), tag.lower(), file_name))
+    if meta is None:
+        candidates = meta_by_file_name.get(file_name) or []
+        if len(candidates) == 1:
+            meta = candidates[0]
+
+    item: Dict[str, Any] = {
+        "file_name": file_name,
+        "genre": genre,
+        "tag": tag,
+        "src_w": _safe_int((meta or {}).get("src_w"), 0),
+        "src_h": _safe_int((meta or {}).get("src_h"), 0),
+        "duration_sec": _safe_float((meta or {}).get("duration_sec"), 0.0),
+        "s3_key": normalized_key,
+    }
+    if meta and meta.get("dominant_color"):
+        item["dominant_color"] = meta.get("dominant_color")
+    if meta and isinstance(meta.get("palette_bins"), list):
+        item["palette_bins"] = meta.get("palette_bins")
+    return item
 
 
 def _load_assets() -> List[Dict[str, Any]]:
     global _assets_cache
     if _assets_cache is not None:
         return _assets_cache
-    idx_path = Path(os.getenv("STATIC_ASSETS_INDEX_JSON", str(_STATIC_INDEX)))
-    data = json.loads(idx_path.read_text(encoding="utf-8"))
-    _assets_cache = data.get("assets", [])
+
+    bucket = str(os.getenv("S3_BUCKET_ASSET_STORAGE") or "").strip()
+    if not bucket:
+        idx_path = Path(os.getenv("STATIC_ASSETS_INDEX_JSON", str(_STATIC_INDEX)))
+        data = json.loads(idx_path.read_text(encoding="utf-8"))
+        _assets_cache = data.get("assets", [])
+        return _assets_cache
+
+    source_prefix = _asset_ui_source_prefix()
+    try:
+        meta_by_triplet, meta_by_file_name = _load_assets_index_metadata()
+        keys = _list_s3_video_keys(bucket=bucket, prefix=source_prefix)
+    except Exception as e:  # pragma: no cover - surfaced via endpoint error
+        raise RuntimeError(
+            "Failed to load asset list from "
+            f"s3://{bucket}/{source_prefix}"
+        ) from e
+
+    items = [
+        _asset_from_s3_key(
+            key,
+            source_prefix=source_prefix,
+            meta_by_triplet=meta_by_triplet,
+            meta_by_file_name=meta_by_file_name,
+        )
+        for key in keys
+    ]
+    items.sort(key=lambda x: str(x.get("s3_key") or x.get("file_name") or ""))
+    _assets_cache = items
     return _assets_cache
 
 
@@ -52,11 +221,33 @@ def _save_overrides(overrides: Dict[str, Any]) -> None:
 
 
 def _s3_key_for_asset(asset: Dict[str, Any]) -> str:
+    explicit_key = str(asset.get("s3_key") or "").strip().lstrip("/")
+    if explicit_key:
+        return explicit_key
     prefix = (os.getenv("S3_ASSET_PREFIX") or "pinterest_collection").strip("/")
     genre = asset.get("genre", "")
     tag = asset.get("tag", "")
     name = asset.get("file_name", "")
     return f"{prefix}/{genre}/{tag}/{name}"
+
+
+def _override_key(*, file_name: str, s3_key: Optional[str]) -> str:
+    clean_key = str(s3_key or "").strip().lstrip("/")
+    if clean_key:
+        return f"s3:{clean_key}"
+    return file_name
+
+
+def _find_asset(assets: List[Dict[str, Any]], *, file_name: str, s3_key: Optional[str]) -> Optional[Dict[str, Any]]:
+    clean_key = str(s3_key or "").strip().lstrip("/")
+    if clean_key:
+        for a in assets:
+            if str(a.get("s3_key") or "").strip().lstrip("/") == clean_key:
+                return a
+    for a in assets:
+        if a.get("file_name") == file_name:
+            return a
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -107,7 +298,10 @@ def create_asset_router(*, prefix: str = "/asset-ui/api") -> APIRouter:
         # Filter out excluded
         filtered = []
         for a in assets:
-            ov = overrides.get(a["file_name"], {})
+            ov = overrides.get(
+                _override_key(file_name=str(a.get("file_name") or ""), s3_key=str(a.get("s3_key") or "") or None),
+                {},
+            ) or overrides.get(str(a.get("file_name") or ""), {})
             if ov.get("excluded"):
                 continue
             if genre and a.get("genre", "").lower() != genre.lower():
@@ -132,27 +326,26 @@ def create_asset_router(*, prefix: str = "/asset-ui/api") -> APIRouter:
 
     # --- single asset ---
     @router.get("/assets/{file_name}")
-    def get_asset(file_name: str) -> Dict[str, Any]:
+    def get_asset(file_name: str, s3_key: Optional[str] = Query(None)) -> Dict[str, Any]:
         assets = _load_assets()
         overrides = _load_overrides()
-        for a in assets:
-            if a["file_name"] == file_name:
-                item = {**a}
-                ov = overrides.get(file_name, {})
-                if ov:
-                    item["overrides"] = ov
-                return item
+        asset = _find_asset(assets, file_name=file_name, s3_key=s3_key)
+        if asset:
+            item = {**asset}
+            ov = overrides.get(
+                _override_key(file_name=file_name, s3_key=str(asset.get("s3_key") or "") or s3_key),
+                {},
+            ) or overrides.get(file_name, {})
+            if ov:
+                item["overrides"] = ov
+            return item
         raise HTTPException(status_code=404, detail="Asset not found")
 
     # --- video presigned URL ---
     @router.get("/assets/{file_name}/video-url")
-    def get_video_url(file_name: str) -> Dict[str, str]:
+    def get_video_url(file_name: str, s3_key: Optional[str] = Query(None)) -> Dict[str, str]:
         assets = _load_assets()
-        asset = None
-        for a in assets:
-            if a["file_name"] == file_name:
-                asset = a
-                break
+        asset = _find_asset(assets, file_name=file_name, s3_key=s3_key)
         if not asset:
             raise HTTPException(status_code=404, detail="Asset not found")
 
@@ -171,33 +364,70 @@ def create_asset_router(*, prefix: str = "/asset-ui/api") -> APIRouter:
 
     # --- update tags ---
     @router.put("/assets/{file_name}/tags")
-    def update_tags(file_name: str, body: TagUpdateRequest) -> Dict[str, Any]:
-        # Verify asset exists
+    def update_tags(file_name: str, body: TagUpdateRequest, s3_key: Optional[str] = Query(None)) -> Dict[str, Any]:
         assets = _load_assets()
-        found = any(a["file_name"] == file_name for a in assets)
-        if not found:
+        asset = _find_asset(assets, file_name=file_name, s3_key=s3_key)
+        if not asset:
             raise HTTPException(status_code=404, detail="Asset not found")
 
         overrides = _load_overrides()
-        entry = overrides.get(file_name, {})
+        override_key = _override_key(file_name=file_name, s3_key=str(asset.get("s3_key") or "") or s3_key)
+        entry = overrides.get(override_key, {})
         entry["theme_assignments"] = [ta.model_dump() for ta in body.theme_assignments]
-        overrides[file_name] = entry
+        overrides[override_key] = entry
         _save_overrides(overrides)
-        return {"ok": True, "file_name": file_name, "overrides": entry}
+        return {"ok": True, "file_name": file_name, "s3_key": asset.get("s3_key"), "overrides": entry}
 
     # --- soft delete ---
     @router.delete("/assets/{file_name}")
-    def delete_asset(file_name: str) -> Dict[str, Any]:
+    def delete_asset(file_name: str, s3_key: Optional[str] = Query(None)) -> Dict[str, Any]:
+        global _assets_cache
+
         assets = _load_assets()
-        found = any(a["file_name"] == file_name for a in assets)
-        if not found:
+        asset = _find_asset(assets, file_name=file_name, s3_key=s3_key)
+        if not asset:
             raise HTTPException(status_code=404, detail="Asset not found")
 
+        resolved_s3_key = str(asset.get("s3_key") or s3_key or "").strip().lstrip("/")
+        trash_key: Optional[str] = None
+        if resolved_s3_key:
+            bucket = str(os.getenv("S3_BUCKET_ASSET_STORAGE") or "").strip()
+            if not bucket:
+                raise HTTPException(status_code=503, detail="S3 not configured")
+            trash_prefix = str(os.getenv("ASSET_UI_TRASH_PREFIX") or "").strip().strip("/")
+            if not trash_prefix:
+                raise HTTPException(status_code=503, detail="ASSET_UI_TRASH_PREFIX is not configured")
+            try:
+                from src.storage.s3 import S3ObjectNotFoundError, soft_delete_s3_object
+
+                trash_key = soft_delete_s3_object(
+                    bucket,
+                    resolved_s3_key,
+                    trash_prefix=trash_prefix,
+                )
+            except S3ObjectNotFoundError as e:
+                raise HTTPException(status_code=404, detail=str(e))
+            except HTTPException:
+                raise
+            except Exception as e:
+                log.error("Failed to soft-delete s3://%s/%s: %s", bucket, resolved_s3_key, e)
+                raise HTTPException(status_code=500, detail=f"Failed to soft-delete S3 object: {e}")
+
         overrides = _load_overrides()
-        entry = overrides.get(file_name, {})
+        override_key = _override_key(file_name=file_name, s3_key=resolved_s3_key or s3_key)
+        entry = overrides.get(override_key, {})
         entry["excluded"] = True
-        overrides[file_name] = entry
+        if trash_key:
+            entry["trash_key"] = trash_key
+        overrides[override_key] = entry
         _save_overrides(overrides)
-        return {"ok": True, "file_name": file_name, "excluded": True}
+        _assets_cache = None
+        return {
+            "ok": True,
+            "file_name": file_name,
+            "s3_key": resolved_s3_key or None,
+            "excluded": True,
+            "trash_key": trash_key,
+        }
 
     return router

@@ -31,7 +31,7 @@ export function AssetBrowser() {
   return (
     <div className="asset-browser">
       <div className="main-column">
-        <VideoPreview fileName={current?.file_name ?? null} />
+        <VideoPreview asset={current} />
         <NavigationBar
           index={index}
           total={total}

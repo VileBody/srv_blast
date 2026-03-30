@@ -1,5 +1,6 @@
 export interface Asset {
   file_name: string;
+  s3_key?: string;
   genre: string;
   tag: string;
   src_w: number;

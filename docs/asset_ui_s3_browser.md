@@ -12,6 +12,7 @@ Required:
 - `S3_SECRET_ACCESS_KEY`
 - `S3_REGION`
 - `S3_BUCKET_ASSET_STORAGE`
+- `ASSET_UI_SOURCE_PREFIX` (optional; defaults to first-level folder from `S3_ASSET_PREFIX`, usually `pinterest_collection`)
 - `ASSET_UI_PORT`
 - `ASSET_UI_UPLOAD_MAX_MB`
 - `ASSET_UI_TRASH_PREFIX`

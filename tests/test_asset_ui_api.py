@@ -142,6 +142,115 @@ def test_update_tags_and_delete_persist_overrides(tmp_path: Path, monkeypatch) -
     assert stored_overrides["clip.mp4"]["excluded"] is True  # type: ignore[index]
 
 
+def test_assets_list_reads_only_first_level_pinterest_collection_prefix(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from src.storage import s3 as s3_storage
+
+    monkeypatch.setattr(asset_routes, "_assets_cache", None)
+    monkeypatch.setenv("S3_BUCKET_ASSET_STORAGE", "asset-bucket")
+    monkeypatch.setenv("S3_ASSET_PREFIX", "pinterest_collection/pins2_1to1_20260323")
+
+    calls: list[dict[str, object]] = []
+
+    def _fake_list(
+        bucket: str,
+        *,
+        prefix: str = "",
+        continuation_token: str | None = None,
+        max_keys: int = 200,
+        delimiter: str = "/",
+    ) -> dict[str, object]:
+        calls.append(
+            {
+                "bucket": bucket,
+                "prefix": prefix,
+                "continuation_token": continuation_token,
+                "max_keys": max_keys,
+                "delimiter": delimiter,
+            }
+        )
+        return {
+            "objects": [
+                {"key": "pinterest_collection/Rock/dark/clip-a.mp4"},
+                {"key": "pinterest_collection/Hip-Hop/night/clip-b.mp4"},
+                {"key": "pinterest_collection/Hip-Hop/night/readme.txt"},
+            ],
+            "prefixes": [],
+            "next_continuation_token": None,
+            "is_truncated": False,
+        }
+
+    monkeypatch.setattr(s3_storage, "list_s3_objects", _fake_list)
+
+    client = _make_app(tmp_path, monkeypatch)
+    res = client.get("/api/assets", params={"page": 1, "per_page": 50})
+    assert res.status_code == 200
+    data = res.json()
+    assert data["total"] == 2
+    assert data["items"][0]["s3_key"].startswith("pinterest_collection/")
+    assert data["items"][1]["s3_key"].startswith("pinterest_collection/")
+    assert calls[0]["prefix"] == "pinterest_collection/"
+    assert calls[0]["delimiter"] == ""
+
+
+def test_delete_asset_soft_deletes_s3_object_when_s3_key_present(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    assets = [
+        {
+            "file_name": "clip.mp4",
+            "genre": "rock",
+            "tag": "night",
+            "s3_key": "pinterest_collection/rock/night/clip.mp4",
+        }
+    ]
+    stored_overrides: dict[str, object] = {}
+
+    monkeypatch.setattr(asset_routes, "_assets_cache", None)
+    monkeypatch.setattr(asset_routes, "_load_assets", lambda: assets)
+    monkeypatch.setattr(asset_routes, "_load_overrides", lambda: dict(stored_overrides))
+    monkeypatch.setenv("S3_BUCKET_ASSET_STORAGE", "asset-bucket")
+    monkeypatch.setenv("ASSET_UI_TRASH_PREFIX", "_trash")
+
+    def _save(updated: dict[str, object]) -> None:
+        stored_overrides.clear()
+        stored_overrides.update(updated)
+
+    monkeypatch.setattr(asset_routes, "_save_overrides", _save)
+
+    from src.storage import s3 as s3_storage
+
+    soft_delete_calls: list[dict[str, str]] = []
+
+    def _fake_soft_delete(bucket: str, key: str, *, trash_prefix: str) -> str:
+        soft_delete_calls.append({"bucket": bucket, "key": key, "trash_prefix": trash_prefix})
+        return "_trash/2026-03-30/pinterest_collection/rock/night/clip.mp4"
+
+    monkeypatch.setattr(s3_storage, "soft_delete_s3_object", _fake_soft_delete)
+
+    client = _make_app(tmp_path, monkeypatch)
+    delete = client.delete(
+        "/api/assets/clip.mp4",
+        params={"s3_key": "pinterest_collection/rock/night/clip.mp4"},
+    )
+    assert delete.status_code == 200
+    assert soft_delete_calls == [
+        {
+            "bucket": "asset-bucket",
+            "key": "pinterest_collection/rock/night/clip.mp4",
+            "trash_prefix": "_trash",
+        }
+    ]
+    assert stored_overrides["s3:pinterest_collection/rock/night/clip.mp4"]["excluded"] is True  # type: ignore[index]
+    assert (
+        stored_overrides["s3:pinterest_collection/rock/night/clip.mp4"]["trash_key"]  # type: ignore[index]
+        == "_trash/2026-03-30/pinterest_collection/rock/night/clip.mp4"
+    )
+
+
 def test_create_app_fails_without_dist(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("ASSET_UI_DIST_DIR", str(tmp_path / "missing_dist"))
     settings = AssetUISettings(

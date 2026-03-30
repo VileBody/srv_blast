@@ -24,7 +24,7 @@ export function TagAssignment({ asset, taxonomy, onSaved }: Props) {
     setSelectedTheme(null);
     setSelectedGroup(null);
     setTagStates({});
-  }, [asset?.file_name]);
+  }, [asset?.file_name, asset?.s3_key]);
 
   // Load existing overrides when theme/group selected
   useEffect(() => {
@@ -74,7 +74,7 @@ export function TagAssignment({ asset, taxonomy, onSaved }: Props) {
         excluded_tags: excludedTags,
       };
 
-      await updateTags(asset.file_name, [...existing, newAssignment]);
+      await updateTags(asset.file_name, [...existing, newAssignment], asset.s3_key);
       onSaved();
     } catch (e) {
       console.error('Failed to save tags', e);

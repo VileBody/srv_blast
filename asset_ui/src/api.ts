@@ -23,18 +23,15 @@ export async function fetchTaxonomy(): Promise<Taxonomy> {
   return data.themes;
 }
 
-export async function fetchVideoUrl(fileName: string): Promise<string> {
-  const res = await fetch(`${BASE}/assets/${encodeURIComponent(fileName)}/video-url`);
-  if (!res.ok) throw new Error(`fetchVideoUrl: ${res.status}`);
-  const data = await res.json();
-  return data.url;
-}
-
 export async function updateTags(
   fileName: string,
   assignments: ThemeAssignment[],
+  s3Key?: string,
 ): Promise<void> {
-  const res = await fetch(`${BASE}/assets/${encodeURIComponent(fileName)}/tags`, {
+  const params = new URLSearchParams();
+  if (s3Key) params.set('s3_key', s3Key);
+  const suffix = params.toString() ? `?${params.toString()}` : '';
+  const res = await fetch(`${BASE}/assets/${encodeURIComponent(fileName)}/tags${suffix}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ theme_assignments: assignments }),
@@ -42,8 +39,21 @@ export async function updateTags(
   if (!res.ok) throw new Error(`updateTags: ${res.status}`);
 }
 
-export async function deleteAsset(fileName: string): Promise<void> {
-  const res = await fetch(`${BASE}/assets/${encodeURIComponent(fileName)}`, {
+export async function fetchVideoUrl(fileName: string, s3Key?: string): Promise<string> {
+  const params = new URLSearchParams();
+  if (s3Key) params.set('s3_key', s3Key);
+  const suffix = params.toString() ? `?${params.toString()}` : '';
+  const res = await fetch(`${BASE}/assets/${encodeURIComponent(fileName)}/video-url${suffix}`);
+  if (!res.ok) throw new Error(`fetchVideoUrl: ${res.status}`);
+  const data = await res.json();
+  return data.url;
+}
+
+export async function deleteAsset(fileName: string, s3Key?: string): Promise<void> {
+  const params = new URLSearchParams();
+  if (s3Key) params.set('s3_key', s3Key);
+  const suffix = params.toString() ? `?${params.toString()}` : '';
+  const res = await fetch(`${BASE}/assets/${encodeURIComponent(fileName)}${suffix}`, {
     method: 'DELETE',
   });
   if (!res.ok) throw new Error(`deleteAsset: ${res.status}`);

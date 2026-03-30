@@ -44,9 +44,15 @@ export function useAssets(genre?: string, tag?: string) {
   const remove = useCallback(async () => {
     if (!current) return;
     try {
-      await apiDelete(current.file_name);
-      setAssets((prev) => prev.filter((a) => a.file_name !== current.file_name));
-      setTotal((t) => t - 1);
+      await apiDelete(current.file_name, current.s3_key);
+      setAssets((prev) =>
+        prev.filter((a) =>
+          current.s3_key
+            ? a.s3_key !== current.s3_key
+            : a.file_name !== current.file_name,
+        ),
+      );
+      setTotal((t) => Math.max(0, t - 1));
     } catch (e) {
       console.error('Failed to delete asset', e);
     }
