@@ -968,6 +968,14 @@ class BlastBotApp:
             if is_new and self.settings.initial_credits > 0:
                 await self.credits_db.add_credits(chat_id, self.settings.initial_credits, "initial_grant")
 
+            # Extract deep link start parameter for source tracking
+            # Format: /start <param> — param is the UTM source identifier
+            raw_text = str(message.text or "")
+            parts = raw_text.split(maxsplit=1)
+            start_param = parts[1].strip() if len(parts) > 1 else ""
+            if start_param and not start_param.startswith("@"):
+                await self.credits_db.set_user_source(chat_id, start_param)
+
             await self.credits_db.log_event(chat_id, "start", f"@{username}" if username else "")
             await self._move_to_onboarding(chat_id, message)
 

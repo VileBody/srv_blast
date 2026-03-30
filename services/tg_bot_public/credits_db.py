@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS users (
     credits             INTEGER   NOT NULL DEFAULT 0,
     created_at          TIMESTAMP NOT NULL DEFAULT NOW(),
     updated_at          TIMESTAMP NOT NULL DEFAULT NOW(),
+    source              TEXT      NOT NULL DEFAULT '',
 
     first_utm_source    TEXT      NOT NULL DEFAULT '',
     first_utm_medium    TEXT      NOT NULL DEFAULT '',
@@ -167,6 +168,7 @@ class CreditsDB:
 
     async def _ensure_migrations(self, conn: asyncpg.Connection) -> None:
         # Keep old databases compatible when tables were created before UTM columns existed.
+        await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT ''")
         await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS first_utm_source TEXT NOT NULL DEFAULT ''")
         await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS first_utm_medium TEXT NOT NULL DEFAULT ''")
         await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS first_utm_campaign TEXT NOT NULL DEFAULT ''")
@@ -419,7 +421,7 @@ class CreditsDB:
         async with pool.acquire() as conn:
             rows = await conn.fetch(
                 "SELECT tg_id, username, credits, created_at, updated_at, "
-                "first_utm_source, first_utm_campaign, last_utm_source, last_utm_campaign "
+                "source, first_utm_source, first_utm_campaign, last_utm_source, last_utm_campaign "
                 "FROM users ORDER BY updated_at DESC, tg_id DESC LIMIT $1 OFFSET $2",
                 int(limit),
                 int(offset),
@@ -431,6 +433,7 @@ class CreditsDB:
                 "credits": int(r["credits"]),
                 "created_at": _fmt_ts(r["created_at"]),
                 "updated_at": _fmt_ts(r["updated_at"]),
+                "source": str(r["source"] or ""),
                 "first_utm_source": str(r["first_utm_source"] or ""),
                 "first_utm_campaign": str(r["first_utm_campaign"] or ""),
                 "last_utm_source": str(r["last_utm_source"] or ""),
@@ -450,6 +453,7 @@ class CreditsDB:
         async with pool.acquire() as conn:
             r = await conn.fetchrow(
                 "SELECT tg_id, username, credits, created_at, updated_at, "
+                "source, "
                 "first_utm_source, first_utm_medium, first_utm_campaign, first_utm_content, first_utm_term, first_utm_payload, first_utm_at, "
                 "last_utm_source, last_utm_medium, last_utm_campaign, last_utm_content, last_utm_term, last_utm_payload, last_utm_at "
                 "FROM users WHERE tg_id = $1",
@@ -463,6 +467,7 @@ class CreditsDB:
             "credits": int(r["credits"]),
             "created_at": _fmt_ts(r["created_at"]),
             "updated_at": _fmt_ts(r["updated_at"]),
+            "source": str(r["source"] or ""),
             "first_utm_source": str(r["first_utm_source"] or ""),
             "first_utm_medium": str(r["first_utm_medium"] or ""),
             "first_utm_campaign": str(r["first_utm_campaign"] or ""),
@@ -722,3 +727,108 @@ class CreditsDB:
                 "ORDER BY cnt DESC"
             )
         return [{"event": str(r["event"] or ""), "count": int(r["cnt"])} for r in rows]
+
+    async def rating_distribution(self) -> List[Dict[str, Any]]:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT detail, COUNT(*)::BIGINT AS cnt "
+                "FROM activity_log "
+                "WHERE event = 'rate_video' AND detail <> '' "
+                "GROUP BY detail ORDER BY cnt DESC"
+            )
+        return [{"rating": str(r["detail"] or ""), "count": int(r["cnt"])} for r in rows]
+
+    async def funnel_reach_counts(self) -> List[Dict[str, Any]]:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT event, COUNT(DISTINCT tg_id)::BIGINT AS cnt "
+                "FROM activity_log GROUP BY event ORDER BY cnt DESC"
+            )
+        return [{"event": str(r["event"] or ""), "count": int(r["cnt"])} for r in rows]
+
+    async def search_users(self, query: str, limit: int = 50) -> List[Dict[str, Any]]:
+        q = str(query or "").strip().lstrip("@").lower()
+        if not q:
+            return []
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            if q.isdigit():
+                rows = await conn.fetch(
+                    "SELECT tg_id, username, credits, created_at, updated_at, source, "
+                    "first_utm_source, first_utm_campaign, last_utm_source, last_utm_campaign "
+                    "FROM users "
+                    "WHERE tg_id = $1 OR username ILIKE $2 "
+                    "ORDER BY updated_at DESC, tg_id DESC LIMIT $3",
+                    int(q),
+                    f"%{q}%",
+                    int(limit),
+                )
+            else:
+                rows = await conn.fetch(
+                    "SELECT tg_id, username, credits, created_at, updated_at, source, "
+                    "first_utm_source, first_utm_campaign, last_utm_source, last_utm_campaign "
+                    "FROM users "
+                    "WHERE username ILIKE $1 "
+                    "ORDER BY updated_at DESC, tg_id DESC LIMIT $2",
+                    f"%{q}%",
+                    int(limit),
+                )
+        return [
+            {
+                "tg_id": int(r["tg_id"]),
+                "username": str(r["username"] or ""),
+                "credits": int(r["credits"]),
+                "created_at": _fmt_ts(r["created_at"]),
+                "updated_at": _fmt_ts(r["updated_at"]),
+                "source": str(r["source"] or ""),
+                "first_utm_source": str(r["first_utm_source"] or ""),
+                "first_utm_campaign": str(r["first_utm_campaign"] or ""),
+                "last_utm_source": str(r["last_utm_source"] or ""),
+                "last_utm_campaign": str(r["last_utm_campaign"] or ""),
+            }
+            for r in rows
+        ]
+
+    async def set_user_source(self, tg_id: int, source: str) -> None:
+        src = _norm_text(source, max_len=128)
+        if not src:
+            return
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                await conn.execute(
+                    "INSERT INTO users (tg_id, username) VALUES ($1, '') ON CONFLICT (tg_id) DO NOTHING",
+                    int(tg_id),
+                )
+                await conn.execute(
+                    "UPDATE users SET source = $1, updated_at = NOW() "
+                    "WHERE tg_id = $2 AND (source = '' OR source IS NULL)",
+                    src,
+                    int(tg_id),
+                )
+
+    async def source_distribution(self) -> List[Dict[str, Any]]:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT COALESCE(NULLIF(source, ''), NULLIF(first_utm_source, ''), '(direct)') AS src, "
+                "COUNT(*)::BIGINT AS cnt "
+                "FROM users GROUP BY src ORDER BY cnt DESC, src ASC"
+            )
+        return [{"source": str(r["src"] or ""), "count": int(r["cnt"])} for r in rows]
+
+    async def get_user_source(self, tg_id: int) -> str:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT source, first_utm_source FROM users WHERE tg_id = $1",
+                int(tg_id),
+            )
+        if not row:
+            return ""
+        direct = str(row["source"] or "").strip()
+        if direct:
+            return direct
+        return str(row["first_utm_source"] or "").strip()
