@@ -47,6 +47,23 @@ location /asset-ui/ {
 }
 ```
 
+If you want to expose it as part of admin zone, use `/admin/assets/` and the
+same Basic Auth file as `/admin/`:
+
+```nginx
+location /admin/assets/ {
+    auth_basic "Blast Backoffice";
+    auth_basic_user_file /etc/nginx/.htpasswd_backoffice;
+
+    proxy_pass http://127.0.0.1:18173/;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+```
+
 Create credentials:
 
 ```bash
@@ -58,4 +75,3 @@ Reload Nginx:
 ```bash
 sudo nginx -t && sudo systemctl reload nginx
 ```
-

@@ -85,6 +85,7 @@ docker compose -f docker-compose.logs.yml --env-file .env.dozzle up -d
 - доступ только через nginx reverse-proxy с Basic Auth, например `https://blast808.com/logs/`
 
 Для панели бота аналогично: `https://blast808.com/admin/` (также через Basic Auth).
+`asset-ui` рекомендуется прокинуть в той же зоне: `https://blast808.com/admin/assets/`.
 
 Dozzle показывает live-логи Docker-контейнеров (включая воркеры/бота/API) и удобен как легкий старт.
 

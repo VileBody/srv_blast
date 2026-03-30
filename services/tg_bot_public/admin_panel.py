@@ -117,6 +117,7 @@ _BASE_HEAD = """
   <a href="/admin/transactions">Transactions</a>
   <a href="/admin/payments">Payments</a>
   <a href="/admin/utm">UTM</a>
+  <a href="/admin/assets/" target="_blank" rel="noopener noreferrer">Assets</a>
 </div>
 """
 _BASE_FOOT = "</body></html>"
