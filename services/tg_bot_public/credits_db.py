@@ -76,6 +76,12 @@ class CreditsDB:
         await self._db.execute("PRAGMA journal_mode=WAL")
         await self._db.executescript(_SCHEMA)
         await self._db.commit()
+        # Migrations: add columns that may not exist yet
+        try:
+            await self._db.execute("ALTER TABLE users ADD COLUMN source TEXT NOT NULL DEFAULT ''")
+            await self._db.commit()
+        except Exception:
+            pass  # column already exists
         log.info("credits_db: initialized at %s", self._path)
 
     async def close(self) -> None:
@@ -351,3 +357,75 @@ class CreditsDB:
         )
         rows = await cur.fetchall()
         return [{"event": r[0], "count": r[1]} for r in rows]
+
+    # ── Analytics queries ─────────────────────────────────────────────
+
+    async def rating_distribution(self) -> List[Dict[str, Any]]:
+        """Count rating events by detail value (low/mid_low/high)."""
+        db = self._conn()
+        cur = await db.execute(
+            "SELECT detail, COUNT(*) as cnt FROM activity_log "
+            "WHERE event = 'rate_video' AND detail != '' "
+            "GROUP BY detail ORDER BY cnt DESC"
+        )
+        rows = await cur.fetchall()
+        return [{"rating": r[0], "count": r[1]} for r in rows]
+
+    async def funnel_reach_counts(self) -> List[Dict[str, Any]]:
+        """Count distinct users who performed each event (cumulative reach)."""
+        db = self._conn()
+        cur = await db.execute(
+            "SELECT event, COUNT(DISTINCT tg_id) as cnt "
+            "FROM activity_log GROUP BY event ORDER BY cnt DESC"
+        )
+        rows = await cur.fetchall()
+        return [{"event": r[0], "count": r[1]} for r in rows]
+
+    async def search_users(self, query: str, limit: int = 50) -> List[Dict[str, Any]]:
+        """Search users by tg_id (exact) or username (LIKE)."""
+        db = self._conn()
+        q = query.strip().lstrip("@").lower()
+        if q.isdigit():
+            cur = await db.execute(
+                "SELECT tg_id, username, credits, created_at, updated_at "
+                "FROM users WHERE tg_id = ? OR username LIKE ? ORDER BY updated_at DESC LIMIT ?",
+                (int(q), f"%{q}%", limit),
+            )
+        else:
+            cur = await db.execute(
+                "SELECT tg_id, username, credits, created_at, updated_at "
+                "FROM users WHERE username LIKE ? ORDER BY updated_at DESC LIMIT ?",
+                (f"%{q}%", limit),
+            )
+        rows = await cur.fetchall()
+        return [
+            {"tg_id": r[0], "username": r[1], "credits": r[2], "created_at": r[3], "updated_at": r[4]}
+            for r in rows
+        ]
+
+    # ── Source tracking ───────────────────────────────────────────────
+
+    async def set_user_source(self, tg_id: int, source: str) -> None:
+        """Set the source for a user (only if currently empty)."""
+        db = self._conn()
+        await db.execute(
+            "UPDATE users SET source = ? WHERE tg_id = ? AND (source = '' OR source IS NULL)",
+            (source, tg_id),
+        )
+        await db.commit()
+
+    async def source_distribution(self) -> List[Dict[str, Any]]:
+        """Count users per source."""
+        db = self._conn()
+        cur = await db.execute(
+            "SELECT COALESCE(NULLIF(source, ''), '(direct)') as src, COUNT(*) as cnt "
+            "FROM users GROUP BY src ORDER BY cnt DESC"
+        )
+        rows = await cur.fetchall()
+        return [{"source": r[0], "count": r[1]} for r in rows]
+
+    async def get_user_source(self, tg_id: int) -> str:
+        db = self._conn()
+        cur = await db.execute("SELECT source FROM users WHERE tg_id = ?", (tg_id,))
+        row = await cur.fetchone()
+        return str(row[0]) if row and row[0] else ""
