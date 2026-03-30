@@ -140,7 +140,7 @@ class RedisChatStateStore:
         existing.completed_job_ids = []
         existing.next_version_to_enqueue = 0
         existing.last_status_text = ""
-        existing.last_status_msg_id = 0
+        existing.status_message_id = 0
         existing.last_status_msg_at = 0.0
         existing.target_fragment = ""
         existing.subtitles_mode = ""
