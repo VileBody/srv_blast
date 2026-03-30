@@ -693,6 +693,7 @@
               var r = textDoc.characterRange(idx, idx + 1);
               if (cs.font !== undefined) r.font = cs.font;
               if (cs.fontSize !== undefined) r.fontSize = cs.fontSize;
+              if (cs.fillColor !== undefined) { r.applyFill = true; r.fillColor = cs.fillColor; }
               if (cs.fauxItalic !== undefined) r.fauxItalic = !!cs.fauxItalic;
             } catch(eChar) {
               logErr("charStyle failed layer=" + layer.name + " i=" + i, eChar);
@@ -1129,7 +1130,13 @@
       try {
         phaseStart(lData.name, "create");
         if (lData.type === "text") {
-          layer = target.layers.addText(String(lData.text || "").replace(/\r/g, "\r"));
+          var _td = lData.text_data ? lData.text_data : null;
+          var _bt = _td ? _td.box_text : null;
+          if (_bt && _bt.length >= 2) {
+            layer = target.layers.addBoxText([_bt[0], _bt[1]], String(lData.text || "").replace(/\r/g, "\r"));
+          } else {
+            layer = target.layers.addText(String(lData.text || "").replace(/\r/g, "\r"));
+          }
 
         } else if (lData.type === "adjustment") {
           layer = target.layers.addSolid([1,1,1], lData.name, target.width, target.height, 1.0, target.duration);
