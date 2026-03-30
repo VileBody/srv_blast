@@ -86,6 +86,8 @@ docker compose -f docker-compose.logs.yml --env-file .env.dozzle up -d
 
 Для панели бота аналогично: `https://blast808.com/admin/` (также через Basic Auth).
 `asset-ui` рекомендуется прокинуть в той же зоне: `https://blast808.com/admin/assets/`.
+При каждом deploy (`docker compose up -d --build`) `asset-ui` пересобирается с
+новым frontend (`asset_ui/dist`) автоматически.
 
 Dozzle показывает live-логи Docker-контейнеров (включая воркеры/бота/API) и удобен как легкий старт.
 

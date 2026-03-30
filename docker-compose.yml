@@ -189,7 +189,7 @@ services:
   asset-ui:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.asset-ui
     container_name: asset-ui
     env_file:
       - .env

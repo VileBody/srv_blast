@@ -1,6 +1,7 @@
-# S3 Asset UI (Preview + Upload + Soft Delete)
+# Asset UI (React + API)
 
-`asset-ui` is a FastAPI web interface for `S3_BUCKET_ASSET_STORAGE`.
+`asset-ui` is served as a React (Vite) frontend with FastAPI backend API.
+The service is intended to be exposed from admin zone: `/admin/assets/`.
 
 ## Runtime env
 
@@ -22,6 +23,8 @@ Service is defined in root `docker-compose.yml`:
 
 - container listens on `ASSET_UI_PORT` (example: `8100`)
 - host bind is fixed to `127.0.0.1:18173`
+- image build uses `Dockerfile.asset-ui` and always builds `asset_ui/dist`
+  during `docker compose up -d --build`
 
 Start:
 
@@ -31,24 +34,7 @@ docker compose up -d asset-ui
 
 ## Reverse proxy + Basic Auth
 
-Expose only through reverse proxy and protect with Basic Auth:
-
-```nginx
-location /asset-ui/ {
-    auth_basic "Asset UI";
-    auth_basic_user_file /etc/nginx/.htpasswd_asset_ui;
-
-    proxy_pass http://127.0.0.1:18173/;
-    proxy_http_version 1.1;
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-}
-```
-
-If you want to expose it as part of admin zone, use `/admin/assets/` and the
-same Basic Auth file as `/admin/`:
+Expose through reverse proxy and protect with Basic Auth:
 
 ```nginx
 location /admin/assets/ {
@@ -67,7 +53,7 @@ location /admin/assets/ {
 Create credentials:
 
 ```bash
-sudo htpasswd -c /etc/nginx/.htpasswd_asset_ui admin
+sudo htpasswd -c /etc/nginx/.htpasswd_backoffice admin
 ```
 
 Reload Nginx:

@@ -85,8 +85,8 @@ class PaginatedAssets(BaseModel):
 # Router factory
 # ---------------------------------------------------------------------------
 
-def create_asset_router() -> APIRouter:
-    router = APIRouter(prefix="/asset-ui/api")
+def create_asset_router(*, prefix: str = "/asset-ui/api") -> APIRouter:
+    router = APIRouter(prefix=prefix)
 
     # --- taxonomy (must be before /{file_name} routes) ---
     @router.get("/assets/taxonomy")

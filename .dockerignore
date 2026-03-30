@@ -25,3 +25,7 @@ footage/
 
 # Local artifacts
 repomix-output.xml
+
+# Frontend local dependencies/artifacts
+asset_ui/node_modules/
+asset_ui/dist/

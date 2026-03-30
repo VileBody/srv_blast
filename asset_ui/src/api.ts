@@ -1,6 +1,6 @@
 import type { PaginatedAssets, Taxonomy, ThemeAssignment } from './types';
 
-const BASE = '/asset-ui/api';
+const BASE = 'api';
 
 export async function fetchAssets(
   page = 1,

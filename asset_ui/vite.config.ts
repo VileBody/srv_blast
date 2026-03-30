@@ -3,12 +3,13 @@ import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   plugins: [react()],
-  base: '/asset-ui/',
+  base: '/admin/assets/',
   server: {
     proxy: {
-      '/asset-ui/api': {
-        target: 'http://127.0.0.1:8000',
+      '/admin/assets/api': {
+        target: 'http://127.0.0.1:8100',
         changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/admin\/assets/, ''),
       },
     },
   },
