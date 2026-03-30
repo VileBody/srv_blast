@@ -10,6 +10,7 @@ from .schemas import SendVideoRequest, SendVideoResponse, JobState
 from .tasks import build_job
 from .config import SETTINGS
 from .bundle_bootstrap import ensure_descriptions_bundle
+from .asset_routes import create_asset_router
 
 
 def create_app() -> FastAPI:
@@ -22,6 +23,9 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # Asset browsing UI
+    app.include_router(create_asset_router())
 
     store = JobStore.from_env()
 
@@ -96,6 +100,12 @@ def create_app() -> FastAPI:
         if not st:
             raise HTTPException(status_code=404, detail="job not found")
         return st
+
+    # Serve built frontend (if exists)
+    _ui_dist = Path(__file__).resolve().parents[2] / "asset_ui" / "dist"
+    if _ui_dist.is_dir():
+        from fastapi.staticfiles import StaticFiles
+        app.mount("/asset-ui", StaticFiles(directory=str(_ui_dist), html=True), name="asset-ui-static")
 
     return app
 

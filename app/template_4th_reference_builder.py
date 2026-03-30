@@ -253,7 +253,7 @@ def build_template_4th_reference_layers(
                 },
                 "char_styles_ungrouped": _char_styles(text=text, focus_word_indices=focus_words),
                 "text_animator": _text_animator_cfg(),
-                "no_layout_pass": True,
+                "box_text": [900, 220],
             },
         }
         layers.append(layer)

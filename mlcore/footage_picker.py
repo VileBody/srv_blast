@@ -62,6 +62,45 @@ _GLOBAL_BAN_TAGS: frozenset = _load_global_ban_tags()
 _SELECTION_RANK_SCORE_KEY = "_selection_rank_score"
 
 
+def _load_tag_overrides() -> Dict[str, Any]:
+    """Load user tag overrides from asset_tag_overrides.json (if exists)."""
+    src = Path(__file__).resolve().parents[1] / "data" / "asset_tag_overrides.json"
+    if not src.exists():
+        return {}
+    try:
+        return json.loads(src.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _apply_tag_overrides(
+    assets: List[Dict[str, Any]],
+    overrides: Dict[str, Any] | None = None,
+) -> List[Dict[str, Any]]:
+    """Filter excluded assets and merge custom tags from overrides."""
+    if overrides is None:
+        overrides = _load_tag_overrides()
+    if not overrides:
+        return assets
+    out: List[Dict[str, Any]] = []
+    for a in assets:
+        ov = overrides.get(a.get("file_name", ""), {})
+        if ov.get("excluded"):
+            continue
+        # Merge custom tags into meta_theme_tags
+        assignments = ov.get("theme_assignments") or []
+        if assignments:
+            extra_tags: List[str] = []
+            for ta in assignments:
+                extra_tags.extend(ta.get("tags") or [])
+            if extra_tags:
+                existing = list(a.get("meta_theme_tags") or [])
+                merged = list(dict.fromkeys(existing + extra_tags))
+                a = {**a, "meta_theme_tags": merged}
+        out.append(a)
+    return out
+
+
 @dataclass(frozen=True)
 class FootagePickerDiagnostics:
     genre: str
@@ -513,6 +552,7 @@ def _build_raw_pool(
     assets: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
     """Build a scored clip pool from a single raw subgroup payload."""
+    assets = _apply_tag_overrides(assets)
     priority_tags = {_normalize_theme_tag(x) for x in raw_pick.filters.priority_theme_tags}
     priority_tags.discard("")
     exclude_people = {_normalize_people_type(x) for x in (raw_pick.filters.exclude or [])}
