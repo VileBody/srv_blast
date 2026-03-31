@@ -4,7 +4,6 @@ import { useTaxonomy } from '../hooks/useTaxonomy';
 import { VideoPreview } from './VideoPreview';
 import { NavigationBar } from './NavigationBar';
 import { AssetInfo } from './AssetInfo';
-import { TagAssignment } from './TagAssignment';
 
 export function AssetBrowser() {
   const { current, index, total, loading, next, prev, remove, reload } = useAssets();
@@ -41,8 +40,7 @@ export function AssetBrowser() {
         />
       </div>
       <div className="side-column">
-        <AssetInfo asset={current} />
-        <TagAssignment asset={current} taxonomy={taxonomy} onSaved={reload} />
+        <AssetInfo asset={current} taxonomy={taxonomy} onSaved={reload} />
       </div>
     </div>
   );

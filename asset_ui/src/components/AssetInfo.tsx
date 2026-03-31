@@ -1,10 +1,13 @@
-import type { Asset } from '../types';
+import type { Asset, Taxonomy } from '../types';
+import { ThemeTagPills } from './ThemeTagPills';
 
 interface Props {
   asset: Asset | null;
+  taxonomy: Taxonomy | null;
+  onSaved: () => void;
 }
 
-export function AssetInfo({ asset }: Props) {
+export function AssetInfo({ asset, taxonomy, onSaved }: Props) {
   if (!asset) return null;
   return (
     <div className="asset-info">
@@ -18,6 +21,12 @@ export function AssetInfo({ asset }: Props) {
           <><span className="label">Цвет:</span><span>{asset.dominant_color}</span></>
         )}
       </div>
+      <ThemeTagPills
+        tags={asset.theme_tags ?? []}
+        tagStatuses={asset.tag_statuses ?? {}}
+        taxonomy={taxonomy}
+        onSaved={onSaved}
+      />
     </div>
   );
 }
