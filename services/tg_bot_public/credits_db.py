@@ -910,8 +910,8 @@ class CreditsDB:
         pool = self._pool_or_fail()
         async with pool.acquire() as conn:
             val = await conn.fetchval(
-                "SELECT COALESCE(SUM(amount), 0)::BIGINT FROM payments "
-                "WHERE tg_id = ANY($1::BIGINT[]) AND status = 'confirmed'",
+                "SELECT COALESCE(SUM(amount_rub), 0)::BIGINT FROM payments "
+                "WHERE tg_id = ANY($1::BIGINT[]) AND status = 'CONFIRMED'",
                 tg_ids,
             )
         return int(val or 0)

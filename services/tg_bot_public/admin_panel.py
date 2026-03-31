@@ -7,6 +7,7 @@ import html as html_mod
 import json
 import logging
 import secrets
+from urllib.parse import quote as url_quote
 from typing import TYPE_CHECKING
 
 import uvicorn
@@ -456,7 +457,7 @@ def build_app(
             stage = stages_map.get(u["tg_id"], "—")
             stage_lbl = _stage_label(stage) if stage != "—" else "—"
             src = u.get("source", "")
-            src_cell = f'<a href="/admin/sources/{html_mod.escape(src)}" class="badge badge-source">{html_mod.escape(src)}</a>' if src else '<span style="color:#ccc">—</span>'
+            src_cell = f'<a href="/admin/sources/{url_quote(src, safe="")}" class="badge badge-source">{html_mod.escape(src)}</a>' if src else '<span style="color:#ccc">—</span>'
             rows += (
                 f"<tr><td><a href='/admin/users/{u['tg_id']}'>{uname}</a></td>"
                 f"<td>{u['tg_id']}</td>"
@@ -738,7 +739,8 @@ def build_app(
         rows = ""
         for d in dist:
             src_escaped = html_mod.escape(d["source"])
-            rows += f"<tr><td><a href='/admin/sources/{src_escaped}'>{src_escaped}</a></td><td><strong>{d['count']}</strong></td></tr>"
+            src_url = url_quote(d["source"], safe="")
+            rows += f"<tr><td><a href='/admin/sources/{src_url}'>{src_escaped}</a></td><td><strong>{d['count']}</strong></td></tr>"
 
         bot_username = settings.tg_bot_username or "YOUR_BOT"
 
@@ -776,7 +778,7 @@ def build_app(
 
     # ── Source detail page ──────────────────────────────────────────
 
-    @app.get("/admin/sources/{source}", response_class=HTMLResponse)
+    @app.get("/admin/sources/{source:path}", response_class=HTMLResponse)
     async def source_detail(source: str, _user: str = Depends(_check_auth)) -> str:
         src_escaped = html_mod.escape(source)
         users = await credits_db.users_by_source(source)
