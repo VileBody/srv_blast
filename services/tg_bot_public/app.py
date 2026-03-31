@@ -962,11 +962,9 @@ class BlastBotApp:
                             referrer_st.stage = STAGE_RATE_VIDEO_2
                         await self.store.set(referrer_st)
 
-            # Ensure user exists in credits DB; grant initial credits if new
+            # Ensure user exists in credits DB (credits granted after subscription)
             username = (st.chat_username or "").lstrip("@")
-            is_new = await self.credits_db.ensure_user(chat_id, username)
-            if is_new and self.settings.initial_credits > 0:
-                await self.credits_db.add_credits(chat_id, self.settings.initial_credits, "initial_grant")
+            await self.credits_db.ensure_user(chat_id, username)
 
             # Extract deep link start parameter for source tracking
             # Format: /start <param> — param is the UTM source identifier
@@ -1179,8 +1177,16 @@ class BlastBotApp:
             await message.answer("Думаешь, мы не будем проверять подписку?)")
             await self._move_to_subscription(int(message.chat.id), message)
             return
-        await self.credits_db.log_event(int(message.chat.id), "subscription_ok")
-        await self._move_to_wait_audio(int(message.chat.id), message)
+        chat_id = int(message.chat.id)
+        await self.credits_db.log_event(chat_id, "subscription_ok")
+        # Grant initial credits after subscription (not on /start) to avoid
+        # race conditions with deep-link users who never subscribe.
+        if self.settings.initial_credits > 0:
+            already_granted = await self.credits_db.has_initial_grant(chat_id)
+            if not already_granted:
+                await self.credits_db.add_credits(chat_id, self.settings.initial_credits, "initial_grant")
+                await self.credits_db.log_event(chat_id, "initial_grant", f"+{self.settings.initial_credits}")
+        await self._move_to_wait_audio(chat_id, message)
 
     async def _move_to_wait_audio(self, chat_id: int, message: Message) -> None:
         await self.store.reset_to_wait_audio(chat_id)
