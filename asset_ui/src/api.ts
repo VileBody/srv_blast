@@ -1,4 +1,4 @@
-import type { PaginatedAssets, Taxonomy, ThemeAssignment } from './types';
+import type { PaginatedAssets, Taxonomy, ThemeAssignment, TagOverrides } from './types';
 
 const BASE = 'api';
 
@@ -57,4 +57,46 @@ export async function deleteAsset(fileName: string, s3Key?: string): Promise<voi
     method: 'DELETE',
   });
   if (!res.ok) throw new Error(`deleteAsset: ${res.status}`);
+}
+
+// --- Tag-level overrides ---
+
+export async function fetchTagOverrides(): Promise<TagOverrides> {
+  const res = await fetch(`${BASE}/tag-overrides`);
+  if (!res.ok) throw new Error(`fetchTagOverrides: ${res.status}`);
+  return res.json();
+}
+
+export async function blacklistTag(tag: string): Promise<void> {
+  const res = await fetch(`${BASE}/tag-overrides/blacklist`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tag }),
+  });
+  if (!res.ok) throw new Error(`blacklistTag: ${res.status}`);
+}
+
+export async function unblacklistTag(tag: string): Promise<void> {
+  const res = await fetch(`${BASE}/tag-overrides/blacklist/${encodeURIComponent(tag)}`, {
+    method: 'DELETE',
+  });
+  if (!res.ok) throw new Error(`unblacklistTag: ${res.status}`);
+}
+
+export async function assignTag(tag: string, theme: string, group: string): Promise<void> {
+  const res = await fetch(`${BASE}/tag-overrides/assign`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tag, theme, group }),
+  });
+  if (!res.ok) throw new Error(`assignTag: ${res.status}`);
+}
+
+export async function unassignTag(tag: string, theme: string, group: string): Promise<void> {
+  const res = await fetch(`${BASE}/tag-overrides/assign`, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tag, theme, group }),
+  });
+  if (!res.ok) throw new Error(`unassignTag: ${res.status}`);
 }

@@ -73,6 +73,20 @@ def _load_tag_overrides() -> Dict[str, Any]:
         return {}
 
 
+def _load_global_tag_overrides() -> Dict[str, Any]:
+    """Load global tag-level overrides (blacklist + assignments)."""
+    src = Path(__file__).resolve().parents[1] / "data" / "tag_overrides.json"
+    if not src.exists():
+        return {"blacklisted_tags": [], "tag_assignments": []}
+    try:
+        data = json.loads(src.read_text(encoding="utf-8"))
+        data.setdefault("blacklisted_tags", [])
+        data.setdefault("tag_assignments", [])
+        return data
+    except Exception:
+        return {"blacklisted_tags": [], "tag_assignments": []}
+
+
 def _apply_tag_overrides(
     assets: List[Dict[str, Any]],
     overrides: Dict[str, Any] | None = None,
@@ -553,8 +567,19 @@ def _build_raw_pool(
 ) -> List[Dict[str, Any]]:
     """Build a scored clip pool from a single raw subgroup payload."""
     assets = _apply_tag_overrides(assets)
+    global_tag_ov = _load_global_tag_overrides()
+    blacklisted = {_normalize_theme_tag(t) for t in global_tag_ov.get("blacklisted_tags", [])}
+    blacklisted.discard("")
+
+    # Expand priority_tags with globally assigned tags for this theme/group
     priority_tags = {_normalize_theme_tag(x) for x in raw_pick.filters.priority_theme_tags}
+    for ta in global_tag_ov.get("tag_assignments", []):
+        if ta.get("theme") == raw_pick.theme and ta.get("group") == raw_pick.tags_group:
+            norm = _normalize_theme_tag(ta.get("tag", ""))
+            if norm:
+                priority_tags.add(norm)
     priority_tags.discard("")
+    priority_tags -= blacklisted
     exclude_people = {_normalize_people_type(x) for x in (raw_pick.filters.exclude or [])}
     exclude_people.discard("")
     exclude_terms = {_normalize_theme_tag(x) for x in (raw_pick.filters.exclude_tags or [])}
@@ -565,6 +590,7 @@ def _build_raw_pool(
     for it in assets:
         meta_tags = {_normalize_theme_tag(x) for x in (it.get("meta_theme_tags") or [])}
         meta_tags.discard("")
+        meta_tags -= blacklisted
         overlap = len(priority_tags.intersection(meta_tags))
         if overlap <= 0:
             continue
