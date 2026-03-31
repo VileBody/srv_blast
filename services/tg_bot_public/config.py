@@ -83,6 +83,7 @@ def _credits_db_url_env() -> str:
 @dataclass(frozen=True)
 class Settings:
     tg_bot_token: str = _env("TG_BOT_TOKEN", "")
+    tg_bot_username: str = _env("TG_BOT_USERNAME", "blast808bot")
     tg_file_proxy_url: str = _env("TG_FILE_PROXY_URL", "")
     orchestrator_public_url: str = _env("ORCHESTRATOR_PUBLIC_URL", "http://orchestrator-api:8000")
 

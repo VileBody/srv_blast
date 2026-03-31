@@ -249,6 +249,15 @@ class CreditsDB:
             )
             return row is not None
 
+    async def has_initial_grant(self, tg_id: int) -> bool:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            row = await conn.fetchval(
+                "SELECT 1 FROM transactions WHERE tg_id = $1 AND reason = 'initial_grant' LIMIT 1",
+                int(tg_id),
+            )
+            return row is not None
+
     async def get_balance(self, tg_id: int) -> int:
         pool = self._pool_or_fail()
         async with pool.acquire() as conn:
@@ -447,6 +456,21 @@ class CreditsDB:
         async with pool.acquire() as conn:
             row = await conn.fetchval("SELECT COUNT(*) FROM users")
             return int(row or 0)
+
+    async def count_activity(self) -> int:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            return int(await conn.fetchval("SELECT COUNT(*) FROM activity_log") or 0)
+
+    async def count_transactions(self) -> int:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            return int(await conn.fetchval("SELECT COUNT(*) FROM transactions") or 0)
+
+    async def count_payments(self) -> int:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            return int(await conn.fetchval("SELECT COUNT(*) FROM payments") or 0)
 
     async def get_user(self, tg_id: int) -> Optional[Dict[str, Any]]:
         pool = self._pool_or_fail()
@@ -832,3 +856,62 @@ class CreditsDB:
         if direct:
             return direct
         return str(row["first_utm_source"] or "").strip()
+
+    async def users_by_source(self, source: str, limit: int = 200) -> List[Dict[str, Any]]:
+        pool = self._pool_or_fail()
+        src = str(source or "").strip()
+        async with pool.acquire() as conn:
+            if src == "(direct)":
+                rows = await conn.fetch(
+                    "SELECT tg_id, username, credits, created_at, updated_at, source "
+                    "FROM users "
+                    "WHERE (source = '' OR source IS NULL) "
+                    "AND (first_utm_source = '' OR first_utm_source IS NULL) "
+                    "ORDER BY created_at DESC LIMIT $1",
+                    int(limit),
+                )
+            else:
+                rows = await conn.fetch(
+                    "SELECT tg_id, username, credits, created_at, updated_at, source "
+                    "FROM users "
+                    "WHERE source = $1 OR first_utm_source = $1 "
+                    "ORDER BY created_at DESC LIMIT $2",
+                    src,
+                    int(limit),
+                )
+        return [
+            {
+                "tg_id": int(r["tg_id"]),
+                "username": str(r["username"] or ""),
+                "credits": int(r["credits"]),
+                "created_at": _fmt_ts(r["created_at"]),
+                "updated_at": _fmt_ts(r["updated_at"]),
+                "source": str(r["source"] or ""),
+            }
+            for r in rows
+        ]
+
+    async def funnel_reach_counts_for_users(self, tg_ids: List[int]) -> List[Dict[str, Any]]:
+        if not tg_ids:
+            return []
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT event, COUNT(DISTINCT tg_id)::BIGINT AS cnt "
+                "FROM activity_log WHERE tg_id = ANY($1::BIGINT[]) "
+                "GROUP BY event ORDER BY cnt DESC",
+                tg_ids,
+            )
+        return [{"event": str(r["event"]), "count": int(r["cnt"])} for r in rows]
+
+    async def revenue_for_users(self, tg_ids: List[int]) -> int:
+        if not tg_ids:
+            return 0
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            val = await conn.fetchval(
+                "SELECT COALESCE(SUM(amount), 0)::BIGINT FROM payments "
+                "WHERE tg_id = ANY($1::BIGINT[]) AND status = 'confirmed'",
+                tg_ids,
+            )
+        return int(val or 0)

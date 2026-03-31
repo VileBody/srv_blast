@@ -6,6 +6,7 @@ import asyncio
 import html as html_mod
 import json
 import logging
+import secrets
 from typing import TYPE_CHECKING
 
 import uvicorn
@@ -82,6 +83,7 @@ _EVENT_LABELS = {
     "no_credits": "Нет кредитов",
     "payment_confirmed": "Оплата подтверждена",
     "admin_activate": "Активация админом",
+    "initial_grant": "Стартовые кредиты",
 }
 
 _RATING_LABELS = {
@@ -290,7 +292,7 @@ def build_app(
     security = HTTPBasic()
 
     def _check_auth(creds: HTTPBasicCredentials = Depends(security)) -> str:
-        if creds.password != settings.admin_panel_password:
+        if not secrets.compare_digest(creds.password.encode(), settings.admin_panel_password.encode()):
             raise HTTPException(status_code=401, detail="Unauthorized", headers={"WWW-Authenticate": "Basic"})
         return creds.username
 
@@ -298,36 +300,42 @@ def build_app(
 
     @app.get("/admin/", response_class=HTMLResponse)
     async def dashboard(_user: str = Depends(_check_auth)) -> str:
-        total = await credits_db.count_users()
+        total, ratings, funnel_raw, all_states, users, recent = await asyncio.gather(
+            credits_db.count_users(),
+            credits_db.rating_distribution(),
+            credits_db.funnel_reach_counts(),
+            state_store.list_all_states(),
+            credits_db.list_users(limit=10),
+            credits_db.get_activity(limit=10),
+        )
 
         # ── Rating distribution for doughnut chart ──
-        ratings = await credits_db.rating_distribution()
         rating_map = {r["rating"]: r["count"] for r in ratings}
         chart_labels = json.dumps([_RATING_LABELS.get(k, k) for k in ["low", "mid_low", "high"]])
         chart_data = json.dumps([rating_map.get(k, 0) for k in ["low", "mid_low", "high"]])
         chart_colors = json.dumps([_RATING_COLORS.get(k, "#999") for k in ["low", "mid_low", "high"]])
         total_ratings = sum(rating_map.values())
 
-        # ── Funnel reach counts ──
-        funnel_raw = await credits_db.funnel_reach_counts()
+        # ── Funnel reach counts with conversion ──
         funnel_map = {r["event"]: r["count"] for r in funnel_raw}
         max_funnel = max(funnel_map.values()) if funnel_map else 1
+        first_cnt = funnel_map.get(_FUNNEL_ORDER[0], 0) or 1
         funnel_html = ""
         for i, event in enumerate(_FUNNEL_ORDER):
             cnt = funnel_map.get(event, 0)
             pct = max(15, cnt / max_funnel * 100) if max_funnel > 0 else 15
+            conv = cnt / first_cnt * 100
             color = _FUNNEL_COLORS[i] if i < len(_FUNNEL_COLORS) else "#999"
             label = _event_label(event)
             funnel_html += (
                 f'<div class="funnel-bar-wrap">'
                 f'<div class="funnel-bar" style="width:{pct:.0f}%;background:{color}">'
                 f'<span class="flabel">{label}</span>'
-                f'<span class="fcount">{cnt}</span>'
+                f'<span class="fcount">{cnt} <small>({conv:.0f}%)</small></span>'
                 f'</div></div>\n'
             )
 
         # ── Current stage snapshot from Redis ──
-        all_states = await state_store.list_all_states()
         stage_counts: dict[str, int] = {}
         for s in all_states:
             stage_counts[s.stage] = stage_counts.get(s.stage, 0) + 1
@@ -337,7 +345,6 @@ def build_app(
             stage_html += f'<div class="stage-chip"><div class="count">{cnt}</div><div class="label">{label}</div></div>'
 
         # ── Recent users ──
-        users = await credits_db.list_users(limit=10)
         user_rows = ""
         for u in users:
             badge = "badge-ok" if u["credits"] > 0 else "badge-zero"
@@ -350,7 +357,6 @@ def build_app(
             )
 
         # ── Recent activity ──
-        recent = await credits_db.get_activity(limit=10)
         act_rows = ""
         for a in recent:
             act_rows += (
@@ -361,12 +367,11 @@ def build_app(
             )
 
         body = f"""
-        <p>Total users: <strong>{total}</strong></p>
-
         <div class="card">
+        <h2>Всего пользователей: {total}</h2>
         <div class="chart-row">
           <div class="chart-box">
-            <h2>Оценки видео</h2>
+            <h3>Оценки видео</h3>
             {"<p>Нет данных</p>" if total_ratings == 0 else f'<canvas id="ratingsChart"></canvas><p style="text-align:center;color:#888;font-size:0.85em">Всего оценок: {total_ratings}</p>'}
           </div>
           <div class="funnel-box">
@@ -450,15 +455,14 @@ def build_app(
             uname = f"@{u['username']}" if u["username"] else str(u["tg_id"])
             stage = stages_map.get(u["tg_id"], "—")
             stage_lbl = _stage_label(stage) if stage != "—" else "—"
-            first_utm = "/".join([x for x in [u.get("first_utm_source", ""), u.get("first_utm_campaign", "")] if x]) or "—"
-            last_utm = "/".join([x for x in [u.get("last_utm_source", ""), u.get("last_utm_campaign", "")] if x]) or "—"
+            src = u.get("source", "")
+            src_cell = f'<a href="/admin/sources/{html_mod.escape(src)}" class="badge badge-source">{html_mod.escape(src)}</a>' if src else '<span style="color:#ccc">—</span>'
             rows += (
                 f"<tr><td><a href='/admin/users/{u['tg_id']}'>{uname}</a></td>"
                 f"<td>{u['tg_id']}</td>"
                 f"<td><span class='badge {badge}'>{u['credits']}</span></td>"
                 f"<td><span class='badge badge-stage'>{stage_lbl}</span></td>"
-                f"<td>{first_utm}</td>"
-                f"<td>{last_utm}</td>"
+                f"<td>{src_cell}</td>"
                 f"<td>{u['created_at']}</td>"
                 f"<td>{u['updated_at']}</td></tr>"
             )
@@ -472,7 +476,7 @@ def build_app(
         {search_note}
         <p>Total: {total}</p>
         <div class="table-wrap">
-        <table><tr><th>Username</th><th>tg_id</th><th>Credits</th><th>Этап</th><th>First UTM</th><th>Last UTM</th><th>Created</th><th>Updated</th></tr>
+        <table><tr><th>Username</th><th>tg_id</th><th>Credits</th><th>Этап</th><th>Источник</th><th>Created</th><th>Updated</th></tr>
         {rows}</table>
         </div>
         {_pagination_html(page, total_pages, base_url)}
@@ -519,26 +523,13 @@ def build_app(
             )
 
         body = f"""
+        <p><a href="/admin/users">&laquo; Все пользователи</a></p>
         <div class="card">
-        <h2>{uname} (id: {tg_id})</h2>
+        <h2>{html_mod.escape(uname)} (id: {tg_id})</h2>
         <p>Credits: <strong>{user['credits']}</strong> |
            Этап: <span class="badge badge-stage">{stage_lbl}</span> |
            Источник: {source_badge} |
            Created: {user['created_at']} | Updated: {user['updated_at']}</p>
-        <p><strong>First UTM:</strong>
-           source={user.get('first_utm_source') or '—'},
-           medium={user.get('first_utm_medium') or '—'},
-           campaign={user.get('first_utm_campaign') or '—'},
-           content={user.get('first_utm_content') or '—'},
-           term={user.get('first_utm_term') or '—'},
-           at={user.get('first_utm_at') or '—'}</p>
-        <p><strong>Last UTM:</strong>
-           source={user.get('last_utm_source') or '—'},
-           medium={user.get('last_utm_medium') or '—'},
-           campaign={user.get('last_utm_campaign') or '—'},
-           content={user.get('last_utm_content') or '—'},
-           term={user.get('last_utm_term') or '—'},
-           at={user.get('last_utm_at') or '—'}</p>
         </div>
 
         <div class="card">
@@ -554,7 +545,7 @@ def build_app(
         <h3>Активировать пакет (внешняя оплата)</h3>
         <p style="color:#666;font-size:0.85em">Начислит кредиты и переведёт пользователя на этап генерации (WAIT_AUDIO).
         Юзер получит уведомление в Telegram.</p>
-        <form method="post" action="/admin/users/{tg_id}/activate" onsubmit="return confirm('Активировать пакет для {uname}?')">
+        <form method="post" action="/admin/users/{tg_id}/activate" onsubmit="return confirm('Активировать пакет для {html_mod.escape(uname, quote=True).replace(chr(39), "&#39;")}'?)">
           <select name="package">{pkg_options}</select>
           <button type="submit" class="btn-success">Активировать</button>
         </form>
@@ -619,23 +610,28 @@ def build_app(
         page = int(request.query_params.get("page", "1"))
         per_page = 50
         offset = (page - 1) * per_page
-        acts = await credits_db.get_activity(limit=per_page, offset=offset)
+        acts, total = await asyncio.gather(
+            credits_db.get_activity(limit=per_page, offset=offset),
+            credits_db.count_activity(),
+        )
+        total_pages = max(1, (total + per_page - 1) // per_page)
         rows = ""
         for a in acts:
             rows += (
                 f"<tr><td>{a['id']}</td>"
                 f"<td><a href='/admin/users/{a['tg_id']}'>{a['tg_id']}</a></td>"
                 f"<td>{_event_label(a['event'])}</td>"
-                f"<td>{a['detail']}</td>"
+                f"<td>{html_mod.escape(str(a['detail']))}</td>"
                 f"<td>{a['created_at']}</td></tr>"
             )
         body = f"""
         <div class="card">
+        <p>Total: {total}</p>
         <div class="table-wrap">
         <table><tr><th>#</th><th>tg_id</th><th>Событие</th><th>Детали</th><th>Дата</th></tr>
         {rows}</table>
         </div>
-        <p><a href="?page={page + 1}">Next page &raquo;</a></p>
+        {_pagination_html(page, total_pages)}
         </div>
         """
         return _page("Activity Log", body)
@@ -647,21 +643,26 @@ def build_app(
         page = int(request.query_params.get("page", "1"))
         per_page = 50
         offset = (page - 1) * per_page
-        txs = await credits_db.get_transactions(limit=per_page, offset=offset)
+        txs, total = await asyncio.gather(
+            credits_db.get_transactions(limit=per_page, offset=offset),
+            credits_db.count_transactions(),
+        )
+        total_pages = max(1, (total + per_page - 1) // per_page)
         rows = ""
         for t in txs:
             sign = "+" if t["amount"] > 0 else ""
             rows += (
                 f"<tr><td>{t['id']}</td><td>{t['tg_id']}</td><td>{sign}{t['amount']}</td>"
-                f"<td>{t['reason']}</td><td>{t['admin_note']}</td><td>{t['created_at']}</td></tr>"
+                f"<td>{t['reason']}</td><td>{html_mod.escape(str(t['admin_note']))}</td><td>{t['created_at']}</td></tr>"
             )
         body = f"""
         <div class="card">
+        <p>Total: {total}</p>
         <div class="table-wrap">
         <table><tr><th>#</th><th>tg_id</th><th>Amount</th><th>Reason</th><th>Note</th><th>Date</th></tr>
         {rows}</table>
         </div>
-        <p><a href="?page={page + 1}">Next page &raquo;</a></p>
+        {_pagination_html(page, total_pages)}
         </div>
         """
         return _page("Transactions", body)
@@ -673,7 +674,11 @@ def build_app(
         page = int(request.query_params.get("page", "1"))
         per_page = 50
         offset = (page - 1) * per_page
-        pays = await credits_db.get_payments(limit=per_page, offset=offset)
+        pays, total = await asyncio.gather(
+            credits_db.get_payments(limit=per_page, offset=offset),
+            credits_db.count_payments(),
+        )
+        total_pages = max(1, (total + per_page - 1) // per_page)
         rows = ""
         for p in pays:
             status_cls = "badge-ok" if p["status"] == "CONFIRMED" else "badge-zero"
@@ -684,17 +689,16 @@ def build_app(
                 f"<td>{p['amount_rub']}&rub;</td>"
                 f"<td>{p['package']}</td>"
                 f"<td><span class='badge {status_cls}'>{p['status']}</span></td>"
-                f"<td>{p.get('utm_source') or '—'}</td>"
-                f"<td>{p.get('utm_campaign') or '—'}</td>"
                 f"<td>{p['created_at']}</td></tr>"
             )
         body = f"""
         <div class="card">
+        <p>Total: {total}</p>
         <div class="table-wrap">
-        <table><tr><th>#</th><th>tg_id</th><th>Order</th><th>Amount</th><th>Package</th><th>Status</th><th>UTM Source</th><th>UTM Campaign</th><th>Date</th></tr>
+        <table><tr><th>#</th><th>tg_id</th><th>Order</th><th>Amount</th><th>Package</th><th>Status</th><th>Date</th></tr>
         {rows}</table>
         </div>
-        <p><a href="?page={page + 1}">Next page &raquo;</a></p>
+        {_pagination_html(page, total_pages)}
         </div>
         """
         return _page("Payments", body)
@@ -733,9 +737,10 @@ def build_app(
         dist = await credits_db.source_distribution()
         rows = ""
         for d in dist:
-            rows += f"<tr><td>{html_mod.escape(d['source'])}</td><td><strong>{d['count']}</strong></td></tr>"
+            src_escaped = html_mod.escape(d["source"])
+            rows += f"<tr><td><a href='/admin/sources/{src_escaped}'>{src_escaped}</a></td><td><strong>{d['count']}</strong></td></tr>"
 
-        bot_username = settings.tg_bot_token.split(":")[0] if settings.tg_bot_token else "YOUR_BOT"
+        bot_username = settings.tg_bot_username or "YOUR_BOT"
 
         body = f"""
         <div class="card">
@@ -768,6 +773,68 @@ def build_app(
         </div>
         """
         return _page("Источники трафика", body)
+
+    # ── Source detail page ──────────────────────────────────────────
+
+    @app.get("/admin/sources/{source}", response_class=HTMLResponse)
+    async def source_detail(source: str, _user: str = Depends(_check_auth)) -> str:
+        src_escaped = html_mod.escape(source)
+        users = await credits_db.users_by_source(source)
+        tg_ids = [u["tg_id"] for u in users]
+        total_users = len(tg_ids)
+
+        funnel_raw = await credits_db.funnel_reach_counts_for_users(tg_ids)
+        funnel_map = {r["event"]: r["count"] for r in funnel_raw}
+        max_funnel = max(funnel_map.values()) if funnel_map else 1
+        first_cnt = funnel_map.get(_FUNNEL_ORDER[0], 0) or 1
+        funnel_html = ""
+        for i, event in enumerate(_FUNNEL_ORDER):
+            cnt = funnel_map.get(event, 0)
+            pct = max(15, cnt / max_funnel * 100) if max_funnel > 0 else 15
+            conv = cnt / first_cnt * 100
+            color = _FUNNEL_COLORS[i] if i < len(_FUNNEL_COLORS) else "#999"
+            label = _event_label(event)
+            funnel_html += (
+                f'<div class="funnel-bar-wrap">'
+                f'<div class="funnel-bar" style="width:{pct:.0f}%;background:{color}">'
+                f'<span class="flabel">{label}</span>'
+                f'<span class="fcount">{cnt} <small>({conv:.0f}%)</small></span>'
+                f'</div></div>\n'
+            )
+
+        revenue = await credits_db.revenue_for_users(tg_ids)
+
+        user_rows = ""
+        for u in users:
+            uname = f"@{u['username']}" if u["username"] else str(u["tg_id"])
+            badge = "badge-ok" if u["credits"] > 0 else "badge-zero"
+            user_rows += (
+                f"<tr><td><a href='/admin/users/{u['tg_id']}'>{uname}</a></td>"
+                f"<td>{u['tg_id']}</td>"
+                f"<td><span class='badge {badge}'>{u['credits']}</span></td>"
+                f"<td>{u['created_at']}</td></tr>"
+            )
+
+        body = f"""
+        <p><a href="/admin/sources">&laquo; Все источники</a></p>
+        <div class="card">
+        <h2>Источник: <span class="badge badge-source">{src_escaped}</span></h2>
+        <p>Пользователей: <strong>{total_users}</strong> &nbsp;|&nbsp;
+           Выручка: <strong>{revenue:,}&nbsp;&#8381;</strong></p>
+        </div>
+        <div class="card">
+        <h2>Воронка</h2>
+        {funnel_html if funnel_html else '<p>Нет данных</p>'}
+        </div>
+        <div class="card">
+        <h2>Пользователи</h2>
+        <div class="table-wrap">
+        <table><tr><th>Username</th><th>tg_id</th><th>Credits</th><th>Дата регистрации</th></tr>
+        {user_rows if user_rows else '<tr><td colspan="4">Нет данных</td></tr>'}</table>
+        </div>
+        </div>
+        """
+        return _page(f"Источник: {src_escaped}", body)
 
     # ── T-Bank webhook (no auth — called by T-Bank servers) ───────
 
