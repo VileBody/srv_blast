@@ -8,6 +8,8 @@ export interface Asset {
   dominant_color?: string;
   palette_bins?: { bin: string; weight: number }[];
   overrides?: AssetOverride;
+  theme_tags?: string[];
+  tag_statuses?: Record<string, TagStatus>;
 }
 
 export interface AssetOverride {
@@ -43,3 +45,19 @@ export interface ThemeData {
 }
 
 export type Taxonomy = Record<string, ThemeData>;
+
+export interface TagStatus {
+  blacklisted?: boolean;
+  assigned_to?: { theme: string; group: string }[];
+}
+
+export interface TagOverrides {
+  blacklisted_tags: string[];
+  tag_assignments: TagAssignmentGlobal[];
+}
+
+export interface TagAssignmentGlobal {
+  tag: string;
+  theme: string;
+  group: string;
+}
