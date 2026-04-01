@@ -727,6 +727,21 @@ class CreditsDB:
             for r in rows
         ]
 
+    async def get_pending_payments(self) -> List[Dict[str, Any]]:
+        """Return all payments with status 'pending' (not yet confirmed/rejected)."""
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT id, order_id, tg_id, amount_rub, package, status, payment_id, created_at "
+                "FROM payments WHERE status = 'pending' ORDER BY created_at ASC",
+            )
+            return [
+                {"id": r["id"], "order_id": r["order_id"], "tg_id": r["tg_id"],
+                 "amount_rub": r["amount_rub"], "package": r["package"], "status": r["status"],
+                 "payment_id": r["payment_id"], "created_at": r["created_at"]}
+                for r in rows
+            ]
+
     async def is_payment_processed(self, payment_id: str, status: str) -> bool:
         pool = self._pool_or_fail()
         async with pool.acquire() as conn:
