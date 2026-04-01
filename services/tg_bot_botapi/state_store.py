@@ -11,6 +11,7 @@ from redis.asyncio import Redis
 from core.subtitles_mode import SUBTITLES_MODE_LEGACY_BLOCKS
 from .config import Settings
 
+log = logging.getLogger("tg_bot.state_store")
 
 log = logging.getLogger(__name__)
 
@@ -25,6 +26,10 @@ STAGE_WAIT_VERSIONS = "WAIT_VERSIONS"
 STAGE_WAIT_CONFIRM = "WAIT_CONFIRM"
 STAGE_PROCESSING = "PROCESSING"
 STAGE_WAIT_NEXT = "WAIT_NEXT"
+# User waiting for a referral friend to activate their first video.
+STAGE_WAITING_REFERRAL = "WAITING_REFERRAL"
+# User account exists but has no credits (not yet paid).
+STAGE_LOCKED = "LOCKED"
 
 
 class ChatState(BaseModel):
@@ -67,6 +72,15 @@ class ChatState(BaseModel):
     # Timestamp for state TTL / recovery
     updated_at: float = 0.0
 
+    # Credit reservation: ref_id of the deduction held while enqueue is in-flight.
+    # Non-empty means a credit was deducted and not yet confirmed as consumed.
+    pending_deduction_ref_id: str = ""
+
+    # Referral: chat_id of the user who referred this user (0 = none).
+    referrer_chat_id: int = 0
+    # Timestamp when we entered WAITING_REFERRAL so recovery can unstick us.
+    waiting_referral_since: float = 0.0
+
 
 class RedisChatStateStore:
     def __init__(self, settings: Settings):
@@ -93,7 +107,7 @@ class RedisChatStateStore:
             obj = json.loads(raw)
         except Exception as e:
             log.error(
-                "chat_state_json_parse_error chat_id=%s err=%r raw_head=%s",
+                "chat_state_json_parse_error chat_id=%s err=%r raw_head=%s — resetting to blank state",
                 chat_id, e, repr(raw[:200]) if raw else "",
             )
             return ChatState(chat_id=int(chat_id))
@@ -102,7 +116,7 @@ class RedisChatStateStore:
             return ChatState.model_validate(obj)
         except Exception as e:
             log.error(
-                "chat_state_validation_error chat_id=%s err=%r keys=%s",
+                "chat_state_validation_error chat_id=%s err=%r keys=%s — resetting to blank state",
                 chat_id, e, list(obj.keys()) if isinstance(obj, dict) else type(obj).__name__,
             )
             return ChatState(chat_id=int(chat_id))
@@ -197,7 +211,12 @@ class RedisChatStateStore:
             try:
                 obj = json.loads(raw)
                 st = ChatState.model_validate(obj)
-            except Exception:
+            except Exception as exc:
+                log.error(
+                    "state_store.list_processing: failed to parse key=%s err=%r — skipping",
+                    key,
+                    exc,
+                )
                 continue
             # Don't remove active states
             if st.stage == STAGE_PROCESSING:
@@ -209,6 +228,28 @@ class RedisChatStateStore:
                 log.info("stale_state_removed chat_id=%s stage=%s age_days=%.1f",
                          st.chat_id, st.stage, (now - updated) / 86400)
         return removed
+
+    async def list_waiting_referral(self) -> List[ChatState]:
+        """Return all chats stuck in WAITING_REFERRAL for recovery."""
+        out: List[ChatState] = []
+        pattern = f"{self._prefix}:*"
+        async for key in self._redis.scan_iter(match=pattern, count=200):
+            raw = await self._redis.get(key)
+            if not raw:
+                continue
+            try:
+                obj = json.loads(raw)
+                st = ChatState.model_validate(obj)
+            except Exception as exc:
+                log.error(
+                    "state_store.list_waiting_referral: failed to parse key=%s err=%r — skipping",
+                    key,
+                    exc,
+                )
+                continue
+            if st.stage == STAGE_WAITING_REFERRAL:
+                out.append(st)
+        return out
 
     async def close(self) -> None:
         await self._redis.aclose()

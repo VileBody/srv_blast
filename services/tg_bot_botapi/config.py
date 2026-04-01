@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import quote_plus
 
 
 def _env(name: str, default: str = "") -> str:
@@ -58,6 +59,24 @@ def _username_allowlist_env(name: str) -> tuple[str, ...]:
     return tuple(out)
 
 
+def _credits_db_url_env() -> str:
+    explicit = _env("CREDITS_DB_URL", "")
+    if explicit:
+        return explicit
+    host = _env("POSTGRES_HOST", "")
+    db = _env("POSTGRES_DB", "")
+    user = _env("POSTGRES_USER", "")
+    password = _env("POSTGRES_PASSWORD", "")
+    sslmode = _env("POSTGRES_SSLMODE", "prefer")
+    port = _int_env("POSTGRES_PORT", 5432)
+    if not host or not db or not user:
+        return ""
+    return (
+        f"postgresql://{quote_plus(user)}:{quote_plus(password)}@{host}:{int(port)}/{db}"
+        f"?sslmode={quote_plus(sslmode or 'prefer')}"
+    )
+
+
 @dataclass(frozen=True)
 class Settings:
     tg_bot_token: str = _env("TG_BOT_TOKEN", "")
@@ -90,6 +109,29 @@ class Settings:
     s3_presign_expires_s: int = _int_env("S3_PRESIGN_EXPIRES_S", 86400)
     tg_send_project_archive: bool = _bool_env("TG_SEND_PROJECT_ARCHIVE", False)
     artifacts_allowlist: tuple[str, ...] = _username_allowlist_env("ARTIFACTS_ALLOWLIST")
+
+    # ------------------------------------------------------------------ #
+    # PostgreSQL (credit system) — CREDITS_DB_URL or POSTGRES_* fallback
+    # ------------------------------------------------------------------ #
+    credits_db_url: str = _credits_db_url_env()
+
+    # ------------------------------------------------------------------ #
+    # Credit & access-gate settings
+    # ------------------------------------------------------------------ #
+    # When True, users must have credits to start generation.
+    credits_required: bool = _bool_env("CREDITS_REQUIRED", False)
+    # Credits spent per generation (batch of any size = 1 credit by default).
+    credits_per_generation: int = _int_env("CREDITS_PER_GENERATION", 1)
+    # Credits granted to the inviter when their referral completes a first generation.
+    referral_bonus_credits: int = _int_env("REFERRAL_BONUS_CREDITS", 1)
+
+    # ------------------------------------------------------------------ #
+    # Recovery timeouts
+    # ------------------------------------------------------------------ #
+    # Hours before a stuck PROCESSING chat is automatically reset.
+    bot_job_timeout_h: float = _float_env("BOT_JOB_TIMEOUT_H", 2.0)
+    # Hours before a stuck WAITING_REFERRAL chat is automatically reset.
+    bot_referral_timeout_h: float = _float_env("BOT_REFERRAL_TIMEOUT_H", 48.0)
 
     @property
     def tmp_dir(self) -> Path:

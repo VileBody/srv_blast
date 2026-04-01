@@ -31,11 +31,13 @@ from core.subtitles_mode import (
 from .audio_prepare import AudioPrepareResult, prepare_audio_best_effort
 from .config import SETTINGS, Settings
 from .orchestrator_client import OrchestratorClient
+from .referral_store import ReferralStore
 from .s3_client import S3Client, make_s3_url
 from .state_store import (
     ChatState,
     RedisChatStateStore,
     STAGE_IDLE,
+    STAGE_LOCKED,
     STAGE_PROCESSING,
     STAGE_WAIT_AUDIO,
     STAGE_WAIT_CONFIRM,
@@ -46,7 +48,9 @@ from .state_store import (
     STAGE_WAIT_NEXT,
     STAGE_WAIT_SUBTITLES_MODE,
     STAGE_WAIT_VERSIONS,
+    STAGE_WAITING_REFERRAL,
 )
+from .user_store import UserStore
 
 
 logging.basicConfig(
@@ -722,6 +726,10 @@ class BlastBotApp:
         self.s3 = S3Client(settings)
         self.orchestrator = OrchestratorClient(base_url=settings.orchestrator_public_url, timeout_s=60.0)
 
+        # Credit / referral subsystems — initialized in _on_startup.
+        self.users: UserStore | None = None
+        self.referrals: ReferralStore | None = None
+
         self.dp = Dispatcher()
         self.router = Router()
         self.dp.include_router(self.router)
@@ -761,6 +769,15 @@ class BlastBotApp:
             return True
         return False
 
+    async def _ensure_user_profile(self, st: ChatState) -> None:
+        """Keep user profile and username index up-to-date on every interaction."""
+        if self.users is None:
+            return
+        try:
+            await self.users.ensure_profile(int(st.chat_id), st.chat_username)
+        except Exception as exc:
+            log.warning("ensure_user_profile chat=%s err=%r", st.chat_id, exc)
+
     def _register_handlers(self) -> None:
         @self.router.message(CommandStart())
         async def _on_start(message: Message) -> None:
@@ -771,6 +788,7 @@ class BlastBotApp:
             user_changed = self._sync_state_user_from_message(st, message)
             if user_changed:
                 await self.store.set(st)
+            await self._ensure_user_profile(st)
             if st.stage == STAGE_PROCESSING:
                 await message.answer("Трек в процессе, подожди завершения.")
                 return
@@ -785,9 +803,23 @@ class BlastBotApp:
             user_changed = self._sync_state_user_from_message(st, message)
             if user_changed:
                 await self.store.set(st)
+            await self._ensure_user_profile(st)
 
             if st.stage == STAGE_PROCESSING:
                 await message.answer("Трек в процессе, подожди завершения.")
+                return
+
+            if st.stage == STAGE_LOCKED:
+                await message.answer(
+                    "Для генерации нужна оплата. Когда кредиты будут зачислены — напиши боту снова."
+                )
+                return
+
+            if st.stage == STAGE_WAITING_REFERRAL:
+                await message.answer(
+                    "Ожидаю, пока твой друг активирует свой первый ролик. "
+                    "Как только это произойдёт — ты получишь доступ автоматически."
+                )
                 return
 
             if st.stage in {STAGE_IDLE, ""}:
@@ -845,6 +877,20 @@ class BlastBotApp:
 
         self.settings.tmp_dir.mkdir(parents=True, exist_ok=True)
 
+        # PostgreSQL — required when credits are enabled, optional otherwise.
+        if self.settings.credits_db_url:
+            self.users = UserStore(self.settings.credits_db_url)
+            await self.users.init()
+            self.referrals = ReferralStore(
+                self.users,
+                referral_bonus_credits=self.settings.referral_bonus_credits,
+            )
+            log.info("startup: PostgreSQL pool ready, user_store active")
+        elif self.settings.credits_required:
+            raise RuntimeError("CREDITS_REQUIRED=true but CREDITS_DB_URL (or POSTGRES_*) is not set")
+        else:
+            log.warning("startup: CREDITS_DB_URL not set — credit system disabled")
+
         self._processing_task = asyncio.create_task(self._processing_loop(), name="tg_bot_processing_loop")
         self._cleanup_task = asyncio.create_task(self._stale_state_cleanup_loop(), name="tg_bot_cleanup_loop")
         log.info("startup complete: polling loop started")
@@ -861,6 +907,8 @@ class BlastBotApp:
 
         await self.orchestrator.close()
         await self.store.close()
+        if self.users is not None:
+            await self.users.close()
         self._bot = None
         log.info("shutdown complete")
 
@@ -1102,8 +1150,38 @@ class BlastBotApp:
             return
 
         key = self._build_raw_audio_key(chat_id=chat_id, file_name=prepared_path.name)
+        versions = max(1, min(5, int(st.versions_count or 1)))
+        # Stable batch_id derived from chat + content (used as part of idempotency key).
+        batch_id = f"tg-{chat_id}-{uuid.uuid4().hex[:12]}"
+        deduction_ref = f"batch:{batch_id}"
+
+        # ------------------------------------------------------------------
+        # Credit gate: check balance and deduct BEFORE enqueue.
+        # If enqueue subsequently fails we refund atomically.
+        # ------------------------------------------------------------------
+        if self.settings.credits_required and self.users is not None:
+            deduct_ok, new_balance = await self.users.deduct_credit(
+                chat_id,
+                ref_id=deduction_ref,
+                amount=self.settings.credits_per_generation,
+                note=f"generation batch={batch_id}",
+            )
+            if not deduct_ok:
+                profile = await self.users.get_profile(chat_id)
+                current = profile.credits if profile else 0
+                await message.answer(
+                    f"Недостаточно кредитов для генерации (нужно {self.settings.credits_per_generation}, "
+                    f"у тебя {current}). Пополни баланс и попробуй снова."
+                )
+                return
+            st.pending_deduction_ref_id = deduction_ref
+            await self.store.set(st)
+            log.info(
+                "credit_deducted_for_generation chat=%s batch=%s new_balance=%d",
+                chat_id, batch_id, new_balance,
+            )
+
         try:
-            versions = max(1, min(5, int(st.versions_count or 1)))
             await message.answer(f"Заливаю аудио в S3 и ставлю задачи в очередь… (версий: {versions})")
             audio_s3_url = await asyncio.to_thread(
                 self.s3.upload_file,
@@ -1113,7 +1191,6 @@ class BlastBotApp:
                 content_type="audio/mpeg",
             )
 
-            batch_id = f"tg-{chat_id}-{uuid.uuid4().hex[:12]}"
             master_job_id = await self._enqueue_batch_version(
                 st=st,
                 audio_s3_url=audio_s3_url,
@@ -1124,6 +1201,8 @@ class BlastBotApp:
                 exclude_file_names=[],
             )
 
+            # Enqueue succeeded — credit is consumed, clear the pending reservation.
+            st.pending_deduction_ref_id = ""
             st.stage = STAGE_PROCESSING
             st.batch_id = batch_id
             st.batch_audio_s3_url = audio_s3_url
@@ -1158,6 +1237,27 @@ class BlastBotApp:
             st.last_status_msg_at = time.time()
             await self.store.set(st)
         except Exception as e:
+            log.warning("enqueue_failed chat=%s batch=%s err=%r", chat_id, batch_id, e)
+            # Enqueue failed — refund the deducted credit so the user isn't charged.
+            if self.settings.credits_required and self.users is not None and st.pending_deduction_ref_id:
+                try:
+                    refunded_balance = await self.users.refund_credit(
+                        chat_id,
+                        ref_id=deduction_ref,
+                        amount=self.settings.credits_per_generation,
+                        note=f"refund: enqueue failed batch={batch_id}",
+                    )
+                    st.pending_deduction_ref_id = ""
+                    await self.store.set(st)
+                    log.info(
+                        "credit_refunded_after_enqueue_failure chat=%s batch=%s new_balance=%d",
+                        chat_id, batch_id, refunded_balance,
+                    )
+                except Exception as refund_err:
+                    log.error(
+                        "credit_refund_error chat=%s batch=%s err=%r",
+                        chat_id, batch_id, refund_err,
+                    )
             await message.answer(f"Не удалось запустить задачу: {e}")
 
     async def _handle_wait_next(self, message: Message, st: ChatState) -> None:
@@ -1308,6 +1408,33 @@ class BlastBotApp:
         st.last_job_error = ""
         st.target_fragment = ""
         st.subtitles_mode = SUBTITLES_MODE_LEGACY_BLOCKS
+        # Credit reservation should be clear by the time we reset; belt-and-suspenders.
+        st.pending_deduction_ref_id = ""
+
+    async def _maybe_grant_referral_bonus_after_generation(self, st: ChatState) -> None:
+        if self.referrals is None:
+            return
+        """
+        Called once when a user's FIRST ever successful generation completes.
+        Grants the referral bonus to the inviter (race-safe via ReferralStore lock).
+        Notifies both parties via bot message.
+        """
+        try:
+            inviter_chat_id = await self.referrals.maybe_grant_referral_bonus(int(st.chat_id))
+            if inviter_chat_id is None:
+                return
+            bot = self._require_bot()
+            # Notify the inviter that they received a bonus.
+            try:
+                await bot.send_message(
+                    inviter_chat_id,
+                    f"Твой друг активировал свой первый ролик — ты получил реферальный бонус "
+                    f"+{self.settings.referral_bonus_credits} кредит(а)!",
+                )
+            except Exception as exc:
+                log.warning("referral_notify_inviter_failed inviter=%s err=%r", inviter_chat_id, exc)
+        except Exception as exc:
+            log.warning("referral_bonus_check_failed chat=%s err=%r", st.chat_id, exc)
 
     async def _send_long_html_message(self, *, bot: Bot, chat_id: int, text: str) -> None:
         chunks = _split_telegram_chunks(text)
@@ -1346,6 +1473,14 @@ class BlastBotApp:
                 if _recovery_check_counter >= 60:
                     _recovery_check_counter = 0
                     await self._recover_stuck_processing()
+
+                # Recovery for chats stuck in WAITING_REFERRAL.
+                waiting_states = await self.store.list_waiting_referral()
+                for st in waiting_states:
+                    try:
+                        await self._recover_waiting_referral(st)
+                    except Exception as e:
+                        log.warning("referral_recovery chat=%s err=%r", st.chat_id, e)
             except asyncio.CancelledError:
                 raise
             except Exception as e:
@@ -1382,6 +1517,53 @@ class BlastBotApp:
                 await self.store.set(st)
         except Exception as e:
             log.warning("stuck_processing_recovery_error err=%r", e)
+
+    async def _maybe_recover_stuck_processing(self, st: ChatState) -> bool:
+        """Reset a chat stuck in PROCESSING beyond the timeout. Returns True if recovered."""
+        timeout_s = float(self.settings.bot_job_timeout_h) * 3600.0
+        started_at = float(st.active_job_started_at or 0.0)
+        if started_at <= 0.0 or (time.time() - started_at) < timeout_s:
+            return False
+        log.warning(
+            "stuck_processing_recovery chat=%s batch=%s started_at=%.0f timeout_h=%.1f — resetting",
+            st.chat_id, st.batch_id, started_at, self.settings.bot_job_timeout_h,
+        )
+        bot = self._require_bot()
+        try:
+            await bot.send_message(
+                st.chat_id,
+                "Генерация зависла слишком долго и была сброшена автоматически. "
+                "Попробуй отправить трек заново.",
+                reply_markup=_kb([BTN_NEXT]),
+            )
+        except Exception as e:
+            log.warning("stuck_recovery_notify_failed chat=%s err=%r", st.chat_id, e)
+        self._reset_processing_state(st)
+        await self.store.set(st)
+        return True
+
+    async def _recover_waiting_referral(self, st: ChatState) -> None:
+        """Reset a chat stuck in WAITING_REFERRAL beyond the timeout."""
+        timeout_s = float(self.settings.bot_referral_timeout_h) * 3600.0
+        since = float(st.waiting_referral_since or 0.0)
+        if since <= 0.0:
+            return
+        if (time.time() - since) < timeout_s:
+            return
+        log.warning(
+            "stuck_waiting_referral_recovery chat=%s since=%.0f timeout_h=%.1f — resetting",
+            st.chat_id, since, self.settings.bot_referral_timeout_h,
+        )
+        bot = self._require_bot()
+        try:
+            await bot.send_message(
+                st.chat_id,
+                "Ожидание активации реферала истекло. Чтобы начать, отправь трек.",
+                reply_markup=_kb([BTN_SEND_TRACK]),
+            )
+        except Exception as e:
+            log.warning("referral_timeout_notify_failed chat=%s err=%r", st.chat_id, e)
+        await self.store.reset_to_wait_audio(st.chat_id)
 
     def _current_job_ids(self, st: ChatState) -> List[str]:
         raw = list(st.active_job_ids or [])
@@ -1488,6 +1670,10 @@ class BlastBotApp:
             pass
 
     async def _process_chat_job(self, st: ChatState) -> None:
+        # Timeout guard: recover chats that have been stuck in PROCESSING too long.
+        if await self._maybe_recover_stuck_processing(st):
+            return
+
         job_ids = self._current_job_ids(st)
         if not job_ids:
             self._reset_processing_state(st)
@@ -1589,7 +1775,7 @@ class BlastBotApp:
                 # master_failed: don't enqueue remaining versions
                 await bot.send_message(
                     st.chat_id,
-                    f"Версия 1/{total_versions} завершилась ошибкой, остальные версии не запускаю.",
+                    f"Версия 1/{total_versions}: завершилась ошибкой (master_failed) — остальные версии не запускаю.",
                 )
                 st.next_version_to_enqueue = total_versions + 1
             else:
@@ -1617,53 +1803,76 @@ class BlastBotApp:
                     return
                 except Exception as e:
                     enqueue_failed = True
+                    log.warning(
+                        "batch_enqueue_failed chat=%s ver=%d total=%d err=%r",
+                        st.chat_id, next_ver, total_versions, e,
+                    )
                     await bot.send_message(
                         st.chat_id,
                         f"Не удалось поставить в очередь Версию {next_ver}/{total_versions}: {e}",
                     )
                     st.next_version_to_enqueue = total_versions + 1
 
-        # Determine explicit batch outcome and send appropriate message
-        if master_status == "FAILED":
-            batch_outcome = "master_failed"
-        elif enqueue_failed:
-            batch_outcome = "enqueue_failed"
-        elif failed_count > 0 and succeeded_count > 0:
-            batch_outcome = "partial_failed"
-        elif failed_count > 0 and succeeded_count == 0:
-            batch_outcome = "all_failed"
-        else:
-            batch_outcome = "all_succeeded"
+        # --- Compute explicit batch outcome ---
+        succeeded_count = sum(1 for r in rows if str(r.get("status") or "").upper() == "SUCCEEDED")
+        failed_count = sum(1 for r in rows if str(r.get("status") or "").upper() == "FAILED")
+        enqueued_count = len(st.job_order or job_ids)
+        enqueue_short = enqueued_count < total_versions or enqueue_failed
 
-        if batch_outcome == "all_succeeded":
-            await bot.send_message(
-                st.chat_id,
-                f"Все {succeeded_count} версий готовы. Сделать следующий?",
-                reply_markup=_kb([BTN_NEXT]),
-            )
-        elif batch_outcome == "partial_failed":
-            await bot.send_message(
-                st.chat_id,
-                f"Batch завершён частично: {succeeded_count} ok, {failed_count} с ошибкой. Сделать следующий?",
-                reply_markup=_kb([BTN_NEXT]),
-            )
-        elif batch_outcome in {"master_failed", "all_failed"}:
-            await bot.send_message(
-                st.chat_id,
-                f"Batch не удался: {failed_count} из {total_versions} с ошибкой, 0 успешных. Сделать следующий?",
-                reply_markup=_kb([BTN_NEXT]),
-            )
-        elif batch_outcome == "enqueue_failed":
-            await bot.send_message(
-                st.chat_id,
-                f"Batch прерван из-за ошибки постановки в очередь. Готово: {succeeded_count} ok, {failed_count} с ошибкой. Сделать следующий?",
-                reply_markup=_kb([BTN_NEXT]),
-            )
+        if total_versions == 1:
+            if succeeded_count == 1:
+                batch_outcome = "all_succeeded"
+            elif master_status == "FAILED":
+                batch_outcome = "master_failed"
+            else:
+                batch_outcome = "all_failed"
+        elif succeeded_count == total_versions:
+            batch_outcome = "all_succeeded"
+        elif succeeded_count > 0 and not enqueue_short:
+            batch_outcome = "partial_failed"
+        elif succeeded_count > 0 and enqueue_short:
+            batch_outcome = "enqueue_failed"
+        elif master_status == "FAILED":
+            batch_outcome = "master_failed"
+        elif enqueue_short:
+            batch_outcome = "enqueue_failed"
+        else:
+            batch_outcome = "all_failed"
 
         log.info(
-            "batch_finished chat=%s batch_id=%s outcome=%s succeeded=%d failed=%d total=%d",
-            st.chat_id, st.batch_id, batch_outcome, succeeded_count, failed_count, total_versions,
+            "batch_done chat=%s batch=%s outcome=%s succeeded=%d failed=%d enqueued=%d total=%d",
+            st.chat_id, st.batch_id, batch_outcome,
+            succeeded_count, failed_count, enqueued_count, total_versions,
         )
+
+        # Build summary message -- do NOT send a success message on failure.
+        if batch_outcome == "all_succeeded":
+            summary = f"Готово: все {succeeded_count}/{total_versions} версий успешно."
+        elif batch_outcome == "partial_failed":
+            summary = (
+                f"Частично готово: {succeeded_count}/{total_versions} версий успешно, "
+                f"{failed_count} завершились ошибкой."
+            )
+        elif batch_outcome == "enqueue_failed":
+            summary = (
+                f"Частично: {succeeded_count} из {total_versions} версий запущено "
+                f"({succeeded_count} успешно, {failed_count} с ошибкой). "
+                f"Не удалось поставить в очередь версии {enqueued_count + 1}–{total_versions}."
+            )
+        elif batch_outcome == "master_failed":
+            summary = "Не удалось: первая версия (master) завершилась ошибкой."
+        else:  # all_failed
+            summary = f"Все {total_versions} версий завершились ошибкой."
+
+        await bot.send_message(
+            st.chat_id,
+            summary + "\nСделать следующий?",
+            reply_markup=_kb([BTN_NEXT]),
+        )
+
+        # Grant referral bonus to inviter if this was the user's first successful generation.
+        if succeeded_count > 0:
+            await self._maybe_grant_referral_bonus_after_generation(st)
 
         self._reset_processing_state(st)
         st.prepared_audio_local_path = ""
