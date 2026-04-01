@@ -953,6 +953,57 @@ def _warn_stage1_clip_over_max(
     )
 
 
+def _maybe_shift_clip_window_for_leading_silence(
+    *,
+    clip_start_abs: float,
+    clip_end_abs: float,
+    selected_words: List[TranscriptWord],
+    logger: logging.Logger,
+) -> Tuple[float, float]:
+    """
+    If selected fragment starts with a long silence/music lead-in,
+    shift the whole clip window so first word starts ~0.5s after clip start.
+
+    Rule (explicit, deterministic):
+      - apply only when lead-in is in [1.0s .. 2.0s]
+      - keep shorter lead-ins unchanged
+      - shift both start/end by the same delta
+    """
+    if not selected_words:
+        return float(clip_start_abs), float(clip_end_abs)
+
+    first_word_start = min(float(w.t_start) for w in selected_words)
+    lead_s = float(first_word_start) - float(clip_start_abs)
+
+    lead_min_s = 1.0
+    lead_max_s = 2.0
+    target_preroll_s = 0.5
+
+    if lead_s < lead_min_s - 1e-6 or lead_s > lead_max_s + 1e-6:
+        return float(clip_start_abs), float(clip_end_abs)
+
+    target_start = max(0.0, float(first_word_start) - target_preroll_s)
+    shift_s = float(target_start) - float(clip_start_abs)
+    if shift_s <= 1e-6:
+        return float(clip_start_abs), float(clip_end_abs)
+
+    new_start = float(clip_start_abs) + shift_s
+    new_end = float(clip_end_abs) + shift_s
+    logger.info(
+        "stage1_leading_silence_trim_applied clip=%.3f..%.3f lead=%.3f first_word=%.3f "
+        "target_preroll=%.3f shift=%.3f result=%.3f..%.3f",
+        float(clip_start_abs),
+        float(clip_end_abs),
+        float(lead_s),
+        float(first_word_start),
+        float(target_preroll_s),
+        float(shift_s),
+        float(new_start),
+        float(new_end),
+    )
+    return float(new_start), float(new_end)
+
+
 def _build_stage1_plan_from_selected_fragment(
     *,
     stage1_asr: Stage1AsrPayload,
@@ -1055,6 +1106,21 @@ def _build_stage1_plan_from_selected_fragment(
             )
             audio_obj["clip_start_abs"] = float(new_start)
             audio_obj["clip_end_abs"] = float(new_end)
+
+    clip_start_after_shift, clip_end_after_shift = _maybe_shift_clip_window_for_leading_silence(
+        clip_start_abs=float(audio_obj["clip_start_abs"]),
+        clip_end_abs=float(audio_obj["clip_end_abs"]),
+        selected_words=selected_words,
+        logger=logger,
+    )
+    audio_obj["clip_start_abs"] = float(clip_start_after_shift)
+    audio_obj["clip_end_abs"] = float(clip_end_after_shift)
+    if selected_pauses:
+        selected_pauses = _pause_spans_in_window(
+            pause_spans=list(selected_pauses),
+            start_abs=float(audio_obj["clip_start_abs"]),
+            end_abs=float(audio_obj["clip_end_abs"]),
+        )
 
     _warn_stage1_clip_over_max(
         clip_start_abs=float(audio_obj["clip_start_abs"]),

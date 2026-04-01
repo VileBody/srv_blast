@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 import re
 import warnings
@@ -59,6 +60,59 @@ def _load_global_ban_tags() -> frozenset:
 
 _GLOBAL_BAN_TAGS: frozenset = _load_global_ban_tags()
 _SELECTION_RANK_SCORE_KEY = "_selection_rank_score"
+
+
+def _load_tag_overrides() -> Dict[str, Any]:
+    """Load user tag overrides from asset_tag_overrides.json (if exists)."""
+    src = Path(__file__).resolve().parents[1] / "data" / "asset_tag_overrides.json"
+    if not src.exists():
+        return {}
+    try:
+        return json.loads(src.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _load_global_tag_overrides() -> Dict[str, Any]:
+    """Load global tag-level overrides (blacklist + assignments)."""
+    src = Path(__file__).resolve().parents[1] / "data" / "tag_overrides.json"
+    if not src.exists():
+        return {"blacklisted_tags": [], "tag_assignments": []}
+    try:
+        data = json.loads(src.read_text(encoding="utf-8"))
+        data.setdefault("blacklisted_tags", [])
+        data.setdefault("tag_assignments", [])
+        return data
+    except Exception:
+        return {"blacklisted_tags": [], "tag_assignments": []}
+
+
+def _apply_tag_overrides(
+    assets: List[Dict[str, Any]],
+    overrides: Dict[str, Any] | None = None,
+) -> List[Dict[str, Any]]:
+    """Filter excluded assets and merge custom tags from overrides."""
+    if overrides is None:
+        overrides = _load_tag_overrides()
+    if not overrides:
+        return assets
+    out: List[Dict[str, Any]] = []
+    for a in assets:
+        ov = overrides.get(a.get("file_name", ""), {})
+        if ov.get("excluded"):
+            continue
+        # Merge custom tags into meta_theme_tags
+        assignments = ov.get("theme_assignments") or []
+        if assignments:
+            extra_tags: List[str] = []
+            for ta in assignments:
+                extra_tags.extend(ta.get("tags") or [])
+            if extra_tags:
+                existing = list(a.get("meta_theme_tags") or [])
+                merged = list(dict.fromkeys(existing + extra_tags))
+                a = {**a, "meta_theme_tags": merged}
+        out.append(a)
+    return out
 
 
 @dataclass(frozen=True)
@@ -512,8 +566,20 @@ def _build_raw_pool(
     assets: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
     """Build a scored clip pool from a single raw subgroup payload."""
+    assets = _apply_tag_overrides(assets)
+    global_tag_ov = _load_global_tag_overrides()
+    blacklisted = {_normalize_theme_tag(t) for t in global_tag_ov.get("blacklisted_tags", [])}
+    blacklisted.discard("")
+
+    # Expand priority_tags with globally assigned tags for this theme/group
     priority_tags = {_normalize_theme_tag(x) for x in raw_pick.filters.priority_theme_tags}
+    for ta in global_tag_ov.get("tag_assignments", []):
+        if ta.get("theme") == raw_pick.theme and ta.get("group") == raw_pick.tags_group:
+            norm = _normalize_theme_tag(ta.get("tag", ""))
+            if norm:
+                priority_tags.add(norm)
     priority_tags.discard("")
+    priority_tags -= blacklisted
     exclude_people = {_normalize_people_type(x) for x in (raw_pick.filters.exclude or [])}
     exclude_people.discard("")
     exclude_terms = {_normalize_theme_tag(x) for x in (raw_pick.filters.exclude_tags or [])}
@@ -524,6 +590,7 @@ def _build_raw_pool(
     for it in assets:
         meta_tags = {_normalize_theme_tag(x) for x in (it.get("meta_theme_tags") or [])}
         meta_tags.discard("")
+        meta_tags -= blacklisted
         overlap = len(priority_tags.intersection(meta_tags))
         if overlap <= 0:
             continue
@@ -696,7 +763,8 @@ def pick_footage_clips_by_intervals_deterministic(
         excluded_names = {str(x).strip() for x in list(exclude_file_names or []) if str(x).strip()}
 
         k = len(raw_picks)
-        subgroup_idx = seed_value % k
+        _vi = os.environ.get("BATCH_VARIANT_INDEX", "").strip()
+        subgroup_idx = ((int(_vi) - 1) % k) if _vi.isdigit() else (seed_value % k)
         chosen_pool = _build_raw_pool(raw_picks[subgroup_idx], assets)
         if not chosen_pool:
             # Chosen subgroup is empty — fall back to merged pool of all non-empty subgroups.

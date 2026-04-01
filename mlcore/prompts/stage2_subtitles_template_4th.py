@@ -18,6 +18,11 @@ TECHNICAL PIPELINE CONTRACT (mandatory):
 - Keep all subtitles inside stage1 audio clip window.
 - subtitle.out must be > subtitle.in for every subtitle.
 - For focus words: no more than 2 focused words per subtitle.
+- Focus word contract: for every word_timing with focus=true, that exact word
+  (case-insensitive, ignoring punctuation) MUST appear as a space-delimited
+  token in the covering subtitle.text.
+- Keep subtitle text short enough to fit 2 lines at 900px width, 60px Montserrat-BoldItalic, tracking -25.
+  Prefer 2-4 words per subtitle; use 5 only if all words are short.
 - No markdown, no comments, no extra keys.
 """
 

@@ -44,7 +44,31 @@ Workflow использует эту переменную, чтобы выпол
    - `git pull --ff-only`
    - `docker compose up -d --build`
 
-## 4) Web UI логов по всем контейнерам (Dozzle + пароль)
+## 3.1) Опционально: отдельный деплой `landing/` в Ubuntu nginx
+
+Если прод-домен обслуживается локальным nginx (а не S3/CDN), можно включить отдельный sync после deploy:
+
+- Скрипт: `infra/runners/deploy_landing_to_nginx.sh`
+- Workflow step: `.github/workflows/deploy-current-branch.yml` (`Deploy Landing To Nginx (optional)`)
+
+Нужные `Repository variables`:
+
+- `LANDING_NGINX_DEPLOY_ENABLED=true`
+- `LANDING_NGINX_DOCROOT=/var/www/blast808.com` (пример)
+- `LANDING_NGINX_MAIN_ONLY=true` (рекомендуется)
+- `LANDING_NGINX_MAIN_BRANCH=main`
+- `LANDING_NGINX_RELOAD_CMD=sudo nginx -t && sudo systemctl reload nginx` (опционально)
+- `LANDING_NGINX_SYNC_MODE=auto` (или `docker-host`, если runner работает в Docker)
+
+Поведение:
+
+- синк `REPO_DIR/landing/` -> `LANDING_NGINX_DOCROOT` через `rsync -a --delete`
+- `sync_mode=auto` пытается использовать `docker-host`, если доступен `/var/run/docker.sock`
+- исключает `*.rar` и `tmp/`
+- по умолчанию обновляет только `main`
+- проверяет маркер в `index.html` после синка
+
+## 4) Web UI логов по всем контейнерам (Dozzle через nginx auth)
 
 На сервере:
 
@@ -52,16 +76,18 @@ Workflow использует эту переменную, чтобы выпол
 cd /opt/blast_mj_final/infra/runners
 cp .env.dozzle.example .env.dozzle
 
-# создать users.yml (логин/пароль для Dozzle)
-./init_dozzle_user.sh admin 'CHANGE_ME_STRONG_PASSWORD'
-
 docker compose -f docker-compose.logs.yml --env-file .env.dozzle up -d
 ```
 
-UI: `http://SERVER_IP:18080`
+Рекомендованный режим:
+- `DOZZLE_BIND_HOST=127.0.0.1` (не публиковать Dozzle напрямую наружу)
+- `DOZZLE_BASE=/logs`
+- доступ только через nginx reverse-proxy с Basic Auth, например `https://blast808.com/logs/`
 
-По умолчанию включен `DOZZLE_AUTH_PROVIDER=simple`, поэтому без `dozzle_data/users.yml`
-Dozzle не должен запускаться в рабочем виде. Пароль обязателен.
+Для панели бота аналогично: `https://blast808.com/admin/` (также через Basic Auth).
+`asset-ui` рекомендуется прокинуть в той же зоне: `https://blast808.com/admin/assets/`.
+При каждом deploy (`docker compose up -d --build`) `asset-ui` пересобирается с
+новым frontend (`asset_ui/dist`) автоматически.
 
 Dozzle показывает live-логи Docker-контейнеров (включая воркеры/бота/API) и удобен как легкий старт.
 

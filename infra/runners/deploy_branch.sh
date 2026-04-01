@@ -64,8 +64,15 @@ if git ls-files --error-unmatch "$RUNTIME_TRACKED_FILE" >/dev/null 2>&1; then
 fi
 
 git_run fetch origin "$BRANCH"
-git_run checkout "$BRANCH"
-git_run pull --ff-only origin "$BRANCH"
+
+if git show-ref --verify --quiet "refs/heads/$BRANCH"; then
+  git_run checkout -f "$BRANCH"
+else
+  git_run checkout -B "$BRANCH" "origin/$BRANCH"
+fi
+
+# Deterministic deploy target: exact remote branch revision.
+git_run reset --hard "origin/$BRANCH"
 
 echo "[deploy] docker compose up -d --build"
 docker compose up -d --build

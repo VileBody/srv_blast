@@ -549,12 +549,18 @@ class Scenes3rdPlanner(_FlowPlannerBase):
             raise ValueError(f"scene has no words (id={scene.id})")
         if len(words) > 5:
             raise ValueError(f"scene has >5 words (id={scene.id}, words={len(words)})")
+        for w in words:
+            if "\n" in w or "\r" in w:
+                raise ValueError(f"scene.words must not contain line breaks (id={scene.id})")
 
         lines: List[List[str]] = []
         for row in scene.lines:
             row_words = [str(w).strip() for w in row if str(w).strip()]
             if row_words:
                 lines.append(row_words)
+
+        if len(lines) > 2:
+            raise ValueError(f"scene must have at most 2 lines (max 1 newline) (id={scene.id})")
 
         if lines:
             flat = [w for row in lines for w in row]

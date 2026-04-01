@@ -19,8 +19,11 @@ services:
       # inputs
       FOOTAGE_DIR: /app/footage
       FOOTAGE_DESCRIPTIONS_DIR: /app/descriptions
+      STATIC_ASSETS_SOURCE_INDEX_JSON: /app/data/static_assets_index_1to1.json
       STATIC_ASSETS_INDEX_JSON: /app/data/static_assets_index_1to1.json
+      STATIC_ASSETS_ENRICH_INDEX_JSON: /app/data/static_assets_index_1to1.json
       S3_ASSET_PREFIX: pinterest_collection/pins2_1to1_20260323
+      FOOTAGE_S3_PREFLIGHT_MODE: strict
 
       # point mlcore to shared paths
       FOOTAGE_INVENTORY_JSON: /app/data/footage_inventory.json
@@ -59,8 +62,11 @@ services:
       # inputs
       FOOTAGE_DIR: /app/footage
       FOOTAGE_DESCRIPTIONS_DIR: /app/descriptions
+      STATIC_ASSETS_SOURCE_INDEX_JSON: /app/data/static_assets_index_1to1.json
       STATIC_ASSETS_INDEX_JSON: /app/data/static_assets_index_1to1.json
+      STATIC_ASSETS_ENRICH_INDEX_JSON: /app/data/static_assets_index_1to1.json
       S3_ASSET_PREFIX: pinterest_collection/pins2_1to1_20260323
+      FOOTAGE_S3_PREFLIGHT_MODE: strict
 
       # point mlcore to shared paths
       FOOTAGE_INVENTORY_JSON: /app/data/footage_inventory.json
@@ -97,8 +103,11 @@ services:
       # inputs
       FOOTAGE_DIR: /app/footage
       FOOTAGE_DESCRIPTIONS_DIR: /app/descriptions
+      STATIC_ASSETS_SOURCE_INDEX_JSON: /app/data/static_assets_index_1to1.json
       STATIC_ASSETS_INDEX_JSON: /app/data/static_assets_index_1to1.json
+      STATIC_ASSETS_ENRICH_INDEX_JSON: /app/data/static_assets_index_1to1.json
       S3_ASSET_PREFIX: pinterest_collection/pins2_1to1_20260323
+      FOOTAGE_S3_PREFLIGHT_MODE: strict
 
       # point mlcore to shared paths
       FOOTAGE_INVENTORY_JSON: /app/data/footage_inventory.json
@@ -133,6 +142,66 @@ services:
       bash -lc "python -m services.tg_bot_botapi.app"
     depends_on:
       - orchestrator-api
+    restart: unless-stopped
+
+  tg-bot-public:
+    build:
+      context: .
+      dockerfile: Dockerfile.tg-bot-public
+    container_name: tg-bot-public
+    env_file:
+      - .env
+    environment:
+      TG_BOT_TOKEN: ${TG_BOT_PUBLIC_TOKEN}
+      TG_STATE_PREFIX: ${TG_PUBLIC_STATE_PREFIX:-blast:tg:public:chat_state}
+      SUBSCRIPTION_CHANNEL: ${SUBSCRIPTION_CHANNEL:-@impulsemarketing}
+      ORCHESTRATOR_PUBLIC_URL: ${ORCHESTRATOR_PUBLIC_URL:-http://orchestrator-api:8000}
+      BOT_POLL_INTERVAL_S: ${BOT_POLL_INTERVAL_S:-5}
+      BOT_STATUS_UPDATE_INTERVAL_S: ${BOT_STATUS_UPDATE_INTERVAL_S:-20}
+      BOT_TMP_DIR: ${BOT_TMP_DIR_PUBLIC:-/app/work/tg_tmp_public}
+      BOT_MAX_AUDIO_MB: ${BOT_MAX_AUDIO_MB:-5}
+      CREDITS_DB_URL: ${CREDITS_DB_URL:-}
+      POSTGRES_HOST: ${POSTGRES_HOST:-}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_DB: ${POSTGRES_DB:-}
+      POSTGRES_USER: ${POSTGRES_USER:-}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
+      POSTGRES_SSLMODE: ${POSTGRES_SSLMODE:-prefer}
+      ADMIN_PANEL_PORT: ${ADMIN_PANEL_PORT:-8080}
+      ADMIN_PANEL_PASSWORD: ${ADMIN_PANEL_PASSWORD:-changeme}
+      INITIAL_CREDITS: ${INITIAL_CREDITS:-2}
+      MANAGER_CHAT_ID: ${MANAGER_CHAT_ID:-0}
+      SURVEY_URL: ${SURVEY_URL:-https://forms.yandex.ru/u/69c52ce695add5c0264676e3}
+      TBANK_TERMINAL_KEY: ${TBANK_TERMINAL_KEY:-}
+      TBANK_PASSWORD: ${TBANK_PASSWORD:-}
+      TBANK_NOTIFY_URL: ${TBANK_NOTIFY_URL:-}
+      OFFER_URL: ${OFFER_URL:-}
+    volumes:
+      - ./work:/app/work
+    ports:
+      - "127.0.0.1:${TG_BOT_PUBLIC_ADMIN_BIND_PORT:-18081}:${ADMIN_PANEL_PORT:-8080}"
+    command: >
+      bash -lc "python -m services.tg_bot_public.app"
+    depends_on:
+      - orchestrator-api
+    restart: unless-stopped
+
+  asset-ui:
+    build:
+      context: .
+      dockerfile: Dockerfile.asset-ui
+    container_name: asset-ui
+    env_file:
+      - .env
+    environment:
+      ASSET_UI_PORT: ${ASSET_UI_PORT:?ASSET_UI_PORT is required}
+      ASSET_UI_UPLOAD_MAX_MB: ${ASSET_UI_UPLOAD_MAX_MB:?ASSET_UI_UPLOAD_MAX_MB is required}
+      ASSET_UI_TRASH_PREFIX: ${ASSET_UI_TRASH_PREFIX:?ASSET_UI_TRASH_PREFIX is required}
+      ASSET_UI_PRESIGN_TTL_S: ${ASSET_UI_PRESIGN_TTL_S:?ASSET_UI_PRESIGN_TTL_S is required}
+    ports:
+      - "127.0.0.1:18173:${ASSET_UI_PORT:?ASSET_UI_PORT is required}"
+    command: >
+      bash -lc "python -m services.asset_ui.run_uvicorn"
     restart: unless-stopped
 
   minio:

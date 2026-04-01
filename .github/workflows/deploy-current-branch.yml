@@ -1,9 +1,9 @@
-name: Deploy Current Branch
+name: Deploy Main
 
 on:
   push:
     branches:
-      - "**"
+      - "main"
   workflow_dispatch:
     inputs:
       branch:
@@ -46,8 +46,46 @@ jobs:
           GITHUB_TOKEN_FALLBACK: ${{ github.token }}
         run: |
           set -euo pipefail
+          AUTH_TOKEN="${GIT_AUTH_TOKEN:-${GITHUB_TOKEN_FALLBACK:-}}"
+          if [ -z "${AUTH_TOKEN:-}" ]; then
+            echo "GitHub token is missing for non-interactive deploy."
+            exit 1
+          fi
+
+          git_run() {
+            git -C "$REPO_DIR" \
+              -c "url.https://x-access-token:${AUTH_TOKEN}@github.com/.insteadof=git@github.com:" \
+              -c "url.https://x-access-token:${AUTH_TOKEN}@github.com/.insteadof=ssh://git@github.com/" \
+              -c "url.https://x-access-token:${AUTH_TOKEN}@github.com/.insteadof=https://github.com/" \
+              "$@"
+          }
+
+          # Force repo state to exact remote branch tip on the self-hosted runner.
+          # This prevents ff-only pull failures when local commits drift on server.
+          git_run fetch origin "$BRANCH"
+          if git -C "$REPO_DIR" show-ref --verify --quiet "refs/heads/$BRANCH"; then
+            git_run checkout -f "$BRANCH"
+          else
+            git_run checkout -B "$BRANCH" "origin/$BRANCH"
+          fi
+          git_run reset --hard "origin/$BRANCH"
+
           # Bootstrap for legacy server states where this runtime file was tracked and modified.
           if git -C "$REPO_DIR" ls-files --error-unmatch data/footage_inventory_selected.json >/dev/null 2>&1; then
             git -C "$REPO_DIR" restore --staged --worktree -- data/footage_inventory_selected.json || true
           fi
           bash "$REPO_DIR/infra/runners/deploy_branch.sh" "$BRANCH"
+
+      - name: Deploy Landing To Nginx (optional)
+        env:
+          REPO_DIR: ${{ vars.BLAST_REPO_DIR }}
+          BRANCH: ${{ inputs.branch != '' && inputs.branch || github.ref_name }}
+          LANDING_NGINX_DEPLOY_ENABLED: ${{ vars.LANDING_NGINX_DEPLOY_ENABLED }}
+          LANDING_NGINX_MAIN_ONLY: ${{ vars.LANDING_NGINX_MAIN_ONLY }}
+          LANDING_NGINX_MAIN_BRANCH: ${{ vars.LANDING_NGINX_MAIN_BRANCH }}
+          LANDING_NGINX_DOCROOT: ${{ vars.LANDING_NGINX_DOCROOT }}
+          LANDING_NGINX_RELOAD_CMD: ${{ vars.LANDING_NGINX_RELOAD_CMD }}
+          LANDING_NGINX_SYNC_MODE: ${{ vars.LANDING_NGINX_SYNC_MODE }}
+        run: |
+          set -euo pipefail
+          bash "$REPO_DIR/infra/runners/deploy_landing_to_nginx.sh" "$BRANCH"

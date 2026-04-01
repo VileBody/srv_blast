@@ -34,3 +34,11 @@ def test_template_uses_strict_audio_file_match_no_auto_fallback() -> None:
     tpl = Path("templates/project_template.j2").read_text(encoding="utf-8")
     assert "audio strict missing expected file" in tpl
     assert "audio fallback by single media/audio file" not in tpl
+
+
+def test_template_contains_template4th_flash_cut_hook() -> None:
+    tpl = Path("templates/project_template.j2").read_text(encoding="utf-8")
+    assert 'String((projectSpec && projectSpec.subtitlesMode) || "") === "template_4th"' in tpl
+    assert "function addTemplate4thFlashCuts()" in tpl
+    assert "BlendingMode.ADD" in tpl
+    assert "addTemplate4thFlashCuts();" in tpl

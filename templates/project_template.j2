@@ -540,6 +540,133 @@
       }
     }
 
+    function _isTemplate4thMode() {
+      try { return String((projectSpec && projectSpec.subtitlesMode) || "") === "template_4th"; }
+      catch(_) { return false; }
+    }
+
+    function _ensureWhiteSolidFootage(targetComp) {
+      try {
+        var ex = findFootageByName("White Solid 1");
+        if (ex) return ex;
+      } catch(_) {}
+
+      try {
+        var tmp = targetComp.layers.addSolid(
+          [1, 1, 1],
+          "White Solid 1",
+          targetComp.width,
+          targetComp.height,
+          targetComp.pixelAspect
+        );
+        var src = tmp.source;
+        try { tmp.remove(); } catch(_) {}
+        return src;
+      } catch(e) {
+        logErr("create White Solid 1 failed", e);
+        return null;
+      }
+    }
+
+    function _collectTemplate4thFlashCutTimes() {
+      var times = [];
+      var seen = {};
+      var frameDt = 1.0 / Number(MAIN_COMP.frameRate || 25);
+
+      for (var i = 0; i < footage_layers.length; i++) {
+        var it = footage_layers[i];
+        if (!it || it.type !== "footage") continue;
+
+        var td = it.text_data || {};
+        var meta = td.layer_meta || {};
+        if (meta.audioEnabled === true) continue;
+        if (meta.isOverlay === true) continue;
+
+        var t = pick(it, "in_point", "inPoint");
+        if (t === undefined || t === null) continue;
+        t = Number(t);
+        if (!isFinite(t)) continue;
+        if (t < -frameDt || t > Number(MAIN_COMP.duration || 0) + frameDt) continue;
+
+        var key = t.toFixed(6);
+        if (seen[key]) continue;
+        seen[key] = true;
+        times.push(t);
+      }
+
+      times.sort(function (a, b) { return a - b; });
+      return times;
+    }
+
+    function addTemplate4thFlashCuts() {
+      if (!_isTemplate4thMode()) return;
+      if (!MAIN_COMP) return;
+
+      var cutTimes = _collectTemplate4thFlashCutTimes();
+      if (!cutTimes || cutTimes.length === 0) {
+        logLine("INFO", "template_4th flash-cuts skipped: no footage cuts");
+        return;
+      }
+
+      var FLASH_DURATION = 0.63333333;
+      var FLASH_OP_START = 25;
+      var FLASH_OP_END = 0;
+      var FLASH_OP_TIME = 0.6;
+
+      var whiteSolid = _ensureWhiteSolidFootage(MAIN_COMP);
+      if (!whiteSolid) {
+        logLine("ERR", "template_4th flash-cuts failed: no White Solid 1 source");
+        return;
+      }
+
+      var created = 0;
+      for (var i = 0; i < cutTimes.length; i++) {
+        var inT = Number(cutTimes[i]);
+        var outT = Math.min(Number(MAIN_COMP.duration || 0), inT + FLASH_DURATION);
+        if (!(outT > inT)) continue;
+
+        var fl = null;
+        try { fl = MAIN_COMP.layers.add(whiteSolid, FLASH_DURATION); } catch(_) { fl = null; }
+        if (!fl) continue;
+
+        try { fl.name = "Вспышка"; } catch(_) {}
+        try { fl.inPoint = inT; } catch(_) {}
+        try { fl.outPoint = outT; } catch(_) {}
+        try { fl.blendingMode = BlendingMode.ADD; } catch(_) {}
+        try { fl.motionBlur = false; } catch(_) {}
+        try { fl.moveToBeginning(); } catch(_) {}
+
+        try {
+          var tf = fl.property("ADBE Transform Group");
+          var op = safeProp(tf, "ADBE Opacity");
+          if (op) {
+            var fadeT = Math.min(outT, inT + FLASH_OP_TIME);
+            op.setValueAtTime(inT, FLASH_OP_START);
+            var k1 = op.nearestKeyIndex(inT);
+            op.setTemporalEaseAtKey(
+              k1,
+              [new KeyframeEase(0, 16.666666667)],
+              [new KeyframeEase(-41.6666666666667, 16.666666667)]
+            );
+
+            op.setValueAtTime(fadeT, FLASH_OP_END);
+            var k2 = op.nearestKeyIndex(fadeT);
+            op.setTemporalEaseAtKey(
+              k2,
+              [new KeyframeEase(-41.6666666666667, 16.666666667)],
+              [new KeyframeEase(0, 16.666666667)]
+            );
+          }
+        } catch(eOp) {
+          logErr("template_4th flash opacity failed t=" + fmtNum(inT), eOp);
+        }
+
+        created += 1;
+      }
+
+      logLine("INFO", "template_4th flash-cuts created=" + created);
+    }
+
     // ==========================================================
     // 2) Helpers
     // ==========================================================
@@ -693,6 +820,7 @@
               var r = textDoc.characterRange(idx, idx + 1);
               if (cs.font !== undefined) r.font = cs.font;
               if (cs.fontSize !== undefined) r.fontSize = cs.fontSize;
+              if (cs.fillColor !== undefined) { r.applyFill = true; r.fillColor = cs.fillColor; }
               if (cs.fauxItalic !== undefined) r.fauxItalic = !!cs.fauxItalic;
             } catch(eChar) {
               logErr("charStyle failed layer=" + layer.name + " i=" + i, eChar);
@@ -1001,10 +1129,9 @@
           + "var minDb=" + String(minDb) + ";\n"
           + "var t=time-inPoint;\n"
           + "var dur=Math.max(0.0001,outPoint-inPoint);\n"
-          + "var a=1.0;\n"
-          + "if (fadeIn>0){var x=Math.min(Math.max(t/fadeIn,0),1);a=Math.min(a,Math.sin(x*Math.PI*0.5));}\n"
-          + "if (fadeOut>0){var y=Math.min(Math.max((dur-t)/fadeOut,0),1);a=Math.min(a,Math.sin(y*Math.PI*0.5));}\n"
-          + "var db=minDb+(0-minDb)*a;\n"
+          + "var db=0;\n"
+          + "if (fadeIn>0){var x=Math.min(Math.max(t/fadeIn,0),1);var a=Math.sin(x*Math.PI*0.5);db=Math.min(db,(a>0.00001)?(20*Math.log(a)/Math.LN10):minDb);}\n"
+          + "if (fadeOut>0){var y=Math.min(Math.max((dur-t)/fadeOut,0),1);var b=Math.sin(y*Math.PI*0.5);db=Math.min(db,(b>0.00001)?(20*Math.log(b)/Math.LN10):minDb);}\n"
           + "[db,db];";
         lv.expression = expr;
       } catch(e) { logErr("apply audio envelope failed layer=" + layer.name, e); }
@@ -1129,7 +1256,13 @@
       try {
         phaseStart(lData.name, "create");
         if (lData.type === "text") {
-          layer = target.layers.addText(String(lData.text || "").replace(/\r/g, "\r"));
+          var _td = lData.text_data ? lData.text_data : null;
+          var _bt = _td ? _td.box_text : null;
+          if (_bt && _bt.length >= 2) {
+            layer = target.layers.addBoxText([_bt[0], _bt[1]], String(lData.text || "").replace(/\r/g, "\r"));
+          } else {
+            layer = target.layers.addText(String(lData.text || "").replace(/\r/g, "\r"));
+          }
 
         } else if (lData.type === "adjustment") {
           layer = target.layers.addSolid([1,1,1], lData.name, target.width, target.height, 1.0, target.duration);
@@ -1317,6 +1450,9 @@
     for (var i = text_layers.length - 1; i >= 0; i--) {
       createLayerFromBlueprint(text_layers[i]);
     }
+
+    // template_4th: no shake in builder + flash cuts generated here
+    addTemplate4thFlashCuts();
 
     // ==========================================================
     // 6) SAVE PROJECT

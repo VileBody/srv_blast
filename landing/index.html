@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Blast — AI-агент для музыкантов</title>
+  <meta name="description" content="Blast — AI-агент для артистов: создаёт вирусный контент под трек с нуля за 60 секунд." />
+  <link rel="icon" type="image/svg+xml" href="assets/logo.svg" />
+  <link rel="stylesheet" href="css/style.css?v=20260328-legalfix1" />
+</head>
+<body>
+
+  <!-- NAVBAR -->
+  <div class="navbar-wrap load-fade load-fade-d1">
+    <header class="navbar">
+      <img src="assets/backforheader.png" class="navbar-back" aria-hidden="true" />
+      <a href="#" class="navbar-logo">
+        <img src="assets/impulselogo.svg" alt="Blast" width="42" height="40" loading="eager" />
+      </a>
+      <nav class="navbar-links">
+        <a href="#how-it-works">Как работает</a>
+        <a href="#examples">Примеры</a>
+        <a href="#features">Преимущества</a>
+      </nav>
+      <a href="https://t.me/blast808bot" class="navbar-cta" target="_blank" rel="noopener">Попробовать</a>
+      <button class="burger" aria-label="Меню" aria-expanded="false">
+        <span></span><span></span><span></span>
+      </button>
+    </header>
+    <div class="mobile-menu">
+      <a href="#how-it-works">Как работает</a>
+      <a href="#examples">Примеры</a>
+      <a href="#features">Преимущества</a>
+      <a href="https://t.me/blast808bot" class="mobile-cta" target="_blank" rel="noopener">Попробовать</a>
+    </div>
+  </div>
+
+  <main>
+
+    <!-- HERO -->
+    <section class="hero" id="hero">
+      <div class="container">
+        <div class="hero-inner">
+
+          <!-- Left: text -->
+          <div class="hero-left load-fade load-fade-d2">
+            <h1 class="hero-h1">
+              <span class="hero-h1-regular">Сделай трек </span><br class="hero-h1-mob-br" /><span class="hero-h1-italic">— вирусным<br /></span><span class="hero-h1-regular">за 60 секунд!</span>
+            </h1>
+            <div class="hero-badge">
+              <img src="assets/blastmainlogo.svg" alt="" width="24" height="18" />
+              <span>Co-pilot в продвижении музыки</span>
+            </div>
+            <p class="hero-desc">
+              <span class="hero-desc-white">Blast — AI-агент для артистов:</span><br /><span class="hero-desc-muted">создаёт контент под трек с нуля</span>
+            </p>
+          </div>
+
+          <!-- Right: dark card with phone + CTA -->
+          <div class="hero-right load-fade load-fade-d3">
+            <img src="assets/containerblur.png" class="hero-container-blur" aria-hidden="true" />
+            <div class="hero-phone-wrap">
+              <img class="hero-phone-frame" src="assets/herophone.png" alt="" />
+              <div class="hero-screen">
+                <video class="hero-video" data-media-key="hero_phone" muted loop playsinline preload="metadata"></video>
+              </div>
+            </div>
+            <div class="hero-right-overlay"></div>
+            <img src="assets/heroblur.png" class="hero-mobile-blur" aria-hidden="true" />
+            <div class="hero-right-cta">
+              <div class="hero-right-texts">
+                <p class="hero-cta-title">Попробуй бесплатно:</p>
+                <p class="hero-cta-sub">Пришли трек в тг-бот<br class="mob-br" /> — получи 3 видео!</p>
+              </div>
+              <a href="https://t.me/blast808bot" class="btn" target="_blank" rel="noopener">
+                <img src="assets/backforbutton.png" class="btn-back" aria-hidden="true" />
+                <span>Загрузить трек</span>
+                <img src="assets/tgvector2.svg" alt="" width="17" height="15" />
+              </a>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </section>
+
+    <!-- SOCIAL PROOF -->
+    <section class="social" id="social">
+      <div class="container">
+        <div class="social-header">
+          <img src="assets/sublogoblast.svg" alt="" class="social-sublogo" width="20" height="20" />
+          <p class="social-label">Нам доверяют:</p>
+        </div>
+        <div class="social-inner">
+          <div class="social-artists">
+            <div class="social-avatars">
+              <img src="assets/person0.svg" class="avatar-circle" alt="" width="50" height="50" />
+              <img src="assets/person1.svg" class="avatar-circle" alt="" width="50" height="50" />
+              <img src="assets/person2.svg" class="avatar-circle" alt="" width="50" height="50" />
+              <img src="assets/person3.svg" class="avatar-circle" alt="" width="50" height="50" />
+              <img src="assets/person4.svg" class="avatar-circle" alt="" width="50" height="50" />
+              <img src="assets/person5.svg" class="avatar-circle" alt="" width="50" height="50" />
+            </div>
+            <span class="social-count"><span class="gradient-text">500+</span> артистов</span>
+          </div>
+          <div class="social-labels">
+            <div class="social-logos">
+              <img src="assets/labelA.svg" class="label-circle" alt="" width="50" height="50" />
+              <img src="assets/labelY.svg" class="label-circle" alt="" width="50" height="50" />
+              <img src="assets/labelR.svg" class="label-circle" alt="" width="50" height="50" />
+            </div>
+            <span class="social-count"><span class="gradient-text">15+</span><span class="social-text-desktop"> лейблов, студий и партнёров</span><span class="social-text-mob"> лейблов и партнёров</span></span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- HOW IT WORKS -->
+    <section class="section-block" id="how-it-works">
+      <div class="container">
+        <div class="steps-scroll-wrapper">
+          <div class="steps-sticky-area">
+            <img src="assets/howworkblur.png" class="steps-bg-blur" aria-hidden="true" />
+            <img src="assets/biglogo.png" class="steps-bg-logo" aria-hidden="true" />
+            <div class="section-head section-head--left">
+              <p class="eyebrow">Создавай видео — без съёмки</p>
+              <h2 class="section-h2">Как работает генерация?</h2>
+            </div>
+          <div class="steps-card">
+            <div class="steps-left">
+              <p class="steps-text">
+                <span class="steps-line active" data-step="0">Загрузи трек.</span>
+                <span class="steps-line" data-step="1">Настрой видео.</span>
+                <span class="steps-line" data-step="2">Получи контент.</span>
+              </p>
+            </div>
+            <div class="steps-right">
+              <img class="steps-stage steps-stage--desktop active" src="assets/workstage1.png" alt="Шаг 1" data-step="0" />
+              <img class="steps-stage steps-stage--desktop" src="assets/workstage2.png" alt="Шаг 2" data-step="1" />
+              <img class="steps-stage steps-stage--mob active" src="assets/workstage1-mob.png" alt="Шаг 1" data-step="0" />
+              <img class="steps-stage steps-stage--mob" src="assets/workstage2-mob.png" alt="Шаг 2" data-step="1" />
+              <div class="steps-stage steps-stage--3" data-step="2">
+                <img class="steps-stage3-desktop" src="assets/workstage3.png" alt="Шаг 3" />
+                <img class="steps-stage3-mob" src="assets/workstage3-mob.png" alt="Шаг 3" />
+                <div class="stage3-glare stage3-glare--glow"></div>
+                <div class="stage3-glare stage3-glare--core"></div>
+                <div class="steps-stat-overlay steps-stat-overlay--desktop">
+                  <div class="steps-stat-card steps-stat-card--before">
+                    <div class="stat-label">Видео А</div>
+                    <div class="stat-row"><span class="stat-num">481</span><span class="stat-lbl">Просмотры</span></div>
+                    <div class="stat-row"><span class="stat-num">28</span><span class="stat-lbl">Лайков</span></div>
+                    <div class="stat-row"><span class="stat-num">1,2</span><span class="stat-lbl">Удержание, %</span></div>
+                  </div>
+                  <div class="steps-stat-card steps-stat-card--after">
+                    <div class="stat-label">Видео Б</div>
+                    <div class="stat-row"><span class="stat-num stat-num--hot">5.1K</span><span class="stat-lbl">Просмотры</span></div>
+                    <div class="stat-row"><span class="stat-num stat-num--hot">1.2K</span><span class="stat-lbl">Лайков</span></div>
+                    <div class="stat-row"><span class="stat-num stat-num--hot">4,8</span><span class="stat-lbl">Удержание, %</span></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="steps-stat-overlay steps-stat-overlay--mob">
+            <div class="steps-stat-card steps-stat-card--before">
+              <div class="stat-label">Видео А</div>
+              <div class="stat-row"><span class="stat-num">481</span><span class="stat-lbl">Просмотры</span></div>
+              <div class="stat-row"><span class="stat-num">28</span><span class="stat-lbl">Лайков</span></div>
+              <div class="stat-row"><span class="stat-num">1,2</span><span class="stat-lbl">Удержание, %</span></div>
+            </div>
+            <div class="steps-stat-card steps-stat-card--after">
+              <div class="stat-label">Видео Б</div>
+              <div class="stat-row"><span class="stat-num stat-num--hot">5.1K</span><span class="stat-lbl">Просмотры</span></div>
+              <div class="stat-row"><span class="stat-num stat-num--hot">1.2K</span><span class="stat-lbl">Лайков</span></div>
+              <div class="stat-row"><span class="stat-num stat-num--hot">4,8</span><span class="stat-lbl">Удержание, %</span></div>
+            </div>
+          </div>
+          </div><!-- /steps-sticky-area -->
+        </div>
+      </div>
+    </section>
+
+    <!-- EXAMPLES -->
+    <section class="section-block" id="examples">
+      <div class="container">
+        <div class="examples-header">
+          <img src="assets/cut.svg" alt="" class="examples-icon" width="24" height="24" />
+          <p class="social-label">Примеры роликов:</p>
+        </div>
+        <div class="examples-scroll">
+          <div class="example-col">
+            <div class="example-slide" data-media-key="example_impulse1" data-portrait="true">
+              <video class="example-preview-video" muted loop playsinline preload="none"></video>
+              <div class="example-play-btn" aria-label="Смотреть"></div>
+            </div>
+            <span class="example-genre">Impulse</span>
+          </div>
+          <div class="example-col">
+            <div class="example-slide" data-media-key="example_tape">
+              <video class="example-preview-video" muted loop playsinline preload="none"></video>
+              <div class="example-play-btn" aria-label="Смотреть"></div>
+            </div>
+            <span class="example-genre">Тape</span>
+          </div>
+          <div class="example-col">
+            <div class="example-slide" data-media-key="example_jakson">
+              <video class="example-preview-video" muted loop playsinline preload="none"></video>
+              <div class="example-play-btn" aria-label="Смотреть"></div>
+            </div>
+            <span class="example-genre">Jakson</span>
+          </div>
+          <div class="example-col">
+            <div class="example-slide" data-media-key="example_billie">
+              <video class="example-preview-video" muted loop playsinline preload="none"></video>
+              <div class="example-play-btn" aria-label="Смотреть"></div>
+            </div>
+            <span class="example-genre">Billie</span>
+          </div>
+          <div class="example-col">
+            <div class="example-slide" data-media-key="example_alter">
+              <video class="example-preview-video" muted loop playsinline preload="none"></video>
+              <div class="example-play-btn" aria-label="Смотреть"></div>
+            </div>
+            <span class="example-genre">Alter</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- FEATURES -->
+    <section class="section-block" id="features">
+      <img src="assets/featblur.png" class="feat-bg-blur" aria-hidden="true" />
+      <img src="assets/backlineblur.png" class="feat-bg-backlineblur" aria-hidden="true" />
+      <img src="assets/backline.svg" class="feat-bg-line" aria-hidden="true" />
+      <div class="container">
+        <div class="section-head section-head--right">
+          <p class="eyebrow">Новый виток в «продвижении» музыки</p>
+          <h2 class="section-h2 section-h2--right">Больше никаких<br />препятствий</h2>
+        </div>
+        <div class="feat-card">
+          <!-- Col 1: before/after -->
+          <div class="feat-col">
+            <div class="feat-visual feat-visual--time">
+              <div class="feat-before">
+                <span class="feat-tag-label">До:</span>
+                <div class="feat-tag feat-tag--dim"><span>1 час</span></div>
+              </div>
+              <div class="feat-after">
+                <span class="feat-tag-label">После:</span>
+                <div class="feat-tag feat-tag--accent"><span>3 клика</span></div>
+              </div>
+              <div class="feat-eq">
+                <span class="feat-tag-label">=</span>
+                <div class="feat-tag feat-tag--dim"><span>ролик</span></div>
+              </div>
+            </div>
+            <p class="feat-title">Ты — делаешь музыку,<br class="mob-br" /> Бласт — делает контент</p>
+            <p class="feat-desc">Без камеры, монтажа,<br class="mob-br" /> навыков и напряга</p>
+          </div>
+          <!-- Col 2: mindmap -->
+          <div class="feat-col feat-col--mid">
+            <div class="feat-visual feat-visual--mindmap">
+              <div class="feat-mindmap">
+                <img src="assets/formatlines.svg" class="feat-formatlines" alt="" />
+                <div class="feat-mindmap-tags">
+                  <span class="feat-pill feat-pill--trends">trends</span>
+                  <span class="feat-pill feat-pill--lyrics">lyrics</span>
+                  <span class="feat-pill feat-pill--pov">pov</span>
+                  <span class="feat-pill feat-pill--edits">edits</span>
+                  <span class="feat-pill feat-pill--story">story</span>
+                </div>
+              </div>
+            </div>
+            <p class="feat-title">Не один ролик — <br />а система форматов</p>
+            <p class="feat-desc">Комбинации из видео<br class="mob-br" /> повышают виральность</p>
+          </div>
+          <!-- Col 3: comparison table -->
+          <div class="feat-col">
+            <div class="feat-visual feat-visual--table">
+              <div class="feat-compare">
+                <div class="feat-compare-blast">
+                  <span class="feat-compare-name gradient-text"><img src="assets/blastmainlogo.svg" class="feat-compare-icon" alt="" />Бласт</span>
+                  <span class="feat-compare-val">Авто</span>
+                  <span class="feat-compare-val">60 секунд</span>
+                  <span class="feat-compare-val">0₽ старт</span>
+                </div>
+                <div class="feat-compare-sep"></div>
+                <div class="feat-compare-agency">
+                  <span class="feat-compare-name">Агентство</span>
+                  <span class="feat-compare-val feat-compare-val--dim">Менеджер</span>
+                  <span class="feat-compare-val feat-compare-val--dim">14–21 дней</span>
+                  <span class="feat-compare-val feat-compare-val--dim">20–50 тыс ₽</span>
+                </div>
+              </div>
+            </div>
+            <p class="feat-title">Контент — без<br />конских бюджетов</p>
+            <p class="feat-desc">В 10 раз дешевле, <br />в сотни раз быстрее</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- CTA -->
+    <section class="cta-section" id="cta">
+      <img src="assets/marketingblur.png" class="cta-bg-blur" aria-hidden="true" />
+      <div class="container">
+        <div class="cta-head">
+          <p class="eyebrow">Сгенерируй видео — прямо сейчас</p>
+          <h2 class="section-h2">Затести Бласт<br />на своём треке</h2>
+        </div>
+        <div class="cta-card">
+          <img src="assets/cta.png" class="cta-illustration" alt="" />
+          <div class="cta-action">
+            <p class="cta-action-label">Попробуй бесплатно:</p>
+            <p class="cta-action-text">Пришли трек в тг-бот<br class="mob-br" /> — получи 3 видео!</p>
+            <a href="https://t.me/blast808bot" class="btn btn--large" target="_blank" rel="noopener">
+              <span>Загрузить трек</span>
+              <img src="assets/arrow1.svg" width="16" height="16" alt="" />
+            </a>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- FOOTER -->
+  <footer class="footer">
+    <div class="container footer-inner">
+      <div class="footer-brand reveal">
+        <img src="assets/footer.png" alt="Blast" loading="lazy" />
+      </div>
+      <div class="footer-social reveal">
+        <span class="footer-social-label">Соц. сети</span>
+        <a href="https://t.me/impulsemarketing" target="_blank" rel="noopener">
+          <img src="assets/tgvector.svg" alt="Telegram" width="17" height="15" style="position:relative;top:-1px;" />
+          <span>Telegram</span>
+        </a>
+        <a href="https://www.instagram.com/impulsemarketing/" target="_blank" rel="noopener">
+          <img src="assets/igvector.svg" alt="Instagram" width="20" height="20" style="position:relative;top:-2px;" />
+          <span>Instagram</span>
+        </a>
+        <a href="https://vk.com/impulsemarketing" target="_blank" rel="noopener">
+          <img src="assets/vkvector.svg" alt="VK" width="20" height="20" style="position:relative;top:-2px;" />
+          <span>VK</span>
+        </a>
+      </div>
+      <div class="footer-legal reveal">
+        <p>«Импульс Промо» 2026</p>
+        <a href="#" class="footer-legal-link" data-popup="popup-offer">Оферта</a>
+        <a href="#" class="footer-legal-link" data-popup="popup-privacy">Политика конфиденциальности</a>
+        <a href="#" class="footer-legal-link" data-popup="popup-contacts">Контакты</a>
+      </div>
+    </div>
+  </footer>
+
+  <!-- LEGAL POPUPS -->
+  <div class="legal-popup" id="popup-offer" aria-hidden="true">
+    <div class="legal-popup-backdrop"></div>
+    <div class="legal-popup-body">
+      <button class="legal-popup-close" aria-label="Закрыть">&#x2715;</button>
+      <h2>Публичная оферта</h2>
+      <div class="legal-popup-content">
+        <p>Индивидуальный предприниматель Чернов Никита Романович (далее — «Исполнитель»), ИНН 623013205426, ОГРНИП 324620000005644, адрес: 390048, Россия, Рязанская обл., г. Рязань, ул. Васильевская, д. 18, кв. 60, предлагает любому физическому или юридическому лицу (далее — «Заказчик») заключить настоящий договор-оферту на оказание услуг по генерации видеоконтента на базе искусственного интеллекта.</p>
+
+        <h3>1. Предмет оферты</h3>
+        <p>Исполнитель оказывает Заказчику услуги по автоматизированной генерации видеоконтента на основе предоставленных Заказчиком аудиозаписей, текстов и предпочтений (далее — «Услуги»). Услуги предоставляются дистанционно с использованием Telegram-бота по адресу: <a href="https://t.me/blast808bot" target="_blank">t.me/blast808bot</a>. Страна производителя Услуг — Российская Федерация.</p>
+
+        <h3>2. Тарифные планы и стоимость</h3>
+
+        <h4>2.1. «Blast Trial» — 990 ₽</h4>
+        <p>Пакет включает: анализ предоставленного аудиоматериала и текстовых данных средствами искусственного интеллекта; формирование контент-плана и подборку трендовых концепций для видеороликов; генерацию 5 (пяти) видеороликов на основе аудиоматериала Заказчика. Пакет предназначен для тестирования потенциала единичного трека.</p>
+
+        <h4>2.2. «Blast» — 1 990 ₽/мес.</h4>
+        <p>Ежемесячная подписка включает: анализ предоставленного аудиоматериала и текстовых данных; формирование контент-плана и трендовых концепций; генерацию 15 (пятнадцати) видеороликов на основе аудиоматериала Заказчика. Подписка обеспечивает регулярное наполнение социальных сетей Заказчика контентом.</p>
+
+        <h4>2.3. «Glow» — 7 990 ₽</h4>
+        <p>Расширенный пакет включает: анализ аудиоматериала и текстовых данных; формирование контент-плана и трендовых концепций; генерацию 30 (тридцати) видеороликов; подбор 2 (двух) блогеров для размещения контента с использованием аудиоматериала Заказчика и закупку по одному ролику у каждого.</p>
+
+        <h4>2.4. «Impulse» — 29 990 ₽</h4>
+        <p>Флагманский пакет включает: заключение двустороннего договора; разработку идейной концепции релиза (5 форматов контента); составление индивидуального контент-плана с референсами; генерацию 50 (пятидесяти) видеороликов с последующим тестированием и масштабированием; закупку 10–12 размещений у блогеров.</p>
+
+        <h3>3. Порядок оплаты</h3>
+        <p>Оплата производится в рублях Российской Федерации путём безналичного перевода с использованием банковских карт Visa, MasterCard, МИР через платёжный сервис ПАО «Т-Банк» (<a href="https://tbank.ru" target="_blank" rel="noopener">tbank.ru</a>). Услуга считается оплаченной с момента поступления денежных средств на расчётный счёт Исполнителя.</p>
+
+        <h3>4. Доставка</h3>
+        <p>Результат оказания Услуг (видеоролики) доставляется Заказчику в электронном виде посредством Telegram-бота незамедлительно после завершения генерации. Территория оказания Услуг не ограничена — Услуги доступны из любой страны мира при наличии доступа к сети Интернет и мессенджеру Telegram.</p>
+
+        <h3>5. Условия возврата и отмены</h3>
+        <p>Заказчик вправе отказаться от Услуг и получить полный возврат денежных средств <strong>до момента начала генерации контента</strong>. После начала процесса генерации возврат денежных средств не производится, так как Услуга считается оказанной. Для оформления возврата Заказчик направляет заявку на адрес электронной почты: <a href="mailto:support@blast808.com">support@blast808.com</a>. Возврат осуществляется тем же способом, которым была произведена оплата, в течение 10 (десяти) рабочих дней.</p>
+
+        <h3>6. Ограничения</h3>
+        <p>Ограничения на экспортную деятельность отсутствуют. Услуги предоставляются исключительно в цифровом формате и не подлежат физической доставке или экспорту.</p>
+
+        <h3>7. Акцепт оферты</h3>
+        <p>Акцептом настоящей оферты является факт оплаты любого тарифного плана. С момента акцепта настоящая оферта считается заключённым договором между Исполнителем и Заказчиком.</p>
+
+        <h3>8. Реквизиты Исполнителя</h3>
+        <p>ИП Чернов Никита Романович<br>
+        ИНН: 623013205426<br>
+        ОГРНИП: 324620000005644<br>
+        Адрес: 390048, Россия, Рязанская обл., г. Рязань, ул. Васильевская, д. 18, кв. 60<br>
+        Email: <a href="mailto:support@blast808.com">support@blast808.com</a><br>
+        Телефон: <a href="tel:+79105724967">+7 (910) 572-49-67</a></p>
+      </div>
+    </div>
+  </div>
+
+  <div class="legal-popup" id="popup-privacy" aria-hidden="true">
+    <div class="legal-popup-backdrop"></div>
+    <div class="legal-popup-body">
+      <button class="legal-popup-close" aria-label="Закрыть">&#x2715;</button>
+      <h2>Политика конфиденциальности</h2>
+      <div class="legal-popup-content">
+        <p>Настоящая Политика конфиденциальности определяет порядок обработки и защиты персональных данных пользователей сервиса Blast (blast808.com), принадлежащего ИП Чернов Никита Романович (далее — «Оператор»).</p>
+
+        <h3>1. Собираемые данные</h3>
+        <p>Оператор может собирать следующие персональные данные: имя и контактные данные (адрес электронной почты, номер телефона), предоставленные Пользователем при обращении в службу поддержки; идентификатор пользователя в Telegram; данные об оплате (без хранения реквизитов банковских карт — обработка платежей осуществляется ПАО «Т-Банк»); аудиозаписи и текстовые материалы, загруженные Пользователем для генерации контента; техническая информация (IP-адрес, тип браузера, cookie-файлы).</p>
+
+        <h3>2. Цели обработки</h3>
+        <p>Персональные данные обрабатываются в целях: оказания Услуг по генерации видеоконтента; идентификации Пользователя; осуществления расчётов; направления информационных уведомлений о статусе заказа; улучшения качества сервиса; исполнения обязательств, предусмотренных законодательством РФ.</p>
+
+        <h3>3. Защита данных</h3>
+        <p>Оператор принимает необходимые организационные и технические меры для защиты персональных данных от неправомерного доступа, уничтожения, изменения, блокирования, копирования и распространения. Передача данных между Пользователем и сервисом осуществляется по защищённому протоколу HTTPS с использованием шифрования TLS. Данные банковских карт не передаются Оператору и не хранятся на серверах сервиса — платёжные транзакции обрабатываются непосредственно ПАО «Т-Банк» в соответствии со стандартом PCI DSS.</p>
+
+        <h3>4. Передача данных третьим лицам</h3>
+        <p>Оператор не передаёт персональные данные третьим лицам, за исключением случаев: обработки платежей ПАО «Т-Банк»; выполнения требований законодательства РФ; защиты прав и законных интересов Оператора.</p>
+
+        <h3>5. Хранение данных</h3>
+        <p>Персональные данные хранятся не дольше, чем это необходимо для целей их обработки. Загруженные аудиоматериалы и сгенерированный контент хранятся в течение 30 (тридцати) дней с момента выполнения заказа, после чего автоматически удаляются.</p>
+
+        <h3>6. Права Пользователя</h3>
+        <p>Пользователь вправе: запросить информацию о составе обрабатываемых персональных данных; потребовать уточнения, блокирования или уничтожения своих персональных данных; отозвать согласие на обработку данных, направив запрос на <a href="mailto:support@blast808.com">support@blast808.com</a>.</p>
+
+        <h3>7. Файлы cookie</h3>
+        <p>Сайт blast808.com использует файлы cookie для обеспечения корректной работы сервиса и сбора анонимной статистики посещений. Пользователь может отключить использование cookie в настройках браузера.</p>
+
+        <h3>8. Контактная информация</h3>
+        <p>По вопросам, связанным с обработкой персональных данных:<br>
+        Email: <a href="mailto:support@blast808.com">support@blast808.com</a><br>
+        Телефон: <a href="tel:+79105724967">+7 (910) 572-49-67</a></p>
+      </div>
+    </div>
+  </div>
+
+  <div class="legal-popup" id="popup-contacts" aria-hidden="true">
+    <div class="legal-popup-backdrop"></div>
+    <div class="legal-popup-body">
+      <button class="legal-popup-close" aria-label="Закрыть">&#x2715;</button>
+      <h2>Контакты</h2>
+      <div class="legal-popup-content">
+        <h3>Служба поддержки</h3>
+        <p>Email: <a href="mailto:support@blast808.com">support@blast808.com</a><br>
+        Телефон: <a href="tel:+79105724967">+7 (910) 572-49-67</a><br>
+        Telegram-бот: <a href="https://t.me/blast808bot" target="_blank" rel="noopener">t.me/blast808bot</a></p>
+
+        <h3>Реквизиты</h3>
+        <p>ИП Чернов Никита Романович<br>
+        ИНН: 623013205426<br>
+        ОГРНИП: 324620000005644<br>
+        Адрес: 390048, Россия, Рязанская обл., г. Рязань, ул. Васильевская, д. 18, кв. 60</p>
+
+        <h3>Способы оплаты</h3>
+        <p>Оплата принимается через платёжный сервис ПАО «Т-Банк» (<a href="https://tbank.ru" target="_blank" rel="noopener">tbank.ru</a>).<br>
+        Принимаются карты: Visa, MasterCard, МИР, T-Pay.</p>
+      </div>
+    </div>
+  </div>
+
+<script src="js/media-config.js?v=20260328-legalfix1"></script>
+<script src="js/main.js?v=20260328-legalfix1" defer></script>
+
+  <!-- VIDEO MODAL -->
+  <div class="video-modal" id="videoModal" aria-hidden="true">
+    <div class="video-modal-backdrop"></div>
+    <div class="video-modal-inner">
+      <button class="video-modal-close" aria-label="Закрыть">&#x2715;</button>
+      <video class="video-modal-player" controls playsinline></video>
+    </div>
+  </div>
+</body>
+</html>
