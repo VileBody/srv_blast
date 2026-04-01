@@ -337,6 +337,20 @@ class CreditsDB:
             for r in rows
         ]
 
+    async def get_pending_payments(self) -> List[Dict[str, Any]]:
+        """Return all payments with status 'pending' (not yet confirmed/rejected)."""
+        db = self._conn()
+        cur = await db.execute(
+            "SELECT id, order_id, tg_id, amount_rub, package, status, payment_id, created_at "
+            "FROM payments WHERE status = 'pending' ORDER BY created_at ASC",
+        )
+        rows = await cur.fetchall()
+        return [
+            {"id": r[0], "order_id": r[1], "tg_id": r[2], "amount_rub": r[3],
+             "package": r[4], "status": r[5], "payment_id": r[6], "created_at": r[7]}
+            for r in rows
+        ]
+
     async def is_payment_processed(self, payment_id: str, status: str) -> bool:
         """Check if this payment_id+status combo was already processed."""
         db = self._conn()

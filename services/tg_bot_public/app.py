@@ -1042,11 +1042,12 @@ class BlastBotApp:
 
         self._processing_task = asyncio.create_task(self._processing_loop(), name="tg_bot_processing_loop")
         self._reminder_task = asyncio.create_task(self._reminder_loop(), name="tg_bot_reminder_loop")
+        self._payment_poll_task = asyncio.create_task(self._payment_poll_loop(), name="tg_bot_payment_poll")
         log.info("startup complete: polling loop started")
 
     async def _on_shutdown(self, bot: Bot) -> None:
         del bot
-        for task in [self._processing_task, getattr(self, "_reminder_task", None), getattr(self, "_admin_panel_task", None)]:
+        for task in [self._processing_task, getattr(self, "_reminder_task", None), getattr(self, "_admin_panel_task", None), getattr(self, "_payment_poll_task", None)]:
             if task is not None:
                 task.cancel()
                 try:
@@ -1691,6 +1692,13 @@ class BlastBotApp:
         "Бласт": 1990,
         "Глоу": 7990,
         "Импульс": 29990,
+    }
+
+    _PKG_CREDITS = {
+        "Триал": 5,
+        "Бласт": 15,
+        "Глоу": 30,
+        "Импульс": 50,
     }
 
     async def _show_purchase_stub(self, message: Message, st: ChatState) -> None:
@@ -2379,6 +2387,112 @@ class BlastBotApp:
             except Exception as e:
                 log.warning("reminder loop error=%r", e)
             await asyncio.sleep(3600)  # check every hour
+
+    async def _payment_poll_loop(self) -> None:
+        """Poll T-Bank every 30s for pending payments, credit on CONFIRMED."""
+        while True:
+            try:
+                if self.tbank:
+                    pending = await self.credits_db.get_pending_payments()
+                    bot = self._require_bot()
+                    for pay in pending:
+                        try:
+                            # T-Bank Init response stores PaymentId — but we may not have it yet
+                            # Use GetState with PaymentId if available, otherwise skip
+                            # We need to get PaymentId from the Init response — let's store it
+                            order_id = pay["order_id"]
+                            # Try to find payment by checking all recent T-Bank payments
+                            # Actually we need PaymentId. Let's try re-init to get status
+                            # Better approach: store PaymentId at Init time
+                            # For now, query by order_id via CheckOrder
+                            state_resp = await self._tbank_check_order(order_id)
+                            if not state_resp:
+                                continue
+                            status = state_resp.get("Status", "")
+                            payment_id = str(state_resp.get("PaymentId", ""))
+                            if status == "CONFIRMED":
+                                pkg = pay["package"]
+                                tg_id = pay["tg_id"]
+                                credits_to_add = self._PKG_CREDITS.get(pkg, 5)
+                                await self.credits_db.update_payment_status(order_id, "confirmed", payment_id)
+                                await self.credits_db.add_credits(tg_id, credits_to_add, "payment", f"Пакет «{pkg}»")
+                                await self.credits_db.log_event(tg_id, "payment_confirmed", f"{pkg} +{credits_to_add} кредитов")
+                                username = ""
+                                try:
+                                    user_data = await self.credits_db.get_user(tg_id)
+                                    username = user_data.get("username", "") if user_data else ""
+                                except Exception:
+                                    pass
+                                # Notify user
+                                bal = await self.credits_db.get_balance(tg_id)
+                                try:
+                                    await bot.send_message(
+                                        tg_id,
+                                        f"Оплата прошла успешно! Пакет «{pkg}» активирован.\n\n"
+                                        f"Начислено кредитов: {credits_to_add}\n"
+                                        f"Баланс: {bal}\n\n"
+                                        "Отправь трек, чтобы начать генерацию.",
+                                        reply_markup=_kb(["Отправить трек"]),
+                                    )
+                                except Exception as e:
+                                    log.warning("payment notify user=%s err=%s", tg_id, e)
+                                # Notify manager
+                                uname = f"@{username}" if username else str(tg_id)
+                                await self._notify_manager_payment(uname, pkg, pay["amount_rub"], "Оплачен")
+                                # Set user state to WAIT_AUDIO
+                                try:
+                                    st = await self.store.get(tg_id)
+                                    if st:
+                                        st.stage = STAGE_WAIT_AUDIO
+                                        await self.store.set(st)
+                                except Exception as e:
+                                    log.warning("payment state update err=%s", e)
+                                log.info("payment confirmed order=%s tg_id=%s pkg=%s credits=%s", order_id, tg_id, pkg, credits_to_add)
+                            elif status in ("REJECTED", "DEADLINE_EXPIRED", "CANCELED", "REVERSED"):
+                                await self.credits_db.update_payment_status(order_id, status.lower(), payment_id)
+                                username = ""
+                                try:
+                                    user_data = await self.credits_db.get_user(pay["tg_id"])
+                                    username = user_data.get("username", "") if user_data else ""
+                                except Exception:
+                                    pass
+                                uname = f"@{username}" if username else str(pay["tg_id"])
+                                status_label = {"REJECTED": "Отклонён", "DEADLINE_EXPIRED": "Истёк", "CANCELED": "Отменён", "REVERSED": "Возврат"}.get(status, status)
+                                await self._notify_manager_payment(uname, pay["package"], pay["amount_rub"], status_label)
+                                log.info("payment %s order=%s", status, order_id)
+                        except Exception as e:
+                            log.warning("payment poll order=%s err=%r", pay.get("order_id"), e)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                log.warning("payment poll loop error=%r", e)
+            await asyncio.sleep(30)
+
+    async def _tbank_check_order(self, order_id: str) -> Optional[Dict[str, Any]]:
+        """Check order status via T-Bank CheckOrder API."""
+        if not self.tbank:
+            return None
+        params: Dict[str, Any] = {
+            "TerminalKey": self.tbank._terminal_key,
+            "OrderId": order_id,
+        }
+        params["Token"] = self.tbank._make_token(params)
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                resp = await client.post("https://securepay.tinkoff.ru/v2/CheckOrder", json=params)
+                if resp.status_code != 200:
+                    return None
+                data = resp.json()
+                if not data.get("Success"):
+                    return None
+                payments = data.get("Payments", [])
+                if not payments:
+                    return None
+                # Return the most recent payment
+                return payments[-1]
+        except Exception as e:
+            log.warning("tbank check_order err=%r", e)
+            return None
 
     def _current_job_ids(self, st: ChatState) -> List[str]:
         raw = list(st.active_job_ids or [])
