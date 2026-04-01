@@ -4,10 +4,37 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import quote_plus
 
 
 def _env(key: str, default: str = "") -> str:
     return (os.environ.get(key, default) or "").strip()
+
+
+def _int_env(key: str, default: int) -> int:
+    raw = _env(key, str(default))
+    try:
+        return int(raw)
+    except Exception:
+        return default
+
+
+def _credits_db_url_env() -> str:
+    explicit = _env("CREDITS_DB_URL", "")
+    if explicit:
+        return explicit
+    host = _env("POSTGRES_HOST", "")
+    db = _env("POSTGRES_DB", "")
+    user = _env("POSTGRES_USER", "")
+    password = _env("POSTGRES_PASSWORD", "")
+    sslmode = _env("POSTGRES_SSLMODE", "prefer")
+    port = _int_env("POSTGRES_PORT", 5432)
+    if not host or not db or not user:
+        return ""
+    return (
+        f"postgresql://{quote_plus(user)}:{quote_plus(password)}@{host}:{int(port)}/{db}"
+        f"?sslmode={quote_plus(sslmode or 'prefer')}"
+    )
 
 
 def _abs_path(p: str, *, repo_root: Path) -> str:
@@ -70,6 +97,22 @@ class Settings:
     # Polling controls (for async win API)
     windows_poll_interval_s: float = float(_env("WINDOWS_POLL_INTERVAL_S", "2.0") or "2.0")
     windows_poll_timeout_s: float = float(_env("WINDOWS_POLL_TIMEOUT_S", "3600") or "3600")
+
+    # ------------------------------------------------------------------ #
+    # PostgreSQL (credit system — shared with tg_bot)
+    # CREDITS_DB_URL or POSTGRES_HOST/USER/PASSWORD/DB/SSLMODE fallback
+    # ------------------------------------------------------------------ #
+    credits_db_url: str = _credits_db_url_env()
+
+    # ------------------------------------------------------------------ #
+    # Payment webhook
+    # ------------------------------------------------------------------ #
+    # HMAC-SHA256 secret shared with the payment provider.
+    # If empty, the /payments/webhook endpoint returns 403 on all requests.
+    payment_webhook_secret: str = _env("PAYMENT_WEBHOOK_SECRET", "")
+    # Bearer token for /payments/activate (admin manual activation).
+    # If empty, the endpoint is disabled (returns 403).
+    payment_admin_token: str = _env("PAYMENT_ADMIN_TOKEN", "")
 
 
 SETTINGS = Settings()

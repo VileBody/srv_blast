@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import List
 
 from pydantic import BaseModel, Field
@@ -9,6 +10,7 @@ from redis.asyncio import Redis
 from core.subtitles_mode import SUBTITLES_MODE_LEGACY_BLOCKS
 from .config import Settings
 
+log = logging.getLogger("tg_bot.state_store")
 
 STAGE_IDLE = "IDLE"
 STAGE_WAIT_AUDIO = "WAIT_AUDIO"
@@ -21,6 +23,10 @@ STAGE_WAIT_VERSIONS = "WAIT_VERSIONS"
 STAGE_WAIT_CONFIRM = "WAIT_CONFIRM"
 STAGE_PROCESSING = "PROCESSING"
 STAGE_WAIT_NEXT = "WAIT_NEXT"
+# User waiting for a referral friend to activate their first video.
+STAGE_WAITING_REFERRAL = "WAITING_REFERRAL"
+# User account exists but has no credits (not yet paid).
+STAGE_LOCKED = "LOCKED"
 
 
 class ChatState(BaseModel):
@@ -60,6 +66,15 @@ class ChatState(BaseModel):
     # Sticky result source for fallback links if file send fails repeatedly.
     last_result_url: str = ""
 
+    # Credit reservation: ref_id of the deduction held while enqueue is in-flight.
+    # Non-empty means a credit was deducted and not yet confirmed as consumed.
+    pending_deduction_ref_id: str = ""
+
+    # Referral: chat_id of the user who referred this user (0 = none).
+    referrer_chat_id: int = 0
+    # Timestamp when we entered WAITING_REFERRAL so recovery can unstick us.
+    waiting_referral_since: float = 0.0
+
 
 class RedisChatStateStore:
     def __init__(self, settings: Settings):
@@ -82,12 +97,23 @@ class RedisChatStateStore:
             return ChatState(chat_id=int(chat_id))
         try:
             obj = json.loads(raw)
-        except Exception:
+        except Exception as exc:
+            log.error(
+                "state_store.get: JSON parse failed chat_id=%s err=%r raw_prefix=%r — resetting to blank state",
+                chat_id,
+                exc,
+                raw[:200] if raw else "",
+            )
             return ChatState(chat_id=int(chat_id))
 
         try:
             return ChatState.model_validate(obj)
-        except Exception:
+        except Exception as exc:
+            log.error(
+                "state_store.get: Pydantic validation failed chat_id=%s err=%r — resetting to blank state",
+                chat_id,
+                exc,
+            )
             return ChatState(chat_id=int(chat_id))
 
     async def set(self, state: ChatState) -> None:
@@ -114,10 +140,37 @@ class RedisChatStateStore:
             try:
                 obj = json.loads(raw)
                 st = ChatState.model_validate(obj)
-            except Exception:
+            except Exception as exc:
+                log.error(
+                    "state_store.list_processing: failed to parse key=%s err=%r — skipping",
+                    key,
+                    exc,
+                )
                 continue
             has_jobs = bool(st.active_job_ids) or bool(st.active_job_id)
             if st.stage == STAGE_PROCESSING and has_jobs:
+                out.append(st)
+        return out
+
+    async def list_waiting_referral(self) -> List[ChatState]:
+        """Return all chats stuck in WAITING_REFERRAL for recovery."""
+        out: List[ChatState] = []
+        pattern = f"{self._prefix}:*"
+        async for key in self._redis.scan_iter(match=pattern, count=200):
+            raw = await self._redis.get(key)
+            if not raw:
+                continue
+            try:
+                obj = json.loads(raw)
+                st = ChatState.model_validate(obj)
+            except Exception as exc:
+                log.error(
+                    "state_store.list_waiting_referral: failed to parse key=%s err=%r — skipping",
+                    key,
+                    exc,
+                )
+                continue
+            if st.stage == STAGE_WAITING_REFERRAL:
                 out.append(st)
         return out
 
