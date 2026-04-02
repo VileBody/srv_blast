@@ -28,9 +28,11 @@ def create_app() -> FastAPI:
     app.include_router(create_asset_router())
 
     store = JobStore.from_env()
+    _bundle_ok = False
 
     @app.on_event("startup")
     def _startup() -> None:
+        nonlocal _bundle_ok
         # Global bundle bootstrap (one for all jobs)
         inv = Path(SETTINGS.footage_inventory_json)
         bun = Path(SETTINGS.descriptions_bundle_path)
@@ -50,18 +52,25 @@ def create_app() -> FastAPI:
         )
         if res.ok:
             print(f"[bundle] {res.action}: {res.bundle_path}")
+            _bundle_ok = True
         else:
-            # Не валим сервис насмерть — но будет ошибка позже при LLM-вызове.
             print(f"[bundle][ERR] {res.reason}")
+            _bundle_ok = False
 
     @app.get("/health")
     def health() -> dict:
+        checks: dict = {}
         try:
             store.r.ping()
-            ok = True
+            checks["redis"] = True
         except Exception:
-            ok = False
-        return {"ok": ok}
+            checks["redis"] = False
+
+        checks["bundle"] = _bundle_ok
+        checks["windows_render_url"] = bool(SETTINGS.windows_base_url)
+
+        ok = all(checks.values())
+        return {"ok": ok, "checks": checks}
 
     # ==========================================================
     # NEW: correct naming (audio URL -> enqueue pipeline)
@@ -100,6 +109,38 @@ def create_app() -> FastAPI:
         if not st:
             raise HTTPException(status_code=404, detail="job not found")
         return st
+
+    @app.get("/metrics")
+    def metrics() -> dict:
+        """Lightweight observability endpoint — queue lengths, job status counts."""
+        from .celery_app import celery_app as _celery
+
+        counts: dict = {"NEW": 0, "QUEUED": 0, "RUNNING": 0, "SUCCEEDED": 0, "FAILED": 0}
+        jobs_error: str | None = None
+        try:
+            for job in store.list_jobs():
+                s = job.get("status", "")
+                if s in counts:
+                    counts[s] += 1
+        except Exception as exc:
+            jobs_error = repr(exc)
+
+        queues: dict = {}
+        try:
+            inspect = _celery.control.inspect(timeout=1.0)
+            active = inspect.active() or {}
+            reserved = inspect.reserved() or {}
+            for worker, tasks in active.items():
+                queues[worker] = {"active": len(tasks), "reserved": len(reserved.get(worker, []))}
+        except Exception:
+            queues["error"] = "inspect_failed"
+
+        return {
+            "job_status_counts": counts,
+            "job_status_error": jobs_error,
+            "workers": queues,
+            "bundle_ok": _bundle_ok,
+        }
 
     # Serve built frontend (if exists)
     _ui_dist = Path(__file__).resolve().parents[2] / "asset_ui" / "dist"

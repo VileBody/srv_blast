@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
-from typing import List
+import logging
+import time
+from typing import List, Optional
 
 from pydantic import BaseModel, Field
 from redis.asyncio import Redis
@@ -9,6 +11,8 @@ from redis.asyncio import Redis
 from core.subtitles_mode import SUBTITLES_MODE_LEGACY_BLOCKS
 from .config import Settings
 
+
+log = logging.getLogger(__name__)
 
 STAGE_IDLE = "IDLE"
 STAGE_WAIT_AUDIO = "WAIT_AUDIO"
@@ -60,6 +64,9 @@ class ChatState(BaseModel):
     # Sticky result source for fallback links if file send fails repeatedly.
     last_result_url: str = ""
 
+    # Timestamp for state TTL / recovery
+    updated_at: float = 0.0
+
 
 class RedisChatStateStore:
     def __init__(self, settings: Settings):
@@ -72,6 +79,8 @@ class RedisChatStateStore:
             db=settings.redis_db,
             decode_responses=True,
         )
+        # Secondary index: set of chat_ids currently in PROCESSING stage.
+        self._processing_set_key = f"{self._prefix}:__index:processing"
 
     def _key(self, chat_id: int) -> str:
         return f"{self._prefix}:{int(chat_id)}"
@@ -82,16 +91,36 @@ class RedisChatStateStore:
             return ChatState(chat_id=int(chat_id))
         try:
             obj = json.loads(raw)
-        except Exception:
+        except Exception as e:
+            log.error(
+                "chat_state_json_parse_error chat_id=%s err=%r raw_head=%s",
+                chat_id, e, repr(raw[:200]) if raw else "",
+            )
             return ChatState(chat_id=int(chat_id))
 
         try:
             return ChatState.model_validate(obj)
-        except Exception:
+        except Exception as e:
+            log.error(
+                "chat_state_validation_error chat_id=%s err=%r keys=%s",
+                chat_id, e, list(obj.keys()) if isinstance(obj, dict) else type(obj).__name__,
+            )
             return ChatState(chat_id=int(chat_id))
 
     async def set(self, state: ChatState) -> None:
+        state.updated_at = time.time()
         await self._redis.set(self._key(state.chat_id), state.model_dump_json())
+        # Maintain processing index
+        await self._update_processing_index(state)
+
+    async def _update_processing_index(self, state: ChatState) -> None:
+        """Keep the processing set in sync with state transitions."""
+        member = str(state.chat_id)
+        has_jobs = bool(state.active_job_ids) or bool(state.active_job_id)
+        if state.stage == STAGE_PROCESSING and has_jobs:
+            await self._redis.sadd(self._processing_set_key, member)
+        else:
+            await self._redis.srem(self._processing_set_key, member)
 
     async def reset_to_wait_audio(self, chat_id: int) -> ChatState:
         st = ChatState(chat_id=int(chat_id), stage=STAGE_WAIT_AUDIO)
@@ -105,9 +134,63 @@ class RedisChatStateStore:
         return st
 
     async def list_processing(self) -> List[ChatState]:
+        """
+        O(k) where k = number of PROCESSING chats (typically small),
+        instead of O(n) full SCAN of all chat states.
+        """
+        members = await self._redis.smembers(self._processing_set_key)
+        if not members:
+            return []
+
         out: List[ChatState] = []
+        stale: List[str] = []
+        for member in members:
+            try:
+                chat_id = int(member)
+            except (ValueError, TypeError):
+                stale.append(str(member))
+                continue
+            st = await self.get(chat_id)
+            has_jobs = bool(st.active_job_ids) or bool(st.active_job_id)
+            if st.stage == STAGE_PROCESSING and has_jobs:
+                out.append(st)
+            else:
+                # Stale index entry — state no longer PROCESSING
+                stale.append(str(member))
+
+        if stale:
+            await self._redis.srem(self._processing_set_key, *stale)
+        return out
+
+    async def list_processing_stuck(self, *, max_age_s: float = 7200.0) -> List[ChatState]:
+        """
+        Find PROCESSING chats that have been stuck for longer than max_age_s.
+        Used for recovery policy.
+        """
+        all_processing = await self.list_processing()
+        now = time.time()
+        stuck: List[ChatState] = []
+        for st in all_processing:
+            started = st.active_job_started_at or st.updated_at or 0.0
+            if started > 0 and (now - started) > max_age_s:
+                stuck.append(st)
+        return stuck
+
+    async def cleanup_stale_states(self, *, max_idle_age_s: float = 604800.0) -> int:
+        """
+        Bounded retention: remove chat states that have been idle (not PROCESSING)
+        for longer than max_idle_age_s (default 7 days).
+
+        This is a SCAN-based operation — call sparingly (e.g., once per hour).
+        Returns count of removed states.
+        """
         pattern = f"{self._prefix}:*"
+        removed = 0
+        now = time.time()
         async for key in self._redis.scan_iter(match=pattern, count=200):
+            # Skip the index key
+            if key == self._processing_set_key:
+                continue
             raw = await self._redis.get(key)
             if not raw:
                 continue
@@ -116,10 +199,16 @@ class RedisChatStateStore:
                 st = ChatState.model_validate(obj)
             except Exception:
                 continue
-            has_jobs = bool(st.active_job_ids) or bool(st.active_job_id)
-            if st.stage == STAGE_PROCESSING and has_jobs:
-                out.append(st)
-        return out
+            # Don't remove active states
+            if st.stage == STAGE_PROCESSING:
+                continue
+            updated = st.updated_at or 0.0
+            if updated > 0 and (now - updated) > max_idle_age_s:
+                await self._redis.delete(key)
+                removed += 1
+                log.info("stale_state_removed chat_id=%s stage=%s age_days=%.1f",
+                         st.chat_id, st.stage, (now - updated) / 86400)
+        return removed
 
     async def close(self) -> None:
         await self._redis.aclose()

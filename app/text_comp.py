@@ -5,6 +5,7 @@ import math
 import os
 from typing import Any, Dict, List
 
+from core.fps import COMP_FPS
 from core.subtitles_mode import (
     SUBTITLES_MODE_IMPULSE_2ND,
     SUBTITLES_MODE_LEGACY_BLOCKS,
@@ -149,7 +150,7 @@ def _preflight_clamp_text_layers(
 ) -> None:
     log = logging.getLogger("app.text_comp")
     if fps <= 0:
-        fps = 23.9759979248047
+        fps = COMP_FPS
     dt = 1.0 / float(fps)
     eps = dt / 10.0
 
@@ -338,11 +339,11 @@ def build_text_layers(*, full_edit_config: Dict[str, Any], text_comp_name: str, 
             _normalize_layer_dict(l, text_comp_name=text_comp_name, mine_comp_name=mine_comp_name)
 
     comp = full_edit_config.get("composition") if isinstance(full_edit_config, dict) else {}
-    fps_raw = comp.get("fps", 23.9759979248047) if isinstance(comp, dict) else 23.9759979248047
+    fps_raw = comp.get("fps", COMP_FPS) if isinstance(comp, dict) else COMP_FPS
     try:
         fps = float(fps_raw)
     except Exception:
-        fps = 23.9759979248047
+        fps = COMP_FPS
     if mode == SUBTITLES_MODE_LEGACY_BLOCKS:
         shift_s = _env_float("TEXT_LAYER_TIME_SHIFT_S", 0.3)
     else:

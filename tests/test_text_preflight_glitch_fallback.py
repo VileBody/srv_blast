@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from core.fps import COMP_FPS
 from app.text_comp import _preflight_clamp_text_layers
 
 
@@ -44,7 +45,7 @@ def test_preflight_glitch_peak_zero_window_merges_into_mine() -> None:
 
     _preflight_clamp_text_layers(
         layers,
-        fps=23.9759979248047,
+        fps=COMP_FPS,
         strict=True,
         mine_comp_name=MINE_COMP_NAME,
     )
@@ -77,7 +78,7 @@ def test_preflight_keeps_strict_failure_for_non_glitch_out_le_in() -> None:
     with pytest.raises(ValueError, match="out<=in"):
         _preflight_clamp_text_layers(
             layers,
-            fps=23.9759979248047,
+            fps=COMP_FPS,
             strict=True,
             mine_comp_name=MINE_COMP_NAME,
         )
@@ -98,7 +99,7 @@ def test_preflight_allows_zero_duration_adjustment_in_strict_mode() -> None:
 
     _preflight_clamp_text_layers(
         layers,
-        fps=23.9759979248047,
+        fps=COMP_FPS,
         strict=True,
         mine_comp_name=MINE_COMP_NAME,
     )

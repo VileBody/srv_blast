@@ -110,6 +110,8 @@ CREATE INDEX IF NOT EXISTS idx_utm_touches_tg_id      ON utm_touches(tg_id);
 CREATE INDEX IF NOT EXISTS idx_utm_touches_created_at ON utm_touches(created_at);
 CREATE INDEX IF NOT EXISTS idx_utm_touches_source     ON utm_touches(source);
 CREATE INDEX IF NOT EXISTS idx_utm_touches_campaign   ON utm_touches(campaign);
+
+CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
 """
 
 
@@ -192,6 +194,7 @@ class CreditsDB:
         await conn.execute("ALTER TABLE payments ADD COLUMN IF NOT EXISTS utm_payload TEXT NOT NULL DEFAULT ''")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_pay_utm_source ON payments(utm_source)")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_pay_utm_campaign ON payments(utm_campaign)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)")
 
         await conn.execute("CREATE TABLE IF NOT EXISTS utm_touches ("
                            "id BIGSERIAL PRIMARY KEY,"
@@ -387,26 +390,32 @@ class CreditsDB:
                 "    COALESCE(NULLIF(source, ''), '(none)') AS source,"
                 "    COALESCE(NULLIF(medium, ''), '(none)') AS medium,"
                 "    COALESCE(NULLIF(campaign, ''), '(none)') AS campaign,"
+                "    COALESCE(NULLIF(content, ''), '') AS content,"
+                "    COALESCE(NULLIF(term, ''), '') AS term,"
                 "    COUNT(*)::BIGINT AS starts_count "
-                "  FROM utm_touches GROUP BY 1,2,3"
+                "  FROM utm_touches GROUP BY 1,2,3,4,5"
                 "),"
                 "paid AS ("
                 "  SELECT "
                 "    COALESCE(NULLIF(utm_source, ''), '(none)') AS source,"
                 "    COALESCE(NULLIF(utm_medium, ''), '(none)') AS medium,"
                 "    COALESCE(NULLIF(utm_campaign, ''), '(none)') AS campaign,"
+                "    COALESCE(NULLIF(utm_content, ''), '') AS content,"
+                "    COALESCE(NULLIF(utm_term, ''), '') AS term,"
                 "    COUNT(*)::BIGINT AS paid_orders,"
                 "    COALESCE(SUM(amount_rub), 0)::BIGINT AS revenue_rub "
-                "  FROM payments WHERE status = 'CONFIRMED' GROUP BY 1,2,3"
+                "  FROM payments WHERE status = 'CONFIRMED' GROUP BY 1,2,3,4,5"
                 ") "
                 "SELECT "
                 "  COALESCE(s.source, p.source) AS source,"
                 "  COALESCE(s.medium, p.medium) AS medium,"
                 "  COALESCE(s.campaign, p.campaign) AS campaign,"
+                "  COALESCE(s.content, p.content) AS content,"
+                "  COALESCE(s.term, p.term) AS term,"
                 "  COALESCE(s.starts_count, 0)::BIGINT AS starts_count,"
                 "  COALESCE(p.paid_orders, 0)::BIGINT AS paid_orders,"
                 "  COALESCE(p.revenue_rub, 0)::BIGINT AS revenue_rub "
-                "FROM starts s FULL OUTER JOIN paid p USING (source, medium, campaign) "
+                "FROM starts s FULL OUTER JOIN paid p USING (source, medium, campaign, content, term) "
                 "ORDER BY starts_count DESC, paid_orders DESC, revenue_rub DESC "
                 "LIMIT $1",
                 int(limit),
@@ -416,6 +425,8 @@ class CreditsDB:
                 "source": str(r["source"] or ""),
                 "medium": str(r["medium"] or ""),
                 "campaign": str(r["campaign"] or ""),
+                "content": str(r["content"] or ""),
+                "term": str(r["term"] or ""),
                 "starts_count": int(r["starts_count"]),
                 "paid_orders": int(r["paid_orders"]),
                 "revenue_rub": int(r["revenue_rub"]),

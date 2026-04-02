@@ -3,14 +3,16 @@ from __future__ import annotations
 
 from typing import Any, Dict, Final
 
+from core.fps import COMP_FPS, COMP_DT
+
 # ============================================================
 # Global timing
 # ============================================================
-# Используй реальное значение из AE (comp.frameRate), а не "24".
-FPS: Final[float] = 23.9759979248047
+# Re-exported from core.fps for backward compatibility.
+FPS: Final[float] = COMP_FPS
 
 def DT() -> float:
-    return 1.0 / FPS
+    return COMP_DT
 
 
 # ============================================================

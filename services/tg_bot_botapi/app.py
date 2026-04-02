@@ -727,6 +727,7 @@ class BlastBotApp:
         self.dp.include_router(self.router)
 
         self._processing_task: asyncio.Task[None] | None = None
+        self._cleanup_task: asyncio.Task[None] | None = None
         self._bot: Bot | None = None
 
         self._register_handlers()
@@ -845,16 +846,18 @@ class BlastBotApp:
         self.settings.tmp_dir.mkdir(parents=True, exist_ok=True)
 
         self._processing_task = asyncio.create_task(self._processing_loop(), name="tg_bot_processing_loop")
+        self._cleanup_task = asyncio.create_task(self._stale_state_cleanup_loop(), name="tg_bot_cleanup_loop")
         log.info("startup complete: polling loop started")
 
     async def _on_shutdown(self, bot: Bot) -> None:
         del bot
-        if self._processing_task is not None:
-            self._processing_task.cancel()
-            try:
-                await self._processing_task
-            except asyncio.CancelledError:
-                pass
+        for task in (self._processing_task, self._cleanup_task):
+            if task is not None:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
 
         await self.orchestrator.close()
         await self.store.close()
@@ -1183,7 +1186,10 @@ class BlastBotApp:
         reuse_text_job_id: str = "",
         exclude_file_names: Optional[List[str]] = None,
     ) -> str:
-        idem = f"tg-{st.chat_id}-batch-{batch_id}-v{int(version_index)}-{uuid.uuid4().hex[:12]}"
+        # Deterministic idempotency key: (chat_id, batch_id, version) — no random UUID.
+        # This means retrying the same version enqueue reuses the same orchestrator job
+        # instead of creating a duplicate.
+        idem = f"tg-{st.chat_id}-batch-{batch_id}-v{int(version_index)}"
         enqueue = await self.orchestrator.send_audio_s3(
             audio_s3_url=audio_s3_url,
             mode="with_gemini",
@@ -1310,7 +1316,21 @@ class BlastBotApp:
                 continue
             await bot.send_message(chat_id=chat_id, text=part, parse_mode="HTML", disable_web_page_preview=True)
 
+    async def _stale_state_cleanup_loop(self) -> None:
+        """Hourly cleanup of idle chat states older than 7 days."""
+        while True:
+            try:
+                await asyncio.sleep(3600.0)
+                removed = await self.store.cleanup_stale_states(max_idle_age_s=604800.0)
+                if removed:
+                    log.info("stale_state_cleanup: removed %d old states", removed)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                log.warning("stale_state_cleanup_error: %r", e)
+
     async def _processing_loop(self) -> None:
+        _recovery_check_counter = 0
         while True:
             try:
                 states = await self.store.list_processing()
@@ -1319,12 +1339,49 @@ class BlastBotApp:
                         await self._process_chat_job(st)
                     except Exception as e:
                         log.warning("processing loop chat=%s err=%r", st.chat_id, e)
+
+                # Recovery check: every ~60 iterations (~5 min at 5s interval),
+                # look for chats stuck in PROCESSING for >2 hours.
+                _recovery_check_counter += 1
+                if _recovery_check_counter >= 60:
+                    _recovery_check_counter = 0
+                    await self._recover_stuck_processing()
             except asyncio.CancelledError:
                 raise
             except Exception as e:
                 log.warning("processing loop iteration error=%r", e)
 
             await asyncio.sleep(max(1.0, float(self.settings.bot_poll_interval_s)))
+
+    async def _recover_stuck_processing(self) -> None:
+        """
+        Recovery policy: if a chat has been in PROCESSING for >2 hours
+        with no progress, reset it so the user isn't stuck forever.
+        """
+        try:
+            stuck = await self.store.list_processing_stuck(max_age_s=7200.0)
+            if not stuck:
+                return
+            bot = self._require_bot()
+            for st in stuck:
+                log.warning(
+                    "stuck_processing_recovery chat=%s batch=%s age_s=%.0f jobs=%s",
+                    st.chat_id, st.batch_id,
+                    time.time() - (st.active_job_started_at or st.updated_at or 0.0),
+                    st.active_job_ids,
+                )
+                try:
+                    await bot.send_message(
+                        st.chat_id,
+                        "Задачи зависли (> 2 часов без прогресса). Сброс состояния. Попробуй ещё раз.",
+                        reply_markup=_kb([BTN_NEXT]),
+                    )
+                except Exception as e:
+                    log.warning("stuck_recovery_msg_failed chat=%s err=%r", st.chat_id, e)
+                self._reset_processing_state(st)
+                await self.store.set(st)
+        except Exception as e:
+            log.warning("stuck_processing_recovery_error err=%r", e)
 
     def _current_job_ids(self, st: ChatState) -> List[str]:
         raw = list(st.active_job_ids or [])
@@ -1513,6 +1570,10 @@ class BlastBotApp:
             await self.store.set(st)
             return
 
+        # Compute batch outcome counts
+        succeeded_count = sum(1 for r in rows if str(r.get("status") or "").upper() == "SUCCEEDED")
+        failed_count = sum(1 for r in rows if str(r.get("status") or "").upper() == "FAILED")
+
         master_status = ""
         if st.master_job_id:
             for r in rows:
@@ -1522,8 +1583,10 @@ class BlastBotApp:
 
         next_ver = max(1, int(st.next_version_to_enqueue or 1))
         can_enqueue_more = next_ver <= total_versions
+        enqueue_failed = False
         if can_enqueue_more:
             if master_status == "FAILED":
+                # master_failed: don't enqueue remaining versions
                 await bot.send_message(
                     st.chat_id,
                     f"Версия 1/{total_versions} завершилась ошибкой, остальные версии не запускаю.",
@@ -1553,16 +1616,53 @@ class BlastBotApp:
                     await self.store.set(st)
                     return
                 except Exception as e:
+                    enqueue_failed = True
                     await bot.send_message(
                         st.chat_id,
                         f"Не удалось поставить в очередь Версию {next_ver}/{total_versions}: {e}",
                     )
                     st.next_version_to_enqueue = total_versions + 1
 
-        await bot.send_message(
-            st.chat_id,
-            "Сделать следующий?",
-            reply_markup=_kb([BTN_NEXT]),
+        # Determine explicit batch outcome and send appropriate message
+        if master_status == "FAILED":
+            batch_outcome = "master_failed"
+        elif enqueue_failed:
+            batch_outcome = "enqueue_failed"
+        elif failed_count > 0 and succeeded_count > 0:
+            batch_outcome = "partial_failed"
+        elif failed_count > 0 and succeeded_count == 0:
+            batch_outcome = "all_failed"
+        else:
+            batch_outcome = "all_succeeded"
+
+        if batch_outcome == "all_succeeded":
+            await bot.send_message(
+                st.chat_id,
+                f"Все {succeeded_count} версий готовы. Сделать следующий?",
+                reply_markup=_kb([BTN_NEXT]),
+            )
+        elif batch_outcome == "partial_failed":
+            await bot.send_message(
+                st.chat_id,
+                f"Batch завершён частично: {succeeded_count} ok, {failed_count} с ошибкой. Сделать следующий?",
+                reply_markup=_kb([BTN_NEXT]),
+            )
+        elif batch_outcome in {"master_failed", "all_failed"}:
+            await bot.send_message(
+                st.chat_id,
+                f"Batch не удался: {failed_count} из {total_versions} с ошибкой, 0 успешных. Сделать следующий?",
+                reply_markup=_kb([BTN_NEXT]),
+            )
+        elif batch_outcome == "enqueue_failed":
+            await bot.send_message(
+                st.chat_id,
+                f"Batch прерван из-за ошибки постановки в очередь. Готово: {succeeded_count} ok, {failed_count} с ошибкой. Сделать следующий?",
+                reply_markup=_kb([BTN_NEXT]),
+            )
+
+        log.info(
+            "batch_finished chat=%s batch_id=%s outcome=%s succeeded=%d failed=%d total=%d",
+            st.chat_id, st.batch_id, batch_outcome, succeeded_count, failed_count, total_versions,
         )
 
         self._reset_processing_state(st)

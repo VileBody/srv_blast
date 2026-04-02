@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from config import Config
+from core.fps import COMP_FPS
 from render_v1.assembler_core import build_project_payload_from_composition
 from .client import AeMediaPayload
 
@@ -295,7 +296,7 @@ def build_render_jsx_and_media(job_id: str, plan: Dict[str, Any]) -> AeBuildResu
                 "width": cfg.target_width,
                 "height": cfg.target_height,
                 "pixelAspect": 1.0,
-                "fps": float(23.976),
+                "fps": COMP_FPS,
                 "duration": comp_duration,
             },
         },

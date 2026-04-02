@@ -1108,10 +1108,18 @@ def poll_windows_render(self, job_id: str, render_id: str) -> Dict[str, Any]:
     if not st:
         raise RuntimeError("job_not_found")
 
-    if not SETTINGS.windows_base_url:
-        raise RuntimeError("WINDOWS_RENDER_URL is not set")
+    # Use the render endpoint pinned at dispatch time so in-flight polls
+    # survive a WINDOWS_RENDER_URL switchover/rollback.
+    pinned_url = ""
+    if isinstance(st.result, dict):
+        dispatch_info = st.result.get("dispatch")
+        if isinstance(dispatch_info, dict):
+            pinned_url = str(dispatch_info.get("windows_url") or "").strip()
+    windows_url = pinned_url or SETTINGS.windows_base_url
+    if not windows_url:
+        raise RuntimeError("WINDOWS_RENDER_URL is not set and no pinned endpoint in job")
 
-    client = WindowsRenderClient(SETTINGS.windows_base_url, timeout_s=SETTINGS.windows_timeout_s)
+    client = WindowsRenderClient(windows_url, timeout_s=SETTINGS.windows_timeout_s)
 
     started_at = _poll_started_at_from_state(st)
     now = time.time()

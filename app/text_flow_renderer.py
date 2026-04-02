@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import logging
 from typing import Any, Dict, List, Tuple
 
+from core.fps import COMP_FPS
 from core.subtitles_mode import (
     SUBTITLES_MODE_IMPULSE_2ND,
     SUBTITLES_MODE_LEGACY_BLOCKS,
@@ -19,7 +20,7 @@ _INTERP_CODES = {
     "bezier": "6613",
     "hold": "6614",
 }
-_FRAME_SEC = 1.0 / 23.976
+_FRAME_SEC = 1.0 / COMP_FPS
 _REVEAL_STEP_SEC = _FRAME_SEC
 _REVEAL_START_PERCENT = 25.0
 
@@ -885,7 +886,7 @@ class FlowTextLayerRenderer:
         if chars <= 1:
             return 0.05
         rough_dur = float(out_t) - float(track_in)
-        exit_time = 7.0 / 23.976
+        exit_time = 7.0 / COMP_FPS
         min_hold = 0.10
         available = rough_dur - exit_time - min_hold
         delay = min(0.05, available / float(chars - 1))
@@ -912,7 +913,7 @@ class FlowTextLayerRenderer:
                     reveal_time = 0.05 * float(max(0, len(str(seg.text or "")) - 1))
                     min_exit = in_t + reveal_time + 0.15
                     exit_t = max(child_in, min_exit)
-                    exit_t = min(exit_t, out_t - 7.0 / 23.976)
+                    exit_t = min(exit_t, out_t - 7.0 / COMP_FPS)
             out.append(exit_t)
         return out
 
@@ -961,7 +962,7 @@ class FlowTextLayerRenderer:
         exits = self._impulse_exit_times(segs)
         out: List[Dict[str, Any]] = []
         z = 1000
-        fps = 23.976
+        fps = COMP_FPS
 
         for idx, seg in enumerate(segs):
             track_in = float(seg.in_point)
