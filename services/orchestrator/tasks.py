@@ -885,7 +885,10 @@ def build_job(self, job_id: str) -> Dict[str, Any]:
                 llm_backup: Dict[str, str | None] = {}
                 for k in llm_env_keys:
                     llm_backup[k] = os.environ.get(k)
-                    os.environ[k] = env[k]
+                    if k in env:
+                        os.environ[k] = env[k]
+                    else:
+                        os.environ.pop(k, None)
                 old_retry_hint = os.environ.get("STAGE2_SUBTITLES_RETRY_HINT")
                 try:
                     os.environ["STAGE2_SUBTITLES_RETRY_HINT"] = retry_hint
