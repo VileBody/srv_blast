@@ -21,6 +21,7 @@ from .config import SETTINGS
 from .job_store import JobStore
 from .render_manifest import build_windows_job_payload
 from .windows_client import WindowsRenderClient
+from .windows_node_pool import WindowsNodePool
 from core.subtitles_mode import SUBTITLES_MODE_LEGACY_BLOCKS, normalize_subtitles_mode
 from core.runtime_mode import MODE_PROD, get_runtime_mode
 
@@ -1012,8 +1013,14 @@ def dispatch_to_windows(self, job_id: str) -> Dict[str, Any]:
     if not st:
         raise RuntimeError("job_not_found")
 
-    if not SETTINGS.windows_base_url:
-        raise RuntimeError("WINDOWS_RENDER_URL is not set")
+    pool = WindowsNodePool(
+        redis_client=store.r,
+        key_prefix=store.key_prefix,
+        lease_ttl_s=SETTINGS.windows_node_lease_ttl_s,
+    )
+    active_urls = pool.get_active_urls(default_urls=SETTINGS.windows_render_urls)
+    if not active_urls:
+        raise RuntimeError("WINDOWS_RENDER_URL / WINDOWS_RENDER_URLS / runtime pool is not set")
 
     req = st.request or {}
     audio_url = str(req.get("audio_s3_url") or "").strip()
@@ -1053,27 +1060,70 @@ def dispatch_to_windows(self, job_id: str) -> Dict[str, Any]:
         output_s3_key=f"renders/{job_id}/output.mp4",
     )
 
-    store.set_status(
-        job_id,
-        "RUNNING",
-        stage="dispatch",
-        result={
-            "dispatch": {"windows_url": SETTINGS.windows_base_url, "audio_url_used": audio_url},
-            "dispatch_started_at": time.time(),
-        },
-    )
+    selected_url = ""
+    res: Dict[str, Any] | None = None
+    errors_by_node: list[str] = []
+    remaining = list(active_urls)
 
-    client = WindowsRenderClient(SETTINGS.windows_base_url, timeout_s=SETTINGS.windows_timeout_s)
-    try:
-        res = client.dispatch_render(win_payload)
-    except Exception as e:
-        if _is_transient_windows_error(e):
-            attempt = int(getattr(self.request, "retries", 0)) + 1
-            backoff = _retry_backoff_s(attempt=attempt, base_s=5.0, cap_s=120.0)
-            raise self.retry(countdown=backoff, exc=RuntimeError(f"windows_dispatch_transient: {e!r}"))
-        raise
+    while remaining:
+        candidate = pool.reserve_best(remaining)
+        if not candidate:
+            break
 
-    if isinstance(res, dict) and res.get("_api") == "jobs":
+        store.set_status(
+            job_id,
+            "RUNNING",
+            stage="dispatch",
+            result={
+                "dispatch": {
+                    "windows_url": candidate,
+                    "audio_url_used": audio_url,
+                    "pool_urls": active_urls,
+                },
+                "dispatch_started_at": time.time(),
+            },
+        )
+
+        client = WindowsRenderClient(candidate, timeout_s=SETTINGS.windows_timeout_s)
+        try:
+            maybe_res = client.dispatch_render(win_payload)
+            if not isinstance(maybe_res, dict):
+                pool.release(candidate)
+                raise RuntimeError(f"windows_bad_response: {maybe_res!r}")
+            selected_url = candidate
+            res = maybe_res
+            break
+        except Exception as e:
+            pool.release(candidate)
+            errors_by_node.append(f"{candidate}: {e!r}")
+            remaining = [u for u in remaining if u != candidate]
+
+            is_transient = _is_transient_windows_error(e)
+            code = 0
+            if isinstance(e, urllib.error.HTTPError):
+                try:
+                    code = int(getattr(e, "code", 0) or 0)
+                except Exception:
+                    code = 0
+            is_contract_404 = code == 404
+
+            if not remaining:
+                if is_transient or is_contract_404:
+                    attempt = int(getattr(self.request, "retries", 0)) + 1
+                    backoff = _retry_backoff_s(attempt=attempt, base_s=5.0, cap_s=120.0)
+                    raise self.retry(
+                        countdown=backoff,
+                        exc=RuntimeError(f"windows_dispatch_transient: all_nodes_failed={errors_by_node!r}"),
+                    )
+                raise RuntimeError(f"windows_dispatch_failed: all_nodes_failed={errors_by_node!r}") from e
+
+            if not is_transient and not is_contract_404:
+                raise
+
+    if not selected_url or res is None:
+        raise RuntimeError(f"windows_dispatch_failed: no_node_selected errors={errors_by_node!r}")
+
+    if res.get("_api") == "jobs":
         ok = bool(res.get("success", False))
         if ok:
             out_url = res.get("output_url") or res.get("output_s3_url") or None
@@ -1082,14 +1132,14 @@ def dispatch_to_windows(self, job_id: str) -> Dict[str, Any]:
             if artifacts_url:
                 result_payload["project_archive_url"] = artifacts_url
             store.set_status(job_id, "SUCCEEDED", stage="render", result=result_payload)
+            pool.release(selected_url)
             return {"ok": True, "mode": "sync_jobs", "windows": res}
+        pool.release(selected_url)
         raise RuntimeError(f"windows_failed(sync_jobs): {res}")
-
-    if not isinstance(res, dict):
-        raise RuntimeError(f"windows_bad_response: {res!r}")
 
     render_id = str(res.get("render_id") or "").strip()
     if not render_id:
+        pool.release(selected_url)
         raise RuntimeError(f"windows_bad_response(no render_id): {res}")
 
     # Start poll timeout clock from HERE (not from build start).
@@ -1110,22 +1160,30 @@ def poll_windows_render(self, job_id: str, render_id: str) -> Dict[str, Any]:
     if not st:
         raise RuntimeError("job_not_found")
 
+    pool = WindowsNodePool(
+        redis_client=store.r,
+        key_prefix=store.key_prefix,
+        lease_ttl_s=SETTINGS.windows_node_lease_ttl_s,
+    )
+    active_urls = pool.get_active_urls(default_urls=SETTINGS.windows_render_urls)
+
     # Use the render endpoint pinned at dispatch time so in-flight polls
-    # survive a WINDOWS_RENDER_URL switchover/rollback.
+    # survive runtime pool updates / node switchovers.
     pinned_url = ""
     if isinstance(st.result, dict):
         dispatch_info = st.result.get("dispatch")
         if isinstance(dispatch_info, dict):
             pinned_url = str(dispatch_info.get("windows_url") or "").strip()
-    windows_url = pinned_url or SETTINGS.windows_base_url
+    windows_url = pinned_url or (active_urls[0] if active_urls else "")
     if not windows_url:
-        raise RuntimeError("WINDOWS_RENDER_URL is not set and no pinned endpoint in job")
+        raise RuntimeError("no pinned windows endpoint in job and runtime pool is empty")
 
     client = WindowsRenderClient(windows_url, timeout_s=SETTINGS.windows_timeout_s)
 
     started_at = _poll_started_at_from_state(st)
     now = time.time()
     if (now - started_at) > float(SETTINGS.windows_poll_timeout_s):
+        pool.release(windows_url)
         raise RuntimeError(f"windows_poll_timeout render_id={render_id}")
 
     try:
@@ -1135,12 +1193,15 @@ def poll_windows_render(self, job_id: str, render_id: str) -> Dict[str, Any]:
             attempt = int(getattr(self.request, "retries", 0)) + 1
             remaining = float(SETTINGS.windows_poll_timeout_s) - (time.time() - started_at)
             if remaining <= 0:
+                pool.release(windows_url)
                 raise RuntimeError(f"windows_poll_timeout(render_status) render_id={render_id}") from e
             backoff = _retry_backoff_s(attempt=attempt, base_s=2.0, cap_s=30.0)
             backoff = min(backoff, max(1.0, remaining))
             raise self.retry(countdown=backoff, exc=RuntimeError(f"windows_poll_transient: {e!r}"))
+        pool.release(windows_url)
         raise
     if not isinstance(res, dict):
+        pool.release(windows_url)
         raise RuntimeError(f"windows_poll_bad_response: {res!r}")
 
     status = str(res.get("status") or "").lower()
@@ -1152,9 +1213,11 @@ def poll_windows_render(self, job_id: str, render_id: str) -> Dict[str, Any]:
         if artifacts_url:
             result_payload["project_archive_url"] = artifacts_url
         store.set_status(job_id, "SUCCEEDED", stage="render", result=result_payload)
+        pool.release(windows_url)
         return {"ok": True, "status": "succeeded", "windows": res}
 
     if status in {"failed", "error"}:
+        pool.release(windows_url)
         raise RuntimeError(f"windows_failed(async_render): {res}")
 
     poll_windows_render.apply_async(args=[job_id, render_id], countdown=float(SETTINGS.windows_poll_interval_s))
