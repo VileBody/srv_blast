@@ -7,13 +7,22 @@ import html as html_mod
 import json
 import logging
 import secrets
-from urllib.parse import quote as url_quote
+from urllib.parse import quote as url_quote, quote_plus
 from typing import TYPE_CHECKING
 
 import uvicorn
 from fastapi import FastAPI, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from services.orchestrator.windows_node_pool import normalize_windows_urls, runtime_windows_urls_key
+
+from .render_node_pool import (
+    RenderNodePoolError,
+    create_render_server_from_clone,
+    delete_render_server,
+    list_render_servers,
+    probe_render_node,
+)
 if TYPE_CHECKING:
     from .config import Settings
     from .credits_db import CreditsDB
@@ -232,6 +241,7 @@ _BASE_HEAD = """
   <a href="/admin/payments">Payments</a>
   <a href="/admin/utm">UTM</a>
   <a href="/admin/sources">Sources</a>
+  <a href="/admin/render-nodes">Render Nodes</a>
   <a href="/admin/assets/" target="_blank" rel="noopener noreferrer">Assets</a>
   <form class="search-form" action="/admin/users" method="get">
     <input type="text" name="q" placeholder="Username / tg_id...">
@@ -296,6 +306,74 @@ def build_app(
         if not secrets.compare_digest(creds.password.encode(), settings.admin_panel_password.encode()):
             raise HTTPException(status_code=401, detail="Unauthorized", headers={"WWW-Authenticate": "Basic"})
         return creds.username
+
+    render_nodes_lock = asyncio.Lock()
+    runtime_pool_key = runtime_windows_urls_key(key_prefix=settings.jobstore_prefix)
+
+    def _render_nodes_config_error() -> str:
+        if not str(settings.twc_token or "").strip():
+            return "TWC_TOKEN is empty"
+        if int(settings.twc_render_source_server_id or 0) <= 0:
+            return "TWC_RENDER_SOURCE_SERVER_ID must be > 0"
+        return ""
+
+    def _render_nodes_redirect(*, ok: str = "", err: str = "") -> RedirectResponse:
+        query: list[str] = []
+        if ok:
+            query.append(f"ok={quote_plus(str(ok))}")
+        if err:
+            query.append(f"err={quote_plus(str(err))}")
+        suffix = "?" + "&".join(query) if query else ""
+        return RedirectResponse(f"/admin/render-nodes{suffix}", status_code=303)
+
+    async def _read_runtime_windows_pool() -> list[str]:
+        redis_client = getattr(state_store, "_redis", None)
+        if redis_client is None:
+            return []
+        try:
+            raw = await redis_client.get(runtime_pool_key)
+        except Exception:
+            return []
+        if not raw:
+            return []
+        try:
+            obj = json.loads(raw)
+        except Exception:
+            return []
+        if not isinstance(obj, list):
+            return []
+        return normalize_windows_urls(str(v) for v in obj)
+
+    async def _sync_runtime_windows_pool() -> list[str]:
+        redis_client = getattr(state_store, "_redis", None)
+        if redis_client is None:
+            return []
+
+        source_server_id = int(settings.twc_render_source_server_id or 0)
+        include_ids = {source_server_id} if source_server_id > 0 else set()
+        servers = await list_render_servers(
+            settings.twc_token,
+            name_prefix=settings.twc_render_name_prefix,
+            include_ids=include_ids,
+        )
+
+        urls: list[str] = []
+        for srv in servers:
+            sid = int(srv.get("id") or 0)
+            if sid <= 0 or sid == source_server_id:
+                continue
+            status = str(srv.get("status") or "").strip().lower()
+            ipv4 = str(srv.get("ipv4") or "").strip()
+            if status != "on" or not ipv4:
+                continue
+            urls.append(f"http://{ipv4}:8000")
+
+        normalized = normalize_windows_urls(urls)
+        if normalized:
+            await redis_client.set(runtime_pool_key, json.dumps(normalized, ensure_ascii=False))
+        else:
+            await redis_client.delete(runtime_pool_key)
+        return normalized
 
     # ── Dashboard ─────────────────────────────────────────────────────
 
@@ -837,6 +915,233 @@ def build_app(
         </div>
         """
         return _page(f"Источник: {src_escaped}", body)
+
+    # ── Render nodes lifecycle control ──────────────────────────────
+
+    @app.get("/admin/render-nodes", response_class=HTMLResponse)
+    async def render_nodes_page(request: Request, _user: str = Depends(_check_auth)) -> str:
+        ok_msg = html_mod.escape(str(request.query_params.get("ok", "")).strip())
+        err_msg = html_mod.escape(str(request.query_params.get("err", "")).strip())
+        config_err = _render_nodes_config_error()
+        source_server_id = int(settings.twc_render_source_server_id or 0)
+        include_ids = {source_server_id} if source_server_id > 0 else set()
+
+        rows_html = ""
+        if not config_err:
+            try:
+                servers = await list_render_servers(
+                    settings.twc_token,
+                    name_prefix=settings.twc_render_name_prefix,
+                    include_ids=include_ids,
+                )
+            except Exception as e:
+                servers = []
+                if not err_msg:
+                    err_msg = html_mod.escape(str(e))
+            for srv in servers:
+                sid = int(srv.get("id") or 0)
+                name = html_mod.escape(str(srv.get("name") or ""))
+                status = html_mod.escape(str(srv.get("status") or ""))
+                ipv4 = html_mod.escape(str(srv.get("ipv4") or ""))
+                created = html_mod.escape(str(srv.get("created_at") or ""))
+                windows_url = f"http://{ipv4}:8000" if ipv4 else ""
+                windows_url_esc = html_mod.escape(windows_url)
+
+                if sid == source_server_id:
+                    role = "<span class='badge badge-ok'>source image</span>"
+                    actions = "<span style='color:#7f8c8d'>delete disabled</span>"
+                else:
+                    role = "<span class='badge badge-stage'>worker</span>"
+                    actions = (
+                        f"<form method='post' action='/admin/render-nodes/delete' "
+                        f"onsubmit=\"return confirm('Delete server #{sid}?');\">"
+                        f"<input type='hidden' name='server_id' value='{sid}'>"
+                        f"<button class='btn-danger' type='submit'>Delete</button>"
+                        f"</form>"
+                    )
+
+                probe_action = ""
+                if windows_url:
+                    probe_action = (
+                        f"<form method='post' action='/admin/render-nodes/probe'>"
+                        f"<input type='hidden' name='windows_url' value='{windows_url_esc}'>"
+                        f"<button type='submit'>Probe</button>"
+                        f"</form>"
+                    )
+
+                rows_html += (
+                    f"<tr>"
+                    f"<td>{sid}</td>"
+                    f"<td>{name}</td>"
+                    f"<td>{role}</td>"
+                    f"<td>{status}</td>"
+                    f"<td>{ipv4 or '-'}</td>"
+                    f"<td>{windows_url_esc or '-'}</td>"
+                    f"<td>{created}</td>"
+                    f"<td>{probe_action}</td>"
+                    f"<td>{actions}</td>"
+                    f"</tr>"
+                )
+
+        busy = render_nodes_lock.locked()
+        busy_note = (
+            "<p style='color:#c0392b'><strong>Операция в процессе:</strong> "
+            "подождите завершения create/delete.</p>"
+            if busy
+            else ""
+        )
+        create_disabled = " disabled" if bool(config_err or busy) else ""
+        source_input_value = source_server_id if source_server_id > 0 else ""
+        source_input_escaped = html_mod.escape(str(source_input_value))
+        prefix_input_escaped = html_mod.escape(str(settings.twc_render_name_prefix or "blast-render-node"))
+        firewall_group_escaped = html_mod.escape(str(settings.twc_render_firewall_group_id or ""))
+        windows_render_url_escaped = html_mod.escape(str(settings.windows_render_url or ""))
+
+        runtime_pool = await _read_runtime_windows_pool()
+        runtime_pool_escaped = html_mod.escape(", ".join(runtime_pool)) if runtime_pool else "(empty)"
+
+        body = f"""
+        <div class="card">
+        <h2>Текущий runtime контур</h2>
+        <p><strong>WINDOWS_RENDER_URL (fallback):</strong> <code>{windows_render_url_escaped or '(empty)'}</code></p>
+        <p><strong>Redis runtime pool key:</strong> <code>{html_mod.escape(runtime_pool_key)}</code><br>
+           <strong>Active pool URLs:</strong> <code>{runtime_pool_escaped}</code></p>
+        <p><strong>Source server id:</strong> <code>{source_input_escaped or '(empty)'}</code><br>
+           <strong>Name prefix:</strong> <code>{prefix_input_escaped}</code><br>
+           <strong>Firewall group id:</strong> <code>{firewall_group_escaped or '(empty)'}</code></p>
+        {f"<p style='color:#c0392b'><strong>Config error:</strong> {html_mod.escape(config_err)}</p>" if config_err else ""}
+        {f"<p style='color:#1e8449'><strong>OK:</strong> {ok_msg}</p>" if ok_msg else ""}
+        {f"<p style='color:#c0392b'><strong>Error:</strong> {err_msg}</p>" if err_msg else ""}
+        {busy_note}
+        <form method="post" action="/admin/render-nodes/sync">
+          <button type="submit">Sync Runtime Pool From Timeweb</button>
+        </form>
+        </div>
+
+        <div class="card">
+        <h2>Create node from source image</h2>
+        <form method="post" action="/admin/render-nodes/create">
+          <p>
+            Source server id:
+            <input type="number" name="source_server_id" value="{source_input_escaped}" min="1">
+            &nbsp;&nbsp; Name prefix:
+            <input type="text" name="name_prefix" value="{prefix_input_escaped}">
+          </p>
+          <p><button type="submit" class="btn-success"{create_disabled}>Create Render Node</button></p>
+        </form>
+        <p style="color:#7f8c8d">Create waits for VM status=on, public IPv4 and reachable render API contract.</p>
+        </div>
+
+        <div class="card">
+        <h2>Known render nodes</h2>
+        <div class="table-wrap">
+        <table><tr>
+          <th>ID</th><th>Name</th><th>Role</th><th>Status</th><th>IPv4</th><th>URL</th>
+          <th>Created</th><th>Probe</th><th>Action</th>
+        </tr>
+        {rows_html if rows_html else '<tr><td colspan="9">No data</td></tr>'}
+        </table>
+        </div>
+        </div>
+        """
+        return _page("Render Nodes", body)
+
+    @app.post("/admin/render-nodes/create")
+    async def render_nodes_create(
+        source_server_id: int = Form(0),
+        name_prefix: str = Form(""),
+        _user: str = Depends(_check_auth),
+    ) -> RedirectResponse:
+        config_err = _render_nodes_config_error()
+        if config_err:
+            return _render_nodes_redirect(err=config_err)
+        if render_nodes_lock.locked():
+            return _render_nodes_redirect(err="Another render-node operation is already running")
+
+        src_id = int(source_server_id or 0) or int(settings.twc_render_source_server_id or 0)
+        if src_id <= 0:
+            return _render_nodes_redirect(err="source_server_id must be > 0")
+        prefix = str(name_prefix or "").strip() or str(settings.twc_render_name_prefix or "blast-render-node")
+
+        try:
+            async with render_nodes_lock:
+                res = await create_render_server_from_clone(
+                    token=settings.twc_token,
+                    source_server_id=src_id,
+                    firewall_group_id=settings.twc_render_firewall_group_id,
+                    name_prefix=prefix,
+                    wait_on_timeout_s=int(settings.twc_render_wait_on_timeout_s or 1800),
+                    wait_api_timeout_s=int(settings.twc_render_wait_api_timeout_s or 900),
+                )
+                runtime_urls = await _sync_runtime_windows_pool()
+        except RenderNodePoolError as e:
+            return _render_nodes_redirect(err=str(e))
+        except Exception as e:
+            return _render_nodes_redirect(err=f"unexpected error: {e}")
+
+        sid = int(res.get("server_id") or 0)
+        url = str(res.get("windows_url") or "")
+        probe = res.get("probe")
+        return _render_nodes_redirect(ok=f"created server_id={sid} url={url} probe={probe} pool={runtime_urls}")
+
+    @app.post("/admin/render-nodes/delete")
+    async def render_nodes_delete(
+        server_id: int = Form(...),
+        _user: str = Depends(_check_auth),
+    ) -> RedirectResponse:
+        token = str(settings.twc_token or "").strip()
+        if not token:
+            return _render_nodes_redirect(err="TWC_TOKEN is empty")
+        if render_nodes_lock.locked():
+            return _render_nodes_redirect(err="Another render-node operation is already running")
+
+        sid = int(server_id or 0)
+        if sid <= 0:
+            return _render_nodes_redirect(err="server_id must be > 0")
+        if sid == int(settings.twc_render_source_server_id or 0):
+            return _render_nodes_redirect(err="Refusing to delete source image server")
+
+        try:
+            async with render_nodes_lock:
+                await delete_render_server(
+                    token=token,
+                    server_id=sid,
+                    firewall_group_id=settings.twc_render_firewall_group_id,
+                )
+                runtime_urls = await _sync_runtime_windows_pool()
+        except RenderNodePoolError as e:
+            return _render_nodes_redirect(err=str(e))
+        except Exception as e:
+            return _render_nodes_redirect(err=f"unexpected error: {e}")
+        return _render_nodes_redirect(ok=f"deleted server_id={sid}; pool={runtime_urls}")
+
+    @app.post("/admin/render-nodes/probe")
+    async def render_nodes_probe(
+        windows_url: str = Form(""),
+        _user: str = Depends(_check_auth),
+    ) -> RedirectResponse:
+        base = str(windows_url or "").strip().rstrip("/")
+        if not base:
+            return _render_nodes_redirect(err="windows_url is empty")
+        try:
+            codes = await probe_render_node(base, timeout_s=8.0)
+        except Exception as e:
+            return _render_nodes_redirect(err=f"probe failed: {e}")
+        return _render_nodes_redirect(ok=f"probe {base} => {codes}")
+
+    @app.post("/admin/render-nodes/sync")
+    async def render_nodes_sync(_user: str = Depends(_check_auth)) -> RedirectResponse:
+        config_err = _render_nodes_config_error()
+        if config_err:
+            return _render_nodes_redirect(err=config_err)
+        if render_nodes_lock.locked():
+            return _render_nodes_redirect(err="Another render-node operation is already running")
+        try:
+            async with render_nodes_lock:
+                urls = await _sync_runtime_windows_pool()
+        except Exception as e:
+            return _render_nodes_redirect(err=f"sync failed: {e}")
+        return _render_nodes_redirect(ok=f"runtime pool synced: {urls}")
 
     # ── T-Bank webhook (no auth — called by T-Bank servers) ───────
 
