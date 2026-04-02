@@ -63,6 +63,20 @@ if git ls-files --error-unmatch "$RUNTIME_TRACKED_FILE" >/dev/null 2>&1; then
   fi
 fi
 
+# Some branch lines introduce new tracked files that may already exist on the
+# server as untracked leftovers from previous deploy attempts.
+# If we keep them, `git checkout` can fail with:
+#   "untracked working tree files would be overwritten by checkout"
+LEGACY_UNTRACKED_CONFLICTS=(
+  "services/tg_bot_botapi/migrations/001_init.sql"
+)
+for p in "${LEGACY_UNTRACKED_CONFLICTS[@]}"; do
+  if [[ -e "$p" ]] && ! git ls-files --error-unmatch "$p" >/dev/null 2>&1; then
+    echo "[deploy] remove untracked checkout conflict: $p"
+    rm -f -- "$p"
+  fi
+done
+
 git_run fetch origin "$BRANCH"
 git_run checkout "$BRANCH"
 git_run pull --ff-only origin "$BRANCH"
