@@ -71,5 +71,9 @@ class Settings:
     windows_poll_interval_s: float = float(_env("WINDOWS_POLL_INTERVAL_S", "2.0") or "2.0")
     windows_poll_timeout_s: float = float(_env("WINDOWS_POLL_TIMEOUT_S", "3600") or "3600")
 
+    # Job artifact cleanup
+    job_artifact_max_age_h: int = int(_env("JOB_ARTIFACT_MAX_AGE_H", "72") or "72")  # hours
+    job_artifact_cleanup_enabled: bool = _env("JOB_ARTIFACT_CLEANUP_ENABLED", "0") not in {"0", "false", "False", "no", "NO"}
+
 
 SETTINGS = Settings()

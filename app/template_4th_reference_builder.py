@@ -3,10 +3,11 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List
 
+from core.fps import COMP_FPS
 from mlcore.models.subtitles_flow import SubtitleFlowPlan
 
 
-_FPS = 23.976
+_FPS = COMP_FPS
 _FRAME_SEC = 1.0 / _FPS
 _FADE_FRAMES = 4.0
 _FADE_DUR = _FADE_FRAMES / _FPS

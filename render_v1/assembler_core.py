@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from config import Config
+from core.fps import COMP_FPS
 from render_v1.effects_logic import resolve_effect_stack, stack_to_ae_effects_conf
 from .models import Payload
 
@@ -17,7 +18,7 @@ ENV_DEFAULTS: Dict[str, Any] = {
     "width": getattr(cfg, "target_width", 1080),
     "height": getattr(cfg, "target_height", 1920),
     "pixelAspect": 1.0,
-    "fps": float(getattr(cfg, "target_fps", 23.976)),
+    "fps": float(getattr(cfg, "target_fps", COMP_FPS)),
 }
 
 # fallback-длительность, если модель не указала отрезок
