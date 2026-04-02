@@ -50,4 +50,12 @@ jobs:
           if git -C "$REPO_DIR" ls-files --error-unmatch data/footage_inventory_selected.json >/dev/null 2>&1; then
             git -C "$REPO_DIR" restore --staged --worktree -- data/footage_inventory_selected.json || true
           fi
+
+          # Legacy conflict: in some server states this file exists as untracked,
+          # and checkout of branches where it's tracked fails.
+          if [ -e "$REPO_DIR/services/tg_bot_botapi/migrations/001_init.sql" ] && \
+             ! git -C "$REPO_DIR" ls-files --error-unmatch services/tg_bot_botapi/migrations/001_init.sql >/dev/null 2>&1; then
+            rm -f "$REPO_DIR/services/tg_bot_botapi/migrations/001_init.sql"
+          fi
+
           bash "$REPO_DIR/infra/runners/deploy_branch.sh" "$BRANCH"
