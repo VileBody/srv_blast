@@ -738,8 +738,7 @@ def build_job(self, job_id: str) -> Dict[str, Any]:
     env["LYRICS_TEXT"] = lyrics_text
     env["TARGET_FRAGMENT"] = target_fragment
     env["SUBTITLES_MODE"] = subtitles_mode
-    if exclude_file_names:
-        env["FOOTAGE_EXCLUDE_FILE_NAMES_JSON"] = json.dumps(exclude_file_names, ensure_ascii=False)
+    env["FOOTAGE_EXCLUDE_FILE_NAMES_JSON"] = json.dumps(exclude_file_names, ensure_ascii=False)
     seed_variant = variant_index if variant_index is not None else 1
     seed_base = project_id or f"job-{job_id}"
     env["STAGE2_SELECTION_SEED"] = f"{seed_base}:v{seed_variant}"
