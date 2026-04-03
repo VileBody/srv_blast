@@ -21,6 +21,7 @@ from .config import SETTINGS
 from .job_store import JobStore
 from .render_manifest import build_windows_job_payload
 from .windows_client import WindowsRenderClient
+from core.llm_worker_types import normalize_llm_worker_type
 from core.subtitles_mode import SUBTITLES_MODE_LEGACY_BLOCKS, normalize_subtitles_mode
 from core.runtime_mode import MODE_PROD, get_runtime_mode
 
@@ -627,8 +628,7 @@ def _poll_started_at_from_state(st: Any) -> float:
     return time.time()
 
 
-@celery_app.task(name="orchestrator.build_job", bind=True, max_retries=8)
-def build_job(self, job_id: str) -> Dict[str, Any]:
+def _build_job_impl(self, job_id: str, *, worker_type: str) -> Dict[str, Any]:
     if get_runtime_mode() != MODE_PROD:
         raise RuntimeError("Celery build_job is allowed only in MODE=prod")
 
@@ -659,6 +659,12 @@ def build_job(self, job_id: str) -> Dict[str, Any]:
     llm_resume_state_path = paths.data_dir / "llm_resume_state.json"
 
     req = st.request or {}
+    req_worker_type = str(req.get("llm_worker_type") or "").strip()
+    llm_worker_type = normalize_llm_worker_type(req_worker_type or worker_type)
+    if llm_worker_type != worker_type:
+        raise RuntimeError(
+            f"llm_worker_type_mismatch expected={worker_type!r} got={llm_worker_type!r}"
+        )
     audio_url = str(req.get("audio_s3_url") or "").strip()
     project_id = str(req.get("project_id") or "").strip()
     lyrics_text = str(req.get("lyrics_text") or "")
@@ -736,6 +742,7 @@ def build_job(self, job_id: str) -> Dict[str, Any]:
     env["AUDIO_FILE_NAME"] = f"audio_source{audio_ext}"
 
     env["AE_MEDIA_MODE"] = "appdir"
+    env["LLM_WORKER_TYPE"] = llm_worker_type
     env["LYRICS_TEXT"] = lyrics_text
     env["TARGET_FRAGMENT"] = target_fragment
     env["SUBTITLES_MODE"] = subtitles_mode
@@ -766,6 +773,7 @@ def build_job(self, job_id: str) -> Dict[str, Any]:
             "AUDIO_DIR",
             "AUDIO_FILE_NAME",
             "AE_MEDIA_MODE",
+            "LLM_WORKER_TYPE",
             "JOB_ID",
             "LYRICS_TEXT",
             "TARGET_FRAGMENT",
@@ -877,6 +885,7 @@ def build_job(self, job_id: str) -> Dict[str, Any]:
                     "AUDIO_DIR",
                     "AUDIO_FILE_NAME",
                     "AE_MEDIA_MODE",
+                    "LLM_WORKER_TYPE",
                     "JOB_ID",
                     "LYRICS_TEXT",
                     "TARGET_FRAGMENT",
@@ -1008,6 +1017,27 @@ def build_job(self, job_id: str) -> Dict[str, Any]:
     )
     dispatch_to_windows.delay(job_id)
     return {"ok": True, "stage": "build_done", "paths": paths.manifest()}
+
+
+@celery_app.task(name="orchestrator.build_job", bind=True, max_retries=8)
+def build_job(self, job_id: str) -> Dict[str, Any]:
+    # Backward-compatible task name kept for already deployed callers.
+    return _build_job_impl(self, job_id, worker_type="sdk")
+
+
+@celery_app.task(name="orchestrator.build_job_sdk", bind=True, max_retries=8)
+def build_job_sdk(self, job_id: str) -> Dict[str, Any]:
+    return _build_job_impl(self, job_id, worker_type="sdk")
+
+
+@celery_app.task(name="orchestrator.build_job_openrouter", bind=True, max_retries=8)
+def build_job_openrouter(self, job_id: str) -> Dict[str, Any]:
+    return _build_job_impl(self, job_id, worker_type="openrouter")
+
+
+@celery_app.task(name="orchestrator.build_job_hybrid", bind=True, max_retries=8)
+def build_job_hybrid(self, job_id: str) -> Dict[str, Any]:
+    return _build_job_impl(self, job_id, worker_type="hybrid")
 
 
 @celery_app.task(name="orchestrator.dispatch_to_windows", bind=True, max_retries=10)

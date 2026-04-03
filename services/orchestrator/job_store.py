@@ -10,6 +10,7 @@ from typing import Any, Callable, Dict, Optional, Tuple, TypeVar
 
 import redis
 
+from core.llm_worker_types import normalize_llm_worker_type
 from .schemas import JobState, JobStatus
 
 
@@ -43,6 +44,16 @@ def _redis_client_from_env() -> redis.Redis:
 
 T = TypeVar("T")
 
+_RELEASE_SLOT_LUA = """
+local key = KEYS[1]
+local current = tonumber(redis.call('GET', key) or '0')
+if current <= 0 then
+  redis.call('SET', key, '0')
+  return 0
+end
+return redis.call('DECR', key)
+"""
+
 
 @dataclass(frozen=True)
 class JobStore:
@@ -67,6 +78,10 @@ class JobStore:
     def _k_idem(self, idem_key: str) -> str:
         return f"{self.key_prefix}:idem:{idem_key}"
 
+    def _k_llm_inflight(self, worker_type: str) -> str:
+        wt = normalize_llm_worker_type(worker_type)
+        return f"{self.key_prefix}:llm_workers:inflight:{wt}:v1"
+
     def _redis_max_attempts(self) -> int:
         try:
             return max(1, int(_env("JOBSTORE_REDIS_MAX_ATTEMPTS", "5") or "5"))
@@ -78,6 +93,18 @@ class JobStore:
             return max(0.0, float(_env("JOBSTORE_REDIS_BACKOFF_S", "0.5") or "0.5"))
         except Exception:
             return 0.5
+
+    def _job_ttl_seconds(self) -> int:
+        try:
+            return max(0, int(_env("JOBSTORE_JOB_TTL_SECONDS", "1209600") or "1209600"))
+        except Exception:
+            return 1209600
+
+    def _idempotency_ttl_seconds(self) -> int:
+        try:
+            return max(0, int(_env("JOBSTORE_IDEMPOTENCY_TTL_SECONDS", "1209600") or "1209600"))
+        except Exception:
+            return 1209600
 
     def _redis_call(self, op: str, fn: Callable[[], T]) -> T:
         """
@@ -121,8 +148,28 @@ class JobStore:
             return None
 
     def _put(self, st: JobState) -> JobState:
-        self._redis_call("set", lambda: self.r.set(self._k_job(st.job_id), st.model_dump_json()))
+        key = self._k_job(st.job_id)
+        payload = st.model_dump_json()
+        ttl_s = self._job_ttl_seconds()
+        if ttl_s > 0:
+            self._redis_call("setex", lambda: self.r.set(key, payload, ex=ttl_s))
+        else:
+            self._redis_call("set", lambda: self.r.set(key, payload))
         return st
+
+    def _is_retryable_idempotent_failure(self, st: JobState) -> bool:
+        if st.status != "FAILED":
+            return False
+        err = str(st.error or "").lower()
+        if not err:
+            return False
+        retryable_markers = (
+            "capacity_exhausted",
+            "llm_worker_disabled",
+            "llm_workers_no_enabled_types",
+            "queue_failed",
+        )
+        return any(marker in err for marker in retryable_markers)
 
     def new_job(
         self,
@@ -134,41 +181,85 @@ class JobStore:
         Returns: (state, created)
           - created=False when idempotency hit.
         """
-        if idempotency_key:
-            idem_k = self._k_idem(idempotency_key)
-            existing_job_id = self._redis_call("get_idem", lambda: self.r.get(idem_k))
-            if existing_job_id:
-                st = self.get(existing_job_id)
-                if st:
-                    return st, False
-                # stale mapping -> delete and continue
-                self._redis_call("delete_idem", lambda: self.r.delete(idem_k))
+        idem_k = self._k_idem(idempotency_key) if idempotency_key else ""
+        idem_ttl_s = self._idempotency_ttl_seconds()
 
-        job_id = uuid.uuid4().hex
-        now = _now()
+        for _ in range(8):
+            if idempotency_key:
+                existing_job_id = self._redis_call("get_idem", lambda: self.r.get(idem_k))
+                if existing_job_id:
+                    st_existing = self.get(existing_job_id)
+                    if st_existing and not self._is_retryable_idempotent_failure(st_existing):
+                        return st_existing, False
+                    # stale mapping or retryable failed state -> allow fresh attempt
+                    self._redis_call("delete_idem", lambda: self.r.delete(idem_k))
 
-        st = JobState(
-            job_id=job_id,
-            status="NEW",
-            created_at=now,
-            updated_at=now,
-            queued_at=None,
-            started_at=None,
-            finished_at=None,
-            stage=None,
-            idempotency_key=idempotency_key,
-            request=request or {},
-            result=None,
-            error=None,
-        )
+            job_id = uuid.uuid4().hex
+            now = _now()
+            st = JobState(
+                job_id=job_id,
+                status="NEW",
+                created_at=now,
+                updated_at=now,
+                queued_at=None,
+                started_at=None,
+                finished_at=None,
+                stage=None,
+                idempotency_key=idempotency_key,
+                request=request or {},
+                result=None,
+                error=None,
+            )
 
-        self._put(st)
+            if idempotency_key:
+                # Claim idempotency atomically before creating job object to avoid duplicate creators.
+                if idem_ttl_s > 0:
+                    claimed = self._redis_call(
+                        "setnx_idem_ex",
+                        lambda: self.r.set(idem_k, job_id, nx=True, ex=idem_ttl_s),
+                    )
+                else:
+                    claimed = self._redis_call(
+                        "setnx_idem",
+                        lambda: self.r.set(idem_k, job_id, nx=True),
+                    )
+                if not claimed:
+                    continue
 
-        if idempotency_key:
-            # idempotency mapping (no TTL by default)
-            self._redis_call("set_idem", lambda: self.r.set(self._k_idem(idempotency_key), job_id))
+            try:
+                self._put(st)
+            except Exception:
+                if idempotency_key:
+                    # Best-effort cleanup of a claim that points to a missing job record.
+                    try:
+                        cur = self._redis_call("get_idem_after_put_error", lambda: self.r.get(idem_k))
+                        if cur == job_id:
+                            self._redis_call("delete_idem_after_put_error", lambda: self.r.delete(idem_k))
+                    except Exception:
+                        pass
+                raise
 
-        return st, True
+            return st, True
+
+        raise RuntimeError("new_job_failed_after_retries")
+
+    def _release_llm_slot_for_state(self, st: JobState) -> None:
+        req = st.request or {}
+        raw = str(req.get("llm_worker_type") or "").strip()
+        if not raw:
+            return
+        try:
+            key = self._k_llm_inflight(raw)
+        except Exception:
+            return
+        try:
+            self._redis_call(
+                "llm_workers_release_slot",
+                lambda: self.r.eval(_RELEASE_SLOT_LUA, 1, key),
+            )
+        except Exception:
+            # Keep status update deterministic even if slot release failed.
+            pass
 
     def set_status(
         self,
@@ -223,4 +314,8 @@ class JobStore:
             error=final_error,
         )
 
-        return self._put(st2)
+        stored = self._put(st2)
+        active_statuses = {"QUEUED", "RUNNING"}
+        if st.status in active_statuses and status not in active_statuses:
+            self._release_llm_slot_for_state(st)
+        return stored

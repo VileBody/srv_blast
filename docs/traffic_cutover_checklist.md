@@ -94,15 +94,41 @@
   - `PYTHONPATH=. pytest -q tests/test_payments_tail_fixes.py` -> `3 passed`.
 - Full smoke-suite остаётся отложенным на финальный этап цикла.
 
+## Status snapshot (2026-04-03, MR-3 llm-workers admission + admin control)
+
+- Добавлен `llm-workers` слой в orchestrator:
+  - типы `sdk/openrouter/hybrid` (`core/llm_worker_types.py`);
+  - runtime-config и выбор воркера (`services/orchestrator/llm_workers.py`);
+  - admission reservation сделан атомарно через Redis Lua (`INCR` только при `inflight < max_inflight`).
+- Admission больше не зависит от full scan всех jobs:
+  - inflight учитывается по материализованным Redis-счётчикам `...:llm_workers:inflight:*`.
+- Инициализация в текущем цикле: `gemini-only` по умолчанию:
+  - `sdk` включён;
+  - `openrouter`/`hybrid` выключены по умолчанию, но управляются runtime из админки.
+- Добавлен runtime control в админке public bot:
+  - страница `/admin/llm-workers`;
+  - чтение/обновление orchestrator `/llm-workers` (`GET`/`PUT`);
+  - guardrail: нельзя сохранить конфиг, где выключены все admission-пути (`enabled + weight + max_inflight`).
+- JobStore обновлён для устойчивости admission/idempotency:
+  - idempotency claim переведён на `SET ... NX` (race-safe создание job по ключу);
+  - retryable idempotent `FAILED` (admission/queue capacity path) пересоздаётся на повторе;
+  - retention TTL добавлен для job state и idempotency keys (`JOBSTORE_JOB_TTL_SECONDS`, `JOBSTORE_IDEMPOTENCY_TTL_SECONDS`);
+  - при переходе job из `QUEUED/RUNNING` в терминальный статус inflight-slot освобождается автоматически.
+- Targeted verification для затронутого контура:
+  - `PYTHONPATH=. pytest -q tests/test_llm_workers.py` -> `5 passed`;
+  - `PYTHONPATH=. pytest -q tests/test_orchestrator_lyrics_schema.py` -> `4 passed`.
+- Ограничение окружения локального прогона:
+  - `tests/test_orchestrator_tasks_preflight_retry.py` не выполнялся из-за отсутствия `celery` в локальном env.
+
 ## 1. Admission, orchestrator, job lifecycle
 
-- [ ] Сделать атомарный admission / reservation для `llm_worker_type`, чтобы burst из 20-30 запросов не переполнял один и тот же backend.
-- [ ] Убрать snapshot-only выбор worker-а и перенести ограничение inflight в атомарную Redis-операцию.
-- [ ] Исправить idempotency race в `JobStore.new_job()`, чтобы параллельные одинаковые запросы не создавали несколько job-ов.
+- [x] Сделать атомарный admission / reservation для `llm_worker_type`, чтобы burst из 20-30 запросов не переполнял один и тот же backend.
+- [x] Убрать snapshot-only выбор worker-а и перенести ограничение inflight в атомарную Redis-операцию.
+- [x] Исправить idempotency race в `JobStore.new_job()`, чтобы параллельные одинаковые запросы не создавали несколько job-ов.
 - [ ] Исправить lost-update в `JobStore.set_status()`, чтобы параллельные обновления статуса не перетирали друг друга.
-- [ ] Починить retry semantics после admission failure: повтор того же idempotent request не должен навсегда возвращать старую `FAILED` job.
-- [ ] Добавить retention policy для job state и idempotency keys в Redis.
-- [ ] Убрать full scan всей истории jobs из hot path admission.
+- [x] Починить retry semantics после admission failure: повтор того же idempotent request не должен навсегда возвращать старую `FAILED` job.
+- [x] Добавить retention policy для job state и idempotency keys в Redis.
+- [x] Убрать full scan всей истории jobs из hot path admission.
 - [ ] Сделать startup/health более честными: если критические runtime prerequisites не готовы, сервис не должен выглядеть "зелёным".
 
 ## 2. Payments, credits, money correctness
@@ -145,7 +171,7 @@
 
 ## 6. Admin panel and operator safety
 
-- [ ] Добавить guardrail в `LLM Workers` admin UI: нельзя сохранить конфиг, который effectively выключает admission на проде.
+- [x] Добавить guardrail в `LLM Workers` admin UI: нельзя сохранить конфиг, который effectively выключает admission на проде.
 - [ ] Показать в admin UI явное предупреждение, если runtime config приводит к `no_enabled_types` или к нулевой суммарной полезной weight.
 - [ ] Улучшить payment/admin audit trail, чтобы было видно: кто начислил, по какой причине, к какому order это относится.
 - [ ] Сделать UTM summary полезнее для маркетинга: не терять `content` и `term` в основной аналитической сводке.
