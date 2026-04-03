@@ -11,8 +11,6 @@ from redis.asyncio import Redis
 from core.subtitles_mode import SUBTITLES_MODE_LEGACY_BLOCKS
 from .config import Settings
 
-log = logging.getLogger("tg_bot.state_store")
-
 log = logging.getLogger(__name__)
 
 STAGE_IDLE = "IDLE"
