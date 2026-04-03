@@ -23,6 +23,7 @@ _ALLOWED_STYLE_PEOPLE = {"none", "girls", "guys", "couple", "crowd", "driver"}
 class FootageStyleRawFilters(BaseModel):
     color_priority: List[str] = Field(min_length=1)
     exclude: List[str] = Field(default_factory=list)
+    exclude_people: Optional[List[str]] = Field(default=None, exclude=True)
     exclude_tags: List[str] = Field(default_factory=list)
     require_people: Optional[str] = None
     priority_theme_tags: List[str] = Field(min_length=1)
@@ -44,9 +45,15 @@ class FootageStyleRawFilters(BaseModel):
             raise ValueError("filters.color_priority must contain at least one value")
         self.color_priority = [str(c) for c in colors]  # type: ignore[assignment]
 
+        # Merge exclude_people (v2 prompt field name) into canonical exclude.
+        merged_exclude = list(self.exclude or [])
+        if self.exclude_people:
+            merged_exclude.extend(self.exclude_people)
+            self.exclude_people = None
+
         ex_seen: set[str] = set()
         ex_out: List[str] = []
-        for p in list(self.exclude or []):
+        for p in merged_exclude:
             pv = str(p).strip().lower()
             if pv == "guy":
                 pv = "guys"
@@ -90,6 +97,7 @@ class FootageStyleRawFilters(BaseModel):
 
 
 class FootageStyleRawPayload(BaseModel):
+    artist_id: Optional[str] = None
     theme: str = Field(min_length=1)
     mood: str
     tags_group: Optional[str] = None
