@@ -10,6 +10,7 @@ import secrets
 from urllib.parse import quote as url_quote
 from typing import TYPE_CHECKING
 
+import httpx
 import uvicorn
 from fastapi import FastAPI, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -233,6 +234,7 @@ _BASE_HEAD = """
   <a href="/admin/utm">UTM</a>
   <a href="/admin/sources">Sources</a>
   <a href="/admin/assets/" target="_blank" rel="noopener noreferrer">Assets</a>
+  <a href="/admin/llm-workers">LLM Workers</a>
   <form class="search-form" action="/admin/users" method="get">
     <input type="text" name="q" placeholder="Username / tg_id...">
     <button type="submit">Search</button>
@@ -296,6 +298,32 @@ def build_app(
         if not secrets.compare_digest(creds.password.encode(), settings.admin_panel_password.encode()):
             raise HTTPException(status_code=401, detail="Unauthorized", headers={"WWW-Authenticate": "Basic"})
         return creds.username
+
+    async def _orchestrator_get_llm_workers() -> dict:
+        base = str(settings.orchestrator_public_url or "").strip().rstrip("/")
+        if not base:
+            raise RuntimeError("ORCHESTRATOR_PUBLIC_URL is empty")
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            resp = await client.get(f"{base}/llm-workers")
+        if resp.status_code >= 300:
+            raise RuntimeError(f"orchestrator GET /llm-workers failed: {resp.status_code} {resp.text}")
+        data = resp.json()
+        if not isinstance(data, dict):
+            raise RuntimeError(f"orchestrator GET /llm-workers returned non-object: {data!r}")
+        return data
+
+    async def _orchestrator_put_llm_workers(payload: dict) -> dict:
+        base = str(settings.orchestrator_public_url or "").strip().rstrip("/")
+        if not base:
+            raise RuntimeError("ORCHESTRATOR_PUBLIC_URL is empty")
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            resp = await client.put(f"{base}/llm-workers", json=payload)
+        if resp.status_code >= 300:
+            raise RuntimeError(f"orchestrator PUT /llm-workers failed: {resp.status_code} {resp.text}")
+        data = resp.json()
+        if not isinstance(data, dict):
+            raise RuntimeError(f"orchestrator PUT /llm-workers returned non-object: {data!r}")
+        return data
 
     # ── Dashboard ─────────────────────────────────────────────────────
 
@@ -837,6 +865,113 @@ def build_app(
         </div>
         """
         return _page(f"Источник: {src_escaped}", body)
+
+    # ── LLM workers runtime control ────────────────────────────────
+
+    @app.get("/admin/llm-workers", response_class=HTMLResponse)
+    async def llm_workers_page(_user: str = Depends(_check_auth)) -> str:
+        err = ""
+        data: dict = {}
+        try:
+            data = await _orchestrator_get_llm_workers()
+        except Exception as e:
+            err = html_mod.escape(str(e))
+
+        workers_obj = data.get("workers") if isinstance(data, dict) else None
+        workers = workers_obj if isinstance(workers_obj, dict) else {}
+        order = ("sdk", "openrouter", "hybrid")
+
+        rows = ""
+        for wt in order:
+            row = workers.get(wt) if isinstance(workers.get(wt), dict) else {}
+            enabled = bool(row.get("enabled", False))
+            weight = int(row.get("weight", 0) or 0)
+            max_inflight = int(row.get("max_inflight", 1) or 1)
+            inflight = int(row.get("inflight", 0) or 0)
+            slots = int(row.get("available_slots", max(0, max_inflight - inflight)) or 0)
+            rows += (
+                f"<tr>"
+                f"<td><strong>{wt}</strong></td>"
+                f"<td>{'on' if enabled else 'off'}</td>"
+                f"<td>{weight}</td>"
+                f"<td>{max_inflight}</td>"
+                f"<td>{inflight}</td>"
+                f"<td>{slots}</td>"
+                f"</tr>"
+            )
+
+        def _enabled_select(name: str, selected: bool) -> str:
+            on_sel = " selected" if selected else ""
+            off_sel = " selected" if not selected else ""
+            return (
+                f'<select name="{name}">'
+                f'<option value="1"{on_sel}>on</option>'
+                f'<option value="0"{off_sel}>off</option>'
+                f"</select>"
+            )
+
+        form_rows = ""
+        for wt in order:
+            row = workers.get(wt) if isinstance(workers.get(wt), dict) else {}
+            enabled = bool(row.get("enabled", False))
+            weight = int(row.get("weight", 1) or 1)
+            max_inflight = int(row.get("max_inflight", 4) or 4)
+            form_rows += (
+                f"<tr>"
+                f"<td><strong>{wt}</strong></td>"
+                f"<td>{_enabled_select(f'{wt}_enabled', enabled)}</td>"
+                f"<td><input type='number' name='{wt}_weight' value='{weight}' min='0' max='1000'></td>"
+                f"<td><input type='number' name='{wt}_max_inflight' value='{max_inflight}' min='1' max='1000'></td>"
+                f"</tr>"
+            )
+
+        body = f"""
+        <div class="card">
+        <h2>Текущий runtime статус</h2>
+        {f"<p style='color:#c0392b'><strong>Ошибка:</strong> {err}</p>" if err else ""}
+        <div class="table-wrap">
+        <table><tr><th>Worker</th><th>Enabled</th><th>Weight</th><th>Max inflight</th><th>Inflight</th><th>Free slots</th></tr>
+        {rows if rows else '<tr><td colspan="6">Нет данных</td></tr>'}</table>
+        </div>
+        </div>
+
+        <div class="card">
+        <h2>Обновить конфиг</h2>
+        <form method="post" action="/admin/llm-workers">
+          <div class="table-wrap">
+          <table><tr><th>Worker</th><th>Enabled</th><th>Weight</th><th>Max inflight</th></tr>
+          {form_rows}
+          </table>
+          </div>
+          <p><button type="submit" class="btn-success">Apply Runtime Config</button></p>
+        </form>
+        </div>
+        """
+        return _page("LLM Workers", body)
+
+    @app.post("/admin/llm-workers")
+    async def llm_workers_update(request: Request, _user: str = Depends(_check_auth)) -> RedirectResponse:
+        form = await request.form()
+        workers_payload: dict[str, dict[str, object]] = {}
+        for wt in ("sdk", "openrouter", "hybrid"):
+            enabled_raw = str(form.get(f"{wt}_enabled", "0")).strip().lower()
+            enabled = enabled_raw in {"1", "true", "yes", "on"}
+            try:
+                weight = int(str(form.get(f"{wt}_weight", "1")).strip() or "1")
+            except Exception:
+                weight = 1
+            try:
+                max_inflight = int(str(form.get(f"{wt}_max_inflight", "4")).strip() or "4")
+            except Exception:
+                max_inflight = 4
+            workers_payload[wt] = {
+                "enabled": bool(enabled),
+                "weight": max(0, int(weight)),
+                "max_inflight": max(1, int(max_inflight)),
+            }
+        payload = {"workers": workers_payload}
+        await _orchestrator_put_llm_workers(payload)
+        return RedirectResponse("/admin/llm-workers", status_code=303)
 
     # ── T-Bank webhook (no auth — called by T-Bank servers) ───────
 

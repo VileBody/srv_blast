@@ -127,6 +127,9 @@ celery_app.conf.update(
     task_default_queue=SETTINGS.celery_queue_build,
     task_routes={
         "orchestrator.build_job": {"queue": SETTINGS.celery_queue_build},
+        "orchestrator.build_job_sdk": {"queue": SETTINGS.celery_queue_build},
+        "orchestrator.build_job_openrouter": {"queue": SETTINGS.celery_queue_build},
+        "orchestrator.build_job_hybrid": {"queue": SETTINGS.celery_queue_build},
         "orchestrator.dispatch_to_windows": {"queue": SETTINGS.celery_queue_render},
         "orchestrator.poll_windows_render": {"queue": SETTINGS.celery_queue_render},
     },

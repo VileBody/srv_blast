@@ -5,10 +5,25 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pathlib import Path
 
+from core.llm_worker_types import LLM_WORKER_TYPE_SDK
 from .job_store import JobStore
+from .llm_workers import (
+    ensure_config_initialized,
+    get_runtime_status,
+    release_worker_slot,
+    reserve_worker_type,
+    set_config,
+)
 from .payment_webhook import make_payment_router
-from .schemas import SendVideoRequest, SendVideoResponse, JobState
-from .tasks import build_job
+from .schemas import (
+    JobState,
+    LLMWorkerRuntimeStatus,
+    LLMWorkersConfigRequest,
+    LLMWorkersStatusResponse,
+    SendVideoRequest,
+    SendVideoResponse,
+)
+from .tasks import build_job_hybrid, build_job_openrouter, build_job_sdk
 from .config import SETTINGS
 from .bundle_bootstrap import ensure_descriptions_bundle
 from .asset_routes import create_asset_router
@@ -75,6 +90,7 @@ def create_app() -> FastAPI:
     @app.on_event("startup")
     def _startup() -> None:
         nonlocal _bundle_ok
+        ensure_config_initialized(store)
         # Global bundle bootstrap (one for all jobs)
         inv = Path(SETTINGS.footage_inventory_json)
         bun = Path(SETTINGS.descriptions_bundle_path)
@@ -125,12 +141,42 @@ def create_app() -> FastAPI:
             request=req.model_dump(mode="json"),
             idempotency_key=req.idempotency_key,
         )
+        if not created:
+            return SendVideoResponse(job_id=st.job_id, status=st.status, created=False)
 
+        worker_type: str | None = None
+        queued = False
         try:
-            store.set_status(st.job_id, "QUEUED", stage="build")
-            build_job.delay(st.job_id)
+            selected = reserve_worker_type(store, requested=req.llm_worker_type)
+            worker_type = selected.worker_type
+
+            store.patch_request(st.job_id, {"llm_worker_type": worker_type})
+            store.set_status(
+                st.job_id,
+                "QUEUED",
+                stage="build",
+                result={"llm_worker_type": worker_type},
+            )
+            queued = True
+
+            if worker_type == "sdk":
+                build_job_sdk.delay(st.job_id)
+            elif worker_type == "openrouter":
+                build_job_openrouter.delay(st.job_id)
+            elif worker_type == "hybrid":
+                build_job_hybrid.delay(st.job_id)
+            else:
+                raise RuntimeError(f"unsupported llm_worker_type: {worker_type}")
         except Exception as e:
+            if worker_type and not queued:
+                try:
+                    release_worker_slot(store, worker_type)
+                except Exception:
+                    pass
             store.set_status(st.job_id, "FAILED", stage="build", error=f"queue_failed: {e!r}")
+            msg = str(e)
+            if "capacity_exhausted" in msg or "disabled" in msg or "no_enabled_types" in msg:
+                raise HTTPException(status_code=503, detail=f"LLM workers capacity issue: {msg}")
             raise HTTPException(status_code=500, detail="Failed to enqueue job")
 
         st2 = store.get(st.job_id) or st
@@ -151,6 +197,36 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail="job not found")
         return st
 
+    @app.get("/llm-workers", response_model=LLMWorkersStatusResponse)
+    def get_llm_workers() -> LLMWorkersStatusResponse:
+        ensure_config_initialized(store)
+        status = get_runtime_status(store)
+        workers = {
+            worker_type: LLMWorkerRuntimeStatus.model_validate(row.model_dump(mode="json"))
+            for worker_type, row in status.items()
+        }
+        return LLMWorkersStatusResponse(
+            workers=workers,
+            default_worker_type=LLM_WORKER_TYPE_SDK,
+        )
+
+    @app.put("/llm-workers", response_model=LLMWorkersStatusResponse)
+    def put_llm_workers(payload: LLMWorkersConfigRequest) -> LLMWorkersStatusResponse:
+        try:
+            set_config(store, payload)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Invalid workers config: {e}") from e
+
+        status = get_runtime_status(store)
+        workers = {
+            worker_type: LLMWorkerRuntimeStatus.model_validate(row.model_dump(mode="json"))
+            for worker_type, row in status.items()
+        }
+        return LLMWorkersStatusResponse(
+            workers=workers,
+            default_worker_type=LLM_WORKER_TYPE_SDK,
+        )
+
     @app.get("/metrics")
     def metrics() -> dict:
         """Lightweight observability endpoint — queue lengths, job status counts."""
@@ -160,7 +236,7 @@ def create_app() -> FastAPI:
         jobs_error: str | None = None
         try:
             for job in store.list_jobs():
-                s = job.get("status", "")
+                s = str(getattr(job, "status", "") or "")
                 if s in counts:
                     counts[s] += 1
         except Exception as exc:

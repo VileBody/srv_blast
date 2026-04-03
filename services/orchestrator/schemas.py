@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Any, Dict, Optional, Literal, List
 from pydantic import BaseModel, Field
 
+from core.llm_worker_types import LLM_WORKER_TYPE_SDK
 from core.subtitles_mode import SUBTITLES_MODE_LEGACY_BLOCKS
 
 
@@ -15,11 +16,13 @@ class SendAudioS3Request(BaseModel):
     Minimal payload:
       - audio_s3_url: where raw audio is stored (http/s3/etc)
       - mode: with_gemini | no_gemini
+      - llm_worker_type: optional explicit worker type pin
       - idempotency_key: optional dedupe key
     """
     audio_s3_url: str = Field(min_length=1)
     project_id: Optional[str] = None
     mode: Literal["with_gemini", "no_gemini"] = "with_gemini"
+    llm_worker_type: Optional[Literal["sdk", "openrouter", "hybrid"]] = None
     idempotency_key: Optional[str] = Field(default=None, min_length=1)
     lyrics_text: str = ""
     target_fragment: str = ""
@@ -60,6 +63,29 @@ class JobState(BaseModel):
     request: Dict[str, Any] = Field(default_factory=dict)
     result: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
+
+
+class LLMWorkerControl(BaseModel):
+    enabled: bool = True
+    weight: int = Field(default=1, ge=0, le=1000)
+    max_inflight: int = Field(default=4, ge=1, le=1000)
+
+
+class LLMWorkersConfigRequest(BaseModel):
+    workers: Dict[Literal["sdk", "openrouter", "hybrid"], LLMWorkerControl]
+
+
+class LLMWorkerRuntimeStatus(BaseModel):
+    enabled: bool
+    weight: int
+    max_inflight: int
+    inflight: int
+    available_slots: int
+
+
+class LLMWorkersStatusResponse(BaseModel):
+    workers: Dict[Literal["sdk", "openrouter", "hybrid"], LLMWorkerRuntimeStatus]
+    default_worker_type: Literal["sdk", "openrouter", "hybrid"] = LLM_WORKER_TYPE_SDK
 
 
 # ---- Backward-compatible aliases (so old clients don't break) ----
