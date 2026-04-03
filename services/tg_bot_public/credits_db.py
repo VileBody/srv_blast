@@ -11,6 +11,7 @@ import asyncpg
 log = logging.getLogger("credits_db")
 
 _UTM_KEYS = ("source", "medium", "campaign", "content", "term")
+_PAID_REASONS = ("payment", "admin_activate", "manual_activation")
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -244,8 +245,9 @@ class CreditsDB:
         pool = self._pool_or_fail()
         async with pool.acquire() as conn:
             row = await conn.fetchval(
-                "SELECT 1 FROM transactions WHERE tg_id = $1 AND reason = 'payment' LIMIT 1",
+                "SELECT 1 FROM transactions WHERE tg_id = $1 AND reason = ANY($2::TEXT[]) LIMIT 1",
                 int(tg_id),
+                list(_PAID_REASONS),
             )
             return row is not None
 
@@ -272,20 +274,27 @@ class CreditsDB:
                     "INSERT INTO users (tg_id, username) VALUES ($1, '') ON CONFLICT (tg_id) DO NOTHING",
                     int(tg_id),
                 )
+                balance_before = await conn.fetchval(
+                    "SELECT credits FROM users WHERE tg_id = $1 FOR UPDATE",
+                    int(tg_id),
+                )
+                before = int(balance_before or 0)
+                requested_delta = int(amount)
+                after = max(0, before + requested_delta)
+                applied_delta = after - before
                 await conn.execute(
-                    "UPDATE users SET credits = GREATEST(0, credits + $1), updated_at = NOW() WHERE tg_id = $2",
-                    int(amount),
+                    "UPDATE users SET credits = $1, updated_at = NOW() WHERE tg_id = $2",
+                    int(after),
                     int(tg_id),
                 )
                 await conn.execute(
                     "INSERT INTO transactions (tg_id, amount, reason, admin_note) VALUES ($1, $2, $3, $4)",
                     int(tg_id),
-                    int(amount),
+                    int(applied_delta),
                     str(reason or ""),
                     str(admin_note or ""),
                 )
-                bal = await conn.fetchval("SELECT credits FROM users WHERE tg_id = $1", int(tg_id))
-                return int(bal) if bal is not None else 0
+                return int(after)
 
     async def deduct_credit(self, tg_id: int) -> bool:
         pool = self._pool_or_fail()
