@@ -30,6 +30,7 @@ from .stage2_subtitles_scenes_3rd import SYSTEM_PART as STAGE2_SUBS_SCENES_3RD
 from .stage2_subtitles_scenes_3rd_single_step import SYSTEM_PART as STAGE2_SUBS_SCENES_3RD_SINGLE_STEP
 from .stage2_subtitles_template_4th import SYSTEM_PART as STAGE2_SUBS_TEMPLATE_4TH
 from .stage2_footage_style_only import SYSTEM_PART as STAGE2_FOOTAGE_STYLE
+from .stage2_footage_style_v2 import SYSTEM_PART_V2 as STAGE2_FOOTAGE_STYLE_V2
 from .stage2_timing_switches import (
     SYSTEM_BASE_JSON as STAGE2_TIMING_BASE_JSON,
     SYSTEM_FAST_START_BY_BEAT as STAGE2_TIMING_FAST_START,
@@ -435,11 +436,12 @@ def build_stage2_subtitles_user_prompt(
     )
 
 
-def build_stage2_footage_system_instruction() -> str:
+def build_stage2_footage_system_instruction(*, artist_id: str = "") -> str:
+    style_body = STAGE2_FOOTAGE_STYLE_V2 if artist_id else STAGE2_FOOTAGE_STYLE
     return (
         "You are a footage style picker for an After Effects pipeline.\n"
         "Return ONLY valid JSON matching the provided schema. No markdown. No comments. No extra keys.\n\n"
-        + STAGE2_FOOTAGE_STYLE.strip()
+        + style_body.strip()
         + "\n"
     )
 
@@ -449,10 +451,15 @@ def build_stage2_footage_user_prompt(
     stage1_json: Dict[str, object],
     style_groups: List[Dict[str, object]],
     schema_name: str = "FootageStyleRawPayload",
+    artist_id: str = "",
 ) -> str:
+    artist_block = ""
+    if artist_id:
+        artist_block = f"ARTIST_ID: {artist_id}\n\n"
     return (
         f"Return ONLY JSON matching schema: {schema_name}\n\n"
-        "STAGE1_CONTEXT_JSON:\n"
+        + artist_block
+        + "STAGE1_CONTEXT_JSON:\n"
         + json.dumps(stage1_json, ensure_ascii=False)
         + "\n\n"
         "NOTE:\n"

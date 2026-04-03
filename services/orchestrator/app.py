@@ -6,12 +6,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from pathlib import Path
 
 from .job_store import JobStore
+from .payment_webhook import make_payment_router
 from .schemas import SendVideoRequest, SendVideoResponse, JobState
 from .tasks import build_job
 from .config import SETTINGS
 from .bundle_bootstrap import ensure_descriptions_bundle
 from .asset_routes import create_asset_router
 from .windows_node_pool import WindowsNodePool
+from services.tg_bot_botapi.user_store import UserStore
 
 
 def create_app() -> FastAPI:
@@ -30,6 +32,46 @@ def create_app() -> FastAPI:
 
     store = JobStore.from_env()
     _bundle_ok = False
+
+    # Payment webhook router — backed by PostgreSQL via shared UserStore.
+    # Initialized once at startup, closed on shutdown.
+    _user_store: UserStore | None = None
+
+    @app.on_event("startup")
+    async def _init_db() -> None:
+        nonlocal _user_store
+        if SETTINGS.credits_db_url:
+            _user_store = UserStore(SETTINGS.credits_db_url)
+            await _user_store.init()
+
+    @app.on_event("shutdown")
+    async def _close_db() -> None:
+        if _user_store is not None:
+            await _user_store.close()
+
+    if SETTINGS.payment_webhook_secret or SETTINGS.payment_admin_token:
+        # Router uses _user_store which is set by startup event before first request.
+        # We pass a lambda so the router always gets the current value.
+        class _LazyUserStore:
+            """Thin proxy so payment router works even though pool isn't ready at import time."""
+            async def ensure_profile(self, *a, **kw):  # type: ignore[override]
+                assert _user_store, "CREDITS_DB_URL not configured"
+                return await _user_store.ensure_profile(*a, **kw)
+
+            async def confirm_payment(self, *a, **kw):  # type: ignore[override]
+                assert _user_store, "CREDITS_DB_URL not configured"
+                return await _user_store.confirm_payment(*a, **kw)
+
+            async def manual_activate(self, *a, **kw):  # type: ignore[override]
+                assert _user_store, "CREDITS_DB_URL not configured"
+                return await _user_store.manual_activate(*a, **kw)
+
+        payment_router = make_payment_router(
+            _LazyUserStore(),  # type: ignore[arg-type]
+            webhook_secret=SETTINGS.payment_webhook_secret,
+            admin_token=SETTINGS.payment_admin_token,
+        )
+        app.include_router(payment_router)
 
     @app.on_event("startup")
     def _startup() -> None:
