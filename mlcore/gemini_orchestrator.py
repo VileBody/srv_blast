@@ -2123,6 +2123,7 @@ def build_all_via_gemini_one_call(
         os.environ.get("SUBTITLES_MODE"),
         default=SUBTITLES_MODE_LEGACY_BLOCKS,
     )
+    footage_artist_id = str(os.environ.get("FOOTAGE_ARTIST_ID") or "").strip()
     use_stage1b_scenario = subtitles_mode == SUBTITLES_MODE_LEGACY_BLOCKS
     forced_reference_text_raw = lyrics_text or target_fragment
     forced_reference_text, dropped_structural_tags = _strip_structural_tags_from_text(
@@ -2639,11 +2640,12 @@ def build_all_via_gemini_one_call(
     sub_sys = logs_dir / f"gemini_system_stage2_subtitles_{stamp}.txt"
     sub_user = logs_dir / f"gemini_prompt_stage2_subtitles_{stamp}.txt"
 
-    foot_system = build_stage2_footage_system_instruction()
+    foot_system = build_stage2_footage_system_instruction(artist_id=footage_artist_id)
     foot_prompt = build_stage2_footage_user_prompt(
         stage1_json=stage1_json,
         style_groups=style_groups,
         schema_name="FootageStyleRotation",
+        artist_id=footage_artist_id,
     )
     foot_raw = logs_dir / f"gemini_raw_stage2_style_{stamp}.json"
     foot_sys = logs_dir / f"gemini_system_stage2_style_{stamp}.txt"

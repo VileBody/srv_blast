@@ -28,6 +28,8 @@ from core.subtitles_mode import (
     normalize_subtitles_mode,
 )
 
+from config.styles.artist_presets_loader import get_artists, get_genres, get_preset
+
 from .audio_prepare import AudioPrepareResult, prepare_audio_best_effort
 from .config import SETTINGS, Settings
 from .orchestrator_client import OrchestratorClient
@@ -41,7 +43,11 @@ from .state_store import (
     STAGE_PROCESSING,
     STAGE_WAIT_AUDIO,
     STAGE_WAIT_CONFIRM,
+    STAGE_WAIT_FOOTAGE_ARTIST,
+    STAGE_WAIT_FOOTAGE_GENRE,
     STAGE_WAIT_FRAGMENT_CHOICE,
+    STAGE_WAIT_TIMING_CHOICE,
+    STAGE_WAIT_TIMING_INPUT,
     STAGE_WAIT_FRAGMENT_TEXT,
     STAGE_WAIT_LYRICS_CHOICE,
     STAGE_WAIT_LYRICS_TEXT,
@@ -65,6 +71,8 @@ BTN_SEND_LYRICS = "Отправить текст"
 BTN_SKIP_LYRICS = "Не присылать текст"
 BTN_SEND_FRAGMENT = "Отправить интересующий фрагмент"
 BTN_SKIP_FRAGMENT = "На усмотрение ИИ"
+BTN_SET_TIMING = "Указать тайминг"
+BTN_SKIP_TIMING = "Весь трек / на усмотрение ИИ"
 BTN_LAUNCH = "Запустить"
 BTN_NEXT = "Сделать следующий"
 BTN_VER_1 = "1"
@@ -98,6 +106,8 @@ _CONTROL_BUTTONS = {
     BTN_SKIP_LYRICS,
     BTN_SEND_FRAGMENT,
     BTN_SKIP_FRAGMENT,
+    BTN_SET_TIMING,
+    BTN_SKIP_TIMING,
     BTN_SUB_MODE_LEGACY,
     BTN_SUB_MODE_IMPULSE,
     BTN_SUB_MODE_SCENES,
@@ -846,6 +856,22 @@ class BlastBotApp:
                 await self._handle_wait_fragment_text(message, st)
                 return
 
+            if st.stage == STAGE_WAIT_FOOTAGE_GENRE:
+                await self._handle_wait_footage_genre(message, st)
+                return
+
+            if st.stage == STAGE_WAIT_FOOTAGE_ARTIST:
+                await self._handle_wait_footage_artist(message, st)
+                return
+
+            if st.stage == STAGE_WAIT_TIMING_CHOICE:
+                await self._handle_wait_timing_choice(message, st)
+                return
+
+            if st.stage == STAGE_WAIT_TIMING_INPUT:
+                await self._handle_wait_timing_input(message, st)
+                return
+
             if st.stage == STAGE_WAIT_SUBTITLES_MODE:
                 await self._handle_wait_subtitles_mode(message, st)
                 return
@@ -927,6 +953,170 @@ class BlastBotApp:
             "Сколько версий сгенерировать?",
             reply_markup=_kb([BTN_VER_1, BTN_VER_2, BTN_VER_3, BTN_VER_4, BTN_VER_5]),
         )
+
+    # ---- timing selection helpers ----
+
+    @staticmethod
+    def _parse_timing(text: str) -> tuple[float, float] | None:
+        """Parse user timing input like '1:20-1:50', '80-110', '1:20 1:50', '1:20 - 1:50'.
+
+        Returns (start_sec, end_sec) or None if unparseable.
+        """
+        text = text.strip()
+        # split by dash / en-dash / em-dash or whitespace
+        parts = re.split(r"[\-\u2013\u2014]+|\s+", text, maxsplit=1)
+        if len(parts) != 2:
+            return None
+
+        def _to_sec(s: str) -> float | None:
+            s = s.strip()
+            if not s:
+                return None
+            # mm:ss or m:ss
+            m = re.fullmatch(r"(\d{1,3}):(\d{1,2})", s)
+            if m:
+                return float(int(m.group(1))) * 60.0 + float(int(m.group(2)))
+            # plain seconds
+            try:
+                v = float(s)
+                return v if v >= 0.0 else None
+            except ValueError:
+                return None
+
+        s = _to_sec(parts[0])
+        e = _to_sec(parts[1])
+        if s is None or e is None:
+            return None
+        if e <= s:
+            return None
+        return (s, e)
+
+    async def _ask_timing_choice(self, message: Message, st: ChatState) -> None:
+        st.stage = STAGE_WAIT_TIMING_CHOICE
+        st.user_clip_start_sec = 0.0
+        st.user_clip_end_sec = 0.0
+        await self.store.set(st)
+        await message.answer(
+            "Хочешь указать конкретный тайминг трека для клипа?\n"
+            "Например: 1:20-1:50 или 80-110 (в секундах).",
+            reply_markup=_kb([BTN_SET_TIMING, BTN_SKIP_TIMING]),
+        )
+
+    async def _handle_wait_timing_choice(self, message: Message, st: ChatState) -> None:
+        text = str(message.text or "").strip()
+        if text == BTN_SET_TIMING:
+            st.stage = STAGE_WAIT_TIMING_INPUT
+            await self.store.set(st)
+            await message.answer(
+                "Отправь тайминг в формате: 1:20-1:50 или 80-110",
+                reply_markup=ReplyKeyboardRemove(),
+            )
+            return
+        if text == BTN_SKIP_TIMING:
+            st.user_clip_start_sec = 0.0
+            st.user_clip_end_sec = 0.0
+            await self._ask_footage_genre(message, st)
+            return
+        await message.answer(
+            "Выбери кнопку: \u00abУказать тайминг\u00bb или \u00abВесь трек / на усмотрение ИИ\u00bb."
+        )
+
+    async def _handle_wait_timing_input(self, message: Message, st: ChatState) -> None:
+        text = str(message.text or "").strip()
+        if not text:
+            await message.answer("Отправь тайминг текстом, например: 1:20-1:50")
+            return
+        parsed = self._parse_timing(text)
+        if parsed is None:
+            await message.answer(
+                "Не удалось распознать тайминг. Формат: 1:20-1:50 или 80-110 (начало-конец в секундах)."
+            )
+            return
+        start_sec, end_sec = parsed
+        dur = end_sec - start_sec
+        if dur < 5.0:
+            await message.answer("Слишком короткий фрагмент (минимум 5 сек). Попробуй ещё раз.")
+            return
+        if dur > 120.0:
+            await message.answer("Слишком длинный фрагмент (максимум 120 сек). Попробуй ещё раз.")
+            return
+        st.user_clip_start_sec = round(start_sec, 3)
+        st.user_clip_end_sec = round(end_sec, 3)
+        await message.answer(
+            f"Тайминг установлен: {self._fmt_timing(start_sec)} \u2013 {self._fmt_timing(end_sec)} "
+            f"({dur:.0f} сек)."
+        )
+        await self._ask_footage_genre(message, st)
+
+    @staticmethod
+    def _fmt_timing(sec: float) -> str:
+        m = int(sec) // 60
+        s = int(sec) % 60
+        return f"{m}:{s:02d}"
+
+    async def _ask_footage_genre(self, message: Message, st: ChatState) -> None:
+        st.stage = STAGE_WAIT_FOOTAGE_GENRE
+        st.footage_genre_key = ""
+        st.footage_artist_key = ""
+        st.footage_artist_id = ""
+        await self.store.set(st)
+        genres = get_genres()
+        labels = [g["label"] for g in genres]
+        await message.answer(
+            "Выбери жанр исходников:",
+            reply_markup=_kb(*[[lbl] for lbl in labels]),
+        )
+
+    async def _handle_wait_footage_genre(self, message: Message, st: ChatState) -> None:
+        text = str(message.text or "").strip()
+        genres = get_genres()
+        genre_by_label = {g["label"]: g for g in genres}
+        if text not in genre_by_label:
+            labels = ", ".join(f"\u00ab{g['label']}\u00bb" for g in genres)
+            await message.answer(f"Выбери жанр кнопкой: {labels}.")
+            return
+        genre = genre_by_label[text]
+        st.footage_genre_key = genre["key"]
+        st.stage = STAGE_WAIT_FOOTAGE_ARTIST
+        await self.store.set(st)
+        artists = genre["artists"]
+        artist_labels = [a["label"] for a in artists]
+        await message.answer(
+            f"Жанр: {genre['label']}. Выбери стиль исходников:",
+            reply_markup=_kb(*[[lbl] for lbl in artist_labels]),
+        )
+        # Send video previews for each artist (if available).
+        for a in artists:
+            preview_fid = str(a.get("preview_file_id") or "").strip()
+            preview_url = str(a.get("preview_s3_url") or "").strip()
+            desc = str(a.get("description") or "")
+            if preview_fid:
+                try:
+                    await message.answer_video(video=preview_fid, caption=f"{a['label']}: {desc}")
+                except Exception:
+                    log.warning("failed to send preview for %s (file_id)", a["key"])
+            elif preview_url:
+                try:
+                    await message.answer_video(video=preview_url, caption=f"{a['label']}: {desc}")
+                except Exception:
+                    log.warning("failed to send preview for %s (url)", a["key"])
+
+    async def _handle_wait_footage_artist(self, message: Message, st: ChatState) -> None:
+        text = str(message.text or "").strip()
+        try:
+            artists = get_artists(st.footage_genre_key)
+        except KeyError:
+            await self._ask_footage_genre(message, st)
+            return
+        artist_by_label = {a["label"]: a for a in artists}
+        if text not in artist_by_label:
+            labels = ", ".join(f"\u00ab{a['label']}\u00bb" for a in artists)
+            await message.answer(f"Выбери стиль кнопкой: {labels}.")
+            return
+        artist = artist_by_label[text]
+        st.footage_artist_key = artist["key"]
+        st.footage_artist_id = artist["key"]
+        await self._ask_subtitles_mode(message, st)
 
     async def _ask_subtitles_mode(self, message: Message, st: ChatState) -> None:
         st.stage = STAGE_WAIT_SUBTITLES_MODE
@@ -1092,7 +1282,7 @@ class BlastBotApp:
 
         if text == BTN_SKIP_FRAGMENT:
             st.target_fragment = ""
-            await self._ask_subtitles_mode(message, st)
+            await self._ask_footage_genre(message, st)
             return
 
         await message.answer("Выбери кнопку: «Отправить интересующий фрагмент» или «На усмотрение ИИ».")
@@ -1107,7 +1297,7 @@ class BlastBotApp:
             return
 
         st.target_fragment = text
-        await self._ask_subtitles_mode(message, st)
+        await self._ask_footage_genre(message, st)
 
     async def _handle_wait_subtitles_mode(self, message: Message, st: ChatState) -> None:
         mode = _parse_subtitles_mode_choice(message.text or "")
@@ -1296,6 +1486,7 @@ class BlastBotApp:
             lyrics_text=st.lyrics_text,
             target_fragment=st.target_fragment,
             subtitles_mode=st.subtitles_mode,
+            footage_artist_id=st.footage_artist_id,
             idempotency_key=idem,
             project_id=batch_id or None,
             reuse_text_job_id=str(reuse_text_job_id or "") or None,

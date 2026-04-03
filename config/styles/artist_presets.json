@@ -1,0 +1,224 @@
+{
+  "version": "v2",
+  "genres": [
+    {
+      "key": "hiphop",
+      "label": "Хип-хоп",
+      "artists": [
+        {
+          "key": "hiphop_emotional_melodic",
+          "label": "Эмоциональный мелодик (Drake, Lil Peep)",
+          "description": "Heartbreak, romance, jealousy, betrayal",
+          "preview_file_id": "BAACAgIAAxkDAAIYT2nPbJhTKDrI0tYczWlXi2M287fWAAJAlgACK7CASks_WiuRv8SvOgQ",
+          "preview_s3_url": ""
+        },
+        {
+          "key": "hiphop_atmospheric_dark",
+          "label": "Атмосферный тёмный (Travis Scott, Kid Cudi)",
+          "description": "Escapism, self-destruction, cyber alienation",
+          "preview_file_id": "BAACAgIAAxkDAAIYUGnPbJy-U3grtTKLfQSwsbjMz3pWAAJBlgACK7CASqXctQhQ539wOgQ",
+          "preview_s3_url": ""
+        },
+        {
+          "key": "hiphop_aggressive_street",
+          "label": "Агрессивный уличный (Pop Smoke, drill)",
+          "description": "Aggression, motivation, hustle",
+          "preview_file_id": "BAACAgIAAxkDAAIYUWnPbJ-XN59UXdLSNR5OEWimSk3uAAJDlgACK7CASkXJmzNopkATOgQ",
+          "preview_s3_url": ""
+        },
+        {
+          "key": "hiphop_ambition_flex",
+          "label": "Амбиции и флекс (Kanye, Jay-Z)",
+          "description": "Adrenaline, flex, motivation",
+          "preview_file_id": "BAACAgIAAxkDAAIYUmnPbKI1fv4xUturAm1qsjP70PR0AAJElgACK7CAShZFD_-rQv3eOgQ",
+          "preview_s3_url": ""
+        },
+        {
+          "key": "hiphop_depressive_emo",
+          "label": "Депрессивный emo-rap (XXX, $uicideboy$)",
+          "description": "Depression, loneliness, isolation",
+          "preview_file_id": "BAACAgIAAxkDAAIYU2nPbKQCMW0hQFu-ZsD_qEFxDbK6AAJFlgACK7CASsu6hhvxq-XJOgQ",
+          "preview_s3_url": ""
+        },
+        {
+          "key": "hiphop_sensual_rnb",
+          "label": "Чувственный R&B (The Weeknd, Bryson Tiller)",
+          "description": "Sensual, intimate",
+          "preview_file_id": "BAACAgIAAxkDAAIYVGnPbKe-uobn8g_fDOuGLoH6SWl4AAJHlgACK7CASsOS8mcLV41jOgQ",
+          "preview_s3_url": ""
+        }
+      ]
+    },
+    {
+      "key": "pop",
+      "label": "Поп",
+      "artists": [
+        {
+          "key": "pop_romantic",
+          "label": "Романтический поп (Ed Sheeran, Bruno Mars)",
+          "description": "Romance, epic love",
+          "preview_file_id": "BAACAgIAAxkDAAIYVWnPbKraoi88I8OD1DLFju0AAeWL3QACSpYAAiuwgEonHZRtV4T7TjoE",
+          "preview_s3_url": ""
+        },
+        {
+          "key": "pop_emotional_ballad",
+          "label": "Эмоциональная баллада (Adele, Sam Smith)",
+          "description": "Heartbreak, epic love",
+          "preview_file_id": "BAACAgIAAxkDAAIYVmnPbK1vVVy7qc5G2V47Bouz-e-CAAJLlgACK7CASif4tkkuG4TNOgQ",
+          "preview_s3_url": ""
+        },
+        {
+          "key": "pop_dance",
+          "label": "Танцевальный поп (Dua Lipa, Doja Cat)",
+          "description": "Youth rebellion, motivation",
+          "preview_file_id": "BAACAgIAAxkDAAIYV2nPbLAyn8erYTqAFSsVXBTyF3feAAJMlgACK7CASuZwlq0-FHpsOgQ",
+          "preview_s3_url": ""
+        },
+        {
+          "key": "pop_dark",
+          "label": "Тёмный поп (Billie Eilish, Lorde)",
+          "description": "Depression, escapism, loneliness",
+          "preview_file_id": "BAACAgIAAxkDAAIYWGnPbLNs7EYE9FB_cwZQceUAAd65AgACTZYAAiuwgEpcgeEirmHTTDoE",
+          "preview_s3_url": ""
+        },
+        {
+          "key": "pop_sensual",
+          "label": "Чувственный поп (Ariana Grande, SZA)",
+          "description": "Jealousy, betrayal",
+          "preview_file_id": "BAACAgIAAxkDAAIYWWnPbLWH3Sh6eDhYGz8jctPV2JE0AAJOlgACK7CASpiLO7UizAABAjoE",
+          "preview_s3_url": ""
+        }
+      ]
+    },
+    {
+      "key": "rock",
+      "label": "Рок",
+      "artists": [
+        {
+          "key": "rock_nu_metal",
+          "label": "Nu-metal / emotional (Linkin Park, BMTH)",
+          "description": "Aggression, depression, self-destruction",
+          "preview_file_id": "BAACAgIAAxkDAAIYWmnPbLhhWy-lh3MDr4Z0b7taD_JnAAJPlgACK7CASgWbz7rMNGRdOgQ",
+          "preview_s3_url": ""
+        },
+        {
+          "key": "rock_indie",
+          "label": "Indie rock (Arctic Monkeys, The Strokes)",
+          "description": "Nostalgia, romance",
+          "preview_file_id": "BAACAgIAAxkDAAIYW2nPbLue-mkFyyK3xxBcGL34woklAAJQlgACK7CASpzCCbJRBSgqOgQ",
+          "preview_s3_url": ""
+        },
+        {
+          "key": "rock_emo",
+          "label": "Emo / post-hardcore (MCR, Paramore)",
+          "description": "Heartbreak, epic love, self-destruction",
+          "preview_file_id": "BAACAgIAAxkDAAIYXGnPbL3ewf_H5wyK-ZWBYK6P9nKhAAJRlgACK7CASmzlwH1U-FoROgQ",
+          "preview_s3_url": ""
+        },
+        {
+          "key": "rock_epic",
+          "label": "Epic / стадионный рок (Imagine Dragons, Muse)",
+          "description": "Motivation, epic love",
+          "preview_file_id": "BAACAgIAAxkDAAIYXWnPbMApiCdGBRlHGcDaXPHuOJBZAAJSlgACK7CASnnVz05sVV3aOgQ",
+          "preview_s3_url": ""
+        },
+        {
+          "key": "rock_grunge",
+          "label": "Grunge / heavy (Nirvana, Alice in Chains)",
+          "description": "Loneliness, aggression, mysticism",
+          "preview_file_id": "BAACAgIAAxkDAAIYXmnPbMQPINDoczyHR7MXpV5DrWGqAAJTlgACK7CASk4mTDscOoSwOgQ",
+          "preview_s3_url": ""
+        }
+      ]
+    },
+    {
+      "key": "alternative",
+      "label": "Альтернатива",
+      "artists": [
+        {
+          "key": "alt_art_rock",
+          "label": "Атмосферный арт-рок (Radiohead, Portishead)",
+          "description": "Cyber alienation, escapism",
+          "preview_file_id": "BAACAgIAAxkDAAIYX2nPbMdkWRmB47uOnEwMu1so-aBfAAJVlgACK7CASut3XUxQ5J8bOgQ",
+          "preview_s3_url": ""
+        },
+        {
+          "key": "alt_cinematic",
+          "label": "Кинематографичный инди (Lana Del Rey, Florence)",
+          "description": "Nostalgia, epic love, romance",
+          "preview_file_id": "BAACAgIAAxkDAAIYYGnPbMs7nXFHzUDxfRPFHjNHDbFjAAJWlgACK7CASqo2s5_iZ_NPOgQ",
+          "preview_s3_url": ""
+        },
+        {
+          "key": "alt_ethereal",
+          "label": "Эфирный / фолк (Bon Iver, Sigur Rós)",
+          "description": "Loneliness, mysticism",
+          "preview_file_id": "BAACAgIAAxkDAAIYYWnPbM7SAAFoBl6pdytX0JSzVUFXWwACV5YAAiuwgEq5DV1tSVbZfDoE",
+          "preview_s3_url": ""
+        },
+        {
+          "key": "alt_dark_indie",
+          "label": "Тёмный инди (Cigarettes After Sex, Mazzy Star)",
+          "description": "Sex, romance, nostalgia",
+          "preview_file_id": "BAACAgIAAxkDAAIYYmnPbNElsAABEPbFGnOK0juY6mNMpgACWZYAAiuwgEr9FteDHJ4qUDoE",
+          "preview_s3_url": ""
+        },
+        {
+          "key": "alt_melancholic",
+          "label": "Меланхоличный инди (The Neighbourhood, Joji)",
+          "description": "Depression, heartbreak, self-destruction",
+          "preview_file_id": "BAACAgIAAxkDAAIYY2nPbNQjF0Dcwp8FWZzLafXgLs74AAJalgACK7CASpE7rbFo1Y_lOgQ",
+          "preview_s3_url": ""
+        }
+      ]
+    },
+    {
+      "key": "electronic",
+      "label": "Электроника",
+      "artists": [
+        {
+          "key": "electro_dark_techno",
+          "label": "Dark techno (Gesaffelstein, Boys Noize)",
+          "description": "Cyber alienation, aggression",
+          "preview_file_id": "BAACAgIAAxkDAAIYZGnPbNendcpcIpwCWnHaI1qq6G0rAAJblgACK7CASggnW-ntQzHWOgQ",
+          "preview_s3_url": ""
+        },
+        {
+          "key": "electro_synthwave",
+          "label": "Synthwave / ретро (Kavinsky, The Midnight)",
+          "description": "Adrenaline, flex",
+          "preview_file_id": "BAACAgIAAxkDAAIYZWnPbNqRrwvM3AAB8g5MhQpQanImxQACXJYAAiuwgEpUZZeOQqiSvjoE",
+          "preview_s3_url": ""
+        },
+        {
+          "key": "electro_experimental",
+          "label": "Experimental / future (Flume, ODESZA)",
+          "description": "Escapism, dreams",
+          "preview_file_id": "BAACAgIAAxkDAAIYZmnPbN0lWlywaFw2q24X7UCMXNtrAAJdlgACK7CASlOWv8qKqyoHOgQ",
+          "preview_s3_url": ""
+        },
+        {
+          "key": "electro_ambient_dark",
+          "label": "Ambient / dark (DARKSIDE, Burial)",
+          "description": "Mysticism, depression, loneliness",
+          "preview_file_id": "BAACAgIAAxkDAAIYZ2nPbN_Ts6KqF4POBPqqLenQ-LkyAAJelgACK7CASiJmoUtahNJNOgQ",
+          "preview_s3_url": ""
+        },
+        {
+          "key": "electro_melodic",
+          "label": "Melodic electronic (Rufus Du Sol, Above & Beyond)",
+          "description": "Romance, epic love, motivation",
+          "preview_file_id": "BAACAgIAAxkDAAIYaGnPbOIMh66weFOqquOVSiU_5YN8AAJflgACK7CASusujTvJKTLDOgQ",
+          "preview_s3_url": ""
+        },
+        {
+          "key": "electro_industrial",
+          "label": "Industrial / breakbeat (The Prodigy, Justice)",
+          "description": "Aggression, self-destruction",
+          "preview_file_id": "BAACAgIAAxkDAAIYaWnPbOUk0gABlvTkNnoGi-V35TEM5wACYJYAAiuwgEr5Vzp5I6wrLzoE",
+          "preview_s3_url": ""
+        }
+      ]
+    }
+  ]
+}
