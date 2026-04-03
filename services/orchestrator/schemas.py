@@ -30,6 +30,7 @@ class SendAudioS3Request(BaseModel):
         "scenes_3rd_single_step",
         "template_4th",
     ] = SUBTITLES_MODE_LEGACY_BLOCKS
+    footage_artist_id: Optional[str] = None
     # Optional internal batch controls for multi-version generation.
     reuse_text_job_id: Optional[str] = None
     exclude_file_names: List[str] = Field(default_factory=list)

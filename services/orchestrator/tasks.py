@@ -700,6 +700,7 @@ def build_job(self, job_id: str) -> Dict[str, Any]:
         str(req.get("subtitles_mode") or ""),
         default=SUBTITLES_MODE_LEGACY_BLOCKS,
     )
+    footage_artist_id = str(req.get("footage_artist_id") or "").strip()
     if not audio_url:
         raise RuntimeError("missing audio_s3_url")
     if not _is_remote_url(audio_url):
@@ -738,6 +739,8 @@ def build_job(self, job_id: str) -> Dict[str, Any]:
     env["LYRICS_TEXT"] = lyrics_text
     env["TARGET_FRAGMENT"] = target_fragment
     env["SUBTITLES_MODE"] = subtitles_mode
+    if footage_artist_id:
+        env["FOOTAGE_ARTIST_ID"] = footage_artist_id
     if exclude_file_names:
         env["FOOTAGE_EXCLUDE_FILE_NAMES_JSON"] = json.dumps(exclude_file_names, ensure_ascii=False)
     seed_variant = variant_index if variant_index is not None else 1
@@ -767,6 +770,7 @@ def build_job(self, job_id: str) -> Dict[str, Any]:
             "LYRICS_TEXT",
             "TARGET_FRAGMENT",
             "SUBTITLES_MODE",
+            "FOOTAGE_ARTIST_ID",
             "FOOTAGE_EXCLUDE_FILE_NAMES_JSON",
             "STAGE2_SELECTION_SEED",
             "BATCH_VARIANT_INDEX",
@@ -886,7 +890,10 @@ def build_job(self, job_id: str) -> Dict[str, Any]:
                 llm_backup: Dict[str, str | None] = {}
                 for k in llm_env_keys:
                     llm_backup[k] = os.environ.get(k)
-                    os.environ[k] = env[k]
+                    if k in env:
+                        os.environ[k] = env[k]
+                    else:
+                        os.environ.pop(k, None)
                 old_retry_hint = os.environ.get("STAGE2_SUBTITLES_RETRY_HINT")
                 try:
                     os.environ["STAGE2_SUBTITLES_RETRY_HINT"] = retry_hint
