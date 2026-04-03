@@ -857,6 +857,7 @@ class BlastBotApp:
         self.dp.include_router(self.router)
 
         self._processing_task: asyncio.Task[None] | None = None
+        self._recovery_task: asyncio.Task[None] | None = None
         self._bot: Bot | None = None
 
         self._register_handlers()
@@ -922,45 +923,9 @@ class BlastBotApp:
                 ref_tag = f"@{raw_username}"
                 referrer_id = await self.store.get_referral(ref_tag)
                 if referrer_id:
-                    await self.store.delete_referral(ref_tag)
                     referrer_st = await self.store.get(referrer_id)
                     if referrer_st.stage == STAGE_WAITING_REFERRAL:
-                        referrer_st.video_round = 2
-                        bot = self._require_bot()
-                        try:
-                            await bot.send_message(
-                                referrer_id,
-                                "Друг подписался! Ставим второе видео в работу.",
-                            )
-                            # Try to enqueue generation if audio is available
-                            if referrer_st.batch_audio_s3_url:
-                                referrer_st.stage = STAGE_PROCESSING
-                                batch_id = f"tg-{referrer_id}-ref-{uuid.uuid4().hex[:8]}"
-                                job_id = await self._enqueue_batch_version(
-                                    st=referrer_st,
-                                    audio_s3_url=referrer_st.batch_audio_s3_url,
-                                    version_index=1,
-                                    versions_total=1,
-                                    batch_id=batch_id,
-                                )
-                                referrer_st.active_job_ids = [job_id]
-                                referrer_st.job_order = [job_id]
-                                referrer_st.active_job_id = job_id
-                                referrer_st.batch_id = batch_id
-                                referrer_st.batch_total_versions = 1
-                                referrer_st.next_version_to_enqueue = 2
-                            else:
-                                # No audio saved — skip to rating stage
-                                referrer_st.stage = STAGE_RATE_VIDEO_2
-                                await bot.send_message(
-                                    referrer_id,
-                                    "Как тебе ролик по 10-балльной шкале?",
-                                    reply_markup=_kb(BTN_RATE_BUTTONS),
-                                )
-                        except Exception as e:
-                            log.warning("referral_gen_failed referrer=%s err=%s", referrer_id, str(e))
-                            referrer_st.stage = STAGE_RATE_VIDEO_2
-                        await self.store.set(referrer_st)
+                        await self._activate_referral_reward(referrer_st=referrer_st, referral_tag=ref_tag)
 
             # Ensure user exists in credits DB (credits granted after subscription)
             username = (st.chat_username or "").lstrip("@")
@@ -1104,13 +1069,20 @@ class BlastBotApp:
         )
 
         self._processing_task = asyncio.create_task(self._processing_loop(), name="tg_bot_processing_loop")
+        self._recovery_task = asyncio.create_task(self._recovery_loop(), name="tg_bot_recovery_loop")
         self._reminder_task = asyncio.create_task(self._reminder_loop(), name="tg_bot_reminder_loop")
         self._payment_poll_task = asyncio.create_task(self._payment_poll_loop(), name="tg_bot_payment_poll")
         log.info("startup complete: polling loop started")
 
     async def _on_shutdown(self, bot: Bot) -> None:
         del bot
-        for task in [self._processing_task, getattr(self, "_reminder_task", None), getattr(self, "_admin_panel_task", None), getattr(self, "_payment_poll_task", None)]:
+        for task in [
+            self._processing_task,
+            self._recovery_task,
+            getattr(self, "_reminder_task", None),
+            getattr(self, "_admin_panel_task", None),
+            getattr(self, "_payment_poll_task", None),
+        ]:
             if task is not None:
                 task.cancel()
                 try:
@@ -2087,82 +2059,83 @@ class BlastBotApp:
             await message.answer("Нажми «В форму»", reply_markup=_kb([BTN_TO_FORM]))
 
     # --- Wait referral tag ---
-    async def _find_chat_by_username(self, username: str) -> bool:
-        """Check if a user with this username already exists in any chat state."""
-        clean = username.lower().lstrip("@")
-        if not clean:
+    async def _find_chat_by_username(self, username: str, *, exclude_chat_id: int | None = None) -> bool:
+        found = await self.store.find_chat_id_by_username(username)
+        if found is None:
             return False
-        pattern = f"{self.store._prefix}:*"
-        async for key in self.store._redis.scan_iter(match=pattern, count=200):
-            raw = await self.store._redis.get(key)
-            if not raw:
-                continue
-            try:
-                import json as _json
-                obj = _json.loads(raw)
-                stored = str(obj.get("chat_username", "")).lower().lstrip("@")
-                if stored == clean:
-                    return True
-            except Exception:
-                continue
-        return False
+        if exclude_chat_id is not None and int(found) == int(exclude_chat_id):
+            return False
+        return True
+
+    async def _activate_referral_reward(self, *, referrer_st: ChatState, referral_tag: str) -> None:
+        referrer_id = int(referrer_st.chat_id)
+        await self.store.delete_referral(referral_tag)
+        referrer_st.video_round = 2
+        referrer_st.referral_wait_started_at = 0.0
+        bot = self._require_bot()
+        try:
+            await bot.send_message(
+                referrer_id,
+                "Друг подписался! Ставим второе видео в работу.",
+            )
+            if referrer_st.batch_audio_s3_url:
+                referrer_st.stage = STAGE_PROCESSING
+                batch_id = self._build_referral_batch_id(referrer_id)
+                job_id = await self._enqueue_batch_version(
+                    st=referrer_st,
+                    audio_s3_url=referrer_st.batch_audio_s3_url,
+                    version_index=1,
+                    versions_total=1,
+                    batch_id=batch_id,
+                )
+                referrer_st.active_job_ids = [job_id]
+                referrer_st.job_order = [job_id]
+                referrer_st.active_job_id = job_id
+                referrer_st.batch_id = batch_id
+                referrer_st.batch_total_versions = 1
+                referrer_st.next_version_to_enqueue = 2
+                referrer_st.master_job_id = job_id
+                referrer_st.completed_job_ids = []
+                referrer_st.active_job_started_at = time.time()
+                referrer_st.last_status_msg_at = 0.0
+                referrer_st.status_message_id = 0
+                referrer_st.last_status_text = ""
+                referrer_st.poll_attempts = 0
+                referrer_st.last_job_stage = ""
+                referrer_st.last_job_error = ""
+            else:
+                referrer_st.stage = STAGE_RATE_VIDEO_2
+                await bot.send_message(
+                    referrer_id,
+                    "Как тебе ролик по 10-балльной шкале?",
+                    reply_markup=_kb(BTN_RATE_BUTTONS),
+                )
+        except Exception as e:
+            log.warning("referral_gen_failed referrer=%s err=%s", referrer_id, str(e))
+            referrer_st.stage = STAGE_RATE_VIDEO_2
+        await self.store.set(referrer_st)
 
     async def _handle_wait_referral_tag(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()
         if text.startswith("@") and len(text) > 1:
             tag = text.lower()
             st.referral_tag = tag
+            st.stage = STAGE_WAITING_REFERRAL
+            st.referral_wait_started_at = time.time()
+            await self.store.set(st)
+            await self.store.set_referral(tag, st.chat_id)
 
-            # Check if friend is already in the bot
             friend_username = tag.lstrip("@")
-            friend_already = await self._find_chat_by_username(friend_username)
+            friend_already = await self._find_chat_by_username(friend_username, exclude_chat_id=st.chat_id)
             if friend_already:
-                # Friend already subscribed — trigger immediately
                 await self.credits_db.log_event(st.chat_id, "referral_matched", tag)
-                await self.store.delete_referral(tag)
-                st.video_round = 2
-                bot = self._require_bot()
-                await message.answer("Друг подписался! Ставим второе видео в работу.")
-                if st.batch_audio_s3_url:
-                    st.stage = STAGE_PROCESSING
-                    batch_id = f"tg-{st.chat_id}-ref-{uuid.uuid4().hex[:8]}"
-                    try:
-                        job_id = await self._enqueue_batch_version(
-                            st=st,
-                            audio_s3_url=st.batch_audio_s3_url,
-                            version_index=1, versions_total=1,
-                            batch_id=batch_id,
-                        )
-                        st.active_job_ids = [job_id]
-                        st.job_order = [job_id]
-                        st.active_job_id = job_id
-                        st.batch_id = batch_id
-                        st.batch_total_versions = 1
-                        st.next_version_to_enqueue = 2
-                    except Exception:
-                        st.stage = STAGE_RATE_VIDEO_2
-                        await bot.send_message(
-                            st.chat_id,
-                            "Как тебе ролик по 10-балльной шкале?",
-                            reply_markup=_kb(BTN_RATE_BUTTONS),
-                        )
-                else:
-                    st.stage = STAGE_RATE_VIDEO_2
-                    await bot.send_message(
-                        st.chat_id,
-                        "Как тебе ролик по 10-балльной шкале?",
-                        reply_markup=_kb(BTN_RATE_BUTTONS),
-                    )
-                await self.store.set(st)
-            else:
-                # Friend not yet in bot — wait
-                await self.credits_db.log_event(st.chat_id, "referral_sent", tag)
-                st.stage = STAGE_WAITING_REFERRAL
-                await self.store.set(st)
-                await self.store.set_referral(tag, st.chat_id)
-                await message.answer(
-                    f"Принял тег {text}. Как только он активирует бота — сразу пришлём тебе ролик!"
-                )
+                await self._activate_referral_reward(referrer_st=st, referral_tag=tag)
+                return
+
+            await self.credits_db.log_event(st.chat_id, "referral_sent", tag)
+            await message.answer(
+                f"Принял тег {text}. Как только он активирует бота — сразу пришлём тебе ролик!"
+            )
         else:
             await message.answer(
                 "Пришли тег друга, начинающийся с @, например: @impulsemanage"
@@ -2274,6 +2247,13 @@ class BlastBotApp:
         safe = _safe_name(file_name)
         return f"{self.settings.s3_raw_audio_prefix.strip('/')}/{chat_id}/{_now_tag()}_{uuid.uuid4().hex[:10]}_{safe}"
 
+    def _build_referral_batch_id(self, chat_id: int) -> str:
+        return f"tg-{int(chat_id)}-referral-round-2"
+
+    @staticmethod
+    def _build_batch_idempotency_key(*, chat_id: int, batch_id: str, version_index: int) -> str:
+        return f"tg-{int(chat_id)}-batch-{str(batch_id or '').strip()}-v{int(version_index)}"
+
     async def _enqueue_batch_version(
         self,
         *,
@@ -2285,7 +2265,12 @@ class BlastBotApp:
         reuse_text_job_id: str = "",
         exclude_file_names: Optional[List[str]] = None,
     ) -> str:
-        idem = f"tg-{st.chat_id}-batch-{batch_id}-v{int(version_index)}-{uuid.uuid4().hex[:12]}"
+        normalized_batch_id = str(batch_id or f"tg-{st.chat_id}").strip()
+        idem = self._build_batch_idempotency_key(
+            chat_id=int(st.chat_id),
+            batch_id=normalized_batch_id,
+            version_index=int(version_index),
+        )
         enqueue = await self.orchestrator.send_audio_s3(
             audio_s3_url=audio_s3_url,
             mode="with_gemini",
@@ -2293,7 +2278,7 @@ class BlastBotApp:
             target_fragment=st.target_fragment,
             subtitles_mode=st.subtitles_mode,
             idempotency_key=idem,
-            project_id=batch_id or None,
+            project_id=normalized_batch_id or None,
             reuse_text_job_id=str(reuse_text_job_id or "") or None,
             exclude_file_names=list(exclude_file_names or []),
             variant_index=int(version_index),
@@ -2444,6 +2429,87 @@ class BlastBotApp:
             if not part:
                 continue
             await bot.send_message(chat_id=chat_id, text=part, parse_mode="HTML", disable_web_page_preview=True)
+
+    def _processing_timeout_s(self) -> float:
+        return max(300.0, float(self.settings.bot_job_timeout_h) * 3600.0)
+
+    def _referral_timeout_s(self) -> float:
+        return max(300.0, float(self.settings.bot_referral_timeout_h) * 3600.0)
+
+    def _recovery_interval_s(self) -> float:
+        return max(15.0, float(self.settings.bot_recovery_poll_interval_s))
+
+    def _is_processing_stuck(self, *, st: ChatState, now_ts: float) -> bool:
+        if st.stage != STAGE_PROCESSING:
+            return False
+        has_jobs = bool(st.active_job_ids) or bool(st.active_job_id)
+        if not has_jobs:
+            return True
+        started_at = float(st.active_job_started_at or 0.0)
+        if started_at <= 0:
+            started_at = float(st.last_status_msg_at or 0.0)
+        if started_at <= 0:
+            return False
+        return (now_ts - started_at) >= self._processing_timeout_s()
+
+    def _is_waiting_referral_stuck(self, *, st: ChatState, now_ts: float) -> bool:
+        if st.stage != STAGE_WAITING_REFERRAL:
+            return False
+        started_at = float(st.referral_wait_started_at or 0.0)
+        if started_at <= 0:
+            return False
+        return (now_ts - started_at) >= self._referral_timeout_s()
+
+    async def _recover_processing_timeout(self, st: ChatState) -> None:
+        await self.store.reset_to_wait_audio(st.chat_id)
+        await self.credits_db.log_event(st.chat_id, "processing_timeout_recovered")
+        try:
+            bot = self._require_bot()
+            await bot.send_message(
+                st.chat_id,
+                "Не дождались результата генерации в ожидаемое время. "
+                "Вернул тебя в стартовое состояние, отправь трек заново.",
+                reply_markup=_kb([BTN_SEND_TRACK]),
+            )
+        except Exception as e:
+            log.warning("processing_timeout_notify_failed chat=%s err=%s", st.chat_id, str(e))
+
+    async def _recover_referral_timeout(self, st: ChatState) -> None:
+        if st.referral_tag:
+            await self.store.delete_referral(st.referral_tag)
+        st.stage = STAGE_REFERRAL_ASK
+        st.referral_wait_started_at = 0.0
+        await self.store.set(st)
+        await self.credits_db.log_event(st.chat_id, "referral_timeout_recovered")
+        try:
+            bot = self._require_bot()
+            await bot.send_message(
+                st.chat_id,
+                "Не дождались активации по рефералу. Можно отправить другой тег друга "
+                "или продолжить без этого шага.",
+                reply_markup=_kb([BTN_SEND_NOW], [BTN_NEED_SEARCH], [BTN_NO_FRIENDS]),
+            )
+        except Exception as e:
+            log.warning("referral_timeout_notify_failed chat=%s err=%s", st.chat_id, str(e))
+
+    async def _recovery_loop(self) -> None:
+        while True:
+            try:
+                now = time.time()
+                for st in await self.store.list_all_states():
+                    try:
+                        if self._is_waiting_referral_stuck(st=st, now_ts=now):
+                            await self._recover_referral_timeout(st)
+                            continue
+                        if self._is_processing_stuck(st=st, now_ts=now):
+                            await self._recover_processing_timeout(st)
+                    except Exception as e:
+                        log.warning("recovery_loop_chat_failed chat=%s err=%r", st.chat_id, e)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                log.warning("recovery_loop_iteration_error err=%r", e)
+            await asyncio.sleep(self._recovery_interval_s())
 
     async def _processing_loop(self) -> None:
         while True:
@@ -2801,6 +2867,7 @@ class BlastBotApp:
                     if new_job_id not in st.job_order:
                         st.job_order.append(new_job_id)
                     st.active_job_id = new_job_id
+                    st.active_job_started_at = time.time()
                     st.next_version_to_enqueue = next_ver + 1
                     await bot.send_message(
                         st.chat_id,

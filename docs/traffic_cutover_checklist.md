@@ -120,6 +120,34 @@
 - Ограничение окружения локального прогона:
   - `tests/test_orchestrator_tasks_preflight_retry.py` не выполнялся из-за отсутствия `celery` в локальном env.
 
+## Status snapshot (2026-04-03, MR-4 bot state correctness + referral recovery)
+
+- В `services/tg_bot_public/state_store.py` добавлен индекс `username -> chat_id`:
+  - индекс поддерживается при каждом `set(state)`;
+  - lookup больше не требует full scan всех chat states;
+  - referral keys нормализованы через единый username-normalization.
+- Убран silent reset при битом Redis state:
+  - `get(chat_id)` больше не возвращает "чистый" state при parse/validation error;
+  - теперь такие кейсы логируются как `chat_state_corrupted` и падают явным `RuntimeError`.
+- В `services/tg_bot_public/app.py` сделан детерминированный batch idempotency key:
+  - ключ формируется строго как `tg-{chat_id}-batch-{batch_id}-v{version}`;
+  - убран случайный UUID из idempotency пути.
+- Referral flow стабилизирован:
+  - активация второго ролика вынесена в единый path `_activate_referral_reward`;
+  - для referral-round используется стабильный `batch_id` (`tg-{chat_id}-referral-round-2`);
+  - при вводе referral tag сначала фиксируем `WAITING_REFERRAL` + Redis referral mapping, затем проверяем match (закрыт race между "tag submit" и "friend /start").
+- Добавлена recovery policy для лимбо-состояний:
+  - `PROCESSING` timeout -> безопасный возврат в `WAIT_AUDIO` + событие `processing_timeout_recovered`;
+  - `WAITING_REFERRAL` timeout -> возврат в `REFERRAL_ASK` + событие `referral_timeout_recovered`;
+  - таймауты/период recovery-loop вынесены в env-настройки:
+    - `BOT_JOB_TIMEOUT_H`,
+    - `BOT_REFERRAL_TIMEOUT_H`,
+    - `BOT_RECOVERY_POLL_INTERVAL_S`.
+- Targeted verification для затронутого контура:
+  - `PYTHONPATH=. pytest -q tests/test_tg_bot_public_state_store.py` -> `4 passed`;
+  - `PYTHONPATH=. pytest -q tests/test_tg_bot_public_mr4.py` -> `2 passed`.
+- Full smoke-suite остаётся отложенным на финальный этап цикла.
+
 ## 1. Admission, orchestrator, job lifecycle
 
 - [x] Сделать атомарный admission / reservation для `llm_worker_type`, чтобы burst из 20-30 запросов не переполнял один и тот же backend.
@@ -146,11 +174,11 @@
 
 - [x] Убрать ложный success flow после failed/partial batch: не отправлять "Готово" и не переводить пользователя в success-ветку, если batch собран не полностью.
 - [x] Развести явные конечные состояния batch-а: `all_succeeded`, `partial_failed`, `enqueue_failed`, `master_failed`.
-- [ ] Исправить referral race при активации второго ролика, чтобы состояние реферера не терялось при параллельных сообщениях.
-- [ ] Заменить O(n) поиск друга по username на нормальный индекс `username -> chat_id`.
-- [ ] Добавить recovery policy для `WAITING_REFERRAL` и застрявшего `PROCESSING`, чтобы пользователь не зависал навсегда в лимбо.
-- [ ] Убрать silent reset state при битом JSON/validation error из Redis; такие случаи должны логироваться и быть диагностируемыми.
-- [ ] Привести batch idempotency в ботах к детерминированному ключу на `(chat_id, batch_id, version)`, а не к случайному UUID на каждый retry.
+- [x] Исправить referral race при активации второго ролика, чтобы состояние реферера не терялось при параллельных сообщениях.
+- [x] Заменить O(n) поиск друга по username на нормальный индекс `username -> chat_id`.
+- [x] Добавить recovery policy для `WAITING_REFERRAL` и застрявшего `PROCESSING`, чтобы пользователь не зависал навсегда в лимбо.
+- [x] Убрать silent reset state при битом JSON/validation error из Redis; такие случаи должны логироваться и быть диагностируемыми.
+- [x] Привести batch idempotency в ботах к детерминированному ключу на `(chat_id, batch_id, version)`, а не к случайному UUID на каждый retry.
 
 ## 4. Redis and state growth
 

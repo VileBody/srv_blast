@@ -89,6 +89,9 @@ class Settings:
 
     bot_poll_interval_s: float = _float_env("BOT_POLL_INTERVAL_S", 5.0)
     bot_status_update_interval_s: float = _float_env("BOT_STATUS_UPDATE_INTERVAL_S", 20.0)
+    bot_recovery_poll_interval_s: float = _float_env("BOT_RECOVERY_POLL_INTERVAL_S", 60.0)
+    bot_job_timeout_h: float = _float_env("BOT_JOB_TIMEOUT_H", 4.0)
+    bot_referral_timeout_h: float = _float_env("BOT_REFERRAL_TIMEOUT_H", 72.0)
     bot_tmp_dir: str = _env("BOT_TMP_DIR", "/app/work/tg_tmp")
     bot_max_audio_mb: int = _int_env("BOT_MAX_AUDIO_MB", 5)
 

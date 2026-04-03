@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import List
 
 from pydantic import BaseModel, Field
@@ -8,6 +9,8 @@ from redis.asyncio import Redis
 
 from core.subtitles_mode import SUBTITLES_MODE_IMPULSE_2ND
 from .config import Settings
+
+log = logging.getLogger("tg_bot_public.state_store")
 
 
 STAGE_IDLE = "IDLE"
@@ -53,6 +56,15 @@ _REFERRAL_PREFIX = "blast:tg:public:referral"
 _REFERRAL_TTL_S = 2592000  # 30 days
 
 
+def _normalize_username(raw: str) -> str:
+    u = str(raw or "").strip().lower()
+    if not u:
+        return ""
+    if not u.startswith("@"):
+        u = "@" + u
+    return u
+
+
 class ChatState(BaseModel):
     chat_id: int
     stage: str = STAGE_IDLE
@@ -95,12 +107,15 @@ class ChatState(BaseModel):
     last_rating: str = ""  # "low" / "mid" / "high"
     selected_package: str = ""  # "trial" / "blast" / "glow" / "impulse"
     referral_tag: str = ""
+    referral_wait_started_at: float = 0.0
     reminder_at: float = 0.0
 
 
 class RedisChatStateStore:
     def __init__(self, settings: Settings):
         self._prefix = settings.tg_state_prefix.rstrip(":")
+        self._username_index_prefix = f"{self._prefix}:username_index"
+        self._chat_username_prefix = f"{self._prefix}:chat_username"
         self._redis = Redis(
             host=settings.redis_host,
             port=settings.redis_port,
@@ -113,22 +128,91 @@ class RedisChatStateStore:
     def _key(self, chat_id: int) -> str:
         return f"{self._prefix}:{int(chat_id)}"
 
+    def _username_key(self, username: str) -> str:
+        normalized = _normalize_username(username).lstrip("@")
+        return f"{self._username_index_prefix}:{normalized}"
+
+    def _chat_username_key(self, chat_id: int) -> str:
+        return f"{self._chat_username_prefix}:{int(chat_id)}"
+
+    @staticmethod
+    def _compact_raw_state(raw: str, *, limit: int = 200) -> str:
+        txt = str(raw or "").strip().replace("\n", " ")
+        if len(txt) <= limit:
+            return txt
+        return txt[: limit - 3] + "..."
+
+    @staticmethod
+    def _raise_corrupted_state(*, chat_id: int, reason: str, raw: str, err: Exception | None = None) -> None:
+        payload = RedisChatStateStore._compact_raw_state(raw)
+        if err is None:
+            log.error("chat_state_corrupted chat_id=%s reason=%s raw=%s", chat_id, reason, payload)
+        else:
+            log.error(
+                "chat_state_corrupted chat_id=%s reason=%s err=%s raw=%s",
+                chat_id,
+                reason,
+                str(err),
+                payload,
+            )
+        raise RuntimeError(f"Corrupted chat state for chat_id={int(chat_id)}: {reason}")
+
+    def _parse_state_or_none(self, *, key: str, raw: str) -> ChatState | None:
+        try:
+            obj = json.loads(raw)
+        except Exception as e:
+            log.error(
+                "chat_state_scan_parse_failed key=%s reason=json err=%s raw=%s",
+                key,
+                str(e),
+                self._compact_raw_state(raw),
+            )
+            return None
+        try:
+            return ChatState.model_validate(obj)
+        except Exception as e:
+            log.error(
+                "chat_state_scan_parse_failed key=%s reason=validation err=%s raw=%s",
+                key,
+                str(e),
+                self._compact_raw_state(raw),
+            )
+            return None
+
     async def get(self, chat_id: int) -> ChatState:
         raw = await self._redis.get(self._key(chat_id))
         if not raw:
             return ChatState(chat_id=int(chat_id))
         try:
             obj = json.loads(raw)
-        except Exception:
-            return ChatState(chat_id=int(chat_id))
+        except Exception as e:
+            self._raise_corrupted_state(chat_id=int(chat_id), reason="json", raw=raw, err=e)
 
         try:
             return ChatState.model_validate(obj)
-        except Exception:
-            return ChatState(chat_id=int(chat_id))
+        except Exception as e:
+            self._raise_corrupted_state(chat_id=int(chat_id), reason="validation", raw=raw, err=e)
 
     async def set(self, state: ChatState) -> None:
-        await self._redis.set(self._key(state.chat_id), state.model_dump_json())
+        chat_id = int(state.chat_id)
+        key = self._key(chat_id)
+        state_raw = state.model_dump_json()
+        new_username = _normalize_username(state.chat_username)
+        old_username = _normalize_username(await self._redis.get(self._chat_username_key(chat_id)))
+
+        await self._redis.set(key, state_raw)
+
+        if old_username and old_username != new_username:
+            old_map_key = self._username_key(old_username)
+            old_owner = await self._redis.get(old_map_key)
+            if str(old_owner or "").strip() == str(chat_id):
+                await self._redis.delete(old_map_key)
+
+        if new_username:
+            await self._redis.set(self._username_key(new_username), str(chat_id))
+            await self._redis.set(self._chat_username_key(chat_id), new_username)
+        else:
+            await self._redis.delete(self._chat_username_key(chat_id))
 
     async def reset_to_wait_audio(self, chat_id: int) -> ChatState:
         existing = await self.get(chat_id)
@@ -145,6 +229,8 @@ class RedisChatStateStore:
         existing.target_fragment = ""
         existing.subtitles_mode = ""
         existing.versions_count = 1
+        existing.referral_tag = ""
+        existing.referral_wait_started_at = 0.0
         await self.set(existing)
         return existing
 
@@ -161,10 +247,8 @@ class RedisChatStateStore:
             raw = await self._redis.get(key)
             if not raw:
                 continue
-            try:
-                obj = json.loads(raw)
-                st = ChatState.model_validate(obj)
-            except Exception:
+            st = self._parse_state_or_none(key=key, raw=raw)
+            if st is None:
                 continue
             has_jobs = bool(st.active_job_ids) or bool(st.active_job_id)
             if st.stage == STAGE_PROCESSING and has_jobs:
@@ -178,21 +262,36 @@ class RedisChatStateStore:
             raw = await self._redis.get(key)
             if not raw:
                 continue
-            try:
-                obj = json.loads(raw)
-                st = ChatState.model_validate(obj)
-            except Exception:
+            st = self._parse_state_or_none(key=key, raw=raw)
+            if st is None:
                 continue
             out.append(st)
         return out
 
+    async def find_chat_id_by_username(self, username: str) -> int | None:
+        normalized = _normalize_username(username)
+        if not normalized:
+            return None
+        val = await self._redis.get(self._username_key(normalized))
+        if not val:
+            return None
+        try:
+            return int(val)
+        except Exception:
+            log.error(
+                "username_index_corrupted username=%s value=%s",
+                normalized,
+                str(val),
+            )
+            return None
+
     # --- Referral helpers ---
     async def set_referral(self, referred_username: str, referrer_chat_id: int) -> None:
-        key = f"{_REFERRAL_PREFIX}:{referred_username.lower()}"
+        key = f"{_REFERRAL_PREFIX}:{_normalize_username(referred_username)}"
         await self._redis.set(key, str(referrer_chat_id), ex=_REFERRAL_TTL_S)
 
     async def get_referral(self, referred_username: str) -> int | None:
-        key = f"{_REFERRAL_PREFIX}:{referred_username.lower()}"
+        key = f"{_REFERRAL_PREFIX}:{_normalize_username(referred_username)}"
         val = await self._redis.get(key)
         if val:
             try:
@@ -202,7 +301,7 @@ class RedisChatStateStore:
         return None
 
     async def delete_referral(self, referred_username: str) -> None:
-        key = f"{_REFERRAL_PREFIX}:{referred_username.lower()}"
+        key = f"{_REFERRAL_PREFIX}:{_normalize_username(referred_username)}"
         await self._redis.delete(key)
 
     # --- Reminder scan ---
@@ -213,10 +312,8 @@ class RedisChatStateStore:
             raw = await self._redis.get(key)
             if not raw:
                 continue
-            try:
-                obj = json.loads(raw)
-                st = ChatState.model_validate(obj)
-            except Exception:
+            st = self._parse_state_or_none(key=key, raw=raw)
+            if st is None:
                 continue
             if st.stage == STAGE_KEEP_IN_TOUCH and st.reminder_at > 0 and st.reminder_at <= now:
                 out.append(st)
