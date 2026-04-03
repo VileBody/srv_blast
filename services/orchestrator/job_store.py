@@ -349,3 +349,27 @@ class JobStore:
         if st.status in active_statuses and status not in active_statuses:
             self._release_llm_slot_for_state(st)
         return stored
+
+    def patch_request(self, job_id: str, patch: Dict[str, Any]) -> Optional[JobState]:
+        st = self.get(job_id)
+        if not st:
+            return None
+
+        req = dict(st.request or {})
+        req.update(patch or {})
+
+        st2 = JobState(
+            job_id=st.job_id,
+            status=st.status,
+            created_at=st.created_at,
+            updated_at=_now(),
+            queued_at=st.queued_at,
+            started_at=st.started_at,
+            finished_at=st.finished_at,
+            stage=st.stage,
+            idempotency_key=st.idempotency_key,
+            request=req,
+            result=st.result,
+            error=st.error,
+        )
+        return self._put(st2)
