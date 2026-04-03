@@ -922,9 +922,13 @@ def build_app(
                 admin_note=f"pkg={pkg} order={order_id} amount={amount_rub}\u20bd",
             )
             await credits_db.log_event(tg_id, "payment_confirmed", f"{pkg} \u2014 {amount_rub}\u20bd")
+            try:
+                await state_store.reset_to_wait_audio(tg_id)
+            except Exception as e:
+                log.warning("tbank notify: failed to unlock user state %s: %s", tg_id, e)
             log.info("payment confirmed tg_id=%s pkg=%s credits=+%s", tg_id, pkg, credits_to_add)
 
-            # Notify user + move to generation flow
+            # Notify user as side-effect. Unlock is already committed.
             if bot_ref and bot_ref[0]:
                 try:
                     from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
@@ -941,8 +945,6 @@ def build_app(
                         ),
                     )
                     await bot_ref[0].send_message(tg_id, "Пришли аудио в формате mp3.")
-                    # Move user state to WAIT_AUDIO
-                    await state_store.reset_to_wait_audio(tg_id)
                 except Exception as e:
                     log.warning("tbank notify: failed to notify user %s: %s", tg_id, e)
 

@@ -80,6 +80,20 @@
   - real archival: `job_id=b8af16ca1c164764aa9b12a8ebfedb91` -> `SUCCEEDED`.
 - Решение по циклу: full smoke-suite оставлен на финальный этап; между MR проверяем только непосредственно затронутый контур.
 
+## Status snapshot (2026-04-03, MR-2 payments tail closed)
+
+- В `services/tg_bot_public/credits_db.py` закрыт ledger edge-case для отрицательных admin adjustments:
+  - баланс всегда clamp к `>= 0`;
+  - в `transactions.amount` пишется фактически применённый delta (`applied_delta`), а не запрошенный.
+- Для post-generation paid-flow унифицирован критерий paid user:
+  - `has_paid()` учитывает `payment`, `admin_activate`, `manual_activation`.
+- В `services/tg_bot_public/admin_panel.py` отвязан unlock state от Telegram notify в webhook path:
+  - сначала commit credits/event + `reset_to_wait_audio`;
+  - уведомление пользователю остаётся side-effect с логированием ошибок.
+- Targeted verification для затронутого контура:
+  - `PYTHONPATH=. pytest -q tests/test_payments_tail_fixes.py` -> `3 passed`.
+- Full smoke-suite остаётся отложенным на финальный этап цикла.
+
 ## 1. Admission, orchestrator, job lifecycle
 
 - [ ] Сделать атомарный admission / reservation для `llm_worker_type`, чтобы burst из 20-30 запросов не переполнял один и тот же backend.
@@ -98,9 +112,9 @@
 - [x] Связать manual activation и payment confirmation, чтобы одно и то же приобретение нельзя было начислить дважды двумя разными путями.
 - [x] Переставить списание кредитов в public bot: не списывать кредиты до успешного enqueue либо добавить корректный reserve/refund flow.
 - [x] Проверять результат `deduct_credit()` и не запускать generation, если фактическое списание не прошло.
-- [ ] Починить ledger consistency для отрицательных admin adjustments, чтобы `transactions` и реальный баланс не расходились.
-- [ ] Определить единое правило "paid user" для post-generation flow: manual activation тоже должна переводить пользователя в paid-ветку, если это бизнес-ожидание.
-- [ ] Отвязать unlock user state от Telegram notify в webhook path: сбой отправки сообщения не должен оставлять оплаченного пользователя в старом stage.
+- [x] Починить ledger consistency для отрицательных admin adjustments, чтобы `transactions` и реальный баланс не расходились.
+- [x] Определить единое правило "paid user" для post-generation flow: manual activation тоже должна переводить пользователя в paid-ветку, если это бизнес-ожидание.
+- [x] Отвязать unlock user state от Telegram notify в webhook path: сбой отправки сообщения не должен оставлять оплаченного пользователя в старом stage.
 
 ## 3. Telegram bot state, batch flow, user-visible correctness
 
