@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import List
+import time
+from typing import Iterable, List
 
 from pydantic import BaseModel, Field
 from redis.asyncio import Redis
@@ -116,6 +117,17 @@ class RedisChatStateStore:
         self._prefix = settings.tg_state_prefix.rstrip(":")
         self._username_index_prefix = f"{self._prefix}:username_index"
         self._chat_username_prefix = f"{self._prefix}:chat_username"
+
+        self._all_ids_key = f"{self._prefix}:idx:all"
+        self._processing_ids_key = f"{self._prefix}:idx:processing"
+        self._waiting_referral_ids_key = f"{self._prefix}:idx:waiting_referral"
+        self._reminder_zset_key = f"{self._prefix}:idx:reminder_at"
+        self._updated_at_zset_key = f"{self._prefix}:idx:updated_at"
+        self._stage_counts_key = f"{self._prefix}:idx:stage_counts"
+        self._stage_by_chat_key = f"{self._prefix}:idx:stage_by_chat"
+
+        self._state_ttl_s = max(3600, int(float(settings.tg_state_ttl_h) * 3600.0))
+
         self._redis = Redis(
             host=settings.redis_host,
             port=settings.redis_port,
@@ -141,6 +153,13 @@ class RedisChatStateStore:
         if len(txt) <= limit:
             return txt
         return txt[: limit - 3] + "..."
+
+    @staticmethod
+    def _parse_chat_id_token(token: str) -> int | None:
+        try:
+            return int(str(token).strip())
+        except Exception:
+            return None
 
     @staticmethod
     def _raise_corrupted_state(*, chat_id: int, reason: str, raw: str, err: Exception | None = None) -> None:
@@ -179,19 +198,118 @@ class RedisChatStateStore:
             )
             return None
 
-    async def get(self, chat_id: int) -> ChatState:
-        raw = await self._redis.get(self._key(chat_id))
-        if not raw:
-            return ChatState(chat_id=int(chat_id))
-        try:
-            obj = json.loads(raw)
-        except Exception as e:
-            self._raise_corrupted_state(chat_id=int(chat_id), reason="json", raw=raw, err=e)
+    async def _adjust_stage_count(self, stage: str, delta: int) -> None:
+        stage_name = str(stage or "").strip()
+        if not stage_name or delta == 0:
+            return
+        new_val = await self._redis.hincrby(self._stage_counts_key, stage_name, int(delta))
+        if int(new_val) <= 0:
+            await self._redis.hdel(self._stage_counts_key, stage_name)
 
-        try:
-            return ChatState.model_validate(obj)
-        except Exception as e:
-            self._raise_corrupted_state(chat_id=int(chat_id), reason="validation", raw=raw, err=e)
+    async def _sync_stage_counters(self, *, chat_id: int, new_stage: str) -> None:
+        chat_token = str(int(chat_id))
+        old_stage = str(await self._redis.hget(self._stage_by_chat_key, chat_token) or "").strip()
+        next_stage = str(new_stage or "").strip()
+        if old_stage == next_stage:
+            return
+        if old_stage:
+            await self._adjust_stage_count(old_stage, -1)
+        if next_stage:
+            await self._adjust_stage_count(next_stage, 1)
+            await self._redis.hset(self._stage_by_chat_key, chat_token, next_stage)
+        else:
+            await self._redis.hdel(self._stage_by_chat_key, chat_token)
+
+    async def _sync_indexes_for_state(self, state: ChatState) -> None:
+        chat_id = int(state.chat_id)
+        chat_token = str(chat_id)
+        stage = str(state.stage or "").strip()
+
+        await self._redis.sadd(self._all_ids_key, chat_token)
+        await self._redis.zadd(self._updated_at_zset_key, {chat_token: float(time.time())})
+
+        if stage == STAGE_PROCESSING:
+            await self._redis.sadd(self._processing_ids_key, chat_token)
+        else:
+            await self._redis.srem(self._processing_ids_key, chat_token)
+
+        if stage == STAGE_WAITING_REFERRAL:
+            await self._redis.sadd(self._waiting_referral_ids_key, chat_token)
+        else:
+            await self._redis.srem(self._waiting_referral_ids_key, chat_token)
+
+        if stage == STAGE_KEEP_IN_TOUCH and float(state.reminder_at or 0.0) > 0.0:
+            await self._redis.zadd(self._reminder_zset_key, {chat_token: float(state.reminder_at)})
+        else:
+            await self._redis.zrem(self._reminder_zset_key, chat_token)
+
+    async def _purge_indexes_only(self, *, chat_id: int, stage_hint: str = "") -> None:
+        chat_token = str(int(chat_id))
+
+        await self._redis.srem(self._all_ids_key, chat_token)
+        await self._redis.srem(self._processing_ids_key, chat_token)
+        await self._redis.srem(self._waiting_referral_ids_key, chat_token)
+        await self._redis.zrem(self._reminder_zset_key, chat_token)
+        await self._redis.zrem(self._updated_at_zset_key, chat_token)
+
+        old_stage = str(stage_hint or await self._redis.hget(self._stage_by_chat_key, chat_token) or "").strip()
+        if old_stage:
+            await self._adjust_stage_count(old_stage, -1)
+        await self._redis.hdel(self._stage_by_chat_key, chat_token)
+
+    async def _load_state_from_key(self, *, chat_id: int, strict: bool) -> ChatState | None:
+        key = self._key(chat_id)
+        raw = await self._redis.get(key)
+        if not raw:
+            return None
+
+        if strict:
+            try:
+                obj = json.loads(raw)
+            except Exception as e:
+                self._raise_corrupted_state(chat_id=int(chat_id), reason="json", raw=raw, err=e)
+            try:
+                return ChatState.model_validate(obj)
+            except Exception as e:
+                self._raise_corrupted_state(chat_id=int(chat_id), reason="validation", raw=raw, err=e)
+
+        parsed = self._parse_state_or_none(key=key, raw=raw)
+        if parsed is None:
+            await self.delete_state(int(chat_id))
+            return None
+        return parsed
+
+    async def _list_states_by_chat_ids(self, chat_ids: Iterable[int]) -> List[ChatState]:
+        out: List[ChatState] = []
+        for chat_id in chat_ids:
+            st = await self._load_state_from_key(chat_id=int(chat_id), strict=False)
+            if st is None:
+                continue
+            out.append(st)
+        return out
+
+    async def _scan_set_chat_ids(self, index_key: str, *, limit: int) -> List[int]:
+        out: List[int] = []
+        cursor = 0
+        remaining = max(1, int(limit))
+        while True:
+            cursor, members = await self._redis.sscan(index_key, cursor=cursor, count=min(200, remaining))
+            for token in members or []:
+                cid = self._parse_chat_id_token(token)
+                if cid is None:
+                    continue
+                out.append(cid)
+                remaining -= 1
+                if remaining <= 0:
+                    return out
+            if int(cursor) == 0:
+                return out
+
+    async def get(self, chat_id: int) -> ChatState:
+        st = await self._load_state_from_key(chat_id=int(chat_id), strict=True)
+        if st is None:
+            return ChatState(chat_id=int(chat_id))
+        return st
 
     async def set(self, state: ChatState) -> None:
         chat_id = int(state.chat_id)
@@ -200,7 +318,9 @@ class RedisChatStateStore:
         new_username = _normalize_username(state.chat_username)
         old_username = _normalize_username(await self._redis.get(self._chat_username_key(chat_id)))
 
-        await self._redis.set(key, state_raw)
+        await self._redis.set(key, state_raw, ex=self._state_ttl_s)
+        await self._sync_indexes_for_state(state)
+        await self._sync_stage_counters(chat_id=chat_id, new_stage=str(state.stage or ""))
 
         if old_username and old_username != new_username:
             old_map_key = self._username_key(old_username)
@@ -210,9 +330,23 @@ class RedisChatStateStore:
 
         if new_username:
             await self._redis.set(self._username_key(new_username), str(chat_id))
-            await self._redis.set(self._chat_username_key(chat_id), new_username)
+            await self._redis.set(self._chat_username_key(chat_id), new_username, ex=self._state_ttl_s)
         else:
             await self._redis.delete(self._chat_username_key(chat_id))
+
+    async def delete_state(self, chat_id: int) -> None:
+        cid = int(chat_id)
+        old_username = _normalize_username(await self._redis.get(self._chat_username_key(cid)))
+        old_stage = str(await self._redis.hget(self._stage_by_chat_key, str(cid)) or "")
+
+        await self._purge_indexes_only(chat_id=cid, stage_hint=old_stage)
+        await self._redis.delete(self._key(cid), self._chat_username_key(cid))
+
+        if old_username:
+            username_key = self._username_key(old_username)
+            old_owner = await self._redis.get(username_key)
+            if str(old_owner or "").strip() == str(cid):
+                await self._redis.delete(username_key)
 
     async def reset_to_wait_audio(self, chat_id: int) -> ChatState:
         existing = await self.get(chat_id)
@@ -240,32 +374,68 @@ class RedisChatStateStore:
         await self.set(st)
         return st
 
+    async def list_processing_candidates(self) -> List[ChatState]:
+        chat_ids: List[int] = []
+        for token in (await self._redis.smembers(self._processing_ids_key) or set()):
+            cid = self._parse_chat_id_token(token)
+            if cid is not None:
+                chat_ids.append(cid)
+        return await self._list_states_by_chat_ids(chat_ids)
+
     async def list_processing(self) -> List[ChatState]:
         out: List[ChatState] = []
-        pattern = f"{self._prefix}:*"
-        async for key in self._redis.scan_iter(match=pattern, count=200):
-            raw = await self._redis.get(key)
-            if not raw:
-                continue
-            st = self._parse_state_or_none(key=key, raw=raw)
-            if st is None:
-                continue
+        for st in await self.list_processing_candidates():
             has_jobs = bool(st.active_job_ids) or bool(st.active_job_id)
             if st.stage == STAGE_PROCESSING and has_jobs:
                 out.append(st)
         return out
 
-    async def list_all_states(self) -> List[ChatState]:
+    async def list_waiting_referral(self) -> List[ChatState]:
+        chat_ids: List[int] = []
+        for token in (await self._redis.smembers(self._waiting_referral_ids_key) or set()):
+            cid = self._parse_chat_id_token(token)
+            if cid is not None:
+                chat_ids.append(cid)
         out: List[ChatState] = []
-        pattern = f"{self._prefix}:*"
-        async for key in self._redis.scan_iter(match=pattern, count=200):
-            raw = await self._redis.get(key)
-            if not raw:
+        for st in await self._list_states_by_chat_ids(chat_ids):
+            if st.stage == STAGE_WAITING_REFERRAL:
+                out.append(st)
+        return out
+
+    async def list_all_states(self) -> List[ChatState]:
+        chat_ids: List[int] = []
+        for token in (await self._redis.smembers(self._all_ids_key) or set()):
+            cid = self._parse_chat_id_token(token)
+            if cid is not None:
+                chat_ids.append(cid)
+        return await self._list_states_by_chat_ids(chat_ids)
+
+    async def list_stage_counts(self) -> dict[str, int]:
+        raw = await self._redis.hgetall(self._stage_counts_key)
+        out: dict[str, int] = {}
+        for stage, cnt in (raw or {}).items():
+            try:
+                val = int(cnt)
+            except Exception:
                 continue
-            st = self._parse_state_or_none(key=key, raw=raw)
-            if st is None:
+            if val > 0:
+                out[str(stage)] = val
+        return out
+
+    async def get_stages_for_chat_ids(self, chat_ids: List[int]) -> dict[int, str]:
+        if not chat_ids:
+            return {}
+        fields = [str(int(cid)) for cid in chat_ids]
+        values = await self._redis.hmget(self._stage_by_chat_key, fields)
+        out: dict[int, str] = {}
+        for field, stage in zip(fields, values or []):
+            cid = self._parse_chat_id_token(field)
+            if cid is None:
                 continue
-            out.append(st)
+            stage_name = str(stage or "").strip()
+            if not stage_name:
+                continue
+            out[cid] = stage_name
         return out
 
     async def find_chat_id_by_username(self, username: str) -> int | None:
@@ -284,6 +454,57 @@ class RedisChatStateStore:
                 str(val),
             )
             return None
+
+    async def list_stale_chat_ids(self, older_than_ts: float, *, limit: int) -> List[int]:
+        tokens = await self._redis.zrangebyscore(
+            self._updated_at_zset_key,
+            min=float("-inf"),
+            max=float(older_than_ts),
+            start=0,
+            num=max(1, int(limit)),
+        )
+        out: List[int] = []
+        for token in tokens or []:
+            cid = self._parse_chat_id_token(token)
+            if cid is not None:
+                out.append(cid)
+        return out
+
+    async def cleanup_index_members(self, *, limit: int = 500) -> int:
+        to_check: List[int] = []
+        max_items = max(1, int(limit))
+
+        for key in (self._all_ids_key, self._processing_ids_key, self._waiting_referral_ids_key):
+            if len(to_check) >= max_items:
+                break
+            want = max_items - len(to_check)
+            to_check.extend(await self._scan_set_chat_ids(key, limit=want))
+
+        if len(to_check) < max_items:
+            remainder = max_items - len(to_check)
+            for token in await self._redis.zrange(self._updated_at_zset_key, 0, remainder - 1):
+                cid = self._parse_chat_id_token(token)
+                if cid is not None:
+                    to_check.append(cid)
+            if len(to_check) < max_items:
+                remainder = max_items - len(to_check)
+                for token in await self._redis.zrange(self._reminder_zset_key, 0, remainder - 1):
+                    cid = self._parse_chat_id_token(token)
+                    if cid is not None:
+                        to_check.append(cid)
+
+        seen: set[int] = set()
+        removed = 0
+        for cid in to_check:
+            if cid in seen:
+                continue
+            seen.add(cid)
+            raw = await self._redis.get(self._key(cid))
+            if raw:
+                continue
+            await self.delete_state(cid)
+            removed += 1
+        return removed
 
     # --- Referral helpers ---
     async def set_referral(self, referred_username: str, referrer_chat_id: int) -> None:
@@ -305,18 +526,26 @@ class RedisChatStateStore:
         await self._redis.delete(key)
 
     # --- Reminder scan ---
-    async def list_pending_reminders(self, now: float) -> List[ChatState]:
+    async def list_pending_reminders(self, now: float, *, limit: int = 500) -> List[ChatState]:
         out: List[ChatState] = []
-        pattern = f"{self._prefix}:*"
-        async for key in self._redis.scan_iter(match=pattern, count=200):
-            raw = await self._redis.get(key)
-            if not raw:
-                continue
-            st = self._parse_state_or_none(key=key, raw=raw)
-            if st is None:
-                continue
-            if st.stage == STAGE_KEEP_IN_TOUCH and st.reminder_at > 0 and st.reminder_at <= now:
+        tokens = await self._redis.zrangebyscore(
+            self._reminder_zset_key,
+            min=float("-inf"),
+            max=float(now),
+            start=0,
+            num=max(1, int(limit)),
+        )
+        chat_ids: List[int] = []
+        for token in tokens or []:
+            cid = self._parse_chat_id_token(token)
+            if cid is not None:
+                chat_ids.append(cid)
+
+        for st in await self._list_states_by_chat_ids(chat_ids):
+            if st.stage == STAGE_KEEP_IN_TOUCH and float(st.reminder_at or 0.0) > 0 and float(st.reminder_at) <= float(now):
                 out.append(st)
+            else:
+                await self._redis.zrem(self._reminder_zset_key, str(int(st.chat_id)))
         return out
 
     async def close(self) -> None:
