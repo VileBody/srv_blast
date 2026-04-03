@@ -47,6 +47,7 @@ from .state_store import (
     STAGE_WAIT_SUBTITLES_MODE,
     STAGE_WAIT_VERSIONS,
 )
+from .user_store import UserStore
 
 
 logging.basicConfig(
@@ -721,6 +722,7 @@ class BlastBotApp:
         self.store = RedisChatStateStore(settings)
         self.s3 = S3Client(settings)
         self.orchestrator = OrchestratorClient(base_url=settings.orchestrator_public_url, timeout_s=60.0)
+        self.users: UserStore | None = None
 
         self.dp = Dispatcher()
         self.router = Router()
@@ -843,6 +845,12 @@ class BlastBotApp:
             raise RuntimeError("S3_BUCKET_RAW_AUDIO is empty")
 
         self.settings.tmp_dir.mkdir(parents=True, exist_ok=True)
+        if self.settings.credits_db_url:
+            self.users = UserStore(self.settings.credits_db_url)
+            await self.users.init()
+            log.info("startup: user_store active")
+        elif self.settings.credits_required:
+            raise RuntimeError("CREDITS_REQUIRED=true but CREDITS_DB_URL (or POSTGRES_*) is not set")
 
         self._processing_task = asyncio.create_task(self._processing_loop(), name="tg_bot_processing_loop")
         log.info("startup complete: polling loop started")
@@ -858,6 +866,8 @@ class BlastBotApp:
 
         await self.orchestrator.close()
         await self.store.close()
+        if self.users is not None:
+            await self.users.close()
         self._bot = None
         log.info("shutdown complete")
 
@@ -1099,8 +1109,29 @@ class BlastBotApp:
             return
 
         key = self._build_raw_audio_key(chat_id=chat_id, file_name=prepared_path.name)
+        versions = max(1, min(5, int(st.versions_count or 1)))
+        batch_id = f"tg-{chat_id}-{uuid.uuid4().hex[:12]}"
+        deduction_ref = f"batch:{batch_id}"
+
+        if self.settings.credits_required and self.users is not None:
+            await self.users.ensure_profile(chat_id, st.chat_username)
+            deduct_ok, _ = await self.users.deduct_credit(
+                chat_id,
+                ref_id=deduction_ref,
+                amount=self.settings.credits_per_generation,
+                note=f"generation batch={batch_id}",
+            )
+            if not deduct_ok:
+                profile = await self.users.get_profile(chat_id)
+                current = profile.credits if profile else 0
+                await message.answer(
+                    f"Недостаточно кредитов для генерации (нужно {self.settings.credits_per_generation}, "
+                    f"у тебя {current}). Пополни баланс и попробуй снова."
+                )
+                return
+            st.pending_deduction_ref_id = deduction_ref
+            await self.store.set(st)
         try:
-            versions = max(1, min(5, int(st.versions_count or 1)))
             await message.answer(f"Заливаю аудио в S3 и ставлю задачи в очередь… (версий: {versions})")
             audio_s3_url = await asyncio.to_thread(
                 self.s3.upload_file,
@@ -1110,7 +1141,6 @@ class BlastBotApp:
                 content_type="audio/mpeg",
             )
 
-            batch_id = f"tg-{chat_id}-{uuid.uuid4().hex[:12]}"
             master_job_id = await self._enqueue_batch_version(
                 st=st,
                 audio_s3_url=audio_s3_url,
@@ -1121,6 +1151,7 @@ class BlastBotApp:
                 exclude_file_names=[],
             )
 
+            st.pending_deduction_ref_id = ""
             st.stage = STAGE_PROCESSING
             st.batch_id = batch_id
             st.batch_audio_s3_url = audio_s3_url
@@ -1155,6 +1186,15 @@ class BlastBotApp:
             st.last_status_msg_at = time.time()
             await self.store.set(st)
         except Exception as e:
+            if self.settings.credits_required and self.users is not None and st.pending_deduction_ref_id:
+                await self.users.refund_credit(
+                    chat_id,
+                    ref_id=deduction_ref,
+                    amount=self.settings.credits_per_generation,
+                    note=f"refund: enqueue failed batch={batch_id}",
+                )
+                st.pending_deduction_ref_id = ""
+                await self.store.set(st)
             await message.answer(f"Не удалось запустить задачу: {e}")
 
     async def _handle_wait_next(self, message: Message, st: ChatState) -> None:
@@ -1183,7 +1223,7 @@ class BlastBotApp:
         reuse_text_job_id: str = "",
         exclude_file_names: Optional[List[str]] = None,
     ) -> str:
-        idem = f"tg-{st.chat_id}-batch-{batch_id}-v{int(version_index)}-{uuid.uuid4().hex[:12]}"
+        idem = f"tg-{st.chat_id}-batch-{batch_id}-v{int(version_index)}"
         enqueue = await self.orchestrator.send_audio_s3(
             audio_s3_url=audio_s3_url,
             mode="with_gemini",
@@ -1302,6 +1342,7 @@ class BlastBotApp:
         st.last_job_error = ""
         st.target_fragment = ""
         st.subtitles_mode = SUBTITLES_MODE_LEGACY_BLOCKS
+        st.pending_deduction_ref_id = ""
 
     async def _send_long_html_message(self, *, bot: Bot, chat_id: int, text: str) -> None:
         chunks = _split_telegram_chunks(text)
@@ -1522,11 +1563,12 @@ class BlastBotApp:
 
         next_ver = max(1, int(st.next_version_to_enqueue or 1))
         can_enqueue_more = next_ver <= total_versions
+        enqueue_failed = False
         if can_enqueue_more:
             if master_status == "FAILED":
                 await bot.send_message(
                     st.chat_id,
-                    f"Версия 1/{total_versions} завершилась ошибкой, остальные версии не запускаю.",
+                    f"Версия 1/{total_versions}: завершилась ошибкой (master_failed) — остальные версии не запускаю.",
                 )
                 st.next_version_to_enqueue = total_versions + 1
             else:
@@ -1553,15 +1595,59 @@ class BlastBotApp:
                     await self.store.set(st)
                     return
                 except Exception as e:
+                    enqueue_failed = True
                     await bot.send_message(
                         st.chat_id,
                         f"Не удалось поставить в очередь Версию {next_ver}/{total_versions}: {e}",
                     )
                     st.next_version_to_enqueue = total_versions + 1
 
+        succeeded_count = sum(1 for r in rows if str(r.get("status") or "").upper() == "SUCCEEDED")
+        failed_count = sum(1 for r in rows if str(r.get("status") or "").upper() == "FAILED")
+        enqueued_count = len(st.job_order or job_ids)
+        enqueue_short = enqueued_count < total_versions or enqueue_failed
+
+        if total_versions == 1:
+            if succeeded_count == 1:
+                batch_outcome = "all_succeeded"
+            elif master_status == "FAILED":
+                batch_outcome = "master_failed"
+            else:
+                batch_outcome = "all_failed"
+        elif succeeded_count == total_versions:
+            batch_outcome = "all_succeeded"
+        elif succeeded_count > 0 and not enqueue_short:
+            batch_outcome = "partial_failed"
+        elif succeeded_count > 0 and enqueue_short:
+            batch_outcome = "enqueue_failed"
+        elif master_status == "FAILED":
+            batch_outcome = "master_failed"
+        elif enqueue_short:
+            batch_outcome = "enqueue_failed"
+        else:
+            batch_outcome = "all_failed"
+
+        if batch_outcome == "all_succeeded":
+            summary = f"Готово: все {succeeded_count}/{total_versions} версий успешно."
+        elif batch_outcome == "partial_failed":
+            summary = (
+                f"Частично готово: {succeeded_count}/{total_versions} версий успешно, "
+                f"{failed_count} завершились ошибкой."
+            )
+        elif batch_outcome == "enqueue_failed":
+            summary = (
+                f"Частично: {succeeded_count} из {total_versions} версий запущено "
+                f"({succeeded_count} успешно, {failed_count} с ошибкой). "
+                f"Не удалось поставить в очередь версии {enqueued_count + 1}–{total_versions}."
+            )
+        elif batch_outcome == "master_failed":
+            summary = "Не удалось: первая версия (master) завершилась ошибкой."
+        else:
+            summary = f"Все {total_versions} версий завершились ошибкой."
+
         await bot.send_message(
             st.chat_id,
-            "Сделать следующий?",
+            summary + "\nСделать следующий?",
             reply_markup=_kb([BTN_NEXT]),
         )
 

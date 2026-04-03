@@ -59,6 +59,7 @@ class ChatState(BaseModel):
 
     # Sticky result source for fallback links if file send fails repeatedly.
     last_result_url: str = ""
+    pending_deduction_ref_id: str = ""
 
 
 class RedisChatStateStore:
