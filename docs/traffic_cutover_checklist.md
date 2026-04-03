@@ -186,8 +186,34 @@
   - не входящие в allowlist артефакты удаляются автоматически по базовому TTL.
 - Вынесен общий модуль `core/filesystem_hygiene.py`, подключён в `tg_bot_public` и `tg_bot_botapi`.
 - Targeted verification для затронутого контура:
-  - `PYTHONPATH=. pytest -q tests/test_filesystem_hygiene.py` -> `3 passed`.
+- `PYTHONPATH=. pytest -q tests/test_filesystem_hygiene.py` -> `3 passed`.
 - Full smoke-suite остаётся отложенным на финальный этап цикла.
+
+## Status snapshot (2026-04-04, MR-7 timing/testability/observability in progress)
+
+- Введён единый timing helper `core/video_timing.py` и вынесен единый FPS source-of-truth:
+  - `app/config.py`, `core/stepper.py`, `app/project_config.py`,
+  - `app/scenes_3rd_reference_builder.py`, `app/template_4th_reference_builder.py`,
+  - `app/text_comp.py`, `app/text_flow_renderer.py`.
+- Для text preflight закреплено строгое продовое поведение:
+  - `TEXT_PREFLIGHT_STRICT` в `MODE=prod` больше не может быть отключён env-переключателем.
+- Починен integration path `stage2_style` без жёсткой зависимости на style-metadata mapping:
+  - `mlcore/gemini_orchestrator.py` поддерживает direct pick payload в test/compat path;
+  - строгий фейл на пустом metadata mapping сохранён для rotation-path;
+  - resume state с `stage2_style` без `stage2_style_rotation` теперь валиден.
+- Нормализован локальный test entrypoint:
+  - добавлен `tests/conftest.py` для запуска `pytest` без ручного `PYTHONPATH=.`;
+  - добавлены test-only shims для отсутствующих локально `celery`/`redis`/`aiogram` (чтобы integration/unit suites не падали на import stage).
+- Добавлена базовая наблюдаемость:
+  - `services/orchestrator/observability_metrics.py` (Redis counters);
+  - `/metrics` расширен: `queue_depth`, `inflight_jobs`, `failed_jobs`, `llm_inflight_by_worker_type`, `webhook_outcomes`, `activate_outcomes`, `render_poll_timeout_outcomes`;
+  - инкременты webhook/admin outcomes в `services/orchestrator/payment_webhook.py`;
+  - инкременты timeout outcomes в `services/orchestrator/tasks.py` (`poll_windows_render`).
+- Targeted verification для затронутого контура:
+  - `pytest -q tests/test_orchestrator_style_integration.py` -> `7 passed`;
+  - `pytest -q tests/test_text_preflight_glitch_fallback.py` -> `3 passed`;
+  - `pytest -q tests/test_orchestrator_tasks_preflight_retry.py` -> `3 passed`;
+  - `pytest -q tests/test_orchestrator_observability_metrics.py` -> `2 passed`.
 
 ## 1. Admission, orchestrator, job lifecycle
 
@@ -254,17 +280,17 @@
 
 ## 8. Timing / subtitles / render correctness
 
-- [ ] Привести FPS math к единому source of truth во всём AE/text/render коде.
-- [ ] Убедиться, что округление времени к кадру делается единообразно там, где это влияет на текстовые слои и keyframes.
-- [ ] Сохранить строгий preflight для текста как дефолтное прод-поведение и не позволять "тихо" протащить битый тайминг.
+- [x] Привести FPS math к единому source of truth во всём AE/text/render коде.
+- [x] Убедиться, что округление времени к кадру делается единообразно там, где это влияет на текстовые слои и keyframes.
+- [x] Сохранить строгий preflight для текста как дефолтное прод-поведение и не позволять "тихо" протащить битый тайминг.
 
 ## 9. Testability, release safety, observability
 
-- [ ] Привести локальный test entrypoint к воспроизводимому виду без ручного `PYTHONPATH=.`.
-- [ ] Сделать минимальный рабочий test setup для suites, которые сейчас валятся на отсутствующих `aiogram` / `celery`.
-- [ ] Починить integration tests, которые сейчас упираются в жёсткую зависимость на style metadata mapping.
+- [x] Привести локальный test entrypoint к воспроизводимому виду без ручного `PYTHONPATH=.`.
+- [x] Сделать минимальный рабочий test setup для suites, которые сейчас валятся на отсутствующих `aiogram` / `celery`.
+- [x] Починить integration tests, которые сейчас упираются в жёсткую зависимость на style metadata mapping.
 - [ ] Зафиксировать smoke checklist перед релизом: enqueue, payment webhook, public bot paid flow, render dispatch, render poll, result delivery.
-- [ ] Добавить базовую операционную наблюдаемость по очередям, in-flight jobs, failed jobs, webhook outcomes и render poll timeouts.
+- [x] Добавить базовую операционную наблюдаемость по очередям, in-flight jobs, failed jobs, webhook outcomes и render poll timeouts.
 
 ## Definition of done для traffic cutover
 

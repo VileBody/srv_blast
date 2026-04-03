@@ -23,6 +23,8 @@ from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel
 
 from services.tg_bot_botapi.user_store import UserStore
+from .job_store import JobStore
+from .observability_metrics import increment_counter
 
 log = logging.getLogger("orchestrator.payment_webhook")
 
@@ -82,6 +84,24 @@ def make_payment_router(
     admin_token: str = "",
 ) -> APIRouter:
     router = APIRouter(prefix="/payments", tags=["payments"])
+    metrics_store: JobStore | None = None
+    try:
+        metrics_store = JobStore.from_env()
+    except Exception as exc:
+        log.warning("payment_metrics_store_init_failed err=%r", exc)
+
+    def _inc(metric: str, label: str) -> None:
+        if metrics_store is None:
+            return
+        try:
+            increment_counter(metrics_store, metric=metric, label=label)
+        except Exception as exc:
+            log.warning(
+                "payment_metrics_increment_failed metric=%s label=%s err=%r",
+                metric,
+                label,
+                exc,
+            )
 
     @router.post("/webhook", response_model=PaymentWebhookResponse)
     async def payment_webhook(
@@ -91,6 +111,7 @@ def make_payment_router(
         raw_body = await request.body()
 
         if not _verify_hmac(webhook_secret, raw_body, x_webhook_signature):
+            _inc("payment_webhook_outcomes", "invalid_signature")
             log.warning(
                 "payment_webhook_hmac_failed sig=%r body_len=%d",
                 x_webhook_signature[:40], len(raw_body),
@@ -100,9 +121,11 @@ def make_payment_router(
         try:
             payload = PaymentWebhookRequest.model_validate(json.loads(raw_body))
         except Exception as exc:
+            _inc("payment_webhook_outcomes", "invalid_payload")
             raise HTTPException(status_code=422, detail=f"Invalid payload: {exc}")
 
         if payload.status.upper() != "CONFIRMED":
+            _inc("payment_webhook_outcomes", "ignored_status")
             log.info(
                 "payment_webhook_ignored order=%s status=%s",
                 payload.order_id, payload.status,
@@ -110,6 +133,7 @@ def make_payment_router(
             return PaymentWebhookResponse(ok=True, message=f"status={payload.status} ignored")
 
         if payload.credits <= 0:
+            _inc("payment_webhook_outcomes", "invalid_credits")
             raise HTTPException(status_code=422, detail="credits must be > 0")
 
         note = (
@@ -127,8 +151,10 @@ def make_payment_router(
             note=note,
         )
         if not ok:
+            _inc("payment_webhook_outcomes", "db_failed")
             raise HTTPException(status_code=500, detail="Failed to process payment")
 
+        _inc("payment_webhook_outcomes", "already_confirmed" if already_done else "confirmed")
         log.info(
             "payment_webhook_ok order=%s chat=%s credits=%d already_done=%s new_balance=%d",
             payload.order_id, payload.chat_id, payload.credits, already_done, new_balance,
@@ -146,9 +172,11 @@ def make_payment_router(
         x_admin_token: str = Header(default=""),
     ) -> PaymentWebhookResponse:
         if not admin_token or not hmac.compare_digest(x_admin_token, admin_token):
+            _inc("payment_activate_outcomes", "invalid_token")
             raise HTTPException(status_code=403, detail="Invalid admin token")
 
         if req.credits <= 0:
+            _inc("payment_activate_outcomes", "invalid_credits")
             raise HTTPException(status_code=422, detail="credits must be > 0")
 
         await user_store.ensure_profile(req.chat_id)
@@ -160,8 +188,10 @@ def make_payment_router(
             note=req.note,
         )
         if not ok:
+            _inc("payment_activate_outcomes", "db_failed")
             raise HTTPException(status_code=500, detail="Failed to process activation")
 
+        _inc("payment_activate_outcomes", "already_activated" if already_done else "activated")
         log.info(
             "manual_activate_ok id=%s chat=%s credits=%d already_done=%s new_balance=%d",
             req.activation_id, req.chat_id, req.credits, already_done, new_balance,

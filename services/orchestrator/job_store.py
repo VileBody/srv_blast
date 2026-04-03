@@ -147,6 +147,36 @@ class JobStore:
         except Exception:
             return None
 
+    def list_jobs(self, *, limit: Optional[int] = None) -> list[JobState]:
+        pattern = f"{self.key_prefix}:job:*"
+        keys = self._redis_call(
+            "list_jobs_scan",
+            lambda: list(self.r.scan_iter(match=pattern, count=500)),
+        )
+        if not keys:
+            return []
+
+        out: list[JobState] = []
+        max_items = int(limit) if limit is not None else 0
+        for i in range(0, len(keys), 200):
+            batch = keys[i : i + 200]
+            raw_values = self._redis_call(
+                "list_jobs_mget",
+                lambda b=batch: self.r.mget(b),
+            ) or []
+            for raw in raw_values:
+                if not raw:
+                    continue
+                try:
+                    out.append(JobState.model_validate(json.loads(raw)))
+                except Exception:
+                    continue
+
+        out.sort(key=lambda st: float(st.created_at), reverse=True)
+        if max_items > 0:
+            return out[:max_items]
+        return out
+
     def _put(self, st: JobState) -> JobState:
         key = self._k_job(st.job_id)
         payload = st.model_dump_json()
