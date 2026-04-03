@@ -59,6 +59,8 @@ help:
 > @echo "  make dev-full AUDIO=...        # no-queue local runner via dev.py (gemini->build->dispatch)"
 > @echo "  make test-smoke                # lightweight smoke checks"
 > @echo "  make smoke-mr1 ARCHIVAL_AUDIO=... [ORCH=...] # MR-1 gate: health + synthetic no-speech + real archival"
+> @echo "  make smoke-release ARCHIVAL_AUDIO=... [ORCH=...] # release gate (health + synthetic + archival)"
+> @echo "  make smoke-release-payment CHAT_ID=... [ORCH=...] [ADMIN_TOKEN=...] # /payments/activate idempotency + auth"
 > @echo ""
 > @echo "Notes:"
 > @echo "  - .env is sourced automatically (if exists)."
@@ -147,3 +149,18 @@ smoke-mr1: _env
 > ARGS=(--archival-file "$(ARCHIVAL_AUDIO)" --job-mode with_gemini --report-json out/mr1_smoke_gate_report.json); \
 > if [[ -n "$(ORCH)" ]]; then ARGS+=(--orch "$(ORCH)"); fi; \
 > .venv/bin/python scripts/run_mr1_smoke_gate.py "$${ARGS[@]}"
+
+.PHONY: smoke-release
+smoke-release: _env
+> if [[ -z "$(ARCHIVAL_AUDIO)" ]]; then echo "[ERR] ARCHIVAL_AUDIO is required. Example: make smoke-release ARCHIVAL_AUDIO=./path/to/archival.mp3"; exit 2; fi
+> ARGS=(--archival-file "$(ARCHIVAL_AUDIO)" --job-mode with_gemini --report-json out/release_smoke_gate_report.json); \
+> if [[ -n "$(ORCH)" ]]; then ARGS+=(--orch "$(ORCH)"); fi; \
+> .venv/bin/python scripts/run_mr1_smoke_gate.py "$${ARGS[@]}"
+
+.PHONY: smoke-release-payment
+smoke-release-payment: _env
+> if [[ -z "$(CHAT_ID)" ]]; then echo "[ERR] CHAT_ID is required. Example: make smoke-release-payment CHAT_ID=123456"; exit 2; fi
+> ARGS=(--chat-id "$(CHAT_ID)" --credits "$${CREDITS:-1}" --report-json out/release_payment_smoke_report.json); \
+> if [[ -n "$(ORCH)" ]]; then ARGS+=(--orch "$(ORCH)"); fi; \
+> if [[ -n "$(ADMIN_TOKEN)" ]]; then ARGS+=(--admin-token "$(ADMIN_TOKEN)"); fi; \
+> .venv/bin/python scripts/run_release_payment_smoke.py "$${ARGS[@]}"

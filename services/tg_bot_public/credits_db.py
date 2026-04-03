@@ -45,11 +45,14 @@ CREATE TABLE IF NOT EXISTS transactions (
     amount      INTEGER NOT NULL,
     reason      TEXT    NOT NULL DEFAULT '',
     admin_note  TEXT    NOT NULL DEFAULT '',
+    actor       TEXT    NOT NULL DEFAULT '',
+    context_order_id TEXT NOT NULL DEFAULT '',
     created_at  TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_tx_tg_id      ON transactions(tg_id);
 CREATE INDEX IF NOT EXISTS idx_tx_created_at ON transactions(created_at);
+CREATE INDEX IF NOT EXISTS idx_tx_order_id   ON transactions(context_order_id);
 
 CREATE TABLE IF NOT EXISTS admins (
     tg_id       BIGINT PRIMARY KEY,
@@ -196,6 +199,9 @@ class CreditsDB:
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_pay_utm_source ON payments(utm_source)")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_pay_utm_campaign ON payments(utm_campaign)")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)")
+        await conn.execute("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS actor TEXT NOT NULL DEFAULT ''")
+        await conn.execute("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS context_order_id TEXT NOT NULL DEFAULT ''")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_tx_order_id ON transactions(context_order_id)")
 
         await conn.execute("CREATE TABLE IF NOT EXISTS utm_touches ("
                            "id BIGSERIAL PRIMARY KEY,"
@@ -269,8 +275,19 @@ class CreditsDB:
             bal = await conn.fetchval("SELECT credits FROM users WHERE tg_id = $1", int(tg_id))
             return int(bal) if bal is not None else 0
 
-    async def add_credits(self, tg_id: int, amount: int, reason: str, admin_note: str = "") -> int:
+    async def add_credits(
+        self,
+        tg_id: int,
+        amount: int,
+        reason: str,
+        admin_note: str = "",
+        *,
+        actor: str = "",
+        order_id: str = "",
+    ) -> int:
         pool = self._pool_or_fail()
+        clean_actor = _norm_text(actor, max_len=64)
+        clean_order_id = _norm_text(order_id, max_len=128)
         async with pool.acquire() as conn:
             async with conn.transaction():
                 await conn.execute(
@@ -291,11 +308,14 @@ class CreditsDB:
                     int(tg_id),
                 )
                 await conn.execute(
-                    "INSERT INTO transactions (tg_id, amount, reason, admin_note) VALUES ($1, $2, $3, $4)",
+                    "INSERT INTO transactions (tg_id, amount, reason, admin_note, actor, context_order_id) "
+                    "VALUES ($1, $2, $3, $4, $5, $6)",
                     int(tg_id),
                     int(applied_delta),
                     str(reason or ""),
                     str(admin_note or ""),
+                    clean_actor,
+                    clean_order_id,
                 )
                 return int(after)
 
@@ -533,7 +553,7 @@ class CreditsDB:
         async with pool.acquire() as conn:
             if tg_id:
                 rows = await conn.fetch(
-                    "SELECT id, tg_id, amount, reason, admin_note, created_at "
+                    "SELECT id, tg_id, amount, reason, admin_note, actor, context_order_id, created_at "
                     "FROM transactions WHERE tg_id = $1 ORDER BY created_at DESC, id DESC LIMIT $2 OFFSET $3",
                     int(tg_id),
                     int(limit),
@@ -541,7 +561,7 @@ class CreditsDB:
                 )
             else:
                 rows = await conn.fetch(
-                    "SELECT id, tg_id, amount, reason, admin_note, created_at "
+                    "SELECT id, tg_id, amount, reason, admin_note, actor, context_order_id, created_at "
                     "FROM transactions ORDER BY created_at DESC, id DESC LIMIT $1 OFFSET $2",
                     int(limit),
                     int(offset),
@@ -553,6 +573,8 @@ class CreditsDB:
                 "amount": int(r["amount"]),
                 "reason": str(r["reason"] or ""),
                 "admin_note": str(r["admin_note"] or ""),
+                "actor": str(r["actor"] or ""),
+                "order_id": str(r["context_order_id"] or ""),
                 "created_at": _fmt_ts(r["created_at"]),
             }
             for r in rows

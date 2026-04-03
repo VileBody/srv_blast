@@ -56,7 +56,9 @@ class _FakeConn:
                     "tg_id": int(args[0]),
                     "amount": int(args[1]),
                     "reason": str(args[2]),
-                    "admin_note": str(args[3]),
+                    "admin_note": str(args[3]) if len(args) > 3 else "",
+                    "actor": str(args[4]) if len(args) > 4 else "",
+                    "order_id": str(args[5]) if len(args) > 5 else "",
                 }
             )
             return "INSERT 0 1"
@@ -144,13 +146,24 @@ class _FakeCreditsDBNotify:
     async def get_payment(self, order_id: str) -> dict[str, Any]:
         return dict(self.payment)
 
-    async def add_credits(self, tg_id: int, amount: int, reason: str, admin_note: str = "") -> int:
+    async def add_credits(
+        self,
+        tg_id: int,
+        amount: int,
+        reason: str,
+        admin_note: str = "",
+        *,
+        actor: str = "",
+        order_id: str = "",
+    ) -> int:
         self.add_calls.append(
             {
                 "tg_id": int(tg_id),
                 "amount": int(amount),
                 "reason": str(reason),
                 "admin_note": str(admin_note),
+                "actor": str(actor),
+                "order_id": str(order_id),
             }
         )
         return 5
@@ -241,4 +254,6 @@ def test_tbank_notify_unlocks_state_even_when_user_notify_fails() -> None:
     assert state_store.reset_calls == [777]
     assert bot.calls >= 1
     assert credits_db.add_calls and credits_db.add_calls[0]["reason"] == "payment"
+    assert credits_db.add_calls[0]["actor"] == "tbank_webhook"
+    assert credits_db.add_calls[0]["order_id"] == "ord-1"
     assert credits_db.events and credits_db.events[0][1] == "payment_confirmed"

@@ -758,7 +758,6 @@ def _build_job_impl(self, job_id: str, *, worker_type: str) -> Dict[str, Any]:
         env["FOOTAGE_ARTIST_ID"] = footage_artist_id
     if exclude_file_names:
         env["FOOTAGE_EXCLUDE_FILE_NAMES_JSON"] = json.dumps(exclude_file_names, ensure_ascii=False)
->>>>>>> theirs
     seed_variant = variant_index if variant_index is not None else 1
     seed_base = project_id or f"job-{job_id}"
     env["STAGE2_SELECTION_SEED"] = f"{seed_base}:v{seed_variant}"

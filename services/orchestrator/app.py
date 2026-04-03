@@ -48,6 +48,7 @@ def create_app() -> FastAPI:
 
     store = JobStore.from_env()
     _bundle_ok = False
+    _payment_enabled = bool(SETTINGS.payment_webhook_secret or SETTINGS.payment_admin_token)
 
     # Payment webhook router — backed by PostgreSQL via shared UserStore.
     # Initialized once at startup, closed on shutdown.
@@ -65,21 +66,24 @@ def create_app() -> FastAPI:
         if _user_store is not None:
             await _user_store.close()
 
-    if SETTINGS.payment_webhook_secret or SETTINGS.payment_admin_token:
+    if _payment_enabled:
         # Router uses _user_store which is set by startup event before first request.
         # We pass a lambda so the router always gets the current value.
         class _LazyUserStore:
             """Thin proxy so payment router works even though pool isn't ready at import time."""
             async def ensure_profile(self, *a, **kw):  # type: ignore[override]
-                assert _user_store, "CREDITS_DB_URL not configured"
+                if _user_store is None:
+                    raise RuntimeError("payment_router_not_ready: credits db pool is not initialized")
                 return await _user_store.ensure_profile(*a, **kw)
 
             async def confirm_payment(self, *a, **kw):  # type: ignore[override]
-                assert _user_store, "CREDITS_DB_URL not configured"
+                if _user_store is None:
+                    raise RuntimeError("payment_router_not_ready: credits db pool is not initialized")
                 return await _user_store.confirm_payment(*a, **kw)
 
             async def manual_activate(self, *a, **kw):  # type: ignore[override]
-                assert _user_store, "CREDITS_DB_URL not configured"
+                if _user_store is None:
+                    raise RuntimeError("payment_router_not_ready: credits db pool is not initialized")
                 return await _user_store.manual_activate(*a, **kw)
 
         payment_router = make_payment_router(
@@ -119,17 +123,43 @@ def create_app() -> FastAPI:
 
     @app.get("/health")
     def health() -> dict:
-        checks: dict = {}
+        checks: dict[str, bool] = {}
+        details: dict[str, str] = {}
         try:
             store.r.ping()
             checks["redis"] = True
         except Exception:
             checks["redis"] = False
+            details["redis"] = "ping_failed"
 
         checks["bundle"] = _bundle_ok
+        if not _bundle_ok:
+            details["bundle"] = "descriptions_bundle_not_ready"
+
+        if _payment_enabled:
+            has_db_url = bool(str(SETTINGS.credits_db_url or "").strip())
+            payment_ready = has_db_url and (_user_store is not None)
+            checks["payment_db_ready"] = payment_ready
+            if not has_db_url:
+                details["payment_db_ready"] = "CREDITS_DB_URL missing"
+            elif _user_store is None:
+                details["payment_db_ready"] = "pool_not_initialized"
+
+        try:
+            llm_status = get_runtime_status(store)
+            llm_ready = any(
+                bool(row.enabled) and int(row.weight) > 0 and int(row.max_inflight) > 0
+                for row in llm_status.values()
+            )
+            checks["llm_admission_ready"] = llm_ready
+            if not llm_ready:
+                details["llm_admission_ready"] = "no_enabled_types_or_zero_useful_weight"
+        except Exception as exc:
+            checks["llm_admission_ready"] = False
+            details["llm_admission_ready"] = f"runtime_status_error: {exc!r}"
 
         ok = all(checks.values())
-        return {"ok": ok, "checks": checks}
+        return {"ok": ok, "checks": checks, "details": details}
 
     # ==========================================================
     # NEW: correct naming (audio URL -> enqueue pipeline)

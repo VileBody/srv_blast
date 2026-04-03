@@ -266,6 +266,29 @@ def _event_label(event: str) -> str:
     return _EVENT_LABELS.get(event, event)
 
 
+def _llm_workers_runtime_warnings(workers: dict[str, dict[str, object]]) -> list[str]:
+    enabled_types = 0
+    useful_types = 0
+
+    for row in workers.values():
+        enabled = bool(row.get("enabled", False))
+        weight = int(row.get("weight", 0) or 0)
+        max_inflight = int(row.get("max_inflight", 0) or 0)
+        if enabled:
+            enabled_types += 1
+        if enabled and weight > 0 and max_inflight > 0:
+            useful_types += 1
+
+    warnings: list[str] = []
+    if enabled_types == 0:
+        warnings.append("no_enabled_types: все worker types выключены, admission недоступен")
+    elif useful_types == 0:
+        warnings.append(
+            "zero_useful_weight: нет ни одного enabled worker с weight > 0 и max_inflight > 0"
+        )
+    return warnings
+
+
 def _pagination_html(page: int, total_pages: int, base_url: str = "?") -> str:
     """Generate pagination links."""
     if total_pages <= 1:
@@ -545,7 +568,9 @@ def build_app(
             sign = "+" if t["amount"] > 0 else ""
             tx_rows += (
                 f"<tr><td>{t['id']}</td><td>{sign}{t['amount']}</td>"
-                f"<td>{t['reason']}</td><td>{t['admin_note']}</td><td>{t['created_at']}</td></tr>"
+                f"<td>{t['reason']}</td><td>{html_mod.escape(str(t.get('actor') or '—'))}</td>"
+                f"<td>{html_mod.escape(str(t.get('order_id') or '—'))}</td>"
+                f"<td>{t['admin_note']}</td><td>{t['created_at']}</td></tr>"
             )
 
         # Activity log
@@ -571,7 +596,9 @@ def build_app(
         <h3>Выдать кредиты</h3>
         <form method="post" action="/admin/users/{tg_id}/credits">
           <input type="number" name="amount" value="0" min="-1000" max="10000">
-          <input type="text" name="reason" placeholder="reason" style="width:150px">
+          <input type="text" name="reason" placeholder="reason" style="width:140px">
+          <input type="text" name="order_id" placeholder="order_id (optional)" style="width:210px">
+          <input type="text" name="note" placeholder="note (optional)" style="width:220px">
           <button type="submit">Add credits</button>
         </form>
         </div>
@@ -597,16 +624,32 @@ def build_app(
         <div class="card">
         <h3>Транзакции</h3>
         <div class="table-wrap">
-        <table><tr><th>#</th><th>Amount</th><th>Reason</th><th>Note</th><th>Date</th></tr>
-        {tx_rows if tx_rows else '<tr><td colspan="5">Нет данных</td></tr>'}</table>
+        <table><tr><th>#</th><th>Amount</th><th>Reason</th><th>Actor</th><th>Order</th><th>Note</th><th>Date</th></tr>
+        {tx_rows if tx_rows else '<tr><td colspan="7">Нет данных</td></tr>'}</table>
         </div>
         </div>
         """
         return _page(f"User {uname}", body)
 
     @app.post("/admin/users/{tg_id}/credits")
-    async def user_add_credits(tg_id: int, amount: int = Form(...), reason: str = Form("admin_panel"), _user: str = Depends(_check_auth)) -> RedirectResponse:
-        await credits_db.add_credits(tg_id, amount, reason, admin_note=f"via panel by {_user}")
+    async def user_add_credits(
+        tg_id: int,
+        amount: int = Form(...),
+        reason: str = Form("admin_panel"),
+        order_id: str = Form(""),
+        note: str = Form(""),
+        _user: str = Depends(_check_auth),
+    ) -> RedirectResponse:
+        note_parts = [str(note or "").strip(), f"via panel by {_user}"]
+        merged_note = " | ".join(part for part in note_parts if part)
+        await credits_db.add_credits(
+            tg_id,
+            amount,
+            reason,
+            admin_note=merged_note,
+            actor=_user,
+            order_id=str(order_id or "").strip(),
+        )
         return RedirectResponse(f"/admin/users/{tg_id}", status_code=303)
 
     # ── Activate package (external payment) ───────────────────────────
@@ -688,13 +731,16 @@ def build_app(
             sign = "+" if t["amount"] > 0 else ""
             rows += (
                 f"<tr><td>{t['id']}</td><td>{t['tg_id']}</td><td>{sign}{t['amount']}</td>"
-                f"<td>{t['reason']}</td><td>{html_mod.escape(str(t['admin_note']))}</td><td>{t['created_at']}</td></tr>"
+                f"<td>{t['reason']}</td>"
+                f"<td>{html_mod.escape(str(t.get('actor') or '—'))}</td>"
+                f"<td>{html_mod.escape(str(t.get('order_id') or '—'))}</td>"
+                f"<td>{html_mod.escape(str(t['admin_note']))}</td><td>{t['created_at']}</td></tr>"
             )
         body = f"""
         <div class="card">
         <p>Total: {total}</p>
         <div class="table-wrap">
-        <table><tr><th>#</th><th>tg_id</th><th>Amount</th><th>Reason</th><th>Note</th><th>Date</th></tr>
+        <table><tr><th>#</th><th>tg_id</th><th>Amount</th><th>Reason</th><th>Actor</th><th>Order</th><th>Note</th><th>Date</th></tr>
         {rows}</table>
         </div>
         {_pagination_html(page, total_pages)}
@@ -750,6 +796,8 @@ def build_app(
                 f"<td>{row['source'] or '(none)'}</td>"
                 f"<td>{row['medium'] or '(none)'}</td>"
                 f"<td>{row['campaign'] or '(none)'}</td>"
+                f"<td>{row['content'] or '(none)'}</td>"
+                f"<td>{row['term'] or '(none)'}</td>"
                 f"<td>{row['starts_count']}</td>"
                 f"<td>{row['paid_orders']}</td>"
                 f"<td>{row['revenue_rub']}₽</td>"
@@ -758,8 +806,8 @@ def build_app(
         body = f"""
         <div class="card">
         <div class="table-wrap">
-        <table><tr><th>Source</th><th>Medium</th><th>Campaign</th><th>Starts</th><th>Paid</th><th>Revenue</th></tr>
-        {rows if rows else '<tr><td colspan="6">Нет данных</td></tr>'}</table>
+        <table><tr><th>Source</th><th>Medium</th><th>Campaign</th><th>Content</th><th>Term</th><th>Starts</th><th>Paid</th><th>Revenue</th></tr>
+        {rows if rows else '<tr><td colspan="8">Нет данных</td></tr>'}</table>
         </div>
         </div>
         """
@@ -886,6 +934,12 @@ def build_app(
         workers_obj = data.get("workers") if isinstance(data, dict) else None
         workers = workers_obj if isinstance(workers_obj, dict) else {}
         order = ("sdk", "openrouter", "hybrid")
+        runtime_warnings = _llm_workers_runtime_warnings(
+            {
+                wt: row if isinstance(row, dict) else {}
+                for wt, row in workers.items()
+            }
+        )
 
         rows = ""
         for wt in order:
@@ -935,6 +989,7 @@ def build_app(
         <div class="card">
         <h2>Текущий runtime статус</h2>
         {f"<p style='color:#c0392b'><strong>Ошибка:</strong> {err}</p>" if err else ""}
+        {"".join(f"<p style='color:#c0392b'><strong>Warning:</strong> {html_mod.escape(w)}</p>" for w in runtime_warnings)}
         <div class="table-wrap">
         <table><tr><th>Worker</th><th>Enabled</th><th>Weight</th><th>Max inflight</th><th>Inflight</th><th>Free slots</th></tr>
         {rows if rows else '<tr><td colspan="6">Нет данных</td></tr>'}</table>
@@ -1061,6 +1116,8 @@ def build_app(
                 tg_id, credits_to_add,
                 reason="payment",
                 admin_note=f"pkg={pkg} order={order_id} amount={amount_rub}\u20bd",
+                actor="tbank_webhook",
+                order_id=order_id,
             )
             await credits_db.log_event(tg_id, "payment_confirmed", f"{pkg} \u2014 {amount_rub}\u20bd")
             try:
