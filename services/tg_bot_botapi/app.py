@@ -19,6 +19,7 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import CommandStart
 from aiogram.types import FSInputFile, KeyboardButton, Message, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from core.clip_window import CLIP_WINDOW_RANGE_S_LABEL
+from core.filesystem_hygiene import cleanup_jobs_artifacts, cleanup_tmp_chat_dirs
 from core.subtitles_mode import (
     SUBTITLES_MODE_IMPULSE_2ND,
     SUBTITLES_MODE_LEGACY_BLOCKS,
@@ -27,6 +28,7 @@ from core.subtitles_mode import (
     SUBTITLES_MODE_TEMPLATE_4TH,
     normalize_subtitles_mode,
 )
+from config.styles.artist_presets_loader import get_artists, get_genres
 
 from config.styles.artist_presets_loader import get_artists, get_genres, get_preset
 
@@ -297,11 +299,7 @@ def _load_json_dict(path: Path) -> Optional[Dict[str, Any]]:
         return None
 
 
-def _logs_dir_candidates_for_job(job_id: str) -> List[Path]:
-    jid = str(job_id or "").strip()
-    if not jid:
-        return []
-
+def _jobs_output_roots() -> List[Path]:
     roots: List[Path] = []
     raw_env_root = str(os.environ.get("BOT_JOBS_OUTPUT_DIR") or "").strip()
     if raw_env_root:
@@ -316,8 +314,15 @@ def _logs_dir_candidates_for_job(job_id: str) -> List[Path]:
         if key in seen:
             continue
         seen.add(key)
-        out.append(root / jid / "out" / "logs")
+        out.append(root)
     return out
+
+
+def _logs_dir_candidates_for_job(job_id: str) -> List[Path]:
+    jid = str(job_id or "").strip()
+    if not jid:
+        return []
+    return [root / jid / "out" / "logs" for root in _jobs_output_roots()]
 
 
 def _latest_file_by_pattern(*, directory: Path, pattern: str) -> Optional[Path]:
@@ -735,6 +740,7 @@ class BlastBotApp:
         self.store = RedisChatStateStore(settings)
         self.s3 = S3Client(settings)
         self.orchestrator = OrchestratorClient(base_url=settings.orchestrator_public_url, timeout_s=60.0)
+        self.users: UserStore | None = None
 
         # Credit / referral subsystems — initialized in _on_startup.
         self.users: UserStore | None = None
@@ -745,7 +751,8 @@ class BlastBotApp:
         self.dp.include_router(self.router)
 
         self._processing_task: asyncio.Task[None] | None = None
-        self._cleanup_task: asyncio.Task[None] | None = None
+        self._state_cleanup_task: asyncio.Task[None] | None = None
+        self._fs_cleanup_task: asyncio.Task[None] | None = None
         self._bot: Bot | None = None
 
         self._register_handlers()
@@ -902,6 +909,12 @@ class BlastBotApp:
             raise RuntimeError("S3_BUCKET_RAW_AUDIO is empty")
 
         self.settings.tmp_dir.mkdir(parents=True, exist_ok=True)
+        if self.settings.credits_db_url:
+            self.users = UserStore(self.settings.credits_db_url)
+            await self.users.init()
+            log.info("startup: user_store active")
+        elif self.settings.credits_required:
+            raise RuntimeError("CREDITS_REQUIRED=true but CREDITS_DB_URL (or POSTGRES_*) is not set")
 
         # PostgreSQL — required when credits are enabled, optional otherwise.
         if self.settings.credits_db_url:
@@ -918,12 +931,13 @@ class BlastBotApp:
             log.warning("startup: CREDITS_DB_URL not set — credit system disabled")
 
         self._processing_task = asyncio.create_task(self._processing_loop(), name="tg_bot_processing_loop")
-        self._cleanup_task = asyncio.create_task(self._stale_state_cleanup_loop(), name="tg_bot_cleanup_loop")
+        self._state_cleanup_task = asyncio.create_task(self._state_cleanup_loop(), name="tg_bot_state_cleanup_loop")
+        self._fs_cleanup_task = asyncio.create_task(self._fs_cleanup_loop(), name="tg_bot_fs_cleanup_loop")
         log.info("startup complete: polling loop started")
 
     async def _on_shutdown(self, bot: Bot) -> None:
         del bot
-        for task in (self._processing_task, self._cleanup_task):
+        for task in [self._processing_task, self._state_cleanup_task, self._fs_cleanup_task]:
             if task is not None:
                 task.cancel()
                 try:
@@ -954,42 +968,37 @@ class BlastBotApp:
             reply_markup=_kb([BTN_VER_1, BTN_VER_2, BTN_VER_3, BTN_VER_4, BTN_VER_5]),
         )
 
-    # ---- timing selection helpers ----
-
     @staticmethod
     def _parse_timing(text: str) -> tuple[float, float] | None:
-        """Parse user timing input like '1:20-1:50', '80-110', '1:20 1:50', '1:20 - 1:50'.
-
-        Returns (start_sec, end_sec) or None if unparseable.
-        """
         text = text.strip()
-        # split by dash / en-dash / em-dash or whitespace
         parts = re.split(r"[\-\u2013\u2014]+|\s+", text, maxsplit=1)
         if len(parts) != 2:
             return None
 
-        def _to_sec(s: str) -> float | None:
-            s = s.strip()
-            if not s:
+        def _to_sec(raw: str) -> float | None:
+            v = str(raw or "").strip()
+            if not v:
                 return None
-            # mm:ss or m:ss
-            m = re.fullmatch(r"(\d{1,3}):(\d{1,2})", s)
+            m = re.fullmatch(r"(\d{1,3}):(\d{1,2})", v)
             if m:
                 return float(int(m.group(1))) * 60.0 + float(int(m.group(2)))
-            # plain seconds
             try:
-                v = float(s)
-                return v if v >= 0.0 else None
+                out = float(v)
             except ValueError:
                 return None
+            return out if out >= 0.0 else None
 
-        s = _to_sec(parts[0])
-        e = _to_sec(parts[1])
-        if s is None or e is None:
+        start_sec = _to_sec(parts[0])
+        end_sec = _to_sec(parts[1])
+        if start_sec is None or end_sec is None or end_sec <= start_sec:
             return None
-        if e <= s:
-            return None
-        return (s, e)
+        return start_sec, end_sec
+
+    @staticmethod
+    def _fmt_timing(sec: float) -> str:
+        m = int(sec) // 60
+        s = int(sec) % 60
+        return f"{m}:{s:02d}"
 
     async def _ask_timing_choice(self, message: Message, st: ChatState) -> None:
         st.stage = STAGE_WAIT_TIMING_CHOICE
@@ -1018,7 +1027,7 @@ class BlastBotApp:
             await self._ask_footage_genre(message, st)
             return
         await message.answer(
-            "Выбери кнопку: \u00abУказать тайминг\u00bb или \u00abВесь трек / на усмотрение ИИ\u00bb."
+            "Выбери кнопку: «Указать тайминг» или «Весь трек / на усмотрение ИИ».",
         )
 
     async def _handle_wait_timing_input(self, message: Message, st: ChatState) -> None:
@@ -1033,26 +1042,19 @@ class BlastBotApp:
             )
             return
         start_sec, end_sec = parsed
-        dur = end_sec - start_sec
-        if dur < 5.0:
+        duration = end_sec - start_sec
+        if duration < 5.0:
             await message.answer("Слишком короткий фрагмент (минимум 5 сек). Попробуй ещё раз.")
             return
-        if dur > 120.0:
+        if duration > 120.0:
             await message.answer("Слишком длинный фрагмент (максимум 120 сек). Попробуй ещё раз.")
             return
         st.user_clip_start_sec = round(start_sec, 3)
         st.user_clip_end_sec = round(end_sec, 3)
         await message.answer(
-            f"Тайминг установлен: {self._fmt_timing(start_sec)} \u2013 {self._fmt_timing(end_sec)} "
-            f"({dur:.0f} сек)."
+            f"Тайминг установлен: {self._fmt_timing(start_sec)} – {self._fmt_timing(end_sec)} ({duration:.0f} сек)."
         )
         await self._ask_footage_genre(message, st)
-
-    @staticmethod
-    def _fmt_timing(sec: float) -> str:
-        m = int(sec) // 60
-        s = int(sec) % 60
-        return f"{m}:{s:02d}"
 
     async def _ask_footage_genre(self, message: Message, st: ChatState) -> None:
         st.stage = STAGE_WAIT_FOOTAGE_GENRE
@@ -1064,7 +1066,7 @@ class BlastBotApp:
         labels = [g["label"] for g in genres]
         await message.answer(
             "Выбери жанр исходников:",
-            reply_markup=_kb(*[[lbl] for lbl in labels]),
+            reply_markup=_kb(*[[label] for label in labels]),
         )
 
     async def _handle_wait_footage_genre(self, message: Message, st: ChatState) -> None:
@@ -1072,34 +1074,33 @@ class BlastBotApp:
         genres = get_genres()
         genre_by_label = {g["label"]: g for g in genres}
         if text not in genre_by_label:
-            labels = ", ".join(f"\u00ab{g['label']}\u00bb" for g in genres)
+            labels = ", ".join(f"«{g['label']}»" for g in genres)
             await message.answer(f"Выбери жанр кнопкой: {labels}.")
             return
         genre = genre_by_label[text]
         st.footage_genre_key = genre["key"]
         st.stage = STAGE_WAIT_FOOTAGE_ARTIST
         await self.store.set(st)
-        artists = genre["artists"]
+        artists = list(genre["artists"])
         artist_labels = [a["label"] for a in artists]
         await message.answer(
             f"Жанр: {genre['label']}. Выбери стиль исходников:",
-            reply_markup=_kb(*[[lbl] for lbl in artist_labels]),
+            reply_markup=_kb(*[[label] for label in artist_labels]),
         )
-        # Send video previews for each artist (if available).
-        for a in artists:
-            preview_fid = str(a.get("preview_file_id") or "").strip()
-            preview_url = str(a.get("preview_s3_url") or "").strip()
-            desc = str(a.get("description") or "")
+        for artist in artists:
+            preview_fid = str(artist.get("preview_file_id") or "").strip()
+            preview_url = str(artist.get("preview_s3_url") or "").strip()
+            description = str(artist.get("description") or "")
             if preview_fid:
                 try:
-                    await message.answer_video(video=preview_fid, caption=f"{a['label']}: {desc}")
+                    await message.answer_video(video=preview_fid, caption=f"{artist['label']}: {description}")
                 except Exception:
-                    log.warning("failed to send preview for %s (file_id)", a["key"])
+                    log.warning("failed to send preview for %s (file_id)", artist["key"])
             elif preview_url:
                 try:
-                    await message.answer_video(video=preview_url, caption=f"{a['label']}: {desc}")
+                    await message.answer_video(video=preview_url, caption=f"{artist['label']}: {description}")
                 except Exception:
-                    log.warning("failed to send preview for %s (url)", a["key"])
+                    log.warning("failed to send preview for %s (url)", artist["key"])
 
     async def _handle_wait_footage_artist(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()
@@ -1110,7 +1111,7 @@ class BlastBotApp:
             return
         artist_by_label = {a["label"]: a for a in artists}
         if text not in artist_by_label:
-            labels = ", ".join(f"\u00ab{a['label']}\u00bb" for a in artists)
+            labels = ", ".join(f"«{a['label']}»" for a in artists)
             await message.answer(f"Выбери стиль кнопкой: {labels}.")
             return
         artist = artist_by_label[text]
@@ -1282,7 +1283,7 @@ class BlastBotApp:
 
         if text == BTN_SKIP_FRAGMENT:
             st.target_fragment = ""
-            await self._ask_footage_genre(message, st)
+            await self._ask_timing_choice(message, st)
             return
 
         await message.answer("Выбери кнопку: «Отправить интересующий фрагмент» или «На усмотрение ИИ».")
@@ -1297,7 +1298,7 @@ class BlastBotApp:
             return
 
         st.target_fragment = text
-        await self._ask_footage_genre(message, st)
+        await self._ask_timing_choice(message, st)
 
     async def _handle_wait_subtitles_mode(self, message: Message, st: ChatState) -> None:
         mode = _parse_subtitles_mode_choice(message.text or "")
@@ -1341,16 +1342,12 @@ class BlastBotApp:
 
         key = self._build_raw_audio_key(chat_id=chat_id, file_name=prepared_path.name)
         versions = max(1, min(5, int(st.versions_count or 1)))
-        # Stable batch_id derived from chat + content (used as part of idempotency key).
         batch_id = f"tg-{chat_id}-{uuid.uuid4().hex[:12]}"
         deduction_ref = f"batch:{batch_id}"
 
-        # ------------------------------------------------------------------
-        # Credit gate: check balance and deduct BEFORE enqueue.
-        # If enqueue subsequently fails we refund atomically.
-        # ------------------------------------------------------------------
         if self.settings.credits_required and self.users is not None:
-            deduct_ok, new_balance = await self.users.deduct_credit(
+            await self.users.ensure_profile(chat_id, st.chat_username)
+            deduct_ok, _ = await self.users.deduct_credit(
                 chat_id,
                 ref_id=deduction_ref,
                 amount=self.settings.credits_per_generation,
@@ -1366,11 +1363,6 @@ class BlastBotApp:
                 return
             st.pending_deduction_ref_id = deduction_ref
             await self.store.set(st)
-            log.info(
-                "credit_deducted_for_generation chat=%s batch=%s new_balance=%d",
-                chat_id, batch_id, new_balance,
-            )
-
         try:
             await message.answer(f"Заливаю аудио в S3 и ставлю задачи в очередь… (версий: {versions})")
             audio_s3_url = await asyncio.to_thread(
@@ -1391,7 +1383,6 @@ class BlastBotApp:
                 exclude_file_names=[],
             )
 
-            # Enqueue succeeded — credit is consumed, clear the pending reservation.
             st.pending_deduction_ref_id = ""
             st.stage = STAGE_PROCESSING
             st.batch_id = batch_id
@@ -1427,27 +1418,15 @@ class BlastBotApp:
             st.last_status_msg_at = time.time()
             await self.store.set(st)
         except Exception as e:
-            log.warning("enqueue_failed chat=%s batch=%s err=%r", chat_id, batch_id, e)
-            # Enqueue failed — refund the deducted credit so the user isn't charged.
             if self.settings.credits_required and self.users is not None and st.pending_deduction_ref_id:
-                try:
-                    refunded_balance = await self.users.refund_credit(
-                        chat_id,
-                        ref_id=deduction_ref,
-                        amount=self.settings.credits_per_generation,
-                        note=f"refund: enqueue failed batch={batch_id}",
-                    )
-                    st.pending_deduction_ref_id = ""
-                    await self.store.set(st)
-                    log.info(
-                        "credit_refunded_after_enqueue_failure chat=%s batch=%s new_balance=%d",
-                        chat_id, batch_id, refunded_balance,
-                    )
-                except Exception as refund_err:
-                    log.error(
-                        "credit_refund_error chat=%s batch=%s err=%r",
-                        chat_id, batch_id, refund_err,
-                    )
+                await self.users.refund_credit(
+                    chat_id,
+                    ref_id=deduction_ref,
+                    amount=self.settings.credits_per_generation,
+                    note=f"refund: enqueue failed batch={batch_id}",
+                )
+                st.pending_deduction_ref_id = ""
+                await self.store.set(st)
             await message.answer(f"Не удалось запустить задачу: {e}")
 
     async def _handle_wait_next(self, message: Message, st: ChatState) -> None:
@@ -1476,9 +1455,6 @@ class BlastBotApp:
         reuse_text_job_id: str = "",
         exclude_file_names: Optional[List[str]] = None,
     ) -> str:
-        # Deterministic idempotency key: (chat_id, batch_id, version) — no random UUID.
-        # This means retrying the same version enqueue reuses the same orchestrator job
-        # instead of creating a duplicate.
         idem = f"tg-{st.chat_id}-batch-{batch_id}-v{int(version_index)}"
         enqueue = await self.orchestrator.send_audio_s3(
             audio_s3_url=audio_s3_url,
@@ -1598,34 +1574,13 @@ class BlastBotApp:
         st.last_job_stage = ""
         st.last_job_error = ""
         st.target_fragment = ""
+        st.footage_genre_key = ""
+        st.footage_artist_key = ""
+        st.footage_artist_id = ""
+        st.user_clip_start_sec = 0.0
+        st.user_clip_end_sec = 0.0
         st.subtitles_mode = SUBTITLES_MODE_LEGACY_BLOCKS
-        # Credit reservation should be clear by the time we reset; belt-and-suspenders.
         st.pending_deduction_ref_id = ""
-
-    async def _maybe_grant_referral_bonus_after_generation(self, st: ChatState) -> None:
-        if self.referrals is None:
-            return
-        """
-        Called once when a user's FIRST ever successful generation completes.
-        Grants the referral bonus to the inviter (race-safe via ReferralStore lock).
-        Notifies both parties via bot message.
-        """
-        try:
-            inviter_chat_id = await self.referrals.maybe_grant_referral_bonus(int(st.chat_id))
-            if inviter_chat_id is None:
-                return
-            bot = self._require_bot()
-            # Notify the inviter that they received a bonus.
-            try:
-                await bot.send_message(
-                    inviter_chat_id,
-                    f"Твой друг активировал свой первый ролик — ты получил реферальный бонус "
-                    f"+{self.settings.referral_bonus_credits} кредит(а)!",
-                )
-            except Exception as exc:
-                log.warning("referral_notify_inviter_failed inviter=%s err=%r", inviter_chat_id, exc)
-        except Exception as exc:
-            log.warning("referral_bonus_check_failed chat=%s err=%r", st.chat_id, exc)
 
     async def _send_long_html_message(self, *, bot: Bot, chat_id: int, text: str) -> None:
         chunks = _split_telegram_chunks(text)
@@ -1634,18 +1589,93 @@ class BlastBotApp:
                 continue
             await bot.send_message(chat_id=chat_id, text=part, parse_mode="HTML", disable_web_page_preview=True)
 
-    async def _stale_state_cleanup_loop(self) -> None:
-        """Hourly cleanup of idle chat states older than 7 days."""
+    def _state_cleanup_interval_s(self) -> float:
+        return max(60.0, float(self.settings.tg_state_cleanup_interval_s))
+
+    def _state_ttl_s(self) -> float:
+        return max(3600.0, float(self.settings.tg_state_ttl_h) * 3600.0)
+
+    def _fs_cleanup_interval_s(self) -> float:
+        return max(60.0, float(self.settings.bot_fs_cleanup_interval_s))
+
+    def _tmp_retention_by_subdir_s(self) -> Dict[str, float]:
+        return {
+            "incoming": max(300.0, float(self.settings.bot_tmp_incoming_retention_h) * 3600.0),
+            "prepared": max(300.0, float(self.settings.bot_tmp_prepared_retention_h) * 3600.0),
+            "result": max(300.0, float(self.settings.bot_tmp_result_retention_h) * 3600.0),
+        }
+
+    def _output_artifact_retention_s(self) -> float:
+        return max(300.0, float(self.settings.bot_output_artifact_retention_h) * 3600.0)
+
+    def _output_debug_artifact_retention_s(self) -> float:
+        return max(300.0, float(self.settings.bot_output_debug_artifact_retention_h) * 3600.0)
+
+    async def _state_cleanup_loop(self) -> None:
         while True:
             try:
-                await asyncio.sleep(3600.0)
-                removed = await self.store.cleanup_stale_states(max_idle_age_s=604800.0)
-                if removed:
-                    log.info("stale_state_cleanup: removed %d old states", removed)
+                now = time.time()
+                cutoff = now - self._state_ttl_s()
+                stale_ids = await self.store.list_stale_chat_ids(
+                    cutoff,
+                    limit=max(1, int(self.settings.tg_state_cleanup_batch_size)),
+                )
+                removed_states = 0
+                for chat_id in stale_ids:
+                    await self.store.delete_state(chat_id)
+                    removed_states += 1
+
+                removed_indexes = await self.store.cleanup_index_members(
+                    limit=max(1, int(self.settings.tg_state_index_cleanup_batch_size))
+                )
+                if removed_states or removed_indexes:
+                    log.info(
+                        "state_cleanup summary removed_states=%s removed_orphan_indexes=%s",
+                        removed_states,
+                        removed_indexes,
+                    )
             except asyncio.CancelledError:
                 raise
             except Exception as e:
-                log.warning("stale_state_cleanup_error: %r", e)
+                log.warning("state_cleanup_loop_iteration_error err=%r", e)
+            await asyncio.sleep(self._state_cleanup_interval_s())
+
+    async def _fs_cleanup_loop(self) -> None:
+        while True:
+            try:
+                now = time.time()
+                batch_size = max(1, int(self.settings.bot_fs_cleanup_batch_size))
+                tmp_stats = await asyncio.to_thread(
+                    cleanup_tmp_chat_dirs,
+                    tmp_root=self.settings.tmp_dir,
+                    retention_by_subdir_s=self._tmp_retention_by_subdir_s(),
+                    now_ts=now,
+                    max_scan_files=batch_size,
+                    max_scan_dirs=batch_size,
+                )
+                jobs_stats = await asyncio.to_thread(
+                    cleanup_jobs_artifacts,
+                    jobs_roots=_jobs_output_roots(),
+                    regular_retention_s=self._output_artifact_retention_s(),
+                    debug_retention_s=self._output_debug_artifact_retention_s(),
+                    debug_allowlist_patterns=tuple(self.settings.bot_output_artifact_allowlist or tuple()),
+                    now_ts=now,
+                    max_scan_files=batch_size,
+                    max_scan_dirs=batch_size,
+                )
+                removed_files = int(tmp_stats.get("removed_files", 0)) + int(jobs_stats.get("removed_files", 0))
+                removed_dirs = int(tmp_stats.get("removed_dirs", 0)) + int(jobs_stats.get("removed_dirs", 0))
+                if removed_files or removed_dirs:
+                    log.info(
+                        "fs_cleanup summary tmp=%s jobs=%s",
+                        tmp_stats,
+                        jobs_stats,
+                    )
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                log.warning("fs_cleanup_loop_iteration_error err=%r", e)
+            await asyncio.sleep(self._fs_cleanup_interval_s())
 
     async def _processing_loop(self) -> None:
         _recovery_check_counter = 0
@@ -1994,17 +2024,12 @@ class BlastBotApp:
                     return
                 except Exception as e:
                     enqueue_failed = True
-                    log.warning(
-                        "batch_enqueue_failed chat=%s ver=%d total=%d err=%r",
-                        st.chat_id, next_ver, total_versions, e,
-                    )
                     await bot.send_message(
                         st.chat_id,
                         f"Не удалось поставить в очередь Версию {next_ver}/{total_versions}: {e}",
                     )
                     st.next_version_to_enqueue = total_versions + 1
 
-        # --- Compute explicit batch outcome ---
         succeeded_count = sum(1 for r in rows if str(r.get("status") or "").upper() == "SUCCEEDED")
         failed_count = sum(1 for r in rows if str(r.get("status") or "").upper() == "FAILED")
         enqueued_count = len(st.job_order or job_ids)
@@ -2030,13 +2055,6 @@ class BlastBotApp:
         else:
             batch_outcome = "all_failed"
 
-        log.info(
-            "batch_done chat=%s batch=%s outcome=%s succeeded=%d failed=%d enqueued=%d total=%d",
-            st.chat_id, st.batch_id, batch_outcome,
-            succeeded_count, failed_count, enqueued_count, total_versions,
-        )
-
-        # Build summary message -- do NOT send a success message on failure.
         if batch_outcome == "all_succeeded":
             summary = f"Готово: все {succeeded_count}/{total_versions} версий успешно."
         elif batch_outcome == "partial_failed":
@@ -2052,7 +2070,7 @@ class BlastBotApp:
             )
         elif batch_outcome == "master_failed":
             summary = "Не удалось: первая версия (master) завершилась ошибкой."
-        else:  # all_failed
+        else:
             summary = f"Все {total_versions} версий завершились ошибкой."
 
         await bot.send_message(

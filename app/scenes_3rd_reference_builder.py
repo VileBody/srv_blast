@@ -4,7 +4,7 @@ import logging
 import math
 from typing import Any, Dict, List, Optional, Tuple
 
-from core.fps import COMP_FPS
+from core.video_timing import AE_FPS
 from mlcore.models.subtitles_flow import SubtitleFlowPlan
 
 
@@ -17,7 +17,7 @@ _LOG = logging.getLogger("app.scenes_3rd_reference_builder")
 RENDER = {
     "comp_w":          1080,
     "comp_h":          1920,
-    "fps":             COMP_FPS,
+    "fps":             float(AE_FPS),
     "font_base":       "Point-SemiBold",
     "font_focus":      "Point-ExtraBold",
     "size_base":       80,            # первая строка

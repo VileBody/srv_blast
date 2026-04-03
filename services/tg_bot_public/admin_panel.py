@@ -10,6 +10,7 @@ import secrets
 from urllib.parse import quote as url_quote, quote_plus
 from typing import TYPE_CHECKING
 
+import httpx
 import uvicorn
 from fastapi import FastAPI, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -243,6 +244,7 @@ _BASE_HEAD = """
   <a href="/admin/sources">Sources</a>
   <a href="/admin/render-nodes">Render Nodes</a>
   <a href="/admin/assets/" target="_blank" rel="noopener noreferrer">Assets</a>
+  <a href="/admin/llm-workers">LLM Workers</a>
   <form class="search-form" action="/admin/users" method="get">
     <input type="text" name="q" placeholder="Username / tg_id...">
     <button type="submit">Search</button>
@@ -307,83 +309,41 @@ def build_app(
             raise HTTPException(status_code=401, detail="Unauthorized", headers={"WWW-Authenticate": "Basic"})
         return creds.username
 
-    render_nodes_lock = asyncio.Lock()
-    runtime_pool_key = runtime_windows_urls_key(key_prefix=settings.jobstore_prefix)
+    async def _orchestrator_get_llm_workers() -> dict:
+        base = str(settings.orchestrator_public_url or "").strip().rstrip("/")
+        if not base:
+            raise RuntimeError("ORCHESTRATOR_PUBLIC_URL is empty")
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            resp = await client.get(f"{base}/llm-workers")
+        if resp.status_code >= 300:
+            raise RuntimeError(f"orchestrator GET /llm-workers failed: {resp.status_code} {resp.text}")
+        data = resp.json()
+        if not isinstance(data, dict):
+            raise RuntimeError(f"orchestrator GET /llm-workers returned non-object: {data!r}")
+        return data
 
-    def _render_nodes_config_error() -> str:
-        if not str(settings.twc_token or "").strip():
-            return "TWC_TOKEN is empty"
-        if int(settings.twc_render_source_server_id or 0) <= 0:
-            return "TWC_RENDER_SOURCE_SERVER_ID must be > 0"
-        return ""
-
-    def _render_nodes_redirect(*, ok: str = "", err: str = "") -> RedirectResponse:
-        query: list[str] = []
-        if ok:
-            query.append(f"ok={quote_plus(str(ok))}")
-        if err:
-            query.append(f"err={quote_plus(str(err))}")
-        suffix = "?" + "&".join(query) if query else ""
-        return RedirectResponse(f"/admin/render-nodes{suffix}", status_code=303)
-
-    async def _read_runtime_windows_pool() -> list[str]:
-        redis_client = getattr(state_store, "_redis", None)
-        if redis_client is None:
-            return []
-        try:
-            raw = await redis_client.get(runtime_pool_key)
-        except Exception:
-            return []
-        if not raw:
-            return []
-        try:
-            obj = json.loads(raw)
-        except Exception:
-            return []
-        if not isinstance(obj, list):
-            return []
-        return normalize_windows_urls(str(v) for v in obj)
-
-    async def _sync_runtime_windows_pool() -> list[str]:
-        redis_client = getattr(state_store, "_redis", None)
-        if redis_client is None:
-            return []
-
-        source_server_id = int(settings.twc_render_source_server_id or 0)
-        include_ids = {source_server_id} if source_server_id > 0 else set()
-        servers = await list_render_servers(
-            settings.twc_token,
-            name_prefix=settings.twc_render_name_prefix,
-            include_ids=include_ids,
-        )
-
-        urls: list[str] = []
-        for srv in servers:
-            sid = int(srv.get("id") or 0)
-            if sid <= 0 or sid == source_server_id:
-                continue
-            status = str(srv.get("status") or "").strip().lower()
-            ipv4 = str(srv.get("ipv4") or "").strip()
-            if status != "on" or not ipv4:
-                continue
-            urls.append(f"http://{ipv4}:8000")
-
-        normalized = normalize_windows_urls(urls)
-        if normalized:
-            await redis_client.set(runtime_pool_key, json.dumps(normalized, ensure_ascii=False))
-        else:
-            await redis_client.delete(runtime_pool_key)
-        return normalized
+    async def _orchestrator_put_llm_workers(payload: dict) -> dict:
+        base = str(settings.orchestrator_public_url or "").strip().rstrip("/")
+        if not base:
+            raise RuntimeError("ORCHESTRATOR_PUBLIC_URL is empty")
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            resp = await client.put(f"{base}/llm-workers", json=payload)
+        if resp.status_code >= 300:
+            raise RuntimeError(f"orchestrator PUT /llm-workers failed: {resp.status_code} {resp.text}")
+        data = resp.json()
+        if not isinstance(data, dict):
+            raise RuntimeError(f"orchestrator PUT /llm-workers returned non-object: {data!r}")
+        return data
 
     # ── Dashboard ─────────────────────────────────────────────────────
 
     @app.get("/admin/", response_class=HTMLResponse)
     async def dashboard(_user: str = Depends(_check_auth)) -> str:
-        total, ratings, funnel_raw, all_states, users, recent = await asyncio.gather(
+        total, ratings, funnel_raw, stage_counts, users, recent = await asyncio.gather(
             credits_db.count_users(),
             credits_db.rating_distribution(),
             credits_db.funnel_reach_counts(),
-            state_store.list_all_states(),
+            state_store.list_stage_counts(),
             credits_db.list_users(limit=10),
             credits_db.get_activity(limit=10),
         )
@@ -414,10 +374,7 @@ def build_app(
                 f'</div></div>\n'
             )
 
-        # ── Current stage snapshot from Redis ──
-        stage_counts: dict[str, int] = {}
-        for s in all_states:
-            stage_counts[s.stage] = stage_counts.get(s.stage, 0) + 1
+        # ── Current stage snapshot from indexed Redis counters ──
         stage_html = ""
         for stage, cnt in sorted(stage_counts.items(), key=lambda x: -x[1]):
             label = _stage_label(stage)
@@ -524,9 +481,8 @@ def build_app(
             total = await credits_db.count_users()
             total_pages = max(1, (total + per_page - 1) // per_page)
 
-        # Get current stages from Redis
-        all_states = await state_store.list_all_states()
-        stages_map = {s.chat_id: s.stage for s in all_states}
+        # Get current stages for requested page only (no full state scan).
+        stages_map = await state_store.get_stages_for_chat_ids([int(u["tg_id"]) for u in users])
 
         rows = ""
         for u in users:
@@ -916,232 +872,112 @@ def build_app(
         """
         return _page(f"Источник: {src_escaped}", body)
 
-    # ── Render nodes lifecycle control ──────────────────────────────
+    # ── LLM workers runtime control ────────────────────────────────
 
-    @app.get("/admin/render-nodes", response_class=HTMLResponse)
-    async def render_nodes_page(request: Request, _user: str = Depends(_check_auth)) -> str:
-        ok_msg = html_mod.escape(str(request.query_params.get("ok", "")).strip())
-        err_msg = html_mod.escape(str(request.query_params.get("err", "")).strip())
-        config_err = _render_nodes_config_error()
-        source_server_id = int(settings.twc_render_source_server_id or 0)
-        include_ids = {source_server_id} if source_server_id > 0 else set()
+    @app.get("/admin/llm-workers", response_class=HTMLResponse)
+    async def llm_workers_page(_user: str = Depends(_check_auth)) -> str:
+        err = ""
+        data: dict = {}
+        try:
+            data = await _orchestrator_get_llm_workers()
+        except Exception as e:
+            err = html_mod.escape(str(e))
 
-        rows_html = ""
-        if not config_err:
-            try:
-                servers = await list_render_servers(
-                    settings.twc_token,
-                    name_prefix=settings.twc_render_name_prefix,
-                    include_ids=include_ids,
-                )
-            except Exception as e:
-                servers = []
-                if not err_msg:
-                    err_msg = html_mod.escape(str(e))
-            for srv in servers:
-                sid = int(srv.get("id") or 0)
-                name = html_mod.escape(str(srv.get("name") or ""))
-                status = html_mod.escape(str(srv.get("status") or ""))
-                ipv4 = html_mod.escape(str(srv.get("ipv4") or ""))
-                created = html_mod.escape(str(srv.get("created_at") or ""))
-                windows_url = f"http://{ipv4}:8000" if ipv4 else ""
-                windows_url_esc = html_mod.escape(windows_url)
+        workers_obj = data.get("workers") if isinstance(data, dict) else None
+        workers = workers_obj if isinstance(workers_obj, dict) else {}
+        order = ("sdk", "openrouter", "hybrid")
 
-                if sid == source_server_id:
-                    role = "<span class='badge badge-ok'>source image</span>"
-                    actions = "<span style='color:#7f8c8d'>delete disabled</span>"
-                else:
-                    role = "<span class='badge badge-stage'>worker</span>"
-                    actions = (
-                        f"<form method='post' action='/admin/render-nodes/delete' "
-                        f"onsubmit=\"return confirm('Delete server #{sid}?');\">"
-                        f"<input type='hidden' name='server_id' value='{sid}'>"
-                        f"<button class='btn-danger' type='submit'>Delete</button>"
-                        f"</form>"
-                    )
+        rows = ""
+        for wt in order:
+            row = workers.get(wt) if isinstance(workers.get(wt), dict) else {}
+            enabled = bool(row.get("enabled", False))
+            weight = int(row.get("weight", 0) or 0)
+            max_inflight = int(row.get("max_inflight", 1) or 1)
+            inflight = int(row.get("inflight", 0) or 0)
+            slots = int(row.get("available_slots", max(0, max_inflight - inflight)) or 0)
+            rows += (
+                f"<tr>"
+                f"<td><strong>{wt}</strong></td>"
+                f"<td>{'on' if enabled else 'off'}</td>"
+                f"<td>{weight}</td>"
+                f"<td>{max_inflight}</td>"
+                f"<td>{inflight}</td>"
+                f"<td>{slots}</td>"
+                f"</tr>"
+            )
 
-                probe_action = ""
-                if windows_url:
-                    probe_action = (
-                        f"<form method='post' action='/admin/render-nodes/probe'>"
-                        f"<input type='hidden' name='windows_url' value='{windows_url_esc}'>"
-                        f"<button type='submit'>Probe</button>"
-                        f"</form>"
-                    )
+        def _enabled_select(name: str, selected: bool) -> str:
+            on_sel = " selected" if selected else ""
+            off_sel = " selected" if not selected else ""
+            return (
+                f'<select name="{name}">'
+                f'<option value="1"{on_sel}>on</option>'
+                f'<option value="0"{off_sel}>off</option>'
+                f"</select>"
+            )
 
-                rows_html += (
-                    f"<tr>"
-                    f"<td>{sid}</td>"
-                    f"<td>{name}</td>"
-                    f"<td>{role}</td>"
-                    f"<td>{status}</td>"
-                    f"<td>{ipv4 or '-'}</td>"
-                    f"<td>{windows_url_esc or '-'}</td>"
-                    f"<td>{created}</td>"
-                    f"<td>{probe_action}</td>"
-                    f"<td>{actions}</td>"
-                    f"</tr>"
-                )
-
-        busy = render_nodes_lock.locked()
-        busy_note = (
-            "<p style='color:#c0392b'><strong>Операция в процессе:</strong> "
-            "подождите завершения create/delete.</p>"
-            if busy
-            else ""
-        )
-        create_disabled = " disabled" if bool(config_err or busy) else ""
-        source_input_value = source_server_id if source_server_id > 0 else ""
-        source_input_escaped = html_mod.escape(str(source_input_value))
-        prefix_input_escaped = html_mod.escape(str(settings.twc_render_name_prefix or "blast-render-node"))
-        firewall_group_escaped = html_mod.escape(str(settings.twc_render_firewall_group_id or ""))
-        windows_render_url_escaped = html_mod.escape(str(settings.windows_render_url or ""))
-
-        runtime_pool = await _read_runtime_windows_pool()
-        runtime_pool_escaped = html_mod.escape(", ".join(runtime_pool)) if runtime_pool else "(empty)"
+        form_rows = ""
+        for wt in order:
+            row = workers.get(wt) if isinstance(workers.get(wt), dict) else {}
+            enabled = bool(row.get("enabled", False))
+            weight = int(row.get("weight", 1) or 1)
+            max_inflight = int(row.get("max_inflight", 4) or 4)
+            form_rows += (
+                f"<tr>"
+                f"<td><strong>{wt}</strong></td>"
+                f"<td>{_enabled_select(f'{wt}_enabled', enabled)}</td>"
+                f"<td><input type='number' name='{wt}_weight' value='{weight}' min='0' max='1000'></td>"
+                f"<td><input type='number' name='{wt}_max_inflight' value='{max_inflight}' min='1' max='1000'></td>"
+                f"</tr>"
+            )
 
         body = f"""
         <div class="card">
-        <h2>Текущий runtime контур</h2>
-        <p><strong>WINDOWS_RENDER_URL (fallback):</strong> <code>{windows_render_url_escaped or '(empty)'}</code></p>
-        <p><strong>Redis runtime pool key:</strong> <code>{html_mod.escape(runtime_pool_key)}</code><br>
-           <strong>Active pool URLs:</strong> <code>{runtime_pool_escaped}</code></p>
-        <p><strong>Source server id:</strong> <code>{source_input_escaped or '(empty)'}</code><br>
-           <strong>Name prefix:</strong> <code>{prefix_input_escaped}</code><br>
-           <strong>Firewall group id:</strong> <code>{firewall_group_escaped or '(empty)'}</code></p>
-        {f"<p style='color:#c0392b'><strong>Config error:</strong> {html_mod.escape(config_err)}</p>" if config_err else ""}
-        {f"<p style='color:#1e8449'><strong>OK:</strong> {ok_msg}</p>" if ok_msg else ""}
-        {f"<p style='color:#c0392b'><strong>Error:</strong> {err_msg}</p>" if err_msg else ""}
-        {busy_note}
-        <form method="post" action="/admin/render-nodes/sync">
-          <button type="submit">Sync Runtime Pool From Timeweb</button>
-        </form>
-        </div>
-
-        <div class="card">
-        <h2>Create node from source image</h2>
-        <form method="post" action="/admin/render-nodes/create">
-          <p>
-            Source server id:
-            <input type="number" name="source_server_id" value="{source_input_escaped}" min="1">
-            &nbsp;&nbsp; Name prefix:
-            <input type="text" name="name_prefix" value="{prefix_input_escaped}">
-          </p>
-          <p><button type="submit" class="btn-success"{create_disabled}>Create Render Node</button></p>
-        </form>
-        <p style="color:#7f8c8d">Create waits for VM status=on, public IPv4 and reachable render API contract.</p>
-        </div>
-
-        <div class="card">
-        <h2>Known render nodes</h2>
+        <h2>Текущий runtime статус</h2>
+        {f"<p style='color:#c0392b'><strong>Ошибка:</strong> {err}</p>" if err else ""}
         <div class="table-wrap">
-        <table><tr>
-          <th>ID</th><th>Name</th><th>Role</th><th>Status</th><th>IPv4</th><th>URL</th>
-          <th>Created</th><th>Probe</th><th>Action</th>
-        </tr>
-        {rows_html if rows_html else '<tr><td colspan="9">No data</td></tr>'}
-        </table>
+        <table><tr><th>Worker</th><th>Enabled</th><th>Weight</th><th>Max inflight</th><th>Inflight</th><th>Free slots</th></tr>
+        {rows if rows else '<tr><td colspan="6">Нет данных</td></tr>'}</table>
         </div>
+        </div>
+
+        <div class="card">
+        <h2>Обновить конфиг</h2>
+        <form method="post" action="/admin/llm-workers">
+          <div class="table-wrap">
+          <table><tr><th>Worker</th><th>Enabled</th><th>Weight</th><th>Max inflight</th></tr>
+          {form_rows}
+          </table>
+          </div>
+          <p><button type="submit" class="btn-success">Apply Runtime Config</button></p>
+        </form>
         </div>
         """
-        return _page("Render Nodes", body)
+        return _page("LLM Workers", body)
 
-    @app.post("/admin/render-nodes/create")
-    async def render_nodes_create(
-        source_server_id: int = Form(0),
-        name_prefix: str = Form(""),
-        _user: str = Depends(_check_auth),
-    ) -> RedirectResponse:
-        config_err = _render_nodes_config_error()
-        if config_err:
-            return _render_nodes_redirect(err=config_err)
-        if render_nodes_lock.locked():
-            return _render_nodes_redirect(err="Another render-node operation is already running")
-
-        src_id = int(source_server_id or 0) or int(settings.twc_render_source_server_id or 0)
-        if src_id <= 0:
-            return _render_nodes_redirect(err="source_server_id must be > 0")
-        prefix = str(name_prefix or "").strip() or str(settings.twc_render_name_prefix or "blast-render-node")
-
-        try:
-            async with render_nodes_lock:
-                res = await create_render_server_from_clone(
-                    token=settings.twc_token,
-                    source_server_id=src_id,
-                    firewall_group_id=settings.twc_render_firewall_group_id,
-                    name_prefix=prefix,
-                    wait_on_timeout_s=int(settings.twc_render_wait_on_timeout_s or 1800),
-                    wait_api_timeout_s=int(settings.twc_render_wait_api_timeout_s or 900),
-                )
-                runtime_urls = await _sync_runtime_windows_pool()
-        except RenderNodePoolError as e:
-            return _render_nodes_redirect(err=str(e))
-        except Exception as e:
-            return _render_nodes_redirect(err=f"unexpected error: {e}")
-
-        sid = int(res.get("server_id") or 0)
-        url = str(res.get("windows_url") or "")
-        probe = res.get("probe")
-        return _render_nodes_redirect(ok=f"created server_id={sid} url={url} probe={probe} pool={runtime_urls}")
-
-    @app.post("/admin/render-nodes/delete")
-    async def render_nodes_delete(
-        server_id: int = Form(...),
-        _user: str = Depends(_check_auth),
-    ) -> RedirectResponse:
-        token = str(settings.twc_token or "").strip()
-        if not token:
-            return _render_nodes_redirect(err="TWC_TOKEN is empty")
-        if render_nodes_lock.locked():
-            return _render_nodes_redirect(err="Another render-node operation is already running")
-
-        sid = int(server_id or 0)
-        if sid <= 0:
-            return _render_nodes_redirect(err="server_id must be > 0")
-        if sid == int(settings.twc_render_source_server_id or 0):
-            return _render_nodes_redirect(err="Refusing to delete source image server")
-
-        try:
-            async with render_nodes_lock:
-                await delete_render_server(
-                    token=token,
-                    server_id=sid,
-                    firewall_group_id=settings.twc_render_firewall_group_id,
-                )
-                runtime_urls = await _sync_runtime_windows_pool()
-        except RenderNodePoolError as e:
-            return _render_nodes_redirect(err=str(e))
-        except Exception as e:
-            return _render_nodes_redirect(err=f"unexpected error: {e}")
-        return _render_nodes_redirect(ok=f"deleted server_id={sid}; pool={runtime_urls}")
-
-    @app.post("/admin/render-nodes/probe")
-    async def render_nodes_probe(
-        windows_url: str = Form(""),
-        _user: str = Depends(_check_auth),
-    ) -> RedirectResponse:
-        base = str(windows_url or "").strip().rstrip("/")
-        if not base:
-            return _render_nodes_redirect(err="windows_url is empty")
-        try:
-            codes = await probe_render_node(base, timeout_s=8.0)
-        except Exception as e:
-            return _render_nodes_redirect(err=f"probe failed: {e}")
-        return _render_nodes_redirect(ok=f"probe {base} => {codes}")
-
-    @app.post("/admin/render-nodes/sync")
-    async def render_nodes_sync(_user: str = Depends(_check_auth)) -> RedirectResponse:
-        config_err = _render_nodes_config_error()
-        if config_err:
-            return _render_nodes_redirect(err=config_err)
-        if render_nodes_lock.locked():
-            return _render_nodes_redirect(err="Another render-node operation is already running")
-        try:
-            async with render_nodes_lock:
-                urls = await _sync_runtime_windows_pool()
-        except Exception as e:
-            return _render_nodes_redirect(err=f"sync failed: {e}")
-        return _render_nodes_redirect(ok=f"runtime pool synced: {urls}")
+    @app.post("/admin/llm-workers")
+    async def llm_workers_update(request: Request, _user: str = Depends(_check_auth)) -> RedirectResponse:
+        form = await request.form()
+        workers_payload: dict[str, dict[str, object]] = {}
+        for wt in ("sdk", "openrouter", "hybrid"):
+            enabled_raw = str(form.get(f"{wt}_enabled", "0")).strip().lower()
+            enabled = enabled_raw in {"1", "true", "yes", "on"}
+            try:
+                weight = int(str(form.get(f"{wt}_weight", "1")).strip() or "1")
+            except Exception:
+                weight = 1
+            try:
+                max_inflight = int(str(form.get(f"{wt}_max_inflight", "4")).strip() or "4")
+            except Exception:
+                max_inflight = 4
+            workers_payload[wt] = {
+                "enabled": bool(enabled),
+                "weight": max(0, int(weight)),
+                "max_inflight": max(1, int(max_inflight)),
+            }
+        payload = {"workers": workers_payload}
+        await _orchestrator_put_llm_workers(payload)
+        return RedirectResponse("/admin/llm-workers", status_code=303)
 
     # ── T-Bank webhook (no auth — called by T-Bank servers) ───────
 
@@ -1227,9 +1063,13 @@ def build_app(
                 admin_note=f"pkg={pkg} order={order_id} amount={amount_rub}\u20bd",
             )
             await credits_db.log_event(tg_id, "payment_confirmed", f"{pkg} \u2014 {amount_rub}\u20bd")
+            try:
+                await state_store.reset_to_wait_audio(tg_id)
+            except Exception as e:
+                log.warning("tbank notify: failed to unlock user state %s: %s", tg_id, e)
             log.info("payment confirmed tg_id=%s pkg=%s credits=+%s", tg_id, pkg, credits_to_add)
 
-            # Notify user + move to generation flow
+            # Notify user as side-effect. Unlock is already committed.
             if bot_ref and bot_ref[0]:
                 try:
                     from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
@@ -1246,8 +1086,6 @@ def build_app(
                         ),
                     )
                     await bot_ref[0].send_message(tg_id, "Пришли аудио в формате mp3.")
-                    # Move user state to WAIT_AUDIO
-                    await state_store.reset_to_wait_audio(tg_id)
                 except Exception as e:
                     log.warning("tbank notify: failed to notify user %s: %s", tg_id, e)
 

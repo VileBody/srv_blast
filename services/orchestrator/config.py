@@ -6,8 +6,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import quote_plus
 
-from .windows_node_pool import parse_windows_urls_csv, normalize_windows_urls
-
 
 def _env(key: str, default: str = "") -> str:
     return (os.environ.get(key, default) or "").strip()
@@ -121,13 +119,6 @@ class Settings:
     # Bearer token for /payments/activate (admin manual activation).
     # If empty, the endpoint is disabled (returns 403).
     payment_admin_token: str = _env("PAYMENT_ADMIN_TOKEN", "")
-
-    @property
-    def windows_render_urls(self) -> tuple[str, ...]:
-        urls = parse_windows_urls_csv(self.windows_base_urls_csv)
-        if not urls:
-            urls = normalize_windows_urls([self.windows_base_url])
-        return tuple(urls)
 
 
 SETTINGS = Settings()

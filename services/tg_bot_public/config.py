@@ -59,6 +59,21 @@ def _username_allowlist_env(name: str) -> tuple[str, ...]:
     return tuple(out)
 
 
+def _csv_env(name: str, default: str = "") -> tuple[str, ...]:
+    raw = _env(name, default)
+    if not raw:
+        return tuple()
+    out: list[str] = []
+    seen: set[str] = set()
+    for part in raw.split(","):
+        item = str(part or "").strip()
+        if not item or item in seen:
+            continue
+        seen.add(item)
+        out.append(item)
+    return tuple(out)
+
+
 def _credits_db_url_env() -> str:
     explicit = _env("CREDITS_DB_URL", "")
     if explicit:
@@ -89,7 +104,25 @@ class Settings:
 
     bot_poll_interval_s: float = _float_env("BOT_POLL_INTERVAL_S", 5.0)
     bot_status_update_interval_s: float = _float_env("BOT_STATUS_UPDATE_INTERVAL_S", 20.0)
+    bot_recovery_poll_interval_s: float = _float_env("BOT_RECOVERY_POLL_INTERVAL_S", 60.0)
+    bot_job_timeout_h: float = _float_env("BOT_JOB_TIMEOUT_H", 4.0)
+    bot_referral_timeout_h: float = _float_env("BOT_REFERRAL_TIMEOUT_H", 72.0)
+    tg_state_ttl_h: float = _float_env("TG_STATE_TTL_H", 720.0)
+    tg_state_cleanup_interval_s: float = _float_env("TG_STATE_CLEANUP_INTERVAL_S", 900.0)
+    tg_state_cleanup_batch_size: int = _int_env("TG_STATE_CLEANUP_BATCH_SIZE", 200)
+    tg_state_index_cleanup_batch_size: int = _int_env("TG_STATE_INDEX_CLEANUP_BATCH_SIZE", 500)
     bot_tmp_dir: str = _env("BOT_TMP_DIR", "/app/work/tg_tmp")
+    bot_fs_cleanup_interval_s: float = _float_env("BOT_FS_CLEANUP_INTERVAL_S", 900.0)
+    bot_fs_cleanup_batch_size: int = _int_env("BOT_FS_CLEANUP_BATCH_SIZE", 2000)
+    bot_tmp_incoming_retention_h: float = _float_env("BOT_TMP_INCOMING_RETENTION_H", 24.0)
+    bot_tmp_prepared_retention_h: float = _float_env("BOT_TMP_PREPARED_RETENTION_H", 24.0)
+    bot_tmp_result_retention_h: float = _float_env("BOT_TMP_RESULT_RETENTION_H", 6.0)
+    bot_output_artifact_retention_h: float = _float_env("BOT_OUTPUT_ARTIFACT_RETENTION_H", 24.0)
+    bot_output_debug_artifact_retention_h: float = _float_env("BOT_OUTPUT_DEBUG_ARTIFACT_RETENTION_H", 168.0)
+    bot_output_artifact_allowlist: tuple[str, ...] = _csv_env(
+        "BOT_OUTPUT_ARTIFACT_ALLOWLIST",
+        "stage2_subtitles.json,stage2_subtitles_*.json,gemini_raw_stage2_subtitles_*.json,stage2_footage.json,stage2_footage_*.json",
+    )
     bot_max_audio_mb: int = _int_env("BOT_MAX_AUDIO_MB", 5)
 
     redis_host: str = _env("REDIS_HOST", "localhost")

@@ -58,6 +58,7 @@ help:
 > @echo "  make dev-builder AUDIO=...     # no-queue local runner via dev.py (builder only)"
 > @echo "  make dev-full AUDIO=...        # no-queue local runner via dev.py (gemini->build->dispatch)"
 > @echo "  make test-smoke                # lightweight smoke checks"
+> @echo "  make smoke-mr1 ARCHIVAL_AUDIO=... [ORCH=...] # MR-1 gate: health + synthetic no-speech + real archival"
 > @echo ""
 > @echo "Notes:"
 > @echo "  - .env is sourced automatically (if exists)."
@@ -139,3 +140,10 @@ dev-full: _env
 .PHONY: test-smoke
 test-smoke:
 > .venv/bin/python - <<'PY'\nfrom pathlib import Path\nimport json\nimport tempfile\nfrom services.orchestrator.render_manifest import collect_media_urls_from_render_payload\nfrom mlcore.gemini_orchestrator import _run_stage2_parallel\n\nwith tempfile.TemporaryDirectory() as td:\n    p = Path(td)/'render_payload.json'\n    p.write_text(json.dumps({"footage_layers":[{"type":"footage","text_data":{"layer_meta":{"audioEnabled":True},"source_footage":{"file_name":"expected.mp3","file_path":""}}}]}, ensure_ascii=False), encoding='utf-8')\n    media = collect_media_urls_from_render_payload(p, audio_url='https://example.com/audio/other_name.mp3?sig=1')\n    assert media[0]['relpath'] == 'media/audio/expected.mp3', media\n\ntry:\n    _run_stage2_parallel(lambda: 'ok', lambda: (_ for _ in ()).throw(RuntimeError('boom')))\nexcept RuntimeError as e:\n    assert str(e) == 'boom'\nelse:\n    raise AssertionError('stage2 parallel did not fail-fast')\n\nprint('smoke checks: OK')\nPY
+
+.PHONY: smoke-mr1
+smoke-mr1: _env
+> if [[ -z "$(ARCHIVAL_AUDIO)" ]]; then echo "[ERR] ARCHIVAL_AUDIO is required. Example: make smoke-mr1 ARCHIVAL_AUDIO=./path/to/archival.mp3"; exit 2; fi
+> ARGS=(--archival-file "$(ARCHIVAL_AUDIO)" --job-mode with_gemini --report-json out/mr1_smoke_gate_report.json); \
+> if [[ -n "$(ORCH)" ]]; then ARGS+=(--orch "$(ORCH)"); fi; \
+> .venv/bin/python scripts/run_mr1_smoke_gate.py "$${ARGS[@]}"

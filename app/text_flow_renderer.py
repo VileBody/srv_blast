@@ -11,6 +11,7 @@ from core.subtitles_mode import (
     SUBTITLES_MODE_SCENES_3RD,
     normalize_subtitles_mode,
 )
+from core.video_timing import AE_FPS, frame_duration_s, frames_to_seconds
 from mlcore.models.subtitles_flow import SubtitleFlowPlan
 
 
@@ -20,7 +21,7 @@ _INTERP_CODES = {
     "bezier": "6613",
     "hold": "6614",
 }
-_FRAME_SEC = 1.0 / COMP_FPS
+_FRAME_SEC = frame_duration_s(AE_FPS)
 _REVEAL_STEP_SEC = _FRAME_SEC
 _REVEAL_START_PERCENT = 25.0
 
@@ -886,7 +887,7 @@ class FlowTextLayerRenderer:
         if chars <= 1:
             return 0.05
         rough_dur = float(out_t) - float(track_in)
-        exit_time = 7.0 / COMP_FPS
+        exit_time = frames_to_seconds(7.0, fps=AE_FPS)
         min_hold = 0.10
         available = rough_dur - exit_time - min_hold
         delay = min(0.05, available / float(chars - 1))
@@ -913,7 +914,7 @@ class FlowTextLayerRenderer:
                     reveal_time = 0.05 * float(max(0, len(str(seg.text or "")) - 1))
                     min_exit = in_t + reveal_time + 0.15
                     exit_t = max(child_in, min_exit)
-                    exit_t = min(exit_t, out_t - 7.0 / COMP_FPS)
+                    exit_t = min(exit_t, out_t - frames_to_seconds(7.0, fps=AE_FPS))
             out.append(exit_t)
         return out
 
@@ -962,7 +963,7 @@ class FlowTextLayerRenderer:
         exits = self._impulse_exit_times(segs)
         out: List[Dict[str, Any]] = []
         z = 1000
-        fps = COMP_FPS
+        fps = AE_FPS
 
         for idx, seg in enumerate(segs):
             track_in = float(seg.in_point)

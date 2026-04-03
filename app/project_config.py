@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from core.fps import COMP_FPS
+from core.video_timing import AE_FPS
 
 AE_PROJECT = {
     # MAIN COMP (верхний)
@@ -9,7 +9,7 @@ AE_PROJECT = {
         "name": "Comp 1",
         "w": 1080,
         "h": 1960,
-        "fps": COMP_FPS,
+        "fps": float(AE_FPS),
         "dur": 60.0600600600601,
         "pixelAspect": 1.0,
         "workAreaStart": 0.0,
@@ -24,7 +24,7 @@ AE_PROJECT = {
         "name": "Текст",
         "w": 1080,
         "h": 1920,
-        "fps": COMP_FPS,
+        "fps": float(AE_FPS),
         "dur": 18.4351017684351,
         "pixelAspect": 1.0,
         "workAreaStart": 0.0,
@@ -39,7 +39,7 @@ AE_PROJECT = {
         "name": 'Текст "Mine"',
         "w": 1080,
         "h": 1920,
-        "fps": COMP_FPS,
+        "fps": float(AE_FPS),
         "dur": 2.54421087754421,
         "pixelAspect": 1.0,
         "workAreaStart": 0.0,

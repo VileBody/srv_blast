@@ -3,14 +3,14 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List
 
-from core.fps import COMP_FPS
+from core.video_timing import AE_FPS, frame_duration_s, frames_to_seconds
 from mlcore.models.subtitles_flow import SubtitleFlowPlan
 
 
-_FPS = COMP_FPS
-_FRAME_SEC = 1.0 / _FPS
+_FPS = float(AE_FPS)
+_FRAME_SEC = frame_duration_s(_FPS)
 _FADE_FRAMES = 4.0
-_FADE_DUR = _FADE_FRAMES / _FPS
+_FADE_DUR = frames_to_seconds(_FADE_FRAMES, fps=_FPS)
 
 _FONT_NAME = "Montserrat-BoldItalic"
 _FONT_SIZE = 60
@@ -260,4 +260,3 @@ def build_template_4th_reference_layers(
         layers.append(layer)
         z -= 1
     return layers
-
