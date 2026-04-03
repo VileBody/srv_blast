@@ -126,9 +126,25 @@ class Block5Glitch(BaseModel):
     glitch_peak: Segment
     mine: MineSegment
 
+    @staticmethod
+    def _is_no_speech_marker(text: str) -> bool:
+        marker = (
+            str(text or "")
+            .strip()
+            .upper()
+            .replace("[", "")
+            .replace("]", "")
+            .replace(" ", "")
+            .replace("\r", "")
+            .replace("\n", "")
+            .replace("\t", "")
+        )
+        return marker in {"NO_SPEECH", "NOSPEECH", "SILENCE", "NOAUDIO"}
+
     @model_validator(mode="after")
     def _no_mine_token_inside_glitch_peak(self) -> "Block5Glitch":
         mine_tok = self.mine.tokens[0]
+        mine_is_no_speech = self._is_no_speech_marker(mine_tok.text)
 
         # IMPORTANT:
         # Repeated words across segments are normal (e.g. "не сошлись, не сошлись...").
@@ -142,6 +158,10 @@ class Block5Glitch(BaseModel):
             gs = float(t.t_start)
             ge = float(t.t_end)
             overlaps = (ms < ge - eps) and (gs < me - eps)
+            if overlaps and mine_is_no_speech and self._is_no_speech_marker(t.text):
+                # Synthetic/no-speech clips may emit a duplicated NO_SPEECH token across
+                # all Block-5 segments. Keep strict overlap checks for real words.
+                continue
             if overlaps:
                 raise ValueError(
                     "mine token must NOT overlap in time with any glitch_peak token. "
