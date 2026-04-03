@@ -6,8 +6,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import quote_plus
 
-from .windows_node_pool import parse_windows_urls_csv, normalize_windows_urls
-
 
 def _env(key: str, default: str = "") -> str:
     return (os.environ.get(key, default) or "").strip()
@@ -94,9 +92,7 @@ class Settings:
 
     # Windows render node
     windows_base_url: str = _env("WINDOWS_RENDER_URL", "")  # e.g. http://win-node:8000
-    windows_base_urls_csv: str = _env("WINDOWS_RENDER_URLS", "")  # comma-separated
     windows_timeout_s: float = float(_env("WINDOWS_TIMEOUT_S", "30") or "30")
-    windows_node_lease_ttl_s: int = int(_env("WINDOWS_NODE_LEASE_TTL_S", "7200") or "7200")
 
     # Polling controls (for async win API)
     windows_poll_interval_s: float = float(_env("WINDOWS_POLL_INTERVAL_S", "2.0") or "2.0")
@@ -121,13 +117,6 @@ class Settings:
     # Bearer token for /payments/activate (admin manual activation).
     # If empty, the endpoint is disabled (returns 403).
     payment_admin_token: str = _env("PAYMENT_ADMIN_TOKEN", "")
-
-    @property
-    def windows_render_urls(self) -> tuple[str, ...]:
-        urls = parse_windows_urls_csv(self.windows_base_urls_csv)
-        if not urls:
-            urls = normalize_windows_urls([self.windows_base_url])
-        return tuple(urls)
 
 
 SETTINGS = Settings()
