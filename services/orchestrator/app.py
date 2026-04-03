@@ -12,7 +12,6 @@ from .tasks import build_job
 from .config import SETTINGS
 from .bundle_bootstrap import ensure_descriptions_bundle
 from .asset_routes import create_asset_router
-from .windows_node_pool import WindowsNodePool
 from services.tg_bot_botapi.user_store import UserStore
 
 
@@ -110,16 +109,9 @@ def create_app() -> FastAPI:
             checks["redis"] = False
 
         checks["bundle"] = _bundle_ok
-        pool = WindowsNodePool(
-            redis_client=store.r,
-            key_prefix=store.key_prefix,
-            lease_ttl_s=SETTINGS.windows_node_lease_ttl_s,
-        )
-        active_urls = pool.get_active_urls(default_urls=SETTINGS.windows_render_urls)
-        checks["windows_render_nodes"] = bool(active_urls)
 
         ok = all(checks.values())
-        return {"ok": ok, "checks": checks, "windows_render_nodes": active_urls}
+        return {"ok": ok, "checks": checks}
 
     # ==========================================================
     # NEW: correct naming (audio URL -> enqueue pipeline)
