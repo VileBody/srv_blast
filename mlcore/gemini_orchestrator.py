@@ -2071,9 +2071,11 @@ def build_all_via_gemini_one_call(
     selection_seed_key = _resolve_footage_seed_key(out_dir=out_dir, logger=logger)
 
     if not mapped_picker_assets:
-        raise RuntimeError(
-            "No inventory assets are mapped to style metadata. "
-            "Check merged metadata dbs and inventory filename clip ids."
+        logger.warning(
+            "style_metadata_empty_mapping inventory_assets=%d metadata_rows=%d db_files=%s",
+            len(picker_assets),
+            len(style_metadata_rows),
+            [str(p) for p in style_metadata_paths],
         )
     logger.info(
         "style_metadata_loaded db_files=%s rows=%d merged_ids=%d inventory_assets=%d mapped=%d unmapped=%d",
@@ -2743,6 +2745,23 @@ def build_all_via_gemini_one_call(
     def _run_style_once() -> FootageStylePickPayload:
         nonlocal style_raw_payload, style_adapter_diag, style_rotation_payload
 
+        def _accept_direct_pick(
+            pick: FootageStylePickPayload, *, source: str
+        ) -> FootageStylePickPayload:
+            nonlocal style_raw_payload, style_adapter_diag, style_rotation_payload
+            validate_style_pick_in_groups(pick, style_groups)
+            style_raw_payload = None
+            style_adapter_diag = None
+            style_rotation_payload = None
+            logger.info(
+                "stage2_style_direct_pick_selected source=%s genre=%s tag=%s inventory_assets=%d",
+                source,
+                pick.genre,
+                pick.tag,
+                len(picker_assets),
+            )
+            return pick
+
         payload_any = call_footage_style_once(
             client=client_footage,
             openrouter_client=openrouter_footage,
@@ -2761,10 +2780,24 @@ def build_all_via_gemini_one_call(
             schema_model=FootageStyleRotation,
         )
 
+        if isinstance(payload_any, FootageStylePickPayload):
+            return _accept_direct_pick(payload_any, source="model")
+
         if isinstance(payload_any, FootageStyleRotation):
             rotation = payload_any
         else:
-            rotation = FootageStyleRotation.model_validate(payload_any)
+            try:
+                direct_pick = FootageStylePickPayload.model_validate(payload_any)
+            except Exception:
+                rotation = FootageStyleRotation.model_validate(payload_any)
+            else:
+                return _accept_direct_pick(direct_pick, source="compat")
+
+        if not mapped_picker_assets:
+            raise RuntimeError(
+                "style_rotation_requires_mapped_inventory_assets: no inventory assets are mapped "
+                "to style metadata. Check merged metadata dbs and inventory filename clip ids."
+            )
 
         # Resolve genre/tag from first subgroup (needed for style_payload).
         base_raw = rotation.subgroups[0]
@@ -2823,19 +2856,24 @@ def build_all_via_gemini_one_call(
     style_rotation_cached = resume_state.get("stage2_style_rotation")
     if isinstance(style_cached, dict):
         try:
-            if not isinstance(style_rotation_cached, dict):
-                raise RuntimeError("missing stage2_style_rotation in resume state")
             style_payload = FootageStylePickPayload.model_validate(style_cached)
             validate_style_pick_in_groups(style_payload, style_groups)
-            style_rotation_payload = FootageStyleRotation.model_validate(style_rotation_cached)
-            if not style_rotation_payload.subgroups:
-                raise RuntimeError("stage2_style_rotation.subgroups is empty in resume state")
-            style_raw_payload = style_rotation_payload.subgroups[0]
+            if isinstance(style_rotation_cached, dict):
+                style_rotation_payload = FootageStyleRotation.model_validate(style_rotation_cached)
+                if not style_rotation_payload.subgroups:
+                    raise RuntimeError("stage2_style_rotation.subgroups is empty in resume state")
+                style_raw_payload = style_rotation_payload.subgroups[0]
+                logger.info(
+                    "llm_resume_hit stage=stage2_style source=rotation subgroups=%d",
+                    len(style_rotation_payload.subgroups),
+                )
+            elif style_rotation_cached is None:
+                style_raw_payload = None
+                style_rotation_payload = None
+                logger.info("llm_resume_hit stage=stage2_style source=direct_pick")
+            else:
+                raise RuntimeError("stage2_style_rotation has invalid type in resume state")
             style_from_resume = True
-            logger.info(
-                "llm_resume_hit stage=stage2_style subgroups=%d",
-                len(style_rotation_payload.subgroups),
-            )
         except Exception as e:
             logger.warning("llm_resume_bad stage=stage2_style err=%s", str(e))
             resume_state.pop("stage2_style", None)
@@ -2903,8 +2941,6 @@ def build_all_via_gemini_one_call(
 
     if subtitles_payload is None or style_payload is None:
         raise RuntimeError("Stage2 failed: missing payloads after execution")
-    if not subtitles_only and style_rotation_payload is None:
-        raise RuntimeError("Stage2 failed: style rotation payload is empty")
 
     clip_start_abs = float(stage1.audio.clip_start_abs)
     clip_end_abs = float(stage1.audio.clip_end_abs)

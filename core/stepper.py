@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import List, Literal
 
 from core.types import KeyframeData, KeyframeEase
+from core.video_timing import AE_FPS
 
 PercentProp = Literal["start", "end"]
 Anchor = Literal["start", "end"]
@@ -71,7 +72,7 @@ class StepperConfig:
     anchor: Anchor = "end"
     start_word: int = 0
     hold: bool = True
-    fps: float = 23.9759979248047
+    fps: float = float(AE_FPS)
     jump_frames: int = 1
     last_jump_advance_frames: int = 0  # <--- key fix
     ease_speed: float = 599.4

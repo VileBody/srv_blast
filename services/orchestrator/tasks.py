@@ -19,6 +19,7 @@ from .artifacts import make_job_paths
 from .celery_app import celery_app
 from .config import SETTINGS
 from .job_store import JobStore
+from .observability_metrics import increment_counter
 from .render_manifest import build_windows_job_payload
 from .windows_client import WindowsRenderClient
 from core.llm_worker_types import normalize_llm_worker_type
@@ -43,6 +44,13 @@ _REUSE_RESUME_STATE_KEYS = (
 def _is_remote_url(u: str) -> bool:
     s = (u or "").strip().lower()
     return s.startswith("http://") or s.startswith("https://") or s.startswith("s3://")
+
+
+def _inc_metric(store: JobStore, *, metric: str, label: str) -> None:
+    try:
+        increment_counter(store, metric=metric, label=label)
+    except Exception:
+        pass
 
 
 def _extract_artifacts_source(payload: Dict[str, Any]) -> str:
@@ -1153,6 +1161,7 @@ def poll_windows_render(self, job_id: str, render_id: str) -> Dict[str, Any]:
     started_at = _poll_started_at_from_state(st)
     now = time.time()
     if (now - started_at) > float(SETTINGS.windows_poll_timeout_s):
+        _inc_metric(store, metric="render_poll_timeout_outcomes", label="before_poll")
         raise RuntimeError(f"windows_poll_timeout render_id={render_id}")
 
     try:
@@ -1162,6 +1171,11 @@ def poll_windows_render(self, job_id: str, render_id: str) -> Dict[str, Any]:
             attempt = int(getattr(self.request, "retries", 0)) + 1
             remaining = float(SETTINGS.windows_poll_timeout_s) - (time.time() - started_at)
             if remaining <= 0:
+                _inc_metric(
+                    store,
+                    metric="render_poll_timeout_outcomes",
+                    label="during_status_retry",
+                )
                 raise RuntimeError(f"windows_poll_timeout(render_status) render_id={render_id}") from e
             backoff = _retry_backoff_s(attempt=attempt, base_s=2.0, cap_s=30.0)
             backoff = min(backoff, max(1.0, remaining))

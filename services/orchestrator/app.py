@@ -9,11 +9,13 @@ from core.llm_worker_types import LLM_WORKER_TYPE_SDK
 from .job_store import JobStore
 from .llm_workers import (
     ensure_config_initialized,
+    get_inflight_counts,
     get_runtime_status,
     release_worker_slot,
     reserve_worker_type,
     set_config,
 )
+from .observability_metrics import get_counter_map
 from .payment_webhook import make_payment_router
 from .schemas import (
     JobState,
@@ -229,7 +231,7 @@ def create_app() -> FastAPI:
 
     @app.get("/metrics")
     def metrics() -> dict:
-        """Lightweight observability endpoint — queue lengths, job status counts."""
+        """Lightweight observability endpoint for queue/job/webhook health."""
         from .celery_app import celery_app as _celery
 
         counts: dict = {"NEW": 0, "QUEUED": 0, "RUNNING": 0, "SUCCEEDED": 0, "FAILED": 0}
@@ -241,6 +243,16 @@ def create_app() -> FastAPI:
                     counts[s] += 1
         except Exception as exc:
             jobs_error = repr(exc)
+        queue_depth = int(counts.get("QUEUED", 0))
+        inflight_jobs = int(counts.get("RUNNING", 0))
+        failed_jobs = int(counts.get("FAILED", 0))
+
+        llm_inflight: dict = {}
+        llm_inflight_error: str | None = None
+        try:
+            llm_inflight = get_inflight_counts(store)
+        except Exception as exc:
+            llm_inflight_error = repr(exc)
 
         queues: dict = {}
         try:
@@ -252,10 +264,33 @@ def create_app() -> FastAPI:
         except Exception:
             queues["error"] = "inspect_failed"
 
+        webhook_outcomes: dict = {}
+        activate_outcomes: dict = {}
+        render_poll_timeout_outcomes: dict = {}
+        metrics_error: str | None = None
+        try:
+            webhook_outcomes = get_counter_map(store, metric="payment_webhook_outcomes")
+            activate_outcomes = get_counter_map(store, metric="payment_activate_outcomes")
+            render_poll_timeout_outcomes = get_counter_map(
+                store,
+                metric="render_poll_timeout_outcomes",
+            )
+        except Exception as exc:
+            metrics_error = repr(exc)
+
         return {
+            "queue_depth": queue_depth,
+            "inflight_jobs": inflight_jobs,
+            "failed_jobs": failed_jobs,
             "job_status_counts": counts,
             "job_status_error": jobs_error,
+            "llm_inflight_by_worker_type": llm_inflight,
+            "llm_inflight_error": llm_inflight_error,
             "workers": queues,
+            "webhook_outcomes": webhook_outcomes,
+            "activate_outcomes": activate_outcomes,
+            "render_poll_timeout_outcomes": render_poll_timeout_outcomes,
+            "metrics_error": metrics_error,
             "bundle_ok": _bundle_ok,
         }
 
