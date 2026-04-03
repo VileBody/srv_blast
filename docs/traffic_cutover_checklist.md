@@ -59,9 +59,9 @@
 - Зафиксирован edge-case:
   - synthetic no-speech smoke (`[NO_SPEECH]`) может падать на strict-валидации `stage2_subtitles` (`block_5.mine` overlap с `block_5.glitch_peak`);
   - реальные архивные тест-джобы после `#83/#84` проходят end-to-end.
-  - узкий фикс для no-speech overlap в `BlocksTokensPayload` добавлен локально с сохранением strict-поведения для обычных слов; нужен релизный gate-прогон.
+  - узкий фикс для no-speech overlap в `BlocksTokensPayload` влит в `MR-1`.
 
-## Status snapshot (2026-04-03, MR-1 no-speech gate prep)
+## Status snapshot (2026-04-03, MR-1 no-speech closed)
 
 - В `mlcore/models/subtitles_tokens.py` разрешён overlap только для no-speech маркеров между `block_5.mine` и `block_5.glitch_peak`.
 - Добавлен точечный тест `tests/test_subtitles_tokens_no_speech_overlap.py`:
@@ -72,7 +72,13 @@
   - synthetic no-speech job;
   - real archival `with_gemini` job;
   - явный fail gate при любом статусе != `SUCCEEDED`.
-- Для закрытия DoD MR-1 остаётся прогон этого gate на релизном окружении (`release/stable-8b22515`) с фиксацией результатов.
+- PR: `#86` (`MR-1: no-speech overlap fix + runtime smoke gate`) в `release/stable-8b22515`.
+- CI: run `23958016071` — `passed`.
+- Deploy: `deploy-current-branch.yml` run `23958050065` — `passed`.
+- Runtime verification на прод-сервере (прямой запуск изнутри хоста, без full smoke-suite):
+  - synthetic/no-speech: `job_id=802bbf6fc443498585e11f806307dd59` -> `SUCCEEDED`;
+  - real archival: `job_id=b8af16ca1c164764aa9b12a8ebfedb91` -> `SUCCEEDED`.
+- Решение по циклу: full smoke-suite оставлен на финальный этап; между MR проверяем только непосредственно затронутый контур.
 
 ## 1. Admission, orchestrator, job lifecycle
 
