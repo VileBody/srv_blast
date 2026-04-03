@@ -172,6 +172,23 @@
   - `PYTHONPATH=. pytest -q tests/test_tg_bot_public_mr4.py` -> `2 passed`.
 - Full smoke-suite остаётся отложенным на финальный этап цикла.
 
+## Status snapshot (2026-04-04, MR-6 disk/tmp/artifacts hygiene closed)
+
+- В оба Telegram бота добавлен фоновый filesystem cleanup loop:
+  - очищаются stale файлы из `incoming/`, `prepared/`, `result/` под `BOT_TMP_DIR`;
+  - очищаются старые job artifacts в `/app/output/jobs` (или `BOT_JOBS_OUTPUT_DIR`).
+- Вынесена явная retention policy в runtime config (оба бота):
+  - `BOT_TMP_INCOMING_RETENTION_H`, `BOT_TMP_PREPARED_RETENTION_H`, `BOT_TMP_RESULT_RETENTION_H`;
+  - `BOT_OUTPUT_ARTIFACT_RETENTION_H`, `BOT_OUTPUT_DEBUG_ARTIFACT_RETENTION_H`;
+  - `BOT_FS_CLEANUP_INTERVAL_S`, `BOT_FS_CLEANUP_BATCH_SIZE`.
+- Добавлен explicit allowlist debug artifacts:
+  - `BOT_OUTPUT_ARTIFACT_ALLOWLIST` (glob-паттерны файлов, которые держим дольше для диагностики);
+  - не входящие в allowlist артефакты удаляются автоматически по базовому TTL.
+- Вынесен общий модуль `core/filesystem_hygiene.py`, подключён в `tg_bot_public` и `tg_bot_botapi`.
+- Targeted verification для затронутого контура:
+  - `PYTHONPATH=. pytest -q tests/test_filesystem_hygiene.py` -> `3 passed`.
+- Full smoke-suite остаётся отложенным на финальный этап цикла.
+
 ## 1. Admission, orchestrator, job lifecycle
 
 - [x] Сделать атомарный admission / reservation для `llm_worker_type`, чтобы burst из 20-30 запросов не переполнял один и тот же backend.
@@ -231,9 +248,9 @@
 
 ## 7. Disk, tmp, and filesystem hygiene
 
-- [ ] Добавить фоновую очистку `incoming/`, `prepared/` и stale `result/` файлов в обоих Telegram bots.
-- [ ] Определить retention policy для `/app/work`, `/app/output` и job-local artifacts.
-- [ ] Проверить, какие артефакты реально нужны для отладки, а какие можно удалять автоматически без потери полезной диагностики.
+- [x] Добавить фоновую очистку `incoming/`, `prepared/` и stale `result/` файлов в обоих Telegram bots.
+- [x] Определить retention policy для `/app/work`, `/app/output` и job-local artifacts.
+- [x] Проверить, какие артефакты реально нужны для отладки, а какие можно удалять автоматически без потери полезной диагностики.
 
 ## 8. Timing / subtitles / render correctness
 
@@ -259,5 +276,5 @@
 - [x] failed или partial batch не маскируется под success;
 - [x] Redis hot paths не зависят линейно от всей исторической массы jobs/chats;
 - [ ] render path переживает штатный switchover Windows node без потери in-flight poll;
-- [ ] tmp/artifact growth ограничен понятной retention policy;
+- [x] tmp/artifact growth ограничен понятной retention policy;
 - [ ] smoke tests и базовая диагностика воспроизводимы локально и на релизе.
