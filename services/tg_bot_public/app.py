@@ -18,6 +18,7 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import CommandStart
 from aiogram.types import FSInputFile, KeyboardButton, Message, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from core.clip_window import CLIP_WINDOW_RANGE_S_LABEL
+from core.filesystem_hygiene import cleanup_jobs_artifacts, cleanup_tmp_chat_dirs
 from core.subtitles_mode import (
     SUBTITLES_MODE_IMPULSE_2ND,
     SUBTITLES_MODE_LEGACY_BLOCKS,
@@ -357,11 +358,7 @@ def _load_json_dict(path: Path) -> Optional[Dict[str, Any]]:
         return None
 
 
-def _logs_dir_candidates_for_job(job_id: str) -> List[Path]:
-    jid = str(job_id or "").strip()
-    if not jid:
-        return []
-
+def _jobs_output_roots() -> List[Path]:
     roots: List[Path] = []
     raw_env_root = str(os.environ.get("BOT_JOBS_OUTPUT_DIR") or "").strip()
     if raw_env_root:
@@ -376,8 +373,15 @@ def _logs_dir_candidates_for_job(job_id: str) -> List[Path]:
         if key in seen:
             continue
         seen.add(key)
-        out.append(root / jid / "out" / "logs")
+        out.append(root)
     return out
+
+
+def _logs_dir_candidates_for_job(job_id: str) -> List[Path]:
+    jid = str(job_id or "").strip()
+    if not jid:
+        return []
+    return [root / jid / "out" / "logs" for root in _jobs_output_roots()]
 
 
 def _latest_file_by_pattern(*, directory: Path, pattern: str) -> Optional[Path]:
@@ -859,6 +863,7 @@ class BlastBotApp:
         self._processing_task: asyncio.Task[None] | None = None
         self._recovery_task: asyncio.Task[None] | None = None
         self._state_cleanup_task: asyncio.Task[None] | None = None
+        self._fs_cleanup_task: asyncio.Task[None] | None = None
         self._bot: Bot | None = None
 
         self._register_handlers()
@@ -1074,6 +1079,7 @@ class BlastBotApp:
         self._reminder_task = asyncio.create_task(self._reminder_loop(), name="tg_bot_reminder_loop")
         self._payment_poll_task = asyncio.create_task(self._payment_poll_loop(), name="tg_bot_payment_poll")
         self._state_cleanup_task = asyncio.create_task(self._state_cleanup_loop(), name="tg_bot_state_cleanup_loop")
+        self._fs_cleanup_task = asyncio.create_task(self._fs_cleanup_loop(), name="tg_bot_fs_cleanup_loop")
         log.info("startup complete: polling loop started")
 
     async def _on_shutdown(self, bot: Bot) -> None:
@@ -1082,6 +1088,7 @@ class BlastBotApp:
             self._processing_task,
             self._recovery_task,
             self._state_cleanup_task,
+            self._fs_cleanup_task,
             getattr(self, "_reminder_task", None),
             getattr(self, "_admin_panel_task", None),
             getattr(self, "_payment_poll_task", None),
@@ -2448,6 +2455,22 @@ class BlastBotApp:
     def _state_ttl_s(self) -> float:
         return max(3600.0, float(self.settings.tg_state_ttl_h) * 3600.0)
 
+    def _fs_cleanup_interval_s(self) -> float:
+        return max(60.0, float(self.settings.bot_fs_cleanup_interval_s))
+
+    def _tmp_retention_by_subdir_s(self) -> Dict[str, float]:
+        return {
+            "incoming": max(300.0, float(self.settings.bot_tmp_incoming_retention_h) * 3600.0),
+            "prepared": max(300.0, float(self.settings.bot_tmp_prepared_retention_h) * 3600.0),
+            "result": max(300.0, float(self.settings.bot_tmp_result_retention_h) * 3600.0),
+        }
+
+    def _output_artifact_retention_s(self) -> float:
+        return max(300.0, float(self.settings.bot_output_artifact_retention_h) * 3600.0)
+
+    def _output_debug_artifact_retention_s(self) -> float:
+        return max(300.0, float(self.settings.bot_output_debug_artifact_retention_h) * 3600.0)
+
     def _is_processing_stuck(self, *, st: ChatState, now_ts: float) -> bool:
         if st.stage != STAGE_PROCESSING:
             return False
@@ -2552,6 +2575,43 @@ class BlastBotApp:
             except Exception as e:
                 log.warning("state_cleanup_loop_iteration_error err=%r", e)
             await asyncio.sleep(self._state_cleanup_interval_s())
+
+    async def _fs_cleanup_loop(self) -> None:
+        while True:
+            try:
+                now = time.time()
+                batch_size = max(1, int(self.settings.bot_fs_cleanup_batch_size))
+                tmp_stats = await asyncio.to_thread(
+                    cleanup_tmp_chat_dirs,
+                    tmp_root=self.settings.tmp_dir,
+                    retention_by_subdir_s=self._tmp_retention_by_subdir_s(),
+                    now_ts=now,
+                    max_scan_files=batch_size,
+                    max_scan_dirs=batch_size,
+                )
+                jobs_stats = await asyncio.to_thread(
+                    cleanup_jobs_artifacts,
+                    jobs_roots=_jobs_output_roots(),
+                    regular_retention_s=self._output_artifact_retention_s(),
+                    debug_retention_s=self._output_debug_artifact_retention_s(),
+                    debug_allowlist_patterns=tuple(self.settings.bot_output_artifact_allowlist or tuple()),
+                    now_ts=now,
+                    max_scan_files=batch_size,
+                    max_scan_dirs=batch_size,
+                )
+                removed_files = int(tmp_stats.get("removed_files", 0)) + int(jobs_stats.get("removed_files", 0))
+                removed_dirs = int(tmp_stats.get("removed_dirs", 0)) + int(jobs_stats.get("removed_dirs", 0))
+                if removed_files or removed_dirs:
+                    log.info(
+                        "fs_cleanup summary tmp=%s jobs=%s",
+                        tmp_stats,
+                        jobs_stats,
+                    )
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                log.warning("fs_cleanup_loop_iteration_error err=%r", e)
+            await asyncio.sleep(self._fs_cleanup_interval_s())
 
     async def _processing_loop(self) -> None:
         while True:
