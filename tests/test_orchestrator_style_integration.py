@@ -436,8 +436,8 @@ def test_hedged_mode_wires_openrouter_for_all_stage_calls(monkeypatch, tmp_path:
     out = go.build_all_via_gemini_one_call()
     assert set(out.keys()) == {"audio_plan", "full_edit_config", "footage_config"}
     assert set(seen.keys()) == {"asr", "scenario", "subtitles", "style", "timing_analysis", "timing_cuts"}
-    assert len(gemini_clients) == 6
-    assert len(openrouter_clients) == 6
+    assert len(gemini_clients) == 7
+    assert len(openrouter_clients) == 7
 
 
 def test_resume_state_skips_stage1_llm_calls(monkeypatch, tmp_path: Path) -> None:

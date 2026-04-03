@@ -5,14 +5,30 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pathlib import Path
 
+from core.llm_worker_types import LLM_WORKER_TYPE_SDK
 from .job_store import JobStore
+from .llm_workers import (
+    ensure_config_initialized,
+    get_inflight_counts,
+    get_runtime_status,
+    release_worker_slot,
+    reserve_worker_type,
+    set_config,
+)
+from .observability_metrics import get_counter_map
 from .payment_webhook import make_payment_router
-from .schemas import SendVideoRequest, SendVideoResponse, JobState
-from .tasks import build_job
+from .schemas import (
+    JobState,
+    LLMWorkerRuntimeStatus,
+    LLMWorkersConfigRequest,
+    LLMWorkersStatusResponse,
+    SendVideoRequest,
+    SendVideoResponse,
+)
+from .tasks import build_job_hybrid, build_job_openrouter, build_job_sdk
 from .config import SETTINGS
 from .bundle_bootstrap import ensure_descriptions_bundle
 from .asset_routes import create_asset_router
-from .windows_node_pool import WindowsNodePool
 from services.tg_bot_botapi.user_store import UserStore
 
 
@@ -76,6 +92,7 @@ def create_app() -> FastAPI:
     @app.on_event("startup")
     def _startup() -> None:
         nonlocal _bundle_ok
+        ensure_config_initialized(store)
         # Global bundle bootstrap (one for all jobs)
         inv = Path(SETTINGS.footage_inventory_json)
         bun = Path(SETTINGS.descriptions_bundle_path)
@@ -110,16 +127,9 @@ def create_app() -> FastAPI:
             checks["redis"] = False
 
         checks["bundle"] = _bundle_ok
-        pool = WindowsNodePool(
-            redis_client=store.r,
-            key_prefix=store.key_prefix,
-            lease_ttl_s=SETTINGS.windows_node_lease_ttl_s,
-        )
-        active_urls = pool.get_active_urls(default_urls=SETTINGS.windows_render_urls)
-        checks["windows_render_nodes"] = bool(active_urls)
 
         ok = all(checks.values())
-        return {"ok": ok, "checks": checks, "windows_render_nodes": active_urls}
+        return {"ok": ok, "checks": checks}
 
     # ==========================================================
     # NEW: correct naming (audio URL -> enqueue pipeline)
@@ -133,12 +143,42 @@ def create_app() -> FastAPI:
             request=req.model_dump(mode="json"),
             idempotency_key=req.idempotency_key,
         )
+        if not created:
+            return SendVideoResponse(job_id=st.job_id, status=st.status, created=False)
 
+        worker_type: str | None = None
+        queued = False
         try:
-            store.set_status(st.job_id, "QUEUED", stage="build")
-            build_job.delay(st.job_id)
+            selected = reserve_worker_type(store, requested=req.llm_worker_type)
+            worker_type = selected.worker_type
+
+            store.patch_request(st.job_id, {"llm_worker_type": worker_type})
+            store.set_status(
+                st.job_id,
+                "QUEUED",
+                stage="build",
+                result={"llm_worker_type": worker_type},
+            )
+            queued = True
+
+            if worker_type == "sdk":
+                build_job_sdk.delay(st.job_id)
+            elif worker_type == "openrouter":
+                build_job_openrouter.delay(st.job_id)
+            elif worker_type == "hybrid":
+                build_job_hybrid.delay(st.job_id)
+            else:
+                raise RuntimeError(f"unsupported llm_worker_type: {worker_type}")
         except Exception as e:
+            if worker_type and not queued:
+                try:
+                    release_worker_slot(store, worker_type)
+                except Exception:
+                    pass
             store.set_status(st.job_id, "FAILED", stage="build", error=f"queue_failed: {e!r}")
+            msg = str(e)
+            if "capacity_exhausted" in msg or "disabled" in msg or "no_enabled_types" in msg:
+                raise HTTPException(status_code=503, detail=f"LLM workers capacity issue: {msg}")
             raise HTTPException(status_code=500, detail="Failed to enqueue job")
 
         st2 = store.get(st.job_id) or st
@@ -159,20 +199,60 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail="job not found")
         return st
 
+    @app.get("/llm-workers", response_model=LLMWorkersStatusResponse)
+    def get_llm_workers() -> LLMWorkersStatusResponse:
+        ensure_config_initialized(store)
+        status = get_runtime_status(store)
+        workers = {
+            worker_type: LLMWorkerRuntimeStatus.model_validate(row.model_dump(mode="json"))
+            for worker_type, row in status.items()
+        }
+        return LLMWorkersStatusResponse(
+            workers=workers,
+            default_worker_type=LLM_WORKER_TYPE_SDK,
+        )
+
+    @app.put("/llm-workers", response_model=LLMWorkersStatusResponse)
+    def put_llm_workers(payload: LLMWorkersConfigRequest) -> LLMWorkersStatusResponse:
+        try:
+            set_config(store, payload)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Invalid workers config: {e}") from e
+
+        status = get_runtime_status(store)
+        workers = {
+            worker_type: LLMWorkerRuntimeStatus.model_validate(row.model_dump(mode="json"))
+            for worker_type, row in status.items()
+        }
+        return LLMWorkersStatusResponse(
+            workers=workers,
+            default_worker_type=LLM_WORKER_TYPE_SDK,
+        )
+
     @app.get("/metrics")
     def metrics() -> dict:
-        """Lightweight observability endpoint — queue lengths, job status counts."""
+        """Lightweight observability endpoint for queue/job/webhook health."""
         from .celery_app import celery_app as _celery
 
         counts: dict = {"NEW": 0, "QUEUED": 0, "RUNNING": 0, "SUCCEEDED": 0, "FAILED": 0}
         jobs_error: str | None = None
         try:
             for job in store.list_jobs():
-                s = job.get("status", "")
+                s = str(getattr(job, "status", "") or "")
                 if s in counts:
                     counts[s] += 1
         except Exception as exc:
             jobs_error = repr(exc)
+        queue_depth = int(counts.get("QUEUED", 0))
+        inflight_jobs = int(counts.get("RUNNING", 0))
+        failed_jobs = int(counts.get("FAILED", 0))
+
+        llm_inflight: dict = {}
+        llm_inflight_error: str | None = None
+        try:
+            llm_inflight = get_inflight_counts(store)
+        except Exception as exc:
+            llm_inflight_error = repr(exc)
 
         queues: dict = {}
         try:
@@ -184,10 +264,33 @@ def create_app() -> FastAPI:
         except Exception:
             queues["error"] = "inspect_failed"
 
+        webhook_outcomes: dict = {}
+        activate_outcomes: dict = {}
+        render_poll_timeout_outcomes: dict = {}
+        metrics_error: str | None = None
+        try:
+            webhook_outcomes = get_counter_map(store, metric="payment_webhook_outcomes")
+            activate_outcomes = get_counter_map(store, metric="payment_activate_outcomes")
+            render_poll_timeout_outcomes = get_counter_map(
+                store,
+                metric="render_poll_timeout_outcomes",
+            )
+        except Exception as exc:
+            metrics_error = repr(exc)
+
         return {
+            "queue_depth": queue_depth,
+            "inflight_jobs": inflight_jobs,
+            "failed_jobs": failed_jobs,
             "job_status_counts": counts,
             "job_status_error": jobs_error,
+            "llm_inflight_by_worker_type": llm_inflight,
+            "llm_inflight_error": llm_inflight_error,
             "workers": queues,
+            "webhook_outcomes": webhook_outcomes,
+            "activate_outcomes": activate_outcomes,
+            "render_poll_timeout_outcomes": render_poll_timeout_outcomes,
+            "metrics_error": metrics_error,
             "bundle_ok": _bundle_ok,
         }
 

@@ -10,6 +10,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar
 
 import redis
 
+from core.llm_worker_types import normalize_llm_worker_type
 from .schemas import JobState, JobStatus
 
 
@@ -43,138 +44,14 @@ def _redis_client_from_env() -> redis.Redis:
 
 T = TypeVar("T")
 
-# ---------------------------------------------------------------------------
-# Lua scripts for atomic operations
-# ---------------------------------------------------------------------------
-
-# Atomic new_job: SET NX idem key -> if already exists, return existing job.
-# If FAILED job found for existing idem key, allow re-creation.
-# KEYS[1] = idem key (or "" if no idempotency)
-# KEYS[2] = job key
-# ARGV[1] = job_id
-# ARGV[2] = job JSON
-# ARGV[3] = idem_ttl_s (0 = no TTL)
-# ARGV[4] = "1" if idempotency_key is provided, else "0"
-# Returns: [created (0/1), job_json]
-_LUA_NEW_JOB = """
-local has_idem = ARGV[4] == "1"
-if has_idem then
-    local idem_key = KEYS[1]
-    local existing_job_id = redis.call("GET", idem_key)
-    if existing_job_id then
-        local existing_key = KEYS[2]:gsub("[^:]+$", "") .. existing_job_id
-        local existing_raw = redis.call("GET", existing_key)
-        if existing_raw then
-            local ok, obj = pcall(cjson.decode, existing_raw)
-            if ok and type(obj) == "table" then
-                local st = obj["status"] or ""
-                if st ~= "FAILED" then
-                    return {0, existing_raw}
-                end
-                -- FAILED job: delete old idem mapping and old job, allow re-creation
-                redis.call("DEL", existing_key)
-            end
-        end
-        redis.call("DEL", idem_key)
-    end
+_RELEASE_SLOT_LUA = """
+local key = KEYS[1]
+local current = tonumber(redis.call('GET', key) or '0')
+if current <= 0 then
+  redis.call('SET', key, '0')
+  return 0
 end
-
--- Create new job
-local job_key = KEYS[2]
-redis.call("SET", job_key, ARGV[2])
-
-if has_idem then
-    local idem_key = KEYS[1]
-    local ttl = tonumber(ARGV[3]) or 0
-    if ttl > 0 then
-        redis.call("SET", idem_key, ARGV[1], "EX", ttl)
-    else
-        redis.call("SET", idem_key, ARGV[1])
-    end
-end
-
-return {1, ARGV[2]}
-"""
-
-# Atomic set_status: read-modify-write in one round-trip.
-# KEYS[1] = job key
-# ARGV[1] = new status
-# ARGV[2] = stage (or "" to keep existing)
-# ARGV[3] = error (or "__NONE__" to keep existing, "__CLEAR__" to clear)
-# ARGV[4] = result JSON to shallow-merge (or "{}" for none)
-# ARGV[5] = now timestamp
-# ARGV[6] = job_ttl_s for finished jobs (0 = no TTL)
-# Returns: updated job JSON, or nil if job not found
-_LUA_SET_STATUS = """
-local raw = redis.call("GET", KEYS[1])
-if not raw then
-    return nil
-end
-
-local ok, st = pcall(cjson.decode, raw)
-if not ok or type(st) ~= "table" then
-    return nil
-end
-
-local new_status = ARGV[1]
-local new_stage = ARGV[2]
-local new_error = ARGV[3]
-local merge_result_json = ARGV[4]
-local now = tonumber(ARGV[5])
-local job_ttl = tonumber(ARGV[6]) or 0
-
-st["status"] = new_status
-st["updated_at"] = now
-
-if new_stage ~= "" then
-    st["stage"] = new_stage
-end
-
--- Timestamps: set only on first transition
-if new_status == "QUEUED" and (st["queued_at"] == nil or st["queued_at"] == false) then
-    st["queued_at"] = now
-end
-if new_status == "RUNNING" and (st["started_at"] == nil or st["started_at"] == false) then
-    st["started_at"] = now
-end
-if (new_status == "SUCCEEDED" or new_status == "FAILED") and (st["finished_at"] == nil or st["finished_at"] == false) then
-    st["finished_at"] = now
-end
-
--- Result merge
-if merge_result_json ~= "{}" then
-    local rok, new_result = pcall(cjson.decode, merge_result_json)
-    if rok and type(new_result) == "table" then
-        local base = st["result"]
-        if type(base) ~= "table" then
-            base = {}
-        end
-        for k, v in pairs(new_result) do
-            base[k] = v
-        end
-        st["result"] = base
-    end
-end
-
--- Error handling
-if new_status == "SUCCEEDED" then
-    st["error"] = nil
-elseif new_error == "__CLEAR__" then
-    st["error"] = nil
-elseif new_error ~= "__NONE__" then
-    st["error"] = new_error
-end
--- if "__NONE__", keep existing error
-
-local updated = cjson.encode(st)
-redis.call("SET", KEYS[1], updated)
-
--- Apply TTL on terminal states
-if (new_status == "SUCCEEDED" or new_status == "FAILED") and job_ttl > 0 then
-    redis.call("EXPIRE", KEYS[1], job_ttl)
-end
-
-return updated
+return redis.call('DECR', key)
 """
 
 
@@ -201,17 +78,9 @@ class JobStore:
     def _k_idem(self, idem_key: str) -> str:
         return f"{self.key_prefix}:idem:{idem_key}"
 
-    def _idem_ttl_s(self) -> int:
-        try:
-            return max(0, int(_env("JOBSTORE_IDEM_TTL_S", "604800") or "604800"))  # 7 days default
-        except Exception:
-            return 604800
-
-    def _finished_job_ttl_s(self) -> int:
-        try:
-            return max(0, int(_env("JOBSTORE_FINISHED_JOB_TTL_S", "0") or "0"))  # 0 = no TTL
-        except Exception:
-            return 0
+    def _k_llm_inflight(self, worker_type: str) -> str:
+        wt = normalize_llm_worker_type(worker_type)
+        return f"{self.key_prefix}:llm_workers:inflight:{wt}:v1"
 
     def _redis_max_attempts(self) -> int:
         try:
@@ -224,6 +93,18 @@ class JobStore:
             return max(0.0, float(_env("JOBSTORE_REDIS_BACKOFF_S", "0.5") or "0.5"))
         except Exception:
             return 0.5
+
+    def _job_ttl_seconds(self) -> int:
+        try:
+            return max(0, int(_env("JOBSTORE_JOB_TTL_SECONDS", "1209600") or "1209600"))
+        except Exception:
+            return 1209600
+
+    def _idempotency_ttl_seconds(self) -> int:
+        try:
+            return max(0, int(_env("JOBSTORE_IDEMPOTENCY_TTL_SECONDS", "1209600") or "1209600"))
+        except Exception:
+            return 1209600
 
     def _redis_call(self, op: str, fn: Callable[[], T]) -> T:
         """
@@ -266,9 +147,59 @@ class JobStore:
         except Exception:
             return None
 
+    def list_jobs(self, *, limit: Optional[int] = None) -> list[JobState]:
+        pattern = f"{self.key_prefix}:job:*"
+        keys = self._redis_call(
+            "list_jobs_scan",
+            lambda: list(self.r.scan_iter(match=pattern, count=500)),
+        )
+        if not keys:
+            return []
+
+        out: list[JobState] = []
+        max_items = int(limit) if limit is not None else 0
+        for i in range(0, len(keys), 200):
+            batch = keys[i : i + 200]
+            raw_values = self._redis_call(
+                "list_jobs_mget",
+                lambda b=batch: self.r.mget(b),
+            ) or []
+            for raw in raw_values:
+                if not raw:
+                    continue
+                try:
+                    out.append(JobState.model_validate(json.loads(raw)))
+                except Exception:
+                    continue
+
+        out.sort(key=lambda st: float(st.created_at), reverse=True)
+        if max_items > 0:
+            return out[:max_items]
+        return out
+
     def _put(self, st: JobState) -> JobState:
-        self._redis_call("set", lambda: self.r.set(self._k_job(st.job_id), st.model_dump_json()))
+        key = self._k_job(st.job_id)
+        payload = st.model_dump_json()
+        ttl_s = self._job_ttl_seconds()
+        if ttl_s > 0:
+            self._redis_call("setex", lambda: self.r.set(key, payload, ex=ttl_s))
+        else:
+            self._redis_call("set", lambda: self.r.set(key, payload))
         return st
+
+    def _is_retryable_idempotent_failure(self, st: JobState) -> bool:
+        if st.status != "FAILED":
+            return False
+        err = str(st.error or "").lower()
+        if not err:
+            return False
+        retryable_markers = (
+            "capacity_exhausted",
+            "llm_worker_disabled",
+            "llm_workers_no_enabled_types",
+            "queue_failed",
+        )
+        return any(marker in err for marker in retryable_markers)
 
     def new_job(
         self,
@@ -277,57 +208,88 @@ class JobStore:
         idempotency_key: Optional[str],
     ) -> Tuple[JobState, bool]:
         """
-        Atomic job creation with idempotency.
-
         Returns: (state, created)
-          - created=False when idempotency hit (non-FAILED existing job).
-          - If existing job is FAILED, it is deleted and a new one is created
-            (retry-after-failure semantics).
+          - created=False when idempotency hit.
         """
-        job_id = uuid.uuid4().hex
-        now = _now()
+        idem_k = self._k_idem(idempotency_key) if idempotency_key else ""
+        idem_ttl_s = self._idempotency_ttl_seconds()
 
-        st = JobState(
-            job_id=job_id,
-            status="NEW",
-            created_at=now,
-            updated_at=now,
-            queued_at=None,
-            started_at=None,
-            finished_at=None,
-            stage=None,
-            idempotency_key=idempotency_key,
-            request=request or {},
-            result=None,
-            error=None,
-        )
+        for _ in range(8):
+            if idempotency_key:
+                existing_job_id = self._redis_call("get_idem", lambda: self.r.get(idem_k))
+                if existing_job_id:
+                    st_existing = self.get(existing_job_id)
+                    if st_existing and not self._is_retryable_idempotent_failure(st_existing):
+                        return st_existing, False
+                    # stale mapping or retryable failed state -> allow fresh attempt
+                    self._redis_call("delete_idem", lambda: self.r.delete(idem_k))
 
-        has_idem = bool(idempotency_key)
-        idem_k = self._k_idem(idempotency_key) if has_idem else ""
-        job_k = self._k_job(job_id)
-        idem_ttl = self._idem_ttl_s()
+            job_id = uuid.uuid4().hex
+            now = _now()
+            st = JobState(
+                job_id=job_id,
+                status="NEW",
+                created_at=now,
+                updated_at=now,
+                queued_at=None,
+                started_at=None,
+                finished_at=None,
+                stage=None,
+                idempotency_key=idempotency_key,
+                request=request or {},
+                result=None,
+                error=None,
+            )
 
-        result = self._redis_call(
-            "new_job_atomic",
-            lambda: self.r.eval(
-                _LUA_NEW_JOB,
-                2,
-                idem_k or "__unused__",
-                job_k,
-                job_id,
-                st.model_dump_json(),
-                str(idem_ttl),
-                "1" if has_idem else "0",
-            ),
-        )
+            if idempotency_key:
+                # Claim idempotency atomically before creating job object to avoid duplicate creators.
+                if idem_ttl_s > 0:
+                    claimed = self._redis_call(
+                        "setnx_idem_ex",
+                        lambda: self.r.set(idem_k, job_id, nx=True, ex=idem_ttl_s),
+                    )
+                else:
+                    claimed = self._redis_call(
+                        "setnx_idem",
+                        lambda: self.r.set(idem_k, job_id, nx=True),
+                    )
+                if not claimed:
+                    continue
 
-        created = int(result[0]) == 1
-        job_json = result[1]
+            try:
+                self._put(st)
+            except Exception:
+                if idempotency_key:
+                    # Best-effort cleanup of a claim that points to a missing job record.
+                    try:
+                        cur = self._redis_call("get_idem_after_put_error", lambda: self.r.get(idem_k))
+                        if cur == job_id:
+                            self._redis_call("delete_idem_after_put_error", lambda: self.r.delete(idem_k))
+                    except Exception:
+                        pass
+                raise
+
+            return st, True
+
+        raise RuntimeError("new_job_failed_after_retries")
+
+    def _release_llm_slot_for_state(self, st: JobState) -> None:
+        req = st.request or {}
+        raw = str(req.get("llm_worker_type") or "").strip()
+        if not raw:
+            return
         try:
-            d = json.loads(job_json)
-            return JobState.model_validate(d), created
+            key = self._k_llm_inflight(raw)
         except Exception:
-            return st, created
+            return
+        try:
+            self._redis_call(
+                "llm_workers_release_slot",
+                lambda: self.r.eval(_RELEASE_SLOT_LUA, 1, key),
+            )
+        except Exception:
+            # Keep status update deterministic even if slot release failed.
+            pass
 
     def set_status(
         self,
@@ -368,32 +330,32 @@ class JobStore:
             ),
         )
 
-        if raw is None:
-            return None
-        try:
-            d = json.loads(raw)
-            return JobState.model_validate(d)
-        except Exception:
+        stored = self._put(st2)
+        active_statuses = {"QUEUED", "RUNNING"}
+        if st.status in active_statuses and status not in active_statuses:
+            self._release_llm_slot_for_state(st)
+        return stored
+
+    def patch_request(self, job_id: str, patch: Dict[str, Any]) -> Optional[JobState]:
+        st = self.get(job_id)
+        if not st:
             return None
 
-    def list_jobs(self, *, status_filter: Optional[str] = None, limit: int = 200) -> List[JobState]:
-        """
-        Scan-based listing. Use sparingly (admin/debug only, NOT hot path).
-        """
-        pattern = f"{self.key_prefix}:job:*"
-        out: List[JobState] = []
-        for key in self.r.scan_iter(match=pattern, count=200):
-            if len(out) >= limit:
-                break
-            raw = self.r.get(key)
-            if not raw:
-                continue
-            try:
-                d = json.loads(raw)
-                st = JobState.model_validate(d)
-            except Exception:
-                continue
-            if status_filter and st.status != status_filter:
-                continue
-            out.append(st)
-        return out
+        req = dict(st.request or {})
+        req.update(patch or {})
+
+        st2 = JobState(
+            job_id=st.job_id,
+            status=st.status,
+            created_at=st.created_at,
+            updated_at=_now(),
+            queued_at=st.queued_at,
+            started_at=st.started_at,
+            finished_at=st.finished_at,
+            stage=st.stage,
+            idempotency_key=st.idempotency_key,
+            request=req,
+            result=st.result,
+            error=st.error,
+        )
+        return self._put(st2)

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import time
-from typing import List, Optional
+from typing import List
 
 from pydantic import BaseModel, Field
 from redis.asyncio import Redis
@@ -11,7 +11,8 @@ from redis.asyncio import Redis
 from core.subtitles_mode import SUBTITLES_MODE_LEGACY_BLOCKS
 from .config import Settings
 
-log = logging.getLogger(__name__)
+log = logging.getLogger("tg_bot_botapi.state_store")
+
 
 STAGE_IDLE = "IDLE"
 STAGE_WAIT_AUDIO = "WAIT_AUDIO"
@@ -75,6 +76,7 @@ class ChatState(BaseModel):
 
     # Sticky result source for fallback links if file send fails repeatedly.
     last_result_url: str = ""
+    pending_deduction_ref_id: str = ""
 
     # Timestamp for state TTL / recovery
     updated_at: float = 0.0
@@ -92,6 +94,11 @@ class ChatState(BaseModel):
 class RedisChatStateStore:
     def __init__(self, settings: Settings):
         self._prefix = settings.tg_state_prefix.rstrip(":")
+        self._all_ids_key = f"{self._prefix}:idx:all"
+        self._processing_ids_key = f"{self._prefix}:idx:processing"
+        self._updated_at_zset_key = f"{self._prefix}:idx:updated_at"
+        self._state_ttl_s = max(3600, int(float(settings.tg_state_ttl_h) * 3600.0))
+
         self._redis = Redis(
             host=settings.redis_host,
             port=settings.redis_port,
@@ -106,42 +113,58 @@ class RedisChatStateStore:
     def _key(self, chat_id: int) -> str:
         return f"{self._prefix}:{int(chat_id)}"
 
-    async def get(self, chat_id: int) -> ChatState:
+    @staticmethod
+    def _parse_chat_id_token(token: str) -> int | None:
+        try:
+            return int(str(token).strip())
+        except Exception:
+            return None
+
+    async def _sync_indexes_for_state(self, state: ChatState) -> None:
+        chat_id = int(state.chat_id)
+        chat_token = str(chat_id)
+        stage = str(state.stage or "").strip()
+
+        await self._redis.sadd(self._all_ids_key, chat_token)
+        await self._redis.zadd(self._updated_at_zset_key, {chat_token: float(time.time())})
+
+        if stage == STAGE_PROCESSING:
+            await self._redis.sadd(self._processing_ids_key, chat_token)
+        else:
+            await self._redis.srem(self._processing_ids_key, chat_token)
+
+    async def _purge_indexes_only(self, chat_id: int) -> None:
+        chat_token = str(int(chat_id))
+        await self._redis.srem(self._all_ids_key, chat_token)
+        await self._redis.srem(self._processing_ids_key, chat_token)
+        await self._redis.zrem(self._updated_at_zset_key, chat_token)
+
+    async def _load_state_from_key(self, chat_id: int) -> ChatState | None:
         raw = await self._redis.get(self._key(chat_id))
         if not raw:
-            return ChatState(chat_id=int(chat_id))
+            return None
         try:
             obj = json.loads(raw)
-        except Exception as e:
-            log.error(
-                "chat_state_json_parse_error chat_id=%s err=%r raw_head=%s — resetting to blank state",
-                chat_id, e, repr(raw[:200]) if raw else "",
-            )
-            return ChatState(chat_id=int(chat_id))
-
-        try:
             return ChatState.model_validate(obj)
-        except Exception as e:
-            log.error(
-                "chat_state_validation_error chat_id=%s err=%r keys=%s — resetting to blank state",
-                chat_id, e, list(obj.keys()) if isinstance(obj, dict) else type(obj).__name__,
-            )
+        except Exception:
+            log.warning("state_parse_failed chat=%s", chat_id)
+            await self.delete_state(chat_id)
+            return None
+
+    async def get(self, chat_id: int) -> ChatState:
+        st = await self._load_state_from_key(int(chat_id))
+        if st is None:
             return ChatState(chat_id=int(chat_id))
+        return st
 
     async def set(self, state: ChatState) -> None:
-        state.updated_at = time.time()
-        await self._redis.set(self._key(state.chat_id), state.model_dump_json())
-        # Maintain processing index
-        await self._update_processing_index(state)
+        await self._redis.set(self._key(state.chat_id), state.model_dump_json(), ex=self._state_ttl_s)
+        await self._sync_indexes_for_state(state)
 
-    async def _update_processing_index(self, state: ChatState) -> None:
-        """Keep the processing set in sync with state transitions."""
-        member = str(state.chat_id)
-        has_jobs = bool(state.active_job_ids) or bool(state.active_job_id)
-        if state.stage == STAGE_PROCESSING and has_jobs:
-            await self._redis.sadd(self._processing_set_key, member)
-        else:
-            await self._redis.srem(self._processing_set_key, member)
+    async def delete_state(self, chat_id: int) -> None:
+        cid = int(chat_id)
+        await self._purge_indexes_only(cid)
+        await self._redis.delete(self._key(cid))
 
     async def reset_to_wait_audio(self, chat_id: int) -> ChatState:
         st = ChatState(chat_id=int(chat_id), stage=STAGE_WAIT_AUDIO)
@@ -239,24 +262,61 @@ class RedisChatStateStore:
     async def list_waiting_referral(self) -> List[ChatState]:
         """Return all chats stuck in WAITING_REFERRAL for recovery."""
         out: List[ChatState] = []
-        pattern = f"{self._prefix}:*"
-        async for key in self._redis.scan_iter(match=pattern, count=200):
-            raw = await self._redis.get(key)
-            if not raw:
+        for token in (await self._redis.smembers(self._processing_ids_key) or set()):
+            cid = self._parse_chat_id_token(token)
+            if cid is None:
                 continue
-            try:
-                obj = json.loads(raw)
-                st = ChatState.model_validate(obj)
-            except Exception as exc:
-                log.error(
-                    "state_store.list_waiting_referral: failed to parse key=%s err=%r — skipping",
-                    key,
-                    exc,
-                )
+            st = await self._load_state_from_key(cid)
+            if st is None:
                 continue
             if st.stage == STAGE_WAITING_REFERRAL:
                 out.append(st)
         return out
+
+    async def list_stale_chat_ids(self, older_than_ts: float, *, limit: int) -> List[int]:
+        tokens = await self._redis.zrangebyscore(
+            self._updated_at_zset_key,
+            min=float("-inf"),
+            max=float(older_than_ts),
+            start=0,
+            num=max(1, int(limit)),
+        )
+        out: List[int] = []
+        for token in tokens or []:
+            cid = self._parse_chat_id_token(token)
+            if cid is not None:
+                out.append(cid)
+        return out
+
+    async def cleanup_index_members(self, *, limit: int = 500) -> int:
+        max_items = max(1, int(limit))
+        to_check: List[int] = []
+
+        for token in await self._redis.zrange(self._updated_at_zset_key, 0, max_items - 1):
+            cid = self._parse_chat_id_token(token)
+            if cid is not None:
+                to_check.append(cid)
+
+        if len(to_check) < max_items:
+            for token in list(await self._redis.smembers(self._all_ids_key) or set()):
+                if len(to_check) >= max_items:
+                    break
+                cid = self._parse_chat_id_token(token)
+                if cid is not None:
+                    to_check.append(cid)
+
+        seen: set[int] = set()
+        removed = 0
+        for cid in to_check:
+            if cid in seen:
+                continue
+            seen.add(cid)
+            raw = await self._redis.get(self._key(cid))
+            if raw:
+                continue
+            await self.delete_state(cid)
+            removed += 1
+        return removed
 
     async def close(self) -> None:
         await self._redis.aclose()

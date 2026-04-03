@@ -14,6 +14,9 @@ from core.subtitles_mode import (
     SUBTITLES_MODE_TEMPLATE_4TH,
     normalize_subtitles_mode,
 )
+from core.runtime_mode import MODE_PROD
+from core.video_timing import AE_FPS, frame_duration_s, frame_epsilon_s, normalize_fps
+
 from app.orchestrator import ProjectOrchestrator
 from app.scenes_3rd_reference_builder import build_scenes_3rd_reference_layers
 from app.template_4th_reference_builder import build_template_4th_reference_layers
@@ -29,6 +32,14 @@ def _env_float(name: str, default: float) -> float:
         return float(raw)
     except Exception:
         return float(default)
+
+
+def _resolve_text_preflight_strict() -> bool:
+    mode = (os.environ.get("MODE") or "").strip().lower()
+    if mode == MODE_PROD:
+        return True
+    raw = (os.environ.get("TEXT_PREFLIGHT_STRICT", "1") or "1").strip().lower()
+    return raw not in {"0", "false", "no", "off"}
 
 
 def _normalize_layer_dict(l: Dict[str, Any], *, text_comp_name: str, mine_comp_name: str) -> None:
@@ -149,10 +160,9 @@ def _preflight_clamp_text_layers(
     preserve_adjustment_effect_curves: bool = False,
 ) -> None:
     log = logging.getLogger("app.text_comp")
-    if fps <= 0:
-        fps = COMP_FPS
-    dt = 1.0 / float(fps)
-    eps = dt / 10.0
+    fps = normalize_fps(fps, default=AE_FPS)
+    dt = frame_duration_s(fps)
+    eps = frame_epsilon_s(fps)
 
     for l in layers:
         if not isinstance(l, dict):
@@ -339,17 +349,14 @@ def build_text_layers(*, full_edit_config: Dict[str, Any], text_comp_name: str, 
             _normalize_layer_dict(l, text_comp_name=text_comp_name, mine_comp_name=mine_comp_name)
 
     comp = full_edit_config.get("composition") if isinstance(full_edit_config, dict) else {}
-    fps_raw = comp.get("fps", COMP_FPS) if isinstance(comp, dict) else COMP_FPS
-    try:
-        fps = float(fps_raw)
-    except Exception:
-        fps = COMP_FPS
+    fps_raw = comp.get("fps", AE_FPS) if isinstance(comp, dict) else AE_FPS
+    fps = normalize_fps(fps_raw, default=AE_FPS)
     if mode == SUBTITLES_MODE_LEGACY_BLOCKS:
         shift_s = _env_float("TEXT_LAYER_TIME_SHIFT_S", 0.3)
     else:
         shift_s = 0.0
     _apply_text_time_shift(layers, shift_s=shift_s)
-    strict = (os.environ.get("TEXT_PREFLIGHT_STRICT", "1").strip() != "0")
+    strict = _resolve_text_preflight_strict()
     _preflight_clamp_text_layers(
         layers,
         fps=fps,

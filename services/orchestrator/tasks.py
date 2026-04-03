@@ -19,9 +19,10 @@ from .artifacts import make_job_paths
 from .celery_app import celery_app
 from .config import SETTINGS
 from .job_store import JobStore
+from .observability_metrics import increment_counter
 from .render_manifest import build_windows_job_payload
 from .windows_client import WindowsRenderClient
-from .windows_node_pool import WindowsNodePool
+from core.llm_worker_types import normalize_llm_worker_type
 from core.subtitles_mode import SUBTITLES_MODE_LEGACY_BLOCKS, normalize_subtitles_mode
 from core.runtime_mode import MODE_PROD, get_runtime_mode
 
@@ -43,6 +44,13 @@ _REUSE_RESUME_STATE_KEYS = (
 def _is_remote_url(u: str) -> bool:
     s = (u or "").strip().lower()
     return s.startswith("http://") or s.startswith("https://") or s.startswith("s3://")
+
+
+def _inc_metric(store: JobStore, *, metric: str, label: str) -> None:
+    try:
+        increment_counter(store, metric=metric, label=label)
+    except Exception:
+        pass
 
 
 def _extract_artifacts_source(payload: Dict[str, Any]) -> str:
@@ -628,8 +636,7 @@ def _poll_started_at_from_state(st: Any) -> float:
     return time.time()
 
 
-@celery_app.task(name="orchestrator.build_job", bind=True, max_retries=8)
-def build_job(self, job_id: str) -> Dict[str, Any]:
+def _build_job_impl(self, job_id: str, *, worker_type: str) -> Dict[str, Any]:
     if get_runtime_mode() != MODE_PROD:
         raise RuntimeError("Celery build_job is allowed only in MODE=prod")
 
@@ -660,6 +667,12 @@ def build_job(self, job_id: str) -> Dict[str, Any]:
     llm_resume_state_path = paths.data_dir / "llm_resume_state.json"
 
     req = st.request or {}
+    req_worker_type = str(req.get("llm_worker_type") or "").strip()
+    llm_worker_type = normalize_llm_worker_type(req_worker_type or worker_type)
+    if llm_worker_type != worker_type:
+        raise RuntimeError(
+            f"llm_worker_type_mismatch expected={worker_type!r} got={llm_worker_type!r}"
+        )
     audio_url = str(req.get("audio_s3_url") or "").strip()
     project_id = str(req.get("project_id") or "").strip()
     lyrics_text = str(req.get("lyrics_text") or "")
@@ -737,12 +750,10 @@ def build_job(self, job_id: str) -> Dict[str, Any]:
     env["AUDIO_FILE_NAME"] = f"audio_source{audio_ext}"
 
     env["AE_MEDIA_MODE"] = "appdir"
+    env["LLM_WORKER_TYPE"] = llm_worker_type
     env["LYRICS_TEXT"] = lyrics_text
     env["TARGET_FRAGMENT"] = target_fragment
     env["SUBTITLES_MODE"] = subtitles_mode
-<<<<<<< ours
-    env["FOOTAGE_EXCLUDE_FILE_NAMES_JSON"] = json.dumps(exclude_file_names, ensure_ascii=False)
-=======
     if footage_artist_id:
         env["FOOTAGE_ARTIST_ID"] = footage_artist_id
     if exclude_file_names:
@@ -771,6 +782,7 @@ def build_job(self, job_id: str) -> Dict[str, Any]:
             "AUDIO_DIR",
             "AUDIO_FILE_NAME",
             "AE_MEDIA_MODE",
+            "LLM_WORKER_TYPE",
             "JOB_ID",
             "LYRICS_TEXT",
             "TARGET_FRAGMENT",
@@ -882,6 +894,7 @@ def build_job(self, job_id: str) -> Dict[str, Any]:
                     "AUDIO_DIR",
                     "AUDIO_FILE_NAME",
                     "AE_MEDIA_MODE",
+                    "LLM_WORKER_TYPE",
                     "JOB_ID",
                     "LYRICS_TEXT",
                     "TARGET_FRAGMENT",
@@ -1013,6 +1026,27 @@ def build_job(self, job_id: str) -> Dict[str, Any]:
     )
     dispatch_to_windows.delay(job_id)
     return {"ok": True, "stage": "build_done", "paths": paths.manifest()}
+
+
+@celery_app.task(name="orchestrator.build_job", bind=True, max_retries=8)
+def build_job(self, job_id: str) -> Dict[str, Any]:
+    # Backward-compatible task name kept for already deployed callers.
+    return _build_job_impl(self, job_id, worker_type="sdk")
+
+
+@celery_app.task(name="orchestrator.build_job_sdk", bind=True, max_retries=8)
+def build_job_sdk(self, job_id: str) -> Dict[str, Any]:
+    return _build_job_impl(self, job_id, worker_type="sdk")
+
+
+@celery_app.task(name="orchestrator.build_job_openrouter", bind=True, max_retries=8)
+def build_job_openrouter(self, job_id: str) -> Dict[str, Any]:
+    return _build_job_impl(self, job_id, worker_type="openrouter")
+
+
+@celery_app.task(name="orchestrator.build_job_hybrid", bind=True, max_retries=8)
+def build_job_hybrid(self, job_id: str) -> Dict[str, Any]:
+    return _build_job_impl(self, job_id, worker_type="hybrid")
 
 
 @celery_app.task(name="orchestrator.dispatch_to_windows", bind=True, max_retries=10)
@@ -1192,7 +1226,7 @@ def poll_windows_render(self, job_id: str, render_id: str) -> Dict[str, Any]:
     started_at = _poll_started_at_from_state(st)
     now = time.time()
     if (now - started_at) > float(SETTINGS.windows_poll_timeout_s):
-        pool.release(windows_url)
+        _inc_metric(store, metric="render_poll_timeout_outcomes", label="before_poll")
         raise RuntimeError(f"windows_poll_timeout render_id={render_id}")
 
     try:
@@ -1202,7 +1236,11 @@ def poll_windows_render(self, job_id: str, render_id: str) -> Dict[str, Any]:
             attempt = int(getattr(self.request, "retries", 0)) + 1
             remaining = float(SETTINGS.windows_poll_timeout_s) - (time.time() - started_at)
             if remaining <= 0:
-                pool.release(windows_url)
+                _inc_metric(
+                    store,
+                    metric="render_poll_timeout_outcomes",
+                    label="during_status_retry",
+                )
                 raise RuntimeError(f"windows_poll_timeout(render_status) render_id={render_id}") from e
             backoff = _retry_backoff_s(attempt=attempt, base_s=2.0, cap_s=30.0)
             backoff = min(backoff, max(1.0, remaining))
