@@ -858,6 +858,7 @@ class BlastBotApp:
 
         self._processing_task: asyncio.Task[None] | None = None
         self._recovery_task: asyncio.Task[None] | None = None
+        self._state_cleanup_task: asyncio.Task[None] | None = None
         self._bot: Bot | None = None
 
         self._register_handlers()
@@ -1072,6 +1073,7 @@ class BlastBotApp:
         self._recovery_task = asyncio.create_task(self._recovery_loop(), name="tg_bot_recovery_loop")
         self._reminder_task = asyncio.create_task(self._reminder_loop(), name="tg_bot_reminder_loop")
         self._payment_poll_task = asyncio.create_task(self._payment_poll_loop(), name="tg_bot_payment_poll")
+        self._state_cleanup_task = asyncio.create_task(self._state_cleanup_loop(), name="tg_bot_state_cleanup_loop")
         log.info("startup complete: polling loop started")
 
     async def _on_shutdown(self, bot: Bot) -> None:
@@ -1079,6 +1081,7 @@ class BlastBotApp:
         for task in [
             self._processing_task,
             self._recovery_task,
+            self._state_cleanup_task,
             getattr(self, "_reminder_task", None),
             getattr(self, "_admin_panel_task", None),
             getattr(self, "_payment_poll_task", None),
@@ -2439,6 +2442,12 @@ class BlastBotApp:
     def _recovery_interval_s(self) -> float:
         return max(15.0, float(self.settings.bot_recovery_poll_interval_s))
 
+    def _state_cleanup_interval_s(self) -> float:
+        return max(60.0, float(self.settings.tg_state_cleanup_interval_s))
+
+    def _state_ttl_s(self) -> float:
+        return max(3600.0, float(self.settings.tg_state_ttl_h) * 3600.0)
+
     def _is_processing_stuck(self, *, st: ChatState, now_ts: float) -> bool:
         if st.stage != STAGE_PROCESSING:
             return False
@@ -2496,20 +2505,53 @@ class BlastBotApp:
         while True:
             try:
                 now = time.time()
-                for st in await self.store.list_all_states():
+                waiting_states = await self.store.list_waiting_referral()
+                for st in waiting_states:
                     try:
                         if self._is_waiting_referral_stuck(st=st, now_ts=now):
                             await self._recover_referral_timeout(st)
-                            continue
+                    except Exception as e:
+                        log.warning("recovery_loop_waiting_referral chat=%s err=%r", st.chat_id, e)
+
+                processing_states = await self.store.list_processing_candidates()
+                for st in processing_states:
+                    try:
                         if self._is_processing_stuck(st=st, now_ts=now):
                             await self._recover_processing_timeout(st)
                     except Exception as e:
-                        log.warning("recovery_loop_chat_failed chat=%s err=%r", st.chat_id, e)
+                        log.warning("recovery_loop_processing chat=%s err=%r", st.chat_id, e)
             except asyncio.CancelledError:
                 raise
             except Exception as e:
                 log.warning("recovery_loop_iteration_error err=%r", e)
             await asyncio.sleep(self._recovery_interval_s())
+
+    async def _state_cleanup_loop(self) -> None:
+        while True:
+            try:
+                now = time.time()
+                cutoff = now - self._state_ttl_s()
+                batch_size = max(1, int(self.settings.tg_state_cleanup_batch_size))
+                stale_ids = await self.store.list_stale_chat_ids(cutoff, limit=batch_size)
+                removed_states = 0
+                for chat_id in stale_ids:
+                    await self.store.delete_state(chat_id)
+                    removed_states += 1
+
+                removed_indexes = await self.store.cleanup_index_members(
+                    limit=max(1, int(self.settings.tg_state_index_cleanup_batch_size))
+                )
+                if removed_states or removed_indexes:
+                    log.info(
+                        "state_cleanup summary removed_states=%s removed_orphan_indexes=%s",
+                        removed_states,
+                        removed_indexes,
+                    )
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                log.warning("state_cleanup_loop_iteration_error err=%r", e)
+            await asyncio.sleep(self._state_cleanup_interval_s())
 
     async def _processing_loop(self) -> None:
         while True:

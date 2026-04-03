@@ -738,6 +738,7 @@ class BlastBotApp:
         self.dp.include_router(self.router)
 
         self._processing_task: asyncio.Task[None] | None = None
+        self._state_cleanup_task: asyncio.Task[None] | None = None
         self._bot: Bot | None = None
 
         self._register_handlers()
@@ -878,16 +879,18 @@ class BlastBotApp:
             raise RuntimeError("CREDITS_REQUIRED=true but CREDITS_DB_URL (or POSTGRES_*) is not set")
 
         self._processing_task = asyncio.create_task(self._processing_loop(), name="tg_bot_processing_loop")
+        self._state_cleanup_task = asyncio.create_task(self._state_cleanup_loop(), name="tg_bot_state_cleanup_loop")
         log.info("startup complete: polling loop started")
 
     async def _on_shutdown(self, bot: Bot) -> None:
         del bot
-        if self._processing_task is not None:
-            self._processing_task.cancel()
-            try:
-                await self._processing_task
-            except asyncio.CancelledError:
-                pass
+        for task in [self._processing_task, self._state_cleanup_task]:
+            if task is not None:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
 
         await self.orchestrator.close()
         await self.store.close()
@@ -1532,6 +1535,41 @@ class BlastBotApp:
             if not part:
                 continue
             await bot.send_message(chat_id=chat_id, text=part, parse_mode="HTML", disable_web_page_preview=True)
+
+    def _state_cleanup_interval_s(self) -> float:
+        return max(60.0, float(self.settings.tg_state_cleanup_interval_s))
+
+    def _state_ttl_s(self) -> float:
+        return max(3600.0, float(self.settings.tg_state_ttl_h) * 3600.0)
+
+    async def _state_cleanup_loop(self) -> None:
+        while True:
+            try:
+                now = time.time()
+                cutoff = now - self._state_ttl_s()
+                stale_ids = await self.store.list_stale_chat_ids(
+                    cutoff,
+                    limit=max(1, int(self.settings.tg_state_cleanup_batch_size)),
+                )
+                removed_states = 0
+                for chat_id in stale_ids:
+                    await self.store.delete_state(chat_id)
+                    removed_states += 1
+
+                removed_indexes = await self.store.cleanup_index_members(
+                    limit=max(1, int(self.settings.tg_state_index_cleanup_batch_size))
+                )
+                if removed_states or removed_indexes:
+                    log.info(
+                        "state_cleanup summary removed_states=%s removed_orphan_indexes=%s",
+                        removed_states,
+                        removed_indexes,
+                    )
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                log.warning("state_cleanup_loop_iteration_error err=%r", e)
+            await asyncio.sleep(self._state_cleanup_interval_s())
 
     async def _processing_loop(self) -> None:
         while True:

@@ -85,6 +85,10 @@ class Settings:
 
     bot_poll_interval_s: float = _float_env("BOT_POLL_INTERVAL_S", 5.0)
     bot_status_update_interval_s: float = _float_env("BOT_STATUS_UPDATE_INTERVAL_S", 20.0)
+    tg_state_ttl_h: float = _float_env("TG_STATE_TTL_H", 720.0)
+    tg_state_cleanup_interval_s: float = _float_env("TG_STATE_CLEANUP_INTERVAL_S", 900.0)
+    tg_state_cleanup_batch_size: int = _int_env("TG_STATE_CLEANUP_BATCH_SIZE", 200)
+    tg_state_index_cleanup_batch_size: int = _int_env("TG_STATE_INDEX_CLEANUP_BATCH_SIZE", 500)
     bot_tmp_dir: str = _env("BOT_TMP_DIR", "/app/work/tg_tmp")
     bot_max_audio_mb: int = _int_env("BOT_MAX_AUDIO_MB", 5)
 

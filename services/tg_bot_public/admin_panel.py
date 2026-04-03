@@ -329,11 +329,11 @@ def build_app(
 
     @app.get("/admin/", response_class=HTMLResponse)
     async def dashboard(_user: str = Depends(_check_auth)) -> str:
-        total, ratings, funnel_raw, all_states, users, recent = await asyncio.gather(
+        total, ratings, funnel_raw, stage_counts, users, recent = await asyncio.gather(
             credits_db.count_users(),
             credits_db.rating_distribution(),
             credits_db.funnel_reach_counts(),
-            state_store.list_all_states(),
+            state_store.list_stage_counts(),
             credits_db.list_users(limit=10),
             credits_db.get_activity(limit=10),
         )
@@ -364,10 +364,7 @@ def build_app(
                 f'</div></div>\n'
             )
 
-        # ── Current stage snapshot from Redis ──
-        stage_counts: dict[str, int] = {}
-        for s in all_states:
-            stage_counts[s.stage] = stage_counts.get(s.stage, 0) + 1
+        # ── Current stage snapshot from indexed Redis counters ──
         stage_html = ""
         for stage, cnt in sorted(stage_counts.items(), key=lambda x: -x[1]):
             label = _stage_label(stage)
@@ -474,9 +471,8 @@ def build_app(
             total = await credits_db.count_users()
             total_pages = max(1, (total + per_page - 1) // per_page)
 
-        # Get current stages from Redis
-        all_states = await state_store.list_all_states()
-        stages_map = {s.chat_id: s.stage for s in all_states}
+        # Get current stages for requested page only (no full state scan).
+        stages_map = await state_store.get_stages_for_chat_ids([int(u["tg_id"]) for u in users])
 
         rows = ""
         for u in users:

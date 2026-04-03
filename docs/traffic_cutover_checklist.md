@@ -148,6 +148,30 @@
   - `PYTHONPATH=. pytest -q tests/test_tg_bot_public_mr4.py` -> `2 passed`.
 - Full smoke-suite остаётся отложенным на финальный этап цикла.
 
+## Status snapshot (2026-04-03, MR-5 Redis state growth + admin hot paths)
+
+- Убран full-scan hot path в обоих Telegram bot state stores:
+  - `services/tg_bot_public/state_store.py`;
+  - `services/tg_bot_botapi/state_store.py`.
+- Вместо `scan_iter` внедрены индексированные структуры Redis:
+  - `idx:processing` для processing loop;
+  - `idx:reminder_at` (zset) для pending reminders;
+  - `idx:all` + `idx:stage_by_chat` / `idx:stage_counts` для admin/live snapshot.
+- Public admin pages переведены с full state scan на индексированные чтения:
+  - dashboard stage snapshot теперь читает `list_stage_counts()` (без `list_all_states()`);
+  - `/admin/users` берет stage только для текущей страницы через `get_stages_for_chat_ids(...)`.
+- Введён bounded retention и cleanup stale Redis state:
+  - TTL на chat state keys (`TG_STATE_TTL_H`);
+  - фоновый cleanup loop в обоих ботах (`TG_STATE_CLEANUP_INTERVAL_S`, `TG_STATE_CLEANUP_BATCH_SIZE`, `TG_STATE_INDEX_CLEANUP_BATCH_SIZE`);
+  - orphaned index entries чистятся без полного скана всей state-истории.
+- Для recovery убран full scan всех состояний:
+  - `tg_bot_public` recovery loop теперь работает только по индексам `WAITING_REFERRAL`/`PROCESSING`.
+- Targeted verification для затронутого контура:
+  - `PYTHONPATH=. pytest -q tests/test_tg_bot_public_state_store.py` -> `6 passed`;
+  - `PYTHONPATH=. pytest -q tests/test_tg_bot_botapi_state_store.py` -> `2 passed`;
+  - `PYTHONPATH=. pytest -q tests/test_tg_bot_public_mr4.py` -> `2 passed`.
+- Full smoke-suite остаётся отложенным на финальный этап цикла.
+
 ## 1. Admission, orchestrator, job lifecycle
 
 - [x] Сделать атомарный admission / reservation для `llm_worker_type`, чтобы burst из 20-30 запросов не переполнял один и тот же backend.
@@ -182,11 +206,11 @@
 
 ## 4. Redis and state growth
 
-- [ ] Убрать full scan `list_processing()` из polling loop обоих ботов.
-- [ ] Убрать full scan `list_pending_reminders()` из reminder loop public bot.
-- [ ] Убрать full scan `list_all_states()` из тяжёлых страниц админки либо перевести их на материализованные/индексируемые представления состояния.
-- [ ] Ввести bounded retention для старых chat states там, где это допустимо продуктово.
-- [ ] Отдельно описать и внедрить политику cleanup stale Redis state после abandoned flows.
+- [x] Убрать full scan `list_processing()` из polling loop обоих ботов.
+- [x] Убрать full scan `list_pending_reminders()` из reminder loop public bot.
+- [x] Убрать full scan `list_all_states()` из тяжёлых страниц админки либо перевести их на материализованные/индексируемые представления состояния.
+- [x] Ввести bounded retention для старых chat states там, где это допустимо продуктово.
+- [x] Отдельно описать и внедрить политику cleanup stale Redis state после abandoned flows.
 
 ## 5. Render path and Windows nodes
 
@@ -203,7 +227,7 @@
 - [ ] Показать в admin UI явное предупреждение, если runtime config приводит к `no_enabled_types` или к нулевой суммарной полезной weight.
 - [ ] Улучшить payment/admin audit trail, чтобы было видно: кто начислил, по какой причине, к какому order это относится.
 - [ ] Сделать UTM summary полезнее для маркетинга: не терять `content` и `term` в основной аналитической сводке.
-- [ ] Пересмотреть тяжёлые admin pages с точки зрения operational safety: страница не должна сама создавать заметную нагрузку на Redis/бот state.
+- [x] Пересмотреть тяжёлые admin pages с точки зрения operational safety: страница не должна сама создавать заметную нагрузку на Redis/бот state.
 
 ## 7. Disk, tmp, and filesystem hygiene
 
@@ -233,7 +257,7 @@
 - [x] duplicate payment/webhook/manual activation не приводят к двойным кредитам;
 - [x] public bot не теряет кредиты без фактического запуска generation;
 - [x] failed или partial batch не маскируется под success;
-- [ ] Redis hot paths не зависят линейно от всей исторической массы jobs/chats;
+- [x] Redis hot paths не зависят линейно от всей исторической массы jobs/chats;
 - [ ] render path переживает штатный switchover Windows node без потери in-flight poll;
 - [ ] tmp/artifact growth ограничен понятной retention policy;
 - [ ] smoke tests и базовая диагностика воспроизводимы локально и на релизе.
