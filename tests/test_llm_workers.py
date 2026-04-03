@@ -174,3 +174,33 @@ def test_set_config_guardrail_rejects_all_disabled() -> None:
         assert False, "expected guardrail error"
     except RuntimeError as e:
         assert "guardrail" in str(e)
+
+
+def test_burst_reservation_does_not_oversubscribe_backends() -> None:
+    store = _FakeStore()
+    set_config(
+        store,
+        LLMWorkersConfigPayload(
+            workers={
+                "sdk": LLMWorkerControl(enabled=True, weight=1, max_inflight=2),
+                "openrouter": LLMWorkerControl(enabled=True, weight=1, max_inflight=1),
+                "hybrid": LLMWorkerControl(enabled=True, weight=1, max_inflight=1),
+            }
+        ),
+    )
+
+    successes = 0
+    failures = 0
+    for _ in range(20):
+        try:
+            choose_worker_type(store)
+            successes += 1
+        except RuntimeError as e:
+            assert "capacity_exhausted" in str(e)
+            failures += 1
+
+    assert successes == 4
+    assert failures == 16
+    assert int(store.r.get("test:llm_workers:inflight:sdk:v1") or 0) <= 2
+    assert int(store.r.get("test:llm_workers:inflight:openrouter:v1") or 0) <= 1
+    assert int(store.r.get("test:llm_workers:inflight:hybrid:v1") or 0) <= 1

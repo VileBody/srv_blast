@@ -215,16 +215,44 @@
   - `pytest -q tests/test_orchestrator_tasks_preflight_retry.py` -> `3 passed`;
   - `pytest -q tests/test_orchestrator_observability_metrics.py` -> `2 passed`.
 
+## Status snapshot (2026-04-04, MR-8 remaining non-Windows closures)
+
+- Закрыт `lost-update` в `JobStore.set_status()`:
+  - статус обновляется атомарно через Redis Lua;
+  - введён version counter в `JobState`;
+  - добавлены тесты на concurrent update merge без потери результата (`tests/test_job_store_set_status.py`).
+- `/health` сделан честным readiness endpoint:
+  - отдельные проверки `payment_db_ready` и `llm_admission_ready`;
+  - сервис не возвращает `ok=true`, если критический runtime path не готов.
+- В admin UI `LLM Workers` добавлено явное runtime-предупреждение:
+  - `no_enabled_types`;
+  - `zero_useful_weight`.
+- Улучшен payment/admin audit trail:
+  - в `transactions` добавлены `actor` и `context_order_id`;
+  - admin pages показывают `Actor/Order/Reason` в явном виде;
+  - webhook-путь пишет `actor=tbank_webhook` и связанный `order_id`.
+- UTM summary расширен до полной аналитической размерности:
+  - в таблицу выведены `content` и `term` (не теряются в основной сводке).
+- Зафиксирован релизный smoke checklist и entrypoints:
+  - `docs/release_smoke_checklist.md`;
+  - `make smoke-release ...`;
+  - `make smoke-release-payment ...`;
+  - `scripts/run_release_payment_smoke.py`.
+- Подтверждение DoD по burst enqueue:
+  - `tests/test_llm_workers.py::test_burst_reservation_does_not_oversubscribe_backends`.
+- Подтверждение воспроизводимости smoke/диагностики:
+  - формализованный чеклист + отчёты `out/release_smoke_gate_report.json` / `out/release_payment_smoke_report.json`.
+
 ## 1. Admission, orchestrator, job lifecycle
 
 - [x] Сделать атомарный admission / reservation для `llm_worker_type`, чтобы burst из 20-30 запросов не переполнял один и тот же backend.
 - [x] Убрать snapshot-only выбор worker-а и перенести ограничение inflight в атомарную Redis-операцию.
 - [x] Исправить idempotency race в `JobStore.new_job()`, чтобы параллельные одинаковые запросы не создавали несколько job-ов.
-- [ ] Исправить lost-update в `JobStore.set_status()`, чтобы параллельные обновления статуса не перетирали друг друга.
+- [x] Исправить lost-update в `JobStore.set_status()`, чтобы параллельные обновления статуса не перетирали друг друга.
 - [x] Починить retry semantics после admission failure: повтор того же idempotent request не должен навсегда возвращать старую `FAILED` job.
 - [x] Добавить retention policy для job state и idempotency keys в Redis.
 - [x] Убрать full scan всей истории jobs из hot path admission.
-- [ ] Сделать startup/health более честными: если критические runtime prerequisites не готовы, сервис не должен выглядеть "зелёным".
+- [x] Сделать startup/health более честными: если критические runtime prerequisites не готовы, сервис не должен выглядеть "зелёным".
 
 ## 2. Payments, credits, money correctness
 
@@ -267,9 +295,9 @@
 ## 6. Admin panel and operator safety
 
 - [x] Добавить guardrail в `LLM Workers` admin UI: нельзя сохранить конфиг, который effectively выключает admission на проде.
-- [ ] Показать в admin UI явное предупреждение, если runtime config приводит к `no_enabled_types` или к нулевой суммарной полезной weight.
-- [ ] Улучшить payment/admin audit trail, чтобы было видно: кто начислил, по какой причине, к какому order это относится.
-- [ ] Сделать UTM summary полезнее для маркетинга: не терять `content` и `term` в основной аналитической сводке.
+- [x] Показать в admin UI явное предупреждение, если runtime config приводит к `no_enabled_types` или к нулевой суммарной полезной weight.
+- [x] Улучшить payment/admin audit trail, чтобы было видно: кто начислил, по какой причине, к какому order это относится.
+- [x] Сделать UTM summary полезнее для маркетинга: не терять `content` и `term` в основной аналитической сводке.
 - [x] Пересмотреть тяжёлые admin pages с точки зрения operational safety: страница не должна сама создавать заметную нагрузку на Redis/бот state.
 
 ## 7. Disk, tmp, and filesystem hygiene
@@ -289,18 +317,18 @@
 - [x] Привести локальный test entrypoint к воспроизводимому виду без ручного `PYTHONPATH=.`.
 - [x] Сделать минимальный рабочий test setup для suites, которые сейчас валятся на отсутствующих `aiogram` / `celery`.
 - [x] Починить integration tests, которые сейчас упираются в жёсткую зависимость на style metadata mapping.
-- [ ] Зафиксировать smoke checklist перед релизом: enqueue, payment webhook, public bot paid flow, render dispatch, render poll, result delivery.
+- [x] Зафиксировать smoke checklist перед релизом: enqueue, payment webhook, public bot paid flow, render dispatch, render poll, result delivery.
 - [x] Добавить базовую операционную наблюдаемость по очередям, in-flight jobs, failed jobs, webhook outcomes и render poll timeouts.
 
 ## Definition of done для traffic cutover
 
 Перед активным заливом трафика должны быть подтверждены следующие свойства системы:
 
-- [ ] burst enqueue не переполняет один LLM backend из-за race condition;
+- [x] burst enqueue не переполняет один LLM backend из-за race condition;
 - [x] duplicate payment/webhook/manual activation не приводят к двойным кредитам;
 - [x] public bot не теряет кредиты без фактического запуска generation;
 - [x] failed или partial batch не маскируется под success;
 - [x] Redis hot paths не зависят линейно от всей исторической массы jobs/chats;
 - [ ] render path переживает штатный switchover Windows node без потери in-flight poll;
 - [x] tmp/artifact growth ограничен понятной retention policy;
-- [ ] smoke tests и базовая диагностика воспроизводимы локально и на релизе.
+- [x] smoke tests и базовая диагностика воспроизводимы локально и на релизе.

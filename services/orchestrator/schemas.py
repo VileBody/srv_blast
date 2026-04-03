@@ -50,6 +50,7 @@ class EnqueueJobResponse(BaseModel):
 class JobState(BaseModel):
     job_id: str
     status: JobStatus
+    version: int = Field(default=0, ge=0)
 
     created_at: float
     updated_at: float

@@ -6,7 +6,7 @@ import logging
 import time
 import uuid
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar
+from typing import Any, Callable, Dict, Optional, Tuple, TypeVar
 
 import redis
 
@@ -52,6 +52,75 @@ if current <= 0 then
   return 0
 end
 return redis.call('DECR', key)
+"""
+
+_LUA_SET_STATUS = """
+local key = KEYS[1]
+local status = ARGV[1]
+local stage_arg = ARGV[2]
+local error_arg = ARGV[3]
+local result_json = ARGV[4]
+local now = tonumber(ARGV[5]) or 0
+local ttl = tonumber(ARGV[6]) or 0
+
+local raw = redis.call('GET', key)
+if not raw then
+  return nil
+end
+
+local obj = cjson.decode(raw)
+local prev_status = tostring(obj.status or '')
+
+obj.status = status
+obj.updated_at = now
+obj.version = tonumber(obj.version or 0) + 1
+
+if stage_arg ~= '' then
+  obj.stage = stage_arg
+end
+
+if status == 'QUEUED' and not obj.queued_at then
+  obj.queued_at = now
+end
+if status == 'RUNNING' and not obj.started_at then
+  obj.started_at = now
+end
+if (status == 'SUCCEEDED' or status == 'FAILED') and not obj.finished_at then
+  obj.finished_at = now
+end
+
+if error_arg == '__CLEAR__' then
+  obj.error = cjson.null
+elseif error_arg ~= '__NONE__' then
+  obj.error = error_arg
+end
+
+local patch_obj = cjson.decode(result_json or '{}')
+if type(patch_obj) == 'table' then
+  local has_patch = false
+  for _, _ in pairs(patch_obj) do
+    has_patch = true
+    break
+  end
+  if has_patch then
+    local merged = obj.result
+    if type(merged) ~= 'table' then
+      merged = {}
+    end
+    for k, v in pairs(patch_obj) do
+      merged[k] = v
+    end
+    obj.result = merged
+  end
+end
+
+local encoded = cjson.encode(obj)
+if ttl > 0 then
+  redis.call('SET', key, encoded, 'EX', ttl)
+else
+  redis.call('SET', key, encoded)
+end
+return {prev_status, encoded}
 """
 
 
@@ -105,6 +174,15 @@ class JobStore:
             return max(0, int(_env("JOBSTORE_IDEMPOTENCY_TTL_SECONDS", "1209600") or "1209600"))
         except Exception:
             return 1209600
+
+    def _finished_job_ttl_s(self) -> int:
+        try:
+            raw = _env("JOBSTORE_FINISHED_JOB_TTL_SECONDS", "")
+            if not raw:
+                return self._job_ttl_seconds()
+            return max(0, int(raw))
+        except Exception:
+            return self._job_ttl_seconds()
 
     def _redis_call(self, op: str, fn: Callable[[], T]) -> T:
         """
@@ -229,6 +307,7 @@ class JobStore:
             st = JobState(
                 job_id=job_id,
                 status="NEW",
+                version=1,
                 created_at=now,
                 updated_at=now,
                 queued_at=None,
@@ -305,7 +384,7 @@ class JobStore:
         """
         job_k = self._k_job(job_id)
         now_s = str(_now())
-        job_ttl = self._finished_job_ttl_s()
+        job_ttl = self._finished_job_ttl_s() if status in {"SUCCEEDED", "FAILED"} else self._job_ttl_seconds()
 
         error_arg = "__NONE__"
         if error is not None:
@@ -329,11 +408,29 @@ class JobStore:
                 str(job_ttl),
             ),
         )
+        if raw is None:
+            return None
 
-        stored = self._put(st2)
+        prev_status = ""
+        encoded = ""
+        if isinstance(raw, (list, tuple)) and len(raw) >= 2:
+            prev_status = str(raw[0] or "")
+            encoded = str(raw[1] or "")
+        else:
+            encoded = str(raw or "")
+
+        if not encoded:
+            return None
+
+        try:
+            stored = JobState.model_validate(json.loads(encoded))
+        except Exception:
+            # Safety net for malformed Redis payloads.
+            return self.get(job_id)
+
         active_statuses = {"QUEUED", "RUNNING"}
-        if st.status in active_statuses and status not in active_statuses:
-            self._release_llm_slot_for_state(st)
+        if prev_status in active_statuses and stored.status not in active_statuses:
+            self._release_llm_slot_for_state(stored)
         return stored
 
     def patch_request(self, job_id: str, patch: Dict[str, Any]) -> Optional[JobState]:
@@ -347,6 +444,7 @@ class JobStore:
         st2 = JobState(
             job_id=st.job_id,
             status=st.status,
+            version=max(0, int(getattr(st, "version", 0))) + 1,
             created_at=st.created_at,
             updated_at=_now(),
             queued_at=st.queued_at,
