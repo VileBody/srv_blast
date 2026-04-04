@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 from typing import Any, Dict, Optional, Literal, List
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
+from core.llm_worker_types import LLM_WORKER_TYPE_SDK
 from core.subtitles_mode import SUBTITLES_MODE_LEGACY_BLOCKS
 
 
@@ -14,12 +15,14 @@ class SendAudioS3Request(BaseModel):
     """
     Minimal payload:
       - audio_s3_url: where raw audio is stored (http/s3/etc)
-      - mode: with_gemini | no_gemini
+      - llm_worker_type: optional explicit worker type pin
       - idempotency_key: optional dedupe key
     """
+    model_config = ConfigDict(extra="forbid")
+
     audio_s3_url: str = Field(min_length=1)
     project_id: Optional[str] = None
-    mode: Literal["with_gemini", "no_gemini"] = "with_gemini"
+    llm_worker_type: Optional[Literal["sdk", "openrouter", "hybrid"]] = None
     idempotency_key: Optional[str] = Field(default=None, min_length=1)
     lyrics_text: str = ""
     target_fragment: str = ""
@@ -59,6 +62,62 @@ class JobState(BaseModel):
     request: Dict[str, Any] = Field(default_factory=dict)
     result: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
+
+
+class LLMWorkerControl(BaseModel):
+    enabled: bool = True
+    weight: int = Field(default=1, ge=0, le=1000)
+    max_inflight: int = Field(default=4, ge=1, le=1000)
+
+
+class LLMWorkersConfigRequest(BaseModel):
+    workers: Dict[Literal["sdk", "openrouter", "hybrid"], LLMWorkerControl]
+
+
+class LLMWorkerRuntimeStatus(BaseModel):
+    enabled: bool
+    weight: int
+    max_inflight: int
+    inflight: int
+    available_slots: int
+
+
+class LLMWorkersStatusResponse(BaseModel):
+    workers: Dict[Literal["sdk", "openrouter", "hybrid"], LLMWorkerRuntimeStatus]
+    default_worker_type: Literal["sdk", "openrouter", "hybrid"] = LLM_WORKER_TYPE_SDK
+
+
+class ActiveJobSummary(BaseModel):
+    job_id: str
+    status: JobStatus
+    stage: Optional[str] = None
+    project_id: str = ""
+    llm_worker_type: str = ""
+    idempotency_key: str = ""
+    created_at: float
+    updated_at: float
+    age_seconds: int = 0
+
+
+class ActiveJobsResponse(BaseModel):
+    jobs: List[ActiveJobSummary] = Field(default_factory=list)
+    total_active: int = 0
+    min_age_seconds: int = 0
+    limit: int = 100
+
+
+class KillJobRequest(BaseModel):
+    reason: str = Field(default="admin_kill_stuck", min_length=1, max_length=500)
+
+
+class KillJobResponse(BaseModel):
+    job_id: str
+    previous_status: JobStatus
+    new_status: JobStatus
+    stage: str
+    reason: str
+    revoked_task_ids: List[str] = Field(default_factory=list)
+    project_id: str = ""
 
 
 # ---- Backward-compatible aliases (so old clients don't break) ----

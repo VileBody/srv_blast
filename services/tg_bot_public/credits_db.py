@@ -387,26 +387,32 @@ class CreditsDB:
                 "    COALESCE(NULLIF(source, ''), '(none)') AS source,"
                 "    COALESCE(NULLIF(medium, ''), '(none)') AS medium,"
                 "    COALESCE(NULLIF(campaign, ''), '(none)') AS campaign,"
+                "    COALESCE(NULLIF(content, ''), '(none)') AS content,"
+                "    COALESCE(NULLIF(term, ''), '(none)') AS term,"
                 "    COUNT(*)::BIGINT AS starts_count "
-                "  FROM utm_touches GROUP BY 1,2,3"
+                "  FROM utm_touches GROUP BY 1,2,3,4,5"
                 "),"
                 "paid AS ("
                 "  SELECT "
                 "    COALESCE(NULLIF(utm_source, ''), '(none)') AS source,"
                 "    COALESCE(NULLIF(utm_medium, ''), '(none)') AS medium,"
                 "    COALESCE(NULLIF(utm_campaign, ''), '(none)') AS campaign,"
+                "    COALESCE(NULLIF(utm_content, ''), '(none)') AS content,"
+                "    COALESCE(NULLIF(utm_term, ''), '(none)') AS term,"
                 "    COUNT(*)::BIGINT AS paid_orders,"
                 "    COALESCE(SUM(amount_rub), 0)::BIGINT AS revenue_rub "
-                "  FROM payments WHERE status = 'CONFIRMED' GROUP BY 1,2,3"
+                "  FROM payments WHERE status = 'CONFIRMED' GROUP BY 1,2,3,4,5"
                 ") "
                 "SELECT "
                 "  COALESCE(s.source, p.source) AS source,"
                 "  COALESCE(s.medium, p.medium) AS medium,"
                 "  COALESCE(s.campaign, p.campaign) AS campaign,"
+                "  COALESCE(s.content, p.content) AS content,"
+                "  COALESCE(s.term, p.term) AS term,"
                 "  COALESCE(s.starts_count, 0)::BIGINT AS starts_count,"
                 "  COALESCE(p.paid_orders, 0)::BIGINT AS paid_orders,"
                 "  COALESCE(p.revenue_rub, 0)::BIGINT AS revenue_rub "
-                "FROM starts s FULL OUTER JOIN paid p USING (source, medium, campaign) "
+                "FROM starts s FULL OUTER JOIN paid p USING (source, medium, campaign, content, term) "
                 "ORDER BY starts_count DESC, paid_orders DESC, revenue_rub DESC "
                 "LIMIT $1",
                 int(limit),
@@ -416,6 +422,8 @@ class CreditsDB:
                 "source": str(r["source"] or ""),
                 "medium": str(r["medium"] or ""),
                 "campaign": str(r["campaign"] or ""),
+                "content": str(r["content"] or ""),
+                "term": str(r["term"] or ""),
                 "starts_count": int(r["starts_count"]),
                 "paid_orders": int(r["paid_orders"]),
                 "revenue_rub": int(r["revenue_rub"]),

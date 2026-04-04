@@ -8,11 +8,22 @@ import json
 import logging
 import secrets
 from typing import TYPE_CHECKING
+from urllib.parse import quote_plus, unquote_plus
 
+import httpx
 import uvicorn
 from fastapi import FastAPI, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
+
+from .render_node_pool import (
+    RenderNodePoolError,
+    create_render_server_from_clone,
+    delete_render_server,
+    list_render_servers,
+    probe_render_node,
+)
+
 if TYPE_CHECKING:
     from .config import Settings
     from .credits_db import CreditsDB
@@ -82,7 +93,10 @@ _EVENT_LABELS = {
     "reminder_sent": "Напоминание отправлено",
     "no_credits": "Нет кредитов",
     "payment_confirmed": "Оплата подтверждена",
+    "payment_webhook_status": "Webhook оплаты",
     "admin_activate": "Активация админом",
+    "admin_credits_adjust": "Корректировка кредитов админом",
+    "admin_force_reset": "Force reset админом",
     "initial_grant": "Стартовые кредиты",
 }
 
@@ -231,6 +245,9 @@ _BASE_HEAD = """
   <a href="/admin/payments">Payments</a>
   <a href="/admin/utm">UTM</a>
   <a href="/admin/sources">Sources</a>
+  <a href="/admin/jobs">Jobs</a>
+  <a href="/admin/llm-workers">LLM Workers</a>
+  <a href="/admin/render-nodes">Render Nodes</a>
   <a href="/admin/assets/" target="_blank" rel="noopener noreferrer">Assets</a>
   <form class="search-form" action="/admin/users" method="get">
     <input type="text" name="q" placeholder="Username / tg_id...">
@@ -281,6 +298,84 @@ def _pagination_html(page: int, total_pages: int, base_url: str = "?") -> str:
     return "".join(parts)
 
 
+def _compact_text(value: str, *, limit: int = 220) -> str:
+    text = " ".join(str(value or "").split()).strip()
+    if not text:
+        return ""
+    return text[:limit]
+
+
+def _encode_audit_note(**fields: object) -> str:
+    parts: list[str] = []
+    for key, value in fields.items():
+        clean_key = _compact_text(str(key), limit=50)
+        clean_val = _compact_text(str(value), limit=260)
+        if not clean_key or not clean_val:
+            continue
+        parts.append(f"{clean_key}={quote_plus(clean_val)}")
+    return ";".join(parts)
+
+
+def _parse_audit_note(raw_note: str) -> dict[str, str]:
+    text = str(raw_note or "").strip()
+    if not text or "=" not in text:
+        return {}
+    out: dict[str, str] = {}
+    chunks = text.split(";") if ";" in text else text.split()
+    for chunk in chunks:
+        if "=" not in chunk:
+            continue
+        key, value = chunk.split("=", 1)
+        key = _compact_text(key, limit=50)
+        if not key:
+            continue
+        out[key] = _compact_text(unquote_plus(value), limit=260)
+    return out
+
+
+def _tx_audit_view(admin_note: str) -> dict[str, str]:
+    parsed = _parse_audit_note(admin_note)
+    actor = parsed.get("actor", "")
+    order_id = parsed.get("order", "")
+    payment_id = parsed.get("payment_id", "")
+    note = parsed.get("note", "")
+    if not note:
+        note = _compact_text(admin_note, limit=260)
+    return {
+        "actor": actor,
+        "order": order_id,
+        "payment_id": payment_id,
+        "note": note,
+    }
+
+
+def _seconds_to_age(seconds: int) -> str:
+    sec = max(0, int(seconds))
+    if sec < 60:
+        return f"{sec}s"
+    mins, rem = divmod(sec, 60)
+    if mins < 60:
+        return f"{mins}m {rem}s"
+    hours, mins = divmod(mins, 60)
+    if hours < 24:
+        return f"{hours}h {mins}m"
+    days, hours = divmod(hours, 24)
+    return f"{days}d {hours}h"
+
+
+def _project_chat_id(project_id: str) -> int | None:
+    raw = str(project_id or "").strip()
+    if not raw.startswith("tg-"):
+        return None
+    part = raw[3:].split("-", 1)[0].strip()
+    if not part.isdigit():
+        return None
+    try:
+        return int(part)
+    except Exception:
+        return None
+
+
 def build_app(
     credits_db: "CreditsDB",
     state_store: "StateStore",
@@ -295,6 +390,84 @@ def build_app(
         if not secrets.compare_digest(creds.password.encode(), settings.admin_panel_password.encode()):
             raise HTTPException(status_code=401, detail="Unauthorized", headers={"WWW-Authenticate": "Basic"})
         return creds.username
+
+    async def _orchestrator_get_llm_workers() -> dict:
+        base = str(settings.orchestrator_public_url or "").strip().rstrip("/")
+        if not base:
+            raise RuntimeError("ORCHESTRATOR_PUBLIC_URL is empty")
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            resp = await client.get(f"{base}/llm-workers")
+        if resp.status_code >= 300:
+            raise RuntimeError(f"orchestrator GET /llm-workers failed: {resp.status_code} {resp.text}")
+        data = resp.json()
+        if not isinstance(data, dict):
+            raise RuntimeError(f"orchestrator GET /llm-workers returned non-object: {data!r}")
+        return data
+
+    async def _orchestrator_put_llm_workers(payload: dict) -> dict:
+        base = str(settings.orchestrator_public_url or "").strip().rstrip("/")
+        if not base:
+            raise RuntimeError("ORCHESTRATOR_PUBLIC_URL is empty")
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            resp = await client.put(f"{base}/llm-workers", json=payload)
+        if resp.status_code >= 300:
+            raise RuntimeError(f"orchestrator PUT /llm-workers failed: {resp.status_code} {resp.text}")
+        data = resp.json()
+        if not isinstance(data, dict):
+            raise RuntimeError(f"orchestrator PUT /llm-workers returned non-object: {data!r}")
+        return data
+
+    async def _orchestrator_get_active_jobs(*, min_age_seconds: int, limit: int) -> dict:
+        base = str(settings.orchestrator_public_url or "").strip().rstrip("/")
+        if not base:
+            raise RuntimeError("ORCHESTRATOR_PUBLIC_URL is empty")
+        params = {
+            "min_age_seconds": max(0, int(min_age_seconds)),
+            "limit": max(1, min(int(limit), 500)),
+        }
+        async with httpx.AsyncClient(timeout=25.0) as client:
+            resp = await client.get(f"{base}/jobs/active", params=params)
+        if resp.status_code >= 300:
+            raise RuntimeError(f"orchestrator GET /jobs/active failed: {resp.status_code} {resp.text}")
+        data = resp.json()
+        if not isinstance(data, dict):
+            raise RuntimeError(f"orchestrator GET /jobs/active returned non-object: {data!r}")
+        return data
+
+    async def _orchestrator_kill_job(*, job_id: str, reason: str) -> dict:
+        base = str(settings.orchestrator_public_url or "").strip().rstrip("/")
+        if not base:
+            raise RuntimeError("ORCHESTRATOR_PUBLIC_URL is empty")
+        jid = str(job_id or "").strip()
+        if not jid:
+            raise RuntimeError("job_id is empty")
+        payload = {"reason": _compact_text(reason, limit=300) or "admin_panel_kill_stuck"}
+        async with httpx.AsyncClient(timeout=25.0) as client:
+            resp = await client.post(f"{base}/jobs/{jid}/kill", json=payload)
+        if resp.status_code >= 300:
+            raise RuntimeError(f"orchestrator POST /jobs/{jid}/kill failed: {resp.status_code} {resp.text}")
+        data = resp.json()
+        if not isinstance(data, dict):
+            raise RuntimeError(f"orchestrator POST /jobs/{jid}/kill returned non-object: {data!r}")
+        return data
+
+    render_nodes_lock = asyncio.Lock()
+
+    def _render_nodes_config_error() -> str:
+        if not str(settings.twc_token or "").strip():
+            return "TWC_TOKEN is empty"
+        if int(settings.twc_render_source_server_id or 0) <= 0:
+            return "TWC_RENDER_SOURCE_SERVER_ID must be > 0"
+        return ""
+
+    def _render_nodes_redirect(*, ok: str = "", err: str = "") -> RedirectResponse:
+        query: list[str] = []
+        if ok:
+            query.append(f"ok={quote_plus(str(ok))}")
+        if err:
+            query.append(f"err={quote_plus(str(err))}")
+        suffix = "?" + "&".join(query) if query else ""
+        return RedirectResponse(f"/admin/render-nodes{suffix}", status_code=303)
 
     # ── Dashboard ─────────────────────────────────────────────────────
 
@@ -508,9 +681,16 @@ def build_app(
         tx_rows = ""
         for t in txs:
             sign = "+" if t["amount"] > 0 else ""
+            audit = _tx_audit_view(str(t["admin_note"]))
+            actor = html_mod.escape(audit["actor"] or "—")
+            order_id = html_mod.escape(audit["order"] or "—")
+            payment_id = html_mod.escape(audit["payment_id"] or "—")
+            note = html_mod.escape(audit["note"] or "")
             tx_rows += (
                 f"<tr><td>{t['id']}</td><td>{sign}{t['amount']}</td>"
-                f"<td>{t['reason']}</td><td>{t['admin_note']}</td><td>{t['created_at']}</td></tr>"
+                f"<td>{html_mod.escape(str(t['reason']))}</td>"
+                f"<td>{actor}</td><td>{order_id}</td><td>{payment_id}</td>"
+                f"<td>{note}</td><td>{t['created_at']}</td></tr>"
             )
 
         # Activity log
@@ -537,6 +717,8 @@ def build_app(
         <form method="post" action="/admin/users/{tg_id}/credits">
           <input type="number" name="amount" value="0" min="-1000" max="10000">
           <input type="text" name="reason" placeholder="reason" style="width:150px">
+          <input type="text" name="order_id" placeholder="order_id (optional)" style="width:220px">
+          <input type="text" name="note" placeholder="note (optional)" style="width:220px">
           <button type="submit">Add credits</button>
         </form>
         </div>
@@ -547,6 +729,8 @@ def build_app(
         Юзер получит уведомление в Telegram.</p>
         <form method="post" action="/admin/users/{tg_id}/activate" onsubmit="return confirm('Активировать пакет для {html_mod.escape(uname, quote=True).replace(chr(39), "&#39;")}'?)">
           <select name="package">{pkg_options}</select>
+          <input type="text" name="order_id" placeholder="order_id (optional)" style="width:220px">
+          <input type="text" name="note" placeholder="note (optional)" style="width:220px">
           <button type="submit" class="btn-success">Активировать</button>
         </form>
         </div>
@@ -562,33 +746,72 @@ def build_app(
         <div class="card">
         <h3>Транзакции</h3>
         <div class="table-wrap">
-        <table><tr><th>#</th><th>Amount</th><th>Reason</th><th>Note</th><th>Date</th></tr>
-        {tx_rows if tx_rows else '<tr><td colspan="5">Нет данных</td></tr>'}</table>
+        <table><tr><th>#</th><th>Amount</th><th>Reason</th><th>Actor</th><th>Order</th><th>PaymentId</th><th>Note</th><th>Date</th></tr>
+        {tx_rows if tx_rows else '<tr><td colspan="8">Нет данных</td></tr>'}</table>
         </div>
         </div>
         """
         return _page(f"User {uname}", body)
 
     @app.post("/admin/users/{tg_id}/credits")
-    async def user_add_credits(tg_id: int, amount: int = Form(...), reason: str = Form("admin_panel"), _user: str = Depends(_check_auth)) -> RedirectResponse:
-        await credits_db.add_credits(tg_id, amount, reason, admin_note=f"via panel by {_user}")
+    async def user_add_credits(
+        tg_id: int,
+        amount: int = Form(...),
+        reason: str = Form("admin_panel"),
+        order_id: str = Form(""),
+        note: str = Form(""),
+        _user: str = Depends(_check_auth),
+    ) -> RedirectResponse:
+        reason_clean = _compact_text(reason, limit=120) or "admin_panel"
+        order_clean = _compact_text(order_id, limit=160)
+        note_clean = _compact_text(note, limit=220)
+        admin_note = _encode_audit_note(
+            actor=_user,
+            order=order_clean,
+            note=note_clean,
+            source="admin_panel",
+        )
+        await credits_db.add_credits(tg_id, amount, reason_clean, admin_note=admin_note)
+        await credits_db.log_event(
+            tg_id,
+            "admin_credits_adjust",
+            _compact_text(f"credits_adjust amount={amount} reason={reason_clean} by {_user} order={order_clean}", limit=220),
+        )
         return RedirectResponse(f"/admin/users/{tg_id}", status_code=303)
 
     # ── Activate package (external payment) ───────────────────────────
 
     @app.post("/admin/users/{tg_id}/activate")
-    async def user_activate_package(tg_id: int, package: int = Form(...), _user: str = Depends(_check_auth)) -> RedirectResponse:
+    async def user_activate_package(
+        tg_id: int,
+        package: int = Form(...),
+        order_id: str = Form(""),
+        note: str = Form(""),
+        _user: str = Depends(_check_auth),
+    ) -> RedirectResponse:
         pkg_label = _PACKAGES.get(str(package), f"{package} credits")
+        order_clean = _compact_text(order_id, limit=160)
+        note_clean = _compact_text(note, limit=220)
         # 1. Add credits
         await credits_db.add_credits(
             tg_id, package,
             reason="admin_activate",
-            admin_note=f"{pkg_label} — activated by {_user}",
+            admin_note=_encode_audit_note(
+                actor=_user,
+                order=order_clean,
+                package=pkg_label,
+                note=note_clean,
+                source="admin_panel",
+            ),
         )
         # 2. Move to WAIT_AUDIO
         await state_store.reset_to_wait_audio(tg_id)
         # 3. Log event
-        await credits_db.log_event(tg_id, "admin_activate", f"{pkg_label} by {_user}")
+        await credits_db.log_event(
+            tg_id,
+            "admin_activate",
+            _compact_text(f"package={pkg_label} by={_user} order={order_clean}", limit=220),
+        )
         # 4. Notify user via Telegram
         if bot_ref and bot_ref[0]:
             try:
@@ -651,15 +874,21 @@ def build_app(
         rows = ""
         for t in txs:
             sign = "+" if t["amount"] > 0 else ""
+            audit = _tx_audit_view(str(t["admin_note"]))
             rows += (
                 f"<tr><td>{t['id']}</td><td>{t['tg_id']}</td><td>{sign}{t['amount']}</td>"
-                f"<td>{t['reason']}</td><td>{html_mod.escape(str(t['admin_note']))}</td><td>{t['created_at']}</td></tr>"
+                f"<td>{html_mod.escape(str(t['reason']))}</td>"
+                f"<td>{html_mod.escape(audit['actor'] or '—')}</td>"
+                f"<td>{html_mod.escape(audit['order'] or '—')}</td>"
+                f"<td>{html_mod.escape(audit['payment_id'] or '—')}</td>"
+                f"<td>{html_mod.escape(audit['note'])}</td>"
+                f"<td>{t['created_at']}</td></tr>"
             )
         body = f"""
         <div class="card">
         <p>Total: {total}</p>
         <div class="table-wrap">
-        <table><tr><th>#</th><th>tg_id</th><th>Amount</th><th>Reason</th><th>Note</th><th>Date</th></tr>
+        <table><tr><th>#</th><th>tg_id</th><th>Amount</th><th>Reason</th><th>Actor</th><th>Order</th><th>PaymentId</th><th>Note</th><th>Date</th></tr>
         {rows}</table>
         </div>
         {_pagination_html(page, total_pages)}
@@ -686,6 +915,7 @@ def build_app(
                 f"<tr><td>{p['id']}</td>"
                 f"<td><a href='/admin/users/{p['tg_id']}'>{p['tg_id']}</a></td>"
                 f"<td>{p['order_id']}</td>"
+                f"<td>{html_mod.escape(str(p.get('payment_id') or '—'))}</td>"
                 f"<td>{p['amount_rub']}&rub;</td>"
                 f"<td>{p['package']}</td>"
                 f"<td><span class='badge {status_cls}'>{p['status']}</span></td>"
@@ -695,7 +925,7 @@ def build_app(
         <div class="card">
         <p>Total: {total}</p>
         <div class="table-wrap">
-        <table><tr><th>#</th><th>tg_id</th><th>Order</th><th>Amount</th><th>Package</th><th>Status</th><th>Date</th></tr>
+        <table><tr><th>#</th><th>tg_id</th><th>Order</th><th>PaymentId</th><th>Amount</th><th>Package</th><th>Status</th><th>Date</th></tr>
         {rows}</table>
         </div>
         {_pagination_html(page, total_pages)}
@@ -715,6 +945,8 @@ def build_app(
                 f"<td>{row['source'] or '(none)'}</td>"
                 f"<td>{row['medium'] or '(none)'}</td>"
                 f"<td>{row['campaign'] or '(none)'}</td>"
+                f"<td>{row.get('content', '') or '(none)'}</td>"
+                f"<td>{row.get('term', '') or '(none)'}</td>"
                 f"<td>{row['starts_count']}</td>"
                 f"<td>{row['paid_orders']}</td>"
                 f"<td>{row['revenue_rub']}₽</td>"
@@ -723,8 +955,8 @@ def build_app(
         body = f"""
         <div class="card">
         <div class="table-wrap">
-        <table><tr><th>Source</th><th>Medium</th><th>Campaign</th><th>Starts</th><th>Paid</th><th>Revenue</th></tr>
-        {rows if rows else '<tr><td colspan="6">Нет данных</td></tr>'}</table>
+        <table><tr><th>Source</th><th>Medium</th><th>Campaign</th><th>Content</th><th>Term</th><th>Starts</th><th>Paid</th><th>Revenue</th></tr>
+        {rows if rows else '<tr><td colspan="8">Нет данных</td></tr>'}</table>
         </div>
         </div>
         """
@@ -836,6 +1068,455 @@ def build_app(
         """
         return _page(f"Источник: {src_escaped}", body)
 
+    # ── Jobs (stuck/in-flight control) ──────────────────────────────
+
+    @app.get("/admin/jobs", response_class=HTMLResponse)
+    async def jobs_page(request: Request, _user: str = Depends(_check_auth)) -> str:
+        try:
+            min_age_seconds = int(str(request.query_params.get("min_age_seconds", "900")).strip() or "900")
+        except Exception:
+            min_age_seconds = 900
+        try:
+            limit = int(str(request.query_params.get("limit", "200")).strip() or "200")
+        except Exception:
+            limit = 200
+        min_age_seconds = max(0, min(min_age_seconds, 604800))
+        limit = max(1, min(limit, 500))
+
+        ok_msg = html_mod.escape(str(request.query_params.get("ok", "")).strip())
+        err_msg = html_mod.escape(str(request.query_params.get("err", "")).strip())
+        data: dict = {}
+        if not err_msg:
+            try:
+                data = await _orchestrator_get_active_jobs(min_age_seconds=min_age_seconds, limit=limit)
+            except Exception as e:
+                err_msg = html_mod.escape(str(e))
+
+        jobs_obj = data.get("jobs") if isinstance(data, dict) else None
+        jobs = jobs_obj if isinstance(jobs_obj, list) else []
+        total_active = int(data.get("total_active", 0) or 0) if isinstance(data, dict) else 0
+
+        rows = ""
+        for row in jobs:
+            if not isinstance(row, dict):
+                continue
+            jid = html_mod.escape(str(row.get("job_id") or ""))
+            status = html_mod.escape(str(row.get("status") or ""))
+            stage = html_mod.escape(str(row.get("stage") or ""))
+            project_id = html_mod.escape(str(row.get("project_id") or ""))
+            worker_type = html_mod.escape(str(row.get("llm_worker_type") or ""))
+            age_seconds = int(row.get("age_seconds", 0) or 0)
+            updated_at = float(row.get("updated_at", 0.0) or 0.0)
+            age_human = _seconds_to_age(age_seconds)
+            updated_s = f"{updated_at:.0f}"
+
+            rows += (
+                f"<tr>"
+                f"<td><code>{jid}</code></td>"
+                f"<td>{status}</td>"
+                f"<td>{stage or '—'}</td>"
+                f"<td>{project_id or '—'}</td>"
+                f"<td>{worker_type or '—'}</td>"
+                f"<td>{age_human}</td>"
+                f"<td>{updated_s}</td>"
+                f"<td>"
+                f"  <form method='post' action='/admin/jobs/{jid}/kill' "
+                f"        onsubmit=\"return confirm('Kill job {jid}?');\">"
+                f"    <input type='hidden' name='min_age_seconds' value='{min_age_seconds}'>"
+                f"    <input type='hidden' name='limit' value='{limit}'>"
+                f"    <input type='text' name='reason' value='stuck_job_manual_kill' style='width:170px'>"
+                f"    <button type='submit' class='btn-danger'>Kill</button>"
+                f"  </form>"
+                f"</td>"
+                f"</tr>"
+            )
+
+        body = f"""
+        <div class="card">
+        <h2>In-flight / stuck jobs</h2>
+        {f"<p style='color:#1e8449'><strong>OK:</strong> {ok_msg}</p>" if ok_msg else ""}
+        {f"<p style='color:#c0392b'><strong>Ошибка:</strong> {err_msg}</p>" if err_msg else ""}
+        <form method="get" action="/admin/jobs" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <label>Min age (sec): <input type="number" name="min_age_seconds" value="{min_age_seconds}" min="0" max="604800"></label>
+          <label>Limit: <input type="number" name="limit" value="{limit}" min="1" max="500"></label>
+          <button type="submit">Refresh</button>
+        </form>
+        <p style="margin-top:8px">Active jobs (after filter): <strong>{total_active}</strong></p>
+        <div class="table-wrap">
+        <table><tr><th>Job</th><th>Status</th><th>Stage</th><th>Project</th><th>Worker</th><th>Age</th><th>Updated</th><th>Action</th></tr>
+        {rows if rows else '<tr><td colspan="8">Нет job по текущему фильтру</td></tr>'}</table>
+        </div>
+        <p style="color:#666;font-size:0.88em">Kill ставит job в FAILED и пытается revoke Celery task. Для проектов вида <code>tg-{{chat_id}}-...</code> дополнительно делается reset пользователя в WAIT_AUDIO.</p>
+        </div>
+        """
+        return _page("Jobs", body)
+
+    @app.post("/admin/jobs/{job_id}/kill")
+    async def jobs_kill(
+        job_id: str,
+        reason: str = Form("stuck_job_manual_kill"),
+        min_age_seconds: int = Form(900),
+        limit: int = Form(200),
+        _user: str = Depends(_check_auth),
+    ) -> RedirectResponse:
+        min_age = max(0, min(int(min_age_seconds), 604800))
+        out_limit = max(1, min(int(limit), 500))
+        base_q = f"min_age_seconds={min_age}&limit={out_limit}"
+
+        jid = str(job_id or "").strip()
+        if not jid:
+            return RedirectResponse(f"/admin/jobs?{base_q}&err={quote_plus('empty job_id')}", status_code=303)
+
+        reason_clean = _compact_text(reason, limit=220) or "stuck_job_manual_kill"
+        actor_reason = _compact_text(f"{reason_clean} by {_user}", limit=260)
+        try:
+            res = await _orchestrator_kill_job(job_id=jid, reason=actor_reason)
+            project_id = str(res.get("project_id") or "")
+            chat_id = _project_chat_id(project_id)
+            if chat_id:
+                try:
+                    await state_store.reset_to_wait_audio(chat_id)
+                    await credits_db.log_event(chat_id, "admin_force_reset", f"job={jid} by {_user}")
+                except Exception as e:
+                    log.warning("jobs_kill: reset_to_wait_audio failed job=%s chat_id=%s err=%s", jid, chat_id, e)
+            revoked_ids = res.get("revoked_task_ids")
+            revoked_count = len(revoked_ids) if isinstance(revoked_ids, list) else 0
+            ok = f"killed job={jid}; revoked={revoked_count}; project={project_id or '-'}"
+            return RedirectResponse(f"/admin/jobs?{base_q}&ok={quote_plus(ok)}", status_code=303)
+        except Exception as e:
+            return RedirectResponse(f"/admin/jobs?{base_q}&err={quote_plus(str(e))}", status_code=303)
+
+    # ── Render nodes lifecycle control ──────────────────────────────
+
+    @app.get("/admin/render-nodes", response_class=HTMLResponse)
+    async def render_nodes_page(request: Request, _user: str = Depends(_check_auth)) -> str:
+        ok_msg = html_mod.escape(str(request.query_params.get("ok", "")).strip())
+        err_msg = html_mod.escape(str(request.query_params.get("err", "")).strip())
+        config_err = _render_nodes_config_error()
+        source_server_id = int(settings.twc_render_source_server_id or 0)
+        include_ids = {source_server_id} if source_server_id > 0 else set()
+
+        rows_html = ""
+        if not config_err:
+            try:
+                servers = await list_render_servers(
+                    settings.twc_token,
+                    name_prefix=settings.twc_render_name_prefix,
+                    include_ids=include_ids,
+                )
+            except Exception as e:
+                servers = []
+                if not err_msg:
+                    err_msg = html_mod.escape(str(e))
+            for srv in servers:
+                sid = int(srv.get("id") or 0)
+                name = html_mod.escape(str(srv.get("name") or ""))
+                status = html_mod.escape(str(srv.get("status") or ""))
+                ipv4 = html_mod.escape(str(srv.get("ipv4") or ""))
+                created = html_mod.escape(str(srv.get("created_at") or ""))
+                windows_url = f"http://{ipv4}:8000" if ipv4 else ""
+                windows_url_esc = html_mod.escape(windows_url)
+
+                if sid == source_server_id:
+                    role = "<span class='badge badge-ok'>source image</span>"
+                    actions = "<span style='color:#7f8c8d'>delete disabled</span>"
+                else:
+                    role = "<span class='badge badge-stage'>worker</span>"
+                    actions = (
+                        f"<form method='post' action='/admin/render-nodes/delete' "
+                        f"onsubmit=\"return confirm('Delete server #{sid}?');\">"
+                        f"<input type='hidden' name='server_id' value='{sid}'>"
+                        f"<button class='btn-danger' type='submit'>Delete</button>"
+                        f"</form>"
+                    )
+
+                probe_action = ""
+                if windows_url:
+                    probe_action = (
+                        f"<form method='post' action='/admin/render-nodes/probe'>"
+                        f"<input type='hidden' name='windows_url' value='{windows_url_esc}'>"
+                        f"<button type='submit'>Probe</button>"
+                        f"</form>"
+                    )
+
+                rows_html += (
+                    f"<tr>"
+                    f"<td>{sid}</td>"
+                    f"<td>{name}</td>"
+                    f"<td>{role}</td>"
+                    f"<td>{status}</td>"
+                    f"<td>{ipv4 or '-'}</td>"
+                    f"<td>{windows_url_esc or '-'}</td>"
+                    f"<td>{created}</td>"
+                    f"<td>{probe_action}</td>"
+                    f"<td>{actions}</td>"
+                    f"</tr>"
+                )
+
+        busy = render_nodes_lock.locked()
+        busy_note = (
+            "<p style='color:#c0392b'><strong>Операция в процессе:</strong> "
+            "подождите завершения create/delete.</p>"
+            if busy
+            else ""
+        )
+        create_disabled = " disabled" if bool(config_err or busy) else ""
+        source_input_value = source_server_id if source_server_id > 0 else ""
+        source_input_escaped = html_mod.escape(str(source_input_value))
+        prefix_input_escaped = html_mod.escape(str(settings.twc_render_name_prefix or "blast-worker-node"))
+        firewall_group_escaped = html_mod.escape(str(settings.twc_render_firewall_group_id or ""))
+        windows_render_url_escaped = html_mod.escape(str(settings.windows_render_url or ""))
+
+        body = f"""
+        <div class="card">
+        <h2>Текущий runtime контур</h2>
+        <p><strong>WINDOWS_RENDER_URL:</strong> <code>{windows_render_url_escaped or '(empty)'}</code></p>
+        <p><strong>Source server id:</strong> <code>{source_input_escaped or '(empty)'}</code><br>
+           <strong>Name prefix:</strong> <code>{prefix_input_escaped}</code><br>
+           <strong>Firewall group id:</strong> <code>{firewall_group_escaped or '(empty)'}</code></p>
+        {f"<p style='color:#c0392b'><strong>Config error:</strong> {html_mod.escape(config_err)}</p>" if config_err else ""}
+        {f"<p style='color:#1e8449'><strong>OK:</strong> {ok_msg}</p>" if ok_msg else ""}
+        {f"<p style='color:#c0392b'><strong>Error:</strong> {err_msg}</p>" if err_msg else ""}
+        {busy_note}
+        </div>
+
+        <div class="card">
+        <h2>Create node from source image</h2>
+        <form method="post" action="/admin/render-nodes/create">
+          <p>
+            Source server id:
+            <input type="number" name="source_server_id" value="{source_input_escaped}" min="1">
+            &nbsp;&nbsp; Name prefix:
+            <input type="text" name="name_prefix" value="{prefix_input_escaped}">
+          </p>
+          <p><button type="submit" class="btn-success"{create_disabled}>Create Render Node</button></p>
+        </form>
+        <p style="color:#7f8c8d">Create waits for VM status=on, public IPv4 and reachable render API contract.</p>
+        </div>
+
+        <div class="card">
+        <h2>Known render nodes</h2>
+        <div class="table-wrap">
+        <table><tr>
+          <th>ID</th><th>Name</th><th>Role</th><th>Status</th><th>IPv4</th><th>URL</th>
+          <th>Created</th><th>Probe</th><th>Action</th>
+        </tr>
+        {rows_html if rows_html else '<tr><td colspan="9">No data</td></tr>'}
+        </table>
+        </div>
+        </div>
+        """
+        return _page("Render Nodes", body)
+
+    @app.post("/admin/render-nodes/create")
+    async def render_nodes_create(
+        source_server_id: int = Form(0),
+        name_prefix: str = Form(""),
+        _user: str = Depends(_check_auth),
+    ) -> RedirectResponse:
+        config_err = _render_nodes_config_error()
+        if config_err:
+            return _render_nodes_redirect(err=config_err)
+        if render_nodes_lock.locked():
+            return _render_nodes_redirect(err="Another render-node operation is already running")
+
+        src_id = int(source_server_id or 0) or int(settings.twc_render_source_server_id or 0)
+        if src_id <= 0:
+            return _render_nodes_redirect(err="source_server_id must be > 0")
+        prefix = str(name_prefix or "").strip() or str(settings.twc_render_name_prefix or "blast-worker-node")
+
+        try:
+            async with render_nodes_lock:
+                res = await create_render_server_from_clone(
+                    token=settings.twc_token,
+                    source_server_id=src_id,
+                    firewall_group_id=settings.twc_render_firewall_group_id,
+                    name_prefix=prefix,
+                    wait_on_timeout_s=int(settings.twc_render_wait_on_timeout_s or 1800),
+                    wait_api_timeout_s=int(settings.twc_render_wait_api_timeout_s or 900),
+                )
+        except RenderNodePoolError as e:
+            return _render_nodes_redirect(err=str(e))
+        except Exception as e:
+            return _render_nodes_redirect(err=f"unexpected error: {e}")
+
+        sid = int(res.get("server_id") or 0)
+        url = str(res.get("windows_url") or "")
+        probe = res.get("probe")
+        return _render_nodes_redirect(ok=f"created server_id={sid} url={url} probe={probe}")
+
+    @app.post("/admin/render-nodes/delete")
+    async def render_nodes_delete(
+        server_id: int = Form(...),
+        _user: str = Depends(_check_auth),
+    ) -> RedirectResponse:
+        token = str(settings.twc_token or "").strip()
+        if not token:
+            return _render_nodes_redirect(err="TWC_TOKEN is empty")
+        if render_nodes_lock.locked():
+            return _render_nodes_redirect(err="Another render-node operation is already running")
+
+        sid = int(server_id or 0)
+        if sid <= 0:
+            return _render_nodes_redirect(err="server_id must be > 0")
+        if sid == int(settings.twc_render_source_server_id or 0):
+            return _render_nodes_redirect(err="Refusing to delete source image server")
+
+        try:
+            async with render_nodes_lock:
+                await delete_render_server(
+                    token=token,
+                    server_id=sid,
+                    firewall_group_id=settings.twc_render_firewall_group_id,
+                )
+        except RenderNodePoolError as e:
+            return _render_nodes_redirect(err=str(e))
+        except Exception as e:
+            return _render_nodes_redirect(err=f"unexpected error: {e}")
+        return _render_nodes_redirect(ok=f"deleted server_id={sid}")
+
+    @app.post("/admin/render-nodes/probe")
+    async def render_nodes_probe(
+        windows_url: str = Form(""),
+        _user: str = Depends(_check_auth),
+    ) -> RedirectResponse:
+        base = str(windows_url or "").strip().rstrip("/")
+        if not base:
+            return _render_nodes_redirect(err="windows_url is empty")
+        try:
+            codes = await probe_render_node(base, timeout_s=8.0)
+        except Exception as e:
+            return _render_nodes_redirect(err=f"probe failed: {e}")
+        return _render_nodes_redirect(ok=f"probe {base} => {codes}")
+
+    # ── LLM workers runtime control ────────────────────────────────
+
+    @app.get("/admin/llm-workers", response_class=HTMLResponse)
+    async def llm_workers_page(_user: str = Depends(_check_auth)) -> str:
+        err = ""
+        data: dict = {}
+        try:
+            data = await _orchestrator_get_llm_workers()
+        except Exception as e:
+            err = html_mod.escape(str(e))
+
+        workers_obj = data.get("workers") if isinstance(data, dict) else None
+        workers = workers_obj if isinstance(workers_obj, dict) else {}
+        order = ("sdk", "openrouter", "hybrid")
+        enabled_types: list[str] = []
+        enabled_weight_total = 0
+
+        rows = ""
+        for wt in order:
+            row = workers.get(wt) if isinstance(workers.get(wt), dict) else {}
+            enabled = bool(row.get("enabled", False))
+            weight = int(row.get("weight", 0) or 0)
+            max_inflight = int(row.get("max_inflight", 1) or 1)
+            inflight = int(row.get("inflight", 0) or 0)
+            slots = int(row.get("available_slots", max(0, max_inflight - inflight)) or 0)
+            if enabled:
+                enabled_types.append(wt)
+                enabled_weight_total += max(0, int(weight))
+            rows += (
+                f"<tr>"
+                f"<td><strong>{wt}</strong></td>"
+                f"<td>{'on' if enabled else 'off'}</td>"
+                f"<td>{weight}</td>"
+                f"<td>{max_inflight}</td>"
+                f"<td>{inflight}</td>"
+                f"<td>{slots}</td>"
+                f"</tr>"
+            )
+
+        def _enabled_select(name: str, selected: bool) -> str:
+            on_sel = " selected" if selected else ""
+            off_sel = " selected" if not selected else ""
+            return (
+                f'<select name="{name}">'
+                f'<option value="1"{on_sel}>on</option>'
+                f'<option value="0"{off_sel}>off</option>'
+                f"</select>"
+            )
+
+        form_rows = ""
+        for wt in order:
+            row = workers.get(wt) if isinstance(workers.get(wt), dict) else {}
+            enabled = bool(row.get("enabled", False))
+            weight = int(row.get("weight", 1) or 1)
+            max_inflight = int(row.get("max_inflight", 4) or 4)
+            form_rows += (
+                f"<tr>"
+                f"<td><strong>{wt}</strong></td>"
+                f"<td>{_enabled_select(f'{wt}_enabled', enabled)}</td>"
+                f"<td><input type='number' name='{wt}_weight' value='{weight}' min='0' max='1000'></td>"
+                f"<td><input type='number' name='{wt}_max_inflight' value='{max_inflight}' min='1' max='1000'></td>"
+                f"</tr>"
+            )
+
+        warnings: list[str] = []
+        if workers:
+            if not enabled_types:
+                warnings.append("Runtime config сейчас даёт no_enabled_types: все worker types выключены.")
+            elif enabled_weight_total <= 0:
+                warnings.append("Runtime config сейчас даёт нулевую суммарную полезную weight: admission не сможет выбрать worker.")
+
+        warnings_html = ""
+        if warnings:
+            warnings_rows = "".join(
+                f"<p style='color:#c0392b'><strong>Warning:</strong> {html_mod.escape(msg)}</p>"
+                for msg in warnings
+            )
+            warnings_html = f"<div class='card'>{warnings_rows}</div>"
+
+        body = f"""
+        {warnings_html}
+        <div class="card">
+        <h2>Текущий runtime статус</h2>
+        {f"<p style='color:#c0392b'><strong>Ошибка:</strong> {err}</p>" if err else ""}
+        <div class="table-wrap">
+        <table><tr><th>Worker</th><th>Enabled</th><th>Weight</th><th>Max inflight</th><th>Inflight</th><th>Free slots</th></tr>
+        {rows if rows else '<tr><td colspan="6">Нет данных</td></tr>'}</table>
+        </div>
+        </div>
+
+        <div class="card">
+        <h2>Обновить конфиг</h2>
+        <form method="post" action="/admin/llm-workers">
+          <div class="table-wrap">
+          <table><tr><th>Worker</th><th>Enabled</th><th>Weight</th><th>Max inflight</th></tr>
+          {form_rows}
+          </table>
+          </div>
+          <p><button type="submit" class="btn-success">Apply Runtime Config</button></p>
+        </form>
+        </div>
+        """
+        return _page("LLM Workers", body)
+
+    @app.post("/admin/llm-workers")
+    async def llm_workers_update(request: Request, _user: str = Depends(_check_auth)) -> RedirectResponse:
+        form = await request.form()
+        workers_payload: dict[str, dict[str, object]] = {}
+        for wt in ("sdk", "openrouter", "hybrid"):
+            enabled_raw = str(form.get(f"{wt}_enabled", "0")).strip().lower()
+            enabled = enabled_raw in {"1", "true", "yes", "on"}
+            try:
+                weight = int(str(form.get(f"{wt}_weight", "1")).strip() or "1")
+            except Exception:
+                weight = 1
+            try:
+                max_inflight = int(str(form.get(f"{wt}_max_inflight", "4")).strip() or "4")
+            except Exception:
+                max_inflight = 4
+            workers_payload[wt] = {
+                "enabled": bool(enabled),
+                "weight": max(0, int(weight)),
+                "max_inflight": max(1, int(max_inflight)),
+            }
+        payload = {"workers": workers_payload}
+        await _orchestrator_put_llm_workers(payload)
+        return RedirectResponse("/admin/llm-workers", status_code=303)
+
     # ── T-Bank webhook (no auth — called by T-Bank servers) ───────
 
     @app.post("/api/tbank/notify")
@@ -877,6 +1558,21 @@ def build_app(
         pkg = payment["package"] if payment else "?"
         amount_rub = payment["amount_rub"] if payment else 0
 
+        if payment and tg_id:
+            await credits_db.log_event(
+                tg_id,
+                "payment_webhook_status",
+                _encode_audit_note(
+                    actor="tbank_webhook",
+                    order=order_id,
+                    payment_id=payment_id,
+                    status=status,
+                    package=pkg,
+                    amount_rub=amount_rub,
+                    source="tbank_notify",
+                ),
+            )
+
         # Notify manager about every status change
         if bot_ref and bot_ref[0] and settings.manager_chat_id and payment:
             status_labels = {
@@ -917,9 +1613,29 @@ def build_app(
             await credits_db.add_credits(
                 tg_id, credits_to_add,
                 reason="payment",
-                admin_note=f"pkg={pkg} order={order_id} amount={amount_rub}\u20bd",
+                admin_note=_encode_audit_note(
+                    actor="tbank_webhook",
+                    order=order_id,
+                    payment_id=payment_id,
+                    package=pkg,
+                    amount_rub=amount_rub,
+                    status=status,
+                    source="tbank_notify",
+                ),
             )
-            await credits_db.log_event(tg_id, "payment_confirmed", f"{pkg} \u2014 {amount_rub}\u20bd")
+            await credits_db.log_event(
+                tg_id,
+                "payment_confirmed",
+                _encode_audit_note(
+                    actor="tbank_webhook",
+                    order=order_id,
+                    payment_id=payment_id,
+                    package=pkg,
+                    amount_rub=amount_rub,
+                    credits=credits_to_add,
+                    source="tbank_notify",
+                ),
+            )
             log.info("payment confirmed tg_id=%s pkg=%s credits=+%s", tg_id, pkg, credits_to_add)
 
             # Notify user + move to generation flow
