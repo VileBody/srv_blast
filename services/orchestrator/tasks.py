@@ -22,6 +22,7 @@ from .job_store import JobStore
 from .observability_metrics import increment_counter
 from .render_manifest import build_windows_job_payload
 from .windows_client import WindowsRenderClient
+from .windows_node_pool import WindowsNodePool
 from core.llm_worker_types import normalize_llm_worker_type
 from core.subtitles_mode import SUBTITLES_MODE_LEGACY_BLOCKS, normalize_subtitles_mode
 from core.runtime_mode import MODE_PROD, get_runtime_mode
