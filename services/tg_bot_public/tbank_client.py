@@ -29,7 +29,10 @@ class TBankClient:
                 continue
             if isinstance(v, (dict, list)):
                 continue
-            token_data[k] = str(v)
+            if isinstance(v, bool):
+                token_data[k] = "true" if v else "false"
+            else:
+                token_data[k] = str(v)
         token_data["Password"] = self._password
         sorted_values = "".join(v for _, v in sorted(token_data.items()))
         return hashlib.sha256(sorted_values.encode()).hexdigest()
