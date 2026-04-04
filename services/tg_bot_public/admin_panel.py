@@ -94,6 +94,7 @@ _EVENT_LABELS = {
     "no_credits": "Нет кредитов",
     "payment_confirmed": "Оплата подтверждена",
     "admin_activate": "Активация админом",
+    "admin_force_reset": "Force reset админом",
     "initial_grant": "Стартовые кредиты",
 }
 
@@ -242,6 +243,7 @@ _BASE_HEAD = """
   <a href="/admin/payments">Payments</a>
   <a href="/admin/utm">UTM</a>
   <a href="/admin/sources">Sources</a>
+  <a href="/admin/jobs">Jobs</a>
   <a href="/admin/render-nodes">Render Nodes</a>
   <a href="/admin/assets/" target="_blank" rel="noopener noreferrer">Assets</a>
   <a href="/admin/llm-workers">LLM Workers</a>
@@ -317,6 +319,33 @@ def _pagination_html(page: int, total_pages: int, base_url: str = "?") -> str:
     return "".join(parts)
 
 
+def _seconds_to_age(seconds: int) -> str:
+    sec = max(0, int(seconds))
+    if sec < 60:
+        return f"{sec}s"
+    mins, rem = divmod(sec, 60)
+    if mins < 60:
+        return f"{mins}m {rem}s"
+    hours, mins = divmod(mins, 60)
+    if hours < 24:
+        return f"{hours}h {mins}m"
+    days, hours = divmod(hours, 24)
+    return f"{days}d {hours}h"
+
+
+def _project_chat_id(project_id: str) -> int | None:
+    raw = str(project_id or "").strip()
+    if not raw.startswith("tg-"):
+        return None
+    part = raw[3:].split("-", 1)[0].strip()
+    if not part.isdigit():
+        return None
+    try:
+        return int(part)
+    except Exception:
+        return None
+
+
 def build_app(
     credits_db: "CreditsDB",
     state_store: "StateStore",
@@ -356,6 +385,40 @@ def build_app(
         data = resp.json()
         if not isinstance(data, dict):
             raise RuntimeError(f"orchestrator PUT /llm-workers returned non-object: {data!r}")
+        return data
+
+    async def _orchestrator_get_active_jobs(*, min_age_seconds: int, limit: int) -> dict:
+        base = str(settings.orchestrator_public_url or "").strip().rstrip("/")
+        if not base:
+            raise RuntimeError("ORCHESTRATOR_PUBLIC_URL is empty")
+        params = {
+            "min_age_seconds": max(0, int(min_age_seconds)),
+            "limit": max(1, min(int(limit), 500)),
+        }
+        async with httpx.AsyncClient(timeout=25.0) as client:
+            resp = await client.get(f"{base}/jobs/active", params=params)
+        if resp.status_code >= 300:
+            raise RuntimeError(f"orchestrator GET /jobs/active failed: {resp.status_code} {resp.text}")
+        data = resp.json()
+        if not isinstance(data, dict):
+            raise RuntimeError(f"orchestrator GET /jobs/active returned non-object: {data!r}")
+        return data
+
+    async def _orchestrator_kill_job(*, job_id: str, reason: str) -> dict:
+        base = str(settings.orchestrator_public_url or "").strip().rstrip("/")
+        if not base:
+            raise RuntimeError("ORCHESTRATOR_PUBLIC_URL is empty")
+        jid = str(job_id or "").strip()
+        if not jid:
+            raise RuntimeError("job_id is empty")
+        payload = {"reason": " ".join(str(reason or "").split()).strip() or "stuck_job_manual_kill"}
+        async with httpx.AsyncClient(timeout=25.0) as client:
+            resp = await client.post(f"{base}/jobs/{jid}/kill", json=payload)
+        if resp.status_code >= 300:
+            raise RuntimeError(f"orchestrator POST /jobs/{jid}/kill failed: {resp.status_code} {resp.text}")
+        data = resp.json()
+        if not isinstance(data, dict):
+            raise RuntimeError(f"orchestrator POST /jobs/{jid}/kill returned non-object: {data!r}")
         return data
 
     # ── Dashboard ─────────────────────────────────────────────────────
@@ -919,6 +982,124 @@ def build_app(
         </div>
         """
         return _page(f"Источник: {src_escaped}", body)
+
+    # ── Jobs (stuck/in-flight control) ──────────────────────────────
+
+    @app.get("/admin/jobs", response_class=HTMLResponse)
+    async def jobs_page(request: Request, _user: str = Depends(_check_auth)) -> str:
+        try:
+            min_age_seconds = int(str(request.query_params.get("min_age_seconds", "900")).strip() or "900")
+        except Exception:
+            min_age_seconds = 900
+        try:
+            limit = int(str(request.query_params.get("limit", "200")).strip() or "200")
+        except Exception:
+            limit = 200
+        min_age_seconds = max(0, min(min_age_seconds, 604800))
+        limit = max(1, min(limit, 500))
+
+        ok_msg = html_mod.escape(str(request.query_params.get("ok", "")).strip())
+        err_msg = html_mod.escape(str(request.query_params.get("err", "")).strip())
+        data: dict = {}
+        if not err_msg:
+            try:
+                data = await _orchestrator_get_active_jobs(min_age_seconds=min_age_seconds, limit=limit)
+            except Exception as e:
+                err_msg = html_mod.escape(str(e))
+
+        jobs_obj = data.get("jobs") if isinstance(data, dict) else None
+        jobs = jobs_obj if isinstance(jobs_obj, list) else []
+        total_active = int(data.get("total_active", 0) or 0) if isinstance(data, dict) else 0
+
+        rows = ""
+        for row in jobs:
+            if not isinstance(row, dict):
+                continue
+            jid_raw = str(row.get("job_id") or "")
+            jid = html_mod.escape(jid_raw)
+            status = html_mod.escape(str(row.get("status") or ""))
+            stage = html_mod.escape(str(row.get("stage") or ""))
+            project_id = html_mod.escape(str(row.get("project_id") or ""))
+            worker_type = html_mod.escape(str(row.get("llm_worker_type") or ""))
+            age_seconds = int(row.get("age_seconds", 0) or 0)
+            updated_at = float(row.get("updated_at", 0.0) or 0.0)
+            age_human = _seconds_to_age(age_seconds)
+            updated_s = f"{updated_at:.0f}"
+
+            rows += (
+                f"<tr>"
+                f"<td><code>{jid}</code></td>"
+                f"<td>{status}</td>"
+                f"<td>{stage or '—'}</td>"
+                f"<td>{project_id or '—'}</td>"
+                f"<td>{worker_type or '—'}</td>"
+                f"<td>{age_human}</td>"
+                f"<td>{updated_s}</td>"
+                f"<td>"
+                f"  <form method='post' action='/admin/jobs/{jid}/kill' "
+                f"        onsubmit=\"return confirm('Kill job {jid}?');\">"
+                f"    <input type='hidden' name='min_age_seconds' value='{min_age_seconds}'>"
+                f"    <input type='hidden' name='limit' value='{limit}'>"
+                f"    <input type='text' name='reason' value='stuck_job_manual_kill' style='width:170px'>"
+                f"    <button type='submit' class='btn-danger'>Kill</button>"
+                f"  </form>"
+                f"</td>"
+                f"</tr>"
+            )
+
+        body = f"""
+        <div class="card">
+        <h2>In-flight / stuck jobs</h2>
+        {f"<p style='color:#1e8449'><strong>OK:</strong> {ok_msg}</p>" if ok_msg else ""}
+        {f"<p style='color:#c0392b'><strong>Ошибка:</strong> {err_msg}</p>" if err_msg else ""}
+        <form method="get" action="/admin/jobs" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <label>Min age (sec): <input type="number" name="min_age_seconds" value="{min_age_seconds}" min="0" max="604800"></label>
+          <label>Limit: <input type="number" name="limit" value="{limit}" min="1" max="500"></label>
+          <button type="submit">Refresh</button>
+        </form>
+        <p style="margin-top:8px">Active jobs (after filter): <strong>{total_active}</strong></p>
+        <div class="table-wrap">
+        <table><tr><th>Job</th><th>Status</th><th>Stage</th><th>Project</th><th>Worker</th><th>Age</th><th>Updated</th><th>Action</th></tr>
+        {rows if rows else '<tr><td colspan="8">Нет job по текущему фильтру</td></tr>'}</table>
+        </div>
+        <p style="color:#666;font-size:0.88em">Kill ставит job в FAILED и пытается revoke Celery task. Для проектов вида <code>tg-{{chat_id}}-...</code> дополнительно делается reset пользователя в WAIT_AUDIO.</p>
+        </div>
+        """
+        return _page("Jobs", body)
+
+    @app.post("/admin/jobs/{job_id}/kill")
+    async def jobs_kill(
+        job_id: str,
+        reason: str = Form("stuck_job_manual_kill"),
+        min_age_seconds: int = Form(900),
+        limit: int = Form(200),
+        _user: str = Depends(_check_auth),
+    ) -> RedirectResponse:
+        min_age = max(0, min(int(min_age_seconds), 604800))
+        out_limit = max(1, min(int(limit), 500))
+        base_q = f"min_age_seconds={min_age}&limit={out_limit}"
+
+        jid = str(job_id or "").strip()
+        if not jid:
+            return RedirectResponse(f"/admin/jobs?{base_q}&err={quote_plus('empty job_id')}", status_code=303)
+
+        actor_reason = " ".join(f"{reason} by {_user}".split()).strip()
+        try:
+            res = await _orchestrator_kill_job(job_id=jid, reason=actor_reason)
+            project_id = str(res.get("project_id") or "")
+            chat_id = _project_chat_id(project_id)
+            if chat_id:
+                try:
+                    await state_store.reset_to_wait_audio(chat_id)
+                    await credits_db.log_event(chat_id, "admin_force_reset", f"job={jid} by {_user}")
+                except Exception as e:
+                    log.warning("jobs_kill: reset_to_wait_audio failed job=%s chat_id=%s err=%s", jid, chat_id, e)
+            revoked_ids = res.get("revoked_task_ids")
+            revoked_count = len(revoked_ids) if isinstance(revoked_ids, list) else 0
+            ok = f"killed job={jid}; revoked={revoked_count}; project={project_id or '-'}"
+            return RedirectResponse(f"/admin/jobs?{base_q}&ok={quote_plus(ok)}", status_code=303)
+        except Exception as e:
+            return RedirectResponse(f"/admin/jobs?{base_q}&err={quote_plus(str(e))}", status_code=303)
 
     # ── LLM workers runtime control ────────────────────────────────
 
