@@ -22,7 +22,7 @@ from .job_store import JobStore
 from .observability_metrics import increment_counter
 from .render_manifest import build_windows_job_payload
 from .windows_client import WindowsRenderClient
-from .windows_node_pool import WindowsNodePool
+from .windows_node_pool import WindowsNodePool, parse_windows_urls_csv
 from core.llm_worker_types import normalize_llm_worker_type
 from core.subtitles_mode import SUBTITLES_MODE_LEGACY_BLOCKS, normalize_subtitles_mode
 from core.runtime_mode import MODE_PROD, get_runtime_mode
@@ -45,6 +45,11 @@ _REUSE_RESUME_STATE_KEYS = (
 def _is_remote_url(u: str) -> bool:
     s = (u or "").strip().lower()
     return s.startswith("http://") or s.startswith("https://") or s.startswith("s3://")
+
+
+def _windows_default_urls() -> list[str]:
+    # Keep a deterministic merged list from WINDOWS_RENDER_URL + WINDOWS_RENDER_URLS.
+    return parse_windows_urls_csv((SETTINGS.windows_base_url + "," + SETTINGS.windows_base_urls_csv).strip(","))
 
 
 def _inc_metric(store: JobStore, *, metric: str, label: str) -> None:
@@ -1061,7 +1066,7 @@ def dispatch_to_windows(self, job_id: str) -> Dict[str, Any]:
         key_prefix=store.key_prefix,
         lease_ttl_s=SETTINGS.windows_node_lease_ttl_s,
     )
-    active_urls = pool.get_active_urls(default_urls=SETTINGS.windows_render_urls)
+    active_urls = pool.get_active_urls(default_urls=_windows_default_urls())
     if not active_urls:
         raise RuntimeError("WINDOWS_RENDER_URL / WINDOWS_RENDER_URLS / runtime pool is not set")
 
@@ -1208,7 +1213,7 @@ def poll_windows_render(self, job_id: str, render_id: str) -> Dict[str, Any]:
         key_prefix=store.key_prefix,
         lease_ttl_s=SETTINGS.windows_node_lease_ttl_s,
     )
-    active_urls = pool.get_active_urls(default_urls=SETTINGS.windows_render_urls)
+    active_urls = pool.get_active_urls(default_urls=_windows_default_urls())
 
     # Use the render endpoint pinned at dispatch time so in-flight polls
     # survive runtime pool updates / node switchovers.
