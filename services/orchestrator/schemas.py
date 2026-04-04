@@ -89,6 +89,39 @@ class LLMWorkersStatusResponse(BaseModel):
     default_worker_type: Literal["sdk", "openrouter", "hybrid"] = LLM_WORKER_TYPE_SDK
 
 
+class ActiveJobSummary(BaseModel):
+    job_id: str
+    status: JobStatus
+    stage: Optional[str] = None
+    project_id: str = ""
+    llm_worker_type: str = ""
+    idempotency_key: str = ""
+    created_at: float
+    updated_at: float
+    age_seconds: int = 0
+
+
+class ActiveJobsResponse(BaseModel):
+    jobs: List[ActiveJobSummary] = Field(default_factory=list)
+    total_active: int = 0
+    min_age_seconds: int = 0
+    limit: int = 100
+
+
+class KillJobRequest(BaseModel):
+    reason: str = Field(default="admin_kill_stuck", min_length=1, max_length=500)
+
+
+class KillJobResponse(BaseModel):
+    job_id: str
+    previous_status: JobStatus
+    new_status: JobStatus
+    stage: str
+    reason: str
+    revoked_task_ids: List[str] = Field(default_factory=list)
+    project_id: str = ""
+
+
 # ---- Backward-compatible aliases (so old clients don't break) ----
 # If you want to remove old names later — delete these aliases and the /send_video route in app.py.
 SendVideoRequest = SendAudioS3Request
