@@ -52,7 +52,6 @@ CREATE TABLE IF NOT EXISTS transactions (
 
 CREATE INDEX IF NOT EXISTS idx_tx_tg_id      ON transactions(tg_id);
 CREATE INDEX IF NOT EXISTS idx_tx_created_at ON transactions(created_at);
-CREATE INDEX IF NOT EXISTS idx_tx_order_id   ON transactions(context_order_id);
 
 CREATE TABLE IF NOT EXISTS admins (
     tg_id       BIGINT PRIMARY KEY,
