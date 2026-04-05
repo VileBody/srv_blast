@@ -367,6 +367,39 @@ def _query_int(
     return value
 
 
+def _payment_status_rank(status: str) -> int:
+    st = str(status or "").strip().upper()
+    ranks = {
+        "NEW": 0,
+        "FORM_SHOWED": 1,
+        "AUTHORIZED": 2,
+        "CONFIRMED": 3,
+        "REJECTED": 4,
+        "REVERSED": 4,
+        "REFUNDED": 4,
+        "PARTIAL_REFUNDED": 4,
+        "DEADLINE_EXPIRED": 4,
+        "CANCELED": 4,
+    }
+    return int(ranks.get(st, -1))
+
+
+def _should_apply_payment_status_update(current_status: str, incoming_status: str) -> bool:
+    cur = str(current_status or "").strip().upper()
+    inc = str(incoming_status or "").strip().upper()
+    if not inc:
+        return False
+    if not cur:
+        return True
+    if cur == inc:
+        return True
+    cur_rank = _payment_status_rank(cur)
+    inc_rank = _payment_status_rank(inc)
+    if cur_rank >= 0 and inc_rank >= 0 and inc_rank < cur_rank:
+        return False
+    return True
+
+
 def build_app(
     credits_db: "CreditsDB",
     state_store: "StateStore",
@@ -1321,7 +1354,7 @@ def build_app(
             return PlainTextResponse("OK", status_code=200)
 
         order_id = str(data.get("OrderId", ""))
-        status = str(data.get("Status", ""))
+        status = str(data.get("Status", "")).strip().upper()
         payment_id = str(data.get("PaymentId", ""))
 
         if not order_id:
@@ -1332,15 +1365,41 @@ def build_app(
             log.info("tbank notify: duplicate payment_id=%s status=%s", payment_id, status)
             return PlainTextResponse("OK", status_code=200)
 
-        # Update payment status
-        await credits_db.update_payment_status(order_id, status, payment_id)
+        existing_payment = await credits_db.get_payment(order_id)
+        current_status = str(existing_payment.get("status", "")).strip().upper() if existing_payment else ""
+        should_apply_status = _should_apply_payment_status_update(current_status, status)
+        if should_apply_status:
+            await credits_db.update_payment_status(order_id, status, payment_id)
+            payment = await credits_db.get_payment(order_id)
+        else:
+            payment = existing_payment
+            log.info(
+                "tbank notify: ignored status downgrade order=%s current=%s incoming=%s payment_id=%s",
+                order_id,
+                current_status,
+                status,
+                payment_id,
+            )
 
-        # Get payment info for notifications
-        payment = await credits_db.get_payment(order_id)
+        effective_status = str(payment.get("status", status) if payment else status).strip().upper()
         tg_id = payment["tg_id"] if payment else 0
         pkg = payment["package"] if payment else "?"
         amount_rub = payment["amount_rub"] if payment else 0
 
+        if payment and tg_id:
+            await credits_db.log_event(
+                tg_id,
+                "payment_webhook_status",
+                _encode_audit_note(
+                    actor="tbank_webhook",
+                    order=order_id,
+                    payment_id=payment_id,
+                    status=effective_status,
+                    package=pkg,
+                    amount_rub=amount_rub,
+                    source="tbank_notify",
+                ),
+            )
         # Notify manager about every status change
         if bot_ref and bot_ref[0] and settings.manager_chat_id and payment:
             status_labels = {
@@ -1351,8 +1410,8 @@ def build_app(
                 "REVERSED": "Отмена",
                 "NEW": "Создан",
             }
-            status_label = status_labels.get(status, status)
-            emoji = {"CONFIRMED": "\u2705", "REJECTED": "\u274c", "REFUNDED": "\U0001f504", "REVERSED": "\U0001f504"}.get(status, "\U0001f4cb")
+            status_label = status_labels.get(effective_status, effective_status)
+            emoji = {"CONFIRMED": "\u2705", "REJECTED": "\u274c", "REFUNDED": "\U0001f504", "REVERSED": "\U0001f504"}.get(effective_status, "\U0001f4cb")
             try:
                 user_info = await credits_db.get_user(tg_id)
                 uname = f"@{user_info['username']}" if user_info and user_info.get("username") else str(tg_id)
@@ -1368,7 +1427,7 @@ def build_app(
                 log.warning("tbank notify: failed to notify manager: %s", e)
 
         # On confirmed payment — grant credits & redirect to generation
-        if status == "CONFIRMED" and payment:
+        if effective_status == "CONFIRMED" and payment:
             # Credits based on package
             credits_map = {
                 "Триал": 5,
@@ -1381,11 +1440,31 @@ def build_app(
             await credits_db.add_credits(
                 tg_id, credits_to_add,
                 reason="payment",
-                admin_note=f"pkg={pkg} order={order_id} amount={amount_rub}\u20bd",
+                admin_note=_encode_audit_note(
+                    actor="tbank_webhook",
+                    order=order_id,
+                    payment_id=payment_id,
+                    package=pkg,
+                    amount_rub=amount_rub,
+                    status=effective_status,
+                    source="tbank_notify",
+                ),
                 actor="tbank_webhook",
                 order_id=order_id,
             )
-            await credits_db.log_event(tg_id, "payment_confirmed", f"{pkg} \u2014 {amount_rub}\u20bd")
+            await credits_db.log_event(
+                tg_id,
+                "payment_confirmed",
+                _encode_audit_note(
+                    actor="tbank_webhook",
+                    order=order_id,
+                    payment_id=payment_id,
+                    package=pkg,
+                    amount_rub=amount_rub,
+                    credits=credits_to_add,
+                    source="tbank_notify",
+                ),
+            )
             try:
                 await state_store.reset_to_wait_audio(tg_id)
             except Exception as e:
