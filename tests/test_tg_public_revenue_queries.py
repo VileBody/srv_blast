@@ -43,6 +43,18 @@ class _FakeConn:
                 "paid_orders": 7,
                 "revenue_rub": 12345,
             }
+        if "confirmed_orders" in query and "authorized_orders" in query:
+            return {
+                "confirmed_orders": 7,
+                "confirmed_revenue_rub": 12345,
+                "authorized_orders": 2,
+                "authorized_revenue_rub": 3980,
+            }
+        if "confirmed_revenue_rub" in query and "authorized_revenue_rub" in query and "WHERE tg_id = ANY" in query:
+            return {
+                "confirmed_revenue_rub": 5670,
+                "authorized_revenue_rub": 1990,
+            }
         return {"orders_count": 7, "revenue_rub": 12345}
 
 
@@ -114,3 +126,40 @@ def test_period_stats_uses_date_window_and_confirmed_payments() -> None:
     assert "INTERVAL '1 day'" in query
     assert "p.status = 'CONFIRMED'" in query
     assert int(args[0]) == 7
+
+
+def test_payments_status_summary_includes_confirmed_and_authorized() -> None:
+    db = CreditsDB("postgresql://example")
+    conn = _FakeConn()
+    db._pool = _FakePool(conn)  # type: ignore[attr-defined]
+
+    out = asyncio.run(db.payments_status_summary())
+
+    assert out == {
+        "confirmed_orders": 7,
+        "confirmed_revenue_rub": 12345,
+        "authorized_orders": 2,
+        "authorized_revenue_rub": 3980,
+        "visible_orders": 9,
+        "visible_revenue_rub": 16325,
+    }
+    query, _ = conn.fetchrow_calls[-1]
+    assert "status = 'CONFIRMED'" in query
+    assert "status = 'AUTHORIZED'" in query
+
+
+def test_revenue_breakdown_for_users_includes_authorized() -> None:
+    db = CreditsDB("postgresql://example")
+    conn = _FakeConn()
+    db._pool = _FakePool(conn)  # type: ignore[attr-defined]
+
+    out = asyncio.run(db.revenue_breakdown_for_users([10, 11]))
+
+    assert out == {
+        "confirmed_revenue_rub": 5670,
+        "authorized_revenue_rub": 1990,
+        "visible_revenue_rub": 7660,
+    }
+    query, args = conn.fetchrow_calls[-1]
+    assert "WHERE tg_id = ANY($1::BIGINT[])" in query
+    assert list(args[0]) == [10, 11]

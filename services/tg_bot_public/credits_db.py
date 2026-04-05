@@ -527,6 +527,39 @@ class CreditsDB:
             "revenue_rub": int(row["revenue_rub"] or 0),
         }
 
+    async def payments_status_summary(self) -> Dict[str, int]:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT "
+                "COALESCE(COUNT(*) FILTER (WHERE status = 'CONFIRMED'), 0)::BIGINT AS confirmed_orders, "
+                "COALESCE(SUM(amount_rub) FILTER (WHERE status = 'CONFIRMED'), 0)::BIGINT AS confirmed_revenue_rub, "
+                "COALESCE(COUNT(*) FILTER (WHERE status = 'AUTHORIZED'), 0)::BIGINT AS authorized_orders, "
+                "COALESCE(SUM(amount_rub) FILTER (WHERE status = 'AUTHORIZED'), 0)::BIGINT AS authorized_revenue_rub "
+                "FROM payments"
+            )
+        if row is None:
+            return {
+                "confirmed_orders": 0,
+                "confirmed_revenue_rub": 0,
+                "authorized_orders": 0,
+                "authorized_revenue_rub": 0,
+                "visible_orders": 0,
+                "visible_revenue_rub": 0,
+            }
+        confirmed_orders = int(row["confirmed_orders"] or 0)
+        confirmed_revenue_rub = int(row["confirmed_revenue_rub"] or 0)
+        authorized_orders = int(row["authorized_orders"] or 0)
+        authorized_revenue_rub = int(row["authorized_revenue_rub"] or 0)
+        return {
+            "confirmed_orders": confirmed_orders,
+            "confirmed_revenue_rub": confirmed_revenue_rub,
+            "authorized_orders": authorized_orders,
+            "authorized_revenue_rub": authorized_revenue_rub,
+            "visible_orders": confirmed_orders + authorized_orders,
+            "visible_revenue_rub": confirmed_revenue_rub + authorized_revenue_rub,
+        }
+
     async def period_stats(self, days: int) -> Dict[str, int]:
         period_days = max(1, min(int(days), 3650))
         pool = self._pool_or_fail()
@@ -1028,3 +1061,33 @@ class CreditsDB:
                 tg_ids,
             )
         return int(val or 0)
+
+    async def revenue_breakdown_for_users(self, tg_ids: List[int]) -> Dict[str, int]:
+        if not tg_ids:
+            return {
+                "confirmed_revenue_rub": 0,
+                "authorized_revenue_rub": 0,
+                "visible_revenue_rub": 0,
+            }
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT "
+                "COALESCE(SUM(amount_rub) FILTER (WHERE status = 'CONFIRMED'), 0)::BIGINT AS confirmed_revenue_rub, "
+                "COALESCE(SUM(amount_rub) FILTER (WHERE status = 'AUTHORIZED'), 0)::BIGINT AS authorized_revenue_rub "
+                "FROM payments WHERE tg_id = ANY($1::BIGINT[])",
+                tg_ids,
+            )
+        if row is None:
+            return {
+                "confirmed_revenue_rub": 0,
+                "authorized_revenue_rub": 0,
+                "visible_revenue_rub": 0,
+            }
+        confirmed_revenue_rub = int(row["confirmed_revenue_rub"] or 0)
+        authorized_revenue_rub = int(row["authorized_revenue_rub"] or 0)
+        return {
+            "confirmed_revenue_rub": confirmed_revenue_rub,
+            "authorized_revenue_rub": authorized_revenue_rub,
+            "visible_revenue_rub": confirmed_revenue_rub + authorized_revenue_rub,
+        }
