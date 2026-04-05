@@ -610,6 +610,76 @@ class Scenes3rdPlanner(_FlowPlannerBase):
                 if last_gap < 0.25 - 1e-6:
                     raise ValueError(f"TYPE_3 last_gap must be >=0.25s (id={scene.id}, gap={last_gap:.3f})")
 
+    def _coerce_scene_lines_to_max_two(
+        self,
+        *,
+        scene: Scene3rdPayloadScene,
+        segment_id: str,
+        warnings: List[SubtitleFlowWarning],
+    ) -> None:
+        words = [str(w).strip() for w in scene.words if str(w).strip()]
+        if not words:
+            return
+
+        rows: List[List[str]] = []
+        for row in scene.lines:
+            row_words = [str(w).strip() for w in row if str(w).strip()]
+            if row_words:
+                rows.append(row_words)
+
+        if len(rows) <= 2:
+            return
+
+        preferred_breaks: List[int] = []
+        running = 0
+        for row in rows[:-1]:
+            running += len(row)
+            if 0 < running < len(words):
+                preferred_breaks.append(running)
+
+        split_idx = self._choose_best_two_line_split(
+            words=words,
+            preferred_breaks=preferred_breaks,
+        )
+        scene.lines = [words[:split_idx], words[split_idx:]]
+        warnings.append(
+            SubtitleFlowWarning(
+                mode=self.mode,
+                segment_id=segment_id,
+                reason="scene_lines_overflow_to_two",
+                action=f"collapsed {len(rows)} lines to 2 (split={split_idx}/{len(words)})",
+            )
+        )
+
+    def _choose_best_two_line_split(
+        self,
+        *,
+        words: List[str],
+        preferred_breaks: List[int],
+    ) -> int:
+        if len(words) <= 1:
+            return len(words)
+
+        valid_breaks = sorted({b for b in preferred_breaks if 0 < b < len(words)})
+        if not valid_breaks:
+            valid_breaks = [len(words) // 2]
+
+        mid = len(words) / 2.0
+        best_idx = 1
+        best_score: tuple[int, int, int, float] | None = None
+        for split_idx in range(1, len(words)):
+            left = " ".join(words[:split_idx])
+            right = " ".join(words[split_idx:])
+            balance_score = abs(len(left) - len(right))
+            boundary_distance = min(abs(split_idx - b) for b in valid_breaks)
+            edge_penalty = 1 if len(words) > 2 and split_idx in {1, len(words) - 1} else 0
+            midpoint_distance = abs(split_idx - mid)
+            score = (balance_score, boundary_distance, edge_penalty, midpoint_distance)
+            if best_score is None or score < best_score:
+                best_score = score
+                best_idx = split_idx
+        return best_idx
+
     def _lines_for_scene(self, scene: Scene3rdPayloadScene) -> List[str]:
         out: List[str] = []
         if scene.lines:
@@ -641,6 +711,11 @@ class Scenes3rdPlanner(_FlowPlannerBase):
         segments: List[SubtitleFlowSegment] = []
         for scene in payload.scenes:
             seg_id = f"scene_{int(scene.id):03d}"
+            self._coerce_scene_lines_to_max_two(
+                scene=scene,
+                segment_id=seg_id,
+                warnings=warnings,
+            )
             self._maybe_fallback_type3_word_count_to_type1(
                 scene=scene,
                 segment_id=seg_id,

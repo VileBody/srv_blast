@@ -685,7 +685,7 @@ def test_scenes_planner_fail_fast_on_word_timings_words_mismatch() -> None:
 
 
 @pytest.mark.parametrize("mode", ["scenes_3rd", "scenes_3rd_single_step"])
-def test_scenes_planner_limits_lines_to_two(mode: str) -> None:
+def test_scenes_planner_limits_lines_to_two(mode: str, caplog) -> None:
     planner = SubtitlesPlannerFactory.create(mode)
     payload = Scenes3rdPayload.model_validate(
         {
@@ -707,8 +707,40 @@ def test_scenes_planner_limits_lines_to_two(mode: str) -> None:
             ],
         }
     )
-    with pytest.raises(ValueError, match="scene must have at most 2 lines"):
-        planner.normalize_payload(payload=payload, stage1=_stage1(), logger=logging.getLogger("test"))
+    caplog.set_level(logging.WARNING)
+    plan = planner.normalize_payload(payload=payload, stage1=_stage1(), logger=logging.getLogger("test"))
+    assert len(plan.segments) == 1
+    assert len(plan.segments[0].lines) <= 2
+    assert any("reason=scene_lines_overflow_to_two" in r.message for r in caplog.records)
+
+
+@pytest.mark.parametrize("mode", ["scenes_3rd", "scenes_3rd_single_step"])
+def test_scenes_planner_rebalances_collapsed_lines(mode: str) -> None:
+    planner = SubtitlesPlannerFactory.create(mode)
+    payload = Scenes3rdPayload.model_validate(
+        {
+            "clip": {"start": 10.0, "end": 24.0},
+            "scenes": [
+                {
+                    "id": 1,
+                    "type": "TYPE_1",
+                    "words": ["alpha", "beta", "gamma", "delta"],
+                    "start": 10.0,
+                    "end": 11.2,
+                    "lines": [["alpha"], ["beta"], ["gamma"], ["delta"]],
+                    "word_timings": [
+                        {"word": "alpha", "start": 10.0, "end": 10.2},
+                        {"word": "beta", "start": 10.25, "end": 10.5},
+                        {"word": "gamma", "start": 10.55, "end": 10.85},
+                        {"word": "delta", "start": 10.9, "end": 11.2},
+                    ],
+                }
+            ],
+        }
+    )
+    plan = planner.normalize_payload(payload=payload, stage1=_stage1(), logger=logging.getLogger("test"))
+    assert len(plan.segments[0].lines) == 2
+    assert plan.segments[0].lines == ["alpha beta", "gamma delta"]
 
 
 @pytest.mark.parametrize(
