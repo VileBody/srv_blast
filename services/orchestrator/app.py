@@ -114,6 +114,36 @@ def _revoke_celery_tasks_for_job(job_id: str) -> list[str]:
     return revoked
 
 
+def _patch_job_request_compat(store: JobStore, job_id: str, patch: dict[str, Any]) -> None:
+    """Patch job request on both current and legacy JobStore implementations."""
+    payload = dict(patch or {})
+    if not payload:
+        return
+
+    patch_request = getattr(store, "patch_request", None)
+    if callable(patch_request):
+        patch_request(job_id, payload)
+        return
+
+    get_fn = getattr(store, "get", None)
+    put_fn = getattr(store, "_put", None)
+    if not callable(get_fn) or not callable(put_fn):
+        return
+
+    st = get_fn(job_id)
+    if st is None:
+        return
+
+    merged_request = dict(getattr(st, "request", {}) or {})
+    merged_request.update(payload)
+
+    try:
+        st2 = st.model_copy(update={"request": merged_request, "updated_at": time.time()})
+    except Exception:
+        return
+    put_fn(st2)
+
+
 def create_app() -> FastAPI:
     app = FastAPI(title="Blast Orchestrator", version="0.4")
 
@@ -264,7 +294,7 @@ def create_app() -> FastAPI:
             selected = reserve_worker_type(store, requested=req.llm_worker_type)
             worker_type = selected.worker_type
 
-            store.patch_request(st.job_id, {"llm_worker_type": worker_type})
+            _patch_job_request_compat(store, st.job_id, {"llm_worker_type": worker_type})
             store.set_status(
                 st.job_id,
                 "QUEUED",

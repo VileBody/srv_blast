@@ -22,10 +22,6 @@ from .config import SETTINGS
 from .job_store import JobStore
 from .observability_metrics import increment_counter
 from .render_manifest import build_windows_job_payload
-from .render_nodes import (
-    release_slot as release_render_node_slot,
-    reserve_node as reserve_render_node,
-)
 from .windows_client import WindowsRenderClient
 from .windows_node_pool import WindowsNodePool, parse_windows_urls_csv
 from core.llm_worker_types import normalize_llm_worker_type

@@ -1,8 +1,20 @@
 from __future__ import annotations
 
+import sys
+import types
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
+
+if "asyncpg" not in sys.modules:
+    asyncpg_stub = types.ModuleType("asyncpg")
+
+    async def _create_pool_stub(*_args, **_kwargs):
+        raise RuntimeError("asyncpg.create_pool stub should not be used in this test")
+
+    asyncpg_stub.Pool = object  # type: ignore[attr-defined]
+    asyncpg_stub.create_pool = _create_pool_stub  # type: ignore[attr-defined]
+    sys.modules["asyncpg"] = asyncpg_stub
 
 from services.orchestrator import app as orchestrator_app
 from services.orchestrator.schemas import JobState
@@ -70,9 +82,10 @@ def test_send_audio_s3_works_when_job_store_has_no_patch_request(monkeypatch) ->
     enqueued: list[str] = []
 
     monkeypatch.setattr(orchestrator_app.JobStore, "from_env", classmethod(lambda cls: store))
+    monkeypatch.setattr(orchestrator_app, "ensure_config_initialized", lambda _store: None)
     monkeypatch.setattr(
         orchestrator_app,
-        "choose_worker_type",
+        "reserve_worker_type",
         lambda _store, requested=None: SimpleNamespace(worker_type="sdk"),
     )
     monkeypatch.setattr(

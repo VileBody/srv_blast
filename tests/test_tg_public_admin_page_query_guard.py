@@ -39,6 +39,9 @@ class _FakeStateStore:
     async def list_all_states(self):
         return []
 
+    async def get_stages_for_chat_ids(self, chat_ids):  # noqa: ARG002
+        return {}
+
 
 def _auth_headers(password: str) -> dict[str, str]:
     token = base64.b64encode(f"admin:{password}".encode("utf-8")).decode("ascii")
