@@ -80,6 +80,7 @@ _EVENT_LABELS = {
     "audio_uploaded": "Аудио загружено",
     "generation_started": "Генерация запущена",
     "generation_done": "Генерация завершена",
+    "generation_failed": "Генерация с ошибкой",
     "rate_video": "Оценка видео",
     "sales_pitch": "Просмотр питча",
     "view_packages": "Просмотр пакетов",
@@ -346,6 +347,59 @@ def _project_chat_id(project_id: str) -> int | None:
         return None
 
 
+def _query_int(
+    request: Request,
+    name: str,
+    *,
+    default: int,
+    min_value: int | None = None,
+    max_value: int | None = None,
+) -> int:
+    raw = str(request.query_params.get(name, str(default))).strip()
+    try:
+        value = int(raw or str(default))
+    except Exception:
+        value = int(default)
+    if min_value is not None:
+        value = max(int(min_value), value)
+    if max_value is not None:
+        value = min(int(max_value), value)
+    return value
+
+
+def _payment_status_rank(status: str) -> int:
+    st = str(status or "").strip().upper()
+    ranks = {
+        "NEW": 0,
+        "FORM_SHOWED": 1,
+        "AUTHORIZED": 2,
+        "CONFIRMED": 3,
+        "REJECTED": 4,
+        "REVERSED": 4,
+        "REFUNDED": 4,
+        "PARTIAL_REFUNDED": 4,
+        "DEADLINE_EXPIRED": 4,
+        "CANCELED": 4,
+    }
+    return int(ranks.get(st, -1))
+
+
+def _should_apply_payment_status_update(current_status: str, incoming_status: str) -> bool:
+    cur = str(current_status or "").strip().upper()
+    inc = str(incoming_status or "").strip().upper()
+    if not inc:
+        return False
+    if not cur:
+        return True
+    if cur == inc:
+        return True
+    cur_rank = _payment_status_rank(cur)
+    inc_rank = _payment_status_rank(inc)
+    if cur_rank >= 0 and inc_rank >= 0 and inc_rank < cur_rank:
+        return False
+    return True
+
+
 def build_app(
     credits_db: "CreditsDB",
     state_store: "StateStore",
@@ -425,14 +479,36 @@ def build_app(
 
     @app.get("/admin/", response_class=HTMLResponse)
     async def dashboard(_user: str = Depends(_check_auth)) -> str:
-        total, ratings, funnel_raw, stage_counts, users, recent = await asyncio.gather(
+        total, ratings, funnel_raw, stage_counts, users, recent, payments_summary, period_rows = await asyncio.gather(
             credits_db.count_users(),
             credits_db.rating_distribution(),
             credits_db.funnel_reach_counts(),
             state_store.list_stage_counts(),
             credits_db.list_users(limit=10),
             credits_db.get_activity(limit=10),
+            credits_db.payments_status_summary(),
+            asyncio.gather(
+                credits_db.period_stats(1),
+                credits_db.period_stats(7),
+                credits_db.period_stats(30),
+            ),
         )
+        period_labels = ["День", "Неделя", "Месяц"]
+        period_table_rows = ""
+        for label, row in zip(period_labels, period_rows):
+            period_table_rows += (
+                "<tr>"
+                f"<td>{label}</td>"
+                f"<td>{int(row.get('users_new', 0))}</td>"
+                f"<td>{int(row.get('starts_users', 0))}</td>"
+                f"<td>{int(row.get('generation_started_users', 0))}</td>"
+                f"<td>{int(row.get('generation_done_users', 0))}</td>"
+                f"<td>{int(row.get('generation_failed_users', 0))}</td>"
+                f"<td>{int(row.get('purchase_intent_users', 0))}</td>"
+                f"<td>{int(row.get('paid_orders', 0))}</td>"
+                f"<td>{int(row.get('revenue_rub', 0)):,}&nbsp;&#8381;</td>"
+                "</tr>"
+            )
 
         # ── Rating distribution for doughnut chart ──
         rating_map = {r["rating"]: r["count"] for r in ratings}
@@ -491,6 +567,9 @@ def build_app(
         body = f"""
         <div class="card">
         <h2>Всего пользователей: {total}</h2>
+        <p>Выручка (CONFIRMED): <strong>{int(payments_summary.get('confirmed_revenue_rub', 0)):,}&nbsp;&#8381;</strong></p>
+        <p>Ожидает списания (AUTHORIZED): <strong>{int(payments_summary.get('authorized_revenue_rub', 0)):,}&nbsp;&#8381;</strong></p>
+        <p>Видимая сумма (CONFIRMED + AUTHORIZED): <strong>{int(payments_summary.get('visible_revenue_rub', 0)):,}&nbsp;&#8381;</strong></p>
         <div class="chart-row">
           <div class="chart-box">
             <h3>Оценки видео</h3>
@@ -506,6 +585,26 @@ def build_app(
         <div class="card">
         <h2>Текущий этап (live)</h2>
         <div class="stage-grid">{stage_html if stage_html else '<p>Нет данных</p>'}</div>
+        </div>
+
+        <div class="card">
+        <h2>Статистика по периодам</h2>
+        <div class="table-wrap">
+        <table>
+          <tr>
+            <th>Период</th>
+            <th>Новые пользователи</th>
+            <th>Стартовали</th>
+            <th>Генерация старт</th>
+            <th>Генерация done</th>
+            <th>Генерация fail</th>
+            <th>Интент покупки</th>
+            <th>Оплат подтвержд.</th>
+            <th>Выручка</th>
+          </tr>
+          {period_table_rows}
+        </table>
+        </div>
         </div>
 
         <div class="card">
@@ -554,7 +653,7 @@ def build_app(
     @app.get("/admin/users", response_class=HTMLResponse)
     async def users_list(request: Request, _user: str = Depends(_check_auth)) -> str:
         q = request.query_params.get("q", "").strip()
-        page = int(request.query_params.get("page", "1"))
+        page = _query_int(request, "page", default=1, min_value=1)
         per_page = 50
         offset = (page - 1) * per_page
 
@@ -748,7 +847,7 @@ def build_app(
 
     @app.get("/admin/activity", response_class=HTMLResponse)
     async def activity_list(request: Request, _user: str = Depends(_check_auth)) -> str:
-        page = int(request.query_params.get("page", "1"))
+        page = _query_int(request, "page", default=1, min_value=1)
         per_page = 50
         offset = (page - 1) * per_page
         acts, total = await asyncio.gather(
@@ -781,7 +880,7 @@ def build_app(
 
     @app.get("/admin/transactions", response_class=HTMLResponse)
     async def transactions_list(request: Request, _user: str = Depends(_check_auth)) -> str:
-        page = int(request.query_params.get("page", "1"))
+        page = _query_int(request, "page", default=1, min_value=1)
         per_page = 50
         offset = (page - 1) * per_page
         txs, total = await asyncio.gather(
@@ -815,7 +914,7 @@ def build_app(
 
     @app.get("/admin/payments", response_class=HTMLResponse)
     async def payments_list(request: Request, _user: str = Depends(_check_auth)) -> str:
-        page = int(request.query_params.get("page", "1"))
+        page = _query_int(request, "page", default=1, min_value=1)
         per_page = 50
         offset = (page - 1) * per_page
         pays, total = await asyncio.gather(
@@ -851,7 +950,16 @@ def build_app(
 
     @app.get("/admin/utm", response_class=HTMLResponse)
     async def utm_summary(_user: str = Depends(_check_auth)) -> str:
-        rows_data = await credits_db.get_utm_summary(limit=200)
+        rows_data, payments_summary, payments_status = await asyncio.gather(
+            credits_db.get_utm_summary(limit=200),
+            credits_db.confirmed_payments_summary(),
+            credits_db.payments_status_summary(),
+        )
+        utm_paid_orders = sum(int(row.get("paid_orders", 0) or 0) for row in rows_data)
+        utm_revenue_rub = sum(int(row.get("revenue_rub", 0) or 0) for row in rows_data)
+        total_paid_orders = int(payments_summary.get("orders_count", 0))
+        total_revenue_rub = int(payments_summary.get("revenue_rub", 0))
+        mismatch = (utm_paid_orders != total_paid_orders) or (utm_revenue_rub != total_revenue_rub)
         rows = ""
         for row in rows_data:
             rows += (
@@ -867,6 +975,14 @@ def build_app(
                 f"</tr>"
             )
         body = f"""
+        <div class="card">
+        <p>Подтвержденные оплаты (global): <strong>{total_paid_orders}</strong></p>
+        <p>Выручка (global): <strong>{total_revenue_rub:,}&nbsp;&#8381;</strong></p>
+        <p>Ожидает списания (AUTHORIZED, global): <strong>{int(payments_status.get('authorized_revenue_rub', 0)):,}&nbsp;&#8381;</strong></p>
+        <p>Видимая сумма (CONFIRMED + AUTHORIZED): <strong>{int(payments_status.get('visible_revenue_rub', 0)):,}&nbsp;&#8381;</strong></p>
+        <p>Сумма по UTM-строкам: <strong>{utm_paid_orders}</strong> оплат / <strong>{utm_revenue_rub:,}&nbsp;&#8381;</strong></p>
+        <p style="color:{'#c0392b' if mismatch else '#1e8449'}">{'Есть расхождение между global и UTM суммами' if mismatch else 'Global и UTM суммы совпадают'}</p>
+        </div>
         <div class="card">
         <div class="table-wrap">
         <table><tr><th>Source</th><th>Medium</th><th>Campaign</th><th>Content</th><th>Term</th><th>Starts</th><th>Paid</th><th>Revenue</th></tr>
@@ -949,7 +1065,7 @@ def build_app(
                 f'</div></div>\n'
             )
 
-        revenue = await credits_db.revenue_for_users(tg_ids)
+        revenue = await credits_db.revenue_breakdown_for_users(tg_ids)
 
         user_rows = ""
         for u in users:
@@ -967,7 +1083,9 @@ def build_app(
         <div class="card">
         <h2>Источник: <span class="badge badge-source">{src_escaped}</span></h2>
         <p>Пользователей: <strong>{total_users}</strong> &nbsp;|&nbsp;
-           Выручка: <strong>{revenue:,}&nbsp;&#8381;</strong></p>
+           Выручка (CONFIRMED): <strong>{int(revenue.get('confirmed_revenue_rub', 0)):,}&nbsp;&#8381;</strong><br>
+           Ожидает списания (AUTHORIZED): <strong>{int(revenue.get('authorized_revenue_rub', 0)):,}&nbsp;&#8381;</strong><br>
+           Видимая сумма (CONFIRMED + AUTHORIZED): <strong>{int(revenue.get('visible_revenue_rub', 0)):,}&nbsp;&#8381;</strong></p>
         </div>
         <div class="card">
         <h2>Воронка</h2>
@@ -1236,7 +1354,7 @@ def build_app(
             return PlainTextResponse("OK", status_code=200)
 
         order_id = str(data.get("OrderId", ""))
-        status = str(data.get("Status", ""))
+        status = str(data.get("Status", "")).strip().upper()
         payment_id = str(data.get("PaymentId", ""))
 
         if not order_id:
@@ -1247,15 +1365,41 @@ def build_app(
             log.info("tbank notify: duplicate payment_id=%s status=%s", payment_id, status)
             return PlainTextResponse("OK", status_code=200)
 
-        # Update payment status
-        await credits_db.update_payment_status(order_id, status, payment_id)
+        existing_payment = await credits_db.get_payment(order_id)
+        current_status = str(existing_payment.get("status", "")).strip().upper() if existing_payment else ""
+        should_apply_status = _should_apply_payment_status_update(current_status, status)
+        if should_apply_status:
+            await credits_db.update_payment_status(order_id, status, payment_id)
+            payment = await credits_db.get_payment(order_id)
+        else:
+            payment = existing_payment
+            log.info(
+                "tbank notify: ignored status downgrade order=%s current=%s incoming=%s payment_id=%s",
+                order_id,
+                current_status,
+                status,
+                payment_id,
+            )
 
-        # Get payment info for notifications
-        payment = await credits_db.get_payment(order_id)
+        effective_status = str(payment.get("status", status) if payment else status).strip().upper()
         tg_id = payment["tg_id"] if payment else 0
         pkg = payment["package"] if payment else "?"
         amount_rub = payment["amount_rub"] if payment else 0
 
+        if payment and tg_id:
+            await credits_db.log_event(
+                tg_id,
+                "payment_webhook_status",
+                _encode_audit_note(
+                    actor="tbank_webhook",
+                    order=order_id,
+                    payment_id=payment_id,
+                    status=effective_status,
+                    package=pkg,
+                    amount_rub=amount_rub,
+                    source="tbank_notify",
+                ),
+            )
         # Notify manager about every status change
         if bot_ref and bot_ref[0] and settings.manager_chat_id and payment:
             status_labels = {
@@ -1266,8 +1410,8 @@ def build_app(
                 "REVERSED": "Отмена",
                 "NEW": "Создан",
             }
-            status_label = status_labels.get(status, status)
-            emoji = {"CONFIRMED": "\u2705", "REJECTED": "\u274c", "REFUNDED": "\U0001f504", "REVERSED": "\U0001f504"}.get(status, "\U0001f4cb")
+            status_label = status_labels.get(effective_status, effective_status)
+            emoji = {"CONFIRMED": "\u2705", "REJECTED": "\u274c", "REFUNDED": "\U0001f504", "REVERSED": "\U0001f504"}.get(effective_status, "\U0001f4cb")
             try:
                 user_info = await credits_db.get_user(tg_id)
                 uname = f"@{user_info['username']}" if user_info and user_info.get("username") else str(tg_id)
@@ -1283,7 +1427,7 @@ def build_app(
                 log.warning("tbank notify: failed to notify manager: %s", e)
 
         # On confirmed payment — grant credits & redirect to generation
-        if status == "CONFIRMED" and payment:
+        if effective_status == "CONFIRMED" and payment:
             # Credits based on package
             credits_map = {
                 "Триал": 5,
@@ -1296,11 +1440,31 @@ def build_app(
             await credits_db.add_credits(
                 tg_id, credits_to_add,
                 reason="payment",
-                admin_note=f"pkg={pkg} order={order_id} amount={amount_rub}\u20bd",
+                admin_note=_encode_audit_note(
+                    actor="tbank_webhook",
+                    order=order_id,
+                    payment_id=payment_id,
+                    package=pkg,
+                    amount_rub=amount_rub,
+                    status=effective_status,
+                    source="tbank_notify",
+                ),
                 actor="tbank_webhook",
                 order_id=order_id,
             )
-            await credits_db.log_event(tg_id, "payment_confirmed", f"{pkg} \u2014 {amount_rub}\u20bd")
+            await credits_db.log_event(
+                tg_id,
+                "payment_confirmed",
+                _encode_audit_note(
+                    actor="tbank_webhook",
+                    order=order_id,
+                    payment_id=payment_id,
+                    package=pkg,
+                    amount_rub=amount_rub,
+                    credits=credits_to_add,
+                    source="tbank_notify",
+                ),
+            )
             try:
                 await state_store.reset_to_wait_audio(tg_id)
             except Exception as e:

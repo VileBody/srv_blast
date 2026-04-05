@@ -34,6 +34,7 @@ class SendAudioS3Request(BaseModel):
         "template_4th",
     ] = SUBTITLES_MODE_LEGACY_BLOCKS
     footage_artist_id: Optional[str] = None
+    overlay_enabled: Optional[bool] = None
     # Optional internal batch controls for multi-version generation.
     reuse_text_job_id: Optional[str] = None
     exclude_file_names: List[str] = Field(default_factory=list)
@@ -120,6 +121,33 @@ class KillJobResponse(BaseModel):
     reason: str
     revoked_task_ids: List[str] = Field(default_factory=list)
     project_id: str = ""
+
+
+class RenderNodeControl(BaseModel):
+    node_id: str = Field(min_length=1, max_length=120)
+    base_url: str = Field(min_length=1, max_length=500)
+    enabled: bool = True
+    drain: bool = False
+    max_inflight: int = Field(default=1, ge=1, le=1000)
+
+
+class RenderNodesConfigRequest(BaseModel):
+    nodes: List[RenderNodeControl] = Field(default_factory=list)
+
+
+class RenderNodeRuntimeStatus(BaseModel):
+    node_id: str
+    base_url: str
+    enabled: bool
+    drain: bool
+    max_inflight: int
+    inflight: int
+    available_slots: int
+
+
+class RenderNodesStatusResponse(BaseModel):
+    nodes: List[RenderNodeRuntimeStatus] = Field(default_factory=list)
+    selection_policy: Literal["least_inflight", "round_robin"] = "least_inflight"
 
 
 # ---- Backward-compatible aliases (so old clients don't break) ----

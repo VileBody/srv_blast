@@ -20,10 +20,10 @@ class OrchestratorClient:
         self,
         *,
         audio_s3_url: str,
-        mode: str,
         lyrics_text: str,
         target_fragment: str,
         subtitles_mode: str = SUBTITLES_MODE_LEGACY_BLOCKS,
+        overlay_enabled: bool | None = None,
         idempotency_key: str | None = None,
         project_id: str | None = None,
         reuse_text_job_id: str | None = None,
@@ -33,10 +33,10 @@ class OrchestratorClient:
     ) -> Dict[str, Any]:
         payload = {
             "audio_s3_url": str(audio_s3_url),
-            "mode": str(mode),
             "lyrics_text": str(lyrics_text or ""),
             "target_fragment": str(target_fragment or ""),
             "subtitles_mode": str(subtitles_mode or SUBTITLES_MODE_LEGACY_BLOCKS),
+            "overlay_enabled": overlay_enabled if overlay_enabled is None else bool(overlay_enabled),
             "idempotency_key": idempotency_key,
             "project_id": project_id,
             "reuse_text_job_id": str(reuse_text_job_id or "") or None,

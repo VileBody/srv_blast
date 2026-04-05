@@ -5,6 +5,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import time
 import urllib.request
@@ -403,8 +404,6 @@ def _looks_like_llm_schema_validation_error(text: str) -> bool:
         or "style_pool_groups_json" in lo
     ):
         return True
-    if "llm_hedged_all_failed" in lo and ("validation" in lo or "schema" in lo):
-        return True
     if "validationerror" in lo and ("pydantic" in lo or "schema" in lo):
         return True
     return False
@@ -721,6 +720,14 @@ def _build_job_impl(self, job_id: str, *, worker_type: str) -> Dict[str, Any]:
         default=SUBTITLES_MODE_LEGACY_BLOCKS,
     )
     footage_artist_id = str(req.get("footage_artist_id") or "").strip()
+    overlay_enabled_raw = req.get("overlay_enabled")
+    overlay_enabled: Optional[bool]
+    if isinstance(overlay_enabled_raw, bool):
+        overlay_enabled = overlay_enabled_raw
+    elif overlay_enabled_raw is None:
+        overlay_enabled = None
+    else:
+        raise RuntimeError(f"overlay_enabled must be boolean when provided, got={overlay_enabled_raw!r}")
     if not audio_url:
         raise RuntimeError("missing audio_s3_url")
     if not _is_remote_url(audio_url):
@@ -762,6 +769,8 @@ def _build_job_impl(self, job_id: str, *, worker_type: str) -> Dict[str, Any]:
     env["SUBTITLES_MODE"] = subtitles_mode
     if footage_artist_id:
         env["FOOTAGE_ARTIST_ID"] = footage_artist_id
+    if overlay_enabled is not None:
+        env["OVERLAY_ENABLED"] = "1" if overlay_enabled else "0"
     if exclude_file_names:
         env["FOOTAGE_EXCLUDE_FILE_NAMES_JSON"] = json.dumps(exclude_file_names, ensure_ascii=False)
     seed_variant = variant_index if variant_index is not None else 1
@@ -776,8 +785,8 @@ def _build_job_impl(self, job_id: str, *, worker_type: str) -> Dict[str, Any]:
     build_all_fn = None
     if mode != "no_gemini":
         from mlcore.gemini_orchestrator import build_all_via_gemini_one_call
-        build_all_fn = build_all_via_gemini_one_call
 
+        build_all_fn = build_all_via_gemini_one_call
         store.set_status(job_id, "RUNNING", stage="llm_stage1")
         backup: Dict[str, str | None] = {}
         for k in (
@@ -793,6 +802,7 @@ def _build_job_impl(self, job_id: str, *, worker_type: str) -> Dict[str, Any]:
             "TARGET_FRAGMENT",
             "SUBTITLES_MODE",
             "FOOTAGE_ARTIST_ID",
+            "OVERLAY_ENABLED",
             "FOOTAGE_EXCLUDE_FILE_NAMES_JSON",
             "STAGE2_SELECTION_SEED",
             "BATCH_VARIANT_INDEX",
@@ -885,8 +895,7 @@ def _build_job_impl(self, job_id: str, *, worker_type: str) -> Dict[str, Any]:
         _maybe_retry_transient(blob_first)
 
         # Preflight validation:
-        # - with_gemini: targeted subtitles rerun (+retry hint), then one immediate local build retry
-        # - no_gemini: one immediate local build retry
+        # - targeted subtitles rerun (+retry hint), then one immediate local build retry
         if _looks_like_build_preflight_validation_error(blob_first):
             if build_all_fn is not None:
                 store.set_status(job_id, "RUNNING", stage="llm_stage2_subtitles_retry")
@@ -963,7 +972,7 @@ def _build_job_impl(self, job_id: str, *, worker_type: str) -> Dict[str, Any]:
                         else:
                             os.environ[k] = old
 
-                store.set_status(job_id, "RUNNING", stage="build")
+            store.set_status(job_id, "RUNNING", stage="build")
 
             proc_retry = _run_build_subprocess_once()
             out_retry = proc_retry.stdout or ""
@@ -1032,13 +1041,10 @@ def _build_job_impl(self, job_id: str, *, worker_type: str) -> Dict[str, Any]:
     dispatch_to_windows.delay(job_id)
     return {"ok": True, "stage": "build_done", "paths": paths.manifest()}
 
-
 @celery_app.task(name="orchestrator.build_job", bind=True, max_retries=8)
 def build_job(self, job_id: str) -> Dict[str, Any]:
     # Backward-compatible task name kept for already deployed callers.
     return _build_job_impl(self, job_id, worker_type="sdk")
-
-
 @celery_app.task(name="orchestrator.build_job_sdk", bind=True, max_retries=8)
 def build_job_sdk(self, job_id: str) -> Dict[str, Any]:
     return _build_job_impl(self, job_id, worker_type="sdk")

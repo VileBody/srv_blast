@@ -124,6 +124,9 @@ class Settings:
         "stage2_subtitles.json,stage2_subtitles_*.json,gemini_raw_stage2_subtitles_*.json,stage2_footage.json,stage2_footage_*.json",
     )
     bot_max_audio_mb: int = _int_env("BOT_MAX_AUDIO_MB", 5)
+    tg_output_compress_enabled: bool = _bool_env("TG_OUTPUT_COMPRESS_ENABLED", True)
+    tg_output_compress_crf: int = _int_env("TG_OUTPUT_COMPRESS_CRF", 24)
+    tg_output_compress_preset: str = _env("TG_OUTPUT_COMPRESS_PRESET", "veryfast")
 
     redis_host: str = _env("REDIS_HOST", "localhost")
     redis_port: int = _int_env("REDIS_PORT", 6379)
