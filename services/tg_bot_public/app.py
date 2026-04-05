@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import re
+import subprocess
 import time
 import uuid
 from pathlib import Path
@@ -101,6 +102,7 @@ BTN_NEXT = "Сделать следующий"
 BTN_SUB_MODE_IMPULSE = "Impulse"
 BTN_SUB_MODE_SCENES = "Jakson"
 BTN_SUB_MODE_4TH = "Tape"
+BTN_SUB_MODE_BACK = "Назад"
 
 # Post-generation flow buttons
 BTN_RATE_LOW = "До 5"
@@ -152,6 +154,7 @@ SUBTITLES_MODE_BUTTONS = [
     BTN_SUB_MODE_IMPULSE,
     BTN_SUB_MODE_SCENES,
     BTN_SUB_MODE_4TH,
+    BTN_SUB_MODE_BACK,
 ]
 _SUBTITLES_MODE_BY_BUTTON = {
     BTN_SUB_MODE_IMPULSE: SUBTITLES_MODE_IMPULSE_2ND,
@@ -200,6 +203,10 @@ _RE_CELERY_RETRIES = re.compile(r"\bretries=(\d+)\b")
 _TG_AUDIO_DOWNLOAD_RETRIES = 3
 _TG_AUDIO_DOWNLOAD_TIMEOUT_S = 180.0
 _TG_AUDIO_DOWNLOAD_BACKOFF_BASE_S = 2.0
+_GENERATION_FAILED_USER_TEXT = (
+    "Увидели ошибку, сейчас с тобой свяжется менеджер и запустит генерацию ролика вручную, "
+    "а пока тех. отдел все проверит"
+)
 
 
 def _kb(*rows: list[str]) -> ReplyKeyboardMarkup:
@@ -1212,6 +1219,7 @@ class BlastBotApp:
                 [BTN_SUB_MODE_IMPULSE],
                 [BTN_SUB_MODE_SCENES],
                 [BTN_SUB_MODE_4TH],
+                [BTN_SUB_MODE_BACK],
             ),
         )
 
@@ -1412,10 +1420,22 @@ class BlastBotApp:
         await message.answer("Выбери: «Да» или «Вернуться назад».", reply_markup=_kb([BTN_CONFIRM_YES, BTN_CONFIRM_BACK]))
 
     async def _handle_wait_subtitles_mode(self, message: Message, st: ChatState) -> None:
-        mode = _parse_subtitles_mode_choice(message.text or "")
+        text = str(message.text or "").strip()
+        if text == BTN_SUB_MODE_BACK:
+            st.lyrics_text = ""
+            st.target_fragment = ""
+            st.stage = STAGE_WAIT_LYRICS_CHOICE
+            await self.store.set(st)
+            await message.answer(
+                "Хочешь прислать текст песни для субтитров?",
+                reply_markup=_kb([BTN_SEND_LYRICS, BTN_SKIP_LYRICS]),
+            )
+            return
+
+        mode = _parse_subtitles_mode_choice(text)
         if mode is None:
             await message.answer(
-                "Выбери режим кнопкой: «Impulse», «Jakson» или «Tape»."
+                "Выбери режим кнопкой: «Impulse», «Jakson», «Tape» или «Назад»."
             )
             return
         st.subtitles_mode = mode
@@ -1585,7 +1605,34 @@ class BlastBotApp:
             st.last_status_msg_at = time.time()
             await self.store.set(st)
         except Exception as e:
-            await message.answer(f"Не удалось запустить задачу: {e}")
+            err_text = str(e)
+            if versions > 0:
+                try:
+                    await self.credits_db.add_credits(
+                        chat_id,
+                        int(versions),
+                        "generation_failed_refund",
+                        admin_note="batch=enqueue_start_failed",
+                    )
+                except Exception as add_e:
+                    log.warning("enqueue_start_refund_failed chat=%s err=%s", chat_id, str(add_e))
+            await self.credits_db.log_event(
+                chat_id,
+                "generation_failed",
+                f"job=enqueue_start stage=enqueue_start error={_compact_text(err_text, limit=140)}",
+            )
+            await self._notify_manager_generation_failure(
+                st=st,
+                job_id="enqueue_start",
+                stage="enqueue_start",
+                error_text=err_text,
+                succeeded_versions=0,
+                total_versions=int(versions),
+                refunded_versions=int(versions),
+            )
+            await message.answer(_GENERATION_FAILED_USER_TEXT, reply_markup=_kb([BTN_SEND_TRACK]))
+            self._reset_processing_state(st, next_stage=STAGE_WAIT_AUDIO)
+            await self.store.set(st)
 
     async def _handle_wait_next(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()
@@ -1599,71 +1646,47 @@ class BlastBotApp:
         await self._move_to_wait_audio(int(message.chat.id), message)
 
     # ── Package descriptions ──────────────────────────────────────────
-    _PKG_PHOTOS = {
-        BTN_PKG_TRIAL: "AgACAgIAAxkBAAIBz2nFqdQJFDSvspelLyiaPlSph7vMAAKaEGsb2OQwSv76z2kyuL32AQADAgADeQADOgQ",
-        BTN_PKG_BLAST: "AgACAgIAAxkBAAIB0GnFqdm9h42UZgya81Y1DNKc16UoAAKbEGsb2OQwSuk4MDu0M3_OAQADAgADeQADOgQ",
-        BTN_PKG_GLOW: "AgACAgIAAxkBAAIB0WnFqd_QhHU-gsyTUIRzkjalpPFvAAKcEGsb2OQwSsD7384J_OaBAQADAgADeQADOgQ",
-        BTN_PKG_IMPULSE: "AgACAgIAAxkBAAIB0mnFqeVSMAHXM7ef0uAno6pTYEYHAAKdEGsb2OQwSvmVQxrw2cXnAQADAgADeQADOgQ",
+    _PKG_IMAGE_DIR = Path(__file__).resolve().parent / "assets" / "packages"
+    _PKG_IMAGES = {
+        BTN_PKG_TRIAL: _PKG_IMAGE_DIR / "blast_trial.png",
+        BTN_PKG_BLAST: _PKG_IMAGE_DIR / "blast.png",
+        BTN_PKG_GLOW: _PKG_IMAGE_DIR / "glow.png",
+        BTN_PKG_IMPULSE: _PKG_IMAGE_DIR / "impulse.png",
     }
 
     _PKG_TEXTS = {
         BTN_PKG_TRIAL: (
-            "Бласт Trial — это trial пакет нашего co-pilot'а в продвижении музыки. "
-            "И вот, как он работает:\n\n"
-            "Артист отправляет свой трек и текст, описывает предпочтения в контенте "
-            "и будущей аудитории.\n\n"
-            "ИИ анализирует эти вводные и на их основе генерирует контент-план, "
-            "трендовые идеи для роликов и 5 видео под звук артиста с абсолютного нуля.\n\n"
-            "Пакет поможет проверить единичный трек и протестировать его потенциал "
-            "на практике для дальнейшего масштабирования. Стоимость: 990₽"
+            "Бласт Trial — 990₽\n\n"
+            "Пробный запуск для одного трека.\n\n"
+            "Отправляешь mp3 и текст — ИИ генерирует контент-план, трендовые идеи для роликов и 5 готовых видео под твой звук.\n\n"
+            "Быстрый способ проверить потенциал трека перед тем, как вкладываться масштабно.\n\n"
+            "Нажимай «Приобрести» — и через несколько минут 5 роликов под твой трек будут готовы."
         ),
         BTN_PKG_BLAST: (
-            "Бласт — это основа нашего co-pilot'а в продвижении музыки. "
-            "И вот, как пакет работает:\n\n"
-            "Артист отправляет свой трек и текст, описывает предпочтения в контенте "
-            "и будущей аудитории.\n\n"
-            "ИИ анализирует эти вводные и на их основе генерирует контент-план, "
-            "трендовые идеи для роликов и 15 видео под его звук с абсолютного нуля.\n\n"
-            "Инструмент работает как ежемесячная подписка и поможет артисту регулярно "
-            "вести соц. сети, органически привлекать нужную аудиторию и повышать свои "
-            "шансы на тренд. Стоимость: 1.990₽"
+            "Бласт — 1 990₽/мес\n\n"
+            "Ежемесячное продвижение на автопилоте.\n\n"
+            "Отправляешь трек и текст — ИИ строит контент-план, придумывает трендовые форматы и создаёт 15 видео под твой звук.\n\n"
+            "Держишь соцсети живыми, органически растишь нужную аудиторию и повышаешь шансы попасть в тренд.\n\n"
+            "Нажимай «Приобрести» — и соцсети работают на тебя каждый месяц."
         ),
         BTN_PKG_GLOW: (
-            "Глоу — это улучшенный пакет нашего co-pilot'a в продвижении музыки. "
-            "И вот, как он работает:\n\n"
-            "1. Ты отправляешь свой трек и текст, описываешь предпочтения в контенте "
-            "и будущей аудитории.\n"
-            "2. ИИ анализирует эти вводные и на их основе генерирует контент-план, "
-            "трендовые идеи для роликов и 30 видео под твой звук с абсолютного нуля.\n"
-            "3. Далее, на основе лучшего формата контента, наш контент-менеджер "
-            "подбирает двух блогеров для поддержки звука в соц. сетях и закупает "
-            "по ролику у каждого.\n\n"
-            "Инструмент поможет глубоко протестировать трек как единицу контента, "
-            "задать тренд, если он зайдет и органически привлекать аудиторию. "
-            "Стоимость: 7.990₽"
+            "Глоу — 7 990₽\n\n"
+            "Глубокое тестирование трека с подключением блогеров.\n\n"
+            "ИИ генерирует контент-план и 30 видео под твой звук — мы выявляем лучшие форматы, затем контент-менеджер находит двух подходящих блогеров и закупает по ролику для поддержки трека.\n\n"
+            "Максимум данных, реальный охват и шанс задать тренд.\n\n"
+            "Нажимай «Приобрести» — запусти трек расти."
         ),
         BTN_PKG_IMPULSE: (
-            "Импульс — это флагманский пакет нашего co-pilot'a в продвижении музыки. "
-            "План:\n\n"
-            "1. Юридические тонкости.\n"
-            "Классически подписываем договор для безопасности двух сторон. "
-            "Оплата через кассу, чек, все прозрачно.\n"
-            "2. Готовим маркетинг релиза и контент.\n"
-            "— Идейная концепция релиза: разработаем 5 форматов для контента, "
-            "с помощью которых будем двигать трек.\n"
-            "— Контент-план для артиста: идеи вертикальных роликов с референсами "
-            "и точным планом съемок.\n"
-            "— Общий план: пул шагов, что помогут выявить потенциал тренда и "
-            "правильно измерить его цифрами.\n"
-            "3. Генерируем контент.\n"
-            "Генерируем 25 роликов для твоих в соц. сетей, тестируем и выявляем "
-            "лучшие. Масштабируем формат контент с помощью еще 25 роликов.\n"
-            "4. Делаем посевы.\n"
-            "В финале мы закупим 10-12 роликов у блогеров в зависимости от ситуации "
-            "и потенциала трека.\n\n"
-            "Итог:\nМы найдем релевантный материал, подтвердим его перспективность "
-            "цифрами и по максимуму масштабируем. Ты получишь много опыта, большую "
-            "пачку роликов и возможность создать тренд вместе с нами. Стоимость: 29.990₽"
+            "Импульс — 29 990₽\n\n"
+            "Полноценная кампания от идеи до масштабирования.\n\n"
+            "Маркетинг и стратегия.\n"
+            "Разрабатываем 5 контентных форматов для продвижения трека, составляем детальный контент-план с референсами и планом съёмок, выстраиваем общую стратегию для измерения потенциала тренда в цифрах.\n\n"
+            "Контент.\n"
+            "Генерируем 25 роликов, тестируем, определяем лучшие форматы — и масштабируем ещё 25 роликами.\n\n"
+            "Посевы.\n"
+            "Закупаем 10–12 роликов у каждого блогера под трек.\n\n"
+            "В итоге ты получаешь проверенный материал с подтверждёнными цифрами, большой пул контента и реальный шанс создать тренд.\n\n"
+            "Нажимай «Приобрести» — это уже не просто трек, это целая рекламная кампания."
         ),
     }
 
@@ -1705,6 +1728,39 @@ class BlastBotApp:
         except Exception as e:
             log.warning("manager_payment_notify_failed err=%s", str(e))
 
+    async def _notify_manager_generation_failure(
+        self,
+        *,
+        st: ChatState,
+        job_id: str,
+        stage: str,
+        error_text: str,
+        succeeded_versions: int,
+        total_versions: int,
+        refunded_versions: int,
+    ) -> None:
+        mgr = self.settings.manager_chat_id
+        if not mgr:
+            return
+        bot = self._require_bot()
+        username = str(st.chat_username or "").strip()
+        uname = f"@{username}" if username else "(нет username)"
+        err_short = _compact_text(error_text or "без деталей", limit=700)
+        try:
+            await bot.send_message(
+                mgr,
+                "⚠️ Generation error (public bot)\n\n"
+                f"Пользователь: {uname}\n"
+                f"chat_id: {st.chat_id}\n"
+                f"job_id: {job_id}\n"
+                f"stage: {stage or '-'}\n"
+                f"Успешно версий: {succeeded_versions}/{total_versions}\n"
+                f"Возврат кредитов: {refunded_versions}\n\n"
+                f"Ошибка: {err_short}",
+            )
+        except Exception as e:
+            log.warning("manager_generation_failure_notify_failed chat=%s err=%s", st.chat_id, str(e))
+
     async def _send_survey_link(self, message: Message) -> None:
         chat_id = int(message.chat.id) if message.chat else 0
         if chat_id:
@@ -1721,11 +1777,11 @@ class BlastBotApp:
         st.stage = STAGE_ALL_PACKAGES
         await self.store.set(st)
         await message.answer(
-            "Вот пул пакетов:\n"
-            "— Триал Бласт за 990 (5 Роликов)\n"
-            "— Подписка на Бласт за 1.990 (15 Роликов)\n"
-            "— Глоу за 7.990 (30 Роликов + 2 блогера)\n"
-            "— Импульс за 29.900 (50 Роликов + 10 блогеров)\n\n"
+            "Вот актуальные пакеты:\n"
+            "— Бласт Trial — 990₽ (5 роликов)\n"
+            "— Бласт — 1 990₽/мес (15 роликов)\n"
+            "— Глоу — 7 990₽ (30 роликов + 2 блогера)\n"
+            "— Импульс — 29 990₽ (50 роликов + 10–12 закупок у блогеров)\n\n"
             "О каком рассказать подробнее?",
             reply_markup=_kb([BTN_PKG_TRIAL], [BTN_PKG_BLAST], [BTN_PKG_GLOW], [BTN_PKG_IMPULSE]),
         )
@@ -1942,11 +1998,14 @@ class BlastBotApp:
             st.selected_package = text
             st.stage = STAGE_PACKAGE_INFO
             await self.store.set(st)
-            photo_id = self._PKG_PHOTOS.get(text)
-            if photo_id:
+            photo_path = self._PKG_IMAGES.get(text)
+            if photo_path:
                 bot = self._require_bot()
                 try:
-                    await bot.send_photo(st.chat_id, photo=photo_id)
+                    if photo_path.exists():
+                        await bot.send_photo(st.chat_id, photo=FSInputFile(str(photo_path)))
+                    else:
+                        log.warning("pkg_photo_missing pkg=%s path=%s", text, str(photo_path))
                 except Exception as e:
                     log.warning("pkg_photo_send_failed pkg=%s err=%s", text, str(e))
             await message.answer(
@@ -2280,10 +2339,10 @@ class BlastBotApp:
         idem = f"tg-{st.chat_id}-batch-{batch_id}-v{int(version_index)}-{uuid.uuid4().hex[:12]}"
         enqueue = await self.orchestrator.send_audio_s3(
             audio_s3_url=audio_s3_url,
-            mode="with_gemini",
             lyrics_text=st.lyrics_text,
             target_fragment=st.target_fragment,
             subtitles_mode=st.subtitles_mode,
+            overlay_enabled=False,
             idempotency_key=idem,
             project_id=batch_id or None,
             reuse_text_job_id=str(reuse_text_job_id or "") or None,
@@ -2408,8 +2467,8 @@ class BlastBotApp:
         except Exception as e:
             log.warning("status_message_send_failed chat=%s err=%s", st.chat_id, str(e))
 
-    def _reset_processing_state(self, st: ChatState) -> None:
-        st.stage = STAGE_RATE_VIDEO
+    def _reset_processing_state(self, st: ChatState, *, next_stage: str = STAGE_RATE_VIDEO) -> None:
+        st.stage = str(next_stage)
         st.active_job_id = ""
         st.active_job_ids = []
         st.completed_job_ids = []
@@ -2493,28 +2552,63 @@ class BlastBotApp:
             out.append(jid)
         return out
 
+    def _compress_video_for_telegram(self, *, source: Path, destination: Path) -> None:
+        crf = max(18, min(35, int(self.settings.tg_output_compress_crf)))
+        preset = str(self.settings.tg_output_compress_preset or "veryfast").strip() or "veryfast"
+        cmd = [
+            str(self.settings.ffmpeg_bin),
+            "-y",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-i",
+            str(source),
+            "-c:v",
+            "libx264",
+            "-preset",
+            preset,
+            "-crf",
+            str(crf),
+            "-c:a",
+            "aac",
+            "-movflags",
+            "+faststart",
+            str(destination),
+        ]
+        proc = subprocess.run(cmd, capture_output=True, text=True)
+        if int(proc.returncode) != 0:
+            err_tail = "\n".join(str(proc.stderr or "").splitlines()[-8:])
+            raise RuntimeError(f"ffmpeg compress failed rc={proc.returncode} stderr_tail={err_tail}")
+
+    async def _choose_video_for_delivery(self, *, original_video: Path) -> Path:
+        if not bool(self.settings.tg_output_compress_enabled):
+            return original_video
+        compressed = original_video.with_name(f"{original_video.stem}.tg.mp4")
+        try:
+            await asyncio.to_thread(
+                self._compress_video_for_telegram,
+                source=original_video,
+                destination=compressed,
+            )
+            if not compressed.exists():
+                return original_video
+            src_size = int(original_video.stat().st_size) if original_video.exists() else 0
+            cmp_size = int(compressed.stat().st_size)
+            if src_size > 0 and 0 < cmp_size < src_size:
+                return compressed
+            return original_video
+        except Exception as e:
+            log.warning("tg_output_compress_failed file=%s err=%s", str(original_video), str(e))
+            return original_video
+
     async def _finalize_one_job(self, *, bot: Bot, st: ChatState, job_id: str, job: Dict[str, Any]) -> None:
         total = max(1, int(st.batch_total_versions or len(st.job_order or st.active_job_ids or []) or 1))
         ver = self._version_num_for_job(st, job_id)
         ver_label = f"Версия {ver}/{total}" if ver > 0 else f"job_id={job_id}"
 
         status = str(job.get("status") or "").upper()
-        stage = str(job.get("stage") or "").strip()
-        error_text = str(job.get("error") or "").strip()
 
         if status == "FAILED":
-            retries = _extract_celery_retries(error_text)
-            fail_lines = [
-                f"{ver_label}: задача завершилась с ошибкой.",
-                f"Стадия: {stage or '-'}",
-            ]
-            if retries is not None:
-                fail_lines.append(f"Celery retries: {retries}")
-            if error_text:
-                fail_lines.append(f"Последняя ошибка: {_compact_text(error_text, limit=1000)}")
-            else:
-                fail_lines.append("Последняя ошибка: без деталей.")
-            await bot.send_message(st.chat_id, "\n".join(fail_lines))
             return
 
         source = _resolve_job_video_source(job, self.settings)
@@ -2534,9 +2628,10 @@ class BlastBotApp:
         send_file_error = ""
         try:
             await self._download_result_video(source=source, dest=video_path)
+            delivery_path = await self._choose_video_for_delivery(original_video=video_path)
             await bot.send_document(
                 chat_id=st.chat_id,
-                document=FSInputFile(str(video_path)),
+                document=FSInputFile(str(delivery_path)),
                 caption=f"{ver_label}: вот твой трек.",
             )
             file_sent = True
@@ -2580,6 +2675,9 @@ class BlastBotApp:
         try:
             if video_path.exists():
                 video_path.unlink()
+            compressed = video_path.with_name(f"{video_path.stem}.tg.mp4")
+            if compressed.exists():
+                compressed.unlink()
         except Exception:
             pass
 
@@ -2661,6 +2759,47 @@ class BlastBotApp:
                     )
 
         st.completed_job_ids = [jid for jid in job_ids if jid in completed]
+        failed_rows = [r for r in rows if str(r.get("status") or "").upper() == "FAILED"]
+        if failed_rows:
+            failed = failed_rows[0]
+            failed_job_id = str(failed.get("job_id") or "")
+            failed_stage = str(failed.get("stage") or "")
+            failed_error = str(failed.get("error") or "")
+            succeeded_versions = sum(1 for r in rows if str(r.get("status") or "").upper() == "SUCCEEDED")
+            refund_versions = max(0, int(total_versions) - int(succeeded_versions))
+            if refund_versions > 0:
+                try:
+                    await self.credits_db.add_credits(
+                        st.chat_id,
+                        int(refund_versions),
+                        "generation_failed_refund",
+                        admin_note=f"batch={st.batch_id or '-'} job={failed_job_id or '-'}",
+                    )
+                except Exception as e:
+                    log.warning("generation_failed_refund_add_credits_failed chat=%s err=%s", st.chat_id, str(e))
+            await self.credits_db.log_event(
+                st.chat_id,
+                "generation_failed",
+                f"job={failed_job_id or '-'} stage={failed_stage or '-'}",
+            )
+            await self._notify_manager_generation_failure(
+                st=st,
+                job_id=failed_job_id,
+                stage=failed_stage,
+                error_text=failed_error,
+                succeeded_versions=int(succeeded_versions),
+                total_versions=int(total_versions),
+                refunded_versions=int(refund_versions),
+            )
+            await bot.send_message(
+                st.chat_id,
+                _GENERATION_FAILED_USER_TEXT,
+                reply_markup=_kb([BTN_SEND_TRACK]),
+            )
+            self._reset_processing_state(st, next_stage=STAGE_WAIT_AUDIO)
+            await self.store.set(st)
+            return
+
         all_done_enqueued = len(st.completed_job_ids) >= len(job_ids)
         if not all_done_enqueued:
             await self.store.set(st)
@@ -2677,10 +2816,6 @@ class BlastBotApp:
         can_enqueue_more = next_ver <= total_versions
         if can_enqueue_more:
             if master_status == "FAILED":
-                await bot.send_message(
-                    st.chat_id,
-                    f"Версия 1/{total_versions} завершилась ошибкой, остальные версии не запускаю.",
-                )
                 st.next_version_to_enqueue = total_versions + 1
             else:
                 try:
@@ -2706,11 +2841,41 @@ class BlastBotApp:
                     await self.store.set(st)
                     return
                 except Exception as e:
+                    err_text = str(e)
+                    succeeded_versions = sum(1 for r in rows if str(r.get("status") or "").upper() == "SUCCEEDED")
+                    refund_versions = max(0, int(total_versions) - int(succeeded_versions))
+                    if refund_versions > 0:
+                        try:
+                            await self.credits_db.add_credits(
+                                st.chat_id,
+                                int(refund_versions),
+                                "generation_failed_refund",
+                                admin_note=f"batch={st.batch_id or '-'} job=enqueue_next_version_failed",
+                            )
+                        except Exception as add_e:
+                            log.warning("enqueue_next_refund_failed chat=%s err=%s", st.chat_id, str(add_e))
+                    await self.credits_db.log_event(
+                        st.chat_id,
+                        "generation_failed",
+                        f"job=enqueue_next stage=enqueue_next_version error={_compact_text(err_text, limit=140)}",
+                    )
+                    await self._notify_manager_generation_failure(
+                        st=st,
+                        job_id="enqueue_next_version",
+                        stage="enqueue_next_version",
+                        error_text=err_text,
+                        succeeded_versions=int(succeeded_versions),
+                        total_versions=int(total_versions),
+                        refunded_versions=int(refund_versions),
+                    )
                     await bot.send_message(
                         st.chat_id,
-                        f"Не удалось поставить в очередь Версию {next_ver}/{total_versions}: {e}",
+                        _GENERATION_FAILED_USER_TEXT,
+                        reply_markup=_kb([BTN_SEND_TRACK]),
                     )
-                    st.next_version_to_enqueue = total_versions + 1
+                    self._reset_processing_state(st, next_stage=STAGE_WAIT_AUDIO)
+                    await self.store.set(st)
+                    return
 
         self._reset_processing_state(st)  # sets stage = RATE_VIDEO
 

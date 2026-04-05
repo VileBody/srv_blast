@@ -5,6 +5,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import time
 import urllib.request
@@ -20,7 +21,12 @@ from .celery_app import celery_app
 from .config import SETTINGS
 from .job_store import JobStore
 from .render_manifest import build_windows_job_payload
+from .render_nodes import (
+    release_slot as release_render_node_slot,
+    reserve_node as reserve_render_node,
+)
 from .windows_client import WindowsRenderClient
+from core.llm_worker_types import normalize_llm_worker_type
 from core.subtitles_mode import SUBTITLES_MODE_LEGACY_BLOCKS, normalize_subtitles_mode
 from core.runtime_mode import MODE_PROD, get_runtime_mode
 
@@ -388,8 +394,6 @@ def _looks_like_llm_schema_validation_error(text: str) -> bool:
         or "style_pool_groups_json" in lo
     ):
         return True
-    if "llm_hedged_all_failed" in lo and ("validation" in lo or "schema" in lo):
-        return True
     if "validationerror" in lo and ("pydantic" in lo or "schema" in lo):
         return True
     return False
@@ -627,8 +631,7 @@ def _poll_started_at_from_state(st: Any) -> float:
     return time.time()
 
 
-@celery_app.task(name="orchestrator.build_job", bind=True, max_retries=8)
-def build_job(self, job_id: str) -> Dict[str, Any]:
+def _build_job_impl(self, job_id: str, *, worker_type: str) -> Dict[str, Any]:
     if get_runtime_mode() != MODE_PROD:
         raise RuntimeError("Celery build_job is allowed only in MODE=prod")
 
@@ -659,6 +662,13 @@ def build_job(self, job_id: str) -> Dict[str, Any]:
     llm_resume_state_path = paths.data_dir / "llm_resume_state.json"
 
     req = st.request or {}
+    req_worker_type = str(req.get("llm_worker_type") or "").strip()
+    llm_worker_type = normalize_llm_worker_type(req_worker_type or worker_type)
+    if llm_worker_type != worker_type:
+        raise RuntimeError(
+            f"llm_worker_type_mismatch expected={worker_type!r} got={llm_worker_type!r}"
+        )
+
     audio_url = str(req.get("audio_s3_url") or "").strip()
     project_id = str(req.get("project_id") or "").strip()
     lyrics_text = str(req.get("lyrics_text") or "")
@@ -700,6 +710,14 @@ def build_job(self, job_id: str) -> Dict[str, Any]:
         str(req.get("subtitles_mode") or ""),
         default=SUBTITLES_MODE_LEGACY_BLOCKS,
     )
+    overlay_enabled_raw = req.get("overlay_enabled")
+    overlay_enabled: Optional[bool]
+    if isinstance(overlay_enabled_raw, bool):
+        overlay_enabled = overlay_enabled_raw
+    elif overlay_enabled_raw is None:
+        overlay_enabled = None
+    else:
+        raise RuntimeError(f"overlay_enabled must be boolean when provided, got={overlay_enabled_raw!r}")
     if not audio_url:
         raise RuntimeError("missing audio_s3_url")
     if not _is_remote_url(audio_url):
@@ -711,7 +729,6 @@ def build_job(self, job_id: str) -> Dict[str, Any]:
     local_audio = paths.data_dir / "inputs" / "audio" / audio_name
     _download(audio_url, local_audio, timeout_s=600.0)
 
-    mode = str(req.get("mode") or "with_gemini")
     build_cmd = (
         f"{SETTINGS.pipeline_cmd} "
         f"--out-dir {paths.out_dir.as_posix()} "
@@ -735,9 +752,12 @@ def build_job(self, job_id: str) -> Dict[str, Any]:
     env["AUDIO_FILE_NAME"] = f"audio_source{audio_ext}"
 
     env["AE_MEDIA_MODE"] = "appdir"
+    env["LLM_WORKER_TYPE"] = llm_worker_type
     env["LYRICS_TEXT"] = lyrics_text
     env["TARGET_FRAGMENT"] = target_fragment
     env["SUBTITLES_MODE"] = subtitles_mode
+    if overlay_enabled is not None:
+        env["OVERLAY_ENABLED"] = "1" if overlay_enabled else "0"
     if exclude_file_names:
         env["FOOTAGE_EXCLUDE_FILE_NAMES_JSON"] = json.dumps(exclude_file_names, ensure_ascii=False)
     seed_variant = variant_index if variant_index is not None else 1
@@ -749,81 +769,81 @@ def build_job(self, job_id: str) -> Dict[str, Any]:
     if reuse_text_job_id:
         env["REUSE_TEXT_JOB_ID"] = reuse_text_job_id
 
-    build_all_fn = None
-    if mode != "no_gemini":
-        from mlcore.gemini_orchestrator import build_all_via_gemini_one_call
-        build_all_fn = build_all_via_gemini_one_call
+    from mlcore.gemini_orchestrator import build_all_via_gemini_one_call
+    build_all_fn = build_all_via_gemini_one_call
 
-        store.set_status(job_id, "RUNNING", stage="llm_stage1")
-        backup: Dict[str, str | None] = {}
-        for k in (
-            "DATA_DIR",
-            "OUT_DIR",
-            "AUDIO_FILE_PATH",
-            "AUDIO_DIR",
-            "AUDIO_FILE_NAME",
-            "AE_MEDIA_MODE",
-            "JOB_ID",
-            "LYRICS_TEXT",
-            "TARGET_FRAGMENT",
-            "SUBTITLES_MODE",
-            "FOOTAGE_EXCLUDE_FILE_NAMES_JSON",
-            "STAGE2_SELECTION_SEED",
-            "BATCH_VARIANT_INDEX",
-            "BATCH_VARIANTS_TOTAL",
-            "REUSE_TEXT_JOB_ID",
-        ):
-            backup[k] = os.environ.get(k)
-            if k in env:
-                os.environ[k] = env[k]
-            else:
-                os.environ.pop(k, None)
+    store.set_status(job_id, "RUNNING", stage="llm_stage1")
+    backup: Dict[str, str | None] = {}
+    for k in (
+        "DATA_DIR",
+        "OUT_DIR",
+        "AUDIO_FILE_PATH",
+        "AUDIO_DIR",
+        "AUDIO_FILE_NAME",
+        "AE_MEDIA_MODE",
+        "LLM_WORKER_TYPE",
+        "JOB_ID",
+        "LYRICS_TEXT",
+        "TARGET_FRAGMENT",
+        "SUBTITLES_MODE",
+        "OVERLAY_ENABLED",
+        "FOOTAGE_EXCLUDE_FILE_NAMES_JSON",
+        "STAGE2_SELECTION_SEED",
+        "BATCH_VARIANT_INDEX",
+        "BATCH_VARIANTS_TOTAL",
+        "REUSE_TEXT_JOB_ID",
+    ):
+        backup[k] = os.environ.get(k)
+        if k in env:
+            os.environ[k] = env[k]
+        else:
+            os.environ.pop(k, None)
 
-        try:
-            if reuse_text_job_id:
-                store.set_status(job_id, "RUNNING", stage="llm_seed_reuse_text")
-                _seed_resume_state_from_source_job(
-                    work_dir=SETTINGS.work_dir,
-                    source_job_id=reuse_text_job_id,
-                    target_resume_state_path=llm_resume_state_path,
-                )
-            build_all_fn(
-                progress_cb=lambda stage: store.set_status(job_id, "RUNNING", stage=str(stage)),
-                resume_state_path=llm_resume_state_path,
+    try:
+        if reuse_text_job_id:
+            store.set_status(job_id, "RUNNING", stage="llm_seed_reuse_text")
+            _seed_resume_state_from_source_job(
+                work_dir=SETTINGS.work_dir,
+                source_job_id=reuse_text_job_id,
+                target_resume_state_path=llm_resume_state_path,
             )
-        except Exception as e:
-            text = _exc_text(e)
-            if _looks_like_gemini_internal_500(text):
-                attempt = int(getattr(self.request, "retries", 0)) + 1
-                backoff = _retry_backoff_s(attempt=attempt, base_s=10.0, cap_s=300.0)
-                raise self.retry(countdown=backoff, exc=RuntimeError("gemini_internal_500"))
-            if _looks_like_gemini_overloaded_503(text):
-                attempt = int(getattr(self.request, "retries", 0)) + 1
-                backoff = _overloaded_retry_backoff_s(attempt=attempt)
-                raise self.retry(countdown=backoff, exc=RuntimeError("gemini_overloaded_503"))
-            if _looks_like_gemini_rate_limited_429(text):
-                attempt = int(getattr(self.request, "retries", 0)) + 1
-                backoff = _retry_backoff_s(attempt=attempt, base_s=15.0, cap_s=600.0)
-                raise self.retry(countdown=backoff, exc=RuntimeError("gemini_rate_limited_429"))
-            if _looks_like_openrouter_timeout(text):
-                attempt = int(getattr(self.request, "retries", 0)) + 1
-                backoff = _retry_backoff_s(attempt=attempt, base_s=10.0, cap_s=300.0)
-                raise self.retry(countdown=backoff, exc=RuntimeError("openrouter_timeout"))
-            if _looks_like_openrouter_overloaded_503(text):
-                attempt = int(getattr(self.request, "retries", 0)) + 1
-                backoff = _overloaded_retry_backoff_s(attempt=attempt)
-                raise self.retry(countdown=backoff, exc=RuntimeError("openrouter_overloaded_503"))
-            if _looks_like_openrouter_rate_limited_429(text):
-                attempt = int(getattr(self.request, "retries", 0)) + 1
-                backoff = _retry_backoff_s(attempt=attempt, base_s=15.0, cap_s=600.0)
-                raise self.retry(countdown=backoff, exc=RuntimeError("openrouter_rate_limited_429"))
-            raise
-        finally:
-            for k, old in backup.items():
-                if old is None:
-                    os.environ.pop(k, None)
-                else:
-                    os.environ[k] = old
+        build_all_fn(
+            progress_cb=lambda stage: store.set_status(job_id, "RUNNING", stage=str(stage)),
+            resume_state_path=llm_resume_state_path,
+        )
+    except Exception as e:
+        text = _exc_text(e)
+        if _looks_like_gemini_internal_500(text):
+            attempt = int(getattr(self.request, "retries", 0)) + 1
+            backoff = _retry_backoff_s(attempt=attempt, base_s=10.0, cap_s=300.0)
+            raise self.retry(countdown=backoff, exc=RuntimeError("gemini_internal_500"))
+        if _looks_like_gemini_overloaded_503(text):
+            attempt = int(getattr(self.request, "retries", 0)) + 1
+            backoff = _overloaded_retry_backoff_s(attempt=attempt)
+            raise self.retry(countdown=backoff, exc=RuntimeError("gemini_overloaded_503"))
+        if _looks_like_gemini_rate_limited_429(text):
+            attempt = int(getattr(self.request, "retries", 0)) + 1
+            backoff = _retry_backoff_s(attempt=attempt, base_s=15.0, cap_s=600.0)
+            raise self.retry(countdown=backoff, exc=RuntimeError("gemini_rate_limited_429"))
+        if _looks_like_openrouter_timeout(text):
+            attempt = int(getattr(self.request, "retries", 0)) + 1
+            backoff = _retry_backoff_s(attempt=attempt, base_s=10.0, cap_s=300.0)
+            raise self.retry(countdown=backoff, exc=RuntimeError("openrouter_timeout"))
+        if _looks_like_openrouter_overloaded_503(text):
+            attempt = int(getattr(self.request, "retries", 0)) + 1
+            backoff = _overloaded_retry_backoff_s(attempt=attempt)
+            raise self.retry(countdown=backoff, exc=RuntimeError("openrouter_overloaded_503"))
+        if _looks_like_openrouter_rate_limited_429(text):
+            attempt = int(getattr(self.request, "retries", 0)) + 1
+            backoff = _retry_backoff_s(attempt=attempt, base_s=15.0, cap_s=600.0)
+            raise self.retry(countdown=backoff, exc=RuntimeError("openrouter_rate_limited_429"))
+        raise
+    finally:
+        for k, old in backup.items():
+            if old is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = old
 
     store.set_status(job_id, "RUNNING", stage="build")
 
@@ -859,81 +879,80 @@ def build_job(self, job_id: str) -> Dict[str, Any]:
         _maybe_retry_transient(blob_first)
 
         # Preflight validation:
-        # - with_gemini: targeted subtitles rerun (+retry hint), then one immediate local build retry
-        # - no_gemini: one immediate local build retry
+        # - targeted subtitles rerun (+retry hint), then one immediate local build retry
         if _looks_like_build_preflight_validation_error(blob_first):
-            if build_all_fn is not None:
-                store.set_status(job_id, "RUNNING", stage="llm_stage2_subtitles_retry")
-                _drop_resume_stage_key(llm_resume_state_path, key="stage2_subtitles")
-                retry_hint = _build_stage2_subtitles_retry_hint(blob_first)
-                llm_env_keys = (
-                    "DATA_DIR",
-                    "OUT_DIR",
-                    "AUDIO_FILE_PATH",
-                    "AUDIO_DIR",
-                    "AUDIO_FILE_NAME",
-                    "AE_MEDIA_MODE",
-                    "JOB_ID",
-                    "LYRICS_TEXT",
-                    "TARGET_FRAGMENT",
-                    "SUBTITLES_MODE",
-                    "FOOTAGE_EXCLUDE_FILE_NAMES_JSON",
-                    "STAGE2_SELECTION_SEED",
-                    "BATCH_VARIANT_INDEX",
-                    "BATCH_VARIANTS_TOTAL",
-                    "REUSE_TEXT_JOB_ID",
-                )
-                llm_backup: Dict[str, str | None] = {}
-                for k in llm_env_keys:
-                    llm_backup[k] = os.environ.get(k)
-                    os.environ[k] = env[k]
-                old_retry_hint = os.environ.get("STAGE2_SUBTITLES_RETRY_HINT")
+            store.set_status(job_id, "RUNNING", stage="llm_stage2_subtitles_retry")
+            _drop_resume_stage_key(llm_resume_state_path, key="stage2_subtitles")
+            retry_hint = _build_stage2_subtitles_retry_hint(blob_first)
+            llm_env_keys = (
+                "DATA_DIR",
+                "OUT_DIR",
+                "AUDIO_FILE_PATH",
+                "AUDIO_DIR",
+                "AUDIO_FILE_NAME",
+                "AE_MEDIA_MODE",
+                "LLM_WORKER_TYPE",
+                "JOB_ID",
+                "LYRICS_TEXT",
+                "TARGET_FRAGMENT",
+                "SUBTITLES_MODE",
+                "FOOTAGE_EXCLUDE_FILE_NAMES_JSON",
+                "STAGE2_SELECTION_SEED",
+                "BATCH_VARIANT_INDEX",
+                "BATCH_VARIANTS_TOTAL",
+                "REUSE_TEXT_JOB_ID",
+            )
+            llm_backup: Dict[str, str | None] = {}
+            for k in llm_env_keys:
+                llm_backup[k] = os.environ.get(k)
+                os.environ[k] = env[k]
+            old_retry_hint = os.environ.get("STAGE2_SUBTITLES_RETRY_HINT")
+            try:
+                os.environ["STAGE2_SUBTITLES_RETRY_HINT"] = retry_hint
                 try:
-                    os.environ["STAGE2_SUBTITLES_RETRY_HINT"] = retry_hint
-                    try:
-                        build_all_fn(
-                            progress_cb=lambda stage: store.set_status(job_id, "RUNNING", stage=str(stage)),
-                            resume_state_path=llm_resume_state_path,
-                        )
-                    except Exception as e:
-                        text = _exc_text(e)
-                        if _looks_like_gemini_internal_500(text):
-                            attempt = int(getattr(self.request, "retries", 0)) + 1
-                            backoff = _retry_backoff_s(attempt=attempt, base_s=10.0, cap_s=300.0)
-                            raise self.retry(countdown=backoff, exc=RuntimeError("gemini_internal_500"))
-                        if _looks_like_gemini_overloaded_503(text):
-                            attempt = int(getattr(self.request, "retries", 0)) + 1
-                            backoff = _overloaded_retry_backoff_s(attempt=attempt)
-                            raise self.retry(countdown=backoff, exc=RuntimeError("gemini_overloaded_503"))
-                        if _looks_like_gemini_rate_limited_429(text):
-                            attempt = int(getattr(self.request, "retries", 0)) + 1
-                            backoff = _retry_backoff_s(attempt=attempt, base_s=15.0, cap_s=600.0)
-                            raise self.retry(countdown=backoff, exc=RuntimeError("gemini_rate_limited_429"))
-                        if _looks_like_openrouter_timeout(text):
-                            attempt = int(getattr(self.request, "retries", 0)) + 1
-                            backoff = _retry_backoff_s(attempt=attempt, base_s=10.0, cap_s=300.0)
-                            raise self.retry(countdown=backoff, exc=RuntimeError("openrouter_timeout"))
-                        if _looks_like_openrouter_overloaded_503(text):
-                            attempt = int(getattr(self.request, "retries", 0)) + 1
-                            backoff = _overloaded_retry_backoff_s(attempt=attempt)
-                            raise self.retry(countdown=backoff, exc=RuntimeError("openrouter_overloaded_503"))
-                        if _looks_like_openrouter_rate_limited_429(text):
-                            attempt = int(getattr(self.request, "retries", 0)) + 1
-                            backoff = _retry_backoff_s(attempt=attempt, base_s=15.0, cap_s=600.0)
-                            raise self.retry(countdown=backoff, exc=RuntimeError("openrouter_rate_limited_429"))
-                        raise
-                finally:
-                    if old_retry_hint is None:
-                        os.environ.pop("STAGE2_SUBTITLES_RETRY_HINT", None)
+                    build_all_fn(
+                        progress_cb=lambda stage: store.set_status(job_id, "RUNNING", stage=str(stage)),
+                        resume_state_path=llm_resume_state_path,
+                    )
+                except Exception as e:
+                    text = _exc_text(e)
+                    if _looks_like_gemini_internal_500(text):
+                        attempt = int(getattr(self.request, "retries", 0)) + 1
+                        backoff = _retry_backoff_s(attempt=attempt, base_s=10.0, cap_s=300.0)
+                        raise self.retry(countdown=backoff, exc=RuntimeError("gemini_internal_500"))
+                    if _looks_like_gemini_overloaded_503(text):
+                        attempt = int(getattr(self.request, "retries", 0)) + 1
+                        backoff = _overloaded_retry_backoff_s(attempt=attempt)
+                        raise self.retry(countdown=backoff, exc=RuntimeError("gemini_overloaded_503"))
+                    if _looks_like_gemini_rate_limited_429(text):
+                        attempt = int(getattr(self.request, "retries", 0)) + 1
+                        backoff = _retry_backoff_s(attempt=attempt, base_s=15.0, cap_s=600.0)
+                        raise self.retry(countdown=backoff, exc=RuntimeError("gemini_rate_limited_429"))
+                    if _looks_like_openrouter_timeout(text):
+                        attempt = int(getattr(self.request, "retries", 0)) + 1
+                        backoff = _retry_backoff_s(attempt=attempt, base_s=10.0, cap_s=300.0)
+                        raise self.retry(countdown=backoff, exc=RuntimeError("openrouter_timeout"))
+                    if _looks_like_openrouter_overloaded_503(text):
+                        attempt = int(getattr(self.request, "retries", 0)) + 1
+                        backoff = _overloaded_retry_backoff_s(attempt=attempt)
+                        raise self.retry(countdown=backoff, exc=RuntimeError("openrouter_overloaded_503"))
+                    if _looks_like_openrouter_rate_limited_429(text):
+                        attempt = int(getattr(self.request, "retries", 0)) + 1
+                        backoff = _retry_backoff_s(attempt=attempt, base_s=15.0, cap_s=600.0)
+                        raise self.retry(countdown=backoff, exc=RuntimeError("openrouter_rate_limited_429"))
+                    raise
+            finally:
+                if old_retry_hint is None:
+                    os.environ.pop("STAGE2_SUBTITLES_RETRY_HINT", None)
+                else:
+                    os.environ["STAGE2_SUBTITLES_RETRY_HINT"] = old_retry_hint
+                for k, old in llm_backup.items():
+                    if old is None:
+                        os.environ.pop(k, None)
                     else:
-                        os.environ["STAGE2_SUBTITLES_RETRY_HINT"] = old_retry_hint
-                    for k, old in llm_backup.items():
-                        if old is None:
-                            os.environ.pop(k, None)
-                        else:
-                            os.environ[k] = old
+                        os.environ[k] = old
 
-                store.set_status(job_id, "RUNNING", stage="build")
+            store.set_status(job_id, "RUNNING", stage="build")
 
             proc_retry = _run_build_subprocess_once()
             out_retry = proc_retry.stdout or ""
@@ -1001,6 +1020,21 @@ def build_job(self, job_id: str) -> Dict[str, Any]:
     )
     dispatch_to_windows.delay(job_id)
     return {"ok": True, "stage": "build_done", "paths": paths.manifest()}
+
+
+@celery_app.task(name="orchestrator.build_job_sdk", bind=True, max_retries=8)
+def build_job_sdk(self, job_id: str) -> Dict[str, Any]:
+    return _build_job_impl(self, job_id, worker_type="sdk")
+
+
+@celery_app.task(name="orchestrator.build_job_openrouter", bind=True, max_retries=8)
+def build_job_openrouter(self, job_id: str) -> Dict[str, Any]:
+    return _build_job_impl(self, job_id, worker_type="openrouter")
+
+
+@celery_app.task(name="orchestrator.build_job_hybrid", bind=True, max_retries=8)
+def build_job_hybrid(self, job_id: str) -> Dict[str, Any]:
+    return _build_job_impl(self, job_id, worker_type="hybrid")
 
 
 @celery_app.task(name="orchestrator.dispatch_to_windows", bind=True, max_retries=10)

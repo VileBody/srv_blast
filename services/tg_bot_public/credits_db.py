@@ -480,6 +480,63 @@ class CreditsDB:
         async with pool.acquire() as conn:
             return int(await conn.fetchval("SELECT COUNT(*) FROM payments") or 0)
 
+    async def confirmed_payments_summary(self) -> Dict[str, int]:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT "
+                "COALESCE(COUNT(*), 0)::BIGINT AS orders_count, "
+                "COALESCE(SUM(amount_rub), 0)::BIGINT AS revenue_rub "
+                "FROM payments WHERE status = 'CONFIRMED'"
+            )
+        if row is None:
+            return {"orders_count": 0, "revenue_rub": 0}
+        return {
+            "orders_count": int(row["orders_count"] or 0),
+            "revenue_rub": int(row["revenue_rub"] or 0),
+        }
+
+    async def period_stats(self, days: int) -> Dict[str, int]:
+        period_days = max(1, min(int(days), 3650))
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "WITH cutoff AS (SELECT NOW() - ($1::INT * INTERVAL '1 day') AS ts) "
+                "SELECT "
+                "  (SELECT COALESCE(COUNT(*), 0)::BIGINT FROM users u, cutoff c WHERE u.created_at >= c.ts) AS users_new, "
+                "  (SELECT COALESCE(COUNT(DISTINCT a.tg_id), 0)::BIGINT FROM activity_log a, cutoff c WHERE a.event = 'start' AND a.created_at >= c.ts) AS starts_users, "
+                "  (SELECT COALESCE(COUNT(DISTINCT a.tg_id), 0)::BIGINT FROM activity_log a, cutoff c WHERE a.event = 'generation_started' AND a.created_at >= c.ts) AS generation_started_users, "
+                "  (SELECT COALESCE(COUNT(DISTINCT a.tg_id), 0)::BIGINT FROM activity_log a, cutoff c WHERE a.event = 'generation_done' AND a.created_at >= c.ts) AS generation_done_users, "
+                "  (SELECT COALESCE(COUNT(DISTINCT a.tg_id), 0)::BIGINT FROM activity_log a, cutoff c WHERE a.event = 'generation_failed' AND a.created_at >= c.ts) AS generation_failed_users, "
+                "  (SELECT COALESCE(COUNT(DISTINCT a.tg_id), 0)::BIGINT FROM activity_log a, cutoff c WHERE a.event = 'purchase_intent' AND a.created_at >= c.ts) AS purchase_intent_users, "
+                "  (SELECT COALESCE(COUNT(*), 0)::BIGINT FROM payments p, cutoff c WHERE p.status = 'CONFIRMED' AND p.created_at >= c.ts) AS paid_orders, "
+                "  (SELECT COALESCE(SUM(p.amount_rub), 0)::BIGINT FROM payments p, cutoff c WHERE p.status = 'CONFIRMED' AND p.created_at >= c.ts) AS revenue_rub",
+                period_days,
+            )
+        if row is None:
+            return {
+                "days": period_days,
+                "users_new": 0,
+                "starts_users": 0,
+                "generation_started_users": 0,
+                "generation_done_users": 0,
+                "generation_failed_users": 0,
+                "purchase_intent_users": 0,
+                "paid_orders": 0,
+                "revenue_rub": 0,
+            }
+        return {
+            "days": period_days,
+            "users_new": int(row["users_new"] or 0),
+            "starts_users": int(row["starts_users"] or 0),
+            "generation_started_users": int(row["generation_started_users"] or 0),
+            "generation_done_users": int(row["generation_done_users"] or 0),
+            "generation_failed_users": int(row["generation_failed_users"] or 0),
+            "purchase_intent_users": int(row["purchase_intent_users"] or 0),
+            "paid_orders": int(row["paid_orders"] or 0),
+            "revenue_rub": int(row["revenue_rub"] or 0),
+        }
+
     async def get_user(self, tg_id: int) -> Optional[Dict[str, Any]]:
         pool = self._pool_or_fail()
         async with pool.acquire() as conn:
@@ -918,8 +975,8 @@ class CreditsDB:
         pool = self._pool_or_fail()
         async with pool.acquire() as conn:
             val = await conn.fetchval(
-                "SELECT COALESCE(SUM(amount), 0)::BIGINT FROM payments "
-                "WHERE tg_id = ANY($1::BIGINT[]) AND status = 'confirmed'",
+                "SELECT COALESCE(SUM(amount_rub), 0)::BIGINT FROM payments "
+                "WHERE tg_id = ANY($1::BIGINT[]) AND status = 'CONFIRMED'",
                 tg_ids,
             )
         return int(val or 0)

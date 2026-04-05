@@ -91,6 +91,9 @@ class Settings:
     bot_status_update_interval_s: float = _float_env("BOT_STATUS_UPDATE_INTERVAL_S", 20.0)
     bot_tmp_dir: str = _env("BOT_TMP_DIR", "/app/work/tg_tmp")
     bot_max_audio_mb: int = _int_env("BOT_MAX_AUDIO_MB", 5)
+    tg_output_compress_enabled: bool = _bool_env("TG_OUTPUT_COMPRESS_ENABLED", True)
+    tg_output_compress_crf: int = _int_env("TG_OUTPUT_COMPRESS_CRF", 24)
+    tg_output_compress_preset: str = _env("TG_OUTPUT_COMPRESS_PRESET", "veryfast")
 
     redis_host: str = _env("REDIS_HOST", "localhost")
     redis_port: int = _int_env("REDIS_PORT", 6379)
@@ -124,12 +127,21 @@ class Settings:
     admin_panel_port: int = _int_env("ADMIN_PANEL_PORT", 8080)
     admin_panel_password: str = _env("ADMIN_PANEL_PASSWORD", "changeme")
     initial_credits: int = _int_env("INITIAL_CREDITS", 2)
+    windows_render_url: str = _env("WINDOWS_RENDER_URL", "")
 
     # T-Bank payments
     tbank_terminal_key: str = _env("TBANK_TERMINAL_KEY", "")
     tbank_password: str = _env("TBANK_PASSWORD", "")
     tbank_notify_url: str = _env("TBANK_NOTIFY_URL", "")
     offer_url: str = _env("OFFER_URL", "")
+
+    # Timeweb render node lifecycle (admin panel create/delete)
+    twc_token: str = _env("TWC_TOKEN", "")
+    twc_render_source_server_id: int = _int_env("TWC_RENDER_SOURCE_SERVER_ID", 0)
+    twc_render_firewall_group_id: str = _env("TWC_RENDER_FIREWALL_GROUP_ID", "")
+    twc_render_name_prefix: str = _env("TWC_RENDER_NAME_PREFIX", "blast-worker-node")
+    twc_render_wait_on_timeout_s: int = _int_env("TWC_RENDER_WAIT_ON_TIMEOUT_S", 1800)
+    twc_render_wait_api_timeout_s: int = _int_env("TWC_RENDER_WAIT_API_TIMEOUT_S", 900)
 
     @property
     def tmp_dir(self) -> Path:
