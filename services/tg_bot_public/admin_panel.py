@@ -80,6 +80,7 @@ _EVENT_LABELS = {
     "audio_uploaded": "Аудио загружено",
     "generation_started": "Генерация запущена",
     "generation_done": "Генерация завершена",
+    "generation_failed": "Генерация с ошибкой",
     "rate_video": "Оценка видео",
     "sales_pitch": "Просмотр питча",
     "view_packages": "Просмотр пакетов",
@@ -425,14 +426,36 @@ def build_app(
 
     @app.get("/admin/", response_class=HTMLResponse)
     async def dashboard(_user: str = Depends(_check_auth)) -> str:
-        total, ratings, funnel_raw, stage_counts, users, recent = await asyncio.gather(
+        total, ratings, funnel_raw, stage_counts, users, recent, payments_summary, period_rows = await asyncio.gather(
             credits_db.count_users(),
             credits_db.rating_distribution(),
             credits_db.funnel_reach_counts(),
             state_store.list_stage_counts(),
             credits_db.list_users(limit=10),
             credits_db.get_activity(limit=10),
+            credits_db.confirmed_payments_summary(),
+            asyncio.gather(
+                credits_db.period_stats(1),
+                credits_db.period_stats(7),
+                credits_db.period_stats(30),
+            ),
         )
+        period_labels = ["День", "Неделя", "Месяц"]
+        period_table_rows = ""
+        for label, row in zip(period_labels, period_rows):
+            period_table_rows += (
+                "<tr>"
+                f"<td>{label}</td>"
+                f"<td>{int(row.get('users_new', 0))}</td>"
+                f"<td>{int(row.get('starts_users', 0))}</td>"
+                f"<td>{int(row.get('generation_started_users', 0))}</td>"
+                f"<td>{int(row.get('generation_done_users', 0))}</td>"
+                f"<td>{int(row.get('generation_failed_users', 0))}</td>"
+                f"<td>{int(row.get('purchase_intent_users', 0))}</td>"
+                f"<td>{int(row.get('paid_orders', 0))}</td>"
+                f"<td>{int(row.get('revenue_rub', 0)):,}&nbsp;&#8381;</td>"
+                "</tr>"
+            )
 
         # ── Rating distribution for doughnut chart ──
         rating_map = {r["rating"]: r["count"] for r in ratings}
@@ -490,7 +513,7 @@ def build_app(
 
         body = f"""
         <div class="card">
-        <h2>Всего пользователей: {total}</h2>
+        <h2>Всего пользователей: {total} &nbsp;|&nbsp; Выручка: {int(payments_summary.get('revenue_rub', 0)):,}&nbsp;&#8381;</h2>
         <div class="chart-row">
           <div class="chart-box">
             <h3>Оценки видео</h3>
@@ -506,6 +529,26 @@ def build_app(
         <div class="card">
         <h2>Текущий этап (live)</h2>
         <div class="stage-grid">{stage_html if stage_html else '<p>Нет данных</p>'}</div>
+        </div>
+
+        <div class="card">
+        <h2>Статистика по периодам</h2>
+        <div class="table-wrap">
+        <table>
+          <tr>
+            <th>Период</th>
+            <th>Новые пользователи</th>
+            <th>Стартовали</th>
+            <th>Генерация старт</th>
+            <th>Генерация done</th>
+            <th>Генерация fail</th>
+            <th>Интент покупки</th>
+            <th>Оплат подтвержд.</th>
+            <th>Выручка</th>
+          </tr>
+          {period_table_rows}
+        </table>
+        </div>
         </div>
 
         <div class="card">
@@ -851,7 +894,15 @@ def build_app(
 
     @app.get("/admin/utm", response_class=HTMLResponse)
     async def utm_summary(_user: str = Depends(_check_auth)) -> str:
-        rows_data = await credits_db.get_utm_summary(limit=200)
+        rows_data, payments_summary = await asyncio.gather(
+            credits_db.get_utm_summary(limit=200),
+            credits_db.confirmed_payments_summary(),
+        )
+        utm_paid_orders = sum(int(row.get("paid_orders", 0) or 0) for row in rows_data)
+        utm_revenue_rub = sum(int(row.get("revenue_rub", 0) or 0) for row in rows_data)
+        total_paid_orders = int(payments_summary.get("orders_count", 0))
+        total_revenue_rub = int(payments_summary.get("revenue_rub", 0))
+        mismatch = (utm_paid_orders != total_paid_orders) or (utm_revenue_rub != total_revenue_rub)
         rows = ""
         for row in rows_data:
             rows += (
@@ -867,6 +918,12 @@ def build_app(
                 f"</tr>"
             )
         body = f"""
+        <div class="card">
+        <p>Подтвержденные оплаты (global): <strong>{total_paid_orders}</strong></p>
+        <p>Выручка (global): <strong>{total_revenue_rub:,}&nbsp;&#8381;</strong></p>
+        <p>Сумма по UTM-строкам: <strong>{utm_paid_orders}</strong> оплат / <strong>{utm_revenue_rub:,}&nbsp;&#8381;</strong></p>
+        <p style="color:{'#c0392b' if mismatch else '#1e8449'}">{'Есть расхождение между global и UTM суммами' if mismatch else 'Global и UTM суммы совпадают'}</p>
+        </div>
         <div class="card">
         <div class="table-wrap">
         <table><tr><th>Source</th><th>Medium</th><th>Campaign</th><th>Content</th><th>Term</th><th>Starts</th><th>Paid</th><th>Revenue</th></tr>
