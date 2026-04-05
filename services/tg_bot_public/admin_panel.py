@@ -347,6 +347,26 @@ def _project_chat_id(project_id: str) -> int | None:
         return None
 
 
+def _query_int(
+    request: Request,
+    name: str,
+    *,
+    default: int,
+    min_value: int | None = None,
+    max_value: int | None = None,
+) -> int:
+    raw = str(request.query_params.get(name, str(default))).strip()
+    try:
+        value = int(raw or str(default))
+    except Exception:
+        value = int(default)
+    if min_value is not None:
+        value = max(int(min_value), value)
+    if max_value is not None:
+        value = min(int(max_value), value)
+    return value
+
+
 def build_app(
     credits_db: "CreditsDB",
     state_store: "StateStore",
@@ -597,7 +617,7 @@ def build_app(
     @app.get("/admin/users", response_class=HTMLResponse)
     async def users_list(request: Request, _user: str = Depends(_check_auth)) -> str:
         q = request.query_params.get("q", "").strip()
-        page = int(request.query_params.get("page", "1"))
+        page = _query_int(request, "page", default=1, min_value=1)
         per_page = 50
         offset = (page - 1) * per_page
 
@@ -791,7 +811,7 @@ def build_app(
 
     @app.get("/admin/activity", response_class=HTMLResponse)
     async def activity_list(request: Request, _user: str = Depends(_check_auth)) -> str:
-        page = int(request.query_params.get("page", "1"))
+        page = _query_int(request, "page", default=1, min_value=1)
         per_page = 50
         offset = (page - 1) * per_page
         acts, total = await asyncio.gather(
@@ -824,7 +844,7 @@ def build_app(
 
     @app.get("/admin/transactions", response_class=HTMLResponse)
     async def transactions_list(request: Request, _user: str = Depends(_check_auth)) -> str:
-        page = int(request.query_params.get("page", "1"))
+        page = _query_int(request, "page", default=1, min_value=1)
         per_page = 50
         offset = (page - 1) * per_page
         txs, total = await asyncio.gather(
@@ -858,7 +878,7 @@ def build_app(
 
     @app.get("/admin/payments", response_class=HTMLResponse)
     async def payments_list(request: Request, _user: str = Depends(_check_auth)) -> str:
-        page = int(request.query_params.get("page", "1"))
+        page = _query_int(request, "page", default=1, min_value=1)
         per_page = 50
         offset = (page - 1) * per_page
         pays, total = await asyncio.gather(
