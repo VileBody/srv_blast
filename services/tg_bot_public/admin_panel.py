@@ -501,7 +501,7 @@ def build_app(
             state_store.list_all_states(),
             credits_db.list_users(limit=10),
             credits_db.get_activity(limit=10),
-            credits_db.confirmed_payments_summary(),
+            credits_db.payments_status_summary(),
             asyncio.gather(
                 credits_db.period_stats(1),
                 credits_db.period_stats(7),
@@ -584,7 +584,10 @@ def build_app(
 
         body = f"""
         <div class="card">
-        <h2>Всего пользователей: {total} &nbsp;|&nbsp; Выручка: {int(payments_summary.get('revenue_rub', 0)):,}&nbsp;&#8381;</h2>
+        <h2>Всего пользователей: {total}</h2>
+        <p>Выручка (CONFIRMED): <strong>{int(payments_summary.get('confirmed_revenue_rub', 0)):,}&nbsp;&#8381;</strong></p>
+        <p>Ожидает списания (AUTHORIZED): <strong>{int(payments_summary.get('authorized_revenue_rub', 0)):,}&nbsp;&#8381;</strong></p>
+        <p>Видимая сумма (CONFIRMED + AUTHORIZED): <strong>{int(payments_summary.get('visible_revenue_rub', 0)):,}&nbsp;&#8381;</strong></p>
         <div class="chart-row">
           <div class="chart-box">
             <h3>Оценки видео</h3>
@@ -1000,9 +1003,10 @@ def build_app(
 
     @app.get("/admin/utm", response_class=HTMLResponse)
     async def utm_summary(_user: str = Depends(_check_auth)) -> str:
-        rows_data, payments_summary = await asyncio.gather(
+        rows_data, payments_summary, payments_status = await asyncio.gather(
             credits_db.get_utm_summary(limit=200),
             credits_db.confirmed_payments_summary(),
+            credits_db.payments_status_summary(),
         )
         utm_paid_orders = sum(int(row.get("paid_orders", 0) or 0) for row in rows_data)
         utm_revenue_rub = sum(int(row.get("revenue_rub", 0) or 0) for row in rows_data)
@@ -1027,6 +1031,8 @@ def build_app(
         <div class="card">
         <p>Подтвержденные оплаты (global): <strong>{total_paid_orders}</strong></p>
         <p>Выручка (global): <strong>{total_revenue_rub:,}&nbsp;&#8381;</strong></p>
+        <p>Ожидает списания (AUTHORIZED, global): <strong>{int(payments_status.get('authorized_revenue_rub', 0)):,}&nbsp;&#8381;</strong></p>
+        <p>Видимая сумма (CONFIRMED + AUTHORIZED): <strong>{int(payments_status.get('visible_revenue_rub', 0)):,}&nbsp;&#8381;</strong></p>
         <p>Сумма по UTM-строкам: <strong>{utm_paid_orders}</strong> оплат / <strong>{utm_revenue_rub:,}&nbsp;&#8381;</strong></p>
         <p style="color:{'#c0392b' if mismatch else '#1e8449'}">{'Есть расхождение между global и UTM суммами' if mismatch else 'Global и UTM суммы совпадают'}</p>
         </div>
@@ -1111,7 +1117,7 @@ def build_app(
                 f'</div></div>\n'
             )
 
-        revenue = await credits_db.revenue_for_users(tg_ids)
+        revenue = await credits_db.revenue_breakdown_for_users(tg_ids)
 
         user_rows = ""
         for u in users:
@@ -1129,7 +1135,9 @@ def build_app(
         <div class="card">
         <h2>Источник: <span class="badge badge-source">{src_escaped}</span></h2>
         <p>Пользователей: <strong>{total_users}</strong> &nbsp;|&nbsp;
-           Выручка: <strong>{revenue:,}&nbsp;&#8381;</strong></p>
+           Выручка (CONFIRMED): <strong>{int(revenue.get('confirmed_revenue_rub', 0)):,}&nbsp;&#8381;</strong><br>
+           Ожидает списания (AUTHORIZED): <strong>{int(revenue.get('authorized_revenue_rub', 0)):,}&nbsp;&#8381;</strong><br>
+           Видимая сумма (CONFIRMED + AUTHORIZED): <strong>{int(revenue.get('visible_revenue_rub', 0)):,}&nbsp;&#8381;</strong></p>
         </div>
         <div class="card">
         <h2>Воронка</h2>
