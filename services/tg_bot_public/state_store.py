@@ -113,6 +113,31 @@ class RedisChatStateStore:
     def _key(self, chat_id: int) -> str:
         return f"{self._prefix}:{int(chat_id)}"
 
+    def _chat_state_scan_pattern(self) -> str:
+        # Chat state keys are stored as "<prefix>:<chat_id>".
+        # Limit scans to numeric suffixes to avoid touching index/zset/hash keys.
+        return f"{self._prefix}:[0-9]*"
+
+    def _is_chat_state_key(self, key: str) -> bool:
+        prefix = f"{self._prefix}:"
+        if not key.startswith(prefix):
+            return False
+        suffix = key[len(prefix) :]
+        return suffix.isdigit()
+
+    async def _load_state_from_key(self, key: str) -> ChatState | None:
+        try:
+            raw = await self._redis.get(key)
+        except Exception:
+            return None
+        if not raw:
+            return None
+        try:
+            obj = json.loads(raw)
+            return ChatState.model_validate(obj)
+        except Exception:
+            return None
+
     async def get(self, chat_id: int) -> ChatState:
         raw = await self._redis.get(self._key(chat_id))
         if not raw:
@@ -156,15 +181,12 @@ class RedisChatStateStore:
 
     async def list_processing(self) -> List[ChatState]:
         out: List[ChatState] = []
-        pattern = f"{self._prefix}:*"
-        async for key in self._redis.scan_iter(match=pattern, count=200):
-            raw = await self._redis.get(key)
-            if not raw:
+        async for key in self._redis.scan_iter(match=self._chat_state_scan_pattern(), count=200):
+            key_s = str(key)
+            if not self._is_chat_state_key(key_s):
                 continue
-            try:
-                obj = json.loads(raw)
-                st = ChatState.model_validate(obj)
-            except Exception:
+            st = await self._load_state_from_key(key_s)
+            if st is None:
                 continue
             has_jobs = bool(st.active_job_ids) or bool(st.active_job_id)
             if st.stage == STAGE_PROCESSING and has_jobs:
@@ -173,15 +195,12 @@ class RedisChatStateStore:
 
     async def list_all_states(self) -> List[ChatState]:
         out: List[ChatState] = []
-        pattern = f"{self._prefix}:*"
-        async for key in self._redis.scan_iter(match=pattern, count=200):
-            raw = await self._redis.get(key)
-            if not raw:
+        async for key in self._redis.scan_iter(match=self._chat_state_scan_pattern(), count=200):
+            key_s = str(key)
+            if not self._is_chat_state_key(key_s):
                 continue
-            try:
-                obj = json.loads(raw)
-                st = ChatState.model_validate(obj)
-            except Exception:
+            st = await self._load_state_from_key(key_s)
+            if st is None:
                 continue
             out.append(st)
         return out
@@ -208,15 +227,12 @@ class RedisChatStateStore:
     # --- Reminder scan ---
     async def list_pending_reminders(self, now: float) -> List[ChatState]:
         out: List[ChatState] = []
-        pattern = f"{self._prefix}:*"
-        async for key in self._redis.scan_iter(match=pattern, count=200):
-            raw = await self._redis.get(key)
-            if not raw:
+        async for key in self._redis.scan_iter(match=self._chat_state_scan_pattern(), count=200):
+            key_s = str(key)
+            if not self._is_chat_state_key(key_s):
                 continue
-            try:
-                obj = json.loads(raw)
-                st = ChatState.model_validate(obj)
-            except Exception:
+            st = await self._load_state_from_key(key_s)
+            if st is None:
                 continue
             if st.stage == STAGE_KEEP_IN_TOUCH and st.reminder_at > 0 and st.reminder_at <= now:
                 out.append(st)
