@@ -205,6 +205,22 @@ services:
       bash -lc "python -m services.asset_ui.run_uvicorn"
     restart: unless-stopped
 
+  finance-bot:
+    build:
+      context: ./finance_bot
+      dockerfile: Dockerfile
+    container_name: finance-bot
+    environment:
+      FINANCE_BOT_TOKEN: ${FINANCE_BOT_TOKEN:-8782530243:AAEodzMW1H_Y4C49WwyVc04C0poy5JaoeX4}
+      GROK_API_KEY: ${GROK_API_KEY:-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}
+      OWNER_TG_ID: ${OWNER_TG_ID:-975769043}
+      DB_PATH: /app/data/finance.db
+    volumes:
+      - ./finance_bot_data:/app/data
+    ports:
+      - "127.0.0.1:18082:8080"
+    restart: unless-stopped
+
   minio:
     image: minio/minio:latest
     container_name: minio

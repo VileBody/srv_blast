@@ -1,0 +1,248 @@
+2026-04-07 01:21:18,105 [INFO] db: Первый запуск — инициализация данных
+2026-04-07 01:21:18,108 [INFO] db: Начальные данные созданы
+2026-04-07 01:21:18,435 [INFO] apscheduler.scheduler: Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2026-04-07 01:21:18,435 [INFO] apscheduler.scheduler: Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2026-04-07 01:21:18,437 [INFO] apscheduler.scheduler: Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2026-04-07 01:21:18,438 [INFO] apscheduler.scheduler: Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2026-04-07 01:21:18,440 [INFO] apscheduler.scheduler: Added job "daily_ping" to job store "default"
+2026-04-07 01:21:18,440 [INFO] apscheduler.scheduler: Added job "daily_ping_retry" to job store "default"
+2026-04-07 01:21:18,441 [INFO] apscheduler.scheduler: Added job "daily_no_data" to job store "default"
+2026-04-07 01:21:18,441 [INFO] apscheduler.scheduler: Added job "weekly_summary" to job store "default"
+2026-04-07 01:21:18,441 [INFO] apscheduler.scheduler: Scheduler started
+2026-04-07 01:21:18,442 [INFO] __main__: Планировщик запущен
+2026-04-07 01:21:18,443 [INFO] __main__: Webhook-сервер запущен на 0.0.0.0:8080
+2026-04-07 01:21:21,775 [ERROR] __main__: Не удалось отправить приветствие: Telegram server says - Bad Request: chat not found
+2026-04-07 01:21:21,776 [INFO] __main__: Бот запущен — polling активен
+2026-04-07 01:21:21,777 [INFO] aiogram.dispatcher: Start polling
+2026-04-07 01:21:21,835 [INFO] aiogram.dispatcher: Run polling for bot @nikifinancebot id=8782530243 - 'Finance'
+2026-04-07 01:22:33,935 [INFO] aiogram.event: Update id=787580845 is not handled. Duration 0 ms by bot id=8782530243
+2026-04-07 01:22:33,936 [ERROR] aiogram.event: Cause exception while process update id=787580845 by bot id=8782530243
+TypeError: cmd_start() got an unexpected keyword argument 'dispatcher'
+Traceback (most recent call last):
+  File "C:\Users\User\AppData\Roaming\Python\Python314\site-packages\aiogram\dispatcher\dispatcher.py", line 320, in _process_update
+    response = await self.feed_update(bot, update, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\User\AppData\Roaming\Python\Python314\site-packages\aiogram\dispatcher\dispatcher.py", line 164, in feed_update
+    response = await self.update.wrap_outer_middleware(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<7 lines>...
+    )
+    ^
+  File "C:\Users\User\AppData\Roaming\Python\Python314\site-packages\aiogram\dispatcher\middlewares\error.py", line 27, in __call__
+    return await handler(event, data)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\User\AppData\Roaming\Python\Python314\site-packages\aiogram\dispatcher\middlewares\user_context.py", line 58, in __call__
+    return await handler(event, data)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\User\AppData\Roaming\Python\Python314\site-packages\aiogram\fsm\middleware.py", line 43, in __call__
+    return await handler(event, data)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\User\AppData\Roaming\Python\Python314\site-packages\aiogram\dispatcher\event\telegram.py", line 126, in trigger
+    return await wrapped_inner(event, kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\User\AppData\Roaming\Python\Python314\site-packages\aiogram\dispatcher\event\handler.py", line 71, in call
+    return await wrapped()
+           ^^^^^^^^^^^^^^^
+  File "C:\Users\User\AppData\Roaming\Python\Python314\site-packages\aiogram\dispatcher\dispatcher.py", line 283, in _listen_update
+    return await self.propagate_event(update_type=update_type, event=event, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\User\AppData\Roaming\Python\Python314\site-packages\aiogram\dispatcher\router.py", line 163, in propagate_event
+    return await observer.wrap_outer_middleware(_wrapped, event=event, data=kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\User\AppData\Roaming\Python\Python314\site-packages\aiogram\dispatcher\router.py", line 155, in _wrapped
+    return await self._propagate_event(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<4 lines>...
+    )
+    ^
+  File "C:\Users\User\AppData\Roaming\Python\Python314\site-packages\aiogram\dispatcher\router.py", line 191, in _propagate_event
+    response = await router.propagate_event(update_type=update_type, event=event, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\User\AppData\Roaming\Python\Python314\site-packages\aiogram\dispatcher\router.py", line 163, in propagate_event
+    return await observer.wrap_outer_middleware(_wrapped, event=event, data=kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\User\AppData\Roaming\Python\Python314\site-packages\aiogram\dispatcher\router.py", line 155, in _wrapped
+    return await self._propagate_event(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<4 lines>...
+    )
+    ^
+  File "C:\Users\User\AppData\Roaming\Python\Python314\site-packages\aiogram\dispatcher\router.py", line 183, in _propagate_event
+    response = await observer.trigger(event, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\User\AppData\Roaming\Python\Python314\site-packages\aiogram\dispatcher\event\telegram.py", line 126, in trigger
+    return await wrapped_inner(event, kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\User\AppData\Roaming\Python\Python314\site-packages\aiogram\dispatcher\event\handler.py", line 71, in call
+    return await wrapped()
+           ^^^^^^^^^^^^^^^
+  File "C:\Users\User\Desktop\srv_blast\.claude\worktrees\adoring-khorana\finance_bot\handlers.py", line 26, in wrapper
+    return await handler(message, *args, **kwargs)
+                 ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: cmd_start() got an unexpected keyword argument 'dispatcher'
+2026-04-07 01:23:23,532 [INFO] aiogram.event: Update id=787580846 is not handled. Duration 0 ms by bot id=8782530243
+2026-04-07 01:23:23,532 [ERROR] aiogram.event: Cause exception while process update id=787580846 by bot id=8782530243
+TypeError: cmd_start() got an unexpected keyword argument 'dispatcher'
+Traceback (most recent call last):
+  File "C:\Users\User\AppData\Roaming\Python\Python314\site-packages\aiogram\dispatcher\dispatcher.py", line 320, in _process_update
+    response = await self.feed_update(bot, update, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\User\AppData\Roaming\Python\Python314\site-packages\aiogram\dispatcher\dispatcher.py", line 164, in feed_update
+    response = await self.update.wrap_outer_middleware(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<7 lines>...
+    )
+    ^
+  File "C:\Users\User\AppData\Roaming\Python\Python314\site-packages\aiogram\dispatcher\middlewares\error.py", line 27, in __call__
+    return await handler(event, data)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\User\AppData\Roaming\Python\Python314\site-packages\aiogram\dispatcher\middlewares\user_context.py", line 58, in __call__
+    return await handler(event, data)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\User\AppData\Roaming\Python\Python314\site-packages\aiogram\fsm\middleware.py", line 43, in __call__
+    return await handler(event, data)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\User\AppData\Roaming\Python\Python314\site-packages\aiogram\dispatcher\event\telegram.py", line 126, in trigger
+    return await wrapped_inner(event, kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\User\AppData\Roaming\Python\Python314\site-packages\aiogram\dispatcher\event\handler.py", line 71, in call
+    return await wrapped()
+           ^^^^^^^^^^^^^^^
+  File "C:\Users\User\AppData\Roaming\Python\Python314\site-packages\aiogram\dispatcher\dispatcher.py", line 283, in _listen_update
+    return await self.propagate_event(update_type=update_type, event=event, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\User\AppData\Roaming\Python\Python314\site-packages\aiogram\dispatcher\router.py", line 163, in propagate_event
+    return await observer.wrap_outer_middleware(_wrapped, event=event, data=kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\User\AppData\Roaming\Python\Python314\site-packages\aiogram\dispatcher\router.py", line 155, in _wrapped
+    return await self._propagate_event(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<4 lines>...
+    )
+    ^
+  File "C:\Users\User\AppData\Roaming\Python\Python314\site-packages\aiogram\dispatcher\router.py", line 191, in _propagate_event
+    response = await router.propagate_event(update_type=update_type, event=event, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\User\AppData\Roaming\Python\Python314\site-packages\aiogram\dispatcher\router.py", line 163, in propagate_event
+    return await observer.wrap_outer_middleware(_wrapped, event=event, data=kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\User\AppData\Roaming\Python\Python314\site-packages\aiogram\dispatcher\router.py", line 155, in _wrapped
+    return await self._propagate_event(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<4 lines>...
+    )
+    ^
+  File "C:\Users\User\AppData\Roaming\Python\Python314\site-packages\aiogram\dispatcher\router.py", line 183, in _propagate_event
+    response = await observer.trigger(event, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\User\AppData\Roaming\Python\Python314\site-packages\aiogram\dispatcher\event\telegram.py", line 126, in trigger
+    return await wrapped_inner(event, kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\User\AppData\Roaming\Python\Python314\site-packages\aiogram\dispatcher\event\handler.py", line 71, in call
+    return await wrapped()
+           ^^^^^^^^^^^^^^^
+  File "C:\Users\User\Desktop\srv_blast\.claude\worktrees\adoring-khorana\finance_bot\handlers.py", line 26, in wrapper
+    if message.from_user.id != OWNER_TG_ID:
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: cmd_start() got an unexpected keyword argument 'dispatcher'
+2026-04-07 01:24:12,606 [ERROR] aiogram.dispatcher: Failed to fetch updates - TelegramNetworkError: HTTP Client says - ServerDisconnectedError: Server disconnected
+2026-04-07 01:24:12,606 [WARNING] aiogram.dispatcher: Sleep for 1.000000 seconds and try again... (tryings = 0, bot id = 8782530243)
+2026-04-07 01:24:23,802 [INFO] aiogram.dispatcher: Connection established (tryings = 1, bot id = 8782530243)
+2026-04-07 01:24:49,418 [INFO] aiogram.event: Update id=787580847 is not handled. Duration 0 ms by bot id=8782530243
+2026-04-07 01:26:35,469 [ERROR] aiogram.event: Cause exception while process update id=787580847 by bot id=8782530243
+TypeError: cmd_start() got an unexpected keyword argument 'dispatcher'
+Traceback (most recent call last):
+  File "C:\Users\User\AppData\Roaming\Python\Python314\site-packages\aiogram\dispatcher\dispatcher.py", line 320, in _process_update
+    response = await self.feed_update(bot, update, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\User\AppData\Roaming\Python\Python314\site-packages\aiogram\dispatcher\dispatcher.py", line 164, in feed_update
+    response = await self.update.wrap_outer_middleware(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<7 lines>...
+    )
+    ^
+  File "C:\Users\User\AppData\Roaming\Python\Python314\site-packages\aiogram\dispatcher\middlewares\error.py", line 27, in __call__
+    return await handler(event, data)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\User\AppData\Roaming\Python\Python314\site-packages\aiogram\dispatcher\middlewares\user_context.py", line 58, in __call__
+    return await handler(event, data)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\User\AppData\Roaming\Python\Python314\site-packages\aiogram\fsm\middleware.py", line 43, in __call__
+    return await handler(event, data)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\User\AppData\Roaming\Python\Python314\site-packages\aiogram\dispatcher\event\telegram.py", line 126, in trigger
+    return await wrapped_inner(event, kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\User\AppData\Roaming\Python\Python314\site-packages\aiogram\dispatcher\event\handler.py", line 71, in call
+    return await wrapped()
+           ^^^^^^^^^^^^^^^
+  File "C:\Users\User\AppData\Roaming\Python\Python314\site-packages\aiogram\dispatcher\dispatcher.py", line 283, in _listen_update
+    return await self.propagate_event(update_type=update_type, event=event, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\User\AppData\Roaming\Python\Python314\site-packages\aiogram\dispatcher\router.py", line 163, in propagate_event
+    return await observer.wrap_outer_middleware(_wrapped, event=event, data=kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\User\AppData\Roaming\Python\Python314\site-packages\aiogram\dispatcher\router.py", line 155, in _wrapped
+    return await self._propagate_event(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<4 lines>...
+    )
+    ^
+  File "C:\Users\User\AppData\Roaming\Python\Python314\site-packages\aiogram\dispatcher\router.py", line 191, in _propagate_event
+    response = await router.propagate_event(update_type=update_type, event=event, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\User\AppData\Roaming\Python\Python314\site-packages\aiogram\dispatcher\router.py", line 163, in propagate_event
+    return await observer.wrap_outer_middleware(_wrapped, event=event, data=kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\User\AppData\Roaming\Python\Python314\site-packages\aiogram\dispatcher\router.py", line 155, in _wrapped
+    return await self._propagate_event(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<4 lines>...
+    )
+    ^
+  File "C:\Users\User\AppData\Roaming\Python\Python314\site-packages\aiogram\dispatcher\router.py", line 183, in _propagate_event
+    response = await observer.trigger(event, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\User\AppData\Roaming\Python\Python314\site-packages\aiogram\dispatcher\event\telegram.py", line 126, in trigger
+    return await wrapped_inner(event, kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\User\AppData\Roaming\Python\Python314\site-packages\aiogram\dispatcher\event\handler.py", line 71, in call
+    return await wrapped()
+           ^^^^^^^^^^^^^^^
+  File "C:\Users\User\Desktop\srv_blast\.claude\worktrees\adoring-khorana\finance_bot\handlers.py", line 26, in wrapper
+    owner = OwnerFilter()
+    
+TypeError: cmd_start() got an unexpected keyword argument 'dispatcher'
+2026-04-07 01:26:35,475 [ERROR] aiogram.dispatcher: Failed to fetch updates - TelegramNetworkError: HTTP Client says - Request timeout error
+2026-04-07 01:26:35,475 [WARNING] aiogram.dispatcher: Sleep for 1.000000 seconds and try again... (tryings = 0, bot id = 8782530243)
+2026-04-07 01:26:37,740 [INFO] __main__: Остановка бота...
+2026-04-07 01:26:37,742 [INFO] apscheduler.scheduler: Scheduler has been shut down
+2026-04-07 01:26:37,745 [INFO] aiogram.dispatcher: Polling stopped
+2026-04-07 01:26:37,750 [ERROR] aiogram.dispatcher: Failed to fetch updates - TelegramNetworkError: HTTP Client says - ServerDisconnectedError: Server disconnected
+2026-04-07 01:26:37,751 [WARNING] aiogram.dispatcher: Sleep for 1.242232 seconds and try again... (tryings = 1, bot id = 8782530243)
+2026-04-07 01:26:38,007 [INFO] __main__: Бот остановлен
+2026-04-07 01:26:38,010 [INFO] aiogram.dispatcher: Polling stopped for bot @nikifinancebot id=8782530243 - 'Finance'
+2026-04-07 01:26:46,449 [INFO] db: Первый запуск — инициализация данных
+2026-04-07 01:26:46,452 [INFO] db: Начальные данные созданы
+2026-04-07 01:26:46,736 [INFO] apscheduler.scheduler: Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2026-04-07 01:26:46,736 [INFO] apscheduler.scheduler: Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2026-04-07 01:26:46,738 [INFO] apscheduler.scheduler: Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2026-04-07 01:26:46,740 [INFO] apscheduler.scheduler: Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2026-04-07 01:26:46,742 [INFO] apscheduler.scheduler: Added job "daily_ping" to job store "default"
+2026-04-07 01:26:46,742 [INFO] apscheduler.scheduler: Added job "daily_ping_retry" to job store "default"
+2026-04-07 01:26:46,743 [INFO] apscheduler.scheduler: Added job "daily_no_data" to job store "default"
+2026-04-07 01:26:46,743 [INFO] apscheduler.scheduler: Added job "weekly_summary" to job store "default"
+2026-04-07 01:26:46,744 [INFO] apscheduler.scheduler: Scheduler started
+2026-04-07 01:26:46,744 [INFO] __main__: Планировщик запущен
+2026-04-07 01:26:46,745 [INFO] __main__: Webhook-сервер запущен на 0.0.0.0:8080
+2026-04-07 01:26:47,160 [INFO] __main__: Бот запущен — polling активен
+2026-04-07 01:26:47,169 [INFO] aiogram.dispatcher: Start polling
+2026-04-07 01:26:47,261 [INFO] aiogram.dispatcher: Run polling for bot @nikifinancebot id=8782530243 - 'Finance'
+2026-04-07 01:26:52,839 [INFO] aiogram.event: Update id=787580848 is handled. Duration 405 ms by bot id=8782530243
+2026-04-07 01:28:53,930 [INFO] __main__: Остановка бота...
+2026-04-07 01:28:53,932 [INFO] apscheduler.scheduler: Scheduler has been shut down
+2026-04-07 01:28:53,934 [INFO] aiogram.dispatcher: Polling stopped
+2026-04-07 01:28:53,938 [ERROR] aiogram.dispatcher: Failed to fetch updates - TelegramNetworkError: HTTP Client says - ServerDisconnectedError: Server disconnected
+2026-04-07 01:28:53,939 [WARNING] aiogram.dispatcher: Sleep for 1.000000 seconds and try again... (tryings = 0, bot id = 8782530243)
+2026-04-07 01:28:54,191 [INFO] __main__: Бот остановлен
+2026-04-07 01:28:54,192 [INFO] aiogram.dispatcher: Polling stopped for bot @nikifinancebot id=8782530243 - 'Finance'
