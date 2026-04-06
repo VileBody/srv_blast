@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from typing import Any, Dict, Optional, Literal, List
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from core.llm_worker_types import LLM_WORKER_TYPE_SDK
 from core.subtitles_mode import SUBTITLES_MODE_LEGACY_BLOCKS
@@ -34,11 +34,25 @@ class SendAudioS3Request(BaseModel):
         "template_4th",
     ] = SUBTITLES_MODE_LEGACY_BLOCKS
     footage_artist_id: Optional[str] = None
+    user_clip_start_sec: Optional[float] = Field(default=None, ge=0.0)
+    user_clip_end_sec: Optional[float] = Field(default=None, ge=0.0)
     # Optional internal batch controls for multi-version generation.
     reuse_text_job_id: Optional[str] = None
     exclude_file_names: List[str] = Field(default_factory=list)
     variant_index: Optional[int] = None
     variants_total: Optional[int] = None
+
+    @model_validator(mode="after")
+    def _validate_user_clip_window(self) -> "SendAudioS3Request":
+        start = self.user_clip_start_sec
+        end = self.user_clip_end_sec
+        if start is None and end is None:
+            return self
+        if start is None or end is None:
+            raise ValueError("user_clip_start_sec and user_clip_end_sec must be provided together")
+        if float(end) <= float(start):
+            raise ValueError("user_clip_end_sec must be > user_clip_start_sec")
+        return self
 
 
 class EnqueueJobResponse(BaseModel):

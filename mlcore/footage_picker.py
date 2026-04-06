@@ -564,6 +564,9 @@ def _assign_unique_file_names_for_intervals(
 def _build_raw_pool(
     raw_pick: FootageStyleRawPayload,
     assets: List[Dict[str, Any]],
+    *,
+    style_genre: Optional[str] = None,
+    style_tag: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """Build a scored clip pool from a single raw subgroup payload."""
     assets = _apply_tag_overrides(assets)
@@ -588,6 +591,11 @@ def _build_raw_pool(
 
     pool: List[Dict[str, Any]] = []
     for it in assets:
+        if style_genre is not None and style_tag is not None:
+            if str(it.get("genre") or "").strip() != str(style_genre).strip():
+                continue
+            if str(it.get("tag") or "").strip() != str(style_tag).strip():
+                continue
         meta_tags = {_normalize_theme_tag(x) for x in (it.get("meta_theme_tags") or [])}
         meta_tags.discard("")
         meta_tags -= blacklisted
@@ -765,15 +773,23 @@ def pick_footage_clips_by_intervals_deterministic(
         k = len(raw_picks)
         _vi = os.environ.get("BATCH_VARIANT_INDEX", "").strip()
         subgroup_idx = ((int(_vi) - 1) % k) if _vi.isdigit() else (seed_value % k)
-        chosen_pool = _build_raw_pool(raw_picks[subgroup_idx], assets)
+        chosen_pool = _build_raw_pool(
+            raw_picks[subgroup_idx],
+            assets,
+            style_genre=genre,
+            style_tag=tag,
+        )
         if not chosen_pool:
             # Chosen subgroup is empty — fall back to merged pool of all non-empty subgroups.
-            all_pools = [_build_raw_pool(rp, assets) for rp in raw_picks]
+            all_pools = [
+                _build_raw_pool(rp, assets, style_genre=genre, style_tag=tag)
+                for rp in raw_picks
+            ]
             non_empty = [p for p in all_pools if p]
             if not non_empty:
                 raise RuntimeError(
-                    "No assets satisfy any subgroup filters in raw_picks rotation "
-                    f"(subgroups={k})"
+                    "No assets satisfy subgroup raw filters for selected style in raw_picks rotation "
+                    f"(subgroups={k}, genre={genre!r}, tag={tag!r})"
                 )
             chosen_pool = _dedupe_assets_by_file_name([it for p in non_empty for it in p])
 

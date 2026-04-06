@@ -721,6 +721,29 @@ def _build_job_impl(self, job_id: str, *, worker_type: str) -> Dict[str, Any]:
         default=SUBTITLES_MODE_LEGACY_BLOCKS,
     )
     footage_artist_id = str(req.get("footage_artist_id") or "").strip()
+    user_clip_start_sec: Optional[float] = None
+    user_clip_end_sec: Optional[float] = None
+    if req.get("user_clip_start_sec") is not None or req.get("user_clip_end_sec") is not None:
+        try:
+            if req.get("user_clip_start_sec") is not None:
+                user_clip_start_sec = float(req.get("user_clip_start_sec"))
+            if req.get("user_clip_end_sec") is not None:
+                user_clip_end_sec = float(req.get("user_clip_end_sec"))
+        except Exception as e:
+            raise RuntimeError(
+                f"invalid user clip window values start={req.get('user_clip_start_sec')!r} "
+                f"end={req.get('user_clip_end_sec')!r}"
+            ) from e
+        if (user_clip_start_sec is None) != (user_clip_end_sec is None):
+            raise RuntimeError("user clip window requires both user_clip_start_sec and user_clip_end_sec")
+        if user_clip_start_sec is not None and user_clip_end_sec is not None:
+            if user_clip_start_sec < 0.0:
+                raise RuntimeError(f"user_clip_start_sec must be >= 0, got {user_clip_start_sec!r}")
+            if user_clip_end_sec <= user_clip_start_sec:
+                raise RuntimeError(
+                    f"user_clip_end_sec must be > user_clip_start_sec "
+                    f"(got {user_clip_start_sec!r}..{user_clip_end_sec!r})"
+                )
     if not audio_url:
         raise RuntimeError("missing audio_s3_url")
     if not _is_remote_url(audio_url):
@@ -762,6 +785,9 @@ def _build_job_impl(self, job_id: str, *, worker_type: str) -> Dict[str, Any]:
     env["SUBTITLES_MODE"] = subtitles_mode
     if footage_artist_id:
         env["FOOTAGE_ARTIST_ID"] = footage_artist_id
+    if user_clip_start_sec is not None and user_clip_end_sec is not None:
+        env["USER_CLIP_START_SEC"] = str(float(user_clip_start_sec))
+        env["USER_CLIP_END_SEC"] = str(float(user_clip_end_sec))
     if exclude_file_names:
         env["FOOTAGE_EXCLUDE_FILE_NAMES_JSON"] = json.dumps(exclude_file_names, ensure_ascii=False)
     seed_variant = variant_index if variant_index is not None else 1
@@ -793,6 +819,8 @@ def _build_job_impl(self, job_id: str, *, worker_type: str) -> Dict[str, Any]:
             "TARGET_FRAGMENT",
             "SUBTITLES_MODE",
             "FOOTAGE_ARTIST_ID",
+            "USER_CLIP_START_SEC",
+            "USER_CLIP_END_SEC",
             "FOOTAGE_EXCLUDE_FILE_NAMES_JSON",
             "STAGE2_SELECTION_SEED",
             "BATCH_VARIANT_INDEX",
@@ -904,6 +932,9 @@ def _build_job_impl(self, job_id: str, *, worker_type: str) -> Dict[str, Any]:
                     "LYRICS_TEXT",
                     "TARGET_FRAGMENT",
                     "SUBTITLES_MODE",
+                    "FOOTAGE_ARTIST_ID",
+                    "USER_CLIP_START_SEC",
+                    "USER_CLIP_END_SEC",
                     "FOOTAGE_EXCLUDE_FILE_NAMES_JSON",
                     "STAGE2_SELECTION_SEED",
                     "BATCH_VARIANT_INDEX",

@@ -1464,6 +1464,13 @@ class BlastBotApp:
         exclude_file_names: Optional[List[str]] = None,
     ) -> str:
         idem = f"tg-{st.chat_id}-batch-{batch_id}-v{int(version_index)}"
+        user_clip_start_sec: float | None = None
+        user_clip_end_sec: float | None = None
+        start = float(st.user_clip_start_sec or 0.0)
+        end = float(st.user_clip_end_sec or 0.0)
+        if end > start >= 0.0:
+            user_clip_start_sec = start
+            user_clip_end_sec = end
         enqueue = await self.orchestrator.send_audio_s3(
             audio_s3_url=audio_s3_url,
             mode="with_gemini",
@@ -1471,6 +1478,8 @@ class BlastBotApp:
             target_fragment=st.target_fragment,
             subtitles_mode=st.subtitles_mode,
             footage_artist_id=st.footage_artist_id,
+            user_clip_start_sec=user_clip_start_sec,
+            user_clip_end_sec=user_clip_end_sec,
             idempotency_key=idem,
             project_id=batch_id or None,
             reuse_text_job_id=str(reuse_text_job_id or "") or None,

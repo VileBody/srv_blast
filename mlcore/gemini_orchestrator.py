@@ -316,6 +316,38 @@ def _require_choice_env(name: str, *, allowed: List[str]) -> str:
     return raw
 
 
+def _optional_user_clip_window_from_env(*, logger: logging.Logger) -> Optional[Tuple[float, float]]:
+    start_raw = (os.environ.get("USER_CLIP_START_SEC") or "").strip()
+    end_raw = (os.environ.get("USER_CLIP_END_SEC") or "").strip()
+    if not start_raw and not end_raw:
+        return None
+    if not start_raw or not end_raw:
+        raise RuntimeError("USER_CLIP_START_SEC and USER_CLIP_END_SEC must be set together")
+    try:
+        start = float(start_raw)
+        end = float(end_raw)
+    except Exception as e:
+        raise RuntimeError(
+            f"Invalid USER_CLIP_START_SEC/USER_CLIP_END_SEC: {start_raw!r}/{end_raw!r}"
+        ) from e
+    if start < 0.0:
+        raise RuntimeError(f"USER_CLIP_START_SEC must be >= 0 (got {start})")
+    if end <= start:
+        raise RuntimeError(f"USER_CLIP_END_SEC must be > USER_CLIP_START_SEC (got {start}..{end})")
+    dur = float(end - start)
+    if dur < CLIP_WINDOW_MIN_SECONDS - 1e-6:
+        raise RuntimeError(
+            f"user clip duration must be >= {CLIP_WINDOW_MIN_LABEL} seconds (got {dur:.3f})"
+        )
+    logger.info(
+        "user_clip_window_input start=%.3f end=%.3f dur=%.3f",
+        float(start),
+        float(end),
+        float(dur),
+    )
+    return float(start), float(end)
+
+
 def _openrouter_model_from_gemini(gemini_model: str) -> str:
     model = (gemini_model or "").strip()
     if not model:
@@ -1145,6 +1177,56 @@ def _build_stage1_plan_from_selected_fragment(
             ),
         }
     )
+
+
+def _apply_user_clip_window_to_stage1(
+    *,
+    stage1: Stage1PlanPayload,
+    stage1_asr: Stage1AsrPayload,
+    start_abs: float,
+    end_abs: float,
+    logger: logging.Logger,
+) -> Stage1PlanPayload:
+    start = float(start_abs)
+    end = float(end_abs)
+    selected_words = _words_in_window(
+        words=list(stage1_asr.transcript_words),
+        start_abs=start,
+        end_abs=end,
+    )
+    if not selected_words:
+        raise ValueError(
+            f"user clip window has no transcript words in range {start:.3f}..{end:.3f}"
+        )
+    selected_pauses = _pause_spans_in_window(
+        pause_spans=list(stage1_asr.pause_spans or []),
+        start_abs=start,
+        end_abs=end,
+    )
+
+    payload = stage1.model_dump(mode="json")
+    audio_obj = dict(payload.get("audio") or {})
+    audio_obj["clip_start_abs"] = float(start)
+    audio_obj["clip_end_abs"] = float(end)
+    moi = audio_obj.get("moment_of_interest_sec")
+    if moi is None or float(moi) < start or float(moi) > end:
+        audio_obj["moment_of_interest_sec"] = float(start + (end - start) / 2.0)
+    payload["audio"] = audio_obj
+    payload["transcript_words"] = [w.model_dump(mode="json") for w in selected_words]
+    payload["pause_spans"] = [p.model_dump(mode="json") for p in selected_pauses]
+
+    # fragment_analytics is tied to LLM-selected window and becomes stale
+    # after explicit user override.
+    payload["fragment_analytics"] = None
+    updated = Stage1PlanPayload.model_validate(payload)
+    logger.info(
+        "user_clip_window_applied stage1_clip=%.3f..%.3f words=%d pauses=%d",
+        float(start),
+        float(end),
+        len(selected_words),
+        len(selected_pauses),
+    )
+    return updated
 
 
 def _is_fragment_target_exact_mismatch(
@@ -2121,6 +2203,15 @@ def build_all_via_gemini_one_call(
     stamp = _stamp()
     lyrics_text = str(os.environ.get("LYRICS_TEXT") or "").strip()
     target_fragment = str(os.environ.get("TARGET_FRAGMENT") or "").strip()
+    user_clip_window = _optional_user_clip_window_from_env(logger=logger)
+    target_fragment_stage1 = target_fragment
+    if user_clip_window is not None and target_fragment:
+        logger.warning(
+            "user_clip_window_override active, stage1 target_fragment branch disabled "
+            "target_fragment_chars=%d",
+            len(target_fragment),
+        )
+        target_fragment_stage1 = ""
     subtitles_mode = normalize_subtitles_mode(
         os.environ.get("SUBTITLES_MODE"),
         default=SUBTITLES_MODE_LEGACY_BLOCKS,
@@ -2158,7 +2249,7 @@ def build_all_via_gemini_one_call(
             reference_text=forced_reference_text,
             schema_name="Stage1ForcedAlignmentPayload",
             require_selected_fragment=(not use_stage1b_scenario),
-            target_fragment=target_fragment,
+            target_fragment=target_fragment_stage1,
         )
         stage1a_raw = logs_dir / f"gemini_raw_stage1_forced_alignment_{stamp}.json"
         stage1a_sys = logs_dir / f"gemini_system_stage1_forced_alignment_{stamp}.txt"
@@ -2168,7 +2259,7 @@ def build_all_via_gemini_one_call(
         stage1a_prompt = build_stage1a_asr_user_prompt(
             schema_name="Stage1AsrPayload",
             require_selected_fragment=(not use_stage1b_scenario),
-            target_fragment=target_fragment,
+            target_fragment=target_fragment_stage1,
         )
         stage1a_raw = logs_dir / f"gemini_raw_stage1_asr_{stamp}.json"
         stage1a_sys = logs_dir / f"gemini_system_stage1_asr_{stamp}.txt"
@@ -2297,7 +2388,7 @@ def build_all_via_gemini_one_call(
                     _build_stage1a_precision_rework_hint(
                         precision_diag=precision_diag,
                         transcribe_attempt_1=stage1_forced_attempt_1,
-                        target_fragment=target_fragment,
+                        target_fragment=target_fragment_stage1,
                     )
                 )
 
@@ -2374,7 +2465,38 @@ def build_all_via_gemini_one_call(
         encoding="utf-8",
     )
 
-    fragment_branch_on = bool(target_fragment)
+    stage1b_transcript_words = list(stage1_asr.transcript_words)
+    stage1b_pause_spans = list(stage1_asr.pause_spans)
+    stage1b_prompt_transcript_words_json = stage1_asr_json.get("transcript_words", [])
+    if user_clip_window is not None:
+        user_start, user_end = user_clip_window
+        stage1b_transcript_words = _words_in_window(
+            words=list(stage1_asr.transcript_words),
+            start_abs=float(user_start),
+            end_abs=float(user_end),
+        )
+        if not stage1b_transcript_words:
+            raise ValueError(
+                f"user clip window has no transcript words in range {float(user_start):.3f}..{float(user_end):.3f}"
+            )
+        stage1b_pause_spans = _pause_spans_in_window(
+            pause_spans=list(stage1_asr.pause_spans),
+            start_abs=float(user_start),
+            end_abs=float(user_end),
+        )
+        stage1b_prompt_transcript_words_json = [
+            w.model_dump(mode="json")
+            for w in stage1b_transcript_words
+        ]
+        logger.info(
+            "user_clip_window_stage1b_context words=%d pauses=%d clip=%.3f..%.3f",
+            len(stage1b_transcript_words),
+            len(stage1b_pause_spans),
+            float(user_start),
+            float(user_end),
+        )
+
+    fragment_branch_on = bool(target_fragment_stage1)
     expected_stage1_plan_source = "stage1b_scenario" if use_stage1b_scenario else "stage1a_selected_fragment"
 
     stage1: Stage1PlanPayload | None = None
@@ -2401,12 +2523,23 @@ def build_all_via_gemini_one_call(
                 stage1 = Stage1PlanPayload.model_validate(stage1_cached)
                 if fragment_branch_on:
                     _validate_fragment_analytics_for_target(
-                        target_fragment=target_fragment,
+                        target_fragment=target_fragment_stage1,
                         audio_start_abs=float(stage1.audio.clip_start_abs),
                         audio_end_abs=float(stage1.audio.clip_end_abs),
                         analytics=stage1.fragment_analytics,
                         logger=logger,
                     )
+                if user_clip_window is not None:
+                    user_start, user_end = user_clip_window
+                    if (
+                        abs(float(stage1.audio.clip_start_abs) - float(user_start)) > 1e-6
+                        or abs(float(stage1.audio.clip_end_abs) - float(user_end)) > 1e-6
+                    ):
+                        raise RuntimeError(
+                            "stage1_plan clip window mismatch for active user clip override "
+                            f"(cached={float(stage1.audio.clip_start_abs):.3f}..{float(stage1.audio.clip_end_abs):.3f}, "
+                            f"user={float(user_start):.3f}..{float(user_end):.3f})"
+                        )
                 logger.info("llm_resume_hit stage=stage1_plan source=%s", expected_stage1_plan_source)
             except Exception as e:
                 logger.warning("llm_resume_bad stage=stage1_plan err=%s", str(e))
@@ -2419,15 +2552,15 @@ def build_all_via_gemini_one_call(
         logger.info(
             "stage1b_fragment_branch enabled=%s target_fragment_chars=%d",
             fragment_branch_on,
-            len(target_fragment),
+            len(target_fragment_stage1),
         )
 
         stage1b_system = build_stage1b_scenario_system_instruction()
         stage1b_base_prompt = build_stage1b_scenario_user_prompt(
             asr_json={
-                "transcript_words": stage1_asr_json.get("transcript_words", []),
+                "transcript_words": stage1b_prompt_transcript_words_json,
             },
-            target_fragment=target_fragment,
+            target_fragment=target_fragment_stage1,
             schema_name="Stage1ScenarioPayload",
         )
         stage1b_sys = logs_dir / f"gemini_system_stage1_scenario_{stamp}.txt"
@@ -2460,7 +2593,7 @@ def build_all_via_gemini_one_call(
                 audio_obj = stage1_scenario.audio.model_dump(mode="json")
                 if fragment_branch_on:
                     forced_start, forced_end = _validate_fragment_analytics_for_target(
-                        target_fragment=target_fragment,
+                        target_fragment=target_fragment_stage1,
                         audio_start_abs=float(stage1_scenario.audio.clip_start_abs),
                         audio_end_abs=float(stage1_scenario.audio.clip_end_abs),
                         analytics=stage1_scenario.fragment_analytics,
@@ -2472,7 +2605,7 @@ def build_all_via_gemini_one_call(
                     audio_obj["clip_end_abs"] = float(forced_end)
 
                     mismatch = _is_fragment_target_exact_mismatch(
-                        target_fragment=target_fragment,
+                        target_fragment=target_fragment_stage1,
                         analytics=stage1_scenario.fragment_analytics,
                     )
                     if mismatch and not exact_retry_used:
@@ -2480,12 +2613,12 @@ def build_all_via_gemini_one_call(
                         if stage1_scenario.fragment_analytics is not None:
                             got_fragment = str(stage1_scenario.fragment_analytics.target_fragment or "")
                         retry_hint = _build_stage1b_fragment_exact_retry_hint(
-                            target_fragment=target_fragment,
+                            target_fragment=target_fragment_stage1,
                             got_fragment=got_fragment,
                         )
                         logger.warning(
                             "stage1b_fragment_exact_retry_hint_applied expected=%r got=%r hint_chars=%d",
-                            target_fragment,
+                            target_fragment_stage1,
                             got_fragment,
                             len(retry_hint),
                         )
@@ -2498,15 +2631,22 @@ def build_all_via_gemini_one_call(
                             got_fragment = str(stage1_scenario.fragment_analytics.target_fragment or "")
                         logger.warning(
                             "stage1b_fragment_target_mismatch_persisted expected=%r got=%r (continuing)",
-                            target_fragment,
+                            target_fragment_stage1,
                             got_fragment,
                         )
+                if user_clip_window is not None:
+                    user_start, user_end = user_clip_window
+                    audio_obj["clip_start_abs"] = float(user_start)
+                    audio_obj["clip_end_abs"] = float(user_end)
+                    audio_obj["moment_of_interest_sec"] = float(
+                        user_start + (user_end - user_start) / 2.0
+                    )
 
                 stage1_candidate = Stage1PlanPayload.model_validate(
                     {
                         "audio": audio_obj,
-                        "transcript_words": stage1_asr.transcript_words,
-                        "pause_spans": stage1_asr.pause_spans,
+                        "transcript_words": stage1b_transcript_words,
+                        "pause_spans": stage1b_pause_spans,
                         "draft_blocks": stage1_scenario.draft_blocks.model_dump(mode="json"),
                         "fragment_analytics": (
                             stage1_scenario.fragment_analytics.model_dump(mode="json")
@@ -2555,7 +2695,7 @@ def build_all_via_gemini_one_call(
         stage1 = _build_stage1_plan_from_selected_fragment(
             stage1_asr=stage1_asr,
             selected=selected,
-            target_fragment=target_fragment,
+            target_fragment=target_fragment_stage1,
             logger=logger,
         )
         (logs_dir / f"stage1a_selected_fragment_{stamp}.json").write_text(
@@ -2568,6 +2708,15 @@ def build_all_via_gemini_one_call(
 
     if stage1 is None:
         raise RuntimeError("stage1 plan is empty after stage1 processing")
+    if user_clip_window is not None:
+        user_start, user_end = user_clip_window
+        stage1 = _apply_user_clip_window_to_stage1(
+            stage1=stage1,
+            stage1_asr=stage1_asr,
+            start_abs=float(user_start),
+            end_abs=float(user_end),
+            logger=logger,
+        )
     _warn_stage1_clip_over_max(
         clip_start_abs=float(stage1.audio.clip_start_abs),
         clip_end_abs=float(stage1.audio.clip_end_abs),

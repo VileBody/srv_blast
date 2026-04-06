@@ -25,6 +25,8 @@ class OrchestratorClient:
         target_fragment: str,
         subtitles_mode: str = SUBTITLES_MODE_LEGACY_BLOCKS,
         footage_artist_id: str = "",
+        user_clip_start_sec: float | None = None,
+        user_clip_end_sec: float | None = None,
         idempotency_key: str | None = None,
         project_id: str | None = None,
         reuse_text_job_id: str | None = None,
@@ -39,6 +41,16 @@ class OrchestratorClient:
             "target_fragment": str(target_fragment or ""),
             "subtitles_mode": str(subtitles_mode or SUBTITLES_MODE_LEGACY_BLOCKS),
             "footage_artist_id": str(footage_artist_id or ""),
+            "user_clip_start_sec": (
+                float(user_clip_start_sec)
+                if user_clip_start_sec is not None
+                else None
+            ),
+            "user_clip_end_sec": (
+                float(user_clip_end_sec)
+                if user_clip_end_sec is not None
+                else None
+            ),
             "idempotency_key": idempotency_key,
             "project_id": project_id,
             "reuse_text_job_id": str(reuse_text_job_id or "") or None,

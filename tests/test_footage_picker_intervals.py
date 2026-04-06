@@ -307,3 +307,167 @@ def test_interval_picker_raw_filters_exclude_bans_by_metadata_tag() -> None:
     clips = sorted(payload.clips, key=lambda c: float(c.in_point))
     assert len(clips) == 1
     assert str(clips[0].file_name) == "z_ok.mp4"
+
+
+def test_raw_rotation_is_constrained_to_selected_style() -> None:
+    style = FootageStylePickPayload.model_validate({"genre": "Alternative", "tag": "art_rock"})
+    raw_picks = [
+        FootageStyleRawPayload.model_validate(
+            {
+                "theme": "alt_theme",
+                "mood": "minor",
+                "tags_group": "g1",
+                "filters": {
+                    "color_priority": ["dark"],
+                    "exclude": [],
+                    "priority_theme_tags": ["night city"],
+                },
+            }
+        ),
+        FootageStyleRawPayload.model_validate(
+            {
+                "theme": "alt_theme",
+                "mood": "minor",
+                "tags_group": "g2",
+                "filters": {
+                    "color_priority": ["cold"],
+                    "exclude": [],
+                    "priority_theme_tags": ["neon lights"],
+                },
+            }
+        ),
+    ]
+    mapped_assets = [
+        {
+            "file_name": "alt_1.mp4",
+            "genre": "Alternative",
+            "tag": "art_rock",
+            "duration_sec": 2.5,
+            "src_w": 720,
+            "src_h": 1280,
+            "meta_mood": "minor",
+            "meta_color_tone": "dark",
+            "meta_people_type": "none",
+            "meta_theme_tags": ["night city", "neon lights"],
+        },
+        {
+            "file_name": "alt_2.mp4",
+            "genre": "Alternative",
+            "tag": "art_rock",
+            "duration_sec": 2.5,
+            "src_w": 720,
+            "src_h": 1280,
+            "meta_mood": "minor",
+            "meta_color_tone": "cold",
+            "meta_people_type": "none",
+            "meta_theme_tags": ["neon lights"],
+        },
+        {
+            "file_name": "pop_leak.mp4",
+            "genre": "Pop",
+            "tag": "dream_aesthetic",
+            "duration_sec": 2.5,
+            "src_w": 720,
+            "src_h": 1280,
+            "meta_mood": "minor",
+            "meta_color_tone": "dark",
+            "meta_people_type": "none",
+            "meta_theme_tags": ["night city", "neon lights"],
+        },
+    ]
+
+    payload, _diag = pick_footage_clips_by_intervals_deterministic(
+        style_pick=style,
+        assets=mapped_assets,
+        clip_start_abs=0.0,
+        clip_end_abs=3.0,
+        switch_points_abs=[1.0, 2.0],
+        seed_key="job-int-raw-rotation-style-guard",
+        raw_picks=raw_picks,
+    )
+    names = [str(c.file_name) for c in sorted(payload.clips, key=lambda c: float(c.in_point))]
+    assert len(names) == 3
+    assert set(names).issubset({"alt_1.mp4", "alt_2.mp4"})
+    assert "pop_leak.mp4" not in names
+
+
+def test_raw_rotation_variant_index_starts_from_first_subgroup(monkeypatch: pytest.MonkeyPatch) -> None:
+    style = FootageStylePickPayload.model_validate({"genre": "Alternative", "tag": "art_rock"})
+    raw_picks = [
+        FootageStyleRawPayload.model_validate(
+            {
+                "theme": "alt_theme",
+                "mood": "minor",
+                "tags_group": "priority_first",
+                "filters": {
+                    "color_priority": ["dark"],
+                    "exclude": [],
+                    "priority_theme_tags": ["first-group-tag"],
+                },
+            }
+        ),
+        FootageStyleRawPayload.model_validate(
+            {
+                "theme": "alt_theme",
+                "mood": "minor",
+                "tags_group": "secondary",
+                "filters": {
+                    "color_priority": ["dark"],
+                    "exclude": [],
+                    "priority_theme_tags": ["second-group-tag"],
+                },
+            }
+        ),
+    ]
+    mapped_assets = [
+        {
+            "file_name": "first_pool.mp4",
+            "genre": "Alternative",
+            "tag": "art_rock",
+            "duration_sec": 2.5,
+            "src_w": 720,
+            "src_h": 1280,
+            "meta_mood": "minor",
+            "meta_color_tone": "dark",
+            "meta_people_type": "none",
+            "meta_theme_tags": ["first-group-tag"],
+        },
+        {
+            "file_name": "second_pool.mp4",
+            "genre": "Alternative",
+            "tag": "art_rock",
+            "duration_sec": 2.5,
+            "src_w": 720,
+            "src_h": 1280,
+            "meta_mood": "minor",
+            "meta_color_tone": "dark",
+            "meta_people_type": "none",
+            "meta_theme_tags": ["second-group-tag"],
+        },
+    ]
+
+    monkeypatch.setenv("BATCH_VARIANT_INDEX", "1")
+    payload_first, _ = pick_footage_clips_by_intervals_deterministic(
+        style_pick=style,
+        assets=mapped_assets,
+        clip_start_abs=0.0,
+        clip_end_abs=1.5,
+        switch_points_abs=[0.75],
+        seed_key="job-int-raw-rotation-v1",
+        raw_picks=raw_picks,
+    )
+    names_first = {str(c.file_name) for c in payload_first.clips}
+    assert names_first == {"first_pool.mp4"}
+
+    monkeypatch.setenv("BATCH_VARIANT_INDEX", "2")
+    payload_second, _ = pick_footage_clips_by_intervals_deterministic(
+        style_pick=style,
+        assets=mapped_assets,
+        clip_start_abs=0.0,
+        clip_end_abs=1.5,
+        switch_points_abs=[0.75],
+        seed_key="job-int-raw-rotation-v2",
+        raw_picks=raw_picks,
+    )
+    names_second = {str(c.file_name) for c in payload_second.clips}
+    assert names_second == {"second_pool.mp4"}
