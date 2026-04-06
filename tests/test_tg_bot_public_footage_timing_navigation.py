@@ -32,21 +32,29 @@ class _FakeStore:
 
 
 class _FakeMessage:
-    def __init__(self, text: str = "") -> None:
+    def __init__(self, text: str = "", *, fail_video_ids: set[str] | None = None) -> None:
         self.text = text
+        self.fail_video_ids = set(fail_video_ids or set())
         self.answers: list[dict[str, object]] = []
         self.videos: list[dict[str, str]] = []
+        self.video_attempts: list[str] = []
 
     async def answer(self, text: str, reply_markup=None, **_kwargs) -> None:
         self.answers.append({"text": text, "reply_markup": reply_markup})
 
     async def answer_video(self, *, video: str, caption: str = "", **_kwargs) -> None:
+        v = str(video)
+        self.video_attempts.append(v)
+        if v in self.fail_video_ids:
+            raise RuntimeError("send_video_failed")
         self.videos.append({"video": video, "caption": caption})
 
 
 def _new_app() -> public_app.BlastBotApp:
     app = object.__new__(public_app.BlastBotApp)
     app.store = _FakeStore()
+    app._preview_source_bot_token = ""
+    app._preview_source_file_url_cache = {}
     return app
 
 
@@ -158,5 +166,89 @@ def test_footage_flow_has_back_navigation(monkeypatch) -> None:
         app._ask_footage_genre = _ask_footage_genre  # type: ignore[method-assign]
         await public_app.BlastBotApp._handle_wait_footage_artist(app, back_artist_msg, st2)
         assert called2["genre"] == 1
+
+    asyncio.run(_run())
+
+
+def test_footage_preview_fallback_uses_source_bot_url(monkeypatch) -> None:
+    async def _run() -> None:
+        monkeypatch.setattr(public_app, "_kb", lambda *rows: ("kb", rows))
+        monkeypatch.setattr(
+            public_app,
+            "get_genres",
+            lambda: [
+                {
+                    "key": "pop",
+                    "label": "Поп",
+                    "artists": [
+                        {
+                            "key": "artist_a",
+                            "label": "Артист A",
+                            "description": "desc",
+                            "preview_file_id": "TEAM_FILE_ID",
+                            "preview_s3_url": "",
+                        }
+                    ],
+                }
+            ],
+        )
+
+        app = _new_app()
+
+        async def _resolve_preview_source_file_url(_preview_file_id: str) -> str:
+            return "https://cdn.example.com/preview-artist-a.mp4"
+
+        app._resolve_preview_source_file_url = _resolve_preview_source_file_url  # type: ignore[method-assign]
+        st = ChatState(chat_id=2005, stage=STAGE_WAIT_FOOTAGE_GENRE)
+        msg = _FakeMessage(text="Поп", fail_video_ids={"TEAM_FILE_ID"})
+
+        await public_app.BlastBotApp._handle_wait_footage_genre(app, msg, st)
+
+        assert "TEAM_FILE_ID" in msg.video_attempts
+        assert "https://cdn.example.com/preview-artist-a.mp4" in msg.video_attempts
+        assert any(v["video"] == "https://cdn.example.com/preview-artist-a.mp4" for v in msg.videos)
+
+    asyncio.run(_run())
+
+
+def test_footage_preview_prefers_public_file_id(monkeypatch) -> None:
+    async def _run() -> None:
+        monkeypatch.setattr(public_app, "_kb", lambda *rows: ("kb", rows))
+        monkeypatch.setattr(
+            public_app,
+            "get_genres",
+            lambda: [
+                {
+                    "key": "pop",
+                    "label": "Поп",
+                    "artists": [
+                        {
+                            "key": "artist_a",
+                            "label": "Артист A",
+                            "description": "desc",
+                            "preview_file_id_public": "PUBLIC_FILE_ID",
+                            "preview_file_id": "TEAM_FILE_ID",
+                            "preview_s3_url": "",
+                        }
+                    ],
+                }
+            ],
+        )
+
+        app = _new_app()
+        calls = {"resolver": 0}
+
+        async def _resolve_preview_source_file_url(_preview_file_id: str) -> str:
+            calls["resolver"] += 1
+            return "https://cdn.example.com/preview-artist-a.mp4"
+
+        app._resolve_preview_source_file_url = _resolve_preview_source_file_url  # type: ignore[method-assign]
+        st = ChatState(chat_id=2006, stage=STAGE_WAIT_FOOTAGE_GENRE)
+        msg = _FakeMessage(text="Поп")
+
+        await public_app.BlastBotApp._handle_wait_footage_genre(app, msg, st)
+
+        assert msg.video_attempts == ["PUBLIC_FILE_ID"]
+        assert calls["resolver"] == 0
 
     asyncio.run(_run())

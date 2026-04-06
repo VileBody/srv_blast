@@ -876,6 +876,8 @@ class BlastBotApp:
         self._state_cleanup_task: asyncio.Task[None] | None = None
         self._fs_cleanup_task: asyncio.Task[None] | None = None
         self._bot: Bot | None = None
+        self._preview_source_bot_token = str(settings.tg_preview_source_bot_token or "").strip()
+        self._preview_source_file_url_cache: Dict[str, str] = {}
 
         self._register_handlers()
         self.dp.startup.register(self._on_startup)
@@ -886,6 +888,34 @@ class BlastBotApp:
             username=st.chat_username,
             allowlist=tuple(self.settings.artifacts_allowlist or tuple()),
         )
+
+    async def _resolve_preview_source_file_url(self, preview_file_id: str) -> str:
+        fid = str(preview_file_id or "").strip()
+        token = str(self._preview_source_bot_token or "").strip()
+        if not fid or not token:
+            return ""
+        cached = str(self._preview_source_file_url_cache.get(fid) or "").strip()
+        if cached:
+            return cached
+
+        try:
+            async with httpx.AsyncClient(timeout=20.0) as client:
+                api_url = f"https://api.telegram.org/bot{token}/getFile"
+                resp = await client.get(api_url, params={"file_id": fid})
+                if resp.status_code >= 300:
+                    return ""
+                payload = resp.json()
+                if not bool(payload.get("ok")):
+                    return ""
+                result = payload.get("result") if isinstance(payload.get("result"), dict) else {}
+                file_path = str(result.get("file_path") or "").strip()
+                if not file_path:
+                    return ""
+                file_url = f"https://api.telegram.org/file/bot{token}/{file_path}"
+                self._preview_source_file_url_cache[fid] = file_url
+                return file_url
+        except Exception:
+            return ""
 
     def _version_num_for_job(self, st: ChatState, job_id: str) -> int:
         jid = str(job_id or "").strip()
@@ -1354,19 +1384,34 @@ class BlastBotApp:
             reply_markup=_kb(*[[label] for label in artist_labels], [BTN_BACK]),
         )
         for artist in artists:
-            preview_fid = str(artist.get("preview_file_id") or "").strip()
+            preview_fid_public = str(artist.get("preview_file_id_public") or "").strip()
+            preview_fid_legacy = str(artist.get("preview_file_id") or "").strip()
+            preview_fid = preview_fid_public or preview_fid_legacy
             preview_url = str(artist.get("preview_s3_url") or "").strip()
             description = str(artist.get("description") or "")
+            caption = f"{artist['label']}: {description}"
+            sent = False
             if preview_fid:
                 try:
-                    await message.answer_video(video=preview_fid, caption=f"{artist['label']}: {description}")
-                except Exception:
-                    log.warning("failed to send preview for %s (file_id)", artist["key"])
-            elif preview_url:
-                try:
-                    await message.answer_video(video=preview_url, caption=f"{artist['label']}: {description}")
-                except Exception:
-                    log.warning("failed to send preview for %s (url)", artist["key"])
+                    await message.answer_video(video=preview_fid, caption=caption)
+                    sent = True
+                except Exception as exc:
+                    log.warning("failed to send preview for %s (file_id): %s", artist["key"], str(exc))
+
+            if not sent:
+                fallback_video = preview_url
+                if not fallback_video and preview_fid:
+                    fallback_video = await self._resolve_preview_source_file_url(preview_fid)
+                if fallback_video:
+                    try:
+                        await message.answer_video(video=fallback_video, caption=caption)
+                        sent = True
+                    except Exception:
+                        log.warning("failed to send preview for %s (fallback)", artist["key"])
+
+            if not sent:
+                # Keep UX explicit instead of silently skipping previews.
+                await message.answer(f"{artist['label']}: {description}")
 
     async def _handle_wait_footage_artist(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()

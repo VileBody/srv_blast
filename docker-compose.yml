@@ -153,6 +153,7 @@ services:
       - .env
     environment:
       TG_BOT_TOKEN: ${TG_BOT_PUBLIC_TOKEN}
+      TG_PREVIEW_SOURCE_BOT_TOKEN: ${TG_BOT_TOKEN:-}
       TG_STATE_PREFIX: ${TG_PUBLIC_STATE_PREFIX:-blast:tg:public:chat_state}
       SUBSCRIPTION_CHANNEL: ${SUBSCRIPTION_CHANNEL:-@impulsemarketing}
       ORCHESTRATOR_PUBLIC_URL: ${ORCHESTRATOR_PUBLIC_URL:-http://orchestrator-api:8000}
