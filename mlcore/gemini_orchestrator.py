@@ -634,6 +634,9 @@ def _stage1_asr_from_forced_alignment(
                     else None
                 ),
             },
+            # Filter out boundary items that start before clip_start or end
+            # after clip_end — they may pass the overlap-based validator but
+            # must not appear in subtitles.
             "transcript_words": [
                 {
                     "text": str(w.text),
@@ -641,6 +644,8 @@ def _stage1_asr_from_forced_alignment(
                     "t_end": float(w.t_end_sec),
                 }
                 for w in sf.transcript_words
+                if float(w.t_start_sec) >= float(selected_audio.clip_start_abs_sec) - 1e-6
+                and float(w.t_end_sec) <= float(selected_audio.clip_end_abs_sec) + 1e-6
             ],
             "pause_spans": [
                 {
@@ -649,6 +654,8 @@ def _stage1_asr_from_forced_alignment(
                     "t_end": float(p.t_end_sec),
                 }
                 for p in sf.pause_spans
+                if float(p.t_start_sec) >= float(selected_audio.clip_start_abs_sec) - 1e-6
+                and float(p.t_end_sec) <= float(selected_audio.clip_end_abs_sec) + 1e-6
             ],
             "srt_items": [
                 {
@@ -657,6 +664,8 @@ def _stage1_asr_from_forced_alignment(
                     "text": str(it.text),
                 }
                 for it in sf.srt_items
+                if float(it.start_sec) >= float(selected_audio.clip_start_abs_sec) - 1e-6
+                and float(it.end_sec) <= float(selected_audio.clip_end_abs_sec) + 1e-6
             ],
             "fragment_analytics": (
                 sf.fragment_analytics.model_dump(mode="json")
