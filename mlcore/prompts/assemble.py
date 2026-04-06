@@ -1,7 +1,7 @@
 # mlcore/prompts/assemble.py
 from __future__ import annotations
 
-from typing import Dict, List
+from typing import Dict, List, Optional, Tuple
 import json
 
 from core.clip_window import (
@@ -113,18 +113,34 @@ def build_stage1a_asr_system_instruction() -> str:
     )
 
 
+def _clip_window_prompt_block(user_clip_window: Tuple[float, float]) -> str:
+    start, end = user_clip_window
+    return (
+        f"\nUSER_CLIP_WINDOW: {start:.3f}s .. {end:.3f}s (duration {end - start:.3f}s)\n"
+        "The user has chosen an explicit timing window.\n"
+        "Only transcribe/align content within the USER_CLIP_WINDOW time range.\n"
+        "Output transcript_words, pause_spans, and srt_items ONLY for words in this range.\n"
+        "Ignore audio content outside the USER_CLIP_WINDOW.\n"
+        "All timestamps must remain ABSOLUTE full-track seconds.\n"
+    )
+
+
 def build_stage1a_asr_user_prompt(
     *,
     schema_name: str = "Stage1AsrPayload",
     require_selected_fragment: bool = False,
     target_fragment: str = "",
+    user_clip_window: Optional[Tuple[float, float]] = None,
 ) -> str:
     base = (
         f"Return ONLY JSON matching schema: {schema_name}\n\n"
         "Use the attached audio as the source of truth.\n"
-        "Output transcript_words for the full track and optional srt_items.\n"
-        "All returned timestamps must be ABSOLUTE full-track seconds.\n"
     )
+    if user_clip_window is not None:
+        base += _clip_window_prompt_block(user_clip_window)
+    else:
+        base += "Output transcript_words for the full track and optional srt_items.\n"
+    base += "All returned timestamps must be ABSOLUTE full-track seconds.\n"
     if not require_selected_fragment:
         return base
 
@@ -186,6 +202,7 @@ def build_stage1a_forced_alignment_user_prompt(
     schema_name: str = "Stage1ForcedAlignmentPayload",
     require_selected_fragment: bool = False,
     target_fragment: str = "",
+    user_clip_window: Optional[Tuple[float, float]] = None,
 ) -> str:
     ref = str(reference_text or "").strip()
     if not ref:
@@ -193,7 +210,16 @@ def build_stage1a_forced_alignment_user_prompt(
     base = (
         f"Return ONLY JSON matching schema: {schema_name}\n\n"
         "Use the attached audio as the source of truth.\n"
-        "Align every word in REFERENCE_TEXT and return one timed item per word.\n"
+    )
+    if user_clip_window is not None:
+        base += _clip_window_prompt_block(user_clip_window)
+        base += (
+            "Align every word in REFERENCE_TEXT that falls within the USER_CLIP_WINDOW "
+            "and return one timed item per word.\n"
+        )
+    else:
+        base += "Align every word in REFERENCE_TEXT and return one timed item per word.\n"
+    base += (
         "REFERENCE_TEXT is the only allowed word source (no extra backing/ad-lib words).\n\n"
         "For aligned_words use string timestamps in mm:ss.mmm format (absolute full-track timeline).\n"
         "mm:ss.mmm means EXACTLY 3 digits after dot.\n"

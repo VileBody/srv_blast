@@ -2300,6 +2300,7 @@ def build_all_via_gemini_one_call(
             schema_name="Stage1ForcedAlignmentPayload",
             require_selected_fragment=need_llm_selected_fragment,
             target_fragment=target_fragment_stage1,
+            user_clip_window=user_clip_window,
         )
         stage1a_raw = logs_dir / f"gemini_raw_stage1_forced_alignment_{stamp}.json"
         stage1a_sys = logs_dir / f"gemini_system_stage1_forced_alignment_{stamp}.txt"
@@ -2310,6 +2311,7 @@ def build_all_via_gemini_one_call(
             schema_name="Stage1AsrPayload",
             require_selected_fragment=need_llm_selected_fragment,
             target_fragment=target_fragment_stage1,
+            user_clip_window=user_clip_window,
         )
         stage1a_raw = logs_dir / f"gemini_raw_stage1_asr_{stamp}.json"
         stage1a_sys = logs_dir / f"gemini_system_stage1_asr_{stamp}.txt"
