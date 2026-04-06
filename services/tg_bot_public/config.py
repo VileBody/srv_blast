@@ -157,6 +157,7 @@ class Settings:
     credits_db_path: str = _env("CREDITS_DB_PATH", "/app/work/credits.db")
     admin_panel_port: int = _int_env("ADMIN_PANEL_PORT", 8080)
     admin_panel_password: str = _env("ADMIN_PANEL_PASSWORD", "changeme")
+    dozzle_base_url: str = _env("DOZZLE_BASE_URL", "")
     initial_credits: int = _int_env("INITIAL_CREDITS", 2)
     jobstore_prefix: str = _env("JOBSTORE_PREFIX", "blast")
     windows_render_url: str = _env("WINDOWS_RENDER_URL", "")

@@ -601,6 +601,32 @@ class CreditsDB:
             "revenue_rub": int(row["revenue_rub"] or 0),
         }
 
+    async def period_stats_range(self, date_from: datetime, date_to: datetime) -> Dict[str, int]:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT "
+                "  (SELECT COALESCE(COUNT(*), 0)::BIGINT FROM users WHERE created_at >= $1 AND created_at < $2) AS users_new, "
+                "  (SELECT COALESCE(COUNT(DISTINCT tg_id), 0)::BIGINT FROM activity_log WHERE event = 'start' AND created_at >= $1 AND created_at < $2) AS starts_users, "
+                "  (SELECT COALESCE(COUNT(DISTINCT tg_id), 0)::BIGINT FROM activity_log WHERE event = 'generation_started' AND created_at >= $1 AND created_at < $2) AS generation_started_users, "
+                "  (SELECT COALESCE(COUNT(DISTINCT tg_id), 0)::BIGINT FROM activity_log WHERE event = 'generation_done' AND created_at >= $1 AND created_at < $2) AS generation_done_users, "
+                "  (SELECT COALESCE(COUNT(DISTINCT tg_id), 0)::BIGINT FROM activity_log WHERE event = 'generation_failed' AND created_at >= $1 AND created_at < $2) AS generation_failed_users, "
+                "  (SELECT COALESCE(COUNT(DISTINCT tg_id), 0)::BIGINT FROM activity_log WHERE event = 'purchase_intent' AND created_at >= $1 AND created_at < $2) AS purchase_intent_users, "
+                "  (SELECT COALESCE(COUNT(*), 0)::BIGINT FROM payments WHERE status = 'CONFIRMED' AND created_at >= $1 AND created_at < $2) AS paid_orders, "
+                "  (SELECT COALESCE(SUM(amount_rub), 0)::BIGINT FROM payments WHERE status = 'CONFIRMED' AND created_at >= $1 AND created_at < $2) AS revenue_rub",
+                date_from,
+                date_to,
+            )
+        empty = {
+            "users_new": 0, "starts_users": 0,
+            "generation_started_users": 0, "generation_done_users": 0,
+            "generation_failed_users": 0, "purchase_intent_users": 0,
+            "paid_orders": 0, "revenue_rub": 0,
+        }
+        if row is None:
+            return empty
+        return {k: int(row[k] or 0) for k in empty}
+
     async def get_user(self, tg_id: int) -> Optional[Dict[str, Any]]:
         pool = self._pool_or_fail()
         async with pool.acquire() as conn:
@@ -923,16 +949,18 @@ class CreditsDB:
         if not q:
             return []
         pool = self._pool_or_fail()
+        like_q = f"%{q}%"
         async with pool.acquire() as conn:
             if q.isdigit():
                 rows = await conn.fetch(
                     "SELECT tg_id, username, credits, created_at, updated_at, source, "
                     "first_utm_source, first_utm_campaign, last_utm_source, last_utm_campaign "
                     "FROM users "
-                    "WHERE tg_id = $1 OR username ILIKE $2 "
+                    "WHERE tg_id = $1 OR username ILIKE $2 OR source ILIKE $2 "
+                    "OR first_utm_source ILIKE $2 OR first_utm_campaign ILIKE $2 "
                     "ORDER BY updated_at DESC, tg_id DESC LIMIT $3",
                     int(q),
-                    f"%{q}%",
+                    like_q,
                     int(limit),
                 )
             else:
@@ -940,9 +968,10 @@ class CreditsDB:
                     "SELECT tg_id, username, credits, created_at, updated_at, source, "
                     "first_utm_source, first_utm_campaign, last_utm_source, last_utm_campaign "
                     "FROM users "
-                    "WHERE username ILIKE $1 "
+                    "WHERE username ILIKE $1 OR source ILIKE $1 "
+                    "OR first_utm_source ILIKE $1 OR first_utm_campaign ILIKE $1 "
                     "ORDER BY updated_at DESC, tg_id DESC LIMIT $2",
-                    f"%{q}%",
+                    like_q,
                     int(limit),
                 )
         return [
