@@ -589,7 +589,11 @@ def _validate_forced_alignment_payload(
     )
 
 
-def _stage1_asr_from_forced_alignment(payload: Stage1ForcedAlignmentPayload) -> Stage1AsrPayload:
+def _stage1_asr_from_forced_alignment(
+    payload: Stage1ForcedAlignmentPayload,
+    *,
+    logger: logging.Logger,
+) -> Stage1AsrPayload:
     min_gap_sec = _stage1a_pause_min_gap_sec()
     transcript_words = [
         {
@@ -676,6 +680,47 @@ def _stage1_asr_from_forced_alignment(payload: Stage1ForcedAlignmentPayload) -> 
                     end_abs=float(selected_audio.clip_end_abs_sec),
                 )
             ]
+
+        # Expand short clip to meet minimum duration requirement.
+        audio_d = selected_obj["audio"]
+        cs = float(audio_d["clip_start_abs"])
+        ce = float(audio_d["clip_end_abs"])
+        clip_dur = ce - cs
+        if clip_dur < CLIP_WINDOW_MIN_SECONDS - 1e-6:
+            need = CLIP_WINDOW_MIN_SECONDS - clip_dur
+            # left_room is bounded by 0; right side is unbounded because the
+            # audio file extends past the last transcribed word.
+            left_room = max(0.0, cs)
+            add_left = min(left_room, need / 2.0)
+            add_right = need - add_left
+            new_start = cs - add_left
+            new_end = ce + add_right
+            audio_d["clip_start_abs"] = float(new_start)
+            audio_d["clip_end_abs"] = float(new_end)
+            moi = audio_d.get("moment_of_interest_sec")
+            if moi is not None and (float(moi) < new_start or float(moi) > new_end):
+                audio_d["moment_of_interest_sec"] = float(new_start + (new_end - new_start) / 2.0)
+            # Re-derive fragment content from full transcript for expanded window.
+            full_words = [TranscriptWord.model_validate(w) for w in transcript_words]
+            full_pauses = [PauseSpan.model_validate(p) for p in pause_spans]
+            expanded_words = _words_in_window(words=full_words, start_abs=new_start, end_abs=new_end)
+            expanded_pauses = _pause_spans_in_window(pause_spans=full_pauses, start_abs=new_start, end_abs=new_end)
+            if expanded_words:
+                selected_obj["transcript_words"] = [
+                    {"text": str(w.text), "t_start": float(w.t_start), "t_end": float(w.t_end)}
+                    for w in expanded_words
+                ]
+            if expanded_pauses:
+                selected_obj["pause_spans"] = [
+                    {"text": "[pause]", "t_start": float(p.t_start), "t_end": float(p.t_end)}
+                    for p in expanded_pauses
+                ]
+            logger.warning(
+                "stage1a_selected_fragment_short_clip_expanded "
+                "original=%.3f..%.3f dur=%.3f expanded=%.3f..%.3f dur=%.3f",
+                cs, ce, clip_dur, new_start, new_end, float(new_end - new_start),
+            )
+
         out["selected_fragment"] = selected_obj
     return Stage1AsrPayload.model_validate(out)
 
@@ -2331,7 +2376,7 @@ def build_all_via_gemini_one_call(
                 logger=logger,
             )
             stage1_forced_attempt_1 = stage1_forced.model_dump(mode="json")
-            stage1_asr = _stage1_asr_from_forced_alignment(stage1_forced)
+            stage1_asr = _stage1_asr_from_forced_alignment(stage1_forced, logger=logger)
             transcribed_dur = _transcribed_duration_sec(stage1_asr)
             precision_diag = _analyze_stage1a_timecode_precision(payload=stage1_forced)
             logger.info(
@@ -2420,7 +2465,7 @@ def build_all_via_gemini_one_call(
                     reference_words=forced_reference_words,
                     logger=logger,
                 )
-                stage1_asr = _stage1_asr_from_forced_alignment(stage1_forced)
+                stage1_asr = _stage1_asr_from_forced_alignment(stage1_forced, logger=logger)
                 (logs_dir / f"stage1_forced_alignment_attempt_1_{stamp}.json").write_text(
                     json.dumps(stage1_forced_attempt_1, ensure_ascii=False, indent=2),
                     encoding="utf-8",
