@@ -22,6 +22,10 @@ STAGE_WAIT_LYRICS_CHOICE = "WAIT_LYRICS_CHOICE"
 STAGE_WAIT_LYRICS_TEXT = "WAIT_LYRICS_TEXT"
 STAGE_WAIT_FRAGMENT_CHOICE = "WAIT_FRAGMENT_CHOICE"
 STAGE_WAIT_FRAGMENT_TEXT = "WAIT_FRAGMENT_TEXT"
+STAGE_WAIT_TIMING_CHOICE = "WAIT_TIMING_CHOICE"
+STAGE_WAIT_TIMING_INPUT = "WAIT_TIMING_INPUT"
+STAGE_WAIT_FOOTAGE_GENRE = "WAIT_FOOTAGE_GENRE"
+STAGE_WAIT_FOOTAGE_ARTIST = "WAIT_FOOTAGE_ARTIST"
 STAGE_WAIT_CONFIRM_TEXT = "WAIT_CONFIRM_TEXT"
 STAGE_WAIT_SUBTITLES_MODE = "WAIT_SUBTITLES_MODE"
 STAGE_WAIT_CONFIRM_MODE = "WAIT_CONFIRM_MODE"
@@ -76,6 +80,11 @@ class ChatState(BaseModel):
     prepared_audio_local_path: str = ""
     lyrics_text: str = ""
     target_fragment: str = ""
+    footage_genre_key: str = ""
+    footage_artist_key: str = ""
+    footage_artist_id: str = ""
+    user_clip_start_sec: float = 0.0
+    user_clip_end_sec: float = 0.0
     subtitles_mode: str = SUBTITLES_MODE_IMPULSE_2ND
     versions_count: int = 1
     # Batch metadata for sequential multi-version generation.
@@ -361,6 +370,11 @@ class RedisChatStateStore:
         existing.status_message_id = 0
         existing.last_status_msg_at = 0.0
         existing.target_fragment = ""
+        existing.footage_genre_key = ""
+        existing.footage_artist_key = ""
+        existing.footage_artist_id = ""
+        existing.user_clip_start_sec = 0.0
+        existing.user_clip_end_sec = 0.0
         existing.subtitles_mode = ""
         existing.versions_count = 1
         existing.referral_tag = ""
