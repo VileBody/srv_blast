@@ -157,20 +157,23 @@ class ForcedSelectedFragment(BaseModel):
     def _check(self) -> "ForcedSelectedFragment":
         cs = float(self.audio.clip_start_abs_sec)
         ce = float(self.audio.clip_end_abs_sec)
+        # Allow words that partially overlap the clip boundary (LLM may place
+        # the clip edge in the middle of a word).  Reject only items that are
+        # entirely outside the clip window.
         for w in self.transcript_words:
-            if float(w.t_start_sec) < cs - 1e-6 or float(w.t_end_sec) > ce + 1e-6:
+            if float(w.t_end_sec) < cs - 1e-6 or float(w.t_start_sec) > ce + 1e-6:
                 raise ValueError(
                     f"selected_fragment.transcript_words item out of clip "
                     f"({w.text!r}, {w.t_start}..{w.t_end} not in {self.audio.clip_start_abs}..{self.audio.clip_end_abs})"
                 )
         for p in self.pause_spans:
-            if float(p.t_start_sec) < cs - 1e-6 or float(p.t_end_sec) > ce + 1e-6:
+            if float(p.t_end_sec) < cs - 1e-6 or float(p.t_start_sec) > ce + 1e-6:
                 raise ValueError(
                     f"selected_fragment.pause_spans item out of clip "
                     f"({p.t_start}..{p.t_end} not in {self.audio.clip_start_abs}..{self.audio.clip_end_abs})"
                 )
         for it in self.srt_items:
-            if float(it.start_sec) < cs - 1e-6 or float(it.end_sec) > ce + 1e-6:
+            if float(it.end_sec) < cs - 1e-6 or float(it.start_sec) > ce + 1e-6:
                 raise ValueError(
                     f"selected_fragment.srt_items item out of clip "
                     f"({it.start}..{it.end} not in {self.audio.clip_start_abs}..{self.audio.clip_end_abs})"
