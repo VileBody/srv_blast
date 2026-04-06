@@ -1687,6 +1687,26 @@ class BlastBotApp:
         except Exception as e:
             log.warning("manager_notify_failed err=%s", str(e))
 
+    async def _notify_manager_generation_error(self, *, username: str, chat_id: int, job_id: str, stage: str, error_text: str) -> None:
+        mgr = self.settings.manager_chat_id
+        if not mgr:
+            return
+        bot = self._require_bot()
+        user_tag = f"@{username}" if username else str(chat_id)
+        lines = [
+            "⚠️ Ошибка генерации!",
+            "",
+            f"Артист: {user_tag}",
+            f"Job: {job_id}",
+            f"Стадия: {stage or '-'}",
+        ]
+        if error_text:
+            lines.append(f"Ошибка: {_compact_text(error_text, limit=500)}")
+        try:
+            await bot.send_message(mgr, "\n".join(lines))
+        except Exception as e:
+            log.warning("manager_generation_error_notify_failed err=%s", str(e))
+
     async def _notify_manager_payment(self, username: str, package: str, amount: int, status: str) -> None:
         mgr = self.settings.manager_chat_id
         if not mgr:
@@ -2618,6 +2638,13 @@ class BlastBotApp:
             else:
                 fail_lines.append("Последняя ошибка: без деталей.")
             await bot.send_message(st.chat_id, "\n".join(fail_lines))
+            await self._notify_manager_generation_error(
+                username=st.chat_username.lstrip("@") if st.chat_username else "",
+                chat_id=st.chat_id,
+                job_id=job_id,
+                stage=stage,
+                error_text=error_text,
+            )
             return
 
         source = _resolve_job_video_source(job, self.settings)
