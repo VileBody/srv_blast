@@ -1423,10 +1423,33 @@ def build_app(
         if chat_id:
             user_link = f' &nbsp;(<a href="/admin/users/{chat_id}">user {chat_id}</a>)'
 
+        error_html = (
+            '<div class="card"><h3>Ошибка</h3>'
+            f'<pre style="white-space:pre-wrap;color:#c0392b">{html_mod.escape(error)}</pre></div>'
+        ) if error else ""
+
+        result_html = (
+            '<div class="card"><h3>Result</h3>'
+            '<pre style="white-space:pre-wrap;max-height:400px;overflow:auto;background:#f8f9fa;padding:12px;border-radius:6px;font-size:0.85em">'
+            f'{result_json}</pre></div>'
+        ) if result_obj else ""
+
+        jid_esc = html_mod.escape(jid)
+        kill_html = (
+            '<div class="card"><h3>Действия</h3>'
+            f"<form method='post' action='/admin/jobs/{jid_esc}/kill'"
+            f""" onsubmit="return confirm('Kill job {jid_esc}?');">"""
+            "<input type='hidden' name='min_age_seconds' value='0'>"
+            "<input type='hidden' name='limit' value='200'>"
+            "<input type='text' name='reason' value='stuck_job_manual_kill' style='width:250px'>"
+            " <button type='submit' class='btn-danger'>Kill</button>"
+            "</form></div>"
+        ) if status in ("NEW", "QUEUED", "RUNNING") else ""
+
         body = f"""
         <p><a href="/admin/jobs">&laquo; Jobs</a></p>
         <div class="card">
-        <h2>Job <code>{html_mod.escape(jid)}</code></h2>
+        <h2>Job <code>{jid_esc}</code></h2>
         <table>
           <tr><td style="width:160px"><strong>Status</strong></td><td><span style="color:{status_color};font-weight:700">{html_mod.escape(status)}</span></td></tr>
           <tr><td><strong>Stage</strong></td><td>{html_mod.escape(stage) or '—'}</td></tr>
@@ -1443,7 +1466,7 @@ def build_app(
         </table>
         </div>
 
-        {f'<div class="card"><h3>Ошибка</h3><pre style="white-space:pre-wrap;color:#c0392b">{html_mod.escape(error)}</pre></div>' if error else ''}
+        {error_html}
 
         {logs_html}
 
@@ -1452,18 +1475,9 @@ def build_app(
         <pre style="white-space:pre-wrap;max-height:400px;overflow:auto;background:#f8f9fa;padding:12px;border-radius:6px;font-size:0.85em">{req_json}</pre>
         </div>
 
-        {f'<div class="card"><h3>Result</h3><pre style="white-space:pre-wrap;max-height:400px;overflow:auto;background:#f8f9fa;padding:12px;border-radius:6px;font-size:0.85em">{result_json}</pre></div>' if result_obj else ''}
+        {result_html}
 
-        {f"""<div class="card">
-        <h3>Действия</h3>
-        <form method='post' action='/admin/jobs/{html_mod.escape(jid)}/kill'
-              onsubmit="return confirm('Kill job {html_mod.escape(jid)}?');">
-          <input type='hidden' name='min_age_seconds' value='0'>
-          <input type='hidden' name='limit' value='200'>
-          <input type='text' name='reason' value='stuck_job_manual_kill' style='width:250px'>
-          <button type='submit' class='btn-danger'>Kill</button>
-        </form>
-        </div>""" if status in ("NEW", "QUEUED", "RUNNING") else ""}
+        {kill_html}
         """
         return _page(f"Job {jid[:12]}…", body)
 
