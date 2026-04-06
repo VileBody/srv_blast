@@ -602,6 +602,9 @@ class CreditsDB:
         }
 
     async def period_stats_range(self, date_from: datetime, date_to: datetime) -> Dict[str, int]:
+        # Strip tzinfo — DB columns are naive TIMESTAMP
+        df = date_from.replace(tzinfo=None) if date_from.tzinfo else date_from
+        dt = date_to.replace(tzinfo=None) if date_to.tzinfo else date_to
         pool = self._pool_or_fail()
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
@@ -614,8 +617,8 @@ class CreditsDB:
                 "  (SELECT COALESCE(COUNT(DISTINCT tg_id), 0)::BIGINT FROM activity_log WHERE event = 'purchase_intent' AND created_at >= $1 AND created_at < $2) AS purchase_intent_users, "
                 "  (SELECT COALESCE(COUNT(*), 0)::BIGINT FROM payments WHERE status = 'CONFIRMED' AND created_at >= $1 AND created_at < $2) AS paid_orders, "
                 "  (SELECT COALESCE(SUM(amount_rub), 0)::BIGINT FROM payments WHERE status = 'CONFIRMED' AND created_at >= $1 AND created_at < $2) AS revenue_rub",
-                date_from,
-                date_to,
+                df,
+                dt,
             )
         empty = {
             "users_new": 0, "starts_users": 0,
