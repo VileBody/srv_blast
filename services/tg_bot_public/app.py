@@ -212,6 +212,10 @@ _RE_CELERY_RETRIES = re.compile(r"\bretries=(\d+)\b")
 _TG_AUDIO_DOWNLOAD_RETRIES = 3
 _TG_AUDIO_DOWNLOAD_TIMEOUT_S = 180.0
 _TG_AUDIO_DOWNLOAD_BACKOFF_BASE_S = 2.0
+_GENERATION_FAILED_USER_TEXT = (
+    "Увидели ошибку, сейчас с тобой свяжется менеджер и запустит генерацию ролика вручную, "
+    "а пока тех. отдел все проверит"
+)
 
 
 def _kb(*rows: list[str]) -> ReplyKeyboardMarkup:
@@ -1833,7 +1837,34 @@ class BlastBotApp:
             st.last_status_msg_at = time.time()
             await self.store.set(st)
         except Exception as e:
-            await message.answer(f"Не удалось запустить задачу: {e}")
+            err_text = str(e)
+            if versions > 0:
+                try:
+                    await self.credits_db.add_credits(
+                        chat_id,
+                        int(versions),
+                        "generation_failed_refund",
+                        admin_note="batch=enqueue_start_failed",
+                    )
+                except Exception as add_e:
+                    log.warning("enqueue_start_refund_failed chat=%s err=%s", chat_id, str(add_e))
+            await self.credits_db.log_event(
+                chat_id,
+                "generation_failed",
+                f"job=enqueue_start stage=enqueue_start error={_compact_text(err_text, limit=140)}",
+            )
+            await self._notify_manager_generation_failure(
+                st=st,
+                job_id="enqueue_start",
+                stage="enqueue_start",
+                error_text=err_text,
+                succeeded_versions=0,
+                total_versions=int(versions),
+                refunded_versions=int(versions),
+            )
+            await message.answer(_GENERATION_FAILED_USER_TEXT, reply_markup=_kb([BTN_SEND_TRACK]))
+            self._reset_processing_state(st, next_stage=STAGE_WAIT_AUDIO)
+            await self.store.set(st)
 
     async def _handle_wait_next(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()
@@ -1952,6 +1983,39 @@ class BlastBotApp:
             )
         except Exception as e:
             log.warning("manager_payment_notify_failed err=%s", str(e))
+
+    async def _notify_manager_generation_failure(
+        self,
+        *,
+        st: ChatState,
+        job_id: str,
+        stage: str,
+        error_text: str,
+        succeeded_versions: int,
+        total_versions: int,
+        refunded_versions: int,
+    ) -> None:
+        mgr = self.settings.manager_chat_id
+        if not mgr:
+            return
+        bot = self._require_bot()
+        username = str(st.chat_username or "").strip()
+        uname = f"@{username}" if username else "(нет username)"
+        err_short = _compact_text(error_text or "без деталей", limit=700)
+        try:
+            await bot.send_message(
+                mgr,
+                "⚠️ Generation error (public bot)\n\n"
+                f"Пользователь: {uname}\n"
+                f"chat_id: {st.chat_id}\n"
+                f"job_id: {job_id}\n"
+                f"stage: {stage or '-'}\n"
+                f"Успешно версий: {succeeded_versions}/{total_versions}\n"
+                f"Возврат кредитов: {refunded_versions}\n\n"
+                f"Ошибка: {err_short}",
+            )
+        except Exception as e:
+            log.warning("manager_generation_failure_notify_failed chat=%s err=%s", st.chat_id, str(e))
 
     async def _send_survey_link(self, message: Message) -> None:
         chat_id = int(message.chat.id) if message.chat else 0
@@ -2677,8 +2741,8 @@ class BlastBotApp:
         except Exception as e:
             log.warning("status_message_send_failed chat=%s err=%s", st.chat_id, str(e))
 
-    def _reset_processing_state(self, st: ChatState) -> None:
-        st.stage = STAGE_RATE_VIDEO
+    def _reset_processing_state(self, st: ChatState, *, next_stage: str = STAGE_RATE_VIDEO) -> None:
+        st.stage = str(next_stage)
         st.active_job_id = ""
         st.active_job_ids = []
         st.completed_job_ids = []
@@ -3045,18 +3109,13 @@ class BlastBotApp:
         error_text = str(job.get("error") or "").strip()
 
         if status == "FAILED":
-            retries = _extract_celery_retries(error_text)
-            fail_lines = [
-                f"{ver_label}: задача завершилась с ошибкой.",
-                f"Стадия: {stage or '-'}",
-            ]
-            if retries is not None:
-                fail_lines.append(f"Celery retries: {retries}")
-            if error_text:
-                fail_lines.append(f"Последняя ошибка: {_compact_text(error_text, limit=1000)}")
-            else:
-                fail_lines.append("Последняя ошибка: без деталей.")
-            await bot.send_message(st.chat_id, "\n".join(fail_lines))
+            log.warning(
+                "finalize_one_job_failed chat=%s job=%s stage=%s err=%s",
+                st.chat_id,
+                job_id,
+                stage,
+                _compact_text(error_text, limit=220),
+            )
             return
 
         source = _resolve_job_video_source(job, self.settings)
@@ -3203,6 +3262,47 @@ class BlastBotApp:
                     )
 
         st.completed_job_ids = [jid for jid in job_ids if jid in completed]
+        failed_rows = [r for r in rows if str(r.get("status") or "").upper() == "FAILED"]
+        if failed_rows:
+            failed = failed_rows[0]
+            failed_job_id = str(failed.get("job_id") or "")
+            failed_stage = str(failed.get("stage") or "")
+            failed_error = str(failed.get("error") or "")
+            succeeded_versions = sum(1 for r in rows if str(r.get("status") or "").upper() == "SUCCEEDED")
+            refund_versions = max(0, int(total_versions) - int(succeeded_versions))
+            if refund_versions > 0:
+                try:
+                    await self.credits_db.add_credits(
+                        st.chat_id,
+                        int(refund_versions),
+                        "generation_failed_refund",
+                        admin_note=f"batch={st.batch_id or '-'} job={failed_job_id or '-'}",
+                    )
+                except Exception as e:
+                    log.warning("generation_failed_refund_add_credits_failed chat=%s err=%s", st.chat_id, str(e))
+            await self.credits_db.log_event(
+                st.chat_id,
+                "generation_failed",
+                f"job={failed_job_id or '-'} stage={failed_stage or '-'}",
+            )
+            await self._notify_manager_generation_failure(
+                st=st,
+                job_id=failed_job_id,
+                stage=failed_stage,
+                error_text=failed_error,
+                succeeded_versions=int(succeeded_versions),
+                total_versions=int(total_versions),
+                refunded_versions=int(refund_versions),
+            )
+            await bot.send_message(
+                st.chat_id,
+                _GENERATION_FAILED_USER_TEXT,
+                reply_markup=_kb([BTN_SEND_TRACK]),
+            )
+            self._reset_processing_state(st, next_stage=STAGE_WAIT_AUDIO)
+            await self.store.set(st)
+            return
+
         all_done_enqueued = len(st.completed_job_ids) >= len(job_ids)
         if not all_done_enqueued:
             await self.store.set(st)
@@ -3249,11 +3349,41 @@ class BlastBotApp:
                     await self.store.set(st)
                     return
                 except Exception as e:
+                    err_text = str(e)
+                    succeeded_versions = sum(1 for r in rows if str(r.get("status") or "").upper() == "SUCCEEDED")
+                    refund_versions = max(0, int(total_versions) - int(succeeded_versions))
+                    if refund_versions > 0:
+                        try:
+                            await self.credits_db.add_credits(
+                                st.chat_id,
+                                int(refund_versions),
+                                "generation_failed_refund",
+                                admin_note=f"batch={st.batch_id or '-'} job=enqueue_next_version_failed",
+                            )
+                        except Exception as add_e:
+                            log.warning("enqueue_next_refund_failed chat=%s err=%s", st.chat_id, str(add_e))
+                    await self.credits_db.log_event(
+                        st.chat_id,
+                        "generation_failed",
+                        f"job=enqueue_next stage=enqueue_next_version error={_compact_text(err_text, limit=140)}",
+                    )
+                    await self._notify_manager_generation_failure(
+                        st=st,
+                        job_id="enqueue_next_version",
+                        stage="enqueue_next_version",
+                        error_text=err_text,
+                        succeeded_versions=int(succeeded_versions),
+                        total_versions=int(total_versions),
+                        refunded_versions=int(refund_versions),
+                    )
                     await bot.send_message(
                         st.chat_id,
-                        f"Не удалось поставить в очередь Версию {next_ver}/{total_versions}: {e}",
+                        _GENERATION_FAILED_USER_TEXT,
+                        reply_markup=_kb([BTN_SEND_TRACK]),
                     )
-                    st.next_version_to_enqueue = total_versions + 1
+                    self._reset_processing_state(st, next_stage=STAGE_WAIT_AUDIO)
+                    await self.store.set(st)
+                    return
 
         self._reset_processing_state(st)  # sets stage = RATE_VIDEO
 
