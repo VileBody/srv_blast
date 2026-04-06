@@ -168,6 +168,9 @@ class Settings:
     tbank_notify_url: str = _env("TBANK_NOTIFY_URL", "")
     offer_url: str = _env("OFFER_URL", "")
 
+    # Finance bot webhook (income tracking)
+    finance_bot_url: str = _env("FINANCE_BOT_URL", "http://finance-bot:8080")
+
     # Timeweb render node lifecycle (admin panel create/delete)
     twc_token: str = _env("TWC_TOKEN", "")
     twc_render_source_server_id: int = _int_env("TWC_RENDER_SOURCE_SERVER_ID", 0)

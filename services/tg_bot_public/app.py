@@ -2004,6 +2004,20 @@ class BlastBotApp:
         except Exception as e:
             log.warning("manager_payment_notify_failed err=%s", str(e))
 
+    async def _notify_finance_bot_income(self, amount: int, username: str, package: str) -> None:
+        """Отправить доход в finance-bot для учёта в конвертах."""
+        url = self.settings.finance_bot_url.rstrip("/") + "/webhook/income"
+        payload = {"amount": amount, "source": "blast", "client": f"{username} — {package}"}
+        try:
+            async with httpx.AsyncClient(timeout=5) as client:
+                resp = await client.post(url, json=payload)
+                if resp.status_code == 200:
+                    log.info("finance_bot income ok amount=%s client=%s", amount, username)
+                else:
+                    log.warning("finance_bot income err status=%s body=%s", resp.status_code, resp.text[:200])
+        except Exception as e:
+            log.warning("finance_bot income request failed: %s", e)
+
     async def _notify_manager_generation_failure(
         self,
         *,
@@ -3061,6 +3075,7 @@ class BlastBotApp:
                                     log.warning("payment notify user=%s err=%s", tg_id, e)
                                 uname = f"@{username}" if username else str(tg_id)
                                 await self._notify_manager_payment(uname, pkg, pay["amount_rub"], "Оплачен")
+                                await self._notify_finance_bot_income(pay["amount_rub"], uname, pkg)
                                 try:
                                     st = await self.store.get(tg_id)
                                     if st:

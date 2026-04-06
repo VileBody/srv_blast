@@ -1721,6 +1721,16 @@ def build_app(
                 except Exception as e:
                     log.warning("tbank notify: failed to notify user %s: %s", tg_id, e)
 
+            # Отправить доход в finance-bot
+            try:
+                user_info_fb = await credits_db.get_user(tg_id)
+                uname_fb = f"@{user_info_fb['username']}" if user_info_fb and user_info_fb.get("username") else str(tg_id)
+                fb_url = settings.finance_bot_url.rstrip("/") + "/webhook/income"
+                async with httpx.AsyncClient(timeout=5) as cli:
+                    await cli.post(fb_url, json={"amount": amount_rub, "source": "blast", "client": f"{uname_fb} — {pkg}"})
+            except Exception as e:
+                log.warning("tbank notify: finance_bot income failed: %s", e)
+
         return PlainTextResponse("OK", status_code=200)
 
     return app
