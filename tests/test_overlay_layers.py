@@ -428,7 +428,7 @@ def test_overlay_blueprint_does_not_use_footage_shake_expression(monkeypatch) ->
     assert "intro=0.63" not in expr
 
 
-def test_footage_blueprint_disables_shake_for_template_4th(monkeypatch) -> None:
+def test_footage_blueprint_keeps_shake_for_template_4th(monkeypatch) -> None:
     monkeypatch.setenv("FOOTAGE_SHAKE_ENABLED", "1")
     cfg = {
         "text_dur_hint": 5.0,
@@ -457,8 +457,8 @@ def test_footage_blueprint_disables_shake_for_template_4th(monkeypatch) -> None:
     footage = next(it for it in layers if str(it.get("name")) == "bg")
     tf_position = (footage.get("props") or {}).get("tf_position") or {}
     expr = str(tf_position.get("expression") or "")
-    assert expr == ""
-    assert "intro=0.63" not in expr
+    assert "intro=0.63" in expr
+    assert "outro=0.63" in expr
 
 
 def test_overlay_tiling_uses_ae_repeat_marker_for_short_known_duration() -> None:

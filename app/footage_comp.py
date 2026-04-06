@@ -978,7 +978,6 @@ def build_footage_layers(
     footage_items = [it for it in layers_cfg if str(it.get("type")) == "footage"]
     base_z_foot = 100
     n = len(footage_items)
-    disable_footage_shake = str(subtitles_mode or "").strip() == SUBTITLES_MODE_TEMPLATE_4TH
     for i, it in enumerate(footage_items):
         z = base_z_foot + (n - 1 - i)
         out.append(
@@ -987,7 +986,9 @@ def build_footage_layers(
                 z_index=z,
                 comp_w=comp_w,
                 comp_h=comp_h,
-                apply_shake=(not disable_footage_shake),
+                # Keep shake enabled for all subtitle modes; template_4th adds
+                # extra flash cuts in JSX but still benefits from camera motion.
+                apply_shake=True,
             )
         )
 
