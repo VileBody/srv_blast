@@ -2288,12 +2288,17 @@ def build_all_via_gemini_one_call(
         (not use_stage1b_scenario),
     )
 
+    # When user_clip_window is set, the user has already chosen the timing window.
+    # Don't ask the LLM to pick a selected_fragment — we'll construct it from the
+    # user's window after ASR completes.
+    need_llm_selected_fragment = (not use_stage1b_scenario) and (user_clip_window is None)
+
     if use_forced_alignment:
         stage1a_system = build_stage1a_forced_alignment_system_instruction()
         stage1a_prompt = build_stage1a_forced_alignment_user_prompt(
             reference_text=forced_reference_text,
             schema_name="Stage1ForcedAlignmentPayload",
-            require_selected_fragment=(not use_stage1b_scenario),
+            require_selected_fragment=need_llm_selected_fragment,
             target_fragment=target_fragment_stage1,
         )
         stage1a_raw = logs_dir / f"gemini_raw_stage1_forced_alignment_{stamp}.json"
@@ -2303,7 +2308,7 @@ def build_all_via_gemini_one_call(
         stage1a_system = build_stage1a_asr_system_instruction()
         stage1a_prompt = build_stage1a_asr_user_prompt(
             schema_name="Stage1AsrPayload",
-            require_selected_fragment=(not use_stage1b_scenario),
+            require_selected_fragment=need_llm_selected_fragment,
             target_fragment=target_fragment_stage1,
         )
         stage1a_raw = logs_dir / f"gemini_raw_stage1_asr_{stamp}.json"
@@ -2338,7 +2343,7 @@ def build_all_via_gemini_one_call(
     if isinstance(stage1_asr_cached, dict):
         try:
             stage1_asr = Stage1AsrPayload.model_validate(stage1_asr_cached)
-            if (not use_stage1b_scenario) and stage1_asr.selected_fragment is None:
+            if need_llm_selected_fragment and stage1_asr.selected_fragment is None:
                 logger.info(
                     "llm_resume_skip stage=stage1a_asr reason=missing_selected_fragment_for_non_legacy_mode"
                 )
@@ -2503,6 +2508,47 @@ def build_all_via_gemini_one_call(
             forced_reference_text_raw if use_forced_alignment else ""
         )
         _save_resume_state(resume_state_path, logger=logger, state=resume_state)
+
+    # When user_clip_window is set in non-legacy mode, construct selected_fragment
+    # from the user's explicit timing window instead of relying on LLM selection.
+    if user_clip_window is not None and not use_stage1b_scenario and stage1_asr.selected_fragment is None:
+        user_start, user_end = user_clip_window
+        frag_words = _words_in_window(
+            words=list(stage1_asr.transcript_words),
+            start_abs=float(user_start),
+            end_abs=float(user_end),
+        )
+        if not frag_words:
+            raise ValueError(
+                f"user clip window has no transcript words in range "
+                f"{float(user_start):.3f}..{float(user_end):.3f}"
+            )
+        frag_pauses = _pause_spans_in_window(
+            pause_spans=list(stage1_asr.pause_spans),
+            start_abs=float(user_start),
+            end_abs=float(user_end),
+        )
+        frag_srt = [
+            s for s in stage1_asr.srt_items
+            if float(s.start) >= float(user_start) - 1e-6
+            and float(s.end) <= float(user_end) + 1e-6
+        ]
+        asr_dict = stage1_asr.model_dump(mode="json")
+        asr_dict["selected_fragment"] = {
+            "audio": {
+                "clip_start_abs": float(user_start),
+                "clip_end_abs": float(user_end),
+            },
+            "transcript_words": [w.model_dump(mode="json") for w in frag_words],
+            "pause_spans": [p.model_dump(mode="json") for p in frag_pauses],
+            "srt_items": [s.model_dump(mode="json") for s in frag_srt],
+        }
+        stage1_asr = Stage1AsrPayload.model_validate(asr_dict)
+        logger.info(
+            "user_clip_window_selected_fragment_constructed clip=%.3f..%.3f words=%d pauses=%d srt=%d",
+            float(user_start), float(user_end),
+            len(frag_words), len(frag_pauses), len(frag_srt),
+        )
 
     stage1_asr_json = stage1_asr.model_dump(mode="json")
     (logs_dir / f"stage1_asr_{stamp}.json").write_text(
