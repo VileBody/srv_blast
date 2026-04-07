@@ -4,6 +4,26 @@
 
 Убрать кейс “dispatch ретраится/падает, хотя `output.mp4` уже существует”, и перевести dispatch на предсказуемый идемпотентный контракт.
 
+## Execution Update (2026-04-07)
+
+Сделано в коде:
+
+1. Orchestrator переведен на явный API mode:
+   - добавлен `WINDOWS_RENDER_API_MODE=render|jobs`;
+   - убран implicit fallback `/render -> /jobs` в `WindowsRenderClient`.
+2. Для `WINDOWS_RENDER_API_MODE=render` используется strict async flow:
+   - dispatch ожидает `render_id`;
+   - дальше состояние ведет `poll_windows_render`.
+3. Добавлен source-of-truth runtime:
+   - `windows/render-node-runtime/`;
+   - async endpoints `POST /render`, `GET /render/{render_id}`;
+   - идемпотентность async dispatch по `job_id`.
+
+Важно по rollout:
+
+- default mode в orchestrator оставлен `jobs` для безопасного включения;
+- после выката `windows/render-node-runtime` на donor/clone переключить orchestrator env на `WINDOWS_RENDER_API_MODE=render`.
+
 ## Фаза 0 — Быстрый стабилизатор (сразу)
 
 Изменения в orchestrator:

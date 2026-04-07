@@ -1243,12 +1243,17 @@ def dispatch_to_windows(self, job_id: str) -> Dict[str, Any]:
                     "windows_url": candidate,
                     "audio_url_used": audio_url,
                     "pool_urls": active_urls,
+                    "api_mode": SETTINGS.windows_render_api_mode,
                 },
                 "dispatch_started_at": time.time(),
             },
         )
 
-        client = WindowsRenderClient(candidate, timeout_s=SETTINGS.windows_timeout_s)
+        client = WindowsRenderClient(
+            candidate,
+            timeout_s=SETTINGS.windows_timeout_s,
+            api_mode=SETTINGS.windows_render_api_mode,
+        )
         try:
             maybe_res = client.dispatch_render(win_payload)
             if not isinstance(maybe_res, dict):
@@ -1349,7 +1354,11 @@ def poll_windows_render(self, job_id: str, render_id: str) -> Dict[str, Any]:
     if not windows_url:
         raise RuntimeError("no pinned windows endpoint in job and runtime pool is empty")
 
-    client = WindowsRenderClient(windows_url, timeout_s=SETTINGS.windows_timeout_s)
+    client = WindowsRenderClient(
+        windows_url,
+        timeout_s=SETTINGS.windows_timeout_s,
+        api_mode="render",
+    )
 
     started_at = _poll_started_at_from_state(st)
     now = time.time()

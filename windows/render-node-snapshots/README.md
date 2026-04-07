@@ -24,8 +24,12 @@
 2. сравнить donor/clone и устранить дрейф;
 3. подготовить перенос в нормальную поддерживаемую структуру репозитория (например `windows/render-node-runtime/` как source of truth).
 
+## Текущий статус
+
+- Source-of-truth runtime теперь находится в `windows/render-node-runtime/`.
+- `render-node-snapshots/*` оставлены как историческая фиксация состояния donor/clone на момент выгрузки.
+
 ## Текущее различие donor vs clone
 
 - На `clone` присутствуют дополнительные operational/debug scripts (`ae_modal_watcher.ps1`, `ae_click_continue_once.ps1`, `_local_*`, `_s3_probe*`, и т.п.).
 - Базовый core (`main.py`, `ae_sdk.py`, `s3_utils.py`, `run_afterfx_job.ps1`, `run_server.ps1`) совпадает.
-

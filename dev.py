@@ -271,7 +271,13 @@ def run_builder_only(*, job_id: str, full_edit: Path, footage: Path, audio_local
     render_jsx = out_dir / "render_full.jsx"
     return render_payload, render_jsx
 
-def dispatch_to_windows_sync(*, job_id: str, audio_url: str, windows_timeout_s: float) -> Dict[str, Any]:
+def dispatch_to_windows_sync(
+    *,
+    job_id: str,
+    audio_url: str,
+    windows_timeout_s: float,
+    windows_api_mode: str,
+) -> Dict[str, Any]:
     """
     Dispatch render to Windows node using your existing client+manifest logic.
     This is the same idea as orchestrator.dispatch_to_windows, but sync and local.
@@ -306,8 +312,15 @@ def dispatch_to_windows_sync(*, job_id: str, audio_url: str, windows_timeout_s: 
         windows_payload=payload,
     )
 
-    print(f"[win] dispatch -> {windows_url} timeout_s={windows_timeout_s}")
-    client = WindowsRenderClient(windows_url, timeout_s=float(windows_timeout_s))
+    print(
+        f"[win] dispatch -> {windows_url} "
+        f"timeout_s={windows_timeout_s} api_mode={windows_api_mode}"
+    )
+    client = WindowsRenderClient(
+        windows_url,
+        timeout_s=float(windows_timeout_s),
+        api_mode=windows_api_mode,
+    )
     res = client.dispatch_render(payload)
     return res
 
@@ -326,6 +339,12 @@ def main() -> int:
     ap.add_argument("--footage", default="", help="Path to existing footage_config.json (for --mode builder)")
     ap.add_argument("--upload-audio", action="store_true", help="Upload audio to S3 and use presigned https url for Windows node")
     ap.add_argument("--windows-timeout-s", type=float, default=300.0, help="Timeout for Windows render POST (default 300s)")
+    ap.add_argument(
+        "--windows-api-mode",
+        default=(os.environ.get("WINDOWS_RENDER_API_MODE", "jobs") or "jobs"),
+        choices=["render", "jobs"],
+        help="Windows render API contract mode (default from WINDOWS_RENDER_API_MODE or jobs)",
+    )
     args = ap.parse_args()
 
     job_id = args.job_id.strip() or uuid.uuid4().hex
@@ -373,7 +392,12 @@ def main() -> int:
             raise RuntimeError("MODE=dev: dispatch disabled. Use --mode builder and run JSX locally in AE.")
         if not audio_url:
             raise RuntimeError("dispatch needs audio URL. Use --upload-audio or set AUDIO_REMOTE_URL in env")
-        res = dispatch_to_windows_sync(job_id=job_id, audio_url=audio_url, windows_timeout_s=args.windows_timeout_s)
+        res = dispatch_to_windows_sync(
+            job_id=job_id,
+            audio_url=audio_url,
+            windows_timeout_s=args.windows_timeout_s,
+            windows_api_mode=args.windows_api_mode,
+        )
         print("[ok] windows response:")
         print(json.dumps(res, ensure_ascii=False, indent=2))
         return 0
@@ -399,7 +423,12 @@ def main() -> int:
         if mode == MODE_PROD:
             if not audio_url:
                 raise RuntimeError("MODE=prod full mode needs audio URL. Use --upload-audio or set AUDIO_REMOTE_URL")
-            res = dispatch_to_windows_sync(job_id=job_id, audio_url=audio_url, windows_timeout_s=args.windows_timeout_s)
+            res = dispatch_to_windows_sync(
+                job_id=job_id,
+                audio_url=audio_url,
+                windows_timeout_s=args.windows_timeout_s,
+                windows_api_mode=args.windows_api_mode,
+            )
             print("[ok] windows response:")
             print(json.dumps(res, ensure_ascii=False, indent=2))
         else:

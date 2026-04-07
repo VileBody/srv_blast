@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import urllib.error
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
@@ -9,27 +8,12 @@ from typing import Any
 import pytest
 
 from services.orchestrator import tasks
-from services.orchestrator.observability_metrics import get_counter_map
-
-
-class _FakeRedis:
-    def __init__(self) -> None:
-        self._hashes: dict[str, dict[str, int]] = {}
-
-    def hincrby(self, key: str, field: str, amount: int) -> int:
-        bucket = self._hashes.setdefault(key, {})
-        bucket[field] = int(bucket.get(field, 0)) + int(amount)
-        return int(bucket[field])
-
-    def hgetall(self, key: str) -> dict[str, str]:
-        bucket = self._hashes.get(key, {})
-        return {k: str(v) for k, v in bucket.items()}
 
 
 class _FakeStore:
     def __init__(self, *, job_id: str, request: dict[str, Any]) -> None:
         self.key_prefix = "blast_test"
-        self.r = _FakeRedis()
+        self.r = object()
         self._job_id = str(job_id)
         self._state = SimpleNamespace(
             job_id=str(job_id),
@@ -39,9 +23,6 @@ class _FakeStore:
             result=None,
             error=None,
         )
-
-    def _redis_call(self, _op: str, fn):
-        return fn()
 
     def get(self, job_id: str):
         if str(job_id) != self._job_id:
@@ -83,10 +64,6 @@ class _FakeNodePool:
         return None
 
 
-class _RetryCalled(Exception):
-    pass
-
-
 def _make_paths(tmp_path: Path) -> _FakePaths:
     out_dir = tmp_path / "output"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -97,12 +74,12 @@ def _make_paths(tmp_path: Path) -> _FakePaths:
     return _FakePaths(render_jsx=render_jsx, render_payload=render_payload)
 
 
-def _patch_dispatch_common(
+def _patch_common(
     monkeypatch: pytest.MonkeyPatch,
     *,
     tmp_path: Path,
     store: _FakeStore,
-    output_exists: bool,
+    api_mode: str,
 ) -> None:
     paths = _make_paths(tmp_path)
     monkeypatch.setattr(tasks.JobStore, "from_env", classmethod(lambda cls: store))
@@ -110,77 +87,97 @@ def _patch_dispatch_common(
     monkeypatch.setattr(tasks, "make_job_paths", lambda **kwargs: paths)
     monkeypatch.setattr(tasks, "_windows_default_urls", lambda: ["http://win-node:8000"])
     monkeypatch.setattr(tasks, "build_windows_job_payload", lambda **kwargs: {"job_id": kwargs["job_id"]})
-    monkeypatch.setattr(tasks, "_s3_head_exists", lambda **kwargs: output_exists)
 
-    class _FailingWindowsClient:
-        def __init__(
-            self,
-            _base_url: str,
-            *,
-            timeout_s: float = 30.0,
-            api_mode: str = "jobs",
-        ) -> None:
+    monkeypatch.setattr(
+        tasks,
+        "SETTINGS",
+        SimpleNamespace(
+            work_dir="/tmp/work",
+            output_dir="/tmp/output",
+            windows_node_lease_ttl_s=7200,
+            windows_timeout_s=300.0,
+            windows_poll_interval_s=2.0,
+            windows_render_api_mode=api_mode,
+        ),
+    )
+
+
+def test_dispatch_jobs_mode_succeeds_without_poll(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    job_id = "job_sync_jobs_mode"
+    store = _FakeStore(job_id=job_id, request={"audio_s3_url": "s3://bucket/raw/audio.mp3"})
+    _patch_common(monkeypatch, tmp_path=tmp_path, store=store, api_mode="jobs")
+
+    poll_calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        tasks.poll_windows_render,
+        "apply_async",
+        lambda *args, **kwargs: poll_calls.append({"args": args, "kwargs": kwargs}),
+    )
+
+    class _JobsWindowsClient:
+        def __init__(self, _base_url: str, *, timeout_s: float = 30.0, api_mode: str = "jobs") -> None:
             _ = (timeout_s, api_mode)
 
         def dispatch_render(self, payload):
             _ = payload
-            raise urllib.error.URLError("timed out")
+            return {
+                "_api": "jobs",
+                "success": True,
+                "job_id": job_id,
+                "output_url": f"s3://output-bucket/renders/{job_id}/output.mp4",
+            }
 
-    monkeypatch.setattr(tasks, "WindowsRenderClient", _FailingWindowsClient)
-    monkeypatch.setenv("DISPATCH_RECOVERY_FROM_S3_ENABLED", "1")
-    monkeypatch.setenv("S3_BUCKET_OUTPUT_VIDEO", "output-bucket")
-
-
-def test_dispatch_transient_all_nodes_failed_recovers_if_output_exists(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    job_id = "job_dispatch_recovery_ok"
-    store = _FakeStore(job_id=job_id, request={"audio_s3_url": "s3://bucket/raw/audio.mp3"})
-    _patch_dispatch_common(monkeypatch, tmp_path=tmp_path, store=store, output_exists=True)
-
-    monkeypatch.setattr(
-        tasks.dispatch_to_windows,
-        "retry",
-        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("unexpected_retry")),
-    )
-    monkeypatch.setattr(tasks.dispatch_to_windows, "request", SimpleNamespace(retries=1), raising=False)
+    monkeypatch.setattr(tasks, "WindowsRenderClient", _JobsWindowsClient)
 
     out = tasks.dispatch_to_windows.run(job_id)
-    assert out["ok"] is True
-    assert out["mode"] == "dispatch_recovered_existing_output"
-    assert out["output_url"] == f"s3://output-bucket/renders/{job_id}/output.mp4"
 
+    assert out["ok"] is True
+    assert out["mode"] == "sync_jobs"
+    assert poll_calls == []
     st = store.get(job_id)
     assert st is not None
     assert st.status == "SUCCEEDED"
     assert st.stage == "render"
     assert st.result["output_url"] == f"s3://output-bucket/renders/{job_id}/output.mp4"
-    assert st.result["dispatch_recovery"]["marker"] == "dispatch_timeout_but_output_exists"
-    assert get_counter_map(store, metric="dispatch_recovery_outcomes") == {"true": 1}
 
 
-def test_dispatch_transient_all_nodes_failed_retries_if_output_missing(
+def test_dispatch_render_mode_schedules_poll(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    job_id = "job_dispatch_recovery_miss"
+    job_id = "job_async_render_mode"
     store = _FakeStore(job_id=job_id, request={"audio_s3_url": "s3://bucket/raw/audio.mp3"})
-    _patch_dispatch_common(monkeypatch, tmp_path=tmp_path, store=store, output_exists=False)
+    _patch_common(monkeypatch, tmp_path=tmp_path, store=store, api_mode="render")
 
-    retry_calls: list[dict[str, Any]] = []
+    poll_calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        tasks.poll_windows_render,
+        "apply_async",
+        lambda *args, **kwargs: poll_calls.append({"args": args, "kwargs": kwargs}),
+    )
 
-    def _fake_retry(*args, **kwargs):
-        retry_calls.append({"args": args, "kwargs": kwargs})
-        raise _RetryCalled("retry_called")
+    class _RenderWindowsClient:
+        def __init__(self, _base_url: str, *, timeout_s: float = 30.0, api_mode: str = "jobs") -> None:
+            _ = (timeout_s, api_mode)
 
-    monkeypatch.setattr(tasks.dispatch_to_windows, "retry", _fake_retry)
-    monkeypatch.setattr(tasks.dispatch_to_windows, "request", SimpleNamespace(retries=0), raising=False)
+        def dispatch_render(self, payload):
+            _ = payload
+            return {"_api": "render", "status": "accepted", "render_id": "rid_123"}
 
-    with pytest.raises(_RetryCalled):
-        tasks.dispatch_to_windows.run(job_id)
+    monkeypatch.setattr(tasks, "WindowsRenderClient", _RenderWindowsClient)
 
-    assert len(retry_calls) == 1
-    kwargs = retry_calls[0]["kwargs"]
-    assert float(kwargs["countdown"]) == 5.0
-    assert "windows_dispatch_transient" in str(kwargs["exc"])
-    assert "all_nodes_failed" in str(kwargs["exc"])
-    assert get_counter_map(store, metric="dispatch_recovery_outcomes") == {"false": 1}
+    out = tasks.dispatch_to_windows.run(job_id)
+
+    assert out["ok"] is True
+    assert out["mode"] == "async_render"
+    assert out["render_id"] == "rid_123"
+    assert len(poll_calls) == 1
+    assert poll_calls[0]["kwargs"]["countdown"] == 2.0
+    assert poll_calls[0]["kwargs"]["args"] == [job_id, "rid_123"]
+
+    st = store.get(job_id)
+    assert st is not None
+    assert st.status == "RUNNING"
+    assert st.stage == "poll"
+    assert st.result["render_id"] == "rid_123"
