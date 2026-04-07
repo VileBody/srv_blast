@@ -3,7 +3,7 @@
 import os
 
 TELEGRAM_BOT_TOKEN = os.environ.get("FINANCE_BOT_TOKEN", "8782530243:AAEodzMW1H_Y4C49WwyVc04C0poy5JaoeX4")
-GROK_API_KEY = os.environ.get("GROK_API_KEY", "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")
+GROK_API_KEY = os.environ.get("GROK_API_KEY", "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")
 OWNER_TG_ID = int(os.environ.get("OWNER_TG_ID", "975769043"))
 
 # Правила распределения дохода по конвертам (%)
@@ -23,8 +23,8 @@ WEEKLY_SUMMARY_DAY = 6  # воскресенье (0=пн, 6=вс)
 TIMEZONE = "Europe/Moscow"
 
 # Grok API
-GROK_API_URL = "https://api.x.ai/v1/chat/completions"
-GROK_MODEL = "grok-3-mini-fast-latest"
+GROK_API_URL = "https://api.groq.com/openai/v1/chat/completions"
+GROK_MODEL = "llama-3.3-70b-versatile"
 
 # Вебхук-сервер
 WEBHOOK_HOST = "0.0.0.0"
