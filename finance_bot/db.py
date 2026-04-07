@@ -1,9 +1,11 @@
 """Работа с SQLite базой данных."""
 
-import aiosqlite
+import json
 import logging
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
+
+import aiosqlite
 
 from config import DB_PATH, INITIAL_DEBTS, ENVELOPE_RULES, TIMEZONE
 
@@ -23,7 +25,9 @@ async def get_db() -> aiosqlite.Connection:
     return db
 
 
-async def init_db():
+# ── Инициализация и миграции ──
+
+async def init_db() -> bool:
     """Создать таблицы и начальные данные при первом запуске."""
     db = await get_db()
     try:
@@ -32,6 +36,7 @@ async def init_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
                 amount INTEGER NOT NULL,
+                initial_amount INTEGER NOT NULL DEFAULT 0,
                 rate REAL NOT NULL DEFAULT 0,
                 min_payment INTEGER NOT NULL DEFAULT 0,
                 deadline_day INTEGER,
@@ -52,6 +57,7 @@ async def init_db():
                 category TEXT,
                 note TEXT,
                 envelope TEXT,
+                source TEXT DEFAULT 'other',
                 date TEXT NOT NULL,
                 created_at TEXT NOT NULL
             );
@@ -71,6 +77,9 @@ async def init_db():
             );
         """)
 
+        # Миграции для существующих таблиц
+        await _run_migrations(db)
+
         # Проверяем, есть ли уже данные
         cursor = await db.execute("SELECT COUNT(*) FROM envelopes")
         row = await cursor.fetchone()
@@ -78,22 +87,19 @@ async def init_db():
             logger.info("Первый запуск — инициализация данных")
             ts = now_msk().isoformat()
 
-            # Начальные долги
             for d in INITIAL_DEBTS:
                 await db.execute(
-                    "INSERT INTO debts (name, amount, rate, min_payment, deadline_day, created_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?)",
-                    (d["name"], d["amount"], d["rate"], d["min_payment"], d["deadline_day"], ts),
+                    "INSERT INTO debts (name, amount, initial_amount, rate, min_payment, deadline_day, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (d["name"], d["amount"], d["amount"], d["rate"], d["min_payment"], d["deadline_day"], ts),
                 )
 
-            # Конверты
             for name, pct in ENVELOPE_RULES.items():
                 await db.execute(
                     "INSERT INTO envelopes (name, balance, percentage) VALUES (?, 0, ?)",
                     (name, pct),
                 )
 
-            # Дефолтные настройки
             await db.execute(
                 "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
                 ("weekly_budget", "7000"),
@@ -101,21 +107,63 @@ async def init_db():
 
             await db.commit()
             logger.info("Начальные данные созданы")
-            return True  # первый запуск
+            return True
         await db.commit()
         return False
     finally:
         await db.close()
 
 
+async def _run_migrations(db: aiosqlite.Connection):
+    """Миграции: добавление новых колонок к существующим таблицам."""
+    # Проверяем колонки transactions
+    cursor = await db.execute("PRAGMA table_info(transactions)")
+    tx_cols = {row[1] for row in await cursor.fetchall()}
+
+    if "source" not in tx_cols:
+        await db.execute("ALTER TABLE transactions ADD COLUMN source TEXT DEFAULT 'other'")
+        logger.info("Миграция: добавлена колонка source в transactions")
+
+    # Проверяем колонки debts
+    cursor = await db.execute("PRAGMA table_info(debts)")
+    debt_cols = {row[1] for row in await cursor.fetchall()}
+
+    if "initial_amount" not in debt_cols:
+        await db.execute("ALTER TABLE debts ADD COLUMN initial_amount INTEGER DEFAULT 0")
+        await db.execute("UPDATE debts SET initial_amount = amount WHERE initial_amount = 0")
+        logger.info("Миграция: добавлена колонка initial_amount в debts")
+
+    await db.commit()
+
+
 # ── Долги ──
 
 async def get_debts() -> list[dict]:
+    """Активные долги (amount > 0)."""
     db = await get_db()
     try:
         cursor = await db.execute("SELECT * FROM debts WHERE amount > 0 ORDER BY rate DESC, amount DESC")
-        rows = await cursor.fetchall()
-        return [dict(r) for r in rows]
+        return [dict(r) for r in await cursor.fetchall()]
+    finally:
+        await db.close()
+
+
+async def get_all_debts() -> list[dict]:
+    """Все долги, включая закрытые."""
+    db = await get_db()
+    try:
+        cursor = await db.execute("SELECT * FROM debts ORDER BY amount DESC, id ASC")
+        return [dict(r) for r in await cursor.fetchall()]
+    finally:
+        await db.close()
+
+
+async def get_debt(debt_id: int) -> dict | None:
+    db = await get_db()
+    try:
+        cursor = await db.execute("SELECT * FROM debts WHERE id = ?", (debt_id,))
+        row = await cursor.fetchone()
+        return dict(row) if row else None
     finally:
         await db.close()
 
@@ -124,9 +172,9 @@ async def add_debt(name: str, amount: int, rate: float, min_payment: int, deadli
     db = await get_db()
     try:
         cursor = await db.execute(
-            "INSERT INTO debts (name, amount, rate, min_payment, deadline_day, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (name, amount, rate, min_payment, deadline_day, now_msk().isoformat()),
+            "INSERT INTO debts (name, amount, initial_amount, rate, min_payment, deadline_day, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (name, amount, amount, rate, min_payment, deadline_day, now_msk().isoformat()),
         )
         await db.commit()
         return cursor.lastrowid
@@ -135,6 +183,7 @@ async def add_debt(name: str, amount: int, rate: float, min_payment: int, deadli
 
 
 async def pay_debt(debt_id: int, amount: int) -> dict | None:
+    """Внести платёж по долгу. Возвращает инфо или None если долг не найден."""
     db = await get_db()
     try:
         cursor = await db.execute("SELECT * FROM debts WHERE id = ?", (debt_id,))
@@ -142,47 +191,77 @@ async def pay_debt(debt_id: int, amount: int) -> dict | None:
         if not debt:
             return None
 
-        new_amount = max(0, dict(debt)["amount"] - amount)
+        d = dict(debt)
+        old_amount = d["amount"]
+        new_amount = max(0, old_amount - amount)
         await db.execute("UPDATE debts SET amount = ? WHERE id = ?", (new_amount, debt_id))
 
-        # Списать из конверта "debts"
         await db.execute(
             "UPDATE envelopes SET balance = balance - ? WHERE name = 'debts'",
             (amount,),
         )
 
-        # Записать транзакцию
+        ts = now_msk()
         await db.execute(
-            "INSERT INTO transactions (type, amount, category, note, envelope, date, created_at) "
-            "VALUES ('expense', ?, 'долг', ?, 'debts', ?, ?)",
-            (amount, f"Платёж по: {dict(debt)['name']}", now_msk().strftime("%Y-%m-%d"), now_msk().isoformat()),
+            "INSERT INTO transactions (type, amount, category, note, envelope, source, date, created_at) "
+            "VALUES ('expense', ?, 'долг', ?, 'debts', 'other', ?, ?)",
+            (amount, f"Платёж: {d['name']}", ts.strftime("%Y-%m-%d"), ts.isoformat()),
         )
 
         await db.commit()
-        result = dict(debt)
-        result["new_amount"] = new_amount
-        result["paid"] = amount
-        return result
+        return {
+            "name": d["name"],
+            "initial_amount": d.get("initial_amount", old_amount),
+            "old_amount": old_amount,
+            "new_amount": new_amount,
+            "paid": amount,
+        }
+    finally:
+        await db.close()
+
+
+async def remove_debt(debt_id: int) -> dict | None:
+    """Удалить долг. Возвращает инфо удалённого долга или None."""
+    db = await get_db()
+    try:
+        cursor = await db.execute("SELECT * FROM debts WHERE id = ?", (debt_id,))
+        debt = await cursor.fetchone()
+        if not debt:
+            return None
+        d = dict(debt)
+        await db.execute("DELETE FROM debts WHERE id = ?", (debt_id,))
+        await db.commit()
+        return d
+    finally:
+        await db.close()
+
+
+async def update_debt_field(debt_id: int, field: str, value) -> bool:
+    """Обновить одно поле долга. Возвращает True если обновлено."""
+    allowed = {"name", "amount", "initial_amount", "rate", "min_payment", "deadline_day"}
+    if field not in allowed:
+        return False
+    db = await get_db()
+    try:
+        await db.execute(f"UPDATE debts SET {field} = ? WHERE id = ?", (value, debt_id))
+        await db.commit()
+        return True
     finally:
         await db.close()
 
 
 def estimate_weeks_to_close(amount: int, rate: float, min_payment: int) -> str:
-    """Прогноз закрытия долга в неделях."""
+    """Прогноз закрытия долга."""
     if amount <= 0:
         return "закрыт"
-    if min_payment <= 0 and rate <= 0:
+    if min_payment <= 0:
         return "без графика"
 
     monthly_rate = rate / 100 / 12
     remaining = amount
     months = 0
-    max_months = 600  # 50 лет максимум
 
-    if min_payment <= 0:
-        return "без графика"
-
-    while remaining > 0 and months < max_months:
+    while remaining > 0 and months < 600:
         interest = int(remaining * monthly_rate)
         principal = min_payment - interest
         if principal <= 0:
@@ -190,11 +269,9 @@ def estimate_weeks_to_close(amount: int, rate: float, min_payment: int) -> str:
         remaining -= principal
         months += 1
 
-    if months >= max_months:
+    if months >= 600:
         return "очень долго"
-
-    weeks = months * 4
-    return f"~{weeks} нед. (~{months} мес.)"
+    return f"~{months * 4} нед. (~{months} мес.)"
 
 
 # ── Конверты ──
@@ -203,43 +280,71 @@ async def get_envelopes() -> list[dict]:
     db = await get_db()
     try:
         cursor = await db.execute("SELECT * FROM envelopes ORDER BY percentage DESC")
-        rows = await cursor.fetchall()
-        return [dict(r) for r in rows]
+        return [dict(r) for r in await cursor.fetchall()]
     finally:
         await db.close()
 
 
-async def distribute_income(amount: int, source: str) -> dict:
-    """Распределить доход по конвертам и записать транзакции."""
+async def get_envelope_rules() -> dict[str, int]:
+    """Правила распределения: из settings или дефолт из config."""
+    rules_json = await get_setting("envelope_rules", "")
+    if rules_json:
+        try:
+            return json.loads(rules_json)
+        except json.JSONDecodeError:
+            pass
+    return dict(ENVELOPE_RULES)
+
+
+async def set_envelope_rules(rules: dict[str, int]):
+    """Сохранить правила распределения в settings и синхронизировать с envelopes."""
+    await set_setting("envelope_rules", json.dumps(rules))
     db = await get_db()
     try:
-        cursor = await db.execute("SELECT name, percentage FROM envelopes")
-        envelopes = await cursor.fetchall()
+        for name, pct in rules.items():
+            await db.execute("UPDATE envelopes SET percentage = ? WHERE name = ?", (pct, name))
+        await db.commit()
+    finally:
+        await db.close()
 
-        distribution = {}
-        total_distributed = 0
 
-        envelope_list = [dict(e) for e in envelopes]
-        for i, env in enumerate(envelope_list):
-            if i == len(envelope_list) - 1:
-                # Последний конверт забирает остаток (избегаем ошибок округления)
-                share = amount - total_distributed
-            else:
-                share = int(amount * env["percentage"] / 100)
-            distribution[env["name"]] = share
-            total_distributed += share
-
+async def distribute_income(amount: int, source: str, note: str) -> dict[str, int]:
+    """Распределить доход по конвертам. Для source='personal' — всё в personal."""
+    db = await get_db()
+    try:
+        if source == "personal":
+            # Всё в конверт personal без распределения
             await db.execute(
-                "UPDATE envelopes SET balance = balance + ? WHERE name = ?",
-                (share, env["name"]),
+                "UPDATE envelopes SET balance = balance + ? WHERE name = 'personal'",
+                (amount,),
             )
+            distribution = {"personal": amount}
+        else:
+            # Распределение по правилам
+            rules = await get_envelope_rules()
+            distribution = {}
+            total_distributed = 0
+            names = list(rules.keys())
+
+            for i, env_name in enumerate(names):
+                if i == len(names) - 1:
+                    share = amount - total_distributed
+                else:
+                    share = int(amount * rules[env_name] / 100)
+                distribution[env_name] = share
+                total_distributed += share
+
+                await db.execute(
+                    "UPDATE envelopes SET balance = balance + ? WHERE name = ?",
+                    (share, env_name),
+                )
 
         # Записать транзакцию дохода
         ts = now_msk()
         await db.execute(
-            "INSERT INTO transactions (type, amount, category, note, envelope, date, created_at) "
-            "VALUES ('income', ?, 'доход', ?, NULL, ?, ?)",
-            (amount, source, ts.strftime("%Y-%m-%d"), ts.isoformat()),
+            "INSERT INTO transactions (type, amount, category, note, envelope, source, date, created_at) "
+            "VALUES ('income', ?, 'доход', ?, NULL, ?, ?, ?)",
+            (amount, note, source, ts.strftime("%Y-%m-%d"), ts.isoformat()),
         )
 
         await db.commit()
@@ -248,19 +353,28 @@ async def distribute_income(amount: int, source: str) -> dict:
         await db.close()
 
 
+async def get_personal_balance() -> int:
+    """Баланс конверта personal."""
+    db = await get_db()
+    try:
+        cursor = await db.execute("SELECT balance FROM envelopes WHERE name = 'personal'")
+        row = await cursor.fetchone()
+        return row[0] if row else 0
+    finally:
+        await db.close()
+
+
 # ── Транзакции ──
 
 async def add_expense(amount: int, category: str, note: str, envelope: str = "personal") -> int:
-    """Добавить расход."""
     db = await get_db()
     try:
         ts = now_msk()
         cursor = await db.execute(
-            "INSERT INTO transactions (type, amount, category, note, envelope, date, created_at) "
-            "VALUES ('expense', ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO transactions (type, amount, category, note, envelope, source, date, created_at) "
+            "VALUES ('expense', ?, ?, ?, ?, 'other', ?, ?)",
             (amount, category, note, envelope, ts.strftime("%Y-%m-%d"), ts.isoformat()),
         )
-        # Списать из конверта personal
         await db.execute(
             "UPDATE envelopes SET balance = balance - ? WHERE name = ?",
             (amount, envelope),
@@ -272,45 +386,71 @@ async def add_expense(amount: int, category: str, note: str, envelope: str = "pe
 
 
 async def get_week_expenses() -> list[dict]:
-    """Расходы за текущую неделю (пн-вс)."""
+    """Расходы за текущую неделю (пн–вс)."""
     today = now_msk().date()
-    # Начало недели — понедельник
     monday = today - timedelta(days=today.weekday())
     sunday = monday + timedelta(days=6)
-
     db = await get_db()
     try:
         cursor = await db.execute(
-            "SELECT * FROM transactions WHERE type = 'expense' AND date >= ? AND date <= ? "
-            "ORDER BY date DESC",
+            "SELECT * FROM transactions WHERE type = 'expense' AND date >= ? AND date <= ? ORDER BY date DESC",
             (monday.isoformat(), sunday.isoformat()),
         )
-        rows = await cursor.fetchall()
-        return [dict(r) for r in rows]
+        return [dict(r) for r in await cursor.fetchall()]
     finally:
         await db.close()
 
 
 async def get_week_transactions() -> list[dict]:
-    """Все транзакции за текущую неделю."""
     today = now_msk().date()
     monday = today - timedelta(days=today.weekday())
     sunday = monday + timedelta(days=6)
-
     db = await get_db()
     try:
         cursor = await db.execute(
             "SELECT * FROM transactions WHERE date >= ? AND date <= ? ORDER BY date DESC",
             (monday.isoformat(), sunday.isoformat()),
         )
-        rows = await cursor.fetchall()
-        return [dict(r) for r in rows]
+        return [dict(r) for r in await cursor.fetchall()]
+    finally:
+        await db.close()
+
+
+async def get_week_income_by_source() -> dict[str, int]:
+    """Доход за неделю по источникам."""
+    today = now_msk().date()
+    monday = today - timedelta(days=today.weekday())
+    sunday = monday + timedelta(days=6)
+    db = await get_db()
+    try:
+        cursor = await db.execute(
+            "SELECT COALESCE(source, 'other') as src, SUM(amount) as total "
+            "FROM transactions WHERE type = 'income' AND date >= ? AND date <= ? GROUP BY src",
+            (monday.isoformat(), sunday.isoformat()),
+        )
+        return {row[0]: row[1] for row in await cursor.fetchall()}
+    finally:
+        await db.close()
+
+
+async def get_week_expenses_by_category() -> dict[str, int]:
+    """Расходы за неделю по категориям."""
+    today = now_msk().date()
+    monday = today - timedelta(days=today.weekday())
+    sunday = monday + timedelta(days=6)
+    db = await get_db()
+    try:
+        cursor = await db.execute(
+            "SELECT COALESCE(category, 'другое') as cat, SUM(amount) as total "
+            "FROM transactions WHERE type = 'expense' AND date >= ? AND date <= ? GROUP BY cat",
+            (monday.isoformat(), sunday.isoformat()),
+        )
+        return {row[0]: row[1] for row in await cursor.fetchall()}
     finally:
         await db.close()
 
 
 async def get_today_has_expenses() -> bool:
-    """Есть ли расходы за сегодня."""
     today = now_msk().strftime("%Y-%m-%d")
     db = await get_db()
     try:
@@ -320,6 +460,55 @@ async def get_today_has_expenses() -> bool:
         )
         row = await cursor.fetchone()
         return row[0] > 0
+    finally:
+        await db.close()
+
+
+async def get_month_totals() -> tuple[int, int]:
+    """(доход, расходы) за текущий месяц."""
+    first_day = now_msk().date().replace(day=1).isoformat()
+    db = await get_db()
+    try:
+        cursor = await db.execute(
+            "SELECT type, COALESCE(SUM(amount), 0) FROM transactions WHERE date >= ? GROUP BY type",
+            (first_day,),
+        )
+        income = 0
+        expense = 0
+        for row in await cursor.fetchall():
+            if row[0] == "income":
+                income = row[1]
+            elif row[0] == "expense":
+                expense = row[1]
+        return income, expense
+    finally:
+        await db.close()
+
+
+async def get_month_income_by_source() -> dict[str, int]:
+    first_day = now_msk().date().replace(day=1).isoformat()
+    db = await get_db()
+    try:
+        cursor = await db.execute(
+            "SELECT COALESCE(source, 'other') as src, SUM(amount) as total "
+            "FROM transactions WHERE type = 'income' AND date >= ? GROUP BY src",
+            (first_day,),
+        )
+        return {row[0]: row[1] for row in await cursor.fetchall()}
+    finally:
+        await db.close()
+
+
+async def get_month_expenses_by_category() -> dict[str, int]:
+    first_day = now_msk().date().replace(day=1).isoformat()
+    db = await get_db()
+    try:
+        cursor = await db.execute(
+            "SELECT COALESCE(category, 'другое') as cat, SUM(amount) as total "
+            "FROM transactions WHERE type = 'expense' AND date >= ? GROUP BY cat",
+            (first_day,),
+        )
+        return {row[0]: row[1] for row in await cursor.fetchall()}
     finally:
         await db.close()
 
@@ -340,8 +529,7 @@ async def set_setting(key: str, value: str):
     db = await get_db()
     try:
         await db.execute(
-            "INSERT INTO settings (key, value) VALUES (?, ?) "
-            "ON CONFLICT(key) DO UPDATE SET value = ?",
+            "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = ?",
             (key, value, value),
         )
         await db.commit()
@@ -355,8 +543,7 @@ async def get_goals() -> list[dict]:
     db = await get_db()
     try:
         cursor = await db.execute("SELECT * FROM goals ORDER BY deadline ASC")
-        rows = await cursor.fetchall()
-        return [dict(r) for r in rows]
+        return [dict(r) for r in await cursor.fetchall()]
     finally:
         await db.close()
 

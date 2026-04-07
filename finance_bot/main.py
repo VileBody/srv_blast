@@ -10,9 +10,10 @@ from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
 
 from config import TELEGRAM_BOT_TOKEN, OWNER_TG_ID, WEBHOOK_HOST, WEBHOOK_PORT, LOG_FILE
-from db import init_db, distribute_income
+from db import init_db, distribute_income, get_personal_balance
 from handlers import router
 from scheduler import setup_scheduler
+from templates import tpl_income_distributed, tpl_income_personal, esc
 
 # Логирование
 logging.basicConfig(
@@ -35,22 +36,23 @@ async def webhook_income(request: web.Request) -> web.Response:
     try:
         data = await request.json()
         amount = int(data.get("amount", 0))
-        source = data.get("source", "webhook")
+        source = data.get("source", "blast")
         client = data.get("client", "")
 
         if amount <= 0:
             return web.json_response({"error": "amount must be > 0"}, status=400)
 
         note = f"{source}" + (f" ({client})" if client else "")
-        distribution = await distribute_income(amount, note)
+        distribution = await distribute_income(amount, source, note)
 
         # Уведомить в Telegram
         bot: Bot = request.app["bot"]
-        lines = "\n".join(f"  {k}: {v}₽" for k, v in distribution.items())
-        await bot.send_message(
-            OWNER_TG_ID,
-            f"💰 Входящий доход (webhook): {amount}₽\nИсточник: {note}\n\nРаспределение:\n{lines}",
-        )
+        if source == "personal":
+            new_bal = await get_personal_balance()
+            text = tpl_income_personal(amount, source, new_bal)
+        else:
+            text = tpl_income_distributed(amount, source, distribution)
+        await bot.send_message(OWNER_TG_ID, text)
 
         logger.info(f"Webhook income: {amount}₽ от {note}")
         return web.json_response({"ok": True, "distribution": distribution})
@@ -67,7 +69,7 @@ async def main():
     # Бот
     bot = Bot(
         token=TELEGRAM_BOT_TOKEN,
-        default=DefaultBotProperties(parse_mode=None),
+        default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN_V2),
     )
     dp = Dispatcher()
     dp.include_router(router)
@@ -93,7 +95,7 @@ async def main():
         try:
             await bot.send_message(
                 OWNER_TG_ID,
-                "🚀 Бот запущен! Начальные данные загружены.\nНапиши /start для статуса.",
+                esc("Бот запущен. Начальные данные загружены. Напиши /start"),
             )
         except Exception as e:
             logger.error(f"Не удалось отправить приветствие: {e}")
