@@ -143,6 +143,7 @@ class Settings:
 
     s3_bucket_raw_audio: str = _env("S3_BUCKET_RAW_AUDIO", "")
     s3_bucket_output_video: str = _env("S3_BUCKET_OUTPUT_VIDEO", "")
+    s3_bucket_asset_storage: str = _env("S3_BUCKET_ASSET_STORAGE", "")
     s3_raw_audio_prefix: str = _env("S3_RAW_AUDIO_PREFIX", "raw_audio")
     s3_presign_expires_s: int = _int_env("S3_PRESIGN_EXPIRES_S", 86400)
     tg_send_project_archive: bool = _bool_env("TG_SEND_PROJECT_ARCHIVE", False)
