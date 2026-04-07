@@ -24,7 +24,7 @@ TIMEZONE = "Europe/Moscow"
 
 # Grok API
 GROK_API_URL = "https://api.groq.com/openai/v1/chat/completions"
-GROK_MODEL = "llama-3.3-70b-versatile"
+GROK_MODEL = "llama-3.1-8b-instant"
 
 # Вебхук-сервер
 WEBHOOK_HOST = "0.0.0.0"
