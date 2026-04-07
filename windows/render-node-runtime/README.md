@@ -25,6 +25,37 @@ python -m uvicorn main:app --host 0.0.0.0 --port 8000
 
 или через `run_server.ps1`.
 
+## Git sparse-checkout на ноде (рекомендуется)
+
+Чтобы обновлять только runtime-папку из репозитория, на каждой ноде:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File C:\ae_dev\repo\sync_runtime_from_git.ps1 `
+  -RepoUrl https://github.com/VileBody/srv_blast.git `
+  -Branch main `
+  -CheckoutDir C:\ae_dev\srv_blast `
+  -RuntimeSubdir windows/render-node-runtime `
+  -RuntimeLinkDir C:\ae_dev\repo `
+  -ReplaceRuntimeLinkDir
+```
+
+Для приватного репозитория можно передать PAT:
+
+```powershell
+-GitAuthToken <token>
+```
+
+После первого bootstrap дальнейшие обновления:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File C:\ae_dev\repo\sync_runtime_from_git.ps1 `
+  -RepoUrl https://github.com/VileBody/srv_blast.git `
+  -Branch main `
+  -CheckoutDir C:\ae_dev\srv_blast `
+  -RuntimeSubdir windows/render-node-runtime `
+  -RuntimeLinkDir C:\ae_dev\repo
+```
+
 ## Связка с orchestrator
 
 На orchestrator side переключение задается явно:
