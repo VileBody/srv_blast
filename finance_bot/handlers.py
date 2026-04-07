@@ -724,36 +724,51 @@ async def handle_free_text(message: Message, state: FSMContext):
     if not text:
         return
 
-    budget = await get_weekly_budget()
-    spent = await get_spent_this_week()
-
-    expenses = await parse_expenses(text, budget, spent)
-
-    if not expenses:
-        await message.answer(tpl_error_grok())
-        return
-
-    # Записываем в БД
-    total = 0
-    for exp in expenses:
-        await add_expense(exp["amount"], exp["category"], exp["note"])
-        total += exp["amount"]
-
-    new_spent = spent + total
-    remaining = budget - new_spent
-    date_str = now_msk().strftime("%d.%m")
-
-    # Предупреждение если бюджет < 20%
-    warn = remaining > 0 and budget > 0 and (remaining / budget) < 0.2
-    today = now_msk().date()
-    sunday = today + timedelta(days=6 - today.weekday())
-    days_left = max(1, (sunday - today).days)
-
     try:
-        await message.answer(tpl_expense_confirm(expenses, total, remaining, budget, date_str, warn, days_left))
+        budget = await get_weekly_budget()
+        spent = await get_spent_this_week()
+
+        logger.info(f"Free text: '{text[:80]}', budget={budget}, spent={spent}")
+
+        expenses = await parse_expenses(text, budget, spent)
+
+        if not expenses:
+            logger.warning(f"Grok вернул пустой список для: {text[:80]}")
+            try:
+                await message.answer(tpl_error_grok())
+            except Exception:
+                await message.answer("Не удалось распознать траты. Попробуй формат: 1000 еда, 500 транспорт", parse_mode=None)
+            return
+
+        # Записываем в БД
+        total = 0
+        for exp in expenses:
+            await add_expense(exp["amount"], exp["category"], exp["note"])
+            total += exp["amount"]
+
+        new_spent = spent + total
+        remaining = budget - new_spent
+        date_str = now_msk().strftime("%d.%m")
+
+        # Предупреждение если бюджет < 20%
+        warn = remaining > 0 and budget > 0 and (remaining / budget) < 0.2
+        today = now_msk().date()
+        sunday = today + timedelta(days=6 - today.weekday())
+        days_left = max(1, (sunday - today).days)
+
+        logger.info(f"Записано {len(expenses)} трат на {total} руб.")
+
+        try:
+            await message.answer(tpl_expense_confirm(expenses, total, remaining, budget, date_str, warn, days_left))
+        except Exception as e:
+            logger.error(f"MarkdownV2 error: {e}")
+            lines = [f"{exp['category']}: {exp['amount']} руб." for exp in expenses]
+            fallback = f"Записал:\n" + "\n".join(lines) + f"\n\nИтого: {total} руб.\nОстаток на неделю: {remaining} из {budget} руб."
+            await message.answer(fallback, parse_mode=None)
+
     except Exception as e:
-        # Фолбэк на plain text если MarkdownV2 сломался
-        logger.error(f"MarkdownV2 error: {e}")
-        lines = [f"{exp['category']}: {exp['amount']} руб." for exp in expenses]
-        fallback = f"Записал:\n" + "\n".join(lines) + f"\n\nИтого: {total} руб.\nОстаток на неделю: {remaining} из {budget} руб."
-        await message.answer(fallback, parse_mode=None)
+        logger.error(f"handle_free_text error: {e}", exc_info=True)
+        try:
+            await message.answer(f"Ошибка обработки: {e}", parse_mode=None)
+        except Exception:
+            pass
