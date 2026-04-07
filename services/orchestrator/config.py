@@ -19,6 +19,16 @@ def _int_env(key: str, default: int) -> int:
         return default
 
 
+def _windows_render_api_mode_env() -> str:
+    raw = _env("WINDOWS_RENDER_API_MODE", "jobs").lower()
+    if raw not in {"render", "jobs"}:
+        raise ValueError(
+            "WINDOWS_RENDER_API_MODE must be one of: render, jobs "
+            f"(got {raw!r})"
+        )
+    return raw
+
+
 def _credits_db_url_env() -> str:
     explicit = _env("CREDITS_DB_URL", "")
     if explicit:
@@ -93,6 +103,7 @@ class Settings:
     # Windows render node
     windows_base_url: str = _env("WINDOWS_RENDER_URL", "")  # e.g. http://win-node:8000
     windows_base_urls_csv: str = _env("WINDOWS_RENDER_URLS", "")  # comma-separated
+    windows_render_api_mode: str = _windows_render_api_mode_env()
     windows_timeout_s: float = float(_env("WINDOWS_TIMEOUT_S", "30") or "30")
     windows_node_lease_ttl_s: int = int(_env("WINDOWS_NODE_LEASE_TTL_S", "7200") or "7200")
 

@@ -1,0 +1,124 @@
+{
+  "extracted_at_utc": "2026-04-07T14:58:31.078519+00:00",
+  "server": {
+    "id": 7205065,
+    "name": "blast-worker-node-20260402-211624",
+    "ip": "72.56.246.24"
+  },
+  "auth": {
+    "username": "Administrator"
+  },
+  "files_count": 22,
+  "files": [
+    {
+      "windows_path": "C:\\\\ae_dev\\\\start-render-node.ps1",
+      "local_path": "windows/render-node-snapshots/clone/misc/start-render-node.ps1",
+      "bytes": 107
+    },
+    {
+      "windows_path": "C:\\ae_dev\\repo\\.vscode\\settings.json",
+      "local_path": "windows/render-node-snapshots/clone/repo/.vscode/settings.json",
+      "bytes": 133
+    },
+    {
+      "windows_path": "C:\\ae_dev\\repo\\__pycache__\\ae_sdk.cpython-314.pyc",
+      "local_path": "windows/render-node-snapshots/clone/repo/__pycache__/ae_sdk.cpython-314.pyc",
+      "bytes": 42441
+    },
+    {
+      "windows_path": "C:\\ae_dev\\repo\\__pycache__\\main.cpython-314.pyc",
+      "local_path": "windows/render-node-snapshots/clone/repo/__pycache__/main.cpython-314.pyc",
+      "bytes": 6697
+    },
+    {
+      "windows_path": "C:\\ae_dev\\repo\\__pycache__\\s3_utils.cpython-314.pyc",
+      "local_path": "windows/render-node-snapshots/clone/repo/__pycache__/s3_utils.cpython-314.pyc",
+      "bytes": 5193
+    },
+    {
+      "windows_path": "C:\\ae_dev\\repo\\_env_probe_main.py",
+      "local_path": "windows/render-node-snapshots/clone/repo/_env_probe_main.py",
+      "bytes": 686
+    },
+    {
+      "windows_path": "C:\\ae_dev\\repo\\_local_direct_renderer_run.py",
+      "local_path": "windows/render-node-snapshots/clone/repo/_local_direct_renderer_run.py",
+      "bytes": 2157
+    },
+    {
+      "windows_path": "C:\\ae_dev\\repo\\_local_hist_run.py",
+      "local_path": "windows/render-node-snapshots/clone/repo/_local_hist_run.py",
+      "bytes": 1227
+    },
+    {
+      "windows_path": "C:\\ae_dev\\repo\\_local_hist_run_fixed.py",
+      "local_path": "windows/render-node-snapshots/clone/repo/_local_hist_run_fixed.py",
+      "bytes": 1430
+    },
+    {
+      "windows_path": "C:\\ae_dev\\repo\\_s3_probe.py",
+      "local_path": "windows/render-node-snapshots/clone/repo/_s3_probe.py",
+      "bytes": 498
+    },
+    {
+      "windows_path": "C:\\ae_dev\\repo\\_s3_probe2.py",
+      "local_path": "windows/render-node-snapshots/clone/repo/_s3_probe2.py",
+      "bytes": 670
+    },
+    {
+      "windows_path": "C:\\ae_dev\\repo\\_spec_probe.py",
+      "local_path": "windows/render-node-snapshots/clone/repo/_spec_probe.py",
+      "bytes": 1122
+    },
+    {
+      "windows_path": "C:\\ae_dev\\repo\\ae_click_continue_once.ps1",
+      "local_path": "windows/render-node-snapshots/clone/repo/ae_click_continue_once.ps1",
+      "bytes": 1144
+    },
+    {
+      "windows_path": "C:\\ae_dev\\repo\\ae_dont_send_once.ps1",
+      "local_path": "windows/render-node-snapshots/clone/repo/ae_dont_send_once.ps1",
+      "bytes": 1782
+    },
+    {
+      "windows_path": "C:\\ae_dev\\repo\\ae_modal_watcher.ps1",
+      "local_path": "windows/render-node-snapshots/clone/repo/ae_modal_watcher.ps1",
+      "bytes": 5746
+    },
+    {
+      "windows_path": "C:\\ae_dev\\repo\\ae_sdk.py",
+      "local_path": "windows/render-node-snapshots/clone/repo/ae_sdk.py",
+      "bytes": 28086
+    },
+    {
+      "windows_path": "C:\\ae_dev\\repo\\install_fonts.py",
+      "local_path": "windows/render-node-snapshots/clone/repo/install_fonts.py",
+      "bytes": 3516
+    },
+    {
+      "windows_path": "C:\\ae_dev\\repo\\main.py",
+      "local_path": "windows/render-node-snapshots/clone/repo/main.py",
+      "bytes": 4138
+    },
+    {
+      "windows_path": "C:\\ae_dev\\repo\\run_afterfx_job.ps1",
+      "local_path": "windows/render-node-snapshots/clone/repo/run_afterfx_job.ps1",
+      "bytes": 4071
+    },
+    {
+      "windows_path": "C:\\ae_dev\\repo\\run_server.ps1",
+      "local_path": "windows/render-node-snapshots/clone/repo/run_server.ps1",
+      "bytes": 799
+    },
+    {
+      "windows_path": "C:\\ae_dev\\repo\\s3_utils.py",
+      "local_path": "windows/render-node-snapshots/clone/repo/s3_utils.py",
+      "bytes": 2670
+    },
+    {
+      "windows_path": "C:\\ae_dev\\repo\\top_files.py",
+      "local_path": "windows/render-node-snapshots/clone/repo/top_files.py",
+      "bytes": 1622
+    }
+  ]
+}

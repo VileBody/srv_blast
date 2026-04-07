@@ -124,6 +124,89 @@ def _make_s3_client():
     return boto3.client(**kwargs)
 
 
+def _bool_env(name: str, default: bool) -> bool:
+    raw = (os.environ.get(name) or "").strip().lower()
+    if not raw:
+        return bool(default)
+    return raw not in {"0", "false", "no", "off"}
+
+
+def _s3_head_exists(*, bucket: str, key: str) -> bool:
+    client = _make_s3_client()
+    try:
+        client.head_object(Bucket=str(bucket), Key=str(key))
+        return True
+    except Exception as e:
+        # boto3/botocore shape: e.response["Error"]["Code"] / HTTPStatusCode
+        response = getattr(e, "response", None)
+        if isinstance(response, dict):
+            err_obj = response.get("Error")
+            err_code = ""
+            if isinstance(err_obj, dict):
+                err_code = str(err_obj.get("Code") or "").strip().lower()
+            if err_code in {"404", "notfound", "nosuchkey"}:
+                return False
+            meta = response.get("ResponseMetadata")
+            if isinstance(meta, dict):
+                try:
+                    if int(meta.get("HTTPStatusCode") or 0) == 404:
+                        return False
+                except Exception:
+                    pass
+        raise
+
+
+def _try_recover_dispatch_from_existing_output(
+    *,
+    store: JobStore,
+    job_id: str,
+    errors_by_node: list[str],
+) -> Optional[Dict[str, Any]]:
+    if not _bool_env("DISPATCH_RECOVERY_FROM_S3_ENABLED", True):
+        return None
+
+    output_bucket = (os.environ.get("S3_BUCKET_OUTPUT_VIDEO") or "").strip()
+    output_key = f"renders/{str(job_id).strip()}/output.mp4"
+    if not output_bucket:
+        _inc_metric(store, metric="dispatch_recovery_outcomes", label="false")
+        print(f"[dispatch_recovery] skip_no_bucket job_id={job_id}")
+        return None
+
+    try:
+        output_exists = _s3_head_exists(bucket=output_bucket, key=output_key)
+    except Exception as e:
+        _inc_metric(store, metric="dispatch_recovery_outcomes", label="false")
+        print(f"[dispatch_recovery] head_failed job_id={job_id} err={e!r}")
+        return None
+
+    if not output_exists:
+        _inc_metric(store, metric="dispatch_recovery_outcomes", label="false")
+        return None
+
+    marker = "dispatch_timeout_but_output_exists"
+    output_url = f"s3://{output_bucket}/{output_key}"
+    store.set_status(
+        job_id,
+        "SUCCEEDED",
+        stage="render",
+        result={
+            "output_url": output_url,
+            "dispatch_recovery": {
+                "marker": marker,
+                "recovered_from_existing_output": True,
+                "errors_by_node": list(errors_by_node),
+                "checked_at": time.time(),
+            },
+        },
+    )
+    _inc_metric(store, metric="dispatch_recovery_outcomes", label="true")
+    print(
+        "[dispatch_recovery] recovered "
+        f"marker={marker} job_id={job_id} output_url={output_url}"
+    )
+    return {"ok": True, "mode": "dispatch_recovered_existing_output", "output_url": output_url}
+
+
 def _download(url: str, dest: Path, *, timeout_s: float = 300.0) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
 
@@ -1128,6 +1211,8 @@ def dispatch_to_windows(self, job_id: str) -> Dict[str, Any]:
             "or the build stage did not produce these files."
         )
 
+    output_bucket = (os.environ.get("S3_BUCKET_OUTPUT_VIDEO") or "").strip()
+
     win_payload = build_windows_job_payload(
         job_id=job_id,
         render_jsx_path=paths.render_jsx,
@@ -1135,7 +1220,7 @@ def dispatch_to_windows(self, job_id: str) -> Dict[str, Any]:
         audio_url=audio_url,
         entry_comp="Main Render",
         output_relpath="work/output.mp4",
-        output_s3_bucket=os.environ.get("S3_BUCKET_OUTPUT_VIDEO", ""),
+        output_s3_bucket=output_bucket,
         output_s3_key=f"renders/{job_id}/output.mp4",
     )
 
@@ -1158,12 +1243,17 @@ def dispatch_to_windows(self, job_id: str) -> Dict[str, Any]:
                     "windows_url": candidate,
                     "audio_url_used": audio_url,
                     "pool_urls": active_urls,
+                    "api_mode": SETTINGS.windows_render_api_mode,
                 },
                 "dispatch_started_at": time.time(),
             },
         )
 
-        client = WindowsRenderClient(candidate, timeout_s=SETTINGS.windows_timeout_s)
+        client = WindowsRenderClient(
+            candidate,
+            timeout_s=SETTINGS.windows_timeout_s,
+            api_mode=SETTINGS.windows_render_api_mode,
+        )
         try:
             maybe_res = client.dispatch_render(win_payload)
             if not isinstance(maybe_res, dict):
@@ -1188,6 +1278,13 @@ def dispatch_to_windows(self, job_id: str) -> Dict[str, Any]:
 
             if not remaining:
                 if is_transient or is_contract_404:
+                    recovered = _try_recover_dispatch_from_existing_output(
+                        store=store,
+                        job_id=job_id,
+                        errors_by_node=errors_by_node,
+                    )
+                    if recovered is not None:
+                        return recovered
                     attempt = int(getattr(self.request, "retries", 0)) + 1
                     backoff = _retry_backoff_s(attempt=attempt, base_s=5.0, cap_s=120.0)
                     raise self.retry(
@@ -1257,7 +1354,11 @@ def poll_windows_render(self, job_id: str, render_id: str) -> Dict[str, Any]:
     if not windows_url:
         raise RuntimeError("no pinned windows endpoint in job and runtime pool is empty")
 
-    client = WindowsRenderClient(windows_url, timeout_s=SETTINGS.windows_timeout_s)
+    client = WindowsRenderClient(
+        windows_url,
+        timeout_s=SETTINGS.windows_timeout_s,
+        api_mode="render",
+    )
 
     started_at = _poll_started_at_from_state(st)
     now = time.time()
