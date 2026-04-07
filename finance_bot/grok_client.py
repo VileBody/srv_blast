@@ -46,46 +46,39 @@ async def parse_expenses(user_text: str, weekly_budget: int, spent_this_week: in
         "Content-Type": "application/json",
     }
 
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(GROK_API_URL, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=30)) as resp:
-                if resp.status != 200:
-                    error_text = await resp.text()
-                    logger.error(f"Grok API ошибка {resp.status}: {error_text}")
-                    return []
+    async with aiohttp.ClientSession() as session:
+        async with session.post(GROK_API_URL, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+            if resp.status != 200:
+                error_text = await resp.text()
+                logger.error(f"Grok API ошибка {resp.status}: {error_text[:200]}")
+                raise RuntimeError(f"Grok API {resp.status}: {error_text[:100]}")
 
-                data = await resp.json()
-                content = data["choices"][0]["message"]["content"].strip()
+            data = await resp.json()
+            content = data["choices"][0]["message"]["content"].strip()
+            logger.info(f"Grok raw response: {content[:200]}")
 
-                # Убираем возможные markdown-обёртки
-                if content.startswith("```"):
-                    content = content.split("\n", 1)[1] if "\n" in content else content[3:]
-                    if content.endswith("```"):
-                        content = content[:-3]
-                    content = content.strip()
+            # Убираем возможные markdown-обёртки
+            if content.startswith("```"):
+                content = content.split("\n", 1)[1] if "\n" in content else content[3:]
+                if content.endswith("```"):
+                    content = content[:-3]
+                content = content.strip()
 
-                result = json.loads(content)
-                expenses = result.get("expenses", [])
+            result = json.loads(content)
+            expenses = result.get("expenses", [])
 
-                # Валидация
-                validated = []
-                for exp in expenses:
-                    if isinstance(exp.get("amount"), (int, float)) and exp["amount"] > 0:
-                        validated.append({
-                            "amount": int(exp["amount"]),
-                            "category": str(exp.get("category", "другое")),
-                            "note": str(exp.get("note", ""))[:100],
-                        })
+            # Валидация
+            validated = []
+            for exp in expenses:
+                if isinstance(exp.get("amount"), (int, float)) and exp["amount"] > 0:
+                    validated.append({
+                        "amount": int(exp["amount"]),
+                        "category": str(exp.get("category", "другое")),
+                        "note": str(exp.get("note", ""))[:100],
+                    })
 
-                logger.info(f"Grok распарсил {len(validated)} трат из текста: {user_text[:50]}")
-                return validated
-
-    except json.JSONDecodeError as e:
-        logger.error(f"Grok вернул невалидный JSON: {e}")
-        return []
-    except Exception as e:
-        logger.error(f"Ошибка при обращении к Grok: {e}")
-        return []
+            logger.info(f"Grok распарсил {len(validated)} трат из текста: {user_text[:50]}")
+            return validated
 
 
 async def generate_weekly_summary(
