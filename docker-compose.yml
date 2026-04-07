@@ -211,9 +211,6 @@ services:
       dockerfile: Dockerfile
     container_name: finance-bot
     environment:
-      FINANCE_BOT_TOKEN: ${FINANCE_BOT_TOKEN:-8782530243:AAEodzMW1H_Y4C49WwyVc04C0poy5JaoeX4}
-      GROK_API_KEY: ${GROK_API_KEY:-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}
-      OWNER_TG_ID: ${OWNER_TG_ID:-975769043}
       DB_PATH: /app/data/finance.db
     volumes:
       - ./finance_bot_data:/app/data
