@@ -11,8 +11,8 @@
 1. Перед `self.retry(...)` в `dispatch_to_windows` делать recovery-check:
    - проверить наличие `s3://<output_bucket>/renders/<job_id>/output.mp4`;
    - если объект есть — завершать job как `SUCCEEDED` без повторного dispatch.
-2. В `JobStore.error`/логах явно маркировать кейс:
-   - `dispatch_timeout_but_output_exists`.
+2. В `JobStore.result`/логах явно маркировать кейс:
+   - `result.dispatch_recovery.marker=dispatch_timeout_but_output_exists`.
 3. Добавить метрику:
    - `dispatch_recovery_outcomes{recovered_from_existing_output=true|false}`.
 
