@@ -25,12 +25,11 @@ async def parse_expenses(user_text: str, weekly_budget: int, spent_this_week: in
     """
     remaining = weekly_budget - spent_this_week
     prompt_template = _load_prompt()
-    prompt = prompt_template.format(
-        weekly_budget=weekly_budget,
-        spent_this_week=spent_this_week,
-        remaining_budget=remaining,
-        user_text=user_text,
-    )
+    prompt = (prompt_template
+              .replace("{weekly_budget}", str(weekly_budget))
+              .replace("{spent_this_week}", str(spent_this_week))
+              .replace("{remaining_budget}", str(remaining))
+              .replace("{user_text}", user_text))
 
     payload = {
         "model": GROK_MODEL,
