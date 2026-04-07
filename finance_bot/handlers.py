@@ -712,12 +712,19 @@ async def cmd_split(message: Message, state: FSMContext):
 # Свободный текст → парсинг трат (только вне FSM)
 # ═══════════════════════════════════
 
-@router.message(F.text & ~F.text.startswith("/"), owner)
+@router.message(F.text, owner)
 async def handle_free_text(message: Message, state: FSMContext):
     """Любой текст без / — считаем вводом трат (если нет активного FSM)."""
+    logger.info(f"handle_free_text вызван: '{message.text[:50] if message.text else ''}'")
+
+    # Пропускаем команды — их ловят Command-хендлеры выше
+    if message.text and message.text.startswith("/"):
+        return
+
     # Если пользователь в FSM-диалоге — не перехватываем
     current_state = await state.get_state()
     if current_state is not None:
+        logger.info(f"Пропуск: FSM активен ({current_state})")
         return
 
     text = message.text.strip()
