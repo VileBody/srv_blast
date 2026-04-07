@@ -4,7 +4,7 @@ import logging
 from datetime import timedelta
 
 from aiogram import Router, F
-from aiogram.filters import Command, CommandStart, BaseFilter, StateFilter
+from aiogram.filters import Command, CommandStart, BaseFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message
@@ -712,9 +712,14 @@ async def cmd_split(message: Message, state: FSMContext):
 # Свободный текст → парсинг трат (только вне FSM)
 # ═══════════════════════════════════
 
-@router.message(F.text & ~F.text.startswith("/"), owner, StateFilter(None))
-async def handle_free_text(message: Message):
-    """Любой текст без / и без активного FSM — считаем вводом трат."""
+@router.message(F.text & ~F.text.startswith("/"), owner)
+async def handle_free_text(message: Message, state: FSMContext):
+    """Любой текст без / — считаем вводом трат (если нет активного FSM)."""
+    # Если пользователь в FSM-диалоге — не перехватываем
+    current_state = await state.get_state()
+    if current_state is not None:
+        return
+
     text = message.text.strip()
     if not text:
         return
@@ -744,4 +749,11 @@ async def handle_free_text(message: Message):
     sunday = today + timedelta(days=6 - today.weekday())
     days_left = max(1, (sunday - today).days)
 
-    await message.answer(tpl_expense_confirm(expenses, total, remaining, budget, date_str, warn, days_left))
+    try:
+        await message.answer(tpl_expense_confirm(expenses, total, remaining, budget, date_str, warn, days_left))
+    except Exception as e:
+        # Фолбэк на plain text если MarkdownV2 сломался
+        logger.error(f"MarkdownV2 error: {e}")
+        lines = [f"{exp['category']}: {exp['amount']} руб." for exp in expenses]
+        fallback = f"Записал:\n" + "\n".join(lines) + f"\n\nИтого: {total} руб.\nОстаток на неделю: {remaining} из {budget} руб."
+        await message.answer(fallback, parse_mode=None)
