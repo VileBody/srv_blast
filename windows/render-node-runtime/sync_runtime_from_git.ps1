@@ -14,11 +14,11 @@ $ErrorActionPreference = "Stop"
 function Invoke-Git {
     param(
         [string]$Cwd,
-        [string[]]$Args
+        [string[]]$GitArgs
     )
-    & git -C $Cwd @Args
+    & git -C $Cwd @GitArgs
     if ($LASTEXITCODE -ne 0) {
-        throw "git failed in '$Cwd': git $($Args -join ' ')"
+        throw "git failed in '$Cwd': git $($GitArgs -join ' ')"
     }
 }
 
@@ -55,11 +55,11 @@ if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
 
 if (-not (Test-Path (Join-Path $CheckoutDir ".git"))) {
     New-Item -ItemType Directory -Path $CheckoutDir -Force | Out-Null
-    Invoke-Git -Cwd $CheckoutDir -Args @("init")
-    Invoke-Git -Cwd $CheckoutDir -Args @("remote", "add", "origin", $RepoUrl)
+    Invoke-Git -Cwd $CheckoutDir -GitArgs @("init")
+    Invoke-Git -Cwd $CheckoutDir -GitArgs @("remote", "add", "origin", $RepoUrl)
 }
 
-Invoke-Git -Cwd $CheckoutDir -Args @("remote", "set-url", "origin", $RepoUrl)
+Invoke-Git -Cwd $CheckoutDir -GitArgs @("remote", "set-url", "origin", $RepoUrl)
 
 $authRepoUrl = $RepoUrl
 $tokenProvided = -not [string]::IsNullOrWhiteSpace($GitAuthToken)
@@ -68,14 +68,14 @@ if ($tokenProvided -and $RepoUrl -match "^https://github\.com/") {
 }
 
 if ($tokenProvided) {
-    Invoke-Git -Cwd $CheckoutDir -Args @("remote", "set-url", "origin", $authRepoUrl)
+    Invoke-Git -Cwd $CheckoutDir -GitArgs @("remote", "set-url", "origin", $authRepoUrl)
 }
 
 try {
-    Invoke-Git -Cwd $CheckoutDir -Args @("fetch", "--prune", "origin", $Branch)
+    Invoke-Git -Cwd $CheckoutDir -GitArgs @("fetch", "--prune", "origin", $Branch)
     $hasLocalBranch = $false
     try {
-        Invoke-Git -Cwd $CheckoutDir -Args @("rev-parse", "--verify", "refs/heads/$Branch")
+        Invoke-Git -Cwd $CheckoutDir -GitArgs @("rev-parse", "--verify", "refs/heads/$Branch")
         $hasLocalBranch = $true
     }
     catch {
@@ -83,19 +83,19 @@ try {
     }
 
     if ($hasLocalBranch) {
-        Invoke-Git -Cwd $CheckoutDir -Args @("checkout", "-f", $Branch)
+        Invoke-Git -Cwd $CheckoutDir -GitArgs @("checkout", "-f", $Branch)
     }
     else {
-        Invoke-Git -Cwd $CheckoutDir -Args @("checkout", "-B", $Branch, "origin/$Branch")
+        Invoke-Git -Cwd $CheckoutDir -GitArgs @("checkout", "-B", $Branch, "origin/$Branch")
     }
 
-    Invoke-Git -Cwd $CheckoutDir -Args @("sparse-checkout", "init", "--cone")
-    Invoke-Git -Cwd $CheckoutDir -Args @("sparse-checkout", "set", $RuntimeSubdir)
-    Invoke-Git -Cwd $CheckoutDir -Args @("reset", "--hard", "origin/$Branch")
+    Invoke-Git -Cwd $CheckoutDir -GitArgs @("sparse-checkout", "init", "--cone")
+    Invoke-Git -Cwd $CheckoutDir -GitArgs @("sparse-checkout", "set", $RuntimeSubdir)
+    Invoke-Git -Cwd $CheckoutDir -GitArgs @("reset", "--hard", "origin/$Branch")
 }
 finally {
     if ($tokenProvided) {
-        Invoke-Git -Cwd $CheckoutDir -Args @("remote", "set-url", "origin", $RepoUrl)
+        Invoke-Git -Cwd $CheckoutDir -GitArgs @("remote", "set-url", "origin", $RepoUrl)
     }
 }
 
