@@ -2286,12 +2286,14 @@ class BlastBotApp:
             if s3_key and self.settings.s3_bucket_asset_storage:
                 bot = self._require_bot()
                 try:
-                    url = self.s3.generate_presigned_url(
+                    tmp = Path(self.settings.bot_tmp_dir) / f"pkg_{s3_key.replace('/', '_')}"
+                    self.s3.download_file(
                         bucket=self.settings.s3_bucket_asset_storage,
                         key=s3_key,
-                        expires_s=3600,
+                        dest=tmp,
                     )
-                    await bot.send_photo(st.chat_id, photo=url)
+                    await bot.send_photo(st.chat_id, photo=FSInputFile(tmp))
+                    tmp.unlink(missing_ok=True)
                 except Exception as e:
                     log.warning("pkg_photo_send_failed pkg=%s err=%s", text, str(e))
             await message.answer(
