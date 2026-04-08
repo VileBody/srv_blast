@@ -210,6 +210,7 @@ def call_full_plan_once(
         files=files,
         system_instruction=system_instruction,
         raw_response_path=raw_response_path,
+        stage="full_plan",
     )
     return payload
 
@@ -248,6 +249,7 @@ def call_stage1_plan_once(
         files=files,
         system_instruction=system_instruction,
         raw_response_path=raw_response_path,
+        stage="stage1_plan",
     )
     return payload
 
@@ -292,6 +294,7 @@ def call_stage1_asr_once(
             files=files,
             system_instruction=system_instruction,
             raw_response_path=_provider_raw_path(raw_response_path, provider="gemini"),
+            stage="stage1_asr",
         )
 
     def _openrouter_call() -> Stage1AsrPayload:
@@ -358,6 +361,7 @@ def call_stage1_forced_alignment_once(
             files=files,
             system_instruction=system_instruction,
             raw_response_path=_provider_raw_path(raw_response_path, provider="gemini"),
+            stage="stage1_forced_alignment",
         )
 
     def _openrouter_call() -> Stage1ForcedAlignmentPayload:
@@ -424,6 +428,7 @@ def call_stage1_scenario_once(
             files=files,
             system_instruction=system_instruction,
             raw_response_path=_provider_raw_path(raw_response_path, provider="gemini"),
+            stage="stage1_scenario",
         )
 
     def _openrouter_call() -> Stage1ScenarioPayload:
@@ -489,6 +494,7 @@ def call_subtitles_plan_once(
             files=files,
             system_instruction=system_instruction,
             raw_response_path=_provider_raw_path(raw_response_path, provider="gemini"),
+            stage="stage2_subtitles",
         )
 
     def _openrouter_call() -> BlocksTokensPayload:
@@ -573,6 +579,7 @@ def call_subtitles_plan_model_once(
             files=files,
             system_instruction=system_instruction,
             raw_response_path=_provider_raw_path(raw_response_path, provider="gemini"),
+            stage=stage_name,
         )
         return schema_model.model_validate(out.model_dump(mode="json"))
 
@@ -634,6 +641,7 @@ def call_subtitles_spans_once(
         files=files,
         system_instruction=system_instruction,
         raw_response_path=raw_response_path,
+        stage="stage2_subtitles_spans",
     )
     return payload
 
@@ -678,6 +686,7 @@ def call_timing_analysis_once(
             files=files,
             system_instruction=system_instruction,
             raw_response_path=_provider_raw_path(raw_response_path, provider="gemini"),
+            stage="stage2_timing_analysis",
         )
 
     def _openrouter_call() -> Stage2TimingAnalysisPayload:
@@ -744,6 +753,7 @@ def call_timing_cuts_once(
             files=files,
             system_instruction=system_instruction,
             raw_response_path=_provider_raw_path(raw_response_path, provider="gemini"),
+            stage="stage2_timing_cuts",
         )
 
     def _openrouter_call() -> Stage2TimingCutsPayload:
@@ -811,6 +821,7 @@ def call_footage_plan_once(
         files=files,
         system_instruction=system_instruction,
         raw_response_path=raw_response_path,
+        stage="stage2_footage",
     )
     return payload
 
@@ -863,6 +874,7 @@ def call_footage_style_once(
             files=files,
             system_instruction=system_instruction,
             raw_response_path=_provider_raw_path(raw_response_path, provider="gemini"),
+            stage="stage2_style",
         )
 
     def _openrouter_call() -> BaseModel:
