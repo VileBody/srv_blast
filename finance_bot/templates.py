@@ -68,6 +68,11 @@ def _env(name: str) -> str:
     return ENV_DISPLAY.get(name, name)
 
 
+def _nav(*cmds: str) -> str:
+    """Блок навигации — команды через разделитель."""
+    return "\n\n" + esc(" | ").join(cmds)
+
+
 # ═══════════════════════════════════
 # 1. /start
 # ═══════════════════════════════════
@@ -125,7 +130,7 @@ def tpl_status(envelopes: list[dict], debts: list[dict], total_debt: int, budget
         f"Потрачено: {money(spent)}",
         f"Остаток: {money(remaining)}",
     ]
-    return "\n".join(lines)
+    return "\n".join(lines) + _nav("/week", "/balance", "/debts")
 
 
 # ═══════════════════════════════════
@@ -171,7 +176,7 @@ def tpl_balance(
                 "",
             ]
 
-    return "\n".join(lines)
+    return "\n".join(lines) + _nav("/week", "/debts", "/envelopes")
 
 
 # ═══════════════════════════════════
@@ -207,7 +212,7 @@ def tpl_debts(debts: list[dict], total_debt: int) -> str:
         lines.append("")
 
     lines.append(f"*{esc('Итого:')} {money(total_debt)}*")
-    return "\n".join(lines)
+    return "\n".join(lines) + _nav("/paydebt", "/adddebt", "/editdebt", "/removedebt")
 
 
 # ═══════════════════════════════════
@@ -246,7 +251,7 @@ def tpl_week(
         f"Потрачено: {money(spent)}",
         f"Остаток: *{money(remaining)}*",
     ]
-    return "\n".join(lines)
+    return "\n".join(lines) + _nav("/balance", "/debts")
 
 
 # ═══════════════════════════════════
@@ -262,7 +267,7 @@ def tpl_income_distributed(amount: int, source: str, distribution: dict[str, int
     ]
     for env_name, share in distribution.items():
         lines.append(f"{esc(_env(env_name))}: {money_signed(share)}")
-    return "\n".join(lines)
+    return "\n".join(lines) + _nav("/balance", "/envelopes")
 
 
 # ═══════════════════════════════════
@@ -276,7 +281,7 @@ def tpl_income_personal(amount: int, source: str, new_balance: int) -> str:
         "",
         f"Зачислено в конверт *{esc('личные')}* без распределения\\.",
         f"Баланс личные: {money(new_balance)}",
-    ])
+    ]) + _nav("/balance", "/envelopes")
 
 
 # ═══════════════════════════════════
@@ -368,7 +373,7 @@ def tpl_expense_confirm(
             f"До конца недели {esc(days_left)} дней, доступно {money(per_day)}/день\\.",
         ]
 
-    return "\n".join(lines)
+    return "\n".join(lines) + _nav("/week", "/balance")
 
 
 # ═══════════════════════════════════
@@ -414,7 +419,7 @@ def tpl_weekly_summary(
     if recommendation:
         lines += ["", f"*{esc('Рекомендация:')}* {esc(recommendation)}"]
 
-    return "\n".join(lines)
+    return "\n".join(lines) + _nav("/balance", "/debts")
 
 
 # ═══════════════════════════════════
@@ -430,7 +435,7 @@ def tpl_paydebt_confirm(amount: int, name: str, old_amount: int, new_amount: int
         f"Было: {money(old_amount)}",
         f"Стало: *{money(new_amount)}*",
         f"Прогресс: {progress_bar(pct)} {esc(f'{pct}%')}",
-    ])
+    ]) + _nav("/debts", "/balance")
 
 
 # ═══════════════════════════════════
@@ -443,7 +448,7 @@ def tpl_paydebt_closed(name: str, initial_amount: int, active_count: int, active
         "",
         f"Выплачено полностью: {money(initial_amount)}",
         f"Активных долгов: {esc(active_count)}, на сумму {money(active_total)}",
-    ])
+    ]) + _nav("/debts", "/balance")
 
 
 # ═══════════════════════════════════
@@ -469,7 +474,7 @@ def tpl_adddebt_confirm(
         "",
         f"Всего долгов: {esc(total_count)}, на сумму {money(total_amount)}",
     ]
-    return "\n".join(lines)
+    return "\n".join(lines) + _nav("/debts", "/balance")
 
 
 # ═══════════════════════════════════
@@ -480,7 +485,7 @@ def tpl_removedebt_confirm(name: str, amount: int) -> str:
     return "\n".join([
         f"*{esc('Удалён долг:')} {esc(name)}*",
         f"Остаток на момент удаления: {money(amount)}",
-    ])
+    ]) + _nav("/debts", "/balance")
 
 
 # ═══════════════════════════════════
@@ -503,7 +508,7 @@ def tpl_envelopes(envelopes: list[dict]) -> str:
             f"Баланс: {money(e['balance'])}",
             "",
         ]
-    return "\n".join(lines)
+    return "\n".join(lines) + _nav("/split", "/balance")
 
 
 # ═══════════════════════════════════
