@@ -14,7 +14,7 @@ from config import (
 from db import (
     get_today_has_expenses, get_week_transactions, get_envelopes,
     get_debts, get_week_income_by_source, get_week_expenses_by_category,
-    estimate_weeks_to_close, now_msk,
+    estimate_weeks_to_close, now_msk, get_full_financial_context,
 )
 from grok_client import generate_weekly_summary
 from templates import tpl_daily_ping, tpl_daily_ping_retry, tpl_no_data, tpl_weekly_summary
@@ -111,10 +111,9 @@ async def weekly_summary(bot: Bot):
         monday = today - timedelta(days=today.weekday())
         sunday = monday + timedelta(days=6)
 
-        # Рекомендация от Grok
-        recommendation = await generate_weekly_summary(
-            total_income, total_expense, expenses_by_cat, envelopes, debts,
-        )
+        # Рекомендация от Groq с полным контекстом
+        financial_context = await get_full_financial_context()
+        recommendation = await generate_weekly_summary(financial_context)
 
         text = tpl_weekly_summary(
             monday, sunday, income_by_src, total_income,

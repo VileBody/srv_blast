@@ -202,37 +202,21 @@ async def _parse_expenses_api(user_text: str, weekly_budget: int, spent_this_wee
             return validated
 
 
-async def generate_weekly_summary(
-    income_total: int,
-    expense_total: int,
-    expenses_by_category: dict[str, int],
-    envelopes: list[dict],
-    debts: list[dict],
-) -> str:
-    """Попросить Groq сгенерировать рекомендацию к недельной сводке."""
-    cat_str = ", ".join(f"{k} {v}₽" for k, v in expenses_by_category.items())
-    env_str = ", ".join(f"{e['name']} {e['balance']}₽" for e in envelopes)
-    debt_str = ", ".join(f"{d['name']} {d['amount']}₽" for d in debts)
-    summary_text = (
-        f"Доход за неделю: {income_total}₽\n"
-        f"Расходы за неделю: {expense_total}₽\n"
-        f"По категориям: {cat_str}\n"
-        f"Конверты: {env_str}\n"
-        f"Долги: {debt_str}\n"
-    )
-
+async def generate_weekly_summary(financial_context: str) -> str:
+    """Генерация рекомендации к недельной сводке с полным контекстом."""
     payload = {
         "model": GROK_MODEL,
         "messages": [
             {
                 "role": "system",
                 "content": (
-                    "Ты — финансовый советник. Дай краткую рекомендацию (2-3 предложения) "
-                    "на основе недельной финансовой сводки пользователя. "
-                    "Будь конкретным, дружелюбным, на русском языке. Обращайся на ты."
+                    "Ты — финансовый советник. Дай краткую рекомендацию (3-5 предложений) "
+                    "на основе финансовой сводки пользователя. Используй историю за предыдущие "
+                    "недели для сравнения и трендов. Будь конкретным, дружелюбным, на русском "
+                    "языке. Обращайся на ты. Не используй эмодзи."
                 ),
             },
-            {"role": "user", "content": summary_text},
+            {"role": "user", "content": financial_context},
         ],
         "temperature": 0.7,
         "max_tokens": 500,
@@ -253,3 +237,40 @@ async def generate_weekly_summary(
     except Exception as e:
         logger.error(f"Ошибка генерации недельной сводки: {e}")
         return ""
+
+
+async def ask_question(question: str, financial_context: str) -> str:
+    """Ответ на свободный вопрос о финансах с полным контекстом."""
+    payload = {
+        "model": GROK_MODEL,
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "Ты — личный финансовый ассистент. Отвечай на вопросы пользователя "
+                    "о его финансах, опираясь на данные ниже. Будь точным, используй "
+                    "конкретные цифры из данных. Отвечай кратко (до 10 предложений), "
+                    "на русском языке, на ты. Не используй эмодзи. Не используй markdown."
+                ),
+            },
+            {
+                "role": "user",
+                "content": f"Мои финансовые данные:\n{financial_context}\n\nВопрос: {question}",
+            },
+        ],
+        "temperature": 0.5,
+        "max_tokens": 800,
+    }
+
+    headers = {
+        "Authorization": f"Bearer {GROK_API_KEY}",
+        "Content-Type": "application/json",
+    }
+
+    async with aiohttp.ClientSession() as session:
+        async with session.post(GROK_API_URL, json=payload, headers=headers, proxy=GROQ_PROXY, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+            if resp.status != 200:
+                error_text = await resp.text()
+                raise RuntimeError(f"Groq API {resp.status}: {error_text[:100]}")
+            data = await resp.json()
+            return data["choices"][0]["message"]["content"].strip()

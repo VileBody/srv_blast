@@ -100,6 +100,7 @@ def tpl_start(balance: int, total_debt: int, nearest: dict | None) -> str:
         esc("/week — сводка за неделю"),
         esc("/income — добавить доход"),
         esc("/split — правила распределения"),
+        esc("/ask — вопрос по финансам"),
     ]
     return "\n".join(lines)
 

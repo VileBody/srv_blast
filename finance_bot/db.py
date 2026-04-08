@@ -581,3 +581,102 @@ async def get_spent_this_week() -> int:
 
 async def get_weekly_budget() -> int:
     return int(await get_setting("weekly_budget", "7000"))
+
+
+async def get_weekly_history(weeks: int = 4) -> list[dict]:
+    """Расходы по категориям за последние N недель (включая текущую)."""
+    today = now_msk().date()
+    monday = today - timedelta(days=today.weekday())
+    result = []
+    db = await get_db()
+    try:
+        for i in range(weeks):
+            w_start = monday - timedelta(weeks=i)
+            w_end = w_start + timedelta(days=6)
+            cursor = await db.execute(
+                "SELECT COALESCE(category, 'другое') as cat, SUM(amount) as total "
+                "FROM transactions WHERE type = 'expense' AND date >= ? AND date <= ? GROUP BY cat",
+                (w_start.isoformat(), w_end.isoformat()),
+            )
+            by_cat = {row[0]: row[1] for row in await cursor.fetchall()}
+            cursor2 = await db.execute(
+                "SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE type = 'income' AND date >= ? AND date <= ?",
+                (w_start.isoformat(), w_end.isoformat()),
+            )
+            income = (await cursor2.fetchone())[0]
+            result.append({
+                "week_start": w_start.isoformat(),
+                "week_end": w_end.isoformat(),
+                "income": income,
+                "total_expense": sum(by_cat.values()) if by_cat else 0,
+                "by_category": by_cat,
+            })
+    finally:
+        await db.close()
+    return result
+
+
+async def get_full_financial_context() -> str:
+    """Полный финансовый контекст для LLM."""
+    from config import ENVELOPE_RULES
+
+    today = now_msk().date()
+    month_name_map = {
+        1: "январь", 2: "февраль", 3: "март", 4: "апрель",
+        5: "май", 6: "июнь", 7: "июль", 8: "август",
+        9: "сентябрь", 10: "октябрь", 11: "ноябрь", 12: "декабрь",
+    }
+    lines = [f"Дата: {today.isoformat()}, {month_name_map.get(today.month, '')}"]
+
+    # Бюджет
+    budget = await get_weekly_budget()
+    spent = await get_spent_this_week()
+    lines.append(f"\nБюджет на неделю: {budget}₽, потрачено: {spent}₽, остаток: {budget - spent}₽")
+
+    # Конверты
+    envelopes = await get_envelopes()
+    lines.append("\nКонверты:")
+    for e in envelopes:
+        lines.append(f"  {e['name']}: {e['balance']}₽ ({e['percentage']}% от дохода)")
+
+    # Долги
+    debts = await get_debts()
+    if debts:
+        total_debt = await get_total_debt()
+        lines.append(f"\nДолги (итого {total_debt}₽):")
+        for d in debts:
+            initial = d.get("initial_amount", d["amount"])
+            paid_pct = max(0, int((initial - d["amount"]) / initial * 100)) if initial > 0 else 0
+            line = f"  {d['name']}: {d['amount']}₽ из {initial}₽ (погашено {paid_pct}%)"
+            if d.get("rate", 0) > 0:
+                line += f", ставка {d['rate']}%"
+            if d.get("min_payment", 0) > 0:
+                line += f", мин.платёж {d['min_payment']}₽"
+            if d.get("deadline_day"):
+                line += f", дедлайн {d['deadline_day']}-го"
+            lines.append(line)
+
+    # Месяц
+    total_income, total_expense = await get_month_totals()
+    income_by_src = await get_month_income_by_source()
+    expenses_by_cat = await get_month_expenses_by_category()
+    lines.append(f"\nТекущий месяц ({month_name_map.get(today.month, '')}):")
+    lines.append(f"  Доход: {total_income}₽")
+    for src, amt in sorted(income_by_src.items(), key=lambda x: -x[1]):
+        lines.append(f"    {src}: {amt}₽")
+    lines.append(f"  Расход: {total_expense}₽")
+    for cat, amt in sorted(expenses_by_cat.items(), key=lambda x: -x[1]):
+        lines.append(f"    {cat}: {amt}₽")
+    lines.append(f"  Баланс: {total_income - total_expense}₽")
+
+    # История за 4 недели
+    history = await get_weekly_history(4)
+    if history:
+        lines.append("\nИстория расходов по неделям:")
+        for w in history:
+            cats = ", ".join(f"{k} {v}₽" for k, v in sorted(w["by_category"].items(), key=lambda x: -x[1]))
+            lines.append(f"  {w['week_start']}..{w['week_end']}: доход {w['income']}₽, расход {w['total_expense']}₽")
+            if cats:
+                lines.append(f"    категории: {cats}")
+
+    return "\n".join(lines)

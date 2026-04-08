@@ -16,9 +16,9 @@ from db import (
     add_expense, get_week_expenses, get_week_income_by_source, get_week_expenses_by_category,
     get_goals, add_goal, get_total_debt, get_spent_this_week, get_weekly_budget,
     set_setting, estimate_weeks_to_close, get_month_totals, get_month_income_by_source,
-    get_month_expenses_by_category, now_msk,
+    get_month_expenses_by_category, now_msk, get_full_financial_context,
 )
-from grok_client import parse_expenses
+from grok_client import parse_expenses, ask_question
 from templates import (
     esc, money, tpl_start, tpl_status, tpl_balance, tpl_debts, tpl_week,
     tpl_income_distributed, tpl_income_personal, tpl_split_show, tpl_split_updated,
@@ -706,6 +706,27 @@ async def cmd_split(message: Message, state: FSMContext):
     old_rules = await get_envelope_rules()
     await set_envelope_rules(new_rules)
     await message.answer(tpl_split_updated(old_rules, new_rules))
+
+
+# ═══════════════════════════════════
+# /ask — свободный вопрос к LLM
+# ═══════════════════════════════════
+
+@router.message(Command("ask"), owner)
+async def cmd_ask(message: Message, state: FSMContext):
+    await state.clear()
+    question = message.text.partition(" ")[2].strip()
+    if not question:
+        await message.answer(esc("Формат: /ask <вопрос>\nПример: /ask на что я больше всего трачу?"))
+        return
+
+    try:
+        context = await get_full_financial_context()
+        answer = await ask_question(question, context)
+        await message.answer(esc(answer))
+    except Exception as e:
+        logger.error(f"cmd_ask error: {e}", exc_info=True)
+        await message.answer(f"Ошибка: {e}", parse_mode=None)
 
 
 # ═══════════════════════════════════
