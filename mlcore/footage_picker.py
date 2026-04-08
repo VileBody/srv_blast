@@ -660,6 +660,8 @@ def _build_raw_pool(
     exclude_terms = {_normalize_theme_tag(x) for x in (raw_pick.filters.exclude_tags or [])}
     exclude_terms.discard("")
     require_people = _normalize_people_type(raw_pick.filters.require_people or "") or None
+    color_priority = {_normalize_color_tone(x) for x in list(raw_pick.filters.color_priority or [])}
+    color_priority.discard("")
 
     pool: List[Dict[str, Any]] = []
     for it in assets:
@@ -675,18 +677,21 @@ def _build_raw_pool(
         if overlap <= 0:
             continue
         people = _normalize_people_type(it.get("meta_people_type"))
-        inv_tag = _normalize_theme_tag(it.get("tag"))
         if (
             (people and people in exclude_people)
             or exclude_terms.intersection(meta_tags)
-            or (inv_tag and inv_tag in exclude_terms)
             or _GLOBAL_BAN_TAGS.intersection(meta_tags)
         ):
             continue
         if require_people and people != require_people:
             continue
+        # Color bonus: +0.5 when clip color_tone matches LLM color_priority
+        color_bonus = 0.0
+        clip_color = _normalize_color_tone(it.get("meta_color_tone"))
+        if clip_color and clip_color in color_priority:
+            color_bonus = 0.5
         row = dict(it)
-        row[_SELECTION_RANK_SCORE_KEY] = float(overlap)
+        row[_SELECTION_RANK_SCORE_KEY] = float(overlap) + color_bonus
         pool.append(row)
     return pool
 
@@ -845,16 +850,17 @@ def pick_footage_clips_by_intervals_deterministic(
         k = len(raw_picks)
         _vi = os.environ.get("BATCH_VARIANT_INDEX", "").strip()
         subgroup_idx = ((int(_vi) - 1) % k) if _vi.isdigit() else (seed_value % k)
+        # v2 rotation: build pool purely from theme parameters (mood +
+        # priority_theme_tags + exclusions).  Legacy genre/tag is NOT passed
+        # so _build_raw_pool skips the old inventory-tag filter.
         chosen_pool = _build_raw_pool(
             raw_picks[subgroup_idx],
             assets,
-            style_genre=genre,
-            style_tag=tag,
         )
         if not chosen_pool:
             # Chosen subgroup is empty — fall back to merged pool of all non-empty subgroups.
             all_pools = [
-                _build_raw_pool(rp, assets, style_genre=genre, style_tag=tag)
+                _build_raw_pool(rp, assets)
                 for rp in raw_picks
             ]
             non_empty = [p for p in all_pools if p]
