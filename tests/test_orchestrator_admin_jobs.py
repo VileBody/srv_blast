@@ -224,3 +224,74 @@ def test_kill_job_marks_failed_and_returns_revoked_tasks(monkeypatch) -> None:
 
         resp2 = client.post("/jobs/job-running/kill", json={"reason": "repeat"})
         assert resp2.status_code == 409
+
+
+def test_requeue_active_job_revokes_and_enqueues_without_re_reserve(monkeypatch) -> None:
+    now = time.time()
+    store = _FakeStore([_job("job-running", status="RUNNING", updated_at=now - 700.0, project_id="tg-11-x")])
+    monkeypatch.setattr(orchestrator_app, "_revoke_celery_tasks_for_job", lambda _jid: ["task-run-1"])
+
+    reserve_called = {"count": 0}
+
+    def _unexpected_reserve(*_args, **_kwargs):
+        reserve_called["count"] += 1
+        raise AssertionError("reserve_worker_type must not be called for active requeue")
+
+    monkeypatch.setattr(orchestrator_app, "reserve_worker_type", _unexpected_reserve)
+
+    delayed: list[str] = []
+    monkeypatch.setattr(orchestrator_app.build_job_sdk, "delay", lambda job_id: delayed.append(str(job_id)))
+
+    with _build_client(monkeypatch, store) as client:
+        resp = client.post("/jobs/job-running/requeue", json={"reason": "retry_on_other_node"})
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["job_id"] == "job-running"
+    assert body["previous_status"] == "RUNNING"
+    assert body["new_status"] == "QUEUED"
+    assert body["stage"] == "build"
+    assert body["llm_worker_type"] == "sdk"
+    assert body["revoked_task_ids"] == ["task-run-1"]
+    assert reserve_called["count"] == 0
+    assert delayed == ["job-running"]
+
+    st = store.get("job-running")
+    assert st is not None
+    assert st.status == "QUEUED"
+    assert st.stage == "build"
+    assert st.request["llm_worker_type"] == "sdk"
+
+
+def test_requeue_failed_job_reserves_and_enqueues(monkeypatch) -> None:
+    now = time.time()
+    store = _FakeStore([_job("job-failed", status="FAILED", updated_at=now - 800.0, project_id="tg-12-x")])
+    monkeypatch.setattr(orchestrator_app, "_revoke_celery_tasks_for_job", lambda _jid: [])
+    monkeypatch.setattr(
+        orchestrator_app,
+        "reserve_worker_type",
+        lambda _store, requested=None: SimpleNamespace(worker_type=str(requested or "sdk")),
+    )
+
+    delayed: list[str] = []
+    monkeypatch.setattr(orchestrator_app.build_job_openrouter, "delay", lambda job_id: delayed.append(str(job_id)))
+
+    with _build_client(monkeypatch, store) as client:
+        resp = client.post(
+            "/jobs/job-failed/requeue",
+            json={"reason": "manual_retry", "llm_worker_type": "openrouter"},
+        )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["job_id"] == "job-failed"
+    assert body["previous_status"] == "FAILED"
+    assert body["new_status"] == "QUEUED"
+    assert body["llm_worker_type"] == "openrouter"
+    assert delayed == ["job-failed"]
+
+    st = store.get("job-failed")
+    assert st is not None
+    assert st.status == "QUEUED"
+    assert st.stage == "build"
+    assert st.request["llm_worker_type"] == "openrouter"

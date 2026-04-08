@@ -136,6 +136,22 @@ class KillJobResponse(BaseModel):
     project_id: str = ""
 
 
+class RequeueJobRequest(BaseModel):
+    reason: str = Field(default="admin_requeue_stuck", min_length=1, max_length=500)
+    llm_worker_type: str = Field(default="", max_length=50)
+
+
+class RequeueJobResponse(BaseModel):
+    job_id: str
+    previous_status: JobStatus
+    new_status: JobStatus
+    stage: str
+    reason: str
+    llm_worker_type: str
+    revoked_task_ids: List[str] = Field(default_factory=list)
+    project_id: str = ""
+
+
 class WindowsNodeState(BaseModel):
     url: str = Field(min_length=1)
     enabled: bool = True

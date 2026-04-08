@@ -8,7 +8,7 @@ from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pathlib import Path
 
-from core.llm_worker_types import LLM_WORKER_TYPE_SDK
+from core.llm_worker_types import LLM_WORKER_TYPE_SDK, normalize_llm_worker_type
 from .job_store import JobStore
 from .llm_workers import (
     ensure_config_initialized,
@@ -30,6 +30,8 @@ from .schemas import (
     LLMWorkerRuntimeStatus,
     LLMWorkersConfigRequest,
     LLMWorkersStatusResponse,
+    RequeueJobRequest,
+    RequeueJobResponse,
     SendVideoRequest,
     SendVideoResponse,
     WindowsNodesStatusResponse,
@@ -311,6 +313,17 @@ def create_app() -> FastAPI:
             runtime_nodes = pool.get_runtime_nodes()
         return _build_windows_nodes_status(runtime_nodes=runtime_nodes)
 
+    def _enqueue_build_task(job_id: str, worker_type: str) -> None:
+        wt = normalize_llm_worker_type(worker_type)
+        if wt == "sdk":
+            build_job_sdk.delay(job_id)
+        elif wt == "openrouter":
+            build_job_openrouter.delay(job_id)
+        elif wt == "hybrid":
+            build_job_hybrid.delay(job_id)
+        else:
+            raise RuntimeError(f"unsupported llm_worker_type: {worker_type}")
+
     # ==========================================================
     # NEW: correct naming (audio URL -> enqueue pipeline)
     # ==========================================================
@@ -340,15 +353,7 @@ def create_app() -> FastAPI:
                 result={"llm_worker_type": worker_type},
             )
             queued = True
-
-            if worker_type == "sdk":
-                build_job_sdk.delay(st.job_id)
-            elif worker_type == "openrouter":
-                build_job_openrouter.delay(st.job_id)
-            elif worker_type == "hybrid":
-                build_job_hybrid.delay(st.job_id)
-            else:
-                raise RuntimeError(f"unsupported llm_worker_type: {worker_type}")
+            _enqueue_build_task(st.job_id, worker_type)
         except Exception as e:
             if worker_type and not queued:
                 try:
@@ -454,6 +459,125 @@ def create_app() -> FastAPI:
             new_status=st2.status,
             stage=str(st2.stage or "admin_kill_stuck"),
             reason=reason,
+            revoked_task_ids=revoked_task_ids,
+            project_id=project_id,
+        )
+
+    @app.post("/jobs/{job_id}/requeue", response_model=RequeueJobResponse)
+    def requeue_job(job_id: str, payload: RequeueJobRequest) -> RequeueJobResponse:
+        jid = str(job_id or "").strip()
+        if not jid:
+            raise HTTPException(status_code=400, detail="job_id is empty")
+
+        st = store.get(jid)
+        if not st:
+            raise HTTPException(status_code=404, detail="job not found")
+
+        prev_status = st.status
+        if prev_status == "SUCCEEDED":
+            raise HTTPException(status_code=409, detail="job already succeeded")
+
+        reason = str(payload.reason or "").strip() or "admin_requeue_stuck"
+        req = st.request or {}
+        project_id = str(req.get("project_id") or "")
+        requested_worker_raw = str(payload.llm_worker_type or "").strip()
+        current_worker_raw = str(req.get("llm_worker_type") or "").strip()
+
+        requested_worker = ""
+        current_worker = ""
+        try:
+            if requested_worker_raw:
+                requested_worker = normalize_llm_worker_type(requested_worker_raw)
+            if current_worker_raw:
+                current_worker = normalize_llm_worker_type(current_worker_raw)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"invalid llm_worker_type: {e}") from e
+
+        selected_worker = requested_worker or current_worker
+        if not selected_worker:
+            raise HTTPException(
+                status_code=400,
+                detail="llm_worker_type is required (missing in job request and payload)",
+            )
+
+        try:
+            revoked_task_ids = _revoke_celery_tasks_for_job(jid)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"failed_to_revoke_celery_tasks: {e!r}") from e
+
+        reserved_new_slot = False
+        is_active = prev_status in {"QUEUED", "RUNNING"}
+
+        if is_active:
+            if requested_worker and current_worker and requested_worker != current_worker:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "cannot change llm_worker_type while job is active; "
+                        f"current={current_worker} requested={requested_worker}"
+                    ),
+                )
+            selected_worker = current_worker or requested_worker
+        else:
+            try:
+                selected = reserve_worker_type(store, requested=selected_worker)
+            except Exception as e:
+                msg = str(e)
+                if "capacity_exhausted" in msg or "disabled" in msg or "no_enabled_types" in msg:
+                    raise HTTPException(status_code=503, detail=f"LLM workers capacity issue: {msg}") from e
+                raise HTTPException(status_code=500, detail=f"failed_to_reserve_worker: {msg}") from e
+            selected_worker = selected.worker_type
+            reserved_new_slot = True
+
+        requeue_attempt = 1
+        if isinstance(st.result, dict):
+            try:
+                prev_attempt = int(st.result.get("admin_requeue_attempt") or 0)
+                requeue_attempt = max(1, prev_attempt + 1)
+            except Exception:
+                requeue_attempt = 1
+
+        queued = False
+        try:
+            store.patch_request(jid, {"llm_worker_type": selected_worker})
+            st2 = store.set_status(
+                jid,
+                "QUEUED",
+                stage="build",
+                error=f"admin_requeued: {reason}",
+                result={
+                    "llm_worker_type": selected_worker,
+                    "admin_requeue_attempt": requeue_attempt,
+                    "admin_requeue_reason": reason,
+                    "admin_requeue_revoked_task_ids": revoked_task_ids,
+                },
+            )
+            if not st2:
+                raise HTTPException(status_code=404, detail="job not found")
+            queued = True
+            _enqueue_build_task(jid, selected_worker)
+        except HTTPException:
+            if reserved_new_slot and not queued:
+                try:
+                    release_worker_slot(store, selected_worker)
+                except Exception:
+                    pass
+            raise
+        except Exception as e:
+            if reserved_new_slot and not queued:
+                try:
+                    release_worker_slot(store, selected_worker)
+                except Exception:
+                    pass
+            raise HTTPException(status_code=500, detail=f"failed_to_requeue_job: {e!r}") from e
+
+        return RequeueJobResponse(
+            job_id=jid,
+            previous_status=prev_status,
+            new_status="QUEUED",
+            stage="build",
+            reason=reason,
+            llm_worker_type=selected_worker,
             revoked_task_ids=revoked_task_ids,
             project_id=project_id,
         )
