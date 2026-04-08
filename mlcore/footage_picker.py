@@ -10,6 +10,7 @@ import warnings
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
+from config.styles.artist_presets_loader import find_preset_by_artist_id
 from mlcore.models.footage_plan import FootageSelectionPayload
 from mlcore.models.footage_style import FootageStylePickPayload, FootageStyleRawPayload
 
@@ -20,6 +21,25 @@ _STYLE_COLOR_ALLOWED = {"dark", "light", "warm", "cold", "neutral"}
 _STYLE_MOOD_ALLOWED = {"major", "minor"}
 _STYLE_PEOPLE_ALLOWED = {"none", "girls", "guys", "couple", "crowd", "driver"}
 _CLIP_ID_RE = re.compile(r"(\d{8,})")
+_GENRE_NORMALIZE_RE = re.compile(r"[^0-9a-zа-я]+", flags=re.IGNORECASE)
+
+# artist style -> inventory genre matching aliases
+_STYLE_GENRE_ALIASES: Dict[str, Tuple[str, ...]] = {
+    "hiphop": ("hiphop", "hip-hop", "хип-хоп", "хипхоп", "хип хоп", "хипхоп"),
+    "pop": ("pop", "поп"),
+    "rock": ("rock", "рок"),
+    "alternative": ("alternative", "альтернатива", "alt"),
+    "electronic": ("electronic", "electro", "электроника", "электро"),
+}
+
+# deterministic genre-level similarity fallback chain.
+_STYLE_GENRE_SIMILARITY: Dict[str, Tuple[str, ...]] = {
+    "hiphop": ("alternative", "electronic", "pop", "rock"),
+    "pop": ("electronic", "alternative", "hiphop", "rock"),
+    "rock": ("alternative", "hiphop", "electronic", "pop"),
+    "alternative": ("rock", "electronic", "hiphop", "pop"),
+    "electronic": ("alternative", "hiphop", "pop", "rock"),
+}
 
 
 def _load_global_ban_tags() -> frozenset:
@@ -162,6 +182,12 @@ class FootageStyleRawAdapterDiagnostics:
     selected_group_score: float
     selected_group_duration_sec: float
     selected_group_assets_count: int
+    requested_style_id: str
+    requested_style_genre_key: str
+    resolved_style_genre_key: str
+    resolved_similarity_rank: int
+    similarity_fallback_used: bool
+    similarity_chain: List[str]
     top_groups: List[Dict[str, Any]]
 
 
@@ -173,6 +199,52 @@ def _as_pos_float(v: Any) -> float:
     if x <= 0:
         raise RuntimeError(f"Expected positive float, got {x!r}")
     return x
+
+
+def _normalize_genre_name(v: Any) -> str:
+    raw = " ".join(str(v or "").strip().lower().split())
+    if not raw:
+        return ""
+    return _GENRE_NORMALIZE_RE.sub("", raw)
+
+
+def _resolve_style_genre_key(style_id: str) -> str:
+    preset = find_preset_by_artist_id(style_id)
+    if not isinstance(preset, dict):
+        raise RuntimeError(f"Unknown footage style id: {style_id!r}")
+    genre_key = str(preset.get("genre_key") or "").strip().lower()
+    if not genre_key:
+        raise RuntimeError(f"Style preset has empty genre_key: {style_id!r}")
+    return genre_key
+
+
+def _genre_similarity_chain(primary_genre_key: str) -> List[str]:
+    base = list(_STYLE_GENRE_SIMILARITY.get(primary_genre_key, ()))
+    chain_raw = [primary_genre_key] + base + list(_STYLE_GENRE_ALIASES.keys())
+    out: List[str] = []
+    seen: set[str] = set()
+    for it in chain_raw:
+        key = str(it or "").strip().lower()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        out.append(key)
+    return out
+
+
+def _row_matches_style_genre_key(row_genre: str, style_genre_key: str) -> bool:
+    row_norm = _normalize_genre_name(row_genre)
+    if not row_norm:
+        return False
+    aliases = _STYLE_GENRE_ALIASES.get(style_genre_key, (style_genre_key,))
+    alias_norm = {_normalize_genre_name(x) for x in aliases}
+    alias_norm.discard("")
+    if not alias_norm:
+        return False
+    for a in alias_norm:
+        if row_norm == a or row_norm.startswith(a) or a.startswith(row_norm):
+            return True
+    return False
 
 
 def _require_non_empty_str(v: Any, *, field: str) -> str:
@@ -1246,6 +1318,7 @@ def resolve_style_pick_from_raw_filters(
     raw_pick: FootageStyleRawPayload,
     mapped_assets: List[Dict[str, Any]],
     seed_key: str,
+    requested_style_id: str = "",
     total_assets: int | None = None,
     unmapped_assets: int = 0,
     metadata_rows_merged: int = 0,
@@ -1324,11 +1397,42 @@ def resolve_style_pick_from_raw_filters(
             str(r["tag"]),
         )
     )
-    best = rows[0]
+    requested_style = str(requested_style_id or "").strip()
+    requested_style_genre_key = ""
+    resolved_style_genre_key = ""
+    resolved_similarity_rank = 0
+    similarity_chain: List[str] = []
+    best: Optional[Dict[str, Any]] = None
+
+    if requested_style:
+        requested_style_genre_key = _resolve_style_genre_key(requested_style)
+        similarity_chain = _genre_similarity_chain(requested_style_genre_key)
+        for idx, genre_key in enumerate(similarity_chain, start=1):
+            filtered = [r for r in rows if _row_matches_style_genre_key(str(r["genre"]), genre_key)]
+            if not filtered:
+                continue
+            best = filtered[0]
+            resolved_style_genre_key = genre_key
+            resolved_similarity_rank = idx
+            break
+        if best is None:
+            raise RuntimeError(
+                "style_selection_exhausted "
+                f"requested_style_id={requested_style!r} "
+                f"requested_style_genre={requested_style_genre_key!r} "
+                f"available_genres={sorted({str(r['genre']) for r in rows})!r}"
+            )
+    else:
+        best = rows[0]
+
+    if best is None:
+        raise RuntimeError("style_selection_internal_error: best row is empty")
+
     pick = FootageStylePickPayload.model_validate(
         {"genre": str(best["genre"]), "tag": str(best["tag"])}
     )
 
+    fallback_used = bool(requested_style and resolved_similarity_rank > 1)
     diag = FootageStyleRawAdapterDiagnostics(
         total_assets=int(total),
         metadata_rows_merged=int(metadata_rows_merged),
@@ -1342,6 +1446,12 @@ def resolve_style_pick_from_raw_filters(
         selected_group_score=float(best["score"]),
         selected_group_duration_sec=float(best["duration"]),
         selected_group_assets_count=int(best["assets_count"]),
+        requested_style_id=requested_style,
+        requested_style_genre_key=requested_style_genre_key,
+        resolved_style_genre_key=resolved_style_genre_key,
+        resolved_similarity_rank=int(resolved_similarity_rank),
+        similarity_fallback_used=fallback_used,
+        similarity_chain=list(similarity_chain),
         top_groups=[
             {
                 "genre": str(r["genre"]),
