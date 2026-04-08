@@ -374,7 +374,7 @@ def tpl_expense_confirm(
             f"До конца недели {esc(days_left)} дней, доступно {money(per_day)}/день\\.",
         ]
 
-    return "\n".join(lines) + _nav("/week", "/balance")
+    return "\n".join(lines) + _nav("/undo", "/week", "/balance")
 
 
 # ═══════════════════════════════════

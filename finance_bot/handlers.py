@@ -13,7 +13,8 @@ from config import OWNER_TG_ID, ENVELOPE_RULES
 from db import (
     get_debts, get_all_debts, get_debt, add_debt, pay_debt, remove_debt, update_debt_field,
     get_envelopes, get_envelope_rules, set_envelope_rules, distribute_income, get_personal_balance,
-    add_expense, get_week_expenses, get_week_income_by_source, get_week_expenses_by_category,
+    add_expense, delete_expense, get_recent_expenses,
+    get_week_expenses, get_week_income_by_source, get_week_expenses_by_category,
     get_goals, add_goal, get_total_debt, get_spent_this_week, get_weekly_budget,
     set_setting, estimate_weeks_to_close, get_month_totals, get_month_income_by_source,
     get_month_expenses_by_category, now_msk, get_full_financial_context,
@@ -709,6 +710,92 @@ async def cmd_split(message: Message, state: FSMContext):
 
 
 # ═══════════════════════════════════
+# /undo — отменить последнюю группу трат
+# ═══════════════════════════════════
+
+@router.message(Command("undo"), owner)
+async def cmd_undo(message: Message, state: FSMContext):
+    data = await state.get_data()
+    await state.clear()
+    last_ids = data.get("last_expense_ids", [])
+    if not last_ids:
+        await message.answer(esc("Нечего отменять. Используй /del для удаления конкретной траты."))
+        return
+
+    deleted = []
+    for tx_id in last_ids:
+        tx = await delete_expense(tx_id)
+        if tx:
+            deleted.append(tx)
+
+    if not deleted:
+        await message.answer(esc("Траты уже были удалены."))
+        return
+
+    total = sum(t["amount"] for t in deleted)
+    budget = await get_weekly_budget()
+    spent = await get_spent_this_week()
+    lines = [f"*{esc('Отменено:')}*", ""]
+    for t in deleted:
+        lines.append(f"{esc(t.get('category', 'другое'))}: {money(t['amount'])}")
+    lines += [
+        "",
+        f"Возвращено: {money(total)}",
+        f"Бюджет на неделю: {money(budget - spent)} из {money(budget)}",
+    ]
+    await message.answer("\n".join(lines))
+
+
+# ═══════════════════════════════════
+# /del — удалить конкретную трату
+# ═══════════════════════════════════
+
+@router.message(Command("del"), owner)
+async def cmd_del(message: Message, state: FSMContext):
+    await state.clear()
+    args = message.text.split()
+
+    if len(args) >= 2:
+        # Инлайн: /del 123
+        try:
+            tx_id = int(args[1])
+        except ValueError:
+            await message.answer(tpl_error_input("/del <id>"))
+            return
+        tx = await delete_expense(tx_id)
+        if not tx:
+            await message.answer(esc("Трата не найдена."))
+            return
+        budget = await get_weekly_budget()
+        spent = await get_spent_this_week()
+        await message.answer("\n".join([
+            f"*{esc('Удалена трата')}* \\#{esc(tx_id)}",
+            f"{esc(tx.get('category', 'другое'))}: {money(tx['amount'])}",
+            f"Бюджет на неделю: {money(budget - spent)} из {money(budget)}",
+        ]))
+        return
+
+    # Показать последние 10 трат для выбора
+    recent = await get_recent_expenses(10)
+    if not recent:
+        await message.answer(esc("Нет записанных трат."))
+        return
+
+    lines = [f"*{esc('Последние траты')}*", ""]
+    for t in recent:
+        tid = t["id"]
+        cat = t.get("category", "другое")
+        note = t.get("note", "")
+        date_str = t.get("date", "")
+        line = f"\\#{esc(tid)} {esc(date_str)} {esc(cat)}: {money(t['amount'])}"
+        if note:
+            line += f" — {esc(note)}"
+        lines.append(line)
+    lines += ["", esc("Удалить: /del <id>")]
+    await message.answer("\n".join(lines))
+
+
+# ═══════════════════════════════════
 # /ask — свободный вопрос к LLM
 # ═══════════════════════════════════
 
@@ -770,9 +857,14 @@ async def handle_free_text(message: Message, state: FSMContext):
 
         # Записываем в БД
         total = 0
+        expense_ids = []
         for exp in expenses:
-            await add_expense(exp["amount"], exp["category"], exp["note"])
+            tx_id = await add_expense(exp["amount"], exp["category"], exp["note"])
+            expense_ids.append(tx_id)
             total += exp["amount"]
+
+        # Сохраняем ID для /undo
+        await state.update_data(last_expense_ids=expense_ids)
 
         new_spent = spent + total
         remaining = budget - new_spent

@@ -385,6 +385,42 @@ async def add_expense(amount: int, category: str, note: str, envelope: str = "pe
         await db.close()
 
 
+async def delete_expense(tx_id: int) -> dict | None:
+    """Удалить трату по ID и вернуть баланс в конверт."""
+    db = await get_db()
+    try:
+        cursor = await db.execute(
+            "SELECT id, amount, category, note, envelope FROM transactions WHERE id = ? AND type = 'expense'",
+            (tx_id,),
+        )
+        row = await cursor.fetchone()
+        if not row:
+            return None
+        tx = dict(row)
+        await db.execute("DELETE FROM transactions WHERE id = ?", (tx_id,))
+        await db.execute(
+            "UPDATE envelopes SET balance = balance + ? WHERE name = ?",
+            (tx["amount"], tx.get("envelope", "personal")),
+        )
+        await db.commit()
+        return tx
+    finally:
+        await db.close()
+
+
+async def get_recent_expenses(limit: int = 10) -> list[dict]:
+    """Последние N трат."""
+    db = await get_db()
+    try:
+        cursor = await db.execute(
+            "SELECT * FROM transactions WHERE type = 'expense' ORDER BY id DESC LIMIT ?",
+            (limit,),
+        )
+        return [dict(r) for r in await cursor.fetchall()]
+    finally:
+        await db.close()
+
+
 async def get_week_expenses() -> list[dict]:
     """Расходы за текущую неделю (пн–вс)."""
     today = now_msk().date()
