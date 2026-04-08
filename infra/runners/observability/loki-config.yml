@@ -30,6 +30,9 @@ ingester:
   chunk_retain_period: 30s
 
 limits_config:
+  # Loki 3 with boltdb-shipper requires explicit disable for structured metadata.
+  # Without this, Loki fails validation and restarts in a loop.
+  allow_structured_metadata: false
   retention_period: ${LOKI_RETENTION}
 
 compactor:
