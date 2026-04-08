@@ -129,6 +129,132 @@ def test_raw_filters_adapter_resolves_genre_tag_deterministically() -> None:
     assert diag.exclude_filtered_out >= 1
 
 
+def test_raw_filters_adapter_respects_requested_style_genre_contract() -> None:
+    raw = FootageStyleRawPayload.model_validate(
+        {
+            "artist_id": "rock_emo",
+            "theme": "heartbreak_minor",
+            "mood": "minor",
+            "filters": {
+                "color_priority": ["dark"],
+                "exclude": [],
+                "priority_theme_tags": ["night city", "shadows", "reflection"],
+            },
+        }
+    )
+    mapped_assets = [
+        {
+            "file_name": "hiphop_high_score.mp4",
+            "genre": "ХипХоп",
+            "tag": "street_night",
+            "duration_sec": 3.0,
+            "meta_mood": "minor",
+            "meta_color_tone": "dark",
+            "meta_people_type": "guys",
+            "meta_theme_tags": ["night city", "shadows", "reflection"],
+        },
+        {
+            "file_name": "rock_contract_ok.mp4",
+            "genre": "Rock",
+            "tag": "dark_forest",
+            "duration_sec": 3.0,
+            "meta_mood": "minor",
+            "meta_color_tone": "dark",
+            "meta_people_type": "guys",
+            "meta_theme_tags": ["night city"],
+        },
+    ]
+
+    pick, diag = resolve_style_pick_from_raw_filters(
+        raw_pick=raw,
+        mapped_assets=mapped_assets,
+        seed_key="job-style-contract",
+        requested_style_id="rock_emo",
+    )
+    assert pick.genre == "Rock"
+    assert pick.tag == "dark_forest"
+    assert diag.requested_style_id == "rock_emo"
+    assert diag.requested_style_genre_key == "rock"
+    assert diag.resolved_style_genre_key == "rock"
+    assert diag.resolved_similarity_rank == 1
+    assert diag.similarity_fallback_used is False
+
+
+def test_raw_filters_adapter_falls_back_to_similar_genre_when_primary_empty() -> None:
+    raw = FootageStyleRawPayload.model_validate(
+        {
+            "artist_id": "rock_emo",
+            "theme": "heartbreak_minor",
+            "mood": "minor",
+            "filters": {
+                "color_priority": ["dark"],
+                "exclude": [],
+                "priority_theme_tags": ["night city", "shadows"],
+            },
+        }
+    )
+    mapped_assets = [
+        {
+            "file_name": "alternative_candidate.mp4",
+            "genre": "Alternative",
+            "tag": "art_rock",
+            "duration_sec": 3.0,
+            "meta_mood": "minor",
+            "meta_color_tone": "dark",
+            "meta_people_type": "none",
+            "meta_theme_tags": ["night city", "shadows"],
+        },
+    ]
+
+    pick, diag = resolve_style_pick_from_raw_filters(
+        raw_pick=raw,
+        mapped_assets=mapped_assets,
+        seed_key="job-style-fallback",
+        requested_style_id="rock_emo",
+    )
+    assert pick.genre == "Alternative"
+    assert pick.tag == "art_rock"
+    assert diag.requested_style_genre_key == "rock"
+    assert diag.resolved_style_genre_key == "alternative"
+    assert diag.resolved_similarity_rank == 2
+    assert diag.similarity_fallback_used is True
+
+
+def test_raw_filters_adapter_rejects_unknown_requested_style() -> None:
+    raw = FootageStyleRawPayload.model_validate(
+        {
+            "artist_id": "unknown_style",
+            "theme": "heartbreak_minor",
+            "mood": "minor",
+            "filters": {
+                "color_priority": ["dark"],
+                "exclude": [],
+                "priority_theme_tags": ["night city"],
+            },
+        }
+    )
+    mapped_assets = [
+        {
+            "file_name": "rock_contract_ok.mp4",
+            "genre": "Rock",
+            "tag": "dark_forest",
+            "duration_sec": 3.0,
+            "meta_mood": "minor",
+            "meta_color_tone": "dark",
+            "meta_people_type": "guys",
+            "meta_theme_tags": ["night city"],
+        },
+    ]
+
+    with pytest.raises(RuntimeError, match="Unknown footage style id"):
+        resolve_style_pick_from_raw_filters(
+            raw_pick=raw,
+            mapped_assets=mapped_assets,
+            seed_key="job-style-unknown",
+            requested_style_id="unknown_style",
+        )
+
+
 def test_raw_filters_adapter_fails_on_empty_candidates() -> None:
     raw = FootageStyleRawPayload.model_validate(
         {
@@ -160,4 +286,3 @@ def test_raw_filters_adapter_fails_on_empty_candidates() -> None:
             mapped_assets=mapped_assets,
             seed_key="job-style-seed",
         )
-

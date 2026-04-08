@@ -3000,6 +3000,11 @@ def build_all_via_gemini_one_call(
             pick: FootageStylePickPayload, *, source: str
         ) -> FootageStylePickPayload:
             nonlocal style_raw_payload, style_adapter_diag, style_rotation_payload
+            if footage_artist_id:
+                raise RuntimeError(
+                    "stage2_style_direct_pick_not_allowed_with_footage_artist_id: "
+                    f"source={source!r} expected=FootageStyleRotation"
+                )
             validate_style_pick_in_groups(pick, style_groups)
             style_raw_payload = None
             style_adapter_diag = None
@@ -3052,10 +3057,24 @@ def build_all_via_gemini_one_call(
 
         # Resolve genre/tag from first subgroup (needed for style_payload).
         base_raw = rotation.subgroups[0]
+        if footage_artist_id:
+            for idx, subgroup in enumerate(rotation.subgroups):
+                subgroup_artist = str(subgroup.artist_id or "").strip()
+                if not subgroup_artist:
+                    raise RuntimeError(
+                        "stage2_style_rotation_missing_artist_id "
+                        f"expected={footage_artist_id!r} subgroup_idx={idx}"
+                    )
+                if subgroup_artist != footage_artist_id:
+                    raise RuntimeError(
+                        "stage2_style_rotation_artist_id_mismatch "
+                        f"expected={footage_artist_id!r} got={subgroup_artist!r} subgroup_idx={idx}"
+                    )
         resolved, diag = resolve_style_pick_from_raw_filters(
             raw_pick=base_raw,
             mapped_assets=mapped_picker_assets,
             seed_key=selection_seed_key,
+            requested_style_id=footage_artist_id,
             total_assets=len(picker_assets),
             unmapped_assets=len(unmapped_picker_file_names),
             metadata_rows_merged=len(style_metadata_index),
@@ -3065,12 +3084,19 @@ def build_all_via_gemini_one_call(
         style_adapter_diag = diag
         style_rotation_payload = rotation
         logger.info(
-            "stage2_style_adapter_selected theme=%s mood=%s subgroups=%d genre=%s tag=%s mapped=%d unmapped=%d",
+            "stage2_style_adapter_selected theme=%s mood=%s subgroups=%d "
+            "genre=%s tag=%s requested_style_id=%s requested_style_genre=%s "
+            "resolved_style_genre=%s resolved_rank=%d fallback=%s mapped=%d unmapped=%d",
             base_raw.theme,
             base_raw.mood,
             len(rotation.subgroups),
             resolved.genre,
             resolved.tag,
+            diag.requested_style_id or "-",
+            diag.requested_style_genre_key or "-",
+            diag.resolved_style_genre_key or "-",
+            int(diag.resolved_similarity_rank),
+            bool(diag.similarity_fallback_used),
             len(mapped_picker_assets),
             len(unmapped_picker_file_names),
         )
@@ -3487,6 +3513,12 @@ def build_all_via_gemini_one_call(
             "selected_group_score": float(style_adapter_diag.selected_group_score),
             "selected_group_duration_sec": float(style_adapter_diag.selected_group_duration_sec),
             "selected_group_assets_count": int(style_adapter_diag.selected_group_assets_count),
+            "requested_style_id": style_adapter_diag.requested_style_id,
+            "requested_style_genre_key": style_adapter_diag.requested_style_genre_key,
+            "resolved_style_genre_key": style_adapter_diag.resolved_style_genre_key,
+            "resolved_similarity_rank": int(style_adapter_diag.resolved_similarity_rank),
+            "similarity_fallback_used": bool(style_adapter_diag.similarity_fallback_used),
+            "similarity_chain": list(style_adapter_diag.similarity_chain),
             "top_groups": list(style_adapter_diag.top_groups),
         }
         (logs_dir / f"stage2_style_adapter_diag_{stamp}.json").write_text(
@@ -3579,6 +3611,12 @@ def build_all_via_gemini_one_call(
             "selected_group_score": float(style_adapter_diag.selected_group_score),
             "selected_group_duration_sec": float(style_adapter_diag.selected_group_duration_sec),
             "selected_group_assets_count": int(style_adapter_diag.selected_group_assets_count),
+            "requested_style_id": style_adapter_diag.requested_style_id,
+            "requested_style_genre_key": style_adapter_diag.requested_style_genre_key,
+            "resolved_style_genre_key": style_adapter_diag.resolved_style_genre_key,
+            "resolved_similarity_rank": int(style_adapter_diag.resolved_similarity_rank),
+            "similarity_fallback_used": bool(style_adapter_diag.similarity_fallback_used),
+            "similarity_chain": list(style_adapter_diag.similarity_chain),
             "top_groups": list(style_adapter_diag.top_groups),
         }
         (logs_dir / "stage2_style_adapter_diag.json").write_text(
