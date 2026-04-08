@@ -46,12 +46,15 @@ async def parse_expenses(user_text: str, weekly_budget: int, spent_this_week: in
         "Content-Type": "application/json",
     }
 
+    key_masked = GROK_API_KEY[:8] + "..." + GROK_API_KEY[-4:] if len(GROK_API_KEY) > 12 else "???"
+    logger.info(f"Grok call: url={GROK_API_URL} model={GROK_MODEL} key={key_masked}")
+
     async with aiohttp.ClientSession() as session:
         async with session.post(GROK_API_URL, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=30)) as resp:
             if resp.status != 200:
                 error_text = await resp.text()
                 logger.error(f"Grok API ошибка {resp.status}: {error_text[:200]}")
-                raise RuntimeError(f"Grok API {resp.status}: {error_text[:100]}")
+                raise RuntimeError(f"API {resp.status} url={GROK_API_URL} key={key_masked}: {error_text[:80]}")
 
             data = await resp.json()
             content = data["choices"][0]["message"]["content"].strip()
