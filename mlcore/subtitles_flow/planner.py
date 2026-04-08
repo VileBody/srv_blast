@@ -7,6 +7,7 @@ from typing import Any, List, Sequence, Type
 from pydantic import BaseModel
 
 from core.clip_window import CLIP_WINDOW_MAX_LABEL, CLIP_WINDOW_MAX_SECONDS
+from core.video_timing import frame_duration_s
 from core.subtitles_mode import (
     SUBTITLES_MODE_IMPULSE_2ND,
     SUBTITLES_MODE_LEGACY_BLOCKS,
@@ -39,6 +40,7 @@ _CLOSE_GAP_EPS = 0.08
 _MIN_SEGMENT_DUR = 0.12
 _MAX_LINE_CHARS_WARNING = 24
 _IMPULSE_LAST_SEGMENT_TAIL_PAD_EPS = 0.55
+_FRAME_SEC = frame_duration_s()
 
 
 @dataclass(frozen=True)

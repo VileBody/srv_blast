@@ -5,7 +5,7 @@ import pytest
 
 from app.text_comp import build_text_layers
 from mlcore.models.stage1_plan import Stage1PlanPayload
-from mlcore.models.subtitles_flow import Impulse2ndRawPayload, Scenes3rdPayload
+from mlcore.models.subtitles_flow import Impulse2ndRawPayload, Scenes3rdPayload, Template4Payload
 from mlcore.subtitles_flow import SubtitlesPlannerFactory
 
 
@@ -216,6 +216,28 @@ def test_scenes_mode_planner_and_renderer(monkeypatch) -> None:
     assert kfs, "expected Geometry2 scale keyframes on adjustment layer"
     assert max(float(x["t"]) for x in kfs) > float(adj.get("out_point")) + 0.45
     _assert_keyframes_within_bounds(layers)
+
+
+def test_template4_mode_planner_synthesizes_tokens_without_word_timings() -> None:
+    planner = SubtitlesPlannerFactory.create("template_4th")
+    payload = Template4Payload.model_validate(
+        {
+            "word_timings": [],
+            "subtitles": [
+                {
+                    "text": "hello world",
+                    "in": 10.0,
+                    "out": 10.6,
+                }
+            ],
+        }
+    )
+    flow = planner.normalize_payload(payload=payload, stage1=_stage1(), logger=logging.getLogger("test"))
+    assert flow.mode == "template_4th"
+    assert len(flow.segments) == 1
+    tokens = flow.segments[0].tokens
+    assert [t.text for t in tokens] == ["hello", "world"]
+    assert all(float(t.t_end) > float(t.t_start) for t in tokens)
 
 
 def test_scenes_reference_postprocess_extends_boundary_from_gap(monkeypatch) -> None:
