@@ -1906,10 +1906,10 @@ class BlastBotApp:
 
     # ── Package descriptions ──────────────────────────────────────────
     _PKG_PHOTOS = {
-        BTN_PKG_TRIAL: "tariffs/1011",
-        BTN_PKG_BLAST: "tariffs/1008",
-        BTN_PKG_GLOW: "tariffs/1009",
-        BTN_PKG_IMPULSE: "tariffs/1010",
+        BTN_PKG_TRIAL: "tariffs/Frame 1011.png",
+        BTN_PKG_BLAST: "tariffs/Frame 1008.png",
+        BTN_PKG_GLOW: "tariffs/Frame 1009.png",
+        BTN_PKG_IMPULSE: "tariffs/Frame 1010.png",
     }
 
     _PKG_TEXTS = {
@@ -2313,14 +2313,13 @@ class BlastBotApp:
             if s3_key and self.settings.s3_bucket_asset_storage:
                 bot = self._require_bot()
                 try:
-                    tmp = Path(self.settings.bot_tmp_dir) / f"pkg_{s3_key.replace('/', '_')}"
-                    self.s3.download_file(
-                        bucket=self.settings.s3_bucket_asset_storage,
-                        key=s3_key,
-                        dest=tmp,
+                    s3_url = make_s3_url(self.settings.s3_bucket_asset_storage, s3_key)
+                    presigned = await asyncio.to_thread(
+                        self.s3.generate_presigned_for_s3_url,
+                        s3_url=s3_url,
+                        expires_s=None,
                     )
-                    await bot.send_photo(st.chat_id, photo=FSInputFile(tmp))
-                    tmp.unlink(missing_ok=True)
+                    await bot.send_photo(st.chat_id, photo=presigned)
                 except Exception as e:
                     log.warning("pkg_photo_send_failed pkg=%s err=%s", text, str(e))
             await message.answer(
