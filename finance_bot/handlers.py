@@ -756,23 +756,38 @@ async def cmd_del(message: Message, state: FSMContext):
     args = message.text.split()
 
     if len(args) >= 2:
-        # Инлайн: /del 123
-        try:
-            tx_id = int(args[1])
-        except ValueError:
-            await message.answer(tpl_error_input("/del <id>"))
+        # /del 7 или /del #7 #5 #4 или /del 7 5 4
+        ids = []
+        for arg in args[1:]:
+            try:
+                ids.append(int(arg.lstrip("#")))
+            except ValueError:
+                continue
+        if not ids:
+            await message.answer(tpl_error_input("/del 7 или /del 7 5 4"))
             return
-        tx = await delete_expense(tx_id)
-        if not tx:
-            await message.answer(esc("Трата не найдена."))
+
+        deleted = []
+        not_found = []
+        for tx_id in ids:
+            tx = await delete_expense(tx_id)
+            if tx:
+                deleted.append(tx)
+            else:
+                not_found.append(tx_id)
+
+        if not deleted:
+            await message.answer(esc("Траты не найдены."))
             return
+
         budget = await get_weekly_budget()
         spent = await get_spent_this_week()
-        await message.answer("\n".join([
-            f"*{esc('Удалена трата')}* \\#{esc(tx_id)}",
-            f"{esc(tx.get('category', 'другое'))}: {money(tx['amount'])}",
-            f"Бюджет на неделю: {money(budget - spent)} из {money(budget)}",
-        ]))
+        total = sum(t["amount"] for t in deleted)
+        lines = [f"*{esc('Удалено:')}*", ""]
+        for t in deleted:
+            lines.append(f"\\#{esc(t['id'])} {esc(t.get('category', 'другое'))}: {money(t['amount'])}")
+        lines += ["", f"Возвращено: {money(total)}", f"Бюджет на неделю: {money(budget - spent)} из {money(budget)}"]
+        await message.answer("\n".join(lines))
         return
 
     # Показать последние 10 трат для выбора
