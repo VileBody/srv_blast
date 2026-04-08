@@ -1,0 +1,24 @@
+{{ define "telegram.default" -}}
+[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}
+{{- if .CommonLabels.severity }} | severity={{ .CommonLabels.severity }}{{ end }}
+{{- if .CommonAnnotations.summary }}
+
+{{ .CommonAnnotations.summary }}
+{{- end }}
+{{- if .CommonAnnotations.description }}
+
+{{ .CommonAnnotations.description }}
+{{- end }}
+{{- if .CommonAnnotations.runbook }}
+
+runbook: {{ .CommonAnnotations.runbook }}
+{{- end }}
+{{- end }}
+
+{{ define "telegram.critical" -}}
+CRITICAL: {{ template "telegram.default" . }}
+{{- end }}
+
+{{ define "telegram.warning" -}}
+WARNING: {{ template "telegram.default" . }}
+{{- end }}

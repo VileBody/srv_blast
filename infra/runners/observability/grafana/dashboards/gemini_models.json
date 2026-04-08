@@ -1,0 +1,77 @@
+{
+  "annotations": {"list": []},
+  "editable": true,
+  "graphTooltip": 0,
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Gemini Calls by Model/Stage",
+      "id": 1,
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "sum by (model, stage, outcome) (rate(gemini_call_total[5m]))", "legendFormat": "{{model}} {{stage}} {{outcome}}", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "bottom"}}
+    },
+    {
+      "type": "stat",
+      "title": "429/503 Share (10m)",
+      "id": 2,
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "sum(increase(gemini_call_total{code_class=~\"429|503\"}[10m])) / clamp_min(sum(increase(gemini_call_total[10m])), 1)", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "percentunit"}, "overrides": []},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}}
+    },
+    {
+      "type": "stat",
+      "title": "Fallback Rate (30m)",
+      "id": 3,
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "sum(increase(gemini_fallback_total{outcome=\"success\"}[30m])) / clamp_min(sum(increase(gemini_call_total[30m])), 1)", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "percentunit"}, "overrides": []},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}}
+    },
+    {
+      "type": "timeseries",
+      "title": "Gemini Warning Rate",
+      "id": 4,
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "sum by (warning_type, model, stage) (rate(gemini_warning_total[5m]))", "legendFormat": "{{warning_type}} {{model}} {{stage}}", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "bottom"}}
+    },
+    {
+      "type": "timeseries",
+      "title": "Latency Actual (avg 5m) vs Median (p50 30m)",
+      "id": 5,
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "sum(rate(gemini_latency_seconds_sum[5m])) / clamp_min(sum(rate(gemini_latency_seconds_count[5m])), 1)", "legendFormat": "actual_avg_5m", "refId": "A"},
+        {"expr": "histogram_quantile(0.5, sum by (le) (rate(gemini_latency_seconds_bucket[30m])))", "legendFormat": "median_p50_30m", "refId": "B"},
+        {"expr": "(sum(rate(gemini_latency_seconds_sum[5m])) / clamp_min(sum(rate(gemini_latency_seconds_count[5m])), 1)) / clamp_min(histogram_quantile(0.5, sum by (le) (rate(gemini_latency_seconds_bucket[30m]))), 0.001)", "legendFormat": "actual_vs_median_ratio", "refId": "C"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "s"}, "overrides": [{"matcher": {"id": "byName", "options": "actual_vs_median_ratio"}, "properties": [{"id": "unit", "value": "none"}]}]},
+      "options": {"legend": {"displayMode": "table", "placement": "bottom"}}
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["blast", "gemini"],
+  "templating": {"list": []},
+  "time": {"from": "now-6h", "to": "now"},
+  "timezone": "browser",
+  "title": "Gemini Models",
+  "version": 1
+}

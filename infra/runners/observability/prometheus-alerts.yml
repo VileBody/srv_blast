@@ -1,0 +1,106 @@
+groups:
+  - name: blast-critical
+    rules:
+      - alert: OrchestratorDown
+        expr: up{job="orchestrator-api"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "orchestrator-api is down"
+          description: "Prometheus cannot scrape orchestrator-api /metrics/prometheus for 2 minutes."
+          runbook: "docs/observability_v1_runbook.md#critical-alerts"
+
+      - alert: QueueDepthHigh
+        expr: queue_depth > 20
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Queue depth is high"
+          description: "queue_depth > 20 for 10m. Check worker capacity and stuck jobs."
+          runbook: "docs/observability_v1_runbook.md#critical-alerts"
+
+      - alert: FailedRatioSpike
+        expr: |
+          (
+            sum(increase(job_lifecycle_total{status="failed"}[10m]))
+            /
+            clamp_min(sum(increase(job_lifecycle_total{status=~"succeeded|failed"}[10m])), 1)
+          ) > 0.35
+          and sum(increase(job_lifecycle_total{status=~"succeeded|failed"}[10m])) > 10
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Failed ratio spike"
+          description: "Failed jobs ratio > 35% in the last 10m."
+          runbook: "docs/observability_v1_runbook.md#critical-alerts"
+
+      - alert: RenderPollTimeoutBurst
+        expr: sum(increase(render_poll_timeout_total[10m])) > 3
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Render poll timeouts burst"
+          description: "More than 3 render poll timeouts in 10m."
+          runbook: "docs/observability_v1_runbook.md#critical-alerts"
+
+      - alert: Gemini429503ShareHigh
+        expr: |
+          (
+            sum(increase(gemini_call_total{code_class=~"429|503"}[10m]))
+            /
+            clamp_min(sum(increase(gemini_call_total[10m])), 1)
+          ) > 0.25
+          and sum(increase(gemini_call_total[10m])) > 20
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Gemini 429/503 share is high"
+          description: "429/503 classes exceed 25% of Gemini calls for 10m window."
+          runbook: "docs/observability_v1_runbook.md#critical-alerts"
+
+  - name: blast-warning
+    rules:
+      - alert: GeminiFallbackRateHigh
+        expr: |
+          (
+            sum(increase(gemini_fallback_total{outcome="success"}[30m]))
+            /
+            clamp_min(sum(increase(gemini_call_total[30m])), 1)
+          ) > 0.15
+          and sum(increase(gemini_call_total[30m])) > 20
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Gemini fallback rate elevated"
+          description: "Fallback success ratio is above 15% for the last 30m."
+          runbook: "docs/observability_v1_runbook.md#warning-alerts"
+
+      - alert: DispatchRecoveryFrequent
+        expr: sum(increase(dispatch_recovery_total{outcome="recovered"}[30m])) > 2
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Dispatch recovery triggered frequently"
+          description: "Recovered dispatches occurred more than 2 times in 30m."
+          runbook: "docs/observability_v1_runbook.md#warning-alerts"
+
+      - alert: BuildStageLatencyP95High
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (rate(stage_duration_seconds_bucket{stage="build"}[30m]))
+          ) > 900
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Build stage p95 latency is high"
+          description: "Build stage p95 exceeds 900 seconds in the last 30m."
+          runbook: "docs/observability_v1_runbook.md#warning-alerts"

@@ -4,7 +4,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pathlib import Path
 
@@ -19,6 +19,7 @@ from .llm_workers import (
     set_config,
 )
 from .observability_metrics import get_counter_map
+from .prometheus_metrics import build_prometheus_metrics_payload
 from .payment_webhook import make_payment_router
 from .schemas import (
     ActiveJobsResponse,
@@ -491,6 +492,11 @@ def create_app() -> FastAPI:
             "metrics_error": metrics_error,
             "bundle_ok": _bundle_ok,
         }
+
+    @app.get("/metrics/prometheus")
+    def metrics_prometheus() -> Response:
+        payload, content_type = build_prometheus_metrics_payload(store)
+        return Response(content=payload, media_type=content_type)
 
     # Serve built frontend (if exists)
     _ui_dist = Path(__file__).resolve().parents[2] / "asset_ui" / "dist"

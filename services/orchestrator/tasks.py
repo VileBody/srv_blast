@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import shlex
@@ -10,6 +11,7 @@ import time
 import urllib.request
 import urllib.error
 from urllib.parse import unquote
+from urllib.parse import urlparse
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 import boto3
@@ -19,7 +21,12 @@ from .artifacts import make_job_paths
 from .celery_app import celery_app
 from .config import SETTINGS
 from .job_store import JobStore
-from .observability_metrics import increment_counter
+from .observability_metrics import (
+    STAGE_DURATION_BUCKETS,
+    increment_counter,
+    increment_labeled_counter,
+    observe_labeled_histogram,
+)
 from .render_manifest import build_windows_job_payload
 from .windows_client import WindowsRenderClient
 from .windows_node_pool import WindowsNodePool, parse_windows_urls_csv
@@ -57,6 +64,71 @@ def _inc_metric(store: JobStore, *, metric: str, label: str) -> None:
         increment_counter(store, metric=metric, label=label)
     except Exception:
         pass
+
+
+log = logging.getLogger(__name__)
+
+
+def _node_label(url: str) -> str:
+    u = str(url or "").strip()
+    if not u:
+        return "unknown"
+    try:
+        host = (urlparse(u).hostname or "").strip().lower()
+        if host:
+            return host
+    except Exception:
+        pass
+    return u.lower()
+
+
+def _inc_labeled_metric(store: JobStore, *, metric: str, labels: dict[str, Any]) -> None:
+    try:
+        increment_labeled_counter(store, metric=metric, labels=labels)
+    except Exception:
+        pass
+
+
+def _observe_stage_duration(
+    store: JobStore,
+    *,
+    stage: str,
+    started_at: float,
+    outcome: str,
+) -> None:
+    try:
+        start = float(started_at)
+    except Exception:
+        return
+    if start <= 0:
+        return
+    dur = max(0.0, time.time() - start)
+    try:
+        observe_labeled_histogram(
+            store,
+            metric="stage_duration_seconds",
+            value=dur,
+            buckets=STAGE_DURATION_BUCKETS,
+            labels={
+                "stage": str(stage or "").strip().lower() or "unknown",
+                "outcome": str(outcome or "").strip().lower() or "unknown",
+            },
+        )
+    except Exception:
+        return
+
+
+def _obs_event(event: str, **fields: Any) -> None:
+    items: list[str] = []
+    for k, v in fields.items():
+        if v is None:
+            continue
+        items.append(f"{k}={v}")
+    tail = " ".join(items)
+    if tail:
+        log.info("obs_event event=%s %s", str(event or "unknown"), tail)
+    else:
+        log.info("obs_event event=%s", str(event or "unknown"))
 
 
 def _extract_artifacts_source(payload: Dict[str, Any]) -> str:
@@ -163,12 +235,14 @@ def _try_recover_dispatch_from_existing_output(
     errors_by_node: list[str],
 ) -> Optional[Dict[str, Any]]:
     if not _bool_env("DISPATCH_RECOVERY_FROM_S3_ENABLED", True):
+        _inc_labeled_metric(store, metric="dispatch_recovery_total", labels={"outcome": "disabled"})
         return None
 
     output_bucket = (os.environ.get("S3_BUCKET_OUTPUT_VIDEO") or "").strip()
     output_key = f"renders/{str(job_id).strip()}/output.mp4"
     if not output_bucket:
         _inc_metric(store, metric="dispatch_recovery_outcomes", label="false")
+        _inc_labeled_metric(store, metric="dispatch_recovery_total", labels={"outcome": "skip_no_bucket"})
         print(f"[dispatch_recovery] skip_no_bucket job_id={job_id}")
         return None
 
@@ -176,11 +250,13 @@ def _try_recover_dispatch_from_existing_output(
         output_exists = _s3_head_exists(bucket=output_bucket, key=output_key)
     except Exception as e:
         _inc_metric(store, metric="dispatch_recovery_outcomes", label="false")
+        _inc_labeled_metric(store, metric="dispatch_recovery_total", labels={"outcome": "head_failed"})
         print(f"[dispatch_recovery] head_failed job_id={job_id} err={e!r}")
         return None
 
     if not output_exists:
         _inc_metric(store, metric="dispatch_recovery_outcomes", label="false")
+        _inc_labeled_metric(store, metric="dispatch_recovery_total", labels={"outcome": "output_missing"})
         return None
 
     marker = "dispatch_timeout_but_output_exists"
@@ -200,6 +276,14 @@ def _try_recover_dispatch_from_existing_output(
         },
     )
     _inc_metric(store, metric="dispatch_recovery_outcomes", label="true")
+    _inc_labeled_metric(store, metric="dispatch_recovery_total", labels={"outcome": "recovered"})
+    _obs_event(
+        "dispatch_recovery",
+        job_id=job_id,
+        marker=marker,
+        output_url=output_url,
+        errors=len(errors_by_node),
+    )
     print(
         "[dispatch_recovery] recovered "
         f"marker={marker} job_id={job_id} output_url={output_url}"
@@ -734,7 +818,13 @@ def _build_job_impl(self, job_id: str, *, worker_type: str) -> Dict[str, Any]:
     if not st:
         raise RuntimeError(f"job not found: {job_id}")
 
-    store.set_status(job_id, "RUNNING", stage="build")
+    build_started_at = time.time()
+    store.set_status(
+        job_id,
+        "RUNNING",
+        stage="build",
+        result={"build_started_at": build_started_at},
+    )
 
     repo_root = Path(__file__).resolve().parents[2].resolve()
     _ensure_shared_catalog(repo_root)
@@ -1130,6 +1220,8 @@ def _build_job_impl(self, job_id: str, *, worker_type: str) -> Dict[str, Any]:
 
     # Best-effort: keep configs consistent
     _patch_audio_layer_to_remote(paths.footage_config, audio_url=audio_url)
+    _observe_stage_duration(store, stage="build", started_at=build_started_at, outcome="succeeded")
+    _obs_event("build_completed", job_id=job_id, worker_type=worker_type)
 
     store.set_status(
         job_id,
@@ -1228,6 +1320,7 @@ def dispatch_to_windows(self, job_id: str) -> Dict[str, Any]:
     res: Dict[str, Any] | None = None
     errors_by_node: list[str] = []
     remaining = list(active_urls)
+    dispatch_started_at = time.time()
     api_mode = str(SETTINGS.windows_render_api_mode or "").strip().lower()
     if api_mode != "render":
         raise RuntimeError(
@@ -1240,6 +1333,13 @@ def dispatch_to_windows(self, job_id: str) -> Dict[str, Any]:
         candidate = pool.reserve_best(remaining)
         if not candidate:
             break
+        node = _node_label(candidate)
+        _inc_labeled_metric(
+            store,
+            metric="dispatch_attempt_total",
+            labels={"node": node, "api_mode": "render", "outcome": "attempt"},
+        )
+        _obs_event("dispatch_attempt", job_id=job_id, node=node, api_mode="render")
 
         store.set_status(
             job_id,
@@ -1252,7 +1352,7 @@ def dispatch_to_windows(self, job_id: str) -> Dict[str, Any]:
                     "pool_urls": active_urls,
                     "api_mode": SETTINGS.windows_render_api_mode,
                 },
-                "dispatch_started_at": time.time(),
+                "dispatch_started_at": dispatch_started_at,
             },
         )
 
@@ -1264,10 +1364,22 @@ def dispatch_to_windows(self, job_id: str) -> Dict[str, Any]:
         try:
             maybe_res = client.dispatch_render(win_payload)
             if not isinstance(maybe_res, dict):
+                _inc_labeled_metric(
+                    store,
+                    metric="dispatch_attempt_total",
+                    labels={"node": node, "api_mode": "render", "outcome": "bad_response"},
+                )
+                _obs_event("dispatch_bad_response", job_id=job_id, node=node, api_mode="render")
                 pool.release(candidate)
                 raise RuntimeError(f"windows_bad_response: {maybe_res!r}")
             selected_url = candidate
             res = maybe_res
+            _inc_labeled_metric(
+                store,
+                metric="dispatch_attempt_total",
+                labels={"node": node, "api_mode": "render", "outcome": "accepted"},
+            )
+            _obs_event("dispatch_accepted", job_id=job_id, node=node, api_mode="render")
             break
         except Exception as e:
             pool.release(candidate)
@@ -1282,6 +1394,20 @@ def dispatch_to_windows(self, job_id: str) -> Dict[str, Any]:
                 except Exception:
                     code = 0
             is_contract_404 = code == 404
+            err_outcome = "contract_404" if is_contract_404 else ("transient_error" if is_transient else "non_transient_error")
+            _inc_labeled_metric(
+                store,
+                metric="dispatch_attempt_total",
+                labels={"node": node, "api_mode": "render", "outcome": err_outcome},
+            )
+            _obs_event(
+                "dispatch_error",
+                job_id=job_id,
+                node=node,
+                api_mode="render",
+                outcome=err_outcome,
+                err=repr(e),
+            )
 
             if not remaining:
                 if is_transient or is_contract_404:
@@ -1291,29 +1417,117 @@ def dispatch_to_windows(self, job_id: str) -> Dict[str, Any]:
                         errors_by_node=errors_by_node,
                     )
                     if recovered is not None:
+                        _observe_stage_duration(
+                            store,
+                            stage="dispatch",
+                            started_at=dispatch_started_at,
+                            outcome="recovered",
+                        )
                         return recovered
                     attempt = int(getattr(self.request, "retries", 0)) + 1
                     backoff = _retry_backoff_s(attempt=attempt, base_s=5.0, cap_s=120.0)
+                    _inc_labeled_metric(
+                        store,
+                        metric="dispatch_attempt_total",
+                        labels={"node": "all_nodes", "api_mode": "render", "outcome": "retry"},
+                    )
+                    _observe_stage_duration(
+                        store,
+                        stage="dispatch",
+                        started_at=dispatch_started_at,
+                        outcome="retry",
+                    )
+                    _obs_event(
+                        "dispatch_retry",
+                        job_id=job_id,
+                        api_mode="render",
+                        attempt=attempt,
+                        backoff_s=backoff,
+                        errors=len(errors_by_node),
+                    )
                     raise self.retry(
                         countdown=backoff,
                         exc=RuntimeError(f"windows_dispatch_transient: all_nodes_failed={errors_by_node!r}"),
                     )
+                _inc_labeled_metric(
+                    store,
+                    metric="dispatch_attempt_total",
+                    labels={"node": "all_nodes", "api_mode": "render", "outcome": "failed"},
+                )
+                _observe_stage_duration(
+                    store,
+                    stage="dispatch",
+                    started_at=dispatch_started_at,
+                    outcome="failed",
+                )
+                _obs_event(
+                    "dispatch_failed",
+                    job_id=job_id,
+                    api_mode="render",
+                    errors=len(errors_by_node),
+                )
                 raise RuntimeError(f"windows_dispatch_failed: all_nodes_failed={errors_by_node!r}") from e
 
             if not is_transient and not is_contract_404:
                 raise
 
     if not selected_url or res is None:
+        _inc_labeled_metric(
+            store,
+            metric="dispatch_attempt_total",
+            labels={"node": "none", "api_mode": "render", "outcome": "failed_no_node"},
+        )
+        _observe_stage_duration(
+            store,
+            stage="dispatch",
+            started_at=dispatch_started_at,
+            outcome="failed",
+        )
         raise RuntimeError(f"windows_dispatch_failed: no_node_selected errors={errors_by_node!r}")
 
     if str(res.get("_api") or "").strip().lower() != "render":
         pool.release(selected_url)
+        _inc_labeled_metric(
+            store,
+            metric="dispatch_attempt_total",
+            labels={"node": _node_label(selected_url), "api_mode": "render", "outcome": "contract_mismatch"},
+        )
+        _observe_stage_duration(
+            store,
+            stage="dispatch",
+            started_at=dispatch_started_at,
+            outcome="failed",
+        )
         raise RuntimeError(f"windows_dispatch_contract_mismatch: expected async render response, got {res!r}")
 
     render_id = str(res.get("render_id") or "").strip()
     if not render_id:
         pool.release(selected_url)
+        _inc_labeled_metric(
+            store,
+            metric="dispatch_attempt_total",
+            labels={"node": _node_label(selected_url), "api_mode": "render", "outcome": "missing_render_id"},
+        )
+        _observe_stage_duration(
+            store,
+            stage="dispatch",
+            started_at=dispatch_started_at,
+            outcome="failed",
+        )
         raise RuntimeError(f"windows_bad_response(no render_id): {res}")
+    _observe_stage_duration(
+        store,
+        stage="dispatch",
+        started_at=dispatch_started_at,
+        outcome="accepted",
+    )
+    _obs_event(
+        "dispatch_completed",
+        job_id=job_id,
+        node=_node_label(selected_url),
+        api_mode="render",
+        render_id=render_id,
+    )
 
     # Start poll timeout clock from HERE (not from build start).
     store.set_status(
@@ -1350,6 +1564,7 @@ def poll_windows_render(self, job_id: str, render_id: str) -> Dict[str, Any]:
     windows_url = pinned_url or (active_urls[0] if active_urls else "")
     if not windows_url:
         raise RuntimeError("no pinned windows endpoint in job and runtime pool is empty")
+    node = _node_label(windows_url)
 
     client = WindowsRenderClient(
         windows_url,
@@ -1361,11 +1576,24 @@ def poll_windows_render(self, job_id: str, render_id: str) -> Dict[str, Any]:
     now = time.time()
     if (now - started_at) > float(SETTINGS.windows_poll_timeout_s):
         _inc_metric(store, metric="render_poll_timeout_outcomes", label="before_poll")
+        _inc_labeled_metric(store, metric="render_poll_timeout_total", labels={"phase": "before_poll"})
+        _inc_labeled_metric(
+            store,
+            metric="render_poll_total",
+            labels={"node": node, "outcome": "timeout_before_poll"},
+        )
+        _observe_stage_duration(store, stage="poll", started_at=started_at, outcome="timeout")
+        _obs_event("poll_timeout", job_id=job_id, node=node, phase="before_poll", render_id=render_id)
         raise RuntimeError(f"windows_poll_timeout render_id={render_id}")
 
     try:
         res = client.get_render_status(render_id)
     except Exception as e:
+        _inc_labeled_metric(
+            store,
+            metric="render_poll_total",
+            labels={"node": node, "outcome": "transient_error" if _is_transient_windows_error(e) else "error"},
+        )
         if _is_transient_windows_error(e):
             attempt = int(getattr(self.request, "retries", 0)) + 1
             remaining = float(SETTINGS.windows_poll_timeout_s) - (time.time() - started_at)
@@ -1375,14 +1603,40 @@ def poll_windows_render(self, job_id: str, render_id: str) -> Dict[str, Any]:
                     metric="render_poll_timeout_outcomes",
                     label="during_status_retry",
                 )
+                _inc_labeled_metric(
+                    store,
+                    metric="render_poll_timeout_total",
+                    labels={"phase": "during_status_retry"},
+                )
+                _observe_stage_duration(store, stage="poll", started_at=started_at, outcome="timeout")
+                _obs_event(
+                    "poll_timeout",
+                    job_id=job_id,
+                    node=node,
+                    phase="during_status_retry",
+                    render_id=render_id,
+                )
                 raise RuntimeError(f"windows_poll_timeout(render_status) render_id={render_id}") from e
             backoff = _retry_backoff_s(attempt=attempt, base_s=2.0, cap_s=30.0)
             backoff = min(backoff, max(1.0, remaining))
+            _obs_event(
+                "poll_retry",
+                job_id=job_id,
+                node=node,
+                attempt=attempt,
+                backoff_s=backoff,
+                render_id=render_id,
+            )
             raise self.retry(countdown=backoff, exc=RuntimeError(f"windows_poll_transient: {e!r}"))
         pool.release(windows_url)
         raise
     if not isinstance(res, dict):
         pool.release(windows_url)
+        _inc_labeled_metric(
+            store,
+            metric="render_poll_total",
+            labels={"node": node, "outcome": "bad_response"},
+        )
         raise RuntimeError(f"windows_poll_bad_response: {res!r}")
 
     status = str(res.get("status") or "").lower()
@@ -1394,13 +1648,34 @@ def poll_windows_render(self, job_id: str, render_id: str) -> Dict[str, Any]:
         if artifacts_url:
             result_payload["project_archive_url"] = artifacts_url
         store.set_status(job_id, "SUCCEEDED", stage="render", result=result_payload)
+        _inc_labeled_metric(
+            store,
+            metric="render_poll_total",
+            labels={"node": node, "outcome": "succeeded"},
+        )
+        _observe_stage_duration(store, stage="poll", started_at=started_at, outcome="succeeded")
+        _observe_stage_duration(store, stage="render", started_at=started_at, outcome="succeeded")
+        _obs_event("render_outcome", job_id=job_id, node=node, outcome="succeeded", render_id=render_id)
         pool.release(windows_url)
         return {"ok": True, "status": "succeeded", "windows": res}
 
     if status in {"failed", "error"}:
         pool.release(windows_url)
+        _inc_labeled_metric(
+            store,
+            metric="render_poll_total",
+            labels={"node": node, "outcome": "failed"},
+        )
+        _observe_stage_duration(store, stage="poll", started_at=started_at, outcome="failed")
+        _observe_stage_duration(store, stage="render", started_at=started_at, outcome="failed")
+        _obs_event("render_outcome", job_id=job_id, node=node, outcome="failed", render_id=render_id)
         raise RuntimeError(f"windows_failed(async_render): {res}")
 
+    _inc_labeled_metric(
+        store,
+        metric="render_poll_total",
+        labels={"node": node, "outcome": "running"},
+    )
     poll_windows_render.apply_async(args=[job_id, render_id], countdown=float(SETTINGS.windows_poll_interval_s))
     store.set_status(job_id, "RUNNING", stage="poll", result={"render_id": render_id, "windows": res})
     return {"ok": True, "status": "running", "windows": res}

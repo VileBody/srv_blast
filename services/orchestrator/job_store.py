@@ -12,6 +12,11 @@ import redis
 
 from core.llm_worker_types import normalize_llm_worker_type
 from .schemas import JobState, JobStatus
+from .observability_metrics import (
+    STAGE_DURATION_BUCKETS,
+    increment_labeled_counter,
+    observe_labeled_histogram,
+)
 
 
 log = logging.getLogger(__name__)
@@ -70,13 +75,19 @@ end
 
 local obj = cjson.decode(raw)
 local prev_status = tostring(obj.status or '')
+local prev_stage = tostring(obj.stage or '')
+local prev_stage_entered = tonumber(obj._stage_entered_at or 0) or 0
 
 obj.status = status
 obj.updated_at = now
 obj.version = tonumber(obj.version or 0) + 1
 
 if stage_arg ~= '' then
+  local stage_changed = tostring(obj.stage or '') ~= stage_arg
   obj.stage = stage_arg
+  if stage_changed then
+    obj._stage_entered_at = now
+  end
 end
 
 if status == 'QUEUED' and not obj.queued_at then
@@ -120,7 +131,7 @@ if ttl > 0 then
 else
   redis.call('SET', key, encoded)
 end
-return {prev_status, encoded}
+return {prev_status, prev_stage, tostring(prev_stage_entered), encoded}
 """
 
 
@@ -348,6 +359,15 @@ class JobStore:
                         pass
                 raise
 
+            try:
+                increment_labeled_counter(
+                    self,
+                    metric="job_lifecycle_total",
+                    labels={"status": "new"},
+                )
+            except Exception:
+                pass
+
             return st, True
 
         raise RuntimeError("new_job_failed_after_retries")
@@ -369,6 +389,66 @@ class JobStore:
         except Exception:
             # Keep status update deterministic even if slot release failed.
             pass
+
+    def _emit_status_metrics(
+        self,
+        *,
+        prev_status: str,
+        prev_stage: str,
+        prev_stage_entered: float,
+        stored: JobState,
+    ) -> None:
+        try:
+            increment_labeled_counter(
+                self,
+                metric="job_lifecycle_total",
+                labels={"status": str(stored.status or "").strip().lower() or "unknown"},
+            )
+        except Exception:
+            pass
+
+        stored_stage = str(stored.stage or "").strip().lower()
+        prev_stage_norm = str(prev_stage or "").strip().lower()
+        outcome = str(stored.status or "").strip().lower() or "unknown"
+
+        if stored_stage and stored_stage != prev_stage_norm:
+            try:
+                increment_labeled_counter(
+                    self,
+                    metric="stage_transition_total",
+                    labels={
+                        "from_stage": prev_stage_norm or "none",
+                        "to_stage": stored_stage,
+                        "outcome": outcome,
+                    },
+                )
+            except Exception:
+                pass
+
+        # Stage duration is measured by stable "entered_at" marker from Redis object.
+        # We observe:
+        #  - when stage changes (previous stage is completed),
+        #  - when job finalizes in the same stage (FAILED/SUCCEEDED without stage switch).
+        should_observe_prev_stage = False
+        if prev_stage_norm and stored_stage and stored_stage != prev_stage_norm:
+            should_observe_prev_stage = True
+        elif prev_stage_norm and str(stored.status or "") in {"FAILED", "SUCCEEDED"}:
+            should_observe_prev_stage = True
+
+        if should_observe_prev_stage:
+            try:
+                started = float(prev_stage_entered or 0.0)
+                if started > 0.0:
+                    duration_s = max(0.0, float(stored.updated_at) - started)
+                    observe_labeled_histogram(
+                        self,
+                        metric="stage_duration_seconds",
+                        value=duration_s,
+                        buckets=STAGE_DURATION_BUCKETS,
+                        labels={"stage": prev_stage_norm, "outcome": outcome},
+                    )
+            except Exception:
+                pass
 
     def set_status(
         self,
@@ -412,8 +492,18 @@ class JobStore:
             return None
 
         prev_status = ""
+        prev_stage = ""
+        prev_stage_entered = 0.0
         encoded = ""
-        if isinstance(raw, (list, tuple)) and len(raw) >= 2:
+        if isinstance(raw, (list, tuple)) and len(raw) >= 4:
+            prev_status = str(raw[0] or "")
+            prev_stage = str(raw[1] or "")
+            try:
+                prev_stage_entered = float(raw[2] or 0.0)
+            except Exception:
+                prev_stage_entered = 0.0
+            encoded = str(raw[3] or "")
+        elif isinstance(raw, (list, tuple)) and len(raw) >= 2:
             prev_status = str(raw[0] or "")
             encoded = str(raw[1] or "")
         else:
@@ -427,6 +517,13 @@ class JobStore:
         except Exception:
             # Safety net for malformed Redis payloads.
             return self.get(job_id)
+
+        self._emit_status_metrics(
+            prev_status=prev_status,
+            prev_stage=prev_stage,
+            prev_stage_entered=prev_stage_entered,
+            stored=stored,
+        )
 
         active_statuses = {"QUEUED", "RUNNING"}
         if prev_status in active_statuses and stored.status not in active_statuses:

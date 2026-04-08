@@ -50,6 +50,7 @@ python scripts/run_release_payment_smoke.py \
 
 ```bash
 curl -fsS "$ORCHESTRATOR_PUBLIC_URL/metrics" | jq .
+curl -fsS "$ORCHESTRATOR_PUBLIC_URL/metrics/prometheus" | head -n 40
 ```
 
 Проверяем, что метрики доступны и содержат:
@@ -57,6 +58,9 @@ curl -fsS "$ORCHESTRATOR_PUBLIC_URL/metrics" | jq .
 - `llm_inflight_by_worker_type`;
 - `webhook_outcomes`, `activate_outcomes`;
 - `render_poll_timeout_outcomes`.
+- Prometheus exposition содержит новые семейства:
+  - `dispatch_attempt_total`, `render_poll_total`, `render_poll_timeout_total`;
+  - `gemini_call_total`, `gemini_latency_seconds_bucket`, `gemini_fallback_total`.
 
 ## 5) Артефакты gate
 

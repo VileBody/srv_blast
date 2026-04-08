@@ -1,0 +1,108 @@
+services:
+  loki:
+    image: grafana/loki:3.0.0
+    container_name: obs-loki
+    restart: unless-stopped
+    command:
+      - -config.file=/etc/loki/config.yml
+      - -config.expand-env=true
+    ports:
+      - "${OBS_BIND_HOST:-127.0.0.1}:${LOKI_PORT:-13100}:3100"
+    volumes:
+      - ./observability/loki-config.yml:/etc/loki/config.yml:ro
+      - obs_loki_data:/loki
+    networks:
+      - blast
+
+  promtail:
+    image: grafana/promtail:3.0.0
+    container_name: obs-promtail
+    restart: unless-stopped
+    command:
+      - -config.file=/etc/promtail/config.yml
+      - -config.expand-env=true
+    environment:
+      OBS_ENV: ${OBS_ENV:-prod}
+    volumes:
+      - ./observability/promtail-config.yml:/etc/promtail/config.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - obs_promtail_positions:/tmp
+    depends_on:
+      - loki
+    networks:
+      - blast
+
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: obs-alertmanager
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+      - --config.expand-env
+    environment:
+      ALERT_TELEGRAM_BOT_TOKEN: ${ALERT_TELEGRAM_BOT_TOKEN:-}
+      ALERT_TELEGRAM_CHAT_ID: ${ALERT_TELEGRAM_CHAT_ID:-}
+    ports:
+      - "${OBS_BIND_HOST:-127.0.0.1}:${ALERTMANAGER_PORT:-19093}:9093"
+    volumes:
+      - ./observability/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - ./observability/alertmanager-telegram.tmpl:/etc/alertmanager/templates/telegram.tmpl:ro
+      - obs_alertmanager_data:/alertmanager
+    networks:
+      - blast
+
+  prometheus:
+    image: prom/prometheus:v2.53.1
+    container_name: obs-prometheus
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-30d}
+      - --web.enable-lifecycle
+    ports:
+      - "${OBS_BIND_HOST:-127.0.0.1}:${PROMETHEUS_PORT:-19090}:9090"
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./observability/prometheus-alerts.yml:/etc/prometheus/alerts.yml:ro
+      - obs_prometheus_data:/prometheus
+    depends_on:
+      - alertmanager
+    networks:
+      - blast
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    container_name: obs-grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-changeme}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+    ports:
+      - "${OBS_BIND_HOST:-127.0.0.1}:${GRAFANA_PORT:-13000}:3000"
+    volumes:
+      - ./observability/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./observability/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - obs_grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+      - loki
+      - alertmanager
+    networks:
+      - blast
+
+networks:
+  blast:
+    external: true
+    name: ${BLAST_DOCKER_NETWORK:-blast_mj_final_default}
+
+volumes:
+  obs_loki_data:
+  obs_promtail_positions:
+  obs_alertmanager_data:
+  obs_prometheus_data:
+  obs_grafana_data:

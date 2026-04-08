@@ -18,6 +18,27 @@ from google.genai import types
 from mlcore.cr_patch import normalize_segment_inplace
 from mlcore.models import BlocksTokensPayload
 
+try:
+    from services.orchestrator.observability_metrics import (
+        GEMINI_LATENCY_BUCKETS,
+        increment_labeled_counter_from_env,
+        observe_labeled_histogram_from_env,
+    )
+except Exception:  # pragma: no cover - graceful fallback for standalone scripts
+    GEMINI_LATENCY_BUCKETS = (0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0, 120.0, 300.0)
+
+    def increment_labeled_counter_from_env(*, metric: str, labels: dict[str, str] | None = None, amount: int = 1) -> None:
+        return
+
+    def observe_labeled_histogram_from_env(
+        *,
+        metric: str,
+        value: float,
+        buckets: Iterable[float],
+        labels: dict[str, str] | None = None,
+    ) -> None:
+        return
+
 
 def normalize_proxy(proxy: str) -> str:
     p = (proxy or "").strip()
@@ -269,9 +290,11 @@ class GeminiClient:
         try:
             val = int(raw)
         except Exception:
+            self._warn_metric(warning_type="env_parse_failed", stage="config")
             self._logger.warning("gemini_env_parse_failed name=%s value=%r using_default=%s", name, raw, default)
             return int(default)
         if val < min_value:
+            self._warn_metric(warning_type="env_out_of_range", stage="config")
             self._logger.warning(
                 "gemini_env_out_of_range name=%s value=%s min=%s using_min",
                 name,
@@ -288,9 +311,11 @@ class GeminiClient:
         try:
             val = float(raw)
         except Exception:
+            self._warn_metric(warning_type="env_parse_failed", stage="config")
             self._logger.warning("gemini_env_parse_failed name=%s value=%r using_default=%s", name, raw, default)
             return float(default)
         if val < min_value:
+            self._warn_metric(warning_type="env_out_of_range", stage="config")
             self._logger.warning(
                 "gemini_env_out_of_range name=%s value=%s min=%s using_min",
                 name,
@@ -308,8 +333,92 @@ class GeminiClient:
             return True
         if raw in {"0", "false", "no", "off"}:
             return False
+        self._warn_metric(warning_type="env_parse_failed", stage="config")
         self._logger.warning("gemini_env_parse_failed name=%s value=%r using_default=%s", name, raw, default)
         return bool(default)
+
+    def _warn_metric(self, *, warning_type: str, stage: str = "unknown") -> None:
+        increment_labeled_counter_from_env(
+            metric="gemini_warning_total",
+            labels={
+                "warning_type": str(warning_type or "").strip().lower() or "unknown",
+                "model": str(self._model or "").strip().lower() or "unknown",
+                "stage": str(stage or "").strip().lower() or "unknown",
+            },
+        )
+
+    def _emit_call_metric(self, *, stage: str, outcome: str, code_class: str) -> None:
+        self._logger.info(
+            "obs_event event=gemini_call stage=%s model=%s outcome=%s code_class=%s",
+            str(stage or "unknown"),
+            str(self._model or "unknown"),
+            str(outcome or "unknown"),
+            str(code_class or "unknown"),
+        )
+        increment_labeled_counter_from_env(
+            metric="gemini_call_total",
+            labels={
+                "model": str(self._model or "").strip().lower() or "unknown",
+                "stage": str(stage or "").strip().lower() or "unknown",
+                "outcome": str(outcome or "").strip().lower() or "unknown",
+                "code_class": str(code_class or "").strip().lower() or "unknown",
+            },
+        )
+
+    def _observe_call_latency(self, *, stage: str, outcome: str, code_class: str, latency_s: float) -> None:
+        observe_labeled_histogram_from_env(
+            metric="gemini_latency_seconds",
+            value=float(latency_s),
+            buckets=GEMINI_LATENCY_BUCKETS,
+            labels={
+                "model": str(self._model or "").strip().lower() or "unknown",
+                "stage": str(stage or "").strip().lower() or "unknown",
+                "outcome": str(outcome or "").strip().lower() or "unknown",
+                "code_class": str(code_class or "").strip().lower() or "unknown",
+            },
+        )
+
+    def _emit_fallback_metric(
+        self,
+        *,
+        outcome: str,
+        reason_class: str,
+        primary_model: str,
+        fallback_model: str,
+    ) -> None:
+        self._logger.info(
+            "obs_event event=gemini_fallback primary_model=%s fallback_model=%s outcome=%s reason_class=%s",
+            str(primary_model or "unknown"),
+            str(fallback_model or "unknown"),
+            str(outcome or "unknown"),
+            str(reason_class or "unknown"),
+        )
+        increment_labeled_counter_from_env(
+            metric="gemini_fallback_total",
+            labels={
+                "primary_model": str(primary_model or "").strip().lower() or "unknown",
+                "fallback_model": str(fallback_model or "").strip().lower() or "unknown",
+                "outcome": str(outcome or "").strip().lower() or "unknown",
+                "reason_class": str(reason_class or "").strip().lower() or "unknown",
+            },
+        )
+
+    def _code_class_from_error_text(self, text: str) -> str:
+        lo = (text or "").lower()
+        if "429" in lo:
+            return "429"
+        if "503" in lo:
+            return "503"
+        if "500" in lo:
+            return "500"
+        if "timeout" in lo or "timed out" in lo:
+            return "timeout"
+        if "validation" in lo:
+            return "validation"
+        return "other"
+
+    def _code_class_from_exc(self, exc: BaseException) -> str:
+        return self._code_class_from_error_text(self._exc_text(exc))
 
     def _exc_text(self, exc: BaseException) -> str:
         parts: List[str] = [type(exc).__name__]
@@ -375,6 +484,7 @@ class GeminiClient:
                 if (not self._is_transient_upload_error(exc)) or attempt >= attempts:
                     raise
                 sleep_s = min(max_sleep, base_sleep * (2 ** (attempt - 1)))
+                self._warn_metric(warning_type="upload_retry", stage="upload")
                 self._logger.warning(
                     "gemini_upload_retry file=%s sha=%s attempt=%d/%d sleep_s=%.2f err=%s",
                     str(p),
@@ -410,6 +520,14 @@ class GeminiClient:
             if not self._is_transient_capacity_error(primary_exc):
                 raise
 
+            reason_class = self._code_class_from_exc(primary_exc)
+            self._emit_fallback_metric(
+                outcome="triggered",
+                reason_class=reason_class,
+                primary_model=self._model,
+                fallback_model=self._fallback_model,
+            )
+            self._warn_metric(warning_type="fallback_triggered", stage=call_kind)
             self._logger.warning(
                 "gemini_model_fallback_triggered kind=%s primary=%s fallback=%s reason=%s",
                 call_kind,
@@ -423,6 +541,12 @@ class GeminiClient:
                     contents=contents,
                     config=config,
                 )
+                self._emit_fallback_metric(
+                    outcome="success",
+                    reason_class=reason_class,
+                    primary_model=self._model,
+                    fallback_model=self._fallback_model,
+                )
                 self._logger.info(
                     "gemini_model_fallback_success kind=%s primary=%s fallback=%s",
                     call_kind,
@@ -431,6 +555,13 @@ class GeminiClient:
                 )
                 return resp
             except Exception as fallback_exc:  # noqa: BLE001
+                self._emit_fallback_metric(
+                    outcome="failed",
+                    reason_class=reason_class,
+                    primary_model=self._model,
+                    fallback_model=self._fallback_model,
+                )
+                self._warn_metric(warning_type="fallback_failed", stage=call_kind)
                 self._logger.warning(
                     "gemini_model_fallback_failed kind=%s primary=%s fallback=%s primary_err=%s fallback_err=%s",
                     call_kind,
@@ -454,6 +585,7 @@ class GeminiClient:
         elif "thinkingBudget" in fields:
             kwargs["thinkingBudget"] = int(budget)
         else:
+            self._warn_metric(warning_type="thinking_budget_unsupported", stage="config")
             self._logger.warning(
                 "gemini_thinking_budget_unsupported sdk_thinking_fields=%s requested=%s; "
                 "continuing without thinking budget cap",
@@ -477,6 +609,7 @@ class GeminiClient:
         try:
             return types.AutomaticFunctionCallingConfig(**kwargs)
         except Exception:
+            self._warn_metric(warning_type="afc_disable_build_failed", stage="config")
             self._logger.warning("gemini_afc_disable_build_failed sdk_afc_fields=%s", sorted(fields))
             return None
 
@@ -545,6 +678,7 @@ class GeminiClient:
             return resp
 
         retry_cfg = self._build_empty_max_tokens_retry_cfg(config)
+        self._warn_metric(warning_type="empty_max_tokens_retry", stage=call_kind)
         self._logger.warning(
             "gemini_empty_max_tokens_retry kind=%s model=%s retry_thinking_tokens=%s",
             call_kind,
@@ -592,6 +726,7 @@ class GeminiClient:
         delay = 0.5
         while True:
             if time.time() - t0 > max_wait_s:
+                self._warn_metric(warning_type="file_wait_timeout", stage="upload_wait")
                 self._logger.warning("gemini_file_wait_timeout name=%s last_state=%s", name, st)
                 return f
 
@@ -600,6 +735,7 @@ class GeminiClient:
 
             fresh = self._file_get(name)
             if not fresh:
+                self._warn_metric(warning_type="file_get_failed_while_waiting", stage="upload_wait")
                 self._logger.warning("gemini_file_get_failed_while_waiting name=%s", name)
                 return f
 
@@ -722,7 +858,12 @@ class GeminiClient:
         files: Optional[List[types.File]] = None,
         system_instruction: Optional[str] = None,
         raw_response_path: Optional[Path] = None,
+        stage: str = "unknown",
     ) -> BlocksTokensPayload:
+        call_stage = str(stage or "unknown").strip().lower() or "unknown"
+        started_perf = time.perf_counter()
+        outcome = "success"
+        code_class = "ok"
         contents: List[object] = []
         if files:
             contents.extend(files)
@@ -735,7 +876,8 @@ class GeminiClient:
 
         log = self._logger
         log.info(
-            "gemini_call_tokens model=%s timeout_s=%s temperature=%s max_output_tokens=%s max_thinking_tokens=%s",
+            "gemini_call_tokens stage=%s model=%s timeout_s=%s temperature=%s max_output_tokens=%s max_thinking_tokens=%s",
+            call_stage,
             self._model,
             self._timeout_s,
             self._temperature,
@@ -743,21 +885,22 @@ class GeminiClient:
             str(self._max_thinking_tokens),
         )
 
-        resp = self._generate_structured_with_targeted_retry(
-            contents=contents,
-            config=cfg,
-            call_kind="tokens_structured",
-        )
-        text = self._response_text_or_none(resp)
-        if text is None:
-            raise RuntimeError(f"Gemini returned empty/non-text response. resp={resp!r}")
-
-        if raw_response_path is not None:
-            raw_response_path.parent.mkdir(parents=True, exist_ok=True)
-            raw_response_path.write_text(text, encoding="utf-8")
-            log.info("gemini_raw_saved path=%s", str(raw_response_path))
-
+        text = ""
         try:
+            resp = self._generate_structured_with_targeted_retry(
+                contents=contents,
+                config=cfg,
+                call_kind=f"tokens_structured:{call_stage}",
+            )
+            text = self._response_text_or_none(resp)
+            if text is None:
+                raise RuntimeError(f"Gemini returned empty/non-text response. resp={resp!r}")
+
+            if raw_response_path is not None:
+                raw_response_path.parent.mkdir(parents=True, exist_ok=True)
+                raw_response_path.write_text(text, encoding="utf-8")
+                log.info("gemini_raw_saved path=%s", str(raw_response_path))
+
             data = json.loads(text)
             if isinstance(data, dict):
                 data = _sanitize_payload_dict(data)
@@ -765,11 +908,24 @@ class GeminiClient:
                 patch_payload_dict_inplace(data)
             return BlocksTokensPayload.model_validate(data)
         except Exception as e:
+            outcome = "error"
+            code_class = self._code_class_from_exc(e)
+            if not text:
+                raise
             head = text[:8000]
             raise RuntimeError(
                 "Failed to validate Gemini JSON against BlocksTokensPayload. "
                 f"err={e!r} text_head={head!r}"
             ) from e
+        finally:
+            latency_s = max(0.0, time.perf_counter() - started_perf)
+            self._emit_call_metric(stage=call_stage, outcome=outcome, code_class=code_class)
+            self._observe_call_latency(
+                stage=call_stage,
+                outcome=outcome,
+                code_class=code_class,
+                latency_s=latency_s,
+            )
 
     # ==========================================================
     # Generic structured JSON call (NO retries)
@@ -783,7 +939,12 @@ class GeminiClient:
         files: Optional[List[types.File]] = None,
         system_instruction: Optional[str] = None,
         raw_response_path: Optional[Path] = None,
+        stage: str = "unknown",
     ) -> BaseModel:
+        call_stage = str(stage or "unknown").strip().lower() or "unknown"
+        started_perf = time.perf_counter()
+        outcome = "success"
+        code_class = "ok"
         contents: List[object] = []
         if files:
             contents.extend(files)
@@ -796,25 +957,40 @@ class GeminiClient:
 
         log = self._logger
         log.info(
-            "gemini_call_generic model=%s max_output_tokens=%s max_thinking_tokens=%s",
+            "gemini_call_generic stage=%s model=%s max_output_tokens=%s max_thinking_tokens=%s",
+            call_stage,
             self._model,
             str(self._max_output_tokens),
             str(self._max_thinking_tokens),
         )
 
-        resp = self._generate_structured_with_targeted_retry(
-            contents=contents,
-            config=cfg,
-            call_kind="generic_structured",
-        )
-        text = self._response_text_or_none(resp)
-        if text is None:
-            raise RuntimeError(f"Gemini returned empty/non-text response. resp={resp!r}")
+        try:
+            resp = self._generate_structured_with_targeted_retry(
+                contents=contents,
+                config=cfg,
+                call_kind=f"generic_structured:{call_stage}",
+            )
+            text = self._response_text_or_none(resp)
+            if text is None:
+                raise RuntimeError(f"Gemini returned empty/non-text response. resp={resp!r}")
 
-        if raw_response_path is not None:
-            raw_response_path.parent.mkdir(parents=True, exist_ok=True)
-            raw_response_path.write_text(text, encoding="utf-8")
-            log.info("gemini_raw_saved path=%s", str(raw_response_path))
+            if raw_response_path is not None:
+                raw_response_path.parent.mkdir(parents=True, exist_ok=True)
+                raw_response_path.write_text(text, encoding="utf-8")
+                log.info("gemini_raw_saved path=%s", str(raw_response_path))
 
-        data = json.loads(text)
-        return schema_model.model_validate(data)
+            data = json.loads(text)
+            return schema_model.model_validate(data)
+        except Exception as e:
+            outcome = "error"
+            code_class = self._code_class_from_exc(e)
+            raise
+        finally:
+            latency_s = max(0.0, time.perf_counter() - started_perf)
+            self._emit_call_metric(stage=call_stage, outcome=outcome, code_class=code_class)
+            self._observe_call_latency(
+                stage=call_stage,
+                outcome=outcome,
+                code_class=code_class,
+                latency_s=latency_s,
+            )
