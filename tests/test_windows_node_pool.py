@@ -4,6 +4,7 @@ import json
 
 from services.orchestrator.windows_node_pool import (
     WindowsNodePool,
+    normalize_windows_nodes,
     normalize_windows_urls,
     parse_windows_urls_csv,
 )
@@ -93,12 +94,67 @@ def test_runtime_pool_storage_and_fallback() -> None:
 
     saved = pool.set_active_urls(["http://10.0.0.5:8000/", "http://10.0.0.5:8000"])
     assert saved == ["http://10.0.0.5:8000"]
+    assert pool.get_runtime_urls() == ["http://10.0.0.5:8000"]
     raw = r.get(pool.runtime_key)
-    assert json.loads(raw) == ["http://10.0.0.5:8000"]
+    assert json.loads(raw) == {
+        "nodes": [
+            {
+                "url": "http://10.0.0.5:8000",
+                "enabled": True,
+                "disabled_reason": "",
+                "disabled_at": None,
+            }
+        ]
+    }
     assert pool.get_active_urls(default_urls=env_defaults) == ["http://10.0.0.5:8000"]
 
     pool.set_active_urls([])
+    assert pool.get_runtime_urls() == []
     assert pool.get_active_urls(default_urls=env_defaults) == env_defaults
+
+
+def test_runtime_nodes_disable_keeps_node_in_pool() -> None:
+    r = _FakeRedis()
+    pool = WindowsNodePool(redis_client=r, key_prefix="blast", lease_ttl_s=3600)
+    env_defaults = ["http://85.239.48.31:8000", "http://72.56.246.24:8000"]
+
+    nodes, changed = pool.disable_node(
+        url="http://85.239.48.31:8000",
+        reason="poll_timeout_before_poll",
+        default_urls=env_defaults,
+    )
+    assert changed is True
+    assert len(nodes) == 2
+    assert pool.get_active_urls(default_urls=[]) == ["http://72.56.246.24:8000"]
+
+    runtime_nodes = pool.get_runtime_nodes()
+    assert runtime_nodes[0]["url"] == "http://85.239.48.31:8000"
+    assert runtime_nodes[0]["enabled"] is False
+    assert runtime_nodes[0]["disabled_reason"] == "poll_timeout_before_poll"
+    assert runtime_nodes[0]["disabled_at"] is not None
+
+    nodes2, changed2 = pool.enable_node(
+        url="http://85.239.48.31:8000",
+        default_urls=env_defaults,
+    )
+    assert changed2 is True
+    assert pool.get_active_urls(default_urls=[]) == env_defaults
+    assert any(n["url"] == "http://85.239.48.31:8000" and n["enabled"] for n in nodes2)
+
+
+def test_normalize_windows_nodes_back_compat() -> None:
+    out = normalize_windows_nodes(
+        [
+            "http://10.0.0.1:8000/",
+            {"url": "http://10.0.0.2:8000", "enabled": False, "disabled_reason": "manual"},
+            {"url": "http://10.0.0.2:8000", "enabled": True},
+        ]
+    )
+    assert out[0]["url"] == "http://10.0.0.1:8000"
+    assert out[0]["enabled"] is True
+    assert out[1]["url"] == "http://10.0.0.2:8000"
+    assert out[1]["enabled"] is False
+    assert out[1]["disabled_reason"] == "manual"
 
 
 def test_reserve_round_robin_and_release() -> None:

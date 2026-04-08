@@ -100,3 +100,21 @@ powershell -ExecutionPolicy Bypass -File C:\ae_dev\repo\sync_runtime_from_git.ps
 - `WINDOWS_RENDER_API_MODE=jobs` (legacy sync flow)
 
 Не используется implicit fallback между контрактами.
+
+## Restart Workflow (автоматизировано)
+
+Добавлены operational scripts для restart без ручных шагов:
+
+- `restart_node_workflow.ps1` — единый restart workflow с логом шагов;
+- `ae_modal_watcher.ps1` — фоновый watcher для modal/crach-repair окон;
+- `ae_click_continue_once.ps1` — one-shot `Enter` helper;
+- `ae_dont_send_once.ps1` — one-shot UIAutomation click по `Don't send`.
+
+Основной лог restart flow:
+
+- `C:\ae_dev\logs\node_restart_workflow.log`
+- формат шага: `WF_STEP=<...> STATUS=<ok|failed|...> MSG=<...>`
+
+Полный e2e rollout (restart + canary + pool update) описан в:
+
+- `docs/windows_node_restart_automation.md`

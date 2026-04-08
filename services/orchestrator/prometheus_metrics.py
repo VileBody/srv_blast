@@ -46,6 +46,11 @@ _LABELED_COUNTER_METRICS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
         ("phase",),
     ),
     (
+        "windows_node_state_change_total",
+        "Windows node state changes (enabled/disabled)",
+        ("node", "event", "reason"),
+    ),
+    (
         "gemini_call_total",
         "Gemini call outcomes by model and stage",
         ("model", "stage", "outcome", "code_class"),

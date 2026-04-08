@@ -136,6 +136,27 @@ class KillJobResponse(BaseModel):
     project_id: str = ""
 
 
+class WindowsNodeState(BaseModel):
+    url: str = Field(min_length=1)
+    enabled: bool = True
+    disabled_reason: Optional[str] = None
+    disabled_at: Optional[float] = None
+
+
+class WindowsNodesUpdateRequest(BaseModel):
+    urls: List[str] = Field(default_factory=list)
+    nodes: List[WindowsNodeState] = Field(default_factory=list)
+
+
+class WindowsNodesStatusResponse(BaseModel):
+    source: Literal["runtime", "env"]
+    default_urls: List[str] = Field(default_factory=list)
+    runtime_urls: List[str] = Field(default_factory=list)
+    effective_urls: List[str] = Field(default_factory=list)
+    nodes: List[WindowsNodeState] = Field(default_factory=list)
+    inflight: Dict[str, int] = Field(default_factory=dict)
+
+
 # ---- Backward-compatible aliases (so old clients don't break) ----
 # If you want to remove old names later — delete these aliases and the /send_video route in app.py.
 SendVideoRequest = SendAudioS3Request

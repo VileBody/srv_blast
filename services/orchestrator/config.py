@@ -107,6 +107,19 @@ class Settings:
     windows_render_api_mode: str = _windows_render_api_mode_env()
     windows_timeout_s: float = float(_env("WINDOWS_TIMEOUT_S", "30") or "30")
     windows_node_lease_ttl_s: int = int(_env("WINDOWS_NODE_LEASE_TTL_S", "7200") or "7200")
+    windows_node_disable_after_dispatch_errors: int = int(
+        _env("WINDOWS_NODE_DISABLE_AFTER_DISPATCH_ERRORS", "3") or "3"
+    )
+    windows_node_disable_dispatch_streak_ttl_s: int = int(
+        _env("WINDOWS_NODE_DISABLE_DISPATCH_STREAK_TTL_S", "1800") or "1800"
+    )
+    windows_node_disable_on_poll_timeout: bool = _env("WINDOWS_NODE_DISABLE_ON_POLL_TIMEOUT", "1") not in {
+        "0",
+        "false",
+        "False",
+        "no",
+        "NO",
+    }
 
     # Polling controls (for async win API)
     windows_poll_interval_s: float = float(_env("WINDOWS_POLL_INTERVAL_S", "2.0") or "2.0")
@@ -131,6 +144,10 @@ class Settings:
     # Bearer token for /payments/activate (admin manual activation).
     # If empty, the endpoint is disabled (returns 403).
     payment_admin_token: str = _env("PAYMENT_ADMIN_TOKEN", "")
+
+    # Ops alerts (used for Windows node auto-disable notifications).
+    alert_telegram_bot_token: str = _env("ALERT_TELEGRAM_BOT_TOKEN", "")
+    alert_telegram_chat_id: str = _env("ALERT_TELEGRAM_CHAT_ID", "")
 
 
 SETTINGS = Settings()

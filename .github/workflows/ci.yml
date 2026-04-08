@@ -63,6 +63,15 @@ jobs:
             services/tg_bot_public/*.py \
             scripts/migrate_credits_sqlite_to_postgres.py
 
+      - name: Run Windows node ops regression tests
+        run: |
+          set -euo pipefail
+          pytest -q \
+            tests/test_windows_node_pool.py \
+            tests/test_orchestrator_windows_nodes_api.py \
+            tests/test_orchestrator_windows_node_auto_disable.py \
+            tests/test_windows_node_rollout.py
+
       - name: Validate landing bundle
         run: |
           set -euo pipefail

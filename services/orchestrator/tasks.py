@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import logging
 import os
 import re
@@ -108,6 +109,124 @@ def _inc_labeled_metric(store: JobStore, *, metric: str, labels: dict[str, Any])
         increment_labeled_counter(store, metric=metric, labels=labels)
     except Exception:
         pass
+
+
+def _reason_label(raw: str) -> str:
+    txt = str(raw or "").strip().lower()
+    if not txt:
+        return "unknown"
+    cleaned = re.sub(r"[^a-z0-9_]+", "_", txt)
+    cleaned = re.sub(r"_+", "_", cleaned).strip("_")
+    return cleaned or "unknown"
+
+
+def _dispatch_fail_streak_key(store: JobStore, *, node_url: str) -> str:
+    digest = hashlib.sha1(str(node_url or "").encode("utf-8")).hexdigest()[:12]
+    return f"{store.key_prefix}:windows:dispatch_fail_streak:{digest}"
+
+
+def _inc_dispatch_fail_streak(store: JobStore, *, node_url: str) -> int:
+    key = _dispatch_fail_streak_key(store, node_url=node_url)
+    ttl = max(0, int(getattr(SETTINGS, "windows_node_disable_dispatch_streak_ttl_s", 1800) or 1800))
+    try:
+        raw = store.r.incr(key)
+        val = int(raw or 0)
+        if ttl > 0:
+            try:
+                store.r.expire(key, ttl)
+            except Exception:
+                pass
+        return max(0, val)
+    except Exception:
+        return 0
+
+
+def _reset_dispatch_fail_streak(store: JobStore, *, node_url: str) -> None:
+    key = _dispatch_fail_streak_key(store, node_url=node_url)
+    try:
+        store.r.delete(key)
+    except Exception:
+        return
+
+
+def _notify_ops_telegram(text: str) -> None:
+    token = str(getattr(SETTINGS, "alert_telegram_bot_token", "") or "").strip()
+    chat_id = str(getattr(SETTINGS, "alert_telegram_chat_id", "") or "").strip()
+    if not token or not chat_id:
+        return
+    payload = {
+        "chat_id": chat_id,
+        "text": str(text or "").strip()[:3500],
+        "disable_web_page_preview": True,
+    }
+    data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    req = urllib.request.Request(
+        url=f"https://api.telegram.org/bot{token}/sendMessage",
+        data=data,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=8.0) as resp:
+            _ = resp.read()
+    except Exception as exc:
+        log.warning("ops_telegram_notify_failed err=%r", exc)
+
+
+def _auto_disable_node(
+    *,
+    store: JobStore,
+    pool: WindowsNodePool,
+    node_url: str,
+    reason: str,
+    job_id: str,
+    render_id: str = "",
+) -> bool:
+    reason_txt = str(reason or "").strip() or "unknown_reason"
+    try:
+        _nodes, changed = pool.disable_node(
+            url=node_url,
+            reason=reason_txt,
+            default_urls=_windows_default_urls(),
+        )
+    except Exception as exc:
+        _obs_event(
+            "windows_node_disable_failed",
+            node=_node_label(node_url),
+            reason=_reason_label(reason_txt),
+            err=repr(exc),
+            job_id=job_id,
+            render_id=render_id or None,
+        )
+        return False
+    if not changed:
+        return False
+    node = _node_label(node_url)
+    reason_label = _reason_label(reason_txt)
+    _inc_labeled_metric(
+        store,
+        metric="windows_node_state_change_total",
+        labels={"node": node, "event": "auto_disabled", "reason": reason_label},
+    )
+    _obs_event(
+        "windows_node_disabled",
+        node=node,
+        reason=reason_label,
+        job_id=job_id,
+        render_id=render_id or None,
+    )
+    _notify_ops_telegram(
+        "\n".join(
+            [
+                "Windows node auto-disabled",
+                f"node: {node_url}",
+                f"reason: {reason_txt}",
+                f"job_id: {job_id}",
+                f"render_id: {render_id or '-'}",
+            ]
+        )
+    )
+    return True
 
 
 def _observe_stage_duration(
@@ -1424,6 +1543,7 @@ def dispatch_to_windows(self, job_id: str) -> Dict[str, Any]:
                 raise RuntimeError(f"windows_bad_response: {maybe_res!r}")
             selected_url = candidate
             res = maybe_res
+            _reset_dispatch_fail_streak(store, node_url=candidate)
             _inc_labeled_metric(
                 store,
                 metric="dispatch_attempt_total",
@@ -1435,6 +1555,7 @@ def dispatch_to_windows(self, job_id: str) -> Dict[str, Any]:
             pool.release(candidate)
             errors_by_node.append(f"{candidate}: {e!r}")
             remaining = [u for u in remaining if u != candidate]
+            fail_streak = _inc_dispatch_fail_streak(store, node_url=candidate)
 
             is_transient = _is_transient_windows_error(e)
             code = 0
@@ -1457,7 +1578,32 @@ def dispatch_to_windows(self, job_id: str) -> Dict[str, Any]:
                 api_mode="render",
                 outcome=err_outcome,
                 err=repr(e),
+                fail_streak=fail_streak,
             )
+
+            disable_threshold = max(
+                0,
+                int(getattr(SETTINGS, "windows_node_disable_after_dispatch_errors", 0) or 0),
+            )
+            should_disable = False
+            disable_reason = ""
+            if is_contract_404:
+                should_disable = True
+                disable_reason = "dispatch_contract_404"
+            elif not is_transient:
+                should_disable = True
+                disable_reason = "dispatch_non_transient_error"
+            elif disable_threshold > 0 and fail_streak >= disable_threshold:
+                should_disable = True
+                disable_reason = f"dispatch_transient_streak_{fail_streak}"
+            if should_disable:
+                _auto_disable_node(
+                    store=store,
+                    pool=pool,
+                    node_url=candidate,
+                    reason=disable_reason,
+                    job_id=job_id,
+                )
 
             if not remaining:
                 if is_transient or is_contract_404:
@@ -1634,6 +1780,15 @@ def poll_windows_render(self, job_id: str, render_id: str) -> Dict[str, Any]:
         )
         _observe_stage_duration(store, stage="poll", started_at=started_at, outcome="timeout")
         _obs_event("poll_timeout", job_id=job_id, node=node, phase="before_poll", render_id=render_id)
+        if bool(getattr(SETTINGS, "windows_node_disable_on_poll_timeout", True)):
+            _auto_disable_node(
+                store=store,
+                pool=pool,
+                node_url=windows_url,
+                reason="poll_timeout_before_poll",
+                job_id=job_id,
+                render_id=render_id,
+            )
         raise RuntimeError(f"windows_poll_timeout render_id={render_id}")
 
     try:
@@ -1666,6 +1821,15 @@ def poll_windows_render(self, job_id: str, render_id: str) -> Dict[str, Any]:
                     phase="during_status_retry",
                     render_id=render_id,
                 )
+                if bool(getattr(SETTINGS, "windows_node_disable_on_poll_timeout", True)):
+                    _auto_disable_node(
+                        store=store,
+                        pool=pool,
+                        node_url=windows_url,
+                        reason="poll_timeout_during_status_retry",
+                        job_id=job_id,
+                        render_id=render_id,
+                    )
                 raise RuntimeError(f"windows_poll_timeout(render_status) render_id={render_id}") from e
             backoff = _retry_backoff_s(attempt=attempt, base_s=2.0, cap_s=30.0)
             backoff = min(backoff, max(1.0, remaining))

@@ -32,11 +32,14 @@ from .schemas import (
     LLMWorkersStatusResponse,
     SendVideoRequest,
     SendVideoResponse,
+    WindowsNodesStatusResponse,
+    WindowsNodesUpdateRequest,
 )
 from .tasks import build_job_hybrid, build_job_openrouter, build_job_sdk
 from .config import SETTINGS
 from .bundle_bootstrap import ensure_descriptions_bundle
 from .asset_routes import create_asset_router
+from .windows_node_pool import WindowsNodePool, parse_windows_urls_csv
 from services.tg_bot_botapi.user_store import UserStore
 
 
@@ -132,6 +135,45 @@ def create_app() -> FastAPI:
     store = JobStore.from_env()
     _bundle_ok = False
     _payment_enabled = bool(SETTINGS.payment_webhook_secret or SETTINGS.payment_admin_token)
+
+    def _default_windows_urls() -> list[str]:
+        raw = ",".join(
+            [
+                str(SETTINGS.windows_base_url or "").strip(),
+                str(SETTINGS.windows_base_urls_csv or "").strip(),
+            ]
+        ).strip(",")
+        return parse_windows_urls_csv(raw)
+
+    def _windows_pool() -> WindowsNodePool:
+        return WindowsNodePool(
+            redis_client=store.r,
+            key_prefix=store.key_prefix,
+            lease_ttl_s=SETTINGS.windows_node_lease_ttl_s,
+        )
+
+    def _build_windows_nodes_status(*, runtime_nodes: list[dict[str, Any]]) -> WindowsNodesStatusResponse:
+        default_urls = _default_windows_urls()
+        effective_nodes = runtime_nodes or _windows_pool().get_effective_nodes(default_urls=default_urls)
+        runtime_urls = [
+            str(node.get("url") or "")
+            for node in runtime_nodes
+            if bool(node.get("enabled", True)) and str(node.get("url") or "").strip()
+        ]
+        effective_urls = [
+            str(node.get("url") or "")
+            for node in effective_nodes
+            if bool(node.get("enabled", True)) and str(node.get("url") or "").strip()
+        ]
+        inflight = _windows_pool().inflight_snapshot(effective_urls)
+        return WindowsNodesStatusResponse(
+            source="runtime" if runtime_nodes else "env",
+            default_urls=default_urls,
+            runtime_urls=runtime_urls,
+            effective_urls=effective_urls,
+            nodes=effective_nodes,
+            inflight=inflight,
+        )
 
     # Payment webhook router — backed by PostgreSQL via shared UserStore.
     # Initialized once at startup, closed on shutdown.
@@ -243,6 +285,31 @@ def create_app() -> FastAPI:
 
         ok = all(checks.values())
         return {"ok": ok, "checks": checks, "details": details}
+
+    @app.get("/windows-nodes", response_model=WindowsNodesStatusResponse)
+    def get_windows_nodes() -> WindowsNodesStatusResponse:
+        runtime_nodes = _windows_pool().get_runtime_nodes()
+        return _build_windows_nodes_status(runtime_nodes=runtime_nodes)
+
+    @app.put("/windows-nodes", response_model=WindowsNodesStatusResponse)
+    def put_windows_nodes(req: WindowsNodesUpdateRequest) -> WindowsNodesStatusResponse:
+        pool = _windows_pool()
+        if req.nodes:
+            runtime_nodes = pool.set_runtime_nodes(
+                [
+                    {
+                        "url": str(node.url),
+                        "enabled": bool(node.enabled),
+                        "disabled_reason": str(node.disabled_reason or ""),
+                        "disabled_at": node.disabled_at,
+                    }
+                    for node in req.nodes
+                ]
+            )
+        else:
+            pool.set_active_urls(req.urls)
+            runtime_nodes = pool.get_runtime_nodes()
+        return _build_windows_nodes_status(runtime_nodes=runtime_nodes)
 
     # ==========================================================
     # NEW: correct naming (audio URL -> enqueue pipeline)

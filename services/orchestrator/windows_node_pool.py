@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import TYPE_CHECKING, Any, Iterable, Sequence
+import time
+from typing import TYPE_CHECKING, Any, Iterable, Mapping, Sequence
 
 if TYPE_CHECKING:
     import redis
@@ -34,6 +35,65 @@ def parse_windows_urls_csv(raw: str) -> list[str]:
     if not s:
         return []
     return normalize_windows_urls(part for part in s.split(","))
+
+
+def _to_float_or_none(raw: Any) -> float | None:
+    try:
+        val = float(raw)
+    except Exception:
+        return None
+    if val <= 0:
+        return None
+    return val
+
+
+def _normalize_disabled_reason(raw: Any) -> str:
+    txt = str(raw or "").strip()
+    if not txt:
+        return ""
+    return txt[:500]
+
+
+def normalize_windows_nodes(values: Iterable[Any]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    now = time.time()
+    for raw in values:
+        if isinstance(raw, str):
+            url = normalize_windows_url(raw)
+            enabled = True
+            reason = ""
+            disabled_at: float | None = None
+        elif isinstance(raw, Mapping):
+            url = normalize_windows_url(str(raw.get("url") or ""))
+            enabled = bool(raw.get("enabled", True))
+            reason = _normalize_disabled_reason(raw.get("disabled_reason"))
+            disabled_at = _to_float_or_none(raw.get("disabled_at"))
+        else:
+            continue
+
+        if not url or url in seen:
+            continue
+        seen.add(url)
+
+        if enabled:
+            reason = ""
+            disabled_at = None
+        else:
+            if not reason:
+                reason = "manual_disabled"
+            if disabled_at is None:
+                disabled_at = now
+
+        out.append(
+            {
+                "url": url,
+                "enabled": bool(enabled),
+                "disabled_reason": reason,
+                "disabled_at": disabled_at,
+            }
+        )
+    return out
 
 
 def runtime_windows_urls_key(*, key_prefix: str) -> str:
@@ -124,29 +184,137 @@ class WindowsNodePool:
         digest = hashlib.sha1(url.encode("utf-8")).hexdigest()[:12]
         return f"{self._prefix}:windows:inflight:{digest}"
 
-    def get_active_urls(self, *, default_urls: Sequence[str]) -> list[str]:
+    def get_runtime_nodes(self) -> list[dict[str, Any]]:
         try:
             raw = self._r.get(self.runtime_key)
         except Exception:
             raw = None
-        if raw:
-            try:
-                obj = json.loads(raw)
-            except Exception:
-                obj = None
-            if isinstance(obj, list):
-                urls = normalize_windows_urls(str(x) for x in obj)
-                if urls:
-                    return urls
-        return normalize_windows_urls(default_urls)
+        if not raw:
+            return []
+        try:
+            obj = json.loads(raw)
+        except Exception:
+            return []
+        if isinstance(obj, list):
+            # Backward-compatible format: ["http://node-a:8000", ...]
+            return normalize_windows_nodes(obj)
+        if not isinstance(obj, dict):
+            return []
+        nodes_raw = obj.get("nodes")
+        if not isinstance(nodes_raw, list):
+            return []
+        return normalize_windows_nodes(nodes_raw)
+
+    def get_runtime_urls(self) -> list[str]:
+        nodes = self.get_runtime_nodes()
+        return [str(node["url"]) for node in nodes if bool(node.get("enabled", True))]
+
+    def get_effective_nodes(self, *, default_urls: Sequence[str]) -> list[dict[str, Any]]:
+        runtime_nodes = self.get_runtime_nodes()
+        if runtime_nodes:
+            return runtime_nodes
+        return normalize_windows_nodes(default_urls)
+
+    def get_active_urls(self, *, default_urls: Sequence[str]) -> list[str]:
+        nodes = self.get_effective_nodes(default_urls=default_urls)
+        return [str(node["url"]) for node in nodes if bool(node.get("enabled", True))]
+
+    def set_runtime_nodes(self, nodes: Sequence[Any]) -> list[dict[str, Any]]:
+        normalized = normalize_windows_nodes(nodes)
+        if normalized:
+            payload = {"nodes": normalized}
+            self._r.set(self.runtime_key, json.dumps(payload, ensure_ascii=False))
+        else:
+            self._r.delete(self.runtime_key)
+        return normalized
 
     def set_active_urls(self, urls: Sequence[str]) -> list[str]:
         normalized = normalize_windows_urls(urls)
         if normalized:
-            self._r.set(self.runtime_key, json.dumps(normalized, ensure_ascii=False))
-        else:
-            self._r.delete(self.runtime_key)
-        return normalized
+            self.set_runtime_nodes([{"url": u, "enabled": True} for u in normalized])
+            return normalized
+        self._r.delete(self.runtime_key)
+        return []
+
+    def _set_node_enabled(
+        self,
+        *,
+        url: str,
+        enabled: bool,
+        reason: str,
+        default_urls: Sequence[str],
+    ) -> tuple[list[dict[str, Any]], bool]:
+        normalized = normalize_windows_url(url)
+        if not normalized:
+            return self.get_effective_nodes(default_urls=default_urls), False
+
+        nodes = self.get_effective_nodes(default_urls=default_urls)
+        changed = False
+        found = False
+        disabled_reason = _normalize_disabled_reason(reason)
+        if not disabled_reason and not enabled:
+            disabled_reason = "auto_disabled"
+
+        for node in nodes:
+            if str(node.get("url") or "") != normalized:
+                continue
+            found = True
+            prev_enabled = bool(node.get("enabled", True))
+            prev_reason = str(node.get("disabled_reason") or "")
+            if prev_enabled != bool(enabled):
+                changed = True
+            if not enabled and prev_reason != disabled_reason:
+                changed = True
+            if enabled:
+                node["enabled"] = True
+                node["disabled_reason"] = ""
+                node["disabled_at"] = None
+            else:
+                node["enabled"] = False
+                node["disabled_reason"] = disabled_reason
+                node["disabled_at"] = time.time()
+
+        if not found:
+            changed = True
+            nodes.append(
+                {
+                    "url": normalized,
+                    "enabled": bool(enabled),
+                    "disabled_reason": "" if enabled else disabled_reason,
+                    "disabled_at": None if enabled else time.time(),
+                }
+            )
+
+        if changed:
+            nodes = self.set_runtime_nodes(nodes)
+        return nodes, changed
+
+    def disable_node(
+        self,
+        *,
+        url: str,
+        reason: str,
+        default_urls: Sequence[str],
+    ) -> tuple[list[dict[str, Any]], bool]:
+        return self._set_node_enabled(
+            url=url,
+            enabled=False,
+            reason=reason,
+            default_urls=default_urls,
+        )
+
+    def enable_node(
+        self,
+        *,
+        url: str,
+        default_urls: Sequence[str],
+    ) -> tuple[list[dict[str, Any]], bool]:
+        return self._set_node_enabled(
+            url=url,
+            enabled=True,
+            reason="",
+            default_urls=default_urls,
+        )
 
     def reserve_best(self, candidate_urls: Sequence[str]) -> str:
         urls = normalize_windows_urls(candidate_urls)
