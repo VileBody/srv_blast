@@ -2513,18 +2513,27 @@ class BlastBotApp:
         text = str(message.text or "").strip()
         if text.startswith("@") and len(text) > 1:
             tag = text.lower()
+
+            own_username = (st.chat_username or "").strip().lower().lstrip("@")
+            entered_username = tag.lstrip("@")
+            if own_username and entered_username == own_username:
+                await message.answer(
+                    "Это твой собственный тег 😅 Укажи тег друга, которого хочешь пригласить."
+                )
+                return
+
+            already_in_bot = await self._find_chat_by_username(entered_username)
+            if already_in_bot:
+                await message.answer(
+                    "Этот пользователь уже есть в боте. Укажи тег друга, которого ещё нет."
+                )
+                return
+
             st.referral_tag = tag
             st.stage = STAGE_WAITING_REFERRAL
             st.referral_wait_started_at = time.time()
             await self.store.set(st)
             await self.store.set_referral(tag, st.chat_id)
-
-            friend_username = tag.lstrip("@")
-            friend_already = await self._find_chat_by_username(friend_username, exclude_chat_id=st.chat_id)
-            if friend_already:
-                await self.credits_db.log_event(st.chat_id, "referral_matched", tag)
-                await self._activate_referral_reward(referrer_st=st, referral_tag=tag)
-                return
 
             await self.credits_db.log_event(st.chat_id, "referral_sent", tag)
             await message.answer(
