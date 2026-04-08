@@ -335,10 +335,6 @@ def _optional_user_clip_window_from_env(*, logger: logging.Logger) -> Optional[T
     if end <= start:
         raise RuntimeError(f"USER_CLIP_END_SEC must be > USER_CLIP_START_SEC (got {start}..{end})")
     dur = float(end - start)
-    if dur < CLIP_WINDOW_MIN_SECONDS - 1e-6:
-        raise RuntimeError(
-            f"user clip duration must be >= {CLIP_WINDOW_MIN_LABEL} seconds (got {dur:.3f})"
-        )
     logger.info(
         "user_clip_window_input start=%.3f end=%.3f dur=%.3f",
         float(start),

@@ -7,6 +7,7 @@ import pytest
 from mlcore import gemini_orchestrator as go
 from mlcore.models.stage1_asr import Stage1AsrPayload
 from mlcore.models.stage1_plan import Stage1PlanPayload
+from mlcore.models.subtitles_tokens import ClipWindow
 
 
 def _draft_blocks() -> dict:
@@ -81,6 +82,13 @@ def test_optional_user_clip_window_env_parse(monkeypatch: pytest.MonkeyPatch) ->
     assert out == (12.5, 33.0)
 
 
+def test_optional_user_clip_window_env_allows_short_duration(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("USER_CLIP_START_SEC", "5.0")
+    monkeypatch.setenv("USER_CLIP_END_SEC", "17.0")
+    out = go._optional_user_clip_window_from_env(logger=logging.getLogger("test.user_clip"))
+    assert out == (5.0, 17.0)
+
+
 def test_optional_user_clip_window_env_requires_both_values(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("USER_CLIP_START_SEC", "12.5")
     monkeypatch.delenv("USER_CLIP_END_SEC", raising=False)
@@ -103,3 +111,39 @@ def test_apply_user_clip_window_updates_stage1_window_and_context() -> None:
     assert words == ["w2", "w3", "w4"]
     pauses = [(float(p.t_start), float(p.t_end)) for p in updated.pause_spans]
     assert pauses == [(7.2, 8.0), (15.0, 15.5)]
+
+
+def test_apply_user_clip_window_allows_short_duration() -> None:
+    updated = go._apply_user_clip_window_to_stage1(
+        stage1=_stage1_plan_payload(),
+        stage1_asr=_stage1_asr_payload(),
+        start_abs=5.0,
+        end_abs=17.0,
+        logger=logging.getLogger("test.user_clip"),
+    )
+    assert abs(float(updated.audio.clip_start_abs) - 5.0) <= 1e-6
+    assert abs(float(updated.audio.clip_end_abs) - 17.0) <= 1e-6
+
+
+def test_stage1_asr_selected_fragment_allows_short_duration() -> None:
+    payload = _stage1_asr_payload().model_dump(mode="json")
+    payload["selected_fragment"] = {
+        "audio": {"clip_start_abs": 5.0, "clip_end_abs": 17.0},
+        "transcript_words": [
+            {"text": "w2", "t_start": 6.0, "t_end": 7.0},
+            {"text": "w3", "t_start": 10.0, "t_end": 11.0},
+            {"text": "w4", "t_start": 16.0, "t_end": 17.0},
+        ],
+        "pause_spans": [{"text": "[pause]", "t_start": 7.2, "t_end": 8.0}],
+        "srt_items": [],
+    }
+    out = Stage1AsrPayload.model_validate(payload)
+    assert out.selected_fragment is not None
+    assert abs(float(out.selected_fragment.audio.clip_start_abs) - 5.0) <= 1e-6
+    assert abs(float(out.selected_fragment.audio.clip_end_abs) - 17.0) <= 1e-6
+
+
+def test_subtitles_clip_window_allows_short_duration() -> None:
+    clip = ClipWindow.model_validate({"start": 5.0, "end": 17.0})
+    assert abs(float(clip.start) - 5.0) <= 1e-6
+    assert abs(float(clip.end) - 17.0) <= 1e-6
