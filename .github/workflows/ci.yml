@@ -17,6 +17,33 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Team/Public parity gate
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_REF: ${{ github.base_ref }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            BASE_REF="origin/${PR_BASE_REF}"
+            git fetch --no-tags --depth=1 origin "${PR_BASE_REF}:${PR_BASE_REF}" || true
+            git branch --list "${PR_BASE_REF}" >/dev/null 2>&1 && BASE_REF="${PR_BASE_REF}"
+          else
+            BASE_REF="$PUSH_BEFORE_SHA"
+          fi
+
+          if [ -z "${BASE_REF:-}" ] || [ "$BASE_REF" = "0000000000000000000000000000000000000000" ]; then
+            echo "parity-check: unable to resolve base ref for this event, skipping."
+            exit 0
+          fi
+
+          python scripts/check_team_public_parity.py \
+            --base-ref "$BASE_REF" \
+            --head-ref "$HEAD_SHA"
 
       - name: Setup Python
         uses: actions/setup-python@v5

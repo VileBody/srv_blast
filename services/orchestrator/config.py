@@ -20,7 +20,8 @@ def _int_env(key: str, default: int) -> int:
 
 
 def _windows_render_api_mode_env() -> str:
-    raw = _env("WINDOWS_RENDER_API_MODE", "jobs").lower()
+    # Async render contract is the default and production baseline.
+    raw = _env("WINDOWS_RENDER_API_MODE", "render").lower()
     if raw not in {"render", "jobs"}:
         raise ValueError(
             "WINDOWS_RENDER_API_MODE must be one of: render, jobs "

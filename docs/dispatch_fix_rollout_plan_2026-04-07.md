@@ -9,7 +9,7 @@
 Сделано в коде:
 
 1. Orchestrator переведен на явный API mode:
-   - добавлен `WINDOWS_RENDER_API_MODE=render|jobs`;
+   - добавлен `WINDOWS_RENDER_API_MODE` (production baseline: `render`);
    - убран implicit fallback `/render -> /jobs` в `WindowsRenderClient`.
 2. Для `WINDOWS_RENDER_API_MODE=render` используется strict async flow:
    - dispatch ожидает `render_id`;
@@ -21,8 +21,8 @@
 
 Важно по rollout:
 
-- default mode в orchestrator оставлен `jobs` для безопасного включения;
-- после выката `windows/render-node-runtime` на donor/clone переключить orchestrator env на `WINDOWS_RENDER_API_MODE=render`.
+- sync `/jobs` dispatch в orchestrator отключен;
+- orchestrator требует `WINDOWS_RENDER_API_MODE=render` и фейлит явной ошибкой при другом значении.
 
 ## Фаза 0 — Быстрый стабилизатор (сразу)
 
@@ -43,9 +43,9 @@
 ## Фаза 1 — Контракт API (короткий горизонт)
 
 1. Ввести явный режим Windows API (без implicit fallback):
-   - `WINDOWS_RENDER_API_MODE=render|jobs`.
+   - `WINDOWS_RENDER_API_MODE=render` (async-only в orchestrator).
 2. Убрать неявный `/render -> /jobs` fallback в клиенте.
-3. Для production выбрать один режим детерминированно (рекомендуется `render` async).
+3. Для production оставить один детерминированный режим: `render` async.
 
 Ожидаемый эффект:
 
@@ -98,7 +98,7 @@
 ## Rollback
 
 1. Фича-флаг Фазы 0 выключаем мгновенно.
-2. Возврат к предыдущему client-mode через env (`WINDOWS_RENDER_API_MODE`).
+2. Возврат к mixed-mode возможен только откатом orchestrator релиза (env-only rollback больше не используется).
 3. В крайнем случае откат конкретного orchestrator релиза.
 
 ## Пункты Со Звездочкой (после стабилизации donor)

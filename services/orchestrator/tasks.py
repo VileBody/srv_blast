@@ -1228,6 +1228,13 @@ def dispatch_to_windows(self, job_id: str) -> Dict[str, Any]:
     res: Dict[str, Any] | None = None
     errors_by_node: list[str] = []
     remaining = list(active_urls)
+    api_mode = str(SETTINGS.windows_render_api_mode or "").strip().lower()
+    if api_mode != "render":
+        raise RuntimeError(
+            "windows_dispatch_contract_mismatch: "
+            "orchestrator dispatch now requires async render contract "
+            "(set WINDOWS_RENDER_API_MODE=render; /jobs sync dispatch is disabled)"
+        )
 
     while remaining:
         candidate = pool.reserve_best(remaining)
@@ -1252,7 +1259,7 @@ def dispatch_to_windows(self, job_id: str) -> Dict[str, Any]:
         client = WindowsRenderClient(
             candidate,
             timeout_s=SETTINGS.windows_timeout_s,
-            api_mode=SETTINGS.windows_render_api_mode,
+            api_mode="render",
         )
         try:
             maybe_res = client.dispatch_render(win_payload)
@@ -1299,19 +1306,9 @@ def dispatch_to_windows(self, job_id: str) -> Dict[str, Any]:
     if not selected_url or res is None:
         raise RuntimeError(f"windows_dispatch_failed: no_node_selected errors={errors_by_node!r}")
 
-    if res.get("_api") == "jobs":
-        ok = bool(res.get("success", False))
-        if ok:
-            out_url = res.get("output_url") or res.get("output_s3_url") or None
-            artifacts_url = _extract_artifacts_source(res) or None
-            result_payload: Dict[str, Any] = {"windows": res, "output_url": out_url}
-            if artifacts_url:
-                result_payload["project_archive_url"] = artifacts_url
-            store.set_status(job_id, "SUCCEEDED", stage="render", result=result_payload)
-            pool.release(selected_url)
-            return {"ok": True, "mode": "sync_jobs", "windows": res}
+    if str(res.get("_api") or "").strip().lower() != "render":
         pool.release(selected_url)
-        raise RuntimeError(f"windows_failed(sync_jobs): {res}")
+        raise RuntimeError(f"windows_dispatch_contract_mismatch: expected async render response, got {res!r}")
 
     render_id = str(res.get("render_id") or "").strip()
     if not render_id:
