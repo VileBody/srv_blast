@@ -41,10 +41,20 @@ services:
       - -ec
       - |
           cfg=/tmp/alertmanager.yml
-          sed \
-            -e "s|\$${ALERT_TELEGRAM_BOT_TOKEN}|${ALERT_TELEGRAM_BOT_TOKEN:-}|g" \
-            -e "s|\$${ALERT_TELEGRAM_CHAT_ID}|${ALERT_TELEGRAM_CHAT_ID:-0}|g" \
-            /etc/alertmanager/alertmanager.yml > "$$cfg"
+          if [ -n "$${ALERT_TELEGRAM_BOT_TOKEN:-}" ] && [ -n "$${ALERT_TELEGRAM_CHAT_ID:-}" ]; then
+            sed \
+              -e "s|\$${ALERT_TELEGRAM_BOT_TOKEN}|$${ALERT_TELEGRAM_BOT_TOKEN}|g" \
+              -e "s|\$${ALERT_TELEGRAM_CHAT_ID}|$${ALERT_TELEGRAM_CHAT_ID}|g" \
+              /etc/alertmanager/alertmanager.yml > "$$cfg"
+          else
+            printf '%s\n' \
+              'global:' \
+              '  resolve_timeout: 5m' \
+              'route:' \
+              '  receiver: "null"' \
+              'receivers:' \
+              '  - name: "null"' > "$$cfg"
+          fi
           exec alertmanager \
             --config.file="$$cfg" \
             --storage.path=/alertmanager \
