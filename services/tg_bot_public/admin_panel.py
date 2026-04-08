@@ -7,6 +7,11 @@ import html as html_mod
 import json
 import logging
 import secrets
+import shlex
+import sys
+import time
+from collections import deque
+from pathlib import Path
 from urllib.parse import quote as url_quote, quote_plus
 from typing import TYPE_CHECKING
 
@@ -18,9 +23,6 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from services.orchestrator.windows_node_pool import normalize_windows_urls, runtime_windows_urls_key
 
 from .render_node_pool import (
-    RenderNodePoolError,
-    create_render_server_from_clone,
-    delete_render_server,
     list_render_servers,
     probe_render_node,
 )
@@ -512,6 +514,207 @@ def build_app(
         except Exception:
             return {}
 
+    async def _orchestrator_get_windows_nodes() -> dict:
+        base = str(settings.orchestrator_public_url or "").strip().rstrip("/")
+        if not base:
+            raise RuntimeError("ORCHESTRATOR_PUBLIC_URL is empty")
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            resp = await client.get(f"{base}/windows-nodes")
+        if resp.status_code >= 300:
+            raise RuntimeError(f"orchestrator GET /windows-nodes failed: {resp.status_code} {resp.text}")
+        data = resp.json()
+        if not isinstance(data, dict):
+            raise RuntimeError(f"orchestrator GET /windows-nodes returned non-object: {data!r}")
+        return data
+
+    donor_restart_state: dict[str, object] = {
+        "run_id": 0,
+        "running": False,
+        "status": "idle",
+        "started_at": 0.0,
+        "finished_at": 0.0,
+        "initiator": "",
+        "summary": "",
+        "last_error": "",
+        "command": "",
+        "log_tail": deque(maxlen=300),
+    }
+    donor_restart_lock = asyncio.Lock()
+
+    def _cfg_bool(name: str, default: bool) -> bool:
+        return bool(getattr(settings, name, default))
+
+    def _cfg_str(name: str, default: str = "") -> str:
+        return str(getattr(settings, name, default) or "").strip()
+
+    def _cfg_int(name: str, default: int) -> int:
+        try:
+            return int(getattr(settings, name, default))
+        except Exception:
+            return int(default)
+
+    def _cfg_float(name: str, default: float) -> float:
+        try:
+            return float(getattr(settings, name, default))
+        except Exception:
+            return float(default)
+
+    def _donor_restart_enabled() -> bool:
+        return _cfg_bool("admin_panel_enable_donor_restart", False)
+
+    def _build_donor_restart_command() -> list[str]:
+        if not _donor_restart_enabled():
+            raise RuntimeError("ADMIN_PANEL_ENABLE_DONOR_RESTART is disabled")
+
+        node_host = _cfg_str("windows_donor_host")
+        node_user = _cfg_str("windows_donor_user", "Administrator") or "Administrator"
+        node_password = _cfg_str("windows_donor_password")
+        test_node_url = _cfg_str("windows_donor_url", "http://85.239.48.31:8000")
+        orchestrator_url = _cfg_str("orchestrator_public_url")
+        canary_audio_url = _cfg_str("windows_donor_canary_audio_s3_url")
+        canary_mode = _cfg_str("windows_donor_canary_mode", "with_gemini") or "with_gemini"
+        llm_worker_type = _cfg_str("windows_donor_llm_worker_type", "openrouter")
+
+        if not node_host:
+            raise RuntimeError("WINDOWS_DONOR_HOST is empty")
+        if not node_password:
+            raise RuntimeError("WINDOWS_DONOR_PASSWORD is empty")
+        if not test_node_url:
+            raise RuntimeError("WINDOWS_DONOR_URL is empty")
+        if not orchestrator_url:
+            raise RuntimeError("ORCHESTRATOR_PUBLIC_URL is empty")
+        if not canary_audio_url:
+            raise RuntimeError("WINDOWS_DONOR_CANARY_AUDIO_S3_URL is empty")
+        if canary_mode not in {"with_gemini", "no_gemini"}:
+            raise RuntimeError("WINDOWS_DONOR_CANARY_MODE must be with_gemini|no_gemini")
+
+        script_path = (Path(__file__).resolve().parents[2] / "scripts" / "windows_node_rollout.py").resolve()
+        if not script_path.exists():
+            raise RuntimeError(f"windows rollout script not found: {script_path}")
+
+        cmd = [
+            sys.executable,
+            str(script_path),
+            "--node-host",
+            node_host,
+            "--node-user",
+            node_user,
+            "--node-password",
+            node_password,
+            "--test-node-url",
+            test_node_url,
+            "--orchestrator-url",
+            orchestrator_url,
+            "--canary-audio-s3-url",
+            canary_audio_url,
+            "--canary-mode",
+            canary_mode,
+            "--health-timeout-sec",
+            str(max(30, _cfg_int("windows_donor_health_timeout_s", 180))),
+            "--health-poll-sec",
+            str(max(1, _cfg_int("windows_donor_health_poll_s", 2))),
+            "--canary-timeout-sec",
+            str(max(60, _cfg_int("windows_donor_canary_timeout_s", 1800))),
+            "--canary-poll-sec",
+            str(max(1.0, _cfg_float("windows_donor_canary_poll_s", 5.0))),
+        ]
+        if llm_worker_type:
+            cmd.extend(["--llm-worker-type", llm_worker_type])
+        if _cfg_bool("windows_donor_start_afterfx", True):
+            cmd.append("--start-afterfx")
+        if _cfg_bool("windows_donor_kill_afterfx_first", True):
+            cmd.append("--kill-afterfx-first")
+        if _cfg_bool("windows_donor_skip_restart", False):
+            cmd.append("--skip-restart")
+        return cmd
+
+    def _command_display(cmd: list[str]) -> str:
+        masked: list[str] = []
+        i = 0
+        while i < len(cmd):
+            part = str(cmd[i])
+            if part == "--node-password" and (i + 1) < len(cmd):
+                masked.extend([part, "***"])
+                i += 2
+                continue
+            masked.append(part)
+            i += 1
+        return " ".join(shlex.quote(x) for x in masked)
+
+    async def _donor_restart_snapshot() -> dict[str, object]:
+        async with donor_restart_lock:
+            snap: dict[str, object] = {}
+            for k, v in donor_restart_state.items():
+                if k == "log_tail":
+                    snap[k] = list(v) if isinstance(v, deque) else []
+                else:
+                    snap[k] = v
+            return snap
+
+    async def _run_donor_restart_background(*, run_id: int, actor: str, cmd: list[str]) -> None:
+        async with donor_restart_lock:
+            donor_restart_state["running"] = True
+            donor_restart_state["status"] = "running"
+            donor_restart_state["started_at"] = float(time.time())
+            donor_restart_state["finished_at"] = 0.0
+            donor_restart_state["initiator"] = str(actor or "")
+            donor_restart_state["summary"] = "running"
+            donor_restart_state["last_error"] = ""
+            donor_restart_state["command"] = _command_display(cmd)
+            tail = donor_restart_state.get("log_tail")
+            if isinstance(tail, deque):
+                tail.clear()
+                tail.append(f"[run {run_id}] starting")
+            donor_restart_state["run_id"] = int(run_id)
+
+        rc = -1
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            assert proc.stdout is not None
+            while True:
+                chunk = await proc.stdout.readline()
+                if not chunk:
+                    break
+                line = chunk.decode("utf-8", errors="replace").rstrip()
+                if not line:
+                    continue
+                log.info("donor_restart run_id=%s line=%s", run_id, line)
+                async with donor_restart_lock:
+                    tail = donor_restart_state.get("log_tail")
+                    if isinstance(tail, deque):
+                        tail.append(line)
+            rc = int(await proc.wait())
+        except Exception as e:
+            async with donor_restart_lock:
+                donor_restart_state["running"] = False
+                donor_restart_state["status"] = "failed"
+                donor_restart_state["finished_at"] = float(time.time())
+                donor_restart_state["summary"] = "failed_to_start"
+                donor_restart_state["last_error"] = repr(e)
+                tail = donor_restart_state.get("log_tail")
+                if isinstance(tail, deque):
+                    tail.append(f"exception: {e!r}")
+            return
+
+        async with donor_restart_lock:
+            donor_restart_state["running"] = False
+            donor_restart_state["finished_at"] = float(time.time())
+            if rc == 0:
+                donor_restart_state["status"] = "succeeded"
+                donor_restart_state["summary"] = "completed"
+                donor_restart_state["last_error"] = ""
+            else:
+                donor_restart_state["status"] = "failed"
+                donor_restart_state["summary"] = f"failed_rc={rc}"
+                donor_restart_state["last_error"] = f"return_code={rc}"
+            tail = donor_restart_state.get("log_tail")
+            if isinstance(tail, deque):
+                tail.append(f"[run {run_id}] finished rc={rc}")
+
     # ── Dashboard ─────────────────────────────────────────────────────
 
     @app.get("/admin/", response_class=HTMLResponse)
@@ -764,6 +967,201 @@ def build_app(
         '''}
         """
         return _page("Blast Admin", body)
+
+    # ── Render nodes / donor restart ────────────────────────────────
+
+    @app.get("/admin/render-nodes", response_class=HTMLResponse)
+    async def render_nodes_page(request: Request, _user: str = Depends(_check_auth)) -> str:
+        ok_msg = html_mod.escape(str(request.query_params.get("ok", "")).strip())
+        err_msg = html_mod.escape(str(request.query_params.get("err", "")).strip())
+
+        donor_url = _cfg_str("windows_donor_url", "http://85.239.48.31:8000")
+        donor_host = _cfg_str("windows_donor_host", "85.239.48.31")
+        canary_audio = _cfg_str("windows_donor_canary_audio_s3_url")
+        orchestrator_url = _cfg_str("orchestrator_public_url")
+        restart_enabled = _donor_restart_enabled()
+
+        pool_data: dict[str, object] = {}
+        pool_err = ""
+        try:
+            pool_data = await _orchestrator_get_windows_nodes()
+        except Exception as e:
+            pool_err = html_mod.escape(str(e))
+
+        runtime_urls = []
+        effective_urls = []
+        nodes = []
+        if isinstance(pool_data, dict):
+            runtime_urls = normalize_windows_urls(pool_data.get("runtime_urls") or [])
+            effective_urls = normalize_windows_urls(pool_data.get("effective_urls") or [])
+            nodes_obj = pool_data.get("nodes")
+            nodes = nodes_obj if isinstance(nodes_obj, list) else []
+
+        donor_probe = {"root": 0, "render": 0, "jobs": 0}
+        donor_probe_err = ""
+        try:
+            donor_probe = await probe_render_node(donor_url, timeout_s=5.0)
+        except Exception as e:
+            donor_probe_err = html_mod.escape(str(e))
+
+        twc_rows = ""
+        twc_err = ""
+        twc_token = _cfg_str("twc_token")
+        twc_prefix = _cfg_str("twc_render_name_prefix", "blast-render-node")
+        twc_source_id = max(0, _cfg_int("twc_render_source_server_id", 0))
+        if twc_token:
+            try:
+                include_ids = {twc_source_id} if twc_source_id > 0 else set()
+                servers = await list_render_servers(
+                    token=twc_token,
+                    name_prefix=twc_prefix,
+                    include_ids=include_ids,
+                )
+                for srv in servers:
+                    if not isinstance(srv, dict):
+                        continue
+                    sid = int(srv.get("id") or 0)
+                    name = html_mod.escape(str(srv.get("name") or ""))
+                    status = html_mod.escape(str(srv.get("status") or ""))
+                    ipv4 = html_mod.escape(str(srv.get("ipv4") or ""))
+                    twc_rows += (
+                        f"<tr><td>{sid}</td><td>{name or '—'}</td><td>{status or '—'}</td>"
+                        f"<td>{ipv4 or '—'}</td><td>{html_mod.escape(str(srv.get('updated_at') or ''))}</td></tr>"
+                    )
+            except Exception as e:
+                twc_err = html_mod.escape(str(e))
+
+        node_rows = ""
+        for row in nodes:
+            if not isinstance(row, dict):
+                continue
+            url = html_mod.escape(str(row.get("url") or ""))
+            enabled = bool(row.get("enabled", True))
+            reason = html_mod.escape(str(row.get("disabled_reason") or ""))
+            disabled_at = row.get("disabled_at")
+            node_rows += (
+                f"<tr><td>{url or '—'}</td>"
+                f"<td>{'on' if enabled else 'off'}</td>"
+                f"<td>{reason or '—'}</td>"
+                f"<td>{disabled_at if disabled_at is not None else '—'}</td></tr>"
+            )
+
+        restart_snap = await _donor_restart_snapshot()
+        restart_running = bool(restart_snap.get("running", False))
+        restart_status = html_mod.escape(str(restart_snap.get("status") or "idle"))
+        restart_summary = html_mod.escape(str(restart_snap.get("summary") or ""))
+        restart_error = html_mod.escape(str(restart_snap.get("last_error") or ""))
+        restart_started = float(restart_snap.get("started_at") or 0.0)
+        restart_finished = float(restart_snap.get("finished_at") or 0.0)
+        restart_run_id = int(restart_snap.get("run_id") or 0)
+        restart_actor = html_mod.escape(str(restart_snap.get("initiator") or ""))
+        restart_cmd = html_mod.escape(str(restart_snap.get("command") or ""))
+        log_tail = restart_snap.get("log_tail")
+        log_lines = log_tail if isinstance(log_tail, list) else []
+        restart_log_html = html_mod.escape("\n".join(str(x) for x in log_lines[-120:])) or "—"
+        restart_btn_disabled = " disabled" if restart_running else ""
+        restart_btn_label = "Restart in progress..." if restart_running else "Restart donor + canary"
+
+        runtime_key = runtime_windows_urls_key(key_prefix=_cfg_str("jobstore_prefix", "blast"))
+        runtime_urls_html = ", ".join(html_mod.escape(u) for u in runtime_urls) or "—"
+        effective_urls_html = ", ".join(html_mod.escape(u) for u in effective_urls) or "—"
+        canary_audio_present = "yes" if bool(canary_audio) else "no"
+
+        body = f"""
+        <div class="card">
+        <h2>Donor restart control</h2>
+        {f"<p style='color:#1e8449'><strong>OK:</strong> {ok_msg}</p>" if ok_msg else ""}
+        {f"<p style='color:#c0392b'><strong>Ошибка:</strong> {err_msg}</p>" if err_msg else ""}
+        <p><strong>Enabled:</strong> {'yes' if restart_enabled else 'no'}<br>
+           <strong>Donor host:</strong> <code>{html_mod.escape(donor_host or '—')}</code><br>
+           <strong>Donor URL:</strong> <code>{html_mod.escape(donor_url or '—')}</code><br>
+           <strong>Orchestrator URL:</strong> <code>{html_mod.escape(orchestrator_url or '—')}</code><br>
+           <strong>Canary audio configured:</strong> {canary_audio_present}</p>
+        <form method="post" action="/admin/render-nodes/restart-donor"
+              onsubmit="return confirm('Restart donor and run canary?');">
+          <button type="submit" class="btn-danger"{restart_btn_disabled}>{restart_btn_label}</button>
+        </form>
+        <p style="margin-top:8px;color:#666;font-size:0.88em">
+          Запуск идет в фоне через <code>scripts/windows_node_rollout.py</code>.
+          Повторный старт блокируется, пока текущий run не завершится.
+        </p>
+        </div>
+
+        <div class="card">
+        <h3>Restart run status</h3>
+        <p><strong>run_id:</strong> {restart_run_id} &nbsp;|&nbsp;
+           <strong>status:</strong> {restart_status} &nbsp;|&nbsp;
+           <strong>initiator:</strong> {restart_actor or '—'}</p>
+        <p><strong>started_at:</strong> {restart_started or '—'} &nbsp;|&nbsp;
+           <strong>finished_at:</strong> {restart_finished or '—'}</p>
+        <p><strong>summary:</strong> {restart_summary or '—'}</p>
+        {f"<p style='color:#c0392b'><strong>error:</strong> {restart_error}</p>" if restart_error else ""}
+        <p><strong>command:</strong> <code>{restart_cmd or '—'}</code></p>
+        <pre style="white-space:pre-wrap;max-height:360px;overflow:auto;background:#f8f9fa;padding:12px;border-radius:6px;font-size:0.82em">{restart_log_html}</pre>
+        </div>
+
+        <div class="card">
+        <h3>Runtime pool</h3>
+        {f"<p style='color:#c0392b'><strong>Ошибка:</strong> {pool_err}</p>" if pool_err else ""}
+        <p><strong>runtime key:</strong> <code>{html_mod.escape(runtime_key)}</code><br>
+           <strong>runtime urls:</strong> {runtime_urls_html}<br>
+           <strong>effective urls:</strong> {effective_urls_html}</p>
+        <div class="table-wrap">
+        <table><tr><th>URL</th><th>Enabled</th><th>Disabled reason</th><th>Disabled at</th></tr>
+        {node_rows if node_rows else '<tr><td colspan="4">Нет данных</td></tr>'}</table>
+        </div>
+        </div>
+
+        <div class="card">
+        <h3>Donor probe</h3>
+        {f"<p style='color:#c0392b'><strong>Ошибка:</strong> {donor_probe_err}</p>" if donor_probe_err else ""}
+        <p><strong>root:</strong> {int(donor_probe.get('root', 0) or 0)} &nbsp;|&nbsp;
+           <strong>render:</strong> {int(donor_probe.get('render', 0) or 0)} &nbsp;|&nbsp;
+           <strong>jobs:</strong> {int(donor_probe.get('jobs', 0) or 0)}</p>
+        </div>
+
+        <div class="card">
+        <h3>Timeweb Windows servers</h3>
+        {f"<p style='color:#c0392b'><strong>Ошибка:</strong> {twc_err}</p>" if twc_err else ""}
+        <div class="table-wrap">
+        <table><tr><th>ID</th><th>Name</th><th>Status</th><th>IPv4</th><th>Updated</th></tr>
+        {twc_rows if twc_rows else '<tr><td colspan="5">Нет данных (или TWC_TOKEN не задан)</td></tr>'}</table>
+        </div>
+        </div>
+        """
+        return _page("Render Nodes", body)
+
+    @app.post("/admin/render-nodes/restart-donor")
+    async def restart_donor(_user: str = Depends(_check_auth)) -> RedirectResponse:
+        if not _donor_restart_enabled():
+            return RedirectResponse(
+                f"/admin/render-nodes?err={quote_plus('ADMIN_PANEL_ENABLE_DONOR_RESTART is disabled')}",
+                status_code=303,
+            )
+
+        async with donor_restart_lock:
+            if bool(donor_restart_state.get("running", False)):
+                run_id = int(donor_restart_state.get("run_id") or 0)
+                return RedirectResponse(
+                    f"/admin/render-nodes?err={quote_plus(f'restart already running run_id={run_id}')}",
+                    status_code=303,
+                )
+            run_id = int(donor_restart_state.get("run_id") or 0) + 1
+            donor_restart_state["run_id"] = run_id
+
+        try:
+            cmd = _build_donor_restart_command()
+        except Exception as e:
+            return RedirectResponse(
+                f"/admin/render-nodes?err={quote_plus(str(e))}",
+                status_code=303,
+            )
+
+        asyncio.create_task(_run_donor_restart_background(run_id=run_id, actor=_user, cmd=cmd))
+        return RedirectResponse(
+            f"/admin/render-nodes?ok={quote_plus(f'restart started run_id={run_id}')}",
+            status_code=303,
+        )
 
     # ── Users list ────────────────────────────────────────────────────
 

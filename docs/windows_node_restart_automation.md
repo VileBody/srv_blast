@@ -42,6 +42,30 @@ python scripts/windows_node_rollout.py \
 
 Скрипт пишет JSON-логи в stdout (`event=...`) и завершится non-zero кодом при любой ошибке.
 
+## Кнопка в Admin Panel
+
+Доступна страница: `/admin/render-nodes`.
+
+Кнопка `Restart donor + canary` запускает тот же `scripts/windows_node_rollout.py` в фоне и показывает live tail логов на странице.
+
+Обязательные env для кнопки:
+
+- `ADMIN_PANEL_ENABLE_DONOR_RESTART=1`
+- `WINDOWS_DONOR_HOST`
+- `WINDOWS_DONOR_PASSWORD`
+- `WINDOWS_DONOR_URL`
+- `WINDOWS_DONOR_CANARY_AUDIO_S3_URL`
+- `ORCHESTRATOR_PUBLIC_URL`
+
+Опциональные env:
+
+- `WINDOWS_DONOR_USER` (default: `Administrator`)
+- `WINDOWS_DONOR_CANARY_MODE` (`with_gemini|no_gemini`)
+- `WINDOWS_DONOR_LLM_WORKER_TYPE` (`sdk|openrouter|hybrid`)
+- `WINDOWS_DONOR_START_AFTERFX`, `WINDOWS_DONOR_KILL_AFTERFX_FIRST`
+- `WINDOWS_DONOR_HEALTH_TIMEOUT_S`, `WINDOWS_DONOR_HEALTH_POLL_S`
+- `WINDOWS_DONOR_CANARY_TIMEOUT_S`, `WINDOWS_DONOR_CANARY_POLL_S`
+
 ## API pool management
 
 Текущий runtime-состояние пула:
