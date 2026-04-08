@@ -15,7 +15,7 @@ from urllib.parse import parse_qsl, quote, unquote_plus
 import httpx
 from aiogram import Bot, Dispatcher, Router
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.filters import CommandStart
+from aiogram.filters import Command, CommandStart
 from aiogram.types import FSInputFile, KeyboardButton, Message, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from core.clip_window import CLIP_WINDOW_RANGE_S_LABEL
 from core.filesystem_hygiene import cleanup_jobs_artifacts, cleanup_tmp_chat_dirs
@@ -96,11 +96,11 @@ BTN_SUBSCRIBED = "Подписался!"
 BTN_SEND_TRACK = "Отправить трек"
 BTN_GENERATE_MORE = "Сгенерировать ещё"
 BTN_SEND_LYRICS = "Отправить текст"
-BTN_SKIP_LYRICS = "Не присылать текст"
-BTN_SEND_FRAGMENT = "Отправить интересующий фрагмент"
+BTN_SKIP_LYRICS = "Пусть ИИ угадает"
+BTN_SEND_FRAGMENT = "Указать строки из текста"
 BTN_SKIP_FRAGMENT = "На усмотрение ИИ"
 BTN_SET_TIMING = "Указать тайминг"
-BTN_SKIP_TIMING = "Весь трек / на усмотрение ИИ"
+BTN_SKIP_TIMING = "На усмотрение ИИ"
 BTN_CONFIRM_YES = "Да"
 BTN_CONFIRM_BACK = "Вернуться назад"
 BTN_BACK = "Назад"
@@ -993,6 +993,28 @@ class BlastBotApp:
             await self.credits_db.log_event(chat_id, "start", f"@{username}" if username else "")
             await self._move_to_onboarding(chat_id, message)
 
+        @self.router.message(Command("packets"))
+        async def _on_packets(message: Message) -> None:
+            if message.chat is None:
+                return
+            chat_id = int(message.chat.id)
+            st = await self.store.get(chat_id)
+            if st.stage == STAGE_PROCESSING:
+                await message.answer("Трек в процессе, подожди завершения.\nПакеты можно посмотреть после.")
+                return
+            await self._show_all_packages(message, st)
+
+        @self.router.message(Command("sendtrack"))
+        async def _on_sendtrack(message: Message) -> None:
+            if message.chat is None:
+                return
+            chat_id = int(message.chat.id)
+            st = await self.store.get(chat_id)
+            if st.stage == STAGE_PROCESSING:
+                await message.answer("Трек в процессе, подожди завершения.")
+                return
+            await self._move_to_wait_audio(chat_id, message)
+
         @self.router.message()
         async def _on_any_message(message: Message) -> None:
             if message.chat is None:
@@ -1237,10 +1259,10 @@ class BlastBotApp:
         bal = await self.credits_db.get_balance(chat_id)
         bal_text = f"\n\nДоступно генераций: {bal}" if bal > 0 else ""
         await message.answer(
-            f"Привет. Отправь трек аудио-файлом, и я соберу клип.{bal_text}",
+            f"Привет. Отправь трек аудио-файлом, и я соберу клип.{bal_text}\n\n"
+            "/packets — посмотреть тарифы",
             reply_markup=_kb([BTN_SEND_TRACK]),
         )
-        await message.answer("Пришли аудио-файл.")
 
     @staticmethod
     def _parse_timing(text: str) -> tuple[float, float] | None:
@@ -1304,7 +1326,8 @@ class BlastBotApp:
         await self.store.set(st)
         await message.answer(
             "Хочешь указать конкретный тайминг трека для клипа?\n"
-            "Например: 1:20-1:50 или 80-110 (в секундах).",
+            "Например: 1:20-1:50 или 80-110 (в секундах).\n"
+            "Максимальный тайминг: 25с.",
             reply_markup=_kb([BTN_SET_TIMING, BTN_SKIP_TIMING]),
         )
 
@@ -1324,7 +1347,7 @@ class BlastBotApp:
             await self._ask_footage_genre(message, st)
             return
         await message.answer(
-            "Выбери кнопку: «Указать тайминг» или «Весь трек / на усмотрение ИИ».",
+            "Выбери кнопку: «Указать тайминг» или «На усмотрение ИИ».",
         )
 
     async def _handle_wait_timing_input(self, message: Message, st: ChatState) -> None:
@@ -1552,11 +1575,9 @@ class BlastBotApp:
         st.stage = STAGE_WAIT_LYRICS_CHOICE
         await self.store.set(st)
 
-        size_mb = prep.size_bytes / (1024 * 1024)
-        limit_note = "<= лимита" if prep.under_limit else "> лимита (best-effort)"
         await message.answer(
-            f"Трек готов: mp3 {prep.bitrate}, {size_mb:.2f}MB ({limit_note}).\n"
-            "Хочешь прислать текст песни для субтитров?",
+            "Трек готов! Пришли текст песни — это улучшит точность субтитров. "
+            "Если не отправишь, ИИ попробует распознать слова сам, но может ошибиться.",
             reply_markup=_kb([BTN_SEND_LYRICS, BTN_SKIP_LYRICS]),
         )
 
@@ -1577,7 +1598,7 @@ class BlastBotApp:
             await self._ask_timing_choice(message, st)
             return
 
-        await message.answer("Выбери кнопку: «Отправить текст» или «Не присылать текст».")
+        await message.answer("Выбери кнопку: «Отправить текст» или «Пусть ИИ угадает».")
 
     async def _handle_wait_lyrics_text(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()
@@ -1593,7 +1614,7 @@ class BlastBotApp:
         st.stage = STAGE_WAIT_FRAGMENT_CHOICE
         await self.store.set(st)
         await message.answer(
-            "Текст получил. Хочешь указать интересующий фрагмент?",
+            "Текст получил. Хочешь указать конкретные строки, которые должны войти в клип?",
             reply_markup=_kb([BTN_SEND_FRAGMENT, BTN_SKIP_FRAGMENT]),
         )
 
@@ -1603,8 +1624,8 @@ class BlastBotApp:
             st.stage = STAGE_WAIT_FRAGMENT_TEXT
             await self.store.set(st)
             await message.answer(
-                "Пришли интересующий фрагмент текста. "
-                f"Рабочее окно всё равно будет {CLIP_WINDOW_RANGE_S_LABEL}, но модель постарается максимизировать overlap.",
+                "Скопируй и пришли нужные строки прямо из текста песни — те слова, которые хочешь видеть в клипе. "
+                "Например — припев трека.",
                 reply_markup=ReplyKeyboardRemove(),
             )
             return
@@ -1614,7 +1635,7 @@ class BlastBotApp:
             await self._ask_timing_choice(message, st)
             return
 
-        await message.answer("Выбери кнопку: «Отправить интересующий фрагмент» или «На усмотрение ИИ».")
+        await message.answer("Выбери кнопку: «Указать строки из текста» или «На усмотрение ИИ».")
 
     async def _handle_wait_fragment_text(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()
@@ -1622,7 +1643,7 @@ class BlastBotApp:
             await message.answer("Жду интересующий фрагмент обычным текстовым сообщением.")
             return
         if _is_control_button_text(text):
-            await message.answer("Нужен именно текст фрагмента сообщением. После этого перейду к следующему шагу.")
+            await message.answer("Нужны именно строки из текста песни — скопируй их и пришли сообщением.")
             return
 
         st.target_fragment = text
@@ -1633,7 +1654,7 @@ class BlastBotApp:
         await message.answer(
             f"Подтвердить текст?\n\n"
             f"*Текст песни:*\n{lyrics_preview}\n\n"
-            f"*Интересующий фрагмент:*\n{st.target_fragment}",
+            f"*Строки из текста:*\n{st.target_fragment}",
             reply_markup=_kb([BTN_CONFIRM_YES, BTN_CONFIRM_BACK]),
             parse_mode="Markdown",
         )
@@ -1649,7 +1670,8 @@ class BlastBotApp:
             st.stage = STAGE_WAIT_LYRICS_CHOICE
             await self.store.set(st)
             await message.answer(
-                "Хочешь прислать текст песни для субтитров?",
+                "Пришли текст песни — это улучшит точность субтитров. "
+                "Если не отправишь, ИИ попробует распознать слова сам, но может ошибиться.",
                 reply_markup=_kb([BTN_SEND_LYRICS, BTN_SKIP_LYRICS]),
             )
             return
@@ -1782,7 +1804,7 @@ class BlastBotApp:
         key = self._build_raw_audio_key(chat_id=chat_id, file_name=prepared_path.name)
         try:
             versions = st.versions_count or 1
-            await message.answer("Заливаю аудио в S3 и ставлю задачу в очередь…")
+            await message.answer("Запускаю генерацию…")
             audio_s3_url = await asyncio.to_thread(
                 self.s3.upload_file,
                 path=prepared_path,
@@ -1869,7 +1891,12 @@ class BlastBotApp:
     async def _handle_wait_next(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()
         if text != BTN_NEXT:
-            await message.answer("Если хочешь новый ролик, нажми «Сделать следующий».", reply_markup=_kb([BTN_NEXT]))
+            await message.answer(
+                "Если хочешь новый ролик, нажми «Сделать следующий».\n\n"
+                "/sendtrack — отправить трек\n"
+                "/packets — посмотреть тарифы",
+                reply_markup=_kb([BTN_NEXT]),
+            )
             return
 
         if message.chat is None:
@@ -3459,7 +3486,8 @@ class BlastBotApp:
                 await bot.send_message(
                     st.chat_id,
                     f"Готово — лови контент! Давай сделаем ещё:\n\n"
-                    f"Остаток генераций: {bal}",
+                    f"Остаток генераций: {bal}\n"
+                    f"/packets — посмотреть тарифы",
                     reply_markup=_kb([BTN_GENERATE_MORE]),
                 )
                 st.stage = STAGE_WAIT_AUDIO
