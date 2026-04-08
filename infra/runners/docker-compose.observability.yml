@@ -36,19 +36,19 @@ services:
     image: prom/alertmanager:v0.27.0
     container_name: obs-alertmanager
     restart: unless-stopped
-    command:
+    entrypoint:
       - /bin/sh
       - -ec
-      - |
-          cfg=/tmp/alertmanager.yml
-          sed \
-            -e "s|\$${ALERT_TELEGRAM_BOT_TOKEN}|${ALERT_TELEGRAM_BOT_TOKEN:-}|g" \
-            -e "s|\$${ALERT_TELEGRAM_CHAT_ID}|${ALERT_TELEGRAM_CHAT_ID:-0}|g" \
-            /etc/alertmanager/alertmanager.yml > "$$cfg"
-          exec alertmanager \
-            --config.file="$$cfg" \
-            --storage.path=/alertmanager \
-            --web.external-url=${ALERTMANAGER_EXTERNAL_URL:-}
+    command: |
+      cfg=/tmp/alertmanager.yml
+      sed \
+        -e "s|\$${ALERT_TELEGRAM_BOT_TOKEN}|${ALERT_TELEGRAM_BOT_TOKEN:-}|g" \
+        -e "s|\$${ALERT_TELEGRAM_CHAT_ID}|${ALERT_TELEGRAM_CHAT_ID:-0}|g" \
+        /etc/alertmanager/alertmanager.yml > "$$cfg"
+      exec alertmanager \
+        --config.file="$$cfg" \
+        --storage.path=/alertmanager \
+        --web.external-url=${ALERTMANAGER_EXTERNAL_URL:-}
     environment:
       ALERT_TELEGRAM_BOT_TOKEN: ${ALERT_TELEGRAM_BOT_TOKEN:-}
       ALERT_TELEGRAM_CHAT_ID: ${ALERT_TELEGRAM_CHAT_ID:-}
