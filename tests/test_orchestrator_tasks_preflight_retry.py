@@ -339,3 +339,50 @@ def test_build_job_openrouter_pins_provider_mode_openrouter(
     assert out["ok"] is True
     assert dispatch_calls == [job_id]
     assert seen_provider_modes == ["openrouter"]
+
+
+def test_build_job_openrouter_retries_on_internal_500(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    job_id = "job_openrouter_internal_500_retry"
+    store = _FakeStore(
+        job_id=job_id,
+        request={
+            "audio_s3_url": "s3://bucket/raw/audio.mp3",
+            "mode": "with_gemini",
+            "lyrics_text": "",
+            "llm_worker_type": "openrouter",
+        },
+    )
+    _paths, dispatch_calls = _patch_common(monkeypatch, tmp_path=tmp_path, job_id=job_id, store=store)
+    monkeypatch.setattr(tasks.build_job_openrouter, "request", SimpleNamespace(retries=0), raising=False)
+
+    from mlcore import gemini_orchestrator as go
+
+    def _fake_build_all(**kwargs):
+        _ = kwargs
+        raise RuntimeError(
+            "Stage2 failed: stage2_subtitles=RuntimeError: "
+            "openrouter_bad_response_no_choices: {'error': {'message': 'Internal Server Error', 'code': 500}}"
+        )
+
+    retry_calls: list[dict] = []
+
+    class _RetryCalled(Exception):
+        pass
+
+    def _fake_retry(*args, **kwargs):
+        retry_calls.append({"args": args, "kwargs": kwargs})
+        raise _RetryCalled("retry_called")
+
+    monkeypatch.setattr(go, "build_all_via_gemini_one_call", _fake_build_all)
+    monkeypatch.setattr(tasks.build_job_openrouter, "retry", _fake_retry)
+
+    with pytest.raises(_RetryCalled):
+        tasks.build_job_openrouter.run(job_id)
+
+    assert len(retry_calls) == 1
+    kwargs = retry_calls[0]["kwargs"]
+    assert float(kwargs["countdown"]) == 10.0
+    assert "openrouter_internal_500" in str(kwargs["exc"])
+    assert dispatch_calls == []

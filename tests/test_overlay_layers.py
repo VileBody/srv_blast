@@ -62,7 +62,7 @@ def _plan(subs_start: float, subs_end: float) -> FullPlanPayload:
     )
 
 
-def test_stage3_overlay_enabled_by_style_tiling(monkeypatch, tmp_path: Path) -> None:
+def test_stage3_overlay_forced_disabled_even_if_enabled_in_env(monkeypatch, tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parent.parent
     dummy_audio = tmp_path / "audio.mp3"
     dummy_audio.write_bytes(b"fake")
@@ -116,15 +116,10 @@ def test_stage3_overlay_enabled_by_style_tiling(monkeypatch, tmp_path: Path) -> 
 
     footage_cfg = json.loads((out_dir / "footage_config.json").read_text(encoding="utf-8"))
     overlays = [x for x in footage_cfg.get("layers", []) if isinstance(x, dict) and x.get("type") == "overlay"]
-    assert len(overlays) == 1
-    assert overlays[0]["in_point"] == 0.0
-    assert overlays[0]["out_point"] == 15.0
-    assert overlays[0]["duration_sec"] == 3.0
-    assert bool(overlays[0].get("tile_in_ae")) is True
-    assert int(overlays[0].get("tile_max_repeats", 0)) >= 100
+    assert len(overlays) == 0
 
 
-def test_stage3_overlay_enabled_requires_inventory_env(monkeypatch, tmp_path: Path) -> None:
+def test_stage3_overlay_inventory_requirement_is_skipped_when_globally_disabled(monkeypatch, tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parent.parent
     dummy_audio = tmp_path / "audio.mp3"
     dummy_audio.write_bytes(b"fake")
@@ -151,17 +146,22 @@ def test_stage3_overlay_enabled_requires_inventory_env(monkeypatch, tmp_path: Pa
     monkeypatch.setenv("OVERLAY_SOURCE_MODE", "inventory")
     monkeypatch.delenv("OVERLAY_INVENTORY_JSON", raising=False)
 
-    with pytest.raises(RuntimeError, match="OVERLAY_INVENTORY_JSON"):
-        render_all_steps(
-            repo_root=repo_root,
-            plan=_plan(100.0, 115.0),
-            footage_inventory_json=inv_path,
-            out_dir=tmp_path / "out",
-            data_dir=tmp_path / "data",
-        )
+    out_dir = tmp_path / "out"
+    data_dir = tmp_path / "data"
+    render_all_steps(
+        repo_root=repo_root,
+        plan=_plan(100.0, 115.0),
+        footage_inventory_json=inv_path,
+        out_dir=out_dir,
+        data_dir=data_dir,
+    )
+
+    footage_cfg = json.loads((out_dir / "footage_config.json").read_text(encoding="utf-8"))
+    overlays = [x for x in footage_cfg.get("layers", []) if isinstance(x, dict) and x.get("type") == "overlay"]
+    assert len(overlays) == 0
 
 
-def test_stage3_overlay_enabled_s3_prefix_global(monkeypatch, tmp_path: Path) -> None:
+def test_stage3_overlay_s3_mode_is_ignored_when_globally_disabled(monkeypatch, tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parent.parent
     dummy_audio = tmp_path / "audio.mp3"
     dummy_audio.write_bytes(b"fake")
@@ -180,8 +180,11 @@ def test_stage3_overlay_enabled_s3_prefix_global(monkeypatch, tmp_path: Path) ->
     inv_path = tmp_path / "inv.json"
     inv_path.write_text(json.dumps(inv, ensure_ascii=False), encoding="utf-8")
 
+    s3_calls = {"n": 0}
+
     class _FakeS3:
         def list_objects_v2(self, **kwargs):
+            s3_calls["n"] += 1
             del kwargs
             return {
                 "IsTruncated": False,
@@ -217,13 +220,8 @@ def test_stage3_overlay_enabled_s3_prefix_global(monkeypatch, tmp_path: Path) ->
 
     footage_cfg = json.loads((out_dir / "footage_config.json").read_text(encoding="utf-8"))
     overlays = [x for x in footage_cfg.get("layers", []) if isinstance(x, dict) and x.get("type") == "overlay"]
-    assert len(overlays) == 1
-    ov = overlays[0]
-    assert str(ov.get("file_path", "")).startswith("s3://bucket/overlays/")
-    assert float(ov.get("in_point", 0.0)) == 0.0
-    assert float(ov.get("out_point", 0.0)) == 15.0
-    assert bool(ov.get("tile_in_ae")) is True
-    assert int(ov.get("tile_max_repeats", 0)) == 100
+    assert len(overlays) == 0
+    assert s3_calls["n"] == 0
 
 
 def test_overlay_blueprint_uses_opacity_from_env(monkeypatch) -> None:

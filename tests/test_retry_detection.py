@@ -10,6 +10,7 @@ from services.orchestrator.tasks import (
     _looks_like_gemini_overloaded_503,
     _looks_like_gemini_rate_limited_429,
     _looks_like_llm_schema_validation_error,
+    _looks_like_openrouter_internal_500,
     _looks_like_openrouter_overloaded_503,
     _looks_like_openrouter_rate_limited_429,
     _looks_like_openrouter_timeout,
@@ -49,6 +50,19 @@ def test_detects_openrouter_timeout() -> None:
     assert _looks_like_openrouter_timeout(s) is True
 
 
+def test_detects_openrouter_internal_500_http_error() -> None:
+    s = "RuntimeError: openrouter_http_error status=500 body='Internal Server Error'"
+    assert _looks_like_openrouter_internal_500(s) is True
+
+
+def test_detects_openrouter_internal_500_bad_response_shape() -> None:
+    s = (
+        "RuntimeError: Stage2 failed: stage2_subtitles=RuntimeError: "
+        "openrouter_bad_response_no_choices: {'error': {'message': 'Internal Server Error', 'code': 500}}"
+    )
+    assert _looks_like_openrouter_internal_500(s) is True
+
+
 def test_detects_llm_schema_validation_error_from_openrouter_marker() -> None:
     s = "RuntimeError: openrouter_schema_validation_failed err=ValidationError(...)"
     assert _looks_like_llm_schema_validation_error(s) is True
@@ -79,6 +93,7 @@ def test_schema_validation_marker_is_not_transient_retriable() -> None:
     assert _looks_like_gemini_overloaded_503(s) is False
     assert _looks_like_gemini_rate_limited_429(s) is False
     assert _looks_like_openrouter_timeout(s) is False
+    assert _looks_like_openrouter_internal_500(s) is False
     assert _looks_like_openrouter_overloaded_503(s) is False
     assert _looks_like_openrouter_rate_limited_429(s) is False
 

@@ -563,6 +563,19 @@ def _looks_like_openrouter_rate_limited_429(text: str) -> bool:
     )
 
 
+def _looks_like_openrouter_internal_500(text: str) -> bool:
+    if not text:
+        return False
+    lo = text.lower()
+    if "openrouter_http_error" in lo and "status=500" in lo:
+        return True
+    if "openrouter_bad_response_no_choices" in lo and (
+        "'code': 500" in lo or '"code": 500' in lo
+    ):
+        return True
+    return ("openrouter" in lo) and ("500" in lo) and ("internal server error" in lo)
+
+
 def _looks_like_llm_schema_validation_error(text: str) -> bool:
     """
     LLM produced syntactically/structurally invalid payload for our schema.
@@ -1060,6 +1073,10 @@ def _build_job_impl(self, job_id: str, *, worker_type: str) -> Dict[str, Any]:
                 attempt = int(getattr(self.request, "retries", 0)) + 1
                 backoff = _retry_backoff_s(attempt=attempt, base_s=10.0, cap_s=300.0)
                 raise self.retry(countdown=backoff, exc=RuntimeError("openrouter_timeout"))
+            if _looks_like_openrouter_internal_500(text):
+                attempt = int(getattr(self.request, "retries", 0)) + 1
+                backoff = _retry_backoff_s(attempt=attempt, base_s=10.0, cap_s=300.0)
+                raise self.retry(countdown=backoff, exc=RuntimeError("openrouter_internal_500"))
             if _looks_like_openrouter_overloaded_503(text):
                 attempt = int(getattr(self.request, "retries", 0)) + 1
                 backoff = _overloaded_retry_backoff_s(attempt=attempt)
@@ -1092,6 +1109,10 @@ def _build_job_impl(self, job_id: str, *, worker_type: str) -> Dict[str, Any]:
             attempt = int(getattr(self.request, "retries", 0)) + 1
             backoff = _retry_backoff_s(attempt=attempt, base_s=10.0, cap_s=300.0)
             raise self.retry(countdown=backoff, exc=RuntimeError("openrouter_timeout"))
+        if _looks_like_openrouter_internal_500(blob):
+            attempt = int(getattr(self.request, "retries", 0)) + 1
+            backoff = _retry_backoff_s(attempt=attempt, base_s=10.0, cap_s=300.0)
+            raise self.retry(countdown=backoff, exc=RuntimeError("openrouter_internal_500"))
         if _looks_like_openrouter_overloaded_503(blob):
             attempt = int(getattr(self.request, "retries", 0)) + 1
             backoff = _overloaded_retry_backoff_s(attempt=attempt)
@@ -1172,6 +1193,10 @@ def _build_job_impl(self, job_id: str, *, worker_type: str) -> Dict[str, Any]:
                             attempt = int(getattr(self.request, "retries", 0)) + 1
                             backoff = _retry_backoff_s(attempt=attempt, base_s=10.0, cap_s=300.0)
                             raise self.retry(countdown=backoff, exc=RuntimeError("openrouter_timeout"))
+                        if _looks_like_openrouter_internal_500(text):
+                            attempt = int(getattr(self.request, "retries", 0)) + 1
+                            backoff = _retry_backoff_s(attempt=attempt, base_s=10.0, cap_s=300.0)
+                            raise self.retry(countdown=backoff, exc=RuntimeError("openrouter_internal_500"))
                         if _looks_like_openrouter_overloaded_503(text):
                             attempt = int(getattr(self.request, "retries", 0)) + 1
                             backoff = _overloaded_retry_backoff_s(attempt=attempt)

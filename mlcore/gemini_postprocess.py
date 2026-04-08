@@ -105,7 +105,9 @@ def _env_bool(name: str, default: bool) -> bool:
 
 
 def _overlay_enabled() -> bool:
-    return _env_bool("OVERLAY_ENABLED", False)
+    # Product decision: overlays are globally disabled for all templates.
+    # Keep helper explicit to avoid accidental re-enable via environment.
+    return False
 
 
 def _overlay_source_mode() -> str:
