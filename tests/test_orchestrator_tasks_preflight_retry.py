@@ -239,6 +239,7 @@ def test_build_job_preflight_with_gemini_triggers_targeted_subtitles_rerun(
             "audio_file_path": os.environ.get("AUDIO_FILE_PATH"),
             "audio_dir": os.environ.get("AUDIO_DIR"),
             "audio_file_name": os.environ.get("AUDIO_FILE_NAME"),
+            "provider_mode": os.environ.get("LLM_PROVIDER_MODE"),
         }
         if len(llm_calls) == 0:
             resume_state_path.write_text(
@@ -292,4 +293,49 @@ def test_build_job_preflight_with_gemini_triggers_targeted_subtitles_rerun(
         assert call["audio_file_path"] == str(expected_audio)
         assert call["audio_dir"] == str(expected_audio.parent)
         assert call["audio_file_name"] == "audio_source.mp3"
+        assert call["provider_mode"] == "gemini"
     assert os.environ.get("STAGE2_SUBTITLES_RETRY_HINT") is None
+
+
+def test_build_job_openrouter_pins_provider_mode_openrouter(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    job_id = "job_openrouter_provider_pin"
+    store = _FakeStore(
+        job_id=job_id,
+        request={
+            "audio_s3_url": "s3://bucket/raw/audio.mp3",
+            "mode": "with_gemini",
+            "lyrics_text": "",
+            "llm_worker_type": "openrouter",
+        },
+    )
+    _paths, dispatch_calls = _patch_common(monkeypatch, tmp_path=tmp_path, job_id=job_id, store=store)
+
+    monkeypatch.setattr(tasks.build_job_openrouter, "request", SimpleNamespace(retries=0), raising=False)
+
+    def _fake_run(*args, **kwargs):
+        return subprocess.CompletedProcess(args=kwargs.get("args", []), returncode=0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(tasks.subprocess, "run", _fake_run)
+    monkeypatch.delenv("LLM_PROVIDER_MODE", raising=False)
+
+    from mlcore import gemini_orchestrator as go
+
+    seen_provider_modes: list[str | None] = []
+
+    def _fake_build_all(**kwargs):
+        _ = kwargs
+        seen_provider_modes.append(os.environ.get("LLM_PROVIDER_MODE"))
+        return {
+            "audio_plan": tmp_path / "audio_plan.json",
+            "full_edit_config": tmp_path / "full_edit_config.json",
+            "footage_config": tmp_path / "footage_config.json",
+        }
+
+    monkeypatch.setattr(go, "build_all_via_gemini_one_call", _fake_build_all)
+
+    out = tasks.build_job_openrouter.run(job_id)
+    assert out["ok"] is True
+    assert dispatch_calls == [job_id]
+    assert seen_provider_modes == ["openrouter"]

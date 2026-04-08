@@ -14,6 +14,7 @@ from services.orchestrator.tasks import (
     _looks_like_openrouter_rate_limited_429,
     _looks_like_openrouter_timeout,
     _overloaded_retry_backoff_s,
+    _provider_mode_for_worker_type,
 )
 
 
@@ -108,3 +109,17 @@ def test_transient_windows_error_urlerror() -> None:
 def test_overloaded_retry_backoff_is_powers_of_two_capped_at_64s() -> None:
     seq = [_overloaded_retry_backoff_s(attempt=i) for i in range(1, 10)]
     assert seq == [2.0, 4.0, 8.0, 16.0, 32.0, 64.0, 64.0, 64.0, 64.0]
+
+
+def test_provider_mode_mapping_by_worker_type() -> None:
+    assert _provider_mode_for_worker_type("sdk") == "gemini"
+    assert _provider_mode_for_worker_type("openrouter") == "openrouter"
+    assert _provider_mode_for_worker_type("hybrid") == "hedged"
+
+
+def test_provider_mode_mapping_rejects_unknown_worker_type() -> None:
+    try:
+        _provider_mode_for_worker_type("unknown")
+        raise AssertionError("expected RuntimeError for unknown worker type")
+    except RuntimeError as e:
+        assert "LLM worker type must be one of" in str(e)

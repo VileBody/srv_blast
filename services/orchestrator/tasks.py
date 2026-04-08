@@ -30,7 +30,12 @@ from .observability_metrics import (
 from .render_manifest import build_windows_job_payload
 from .windows_client import WindowsRenderClient
 from .windows_node_pool import WindowsNodePool, parse_windows_urls_csv
-from core.llm_worker_types import normalize_llm_worker_type
+from core.llm_worker_types import (
+    LLM_WORKER_TYPE_HYBRID,
+    LLM_WORKER_TYPE_OPENROUTER,
+    LLM_WORKER_TYPE_SDK,
+    normalize_llm_worker_type,
+)
 from core.subtitles_mode import SUBTITLES_MODE_LEGACY_BLOCKS, normalize_subtitles_mode
 from core.runtime_mode import MODE_PROD, get_runtime_mode
 
@@ -57,6 +62,22 @@ def _is_remote_url(u: str) -> bool:
 def _windows_default_urls() -> list[str]:
     # Keep a deterministic merged list from WINDOWS_RENDER_URL + WINDOWS_RENDER_URLS.
     return parse_windows_urls_csv((SETTINGS.windows_base_url + "," + SETTINGS.windows_base_urls_csv).strip(","))
+
+
+_LLM_PROVIDER_MODE_GEMINI = "gemini"
+_LLM_PROVIDER_MODE_OPENROUTER = "openrouter"
+_LLM_PROVIDER_MODE_HEDGED = "hedged"
+
+
+def _provider_mode_for_worker_type(worker_type: str) -> str:
+    wt = normalize_llm_worker_type(worker_type)
+    if wt == LLM_WORKER_TYPE_SDK:
+        return _LLM_PROVIDER_MODE_GEMINI
+    if wt == LLM_WORKER_TYPE_OPENROUTER:
+        return _LLM_PROVIDER_MODE_OPENROUTER
+    if wt == LLM_WORKER_TYPE_HYBRID:
+        return _LLM_PROVIDER_MODE_HEDGED
+    raise RuntimeError(f"unsupported llm_worker_type: {worker_type!r}")
 
 
 def _inc_metric(store: JobStore, *, metric: str, label: str) -> None:
@@ -852,6 +873,7 @@ def _build_job_impl(self, job_id: str, *, worker_type: str) -> Dict[str, Any]:
         raise RuntimeError(
             f"llm_worker_type_mismatch expected={worker_type!r} got={llm_worker_type!r}"
         )
+    llm_provider_mode = _provider_mode_for_worker_type(llm_worker_type)
     audio_url = str(req.get("audio_s3_url") or "").strip()
     project_id = str(req.get("project_id") or "").strip()
     lyrics_text = str(req.get("lyrics_text") or "")
@@ -953,6 +975,7 @@ def _build_job_impl(self, job_id: str, *, worker_type: str) -> Dict[str, Any]:
 
     env["AE_MEDIA_MODE"] = "appdir"
     env["LLM_WORKER_TYPE"] = llm_worker_type
+    env["LLM_PROVIDER_MODE"] = llm_provider_mode
     env["LYRICS_TEXT"] = lyrics_text
     env["TARGET_FRAGMENT"] = target_fragment
     env["SUBTITLES_MODE"] = subtitles_mode
@@ -987,6 +1010,7 @@ def _build_job_impl(self, job_id: str, *, worker_type: str) -> Dict[str, Any]:
             "AUDIO_FILE_NAME",
             "AE_MEDIA_MODE",
             "LLM_WORKER_TYPE",
+            "LLM_PROVIDER_MODE",
             "JOB_ID",
             "LYRICS_TEXT",
             "TARGET_FRAGMENT",
@@ -1101,6 +1125,7 @@ def _build_job_impl(self, job_id: str, *, worker_type: str) -> Dict[str, Any]:
                     "AUDIO_FILE_NAME",
                     "AE_MEDIA_MODE",
                     "LLM_WORKER_TYPE",
+                    "LLM_PROVIDER_MODE",
                     "JOB_ID",
                     "LYRICS_TEXT",
                     "TARGET_FRAGMENT",
