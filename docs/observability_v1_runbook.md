@@ -54,3 +54,7 @@ Snapshot: `2026-04-08`
   - `https://blast808.com/admin/obs/grafana/`
   - `https://blast808.com/admin/obs/prometheus/`
   - `https://blast808.com/admin/obs/alertmanager/`
+- If Grafana returns 404 after successful login, verify:
+  - `GRAFANA_ROOT_URL=https://blast808.com/admin/obs/grafana/`
+  - `GRAFANA_SERVE_FROM_SUB_PATH=true`
+  - then restart observability stack (`docker compose -f infra/runners/docker-compose.observability.yml --env-file infra/runners/.env.observability up -d`).

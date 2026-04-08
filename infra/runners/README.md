@@ -115,11 +115,12 @@ cp .env.observability.example .env.observability
 # - GRAFANA_ADMIN_PASSWORD
 # - BLAST_DOCKER_NETWORK (сеть docker compose основного контура)
 # - ALERT_TELEGRAM_BOT_TOKEN / ALERT_TELEGRAM_CHAT_ID
-# - (если нужен доступ снаружи через nginx)
+# - (для доступа снаружи через nginx subpath — обязательно)
 #   GRAFANA_ROOT_URL=https://blast808.com/admin/obs/grafana/
 #   GRAFANA_SERVE_FROM_SUB_PATH=true
 #   PROMETHEUS_EXTERNAL_URL=https://blast808.com/admin/obs/prometheus/
 #   ALERTMANAGER_EXTERNAL_URL=https://blast808.com/admin/obs/alertmanager/
+#   Иначе Grafana может логинить успешно, но редиректить на "/" и давать 404.
 
 docker compose -f docker-compose.observability.yml --env-file .env.observability up -d
 ```

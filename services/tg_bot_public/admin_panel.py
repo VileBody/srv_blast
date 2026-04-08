@@ -250,6 +250,7 @@ _BASE_HEAD = """
   <a href="/admin/render-nodes">Render Nodes</a>
   <a href="/admin/assets/" target="_blank" rel="noopener noreferrer">Assets</a>
   <a href="/admin/llm-workers">LLM Workers</a>
+  <a href="/admin/obs/grafana/" target="_blank" rel="noopener noreferrer">Grafana</a>
   <form class="search-form" action="/admin/users" method="get">
     <input type="text" name="q" placeholder="Username / tg_id...">
     <button type="submit">Search</button>
