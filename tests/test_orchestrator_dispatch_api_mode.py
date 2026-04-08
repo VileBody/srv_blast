@@ -102,10 +102,10 @@ def _patch_common(
     )
 
 
-def test_dispatch_jobs_mode_succeeds_without_poll(
+def test_dispatch_jobs_mode_is_rejected(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    job_id = "job_sync_jobs_mode"
+    job_id = "job_sync_jobs_mode_rejected"
     store = _FakeStore(job_id=job_id, request={"audio_s3_url": "s3://bucket/raw/audio.mp3"})
     _patch_common(monkeypatch, tmp_path=tmp_path, store=store, api_mode="jobs")
 
@@ -116,31 +116,25 @@ def test_dispatch_jobs_mode_succeeds_without_poll(
         lambda *args, **kwargs: poll_calls.append({"args": args, "kwargs": kwargs}),
     )
 
-    class _JobsWindowsClient:
+    class _NeverCalledWindowsClient:
         def __init__(self, _base_url: str, *, timeout_s: float = 30.0, api_mode: str = "jobs") -> None:
-            _ = (timeout_s, api_mode)
+            _ = (_base_url, timeout_s, api_mode)
+            raise AssertionError("WindowsRenderClient should not be created for jobs mode")
 
         def dispatch_render(self, payload):
-            _ = payload
-            return {
-                "_api": "jobs",
-                "success": True,
-                "job_id": job_id,
-                "output_url": f"s3://output-bucket/renders/{job_id}/output.mp4",
-            }
+            raise AssertionError(f"dispatch_render should not be called: {payload}")
 
-    monkeypatch.setattr(tasks, "WindowsRenderClient", _JobsWindowsClient)
+    monkeypatch.setattr(tasks, "WindowsRenderClient", _NeverCalledWindowsClient)
 
-    out = tasks.dispatch_to_windows.run(job_id)
+    with pytest.raises(RuntimeError, match="windows_dispatch_contract_mismatch"):
+        tasks.dispatch_to_windows.run(job_id)
 
-    assert out["ok"] is True
-    assert out["mode"] == "sync_jobs"
     assert poll_calls == []
     st = store.get(job_id)
     assert st is not None
-    assert st.status == "SUCCEEDED"
-    assert st.stage == "render"
-    assert st.result["output_url"] == f"s3://output-bucket/renders/{job_id}/output.mp4"
+    assert st.status == "NEW"
+    assert st.stage is None
+    assert st.result is None
 
 
 def test_dispatch_render_mode_schedules_poll(
@@ -181,3 +175,32 @@ def test_dispatch_render_mode_schedules_poll(
     assert st.status == "RUNNING"
     assert st.stage == "poll"
     assert st.result["render_id"] == "rid_123"
+
+
+def test_dispatch_render_mode_rejects_sync_like_response(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    job_id = "job_async_render_contract_mismatch"
+    store = _FakeStore(job_id=job_id, request={"audio_s3_url": "s3://bucket/raw/audio.mp3"})
+    _patch_common(monkeypatch, tmp_path=tmp_path, store=store, api_mode="render")
+
+    poll_calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        tasks.poll_windows_render,
+        "apply_async",
+        lambda *args, **kwargs: poll_calls.append({"args": args, "kwargs": kwargs}),
+    )
+
+    class _BadRenderWindowsClient:
+        def __init__(self, _base_url: str, *, timeout_s: float = 30.0, api_mode: str = "jobs") -> None:
+            _ = (_base_url, timeout_s, api_mode)
+
+        def dispatch_render(self, payload):
+            _ = payload
+            return {"_api": "jobs", "success": True, "job_id": job_id}
+
+    monkeypatch.setattr(tasks, "WindowsRenderClient", _BadRenderWindowsClient)
+
+    with pytest.raises(RuntimeError, match="windows_dispatch_contract_mismatch"):
+        tasks.dispatch_to_windows.run(job_id)
+    assert poll_calls == []
