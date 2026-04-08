@@ -143,7 +143,6 @@ def test_dispatch_transient_all_nodes_failed_recovers_if_output_exists(
         "retry",
         lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("unexpected_retry")),
     )
-    monkeypatch.setattr(tasks.dispatch_to_windows, "request", SimpleNamespace(retries=1), raising=False)
 
     out = tasks.dispatch_to_windows.run(job_id)
     assert out["ok"] is True
@@ -173,7 +172,6 @@ def test_dispatch_transient_all_nodes_failed_retries_if_output_missing(
         raise _RetryCalled("retry_called")
 
     monkeypatch.setattr(tasks.dispatch_to_windows, "retry", _fake_retry)
-    monkeypatch.setattr(tasks.dispatch_to_windows, "request", SimpleNamespace(retries=0), raising=False)
 
     with pytest.raises(_RetryCalled):
         tasks.dispatch_to_windows.run(job_id)

@@ -130,7 +130,6 @@ def test_dispatch_auto_disables_node_on_transient_streak(
         raise _RetryCalled(str(kwargs.get("exc") or "retry_called"))
 
     monkeypatch.setattr(tasks.dispatch_to_windows, "retry", _fake_retry)
-    monkeypatch.setattr(tasks.dispatch_to_windows, "request", SimpleNamespace(retries=0), raising=False)
 
     with pytest.raises(_RetryCalled):
         tasks.dispatch_to_windows.run(job_id)
