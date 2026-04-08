@@ -50,3 +50,7 @@ Snapshot: `2026-04-08`
 - Alert routing: Alertmanager -> Telegram channel.
 - Dashboards source-of-truth: provisioned JSON under `infra/runners/observability/grafana/dashboards`.
 - Config changes are made only via PR + CI + deploy-runner.
+- Public access should be via nginx + Basic Auth only:
+  - `https://blast808.com/admin/obs/grafana/`
+  - `https://blast808.com/admin/obs/prometheus/`
+  - `https://blast808.com/admin/obs/alertmanager/`

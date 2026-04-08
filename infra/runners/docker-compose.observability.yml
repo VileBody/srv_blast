@@ -40,6 +40,7 @@ services:
       - --config.file=/etc/alertmanager/alertmanager.yml
       - --storage.path=/alertmanager
       - --config.expand-env
+      - --web.external-url=${ALERTMANAGER_EXTERNAL_URL:-}
     environment:
       ALERT_TELEGRAM_BOT_TOKEN: ${ALERT_TELEGRAM_BOT_TOKEN:-}
       ALERT_TELEGRAM_CHAT_ID: ${ALERT_TELEGRAM_CHAT_ID:-}
@@ -61,6 +62,8 @@ services:
       - --storage.tsdb.path=/prometheus
       - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-30d}
       - --web.enable-lifecycle
+      - --web.external-url=${PROMETHEUS_EXTERNAL_URL:-}
+      - --web.route-prefix=${PROMETHEUS_ROUTE_PREFIX:-/}
     ports:
       - "${OBS_BIND_HOST:-127.0.0.1}:${PROMETHEUS_PORT:-19090}:9090"
     volumes:
@@ -81,6 +84,8 @@ services:
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-changeme}
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:-}
+      GF_SERVER_SERVE_FROM_SUB_PATH: ${GRAFANA_SERVE_FROM_SUB_PATH:-false}
     ports:
       - "${OBS_BIND_HOST:-127.0.0.1}:${GRAFANA_PORT:-13000}:3000"
     volumes:

@@ -115,6 +115,11 @@ cp .env.observability.example .env.observability
 # - GRAFANA_ADMIN_PASSWORD
 # - BLAST_DOCKER_NETWORK (сеть docker compose основного контура)
 # - ALERT_TELEGRAM_BOT_TOKEN / ALERT_TELEGRAM_CHAT_ID
+# - (если нужен доступ снаружи через nginx)
+#   GRAFANA_ROOT_URL=https://blast808.com/admin/obs/grafana/
+#   GRAFANA_SERVE_FROM_SUB_PATH=true
+#   PROMETHEUS_EXTERNAL_URL=https://blast808.com/admin/obs/prometheus/
+#   ALERTMANAGER_EXTERNAL_URL=https://blast808.com/admin/obs/alertmanager/
 
 docker compose -f docker-compose.observability.yml --env-file .env.observability up -d
 ```
@@ -129,3 +134,19 @@ docker compose -f docker-compose.observability.yml --env-file .env.observability
 - Orchestrator должен экспортировать `GET /metrics/prometheus`.
 - `promtail` читает Docker logs и метит минимум `service`, `container`, `env`; `job_id` извлекается regex-пайплайном.
 - Для production рекомендуется закрыть порты и публиковать Grafana/Prometheus/Alertmanager только через nginx + auth.
+
+### 5.1) Публикация через `blast808.com` + Basic Auth
+
+Готовый пример location-блоков:
+- `infra/runners/nginx/observability.locations.conf.example`
+
+Рекомендуемые внешние URL:
+- `https://blast808.com/admin/obs/grafana/`
+- `https://blast808.com/admin/obs/prometheus/`
+- `https://blast808.com/admin/obs/alertmanager/`
+
+После внесения nginx-конфига:
+
+```bash
+sudo nginx -t && sudo systemctl reload nginx
+```
