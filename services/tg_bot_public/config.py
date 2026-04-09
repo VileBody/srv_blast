@@ -125,6 +125,11 @@ class Settings:
         "stage2_subtitles.json,stage2_subtitles_*.json,gemini_raw_stage2_subtitles_*.json,stage2_footage.json,stage2_footage_*.json",
     )
     bot_max_audio_mb: int = _int_env("BOT_MAX_AUDIO_MB", 5)
+    bot_max_video_mb: int = _int_env("BOT_MAX_VIDEO_MB", 49)
+    tg_video_send_timeout_s: float = _float_env("TG_VIDEO_SEND_TIMEOUT_S", 120.0)
+    tg_video_send_retries: int = _int_env("TG_VIDEO_SEND_RETRIES", 2)
+    tg_video_send_backoff_base_s: float = _float_env("TG_VIDEO_SEND_BACKOFF_BASE_S", 2.0)
+    tg_video_compress_enabled: bool = _bool_env("TG_VIDEO_COMPRESS_ENABLED", True)
 
     redis_host: str = _env("REDIS_HOST", "localhost")
     redis_port: int = _int_env("REDIS_PORT", 6379)
