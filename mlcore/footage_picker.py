@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 import re
 import warnings
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
 from config.styles.artist_presets_loader import find_preset_by_artist_id
@@ -166,6 +166,9 @@ class FootageIntervalPickerDiagnostics:
     deterministic_seed: int
     seed_key: str
     selected_file_names: List[str]
+    selection_mode: str = "classic"
+    subgroup_order: List[Dict[str, Any]] = field(default_factory=list)
+    interval_trace: List[Dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -839,78 +842,280 @@ def pick_footage_clips_by_intervals_deterministic(
     if not intervals:
         raise RuntimeError("No intervals were built from switch points")
 
-    # ── Subgroup rotation path ────────────────────────────────────────────────
-    # One subgroup per rendered video: pick subgroup by (seed % k) so every
-    # clip inside one job comes from the same visual pool. Rotation across jobs
-    # happens naturally because each job has a unique seed (derived from JOB_ID).
+    # ── Ordered subgroup priority path (raw_picks) ────────────────────────────
+    # The model returns 1..3 subgroups in strict priority order.
+    # Picker consumes clips from the first subgroup until it can no longer
+    # provide suitable unseen clips for the current interval, then moves
+    # forward to the next subgroup.
     if raw_picks is not None and len(raw_picks) > 0:
         seed_value = deterministic_seed_from_key(seed_key)
         excluded_names = {str(x).strip() for x in list(exclude_file_names or []) if str(x).strip()}
-
         k = len(raw_picks)
-        _vi = os.environ.get("BATCH_VARIANT_INDEX", "").strip()
-        subgroup_idx = ((int(_vi) - 1) % k) if _vi.isdigit() else (seed_value % k)
-        # v2 rotation: build pool purely from theme parameters (mood +
-        # priority_theme_tags + exclusions).  Legacy genre/tag is NOT passed
-        # so _build_raw_pool skips the old inventory-tag filter.
-        chosen_pool = _build_raw_pool(
-            raw_picks[subgroup_idx],
-            assets,
-        )
-        if not chosen_pool:
-            # Chosen subgroup is empty — fall back to merged pool of all non-empty subgroups.
-            all_pools = [
-                _build_raw_pool(rp, assets)
-                for rp in raw_picks
-            ]
-            non_empty = [p for p in all_pools if p]
-            if not non_empty:
-                raise RuntimeError(
-                    "No assets satisfy subgroup raw filters for selected style in raw_picks rotation "
-                    f"(subgroups={k}, genre={genre!r}, tag={tag!r})"
-                )
-            chosen_pool = _dedupe_assets_by_file_name([it for p in non_empty for it in p])
 
-        pool = [it for it in chosen_pool if str(it.get("file_name") or "") not in excluded_names]
-        if not pool:
-            pool = list(chosen_pool)  # relax exclusion when everything is excluded
+        def _scores_by_name(pool: List[Dict[str, Any]]) -> Dict[str, float]:
+            out: Dict[str, float] = {}
+            for it in pool:
+                nm = str(it.get("file_name") or "").strip()
+                if not nm:
+                    continue
+                try:
+                    out[nm] = float(it.get(_SELECTION_RANK_SCORE_KEY) or 0.0)
+                except Exception:
+                    out[nm] = 0.0
+            return out
+
+        def _ordered_names_for_pool(
+            *,
+            pool: List[Dict[str, Any]],
+            subgroup_idx: int,
+            scores_map: Dict[str, float],
+        ) -> List[str]:
+            names = [str(it.get("file_name") or "").strip() for it in pool if str(it.get("file_name") or "").strip()]
+            if not names:
+                return []
+            return _deterministic_file_name_order(
+                file_names=names,
+                seed_value=seed_value,
+                interval_idx=-(subgroup_idx + 1),
+                interval_start=float(subgroup_idx),
+                scores_by_name=scores_map,
+            )
+
+        subgroup_defs = list(raw_picks)
+        subgroup_pools_all: List[List[Dict[str, Any]]] = []
+        subgroup_pools_selected: List[List[Dict[str, Any]]] = []
+        subgroup_maps_all: List[Dict[str, Dict[str, Any]]] = []
+        subgroup_maps_selected: List[Dict[str, Dict[str, Any]]] = []
+        subgroup_scores_all: List[Dict[str, float]] = []
+        subgroup_scores_selected: List[Dict[str, float]] = []
+        subgroup_order_all: List[List[str]] = []
+        subgroup_order_selected: List[List[str]] = []
+        subgroup_order_diag: List[Dict[str, Any]] = []
+        primary_pool_names: set[str] = set()
+        selected_pool_names: set[str] = set()
+        for subgroup_idx, subgroup in enumerate(subgroup_defs):
+            pool_all = _dedupe_assets_by_file_name(
+                _build_raw_pool(
+                    subgroup,
+                    assets,
+                    style_genre=genre,
+                    style_tag=tag,
+                )
+            )
+            pool_selected = [
+                it for it in pool_all if str(it.get("file_name") or "").strip() not in excluded_names
+            ]
+            scores_all = _scores_by_name(pool_all)
+            scores_selected = _scores_by_name(pool_selected)
+            ordered_all = _ordered_names_for_pool(
+                pool=pool_all,
+                subgroup_idx=subgroup_idx,
+                scores_map=scores_all,
+            )
+            ordered_selected = _ordered_names_for_pool(
+                pool=pool_selected,
+                subgroup_idx=subgroup_idx,
+                scores_map=scores_selected,
+            )
+            map_all = {str(it.get("file_name") or "").strip(): it for it in pool_all if str(it.get("file_name") or "").strip()}
+            map_selected = {str(it.get("file_name") or "").strip(): it for it in pool_selected if str(it.get("file_name") or "").strip()}
+            subgroup_pools_all.append(pool_all)
+            subgroup_pools_selected.append(pool_selected)
+            subgroup_maps_all.append(map_all)
+            subgroup_maps_selected.append(map_selected)
+            subgroup_scores_all.append(scores_all)
+            subgroup_scores_selected.append(scores_selected)
+            subgroup_order_all.append(ordered_all)
+            subgroup_order_selected.append(ordered_selected)
+            primary_pool_names.update(map_all.keys())
+            selected_pool_names.update(map_selected.keys())
+            subgroup_order_diag.append(
+                {
+                    "index": int(subgroup_idx),
+                    "theme": str(subgroup.theme),
+                    "tags_group": str(subgroup.tags_group or ""),
+                    "priority_theme_tags": list(subgroup.filters.priority_theme_tags or []),
+                    "exclude_people": list(subgroup.filters.exclude or []),
+                    "exclude_tags": list(subgroup.filters.exclude_tags or []),
+                    "color_priority": list(subgroup.filters.color_priority or []),
+                    "pool_all_count": int(len(pool_all)),
+                    "pool_selected_count": int(len(pool_selected)),
+                    "excluded_by_input_count": int(max(0, len(pool_all) - len(pool_selected))),
+                    "ordered_all_head": list(ordered_all[:10]),
+                    "ordered_selected_head": list(ordered_selected[:10]),
+                }
+            )
+
+        if not primary_pool_names:
+            raise RuntimeError(
+                "No assets satisfy ordered raw subgroup filters for selected style "
+                f"(subgroups={k}, genre={genre!r}, tag={tag!r})"
+            )
+
+        exclude_relaxed = False
+        active_maps = subgroup_maps_selected
+        active_scores = subgroup_scores_selected
+        active_order = subgroup_order_selected
+        effective_pool_names = set(selected_pool_names)
+        if not effective_pool_names and excluded_names:
+            exclude_relaxed = True
+            active_maps = subgroup_maps_all
+            active_scores = subgroup_scores_all
+            active_order = subgroup_order_all
+            effective_pool_names = set(primary_pool_names)
 
         repeats_used = False
-        try:
-            assigned_file_names = _assign_unique_file_names_for_intervals(
-                intervals=intervals,
-                pool=pool,
-                seed_value=seed_value,
-            )
-        except RuntimeError:
-            repeats_used = True
-            assigned_file_names = []
-            prev_name: Optional[str] = None
-            for gi, (a, b) in enumerate(intervals):
-                need = float(b - a)
-                candidates = [it for it in pool if _fits_interval(it, interval_len=need)] or pool
-                chosen = _deterministic_choose(
-                    candidates=candidates,
-                    seed_value=seed_value,
-                    interval_idx=gi,
-                    interval_start=float(a),
-                    avoid_file_name=prev_name,
-                )
-                nm = str(chosen["file_name"])
-                assigned_file_names.append(nm)
-                prev_name = nm
+        used_names: set[str] = set()
+        selected_file_names: List[str] = []
+        interval_trace: List[Dict[str, Any]] = []
+        current_subgroup_idx = 0
 
-        by_name: Dict[str, Dict[str, Any]] = {
-            str(it.get("file_name") or "").strip(): it
-            for it in assets
-            if str(it.get("file_name") or "").strip()
-        }
+        def _pick_name_from_subgroup(
+            *,
+            subgroup_idx: int,
+            interval_idx: int,
+            interval_start: float,
+            interval_len: float,
+            allow_reuse: bool,
+            avoid_name: str,
+        ) -> Tuple[str | None, int]:
+            ordered = list(active_order[subgroup_idx] or [])
+            if not ordered:
+                return None, 0
+            subgroup_map = active_maps[subgroup_idx]
+            subgroup_scores = active_scores[subgroup_idx]
+            viable_names: List[str] = []
+            for nm in ordered:
+                if not allow_reuse and nm in used_names:
+                    continue
+                asset = subgroup_map.get(nm)
+                if not isinstance(asset, dict):
+                    continue
+                if _fits_interval(asset, interval_len=interval_len):
+                    viable_names.append(nm)
+            if not viable_names:
+                return None, 0
+            ranked = _deterministic_file_name_order(
+                file_names=viable_names,
+                seed_value=seed_value,
+                interval_idx=interval_idx,
+                interval_start=interval_start,
+                scores_by_name=subgroup_scores,
+            )
+            avoid = str(avoid_name or "").strip()
+            if avoid and len(ranked) > 1:
+                for nm in ranked:
+                    if nm != avoid:
+                        return nm, len(viable_names)
+            return ranked[0], len(viable_names)
+
+        for idx, (a, b) in enumerate(intervals):
+            need = float(b - a)
+            prev_name = selected_file_names[-1] if selected_file_names else ""
+            phase = "unique"
+            trace_attempts: List[Dict[str, Any]] = []
+
+            def _try_pick(*, start_idx: int, allow_reuse: bool, phase_name: str) -> Tuple[str | None, int]:
+                nonlocal trace_attempts
+                for subgroup_idx in range(start_idx, k):
+                    picked_name, candidate_count = _pick_name_from_subgroup(
+                        subgroup_idx=subgroup_idx,
+                        interval_idx=idx,
+                        interval_start=float(a),
+                        interval_len=need,
+                        allow_reuse=allow_reuse,
+                        avoid_name=prev_name,
+                    )
+                    trace_attempts.append(
+                        {
+                            "phase": phase_name,
+                            "subgroup_idx": int(subgroup_idx),
+                            "theme": str(subgroup_defs[subgroup_idx].theme),
+                            "tags_group": str(subgroup_defs[subgroup_idx].tags_group or ""),
+                            "candidate_count": int(candidate_count),
+                            "picked": str(picked_name or ""),
+                        }
+                    )
+                    if picked_name:
+                        return picked_name, subgroup_idx
+                return None, -1
+
+            chosen_name, chosen_subgroup_idx = _try_pick(
+                start_idx=current_subgroup_idx,
+                allow_reuse=False,
+                phase_name=phase,
+            )
+
+            if not chosen_name and excluded_names and not exclude_relaxed:
+                exclude_relaxed = True
+                active_maps = subgroup_maps_all
+                active_scores = subgroup_scores_all
+                active_order = subgroup_order_all
+                effective_pool_names = set(primary_pool_names)
+                phase = "unique_exclude_relaxed"
+                chosen_name, chosen_subgroup_idx = _try_pick(
+                    start_idx=current_subgroup_idx,
+                    allow_reuse=False,
+                    phase_name=phase,
+                )
+
+            if not chosen_name:
+                repeats_used = True
+                phase = "reuse"
+                chosen_name, chosen_subgroup_idx = _try_pick(
+                    start_idx=current_subgroup_idx,
+                    allow_reuse=True,
+                    phase_name=phase,
+                )
+
+            if not chosen_name and current_subgroup_idx > 0:
+                repeats_used = True
+                phase = "reuse_full_chain"
+                chosen_name, chosen_subgroup_idx = _try_pick(
+                    start_idx=0,
+                    allow_reuse=True,
+                    phase_name=phase,
+                )
+
+            if not chosen_name or chosen_subgroup_idx < 0:
+                raise RuntimeError(
+                    "No footage asset can cover interval in ordered subgroup selection "
+                    f"(idx={idx}, interval={a:.3f}..{b:.3f}, dur={need:.3f}, start_subgroup={current_subgroup_idx})"
+                )
+
+            if chosen_name in used_names:
+                repeats_used = True
+            else:
+                used_names.add(chosen_name)
+            selected_file_names.append(chosen_name)
+            current_subgroup_idx = int(chosen_subgroup_idx)
+            interval_trace.append(
+                {
+                    "interval_idx": int(idx),
+                    "in_point": float(a),
+                    "out_point": float(b),
+                    "duration": float(need),
+                    "phase": phase,
+                    "selected_subgroup_idx": int(chosen_subgroup_idx),
+                    "selected_theme": str(subgroup_defs[chosen_subgroup_idx].theme),
+                    "selected_tags_group": str(subgroup_defs[chosen_subgroup_idx].tags_group or ""),
+                    "selected_file_name": chosen_name,
+                    "exclude_relaxed": bool(exclude_relaxed),
+                    "attempts": trace_attempts,
+                }
+            )
+
+        all_assets_by_name: Dict[str, Dict[str, Any]] = {}
+        for subgroup_map in subgroup_maps_all:
+            for nm, row in subgroup_map.items():
+                if nm and nm not in all_assets_by_name:
+                    all_assets_by_name[nm] = row
 
         offset_enabled = _source_offset_enabled()
         clips: List[Dict[str, Any]] = []
         for idx, (a, b) in enumerate(intervals):
-            chosen_name = str(assigned_file_names[idx])
-            asset_dur = float((by_name.get(chosen_name) or {}).get("duration_sec") or 0.0)
+            chosen_name = str(selected_file_names[idx])
+            asset_dur = float((all_assets_by_name.get(chosen_name) or {}).get("duration_sec") or 0.0)
             src_off = (
                 _deterministic_source_offset(
                     file_name=chosen_name,
@@ -933,24 +1138,27 @@ def pick_footage_clips_by_intervals_deterministic(
                 }
             )
 
-        selected_excluded_count = sum(1 for x in assigned_file_names if str(x) in excluded_names)
+        selected_excluded_count = sum(1 for x in selected_file_names if str(x) in excluded_names)
         payload = FootageSelectionPayload.model_validate({"clips": clips, "allow_gaps": False})
         diag = FootageIntervalPickerDiagnostics(
-            genre="__raw_rotation__",
-            tag=str(raw_picks[subgroup_idx].theme),
+            genre="__raw_priority_v2__",
+            tag=str(subgroup_defs[0].theme),
             intervals_count=len(intervals),
             max_interval_sec=max(float(b - a) for a, b in intervals),
-            primary_pool_count=len(chosen_pool),
-            selected_pool_count=len(pool),
+            primary_pool_count=int(len(primary_pool_names)),
+            selected_pool_count=int(len(effective_pool_names)),
             widened_to_genre=False,
             widened_to_global=False,
             repeats_used=bool(repeats_used),
             excluded_input_count=len(excluded_names),
             selected_excluded_count=int(selected_excluded_count),
-            exclude_relaxed=False,
+            exclude_relaxed=bool(exclude_relaxed),
             deterministic_seed=int(seed_value),
             seed_key=str(seed_key),
-            selected_file_names=[str(x) for x in assigned_file_names],
+            selected_file_names=[str(x) for x in selected_file_names],
+            selection_mode="raw_priority_v2",
+            subgroup_order=subgroup_order_diag,
+            interval_trace=interval_trace,
         )
         return payload, diag
     # ── End rotation path ─────────────────────────────────────────────────────
@@ -1146,6 +1354,9 @@ def pick_footage_clips_by_intervals_deterministic(
     if use_raw_global and raw_pick is not None:
         diag_genre = "__raw_global__"
         diag_tag = str(raw_pick.theme)
+        selection_mode = "raw_global"
+    else:
+        selection_mode = "classic_interval"
 
     payload = FootageSelectionPayload.model_validate({"clips": clips, "allow_gaps": False})
     diag = FootageIntervalPickerDiagnostics(
@@ -1164,6 +1375,7 @@ def pick_footage_clips_by_intervals_deterministic(
         deterministic_seed=int(seed_value),
         seed_key=str(seed_key),
         selected_file_names=[str(x) for x in assigned_file_names],
+        selection_mode=selection_mode,
     )
     return payload, diag
 

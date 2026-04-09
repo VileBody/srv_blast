@@ -200,18 +200,19 @@ ARTIST PROFILES:
 =========================================
 STEP 2 — THEME SELECTION
 =========================================
-If the artist has only 1 theme → use that theme.
-If the artist has 2+ themes → analyze the lyrics and pick the best match.
+Select 1-3 themes in strict priority order.
+- If the artist has only 1 theme → return 1 theme.
+- If the artist has 2+ themes → return top 2-3 most relevant themes (best first).
 
 SELECTION HINTS:
 - Analyze the emotional tone and key topics of the lyrics.
-- Match to the theme whose tags_groups best fit the lyrical imagery and mood.
-- When lyrics are ambiguous → use the FIRST theme in the profile (it is the primary/default).
+- Match themes whose tags_groups best fit lyrical imagery and mood.
+- When lyrics are ambiguous → the FIRST profile theme has highest priority.
 
 =========================================
 STEP 3 — PICK TAGS GROUP
 =========================================
-Once you have the theme, look up its tags_groups in THEMES LOGIC below.
+For EACH selected theme, pick one best tags_group from THEMES LOGIC below.
 
 HOW TO READ TAGS GROUPS:
 Some groups are simple tag lists. Others are objects with special parameters:
@@ -222,8 +223,8 @@ Some groups are simple tag lists. Others are objects with special parameters:
   "_color": [...]        → Overrides the theme's default color. Use this for color_priority.
 
 RULES:
-1. Pick the most thematically accurate group for the lyrics.
-2. Select 6-10 tags from "_tags" of the chosen group ONLY. No mixing between groups.
+1. Pick the most thematically accurate group for each selected theme.
+2. Select 6-10 tags from "_tags" of that chosen group ONLY. No mixing between groups.
 3. NEVER put _exclude_tags values into priority_theme_tags.
 
 =========================================
@@ -634,14 +635,14 @@ THEMES LOGIC (Themes & Tags)
 STEP 5 — BUILD OUTPUT JSON
 =========================================
 
-When you have chosen the theme and group, look up the group definition in THEMES LOGIC above and:
+For each selected (theme, group) pair in priority order:
 1. Take priority_theme_tags from the group's "_tags" list (6-10 tags).
 2. Take exclude_tags from the group's "_exclude_tags" list (copy ALL of them as-is).
    If the group has no "_exclude_tags" — output an empty list [].
 3. Take color_priority from the group's "_color" if present, otherwise from the theme's "color".
 4. Take exclude_people from the theme's "exclude" list.
 
-OUTPUT JSON FORMAT:
+OUTPUT JSON FORMAT (single subgroup object template):
 {
   "artist_id": "...",
   "theme": "...",
@@ -657,5 +658,6 @@ OUTPUT JSON FORMAT:
 Notes:
 - artist_id: the {artist_id} received as input.
 - exclude_tags: copy ALL _exclude_tags from the chosen group. Empty list [] if none.
+- Build 1-3 such subgroup objects and return them in strict priority order.
 - No text before or after JSON.
 """
