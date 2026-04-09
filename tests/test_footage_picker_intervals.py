@@ -7,7 +7,7 @@ from mlcore.footage_picker import (
     build_intervals_from_switch_points,
     pick_footage_clips_by_intervals_deterministic,
 )
-from mlcore.models.footage_style import FootageStylePickPayload, FootageStyleRawPayload
+from mlcore.models.footage_style import FootageStylePickPayload, FootageStyleRawPayload, FootageStyleRotation
 
 
 def _assets() -> list[dict]:
@@ -309,6 +309,41 @@ def test_interval_picker_raw_filters_exclude_bans_by_metadata_tag() -> None:
     assert str(clips[0].file_name) == "z_ok.mp4"
 
 
+def test_style_rotation_allows_multiple_themes_with_same_mood() -> None:
+    payload = FootageStyleRotation.model_validate(
+        {
+            "subgroups": [
+                {
+                    "artist_id": "rock_emo",
+                    "theme": "heartbreak_minor",
+                    "mood": "minor",
+                    "tags_group": "g1",
+                    "filters": {
+                        "color_priority": ["dark"],
+                        "exclude_people": ["crowd"],
+                        "exclude_tags": [],
+                        "priority_theme_tags": ["night city"],
+                    },
+                },
+                {
+                    "artist_id": "rock_emo",
+                    "theme": "self_destruction_minor",
+                    "mood": "minor",
+                    "tags_group": "g2",
+                    "filters": {
+                        "color_priority": ["cold"],
+                        "exclude_people": ["crowd"],
+                        "exclude_tags": [],
+                        "priority_theme_tags": ["blurry"],
+                    },
+                },
+            ]
+        }
+    )
+    assert len(payload.subgroups) == 2
+    assert payload.subgroups[0].theme != payload.subgroups[1].theme
+
+
 def test_raw_rotation_is_constrained_to_selected_style() -> None:
     style = FootageStylePickPayload.model_validate({"genre": "Alternative", "tag": "art_rock"})
     raw_picks = [
@@ -391,7 +426,7 @@ def test_raw_rotation_is_constrained_to_selected_style() -> None:
     assert "pop_leak.mp4" not in names
 
 
-def test_raw_rotation_variant_index_starts_from_first_subgroup(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_raw_priority_selection_moves_to_next_subgroup_when_first_is_exhausted() -> None:
     style = FootageStylePickPayload.model_validate({"genre": "Alternative", "tag": "art_rock"})
     raw_picks = [
         FootageStyleRawPayload.model_validate(
@@ -446,28 +481,82 @@ def test_raw_rotation_variant_index_starts_from_first_subgroup(monkeypatch: pyte
         },
     ]
 
-    monkeypatch.setenv("BATCH_VARIANT_INDEX", "1")
-    payload_first, _ = pick_footage_clips_by_intervals_deterministic(
+    payload, diag = pick_footage_clips_by_intervals_deterministic(
         style_pick=style,
         assets=mapped_assets,
         clip_start_abs=0.0,
         clip_end_abs=1.5,
         switch_points_abs=[0.75],
-        seed_key="job-int-raw-rotation-v1",
+        seed_key="job-int-raw-priority-v2",
         raw_picks=raw_picks,
     )
-    names_first = {str(c.file_name) for c in payload_first.clips}
-    assert names_first == {"first_pool.mp4"}
+    names = [str(c.file_name) for c in sorted(payload.clips, key=lambda c: float(c.in_point))]
+    assert names == ["first_pool.mp4", "second_pool.mp4"]
+    assert diag.selection_mode == "raw_priority_v2"
+    assert len(diag.interval_trace) == 2
+    assert int(diag.interval_trace[0]["selected_subgroup_idx"]) == 0
+    assert int(diag.interval_trace[1]["selected_subgroup_idx"]) == 1
 
-    monkeypatch.setenv("BATCH_VARIANT_INDEX", "2")
-    payload_second, _ = pick_footage_clips_by_intervals_deterministic(
+
+def test_raw_priority_selection_falls_forward_to_next_theme_when_first_theme_empty() -> None:
+    style = FootageStylePickPayload.model_validate({"genre": "Alternative", "tag": "art_rock"})
+    raw_picks = [
+        FootageStyleRawPayload.model_validate(
+            {
+                "theme": "theme_a",
+                "mood": "minor",
+                "tags_group": "empty_group",
+                "filters": {
+                    "color_priority": ["dark"],
+                    "exclude": [],
+                    "priority_theme_tags": ["tag-missing-in-inventory"],
+                },
+            }
+        ),
+        FootageStyleRawPayload.model_validate(
+            {
+                "theme": "theme_b",
+                "mood": "minor",
+                "tags_group": "working_group",
+                "filters": {
+                    "color_priority": ["dark"],
+                    "exclude": [],
+                    "priority_theme_tags": ["tag-present"],
+                },
+            }
+        ),
+    ]
+    mapped_assets = [
+        {
+            "file_name": "working_1.mp4",
+            "genre": "Alternative",
+            "tag": "art_rock",
+            "duration_sec": 2.5,
+            "src_w": 720,
+            "src_h": 1280,
+            "meta_mood": "minor",
+            "meta_color_tone": "dark",
+            "meta_people_type": "none",
+            "meta_theme_tags": ["tag-present"],
+        },
+    ]
+
+    payload, diag = pick_footage_clips_by_intervals_deterministic(
         style_pick=style,
         assets=mapped_assets,
         clip_start_abs=0.0,
-        clip_end_abs=1.5,
-        switch_points_abs=[0.75],
-        seed_key="job-int-raw-rotation-v2",
+        clip_end_abs=1.0,
+        switch_points_abs=[],
+        seed_key="job-int-raw-priority-theme-fall-forward",
         raw_picks=raw_picks,
     )
-    names_second = {str(c.file_name) for c in payload_second.clips}
-    assert names_second == {"second_pool.mp4"}
+    names = [str(c.file_name) for c in sorted(payload.clips, key=lambda c: float(c.in_point))]
+    assert names == ["working_1.mp4"]
+    assert diag.selection_mode == "raw_priority_v2"
+    assert len(diag.interval_trace) == 1
+    attempts = list(diag.interval_trace[0].get("attempts") or [])
+    assert len(attempts) >= 2
+    assert int(attempts[0]["subgroup_idx"]) == 0
+    assert int(attempts[0]["candidate_count"]) == 0
+    assert int(attempts[1]["subgroup_idx"]) == 1
+    assert int(attempts[1]["candidate_count"]) >= 1

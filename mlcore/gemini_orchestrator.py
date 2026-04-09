@@ -1947,8 +1947,9 @@ def _log_footage_interval_picker_diagnostics(
     diagnostics: FootageIntervalPickerDiagnostics,
 ) -> None:
     logger.info(
-        "footage_interval_picker style=%s/%s intervals=%d max_interval=%.3f "
+        "footage_interval_picker mode=%s style=%s/%s intervals=%d max_interval=%.3f "
         "pool_primary=%d pool_selected=%d widen_genre=%s widen_global=%s repeats_used=%s seed=%d seed_key=%s",
+        getattr(diagnostics, "selection_mode", "classic"),
         diagnostics.genre,
         diagnostics.tag,
         diagnostics.intervals_count,
@@ -1966,6 +1967,42 @@ def _log_footage_interval_picker_diagnostics(
         len(diagnostics.selected_file_names),
         diagnostics.selected_file_names,
     )
+    subgroup_order = list(getattr(diagnostics, "subgroup_order", []) or [])
+    if subgroup_order:
+        logger.info("footage_interval_picker subgroup_order_count=%d", len(subgroup_order))
+        for row in subgroup_order:
+            logger.info(
+                "footage_interval_picker subgroup idx=%s theme=%s group=%s pool_all=%s pool_selected=%s "
+                "exclude_people=%s exclude_tags=%s priority_tags=%s color_priority=%s",
+                row.get("index"),
+                row.get("theme"),
+                row.get("tags_group"),
+                row.get("pool_all_count"),
+                row.get("pool_selected_count"),
+                row.get("exclude_people"),
+                row.get("exclude_tags"),
+                row.get("priority_theme_tags"),
+                row.get("color_priority"),
+            )
+    interval_trace = list(getattr(diagnostics, "interval_trace", []) or [])
+    if interval_trace:
+        logger.info("footage_interval_picker interval_trace_count=%d", len(interval_trace))
+        for row in interval_trace:
+            logger.info(
+                "footage_interval_picker interval idx=%s in=%.3f out=%.3f dur=%.3f phase=%s "
+                "picked_subgroup=%s picked_theme=%s picked_group=%s file=%s exclude_relaxed=%s attempts=%s",
+                row.get("interval_idx"),
+                float(row.get("in_point") or 0.0),
+                float(row.get("out_point") or 0.0),
+                float(row.get("duration") or 0.0),
+                row.get("phase"),
+                row.get("selected_subgroup_idx"),
+                row.get("selected_theme"),
+                row.get("selected_tags_group"),
+                row.get("selected_file_name"),
+                row.get("exclude_relaxed"),
+                row.get("attempts"),
+            )
 
 
 def build_all_via_gemini_one_call(
@@ -3051,7 +3088,7 @@ def build_all_via_gemini_one_call(
                 "to style metadata. Check merged metadata dbs and inventory filename clip ids."
             )
 
-        # Resolve genre/tag from first subgroup (needed for style_payload).
+        # Resolve genre/tag from highest-priority subgroup that can be mapped to inventory groups.
         base_raw = rotation.subgroups[0]
         if footage_artist_id:
             for idx, subgroup in enumerate(rotation.subgroups):
@@ -3066,24 +3103,43 @@ def build_all_via_gemini_one_call(
                         "stage2_style_rotation_artist_id_mismatch "
                         f"expected={footage_artist_id!r} got={subgroup_artist!r} subgroup_idx={idx}"
                     )
-        resolved, diag = resolve_style_pick_from_raw_filters(
-            raw_pick=base_raw,
-            mapped_assets=mapped_picker_assets,
-            seed_key=selection_seed_key,
-            requested_style_id=footage_artist_id,
-            total_assets=len(picker_assets),
-            unmapped_assets=len(unmapped_picker_file_names),
-            metadata_rows_merged=len(style_metadata_index),
-        )
+        resolved: Optional[FootageStylePickPayload] = None
+        diag: Optional[FootageStyleRawAdapterDiagnostics] = None
+        resolve_errors: List[str] = []
+        selected_subgroup_idx = 0
+        for idx, subgroup in enumerate(rotation.subgroups):
+            try:
+                resolved_candidate, diag_candidate = resolve_style_pick_from_raw_filters(
+                    raw_pick=subgroup,
+                    mapped_assets=mapped_picker_assets,
+                    seed_key=selection_seed_key,
+                    requested_style_id=footage_artist_id,
+                    total_assets=len(picker_assets),
+                    unmapped_assets=len(unmapped_picker_file_names),
+                    metadata_rows_merged=len(style_metadata_index),
+                )
+            except Exception as e:
+                resolve_errors.append(f"subgroup[{idx}] theme={subgroup.theme!r} group={subgroup.tags_group!r}: {e}")
+                continue
+            resolved = resolved_candidate
+            diag = diag_candidate
+            base_raw = subgroup
+            selected_subgroup_idx = idx
+            break
+        if resolved is None or diag is None:
+            detail = "; ".join(resolve_errors) if resolve_errors else "no subgroup could be resolved"
+            raise RuntimeError(f"stage2_style_rotation_resolve_failed: {detail}")
         validate_style_pick_in_groups(resolved, style_groups)
         style_raw_payload = base_raw  # enables mapped_picker_assets selection path
         style_adapter_diag = diag
         style_rotation_payload = rotation
         logger.info(
-            "stage2_style_adapter_selected theme=%s mood=%s subgroups=%d "
+            "stage2_style_adapter_selected subgroup_idx=%d theme=%s group=%s mood=%s subgroups=%d "
             "genre=%s tag=%s requested_style_id=%s requested_style_genre=%s "
             "resolved_style_genre=%s resolved_rank=%d fallback=%s mapped=%d unmapped=%d",
+            int(selected_subgroup_idx),
             base_raw.theme,
+            base_raw.tags_group or "-",
             base_raw.mood,
             len(rotation.subgroups),
             resolved.genre,
@@ -3443,7 +3499,7 @@ def build_all_via_gemini_one_call(
     selection_assets = mapped_picker_assets if style_rotation_payload is not None else picker_assets
     if style_rotation_payload is not None:
         logger.info(
-            "footage_selection_mode mode=raw_rotation mapped_assets=%d subgroups=%d",
+            "footage_selection_mode mode=raw_priority_v2 mapped_assets=%d subgroups=%d",
             len(selection_assets),
             len(style_rotation_payload.subgroups),
         )
@@ -3565,6 +3621,15 @@ def build_all_via_gemini_one_call(
         json.dumps(interval_obj, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    selection_trace_obj = {
+        "selection_mode": str(getattr(interval_diag, "selection_mode", "classic")),
+        "subgroup_order": list(getattr(interval_diag, "subgroup_order", []) or []),
+        "interval_trace": list(getattr(interval_diag, "interval_trace", []) or []),
+    }
+    (logs_dir / f"stage2_footage_selection_trace_{stamp}.json").write_text(
+        json.dumps(selection_trace_obj, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
     # clips_manifest.json — human-readable list of clips used in this job.
     # Use this to identify bad clips by timestamp and add them to FOOTAGE_BLACKLIST_PATH.
     (logs_dir / "clips_manifest.json").write_text(
@@ -3625,6 +3690,10 @@ def build_all_via_gemini_one_call(
     )
     (logs_dir / "stage2_footage_intervals.json").write_text(
         json.dumps(interval_obj, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    (logs_dir / "stage2_footage_selection_trace.json").write_text(
+        json.dumps(selection_trace_obj, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
     (logs_dir / "stage2_footage.json").write_text(

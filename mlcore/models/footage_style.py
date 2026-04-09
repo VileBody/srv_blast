@@ -117,34 +117,31 @@ class FootageStyleRawPayload(BaseModel):
 
 class FootageStyleRotation(BaseModel):
     """
-    Ordered list of 2-3 subgroups for rotation within a single job.
-    Clip intervals are split into equal blocks; each block uses the next subgroup's filters.
-    All subgroups must share the same theme and mood.
+    Ordered priority list of subgroups for footage picking within a single job.
+    Picker consumes subgroups from left to right and moves forward when current subgroup
+    cannot provide suitable unseen clips for the next intervals.
     """
 
     subgroups: List[FootageStyleRawPayload] = Field(min_length=1, max_length=3)
 
     @model_validator(mode="after")
     def _check_consistency(self) -> "FootageStyleRotation":
-        if len(self.subgroups) < 2:
-            return self
-        first_theme = self.subgroups[0].theme
-        first_mood = self.subgroups[0].mood
-        for i, sg in enumerate(self.subgroups[1:], start=1):
-            if sg.theme != first_theme:
-                raise ValueError(
-                    f"subgroups[{i}].theme={sg.theme!r} differs from subgroups[0].theme={first_theme!r}; "
-                    "all subgroups must belong to the same theme"
-                )
-            if sg.mood != first_mood:
-                raise ValueError(
-                    f"subgroups[{i}].mood={sg.mood!r} differs from subgroups[0].mood={first_mood!r}"
-                )
-        # Deduplicate by tags_group name — prevents LLM from returning the same subgroup twice
+        # Keep mood stable across a single response. Artist presets are mood-consistent.
+        if len(self.subgroups) >= 2:
+            first_mood = self.subgroups[0].mood
+            for i, sg in enumerate(self.subgroups[1:], start=1):
+                if sg.mood != first_mood:
+                    raise ValueError(
+                        f"subgroups[{i}].mood={sg.mood!r} differs from subgroups[0].mood={first_mood!r}"
+                    )
+        # Deduplicate by (theme, tags_group) — prevents the same subgroup from appearing twice.
         seen_groups: set[str] = set()
         deduped: List[FootageStyleRawPayload] = []
         for sg in self.subgroups:
-            key = str(sg.tags_group or "").strip().lower() or str(sg.filters.priority_theme_tags)
+            key = (
+                f"{str(sg.theme or '').strip().lower()}::"
+                f"{str(sg.tags_group or '').strip().lower() or str(sg.filters.priority_theme_tags)}"
+            )
             if key not in seen_groups:
                 seen_groups.add(key)
                 deduped.append(sg)
