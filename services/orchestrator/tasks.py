@@ -2,10 +2,10 @@
 from __future__ import annotations
 
 import json
+import re
 import hashlib
 import logging
 import os
-import re
 import shlex
 import subprocess
 import time
@@ -27,6 +27,11 @@ from .observability_metrics import (
     increment_counter,
     increment_labeled_counter,
     observe_labeled_histogram,
+)
+from .ops_alert_subscribers import (
+    deactivate_chat_id_sync,
+    fetch_active_chat_ids_sync,
+    is_terminal_telegram_delivery_error,
 )
 from .render_manifest import build_windows_job_payload
 from .windows_client import WindowsRenderClient
@@ -151,26 +156,66 @@ def _reset_dispatch_fail_streak(store: JobStore, *, node_url: str) -> None:
 
 def _notify_ops_telegram(text: str) -> None:
     token = str(getattr(SETTINGS, "alert_telegram_bot_token", "") or "").strip()
-    chat_id = str(getattr(SETTINGS, "alert_telegram_chat_id", "") or "").strip()
-    if not token or not chat_id:
+    if not token:
         return
-    payload = {
-        "chat_id": chat_id,
-        "text": str(text or "").strip()[:3500],
-        "disable_web_page_preview": True,
-    }
-    data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-    req = urllib.request.Request(
-        url=f"https://api.telegram.org/bot{token}/sendMessage",
-        data=data,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=8.0) as resp:
-            _ = resp.read()
-    except Exception as exc:
-        log.warning("ops_telegram_notify_failed err=%r", exc)
+    recipients: set[str] = set()
+    static_chat_id = str(getattr(SETTINGS, "alert_telegram_chat_id", "") or "").strip()
+    if static_chat_id:
+        recipients.add(static_chat_id)
+    if bool(getattr(SETTINGS, "alert_subscribers_enabled", True)):
+        for chat_id in fetch_active_chat_ids_sync(
+            str(getattr(SETTINGS, "credits_db_url", "") or "").strip(),
+            limit=max(1, int(getattr(SETTINGS, "alert_subscribers_max_chat_ids", 200) or 200)),
+        ):
+            if chat_id:
+                recipients.add(str(chat_id))
+    if not recipients:
+        return
+
+    msg_text = str(text or "").strip()[:3500]
+    for chat_id in sorted(recipients):
+        payload = {
+            "chat_id": chat_id,
+            "text": msg_text,
+            "disable_web_page_preview": True,
+        }
+        data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        req = urllib.request.Request(
+            url=f"https://api.telegram.org/bot{token}/sendMessage",
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=8.0) as resp:
+                _ = resp.read()
+        except urllib.error.HTTPError as exc:
+            status_code = int(getattr(exc, "code", 0) or 0)
+            body = ""
+            try:
+                body = exc.read().decode("utf-8", "ignore")
+            except Exception:
+                body = ""
+            description = ""
+            if body:
+                try:
+                    parsed = json.loads(body)
+                    description = str(parsed.get("description") or "")
+                except Exception:
+                    description = body[:300]
+            log.warning(
+                "ops_telegram_notify_failed chat_id=%s status=%s desc=%s",
+                chat_id,
+                status_code,
+                description or repr(exc),
+            )
+            if is_terminal_telegram_delivery_error(status_code=status_code, description=description):
+                deactivate_chat_id_sync(
+                    str(getattr(SETTINGS, "credits_db_url", "") or "").strip(),
+                    chat_id=int(chat_id),
+                )
+        except Exception as exc:
+            log.warning("ops_telegram_notify_failed chat_id=%s err=%r", chat_id, exc)
 
 
 def _auto_disable_node(

@@ -1,6 +1,8 @@
 # services/orchestrator/app.py
 from __future__ import annotations
 
+import asyncio
+import logging
 import time
 from typing import Any
 
@@ -41,8 +43,11 @@ from .tasks import build_job_hybrid, build_job_openrouter, build_job_sdk
 from .config import SETTINGS
 from .bundle_bootstrap import ensure_descriptions_bundle
 from .asset_routes import create_asset_router
+from .ops_alert_subscribers import OpsAlertBotPoller, OpsAlertSubscriberStore
 from .windows_node_pool import WindowsNodePool, parse_windows_urls_csv
 from services.tg_bot_botapi.user_store import UserStore
+
+log = logging.getLogger(__name__)
 
 
 def _iter_celery_tasks(raw_tasks: object) -> list[dict[str, Any]]:
@@ -177,19 +182,51 @@ def create_app() -> FastAPI:
             inflight=inflight,
         )
 
-    # Payment webhook router — backed by PostgreSQL via shared UserStore.
-    # Initialized once at startup, closed on shutdown.
+    # Payment webhook/router DB + persistent ops alert subscribers.
     _user_store: UserStore | None = None
+    _ops_alert_store: OpsAlertSubscriberStore | None = None
+    _ops_alert_poller_task: asyncio.Task[None] | None = None
+    _ops_alert_poller_stop: asyncio.Event | None = None
 
     @app.on_event("startup")
     async def _init_db() -> None:
-        nonlocal _user_store
+        nonlocal _user_store, _ops_alert_store, _ops_alert_poller_task, _ops_alert_poller_stop
         if SETTINGS.credits_db_url:
             _user_store = UserStore(SETTINGS.credits_db_url)
             await _user_store.init()
+            _ops_alert_store = OpsAlertSubscriberStore(_user_store.pool)
+            await _ops_alert_store.init_schema()
+
+            if SETTINGS.alert_subscribers_enabled and SETTINGS.alert_telegram_bot_token:
+                _ops_alert_poller_stop = asyncio.Event()
+                poller = OpsAlertBotPoller(
+                    bot_token=SETTINGS.alert_telegram_bot_token,
+                    store=_ops_alert_store,
+                    poll_timeout_s=SETTINGS.alert_subscribers_poll_timeout_s,
+                    retry_sleep_s=SETTINGS.alert_subscribers_retry_sleep_s,
+                )
+                _ops_alert_poller_task = asyncio.create_task(
+                    poller.run(_ops_alert_poller_stop),
+                    name="ops_alert_bot_poller",
+                )
+                log.info("ops_alert_poller_started enabled=true")
+            elif SETTINGS.alert_subscribers_enabled:
+                log.warning("ops_alert_poller_not_started reason=empty_alert_telegram_bot_token")
 
     @app.on_event("shutdown")
     async def _close_db() -> None:
+        nonlocal _ops_alert_poller_task, _ops_alert_poller_stop
+        if _ops_alert_poller_stop is not None:
+            _ops_alert_poller_stop.set()
+        if _ops_alert_poller_task is not None:
+            try:
+                await asyncio.wait_for(_ops_alert_poller_task, timeout=6.0)
+            except Exception:
+                _ops_alert_poller_task.cancel()
+                try:
+                    await _ops_alert_poller_task
+                except Exception:
+                    pass
         if _user_store is not None:
             await _user_store.close()
 
@@ -287,6 +324,17 @@ def create_app() -> FastAPI:
 
         ok = all(checks.values())
         return {"ok": ok, "checks": checks, "details": details}
+
+    @app.get("/ops/alert-subscribers")
+    async def ops_alert_subscribers_status() -> dict[str, Any]:
+        if _ops_alert_store is None:
+            return {"enabled": False, "count": 0, "items": []}
+        items = await _ops_alert_store.list_active(limit=SETTINGS.alert_subscribers_max_chat_ids)
+        return {
+            "enabled": bool(SETTINGS.alert_subscribers_enabled),
+            "count": len(items),
+            "items": items,
+        }
 
     @app.get("/windows-nodes", response_model=WindowsNodesStatusResponse)
     def get_windows_nodes() -> WindowsNodesStatusResponse:

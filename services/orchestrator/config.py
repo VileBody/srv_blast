@@ -19,6 +19,23 @@ def _int_env(key: str, default: int) -> int:
         return default
 
 
+def _float_env(key: str, default: float) -> float:
+    raw = _env(key, str(default))
+    try:
+        return float(raw)
+    except Exception:
+        return default
+
+
+def _bool_env(key: str, default: bool) -> bool:
+    raw = _env(key, "1" if default else "0").lower()
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    return bool(default)
+
+
 def _windows_render_api_mode_env() -> str:
     # Async render contract is the default and production baseline.
     raw = _env("WINDOWS_RENDER_API_MODE", "render").lower()
@@ -148,6 +165,10 @@ class Settings:
     # Ops alerts (used for Windows node auto-disable notifications).
     alert_telegram_bot_token: str = _env("ALERT_TELEGRAM_BOT_TOKEN", "")
     alert_telegram_chat_id: str = _env("ALERT_TELEGRAM_CHAT_ID", "")
+    alert_subscribers_enabled: bool = _bool_env("ALERT_SUBSCRIBERS_ENABLED", True)
+    alert_subscribers_poll_timeout_s: float = _float_env("ALERT_SUBSCRIBERS_POLL_TIMEOUT_S", 25.0)
+    alert_subscribers_retry_sleep_s: float = _float_env("ALERT_SUBSCRIBERS_RETRY_SLEEP_S", 2.0)
+    alert_subscribers_max_chat_ids: int = _int_env("ALERT_SUBSCRIBERS_MAX_CHAT_IDS", 200)
 
 
 SETTINGS = Settings()
