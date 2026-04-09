@@ -128,6 +128,7 @@ _RE_CELERY_RETRIES = re.compile(r"\bretries=(\d+)\b")
 _TG_AUDIO_DOWNLOAD_RETRIES = 3
 _TG_AUDIO_DOWNLOAD_TIMEOUT_S = 180.0
 _TG_AUDIO_DOWNLOAD_BACKOFF_BASE_S = 2.0
+_TG_VIDEO_COMPRESS_CRF_STEPS = (30, 32, 34, 36)
 
 
 def _kb(*rows: list[str]) -> ReplyKeyboardMarkup:
@@ -1853,14 +1854,22 @@ class BlastBotApp:
 
         video_path = self.settings.tmp_dir / str(st.chat_id) / "result" / f"{job_id}.mp4"
         video_path.parent.mkdir(parents=True, exist_ok=True)
+        send_video_path = video_path
 
         file_sent = False
         send_file_error = ""
         try:
             await self._download_result_video(source=source, dest=video_path)
-            await bot.send_document(
+            send_video_path = await self._prepare_result_video_for_tg(
+                source_path=video_path,
                 chat_id=st.chat_id,
-                document=FSInputFile(str(video_path)),
+                job_id=job_id,
+            )
+            await self._send_result_video_with_retry(
+                bot=bot,
+                chat_id=st.chat_id,
+                job_id=job_id,
+                video_path=send_video_path,
                 caption=f"{ver_label}: вот твой трек.",
             )
             file_sent = True
@@ -1902,8 +1911,9 @@ class BlastBotApp:
                 log.warning("subtitles_debug_send_failed chat=%s job=%s err=%s", st.chat_id, job_id, str(e))
 
         try:
-            if video_path.exists():
-                video_path.unlink()
+            for p in {video_path, send_video_path}:
+                if p.exists():
+                    p.unlink()
         except Exception:
             pass
 
@@ -2123,6 +2133,145 @@ class BlastBotApp:
             return
 
         raise RuntimeError(f"unsupported output source: {src!r}")
+
+    def _tg_video_max_bytes(self) -> int:
+        mb = int(getattr(self.settings, "bot_max_video_mb", 49) or 49)
+        if mb < 1:
+            mb = 1
+        return int(mb) * 1024 * 1024
+
+    async def _prepare_result_video_for_tg(self, *, source_path: Path, chat_id: int, job_id: str) -> Path:
+        max_bytes = self._tg_video_max_bytes()
+        try:
+            size_bytes = int(source_path.stat().st_size)
+        except Exception as e:
+            raise RuntimeError(f"video file is not readable before send: {source_path}") from e
+
+        if size_bytes <= max_bytes:
+            return source_path
+
+        compress_enabled = bool(getattr(self.settings, "tg_video_compress_enabled", True))
+        if not compress_enabled:
+            raise RuntimeError(
+                f"video is too large for telegram ({size_bytes} bytes > {max_bytes} bytes) and compression is disabled"
+            )
+
+        compressed = source_path.with_name(f"{source_path.stem}.tg.mp4")
+        await self._compress_video_to_fit_tg(
+            source_path=source_path,
+            output_path=compressed,
+            max_bytes=max_bytes,
+        )
+        out_size = int(compressed.stat().st_size) if compressed.exists() else 0
+        log.info(
+            "video_compressed_for_tg chat=%s job=%s source_mb=%.2f result_mb=%.2f max_mb=%.2f",
+            chat_id,
+            job_id,
+            float(size_bytes) / (1024.0 * 1024.0),
+            float(out_size) / (1024.0 * 1024.0),
+            float(max_bytes) / (1024.0 * 1024.0),
+        )
+        return compressed
+
+    async def _compress_video_to_fit_tg(self, *, source_path: Path, output_path: Path, max_bytes: int) -> None:
+        if output_path.exists():
+            output_path.unlink()
+
+        for crf in _TG_VIDEO_COMPRESS_CRF_STEPS:
+            await self._run_ffmpeg_video_compress(source_path=source_path, output_path=output_path, crf=crf)
+            size_bytes = int(output_path.stat().st_size) if output_path.exists() else 0
+            if size_bytes > 0 and size_bytes <= max_bytes:
+                return
+
+        final_size = int(output_path.stat().st_size) if output_path.exists() else 0
+        raise RuntimeError(
+            f"video compression did not reach telegram limit: size={final_size} max={max_bytes} path={output_path}"
+        )
+
+    async def _run_ffmpeg_video_compress(self, *, source_path: Path, output_path: Path, crf: int) -> None:
+        cmd = [
+            self.settings.ffmpeg_bin,
+            "-y",
+            "-i",
+            str(source_path),
+            "-map",
+            "0:v:0",
+            "-map",
+            "0:a?",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-crf",
+            str(int(crf)),
+            "-pix_fmt",
+            "yuv420p",
+            "-movflags",
+            "+faststart",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "96k",
+            str(output_path),
+        ]
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _stdout, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            err_tail = (stderr.decode("utf-8", errors="replace")[-1200:] if stderr else "").strip()
+            raise RuntimeError(
+                f"ffmpeg video compress failed rc={proc.returncode} crf={crf} stderr_tail={err_tail}"
+            )
+
+    async def _send_result_video_with_retry(
+        self,
+        *,
+        bot: Bot,
+        chat_id: int,
+        job_id: str,
+        video_path: Path,
+        caption: str,
+    ) -> None:
+        retries = max(1, int(getattr(self.settings, "tg_video_send_retries", 2) or 2))
+        timeout_s = max(1.0, float(getattr(self.settings, "tg_video_send_timeout_s", 120.0) or 120.0))
+        backoff_s = max(0.0, float(getattr(self.settings, "tg_video_send_backoff_base_s", 2.0) or 2.0))
+        request_timeout = int(timeout_s)
+        last_err: Exception | None = None
+
+        for attempt in range(1, retries + 1):
+            try:
+                await bot.send_document(
+                    chat_id=chat_id,
+                    document=FSInputFile(str(video_path)),
+                    caption=caption,
+                    request_timeout=request_timeout,
+                )
+                return
+            except Exception as e:  # noqa: BLE001
+                last_err = e
+                if attempt >= retries:
+                    break
+                delay_s = backoff_s * float(attempt)
+                log.warning(
+                    "video_send_retry chat=%s job=%s attempt=%d/%d timeout_s=%.1f delay_s=%.1f err=%r",
+                    chat_id,
+                    job_id,
+                    attempt,
+                    retries,
+                    timeout_s,
+                    delay_s,
+                    e,
+                )
+                if delay_s > 0:
+                    await asyncio.sleep(delay_s)
+
+        assert last_err is not None
+        raise RuntimeError(
+            f"telegram video send failed after {retries} attempts: {type(last_err).__name__}: {last_err!r}"
+        ) from last_err
 
     async def _download_telegram_audio_with_retry(
         self,
