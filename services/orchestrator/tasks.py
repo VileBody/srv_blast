@@ -710,6 +710,13 @@ def _looks_like_openrouter_provider_unavailable_502(text: str) -> bool:
     )
 
 
+def _looks_like_openrouter_bad_request_400(text: str) -> bool:
+    if not text:
+        return False
+    lo = text.lower()
+    return "openrouter_http_error" in lo and "status=400" in lo
+
+
 def _looks_like_llm_schema_validation_error(text: str) -> bool:
     """
     LLM produced syntactically/structurally invalid payload for our schema.
@@ -1217,6 +1224,17 @@ def _build_job_impl(self, job_id: str, *, worker_type: str) -> Dict[str, Any]:
                 raise self.retry(
                     countdown=backoff, exc=RuntimeError("openrouter_provider_unavailable_502")
                 )
+            if _looks_like_openrouter_bad_request_400(text):
+                attempt = int(getattr(self.request, "retries", 0)) + 1
+                backoff = _retry_backoff_s(attempt=attempt, base_s=10.0, cap_s=300.0)
+                log.warning(
+                    "openrouter_retry_on_http_400 attempt=%d/%d backoff_s=%.1f err=%s",
+                    attempt,
+                    int(getattr(self, "max_retries", 0) or 0),
+                    backoff,
+                    text[:800],
+                )
+                raise self.retry(countdown=backoff, exc=RuntimeError("openrouter_bad_request_400"))
             if _looks_like_openrouter_overloaded_503(text):
                 attempt = int(getattr(self.request, "retries", 0)) + 1
                 backoff = _overloaded_retry_backoff_s(attempt=attempt)
@@ -1257,6 +1275,17 @@ def _build_job_impl(self, job_id: str, *, worker_type: str) -> Dict[str, Any]:
             attempt = int(getattr(self.request, "retries", 0)) + 1
             backoff = _retry_backoff_s(attempt=attempt, base_s=10.0, cap_s=300.0)
             raise self.retry(countdown=backoff, exc=RuntimeError("openrouter_provider_unavailable_502"))
+        if _looks_like_openrouter_bad_request_400(blob):
+            attempt = int(getattr(self.request, "retries", 0)) + 1
+            backoff = _retry_backoff_s(attempt=attempt, base_s=10.0, cap_s=300.0)
+            log.warning(
+                "openrouter_retry_on_http_400 attempt=%d/%d backoff_s=%.1f err=%s",
+                attempt,
+                int(getattr(self, "max_retries", 0) or 0),
+                backoff,
+                blob[:800],
+            )
+            raise self.retry(countdown=backoff, exc=RuntimeError("openrouter_bad_request_400"))
         if _looks_like_openrouter_overloaded_503(blob):
             attempt = int(getattr(self.request, "retries", 0)) + 1
             backoff = _overloaded_retry_backoff_s(attempt=attempt)
@@ -1347,6 +1376,20 @@ def _build_job_impl(self, job_id: str, *, worker_type: str) -> Dict[str, Any]:
                             raise self.retry(
                                 countdown=backoff,
                                 exc=RuntimeError("openrouter_provider_unavailable_502"),
+                            )
+                        if _looks_like_openrouter_bad_request_400(text):
+                            attempt = int(getattr(self.request, "retries", 0)) + 1
+                            backoff = _retry_backoff_s(attempt=attempt, base_s=10.0, cap_s=300.0)
+                            log.warning(
+                                "openrouter_retry_on_http_400 attempt=%d/%d backoff_s=%.1f err=%s",
+                                attempt,
+                                int(getattr(self, "max_retries", 0) or 0),
+                                backoff,
+                                text[:800],
+                            )
+                            raise self.retry(
+                                countdown=backoff,
+                                exc=RuntimeError("openrouter_bad_request_400"),
                             )
                         if _looks_like_openrouter_overloaded_503(text):
                             attempt = int(getattr(self.request, "retries", 0)) + 1

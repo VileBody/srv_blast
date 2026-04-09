@@ -10,6 +10,7 @@ from services.orchestrator.tasks import (
     _looks_like_gemini_overloaded_503,
     _looks_like_gemini_rate_limited_429,
     _looks_like_llm_schema_validation_error,
+    _looks_like_openrouter_bad_request_400,
     _looks_like_openrouter_internal_500,
     _looks_like_openrouter_provider_unavailable_502,
     _looks_like_openrouter_overloaded_503,
@@ -49,6 +50,11 @@ def test_detects_openrouter_429_rate_limit() -> None:
 def test_detects_openrouter_timeout() -> None:
     s = "RuntimeError: openrouter_timeout: ReadTimeout('timed out')"
     assert _looks_like_openrouter_timeout(s) is True
+
+
+def test_detects_openrouter_bad_request_400() -> None:
+    s = "RuntimeError: openrouter_http_error status=400 body='Provider returned error'"
+    assert _looks_like_openrouter_bad_request_400(s) is True
 
 
 def test_detects_openrouter_internal_500_http_error() -> None:
@@ -108,6 +114,7 @@ def test_schema_validation_marker_is_not_transient_retriable() -> None:
     assert _looks_like_gemini_overloaded_503(s) is False
     assert _looks_like_gemini_rate_limited_429(s) is False
     assert _looks_like_openrouter_timeout(s) is False
+    assert _looks_like_openrouter_bad_request_400(s) is False
     assert _looks_like_openrouter_internal_500(s) is False
     assert _looks_like_openrouter_provider_unavailable_502(s) is False
     assert _looks_like_openrouter_overloaded_503(s) is False

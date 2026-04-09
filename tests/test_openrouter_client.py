@@ -10,7 +10,7 @@ from mlcore.models.stage1_asr import Stage1AsrPayload
 from mlcore.openrouter_client import OpenRouterClient, OpenRouterSettings
 
 
-def _mk_client(captured: Dict[str, Any]) -> OpenRouterClient:
+def _mk_client(captured: Dict[str, Any], *, model: str = "google/gemini-2.5-pro") -> OpenRouterClient:
     def _request(url: str, *, headers: Dict[str, str], json: Dict[str, Any], timeout: float) -> httpx.Response:
         captured["url"] = url
         captured["headers"] = headers
@@ -33,7 +33,7 @@ def _mk_client(captured: Dict[str, Any]) -> OpenRouterClient:
     return OpenRouterClient(
         OpenRouterSettings(
             api_key="k",
-            model="google/gemini-2.5-pro",
+            model=model,
             temperature=0.1,
             timeout_s=33.0,
         ),
@@ -58,6 +58,7 @@ def test_openrouter_payload_includes_provider_and_response_format(tmp_path: Path
     payload = captured["json"]
     assert payload["provider"]["allow_fallbacks"] is False
     assert payload["provider"]["require_parameters"] is True
+    assert payload["provider"]["only"] == ["google-vertex"]
     assert payload["response_format"]["type"] == "json_schema"
     assert payload["response_format"]["json_schema"]["name"] == "Stage1AsrPayload"
 
@@ -85,3 +86,22 @@ def test_openrouter_asr_audio_is_input_audio_base64(tmp_path: Path) -> None:
     assert input_audio["format"] == "mp3"
     decoded = base64.b64decode(input_audio["data"])
     assert decoded == source
+
+
+def test_openrouter_provider_pin_applies_only_to_google_models(tmp_path: Path) -> None:
+    captured: Dict[str, Any] = {}
+    client = _mk_client(captured, model="openai/gpt-4o-mini")
+    audio = tmp_path / "a.mp3"
+    audio.write_bytes(b"\x01\x02test-audio")
+
+    out = client.generate_structured(
+        schema_model=Stage1AsrPayload,
+        prompt="prompt",
+        system_instruction="sys",
+        audio_paths=[audio],
+    )
+    assert isinstance(out, Stage1AsrPayload)
+    payload = captured["json"]
+    assert payload["provider"]["allow_fallbacks"] is False
+    assert payload["provider"]["require_parameters"] is True
+    assert "only" not in payload["provider"]

@@ -169,6 +169,16 @@ class OpenRouterClient:
             },
         }
 
+    def _provider_payload(self) -> Dict[str, Any]:
+        provider: Dict[str, Any] = {
+            "allow_fallbacks": False,
+            "require_parameters": True,
+        }
+        # Pin Google-family models to Vertex to avoid geo-blocked AI Studio endpoint.
+        if self._model.lower().startswith("google/"):
+            provider["only"] = ["google-vertex"]
+        return provider
+
     def _generate_text(
         self,
         *,
@@ -187,10 +197,7 @@ class OpenRouterClient:
                 audio_paths=audio_paths,
             ),
             "response_format": self._response_format(schema_model=schema_model),
-            "provider": {
-                "allow_fallbacks": False,
-                "require_parameters": True,
-            },
+            "provider": self._provider_payload(),
         }
         self._logger.info("openrouter_call model=%s timeout_s=%s", self._model, self._timeout_s)
         obj = self._post_chat_completion(payload)
@@ -254,4 +261,3 @@ class OpenRouterClient:
                 "openrouter_schema_validation_failed "
                 f"schema={schema_model.__name__} err={e!r} text_head={text[:8000]!r}"
             ) from e
-
