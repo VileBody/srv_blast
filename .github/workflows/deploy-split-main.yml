@@ -1,0 +1,100 @@
+name: Deploy Main (Split Prod/Infra)
+
+on:
+  push:
+    branches:
+      - "main"
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "Branch to deploy (optional, defaults to selected ref)"
+        required: false
+        type: string
+      target:
+        description: "Which stack to deploy"
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - prod-path
+          - infra-ops
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-split-${{ github.event_name == 'workflow_dispatch' && (inputs.branch != '' && inputs.branch || github.ref_name) || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  deploy-prod-path:
+    if: ${{ vars.DEPLOY_SPLIT_ENABLED == 'true' && (github.event_name == 'push' || inputs.target == 'all' || inputs.target == 'prod-path') }}
+    name: Deploy Prod Path
+    runs-on: [self-hosted, blast-deploy-prod]
+    timeout-minutes: 30
+    env:
+      REPO_DIR: ${{ vars.BLAST_REPO_DIR_PROD != '' && vars.BLAST_REPO_DIR_PROD || vars.BLAST_REPO_DIR }}
+      INPUT_BRANCH: ${{ inputs.branch }}
+      REF_NAME: ${{ github.ref_name }}
+      GIT_AUTH_TOKEN: ${{ secrets.DEPLOY_GH_TOKEN }}
+      GITHUB_TOKEN_FALLBACK: ${{ github.token }}
+      DEPLOY_PRUNE_OTHER_STACK: ${{ vars.DEPLOY_PRUNE_OTHER_STACK }}
+    steps:
+      - name: Validate Runner Repo Path
+        run: |
+          set -euo pipefail
+          if [ -z "${REPO_DIR:-}" ]; then
+            echo "Repository variable BLAST_REPO_DIR_PROD (or BLAST_REPO_DIR) is not set"
+            exit 1
+          fi
+          if [ ! -d "$REPO_DIR/.git" ]; then
+            echo "REPO_DIR does not point to a git repo: $REPO_DIR"
+            exit 1
+          fi
+
+      - name: Deploy prod-path stack
+        run: |
+          set -euo pipefail
+          BRANCH="${INPUT_BRANCH:-$REF_NAME}"
+          if [ -z "$BRANCH" ]; then
+            echo "Branch is empty"
+            exit 1
+          fi
+          bash "$REPO_DIR/infra/runners/deploy_branch.sh" "$BRANCH" "prod-path"
+
+  deploy-infra-ops:
+    if: ${{ vars.DEPLOY_SPLIT_ENABLED == 'true' && (github.event_name == 'push' || inputs.target == 'all' || inputs.target == 'infra-ops') }}
+    name: Deploy Infra Ops
+    runs-on: [self-hosted, blast-deploy-infra]
+    timeout-minutes: 30
+    env:
+      REPO_DIR: ${{ vars.BLAST_REPO_DIR_INFRA != '' && vars.BLAST_REPO_DIR_INFRA || vars.BLAST_REPO_DIR }}
+      INPUT_BRANCH: ${{ inputs.branch }}
+      REF_NAME: ${{ github.ref_name }}
+      GIT_AUTH_TOKEN: ${{ secrets.DEPLOY_GH_TOKEN }}
+      GITHUB_TOKEN_FALLBACK: ${{ github.token }}
+      DEPLOY_PRUNE_OTHER_STACK: ${{ vars.DEPLOY_PRUNE_OTHER_STACK }}
+    steps:
+      - name: Validate Runner Repo Path
+        run: |
+          set -euo pipefail
+          if [ -z "${REPO_DIR:-}" ]; then
+            echo "Repository variable BLAST_REPO_DIR_INFRA (or BLAST_REPO_DIR) is not set"
+            exit 1
+          fi
+          if [ ! -d "$REPO_DIR/.git" ]; then
+            echo "REPO_DIR does not point to a git repo: $REPO_DIR"
+            exit 1
+          fi
+
+      - name: Deploy infra-ops stack
+        run: |
+          set -euo pipefail
+          BRANCH="${INPUT_BRANCH:-$REF_NAME}"
+          if [ -z "$BRANCH" ]; then
+            echo "Branch is empty"
+            exit 1
+          fi
+          bash "$REPO_DIR/infra/runners/deploy_branch.sh" "$BRANCH" "infra-ops"
+

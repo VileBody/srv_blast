@@ -2,9 +2,18 @@
 set -euo pipefail
 
 BRANCH="${1:-${GITHUB_REF_NAME:-}}"
+DEPLOY_STACK="${2:-${DEPLOY_STACK:-all}}"
+DEPLOY_PRUNE_OTHER_STACK="${DEPLOY_PRUNE_OTHER_STACK:-false}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="${REPO_DIR:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
+RUNNERS_DIR="$REPO_DIR/infra/runners"
+
+is_true() {
+  local v
+  v="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')"
+  [[ "$v" == "1" || "$v" == "true" || "$v" == "yes" || "$v" == "on" ]]
+}
 
 if [[ -z "$BRANCH" ]]; then
   echo "Branch is not specified. Pass it as the first argument."
@@ -18,7 +27,7 @@ fi
 
 cd "$REPO_DIR"
 
-echo "[deploy] repo=$REPO_DIR branch=$BRANCH"
+echo "[deploy] repo=$REPO_DIR branch=$BRANCH stack=$DEPLOY_STACK"
 
 # Prefer an explicit PAT secret, then fallback to the workflow token.
 AUTH_TOKEN="${GIT_AUTH_TOKEN:-${GITHUB_TOKEN_FALLBACK:-}}"
@@ -74,8 +83,91 @@ fi
 # Deterministic deploy target: exact remote branch revision.
 git_run reset --hard "origin/$BRANCH"
 
-echo "[deploy] docker compose up -d --build"
-docker compose up -d --build
+deploy_root_services() {
+  local services=("$@")
+  if [[ ${#services[@]} -eq 0 ]]; then
+    echo "[deploy] docker compose up -d --build"
+    docker compose up -d --build
+  else
+    echo "[deploy] docker compose up -d --build ${services[*]}"
+    docker compose up -d --build "${services[@]}"
+  fi
+}
 
-echo "[deploy] docker compose ps"
-docker compose ps
+stop_root_services() {
+  local services=("$@")
+  if [[ ${#services[@]} -eq 0 ]]; then
+    return 0
+  fi
+  echo "[deploy] docker compose stop ${services[*]}"
+  docker compose stop "${services[@]}" || true
+}
+
+deploy_runner_compose_if_present() {
+  local compose_file="$1"
+  local env_file="$2"
+  if [[ ! -f "$compose_file" ]]; then
+    echo "[deploy] skip missing compose file: $compose_file"
+    return 0
+  fi
+  if [[ ! -f "$env_file" ]]; then
+    echo "[deploy] skip $compose_file (env file not found: $env_file)"
+    return 0
+  fi
+  echo "[deploy] docker compose -f $compose_file --env-file $env_file up -d"
+  docker compose -f "$compose_file" --env-file "$env_file" up -d
+}
+
+show_status() {
+  echo "[deploy] docker compose ps"
+  docker compose ps
+  if [[ -d "$RUNNERS_DIR" ]]; then
+    if [[ -f "$RUNNERS_DIR/.env.dozzle" ]]; then
+      docker compose -f "$RUNNERS_DIR/docker-compose.logs.yml" --env-file "$RUNNERS_DIR/.env.dozzle" ps || true
+    fi
+    if [[ -f "$RUNNERS_DIR/.env.observability" ]]; then
+      docker compose -f "$RUNNERS_DIR/docker-compose.observability.yml" --env-file "$RUNNERS_DIR/.env.observability" ps || true
+    fi
+    if [[ -f "$RUNNERS_DIR/.env.github-runner" ]]; then
+      docker compose -f "$RUNNERS_DIR/docker-compose.github-runner.yml" --env-file "$RUNNERS_DIR/.env.github-runner" ps || true
+    fi
+    if [[ -f "$RUNNERS_DIR/.env.promtail-edge" ]]; then
+      docker compose -f "$RUNNERS_DIR/docker-compose.promtail-edge.yml" --env-file "$RUNNERS_DIR/.env.promtail-edge" ps || true
+    fi
+  fi
+}
+
+case "$DEPLOY_STACK" in
+  all)
+    deploy_root_services
+    ;;
+  prod-path)
+    deploy_root_services orchestrator-api worker-build worker-render tg-bot-public
+    deploy_runner_compose_if_present "$RUNNERS_DIR/docker-compose.promtail-edge.yml" "$RUNNERS_DIR/.env.promtail-edge"
+    if is_true "$DEPLOY_PRUNE_OTHER_STACK"; then
+      stop_root_services tg-bot asset-ui finance-bot
+    fi
+    ;;
+  infra-apps)
+    deploy_root_services tg-bot asset-ui finance-bot
+    if is_true "$DEPLOY_PRUNE_OTHER_STACK"; then
+      stop_root_services orchestrator-api worker-build worker-render tg-bot-public
+    fi
+    ;;
+  infra-ops)
+    deploy_root_services tg-bot asset-ui finance-bot
+    deploy_runner_compose_if_present "$RUNNERS_DIR/docker-compose.logs.yml" "$RUNNERS_DIR/.env.dozzle"
+    deploy_runner_compose_if_present "$RUNNERS_DIR/docker-compose.observability.yml" "$RUNNERS_DIR/.env.observability"
+    deploy_runner_compose_if_present "$RUNNERS_DIR/docker-compose.github-runner.yml" "$RUNNERS_DIR/.env.github-runner"
+    if is_true "$DEPLOY_PRUNE_OTHER_STACK"; then
+      stop_root_services orchestrator-api worker-build worker-render tg-bot-public
+    fi
+    ;;
+  *)
+    echo "Unknown DEPLOY_STACK=$DEPLOY_STACK"
+    echo "Allowed: all | prod-path | infra-apps | infra-ops"
+    exit 1
+    ;;
+esac
+
+show_status

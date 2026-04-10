@@ -57,6 +57,12 @@ jobs:
           python -m pip install -r requirements.txt
           python -m pip install pytest
 
+      - name: Shell script syntax check
+        run: |
+          set -euo pipefail
+          bash -n infra/runners/deploy_branch.sh
+          bash -n infra/runners/deploy_landing_to_nginx.sh
+
       - name: Compile tg_bot_public
         run: |
           set -euo pipefail
