@@ -1,4 +1,4 @@
-name: Deploy Main
+name: Deploy Main (Legacy Single Node)
 
 on:
   push:
@@ -20,6 +20,7 @@ concurrency:
 
 jobs:
   deploy:
+    if: ${{ vars.DEPLOY_SPLIT_ENABLED != 'true' }}
     name: Deploy On Self-Hosted Runner
     runs-on: [self-hosted, blast-deploy]
     timeout-minutes: 30

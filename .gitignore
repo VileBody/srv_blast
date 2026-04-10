@@ -3,8 +3,11 @@
 
 # Local env
 .env
+.env.iac
 infra/runners/.env.github-runner
 infra/runners/.env.dozzle
+infra/runners/.env.observability
+infra/runners/.env.promtail-edge
 
 # Python caches
 __pycache__/
@@ -40,3 +43,7 @@ repomix_*_flow.md
 
 # Infra runtime secrets/state
 infra/runners/dozzle_data/
+infra/timeweb/**/.terraform/
+infra/timeweb/**/.terraform.lock.hcl
+infra/timeweb/**/terraform.tfstate
+infra/timeweb/**/terraform.tfstate.*

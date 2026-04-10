@@ -5,13 +5,16 @@
 ## Что добавлено
 
 - Workflow: `.github/workflows/deploy-current-branch.yml`
+- Workflow (split): `.github/workflows/deploy-split-main.yml`
 - Скрипт деплоя: `infra/runners/deploy_branch.sh`
 - Docker Compose для GitHub self-hosted runner: `infra/runners/docker-compose.github-runner.yml`
 - Docker Compose для web UI логов (Dozzle): `infra/runners/docker-compose.logs.yml`
 - Docker Compose для observability V1: `infra/runners/docker-compose.observability.yml`
+- Docker Compose для prod-node log shipping: `infra/runners/docker-compose.promtail-edge.yml`
 - Пример env: `infra/runners/.env.github-runner.example`
 - Пример env для Dozzle: `infra/runners/.env.dozzle.example`
 - Пример env для observability: `infra/runners/.env.observability.example`
+- Пример env для prod-node promtail: `infra/runners/.env.promtail-edge.example`
 
 ## 1) Поднять self-hosted runner
 
@@ -44,7 +47,27 @@ Workflow использует эту переменную, чтобы выпол
    - `git fetch`
    - `git checkout X`
    - `git pull --ff-only`
-   - `docker compose up -d --build`
+   - `docker compose up -d --build` (или stack-aware режим)
+
+### 3.2) Stack-aware deploy (prod-path / infra-ops)
+
+`infra/runners/deploy_branch.sh` поддерживает второй аргумент:
+
+- `all` (по умолчанию): legacy single-node deploy.
+- `prod-path`: `orchestrator-api`, `worker-build`, `worker-render`, `tg-bot-public` + опционально `promtail-edge`.
+- `infra-apps`: `tg-bot`, `asset-ui`, `finance-bot`.
+- `infra-ops`: `infra-apps` + `dozzle` + `observability` + `github-runner` (если есть соответствующие `.env`).
+
+Примеры:
+
+```bash
+bash infra/runners/deploy_branch.sh main prod-path
+bash infra/runners/deploy_branch.sh main infra-ops
+```
+
+Опция:
+
+- `DEPLOY_PRUNE_OTHER_STACK=true` — после деплоя останавливает сервисы противоположного stack.
 
 ## 3.1) Опционально: отдельный деплой `landing/` в Ubuntu nginx
 
@@ -136,6 +159,22 @@ docker compose -f docker-compose.observability.yml --env-file .env.observability
 - `promtail` читает Docker logs и метит минимум `service`, `container`, `env`; `job_id` извлекается regex-пайплайном.
 - Для production рекомендуется закрыть порты и публиковать Grafana/Prometheus/Alertmanager только через nginx + auth.
 
+### 5.2) Split режим: Loki на infra VM, логи с prod VM через promtail-edge
+
+На **prod VM** поднимается только `promtail-edge`, который читает docker logs локально и шлет в Loki на infra VM:
+
+```bash
+cd /opt/blast_mj_final/infra/runners
+cp .env.promtail-edge.example .env.promtail-edge
+# заполни PROMTAIL_LOKI_URL и labels OBS_NODE_*
+docker compose -f docker-compose.promtail-edge.yml --env-file .env.promtail-edge up -d
+```
+
+Важно:
+
+- на infra VM Loki должен быть доступен prod VM по сети (private IP + firewall allowlist).
+- это pull-like логирование со стороны prod узла: приложения не отправляют логи в Loki напрямую.
+
 ### 5.1) Публикация через `blast808.com` + Basic Auth
 
 Готовый пример location-блоков:
@@ -151,3 +190,23 @@ docker compose -f docker-compose.observability.yml --env-file .env.observability
 ```bash
 sudo nginx -t && sudo systemctl reload nginx
 ```
+
+## 6) CI/CD split rollout (рекомендуется)
+
+Для двух VM используем два self-hosted runner:
+
+- `blast-deploy-prod` (на prod VM)
+- `blast-deploy-infra` (на infra VM)
+
+Workflow:
+
+- `.github/workflows/deploy-split-main.yml`
+
+Repository variables:
+
+- `DEPLOY_SPLIT_ENABLED=true`
+- `BLAST_REPO_DIR_PROD=/opt/blast_mj_final` (или ваш путь на prod VM)
+- `BLAST_REPO_DIR_INFRA=/opt/blast_mj_final` (или ваш путь на infra VM)
+- `DEPLOY_PRUNE_OTHER_STACK=true` (опционально)
+
+Legacy workflow `.github/workflows/deploy-current-branch.yml` автоматически пропускается при `DEPLOY_SPLIT_ENABLED=true`.
