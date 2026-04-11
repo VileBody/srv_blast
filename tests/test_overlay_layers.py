@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from app.footage_comp import build_footage_layers
-from core.subtitles_mode import SUBTITLES_MODE_TEMPLATE_4TH
+from core.subtitles_mode import SUBTITLES_MODE_SCENES_3RD, SUBTITLES_MODE_TEMPLATE_4TH
 import mlcore.gemini_postprocess as gp
 from mlcore.gemini_postprocess import render_all_steps
 from mlcore.models.full_plan import FullPlanPayload
@@ -358,7 +358,7 @@ def test_overlay_blueprint_propagates_ae_tiling_meta(monkeypatch) -> None:
     assert int(meta.get("overlayTileMaxRepeats", 0)) == 100
 
 
-def test_footage_blueprint_enables_shake_expression_by_default(monkeypatch) -> None:
+def test_footage_blueprint_enables_shake_expression_for_jakson(monkeypatch) -> None:
     monkeypatch.delenv("FOOTAGE_SHAKE_ENABLED", raising=False)
     cfg = {
         "text_dur_hint": 5.0,
@@ -382,6 +382,7 @@ def test_footage_blueprint_enables_shake_expression_by_default(monkeypatch) -> N
         footage_cfg=cfg,
         main_comp_name="Comp 1",
         text_comp_name="Text",
+        subtitles_mode=SUBTITLES_MODE_SCENES_3RD,
     )
     footage = next(it for it in layers if str(it.get("name")) == "bg")
     tf_position = (footage.get("props") or {}).get("tf_position") or {}
@@ -426,7 +427,7 @@ def test_overlay_blueprint_does_not_use_footage_shake_expression(monkeypatch) ->
     assert "intro=0.63" not in expr
 
 
-def test_footage_blueprint_keeps_shake_for_template_4th(monkeypatch) -> None:
+def test_footage_blueprint_no_shake_for_template_4th(monkeypatch) -> None:
     monkeypatch.setenv("FOOTAGE_SHAKE_ENABLED", "1")
     cfg = {
         "text_dur_hint": 5.0,
@@ -455,8 +456,8 @@ def test_footage_blueprint_keeps_shake_for_template_4th(monkeypatch) -> None:
     footage = next(it for it in layers if str(it.get("name")) == "bg")
     tf_position = (footage.get("props") or {}).get("tf_position") or {}
     expr = str(tf_position.get("expression") or "")
-    assert "intro=0.63" in expr
-    assert "outro=0.63" in expr
+    assert "intro=0.63" not in expr
+    assert "outro=0.63" not in expr
 
 
 def test_overlay_tiling_uses_ae_repeat_marker_for_short_known_duration() -> None:
