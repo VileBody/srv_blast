@@ -37,3 +37,18 @@ def test_adj16_layer_index_params_are_neutralized() -> None:
 
     # Ensure we actually hit the known problematic param.
     assert "BCC6LensBlur-9961851" in found
+
+
+def test_adj16_curves_effect_is_dropped() -> None:
+    repo_root = Path(__file__).resolve().parent.parent
+    dump_path = repo_root / "data" / "0_4.504505__Adjustment Layer 16__adjustment.json"
+    dump = json.loads(dump_path.read_text(encoding="utf-8"))
+
+    effects = _extract_effects_from_adjustment_dump(dump)
+
+    # Render-node "render-only" mode is unstable with Curves (CUSTOM_VALUE).
+    # Keep this strict: no Curves effect or params should reach generated JSX.
+    for eff_key, params in effects.items():
+        assert not str(eff_key).endswith(":ADBE CurvesCustom")
+        for pd in params.values():
+            assert not str(pd.match_name).startswith("ADBE CurvesCustom")

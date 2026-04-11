@@ -14,6 +14,20 @@ from core.types import KeyframeData, KeyframeEase, LayerBlueprint, PropertyData
 
 LOGGER = logging.getLogger("app.footage_comp")
 
+_DISALLOWED_EFFECT_MATCH_PREFIXES: tuple[str, ...] = (
+    "ADBE CurvesCustom",
+)
+
+
+def _is_disallowed_effect_match_name(match_name: str) -> bool:
+    raw = str(match_name or "").strip()
+    if not raw:
+        return False
+    for prefix in _DISALLOWED_EFFECT_MATCH_PREFIXES:
+        if raw == prefix or raw.startswith(prefix):
+            return True
+    return False
+
 
 def _env_bool(name: str, default: bool) -> bool:
     raw = os.environ.get(name)
@@ -233,6 +247,8 @@ def _extract_effects_from_adjustment_dump(dump: Dict[str, Any]) -> Dict[str, Dic
     for eff_i, eff in enumerate((parade.get("children") or [])):
         eff_match = eff.get("matchName")
         if not eff_match:
+            continue
+        if _is_disallowed_effect_match_name(str(eff_match)):
             continue
 
         # IMPORTANT:

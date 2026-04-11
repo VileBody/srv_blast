@@ -13,6 +13,20 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
+_DISALLOWED_EFFECT_MATCH_PREFIXES: tuple[str, ...] = (
+    "ADBE CurvesCustom",
+)
+
+
+def _is_disallowed_effect_match_name(match_name: str) -> bool:
+    raw = str(match_name or "").strip()
+    if not raw:
+        return False
+    for prefix in _DISALLOWED_EFFECT_MATCH_PREFIXES:
+        if raw == prefix or raw.startswith(prefix):
+            return True
+    return False
+
 
 def _deep_merge(a: Any, b: Any) -> Any:
     """Deep-merge b into a (dict-recursive). For lists/scalars, b overwrites a."""
@@ -154,6 +168,8 @@ def stack_to_ae_effects_conf(
         tree = preset.get("propertyTree") or {}
         match_name = tree.get("matchName")
         if not match_name:
+            continue
+        if _is_disallowed_effect_match_name(str(match_name)):
             continue
 
         exposed = preset.get("exposedParams") or []
