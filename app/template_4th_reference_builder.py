@@ -9,8 +9,9 @@ from mlcore.models.subtitles_flow import SubtitleFlowPlan
 
 _FPS = float(AE_FPS)
 _FRAME_SEC = frame_duration_s(_FPS)
-_FADE_FRAMES = 4.0
+_FADE_FRAMES = 2.0
 _FADE_DUR = frames_to_seconds(_FADE_FRAMES, fps=_FPS)
+_ANTICIPATION_SEC = _FRAME_SEC * 2  # 2 кадра предраскрытия
 
 _FONT_NAME = "Montserrat-BoldItalic"
 _FONT_SIZE = 60
@@ -18,7 +19,7 @@ _TRACKING = -25
 _LEADING = 80
 _POSITION = [540, 960, 0]
 _WHITE = [1.0, 1.0, 1.0]
-_FOCUS_RED = [1.0, 0.451, 0.451]
+_FOCUS_RED = [0.898, 0.082, 0.082]  # #E51515
 
 _CLEAN_RE = re.compile(r"[^\w\u0400-\u04FF]+", flags=re.UNICODE)
 
@@ -155,7 +156,7 @@ def _reveal_keyframes(*, seg: Any, text: str) -> List[Dict[str, Any]]:
         kfs: List[Dict[str, Any]] = []
         for idx, tok in enumerate(tokens):
             pct = (float(idx) / float(n_words)) * 100.0
-            t = max(in_t, min(float(tok.t_start), out_t))
+            t = max(in_t, min(float(tok.t_start) - _ANTICIPATION_SEC, out_t))
             kfs.append(_kf(t=t, value=pct, interpolation="bezier"))
         last_end = max(in_t, min(float(tokens[-1].t_end), out_t))
         final_t = min(out_t, max(last_end, out_t - _FADE_DUR))

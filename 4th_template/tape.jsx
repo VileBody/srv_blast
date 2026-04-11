@@ -9,7 +9,7 @@
 var FONT_NAME   = "Montserrat-BoldItalic";
 var FONT_SIZE   = 60;
 var FILL_COLOR  = [1, 1, 1];
-var FOCUS_COLOR = [1.0, 0.451, 0.451]; // #FF7373 // #E51515
+var FOCUS_COLOR = [0.898, 0.082, 0.082]; // #E51515
 var TRACKING    = -25;
 var LEADING     = 80;
 var FPS         = 23.976;
@@ -98,8 +98,9 @@ function createSubtitle(comp, sub, wordList) {
     var dur  = outT - inT;
     if (dur <= 0) return;
 
-    var FADE_FRAMES = 4;
+    var FADE_FRAMES = 2;
     var fadeDur     = FADE_FRAMES / FPS;
+    var ANTICIPATION = 2 / FPS; // 2 кадра предраскрытия
 
     var subWords = getSubWords(sub.text, wordList, inT, outT);
     var nWords   = sub.text.split(" ").length;
@@ -178,7 +179,7 @@ function createSubtitle(comp, sub, wordList) {
     if (subWords.length >= 2) {
         for (var k = 0; k < subWords.length; k++) {
             var pct  = (k / nWords) * 100;
-            var time = subWords[k].wt.start;
+            var time = subWords[k].wt.start - ANTICIPATION;
             if (time < inT) time = inT;
             ps.setValueAtTime(time, pct);
         }
@@ -216,7 +217,7 @@ function createSubtitle(comp, sub, wordList) {
         var wordLen  = textWords[wordIdx].length;
         var charMid  = charFrom + Math.ceil(wordLen / 2); // середина слова
 
-        var wStart   = subWords[fi].wt.start + TIME_OFFSET;
+        var wStart   = subWords[fi].wt.start + TIME_OFFSET - ANTICIPATION;
         var wEnd     = subWords[fi].wt.end   + TIME_OFFSET;
         var wMid     = wStart + (wEnd - wStart) / 2;
 

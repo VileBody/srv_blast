@@ -22,6 +22,7 @@ _INTERP_CODES = {
     "hold": "6614",
 }
 _FRAME_SEC = frame_duration_s(AE_FPS)
+_ANTICIPATION_SEC = _FRAME_SEC * 2  # 2 кадра предраскрытия
 _REVEAL_STEP_SEC = _FRAME_SEC
 _REVEAL_START_PERCENT = 25.0
 
@@ -284,7 +285,7 @@ class FlowTextLayerRenderer:
         out: List[Dict[str, Any]] = []
         prev_t = seg_in
         for i, (_word, t_start, _t_end) in enumerate(token_times):
-            hold_t = max(float(t_start), prev_t)
+            hold_t = max(float(t_start) - _ANTICIPATION_SEC, prev_t)
             jump_t = min(seg_out, hold_t + _REVEAL_STEP_SEC)
             out.append(_kf(t=hold_t, value=thresholds[i], interpolation="bezier"))
             out.append(_kf(t=jump_t, value=thresholds[i + 1], interpolation="bezier"))
