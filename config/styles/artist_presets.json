@@ -9,6 +9,7 @@
           "key": "hiphop_emotional_melodic",
           "label": "Эмоциональный мелодик (Drake, Lil Peep)",
           "description": "Heartbreak, romance, jealousy, betrayal",
+          "themes": ["heartbreak_minor", "romance_minor", "jealousy_minor", "betrayal_minor"],
           "preview_file_id": "BAACAgIAAxkDAAIYT2nPbJhTKDrI0tYczWlXi2M287fWAAJAlgACK7CASks_WiuRv8SvOgQ",
           "preview_s3_url": "",
           "preview_file_id_public": "BAACAgIAAxkDAAISH2nTgiNbW9pKSJIE2BIhOZDjLRz5AALkmQACEWahSioin1lEmdzAOwQ"
@@ -17,6 +18,7 @@
           "key": "hiphop_atmospheric_dark",
           "label": "Атмосферный тёмный (Travis Scott, Kid Cudi)",
           "description": "Escapism, self-destruction, cyber alienation",
+          "themes": ["escapism_dreams_minor", "self_destruction_minor", "cyber_alienation_minor"],
           "preview_file_id": "BAACAgIAAxkDAAIYUGnPbJy-U3grtTKLfQSwsbjMz3pWAAJBlgACK7CASqXctQhQ539wOgQ",
           "preview_s3_url": "",
           "preview_file_id_public": "BAACAgIAAxkDAAISIGnTgiVzCU7soB759PQq-2XepQsSAALlmQACEWahShnP-6AyxbtVOwQ"
@@ -25,6 +27,7 @@
           "key": "hiphop_aggressive_street",
           "label": "Агрессивный уличный (Pop Smoke, drill)",
           "description": "Aggression, motivation, hustle",
+          "themes": ["aggression_minor", "motivation_minor", "hustle_minor"],
           "preview_file_id": "BAACAgIAAxkDAAIYUWnPbJ-XN59UXdLSNR5OEWimSk3uAAJDlgACK7CASkXJmzNopkATOgQ",
           "preview_s3_url": "",
           "preview_file_id_public": "BAACAgIAAxkDAAISIWnTgidaHJoWdG_PD-ITHZyQv1zkAALmmQACEWahSmUb9mXWxE1KOwQ"
@@ -33,6 +36,7 @@
           "key": "hiphop_ambition_flex",
           "label": "Амбиции и флекс (Kanye, Jay-Z)",
           "description": "Adrenaline, flex, motivation",
+          "themes": ["adrenaline_flex_major", "motivation_major"],
           "preview_file_id": "BAACAgIAAxkDAAIYUmnPbKI1fv4xUturAm1qsjP70PR0AAJElgACK7CAShZFD_-rQv3eOgQ",
           "preview_s3_url": "",
           "preview_file_id_public": "BAACAgIAAxkDAAISImnTginboMx3z9YyzQ0sQs6B7FkhAALnmQACEWahSrtqibIjl7PyOwQ"
@@ -41,6 +45,7 @@
           "key": "hiphop_depressive_emo",
           "label": "Депрессивный emo-rap (XXX, $uicideboy$)",
           "description": "Depression, loneliness, isolation",
+          "themes": ["depression_minor", "loneliness_isolation_minor"],
           "preview_file_id": "BAACAgIAAxkDAAIYU2nPbKQCMW0hQFu-ZsD_qEFxDbK6AAJFlgACK7CASsu6hhvxq-XJOgQ",
           "preview_s3_url": "",
           "preview_file_id_public": "BAACAgIAAxkDAAISI2nTgiv9OCDUYv_gJp23HTETOQvyAALomQACEWahSidAEm6XGmf2OwQ"
@@ -49,6 +54,7 @@
           "key": "hiphop_sensual_rnb",
           "label": "Чувственный R&B (The Weeknd, Bryson Tiller)",
           "description": "Sensual, intimate",
+          "themes": ["sex_minor"],
           "preview_file_id": "BAACAgIAAxkDAAIYVGnPbKe-uobn8g_fDOuGLoH6SWl4AAJHlgACK7CASsOS8mcLV41jOgQ",
           "preview_s3_url": "",
           "preview_file_id_public": "BAACAgIAAxkDAAISJGnTgi9GSgxvFKmdfmVG8f7jiV1AAALpmQACEWahSuVXHtKMLuVSOwQ"
@@ -63,6 +69,7 @@
           "key": "pop_romantic",
           "label": "Романтический поп (Ed Sheeran, Bruno Mars)",
           "description": "Romance, epic love",
+          "themes": ["romance_major", "epic_love_major", "sex_major"],
           "preview_file_id": "BAACAgIAAxkDAAIYVWnPbKraoi88I8OD1DLFju0AAeWL3QACSpYAAiuwgEonHZRtV4T7TjoE",
           "preview_s3_url": "",
           "preview_file_id_public": "BAACAgIAAxkDAAISJWnTgjH6IJViz428amnJwcShuojSAALqmQACEWahSp_qC7tdAl1eOwQ"
@@ -71,6 +78,7 @@
           "key": "pop_emotional_ballad",
           "label": "Эмоциональная баллада (Adele, Sam Smith)",
           "description": "Heartbreak, epic love",
+          "themes": ["heartbreak_minor", "epic_love_minor", "romance_minor"],
           "preview_file_id": "BAACAgIAAxkDAAIYVmnPbK1vVVy7qc5G2V47Bouz-e-CAAJLlgACK7CASif4tkkuG4TNOgQ",
           "preview_s3_url": "",
           "preview_file_id_public": "BAACAgIAAxkDAAISJmnTgjQwwCKEbetGizT-kIxJtjxDAALrmQACEWahSuK2qKTGKWpeOwQ"
@@ -79,6 +87,7 @@
           "key": "pop_dance",
           "label": "Танцевальный поп (Dua Lipa, Doja Cat)",
           "description": "Youth rebellion, motivation",
+          "themes": ["youth_rebellion_major", "motivation_major"],
           "preview_file_id": "BAACAgIAAxkDAAIYV2nPbLAyn8erYTqAFSsVXBTyF3feAAJMlgACK7CASuZwlq0-FHpsOgQ",
           "preview_s3_url": "",
           "preview_file_id_public": "BAACAgIAAxkDAAISJ2nTgjaiRtR3vzuGYXDU5_T9I1bJAALsmQACEWahSvGtaHo4YHqcOwQ"
@@ -87,6 +96,7 @@
           "key": "pop_dark",
           "label": "Тёмный поп (Billie Eilish, Lorde)",
           "description": "Depression, escapism, loneliness",
+          "themes": ["depression_minor", "escapism_dreams_minor", "loneliness_isolation_minor"],
           "preview_file_id": "BAACAgIAAxkDAAIYWGnPbLNs7EYE9FB_cwZQceUAAd65AgACTZYAAiuwgEpcgeEirmHTTDoE",
           "preview_s3_url": "",
           "preview_file_id_public": "BAACAgIAAxkDAAISKGnTgjjb96C992-Japb8ZZjosG9oAALtmQACEWahSk7QWDLA7VhQOwQ"
@@ -95,6 +105,7 @@
           "key": "pop_sensual",
           "label": "Чувственный поп (Ariana Grande, SZA)",
           "description": "Jealousy, betrayal",
+          "themes": ["jealousy_minor", "betrayal_minor"],
           "preview_file_id": "BAACAgIAAxkDAAIYWWnPbLWH3Sh6eDhYGz8jctPV2JE0AAJOlgACK7CASpiLO7UizAABAjoE",
           "preview_s3_url": "",
           "preview_file_id_public": "BAACAgIAAxkDAAISKWnTgjwTTgJWXWDhWPImo0W_tcDFAALumQACEWahSgaES3yM33QNOwQ"
@@ -109,6 +120,7 @@
           "key": "rock_nu_metal",
           "label": "Nu-metal / emotional (Linkin Park, BMTH)",
           "description": "Aggression, depression, self-destruction",
+          "themes": ["aggression_minor", "depression_minor", "self_destruction_minor"],
           "preview_file_id": "BAACAgIAAxkDAAIYWmnPbLhhWy-lh3MDr4Z0b7taD_JnAAJPlgACK7CASgWbz7rMNGRdOgQ",
           "preview_s3_url": "",
           "preview_file_id_public": "BAACAgIAAxkDAAISKmnTgj_P0hdDqFa0bCt-hzRqBCK8AALvmQACEWahSiiNqRelrr_MOwQ"
@@ -117,6 +129,7 @@
           "key": "rock_indie",
           "label": "Indie rock (Arctic Monkeys, The Strokes)",
           "description": "Nostalgia, romance",
+          "themes": ["nostalgia_city_minor", "romance_minor"],
           "preview_file_id": "BAACAgIAAxkDAAIYW2nPbLue-mkFyyK3xxBcGL34woklAAJQlgACK7CASpzCCbJRBSgqOgQ",
           "preview_s3_url": "",
           "preview_file_id_public": "BAACAgIAAxkDAAISK2nTgkDybgpoQGcNh-U63SpPIShsAALwmQACEWahSosEHIKRZDPyOwQ"
@@ -125,6 +138,7 @@
           "key": "rock_emo",
           "label": "Emo / post-hardcore (MCR, Paramore)",
           "description": "Heartbreak, epic love, self-destruction",
+          "themes": ["heartbreak_minor", "epic_love_minor", "self_destruction_minor"],
           "preview_file_id": "BAACAgIAAxkDAAIYXGnPbL3ewf_H5wyK-ZWBYK6P9nKhAAJRlgACK7CASmzlwH1U-FoROgQ",
           "preview_s3_url": "",
           "preview_file_id_public": "BAACAgIAAxkDAAISLGnTgkJV3_wkphai9q6C0GHjMHSsAALxmQACEWahSr2xyjIZG0OxOwQ"
@@ -133,6 +147,7 @@
           "key": "rock_epic",
           "label": "Epic / стадионный рок (Imagine Dragons, Muse)",
           "description": "Motivation, epic love",
+          "themes": ["motivation_major", "epic_love_major"],
           "preview_file_id": "BAACAgIAAxkDAAIYXWnPbMApiCdGBRlHGcDaXPHuOJBZAAJSlgACK7CASnnVz05sVV3aOgQ",
           "preview_s3_url": "",
           "preview_file_id_public": "BAACAgIAAxkDAAISLWnTgkR_Ro6ZvbwfqgVxexyUnfI4AALymQACEWahStfu8vIAAS3udzsE"
@@ -141,6 +156,7 @@
           "key": "rock_grunge",
           "label": "Grunge / heavy (Nirvana, Alice in Chains)",
           "description": "Loneliness, aggression, mysticism",
+          "themes": ["loneliness_isolation_minor", "aggression_minor", "mysticism_fate_minor"],
           "preview_file_id": "BAACAgIAAxkDAAIYXmnPbMQPINDoczyHR7MXpV5DrWGqAAJTlgACK7CASk4mTDscOoSwOgQ",
           "preview_s3_url": "",
           "preview_file_id_public": "BAACAgIAAxkDAAISLmnTgkULNvr4CSrCcDJapAuVT4USAALzmQACEWahSu9n-llYDWV7OwQ"
@@ -155,6 +171,7 @@
           "key": "alt_art_rock",
           "label": "Атмосферный арт-рок (Radiohead, Portishead)",
           "description": "Cyber alienation, escapism",
+          "themes": ["cyber_alienation_minor", "escapism_dreams_minor"],
           "preview_file_id": "BAACAgIAAxkDAAIYX2nPbMdkWRmB47uOnEwMu1so-aBfAAJVlgACK7CASut3XUxQ5J8bOgQ",
           "preview_s3_url": "",
           "preview_file_id_public": "BAACAgIAAxkDAAISL2nTgkcVVZlm7h5U6zivNaaGEQO6AAL0mQACEWahSgk6O_XRJXsUOwQ"
@@ -163,6 +180,7 @@
           "key": "alt_cinematic",
           "label": "Кинематографичный инди (Lana Del Rey, Florence)",
           "description": "Nostalgia, epic love, romance",
+          "themes": ["nostalgia_city_minor", "epic_love_minor", "romance_minor"],
           "preview_file_id": "BAACAgIAAxkDAAIYYGnPbMs7nXFHzUDxfRPFHjNHDbFjAAJWlgACK7CASqo2s5_iZ_NPOgQ",
           "preview_s3_url": "",
           "preview_file_id_public": "BAACAgIAAxkDAAISMGnTgkmcx8KIvyQEp1tUvYxnxjZHAAL1mQACEWahSjxkOJh8KLjyOwQ"
@@ -171,6 +189,7 @@
           "key": "alt_ethereal",
           "label": "Эфирный / фолк (Bon Iver, Sigur Rós)",
           "description": "Loneliness, mysticism",
+          "themes": ["loneliness_isolation_minor", "mysticism_fate_minor"],
           "preview_file_id": "BAACAgIAAxkDAAIYYWnPbM7SAAFoBl6pdytX0JSzVUFXWwACV5YAAiuwgEq5DV1tSVbZfDoE",
           "preview_s3_url": "",
           "preview_file_id_public": "BAACAgIAAxkDAAISMWnTgk5z8gV8QCJ57Mj4RBS4z-TnAAL2mQACEWahSljOB07nxnfgOwQ"
@@ -179,6 +198,7 @@
           "key": "alt_dark_indie",
           "label": "Тёмный инди (Cigarettes After Sex, Mazzy Star)",
           "description": "Sex, romance, nostalgia",
+          "themes": ["sex_minor", "romance_minor", "nostalgia_city_minor"],
           "preview_file_id": "BAACAgIAAxkDAAIYYmnPbNElsAABEPbFGnOK0juY6mNMpgACWZYAAiuwgEr9FteDHJ4qUDoE",
           "preview_s3_url": "",
           "preview_file_id_public": "BAACAgIAAxkDAAISMmnTgk-wgX8a6BSYZiIYnpk_xI92AAL3mQACEWahSmvWJOtXBtIDOwQ"
@@ -187,6 +207,7 @@
           "key": "alt_melancholic",
           "label": "Меланхоличный инди (The Neighbourhood, Joji)",
           "description": "Depression, heartbreak, self-destruction",
+          "themes": ["depression_minor", "heartbreak_minor", "self_destruction_minor"],
           "preview_file_id": "BAACAgIAAxkDAAIYY2nPbNQjF0Dcwp8FWZzLafXgLs74AAJalgACK7CASpE7rbFo1Y_lOgQ",
           "preview_s3_url": "",
           "preview_file_id_public": "BAACAgIAAxkDAAISM2nTglGeWYZRsdNBGuYvcFFJaGZCAAL4mQACEWahSrBtpI90jdKtOwQ"
@@ -201,6 +222,7 @@
           "key": "electro_dark_techno",
           "label": "Dark techno (Gesaffelstein, Boys Noize)",
           "description": "Cyber alienation, aggression",
+          "themes": ["cyber_alienation_minor", "aggression_minor"],
           "preview_file_id": "BAACAgIAAxkDAAIYZGnPbNendcpcIpwCWnHaI1qq6G0rAAJblgACK7CASggnW-ntQzHWOgQ",
           "preview_s3_url": "",
           "preview_file_id_public": "BAACAgIAAxkDAAISNGnTglNODpptJwi2c9E3eTh8UEL6AAL5mQACEWahSprNGlaFhtiTOwQ"
@@ -209,6 +231,7 @@
           "key": "electro_synthwave",
           "label": "Synthwave / ретро (Kavinsky, The Midnight)",
           "description": "Adrenaline, flex",
+          "themes": ["adrenaline_flex_major"],
           "preview_file_id": "BAACAgIAAxkDAAIYZWnPbNqRrwvM3AAB8g5MhQpQanImxQACXJYAAiuwgEpUZZeOQqiSvjoE",
           "preview_s3_url": "",
           "preview_file_id_public": "BAACAgIAAxkDAAISNWnTglTiXt8Oy2Pex8fpmbQnIkjiAAL6mQACEWahSjF0JltL8jzLOwQ"
@@ -217,6 +240,7 @@
           "key": "electro_experimental",
           "label": "Experimental / future (Flume, ODESZA)",
           "description": "Escapism, dreams",
+          "themes": ["escapism_dreams_minor"],
           "preview_file_id": "BAACAgIAAxkDAAIYZmnPbN0lWlywaFw2q24X7UCMXNtrAAJdlgACK7CASlOWv8qKqyoHOgQ",
           "preview_s3_url": "",
           "preview_file_id_public": "BAACAgIAAxkDAAISNmnTgliQFpMgHke7MGxfWlH9ch8kAAL7mQACEWahSvj2bZ5LjrE8OwQ"
@@ -225,6 +249,7 @@
           "key": "electro_ambient_dark",
           "label": "Ambient / dark (DARKSIDE, Burial)",
           "description": "Mysticism, depression, loneliness",
+          "themes": ["mysticism_fate_minor", "depression_minor", "loneliness_isolation_minor"],
           "preview_file_id": "BAACAgIAAxkDAAIYZ2nPbN_Ts6KqF4POBPqqLenQ-LkyAAJelgACK7CASiJmoUtahNJNOgQ",
           "preview_s3_url": "",
           "preview_file_id_public": "BAACAgIAAxkDAAISN2nTgll0_-W1CuvRqqoB2Aw0eiXJAAL8mQACEWahSgAB0ZErLmgDMzsE"
@@ -233,6 +258,7 @@
           "key": "electro_melodic",
           "label": "Melodic electronic (Rufus Du Sol, Above & Beyond)",
           "description": "Romance, epic love, motivation",
+          "themes": ["romance_major", "epic_love_major", "motivation_major"],
           "preview_file_id": "BAACAgIAAxkDAAIYaGnPbOIMh66weFOqquOVSiU_5YN8AAJflgACK7CASusujTvJKTLDOgQ",
           "preview_s3_url": "",
           "preview_file_id_public": "BAACAgIAAxkDAAISOGnTglss4HOo6NeNPciXcdETnm7yAAL9mQACEWahSqbrA83bU3ONOwQ"
@@ -241,6 +267,7 @@
           "key": "electro_industrial",
           "label": "Industrial / breakbeat (The Prodigy, Justice)",
           "description": "Aggression, self-destruction",
+          "themes": ["aggression_minor", "self_destruction_minor"],
           "preview_file_id": "BAACAgIAAxkDAAIYaWnPbOUk0gABlvTkNnoGi-V35TEM5wACYJYAAiuwgEr5Vzp5I6wrLzoE",
           "preview_s3_url": "",
           "preview_file_id_public": "BAACAgIAAxkDAAISOWnTgl7-Pj1QcKJhngndTh1vLdKkAAL-mQACEWahSulRP6MT3oLJOwQ"

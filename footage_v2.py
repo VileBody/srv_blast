@@ -200,14 +200,13 @@ ARTIST PROFILES:
 =========================================
 STEP 2 — THEME SELECTION
 =========================================
-Select 1-3 themes in strict priority order.
-- If the artist has only 1 theme → return 1 theme.
-- If the artist has 2+ themes → return top 2-3 most relevant themes (best first).
+Use themes EXACTLY in the order listed in the artist profile.
+- If the artist has only 1 theme → use that theme.
+- If the artist has 2+ themes → use up to 3 themes, keeping the profile order.
+  subgroups[0] MUST use themes[0], subgroups[1] MUST use themes[1], etc.
 
-SELECTION HINTS:
-- Analyze the emotional tone and key topics of the lyrics.
-- Match themes whose tags_groups best fit lyrical imagery and mood.
-- When lyrics are ambiguous → the FIRST profile theme has highest priority.
+DO NOT reorder themes based on lyrics. The profile order is decided by the product team
+and must be respected. Lyrics only influence which tags_group you pick within each theme.
 
 =========================================
 STEP 3 — PICK TAGS GROUP

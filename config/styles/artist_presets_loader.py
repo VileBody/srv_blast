@@ -52,3 +52,11 @@ def find_preset_by_artist_id(artist_id: str) -> Optional[Dict[str, Any]]:
             if artist["key"] == aid:
                 return {"genre_key": genre["key"], **artist}
     return None
+
+
+def get_artist_themes(artist_id: str) -> List[str]:
+    """Return ordered theme list for artist_id. Empty list if not found."""
+    preset = find_preset_by_artist_id(artist_id)
+    if not isinstance(preset, dict):
+        return []
+    return list(preset.get("themes") or [])

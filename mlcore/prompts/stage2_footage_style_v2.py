@@ -54,11 +54,10 @@ Schema:
 Hard constraints:
 - `subgroups` must contain 1–3 entries.
 - All subgroups must share the SAME `artist_id` and `mood`.
-- Subgroups may come from different themes of the chosen artist profile.
+- Subgroups MUST follow the theme order from the artist profile:
+  subgroups[0] uses themes[0], subgroups[1] uses themes[1], etc.
+  Do NOT reorder themes — the profile order is final.
 - Each subgroup must target a DIFFERENT (`theme`, `tags_group`) pair from THEMES LOGIC.
-- Subgroup order defines strict priority order for picker:
-  - first subgroup = highest priority,
-  - when its suitable unseen clips are exhausted, picker moves to next subgroup.
 - `filters.exclude_people` is the canonical field name for people exclusion.
 - `filters.exclude_tags` must contain ALL _exclude_tags from the chosen group (empty list [] if none).
 - `tags_group` must be the exact name of the chosen subgroup from THEMES LOGIC.
