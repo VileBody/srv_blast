@@ -980,15 +980,15 @@ def build_footage_layers(
     n = len(footage_items)
     for i, it in enumerate(footage_items):
         z = base_z_foot + (n - 1 - i)
+        # Layer shake only for jakson template (scenes_3rd / scenes_3rd_single_step)
+        shake_for_layer = subtitles_mode in ("scenes_3rd", "scenes_3rd_single_step")
         out.append(
             _footage_bp(
                 it=it,
                 z_index=z,
                 comp_w=comp_w,
                 comp_h=comp_h,
-                # Keep shake enabled for all subtitle modes; template_4th adds
-                # extra flash cuts in JSX but still benefits from camera motion.
-                apply_shake=True,
+                apply_shake=shake_for_layer,
             )
         )
 
