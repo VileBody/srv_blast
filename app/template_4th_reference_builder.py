@@ -125,6 +125,14 @@ def _focus_word_indices(*, text: str, tokens: List[Any]) -> set[int]:
     return out
 
 
+def _focus_tokens(*, tokens: List[Any]) -> List[Any]:
+    """Возвращает токены с focus=True, отсортированные по времени."""
+    return sorted(
+        [t for t in tokens if bool(getattr(t, "focus", False))],
+        key=lambda t: (float(t.t_start), float(t.t_end)),
+    )
+
+
 def _char_styles(*, text: str, focus_word_indices: set[int]) -> List[Dict[str, Any]]:
     styles: List[Dict[str, Any]] = []
     word_idx = 0
@@ -190,13 +198,142 @@ def _fade_keyframes(*, seg: Any) -> List[Dict[str, Any]]:
     ]
 
 
+def _build_focus_layers(
+    *,
+    tok: Any,
+    text_comp_name: str,
+    mine_comp_name: str,
+    z: int,
+) -> List[Dict[str, Any]]:
+    """Создаёт слои для одного фокус-слова: mine_text + precomp в Text-компе."""
+    word = str(tok.text).strip().upper()
+    if not word:
+        return []
+
+    t_start = float(tok.t_start) - _ANTICIPATION_SEC
+    t_end = float(tok.t_end)
+    dur = max(_FRAME_SEC, t_end - t_start)
+    fade_dur = min(dur * 0.3, _FADE_DUR * 2)
+
+    mine_in = max(0.0, t_start)
+    mine_out = t_end + 0.1
+
+    # --- Слой в Mine-компе: красное слово ---
+    mine_text = {
+        "name": "mine",
+        "type": "text",
+        "in_point": mine_in,
+        "out_point": mine_out,
+        "z_index": z,
+        "text": word,
+        "adjustment_layer": False,
+        "source_rect": {},
+        "props": {
+            "tf_anchor": _prop("ADBE Anchor Point", [0, -33.5, 0]),
+            "tf_position": _prop("ADBE Position", list(_POSITION)),
+            "tf_scale": _prop("ADBE Scale", [100, 100, 100]),
+            "tf_rotation": _prop("ADBE Rotate Z", 0),
+            "layer_opacity": _prop("ADBE Opacity", keyframes=[
+                _kf(t=max(mine_in, t_end - fade_dur), value=100, interpolation="bezier"),
+                _kf(t=max(mine_in + _FRAME_SEC, mine_out - _FRAME_SEC), value=0, interpolation="bezier"),
+            ]),
+        },
+        "effects": {
+            "ADBE Drop Shadow": {
+                "0001": _prop("ADBE Drop Shadow-0001", [1, 1, 1, 1]),
+                "0002": _prop("ADBE Drop Shadow-0002", 50),
+                "0003": _prop("ADBE Drop Shadow-0003", 0),
+                "0004": _prop("ADBE Drop Shadow-0004", 3.0),
+                "0005": _prop("ADBE Drop Shadow-0005", 0.0),
+                "0006": _prop("ADBE Drop Shadow-0006", 0),
+            },
+            "ADBE Box Blur2": {
+                "0001": _prop("ADBE Box Blur2-0001", keyframes=[
+                    _kf(t=max(mine_in, t_end - fade_dur), value=0, interpolation="bezier"),
+                    _kf(t=max(mine_in + _FRAME_SEC, mine_out - _FRAME_SEC), value=5, interpolation="bezier"),
+                ]),
+                "0002": _prop("ADBE Box Blur2-0002", 3),
+            },
+        },
+        "style_instructions": [],
+        "text_data": {
+            "layer_meta": {
+                "blendingModeCode": "5212",
+                "startTime": 0.0,
+                "comp_name_target": str(mine_comp_name),
+                "enabled": True,
+            },
+            "layer_styles_enabled": False,
+            "text_base": {
+                "font": _FONT_NAME,
+                "fontSize": _FONT_SIZE,
+                "applyFill": True,
+                "fillColor": list(_FOCUS_RED),
+                "applyStroke": False,
+                "strokeWidth": 0,
+                "strokeColor": None,
+                "tracking": _TRACKING,
+                "leading": _LEADING,
+                "autoLeading": False,
+                "justificationCode": "7415",
+                "allCaps": True,
+                "leftIndent": 0,
+                "rightIndent": 0,
+                "firstLineIndent": 0,
+                "spaceBefore": 0,
+                "spaceAfter": 0,
+            },
+            "char_styles_ungrouped": [
+                {"i": j, "font": _FONT_NAME, "fontSize": _FONT_SIZE}
+                for j in range(len(word))
+            ],
+            "no_text_animator": True,
+            "no_layout_pass": True,
+            "box_text": [900, 220],
+        },
+    }
+
+    # --- Precomp-ссылка на Mine в Text-компе ---
+    precomp_main = {
+        "name": 'Текст "Mine"',
+        "type": "precomp",
+        "in_point": t_start,
+        "out_point": t_end,
+        "z_index": z - 1,
+        "text": "",
+        "adjustment_layer": False,
+        "source_rect": {},
+        "props": {
+            "tf_anchor": _prop("ADBE Anchor Point", [540, 960, 0]),
+            "tf_position": _prop("ADBE Position", [540, 960, 0]),
+            "tf_scale": _prop("ADBE Scale", [100, 100, 100]),
+            "tf_rotation": _prop("ADBE Rotate Z", 0),
+            "tf_opacity": _prop("ADBE Opacity", 100),
+        },
+        "effects": {},
+        "style_instructions": [],
+        "text_data": {
+            "layer_meta": {
+                "blendingModeCode": "5212",
+                "startTime": 0,
+                "motionBlur": False,
+                "enabled": True,
+                "comp_name_target": str(text_comp_name),
+            },
+            "layer_styles_enabled": False,
+            "precomp_source": {"comp_name": str(mine_comp_name)},
+        },
+    }
+
+    return [mine_text, precomp_main]
+
+
 def build_template_4th_reference_layers(
     *,
     flow_plan: SubtitleFlowPlan,
     text_comp_name: str,
     mine_comp_name: str,
 ) -> List[Dict[str, Any]]:
-    del mine_comp_name
     layers: List[Dict[str, Any]] = []
     z = 1000
     for seg in sorted(flow_plan.segments, key=lambda s: (float(s.in_point), str(s.segment_id))):
@@ -204,6 +341,8 @@ def build_template_4th_reference_layers(
         if not text:
             continue
         focus_words = _focus_word_indices(text=text, tokens=list(seg.tokens or []))
+
+        # --- Основной слой субтитра в Text-компе ---
         layer = {
             "name": text,
             "type": "text",
@@ -260,4 +399,16 @@ def build_template_4th_reference_layers(
         }
         layers.append(layer)
         z -= 1
+
+        # --- Фокус-слова: слои в Mine-компе + precomp-ссылки ---
+        for tok in _focus_tokens(tokens=list(seg.tokens or [])):
+            focus_layers = _build_focus_layers(
+                tok=tok,
+                text_comp_name=text_comp_name,
+                mine_comp_name=mine_comp_name,
+                z=z,
+            )
+            layers.extend(focus_layers)
+            z -= len(focus_layers)
+
     return layers
