@@ -236,9 +236,7 @@ class Template4WordTimingPayload(BaseModel):
     word: str = Field(min_length=1)
     start: float = Field(ge=0.0)
     end: float = Field(ge=0.0)
-    focus: bool = Field(
-        description="true for emotionally strong key words (at least 1 per every 2 subtitles). These words will be colored red."
-    )
+    focus: bool
 
     @model_validator(mode="after")
     def _check_time(self) -> "Template4WordTimingPayload":
