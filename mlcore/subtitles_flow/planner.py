@@ -964,13 +964,18 @@ class Template4Planner(_FlowPlannerBase):
                 )
 
             focus_count = sum(1 for t in tokens if bool(t.focus))
-            if focus_count > 2:
+            # ── Fallback: если Gemini не пометил ни одного focus-слова,
+            # автоматически выбираем самое длинное слово в сегменте.
+            if focus_count == 0 and len(tokens) > 0:
+                longest = max(tokens, key=lambda t: len(str(t.text)))
+                longest.focus = True
+                focus_count = 1
                 warnings.append(
                     SubtitleFlowWarning(
                         mode=self.mode,
                         segment_id=seg_id,
-                        reason="focus_words_over_limit",
-                        action=f"kept count={focus_count}",
+                        reason="focus_auto_assigned",
+                        action=f"word={longest.text!r}",
                     )
                 )
 

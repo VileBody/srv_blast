@@ -262,7 +262,7 @@ class Template4SubtitlePayload(BaseModel):
 
 
 class Template4Payload(BaseModel):
-    word_timings: List[Template4WordTimingPayload] = Field(default_factory=list)
+    word_timings: List[Template4WordTimingPayload] = Field(min_length=1)
     subtitles: List[Template4SubtitlePayload] = Field(min_length=1)
 
     @property

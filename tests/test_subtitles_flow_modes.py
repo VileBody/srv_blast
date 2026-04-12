@@ -218,11 +218,14 @@ def test_scenes_mode_planner_and_renderer(monkeypatch) -> None:
     _assert_keyframes_within_bounds(layers)
 
 
-def test_template4_mode_planner_synthesizes_tokens_without_word_timings() -> None:
+def test_template4_mode_planner_with_word_timings_and_focus() -> None:
     planner = SubtitlesPlannerFactory.create("template_4th")
     payload = Template4Payload.model_validate(
         {
-            "word_timings": [],
+            "word_timings": [
+                {"word": "hello", "start": 10.0, "end": 10.25, "focus": False},
+                {"word": "world", "start": 10.25, "end": 10.6, "focus": True},
+            ],
             "subtitles": [
                 {
                     "text": "hello world",
@@ -238,6 +241,8 @@ def test_template4_mode_planner_synthesizes_tokens_without_word_timings() -> Non
     tokens = flow.segments[0].tokens
     assert [t.text for t in tokens] == ["hello", "world"]
     assert all(float(t.t_end) > float(t.t_start) for t in tokens)
+    assert tokens[0].focus is False
+    assert tokens[1].focus is True
 
 
 def test_scenes_reference_postprocess_extends_boundary_from_gap(monkeypatch) -> None:
