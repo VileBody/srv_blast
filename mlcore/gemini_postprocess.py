@@ -675,6 +675,7 @@ def normalize_subtitle_flow_to_clip_zero(
                 "text": str(t.text),
                 "t_start": float(t.t_start) - clip_start,
                 "t_end": float(t.t_end) - clip_start,
+                "focus": bool(t.focus),
             }
             for t in seg.tokens
         ]
