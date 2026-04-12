@@ -22,7 +22,7 @@ var COMP_W    = 1080;
 var COMP_H    = 1920;
 
 var BOX_W = 900;
-var BOX_H = 220; // fontSize(60) + leading(80) × 2 + запас на 2-3 строки
+var BOX_H = 160; // fontSize(60) + leading(80) + 20px padding = ровно 2 строки
 
 // ============================================================
 // Утилиты
@@ -63,12 +63,11 @@ function getSubWords(text, wordList, inT, outT) {
     var listIdx   = 0;
     for (var i = 0; i < textWords.length; i++) {
         var tw = textWords[i].replace(/[^\w\u0400-\u04FF]/gi, "").toLowerCase();
-        if (!tw) continue; // пропускаем пустые после очистки
         for (var j = listIdx; j < wordList.length; j++) {
             var wl = wordList[j];
             if (wl.start >= inT - 0.15 && wl.end <= outT + 0.15) {
                 var wlClean = wl.word.replace(/[^\w\u0400-\u04FF]/gi, "").toLowerCase();
-                if (wlClean === tw || tw.indexOf(wlClean) >= 0 || wlClean.indexOf(tw) >= 0) {
+                if (wlClean === tw) {
                     result.push({ textIdx: i, wt: wl });
                     listIdx = j + 1;
                     break;
