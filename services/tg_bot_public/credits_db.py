@@ -938,6 +938,21 @@ class CreditsDB:
             )
         return [{"rating": str(r["detail"] or ""), "count": int(r["cnt"])} for r in rows]
 
+    async def rating_distribution_for_users(self, tg_ids: List[int]) -> List[Dict[str, Any]]:
+        if not tg_ids:
+            return []
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT detail, COUNT(*)::BIGINT AS cnt "
+                "FROM activity_log "
+                "WHERE event = 'rate_video' AND detail <> '' "
+                "AND tg_id = ANY($1::BIGINT[]) "
+                "GROUP BY detail ORDER BY cnt DESC",
+                tg_ids,
+            )
+        return [{"rating": str(r["detail"] or ""), "count": int(r["cnt"])} for r in rows]
+
     async def funnel_reach_counts(self) -> List[Dict[str, Any]]:
         pool = self._pool_or_fail()
         async with pool.acquire() as conn:
@@ -1035,7 +1050,7 @@ class CreditsDB:
             return direct
         return str(row["first_utm_source"] or "").strip()
 
-    async def users_by_source(self, source: str, limit: int = 200) -> List[Dict[str, Any]]:
+    async def users_by_source(self, source: str) -> List[Dict[str, Any]]:
         pool = self._pool_or_fail()
         src = str(source or "").strip()
         async with pool.acquire() as conn:
@@ -1045,17 +1060,15 @@ class CreditsDB:
                     "FROM users "
                     "WHERE (source = '' OR source IS NULL) "
                     "AND (first_utm_source = '' OR first_utm_source IS NULL) "
-                    "ORDER BY created_at DESC LIMIT $1",
-                    int(limit),
+                    "ORDER BY created_at DESC",
                 )
             else:
                 rows = await conn.fetch(
                     "SELECT tg_id, username, credits, created_at, updated_at, source "
                     "FROM users "
                     "WHERE source = $1 OR first_utm_source = $1 "
-                    "ORDER BY created_at DESC LIMIT $2",
+                    "ORDER BY created_at DESC",
                     src,
-                    int(limit),
                 )
         return [
             {

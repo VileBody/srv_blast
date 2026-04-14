@@ -1562,7 +1562,10 @@ def build_app(
         tg_ids = [u["tg_id"] for u in users]
         total_users = len(tg_ids)
 
-        funnel_raw = await credits_db.funnel_reach_counts_for_users(tg_ids)
+        funnel_raw, ratings_raw = await asyncio.gather(
+            credits_db.funnel_reach_counts_for_users(tg_ids),
+            credits_db.rating_distribution_for_users(tg_ids),
+        )
         funnel_map = {r["event"]: r["count"] for r in funnel_raw}
         max_funnel = max(funnel_map.values()) if funnel_map else 1
         first_cnt = funnel_map.get(_FUNNEL_ORDER[0], 0) or 1
@@ -1580,6 +1583,13 @@ def build_app(
                 f'<span class="fcount">{cnt} <small>({conv:.0f}%)</small></span>'
                 f'</div></div>\n'
             )
+
+        # ── Rating distribution for doughnut chart ──
+        rating_map = {r["rating"]: r["count"] for r in ratings_raw}
+        src_chart_labels = json.dumps([_RATING_LABELS.get(k, k) for k in ["low", "mid_low", "high"]])
+        src_chart_data = json.dumps([rating_map.get(k, 0) for k in ["low", "mid_low", "high"]])
+        src_chart_colors = json.dumps([_RATING_COLORS.get(k, "#999") for k in ["low", "mid_low", "high"]])
+        src_total_ratings = sum(rating_map.values())
 
         revenue = await credits_db.revenue_breakdown_for_users(tg_ids)
 
@@ -1604,9 +1614,39 @@ def build_app(
            Видимая сумма (CONFIRMED + AUTHORIZED): <strong>{int(revenue.get('visible_revenue_rub', 0)):,}&nbsp;&#8381;</strong></p>
         </div>
         <div class="card">
-        <h2>Воронка</h2>
-        {funnel_html if funnel_html else '<p>Нет данных</p>'}
+        <div class="chart-row">
+          <div class="funnel-box">
+            <h2>Воронка</h2>
+            {funnel_html if funnel_html else '<p>Нет данных</p>'}
+          </div>
+          <div class="chart-box">
+            <h3>Оценки видео</h3>
+            {"<p>Нет данных</p>" if src_total_ratings == 0 else f'<canvas id="srcRatingsChart"></canvas><p style="text-align:center;color:#888;font-size:0.85em">Всего оценок: {src_total_ratings}</p>'}
+          </div>
         </div>
+        </div>
+        {"" if src_total_ratings == 0 else '''
+        <script>
+        new Chart(document.getElementById("srcRatingsChart"), {
+          type: "doughnut",
+          data: {
+            labels: ''' + src_chart_labels + ''',
+            datasets: [{
+              data: ''' + src_chart_data + ''',
+              backgroundColor: ''' + src_chart_colors + ''',
+              borderWidth: 2,
+              borderColor: "#fff",
+            }]
+          },
+          options: {
+            responsive: true,
+            plugins: {
+              legend: { position: "bottom", labels: { padding: 16, font: { size: 13 } } },
+            }
+          }
+        });
+        </script>
+        '''}
         <div class="card">
         <h2>Пользователи</h2>
         <div class="table-wrap">
