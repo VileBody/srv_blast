@@ -1346,7 +1346,10 @@ class BlastBotApp:
         await message.answer(
             "Хочешь указать конкретный тайминг трека для клипа?\n"
             "Например: 1:20-1:50 или 80-110 (в секундах).\n"
-            "Максимальный тайминг: 25с.",
+            "Максимальный тайминг: 15с.\n\n"
+            "<b>Это строгое ограничение, если ты поставишь больше, "
+            "то задача вернется с ошибкой и придется заполнять все заново.</b>",
+            parse_mode="HTML",
             reply_markup=_kb([BTN_SET_TIMING, BTN_SKIP_TIMING]),
         )
 
@@ -1385,8 +1388,8 @@ class BlastBotApp:
         if duration < 5.0:
             await message.answer("Слишком короткий фрагмент (минимум 5 сек). Попробуй ещё раз.")
             return
-        if duration > 120.0:
-            await message.answer("Слишком длинный фрагмент (максимум 120 сек). Попробуй ещё раз.")
+        if duration > 22.0:
+            await message.answer("Слишком длинный фрагмент (максимум 22 сек). Попробуй ещё раз.")
             return
         st.user_clip_start_sec = round(start_sec, 3)
         st.user_clip_end_sec = round(end_sec, 3)
