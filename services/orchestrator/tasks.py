@@ -722,6 +722,14 @@ def _looks_like_openrouter_rate_limited_429(text: str) -> bool:
     lo = text.lower()
     if "openrouter_http_error" in lo and "status=429" in lo:
         return True
+    if "openrouter_bad_response_no_choices" in lo and (
+        "'code': 429" in lo or '"code": 429' in lo
+    ):
+        return True
+    if "openrouter_bad_response_no_text_content" in lo and (
+        "'code': 429" in lo or '"code": 429' in lo
+    ):
+        return True
     return ("openrouter" in lo) and ("429" in lo) and (
         "rate limit" in lo or "too many requests" in lo
     )

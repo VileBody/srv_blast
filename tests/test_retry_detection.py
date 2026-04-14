@@ -47,6 +47,14 @@ def test_detects_openrouter_429_rate_limit() -> None:
     assert _looks_like_openrouter_rate_limited_429(s) is True
 
 
+def test_detects_openrouter_429_rate_limit_bad_response_no_choices() -> None:
+    s = (
+        "RuntimeError: openrouter_bad_response_no_choices: "
+        "{'error': {'message': 'Provider returned error', 'code': 429}}"
+    )
+    assert _looks_like_openrouter_rate_limited_429(s) is True
+
+
 def test_detects_openrouter_timeout() -> None:
     s = "RuntimeError: openrouter_timeout: ReadTimeout('timed out')"
     assert _looks_like_openrouter_timeout(s) is True
