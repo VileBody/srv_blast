@@ -904,6 +904,7 @@ def build_app(
         <table>
           <tr>
             <th>Новые пользователи</th>
+            <th>Отписки</th>
             <th>Стартовали</th>
             <th>Генерация старт</th>
             <th>Генерация done</th>
@@ -914,6 +915,7 @@ def build_app(
           </tr>
           <tr>
             <td>{int(period_stats_row.get('users_new', 0))}</td>
+            <td>{int(period_stats_row.get('bot_blocked_users', 0))}</td>
             <td>{int(period_stats_row.get('starts_users', 0))}</td>
             <td>{int(period_stats_row.get('generation_started_users', 0))}</td>
             <td>{int(period_stats_row.get('generation_done_users', 0))}</td>

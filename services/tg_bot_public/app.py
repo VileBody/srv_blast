@@ -17,7 +17,7 @@ from aiogram import Bot, Dispatcher, Router
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandStart
-from aiogram.types import FSInputFile, KeyboardButton, Message, ReplyKeyboardMarkup, ReplyKeyboardRemove
+from aiogram.types import ChatMemberUpdated, FSInputFile, KeyboardButton, Message, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from core.clip_window import CLIP_WINDOW_RANGE_S_LABEL
 from core.filesystem_hygiene import cleanup_jobs_artifacts, cleanup_tmp_chat_dirs
 from core.subtitles_mode import (
@@ -961,6 +961,13 @@ class BlastBotApp:
         return False
 
     def _register_handlers(self) -> None:
+        @self.router.my_chat_member()
+        async def _on_my_chat_member(event: ChatMemberUpdated) -> None:
+            new_status = event.new_chat_member.status
+            if new_status in ("kicked", "left"):
+                chat_id = int(event.chat.id)
+                await self.credits_db.log_event(chat_id, "bot_blocked", new_status)
+
         @self.router.message(CommandStart())
         async def _on_start(message: Message) -> None:
             if message.chat is None:

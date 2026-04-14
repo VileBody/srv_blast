@@ -574,7 +574,8 @@ class CreditsDB:
                 "  (SELECT COALESCE(COUNT(DISTINCT a.tg_id), 0)::BIGINT FROM activity_log a, cutoff c WHERE a.event = 'generation_failed' AND a.created_at >= c.ts) AS generation_failed_users, "
                 "  (SELECT COALESCE(COUNT(DISTINCT a.tg_id), 0)::BIGINT FROM activity_log a, cutoff c WHERE a.event = 'purchase_intent' AND a.created_at >= c.ts) AS purchase_intent_users, "
                 "  (SELECT COALESCE(COUNT(*), 0)::BIGINT FROM payments p, cutoff c WHERE p.status = 'CONFIRMED' AND p.created_at >= c.ts) AS paid_orders, "
-                "  (SELECT COALESCE(SUM(p.amount_rub), 0)::BIGINT FROM payments p, cutoff c WHERE p.status = 'CONFIRMED' AND p.created_at >= c.ts) AS revenue_rub",
+                "  (SELECT COALESCE(SUM(p.amount_rub), 0)::BIGINT FROM payments p, cutoff c WHERE p.status = 'CONFIRMED' AND p.created_at >= c.ts) AS revenue_rub, "
+                "  (SELECT COALESCE(COUNT(DISTINCT a.tg_id), 0)::BIGINT FROM activity_log a, cutoff c WHERE a.event = 'bot_blocked' AND a.created_at >= c.ts) AS bot_blocked_users",
                 period_days,
             )
         if row is None:
@@ -588,6 +589,7 @@ class CreditsDB:
                 "purchase_intent_users": 0,
                 "paid_orders": 0,
                 "revenue_rub": 0,
+                "bot_blocked_users": 0,
             }
         return {
             "days": period_days,
@@ -599,6 +601,7 @@ class CreditsDB:
             "purchase_intent_users": int(row["purchase_intent_users"] or 0),
             "paid_orders": int(row["paid_orders"] or 0),
             "revenue_rub": int(row["revenue_rub"] or 0),
+            "bot_blocked_users": int(row["bot_blocked_users"] or 0),
         }
 
     async def period_stats_range(self, date_from: datetime, date_to: datetime) -> Dict[str, int]:
@@ -616,7 +619,8 @@ class CreditsDB:
                 "  (SELECT COALESCE(COUNT(DISTINCT tg_id), 0)::BIGINT FROM activity_log WHERE event = 'generation_failed' AND created_at >= $1 AND created_at < $2) AS generation_failed_users, "
                 "  (SELECT COALESCE(COUNT(DISTINCT tg_id), 0)::BIGINT FROM activity_log WHERE event = 'purchase_intent' AND created_at >= $1 AND created_at < $2) AS purchase_intent_users, "
                 "  (SELECT COALESCE(COUNT(*), 0)::BIGINT FROM payments WHERE status = 'CONFIRMED' AND created_at >= $1 AND created_at < $2) AS paid_orders, "
-                "  (SELECT COALESCE(SUM(amount_rub), 0)::BIGINT FROM payments WHERE status = 'CONFIRMED' AND created_at >= $1 AND created_at < $2) AS revenue_rub",
+                "  (SELECT COALESCE(SUM(amount_rub), 0)::BIGINT FROM payments WHERE status = 'CONFIRMED' AND created_at >= $1 AND created_at < $2) AS revenue_rub, "
+                "  (SELECT COALESCE(COUNT(DISTINCT tg_id), 0)::BIGINT FROM activity_log WHERE event = 'bot_blocked' AND created_at >= $1 AND created_at < $2) AS bot_blocked_users",
                 df,
                 dt,
             )
@@ -625,6 +629,7 @@ class CreditsDB:
             "generation_started_users": 0, "generation_done_users": 0,
             "generation_failed_users": 0, "purchase_intent_users": 0,
             "paid_orders": 0, "revenue_rub": 0,
+            "bot_blocked_users": 0,
         }
         if row is None:
             return empty
