@@ -763,6 +763,23 @@ def _looks_like_openrouter_provider_unavailable_502(text: str) -> bool:
     )
 
 
+def _looks_like_openrouter_gateway_timeout_524(text: str) -> bool:
+    if not text:
+        return False
+    lo = text.lower()
+    if "openrouter_http_error" in lo and "status=524" in lo:
+        return True
+    if "openrouter_bad_response_no_choices" in lo and (
+        "'code': 524" in lo or '"code": 524' in lo
+    ):
+        return True
+    if "openrouter_bad_response_no_text_content" in lo and (
+        "'code': 524" in lo or '"code": 524' in lo
+    ):
+        return True
+    return ("openrouter" in lo) and ("524" in lo) and ("timeout" in lo or "provider returned error" in lo)
+
+
 def _looks_like_openrouter_bad_request_400(text: str) -> bool:
     if not text:
         return False
@@ -1276,6 +1293,13 @@ def _build_job_impl(self, job_id: str, *, worker_type: str) -> Dict[str, Any]:
                 attempt = int(getattr(self.request, "retries", 0)) + 1
                 backoff = _retry_backoff_s(attempt=attempt, base_s=10.0, cap_s=300.0)
                 raise self.retry(countdown=backoff, exc=RuntimeError("openrouter_timeout"))
+            if _looks_like_openrouter_gateway_timeout_524(text):
+                attempt = int(getattr(self.request, "retries", 0)) + 1
+                backoff = _retry_backoff_s(attempt=attempt, base_s=10.0, cap_s=300.0)
+                raise self.retry(
+                    countdown=backoff,
+                    exc=RuntimeError("openrouter_gateway_timeout_524"),
+                )
             if _looks_like_openrouter_internal_500(text):
                 attempt = int(getattr(self.request, "retries", 0)) + 1
                 backoff = _retry_backoff_s(attempt=attempt, base_s=10.0, cap_s=300.0)
@@ -1336,6 +1360,10 @@ def _build_job_impl(self, job_id: str, *, worker_type: str) -> Dict[str, Any]:
             attempt = int(getattr(self.request, "retries", 0)) + 1
             backoff = _retry_backoff_s(attempt=attempt, base_s=10.0, cap_s=300.0)
             raise self.retry(countdown=backoff, exc=RuntimeError("openrouter_timeout"))
+        if _looks_like_openrouter_gateway_timeout_524(blob):
+            attempt = int(getattr(self.request, "retries", 0)) + 1
+            backoff = _retry_backoff_s(attempt=attempt, base_s=10.0, cap_s=300.0)
+            raise self.retry(countdown=backoff, exc=RuntimeError("openrouter_gateway_timeout_524"))
         if _looks_like_openrouter_internal_500(blob):
             attempt = int(getattr(self.request, "retries", 0)) + 1
             backoff = _retry_backoff_s(attempt=attempt, base_s=10.0, cap_s=300.0)
@@ -1439,6 +1467,13 @@ def _build_job_impl(self, job_id: str, *, worker_type: str) -> Dict[str, Any]:
                             attempt = int(getattr(self.request, "retries", 0)) + 1
                             backoff = _retry_backoff_s(attempt=attempt, base_s=10.0, cap_s=300.0)
                             raise self.retry(countdown=backoff, exc=RuntimeError("openrouter_timeout"))
+                        if _looks_like_openrouter_gateway_timeout_524(text):
+                            attempt = int(getattr(self.request, "retries", 0)) + 1
+                            backoff = _retry_backoff_s(attempt=attempt, base_s=10.0, cap_s=300.0)
+                            raise self.retry(
+                                countdown=backoff,
+                                exc=RuntimeError("openrouter_gateway_timeout_524"),
+                            )
                         if _looks_like_openrouter_internal_500(text):
                             attempt = int(getattr(self.request, "retries", 0)) + 1
                             backoff = _retry_backoff_s(attempt=attempt, base_s=10.0, cap_s=300.0)

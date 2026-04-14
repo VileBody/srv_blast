@@ -11,6 +11,7 @@ from services.orchestrator.tasks import (
     _looks_like_gemini_rate_limited_429,
     _looks_like_llm_schema_validation_error,
     _looks_like_openrouter_bad_request_400,
+    _looks_like_openrouter_gateway_timeout_524,
     _looks_like_openrouter_internal_500,
     _looks_like_openrouter_provider_unavailable_502,
     _looks_like_openrouter_overloaded_503,
@@ -59,6 +60,14 @@ def test_detects_openrouter_429_rate_limit_bad_response_no_choices() -> None:
 def test_detects_openrouter_timeout() -> None:
     s = "RuntimeError: openrouter_timeout: ReadTimeout('timed out')"
     assert _looks_like_openrouter_timeout(s) is True
+
+
+def test_detects_openrouter_gateway_timeout_524_bad_response_no_choices() -> None:
+    s = (
+        "RuntimeError: Stage2 failed: stage2_subtitles=RuntimeError: "
+        "openrouter_bad_response_no_choices: {'error': {'message': 'Provider returned error', 'code': 524}}"
+    )
+    assert _looks_like_openrouter_gateway_timeout_524(s) is True
 
 
 def test_detects_openrouter_bad_request_400() -> None:
@@ -129,6 +138,7 @@ def test_schema_validation_marker_is_not_transient_retriable() -> None:
     assert _looks_like_gemini_rate_limited_429(s) is False
     assert _looks_like_openrouter_timeout(s) is False
     assert _looks_like_openrouter_bad_request_400(s) is False
+    assert _looks_like_openrouter_gateway_timeout_524(s) is False
     assert _looks_like_openrouter_internal_500(s) is False
     assert _looks_like_openrouter_provider_unavailable_502(s) is False
     assert _looks_like_openrouter_overloaded_503(s) is False
