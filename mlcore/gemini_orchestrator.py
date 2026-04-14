@@ -1451,6 +1451,8 @@ def _looks_like_model_validation_error_text(text: str) -> bool:
         return True
     if "jsondecodeerror" in lo:
         return True
+    if "stage1a_selected_fragment_missing" in lo:
+        return True
     return False
 
 
@@ -2528,10 +2530,8 @@ def build_all_via_gemini_one_call(
                 encoding="utf-8",
             )
         else:
-            stage1_asr = _run_stage_with_model_validation_retries(
-                stage_name="stage1_asr",
-                logger=logger,
-                fn=lambda: call_stage1_asr_once(
+            def _run_stage1_asr_once() -> Stage1AsrPayload:
+                payload = call_stage1_asr_once(
                     client=client_stage1_asr,
                     openrouter_client=openrouter_stage1_asr,
                     provider_mode=provider_mode,
@@ -2544,7 +2544,17 @@ def build_all_via_gemini_one_call(
                     cache_path=cache_path,
                     prompt_dump_path=stage1a_user,
                     system_dump_path=stage1a_sys,
-                ),
+                )
+                if need_llm_selected_fragment and payload.selected_fragment is None:
+                    raise RuntimeError(
+                        f"stage1a_selected_fragment_missing subtitles_mode={subtitles_mode!r}"
+                    )
+                return payload
+
+            stage1_asr = _run_stage_with_model_validation_retries(
+                stage_name="stage1_asr",
+                logger=logger,
+                fn=_run_stage1_asr_once,
             )
         resume_state["stage1_asr"] = stage1_asr.model_dump(mode="json")
         resume_state["stage1_asr_mode"] = stage1a_mode

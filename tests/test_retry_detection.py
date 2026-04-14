@@ -15,6 +15,7 @@ from services.orchestrator.tasks import (
     _looks_like_openrouter_provider_unavailable_502,
     _looks_like_openrouter_overloaded_503,
     _looks_like_openrouter_rate_limited_429,
+    _looks_like_stage1a_selected_fragment_missing,
     _looks_like_openrouter_timeout,
     _overloaded_retry_backoff_s,
     _provider_mode_for_worker_type,
@@ -63,6 +64,11 @@ def test_detects_openrouter_timeout() -> None:
 def test_detects_openrouter_bad_request_400() -> None:
     s = "RuntimeError: openrouter_http_error status=400 body='Provider returned error'"
     assert _looks_like_openrouter_bad_request_400(s) is True
+
+
+def test_detects_stage1a_selected_fragment_missing() -> None:
+    s = "ValueError: subtitles_mode='impulse_2nd' requires Stage1A.selected_fragment, got null"
+    assert _looks_like_stage1a_selected_fragment_missing(s) is True
 
 
 def test_detects_openrouter_internal_500_http_error() -> None:

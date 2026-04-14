@@ -770,6 +770,15 @@ def _looks_like_openrouter_bad_request_400(text: str) -> bool:
     return "openrouter_http_error" in lo and "status=400" in lo
 
 
+def _looks_like_stage1a_selected_fragment_missing(text: str) -> bool:
+    if not text:
+        return False
+    lo = text.lower()
+    if "stage1a_selected_fragment_missing" in lo:
+        return True
+    return "requires stage1a.selected_fragment" in lo and "got null" in lo
+
+
 def _looks_like_llm_schema_validation_error(text: str) -> bool:
     """
     LLM produced syntactically/structurally invalid payload for our schema.
@@ -1296,6 +1305,13 @@ def _build_job_impl(self, job_id: str, *, worker_type: str) -> Dict[str, Any]:
                 attempt = int(getattr(self.request, "retries", 0)) + 1
                 backoff = _retry_backoff_s(attempt=attempt, base_s=15.0, cap_s=600.0)
                 raise self.retry(countdown=backoff, exc=RuntimeError("openrouter_rate_limited_429"))
+            if _looks_like_stage1a_selected_fragment_missing(text):
+                attempt = int(getattr(self.request, "retries", 0)) + 1
+                backoff = _retry_backoff_s(attempt=attempt, base_s=8.0, cap_s=180.0)
+                raise self.retry(
+                    countdown=backoff,
+                    exc=RuntimeError("stage1a_selected_fragment_missing"),
+                )
             raise
         finally:
             for k, old in backup.items():
@@ -1347,6 +1363,10 @@ def _build_job_impl(self, job_id: str, *, worker_type: str) -> Dict[str, Any]:
             attempt = int(getattr(self.request, "retries", 0)) + 1
             backoff = _retry_backoff_s(attempt=attempt, base_s=15.0, cap_s=600.0)
             raise self.retry(countdown=backoff, exc=RuntimeError("openrouter_rate_limited_429"))
+        if _looks_like_stage1a_selected_fragment_missing(blob):
+            attempt = int(getattr(self.request, "retries", 0)) + 1
+            backoff = _retry_backoff_s(attempt=attempt, base_s=8.0, cap_s=180.0)
+            raise self.retry(countdown=backoff, exc=RuntimeError("stage1a_selected_fragment_missing"))
 
     proc = _run_build_subprocess_once()
     out = proc.stdout or ""
@@ -1452,6 +1472,13 @@ def _build_job_impl(self, job_id: str, *, worker_type: str) -> Dict[str, Any]:
                             attempt = int(getattr(self.request, "retries", 0)) + 1
                             backoff = _retry_backoff_s(attempt=attempt, base_s=15.0, cap_s=600.0)
                             raise self.retry(countdown=backoff, exc=RuntimeError("openrouter_rate_limited_429"))
+                        if _looks_like_stage1a_selected_fragment_missing(text):
+                            attempt = int(getattr(self.request, "retries", 0)) + 1
+                            backoff = _retry_backoff_s(attempt=attempt, base_s=8.0, cap_s=180.0)
+                            raise self.retry(
+                                countdown=backoff,
+                                exc=RuntimeError("stage1a_selected_fragment_missing"),
+                            )
                         raise
                 finally:
                     if old_retry_hint is None:
