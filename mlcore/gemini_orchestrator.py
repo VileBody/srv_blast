@@ -2565,7 +2565,20 @@ def build_all_via_gemini_one_call(
 
     # When user_clip_window is set in non-legacy mode, construct selected_fragment
     # from the user's explicit timing window instead of relying on LLM selection.
-    if user_clip_window is not None and not use_stage1b_scenario and stage1_asr.selected_fragment is None:
+    # NOTE: we intentionally ignore any model-returned selected_fragment here.
+    # With OpenRouter strict JSON schema the model may fill the optional field
+    # with its own (wrong) timing even when the prompt does not request it.
+    # The user's explicit window MUST take precedence unconditionally.
+    if user_clip_window is not None and not use_stage1b_scenario:
+        if stage1_asr.selected_fragment is not None:
+            logger.warning(
+                "user_clip_window_overriding_model_selected_fragment "
+                "model_clip=%.3f..%.3f user_clip=%.3f..%.3f",
+                float(stage1_asr.selected_fragment.audio.clip_start_abs),
+                float(stage1_asr.selected_fragment.audio.clip_end_abs),
+                float(user_clip_window[0]),
+                float(user_clip_window[1]),
+            )
         user_start, user_end = user_clip_window
         frag_words = _words_in_window(
             words=list(stage1_asr.transcript_words),
