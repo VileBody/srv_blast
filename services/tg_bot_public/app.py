@@ -1046,7 +1046,9 @@ class BlastBotApp:
             await self.credits_db.log_event(chat_id, "cancel_subscription_request")
             await message.answer(
                 "Для отмены подписки свяжись с нашим менеджером: @impulsemanage\n\n"
-                "Он поможет отменить подписку и ответит на все вопросы.",
+                "Он поможет отменить подписку и ответит на все вопросы.\n\n"
+                "/packets — посмотреть тарифы\n"
+                "/sendtrack — вернуться к генерации",
                 reply_markup=ReplyKeyboardRemove(),
             )
 
