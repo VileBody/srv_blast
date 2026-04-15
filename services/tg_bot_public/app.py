@@ -68,6 +68,9 @@ from .state_store import (
     STAGE_PACKAGE_DETAILS,
     STAGE_ALL_PACKAGES,
     STAGE_PACKAGE_INFO,
+    STAGE_PURCHASE_CHOICE,
+    STAGE_SUBSCRIPTION_CONFIRM,
+    STAGE_WAIT_PAYMENT,
     STAGE_WHY_NOT,
     STAGE_NOT_ACTUAL_REASON,
     STAGE_CASES_TECH,
@@ -137,6 +140,9 @@ BTN_PKG_BUTTONS = [BTN_PKG_TRIAL, BTN_PKG_BLAST, BTN_PKG_GLOW, BTN_PKG_IMPULSE]
 
 BTN_TO_TARIFFS = "К тарифам"
 BTN_PURCHASE = "Приобрести"
+BTN_BUY_ONCE = "Купить разово"
+BTN_BUY_SUBSCRIPTION = "Купить по подписке"
+BTN_CONFIRM = "Подтвердить"
 
 BTN_NO_RELEASE = "Нет актуального релиза"
 BTN_NO_MONEY = "Пока не хватает финансов"
@@ -1135,6 +1141,9 @@ class BlastBotApp:
                 STAGE_PACKAGE_DETAILS: self._handle_package_details,
                 STAGE_ALL_PACKAGES: self._handle_all_packages,
                 STAGE_PACKAGE_INFO: self._handle_package_info,
+                STAGE_PURCHASE_CHOICE: self._handle_purchase_choice,
+                STAGE_SUBSCRIPTION_CONFIRM: self._handle_subscription_confirm,
+                STAGE_WAIT_PAYMENT: self._handle_wait_payment,
                 STAGE_WHY_NOT: self._handle_why_not,
                 STAGE_NOT_ACTUAL_REASON: self._handle_not_actual_reason,
                 STAGE_CASES_TECH: self._handle_cases_tech,
@@ -1285,8 +1294,7 @@ class BlastBotApp:
         bal = await self.credits_db.get_balance(chat_id)
         bal_text = f"\n\nДоступно генераций: {bal}" if bal > 0 else ""
         await message.answer(
-            f"Привет. Отправь трек аудио-файлом, и я соберу клип.{bal_text}\n\n"
-            "/packets — посмотреть тарифы",
+            f"Привет. Отправь трек аудио-файлом, и я соберу клип.{bal_text}",
             reply_markup=_kb([BTN_SEND_TRACK]),
         )
 
@@ -1812,7 +1820,8 @@ class BlastBotApp:
         if balance < versions:
             await self.credits_db.log_event(chat_id, "no_credits")
             await message.answer(
-                "Твои кредиты закончились. Хочешь посмотреть тарифы?",
+                "Твои кредиты закончились. Хочешь посмотреть тарифы?\n\n"
+                "/packets — посмотреть тарифы",
                 reply_markup=_kb([BTN_ALL_PACKAGES]),
             )
             st.stage = STAGE_PACKAGES_OFFER
@@ -2115,7 +2124,8 @@ class BlastBotApp:
             "— Бласт за 1 990₽/мес (15 роликов)\n"
             "— Глоу за 7 990₽ (30 роликов + 2 блогера)\n"
             "— Импульс за 29 990₽ (50 роликов + посевы)\n\n"
-            "О каком рассказать подробнее?",
+            "О каком рассказать подробнее?\n\n"
+            "/sendtrack — вернуться к генерации",
             reply_markup=_kb([BTN_PKG_TRIAL], [BTN_PKG_BLAST], [BTN_PKG_GLOW], [BTN_PKG_IMPULSE]),
         )
 
@@ -2185,9 +2195,8 @@ class BlastBotApp:
                         f"Отлично! Пакет «{pkg}» — {price_str}₽.\n\n"
                         "Нажми кнопку ниже для оплаты. После успешной оплаты кредиты "
                         "начислятся автоматически.\n\n"
-                        "У нас все официально: прозрачный эквайринг и, конечно, чек об оплате.\n\n"
-                        "Чтобы вернуться к генерации — /sendtrack",
-                        reply_markup=ReplyKeyboardRemove(),
+                        "У нас все официально: прозрачный эквайринг и, конечно, чек об оплате.",
+                        reply_markup=_kb([BTN_BACK]),
                     )
                     await message.answer(
                         "Ссылка на оплату:",
@@ -2318,9 +2327,7 @@ class BlastBotApp:
         text = str(message.text or "").strip()
         if text == BTN_READY:
             st.selected_package = "Бласт"
-            await self._show_purchase_stub(message, st)
-            st.stage = STAGE_IDLE
-            await self.store.set(st)
+            await self._show_purchase_choice(message, st)
         elif text == BTN_ALL_PACKAGES:
             await self._show_all_packages(message, st)
         elif text == BTN_MAYBE_LATER:
@@ -2353,7 +2360,7 @@ class BlastBotApp:
                 except Exception as e:
                     log.warning("pkg_photo_send_failed pkg=%s err=%s", text, str(e))
             await message.answer(
-                self._PKG_TEXTS[text],
+                self._PKG_TEXTS[text] + "\n\n/sendtrack — вернуться к генерации",
                 reply_markup=_kb([BTN_TO_TARIFFS], [BTN_NOT_NOW], [BTN_PURCHASE]),
             )
         else:
@@ -2367,13 +2374,95 @@ class BlastBotApp:
         elif text == BTN_NOT_NOW:
             await self._show_why_not(message, st)
         elif text == BTN_PURCHASE:
-            await self._show_purchase_stub(message, st)
-            st.stage = STAGE_IDLE
-            await self.store.set(st)
+            if st.selected_package == "Бласт":
+                await self._show_purchase_choice(message, st)
+            else:
+                await self._show_purchase_stub(message, st)
+                st.stage = STAGE_WAIT_PAYMENT
+                await self.store.set(st)
         else:
             await message.answer(
                 "Выбери из кнопок ниже.",
                 reply_markup=_kb([BTN_TO_TARIFFS], [BTN_NOT_NOW], [BTN_PURCHASE]),
+            )
+
+    # --- Purchase choice: one-time vs subscription (Бласт only) ---
+    async def _show_purchase_choice(self, message: Message, st: ChatState) -> None:
+        st.stage = STAGE_PURCHASE_CHOICE
+        await self.store.set(st)
+        await message.answer(
+            "Бласт можно приобрести разово или по подписке.\n\n"
+            "В рамках подписки будут включены все плюшки, о которых мы говорили "
+            "ранее, а при разовой оплате — нет.\n\n"
+            "Какой вариант выбираешь?",
+            reply_markup=_kb([BTN_BUY_ONCE], [BTN_BUY_SUBSCRIPTION]),
+        )
+
+    async def _handle_purchase_choice(self, message: Message, st: ChatState) -> None:
+        text = str(message.text or "").strip()
+        if text == BTN_BUY_ONCE:
+            await self._show_purchase_stub(message, st)
+            st.stage = STAGE_WAIT_PAYMENT
+            await self.store.set(st)
+        elif text == BTN_BUY_SUBSCRIPTION:
+            await self._show_subscription_confirm(message, st)
+        else:
+            await message.answer(
+                "Выбери вариант кнопкой.",
+                reply_markup=_kb([BTN_BUY_ONCE], [BTN_BUY_SUBSCRIPTION]),
+            )
+
+    # --- Subscription confirm ---
+    async def _show_subscription_confirm(self, message: Message, st: ChatState) -> None:
+        st.stage = STAGE_SUBSCRIPTION_CONFIRM
+        await self.store.set(st)
+        await message.answer(
+            "Подписка на Бласт — 1 990₽/мес.\n\n"
+            "Условия подписки:\n"
+            "— Списание 1 990₽ каждый месяц\n"
+            "— 15 генераций видео ежемесячно\n"
+            "— Отмена в любой момент\n\n"
+            "Разовые бонусы:\n"
+            "— Удвоение роликов со второго месяца\n"
+            "— Бонусный блогер с третьего месяца\n"
+            "— Безлимитная дистрибьюция с четвёртого месяца\n\n"
+            "Нажимая «Подтвердить», ты соглашаешься с условиями подписки и оферты.",
+            reply_markup=_kb([BTN_CONFIRM], [BTN_BACK]),
+        )
+
+    async def _handle_subscription_confirm(self, message: Message, st: ChatState) -> None:
+        text = str(message.text or "").strip()
+        if text == BTN_CONFIRM:
+            # For now use the same payment link as one-time (will be replaced with recurrent)
+            await self._show_purchase_stub(message, st)
+            st.stage = STAGE_WAIT_PAYMENT
+            await self.store.set(st)
+        elif text == BTN_BACK:
+            await self._show_purchase_choice(message, st)
+        else:
+            await message.answer(
+                "Выбери кнопку: «Подтвердить» или «Назад».",
+                reply_markup=_kb([BTN_CONFIRM], [BTN_BACK]),
+            )
+
+    # --- Wait payment (Назад → return to package info) ---
+    async def _handle_wait_payment(self, message: Message, st: ChatState) -> None:
+        text = str(message.text or "").strip()
+        if text == BTN_BACK:
+            pkg = st.selected_package or ""
+            if pkg in self._PKG_TEXTS:
+                st.stage = STAGE_PACKAGE_INFO
+                await self.store.set(st)
+                await message.answer(
+                    self._PKG_TEXTS[pkg] + "\n\n/sendtrack — вернуться к генерации",
+                    reply_markup=_kb([BTN_TO_TARIFFS], [BTN_NOT_NOW], [BTN_PURCHASE]),
+                )
+            else:
+                await self._show_all_packages(message, st)
+        else:
+            await message.answer(
+                "Ожидаем оплату. Нажми «Назад», чтобы вернуться к описанию пакета.",
+                reply_markup=_kb([BTN_BACK]),
             )
 
     # --- Why not actual ---
@@ -3542,7 +3631,8 @@ class BlastBotApp:
                 await bot.send_message(
                     st.chat_id,
                     "Готово — лови контент!\n\n"
-                    "Твои кредиты закончились. Хочешь посмотреть тарифы?",
+                    "Твои кредиты закончились. Хочешь посмотреть тарифы?\n\n"
+                    "/packets — посмотреть тарифы",
                     reply_markup=_kb([BTN_ALL_PACKAGES]),
                 )
                 st.stage = STAGE_PACKAGES_OFFER
