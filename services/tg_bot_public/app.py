@@ -17,7 +17,7 @@ from aiogram import Bot, Dispatcher, Router
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandStart
-from aiogram.types import ChatMemberUpdated, FSInputFile, KeyboardButton, Message, ReplyKeyboardMarkup, ReplyKeyboardRemove
+from aiogram.types import CallbackQuery, ChatMemberUpdated, FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, Message, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from core.clip_window import CLIP_WINDOW_RANGE_S_LABEL
 from core.filesystem_hygiene import cleanup_jobs_artifacts, cleanup_tmp_chat_dirs
 from core.subtitles_mode import (
@@ -71,6 +71,8 @@ from .state_store import (
     STAGE_PURCHASE_CHOICE,
     STAGE_SUBSCRIPTION_CONFIRM,
     STAGE_WAIT_PAYMENT,
+    STAGE_IMPROVEMENT_FEEDBACK,
+    STAGE_IMPROVEMENT_OTHER_TEXT,
     STAGE_WHY_NOT,
     STAGE_NOT_ACTUAL_REASON,
     STAGE_CASES_TECH,
@@ -124,6 +126,7 @@ BTN_RATE_BUTTONS = [BTN_RATE_LOW, BTN_RATE_MID_LOW, BTN_RATE_MID_HIGH, BTN_RATE_
 
 BTN_LETS_DO_IT = "Делаем!"
 BTN_HOW_SO = "Как же?"
+BTN_WANT_THIS = "Хочу так"
 
 BTN_TELL_MORE = "Рассказывайте!"
 BTN_ALL_PACKAGES = "Все пакеты"
@@ -1035,6 +1038,18 @@ class BlastBotApp:
                 return
             await self._show_all_packages(message, st)
 
+        @self.router.message(Command("cancelsubscription"))
+        async def _on_cancel_subscription(message: Message) -> None:
+            if message.chat is None:
+                return
+            chat_id = int(message.chat.id)
+            await self.credits_db.log_event(chat_id, "cancel_subscription_request")
+            await message.answer(
+                "Для отмены подписки свяжись с нашим менеджером: @impulsemanage\n\n"
+                "Он поможет отменить подписку и ответит на все вопросы.",
+                reply_markup=ReplyKeyboardRemove(),
+            )
+
         @self.router.message(Command("sendtrack"))
         async def _on_sendtrack(message: Message) -> None:
             if message.chat is None:
@@ -1045,6 +1060,38 @@ class BlastBotApp:
                 await message.answer("Трек в процессе, подожди завершения.")
                 return
             await self._move_to_wait_audio(chat_id, message)
+
+        @self.router.callback_query(lambda c: c.data and c.data.startswith("improve:"))
+        async def _on_improve_callback(callback: CallbackQuery) -> None:
+            if callback.message is None or callback.message.chat is None:
+                return
+            chat_id = int(callback.message.chat.id)
+            st = await self.store.get(chat_id)
+            area = str(callback.data or "").replace("improve:", "")
+            await callback.answer()
+
+            await self.credits_db.log_event(
+                chat_id, "improvement_feedback",
+                f"rating=5-6 area={area}",
+            )
+
+            if area == "other":
+                st.stage = STAGE_IMPROVEMENT_OTHER_TEXT
+                await self.store.set(st)
+                await callback.message.answer(
+                    "Напиши, что бы изменил — мы учтём.",
+                    reply_markup=ReplyKeyboardRemove(),
+                )
+            else:
+                await self._send_improvement_thanks(callback.message, st)
+
+        @self.router.callback_query(lambda c: c.data == "sendtrack")
+        async def _on_sendtrack_callback(callback: CallbackQuery) -> None:
+            if callback.message is None or callback.message.chat is None:
+                return
+            chat_id = int(callback.message.chat.id)
+            await callback.answer()
+            await self._move_to_wait_audio(chat_id, callback.message)
 
         @self.router.message()
         async def _on_any_message(message: Message) -> None:
@@ -1136,6 +1183,8 @@ class BlastBotApp:
             _PG_DISPATCH = {
                 STAGE_RATE_VIDEO: self._handle_rate_video,
                 STAGE_FEEDBACK_LOW: self._handle_feedback_low,
+                STAGE_IMPROVEMENT_FEEDBACK: self._handle_improvement_feedback_text,
+                STAGE_IMPROVEMENT_OTHER_TEXT: self._handle_improvement_other_text,
                 STAGE_SALES_PITCH: self._handle_sales_pitch,
                 STAGE_PACKAGES_OFFER: self._handle_packages_offer,
                 STAGE_PACKAGE_DETAILS: self._handle_package_details,
@@ -2125,7 +2174,8 @@ class BlastBotApp:
             "— Глоу за 7 990₽ (30 роликов + 2 блогера)\n"
             "— Импульс за 29 990₽ (50 роликов + посевы)\n\n"
             "О каком рассказать подробнее?\n\n"
-            "/sendtrack — вернуться к генерации",
+            "/sendtrack — вернуться к генерации\n"
+            "/cancelsubscription — отменить подписку",
             reply_markup=_kb([BTN_PKG_TRIAL], [BTN_PKG_BLAST], [BTN_PKG_GLOW], [BTN_PKG_IMPULSE]),
         )
 
@@ -2183,7 +2233,7 @@ class BlastBotApp:
                     description=f"Пакет «{pkg}»",
                 )
                 if pay_url:
-                    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
                     buttons = [
                         [InlineKeyboardButton(text=f"Оплатить {price:,}₽".replace(",", "."), url=pay_url)],
                     ]
@@ -2236,15 +2286,21 @@ class BlastBotApp:
         elif text == BTN_RATE_MID_LOW:
             await self.credits_db.log_event(st.chat_id, "rate_video", "mid_low")
             st.last_rating = "mid"
-            st.stage = STAGE_SALES_PITCH
+            st.stage = STAGE_IMPROVEMENT_FEEDBACK
             await self.store.set(st)
+            from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [
+                    InlineKeyboardButton(text="Субтитры", callback_data="improve:subtitles"),
+                    InlineKeyboardButton(text="Исходники", callback_data="improve:sources"),
+                    InlineKeyboardButton(text="Переходы", callback_data="improve:transitions"),
+                    InlineKeyboardButton(text="Другое", callback_data="improve:other"),
+                ],
+            ])
             await message.answer(
-                "Супер, значит мы близко!\n\n"
-                "Обычно артисты застревают на одном ролике и хаотичных попытках. "
-                "Blast решает это — технология помогает вести контент регулярно и эффективно.\n\n"
-                "Прямо сейчас ты можешь выстроить систему из контента: без страха съемок, "
-                "ужасов монтажа, проблем выкладки и инфантильных менеджеров.",
-                reply_markup=_kb([BTN_HOW_SO]),
+                "Спасибо за честность! Мы хотим, чтобы следующий ролик зашёл сильнее. "
+                "Что бы ты поменял в первую очередь?",
+                reply_markup=kb,
             )
         elif text in {BTN_RATE_MID_HIGH, BTN_RATE_HIGH}:
             await self.credits_db.log_event(st.chat_id, "rate_video", "high")
@@ -2253,12 +2309,10 @@ class BlastBotApp:
             await self.store.set(st)
             await message.answer(
                 "Отлично, значит мы попали!\n\n"
-                "Обычно артисты застревают на одном ролике и хаотичных попытках что-то "
-                "смонтировать и выложить. Blast решает это — технология помогает вести "
-                "контент регулярно и эффективно.\n\n"
-                "Прямо сейчас ты можешь выстроить систему из контента: без страха съемок, "
-                "ужасов монтажа, проблем выкладки и инфантильных менеджеров.",
-                reply_markup=_kb([BTN_HOW_SO]),
+                "Это один ролик — а представь: каждую неделю у тебя появляется свежий "
+                "контент под твои треки, в твоём стиле и вайбе. Без съёмок и монтажа — "
+                "просто закидываешь треки, а Blast собирает контент.",
+                reply_markup=_kb([BTN_WANT_THIS]),
             )
         else:
             await message.answer(
@@ -2276,10 +2330,44 @@ class BlastBotApp:
         else:
             await message.answer("Нажми «Делаем!»", reply_markup=_kb([BTN_LETS_DO_IT]))
 
-    # --- Sales pitch ("Как же?") ---
+    # --- Improvement feedback (5-6 rating) ---
+    async def _handle_improvement_feedback_text(self, message: Message, st: ChatState) -> None:
+        """Handle text messages while waiting for inline button press."""
+        await message.answer("Выбери один из вариантов кнопкой выше.")
+
+    # --- Improvement feedback (5-6 rating, "Другое" text input) ---
+    async def _handle_improvement_other_text(self, message: Message, st: ChatState) -> None:
+        text = str(message.text or "").strip()
+        if not text:
+            await message.answer("Напиши, что бы изменил — мы учтём.")
+            return
+        await self.credits_db.log_event(
+            st.chat_id, "improvement_feedback",
+            f"rating=5-6 area=other text={text}",
+        )
+        await self._send_improvement_thanks(message, st)
+
+    async def _send_improvement_thanks(self, message: Message, st: ChatState) -> None:
+        chat_id = st.chat_id
+        bal = await self.credits_db.get_balance(chat_id)
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="Отправить трек", callback_data="sendtrack")],
+        ])
+        await message.answer(
+            f"Записал! Мы постоянно докручиваем качество — и с каждым обновлением "
+            f"ролики становятся точнее. А пока — у тебя ещё {bal} бесплатных генераций, "
+            f"попробуй на другом треке. Результат может быть совсем другим, "
+            f"тк это итеративная работа. Особенно, если ты точно укажешь тайминг "
+            f"и текст отрывка.",
+            reply_markup=kb,
+        )
+        st.stage = STAGE_IDLE
+        await self.store.set(st)
+
+    # --- Sales pitch ("Как же?" / "Хочу так") ---
     async def _handle_sales_pitch(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()
-        if text == BTN_HOW_SO:
+        if text in {BTN_HOW_SO, BTN_WANT_THIS}:
             await self.credits_db.log_event(st.chat_id, "sales_pitch")
             st.stage = STAGE_PACKAGES_OFFER
             await self.store.set(st)
@@ -2295,7 +2383,9 @@ class BlastBotApp:
                 reply_markup=_kb([BTN_TELL_MORE], [BTN_ALL_PACKAGES], [BTN_NOT_NOW]),
             )
         else:
-            await message.answer("Нажми «Как же?»", reply_markup=_kb([BTN_HOW_SO]))
+            # Show the right button depending on last rating
+            btn = BTN_WANT_THIS if st.last_rating == "high" else BTN_HOW_SO
+            await message.answer(f"Нажми «{btn}»", reply_markup=_kb([btn]))
 
     # --- Packages offer (Рассказывайте / Все пакеты / Пока неактуально) ---
     async def _handle_packages_offer(self, message: Message, st: ChatState) -> None:
@@ -2426,7 +2516,9 @@ class BlastBotApp:
             "— Удвоение роликов со второго месяца\n"
             "— Бонусный блогер с третьего месяца\n"
             "— Безлимитная дистрибьюция с четвёртого месяца\n\n"
-            "Нажимая «Подтвердить», ты соглашаешься с условиями подписки и оферты.",
+            "Нажимая «Подтвердить», ты соглашаешься на ежемесячную подписку "
+            "с автоматическим списанием 1 990₽/мес и условиями оферты.\n\n"
+            "Отменить подписку можно в любой момент — /cancelsubscription",
             reply_markup=_kb([BTN_CONFIRM], [BTN_BACK]),
         )
 
@@ -2684,15 +2776,23 @@ class BlastBotApp:
                 "тебе вкатило. Сделаем?",
                 reply_markup=_kb([BTN_LETS_DO_IT]),
             )
-        elif text in {BTN_RATE_MID_LOW, BTN_RATE_MID_HIGH, BTN_RATE_HIGH}:
-            st.stage = STAGE_LAST_STEP_FORM
+        elif text == BTN_RATE_MID_LOW:
+            await self.credits_db.log_event(st.chat_id, "rate_video_2", "mid_low")
+            st.last_rating = "mid"
+            # 2nd gen 5-6 → referral + feedback form
+            await self._show_referral_ask(message, st)
+        elif text in {BTN_RATE_MID_HIGH, BTN_RATE_HIGH}:
+            await self.credits_db.log_event(st.chat_id, "rate_video_2", "high")
+            st.last_rating = "high"
+            # 2nd gen 7+ → standard sales pitch
+            st.stage = STAGE_SALES_PITCH
             await self.store.set(st)
             await message.answer(
-                "Окей! Тогда остался последний шаг, чтобы получить все ролики.\n\n"
-                "Тебе нужно всего лишь пройти форму обратной связи: ответить на 5 вопросов "
-                "о контенте и менеджер пришлет тебе еще один ролик.\n\n"
-                "Проще простого, не правда ли?",
-                reply_markup=_kb([BTN_TO_FORM]),
+                "Отлично, значит мы попали!\n\n"
+                "Это один ролик — а представь: каждую неделю у тебя появляется свежий "
+                "контент под твои треки, в твоём стиле и вайбе. Без съёмок и монтажа — "
+                "просто закидываешь треки, а Blast собирает контент.",
+                reply_markup=_kb([BTN_WANT_THIS]),
             )
         else:
             await message.answer(
