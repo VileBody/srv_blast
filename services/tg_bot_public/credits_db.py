@@ -115,6 +115,24 @@ CREATE INDEX IF NOT EXISTS idx_utm_touches_source     ON utm_touches(source);
 CREATE INDEX IF NOT EXISTS idx_utm_touches_campaign   ON utm_touches(campaign);
 
 CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
+
+CREATE TABLE IF NOT EXISTS subscriptions (
+    id              BIGSERIAL PRIMARY KEY,
+    tg_id           BIGINT    NOT NULL,
+    package         TEXT      NOT NULL DEFAULT '',
+    rebill_id       TEXT      NOT NULL DEFAULT '',
+    amount_rub      INTEGER   NOT NULL DEFAULT 0,
+    status          TEXT      NOT NULL DEFAULT 'active',
+    next_charge_at  TIMESTAMP NOT NULL DEFAULT (NOW() + INTERVAL '30 days'),
+    charge_retries  INTEGER   NOT NULL DEFAULT 0,
+    created_at      TIMESTAMP NOT NULL DEFAULT NOW(),
+    cancelled_at    TIMESTAMP,
+    updated_at      TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_sub_tg_id       ON subscriptions(tg_id);
+CREATE INDEX IF NOT EXISTS idx_sub_status      ON subscriptions(status);
+CREATE INDEX IF NOT EXISTS idx_sub_next_charge ON subscriptions(next_charge_at);
 """
 
 
@@ -201,6 +219,9 @@ class CreditsDB:
         await conn.execute("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS actor TEXT NOT NULL DEFAULT ''")
         await conn.execute("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS context_order_id TEXT NOT NULL DEFAULT ''")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_tx_order_id ON transactions(context_order_id)")
+        # Recurrent payments support
+        await conn.execute("ALTER TABLE payments ADD COLUMN IF NOT EXISTS rebill_id TEXT NOT NULL DEFAULT ''")
+        await conn.execute("ALTER TABLE payments ADD COLUMN IF NOT EXISTS is_recurrent BOOLEAN NOT NULL DEFAULT FALSE")
 
         await conn.execute("CREATE TABLE IF NOT EXISTS utm_touches ("
                            "id BIGSERIAL PRIMARY KEY,"
@@ -897,15 +918,78 @@ class CreditsDB:
         pool = self._pool_or_fail()
         async with pool.acquire() as conn:
             rows = await conn.fetch(
-                "SELECT id, order_id, tg_id, amount_rub, package, status, payment_id, created_at "
+                "SELECT id, order_id, tg_id, amount_rub, package, status, payment_id, is_recurrent, created_at "
                 "FROM payments WHERE status = 'pending' ORDER BY created_at ASC",
             )
             return [
                 {"id": r["id"], "order_id": r["order_id"], "tg_id": r["tg_id"],
                  "amount_rub": r["amount_rub"], "package": r["package"], "status": r["status"],
-                 "payment_id": r["payment_id"], "created_at": r["created_at"]}
+                 "payment_id": r["payment_id"], "is_recurrent": bool(r["is_recurrent"]),
+                 "created_at": r["created_at"]}
                 for r in rows
             ]
+
+    async def save_rebill_id(self, tg_id: int, rebill_id: str) -> None:
+        """Save RebillId for recurrent charges on the latest confirmed payment."""
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE payments SET rebill_id = $1 "
+                "WHERE tg_id = $2 AND status = 'confirmed' AND rebill_id = '' "
+                "ORDER BY updated_at DESC LIMIT 1",
+                str(rebill_id),
+                int(tg_id),
+            )
+
+    async def get_rebill_id(self, tg_id: int) -> Optional[str]:
+        """Get the latest RebillId for a user (from their last recurrent parent payment)."""
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            val = await conn.fetchval(
+                "SELECT rebill_id FROM payments "
+                "WHERE tg_id = $1 AND rebill_id <> '' AND is_recurrent = TRUE AND status = 'confirmed' "
+                "ORDER BY updated_at DESC LIMIT 1",
+                int(tg_id),
+            )
+        return str(val) if val else None
+
+    async def create_recurrent_payment(
+        self,
+        order_id: str,
+        tg_id: int,
+        amount_rub: int,
+        package: str,
+        utm: Optional[Dict[str, str]] = None,
+    ) -> None:
+        """Create a payment record marked as recurrent."""
+        clean = _clean_utm(utm)
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "INSERT INTO payments (order_id, tg_id, amount_rub, package, is_recurrent, "
+                "utm_source, utm_medium, utm_campaign, utm_content, utm_term, utm_payload) "
+                "VALUES ($1, $2, $3, $4, TRUE, $5, $6, $7, $8, $9, $10)",
+                str(order_id),
+                int(tg_id),
+                int(amount_rub),
+                str(package or ""),
+                clean["source"],
+                clean["medium"],
+                clean["campaign"],
+                clean["content"],
+                clean["term"],
+                clean["payload"],
+            )
+
+    async def update_rebill_id(self, order_id: str, rebill_id: str) -> None:
+        """Set rebill_id on a specific payment order."""
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE payments SET rebill_id = $1, updated_at = NOW() WHERE order_id = $2",
+                str(rebill_id),
+                str(order_id),
+            )
 
     async def is_payment_processed(self, payment_id: str, status: str) -> bool:
         pool = self._pool_or_fail()
@@ -1141,3 +1225,126 @@ class CreditsDB:
             "authorized_revenue_rub": authorized_revenue_rub,
             "visible_revenue_rub": confirmed_revenue_rub + authorized_revenue_rub,
         }
+
+    # ── Subscriptions ────────────────────────────────────────────────
+
+    async def create_subscription(
+        self, tg_id: int, package: str, rebill_id: str, amount_rub: int,
+    ) -> None:
+        """Create an active subscription after first recurrent payment."""
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            # Cancel any existing active subscription for this user
+            await conn.execute(
+                "UPDATE subscriptions SET status = 'replaced', cancelled_at = NOW(), updated_at = NOW() "
+                "WHERE tg_id = $1 AND status = 'active'",
+                int(tg_id),
+            )
+            await conn.execute(
+                "INSERT INTO subscriptions (tg_id, package, rebill_id, amount_rub) "
+                "VALUES ($1, $2, $3, $4)",
+                int(tg_id),
+                str(package or ""),
+                str(rebill_id),
+                int(amount_rub),
+            )
+
+    async def get_active_subscription(self, tg_id: int) -> Optional[Dict[str, Any]]:
+        """Get the active subscription for a user, if any."""
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            r = await conn.fetchrow(
+                "SELECT id, tg_id, package, rebill_id, amount_rub, status, "
+                "next_charge_at, charge_retries, created_at, cancelled_at "
+                "FROM subscriptions WHERE tg_id = $1 AND status = 'active' "
+                "ORDER BY id DESC LIMIT 1",
+                int(tg_id),
+            )
+        if not r:
+            return None
+        return {
+            "id": int(r["id"]),
+            "tg_id": int(r["tg_id"]),
+            "package": str(r["package"] or ""),
+            "rebill_id": str(r["rebill_id"] or ""),
+            "amount_rub": int(r["amount_rub"]),
+            "status": str(r["status"]),
+            "next_charge_at": r["next_charge_at"],
+            "charge_retries": int(r["charge_retries"]),
+            "created_at": r["created_at"],
+            "cancelled_at": r["cancelled_at"],
+        }
+
+    async def get_subscriptions_due(self) -> List[Dict[str, Any]]:
+        """Get active subscriptions that are due for charging (next_charge_at <= NOW)."""
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT id, tg_id, package, rebill_id, amount_rub, charge_retries, next_charge_at "
+                "FROM subscriptions "
+                "WHERE status = 'active' AND next_charge_at <= NOW() "
+                "ORDER BY next_charge_at ASC",
+            )
+        return [
+            {
+                "id": int(r["id"]),
+                "tg_id": int(r["tg_id"]),
+                "package": str(r["package"] or ""),
+                "rebill_id": str(r["rebill_id"] or ""),
+                "amount_rub": int(r["amount_rub"]),
+                "charge_retries": int(r["charge_retries"]),
+                "next_charge_at": r["next_charge_at"],
+            }
+            for r in rows
+        ]
+
+    async def subscription_charge_success(self, sub_id: int) -> None:
+        """After successful charge: reset retries, push next_charge_at +30 days."""
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE subscriptions "
+                "SET next_charge_at = NOW() + INTERVAL '30 days', "
+                "    charge_retries = 0, updated_at = NOW() "
+                "WHERE id = $1",
+                int(sub_id),
+            )
+
+    async def subscription_charge_failed(self, sub_id: int, max_retries: int = 3) -> str:
+        """After failed charge: increment retries. If max reached, pause subscription.
+
+        Returns new status: 'active' (will retry) or 'paused' (max retries hit).
+        """
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            r = await conn.fetchrow(
+                "SELECT charge_retries FROM subscriptions WHERE id = $1", int(sub_id),
+            )
+            retries = int(r["charge_retries"]) + 1 if r else 1
+            if retries >= max_retries:
+                await conn.execute(
+                    "UPDATE subscriptions SET status = 'paused', charge_retries = $1, updated_at = NOW() "
+                    "WHERE id = $2",
+                    retries, int(sub_id),
+                )
+                return "paused"
+            else:
+                # Retry in 24 hours
+                await conn.execute(
+                    "UPDATE subscriptions "
+                    "SET charge_retries = $1, next_charge_at = NOW() + INTERVAL '1 day', updated_at = NOW() "
+                    "WHERE id = $2",
+                    retries, int(sub_id),
+                )
+                return "active"
+
+    async def cancel_subscription(self, tg_id: int) -> bool:
+        """Cancel the active subscription for a user. Returns True if there was one."""
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            tag = await conn.execute(
+                "UPDATE subscriptions SET status = 'cancelled', cancelled_at = NOW(), updated_at = NOW() "
+                "WHERE tg_id = $1 AND status = 'active'",
+                int(tg_id),
+            )
+            return _rowcount_from_tag(tag) > 0

@@ -5,13 +5,14 @@ from __future__ import annotations
 import hashlib
 import hmac
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 import httpx
 
 log = logging.getLogger("tbank")
 
 TBANK_INIT_URL = "https://securepay.tinkoff.ru/v2/Init"
+TBANK_CHARGE_URL = "https://securepay.tinkoff.ru/v2/Charge"
 
 
 class TBankClient:
@@ -37,18 +38,9 @@ class TBankClient:
         sorted_values = "".join(v for _, v in sorted(token_data.items()))
         return hashlib.sha256(sorted_values.encode()).hexdigest()
 
-    async def create_payment(
-        self,
-        amount_rub: int,
-        order_id: str,
-        description: str = "Оплата пакета Blast",
-        email: str = "",
-    ) -> Optional[str]:
-        """Call Init endpoint. Returns PaymentURL or None on error."""
-        amount_kop = amount_rub * 100
-
-        # Receipt is required for production terminals
-        receipt = {
+    def _make_receipt(self, description: str, amount_kop: int, email: str = "") -> Dict[str, Any]:
+        """Build receipt object for Init requests."""
+        return {
             "Email": email or "noreply@blast808.com",
             "Taxation": "usn_income",
             "Items": [
@@ -64,6 +56,23 @@ class TBankClient:
             ],
         }
 
+    async def create_payment(
+        self,
+        amount_rub: int,
+        order_id: str,
+        description: str = "Оплата пакета Blast",
+        email: str = "",
+        recurrent: bool = False,
+        customer_key: str = "",
+    ) -> Optional[str]:
+        """Call Init endpoint. Returns PaymentURL or None on error.
+
+        If recurrent=True, sets Recurrent=Y and CustomerKey so the card
+        is saved for future Charge calls.
+        """
+        amount_kop = amount_rub * 100
+        receipt = self._make_receipt(description, amount_kop, email)
+
         params: Dict[str, Any] = {
             "TerminalKey": self._terminal_key,
             "Amount": amount_kop,
@@ -71,6 +80,9 @@ class TBankClient:
             "Description": description[:250],
             "Receipt": receipt,
         }
+        if recurrent and customer_key:
+            params["Recurrent"] = "Y"
+            params["CustomerKey"] = customer_key
         if self._notify_url:
             params["NotificationURL"] = self._notify_url
 
@@ -91,8 +103,82 @@ class TBankClient:
                 )
                 return None
             url = data.get("PaymentURL")
-            log.info("tbank payment created order=%s url=%s", order_id, url)
+            log.info("tbank payment created order=%s url=%s recurrent=%s", order_id, url, recurrent)
             return url
+
+    async def init_for_charge(
+        self,
+        amount_rub: int,
+        order_id: str,
+        description: str = "Подписка Blast — ежемесячное списание",
+        email: str = "",
+    ) -> Optional[str]:
+        """Init a payment for subsequent Charge (no PaymentURL needed).
+
+        Returns PaymentId or None on error.
+        """
+        amount_kop = amount_rub * 100
+        receipt = self._make_receipt(description, amount_kop, email)
+
+        params: Dict[str, Any] = {
+            "TerminalKey": self._terminal_key,
+            "Amount": amount_kop,
+            "OrderId": order_id,
+            "Description": description[:250],
+            "Receipt": receipt,
+        }
+        if self._notify_url:
+            params["NotificationURL"] = self._notify_url
+
+        params["Token"] = self._make_token(params)
+
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(TBANK_INIT_URL, json=params)
+            if resp.status_code != 200:
+                log.error("tbank init_for_charge failed status=%s body=%s", resp.status_code, resp.text)
+                return None
+            data = resp.json()
+            if not data.get("Success"):
+                log.error(
+                    "tbank init_for_charge error: %s %s details=%s",
+                    data.get("ErrorCode"),
+                    data.get("Message"),
+                    data.get("Details"),
+                )
+                return None
+            payment_id = str(data.get("PaymentId", ""))
+            log.info("tbank init_for_charge order=%s payment_id=%s", order_id, payment_id)
+            return payment_id
+
+    async def charge(
+        self,
+        payment_id: str,
+        rebill_id: str,
+    ) -> Tuple[bool, str]:
+        """Charge a saved card using RebillId.
+
+        Returns (success, error_message).
+        """
+        params: Dict[str, Any] = {
+            "TerminalKey": self._terminal_key,
+            "PaymentId": payment_id,
+            "RebillId": rebill_id,
+        }
+        params["Token"] = self._make_token(params)
+
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(TBANK_CHARGE_URL, json=params)
+            if resp.status_code != 200:
+                log.error("tbank charge failed status=%s body=%s", resp.status_code, resp.text)
+                return False, f"HTTP {resp.status_code}"
+            data = resp.json()
+            if not data.get("Success"):
+                err = f"{data.get('ErrorCode', '')}: {data.get('Message', '')} {data.get('Details', '')}"
+                log.error("tbank charge error: %s", err)
+                return False, err
+            log.info("tbank charge ok payment_id=%s rebill_id=%s status=%s",
+                     payment_id, rebill_id, data.get("Status"))
+            return True, ""
 
     async def cancel_payment(self, payment_id: str, amount_kop: int = 0) -> bool:
         """Call Cancel endpoint. Returns True on success."""

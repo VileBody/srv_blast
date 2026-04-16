@@ -1248,6 +1248,7 @@ class BlastBotApp:
         self._payment_poll_task = asyncio.create_task(self._payment_poll_loop(), name="tg_bot_payment_poll")
         self._state_cleanup_task = asyncio.create_task(self._state_cleanup_loop(), name="tg_bot_state_cleanup_loop")
         self._fs_cleanup_task = asyncio.create_task(self._fs_cleanup_loop(), name="tg_bot_fs_cleanup_loop")
+        self._subscription_charge_task = asyncio.create_task(self._subscription_charge_loop(), name="tg_bot_subscription_charge")
         log.info("startup complete: polling loop started")
 
     async def _on_shutdown(self, bot: Bot) -> None:
@@ -1260,6 +1261,7 @@ class BlastBotApp:
             getattr(self, "_reminder_task", None),
             getattr(self, "_admin_panel_task", None),
             getattr(self, "_payment_poll_task", None),
+            getattr(self, "_subscription_charge_task", None),
         ]:
             if task is not None:
                 task.cancel()
@@ -2216,23 +2218,30 @@ class BlastBotApp:
         "Импульс": 50,
     }
 
-    async def _show_purchase_stub(self, message: Message, st: ChatState) -> None:
+    async def _show_purchase_stub(self, message: Message, st: ChatState, recurrent: bool = False) -> None:
         username = (st.chat_username or "").lstrip("@") or str(st.chat_id)
         pkg = st.selected_package or "не указан"
-        await self.credits_db.log_event(st.chat_id, "purchase_intent", pkg)
+        event = "purchase_intent_recurrent" if recurrent else "purchase_intent"
+        await self.credits_db.log_event(st.chat_id, event, pkg)
 
         price = self._PKG_PRICES.get(pkg, 0)
 
         # Try to create T-Bank payment link
         if self.tbank and price > 0:
-            order_id = f"{st.chat_id}-{pkg.replace(' ', '_')}-{uuid.uuid4().hex[:8]}"
+            suffix = "sub" if recurrent else ""
+            order_id = f"{st.chat_id}-{pkg.replace(' ', '_')}-{suffix}{uuid.uuid4().hex[:8]}"
             try:
                 last_utm = await self.credits_db.get_last_utm(st.chat_id)
-                await self.credits_db.create_payment(order_id, st.chat_id, price, pkg, utm=last_utm)
+                if recurrent:
+                    await self.credits_db.create_recurrent_payment(order_id, st.chat_id, price, pkg, utm=last_utm)
+                else:
+                    await self.credits_db.create_payment(order_id, st.chat_id, price, pkg, utm=last_utm)
                 pay_url = await self.tbank.create_payment(
                     amount_rub=price,
                     order_id=order_id,
-                    description=f"Пакет «{pkg}»",
+                    description=f"Подписка «{pkg}»" if recurrent else f"Пакет «{pkg}»",
+                    recurrent=recurrent,
+                    customer_key=str(st.chat_id) if recurrent else "",
                 )
                 if pay_url:
 
@@ -2243,18 +2252,28 @@ class BlastBotApp:
                         buttons.append([InlineKeyboardButton(text="Договор оферты", url=self.settings.offer_url)])
                     kb = InlineKeyboardMarkup(inline_keyboard=buttons)
                     price_str = f"{price:,}".replace(",", ".")
-                    await message.answer(
-                        f"Отлично! Пакет «{pkg}» — {price_str}₽.\n\n"
-                        "Нажми кнопку ниже для оплаты. После успешной оплаты кредиты "
-                        "начислятся автоматически.\n\n"
-                        "У нас все официально: прозрачный эквайринг и, конечно, чек об оплате.",
-                        reply_markup=_kb([BTN_BACK]),
-                    )
+                    if recurrent:
+                        await message.answer(
+                            f"Подписка активирована! «{pkg}» — {price_str}₽/мес.\n\n"
+                            "Нажми кнопку ниже для оплаты. После успешной оплаты кредиты "
+                            "начислятся автоматически.\n\n"
+                            "У нас все официально: прозрачный эквайринг и, конечно, чек об оплате.",
+                            reply_markup=_kb([BTN_BACK]),
+                        )
+                    else:
+                        await message.answer(
+                            f"Отлично! Пакет «{pkg}» — {price_str}₽.\n\n"
+                            "Нажми кнопку ниже для оплаты. После успешной оплаты кредиты "
+                            "начислятся автоматически.\n\n"
+                            "У нас все официально: прозрачный эквайринг и, конечно, чек об оплате.",
+                            reply_markup=_kb([BTN_BACK]),
+                        )
                     await message.answer(
                         "Ссылка на оплату:",
                         reply_markup=kb,
                     )
-                    await self._notify_manager_payment(username, pkg, price, "Создан")
+                    status_label = "Подписка создана" if recurrent else "Создан"
+                    await self._notify_manager_payment(username, pkg, price, status_label)
                     return
             except Exception as e:
                 log.warning("tbank payment creation failed: %s", e)
@@ -2527,8 +2546,7 @@ class BlastBotApp:
     async def _handle_subscription_confirm(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()
         if text == BTN_CONFIRM:
-            # For now use the same payment link as one-time (will be replaced with recurrent)
-            await self._show_purchase_stub(message, st)
+            await self._show_purchase_stub(message, st, recurrent=True)
             st.stage = STAGE_WAIT_PAYMENT
             await self.store.set(st)
         elif text == BTN_BACK:
@@ -3305,6 +3323,23 @@ class BlastBotApp:
                                 await self.credits_db.update_payment_status(order_id, "confirmed", payment_id)
                                 await self.credits_db.add_credits(tg_id, credits_to_add, "payment", f"Пакет «{pkg}»")
                                 await self.credits_db.log_event(tg_id, "payment_confirmed", f"{pkg} +{credits_to_add} кредитов")
+                                # Save RebillId and create subscription for recurrent payments
+                                is_recurrent = pay.get("is_recurrent", False)
+                                if is_recurrent and payment_id and self.tbank:
+                                    try:
+                                        gs = await self.tbank.get_state(payment_id)
+                                        rebill_id = str(gs.get("RebillId", "")) if gs else ""
+                                        if rebill_id:
+                                            await self.credits_db.update_rebill_id(order_id, rebill_id)
+                                            await self.credits_db.create_subscription(
+                                                tg_id, pkg, rebill_id, pay["amount_rub"],
+                                            )
+                                            await self.credits_db.log_event(
+                                                tg_id, "subscription_created", f"{pkg} rebill={rebill_id}",
+                                            )
+                                            log.info("subscription created order=%s rebill=%s", order_id, rebill_id)
+                                    except Exception as e:
+                                        log.warning("subscription create failed order=%s err=%s", order_id, e)
                                 username = ""
                                 try:
                                     user_data = await self.credits_db.get_user(tg_id)
@@ -3353,6 +3388,100 @@ class BlastBotApp:
             except Exception as e:
                 log.warning("payment poll loop error=%r", e)
             await asyncio.sleep(30)
+
+    async def _subscription_charge_loop(self) -> None:
+        """Once per day, charge active subscriptions that are due."""
+        while True:
+            try:
+                if self.tbank:
+                    due = await self.credits_db.get_subscriptions_due()
+                    bot = self._require_bot()
+                    for sub in due:
+                        try:
+                            tg_id = sub["tg_id"]
+                            pkg = sub["package"]
+                            rebill_id = sub["rebill_id"]
+                            amount_rub = sub["amount_rub"]
+                            sub_id = sub["id"]
+
+                            # Init a new payment for Charge
+                            order_id = f"{tg_id}-{pkg.replace(' ', '_')}-sub-{uuid.uuid4().hex[:8]}"
+                            last_utm = await self.credits_db.get_last_utm(tg_id)
+                            await self.credits_db.create_recurrent_payment(
+                                order_id, tg_id, amount_rub, pkg, utm=last_utm,
+                            )
+                            payment_id = await self.tbank.init_for_charge(
+                                amount_rub=amount_rub,
+                                order_id=order_id,
+                                description=f"Подписка «{pkg}» — ежемесячное списание",
+                            )
+                            if not payment_id:
+                                log.warning("sub charge init failed sub=%s tg_id=%s", sub_id, tg_id)
+                                new_status = await self.credits_db.subscription_charge_failed(sub_id)
+                                if new_status == "paused":
+                                    await self._notify_subscription_paused(bot, tg_id, pkg)
+                                continue
+
+                            # Charge the saved card
+                            success, err = await self.tbank.charge(payment_id, rebill_id)
+                            if success:
+                                await self.credits_db.update_payment_status(order_id, "confirmed", payment_id)
+                                credits_to_add = self._PKG_CREDITS.get(pkg, 5)
+                                await self.credits_db.add_credits(tg_id, credits_to_add, "subscription", f"Подписка «{pkg}»")
+                                await self.credits_db.subscription_charge_success(sub_id)
+                                await self.credits_db.log_event(tg_id, "subscription_charged", f"{pkg} +{credits_to_add}")
+                                bal = await self.credits_db.get_balance(tg_id)
+                                try:
+                                    await bot.send_message(
+                                        tg_id,
+                                        f"Подписка «{pkg}» продлена!\n\n"
+                                        f"Начислено кредитов: {credits_to_add}\n"
+                                        f"Баланс: {bal}\n\n"
+                                        "Отправь трек, чтобы начать генерацию.\n\n"
+                                        "/cancelsubscription — отменить подписку",
+                                        reply_markup=_kb(["Отправить трек"]),
+                                    )
+                                except Exception as e:
+                                    log.warning("sub charge notify user=%s err=%s", tg_id, e)
+                                username = ""
+                                try:
+                                    user_data = await self.credits_db.get_user(tg_id)
+                                    username = user_data.get("username", "") if user_data else ""
+                                except Exception:
+                                    pass
+                                uname = f"@{username}" if username else str(tg_id)
+                                await self._notify_manager_payment(uname, pkg, amount_rub, "Подписка")
+                                await self._notify_finance_bot_income(amount_rub, uname, pkg)
+                                log.info("subscription charged sub=%s tg_id=%s pkg=%s", sub_id, tg_id, pkg)
+                            else:
+                                await self.credits_db.update_payment_status(order_id, "charge_failed", payment_id)
+                                new_status = await self.credits_db.subscription_charge_failed(sub_id)
+                                await self.credits_db.log_event(tg_id, "subscription_charge_failed", err)
+                                if new_status == "paused":
+                                    await self._notify_subscription_paused(bot, tg_id, pkg)
+                                else:
+                                    log.info("sub charge failed, will retry sub=%s retries=%s", sub_id, sub["charge_retries"] + 1)
+                        except Exception as e:
+                            log.warning("sub charge error sub=%s err=%r", sub.get("id"), e)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                log.warning("subscription charge loop error=%r", e)
+            await asyncio.sleep(86400)  # once per day
+
+    async def _notify_subscription_paused(self, bot: Bot, tg_id: int, pkg: str) -> None:
+        """Notify user that their subscription is paused due to failed charges."""
+        try:
+            await bot.send_message(
+                tg_id,
+                f"Не удалось списать оплату за подписку «{pkg}».\n\n"
+                "Подписка приостановлена. Проверь карту и свяжись с менеджером "
+                "для возобновления: @impulsemanage\n\n"
+                "/packets — посмотреть тарифы",
+                reply_markup=ReplyKeyboardRemove(),
+            )
+        except Exception as e:
+            log.warning("sub paused notify failed tg_id=%s err=%s", tg_id, e)
 
     async def _tbank_check_order(self, order_id: str) -> Optional[Dict[str, Any]]:
         """Check order status via T-Bank CheckOrder API."""
