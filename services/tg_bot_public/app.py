@@ -17,7 +17,7 @@ from aiogram import Bot, Dispatcher, Router
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandStart
-from aiogram.types import CallbackQuery, ChatMemberUpdated, FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, Message, ReplyKeyboardMarkup, ReplyKeyboardRemove
+from aiogram.types import BotCommand, CallbackQuery, ChatMemberUpdated, FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, Message, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from core.clip_window import CLIP_WINDOW_RANGE_S_LABEL
 from core.filesystem_hygiene import cleanup_jobs_artifacts, cleanup_tmp_chat_dirs
 from core.subtitles_mode import (
@@ -1232,6 +1232,14 @@ class BlastBotApp:
         self.settings.tmp_dir.mkdir(parents=True, exist_ok=True)
 
         await self.credits_db.init()
+
+        # Set bot menu commands
+        await bot.set_my_commands([
+            BotCommand(command="start", description="Запустить бота"),
+            BotCommand(command="sendtrack", description="Отправить трек"),
+            BotCommand(command="packets", description="Посмотреть тарифы"),
+            BotCommand(command="cancelsubscription", description="Отменить подписку"),
+        ])
 
         # Start admin web panel as background task
         self._admin_panel_task = asyncio.create_task(
