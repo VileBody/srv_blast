@@ -89,6 +89,11 @@ from core.subtitles_mode import (
     SUBTITLES_MODE_SCENES_3RD_SINGLE_STEP,
     normalize_subtitles_mode,
 )
+from core.llm_worker_types import (
+    LLM_WORKER_TYPE_SDK,
+    LLM_WORKER_TYPE_VERTEX_SDK_MIX,
+    normalize_llm_worker_type,
+)
 from core.runtime_mode import get_runtime_mode, MODE_DEV, MODE_PROD
 from core.clip_window import (
     CLIP_WINDOW_MAX_LABEL,
@@ -238,6 +243,9 @@ def _make_client(
     logger: logging.Logger,
     max_output_tokens: Optional[int] = None,
     max_thinking_tokens: Optional[int] = None,
+    vertexai: bool = False,
+    vertex_project: Optional[str] = None,
+    vertex_location: Optional[str] = None,
 ) -> GeminiClient:
     return GeminiClient(
         GeminiSettings(
@@ -250,6 +258,9 @@ def _make_client(
             max_output_tokens=max_output_tokens,
             max_thinking_tokens=max_thinking_tokens,
             max_attempts=1,
+            vertexai=bool(vertexai),
+            vertex_project=vertex_project,
+            vertex_location=vertex_location,
         ),
         logger=logger,
     )
@@ -2019,6 +2030,15 @@ def build_all_via_gemini_one_call(
       - stage3: merge -> FullPlanPayload -> render_all_steps
     """
     gemini_api_key = os.environ.get("GEMINI_API_KEY", "").strip()
+    gemini_asr_key = os.environ.get("GEMINI_ASR_KEY", "").strip()
+    vertex_ai_api_key = os.environ.get("VERTEX_AI_API_KEY_V1", "").strip()
+    vertex_ai_project = (os.environ.get("VERTEX_AI_PROJECT") or "").strip() or None
+    vertex_ai_location = (os.environ.get("VERTEX_AI_LOCATION") or "").strip() or None
+    llm_worker_type = normalize_llm_worker_type(
+        os.environ.get("LLM_WORKER_TYPE", ""),
+        default=LLM_WORKER_TYPE_SDK,
+    )
+    vertex_sdk_mix_enabled = llm_worker_type == LLM_WORKER_TYPE_VERTEX_SDK_MIX
     proxy = os.environ.get("OUTBOUND_PROXY", "").strip()
     temperature = _float_env("GEMINI_TEMPERATURE", 0.0)
     timeout_s = _float_env("GEMINI_TIMEOUT_S", 120.0)
@@ -2036,10 +2056,20 @@ def build_all_via_gemini_one_call(
     if mode not in {MODE_DEV, MODE_PROD}:
         raise RuntimeError(f"Unsupported MODE={mode!r}")
 
-    if provider_mode in {PROVIDER_MODE_GEMINI, PROVIDER_MODE_HEDGED} and not gemini_api_key:
+    if vertex_sdk_mix_enabled and provider_mode != PROVIDER_MODE_GEMINI:
         raise RuntimeError(
-            "Missing GEMINI_API_KEY in env for LLM_PROVIDER_MODE=gemini|hedged"
+            "vertex_sdk_mix requires LLM_PROVIDER_MODE=gemini"
         )
+    if provider_mode in {PROVIDER_MODE_GEMINI, PROVIDER_MODE_HEDGED}:
+        if vertex_sdk_mix_enabled:
+            if not gemini_asr_key:
+                raise RuntimeError("Missing GEMINI_ASR_KEY in env for LLM_WORKER_TYPE=vertex_sdk_mix")
+            if not vertex_ai_api_key:
+                raise RuntimeError("Missing VERTEX_AI_API_KEY_V1 in env for LLM_WORKER_TYPE=vertex_sdk_mix")
+        elif not gemini_api_key:
+            raise RuntimeError(
+                "Missing GEMINI_API_KEY in env for LLM_PROVIDER_MODE=gemini|hedged"
+            )
 
     # Explicit-only model contract:
     # - GEMINI_MODEL_STAGE1 is required (base).
@@ -2063,7 +2093,8 @@ def build_all_via_gemini_one_call(
     logger.info(
         "llm_provider_config mode=%s hedge_delay_s=%s gemini_timeout_s=%s openrouter_timeout_s=%s "
         "timing_mode=%s fast_start_seconds=%.3f gemini_max_output_tokens=%s "
-        "gemini_max_thinking_tokens=%s gemini_fallback_model=%s",
+        "gemini_max_thinking_tokens=%s gemini_fallback_model=%s llm_worker_type=%s "
+        "vertex_sdk_mix=%s vertex_location=%s",
         provider_mode,
         hedge_delay_s,
         timeout_s,
@@ -2073,6 +2104,9 @@ def build_all_via_gemini_one_call(
         str(max_output_tokens),
         str(max_thinking_tokens),
         (model_fallback or "<disabled>"),
+        llm_worker_type,
+        str(vertex_sdk_mix_enabled).lower(),
+        str(vertex_ai_location or ""),
     )
 
     client_stage1_asr: Optional[GeminiClient] = None
@@ -2083,8 +2117,13 @@ def build_all_via_gemini_one_call(
     client_footage: Optional[GeminiClient] = None
     client_timing: Optional[GeminiClient] = None
     if provider_mode in {PROVIDER_MODE_GEMINI, PROVIDER_MODE_HEDGED}:
+        shared_api_key = vertex_ai_api_key if vertex_sdk_mix_enabled else gemini_api_key
+        shared_vertexai = bool(vertex_sdk_mix_enabled)
+        # vertex_sdk_mix contract:
+        # audio-attached stages must use Gemini Developer API (vertexai=False)
+        # and GEMINI_ASR_KEY to keep SDK-like upload semantics.
         client_stage1_asr = _make_client(
-            api_key=gemini_api_key,
+            api_key=gemini_asr_key if vertex_sdk_mix_enabled else shared_api_key,
             model=model_stage1_asr,
             fallback_model=model_fallback or None,
             proxy=proxy,
@@ -2093,9 +2132,12 @@ def build_all_via_gemini_one_call(
             logger=logger,
             max_output_tokens=max_output_tokens,
             max_thinking_tokens=max_thinking_tokens,
+            vertexai=False if vertex_sdk_mix_enabled else shared_vertexai,
+            vertex_project=None if vertex_sdk_mix_enabled else (vertex_ai_project if shared_vertexai else None),
+            vertex_location=None if vertex_sdk_mix_enabled else (vertex_ai_location if shared_vertexai else None),
         )
         client_stage1_forced = _make_client(
-            api_key=gemini_api_key,
+            api_key=gemini_asr_key if vertex_sdk_mix_enabled else shared_api_key,
             model=model_stage1_asr,
             fallback_model=model_fallback or None,
             proxy=proxy,
@@ -2104,9 +2146,12 @@ def build_all_via_gemini_one_call(
             logger=logger,
             max_output_tokens=max_output_tokens,
             max_thinking_tokens=max_thinking_tokens,
+            vertexai=False,
+            vertex_project=None,
+            vertex_location=None,
         )
         client_stage1_scenario = _make_client(
-            api_key=gemini_api_key,
+            api_key=shared_api_key,
             model=model_stage1_scenario,
             fallback_model=model_fallback or None,
             proxy=proxy,
@@ -2115,9 +2160,12 @@ def build_all_via_gemini_one_call(
             logger=logger,
             max_output_tokens=max_output_tokens,
             max_thinking_tokens=max_thinking_tokens,
+            vertexai=shared_vertexai,
+            vertex_project=vertex_ai_project if shared_vertexai else None,
+            vertex_location=vertex_ai_location if shared_vertexai else None,
         )
         client_subtitles = _make_client(
-            api_key=gemini_api_key,
+            api_key=shared_api_key,
             model=model_subtitles,
             fallback_model=model_fallback or None,
             proxy=proxy,
@@ -2126,9 +2174,12 @@ def build_all_via_gemini_one_call(
             logger=logger,
             max_output_tokens=max_output_tokens,
             max_thinking_tokens=max_thinking_tokens,
+            vertexai=shared_vertexai,
+            vertex_project=vertex_ai_project if shared_vertexai else None,
+            vertex_location=vertex_ai_location if shared_vertexai else None,
         )
         client_subtitles_single_step = _make_client(
-            api_key=gemini_api_key,
+            api_key=gemini_asr_key if vertex_sdk_mix_enabled else shared_api_key,
             model=_SCENES_3RD_SINGLE_STEP_MODEL,
             fallback_model=model_fallback or None,
             proxy=proxy,
@@ -2137,9 +2188,12 @@ def build_all_via_gemini_one_call(
             logger=logger,
             max_output_tokens=max_output_tokens,
             max_thinking_tokens=max_thinking_tokens,
+            vertexai=False if vertex_sdk_mix_enabled else shared_vertexai,
+            vertex_project=None if vertex_sdk_mix_enabled else (vertex_ai_project if shared_vertexai else None),
+            vertex_location=None if vertex_sdk_mix_enabled else (vertex_ai_location if shared_vertexai else None),
         )
         client_footage = _make_client(
-            api_key=gemini_api_key,
+            api_key=shared_api_key,
             model=model_footage,
             fallback_model=model_fallback or None,
             proxy=proxy,
@@ -2148,9 +2202,12 @@ def build_all_via_gemini_one_call(
             logger=logger,
             max_output_tokens=max_output_tokens,
             max_thinking_tokens=max_thinking_tokens,
+            vertexai=shared_vertexai,
+            vertex_project=vertex_ai_project if shared_vertexai else None,
+            vertex_location=vertex_ai_location if shared_vertexai else None,
         )
         client_timing = _make_client(
-            api_key=gemini_api_key,
+            api_key=shared_api_key,
             model=model_stage1_base,
             fallback_model=model_fallback or None,
             proxy=proxy,
@@ -2159,6 +2216,9 @@ def build_all_via_gemini_one_call(
             logger=logger,
             max_output_tokens=max_output_tokens,
             max_thinking_tokens=max_thinking_tokens,
+            vertexai=shared_vertexai,
+            vertex_project=vertex_ai_project if shared_vertexai else None,
+            vertex_location=vertex_ai_location if shared_vertexai else None,
         )
 
     openrouter_stage1_asr: Optional[OpenRouterClient] = None
