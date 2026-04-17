@@ -47,7 +47,15 @@ def normalize_proxy(proxy: str) -> str:
     return p
 
 
-def make_client(*, api_key: str, proxy: str, timeout_s: float) -> genai.Client:
+def make_client(
+    *,
+    api_key: str,
+    proxy: str,
+    timeout_s: float,
+    vertexai: bool = False,
+    vertex_project: Optional[str] = None,
+    vertex_location: Optional[str] = None,
+) -> genai.Client:
     """
     timeout_s — общий таймаут на HTTP запрос.
     """
@@ -66,7 +74,19 @@ def make_client(*, api_key: str, proxy: str, timeout_s: float) -> genai.Client:
         client_args=client_args,
         async_client_args=async_client_args,
     )
-    return genai.Client(api_key=api_key, http_options=http_options)
+    kwargs: Dict[str, Any] = {
+        "api_key": api_key,
+        "http_options": http_options,
+    }
+    if bool(vertexai):
+        kwargs["vertexai"] = True
+        # SDK contract: project/location cannot be combined with API key.
+        if not str(api_key or "").strip():
+            if str(vertex_project or "").strip():
+                kwargs["project"] = str(vertex_project).strip()
+            if str(vertex_location or "").strip():
+                kwargs["location"] = str(vertex_location).strip()
+    return genai.Client(**kwargs)
 
 
 @dataclass(frozen=True)
@@ -80,6 +100,9 @@ class GeminiSettings:
     max_output_tokens: Optional[int] = None
     max_thinking_tokens: Optional[int] = None
     max_attempts: int = 1  # NOTE: kept for compat; retries handled by Celery now
+    vertexai: bool = False
+    vertex_project: Optional[str] = None
+    vertex_location: Optional[str] = None
 
 
 # =============================================================================
@@ -248,7 +271,14 @@ class GeminiClient:
 
     def __init__(self, settings: GeminiSettings, *, logger: Optional[logging.Logger] = None):
         self._logger = logger or logging.getLogger("mlcore.gemini_client")
-        self._client = make_client(api_key=settings.api_key, proxy=settings.proxy, timeout_s=float(settings.timeout_s))
+        self._client = make_client(
+            api_key=settings.api_key,
+            proxy=settings.proxy,
+            timeout_s=float(settings.timeout_s),
+            vertexai=bool(settings.vertexai),
+            vertex_project=settings.vertex_project,
+            vertex_location=settings.vertex_location,
+        )
         self._model = settings.model
         fm = str(settings.fallback_model or "").strip()
         self._fallback_model: Optional[str] = fm if (fm and fm != self._model) else None
@@ -258,6 +288,9 @@ class GeminiClient:
                 api_key=settings.api_key,
                 proxy=settings.proxy,
                 timeout_s=float(settings.timeout_s),
+                vertexai=bool(settings.vertexai),
+                vertex_project=settings.vertex_project,
+                vertex_location=settings.vertex_location,
             )
         self._temperature = float(settings.temperature)
         self._timeout_s = float(settings.timeout_s)
