@@ -40,6 +40,7 @@ from core.llm_worker_types import (
     LLM_WORKER_TYPE_HYBRID,
     LLM_WORKER_TYPE_OPENROUTER,
     LLM_WORKER_TYPE_SDK,
+    LLM_WORKER_TYPE_VERTEX_SDK_MIX,
     normalize_llm_worker_type,
 )
 from core.subtitles_mode import SUBTITLES_MODE_LEGACY_BLOCKS, normalize_subtitles_mode
@@ -77,7 +78,7 @@ _LLM_PROVIDER_MODE_HEDGED = "hedged"
 
 def _provider_mode_for_worker_type(worker_type: str) -> str:
     wt = normalize_llm_worker_type(worker_type)
-    if wt == LLM_WORKER_TYPE_SDK:
+    if wt in {LLM_WORKER_TYPE_SDK, LLM_WORKER_TYPE_VERTEX_SDK_MIX}:
         return _LLM_PROVIDER_MODE_GEMINI
     if wt == LLM_WORKER_TYPE_OPENROUTER:
         return _LLM_PROVIDER_MODE_OPENROUTER
@@ -1617,6 +1618,11 @@ def build_job_openrouter(self, job_id: str) -> Dict[str, Any]:
 @celery_app.task(name="orchestrator.build_job_hybrid", bind=True, max_retries=8)
 def build_job_hybrid(self, job_id: str) -> Dict[str, Any]:
     return _build_job_impl(self, job_id, worker_type="hybrid")
+
+
+@celery_app.task(name="orchestrator.build_job_vertex_sdk_mix", bind=True, max_retries=8)
+def build_job_vertex_sdk_mix(self, job_id: str) -> Dict[str, Any]:
+    return _build_job_impl(self, job_id, worker_type="vertex_sdk_mix")
 
 
 @celery_app.task(name="orchestrator.dispatch_to_windows", bind=True, max_retries=10)

@@ -8,6 +8,9 @@ from core.llm_worker_types import LLM_WORKER_TYPE_SDK
 from core.subtitles_mode import SUBTITLES_MODE_LEGACY_BLOCKS
 
 
+LLMWorkerTypeLiteral = Literal["sdk", "openrouter", "hybrid", "vertex_sdk_mix"]
+
+
 JobStatus = Literal["NEW", "QUEUED", "RUNNING", "SUCCEEDED", "FAILED"]
 
 
@@ -22,7 +25,7 @@ class SendAudioS3Request(BaseModel):
     audio_s3_url: str = Field(min_length=1)
     project_id: Optional[str] = None
     mode: Literal["with_gemini", "no_gemini"] = "with_gemini"
-    llm_worker_type: Optional[Literal["sdk", "openrouter", "hybrid"]] = None
+    llm_worker_type: Optional[LLMWorkerTypeLiteral] = None
     idempotency_key: Optional[str] = Field(default=None, min_length=1)
     lyrics_text: str = ""
     target_fragment: str = ""
@@ -87,7 +90,7 @@ class LLMWorkerControl(BaseModel):
 
 
 class LLMWorkersConfigRequest(BaseModel):
-    workers: Dict[Literal["sdk", "openrouter", "hybrid"], LLMWorkerControl]
+    workers: Dict[LLMWorkerTypeLiteral, LLMWorkerControl]
 
 
 class LLMWorkerRuntimeStatus(BaseModel):
@@ -99,8 +102,8 @@ class LLMWorkerRuntimeStatus(BaseModel):
 
 
 class LLMWorkersStatusResponse(BaseModel):
-    workers: Dict[Literal["sdk", "openrouter", "hybrid"], LLMWorkerRuntimeStatus]
-    default_worker_type: Literal["sdk", "openrouter", "hybrid"] = LLM_WORKER_TYPE_SDK
+    workers: Dict[LLMWorkerTypeLiteral, LLMWorkerRuntimeStatus]
+    default_worker_type: LLMWorkerTypeLiteral = LLM_WORKER_TYPE_SDK
 
 
 class ActiveJobSummary(BaseModel):

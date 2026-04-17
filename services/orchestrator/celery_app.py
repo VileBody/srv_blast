@@ -130,6 +130,7 @@ celery_app.conf.update(
         "orchestrator.build_job_sdk": {"queue": SETTINGS.celery_queue_build},
         "orchestrator.build_job_openrouter": {"queue": SETTINGS.celery_queue_build},
         "orchestrator.build_job_hybrid": {"queue": SETTINGS.celery_queue_build},
+        "orchestrator.build_job_vertex_sdk_mix": {"queue": SETTINGS.celery_queue_build},
         "orchestrator.dispatch_to_windows": {"queue": SETTINGS.celery_queue_render},
         "orchestrator.poll_windows_render": {"queue": SETTINGS.celery_queue_render},
     },

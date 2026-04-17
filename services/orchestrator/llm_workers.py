@@ -11,6 +11,7 @@ from core.llm_worker_types import (
     LLM_WORKER_TYPE_HYBRID,
     LLM_WORKER_TYPE_OPENROUTER,
     LLM_WORKER_TYPE_SDK,
+    LLM_WORKER_TYPE_VERTEX_SDK_MIX,
     normalize_llm_worker_type,
 )
 from .job_store import JobStore
@@ -94,6 +95,11 @@ def _default_config() -> Dict[str, LLMWorkerControl]:
             enabled=_bool_env("LLM_WORKER_HYBRID_ENABLED", False),
             weight=_int_env("LLM_WORKER_HYBRID_WEIGHT", 1, min_value=0),
             max_inflight=_int_env("LLM_WORKER_HYBRID_MAX_INFLIGHT", 4, min_value=1),
+        ),
+        LLM_WORKER_TYPE_VERTEX_SDK_MIX: LLMWorkerControl(
+            enabled=_bool_env("LLM_WORKER_VERTEX_SDK_MIX_ENABLED", False),
+            weight=_int_env("LLM_WORKER_VERTEX_SDK_MIX_WEIGHT", 1, min_value=0),
+            max_inflight=_int_env("LLM_WORKER_VERTEX_SDK_MIX_MAX_INFLIGHT", 4, min_value=1),
         ),
     }
 

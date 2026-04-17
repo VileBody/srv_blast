@@ -20,6 +20,7 @@ import uvicorn
 from fastapi import FastAPI, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from core.llm_worker_types import LLM_WORKER_TYPES
 from services.orchestrator.windows_node_pool import normalize_windows_urls, runtime_windows_urls_key
 
 from .render_node_pool import (
@@ -1935,7 +1936,7 @@ def build_app(
 
         workers_obj = data.get("workers") if isinstance(data, dict) else None
         workers = workers_obj if isinstance(workers_obj, dict) else {}
-        order = ("sdk", "openrouter", "hybrid")
+        order = tuple(str(wt) for wt in LLM_WORKER_TYPES)
         runtime_warnings = _llm_workers_runtime_warnings(
             {
                 wt: row if isinstance(row, dict) else {}
@@ -2016,7 +2017,7 @@ def build_app(
     async def llm_workers_update(request: Request, _user: str = Depends(_check_auth)) -> RedirectResponse:
         form = await request.form()
         workers_payload: dict[str, dict[str, object]] = {}
-        for wt in ("sdk", "openrouter", "hybrid"):
+        for wt in LLM_WORKER_TYPES:
             enabled_raw = str(form.get(f"{wt}_enabled", "0")).strip().lower()
             enabled = enabled_raw in {"1", "true", "yes", "on"}
             try:

@@ -10,7 +10,10 @@ from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pathlib import Path
 
-from core.llm_worker_types import LLM_WORKER_TYPE_SDK, normalize_llm_worker_type
+from core.llm_worker_types import (
+    LLM_WORKER_TYPE_VERTEX_SDK_MIX,
+    normalize_llm_worker_type,
+)
 from .job_store import JobStore
 from .llm_workers import (
     ensure_config_initialized,
@@ -39,7 +42,12 @@ from .schemas import (
     WindowsNodesStatusResponse,
     WindowsNodesUpdateRequest,
 )
-from .tasks import build_job_hybrid, build_job_openrouter, build_job_sdk
+from .tasks import (
+    build_job_hybrid,
+    build_job_openrouter,
+    build_job_sdk,
+    build_job_vertex_sdk_mix,
+)
 from .config import SETTINGS
 from .bundle_bootstrap import ensure_descriptions_bundle
 from .asset_routes import create_asset_router
@@ -363,14 +371,16 @@ def create_app() -> FastAPI:
 
     def _enqueue_build_task(job_id: str, worker_type: str) -> None:
         wt = normalize_llm_worker_type(worker_type)
-        if wt == "sdk":
-            build_job_sdk.delay(job_id)
-        elif wt == "openrouter":
-            build_job_openrouter.delay(job_id)
-        elif wt == "hybrid":
-            build_job_hybrid.delay(job_id)
-        else:
+        task_map = {
+            "sdk": build_job_sdk,
+            "openrouter": build_job_openrouter,
+            "hybrid": build_job_hybrid,
+            "vertex_sdk_mix": build_job_vertex_sdk_mix,
+        }
+        task = task_map.get(wt)
+        if task is None:
             raise RuntimeError(f"unsupported llm_worker_type: {worker_type}")
+        task.delay(job_id)
 
     # ==========================================================
     # NEW: correct naming (audio URL -> enqueue pipeline)
@@ -647,7 +657,7 @@ def create_app() -> FastAPI:
         }
         return LLMWorkersStatusResponse(
             workers=workers,
-            default_worker_type=LLM_WORKER_TYPE_SDK,
+            default_worker_type=LLM_WORKER_TYPE_VERTEX_SDK_MIX,
         )
 
     @app.put("/llm-workers", response_model=LLMWorkersStatusResponse)
@@ -664,7 +674,7 @@ def create_app() -> FastAPI:
         }
         return LLMWorkersStatusResponse(
             workers=workers,
-            default_worker_type=LLM_WORKER_TYPE_SDK,
+            default_worker_type=LLM_WORKER_TYPE_VERTEX_SDK_MIX,
         )
 
     @app.get("/metrics")
