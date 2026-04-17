@@ -567,5 +567,27 @@ class RedisChatStateStore:
                 await self._redis.zrem(self._reminder_zset_key, str(int(st.chat_id)))
         return out
 
+    async def set_runtime_bool(self, key: str, value: bool, *, ttl_s: int = 0) -> None:
+        runtime_key = str(key or "").strip()
+        if not runtime_key:
+            return
+        payload = "1" if bool(value) else "0"
+        ttl = int(ttl_s or 0)
+        if ttl > 0:
+            await self._redis.set(runtime_key, payload, ex=ttl)
+        else:
+            await self._redis.set(runtime_key, payload)
+
+    async def get_runtime_bool(self, key: str, *, default: bool = False) -> bool:
+        runtime_key = str(key or "").strip()
+        if not runtime_key:
+            return bool(default)
+        raw = str(await self._redis.get(runtime_key) or "").strip().lower()
+        if raw in {"1", "true", "yes", "on"}:
+            return True
+        if raw in {"0", "false", "no", "off"}:
+            return False
+        return bool(default)
+
     async def close(self) -> None:
         await self._redis.aclose()

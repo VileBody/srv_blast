@@ -36,6 +36,24 @@ def _bool_env(key: str, default: bool) -> bool:
     return bool(default)
 
 
+def _maintenance_mode_env(default: bool = False) -> bool:
+    """Global maintenance switch shared across services.
+
+    SYSTEM_MAINTENANCE_MODE has priority; if it is not set, we use fallback.
+    """
+    raw = _env("SYSTEM_MAINTENANCE_MODE", "")
+    if raw:
+        return _bool_env("SYSTEM_MAINTENANCE_MODE", default)
+    return bool(default)
+
+
+def _maintenance_message_env(default: str = "Мы на техработах. Скоро вернемся.") -> str:
+    raw = _env("SYSTEM_MAINTENANCE_MESSAGE", "")
+    if raw:
+        return raw
+    return str(default or "").strip() or "Мы на техработах. Скоро вернемся."
+
+
 def _windows_render_api_mode_env() -> str:
     # Async render contract is the default and production baseline.
     raw = _env("WINDOWS_RENDER_API_MODE", "render").lower()
@@ -117,6 +135,8 @@ class Settings:
 
     # Feature flags
     debug_save_llm: bool = _env("DEBUG_SAVE_LLM", "0") not in {"0", "false", "False", "no", "NO"}
+    system_maintenance_mode: bool = _maintenance_mode_env(False)
+    system_maintenance_message: str = _maintenance_message_env("Мы на техработах. Скоро вернемся.")
 
     # Windows render node
     windows_base_url: str = _env("WINDOWS_RENDER_URL", "")  # e.g. http://win-node:8000

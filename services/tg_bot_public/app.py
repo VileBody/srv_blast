@@ -969,6 +969,31 @@ class BlastBotApp:
             return True
         return False
 
+    async def _maintenance_enabled(self) -> bool:
+        if bool(self.settings.tg_maintenance_mode):
+            return True
+        key = str(self.settings.tg_maintenance_state_key or "").strip()
+        if not key:
+            return False
+        return await self.store.get_runtime_bool(key, default=False)
+
+    def _maintenance_message_text(self) -> str:
+        txt = str(self.settings.tg_maintenance_message or "").strip()
+        if txt:
+            return txt
+        return "Мы на техработах. Скоро вернемся."
+
+    async def _maybe_reply_maintenance_stub(self, message: Message) -> bool:
+        try:
+            enabled = await self._maintenance_enabled()
+        except Exception as e:
+            log.warning("maintenance_gate_check_failed err=%r", e)
+            enabled = bool(self.settings.tg_maintenance_mode)
+        if not enabled:
+            return False
+        await message.answer(self._maintenance_message_text())
+        return True
+
     def _register_handlers(self) -> None:
         @self.router.my_chat_member()
         async def _on_my_chat_member(event: ChatMemberUpdated) -> None:
@@ -982,6 +1007,8 @@ class BlastBotApp:
             if message.chat is None:
                 return
             chat_id = int(message.chat.id)
+            if await self._maybe_reply_maintenance_stub(message):
+                return
             st = await self.store.get(chat_id)
             user_changed = self._sync_state_user_from_message(st, message)
             if user_changed:
@@ -1032,6 +1059,8 @@ class BlastBotApp:
             if message.chat is None:
                 return
             chat_id = int(message.chat.id)
+            if await self._maybe_reply_maintenance_stub(message):
+                return
             st = await self.store.get(chat_id)
             if st.stage == STAGE_PROCESSING:
                 await message.answer("Трек в процессе, подожди завершения.\nПакеты можно посмотреть после.")
@@ -1057,6 +1086,8 @@ class BlastBotApp:
             if message.chat is None:
                 return
             chat_id = int(message.chat.id)
+            if await self._maybe_reply_maintenance_stub(message):
+                return
             st = await self.store.get(chat_id)
             if st.stage == STAGE_PROCESSING:
                 await message.answer("Трек в процессе, подожди завершения.")
@@ -1100,6 +1131,8 @@ class BlastBotApp:
             if message.chat is None:
                 return
             chat_id = int(message.chat.id)
+            if await self._maybe_reply_maintenance_stub(message):
+                return
             st = await self.store.get(chat_id)
             user_changed = self._sync_state_user_from_message(st, message)
             if user_changed:

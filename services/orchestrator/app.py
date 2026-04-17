@@ -382,6 +382,13 @@ def create_app() -> FastAPI:
             raise RuntimeError(f"unsupported llm_worker_type: {worker_type}")
         task.delay(job_id)
 
+    def _ensure_accepting_new_jobs() -> None:
+        if not bool(SETTINGS.system_maintenance_mode):
+            return
+        msg = str(SETTINGS.system_maintenance_message or "").strip()
+        detail = msg or "Service is temporarily unavailable due to maintenance."
+        raise HTTPException(status_code=503, detail=detail)
+
     # ==========================================================
     # NEW: correct naming (audio URL -> enqueue pipeline)
     # ==========================================================
@@ -390,6 +397,7 @@ def create_app() -> FastAPI:
     # Позже можешь переименовать модели в schemas.py, но эндпоинт уже будет правильный.
     @app.post("/send_audio_s3", response_model=SendVideoResponse)
     def send_audio_s3(req: SendVideoRequest) -> SendVideoResponse:
+        _ensure_accepting_new_jobs()
         st, created = store.new_job(
             request=req.model_dump(mode="json"),
             idempotency_key=req.idempotency_key,

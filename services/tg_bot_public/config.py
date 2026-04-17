@@ -35,6 +35,24 @@ def _bool_env(name: str, default: bool) -> bool:
     return bool(default)
 
 
+def _maintenance_mode_env(default: bool = False) -> bool:
+    """Global maintenance switch shared across services.
+
+    SYSTEM_MAINTENANCE_MODE has priority; if it is not set, we fallback to TG flag.
+    """
+    raw = _env("SYSTEM_MAINTENANCE_MODE", "")
+    if raw:
+        return _bool_env("SYSTEM_MAINTENANCE_MODE", default)
+    return bool(default)
+
+
+def _maintenance_message_env(default: str = "Мы на техработах. Скоро вернемся.") -> str:
+    raw = _env("SYSTEM_MAINTENANCE_MESSAGE", "")
+    if raw:
+        return raw
+    return str(default or "").strip() or "Мы на техработах. Скоро вернемся."
+
+
 def _normalize_username(raw: str) -> str:
     u = str(raw or "").strip().lower()
     if not u:
@@ -130,6 +148,11 @@ class Settings:
     tg_video_send_retries: int = _int_env("TG_VIDEO_SEND_RETRIES", 2)
     tg_video_send_backoff_base_s: float = _float_env("TG_VIDEO_SEND_BACKOFF_BASE_S", 2.0)
     tg_video_compress_enabled: bool = _bool_env("TG_VIDEO_COMPRESS_ENABLED", True)
+    tg_maintenance_mode: bool = _maintenance_mode_env(_bool_env("TG_MAINTENANCE_MODE", False))
+    tg_maintenance_message: str = _maintenance_message_env(
+        _env("TG_MAINTENANCE_MESSAGE", "Мы на техработах. Скоро вернемся.")
+    )
+    tg_maintenance_state_key: str = _env("TG_MAINTENANCE_STATE_KEY", "blast:tg:public:maintenance_mode")
 
     redis_host: str = _env("REDIS_HOST", "localhost")
     redis_port: int = _int_env("REDIS_PORT", 6379)
