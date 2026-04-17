@@ -118,6 +118,17 @@ deploy_runner_compose_if_present() {
   docker compose -f "$compose_file" --env-file "$env_file" up -d
 }
 
+deploy_github_runner_compose_if_allowed() {
+  local compose_file="$1"
+  local env_file="$2"
+  if [[ "${GITHUB_ACTIONS:-}" == "true" ]] && ! is_true "${DEPLOY_SELF_RESTART_RUNNER:-false}"; then
+    echo "[deploy] skip $compose_file during GitHub Actions job"
+    echo "[deploy] set DEPLOY_SELF_RESTART_RUNNER=true to force self-restart"
+    return 0
+  fi
+  deploy_runner_compose_if_present "$compose_file" "$env_file"
+}
+
 show_status() {
   echo "[deploy] docker compose ps"
   docker compose ps
@@ -158,7 +169,7 @@ case "$DEPLOY_STACK" in
     deploy_root_services tg-bot asset-ui finance-bot
     deploy_runner_compose_if_present "$RUNNERS_DIR/docker-compose.logs.yml" "$RUNNERS_DIR/.env.dozzle"
     deploy_runner_compose_if_present "$RUNNERS_DIR/docker-compose.observability.yml" "$RUNNERS_DIR/.env.observability"
-    deploy_runner_compose_if_present "$RUNNERS_DIR/docker-compose.github-runner.yml" "$RUNNERS_DIR/.env.github-runner"
+    deploy_github_runner_compose_if_allowed "$RUNNERS_DIR/docker-compose.github-runner.yml" "$RUNNERS_DIR/.env.github-runner"
     if is_true "$DEPLOY_PRUNE_OTHER_STACK"; then
       stop_root_services orchestrator-api worker-build worker-render tg-bot-public
     fi
