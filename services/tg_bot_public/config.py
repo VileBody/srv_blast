@@ -53,6 +53,22 @@ def _maintenance_message_env(default: str = "Мы на техработах. С�
     return str(default or "").strip() or "Мы на техработах. Скоро вернемся."
 
 
+def _maintenance_bypass_usernames_env() -> tuple[str, ...]:
+    raw = _username_allowlist_env("SYSTEM_MAINTENANCE_BYPASS_USERNAMES")
+    if raw:
+        return raw
+    # Keep core operators unblocked even during maintenance mode.
+    return ("@nikitaimpulse", "@vilebody", "@impulsemanage")
+
+
+def _maintenance_bypass_token_env() -> str:
+    raw = _env("SYSTEM_MAINTENANCE_BYPASS_TOKEN", "")
+    if raw:
+        return raw
+    # Safe default for internal bot->orchestrator calls when services share one env file.
+    return _env("TG_BOT_TOKEN", "")
+
+
 def _normalize_username(raw: str) -> str:
     u = str(raw or "").strip().lower()
     if not u:
@@ -153,10 +169,8 @@ class Settings:
         _env("TG_MAINTENANCE_MESSAGE", "Мы на техработах. Скоро вернемся.")
     )
     tg_maintenance_state_key: str = _env("TG_MAINTENANCE_STATE_KEY", "blast:tg:public:maintenance_mode")
-    tg_maintenance_bypass_usernames: tuple[str, ...] = _username_allowlist_env(
-        "SYSTEM_MAINTENANCE_BYPASS_USERNAMES"
-    )
-    system_maintenance_bypass_token: str = _env("SYSTEM_MAINTENANCE_BYPASS_TOKEN", "")
+    tg_maintenance_bypass_usernames: tuple[str, ...] = _maintenance_bypass_usernames_env()
+    system_maintenance_bypass_token: str = _maintenance_bypass_token_env()
 
     redis_host: str = _env("REDIS_HOST", "localhost")
     redis_port: int = _int_env("REDIS_PORT", 6379)

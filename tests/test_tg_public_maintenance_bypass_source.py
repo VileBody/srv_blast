@@ -11,6 +11,9 @@ def test_tg_public_config_declares_maintenance_bypass_envs() -> None:
     src = _read("services/tg_bot_public/config.py")
     assert "SYSTEM_MAINTENANCE_BYPASS_USERNAMES" in src
     assert "SYSTEM_MAINTENANCE_BYPASS_TOKEN" in src
+    assert "@nikitaimpulse" in src
+    assert "@vilebody" in src
+    assert "@impulsemanage" in src
 
 
 def test_tg_public_app_uses_bypass_allowlist_and_token_on_enqueue() -> None:
