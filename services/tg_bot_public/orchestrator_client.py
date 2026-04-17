@@ -33,6 +33,7 @@ class OrchestratorClient:
         exclude_file_names: List[str] | None = None,
         variant_index: int | None = None,
         variants_total: int | None = None,
+        maintenance_bypass_token: str | None = None,
     ) -> Dict[str, Any]:
         payload = {
             "audio_s3_url": str(audio_s3_url),
@@ -57,6 +58,7 @@ class OrchestratorClient:
             "exclude_file_names": [str(x).strip() for x in list(exclude_file_names or []) if str(x).strip()],
             "variant_index": int(variant_index) if variant_index is not None else None,
             "variants_total": int(variants_total) if variants_total is not None else None,
+            "maintenance_bypass_token": str(maintenance_bypass_token or "") or None,
         }
         resp = await self._client.post(f"{self._base_url}/send_audio_s3", json=payload)
         if resp.status_code >= 300:

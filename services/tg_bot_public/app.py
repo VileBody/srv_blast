@@ -920,6 +920,21 @@ class BlastBotApp:
             allowlist=tuple(self.settings.artifacts_allowlist or tuple()),
         )
 
+    def _allow_maintenance_bypass_username(self, username: str) -> bool:
+        return _is_username_allowed(
+            username=username,
+            allowlist=tuple(self.settings.tg_maintenance_bypass_usernames or tuple()),
+        )
+
+    def _allow_maintenance_bypass_for_state(self, st: ChatState) -> bool:
+        return self._allow_maintenance_bypass_username(str(st.chat_username or ""))
+
+    def _allow_maintenance_bypass_for_message(self, message: Message) -> bool:
+        if message.from_user is None:
+            return False
+        username = str(getattr(message.from_user, "username", "") or "")
+        return self._allow_maintenance_bypass_username(username)
+
     async def _resolve_preview_source_file_url(self, preview_file_id: str) -> str:
         fid = str(preview_file_id or "").strip()
         token = str(self._preview_source_bot_token or "").strip()
@@ -990,6 +1005,8 @@ class BlastBotApp:
             log.warning("maintenance_gate_check_failed err=%r", e)
             enabled = bool(self.settings.tg_maintenance_mode)
         if not enabled:
+            return False
+        if self._allow_maintenance_bypass_for_message(message):
             return False
         await message.answer(self._maintenance_message_text())
         return True
@@ -2960,6 +2977,9 @@ class BlastBotApp:
         if end > start >= 0.0:
             user_clip_start_sec = start
             user_clip_end_sec = end
+        maintenance_bypass_token: str | None = None
+        if self._allow_maintenance_bypass_for_state(st):
+            maintenance_bypass_token = str(self.settings.system_maintenance_bypass_token or "").strip() or None
         enqueue = await self.orchestrator.send_audio_s3(
             audio_s3_url=audio_s3_url,
             mode="with_gemini",
@@ -2975,6 +2995,7 @@ class BlastBotApp:
             exclude_file_names=list(exclude_file_names or []),
             variant_index=int(version_index),
             variants_total=int(versions_total),
+            maintenance_bypass_token=maintenance_bypass_token,
         )
         job_id = str(enqueue.get("job_id") or "").strip()
         if not job_id:

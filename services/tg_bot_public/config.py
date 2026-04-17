@@ -153,6 +153,10 @@ class Settings:
         _env("TG_MAINTENANCE_MESSAGE", "Мы на техработах. Скоро вернемся.")
     )
     tg_maintenance_state_key: str = _env("TG_MAINTENANCE_STATE_KEY", "blast:tg:public:maintenance_mode")
+    tg_maintenance_bypass_usernames: tuple[str, ...] = _username_allowlist_env(
+        "SYSTEM_MAINTENANCE_BYPASS_USERNAMES"
+    )
+    system_maintenance_bypass_token: str = _env("SYSTEM_MAINTENANCE_BYPASS_TOKEN", "")
 
     redis_host: str = _env("REDIS_HOST", "localhost")
     redis_port: int = _int_env("REDIS_PORT", 6379)

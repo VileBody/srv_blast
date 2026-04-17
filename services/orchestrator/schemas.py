@@ -44,6 +44,7 @@ class SendAudioS3Request(BaseModel):
     exclude_file_names: List[str] = Field(default_factory=list)
     variant_index: Optional[int] = None
     variants_total: Optional[int] = None
+    maintenance_bypass_token: Optional[str] = Field(default=None, min_length=1)
 
     @model_validator(mode="after")
     def _validate_user_clip_window(self) -> "SendAudioS3Request":

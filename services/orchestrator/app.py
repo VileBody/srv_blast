@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import secrets
 import time
 from typing import Any
 
@@ -56,6 +57,18 @@ from .windows_node_pool import WindowsNodePool, parse_windows_urls_csv
 from services.tg_bot_botapi.user_store import UserStore
 
 log = logging.getLogger(__name__)
+
+
+def _maintenance_bypass_allowed(req: SendVideoRequest | None) -> bool:
+    if req is None:
+        return False
+    configured = str(SETTINGS.system_maintenance_bypass_token or "").strip()
+    if not configured:
+        return False
+    provided = str(getattr(req, "maintenance_bypass_token", "") or "").strip()
+    if not provided:
+        return False
+    return secrets.compare_digest(provided, configured)
 
 
 def _iter_celery_tasks(raw_tasks: object) -> list[dict[str, Any]]:
@@ -382,8 +395,10 @@ def create_app() -> FastAPI:
             raise RuntimeError(f"unsupported llm_worker_type: {worker_type}")
         task.delay(job_id)
 
-    def _ensure_accepting_new_jobs() -> None:
+    def _ensure_accepting_new_jobs(req: SendVideoRequest | None = None) -> None:
         if not bool(SETTINGS.system_maintenance_mode):
+            return
+        if _maintenance_bypass_allowed(req):
             return
         msg = str(SETTINGS.system_maintenance_message or "").strip()
         detail = msg or "Service is temporarily unavailable due to maintenance."
@@ -397,7 +412,7 @@ def create_app() -> FastAPI:
     # Позже можешь переименовать модели в schemas.py, но эндпоинт уже будет правильный.
     @app.post("/send_audio_s3", response_model=SendVideoResponse)
     def send_audio_s3(req: SendVideoRequest) -> SendVideoResponse:
-        _ensure_accepting_new_jobs()
+        _ensure_accepting_new_jobs(req)
         st, created = store.new_job(
             request=req.model_dump(mode="json"),
             idempotency_key=req.idempotency_key,

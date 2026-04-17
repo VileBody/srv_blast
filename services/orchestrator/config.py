@@ -137,6 +137,7 @@ class Settings:
     debug_save_llm: bool = _env("DEBUG_SAVE_LLM", "0") not in {"0", "false", "False", "no", "NO"}
     system_maintenance_mode: bool = _maintenance_mode_env(False)
     system_maintenance_message: str = _maintenance_message_env("Мы на техработах. Скоро вернемся.")
+    system_maintenance_bypass_token: str = _env("SYSTEM_MAINTENANCE_BYPASS_TOKEN", "")
 
     # Windows render node
     windows_base_url: str = _env("WINDOWS_RENDER_URL", "")  # e.g. http://win-node:8000
