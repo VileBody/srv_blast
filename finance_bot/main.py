@@ -10,7 +10,7 @@ from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
 from aiogram.client.session.aiohttp import AiohttpSession
 
-from config import TELEGRAM_BOT_TOKEN, OWNER_TG_ID, WEBHOOK_HOST, WEBHOOK_PORT, LOG_FILE, GROQ_PROXY
+from config import TELEGRAM_BOT_TOKEN, OWNER_TG_ID, WEBHOOK_HOST, WEBHOOK_PORT, LOG_FILE, TELEGRAM_PROXY
 from db import init_db, distribute_income, get_personal_balance
 from handlers import router
 from scheduler import setup_scheduler
@@ -68,7 +68,7 @@ async def main():
     is_first_run = await init_db()
 
     # Бот (через прокси если настроен)
-    session = AiohttpSession(proxy=GROQ_PROXY) if GROQ_PROXY else None
+    session = AiohttpSession(proxy=TELEGRAM_PROXY) if TELEGRAM_PROXY else None
     bot = Bot(
         token=TELEGRAM_BOT_TOKEN,
         session=session,

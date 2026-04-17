@@ -27,6 +27,9 @@ GROK_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 GROK_MODEL = "llama-3.1-8b-instant"
 GROQ_PROXY = os.environ.get("GROQ_PROXY", "http://xvGVE8:tQGDZo@177.234.140.100:8000")
 
+# Telegram Bot API proxy (optional, separate from GROQ_PROXY)
+TELEGRAM_PROXY = os.environ.get("TELEGRAM_PROXY", "")
+
 # Вебхук-сервер
 WEBHOOK_HOST = "0.0.0.0"
 WEBHOOK_PORT = 8080
