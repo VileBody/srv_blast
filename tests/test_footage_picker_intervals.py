@@ -263,7 +263,7 @@ def test_interval_picker_raw_filters_exclude_bans_by_metadata_tag() -> None:
             "mood": "minor",
             "filters": {
                 "color_priority": ["dark"],
-                "exclude": ["crowd"],
+                "exclude_tags": ["crowd"],
                 "priority_theme_tags": ["night"],
             },
         }

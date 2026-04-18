@@ -1124,6 +1124,14 @@ def _build_job_impl(self, job_id: str, *, worker_type: str) -> Dict[str, Any]:
             seen_exclude.add(name)
             exclude_file_names.append(name)
 
+    rotation_theme = str(req.get("rotation_theme") or "").strip()
+    rotation_tags_group = str(req.get("rotation_tags_group") or "").strip()
+    # Either both set (override active) or both empty (no override).
+    if bool(rotation_theme) != bool(rotation_tags_group):
+        raise RuntimeError(
+            "rotation_theme and rotation_tags_group must be provided together"
+        )
+
     variant_index: Optional[int] = None
     variant_total: Optional[int] = None
     try:
@@ -1220,6 +1228,9 @@ def _build_job_impl(self, job_id: str, *, worker_type: str) -> Dict[str, Any]:
         env["USER_CLIP_END_SEC"] = str(float(user_clip_end_sec))
     if exclude_file_names:
         env["FOOTAGE_EXCLUDE_FILE_NAMES_JSON"] = json.dumps(exclude_file_names, ensure_ascii=False)
+    if rotation_theme and rotation_tags_group:
+        env["FOOTAGE_ROTATION_THEME"] = rotation_theme
+        env["FOOTAGE_ROTATION_GROUP"] = rotation_tags_group
     seed_variant = variant_index if variant_index is not None else 1
     seed_base = project_id or f"job-{job_id}"
     env["STAGE2_SELECTION_SEED"] = f"{seed_base}:v{seed_variant}"
@@ -1253,6 +1264,8 @@ def _build_job_impl(self, job_id: str, *, worker_type: str) -> Dict[str, Any]:
             "USER_CLIP_START_SEC",
             "USER_CLIP_END_SEC",
             "FOOTAGE_EXCLUDE_FILE_NAMES_JSON",
+            "FOOTAGE_ROTATION_THEME",
+            "FOOTAGE_ROTATION_GROUP",
             "STAGE2_SELECTION_SEED",
             "BATCH_VARIANT_INDEX",
             "BATCH_VARIANTS_TOTAL",
@@ -1430,6 +1443,8 @@ def _build_job_impl(self, job_id: str, *, worker_type: str) -> Dict[str, Any]:
                     "USER_CLIP_START_SEC",
                     "USER_CLIP_END_SEC",
                     "FOOTAGE_EXCLUDE_FILE_NAMES_JSON",
+                    "FOOTAGE_ROTATION_THEME",
+                    "FOOTAGE_ROTATION_GROUP",
                     "STAGE2_SELECTION_SEED",
                     "BATCH_VARIANT_INDEX",
                     "BATCH_VARIANTS_TOTAL",
