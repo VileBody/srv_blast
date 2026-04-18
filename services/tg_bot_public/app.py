@@ -920,6 +920,14 @@ class BlastBotApp:
             allowlist=tuple(self.settings.artifacts_allowlist or tuple()),
         )
 
+    async def _maybe_grant_referral_bonus_after_generation(self, st: ChatState) -> None:
+        """
+        Team bot handles referral bonuses in PostgreSQL.
+        Public bot keeps a no-op hook for Team/Public parity and future reuse.
+        """
+        _ = st
+        return
+
     def _allow_maintenance_bypass_username(self, username: str) -> bool:
         return _is_username_allowed(
             username=username,

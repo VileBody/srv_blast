@@ -1977,6 +1977,42 @@ class BlastBotApp:
             log.warning("referral_timeout_notify_failed chat=%s err=%r", st.chat_id, e)
         await self.store.reset_to_wait_audio(st.chat_id)
 
+    async def _maybe_grant_referral_bonus_after_generation(self, st: ChatState) -> None:
+        """
+        Best-effort referral bonus grant for the referee's first successful generation.
+        This method must never break the processing loop.
+        """
+        if self.referrals is None:
+            return
+        referee_chat_id = int(st.chat_id)
+        try:
+            inviter_chat_id = await self.referrals.maybe_grant_referral_bonus(referee_chat_id)
+        except Exception as e:
+            log.warning(
+                "referral_bonus_grant_failed referee=%s err=%r",
+                referee_chat_id,
+                e,
+            )
+            return
+
+        if not inviter_chat_id:
+            return
+
+        try:
+            bot = self._require_bot()
+            await bot.send_message(
+                int(inviter_chat_id),
+                f"Твой реферал @{(st.chat_username or '').lstrip('@') or referee_chat_id} "
+                f"сделал первый ролик. Бонус +{self.settings.referral_bonus_credits} кредит.",
+            )
+        except Exception as e:
+            log.warning(
+                "referral_bonus_notify_failed inviter=%s referee=%s err=%r",
+                inviter_chat_id,
+                referee_chat_id,
+                e,
+            )
+
     def _current_job_ids(self, st: ChatState) -> List[str]:
         raw = list(st.active_job_ids or [])
         if not raw and st.active_job_id:
