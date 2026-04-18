@@ -24,8 +24,20 @@
  */
 
 (function () {
+    // Headless-safe logger. When this sidecar is eval'd from project_template.j2,
+    // `logLine` is available in the enclosing scope; fall back to $.writeln.
+    // IMPORTANT: we must NEVER call the AE built-in `alert(...)` from a sidecar —
+    // on a render node it opens a modal dialog and hangs AE indefinitely
+    // (symptom: "Timeout waiting for ae_status.txt").
+    function __sidecarLog(msg) {
+        try {
+            if (typeof logLine === "function") { logLine("INFO", "[sidecar/warm] " + String(msg)); return; }
+        } catch (e) {}
+        try { $.writeln("[sidecar/warm] " + String(msg)); } catch (e2) {}
+    }
+
     if (!app.project || !app.project.activeItem || !(app.project.activeItem instanceof CompItem)) {
-        alert("Please select a composition first.");
+        __sidecarLog("no active CompItem — skipping sidecar");
         return;
     }
 
@@ -77,7 +89,7 @@
             try {
                 fx = al1.Effects.addProperty("MB LookSuite3");
             } catch (e) {
-                alert("Could not add Magic Bullet Looks.\nMake sure the plugin is installed.\n\n" + e.toString());
+                __sidecarLog("MB LookSuite3 plugin missing — skipping Looks on AL1: " + e.toString());
                 return;
             }
             setEffectProp(fx, "MB LookSuite3-0013", 80);  // Strength
@@ -93,7 +105,7 @@
             try {
                 fx = al3.Effects.addProperty("S_Glow");
             } catch (e) {
-                alert("Could not add Sapphire S_Glow.\nMake sure Boris FX Sapphire is installed.\n\n" + e.toString());
+                __sidecarLog("Sapphire S_Glow plugin missing — skipping Glow: " + e.toString());
                 return;
             }
             setEffectProp(fx, "S_Glow-0050", 2.5);     // Brightness
@@ -228,7 +240,7 @@
             try {
                 fx = al4.Effects.addProperty("S_HueSatBright");
             } catch (e) {
-                alert("Could not add Sapphire S_HueSatBright.\nMake sure Boris FX Sapphire is installed.\n\n" + e.toString());
+                __sidecarLog("Sapphire S_HueSatBright plugin missing — skipping: " + e.toString());
                 return;
             }
             setEffectProp(fx, "S_HueSatBright-0050", 0);    // Hue Shift
@@ -265,16 +277,10 @@
         //  That matches the desired stack. No reordering needed.
         // ==================================================================
 
-        alert(
-            "Done! 4 adjustment layers created.\n\n" +
-            "MANUAL STEPS REQUIRED:\n" +
-            "1. Set the Curves effect values on layers 2 and 4 (cannot be scripted).\n" +
-            "2. Choose the Look preset in Magic Bullet Looks on layers 1 and 2.\n\n" +
-            "Place your footage layers BELOW these adjustment layers."
-        );
+        __sidecarLog("done — 4 adjustment layers created (warm, saturation=1.2)");
 
     } catch (err) {
-        alert("Error: " + err.toString() + "\nLine: " + err.line);
+        __sidecarLog("ERROR: " + err.toString() + " line=" + (err.line || "?"));
     }
 
     app.endUndoGroup();
