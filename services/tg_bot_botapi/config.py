@@ -118,6 +118,7 @@ class Settings:
     )
     bot_max_audio_mb: int = _int_env("BOT_MAX_AUDIO_MB", 5)
     bot_max_video_mb: int = _int_env("BOT_MAX_VIDEO_MB", 49)
+    bot_enqueue_all_versions_async: bool = _bool_env("BOT_ENQUEUE_ALL_VERSIONS_ASYNC", True)
     tg_video_send_timeout_s: float = _float_env("TG_VIDEO_SEND_TIMEOUT_S", 120.0)
     tg_video_send_retries: int = _int_env("TG_VIDEO_SEND_RETRIES", 2)
     tg_video_send_backoff_base_s: float = _float_env("TG_VIDEO_SEND_BACKOFF_BASE_S", 2.0)

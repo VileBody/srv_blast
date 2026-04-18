@@ -17,7 +17,13 @@ if "redis.asyncio" not in sys.modules:
     sys.modules["redis"] = redis_module
     sys.modules["redis.asyncio"] = redis_asyncio
 
-from services.tg_bot_botapi.state_store import ChatState, RedisChatStateStore, STAGE_PROCESSING, STAGE_WAIT_AUDIO
+from services.tg_bot_botapi.state_store import (
+    ChatState,
+    RedisChatStateStore,
+    STAGE_PROCESSING,
+    STAGE_WAIT_AUDIO,
+    STAGE_WAITING_REFERRAL,
+)
 
 
 class _FakeRedis:
@@ -122,6 +128,7 @@ def _make_store(fake_redis: _FakeRedis) -> RedisChatStateStore:
     store._prefix = "blast:tg:chat_state"
     store._all_ids_key = f"{store._prefix}:idx:all"
     store._processing_ids_key = f"{store._prefix}:idx:processing"
+    store._processing_set_key = f"{store._prefix}:__index:processing"
     store._updated_at_zset_key = f"{store._prefix}:idx:updated_at"
     store._state_ttl_s = 86400
     store._redis = fake_redis
@@ -153,5 +160,19 @@ def test_cleanup_index_members_removes_orphan_entries() -> None:
         removed = await store.cleanup_index_members(limit=10)
         assert removed == 1
         assert "99" not in await redis.smembers(store._all_ids_key)
+
+    asyncio.run(_run())
+
+
+def test_list_waiting_referral_reads_all_ids_index() -> None:
+    async def _run() -> None:
+        redis = _FakeRedis()
+        store = _make_store(redis)
+
+        await store.set(ChatState(chat_id=21, stage=STAGE_WAITING_REFERRAL, waiting_referral_since=1.0))
+        await store.set(ChatState(chat_id=22, stage=STAGE_WAIT_AUDIO))
+
+        rows = await store.list_waiting_referral()
+        assert [s.chat_id for s in rows] == [21]
 
     asyncio.run(_run())

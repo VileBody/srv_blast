@@ -1481,28 +1481,60 @@ class BlastBotApp:
                 key=key,
                 content_type="audio/mpeg",
             )
+            job_order: List[str] = []
+            next_version_to_enqueue = 2
+            enqueue_failed_from_version: int | None = None
+            enqueue_failed_error: str = ""
 
-            master_job_id = await self._enqueue_batch_version(
-                st=st,
-                audio_s3_url=audio_s3_url,
-                version_index=1,
-                versions_total=versions,
-                batch_id=batch_id,
-                reuse_text_job_id="",
-                exclude_file_names=[],
-            )
+            if self.settings.bot_enqueue_all_versions_async:
+                next_version_to_enqueue = int(versions) + 1
+                for version_index in range(1, int(versions) + 1):
+                    try:
+                        job_id = await self._enqueue_batch_version(
+                            st=st,
+                            audio_s3_url=audio_s3_url,
+                            version_index=version_index,
+                            versions_total=versions,
+                            batch_id=batch_id,
+                            # For parallel batch enqueue we intentionally do not
+                            # depend on stage1 artifacts from a master job.
+                            reuse_text_job_id="",
+                            exclude_file_names=[],
+                        )
+                    except Exception as e:
+                        if version_index == 1:
+                            raise RuntimeError(f"Не удалось поставить в очередь Версию 1/{versions}: {e}") from e
+                        enqueue_failed_from_version = version_index
+                        enqueue_failed_error = str(e)
+                        break
+                    job_order.append(job_id)
+            else:
+                master_job_id = await self._enqueue_batch_version(
+                    st=st,
+                    audio_s3_url=audio_s3_url,
+                    version_index=1,
+                    versions_total=versions,
+                    batch_id=batch_id,
+                    reuse_text_job_id="",
+                    exclude_file_names=[],
+                )
+                job_order = [master_job_id]
+
+            if not job_order:
+                raise RuntimeError("Не удалось поставить в очередь ни одной версии.")
+            master_job_id = job_order[0]
 
             st.pending_deduction_ref_id = ""
             st.stage = STAGE_PROCESSING
             st.batch_id = batch_id
             st.batch_audio_s3_url = audio_s3_url
             st.batch_total_versions = int(versions)
-            st.next_version_to_enqueue = 2
+            st.next_version_to_enqueue = int(next_version_to_enqueue)
             st.master_job_id = master_job_id
-            st.job_order = [master_job_id]
+            st.job_order = list(job_order)
             st.used_footage_file_names = []
             st.active_job_id = master_job_id
-            st.active_job_ids = [master_job_id]
+            st.active_job_ids = list(job_order)
             st.completed_job_ids = []
             st.active_job_started_at = time.time()
             st.last_status_msg_at = 0.0
@@ -1513,9 +1545,11 @@ class BlastBotApp:
             st.last_job_error = ""
             st.last_result_url = ""
 
-            initial_rows = [
-                {"job_id": master_job_id, "status": "QUEUED", "stage": "build", "error": "", "version": 1}
-            ]
+            initial_rows = []
+            for idx, jid in enumerate(job_order, start=1):
+                initial_rows.append(
+                    {"job_id": jid, "status": "QUEUED", "stage": "build", "error": "", "version": idx}
+                )
             initial_text = self._jobs_progress_message(
                 rows=initial_rows,
                 poll_attempts=0,
@@ -1526,6 +1560,13 @@ class BlastBotApp:
             st.last_status_text = initial_text
             st.last_status_msg_at = time.time()
             await self.store.set(st)
+
+            if enqueue_failed_from_version is not None:
+                await message.answer(
+                    "Часть версий не поставилась в очередь: "
+                    f"начиная с v{enqueue_failed_from_version}/{versions}. "
+                    f"Ошибка: {_compact_text(enqueue_failed_error, limit=180)}"
+                )
         except Exception as e:
             if self.settings.credits_required and self.users is not None and st.pending_deduction_ref_id:
                 await self.users.refund_credit(

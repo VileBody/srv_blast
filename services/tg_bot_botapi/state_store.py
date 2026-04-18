@@ -112,7 +112,7 @@ class RedisChatStateStore:
             db=settings.redis_db,
             decode_responses=True,
         )
-        # Secondary index: set of chat_ids currently in PROCESSING stage.
+        # Legacy key kept for backward compatibility with old deployments.
         self._processing_set_key = f"{self._prefix}:__index:processing"
 
     def _key(self, chat_id: int) -> str:
@@ -129,19 +129,23 @@ class RedisChatStateStore:
         chat_id = int(state.chat_id)
         chat_token = str(chat_id)
         stage = str(state.stage or "").strip()
+        processing_keys = (self._processing_ids_key, self._processing_set_key)
 
         await self._redis.sadd(self._all_ids_key, chat_token)
         await self._redis.zadd(self._updated_at_zset_key, {chat_token: float(time.time())})
 
         if stage == STAGE_PROCESSING:
-            await self._redis.sadd(self._processing_ids_key, chat_token)
+            for key in processing_keys:
+                await self._redis.sadd(key, chat_token)
         else:
-            await self._redis.srem(self._processing_ids_key, chat_token)
+            for key in processing_keys:
+                await self._redis.srem(key, chat_token)
 
     async def _purge_indexes_only(self, chat_id: int) -> None:
         chat_token = str(int(chat_id))
         await self._redis.srem(self._all_ids_key, chat_token)
         await self._redis.srem(self._processing_ids_key, chat_token)
+        await self._redis.srem(self._processing_set_key, chat_token)
         await self._redis.zrem(self._updated_at_zset_key, chat_token)
 
     async def _load_state_from_key(self, chat_id: int) -> ChatState | None:
@@ -187,7 +191,9 @@ class RedisChatStateStore:
         O(k) where k = number of PROCESSING chats (typically small),
         instead of O(n) full SCAN of all chat states.
         """
-        members = await self._redis.smembers(self._processing_set_key)
+        members = set(await self._redis.smembers(self._processing_ids_key) or set())
+        # Compatibility path for deployments that still have stale legacy index.
+        members.update(await self._redis.smembers(self._processing_set_key) or set())
         if not members:
             return []
 
@@ -208,6 +214,7 @@ class RedisChatStateStore:
                 stale.append(str(member))
 
         if stale:
+            await self._redis.srem(self._processing_ids_key, *stale)
             await self._redis.srem(self._processing_set_key, *stale)
         return out
 
@@ -237,8 +244,13 @@ class RedisChatStateStore:
         removed = 0
         now = time.time()
         async for key in self._redis.scan_iter(match=pattern, count=200):
-            # Skip the index key
-            if key == self._processing_set_key:
+            # Skip index keys.
+            if key in {
+                self._all_ids_key,
+                self._processing_ids_key,
+                self._processing_set_key,
+                self._updated_at_zset_key,
+            }:
                 continue
             raw = await self._redis.get(key)
             if not raw:
@@ -267,7 +279,7 @@ class RedisChatStateStore:
     async def list_waiting_referral(self) -> List[ChatState]:
         """Return all chats stuck in WAITING_REFERRAL for recovery."""
         out: List[ChatState] = []
-        for token in (await self._redis.smembers(self._processing_ids_key) or set()):
+        for token in (await self._redis.smembers(self._all_ids_key) or set()):
             cid = self._parse_chat_id_token(token)
             if cid is None:
                 continue
