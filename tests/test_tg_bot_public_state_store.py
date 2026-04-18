@@ -179,6 +179,7 @@ def _make_store(fake_redis: _FakeRedis) -> RedisChatStateStore:
     store._chat_username_prefix = f"{store._prefix}:chat_username"
     store._all_ids_key = f"{store._prefix}:idx:all"
     store._processing_ids_key = f"{store._prefix}:idx:processing"
+    store._processing_set_key = f"{store._prefix}:__index:processing"
     store._waiting_referral_ids_key = f"{store._prefix}:idx:waiting_referral"
     store._reminder_zset_key = f"{store._prefix}:idx:reminder_at"
     store._updated_at_zset_key = f"{store._prefix}:idx:updated_at"
@@ -228,6 +229,21 @@ def test_list_processing_reads_from_processing_index() -> None:
 
         got = await store.list_processing()
         assert [s.chat_id for s in got] == [100]
+
+    asyncio.run(_run())
+
+
+def test_list_processing_reads_from_legacy_processing_index() -> None:
+    async def _run() -> None:
+        redis = _FakeRedis()
+        store = _make_store(redis)
+
+        st_processing = ChatState(chat_id=111, stage=STAGE_PROCESSING, active_job_ids=["job-legacy"])
+        await store.set(st_processing)
+        await redis.srem(store._processing_ids_key, "111")
+
+        got = await store.list_processing()
+        assert [s.chat_id for s in got] == [111]
 
     asyncio.run(_run())
 

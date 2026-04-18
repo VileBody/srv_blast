@@ -134,6 +134,8 @@ class RedisChatStateStore:
 
         self._all_ids_key = f"{self._prefix}:idx:all"
         self._processing_ids_key = f"{self._prefix}:idx:processing"
+        # Legacy key kept for compatibility with older deployments.
+        self._processing_set_key = f"{self._prefix}:__index:processing"
         self._waiting_referral_ids_key = f"{self._prefix}:idx:waiting_referral"
         self._reminder_zset_key = f"{self._prefix}:idx:reminder_at"
         self._updated_at_zset_key = f"{self._prefix}:idx:updated_at"
@@ -244,8 +246,10 @@ class RedisChatStateStore:
 
         if stage == STAGE_PROCESSING:
             await self._redis.sadd(self._processing_ids_key, chat_token)
+            await self._redis.sadd(self._processing_set_key, chat_token)
         else:
             await self._redis.srem(self._processing_ids_key, chat_token)
+            await self._redis.srem(self._processing_set_key, chat_token)
 
         if stage == STAGE_WAITING_REFERRAL:
             await self._redis.sadd(self._waiting_referral_ids_key, chat_token)
@@ -262,6 +266,7 @@ class RedisChatStateStore:
 
         await self._redis.srem(self._all_ids_key, chat_token)
         await self._redis.srem(self._processing_ids_key, chat_token)
+        await self._redis.srem(self._processing_set_key, chat_token)
         await self._redis.srem(self._waiting_referral_ids_key, chat_token)
         await self._redis.zrem(self._reminder_zset_key, chat_token)
         await self._redis.zrem(self._updated_at_zset_key, chat_token)
@@ -395,7 +400,9 @@ class RedisChatStateStore:
 
     async def list_processing_candidates(self) -> List[ChatState]:
         chat_ids: List[int] = []
-        for token in (await self._redis.smembers(self._processing_ids_key) or set()):
+        members = set(await self._redis.smembers(self._processing_ids_key) or set())
+        members.update(await self._redis.smembers(self._processing_set_key) or set())
+        for token in members:
             cid = self._parse_chat_id_token(token)
             if cid is not None:
                 chat_ids.append(cid)

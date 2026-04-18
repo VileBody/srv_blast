@@ -1926,7 +1926,7 @@ class BlastBotApp:
         user_id = message.from_user.id if message.from_user else chat_id
 
         # Check and reserve credits before generation (1 credit per version)
-        versions = st.versions_count or 1
+        versions = max(1, min(5, int(st.versions_count or 1)))
         balance = await self.credits_db.get_balance(user_id)
         if balance < versions:
             await self.credits_db.log_event(chat_id, "no_credits")
@@ -1952,7 +1952,7 @@ class BlastBotApp:
 
         key = self._build_raw_audio_key(chat_id=chat_id, file_name=prepared_path.name)
         try:
-            versions = st.versions_count or 1
+            versions = max(1, min(5, int(st.versions_count or 1)))
             await message.answer("Запускаю генерацию…")
             audio_s3_url = await asyncio.to_thread(
                 self.s3.upload_file,
