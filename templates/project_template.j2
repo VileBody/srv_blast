@@ -59,7 +59,7 @@
   // --- Uniqueness pass SOURCE (per-clip geometric drift + optional mirror + color jitter) ---
   // Inlined at build time (same reason as cold/warm sidecar).
   // Feature-flag globals are picked up by uniqueness_pass.jsx at runtime and OR'd
-  // with the script's own ENV reads — any OFF wins, so rollback is safe at any level.
+  // with the script's own ENV reads - any OFF wins, so rollback is safe at any level.
   var UNIQUENESS_PASS_SOURCE = {{ uniqueness_pass_source | tojson if uniqueness_pass_source else 'null' }};
   var UNIQUENESS_SEED = {{ uniqueness_seed | default(0) }};
   var UNIQUENESS_ALLOW_MIRROR = {{ 'true' if uniqueness_allow_mirror else 'false' }};
@@ -67,6 +67,33 @@
   var UNIQUENESS_GEOMETRY_ENABLED = {{ 'true' if uniqueness_geometry_enabled else 'false' }};
   var UNIQUENESS_MIRROR_ENABLED = {{ 'true' if uniqueness_mirror_enabled else 'false' }};
   var UNIQUENESS_COLOR_JITTER_ENABLED = {{ 'true' if uniqueness_color_jitter_enabled else 'false' }};
+
+  // Hard-disable UI modal APIs in render-node mode.
+  // Any alert/confirm/prompt from legacy snippets must not block headless execution.
+  var __SUPPRESSED_UI_CALLS = [];
+  function __safeToString(v) {
+    try { return String(v); } catch(_) { return "<unprintable>"; }
+  }
+  try {
+    alert = function(msg) {
+      __SUPPRESSED_UI_CALLS.push("alert:" + __safeToString(msg));
+      try { $.writeln("[WARN] suppressed alert: " + __safeToString(msg)); } catch(_) {}
+    };
+  } catch(_) {}
+  try {
+    confirm = function(msg, noAsDflt, title) {
+      __SUPPRESSED_UI_CALLS.push("confirm:" + __safeToString(msg));
+      try { $.writeln("[WARN] suppressed confirm: " + __safeToString(msg)); } catch(_) {}
+      return true;
+    };
+  } catch(_) {}
+  try {
+    prompt = function(msg, def, title) {
+      __SUPPRESSED_UI_CALLS.push("prompt:" + __safeToString(msg));
+      try { $.writeln("[WARN] suppressed prompt: " + __safeToString(msg)); } catch(_) {}
+      return (def !== undefined && def !== null) ? String(def) : "";
+    };
+  } catch(_) {}
 
   // suppress hidden modal dialogs (helps with BCC trial/alerts etc.)
   try { app.beginSuppressDialogs(); } catch(_) {}
@@ -245,6 +272,10 @@
     logLine("DBG", "projectSpec=" + safeJson(projectSpec, 400));
     logLine("DBG", "compsSpec=" + safeJson(compsSpec, 400));
     logLine("DBG", "APP_DIR=" + String(__APP_DIR));
+    if (__SUPPRESSED_UI_CALLS.length > 0) {
+      logLine("WARN", "suppressed_ui_calls_preinit=" + safeJson(__SUPPRESSED_UI_CALLS, 600));
+      __SUPPRESSED_UI_CALLS = [];
+    }
 
     // ==========================================================
     // 1) PROJECT + COMPS
@@ -1471,6 +1502,10 @@
 
     // flash on cuts for impulse + tape templates
     addFlashOnCuts();
+
+    if (__SUPPRESSED_UI_CALLS.length > 0) {
+      logLine("WARN", "suppressed_ui_calls=" + safeJson(__SUPPRESSED_UI_CALLS, 2000));
+    }
 
     // ==========================================================
     // 5.5) APPLY ADJUSTMENT-EFFECTS SIDECAR (cold/warm color grade)
