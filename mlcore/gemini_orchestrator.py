@@ -3010,11 +3010,18 @@ def build_all_via_gemini_one_call(
     sub_user = logs_dir / f"gemini_prompt_stage2_subtitles_{stamp}.txt"
 
     foot_system = build_stage2_footage_system_instruction(artist_id=footage_artist_id)
+    # Per-user rotation cursor override: when set, forces Stage 2B to emit a
+    # single subgroup for the exact (theme, tags_group) that the bot-side
+    # rotation picked for this user/artist. Empty means no override.
+    rotation_theme_override = str(os.environ.get("FOOTAGE_ROTATION_THEME") or "").strip()
+    rotation_group_override = str(os.environ.get("FOOTAGE_ROTATION_GROUP") or "").strip()
     foot_prompt = build_stage2_footage_user_prompt(
         stage1_json=stage1_json,
         style_groups=style_groups,
         schema_name="FootageStyleRotation",
         artist_id=footage_artist_id,
+        rotation_theme=rotation_theme_override,
+        rotation_tags_group=rotation_group_override,
     )
     foot_raw = logs_dir / f"gemini_raw_stage2_style_{stamp}.json"
     foot_sys = logs_dir / f"gemini_system_stage2_style_{stamp}.txt"
@@ -3172,6 +3179,24 @@ def build_all_via_gemini_one_call(
             )
 
         # Resolve genre/tag from highest-priority subgroup that can be mapped to inventory groups.
+        # Rotation-override hard check: if we pinned (theme, tags_group), enforce exact match.
+        if rotation_theme_override and rotation_group_override:
+            if len(rotation.subgroups) != 1:
+                raise RuntimeError(
+                    "stage2_style_rotation_override_violation: expected exactly 1 subgroup "
+                    f"when cursor override is set, got {len(rotation.subgroups)}"
+                )
+            only = rotation.subgroups[0]
+            if str(only.theme).strip() != rotation_theme_override:
+                raise RuntimeError(
+                    "stage2_style_rotation_override_theme_mismatch: "
+                    f"expected={rotation_theme_override!r} got={only.theme!r}"
+                )
+            if str(only.tags_group or "").strip() != rotation_group_override:
+                raise RuntimeError(
+                    "stage2_style_rotation_override_group_mismatch: "
+                    f"expected={rotation_group_override!r} got={only.tags_group!r}"
+                )
         base_raw = rotation.subgroups[0]
         if footage_artist_id:
             for idx, subgroup in enumerate(rotation.subgroups):
@@ -3711,6 +3736,42 @@ def build_all_via_gemini_one_call(
     }
     (logs_dir / f"stage2_footage_selection_trace_{stamp}.json").write_text(
         json.dumps(selection_trace_obj, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    # Compact diagnostics for the bot rotation-advance logic.
+    # Consumed by tg_bot_public / tg_bot_botapi to decide whether the cursor
+    # should advance after this job (bad run: avg_score<1.5 OR repeat_ratio>=0.75
+    # OR exclude_relaxed).
+    rotation_diag_obj = {
+        "selection_mode": str(getattr(interval_diag, "selection_mode", "classic")),
+        "resolved_theme": str(getattr(interval_diag, "tag", "") or ""),
+        "resolved_tags_group": (
+            str(list(getattr(interval_diag, "subgroup_order", []) or [{}])[0].get("tags_group") or "")
+            if getattr(interval_diag, "subgroup_order", None) else ""
+        ),
+        "rotation_theme_requested": rotation_theme_override,
+        "rotation_group_requested": rotation_group_override,
+        "exclude_relaxed": bool(getattr(interval_diag, "exclude_relaxed", False)),
+        "repeats_used": bool(getattr(interval_diag, "repeats_used", False)),
+        "primary_pool_avg_score": float(
+            getattr(interval_diag, "primary_pool_avg_score", 0.0) or 0.0
+        ),
+        "primary_pool_repeat_ratio": float(
+            getattr(interval_diag, "primary_pool_repeat_ratio", 0.0) or 0.0
+        ),
+        "intervals_count": int(getattr(interval_diag, "intervals_count", 0) or 0),
+        "primary_pool_count": int(getattr(interval_diag, "primary_pool_count", 0) or 0),
+        "selected_pool_count": int(getattr(interval_diag, "selected_pool_count", 0) or 0),
+        "selected_file_names": [
+            str(x) for x in (getattr(interval_diag, "selected_file_names", []) or [])
+        ],
+    }
+    (logs_dir / f"stage2_footage_rotation_diag_{stamp}.json").write_text(
+        json.dumps(rotation_diag_obj, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    (logs_dir / "stage2_footage_rotation_diag.json").write_text(
+        json.dumps(rotation_diag_obj, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
     # clips_manifest.json — human-readable list of clips used in this job.
