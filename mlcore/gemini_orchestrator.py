@@ -3115,14 +3115,17 @@ def build_all_via_gemini_one_call(
     style_raw_payload: Optional[FootageStyleRawPayload] = None
     style_adapter_diag: Optional[FootageStyleRawAdapterDiagnostics] = None
     style_rotation_payload: Optional[FootageStyleRotation] = None
+    selected_subgroup_idx_out: Optional[int] = None
 
     def _run_style_once() -> FootageStylePickPayload:
         nonlocal style_raw_payload, style_adapter_diag, style_rotation_payload
+        nonlocal selected_subgroup_idx_out
 
         def _accept_direct_pick(
             pick: FootageStylePickPayload, *, source: str
         ) -> FootageStylePickPayload:
             nonlocal style_raw_payload, style_adapter_diag, style_rotation_payload
+            nonlocal selected_subgroup_idx_out
             if footage_artist_id:
                 raise RuntimeError(
                     "stage2_style_direct_pick_not_allowed_with_footage_artist_id: "
@@ -3132,6 +3135,7 @@ def build_all_via_gemini_one_call(
             style_raw_payload = None
             style_adapter_diag = None
             style_rotation_payload = None
+            selected_subgroup_idx_out = None
             logger.info(
                 "stage2_style_direct_pick_selected source=%s genre=%s tag=%s inventory_assets=%d",
                 source,
@@ -3241,6 +3245,7 @@ def build_all_via_gemini_one_call(
         style_raw_payload = base_raw  # enables mapped_picker_assets selection path
         style_adapter_diag = diag
         style_rotation_payload = rotation
+        selected_subgroup_idx_out = int(selected_subgroup_idx)
         logger.info(
             "stage2_style_adapter_selected subgroup_idx=%d theme=%s group=%s mood=%s subgroups=%d "
             "genre=%s tag=%s requested_style_id=%s requested_style_genre=%s "
@@ -3635,6 +3640,106 @@ def build_all_via_gemini_one_call(
         clip_end_abs=clip_end_abs,
     )
     _log_footage_interval_picker_diagnostics(logger=logger, diagnostics=interval_diag)
+
+    # --- Resolve color_grade (cold|warm|None) from the selected subgroup's color_priority ---
+    def _resolve_color_grade_from_priority(priority: Optional[List[str]]) -> Optional[str]:
+        if not priority:
+            return None
+        first = str(priority[0] or "").strip().lower()
+        if first in ("cold", "dark"):
+            return "cold"
+        if first in ("warm", "light"):
+            return "warm"
+        return None
+
+    # Prefer freshly-resolved value from the current style payload; fall back to
+    # resume cache when Stage 2 was skipped (style_raw_payload is None on resume).
+    _color_priority_list: List[str] = []
+    if style_raw_payload is not None and getattr(style_raw_payload, "filters", None) is not None:
+        try:
+            _color_priority_list = list(style_raw_payload.filters.color_priority or [])
+        except Exception:
+            _color_priority_list = []
+    resolved_color_grade = _resolve_color_grade_from_priority(_color_priority_list)
+
+    if resolved_color_grade is None:
+        cached_color_grade = resume_state.get("color_grade")
+        if cached_color_grade in ("cold", "warm"):
+            resolved_color_grade = cached_color_grade
+            logger.info(
+                "color_grade restored from resume cache: %s (artist=%s, subgroup_idx=%s)",
+                resolved_color_grade,
+                footage_artist_id,
+                selected_subgroup_idx_out,
+            )
+        else:
+            logger.warning(
+                "color_grade not resolved for artist=%s, subgroup_idx=%s, color_priority=%r, "
+                "resume_cache=%r; adjustment effects will be skipped",
+                footage_artist_id,
+                selected_subgroup_idx_out,
+                _color_priority_list,
+                cached_color_grade,
+            )
+    else:
+        logger.info("color_grade resolved: %s", resolved_color_grade)
+    resume_state["color_grade"] = resolved_color_grade
+
+    # --- Resolve allow_mirror from the selected subgroup's require_people ---
+    # Whitelist: {"none", "crowd"} — no identifiable faces / directional gaze →
+    # horizontal flip is safe. Everything else (girls/guys/couple/driver) blocks
+    # mirror to avoid breaking facial direction and on-clothing text readability.
+    def _resolve_allow_mirror_from_people(require_people_value) -> bool:
+        if require_people_value is None:
+            return False
+        v = str(require_people_value).strip().lower()
+        return v in ("none", "crowd")
+
+    _require_people_value = None
+    if style_raw_payload is not None and getattr(style_raw_payload, "filters", None) is not None:
+        try:
+            _require_people_value = getattr(style_raw_payload.filters, "require_people", None)
+        except Exception:
+            _require_people_value = None
+
+    if _require_people_value is not None:
+        resolved_allow_mirror: Optional[bool] = _resolve_allow_mirror_from_people(_require_people_value)
+        logger.info(
+            "allow_mirror resolved: %s (require_people=%r)",
+            resolved_allow_mirror,
+            _require_people_value,
+        )
+    else:
+        # Fallback to resume cache if stage2 was skipped on resume.
+        cached_mirror = resume_state.get("allow_mirror")
+        if isinstance(cached_mirror, bool):
+            resolved_allow_mirror = cached_mirror
+            logger.info("allow_mirror restored from resume cache: %s", resolved_allow_mirror)
+        else:
+            resolved_allow_mirror = False
+            logger.warning(
+                "allow_mirror not resolved for artist=%s, subgroup_idx=%s, "
+                "require_people=None, resume_cache=%r; defaulting to False (no mirror)",
+                footage_artist_id,
+                selected_subgroup_idx_out,
+                cached_mirror,
+            )
+    resume_state["allow_mirror"] = resolved_allow_mirror
+
+    # Attach color_grade + allow_mirror to the selection payload so downstream
+    # code (footage_config.json, AE sidecar injection, uniqueness pass) can pick
+    # them up without re-reading the style subgroup.
+    try:
+        footage_payload = footage_payload.model_copy(update={
+            "color_grade": resolved_color_grade,
+            "allow_mirror": resolved_allow_mirror,
+        })
+    except Exception:
+        # Fallback: rebuild via model_validate to keep validators in force
+        _fp_data = footage_payload.model_dump(mode="json")
+        _fp_data["color_grade"] = resolved_color_grade
+        _fp_data["allow_mirror"] = resolved_allow_mirror
+        footage_payload = FootageSelectionPayload.model_validate(_fp_data)
 
     # Debug artifacts (like Stage1): dump parsed Stage2 payloads so we can inspect what the model returned
     # without digging into the raw response wrapper.

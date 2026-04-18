@@ -61,6 +61,10 @@ class OrchestratorClient:
             "variants_total": int(variants_total) if variants_total is not None else None,
             "rotation_theme": str(rotation_theme or "").strip(),
             "rotation_tags_group": str(rotation_tags_group or "").strip(),
+            # Route this job through the botapi-only experimental pipeline
+            # (uniqueness pass, cold/warm color grade). Public bot MUST NOT
+            # send this field until the feature has been validated here.
+            "source_bot": "botapi",
         }
         resp = await self._client.post(f"{self._base_url}/send_audio_s3", json=payload)
         if resp.status_code >= 300:

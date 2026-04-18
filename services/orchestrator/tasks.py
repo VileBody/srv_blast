@@ -1158,6 +1158,13 @@ def _build_job_impl(self, job_id: str, *, worker_type: str) -> Dict[str, Any]:
         default=SUBTITLES_MODE_LEGACY_BLOCKS,
     )
     footage_artist_id = str(req.get("footage_artist_id") or "").strip()
+    # Origin-bot tag. Only "botapi" activates the experimental pipeline
+    # (uniqueness pass + cold/warm color grade). Empty/unknown values mean
+    # public-bot path — kept on the stable rendering contract.
+    source_bot = str(req.get("source_bot") or "").strip().lower()
+    if source_bot and source_bot != "botapi":
+        # Defensive: anything other than "botapi" is treated as public → clear.
+        source_bot = ""
     user_clip_start_sec: Optional[float] = None
     user_clip_end_sec: Optional[float] = None
     if req.get("user_clip_start_sec") is not None or req.get("user_clip_end_sec") is not None:
@@ -1223,6 +1230,10 @@ def _build_job_impl(self, job_id: str, *, worker_type: str) -> Dict[str, Any]:
     env["SUBTITLES_MODE"] = subtitles_mode
     if footage_artist_id:
         env["FOOTAGE_ARTIST_ID"] = footage_artist_id
+    # Forward bot origin so app/project_builder.py can gate experimental
+    # features (uniqueness pass, cold/warm color grade) to botapi-only.
+    # Empty value keeps the public-bot path neutral.
+    env["SOURCE_BOT"] = source_bot
     if user_clip_start_sec is not None and user_clip_end_sec is not None:
         env["USER_CLIP_START_SEC"] = str(float(user_clip_start_sec))
         env["USER_CLIP_END_SEC"] = str(float(user_clip_end_sec))

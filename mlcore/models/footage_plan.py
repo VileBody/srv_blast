@@ -1,7 +1,7 @@
 # mlcore/models/footage_plan.py
 from __future__ import annotations
 
-from typing import List, Literal
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -60,6 +60,16 @@ class FootageSelectionPayload(BaseModel):
     Footage selection payload:
       - list of clips (absolute times)
       - allow_gaps: if false, postprocess will enforce continuous coverage
+      - color_grade: optional color grade hint resolved from the selected
+        footage subgroup's color_priority filter. Maps to an adjustment-effects
+        sidecar JSX applied at render time (cold/warm). None disables the
+        sidecar (neutral / unresolved).
+      - allow_mirror: whether the uniqueness pass is allowed to horizontally
+        flip footage layers. Resolved from the selected subgroup's
+        filters.require_people: {"none", "crowd"} → True, else False.
+        None means "not resolved" — treated as False by downstream.
     """
     clips: List[FootageClipPick] = Field(min_length=1)
     allow_gaps: bool = False
+    color_grade: Optional[Literal["cold", "warm"]] = None
+    allow_mirror: Optional[bool] = None

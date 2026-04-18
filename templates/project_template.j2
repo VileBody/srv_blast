@@ -52,6 +52,22 @@
     } catch(e) {}
   }
 
+  // --- Adjustment-effects sidecar SOURCE (cold/warm color grade), inlined at build time ---
+  // Inlined to avoid dependency on render_templates/ being synced to render-node.
+  var ADJUSTMENT_SIDECAR_SOURCE = {{ adjustment_sidecar_source | tojson if adjustment_sidecar_source else 'null' }};
+
+  // --- Uniqueness pass SOURCE (per-clip geometric drift + optional mirror + color jitter) ---
+  // Inlined at build time (same reason as cold/warm sidecar).
+  // Feature-flag globals are picked up by uniqueness_pass.jsx at runtime and OR'd
+  // with the script's own ENV reads — any OFF wins, so rollback is safe at any level.
+  var UNIQUENESS_PASS_SOURCE = {{ uniqueness_pass_source | tojson if uniqueness_pass_source else 'null' }};
+  var UNIQUENESS_SEED = {{ uniqueness_seed | default(0) }};
+  var UNIQUENESS_ALLOW_MIRROR = {{ 'true' if uniqueness_allow_mirror else 'false' }};
+  var UNIQUENESS_ENABLED = {{ 'true' if uniqueness_enabled else 'false' }};
+  var UNIQUENESS_GEOMETRY_ENABLED = {{ 'true' if uniqueness_geometry_enabled else 'false' }};
+  var UNIQUENESS_MIRROR_ENABLED = {{ 'true' if uniqueness_mirror_enabled else 'false' }};
+  var UNIQUENESS_COLOR_JITTER_ENABLED = {{ 'true' if uniqueness_color_jitter_enabled else 'false' }};
+
   // suppress hidden modal dialogs (helps with BCC trial/alerts etc.)
   try { app.beginSuppressDialogs(); } catch(_) {}
 
@@ -1455,6 +1471,84 @@
 
     // flash on cuts for impulse + tape templates
     addFlashOnCuts();
+
+    // ==========================================================
+    // 5.5) APPLY ADJUSTMENT-EFFECTS SIDECAR (cold/warm color grade)
+    // ==========================================================
+    // Source is inlined at build time (see ADJUSTMENT_SIDECAR_SOURCE above) —
+    // independent from render-node filesystem / sparse-checkout state.
+    if (typeof ADJUSTMENT_SIDECAR_SOURCE !== "undefined" && ADJUSTMENT_SIDECAR_SOURCE) {
+      try {
+        // Sidecar operates on app.project.activeItem — make MAIN_COMP active.
+        try {
+          if (MAIN_COMP && typeof MAIN_COMP.openInViewer === "function") {
+            MAIN_COMP.openInViewer();
+          }
+        } catch (eOpen) {
+          try { logLine("WARN", "MAIN_COMP.openInViewer failed: " + eOpen.toString()); } catch(_) {}
+        }
+        // Suppress alerts inside sidecar — render node is headless.
+        var _origAlert = (typeof alert === "function") ? alert : null;
+        alert = function (msg) {
+          try { logLine("INFO", "[sidecar alert] " + String(msg)); } catch (e) {}
+        };
+        try {
+          eval(ADJUSTMENT_SIDECAR_SOURCE);
+          logLine("INFO", "Applied adjustment sidecar (inline, " + ADJUSTMENT_SIDECAR_SOURCE.length + " chars)");
+        } finally {
+          if (_origAlert) alert = _origAlert;
+        }
+      } catch (eSidecar) {
+        try { logLine("ERR", "sidecar failed: " + eSidecar.toString()); } catch(_) {}
+      }
+    }
+
+    // ==========================================================
+    // 5.6) APPLY UNIQUENESS PASS (per-clip geometric drift + mirror + color jitter)
+    // ==========================================================
+    // Source inlined at build time (see UNIQUENESS_PASS_SOURCE above).
+    // Rollback at 4 levels via build-time ENV flags (OR'd with runtime ENV reads
+    // inside the script — any OFF wins):
+    //   UNIQUENESS_ENABLED=0               → whole pass disabled (master kill switch)
+    //   UNIQUENESS_GEOMETRY_ENABLED=0      → no scale+offset
+    //   UNIQUENESS_MIRROR_ENABLED=0        → no horizontal flip
+    //   UNIQUENESS_COLOR_JITTER_ENABLED=0  → no hue/sat/exposure/gamma jitter
+    // TEXT_COMP is never touched (script skips CompItem layers by design).
+    if (typeof UNIQUENESS_PASS_SOURCE !== "undefined" && UNIQUENESS_PASS_SOURCE
+        && typeof UNIQUENESS_ENABLED !== "undefined" && UNIQUENESS_ENABLED) {
+      try {
+        // Script operates on app.project.activeItem — keep MAIN_COMP active.
+        try {
+          if (MAIN_COMP && typeof MAIN_COMP.openInViewer === "function") {
+            MAIN_COMP.openInViewer();
+          }
+        } catch (eOpen2) {
+          try { logLine("WARN", "MAIN_COMP.openInViewer failed (uniqueness): " + eOpen2.toString()); } catch(_) {}
+        }
+        // Suppress alerts inside uniqueness pass — render node is headless.
+        var _origAlert2 = (typeof alert === "function") ? alert : null;
+        alert = function (msg) {
+          try { logLine("INFO", "[uniqueness alert] " + String(msg)); } catch (e) {}
+        };
+        try {
+          eval(UNIQUENESS_PASS_SOURCE);
+          logLine("INFO",
+            "Applied uniqueness pass (inline, " + UNIQUENESS_PASS_SOURCE.length + " chars)" +
+            " seed=" + UNIQUENESS_SEED +
+            " allow_mirror=" + UNIQUENESS_ALLOW_MIRROR +
+            " flags: geo=" + UNIQUENESS_GEOMETRY_ENABLED +
+            " mirror=" + UNIQUENESS_MIRROR_ENABLED +
+            " color=" + UNIQUENESS_COLOR_JITTER_ENABLED
+          );
+        } finally {
+          if (_origAlert2) alert = _origAlert2;
+        }
+      } catch (eUniq) {
+        try { logLine("ERR", "uniqueness pass failed: " + eUniq.toString()); } catch(_) {}
+      }
+    } else {
+      try { logLine("INFO", "uniqueness pass skipped (disabled or missing source)"); } catch(_) {}
+    }
 
     // ==========================================================
     // 6) SAVE PROJECT

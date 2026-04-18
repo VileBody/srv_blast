@@ -607,6 +607,74 @@
 
     try {
         entryComp = buildProject();
+
+        // --- Apply adjustment-effects sidecar (cold/warm color grade) ---
+        // The sidecar script operates on app.project.activeItem, so the final comp
+        // must be the active viewer item before eval() is called.
+        // Source is inlined into render.jsx at build time — no external file deps.
+        if (typeof ADJUSTMENT_SIDECAR_SOURCE !== "undefined" && ADJUSTMENT_SIDECAR_SOURCE) {
+            try {
+                if (entryComp && typeof entryComp.openInViewer === "function") {
+                    try { entryComp.openInViewer(); } catch (eOpen) {
+                        try { logLine("[warn] entryComp.openInViewer failed: " + eOpen.toString()); } catch (_) {}
+                    }
+                }
+                // Suppress alerts inside sidecar — render node is headless.
+                var _origAlert = (typeof alert === "function") ? alert : null;
+                alert = function (msg) {
+                    try { if (typeof logLine === "function") logLine("[sidecar alert] " + String(msg)); } catch (e) {}
+                };
+                try {
+                    eval(ADJUSTMENT_SIDECAR_SOURCE);
+                    if (typeof logLine === "function") logLine("Applied adjustment sidecar (inline, " + ADJUSTMENT_SIDECAR_SOURCE.length + " chars)");
+                } finally {
+                    if (_origAlert) alert = _origAlert;
+                }
+            } catch (eSidecar) {
+                if (typeof logLine === "function") logLine("[err] sidecar failed: " + eSidecar.toString());
+            }
+        }
+
+        // --- Apply uniqueness pass (per-clip geometric drift + optional mirror + color jitter) ---
+        // Source inlined into render.jsx at build time via UNIQUENESS_PASS_SOURCE global.
+        // Rollback via build-time ENV flags (also re-checked at runtime inside the pass):
+        //   UNIQUENESS_ENABLED=0               → whole pass off
+        //   UNIQUENESS_GEOMETRY_ENABLED=0      → no scale+offset
+        //   UNIQUENESS_MIRROR_ENABLED=0        → no horizontal flip
+        //   UNIQUENESS_COLOR_JITTER_ENABLED=0  → no hue/sat/exposure/gamma jitter
+        // TEXT_COMP is never touched (pass skips CompItem layers by design).
+        if (typeof UNIQUENESS_PASS_SOURCE !== "undefined" && UNIQUENESS_PASS_SOURCE
+            && typeof UNIQUENESS_ENABLED !== "undefined" && UNIQUENESS_ENABLED) {
+            try {
+                if (entryComp && typeof entryComp.openInViewer === "function") {
+                    try { entryComp.openInViewer(); } catch (eOpen2) {
+                        try { logLine("[warn] entryComp.openInViewer failed (uniqueness): " + eOpen2.toString()); } catch (_) {}
+                    }
+                }
+                var _origAlert2 = (typeof alert === "function") ? alert : null;
+                alert = function (msg) {
+                    try { if (typeof logLine === "function") logLine("[uniqueness alert] " + String(msg)); } catch (e) {}
+                };
+                try {
+                    eval(UNIQUENESS_PASS_SOURCE);
+                    if (typeof logLine === "function") {
+                        logLine(
+                            "Applied uniqueness pass (inline, " + UNIQUENESS_PASS_SOURCE.length + " chars)" +
+                            " seed=" + (typeof UNIQUENESS_SEED !== "undefined" ? UNIQUENESS_SEED : "?") +
+                            " allow_mirror=" + (typeof UNIQUENESS_ALLOW_MIRROR !== "undefined" ? UNIQUENESS_ALLOW_MIRROR : "?") +
+                            " flags: geo=" + (typeof UNIQUENESS_GEOMETRY_ENABLED !== "undefined" ? UNIQUENESS_GEOMETRY_ENABLED : "?") +
+                            " mirror=" + (typeof UNIQUENESS_MIRROR_ENABLED !== "undefined" ? UNIQUENESS_MIRROR_ENABLED : "?") +
+                            " color=" + (typeof UNIQUENESS_COLOR_JITTER_ENABLED !== "undefined" ? UNIQUENESS_COLOR_JITTER_ENABLED : "?")
+                        );
+                    }
+                } finally {
+                    if (_origAlert2) alert = _origAlert2;
+                }
+            } catch (eUniq) {
+                if (typeof logLine === "function") logLine("[err] uniqueness pass failed: " + eUniq.toString());
+            }
+        }
+
         projFile = saveProject(entryComp);
 
         var msgLines = [];
