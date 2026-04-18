@@ -14,11 +14,6 @@ from .config import Settings
 log = logging.getLogger("tg_bot_botapi.state_store")
 
 
-# Per-user footage rotation + history persistence (survives audio re-uploads).
-_ROTATION_TTL_S = 2592000  # 30 days
-_ROTATION_HISTORY_MAX = 150
-
-
 STAGE_IDLE = "IDLE"
 STAGE_WAIT_AUDIO = "WAIT_AUDIO"
 STAGE_WAIT_LYRICS_CHOICE = "WAIT_LYRICS_CHOICE"
@@ -322,66 +317,6 @@ class RedisChatStateStore:
             await self.delete_state(cid)
             removed += 1
         return removed
-
-    # --- Per-user footage rotation helpers ---
-    # Cursor and history are keyed by (chat_id, artist_id). History persists
-    # across audio uploads and batch boundaries, which is why it lives outside
-    # of ChatState.used_footage_file_names (that field is intra-batch only).
-    def _rotation_cursor_key(self, chat_id: int, artist_id: str) -> str:
-        aid = str(artist_id or "").strip() or "_unknown_"
-        return f"{self._prefix}:rotation:cursor:{int(chat_id)}:{aid}"
-
-    def _rotation_history_key(self, chat_id: int, artist_id: str) -> str:
-        aid = str(artist_id or "").strip() or "_unknown_"
-        return f"{self._prefix}:rotation:history:{int(chat_id)}:{aid}"
-
-    async def get_rotation_cursor(self, chat_id: int, artist_id: str) -> int:
-        raw = await self._redis.get(self._rotation_cursor_key(int(chat_id), artist_id))
-        if not raw:
-            return 0
-        try:
-            return int(raw)
-        except Exception:
-            return 0
-
-    async def set_rotation_cursor(self, chat_id: int, artist_id: str, value: int) -> None:
-        key = self._rotation_cursor_key(int(chat_id), artist_id)
-        await self._redis.set(key, str(int(value)), ex=_ROTATION_TTL_S)
-
-    async def advance_rotation_cursor(self, chat_id: int, artist_id: str) -> tuple[int, int]:
-        """Increment the cursor by 1 and return (old_value, new_value)."""
-        key = self._rotation_cursor_key(int(chat_id), artist_id)
-        new_val = int(await self._redis.incr(key))
-        await self._redis.expire(key, _ROTATION_TTL_S)
-        return new_val - 1, new_val
-
-    async def get_rotation_history(self, chat_id: int, artist_id: str) -> List[str]:
-        key = self._rotation_history_key(int(chat_id), artist_id)
-        items = await self._redis.lrange(key, 0, _ROTATION_HISTORY_MAX - 1)
-        out: List[str] = []
-        seen: set[str] = set()
-        for it in items or []:
-            name = str(it or "").strip()
-            if not name or name in seen:
-                continue
-            seen.add(name)
-            out.append(name)
-        return out
-
-    async def add_rotation_history(
-        self,
-        chat_id: int,
-        artist_id: str,
-        file_names: List[str],
-    ) -> None:
-        clean = [str(n).strip() for n in (file_names or []) if str(n).strip()]
-        if not clean:
-            return
-        key = self._rotation_history_key(int(chat_id), artist_id)
-        # LPUSH newest first, then cap to _ROTATION_HISTORY_MAX.
-        await self._redis.lpush(key, *clean)
-        await self._redis.ltrim(key, 0, _ROTATION_HISTORY_MAX - 1)
-        await self._redis.expire(key, _ROTATION_TTL_S)
 
     async def close(self) -> None:
         await self._redis.aclose()

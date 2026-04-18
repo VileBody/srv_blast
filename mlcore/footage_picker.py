@@ -17,13 +17,6 @@ from mlcore.models.footage_style import FootageStylePickPayload, FootageStyleRaw
 
 _EPS = 1e-6
 _MAX_SWITCH_SEC = 4.0
-# Uniform jitter added to selection score per (seed, file_name) to break
-# score-dominance and produce variety across reruns with different seed.
-_SCORE_JITTER_MAG = 0.75
-# Safety margin (seconds) kept at the head/tail of a source video when
-# picking a random in-source offset. Relaxed from 0.1 to 0.05 to unlock
-# offsets for sources whose duration is just barely above the interval.
-_SOURCE_OFFSET_SAFETY = 0.05
 _STYLE_COLOR_ALLOWED = {"dark", "light", "warm", "cold", "neutral"}
 _STYLE_MOOD_ALLOWED = {"major", "minor"}
 _STYLE_PEOPLE_ALLOWED = {"none", "girls", "guys", "couple", "crowd", "driver"}
@@ -176,11 +169,6 @@ class FootageIntervalPickerDiagnostics:
     selection_mode: str = "classic"
     subgroup_order: List[Dict[str, Any]] = field(default_factory=list)
     interval_trace: List[Dict[str, Any]] = field(default_factory=list)
-    # Quality/uniqueness signals used by bot rotation advance logic.
-    # primary_pool_avg_score: avg base score of selected clips (overlap+color_bonus, pre-jitter)
-    # primary_pool_repeat_ratio: fraction of intervals whose file_name repeats at least once
-    primary_pool_avg_score: float = 0.0
-    primary_pool_repeat_ratio: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -508,19 +496,6 @@ def _fits_interval(asset: Dict[str, Any], *, interval_len: float) -> bool:
     return dur + _EPS >= float(interval_len)
 
 
-def _score_jitter(seed_value: int, file_name: str) -> float:
-    """Uniform [0, _SCORE_JITTER_MAG) jitter, stable per (seed, file_name).
-
-    Deliberately does NOT depend on interval_idx so each file has one
-    consistent effective score inside a single run; different seeds yield
-    different orderings across reruns.
-    """
-    material = f"jitter:{seed_value}:{file_name}"
-    h = int(hashlib.sha256(material.encode("utf-8")).hexdigest()[:16], 16)
-    frac = h / (2 ** 64)
-    return float(frac) * _SCORE_JITTER_MAG
-
-
 def _deterministic_choose(
     *,
     candidates: List[Dict[str, Any]],
@@ -534,10 +509,9 @@ def _deterministic_choose(
 
     def _score(it: Dict[str, Any]) -> float:
         try:
-            base = float(it.get(_SELECTION_RANK_SCORE_KEY) or 0.0)
+            return float(it.get(_SELECTION_RANK_SCORE_KEY) or 0.0)
         except Exception:
-            base = 0.0
-        return base + _score_jitter(seed_value, str(it.get("file_name") or ""))
+            return 0.0
 
     def _sort_key(it: Dict[str, Any]) -> Tuple[float, str, str]:
         file_name = str(it["file_name"])
@@ -575,13 +549,12 @@ def _deterministic_file_name_order(
     scores_by_name: Dict[str, float] | None = None,
 ) -> List[str]:
     def _score(name: str) -> float:
-        base = 0.0
-        if scores_by_name:
-            try:
-                base = float(scores_by_name.get(name) or 0.0)
-            except Exception:
-                base = 0.0
-        return base + _score_jitter(seed_value, name)
+        if not scores_by_name:
+            return 0.0
+        try:
+            return float(scores_by_name.get(name) or 0.0)
+        except Exception:
+            return 0.0
 
     def _key(name: str) -> Tuple[float, str, str]:
         material = f"{seed_value}:{interval_idx}:{interval_start:.6f}:{name}"
@@ -742,10 +715,10 @@ def _deterministic_source_offset(
     """Return a deterministic random start offset within the source video.
 
     The offset is clamped so that the source has enough remaining footage to
-    cover the full interval duration.  A small safety margin is kept
-    (see _SOURCE_OFFSET_SAFETY). Returns 0.0 when there is no room to offset.
+    cover the full interval duration.  A small safety margin (0.1 s) is kept.
+    Returns 0.0 when there is no room to offset.
     """
-    safety = _SOURCE_OFFSET_SAFETY
+    safety = 0.1
     max_offset = float(asset_duration_sec) - float(interval_len) - safety
     if max_offset < safety:
         return 0.0
@@ -753,41 +726,6 @@ def _deterministic_source_offset(
     h = int(hashlib.sha256(material.encode("utf-8")).hexdigest()[:16], 16)
     frac = h / (2 ** 64)
     return round(frac * max_offset, 3)
-
-
-def _compute_pool_stats(
-    *,
-    selected_names: List[str],
-    assets_by_name: Dict[str, Dict[str, Any]],
-) -> Tuple[float, float]:
-    """Return (avg_score, repeat_ratio) for a list of chosen file_names.
-
-    avg_score averages base selection score (overlap+color_bonus, pre-jitter).
-    repeat_ratio is the fraction of positions whose file_name occurs more than
-    once in the list (0.0 if all unique; up to 1.0 if everything repeats).
-    """
-    n = len(selected_names or [])
-    if n <= 0:
-        return 0.0, 0.0
-    total = 0.0
-    count = 0
-    for nm in selected_names:
-        asset = assets_by_name.get(str(nm))
-        if not isinstance(asset, dict):
-            continue
-        try:
-            total += float(asset.get(_SELECTION_RANK_SCORE_KEY) or 0.0)
-            count += 1
-        except Exception:
-            continue
-    avg = (total / count) if count > 0 else 0.0
-    counts: Dict[str, int] = {}
-    for nm in selected_names:
-        key = str(nm)
-        counts[key] = counts.get(key, 0) + 1
-    repeated_positions = sum(1 for nm in selected_names if counts.get(str(nm), 0) > 1)
-    ratio = float(repeated_positions) / float(n)
-    return float(avg), float(ratio)
 
 
 def _assign_rotation_file_names(
@@ -1202,10 +1140,6 @@ def pick_footage_clips_by_intervals_deterministic(
 
         selected_excluded_count = sum(1 for x in selected_file_names if str(x) in excluded_names)
         payload = FootageSelectionPayload.model_validate({"clips": clips, "allow_gaps": False})
-        avg_score, repeat_ratio = _compute_pool_stats(
-            selected_names=[str(x) for x in selected_file_names],
-            assets_by_name=all_assets_by_name,
-        )
         diag = FootageIntervalPickerDiagnostics(
             genre="__raw_priority_v2__",
             tag=str(subgroup_defs[0].theme),
@@ -1225,8 +1159,6 @@ def pick_footage_clips_by_intervals_deterministic(
             selection_mode="raw_priority_v2",
             subgroup_order=subgroup_order_diag,
             interval_trace=interval_trace,
-            primary_pool_avg_score=float(avg_score),
-            primary_pool_repeat_ratio=float(repeat_ratio),
         )
         return payload, diag
     # ── End rotation path ─────────────────────────────────────────────────────
@@ -1427,10 +1359,6 @@ def pick_footage_clips_by_intervals_deterministic(
         selection_mode = "classic_interval"
 
     payload = FootageSelectionPayload.model_validate({"clips": clips, "allow_gaps": False})
-    avg_score, repeat_ratio = _compute_pool_stats(
-        selected_names=[str(x) for x in assigned_file_names],
-        assets_by_name=by_name,
-    )
     diag = FootageIntervalPickerDiagnostics(
         genre=diag_genre,
         tag=diag_tag,
@@ -1448,8 +1376,6 @@ def pick_footage_clips_by_intervals_deterministic(
         seed_key=str(seed_key),
         selected_file_names=[str(x) for x in assigned_file_names],
         selection_mode=selection_mode,
-        primary_pool_avg_score=float(avg_score),
-        primary_pool_repeat_ratio=float(repeat_ratio),
     )
     return payload, diag
 

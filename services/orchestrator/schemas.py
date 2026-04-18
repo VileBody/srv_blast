@@ -45,11 +45,6 @@ class SendAudioS3Request(BaseModel):
     variant_index: Optional[int] = None
     variants_total: Optional[int] = None
     maintenance_bypass_token: Optional[str] = Field(default=None, min_length=1)
-    # Per-user Stage 2B rotation cursor override. When both are non-empty, the
-    # orchestrator forces Gemini to emit exactly one subgroup at this
-    # (theme, tags_group) pair instead of picking from the artist profile.
-    rotation_theme: str = ""
-    rotation_tags_group: str = ""
 
     @model_validator(mode="after")
     def _validate_user_clip_window(self) -> "SendAudioS3Request":

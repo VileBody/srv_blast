@@ -478,37 +478,13 @@ def build_stage2_footage_user_prompt(
     style_groups: List[Dict[str, object]],
     schema_name: str = "FootageStyleRawPayload",
     artist_id: str = "",
-    rotation_theme: str = "",
-    rotation_tags_group: str = "",
 ) -> str:
     artist_block = ""
     if artist_id:
         artist_block = f"ARTIST_ID: {artist_id}\n\n"
-
-    rotation_block = ""
-    theme_override = str(rotation_theme or "").strip()
-    group_override = str(rotation_tags_group or "").strip()
-    if theme_override and group_override:
-        # Hard override for the per-user rotation cursor. Forces exactly one
-        # subgroup at the requested (theme, tags_group) pair and bypasses the
-        # "profile order"/"3 subgroups" guidance from the system prompt.
-        rotation_block = (
-            "ROTATION_OVERRIDE (HARD CONSTRAINT, TAKES PRIORITY OVER STEP 2):\n"
-            f"- Output EXACTLY ONE subgroup in `subgroups` — no more, no less.\n"
-            f"- The subgroup MUST use theme = {json.dumps(theme_override, ensure_ascii=False)}.\n"
-            f"- The subgroup MUST use tags_group = {json.dumps(group_override, ensure_ascii=False)}.\n"
-            "- Ignore the profile theme order for this call. The rotation cursor has\n"
-            "  already decided which (theme, tags_group) to render; your job is only to\n"
-            "  pick 6-10 priority_theme_tags from that exact group's `_tags`, copy its\n"
-            "  `_exclude_tags` verbatim, pick color_priority (group `_color` else theme\n"
-            "  `color`), and exclude_people from the theme's `exclude` list.\n"
-            "- Still obey the banned tags and valid enums from CONSTRAINTS.\n\n"
-        )
-
     return (
         f"Return ONLY JSON matching schema: {schema_name}\n\n"
         + artist_block
-        + rotation_block
         + "STAGE1_CONTEXT_JSON:\n"
         + json.dumps(stage1_json, ensure_ascii=False)
         + "\n\n"
