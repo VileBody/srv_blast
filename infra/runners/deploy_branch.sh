@@ -4,6 +4,8 @@ set -euo pipefail
 BRANCH="${1:-${GITHUB_REF_NAME:-}}"
 DEPLOY_STACK="${2:-${DEPLOY_STACK:-all}}"
 DEPLOY_PRUNE_OTHER_STACK="${DEPLOY_PRUNE_OTHER_STACK:-false}"
+DEPLOY_ORCHESTRATOR_HA="${DEPLOY_ORCHESTRATOR_HA:-false}"
+DEPLOY_ORCHESTRATOR_HA_COMPOSE_FILE="${DEPLOY_ORCHESTRATOR_HA_COMPOSE_FILE:-docker-compose.orchestrator-ha.yml}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="${REPO_DIR:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
@@ -92,6 +94,31 @@ deploy_root_services() {
     echo "[deploy] docker compose up -d --build ${services[*]}"
     docker compose up -d --build "${services[@]}"
   fi
+}
+
+deploy_prod_path_services() {
+  if ! is_true "$DEPLOY_ORCHESTRATOR_HA"; then
+    deploy_root_services orchestrator-api worker-build worker-render tg-bot-public
+    return 0
+  fi
+
+  local compose_ha="$DEPLOY_ORCHESTRATOR_HA_COMPOSE_FILE"
+  if [[ -z "$compose_ha" ]]; then
+    echo "[deploy] DEPLOY_ORCHESTRATOR_HA=true but DEPLOY_ORCHESTRATOR_HA_COMPOSE_FILE is empty"
+    exit 1
+  fi
+  if [[ "$compose_ha" != /* ]]; then
+    compose_ha="$REPO_DIR/$compose_ha"
+  fi
+  if [[ ! -f "$compose_ha" ]]; then
+    echo "[deploy] DEPLOY_ORCHESTRATOR_HA=true but compose override not found: $compose_ha"
+    exit 1
+  fi
+
+  echo "[deploy] orchestrator-ha enabled compose=$compose_ha"
+  echo "[deploy] docker compose -f docker-compose.yml -f $compose_ha up -d --build orchestrator-api orchestrator-api-2 worker-build worker-render tg-bot-public"
+  docker compose -f docker-compose.yml -f "$compose_ha" up -d --build \
+    orchestrator-api orchestrator-api-2 worker-build worker-render tg-bot-public
 }
 
 stop_root_services() {
@@ -265,7 +292,7 @@ case "$DEPLOY_STACK" in
     deploy_root_services
     ;;
   prod-path)
-    deploy_root_services orchestrator-api worker-build worker-render tg-bot-public
+    deploy_prod_path_services
     deploy_runner_compose_if_present "$RUNNERS_DIR/docker-compose.promtail-edge.yml" "$RUNNERS_DIR/.env.promtail-edge"
     if is_true "$DEPLOY_PRUNE_OTHER_STACK"; then
       stop_root_services tg-bot asset-ui finance-bot
@@ -274,7 +301,7 @@ case "$DEPLOY_STACK" in
   infra-apps)
     deploy_root_services tg-bot asset-ui finance-bot
     if is_true "$DEPLOY_PRUNE_OTHER_STACK"; then
-      stop_root_services orchestrator-api worker-build worker-render tg-bot-public
+      stop_root_services orchestrator-api orchestrator-api-2 worker-build worker-render tg-bot-public
     fi
     ;;
   infra-ops)
@@ -283,7 +310,7 @@ case "$DEPLOY_STACK" in
     deploy_runner_compose_if_present "$RUNNERS_DIR/docker-compose.observability.yml" "$RUNNERS_DIR/.env.observability"
     deploy_github_runner_compose_if_allowed "$RUNNERS_DIR/docker-compose.github-runner.yml" "$RUNNERS_DIR/.env.github-runner"
     if is_true "$DEPLOY_PRUNE_OTHER_STACK"; then
-      stop_root_services orchestrator-api worker-build worker-render tg-bot-public
+      stop_root_services orchestrator-api orchestrator-api-2 worker-build worker-render tg-bot-public
     fi
     ;;
   *)
