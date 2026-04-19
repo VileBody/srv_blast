@@ -42,6 +42,8 @@ jobs:
           BRANCH: ${{ inputs.branch != '' && inputs.branch || github.ref_name }}
           GIT_AUTH_TOKEN: ${{ secrets.DEPLOY_GH_TOKEN }}
           GITHUB_TOKEN_FALLBACK: ${{ github.token }}
+          DEPLOY_ORCHESTRATOR_HA: ${{ vars.DEPLOY_ORCHESTRATOR_HA }}
+          DEPLOY_ORCHESTRATOR_HA_COMPOSE_FILE: ${{ vars.DEPLOY_ORCHESTRATOR_HA_COMPOSE_FILE }}
         run: |
           set -euo pipefail
           AUTH_TOKEN="${GIT_AUTH_TOKEN:-${GITHUB_TOKEN_FALLBACK:-}}"
@@ -73,6 +75,22 @@ jobs:
             git -C "$REPO_DIR" restore --staged --worktree -- data/footage_inventory_selected.json || true
           fi
           bash "$REPO_DIR/infra/runners/deploy_branch.sh" "$BRANCH"
+
+      - name: Deploy Orchestrator Nginx (optional)
+        env:
+          REPO_DIR: ${{ vars.BLAST_REPO_DIR }}
+          BRANCH: ${{ inputs.branch != '' && inputs.branch || github.ref_name }}
+          ORCHESTRATOR_NGINX_DEPLOY_ENABLED: ${{ vars.ORCHESTRATOR_NGINX_DEPLOY_ENABLED }}
+          ORCHESTRATOR_NGINX_MAIN_ONLY: ${{ vars.ORCHESTRATOR_NGINX_MAIN_ONLY }}
+          ORCHESTRATOR_NGINX_MAIN_BRANCH: ${{ vars.ORCHESTRATOR_NGINX_MAIN_BRANCH }}
+          ORCHESTRATOR_NGINX_UPSTREAM_TEMPLATE: ${{ vars.ORCHESTRATOR_NGINX_UPSTREAM_TEMPLATE }}
+          ORCHESTRATOR_NGINX_LOCATIONS_TEMPLATE: ${{ vars.ORCHESTRATOR_NGINX_LOCATIONS_TEMPLATE }}
+          ORCHESTRATOR_NGINX_UPSTREAM_TARGET: ${{ vars.ORCHESTRATOR_NGINX_UPSTREAM_TARGET }}
+          ORCHESTRATOR_NGINX_LOCATIONS_TARGET: ${{ vars.ORCHESTRATOR_NGINX_LOCATIONS_TARGET }}
+          ORCHESTRATOR_NGINX_RELOAD_CMD: ${{ vars.ORCHESTRATOR_NGINX_RELOAD_CMD }}
+        run: |
+          set -euo pipefail
+          bash "$REPO_DIR/infra/runners/deploy_orchestrator_nginx.sh" "$BRANCH"
 
       - name: Deploy Landing To Nginx (optional)
         env:

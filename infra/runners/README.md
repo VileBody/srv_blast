@@ -7,6 +7,7 @@
 - Workflow: `.github/workflows/deploy-current-branch.yml`
 - Workflow (split): `.github/workflows/deploy-split-main.yml`
 - Скрипт деплоя: `infra/runners/deploy_branch.sh`
+- Скрипт sync orchestrator nginx snippets: `infra/runners/deploy_orchestrator_nginx.sh`
 - Docker Compose для GitHub self-hosted runner: `infra/runners/docker-compose.github-runner.yml`
 - Docker Compose для web UI логов (Dozzle): `infra/runners/docker-compose.logs.yml`
 - Docker Compose для observability V1: `infra/runners/docker-compose.observability.yml`
@@ -54,7 +55,7 @@ Workflow использует эту переменную, чтобы выпол
 `infra/runners/deploy_branch.sh` поддерживает второй аргумент:
 
 - `all` (по умолчанию): legacy single-node deploy.
-- `prod-path`: `orchestrator-api`, `worker-build`, `worker-render`, `tg-bot-public` + опционально `promtail-edge`.
+- `prod-path`: `orchestrator-api`, `worker-build`, `worker-render`, `tg-bot-public` + опционально `orchestrator-api-2` (если `DEPLOY_ORCHESTRATOR_HA=true`) + опционально `promtail-edge`.
 - `infra-apps`: `tg-bot`, `asset-ui`, `finance-bot`.
 - `infra-ops`: `infra-apps` + `dozzle` + `observability` + `github-runner` (если есть соответствующие `.env`).
 
@@ -106,6 +107,7 @@ bash infra/runners/deploy_branch.sh main infra-ops
 - `REDIS_HOST`, `CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND` должны оставаться общими.
 - На реплике принудительно выставлен `ALERT_SUBSCRIBERS_ENABLED=0`, чтобы не дублировать long-polling ops-alert бота.
 - В `MODE=prod` выставляй `ORCHESTRATOR_PUBLIC_URL` на nginx/vhost endpoint, а не на конкретный контейнер.
+- Для CI включение HA делается через `Repository variable`: `DEPLOY_ORCHESTRATOR_HA=true`.
 
 Поднять primary + replica:
 
@@ -121,6 +123,22 @@ curl -fsS http://127.0.0.1:18000/health
 curl -fsS http://127.0.0.1:18001/health
 sudo nginx -t && sudo systemctl reload nginx
 ```
+
+Опциональный sync nginx snippets через CI:
+- workflow step: `Deploy Orchestrator Nginx (optional)` в обоих workflow (`deploy-current-branch.yml` и `deploy-split-main.yml`, prod job).
+- скрипт: `infra/runners/deploy_orchestrator_nginx.sh`.
+
+Нужные `Repository variables` для этого шага:
+- `ORCHESTRATOR_NGINX_DEPLOY_ENABLED=true`
+- `ORCHESTRATOR_NGINX_MAIN_ONLY=true` (рекомендуется)
+- `ORCHESTRATOR_NGINX_MAIN_BRANCH=main`
+- `ORCHESTRATOR_NGINX_UPSTREAM_TARGET=/etc/nginx/conf.d/blast_orchestrator_upstream.conf`
+- `ORCHESTRATOR_NGINX_LOCATIONS_TARGET=/etc/nginx/snippets/blast_orchestrator.locations.conf`
+- `ORCHESTRATOR_NGINX_RELOAD_CMD=sudo nginx -t && sudo systemctl reload nginx`
+
+Опционально (если шаблоны лежат не в дефолтных путях репо):
+- `ORCHESTRATOR_NGINX_UPSTREAM_TEMPLATE=/opt/blast_mj_final/infra/runners/nginx/orchestrator.upstream.conf.example`
+- `ORCHESTRATOR_NGINX_LOCATIONS_TEMPLATE=/opt/blast_mj_final/infra/runners/nginx/orchestrator.locations.conf.example`
 
 ## 4) Web UI логов по всем контейнерам (Dozzle через nginx auth)
 
@@ -237,5 +255,7 @@ Repository variables:
 - `BLAST_REPO_DIR_PROD=/opt/blast_mj_final` (или ваш путь на prod VM)
 - `BLAST_REPO_DIR_INFRA=/opt/blast_mj_final` (или ваш путь на infra VM)
 - `DEPLOY_PRUNE_OTHER_STACK=true` (опционально)
+- `DEPLOY_ORCHESTRATOR_HA=true` (опционально, включает `docker-compose.orchestrator-ha.yml` в `prod-path`)
+- `DEPLOY_ORCHESTRATOR_HA_COMPOSE_FILE=docker-compose.orchestrator-ha.yml` (опционально)
 
 Legacy workflow `.github/workflows/deploy-current-branch.yml` автоматически пропускается при `DEPLOY_SPLIT_ENABLED=true`.
