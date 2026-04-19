@@ -294,7 +294,7 @@ Legacy workflow `.github/workflows/deploy-current-branch.yml` автоматич
 - Watchdog workflow: `.github/workflows/logs-watchdog.yml`
 - Пример env: `infra/runners/.env.logs-backup.example`
 
-### 7.1 Настройка env на каждой VM
+### 7.1 Централизованный режим (рекомендуется)
 
 ```bash
 cd /opt/blast_mj_final/infra/runners
@@ -306,8 +306,9 @@ cp .env.logs-backup.example .env.logs-backup
 - `LOG_BACKUP_ENABLED=true`
 - `LOG_BACKUP_DB_DSN` указывает в тот же Postgres (схема `logs`)
 - `LOG_BACKUP_S3_BUCKET` = рабочий bucket (обычно `S3_BUCKET_ASSET_STORAGE`)
-- infra VM: `LOG_BACKUP_LOKI_ENABLED=true`
-- prod VM: `LOG_BACKUP_DOCKER_ENABLED=true` (и, при необходимости, Loki тоже)
+- logs-service VM (`blast-ops`): `LOG_BACKUP_LOKI_ENABLED=true`, `LOG_BACKUP_DOCKER_ENABLED=false`
+- prod VM (`orchestrator`): не включаем logs pipeline (`LOG_BACKUP_ENABLED=false`/без `.env.logs-backup`)
+- все контейнерные логи с prod/infra сходятся в Loki через `promtail`/`promtail-edge`, поэтому backup делается централизованно с logs-service.
 
 ### 7.2 Автоустановка systemd через deploy
 
@@ -332,7 +333,7 @@ python3 scripts/logs_pipeline.py healthcheck --max-lag-min 90
 
 ### 7.4 Watchdog
 
-`logs-watchdog.yml` запускается по расписанию и на каждом runner:
+`logs-watchdog.yml` запускается по расписанию на logs-service runner (`blast-deploy-infra`):
 - проверяет lag через `healthcheck`
 - при проблеме выполняет `systemctl start blast-logs-hourly.service`
 - фейлит job, чтобы инцидент был виден в GitHub Actions
