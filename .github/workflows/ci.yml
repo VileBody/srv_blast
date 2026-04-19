@@ -68,7 +68,8 @@ jobs:
           set -euo pipefail
           python -m py_compile \
             services/tg_bot_public/*.py \
-            scripts/migrate_credits_sqlite_to_postgres.py
+            scripts/migrate_credits_sqlite_to_postgres.py \
+            scripts/logs_pipeline.py
 
       - name: Run Windows node ops regression tests
         run: |
@@ -78,6 +79,14 @@ jobs:
             tests/test_orchestrator_windows_nodes_api.py \
             tests/test_orchestrator_windows_node_auto_disable.py \
             tests/test_windows_node_rollout.py
+
+      - name: Run logs pipeline tests
+        run: |
+          set -euo pipefail
+          python -m pytest -q \
+            tests/test_logs_pipeline_unit.py \
+            tests/test_logs_pipeline_sql_contract.py \
+            tests/test_logs_pipeline_integration.py
 
       - name: Validate landing bundle
         run: |

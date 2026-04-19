@@ -1,0 +1,11 @@
+[Unit]
+Description=Blast Logs V2 Partition Prune
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/etc/blast/logs-backup.env
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/blast/logs-backup.env
+WorkingDirectory=__REPO_DIR__
+ExecStart=/usr/bin/env bash -lc 'python3 scripts/logs_pipeline.py prune'

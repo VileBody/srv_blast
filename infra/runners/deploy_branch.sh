@@ -156,6 +156,97 @@ deploy_github_runner_compose_if_allowed() {
   deploy_runner_compose_if_present "$compose_file" "$env_file"
 }
 
+run_as_root() {
+  if [[ "$(id -u)" -eq 0 ]]; then
+    "$@"
+    return
+  fi
+  if command -v sudo >/dev/null 2>&1; then
+    sudo "$@"
+    return
+  fi
+  echo "[deploy] logs systemd setup requires root privileges or sudo"
+  return 1
+}
+
+deploy_logs_pipeline_systemd_if_present() {
+  local env_file="$RUNNERS_DIR/.env.logs-backup"
+  local units_dir="$REPO_DIR/infra/logging/systemd"
+  local target_env_file="/etc/blast/logs-backup.env"
+
+  if [[ ! -f "$env_file" ]]; then
+    echo "[deploy] skip logs pipeline systemd setup (env missing: $env_file)"
+    return 0
+  fi
+  if [[ ! -d "$units_dir" ]]; then
+    echo "[deploy] skip logs pipeline systemd setup (units dir missing: $units_dir)"
+    return 0
+  fi
+
+  local enabled_raw=""
+  enabled_raw="$(grep -E '^LOG_BACKUP_ENABLED=' "$env_file" | tail -n1 | cut -d= -f2- | tr -d '"' | xargs || true)"
+  local enabled_norm
+  enabled_norm="$(printf '%s' "$enabled_raw" | tr '[:upper:]' '[:lower:]')"
+  if [[ "$enabled_norm" != "1" && "$enabled_norm" != "true" && "$enabled_norm" != "yes" && "$enabled_norm" != "on" ]]; then
+    echo "[deploy] skip logs pipeline systemd setup (LOG_BACKUP_ENABLED is not true)"
+    return 0
+  fi
+
+  echo "[deploy] bootstrap logs schema + s3 lifecycle"
+  (
+    set -euo pipefail
+    set -a
+    # shellcheck disable=SC1090
+    . "$env_file"
+    set +a
+    cd "$REPO_DIR"
+    python3 scripts/logs_pipeline.py migrate
+    python3 scripts/logs_pipeline.py bootstrap-s3-lifecycle
+  )
+
+  local units=(
+    "blast-logs-hourly.service"
+    "blast-logs-hourly.timer"
+    "blast-logs-backfill.service"
+    "blast-logs-prune.service"
+    "blast-logs-prune.timer"
+  )
+
+  local repo_escaped
+  repo_escaped="${REPO_DIR//|/\\|}"
+  repo_escaped="${repo_escaped//&/\\&}"
+
+  local tmp_dir
+  tmp_dir="$(mktemp -d)"
+
+  local unit
+  for unit in "${units[@]}"; do
+    if [[ ! -f "$units_dir/$unit" ]]; then
+      echo "[deploy] missing logs systemd unit: $units_dir/$unit"
+      return 1
+    fi
+    sed "s|__REPO_DIR__|$repo_escaped|g" "$units_dir/$unit" > "$tmp_dir/$unit"
+  done
+
+  echo "[deploy] install logs pipeline env -> $target_env_file"
+  run_as_root mkdir -p /etc/blast
+  run_as_root install -m 600 "$env_file" "$target_env_file"
+
+  for unit in "${units[@]}"; do
+    echo "[deploy] install systemd unit /etc/systemd/system/$unit"
+    run_as_root install -m 644 "$tmp_dir/$unit" "/etc/systemd/system/$unit"
+  done
+
+  echo "[deploy] systemctl daemon-reload"
+  run_as_root systemctl daemon-reload
+  echo "[deploy] enable --now blast-logs-hourly.timer"
+  run_as_root systemctl enable --now blast-logs-hourly.timer
+  echo "[deploy] enable --now blast-logs-prune.timer"
+  run_as_root systemctl enable --now blast-logs-prune.timer
+
+  rm -rf "$tmp_dir"
+}
+
 show_status() {
   echo "[deploy] docker compose ps"
   docker compose ps
@@ -207,5 +298,7 @@ case "$DEPLOY_STACK" in
     exit 1
     ;;
 esac
+
+deploy_logs_pipeline_systemd_if_present
 
 show_status

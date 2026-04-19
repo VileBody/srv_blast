@@ -29,3 +29,4 @@ librosa>=0.10.2
 asyncpg>=0.29.0
 python-multipart>=0.0.9
 prometheus-client>=0.20.0
+docker>=7.1.0

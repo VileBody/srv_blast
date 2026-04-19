@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Blast Logs V2 Partition Prune Daily
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+Unit=blast-logs-prune.service
+
+[Install]
+WantedBy=timers.target

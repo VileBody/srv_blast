@@ -283,3 +283,56 @@ Repository variables:
 на prod VM, а не локально на runner-хосте.
 
 Legacy workflow `.github/workflows/deploy-current-branch.yml` автоматически пропускается при `DEPLOY_SPLIT_ENABLED=true`.
+
+## 7) Logs Backup V2 (PostgreSQL normalization + S3 raw backup)
+
+Что добавлено:
+
+- SQL схема: `infra/logging/sql/001_logs_schema.sql`
+- Pipeline CLI: `scripts/logs_pipeline.py`
+- Systemd units: `infra/logging/systemd/*.service|*.timer`
+- Watchdog workflow: `.github/workflows/logs-watchdog.yml`
+- Пример env: `infra/runners/.env.logs-backup.example`
+
+### 7.1 Настройка env на каждой VM
+
+```bash
+cd /opt/blast_mj_final/infra/runners
+cp .env.logs-backup.example .env.logs-backup
+# заполни LOG_BACKUP_* + S3_* значения
+```
+
+Важно:
+- `LOG_BACKUP_ENABLED=true`
+- `LOG_BACKUP_DB_DSN` указывает в тот же Postgres (схема `logs`)
+- `LOG_BACKUP_S3_BUCKET` = рабочий bucket (обычно `S3_BUCKET_ASSET_STORAGE`)
+- infra VM: `LOG_BACKUP_LOKI_ENABLED=true`
+- prod VM: `LOG_BACKUP_DOCKER_ENABLED=true` (и, при необходимости, Loki тоже)
+
+### 7.2 Автоустановка systemd через deploy
+
+`infra/runners/deploy_branch.sh` автоматически:
+- копирует `infra/runners/.env.logs-backup` -> `/etc/blast/logs-backup.env`
+- устанавливает units в `/etc/systemd/system/`
+- включает таймеры `blast-logs-hourly.timer` и `blast-logs-prune.timer`
+
+Условие: `LOG_BACKUP_ENABLED=true` в `.env.logs-backup`.
+
+### 7.3 Ручные команды (one-shot)
+
+```bash
+cd /opt/blast_mj_final
+set -a; . /etc/blast/logs-backup.env; set +a
+
+python3 scripts/logs_pipeline.py migrate
+python3 scripts/logs_pipeline.py bootstrap-s3-lifecycle
+python3 scripts/logs_pipeline.py backfill --days 30
+python3 scripts/logs_pipeline.py healthcheck --max-lag-min 90
+```
+
+### 7.4 Watchdog
+
+`logs-watchdog.yml` запускается по расписанию и на каждом runner:
+- проверяет lag через `healthcheck`
+- при проблеме выполняет `systemctl start blast-logs-hourly.service`
+- фейлит job, чтобы инцидент был виден в GitHub Actions

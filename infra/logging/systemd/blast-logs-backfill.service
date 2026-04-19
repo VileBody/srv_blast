@@ -1,0 +1,11 @@
+[Unit]
+Description=Blast Logs V2 Backfill (one-shot)
+After=network-online.target docker.service
+Wants=network-online.target
+ConditionPathExists=/etc/blast/logs-backup.env
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/blast/logs-backup.env
+WorkingDirectory=__REPO_DIR__
+ExecStart=/usr/bin/env bash -lc 'python3 scripts/logs_pipeline.py backfill --days ${LOG_BACKUP_BACKFILL_DAYS}'

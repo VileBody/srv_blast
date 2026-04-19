@@ -1,0 +1,102 @@
+name: Logs Pipeline Watchdog
+
+on:
+  schedule:
+    - cron: '*/20 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  watchdog-prod:
+    if: ${{ vars.DEPLOY_SPLIT_ENABLED == 'true' }}
+    name: Watchdog Prod Path
+    runs-on: [self-hosted, blast-deploy-prod]
+    timeout-minutes: 15
+    env:
+      REPO_DIR: ${{ vars.BLAST_REPO_DIR_PROD != '' && vars.BLAST_REPO_DIR_PROD || vars.BLAST_REPO_DIR }}
+    steps:
+      - name: Validate and run healthcheck
+        run: |
+          set -euo pipefail
+          if [ -z "${REPO_DIR:-}" ]; then
+            echo "BLAST_REPO_DIR_PROD (or BLAST_REPO_DIR) is not set"
+            exit 1
+          fi
+          if [ ! -d "$REPO_DIR/.git" ]; then
+            echo "REPO_DIR does not point to a git repo: $REPO_DIR"
+            exit 1
+          fi
+          if [ ! -f /etc/blast/logs-backup.env ]; then
+            echo "logs env not found: /etc/blast/logs-backup.env"
+            exit 1
+          fi
+
+          set -a
+          . /etc/blast/logs-backup.env
+          set +a
+
+          cd "$REPO_DIR"
+          if python3 scripts/logs_pipeline.py healthcheck --max-lag-min "${LOG_BACKUP_MAX_LAG_MIN:-90}"; then
+            echo "logs healthcheck passed on prod-path"
+            exit 0
+          fi
+
+          echo "logs healthcheck failed, trying blast-logs-hourly.service restart"
+          if [ "$(id -u)" -eq 0 ]; then
+            systemctl start blast-logs-hourly.service || true
+          elif command -v sudo >/dev/null 2>&1; then
+            sudo systemctl start blast-logs-hourly.service || true
+          else
+            echo "sudo is not available to restart blast-logs-hourly.service"
+          fi
+
+          echo "logs watchdog forced restart on prod-path"
+          exit 1
+
+  watchdog-infra:
+    if: ${{ vars.DEPLOY_SPLIT_ENABLED == 'true' }}
+    name: Watchdog Infra Ops
+    runs-on: [self-hosted, blast-deploy-infra]
+    timeout-minutes: 15
+    env:
+      REPO_DIR: ${{ vars.BLAST_REPO_DIR_INFRA != '' && vars.BLAST_REPO_DIR_INFRA || vars.BLAST_REPO_DIR }}
+    steps:
+      - name: Validate and run healthcheck
+        run: |
+          set -euo pipefail
+          if [ -z "${REPO_DIR:-}" ]; then
+            echo "BLAST_REPO_DIR_INFRA (or BLAST_REPO_DIR) is not set"
+            exit 1
+          fi
+          if [ ! -d "$REPO_DIR/.git" ]; then
+            echo "REPO_DIR does not point to a git repo: $REPO_DIR"
+            exit 1
+          fi
+          if [ ! -f /etc/blast/logs-backup.env ]; then
+            echo "logs env not found: /etc/blast/logs-backup.env"
+            exit 1
+          fi
+
+          set -a
+          . /etc/blast/logs-backup.env
+          set +a
+
+          cd "$REPO_DIR"
+          if python3 scripts/logs_pipeline.py healthcheck --max-lag-min "${LOG_BACKUP_MAX_LAG_MIN:-90}"; then
+            echo "logs healthcheck passed on infra-ops"
+            exit 0
+          fi
+
+          echo "logs healthcheck failed, trying blast-logs-hourly.service restart"
+          if [ "$(id -u)" -eq 0 ]; then
+            systemctl start blast-logs-hourly.service || true
+          elif command -v sudo >/dev/null 2>&1; then
+            sudo systemctl start blast-logs-hourly.service || true
+          else
+            echo "sudo is not available to restart blast-logs-hourly.service"
+          fi
+
+          echo "logs watchdog forced restart on infra-ops"
+          exit 1
