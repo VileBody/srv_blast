@@ -123,8 +123,10 @@ jobs:
             ORCHESTRATOR_NGINX_REMOTE_USER="${ORCHESTRATOR_NGINX_REMOTE_USER:-blast}" \
             ORCHESTRATOR_NGINX_REMOTE_PORT="${ORCHESTRATOR_NGINX_REMOTE_PORT:-22}" \
             ORCHESTRATOR_NGINX_REMOTE_SSH_KEY_PATH="$key_path" \
+            REPO_DIR="$GITHUB_WORKSPACE" \
             bash "$GITHUB_WORKSPACE/infra/runners/deploy_orchestrator_nginx_remote.sh" "$BRANCH"
           else
+            REPO_DIR="$GITHUB_WORKSPACE" \
             bash "$GITHUB_WORKSPACE/infra/runners/deploy_orchestrator_nginx.sh" "$BRANCH"
           fi
 
@@ -140,4 +142,5 @@ jobs:
           LANDING_NGINX_SYNC_MODE: ${{ vars.LANDING_NGINX_SYNC_MODE }}
         run: |
           set -euo pipefail
+          REPO_DIR="$GITHUB_WORKSPACE" \
           bash "$GITHUB_WORKSPACE/infra/runners/deploy_landing_to_nginx.sh" "$BRANCH"
