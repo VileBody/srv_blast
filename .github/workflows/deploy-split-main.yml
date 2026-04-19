@@ -61,6 +61,11 @@ jobs:
             exit 1
           fi
 
+      - name: Checkout Workflow Repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
       - name: Deploy prod-path stack
         run: |
           set -euo pipefail
@@ -93,9 +98,9 @@ jobs:
             DEPLOY_REMOTE_PORT="${DEPLOY_PROD_REMOTE_PORT:-22}" \
             DEPLOY_REMOTE_REPO_DIR="$DEPLOY_PROD_REMOTE_REPO_DIR" \
             DEPLOY_REMOTE_SSH_KEY_PATH="$key_path" \
-            bash "$REPO_DIR/infra/runners/deploy_remote_branch.sh" "$BRANCH" "prod-path"
+            bash "$GITHUB_WORKSPACE/infra/runners/deploy_remote_branch.sh" "$BRANCH" "prod-path"
           else
-            bash "$REPO_DIR/infra/runners/deploy_branch.sh" "$BRANCH" "prod-path"
+            bash "$GITHUB_WORKSPACE/infra/runners/deploy_branch.sh" "$BRANCH" "prod-path"
           fi
 
       - name: Deploy Orchestrator Nginx (optional)
@@ -111,7 +116,7 @@ jobs:
           ORCHESTRATOR_NGINX_RELOAD_CMD: ${{ vars.ORCHESTRATOR_NGINX_RELOAD_CMD }}
         run: |
           set -euo pipefail
-          bash "$REPO_DIR/infra/runners/deploy_orchestrator_nginx.sh" "$BRANCH"
+          bash "$GITHUB_WORKSPACE/infra/runners/deploy_orchestrator_nginx.sh" "$BRANCH"
 
   deploy-infra-ops:
     if: ${{ vars.DEPLOY_SPLIT_ENABLED == 'true' && (github.event_name == 'push' || inputs.target == 'all' || inputs.target == 'infra-ops') }}
@@ -138,6 +143,11 @@ jobs:
             exit 1
           fi
 
+      - name: Checkout Workflow Repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
       - name: Deploy infra-ops stack
         run: |
           set -euo pipefail
@@ -146,4 +156,4 @@ jobs:
             echo "Branch is empty"
             exit 1
           fi
-          bash "$REPO_DIR/infra/runners/deploy_branch.sh" "$BRANCH" "infra-ops"
+          bash "$GITHUB_WORKSPACE/infra/runners/deploy_branch.sh" "$BRANCH" "infra-ops"
