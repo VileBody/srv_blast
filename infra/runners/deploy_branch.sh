@@ -169,6 +169,29 @@ run_as_root() {
   return 1
 }
 
+detect_logs_python() {
+  local logs_python="/opt/blast-logs-venv/bin/python"
+  if [[ -x "$logs_python" ]]; then
+    printf '%s\n' "$logs_python"
+    return 0
+  fi
+
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "[deploy] python3 is required for logs pipeline bootstrap"
+    return 1
+  fi
+
+  echo "[deploy] bootstrap logs venv at /opt/blast-logs-venv"
+  if ! run_as_root python3 -m venv /opt/blast-logs-venv; then
+    echo "[deploy] failed to create /opt/blast-logs-venv (install python3-venv on host)"
+    return 1
+  fi
+
+  run_as_root /opt/blast-logs-venv/bin/pip install --upgrade pip
+  run_as_root /opt/blast-logs-venv/bin/pip install -r "$REPO_DIR/requirements.txt"
+  printf '%s\n' "$logs_python"
+}
+
 deploy_logs_pipeline_systemd_if_present() {
   local env_file="$RUNNERS_DIR/.env.logs-backup"
   local units_dir="$REPO_DIR/infra/logging/systemd"
@@ -213,6 +236,13 @@ deploy_logs_pipeline_systemd_if_present() {
     return 1
   fi
 
+  local logs_python
+  logs_python="$(detect_logs_python)"
+  if [[ -z "$logs_python" ]]; then
+    echo "[deploy] failed to detect logs pipeline python interpreter"
+    return 1
+  fi
+
   echo "[deploy] bootstrap logs schema + s3 lifecycle"
   (
     set -euo pipefail
@@ -221,8 +251,8 @@ deploy_logs_pipeline_systemd_if_present() {
     . "$env_file"
     set +a
     cd "$REPO_DIR"
-    python3 scripts/logs_pipeline.py migrate
-    python3 scripts/logs_pipeline.py bootstrap-s3-lifecycle
+    "$logs_python" scripts/logs_pipeline.py migrate
+    "$logs_python" scripts/logs_pipeline.py bootstrap-s3-lifecycle
   )
 
   local units=(
@@ -236,6 +266,9 @@ deploy_logs_pipeline_systemd_if_present() {
   local repo_escaped
   repo_escaped="${REPO_DIR//|/\\|}"
   repo_escaped="${repo_escaped//&/\\&}"
+  local logs_python_escaped
+  logs_python_escaped="${logs_python//|/\\|}"
+  logs_python_escaped="${logs_python_escaped//&/\\&}"
 
   local tmp_dir
   tmp_dir="$(mktemp -d)"
@@ -246,7 +279,10 @@ deploy_logs_pipeline_systemd_if_present() {
       echo "[deploy] missing logs systemd unit: $units_dir/$unit"
       return 1
     fi
-    sed "s|__REPO_DIR__|$repo_escaped|g" "$units_dir/$unit" > "$tmp_dir/$unit"
+    sed \
+      -e "s|__REPO_DIR__|$repo_escaped|g" \
+      -e "s|python3 scripts/logs_pipeline.py|$logs_python_escaped scripts/logs_pipeline.py|g" \
+      "$units_dir/$unit" > "$tmp_dir/$unit"
   done
 
   echo "[deploy] install logs pipeline env -> $target_env_file"
