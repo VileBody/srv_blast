@@ -32,6 +32,7 @@ from config.styles.artist_presets_loader import get_artists, get_genres
 
 from .admin_commands import make_admin_router
 from .admin_panel import start_admin_panel
+from .broadcast_sender import start_broadcast_workers
 from .audio_prepare import AudioPrepareResult, prepare_audio_best_effort
 from .config import SETTINGS, Settings
 from .credits_db import CreditsDB
@@ -1308,6 +1309,14 @@ class BlastBotApp:
             name="admin_panel",
         )
 
+        # Broadcast + lifecycle workers
+        bc_task, lc_task, bc_stop = await start_broadcast_workers(
+            self.credits_db, self._bot_ref,
+        )
+        self._broadcast_task = bc_task
+        self._lifecycle_task = lc_task
+        self._broadcast_stop = bc_stop
+
         self._processing_task = asyncio.create_task(self._processing_loop(), name="tg_bot_processing_loop")
         self._recovery_task = asyncio.create_task(self._recovery_loop(), name="tg_bot_recovery_loop")
         self._reminder_task = asyncio.create_task(self._reminder_loop(), name="tg_bot_reminder_loop")
@@ -1319,6 +1328,12 @@ class BlastBotApp:
 
     async def _on_shutdown(self, bot: Bot) -> None:
         del bot
+        stop_fn = getattr(self, "_broadcast_stop", None)
+        if callable(stop_fn):
+            try:
+                stop_fn()
+            except Exception:
+                pass
         for task in [
             self._processing_task,
             self._recovery_task,
@@ -1328,6 +1343,8 @@ class BlastBotApp:
             getattr(self, "_admin_panel_task", None),
             getattr(self, "_payment_poll_task", None),
             getattr(self, "_subscription_charge_task", None),
+            getattr(self, "_broadcast_task", None),
+            getattr(self, "_lifecycle_task", None),
         ]:
             if task is not None:
                 task.cancel()

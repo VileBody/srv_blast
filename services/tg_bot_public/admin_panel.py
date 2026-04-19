@@ -11,14 +11,17 @@ import shlex
 import sys
 import time
 from collections import deque
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import quote as url_quote, quote_plus
-from typing import TYPE_CHECKING
+from typing import Any, Optional, TYPE_CHECKING
+
+from .broadcast_sender import send_bot_message
 
 import httpx
 import uvicorn
 from fastapi import FastAPI, Depends, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from core.llm_worker_types import LLM_WORKER_TYPES
 from services.orchestrator.windows_node_pool import normalize_windows_urls, runtime_windows_urls_key
@@ -241,6 +244,10 @@ _BASE_HEAD = """
 <div class="header">
   <a href="/admin/" class="brand">Blast Admin</a>
   <a href="/admin/">Dashboard</a>
+  <a href="/admin/clients">Клиенты</a>
+  <a href="/admin/broadcasts">Рассылки</a>
+  <a href="/admin/lifecycle">Триггеры</a>
+  <a href="/admin/cohorts">Когорты</a>
   <a href="/admin/users">Users</a>
   <a href="/admin/activity">Activity</a>
   <a href="/admin/transactions">Transactions</a>
@@ -251,6 +258,7 @@ _BASE_HEAD = """
   <a href="/admin/render-nodes">Render Nodes</a>
   <a href="/admin/assets/" target="_blank" rel="noopener noreferrer">Assets</a>
   <a href="/admin/llm-workers">LLM Workers</a>
+  <a href="/admin/audit">Audit</a>
   <a href="/admin/obs/grafana/" target="_blank" rel="noopener noreferrer">Grafana</a>
   <form class="search-form" action="/admin/users" method="get">
     <input type="text" name="q" placeholder="Username / tg_id...">
@@ -1243,6 +1251,31 @@ def build_app(
         # Package options
         pkg_options = "".join(f'<option value="{v}">{lbl}</option>' for v, lbl in _PACKAGES.items())
 
+        # Health + CRM data
+        metrics = await credits_db.user_health_metrics(tg_id)
+        health_label, health_class = _health_label(metrics, int(user["credits"]))
+        tags = await credits_db.get_user_tags(tg_id)
+        notes = await credits_db.get_user_notes(tg_id)
+        tag_badges = " ".join(
+            f'<span class="badge badge-source">{html_mod.escape(t)}'
+            f' <a href="#" onclick="document.getElementById(\'rmtag-{html_mod.escape(t, quote=True)}\').submit();return false" '
+            f'style="color:#c0392b;margin-left:4px;text-decoration:none">&times;</a></span>'
+            f'<form id="rmtag-{html_mod.escape(t, quote=True)}" method="post" '
+            f'action="/admin/users/{tg_id}/tags/remove" style="display:none">'
+            f'<input type="hidden" name="tag" value="{html_mod.escape(t, quote=True)}"></form>'
+            for t in tags
+        )
+        notes_html = "".join(
+            f'<div style="border-left:3px solid #3498db;padding:6px 10px;margin:0.5rem 0;background:#f8f9fa">'
+            f'<div>{html_mod.escape(n["note"])}</div>'
+            f'<small style="color:#666">{n["created_at"]} · {html_mod.escape(n["created_by"] or "—")} '
+            f'· <form method="post" action="/admin/users/{tg_id}/notes/{n["id"]}/delete" style="display:inline" '
+            f'onsubmit="return confirm(\'Удалить заметку?\')">'
+            f'<button style="background:none;color:#c0392b;padding:0;font-size:0.8em;cursor:pointer;border:none">удалить</button>'
+            f'</form></small></div>'
+            for n in notes
+        )
+
         txs = await credits_db.get_transactions(tg_id, limit=50)
         tx_rows = ""
         for t in txs:
@@ -1264,13 +1297,55 @@ def build_app(
             )
 
         body = f"""
-        <p><a href="/admin/users">&laquo; Все пользователи</a></p>
+        <p><a href="/admin/users">&laquo; Все пользователи</a> |
+           <a href="/admin/clients">Клиенты</a></p>
         <div class="card">
         <h2>{html_mod.escape(uname)} (id: {tg_id})</h2>
         <p>Credits: <strong>{user['credits']}</strong> |
+           Health: <span class="badge {health_class}">{health_label}</span> |
            Этап: <span class="badge badge-stage">{stage_lbl}</span> |
            Источник: {source_badge} |
            Created: {user['created_at']} | Updated: {user['updated_at']}</p>
+        <p>Генераций всего: <b>{metrics['gens_done']}</b> · за 30д: {metrics['gens_done_30d']} ·
+           Последняя: {metrics['last_gen_at'] or '—'} ·
+           Оплат: <b>{metrics['paid_orders']}</b> на {metrics['revenue_rub']}₽</p>
+        </div>
+
+        <div class="card">
+          <h3>Теги</h3>
+          <div style="margin-bottom:0.5rem">{tag_badges or '<span style="color:#999">нет</span>'}</div>
+          <form method="post" action="/admin/users/{tg_id}/tags/add" style="display:inline">
+            <input type="text" name="tag" placeholder="vip, artist, agency..." style="width:200px" required>
+            <button type="submit">+ тег</button>
+          </form>
+        </div>
+
+        <div class="card">
+          <h3>Написать пользователю от бота</h3>
+          <form method="post" action="/admin/users/{tg_id}/message">
+            <textarea name="text" rows="3" style="width:100%;font-family:inherit"
+              placeholder="HTML-текст сообщения..." required></textarea>
+            <div style="margin-top:0.5rem">
+              <label>Parse:
+                <select name="parse_mode">
+                  <option value="HTML" selected>HTML</option>
+                  <option value="MARKDOWN">Markdown</option>
+                  <option value="">plain</option>
+                </select>
+              </label>
+              <button type="submit" class="btn-success"
+                onclick="return confirm('Отправить сообщение пользователю от имени бота?')">Отправить</button>
+            </div>
+          </form>
+        </div>
+
+        <div class="card">
+          <h3>Заметки</h3>
+          {notes_html or '<p style="color:#999">Пока нет заметок</p>'}
+          <form method="post" action="/admin/users/{tg_id}/notes/add">
+            <textarea name="note" rows="2" style="width:100%" placeholder="Контекст, договорённости, наблюдения..." required></textarea>
+            <button type="submit">+ заметка</button>
+          </form>
         </div>
 
         <div class="card">
@@ -2174,6 +2249,863 @@ def build_app(
                 log.warning("tbank notify: finance_bot income failed: %s", e)
 
         return PlainTextResponse("OK", status_code=200)
+
+    # ══════════════════════════════════════════════════════════════════
+    # Broadcasts, CRM, Cohorts, Lifecycle, Audit
+    # ══════════════════════════════════════════════════════════════════
+
+    def _aud_summary(audience: dict) -> str:
+        mode = str(audience.get("mode") or "all")
+        if mode == "all":
+            return "вся база"
+        if mode == "utm":
+            utm = audience.get("utm") or {}
+            parts = [f"{k}={v}" for k, v in utm.items() if v]
+            return "UTM: " + (", ".join(parts) if parts else "(пусто)")
+        if mode == "filter":
+            f = audience.get("filter") or {}
+            parts = []
+            if f.get("credits_min") not in (None, ""):
+                parts.append(f"credits≥{f['credits_min']}")
+            if f.get("credits_max") not in (None, ""):
+                parts.append(f"credits≤{f['credits_max']}")
+            if f.get("paid") == "yes":
+                parts.append("платили")
+            elif f.get("paid") == "no":
+                parts.append("не платили")
+            if f.get("generated") == "yes":
+                parts.append("генерили")
+            elif f.get("generated") == "no":
+                parts.append("не генерили")
+            if f.get("tag"):
+                parts.append(f"tag={f['tag']}")
+            if f.get("created_from"):
+                parts.append(f"с {f['created_from']}")
+            if f.get("created_to"):
+                parts.append(f"до {f['created_to']}")
+            return "Фильтр: " + (", ".join(parts) if parts else "(все)")
+        if mode == "manual":
+            m = audience.get("manual") or {}
+            ids_n = len(m.get("tg_ids") or [])
+            un_n = len(m.get("usernames") or [])
+            return f"Вручную: {ids_n} id + {un_n} username"
+        return mode
+
+    def _parse_manual_list(raw: str) -> dict:
+        tg_ids: list[int] = []
+        usernames: list[str] = []
+        for token in str(raw or "").replace(",", "\n").split():
+            t = token.strip().lstrip("@")
+            if not t:
+                continue
+            if t.lstrip("-").isdigit():
+                try:
+                    tg_ids.append(int(t))
+                except Exception:
+                    pass
+            else:
+                usernames.append(t.lower())
+        return {"tg_ids": tg_ids, "usernames": usernames}
+
+    def _parse_buttons(raw: str) -> list[dict]:
+        out: list[dict] = []
+        for line in str(raw or "").splitlines():
+            line = line.strip()
+            if not line or "|" not in line:
+                continue
+            text, url = line.split("|", 1)
+            text = text.strip()
+            url = url.strip()
+            if text and url:
+                out.append({"text": text, "url": url})
+        return out
+
+    def _format_buttons(buttons: list[dict]) -> str:
+        return "\n".join(f"{b.get('text','')}|{b.get('url','')}" for b in (buttons or []))
+
+    def _health_label(metrics: dict, credits: int) -> tuple[str, str]:
+        """Return (label, css_class) for health score.
+        Based on days since last activity + generations last 30d + paid.
+        """
+        last = metrics.get("_last_activity_raw")
+        if last is None:
+            return ("Новый", "badge-stage")
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        try:
+            dt = last if isinstance(last, datetime) else None
+            days = (now - dt).days if dt else 999
+        except Exception:
+            days = 999
+        gens = int(metrics.get("gens_done_30d") or 0)
+        paid = int(metrics.get("paid_orders") or 0)
+        if days <= 7 and (gens >= 1 or credits >= 3):
+            return ("Активен", "badge-ok")
+        if days <= 21:
+            return ("Остывает", "badge-stage")
+        if paid > 0:
+            return ("Потерян", "badge-zero")
+        return ("Холодный", "badge-zero")
+
+    def _parse_dt_local(value: str) -> Optional[datetime]:
+        s = str(value or "").strip()
+        if not s:
+            return None
+        for fmt in ("%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S"):
+            try:
+                return datetime.strptime(s, fmt)
+            except ValueError:
+                continue
+        return None
+
+    # ── Broadcasts: list ──────────────────────────────────────────────
+
+    @app.get("/admin/broadcasts", response_class=HTMLResponse)
+    async def broadcasts_list(request: Request, _user: str = Depends(_check_auth)) -> str:
+        page = _query_int(request, "page", default=1, min_value=1, max_value=10_000)
+        per_page = 50
+        rows = await credits_db.list_broadcasts(limit=per_page, offset=(page - 1) * per_page)
+        total = await credits_db.count_broadcasts()
+        total_pages = max(1, (total + per_page - 1) // per_page)
+
+        status_badges = {
+            "draft": '<span class="badge badge-stage">черновик</span>',
+            "scheduled": '<span class="badge badge-source">запланирована</span>',
+            "sending": '<span class="badge badge-stage">отправляется</span>',
+            "done": '<span class="badge badge-ok">готово</span>',
+            "paused": '<span class="badge badge-source">пауза</span>',
+            "cancelled": '<span class="badge badge-zero">отменена</span>',
+        }
+        tr = []
+        for r in rows:
+            sent = r["sent_count"]
+            fail = r["failed_count"]
+            size = r["audience_size"]
+            progress = f"{sent}/{size}" if size else f"{sent}"
+            fail_str = f' <span style="color:#c0392b">(–{fail})</span>' if fail else ""
+            tr.append(
+                f"<tr><td><a href='/admin/broadcasts/{r['id']}'>#{r['id']}</a></td>"
+                f"<td>{html_mod.escape(r['title'])}</td>"
+                f"<td>{status_badges.get(r['status'], html_mod.escape(r['status']))}</td>"
+                f"<td>{progress}{fail_str}</td>"
+                f"<td>{html_mod.escape(r['schedule_at'] or '—')}</td>"
+                f"<td>{html_mod.escape(r['created_by'] or '—')}</td>"
+                f"<td>{r['created_at']}</td></tr>"
+            )
+
+        body = f"""
+        <div class="card">
+        <a class="btn btn-success" href="/admin/broadcasts/new">+ Новая рассылка</a>
+        <p style="color:#666;margin-top:0.8rem">
+          Создание сообщения от имени бота, выбор аудитории (вся база / UTM / фильтр / вручную),
+          планирование и бэклог. Медиа поддерживается через URL или file_id.
+        </p>
+        </div>
+        <div class="card">
+        <div class="table-wrap"><table>
+        <tr><th>#</th><th>Название</th><th>Статус</th><th>Доставлено</th><th>Запланирована</th><th>Автор</th><th>Создана</th></tr>
+        {''.join(tr) if tr else '<tr><td colspan=7>Пока нет рассылок</td></tr>'}
+        </table></div>
+        {_pagination_html(page, total_pages, base_url='?')}
+        </div>
+        """
+        return _page("Рассылки", body)
+
+    # ── Broadcasts: create form ───────────────────────────────────────
+
+    @app.get("/admin/broadcasts/new", response_class=HTMLResponse)
+    async def broadcasts_new_form(_user: str = Depends(_check_auth)) -> str:
+        tags = await credits_db.list_all_tags()
+        tag_opts = "".join(
+            f'<option value="{html_mod.escape(t["tag"])}">{html_mod.escape(t["tag"])} ({t["count"]})</option>'
+            for t in tags
+        )
+        utm_sources = await credits_db.distinct_utm_values("source", limit=200)
+        utm_campaigns = await credits_db.distinct_utm_values("campaign", limit=200)
+        src_opts = "".join(f'<option value="{html_mod.escape(v)}">{html_mod.escape(v)}</option>' for v in utm_sources)
+        camp_opts = "".join(f'<option value="{html_mod.escape(v)}">{html_mod.escape(v)}</option>' for v in utm_campaigns)
+
+        body = f"""
+        <div class="card">
+        <form method="post" action="/admin/broadcasts/new">
+          <h3>1. Сообщение</h3>
+          <label>Название (для бэклога): <input type="text" name="title" required style="width:400px"></label><br><br>
+          <label>Текст (HTML разрешён):<br>
+            <textarea name="text" rows="6" style="width:100%;font-family:inherit" required></textarea>
+          </label><br>
+          <label>Parse mode:
+            <select name="parse_mode">
+              <option value="HTML" selected>HTML</option>
+              <option value="MARKDOWN">Markdown</option>
+              <option value="">plain</option>
+            </select>
+          </label><br><br>
+
+          <h3>2. Медиа (опционально)</h3>
+          <p style="color:#666;font-size:0.85em">
+            Для фото/видео: паст URL публичной ссылки <b>или</b> Telegram file_id.
+            Чтобы получить file_id — отправь медиа боту-админке, он ответит id в логах (см. ниже «тест на себя»).
+          </p>
+          <label>Тип:
+            <select name="media_type">
+              <option value="">без медиа</option>
+              <option value="photo">photo</option>
+              <option value="video">video</option>
+              <option value="animation">animation (gif)</option>
+              <option value="document">document</option>
+            </select>
+          </label>
+          <label>URL: <input type="text" name="media_url" placeholder="https://..." style="width:380px"></label><br>
+          <label>или file_id: <input type="text" name="media_file_id" placeholder="AgACAg..." style="width:420px"></label><br><br>
+
+          <h3>3. Кнопки (опционально)</h3>
+          <p style="color:#666;font-size:0.85em">По одной на строку, формат: <code>Текст | https://url</code></p>
+          <textarea name="buttons_raw" rows="3" style="width:100%;font-family:monospace"
+            placeholder="Открыть бот | https://t.me/your_bot&#10;Сайт | https://blast808.com"></textarea><br><br>
+
+          <h3>4. Аудитория</h3>
+          <label><input type="radio" name="mode" value="all" checked> Вся база</label><br>
+          <label><input type="radio" name="mode" value="utm"> По UTM</label>
+          <span style="margin-left:1em">
+            source: <input list="ds_src" name="utm_source" style="width:160px">
+            <datalist id="ds_src">{src_opts}</datalist>
+            campaign: <input list="ds_camp" name="utm_campaign" style="width:160px">
+            <datalist id="ds_camp">{camp_opts}</datalist>
+            medium: <input type="text" name="utm_medium" style="width:100px">
+            content: <input type="text" name="utm_content" style="width:120px">
+          </span><br>
+          <label><input type="radio" name="mode" value="filter"> Фильтр по базе</label>
+          <span style="margin-left:1em">
+            credits≥ <input type="number" name="credits_min" style="width:60px">
+            credits≤ <input type="number" name="credits_max" style="width:60px">
+            платил:
+            <select name="paid"><option value="any">—</option><option value="yes">да</option><option value="no">нет</option></select>
+            генерил:
+            <select name="generated"><option value="any">—</option><option value="yes">да</option><option value="no">нет</option></select>
+            tag: <select name="tag"><option value="">—</option>{tag_opts}</select>
+            с: <input type="date" name="created_from">
+            до: <input type="date" name="created_to">
+          </span><br>
+          <label><input type="radio" name="mode" value="manual"> Точечно</label>
+          <span style="margin-left:1em">
+            <input type="text" name="manual_raw" placeholder="@username, 123456789, ..." style="width:560px">
+          </span><br><br>
+          <label><input type="checkbox" name="exclude_blocked" checked> Исключить тех, кто блокнул бота</label><br><br>
+
+          <h3>5. Запуск</h3>
+          <label><input type="radio" name="when" value="draft" checked> Сохранить черновик</label><br>
+          <label><input type="radio" name="when" value="now"> Отправить сейчас</label><br>
+          <label><input type="radio" name="when" value="schedule"> Запланировать на:
+            <input type="datetime-local" name="schedule_at"> <small>(UTC)</small>
+          </label><br><br>
+
+          <button type="submit" class="btn-success">Создать</button>
+          <a href="/admin/broadcasts" style="margin-left:1rem">Отмена</a>
+        </form>
+        </div>
+        """
+        return _page("Новая рассылка", body)
+
+    @app.post("/admin/broadcasts/new")
+    async def broadcasts_new_submit(
+        title: str = Form(...),
+        text: str = Form(""),
+        parse_mode: str = Form("HTML"),
+        media_type: str = Form(""),
+        media_url: str = Form(""),
+        media_file_id: str = Form(""),
+        buttons_raw: str = Form(""),
+        mode: str = Form("all"),
+        utm_source: str = Form(""),
+        utm_medium: str = Form(""),
+        utm_campaign: str = Form(""),
+        utm_content: str = Form(""),
+        credits_min: str = Form(""),
+        credits_max: str = Form(""),
+        paid: str = Form("any"),
+        generated: str = Form("any"),
+        tag: str = Form(""),
+        created_from: str = Form(""),
+        created_to: str = Form(""),
+        manual_raw: str = Form(""),
+        exclude_blocked: str = Form(""),
+        when: str = Form("draft"),
+        schedule_at: str = Form(""),
+        _user: str = Depends(_check_auth),
+    ) -> RedirectResponse:
+        audience: dict = {"mode": mode, "exclude_blocked": bool(exclude_blocked)}
+        if mode == "utm":
+            audience["utm"] = {
+                "source": utm_source.strip(), "medium": utm_medium.strip(),
+                "campaign": utm_campaign.strip(), "content": utm_content.strip(),
+            }
+        elif mode == "filter":
+            audience["filter"] = {
+                "credits_min": credits_min.strip() or None,
+                "credits_max": credits_max.strip() or None,
+                "paid": paid, "generated": generated,
+                "tag": tag.strip(),
+                "created_from": created_from.strip() or None,
+                "created_to": created_to.strip() or None,
+            }
+        elif mode == "manual":
+            audience["manual"] = _parse_manual_list(manual_raw)
+
+        buttons = _parse_buttons(buttons_raw)
+        sched_dt = _parse_dt_local(schedule_at) if when == "schedule" else None
+
+        bid = await credits_db.create_broadcast(
+            title=title, text=text, parse_mode=parse_mode,
+            media_type=media_type, media_file_id=media_file_id, media_url=media_url,
+            buttons=buttons, audience=audience, schedule_at=sched_dt,
+            created_by=_user,
+        )
+        await credits_db.audit_log(_user, "broadcast_create", str(bid), _aud_summary(audience))
+
+        if when == "now":
+            # Resolve audience, seed, mark sending — worker picks up.
+            ids = await credits_db.resolve_audience(audience)
+            await credits_db.seed_broadcast_deliveries(bid, ids)
+            await credits_db.set_broadcast_status(
+                bid, "sending", started_at=datetime.now(timezone.utc).replace(tzinfo=None),
+                audience_size=len(ids),
+            )
+            await credits_db.audit_log(_user, "broadcast_start", str(bid), f"audience={len(ids)}")
+        elif when == "schedule" and sched_dt is not None:
+            ids = await credits_db.resolve_audience(audience)
+            await credits_db.set_broadcast_status(bid, "scheduled", audience_size=len(ids))
+            await credits_db.audit_log(_user, "broadcast_schedule", str(bid), f"at={sched_dt} audience={len(ids)}")
+        return RedirectResponse(f"/admin/broadcasts/{bid}", status_code=303)
+
+    # ── Broadcasts: detail ────────────────────────────────────────────
+
+    @app.get("/admin/broadcasts/{bid}", response_class=HTMLResponse)
+    async def broadcasts_detail(bid: int, _user: str = Depends(_check_auth)) -> str:
+        bc = await credits_db.get_broadcast(bid)
+        if not bc:
+            raise HTTPException(404, "Broadcast not found")
+
+        deliveries_sent = await credits_db.get_broadcast_deliveries(bid, status="sent", limit=20)
+        deliveries_fail = await credits_db.get_broadcast_deliveries(bid, status="failed", limit=20)
+        deliveries_blk = await credits_db.get_broadcast_deliveries(bid, status="blocked", limit=20)
+
+        buttons_html = "".join(
+            f'<a class="btn" href="{html_mod.escape(b.get("url",""), quote=True)}" target="_blank">{html_mod.escape(b.get("text",""))}</a> '
+            for b in (bc["buttons"] or [])
+        )
+        media_html = ""
+        if bc["media_type"]:
+            src = bc["media_url"] or bc["media_file_id"]
+            media_html = f"<p><b>Медиа:</b> {html_mod.escape(bc['media_type'])} — <code>{html_mod.escape(src)}</code></p>"
+
+        action_buttons = []
+        if bc["status"] == "draft":
+            action_buttons.append(
+                f'<form method="post" action="/admin/broadcasts/{bid}/send" '
+                f'onsubmit="return confirm(\'Запустить рассылку сейчас?\')">'
+                f'<button class="btn-success">Запустить сейчас</button></form>'
+            )
+            action_buttons.append(
+                f'<form method="post" action="/admin/broadcasts/{bid}/delete" '
+                f'onsubmit="return confirm(\'Удалить черновик?\')">'
+                f'<button class="btn-danger">Удалить</button></form>'
+            )
+        if bc["status"] == "sending":
+            action_buttons.append(
+                f'<form method="post" action="/admin/broadcasts/{bid}/pause"><button>Пауза</button></form>'
+            )
+            action_buttons.append(
+                f'<form method="post" action="/admin/broadcasts/{bid}/cancel" '
+                f'onsubmit="return confirm(\'Отменить рассылку? Недоставленные будут пропущены\')">'
+                f'<button class="btn-danger">Отменить</button></form>'
+            )
+        if bc["status"] == "paused":
+            action_buttons.append(
+                f'<form method="post" action="/admin/broadcasts/{bid}/send"><button class="btn-success">Продолжить</button></form>'
+            )
+            action_buttons.append(
+                f'<form method="post" action="/admin/broadcasts/{bid}/cancel"><button class="btn-danger">Отменить</button></form>'
+            )
+        if bc["status"] == "scheduled":
+            action_buttons.append(
+                f'<form method="post" action="/admin/broadcasts/{bid}/cancel"><button class="btn-danger">Отменить</button></form>'
+            )
+        if bc["status"] in ("done", "cancelled"):
+            action_buttons.append(
+                f'<form method="post" action="/admin/broadcasts/{bid}/delete" '
+                f'onsubmit="return confirm(\'Удалить рассылку и её delivery-лог?\')">'
+                f'<button class="btn-danger">Удалить</button></form>'
+            )
+        action_buttons.append(
+            f'<form method="post" action="/admin/broadcasts/{bid}/test">'
+            f'<input type="text" name="target" placeholder="tg_id или @username" style="width:220px">'
+            f'<button>Тест</button></form>'
+        )
+
+        def _dtable(label: str, rows: list, color: str) -> str:
+            if not rows:
+                return f"<h4 style='color:{color}'>{label}: 0</h4>"
+            trs = "".join(
+                f"<tr><td><a href='/admin/users/{r['tg_id']}'>{('@' + r['username']) if r['username'] else r['tg_id']}</a></td>"
+                f"<td>{html_mod.escape(r['error'] or '—')}</td><td>{r['sent_at'] or '—'}</td></tr>"
+                for r in rows
+            )
+            return (
+                f"<h4 style='color:{color}'>{label}: {len(rows)}</h4>"
+                f"<table><tr><th>User</th><th>Error</th><th>At</th></tr>{trs}</table>"
+            )
+
+        body = f"""
+        <p><a href="/admin/broadcasts">&laquo; Все рассылки</a></p>
+        <div class="card">
+          <h2>#{bc['id']} — {html_mod.escape(bc['title'])}</h2>
+          <p>Статус: <b>{html_mod.escape(bc['status'])}</b> |
+             Создана: {bc['created_at']} ({html_mod.escape(bc['created_by'] or '—')}) |
+             Запланирована: {html_mod.escape(bc['schedule_at'] or '—')}</p>
+          <p>Аудитория: {html_mod.escape(_aud_summary(bc['audience']))} ({bc['audience_size']} чел.)</p>
+          <p>Отправлено: <b>{bc['sent_count']}</b> · Ошибок: {bc['failed_count']} · Заблокировали: {bc['blocked_count']}</p>
+          <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.5rem">{' '.join(action_buttons)}</div>
+        </div>
+
+        <div class="card">
+          <h3>Превью</h3>
+          {media_html}
+          <pre style="white-space:pre-wrap;background:#f8f9fa;padding:1rem;border-radius:6px">{html_mod.escape(bc['text'])}</pre>
+          <div>{buttons_html}</div>
+        </div>
+
+        <div class="card">
+          {_dtable('Доставлено', deliveries_sent, '#27ae60')}
+          {_dtable('Ошибки', deliveries_fail, '#e74c3c')}
+          {_dtable('Заблокировали', deliveries_blk, '#7f8c8d')}
+        </div>
+        """
+        return _page(f"Рассылка #{bc['id']}", body)
+
+    @app.post("/admin/broadcasts/{bid}/send")
+    async def broadcasts_send(bid: int, _user: str = Depends(_check_auth)) -> RedirectResponse:
+        bc = await credits_db.get_broadcast(bid)
+        if not bc:
+            raise HTTPException(404)
+        # If switching from draft/paused/scheduled → sending
+        if bc["status"] == "draft":
+            ids = await credits_db.resolve_audience(bc["audience"])
+            await credits_db.seed_broadcast_deliveries(bid, ids)
+            await credits_db.set_broadcast_status(
+                bid, "sending", started_at=datetime.now(timezone.utc).replace(tzinfo=None),
+                audience_size=len(ids),
+            )
+        else:
+            await credits_db.set_broadcast_status(bid, "sending")
+        await credits_db.audit_log(_user, "broadcast_start", str(bid))
+        return RedirectResponse(f"/admin/broadcasts/{bid}", status_code=303)
+
+    @app.post("/admin/broadcasts/{bid}/pause")
+    async def broadcasts_pause(bid: int, _user: str = Depends(_check_auth)) -> RedirectResponse:
+        await credits_db.set_broadcast_status(bid, "paused")
+        await credits_db.audit_log(_user, "broadcast_pause", str(bid))
+        return RedirectResponse(f"/admin/broadcasts/{bid}", status_code=303)
+
+    @app.post("/admin/broadcasts/{bid}/cancel")
+    async def broadcasts_cancel(bid: int, _user: str = Depends(_check_auth)) -> RedirectResponse:
+        await credits_db.set_broadcast_status(
+            bid, "cancelled", finished_at=datetime.now(timezone.utc).replace(tzinfo=None),
+        )
+        await credits_db.audit_log(_user, "broadcast_cancel", str(bid))
+        return RedirectResponse(f"/admin/broadcasts/{bid}", status_code=303)
+
+    @app.post("/admin/broadcasts/{bid}/delete")
+    async def broadcasts_delete(bid: int, _user: str = Depends(_check_auth)) -> RedirectResponse:
+        await credits_db.delete_broadcast(bid)
+        await credits_db.audit_log(_user, "broadcast_delete", str(bid))
+        return RedirectResponse("/admin/broadcasts", status_code=303)
+
+    @app.post("/admin/broadcasts/{bid}/test")
+    async def broadcasts_test(
+        bid: int, target: str = Form(""), _user: str = Depends(_check_auth),
+    ) -> RedirectResponse:
+        bc = await credits_db.get_broadcast(bid)
+        if not bc:
+            raise HTTPException(404)
+        if not bot_ref or not bot_ref[0]:
+            raise HTTPException(503, "Bot not ready")
+        tg_id = 0
+        tgt = str(target or "").strip().lstrip("@")
+        if tgt.lstrip("-").isdigit():
+            tg_id = int(tgt)
+        elif tgt:
+            found = await credits_db.search_users(tgt, limit=1)
+            if found:
+                tg_id = int(found[0]["tg_id"])
+        if tg_id <= 0:
+            tg_id = int(getattr(settings, "manager_chat_id", 0) or 0)
+        if tg_id <= 0:
+            raise HTTPException(400, "Укажи tg_id/@username для теста")
+        try:
+            await send_bot_message(
+                bot_ref[0], tg_id,
+                text=bc["text"], parse_mode=bc["parse_mode"],
+                media_type=bc["media_type"], media_file_id=bc["media_file_id"], media_url=bc["media_url"],
+                buttons=bc["buttons"],
+            )
+            await credits_db.audit_log(_user, "broadcast_test", str(bid), f"to={tg_id}")
+        except Exception as e:
+            await credits_db.audit_log(_user, "broadcast_test_fail", str(bid), f"to={tg_id} err={e}")
+            raise HTTPException(500, f"Test send failed: {e}")
+        return RedirectResponse(f"/admin/broadcasts/{bid}", status_code=303)
+
+    @app.post("/admin/broadcasts/preview")
+    async def broadcasts_audience_preview(request: Request, _user: str = Depends(_check_auth)) -> JSONResponse:
+        try:
+            data = await request.json()
+        except Exception:
+            data = {}
+        ids = await credits_db.resolve_audience(data or {"mode": "all"})
+        return JSONResponse({"count": len(ids)})
+
+    # ── Clients (CRM tab) ─────────────────────────────────────────────
+
+    @app.get("/admin/clients", response_class=HTMLResponse)
+    async def clients_list(request: Request, _user: str = Depends(_check_auth)) -> str:
+        page = _query_int(request, "page", default=1, min_value=1, max_value=10_000)
+        min_c = _query_int(request, "min_credits", default=5, min_value=1, max_value=10_000)
+        tag_filter = str(request.query_params.get("tag") or "").strip()
+        sort = str(request.query_params.get("sort") or "credits")
+        per_page = 50
+
+        summary = await credits_db.clients_summary(min_credits=min_c)
+        rows = await credits_db.list_clients(
+            min_credits=min_c, limit=per_page, offset=(page - 1) * per_page,
+            tag=tag_filter, sort=sort,
+        )
+        total = await credits_db.count_clients(min_credits=min_c, tag=tag_filter)
+        total_pages = max(1, (total + per_page - 1) // per_page)
+        tags_map = await credits_db.get_tags_for_users([r["tg_id"] for r in rows])
+        all_tags = await credits_db.list_all_tags()
+
+        tag_opts = '<option value="">— все теги —</option>' + "".join(
+            f'<option value="{html_mod.escape(t["tag"])}" '
+            f'{"selected" if t["tag"] == tag_filter else ""}>{html_mod.escape(t["tag"])} ({t["count"]})</option>'
+            for t in all_tags
+        )
+        sort_opts = "".join(
+            f'<option value="{v}" {"selected" if v == sort else ""}>{lbl}</option>'
+            for v, lbl in (("credits", "по балансу"), ("recent", "по активности"), ("oldest", "старые"))
+        )
+
+        tr = []
+        for r in rows:
+            tags = tags_map.get(r["tg_id"], [])
+            tag_badges = " ".join(f'<span class="badge badge-source">{html_mod.escape(t)}</span>' for t in tags)
+            uname = f"@{r['username']}" if r['username'] else str(r['tg_id'])
+            tr.append(
+                f"<tr><td><a href='/admin/users/{r['tg_id']}'>{html_mod.escape(uname)}</a></td>"
+                f"<td><b>{r['credits']}</b></td>"
+                f"<td>{r['gens_done']}</td>"
+                f"<td>{r['revenue_rub']}₽</td>"
+                f"<td>{html_mod.escape(r['last_activity_at'] or '—')}</td>"
+                f"<td>{html_mod.escape(r['first_utm_source'] or '—')}</td>"
+                f"<td>{tag_badges}</td></tr>"
+            )
+
+        body = f"""
+        <div class="card">
+          <h3>Сводка</h3>
+          <div class="stage-grid">
+            <div class="stage-chip"><div class="count">{summary['clients_count']}</div><div class="label">клиентов</div></div>
+            <div class="stage-chip"><div class="count">{summary['credits_on_balance']}</div><div class="label">кредитов на балансе</div></div>
+            <div class="stage-chip"><div class="count">{summary['active_7d']}</div><div class="label">активны за 7 дней</div></div>
+            <div class="stage-chip"><div class="count">{summary['dormant_14d']}</div><div class="label">спят 14+ дней</div></div>
+            <div class="stage-chip"><div class="count">{summary['revenue_rub_total']}₽</div><div class="label">выручка с клиентов</div></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <form method="get" style="display:inline">
+            <label>Порог credits ≥ <input type="number" name="min_credits" value="{min_c}" style="width:70px" min="1"></label>
+            <label>Тег: <select name="tag">{tag_opts}</select></label>
+            <label>Сортировка: <select name="sort">{sort_opts}</select></label>
+            <button type="submit">Применить</button>
+          </form>
+          <a href="/admin/clients/export?min_credits={min_c}&tag={url_quote(tag_filter)}" class="btn" style="float:right">Экспорт CSV</a>
+        </div>
+
+        <div class="card">
+          <div class="table-wrap"><table>
+            <tr><th>User</th><th>Баланс</th><th>Генераций</th><th>Выручка</th>
+                <th>Последняя активность</th><th>UTM source</th><th>Теги</th></tr>
+            {''.join(tr) if tr else '<tr><td colspan=7>Клиентов пока нет — поднимите порог ниже.</td></tr>'}
+          </table></div>
+          {_pagination_html(page, total_pages, base_url=f'?min_credits={min_c}&tag={url_quote(tag_filter)}&sort={sort}&')}
+        </div>
+
+        <div class="info-box">
+          <b>CRM-идеи</b> для этой вкладки: кликай по клиенту → откроется карточка с таймлайном, тегами,
+          заметками, health-score и кнопкой «написать от бота». Автоматические триггеры настраиваются
+          в <a href="/admin/lifecycle">Триггеры</a>.
+        </div>
+        """
+        return _page("Клиенты (CRM)", body)
+
+    @app.get("/admin/clients/export", response_class=PlainTextResponse)
+    async def clients_export(request: Request, _user: str = Depends(_check_auth)) -> PlainTextResponse:
+        min_c = _query_int(request, "min_credits", default=5, min_value=1, max_value=10_000)
+        tag = str(request.query_params.get("tag") or "").strip()
+        rows = await credits_db.list_clients(min_credits=min_c, limit=10_000, offset=0, tag=tag, sort="credits")
+        lines = ["tg_id,username,credits,gens_done,revenue_rub,last_activity,first_utm_source,first_utm_campaign,created_at"]
+        for r in rows:
+            def esc(v: Any) -> str:
+                s = str(v or "").replace('"', '""')
+                return f'"{s}"' if ("," in s or '"' in s) else s
+            lines.append(",".join([
+                str(r["tg_id"]), esc(r["username"]), str(r["credits"]), str(r["gens_done"]),
+                str(r["revenue_rub"]), esc(r["last_activity_at"]),
+                esc(r["first_utm_source"]), esc(r["first_utm_campaign"]), esc(r["created_at"]),
+            ]))
+        return PlainTextResponse(
+            "\n".join(lines),
+            headers={"Content-Disposition": 'attachment; filename="clients.csv"', "Content-Type": "text/csv"},
+        )
+
+    # ── User card extensions: tags, notes, send message ───────────────
+
+    @app.post("/admin/users/{tg_id}/tags/add")
+    async def user_tag_add(tg_id: int, tag: str = Form(...), _user: str = Depends(_check_auth)) -> RedirectResponse:
+        ok = await credits_db.add_user_tag(tg_id, tag, created_by=_user)
+        if ok:
+            await credits_db.audit_log(_user, "tag_add", str(tg_id), tag)
+        return RedirectResponse(f"/admin/users/{tg_id}", status_code=303)
+
+    @app.post("/admin/users/{tg_id}/tags/remove")
+    async def user_tag_remove(tg_id: int, tag: str = Form(...), _user: str = Depends(_check_auth)) -> RedirectResponse:
+        ok = await credits_db.remove_user_tag(tg_id, tag)
+        if ok:
+            await credits_db.audit_log(_user, "tag_remove", str(tg_id), tag)
+        return RedirectResponse(f"/admin/users/{tg_id}", status_code=303)
+
+    @app.post("/admin/users/{tg_id}/notes/add")
+    async def user_note_add(tg_id: int, note: str = Form(...), _user: str = Depends(_check_auth)) -> RedirectResponse:
+        nid = await credits_db.add_user_note(tg_id, note, created_by=_user)
+        if nid:
+            await credits_db.audit_log(_user, "note_add", str(tg_id), f"id={nid}")
+        return RedirectResponse(f"/admin/users/{tg_id}", status_code=303)
+
+    @app.post("/admin/users/{tg_id}/notes/{nid}/delete")
+    async def user_note_delete(tg_id: int, nid: int, _user: str = Depends(_check_auth)) -> RedirectResponse:
+        if await credits_db.delete_user_note(nid):
+            await credits_db.audit_log(_user, "note_delete", str(tg_id), f"id={nid}")
+        return RedirectResponse(f"/admin/users/{tg_id}", status_code=303)
+
+    @app.post("/admin/users/{tg_id}/message")
+    async def user_send_message(
+        tg_id: int, text: str = Form(...), parse_mode: str = Form("HTML"),
+        _user: str = Depends(_check_auth),
+    ) -> RedirectResponse:
+        if not bot_ref or not bot_ref[0]:
+            raise HTTPException(503, "Bot not ready")
+        msg = str(text or "").strip()
+        if not msg:
+            return RedirectResponse(f"/admin/users/{tg_id}", status_code=303)
+        try:
+            await send_bot_message(bot_ref[0], tg_id, text=msg, parse_mode=parse_mode)
+            await credits_db.audit_log(_user, "dm_send", str(tg_id), f"len={len(msg)}")
+            await credits_db.log_event(tg_id, "admin_dm", f"by={_user}")
+        except Exception as e:
+            await credits_db.audit_log(_user, "dm_fail", str(tg_id), str(e)[:200])
+            raise HTTPException(500, f"Send failed: {e}")
+        return RedirectResponse(f"/admin/users/{tg_id}", status_code=303)
+
+    # ── Cohorts ───────────────────────────────────────────────────────
+
+    @app.get("/admin/cohorts", response_class=HTMLResponse)
+    async def cohorts_view(request: Request, _user: str = Depends(_check_auth)) -> str:
+        months = _query_int(request, "months", default=12, min_value=1, max_value=36)
+        rows = await credits_db.cohort_monthly(months=months)
+
+        tr = []
+        for r in rows:
+            size = r["size"] or 1
+            conv = (100.0 * r["paid_users"] / size) if size else 0.0
+            gen_pct = (100.0 * r["generated_users"] / size) if size else 0.0
+            arpu = (r["revenue_rub"] / r["paid_users"]) if r["paid_users"] else 0.0
+            tr.append(
+                f"<tr><td>{r['cohort']}</td>"
+                f"<td>{r['size']}</td>"
+                f"<td>{r['generated_users']} ({gen_pct:.1f}%)</td>"
+                f"<td>{r['paid_users']} ({conv:.1f}%)</td>"
+                f"<td>{r['revenue_rub']}₽</td>"
+                f"<td>{arpu:.0f}₽</td></tr>"
+            )
+
+        body = f"""
+        <div class="card">
+          <form method="get">
+            <label>Глубина: <input type="number" name="months" value="{months}" min="1" max="36" style="width:70px"> мес.</label>
+            <button type="submit">Обновить</button>
+          </form>
+        </div>
+        <div class="card">
+          <div class="table-wrap"><table>
+            <tr><th>Когорта</th><th>Размер</th><th>Сгенерили хоть раз</th>
+                <th>Оплатили</th><th>Выручка</th><th>ARPPU</th></tr>
+            {''.join(tr) if tr else '<tr><td colspan=6>Нет данных</td></tr>'}
+          </table></div>
+          <p style="color:#666;font-size:0.85em">
+            Когорта = месяц первой регистрации. ARPPU = выручка / кол-во оплативших. Конверсия считается
+            от размера когорты.
+          </p>
+        </div>
+        """
+        return _page("Когорты", body)
+
+    # ── Lifecycle rules ───────────────────────────────────────────────
+
+    _TRIGGER_LABELS = {
+        "balance_low": "Баланс просел",
+        "inactive": "Не заходил N дней",
+        "generated_not_paid": "Генерил, но не платил",
+    }
+
+    @app.get("/admin/lifecycle", response_class=HTMLResponse)
+    async def lifecycle_list(_user: str = Depends(_check_auth)) -> str:
+        rules = await credits_db.list_lifecycle_rules()
+        tr = []
+        for r in rules:
+            trig_lbl = _TRIGGER_LABELS.get(r["trigger_type"], r["trigger_type"])
+            trig_params = ", ".join(f"{k}={v}" for k, v in (r["trigger"] or {}).items())
+            enabled_badge = (
+                '<span class="badge badge-ok">включен</span>' if r["enabled"]
+                else '<span class="badge badge-zero">выключен</span>'
+            )
+            tr.append(
+                f"<tr><td>#{r['id']}</td><td>{html_mod.escape(r['name'])}</td>"
+                f"<td>{trig_lbl}<br><small>{html_mod.escape(trig_params)}</small></td>"
+                f"<td>{r['cooldown_days']} дн.</td>"
+                f"<td>{r['fired_count']}</td>"
+                f"<td>{r['last_run_at'] or '—'}</td>"
+                f"<td>{enabled_badge}</td>"
+                f"<td>"
+                f"<form method='post' action='/admin/lifecycle/{r['id']}/toggle' style='display:inline'>"
+                f"<button>{'Выключить' if r['enabled'] else 'Включить'}</button></form> "
+                f"<form method='post' action='/admin/lifecycle/{r['id']}/delete' style='display:inline' "
+                f"onsubmit=\"return confirm('Удалить правило?')\"><button class='btn-danger'>Удалить</button></form>"
+                f"</td></tr>"
+            )
+
+        body = f"""
+        <div class="card">
+          <h3>Добавить правило</h3>
+          <form method="post" action="/admin/lifecycle/new">
+            <label>Название: <input type="text" name="name" required style="width:260px"></label><br><br>
+            <label>Тип триггера:
+              <select name="trigger_type" onchange="document.getElementById('tp-bal').style.display=this.value==='balance_low'?'block':'none';document.getElementById('tp-inact').style.display=this.value==='inactive'?'block':'none';document.getElementById('tp-gnp').style.display=this.value==='generated_not_paid'?'block':'none';">
+                <option value="balance_low">Баланс просел (credits между X и Y)</option>
+                <option value="inactive">Не заходил N дней</option>
+                <option value="generated_not_paid">Сделал ≥N генераций, не платил</option>
+              </select>
+            </label><br>
+
+            <div id="tp-bal" style="margin-top:0.5rem">
+              credits ≥ <input type="number" name="credits_geq" value="1" min="0" style="width:70px">
+              credits ≤ <input type="number" name="credits_leq" value="2" min="0" style="width:70px">
+            </div>
+            <div id="tp-inact" style="display:none;margin-top:0.5rem">
+              дней без активности ≥ <input type="number" name="inactive_days" value="14" min="1" style="width:70px">
+            </div>
+            <div id="tp-gnp" style="display:none;margin-top:0.5rem">
+              минимум генераций ≥ <input type="number" name="min_gens" value="3" min="1" style="width:70px">
+            </div>
+            <br>
+            <label>Cooldown (не долбить одному юзеру чаще, чем раз в N дней):
+              <input type="number" name="cooldown_days" value="30" min="1" style="width:70px">
+            </label><br><br>
+            <label>Сообщение (HTML):<br>
+              <textarea name="message_text" rows="4" style="width:100%" required></textarea>
+            </label><br><br>
+            <label><input type="checkbox" name="enabled" checked> Включить сразу</label><br><br>
+            <button type="submit" class="btn-success">Создать</button>
+          </form>
+        </div>
+
+        <div class="card">
+          <div class="table-wrap"><table>
+            <tr><th>#</th><th>Название</th><th>Триггер</th><th>Cooldown</th>
+                <th>Срабатываний</th><th>Последний запуск</th><th>Статус</th><th>Действия</th></tr>
+            {''.join(tr) if tr else '<tr><td colspan=8>Правил ещё нет</td></tr>'}
+          </table></div>
+          <p style="color:#666;font-size:0.85em">
+            Воркер прогоняет правила автоматически раз в час (см. <code>LIFECYCLE_TICK_SECONDS</code>).
+          </p>
+        </div>
+        """
+        return _page("Lifecycle-триггеры", body)
+
+    @app.post("/admin/lifecycle/new")
+    async def lifecycle_new(
+        name: str = Form(...),
+        trigger_type: str = Form(...),
+        credits_geq: str = Form("1"),
+        credits_leq: str = Form("2"),
+        inactive_days: str = Form("14"),
+        min_gens: str = Form("3"),
+        cooldown_days: int = Form(30),
+        message_text: str = Form(...),
+        enabled: str = Form(""),
+        _user: str = Depends(_check_auth),
+    ) -> RedirectResponse:
+        trig: dict = {}
+        if trigger_type == "balance_low":
+            trig = {"credits_geq": int(credits_geq or 1), "credits_leq": int(credits_leq or 2)}
+        elif trigger_type == "inactive":
+            trig = {"days": int(inactive_days or 14)}
+        elif trigger_type == "generated_not_paid":
+            trig = {"min_gens": int(min_gens or 3)}
+        rid = await credits_db.create_lifecycle_rule(
+            name=name, trigger_type=trigger_type, trigger=trig,
+            message_text=message_text, cooldown_days=int(cooldown_days),
+            enabled=bool(enabled), created_by=_user,
+        )
+        await credits_db.audit_log(_user, "lifecycle_create", str(rid), f"{trigger_type} {trig}")
+        return RedirectResponse("/admin/lifecycle", status_code=303)
+
+    @app.post("/admin/lifecycle/{rid}/toggle")
+    async def lifecycle_toggle(rid: int, _user: str = Depends(_check_auth)) -> RedirectResponse:
+        rule = await credits_db.get_lifecycle_rule(rid)
+        if not rule:
+            raise HTTPException(404)
+        await credits_db.update_lifecycle_rule(rid, enabled=not rule["enabled"])
+        await credits_db.audit_log(_user, "lifecycle_toggle", str(rid), f"enabled={not rule['enabled']}")
+        return RedirectResponse("/admin/lifecycle", status_code=303)
+
+    @app.post("/admin/lifecycle/{rid}/delete")
+    async def lifecycle_delete(rid: int, _user: str = Depends(_check_auth)) -> RedirectResponse:
+        await credits_db.delete_lifecycle_rule(rid)
+        await credits_db.audit_log(_user, "lifecycle_delete", str(rid))
+        return RedirectResponse("/admin/lifecycle", status_code=303)
+
+    # ── Audit log ─────────────────────────────────────────────────────
+
+    @app.get("/admin/audit", response_class=HTMLResponse)
+    async def audit_view(request: Request, _user: str = Depends(_check_auth)) -> str:
+        page = _query_int(request, "page", default=1, min_value=1, max_value=10_000)
+        per_page = 100
+        rows = await credits_db.get_audit_log(limit=per_page, offset=(page - 1) * per_page)
+        tr = "".join(
+            f"<tr><td>{r['id']}</td><td>{html_mod.escape(r['admin_user'])}</td>"
+            f"<td>{html_mod.escape(r['action'])}</td>"
+            f"<td>{html_mod.escape(r['target'])}</td>"
+            f"<td>{html_mod.escape(r['details'])}</td>"
+            f"<td>{r['created_at']}</td></tr>"
+            for r in rows
+        )
+        body = f"""
+        <div class="card">
+          <div class="table-wrap"><table>
+            <tr><th>#</th><th>Admin</th><th>Action</th><th>Target</th><th>Details</th><th>At</th></tr>
+            {tr or '<tr><td colspan=6>Пусто</td></tr>'}
+          </table></div>
+        </div>
+        """
+        return _page("Admin audit log", body)
 
     return app
 

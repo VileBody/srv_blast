@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -240,6 +241,121 @@ class CreditsDB:
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_utm_touches_created_at ON utm_touches(created_at)")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_utm_touches_source ON utm_touches(source)")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_utm_touches_campaign ON utm_touches(campaign)")
+
+        # Broadcasts
+        await conn.execute(
+            "CREATE TABLE IF NOT EXISTS broadcasts ("
+            "id BIGSERIAL PRIMARY KEY,"
+            "title TEXT NOT NULL DEFAULT '',"
+            "text TEXT NOT NULL DEFAULT '',"
+            "parse_mode TEXT NOT NULL DEFAULT 'HTML',"
+            "media_type TEXT NOT NULL DEFAULT '',"
+            "media_file_id TEXT NOT NULL DEFAULT '',"
+            "media_url TEXT NOT NULL DEFAULT '',"
+            "buttons_json TEXT NOT NULL DEFAULT '[]',"
+            "audience_json TEXT NOT NULL DEFAULT '{}',"
+            "audience_size INTEGER NOT NULL DEFAULT 0,"
+            "schedule_at TIMESTAMP,"
+            "status TEXT NOT NULL DEFAULT 'draft',"
+            "sent_count INTEGER NOT NULL DEFAULT 0,"
+            "failed_count INTEGER NOT NULL DEFAULT 0,"
+            "blocked_count INTEGER NOT NULL DEFAULT 0,"
+            "created_by TEXT NOT NULL DEFAULT '',"
+            "created_at TIMESTAMP NOT NULL DEFAULT NOW(),"
+            "started_at TIMESTAMP,"
+            "finished_at TIMESTAMP"
+            ")"
+        )
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_bc_status ON broadcasts(status)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_bc_schedule ON broadcasts(schedule_at)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_bc_created_at ON broadcasts(created_at)")
+
+        await conn.execute(
+            "CREATE TABLE IF NOT EXISTS broadcast_deliveries ("
+            "id BIGSERIAL PRIMARY KEY,"
+            "broadcast_id BIGINT NOT NULL,"
+            "tg_id BIGINT NOT NULL,"
+            "status TEXT NOT NULL DEFAULT 'pending',"
+            "error TEXT NOT NULL DEFAULT '',"
+            "attempts INTEGER NOT NULL DEFAULT 0,"
+            "sent_at TIMESTAMP,"
+            "created_at TIMESTAMP NOT NULL DEFAULT NOW(),"
+            "UNIQUE (broadcast_id, tg_id)"
+            ")"
+        )
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_bcd_broadcast ON broadcast_deliveries(broadcast_id)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_bcd_status ON broadcast_deliveries(status)")
+
+        # CRM: tags and notes
+        await conn.execute(
+            "CREATE TABLE IF NOT EXISTS user_tags ("
+            "id BIGSERIAL PRIMARY KEY,"
+            "tg_id BIGINT NOT NULL,"
+            "tag TEXT NOT NULL,"
+            "created_by TEXT NOT NULL DEFAULT '',"
+            "created_at TIMESTAMP NOT NULL DEFAULT NOW(),"
+            "UNIQUE (tg_id, tag)"
+            ")"
+        )
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_ut_tg_id ON user_tags(tg_id)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_ut_tag ON user_tags(tag)")
+
+        await conn.execute(
+            "CREATE TABLE IF NOT EXISTS user_notes ("
+            "id BIGSERIAL PRIMARY KEY,"
+            "tg_id BIGINT NOT NULL,"
+            "note TEXT NOT NULL DEFAULT '',"
+            "created_by TEXT NOT NULL DEFAULT '',"
+            "created_at TIMESTAMP NOT NULL DEFAULT NOW()"
+            ")"
+        )
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_un_tg_id ON user_notes(tg_id)")
+
+        # Admin audit log
+        await conn.execute(
+            "CREATE TABLE IF NOT EXISTS admin_audit_log ("
+            "id BIGSERIAL PRIMARY KEY,"
+            "admin_user TEXT NOT NULL DEFAULT '',"
+            "action TEXT NOT NULL,"
+            "target TEXT NOT NULL DEFAULT '',"
+            "details TEXT NOT NULL DEFAULT '',"
+            "created_at TIMESTAMP NOT NULL DEFAULT NOW()"
+            ")"
+        )
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_created_at ON admin_audit_log(created_at)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_admin ON admin_audit_log(admin_user)")
+
+        # Lifecycle rules — automated triggers that send messages
+        await conn.execute(
+            "CREATE TABLE IF NOT EXISTS lifecycle_rules ("
+            "id BIGSERIAL PRIMARY KEY,"
+            "name TEXT NOT NULL DEFAULT '',"
+            "trigger_type TEXT NOT NULL,"
+            "trigger_json TEXT NOT NULL DEFAULT '{}',"
+            "message_text TEXT NOT NULL DEFAULT '',"
+            "parse_mode TEXT NOT NULL DEFAULT 'HTML',"
+            "cooldown_days INTEGER NOT NULL DEFAULT 7,"
+            "enabled BOOLEAN NOT NULL DEFAULT TRUE,"
+            "last_run_at TIMESTAMP,"
+            "fired_count INTEGER NOT NULL DEFAULT 0,"
+            "created_by TEXT NOT NULL DEFAULT '',"
+            "created_at TIMESTAMP NOT NULL DEFAULT NOW(),"
+            "updated_at TIMESTAMP NOT NULL DEFAULT NOW()"
+            ")"
+        )
+        await conn.execute(
+            "CREATE TABLE IF NOT EXISTS lifecycle_fires ("
+            "id BIGSERIAL PRIMARY KEY,"
+            "rule_id BIGINT NOT NULL,"
+            "tg_id BIGINT NOT NULL,"
+            "status TEXT NOT NULL DEFAULT 'sent',"
+            "error TEXT NOT NULL DEFAULT '',"
+            "created_at TIMESTAMP NOT NULL DEFAULT NOW()"
+            ")"
+        )
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_lcf_rule ON lifecycle_fires(rule_id)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_lcf_tg ON lifecycle_fires(tg_id)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_lcf_created ON lifecycle_fires(created_at)")
 
     async def close(self) -> None:
         if self._pool:
@@ -1348,3 +1464,894 @@ class CreditsDB:
                 int(tg_id),
             )
             return _rowcount_from_tag(tag) > 0
+
+    # ── Admin audit log ──────────────────────────────────────────────
+
+    async def audit_log(self, admin_user: str, action: str, target: str = "", details: str = "") -> None:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "INSERT INTO admin_audit_log (admin_user, action, target, details) VALUES ($1, $2, $3, $4)",
+                _norm_text(admin_user, max_len=64),
+                _norm_text(action, max_len=64),
+                _norm_text(target, max_len=128),
+                str(details or "")[:2000],
+            )
+
+    async def get_audit_log(self, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT id, admin_user, action, target, details, created_at "
+                "FROM admin_audit_log ORDER BY id DESC LIMIT $1 OFFSET $2",
+                int(limit), int(offset),
+            )
+        return [
+            {
+                "id": int(r["id"]),
+                "admin_user": str(r["admin_user"] or ""),
+                "action": str(r["action"] or ""),
+                "target": str(r["target"] or ""),
+                "details": str(r["details"] or ""),
+                "created_at": _fmt_ts(r["created_at"]),
+            }
+            for r in rows
+        ]
+
+    # ── User tags ────────────────────────────────────────────────────
+
+    async def add_user_tag(self, tg_id: int, tag: str, created_by: str = "") -> bool:
+        clean = _norm_text(tag, max_len=64).lower()
+        if not clean:
+            return False
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "INSERT INTO user_tags (tg_id, tag, created_by) VALUES ($1, $2, $3) "
+                "ON CONFLICT (tg_id, tag) DO NOTHING RETURNING id",
+                int(tg_id), clean, _norm_text(created_by, max_len=64),
+            )
+        return row is not None
+
+    async def remove_user_tag(self, tg_id: int, tag: str) -> bool:
+        clean = _norm_text(tag, max_len=64).lower()
+        if not clean:
+            return False
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            tag_result = await conn.execute(
+                "DELETE FROM user_tags WHERE tg_id = $1 AND tag = $2",
+                int(tg_id), clean,
+            )
+        return _rowcount_from_tag(tag_result) > 0
+
+    async def get_user_tags(self, tg_id: int) -> List[str]:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT tag FROM user_tags WHERE tg_id = $1 ORDER BY tag",
+                int(tg_id),
+            )
+        return [str(r["tag"]) for r in rows]
+
+    async def list_all_tags(self) -> List[Dict[str, Any]]:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT tag, COUNT(*)::BIGINT AS cnt FROM user_tags GROUP BY tag ORDER BY cnt DESC, tag"
+            )
+        return [{"tag": str(r["tag"]), "count": int(r["cnt"])} for r in rows]
+
+    async def get_tags_for_users(self, tg_ids: List[int]) -> Dict[int, List[str]]:
+        if not tg_ids:
+            return {}
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT tg_id, tag FROM user_tags WHERE tg_id = ANY($1::BIGINT[]) ORDER BY tag",
+                [int(x) for x in tg_ids],
+            )
+        out: Dict[int, List[str]] = {}
+        for r in rows:
+            out.setdefault(int(r["tg_id"]), []).append(str(r["tag"]))
+        return out
+
+    # ── User notes ───────────────────────────────────────────────────
+
+    async def add_user_note(self, tg_id: int, note: str, created_by: str = "") -> int:
+        text = str(note or "").strip()
+        if not text:
+            return 0
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            nid = await conn.fetchval(
+                "INSERT INTO user_notes (tg_id, note, created_by) VALUES ($1, $2, $3) RETURNING id",
+                int(tg_id), text[:2000], _norm_text(created_by, max_len=64),
+            )
+        return int(nid or 0)
+
+    async def delete_user_note(self, note_id: int) -> bool:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            tag = await conn.execute(
+                "DELETE FROM user_notes WHERE id = $1", int(note_id),
+            )
+        return _rowcount_from_tag(tag) > 0
+
+    async def get_user_notes(self, tg_id: int) -> List[Dict[str, Any]]:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT id, note, created_by, created_at FROM user_notes "
+                "WHERE tg_id = $1 ORDER BY id DESC",
+                int(tg_id),
+            )
+        return [
+            {
+                "id": int(r["id"]),
+                "note": str(r["note"] or ""),
+                "created_by": str(r["created_by"] or ""),
+                "created_at": _fmt_ts(r["created_at"]),
+            }
+            for r in rows
+        ]
+
+    # ── CRM: clients (credits > threshold) and stats ─────────────────
+
+    async def list_clients(
+        self,
+        *,
+        min_credits: int = 5,
+        limit: int = 100,
+        offset: int = 0,
+        tag: str = "",
+        sort: str = "credits",
+    ) -> List[Dict[str, Any]]:
+        pool = self._pool_or_fail()
+        order_sql = {
+            "credits": "u.credits DESC, u.updated_at DESC",
+            "recent": "u.updated_at DESC, u.tg_id DESC",
+            "oldest": "u.created_at ASC, u.tg_id ASC",
+        }.get(sort, "u.credits DESC, u.updated_at DESC")
+        tag_clean = _norm_text(tag, max_len=64).lower()
+        params: List[Any] = [int(min_credits)]
+        where = "u.credits >= $1"
+        if tag_clean:
+            params.append(tag_clean)
+            where += f" AND EXISTS (SELECT 1 FROM user_tags ut WHERE ut.tg_id = u.tg_id AND ut.tag = ${len(params)})"
+        params.append(int(limit))
+        params.append(int(offset))
+        q = (
+            f"SELECT u.tg_id, u.username, u.credits, u.created_at, u.updated_at, "
+            f"u.first_utm_source, u.first_utm_campaign, "
+            f"(SELECT COUNT(*) FROM activity_log a WHERE a.tg_id = u.tg_id AND a.event = 'generation_done') AS gens_done, "
+            f"(SELECT MAX(created_at) FROM activity_log a WHERE a.tg_id = u.tg_id) AS last_activity_at, "
+            f"(SELECT COALESCE(SUM(amount_rub), 0) FROM payments p WHERE p.tg_id = u.tg_id AND p.status = 'CONFIRMED') AS revenue_rub "
+            f"FROM users u WHERE {where} "
+            f"ORDER BY {order_sql} LIMIT ${len(params) - 1} OFFSET ${len(params)}"
+        )
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(q, *params)
+        return [
+            {
+                "tg_id": int(r["tg_id"]),
+                "username": str(r["username"] or ""),
+                "credits": int(r["credits"]),
+                "created_at": _fmt_ts(r["created_at"]),
+                "updated_at": _fmt_ts(r["updated_at"]),
+                "first_utm_source": str(r["first_utm_source"] or ""),
+                "first_utm_campaign": str(r["first_utm_campaign"] or ""),
+                "gens_done": int(r["gens_done"] or 0),
+                "last_activity_at": _fmt_ts(r["last_activity_at"]),
+                "revenue_rub": int(r["revenue_rub"] or 0),
+            }
+            for r in rows
+        ]
+
+    async def count_clients(self, *, min_credits: int = 5, tag: str = "") -> int:
+        pool = self._pool_or_fail()
+        tag_clean = _norm_text(tag, max_len=64).lower()
+        if tag_clean:
+            async with pool.acquire() as conn:
+                val = await conn.fetchval(
+                    "SELECT COUNT(*) FROM users u WHERE u.credits >= $1 "
+                    "AND EXISTS (SELECT 1 FROM user_tags ut WHERE ut.tg_id = u.tg_id AND ut.tag = $2)",
+                    int(min_credits), tag_clean,
+                )
+        else:
+            async with pool.acquire() as conn:
+                val = await conn.fetchval(
+                    "SELECT COUNT(*) FROM users WHERE credits >= $1",
+                    int(min_credits),
+                )
+        return int(val or 0)
+
+    async def clients_summary(self, min_credits: int = 5) -> Dict[str, int]:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT "
+                "COUNT(*)::BIGINT AS clients_count, "
+                "COALESCE(SUM(credits), 0)::BIGINT AS credits_on_balance, "
+                "COUNT(*) FILTER (WHERE updated_at >= NOW() - INTERVAL '7 days')::BIGINT AS active_7d, "
+                "COUNT(*) FILTER (WHERE updated_at < NOW() - INTERVAL '14 days')::BIGINT AS dormant_14d "
+                "FROM users WHERE credits >= $1",
+                int(min_credits),
+            )
+            revenue = await conn.fetchval(
+                "SELECT COALESCE(SUM(amount_rub), 0)::BIGINT FROM payments p "
+                "WHERE p.status = 'CONFIRMED' AND p.tg_id IN (SELECT tg_id FROM users WHERE credits >= $1)",
+                int(min_credits),
+            )
+        return {
+            "clients_count": int(row["clients_count"] or 0) if row else 0,
+            "credits_on_balance": int(row["credits_on_balance"] or 0) if row else 0,
+            "active_7d": int(row["active_7d"] or 0) if row else 0,
+            "dormant_14d": int(row["dormant_14d"] or 0) if row else 0,
+            "revenue_rub_total": int(revenue or 0),
+        }
+
+    async def user_health_metrics(self, tg_id: int) -> Dict[str, Any]:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT "
+                "(SELECT MAX(created_at) FROM activity_log WHERE tg_id = $1) AS last_activity_at, "
+                "(SELECT MAX(created_at) FROM activity_log WHERE tg_id = $1 AND event = 'generation_done') AS last_gen_at, "
+                "(SELECT COUNT(*) FROM activity_log WHERE tg_id = $1 AND event = 'generation_done') AS gens_done, "
+                "(SELECT COUNT(*) FROM activity_log WHERE tg_id = $1 AND event = 'generation_done' AND created_at >= NOW() - INTERVAL '30 days') AS gens_done_30d, "
+                "(SELECT COALESCE(SUM(amount_rub), 0) FROM payments WHERE tg_id = $1 AND status = 'CONFIRMED') AS revenue_rub, "
+                "(SELECT COUNT(*) FROM payments WHERE tg_id = $1 AND status = 'CONFIRMED') AS paid_orders, "
+                "(SELECT MAX(created_at) FROM payments WHERE tg_id = $1 AND status = 'CONFIRMED') AS last_payment_at",
+                int(tg_id),
+            )
+        if not row:
+            return {
+                "last_activity_at": "", "last_gen_at": "", "gens_done": 0,
+                "gens_done_30d": 0, "revenue_rub": 0, "paid_orders": 0, "last_payment_at": "",
+            }
+        return {
+            "last_activity_at": _fmt_ts(row["last_activity_at"]),
+            "last_gen_at": _fmt_ts(row["last_gen_at"]),
+            "gens_done": int(row["gens_done"] or 0),
+            "gens_done_30d": int(row["gens_done_30d"] or 0),
+            "revenue_rub": int(row["revenue_rub"] or 0),
+            "paid_orders": int(row["paid_orders"] or 0),
+            "last_payment_at": _fmt_ts(row["last_payment_at"]),
+            "_last_activity_raw": row["last_activity_at"],
+            "_last_gen_raw": row["last_gen_at"],
+        }
+
+    # ── Cohorts (by month of first signup) ───────────────────────────
+
+    async def cohort_monthly(self, months: int = 12) -> List[Dict[str, Any]]:
+        months = max(1, min(int(months), 36))
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "WITH cohort AS ("
+                "  SELECT tg_id, date_trunc('month', created_at) AS cohort_month "
+                "  FROM users WHERE created_at >= date_trunc('month', NOW()) - ($1::INT - 1) * INTERVAL '1 month'"
+                ") "
+                "SELECT "
+                "  to_char(c.cohort_month, 'YYYY-MM') AS cohort, "
+                "  COUNT(DISTINCT c.tg_id)::BIGINT AS size, "
+                "  COUNT(DISTINCT p.tg_id) FILTER (WHERE p.status = 'CONFIRMED')::BIGINT AS paid_users, "
+                "  COALESCE(SUM(p.amount_rub) FILTER (WHERE p.status = 'CONFIRMED'), 0)::BIGINT AS revenue_rub, "
+                "  COUNT(DISTINCT a.tg_id) FILTER (WHERE a.event = 'generation_done')::BIGINT AS generated_users "
+                "FROM cohort c "
+                "LEFT JOIN payments p ON p.tg_id = c.tg_id "
+                "LEFT JOIN activity_log a ON a.tg_id = c.tg_id "
+                "GROUP BY c.cohort_month "
+                "ORDER BY c.cohort_month DESC",
+                months,
+            )
+        return [
+            {
+                "cohort": str(r["cohort"]),
+                "size": int(r["size"]),
+                "paid_users": int(r["paid_users"]),
+                "revenue_rub": int(r["revenue_rub"]),
+                "generated_users": int(r["generated_users"]),
+            }
+            for r in rows
+        ]
+
+    # ── Audience resolution for broadcasts ───────────────────────────
+
+    async def resolve_audience(self, audience: Dict[str, Any]) -> List[int]:
+        """Resolve audience spec → list of tg_ids.
+
+        audience schema:
+          { "mode": "all" | "utm" | "filter" | "manual",
+            "utm": {"source": "...", "medium": "...", "campaign": "...", "content": "...", "term": "..."},
+            "filter": {"credits_min": int, "credits_max": int,
+                       "paid": "any"|"yes"|"no",
+                       "generated": "any"|"yes"|"no",
+                       "created_from": "YYYY-MM-DD", "created_to": "YYYY-MM-DD",
+                       "tag": "..."},
+            "manual": {"tg_ids": [int, ...], "usernames": [str, ...]},
+            "exclude_blocked": bool }
+        """
+        mode = str(audience.get("mode") or "all").lower()
+        exclude_blocked = bool(audience.get("exclude_blocked", True))
+        pool = self._pool_or_fail()
+
+        ids: List[int] = []
+        if mode == "all":
+            async with pool.acquire() as conn:
+                rows = await conn.fetch("SELECT tg_id FROM users")
+            ids = [int(r["tg_id"]) for r in rows]
+        elif mode == "utm":
+            utm = audience.get("utm") or {}
+            conds: List[str] = []
+            params: List[Any] = []
+            for key, column in (
+                ("source", "first_utm_source"),
+                ("medium", "first_utm_medium"),
+                ("campaign", "first_utm_campaign"),
+                ("content", "first_utm_content"),
+                ("term", "first_utm_term"),
+            ):
+                val = _norm_text(utm.get(key, ""), max_len=160)
+                if val:
+                    params.append(val)
+                    conds.append(f"{column} = ${len(params)}")
+            where = " AND ".join(conds) if conds else "TRUE"
+            async with pool.acquire() as conn:
+                rows = await conn.fetch(f"SELECT tg_id FROM users WHERE {where}", *params)
+            ids = [int(r["tg_id"]) for r in rows]
+        elif mode == "filter":
+            f = audience.get("filter") or {}
+            conds = ["TRUE"]
+            params = []
+            if f.get("credits_min") not in (None, ""):
+                params.append(int(f["credits_min"]))
+                conds.append(f"credits >= ${len(params)}")
+            if f.get("credits_max") not in (None, ""):
+                params.append(int(f["credits_max"]))
+                conds.append(f"credits <= ${len(params)}")
+            if f.get("created_from"):
+                params.append(str(f["created_from"]))
+                conds.append(f"created_at >= ${len(params)}::DATE")
+            if f.get("created_to"):
+                params.append(str(f["created_to"]))
+                conds.append(f"created_at < (${len(params)}::DATE + INTERVAL '1 day')")
+            paid = str(f.get("paid") or "any").lower()
+            if paid == "yes":
+                conds.append("EXISTS (SELECT 1 FROM payments p WHERE p.tg_id = users.tg_id AND p.status = 'CONFIRMED')")
+            elif paid == "no":
+                conds.append("NOT EXISTS (SELECT 1 FROM payments p WHERE p.tg_id = users.tg_id AND p.status = 'CONFIRMED')")
+            generated = str(f.get("generated") or "any").lower()
+            if generated == "yes":
+                conds.append("EXISTS (SELECT 1 FROM activity_log a WHERE a.tg_id = users.tg_id AND a.event = 'generation_done')")
+            elif generated == "no":
+                conds.append("NOT EXISTS (SELECT 1 FROM activity_log a WHERE a.tg_id = users.tg_id AND a.event = 'generation_done')")
+            tag = _norm_text(f.get("tag", ""), max_len=64).lower()
+            if tag:
+                params.append(tag)
+                conds.append(f"EXISTS (SELECT 1 FROM user_tags ut WHERE ut.tg_id = users.tg_id AND ut.tag = ${len(params)})")
+            where = " AND ".join(conds)
+            async with pool.acquire() as conn:
+                rows = await conn.fetch(f"SELECT tg_id FROM users WHERE {where}", *params)
+            ids = [int(r["tg_id"]) for r in rows]
+        elif mode == "manual":
+            m = audience.get("manual") or {}
+            raw_ids = [int(x) for x in (m.get("tg_ids") or []) if str(x).strip().lstrip("-").isdigit()]
+            usernames = [str(u).lstrip("@").lower() for u in (m.get("usernames") or []) if str(u).strip()]
+            collected: set[int] = set(raw_ids)
+            if usernames:
+                async with pool.acquire() as conn:
+                    rows = await conn.fetch(
+                        "SELECT tg_id FROM users WHERE username = ANY($1::TEXT[])", usernames,
+                    )
+                collected.update(int(r["tg_id"]) for r in rows)
+            ids = list(collected)
+        else:
+            ids = []
+
+        if exclude_blocked and ids:
+            async with pool.acquire() as conn:
+                blocked_rows = await conn.fetch(
+                    "SELECT DISTINCT tg_id FROM activity_log "
+                    "WHERE event = 'bot_blocked' AND tg_id = ANY($1::BIGINT[])",
+                    ids,
+                )
+            blocked = {int(r["tg_id"]) for r in blocked_rows}
+            ids = [x for x in ids if x not in blocked]
+
+        return sorted(set(ids))
+
+    async def distinct_utm_values(self, column: str, limit: int = 500) -> List[str]:
+        allowed = {
+            "source": "first_utm_source",
+            "medium": "first_utm_medium",
+            "campaign": "first_utm_campaign",
+            "content": "first_utm_content",
+            "term": "first_utm_term",
+        }
+        col = allowed.get(column)
+        if not col:
+            return []
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"SELECT DISTINCT {col} AS v FROM users WHERE {col} <> '' ORDER BY v LIMIT $1",
+                int(limit),
+            )
+        return [str(r["v"]) for r in rows]
+
+    # ── Broadcasts ───────────────────────────────────────────────────
+
+    async def create_broadcast(
+        self,
+        *,
+        title: str,
+        text: str,
+        parse_mode: str = "HTML",
+        media_type: str = "",
+        media_file_id: str = "",
+        media_url: str = "",
+        buttons: Optional[List[Dict[str, str]]] = None,
+        audience: Optional[Dict[str, Any]] = None,
+        schedule_at: Optional[datetime] = None,
+        created_by: str = "",
+    ) -> int:
+        audience_json = json.dumps(audience or {"mode": "all"}, ensure_ascii=False)
+        buttons_json = json.dumps(buttons or [], ensure_ascii=False)
+        sched = schedule_at.replace(tzinfo=None) if (schedule_at and schedule_at.tzinfo) else schedule_at
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            bid = await conn.fetchval(
+                "INSERT INTO broadcasts "
+                "(title, text, parse_mode, media_type, media_file_id, media_url, buttons_json, "
+                "audience_json, schedule_at, status, created_by) "
+                "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'draft', $10) RETURNING id",
+                _norm_text(title, max_len=200),
+                str(text or "")[:4000],
+                str(parse_mode or "HTML"),
+                str(media_type or ""),
+                str(media_file_id or ""),
+                str(media_url or ""),
+                buttons_json,
+                audience_json,
+                sched,
+                _norm_text(created_by, max_len=64),
+            )
+        return int(bid or 0)
+
+    async def update_broadcast(
+        self,
+        bid: int,
+        *,
+        title: Optional[str] = None,
+        text: Optional[str] = None,
+        parse_mode: Optional[str] = None,
+        media_type: Optional[str] = None,
+        media_file_id: Optional[str] = None,
+        media_url: Optional[str] = None,
+        buttons: Optional[List[Dict[str, str]]] = None,
+        audience: Optional[Dict[str, Any]] = None,
+        schedule_at: Optional[datetime] = None,
+        clear_schedule: bool = False,
+    ) -> None:
+        sets: List[str] = []
+        params: List[Any] = []
+        def add(col: str, val: Any) -> None:
+            params.append(val)
+            sets.append(f"{col} = ${len(params)}")
+        if title is not None:
+            add("title", _norm_text(title, max_len=200))
+        if text is not None:
+            add("text", str(text)[:4000])
+        if parse_mode is not None:
+            add("parse_mode", str(parse_mode or "HTML"))
+        if media_type is not None:
+            add("media_type", str(media_type or ""))
+        if media_file_id is not None:
+            add("media_file_id", str(media_file_id or ""))
+        if media_url is not None:
+            add("media_url", str(media_url or ""))
+        if buttons is not None:
+            add("buttons_json", json.dumps(buttons, ensure_ascii=False))
+        if audience is not None:
+            add("audience_json", json.dumps(audience, ensure_ascii=False))
+        if clear_schedule:
+            sets.append("schedule_at = NULL")
+        elif schedule_at is not None:
+            sched = schedule_at.replace(tzinfo=None) if schedule_at.tzinfo else schedule_at
+            add("schedule_at", sched)
+        if not sets:
+            return
+        params.append(int(bid))
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                f"UPDATE broadcasts SET {', '.join(sets)} WHERE id = ${len(params)}",
+                *params,
+            )
+
+    async def set_broadcast_status(
+        self, bid: int, status: str,
+        *, started_at: Optional[datetime] = None, finished_at: Optional[datetime] = None,
+        audience_size: Optional[int] = None,
+    ) -> None:
+        sets = ["status = $1"]
+        params: List[Any] = [str(status)]
+        if started_at is not None:
+            params.append(started_at.replace(tzinfo=None) if started_at.tzinfo else started_at)
+            sets.append(f"started_at = ${len(params)}")
+        if finished_at is not None:
+            params.append(finished_at.replace(tzinfo=None) if finished_at.tzinfo else finished_at)
+            sets.append(f"finished_at = ${len(params)}")
+        if audience_size is not None:
+            params.append(int(audience_size))
+            sets.append(f"audience_size = ${len(params)}")
+        params.append(int(bid))
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                f"UPDATE broadcasts SET {', '.join(sets)} WHERE id = ${len(params)}",
+                *params,
+            )
+
+    async def get_broadcast(self, bid: int) -> Optional[Dict[str, Any]]:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            r = await conn.fetchrow(
+                "SELECT id, title, text, parse_mode, media_type, media_file_id, media_url, "
+                "buttons_json, audience_json, audience_size, schedule_at, status, "
+                "sent_count, failed_count, blocked_count, created_by, created_at, started_at, finished_at "
+                "FROM broadcasts WHERE id = $1",
+                int(bid),
+            )
+        if not r:
+            return None
+        try:
+            audience = json.loads(r["audience_json"] or "{}")
+        except Exception:
+            audience = {}
+        try:
+            buttons = json.loads(r["buttons_json"] or "[]")
+        except Exception:
+            buttons = []
+        return {
+            "id": int(r["id"]),
+            "title": str(r["title"] or ""),
+            "text": str(r["text"] or ""),
+            "parse_mode": str(r["parse_mode"] or "HTML"),
+            "media_type": str(r["media_type"] or ""),
+            "media_file_id": str(r["media_file_id"] or ""),
+            "media_url": str(r["media_url"] or ""),
+            "buttons": buttons,
+            "audience": audience,
+            "audience_size": int(r["audience_size"] or 0),
+            "schedule_at": _fmt_ts(r["schedule_at"]),
+            "_schedule_raw": r["schedule_at"],
+            "status": str(r["status"] or "draft"),
+            "sent_count": int(r["sent_count"] or 0),
+            "failed_count": int(r["failed_count"] or 0),
+            "blocked_count": int(r["blocked_count"] or 0),
+            "created_by": str(r["created_by"] or ""),
+            "created_at": _fmt_ts(r["created_at"]),
+            "started_at": _fmt_ts(r["started_at"]),
+            "finished_at": _fmt_ts(r["finished_at"]),
+        }
+
+    async def list_broadcasts(self, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT id, title, status, audience_size, sent_count, failed_count, "
+                "schedule_at, created_by, created_at, started_at, finished_at "
+                "FROM broadcasts ORDER BY id DESC LIMIT $1 OFFSET $2",
+                int(limit), int(offset),
+            )
+        return [
+            {
+                "id": int(r["id"]),
+                "title": str(r["title"] or ""),
+                "status": str(r["status"] or ""),
+                "audience_size": int(r["audience_size"] or 0),
+                "sent_count": int(r["sent_count"] or 0),
+                "failed_count": int(r["failed_count"] or 0),
+                "schedule_at": _fmt_ts(r["schedule_at"]),
+                "created_by": str(r["created_by"] or ""),
+                "created_at": _fmt_ts(r["created_at"]),
+                "started_at": _fmt_ts(r["started_at"]),
+                "finished_at": _fmt_ts(r["finished_at"]),
+            }
+            for r in rows
+        ]
+
+    async def count_broadcasts(self) -> int:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            return int(await conn.fetchval("SELECT COUNT(*) FROM broadcasts") or 0)
+
+    async def delete_broadcast(self, bid: int) -> None:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                await conn.execute("DELETE FROM broadcast_deliveries WHERE broadcast_id = $1", int(bid))
+                await conn.execute("DELETE FROM broadcasts WHERE id = $1", int(bid))
+
+    async def seed_broadcast_deliveries(self, bid: int, tg_ids: List[int]) -> int:
+        if not tg_ids:
+            return 0
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            tag = await conn.execute(
+                "INSERT INTO broadcast_deliveries (broadcast_id, tg_id) "
+                "SELECT $1, x FROM UNNEST($2::BIGINT[]) AS t(x) "
+                "ON CONFLICT (broadcast_id, tg_id) DO NOTHING",
+                int(bid), [int(x) for x in tg_ids],
+            )
+        return _rowcount_from_tag(tag)
+
+    async def fetch_pending_deliveries(self, bid: int, batch: int = 100) -> List[int]:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT tg_id FROM broadcast_deliveries "
+                "WHERE broadcast_id = $1 AND status = 'pending' "
+                "ORDER BY id LIMIT $2",
+                int(bid), int(batch),
+            )
+        return [int(r["tg_id"]) for r in rows]
+
+    async def mark_delivery(self, bid: int, tg_id: int, status: str, error: str = "") -> None:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE broadcast_deliveries SET status = $1, error = $2, attempts = attempts + 1, sent_at = NOW() "
+                "WHERE broadcast_id = $3 AND tg_id = $4",
+                str(status), str(error or "")[:500], int(bid), int(tg_id),
+            )
+            if status == "sent":
+                await conn.execute(
+                    "UPDATE broadcasts SET sent_count = sent_count + 1 WHERE id = $1", int(bid),
+                )
+            elif status == "blocked":
+                await conn.execute(
+                    "UPDATE broadcasts SET blocked_count = blocked_count + 1 WHERE id = $1", int(bid),
+                )
+            elif status == "failed":
+                await conn.execute(
+                    "UPDATE broadcasts SET failed_count = failed_count + 1 WHERE id = $1", int(bid),
+                )
+
+    async def get_broadcast_deliveries(
+        self, bid: int, *, status: str = "", limit: int = 100, offset: int = 0,
+    ) -> List[Dict[str, Any]]:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            if status:
+                rows = await conn.fetch(
+                    "SELECT bd.tg_id, bd.status, bd.error, bd.attempts, bd.sent_at, bd.created_at, u.username "
+                    "FROM broadcast_deliveries bd LEFT JOIN users u ON u.tg_id = bd.tg_id "
+                    "WHERE bd.broadcast_id = $1 AND bd.status = $2 ORDER BY bd.id LIMIT $3 OFFSET $4",
+                    int(bid), str(status), int(limit), int(offset),
+                )
+            else:
+                rows = await conn.fetch(
+                    "SELECT bd.tg_id, bd.status, bd.error, bd.attempts, bd.sent_at, bd.created_at, u.username "
+                    "FROM broadcast_deliveries bd LEFT JOIN users u ON u.tg_id = bd.tg_id "
+                    "WHERE bd.broadcast_id = $1 ORDER BY bd.id LIMIT $2 OFFSET $3",
+                    int(bid), int(limit), int(offset),
+                )
+        return [
+            {
+                "tg_id": int(r["tg_id"]),
+                "username": str(r["username"] or ""),
+                "status": str(r["status"] or ""),
+                "error": str(r["error"] or ""),
+                "attempts": int(r["attempts"] or 0),
+                "sent_at": _fmt_ts(r["sent_at"]),
+                "created_at": _fmt_ts(r["created_at"]),
+            }
+            for r in rows
+        ]
+
+    async def find_due_broadcasts(self) -> List[Dict[str, Any]]:
+        """Return broadcasts ready to process: scheduled whose time arrived, and already-sending ones."""
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT id FROM broadcasts "
+                "WHERE status = 'sending' "
+                "OR (status = 'scheduled' AND schedule_at IS NOT NULL AND schedule_at <= NOW()) "
+                "ORDER BY id"
+            )
+        return [{"id": int(r["id"])} for r in rows]
+
+    # ── Lifecycle rules ──────────────────────────────────────────────
+
+    async def create_lifecycle_rule(
+        self, *, name: str, trigger_type: str, trigger: Dict[str, Any],
+        message_text: str, parse_mode: str = "HTML", cooldown_days: int = 7,
+        enabled: bool = True, created_by: str = "",
+    ) -> int:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            rid = await conn.fetchval(
+                "INSERT INTO lifecycle_rules "
+                "(name, trigger_type, trigger_json, message_text, parse_mode, cooldown_days, enabled, created_by) "
+                "VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id",
+                _norm_text(name, max_len=120),
+                _norm_text(trigger_type, max_len=64),
+                json.dumps(trigger or {}, ensure_ascii=False),
+                str(message_text or "")[:4000],
+                str(parse_mode or "HTML"),
+                max(0, int(cooldown_days)),
+                bool(enabled),
+                _norm_text(created_by, max_len=64),
+            )
+        return int(rid or 0)
+
+    async def update_lifecycle_rule(
+        self, rid: int, *, name: Optional[str] = None, trigger: Optional[Dict[str, Any]] = None,
+        message_text: Optional[str] = None, cooldown_days: Optional[int] = None,
+        enabled: Optional[bool] = None,
+    ) -> None:
+        sets: List[str] = ["updated_at = NOW()"]
+        params: List[Any] = []
+        def add(col: str, val: Any) -> None:
+            params.append(val)
+            sets.append(f"{col} = ${len(params)}")
+        if name is not None:
+            add("name", _norm_text(name, max_len=120))
+        if trigger is not None:
+            add("trigger_json", json.dumps(trigger, ensure_ascii=False))
+        if message_text is not None:
+            add("message_text", str(message_text)[:4000])
+        if cooldown_days is not None:
+            add("cooldown_days", max(0, int(cooldown_days)))
+        if enabled is not None:
+            add("enabled", bool(enabled))
+        if len(sets) == 1:
+            return
+        params.append(int(rid))
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                f"UPDATE lifecycle_rules SET {', '.join(sets)} WHERE id = ${len(params)}",
+                *params,
+            )
+
+    async def delete_lifecycle_rule(self, rid: int) -> None:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            await conn.execute("DELETE FROM lifecycle_rules WHERE id = $1", int(rid))
+
+    async def list_lifecycle_rules(self) -> List[Dict[str, Any]]:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT id, name, trigger_type, trigger_json, message_text, parse_mode, "
+                "cooldown_days, enabled, last_run_at, fired_count, created_by, created_at, updated_at "
+                "FROM lifecycle_rules ORDER BY id DESC"
+            )
+        out: List[Dict[str, Any]] = []
+        for r in rows:
+            try:
+                trig = json.loads(r["trigger_json"] or "{}")
+            except Exception:
+                trig = {}
+            out.append({
+                "id": int(r["id"]),
+                "name": str(r["name"] or ""),
+                "trigger_type": str(r["trigger_type"] or ""),
+                "trigger": trig,
+                "message_text": str(r["message_text"] or ""),
+                "parse_mode": str(r["parse_mode"] or "HTML"),
+                "cooldown_days": int(r["cooldown_days"] or 0),
+                "enabled": bool(r["enabled"]),
+                "last_run_at": _fmt_ts(r["last_run_at"]),
+                "fired_count": int(r["fired_count"] or 0),
+                "created_by": str(r["created_by"] or ""),
+                "created_at": _fmt_ts(r["created_at"]),
+                "updated_at": _fmt_ts(r["updated_at"]),
+            })
+        return out
+
+    async def get_lifecycle_rule(self, rid: int) -> Optional[Dict[str, Any]]:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            r = await conn.fetchrow(
+                "SELECT id, name, trigger_type, trigger_json, message_text, parse_mode, "
+                "cooldown_days, enabled, last_run_at, fired_count, created_by, created_at, updated_at "
+                "FROM lifecycle_rules WHERE id = $1", int(rid),
+            )
+        if not r:
+            return None
+        try:
+            trig = json.loads(r["trigger_json"] or "{}")
+        except Exception:
+            trig = {}
+        return {
+            "id": int(r["id"]),
+            "name": str(r["name"] or ""),
+            "trigger_type": str(r["trigger_type"] or ""),
+            "trigger": trig,
+            "message_text": str(r["message_text"] or ""),
+            "parse_mode": str(r["parse_mode"] or "HTML"),
+            "cooldown_days": int(r["cooldown_days"] or 0),
+            "enabled": bool(r["enabled"]),
+            "last_run_at": _fmt_ts(r["last_run_at"]),
+            "fired_count": int(r["fired_count"] or 0),
+            "created_by": str(r["created_by"] or ""),
+        }
+
+    async def find_lifecycle_candidates(self, rule: Dict[str, Any], *, limit: int = 200) -> List[int]:
+        """Compute tg_ids that match rule's trigger AND haven't been fired within cooldown."""
+        trigger_type = str(rule.get("trigger_type") or "")
+        trig = rule.get("trigger") or {}
+        cooldown = int(rule.get("cooldown_days") or 7)
+        rid = int(rule.get("id") or 0)
+
+        pool = self._pool_or_fail()
+        sql: str
+        params: List[Any]
+
+        if trigger_type == "balance_low":
+            threshold = int(trig.get("credits_leq", 2))
+            min_balance = int(trig.get("credits_geq", 1))
+            sql = (
+                "SELECT u.tg_id FROM users u "
+                "WHERE u.credits BETWEEN $1 AND $2 "
+                "AND EXISTS (SELECT 1 FROM payments p WHERE p.tg_id = u.tg_id AND p.status = 'CONFIRMED') "
+                "AND NOT EXISTS (SELECT 1 FROM lifecycle_fires f WHERE f.rule_id = $3 AND f.tg_id = u.tg_id "
+                "AND f.created_at >= NOW() - ($4::INT * INTERVAL '1 day'))"
+            )
+            params = [min_balance, threshold, rid, cooldown]
+        elif trigger_type == "inactive":
+            days = int(trig.get("days", 14))
+            sql = (
+                "SELECT u.tg_id FROM users u "
+                "WHERE NOT EXISTS (SELECT 1 FROM activity_log a WHERE a.tg_id = u.tg_id "
+                "AND a.created_at >= NOW() - ($1::INT * INTERVAL '1 day')) "
+                "AND u.created_at <= NOW() - ($1::INT * INTERVAL '1 day') "
+                "AND NOT EXISTS (SELECT 1 FROM lifecycle_fires f WHERE f.rule_id = $2 AND f.tg_id = u.tg_id "
+                "AND f.created_at >= NOW() - ($3::INT * INTERVAL '1 day'))"
+            )
+            params = [days, rid, cooldown]
+        elif trigger_type == "generated_not_paid":
+            min_gens = int(trig.get("min_gens", 3))
+            sql = (
+                "SELECT u.tg_id FROM users u "
+                "WHERE (SELECT COUNT(*) FROM activity_log a WHERE a.tg_id = u.tg_id AND a.event = 'generation_done') >= $1 "
+                "AND NOT EXISTS (SELECT 1 FROM payments p WHERE p.tg_id = u.tg_id AND p.status = 'CONFIRMED') "
+                "AND NOT EXISTS (SELECT 1 FROM lifecycle_fires f WHERE f.rule_id = $2 AND f.tg_id = u.tg_id "
+                "AND f.created_at >= NOW() - ($3::INT * INTERVAL '1 day'))"
+            )
+            params = [min_gens, rid, cooldown]
+        else:
+            return []
+
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(sql + " LIMIT $" + str(len(params) + 1), *params, int(limit))
+        return [int(r["tg_id"]) for r in rows]
+
+    async def record_lifecycle_fire(self, rule_id: int, tg_id: int, status: str, error: str = "") -> None:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                await conn.execute(
+                    "INSERT INTO lifecycle_fires (rule_id, tg_id, status, error) VALUES ($1, $2, $3, $4)",
+                    int(rule_id), int(tg_id), str(status), str(error or "")[:500],
+                )
+                if status == "sent":
+                    await conn.execute(
+                        "UPDATE lifecycle_rules SET fired_count = fired_count + 1, "
+                        "last_run_at = NOW(), updated_at = NOW() WHERE id = $1",
+                        int(rule_id),
+                    )
+
+    async def touch_lifecycle_rule(self, rid: int) -> None:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE lifecycle_rules SET last_run_at = NOW(), updated_at = NOW() WHERE id = $1",
+                int(rid),
+            )
