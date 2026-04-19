@@ -1,0 +1,46 @@
+services:
+  orchestrator-api-2:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: orchestrator-api-2
+    env_file:
+      - .env
+    environment:
+      WORK_DIR: /app/work
+      OUTPUT_DIR: /app/output
+      PINS_DIR: /app/pins
+      DESCRIPTIONS_DIR: /app/descriptions
+
+      # shared artifacts paths
+      FOOTAGE_INVENTORY_OUT: /app/data/footage_inventory.json
+      DESCRIPTIONS_BUNDLE_OUT: /app/pins/descriptions_bundle_selected.json
+
+      # inputs
+      FOOTAGE_DIR: /app/footage
+      FOOTAGE_DESCRIPTIONS_DIR: /app/descriptions
+      STATIC_ASSETS_SOURCE_INDEX_JSON: /app/data/static_assets_index_1to1.json
+      STATIC_ASSETS_INDEX_JSON: /app/data/static_assets_index_1to1.json
+      STATIC_ASSETS_ENRICH_INDEX_JSON: /app/data/static_assets_index_1to1.json
+      S3_ASSET_PREFIX: pinterest_collection/pins2_1to1_20260323
+      FOOTAGE_S3_PREFLIGHT_MODE: strict
+
+      # point mlcore to shared paths
+      FOOTAGE_INVENTORY_JSON: /app/data/footage_inventory.json
+      DESCRIPTIONS_BUNDLE_PATH: /app/pins/descriptions_bundle_selected.json
+
+      # only one orchestrator instance should run ops-alert long-polling
+      ALERT_SUBSCRIBERS_ENABLED: "0"
+    volumes:
+      - ./work:/app/work
+      - ./output:/app/output
+      - ./out:/app/out
+      - ./data:/app/data
+      - ./pins:/app/pins
+      - ./descriptions:/app/descriptions:ro
+      - ./audio:/app/audio:ro
+    ports:
+      - "127.0.0.1:18001:8000"
+    command: >
+      bash -lc "python footage_config.py && python -m services.orchestrator.run_uvicorn"
+    restart: unless-stopped
