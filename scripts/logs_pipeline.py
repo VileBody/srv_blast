@@ -230,7 +230,8 @@ def _load_config(*, require_enabled: bool, require_s3: bool, require_collectors:
 
     loki_enabled = _env_bool("LOG_BACKUP_LOKI_ENABLED", False)
     loki_url = str(os.environ.get("LOG_BACKUP_LOKI_URL") or "").strip()
-    loki_query = str(os.environ.get("LOG_BACKUP_LOKI_QUERY") or "{}").strip() or "{}"
+    # Loki rejects an empty selector "{}", so use a broad but valid matcher by default.
+    loki_query = str(os.environ.get("LOG_BACKUP_LOKI_QUERY") or '{job=~".+"}').strip() or '{job=~".+"}'
     if loki_enabled and not loki_url:
         raise RuntimeError("LOG_BACKUP_LOKI_URL is required when LOG_BACKUP_LOKI_ENABLED=true")
 
