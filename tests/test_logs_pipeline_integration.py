@@ -30,8 +30,9 @@ def test_upload_raw_events_to_s3_writes_ndjson_and_manifest() -> None:
     mod = _load_module()
     cfg = mod.PipelineConfig(
         enabled=True,
+        mode="centralized",
         node_name="blast-ops-1",
-        node_role="infra-ops",
+        node_role="logs-service",
         db_dsn="postgresql://x",
         s3_bucket="bucket",
         s3_prefix="logs-backup",

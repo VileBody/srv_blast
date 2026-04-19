@@ -28,6 +28,8 @@ MIGRATION_SQL_PATH = Path(__file__).resolve().parents[1] / "infra" / "logging" /
 
 SOURCE_KIND_LOKI = "loki"
 SOURCE_KIND_DOCKER = "docker"
+MODE_CENTRALIZED = "centralized"
+MODE_DISTRIBUTED = "distributed"
 
 JOB_ID_RE = re.compile(r"(?i)(?:job_id=|job[ _-]?id[:= ]+)([a-f0-9]{32})")
 REQUEST_ID_RE = re.compile(r"(?i)(?:request_id=|request[ _-]?id[:= ]+)([a-z0-9-]{8,64})")
@@ -62,6 +64,7 @@ TARGET_CONTAINER_PREFIXES: tuple[str, ...] = (
 @dataclass(frozen=True)
 class PipelineConfig:
     enabled: bool
+    mode: str
     node_name: str
     node_role: str
     db_dsn: str
@@ -203,6 +206,10 @@ def _load_config(*, require_enabled: bool, require_s3: bool, require_collectors:
     if require_enabled and not enabled:
         raise RuntimeError("LOG_BACKUP_ENABLED must be true for this command")
 
+    mode = str(os.environ.get("LOG_BACKUP_MODE") or MODE_CENTRALIZED).strip().lower()
+    if mode not in {MODE_CENTRALIZED, MODE_DISTRIBUTED}:
+        raise RuntimeError(f"Invalid LOG_BACKUP_MODE: {mode!r} (expected centralized|distributed)")
+
     node_name = _env_required("LOG_BACKUP_NODE_NAME")
     node_role = _env_required("LOG_BACKUP_NODE_ROLE")
     db_dsn = _env_required("LOG_BACKUP_DB_DSN")
@@ -230,6 +237,13 @@ def _load_config(*, require_enabled: bool, require_s3: bool, require_collectors:
     docker_enabled = _env_bool("LOG_BACKUP_DOCKER_ENABLED", False)
     if require_collectors and not (loki_enabled or docker_enabled):
         raise RuntimeError("At least one collector must be enabled: LOG_BACKUP_LOKI_ENABLED or LOG_BACKUP_DOCKER_ENABLED")
+    if mode == MODE_CENTRALIZED:
+        if node_role != "logs-service":
+            raise RuntimeError("Centralized mode requires LOG_BACKUP_NODE_ROLE=logs-service")
+        if not loki_enabled:
+            raise RuntimeError("Centralized mode requires LOG_BACKUP_LOKI_ENABLED=true")
+        if docker_enabled:
+            raise RuntimeError("Centralized mode requires LOG_BACKUP_DOCKER_ENABLED=false")
 
     retention_days = _env_int("LOG_BACKUP_RETENTION_DAYS", 180)
     raw_retention_days = _env_int("LOG_BACKUP_RAW_RETENTION_DAYS", 30)
@@ -252,6 +266,7 @@ def _load_config(*, require_enabled: bool, require_s3: bool, require_collectors:
 
     return PipelineConfig(
         enabled=enabled,
+        mode=mode,
         node_name=node_name,
         node_role=node_role,
         db_dsn=db_dsn,
@@ -1357,9 +1372,9 @@ async def cmd_healthcheck(args: argparse.Namespace) -> None:
         await conn.close()
 
     required_sources: list[str] = []
-    if _env_bool("LOG_BACKUP_LOKI_ENABLED", False):
+    if cfg.loki_enabled:
         required_sources.append(SOURCE_KIND_LOKI)
-    if _env_bool("LOG_BACKUP_DOCKER_ENABLED", False):
+    if cfg.docker_enabled:
         required_sources.append(SOURCE_KIND_DOCKER)
     if not required_sources:
         raise RuntimeError("Healthcheck requires at least one enabled source")

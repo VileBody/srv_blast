@@ -7,9 +7,6 @@
 - Workflow: `.github/workflows/deploy-current-branch.yml`
 - Workflow (split): `.github/workflows/deploy-split-main.yml`
 - Скрипт деплоя: `infra/runners/deploy_branch.sh`
-- Скрипт удаленного деплоя на prod VM по SSH: `infra/runners/deploy_remote_branch.sh`
-- Скрипт sync orchestrator nginx snippets: `infra/runners/deploy_orchestrator_nginx.sh`
-- Скрипт remote sync orchestrator nginx snippets по SSH: `infra/runners/deploy_orchestrator_nginx_remote.sh`
 - Docker Compose для GitHub self-hosted runner: `infra/runners/docker-compose.github-runner.yml`
 - Docker Compose для web UI логов (Dozzle): `infra/runners/docker-compose.logs.yml`
 - Docker Compose для observability V1: `infra/runners/docker-compose.observability.yml`
@@ -57,7 +54,7 @@ Workflow использует эту переменную, чтобы выпол
 `infra/runners/deploy_branch.sh` поддерживает второй аргумент:
 
 - `all` (по умолчанию): legacy single-node deploy.
-- `prod-path`: `orchestrator-api`, `worker-build`, `worker-render`, `tg-bot-public` + опционально `orchestrator-api-2` (если `DEPLOY_ORCHESTRATOR_HA=true`) + опционально `promtail-edge`.
+- `prod-path`: `orchestrator-api`, `worker-build`, `worker-render`, `tg-bot-public` + опционально `promtail-edge`.
 - `infra-apps`: `tg-bot`, `asset-ui`, `finance-bot`.
 - `infra-ops`: `infra-apps` + `dozzle` + `observability` + `github-runner` (если есть соответствующие `.env`).
 
@@ -95,63 +92,6 @@ bash infra/runners/deploy_branch.sh main infra-ops
 - исключает `*.rar` и `tmp/`
 - по умолчанию обновляет только `main`
 - проверяет маркер в `index.html` после синка
-
-## 3.3) Orchestrator HA: 2 API инстанса + nginx роутер
-
-Для отказоустойчивого входа можно поднять реплику `orchestrator-api` и балансировать
-входящий трафик через локальный nginx на той же VM.
-
-Что добавлено в репозиторий:
-- Compose override: `docker-compose.orchestrator-ha.yml` (сервис `orchestrator-api-2`).
-- Nginx snippets: `infra/runners/nginx/orchestrator.upstream.conf.example` (в `http {}`) и `infra/runners/nginx/orchestrator.locations.conf.example` (в `server {}`).
-
-Важно:
-- `REDIS_HOST`, `CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND` должны оставаться общими.
-- На реплике принудительно выставлен `ALERT_SUBSCRIBERS_ENABLED=0`, чтобы не дублировать long-polling ops-alert бота.
-- В `MODE=prod` выставляй `ORCHESTRATOR_PUBLIC_URL` на nginx/vhost endpoint, а не на конкретный контейнер.
-- Для CI включение HA делается через `Repository variable`: `DEPLOY_ORCHESTRATOR_HA=true`.
-
-Поднять primary + replica:
-
-```bash
-cd /opt/blast_mj_final
-docker compose -f docker-compose.yml -f docker-compose.orchestrator-ha.yml up -d --build orchestrator-api orchestrator-api-2
-```
-
-Проверка:
-
-```bash
-curl -fsS http://127.0.0.1:18000/health
-curl -fsS http://127.0.0.1:18001/health
-sudo nginx -t && sudo systemctl reload nginx
-```
-
-Опциональный sync nginx snippets через CI:
-- workflow step: `Deploy Orchestrator Nginx (optional)` в обоих workflow (`deploy-current-branch.yml` и `deploy-split-main.yml`, prod job).
-- скрипт: `infra/runners/deploy_orchestrator_nginx.sh`.
-
-Нужные `Repository variables` для этого шага:
-- `ORCHESTRATOR_NGINX_DEPLOY_ENABLED=true`
-- `ORCHESTRATOR_NGINX_MAIN_ONLY=true` (рекомендуется)
-- `ORCHESTRATOR_NGINX_MAIN_BRANCH=main`
-- `ORCHESTRATOR_NGINX_UPSTREAM_TARGET=/etc/nginx/conf.d/blast_orchestrator_upstream.conf`
-- `ORCHESTRATOR_NGINX_LOCATIONS_TARGET=/etc/nginx/snippets/blast_orchestrator.locations.conf`
-- `ORCHESTRATOR_NGINX_RELOAD_CMD=sudo nginx -t && sudo systemctl reload nginx`
-
-Опционально (если шаблоны лежат не в дефолтных путях репо):
-- `ORCHESTRATOR_NGINX_UPSTREAM_TEMPLATE=/opt/blast_mj_final/infra/runners/nginx/orchestrator.upstream.conf.example`
-- `ORCHESTRATOR_NGINX_LOCATIONS_TEMPLATE=/opt/blast_mj_final/infra/runners/nginx/orchestrator.locations.conf.example`
-
-Для удаленного обновления nginx на orchestrator VM из CI (когда runner не имеет прямого доступа к host `/etc/nginx`):
-- `ORCHESTRATOR_NGINX_REMOTE_ENABLED=true`
-- `ORCHESTRATOR_NGINX_REMOTE_HOST=<orchestrator-ip>`
-- `ORCHESTRATOR_NGINX_REMOTE_USER=blast` (или другой sudo-user)
-- `ORCHESTRATOR_NGINX_REMOTE_PORT=22`
-- `Repository secret ORCHESTRATOR_NGINX_REMOTE_SSH_PRIVATE_KEY` (private key для SSH на orchestrator VM)
-
-При включенном `ORCHESTRATOR_NGINX_REMOTE_ENABLED=true` workflow использует
-`deploy_orchestrator_nginx_remote.sh`: шаблоны из git-копии workflow передаются по SSH
-на orchestrator VM, устанавливаются в target path и затем выполняется `ORCHESTRATOR_NGINX_RELOAD_CMD`.
 
 ## 4) Web UI логов по всем контейнерам (Dozzle через nginx auth)
 
@@ -268,19 +208,6 @@ Repository variables:
 - `BLAST_REPO_DIR_PROD=/opt/blast_mj_final` (или ваш путь на prod VM)
 - `BLAST_REPO_DIR_INFRA=/opt/blast_mj_final` (или ваш путь на infra VM)
 - `DEPLOY_PRUNE_OTHER_STACK=true` (опционально)
-- `DEPLOY_ORCHESTRATOR_HA=true` (опционально, включает `docker-compose.orchestrator-ha.yml` в `prod-path`)
-- `DEPLOY_ORCHESTRATOR_HA_COMPOSE_FILE=docker-compose.orchestrator-ha.yml` (опционально)
-
-Для схемы "runner на orchestrator VM, prod-path на отдельной blast-ops VM":
-- `DEPLOY_PROD_REMOTE_ENABLED=true`
-- `DEPLOY_PROD_REMOTE_HOST=<prod-vm-ip>`
-- `DEPLOY_PROD_REMOTE_USER=deploy`
-- `DEPLOY_PROD_REMOTE_PORT=22` (или ваш SSH port)
-- `DEPLOY_PROD_REMOTE_REPO_DIR=/home/deploy/blast_final`
-- `Repository secret DEPLOY_PROD_SSH_PRIVATE_KEY` (private key для `deploy@prod-vm`)
-
-При включенном `DEPLOY_PROD_REMOTE_ENABLED=true` job `deploy-prod-path` выполняет deploy по SSH
-на prod VM, а не локально на runner-хосте.
 
 Legacy workflow `.github/workflows/deploy-current-branch.yml` автоматически пропускается при `DEPLOY_SPLIT_ENABLED=true`.
 
@@ -304,11 +231,16 @@ cp .env.logs-backup.example .env.logs-backup
 
 Важно:
 - `LOG_BACKUP_ENABLED=true`
+- `LOG_BACKUP_MODE=centralized`
 - `LOG_BACKUP_DB_DSN` указывает в тот же Postgres (схема `logs`)
 - `LOG_BACKUP_S3_BUCKET` = рабочий bucket (обычно `S3_BUCKET_ASSET_STORAGE`)
-- logs-service VM (`blast-ops`): `LOG_BACKUP_LOKI_ENABLED=true`, `LOG_BACKUP_DOCKER_ENABLED=false`
+- logs-service VM (`blast-ops`): `LOG_BACKUP_NODE_ROLE=logs-service`, `LOG_BACKUP_LOKI_ENABLED=true`, `LOG_BACKUP_DOCKER_ENABLED=false`
 - prod VM (`orchestrator`): не включаем logs pipeline (`LOG_BACKUP_ENABLED=false`/без `.env.logs-backup`)
 - все контейнерные логи с prod/infra сходятся в Loki через `promtail`/`promtail-edge`, поэтому backup делается централизованно с logs-service.
+
+Fail-fast контракт:
+- при `LOG_BACKUP_MODE=centralized` pipeline завершится ошибкой, если `LOG_BACKUP_NODE_ROLE != logs-service`
+- при `LOG_BACKUP_MODE=centralized` pipeline завершится ошибкой, если `LOG_BACKUP_LOKI_ENABLED != true` или `LOG_BACKUP_DOCKER_ENABLED != false`
 
 ### 7.2 Автоустановка systemd через deploy
 
@@ -317,7 +249,8 @@ cp .env.logs-backup.example .env.logs-backup
 - устанавливает units в `/etc/systemd/system/`
 - включает таймеры `blast-logs-hourly.timer` и `blast-logs-prune.timer`
 
-Условие: `LOG_BACKUP_ENABLED=true` в `.env.logs-backup`.
+Условие: `LOG_BACKUP_ENABLED=true` в `.env.logs-backup`.  
+При `LOG_BACKUP_MODE=centralized` deploy тоже завершится ошибкой, если `LOG_BACKUP_NODE_ROLE != logs-service`.
 
 ### 7.3 Ручные команды (one-shot)
 

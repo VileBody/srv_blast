@@ -4,8 +4,6 @@ set -euo pipefail
 BRANCH="${1:-${GITHUB_REF_NAME:-}}"
 DEPLOY_STACK="${2:-${DEPLOY_STACK:-all}}"
 DEPLOY_PRUNE_OTHER_STACK="${DEPLOY_PRUNE_OTHER_STACK:-false}"
-DEPLOY_ORCHESTRATOR_HA="${DEPLOY_ORCHESTRATOR_HA:-false}"
-DEPLOY_ORCHESTRATOR_HA_COMPOSE_FILE="${DEPLOY_ORCHESTRATOR_HA_COMPOSE_FILE:-docker-compose.orchestrator-ha.yml}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="${REPO_DIR:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
@@ -96,31 +94,6 @@ deploy_root_services() {
   fi
 }
 
-deploy_prod_path_services() {
-  if ! is_true "$DEPLOY_ORCHESTRATOR_HA"; then
-    deploy_root_services orchestrator-api worker-build worker-render tg-bot-public
-    return 0
-  fi
-
-  local compose_ha="$DEPLOY_ORCHESTRATOR_HA_COMPOSE_FILE"
-  if [[ -z "$compose_ha" ]]; then
-    echo "[deploy] DEPLOY_ORCHESTRATOR_HA=true but DEPLOY_ORCHESTRATOR_HA_COMPOSE_FILE is empty"
-    exit 1
-  fi
-  if [[ "$compose_ha" != /* ]]; then
-    compose_ha="$REPO_DIR/$compose_ha"
-  fi
-  if [[ ! -f "$compose_ha" ]]; then
-    echo "[deploy] DEPLOY_ORCHESTRATOR_HA=true but compose override not found: $compose_ha"
-    exit 1
-  fi
-
-  echo "[deploy] orchestrator-ha enabled compose=$compose_ha"
-  echo "[deploy] docker compose -f docker-compose.yml -f $compose_ha up -d --build orchestrator-api orchestrator-api-2 worker-build worker-render tg-bot-public"
-  docker compose -f docker-compose.yml -f "$compose_ha" up -d --build \
-    orchestrator-api orchestrator-api-2 worker-build worker-render tg-bot-public
-}
-
 stop_root_services() {
   local services=("$@")
   if [[ ${#services[@]} -eq 0 ]]; then
@@ -190,6 +163,27 @@ deploy_logs_pipeline_systemd_if_present() {
   if [[ "$enabled_norm" != "1" && "$enabled_norm" != "true" && "$enabled_norm" != "yes" && "$enabled_norm" != "on" ]]; then
     echo "[deploy] skip logs pipeline systemd setup (LOG_BACKUP_ENABLED is not true)"
     return 0
+  fi
+
+  local mode_raw=""
+  mode_raw="$(grep -E '^LOG_BACKUP_MODE=' "$env_file" | tail -n1 | cut -d= -f2- | tr -d '"' | xargs || true)"
+  local mode_norm
+  mode_norm="$(printf '%s' "${mode_raw:-centralized}" | tr '[:upper:]' '[:lower:]')"
+  if [[ -z "$mode_norm" ]]; then
+    mode_norm="centralized"
+  fi
+  if [[ "$mode_norm" != "centralized" && "$mode_norm" != "distributed" ]]; then
+    echo "[deploy] invalid LOG_BACKUP_MODE=$mode_raw (expected centralized|distributed)"
+    return 1
+  fi
+
+  local node_role_raw=""
+  node_role_raw="$(grep -E '^LOG_BACKUP_NODE_ROLE=' "$env_file" | tail -n1 | cut -d= -f2- | tr -d '"' | xargs || true)"
+  local node_role_norm
+  node_role_norm="$(printf '%s' "$node_role_raw" | tr '[:upper:]' '[:lower:]')"
+  if [[ "$mode_norm" == "centralized" && "$node_role_norm" != "logs-service" ]]; then
+    echo "[deploy] centralized logs mode requires LOG_BACKUP_NODE_ROLE=logs-service (got: ${node_role_raw:-<empty>})"
+    return 1
   fi
 
   echo "[deploy] bootstrap logs schema + s3 lifecycle"
@@ -271,7 +265,7 @@ case "$DEPLOY_STACK" in
     deploy_root_services
     ;;
   prod-path)
-    deploy_prod_path_services
+    deploy_root_services orchestrator-api worker-build worker-render tg-bot-public
     deploy_runner_compose_if_present "$RUNNERS_DIR/docker-compose.promtail-edge.yml" "$RUNNERS_DIR/.env.promtail-edge"
     if is_true "$DEPLOY_PRUNE_OTHER_STACK"; then
       stop_root_services tg-bot asset-ui finance-bot
@@ -280,7 +274,7 @@ case "$DEPLOY_STACK" in
   infra-apps)
     deploy_root_services tg-bot asset-ui finance-bot
     if is_true "$DEPLOY_PRUNE_OTHER_STACK"; then
-      stop_root_services orchestrator-api orchestrator-api-2 worker-build worker-render tg-bot-public
+      stop_root_services orchestrator-api worker-build worker-render tg-bot-public
     fi
     ;;
   infra-ops)
@@ -289,7 +283,7 @@ case "$DEPLOY_STACK" in
     deploy_runner_compose_if_present "$RUNNERS_DIR/docker-compose.observability.yml" "$RUNNERS_DIR/.env.observability"
     deploy_github_runner_compose_if_allowed "$RUNNERS_DIR/docker-compose.github-runner.yml" "$RUNNERS_DIR/.env.github-runner"
     if is_true "$DEPLOY_PRUNE_OTHER_STACK"; then
-      stop_root_services orchestrator-api orchestrator-api-2 worker-build worker-render tg-bot-public
+      stop_root_services orchestrator-api worker-build worker-render tg-bot-public
     fi
     ;;
   *)

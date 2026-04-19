@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 
+import pytest
+
 
 def _load_module():
     script_path = Path(__file__).resolve().parents[1] / "scripts" / "logs_pipeline.py"
@@ -112,3 +114,47 @@ def test_normalize_event_extracts_core_fields() -> None:
     assert norm.chat_id == 777
     assert norm.duration_ms == 321
     assert norm.cost_value == Decimal("0.42")
+
+
+def _set_required_env(monkeypatch: pytest.MonkeyPatch, **overrides: str) -> None:
+    base = {
+        "LOG_BACKUP_ENABLED": "true",
+        "LOG_BACKUP_MODE": "centralized",
+        "LOG_BACKUP_NODE_NAME": "blast-ops",
+        "LOG_BACKUP_NODE_ROLE": "logs-service",
+        "LOG_BACKUP_DB_DSN": "postgresql://gen_user:password@db.example:5432/default_db?sslmode=prefer",
+        "LOG_BACKUP_S3_BUCKET": "bucket",
+        "LOG_BACKUP_S3_PREFIX": "logs-backup",
+        "S3_ENDPOINT_URL": "https://s3.example",
+        "S3_ACCESS_KEY_ID": "key",
+        "S3_SECRET_ACCESS_KEY": "secret",
+        "LOG_BACKUP_LOKI_ENABLED": "true",
+        "LOG_BACKUP_LOKI_URL": "http://127.0.0.1:13100",
+        "LOG_BACKUP_DOCKER_ENABLED": "false",
+    }
+    base.update(overrides)
+    for key, value in base.items():
+        monkeypatch.setenv(key, value)
+
+
+def test_load_config_centralized_requires_logs_service_role(monkeypatch: pytest.MonkeyPatch) -> None:
+    mod = _load_module()
+    _set_required_env(monkeypatch, LOG_BACKUP_NODE_ROLE="prod")
+
+    with pytest.raises(RuntimeError, match="LOG_BACKUP_NODE_ROLE=logs-service"):
+        mod._load_config(require_enabled=True, require_s3=True, require_collectors=True)
+
+
+def test_load_config_distributed_allows_non_logs_service_role(monkeypatch: pytest.MonkeyPatch) -> None:
+    mod = _load_module()
+    _set_required_env(
+        monkeypatch,
+        LOG_BACKUP_MODE="distributed",
+        LOG_BACKUP_NODE_ROLE="orchestrator",
+        LOG_BACKUP_DOCKER_ENABLED="true",
+    )
+
+    cfg = mod._load_config(require_enabled=True, require_s3=True, require_collectors=True)
+    assert cfg.mode == "distributed"
+    assert cfg.node_role == "orchestrator"
+    assert cfg.docker_enabled is True
