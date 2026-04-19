@@ -37,7 +37,7 @@ services:
       - ./descriptions:/app/descriptions:ro
       - ./audio:/app/audio:ro
     ports:
-      - "127.0.0.1:18000:8000"
+      - "${ORCHESTRATOR_API_BIND_HOST:-127.0.0.1}:18000:8000"
     command: >
       bash -lc "python footage_config.py && python -m services.orchestrator.run_uvicorn"
     restart: unless-stopped
@@ -80,7 +80,7 @@ services:
       - ./descriptions:/app/descriptions:ro
       - ./audio:/app/audio:ro
     command: >
-      bash -lc "python footage_config.py && celery -A services.orchestrator.celery_app:celery_app worker -l INFO --concurrency=4 -Q ${CELERY_QUEUE_BUILD:-build}"
+      bash -lc "python footage_config.py && celery -A services.orchestrator.celery_app:celery_app worker -l INFO --concurrency=${WORKER_BUILD_CONCURRENCY:-4} -Q ${CELERY_QUEUE_BUILD:-build}"
     restart: unless-stopped
 
   worker-render:
@@ -159,6 +159,13 @@ services:
       ORCHESTRATOR_PUBLIC_URL: ${ORCHESTRATOR_PUBLIC_URL:-http://orchestrator-api:8000}
       BOT_POLL_INTERVAL_S: ${BOT_POLL_INTERVAL_S:-5}
       BOT_STATUS_UPDATE_INTERVAL_S: ${BOT_STATUS_UPDATE_INTERVAL_S:-20}
+      TG_DELIVERY_MODE: ${TG_DELIVERY_MODE:-polling}
+      TG_WEBHOOK_URL: ${TG_WEBHOOK_URL:-}
+      TG_WEBHOOK_SECRET: ${TG_WEBHOOK_SECRET:-}
+      TG_WEBHOOK_PATH: ${TG_WEBHOOK_PATH:-/telegram/webhook}
+      TG_WEBHOOK_BIND_HOST: ${TG_WEBHOOK_BIND_HOST:-0.0.0.0}
+      TG_WEBHOOK_PORT: ${TG_WEBHOOK_PORT:-8081}
+      TG_WEBHOOK_DEDUP_TTL_S: ${TG_WEBHOOK_DEDUP_TTL_S:-86400}
       BOT_TMP_DIR: ${BOT_TMP_DIR_PUBLIC:-/app/work/tg_tmp_public}
       BOT_MAX_AUDIO_MB: ${BOT_MAX_AUDIO_MB:-5}
       CREDITS_DB_URL: ${CREDITS_DB_URL:-}
@@ -180,7 +187,8 @@ services:
     volumes:
       - ./work:/app/work
     ports:
-      - "127.0.0.1:${TG_BOT_PUBLIC_ADMIN_BIND_PORT:-18081}:${ADMIN_PANEL_PORT:-8080}"
+      - "${TG_BOT_PUBLIC_ADMIN_BIND_HOST:-127.0.0.1}:${TG_BOT_PUBLIC_ADMIN_BIND_PORT:-18081}:${ADMIN_PANEL_PORT:-8080}"
+      - "${TG_BOT_PUBLIC_WEBHOOK_BIND_HOST:-127.0.0.1}:${TG_BOT_PUBLIC_WEBHOOK_BIND_PORT:-18083}:${TG_WEBHOOK_PORT:-8081}"
     command: >
       bash -lc "python -m services.tg_bot_public.app"
     depends_on:
@@ -212,6 +220,7 @@ services:
     container_name: finance-bot
     environment:
       DB_PATH: /app/data/finance.db
+      GROQ_PROXY: ${GROQ_PROXY:-}
     volumes:
       - ./finance_bot_data:/app/data
     ports:

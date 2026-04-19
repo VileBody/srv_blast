@@ -30,11 +30,11 @@ concurrency:
 jobs:
   deploy-prod-path:
     if: ${{ vars.DEPLOY_SPLIT_ENABLED == 'true' && (github.event_name == 'push' || inputs.target == 'all' || inputs.target == 'prod-path') }}
-    name: Deploy Prod Path
-    runs-on: [self-hosted, blast-deploy-prod]
-    timeout-minutes: 30
+    name: Deploy Prod Path (Fan-out)
+    runs-on: [self-hosted, blast-deploy-infra]
+    timeout-minutes: 45
     env:
-      REPO_DIR: ${{ vars.BLAST_REPO_DIR_PROD != '' && vars.BLAST_REPO_DIR_PROD || vars.BLAST_REPO_DIR }}
+      REPO_DIR: ${{ vars.BLAST_REPO_DIR_INFRA != '' && vars.BLAST_REPO_DIR_INFRA || vars.BLAST_REPO_DIR }}
       INPUT_BRANCH: ${{ inputs.branch }}
       REF_NAME: ${{ github.ref_name }}
       GIT_AUTH_TOKEN: ${{ secrets.DEPLOY_GH_TOKEN }}
@@ -42,31 +42,46 @@ jobs:
       DEPLOY_PRUNE_OTHER_STACK: ${{ vars.DEPLOY_PRUNE_OTHER_STACK }}
       DEPLOY_ORCHESTRATOR_HA: ${{ vars.DEPLOY_ORCHESTRATOR_HA }}
       DEPLOY_ORCHESTRATOR_HA_COMPOSE_FILE: ${{ vars.DEPLOY_ORCHESTRATOR_HA_COMPOSE_FILE }}
-      DEPLOY_PROD_REMOTE_ENABLED: ${{ vars.DEPLOY_PROD_REMOTE_ENABLED }}
-      DEPLOY_PROD_REMOTE_HOST: ${{ vars.DEPLOY_PROD_REMOTE_HOST }}
-      DEPLOY_PROD_REMOTE_USER: ${{ vars.DEPLOY_PROD_REMOTE_USER }}
-      DEPLOY_PROD_REMOTE_PORT: ${{ vars.DEPLOY_PROD_REMOTE_PORT }}
-      DEPLOY_PROD_REMOTE_REPO_DIR: ${{ vars.DEPLOY_PROD_REMOTE_REPO_DIR }}
-      DEPLOY_PROD_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_PROD_SSH_PRIVATE_KEY }}
+      DEPLOY_PROD_NODE0_HOST: ${{ vars.DEPLOY_PROD_NODE0_HOST }}
+      DEPLOY_PROD_NODE0_USER: ${{ vars.DEPLOY_PROD_NODE0_USER }}
+      DEPLOY_PROD_NODE0_PORT: ${{ vars.DEPLOY_PROD_NODE0_PORT }}
+      DEPLOY_PROD_NODE0_REPO_DIR: ${{ vars.DEPLOY_PROD_NODE0_REPO_DIR }}
+      DEPLOY_PROD_NODE1_HOST: ${{ vars.DEPLOY_PROD_NODE1_HOST }}
+      DEPLOY_PROD_NODE1_USER: ${{ vars.DEPLOY_PROD_NODE1_USER }}
+      DEPLOY_PROD_NODE1_PORT: ${{ vars.DEPLOY_PROD_NODE1_PORT }}
+      DEPLOY_PROD_NODE1_REPO_DIR: ${{ vars.DEPLOY_PROD_NODE1_REPO_DIR }}
+      DEPLOY_PROD_NODE0_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_PROD_NODE0_SSH_PRIVATE_KEY }}
+      DEPLOY_PROD_NODE1_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_PROD_NODE1_SSH_PRIVATE_KEY }}
     steps:
-      - name: Validate Runner Repo Path
+      - name: Validate Runner Repo Path + Fan-out Vars
         run: |
           set -euo pipefail
           if [ -z "${REPO_DIR:-}" ]; then
-            echo "Repository variable BLAST_REPO_DIR_PROD (or BLAST_REPO_DIR) is not set"
+            echo "Repository variable BLAST_REPO_DIR_INFRA (or BLAST_REPO_DIR) is not set"
             exit 1
           fi
           if [ ! -d "$REPO_DIR/.git" ]; then
             echo "REPO_DIR does not point to a git repo: $REPO_DIR"
             exit 1
           fi
+          required_vars=(
+            DEPLOY_PROD_NODE0_HOST
+            DEPLOY_PROD_NODE0_REPO_DIR
+            DEPLOY_PROD_NODE1_HOST
+            DEPLOY_PROD_NODE1_REPO_DIR
+          )
+          for key in "${required_vars[@]}"; do
+            if [ -z "${!key:-}" ]; then
+              echo "Required repository variable is missing: $key"
+              exit 1
+            fi
+          done
+          if [ -z "${DEPLOY_PROD_NODE0_SSH_PRIVATE_KEY:-}" ] || [ -z "${DEPLOY_PROD_NODE1_SSH_PRIVATE_KEY:-}" ]; then
+            echo "Required secrets are missing: DEPLOY_PROD_NODE0_SSH_PRIVATE_KEY / DEPLOY_PROD_NODE1_SSH_PRIVATE_KEY"
+            exit 1
+          fi
 
-      - name: Checkout Workflow Repo
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-
-      - name: Deploy prod-path stack
+      - name: Deploy prod-path fan-out to orchestrator-0 and orchestrator-1
         run: |
           set -euo pipefail
           BRANCH="${INPUT_BRANCH:-$REF_NAME}"
@@ -74,82 +89,28 @@ jobs:
             echo "Branch is empty"
             exit 1
           fi
-          remote_flag="$(printf '%s' "${DEPLOY_PROD_REMOTE_ENABLED:-}" | tr '[:upper:]' '[:lower:]')"
-          if [ "$remote_flag" = "1" ] || [ "$remote_flag" = "true" ] || [ "$remote_flag" = "yes" ] || [ "$remote_flag" = "on" ]; then
-            if [ -z "${DEPLOY_PROD_REMOTE_HOST:-}" ] || [ -z "${DEPLOY_PROD_REMOTE_REPO_DIR:-}" ]; then
-              echo "DEPLOY_PROD_REMOTE_ENABLED=true requires DEPLOY_PROD_REMOTE_HOST and DEPLOY_PROD_REMOTE_REPO_DIR"
-              exit 1
-            fi
-            if [ -z "${DEPLOY_PROD_SSH_PRIVATE_KEY:-}" ]; then
-              echo "DEPLOY_PROD_REMOTE_ENABLED=true requires secret DEPLOY_PROD_SSH_PRIVATE_KEY"
-              exit 1
-            fi
-            install -d -m 700 "$HOME/.ssh"
-            key_path="$HOME/.ssh/deploy_prod_ci"
-            printf '%s\n' "$DEPLOY_PROD_SSH_PRIVATE_KEY" > "$key_path"
-            chmod 600 "$key_path"
-            cleanup_key() {
-              rm -f "$key_path"
-            }
-            trap cleanup_key EXIT
+          install -d -m 700 "$HOME/.ssh"
+          key_node0="$HOME/.ssh/deploy_prod_node0_ci"
+          key_node1="$HOME/.ssh/deploy_prod_node1_ci"
+          printf '%s\n' "$DEPLOY_PROD_NODE0_SSH_PRIVATE_KEY" > "$key_node0"
+          printf '%s\n' "$DEPLOY_PROD_NODE1_SSH_PRIVATE_KEY" > "$key_node1"
+          chmod 600 "$key_node0" "$key_node1"
+          cleanup_keys() {
+            rm -f "$key_node0" "$key_node1"
+          }
+          trap cleanup_keys EXIT
 
-            DEPLOY_REMOTE_HOST="$DEPLOY_PROD_REMOTE_HOST" \
-            DEPLOY_REMOTE_USER="${DEPLOY_PROD_REMOTE_USER:-deploy}" \
-            DEPLOY_REMOTE_PORT="${DEPLOY_PROD_REMOTE_PORT:-22}" \
-            DEPLOY_REMOTE_REPO_DIR="$DEPLOY_PROD_REMOTE_REPO_DIR" \
-            DEPLOY_REMOTE_SSH_KEY_PATH="$key_path" \
-            bash "$GITHUB_WORKSPACE/infra/runners/deploy_remote_branch.sh" "$BRANCH" "prod-path"
-          else
-            bash "$GITHUB_WORKSPACE/infra/runners/deploy_branch.sh" "$BRANCH" "prod-path"
-          fi
-
-      - name: Deploy Orchestrator Nginx (optional)
-        env:
-          BRANCH: ${{ inputs.branch != '' && inputs.branch || github.ref_name }}
-          ORCHESTRATOR_NGINX_DEPLOY_ENABLED: ${{ vars.ORCHESTRATOR_NGINX_DEPLOY_ENABLED }}
-          ORCHESTRATOR_NGINX_MAIN_ONLY: ${{ vars.ORCHESTRATOR_NGINX_MAIN_ONLY }}
-          ORCHESTRATOR_NGINX_MAIN_BRANCH: ${{ vars.ORCHESTRATOR_NGINX_MAIN_BRANCH }}
-          ORCHESTRATOR_NGINX_UPSTREAM_TEMPLATE: ${{ vars.ORCHESTRATOR_NGINX_UPSTREAM_TEMPLATE }}
-          ORCHESTRATOR_NGINX_LOCATIONS_TEMPLATE: ${{ vars.ORCHESTRATOR_NGINX_LOCATIONS_TEMPLATE }}
-          ORCHESTRATOR_NGINX_UPSTREAM_TARGET: ${{ vars.ORCHESTRATOR_NGINX_UPSTREAM_TARGET }}
-          ORCHESTRATOR_NGINX_LOCATIONS_TARGET: ${{ vars.ORCHESTRATOR_NGINX_LOCATIONS_TARGET }}
-          ORCHESTRATOR_NGINX_RELOAD_CMD: ${{ vars.ORCHESTRATOR_NGINX_RELOAD_CMD }}
-          ORCHESTRATOR_NGINX_REMOTE_ENABLED: ${{ vars.ORCHESTRATOR_NGINX_REMOTE_ENABLED }}
-          ORCHESTRATOR_NGINX_REMOTE_HOST: ${{ vars.ORCHESTRATOR_NGINX_REMOTE_HOST }}
-          ORCHESTRATOR_NGINX_REMOTE_USER: ${{ vars.ORCHESTRATOR_NGINX_REMOTE_USER }}
-          ORCHESTRATOR_NGINX_REMOTE_PORT: ${{ vars.ORCHESTRATOR_NGINX_REMOTE_PORT }}
-          ORCHESTRATOR_NGINX_REMOTE_SSH_PRIVATE_KEY: ${{ secrets.ORCHESTRATOR_NGINX_REMOTE_SSH_PRIVATE_KEY }}
-        run: |
-          set -euo pipefail
-          remote_flag="$(printf '%s' "${ORCHESTRATOR_NGINX_REMOTE_ENABLED:-}" | tr '[:upper:]' '[:lower:]')"
-          if [ "$remote_flag" = "1" ] || [ "$remote_flag" = "true" ] || [ "$remote_flag" = "yes" ] || [ "$remote_flag" = "on" ]; then
-            if [ -z "${ORCHESTRATOR_NGINX_REMOTE_HOST:-}" ]; then
-              echo "ORCHESTRATOR_NGINX_REMOTE_ENABLED=true requires ORCHESTRATOR_NGINX_REMOTE_HOST"
-              exit 1
-            fi
-            if [ -z "${ORCHESTRATOR_NGINX_REMOTE_SSH_PRIVATE_KEY:-}" ]; then
-              echo "ORCHESTRATOR_NGINX_REMOTE_ENABLED=true requires secret ORCHESTRATOR_NGINX_REMOTE_SSH_PRIVATE_KEY"
-              exit 1
-            fi
-            install -d -m 700 "$HOME/.ssh"
-            key_path="$HOME/.ssh/orchestrator_nginx_ci"
-            printf '%s\n' "$ORCHESTRATOR_NGINX_REMOTE_SSH_PRIVATE_KEY" > "$key_path"
-            chmod 600 "$key_path"
-            cleanup_key() {
-              rm -f "$key_path"
-            }
-            trap cleanup_key EXIT
-
-            ORCHESTRATOR_NGINX_REMOTE_HOST="$ORCHESTRATOR_NGINX_REMOTE_HOST" \
-            ORCHESTRATOR_NGINX_REMOTE_USER="${ORCHESTRATOR_NGINX_REMOTE_USER:-blast}" \
-            ORCHESTRATOR_NGINX_REMOTE_PORT="${ORCHESTRATOR_NGINX_REMOTE_PORT:-22}" \
-            ORCHESTRATOR_NGINX_REMOTE_SSH_KEY_PATH="$key_path" \
-            REPO_DIR="$GITHUB_WORKSPACE" \
-            bash "$GITHUB_WORKSPACE/infra/runners/deploy_orchestrator_nginx_remote.sh" "$BRANCH"
-          else
-            REPO_DIR="$GITHUB_WORKSPACE" \
-            bash "$GITHUB_WORKSPACE/infra/runners/deploy_orchestrator_nginx.sh" "$BRANCH"
-          fi
+          DEPLOY_REMOTE_NODE0_HOST="$DEPLOY_PROD_NODE0_HOST" \
+          DEPLOY_REMOTE_NODE0_USER="${DEPLOY_PROD_NODE0_USER:-deploy}" \
+          DEPLOY_REMOTE_NODE0_PORT="${DEPLOY_PROD_NODE0_PORT:-22}" \
+          DEPLOY_REMOTE_NODE0_REPO_DIR="$DEPLOY_PROD_NODE0_REPO_DIR" \
+          DEPLOY_REMOTE_NODE0_SSH_KEY_PATH="$key_node0" \
+          DEPLOY_REMOTE_NODE1_HOST="$DEPLOY_PROD_NODE1_HOST" \
+          DEPLOY_REMOTE_NODE1_USER="${DEPLOY_PROD_NODE1_USER:-deploy}" \
+          DEPLOY_REMOTE_NODE1_PORT="${DEPLOY_PROD_NODE1_PORT:-22}" \
+          DEPLOY_REMOTE_NODE1_REPO_DIR="$DEPLOY_PROD_NODE1_REPO_DIR" \
+          DEPLOY_REMOTE_NODE1_SSH_KEY_PATH="$key_node1" \
+          bash "$REPO_DIR/infra/runners/deploy_remote_fanout.sh" "$BRANCH" "prod-path"
 
   deploy-infra-ops:
     if: ${{ vars.DEPLOY_SPLIT_ENABLED == 'true' && (github.event_name == 'push' || inputs.target == 'all' || inputs.target == 'infra-ops') }}
@@ -176,11 +137,6 @@ jobs:
             exit 1
           fi
 
-      - name: Checkout Workflow Repo
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-
       - name: Deploy infra-ops stack
         run: |
           set -euo pipefail
@@ -189,4 +145,4 @@ jobs:
             echo "Branch is empty"
             exit 1
           fi
-          bash "$GITHUB_WORKSPACE/infra/runners/deploy_branch.sh" "$BRANCH" "infra-ops"
+          bash "$REPO_DIR/infra/runners/deploy_branch.sh" "$BRANCH" "infra-ops"
