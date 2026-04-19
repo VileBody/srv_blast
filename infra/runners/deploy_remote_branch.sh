@@ -66,6 +66,11 @@ printf -v q_remote_cmd '%q' "$remote_cmd"
 
 echo "[deploy-remote] host=$DEPLOY_REMOTE_USER@$DEPLOY_REMOTE_HOST port=$DEPLOY_REMOTE_PORT repo=$DEPLOY_REMOTE_REPO_DIR branch=$BRANCH stack=$DEPLOY_STACK"
 
+if command -v ssh-keygen >/dev/null 2>&1; then
+  ssh-keygen -R "$DEPLOY_REMOTE_HOST" >/dev/null 2>&1 || true
+  ssh-keygen -R "[$DEPLOY_REMOTE_HOST]:$DEPLOY_REMOTE_PORT" >/dev/null 2>&1 || true
+fi
+
 ssh \
   -p "$DEPLOY_REMOTE_PORT" \
   -i "$DEPLOY_REMOTE_SSH_KEY_PATH" \
