@@ -71,6 +71,23 @@ def _windows_default_urls() -> list[str]:
     return parse_windows_urls_csv((SETTINGS.windows_base_url + "," + SETTINGS.windows_base_urls_csv).strip(","))
 
 
+def _resolve_job_queue_name(raw: str, *, fallback: str) -> str:
+    value = str(raw or "").strip()
+    if value:
+        return value
+    return str(fallback or "").strip()
+
+
+def _job_render_queue(st: Any) -> str:
+    req = getattr(st, "request", None)
+    if isinstance(req, dict):
+        return _resolve_job_queue_name(
+            str(req.get("render_queue") or ""),
+            fallback=SETTINGS.celery_queue_render,
+        )
+    return _resolve_job_queue_name("", fallback=SETTINGS.celery_queue_render)
+
+
 _LLM_PROVIDER_MODE_GEMINI = "gemini"
 _LLM_PROVIDER_MODE_OPENROUTER = "openrouter"
 _LLM_PROVIDER_MODE_HEDGED = "hedged"
@@ -1621,7 +1638,11 @@ def _build_job_impl(self, job_id: str, *, worker_type: str) -> Dict[str, Any]:
             }
         },
     )
-    dispatch_to_windows.delay(job_id)
+    render_queue = _resolve_job_queue_name(str(req.get("render_queue") or ""), fallback=SETTINGS.celery_queue_render)
+    if render_queue != str(SETTINGS.celery_queue_render or "").strip():
+        dispatch_to_windows.apply_async(args=[job_id], queue=render_queue)
+    else:
+        dispatch_to_windows.delay(job_id)
     return {"ok": True, "stage": "build_done", "paths": paths.manifest()}
 
 
@@ -1954,7 +1975,12 @@ def dispatch_to_windows(self, job_id: str) -> Dict[str, Any]:
         stage="poll",
         result={"render_id": render_id, "windows": res, "poll_started_at": time.time()},
     )
-    poll_windows_render.apply_async(args=[job_id, render_id], countdown=float(SETTINGS.windows_poll_interval_s))
+    render_queue = _job_render_queue(st)
+    poll_windows_render.apply_async(
+        args=[job_id, render_id],
+        countdown=float(SETTINGS.windows_poll_interval_s),
+        queue=render_queue,
+    )
     return {"ok": True, "mode": "async_render", "render_id": render_id, "windows": res}
 
 
@@ -2112,6 +2138,11 @@ def poll_windows_render(self, job_id: str, render_id: str) -> Dict[str, Any]:
         metric="render_poll_total",
         labels={"node": node, "outcome": "running"},
     )
-    poll_windows_render.apply_async(args=[job_id, render_id], countdown=float(SETTINGS.windows_poll_interval_s))
+    render_queue = _job_render_queue(st)
+    poll_windows_render.apply_async(
+        args=[job_id, render_id],
+        countdown=float(SETTINGS.windows_poll_interval_s),
+        queue=render_queue,
+    )
     store.set_status(job_id, "RUNNING", stage="poll", result={"render_id": render_id, "windows": res})
     return {"ok": True, "status": "running", "windows": res}

@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import re
+import secrets
 import time
 import uuid
 from pathlib import Path
@@ -13,11 +14,12 @@ from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import parse_qsl, quote, unquote_plus
 
 import httpx
+import uvicorn
 from aiogram import Bot, Dispatcher, Router
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandStart
-from aiogram.types import BotCommand, CallbackQuery, ChatMemberUpdated, FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, Message, ReplyKeyboardMarkup, ReplyKeyboardRemove
+from aiogram.types import BotCommand, CallbackQuery, ChatMemberUpdated, FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, Message, ReplyKeyboardMarkup, ReplyKeyboardRemove, Update
 from core.clip_window import CLIP_WINDOW_RANGE_S_LABEL
 from core.filesystem_hygiene import cleanup_jobs_artifacts, cleanup_tmp_chat_dirs
 from core.subtitles_mode import (
@@ -89,6 +91,7 @@ from .state_store import (
     STAGE_REMIND_RELEASE,
     STAGE_NO_FRIENDS_FORM,
 )
+from fastapi import FastAPI, HTTPException, Request
 
 
 logging.basicConfig(
@@ -4253,6 +4256,85 @@ class BlastBotApp:
             raise RuntimeError("bot instance is not ready")
         return self._bot
 
+    async def _bot_call_maybe_async(self, fn: Any, *args: Any, **kwargs: Any) -> Any:
+        res = fn(*args, **kwargs)
+        if asyncio.iscoroutine(res):
+            return await res
+        return res
+
+    def _normalized_webhook_path(self) -> str:
+        raw = str(self.settings.tg_webhook_path or "").strip()
+        if not raw:
+            raise RuntimeError("TG_WEBHOOK_PATH must be non-empty")
+        if not raw.startswith("/"):
+            raw = "/" + raw
+        return raw
+
+    def _build_webhook_public_url(self) -> str:
+        base = str(self.settings.tg_webhook_url or "").strip()
+        if not base:
+            raise RuntimeError("TG_WEBHOOK_URL is required when TG_DELIVERY_MODE=webhook")
+        return base.rstrip("/") + self._normalized_webhook_path()
+
+    async def _configure_telegram_webhook(self, *, bot: Bot, webhook_url: str) -> None:
+        secret = str(self.settings.tg_webhook_secret or "").strip()
+        await self._bot_call_maybe_async(bot.delete_webhook, drop_pending_updates=False)
+        kwargs: dict[str, Any] = {"url": webhook_url}
+        if secret:
+            kwargs["secret_token"] = secret
+        await self._bot_call_maybe_async(bot.set_webhook, **kwargs)
+
+    async def _drop_telegram_webhook(self, *, bot: Bot) -> None:
+        await self._bot_call_maybe_async(bot.delete_webhook, drop_pending_updates=False)
+
+    def _create_webhook_app(self) -> FastAPI:
+        app = FastAPI(docs_url=None, redoc_url=None)
+        webhook_path = self._normalized_webhook_path()
+
+        @app.get("/healthz")
+        async def _healthz() -> dict[str, bool]:
+            return {"ok": True}
+
+        @app.post(webhook_path)
+        async def _telegram_webhook(req: Request) -> dict[str, Any]:
+            secret_expected = str(self.settings.tg_webhook_secret or "").strip()
+            if secret_expected:
+                secret_got = str(req.headers.get("X-Telegram-Bot-Api-Secret-Token") or "")
+                if not secrets.compare_digest(secret_expected, secret_got):
+                    raise HTTPException(status_code=403, detail="invalid webhook secret")
+
+            try:
+                payload = await req.json()
+            except Exception as exc:
+                raise HTTPException(status_code=400, detail=f"invalid json body: {exc!r}") from exc
+            if not isinstance(payload, dict):
+                raise HTTPException(status_code=400, detail="webhook body must be a JSON object")
+
+            update_id_raw = payload.get("update_id")
+            if update_id_raw is not None:
+                try:
+                    update_id = int(update_id_raw)
+                except Exception as exc:
+                    raise HTTPException(status_code=400, detail=f"invalid update_id: {update_id_raw!r}") from exc
+                is_new = await self.store.mark_webhook_update_seen(
+                    update_id,
+                    ttl_s=int(self.settings.tg_webhook_dedup_ttl_s),
+                )
+                if not is_new:
+                    return {"ok": True, "dedup": True}
+
+            bot = self._require_bot()
+            if hasattr(Update, "model_validate"):
+                update = Update.model_validate(payload)  # type: ignore[attr-defined]
+            else:  # pragma: no cover - compatibility for lightweight stubs
+                update = payload
+            feed_result = self.dp.feed_update(bot, update)
+            if asyncio.iscoroutine(feed_result):
+                await feed_result
+            return {"ok": True}
+
+        return app
+
     async def run(self) -> None:
         tg_proxy = str(self.settings.tg_file_proxy_url or "").strip()
         if tg_proxy:
@@ -4260,7 +4342,45 @@ class BlastBotApp:
             log.info("bot_api_proxy_enabled proxy=%s", _mask_proxy_url(tg_proxy))
         else:
             bot = Bot(token=self.settings.tg_bot_token)
-        await self.dp.start_polling(bot)
+        mode = str(self.settings.tg_delivery_mode or "").strip().lower()
+        if mode == "polling":
+            await self.dp.start_polling(bot)
+            return
+        if mode != "webhook":
+            raise RuntimeError(f"Unsupported TG_DELIVERY_MODE={mode!r} (expected polling|webhook)")
+
+        self._bot = bot
+        self._bot_ref[0] = bot
+        started = False
+        try:
+            await self._on_startup(bot)
+            started = True
+            webhook_url = self._build_webhook_public_url()
+            await self._configure_telegram_webhook(bot=bot, webhook_url=webhook_url)
+
+            webhook_app = self._create_webhook_app()
+            config = uvicorn.Config(
+                webhook_app,
+                host=str(self.settings.tg_webhook_bind_host or "0.0.0.0"),
+                port=int(self.settings.tg_webhook_port),
+                log_level="info",
+            )
+            server = uvicorn.Server(config)
+            log.info(
+                "tg_public webhook mode enabled url=%s bind=%s:%s path=%s",
+                webhook_url,
+                self.settings.tg_webhook_bind_host,
+                self.settings.tg_webhook_port,
+                self._normalized_webhook_path(),
+            )
+            await server.serve()
+        finally:
+            try:
+                await self._drop_telegram_webhook(bot=bot)
+            except Exception as e:
+                log.warning("failed to drop telegram webhook on shutdown err=%r", e)
+            if started:
+                await self._on_shutdown(bot)
 
 
 def main() -> None:

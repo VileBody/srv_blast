@@ -136,6 +136,7 @@ class RedisChatStateStore:
         self._processing_ids_key = f"{self._prefix}:idx:processing"
         # Legacy key kept for compatibility with older deployments.
         self._processing_set_key = f"{self._prefix}:__index:processing"
+        self._webhook_seen_prefix = f"{self._prefix}:webhook_seen"
         self._waiting_referral_ids_key = f"{self._prefix}:idx:waiting_referral"
         self._reminder_zset_key = f"{self._prefix}:idx:reminder_at"
         self._updated_at_zset_key = f"{self._prefix}:idx:updated_at"
@@ -595,6 +596,21 @@ class RedisChatStateStore:
         if raw in {"0", "false", "no", "off"}:
             return False
         return bool(default)
+
+    async def mark_webhook_update_seen(self, update_id: int, *, ttl_s: int) -> bool:
+        uid = int(update_id)
+        ttl = max(60, int(ttl_s or 0))
+        key = f"{self._webhook_seen_prefix}:{uid}"
+        try:
+            inserted = await self._redis.set(key, "1", ex=ttl, nx=True)
+        except TypeError:
+            # Compatibility path for lightweight test doubles without NX support.
+            existing = await self._redis.get(key)
+            if existing:
+                return False
+            await self._redis.set(key, "1", ex=ttl)
+            return True
+        return bool(inserted)
 
     async def close(self) -> None:
         await self._redis.aclose()

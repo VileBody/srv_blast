@@ -158,19 +158,34 @@ def _install_aiogram_stub() -> None:
     class TelegramBadRequest(Exception):
         pass
 
+    class TelegramForbiddenError(Exception):
+        pass
+
+    class TelegramRetryAfter(Exception):
+        def __init__(self, *args, retry_after: float = 1.0, **kwargs) -> None:
+            super().__init__(*args)
+            _ = kwargs
+            self.retry_after = retry_after
+
     aiogram_mod.Bot = _DummyBot
     aiogram_mod.Dispatcher = _DummyDispatcher
     aiogram_mod.Router = _DummyRouter
     aiogram_exceptions_mod.TelegramBadRequest = TelegramBadRequest
+    aiogram_exceptions_mod.TelegramForbiddenError = TelegramForbiddenError
+    aiogram_exceptions_mod.TelegramRetryAfter = TelegramRetryAfter
     aiogram_filters_mod.CommandStart = _Dummy
     aiogram_filters_mod.Command = _Dummy
     aiogram_types_mod.FSInputFile = _Dummy
+    aiogram_types_mod.BotCommand = _Dummy
+    aiogram_types_mod.CallbackQuery = _Dummy
+    aiogram_types_mod.ChatMemberUpdated = _Dummy
     aiogram_types_mod.KeyboardButton = _Dummy
     aiogram_types_mod.Message = _Dummy
     aiogram_types_mod.ReplyKeyboardMarkup = _Dummy
     aiogram_types_mod.ReplyKeyboardRemove = _Dummy
     aiogram_types_mod.InlineKeyboardMarkup = _Dummy
     aiogram_types_mod.InlineKeyboardButton = _Dummy
+    aiogram_types_mod.Update = _Dummy
     aiogram_client_session_aiohttp_mod.AiohttpSession = _Dummy
 
     sys.modules["aiogram"] = aiogram_mod

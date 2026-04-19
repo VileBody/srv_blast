@@ -152,7 +152,21 @@ class _FakeStore:
         return st2
 
 
-def _job(job_id: str, *, status: str, updated_at: float, project_id: str = "") -> JobState:
+def _job(
+    job_id: str,
+    *,
+    status: str,
+    updated_at: float,
+    project_id: str = "",
+    request_patch: dict | None = None,
+) -> JobState:
+    request = {
+        "audio_s3_url": "s3://bucket/raw.mp3",
+        "project_id": project_id,
+        "llm_worker_type": "sdk",
+    }
+    if isinstance(request_patch, dict):
+        request.update(request_patch)
     return JobState(
         job_id=job_id,
         status=status,  # type: ignore[arg-type]
@@ -164,11 +178,7 @@ def _job(job_id: str, *, status: str, updated_at: float, project_id: str = "") -
         finished_at=None,
         stage="build",
         idempotency_key=None,
-        request={
-            "audio_s3_url": "s3://bucket/raw.mp3",
-            "project_id": project_id,
-            "llm_worker_type": "sdk",
-        },
+        request=request,
         result=None,
         error=None,
     )
@@ -295,3 +305,45 @@ def test_requeue_failed_job_reserves_and_enqueues(monkeypatch) -> None:
     assert st.status == "QUEUED"
     assert st.stage == "build"
     assert st.request["llm_worker_type"] == "openrouter"
+
+
+def test_requeue_uses_origin_build_queue_when_request_has_node_pin(monkeypatch) -> None:
+    now = time.time()
+    store = _FakeStore(
+        [
+            _job(
+                "job-pinned",
+                status="FAILED",
+                updated_at=now - 800.0,
+                request_patch={
+                    "build_queue": "build.orchestrator-0",
+                    "render_queue": "render.orchestrator-0",
+                    "origin_node": "orchestrator-0",
+                },
+            )
+        ]
+    )
+    monkeypatch.setattr(orchestrator_app, "_revoke_celery_tasks_for_job", lambda _jid: [])
+    monkeypatch.setattr(
+        orchestrator_app,
+        "reserve_worker_type",
+        lambda _store, requested=None: SimpleNamespace(worker_type=str(requested or "sdk")),
+    )
+
+    delayed: list[str] = []
+    applied: list[dict[str, object]] = []
+    monkeypatch.setattr(orchestrator_app.build_job_sdk, "delay", lambda job_id: delayed.append(str(job_id)))
+    monkeypatch.setattr(
+        orchestrator_app.build_job_sdk,
+        "apply_async",
+        lambda *args, **kwargs: applied.append({"args": args, "kwargs": kwargs}),
+    )
+
+    with _build_client(monkeypatch, store) as client:
+        resp = client.post("/jobs/job-pinned/requeue", json={"reason": "manual_retry"})
+
+    assert resp.status_code == 200
+    assert delayed == []
+    assert len(applied) == 1
+    assert applied[0]["kwargs"]["queue"] == "build.orchestrator-0"
+    assert applied[0]["kwargs"]["args"] == ["job-pinned"]

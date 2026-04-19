@@ -8,8 +8,11 @@
 - Workflow (split): `.github/workflows/deploy-split-main.yml`
 - Скрипт деплоя: `infra/runners/deploy_branch.sh`
 - Скрипт удаленного деплоя на prod VM по SSH: `infra/runners/deploy_remote_branch.sh`
+- Скрипт fan-out деплоя на две worker-ноды: `infra/runners/deploy_remote_fanout.sh`
 - Скрипт sync orchestrator nginx snippets: `infra/runners/deploy_orchestrator_nginx.sh`
 - Скрипт remote sync orchestrator nginx snippets по SSH: `infra/runners/deploy_orchestrator_nginx_remote.sh`
+- Скрипт deploy ingress snippets на blast-ops: `infra/runners/deploy_blast_ops_nginx.sh`
+- Nginx snippets для ingress blast-ops: `infra/runners/nginx/blast-ops.*.conf.example`
 - Docker Compose для GitHub self-hosted runner: `infra/runners/docker-compose.github-runner.yml`
 - Docker Compose для web UI логов (Dozzle): `infra/runners/docker-compose.logs.yml`
 - Docker Compose для observability V1: `infra/runners/docker-compose.observability.yml`
@@ -30,7 +33,7 @@ cp .env.github-runner.example .env.github-runner
 docker compose -f docker-compose.github-runner.yml --env-file .env.github-runner up -d
 ```
 
-Runner поднимется с label: `self-hosted,blast-deploy`.
+Runner поднимется с label из `.env.github-runner` (для split rollout рекомендуем `blast-deploy-infra` на `blast-ops`).
 
 ## 2) Настроить GitHub variable
 
@@ -251,12 +254,13 @@ docker compose -f docker-compose.promtail-edge.yml --env-file .env.promtail-edge
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
-## 6) CI/CD split rollout (рекомендуется)
+## 6) CI/CD split rollout (blast-ops runner + remote fan-out)
 
-Для двух VM используем два self-hosted runner:
+Целевая схема:
 
-- `blast-deploy-prod` (на prod VM)
-- `blast-deploy-infra` (на infra VM)
+- self-hosted runner только на `blast-ops` (label: `blast-deploy-infra`);
+- `infra-ops` деплоится локально на `blast-ops`;
+- `prod-path` деплоится по SSH fan-out на `orchestrator-0` и `orchestrator-1`.
 
 Workflow:
 
@@ -265,24 +269,64 @@ Workflow:
 Repository variables:
 
 - `DEPLOY_SPLIT_ENABLED=true`
-- `BLAST_REPO_DIR_PROD=/opt/blast_mj_final` (или ваш путь на prod VM)
-- `BLAST_REPO_DIR_INFRA=/opt/blast_mj_final` (или ваш путь на infra VM)
+- `BLAST_REPO_DIR_INFRA=/opt/blast_mj_final` (путь репо на `blast-ops`)
 - `DEPLOY_PRUNE_OTHER_STACK=true` (опционально)
-- `DEPLOY_ORCHESTRATOR_HA=true` (опционально, включает `docker-compose.orchestrator-ha.yml` в `prod-path`)
+- `DEPLOY_ORCHESTRATOR_HA=true` (опционально)
 - `DEPLOY_ORCHESTRATOR_HA_COMPOSE_FILE=docker-compose.orchestrator-ha.yml` (опционально)
+- `DEPLOY_PROD_NODE0_HOST=<orchestrator-0-private-ip-or-host>`
+- `DEPLOY_PROD_NODE0_USER=deploy`
+- `DEPLOY_PROD_NODE0_PORT=22`
+- `DEPLOY_PROD_NODE0_REPO_DIR=/home/deploy/blast_final`
+- `DEPLOY_PROD_NODE1_HOST=<orchestrator-1-private-ip-or-host>`
+- `DEPLOY_PROD_NODE1_USER=deploy`
+- `DEPLOY_PROD_NODE1_PORT=22`
+- `DEPLOY_PROD_NODE1_REPO_DIR=/home/deploy/blast_final`
 
-Для схемы "runner на orchestrator VM, prod-path на отдельной blast-ops VM":
-- `DEPLOY_PROD_REMOTE_ENABLED=true`
-- `DEPLOY_PROD_REMOTE_HOST=<prod-vm-ip>`
-- `DEPLOY_PROD_REMOTE_USER=deploy`
-- `DEPLOY_PROD_REMOTE_PORT=22` (или ваш SSH port)
-- `DEPLOY_PROD_REMOTE_REPO_DIR=/home/deploy/blast_final`
-- `Repository secret DEPLOY_PROD_SSH_PRIVATE_KEY` (private key для `deploy@prod-vm`)
+Repository secrets:
 
-При включенном `DEPLOY_PROD_REMOTE_ENABLED=true` job `deploy-prod-path` выполняет deploy по SSH
-на prod VM, а не локально на runner-хосте.
+- `DEPLOY_GH_TOKEN`
+- `DEPLOY_PROD_NODE0_SSH_PRIVATE_KEY`
+- `DEPLOY_PROD_NODE1_SSH_PRIVATE_KEY`
+
+Скрипты:
+
+- `infra/runners/deploy_remote_branch.sh` — deploy на одну ноду.
+- `infra/runners/deploy_remote_fanout.sh` — последовательный deploy на обе worker-ноды.
+
+Fail-fast контракт:
+
+- job `deploy-prod-path` завершится ошибкой, если не задан хотя бы один из vars/secrets для `node0/node1`;
+- локальный deploy `prod-path` на blast-ops больше не используется.
 
 Legacy workflow `.github/workflows/deploy-current-branch.yml` автоматически пропускается при `DEPLOY_SPLIT_ENABLED=true`.
+
+### 6.1) Nginx ingress на blast-ops (API + webhook)
+
+Что добавлено:
+
+- шаблоны: `infra/runners/nginx/blast-ops.upstream.conf.example`, `infra/runners/nginx/blast-ops.locations.conf.example`
+- скрипт установки: `infra/runners/deploy_blast_ops_nginx.sh`
+- шаг в `deploy-split-main.yml` (job `deploy-infra-ops`)
+
+Repository variables для шага ingress:
+
+- `BLAST_OPS_NGINX_DEPLOY_ENABLED=true`
+- `BLAST_OPS_NGINX_MAIN_ONLY=true`
+- `BLAST_OPS_NGINX_MAIN_BRANCH=main`
+- `BLAST_OPS_NGINX_UPSTREAM_TARGET=/etc/nginx/conf.d/blast_ops_upstream.conf`
+- `BLAST_OPS_NGINX_LOCATIONS_TARGET=/etc/nginx/snippets/blast_ops.locations.conf`
+- `BLAST_OPS_NGINX_RELOAD_CMD=sudo nginx -t && sudo systemctl reload nginx`
+- `BLAST_OPS_ORCH0_API_UPSTREAM=<orchestrator-0-ip>:18000`
+- `BLAST_OPS_ORCH1_API_UPSTREAM=<orchestrator-1-ip>:18000`
+- `BLAST_OPS_ORCH0_TG_WEBHOOK_UPSTREAM=<orchestrator-0-ip>:18083`
+- `BLAST_OPS_ORCH1_TG_WEBHOOK_UPSTREAM=<orchestrator-1-ip>:18083`
+- `BLAST_OPS_TG_WEBHOOK_PATH=/telegram/webhook`
+
+Для webhook publish на worker-нодах:
+
+- `TG_BOT_PUBLIC_WEBHOOK_BIND_HOST=0.0.0.0`
+- `TG_BOT_PUBLIC_WEBHOOK_BIND_PORT=18083`
+- `TG_DELIVERY_MODE=webhook`
 
 ## 7) Logs Backup V2 (PostgreSQL normalization + S3 raw backup)
 

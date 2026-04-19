@@ -1,0 +1,35 @@
+# Put this snippet into nginx `server {}` context on blast-ops.
+# Replace __TG_WEBHOOK_PATH__ through infra/runners/deploy_blast_ops_nginx.sh.
+
+# Orchestrator public API behind blast-ops ingress.
+location /orchestrator/ {
+    proxy_pass http://blast_orchestrator_api_pool/;
+    proxy_http_version 1.1;
+
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header Connection "";
+
+    proxy_connect_timeout 5s;
+    proxy_send_timeout 300s;
+    proxy_read_timeout 300s;
+}
+
+# Telegram webhook endpoint for tg-bot-public (round-robin between worker nodes).
+location = __TG_WEBHOOK_PATH__ {
+    proxy_pass http://blast_tg_public_webhook_pool__TG_WEBHOOK_PATH__;
+    proxy_http_version 1.1;
+
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header Connection "";
+
+    proxy_request_buffering off;
+    proxy_connect_timeout 5s;
+    proxy_send_timeout 60s;
+    proxy_read_timeout 60s;
+}
