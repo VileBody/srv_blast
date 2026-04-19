@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import socket
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import quote_plus
@@ -91,6 +92,17 @@ def _credits_db_url_env() -> str:
     )
 
 
+def _worker_node_name_env() -> str:
+    raw = _env("WORKER_NODE_NAME", "")
+    if raw:
+        return raw
+    try:
+        host = str(socket.gethostname() or "").strip()
+    except Exception:
+        host = ""
+    return host or "unknown-node"
+
+
 def _abs_path(p: str, *, repo_root: Path) -> str:
     s = (p or "").strip()
     if not s:
@@ -115,6 +127,7 @@ class Settings:
     # Celery
     celery_broker_url: str = _env("CELERY_BROKER_URL", "")
     celery_result_backend: str = _env("CELERY_RESULT_BACKEND", "")
+    worker_node_name: str = _worker_node_name_env()
 
     # Two queues
     celery_queue_build: str = _env("CELERY_QUEUE_BUILD", "build")

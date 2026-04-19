@@ -180,6 +180,19 @@ def create_app() -> FastAPI:
             lease_ttl_s=SETTINGS.windows_node_lease_ttl_s,
         )
 
+    def _normalize_queue_name(raw: str, *, fallback: str) -> str:
+        value = str(raw or "").strip()
+        if value:
+            return value
+        return str(fallback or "").strip()
+
+    def _local_worker_binding() -> dict[str, str]:
+        return {
+            "origin_node": str(SETTINGS.worker_node_name or "").strip() or "unknown-node",
+            "build_queue": _normalize_queue_name("", fallback=SETTINGS.celery_queue_build),
+            "render_queue": _normalize_queue_name("", fallback=SETTINGS.celery_queue_render),
+        }
+
     def _build_windows_nodes_status(*, runtime_nodes: list[dict[str, Any]]) -> WindowsNodesStatusResponse:
         default_urls = _default_windows_urls()
         effective_nodes = runtime_nodes or _windows_pool().get_effective_nodes(default_urls=default_urls)
@@ -382,7 +395,7 @@ def create_app() -> FastAPI:
             runtime_nodes = pool.get_runtime_nodes()
         return _build_windows_nodes_status(runtime_nodes=runtime_nodes)
 
-    def _enqueue_build_task(job_id: str, worker_type: str) -> None:
+    def _enqueue_build_task(job_id: str, worker_type: str, *, build_queue: str = "") -> None:
         wt = normalize_llm_worker_type(worker_type)
         task_map = {
             "sdk": build_job_sdk,
@@ -393,6 +406,10 @@ def create_app() -> FastAPI:
         task = task_map.get(wt)
         if task is None:
             raise RuntimeError(f"unsupported llm_worker_type: {worker_type}")
+        queue_name = _normalize_queue_name(build_queue, fallback=SETTINGS.celery_queue_build)
+        if queue_name != str(SETTINGS.celery_queue_build or "").strip():
+            task.apply_async(args=[job_id], queue=queue_name)
+            return
         task.delay(job_id)
 
     def _ensure_accepting_new_jobs(req: SendVideoRequest | None = None) -> None:
@@ -425,16 +442,29 @@ def create_app() -> FastAPI:
         try:
             selected = reserve_worker_type(store, requested=req.llm_worker_type)
             worker_type = selected.worker_type
-
-            store.patch_request(st.job_id, {"llm_worker_type": worker_type})
+            worker_binding = _local_worker_binding()
+            store.patch_request(
+                st.job_id,
+                {
+                    "llm_worker_type": worker_type,
+                    "origin_node": worker_binding["origin_node"],
+                    "build_queue": worker_binding["build_queue"],
+                    "render_queue": worker_binding["render_queue"],
+                },
+            )
             store.set_status(
                 st.job_id,
                 "QUEUED",
                 stage="build",
-                result={"llm_worker_type": worker_type},
+                result={
+                    "llm_worker_type": worker_type,
+                    "origin_node": worker_binding["origin_node"],
+                    "build_queue": worker_binding["build_queue"],
+                    "render_queue": worker_binding["render_queue"],
+                },
             )
             queued = True
-            _enqueue_build_task(st.job_id, worker_type)
+            _enqueue_build_task(st.job_id, worker_type, build_queue=worker_binding["build_queue"])
         except Exception as e:
             if worker_type and not queued:
                 try:
@@ -580,6 +610,17 @@ def create_app() -> FastAPI:
                 status_code=400,
                 detail="llm_worker_type is required (missing in job request and payload)",
             )
+        selected_build_queue = _normalize_queue_name(
+            str(req.get("build_queue") or ""),
+            fallback=SETTINGS.celery_queue_build,
+        )
+        selected_render_queue = _normalize_queue_name(
+            str(req.get("render_queue") or ""),
+            fallback=SETTINGS.celery_queue_render,
+        )
+        selected_origin_node = str(req.get("origin_node") or "").strip() or str(
+            SETTINGS.worker_node_name or ""
+        ).strip() or "unknown-node"
 
         try:
             revoked_task_ids = _revoke_celery_tasks_for_job(jid)
@@ -620,7 +661,15 @@ def create_app() -> FastAPI:
 
         queued = False
         try:
-            store.patch_request(jid, {"llm_worker_type": selected_worker})
+            store.patch_request(
+                jid,
+                {
+                    "llm_worker_type": selected_worker,
+                    "origin_node": selected_origin_node,
+                    "build_queue": selected_build_queue,
+                    "render_queue": selected_render_queue,
+                },
+            )
             st2 = store.set_status(
                 jid,
                 "QUEUED",
@@ -628,6 +677,9 @@ def create_app() -> FastAPI:
                 error=f"admin_requeued: {reason}",
                 result={
                     "llm_worker_type": selected_worker,
+                    "origin_node": selected_origin_node,
+                    "build_queue": selected_build_queue,
+                    "render_queue": selected_render_queue,
                     "admin_requeue_attempt": requeue_attempt,
                     "admin_requeue_reason": reason,
                     "admin_requeue_revoked_task_ids": revoked_task_ids,
@@ -636,7 +688,7 @@ def create_app() -> FastAPI:
             if not st2:
                 raise HTTPException(status_code=404, detail="job not found")
             queued = True
-            _enqueue_build_task(jid, selected_worker)
+            _enqueue_build_task(jid, selected_worker, build_queue=selected_build_queue)
         except HTTPException:
             if reserved_new_slot and not queued:
                 try:

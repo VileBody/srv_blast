@@ -1,0 +1,22 @@
+# Put this snippet into nginx `http {}` context on blast-ops.
+# Replace placeholders through infra/runners/deploy_blast_ops_nginx.sh.
+#
+# Example values:
+# - __ORCH0_API_UPSTREAM__        -> 10.10.0.20:18000
+# - __ORCH1_API_UPSTREAM__        -> 10.10.0.21:18000
+# - __ORCH0_TG_WEBHOOK_UPSTREAM__ -> 10.10.0.20:18083
+# - __ORCH1_TG_WEBHOOK_UPSTREAM__ -> 10.10.0.21:18083
+
+upstream blast_orchestrator_api_pool {
+    least_conn;
+    server __ORCH0_API_UPSTREAM__ max_fails=3 fail_timeout=10s;
+    server __ORCH1_API_UPSTREAM__ max_fails=3 fail_timeout=10s;
+    keepalive 64;
+}
+
+upstream blast_tg_public_webhook_pool {
+    least_conn;
+    server __ORCH0_TG_WEBHOOK_UPSTREAM__ max_fails=3 fail_timeout=10s;
+    server __ORCH1_TG_WEBHOOK_UPSTREAM__ max_fails=3 fail_timeout=10s;
+    keepalive 32;
+}

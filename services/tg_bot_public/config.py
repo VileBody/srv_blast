@@ -129,6 +129,23 @@ def _credits_db_url_env() -> str:
     )
 
 
+def _delivery_mode_env() -> str:
+    raw = _env("TG_DELIVERY_MODE", "polling").lower()
+    if raw not in {"polling", "webhook"}:
+        raise ValueError("TG_DELIVERY_MODE must be one of: polling, webhook")
+    return raw
+
+
+def _webhook_path_env() -> str:
+    raw = _env("TG_WEBHOOK_PATH", "/telegram/webhook")
+    path = str(raw or "").strip()
+    if not path:
+        raise ValueError("TG_WEBHOOK_PATH must be non-empty")
+    if not path.startswith("/"):
+        path = "/" + path
+    return path
+
+
 @dataclass(frozen=True)
 class Settings:
     tg_bot_token: str = _env("TG_BOT_TOKEN", "")
@@ -136,6 +153,13 @@ class Settings:
     tg_bot_username: str = _env("TG_BOT_USERNAME", "blast808bot")
     tg_file_proxy_url: str = _env("TG_FILE_PROXY_URL", "")
     orchestrator_public_url: str = _env("ORCHESTRATOR_PUBLIC_URL", "http://orchestrator-api:8000")
+    tg_delivery_mode: str = _delivery_mode_env()
+    tg_webhook_url: str = _env("TG_WEBHOOK_URL", "")
+    tg_webhook_secret: str = _env("TG_WEBHOOK_SECRET", "")
+    tg_webhook_path: str = _webhook_path_env()
+    tg_webhook_bind_host: str = _env("TG_WEBHOOK_BIND_HOST", "0.0.0.0")
+    tg_webhook_port: int = _int_env("TG_WEBHOOK_PORT", 8081)
+    tg_webhook_dedup_ttl_s: int = _int_env("TG_WEBHOOK_DEDUP_TTL_S", 86400)
 
     bot_poll_interval_s: float = _float_env("BOT_POLL_INTERVAL_S", 5.0)
     bot_status_update_interval_s: float = _float_env("BOT_STATUS_UPDATE_INTERVAL_S", 20.0)

@@ -39,9 +39,12 @@ class _FakeRedis:
     async def get(self, key: str):
         return self.data.get(key)
 
-    async def set(self, key: str, value: str, ex: int | None = None) -> None:
+    async def set(self, key: str, value: str, ex: int | None = None, nx: bool | None = None):
         del ex
+        if nx and key in self.data:
+            return False
         self.data[key] = value
+        return True
 
     async def delete(self, *keys: str) -> int:
         removed = 0
@@ -180,6 +183,7 @@ def _make_store(fake_redis: _FakeRedis) -> RedisChatStateStore:
     store._all_ids_key = f"{store._prefix}:idx:all"
     store._processing_ids_key = f"{store._prefix}:idx:processing"
     store._processing_set_key = f"{store._prefix}:__index:processing"
+    store._webhook_seen_prefix = f"{store._prefix}:webhook_seen"
     store._waiting_referral_ids_key = f"{store._prefix}:idx:waiting_referral"
     store._reminder_zset_key = f"{store._prefix}:idx:reminder_at"
     store._updated_at_zset_key = f"{store._prefix}:idx:updated_at"
@@ -215,6 +219,20 @@ def test_get_raises_runtime_error_for_broken_json() -> None:
 
     with pytest.raises(RuntimeError, match="Corrupted chat state"):
         asyncio.run(store.get(1))
+
+
+def test_mark_webhook_update_seen_is_idempotent() -> None:
+    async def _run() -> None:
+        redis = _FakeRedis()
+        store = _make_store(redis)
+
+        first = await store.mark_webhook_update_seen(1001, ttl_s=60)
+        second = await store.mark_webhook_update_seen(1001, ttl_s=60)
+
+        assert first is True
+        assert second is False
+
+    asyncio.run(_run())
 
 
 def test_list_processing_reads_from_processing_index() -> None:
