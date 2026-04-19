@@ -169,6 +169,16 @@ run_as_root() {
   return 1
 }
 
+can_manage_systemd() {
+  if ! command -v systemctl >/dev/null 2>&1; then
+    return 1
+  fi
+  if ! systemctl show --property=Version >/dev/null 2>&1; then
+    return 1
+  fi
+  return 0
+}
+
 DETECTED_LOGS_PYTHON=""
 
 detect_logs_python() {
@@ -270,6 +280,11 @@ deploy_logs_pipeline_systemd_if_present() {
     "$logs_python" scripts/logs_pipeline.py migrate
     "$logs_python" scripts/logs_pipeline.py bootstrap-s3-lifecycle
   )
+
+  if ! can_manage_systemd; then
+    echo "[deploy] skip logs pipeline systemd setup (systemd unavailable in current runtime)"
+    return 0
+  fi
 
   local units=(
     "blast-logs-hourly.service"
