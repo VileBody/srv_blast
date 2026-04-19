@@ -172,12 +172,13 @@ run_as_root() {
 detect_logs_python() {
   local logs_python="/opt/blast-logs-venv/bin/python"
   local deps_probe='import boto3, httpx, asyncpg, docker  # noqa: F401'
+  local logs_pip_pkgs=(boto3 httpx asyncpg docker)
 
   if [[ -x "$logs_python" ]]; then
     if ! "$logs_python" -c "$deps_probe" >/dev/null 2>&1; then
       echo "[deploy] install logs pipeline deps into $logs_python" >&2
-      run_as_root "$logs_python" -m pip install --upgrade pip
-      run_as_root "$logs_python" -m pip install -r "$REPO_DIR/requirements.txt"
+      run_as_root "$logs_python" -m pip install --upgrade pip >&2
+      run_as_root "$logs_python" -m pip install "${logs_pip_pkgs[@]}" >&2
     fi
     printf '%s\n' "$logs_python"
     return 0
@@ -194,8 +195,8 @@ detect_logs_python() {
     return 1
   fi
 
-  run_as_root /opt/blast-logs-venv/bin/pip install --upgrade pip
-  run_as_root /opt/blast-logs-venv/bin/pip install -r "$REPO_DIR/requirements.txt"
+  run_as_root /opt/blast-logs-venv/bin/pip install --upgrade pip >&2
+  run_as_root /opt/blast-logs-venv/bin/pip install "${logs_pip_pkgs[@]}" >&2
   printf '%s\n' "$logs_python"
 }
 
