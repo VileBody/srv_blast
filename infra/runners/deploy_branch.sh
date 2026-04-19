@@ -171,19 +171,26 @@ run_as_root() {
 
 detect_logs_python() {
   local logs_python="/opt/blast-logs-venv/bin/python"
+  local deps_probe='import boto3, httpx, asyncpg, docker  # noqa: F401'
+
   if [[ -x "$logs_python" ]]; then
+    if ! "$logs_python" -c "$deps_probe" >/dev/null 2>&1; then
+      echo "[deploy] install logs pipeline deps into $logs_python" >&2
+      run_as_root "$logs_python" -m pip install --upgrade pip
+      run_as_root "$logs_python" -m pip install -r "$REPO_DIR/requirements.txt"
+    fi
     printf '%s\n' "$logs_python"
     return 0
   fi
 
   if ! command -v python3 >/dev/null 2>&1; then
-    echo "[deploy] python3 is required for logs pipeline bootstrap"
+    echo "[deploy] python3 is required for logs pipeline bootstrap" >&2
     return 1
   fi
 
-  echo "[deploy] bootstrap logs venv at /opt/blast-logs-venv"
+  echo "[deploy] bootstrap logs venv at /opt/blast-logs-venv" >&2
   if ! run_as_root python3 -m venv /opt/blast-logs-venv; then
-    echo "[deploy] failed to create /opt/blast-logs-venv (install python3-venv on host)"
+    echo "[deploy] failed to create /opt/blast-logs-venv (install python3-venv on host)" >&2
     return 1
   fi
 
