@@ -326,7 +326,11 @@ deploy_logs_pipeline_systemd_if_present() {
   done
 
   echo "[deploy] systemctl daemon-reload"
-  run_as_root systemctl daemon-reload
+  if ! run_as_root systemctl daemon-reload; then
+    echo "[deploy] skip logs pipeline systemd setup (systemd unavailable in current runtime)"
+    rm -rf "$tmp_dir"
+    return 0
+  fi
   echo "[deploy] enable --now blast-logs-hourly.timer"
   run_as_root systemctl enable --now blast-logs-hourly.timer
   echo "[deploy] enable --now blast-logs-prune.timer"
