@@ -169,10 +169,13 @@ run_as_root() {
   return 1
 }
 
+DETECTED_LOGS_PYTHON=""
+
 detect_logs_python() {
   local logs_python="/opt/blast-logs-venv/bin/python"
   local deps_probe='import boto3, httpx, asyncpg, docker  # noqa: F401'
   local logs_pip_pkgs=(boto3 httpx asyncpg docker)
+  DETECTED_LOGS_PYTHON=""
 
   if [[ -x "$logs_python" ]]; then
     if ! "$logs_python" -c "$deps_probe" >/dev/null 2>&1; then
@@ -180,7 +183,7 @@ detect_logs_python() {
       run_as_root "$logs_python" -m pip install --upgrade pip >&2
       run_as_root "$logs_python" -m pip install "${logs_pip_pkgs[@]}" >&2
     fi
-    printf '%s\n' "$logs_python"
+    DETECTED_LOGS_PYTHON="$logs_python"
     return 0
   fi
 
@@ -197,7 +200,8 @@ detect_logs_python() {
 
   run_as_root /opt/blast-logs-venv/bin/pip install --upgrade pip >&2
   run_as_root /opt/blast-logs-venv/bin/pip install "${logs_pip_pkgs[@]}" >&2
-  printf '%s\n' "$logs_python"
+  DETECTED_LOGS_PYTHON="$logs_python"
+  return 0
 }
 
 deploy_logs_pipeline_systemd_if_present() {
@@ -244,8 +248,12 @@ deploy_logs_pipeline_systemd_if_present() {
     return 1
   fi
 
-  local logs_python
-  logs_python="$(detect_logs_python)"
+  local logs_python=""
+  if ! detect_logs_python; then
+    echo "[deploy] failed to detect logs pipeline python interpreter"
+    return 1
+  fi
+  logs_python="$DETECTED_LOGS_PYTHON"
   if [[ -z "$logs_python" ]]; then
     echo "[deploy] failed to detect logs pipeline python interpreter"
     return 1
