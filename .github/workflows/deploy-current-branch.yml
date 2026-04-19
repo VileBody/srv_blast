@@ -36,6 +36,11 @@ jobs:
             exit 1
           fi
 
+      - name: Checkout Workflow Repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
       - name: Deploy Branch
         env:
           REPO_DIR: ${{ vars.BLAST_REPO_DIR }}
@@ -88,9 +93,40 @@ jobs:
           ORCHESTRATOR_NGINX_UPSTREAM_TARGET: ${{ vars.ORCHESTRATOR_NGINX_UPSTREAM_TARGET }}
           ORCHESTRATOR_NGINX_LOCATIONS_TARGET: ${{ vars.ORCHESTRATOR_NGINX_LOCATIONS_TARGET }}
           ORCHESTRATOR_NGINX_RELOAD_CMD: ${{ vars.ORCHESTRATOR_NGINX_RELOAD_CMD }}
+          ORCHESTRATOR_NGINX_REMOTE_ENABLED: ${{ vars.ORCHESTRATOR_NGINX_REMOTE_ENABLED }}
+          ORCHESTRATOR_NGINX_REMOTE_HOST: ${{ vars.ORCHESTRATOR_NGINX_REMOTE_HOST }}
+          ORCHESTRATOR_NGINX_REMOTE_USER: ${{ vars.ORCHESTRATOR_NGINX_REMOTE_USER }}
+          ORCHESTRATOR_NGINX_REMOTE_PORT: ${{ vars.ORCHESTRATOR_NGINX_REMOTE_PORT }}
+          ORCHESTRATOR_NGINX_REMOTE_SSH_PRIVATE_KEY: ${{ secrets.ORCHESTRATOR_NGINX_REMOTE_SSH_PRIVATE_KEY }}
         run: |
           set -euo pipefail
-          bash "$REPO_DIR/infra/runners/deploy_orchestrator_nginx.sh" "$BRANCH"
+          remote_flag="$(printf '%s' "${ORCHESTRATOR_NGINX_REMOTE_ENABLED:-}" | tr '[:upper:]' '[:lower:]')"
+          if [ "$remote_flag" = "1" ] || [ "$remote_flag" = "true" ] || [ "$remote_flag" = "yes" ] || [ "$remote_flag" = "on" ]; then
+            if [ -z "${ORCHESTRATOR_NGINX_REMOTE_HOST:-}" ]; then
+              echo "ORCHESTRATOR_NGINX_REMOTE_ENABLED=true requires ORCHESTRATOR_NGINX_REMOTE_HOST"
+              exit 1
+            fi
+            if [ -z "${ORCHESTRATOR_NGINX_REMOTE_SSH_PRIVATE_KEY:-}" ]; then
+              echo "ORCHESTRATOR_NGINX_REMOTE_ENABLED=true requires secret ORCHESTRATOR_NGINX_REMOTE_SSH_PRIVATE_KEY"
+              exit 1
+            fi
+            install -d -m 700 "$HOME/.ssh"
+            key_path="$HOME/.ssh/orchestrator_nginx_ci"
+            printf '%s\n' "$ORCHESTRATOR_NGINX_REMOTE_SSH_PRIVATE_KEY" > "$key_path"
+            chmod 600 "$key_path"
+            cleanup_key() {
+              rm -f "$key_path"
+            }
+            trap cleanup_key EXIT
+
+            ORCHESTRATOR_NGINX_REMOTE_HOST="$ORCHESTRATOR_NGINX_REMOTE_HOST" \
+            ORCHESTRATOR_NGINX_REMOTE_USER="${ORCHESTRATOR_NGINX_REMOTE_USER:-blast}" \
+            ORCHESTRATOR_NGINX_REMOTE_PORT="${ORCHESTRATOR_NGINX_REMOTE_PORT:-22}" \
+            ORCHESTRATOR_NGINX_REMOTE_SSH_KEY_PATH="$key_path" \
+            bash "$GITHUB_WORKSPACE/infra/runners/deploy_orchestrator_nginx_remote.sh" "$BRANCH"
+          else
+            bash "$GITHUB_WORKSPACE/infra/runners/deploy_orchestrator_nginx.sh" "$BRANCH"
+          fi
 
       - name: Deploy Landing To Nginx (optional)
         env:
@@ -104,4 +140,4 @@ jobs:
           LANDING_NGINX_SYNC_MODE: ${{ vars.LANDING_NGINX_SYNC_MODE }}
         run: |
           set -euo pipefail
-          bash "$REPO_DIR/infra/runners/deploy_landing_to_nginx.sh" "$BRANCH"
+          bash "$GITHUB_WORKSPACE/infra/runners/deploy_landing_to_nginx.sh" "$BRANCH"

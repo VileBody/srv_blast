@@ -9,6 +9,7 @@
 - Скрипт деплоя: `infra/runners/deploy_branch.sh`
 - Скрипт удаленного деплоя на prod VM по SSH: `infra/runners/deploy_remote_branch.sh`
 - Скрипт sync orchestrator nginx snippets: `infra/runners/deploy_orchestrator_nginx.sh`
+- Скрипт remote sync orchestrator nginx snippets по SSH: `infra/runners/deploy_orchestrator_nginx_remote.sh`
 - Docker Compose для GitHub self-hosted runner: `infra/runners/docker-compose.github-runner.yml`
 - Docker Compose для web UI логов (Dozzle): `infra/runners/docker-compose.logs.yml`
 - Docker Compose для observability V1: `infra/runners/docker-compose.observability.yml`
@@ -140,6 +141,17 @@ sudo nginx -t && sudo systemctl reload nginx
 Опционально (если шаблоны лежат не в дефолтных путях репо):
 - `ORCHESTRATOR_NGINX_UPSTREAM_TEMPLATE=/opt/blast_mj_final/infra/runners/nginx/orchestrator.upstream.conf.example`
 - `ORCHESTRATOR_NGINX_LOCATIONS_TEMPLATE=/opt/blast_mj_final/infra/runners/nginx/orchestrator.locations.conf.example`
+
+Для удаленного обновления nginx на orchestrator VM из CI (когда runner не имеет прямого доступа к host `/etc/nginx`):
+- `ORCHESTRATOR_NGINX_REMOTE_ENABLED=true`
+- `ORCHESTRATOR_NGINX_REMOTE_HOST=<orchestrator-ip>`
+- `ORCHESTRATOR_NGINX_REMOTE_USER=blast` (или другой sudo-user)
+- `ORCHESTRATOR_NGINX_REMOTE_PORT=22`
+- `Repository secret ORCHESTRATOR_NGINX_REMOTE_SSH_PRIVATE_KEY` (private key для SSH на orchestrator VM)
+
+При включенном `ORCHESTRATOR_NGINX_REMOTE_ENABLED=true` workflow использует
+`deploy_orchestrator_nginx_remote.sh`: шаблоны из git-копии workflow передаются по SSH
+на orchestrator VM, устанавливаются в target path и затем выполняется `ORCHESTRATOR_NGINX_RELOAD_CMD`.
 
 ## 4) Web UI логов по всем контейнерам (Dozzle через nginx auth)
 
