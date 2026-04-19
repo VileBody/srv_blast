@@ -42,6 +42,12 @@ jobs:
       DEPLOY_PRUNE_OTHER_STACK: ${{ vars.DEPLOY_PRUNE_OTHER_STACK }}
       DEPLOY_ORCHESTRATOR_HA: ${{ vars.DEPLOY_ORCHESTRATOR_HA }}
       DEPLOY_ORCHESTRATOR_HA_COMPOSE_FILE: ${{ vars.DEPLOY_ORCHESTRATOR_HA_COMPOSE_FILE }}
+      DEPLOY_PROD_REMOTE_ENABLED: ${{ vars.DEPLOY_PROD_REMOTE_ENABLED }}
+      DEPLOY_PROD_REMOTE_HOST: ${{ vars.DEPLOY_PROD_REMOTE_HOST }}
+      DEPLOY_PROD_REMOTE_USER: ${{ vars.DEPLOY_PROD_REMOTE_USER }}
+      DEPLOY_PROD_REMOTE_PORT: ${{ vars.DEPLOY_PROD_REMOTE_PORT }}
+      DEPLOY_PROD_REMOTE_REPO_DIR: ${{ vars.DEPLOY_PROD_REMOTE_REPO_DIR }}
+      DEPLOY_PROD_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_PROD_SSH_PRIVATE_KEY }}
     steps:
       - name: Validate Runner Repo Path
         run: |
@@ -63,7 +69,34 @@ jobs:
             echo "Branch is empty"
             exit 1
           fi
-          bash "$REPO_DIR/infra/runners/deploy_branch.sh" "$BRANCH" "prod-path"
+          remote_flag="$(printf '%s' "${DEPLOY_PROD_REMOTE_ENABLED:-}" | tr '[:upper:]' '[:lower:]')"
+          if [ "$remote_flag" = "1" ] || [ "$remote_flag" = "true" ] || [ "$remote_flag" = "yes" ] || [ "$remote_flag" = "on" ]; then
+            if [ -z "${DEPLOY_PROD_REMOTE_HOST:-}" ] || [ -z "${DEPLOY_PROD_REMOTE_REPO_DIR:-}" ]; then
+              echo "DEPLOY_PROD_REMOTE_ENABLED=true requires DEPLOY_PROD_REMOTE_HOST and DEPLOY_PROD_REMOTE_REPO_DIR"
+              exit 1
+            fi
+            if [ -z "${DEPLOY_PROD_SSH_PRIVATE_KEY:-}" ]; then
+              echo "DEPLOY_PROD_REMOTE_ENABLED=true requires secret DEPLOY_PROD_SSH_PRIVATE_KEY"
+              exit 1
+            fi
+            install -d -m 700 "$HOME/.ssh"
+            key_path="$HOME/.ssh/deploy_prod_ci"
+            printf '%s\n' "$DEPLOY_PROD_SSH_PRIVATE_KEY" > "$key_path"
+            chmod 600 "$key_path"
+            cleanup_key() {
+              rm -f "$key_path"
+            }
+            trap cleanup_key EXIT
+
+            DEPLOY_REMOTE_HOST="$DEPLOY_PROD_REMOTE_HOST" \
+            DEPLOY_REMOTE_USER="${DEPLOY_PROD_REMOTE_USER:-deploy}" \
+            DEPLOY_REMOTE_PORT="${DEPLOY_PROD_REMOTE_PORT:-22}" \
+            DEPLOY_REMOTE_REPO_DIR="$DEPLOY_PROD_REMOTE_REPO_DIR" \
+            DEPLOY_REMOTE_SSH_KEY_PATH="$key_path" \
+            bash "$REPO_DIR/infra/runners/deploy_remote_branch.sh" "$BRANCH" "prod-path"
+          else
+            bash "$REPO_DIR/infra/runners/deploy_branch.sh" "$BRANCH" "prod-path"
+          fi
 
       - name: Deploy Orchestrator Nginx (optional)
         env:

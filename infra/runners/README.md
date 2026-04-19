@@ -7,6 +7,7 @@
 - Workflow: `.github/workflows/deploy-current-branch.yml`
 - Workflow (split): `.github/workflows/deploy-split-main.yml`
 - Скрипт деплоя: `infra/runners/deploy_branch.sh`
+- Скрипт удаленного деплоя на prod VM по SSH: `infra/runners/deploy_remote_branch.sh`
 - Скрипт sync orchestrator nginx snippets: `infra/runners/deploy_orchestrator_nginx.sh`
 - Docker Compose для GitHub self-hosted runner: `infra/runners/docker-compose.github-runner.yml`
 - Docker Compose для web UI логов (Dozzle): `infra/runners/docker-compose.logs.yml`
@@ -257,5 +258,16 @@ Repository variables:
 - `DEPLOY_PRUNE_OTHER_STACK=true` (опционально)
 - `DEPLOY_ORCHESTRATOR_HA=true` (опционально, включает `docker-compose.orchestrator-ha.yml` в `prod-path`)
 - `DEPLOY_ORCHESTRATOR_HA_COMPOSE_FILE=docker-compose.orchestrator-ha.yml` (опционально)
+
+Для схемы "runner на orchestrator VM, prod-path на отдельной blast-ops VM":
+- `DEPLOY_PROD_REMOTE_ENABLED=true`
+- `DEPLOY_PROD_REMOTE_HOST=<prod-vm-ip>`
+- `DEPLOY_PROD_REMOTE_USER=deploy`
+- `DEPLOY_PROD_REMOTE_PORT=22` (или ваш SSH port)
+- `DEPLOY_PROD_REMOTE_REPO_DIR=/home/deploy/blast_final`
+- `Repository secret DEPLOY_PROD_SSH_PRIVATE_KEY` (private key для `deploy@prod-vm`)
+
+При включенном `DEPLOY_PROD_REMOTE_ENABLED=true` job `deploy-prod-path` выполняет deploy по SSH
+на prod VM, а не локально на runner-хосте.
 
 Legacy workflow `.github/workflows/deploy-current-branch.yml` автоматически пропускается при `DEPLOY_SPLIT_ENABLED=true`.
