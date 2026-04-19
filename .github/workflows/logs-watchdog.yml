@@ -37,8 +37,37 @@ jobs:
           . /etc/blast/logs-backup.env
           set +a
 
+          logs_python=""
+          logs_probe='import boto3, httpx, asyncpg, docker  # noqa: F401'
+          logs_pkgs=(boto3 httpx asyncpg docker)
+
+          if [ -x /opt/blast-logs-venv/bin/python ]; then
+            logs_python="/opt/blast-logs-venv/bin/python"
+            if ! "$logs_python" -c "$logs_probe" >/dev/null 2>&1; then
+              echo "logs deps missing in /opt/blast-logs-venv; trying to install"
+              if ! "$logs_python" -m pip install --upgrade pip; then
+                logs_python=""
+              elif ! "$logs_python" -m pip install "${logs_pkgs[@]}"; then
+                logs_python=""
+              fi
+            fi
+          fi
+
+          if [ -z "$logs_python" ]; then
+            if ! command -v python3 >/dev/null 2>&1; then
+              echo "python3 is required for logs watchdog healthcheck"
+              exit 1
+            fi
+            logs_venv="${RUNNER_TEMP:-/tmp}/logs-watchdog-venv"
+            rm -rf "$logs_venv"
+            python3 -m venv "$logs_venv"
+            "$logs_venv/bin/pip" install --upgrade pip
+            "$logs_venv/bin/pip" install "${logs_pkgs[@]}"
+            logs_python="$logs_venv/bin/python"
+          fi
+
           cd "$REPO_DIR"
-          if python3 scripts/logs_pipeline.py healthcheck --max-lag-min "${LOG_BACKUP_MAX_LAG_MIN:-90}"; then
+          if "$logs_python" scripts/logs_pipeline.py healthcheck --max-lag-min "${LOG_BACKUP_MAX_LAG_MIN:-90}"; then
             echo "logs healthcheck passed on logs-service"
             exit 0
           fi
