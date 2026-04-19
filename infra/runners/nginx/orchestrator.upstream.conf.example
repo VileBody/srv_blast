@@ -1,0 +1,10 @@
+# Put this block into nginx `http {}` context.
+# Upstream targets are localhost-bound docker ports from:
+# - docker-compose.yml (orchestrator-api -> 127.0.0.1:18000)
+# - docker-compose.orchestrator-ha.yml (orchestrator-api-2 -> 127.0.0.1:18001)
+upstream blast_orchestrator_api_ha {
+    least_conn;
+    server 127.0.0.1:18000 max_fails=3 fail_timeout=10s;
+    server 127.0.0.1:18001 max_fails=3 fail_timeout=10s;
+    keepalive 64;
+}

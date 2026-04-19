@@ -93,6 +93,35 @@ bash infra/runners/deploy_branch.sh main infra-ops
 - по умолчанию обновляет только `main`
 - проверяет маркер в `index.html` после синка
 
+## 3.3) Orchestrator HA: 2 API инстанса + nginx роутер
+
+Для отказоустойчивого входа можно поднять реплику `orchestrator-api` и балансировать
+входящий трафик через локальный nginx на той же VM.
+
+Что добавлено в репозиторий:
+- Compose override: `docker-compose.orchestrator-ha.yml` (сервис `orchestrator-api-2`).
+- Nginx snippets: `infra/runners/nginx/orchestrator.upstream.conf.example` (в `http {}`) и `infra/runners/nginx/orchestrator.locations.conf.example` (в `server {}`).
+
+Важно:
+- `REDIS_HOST`, `CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND` должны оставаться общими.
+- На реплике принудительно выставлен `ALERT_SUBSCRIBERS_ENABLED=0`, чтобы не дублировать long-polling ops-alert бота.
+- В `MODE=prod` выставляй `ORCHESTRATOR_PUBLIC_URL` на nginx/vhost endpoint, а не на конкретный контейнер.
+
+Поднять primary + replica:
+
+```bash
+cd /opt/blast_mj_final
+docker compose -f docker-compose.yml -f docker-compose.orchestrator-ha.yml up -d --build orchestrator-api orchestrator-api-2
+```
+
+Проверка:
+
+```bash
+curl -fsS http://127.0.0.1:18000/health
+curl -fsS http://127.0.0.1:18001/health
+sudo nginx -t && sudo systemctl reload nginx
+```
+
 ## 4) Web UI логов по всем контейнерам (Dozzle через nginx auth)
 
 На сервере:
