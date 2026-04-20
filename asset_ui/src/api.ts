@@ -100,3 +100,84 @@ export async function unassignTag(tag: string, theme: string, group: string): Pr
   });
   if (!res.ok) throw new Error(`unassignTag: ${res.status}`);
 }
+
+// --- Bulk export / import ---
+
+export interface ExportManifestItem {
+  file_name: string;
+  s3_key?: string;
+  genre: string;
+  tag: string;
+  duration_sec: number;
+  src_w?: number;
+  src_h?: number;
+  download_url?: string;
+}
+
+export interface ExportManifest {
+  generated_at: string;
+  total: number;
+  filters: { genre?: string | null; tag?: string | null };
+  expires_in_sec: number | null;
+  items: ExportManifestItem[];
+}
+
+export interface ImportResult {
+  uploaded: number;
+  uploaded_files: { file_name: string; s3_key: string }[];
+  errors: { file: string; error: string }[];
+  target_prefix: string;
+}
+
+function buildExportParams(genre?: string, tag?: string, format: 'manifest' | 'zip' = 'manifest'): URLSearchParams {
+  const params = new URLSearchParams({ format });
+  if (genre) params.set('genre', genre);
+  if (tag) params.set('tag', tag);
+  return params;
+}
+
+export async function fetchExportManifest(genre?: string, tag?: string): Promise<ExportManifest> {
+  const params = buildExportParams(genre, tag, 'manifest');
+  const res = await fetch(`${BASE}/assets/export?${params}`);
+  if (!res.ok) throw new Error(`fetchExportManifest: ${res.status}`);
+  return res.json();
+}
+
+export function exportZipUrl(genre?: string, tag?: string): string {
+  const params = buildExportParams(genre, tag, 'zip');
+  return `${BASE}/assets/export?${params}`;
+}
+
+export function importAssets(
+  files: File[],
+  genre: string,
+  tag: string,
+  onProgress?: (pct: number) => void,
+): Promise<ImportResult> {
+  const params = new URLSearchParams({ genre, tag });
+  return new Promise<ImportResult>((resolve, reject) => {
+    const form = new FormData();
+    for (const file of files) form.append('files', file, file.name);
+    const xhr = new XMLHttpRequest();
+    xhr.upload.addEventListener('progress', (e) => {
+      if (onProgress && e.lengthComputable && e.total > 0) {
+        onProgress(Math.min(100, Math.round((e.loaded / e.total) * 100)));
+      }
+    });
+    xhr.addEventListener('load', () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          resolve(JSON.parse(xhr.responseText));
+        } catch (err) {
+          reject(new Error(`importAssets: bad JSON (${(err as Error).message})`));
+        }
+      } else {
+        reject(new Error(`importAssets: ${xhr.status} ${xhr.responseText.slice(0, 300)}`));
+      }
+    });
+    xhr.addEventListener('error', () => reject(new Error('importAssets: network error')));
+    xhr.addEventListener('abort', () => reject(new Error('importAssets: aborted')));
+    xhr.open('POST', `${BASE}/assets/import?${params}`);
+    xhr.send(form);
+  });
+}

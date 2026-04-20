@@ -1,14 +1,20 @@
 """Asset browsing & tagging API for the footage library UI."""
 from __future__ import annotations
 
+import io
 import json
 import logging
 import os
 import re
+import shutil
+import tempfile
+import zipfile
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterator, List, Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from .taxonomy_parser import get_taxonomy
@@ -380,6 +386,89 @@ class TagAssignRequest(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Bulk export / import helpers
+# ---------------------------------------------------------------------------
+
+_VIDEO_MIME_BY_EXT = {
+    ".mp4": "video/mp4",
+    ".mov": "video/quicktime",
+    ".m4v": "video/x-m4v",
+    ".webm": "video/webm",
+    ".mkv": "video/x-matroska",
+    ".avi": "video/x-msvideo",
+}
+
+
+def _mime_for_ext(ext: str) -> Optional[str]:
+    return _VIDEO_MIME_BY_EXT.get(ext.lower())
+
+
+def _iter_zip_from_s3(bucket: str, assets: List[Dict[str, Any]]) -> Iterator[bytes]:
+    """Stream a ZIP archive built from S3 objects without buffering the whole archive.
+
+    Uses zipfile.ZipFile.open(..., 'w') for per-entry streaming writes, and drains
+    the outer BytesIO buffer after every chunk so memory usage stays bounded by
+    the S3 read chunk size (1 MiB).
+    """
+    from src.storage.s3 import get_s3_client
+
+    s3 = get_s3_client()
+
+    buffer = io.BytesIO()
+    zf = zipfile.ZipFile(buffer, "w", zipfile.ZIP_STORED, allowZip64=True)
+
+    def drain() -> bytes:
+        buffer.seek(0)
+        data = buffer.read()
+        buffer.seek(0)
+        buffer.truncate()
+        return data
+
+    seen_arcnames: set[str] = set()
+    for item in assets:
+        key = _s3_key_for_asset(item)
+        try:
+            obj = s3.get_object(Bucket=bucket, Key=key)
+        except Exception as e:  # pragma: no cover - surfaced via log
+            log.warning("Skipping %s in ZIP export: %s", key, e)
+            continue
+        body = obj.get("Body")
+        if body is None:
+            continue
+
+        genre = str(item.get("genre") or "_").strip() or "_"
+        tag = str(item.get("tag") or "_").strip() or "_"
+        file_name = str(item.get("file_name") or Path(key).name)
+        arcname = f"{genre}/{tag}/{file_name}"
+        base = arcname
+        dedup_n = 1
+        while arcname in seen_arcnames:
+            stem, dot, ext = base.rpartition(".")
+            arcname = f"{stem}_{dedup_n}.{ext}" if dot else f"{base}_{dedup_n}"
+            dedup_n += 1
+        seen_arcnames.add(arcname)
+
+        with zf.open(arcname, mode="w", force_zip64=True) as entry:
+            while True:
+                chunk = body.read(1024 * 1024)
+                if not chunk:
+                    break
+                entry.write(chunk)
+                flushed = drain()
+                if flushed:
+                    yield flushed
+
+        tail = drain()
+        if tail:
+            yield tail
+
+    zf.close()
+    final = drain()
+    if final:
+        yield final
+
+
+# ---------------------------------------------------------------------------
 # Router factory
 # ---------------------------------------------------------------------------
 
@@ -489,6 +578,189 @@ def create_asset_router(*, prefix: str = "/asset-ui/api") -> APIRouter:
             per_page=per_page,
             items=filtered[start:end],
         )
+
+    # --- bulk export ---
+    @router.get("/assets/export")
+    def export_assets(
+        genre: Optional[str] = Query(None),
+        tag: Optional[str] = Query(None),
+        format: str = Query("manifest", pattern="^(manifest|zip)$"),
+    ):
+        """Export the currently visible asset set.
+
+        - format=manifest (default): JSON with metadata + presigned URLs (1h TTL).
+        - format=zip: streaming ZIP archive built directly from S3 (no ZIP cached on disk).
+        """
+        assets = _load_assets()
+        overrides = _load_overrides()
+
+        filtered: List[Dict[str, Any]] = []
+        for a in assets:
+            ov = overrides.get(
+                _override_key(file_name=str(a.get("file_name") or ""), s3_key=str(a.get("s3_key") or "") or None),
+                {},
+            ) or overrides.get(str(a.get("file_name") or ""), {})
+            if ov.get("excluded"):
+                continue
+            if genre and a.get("genre", "").lower() != genre.lower():
+                continue
+            if tag and a.get("tag", "").lower() != tag.lower():
+                continue
+            filtered.append(a)
+
+        bucket = str(os.getenv("S3_BUCKET_ASSET_STORAGE") or "").strip()
+
+        if format == "zip":
+            if not bucket:
+                raise HTTPException(status_code=503, detail="S3 not configured")
+            ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+            parts = ["assets"]
+            if genre:
+                parts.append(genre.strip().replace("/", "_"))
+            if tag:
+                parts.append(tag.strip().replace("/", "_"))
+            parts.append(ts)
+            zip_name = "_".join(parts) + ".zip"
+            headers = {
+                "Content-Disposition": f'attachment; filename="{zip_name}"',
+                "X-Export-Count": str(len(filtered)),
+            }
+            return StreamingResponse(
+                _iter_zip_from_s3(bucket, filtered),
+                media_type="application/zip",
+                headers=headers,
+            )
+
+        # format == "manifest"
+        from src.storage.s3 import generate_presigned_url
+
+        items: List[Dict[str, Any]] = []
+        for a in filtered:
+            entry: Dict[str, Any] = {
+                "file_name": a.get("file_name"),
+                "s3_key": a.get("s3_key"),
+                "genre": a.get("genre"),
+                "tag": a.get("tag"),
+                "duration_sec": a.get("duration_sec"),
+                "src_w": a.get("src_w"),
+                "src_h": a.get("src_h"),
+            }
+            if bucket:
+                try:
+                    key = _s3_key_for_asset(a)
+                    entry["download_url"] = generate_presigned_url(bucket, key, expires_in=3600)
+                except Exception as e:  # pragma: no cover
+                    log.warning("Failed to presign %s: %s", a.get("file_name"), e)
+            items.append(entry)
+
+        return {
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "total": len(items),
+            "filters": {"genre": genre, "tag": tag},
+            "expires_in_sec": 3600 if bucket else None,
+            "items": items,
+        }
+
+    # --- bulk import ---
+    @router.post("/assets/import")
+    async def import_assets(
+        files: List[UploadFile] = File(...),
+        genre: str = Query(...),
+        tag: str = Query(...),
+    ) -> Dict[str, Any]:
+        """Upload one or more videos (or a ZIP containing videos) to the configured S3
+        bucket under ``<prefix>/<genre>/<tag>/<file>``. Invalidates the asset cache
+        so newly uploaded assets appear in the list on the next request.
+        """
+        global _assets_cache
+
+        genre_clean = genre.strip()
+        tag_clean = tag.strip()
+        if not genre_clean or not tag_clean:
+            raise HTTPException(status_code=422, detail="genre and tag are required")
+        # Guard against path segments in user input
+        if "/" in genre_clean or "\\" in genre_clean or "/" in tag_clean or "\\" in tag_clean:
+            raise HTTPException(status_code=422, detail="genre/tag must not contain slashes")
+
+        bucket = str(os.getenv("S3_BUCKET_ASSET_STORAGE") or "").strip()
+        if not bucket:
+            raise HTTPException(status_code=503, detail="S3 not configured")
+
+        prefix = (os.getenv("S3_ASSET_PREFIX") or "pinterest_collection").strip("/")
+
+        from src.storage.s3 import upload_file_to_s3
+
+        uploaded: List[Dict[str, str]] = []
+        errors: List[Dict[str, str]] = []
+
+        def _upload_from_path(orig_name: str, src: Path, ext: str) -> None:
+            safe_name = Path(orig_name).name
+            if not safe_name:
+                raise RuntimeError("empty file name")
+            key = f"{prefix}/{genre_clean}/{tag_clean}/{safe_name}"
+            upload_file_to_s3(bucket, key, src, content_type=_mime_for_ext(ext))
+            uploaded.append({"file_name": safe_name, "s3_key": key})
+
+        for f in files:
+            name = f.filename or "unknown"
+            ext = Path(name).suffix.lower()
+
+            try:
+                if ext == ".zip":
+                    # Spool upload to disk, then iterate entries
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".zip") as tmp_zip:
+                        shutil.copyfileobj(f.file, tmp_zip)
+                        tmp_zip_path = Path(tmp_zip.name)
+                    try:
+                        with zipfile.ZipFile(tmp_zip_path, "r") as zf:
+                            for zinfo in zf.infolist():
+                                if zinfo.is_dir():
+                                    continue
+                                inner = zinfo.filename
+                                inner_base = Path(inner).name
+                                inner_ext = Path(inner).suffix.lower()
+                                if not inner_base or inner_base.startswith("."):
+                                    continue
+                                if inner_ext not in _VIDEO_EXTENSIONS:
+                                    continue
+                                with zf.open(zinfo, "r") as src_fh:
+                                    with tempfile.NamedTemporaryFile(delete=False, suffix=inner_ext) as tmp_vid:
+                                        shutil.copyfileobj(src_fh, tmp_vid)
+                                        tmp_vid_path = Path(tmp_vid.name)
+                                try:
+                                    _upload_from_path(inner_base, tmp_vid_path, inner_ext)
+                                except Exception as e:
+                                    errors.append({"file": f"{name}::{inner_base}", "error": str(e)})
+                                finally:
+                                    tmp_vid_path.unlink(missing_ok=True)
+                    finally:
+                        tmp_zip_path.unlink(missing_ok=True)
+                elif ext in _VIDEO_EXTENSIONS:
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
+                        shutil.copyfileobj(f.file, tmp)
+                        tmp_path = Path(tmp.name)
+                    try:
+                        _upload_from_path(name, tmp_path, ext)
+                    except Exception as e:
+                        errors.append({"file": name, "error": str(e)})
+                    finally:
+                        tmp_path.unlink(missing_ok=True)
+                else:
+                    errors.append({"file": name, "error": f"unsupported extension {ext}"})
+            except Exception as e:
+                errors.append({"file": name, "error": str(e)})
+            finally:
+                await f.close()
+
+        # Invalidate cache so new files show up in the next /assets call
+        _assets_cache = None
+
+        return {
+            "uploaded": len(uploaded),
+            "uploaded_files": uploaded,
+            "errors": errors,
+            "target_prefix": f"{prefix}/{genre_clean}/{tag_clean}/",
+        }
 
     # --- single asset ---
     @router.get("/assets/{file_name}")
