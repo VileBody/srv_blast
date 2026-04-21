@@ -59,6 +59,9 @@ class OrchestratorClient:
             "variant_index": int(variant_index) if variant_index is not None else None,
             "variants_total": int(variants_total) if variants_total is not None else None,
             "maintenance_bypass_token": str(maintenance_bypass_token or "") or None,
+            # Route public jobs through the same render path as team-bot:
+            # enables color-grade sidecar + uniqueness pass in project_builder.
+            "source_bot": "botapi",
         }
         resp = await self._client.post(f"{self._base_url}/send_audio_s3", json=payload)
         if resp.status_code >= 300:

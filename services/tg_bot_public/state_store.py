@@ -596,5 +596,14 @@ class RedisChatStateStore:
             return False
         return bool(default)
 
+    async def mark_webhook_update_seen(self, *, update_id: int, ttl_s: int) -> bool:
+        uid = int(update_id)
+        if uid <= 0:
+            return True
+        ttl = max(1, int(ttl_s))
+        key = f"{self._prefix}:webhook:update:{uid}"
+        created = await self._redis.set(key, "1", ex=ttl, nx=True)
+        return bool(created)
+
     async def close(self) -> None:
         await self._redis.aclose()

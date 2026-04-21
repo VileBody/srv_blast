@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import parse_qsl, quote, unquote_plus
 
 import httpx
+from aiohttp import web
 from aiogram import Bot, Dispatcher, Router
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.exceptions import TelegramBadRequest
@@ -228,6 +229,7 @@ _GENERATION_FAILED_USER_TEXT = (
     "Увидели ошибку, сейчас с тобой свяжется менеджер и запустит генерацию ролика вручную, "
     "а пока тех. отдел все проверит"
 )
+_TG_WEBHOOK_SECRET_HEADER = "X-Telegram-Bot-Api-Secret-Token"
 
 
 def _kb(*rows: list[str]) -> ReplyKeyboardMarkup:
@@ -1754,6 +1756,71 @@ class BlastBotApp:
             reply_markup=_kb([BTN_SEND_LYRICS, BTN_SKIP_LYRICS]),
         )
 
+    async def _ensure_prepared_audio_for_confirm(self, *, message: Message, st: ChatState) -> Path | None:
+        prepared_raw = str(st.prepared_audio_local_path or "").strip()
+        if prepared_raw:
+            prepared_path = Path(prepared_raw).expanduser().resolve()
+            if prepared_path.exists():
+                return prepared_path
+
+        file_id = str(st.pending_audio_file_id or "").strip()
+        original_name = str(st.pending_audio_filename or "").strip() or "audio.mp3"
+        if not file_id or message.chat is None:
+            log.warning(
+                "prepared_audio_missing_unrecoverable chat=%s has_file_id=%s path=%r",
+                st.chat_id,
+                bool(file_id),
+                prepared_raw,
+            )
+            return None
+
+        chat_id = int(message.chat.id)
+        incoming_dir = self.settings.tmp_dir / str(chat_id) / "incoming"
+        prepared_dir = self.settings.tmp_dir / str(chat_id) / "prepared"
+        incoming_dir.mkdir(parents=True, exist_ok=True)
+        prepared_dir.mkdir(parents=True, exist_ok=True)
+        src_name = f"{_now_tag()}_{uuid.uuid4().hex[:8]}_{_safe_name(original_name)}"
+        src_path = incoming_dir / src_name
+
+        log.warning(
+            "prepared_audio_missing_recover_start chat=%s file_name=%s path=%r",
+            chat_id,
+            original_name,
+            prepared_raw,
+        )
+        try:
+            await message.answer("Восстанавливаю подготовленный трек…")
+            await self._download_telegram_audio_with_retry(
+                bot=message.bot,
+                file_id=file_id,
+                dest=src_path,
+                chat_id=chat_id,
+                original_name=original_name,
+            )
+            prep: AudioPrepareResult = await asyncio.to_thread(
+                prepare_audio_best_effort,
+                src=src_path,
+                work_dir=prepared_dir,
+                ffmpeg_bin=self.settings.ffmpeg_bin,
+                max_audio_mb=self.settings.bot_max_audio_mb,
+            )
+        except Exception as e:
+            log.exception(
+                "prepared_audio_recover_failed chat=%s file_id=%s name=%s err=%s",
+                chat_id,
+                file_id,
+                original_name,
+                str(e),
+            )
+            return None
+
+        recovered_path = Path(prep.output_path).expanduser().resolve()
+        st.prepared_audio_local_path = str(recovered_path)
+        await self.store.set(st)
+        await self.credits_db.log_event(chat_id, "audio_recovered", original_name)
+        log.info("prepared_audio_recover_ok chat=%s path=%s", chat_id, recovered_path)
+        return recovered_path
+
     async def _handle_wait_lyrics_choice(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()
         if text == BTN_SEND_LYRICS:
@@ -1964,16 +2031,43 @@ class BlastBotApp:
             await self.store.set(st)
             return
 
-        # Reserve credits upfront to prevent double-spend
-        for _ in range(versions):
-            await self.credits_db.deduct_credit(chat_id)
-        await self.credits_db.log_event(chat_id, "credits_reserved", f"versions={versions}")
-
-        prepared_path = Path(st.prepared_audio_local_path).expanduser().resolve()
-        if not prepared_path.exists():
+        prepared_path = await self._ensure_prepared_audio_for_confirm(message=message, st=st)
+        if prepared_path is None:
+            await self.credits_db.log_event(
+                chat_id,
+                "generation_prepare_missing",
+                "prepared_mp3_missing_or_unrecoverable",
+            )
             await message.answer("Подготовленный mp3 не найден. Пришли трек заново.")
             await self._move_to_wait_audio(chat_id, message)
             return
+
+        # Reserve credits only after we have a prepared mp3 on current node.
+        deducted_versions = 0
+        for _ in range(versions):
+            ok = await self.credits_db.deduct_credit(chat_id)
+            if not ok:
+                break
+            deducted_versions += 1
+        if deducted_versions != versions:
+            if deducted_versions > 0:
+                try:
+                    await self.credits_db.add_credits(
+                        chat_id,
+                        int(deducted_versions),
+                        "generation_failed_refund",
+                        admin_note="batch=reserve_partial",
+                    )
+                except Exception as add_e:
+                    log.warning("reserve_partial_refund_failed chat=%s err=%s", chat_id, str(add_e))
+            await self.credits_db.log_event(
+                chat_id,
+                "generation_failed",
+                "job=enqueue_start stage=reserve_credits",
+            )
+            await message.answer("Не удалось зарезервировать генерации. Нажми «Запустить» еще раз.")
+            return
+        await self.credits_db.log_event(chat_id, "credits_reserved", f"versions={versions}")
 
         key = self._build_raw_audio_key(chat_id=chat_id, file_name=prepared_path.name)
         try:
@@ -2034,11 +2128,11 @@ class BlastBotApp:
             await self.store.set(st)
         except Exception as e:
             err_text = str(e)
-            if versions > 0:
+            if deducted_versions > 0:
                 try:
                     await self.credits_db.add_credits(
                         chat_id,
-                        int(versions),
+                        int(deducted_versions),
                         "generation_failed_refund",
                         admin_note="batch=enqueue_start_failed",
                     )
@@ -2056,7 +2150,7 @@ class BlastBotApp:
                 error_text=err_text,
                 succeeded_versions=0,
                 total_versions=int(versions),
-                refunded_versions=int(versions),
+                refunded_versions=int(deducted_versions),
             )
             await message.answer(_GENERATION_FAILED_USER_TEXT, reply_markup=_kb([BTN_SEND_TRACK]))
             self._reset_processing_state(st, next_stage=STAGE_WAIT_AUDIO)
@@ -4253,6 +4347,96 @@ class BlastBotApp:
             raise RuntimeError("bot instance is not ready")
         return self._bot
 
+    @staticmethod
+    def _normalize_webhook_path(path: str) -> str:
+        p = str(path or "").strip()
+        if not p:
+            raise RuntimeError("TG_WEBHOOK_PATH is empty")
+        if not p.startswith("/"):
+            raise RuntimeError(f"TG_WEBHOOK_PATH must start with '/', got {p!r}")
+        return p
+
+    async def _handle_telegram_webhook(self, request: web.Request, *, bot: Bot) -> web.Response:
+        expected_secret = str(self.settings.tg_webhook_secret or "").strip()
+        if expected_secret:
+            got_secret = str(request.headers.get(_TG_WEBHOOK_SECRET_HEADER) or "").strip()
+            if got_secret != expected_secret:
+                log.warning("telegram_webhook_rejected reason=bad_secret")
+                raise web.HTTPForbidden(text="forbidden")
+
+        payload = await request.json()
+        if not isinstance(payload, dict):
+            raise web.HTTPBadRequest(text="invalid payload")
+
+        update_id = int(payload.get("update_id") or 0)
+        if update_id > 0:
+            is_new = await self.store.mark_webhook_update_seen(
+                update_id=update_id,
+                ttl_s=int(self.settings.tg_webhook_dedup_ttl_s),
+            )
+            if not is_new:
+                return web.json_response({"ok": True, "dedup": True})
+
+        await self.dp.feed_raw_update(bot, payload)
+        return web.json_response({"ok": True})
+
+    async def _run_webhook(self, *, bot: Bot) -> None:
+        webhook_path = self._normalize_webhook_path(self.settings.tg_webhook_path)
+        webhook_url_base = str(self.settings.tg_webhook_url or "").strip().rstrip("/")
+        if not webhook_url_base:
+            raise RuntimeError("TG_WEBHOOK_URL is required when TG_DELIVERY_MODE=webhook")
+        webhook_url = f"{webhook_url_base}{webhook_path}"
+
+        await self.dp.emit_startup(bot=bot)
+        runner: web.AppRunner | None = None
+        try:
+            async def _health_handler(_request: web.Request) -> web.Response:
+                return web.json_response({"ok": True, "mode": "webhook"})
+
+            async def _telegram_webhook_handler(request: web.Request) -> web.Response:
+                return await self._handle_telegram_webhook(request, bot=bot)
+
+            app = web.Application()
+            app.router.add_get("/health", _health_handler)
+            app.router.add_post(webhook_path, _telegram_webhook_handler)
+
+            runner = web.AppRunner(app, access_log=None)
+            await runner.setup()
+            site = web.TCPSite(
+                runner,
+                host=str(self.settings.tg_webhook_bind_host or "0.0.0.0"),
+                port=int(self.settings.tg_webhook_port),
+            )
+            await site.start()
+
+            ok = await bot.set_webhook(
+                url=webhook_url,
+                secret_token=str(self.settings.tg_webhook_secret or "").strip() or None,
+                drop_pending_updates=False,
+            )
+            if not ok:
+                raise RuntimeError("Telegram set_webhook returned false")
+
+            log.info(
+                "startup complete: webhook loop started url=%s path=%s bind=%s:%s",
+                webhook_url,
+                webhook_path,
+                str(self.settings.tg_webhook_bind_host or "0.0.0.0"),
+                int(self.settings.tg_webhook_port),
+            )
+            await asyncio.Future()
+        finally:
+            try:
+                await bot.delete_webhook(drop_pending_updates=False)
+            except Exception as e:
+                log.warning("telegram_delete_webhook_failed err=%s", e)
+            if runner is not None:
+                try:
+                    await runner.cleanup()
+                except Exception as e:
+                    log.warning("telegram_webhook_runner_cleanup_failed err=%s", e)
+            await self.dp.emit_shutdown(bot=bot)
+
     async def run(self) -> None:
         tg_proxy = str(self.settings.tg_file_proxy_url or "").strip()
         if tg_proxy:
@@ -4260,7 +4444,14 @@ class BlastBotApp:
             log.info("bot_api_proxy_enabled proxy=%s", _mask_proxy_url(tg_proxy))
         else:
             bot = Bot(token=self.settings.tg_bot_token)
-        await self.dp.start_polling(bot)
+        delivery_mode = str(self.settings.tg_delivery_mode or "").strip().lower()
+        if delivery_mode == "polling":
+            await self.dp.start_polling(bot)
+            return
+        if delivery_mode == "webhook":
+            await self._run_webhook(bot=bot)
+            return
+        raise RuntimeError(f"Unsupported TG_DELIVERY_MODE={delivery_mode!r}")
 
 
 def main() -> None:

@@ -35,6 +35,13 @@ def _bool_env(name: str, default: bool) -> bool:
     return bool(default)
 
 
+def _delivery_mode_env(name: str, default: str = "polling") -> str:
+    mode = str(_env(name, default) or "").strip().lower()
+    if mode not in {"polling", "webhook"}:
+        raise RuntimeError(f"{name} must be 'polling' or 'webhook', got {mode!r}")
+    return mode
+
+
 def _maintenance_mode_env(default: bool = False) -> bool:
     """Global maintenance switch shared across services.
 
@@ -138,6 +145,13 @@ class Settings:
     orchestrator_public_url: str = _env("ORCHESTRATOR_PUBLIC_URL", "http://orchestrator-api:8000")
 
     bot_poll_interval_s: float = _float_env("BOT_POLL_INTERVAL_S", 5.0)
+    tg_delivery_mode: str = _delivery_mode_env("TG_DELIVERY_MODE", "polling")
+    tg_webhook_url: str = _env("TG_WEBHOOK_URL", "")
+    tg_webhook_secret: str = _env("TG_WEBHOOK_SECRET", "")
+    tg_webhook_path: str = _env("TG_WEBHOOK_PATH", "/telegram/webhook")
+    tg_webhook_bind_host: str = _env("TG_WEBHOOK_BIND_HOST", "0.0.0.0")
+    tg_webhook_port: int = _int_env("TG_WEBHOOK_PORT", 8081)
+    tg_webhook_dedup_ttl_s: int = _int_env("TG_WEBHOOK_DEDUP_TTL_S", 86400)
     bot_status_update_interval_s: float = _float_env("BOT_STATUS_UPDATE_INTERVAL_S", 20.0)
     bot_recovery_poll_interval_s: float = _float_env("BOT_RECOVERY_POLL_INTERVAL_S", 60.0)
     bot_job_timeout_h: float = _float_env("BOT_JOB_TIMEOUT_H", 4.0)
