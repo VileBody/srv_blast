@@ -102,6 +102,7 @@ log = logging.getLogger("tg_bot")
 BTN_LETS_GO = "Едем!"
 BTN_SUBSCRIBED = "Подписался!"
 BTN_SEND_TRACK = "Отправить трек"
+BTN_REUSE_INPUT = "Сделать под тот же трек"
 BTN_GENERATE_MORE = "Сгенерировать ещё"
 BTN_SEND_LYRICS = "Отправить текст"
 BTN_SKIP_LYRICS = "Пусть ИИ угадает"
@@ -189,6 +190,7 @@ _CONTROL_BUTTONS = {
     BTN_LETS_GO,
     BTN_SUBSCRIBED,
     BTN_SEND_TRACK,
+    BTN_REUSE_INPUT,
     BTN_SEND_LYRICS,
     BTN_SKIP_LYRICS,
     BTN_SEND_FRAGMENT,
@@ -1438,6 +1440,22 @@ class BlastBotApp:
         )
 
     @staticmethod
+    def _can_reuse_input(st: ChatState) -> bool:
+        if str(st.pending_audio_file_id or "").strip():
+            return True
+        prepared_raw = str(st.prepared_audio_local_path or "").strip()
+        if not prepared_raw:
+            return False
+        try:
+            return Path(prepared_raw).expanduser().resolve().exists()
+        except Exception:
+            return False
+
+    @staticmethod
+    def _wait_audio_reuse_kb() -> ReplyKeyboardMarkup:
+        return _kb([BTN_SEND_TRACK], [BTN_REUSE_INPUT])
+
+    @staticmethod
     def _parse_timing(text: str) -> tuple[float, float] | None:
         text = text.strip()
         parts = re.split(r"[\-\u2013\u2014]+|\s+", text, maxsplit=1)
@@ -1657,6 +1675,17 @@ class BlastBotApp:
         text = str(message.text or "").strip()
         if text == BTN_ALL_PACKAGES:
             await self._show_all_packages(message, st)
+            return
+        if text == BTN_REUSE_INPUT:
+            if not self._can_reuse_input(st):
+                await message.answer(
+                    "Не вижу сохраненного трека. Нажми «Отправить трек» и пришли файл.",
+                    reply_markup=self._wait_audio_reuse_kb(),
+                )
+                return
+            st.subtitles_mode = SUBTITLES_MODE_IMPULSE_2ND
+            st.versions_count = 1
+            await self._ask_footage_genre(message, st)
             return
         if text in (BTN_SEND_TRACK, BTN_GENERATE_MORE):
             await message.answer("Жду аудио-файл.", reply_markup=ReplyKeyboardRemove())
@@ -2153,7 +2182,7 @@ class BlastBotApp:
                 total_versions=int(versions),
                 refunded_versions=int(deducted_versions),
             )
-            await message.answer(_GENERATION_FAILED_USER_TEXT, reply_markup=_kb([BTN_SEND_TRACK]))
+            await message.answer(_GENERATION_FAILED_USER_TEXT, reply_markup=self._wait_audio_reuse_kb())
             self._reset_processing_state(st, next_stage=STAGE_WAIT_AUDIO)
             await self.store.set(st)
 
@@ -3249,12 +3278,9 @@ class BlastBotApp:
         st.poll_attempts = 0
         st.last_job_stage = ""
         st.last_job_error = ""
-        st.target_fragment = ""
         st.footage_genre_key = ""
         st.footage_artist_key = ""
         st.footage_artist_id = ""
-        st.user_clip_start_sec = 0.0
-        st.user_clip_end_sec = 0.0
         st.subtitles_mode = SUBTITLES_MODE_IMPULSE_2ND
 
     async def _send_long_html_message(self, *, bot: Bot, chat_id: int, text: str) -> None:
@@ -3980,7 +4006,7 @@ class BlastBotApp:
             await bot.send_message(
                 st.chat_id,
                 _GENERATION_FAILED_USER_TEXT,
-                reply_markup=_kb([BTN_SEND_TRACK]),
+                reply_markup=self._wait_audio_reuse_kb(),
             )
             self._reset_processing_state(st, next_stage=STAGE_WAIT_AUDIO)
             await self.store.set(st)
@@ -4067,7 +4093,7 @@ class BlastBotApp:
                     await bot.send_message(
                         st.chat_id,
                         _GENERATION_FAILED_USER_TEXT,
-                        reply_markup=_kb([BTN_SEND_TRACK]),
+                        reply_markup=self._wait_audio_reuse_kb(),
                     )
                     self._reset_processing_state(st, next_stage=STAGE_WAIT_AUDIO)
                     await self.store.set(st)
