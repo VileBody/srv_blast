@@ -54,14 +54,6 @@ def _maintenance_message_env(default: str = "Мы на техработах. С�
     return str(default or "").strip() or "Мы на техработах. Скоро вернемся."
 
 
-def _maintenance_bypass_token_env() -> str:
-    raw = _env("SYSTEM_MAINTENANCE_BYPASS_TOKEN", "")
-    if raw:
-        return raw
-    # Safe default for internal tg_bot_public -> orchestrator requests.
-    return _env("TG_BOT_TOKEN", "")
-
-
 def _windows_render_api_mode_env() -> str:
     # Async render contract is the default and production baseline.
     raw = _env("WINDOWS_RENDER_API_MODE", "render").lower()
@@ -119,6 +111,7 @@ class Settings:
     # Two queues
     celery_queue_build: str = _env("CELERY_QUEUE_BUILD", "build")
     celery_queue_render: str = _env("CELERY_QUEUE_RENDER", "render")
+    orchestrator_node_name: str = _env("ORCHESTRATOR_NODE_NAME", "")
 
     # Paths inside container / host
     work_dir: str = _env("WORK_DIR", "/app/work")
@@ -145,7 +138,6 @@ class Settings:
     debug_save_llm: bool = _env("DEBUG_SAVE_LLM", "0") not in {"0", "false", "False", "no", "NO"}
     system_maintenance_mode: bool = _maintenance_mode_env(False)
     system_maintenance_message: str = _maintenance_message_env("Мы на техработах. Скоро вернемся.")
-    system_maintenance_bypass_token: str = _maintenance_bypass_token_env()
 
     # Windows render node
     windows_base_url: str = _env("WINDOWS_RENDER_URL", "")  # e.g. http://win-node:8000

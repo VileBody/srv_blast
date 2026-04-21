@@ -912,6 +912,9 @@ class BlastBotApp:
         self._bot: Bot | None = None
         self._preview_source_bot_token = str(settings.tg_preview_source_bot_token or "").strip()
         self._preview_source_file_url_cache: Dict[str, str] = {}
+        node_id = str(settings.tg_processing_node_id or "").strip() or "unknown-node"
+        self._processing_owner_id = f"{node_id}:{os.getpid()}"
+        self._processing_lock_ttl_s = max(30, int(settings.tg_processing_lock_ttl_s or 240))
 
         self._register_handlers()
         self.dp.startup.register(self._on_startup)
@@ -1016,8 +1019,6 @@ class BlastBotApp:
             log.warning("maintenance_gate_check_failed err=%r", e)
             enabled = bool(self.settings.tg_maintenance_mode)
         if not enabled:
-            return False
-        if self._allow_maintenance_bypass_for_message(message):
             return False
         await message.answer(self._maintenance_message_text())
         return True
@@ -3096,9 +3097,6 @@ class BlastBotApp:
         if end > start >= 0.0:
             user_clip_start_sec = start
             user_clip_end_sec = end
-        maintenance_bypass_token: str | None = None
-        if self._allow_maintenance_bypass_for_state(st):
-            maintenance_bypass_token = str(self.settings.system_maintenance_bypass_token or "").strip() or None
         enqueue = await self.orchestrator.send_audio_s3(
             audio_s3_url=audio_s3_url,
             mode="with_gemini",
@@ -3114,7 +3112,6 @@ class BlastBotApp:
             exclude_file_names=list(exclude_file_names or []),
             variant_index=int(version_index),
             variants_total=int(versions_total),
-            maintenance_bypass_token=maintenance_bypass_token,
         )
         job_id = str(enqueue.get("job_id") or "").strip()
         if not job_id:
@@ -3445,10 +3442,31 @@ class BlastBotApp:
             try:
                 states = await self.store.list_processing()
                 for st in states:
+                    lock_acquired = False
                     try:
-                        await self._process_chat_job(st)
+                        lock_acquired = await self.store.acquire_processing_lock(
+                            chat_id=st.chat_id,
+                            owner_id=self._processing_owner_id,
+                            ttl_s=self._processing_lock_ttl_s,
+                        )
+                        if not lock_acquired:
+                            continue
+                        await self._process_chat_job(
+                            st,
+                            lock_owner_id=self._processing_owner_id,
+                            lock_ttl_s=self._processing_lock_ttl_s,
+                        )
                     except Exception as e:
                         log.warning("processing loop chat=%s err=%r", st.chat_id, e)
+                    finally:
+                        if lock_acquired:
+                            try:
+                                await self.store.release_processing_lock(
+                                    chat_id=st.chat_id,
+                                    owner_id=self._processing_owner_id,
+                                )
+                            except Exception as release_err:
+                                log.warning("processing lock release failed chat=%s err=%r", st.chat_id, release_err)
             except asyncio.CancelledError:
                 raise
             except Exception as e:
@@ -3816,7 +3834,30 @@ class BlastBotApp:
         except Exception:
             pass
 
-    async def _process_chat_job(self, st: ChatState) -> None:
+    async def _refresh_processing_lock_or_raise(self, *, chat_id: int, owner_id: str, ttl_s: int) -> None:
+        owner = str(owner_id or "").strip()
+        if not owner:
+            return
+        ok = await self.store.refresh_processing_lock(
+            chat_id=int(chat_id),
+            owner_id=owner,
+            ttl_s=max(5, int(ttl_s)),
+        )
+        if not ok:
+            raise RuntimeError(f"processing_lock_lost chat={int(chat_id)} owner={owner!r}")
+
+    async def _process_chat_job(
+        self,
+        st: ChatState,
+        *,
+        lock_owner_id: str = "",
+        lock_ttl_s: int = 0,
+    ) -> None:
+        await self._refresh_processing_lock_or_raise(
+            chat_id=st.chat_id,
+            owner_id=lock_owner_id,
+            ttl_s=lock_ttl_s,
+        )
         job_ids = self._current_job_ids(st)
         if not job_ids:
             self._reset_processing_state(st)
@@ -3836,6 +3877,11 @@ class BlastBotApp:
 
         st.poll_attempts = max(0, int(st.poll_attempts)) + 1
         for jid in job_ids:
+            await self._refresh_processing_lock_or_raise(
+                chat_id=st.chat_id,
+                owner_id=lock_owner_id,
+                ttl_s=lock_ttl_s,
+            )
             job = await self.orchestrator.get_job(jid)
             status = str(job.get("status") or "").upper()
             stage = str(job.get("stage") or "").strip()
@@ -3872,6 +3918,11 @@ class BlastBotApp:
             st.last_status_msg_at = now
 
         for jid, job in new_finals:
+            await self._refresh_processing_lock_or_raise(
+                chat_id=st.chat_id,
+                owner_id=lock_owner_id,
+                ttl_s=lock_ttl_s,
+            )
             await self._finalize_one_job(bot=bot, st=st, job_id=jid, job=job)
             completed.add(jid)
             if str(job.get("status") or "").upper() == "SUCCEEDED":
@@ -3958,6 +4009,11 @@ class BlastBotApp:
                 st.next_version_to_enqueue = total_versions + 1
             else:
                 try:
+                    await self._refresh_processing_lock_or_raise(
+                        chat_id=st.chat_id,
+                        owner_id=lock_owner_id,
+                        ttl_s=lock_ttl_s,
+                    )
                     new_job_id = await self._enqueue_batch_version(
                         st=st,
                         audio_s3_url=str(st.batch_audio_s3_url or ""),

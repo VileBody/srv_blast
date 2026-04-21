@@ -75,6 +75,17 @@ def _normalize_username(raw: str) -> str:
     return u
 
 
+def _parse_bool_text(raw: str, *, default: bool = False) -> bool:
+    value = str(raw or "").strip().lower()
+    if not value:
+        return bool(default)
+    if value in {"1", "true", "yes", "on", "enabled", "enable"}:
+        return True
+    if value in {"0", "false", "no", "off", "disabled", "disable"}:
+        return False
+    return bool(default)
+
+
 class ChatState(BaseModel):
     chat_id: int
     stage: str = STAGE_IDLE
@@ -141,6 +152,7 @@ class RedisChatStateStore:
         self._updated_at_zset_key = f"{self._prefix}:idx:updated_at"
         self._stage_counts_key = f"{self._prefix}:idx:stage_counts"
         self._stage_by_chat_key = f"{self._prefix}:idx:stage_by_chat"
+        self._processing_lock_prefix = f"{self._prefix}:locks:processing"
 
         self._state_ttl_s = max(3600, int(float(settings.tg_state_ttl_h) * 3600.0))
 
@@ -155,6 +167,17 @@ class RedisChatStateStore:
 
     def _key(self, chat_id: int) -> str:
         return f"{self._prefix}:{int(chat_id)}"
+
+    async def get_runtime_bool(self, key: str, *, default: bool = False) -> bool:
+        redis_key = str(key or "").strip()
+        if not redis_key:
+            return bool(default)
+        try:
+            raw = await self._redis.get(redis_key)
+        except Exception as e:
+            log.warning("runtime_bool_read_failed key=%s err=%s", redis_key, str(e))
+            return bool(default)
+        return _parse_bool_text(str(raw or ""), default=default)
 
     def _username_key(self, username: str) -> str:
         normalized = _normalize_username(username).lstrip("@")
@@ -415,6 +438,41 @@ class RedisChatStateStore:
             if st.stage == STAGE_PROCESSING and has_jobs:
                 out.append(st)
         return out
+
+    def _processing_lock_key(self, chat_id: int) -> str:
+        return f"{self._processing_lock_prefix}:{int(chat_id)}"
+
+    async def acquire_processing_lock(self, *, chat_id: int, owner_id: str, ttl_s: int) -> bool:
+        owner = str(owner_id or "").strip()
+        if not owner:
+            raise RuntimeError("owner_id is required for processing lock")
+        ttl = max(5, int(ttl_s))
+        key = self._processing_lock_key(int(chat_id))
+        created = await self._redis.set(key, owner, ex=ttl, nx=True)
+        return bool(created)
+
+    async def refresh_processing_lock(self, *, chat_id: int, owner_id: str, ttl_s: int) -> bool:
+        owner = str(owner_id or "").strip()
+        if not owner:
+            return False
+        key = self._processing_lock_key(int(chat_id))
+        current = str(await self._redis.get(key) or "").strip()
+        if current != owner:
+            return False
+        ttl = max(5, int(ttl_s))
+        await self._redis.expire(key, ttl)
+        return True
+
+    async def release_processing_lock(self, *, chat_id: int, owner_id: str) -> bool:
+        owner = str(owner_id or "").strip()
+        if not owner:
+            return False
+        key = self._processing_lock_key(int(chat_id))
+        current = str(await self._redis.get(key) or "").strip()
+        if current != owner:
+            return False
+        await self._redis.delete(key)
+        return True
 
     async def list_waiting_referral(self) -> List[ChatState]:
         chat_ids: List[int] = []

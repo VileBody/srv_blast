@@ -55,6 +55,11 @@ class SendAudioS3Request(BaseModel):
     # send this field — it rolls out to public only after botapi validation.
     # Accepted values: "botapi" (routed to experimental pipeline) or None.
     source_bot: Optional[Literal["botapi"]] = None
+    # Internal routing pinning metadata.
+    # Public callers should not set these fields directly.
+    origin_node: Optional[str] = None
+    build_queue: Optional[str] = None
+    render_queue: Optional[str] = None
 
     @model_validator(mode="after")
     def _validate_user_clip_window(self) -> "SendAudioS3Request":

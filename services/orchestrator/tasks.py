@@ -71,6 +71,13 @@ def _windows_default_urls() -> list[str]:
     return parse_windows_urls_csv((SETTINGS.windows_base_url + "," + SETTINGS.windows_base_urls_csv).strip(","))
 
 
+def _job_queue_from_request(req: Dict[str, Any], *, key: str, default: str) -> str:
+    value = str(req.get(key) or "").strip()
+    if value:
+        return value
+    return str(default or "").strip()
+
+
 _LLM_PROVIDER_MODE_GEMINI = "gemini"
 _LLM_PROVIDER_MODE_OPENROUTER = "openrouter"
 _LLM_PROVIDER_MODE_HEDGED = "hedged"
@@ -1621,7 +1628,15 @@ def _build_job_impl(self, job_id: str, *, worker_type: str) -> Dict[str, Any]:
             }
         },
     )
-    dispatch_to_windows.delay(job_id)
+    render_queue = _job_queue_from_request(
+        req,
+        key="render_queue",
+        default=SETTINGS.celery_queue_render,
+    )
+    if render_queue:
+        dispatch_to_windows.apply_async(args=[job_id], queue=render_queue)
+    else:
+        dispatch_to_windows.delay(job_id)
     return {"ok": True, "stage": "build_done", "paths": paths.manifest()}
 
 
@@ -1954,7 +1969,18 @@ def dispatch_to_windows(self, job_id: str) -> Dict[str, Any]:
         stage="poll",
         result={"render_id": render_id, "windows": res, "poll_started_at": time.time()},
     )
-    poll_windows_render.apply_async(args=[job_id, render_id], countdown=float(SETTINGS.windows_poll_interval_s))
+    render_queue = _job_queue_from_request(
+        req,
+        key="render_queue",
+        default=SETTINGS.celery_queue_render,
+    )
+    kwargs: Dict[str, Any] = {
+        "args": [job_id, render_id],
+        "countdown": float(SETTINGS.windows_poll_interval_s),
+    }
+    if render_queue:
+        kwargs["queue"] = render_queue
+    poll_windows_render.apply_async(**kwargs)
     return {"ok": True, "mode": "async_render", "render_id": render_id, "windows": res}
 
 
@@ -2112,6 +2138,18 @@ def poll_windows_render(self, job_id: str, render_id: str) -> Dict[str, Any]:
         metric="render_poll_total",
         labels={"node": node, "outcome": "running"},
     )
-    poll_windows_render.apply_async(args=[job_id, render_id], countdown=float(SETTINGS.windows_poll_interval_s))
+    req = st.request if isinstance(st.request, dict) else {}
+    render_queue = _job_queue_from_request(
+        req,
+        key="render_queue",
+        default=SETTINGS.celery_queue_render,
+    )
+    kwargs: Dict[str, Any] = {
+        "args": [job_id, render_id],
+        "countdown": float(SETTINGS.windows_poll_interval_s),
+    }
+    if render_queue:
+        kwargs["queue"] = render_queue
+    poll_windows_render.apply_async(**kwargs)
     store.set_status(job_id, "RUNNING", stage="poll", result={"render_id": render_id, "windows": res})
     return {"ok": True, "status": "running", "windows": res}

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import socket
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import quote_plus
@@ -60,20 +61,14 @@ def _maintenance_message_env(default: str = "Мы на техработах. С�
     return str(default or "").strip() or "Мы на техработах. Скоро вернемся."
 
 
-def _maintenance_bypass_usernames_env() -> tuple[str, ...]:
-    raw = _username_allowlist_env("SYSTEM_MAINTENANCE_BYPASS_USERNAMES")
-    if raw:
-        return raw
-    # Keep core operators unblocked even during maintenance mode.
-    return ("@nikitaimpulse", "@vilebody", "@impulsemanage")
-
-
-def _maintenance_bypass_token_env() -> str:
-    raw = _env("SYSTEM_MAINTENANCE_BYPASS_TOKEN", "")
-    if raw:
-        return raw
-    # Safe default for internal bot->orchestrator calls when services share one env file.
-    return _env("TG_BOT_TOKEN", "")
+def _default_processing_node_id() -> str:
+    host = _env("HOSTNAME", "")
+    if host:
+        return host
+    try:
+        return str(socket.gethostname() or "").strip() or "unknown-node"
+    except Exception:
+        return "unknown-node"
 
 
 def _normalize_username(raw: str) -> str:
@@ -145,6 +140,8 @@ class Settings:
     orchestrator_public_url: str = _env("ORCHESTRATOR_PUBLIC_URL", "http://orchestrator-api:8000")
 
     bot_poll_interval_s: float = _float_env("BOT_POLL_INTERVAL_S", 5.0)
+    tg_processing_node_id: str = _env("TG_PROCESSING_NODE_ID", _default_processing_node_id())
+    tg_processing_lock_ttl_s: int = _int_env("TG_PROCESSING_LOCK_TTL_S", 240)
     tg_delivery_mode: str = _delivery_mode_env("TG_DELIVERY_MODE", "polling")
     tg_webhook_url: str = _env("TG_WEBHOOK_URL", "")
     tg_webhook_secret: str = _env("TG_WEBHOOK_SECRET", "")
@@ -183,8 +180,6 @@ class Settings:
         _env("TG_MAINTENANCE_MESSAGE", "Мы на техработах. Скоро вернемся.")
     )
     tg_maintenance_state_key: str = _env("TG_MAINTENANCE_STATE_KEY", "blast:tg:public:maintenance_mode")
-    tg_maintenance_bypass_usernames: tuple[str, ...] = _maintenance_bypass_usernames_env()
-    system_maintenance_bypass_token: str = _maintenance_bypass_token_env()
 
     redis_host: str = _env("REDIS_HOST", "localhost")
     redis_port: int = _int_env("REDIS_PORT", 6379)
@@ -229,7 +224,7 @@ class Settings:
     windows_donor_password: str = _env("WINDOWS_DONOR_PASSWORD", "")
     windows_donor_canary_audio_s3_url: str = _env("WINDOWS_DONOR_CANARY_AUDIO_S3_URL", "")
     windows_donor_canary_mode: str = _env("WINDOWS_DONOR_CANARY_MODE", "with_gemini")
-    windows_donor_llm_worker_type: str = _env("WINDOWS_DONOR_LLM_WORKER_TYPE", "openrouter")
+    windows_donor_llm_worker_type: str = _env("WINDOWS_DONOR_LLM_WORKER_TYPE", "vertex_sdk_mix")
     windows_donor_start_afterfx: bool = _bool_env("WINDOWS_DONOR_START_AFTERFX", True)
     windows_donor_kill_afterfx_first: bool = _bool_env("WINDOWS_DONOR_KILL_AFTERFX_FIRST", True)
     windows_donor_skip_restart: bool = _bool_env("WINDOWS_DONOR_SKIP_RESTART", False)

@@ -95,12 +95,36 @@ from services.orchestrator.schemas import JobState
 class _FakeStore:
     def __init__(self, jobs: list[JobState]) -> None:
         self._jobs: dict[str, JobState] = {j.job_id: j for j in jobs}
+        self._new_job_seq = 0
 
     def list_jobs(self) -> list[JobState]:
         return list(self._jobs.values())
 
     def get(self, job_id: str) -> JobState | None:
         return self._jobs.get(str(job_id))
+
+    def new_job(self, *, request: dict, idempotency_key: str | None):
+        del idempotency_key
+        self._new_job_seq += 1
+        now = time.time()
+        job_id = f"new-job-{self._new_job_seq}"
+        st = JobState(
+            job_id=job_id,
+            status="NEW",
+            version=1,
+            created_at=now,
+            updated_at=now,
+            queued_at=None,
+            started_at=None,
+            finished_at=None,
+            stage=None,
+            idempotency_key=None,
+            request=dict(request or {}),
+            result=None,
+            error=None,
+        )
+        self._jobs[job_id] = st
+        return st, True
 
     def set_status(self, job_id: str, status: str, *, stage=None, error=None, result=None):
         st = self._jobs.get(str(job_id))
@@ -295,3 +319,90 @@ def test_requeue_failed_job_reserves_and_enqueues(monkeypatch) -> None:
     assert st.status == "QUEUED"
     assert st.stage == "build"
     assert st.request["llm_worker_type"] == "openrouter"
+
+
+def test_send_audio_rejects_no_gemini_mode(monkeypatch) -> None:
+    store = _FakeStore([])
+    with _build_client(monkeypatch, store) as client:
+        resp = client.post(
+            "/send_audio_s3",
+            json={
+                "audio_s3_url": "s3://bucket/raw/audio.mp3",
+                "mode": "no_gemini",
+            },
+        )
+
+    assert resp.status_code == 400
+    body = resp.json()
+    assert body["detail"] == "mode=no_gemini is disabled; use mode=with_gemini"
+
+
+def test_send_audio_reuse_inherits_source_routing_and_queue(monkeypatch) -> None:
+    now = time.time()
+    source = _job("job-source", status="SUCCEEDED", updated_at=now - 60.0, project_id="tg-src")
+    source.request.update(
+        {
+            "origin_node": "orchestrator-0",
+            "build_queue": "build.orchestrator-0",
+            "render_queue": "render.orchestrator-0",
+        }
+    )
+    store = _FakeStore([source])
+    monkeypatch.setattr(
+        orchestrator_app,
+        "reserve_worker_type",
+        lambda _store, requested=None: SimpleNamespace(worker_type=str(requested or "sdk")),
+    )
+
+    queued: dict[str, object] = {}
+
+    def _apply_async(*, args=None, queue=None, **kwargs):
+        queued["args"] = list(args or [])
+        queued["queue"] = queue
+        queued["kwargs"] = dict(kwargs or {})
+        return None
+
+    monkeypatch.setattr(orchestrator_app.build_job_sdk, "apply_async", _apply_async)
+    monkeypatch.setattr(orchestrator_app.build_job_sdk, "delay", lambda *_args, **_kwargs: None)
+
+    with _build_client(monkeypatch, store) as client:
+        resp = client.post(
+            "/send_audio_s3",
+            json={
+                "audio_s3_url": "s3://bucket/raw/audio.mp3",
+                "mode": "with_gemini",
+                "llm_worker_type": "sdk",
+                "reuse_text_job_id": "job-source",
+            },
+        )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    new_job_id = str(body["job_id"])
+    st = store.get(new_job_id)
+    assert st is not None
+    assert st.request.get("origin_node") == "orchestrator-0"
+    assert st.request.get("build_queue") == "build.orchestrator-0"
+    assert st.request.get("render_queue") == "render.orchestrator-0"
+    assert queued == {
+        "args": [new_job_id],
+        "queue": "build.orchestrator-0",
+        "kwargs": {},
+    }
+
+
+def test_send_audio_reuse_missing_source_returns_409(monkeypatch) -> None:
+    store = _FakeStore([])
+    with _build_client(monkeypatch, store) as client:
+        resp = client.post(
+            "/send_audio_s3",
+            json={
+                "audio_s3_url": "s3://bucket/raw/audio.mp3",
+                "mode": "with_gemini",
+                "reuse_text_job_id": "missing-source-job",
+            },
+        )
+
+    assert resp.status_code == 409
+    body = resp.json()
+    assert body["detail"] == "reuse_text_source_job_not_found: missing-source-job"

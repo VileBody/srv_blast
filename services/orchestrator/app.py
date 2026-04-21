@@ -3,9 +3,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import secrets
 import time
-from typing import Any
+from typing import Any, Dict
 
 from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -57,18 +56,6 @@ from .windows_node_pool import WindowsNodePool, parse_windows_urls_csv
 from services.tg_bot_botapi.user_store import UserStore
 
 log = logging.getLogger(__name__)
-
-
-def _maintenance_bypass_allowed(req: SendVideoRequest | None) -> bool:
-    if req is None:
-        return False
-    configured = str(SETTINGS.system_maintenance_bypass_token or "").strip()
-    if not configured:
-        return False
-    provided = str(getattr(req, "maintenance_bypass_token", "") or "").strip()
-    if not provided:
-        return False
-    return secrets.compare_digest(provided, configured)
 
 
 def _iter_celery_tasks(raw_tasks: object) -> list[dict[str, Any]]:
@@ -382,7 +369,46 @@ def create_app() -> FastAPI:
             runtime_nodes = pool.get_runtime_nodes()
         return _build_windows_nodes_status(runtime_nodes=runtime_nodes)
 
-    def _enqueue_build_task(job_id: str, worker_type: str) -> None:
+    def _resolve_job_routing(*, request_payload: Dict[str, Any]) -> Dict[str, str]:
+        local_origin_node = str(SETTINGS.orchestrator_node_name or "").strip()
+        local_build_queue = str(SETTINGS.celery_queue_build or "").strip()
+        local_render_queue = str(SETTINGS.celery_queue_render or "").strip()
+
+        origin_node = str(request_payload.get("origin_node") or "").strip() or local_origin_node
+        build_queue = str(request_payload.get("build_queue") or "").strip() or local_build_queue
+        render_queue = str(request_payload.get("render_queue") or "").strip() or local_render_queue
+
+        reuse_text_job_id = str(request_payload.get("reuse_text_job_id") or "").strip()
+        if reuse_text_job_id:
+            source_state = store.get(reuse_text_job_id)
+            if not source_state:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"reuse_text_source_job_not_found: {reuse_text_job_id}",
+                )
+            source_req = source_state.request or {}
+            source_origin_node = str(source_req.get("origin_node") or "").strip()
+            source_build_queue = str(source_req.get("build_queue") or "").strip()
+            source_render_queue = str(source_req.get("render_queue") or "").strip()
+            if source_origin_node:
+                origin_node = source_origin_node
+            if source_build_queue:
+                build_queue = source_build_queue
+            if source_render_queue:
+                render_queue = source_render_queue
+
+        if not build_queue:
+            raise HTTPException(status_code=500, detail="CELERY_QUEUE_BUILD is empty")
+        if not render_queue:
+            raise HTTPException(status_code=500, detail="CELERY_QUEUE_RENDER is empty")
+
+        return {
+            "origin_node": origin_node,
+            "build_queue": build_queue,
+            "render_queue": render_queue,
+        }
+
+    def _enqueue_build_task(job_id: str, worker_type: str, *, queue: str = "") -> None:
         wt = normalize_llm_worker_type(worker_type)
         task_map = {
             "sdk": build_job_sdk,
@@ -393,16 +419,33 @@ def create_app() -> FastAPI:
         task = task_map.get(wt)
         if task is None:
             raise RuntimeError(f"unsupported llm_worker_type: {worker_type}")
+        target_queue = str(queue or "").strip()
+        default_queue = str(SETTINGS.celery_queue_build or "").strip()
+        if target_queue and target_queue != default_queue:
+            task.apply_async(args=[job_id], queue=target_queue)
+            return
         task.delay(job_id)
 
-    def _ensure_accepting_new_jobs(req: SendVideoRequest | None = None) -> None:
+    def _ensure_accepting_new_jobs() -> None:
         if not bool(SETTINGS.system_maintenance_mode):
-            return
-        if _maintenance_bypass_allowed(req):
             return
         msg = str(SETTINGS.system_maintenance_message or "").strip()
         detail = msg or "Service is temporarily unavailable due to maintenance."
         raise HTTPException(status_code=503, detail=detail)
+
+    def _ensure_supported_mode(mode: str) -> None:
+        selected_mode = str(mode or "with_gemini").strip().lower() or "with_gemini"
+        if selected_mode == "with_gemini":
+            return
+        if selected_mode == "no_gemini":
+            raise HTTPException(
+                status_code=400,
+                detail="mode=no_gemini is disabled; use mode=with_gemini",
+            )
+        raise HTTPException(
+            status_code=400,
+            detail=f"unsupported mode={selected_mode!r}; expected with_gemini",
+        )
 
     # ==========================================================
     # NEW: correct naming (audio URL -> enqueue pipeline)
@@ -412,9 +455,13 @@ def create_app() -> FastAPI:
     # Позже можешь переименовать модели в schemas.py, но эндпоинт уже будет правильный.
     @app.post("/send_audio_s3", response_model=SendVideoResponse)
     def send_audio_s3(req: SendVideoRequest) -> SendVideoResponse:
-        _ensure_accepting_new_jobs(req)
+        _ensure_accepting_new_jobs()
+        _ensure_supported_mode(req.mode)
+        request_payload = req.model_dump(mode="json", exclude_none=True)
+        routing = _resolve_job_routing(request_payload=request_payload)
+        request_payload.update(routing)
         st, created = store.new_job(
-            request=req.model_dump(mode="json"),
+            request=request_payload,
             idempotency_key=req.idempotency_key,
         )
         if not created:
@@ -426,15 +473,30 @@ def create_app() -> FastAPI:
             selected = reserve_worker_type(store, requested=req.llm_worker_type)
             worker_type = selected.worker_type
 
-            store.patch_request(st.job_id, {"llm_worker_type": worker_type})
+            store.patch_request(
+                st.job_id,
+                {
+                    "llm_worker_type": worker_type,
+                    "origin_node": routing["origin_node"],
+                    "build_queue": routing["build_queue"],
+                    "render_queue": routing["render_queue"],
+                },
+            )
             store.set_status(
                 st.job_id,
                 "QUEUED",
                 stage="build",
-                result={"llm_worker_type": worker_type},
+                result={
+                    "llm_worker_type": worker_type,
+                    "routing": {
+                        "origin_node": routing["origin_node"],
+                        "build_queue": routing["build_queue"],
+                        "render_queue": routing["render_queue"],
+                    },
+                },
             )
             queued = True
-            _enqueue_build_task(st.job_id, worker_type)
+            _enqueue_build_task(st.job_id, worker_type, queue=routing["build_queue"])
         except Exception as e:
             if worker_type and not queued:
                 try:
@@ -561,6 +623,9 @@ def create_app() -> FastAPI:
         reason = str(payload.reason or "").strip() or "admin_requeue_stuck"
         req = st.request or {}
         project_id = str(req.get("project_id") or "")
+        pinned_origin_node = str(req.get("origin_node") or SETTINGS.orchestrator_node_name or "").strip()
+        pinned_build_queue = str(req.get("build_queue") or SETTINGS.celery_queue_build or "").strip()
+        pinned_render_queue = str(req.get("render_queue") or SETTINGS.celery_queue_render or "").strip()
         requested_worker_raw = str(payload.llm_worker_type or "").strip()
         current_worker_raw = str(req.get("llm_worker_type") or "").strip()
 
@@ -620,7 +685,15 @@ def create_app() -> FastAPI:
 
         queued = False
         try:
-            store.patch_request(jid, {"llm_worker_type": selected_worker})
+            store.patch_request(
+                jid,
+                {
+                    "llm_worker_type": selected_worker,
+                    "origin_node": pinned_origin_node,
+                    "build_queue": pinned_build_queue,
+                    "render_queue": pinned_render_queue,
+                },
+            )
             st2 = store.set_status(
                 jid,
                 "QUEUED",
@@ -628,6 +701,11 @@ def create_app() -> FastAPI:
                 error=f"admin_requeued: {reason}",
                 result={
                     "llm_worker_type": selected_worker,
+                    "routing": {
+                        "origin_node": pinned_origin_node,
+                        "build_queue": pinned_build_queue,
+                        "render_queue": pinned_render_queue,
+                    },
                     "admin_requeue_attempt": requeue_attempt,
                     "admin_requeue_reason": reason,
                     "admin_requeue_revoked_task_ids": revoked_task_ids,
@@ -636,7 +714,7 @@ def create_app() -> FastAPI:
             if not st2:
                 raise HTTPException(status_code=404, detail="job not found")
             queued = True
-            _enqueue_build_task(jid, selected_worker)
+            _enqueue_build_task(jid, selected_worker, queue=pinned_build_queue)
         except HTTPException:
             if reserved_new_slot and not queued:
                 try:

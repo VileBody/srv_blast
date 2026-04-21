@@ -39,9 +39,16 @@ class _FakeRedis:
     async def get(self, key: str):
         return self.data.get(key)
 
-    async def set(self, key: str, value: str, ex: int | None = None) -> None:
+    async def set(self, key: str, value: str, ex: int | None = None, nx: bool = False):
         del ex
+        if nx and key in self.data:
+            return None
         self.data[key] = value
+        return True
+
+    async def expire(self, key: str, ttl: int) -> int:
+        del ttl
+        return 1 if key in self.data else 0
 
     async def delete(self, *keys: str) -> int:
         removed = 0
@@ -185,6 +192,7 @@ def _make_store(fake_redis: _FakeRedis) -> RedisChatStateStore:
     store._updated_at_zset_key = f"{store._prefix}:idx:updated_at"
     store._stage_counts_key = f"{store._prefix}:idx:stage_counts"
     store._stage_by_chat_key = f"{store._prefix}:idx:stage_by_chat"
+    store._processing_lock_prefix = f"{store._prefix}:locks:processing"
     store._state_ttl_s = 86400
     store._redis = fake_redis
     return store
@@ -294,5 +302,33 @@ def test_cleanup_index_members_purges_orphan_index_entries() -> None:
         removed = await store.cleanup_index_members(limit=10)
         assert removed == 1
         assert "401" not in await redis.smembers(store._all_ids_key)
+
+    asyncio.run(_run())
+
+
+def test_processing_lock_acquire_refresh_release_by_owner() -> None:
+    async def _run() -> None:
+        redis = _FakeRedis()
+        store = _make_store(redis)
+
+        acquired = await store.acquire_processing_lock(chat_id=501, owner_id="node-a", ttl_s=60)
+        assert acquired is True
+
+        acquired_other = await store.acquire_processing_lock(chat_id=501, owner_id="node-b", ttl_s=60)
+        assert acquired_other is False
+
+        refreshed_owner = await store.refresh_processing_lock(chat_id=501, owner_id="node-a", ttl_s=60)
+        refreshed_other = await store.refresh_processing_lock(chat_id=501, owner_id="node-b", ttl_s=60)
+        assert refreshed_owner is True
+        assert refreshed_other is False
+
+        released_other = await store.release_processing_lock(chat_id=501, owner_id="node-b")
+        assert released_other is False
+
+        released_owner = await store.release_processing_lock(chat_id=501, owner_id="node-a")
+        assert released_owner is True
+
+        acquired_after_release = await store.acquire_processing_lock(chat_id=501, owner_id="node-b", ttl_s=60)
+        assert acquired_after_release is True
 
     asyncio.run(_run())
