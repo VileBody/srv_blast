@@ -50,8 +50,16 @@ def get_s3_client():
             "S3 is not configured: set S3_ENDPOINT_URL, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY"
         )
 
-    # Никаких proxies для S3 — прямой выход
-    boto_config = BotoConfig()
+    # Никаких proxies для S3 — прямой выход.
+    # read_timeout=3600s: крупные бакет-операции (например, ZIP-стрим экспорта
+    # всех ассетов в asset-ui или заливка многогигабайтного файла) могут между
+    # чанками ответа ждать дольше дефолтных 60с, если S3 подтормаживает;
+    # ставим верхнюю границу 1ч, чтобы не обрывать длинные операции.
+    boto_config = BotoConfig(
+        connect_timeout=30,
+        read_timeout=3600,
+        retries={"max_attempts": 3, "mode": "standard"},
+    )
 
     session = boto3.session.Session(
         aws_access_key_id=access_key,

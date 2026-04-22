@@ -1,0 +1,34 @@
+# Paste inside the nginx `server {}` that exposes asset-ui.
+# Example public URL: https://blast808.com/admin/assets/
+#
+# Important timeouts: the asset-ui exposes bulk export (streaming ZIP archive
+# of all selected videos) and bulk import (multipart upload of videos / ZIP).
+# Both flows can legitimately run for many minutes on slow networks or large
+# libraries, so the defaults (60s for nginx, 1m for body size) are too tight.
+
+location /admin/assets/ {
+    proxy_pass http://blast_asset_ui/;
+    proxy_http_version 1.1;
+
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header Connection "";
+
+    # Long download / upload budget.
+    proxy_connect_timeout 30s;
+    proxy_send_timeout    3600s;   # 1h — upload (client -> nginx -> app)
+    proxy_read_timeout    3600s;   # 1h — download (app -> nginx -> client)
+    send_timeout          3600s;
+
+    # Uploads: bulk import can push multiple videos or a large ZIP at once.
+    # Match or exceed ASSET_UI_UPLOAD_MAX_MB.
+    client_max_body_size  10g;
+    client_body_timeout   3600s;
+
+    # Disable buffering so streaming ZIP response goes straight to the client
+    # and upload body isn't spooled to disk on nginx.
+    proxy_buffering         off;
+    proxy_request_buffering off;
+}
