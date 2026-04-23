@@ -4,7 +4,15 @@ from prometheus_client import CollectorRegistry, generate_latest
 from prometheus_client.core import CounterMetricFamily, GaugeMetricFamily, HistogramMetricFamily
 from prometheus_client.exposition import CONTENT_TYPE_LATEST
 
+from .backpressure_policy import (
+    BACKPRESSURE_STATE_DEGRADED,
+    BACKPRESSURE_STATE_MANUAL_MAINTENANCE_RECOMMENDED,
+    BACKPRESSURE_STATE_NORMAL,
+    compute_capacity_policy,
+)
+from .config import SETTINGS
 from .job_store import JobStore
+from .llm_workers import get_runtime_status
 from .observability_metrics import (
     GEMINI_LATENCY_BUCKETS,
     STAGE_DURATION_BUCKETS,
@@ -54,6 +62,11 @@ _LABELED_COUNTER_METRICS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
         "gemini_call_total",
         "Gemini call outcomes by model and stage",
         ("model", "stage", "outcome", "code_class"),
+    ),
+    (
+        "gemini_token_total",
+        "Gemini token usage from response usage_metadata",
+        ("provider", "model", "stage", "token_type"),
     ),
     (
         "gemini_fallback_total",
@@ -134,11 +147,21 @@ class _RedisBackedCollector:
             "succeeded": 0,
             "failed": 0,
         }
+        stage_counts: dict[str, int] = {}
+        render_backlog = 0
+        build_backlog = 0
         try:
             for job in self._store.list_jobs():
                 status = str(getattr(job, "status", "") or "").strip().lower()
                 if status in counts:
                     counts[status] += 1
+                stage = str(getattr(job, "stage", "") or "none").strip().lower() or "none"
+                stage_counts[stage] = int(stage_counts.get(stage, 0)) + 1
+                if status in {"new", "queued", "running"}:
+                    if "render" in stage or stage in {"dispatch", "poll", "render_dispatch", "render_poll"}:
+                        render_backlog += 1
+                    else:
+                        build_backlog += 1
         except Exception:
             pass
 
@@ -154,6 +177,17 @@ class _RedisBackedCollector:
         yield GaugeMetricFamily("queue_depth", "Current queued jobs", value=float(counts["queued"]))
         yield GaugeMetricFamily("inflight_jobs", "Current running jobs", value=float(counts["running"]))
         yield GaugeMetricFamily("failed_jobs", "Current failed jobs", value=float(counts["failed"]))
+        yield GaugeMetricFamily("render_backlog", "Current render-side backlog", value=float(render_backlog))
+        yield GaugeMetricFamily("build_backlog", "Current build-side backlog", value=float(build_backlog))
+
+        stage_g = GaugeMetricFamily(
+            "job_stage_count",
+            "Current number of jobs by stage",
+            labels=["stage"],
+        )
+        for stage, value in sorted(stage_counts.items()):
+            stage_g.add_metric([str(stage or "none")], float(int(value)))
+        yield stage_g
 
         try:
             from .llm_workers import get_inflight_counts
@@ -169,6 +203,89 @@ class _RedisBackedCollector:
         for worker_type, count in sorted((llm_inflight or {}).items()):
             llm_g.add_metric([str(worker_type or "unknown")], float(int(count or 0)))
         yield llm_g
+
+        llm_status = {}
+        try:
+            llm_status = get_runtime_status(self._store)
+        except Exception:
+            llm_status = {}
+
+        llm_max_g = GaugeMetricFamily(
+            "llm_worker_max_inflight",
+            "Configured max inflight per LLM worker type",
+            labels=["worker_type", "enabled"],
+        )
+        llm_available_g = GaugeMetricFamily(
+            "llm_worker_available_slots",
+            "Currently available slots per LLM worker type",
+            labels=["worker_type", "enabled"],
+        )
+        llm_saturated_g = GaugeMetricFamily(
+            "llm_worker_saturated",
+            "Whether an LLM worker type is saturated (1=true, 0=false)",
+            labels=["worker_type", "enabled"],
+        )
+        llm_enabled_g = GaugeMetricFamily(
+            "llm_worker_enabled",
+            "Whether an LLM worker type is enabled (1=true, 0=false)",
+            labels=["worker_type"],
+        )
+        llm_saturation_payload: dict[str, dict[str, int | bool]] = {}
+        for worker_type, row in sorted((llm_status or {}).items()):
+            enabled = bool(getattr(row, "enabled", False))
+            enabled_label = "true" if enabled else "false"
+            max_inflight = int(getattr(row, "max_inflight", 0) or 0)
+            available_slots = int(getattr(row, "available_slots", 0) or 0)
+            inflight = int(getattr(row, "inflight", 0) or 0)
+            weight = int(getattr(row, "weight", 0) or 0)
+            saturated = bool(enabled and max_inflight > 0 and inflight >= max_inflight)
+            llm_saturation_payload[str(worker_type)] = {
+                "enabled": enabled,
+                "weight": weight,
+                "max_inflight": max_inflight,
+                "available_slots": available_slots,
+                "saturated": saturated,
+            }
+            llm_max_g.add_metric([str(worker_type), enabled_label], float(max_inflight))
+            llm_available_g.add_metric([str(worker_type), enabled_label], float(available_slots))
+            llm_saturated_g.add_metric([str(worker_type), enabled_label], 1.0 if saturated else 0.0)
+            llm_enabled_g.add_metric([str(worker_type)], 1.0 if enabled else 0.0)
+        yield llm_max_g
+        yield llm_available_g
+        yield llm_saturated_g
+        yield llm_enabled_g
+
+        capacity_policy = compute_capacity_policy(
+            render_backlog=render_backlog,
+            build_backlog=build_backlog,
+            llm_saturation_by_worker_type=llm_saturation_payload,
+            render_backlog_degraded_threshold=int(SETTINGS.render_backlog_degraded_threshold),
+            render_backlog_scaleout_threshold=int(SETTINGS.render_backlog_scaleout_threshold),
+            build_backlog_degraded_threshold=int(SETTINGS.build_backlog_degraded_threshold),
+            build_backlog_manual_maintenance_threshold=int(SETTINGS.build_backlog_manual_maintenance_threshold),
+        )
+        policy_state = str(capacity_policy.get("state") or BACKPRESSURE_STATE_NORMAL).strip().lower()
+        policy_g = GaugeMetricFamily(
+            "backpressure_policy_state",
+            "Current backpressure policy state (1 for active state, 0 otherwise)",
+            labels=["state"],
+        )
+        for state in (
+            BACKPRESSURE_STATE_NORMAL,
+            BACKPRESSURE_STATE_DEGRADED,
+            BACKPRESSURE_STATE_MANUAL_MAINTENANCE_RECOMMENDED,
+        ):
+            policy_g.add_metric([state], 1.0 if policy_state == state else 0.0)
+        yield policy_g
+
+        yield GaugeMetricFamily(
+            "render_poll_split_active",
+            "Whether render dispatch and render poll use different queues (1=true, 0=false)",
+            value=1.0
+            if str(SETTINGS.celery_queue_render_poll or "").strip()
+            and str(SETTINGS.celery_queue_render_poll or "").strip() != str(SETTINGS.celery_queue_render or "").strip()
+            else 0.0,
+        )
 
         for source_metric, target_metric, help_text, label_name in _LEGACY_COUNTER_MAPS:
             raw = get_counter_map(self._store, metric=source_metric)

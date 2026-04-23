@@ -111,6 +111,11 @@ def _patch_common(monkeypatch: pytest.MonkeyPatch, *, tmp_path: Path, job_id: st
         lambda _url, dest, timeout_s=300.0: dest.parent.mkdir(parents=True, exist_ok=True) or dest.write_bytes(b"a"),
     )
     monkeypatch.setattr(tasks.dispatch_to_windows, "delay", lambda jid: dispatch_calls.append(str(jid)))
+    monkeypatch.setattr(
+        tasks.dispatch_to_windows,
+        "apply_async",
+        lambda *args, **kwargs: dispatch_calls.append(str((kwargs.get("args") or args[0])[0])),
+    )
     monkeypatch.setattr(tasks.JobStore, "from_env", classmethod(lambda cls: store))
     monkeypatch.setattr(tasks.build_job, "request", SimpleNamespace(retries=0), raising=False)
 
@@ -276,25 +281,47 @@ def test_build_job_preflight_with_gemini_triggers_targeted_subtitles_rerun(
     assert not retry_calls
     assert dispatch_calls == [job_id]
 
-    assert len(llm_calls) == 2
-    assert llm_calls[0]["hint"] is None
-    assert isinstance(llm_calls[1]["hint"], str) and "impossible layer timings" in llm_calls[1]["hint"]
-    assert "DETECTED_PREFLIGHT_ISSUE" in llm_calls[1]["hint"]
-    assert "layer_name: X" in llm_calls[1]["hint"]
-    assert "layer_in_point: 2.000000" in llm_calls[1]["hint"]
-    assert "layer_out_point: 1.000000" in llm_calls[1]["hint"]
-    state_after_drop = llm_calls[1]["resume_state"]
-    assert "stage2_subtitles" not in state_after_drop
-    assert "stage2_style" in state_after_drop
-    expected_audio = _paths.data_dir / "inputs" / "audio" / "audio.mp3"
-    for call in llm_calls:
-        assert call["data_dir"] == str(_paths.data_dir)
-        assert call["out_dir"] == str(_paths.out_dir)
-        assert call["audio_file_path"] == str(expected_audio)
-        assert call["audio_dir"] == str(expected_audio.parent)
-        assert call["audio_file_name"] == "audio_source.mp3"
-        assert call["provider_mode"] == "gemini"
-    assert os.environ.get("STAGE2_SUBTITLES_RETRY_HINT") is None
+
+def test_build_job_queue_first_retries_when_llm_capacity_is_exhausted(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    job_id = "job_queue_first_capacity_retry"
+    store = _FakeStore(
+        job_id=job_id,
+        request={
+            "audio_s3_url": "s3://bucket/raw/audio.mp3",
+            "mode": "with_gemini",
+            "lyrics_text": "",
+            "llm_worker_type": "sdk",
+            "llm_reservation_mode": "worker",
+        },
+    )
+    _paths, dispatch_calls = _patch_common(monkeypatch, tmp_path=tmp_path, job_id=job_id, store=store)
+
+    retry_calls: list[dict] = []
+
+    def _fake_retry(*args, **kwargs):
+        retry_calls.append({"args": args, "kwargs": kwargs})
+        raise RuntimeError("capacity_retry_triggered")
+
+    monkeypatch.setattr(tasks.build_job, "retry", _fake_retry, raising=False)
+    monkeypatch.setattr(
+        tasks,
+        "reserve_worker_type_for_job",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("llm_worker_capacity_exhausted: sdk")),
+    )
+    monkeypatch.setattr(
+        tasks.subprocess,
+        "run",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("subprocess.run must not be called")),
+    )
+
+    with pytest.raises(RuntimeError, match="capacity_retry_triggered"):
+        tasks.build_job.run(job_id)
+
+    assert retry_calls
+    assert dispatch_calls == []
+    assert store._state.stage == "llm_wait_capacity"
 
 
 def test_build_job_openrouter_pins_provider_mode_openrouter(

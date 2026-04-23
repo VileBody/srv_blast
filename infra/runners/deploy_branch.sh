@@ -98,7 +98,7 @@ deploy_root_services() {
 
 deploy_prod_path_services() {
   if ! is_true "$DEPLOY_ORCHESTRATOR_HA"; then
-    deploy_root_services orchestrator-api worker-build worker-render tg-bot-public
+    deploy_root_services orchestrator-api worker-build worker-render worker-render-poll tg-bot-public
     return 0
   fi
 
@@ -116,9 +116,9 @@ deploy_prod_path_services() {
   fi
 
   echo "[deploy] orchestrator-ha enabled compose=$compose_ha"
-  echo "[deploy] docker compose -f docker-compose.yml -f $compose_ha up -d --build orchestrator-api orchestrator-api-2 worker-build worker-render tg-bot-public"
+  echo "[deploy] docker compose -f docker-compose.yml -f $compose_ha up -d --build orchestrator-api orchestrator-api-2 worker-build worker-render worker-render-poll tg-bot-public"
   docker compose -f docker-compose.yml -f "$compose_ha" up -d --build \
-    orchestrator-api orchestrator-api-2 worker-build worker-render tg-bot-public
+    orchestrator-api orchestrator-api-2 worker-build worker-render worker-render-poll tg-bot-public
 }
 
 stop_root_services() {
@@ -268,7 +268,6 @@ deploy_logs_pipeline_systemd_if_present() {
     echo "[deploy] failed to detect logs pipeline python interpreter"
     return 1
   fi
-
   echo "[deploy] bootstrap logs schema + s3 lifecycle"
   (
     set -euo pipefail

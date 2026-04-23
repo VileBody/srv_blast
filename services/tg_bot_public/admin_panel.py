@@ -24,6 +24,7 @@ from fastapi import FastAPI, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from core.llm_worker_types import LLM_WORKER_TYPES
+from services.generation_runtime import GenerationRuntimeStore
 from services.orchestrator.windows_node_pool import normalize_windows_urls, runtime_windows_urls_key
 
 from .render_node_pool import (
@@ -196,6 +197,7 @@ _BASE_HEAD = """
   /* Badges */
   .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.85em; }
   .badge-ok { background: #d4edda; color: #155724; }
+  .badge-warn { background: #fff3cd; color: #856404; }
   .badge-zero { background: #f8d7da; color: #721c24; }
   .badge-stage { background: #cce5ff; color: #004085; }
   .badge-source { background: #e8daef; color: #6c3483; }
@@ -255,6 +257,8 @@ _BASE_HEAD = """
   <a href="/admin/utm">UTM</a>
   <a href="/admin/sources">Sources</a>
   <a href="/admin/jobs">Jobs</a>
+  <a href="/admin/runs">Runs</a>
+  <a href="/admin/ops">Ops</a>
   <a href="/admin/render-nodes">Render Nodes</a>
   <a href="/admin/assets/" target="_blank" rel="noopener noreferrer">Assets</a>
   <a href="/admin/llm-workers">LLM Workers</a>
@@ -346,6 +350,34 @@ def _seconds_to_age(seconds: int) -> str:
     return f"{days}d {hours}h"
 
 
+def _runtime_dt_text(value: object) -> str:
+    if value is None:
+        return "—"
+    if isinstance(value, datetime):
+        try:
+            return value.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        except Exception:
+            return str(value)
+    return html_mod.escape(str(value))
+
+
+def _compact_runtime_text(value: object, *, limit: int = 160) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return "—"
+    if len(text) <= limit:
+        return html_mod.escape(text)
+    return html_mod.escape(text[: max(1, limit - 1)].rstrip() + "…")
+
+
+def _job_admin_link(job_id: object) -> str:
+    jid = str(job_id or "").strip()
+    if not jid:
+        return "—"
+    jid_esc = html_mod.escape(jid)
+    return f"<a href='/admin/jobs/{jid_esc}'><code>{jid_esc}</code></a>"
+
+
 def _project_chat_id(project_id: str) -> int | None:
     raw = str(project_id or "").strip()
     if not raw.startswith("tg-"):
@@ -421,6 +453,13 @@ def build_app(
 ) -> FastAPI:
     app = FastAPI(docs_url=None, redoc_url=None)
     security = HTTPBasic()
+    runtime_store: GenerationRuntimeStore | None = None
+    try:
+        pool_getter = getattr(credits_db, "_pool_or_fail", None)
+        if callable(pool_getter):
+            runtime_store = GenerationRuntimeStore(pool_getter())
+    except Exception as e:
+        log.warning("admin_panel runtime store unavailable err=%s", e)
 
     def _check_auth(creds: HTTPBasicCredentials = Depends(security)) -> str:
         if not secrets.compare_digest(creds.password.encode(), settings.admin_panel_password.encode()):
@@ -487,6 +526,28 @@ def build_app(
             raise RuntimeError(f"orchestrator POST /jobs/{jid}/kill returned non-object: {data!r}")
         return data
 
+    async def _orchestrator_requeue_job(*, job_id: str, reason: str, llm_worker_type: str = "") -> dict:
+        base = str(settings.orchestrator_public_url or "").strip().rstrip("/")
+        if not base:
+            raise RuntimeError("ORCHESTRATOR_PUBLIC_URL is empty")
+        jid = str(job_id or "").strip()
+        if not jid:
+            raise RuntimeError("job_id is empty")
+        payload: dict[str, Any] = {
+            "reason": " ".join(str(reason or "").split()).strip() or "admin_requeue",
+        }
+        selected_worker = str(llm_worker_type or "").strip()
+        if selected_worker:
+            payload["llm_worker_type"] = selected_worker
+        async with httpx.AsyncClient(timeout=25.0) as client:
+            resp = await client.post(f"{base}/jobs/{jid}/requeue", json=payload)
+        if resp.status_code >= 300:
+            raise RuntimeError(f"orchestrator POST /jobs/{jid}/requeue failed: {resp.status_code} {resp.text}")
+        data = resp.json()
+        if not isinstance(data, dict):
+            raise RuntimeError(f"orchestrator POST /jobs/{jid}/requeue returned non-object: {data!r}")
+        return data
+
     async def _orchestrator_get_job(*, job_id: str) -> dict:
         base = str(settings.orchestrator_public_url or "").strip().rstrip("/")
         if not base:
@@ -523,6 +584,101 @@ def build_app(
             return await _orchestrator_get_metrics()
         except Exception:
             return {}
+
+    async def _safe_get_windows_nodes() -> dict:
+        try:
+            return await _orchestrator_get_windows_nodes()
+        except Exception:
+            return {}
+
+    async def _safe_get_llm_workers() -> dict:
+        try:
+            return await _orchestrator_get_llm_workers()
+        except Exception:
+            return {}
+
+    async def _telegram_get_webhook_info() -> dict:
+        token = str(settings.tg_bot_token or "").strip()
+        if not token:
+            return {}
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(f"https://api.telegram.org/bot{token}/getWebhookInfo")
+        if resp.status_code >= 300:
+            raise RuntimeError(f"telegram getWebhookInfo failed: {resp.status_code} {resp.text}")
+        data = resp.json()
+        if not isinstance(data, dict):
+            raise RuntimeError(f"telegram getWebhookInfo returned non-object: {data!r}")
+        if not data.get("ok"):
+            raise RuntimeError(f"telegram getWebhookInfo not ok: {data!r}")
+        result = data.get("result")
+        return result if isinstance(result, dict) else {}
+
+    async def _safe_get_webhook_info() -> dict:
+        if str(getattr(settings, "tg_delivery_mode", "") or "").strip().lower() != "webhook":
+            return {}
+        try:
+            return await _telegram_get_webhook_info()
+        except Exception:
+            return {}
+
+    async def _safe_get_runtime_stats() -> dict:
+        if runtime_store is None:
+            return {}
+        try:
+            return await runtime_store.get_runtime_stats(surface="public")
+        except Exception as e:
+            return {"error": str(e)}
+
+    async def _send_alert_telegram_message(text: str) -> dict:
+        token = str(getattr(settings, "alert_telegram_bot_token", "") or "").strip()
+        chat_id = str(getattr(settings, "alert_telegram_chat_id", "") or "").strip()
+        if not token:
+            raise RuntimeError("ALERT_TELEGRAM_BOT_TOKEN is empty")
+        if not chat_id:
+            raise RuntimeError("ALERT_TELEGRAM_CHAT_ID is empty")
+        msg = str(text or "").strip()
+        if not msg:
+            raise RuntimeError("alert text is empty")
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(
+                f"https://api.telegram.org/bot{token}/sendMessage",
+                json={
+                    "chat_id": chat_id,
+                    "text": msg,
+                    "disable_web_page_preview": True,
+                },
+            )
+        if resp.status_code >= 300:
+            raise RuntimeError(f"telegram sendMessage failed: {resp.status_code} {resp.text}")
+        data = resp.json()
+        if not isinstance(data, dict) or not data.get("ok"):
+            raise RuntimeError(f"telegram sendMessage not ok: {data!r}")
+        return data
+
+    async def _send_alert_smoke(*, actor: str) -> dict:
+        text = "\n".join(
+            [
+                "Blast admin alert smoke",
+                f"actor: {actor or 'admin'}",
+                f"ts: {datetime.now(timezone.utc).isoformat()}",
+                "scope: admin-only check, no user job created",
+            ]
+        )
+        return await _send_alert_telegram_message(text)
+
+    async def _send_friendly_error_smoke(*, actor: str) -> dict:
+        text = "\n".join(
+            [
+                "Blast friendly-error smoke",
+                f"actor: {actor or 'admin'}",
+                f"ts: {datetime.now(timezone.utc).isoformat()}",
+                "user_text: Мы не смогли корректно собрать видео. Деньги за эту попытку не списаны, а команда уже получила технические детали.",
+                "tech_error_code: friendly_error_smoke",
+                "tech_details: simulated traceback stays in ops alert only",
+                "scope: admin-only check, no user job created",
+            ]
+        )
+        return await _send_alert_telegram_message(text)
 
     async def _orchestrator_get_windows_nodes() -> dict:
         base = str(settings.orchestrator_public_url or "").strip().rstrip("/")
@@ -762,7 +918,7 @@ def build_app(
             active_period = "30d"
             _, period_from, period_to = _PERIOD_PRESETS["30d"]
 
-        total, ratings, funnel_raw, stage_counts, users, recent, payments_summary, period_stats_row, metrics_data = await asyncio.gather(
+        total, ratings, funnel_raw, stage_counts, users, recent, payments_summary, period_stats_row, metrics_data, windows_nodes_data, llm_workers_data, webhook_info = await asyncio.gather(
             credits_db.count_users(),
             credits_db.rating_distribution(),
             credits_db.funnel_reach_counts(),
@@ -772,6 +928,9 @@ def build_app(
             credits_db.payments_status_summary(),
             credits_db.period_stats_range(period_from, period_to),
             _safe_get_metrics(),
+            _safe_get_windows_nodes(),
+            _safe_get_llm_workers(),
+            _safe_get_webhook_info(),
         )
 
         # ── Rating distribution for doughnut chart ──
@@ -875,6 +1034,45 @@ def build_app(
         else:
             metrics_card = ""
 
+        effective_nodes = windows_nodes_data.get("effective_urls") or [] if isinstance(windows_nodes_data, dict) else []
+        llm_rows = llm_workers_data.get("workers") or {} if isinstance(llm_workers_data, dict) else {}
+        llm_worker_html = ""
+        for worker_name, worker_row in llm_rows.items():
+            if not isinstance(worker_row, dict):
+                continue
+            enabled = "on" if bool(worker_row.get("enabled")) else "off"
+            inflight = int(worker_row.get("inflight", 0) or 0)
+            max_inflight = int(worker_row.get("max_inflight", 0) or 0)
+            llm_worker_html += (
+                f"<div class='stage-chip'>"
+                f"<div class='count'>{inflight}/{max_inflight}</div>"
+                f"<div class='label'>{html_mod.escape(str(worker_name))} ({enabled})</div>"
+                f"</div>"
+            )
+
+        webhook_pending = int(webhook_info.get("pending_update_count", 0) or 0) if isinstance(webhook_info, dict) else 0
+        webhook_last_error = html_mod.escape(str(webhook_info.get("last_error_message") or "").strip()) if isinstance(webhook_info, dict) else ""
+        webhook_url = html_mod.escape(str(webhook_info.get("url") or "").strip()) if isinstance(webhook_info, dict) else ""
+        maintenance_state = "ON" if bool(getattr(settings, "tg_maintenance_mode", False)) else "OFF"
+        alert_configured = bool(str(getattr(settings, "alert_telegram_bot_token", "") or "").strip()) and bool(
+            str(getattr(settings, "alert_telegram_chat_id", "") or "").strip()
+        )
+        health_card = f"""
+        <div class="card">
+        <h2>Runtime Health</h2>
+        <div class="stage-grid">
+          <div class="stage-chip"><div class="count">{maintenance_state}</div><div class="label">Maintenance</div></div>
+          <div class="stage-chip"><div class="count">{'ON' if alert_configured else 'OFF'}</div><div class="label">Alert bot</div></div>
+          <div class="stage-chip"><div class="count">{len(effective_nodes)}</div><div class="label">Windows nodes</div></div>
+          <div class="stage-chip"><div class="count">{webhook_pending}</div><div class="label">Webhook pending</div></div>
+        </div>
+        <p style="margin-top:8px">Webhook mode: <strong>{html_mod.escape(str(settings.tg_delivery_mode or 'polling'))}</strong>{f' · URL: <code>{webhook_url}</code>' if webhook_url else ''}</p>
+        {f"<p style='color:#c0392b'><strong>Webhook error:</strong> {webhook_last_error}</p>" if webhook_last_error else "<p style='color:#1e8449'>Webhook error: none</p>"}
+        <p>Windows pool: {', '.join(html_mod.escape(str(x)) for x in effective_nodes) if effective_nodes else 'нет данных'}</p>
+        {f"<div class='stage-grid'>{llm_worker_html}</div>" if llm_worker_html else "<p>LLM workers: нет данных</p>"}
+        </div>
+        """
+
         body = f"""
         <div class="card">
         <h2>Всего пользователей: {total}</h2>
@@ -897,6 +1095,8 @@ def build_app(
         <h2>Текущий этап (live)</h2>
         <div class="stage-grid">{stage_html if stage_html else '<p>Нет данных</p>'}</div>
         </div>
+
+        {health_card}
 
         <div class="card">
         <h2>Статистика по периодам</h2>
@@ -979,6 +1179,217 @@ def build_app(
         '''}
         """
         return _page("Blast Admin", body)
+
+    # ── Operator toolkit ───────────────────────────────────────────────
+
+    @app.get("/admin/ops", response_class=HTMLResponse)
+    async def ops_page(request: Request, _user: str = Depends(_check_auth)) -> str:
+        ok_msg = html_mod.escape(str(request.query_params.get("ok", "")).strip())
+        err_msg = html_mod.escape(str(request.query_params.get("err", "")).strip())
+        metrics_data, windows_nodes_data, llm_workers_data, webhook_info, runtime_stats = await asyncio.gather(
+            _safe_get_metrics(),
+            _safe_get_windows_nodes(),
+            _safe_get_llm_workers(),
+            _safe_get_webhook_info(),
+            _safe_get_runtime_stats(),
+        )
+
+        def _count_grid(data: object, *, empty: str = "нет данных") -> str:
+            if not isinstance(data, dict) or not data:
+                return f"<p>{empty}</p>"
+            chips = ""
+            for key, value in sorted(data.items(), key=lambda item: str(item[0])):
+                chips += (
+                    "<div class='stage-chip'>"
+                    f"<div class='count'>{html_mod.escape(str(value))}</div>"
+                    f"<div class='label'>{html_mod.escape(str(key))}</div>"
+                    "</div>"
+                )
+            return f"<div class='stage-grid'>{chips}</div>"
+
+        job_counts = metrics_data.get("job_status_counts") if isinstance(metrics_data, dict) else {}
+        stage_counts = metrics_data.get("job_stage_counts") if isinstance(metrics_data, dict) else {}
+        capacity_policy = metrics_data.get("capacity_policy") if isinstance(metrics_data, dict) else {}
+        queue_topology = metrics_data.get("queue_topology") if isinstance(metrics_data, dict) else {}
+        render_backlog = int(metrics_data.get("render_backlog", 0) or 0) if isinstance(metrics_data, dict) else 0
+        build_backlog = int(metrics_data.get("build_backlog", 0) or 0) if isinstance(metrics_data, dict) else 0
+        threshold = int((capacity_policy or {}).get("render_backlog_add_windows_node_threshold", 300) or 300)
+        degraded_threshold = int((capacity_policy or {}).get("render_backlog_degraded_threshold", 100) or 100)
+        build_degraded_threshold = int((capacity_policy or {}).get("build_backlog_degraded_threshold", 30) or 30)
+        build_manual_threshold = int(
+            (capacity_policy or {}).get("build_backlog_manual_maintenance_threshold", 80) or 80
+        )
+        policy_state = html_mod.escape(str((capacity_policy or {}).get("state") or "unknown"))
+        policy_state_norm = str((capacity_policy or {}).get("state") or "").strip().lower()
+        if policy_state_norm == "manual_maintenance_recommended":
+            policy_badge_class = "badge-zero"
+        elif policy_state_norm == "degraded":
+            policy_badge_class = "badge-warn"
+        else:
+            policy_badge_class = "badge-ok"
+        policy_reasons = []
+        if isinstance(capacity_policy, dict):
+            for reason in list(capacity_policy.get("reason_codes") or []):
+                txt = str(reason or "").strip()
+                if txt:
+                    policy_reasons.append(txt)
+        operator_action = html_mod.escape(str((capacity_policy or {}).get("operator_action") or "").strip())
+        user_notice = html_mod.escape(str((capacity_policy or {}).get("user_message") or "").strip())
+        render_split_active = bool((queue_topology or {}).get("render_poll_split_active")) if isinstance(queue_topology, dict) else False
+        render_queue_default = html_mod.escape(
+            str((queue_topology or {}).get("render_queue_default") or "—") if isinstance(queue_topology, dict) else "—"
+        )
+        render_poll_queue_default = html_mod.escape(
+            str((queue_topology or {}).get("render_poll_queue_default") or "—")
+            if isinstance(queue_topology, dict)
+            else "—"
+        )
+        render_split_badge = "badge-ok" if render_split_active else "badge-zero"
+
+        effective_nodes = windows_nodes_data.get("effective_urls") if isinstance(windows_nodes_data, dict) else []
+        runtime_urls = windows_nodes_data.get("runtime_urls") if isinstance(windows_nodes_data, dict) else []
+        llm_workers = llm_workers_data.get("workers") if isinstance(llm_workers_data, dict) else {}
+        llm_rows = ""
+        if isinstance(llm_workers, dict):
+            for worker_name, row in sorted(llm_workers.items()):
+                if not isinstance(row, dict):
+                    continue
+                enabled = "on" if bool(row.get("enabled")) else "off"
+                llm_rows += (
+                    "<tr>"
+                    f"<td>{html_mod.escape(str(worker_name))}</td>"
+                    f"<td>{enabled}</td>"
+                    f"<td>{int(row.get('inflight', 0) or 0)}</td>"
+                    f"<td>{int(row.get('max_inflight', 0) or 0)}</td>"
+                    f"<td>{int(row.get('available_slots', 0) or 0)}</td>"
+                    "</tr>"
+                )
+
+        webhook_url = html_mod.escape(str(webhook_info.get("url") or "").strip()) if isinstance(webhook_info, dict) else ""
+        webhook_pending = int(webhook_info.get("pending_update_count", 0) or 0) if isinstance(webhook_info, dict) else 0
+        webhook_error = html_mod.escape(str(webhook_info.get("last_error_message") or "").strip()) if isinstance(webhook_info, dict) else ""
+        webhook_mode = html_mod.escape(str(getattr(settings, "tg_delivery_mode", "polling") or "polling"))
+
+        runtime_error = html_mod.escape(str(runtime_stats.get("error") or "")) if isinstance(runtime_stats, dict) else ""
+        run_status_counts = runtime_stats.get("run_status_counts") if isinstance(runtime_stats, dict) else {}
+        outbox_status_counts = runtime_stats.get("outbox_status_counts") if isinstance(runtime_stats, dict) else {}
+        outbox_oldest_due_age_s = runtime_stats.get("outbox_oldest_due_age_s") if isinstance(runtime_stats, dict) else {}
+        old_runs_by_stage = runtime_stats.get("old_incomplete_runs_by_stage") if isinstance(runtime_stats, dict) else {}
+
+        alert_configured = bool(str(getattr(settings, "alert_telegram_bot_token", "") or "").strip()) and bool(
+            str(getattr(settings, "alert_telegram_chat_id", "") or "").strip()
+        )
+        friendly_preview = (
+            "Мы не смогли корректно собрать видео. Деньги за эту попытку не списаны, "
+            "а команда уже получила технические детали."
+        )
+
+        body = f"""
+        {f'<div class="card"><p style="color:#1e8449"><strong>OK:</strong> {ok_msg}</p></div>' if ok_msg else ''}
+        {f'<div class="card"><p style="color:#c0392b"><strong>Error:</strong> {err_msg}</p></div>' if err_msg else ''}
+
+        <div class="card">
+          <h2>Admin-only Smoke Checks</h2>
+          <p>Эти проверки не создают пользовательскую job. Боевой smoke-job через Telegram ingress остается ручным release acceptance.</p>
+          <form method="post" action="/admin/ops/alert-smoke">
+            <button type="submit" class="btn-success">Send Alert Smoke</button>
+          </form>
+          <form method="post" action="/admin/ops/friendly-error-smoke" style="margin-left:8px">
+            <button type="submit">Friendly Error Smoke</button>
+          </form>
+          <p style="margin-top:8px">Alert bot config: <span class="badge {'badge-ok' if alert_configured else 'badge-zero'}">{'ON' if alert_configured else 'OFF'}</span></p>
+          <p>Friendly error preview: <em>{html_mod.escape(friendly_preview)}</em></p>
+        </div>
+
+        <div class="card">
+          <h2>Webhook</h2>
+          <div class="stage-grid">
+            <div class="stage-chip"><div class="count">{webhook_mode}</div><div class="label">mode</div></div>
+            <div class="stage-chip"><div class="count">{webhook_pending}</div><div class="label">pending</div></div>
+          </div>
+          {f'<p>URL: <code>{webhook_url}</code></p>' if webhook_url else '<p>URL: нет данных</p>'}
+          {f"<p style='color:#c0392b'><strong>Last error:</strong> {webhook_error}</p>" if webhook_error else "<p style='color:#1e8449'>Last error: none</p>"}
+        </div>
+
+        <div class="card">
+          <h2>Queue Snapshot</h2>
+          <div class="stage-grid">
+            <div class="stage-chip"><div class="count">{render_backlog}</div><div class="label">render backlog</div></div>
+            <div class="stage-chip"><div class="count">{build_backlog}</div><div class="label">build backlog</div></div>
+            <div class="stage-chip"><div class="count"><span class="badge {policy_badge_class}">{policy_state}</span></div><div class="label">policy state</div></div>
+            <div class="stage-chip"><div class="count"><span class="badge {render_split_badge}">{'split' if render_split_active else 'shared'}</span></div><div class="label">render/poll queues</div></div>
+          </div>
+          <p>Backpressure thresholds: render degraded at <strong>{degraded_threshold}</strong>, add 3rd Windows node at <strong>{threshold}</strong>, build degraded at <strong>{build_degraded_threshold}</strong>, manual maintenance recommended at build backlog <strong>{build_manual_threshold}</strong>.</p>
+          <p>Queue topology: dispatch queue <code>{render_queue_default}</code>, poll queue <code>{render_poll_queue_default}</code>.</p>
+          {f'<p><strong>Policy reasons:</strong> {html_mod.escape(", ".join(policy_reasons))}</p>' if policy_reasons else '<p><strong>Policy reasons:</strong> none</p>'}
+          {f'<p><strong>Operator action:</strong> {operator_action}</p>' if operator_action else '<p><strong>Operator action:</strong> none</p>'}
+          {f'<p><strong>User copy:</strong> <em>{user_notice}</em></p>' if user_notice else '<p><strong>User copy:</strong> normal flow, no overload notice</p>'}
+          <h3>Job statuses</h3>
+          {_count_grid(job_counts)}
+          <h3>Job stages</h3>
+          {_count_grid(stage_counts)}
+        </div>
+
+        <div class="card">
+          <h2>Windows / Render Pool</h2>
+          <p>effective urls: {', '.join(html_mod.escape(str(x)) for x in (effective_nodes or [])) if effective_nodes else 'нет данных'}</p>
+          <p>runtime urls: {', '.join(html_mod.escape(str(x)) for x in (runtime_urls or [])) if runtime_urls else 'нет данных'}</p>
+          <p><a href="/admin/render-nodes">Render Nodes control &rarr;</a></p>
+        </div>
+
+        <div class="card">
+          <h2>LLM Workers</h2>
+          <div class="table-wrap">
+            <table><tr><th>Worker</th><th>Enabled</th><th>Inflight</th><th>Max</th><th>Free</th></tr>
+            {llm_rows or '<tr><td colspan="5">Нет данных</td></tr>'}
+            </table>
+          </div>
+          <p><a href="/admin/llm-workers">LLM runtime config &rarr;</a></p>
+        </div>
+
+        <div class="card">
+          <h2>Runtime / Outbox</h2>
+          {f"<p style='color:#c0392b'><strong>Runtime error:</strong> {runtime_error}</p>" if runtime_error else ""}
+          <h3>Run statuses</h3>
+          {_count_grid(run_status_counts)}
+          <h3>Outbox statuses</h3>
+          {_count_grid(outbox_status_counts)}
+          <h3>Oldest due outbox age, seconds</h3>
+          {_count_grid(outbox_oldest_due_age_s)}
+          <h3>Old incomplete runs by stage (&gt;15m)</h3>
+          {_count_grid(old_runs_by_stage, empty="старых незавершенных run нет")}
+          <p><a href="/admin/runs">Run-centric view &rarr;</a></p>
+        </div>
+        """
+        return _page("Ops Toolkit", body)
+
+    @app.post("/admin/ops/alert-smoke")
+    async def ops_alert_smoke(_user: str = Depends(_check_auth)) -> RedirectResponse:
+        try:
+            await _send_alert_smoke(actor=_user)
+            return RedirectResponse(
+                f"/admin/ops?ok={quote_plus('alert smoke sent')}",
+                status_code=303,
+            )
+        except Exception as e:
+            return RedirectResponse(
+                f"/admin/ops?err={quote_plus(str(e))}",
+                status_code=303,
+            )
+
+    @app.post("/admin/ops/friendly-error-smoke")
+    async def ops_friendly_error_smoke(_user: str = Depends(_check_auth)) -> RedirectResponse:
+        try:
+            await _send_friendly_error_smoke(actor=_user)
+            return RedirectResponse(
+                f"/admin/ops?ok={quote_plus('friendly error smoke sent')}",
+                status_code=303,
+            )
+        except Exception as e:
+            return RedirectResponse(
+                f"/admin/ops?err={quote_plus(str(e))}",
+                status_code=303,
+            )
 
     # ── Render nodes / donor restart ────────────────────────────────
 
@@ -1800,6 +2211,14 @@ def build_app(
                 f"<td>{updated_s}</td>"
                 f"<td>{logs_cell}</td>"
                 f"<td>"
+                f"  <form method='post' action='/admin/jobs/{jid}/requeue' "
+                f"        onsubmit=\"return confirm('Requeue job {jid}?');\" style='margin-bottom:8px'>"
+                f"    <input type='hidden' name='min_age_seconds' value='{min_age_seconds}'>"
+                f"    <input type='hidden' name='limit' value='{limit}'>"
+                f"    <input type='text' name='reason' value='admin_requeue' style='width:170px'>"
+                f"    <input type='text' name='llm_worker_type' value='' placeholder='worker(optional)' style='width:140px'>"
+                f"    <button type='submit'>Requeue</button>"
+                f"  </form>"
                 f"  <form method='post' action='/admin/jobs/{jid}/kill' "
                 f"        onsubmit=\"return confirm('Kill job {jid}?');\">"
                 f"    <input type='hidden' name='min_age_seconds' value='{min_age_seconds}'>"
@@ -1865,6 +2284,36 @@ def build_app(
             revoked_ids = res.get("revoked_task_ids")
             revoked_count = len(revoked_ids) if isinstance(revoked_ids, list) else 0
             ok = f"killed job={jid}; revoked={revoked_count}; project={project_id or '-'}"
+            return RedirectResponse(f"/admin/jobs?{base_q}&ok={quote_plus(ok)}", status_code=303)
+        except Exception as e:
+            return RedirectResponse(f"/admin/jobs?{base_q}&err={quote_plus(str(e))}", status_code=303)
+
+    @app.post("/admin/jobs/{job_id}/requeue")
+    async def jobs_requeue(
+        job_id: str,
+        reason: str = Form("admin_requeue"),
+        llm_worker_type: str = Form(""),
+        min_age_seconds: int = Form(900),
+        limit: int = Form(200),
+        _user: str = Depends(_check_auth),
+    ) -> RedirectResponse:
+        min_age = max(0, min(int(min_age_seconds), 604800))
+        out_limit = max(1, min(int(limit), 500))
+        base_q = f"min_age_seconds={min_age}&limit={out_limit}"
+
+        jid = str(job_id or "").strip()
+        if not jid:
+            return RedirectResponse(f"/admin/jobs?{base_q}&err={quote_plus('empty job_id')}", status_code=303)
+
+        actor_reason = " ".join(f"{reason} by {_user}".split()).strip()
+        try:
+            res = await _orchestrator_requeue_job(
+                job_id=jid,
+                reason=actor_reason,
+                llm_worker_type=str(llm_worker_type or "").strip(),
+            )
+            worker = str(res.get("llm_worker_type") or "")
+            ok = f"requeued job={jid}; worker={worker or '-'}"
             return RedirectResponse(f"/admin/jobs?{base_q}&ok={quote_plus(ok)}", status_code=303)
         except Exception as e:
             return RedirectResponse(f"/admin/jobs?{base_q}&err={quote_plus(str(e))}", status_code=303)
@@ -1952,16 +2401,33 @@ def build_app(
         ) if result_obj else ""
 
         jid_esc = html_mod.escape(jid)
-        kill_html = (
+        action_forms: list[str] = []
+        if status != "SUCCEEDED":
+            action_forms.append(
+                f"<form method='post' action='/admin/jobs/{jid_esc}/requeue'"
+                f""" onsubmit="return confirm('Requeue job {jid_esc}?');" style='margin-right:10px;margin-bottom:8px'>"""
+                "<input type='hidden' name='min_age_seconds' value='0'>"
+                "<input type='hidden' name='limit' value='200'>"
+                "<input type='text' name='reason' value='admin_requeue' style='width:220px'>"
+                "<input type='text' name='llm_worker_type' value='' placeholder='worker(optional)' style='width:160px'>"
+                " <button type='submit'>Requeue</button>"
+                "</form>"
+            )
+        if status in ("NEW", "QUEUED", "RUNNING"):
+            action_forms.append(
+                f"<form method='post' action='/admin/jobs/{jid_esc}/kill'"
+                f""" onsubmit="return confirm('Kill job {jid_esc}?');">"""
+                "<input type='hidden' name='min_age_seconds' value='0'>"
+                "<input type='hidden' name='limit' value='200'>"
+                "<input type='text' name='reason' value='stuck_job_manual_kill' style='width:250px'>"
+                " <button type='submit' class='btn-danger'>Kill</button>"
+                "</form>"
+            )
+        actions_html = (
             '<div class="card"><h3>Действия</h3>'
-            f"<form method='post' action='/admin/jobs/{jid_esc}/kill'"
-            f""" onsubmit="return confirm('Kill job {jid_esc}?');">"""
-            "<input type='hidden' name='min_age_seconds' value='0'>"
-            "<input type='hidden' name='limit' value='200'>"
-            "<input type='text' name='reason' value='stuck_job_manual_kill' style='width:250px'>"
-            " <button type='submit' class='btn-danger'>Kill</button>"
-            "</form></div>"
-        ) if status in ("NEW", "QUEUED", "RUNNING") else ""
+            + "".join(action_forms)
+            + "</div>"
+        ) if action_forms else ""
 
         body = f"""
         <p><a href="/admin/jobs">&laquo; Jobs</a></p>
@@ -1994,9 +2460,202 @@ def build_app(
 
         {result_html}
 
-        {kill_html}
+        {actions_html}
         """
         return _page(f"Job {jid[:12]}…", body)
+
+    @app.get("/admin/runs", response_class=HTMLResponse)
+    async def runs_page(
+        request: Request,
+        _user: str = Depends(_check_auth),
+    ) -> str:
+        if runtime_store is None:
+            return _page(
+                "Runs",
+                '<div class="card"><p style="color:#c0392b">Generation runtime store is unavailable.</p></div>',
+            )
+
+        status = str(request.query_params.get("status") or "").strip()
+        scope = str(request.query_params.get("scope") or "active").strip().lower()
+        limit = _query_int(request, "limit", default=100, min_value=1, max_value=300)
+        include_terminal = scope == "all"
+
+        try:
+            runs = await runtime_store.list_runs(
+                surface="public",
+                status=status,
+                include_terminal=include_terminal,
+                limit=limit,
+                offset=0,
+            )
+        except Exception as e:
+            return _page(
+                "Runs",
+                f'<div class="card"><p style="color:#c0392b">{html_mod.escape(str(e))}</p></div>',
+            )
+
+        rows = ""
+        for row in runs:
+            run_id = str(row.get("run_id") or "")
+            chat_id = int(row.get("chat_id") or 0)
+            batch_id = str(row.get("batch_id") or "")
+            run_status = str(row.get("status") or "")
+            current_stage = str(row.get("current_stage") or "")
+            versions_total = int(row.get("versions_total") or 0)
+            next_ver = int(row.get("next_version_to_enqueue") or 0)
+            status_color = {
+                "queued": "#f39c12",
+                "running": "#3498db",
+                "succeeded": "#27ae60",
+                "failed": "#e74c3c",
+                "cancelled": "#7f8c8d",
+            }.get(run_status.lower(), "#999")
+            rows += (
+                "<tr>"
+                f"<td><a href='/admin/runs/{html_mod.escape(run_id)}'><code>{html_mod.escape(run_id)}</code></a></td>"
+                f"<td><a href='/admin/users/{chat_id}'>{chat_id}</a></td>"
+                f"<td>{html_mod.escape(batch_id or '—')}</td>"
+                f"<td><span style='color:{status_color};font-weight:700'>{html_mod.escape(run_status or '—')}</span></td>"
+                f"<td>{html_mod.escape(current_stage or '—')}</td>"
+                f"<td>{versions_total}</td>"
+                f"<td>{next_ver}</td>"
+                f"<td>{_runtime_dt_text(row.get('updated_at'))}</td>"
+                f"<td>{_compact_runtime_text(row.get('last_error_text') or row.get('last_error_code') or '')}</td>"
+                "</tr>"
+            )
+
+        selected_active = " selected" if scope != "all" else ""
+        selected_all = " selected" if scope == "all" else ""
+        body = f"""
+        <div class="card">
+          <h2>Generation Runs</h2>
+          <form method="get" action="/admin/runs" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <label>Scope:
+              <select name="scope">
+                <option value="active"{selected_active}>active only</option>
+                <option value="all"{selected_all}>all</option>
+              </select>
+            </label>
+            <label>Status: <input type="text" name="status" value="{html_mod.escape(status)}" placeholder="running / failed / succeeded"></label>
+            <label>Limit: <input type="number" name="limit" value="{limit}" min="1" max="300"></label>
+            <button type="submit">Refresh</button>
+          </form>
+          <p style="margin-top:8px">Visible runs: <strong>{len(runs)}</strong></p>
+          <div class="table-wrap">
+            <table>
+              <tr><th>Run</th><th>Chat</th><th>Batch</th><th>Status</th><th>Stage</th><th>Total</th><th>Next</th><th>Updated</th><th>Last error</th></tr>
+              {rows or '<tr><td colspan="9">Нет run по текущему фильтру</td></tr>'}
+            </table>
+          </div>
+          <p style="color:#666;font-size:0.88em">Карточка run показывает версии, outbox и event trail в одном месте.</p>
+        </div>
+        """
+        return _page("Runs", body)
+
+    @app.get("/admin/runs/{run_id}", response_class=HTMLResponse)
+    async def run_detail(run_id: str, _user: str = Depends(_check_auth)) -> str:
+        rid = str(run_id or "").strip()
+        if not rid:
+            raise HTTPException(404, "run_id is empty")
+        if runtime_store is None:
+            return _page(
+                "Run Error",
+                '<div class="card"><p style="color:#c0392b">Generation runtime store is unavailable.</p></div>',
+            )
+
+        run = await runtime_store.get_run(rid)
+        if not run:
+            raise HTTPException(404, "Run not found")
+        versions = await runtime_store.get_versions(rid)
+        outbox_rows = await runtime_store.list_outbox_items(surface="public", run_id=rid, limit=200)
+        events = await runtime_store.list_events(rid, limit=200)
+
+        versions_html = "".join(
+            "<tr>"
+            f"<td>{int(row.get('version_index') or 0)}</td>"
+            f"<td>{_job_admin_link(row.get('job_id'))}</td>"
+            f"<td>{html_mod.escape(str(row.get('job_status') or '—'))}</td>"
+            f"<td>{html_mod.escape(str(row.get('job_stage') or '—'))}</td>"
+            f"<td>{html_mod.escape(str(row.get('worker_type') or '—'))}</td>"
+            f"<td>{html_mod.escape(str(row.get('origin_node') or '—'))}</td>"
+            f"<td>{html_mod.escape(str(row.get('build_queue') or '—'))}</td>"
+            f"<td>{html_mod.escape(str(row.get('render_queue') or '—'))}</td>"
+            f"<td>{_compact_runtime_text(row.get('last_error_text') or '')}</td>"
+            "</tr>"
+            for row in versions
+        )
+        outbox_html = "".join(
+            "<tr>"
+            f"<td><code>{html_mod.escape(str(row.get('dedupe_key') or ''))}</code></td>"
+            f"<td>{html_mod.escape(str(row.get('kind') or '—'))}</td>"
+            f"<td>{html_mod.escape(str(row.get('status') or '—'))}</td>"
+            f"<td>{int(row.get('attempt_count') or 0)}</td>"
+            f"<td>{_runtime_dt_text(row.get('next_attempt_at'))}</td>"
+            f"<td>{_runtime_dt_text(row.get('sent_at'))}</td>"
+            f"<td>{_compact_runtime_text(row.get('last_error') or '')}</td>"
+            "</tr>"
+            for row in outbox_rows
+        )
+        events_html = "".join(
+            "<tr>"
+            f"<td>{_runtime_dt_text(row.get('created_at'))}</td>"
+            f"<td>{html_mod.escape(str(row.get('event_type') or '—'))}</td>"
+            f"<td>{html_mod.escape(str(row.get('job_id') or '—'))}</td>"
+            f"<td><pre style='white-space:pre-wrap;margin:0'>{html_mod.escape(json.dumps(row.get('payload') or {}, ensure_ascii=False, default=str))}</pre></td>"
+            "</tr>"
+            for row in events
+        )
+
+        body = f"""
+        <p><a href="/admin/runs">&laquo; Runs</a></p>
+        <div class="card">
+          <h2>Run <code>{html_mod.escape(rid)}</code></h2>
+          <table>
+            <tr><td style="width:180px"><strong>Surface</strong></td><td>{html_mod.escape(str(run.get('surface') or '—'))}</td></tr>
+            <tr><td><strong>Chat</strong></td><td><a href="/admin/users/{int(run.get('chat_id') or 0)}">{int(run.get('chat_id') or 0)}</a></td></tr>
+            <tr><td><strong>Batch</strong></td><td>{html_mod.escape(str(run.get('batch_id') or '—'))}</td></tr>
+            <tr><td><strong>Status</strong></td><td>{html_mod.escape(str(run.get('status') or '—'))}</td></tr>
+            <tr><td><strong>Current stage</strong></td><td>{html_mod.escape(str(run.get('current_stage') or '—'))}</td></tr>
+            <tr><td><strong>Versions total</strong></td><td>{int(run.get('versions_total') or 0)}</td></tr>
+            <tr><td><strong>Next version</strong></td><td>{int(run.get('next_version_to_enqueue') or 0)}</td></tr>
+            <tr><td><strong>Last error code</strong></td><td>{html_mod.escape(str(run.get('last_error_code') or '—'))}</td></tr>
+            <tr><td><strong>Last error text</strong></td><td>{_compact_runtime_text(run.get('last_error_text') or '', limit=300)}</td></tr>
+            <tr><td><strong>Created</strong></td><td>{_runtime_dt_text(run.get('created_at'))}</td></tr>
+            <tr><td><strong>Updated</strong></td><td>{_runtime_dt_text(run.get('updated_at'))}</td></tr>
+          </table>
+        </div>
+
+        <div class="card">
+          <h3>Versions</h3>
+          <div class="table-wrap">
+            <table>
+              <tr><th>#</th><th>Job</th><th>Status</th><th>Stage</th><th>Worker</th><th>Origin</th><th>Build queue</th><th>Render queue</th><th>Last error</th></tr>
+              {versions_html or '<tr><td colspan="9">Нет versions</td></tr>'}
+            </table>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Outbox</h3>
+          <div class="table-wrap">
+            <table>
+              <tr><th>Dedupe key</th><th>Kind</th><th>Status</th><th>Attempts</th><th>Next attempt</th><th>Sent at</th><th>Last error</th></tr>
+              {outbox_html or '<tr><td colspan="7">Нет outbox items</td></tr>'}
+            </table>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Events</h3>
+          <div class="table-wrap">
+            <table>
+              <tr><th>At</th><th>Type</th><th>Job</th><th>Payload</th></tr>
+              {events_html or '<tr><td colspan="4">Нет events</td></tr>'}
+            </table>
+          </div>
+        </div>
+        """
+        return _page(f"Run {rid[:12]}…", body)
 
     # ── LLM workers runtime control ────────────────────────────────
 

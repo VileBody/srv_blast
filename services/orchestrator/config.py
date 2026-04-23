@@ -71,6 +71,24 @@ def _windows_render_api_mode_env() -> str:
     return raw
 
 
+def derive_render_poll_queue(render_queue: str) -> str:
+    queue = str(render_queue or "").strip() or "render"
+    if queue == "render":
+        return "render-poll"
+    if queue.startswith("render."):
+        return "render-poll." + queue[len("render.") :]
+    if queue.startswith("render-"):
+        return "render-poll-" + queue[len("render-") :]
+    return f"{queue}-poll"
+
+
+def _render_poll_queue_env() -> str:
+    explicit = _env("CELERY_QUEUE_RENDER_POLL", "")
+    if explicit:
+        return explicit
+    return derive_render_poll_queue(_env("CELERY_QUEUE_RENDER", "render"))
+
+
 def _credits_db_url_env() -> str:
     explicit = _env("CREDITS_DB_URL", "")
     if explicit:
@@ -117,7 +135,15 @@ class Settings:
     # Two queues
     celery_queue_build: str = _env("CELERY_QUEUE_BUILD", "build")
     celery_queue_render: str = _env("CELERY_QUEUE_RENDER", "render")
+    celery_queue_render_poll: str = _render_poll_queue_env()
     orchestrator_node_name: str = _env("ORCHESTRATOR_NODE_NAME", "")
+    orchestrator_enqueue_enabled: bool = _bool_env("ORCHESTRATOR_ENQUEUE_ENABLED", True)
+    render_backlog_degraded_threshold: int = int(_env("RENDER_BACKLOG_DEGRADED_THRESHOLD", "100") or "100")
+    render_backlog_scaleout_threshold: int = int(_env("RENDER_BACKLOG_SCALEOUT_THRESHOLD", "300") or "300")
+    build_backlog_degraded_threshold: int = int(_env("BUILD_BACKLOG_DEGRADED_THRESHOLD", "30") or "30")
+    build_backlog_manual_maintenance_threshold: int = int(
+        _env("BUILD_BACKLOG_MANUAL_MAINTENANCE_THRESHOLD", "80") or "80"
+    )
 
     # Paths inside container / host
     work_dir: str = _env("WORK_DIR", "/app/work")
@@ -144,6 +170,7 @@ class Settings:
     debug_save_llm: bool = _env("DEBUG_SAVE_LLM", "0") not in {"0", "false", "False", "no", "NO"}
     system_maintenance_mode: bool = _maintenance_mode_env(False)
     system_maintenance_message: str = _maintenance_message_env("Мы на техработах. Скоро вернемся.")
+    system_maintenance_bypass_token: str = _env("SYSTEM_MAINTENANCE_BYPASS_TOKEN", "")
 
     # Windows render node
     windows_base_url: str = _env("WINDOWS_RENDER_URL", "")  # e.g. http://win-node:8000

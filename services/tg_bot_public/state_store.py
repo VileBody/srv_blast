@@ -103,6 +103,7 @@ class ChatState(BaseModel):
     user_clip_end_sec: float = 0.0
     subtitles_mode: str = SUBTITLES_MODE_IMPULSE_2ND
     versions_count: int = 1
+    generation_run_id: str = ""
     # Batch metadata for sequential multi-version generation.
     batch_id: str = ""
     batch_audio_s3_url: str = ""
@@ -121,6 +122,7 @@ class ChatState(BaseModel):
     last_status_msg_at: float = 0.0
     status_message_id: int = 0
     last_status_text: str = ""
+    last_backpressure_notice: str = ""
     poll_attempts: int = 0
     last_job_stage: str = ""
     last_job_error: str = ""
@@ -396,12 +398,23 @@ class RedisChatStateStore:
         # Clear generation-specific fields but keep user context
         existing.prepared_audio_local_path = ""
         existing.active_job_id = ""
+        existing.active_job_ids = []
         existing.job_order = []
         existing.completed_job_ids = []
-        existing.next_version_to_enqueue = 0
+        existing.batch_id = ""
+        existing.batch_audio_s3_url = ""
+        existing.batch_total_versions = 1
+        existing.next_version_to_enqueue = 1
+        existing.master_job_id = ""
+        existing.used_footage_file_names = []
+        existing.active_job_started_at = 0.0
         existing.last_status_text = ""
         existing.status_message_id = 0
         existing.last_status_msg_at = 0.0
+        existing.poll_attempts = 0
+        existing.last_job_stage = ""
+        existing.last_job_error = ""
+        existing.last_result_url = ""
         existing.target_fragment = ""
         existing.footage_genre_key = ""
         existing.footage_artist_key = ""

@@ -60,6 +60,7 @@ class SendAudioS3Request(BaseModel):
     origin_node: Optional[str] = None
     build_queue: Optional[str] = None
     render_queue: Optional[str] = None
+    render_poll_queue: Optional[str] = None
 
     @model_validator(mode="after")
     def _validate_user_clip_window(self) -> "SendAudioS3Request":
@@ -97,6 +98,15 @@ class JobState(BaseModel):
     request: Dict[str, Any] = Field(default_factory=dict)
     result: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
+
+
+class JobsBatchRequest(BaseModel):
+    job_ids: List[str] = Field(default_factory=list, min_length=1, max_length=500)
+
+
+class JobsBatchResponse(BaseModel):
+    jobs: List[JobState] = Field(default_factory=list)
+    total: int = 0
 
 
 class LLMWorkerControl(BaseModel):

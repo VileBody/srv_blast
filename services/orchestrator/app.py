@@ -17,10 +17,10 @@ from core.llm_worker_types import (
 from .job_store import JobStore
 from .llm_workers import (
     ensure_config_initialized,
+    ensure_enqueue_worker_available,
     get_inflight_counts,
     get_runtime_status,
-    release_worker_slot,
-    reserve_worker_type,
+    select_worker_type,
     set_config,
 )
 from .observability_metrics import get_counter_map
@@ -30,6 +30,8 @@ from .schemas import (
     ActiveJobsResponse,
     ActiveJobSummary,
     JobState,
+    JobsBatchRequest,
+    JobsBatchResponse,
     KillJobRequest,
     KillJobResponse,
     LLMWorkerRuntimeStatus,
@@ -43,12 +45,14 @@ from .schemas import (
     WindowsNodesUpdateRequest,
 )
 from .tasks import (
+    build_job,
     build_job_hybrid,
     build_job_openrouter,
     build_job_sdk,
     build_job_vertex_sdk_mix,
 )
-from .config import SETTINGS
+from .backpressure_policy import compute_capacity_policy
+from .config import SETTINGS, derive_render_poll_queue
 from .bundle_bootstrap import ensure_descriptions_bundle
 from .asset_routes import create_asset_router
 from .ops_alert_subscribers import OpsAlertBotPoller, OpsAlertSubscriberStore
@@ -56,6 +60,17 @@ from .windows_node_pool import WindowsNodePool, parse_windows_urls_csv
 from services.tg_bot_botapi.user_store import UserStore
 
 log = logging.getLogger(__name__)
+
+
+def _maintenance_bypass_allowed(req: object) -> bool:
+    expected = str(getattr(SETTINGS, "system_maintenance_bypass_token", "") or "").strip()
+    provided = str(getattr(req, "maintenance_bypass_token", "") or "").strip()
+    return bool(expected) and bool(provided) and provided == expected
+
+
+def _maintenance_message_detail() -> str:
+    detail = str(getattr(SETTINGS, "system_maintenance_message", "") or "").strip()
+    return detail or "Service is temporarily unavailable due to maintenance."
 
 
 def _iter_celery_tasks(raw_tasks: object) -> list[dict[str, Any]]:
@@ -374,10 +389,14 @@ def create_app() -> FastAPI:
         local_origin_node = str(SETTINGS.orchestrator_node_name or "").strip()
         local_build_queue = str(SETTINGS.celery_queue_build or "").strip()
         local_render_queue = str(SETTINGS.celery_queue_render or "").strip()
+        local_render_poll_queue = str(SETTINGS.celery_queue_render_poll or "").strip() or derive_render_poll_queue(
+            local_render_queue
+        )
 
         origin_node = str(request_payload.get("origin_node") or "").strip() or local_origin_node
         build_queue = str(request_payload.get("build_queue") or "").strip() or local_build_queue
         render_queue = str(request_payload.get("render_queue") or "").strip() or local_render_queue
+        render_poll_queue = str(request_payload.get("render_poll_queue") or "").strip()
 
         reuse_text_job_id = str(request_payload.get("reuse_text_job_id") or "").strip()
         if reuse_text_job_id:
@@ -391,33 +410,45 @@ def create_app() -> FastAPI:
             source_origin_node = str(source_req.get("origin_node") or "").strip()
             source_build_queue = str(source_req.get("build_queue") or "").strip()
             source_render_queue = str(source_req.get("render_queue") or "").strip()
+            source_render_poll_queue = str(source_req.get("render_poll_queue") or "").strip()
             if source_origin_node:
                 origin_node = source_origin_node
             if source_build_queue:
                 build_queue = source_build_queue
             if source_render_queue:
                 render_queue = source_render_queue
+            if source_render_poll_queue:
+                render_poll_queue = source_render_poll_queue
+
+        if not render_poll_queue:
+            render_poll_queue = derive_render_poll_queue(render_queue or local_render_queue)
+        if not render_poll_queue:
+            render_poll_queue = local_render_poll_queue
 
         if not build_queue:
             raise HTTPException(status_code=500, detail="CELERY_QUEUE_BUILD is empty")
         if not render_queue:
             raise HTTPException(status_code=500, detail="CELERY_QUEUE_RENDER is empty")
+        if not render_poll_queue:
+            raise HTTPException(status_code=500, detail="CELERY_QUEUE_RENDER_POLL is empty")
 
         return {
             "origin_node": origin_node,
             "build_queue": build_queue,
             "render_queue": render_queue,
+            "render_poll_queue": render_poll_queue,
         }
 
-    def _enqueue_build_task(job_id: str, worker_type: str, *, queue: str = "") -> None:
-        wt = normalize_llm_worker_type(worker_type)
+    def _enqueue_build_task(job_id: str, worker_type: str | None, *, queue: str = "") -> None:
+        wt = normalize_llm_worker_type(worker_type) if str(worker_type or "").strip() else ""
         task_map = {
+            "": build_job,
             "sdk": build_job_sdk,
             "openrouter": build_job_openrouter,
             "hybrid": build_job_hybrid,
             "vertex_sdk_mix": build_job_vertex_sdk_mix,
         }
-        task = task_map.get(wt)
+        task = task_map.get(wt, build_job)
         if task is None:
             raise RuntimeError(f"unsupported llm_worker_type: {worker_type}")
         target_queue = str(queue or "").strip()
@@ -427,11 +458,18 @@ def create_app() -> FastAPI:
             return
         task.delay(job_id)
 
-    def _ensure_accepting_new_jobs() -> None:
+    def _ensure_accepting_new_jobs(req: object | None = None) -> None:
         if not bool(SETTINGS.system_maintenance_mode):
+            if bool(getattr(SETTINGS, "orchestrator_enqueue_enabled", True)):
+                return
+            node_name = str(getattr(SETTINGS, "orchestrator_node_name", "") or "").strip()
+            detail = "enqueue disabled on this orchestrator"
+            if node_name:
+                detail = f"enqueue disabled on node={node_name}"
+            raise HTTPException(status_code=503, detail=detail)
+        if _maintenance_bypass_allowed(req) and bool(getattr(SETTINGS, "orchestrator_enqueue_enabled", True)):
             return
-        msg = str(SETTINGS.system_maintenance_message or "").strip()
-        detail = msg or "Service is temporarily unavailable due to maintenance."
+        detail = _maintenance_message_detail()
         raise HTTPException(status_code=503, detail=detail)
 
     def _ensure_supported_mode(mode: str) -> None:
@@ -456,7 +494,7 @@ def create_app() -> FastAPI:
     # Позже можешь переименовать модели в schemas.py, но эндпоинт уже будет правильный.
     @app.post("/send_audio_s3", response_model=SendVideoResponse)
     def send_audio_s3(req: SendVideoRequest) -> SendVideoResponse:
-        _ensure_accepting_new_jobs()
+        _ensure_accepting_new_jobs(req)
         _ensure_supported_mode(req.mode)
         request_payload = req.model_dump(mode="json", exclude_none=True)
         routing = _resolve_job_routing(request_payload=request_payload)
@@ -468,42 +506,40 @@ def create_app() -> FastAPI:
         if not created:
             return SendVideoResponse(job_id=st.job_id, status=st.status, created=False)
 
-        worker_type: str | None = None
-        queued = False
         try:
-            selected = reserve_worker_type(store, requested=req.llm_worker_type)
-            worker_type = selected.worker_type
+            requested_worker_type = ensure_enqueue_worker_available(store, requested=req.llm_worker_type)
 
-            store.patch_request(
-                st.job_id,
-                {
-                    "llm_worker_type": worker_type,
+            request_patch: Dict[str, Any] = {
+                "llm_reservation_mode": "worker",
+                "origin_node": routing["origin_node"],
+                "build_queue": routing["build_queue"],
+                "render_queue": routing["render_queue"],
+                "render_poll_queue": routing["render_poll_queue"],
+            }
+            if requested_worker_type:
+                request_patch["llm_worker_type"] = requested_worker_type
+
+            store.patch_request(st.job_id, request_patch)
+
+            result_payload: Dict[str, Any] = {
+                "routing": {
                     "origin_node": routing["origin_node"],
                     "build_queue": routing["build_queue"],
                     "render_queue": routing["render_queue"],
+                    "render_poll_queue": routing["render_poll_queue"],
                 },
-            )
+                "llm_reservation_mode": "worker",
+            }
+            if requested_worker_type:
+                result_payload["llm_worker_type"] = requested_worker_type
             store.set_status(
                 st.job_id,
                 "QUEUED",
                 stage="build",
-                result={
-                    "llm_worker_type": worker_type,
-                    "routing": {
-                        "origin_node": routing["origin_node"],
-                        "build_queue": routing["build_queue"],
-                        "render_queue": routing["render_queue"],
-                    },
-                },
+                result=result_payload,
             )
-            queued = True
-            _enqueue_build_task(st.job_id, worker_type, queue=routing["build_queue"])
+            _enqueue_build_task(st.job_id, requested_worker_type or None, queue=routing["build_queue"])
         except Exception as e:
-            if worker_type and not queued:
-                try:
-                    release_worker_slot(store, worker_type)
-                except Exception:
-                    pass
             store.set_status(st.job_id, "FAILED", stage="build", error=f"queue_failed: {e!r}")
             msg = str(e)
             if "capacity_exhausted" in msg or "disabled" in msg or "no_enabled_types" in msg:
@@ -609,6 +645,7 @@ def create_app() -> FastAPI:
 
     @app.post("/jobs/{job_id}/requeue", response_model=RequeueJobResponse)
     def requeue_job(job_id: str, payload: RequeueJobRequest) -> RequeueJobResponse:
+        _ensure_accepting_new_jobs()
         jid = str(job_id or "").strip()
         if not jid:
             raise HTTPException(status_code=400, detail="job_id is empty")
@@ -627,6 +664,11 @@ def create_app() -> FastAPI:
         pinned_origin_node = str(req.get("origin_node") or SETTINGS.orchestrator_node_name or "").strip()
         pinned_build_queue = str(req.get("build_queue") or SETTINGS.celery_queue_build or "").strip()
         pinned_render_queue = str(req.get("render_queue") or SETTINGS.celery_queue_render or "").strip()
+        pinned_render_poll_queue = str(req.get("render_poll_queue") or "").strip()
+        if not pinned_render_poll_queue:
+            pinned_render_poll_queue = derive_render_poll_queue(pinned_render_queue or SETTINGS.celery_queue_render)
+        if not pinned_render_poll_queue:
+            pinned_render_poll_queue = str(SETTINGS.celery_queue_render_poll or "").strip()
         requested_worker_raw = str(payload.llm_worker_type or "").strip()
         current_worker_raw = str(req.get("llm_worker_type") or "").strip()
 
@@ -641,18 +683,12 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=400, detail=f"invalid llm_worker_type: {e}") from e
 
         selected_worker = requested_worker or current_worker
-        if not selected_worker:
-            raise HTTPException(
-                status_code=400,
-                detail="llm_worker_type is required (missing in job request and payload)",
-            )
 
         try:
             revoked_task_ids = _revoke_celery_tasks_for_job(jid)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"failed_to_revoke_celery_tasks: {e!r}") from e
 
-        reserved_new_slot = False
         is_active = prev_status in {"QUEUED", "RUNNING"}
 
         if is_active:
@@ -667,14 +703,15 @@ def create_app() -> FastAPI:
             selected_worker = current_worker or requested_worker
         else:
             try:
-                selected = reserve_worker_type(store, requested=selected_worker)
+                normalized_requested = selected_worker or None
+                selected = select_worker_type(store, requested=normalized_requested) if normalized_requested else None
+                ensure_enqueue_worker_available(store, requested=normalized_requested)
             except Exception as e:
                 msg = str(e)
                 if "capacity_exhausted" in msg or "disabled" in msg or "no_enabled_types" in msg:
                     raise HTTPException(status_code=503, detail=f"LLM workers capacity issue: {msg}") from e
-                raise HTTPException(status_code=500, detail=f"failed_to_reserve_worker: {msg}") from e
-            selected_worker = selected.worker_type
-            reserved_new_slot = True
+                raise HTTPException(status_code=500, detail=f"failed_to_select_worker: {msg}") from e
+            selected_worker = selected.worker_type if selected is not None else ""
 
         requeue_attempt = 1
         if isinstance(st.result, dict):
@@ -684,51 +721,45 @@ def create_app() -> FastAPI:
             except Exception:
                 requeue_attempt = 1
 
-        queued = False
         try:
             store.patch_request(
                 jid,
                 {
                     "llm_worker_type": selected_worker,
+                    "llm_reservation_mode": "worker",
                     "origin_node": pinned_origin_node,
                     "build_queue": pinned_build_queue,
                     "render_queue": pinned_render_queue,
+                    "render_poll_queue": pinned_render_poll_queue,
                 },
             )
+            result_payload: Dict[str, Any] = {
+                "routing": {
+                    "origin_node": pinned_origin_node,
+                    "build_queue": pinned_build_queue,
+                    "render_queue": pinned_render_queue,
+                    "render_poll_queue": pinned_render_poll_queue,
+                },
+                "llm_reservation_mode": "worker",
+                "admin_requeue_attempt": requeue_attempt,
+                "admin_requeue_reason": reason,
+                "admin_requeue_revoked_task_ids": revoked_task_ids,
+            }
+            if selected_worker:
+                result_payload["llm_worker_type"] = selected_worker
             st2 = store.set_status(
                 jid,
                 "QUEUED",
                 stage="build",
                 error=f"admin_requeued: {reason}",
-                result={
-                    "llm_worker_type": selected_worker,
-                    "routing": {
-                        "origin_node": pinned_origin_node,
-                        "build_queue": pinned_build_queue,
-                        "render_queue": pinned_render_queue,
-                    },
-                    "admin_requeue_attempt": requeue_attempt,
-                    "admin_requeue_reason": reason,
-                    "admin_requeue_revoked_task_ids": revoked_task_ids,
-                },
+                result=result_payload,
             )
             if not st2:
                 raise HTTPException(status_code=404, detail="job not found")
-            queued = True
-            _enqueue_build_task(jid, selected_worker, queue=pinned_build_queue)
+            _enqueue_build_task(jid, selected_worker or None, queue=pinned_build_queue)
         except HTTPException:
-            if reserved_new_slot and not queued:
-                try:
-                    release_worker_slot(store, selected_worker)
-                except Exception:
-                    pass
             raise
         except Exception as e:
-            if reserved_new_slot and not queued:
-                try:
-                    release_worker_slot(store, selected_worker)
-                except Exception:
-                    pass
             raise HTTPException(status_code=500, detail=f"failed_to_requeue_job: {e!r}") from e
 
         return RequeueJobResponse(
@@ -748,6 +779,32 @@ def create_app() -> FastAPI:
         if not st:
             raise HTTPException(status_code=404, detail="job not found")
         return st
+
+    @app.post("/jobs/batch", response_model=JobsBatchResponse)
+    def get_jobs_batch(payload: JobsBatchRequest) -> JobsBatchResponse:
+        job_ids: list[str] = []
+        seen: set[str] = set()
+        for raw in list(payload.job_ids or []):
+            jid = str(raw or "").strip()
+            if not jid or jid in seen:
+                continue
+            seen.add(jid)
+            job_ids.append(jid)
+        if not job_ids:
+            raise HTTPException(status_code=400, detail="job_ids is empty")
+
+        jobs: list[JobState] = []
+        missing: list[str] = []
+        for jid in job_ids:
+            st = store.get(jid)
+            if not st:
+                missing.append(jid)
+                continue
+            jobs.append(st)
+        if missing:
+            missing_blob = ",".join(missing[:20])
+            raise HTTPException(status_code=404, detail=f"jobs not found: {missing_blob}")
+        return JobsBatchResponse(jobs=jobs, total=len(jobs))
 
     @app.get("/llm-workers", response_model=LLMWorkersStatusResponse)
     def get_llm_workers() -> LLMWorkersStatusResponse:
@@ -785,12 +842,22 @@ def create_app() -> FastAPI:
         from .celery_app import celery_app as _celery
 
         counts: dict = {"NEW": 0, "QUEUED": 0, "RUNNING": 0, "SUCCEEDED": 0, "FAILED": 0}
+        stage_counts: dict[str, int] = {}
+        render_backlog = 0
+        build_backlog = 0
         jobs_error: str | None = None
         try:
             for job in store.list_jobs():
                 s = str(getattr(job, "status", "") or "")
                 if s in counts:
                     counts[s] += 1
+                stage = str(getattr(job, "stage", "") or "none").strip().lower() or "none"
+                stage_counts[stage] = int(stage_counts.get(stage, 0)) + 1
+                if s in {"NEW", "QUEUED", "RUNNING"}:
+                    if "render" in stage or stage in {"dispatch", "poll", "render_dispatch", "render_poll"}:
+                        render_backlog += 1
+                    else:
+                        build_backlog += 1
         except Exception as exc:
             jobs_error = repr(exc)
         queue_depth = int(counts.get("QUEUED", 0))
@@ -803,6 +870,24 @@ def create_app() -> FastAPI:
             llm_inflight = get_inflight_counts(store)
         except Exception as exc:
             llm_inflight_error = repr(exc)
+        llm_saturation: dict[str, dict[str, object]] = {}
+        try:
+            for worker_type, row in get_runtime_status(store).items():
+                enabled = bool(row.enabled)
+                weight = int(row.weight)
+                inflight = int(row.inflight)
+                max_inflight = int(row.max_inflight)
+                llm_saturation[str(worker_type)] = {
+                    "enabled": enabled,
+                    "weight": weight,
+                    "inflight": inflight,
+                    "max_inflight": max_inflight,
+                    "available_slots": int(row.available_slots),
+                    "saturated": bool(enabled and max_inflight > 0 and inflight >= max_inflight),
+                }
+        except Exception as exc:
+            if not llm_inflight_error:
+                llm_inflight_error = repr(exc)
 
         queues: dict = {}
         try:
@@ -828,13 +913,38 @@ def create_app() -> FastAPI:
         except Exception as exc:
             metrics_error = repr(exc)
 
+        capacity_policy = compute_capacity_policy(
+            render_backlog=int(render_backlog),
+            build_backlog=int(build_backlog),
+            llm_saturation_by_worker_type=llm_saturation,
+            render_backlog_degraded_threshold=int(SETTINGS.render_backlog_degraded_threshold),
+            render_backlog_scaleout_threshold=int(SETTINGS.render_backlog_scaleout_threshold),
+            build_backlog_degraded_threshold=int(SETTINGS.build_backlog_degraded_threshold),
+            build_backlog_manual_maintenance_threshold=int(SETTINGS.build_backlog_manual_maintenance_threshold),
+        )
+
         return {
             "queue_depth": queue_depth,
             "inflight_jobs": inflight_jobs,
             "failed_jobs": failed_jobs,
             "job_status_counts": counts,
+            "job_stage_counts": stage_counts,
             "job_status_error": jobs_error,
+            "render_backlog": int(render_backlog),
+            "build_backlog": int(build_backlog),
+            "capacity_policy": capacity_policy,
+            "queue_topology": {
+                "build_queue_default": str(SETTINGS.celery_queue_build or "").strip(),
+                "render_queue_default": str(SETTINGS.celery_queue_render or "").strip(),
+                "render_poll_queue_default": str(SETTINGS.celery_queue_render_poll or "").strip(),
+                "render_poll_split_active": bool(
+                    str(SETTINGS.celery_queue_render_poll or "").strip()
+                    and str(SETTINGS.celery_queue_render_poll or "").strip()
+                    != str(SETTINGS.celery_queue_render or "").strip()
+                ),
+            },
             "llm_inflight_by_worker_type": llm_inflight,
+            "llm_saturation_by_worker_type": llm_saturation,
             "llm_inflight_error": llm_inflight_error,
             "workers": queues,
             "webhook_outcomes": webhook_outcomes,
