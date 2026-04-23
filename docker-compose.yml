@@ -162,7 +162,20 @@ services:
       - ./descriptions:/app/descriptions:ro
       - ./audio:/app/audio:ro
     command: >
-      bash -lc "python footage_config.py && celery -A services.orchestrator.celery_app:celery_app worker -l INFO --concurrency=1 -Q ${CELERY_QUEUE_RENDER_POLL:-render-poll}"
+      bash -lc '
+        python footage_config.py &&
+        render_queue="${CELERY_QUEUE_RENDER:-render}" &&
+        poll_queue="${CELERY_QUEUE_RENDER_POLL:-}" &&
+        if [ -z "$$poll_queue" ]; then
+          case "$$render_queue" in
+            render) poll_queue="render-poll" ;;
+            render.*) poll_queue="render-poll.$${render_queue#render.}" ;;
+            render-*) poll_queue="render-poll-$${render_queue#render-}" ;;
+            *) poll_queue="$${render_queue}-poll" ;;
+          esac
+        fi &&
+        celery -A services.orchestrator.celery_app:celery_app worker -l INFO --concurrency=1 -Q "$$poll_queue"
+      '
     restart: unless-stopped
 
   tg-bot:
