@@ -214,6 +214,14 @@ class Settings:
         _env("TG_MAINTENANCE_MESSAGE", "Мы на техработах. Скоро вернемся.")
     )
     tg_maintenance_state_key: str = _env("TG_MAINTENANCE_STATE_KEY", "blast:tg:public:maintenance_mode")
+    system_maintenance_bypass_usernames: tuple[str, ...] = _username_allowlist_env(
+        "SYSTEM_MAINTENANCE_BYPASS_USERNAMES"
+    ) or (
+        "@nikitaimpulse",
+        "@vilebody",
+        "@impulsemanage",
+    )
+    system_maintenance_bypass_token: str = _env("SYSTEM_MAINTENANCE_BYPASS_TOKEN", "")
 
     redis_host: str = _env("REDIS_HOST", "localhost")
     redis_port: int = _int_env("REDIS_PORT", 6379)
@@ -240,6 +248,8 @@ class Settings:
     subscription_channel: str = _env("SUBSCRIPTION_CHANNEL", "@impulsemarketing")
     manager_chat_id: int = _int_env("MANAGER_CHAT_ID", 0)
     survey_url: str = _env("SURVEY_URL", "https://forms.yandex.ru/u/69c52ce695add5c0264676e3")
+    alert_telegram_bot_token: str = _env("ALERT_TELEGRAM_BOT_TOKEN", "")
+    alert_telegram_chat_id: str = _env("ALERT_TELEGRAM_CHAT_ID", "")
 
     # Credits & admin panel
     credits_db_url: str = _active_credits_db_url_env()

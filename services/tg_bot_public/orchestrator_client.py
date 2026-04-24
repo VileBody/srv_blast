@@ -16,6 +16,15 @@ class OrchestratorClient:
     async def close(self) -> None:
         await self._client.aclose()
 
+    async def _get_json(self, path: str) -> Dict[str, Any]:
+        resp = await self._client.get(f"{self._base_url}{path}")
+        if resp.status_code >= 300:
+            raise RuntimeError(f"orchestrator {path} failed status={resp.status_code} body={resp.text}")
+        out = resp.json()
+        if not isinstance(out, dict):
+            raise RuntimeError(f"orchestrator {path} returned non-object: {out!r}")
+        return out
+
     async def send_audio_s3(
         self,
         *,
@@ -75,10 +84,48 @@ class OrchestratorClient:
         jid = str(job_id or "").strip()
         if not jid:
             raise RuntimeError("get_job requires non-empty job_id")
-        resp = await self._client.get(f"{self._base_url}/jobs/{jid}")
+        return await self._get_json(f"/jobs/{jid}")
+
+    async def get_jobs(self, job_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+        cleaned: List[str] = []
+        seen: set[str] = set()
+        for raw in list(job_ids or []):
+            jid = str(raw or "").strip()
+            if not jid or jid in seen:
+                continue
+            seen.add(jid)
+            cleaned.append(jid)
+        if not cleaned:
+            raise RuntimeError("get_jobs requires non-empty job_ids")
+        resp = await self._client.post(f"{self._base_url}/jobs/batch", json={"job_ids": cleaned})
         if resp.status_code >= 300:
-            raise RuntimeError(f"orchestrator /jobs/{jid} failed status={resp.status_code} body={resp.text}")
+            raise RuntimeError(f"orchestrator /jobs/batch failed status={resp.status_code} body={resp.text}")
         out = resp.json()
         if not isinstance(out, dict):
-            raise RuntimeError(f"orchestrator /jobs/{jid} returned non-object: {out!r}")
-        return out
+            raise RuntimeError(f"orchestrator /jobs/batch returned non-object: {out!r}")
+        rows = out.get("jobs")
+        if not isinstance(rows, list):
+            raise RuntimeError(f"orchestrator /jobs/batch returned invalid jobs payload: {out!r}")
+        jobs_by_id: Dict[str, Dict[str, Any]] = {}
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            jid = str(row.get("job_id") or "").strip()
+            if jid:
+                jobs_by_id[jid] = row
+        missing = [jid for jid in cleaned if jid not in jobs_by_id]
+        if missing:
+            raise RuntimeError(f"orchestrator /jobs/batch missing jobs: {', '.join(missing[:20])}")
+        return jobs_by_id
+
+    async def get_health(self) -> Dict[str, Any]:
+        return await self._get_json("/health")
+
+    async def get_llm_workers(self) -> Dict[str, Any]:
+        return await self._get_json("/llm-workers")
+
+    async def get_windows_nodes(self) -> Dict[str, Any]:
+        return await self._get_json("/windows-nodes")
+
+    async def get_metrics(self) -> Dict[str, Any]:
+        return await self._get_json("/metrics")

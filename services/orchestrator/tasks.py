@@ -1,6 +1,7 @@
 # services/orchestrator/tasks.py
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import hashlib
@@ -24,6 +25,7 @@ from .artifacts import make_job_paths
 from .celery_app import celery_app
 from .config import SETTINGS
 from .job_store import JobStore
+from .llm_workers import reserve_worker_type_for_job
 from .observability_metrics import (
     STAGE_DURATION_BUCKETS,
     increment_counter,
@@ -36,8 +38,10 @@ from .ops_alert_subscribers import (
     is_terminal_telegram_delivery_error,
 )
 from .render_manifest import build_windows_job_payload
+from .runtime_config import get_runtime_values
 from .windows_client import WindowsRenderClient
 from .windows_node_pool import WindowsNodePool, parse_windows_urls_csv
+from services.generation_runtime.store import resume_state_checksum
 from core.llm_worker_types import (
     LLM_WORKER_TYPE_HYBRID,
     LLM_WORKER_TYPE_OPENROUTER,
@@ -712,6 +716,62 @@ def _looks_like_gemini_rate_limited_429(text: str) -> bool:
     return ("resource_exhausted" in lo or "too many requests" in lo) and ("429" in lo)
 
 
+def _looks_like_gemini_transport_disconnect(text: str) -> bool:
+    if not text:
+        return False
+    lo = text.lower()
+    transport_markers = (
+        "remoteprotocolerror",
+        "server disconnected without sending a response",
+        "connection reset by peer",
+        "connection aborted",
+        "readerror",
+        "connecterror",
+        "httpcore.",
+        "httpx.",
+    )
+    if not any(marker in lo for marker in transport_markers):
+        return False
+    gemini_markers = (
+        "google.genai",
+        "google/genai",
+        "gemini_client.py",
+        "models.generate_content",
+        "generate_content",
+    )
+    return any(marker in lo for marker in gemini_markers)
+
+
+def _maybe_retry_gemini_transport_disconnect(self: Any, store: JobStore, text: str, *, phase: str) -> None:
+    if not _looks_like_gemini_transport_disconnect(text):
+        return
+    try:
+        runtime_values = get_runtime_values(store)
+    except Exception:
+        runtime_values = {}
+    if runtime_values.get("gemini.transport_retry_enabled", True) is False:
+        return
+    try:
+        base_s = float(runtime_values.get("gemini.transport_retry_base_s", 10.0) or 10.0)
+    except Exception:
+        base_s = 10.0
+    try:
+        cap_s = float(runtime_values.get("gemini.transport_retry_cap_s", 300.0) or 300.0)
+    except Exception:
+        cap_s = 300.0
+    attempt = int(getattr(self.request, "retries", 0)) + 1
+    backoff = _retry_backoff_s(attempt=attempt, base_s=max(0.5, base_s), cap_s=max(1.0, cap_s))
+    log.warning(
+        "gemini_transport_disconnect_retry phase=%s attempt=%d/%d backoff_s=%.1f err=%s",
+        phase,
+        attempt,
+        int(getattr(self, "max_retries", 0) or 0),
+        backoff,
+        text[:800],
+    )
+    raise self.retry(countdown=backoff, exc=RuntimeError("gemini_transport_disconnect"))
+
+
 def _looks_like_openrouter_timeout(text: str) -> bool:
     if not text:
         return False
@@ -1003,26 +1063,221 @@ def _job_resume_state_path(*, work_dir: str, job_id: str) -> Path:
     return Path(work_dir).resolve() / "jobs" / str(job_id).strip() / "data" / "llm_resume_state.json"
 
 
+def _load_resume_state_file(path: Path) -> Dict[str, Any]:
+    try:
+        obj = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as e:
+        raise RuntimeError(f"resume_state_unreadable path={path} err={e!r}") from e
+    if not isinstance(obj, dict):
+        raise RuntimeError(f"resume_state_invalid path={path} expected JSON object")
+    return obj
+
+
+def _resume_state_from_job_result(store: JobStore, job_id: str) -> Dict[str, Any]:
+    st = store.get(str(job_id or "").strip())
+    if not st or not isinstance(st.result, dict):
+        return {}
+    obj = st.result.get("resume_state")
+    return dict(obj) if isinstance(obj, dict) else {}
+
+
+async def _load_resume_state_from_runtime_db_async(*, db_url: str, job_id: str) -> Dict[str, Any]:
+    import asyncpg  # type: ignore
+
+    conn = await asyncpg.connect(dsn=str(db_url or "").strip())
+    try:
+        row = await conn.fetchrow(
+            """
+            SELECT resume_state
+            FROM generation_versions
+            WHERE job_id = $1
+              AND resume_state_checksum <> ''
+            LIMIT 1
+            """,
+            str(job_id or "").strip(),
+        )
+    finally:
+        await conn.close()
+    if not row:
+        return {}
+    raw = row["resume_state"]
+    if isinstance(raw, dict):
+        return dict(raw)
+    if isinstance(raw, str):
+        try:
+            parsed = json.loads(raw)
+            return dict(parsed) if isinstance(parsed, dict) else {}
+        except Exception:
+            return {}
+    return {}
+
+
+def _load_resume_state_from_runtime_db(*, job_id: str) -> Dict[str, Any]:
+    db_url = str(getattr(SETTINGS, "credits_db_url", "") or "").strip()
+    if not db_url or not str(job_id or "").strip():
+        return {}
+    try:
+        return asyncio.run(_load_resume_state_from_runtime_db_async(db_url=db_url, job_id=job_id))
+    except Exception as exc:
+        log.warning("runtime_resume_state_read_failed source_job_id=%s err=%r", job_id, exc)
+        return {}
+
+
+async def _persist_resume_state_to_runtime_db_async(
+    *,
+    db_url: str,
+    job_id: str,
+    resume_state: Dict[str, Any],
+    source: str,
+    checksum: str,
+) -> bool:
+    import asyncpg  # type: ignore
+
+    conn = await asyncpg.connect(dsn=str(db_url or "").strip())
+    try:
+        await conn.execute(
+            """
+            ALTER TABLE generation_versions
+                ADD COLUMN IF NOT EXISTS resume_state JSONB NOT NULL DEFAULT '{}'::jsonb
+            """
+        )
+        await conn.execute(
+            """
+            ALTER TABLE generation_versions
+                ADD COLUMN IF NOT EXISTS resume_state_source TEXT NOT NULL DEFAULT ''
+            """
+        )
+        await conn.execute(
+            """
+            ALTER TABLE generation_versions
+                ADD COLUMN IF NOT EXISTS resume_state_checksum TEXT NOT NULL DEFAULT ''
+            """
+        )
+        await conn.execute(
+            """
+            ALTER TABLE generation_versions
+                ADD COLUMN IF NOT EXISTS resume_state_updated_at TIMESTAMPTZ
+            """
+        )
+        status = await conn.execute(
+            """
+            UPDATE generation_versions
+            SET
+                resume_state = $2::jsonb,
+                resume_state_source = $3,
+                resume_state_checksum = $4,
+                resume_state_updated_at = NOW(),
+                updated_at = NOW()
+            WHERE job_id = $1
+            """,
+            str(job_id or "").strip(),
+            json.dumps(resume_state or {}, ensure_ascii=False),
+            str(source or ""),
+            str(checksum or ""),
+        )
+        updated = int(str(status or "UPDATE 0").split()[-1])
+        if updated > 0:
+            await conn.execute(
+                """
+                INSERT INTO run_events (run_id, surface, job_id, event_type, payload)
+                SELECT
+                    v.run_id,
+                    r.surface,
+                    v.job_id,
+                    'resume_state_persisted',
+                    $2::jsonb
+                FROM generation_versions v
+                JOIN generation_runs r ON r.run_id = v.run_id
+                WHERE v.job_id = $1
+                """,
+                str(job_id or "").strip(),
+                json.dumps({"source": source, "checksum": checksum}, ensure_ascii=False),
+            )
+        return updated > 0
+    finally:
+        await conn.close()
+
+
+def _persist_resume_state_snapshot(
+    *,
+    store: JobStore,
+    job_id: str,
+    resume_state_path: Path,
+    source: str,
+) -> Dict[str, Any]:
+    if not resume_state_path.exists():
+        return {}
+    state = _load_resume_state_file(resume_state_path)
+    if not state:
+        return {}
+    checksum = resume_state_checksum(state)
+    persisted_to_runtime = False
+    db_url = str(getattr(SETTINGS, "credits_db_url", "") or "").strip()
+    if db_url:
+        try:
+            persisted_to_runtime = asyncio.run(
+                _persist_resume_state_to_runtime_db_async(
+                    db_url=db_url,
+                    job_id=job_id,
+                    resume_state=state,
+                    source=source,
+                    checksum=checksum,
+                )
+            )
+        except Exception as exc:
+            log.warning("runtime_resume_state_persist_failed job=%s source=%s err=%r", job_id, source, exc)
+    store.set_status(
+        job_id,
+        "RUNNING",
+        result={
+            "resume_state": state,
+            "resume_state_source": source,
+            "resume_state_checksum": checksum,
+            "resume_state_updated_at": time.time(),
+            "resume_state_runtime_persisted": bool(persisted_to_runtime),
+        },
+    )
+    return {
+        "resume_state": state,
+        "resume_state_source": source,
+        "resume_state_checksum": checksum,
+        "resume_state_runtime_persisted": bool(persisted_to_runtime),
+    }
+
+
 def _seed_resume_state_from_source_job(
     *,
     work_dir: str,
     source_job_id: str,
     target_resume_state_path: Path,
+    store: JobStore | None = None,
 ) -> None:
     src_job = str(source_job_id or "").strip()
     if not src_job:
         raise RuntimeError("reuse_text_job_id is empty")
 
-    src_path = _job_resume_state_path(work_dir=work_dir, job_id=src_job)
-    if not src_path.exists():
-        raise RuntimeError(f"reuse_text_source_resume_missing source_job_id={src_job!r} path={src_path}")
+    sources_checked: list[str] = []
+    src_obj: Dict[str, Any] = {}
 
-    try:
-        src_obj = json.loads(src_path.read_text(encoding="utf-8"))
-    except Exception as e:
-        raise RuntimeError(f"reuse_text_source_resume_unreadable source_job_id={src_job!r} err={e!r}") from e
-    if not isinstance(src_obj, dict):
-        raise RuntimeError(f"reuse_text_source_resume_invalid source_job_id={src_job!r} expected JSON object")
+    src_obj = _load_resume_state_from_runtime_db(job_id=src_job)
+    sources_checked.append("runtime_db")
+
+    if not src_obj and store is not None:
+        src_obj = _resume_state_from_job_result(store, src_job)
+        sources_checked.append("job_result")
+
+    src_path = _job_resume_state_path(work_dir=work_dir, job_id=src_job)
+    if not src_obj and src_path.exists():
+        src_obj = _load_resume_state_file(src_path)
+        sources_checked.append("legacy_file")
+    elif not src_obj:
+        sources_checked.append("legacy_file_missing")
+
+    if not isinstance(src_obj, dict) or not src_obj:
+        raise RuntimeError(
+            "reuse_text_source_resume_unavailable "
+            f"source_job_id={src_job!r} checked={sources_checked!r} path={src_path}"
+        )
 
     missing = [k for k in _REUSE_RESUME_STATE_KEYS if k not in src_obj]
     if missing:
@@ -1042,8 +1297,9 @@ def _seed_resume_state_from_source_job(
 
     for k in _REUSE_RESUME_STATE_KEYS:
         dst_obj[k] = src_obj[k]
-    # Force footage/style re-selection for variant diversification.
-    dst_obj.pop("stage2_style", None)
+    # Reuse copies only text/timing state. Preserve an existing destination
+    # style if the operator/user already selected one, but never copy footage
+    # selection from the source job.
     dst_obj.pop("stage2_footage", None)
 
     target_resume_state_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1077,7 +1333,7 @@ def _poll_started_at_from_state(st: Any) -> float:
     return time.time()
 
 
-def _build_job_impl(self, job_id: str, *, worker_type: str) -> Dict[str, Any]:
+def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, Any]:
     if get_runtime_mode() != MODE_PROD:
         raise RuntimeError("Celery build_job is allowed only in MODE=prod")
 
@@ -1087,12 +1343,6 @@ def _build_job_impl(self, job_id: str, *, worker_type: str) -> Dict[str, Any]:
         raise RuntimeError(f"job not found: {job_id}")
 
     build_started_at = time.time()
-    store.set_status(
-        job_id,
-        "RUNNING",
-        stage="build",
-        result={"build_started_at": build_started_at},
-    )
 
     repo_root = Path(__file__).resolve().parents[2].resolve()
     _ensure_shared_catalog(repo_root)
@@ -1114,12 +1364,60 @@ def _build_job_impl(self, job_id: str, *, worker_type: str) -> Dict[str, Any]:
     llm_resume_state_path = paths.data_dir / "llm_resume_state.json"
 
     req = st.request or {}
-    req_worker_type = str(req.get("llm_worker_type") or "").strip()
-    llm_worker_type = normalize_llm_worker_type(req_worker_type or worker_type)
-    if llm_worker_type != worker_type:
+    req_worker_type_raw = str(req.get("llm_worker_type") or "").strip()
+    task_worker_type = normalize_llm_worker_type(worker_type) if str(worker_type or "").strip() else ""
+    req_worker_type = normalize_llm_worker_type(req_worker_type_raw) if req_worker_type_raw else ""
+    if task_worker_type and req_worker_type and task_worker_type != req_worker_type:
         raise RuntimeError(
-            f"llm_worker_type_mismatch expected={worker_type!r} got={llm_worker_type!r}"
+            f"llm_worker_type_mismatch expected={task_worker_type!r} got={req_worker_type!r}"
         )
+    reservation_mode = str(req.get("llm_reservation_mode") or "").strip().lower()
+    llm_worker_type = req_worker_type or task_worker_type
+    if reservation_mode == "worker":
+        store.set_status(
+            job_id,
+            "RUNNING",
+            stage="llm_wait_capacity",
+            result={"build_started_at": build_started_at, "llm_reservation_mode": "worker"},
+        )
+        try:
+            reserved = reserve_worker_type_for_job(
+                store,
+                job_id=job_id,
+                requested=llm_worker_type or None,
+            )
+            llm_worker_type = str(reserved.worker_type or "").strip()
+            if not req_worker_type or req_worker_type != llm_worker_type:
+                store.patch_request(job_id, {"llm_worker_type": llm_worker_type})
+                refreshed = store.get(job_id)
+                req = (refreshed.request if refreshed else req) or req
+        except Exception as exc:
+            msg = str(exc)
+            if "capacity_exhausted" in msg:
+                attempt = int(getattr(self.request, "retries", 0)) + 1
+                if attempt in {1, 5}:
+                    _notify_ops_telegram(
+                        "[orchestrator] llm capacity saturation\n"
+                        f"job_id={job_id}\n"
+                        f"worker_type={llm_worker_type}\n"
+                        f"attempt={attempt}\n"
+                        "action=retry_build_when_capacity_frees"
+                    )
+                backoff = _retry_backoff_s(attempt=attempt, base_s=5.0, cap_s=120.0)
+                raise self.retry(countdown=backoff, exc=RuntimeError(msg))
+            raise
+    elif not llm_worker_type:
+        llm_worker_type = LLM_WORKER_TYPE_SDK
+    store.set_status(
+        job_id,
+        "RUNNING",
+        stage="build",
+        result={
+            "build_started_at": build_started_at,
+            "llm_reservation_mode": reservation_mode or "legacy",
+            "llm_worker_type": llm_worker_type,
+        },
+    )
     llm_provider_mode = _provider_mode_for_worker_type(llm_worker_type)
     audio_url = str(req.get("audio_s3_url") or "").strip()
     project_id = str(req.get("project_id") or "").strip()
@@ -1308,13 +1606,36 @@ def _build_job_impl(self, job_id: str, *, worker_type: str) -> Dict[str, Any]:
                     work_dir=SETTINGS.work_dir,
                     source_job_id=reuse_text_job_id,
                     target_resume_state_path=llm_resume_state_path,
+                    store=store,
+                )
+                _persist_resume_state_snapshot(
+                    store=store,
+                    job_id=job_id,
+                    resume_state_path=llm_resume_state_path,
+                    source="reuse_text_seed",
                 )
             build_all_fn(
                 progress_cb=lambda stage: store.set_status(job_id, "RUNNING", stage=str(stage)),
                 resume_state_path=llm_resume_state_path,
             )
+            _persist_resume_state_snapshot(
+                store=store,
+                job_id=job_id,
+                resume_state_path=llm_resume_state_path,
+                source="llm_success",
+            )
         except Exception as e:
+            try:
+                _persist_resume_state_snapshot(
+                    store=store,
+                    job_id=job_id,
+                    resume_state_path=llm_resume_state_path,
+                    source="llm_exception_partial",
+                )
+            except Exception as persist_exc:
+                log.warning("resume_state_partial_persist_failed job=%s err=%r", job_id, persist_exc)
             text = _exc_text(e)
+            _maybe_retry_gemini_transport_disconnect(self, store, text, phase="build_all")
             if _looks_like_gemini_internal_500(text):
                 attempt = int(getattr(self.request, "retries", 0)) + 1
                 backoff = _retry_backoff_s(attempt=attempt, base_s=10.0, cap_s=300.0)
@@ -1390,6 +1711,7 @@ def _build_job_impl(self, job_id: str, *, worker_type: str) -> Dict[str, Any]:
         return subprocess.run(args, cwd=str(repo_root), env=env, capture_output=True, text=True)
 
     def _maybe_retry_transient(blob: str) -> None:
+        _maybe_retry_gemini_transport_disconnect(self, store, blob, phase="build_subprocess")
         if _looks_like_gemini_internal_500(blob):
             attempt = int(getattr(self.request, "retries", 0)) + 1
             backoff = _retry_backoff_s(attempt=attempt, base_s=10.0, cap_s=300.0)
@@ -1449,6 +1771,15 @@ def _build_job_impl(self, job_id: str, *, worker_type: str) -> Dict[str, Any]:
             if build_all_fn is not None:
                 store.set_status(job_id, "RUNNING", stage="llm_stage2_subtitles_retry")
                 _drop_resume_stage_key(llm_resume_state_path, key="stage2_subtitles")
+                try:
+                    _persist_resume_state_snapshot(
+                        store=store,
+                        job_id=job_id,
+                        resume_state_path=llm_resume_state_path,
+                        source="preflight_drop_stage2_subtitles",
+                    )
+                except Exception as persist_exc:
+                    log.warning("resume_state_drop_persist_failed job=%s err=%r", job_id, persist_exc)
                 retry_hint = _build_stage2_subtitles_retry_hint(blob_first)
                 llm_env_keys = (
                     "DATA_DIR",
@@ -1489,8 +1820,24 @@ def _build_job_impl(self, job_id: str, *, worker_type: str) -> Dict[str, Any]:
                             progress_cb=lambda stage: store.set_status(job_id, "RUNNING", stage=str(stage)),
                             resume_state_path=llm_resume_state_path,
                         )
+                        _persist_resume_state_snapshot(
+                            store=store,
+                            job_id=job_id,
+                            resume_state_path=llm_resume_state_path,
+                            source="llm_preflight_retry_success",
+                        )
                     except Exception as e:
+                        try:
+                            _persist_resume_state_snapshot(
+                                store=store,
+                                job_id=job_id,
+                                resume_state_path=llm_resume_state_path,
+                                source="llm_preflight_retry_exception_partial",
+                            )
+                        except Exception as persist_exc:
+                            log.warning("resume_state_retry_partial_persist_failed job=%s err=%r", job_id, persist_exc)
                         text = _exc_text(e)
+                        _maybe_retry_gemini_transport_disconnect(self, store, text, phase="stage2_subtitles_retry")
                         if _looks_like_gemini_internal_500(text):
                             attempt = int(getattr(self.request, "retries", 0)) + 1
                             backoff = _retry_backoff_s(attempt=attempt, base_s=10.0, cap_s=300.0)
@@ -1649,7 +1996,7 @@ def _build_job_impl(self, job_id: str, *, worker_type: str) -> Dict[str, Any]:
 @celery_app.task(name="orchestrator.build_job", bind=True, max_retries=8)
 def build_job(self, job_id: str) -> Dict[str, Any]:
     # Backward-compatible task name kept for already deployed callers.
-    return _build_job_impl(self, job_id, worker_type="sdk")
+    return _build_job_impl(self, job_id, worker_type=None)
 
 
 @celery_app.task(name="orchestrator.build_job_sdk", bind=True, max_retries=8)
@@ -1977,8 +2324,8 @@ def dispatch_to_windows(self, job_id: str) -> Dict[str, Any]:
     )
     render_queue = _job_queue_from_request(
         req,
-        key="render_queue",
-        default=SETTINGS.celery_queue_render,
+        key="render_poll_queue",
+        default=SETTINGS.celery_queue_render_poll,
     )
     kwargs: Dict[str, Any] = {
         "args": [job_id, render_id],
@@ -2147,8 +2494,8 @@ def poll_windows_render(self, job_id: str, render_id: str) -> Dict[str, Any]:
     req = st.request if isinstance(st.request, dict) else {}
     render_queue = _job_queue_from_request(
         req,
-        key="render_queue",
-        default=SETTINGS.celery_queue_render,
+        key="render_poll_queue",
+        default=SETTINGS.celery_queue_render_poll,
     )
     kwargs: Dict[str, Any] = {
         "args": [job_id, render_id],

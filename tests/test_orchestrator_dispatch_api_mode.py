@@ -98,6 +98,8 @@ def _patch_common(
             windows_timeout_s=300.0,
             windows_poll_interval_s=2.0,
             windows_render_api_mode=api_mode,
+            celery_queue_render="render",
+            celery_queue_render_poll="render_poll",
         ),
     )
 

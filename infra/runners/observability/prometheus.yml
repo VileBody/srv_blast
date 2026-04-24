@@ -16,7 +16,12 @@ scrape_configs:
   - job_name: orchestrator-api
     metrics_path: /metrics/prometheus
     static_configs:
-      - targets: ["orchestrator-api:8000"]
+      - targets: ["192.168.0.8:18000"]
+        labels:
+          node: orchestrator-0
+      - targets: ["192.168.0.11:18000"]
+        labels:
+          node: orchestrator-1
 
   - job_name: prometheus
     static_configs:

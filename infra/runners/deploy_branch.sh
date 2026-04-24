@@ -17,6 +17,36 @@ is_true() {
   [[ "$v" == "1" || "$v" == "true" || "$v" == "yes" || "$v" == "on" ]]
 }
 
+env_file_value() {
+  local key="$1"
+  local env_file="$REPO_DIR/.env"
+  if [[ ! -f "$env_file" ]]; then
+    return 0
+  fi
+  grep -E "^${key}=" "$env_file" | tail -n1 | cut -d= -f2- | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/^"//' -e 's/"$//'
+}
+
+is_canary_runtime_node() {
+  local node_name enqueue_enabled
+  node_name="$(env_file_value ORCHESTRATOR_NODE_NAME)"
+  enqueue_enabled="$(env_file_value ORCHESTRATOR_ENQUEUE_ENABLED)"
+  if [[ "$node_name" == "blast-ops-canary" ]]; then
+    return 0
+  fi
+  if [[ -n "$enqueue_enabled" ]] && ! is_true "$enqueue_enabled"; then
+    return 0
+  fi
+  return 1
+}
+
+infra_app_services() {
+  if is_canary_runtime_node; then
+    printf '%s\n' asset-ui finance-bot
+    return 0
+  fi
+  printf '%s\n' tg-bot asset-ui finance-bot
+}
+
 if [[ -z "$BRANCH" ]]; then
   echo "Branch is not specified. Pass it as the first argument."
   exit 1
@@ -98,7 +128,7 @@ deploy_root_services() {
 
 deploy_prod_path_services() {
   if ! is_true "$DEPLOY_ORCHESTRATOR_HA"; then
-    deploy_root_services orchestrator-api worker-build worker-render tg-bot-public
+    deploy_root_services orchestrator-api worker-build worker-render worker-render-poll tg-bot-public
     return 0
   fi
 
@@ -116,9 +146,9 @@ deploy_prod_path_services() {
   fi
 
   echo "[deploy] orchestrator-ha enabled compose=$compose_ha"
-  echo "[deploy] docker compose -f docker-compose.yml -f $compose_ha up -d --build orchestrator-api orchestrator-api-2 worker-build worker-render tg-bot-public"
+  echo "[deploy] docker compose -f docker-compose.yml -f $compose_ha up -d --build orchestrator-api orchestrator-api-2 worker-build worker-render worker-render-poll tg-bot-public"
   docker compose -f docker-compose.yml -f "$compose_ha" up -d --build \
-    orchestrator-api orchestrator-api-2 worker-build worker-render tg-bot-public
+    orchestrator-api orchestrator-api-2 worker-build worker-render worker-render-poll tg-bot-public
 }
 
 stop_root_services() {
@@ -128,6 +158,16 @@ stop_root_services() {
   fi
   echo "[deploy] docker compose stop ${services[*]}"
   docker compose stop "${services[@]}" || true
+}
+
+remove_root_services() {
+  local services=("$@")
+  if [[ ${#services[@]} -eq 0 ]]; then
+    return 0
+  fi
+  stop_root_services "${services[@]}"
+  echo "[deploy] docker compose rm -f ${services[*]}"
+  docker compose rm -f "${services[@]}" || true
 }
 
 deploy_runner_compose_if_present() {
@@ -268,7 +308,6 @@ deploy_logs_pipeline_systemd_if_present() {
     echo "[deploy] failed to detect logs pipeline python interpreter"
     return 1
   fi
-
   echo "[deploy] bootstrap logs schema + s3 lifecycle"
   (
     set -euo pipefail
@@ -370,18 +409,20 @@ case "$DEPLOY_STACK" in
     fi
     ;;
   infra-apps)
-    deploy_root_services tg-bot asset-ui finance-bot
+    mapfile -t services < <(infra_app_services)
+    deploy_root_services "${services[@]}"
     if is_true "$DEPLOY_PRUNE_OTHER_STACK"; then
-      stop_root_services orchestrator-api orchestrator-api-2 worker-build worker-render tg-bot-public
+      remove_root_services orchestrator-api orchestrator-api-2 worker-build worker-render worker-render-poll tg-bot-public
     fi
     ;;
   infra-ops)
-    deploy_root_services tg-bot asset-ui finance-bot
+    mapfile -t services < <(infra_app_services)
+    deploy_root_services "${services[@]}"
     deploy_runner_compose_if_present "$RUNNERS_DIR/docker-compose.logs.yml" "$RUNNERS_DIR/.env.dozzle"
     deploy_runner_compose_if_present "$RUNNERS_DIR/docker-compose.observability.yml" "$RUNNERS_DIR/.env.observability"
     deploy_github_runner_compose_if_allowed "$RUNNERS_DIR/docker-compose.github-runner.yml" "$RUNNERS_DIR/.env.github-runner"
     if is_true "$DEPLOY_PRUNE_OTHER_STACK"; then
-      stop_root_services orchestrator-api orchestrator-api-2 worker-build worker-render tg-bot-public
+      remove_root_services orchestrator-api orchestrator-api-2 worker-build worker-render worker-render-poll tg-bot-public
     fi
     ;;
   *)

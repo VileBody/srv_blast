@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 import time
 import types
+from dataclasses import replace
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
@@ -176,7 +177,7 @@ class _FakeStore:
         return st2
 
 
-def _job(job_id: str, *, status: str, updated_at: float, project_id: str = "") -> JobState:
+def _job(job_id: str, *, status: str, updated_at: float, project_id: str = "", stage: str = "build") -> JobState:
     return JobState(
         job_id=job_id,
         status=status,  # type: ignore[arg-type]
@@ -186,7 +187,7 @@ def _job(job_id: str, *, status: str, updated_at: float, project_id: str = "") -
         queued_at=updated_at - 4.0,
         started_at=updated_at - 3.0,
         finished_at=None,
-        stage="build",
+        stage=stage,
         idempotency_key=None,
         request={
             "audio_s3_url": "s3://bucket/raw.mp3",
@@ -230,6 +231,62 @@ def test_jobs_active_filters_by_age_and_status(monkeypatch) -> None:
     assert body["jobs"][0]["job_id"] == "job-old-running"
 
 
+def test_jobs_batch_returns_requested_jobs_in_order(monkeypatch) -> None:
+    now = time.time()
+    store = _FakeStore(
+        [
+            _job("job-1", status="RUNNING", updated_at=now - 120.0, project_id="tg-1-a"),
+            _job("job-2", status="FAILED", updated_at=now - 300.0, project_id="tg-2-a"),
+        ]
+    )
+    with _build_client(monkeypatch, store) as client:
+        resp = client.post("/jobs/batch", json={"job_ids": ["job-2", "job-1", "job-2"]})
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["total"] == 2
+    assert [row["job_id"] for row in body["jobs"]] == ["job-2", "job-1"]
+
+
+def test_jobs_batch_returns_404_when_any_job_missing(monkeypatch) -> None:
+    now = time.time()
+    store = _FakeStore([_job("job-1", status="RUNNING", updated_at=now - 120.0, project_id="tg-1-a")])
+    with _build_client(monkeypatch, store) as client:
+        resp = client.post("/jobs/batch", json={"job_ids": ["job-1", "job-missing"]})
+
+    assert resp.status_code == 404
+    body = resp.json()
+    assert "jobs not found: job-missing" in body["detail"]
+
+
+def test_metrics_returns_stage_aware_capacity_snapshot(monkeypatch) -> None:
+    now = time.time()
+    store = _FakeStore(
+        [
+            _job("job-build", status="QUEUED", updated_at=now - 30.0, project_id="tg-1-a", stage="build"),
+            _job("job-render", status="RUNNING", updated_at=now - 60.0, project_id="tg-2-a", stage="render"),
+            _job("job-poll", status="QUEUED", updated_at=now - 90.0, project_id="tg-3-a", stage="render_poll"),
+            _job("job-failed", status="FAILED", updated_at=now - 120.0, project_id="tg-4-a", stage="build"),
+        ]
+    )
+
+    with _build_client(monkeypatch, store) as client:
+        resp = client.get("/metrics")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["render_backlog"] == 2
+    assert body["build_backlog"] == 1
+    assert body["job_stage_counts"]["render"] == 1
+    assert body["job_stage_counts"]["render_poll"] == 1
+    assert body["capacity_policy"]["state"] == "normal"
+    assert body["capacity_policy"]["render_backlog_degraded_threshold"] == 100
+    assert body["capacity_policy"]["render_backlog_add_windows_node_threshold"] == 300
+    assert body["capacity_policy"]["render_node_action"] == "add_3rd_windows_node_manually"
+    assert body["queue_topology"]["render_poll_queue_default"] == "render-poll"
+    assert body["queue_topology"]["render_poll_split_active"] is True
+
+
 def test_kill_job_marks_failed_and_returns_revoked_tasks(monkeypatch) -> None:
     now = time.time()
     store = _FakeStore([_job("job-running", status="RUNNING", updated_at=now - 600.0, project_id="tg-99-x")])
@@ -257,11 +314,11 @@ def test_requeue_active_job_revokes_and_enqueues_without_re_reserve(monkeypatch)
 
     reserve_called = {"count": 0}
 
-    def _unexpected_reserve(*_args, **_kwargs):
+    def _unexpected_select(*_args, **_kwargs):
         reserve_called["count"] += 1
-        raise AssertionError("reserve_worker_type must not be called for active requeue")
+        raise AssertionError("select_worker_type must not be called for active requeue")
 
-    monkeypatch.setattr(orchestrator_app, "reserve_worker_type", _unexpected_reserve)
+    monkeypatch.setattr(orchestrator_app, "select_worker_type", _unexpected_select)
 
     delayed: list[str] = []
     monkeypatch.setattr(orchestrator_app.build_job_sdk, "delay", lambda job_id: delayed.append(str(job_id)))
@@ -285,16 +342,22 @@ def test_requeue_active_job_revokes_and_enqueues_without_re_reserve(monkeypatch)
     assert st.status == "QUEUED"
     assert st.stage == "build"
     assert st.request["llm_worker_type"] == "sdk"
+    assert st.request["llm_reservation_mode"] == "worker"
 
 
-def test_requeue_failed_job_reserves_and_enqueues(monkeypatch) -> None:
+def test_requeue_failed_job_selects_worker_and_enqueues(monkeypatch) -> None:
     now = time.time()
     store = _FakeStore([_job("job-failed", status="FAILED", updated_at=now - 800.0, project_id="tg-12-x")])
     monkeypatch.setattr(orchestrator_app, "_revoke_celery_tasks_for_job", lambda _jid: [])
     monkeypatch.setattr(
         orchestrator_app,
-        "reserve_worker_type",
+        "select_worker_type",
         lambda _store, requested=None: SimpleNamespace(worker_type=str(requested or "sdk")),
+    )
+    monkeypatch.setattr(
+        orchestrator_app,
+        "ensure_enqueue_worker_available",
+        lambda _store, requested=None: str(requested or ""),
     )
 
     delayed: list[str] = []
@@ -319,6 +382,7 @@ def test_requeue_failed_job_reserves_and_enqueues(monkeypatch) -> None:
     assert st.status == "QUEUED"
     assert st.stage == "build"
     assert st.request["llm_worker_type"] == "openrouter"
+    assert st.request["llm_reservation_mode"] == "worker"
 
 
 def test_send_audio_rejects_no_gemini_mode(monkeypatch) -> None:
@@ -337,6 +401,56 @@ def test_send_audio_rejects_no_gemini_mode(monkeypatch) -> None:
     assert body["detail"] == "mode=no_gemini is disabled; use mode=with_gemini"
 
 
+def test_send_audio_rejects_when_enqueue_disabled(monkeypatch) -> None:
+    store = _FakeStore([])
+    monkeypatch.setattr(
+        orchestrator_app,
+        "SETTINGS",
+        replace(
+            orchestrator_app.SETTINGS,
+            orchestrator_enqueue_enabled=False,
+            orchestrator_node_name="blast-ops-canary",
+            system_maintenance_mode=False,
+        ),
+    )
+    with _build_client(monkeypatch, store) as client:
+        resp = client.post(
+            "/send_audio_s3",
+            json={
+                "audio_s3_url": "s3://bucket/raw/audio.mp3",
+                "mode": "with_gemini",
+            },
+        )
+
+    assert resp.status_code == 503
+    body = resp.json()
+    assert body["detail"] == "enqueue disabled on node=blast-ops-canary"
+
+
+def test_requeue_rejects_when_enqueue_disabled(monkeypatch) -> None:
+    now = time.time()
+    store = _FakeStore([_job("job-failed", status="FAILED", updated_at=now - 800.0, project_id="tg-12-x")])
+    monkeypatch.setattr(
+        orchestrator_app,
+        "SETTINGS",
+        replace(
+            orchestrator_app.SETTINGS,
+            orchestrator_enqueue_enabled=False,
+            orchestrator_node_name="blast-ops-canary",
+            system_maintenance_mode=False,
+        ),
+    )
+    with _build_client(monkeypatch, store) as client:
+        resp = client.post(
+            "/jobs/job-failed/requeue",
+            json={"reason": "manual_retry", "llm_worker_type": "openrouter"},
+        )
+
+    assert resp.status_code == 503
+    body = resp.json()
+    assert body["detail"] == "enqueue disabled on node=blast-ops-canary"
+
+
 def test_send_audio_reuse_inherits_source_routing_and_queue(monkeypatch) -> None:
     now = time.time()
     source = _job("job-source", status="SUCCEEDED", updated_at=now - 60.0, project_id="tg-src")
@@ -350,8 +464,8 @@ def test_send_audio_reuse_inherits_source_routing_and_queue(monkeypatch) -> None
     store = _FakeStore([source])
     monkeypatch.setattr(
         orchestrator_app,
-        "reserve_worker_type",
-        lambda _store, requested=None: SimpleNamespace(worker_type=str(requested or "sdk")),
+        "ensure_enqueue_worker_available",
+        lambda _store, requested=None: str(requested or ""),
     )
 
     queued: dict[str, object] = {}
@@ -384,6 +498,7 @@ def test_send_audio_reuse_inherits_source_routing_and_queue(monkeypatch) -> None
     assert st.request.get("origin_node") == "orchestrator-0"
     assert st.request.get("build_queue") == "build.orchestrator-0"
     assert st.request.get("render_queue") == "render.orchestrator-0"
+    assert st.request.get("render_poll_queue") == "render-poll.orchestrator-0"
     assert queued == {
         "args": [new_job_id],
         "queue": "build.orchestrator-0",
@@ -406,3 +521,58 @@ def test_send_audio_reuse_missing_source_returns_409(monkeypatch) -> None:
     assert resp.status_code == 409
     body = resp.json()
     assert body["detail"] == "reuse_text_source_job_not_found: missing-source-job"
+
+
+def test_send_audio_queue_first_accepts_generic_worker_and_uses_generic_build_task(monkeypatch) -> None:
+    store = _FakeStore([])
+    monkeypatch.setattr(
+        orchestrator_app,
+        "ensure_enqueue_worker_available",
+        lambda _store, requested=None: str(requested or ""),
+    )
+
+    delayed: list[str] = []
+    monkeypatch.setattr(orchestrator_app.build_job, "delay", lambda job_id: delayed.append(str(job_id)))
+
+    with _build_client(monkeypatch, store) as client:
+        resp = client.post(
+            "/send_audio_s3",
+            json={
+                "audio_s3_url": "s3://bucket/raw/audio.mp3",
+                "mode": "with_gemini",
+            },
+        )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    new_job_id = str(body["job_id"])
+    assert delayed == [new_job_id]
+
+    st = store.get(new_job_id)
+    assert st is not None
+    assert st.status == "QUEUED"
+    assert st.request.get("llm_worker_type") in {None, ""}
+    assert st.request.get("llm_reservation_mode") == "worker"
+    assert st.request.get("render_poll_queue") == "render-poll"
+
+
+def test_send_audio_rejects_when_no_enabled_worker_types(monkeypatch) -> None:
+    store = _FakeStore([])
+    monkeypatch.setattr(
+        orchestrator_app,
+        "ensure_enqueue_worker_available",
+        lambda _store, requested=None: (_ for _ in ()).throw(RuntimeError("llm_workers_no_enabled_types")),
+    )
+
+    with _build_client(monkeypatch, store) as client:
+        resp = client.post(
+            "/send_audio_s3",
+            json={
+                "audio_s3_url": "s3://bucket/raw/audio.mp3",
+                "mode": "with_gemini",
+            },
+        )
+
+    assert resp.status_code == 503
+    body = resp.json()
+    assert "llm_workers_no_enabled_types" in body["detail"]

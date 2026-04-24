@@ -40,6 +40,10 @@ jobs:
             echo "parity-check: unable to resolve base ref for this event, skipping."
             exit 0
           fi
+          if ! git cat-file -e "${BASE_REF}^{commit}" 2>/dev/null; then
+            echo "parity-check: base ref ${BASE_REF} is not available in checkout, skipping."
+            exit 0
+          fi
 
           python scripts/check_team_public_parity.py \
             --base-ref "$BASE_REF" \

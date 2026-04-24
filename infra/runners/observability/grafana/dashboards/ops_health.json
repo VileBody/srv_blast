@@ -69,10 +69,48 @@
       "options": {"legend": {"displayMode": "table", "placement": "bottom"}}
     },
     {
+      "type": "timeseries",
+      "title": "Render / Build Backlog",
+      "id": 8,
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "render_backlog", "legendFormat": "render backlog", "refId": "A"},
+        {"expr": "build_backlog", "legendFormat": "build backlog", "refId": "B"}
+      ],
+      "fieldConfig": {"defaults": {}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}}
+    },
+    {
+      "type": "timeseries",
+      "title": "Backpressure Policy State",
+      "id": 9,
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 12},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "backpressure_policy_state", "legendFormat": "{{state}}", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"min": 0, "max": 1}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}}
+    },
+    {
+      "type": "timeseries",
+      "title": "LLM Capacity / Saturation",
+      "id": 10,
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 20},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "llm_worker_available_slots", "legendFormat": "{{worker_type}} available", "refId": "A"},
+        {"expr": "llm_worker_saturated", "legendFormat": "{{worker_type}} saturated", "refId": "B"}
+      ],
+      "fieldConfig": {"defaults": {}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "bottom"}}
+    },
+    {
       "type": "logs",
       "title": "Ops Logs (obs_event)",
       "id": 7,
-      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 12},
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 28},
       "datasource": {"type": "loki", "uid": "loki"},
       "targets": [
         {"expr": "{service=~\"orchestrator-api|worker-build|worker-render|tg-bot-public\"} |= \"obs_event\"", "refId": "A"}

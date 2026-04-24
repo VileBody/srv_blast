@@ -21,6 +21,26 @@ groups:
           description: "queue_depth > 20 for 10m. Check worker capacity and stuck jobs."
           runbook: "docs/observability_v1_runbook.md#critical-alerts"
 
+      - alert: BackpressureMaintenanceRecommended
+        expr: max(backpressure_policy_state{state="manual_maintenance_recommended"}) > 0
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Manual maintenance is recommended by backpressure policy"
+          description: "Backpressure policy stayed in manual_maintenance_recommended for 10m."
+          runbook: "docs/observability_v1_runbook.md#critical-alerts"
+
+      - alert: RenderBacklogScaleoutRecommended
+        expr: render_backlog > 300
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Render backlog requires manual scale-out"
+          description: "render_backlog > 300 for 10m. Add the 3rd Windows node."
+          runbook: "docs/observability_v1_runbook.md#critical-alerts"
+
       - alert: FailedRatioSpike
         expr: |
           (
@@ -79,6 +99,30 @@ groups:
         annotations:
           summary: "Gemini fallback rate elevated"
           description: "Fallback success ratio is above 15% for the last 30m."
+          runbook: "docs/observability_v1_runbook.md#warning-alerts"
+
+      - alert: BuildBacklogHigh
+        expr: build_backlog > 30
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Build backlog is elevated"
+          description: "build_backlog > 30 for 15m. Watch ETA, queue-first intake, and LLM saturation."
+          runbook: "docs/observability_v1_runbook.md#warning-alerts"
+
+      - alert: LLMAllWorkersSaturated
+        expr: |
+          sum(llm_worker_saturated{enabled="true"})
+          >=
+          count(llm_worker_saturated{enabled="true"})
+          and count(llm_worker_saturated{enabled="true"}) > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "All enabled LLM worker types are saturated"
+          description: "Every enabled LLM worker type has zero available slots for 10m."
           runbook: "docs/observability_v1_runbook.md#warning-alerts"
 
       - alert: DispatchRecoveryFrequent

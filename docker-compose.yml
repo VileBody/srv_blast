@@ -23,7 +23,7 @@ services:
       STATIC_ASSETS_INDEX_JSON: /app/data/static_assets_index_1to1.json
       STATIC_ASSETS_ENRICH_INDEX_JSON: /app/data/static_assets_index_1to1.json
       S3_ASSET_PREFIX: pinterest_collection/pins2_1to1_20260323
-      FOOTAGE_S3_PREFLIGHT_MODE: strict
+      FOOTAGE_S3_PREFLIGHT_MODE: ${FOOTAGE_S3_PREFLIGHT_MODE:-strict}
 
       # point mlcore to shared paths
       FOOTAGE_INVENTORY_JSON: /app/data/footage_inventory.json
@@ -66,7 +66,7 @@ services:
       STATIC_ASSETS_INDEX_JSON: /app/data/static_assets_index_1to1.json
       STATIC_ASSETS_ENRICH_INDEX_JSON: /app/data/static_assets_index_1to1.json
       S3_ASSET_PREFIX: pinterest_collection/pins2_1to1_20260323
-      FOOTAGE_S3_PREFLIGHT_MODE: strict
+      FOOTAGE_S3_PREFLIGHT_MODE: ${FOOTAGE_S3_PREFLIGHT_MODE:-strict}
 
       # point mlcore to shared paths
       FOOTAGE_INVENTORY_JSON: /app/data/footage_inventory.json
@@ -107,7 +107,7 @@ services:
       STATIC_ASSETS_INDEX_JSON: /app/data/static_assets_index_1to1.json
       STATIC_ASSETS_ENRICH_INDEX_JSON: /app/data/static_assets_index_1to1.json
       S3_ASSET_PREFIX: pinterest_collection/pins2_1to1_20260323
-      FOOTAGE_S3_PREFLIGHT_MODE: strict
+      FOOTAGE_S3_PREFLIGHT_MODE: ${FOOTAGE_S3_PREFLIGHT_MODE:-strict}
 
       # point mlcore to shared paths
       FOOTAGE_INVENTORY_JSON: /app/data/footage_inventory.json
@@ -122,6 +122,60 @@ services:
       - ./audio:/app/audio:ro
     command: >
       bash -lc "python footage_config.py && celery -A services.orchestrator.celery_app:celery_app worker -l INFO --concurrency=1 -Q ${CELERY_QUEUE_RENDER:-render}"
+    restart: unless-stopped
+
+  worker-render-poll:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: worker-render-poll
+    env_file:
+      - .env
+    environment:
+      WORK_DIR: /app/work
+      OUTPUT_DIR: /app/output
+      PINS_DIR: /app/pins
+      DESCRIPTIONS_DIR: /app/descriptions
+
+      # shared artifacts paths
+      FOOTAGE_INVENTORY_OUT: /app/data/footage_inventory.json
+      DESCRIPTIONS_BUNDLE_OUT: /app/pins/descriptions_bundle_selected.json
+
+      # inputs
+      FOOTAGE_DIR: /app/footage
+      FOOTAGE_DESCRIPTIONS_DIR: /app/descriptions
+      STATIC_ASSETS_SOURCE_INDEX_JSON: /app/data/static_assets_index_1to1.json
+      STATIC_ASSETS_INDEX_JSON: /app/data/static_assets_index_1to1.json
+      STATIC_ASSETS_ENRICH_INDEX_JSON: /app/data/static_assets_index_1to1.json
+      S3_ASSET_PREFIX: pinterest_collection/pins2_1to1_20260323
+      FOOTAGE_S3_PREFLIGHT_MODE: ${FOOTAGE_S3_PREFLIGHT_MODE:-strict}
+
+      # point mlcore to shared paths
+      FOOTAGE_INVENTORY_JSON: /app/data/footage_inventory.json
+      DESCRIPTIONS_BUNDLE_PATH: /app/pins/descriptions_bundle_selected.json
+    volumes:
+      - ./work:/app/work
+      - ./output:/app/output
+      - ./out:/app/out
+      - ./data:/app/data
+      - ./pins:/app/pins
+      - ./descriptions:/app/descriptions:ro
+      - ./audio:/app/audio:ro
+    command: >
+      bash -lc '
+        python footage_config.py &&
+        render_queue="${CELERY_QUEUE_RENDER:-render}" &&
+        poll_queue="${CELERY_QUEUE_RENDER_POLL:-}" &&
+        if [ -z "$$poll_queue" ]; then
+          case "$$render_queue" in
+            render) poll_queue="render-poll" ;;
+            render.*) poll_queue="render-poll.$${render_queue#render.}" ;;
+            render-*) poll_queue="render-poll-$${render_queue#render-}" ;;
+            *) poll_queue="$${render_queue}-poll" ;;
+          esac
+        fi &&
+        celery -A services.orchestrator.celery_app:celery_app worker -l INFO --concurrency=1 -Q "$$poll_queue"
+      '
     restart: unless-stopped
 
   tg-bot:

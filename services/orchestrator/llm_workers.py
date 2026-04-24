@@ -79,6 +79,10 @@ def _inflight_key(prefix: str, worker_type: str) -> str:
     return f"{prefix}:llm_workers:inflight:{wt}:v1"
 
 
+def _reservation_key(prefix: str, job_id: str) -> str:
+    return f"{prefix}:llm_workers:job_reservation:{str(job_id or '').strip()}:v1"
+
+
 def _default_config() -> Dict[str, LLMWorkerControl]:
     return {
         LLM_WORKER_TYPE_SDK: LLMWorkerControl(
@@ -227,6 +231,27 @@ end
 return redis.call('DECR', key)
 """
 
+_RESERVE_JOB_SLOT_LUA = """
+local reservation_key = KEYS[1]
+local inflight_key = KEYS[2]
+local worker_type = ARGV[1]
+local max_inflight = tonumber(ARGV[2]) or 0
+
+local existing = tostring(redis.call('GET', reservation_key) or '')
+if existing ~= '' then
+  return existing
+end
+
+local current = tonumber(redis.call('GET', inflight_key) or '0')
+if current >= max_inflight then
+  return ''
+end
+
+redis.call('INCR', inflight_key)
+redis.call('SET', reservation_key, worker_type)
+return worker_type
+"""
+
 
 def _try_reserve_slot(store: JobStore, *, worker_type: str, max_inflight: int) -> bool:
     key = _inflight_key(store.key_prefix, worker_type)
@@ -240,6 +265,29 @@ def _try_reserve_slot(store: JobStore, *, worker_type: str, max_inflight: int) -
         return False
 
 
+def _try_reserve_slot_for_job(
+    store: JobStore,
+    *,
+    job_id: str,
+    worker_type: str,
+    max_inflight: int,
+) -> str:
+    reservation_key = _reservation_key(store.key_prefix, job_id)
+    inflight_key = _inflight_key(store.key_prefix, worker_type)
+    rv = store._redis_call(
+        "llm_workers_reserve_slot_for_job",
+        lambda: store.r.eval(
+            _RESERVE_JOB_SLOT_LUA,
+            2,
+            reservation_key,
+            inflight_key,
+            str(worker_type),
+            int(max_inflight),
+        ),
+    )
+    return str(rv or "").strip()
+
+
 def release_worker_slot(store: JobStore, worker_type: str) -> int:
     wt = normalize_llm_worker_type(worker_type)
     key = _inflight_key(store.key_prefix, wt)
@@ -251,6 +299,55 @@ def release_worker_slot(store: JobStore, worker_type: str) -> int:
         return max(0, int(rv))
     except Exception:
         return 0
+
+
+def select_worker_type(store: JobStore, *, requested: Optional[str] = None) -> LLMWorkerSelection:
+    cfg = get_config(store)
+
+    if requested:
+        worker_type = normalize_llm_worker_type(requested)
+        row = cfg[worker_type]
+        if not row.enabled:
+            raise RuntimeError(f"llm_worker_disabled: {worker_type}")
+        return LLMWorkerSelection(worker_type=worker_type, workers=get_runtime_status(store))
+
+    weighted: list[str] = []
+    for worker_type in LLM_WORKER_TYPES:
+        row = cfg[worker_type]
+        if not row.enabled:
+            continue
+        if row.weight <= 0:
+            continue
+        weighted.extend([worker_type] * int(row.weight))
+    if not weighted:
+        raise RuntimeError("llm_workers_no_enabled_types")
+
+    seq = int(
+        store._redis_call(
+            "llm_workers_rr_incr",
+            lambda: store.r.incr(_rr_cursor_key(store.key_prefix)),
+        )
+    ) - 1
+    start = seq % len(weighted)
+    candidate = weighted[start]
+    return LLMWorkerSelection(worker_type=candidate, workers=get_runtime_status(store))
+
+
+def ensure_enqueue_worker_available(store: JobStore, *, requested: Optional[str] = None) -> str:
+    cfg = get_config(store)
+
+    if requested:
+        worker_type = normalize_llm_worker_type(requested)
+        row = cfg[worker_type]
+        if not row.enabled:
+            raise RuntimeError(f"llm_worker_disabled: {worker_type}")
+        return worker_type
+
+    for worker_type in LLM_WORKER_TYPES:
+        row = cfg[worker_type]
+        if row.enabled and int(row.weight) > 0 and int(row.max_inflight) > 0:
+            return ""
+    raise RuntimeError("llm_workers_no_enabled_types")
 
 
 def reserve_worker_type(store: JobStore, *, requested: Optional[str] = None) -> LLMWorkerSelection:
@@ -288,6 +385,66 @@ def reserve_worker_type(store: JobStore, *, requested: Optional[str] = None) -> 
         row = cfg[candidate]
         if _try_reserve_slot(store, worker_type=candidate, max_inflight=int(row.max_inflight)):
             return LLMWorkerSelection(worker_type=candidate, workers=get_runtime_status(store))
+
+    raise RuntimeError("llm_workers_capacity_exhausted")
+
+
+def reserve_worker_type_for_job(
+    store: JobStore,
+    *,
+    job_id: str,
+    requested: Optional[str] = None,
+) -> LLMWorkerSelection:
+    jid = str(job_id or "").strip()
+    if not jid:
+        raise RuntimeError("job_id is required for reserve_worker_type_for_job")
+
+    cfg = get_config(store)
+
+    if requested:
+        worker_type = normalize_llm_worker_type(requested)
+        row = cfg[worker_type]
+        if not row.enabled:
+            raise RuntimeError(f"llm_worker_disabled: {worker_type}")
+        reserved = _try_reserve_slot_for_job(
+            store,
+            job_id=jid,
+            worker_type=worker_type,
+            max_inflight=int(row.max_inflight),
+        )
+        if not reserved:
+            raise RuntimeError(f"llm_worker_capacity_exhausted: {worker_type}")
+        return LLMWorkerSelection(worker_type=reserved, workers=get_runtime_status(store))
+
+    weighted: list[str] = []
+    for worker_type in LLM_WORKER_TYPES:
+        row = cfg[worker_type]
+        if not row.enabled:
+            continue
+        if row.weight <= 0:
+            continue
+        weighted.extend([worker_type] * int(row.weight))
+    if not weighted:
+        raise RuntimeError("llm_workers_no_enabled_types")
+
+    seq = int(
+        store._redis_call(
+            "llm_workers_rr_incr",
+            lambda: store.r.incr(_rr_cursor_key(store.key_prefix)),
+        )
+    ) - 1
+    start = seq % len(weighted)
+    for i in range(len(weighted)):
+        candidate = weighted[(start + i) % len(weighted)]
+        row = cfg[candidate]
+        reserved = _try_reserve_slot_for_job(
+            store,
+            job_id=jid,
+            worker_type=candidate,
+            max_inflight=int(row.max_inflight),
+        )
+        if reserved:
+            return LLMWorkerSelection(worker_type=reserved, workers=get_runtime_status(store))
 
     raise RuntimeError("llm_workers_capacity_exhausted")
 

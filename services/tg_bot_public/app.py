@@ -40,6 +40,7 @@ from .credits_db import CreditsDB
 from .tbank_client import TBankClient
 from .orchestrator_client import OrchestratorClient
 from .s3_client import S3Client, make_s3_url
+from services.generation_runtime import GenerationRuntimeStore
 from .state_store import (
     ChatState,
     RedisChatStateStore,
@@ -230,6 +231,22 @@ _TG_VIDEO_COMPRESS_CRF_STEPS = (30, 32, 34, 36)
 _GENERATION_FAILED_USER_TEXT = (
     "Увидели ошибку, сейчас с тобой свяжется менеджер и запустит генерацию ролика вручную, "
     "а пока тех. отдел все проверит"
+)
+_AUDIO_PREPARE_FAILED_USER_TEXT = (
+    "Не получилось подготовить трек к генерации. "
+    "Попробуй отправить его ещё раз чуть позже."
+)
+_AUDIO_PREPARE_TG_FAILED_USER_TEXT = (
+    "Не получилось получить файл из Telegram. "
+    "Попробуй отправить трек ещё раз, лучше в mp3 или m4a."
+)
+_RESULT_SOURCE_MISSING_USER_TEXT = (
+    "Видео собрано, но ссылка на файл не вернулась. "
+    "Мы уже увидели проблему и проверяем её."
+)
+_VIDEO_DELIVERY_FAILED_USER_TEXT = (
+    "Не получилось отправить видео прямо в Telegram, "
+    "но сам файл сохранился."
 )
 _TG_WEBHOOK_SECRET_HEADER = "X-Telegram-Bot-Api-Secret-Token"
 
@@ -895,6 +912,7 @@ class BlastBotApp:
         if not settings.credits_db_url:
             raise RuntimeError("CREDITS_DB_URL (or POSTGRES_*) is required for tg_bot_public")
         self.credits_db = CreditsDB(settings.credits_db_url)
+        self.runtime_store: GenerationRuntimeStore | None = None
         self.tbank = TBankClient(
             terminal_key=settings.tbank_terminal_key,
             password=settings.tbank_password,
@@ -912,6 +930,8 @@ class BlastBotApp:
         self._recovery_task: asyncio.Task[None] | None = None
         self._state_cleanup_task: asyncio.Task[None] | None = None
         self._fs_cleanup_task: asyncio.Task[None] | None = None
+        self._startup_maintenance_task: asyncio.Task[None] | None = None
+        self._outbox_task: asyncio.Task[None] | None = None
         self._bot: Bot | None = None
         self._preview_source_bot_token = str(settings.tg_preview_source_bot_token or "").strip()
         self._preview_source_file_url_cache: Dict[str, str] = {}
@@ -922,6 +942,726 @@ class BlastBotApp:
         self._register_handlers()
         self.dp.startup.register(self._on_startup)
         self.dp.shutdown.register(self._on_shutdown)
+
+    @staticmethod
+    def _runtime_surface() -> str:
+        return "public"
+
+    def _runtime_owner_id(self) -> str:
+        node_id = str(self.settings.tg_processing_node_id or "unknown-node").strip() or "unknown-node"
+        return f"{self._runtime_surface()}:{node_id}:{os.getpid()}"
+
+    def _runtime_outbox_owner_id(self) -> str:
+        return f"{self._runtime_owner_id()}:outbox"
+
+    def _build_generation_run_id(self, *, chat_id: int) -> str:
+        return f"{self._runtime_surface()}-{int(chat_id)}-{uuid.uuid4().hex}"
+
+    def _runtime_snapshot_payload(
+        self,
+        *,
+        st: ChatState,
+        audio_s3_url: str,
+        versions_total: int,
+    ) -> Dict[str, Any]:
+        return {
+            "chat_id": int(st.chat_id),
+            "chat_username": str(st.chat_username or ""),
+            "audio_s3_url": str(audio_s3_url or ""),
+            "lyrics_text": str(st.lyrics_text or ""),
+            "target_fragment": str(st.target_fragment or ""),
+            "footage_artist_id": str(st.footage_artist_id or ""),
+            "subtitles_mode": str(st.subtitles_mode or ""),
+            "user_clip_start_sec": float(st.user_clip_start_sec or 0.0),
+            "user_clip_end_sec": float(st.user_clip_end_sec or 0.0),
+            "versions_total": max(1, int(versions_total)),
+        }
+
+    async def _runtime_start_run(
+        self,
+        *,
+        st: ChatState,
+        batch_id: str,
+        audio_s3_url: str,
+        versions_total: int,
+    ) -> str:
+        store = getattr(self, "runtime_store", None)
+        if store is None:
+            return ""
+        run_id = str(st.generation_run_id or "").strip() or self._build_generation_run_id(chat_id=st.chat_id)
+        await store.upsert_run(
+            run_id=run_id,
+            surface=self._runtime_surface(),
+            chat_id=int(st.chat_id),
+            batch_id=str(batch_id or ""),
+            status="running",
+            versions_total=max(1, int(versions_total)),
+            next_version_to_enqueue=1,
+            current_stage="enqueue_start",
+        )
+        await store.record_event(
+            run_id=run_id,
+            surface=self._runtime_surface(),
+            event_type="run_started",
+            payload=self._runtime_snapshot_payload(
+                st=st,
+                audio_s3_url=audio_s3_url,
+                versions_total=versions_total,
+            ),
+        )
+        return run_id
+
+    async def _runtime_update_run(
+        self,
+        *,
+        st: ChatState,
+        status: Optional[str] = None,
+        current_stage: Optional[str] = None,
+        next_version_to_enqueue: Optional[int] = None,
+        last_error_code: Optional[str] = None,
+        last_error_text: Optional[str] = None,
+    ) -> None:
+        store = getattr(self, "runtime_store", None)
+        run_id = str(st.generation_run_id or "").strip()
+        if store is None or not run_id:
+            return
+        await store.update_run(
+            run_id,
+            status=status,
+            current_stage=current_stage,
+            next_version_to_enqueue=next_version_to_enqueue,
+            last_error_code=last_error_code,
+            last_error_text=last_error_text,
+        )
+
+    async def _runtime_attach_version(
+        self,
+        *,
+        st: ChatState,
+        version_index: int,
+        job_id: str,
+        reuse_text_job_id: str = "",
+    ) -> None:
+        store = getattr(self, "runtime_store", None)
+        run_id = str(st.generation_run_id or "").strip()
+        if store is None or not run_id:
+            return
+        await store.upsert_version(
+            run_id=run_id,
+            version_index=max(1, int(version_index)),
+            job_id=str(job_id or ""),
+            job_status="QUEUED",
+            job_stage="build",
+            resume_source_job_id=str(reuse_text_job_id or ""),
+        )
+        await store.record_event(
+            run_id=run_id,
+            surface=self._runtime_surface(),
+            job_id=str(job_id or ""),
+            event_type="version_enqueued",
+            payload={
+                "version_index": max(1, int(version_index)),
+                "job_id": str(job_id or ""),
+                "resume_source_job_id": str(reuse_text_job_id or ""),
+            },
+        )
+
+    async def _runtime_sync_version_from_job(
+        self,
+        *,
+        st: ChatState,
+        job_id: str,
+        job: Dict[str, Any],
+    ) -> None:
+        store = getattr(self, "runtime_store", None)
+        run_id = str(st.generation_run_id or "").strip()
+        if store is None or not run_id:
+            return
+        version_index = max(1, int(self._version_num_for_job(st, job_id) or 1))
+        req = job.get("request") if isinstance(job.get("request"), dict) else {}
+        result = job.get("result") if isinstance(job.get("result"), dict) else {}
+        resume_state = result.get("resume_state") if isinstance(result.get("resume_state"), dict) else None
+        await store.upsert_version(
+            run_id=run_id,
+            version_index=version_index,
+            job_id=str(job_id or ""),
+            job_status=str(job.get("status") or "NEW"),
+            job_stage=str(job.get("stage") or ""),
+            worker_type=str(req.get("llm_worker_type") or ""),
+            origin_node=str(req.get("origin_node") or ""),
+            build_queue=str(req.get("build_queue") or ""),
+            render_queue=str(req.get("render_queue") or ""),
+            result_url=_resolve_job_video_source(job, self.settings),
+            archive_url=_resolve_job_project_archive_source(job),
+            resume_source_job_id=str(req.get("reuse_text_job_id") or ""),
+            resume_state=resume_state,
+            resume_state_source=str(result.get("resume_state_source") or ""),
+            resume_state_checksum_value=str(result.get("resume_state_checksum") or ""),
+            last_error_text=str(job.get("error") or ""),
+        )
+        await self._runtime_update_run(
+            st=st,
+            current_stage=str(job.get("stage") or ""),
+            last_error_text=str(job.get("error") or ""),
+        )
+
+    async def _runtime_record_version_succeeded(
+        self,
+        *,
+        st: ChatState,
+        job_id: str,
+        used_file_names: List[str],
+    ) -> None:
+        store = getattr(self, "runtime_store", None)
+        run_id = str(st.generation_run_id or "").strip()
+        if store is None or not run_id:
+            return
+        await store.record_event(
+            run_id=run_id,
+            surface=self._runtime_surface(),
+            job_id=str(job_id or ""),
+            event_type="version_succeeded",
+            payload={
+                "job_id": str(job_id or ""),
+                "version_index": max(1, int(self._version_num_for_job(st, job_id) or 1)),
+                "used_file_names": [str(x) for x in list(used_file_names or []) if str(x)],
+            },
+        )
+
+    @staticmethod
+    def _runtime_outbox_key(*, run_id: str, kind: str, job_id: str = "", suffix: str = "") -> str:
+        parts = ["public", str(run_id or ""), str(kind or "")]
+        if job_id:
+            parts.append(str(job_id))
+        if suffix:
+            parts.append(str(suffix))
+        return ":".join(parts)
+
+    async def _runtime_claim_outbox(
+        self,
+        *,
+        st: ChatState,
+        kind: str,
+        payload: Dict[str, Any],
+        job_id: str = "",
+        suffix: str = "",
+        lease_s: int = 21600,
+    ) -> tuple[bool, str]:
+        store = getattr(self, "runtime_store", None)
+        run_id = str(st.generation_run_id or "").strip()
+        if store is None or not run_id:
+            return True, ""
+        dedupe_key = self._runtime_outbox_key(run_id=run_id, kind=kind, job_id=job_id, suffix=suffix)
+        await store.ensure_outbox_item(
+            run_id=run_id,
+            surface=self._runtime_surface(),
+            kind=kind,
+            dedupe_key=dedupe_key,
+            payload=payload,
+            job_id=job_id,
+        )
+        claimed = await store.claim_outbox_item(
+            dedupe_key=dedupe_key,
+            owner_id=self._runtime_owner_id(),
+            lease_s=max(300, int(lease_s)),
+            allow_stale_lease=False,
+        )
+        if claimed:
+            return True, dedupe_key
+        return False, dedupe_key
+
+    async def _runtime_mark_outbox_sent(
+        self,
+        *,
+        dedupe_key: str,
+        payload_patch: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        store = getattr(self, "runtime_store", None)
+        if store is None or not dedupe_key:
+            return
+        await store.mark_outbox_sent(dedupe_key=dedupe_key, payload_patch=payload_patch)
+
+    async def _runtime_mark_outbox_failed(
+        self,
+        *,
+        dedupe_key: str,
+        error_text: str,
+        retry_delay_s: int = 0,
+        keep_leased: bool = False,
+    ) -> None:
+        store = getattr(self, "runtime_store", None)
+        if store is None or not dedupe_key:
+            return
+        await store.mark_outbox_failed(
+            dedupe_key=dedupe_key,
+            error_text=error_text,
+            retry_delay_s=retry_delay_s,
+            keep_leased=keep_leased,
+        )
+
+    def _runtime_outbox_retry_delay_s(self, item: Dict[str, Any]) -> int:
+        attempt = max(1, int(item.get("attempt_count") or 1))
+        base = max(1, int(getattr(self.settings, "tg_outbox_retry_base_s", 30) or 30))
+        max_delay = max(base, int(getattr(self.settings, "tg_outbox_retry_max_s", 900) or 900))
+        return min(max_delay, base * (2 ** min(6, attempt - 1)))
+
+    @staticmethod
+    def _runtime_outbox_terminal_error(exc: Exception) -> bool:
+        text = repr(exc).lower()
+        return (
+            exc.__class__.__name__ == "TelegramForbiddenError"
+            or "bot was blocked" in text
+            or "chat not found" in text
+            or "user is deactivated" in text
+        )
+
+    @staticmethod
+    def _runtime_outbox_payload(item: Dict[str, Any]) -> Dict[str, Any]:
+        payload = item.get("payload")
+        return dict(payload) if isinstance(payload, dict) else {}
+
+    async def _runtime_run_snapshot(self, run_id: str) -> Dict[str, Any]:
+        store = getattr(self, "runtime_store", None)
+        if store is None or not str(run_id or "").strip():
+            return {}
+        events = await store.list_events(str(run_id), event_type="run_started", limit=1)
+        if events and isinstance(events[0].get("payload"), dict):
+            return dict(events[0].get("payload") or {})
+        return {}
+
+    async def _runtime_outbox_context(self, item: Dict[str, Any]) -> tuple[Dict[str, Any], ChatState, Dict[str, Any]]:
+        store = getattr(self, "runtime_store", None)
+        if store is None:
+            raise RuntimeError("runtime_store is not ready")
+        payload = self._runtime_outbox_payload(item)
+        run_id = str(item.get("run_id") or "").strip()
+        if not run_id:
+            raise RuntimeError("outbox item has empty run_id")
+        run = await store.get_run(run_id)
+        if not run:
+            raise RuntimeError(f"generation run not found for outbox run_id={run_id}")
+        chat_id = int(run.get("chat_id") or payload.get("chat_id") or 0)
+        if chat_id <= 0:
+            raise RuntimeError(f"outbox item has invalid chat_id run_id={run_id}")
+        st = await self.store.get(chat_id)
+        st.generation_run_id = str(st.generation_run_id or run_id)
+        if not str(st.chat_username or "").strip():
+            snapshot = await self._runtime_run_snapshot(run_id)
+            st.chat_username = str(snapshot.get("chat_username") or st.chat_username or "")
+        return run, st, payload
+
+    def _runtime_outbox_ver_label(
+        self,
+        *,
+        st: ChatState,
+        run: Dict[str, Any],
+        payload: Dict[str, Any],
+        job_id: str,
+    ) -> str:
+        explicit = str(payload.get("ver_label") or "").strip()
+        if explicit:
+            return explicit
+        total = max(1, int(run.get("versions_total") or st.batch_total_versions or len(st.job_order or []) or 1))
+        ver = self._version_num_for_job(st, job_id)
+        return f"Версия {ver}/{total}" if ver > 0 else f"job_id={job_id}"
+
+    async def _runtime_outbox_version(self, job_id: str) -> Dict[str, Any]:
+        store = getattr(self, "runtime_store", None)
+        jid = str(job_id or "").strip()
+        if store is None or not jid:
+            return {}
+        try:
+            return await store.get_version_by_job(jid)
+        except Exception:
+            return {}
+
+    async def _runtime_record_outbox_event(
+        self,
+        item: Dict[str, Any],
+        *,
+        event_type: str,
+        payload: Dict[str, Any],
+    ) -> None:
+        store = getattr(self, "runtime_store", None)
+        run_id = str(item.get("run_id") or "").strip()
+        if store is None or not run_id:
+            return
+        try:
+            await store.record_event(
+                run_id=run_id,
+                surface=self._runtime_surface(),
+                job_id=str(item.get("job_id") or ""),
+                event_type=event_type,
+                payload=payload,
+            )
+        except Exception as exc:
+            log.warning("runtime_outbox_event_record_failed key=%s err=%r", item.get("dedupe_key"), exc)
+
+    async def _runtime_dispatch_ready_outbox_once(self) -> int:
+        store = getattr(self, "runtime_store", None)
+        if store is None:
+            return 0
+        items = await store.claim_ready_outbox_items(
+            surface=self._runtime_surface(),
+            owner_id=self._runtime_outbox_owner_id(),
+            limit=max(1, int(getattr(self.settings, "tg_outbox_dispatch_batch_size", 25) or 25)),
+            stale_lease_s=max(60, int(getattr(self.settings, "tg_outbox_stale_lease_s", 1800) or 1800)),
+        )
+        for item in items:
+            dedupe_key = str(item.get("dedupe_key") or "").strip()
+            if not dedupe_key:
+                continue
+            try:
+                payload_patch = await self._runtime_dispatch_outbox_item(item)
+                await self._runtime_mark_outbox_sent(
+                    dedupe_key=dedupe_key,
+                    payload_patch=payload_patch,
+                )
+                await self._runtime_record_outbox_event(
+                    item,
+                    event_type="outbox_sent",
+                    payload={
+                        "dedupe_key": dedupe_key,
+                        "kind": str(item.get("kind") or ""),
+                        "attempt_count": int(item.get("attempt_count") or 0),
+                        **dict(payload_patch or {}),
+                    },
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                if self._runtime_outbox_terminal_error(exc):
+                    terminal_error = _compact_text(repr(exc), limit=500)
+                    log.warning(
+                        "runtime_outbox_terminal_delivery key=%s kind=%s err=%s",
+                        dedupe_key,
+                        item.get("kind"),
+                        terminal_error,
+                    )
+                    await self._runtime_mark_outbox_sent(
+                        dedupe_key=dedupe_key,
+                        payload_patch={
+                            "sent_mode": "telegram_undeliverable",
+                            "terminal_error": terminal_error,
+                        },
+                    )
+                    await self._runtime_record_outbox_event(
+                        item,
+                        event_type="outbox_undeliverable",
+                        payload={
+                            "dedupe_key": dedupe_key,
+                            "kind": str(item.get("kind") or ""),
+                            "error": terminal_error,
+                        },
+                    )
+                    continue
+                delay_s = self._runtime_outbox_retry_delay_s(item)
+                log.warning(
+                    "runtime_outbox_dispatch_failed key=%s kind=%s retry_delay_s=%s err=%r",
+                    dedupe_key,
+                    item.get("kind"),
+                    delay_s,
+                    exc,
+                )
+                await self._runtime_mark_outbox_failed(
+                    dedupe_key=dedupe_key,
+                    error_text=repr(exc),
+                    retry_delay_s=delay_s,
+                    keep_leased=False,
+                )
+                await self._runtime_record_outbox_event(
+                    item,
+                    event_type="outbox_failed",
+                    payload={
+                        "dedupe_key": dedupe_key,
+                        "kind": str(item.get("kind") or ""),
+                        "retry_delay_s": int(delay_s),
+                        "error": repr(exc),
+                    },
+                )
+        return len(items)
+
+    async def _runtime_outbox_loop(self) -> None:
+        interval_s = max(1.0, float(getattr(self.settings, "tg_outbox_dispatch_interval_s", 10.0) or 10.0))
+        while True:
+            try:
+                claimed = await self._runtime_dispatch_ready_outbox_once()
+                if claimed <= 0:
+                    await asyncio.sleep(interval_s)
+                else:
+                    await asyncio.sleep(0.1)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                log.warning("runtime_outbox_loop_iteration_failed err=%r", exc)
+                await asyncio.sleep(interval_s)
+
+    async def _runtime_dispatch_outbox_item(self, item: Dict[str, Any]) -> Dict[str, Any]:
+        kind = str(item.get("kind") or "").strip()
+        if kind == "result_source_missing_notice":
+            return await self._runtime_dispatch_result_source_missing_notice(item)
+        if kind == "telegram_video_delivery":
+            return await self._runtime_dispatch_telegram_video_delivery(item)
+        if kind == "telegram_project_archive_notice":
+            return await self._runtime_dispatch_project_archive_notice(item)
+        if kind in {"generation_failed_refund", "enqueue_next_failed_refund"}:
+            return await self._runtime_dispatch_refund(item)
+        if kind in {"generation_failed_manager_alert", "enqueue_next_failed_manager_alert"}:
+            return await self._runtime_dispatch_manager_alert(item)
+        if kind in {"generation_failed_user_notice", "enqueue_next_failed_user_notice"}:
+            return await self._runtime_dispatch_user_notice(item)
+        raise RuntimeError(f"unsupported public outbox kind={kind!r}")
+
+    async def _runtime_dispatch_result_source_missing_notice(self, item: Dict[str, Any]) -> Dict[str, Any]:
+        run, st, payload = await self._runtime_outbox_context(item)
+        bot = self._require_bot()
+        job_id = str(payload.get("job_id") or item.get("job_id") or "").strip()
+        stage = str(payload.get("stage") or "render").strip()
+        ver_label = self._runtime_outbox_ver_label(st=st, run=run, payload=payload, job_id=job_id)
+        await self._notify_ops_alert(
+            title="Render result without output source",
+            chat_id=st.chat_id,
+            username=st.chat_username,
+            job_id=job_id,
+            stage=stage,
+            error_text=json.dumps(payload, ensure_ascii=False)[:1200],
+        )
+        await bot.send_message(st.chat_id, f"{ver_label}: {_RESULT_SOURCE_MISSING_USER_TEXT}")
+        return {"sent_mode": "user_notice"}
+
+    async def _runtime_dispatch_telegram_video_delivery(self, item: Dict[str, Any]) -> Dict[str, Any]:
+        run, st, payload = await self._runtime_outbox_context(item)
+        bot = self._require_bot()
+        job_id = str(payload.get("job_id") or item.get("job_id") or "").strip()
+        if not job_id:
+            raise RuntimeError("telegram_video_delivery outbox item has empty job_id")
+        version = await self._runtime_outbox_version(job_id)
+        source = str(payload.get("source") or version.get("result_url") or st.last_result_url or "").strip()
+        if not source:
+            raise RuntimeError(f"telegram_video_delivery has empty source job_id={job_id}")
+        ver_label = self._runtime_outbox_ver_label(st=st, run=run, payload=payload, job_id=job_id)
+        stage = str(payload.get("stage") or "render_delivery").strip()
+
+        video_path = self.settings.tmp_dir / str(st.chat_id) / "result" / f"{job_id}.mp4"
+        video_path.parent.mkdir(parents=True, exist_ok=True)
+        send_video_path = video_path
+        send_file_error = ""
+        try:
+            try:
+                await self._download_result_video(source=source, dest=video_path)
+                send_video_path = await self._prepare_result_video_for_tg(
+                    source_path=video_path,
+                    chat_id=st.chat_id,
+                    job_id=job_id,
+                )
+                await self._send_result_video_with_retry(
+                    bot=bot,
+                    chat_id=st.chat_id,
+                    job_id=job_id,
+                    video_path=send_video_path,
+                    caption=f"{ver_label}: вот твой трек.",
+                )
+                return {"sent_mode": "telegram_video", "source": source}
+            except Exception as exc:
+                send_file_error = str(exc)
+                log.warning("outbox_send_file_failed chat=%s job=%s err=%s", st.chat_id, job_id, send_file_error)
+
+            fallback_link = await self._build_fallback_link(source)
+            await self._notify_ops_alert(
+                title="Telegram video delivery failed",
+                chat_id=st.chat_id,
+                username=st.chat_username,
+                job_id=job_id,
+                stage=stage,
+                error_text=send_file_error,
+                extra_lines=[f"has_fallback_link: {bool(fallback_link)}"],
+            )
+            msg = f"{ver_label}: {_VIDEO_DELIVERY_FAILED_USER_TEXT}"
+            if fallback_link:
+                msg += f"\nСсылка: {fallback_link}"
+            await bot.send_message(st.chat_id, msg)
+            return {
+                "sent_mode": "fallback_link",
+                "fallback_link": fallback_link,
+                "source": source,
+                "send_file_error": _compact_text(send_file_error, limit=500),
+            }
+        finally:
+            try:
+                for path in {video_path, send_video_path}:
+                    if path.exists():
+                        path.unlink()
+            except Exception:
+                pass
+
+    async def _runtime_dispatch_project_archive_notice(self, item: Dict[str, Any]) -> Dict[str, Any]:
+        run, st, payload = await self._runtime_outbox_context(item)
+        bot = self._require_bot()
+        job_id = str(payload.get("job_id") or item.get("job_id") or "").strip()
+        ver_label = self._runtime_outbox_ver_label(st=st, run=run, payload=payload, job_id=job_id)
+        version = await self._runtime_outbox_version(job_id)
+        archive_source = str(payload.get("archive_source") or version.get("archive_url") or "").strip()
+        if not archive_source and job_id:
+            job = await self.orchestrator.get_job(job_id)
+            archive_source = _resolve_job_project_archive_source(job)
+        if archive_source:
+            archive_link = await self._build_fallback_link(archive_source)
+            if not archive_link:
+                archive_link = archive_source
+            await bot.send_message(st.chat_id, f"{ver_label}: проект (AEP + ресурсы): {archive_link}")
+            return {"archive_link": archive_link}
+        await bot.send_message(
+            st.chat_id,
+            f"{ver_label}: видео готово, но ссылка на архив проекта в ответе рендера не найдена.",
+        )
+        return {"archive_link": ""}
+
+    async def _runtime_dispatch_refund(self, item: Dict[str, Any]) -> Dict[str, Any]:
+        run, st, payload = await self._runtime_outbox_context(item)
+        refund_versions = int(payload.get("refund_versions") or payload.get("refunded_versions") or 0)
+        if refund_versions <= 0:
+            return {"sent_mode": "refund_skipped", "refund_versions": 0}
+        failed_job_id = str(payload.get("failed_job_id") or item.get("job_id") or "batch").strip() or "batch"
+        await self.credits_db.add_credits(
+            st.chat_id,
+            int(refund_versions),
+            "generation_failed_refund",
+            admin_note=f"run={run.get('run_id') or '-'} batch={run.get('batch_id') or '-'} job={failed_job_id}",
+            actor="outbox_dispatcher",
+            order_id=str(item.get("dedupe_key") or ""),
+        )
+        return {"sent_mode": "refund", "refund_versions": int(refund_versions)}
+
+    async def _runtime_dispatch_manager_alert(self, item: Dict[str, Any]) -> Dict[str, Any]:
+        run, st, payload = await self._runtime_outbox_context(item)
+        kind = str(item.get("kind") or "")
+        refund_versions = int(payload.get("refunded_versions") or payload.get("refund_versions") or 0)
+        total_versions = max(1, int(payload.get("total_versions") or run.get("versions_total") or st.batch_total_versions or 1))
+        succeeded_versions = int(payload.get("succeeded_versions") or max(0, total_versions - refund_versions))
+        job_id = str(payload.get("failed_job_id") or item.get("job_id") or "").strip()
+        if not job_id and kind.startswith("enqueue_next"):
+            job_id = "enqueue_next_version"
+        stage = str(payload.get("failed_stage") or run.get("current_stage") or "").strip()
+        if not stage and kind.startswith("enqueue_next"):
+            stage = "enqueue_next_version"
+        error_text = str(payload.get("error_text") or run.get("last_error_text") or st.last_job_error or "").strip()
+        await self._notify_manager_generation_failure(
+            st=st,
+            job_id=job_id,
+            stage=stage,
+            error_text=error_text,
+            succeeded_versions=int(succeeded_versions),
+            total_versions=int(total_versions),
+            refunded_versions=int(refund_versions),
+            strict=True,
+        )
+        return {"sent_mode": "manager_alert"}
+
+    async def _runtime_dispatch_user_notice(self, item: Dict[str, Any]) -> Dict[str, Any]:
+        _, st, _ = await self._runtime_outbox_context(item)
+        bot = self._require_bot()
+        await bot.send_message(
+            st.chat_id,
+            _GENERATION_FAILED_USER_TEXT,
+            reply_markup=self._wait_audio_reuse_kb(),
+        )
+        return {"sent_mode": "user_notice"}
+
+    async def _restore_runtime_processing_states(self) -> None:
+        store = getattr(self, "runtime_store", None)
+        if store is None:
+            return
+        try:
+            runs = await store.list_incomplete_runs(surface=self._runtime_surface(), limit=200)
+        except Exception as exc:
+            log.warning("runtime_restore_runs_failed err=%r", exc)
+            return
+
+        for run in runs:
+            run_id = str(run.get("run_id") or "").strip()
+            if not run_id:
+                continue
+            try:
+                versions = await store.get_versions(run_id)
+                if not versions:
+                    continue
+                start_events = await store.list_events(run_id, event_type="run_started", limit=1)
+                snapshot = {}
+                if start_events and isinstance(start_events[0].get("payload"), dict):
+                    snapshot = dict(start_events[0].get("payload") or {})
+                success_events = await store.list_events(run_id, event_type="version_succeeded", limit=500)
+
+                ordered_job_ids = [
+                    str(v.get("job_id") or "")
+                    for v in versions
+                    if str(v.get("job_id") or "").strip()
+                ]
+                processed_success_job_ids = {
+                    str(
+                        ev.get("job_id")
+                        or (ev.get("payload") if isinstance(ev.get("payload"), dict) else {}).get("job_id")
+                        or ""
+                    ).strip()
+                    for ev in success_events
+                }
+                processed_success_job_ids.discard("")
+                active_job_ids = [jid for jid in ordered_job_ids if jid not in processed_success_job_ids]
+                if not active_job_ids:
+                    continue
+                completed_job_ids = [jid for jid in ordered_job_ids if jid in processed_success_job_ids]
+
+                used_file_names: List[str] = []
+                seen_names: set[str] = set()
+                for ev in success_events:
+                    payload = ev.get("payload") if isinstance(ev.get("payload"), dict) else {}
+                    for name in list(payload.get("used_file_names") or []):
+                        clean = str(name or "").strip()
+                        if not clean or clean in seen_names:
+                            continue
+                        seen_names.add(clean)
+                        used_file_names.append(clean)
+
+                chat_id = int(run.get("chat_id") or 0)
+                if chat_id <= 0:
+                    continue
+                st = await self.store.get(chat_id)
+                if st.stage == STAGE_PROCESSING and str(st.generation_run_id or "") == run_id:
+                    continue
+                st.stage = STAGE_PROCESSING
+                st.chat_username = str(snapshot.get("chat_username") or st.chat_username or "")
+                st.lyrics_text = str(snapshot.get("lyrics_text") or "")
+                st.target_fragment = str(snapshot.get("target_fragment") or "")
+                st.footage_artist_id = str(snapshot.get("footage_artist_id") or "")
+                st.subtitles_mode = str(snapshot.get("subtitles_mode") or st.subtitles_mode or "")
+                st.user_clip_start_sec = float(snapshot.get("user_clip_start_sec") or 0.0)
+                st.user_clip_end_sec = float(snapshot.get("user_clip_end_sec") or 0.0)
+                st.generation_run_id = run_id
+                st.batch_id = str(run.get("batch_id") or "")
+                st.batch_audio_s3_url = str(snapshot.get("audio_s3_url") or "")
+                st.batch_total_versions = max(1, int(run.get("versions_total") or len(versions) or 1))
+                st.next_version_to_enqueue = max(1, int(run.get("next_version_to_enqueue") or 1))
+                st.master_job_id = ordered_job_ids[0] if ordered_job_ids else ""
+                st.job_order = ordered_job_ids
+                st.used_footage_file_names = used_file_names
+                st.active_job_ids = active_job_ids
+                st.active_job_id = active_job_ids[0]
+                st.completed_job_ids = completed_job_ids
+                st.active_job_started_at = time.time()
+                st.last_status_msg_at = 0.0
+                st.status_message_id = 0
+                st.last_status_text = ""
+                st.last_backpressure_notice = ""
+                st.poll_attempts = 0
+                await self.store.set(st)
+                log.info(
+                    "runtime_processing_state_restored surface=%s chat=%s run_id=%s jobs=%s",
+                    self._runtime_surface(),
+                    st.chat_id,
+                    run_id,
+                    active_job_ids,
+                )
+            except Exception as exc:
+                log.warning("runtime_restore_run_failed run_id=%s err=%r", run_id, exc)
 
     def _allow_archive_for_state(self, st: ChatState) -> bool:
         return _is_username_allowed(
@@ -940,7 +1680,7 @@ class BlastBotApp:
     def _allow_maintenance_bypass_username(self, username: str) -> bool:
         return _is_username_allowed(
             username=username,
-            allowlist=tuple(self.settings.tg_maintenance_bypass_usernames or tuple()),
+            allowlist=tuple(self.settings.system_maintenance_bypass_usernames or tuple()),
         )
 
     def _allow_maintenance_bypass_for_state(self, st: ChatState) -> bool:
@@ -1005,15 +1745,113 @@ class BlastBotApp:
         if bool(self.settings.tg_maintenance_mode):
             return True
         key = str(self.settings.tg_maintenance_state_key or "").strip()
-        if not key:
+        if key and await self.store.get_runtime_bool(key, default=False):
+            return True
+        startup_key = self._startup_maintenance_state_key()
+        if not startup_key:
             return False
-        return await self.store.get_runtime_bool(key, default=False)
+        return await self.store.get_runtime_bool(startup_key, default=False)
 
     def _maintenance_message_text(self) -> str:
         txt = str(self.settings.tg_maintenance_message or "").strip()
         if txt:
             return txt
         return "Мы на техработах. Скоро вернемся."
+
+    def _startup_maintenance_state_key(self) -> str:
+        base = str(getattr(self.settings, "tg_startup_maintenance_state_key", "") or "").strip()
+        if not base:
+            return ""
+        node_id = str(getattr(self.settings, "tg_processing_node_id", "") or "").strip() or "unknown-node"
+        return f"{base}:{node_id}"
+
+    async def _set_startup_maintenance_enabled(self, enabled: bool, *, ttl_s: int = 0) -> None:
+        startup_key = self._startup_maintenance_state_key()
+        if not startup_key:
+            return
+        await self.store.set_runtime_bool(startup_key, bool(enabled), ttl_s=max(0, int(ttl_s or 0)))
+
+    async def _startup_dependencies_status(self) -> tuple[bool, List[str]]:
+        issues: List[str] = []
+
+        try:
+            health = await self.orchestrator.get_health()
+            if not bool(health.get("ok")):
+                issues.append("orchestrator_health_not_ok")
+            checks = health.get("checks") if isinstance(health.get("checks"), dict) else {}
+            if isinstance(checks, dict):
+                if checks.get("bundle_ready") is False:
+                    issues.append("bundle_ready=false")
+                if checks.get("llm_admission_ready") is False:
+                    issues.append("llm_admission_ready=false")
+                if checks.get("payment_db_ready") is False:
+                    issues.append("payment_db_ready=false")
+        except Exception as exc:
+            issues.append(f"health_error={type(exc).__name__}")
+
+        try:
+            llm_workers = await self.orchestrator.get_llm_workers()
+            workers = llm_workers.get("workers") if isinstance(llm_workers.get("workers"), dict) else {}
+            useful_capacity = False
+            for row in workers.values():
+                if not isinstance(row, dict):
+                    continue
+                if bool(row.get("enabled")) and int(row.get("weight", 0) or 0) > 0 and int(row.get("max_inflight", 0) or 0) > 0:
+                    useful_capacity = True
+                    break
+            if not useful_capacity:
+                issues.append("llm_workers_not_ready")
+        except Exception as exc:
+            issues.append(f"llm_workers_error={type(exc).__name__}")
+
+        try:
+            windows_nodes = await self.orchestrator.get_windows_nodes()
+            effective_urls = windows_nodes.get("effective_urls")
+            if not isinstance(effective_urls, list) or not [str(x).strip() for x in effective_urls if str(x).strip()]:
+                issues.append("windows_nodes_empty")
+        except Exception as exc:
+            issues.append(f"windows_nodes_error={type(exc).__name__}")
+
+        return (len(issues) == 0), issues
+
+    async def _startup_auto_maintenance_loop(self) -> None:
+        poll_s = max(1.0, float(getattr(self.settings, "tg_startup_maintenance_poll_s", 5.0) or 5.0))
+        timeout_s = max(30.0, float(getattr(self.settings, "tg_startup_maintenance_timeout_s", 600.0) or 600.0))
+        ttl_s = max(60, int(timeout_s + poll_s * 3.0))
+        deadline = time.monotonic() + timeout_s
+        timeout_alert_sent = False
+        try:
+            while True:
+                await self._set_startup_maintenance_enabled(True, ttl_s=ttl_s)
+                ready, issues = await self._startup_dependencies_status()
+                if ready:
+                    await self._set_startup_maintenance_enabled(False)
+                    await self._notify_ops_alert(
+                        title="Public bot startup maintenance cleared",
+                        extra_lines=[
+                            f"node: {str(self.settings.tg_processing_node_id or '').strip() or 'unknown-node'}",
+                            f"delivery_mode: {str(self.settings.tg_delivery_mode or '').strip() or 'polling'}",
+                        ],
+                    )
+                    return
+
+                if (not timeout_alert_sent) and time.monotonic() >= deadline:
+                    timeout_alert_sent = True
+                    await self._notify_ops_alert(
+                        title="Public bot startup maintenance still active",
+                        extra_lines=[f"issues: {', '.join(issues[:5])}" if issues else "issues: unknown"],
+                    )
+
+                await asyncio.sleep(poll_s)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            log.warning("startup_auto_maintenance_loop_failed err=%r", exc)
+            await self._notify_ops_alert(
+                title="Public bot startup maintenance loop failed",
+                extra_lines=[f"node: {str(self.settings.tg_processing_node_id or '').strip() or 'unknown-node'}"],
+                error_text=repr(exc),
+            )
 
     async def _maybe_reply_maintenance_stub(self, message: Message) -> bool:
         try:
@@ -1022,6 +1860,8 @@ class BlastBotApp:
             log.warning("maintenance_gate_check_failed err=%r", e)
             enabled = bool(self.settings.tg_maintenance_mode)
         if not enabled:
+            return False
+        if self._allow_maintenance_bypass_for_message(message):
             return False
         await message.answer(self._maintenance_message_text())
         return True
@@ -1297,6 +2137,8 @@ class BlastBotApp:
         self.settings.tmp_dir.mkdir(parents=True, exist_ok=True)
 
         await self.credits_db.init()
+        self.runtime_store = GenerationRuntimeStore(self.credits_db._pool_or_fail())
+        await self.runtime_store.init_schema()
 
         # Set bot menu commands
         await bot.set_my_commands([
@@ -1330,6 +2172,19 @@ class BlastBotApp:
         self._state_cleanup_task = asyncio.create_task(self._state_cleanup_loop(), name="tg_bot_state_cleanup_loop")
         self._fs_cleanup_task = asyncio.create_task(self._fs_cleanup_loop(), name="tg_bot_fs_cleanup_loop")
         self._subscription_charge_task = asyncio.create_task(self._subscription_charge_loop(), name="tg_bot_subscription_charge")
+        await self._restore_runtime_processing_states()
+        self._outbox_task = asyncio.create_task(self._runtime_outbox_loop(), name="tg_bot_outbox_dispatcher")
+        if bool(getattr(self.settings, "tg_auto_startup_maintenance", False)) and not bool(self.settings.tg_maintenance_mode):
+            await self._set_startup_maintenance_enabled(
+                True,
+                ttl_s=max(60, int(float(getattr(self.settings, "tg_startup_maintenance_timeout_s", 600.0) or 600.0) + 30.0)),
+            )
+            self._startup_maintenance_task = asyncio.create_task(
+                self._startup_auto_maintenance_loop(),
+                name="tg_bot_startup_maintenance_loop",
+            )
+        else:
+            await self._set_startup_maintenance_enabled(False)
         log.info("startup complete: polling loop started")
 
     async def _on_shutdown(self, bot: Bot) -> None:
@@ -1351,6 +2206,8 @@ class BlastBotApp:
             getattr(self, "_subscription_charge_task", None),
             getattr(self, "_broadcast_task", None),
             getattr(self, "_lifecycle_task", None),
+            getattr(self, "_startup_maintenance_task", None),
+            getattr(self, "_outbox_task", None),
         ]:
             if task is not None:
                 task.cancel()
@@ -1362,6 +2219,7 @@ class BlastBotApp:
         await self.orchestrator.close()
         await self.credits_db.close()
         await self.store.close()
+        self.runtime_store = None
         self._bot = None
         log.info("shutdown complete")
 
@@ -1745,7 +2603,15 @@ class BlastBotApp:
                     "Пришли, пожалуйста, более легкий файл: лучше mp3/m4a или обрезанный фрагмент."
                 )
             else:
-                await message.answer(f"Не удалось подготовить аудио (Telegram): {e}")
+                await self._notify_ops_alert(
+                    title="Audio prepare telegram error",
+                    chat_id=chat_id,
+                    username=st.chat_username,
+                    stage="audio_prepare",
+                    error_text=str(e),
+                    extra_lines=[f"file_name: {_safe_name(original_name)}"],
+                )
+                await message.answer(_AUDIO_PREPARE_TG_FAILED_USER_TEXT)
             return
         except Exception as e:
             log.exception(
@@ -1755,7 +2621,15 @@ class BlastBotApp:
                 original_name,
                 str(e),
             )
-            await message.answer(f"Не удалось подготовить аудио: {e}")
+            await self._notify_ops_alert(
+                title="Audio prepare failure",
+                chat_id=chat_id,
+                username=st.chat_username,
+                stage="audio_prepare",
+                error_text=str(e),
+                extra_lines=[f"file_name: {_safe_name(original_name)}"],
+            )
+            await message.answer(_AUDIO_PREPARE_FAILED_USER_TEXT)
             return
 
         st.pending_audio_file_id = file_id
@@ -2116,6 +2990,12 @@ class BlastBotApp:
             )
 
             batch_id = f"tg-{chat_id}-{uuid.uuid4().hex[:12]}"
+            st.generation_run_id = await self._runtime_start_run(
+                st=st,
+                batch_id=batch_id,
+                audio_s3_url=audio_s3_url,
+                versions_total=versions,
+            )
             master_job_id = await self._enqueue_batch_version(
                 st=st,
                 audio_s3_url=audio_s3_url,
@@ -2142,6 +3022,7 @@ class BlastBotApp:
             st.last_status_msg_at = 0.0
             st.status_message_id = 0
             st.last_status_text = ""
+            st.last_backpressure_notice = ""
             st.poll_attempts = 0
             st.last_job_stage = ""
             st.last_job_error = ""
@@ -2150,10 +3031,12 @@ class BlastBotApp:
             initial_rows = [
                 {"job_id": master_job_id, "status": "QUEUED", "stage": "build", "error": "", "version": 1}
             ]
+            st.last_backpressure_notice = await self._current_backpressure_notice()
             initial_text = self._jobs_progress_message(
                 rows=initial_rows,
                 poll_attempts=0,
                 total_versions=versions,
+                backpressure_notice=st.last_backpressure_notice,
             )
             sent = await message.answer(initial_text)
             st.status_message_id = int(getattr(sent, "message_id", 0) or 0)
@@ -2187,6 +3070,13 @@ class BlastBotApp:
                 refunded_versions=int(deducted_versions),
             )
             await message.answer(_GENERATION_FAILED_USER_TEXT, reply_markup=self._wait_audio_reuse_kb())
+            await self._runtime_update_run(
+                st=st,
+                status="failed",
+                current_stage="enqueue_start",
+                last_error_code="enqueue_start_failed",
+                last_error_text=err_text,
+            )
             self._reset_processing_state(st, next_stage=STAGE_WAIT_AUDIO)
             await self.store.set(st)
 
@@ -2281,7 +3171,67 @@ class BlastBotApp:
         except Exception as e:
             log.warning("manager_notify_failed err=%s", str(e))
 
+    async def _notify_ops_alert(
+        self,
+        *,
+        title: str,
+        chat_id: int = 0,
+        username: str = "",
+        job_id: str = "",
+        stage: str = "",
+        error_text: str = "",
+        extra_lines: Optional[List[str]] = None,
+        raise_on_error: bool = False,
+    ) -> bool:
+        token = str(self.settings.alert_telegram_bot_token or "").strip()
+        target_chat_id = str(self.settings.alert_telegram_chat_id or "").strip()
+        if not token or not target_chat_id:
+            return False
+
+        clean_username = str(username or "").strip().lstrip("@")
+        lines = [f"⚠️ {title}"]
+        if clean_username:
+            lines.append(f"user: @{clean_username}")
+        if chat_id:
+            lines.append(f"chat_id: {chat_id}")
+        if job_id:
+            lines.append(f"job_id: {job_id}")
+        if stage:
+            lines.append(f"stage: {stage}")
+        for raw in list(extra_lines or []):
+            txt = str(raw or "").strip()
+            if txt:
+                lines.append(txt)
+        if error_text:
+            lines.extend(["", f"error: {_compact_text(error_text, limit=1200)}"])
+
+        payload = {
+            "chat_id": target_chat_id,
+            "text": "\n".join(lines)[:3500],
+            "disable_web_page_preview": True,
+        }
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.post(url, json=payload)
+            if resp.status_code >= 300:
+                raise RuntimeError(f"status={resp.status_code} body={resp.text[:300]}")
+            return True
+        except Exception as e:
+            log.warning("ops_alert_notify_failed title=%s err=%s", title, str(e))
+            if raise_on_error:
+                raise
+        return False
+
     async def _notify_manager_generation_error(self, *, username: str, chat_id: int, job_id: str, stage: str, error_text: str) -> None:
+        await self._notify_ops_alert(
+            title="Public bot generation error",
+            chat_id=chat_id,
+            username=username,
+            job_id=job_id,
+            stage=stage,
+            error_text=error_text,
+        )
         mgr = self.settings.manager_chat_id
         if not mgr:
             return
@@ -2344,14 +3294,28 @@ class BlastBotApp:
         succeeded_versions: int,
         total_versions: int,
         refunded_versions: int,
+        strict: bool = False,
     ) -> None:
+        username = str(st.chat_username or "").strip()
+        uname = f"@{username}" if username else "(нет username)"
+        err_short = _compact_text(error_text or "без деталей", limit=700)
+        await self._notify_ops_alert(
+            title="Public bot generation failure",
+            chat_id=st.chat_id,
+            username=username,
+            job_id=job_id,
+            stage=stage,
+            error_text=error_text,
+            extra_lines=[
+                f"succeeded_versions: {succeeded_versions}/{total_versions}",
+                f"refunded_versions: {refunded_versions}",
+            ],
+            raise_on_error=strict,
+        )
         mgr = self.settings.manager_chat_id
         if not mgr:
             return
         bot = self._require_bot()
-        username = str(st.chat_username or "").strip()
-        uname = f"@{username}" if username else "(нет username)"
-        err_short = _compact_text(error_text or "без деталей", limit=700)
         try:
             await bot.send_message(
                 mgr,
@@ -2366,6 +3330,8 @@ class BlastBotApp:
             )
         except Exception as e:
             log.warning("manager_generation_failure_notify_failed chat=%s err=%s", st.chat_id, str(e))
+            if strict:
+                raise
 
     async def _send_survey_link(self, message: Message) -> None:
         chat_id = int(message.chat.id) if message.chat else 0
@@ -2916,6 +3882,12 @@ class BlastBotApp:
             if referrer_st.batch_audio_s3_url:
                 referrer_st.stage = STAGE_PROCESSING
                 batch_id = self._build_referral_batch_id(referrer_id)
+                referrer_st.generation_run_id = await self._runtime_start_run(
+                    st=referrer_st,
+                    batch_id=batch_id,
+                    audio_s3_url=str(referrer_st.batch_audio_s3_url or ""),
+                    versions_total=1,
+                )
                 job_id = await self._enqueue_batch_version(
                     st=referrer_st,
                     audio_s3_url=referrer_st.batch_audio_s3_url,
@@ -2935,6 +3907,7 @@ class BlastBotApp:
                 referrer_st.last_status_msg_at = 0.0
                 referrer_st.status_message_id = 0
                 referrer_st.last_status_text = ""
+                referrer_st.last_backpressure_notice = ""
                 referrer_st.poll_attempts = 0
                 referrer_st.last_job_stage = ""
                 referrer_st.last_job_error = ""
@@ -3130,6 +4103,9 @@ class BlastBotApp:
         if end > start >= 0.0:
             user_clip_start_sec = start
             user_clip_end_sec = end
+        maintenance_bypass_token = ""
+        if self._allow_maintenance_bypass_for_state(st):
+            maintenance_bypass_token = str(self.settings.system_maintenance_bypass_token or "").strip()
         enqueue = await self.orchestrator.send_audio_s3(
             audio_s3_url=audio_s3_url,
             mode="with_gemini",
@@ -3145,10 +4121,22 @@ class BlastBotApp:
             exclude_file_names=list(exclude_file_names or []),
             variant_index=int(version_index),
             variants_total=int(versions_total),
+            maintenance_bypass_token=maintenance_bypass_token,
         )
         job_id = str(enqueue.get("job_id") or "").strip()
         if not job_id:
             raise RuntimeError(f"enqueue response has no job_id: {enqueue}")
+        await self._runtime_attach_version(
+            st=st,
+            version_index=int(version_index),
+            job_id=job_id,
+            reuse_text_job_id=str(reuse_text_job_id or ""),
+        )
+        await self._runtime_update_run(
+            st=st,
+            current_stage="queued",
+            next_version_to_enqueue=max(1, int(version_index) + 1),
+        )
         return job_id
 
     def _progress_interval_s(self) -> float:
@@ -3200,12 +4188,26 @@ class BlastBotApp:
         filled = int(round((p / 100.0) * width))
         return "[" + ("█" * filled) + ("░" * max(0, width - filled)) + "]"
 
+    async def _current_backpressure_notice(self) -> str:
+        try:
+            metrics = await self.orchestrator.get_metrics()
+        except Exception:
+            return ""
+        capacity_policy = metrics.get("capacity_policy") if isinstance(metrics, dict) else {}
+        if not isinstance(capacity_policy, dict):
+            return ""
+        state = str(capacity_policy.get("state") or "").strip().lower()
+        if state in {"", "normal"}:
+            return ""
+        return str(capacity_policy.get("user_message") or "").strip()
+
     def _jobs_progress_message(
         self,
         *,
         rows: List[Dict[str, Any]],
         poll_attempts: int,
         total_versions: int,
+        backpressure_notice: str = "",
     ) -> str:
         total = max(1, int(total_versions))
         sum_frac = 0.0
@@ -3221,10 +4223,14 @@ class BlastBotApp:
         frac = max(0.0, min(1.0, frac))
         percent = int(round(frac * 100))
 
-        return "\n".join([
+        lines = [
             "Прогресс:",
             f"{self._progress_bar(percent)} {percent}%",
-        ])
+        ]
+        note = str(backpressure_notice or "").strip()
+        if note:
+            lines.extend(["", note])
+        return "\n".join(lines)
 
     async def _upsert_status_message(self, *, bot: Bot, st: ChatState, text: str) -> None:
         new_text = str(text or "").strip()
@@ -3265,6 +4271,7 @@ class BlastBotApp:
 
     def _reset_processing_state(self, st: ChatState, *, next_stage: str = STAGE_RATE_VIDEO) -> None:
         st.stage = str(next_stage)
+        st.generation_run_id = ""
         st.active_job_id = ""
         st.active_job_ids = []
         st.completed_job_ids = []
@@ -3279,6 +4286,7 @@ class BlastBotApp:
         st.last_status_msg_at = 0.0
         st.status_message_id = 0
         st.last_status_text = ""
+        st.last_backpressure_notice = ""
         st.poll_attempts = 0
         st.last_job_stage = ""
         st.last_job_error = ""
@@ -3471,21 +4479,25 @@ class BlastBotApp:
         while True:
             try:
                 states = await self.store.list_processing()
-                for st in states:
+                concurrency = max(1, int(getattr(self.settings, "tg_processing_max_concurrency", 8) or 8))
+                semaphore = asyncio.Semaphore(concurrency)
+
+                async def _process_one(st: ChatState) -> None:
                     lock_acquired = False
                     try:
-                        lock_acquired = await self.store.acquire_processing_lock(
-                            chat_id=st.chat_id,
-                            owner_id=self._processing_owner_id,
-                            ttl_s=self._processing_lock_ttl_s,
-                        )
-                        if not lock_acquired:
-                            continue
-                        await self._process_chat_job(
-                            st,
-                            lock_owner_id=self._processing_owner_id,
-                            lock_ttl_s=self._processing_lock_ttl_s,
-                        )
+                        async with semaphore:
+                            lock_acquired = await self.store.acquire_processing_lock(
+                                chat_id=st.chat_id,
+                                owner_id=self._processing_owner_id,
+                                ttl_s=self._processing_lock_ttl_s,
+                            )
+                            if not lock_acquired:
+                                return
+                            await self._process_chat_job(
+                                st,
+                                lock_owner_id=self._processing_owner_id,
+                                lock_ttl_s=self._processing_lock_ttl_s,
+                            )
                     except Exception as e:
                         log.warning("processing loop chat=%s err=%r", st.chat_id, e)
                     finally:
@@ -3497,6 +4509,9 @@ class BlastBotApp:
                                 )
                             except Exception as release_err:
                                 log.warning("processing lock release failed chat=%s err=%r", st.chat_id, release_err)
+
+                if states:
+                    await asyncio.gather(*[_process_one(st) for st in states])
             except asyncio.CancelledError:
                 raise
             except Exception as e:
@@ -3768,86 +4783,169 @@ class BlastBotApp:
                 stage,
                 _compact_text(error_text, limit=220),
             )
-            retries = _extract_celery_retries(error_text)
-            fail_lines = [
-                f"{ver_label}: задача завершилась с ошибкой.",
-                f"Стадия: {stage or '-'}",
-            ]
-            if retries is not None:
-                fail_lines.append(f"Celery retries: {retries}")
-            if error_text:
-                fail_lines.append(f"Последняя ошибка: {_compact_text(error_text, limit=1000)}")
-            else:
-                fail_lines.append("Последняя ошибка: без деталей.")
-            await bot.send_message(st.chat_id, "\n".join(fail_lines))
-            await self._notify_manager_generation_error(
-                username=st.chat_username.lstrip("@") if st.chat_username else "",
-                chat_id=st.chat_id,
-                job_id=job_id,
-                stage=stage,
-                error_text=error_text,
+            await self._runtime_update_run(
+                st=st,
+                current_stage=stage or "failed",
+                last_error_code="job_failed",
+                last_error_text=error_text,
             )
             return
 
         source = _resolve_job_video_source(job, self.settings)
         if not source:
-            await bot.send_message(
-                st.chat_id,
-                f"{ver_label}: готово, но не нашёл ссылку на видео в ответе оркестратора.",
+            claimed_missing_source, missing_source_key = await self._runtime_claim_outbox(
+                st=st,
+                kind="result_source_missing_notice",
+                job_id=job_id,
+                payload={
+                    "job_id": job_id,
+                    "ver_label": ver_label,
+                    "stage": stage or "render",
+                },
             )
+            if claimed_missing_source:
+                try:
+                    await self._notify_ops_alert(
+                        title="Render result without output source",
+                        chat_id=st.chat_id,
+                        username=st.chat_username,
+                        job_id=job_id,
+                        stage=stage or "render",
+                        error_text=json.dumps(job, ensure_ascii=False)[:1200],
+                    )
+                    await bot.send_message(
+                        st.chat_id,
+                        f"{ver_label}: {_RESULT_SOURCE_MISSING_USER_TEXT}",
+                    )
+                    await self._runtime_mark_outbox_sent(
+                        dedupe_key=missing_source_key,
+                        payload_patch={"sent_mode": "user_notice"},
+                    )
+                except Exception as exc:
+                    await self._runtime_mark_outbox_failed(
+                        dedupe_key=missing_source_key,
+                        error_text=repr(exc),
+                        keep_leased=True,
+                    )
             return
 
         st.last_result_url = source
 
-        video_path = self.settings.tmp_dir / str(st.chat_id) / "result" / f"{job_id}.mp4"
-        video_path.parent.mkdir(parents=True, exist_ok=True)
-        send_video_path = video_path
+        claimed_video_delivery, video_delivery_key = await self._runtime_claim_outbox(
+            st=st,
+            kind="telegram_video_delivery",
+            job_id=job_id,
+            payload={
+                "job_id": job_id,
+                "ver_label": ver_label,
+                "source": source,
+                "stage": stage or "render_delivery",
+            },
+        )
+        if claimed_video_delivery:
+            video_path = self.settings.tmp_dir / str(st.chat_id) / "result" / f"{job_id}.mp4"
+            video_path.parent.mkdir(parents=True, exist_ok=True)
+            send_video_path = video_path
 
-        file_sent = False
-        send_file_error = ""
-        try:
-            await self._download_result_video(source=source, dest=video_path)
-            send_video_path = await self._prepare_result_video_for_tg(
-                source_path=video_path,
-                chat_id=st.chat_id,
-                job_id=job_id,
-            )
-            await self._send_result_video_with_retry(
-                bot=bot,
-                chat_id=st.chat_id,
-                job_id=job_id,
-                video_path=send_video_path,
-                caption=f"{ver_label}: вот твой трек.",
-            )
-            file_sent = True
-        except Exception as e:
-            send_file_error = str(e)
-            log.warning("send file failed chat=%s job=%s err=%s", st.chat_id, job_id, send_file_error)
+            file_sent = False
+            send_file_error = ""
+            try:
+                await self._download_result_video(source=source, dest=video_path)
+                send_video_path = await self._prepare_result_video_for_tg(
+                    source_path=video_path,
+                    chat_id=st.chat_id,
+                    job_id=job_id,
+                )
+                await self._send_result_video_with_retry(
+                    bot=bot,
+                    chat_id=st.chat_id,
+                    job_id=job_id,
+                    video_path=send_video_path,
+                    caption=f"{ver_label}: вот твой трек.",
+                )
+                file_sent = True
+                await self._runtime_mark_outbox_sent(
+                    dedupe_key=video_delivery_key,
+                    payload_patch={"sent_mode": "telegram_video"},
+                )
+            except Exception as e:
+                send_file_error = str(e)
+                log.warning("send file failed chat=%s job=%s err=%s", st.chat_id, job_id, send_file_error)
 
-        if not file_sent:
-            fallback_link = await self._build_fallback_link(source)
-            msg = f"{ver_label}: не смог отправить файл видео."
-            if fallback_link:
-                msg += f"\nСсылка: {fallback_link}"
-            if send_file_error:
-                msg += f"\nОшибка: {send_file_error}"
-            await bot.send_message(st.chat_id, msg)
+            if not file_sent:
+                fallback_link = await self._build_fallback_link(source)
+                try:
+                    await self._notify_ops_alert(
+                        title="Telegram video delivery failed",
+                        chat_id=st.chat_id,
+                        username=st.chat_username,
+                        job_id=job_id,
+                        stage=stage or "render_delivery",
+                        error_text=send_file_error,
+                        extra_lines=[f"has_fallback_link: {bool(fallback_link)}"],
+                    )
+                    msg = f"{ver_label}: {_VIDEO_DELIVERY_FAILED_USER_TEXT}"
+                    if fallback_link:
+                        msg += f"\nСсылка: {fallback_link}"
+                    await bot.send_message(st.chat_id, msg)
+                    await self._runtime_mark_outbox_sent(
+                        dedupe_key=video_delivery_key,
+                        payload_patch={
+                            "sent_mode": "fallback_link",
+                            "fallback_link": fallback_link,
+                        },
+                    )
+                except Exception as exc:
+                    await self._runtime_mark_outbox_failed(
+                        dedupe_key=video_delivery_key,
+                        error_text=repr(exc),
+                        keep_leased=True,
+                    )
+
+            try:
+                for p in {video_path, send_video_path}:
+                    if p.exists():
+                        p.unlink()
+            except Exception:
+                pass
 
         if self.settings.tg_send_project_archive and self._allow_archive_for_state(st):
             archive_source = _resolve_job_project_archive_source(job)
-            if archive_source:
-                archive_link = await self._build_fallback_link(archive_source)
-                if not archive_link:
-                    archive_link = archive_source
-                await bot.send_message(
-                    st.chat_id,
-                    f"{ver_label}: проект (AEP + ресурсы): {archive_link}",
-                )
-            else:
-                await bot.send_message(
-                    st.chat_id,
-                    f"{ver_label}: видео готово, но ссылка на архив проекта в ответе рендера не найдена.",
-                )
+            claimed_archive_notice, archive_notice_key = await self._runtime_claim_outbox(
+                st=st,
+                kind="telegram_project_archive_notice",
+                job_id=job_id,
+                payload={"job_id": job_id, "ver_label": ver_label, "archive_source": archive_source},
+            )
+            if claimed_archive_notice:
+                try:
+                    if archive_source:
+                        archive_link = await self._build_fallback_link(archive_source)
+                        if not archive_link:
+                            archive_link = archive_source
+                        await bot.send_message(
+                            st.chat_id,
+                            f"{ver_label}: проект (AEP + ресурсы): {archive_link}",
+                        )
+                        await self._runtime_mark_outbox_sent(
+                            dedupe_key=archive_notice_key,
+                            payload_patch={"archive_link": archive_link},
+                        )
+                    else:
+                        await bot.send_message(
+                            st.chat_id,
+                            f"{ver_label}: видео готово, но ссылка на архив проекта в ответе рендера не найдена.",
+                        )
+                        await self._runtime_mark_outbox_sent(
+                            dedupe_key=archive_notice_key,
+                            payload_patch={"archive_link": ""},
+                        )
+                except Exception as exc:
+                    await self._runtime_mark_outbox_failed(
+                        dedupe_key=archive_notice_key,
+                        error_text=repr(exc),
+                        keep_leased=True,
+                    )
 
         if self._allow_archive_for_state(st):
             try:
@@ -3856,13 +4954,7 @@ class BlastBotApp:
                     await self._send_long_html_message(bot=bot, chat_id=st.chat_id, text=dbg_text)
             except Exception as e:
                 log.warning("subtitles_debug_send_failed chat=%s job=%s err=%s", st.chat_id, job_id, str(e))
-
-        try:
-            for p in {video_path, send_video_path}:
-                if p.exists():
-                    p.unlink()
-        except Exception:
-            pass
+        await self._runtime_update_run(st=st, current_stage=stage or "render_delivery")
 
     async def _refresh_processing_lock_or_raise(self, *, chat_id: int, owner_id: str, ttl_s: int) -> None:
         owner = str(owner_id or "").strip()
@@ -3906,13 +4998,14 @@ class BlastBotApp:
         new_finals: List[Tuple[str, Dict[str, Any]]] = []
 
         st.poll_attempts = max(0, int(st.poll_attempts)) + 1
+        await self._refresh_processing_lock_or_raise(
+            chat_id=st.chat_id,
+            owner_id=lock_owner_id,
+            ttl_s=lock_ttl_s,
+        )
+        jobs_by_id = await self.orchestrator.get_jobs(job_ids)
         for jid in job_ids:
-            await self._refresh_processing_lock_or_raise(
-                chat_id=st.chat_id,
-                owner_id=lock_owner_id,
-                ttl_s=lock_ttl_s,
-            )
-            job = await self.orchestrator.get_job(jid)
+            job = jobs_by_id[jid]
             status = str(job.get("status") or "").upper()
             stage = str(job.get("stage") or "").strip()
             error_text = str(job.get("error") or "").strip()
@@ -3929,13 +5022,20 @@ class BlastBotApp:
                 st.last_job_stage = stage
             if error_text:
                 st.last_job_error = error_text
+            if status not in {"SUCCEEDED", "FAILED"} and jid in completed:
+                completed.discard(jid)
+            await self._runtime_sync_version_from_job(st=st, job_id=jid, job=job)
             if status in {"SUCCEEDED", "FAILED"} and jid not in completed:
                 new_finals.append((jid, job))
+
+        if st.poll_attempts == 1 or (st.poll_attempts % 3) == 0:
+            st.last_backpressure_notice = await self._current_backpressure_notice()
 
         status_text = self._jobs_progress_message(
             rows=rows,
             poll_attempts=st.poll_attempts,
             total_versions=total_versions,
+            backpressure_notice=st.last_backpressure_notice,
         )
         now = time.time()
         should_send = (
@@ -3973,6 +5073,11 @@ class BlastBotApp:
                         added_count,
                         len(st.used_footage_file_names or []),
                     )
+                    await self._runtime_record_version_succeeded(
+                        st=st,
+                        job_id=jid,
+                        used_file_names=list(used_now),
+                    )
 
         st.completed_job_ids = [jid for jid in job_ids if jid in completed]
         failed_rows = [r for r in rows if str(r.get("status") or "").upper() == "FAILED"]
@@ -3984,33 +5089,99 @@ class BlastBotApp:
             succeeded_versions = sum(1 for r in rows if str(r.get("status") or "").upper() == "SUCCEEDED")
             refund_versions = max(0, int(total_versions) - int(succeeded_versions))
             if refund_versions > 0:
-                try:
-                    await self.credits_db.add_credits(
-                        st.chat_id,
-                        int(refund_versions),
-                        "generation_failed_refund",
-                        admin_note=f"batch={st.batch_id or '-'} job={failed_job_id or '-'}",
-                    )
-                except Exception as e:
-                    log.warning("generation_failed_refund_add_credits_failed chat=%s err=%s", st.chat_id, str(e))
+                claimed_refund, refund_key = await self._runtime_claim_outbox(
+                    st=st,
+                    kind="generation_failed_refund",
+                    suffix=failed_job_id or "batch",
+                    payload={
+                        "failed_job_id": failed_job_id,
+                        "refund_versions": int(refund_versions),
+                    },
+                )
+                if claimed_refund:
+                    try:
+                        await self.credits_db.add_credits(
+                            st.chat_id,
+                            int(refund_versions),
+                            "generation_failed_refund",
+                            admin_note=f"batch={st.batch_id or '-'} job={failed_job_id or '-'}",
+                            actor="outbox_inline",
+                            order_id=refund_key,
+                        )
+                        await self._runtime_mark_outbox_sent(
+                            dedupe_key=refund_key,
+                            payload_patch={"refund_versions": int(refund_versions)},
+                        )
+                    except Exception as e:
+                        log.warning("generation_failed_refund_add_credits_failed chat=%s err=%s", st.chat_id, str(e))
+                        await self._runtime_mark_outbox_failed(
+                            dedupe_key=refund_key,
+                            error_text=repr(e),
+                            keep_leased=True,
+                        )
             await self.credits_db.log_event(
                 st.chat_id,
                 "generation_failed",
                 f"job={failed_job_id or '-'} stage={failed_stage or '-'}",
             )
-            await self._notify_manager_generation_failure(
+            claimed_manager_alert, manager_alert_key = await self._runtime_claim_outbox(
                 st=st,
-                job_id=failed_job_id,
-                stage=failed_stage,
-                error_text=failed_error,
-                succeeded_versions=int(succeeded_versions),
-                total_versions=int(total_versions),
-                refunded_versions=int(refund_versions),
+                kind="generation_failed_manager_alert",
+                suffix=failed_job_id or "batch",
+                payload={
+                    "failed_job_id": failed_job_id,
+                    "failed_stage": failed_stage,
+                    "error_text": failed_error,
+                    "succeeded_versions": int(succeeded_versions),
+                    "total_versions": int(total_versions),
+                    "refunded_versions": int(refund_versions),
+                },
             )
-            await bot.send_message(
-                st.chat_id,
-                _GENERATION_FAILED_USER_TEXT,
-                reply_markup=self._wait_audio_reuse_kb(),
+            if claimed_manager_alert:
+                try:
+                    await self._notify_manager_generation_failure(
+                        st=st,
+                        job_id=failed_job_id,
+                        stage=failed_stage,
+                        error_text=failed_error,
+                        succeeded_versions=int(succeeded_versions),
+                        total_versions=int(total_versions),
+                        refunded_versions=int(refund_versions),
+                        strict=True,
+                    )
+                    await self._runtime_mark_outbox_sent(dedupe_key=manager_alert_key)
+                except Exception as exc:
+                    await self._runtime_mark_outbox_failed(
+                        dedupe_key=manager_alert_key,
+                        error_text=repr(exc),
+                        keep_leased=True,
+                    )
+            claimed_user_notice, user_notice_key = await self._runtime_claim_outbox(
+                st=st,
+                kind="generation_failed_user_notice",
+                suffix=failed_job_id or "batch",
+                payload={"failed_job_id": failed_job_id},
+            )
+            if claimed_user_notice:
+                try:
+                    await bot.send_message(
+                        st.chat_id,
+                        _GENERATION_FAILED_USER_TEXT,
+                        reply_markup=self._wait_audio_reuse_kb(),
+                    )
+                    await self._runtime_mark_outbox_sent(dedupe_key=user_notice_key)
+                except Exception as exc:
+                    await self._runtime_mark_outbox_failed(
+                        dedupe_key=user_notice_key,
+                        error_text=repr(exc),
+                        keep_leased=True,
+                    )
+            await self._runtime_update_run(
+                st=st,
+                status="failed",
+                current_stage=failed_stage or "failed",
+                last_error_code="batch_failed",
+                last_error_text=failed_error,
             )
             self._reset_processing_state(st, next_stage=STAGE_WAIT_AUDIO)
             await self.store.set(st)
@@ -4071,38 +5242,109 @@ class BlastBotApp:
                     succeeded_versions = sum(1 for r in rows if str(r.get("status") or "").upper() == "SUCCEEDED")
                     refund_versions = max(0, int(total_versions) - int(succeeded_versions))
                     if refund_versions > 0:
-                        try:
-                            await self.credits_db.add_credits(
-                                st.chat_id,
-                                int(refund_versions),
-                                "generation_failed_refund",
-                                admin_note=f"batch={st.batch_id or '-'} job=enqueue_next_version_failed",
-                            )
-                        except Exception as add_e:
-                            log.warning("enqueue_next_refund_failed chat=%s err=%s", st.chat_id, str(add_e))
+                        claimed_refund, refund_key = await self._runtime_claim_outbox(
+                            st=st,
+                            kind="enqueue_next_failed_refund",
+                            suffix="enqueue_next_version",
+                            payload={
+                                "failed_job_id": "enqueue_next_version",
+                                "refund_versions": int(refund_versions),
+                            },
+                        )
+                        if claimed_refund:
+                            try:
+                                await self.credits_db.add_credits(
+                                    st.chat_id,
+                                    int(refund_versions),
+                                    "generation_failed_refund",
+                                    admin_note=f"batch={st.batch_id or '-'} job=enqueue_next_version_failed",
+                                    actor="outbox_inline",
+                                    order_id=refund_key,
+                                )
+                                await self._runtime_mark_outbox_sent(dedupe_key=refund_key)
+                            except Exception as add_e:
+                                log.warning("enqueue_next_refund_failed chat=%s err=%s", st.chat_id, str(add_e))
+                                await self._runtime_mark_outbox_failed(
+                                    dedupe_key=refund_key,
+                                    error_text=repr(add_e),
+                                    keep_leased=True,
+                                )
                     await self.credits_db.log_event(
                         st.chat_id,
                         "generation_failed",
                         f"job=enqueue_next stage=enqueue_next_version error={_compact_text(err_text, limit=140)}",
                     )
-                    await self._notify_manager_generation_failure(
+                    claimed_manager_alert, manager_alert_key = await self._runtime_claim_outbox(
                         st=st,
-                        job_id="enqueue_next_version",
-                        stage="enqueue_next_version",
-                        error_text=err_text,
-                        succeeded_versions=int(succeeded_versions),
-                        total_versions=int(total_versions),
-                        refunded_versions=int(refund_versions),
+                        kind="enqueue_next_failed_manager_alert",
+                        suffix="enqueue_next_version",
+                        payload={
+                            "failed_job_id": "enqueue_next_version",
+                            "failed_stage": "enqueue_next_version",
+                            "error_text": err_text,
+                            "succeeded_versions": int(succeeded_versions),
+                            "total_versions": int(total_versions),
+                            "refunded_versions": int(refund_versions),
+                        },
                     )
-                    await bot.send_message(
-                        st.chat_id,
-                        _GENERATION_FAILED_USER_TEXT,
-                        reply_markup=self._wait_audio_reuse_kb(),
+                    if claimed_manager_alert:
+                        try:
+                            await self._notify_manager_generation_failure(
+                                st=st,
+                                job_id="enqueue_next_version",
+                                stage="enqueue_next_version",
+                                error_text=err_text,
+                                succeeded_versions=int(succeeded_versions),
+                                total_versions=int(total_versions),
+                                refunded_versions=int(refund_versions),
+                                strict=True,
+                            )
+                            await self._runtime_mark_outbox_sent(dedupe_key=manager_alert_key)
+                        except Exception as exc:
+                            await self._runtime_mark_outbox_failed(
+                                dedupe_key=manager_alert_key,
+                                error_text=repr(exc),
+                                keep_leased=True,
+                            )
+                    claimed_user_notice, user_notice_key = await self._runtime_claim_outbox(
+                        st=st,
+                        kind="enqueue_next_failed_user_notice",
+                        suffix="enqueue_next_version",
+                        payload={"error_text": err_text[:500]},
+                    )
+                    if claimed_user_notice:
+                        try:
+                            await bot.send_message(
+                                st.chat_id,
+                                _GENERATION_FAILED_USER_TEXT,
+                                reply_markup=self._wait_audio_reuse_kb(),
+                            )
+                            await self._runtime_mark_outbox_sent(dedupe_key=user_notice_key)
+                        except Exception as exc:
+                            await self._runtime_mark_outbox_failed(
+                                dedupe_key=user_notice_key,
+                                error_text=repr(exc),
+                                keep_leased=True,
+                            )
+                    await self._runtime_update_run(
+                        st=st,
+                        status="failed",
+                        current_stage="enqueue_next_version",
+                        last_error_code="enqueue_next_failed",
+                        last_error_text=err_text,
                     )
                     self._reset_processing_state(st, next_stage=STAGE_WAIT_AUDIO)
                     await self.store.set(st)
                     return
 
+        await self._runtime_update_run(
+            st=st,
+            status="succeeded",
+            current_stage="completed",
+            next_version_to_enqueue=int(total_versions) + 1,
+            last_error_code="",
+            last_error_text="",
+        )
         self._reset_processing_state(st)  # sets stage = RATE_VIDEO
 
         await self.credits_db.log_event(st.chat_id, "generation_done")

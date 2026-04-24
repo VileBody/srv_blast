@@ -9,6 +9,7 @@ from services.orchestrator.tasks import (
     _looks_like_gemini_internal_500,
     _looks_like_gemini_overloaded_503,
     _looks_like_gemini_rate_limited_429,
+    _looks_like_gemini_transport_disconnect,
     _looks_like_llm_schema_validation_error,
     _looks_like_openrouter_bad_request_400,
     _looks_like_openrouter_gateway_timeout_524,
@@ -37,6 +38,22 @@ def test_detects_gemini_429_rate_limit() -> None:
         "{'error': {'code': 429, 'message': 'Too Many Requests'}}"
     )
     assert _looks_like_gemini_rate_limited_429(s) is True
+
+
+def test_detects_gemini_transport_disconnect_from_google_genai_traceback() -> None:
+    s = (
+        "File \"/app/mlcore/gemini_client.py\", line 543, in _generate_content_with_optional_fallback\n"
+        "return self._client.models.generate_content(model=self._model, contents=contents, config=config)\n"
+        "File \"/usr/local/lib/python3.13/site-packages/google/genai/_api_client.py\", line 1308\n"
+        "response = self._httpx_client.send(httpx_request, stream=stream)\n"
+        "httpx.RemoteProtocolError: Server disconnected without sending a response."
+    )
+    assert _looks_like_gemini_transport_disconnect(s) is True
+
+
+def test_gemini_transport_disconnect_detector_does_not_match_plain_openrouter_text() -> None:
+    s = "RuntimeError: openrouter_transport_error: RemoteProtocolError('Server disconnected without sending a response.')"
+    assert _looks_like_gemini_transport_disconnect(s) is False
 
 
 def test_detects_openrouter_503_overload() -> None:
