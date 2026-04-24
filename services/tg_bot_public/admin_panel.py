@@ -262,6 +262,7 @@ _BASE_HEAD = """
   <a href="/admin/render-nodes">Render Nodes</a>
   <a href="/admin/assets/" target="_blank" rel="noopener noreferrer">Assets</a>
   <a href="/admin/llm-workers">LLM Workers</a>
+  <a href="/admin/runtime-config">Runtime Config</a>
   <a href="/admin/audit">Audit</a>
   <a href="/admin/obs/grafana/" target="_blank" rel="noopener noreferrer">Grafana</a>
   <form class="search-form" action="/admin/users" method="get">
@@ -577,6 +578,32 @@ def build_app(
         data = resp.json()
         if not isinstance(data, dict):
             raise RuntimeError(f"orchestrator GET /metrics returned non-object: {data!r}")
+        return data
+
+    async def _orchestrator_get_runtime_config() -> dict:
+        base = str(settings.orchestrator_public_url or "").strip().rstrip("/")
+        if not base:
+            raise RuntimeError("ORCHESTRATOR_PUBLIC_URL is empty")
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            resp = await client.get(f"{base}/runtime-config")
+        if resp.status_code >= 300:
+            raise RuntimeError(f"orchestrator GET /runtime-config failed: {resp.status_code} {resp.text}")
+        data = resp.json()
+        if not isinstance(data, dict):
+            raise RuntimeError(f"orchestrator GET /runtime-config returned non-object: {data!r}")
+        return data
+
+    async def _orchestrator_put_runtime_config(payload: dict) -> dict:
+        base = str(settings.orchestrator_public_url or "").strip().rstrip("/")
+        if not base:
+            raise RuntimeError("ORCHESTRATOR_PUBLIC_URL is empty")
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            resp = await client.put(f"{base}/runtime-config", json=payload)
+        if resp.status_code >= 300:
+            raise RuntimeError(f"orchestrator PUT /runtime-config failed: {resp.status_code} {resp.text}")
+        data = resp.json()
+        if not isinstance(data, dict):
+            raise RuntimeError(f"orchestrator PUT /runtime-config returned non-object: {data!r}")
         return data
 
     async def _safe_get_metrics() -> dict:
@@ -2656,6 +2683,166 @@ def build_app(
         </div>
         """
         return _page(f"Run {rid[:12]}…", body)
+
+    # ── Runtime config ────────────────────────────────────────────────
+
+    @app.get("/admin/runtime-config", response_class=HTMLResponse)
+    async def runtime_config_page(request: Request, _user: str = Depends(_check_auth)) -> str:
+        ok_msg = html_mod.escape(str(request.query_params.get("ok", "")).strip())
+        err_msg = html_mod.escape(str(request.query_params.get("err", "")).strip())
+        data: dict = {}
+        metrics: dict = {}
+        if not err_msg:
+            try:
+                data = await _orchestrator_get_runtime_config()
+                metrics = await _safe_get_metrics()
+            except Exception as e:
+                err_msg = html_mod.escape(str(e))
+
+        items_obj = data.get("items") if isinstance(data, dict) else None
+        items = items_obj if isinstance(items_obj, list) else []
+        policy = (
+            metrics.get("runtime_capacity_policy")
+            if isinstance(metrics.get("runtime_capacity_policy"), dict)
+            else {}
+        )
+        if not policy:
+            raw_policy = metrics.get("capacity_policy") if isinstance(metrics.get("capacity_policy"), dict) else {}
+            policy = (
+                raw_policy.get("runtime_config_snapshot")
+                if isinstance(raw_policy.get("runtime_config_snapshot"), dict)
+                else raw_policy
+            )
+        signals = policy.get("signals") if isinstance(policy.get("signals"), dict) else {}
+        thresholds = policy.get("thresholds") if isinstance(policy.get("thresholds"), dict) else {}
+        actions = policy.get("operator_actions") if isinstance(policy.get("operator_actions"), list) else []
+        reasons = policy.get("reasons") if isinstance(policy.get("reasons"), list) else []
+        state = html_mod.escape(str(policy.get("state") or "unknown"))
+
+        def _input_html(item: dict[str, object]) -> str:
+            key = html_mod.escape(str(item.get("key") or ""))
+            kind = str(item.get("kind") or "str")
+            value = item.get("value")
+            if kind == "bool":
+                selected_true = " selected" if bool(value) else ""
+                selected_false = " selected" if not bool(value) else ""
+                return (
+                    f"<select name='{key}'>"
+                    f"<option value='1'{selected_true}>on</option>"
+                    f"<option value='0'{selected_false}>off</option>"
+                    f"</select>"
+                )
+            if kind == "str":
+                value_esc = html_mod.escape(str(value or ""))
+                max_len = int(item.get("max_length", 500) or 500)
+                return (
+                    f"<textarea name='{key}' rows='3' maxlength='{max_len}' "
+                    f"style='width:100%;min-width:320px'>{value_esc}</textarea>"
+                )
+            value_esc = html_mod.escape(str(value if value is not None else ""))
+            min_attr = ""
+            max_attr = ""
+            if item.get("min_value") is not None:
+                min_attr = f" min='{html_mod.escape(str(item.get('min_value')))}'"
+            if item.get("max_value") is not None:
+                max_attr = f" max='{html_mod.escape(str(item.get('max_value')))}'"
+            step = " step='0.01'" if kind == "float" else ""
+            return f"<input type='number' name='{key}' value='{value_esc}'{min_attr}{max_attr}{step}>"
+
+        rows = ""
+        for item_raw in items:
+            if not isinstance(item_raw, dict):
+                continue
+            key = html_mod.escape(str(item_raw.get("key") or ""))
+            title = html_mod.escape(str(item_raw.get("title") or key))
+            category = html_mod.escape(str(item_raw.get("category") or ""))
+            effect = html_mod.escape(str(item_raw.get("runtime_effect") or ""))
+            default = html_mod.escape(str(item_raw.get("default") if item_raw.get("default") is not None else ""))
+            desc = html_mod.escape(str(item_raw.get("description") or ""))
+            is_default = bool(item_raw.get("is_default", True))
+            rows += (
+                "<tr>"
+                f"<td><strong>{title}</strong><br><code>{key}</code><br><span style='color:#666'>{desc}</span></td>"
+                f"<td>{category}</td>"
+                f"<td>{effect}</td>"
+                f"<td>{_input_html(item_raw)}</td>"
+                f"<td><code>{default}</code></td>"
+                f"<td>{'default' if is_default else 'override'}</td>"
+                "</tr>"
+            )
+
+        signal_rows = "".join(
+            f"<tr><td>{html_mod.escape(str(k))}</td><td><code>{html_mod.escape(str(v))}</code></td></tr>"
+            for k, v in sorted(signals.items())
+        )
+        threshold_rows = "".join(
+            f"<tr><td>{html_mod.escape(str(k))}</td><td><code>{html_mod.escape(str(v))}</code></td></tr>"
+            for k, v in sorted(thresholds.items())
+        )
+        action_html = "".join(f"<li>{html_mod.escape(str(a))}</li>" for a in actions)
+        reason_html = "".join(f"<li>{html_mod.escape(str(r))}</li>" for r in reasons)
+
+        body = f"""
+        <div class="card">
+        <h2>Backpressure policy</h2>
+        {f"<p style='color:#1e8449'><strong>OK:</strong> {ok_msg}</p>" if ok_msg else ""}
+        {f"<p style='color:#c0392b'><strong>Ошибка:</strong> {err_msg}</p>" if err_msg else ""}
+        <p>State: <strong>{state}</strong></p>
+        <div style="display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap">
+          <div class="table-wrap" style="flex:1 1 300px">
+            <h3>Signals</h3>
+            <table><tr><th>Signal</th><th>Value</th></tr>{signal_rows or '<tr><td colspan="2">Нет данных</td></tr>'}</table>
+          </div>
+          <div class="table-wrap" style="flex:1 1 300px">
+            <h3>Thresholds</h3>
+            <table><tr><th>Threshold</th><th>Value</th></tr>{threshold_rows or '<tr><td colspan="2">Нет данных</td></tr>'}</table>
+          </div>
+        </div>
+        <h3>Operator hints</h3>
+        {f"<ul>{reason_html}</ul>" if reason_html else "<p>Причин деградации нет.</p>"}
+        {f"<ul>{action_html}</ul>" if action_html else "<p>Действий не требуется.</p>"}
+        </div>
+
+        <div class="card">
+        <h2>Runtime knobs</h2>
+        <p style="color:#666">Hot параметры применяются сразу в orchestrator. Параметры с <code>requires_*</code> сейчас являются operator-visible target values и требуют recreate соответствующего сервиса.</p>
+        <form method="post" action="/admin/runtime-config">
+          <div class="table-wrap">
+          <table><tr><th>Key</th><th>Category</th><th>Effect</th><th>Value</th><th>Default</th><th>Source</th></tr>
+          {rows if rows else '<tr><td colspan="6">Нет данных</td></tr>'}
+          </table>
+          </div>
+          <p><button type="submit" class="btn-success">Apply Runtime Config</button></p>
+        </form>
+        </div>
+        """
+        return _page("Runtime Config", body)
+
+    @app.post("/admin/runtime-config")
+    async def runtime_config_update(request: Request, _user: str = Depends(_check_auth)) -> RedirectResponse:
+        try:
+            current = await _orchestrator_get_runtime_config()
+            items_obj = current.get("items") if isinstance(current, dict) else None
+            items = items_obj if isinstance(items_obj, list) else []
+            form = await request.form()
+            values: dict[str, object] = {}
+            for item_raw in items:
+                if not isinstance(item_raw, dict):
+                    continue
+                key = str(item_raw.get("key") or "").strip()
+                if not key:
+                    continue
+                values[key] = form.get(key)
+            await _orchestrator_put_runtime_config({"values": values})
+            return RedirectResponse(
+                f"/admin/runtime-config?ok={quote_plus('runtime config updated')}",
+                status_code=303,
+            )
+        except Exception as e:
+            return RedirectResponse(
+                f"/admin/runtime-config?err={quote_plus(str(e))}",
+                status_code=303,
+            )
 
     # ── LLM workers runtime control ────────────────────────────────
 

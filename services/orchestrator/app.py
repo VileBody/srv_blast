@@ -26,6 +26,13 @@ from .llm_workers import (
 from .observability_metrics import get_counter_map
 from .prometheus_metrics import build_prometheus_metrics_payload
 from .payment_webhook import make_payment_router
+from .runtime_config import (
+    build_capacity_policy_snapshot,
+    build_llm_saturation,
+    get_runtime_config,
+    get_runtime_values,
+    set_runtime_config,
+)
 from .schemas import (
     ActiveJobsResponse,
     ActiveJobSummary,
@@ -836,6 +843,23 @@ def create_app() -> FastAPI:
             default_worker_type=LLM_WORKER_TYPE_VERTEX_SDK_MIX,
         )
 
+    @app.get("/runtime-config")
+    def get_runtime_config_endpoint() -> dict[str, Any]:
+        try:
+            return get_runtime_config(store)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"runtime_config_get_failed: {e!r}") from e
+
+    @app.put("/runtime-config")
+    def put_runtime_config_endpoint(payload: Dict[str, Any]) -> dict[str, Any]:
+        values = payload.get("values") if isinstance(payload.get("values"), dict) else payload
+        if not isinstance(values, dict):
+            raise HTTPException(status_code=400, detail="payload must be an object or {values: object}")
+        try:
+            return set_runtime_config(store, values)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"runtime_config_update_failed: {e}") from e
+
     @app.get("/metrics")
     def metrics() -> dict:
         """Lightweight observability endpoint for queue/job/webhook health."""
@@ -871,12 +895,16 @@ def create_app() -> FastAPI:
         except Exception as exc:
             llm_inflight_error = repr(exc)
         llm_saturation: dict[str, dict[str, object]] = {}
+        llm_saturation_ratio: dict[str, dict[str, Any]] = {}
+        llm_runtime_error: str | None = None
         try:
+            llm_runtime: dict[str, Any] = {}
             for worker_type, row in get_runtime_status(store).items():
                 enabled = bool(row.enabled)
                 weight = int(row.weight)
                 inflight = int(row.inflight)
                 max_inflight = int(row.max_inflight)
+                llm_runtime[str(worker_type)] = row.model_dump(mode="json")
                 llm_saturation[str(worker_type)] = {
                     "enabled": enabled,
                     "weight": weight,
@@ -885,9 +913,11 @@ def create_app() -> FastAPI:
                     "available_slots": int(row.available_slots),
                     "saturated": bool(enabled and max_inflight > 0 and inflight >= max_inflight),
                 }
+            llm_saturation_ratio = build_llm_saturation(llm_runtime)
         except Exception as exc:
             if not llm_inflight_error:
                 llm_inflight_error = repr(exc)
+            llm_runtime_error = repr(exc)
 
         queues: dict = {}
         try:
@@ -912,7 +942,8 @@ def create_app() -> FastAPI:
             )
         except Exception as exc:
             metrics_error = repr(exc)
-
+        runtime_config_error: str | None = None
+        runtime_policy_snapshot: dict[str, Any] = {}
         capacity_policy = compute_capacity_policy(
             render_backlog=int(render_backlog),
             build_backlog=int(build_backlog),
@@ -922,6 +953,51 @@ def create_app() -> FastAPI:
             build_backlog_degraded_threshold=int(SETTINGS.build_backlog_degraded_threshold),
             build_backlog_manual_maintenance_threshold=int(SETTINGS.build_backlog_manual_maintenance_threshold),
         )
+        try:
+            runtime_values = get_runtime_values(store)
+            capacity_policy = compute_capacity_policy(
+                render_backlog=int(render_backlog),
+                build_backlog=int(build_backlog),
+                llm_saturation_by_worker_type=llm_saturation,
+                render_backlog_degraded_threshold=int(
+                    runtime_values.get("backpressure.render_backlog_degraded", SETTINGS.render_backlog_degraded_threshold)
+                ),
+                render_backlog_scaleout_threshold=int(
+                    runtime_values.get("backpressure.render_backlog_add_windows_node", SETTINGS.render_backlog_scaleout_threshold)
+                ),
+                build_backlog_degraded_threshold=int(
+                    runtime_values.get("backpressure.build_backlog_degraded", SETTINGS.build_backlog_degraded_threshold)
+                ),
+                build_backlog_manual_maintenance_threshold=int(
+                    runtime_values.get(
+                        "backpressure.build_backlog_maintenance_recommended",
+                        SETTINGS.build_backlog_manual_maintenance_threshold,
+                    )
+                ),
+            )
+            runtime_policy_snapshot = build_capacity_policy_snapshot(
+                values=runtime_values,
+                job_status_counts=counts,
+                job_stage_counts=stage_counts,
+                llm_saturation_by_worker_type=llm_saturation_ratio,
+            )
+            if capacity_policy.get("state") != "normal":
+                user_copy = str(runtime_policy_snapshot.get("user_degraded_copy") or "").strip()
+                if user_copy:
+                    capacity_policy["user_message"] = user_copy
+            capacity_policy["runtime_config_snapshot"] = runtime_policy_snapshot
+        except Exception as exc:
+            runtime_config_error = repr(exc)
+            runtime_values = {}
+            try:
+                runtime_policy_snapshot = build_capacity_policy_snapshot(
+                    values=runtime_values,
+                    job_status_counts=counts,
+                    job_stage_counts=stage_counts,
+                    llm_saturation_by_worker_type=llm_saturation_ratio,
+                )
+            except Exception:
+                runtime_policy_snapshot = {}
 
         return {
             "queue_depth": queue_depth,
@@ -945,7 +1021,11 @@ def create_app() -> FastAPI:
             },
             "llm_inflight_by_worker_type": llm_inflight,
             "llm_saturation_by_worker_type": llm_saturation,
+            "llm_saturation_ratio_by_worker_type": llm_saturation_ratio,
             "llm_inflight_error": llm_inflight_error,
+            "llm_runtime_error": llm_runtime_error,
+            "runtime_capacity_policy": runtime_policy_snapshot,
+            "runtime_config_error": runtime_config_error,
             "workers": queues,
             "webhook_outcomes": webhook_outcomes,
             "activate_outcomes": activate_outcomes,

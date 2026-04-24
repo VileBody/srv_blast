@@ -38,6 +38,7 @@ from .ops_alert_subscribers import (
     is_terminal_telegram_delivery_error,
 )
 from .render_manifest import build_windows_job_payload
+from .runtime_config import get_runtime_values
 from .windows_client import WindowsRenderClient
 from .windows_node_pool import WindowsNodePool, parse_windows_urls_csv
 from services.generation_runtime.store import resume_state_checksum
@@ -713,6 +714,62 @@ def _looks_like_gemini_rate_limited_429(text: str) -> bool:
     # Can surface as ClientError/ServerError; we key off explicit code+keyword.
     lo = text.lower()
     return ("resource_exhausted" in lo or "too many requests" in lo) and ("429" in lo)
+
+
+def _looks_like_gemini_transport_disconnect(text: str) -> bool:
+    if not text:
+        return False
+    lo = text.lower()
+    transport_markers = (
+        "remoteprotocolerror",
+        "server disconnected without sending a response",
+        "connection reset by peer",
+        "connection aborted",
+        "readerror",
+        "connecterror",
+        "httpcore.",
+        "httpx.",
+    )
+    if not any(marker in lo for marker in transport_markers):
+        return False
+    gemini_markers = (
+        "google.genai",
+        "google/genai",
+        "gemini_client.py",
+        "models.generate_content",
+        "generate_content",
+    )
+    return any(marker in lo for marker in gemini_markers)
+
+
+def _maybe_retry_gemini_transport_disconnect(self: Any, store: JobStore, text: str, *, phase: str) -> None:
+    if not _looks_like_gemini_transport_disconnect(text):
+        return
+    try:
+        runtime_values = get_runtime_values(store)
+    except Exception:
+        runtime_values = {}
+    if runtime_values.get("gemini.transport_retry_enabled", True) is False:
+        return
+    try:
+        base_s = float(runtime_values.get("gemini.transport_retry_base_s", 10.0) or 10.0)
+    except Exception:
+        base_s = 10.0
+    try:
+        cap_s = float(runtime_values.get("gemini.transport_retry_cap_s", 300.0) or 300.0)
+    except Exception:
+        cap_s = 300.0
+    attempt = int(getattr(self.request, "retries", 0)) + 1
+    backoff = _retry_backoff_s(attempt=attempt, base_s=max(0.5, base_s), cap_s=max(1.0, cap_s))
+    log.warning(
+        "gemini_transport_disconnect_retry phase=%s attempt=%d/%d backoff_s=%.1f err=%s",
+        phase,
+        attempt,
+        int(getattr(self, "max_retries", 0) or 0),
+        backoff,
+        text[:800],
+    )
+    raise self.retry(countdown=backoff, exc=RuntimeError("gemini_transport_disconnect"))
 
 
 def _looks_like_openrouter_timeout(text: str) -> bool:
@@ -1578,6 +1635,7 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
             except Exception as persist_exc:
                 log.warning("resume_state_partial_persist_failed job=%s err=%r", job_id, persist_exc)
             text = _exc_text(e)
+            _maybe_retry_gemini_transport_disconnect(self, store, text, phase="build_all")
             if _looks_like_gemini_internal_500(text):
                 attempt = int(getattr(self.request, "retries", 0)) + 1
                 backoff = _retry_backoff_s(attempt=attempt, base_s=10.0, cap_s=300.0)
@@ -1653,6 +1711,7 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
         return subprocess.run(args, cwd=str(repo_root), env=env, capture_output=True, text=True)
 
     def _maybe_retry_transient(blob: str) -> None:
+        _maybe_retry_gemini_transport_disconnect(self, store, blob, phase="build_subprocess")
         if _looks_like_gemini_internal_500(blob):
             attempt = int(getattr(self.request, "retries", 0)) + 1
             backoff = _retry_backoff_s(attempt=attempt, base_s=10.0, cap_s=300.0)
@@ -1778,6 +1837,7 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
                         except Exception as persist_exc:
                             log.warning("resume_state_retry_partial_persist_failed job=%s err=%r", job_id, persist_exc)
                         text = _exc_text(e)
+                        _maybe_retry_gemini_transport_disconnect(self, store, text, phase="stage2_subtitles_retry")
                         if _looks_like_gemini_internal_500(text):
                             attempt = int(getattr(self.request, "retries", 0)) + 1
                             backoff = _retry_backoff_s(attempt=attempt, base_s=10.0, cap_s=300.0)

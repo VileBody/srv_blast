@@ -12,6 +12,7 @@ class _FakeRedis:
     def __init__(self) -> None:
         self._hashes: dict[str, dict[str, int]] = {}
         self._float_hashes: dict[str, dict[str, float]] = {}
+        self._values: dict[str, str] = {}
 
     def hincrby(self, key: str, field: str, amount: int) -> int:
         bucket = self._hashes.setdefault(key, {})
@@ -29,6 +30,13 @@ class _FakeRedis:
         out = {k: str(v) for k, v in bucket_i.items()}
         out.update({k: str(v) for k, v in bucket_f.items()})
         return out
+
+    def get(self, key: str) -> str | None:
+        return self._values.get(key)
+
+    def set(self, key: str, value: str) -> bool:
+        self._values[key] = value
+        return True
 
 
 class _FakeStore:
@@ -124,6 +132,9 @@ def test_prometheus_payload_contains_new_observability_metrics() -> None:
     assert "llm_worker_saturated" in body
     assert "backpressure_policy_state" in body
     assert "render_poll_split_active" in body
+    assert 'job_stage_count{stage="dispatch"}' in body
+    assert "capacity_policy_state" in body
+    assert "runtime_config_numeric_value" in body
     assert "dispatch_attempt_total" in body
     assert "gemini_call_total" in body
     assert "gemini_token_total" in body
