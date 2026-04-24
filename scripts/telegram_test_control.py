@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import math
 import os
 import re
 import shlex
@@ -46,6 +47,34 @@ REMOTE_ENV_KEYS = [
     "TG_MAINTENANCE_STATE_KEY",
     "BOT_TMP_DIR_PUBLIC",
     "ALERT_TELEGRAM_API_ENV",
+]
+CONFIG_ENV_KEY_PREFIX = "TG_TEST_CONFIG_"
+CONFIGURE_ENV_KEYS = [
+    "TG_TEST_API_ID",
+    "TG_TEST_API_HASH",
+    "TG_TEST_OWNER_SESSION_STRING",
+    "TG_TEST_CREDITS_DB_URL",
+    "TG_TEST_ADMIN_DB_URL",
+    "TG_WEBHOOK_SECRET",
+    "TG_TEST_AUDIO_PATH",
+    "TG_TEST_FOOTAGE_GENRE_LABEL",
+    "TG_TEST_FOOTAGE_ARTIST_LABEL",
+    "TG_TEST_BOT_TOKEN",
+    "TG_TEST_BOT_USERNAME",
+    "TG_TEST_BOT_NAME",
+    "TG_TEST_BOT_USERNAME_CANDIDATE",
+]
+CONFIGURE_NODE_KEYS = [
+    "TG_TEST_NODE0_HOST",
+    "TG_TEST_NODE0_USER",
+    "TG_TEST_NODE0_PORT",
+    "TG_TEST_NODE0_REPO_DIR",
+    "TG_TEST_NODE0_SSH_KEY_PATH",
+    "TG_TEST_NODE1_HOST",
+    "TG_TEST_NODE1_USER",
+    "TG_TEST_NODE1_PORT",
+    "TG_TEST_NODE1_REPO_DIR",
+    "TG_TEST_NODE1_SSH_KEY_PATH",
 ]
 
 
@@ -137,6 +166,34 @@ def _write_env_file(path: Path, updates: dict[str, str]) -> None:
     path.chmod(0o600)
 
 
+def _print_configured_keys(updates: dict[str, str]) -> None:
+    secret_markers = ("TOKEN", "HASH", "SECRET", "PASSWORD", "SESSION", "URL")
+    for key in sorted(updates):
+        value = updates[key]
+        rendered = _mask(value) if any(marker in key for marker in secret_markers) else value
+        print(f"[telegram-test-control] configured {key}={rendered}")
+
+
+def _write_synthetic_audio(path: Path) -> None:
+    import wave
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    sample_rate = 16_000
+    seconds = 8
+    amplitude = 10_000
+    with wave.open(str(path), "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(sample_rate)
+        frames = bytearray()
+        for i in range(sample_rate * seconds):
+            freq = 440.0 if (i // sample_rate) % 2 == 0 else 660.0
+            sample = int(amplitude * math.sin(2.0 * math.pi * freq * (i / sample_rate)))
+            frames.extend(sample.to_bytes(2, byteorder="little", signed=True))
+        wav.writeframes(bytes(frames))
+    path.chmod(0o600)
+
+
 def _init_env_file(env_file: Path, *, force: bool = False) -> None:
     example = REPO_ROOT / ".env.telegram-test.example"
     if not example.exists():
@@ -150,6 +207,56 @@ def _init_env_file(env_file: Path, *, force: bool = False) -> None:
     env_file.chmod(0o600)
     print(f"[telegram-test-control] initialized env from example: {env_file}")
     print("[telegram-test-control] fill TG_TEST_API_ID, TG_TEST_API_HASH, TG_TEST_CREDITS_DB_URL, TG_WEBHOOK_SECRET, TG_TEST_AUDIO_PATH, and labels before prepare")
+
+
+def _configure_env_file(env_file: Path, *, dry_run: bool) -> None:
+    if not env_file.exists():
+        _init_env_file(env_file)
+    existing = _load_env_file(env_file)
+    updates: dict[str, str] = {
+        "TG_BOT_API_ENV": TELEGRAM_API_ENV_TEST,
+        "TG_DELIVERY_MODE": "webhook",
+        "TG_WEBHOOK_URL": "https://blast808.com",
+        "TG_WEBHOOK_PATH": "/telegram/webhook",
+        "TG_TEST_BYPASS_SUBSCRIPTION": "1",
+        "TG_TEST_PREVIEW_SOURCE_BOT_TOKEN": "",
+        "TG_PUBLIC_STATE_PREFIX": "blast:tg:test:public:chat_state",
+        "TG_MAINTENANCE_STATE_KEY": "blast:tg:test:maintenance_mode",
+        "BOT_TMP_DIR_PUBLIC": "/app/work/tg_tmp_public_test",
+        "TG_TEST_ORCHESTRATOR_URL": "https://blast808.com/orchestrator",
+        "TG_TEST_REMOTE_ENV_PATH": ".env.telegram-test",
+        "ALERT_TELEGRAM_API_ENV": TELEGRAM_API_ENV_PROD,
+    }
+    for key in CONFIGURE_ENV_KEYS:
+        env_key = f"{CONFIG_ENV_KEY_PREFIX}{key}"
+        value = str(os.environ.get(env_key) or "").strip()
+        if value:
+            updates[key] = value
+    for key in CONFIGURE_NODE_KEYS:
+        value = str(os.environ.get(key) or "").strip()
+        if value:
+            updates[key] = value
+
+    candidate = str(updates.get("TG_TEST_BOT_USERNAME_CANDIDATE") or existing.get("TG_TEST_BOT_USERNAME_CANDIDATE") or "").strip()
+    if not candidate or candidate == "blasttestbot" or _is_placeholder(candidate):
+        updates["TG_TEST_BOT_USERNAME_CANDIDATE"] = f"blasttest{int(time.time())}bot"
+
+    audio_path = str(updates.get("TG_TEST_AUDIO_PATH") or existing.get("TG_TEST_AUDIO_PATH") or "").strip()
+    create_audio = _bool_env(os.environ, f"{CONFIG_ENV_KEY_PREFIX}CREATE_SAMPLE_AUDIO", False)
+
+    _print_configured_keys(updates)
+    if dry_run:
+        if create_audio and audio_path and not _is_placeholder(audio_path):
+            print(f"[telegram-test-control] dry-run would create synthetic audio at {audio_path}")
+        return
+    _write_env_file(env_file, updates)
+    if create_audio and audio_path and not _is_placeholder(audio_path):
+        audio = Path(audio_path).expanduser()
+        if not audio.exists():
+            _write_synthetic_audio(audio)
+            print(f"[telegram-test-control] created synthetic audio at {audio}")
+        else:
+            print(f"[telegram-test-control] audio already exists at {audio}")
 
 
 def _http_json(
@@ -581,7 +688,7 @@ def _exit_test(args: argparse.Namespace) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Blast-ops control plane for Telegram test/prod bot switching.")
-    parser.add_argument("action", choices=["init-env", "prepare", "status", "enter-test", "exit-test", "provision", "run", "cleanup"])
+    parser.add_argument("action", choices=["init-env", "configure-env", "prepare", "status", "enter-test", "exit-test", "provision", "run", "cleanup"])
     parser.add_argument("--env-file", type=Path, default=DEFAULT_CONTROL_ENV_FILE)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--skip-queue-check", action="store_true")
@@ -596,6 +703,8 @@ def main() -> None:
     try:
         if args.action == "init-env":
             _init_env_file(args.env_file, force=args.yes)
+        elif args.action == "configure-env":
+            _configure_env_file(args.env_file, dry_run=args.dry_run)
         elif args.action == "prepare":
             _prepare(args)
         elif args.action == "status":

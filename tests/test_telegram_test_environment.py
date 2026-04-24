@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import importlib
+from pathlib import Path
 
 import pytest
 
 from core.telegram_api import build_aiogram_session, make_telegram_api, normalize_telegram_api_env
 from scripts.telegram_test_botfather import BotFatherConfig
-from scripts.telegram_test_control import _init_env_file, _merged_env, render_remote_env
+from scripts.telegram_test_control import _configure_env_file, _init_env_file, _merged_env, render_remote_env
 from scripts.telegram_test_load import TestLoadConfig as LoadConfig
 
 
@@ -180,3 +181,25 @@ def test_control_env_allows_workflow_env_to_override_placeholders(tmp_path, monk
     merged = _merged_env(env_file)
 
     assert merged["TG_TEST_NODE0_HOST"] == "10.0.0.10"
+
+
+def test_control_configure_env_writes_secret_backed_values(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    env_file = tmp_path / ".env"
+    monkeypatch.setenv("TG_TEST_CONFIG_TG_TEST_API_ID", "123")
+    monkeypatch.setenv("TG_TEST_CONFIG_TG_TEST_API_HASH", "hash")
+    monkeypatch.setenv("TG_TEST_CONFIG_TG_TEST_CREDITS_DB_URL", "postgresql://test")
+    monkeypatch.setenv("TG_TEST_CONFIG_TG_WEBHOOK_SECRET", "secret")
+    monkeypatch.setenv("TG_TEST_CONFIG_TG_TEST_AUDIO_PATH", str(tmp_path / "sample.wav"))
+    monkeypatch.setenv("TG_TEST_CONFIG_TG_TEST_FOOTAGE_GENRE_LABEL", "Поп")
+    monkeypatch.setenv("TG_TEST_CONFIG_TG_TEST_FOOTAGE_ARTIST_LABEL", "Романтический поп")
+    monkeypatch.setenv("TG_TEST_CONFIG_CREATE_SAMPLE_AUDIO", "1")
+    monkeypatch.setenv("TG_TEST_NODE0_HOST", "10.0.0.10")
+
+    _configure_env_file(env_file, dry_run=False)
+
+    merged = _merged_env(env_file)
+    assert merged["TG_TEST_API_ID"] == "123"
+    assert merged["TG_TEST_CREDITS_DB_URL"] == "postgresql://test"
+    assert merged["TG_WEBHOOK_SECRET"] == "secret"
+    assert merged["TG_TEST_NODE0_HOST"] == "10.0.0.10"
+    assert Path(merged["TG_TEST_AUDIO_PATH"]).exists()
