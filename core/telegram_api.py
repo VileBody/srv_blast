@@ -74,7 +74,13 @@ def build_aiogram_session(*, api_env: str, proxy_url: str = ""):
     except Exception as exc:  # pragma: no cover - depends on runtime package install
         raise RuntimeError("aiogram TelegramAPIServer support is required") from exc
 
-    server = TelegramAPIServer.TEST if normalized == TELEGRAM_API_ENV_TEST else TelegramAPIServer.PRODUCTION
+    if normalized == TELEGRAM_API_ENV_TEST:
+        server = getattr(TelegramAPIServer, "TEST", None) or TelegramAPIServer(
+            base="https://api.telegram.org/bot{token}/test/{method}",
+            file="https://api.telegram.org/file/bot{token}/test/{path}",
+        )
+    else:
+        server = TelegramAPIServer.PRODUCTION
     kwargs = {"api": server}
     proxy = str(proxy_url or "").strip()
     if proxy:
