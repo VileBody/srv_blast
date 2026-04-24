@@ -130,6 +130,16 @@ stop_root_services() {
   docker compose stop "${services[@]}" || true
 }
 
+remove_root_services() {
+  local services=("$@")
+  if [[ ${#services[@]} -eq 0 ]]; then
+    return 0
+  fi
+  stop_root_services "${services[@]}"
+  echo "[deploy] docker compose rm -f ${services[*]}"
+  docker compose rm -f "${services[@]}" || true
+}
+
 deploy_runner_compose_if_present() {
   local compose_file="$1"
   local env_file="$2"
@@ -371,7 +381,7 @@ case "$DEPLOY_STACK" in
   infra-apps)
     deploy_root_services tg-bot asset-ui finance-bot
     if is_true "$DEPLOY_PRUNE_OTHER_STACK"; then
-      stop_root_services orchestrator-api orchestrator-api-2 worker-build worker-render tg-bot-public
+      remove_root_services orchestrator-api orchestrator-api-2 worker-build worker-render worker-render-poll tg-bot-public
     fi
     ;;
   infra-ops)
@@ -380,7 +390,7 @@ case "$DEPLOY_STACK" in
     deploy_runner_compose_if_present "$RUNNERS_DIR/docker-compose.observability.yml" "$RUNNERS_DIR/.env.observability"
     deploy_github_runner_compose_if_allowed "$RUNNERS_DIR/docker-compose.github-runner.yml" "$RUNNERS_DIR/.env.github-runner"
     if is_true "$DEPLOY_PRUNE_OTHER_STACK"; then
-      stop_root_services orchestrator-api orchestrator-api-2 worker-build worker-render tg-bot-public
+      remove_root_services orchestrator-api orchestrator-api-2 worker-build worker-render worker-render-poll tg-bot-public
     fi
     ;;
   *)
