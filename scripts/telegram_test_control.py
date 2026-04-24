@@ -67,8 +67,8 @@ def _load_env_file(path: Path) -> dict[str, str]:
 
 def _merged_env(env_file: Path) -> dict[str, str]:
     merged = _load_env_file(REPO_ROOT / ".env")
-    merged.update(os.environ)
     merged.update(_load_env_file(env_file))
+    merged.update(os.environ)
     return merged
 
 
@@ -135,6 +135,21 @@ def _write_env_file(path: Path, updates: dict[str, str]) -> None:
             rendered.append(f"{key}={value}")
     path.write_text("\n".join(rendered).rstrip() + "\n", encoding="utf-8")
     path.chmod(0o600)
+
+
+def _init_env_file(env_file: Path, *, force: bool = False) -> None:
+    example = REPO_ROOT / ".env.telegram-test.example"
+    if not example.exists():
+        raise SystemExit(f"Telegram test env example is missing: {example}")
+    if env_file.exists() and not force:
+        print(f"[telegram-test-control] env already exists: {env_file}")
+        print("[telegram-test-control] not overwriting; fill missing values in-place or pass --yes to refresh")
+        return
+    env_file.parent.mkdir(parents=True, exist_ok=True)
+    env_file.write_text(example.read_text(encoding="utf-8"), encoding="utf-8")
+    env_file.chmod(0o600)
+    print(f"[telegram-test-control] initialized env from example: {env_file}")
+    print("[telegram-test-control] fill TG_TEST_API_ID, TG_TEST_API_HASH, TG_TEST_CREDITS_DB_URL, TG_WEBHOOK_SECRET, TG_TEST_AUDIO_PATH, and labels before prepare")
 
 
 def _http_json(
@@ -566,7 +581,7 @@ def _exit_test(args: argparse.Namespace) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Blast-ops control plane for Telegram test/prod bot switching.")
-    parser.add_argument("action", choices=["prepare", "status", "enter-test", "exit-test", "provision", "run", "cleanup"])
+    parser.add_argument("action", choices=["init-env", "prepare", "status", "enter-test", "exit-test", "provision", "run", "cleanup"])
     parser.add_argument("--env-file", type=Path, default=DEFAULT_CONTROL_ENV_FILE)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--skip-queue-check", action="store_true")
@@ -579,7 +594,9 @@ def main() -> None:
     args = parser.parse_args()
 
     try:
-        if args.action == "prepare":
+        if args.action == "init-env":
+            _init_env_file(args.env_file, force=args.yes)
+        elif args.action == "prepare":
             _prepare(args)
         elif args.action == "status":
             _status(args)

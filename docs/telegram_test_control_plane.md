@@ -4,7 +4,7 @@
 
 ## One-time setup on blast-ops
 
-1. Copy `.env.telegram-test.example` to `/opt/blast/telegram-test/.env`.
+1. Run `init-env` once from the GitHub Actions workflow, or copy `.env.telegram-test.example` to `/opt/blast/telegram-test/.env`.
 2. Fill `TG_TEST_API_ID`, `TG_TEST_API_HASH`, `TG_TEST_CREDITS_DB_URL`, `TG_WEBHOOK_SECRET`, `TG_TEST_AUDIO_PATH`, genre/style labels, and explicit `TG_TEST_NODE0/1_*` connection fields.
 3. Optionally set `TG_TEST_OWNER_SESSION_STRING`, but only for a Telegram test account whose phone starts with `99966`.
 4. Keep `TG_TEST_BOT_TOKEN` empty if `prepare` should create the bot through test `BotFather`.
@@ -16,6 +16,7 @@ Use GitHub Actions workflow `Telegram Test Control`.
 Recommended sequence:
 
 ```bash
+init-env
 prepare
 status
 enter-test

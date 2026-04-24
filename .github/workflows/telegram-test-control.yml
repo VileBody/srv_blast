@@ -10,6 +10,7 @@ on:
         type: choice
         options:
           - prepare
+          - init-env
           - status
           - enter-test
           - exit-test

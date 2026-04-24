@@ -6,7 +6,7 @@ import pytest
 
 from core.telegram_api import build_aiogram_session, make_telegram_api, normalize_telegram_api_env
 from scripts.telegram_test_botfather import BotFatherConfig
-from scripts.telegram_test_control import render_remote_env
+from scripts.telegram_test_control import _init_env_file, _merged_env, render_remote_env
 from scripts.telegram_test_load import TestLoadConfig as LoadConfig
 
 
@@ -160,3 +160,23 @@ def test_control_remote_env_excludes_blast_ops_only_secrets() -> None:
     assert "TG_TEST_API_ID" not in content
     assert "TG_TEST_API_HASH" not in content
     assert "TG_TEST_OWNER_SESSION_STRING" not in content
+
+
+def test_control_env_can_be_initialized_from_example(tmp_path) -> None:
+    env_file = tmp_path / ".env"
+
+    _init_env_file(env_file)
+
+    content = env_file.read_text(encoding="utf-8")
+    assert "TG_BOT_API_ENV=test" in content
+    assert "TG_TEST_CREDITS_DB_URL=<postgresql://" in content
+
+
+def test_control_env_allows_workflow_env_to_override_placeholders(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text("TG_TEST_NODE0_HOST=<fill-orchestrator-0-host>\n", encoding="utf-8")
+    monkeypatch.setenv("TG_TEST_NODE0_HOST", "10.0.0.10")
+
+    merged = _merged_env(env_file)
+
+    assert merged["TG_TEST_NODE0_HOST"] == "10.0.0.10"
