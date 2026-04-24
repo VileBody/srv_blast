@@ -18,6 +18,8 @@ from typing import Any, Dict, List, Optional
 import boto3
 from botocore.config import Config
 
+from core.telegram_api import make_telegram_api
+
 from .artifacts import make_job_paths
 from .celery_app import celery_app
 from .config import SETTINGS
@@ -166,6 +168,10 @@ def _notify_ops_telegram(text: str) -> None:
     token = str(getattr(SETTINGS, "alert_telegram_bot_token", "") or "").strip()
     if not token:
         return
+    telegram_api = make_telegram_api(
+        str(getattr(SETTINGS, "alert_telegram_api_env", "prod") or "prod"),
+        name="ALERT_TELEGRAM_API_ENV",
+    )
     recipients: set[str] = set()
     static_chat_id = str(getattr(SETTINGS, "alert_telegram_chat_id", "") or "").strip()
     if static_chat_id:
@@ -189,7 +195,7 @@ def _notify_ops_telegram(text: str) -> None:
         }
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         req = urllib.request.Request(
-            url=f"https://api.telegram.org/bot{token}/sendMessage",
+            url=telegram_api.method_url(token=token, method="sendMessage"),
             data=data,
             headers={"Content-Type": "application/json"},
             method="POST",

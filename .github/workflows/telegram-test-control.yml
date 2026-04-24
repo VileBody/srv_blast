@@ -1,0 +1,185 @@
+name: Telegram Test Control
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "Control action to run from blast-ops"
+        required: true
+        default: status
+        type: choice
+        options:
+          - prepare
+          - status
+          - enter-test
+          - exit-test
+          - provision
+          - run
+          - cleanup
+      branch:
+        description: "Branch to sync on blast-ops before running control action"
+        required: false
+        type: string
+      user_count:
+        description: "Override TG_TEST_USER_COUNT for provision/run/status"
+        required: false
+        default: "0"
+        type: string
+      concurrency:
+        description: "Override TG_TEST_USER_CONCURRENCY for provision/run"
+        required: false
+        default: "0"
+        type: string
+      run_id:
+        description: "Optional run id for Telegram load scenario"
+        required: false
+        default: ""
+        type: string
+      dry_run:
+        description: "Print actions without mutating remote bot state"
+        required: false
+        default: false
+        type: boolean
+      skip_queue_check:
+        description: "Skip active queue drain check"
+        required: false
+        default: false
+        type: boolean
+      skip_db_check:
+        description: "Skip test credits DB connectivity check during prepare"
+        required: false
+        default: false
+        type: boolean
+      build:
+        description: "Rebuild tg-bot-public during enter/exit"
+        required: false
+        default: false
+        type: boolean
+      yes:
+        description: "Confirm cleanup action"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: telegram-test-control
+  cancel-in-progress: false
+
+jobs:
+  control:
+    name: Blast Ops Telegram Test Control
+    runs-on: [self-hosted, blast-deploy-infra]
+    timeout-minutes: 60
+    env:
+      REPO_DIR: ${{ vars.BLAST_REPO_DIR_INFRA != '' && vars.BLAST_REPO_DIR_INFRA || vars.BLAST_REPO_DIR }}
+      INPUT_BRANCH: ${{ inputs.branch }}
+      REF_NAME: ${{ github.ref_name }}
+      ACTION: ${{ inputs.action }}
+      USER_COUNT: ${{ inputs.user_count }}
+      CONCURRENCY: ${{ inputs.concurrency }}
+      RUN_ID: ${{ inputs.run_id }}
+      DRY_RUN: ${{ inputs.dry_run }}
+      SKIP_QUEUE_CHECK: ${{ inputs.skip_queue_check }}
+      SKIP_DB_CHECK: ${{ inputs.skip_db_check }}
+      BUILD: ${{ inputs.build }}
+      YES: ${{ inputs.yes }}
+      GIT_AUTH_TOKEN: ${{ secrets.DEPLOY_GH_TOKEN }}
+      GITHUB_TOKEN_FALLBACK: ${{ github.token }}
+      TG_TEST_CONTROL_ENV_FILE: ${{ vars.TG_TEST_CONTROL_ENV_FILE != '' && vars.TG_TEST_CONTROL_ENV_FILE || '/opt/blast/telegram-test/.env' }}
+      TG_TEST_NODE0_HOST: ${{ vars.DEPLOY_PROD_NODE0_HOST }}
+      TG_TEST_NODE0_USER: ${{ vars.DEPLOY_PROD_NODE0_USER }}
+      TG_TEST_NODE0_PORT: ${{ vars.DEPLOY_PROD_NODE0_PORT }}
+      TG_TEST_NODE0_REPO_DIR: ${{ vars.DEPLOY_PROD_NODE0_REPO_DIR }}
+      TG_TEST_NODE1_HOST: ${{ vars.DEPLOY_PROD_NODE1_HOST }}
+      TG_TEST_NODE1_USER: ${{ vars.DEPLOY_PROD_NODE1_USER }}
+      TG_TEST_NODE1_PORT: ${{ vars.DEPLOY_PROD_NODE1_PORT }}
+      TG_TEST_NODE1_REPO_DIR: ${{ vars.DEPLOY_PROD_NODE1_REPO_DIR }}
+      DEPLOY_PROD_NODE0_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_PROD_NODE0_SSH_PRIVATE_KEY }}
+      DEPLOY_PROD_NODE1_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_PROD_NODE1_SSH_PRIVATE_KEY }}
+    steps:
+      - name: Validate blast-ops repo
+        run: |
+          set -euo pipefail
+          if [ -z "${REPO_DIR:-}" ]; then
+            echo "Repository variable BLAST_REPO_DIR_INFRA (or BLAST_REPO_DIR) is not set"
+            exit 1
+          fi
+          if [ ! -d "$REPO_DIR/.git" ]; then
+            echo "REPO_DIR does not point to a git repo: $REPO_DIR"
+            exit 1
+          fi
+
+      - name: Sync blast-ops repo branch
+        run: |
+          set -euo pipefail
+          BRANCH="${INPUT_BRANCH:-$REF_NAME}"
+          if [ -z "$BRANCH" ]; then
+            echo "Branch is empty"
+            exit 1
+          fi
+          AUTH_TOKEN="${GIT_AUTH_TOKEN:-${GITHUB_TOKEN_FALLBACK:-}}"
+          if [ -z "$AUTH_TOKEN" ]; then
+            echo "GitHub token is missing for non-interactive control run."
+            exit 1
+          fi
+          if ! git -C "$REPO_DIR" config --global --get-all safe.directory 2>/dev/null | grep -Fxq "$REPO_DIR"; then
+            git -C "$REPO_DIR" config --global --add safe.directory "$REPO_DIR"
+          fi
+          git_run() {
+            git -C "$REPO_DIR" \
+              -c "url.https://x-access-token:${AUTH_TOKEN}@github.com/.insteadof=git@github.com:" \
+              -c "url.https://x-access-token:${AUTH_TOKEN}@github.com/.insteadof=ssh://git@github.com/" \
+              -c "url.https://x-access-token:${AUTH_TOKEN}@github.com/.insteadof=https://github.com/" \
+              "$@"
+          }
+          git_run fetch origin "$BRANCH"
+          if git -C "$REPO_DIR" show-ref --verify --quiet "refs/heads/$BRANCH"; then
+            git_run checkout -f "$BRANCH"
+          else
+            git_run checkout -B "$BRANCH" "origin/$BRANCH"
+          fi
+          git_run reset --hard "origin/$BRANCH"
+
+      - name: Bootstrap control venv
+        run: |
+          set -euo pipefail
+          CONTROL_DIR="$(dirname "$TG_TEST_CONTROL_ENV_FILE")"
+          install -d -m 700 "$CONTROL_DIR"
+          python3 -m venv "$CONTROL_DIR/venv"
+          "$CONTROL_DIR/venv/bin/python" -m pip install --upgrade pip
+          "$CONTROL_DIR/venv/bin/python" -m pip install "telethon>=1.36.0" "asyncpg>=0.29.0"
+
+      - name: Run control action
+        run: |
+          set -euo pipefail
+          CONTROL_DIR="$(dirname "$TG_TEST_CONTROL_ENV_FILE")"
+          KEY_DIR="$CONTROL_DIR/keys"
+          install -d -m 700 "$KEY_DIR"
+          key_node0="$KEY_DIR/orchestrator_0_ci"
+          key_node1="$KEY_DIR/orchestrator_1_ci"
+          printf '%s\n' "$DEPLOY_PROD_NODE0_SSH_PRIVATE_KEY" > "$key_node0"
+          printf '%s\n' "$DEPLOY_PROD_NODE1_SSH_PRIVATE_KEY" > "$key_node1"
+          chmod 600 "$key_node0" "$key_node1"
+
+          cmd=(
+            "$CONTROL_DIR/venv/bin/python"
+            "$REPO_DIR/scripts/telegram_test_control.py"
+            "$ACTION"
+            "--env-file"
+            "$TG_TEST_CONTROL_ENV_FILE"
+          )
+          [ "$DRY_RUN" = "true" ] && cmd+=("--dry-run")
+          [ "$SKIP_QUEUE_CHECK" = "true" ] && cmd+=("--skip-queue-check")
+          [ "$SKIP_DB_CHECK" = "true" ] && cmd+=("--skip-db-check")
+          [ "$BUILD" = "true" ] && cmd+=("--build")
+          [ "${USER_COUNT:-0}" != "0" ] && cmd+=("--user-count" "$USER_COUNT")
+          [ "${CONCURRENCY:-0}" != "0" ] && cmd+=("--concurrency" "$CONCURRENCY")
+          [ -n "${RUN_ID:-}" ] && cmd+=("--run-id" "$RUN_ID")
+          [ "$YES" = "true" ] && cmd+=("--yes")
+
+          TG_TEST_NODE0_SSH_KEY_PATH="$key_node0" \
+          TG_TEST_NODE1_SSH_KEY_PATH="$key_node1" \
+          "${cmd[@]}"

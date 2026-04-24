@@ -67,9 +67,19 @@ jobs:
         run: |
           set -euo pipefail
           python -m py_compile \
+            core/telegram_api.py \
             services/tg_bot_public/*.py \
+            scripts/telegram_test_botfather.py \
+            scripts/telegram_test_control.py \
+            scripts/telegram_test_load.py \
+            scripts/telegram_test_switch.py \
             scripts/migrate_credits_sqlite_to_postgres.py \
             scripts/logs_pipeline.py
+
+      - name: Run Telegram test environment contract tests
+        run: |
+          set -euo pipefail
+          python -m pytest -q tests/test_telegram_test_environment.py
 
       - name: Run Windows node ops regression tests
         run: |

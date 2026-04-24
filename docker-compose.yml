@@ -132,6 +132,9 @@ services:
     env_file:
       - .env
     environment:
+      TG_BOT_API_ENV: ${TG_BOT_API_ENV:-prod}
+      TG_TEST_BOT_TOKEN: ${TG_TEST_BOT_TOKEN:-}
+      TG_TEST_CREDITS_DB_URL: ${TG_TEST_CREDITS_DB_URL:-}
       ORCHESTRATOR_PUBLIC_URL: ${ORCHESTRATOR_PUBLIC_URL:-http://orchestrator-api:8000}
       BOT_POLL_INTERVAL_S: ${BOT_POLL_INTERVAL_S:-5}
       BOT_TMP_DIR: ${BOT_TMP_DIR:-/app/work/tg_tmp}
@@ -152,7 +155,14 @@ services:
     env_file:
       - .env
     environment:
+      TG_BOT_API_ENV: ${TG_BOT_API_ENV:-prod}
       TG_BOT_TOKEN: ${TG_BOT_PUBLIC_TOKEN}
+      TG_BOT_USERNAME: ${TG_BOT_USERNAME:-blast808bot}
+      TG_TEST_BOT_TOKEN: ${TG_TEST_BOT_TOKEN:-}
+      TG_TEST_BOT_USERNAME: ${TG_TEST_BOT_USERNAME:-}
+      TG_TEST_BYPASS_SUBSCRIPTION: ${TG_TEST_BYPASS_SUBSCRIPTION:-0}
+      TG_TEST_CREDITS_DB_URL: ${TG_TEST_CREDITS_DB_URL:-}
+      TG_TEST_PREVIEW_SOURCE_BOT_TOKEN: ${TG_TEST_PREVIEW_SOURCE_BOT_TOKEN:-}
       TG_PREVIEW_SOURCE_BOT_TOKEN: ${TG_BOT_TOKEN:-}
       TG_STATE_PREFIX: ${TG_PUBLIC_STATE_PREFIX:-blast:tg:public:chat_state}
       SUBSCRIPTION_CHANNEL: ${SUBSCRIPTION_CHANNEL:-@impulsemarketing}

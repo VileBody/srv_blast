@@ -10,6 +10,8 @@ import urllib.parse
 import urllib.request
 from typing import Any
 
+from core.telegram_api import make_telegram_api
+
 log = logging.getLogger("orchestrator.ops_alert_subscribers")
 
 
@@ -219,17 +221,19 @@ class OpsAlertBotPoller:
         *,
         bot_token: str,
         store: OpsAlertSubscriberStore,
+        api_env: str = "prod",
         poll_timeout_s: float = 25.0,
         retry_sleep_s: float = 2.0,
     ) -> None:
         self._token = _to_str(bot_token)
+        self._telegram_api = make_telegram_api(api_env, name="ALERT_TELEGRAM_API_ENV")
         self._store = store
         self._poll_timeout_s = max(1.0, float(poll_timeout_s))
         self._retry_sleep_s = max(0.2, float(retry_sleep_s))
         self._offset = 0
 
     def _api_url(self, method: str) -> str:
-        return f"https://api.telegram.org/bot{self._token}/{method}"
+        return self._telegram_api.method_url(token=self._token, method=method)
 
     def _get_updates(self, *, offset: int, timeout_s: float) -> list[dict[str, Any]]:
         params = {"timeout": str(int(max(1.0, timeout_s)))}

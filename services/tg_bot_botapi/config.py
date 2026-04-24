@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import quote_plus
 
+from core.telegram_api import TELEGRAM_API_ENV_TEST, normalize_telegram_api_env
+
 
 def _env(name: str, default: str = "") -> str:
     return (os.environ.get(name, default) or "").strip()
@@ -33,6 +35,10 @@ def _bool_env(name: str, default: bool) -> bool:
     if raw in {"0", "false", "no", "off"}:
         return False
     return bool(default)
+
+
+def _telegram_api_env(name: str = "TG_BOT_API_ENV") -> str:
+    return normalize_telegram_api_env(_env(name, "prod"), name=name)
 
 
 def _normalize_username(raw: str) -> str:
@@ -92,9 +98,23 @@ def _credits_db_url_env() -> str:
     )
 
 
+def _active_credits_db_url_env() -> str:
+    if _telegram_api_env() == TELEGRAM_API_ENV_TEST:
+        return _env("TG_TEST_CREDITS_DB_URL", "")
+    return _credits_db_url_env()
+
+
+def _active_tg_bot_token_env() -> str:
+    if _telegram_api_env() == TELEGRAM_API_ENV_TEST:
+        return _env("TG_TEST_BOT_TOKEN", "")
+    return _env("TG_BOT_TOKEN", "")
+
+
 @dataclass(frozen=True)
 class Settings:
-    tg_bot_token: str = _env("TG_BOT_TOKEN", "")
+    tg_bot_api_env: str = _telegram_api_env()
+    tg_test_bot_token: str = _env("TG_TEST_BOT_TOKEN", "")
+    tg_bot_token: str = _active_tg_bot_token_env()
     tg_file_proxy_url: str = _env("TG_FILE_PROXY_URL", "")
     orchestrator_public_url: str = _env("ORCHESTRATOR_PUBLIC_URL", "http://orchestrator-api:8000")
 
@@ -149,7 +169,7 @@ class Settings:
     # ------------------------------------------------------------------ #
     # PostgreSQL (credit system) — CREDITS_DB_URL or POSTGRES_* fallback
     # ------------------------------------------------------------------ #
-    credits_db_url: str = _credits_db_url_env()
+    credits_db_url: str = _active_credits_db_url_env()
 
     # ------------------------------------------------------------------ #
     # Credit & access-gate settings
@@ -175,6 +195,10 @@ class Settings:
         if not p.is_absolute():
             p = (Path.cwd() / p).resolve()
         return p.resolve()
+
+    def __post_init__(self) -> None:
+        if self.tg_bot_api_env == TELEGRAM_API_ENV_TEST and not str(self.tg_test_bot_token or "").strip():
+            raise RuntimeError("TG_TEST_BOT_TOKEN is required when TG_BOT_API_ENV=test")
 
 
 SETTINGS = Settings()

@@ -9,9 +9,15 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any
+import sys
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 import redis
 
+from core.telegram_api import make_telegram_api
 from services.tg_bot_public.job_recovery_policy import (
     decide_job_recovery,
     is_forbidden_delivery_error,
@@ -135,6 +141,7 @@ def main() -> int:
     ).rstrip("/")
     out_bucket = str(os.environ.get("S3_BUCKET_OUTPUT_VIDEO") or "").strip()
     bot_token = str(os.environ.get("TG_BOT_TOKEN") or "").strip()
+    telegram_api = make_telegram_api(os.environ.get("TG_BOT_API_ENV", "prod"), name="TG_BOT_API_ENV")
     state_path = Path(
         str(os.environ.get("WAIT_AUDIO_POLICY_STATE_PATH") or "/app/work/wait_audio_policy_state.json").strip()
     )
@@ -258,7 +265,7 @@ def main() -> int:
                     rows.append({**row, "result": "send_failed_no_token"})
                     continue
                 code, body = _http_post_json(
-                    f"https://api.telegram.org/bot{bot_token}/sendMessage",
+                    telegram_api.method_url(token=bot_token, method="sendMessage"),
                     {"chat_id": int(chat_id), "text": text, "disable_notification": True},
                     timeout=25.0,
                 )
@@ -338,4 +345,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

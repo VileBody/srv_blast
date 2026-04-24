@@ -102,12 +102,14 @@ def _install_aiogram_stub() -> None:
     aiogram_filters_mod = types.ModuleType("aiogram.filters")
     aiogram_types_mod = types.ModuleType("aiogram.types")
     aiogram_client_mod = types.ModuleType("aiogram.client")
+    aiogram_client_telegram_mod = types.ModuleType("aiogram.client.telegram")
     aiogram_client_session_mod = types.ModuleType("aiogram.client.session")
     aiogram_client_session_aiohttp_mod = types.ModuleType("aiogram.client.session.aiohttp")
 
     class _Dummy:
         def __init__(self, *args, **kwargs) -> None:
-            _ = (args, kwargs)
+            self.args = args
+            self.kwargs = kwargs
 
         def __call__(self, *args, **kwargs):
             _ = (args, kwargs)
@@ -158,6 +160,20 @@ def _install_aiogram_stub() -> None:
     class TelegramBadRequest(Exception):
         pass
 
+    class TelegramAPIServer:
+        def __init__(self, base: str, file: str) -> None:
+            self.base = base
+            self.file = file
+
+    TelegramAPIServer.PRODUCTION = TelegramAPIServer(
+        base="https://api.telegram.org/bot{token}/{method}",
+        file="https://api.telegram.org/file/bot{token}/{path}",
+    )
+    TelegramAPIServer.TEST = TelegramAPIServer(
+        base="https://api.telegram.org/bot{token}/test/{method}",
+        file="https://api.telegram.org/file/bot{token}/test/{path}",
+    )
+
     aiogram_mod.Bot = _DummyBot
     aiogram_mod.Dispatcher = _DummyDispatcher
     aiogram_mod.Router = _DummyRouter
@@ -171,6 +187,7 @@ def _install_aiogram_stub() -> None:
     aiogram_types_mod.ReplyKeyboardRemove = _Dummy
     aiogram_types_mod.InlineKeyboardMarkup = _Dummy
     aiogram_types_mod.InlineKeyboardButton = _Dummy
+    aiogram_client_telegram_mod.TelegramAPIServer = TelegramAPIServer
     aiogram_client_session_aiohttp_mod.AiohttpSession = _Dummy
 
     sys.modules["aiogram"] = aiogram_mod
@@ -178,6 +195,7 @@ def _install_aiogram_stub() -> None:
     sys.modules["aiogram.filters"] = aiogram_filters_mod
     sys.modules["aiogram.types"] = aiogram_types_mod
     sys.modules["aiogram.client"] = aiogram_client_mod
+    sys.modules["aiogram.client.telegram"] = aiogram_client_telegram_mod
     sys.modules["aiogram.client.session"] = aiogram_client_session_mod
     sys.modules["aiogram.client.session.aiohttp"] = aiogram_client_session_aiohttp_mod
 

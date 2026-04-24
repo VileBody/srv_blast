@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import quote_plus
 
+from core.telegram_api import TELEGRAM_API_ENV_TEST, normalize_telegram_api_env
+
 
 def _env(name: str, default: str = "") -> str:
     return (os.environ.get(name, default) or "").strip()
@@ -41,6 +43,10 @@ def _delivery_mode_env(name: str, default: str = "polling") -> str:
     if mode not in {"polling", "webhook"}:
         raise RuntimeError(f"{name} must be 'polling' or 'webhook', got {mode!r}")
     return mode
+
+
+def _telegram_api_env(name: str = "TG_BOT_API_ENV") -> str:
+    return normalize_telegram_api_env(_env(name, "prod"), name=name)
 
 
 def _maintenance_mode_env(default: bool = False) -> bool:
@@ -131,11 +137,39 @@ def _credits_db_url_env() -> str:
     )
 
 
+def _active_credits_db_url_env() -> str:
+    if _telegram_api_env() == TELEGRAM_API_ENV_TEST:
+        return _env("TG_TEST_CREDITS_DB_URL", "")
+    return _credits_db_url_env()
+
+
+def _active_tg_bot_token_env() -> str:
+    if _telegram_api_env() == TELEGRAM_API_ENV_TEST:
+        return _env("TG_TEST_BOT_TOKEN", "")
+    return _env("TG_BOT_TOKEN", "")
+
+
+def _active_tg_bot_username_env() -> str:
+    if _telegram_api_env() == TELEGRAM_API_ENV_TEST:
+        return _env("TG_TEST_BOT_USERNAME", "")
+    return _env("TG_BOT_USERNAME", "blast808bot")
+
+
+def _active_preview_source_bot_token_env() -> str:
+    if _telegram_api_env() == TELEGRAM_API_ENV_TEST:
+        return _env("TG_TEST_PREVIEW_SOURCE_BOT_TOKEN", "")
+    return _env("TG_PREVIEW_SOURCE_BOT_TOKEN", "")
+
+
 @dataclass(frozen=True)
 class Settings:
-    tg_bot_token: str = _env("TG_BOT_TOKEN", "")
-    tg_preview_source_bot_token: str = _env("TG_PREVIEW_SOURCE_BOT_TOKEN", "")
-    tg_bot_username: str = _env("TG_BOT_USERNAME", "blast808bot")
+    tg_bot_api_env: str = _telegram_api_env()
+    tg_test_bot_token: str = _env("TG_TEST_BOT_TOKEN", "")
+    tg_test_bot_username: str = _env("TG_TEST_BOT_USERNAME", "")
+    tg_test_bypass_subscription: bool = _bool_env("TG_TEST_BYPASS_SUBSCRIPTION", False)
+    tg_bot_token: str = _active_tg_bot_token_env()
+    tg_preview_source_bot_token: str = _active_preview_source_bot_token_env()
+    tg_bot_username: str = _active_tg_bot_username_env()
     tg_file_proxy_url: str = _env("TG_FILE_PROXY_URL", "")
     orchestrator_public_url: str = _env("ORCHESTRATOR_PUBLIC_URL", "http://orchestrator-api:8000")
 
@@ -208,7 +242,7 @@ class Settings:
     survey_url: str = _env("SURVEY_URL", "https://forms.yandex.ru/u/69c52ce695add5c0264676e3")
 
     # Credits & admin panel
-    credits_db_url: str = _credits_db_url_env()
+    credits_db_url: str = _active_credits_db_url_env()
     # Kept only as an explicit source for one-time migration script.
     credits_db_path: str = _env("CREDITS_DB_PATH", "/app/work/credits.db")
     admin_panel_port: int = _int_env("ADMIN_PANEL_PORT", 8080)
@@ -256,6 +290,19 @@ class Settings:
         if not p.is_absolute():
             p = (Path.cwd() / p).resolve()
         return p.resolve()
+
+    def __post_init__(self) -> None:
+        if self.tg_test_bypass_subscription and self.tg_bot_api_env != TELEGRAM_API_ENV_TEST:
+            raise RuntimeError("TG_TEST_BYPASS_SUBSCRIPTION=1 is allowed only when TG_BOT_API_ENV=test")
+        if self.tg_bot_api_env == TELEGRAM_API_ENV_TEST:
+            if not str(self.tg_test_bot_token or "").strip():
+                raise RuntimeError("TG_TEST_BOT_TOKEN is required when TG_BOT_API_ENV=test")
+            if not str(self.tg_test_bot_username or "").strip():
+                raise RuntimeError("TG_TEST_BOT_USERNAME is required when TG_BOT_API_ENV=test")
+            if self.tg_delivery_mode == "webhook" and not str(self.tg_webhook_url or "").strip():
+                raise RuntimeError("TG_WEBHOOK_URL is required for TG_BOT_API_ENV=test with webhook delivery")
+            if not str(self.credits_db_url or "").strip():
+                raise RuntimeError("TG_TEST_CREDITS_DB_URL is required when TG_BOT_API_ENV=test")
 
 
 SETTINGS = Settings()

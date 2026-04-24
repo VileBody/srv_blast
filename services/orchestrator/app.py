@@ -210,6 +210,7 @@ def create_app() -> FastAPI:
                 poller = OpsAlertBotPoller(
                     bot_token=SETTINGS.alert_telegram_bot_token,
                     store=_ops_alert_store,
+                    api_env=SETTINGS.alert_telegram_api_env,
                     poll_timeout_s=SETTINGS.alert_subscribers_poll_timeout_s,
                     retry_sleep_s=SETTINGS.alert_subscribers_retry_sleep_s,
                 )

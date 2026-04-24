@@ -4,6 +4,8 @@
 # Local env
 .env
 .env.iac
+.env.telegram-test
+.telegram-test-sessions/
 infra/runners/.env.github-runner
 infra/runners/.env.dozzle
 infra/runners/.env.observability

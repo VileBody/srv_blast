@@ -10,15 +10,15 @@ import time
 import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
-from urllib.parse import parse_qsl, quote, unquote_plus
+from urllib.parse import parse_qsl, unquote_plus
 
 import httpx
 from aiohttp import web
 from aiogram import Bot, Dispatcher, Router
-from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandStart
 from aiogram.types import BotCommand, CallbackQuery, ChatMemberUpdated, FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, Message, ReplyKeyboardMarkup, ReplyKeyboardRemove
+from core.telegram_api import build_aiogram_session, make_telegram_api
 from core.clip_window import CLIP_WINDOW_RANGE_S_LABEL
 from core.filesystem_hygiene import cleanup_jobs_artifacts, cleanup_tmp_chat_dirs
 from core.subtitles_mode import (
@@ -888,6 +888,7 @@ def _is_control_button_text(text: str) -> bool:
 class BlastBotApp:
     def __init__(self, settings: Settings):
         self.settings = settings
+        self.telegram_api = make_telegram_api(settings.tg_bot_api_env)
         self.store = RedisChatStateStore(settings)
         self.s3 = S3Client(settings)
         self.orchestrator = OrchestratorClient(base_url=settings.orchestrator_public_url, timeout_s=60.0)
@@ -962,7 +963,7 @@ class BlastBotApp:
 
         try:
             async with httpx.AsyncClient(timeout=20.0) as client:
-                api_url = f"https://api.telegram.org/bot{token}/getFile"
+                api_url = self.telegram_api.method_url(token=token, method="getFile")
                 resp = await client.get(api_url, params={"file_id": fid})
                 if resp.status_code >= 300:
                     return ""
@@ -973,7 +974,7 @@ class BlastBotApp:
                 file_path = str(result.get("file_path") or "").strip()
                 if not file_path:
                     return ""
-                file_url = f"https://api.telegram.org/file/bot{token}/{file_path}"
+                file_url = self.telegram_api.file_url(token=token, path=file_path)
                 self._preview_source_file_url_cache[fid] = file_url
                 return file_url
         except Exception:
@@ -1392,6 +1393,9 @@ class BlastBotApp:
         )
 
     async def _check_subscription(self, user_id: int) -> bool:
+        if bool(getattr(self.settings, "tg_test_bypass_subscription", False)):
+            log.info("subscription_check_bypassed_for_telegram_test_env user_id=%s", user_id)
+            return True
         bot = self._require_bot()
         try:
             member = await bot.get_chat_member(
@@ -4383,8 +4387,7 @@ class BlastBotApp:
         if not path:
             raise RuntimeError("telegram file_path is empty")
 
-        encoded_path = quote(path, safe="/")
-        url = f"https://api.telegram.org/file/bot{self.settings.tg_bot_token}/{encoded_path}"
+        url = self.telegram_api.file_url(token=self.settings.tg_bot_token, path=path)
 
         dest.parent.mkdir(parents=True, exist_ok=True)
         timeout = httpx.Timeout(float(_TG_AUDIO_DOWNLOAD_TIMEOUT_S))
@@ -4522,10 +4525,16 @@ class BlastBotApp:
     async def run(self) -> None:
         tg_proxy = str(self.settings.tg_file_proxy_url or "").strip()
         if tg_proxy:
-            bot = Bot(token=self.settings.tg_bot_token, session=AiohttpSession(proxy=tg_proxy))
+            bot = Bot(
+                token=self.settings.tg_bot_token,
+                session=build_aiogram_session(api_env=self.settings.tg_bot_api_env, proxy_url=tg_proxy),
+            )
             log.info("bot_api_proxy_enabled proxy=%s", _mask_proxy_url(tg_proxy))
         else:
-            bot = Bot(token=self.settings.tg_bot_token)
+            bot = Bot(
+                token=self.settings.tg_bot_token,
+                session=build_aiogram_session(api_env=self.settings.tg_bot_api_env),
+            )
         delivery_mode = str(self.settings.tg_delivery_mode or "").strip().lower()
         if delivery_mode == "polling":
             await self.dp.start_polling(bot)

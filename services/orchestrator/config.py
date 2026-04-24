@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import quote_plus
 
+from core.telegram_api import normalize_telegram_api_env
+
 
 def _env(key: str, default: str = "") -> str:
     return (os.environ.get(key, default) or "").strip()
@@ -34,6 +36,10 @@ def _bool_env(key: str, default: bool) -> bool:
     if raw in {"0", "false", "no", "off"}:
         return False
     return bool(default)
+
+
+def _telegram_api_env(key: str, default: str = "prod") -> str:
+    return normalize_telegram_api_env(_env(key, default), name=key)
 
 
 def _maintenance_mode_env(default: bool = False) -> bool:
@@ -186,6 +192,7 @@ class Settings:
     # Ops alerts (used for Windows node auto-disable notifications).
     alert_telegram_bot_token: str = _env("ALERT_TELEGRAM_BOT_TOKEN", "")
     alert_telegram_chat_id: str = _env("ALERT_TELEGRAM_CHAT_ID", "")
+    alert_telegram_api_env: str = _telegram_api_env("ALERT_TELEGRAM_API_ENV", "prod")
     alert_subscribers_enabled: bool = _bool_env("ALERT_SUBSCRIBERS_ENABLED", True)
     alert_subscribers_poll_timeout_s: float = _float_env("ALERT_SUBSCRIBERS_POLL_TIMEOUT_S", 25.0)
     alert_subscribers_retry_sleep_s: float = _float_env("ALERT_SUBSCRIBERS_RETRY_SLEEP_S", 2.0)
