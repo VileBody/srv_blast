@@ -16,6 +16,14 @@ def test_tg_public_config_declares_maintenance_bypass_envs() -> None:
     assert "@impulsemanage" in src
 
 
+def test_tg_public_config_declares_ops_alert_envs() -> None:
+    src = _read("services/tg_bot_public/config.py")
+    assert "alert_telegram_bot_token" in src
+    assert "ALERT_TELEGRAM_BOT_TOKEN" in src
+    assert "alert_telegram_chat_id" in src
+    assert "ALERT_TELEGRAM_CHAT_ID" in src
+
+
 def test_tg_public_app_uses_bypass_allowlist_and_token_on_enqueue() -> None:
     src = _read("services/tg_bot_public/app.py")
     assert "_allow_maintenance_bypass_for_message" in src
