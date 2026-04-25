@@ -368,6 +368,50 @@ def test_build_job_openrouter_pins_provider_mode_openrouter(
     assert seen_provider_modes == ["openrouter"]
 
 
+def test_build_job_applies_runtime_gemini_thinking_tokens(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    job_id = "job_runtime_thinking_budget"
+    store = _FakeStore(
+        job_id=job_id,
+        request={"audio_s3_url": "s3://bucket/raw/audio.mp3", "mode": "with_gemini", "lyrics_text": ""},
+    )
+    _paths, dispatch_calls = _patch_common(monkeypatch, tmp_path=tmp_path, job_id=job_id, store=store)
+    monkeypatch.setattr(tasks, "get_runtime_values", lambda _store: {"gemini.max_thinking_tokens": 2500})
+    monkeypatch.setenv("GEMINI_MAX_THINKING_TOKENS", "20000")
+
+    subprocess_env_values: list[str | None] = []
+
+    def _fake_run(*args, **kwargs):
+        env = kwargs.get("env") or {}
+        subprocess_env_values.append(env.get("GEMINI_MAX_THINKING_TOKENS"))
+        return subprocess.CompletedProcess(args=kwargs.get("args", []), returncode=0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(tasks.subprocess, "run", _fake_run)
+
+    from mlcore import gemini_orchestrator as go
+
+    llm_env_values: list[str | None] = []
+
+    def _fake_build_all(**kwargs):
+        _ = kwargs
+        llm_env_values.append(os.environ.get("GEMINI_MAX_THINKING_TOKENS"))
+        return {
+            "audio_plan": tmp_path / "audio_plan.json",
+            "full_edit_config": tmp_path / "full_edit_config.json",
+            "footage_config": tmp_path / "footage_config.json",
+        }
+
+    monkeypatch.setattr(go, "build_all_via_gemini_one_call", _fake_build_all)
+
+    out = tasks.build_job.run(job_id)
+    assert out["ok"] is True
+    assert dispatch_calls == [job_id]
+    assert llm_env_values == ["2500"]
+    assert subprocess_env_values == ["2500"]
+    assert os.environ.get("GEMINI_MAX_THINKING_TOKENS") == "20000"
+
+
 def test_build_job_openrouter_retries_on_internal_500(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

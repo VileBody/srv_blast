@@ -34,17 +34,21 @@ def test_runtime_config_defaults_and_overrides() -> None:
     store = _FakeStore()
     cfg = get_runtime_config(store)
     assert cfg["values"]["gemini.transport_retry_enabled"] is True
+    assert cfg["values"]["gemini.max_thinking_tokens"] == 2500
     assert cfg["values"]["backpressure.render_backlog_add_windows_node"] == 300
 
     updated = set_runtime_config(
         store,
         {
             "gemini.transport_retry_enabled": "0",
+            "gemini.max_thinking_tokens": "7000",
             "backpressure.render_backlog_add_windows_node": "42",
         },
     )
     assert updated["values"]["gemini.transport_retry_enabled"] is False
+    assert updated["values"]["gemini.max_thinking_tokens"] == 7000
     assert updated["values"]["backpressure.render_backlog_add_windows_node"] == 42
+    assert get_runtime_values(store)["gemini.max_thinking_tokens"] == 7000
     assert get_runtime_values(store)["backpressure.render_backlog_add_windows_node"] == 42
 
 

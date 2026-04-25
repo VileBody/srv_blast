@@ -67,6 +67,44 @@ _REUSE_RESUME_STATE_KEYS = (
 )
 
 
+_LLM_ENV_KEYS = (
+    "DATA_DIR",
+    "OUT_DIR",
+    "AUDIO_FILE_PATH",
+    "AUDIO_DIR",
+    "AUDIO_FILE_NAME",
+    "AE_MEDIA_MODE",
+    "LLM_WORKER_TYPE",
+    "LLM_PROVIDER_MODE",
+    "JOB_ID",
+    "LYRICS_TEXT",
+    "TARGET_FRAGMENT",
+    "SUBTITLES_MODE",
+    "FOOTAGE_ARTIST_ID",
+    "USER_CLIP_START_SEC",
+    "USER_CLIP_END_SEC",
+    "FOOTAGE_EXCLUDE_FILE_NAMES_JSON",
+    "FOOTAGE_ROTATION_THEME",
+    "FOOTAGE_ROTATION_GROUP",
+    "STAGE2_SELECTION_SEED",
+    "BATCH_VARIANT_INDEX",
+    "BATCH_VARIANTS_TOTAL",
+    "REUSE_TEXT_JOB_ID",
+    "GEMINI_MAX_THINKING_TOKENS",
+)
+
+
+def _apply_runtime_llm_env_overrides(env: Dict[str, str], store: JobStore) -> None:
+    try:
+        runtime_values = get_runtime_values(store)
+    except Exception as exc:
+        log.warning("runtime_llm_config_unavailable err=%r", exc)
+        return
+    raw_thinking = runtime_values.get("gemini.max_thinking_tokens")
+    if raw_thinking is not None:
+        env["GEMINI_MAX_THINKING_TOKENS"] = str(int(raw_thinking))
+
+
 def _is_remote_url(u: str) -> bool:
     s = (u or "").strip().lower()
     return s.startswith("http://") or s.startswith("https://") or s.startswith("s3://")
@@ -1523,6 +1561,7 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
     env["DATA_DIR"] = str(paths.data_dir)
     env["OUT_DIR"] = str(paths.out_dir)
     env["JOB_ID"] = str(job_id)
+    _apply_runtime_llm_env_overrides(env, store)
 
     # make pipeline use THIS job audio
     env["AUDIO_FILE_PATH"] = str(local_audio)
@@ -1569,30 +1608,7 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
 
         store.set_status(job_id, "RUNNING", stage="llm_stage1")
         backup: Dict[str, str | None] = {}
-        for k in (
-            "DATA_DIR",
-            "OUT_DIR",
-            "AUDIO_FILE_PATH",
-            "AUDIO_DIR",
-            "AUDIO_FILE_NAME",
-            "AE_MEDIA_MODE",
-            "LLM_WORKER_TYPE",
-            "LLM_PROVIDER_MODE",
-            "JOB_ID",
-            "LYRICS_TEXT",
-            "TARGET_FRAGMENT",
-            "SUBTITLES_MODE",
-            "FOOTAGE_ARTIST_ID",
-            "USER_CLIP_START_SEC",
-            "USER_CLIP_END_SEC",
-            "FOOTAGE_EXCLUDE_FILE_NAMES_JSON",
-            "FOOTAGE_ROTATION_THEME",
-            "FOOTAGE_ROTATION_GROUP",
-            "STAGE2_SELECTION_SEED",
-            "BATCH_VARIANT_INDEX",
-            "BATCH_VARIANTS_TOTAL",
-            "REUSE_TEXT_JOB_ID",
-        ):
+        for k in _LLM_ENV_KEYS:
             backup[k] = os.environ.get(k)
             if k in env:
                 os.environ[k] = env[k]
@@ -1781,32 +1797,8 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
                 except Exception as persist_exc:
                     log.warning("resume_state_drop_persist_failed job=%s err=%r", job_id, persist_exc)
                 retry_hint = _build_stage2_subtitles_retry_hint(blob_first)
-                llm_env_keys = (
-                    "DATA_DIR",
-                    "OUT_DIR",
-                    "AUDIO_FILE_PATH",
-                    "AUDIO_DIR",
-                    "AUDIO_FILE_NAME",
-                    "AE_MEDIA_MODE",
-                    "LLM_WORKER_TYPE",
-                    "LLM_PROVIDER_MODE",
-                    "JOB_ID",
-                    "LYRICS_TEXT",
-                    "TARGET_FRAGMENT",
-                    "SUBTITLES_MODE",
-                    "FOOTAGE_ARTIST_ID",
-                    "USER_CLIP_START_SEC",
-                    "USER_CLIP_END_SEC",
-                    "FOOTAGE_EXCLUDE_FILE_NAMES_JSON",
-                    "FOOTAGE_ROTATION_THEME",
-                    "FOOTAGE_ROTATION_GROUP",
-                    "STAGE2_SELECTION_SEED",
-                    "BATCH_VARIANT_INDEX",
-                    "BATCH_VARIANTS_TOTAL",
-                    "REUSE_TEXT_JOB_ID",
-                )
                 llm_backup: Dict[str, str | None] = {}
-                for k in llm_env_keys:
+                for k in _LLM_ENV_KEYS:
                     llm_backup[k] = os.environ.get(k)
                     if k in env:
                         os.environ[k] = env[k]

@@ -133,6 +133,17 @@ SPECS: tuple[RuntimeConfigSpec, ...] = (
         description="Maximum backoff for Gemini transport disconnect retries.",
     ),
     RuntimeConfigSpec(
+        key="gemini.max_thinking_tokens",
+        title="Gemini max thinking tokens",
+        kind="int",
+        default=2500,
+        min_value=1,
+        max_value=100000,
+        category="gemini",
+        runtime_effect="hot",
+        description="Runtime override for GEMINI_MAX_THINKING_TOKENS applied before each build job.",
+    ),
+    RuntimeConfigSpec(
         key="worker.build_concurrency_per_node",
         title="Build worker concurrency per node",
         kind="int",
