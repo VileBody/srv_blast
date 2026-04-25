@@ -109,6 +109,10 @@ _STRUCTURAL_TAG_TOKEN_RE = re.compile(r"^\[[a-zа-яё0-9_\-:+./]+\]$", flags=re
 _SCENES_3RD_SINGLE_STEP_MODEL = "gemini-2.5-pro"
 
 
+class _Stage1AUserClipEmptyError(RuntimeError):
+    """Forced alignment missed the explicit user clip window; safe to retry Stage1A."""
+
+
 def _stamp() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
 
@@ -599,8 +603,9 @@ def _validate_forced_alignment_payload(
 def _stage1_asr_from_forced_alignment(
     payload: Stage1ForcedAlignmentPayload,
     *,
-    logger: logging.Logger,
+    logger: Optional[logging.Logger] = None,
 ) -> Stage1AsrPayload:
+    logger = logger or logging.getLogger(__name__)
     min_gap_sec = _stage1a_pause_min_gap_sec()
     transcript_words = [
         {
@@ -987,6 +992,30 @@ def _words_in_window(
         if ts >= float(start_abs) - 1e-6 and te <= float(end_abs) + 1e-6:
             out.append(w)
     return out
+
+
+def _ensure_stage1a_user_clip_has_words(
+    *,
+    stage1_asr: Stage1AsrPayload,
+    user_clip_window: Optional[Tuple[float, float]],
+) -> None:
+    if user_clip_window is None:
+        return
+    user_start, user_end = user_clip_window
+    frag_words = _words_in_window(
+        words=list(stage1_asr.transcript_words),
+        start_abs=float(user_start),
+        end_abs=float(user_end),
+    )
+    if frag_words:
+        return
+    last_end = _transcribed_duration_sec(stage1_asr)
+    raise _Stage1AUserClipEmptyError(
+        "stage1a_user_clip_empty: user clip window has no transcript words "
+        f"in range {float(user_start):.3f}..{float(user_end):.3f}; "
+        f"asr_words={len(stage1_asr.transcript_words)} "
+        f"asr_last_end={last_end if last_end is not None else 'none'}"
+    )
 
 
 def _fallback_draft_blocks_from_words(words: List[str]) -> Dict[str, Any]:
@@ -1448,6 +1477,8 @@ def _looks_like_model_validation_error_text(text: str) -> bool:
     if not text:
         return False
     lo = text.lower()
+    if "stage1a_user_clip_empty" in lo:
+        return True
     if "fragment_analytics" in lo and "target_fragment" in lo:
         return True
     if "openrouter_schema_validation_failed" in lo:
@@ -1468,6 +1499,8 @@ def _looks_like_model_validation_error_text(text: str) -> bool:
 
 
 def _is_model_validation_error(exc: BaseException) -> bool:
+    if isinstance(exc, _Stage1AUserClipEmptyError):
+        return True
     if isinstance(exc, (ValidationError, JSONDecodeError)):
         return True
     return _looks_like_model_validation_error_text(_exc_blob(exc))
@@ -2455,6 +2488,20 @@ def build_all_via_gemini_one_call(
                 )
                 stage1_asr = None
                 resume_state.pop("stage1_asr", None)
+            elif user_clip_window is not None and not use_stage1b_scenario:
+                try:
+                    _ensure_stage1a_user_clip_has_words(
+                        stage1_asr=stage1_asr,
+                        user_clip_window=user_clip_window,
+                    )
+                    logger.info("llm_resume_hit stage=stage1a_asr")
+                except _Stage1AUserClipEmptyError as e:
+                    logger.warning(
+                        "llm_resume_skip stage=stage1a_asr reason=user_clip_empty err=%s",
+                        str(e),
+                    )
+                    stage1_asr = None
+                    resume_state.pop("stage1_asr", None)
             else:
                 logger.info("llm_resume_hit stage=stage1a_asr")
         except Exception as e:
@@ -2463,31 +2510,59 @@ def build_all_via_gemini_one_call(
 
     if stage1_asr is None:
         if use_forced_alignment:
-            stage1_forced = _run_stage_with_model_validation_retries(
-                stage_name="stage1_forced_alignment",
-                logger=logger,
-                fn=lambda: call_stage1_forced_alignment_once(
+            stage1_forced_checked_asr: Stage1AsrPayload | None = None
+
+            def _call_stage1_forced_alignment_checked(
+                *,
+                user_prompt: str,
+                raw_response_path: Path,
+                prompt_dump_path: Path,
+                system_dump_path: Path,
+            ) -> Stage1ForcedAlignmentPayload:
+                nonlocal stage1_forced_checked_asr
+                payload = call_stage1_forced_alignment_once(
                     client=client_stage1_forced,
                     openrouter_client=openrouter_stage1_forced,
                     provider_mode=provider_mode,
                     hedge_delay_s=hedge_delay_s,
                     logger=logger,
                     system_instruction=stage1a_system,
-                    user_prompt=stage1a_prompt,
+                    user_prompt=user_prompt,
                     audio_paths=audio_files,
-                    raw_response_path=stage1a_raw,
+                    raw_response_path=raw_response_path,
                     cache_path=cache_path,
+                    prompt_dump_path=prompt_dump_path,
+                    system_dump_path=system_dump_path,
+                )
+                _validate_forced_alignment_payload(
+                    payload=payload,
+                    reference_words=forced_reference_words,
+                    logger=logger,
+                )
+                checked_asr = _stage1_asr_from_forced_alignment(payload, logger=logger)
+                if user_clip_window is not None and not use_stage1b_scenario:
+                    _ensure_stage1a_user_clip_has_words(
+                        stage1_asr=checked_asr,
+                        user_clip_window=user_clip_window,
+                    )
+                stage1_forced_checked_asr = checked_asr
+                return payload
+
+            stage1_forced = _run_stage_with_model_validation_retries(
+                stage_name="stage1_forced_alignment",
+                logger=logger,
+                fn=lambda: _call_stage1_forced_alignment_checked(
+                    user_prompt=stage1a_prompt,
+                    raw_response_path=stage1a_raw,
                     prompt_dump_path=stage1a_user,
                     system_dump_path=stage1a_sys,
                 ),
             )
-            _validate_forced_alignment_payload(
-                payload=stage1_forced,
-                reference_words=forced_reference_words,
+            stage1_forced_attempt_1 = stage1_forced.model_dump(mode="json")
+            stage1_asr = stage1_forced_checked_asr or _stage1_asr_from_forced_alignment(
+                stage1_forced,
                 logger=logger,
             )
-            stage1_forced_attempt_1 = stage1_forced.model_dump(mode="json")
-            stage1_asr = _stage1_asr_from_forced_alignment(stage1_forced, logger=logger)
             transcribed_dur = _transcribed_duration_sec(stage1_asr)
             precision_diag = _analyze_stage1a_timecode_precision(payload=stage1_forced)
             logger.info(
@@ -2556,27 +2631,17 @@ def build_all_via_gemini_one_call(
                 stage1_forced = _run_stage_with_model_validation_retries(
                     stage_name="stage1_forced_alignment_rework",
                     logger=logger,
-                    fn=lambda: call_stage1_forced_alignment_once(
-                        client=client_stage1_forced,
-                        openrouter_client=openrouter_stage1_forced,
-                        provider_mode=provider_mode,
-                        hedge_delay_s=hedge_delay_s,
-                        logger=logger,
-                        system_instruction=stage1a_system,
+                    fn=lambda: _call_stage1_forced_alignment_checked(
                         user_prompt=stage1a_prompt + rework_hint,
-                        audio_paths=audio_files,
                         raw_response_path=stage1a_raw_retry,
-                        cache_path=cache_path,
                         prompt_dump_path=stage1a_user_retry,
                         system_dump_path=stage1a_sys_retry,
                     ),
                 )
-                _validate_forced_alignment_payload(
-                    payload=stage1_forced,
-                    reference_words=forced_reference_words,
+                stage1_asr = stage1_forced_checked_asr or _stage1_asr_from_forced_alignment(
+                    stage1_forced,
                     logger=logger,
                 )
-                stage1_asr = _stage1_asr_from_forced_alignment(stage1_forced, logger=logger)
                 (logs_dir / f"stage1_forced_alignment_attempt_1_{stamp}.json").write_text(
                     json.dumps(stage1_forced_attempt_1, ensure_ascii=False, indent=2),
                     encoding="utf-8",
