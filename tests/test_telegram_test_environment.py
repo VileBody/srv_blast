@@ -36,6 +36,22 @@ def test_aiogram_session_uses_test_api_server() -> None:
     assert "/test/{path}" in api.file
 
 
+def test_aiogram_session_uses_prod_api_server_without_prod_constant() -> None:
+    from aiogram.client.telegram import TelegramAPIServer
+
+    old_production = getattr(TelegramAPIServer, "PRODUCTION", None)
+    if hasattr(TelegramAPIServer, "PRODUCTION"):
+        delattr(TelegramAPIServer, "PRODUCTION")
+    try:
+        session = build_aiogram_session(api_env="prod")
+    finally:
+        if old_production is not None:
+            TelegramAPIServer.PRODUCTION = old_production
+    api = getattr(session, "kwargs", {}).get("api") or getattr(session, "api", None)
+    assert api.base == "https://api.telegram.org/bot{token}/{method}"
+    assert api.file == "https://api.telegram.org/file/bot{token}/{path}"
+
+
 def _reload_public_config(monkeypatch: pytest.MonkeyPatch):
     import services.tg_bot_public.config as cfg
 

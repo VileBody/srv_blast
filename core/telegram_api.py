@@ -80,7 +80,16 @@ def build_aiogram_session(*, api_env: str, proxy_url: str = ""):
             file="https://api.telegram.org/file/bot{token}/test/{path}",
         )
     else:
-        server = TelegramAPIServer.PRODUCTION
+        from_base = getattr(TelegramAPIServer, "from_base", None)
+        server = (
+            from_base("https://api.telegram.org")
+            if callable(from_base)
+            else getattr(TelegramAPIServer, "PRODUCTION", None)
+            or TelegramAPIServer(
+                base="https://api.telegram.org/bot{token}/{method}",
+                file="https://api.telegram.org/file/bot{token}/{path}",
+            )
+        )
     kwargs = {"api": server}
     proxy = str(proxy_url or "").strip()
     if proxy:

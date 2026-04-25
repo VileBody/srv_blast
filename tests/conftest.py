@@ -181,6 +181,14 @@ def _install_aiogram_stub() -> None:
             self.base = base
             self.file = file
 
+        @classmethod
+        def from_base(cls, base: str) -> "TelegramAPIServer":
+            base = base.rstrip("/")
+            return cls(
+                base=f"{base}/bot{{token}}/{{method}}",
+                file=f"{base}/file/bot{{token}}/{{path}}",
+            )
+
     TelegramAPIServer.PRODUCTION = TelegramAPIServer(
         base="https://api.telegram.org/bot{token}/{method}",
         file="https://api.telegram.org/file/bot{token}/{path}",
