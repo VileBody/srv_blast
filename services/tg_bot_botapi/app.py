@@ -438,25 +438,35 @@ def _load_rotation_diag_for_job(job_id: str) -> Dict[str, Any]:
 
 
 def _should_advance_rotation(diag: Dict[str, Any]) -> Tuple[bool, str]:
-    """Return (should_advance, reason_code) per the three advance triggers."""
-    if not isinstance(diag, dict) or not diag:
-        return False, ""
-    try:
-        avg = float(diag.get("primary_pool_avg_score") or 0.0)
-    except Exception:
-        avg = 0.0
-    try:
-        repeat_ratio = float(diag.get("primary_pool_repeat_ratio") or 0.0)
-    except Exception:
-        repeat_ratio = 0.0
-    exclude_relaxed = bool(diag.get("exclude_relaxed"))
-    if avg < _ROTATION_ADVANCE_AVG_SCORE_MIN:
-        return True, f"low_avg_score({avg:.2f}<{_ROTATION_ADVANCE_AVG_SCORE_MIN})"
-    if repeat_ratio >= _ROTATION_ADVANCE_REPEAT_RATIO:
-        return True, f"repeat_ratio({repeat_ratio:.2f}>={_ROTATION_ADVANCE_REPEAT_RATIO})"
-    if exclude_relaxed:
-        return True, "exclude_relaxed"
-    return False, ""
+    """Always advance rotation cursor by 1 after a SUCCEEDED job.
+
+    Earlier policy advanced only on bad-run signals (low avg_score, high
+    repeat_ratio, or exclude_relaxed). On clean pools that triggered nothing
+    and the cursor stayed in place forever, so the same (theme, group) was
+    used over and over -> same source files in the same intervals across
+    different videos. That's exactly the symptom we're fixing.
+
+    The diagnostics signals are now embedded in the reason code for
+    observability only — they do not gate the advance.
+    """
+    reason_parts: List[str] = ["batch_completed"]
+    if isinstance(diag, dict) and diag:
+        try:
+            avg = float(diag.get("primary_pool_avg_score") or 0.0)
+        except Exception:
+            avg = 0.0
+        try:
+            repeat_ratio = float(diag.get("primary_pool_repeat_ratio") or 0.0)
+        except Exception:
+            repeat_ratio = 0.0
+        exclude_relaxed = bool(diag.get("exclude_relaxed"))
+        if avg < _ROTATION_ADVANCE_AVG_SCORE_MIN:
+            reason_parts.append(f"low_avg_score({avg:.2f})")
+        if repeat_ratio >= _ROTATION_ADVANCE_REPEAT_RATIO:
+            reason_parts.append(f"repeat_ratio({repeat_ratio:.2f})")
+        if exclude_relaxed:
+            reason_parts.append("exclude_relaxed")
+    return True, "+".join(reason_parts)
 
 
 def _describe_rotation_transition(

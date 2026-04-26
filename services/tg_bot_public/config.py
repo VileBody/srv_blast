@@ -201,7 +201,7 @@ class Settings:
     bot_output_debug_artifact_retention_h: float = _float_env("BOT_OUTPUT_DEBUG_ARTIFACT_RETENTION_H", 168.0)
     bot_output_artifact_allowlist: tuple[str, ...] = _csv_env(
         "BOT_OUTPUT_ARTIFACT_ALLOWLIST",
-        "stage2_subtitles.json,stage2_subtitles_*.json,gemini_raw_stage2_subtitles_*.json,stage2_footage.json,stage2_footage_*.json",
+        "stage2_subtitles.json,stage2_subtitles_*.json,gemini_raw_stage2_subtitles_*.json,stage2_footage.json,stage2_footage_*.json,stage2_footage_rotation_diag.json,stage2_footage_rotation_diag_*.json",
     )
     bot_max_audio_mb: int = _int_env("BOT_MAX_AUDIO_MB", 5)
     bot_max_video_mb: int = _int_env("BOT_MAX_VIDEO_MB", 49)

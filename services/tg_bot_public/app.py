@@ -30,6 +30,11 @@ from core.subtitles_mode import (
     normalize_subtitles_mode,
 )
 from config.styles.artist_presets_loader import get_artists, get_genres
+from config.styles.theme_groups import (
+    get_artist_rotation_slots,
+    get_rotation_slot,
+    get_theme_groups,
+)
 
 from .admin_commands import make_admin_router
 from .admin_panel import start_admin_panel
@@ -517,6 +522,94 @@ def _load_used_footage_file_names_for_job(job_id: str) -> List[str]:
         return []
     payload = _load_json_dict(fp)
     return _extract_footage_file_names(payload)
+
+
+# Rotation cursor advances by 1 after every SUCCEEDED job (no quality gate).
+# Diag signals are still computed for observability but no longer gate advance.
+_ROTATION_ADVANCE_AVG_SCORE_MIN = 1.5
+_ROTATION_ADVANCE_REPEAT_RATIO = 0.75
+
+
+def _pick_rotation_diag_file_for_job(job_id: str) -> Optional[Path]:
+    for logs_dir in _logs_dir_candidates_for_job(job_id):
+        if not logs_dir.exists() or not logs_dir.is_dir():
+            continue
+        final_path = logs_dir / "stage2_footage_rotation_diag.json"
+        if not final_path.exists():
+            final_path = (
+                _latest_file_by_pattern(
+                    directory=logs_dir,
+                    pattern="stage2_footage_rotation_diag_*.json",
+                )
+                or final_path
+            )
+            if not final_path.exists():
+                final_path = None
+        if final_path is not None:
+            return final_path
+    return None
+
+
+def _load_rotation_diag_for_job(job_id: str) -> Dict[str, Any]:
+    fp = _pick_rotation_diag_file_for_job(job_id)
+    if not isinstance(fp, Path):
+        return {}
+    payload = _load_json_dict(fp)
+    return payload if isinstance(payload, dict) else {}
+
+
+def _should_advance_rotation(diag: Dict[str, Any]) -> Tuple[bool, str]:
+    """Always advance after a SUCCEEDED job (see same fn in tg_bot_botapi)."""
+    reason_parts: List[str] = ["batch_completed"]
+    if isinstance(diag, dict) and diag:
+        try:
+            avg = float(diag.get("primary_pool_avg_score") or 0.0)
+        except Exception:
+            avg = 0.0
+        try:
+            repeat_ratio = float(diag.get("primary_pool_repeat_ratio") or 0.0)
+        except Exception:
+            repeat_ratio = 0.0
+        exclude_relaxed = bool(diag.get("exclude_relaxed"))
+        if avg < _ROTATION_ADVANCE_AVG_SCORE_MIN:
+            reason_parts.append(f"low_avg_score({avg:.2f})")
+        if repeat_ratio >= _ROTATION_ADVANCE_REPEAT_RATIO:
+            reason_parts.append(f"repeat_ratio({repeat_ratio:.2f})")
+        if exclude_relaxed:
+            reason_parts.append("exclude_relaxed")
+    return True, "+".join(reason_parts)
+
+
+def _describe_rotation_transition(
+    *,
+    artist_id: str,
+    old_cursor: int,
+    new_cursor: int,
+) -> Optional[str]:
+    """Build a short Russian user-facing message about the rotation move."""
+    slots = get_artist_rotation_slots(artist_id)
+    if not slots:
+        return None
+    n = len(slots)
+    old_slot = slots[int(old_cursor) % n]
+    new_slot = slots[int(new_cursor) % n]
+    old_theme, old_group = old_slot
+    new_theme, new_group = new_slot
+    wrapped = (int(new_cursor) // n) > (int(old_cursor) // n)
+    if wrapped:
+        return (
+            "Прошёл полный круг тем для этого артиста — начинаю новый круг. "
+            f"Следующий ролик: тема «{new_theme}», подгруппа «{new_group}»."
+        )
+    if old_theme == new_theme:
+        return (
+            f"Перехожу на следующую подгруппу внутри темы «{new_theme}»: "
+            f"«{old_group}» → «{new_group}»."
+        )
+    return (
+        f"Меняю тему для следующего ролика: «{old_theme}» → «{new_theme}» "
+        f"(подгруппа «{new_group}»)."
+    )
 
 
 def _detect_subtitles_debug_mode(payload: Optional[Dict[str, Any]]) -> Optional[str]:
@@ -4079,6 +4172,25 @@ class BlastBotApp:
     def _build_batch_idempotency_key(*, chat_id: int, batch_id: str, version_index: int) -> str:
         return f"tg-{int(chat_id)}-batch-{str(batch_id or '').strip()}-v{int(version_index)}"
 
+    async def _resolve_rotation_slot_for_enqueue(
+        self, *, st: ChatState
+    ) -> Tuple[str, str, List[str]]:
+        """Return (theme, group, persistent_history_names) for the current user.
+
+        Returns empty ("", "", []) when artist_id has no rotation slots
+        (unknown artist or no themes) — callers should then skip override.
+        """
+        artist_id = str(st.footage_artist_id or "").strip()
+        if not artist_id:
+            return "", "", []
+        slots = get_artist_rotation_slots(artist_id)
+        if not slots:
+            return "", "", []
+        cursor = await self.store.get_rotation_cursor(int(st.chat_id), artist_id)
+        slot = slots[int(cursor) % len(slots)]
+        history = await self.store.get_rotation_history(int(st.chat_id), artist_id)
+        return slot[0], slot[1], history
+
     async def _enqueue_batch_version(
         self,
         *,
@@ -4106,6 +4218,17 @@ class BlastBotApp:
         maintenance_bypass_token = ""
         if self._allow_maintenance_bypass_for_state(st):
             maintenance_bypass_token = str(self.settings.system_maintenance_bypass_token or "").strip()
+        rotation_theme, rotation_group, rotation_history = (
+            await self._resolve_rotation_slot_for_enqueue(st=st)
+        )
+        merged_exclude_seen: set[str] = set()
+        merged_exclude: List[str] = []
+        for name in list(exclude_file_names or []) + list(rotation_history or []):
+            clean = str(name or "").strip()
+            if not clean or clean in merged_exclude_seen:
+                continue
+            merged_exclude_seen.add(clean)
+            merged_exclude.append(clean)
         enqueue = await self.orchestrator.send_audio_s3(
             audio_s3_url=audio_s3_url,
             mode="with_gemini",
@@ -4118,10 +4241,12 @@ class BlastBotApp:
             idempotency_key=idem,
             project_id=normalized_batch_id or None,
             reuse_text_job_id=str(reuse_text_job_id or "") or None,
-            exclude_file_names=list(exclude_file_names or []),
+            exclude_file_names=merged_exclude,
             variant_index=int(version_index),
             variants_total=int(versions_total),
             maintenance_bypass_token=maintenance_bypass_token,
+            rotation_theme=rotation_theme,
+            rotation_tags_group=rotation_group,
         )
         job_id = str(enqueue.get("job_id") or "").strip()
         if not job_id:
@@ -5078,6 +5203,53 @@ class BlastBotApp:
                         job_id=jid,
                         used_file_names=list(used_now),
                     )
+
+                # Persistent cross-session footage history (keyed by artist_id).
+                artist_id_for_rotation = str(st.footage_artist_id or "").strip()
+                if artist_id_for_rotation and used_now:
+                    try:
+                        await self.store.add_rotation_history(
+                            int(st.chat_id), artist_id_for_rotation, used_now
+                        )
+                    except Exception as e:
+                        log.warning(
+                            "rotation_history_persist_failed chat=%s job=%s err=%s",
+                            st.chat_id, jid, str(e),
+                        )
+
+                # Always advance rotation cursor on success — diag signals
+                # are folded into the reason code for log observability only.
+                if artist_id_for_rotation:
+                    diag = _load_rotation_diag_for_job(jid)
+                    should_advance, reason = _should_advance_rotation(diag)
+                    if should_advance:
+                        try:
+                            old_cursor, new_cursor = await self.store.advance_rotation_cursor(
+                                int(st.chat_id), artist_id_for_rotation
+                            )
+                            log.info(
+                                "rotation_cursor_advance chat=%s artist=%s old=%d new=%d reason=%s",
+                                st.chat_id, artist_id_for_rotation,
+                                old_cursor, new_cursor, reason,
+                            )
+                            msg = _describe_rotation_transition(
+                                artist_id=artist_id_for_rotation,
+                                old_cursor=old_cursor,
+                                new_cursor=new_cursor,
+                            )
+                            if msg:
+                                try:
+                                    await bot.send_message(st.chat_id, msg)
+                                except Exception as send_e:
+                                    log.warning(
+                                        "rotation_notify_failed chat=%s err=%s",
+                                        st.chat_id, str(send_e),
+                                    )
+                        except Exception as e:
+                            log.warning(
+                                "rotation_cursor_advance_failed chat=%s artist=%s err=%s",
+                                st.chat_id, artist_id_for_rotation, str(e),
+                            )
 
         st.completed_job_ids = [jid for jid in job_ids if jid in completed]
         failed_rows = [r for r in rows if str(r.get("status") or "").upper() == "FAILED"]

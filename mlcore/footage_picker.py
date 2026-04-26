@@ -24,6 +24,16 @@ _MAX_SWITCH_SEC = 4.0
 # so that "the one obvious top file" doesn't dominate the very first interval
 # across all batch versions.
 _SCORE_JITTER_MAG = 2.5
+
+# Weighted softmax sampling within top-K candidates (instead of strict argmax).
+# Top files remain probable, but with non-trivial probability the runner-up
+# wins instead. This produces real variety across reruns even when the
+# overlap-score gap exceeds _SCORE_JITTER_MAG. Determinism is preserved via
+# a seeded RNG keyed by (seed_value, interval_idx, interval_start).
+#   _SOFTMAX_TEMP : higher  -> flatter distribution (more variety)
+#   _SOFTMAX_TOP_K: how many candidates compete (cuts long tail of bad files)
+_SOFTMAX_TEMP = 2.0
+_SOFTMAX_TOP_K = 5
 # Safety margin (seconds) kept at the head/tail of a source video when
 # picking a random in-source offset. Relaxed from 0.1 to 0.05 to unlock
 # offsets for sources whose duration is just barely above the interval.
@@ -527,6 +537,60 @@ def _score_jitter(seed_value: int, file_name: str, interval_idx: int = -1) -> fl
     return float(frac) * _SCORE_JITTER_MAG
 
 
+def _seeded_unit_random(seed_value: int, interval_idx: int, interval_start: float, salt: str = "") -> float:
+    """Deterministic uniform random in [0, 1) keyed by (seed, interval_idx, start, salt)."""
+    material = f"sample:{seed_value}:{int(interval_idx)}:{float(interval_start):.6f}:{salt}"
+    h = int(hashlib.sha256(material.encode("utf-8")).hexdigest()[:16], 16)
+    return float(h) / float(2 ** 64)
+
+
+def _softmax_pick_index(
+    *,
+    scores: List[float],
+    seed_value: int,
+    interval_idx: int,
+    interval_start: float,
+    salt: str = "",
+    top_k: int = _SOFTMAX_TOP_K,
+    temperature: float = _SOFTMAX_TEMP,
+) -> int:
+    """Pick an index into `scores` via softmax-weighted sampling within top-K.
+
+    Top-K filter (by score, descending) keeps low-quality candidates out of the
+    distribution. Softmax with temperature spreads probability across remaining
+    candidates: top file is most probable but not guaranteed. Determinism comes
+    from a seeded uniform draw — the same seed -> same pick.
+    """
+    n = len(scores)
+    if n <= 0:
+        raise RuntimeError("softmax pick on empty scores")
+    # Build (orig_idx, score) sorted by score desc; ties broken by deterministic hash
+    indexed = list(enumerate(scores))
+
+    def _tie_break(item: Tuple[int, float]) -> Tuple[float, str]:
+        idx, sc = item
+        material = f"tie:{seed_value}:{interval_idx}:{interval_start:.6f}:{idx}"
+        h = hashlib.sha256(material.encode("utf-8")).hexdigest()
+        return -float(sc), h
+
+    indexed.sort(key=_tie_break)
+    k = max(1, min(int(top_k), n))
+    top = indexed[:k]
+    top_scores = [s for _, s in top]
+    max_s = max(top_scores)
+    t = max(1e-3, float(temperature))
+    weights = [math.exp((s - max_s) / t) for s in top_scores]
+    wsum = sum(weights) or 1.0
+    probs = [w / wsum for w in weights]
+    u = _seeded_unit_random(seed_value, interval_idx, interval_start, salt=salt)
+    acc = 0.0
+    for (orig_idx, _), p in zip(top, probs):
+        acc += p
+        if u <= acc:
+            return orig_idx
+    return top[-1][0]
+
+
 def _deterministic_choose(
     *,
     candidates: List[Dict[str, Any]],
@@ -547,19 +611,20 @@ def _deterministic_choose(
             seed_value, str(it.get("file_name") or ""), interval_idx
         )
 
-    def _sort_key(it: Dict[str, Any]) -> Tuple[float, str, str]:
-        file_name = str(it["file_name"])
-        material = f"{seed_value}:{interval_idx}:{interval_start:.6f}:{file_name}"
-        h = hashlib.sha256(material.encode("utf-8")).hexdigest()
-        return -_score(it), h, file_name
-
-    ranked = sorted(candidates, key=_sort_key)
     avoid = str(avoid_file_name or "").strip()
-    if avoid and len(ranked) > 1:
-        for it in ranked:
-            if str(it.get("file_name") or "") != avoid:
-                return it
-    return ranked[0]
+    pool = list(candidates)
+    if avoid and len(pool) > 1:
+        pool = [it for it in pool if str(it.get("file_name") or "") != avoid] or list(candidates)
+
+    scores = [_score(it) for it in pool]
+    pick_idx = _softmax_pick_index(
+        scores=scores,
+        seed_value=seed_value,
+        interval_idx=interval_idx,
+        interval_start=interval_start,
+        salt="choose",
+    )
+    return pool[pick_idx]
 
 
 def _dedupe_assets_by_file_name(pool: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -582,6 +647,17 @@ def _deterministic_file_name_order(
     interval_start: float,
     scores_by_name: Dict[str, float] | None = None,
 ) -> List[str]:
+    """Return file_names ordered by descending preference.
+
+    The first element comes from a softmax-weighted pick within top-K, so
+    different seeds produce genuinely different "winners" of an interval
+    (not just hash-tie-break orderings). The remaining elements are filled
+    by deterministic strict-rank order so callers that walk down the list
+    on conflicts still see a sensible fallback chain.
+    """
+    if not file_names:
+        return []
+
     def _score(name: str) -> float:
         base = 0.0
         if scores_by_name:
@@ -591,12 +667,24 @@ def _deterministic_file_name_order(
                 base = 0.0
         return base + _score_jitter(seed_value, name, interval_idx)
 
-    def _key(name: str) -> Tuple[float, str, str]:
+    scores = [_score(n) for n in file_names]
+    pick_idx = _softmax_pick_index(
+        scores=scores,
+        seed_value=seed_value,
+        interval_idx=interval_idx,
+        interval_start=interval_start,
+        salt="filename",
+    )
+    head = file_names[pick_idx]
+
+    def _tail_key(name: str) -> Tuple[float, str, str]:
         material = f"{seed_value}:{interval_idx}:{interval_start:.6f}:{name}"
         h = hashlib.sha256(material.encode("utf-8")).hexdigest()
         return -_score(name), h, name
 
-    return sorted(file_names, key=_key)
+    rest = [n for i, n in enumerate(file_names) if i != pick_idx]
+    rest_sorted = sorted(rest, key=_tail_key)
+    return [head, *rest_sorted]
 
 
 def _assign_unique_file_names_for_intervals(
