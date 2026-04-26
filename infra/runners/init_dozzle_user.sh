@@ -17,7 +17,7 @@ USERS_FILE="$DATA_DIR/users.yml"
 
 mkdir -p "$DATA_DIR"
 
-docker run --rm amir20/dozzle:latest \
+docker run --rm amir20/dozzle:v10.4.1 \
   generate "$USERNAME" \
   --password "$PASSWORD" \
   --email "$EMAIL" \

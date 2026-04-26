@@ -57,7 +57,7 @@ Workflow использует эту переменную, чтобы выпол
 `infra/runners/deploy_branch.sh` поддерживает второй аргумент:
 
 - `all` (по умолчанию): legacy single-node deploy.
-- `prod-path`: `orchestrator-api`, `worker-build`, `worker-render`, `tg-bot-public` + опционально `orchestrator-api-2` (если `DEPLOY_ORCHESTRATOR_HA=true`) + опционально Dozzle agent (если есть `.env.dozzle-agent`) + опционально `promtail-edge`.
+- `prod-path`: `orchestrator-api`, `worker-build`, `worker-render`, `tg-bot-public` + опционально `orchestrator-api-2` (если `DEPLOY_ORCHESTRATOR_HA=true`) + Dozzle agent (env создается автоматически) + опционально `promtail-edge`.
 - `infra-apps`: `tg-bot`, `asset-ui`, `finance-bot`.
 - `infra-ops`: `infra-apps` + `dozzle` + `observability` + `github-runner` (если есть соответствующие `.env`).
 
@@ -165,6 +165,7 @@ docker compose -f docker-compose.logs.yml --env-file .env.dozzle up -d
 ```
 
 Рекомендованный режим:
+- образ Dozzle зафиксирован как `amir20/dozzle:v10.4.1`, чтобы central и agents не расходились по cached `latest`;
 - `DOZZLE_BIND_HOST=127.0.0.1` (не публиковать Dozzle напрямую наружу)
 - `DOZZLE_BASE=/logs`
 - `DOZZLE_HOSTNAME=blast-ops`
