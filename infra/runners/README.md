@@ -171,7 +171,10 @@ docker compose -f docker-compose.logs.yml --env-file .env.dozzle up -d
 - `DOZZLE_REMOTE_AGENT=` пустой для single-host или явный список `<node-private-ip>:7007,<node-private-ip>:7007`
 - доступ только через nginx reverse-proxy с Basic Auth, например `https://blast808.com/logs/`
 
-На `orchestrator-0/1` Dozzle live-tail подключается через lightweight agent:
+На `orchestrator-0/1` Dozzle live-tail подключается через lightweight agent.
+В `prod-path` деплое `deploy_branch.sh` сам создает `infra/runners/.env.dozzle-agent`,
+если файла еще нет: bind host берется из private IP ноды, hostname — из
+`ORCHESTRATOR_NODE_NAME`, порт — `7007`.
 
 ```bash
 cd /opt/blast_mj_final/infra/runners
@@ -190,14 +193,15 @@ DOZZLE_AGENT_HOSTNAME=<this-node-name>
 DOZZLE_AGENT_LEVEL=info
 ```
 
-В `deploy_branch.sh prod-path` agent поднимается только при наличии
-`infra/runners/.env.dozzle-agent`. Если env отсутствует, deploy продолжится с явным skip.
-Если env есть, но bind host/hostname не заполнены или bind host указывает на loopback,
-deploy завершится ошибкой.
+В `deploy_branch.sh prod-path` agent поднимается на каждой prod-ноде. Если env
+отсутствует, deploy создаст его с non-secret значениями. Если bind host указывает
+на loopback/`0.0.0.0`, deploy завершится ошибкой.
 
 Для старых `.env.dozzle` deploy-скрипт дописывает только non-secret значения
 `DOZZLE_AUTH_PROVIDER=none`, `DOZZLE_BASE=/logs`, `DOZZLE_HOSTNAME=blast-ops`.
 `DOZZLE_BIND_HOST` и `DOZZLE_PORT` остаются обязательными в локальном env.
+Если `DOZZLE_REMOTE_AGENT` пустой, CI/CD заполняет текущий split-prod список:
+`192.168.0.8:7007,192.168.0.11:7007`.
 
 Для панели бота аналогично: `https://blast808.com/admin/` (также через Basic Auth).
 `asset-ui` рекомендуется прокинуть в той же зоне: `https://blast808.com/admin/assets/`.

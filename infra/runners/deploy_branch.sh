@@ -85,9 +85,98 @@ ensure_env_file_value() {
   echo "[deploy] set $key in $env_file for legacy Dozzle env compatibility"
 }
 
+dozzle_remote_agent_default() {
+  printf '%s' "${DOZZLE_REMOTE_AGENT_DEFAULT:-192.168.0.8:7007,192.168.0.11:7007}"
+}
+
 is_remote_reachable_bind_host() {
   local host="$1"
   [[ -n "$host" && "$host" != "127."* && "$host" != "localhost" && "$host" != "0.0.0.0" ]]
+}
+
+detect_private_bind_host() {
+  local explicit first_172 iface cidr host
+  explicit="$(env_file_value DOZZLE_AGENT_BIND_HOST)"
+  if is_remote_reachable_bind_host "$explicit"; then
+    printf '%s\n' "$explicit"
+    return 0
+  fi
+  if ! command -v ip >/dev/null 2>&1; then
+    return 1
+  fi
+  first_172=""
+  while read -r iface cidr; do
+    host="${cidr%%/*}"
+    case "$iface" in
+      docker*|br-*|veth*|lo)
+        continue
+        ;;
+    esac
+    case "$host" in
+      192.168.*|10.*)
+        printf '%s\n' "$host"
+        return 0
+        ;;
+      172.1[6-9].*|172.2[0-9].*|172.3[0-1].*)
+        if [[ -z "$first_172" ]]; then
+          first_172="$host"
+        fi
+        ;;
+    esac
+  done < <(ip -o -4 addr show scope global | awk '{print $2, $4}')
+  if [[ -n "$first_172" ]]; then
+    printf '%s\n' "$first_172"
+    return 0
+  fi
+  return 1
+}
+
+dozzle_agent_hostname_default() {
+  local configured host
+  configured="$(env_file_value ORCHESTRATOR_NODE_NAME)"
+  if [[ -n "$configured" ]]; then
+    printf '%s\n' "$configured"
+    return 0
+  fi
+  host="$(hostname -s 2>/dev/null || hostname 2>/dev/null || true)"
+  if [[ -n "$host" ]]; then
+    printf '%s\n' "$host"
+    return 0
+  fi
+  return 1
+}
+
+bootstrap_dozzle_agent_env() {
+  local env_file="$RUNNERS_DIR/.env.dozzle-agent"
+  local bind_host agent_hostname
+
+  if [[ ! -f "$env_file" ]]; then
+    install -m 600 /dev/null "$env_file"
+    echo "[deploy] created Dozzle agent env file: $env_file"
+  fi
+
+  bind_host="$(generic_env_file_value "$env_file" DOZZLE_AGENT_BIND_HOST)"
+  if [[ -z "$bind_host" ]]; then
+    bind_host="$(detect_private_bind_host || true)"
+    if [[ -z "$bind_host" ]]; then
+      echo "[deploy] cannot infer DOZZLE_AGENT_BIND_HOST for $env_file; set it to this node private IP"
+      return 2
+    fi
+    ensure_env_file_value "$env_file" DOZZLE_AGENT_BIND_HOST "$bind_host"
+  fi
+
+  agent_hostname="$(generic_env_file_value "$env_file" DOZZLE_AGENT_HOSTNAME)"
+  if [[ -z "$agent_hostname" ]]; then
+    agent_hostname="$(dozzle_agent_hostname_default || true)"
+    if [[ -z "$agent_hostname" ]]; then
+      echo "[deploy] cannot infer DOZZLE_AGENT_HOSTNAME for $env_file"
+      return 2
+    fi
+    ensure_env_file_value "$env_file" DOZZLE_AGENT_HOSTNAME "$agent_hostname"
+  fi
+
+  ensure_env_file_value "$env_file" DOZZLE_AGENT_PORT "7007"
+  ensure_env_file_value "$env_file" DOZZLE_AGENT_LEVEL "info"
 }
 
 is_canary_runtime_node() {
@@ -261,6 +350,7 @@ dozzle_central_env_is_ready() {
   ensure_env_file_value "$env_file" DOZZLE_AUTH_PROVIDER "none"
   ensure_env_file_value "$env_file" DOZZLE_BASE "/logs"
   ensure_env_file_value "$env_file" DOZZLE_HOSTNAME "blast-ops"
+  ensure_env_file_value "$env_file" DOZZLE_REMOTE_AGENT "$(dozzle_remote_agent_default)"
 
   require_env_file_value "$env_file" DOZZLE_BIND_HOST || missing_required=1
   require_env_file_value "$env_file" DOZZLE_PORT || missing_required=1
@@ -283,10 +373,7 @@ dozzle_central_env_is_ready() {
 dozzle_agent_env_is_ready() {
   local env_file="$RUNNERS_DIR/.env.dozzle-agent"
   local bind_host missing_required=0
-  if [[ ! -f "$env_file" ]]; then
-    echo "[deploy] skip Dozzle agent deploy (env file not found: $env_file)"
-    return 1
-  fi
+  bootstrap_dozzle_agent_env || return $?
 
   require_env_file_value "$env_file" DOZZLE_AGENT_BIND_HOST || missing_required=1
   require_env_file_value "$env_file" DOZZLE_AGENT_PORT || missing_required=1
