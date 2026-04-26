@@ -1,0 +1,13 @@
+services:
+  dozzle-agent:
+    image: amir20/dozzle:latest
+    container_name: dozzle-agent
+    restart: unless-stopped
+    command: ["agent"]
+    ports:
+      - "${DOZZLE_AGENT_BIND_HOST:?set DOZZLE_AGENT_BIND_HOST to the node private IP}:${DOZZLE_AGENT_PORT:?set DOZZLE_AGENT_PORT}:7007"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      DOZZLE_LEVEL: ${DOZZLE_AGENT_LEVEL:-info}
+      DOZZLE_HOSTNAME: ${DOZZLE_AGENT_HOSTNAME:?set DOZZLE_AGENT_HOSTNAME to the node name}

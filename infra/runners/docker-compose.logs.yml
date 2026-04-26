@@ -4,12 +4,14 @@ services:
     container_name: dozzle
     restart: unless-stopped
     ports:
-      - "${DOZZLE_BIND_HOST:-127.0.0.1}:${DOZZLE_PORT:-18080}:8080"
+      - "${DOZZLE_BIND_HOST:?set DOZZLE_BIND_HOST}:${DOZZLE_PORT:?set DOZZLE_PORT}:8080"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ./dozzle_data:/data
     environment:
-      DOZZLE_LEVEL: info
-      DOZZLE_AUTH_PROVIDER: ${DOZZLE_AUTH_PROVIDER:-none}
+      DOZZLE_LEVEL: ${DOZZLE_LEVEL:-info}
+      DOZZLE_AUTH_PROVIDER: ${DOZZLE_AUTH_PROVIDER:?set DOZZLE_AUTH_PROVIDER}
       DOZZLE_AUTH_TTL: 168h
-      DOZZLE_BASE: ${DOZZLE_BASE:-/logs}
+      DOZZLE_BASE: ${DOZZLE_BASE:?set DOZZLE_BASE}
+      DOZZLE_HOSTNAME: ${DOZZLE_HOSTNAME:?set DOZZLE_HOSTNAME}
+      DOZZLE_REMOTE_AGENT: ${DOZZLE_REMOTE_AGENT:-}

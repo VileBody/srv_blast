@@ -23,7 +23,33 @@ env_file_value() {
   if [[ ! -f "$env_file" ]]; then
     return 0
   fi
-  grep -E "^${key}=" "$env_file" | tail -n1 | cut -d= -f2- | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/^"//' -e 's/"$//'
+  grep -E "^${key}=" "$env_file" | tail -n1 | cut -d= -f2- | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/^"//' -e 's/"$//' || true
+}
+
+generic_env_file_value() {
+  local env_file="$1"
+  local key="$2"
+  if [[ ! -f "$env_file" ]]; then
+    return 0
+  fi
+  grep -E "^${key}=" "$env_file" | tail -n1 | cut -d= -f2- | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/^"//' -e 's/"$//' || true
+}
+
+require_env_file_value() {
+  local env_file="$1"
+  local key="$2"
+  local current
+  current="$(generic_env_file_value "$env_file" "$key")"
+  if [[ -z "$current" ]]; then
+    echo "[deploy] missing required $key in $env_file"
+    return 1
+  fi
+  return 0
+}
+
+is_remote_reachable_bind_host() {
+  local host="$1"
+  [[ -n "$host" && "$host" != "127."* && "$host" != "localhost" && "$host" != "0.0.0.0" ]]
 }
 
 is_canary_runtime_node() {
@@ -183,6 +209,56 @@ deploy_runner_compose_if_present() {
   fi
   echo "[deploy] docker compose -f $compose_file --env-file $env_file up -d"
   docker compose -f "$compose_file" --env-file "$env_file" up -d
+}
+
+dozzle_central_env_is_ready() {
+  local env_file="$RUNNERS_DIR/.env.dozzle"
+  local bind_host missing_required=0
+
+  if [[ ! -f "$env_file" ]]; then
+    echo "[deploy] skip Dozzle central deploy (env file not found: $env_file)"
+    return 1
+  fi
+
+  require_env_file_value "$env_file" DOZZLE_BIND_HOST || missing_required=1
+  require_env_file_value "$env_file" DOZZLE_PORT || missing_required=1
+  require_env_file_value "$env_file" DOZZLE_AUTH_PROVIDER || missing_required=1
+  require_env_file_value "$env_file" DOZZLE_BASE || missing_required=1
+  require_env_file_value "$env_file" DOZZLE_HOSTNAME || missing_required=1
+  if [[ "$missing_required" -ne 0 ]]; then
+    return 2
+  fi
+
+  bind_host="$(generic_env_file_value "$env_file" DOZZLE_BIND_HOST)"
+  if [[ "$bind_host" == "0.0.0.0" ]]; then
+    echo "[deploy] invalid DOZZLE_BIND_HOST=0.0.0.0 in $env_file; bind central Dozzle to localhost/private IP and expose it through nginx auth"
+    return 2
+  fi
+
+  return 0
+}
+
+dozzle_agent_env_is_ready() {
+  local env_file="$RUNNERS_DIR/.env.dozzle-agent"
+  local bind_host missing_required=0
+  if [[ ! -f "$env_file" ]]; then
+    echo "[deploy] skip Dozzle agent deploy (env file not found: $env_file)"
+    return 1
+  fi
+
+  require_env_file_value "$env_file" DOZZLE_AGENT_BIND_HOST || missing_required=1
+  require_env_file_value "$env_file" DOZZLE_AGENT_PORT || missing_required=1
+  require_env_file_value "$env_file" DOZZLE_AGENT_HOSTNAME || missing_required=1
+  if [[ "$missing_required" -ne 0 ]]; then
+    return 2
+  fi
+
+  bind_host="$(generic_env_file_value "$env_file" DOZZLE_AGENT_BIND_HOST)"
+  if ! is_remote_reachable_bind_host "$bind_host"; then
+    echo "[deploy] invalid DOZZLE_AGENT_BIND_HOST=${bind_host:-<empty>} in $env_file; set it to this node private IP"
+    return 2
+  fi
+  return 0
 }
 
 deploy_github_runner_compose_if_allowed() {
@@ -385,6 +461,9 @@ show_status() {
     if [[ -f "$RUNNERS_DIR/.env.dozzle" ]]; then
       docker compose -f "$RUNNERS_DIR/docker-compose.logs.yml" --env-file "$RUNNERS_DIR/.env.dozzle" ps || true
     fi
+    if [[ -f "$RUNNERS_DIR/.env.dozzle-agent" ]]; then
+      docker compose -f "$RUNNERS_DIR/docker-compose.dozzle-agent.yml" --env-file "$RUNNERS_DIR/.env.dozzle-agent" ps || true
+    fi
     if [[ -f "$RUNNERS_DIR/.env.observability" ]]; then
       docker compose -f "$RUNNERS_DIR/docker-compose.observability.yml" --env-file "$RUNNERS_DIR/.env.observability" ps || true
     fi
@@ -403,6 +482,13 @@ case "$DEPLOY_STACK" in
     ;;
   prod-path)
     deploy_prod_path_services
+    dozzle_agent_status=0
+    dozzle_agent_env_is_ready || dozzle_agent_status=$?
+    if [[ "$dozzle_agent_status" -eq 0 ]]; then
+      deploy_runner_compose_if_present "$RUNNERS_DIR/docker-compose.dozzle-agent.yml" "$RUNNERS_DIR/.env.dozzle-agent"
+    elif [[ "$dozzle_agent_status" -gt 1 ]]; then
+      exit 1
+    fi
     deploy_runner_compose_if_present "$RUNNERS_DIR/docker-compose.promtail-edge.yml" "$RUNNERS_DIR/.env.promtail-edge"
     if is_true "$DEPLOY_PRUNE_OTHER_STACK"; then
       stop_root_services tg-bot asset-ui finance-bot
@@ -418,7 +504,13 @@ case "$DEPLOY_STACK" in
   infra-ops)
     mapfile -t services < <(infra_app_services)
     deploy_root_services "${services[@]}"
-    deploy_runner_compose_if_present "$RUNNERS_DIR/docker-compose.logs.yml" "$RUNNERS_DIR/.env.dozzle"
+    dozzle_central_status=0
+    dozzle_central_env_is_ready || dozzle_central_status=$?
+    if [[ "$dozzle_central_status" -eq 0 ]]; then
+      deploy_runner_compose_if_present "$RUNNERS_DIR/docker-compose.logs.yml" "$RUNNERS_DIR/.env.dozzle"
+    elif [[ "$dozzle_central_status" -gt 1 ]]; then
+      exit 1
+    fi
     deploy_runner_compose_if_present "$RUNNERS_DIR/docker-compose.observability.yml" "$RUNNERS_DIR/.env.observability"
     deploy_github_runner_compose_if_allowed "$RUNNERS_DIR/docker-compose.github-runner.yml" "$RUNNERS_DIR/.env.github-runner"
     if is_true "$DEPLOY_PRUNE_OTHER_STACK"; then

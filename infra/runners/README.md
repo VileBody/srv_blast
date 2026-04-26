@@ -57,7 +57,7 @@ Workflow использует эту переменную, чтобы выпол
 `infra/runners/deploy_branch.sh` поддерживает второй аргумент:
 
 - `all` (по умолчанию): legacy single-node deploy.
-- `prod-path`: `orchestrator-api`, `worker-build`, `worker-render`, `tg-bot-public` + опционально `orchestrator-api-2` (если `DEPLOY_ORCHESTRATOR_HA=true`) + опционально `promtail-edge`.
+- `prod-path`: `orchestrator-api`, `worker-build`, `worker-render`, `tg-bot-public` + опционально `orchestrator-api-2` (если `DEPLOY_ORCHESTRATOR_HA=true`) + опционально Dozzle agent (если есть `.env.dozzle-agent`) + опционально `promtail-edge`.
 - `infra-apps`: `tg-bot`, `asset-ui`, `finance-bot`.
 - `infra-ops`: `infra-apps` + `dozzle` + `observability` + `github-runner` (если есть соответствующие `.env`).
 
@@ -155,7 +155,7 @@ sudo nginx -t && sudo systemctl reload nginx
 
 ## 4) Web UI логов по всем контейнерам (Dozzle через nginx auth)
 
-На сервере:
+На `blast-ops`:
 
 ```bash
 cd /opt/blast_mj_final/infra/runners
@@ -167,14 +167,41 @@ docker compose -f docker-compose.logs.yml --env-file .env.dozzle up -d
 Рекомендованный режим:
 - `DOZZLE_BIND_HOST=127.0.0.1` (не публиковать Dozzle напрямую наружу)
 - `DOZZLE_BASE=/logs`
+- `DOZZLE_HOSTNAME=blast-ops`
+- `DOZZLE_REMOTE_AGENT=` пустой для single-host или явный список `<node-private-ip>:7007,<node-private-ip>:7007`
 - доступ только через nginx reverse-proxy с Basic Auth, например `https://blast808.com/logs/`
+
+На `orchestrator-0/1` Dozzle live-tail подключается через lightweight agent:
+
+```bash
+cd /opt/blast_mj_final/infra/runners
+cp .env.dozzle-agent.example .env.dozzle-agent
+
+docker compose -f docker-compose.dozzle-agent.yml --env-file .env.dozzle-agent up -d
+```
+
+Для каждой orchestrator-ноды нужно явно задать private bind host и hostname в локальном
+`infra/runners/.env.dozzle-agent`. Пример:
+
+```bash
+DOZZLE_AGENT_BIND_HOST=<this-node-private-ip>
+DOZZLE_AGENT_PORT=7007
+DOZZLE_AGENT_HOSTNAME=<this-node-name>
+DOZZLE_AGENT_LEVEL=info
+```
+
+В `deploy_branch.sh prod-path` agent поднимается только при наличии
+`infra/runners/.env.dozzle-agent`. Если env отсутствует, deploy продолжится с явным skip.
+Если env есть, но bind host/hostname не заполнены или bind host указывает на loopback,
+deploy завершится ошибкой.
 
 Для панели бота аналогично: `https://blast808.com/admin/` (также через Basic Auth).
 `asset-ui` рекомендуется прокинуть в той же зоне: `https://blast808.com/admin/assets/`.
 При каждом deploy (`docker compose up -d --build`) `asset-ui` пересобирается с
 новым frontend (`asset_ui/dist`) автоматически.
 
-Dozzle показывает live-логи Docker-контейнеров (включая воркеры/бота/API) и удобен как легкий старт.
+Dozzle показывает live-логи Docker-контейнеров на `blast-ops`; при заполненном
+`DOZZLE_REMOTE_AGENT` он также подключает другие Docker hosts через remote agents.
 
 ## Loki vs Dozzle
 

@@ -8,6 +8,7 @@
 .telegram-test-sessions/
 infra/runners/.env.github-runner
 infra/runners/.env.dozzle
+infra/runners/.env.dozzle-agent
 infra/runners/.env.observability
 infra/runners/.env.promtail-edge
 
