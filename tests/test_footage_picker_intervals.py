@@ -344,7 +344,14 @@ def test_style_rotation_allows_multiple_themes_with_same_mood() -> None:
     assert payload.subgroups[0].theme != payload.subgroups[1].theme
 
 
-def test_raw_rotation_is_constrained_to_selected_style() -> None:
+def test_raw_rotation_uses_theme_tags_overlap_not_inventory_genre_tag() -> None:
+    """In v2 rotation, the picker selects on (artist_id-scoped assets) ∩
+    priority_theme_tags ∩ exclusion filters. The legacy inventory genre/tag
+    filter is intentionally NOT applied — that responsibility moved to the
+    orchestrator, which now pre-scopes `assets` by artist_id before invoking
+    the picker. Regression for a production crash where genre=tag="ХипХоп"
+    nuked the entire pool because no asset had that exact (genre, tag) pair.
+    """
     style = FootageStylePickPayload.model_validate({"genre": "Alternative", "tag": "art_rock"})
     raw_picks = [
         FootageStyleRawPayload.model_validate(
@@ -359,55 +366,34 @@ def test_raw_rotation_is_constrained_to_selected_style() -> None:
                 },
             }
         ),
-        FootageStyleRawPayload.model_validate(
-            {
-                "theme": "alt_theme",
-                "mood": "minor",
-                "tags_group": "g2",
-                "filters": {
-                    "color_priority": ["cold"],
-                    "exclude": [],
-                    "priority_theme_tags": ["neon lights"],
-                },
-            }
-        ),
     ]
+    # Assets here are presumed already scoped to one artist; their `genre`
+    # and `tag` fields are ignored by the picker. What matters is the
+    # priority_theme_tags overlap.
     mapped_assets = [
         {
-            "file_name": "alt_1.mp4",
-            "genre": "Alternative",
-            "tag": "art_rock",
+            "file_name": "asset_1.mp4",
+            "genre": "ХипХоп",
+            "tag": "ХипХоп",  # genre==tag — no specific inventory subgroup
             "duration_sec": 2.5,
             "src_w": 720,
             "src_h": 1280,
             "meta_mood": "minor",
             "meta_color_tone": "dark",
             "meta_people_type": "none",
-            "meta_theme_tags": ["night city", "neon lights"],
+            "meta_theme_tags": ["night city"],
         },
         {
-            "file_name": "alt_2.mp4",
-            "genre": "Alternative",
-            "tag": "art_rock",
-            "duration_sec": 2.5,
-            "src_w": 720,
-            "src_h": 1280,
-            "meta_mood": "minor",
-            "meta_color_tone": "cold",
-            "meta_people_type": "none",
-            "meta_theme_tags": ["neon lights"],
-        },
-        {
-            "file_name": "pop_leak.mp4",
-            "genre": "Pop",
-            "tag": "dream_aesthetic",
+            "file_name": "asset_2.mp4",
+            "genre": "ХипХоп",
+            "tag": "ХипХоп",
             "duration_sec": 2.5,
             "src_w": 720,
             "src_h": 1280,
             "meta_mood": "minor",
             "meta_color_tone": "dark",
             "meta_people_type": "none",
-            "meta_theme_tags": ["night city", "neon lights"],
+            "meta_theme_tags": ["night city", "neon"],
         },
     ]
 
@@ -422,8 +408,9 @@ def test_raw_rotation_is_constrained_to_selected_style() -> None:
     )
     names = [str(c.file_name) for c in sorted(payload.clips, key=lambda c: float(c.in_point))]
     assert len(names) == 3
-    assert set(names).issubset({"alt_1.mp4", "alt_2.mp4"})
-    assert "pop_leak.mp4" not in names
+    # Both pre-scoped assets are valid; picker uses theme overlap only,
+    # not inventory genre/tag (which mismatches Alternative/art_rock here).
+    assert set(names).issubset({"asset_1.mp4", "asset_2.mp4"})
 
 
 def test_raw_priority_selection_moves_to_next_subgroup_when_first_is_exhausted() -> None:

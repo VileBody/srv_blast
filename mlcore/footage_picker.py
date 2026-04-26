@@ -1052,13 +1052,14 @@ def pick_footage_clips_by_intervals_deterministic(
         primary_pool_names: set[str] = set()
         selected_pool_names: set[str] = set()
         for subgroup_idx, subgroup in enumerate(subgroup_defs):
+            # v2 rotation: build pool purely from theme parameters (mood +
+            # priority_theme_tags + exclusions). Legacy inventory genre/tag
+            # filter is NOT passed — assets are already scoped to the artist
+            # by the orchestrator, and within an artist we route by
+            # (theme, tags_group). Same fix as commit ab21a63 applied to the
+            # ordered-subgroup path.
             pool_all = _dedupe_assets_by_file_name(
-                _build_raw_pool(
-                    subgroup,
-                    assets,
-                    style_genre=genre,
-                    style_tag=tag,
-                )
+                _build_raw_pool(subgroup, assets)
             )
             pool_selected = [
                 it for it in pool_all if str(it.get("file_name") or "").strip() not in excluded_names
@@ -1105,9 +1106,13 @@ def pick_footage_clips_by_intervals_deterministic(
             )
 
         if not primary_pool_names:
+            subgroup_summary = ", ".join(
+                f"{idx}:theme={sg.theme!r}/group={(sg.tags_group or '')!r}"
+                for idx, sg in enumerate(subgroup_defs)
+            )
             raise RuntimeError(
-                "No assets satisfy ordered raw subgroup filters for selected style "
-                f"(subgroups={k}, genre={genre!r}, tag={tag!r})"
+                "No assets satisfy ordered raw subgroup filters "
+                f"(subgroups={k}; {subgroup_summary})"
             )
 
         exclude_relaxed = False
