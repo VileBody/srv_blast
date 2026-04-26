@@ -231,6 +231,36 @@ def test_jobs_active_filters_by_age_and_status(monkeypatch) -> None:
     assert body["jobs"][0]["job_id"] == "job-old-running"
 
 
+def test_job_queue_estimate_returns_position_and_moving_average(monkeypatch) -> None:
+    now = time.time()
+    done_old = _job("done-old", status="SUCCEEDED", updated_at=now - 500.0).model_copy(
+        update={"created_at": now - 700.0, "finished_at": now - 500.0}
+    )
+    done_new = _job("done-new", status="SUCCEEDED", updated_at=now - 100.0).model_copy(
+        update={"created_at": now - 220.0, "finished_at": now - 100.0}
+    )
+    active_running = _job("active-running", status="RUNNING", updated_at=now - 40.0).model_copy(
+        update={"created_at": now - 90.0, "started_at": now - 80.0}
+    )
+    target = _job("target", status="QUEUED", updated_at=now - 20.0).model_copy(
+        update={"created_at": now - 30.0, "started_at": None}
+    )
+    store = _FakeStore([done_old, done_new, active_running, target])
+
+    with _build_client(monkeypatch, store) as client:
+        resp = client.get("/jobs/target/queue-estimate?window=50")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["job_id"] == "target"
+    assert body["active"] is True
+    assert body["queue_position"] == 2
+    assert body["active_jobs_total"] == 2
+    assert body["sample_size"] == 2
+    assert body["avg_duration_seconds"] == 160.0
+    assert body["eta_seconds"] > 160.0
+
+
 def test_jobs_batch_returns_requested_jobs_in_order(monkeypatch) -> None:
     now = time.time()
     store = _FakeStore(

@@ -90,6 +90,12 @@ class OrchestratorClient:
             raise RuntimeError("get_job requires non-empty job_id")
         return await self._get_json(f"/jobs/{jid}")
 
+    async def get_queue_estimate(self, job_id: str) -> Dict[str, Any]:
+        jid = str(job_id or "").strip()
+        if not jid:
+            raise RuntimeError("get_queue_estimate requires non-empty job_id")
+        return await self._get_json(f"/jobs/{jid}/queue-estimate")
+
     async def get_jobs(self, job_ids: List[str]) -> Dict[str, Dict[str, Any]]:
         cleaned: List[str] = []
         seen: set[str] = set()

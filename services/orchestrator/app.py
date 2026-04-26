@@ -14,6 +14,11 @@ from core.llm_worker_types import (
     LLM_WORKER_TYPE_VERTEX_SDK_MIX,
     normalize_llm_worker_type,
 )
+from core.queue_estimate import (
+    DEFAULT_QUEUE_ESTIMATE_WINDOW,
+    build_queue_estimate,
+    normalize_queue_estimate_window,
+)
 from .job_store import JobStore
 from .llm_workers import (
     ensure_config_initialized,
@@ -44,6 +49,7 @@ from .schemas import (
     LLMWorkerRuntimeStatus,
     LLMWorkersConfigRequest,
     LLMWorkersStatusResponse,
+    QueueEstimateResponse,
     RequeueJobRequest,
     RequeueJobResponse,
     SendVideoRequest,
@@ -786,6 +792,27 @@ def create_app() -> FastAPI:
         if not st:
             raise HTTPException(status_code=404, detail="job not found")
         return st
+
+    @app.get("/jobs/{job_id}/queue-estimate", response_model=QueueEstimateResponse)
+    def get_job_queue_estimate(
+        job_id: str,
+        window: int = DEFAULT_QUEUE_ESTIMATE_WINDOW,
+    ) -> QueueEstimateResponse:
+        jid = str(job_id or "").strip()
+        if not jid:
+            raise HTTPException(status_code=400, detail="job_id is empty")
+
+        if not store.get(jid):
+            raise HTTPException(status_code=404, detail="job not found")
+
+        snapshot = build_queue_estimate(
+            store.list_jobs(),
+            job_id=jid,
+            window_size=normalize_queue_estimate_window(window),
+        )
+        if not snapshot:
+            raise HTTPException(status_code=404, detail="job not found")
+        return QueueEstimateResponse.model_validate(snapshot)
 
     @app.post("/jobs/batch", response_model=JobsBatchResponse)
     def get_jobs_batch(payload: JobsBatchRequest) -> JobsBatchResponse:

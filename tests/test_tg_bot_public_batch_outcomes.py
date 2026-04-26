@@ -46,6 +46,9 @@ class _FakeOrchestrator:
             raise AssertionError(f"Unexpected job_id in test: {jid}")
         return dict(self._jobs[jid])
 
+    async def get_jobs(self, job_ids: list[str]) -> dict[str, dict[str, Any]]:
+        return {str(jid): await self.get_job(str(jid)) for jid in job_ids}
+
 
 class _FakeCreditsDB:
     def __init__(self) -> None:

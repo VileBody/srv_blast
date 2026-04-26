@@ -21,6 +21,7 @@ from aiogram.types import BotCommand, CallbackQuery, ChatMemberUpdated, FSInputF
 from core.telegram_api import build_aiogram_session, make_telegram_api
 from core.clip_window import CLIP_WINDOW_RANGE_S_LABEL
 from core.filesystem_hygiene import cleanup_jobs_artifacts, cleanup_tmp_chat_dirs
+from core.queue_estimate import format_queue_estimate_lines, pick_queue_estimate_job_id
 from core.subtitles_mode import (
     SUBTITLES_MODE_IMPULSE_2ND,
     SUBTITLES_MODE_LEGACY_BLOCKS,
@@ -3130,6 +3131,7 @@ class BlastBotApp:
                 poll_attempts=0,
                 total_versions=versions,
                 backpressure_notice=st.last_backpressure_notice,
+                queue_estimate=await self._queue_estimate_for_rows(initial_rows),
             )
             sent = await message.answer(initial_text)
             st.status_message_id = int(getattr(sent, "message_id", 0) or 0)
@@ -4326,6 +4328,20 @@ class BlastBotApp:
             return ""
         return str(capacity_policy.get("user_message") or "").strip()
 
+    async def _queue_estimate_for_rows(self, rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+        job_id = pick_queue_estimate_job_id(rows)
+        if not job_id:
+            return {}
+        getter = getattr(self.orchestrator, "get_queue_estimate", None)
+        if not callable(getter):
+            return {}
+        try:
+            out = await getter(job_id)
+        except Exception as e:
+            log.warning("queue_estimate_fetch_failed job=%s err=%s", job_id, str(e))
+            return {}
+        return out if isinstance(out, dict) else {}
+
     def _jobs_progress_message(
         self,
         *,
@@ -4333,6 +4349,7 @@ class BlastBotApp:
         poll_attempts: int,
         total_versions: int,
         backpressure_notice: str = "",
+        queue_estimate: Dict[str, Any] | None = None,
     ) -> str:
         total = max(1, int(total_versions))
         sum_frac = 0.0
@@ -4352,6 +4369,9 @@ class BlastBotApp:
             "Прогресс:",
             f"{self._progress_bar(percent)} {percent}%",
         ]
+        queue_lines = format_queue_estimate_lines(queue_estimate)
+        if queue_lines:
+            lines.extend(["", *queue_lines])
         note = str(backpressure_notice or "").strip()
         if note:
             lines.extend(["", note])
@@ -5161,6 +5181,7 @@ class BlastBotApp:
             poll_attempts=st.poll_attempts,
             total_versions=total_versions,
             backpressure_notice=st.last_backpressure_notice,
+            queue_estimate=await self._queue_estimate_for_rows(rows),
         )
         now = time.time()
         should_send = (

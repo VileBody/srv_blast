@@ -19,6 +19,7 @@ from aiogram.types import FSInputFile, KeyboardButton, Message, ReplyKeyboardMar
 from core.telegram_api import build_aiogram_session, make_telegram_api
 from core.clip_window import CLIP_WINDOW_RANGE_S_LABEL
 from core.filesystem_hygiene import cleanup_jobs_artifacts, cleanup_tmp_chat_dirs
+from core.queue_estimate import format_queue_estimate_lines, pick_queue_estimate_job_id
 from core.subtitles_mode import (
     SUBTITLES_MODE_IMPULSE_2ND,
     SUBTITLES_MODE_LEGACY_BLOCKS,
@@ -1564,6 +1565,7 @@ class BlastBotApp:
                 rows=initial_rows,
                 poll_attempts=0,
                 total_versions=versions,
+                queue_estimate=await self._queue_estimate_for_rows(initial_rows),
             )
             sent = await message.answer(initial_text)
             st.status_message_id = int(getattr(sent, "message_id", 0) or 0)
@@ -1679,12 +1681,27 @@ class BlastBotApp:
     def _progress_interval_s(self) -> float:
         return max(1.0, float(self.settings.bot_status_update_interval_s))
 
+    async def _queue_estimate_for_rows(self, rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+        job_id = pick_queue_estimate_job_id(rows)
+        if not job_id:
+            return {}
+        getter = getattr(self.orchestrator, "get_queue_estimate", None)
+        if not callable(getter):
+            return {}
+        try:
+            out = await getter(job_id)
+        except Exception as e:
+            log.warning("queue_estimate_fetch_failed job=%s err=%s", job_id, str(e))
+            return {}
+        return out if isinstance(out, dict) else {}
+
     def _jobs_progress_message(
         self,
         *,
         rows: List[Dict[str, Any]],
         poll_attempts: int,
         total_versions: int,
+        queue_estimate: Dict[str, Any] | None = None,
     ) -> str:
         total = max(1, int(total_versions))
         succ = 0
@@ -1706,6 +1723,9 @@ class BlastBotApp:
             f"versions={done}/{total} ok={succ} fail={fail} active={active} pending={pending}",
             f"poll_attempts={max(0, int(poll_attempts))}",
         ]
+        queue_lines = format_queue_estimate_lines(queue_estimate)
+        if queue_lines:
+            lines.extend(queue_lines)
         for i, r in enumerate(rows, start=1):
             ver = int(r.get("version") or i)
             status = str(r.get("status") or "UNKNOWN").upper()
@@ -2184,6 +2204,7 @@ class BlastBotApp:
             rows=rows,
             poll_attempts=st.poll_attempts,
             total_versions=total_versions,
+            queue_estimate=await self._queue_estimate_for_rows(rows),
         )
         now = time.time()
         should_send = (

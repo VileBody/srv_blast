@@ -151,6 +151,18 @@ class ActiveJobsResponse(BaseModel):
     limit: int = 100
 
 
+class QueueEstimateResponse(BaseModel):
+    job_id: str
+    status: JobStatus
+    active: bool = False
+    queue_position: int = Field(default=0, ge=0)
+    active_jobs_total: int = Field(default=0, ge=0)
+    window_size: int = Field(default=50, ge=1, le=500)
+    sample_size: int = Field(default=0, ge=0)
+    avg_duration_seconds: Optional[float] = None
+    eta_seconds: Optional[float] = None
+
+
 class KillJobRequest(BaseModel):
     reason: str = Field(default="admin_kill_stuck", min_length=1, max_length=500)
 

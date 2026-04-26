@@ -16,6 +16,15 @@ class OrchestratorClient:
     async def close(self) -> None:
         await self._client.aclose()
 
+    async def _get_json(self, path: str) -> Dict[str, Any]:
+        resp = await self._client.get(f"{self._base_url}{path}")
+        if resp.status_code >= 300:
+            raise RuntimeError(f"orchestrator {path} failed status={resp.status_code} body={resp.text}")
+        out = resp.json()
+        if not isinstance(out, dict):
+            raise RuntimeError(f"orchestrator {path} returned non-object: {out!r}")
+        return out
+
     async def send_audio_s3(
         self,
         *,
@@ -78,10 +87,10 @@ class OrchestratorClient:
         jid = str(job_id or "").strip()
         if not jid:
             raise RuntimeError("get_job requires non-empty job_id")
-        resp = await self._client.get(f"{self._base_url}/jobs/{jid}")
-        if resp.status_code >= 300:
-            raise RuntimeError(f"orchestrator /jobs/{jid} failed status={resp.status_code} body={resp.text}")
-        out = resp.json()
-        if not isinstance(out, dict):
-            raise RuntimeError(f"orchestrator /jobs/{jid} returned non-object: {out!r}")
-        return out
+        return await self._get_json(f"/jobs/{jid}")
+
+    async def get_queue_estimate(self, job_id: str) -> Dict[str, Any]:
+        jid = str(job_id or "").strip()
+        if not jid:
+            raise RuntimeError("get_queue_estimate requires non-empty job_id")
+        return await self._get_json(f"/jobs/{jid}/queue-estimate")
