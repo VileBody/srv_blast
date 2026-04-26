@@ -177,44 +177,16 @@ def build_full_project(
         "ENABLED" if is_botapi_origin else "DISABLED (public/unknown path — stable contract)",
     )
 
-    # Inline adjustment-effects sidecar jsx SOURCE (cold/warm color grade) based on
-    # color_grade hint from footage_config. We embed source text directly into
-    # render.jsx to avoid dependency on render_templates/ being synced to the
-    # render node (sparse-checkout only pulls windows/render-node-runtime/).
+    # The cold/warm adjustment-effects sidecar is disabled globally.
+    # It can hang headless AE while initializing third-party plugins before
+    # ae_status.txt is written, so render.jsx must not inline or eval it.
     color_grade = str(footage_cfg.get("color_grade") or "").strip().lower() or None
     adjustment_sidecar_source: str | None = None
-    if not is_botapi_origin:
-        LOGGER.info(
-            "adjustment_sidecar skipped: SOURCE_BOT != 'botapi' "
-            "(color_grade=%r ignored on public path)",
-            color_grade,
-        )
-    elif color_grade in ("cold", "warm"):
-        _sidecar_path = (
-            repo_root / "render_templates" / f"apply_adjustment_effects_{color_grade}.jsx"
-        )
-        try:
-            adjustment_sidecar_source = _sidecar_path.read_text(encoding="utf-8")
-            LOGGER.info(
-                "adjustment_sidecar inlined: %s (%d chars) color_grade=%r job_id=%r",
-                _sidecar_path.name,
-                len(adjustment_sidecar_source),
-                color_grade,
-                job_id_for_log,
-            )
-        except Exception as e:
-            LOGGER.error(
-                "adjustment_sidecar read failed: %s — skipping color grade "
-                "(color_grade=%r job_id=%r)",
-                e, color_grade, job_id_for_log,
-            )
-            adjustment_sidecar_source = None
-    else:
-        LOGGER.warning(
-            "adjustment_sidecar skipped: color_grade=%r "
-            "(cold/warm adjustment effects NOT applied; botapi origin but unresolved tag)",
-            color_grade,
-        )
+    LOGGER.warning(
+        "adjustment_sidecar disabled: color_grade=%r ignored (job_id=%r)",
+        color_grade,
+        job_id_for_log,
+    )
 
     # --- Uniqueness pass (per-clip geometric drift + optional mirror + color jitter) ---
     # Inlined into render.jsx (same reason as cold/warm sidecar — render-node sparse-checkout).
