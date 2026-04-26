@@ -8,17 +8,18 @@
  * Stack order (bottom to top):
  *   Adjustment Layer 1  — Looks (MB LookSuite3)
  *   Adjustment Layer 3  — S_Glow (Sapphire)
- *   Adjustment Layer 2  — Sharpen, Unsharp Mask, Exposure, Curves, Brightness & Contrast, Looks, Mojo II
- *   Adjustment Layer 4  — S_HueSatBright (Sapphire), Curves
+ *   Adjustment Layer 2  — Sharpen, Unsharp Mask, Exposure, Brightness & Contrast, Looks, Mojo II
+ *   Adjustment Layer 4  — S_HueSatBright (Sapphire)
  *
  * REQUIREMENTS:
  *   - Magic Bullet Looks (Red Giant / Maxon)
  *   - Magic Bullet Mojo II (Red Giant / Maxon)
  *   - Sapphire (Boris FX) — S_Glow, S_HueSatBright
  *
- * LIMITATIONS:
- *   - Curves (ADBE CurvesCustom) effect is added but its curve data cannot
- *     be set via scripting (CUSTOM_VALUE type). You must adjust curves manually.
+ * NOTE:
+ *   - Curves (ADBE CurvesCustom) is intentionally NOT added — on the headless
+ *     render node AE refuses to process empty Curves layers, and we can't
+ *     populate the curve shape data from script (CUSTOM_VALUE).
  *   - Magic Bullet Looks preset/look data is also CUSTOM_VALUE — the effect
  *     is applied with Strength set, but the look itself must be chosen manually.
  */
@@ -159,8 +160,9 @@
         })();
 
         // ==================================================================
-        //  ADJUSTMENT LAYER 2 — Sharpen, Unsharp Mask, Exposure, Curves,
+        //  ADJUSTMENT LAYER 2 — Sharpen, Unsharp Mask, Exposure,
         //                        Brightness & Contrast, Looks, Mojo II
+        //  (Curves removed — headless AE chokes on empty CurvesCustom)
         // ==================================================================
         var al2 = addAdjustmentLayer("Adjustment Layer 2 — Color & Sharpen");
 
@@ -201,12 +203,7 @@
             setEffectProp(fx, "ADBE Exposure2-0022", 0);     // Bypass Linear Light
         })();
 
-        // 4. Curves (curve data must be set manually!)
-        (function () {
-            try { al2.Effects.addProperty("ADBE CurvesCustom"); } catch (e) { return; }
-            // NOTE: Curve shape data is CUSTOM_VALUE — cannot be set via script.
-            // Open the effect and adjust curves manually.
-        })();
+        // 4. (Curves removed — headless AE refuses empty CurvesCustom)
 
         // 5. Brightness & Contrast
         (function () {
@@ -247,7 +244,8 @@
         })();
 
         // ==================================================================
-        //  ADJUSTMENT LAYER 4 — S_HueSatBright, Curves (top of the stack)
+        //  ADJUSTMENT LAYER 4 — S_HueSatBright (top of the stack)
+        //  (Curves removed — headless AE chokes on empty CurvesCustom)
         // ==================================================================
         var al4 = addAdjustmentLayer("Adjustment Layer 4 — S_HueSatBright");
 
@@ -275,10 +273,7 @@
             } catch (e) {}
         })();
 
-        // 2. Curves (curve data must be set manually!)
-        (function () {
-            try { al4.Effects.addProperty("ADBE CurvesCustom"); } catch (e) { return; }
-        })();
+        // 2. (Curves removed — headless AE refuses empty CurvesCustom)
 
         // ==================================================================
         //  Reorder layers so the stack is correct (top-down in AE timeline):
