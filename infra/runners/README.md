@@ -195,6 +195,10 @@ DOZZLE_AGENT_LEVEL=info
 Если env есть, но bind host/hostname не заполнены или bind host указывает на loopback,
 deploy завершится ошибкой.
 
+Для старых `.env.dozzle` deploy-скрипт дописывает только non-secret значения
+`DOZZLE_AUTH_PROVIDER=none`, `DOZZLE_BASE=/logs`, `DOZZLE_HOSTNAME=blast-ops`.
+`DOZZLE_BIND_HOST` и `DOZZLE_PORT` остаются обязательными в локальном env.
+
 Для панели бота аналогично: `https://blast808.com/admin/` (также через Basic Auth).
 `asset-ui` рекомендуется прокинуть в той же зоне: `https://blast808.com/admin/assets/`.
 При каждом deploy (`docker compose up -d --build`) `asset-ui` пересобирается с

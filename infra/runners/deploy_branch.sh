@@ -23,7 +23,7 @@ env_file_value() {
   if [[ ! -f "$env_file" ]]; then
     return 0
   fi
-  grep -E "^${key}=" "$env_file" | tail -n1 | cut -d= -f2- | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/^"//' -e 's/"$//' || true
+  grep -E "^${key}=" "$env_file" | tail -n1 | cut -d= -f2- | tr -d '\r' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/^"//' -e 's/"$//' || true
 }
 
 generic_env_file_value() {
@@ -32,7 +32,7 @@ generic_env_file_value() {
   if [[ ! -f "$env_file" ]]; then
     return 0
   fi
-  grep -E "^${key}=" "$env_file" | tail -n1 | cut -d= -f2- | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/^"//' -e 's/"$//' || true
+  grep -E "^${key}=" "$env_file" | tail -n1 | cut -d= -f2- | tr -d '\r' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/^"//' -e 's/"$//' || true
 }
 
 require_env_file_value() {
@@ -45,6 +45,44 @@ require_env_file_value() {
     return 1
   fi
   return 0
+}
+
+set_env_file_value() {
+  local env_file="$1"
+  local key="$2"
+  local value="$3"
+  local tmp
+  tmp="$(mktemp)"
+  awk -v key="$key" -v value="$value" '
+    BEGIN { done = 0 }
+    $0 ~ "^[[:space:]]*" key "=" {
+      if (!done) {
+        print key "=" value
+        done = 1
+      }
+      next
+    }
+    { print }
+    END {
+      if (!done) {
+        print key "=" value
+      }
+    }
+  ' "$env_file" > "$tmp"
+  mv "$tmp" "$env_file"
+}
+
+ensure_env_file_value() {
+  local env_file="$1"
+  local key="$2"
+  local value="$3"
+  local current
+  current="$(generic_env_file_value "$env_file" "$key")"
+  if [[ -n "$current" ]]; then
+    return 0
+  fi
+  set_env_file_value "$env_file" "$key" "$value"
+  echo "[deploy] set $key in $env_file for legacy Dozzle env compatibility"
 }
 
 is_remote_reachable_bind_host() {
@@ -219,6 +257,10 @@ dozzle_central_env_is_ready() {
     echo "[deploy] skip Dozzle central deploy (env file not found: $env_file)"
     return 1
   fi
+
+  ensure_env_file_value "$env_file" DOZZLE_AUTH_PROVIDER "none"
+  ensure_env_file_value "$env_file" DOZZLE_BASE "/logs"
+  ensure_env_file_value "$env_file" DOZZLE_HOSTNAME "blast-ops"
 
   require_env_file_value "$env_file" DOZZLE_BIND_HOST || missing_required=1
   require_env_file_value "$env_file" DOZZLE_PORT || missing_required=1
