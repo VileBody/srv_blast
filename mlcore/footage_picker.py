@@ -17,9 +17,13 @@ from mlcore.models.footage_style import FootageStylePickPayload, FootageStyleRaw
 
 _EPS = 1e-6
 _MAX_SWITCH_SEC = 4.0
-# Uniform jitter added to selection score per (seed, file_name) to break
-# score-dominance and produce variety across reruns with different seed.
-_SCORE_JITTER_MAG = 0.75
+# Uniform jitter added to selection score per (seed, interval_idx, file_name)
+# to break score-dominance and produce variety across reruns with different
+# seed AND across intervals within one run. Magnitude is tuned to overpower
+# typical overlap-score differences (priority-tag overlap is usually 1-3),
+# so that "the one obvious top file" doesn't dominate the very first interval
+# across all batch versions.
+_SCORE_JITTER_MAG = 2.5
 # Safety margin (seconds) kept at the head/tail of a source video when
 # picking a random in-source offset. Relaxed from 0.1 to 0.05 to unlock
 # offsets for sources whose duration is just barely above the interval.
@@ -508,14 +512,16 @@ def _fits_interval(asset: Dict[str, Any], *, interval_len: float) -> bool:
     return dur + _EPS >= float(interval_len)
 
 
-def _score_jitter(seed_value: int, file_name: str) -> float:
-    """Uniform [0, _SCORE_JITTER_MAG) jitter, stable per (seed, file_name).
+def _score_jitter(seed_value: int, file_name: str, interval_idx: int = -1) -> float:
+    """Uniform [0, _SCORE_JITTER_MAG) jitter, stable per (seed, interval_idx, file_name).
 
-    Deliberately does NOT depend on interval_idx so each file has one
-    consistent effective score inside a single run; different seeds yield
-    different orderings across reruns.
+    Depends on interval_idx so the same file gets a different effective rank
+    across different intervals within ONE run — this prevents "the one
+    high-overlap file" from dominating the first interval across multiple
+    batch versions (the symptom: v3 first 4-5s identical to v1 first 4-5s).
+    Different seeds also yield different orderings across reruns.
     """
-    material = f"jitter:{seed_value}:{file_name}"
+    material = f"jitter:{seed_value}:{int(interval_idx)}:{file_name}"
     h = int(hashlib.sha256(material.encode("utf-8")).hexdigest()[:16], 16)
     frac = h / (2 ** 64)
     return float(frac) * _SCORE_JITTER_MAG
@@ -537,7 +543,9 @@ def _deterministic_choose(
             base = float(it.get(_SELECTION_RANK_SCORE_KEY) or 0.0)
         except Exception:
             base = 0.0
-        return base + _score_jitter(seed_value, str(it.get("file_name") or ""))
+        return base + _score_jitter(
+            seed_value, str(it.get("file_name") or ""), interval_idx
+        )
 
     def _sort_key(it: Dict[str, Any]) -> Tuple[float, str, str]:
         file_name = str(it["file_name"])
@@ -581,7 +589,7 @@ def _deterministic_file_name_order(
                 base = float(scores_by_name.get(name) or 0.0)
             except Exception:
                 base = 0.0
-        return base + _score_jitter(seed_value, name)
+        return base + _score_jitter(seed_value, name, interval_idx)
 
     def _key(name: str) -> Tuple[float, str, str]:
         material = f"{seed_value}:{interval_idx}:{interval_start:.6f}:{name}"
