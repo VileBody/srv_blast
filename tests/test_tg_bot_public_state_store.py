@@ -35,6 +35,7 @@ class _FakeRedis:
         self.sets: dict[str, set[str]] = {}
         self.zsets: dict[str, dict[str, float]] = {}
         self.hashes: dict[str, dict[str, str]] = {}
+        self.lists: dict[str, list[str]] = {}
 
     async def get(self, key: str):
         return self.data.get(key)
@@ -169,6 +170,38 @@ class _FakeRedis:
         new_val = current + int(amount)
         bucket[str(field)] = str(new_val)
         return new_val
+
+    async def incr(self, key: str) -> int:
+        current = int(self.data.get(key, "0") or 0)
+        new_val = current + 1
+        self.data[key] = str(new_val)
+        return new_val
+
+    async def lpush(self, key: str, *values: str) -> int:
+        bucket = self.lists.setdefault(key, [])
+        for value in values:
+            bucket.insert(0, str(value))
+        return len(bucket)
+
+    async def ltrim(self, key: str, start: int, end: int) -> str:
+        bucket = self.lists.get(key)
+        if bucket is None:
+            return "OK"
+        s = int(start)
+        e = int(end)
+        if e < 0:
+            self.lists[key] = bucket[s:]
+        else:
+            self.lists[key] = bucket[s : e + 1]
+        return "OK"
+
+    async def lrange(self, key: str, start: int, end: int):
+        bucket = self.lists.get(key, [])
+        s = int(start)
+        e = int(end)
+        if e < 0:
+            return list(bucket[s:])
+        return list(bucket[s : e + 1])
 
     async def aclose(self) -> None:
         return None
@@ -332,3 +365,47 @@ def test_processing_lock_acquire_refresh_release_by_owner() -> None:
         assert acquired_after_release is True
 
     asyncio.run(_run())
+
+
+def test_rotation_cursor_advances_and_history_caps_at_max() -> None:
+    """Per-user footage rotation cursor must increment and history must cap.
+
+    Regression for the symptom: same source files reappeared in same intervals
+    because the cursor never advanced. Now cursor advances on every successful
+    job; history is capped to _ROTATION_HISTORY_MAX (150) so we never grow
+    Redis lists unboundedly.
+    """
+    from services.tg_bot_public.state_store import _ROTATION_HISTORY_MAX
+
+    async def _run() -> None:
+        redis = _FakeRedis()
+        store = _make_store(redis)
+
+        chat_id = 4242
+        artist_id = "rock_emo"
+
+        assert await store.get_rotation_cursor(chat_id, artist_id) == 0
+
+        old1, new1 = await store.advance_rotation_cursor(chat_id, artist_id)
+        assert (old1, new1) == (0, 1)
+        old2, new2 = await store.advance_rotation_cursor(chat_id, artist_id)
+        assert (old2, new2) == (1, 2)
+        assert await store.get_rotation_cursor(chat_id, artist_id) == 2
+
+        # Independent (chat_id, artist_id) keyspace.
+        await store.advance_rotation_cursor(chat_id, "another_artist")
+        assert await store.get_rotation_cursor(chat_id, "another_artist") == 1
+        assert await store.get_rotation_cursor(chat_id, artist_id) == 2
+
+        # History must cap. Push more than the cap, oldest entries get dropped.
+        overflow = _ROTATION_HISTORY_MAX + 25
+        await store.add_rotation_history(
+            chat_id, artist_id, [f"f{i:04d}.mp4" for i in range(overflow)]
+        )
+        names = await store.get_rotation_history(chat_id, artist_id)
+        assert len(names) == _ROTATION_HISTORY_MAX
+        # Most-recent push wins (LPUSH puts newest first).
+        assert names[0] == f"f{overflow - 1:04d}.mp4"
+
+    asyncio.run(_run())
+
