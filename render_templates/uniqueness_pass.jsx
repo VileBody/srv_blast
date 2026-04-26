@@ -35,10 +35,36 @@
  *   - Gamma: 0.97..1.03
  */
 (function () {
-    if (!app.project || !app.project.activeItem || !(app.project.activeItem instanceof CompItem)) return;
-    var comp = app.project.activeItem;
-
     // --- Helpers ---------------------------------------------------------
+    function safeLogEarly(line) {
+        try { if (typeof logLine === "function") logLine("INFO", "[uniqueness] " + String(line)); } catch (e) {}
+        try { $.writeln("[uniqueness] " + String(line)); } catch (e2) {}
+    }
+
+    // Resolve target comp:
+    //   1) Prefer MAIN_COMP from enclosing scope (injected by project_template.j2).
+    //      Required on headless render nodes where openInViewer() does NOT
+    //      promote a comp to app.project.activeItem.
+    //   2) Fallback to app.project.activeItem (manual run inside AE GUI).
+    var comp = null;
+    try {
+        if (typeof MAIN_COMP !== "undefined" && MAIN_COMP && (MAIN_COMP instanceof CompItem)) {
+            comp = MAIN_COMP;
+        }
+    } catch (eMC) {}
+    if (!comp) {
+        try {
+            if (app.project && app.project.activeItem && (app.project.activeItem instanceof CompItem)) {
+                comp = app.project.activeItem;
+            }
+        } catch (eAI) {}
+    }
+    if (!comp) {
+        safeLogEarly("no target comp (MAIN_COMP undefined, no active CompItem) — skipping uniqueness pass");
+        return;
+    }
+    safeLogEarly("target comp resolved name=\"" + comp.name + "\" total_layers=" + comp.layers.length);
+
     function envFlag(name, fallbackGlobal) {
         try {
             var raw = $.getenv(name);
