@@ -2,10 +2,8 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
-import os
 from pathlib import Path
 from typing import Any, Dict, Tuple
 
@@ -158,118 +156,11 @@ def build_full_project(
         mine_comp_name=mine_name,
     )
 
-    # ----------------------------------------------------------
-    # Origin-bot gate (botapi-only experimental features).
-    # Public-bot requests arrive with SOURCE_BOT="" → all experimental
-    # features are disabled regardless of other flags. This isolation is
-    # a hard constraint: cold/warm color grade + uniqueness pass activate
-    # only on botapi until validated there.
-    # ----------------------------------------------------------
-    source_bot = (os.environ.get("SOURCE_BOT") or "").strip().lower()
-    is_botapi_origin = (source_bot == "botapi")
-    job_id_for_log = str(os.environ.get("JOB_ID") or footage_cfg.get("job_id") or "default")
-    LOGGER.info(
-        "origin gate job_id=%r SOURCE_BOT=%r is_botapi_origin=%s "
-        "(experimental features: %s)",
-        job_id_for_log,
-        source_bot,
-        is_botapi_origin,
-        "ENABLED" if is_botapi_origin else "DISABLED (public/unknown path — stable contract)",
-    )
-
-    # The cold/warm adjustment-effects sidecar is disabled globally.
-    # It can hang headless AE while initializing third-party plugins before
-    # ae_status.txt is written, so render.jsx must not inline or eval it.
-    color_grade = str(footage_cfg.get("color_grade") or "").strip().lower() or None
-    adjustment_sidecar_source: str | None = None
-    LOGGER.warning(
-        "adjustment_sidecar disabled: color_grade=%r ignored (job_id=%r)",
-        color_grade,
-        job_id_for_log,
-    )
-
-    # --- Uniqueness pass (per-clip geometric drift + optional mirror + color jitter) ---
-    # Inlined into render.jsx (same reason as cold/warm sidecar — render-node sparse-checkout).
-    # Fully controllable via env kill-switches for easy rollback without redeploy:
-    #   UNIQUENESS_ENABLED=0                  → whole pass disabled (master)
-    #   UNIQUENESS_GEOMETRY_ENABLED=0         → scale+offset disabled
-    #   UNIQUENESS_MIRROR_ENABLED=0           → mirror disabled (even if allow_mirror=True)
-    #   UNIQUENESS_COLOR_JITTER_ENABLED=0     → hue/sat/exp/gamma disabled
-    # Both build-time flags (here) and runtime flags (inside uniqueness_pass.jsx) are OR'd —
-    # any OFF wins. Default: all ON.
-    def _env_flag_on(name: str, default: bool = True) -> bool:
-        raw = (os.environ.get(name) or "").strip().lower()
-        if raw in ("0", "false", "off", "no"):
-            return False
-        if raw in ("1", "true", "on", "yes"):
-            return True
-        return default
-
-    # Origin-bot gate AND'd with every flag: public-path jobs get uniqueness OFF
-    # across the board regardless of env flags. This keeps the public pipeline
-    # on the stable rendering contract.
-    uniqueness_master_on = _env_flag_on("UNIQUENESS_ENABLED", True) and is_botapi_origin
-    uniqueness_geometry_on = _env_flag_on("UNIQUENESS_GEOMETRY_ENABLED", True) and uniqueness_master_on
-    uniqueness_mirror_on = _env_flag_on("UNIQUENESS_MIRROR_ENABLED", True) and uniqueness_master_on
-    uniqueness_color_jitter_on = _env_flag_on("UNIQUENESS_COLOR_JITTER_ENABLED", True) and uniqueness_master_on
-
-    uniqueness_pass_source: str | None = None
-    if uniqueness_master_on:
-        _uniq_path = repo_root / "render_templates" / "uniqueness_pass.jsx"
-        try:
-            uniqueness_pass_source = _uniq_path.read_text(encoding="utf-8")
-            LOGGER.info(
-                "uniqueness_pass inlined: %s (%d chars) job_id=%r",
-                _uniq_path.name,
-                len(uniqueness_pass_source),
-                job_id_for_log,
-            )
-        except Exception as e:
-            LOGGER.error(
-                "uniqueness_pass read failed: %s — skipping uniqueness pass (job_id=%r)",
-                e, job_id_for_log,
-            )
-            uniqueness_pass_source = None
-    else:
-        _reason = (
-            "public/unknown origin (SOURCE_BOT=%r)" % source_bot
-            if not is_botapi_origin
-            else "UNIQUENESS_ENABLED=0 (master kill switch)"
-        )
-        LOGGER.warning(
-            "uniqueness_pass skipped: %s (job_id=%r)",
-            _reason, job_id_for_log,
-        )
-
-    _job_id_str = job_id_for_log
-    uniqueness_seed = int(hashlib.md5(_job_id_str.encode("utf-8")).hexdigest()[:8], 16)
-    uniqueness_allow_mirror = bool(footage_cfg.get("allow_mirror") or False)
-    LOGGER.info(
-        "uniqueness flags: origin_botapi=%s master=%s geo=%s mirror=%s color=%s "
-        "| seed=%d allow_mirror=%s (job_id=%r)",
-        is_botapi_origin,
-        uniqueness_master_on,
-        uniqueness_geometry_on,
-        uniqueness_mirror_on,
-        uniqueness_color_jitter_on,
-        uniqueness_seed,
-        uniqueness_allow_mirror,
-        _job_id_str,
-    )
-
     payload: Dict[str, Any] = {
         "project": {"mainCompName": main_name, "subtitlesMode": subtitles_mode},
         "comps": [main_comp, text_comp, mine_comp],
         "footage_layers": footage_layers,
         "text_layers": text_layers,
-        "adjustment_sidecar_source": adjustment_sidecar_source,
-        "uniqueness_pass_source": uniqueness_pass_source,
-        "uniqueness_seed": uniqueness_seed,
-        "uniqueness_allow_mirror": uniqueness_allow_mirror,
-        "uniqueness_enabled": uniqueness_master_on,
-        "uniqueness_geometry_enabled": uniqueness_geometry_on,
-        "uniqueness_mirror_enabled": uniqueness_mirror_on,
-        "uniqueness_color_jitter_enabled": uniqueness_color_jitter_on,
     }
 
     out_dir.mkdir(parents=True, exist_ok=True)

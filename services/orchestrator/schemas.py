@@ -50,11 +50,6 @@ class SendAudioS3Request(BaseModel):
     # (theme, tags_group) pair instead of picking from the artist profile.
     rotation_theme: str = ""
     rotation_tags_group: str = ""
-    # Origin-bot tag. Pipeline reads this to gate bot-api-only experimental
-    # features (uniqueness pass, cold/warm color grade). Public bot MUST NOT
-    # send this field — it rolls out to public only after botapi validation.
-    # Accepted values: "botapi" (routed to experimental pipeline) or None.
-    source_bot: Optional[Literal["botapi"]] = None
     # Internal routing pinning metadata.
     # Public callers should not set these fields directly.
     origin_node: Optional[str] = None

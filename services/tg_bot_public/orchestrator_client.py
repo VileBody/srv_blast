@@ -72,9 +72,6 @@ class OrchestratorClient:
             "maintenance_bypass_token": str(maintenance_bypass_token or "") or None,
             "rotation_theme": str(rotation_theme or "").strip(),
             "rotation_tags_group": str(rotation_tags_group or "").strip(),
-            # Route public jobs through the same render path as team-bot:
-            # enables color-grade sidecar + uniqueness pass in project_builder.
-            "source_bot": "botapi",
         }
         resp = await self._client.post(f"{self._base_url}/send_audio_s3", json=payload)
         if resp.status_code >= 300:

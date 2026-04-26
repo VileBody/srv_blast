@@ -53,7 +53,7 @@ def test_seed_resume_state_from_source_job_copies_whitelist_keys(tmp_path: Path)
 
 
 def test_seed_resume_state_from_source_job_fails_when_source_missing(tmp_path: Path) -> None:
-    with pytest.raises(RuntimeError, match="reuse_text_source_resume_missing"):
+    with pytest.raises(RuntimeError, match="reuse_text_source_resume_unavailable"):
         tasks._seed_resume_state_from_source_job(
             work_dir=tmp_path / "work",
             source_job_id="missing_job",

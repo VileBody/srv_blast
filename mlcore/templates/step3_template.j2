@@ -13,12 +13,6 @@
 
   "adjustment_preset": {{ adjustment_preset | tojson }},
 
-  {# color_grade hint: "cold" | "warm" | null. Drives adjustment-effects sidecar pick. #}
-  "color_grade": {{ color_grade | tojson if color_grade is defined else 'null' }},
-
-  {# allow_mirror: bool | null. Drives uniqueness pass horizontal-flip axis. #}
-  "allow_mirror": {{ allow_mirror | tojson if allow_mirror is defined else 'false' }},
-
   {# Optional diagnostics contract (safe to ignore downstream) #}
   "diagnostics": {
     "enabled": {% if diagnostics is defined and diagnostics.enabled %}true{% else %}false{% endif %},

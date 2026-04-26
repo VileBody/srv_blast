@@ -746,8 +746,6 @@ def _shift_footage_to_clip_zero(
     payload = {
         "clips": shifted_clips,
         "allow_gaps": False,
-        "color_grade": getattr(footage_abs, "color_grade", None),
-        "allow_mirror": getattr(footage_abs, "allow_mirror", None),
     }
     shifted = FootageSelectionPayload.model_validate(payload)
 
@@ -1021,8 +1019,6 @@ def render_all_steps(
         main_comp_fps=float(AE_FPS),  # ✅ FIX: was missing (caused UndefinedError)
         text_dur_hint=float(comp_dur),
         adjustment_preset=preset,
-        color_grade=getattr(footage_clip_zero, "color_grade", None),
-        allow_mirror=getattr(footage_clip_zero, "allow_mirror", None),
         footage=footage_clip_zero,
         assets_map=assets_map,
         overlay_layers=overlay_layers,

@@ -6,9 +6,7 @@ from pathlib import Path
 from app import project_builder
 
 
-def test_adjustment_sidecar_is_not_inlined_for_botapi_color_grade(tmp_path, monkeypatch):
-    monkeypatch.setenv("SOURCE_BOT", "botapi")
-    monkeypatch.setenv("JOB_ID", "sidecar_disabled_test")
+def test_project_builder_does_not_emit_sidecar_or_uniqueness_sources(tmp_path, monkeypatch):
     monkeypatch.setattr(project_builder, "build_footage_layers", lambda **_: [])
     monkeypatch.setattr(project_builder, "build_text_layers", lambda **_: [])
 
@@ -28,8 +26,9 @@ def test_adjustment_sidecar_is_not_inlined_for_botapi_color_grade(tmp_path, monk
     footage_config.write_text(
         json.dumps(
             {
-                "job_id": "sidecar_disabled_test",
+                "job_id": "release_no_sidecar_test",
                 "color_grade": "cold",
+                "allow_mirror": True,
                 "layers": [],
             }
         ),
@@ -46,8 +45,9 @@ def test_adjustment_sidecar_is_not_inlined_for_botapi_color_grade(tmp_path, monk
     payload = json.loads(out_json.read_text(encoding="utf-8"))
     jsx = out_jsx.read_text(encoding="utf-8")
 
-    assert payload["adjustment_sidecar_source"] is None
-    assert "var ADJUSTMENT_SIDECAR_SOURCE = null;" in jsx
-    assert "apply_adjustment_effects_cold" not in jsx
-    assert "S_Glow-0050" not in jsx
-    assert "MB LookSuite3-0013" not in jsx
+    assert "adjustment_sidecar_source" not in payload
+    assert "uniqueness_pass_source" not in payload
+    assert "ADJUSTMENT_SIDECAR_SOURCE" not in jsx
+    assert "UNIQUENESS_PASS_SOURCE" not in jsx
+    assert "apply_adjustment_effects" not in jsx
+    assert "S_Glow" not in jsx
