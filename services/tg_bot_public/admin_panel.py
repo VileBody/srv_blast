@@ -93,6 +93,7 @@ _EVENT_LABELS = {
     "view_packages": "Просмотр пакетов",
     "select_package": "Выбор пакета",
     "purchase_intent": "Заявка на покупку",
+    "purchase_intent_recurrent": "Заявка на подписку",
     "referral_sent": "Реферал отправлен",
     "referral_matched": "Реферал сработал",
     "survey_opened": "Открыл форму",
@@ -101,8 +102,12 @@ _EVENT_LABELS = {
     "reminder_sent": "Напоминание отправлено",
     "no_credits": "Нет кредитов",
     "payment_confirmed": "Оплата подтверждена",
+    "subscription_charged": "Подписка списана",
+    "subscription_charge_failed": "Подписка: ошибка списания",
+    "cancel_subscription_request": "Запрос отмены подписки",
     "admin_activate": "Активация админом",
     "admin_force_reset": "Force reset админом",
+    "admin_dm": "Сообщение от менеджера",
     "initial_grant": "Стартовые кредиты",
 }
 
@@ -118,7 +123,9 @@ _RATING_COLORS = {
     "high": "#27ae60",
 }
 
-# Canonical funnel order for visualization
+# Canonical funnel order for visualization.
+# Acquisition → activation → engagement → monetization. Branches like feedback
+# form / referral / manager DM live alongside the purchase path.
 _FUNNEL_ORDER = [
     "start",
     "subscription_ok",
@@ -126,18 +133,24 @@ _FUNNEL_ORDER = [
     "generation_started",
     "generation_done",
     "rate_video",
+    "survey_opened",
+    "survey_done",
+    "referral_sent",
     "sales_pitch",
     "view_packages",
     "select_package",
     "purchase_intent",
     "payment_confirmed",
+    "subscription_charged",
+    "admin_dm",
 ]
 
-# Funnel bar colors (green → red gradient)
+# Funnel bar colors (green → red gradient).
 _FUNNEL_COLORS = [
-    "#27ae60", "#2ecc71", "#3498db", "#2980b9",
-    "#8e44ad", "#9b59b6", "#e67e22", "#d35400",
-    "#e74c3c", "#c0392b", "#c0392b",
+    "#27ae60", "#2ecc71", "#3498db", "#2980b9",  # acquisition
+    "#8e44ad", "#9b59b6", "#16a085", "#1abc9c", "#f39c12",  # engagement / loyalty
+    "#e67e22", "#d35400", "#e74c3c",  # interest in packages
+    "#c0392b", "#c0392b", "#7f8c8d", "#34495e",  # monetization + manager
 ]
 
 # Package definitions
@@ -415,11 +428,10 @@ _BASE_HEAD = """
 <div class="header">
   <a href="/admin/" class="brand">Blast Admin</a>
   <a href="/admin/">Dashboard</a>
-  <a href="/admin/clients">Клиенты</a>
-  <a href="/admin/tiers">Тиры</a>
-  <a href="/admin/broadcasts">Рассылки</a>
-  <a href="/admin/lifecycle">Триггеры</a>
-  <a href="/admin/cohorts">Когорты</a>
+  <a href="/admin/clients">Clients</a>
+  <a href="/admin/tiers">Tiers</a>
+  <a href="/admin/broadcasts">Broadcasts</a>
+  <a href="/admin/lifecycle">Triggers</a>
   <a href="/admin/users">Users</a>
   <a href="/admin/activity">Activity</a>
   <a href="/admin/transactions">Transactions</a>
@@ -1864,6 +1876,7 @@ def build_app(
         tags = await credits_db.get_user_tags(tg_id)
         notes = await credits_db.get_user_notes(tg_id)
         manual_payments = await credits_db.list_manual_payments(tg_id, limit=50)
+        purchases = await credits_db.get_user_purchases(tg_id)
         user_tier = await credits_db.get_user_tier(tg_id)
         tier_spec = _TIER_SPEC.get(user_tier) if user_tier else None
         tier_badge = (
@@ -1916,7 +1929,7 @@ def build_app(
 
         body = f"""
         <p><a href="/admin/users">&laquo; Все пользователи</a> |
-           <a href="/admin/clients">Клиенты</a></p>
+           <a href="/admin/clients">Clients</a></p>
         <div class="card">
         <h2>{html_mod.escape(uname)} (id: {tg_id})</h2>
         <p>Credits: <strong>{user['credits']}</strong> |
@@ -1930,6 +1943,11 @@ def build_app(
         <p>Выручка: <b>{metrics['revenue_rub']}₽</b>
            (бот: {metrics.get('revenue_bot', 0)}₽, ручная: {metrics.get('revenue_manual', 0)}₽) ·
            Оплат через бота: <b>{metrics['paid_orders']}</b></p>
+        </div>
+
+        <div class="card">
+          <h3>Покупки</h3>
+          {_purchases_html(purchases)}
         </div>
 
         <div class="card">
@@ -3348,6 +3366,45 @@ def build_app(
             return ("Потерян", "badge-zero")
         return ("Холодный", "badge-zero")
 
+    def _purchases_html(data: dict) -> str:
+        items = data.get("purchases") or []
+        sub = data.get("active_subscription")
+        if not items and not sub:
+            return '<p style="color:#999">Без покупок</p>'
+
+        sub_html = ""
+        if sub:
+            pkg_lbl = _PACKAGES.get(str(sub["package"]), f"package={sub['package']}")
+            sub_html = (
+                f'<div style="border-left:3px solid #16a085;padding:6px 10px;margin:0.5rem 0;background:#f0faf7">'
+                f'<b>Подписка активна:</b> {html_mod.escape(pkg_lbl)} '
+                f'на {sub["amount_rub"]}₽/мес · '
+                f'списаний: {sub["charges_count"]} · '
+                f'следующее: {html_mod.escape(sub.get("next_charge_at") or "—")} · '
+                f'с {html_mod.escape(sub.get("created_at") or "—")}'
+                f'</div>'
+            )
+
+        if not items:
+            return sub_html or '<p style="color:#999">Без покупок</p>'
+
+        rows = ""
+        for p in items:
+            pkg_lbl = _PACKAGES.get(str(p["package"]), f"package={p['package']}")
+            rows += (
+                f"<tr>"
+                f"<td><b>{html_mod.escape(pkg_lbl)}</b></td>"
+                f"<td>{p['count']}</td>"
+                f"<td>{p['total_rub']}₽</td>"
+                f"<td>{p['last_at']}</td>"
+                f"</tr>"
+            )
+        return sub_html + (
+            '<div class="table-wrap"><table>'
+            '<tr><th>Продукт</th><th>Кол-во оплат</th><th>Сумма</th><th>Последняя</th></tr>'
+            f'{rows}</table></div>'
+        )
+
     def _manual_payments_html(tg_id: int, payments: list) -> str:
         if not payments:
             return '<p style="color:#999">Пока нет ручных платежей</p>'
@@ -3806,20 +3863,54 @@ def build_app(
 
     # ── Clients (CRM tab) ─────────────────────────────────────────────
 
+    _PRODUCT_LABELS = (
+        ("", "— все продукты —"),
+        ("any", "хотя бы одна покупка"),
+        ("none", "без покупок"),
+        ("trial", "Триал (5)"),
+        ("blast", "Бласт (15) — разовая"),
+        ("blast_subscription", "Бласт — подписка"),
+        ("glow", "Глоу (30)"),
+        ("impulse", "Импульс (50)"),
+    )
+
+    def _bought_packages_html(bought: list, has_sub: bool) -> str:
+        labels = []
+        bought_set = {str(p) for p in (bought or [])}
+        if has_sub and "15" in bought_set:
+            labels.append('<span class="badge" style="background:#16a085;color:white">Бласт (sub)</span>')
+            bought_set.discard("15")
+        elif has_sub:
+            labels.append('<span class="badge" style="background:#16a085;color:white">Подписка</span>')
+        pkg_styles = {
+            "5":  ('Триал', '#3498db'),
+            "15": ('Бласт', '#27ae60'),
+            "30": ('Глоу', '#e67e22'),
+            "50": ('Импульс', '#c0392b'),
+        }
+        for code in ("5", "15", "30", "50"):
+            if code in bought_set:
+                lbl, color = pkg_styles[code]
+                labels.append(f'<span class="badge" style="background:{color};color:white">{lbl}</span>')
+        return " ".join(labels) if labels else '<span style="color:#999">—</span>'
+
     @app.get("/admin/clients", response_class=HTMLResponse)
     async def clients_list(request: Request, _user: str = Depends(_check_auth)) -> str:
         page = _query_int(request, "page", default=1, min_value=1, max_value=10_000)
         min_c = _query_int(request, "min_credits", default=5, min_value=1, max_value=10_000)
         tag_filter = str(request.query_params.get("tag") or "").strip()
+        product_filter = str(request.query_params.get("product") or "").strip().lower()
         sort = str(request.query_params.get("sort") or "credits")
         per_page = 50
 
         summary = await credits_db.clients_summary(min_credits=min_c)
         rows = await credits_db.list_clients(
             min_credits=min_c, limit=per_page, offset=(page - 1) * per_page,
-            tag=tag_filter, sort=sort,
+            tag=tag_filter, sort=sort, product=product_filter,
         )
-        total = await credits_db.count_clients(min_credits=min_c, tag=tag_filter)
+        total = await credits_db.count_clients(
+            min_credits=min_c, tag=tag_filter, product=product_filter,
+        )
         total_pages = max(1, (total + per_page - 1) // per_page)
         tags_map = await credits_db.get_tags_for_users([r["tg_id"] for r in rows])
         all_tags = await credits_db.list_all_tags()
@@ -3833,22 +3924,32 @@ def build_app(
             f'<option value="{v}" {"selected" if v == sort else ""}>{lbl}</option>'
             for v, lbl in (("credits", "по балансу"), ("recent", "по активности"), ("oldest", "старые"))
         )
+        product_opts = "".join(
+            f'<option value="{v}" {"selected" if v == product_filter else ""}>{lbl}</option>'
+            for v, lbl in _PRODUCT_LABELS
+        )
 
         tr = []
         for r in rows:
             tags = tags_map.get(r["tg_id"], [])
             tag_badges = " ".join(f'<span class="badge badge-source">{html_mod.escape(t)}</span>' for t in tags)
             uname = f"@{r['username']}" if r['username'] else str(r['tg_id'])
+            products_cell = _bought_packages_html(r.get("bought_packages") or [], r.get("has_active_subscription"))
             tr.append(
                 f"<tr><td><a href='/admin/users/{r['tg_id']}'>{html_mod.escape(uname)}</a></td>"
                 f"<td><b>{r['credits']}</b></td>"
                 f"<td>{r['gens_done']}</td>"
                 f"<td>{r['revenue_rub']}₽</td>"
+                f"<td>{products_cell}</td>"
                 f"<td>{html_mod.escape(r['last_activity_at'] or '—')}</td>"
                 f"<td>{html_mod.escape(r['source'] or '(direct)')}</td>"
                 f"<td>{tag_badges}</td></tr>"
             )
 
+        export_qs = (
+            f"min_credits={min_c}&tag={url_quote(tag_filter)}"
+            f"&product={url_quote(product_filter)}"
+        )
         body = f"""
         <div class="card">
           <h3>Сводка</h3>
@@ -3865,47 +3966,56 @@ def build_app(
           <form method="get" style="display:inline">
             <label>Порог credits ≥ <input type="number" name="min_credits" value="{min_c}" style="width:70px" min="1"></label>
             <label>Тег: <select name="tag">{tag_opts}</select></label>
+            <label>Продукт: <select name="product">{product_opts}</select></label>
             <label>Сортировка: <select name="sort">{sort_opts}</select></label>
             <button type="submit">Применить</button>
           </form>
-          <a href="/admin/clients/export?min_credits={min_c}&tag={url_quote(tag_filter)}" class="btn" style="float:right">Экспорт CSV</a>
+          <a href="/admin/clients/export?{export_qs}" class="btn" style="float:right">Экспорт CSV</a>
         </div>
 
         <div class="card">
           <div class="table-wrap"><table>
-            <tr><th>User</th><th>Баланс</th><th>Генераций</th><th>Выручка</th>
+            <tr><th>User</th><th>Баланс</th><th>Генераций</th><th>Выручка</th><th>Продукты</th>
                 <th>Последняя активность</th><th>Источник</th><th>Теги</th></tr>
-            {''.join(tr) if tr else '<tr><td colspan=7>Клиентов пока нет — поднимите порог ниже.</td></tr>'}
+            {''.join(tr) if tr else '<tr><td colspan=8>Клиентов пока нет — поднимите порог ниже.</td></tr>'}
           </table></div>
-          {_pagination_html(page, total_pages, base_url=f'?min_credits={min_c}&tag={url_quote(tag_filter)}&sort={sort}&')}
-        </div>
-
-        <div class="info-box">
-          <b>CRM-идеи</b> для этой вкладки: кликай по клиенту → откроется карточка с таймлайном, тегами,
-          заметками, health-score и кнопкой «написать от бота». Автоматические триггеры настраиваются
-          в <a href="/admin/lifecycle">Триггеры</a>.
+          {_pagination_html(page, total_pages, base_url=f'?{export_qs}&sort={sort}&')}
         </div>
         """
-        return _page("Клиенты (CRM)", body)
+        return _page("Clients", body)
 
     @app.get("/admin/clients/export", response_class=PlainTextResponse)
     async def clients_export(request: Request, _user: str = Depends(_check_auth)) -> PlainTextResponse:
         min_c = _query_int(request, "min_credits", default=5, min_value=1, max_value=10_000)
         tag = str(request.query_params.get("tag") or "").strip()
-        rows = await credits_db.list_clients(min_credits=min_c, limit=10_000, offset=0, tag=tag, sort="credits")
-        lines = ["tg_id,username,credits,gens_done,revenue_rub,last_activity,source,created_at"]
+        product = str(request.query_params.get("product") or "").strip().lower()
+        rows = await credits_db.list_clients(
+            min_credits=min_c, limit=10_000, offset=0, tag=tag, sort="credits", product=product,
+        )
+        lines = [
+            "tg_id,username,credits,gens_done,revenue_rub,products,subscription,"
+            "last_activity,source,created_at"
+        ]
         for r in rows:
             def esc(v: Any) -> str:
                 s = str(v or "").replace('"', '""')
                 return f'"{s}"' if ("," in s or '"' in s) else s
+            products_str = "/".join(
+                {"5": "trial", "15": "blast", "30": "glow", "50": "impulse"}.get(str(p), str(p))
+                for p in (r.get("bought_packages") or [])
+            )
+            sub_str = "yes" if r.get("has_active_subscription") else ""
             lines.append(",".join([
                 str(r["tg_id"]), esc(r["username"]), str(r["credits"]), str(r["gens_done"]),
-                str(r["revenue_rub"]), esc(r["last_activity_at"]),
-                esc(r["source"]), esc(r["created_at"]),
+                str(r["revenue_rub"]), esc(products_str), esc(sub_str),
+                esc(r["last_activity_at"]), esc(r["source"]), esc(r["created_at"]),
             ]))
         return PlainTextResponse(
-            "\n".join(lines),
-            headers={"Content-Disposition": 'attachment; filename="clients.csv"', "Content-Type": "text/csv"},
+            "﻿" + "\n".join(lines),
+            headers={
+                "Content-Disposition": 'attachment; filename="clients.csv"',
+                "Content-Type": "text/csv; charset=utf-8",
+            },
         )
 
     # ── User card extensions: tags, notes, send message ───────────────
@@ -3977,49 +4087,6 @@ def build_app(
             await credits_db.audit_log(_user, "dm_fail", str(tg_id), str(e)[:200])
             raise HTTPException(500, f"Send failed: {e}")
         return RedirectResponse(f"/admin/users/{tg_id}", status_code=303)
-
-    # ── Cohorts ───────────────────────────────────────────────────────
-
-    @app.get("/admin/cohorts", response_class=HTMLResponse)
-    async def cohorts_view(request: Request, _user: str = Depends(_check_auth)) -> str:
-        months = _query_int(request, "months", default=12, min_value=1, max_value=36)
-        rows = await credits_db.cohort_monthly(months=months)
-
-        tr = []
-        for r in rows:
-            size = r["size"] or 1
-            conv = (100.0 * r["paid_users"] / size) if size else 0.0
-            gen_pct = (100.0 * r["generated_users"] / size) if size else 0.0
-            arpu = (r["revenue_rub"] / r["paid_users"]) if r["paid_users"] else 0.0
-            tr.append(
-                f"<tr><td>{r['cohort']}</td>"
-                f"<td>{r['size']}</td>"
-                f"<td>{r['generated_users']} ({gen_pct:.1f}%)</td>"
-                f"<td>{r['paid_users']} ({conv:.1f}%)</td>"
-                f"<td>{r['revenue_rub']}₽</td>"
-                f"<td>{arpu:.0f}₽</td></tr>"
-            )
-
-        body = f"""
-        <div class="card">
-          <form method="get">
-            <label>Глубина: <input type="number" name="months" value="{months}" min="1" max="36" style="width:70px"> мес.</label>
-            <button type="submit">Обновить</button>
-          </form>
-        </div>
-        <div class="card">
-          <div class="table-wrap"><table>
-            <tr><th>Когорта</th><th>Размер</th><th>Сгенерили хоть раз</th>
-                <th>Оплатили</th><th>Выручка</th><th>ARPPU</th></tr>
-            {''.join(tr) if tr else '<tr><td colspan=6>Нет данных</td></tr>'}
-          </table></div>
-          <p style="color:#666;font-size:0.85em">
-            Когорта = месяц первой регистрации. ARPPU = выручка / кол-во оплативших. Конверсия считается
-            от размера когорты.
-          </p>
-        </div>
-        """
-        return _page("Когорты", body)
 
     # ── Tier system: classification page + outreach workflow ─────────
 

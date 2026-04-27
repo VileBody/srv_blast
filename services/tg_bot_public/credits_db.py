@@ -161,6 +161,55 @@ def _norm_text(value: Any, *, max_len: int = 160) -> str:
     return compact[:max_len]
 
 
+def _client_product_where(tg_id_col: str, product: str) -> str:
+    """SQL fragment for filtering clients by purchased product.
+
+    Returns "" when no filter applies. The fragment references `tg_id_col`
+    (e.g. 'u.tg_id') for the user-side join and produces a fully-qualified
+    EXISTS / NOT EXISTS expression — no parameters, only literals.
+    """
+    if not product:
+        return ""
+    if product == "trial":
+        return (
+            f"EXISTS (SELECT 1 FROM payments p WHERE p.tg_id = {tg_id_col} "
+            f"AND p.status = 'CONFIRMED' AND p.package = '5')"
+        )
+    if product == "blast":
+        # one-off Blast purchase, no active subscription
+        return (
+            f"EXISTS (SELECT 1 FROM payments p WHERE p.tg_id = {tg_id_col} "
+            f"AND p.status = 'CONFIRMED' AND p.package = '15') "
+            f"AND NOT EXISTS (SELECT 1 FROM subscriptions s WHERE s.tg_id = {tg_id_col} "
+            f"AND s.status = 'active' AND s.package = '15')"
+        )
+    if product == "blast_subscription":
+        return (
+            f"EXISTS (SELECT 1 FROM subscriptions s WHERE s.tg_id = {tg_id_col} "
+            f"AND s.status = 'active' AND s.package = '15')"
+        )
+    if product == "glow":
+        return (
+            f"EXISTS (SELECT 1 FROM payments p WHERE p.tg_id = {tg_id_col} "
+            f"AND p.status = 'CONFIRMED' AND p.package = '30')"
+        )
+    if product == "impulse":
+        return (
+            f"EXISTS (SELECT 1 FROM payments p WHERE p.tg_id = {tg_id_col} "
+            f"AND p.status = 'CONFIRMED' AND p.package = '50')"
+        )
+    if product == "any":
+        return (
+            f"EXISTS (SELECT 1 FROM payments p WHERE p.tg_id = {tg_id_col} AND p.status = 'CONFIRMED')"
+        )
+    if product == "none":
+        return (
+            f"NOT EXISTS (SELECT 1 FROM payments p WHERE p.tg_id = {tg_id_col} AND p.status = 'CONFIRMED') "
+            f"AND NOT EXISTS (SELECT 1 FROM subscriptions s WHERE s.tg_id = {tg_id_col} AND s.status = 'active')"
+        )
+    return ""
+
+
 def _clean_utm(utm: Optional[Dict[str, str]]) -> Dict[str, str]:
     src = dict(utm or {})
     payload = _norm_text(src.get("payload", ""), max_len=512)
@@ -387,6 +436,16 @@ class CreditsDB:
         )
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_tier_outreach_status ON tier_outreach(status)")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_tier_outreach_tier ON tier_outreach(tier)")
+
+        # Seed core team into admins table by username — runs on every startup,
+        # idempotent. Anyone in this list is filtered out of CRM/clients views.
+        await conn.execute(
+            "INSERT INTO admins (tg_id, username) "
+            "SELECT u.tg_id, LOWER(u.username) FROM users u "
+            "WHERE LOWER(u.username) = ANY($1::TEXT[]) "
+            "ON CONFLICT (tg_id) DO NOTHING",
+            ["whoistvoidiller", "vilebody", "nikitaimpulse"],
+        )
 
         # Tier system: aggregator view + tier classifier view.
         # Recreate on every startup so refining the CASE WHEN in this file is enough — no separate migration.
@@ -1748,6 +1807,47 @@ class CreditsDB:
             for r in rows
         ]
 
+    async def get_user_purchases(self, tg_id: int) -> Dict[str, Any]:
+        """Structured view of paid products: per-package totals + active subscription."""
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            purchases = await conn.fetch(
+                "SELECT package, COUNT(*)::INT AS count, "
+                "SUM(amount_rub)::INT AS total_rub, "
+                "MAX(created_at) AS last_at "
+                "FROM payments WHERE tg_id = $1 AND status = 'CONFIRMED' "
+                "GROUP BY package ORDER BY last_at DESC NULLS LAST",
+                int(tg_id),
+            )
+            sub_row = await conn.fetchrow(
+                "SELECT s.package, s.amount_rub, s.next_charge_at, s.status, s.created_at, "
+                "(SELECT COUNT(*) FROM activity_log a WHERE a.tg_id = $1 AND a.event = 'subscription_charged') AS charges "
+                "FROM subscriptions s WHERE s.tg_id = $1 AND s.status = 'active' "
+                "ORDER BY s.id DESC LIMIT 1",
+                int(tg_id),
+            )
+        return {
+            "purchases": [
+                {
+                    "package": str(r["package"] or ""),
+                    "count": int(r["count"]),
+                    "total_rub": int(r["total_rub"] or 0),
+                    "last_at": _fmt_ts(r["last_at"]),
+                }
+                for r in purchases
+            ],
+            "active_subscription": (
+                {
+                    "package": str(sub_row["package"] or ""),
+                    "amount_rub": int(sub_row["amount_rub"] or 0),
+                    "next_charge_at": _fmt_ts(sub_row["next_charge_at"]),
+                    "charges_count": int(sub_row["charges"] or 0),
+                    "status": str(sub_row["status"]),
+                    "created_at": _fmt_ts(sub_row["created_at"]),
+                } if sub_row else None
+            ),
+        }
+
     async def sum_manual_payments(self, tg_id: int) -> int:
         pool = self._pool_or_fail()
         async with pool.acquire() as conn:
@@ -1767,6 +1867,7 @@ class CreditsDB:
         offset: int = 0,
         tag: str = "",
         sort: str = "credits",
+        product: str = "",
     ) -> List[Dict[str, Any]]:
         pool = self._pool_or_fail()
         order_sql = {
@@ -1780,6 +1881,9 @@ class CreditsDB:
         if tag_clean:
             params.append(tag_clean)
             where += f" AND EXISTS (SELECT 1 FROM user_tags ut WHERE ut.tg_id = u.tg_id AND ut.tag = ${len(params)})"
+        product_filter = _client_product_where("u.tg_id", str(product or "").strip().lower())
+        if product_filter:
+            where += f" AND {product_filter}"
         params.append(int(limit))
         params.append(int(offset))
         q = (
@@ -1789,7 +1893,9 @@ class CreditsDB:
             f"(SELECT MAX(created_at) FROM activity_log a WHERE a.tg_id = u.tg_id) AS last_activity_at, "
             f"(SELECT COALESCE(SUM(amount_rub), 0) FROM payments p WHERE p.tg_id = u.tg_id AND p.status = 'CONFIRMED') "
             f"  + (SELECT COALESCE(SUM(amount_rub), 0) FROM manual_payments mp WHERE mp.tg_id = u.tg_id) "
-            f"  AS revenue_rub "
+            f"  AS revenue_rub, "
+            f"(SELECT array_agg(DISTINCT p.package) FROM payments p WHERE p.tg_id = u.tg_id AND p.status = 'CONFIRMED' AND p.package <> '') AS bought_packages, "
+            f"EXISTS (SELECT 1 FROM subscriptions s WHERE s.tg_id = u.tg_id AND s.status = 'active') AS has_active_subscription "
             f"FROM users u WHERE {where} "
             f"ORDER BY {order_sql} LIMIT ${len(params) - 1} OFFSET ${len(params)}"
         )
@@ -1806,28 +1912,27 @@ class CreditsDB:
                 "gens_done": int(r["gens_done"] or 0),
                 "last_activity_at": _fmt_ts(r["last_activity_at"]),
                 "revenue_rub": int(r["revenue_rub"] or 0),
+                "bought_packages": list(r["bought_packages"] or []),
+                "has_active_subscription": bool(r["has_active_subscription"]),
             }
             for r in rows
         ]
 
-    async def count_clients(self, *, min_credits: int = 5, tag: str = "") -> int:
+    async def count_clients(
+        self, *, min_credits: int = 5, tag: str = "", product: str = "",
+    ) -> int:
         pool = self._pool_or_fail()
         tag_clean = _norm_text(tag, max_len=64).lower()
+        product_filter = _client_product_where("u.tg_id", str(product or "").strip().lower())
+        params: List[Any] = [int(min_credits)]
+        where = "u.credits >= $1 AND u.tg_id NOT IN (SELECT tg_id FROM admins)"
         if tag_clean:
-            async with pool.acquire() as conn:
-                val = await conn.fetchval(
-                    "SELECT COUNT(*) FROM users u WHERE u.credits >= $1 "
-                    "AND u.tg_id NOT IN (SELECT tg_id FROM admins) "
-                    "AND EXISTS (SELECT 1 FROM user_tags ut WHERE ut.tg_id = u.tg_id AND ut.tag = $2)",
-                    int(min_credits), tag_clean,
-                )
-        else:
-            async with pool.acquire() as conn:
-                val = await conn.fetchval(
-                    "SELECT COUNT(*) FROM users u WHERE u.credits >= $1 "
-                    "AND u.tg_id NOT IN (SELECT tg_id FROM admins)",
-                    int(min_credits),
-                )
+            params.append(tag_clean)
+            where += f" AND EXISTS (SELECT 1 FROM user_tags ut WHERE ut.tg_id = u.tg_id AND ut.tag = ${len(params)})"
+        if product_filter:
+            where += f" AND {product_filter}"
+        async with pool.acquire() as conn:
+            val = await conn.fetchval(f"SELECT COUNT(*) FROM users u WHERE {where}", *params)
         return int(val or 0)
 
     async def clients_summary(self, min_credits: int = 5) -> Dict[str, int]:
@@ -1900,64 +2005,6 @@ class CreditsDB:
             "_last_activity_raw": row["last_activity_at"],
             "_last_gen_raw": row["last_gen_at"],
         }
-
-    # ── Cohorts (by month of first signup) ───────────────────────────
-
-    async def cohort_monthly(self, months: int = 12) -> List[Dict[str, Any]]:
-        months = max(1, min(int(months), 36))
-        pool = self._pool_or_fail()
-        async with pool.acquire() as conn:
-            rows = await conn.fetch(
-                "WITH cohort AS ("
-                "  SELECT tg_id, date_trunc('month', created_at) AS cohort_month "
-                "  FROM users "
-                "  WHERE created_at >= date_trunc('month', NOW()) - ($1::INT - 1) * INTERVAL '1 month' "
-                "  AND tg_id NOT IN (SELECT tg_id FROM admins)"
-                "), "
-                "rev_bot AS ("
-                "  SELECT c.cohort_month, "
-                "    COUNT(DISTINCT p.tg_id) FILTER (WHERE p.status = 'CONFIRMED') AS paid_users, "
-                "    COALESCE(SUM(p.amount_rub) FILTER (WHERE p.status = 'CONFIRMED'), 0) AS revenue "
-                "  FROM cohort c LEFT JOIN payments p ON p.tg_id = c.tg_id "
-                "  GROUP BY c.cohort_month"
-                "), "
-                "rev_manual AS ("
-                "  SELECT c.cohort_month, "
-                "    COALESCE(SUM(mp.amount_rub), 0) AS revenue, "
-                "    COUNT(DISTINCT mp.tg_id) AS users "
-                "  FROM cohort c LEFT JOIN manual_payments mp ON mp.tg_id = c.tg_id "
-                "  GROUP BY c.cohort_month"
-                "), "
-                "gens AS ("
-                "  SELECT c.cohort_month, "
-                "    COUNT(DISTINCT a.tg_id) FILTER (WHERE a.event = 'generation_done') AS generated_users "
-                "  FROM cohort c LEFT JOIN activity_log a ON a.tg_id = c.tg_id "
-                "  GROUP BY c.cohort_month"
-                ") "
-                "SELECT "
-                "  to_char(c.cohort_month, 'YYYY-MM') AS cohort, "
-                "  COUNT(DISTINCT c.tg_id)::BIGINT AS size, "
-                "  COALESCE(rb.paid_users, 0)::BIGINT AS paid_users, "
-                "  (COALESCE(rb.revenue, 0) + COALESCE(rm.revenue, 0))::BIGINT AS revenue_rub, "
-                "  COALESCE(g.generated_users, 0)::BIGINT AS generated_users "
-                "FROM cohort c "
-                "LEFT JOIN rev_bot rb ON rb.cohort_month = c.cohort_month "
-                "LEFT JOIN rev_manual rm ON rm.cohort_month = c.cohort_month "
-                "LEFT JOIN gens g ON g.cohort_month = c.cohort_month "
-                "GROUP BY c.cohort_month, rb.paid_users, rb.revenue, rm.revenue, g.generated_users "
-                "ORDER BY c.cohort_month DESC",
-                months,
-            )
-        return [
-            {
-                "cohort": str(r["cohort"]),
-                "size": int(r["size"]),
-                "paid_users": int(r["paid_users"]),
-                "revenue_rub": int(r["revenue_rub"]),
-                "generated_users": int(r["generated_users"]),
-            }
-            for r in rows
-        ]
 
     # ── Audience resolution for broadcasts ───────────────────────────
 
