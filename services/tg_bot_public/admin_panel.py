@@ -254,7 +254,6 @@ _BASE_HEAD = """
   <a href="/admin/activity">Activity</a>
   <a href="/admin/transactions">Transactions</a>
   <a href="/admin/payments">Payments</a>
-  <a href="/admin/utm">UTM</a>
   <a href="/admin/sources">Sources</a>
   <a href="/admin/jobs">Jobs</a>
   <a href="/admin/runs">Runs</a>
@@ -1694,6 +1693,7 @@ def build_app(
         health_label, health_class = _health_label(metrics, int(user["credits"]))
         tags = await credits_db.get_user_tags(tg_id)
         notes = await credits_db.get_user_notes(tg_id)
+        manual_payments = await credits_db.list_manual_payments(tg_id, limit=50)
         tag_badges = " ".join(
             f'<span class="badge badge-source">{html_mod.escape(t)}'
             f' <a href="#" onclick="document.getElementById(\'rmtag-{html_mod.escape(t, quote=True)}\').submit();return false" '
@@ -1745,8 +1745,10 @@ def build_app(
            Источник: {source_badge} |
            Created: {user['created_at']} | Updated: {user['updated_at']}</p>
         <p>Генераций всего: <b>{metrics['gens_done']}</b> · за 30д: {metrics['gens_done_30d']} ·
-           Последняя: {metrics['last_gen_at'] or '—'} ·
-           Оплат: <b>{metrics['paid_orders']}</b> на {metrics['revenue_rub']}₽</p>
+           Последняя: {metrics['last_gen_at'] or '—'}</p>
+        <p>Выручка: <b>{metrics['revenue_rub']}₽</b>
+           (бот: {metrics.get('revenue_bot', 0)}₽, ручная: {metrics.get('revenue_manual', 0)}₽) ·
+           Оплат через бота: <b>{metrics['paid_orders']}</b></p>
         </div>
 
         <div class="card">
@@ -1783,6 +1785,17 @@ def build_app(
           <form method="post" action="/admin/users/{tg_id}/notes/add">
             <textarea name="note" rows="2" style="width:100%" placeholder="Контекст, договорённости, наблюдения..." required></textarea>
             <button type="submit">+ заметка</button>
+          </form>
+        </div>
+
+        <div class="card">
+          <h3>Ручная выручка</h3>
+          <p style="color:#666;font-size:0.85em">Платежи мимо бота (наличка, инвойс, иной канал) — учитываются в выручке клиента и в когортах.</p>
+          {_manual_payments_html(tg_id, manual_payments)}
+          <form method="post" action="/admin/users/{tg_id}/manual-payment/add" style="margin-top:0.5rem">
+            <input type="number" name="amount_rub" placeholder="сумма ₽" required style="width:120px" min="-1000000" max="10000000">
+            <input type="text" name="note" placeholder="комментарий (e.g. инвойс №42)" style="width:380px">
+            <button type="submit" class="btn-success">+ добавить платёж</button>
           </form>
         </div>
 
@@ -1980,51 +1993,7 @@ def build_app(
 
     # ── UTM summary ─────────────────────────────────────────────────
 
-    @app.get("/admin/utm", response_class=HTMLResponse)
-    async def utm_summary(_user: str = Depends(_check_auth)) -> str:
-        rows_data, payments_summary, payments_status = await asyncio.gather(
-            credits_db.get_utm_summary(limit=200),
-            credits_db.confirmed_payments_summary(),
-            credits_db.payments_status_summary(),
-        )
-        utm_paid_orders = sum(int(row.get("paid_orders", 0) or 0) for row in rows_data)
-        utm_revenue_rub = sum(int(row.get("revenue_rub", 0) or 0) for row in rows_data)
-        total_paid_orders = int(payments_summary.get("orders_count", 0))
-        total_revenue_rub = int(payments_summary.get("revenue_rub", 0))
-        mismatch = (utm_paid_orders != total_paid_orders) or (utm_revenue_rub != total_revenue_rub)
-        rows = ""
-        for row in rows_data:
-            rows += (
-                f"<tr>"
-                f"<td>{row['source'] or '(none)'}</td>"
-                f"<td>{row['medium'] or '(none)'}</td>"
-                f"<td>{row['campaign'] or '(none)'}</td>"
-                f"<td>{row['content'] or '(none)'}</td>"
-                f"<td>{row['term'] or '(none)'}</td>"
-                f"<td>{row['starts_count']}</td>"
-                f"<td>{row['paid_orders']}</td>"
-                f"<td>{row['revenue_rub']}₽</td>"
-                f"</tr>"
-            )
-        body = f"""
-        <div class="card">
-        <p>Подтвержденные оплаты (global): <strong>{total_paid_orders}</strong></p>
-        <p>Выручка (global): <strong>{total_revenue_rub:,}&nbsp;&#8381;</strong></p>
-        <p>Ожидает списания (AUTHORIZED, global): <strong>{int(payments_status.get('authorized_revenue_rub', 0)):,}&nbsp;&#8381;</strong></p>
-        <p>Видимая сумма (CONFIRMED + AUTHORIZED): <strong>{int(payments_status.get('visible_revenue_rub', 0)):,}&nbsp;&#8381;</strong></p>
-        <p>Сумма по UTM-строкам: <strong>{utm_paid_orders}</strong> оплат / <strong>{utm_revenue_rub:,}&nbsp;&#8381;</strong></p>
-        <p style="color:{'#c0392b' if mismatch else '#1e8449'}">{'Есть расхождение между global и UTM суммами' if mismatch else 'Global и UTM суммы совпадают'}</p>
-        </div>
-        <div class="card">
-        <div class="table-wrap">
-        <table><tr><th>Source</th><th>Medium</th><th>Campaign</th><th>Content</th><th>Term</th><th>Starts</th><th>Paid</th><th>Revenue</th></tr>
-        {rows if rows else '<tr><td colspan="8">Нет данных</td></tr>'}</table>
-        </div>
-        </div>
-        """
-        return _page("UTM Summary", body)
-
-    # ── Sources (UTM tracking) ────────────────────────────────────────
+    # ── Sources (start-param tracking) ────────────────────────────────
 
     @app.get("/admin/sources", response_class=HTMLResponse)
     async def sources_page(_user: str = Depends(_check_auth)) -> str:
@@ -3104,10 +3073,13 @@ def build_app(
         mode = str(audience.get("mode") or "all")
         if mode == "all":
             return "вся база"
+        if mode == "source":
+            val = str((audience.get("source") or {}).get("value") or "")
+            return f"Источник: {val or '— любой —'}"
         if mode == "utm":
             utm = audience.get("utm") or {}
-            parts = [f"{k}={v}" for k, v in utm.items() if v]
-            return "UTM: " + (", ".join(parts) if parts else "(пусто)")
+            src = str(utm.get("source") or "")
+            return f"Источник (legacy): {src or '(пусто)'}"
         if mode == "filter":
             f = audience.get("filter") or {}
             parts = []
@@ -3192,6 +3164,29 @@ def build_app(
             return ("Потерян", "badge-zero")
         return ("Холодный", "badge-zero")
 
+    def _manual_payments_html(tg_id: int, payments: list) -> str:
+        if not payments:
+            return '<p style="color:#999">Пока нет ручных платежей</p>'
+        rows = ""
+        for p in payments:
+            note = html_mod.escape(p["note"]) if p["note"] else "<span style='color:#999'>—</span>"
+            actor = html_mod.escape(p["created_by"] or "—")
+            rows += (
+                f"<tr><td><b>{p['amount_rub']}₽</b></td>"
+                f"<td>{note}</td>"
+                f"<td>{p['created_at']}</td>"
+                f"<td>{actor}</td>"
+                f"<td><form method='post' action='/admin/users/{tg_id}/manual-payment/{p['id']}/delete' "
+                f"style='display:inline' onsubmit=\"return confirm('Удалить платёж?')\">"
+                f"<button style='background:none;color:#c0392b;padding:0;font-size:0.85em;cursor:pointer;border:none'>удалить</button>"
+                f"</form></td></tr>"
+            )
+        return (
+            '<div class="table-wrap"><table>'
+            '<tr><th>Сумма</th><th>Комментарий</th><th>Дата</th><th>Кем</th><th></th></tr>'
+            f'{rows}</table></div>'
+        )
+
     def _parse_dt_local(value: str) -> Optional[datetime]:
         s = str(value or "").strip()
         if not s:
@@ -3265,10 +3260,11 @@ def build_app(
             f'<option value="{html_mod.escape(t["tag"])}">{html_mod.escape(t["tag"])} ({t["count"]})</option>'
             for t in tags
         )
-        utm_sources = await credits_db.distinct_utm_values("source", limit=200)
-        utm_campaigns = await credits_db.distinct_utm_values("campaign", limit=200)
-        src_opts = "".join(f'<option value="{html_mod.escape(v)}">{html_mod.escape(v)}</option>' for v in utm_sources)
-        camp_opts = "".join(f'<option value="{html_mod.escape(v)}">{html_mod.escape(v)}</option>' for v in utm_campaigns)
+        sources_dist = await credits_db.source_distribution()
+        src_opts = "".join(
+            f'<option value="{html_mod.escape(d["source"])}">{html_mod.escape(d["source"])} ({d["count"]})</option>'
+            for d in sources_dist
+        )
 
         body = f"""
         <div class="card">
@@ -3310,14 +3306,13 @@ def build_app(
 
           <h3>4. Аудитория</h3>
           <label><input type="radio" name="mode" value="all" checked> Вся база</label><br>
-          <label><input type="radio" name="mode" value="utm"> По UTM</label>
+          <label><input type="radio" name="mode" value="source"> По источнику</label>
           <span style="margin-left:1em">
-            source: <input list="ds_src" name="utm_source" style="width:160px">
-            <datalist id="ds_src">{src_opts}</datalist>
-            campaign: <input list="ds_camp" name="utm_campaign" style="width:160px">
-            <datalist id="ds_camp">{camp_opts}</datalist>
-            medium: <input type="text" name="utm_medium" style="width:100px">
-            content: <input type="text" name="utm_content" style="width:120px">
+            source: <select name="source_value" style="width:240px">
+              <option value="">— любой —</option>
+              {src_opts}
+            </select>
+            <small style="color:#666">источник от Telegram start-параметра (см. <a href="/admin/sources">/admin/sources</a>)</small>
           </span><br>
           <label><input type="radio" name="mode" value="filter"> Фильтр по базе</label>
           <span style="margin-left:1em">
@@ -3361,10 +3356,7 @@ def build_app(
         media_file_id: str = Form(""),
         buttons_raw: str = Form(""),
         mode: str = Form("all"),
-        utm_source: str = Form(""),
-        utm_medium: str = Form(""),
-        utm_campaign: str = Form(""),
-        utm_content: str = Form(""),
+        source_value: str = Form(""),
         credits_min: str = Form(""),
         credits_max: str = Form(""),
         paid: str = Form("any"),
@@ -3379,11 +3371,8 @@ def build_app(
         _user: str = Depends(_check_auth),
     ) -> RedirectResponse:
         audience: dict = {"mode": mode, "exclude_blocked": bool(exclude_blocked)}
-        if mode == "utm":
-            audience["utm"] = {
-                "source": utm_source.strip(), "medium": utm_medium.strip(),
-                "campaign": utm_campaign.strip(), "content": utm_content.strip(),
-            }
+        if mode == "source":
+            audience["source"] = {"value": source_value.strip()}
         elif mode == "filter":
             audience["filter"] = {
                 "credits_min": credits_min.strip() or None,
@@ -3649,7 +3638,7 @@ def build_app(
                 f"<td>{r['gens_done']}</td>"
                 f"<td>{r['revenue_rub']}₽</td>"
                 f"<td>{html_mod.escape(r['last_activity_at'] or '—')}</td>"
-                f"<td>{html_mod.escape(r['first_utm_source'] or '—')}</td>"
+                f"<td>{html_mod.escape(r['source'] or '(direct)')}</td>"
                 f"<td>{tag_badges}</td></tr>"
             )
 
@@ -3678,7 +3667,7 @@ def build_app(
         <div class="card">
           <div class="table-wrap"><table>
             <tr><th>User</th><th>Баланс</th><th>Генераций</th><th>Выручка</th>
-                <th>Последняя активность</th><th>UTM source</th><th>Теги</th></tr>
+                <th>Последняя активность</th><th>Источник</th><th>Теги</th></tr>
             {''.join(tr) if tr else '<tr><td colspan=7>Клиентов пока нет — поднимите порог ниже.</td></tr>'}
           </table></div>
           {_pagination_html(page, total_pages, base_url=f'?min_credits={min_c}&tag={url_quote(tag_filter)}&sort={sort}&')}
@@ -3697,7 +3686,7 @@ def build_app(
         min_c = _query_int(request, "min_credits", default=5, min_value=1, max_value=10_000)
         tag = str(request.query_params.get("tag") or "").strip()
         rows = await credits_db.list_clients(min_credits=min_c, limit=10_000, offset=0, tag=tag, sort="credits")
-        lines = ["tg_id,username,credits,gens_done,revenue_rub,last_activity,first_utm_source,first_utm_campaign,created_at"]
+        lines = ["tg_id,username,credits,gens_done,revenue_rub,last_activity,source,created_at"]
         for r in rows:
             def esc(v: Any) -> str:
                 s = str(v or "").replace('"', '""')
@@ -3705,7 +3694,7 @@ def build_app(
             lines.append(",".join([
                 str(r["tg_id"]), esc(r["username"]), str(r["credits"]), str(r["gens_done"]),
                 str(r["revenue_rub"]), esc(r["last_activity_at"]),
-                esc(r["first_utm_source"]), esc(r["first_utm_campaign"]), esc(r["created_at"]),
+                esc(r["source"]), esc(r["created_at"]),
             ]))
         return PlainTextResponse(
             "\n".join(lines),
@@ -3739,6 +3728,28 @@ def build_app(
     async def user_note_delete(tg_id: int, nid: int, _user: str = Depends(_check_auth)) -> RedirectResponse:
         if await credits_db.delete_user_note(nid):
             await credits_db.audit_log(_user, "note_delete", str(tg_id), f"id={nid}")
+        return RedirectResponse(f"/admin/users/{tg_id}", status_code=303)
+
+    @app.post("/admin/users/{tg_id}/manual-payment/add")
+    async def user_manual_payment_add(
+        tg_id: int,
+        amount_rub: int = Form(...),
+        note: str = Form(""),
+        _user: str = Depends(_check_auth),
+    ) -> RedirectResponse:
+        if amount_rub == 0:
+            return RedirectResponse(f"/admin/users/{tg_id}", status_code=303)
+        mpid = await credits_db.add_manual_payment(tg_id, amount_rub, note=note, created_by=_user)
+        if mpid:
+            await credits_db.audit_log(_user, "manual_payment_add", str(tg_id), f"id={mpid} {amount_rub}rub")
+        return RedirectResponse(f"/admin/users/{tg_id}", status_code=303)
+
+    @app.post("/admin/users/{tg_id}/manual-payment/{mpid}/delete")
+    async def user_manual_payment_delete(
+        tg_id: int, mpid: int, _user: str = Depends(_check_auth),
+    ) -> RedirectResponse:
+        if await credits_db.delete_manual_payment(mpid):
+            await credits_db.audit_log(_user, "manual_payment_delete", str(tg_id), f"id={mpid}")
         return RedirectResponse(f"/admin/users/{tg_id}", status_code=303)
 
     @app.post("/admin/users/{tg_id}/message")

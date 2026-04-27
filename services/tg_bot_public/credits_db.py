@@ -357,6 +357,20 @@ class CreditsDB:
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_lcf_tg ON lifecycle_fires(tg_id)")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_lcf_created ON lifecycle_fires(created_at)")
 
+        # Manual payments — revenue from outside the bot (cash, external invoice, etc.)
+        await conn.execute(
+            "CREATE TABLE IF NOT EXISTS manual_payments ("
+            "id BIGSERIAL PRIMARY KEY,"
+            "tg_id BIGINT NOT NULL,"
+            "amount_rub BIGINT NOT NULL,"
+            "note TEXT NOT NULL DEFAULT '',"
+            "created_by TEXT NOT NULL DEFAULT '',"
+            "created_at TIMESTAMP NOT NULL DEFAULT NOW()"
+            ")"
+        )
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_manual_payments_tg_id ON manual_payments(tg_id)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_manual_payments_created ON manual_payments(created_at)")
+
     async def close(self) -> None:
         if self._pool:
             await self._pool.close()
@@ -1596,6 +1610,63 @@ class CreditsDB:
             for r in rows
         ]
 
+    # ── Manual payments (revenue from outside the bot) ────────────────
+
+    async def add_manual_payment(
+        self,
+        tg_id: int,
+        amount_rub: int,
+        note: str = "",
+        created_by: str = "",
+    ) -> int:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "INSERT INTO manual_payments (tg_id, amount_rub, note, created_by) "
+                "VALUES ($1, $2, $3, $4) RETURNING id",
+                int(tg_id),
+                int(amount_rub),
+                _norm_text(note, max_len=500),
+                _norm_text(created_by, max_len=128),
+            )
+            return int(row["id"]) if row else 0
+
+    async def delete_manual_payment(self, mpid: int) -> bool:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            res = await conn.execute("DELETE FROM manual_payments WHERE id = $1", int(mpid))
+        return res.endswith(" 1")
+
+    async def list_manual_payments(self, tg_id: int, limit: int = 100) -> List[Dict[str, Any]]:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT id, tg_id, amount_rub, note, created_by, created_at "
+                "FROM manual_payments WHERE tg_id = $1 ORDER BY created_at DESC LIMIT $2",
+                int(tg_id),
+                int(limit),
+            )
+        return [
+            {
+                "id": int(r["id"]),
+                "tg_id": int(r["tg_id"]),
+                "amount_rub": int(r["amount_rub"]),
+                "note": str(r["note"] or ""),
+                "created_by": str(r["created_by"] or ""),
+                "created_at": _fmt_ts(r["created_at"]),
+            }
+            for r in rows
+        ]
+
+    async def sum_manual_payments(self, tg_id: int) -> int:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            val = await conn.fetchval(
+                "SELECT COALESCE(SUM(amount_rub), 0)::BIGINT FROM manual_payments WHERE tg_id = $1",
+                int(tg_id),
+            )
+        return int(val or 0)
+
     # ── CRM: clients (credits > threshold) and stats ─────────────────
 
     async def list_clients(
@@ -1615,7 +1686,7 @@ class CreditsDB:
         }.get(sort, "u.credits DESC, u.updated_at DESC")
         tag_clean = _norm_text(tag, max_len=64).lower()
         params: List[Any] = [int(min_credits)]
-        where = "u.credits >= $1"
+        where = "u.credits >= $1 AND u.tg_id NOT IN (SELECT tg_id FROM admins)"
         if tag_clean:
             params.append(tag_clean)
             where += f" AND EXISTS (SELECT 1 FROM user_tags ut WHERE ut.tg_id = u.tg_id AND ut.tag = ${len(params)})"
@@ -1623,10 +1694,12 @@ class CreditsDB:
         params.append(int(offset))
         q = (
             f"SELECT u.tg_id, u.username, u.credits, u.created_at, u.updated_at, "
-            f"u.first_utm_source, u.first_utm_campaign, "
+            f"COALESCE(NULLIF(u.source, ''), NULLIF(u.first_utm_source, ''), '') AS source, "
             f"(SELECT COUNT(*) FROM activity_log a WHERE a.tg_id = u.tg_id AND a.event = 'generation_done') AS gens_done, "
             f"(SELECT MAX(created_at) FROM activity_log a WHERE a.tg_id = u.tg_id) AS last_activity_at, "
-            f"(SELECT COALESCE(SUM(amount_rub), 0) FROM payments p WHERE p.tg_id = u.tg_id AND p.status = 'CONFIRMED') AS revenue_rub "
+            f"(SELECT COALESCE(SUM(amount_rub), 0) FROM payments p WHERE p.tg_id = u.tg_id AND p.status = 'CONFIRMED') "
+            f"  + (SELECT COALESCE(SUM(amount_rub), 0) FROM manual_payments mp WHERE mp.tg_id = u.tg_id) "
+            f"  AS revenue_rub "
             f"FROM users u WHERE {where} "
             f"ORDER BY {order_sql} LIMIT ${len(params) - 1} OFFSET ${len(params)}"
         )
@@ -1639,8 +1712,7 @@ class CreditsDB:
                 "credits": int(r["credits"]),
                 "created_at": _fmt_ts(r["created_at"]),
                 "updated_at": _fmt_ts(r["updated_at"]),
-                "first_utm_source": str(r["first_utm_source"] or ""),
-                "first_utm_campaign": str(r["first_utm_campaign"] or ""),
+                "source": str(r["source"] or ""),
                 "gens_done": int(r["gens_done"] or 0),
                 "last_activity_at": _fmt_ts(r["last_activity_at"]),
                 "revenue_rub": int(r["revenue_rub"] or 0),
@@ -1655,13 +1727,15 @@ class CreditsDB:
             async with pool.acquire() as conn:
                 val = await conn.fetchval(
                     "SELECT COUNT(*) FROM users u WHERE u.credits >= $1 "
+                    "AND u.tg_id NOT IN (SELECT tg_id FROM admins) "
                     "AND EXISTS (SELECT 1 FROM user_tags ut WHERE ut.tg_id = u.tg_id AND ut.tag = $2)",
                     int(min_credits), tag_clean,
                 )
         else:
             async with pool.acquire() as conn:
                 val = await conn.fetchval(
-                    "SELECT COUNT(*) FROM users WHERE credits >= $1",
+                    "SELECT COUNT(*) FROM users u WHERE u.credits >= $1 "
+                    "AND u.tg_id NOT IN (SELECT tg_id FROM admins)",
                     int(min_credits),
                 )
         return int(val or 0)
@@ -1675,12 +1749,21 @@ class CreditsDB:
                 "COALESCE(SUM(credits), 0)::BIGINT AS credits_on_balance, "
                 "COUNT(*) FILTER (WHERE updated_at >= NOW() - INTERVAL '7 days')::BIGINT AS active_7d, "
                 "COUNT(*) FILTER (WHERE updated_at < NOW() - INTERVAL '14 days')::BIGINT AS dormant_14d "
-                "FROM users WHERE credits >= $1",
+                "FROM users WHERE credits >= $1 "
+                "AND tg_id NOT IN (SELECT tg_id FROM admins)",
                 int(min_credits),
             )
-            revenue = await conn.fetchval(
+            revenue_paid = await conn.fetchval(
                 "SELECT COALESCE(SUM(amount_rub), 0)::BIGINT FROM payments p "
-                "WHERE p.status = 'CONFIRMED' AND p.tg_id IN (SELECT tg_id FROM users WHERE credits >= $1)",
+                "WHERE p.status = 'CONFIRMED' "
+                "AND p.tg_id IN (SELECT tg_id FROM users WHERE credits >= $1) "
+                "AND p.tg_id NOT IN (SELECT tg_id FROM admins)",
+                int(min_credits),
+            )
+            revenue_manual = await conn.fetchval(
+                "SELECT COALESCE(SUM(amount_rub), 0)::BIGINT FROM manual_payments mp "
+                "WHERE mp.tg_id IN (SELECT tg_id FROM users WHERE credits >= $1) "
+                "AND mp.tg_id NOT IN (SELECT tg_id FROM admins)",
                 int(min_credits),
             )
         return {
@@ -1688,7 +1771,7 @@ class CreditsDB:
             "credits_on_balance": int(row["credits_on_balance"] or 0) if row else 0,
             "active_7d": int(row["active_7d"] or 0) if row else 0,
             "dormant_14d": int(row["dormant_14d"] or 0) if row else 0,
-            "revenue_rub_total": int(revenue or 0),
+            "revenue_rub_total": int(revenue_paid or 0) + int(revenue_manual or 0),
         }
 
     async def user_health_metrics(self, tg_id: int) -> Dict[str, Any]:
@@ -1700,7 +1783,8 @@ class CreditsDB:
                 "(SELECT MAX(created_at) FROM activity_log WHERE tg_id = $1 AND event = 'generation_done') AS last_gen_at, "
                 "(SELECT COUNT(*) FROM activity_log WHERE tg_id = $1 AND event = 'generation_done') AS gens_done, "
                 "(SELECT COUNT(*) FROM activity_log WHERE tg_id = $1 AND event = 'generation_done' AND created_at >= NOW() - INTERVAL '30 days') AS gens_done_30d, "
-                "(SELECT COALESCE(SUM(amount_rub), 0) FROM payments WHERE tg_id = $1 AND status = 'CONFIRMED') AS revenue_rub, "
+                "(SELECT COALESCE(SUM(amount_rub), 0) FROM payments WHERE tg_id = $1 AND status = 'CONFIRMED') AS revenue_bot, "
+                "(SELECT COALESCE(SUM(amount_rub), 0) FROM manual_payments WHERE tg_id = $1) AS revenue_manual, "
                 "(SELECT COUNT(*) FROM payments WHERE tg_id = $1 AND status = 'CONFIRMED') AS paid_orders, "
                 "(SELECT MAX(created_at) FROM payments WHERE tg_id = $1 AND status = 'CONFIRMED') AS last_payment_at",
                 int(tg_id),
@@ -1708,14 +1792,19 @@ class CreditsDB:
         if not row:
             return {
                 "last_activity_at": "", "last_gen_at": "", "gens_done": 0,
-                "gens_done_30d": 0, "revenue_rub": 0, "paid_orders": 0, "last_payment_at": "",
+                "gens_done_30d": 0, "revenue_rub": 0, "revenue_bot": 0, "revenue_manual": 0,
+                "paid_orders": 0, "last_payment_at": "",
             }
+        revenue_bot = int(row["revenue_bot"] or 0)
+        revenue_manual = int(row["revenue_manual"] or 0)
         return {
             "last_activity_at": _fmt_ts(row["last_activity_at"]),
             "last_gen_at": _fmt_ts(row["last_gen_at"]),
             "gens_done": int(row["gens_done"] or 0),
             "gens_done_30d": int(row["gens_done_30d"] or 0),
-            "revenue_rub": int(row["revenue_rub"] or 0),
+            "revenue_rub": revenue_bot + revenue_manual,
+            "revenue_bot": revenue_bot,
+            "revenue_manual": revenue_manual,
             "paid_orders": int(row["paid_orders"] or 0),
             "last_payment_at": _fmt_ts(row["last_payment_at"]),
             "_last_activity_raw": row["last_activity_at"],
@@ -1731,18 +1820,41 @@ class CreditsDB:
             rows = await conn.fetch(
                 "WITH cohort AS ("
                 "  SELECT tg_id, date_trunc('month', created_at) AS cohort_month "
-                "  FROM users WHERE created_at >= date_trunc('month', NOW()) - ($1::INT - 1) * INTERVAL '1 month'"
+                "  FROM users "
+                "  WHERE created_at >= date_trunc('month', NOW()) - ($1::INT - 1) * INTERVAL '1 month' "
+                "  AND tg_id NOT IN (SELECT tg_id FROM admins)"
+                "), "
+                "rev_bot AS ("
+                "  SELECT c.cohort_month, "
+                "    COUNT(DISTINCT p.tg_id) FILTER (WHERE p.status = 'CONFIRMED') AS paid_users, "
+                "    COALESCE(SUM(p.amount_rub) FILTER (WHERE p.status = 'CONFIRMED'), 0) AS revenue "
+                "  FROM cohort c LEFT JOIN payments p ON p.tg_id = c.tg_id "
+                "  GROUP BY c.cohort_month"
+                "), "
+                "rev_manual AS ("
+                "  SELECT c.cohort_month, "
+                "    COALESCE(SUM(mp.amount_rub), 0) AS revenue, "
+                "    COUNT(DISTINCT mp.tg_id) AS users "
+                "  FROM cohort c LEFT JOIN manual_payments mp ON mp.tg_id = c.tg_id "
+                "  GROUP BY c.cohort_month"
+                "), "
+                "gens AS ("
+                "  SELECT c.cohort_month, "
+                "    COUNT(DISTINCT a.tg_id) FILTER (WHERE a.event = 'generation_done') AS generated_users "
+                "  FROM cohort c LEFT JOIN activity_log a ON a.tg_id = c.tg_id "
+                "  GROUP BY c.cohort_month"
                 ") "
                 "SELECT "
                 "  to_char(c.cohort_month, 'YYYY-MM') AS cohort, "
                 "  COUNT(DISTINCT c.tg_id)::BIGINT AS size, "
-                "  COUNT(DISTINCT p.tg_id) FILTER (WHERE p.status = 'CONFIRMED')::BIGINT AS paid_users, "
-                "  COALESCE(SUM(p.amount_rub) FILTER (WHERE p.status = 'CONFIRMED'), 0)::BIGINT AS revenue_rub, "
-                "  COUNT(DISTINCT a.tg_id) FILTER (WHERE a.event = 'generation_done')::BIGINT AS generated_users "
+                "  COALESCE(rb.paid_users, 0)::BIGINT AS paid_users, "
+                "  (COALESCE(rb.revenue, 0) + COALESCE(rm.revenue, 0))::BIGINT AS revenue_rub, "
+                "  COALESCE(g.generated_users, 0)::BIGINT AS generated_users "
                 "FROM cohort c "
-                "LEFT JOIN payments p ON p.tg_id = c.tg_id "
-                "LEFT JOIN activity_log a ON a.tg_id = c.tg_id "
-                "GROUP BY c.cohort_month "
+                "LEFT JOIN rev_bot rb ON rb.cohort_month = c.cohort_month "
+                "LEFT JOIN rev_manual rm ON rm.cohort_month = c.cohort_month "
+                "LEFT JOIN gens g ON g.cohort_month = c.cohort_month "
+                "GROUP BY c.cohort_month, rb.paid_users, rb.revenue, rm.revenue, g.generated_users "
                 "ORDER BY c.cohort_month DESC",
                 months,
             )
@@ -1763,18 +1875,20 @@ class CreditsDB:
         """Resolve audience spec → list of tg_ids.
 
         audience schema:
-          { "mode": "all" | "utm" | "filter" | "manual",
-            "utm": {"source": "...", "medium": "...", "campaign": "...", "content": "...", "term": "..."},
+          { "mode": "all" | "source" | "filter" | "manual",
+            "source": {"value": "..."},  # matches users.source OR users.first_utm_source; "(direct)" for empty
             "filter": {"credits_min": int, "credits_max": int,
                        "paid": "any"|"yes"|"no",
                        "generated": "any"|"yes"|"no",
                        "created_from": "YYYY-MM-DD", "created_to": "YYYY-MM-DD",
                        "tag": "..."},
             "manual": {"tg_ids": [int, ...], "usernames": [str, ...]},
-            "exclude_blocked": bool }
+            "exclude_blocked": bool,
+            "exclude_admins": bool (default true) }
         """
         mode = str(audience.get("mode") or "all").lower()
         exclude_blocked = bool(audience.get("exclude_blocked", True))
+        exclude_admins = bool(audience.get("exclude_admins", True))
         pool = self._pool_or_fail()
 
         ids: List[int] = []
@@ -1782,24 +1896,35 @@ class CreditsDB:
             async with pool.acquire() as conn:
                 rows = await conn.fetch("SELECT tg_id FROM users")
             ids = [int(r["tg_id"]) for r in rows]
-        elif mode == "utm":
-            utm = audience.get("utm") or {}
-            conds: List[str] = []
-            params: List[Any] = []
-            for key, column in (
-                ("source", "first_utm_source"),
-                ("medium", "first_utm_medium"),
-                ("campaign", "first_utm_campaign"),
-                ("content", "first_utm_content"),
-                ("term", "first_utm_term"),
-            ):
-                val = _norm_text(utm.get(key, ""), max_len=160)
-                if val:
-                    params.append(val)
-                    conds.append(f"{column} = ${len(params)}")
-            where = " AND ".join(conds) if conds else "TRUE"
+        elif mode == "source":
+            src = _norm_text((audience.get("source") or {}).get("value", ""), max_len=160)
             async with pool.acquire() as conn:
-                rows = await conn.fetch(f"SELECT tg_id FROM users WHERE {where}", *params)
+                if src == "(direct)":
+                    rows = await conn.fetch(
+                        "SELECT tg_id FROM users "
+                        "WHERE (source = '' OR source IS NULL) "
+                        "AND (first_utm_source = '' OR first_utm_source IS NULL)"
+                    )
+                elif src:
+                    rows = await conn.fetch(
+                        "SELECT tg_id FROM users WHERE source = $1 OR first_utm_source = $1",
+                        src,
+                    )
+                else:
+                    rows = await conn.fetch("SELECT tg_id FROM users")
+            ids = [int(r["tg_id"]) for r in rows]
+        elif mode == "utm":
+            # Backward-compat for any old broadcasts saved before the UTM→source migration.
+            utm = audience.get("utm") or {}
+            src_val = _norm_text(utm.get("source", ""), max_len=160)
+            async with pool.acquire() as conn:
+                if src_val:
+                    rows = await conn.fetch(
+                        "SELECT tg_id FROM users WHERE source = $1 OR first_utm_source = $1",
+                        src_val,
+                    )
+                else:
+                    rows = await conn.fetch("SELECT tg_id FROM users")
             ids = [int(r["tg_id"]) for r in rows]
         elif mode == "filter":
             f = audience.get("filter") or {}
@@ -1859,6 +1984,15 @@ class CreditsDB:
                 )
             blocked = {int(r["tg_id"]) for r in blocked_rows}
             ids = [x for x in ids if x not in blocked]
+
+        if exclude_admins and ids:
+            async with pool.acquire() as conn:
+                admin_rows = await conn.fetch(
+                    "SELECT tg_id FROM admins WHERE tg_id = ANY($1::BIGINT[])",
+                    ids,
+                )
+            admin_ids = {int(r["tg_id"]) for r in admin_rows}
+            ids = [x for x in ids if x not in admin_ids]
 
         return sorted(set(ids))
 
