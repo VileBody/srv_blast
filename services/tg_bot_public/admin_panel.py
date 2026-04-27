@@ -14,7 +14,7 @@ from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import quote as url_quote, quote_plus
-from typing import Any, Optional, TYPE_CHECKING
+from typing import Any, Dict, Optional, TYPE_CHECKING
 
 from .broadcast_sender import send_bot_message
 
@@ -148,6 +148,175 @@ _PACKAGES = {
     "50": "Импульс (50 генераций)",
 }
 
+# ── Tier system spec (from /docs/reactivation_plan) ──────────────────────
+# Each tier carries: title, color (CSS), tier-group letter (S/A/B/C/D/P), and
+# a card with task/channel/angle/cr to show on /admin/tiers.
+
+_TIER_SPEC: Dict[str, Dict[str, str]] = {
+    "S1": {
+        "title": "Tri-signal champions",
+        "group": "S", "color": "#c0392b",
+        "rule": "gens ≥ 2 AND last_rating='high' AND опросник заполнен",
+        "task": "Конвертировать в Глоу/Импульс через персональное касание",
+        "channel": "Менеджер вручную, голосовое. Через 24ч после позитивного фидбека",
+        "angle": "«Видим, что зашло. Лично расскажу про Glow — для тех, кто уже раскачался»",
+        "cr": "30-40% в Glow",
+    },
+    "S2": {
+        "title": "Изучали карточку пакета",
+        "group": "S", "color": "#c0392b",
+        "rule": "viewed_package_details AND нет покупки",
+        "task": "Снять конкретные возражения по пакету, который смотрели",
+        "channel": "Менеджер персонально. Через 6-12ч после просмотра карточки",
+        "angle": "Glow → дистрибьюция; Impulse → стратегия под задачу",
+        "cr": "15-25% в покупку",
+    },
+    "S3": {
+        "title": "Адвокаты бренда — позитивный фидбек без покупки",
+        "group": "S", "color": "#c0392b",
+        "rule": "опросник заполнен AND last_rating='high' AND нет покупки",
+        "task": "Дожать в покупку И/ИЛИ получить реферал",
+        "channel": "Менеджер персонально, через 48ч после фидбека",
+        "angle": "Благодарность → soft offer (Trial/Бласт со скидкой) → реферал",
+        "cr": "15-20% в покупку",
+    },
+    "A1": {
+        "title": "Прошли весь бесплатный флоу",
+        "group": "A", "color": "#e67e22",
+        "rule": "gens ≥ 3 AND last_rating='high' AND нет покупки",
+        "task": "Снять иллюзию «у меня всё бесплатно» — показать ценность платных пакетов",
+        "channel": "Авто-рассылка с персонализацией. Через 24ч после 3-го видео",
+        "angle": "«Прошли максимум бесплатного — что дальше? Trial −50%, 24 часа»",
+        "cr": "5-10% в Trial/Бласт",
+    },
+    "A2": {
+        "title": "Залипли на 1-м видео при высокой оценке",
+        "group": "A", "color": "#e67e22",
+        "rule": "gens = 1 AND last_rating='high'",
+        "task": "Довести до 2-й генерации",
+        "channel": "Автомат через 24ч после высокой оценки 1-го видео",
+        "angle": "«У вас доступно 2-е видео в подарок — заберите по этой ссылке»",
+        "cr": "30-40% в новую генерацию",
+    },
+    "B1": {
+        "title": "Получили ролик, не оценили",
+        "group": "B", "color": "#d35400",
+        "rule": "gens ≥ 1 AND last_rating IS NULL",
+        "task": "Вернуть в активное взаимодействие. Оценка как точка восстановления",
+        "channel": "Массовая. Через 24-48ч после генерации",
+        "angle": "«Оцените свой ролик — и получите 2-е видео без условий»",
+        "cr": "20-30% в оценку",
+    },
+    "B2": {
+        "title": "Среднеоценившие (mid_low)",
+        "group": "B", "color": "#d35400",
+        "rule": "last_rating='mid_low' AND нет покупки",
+        "task": "Дать второй шанс, узнать что не зашло",
+        "channel": "Массовая. Через 48ч после оценки",
+        "angle": "«Вторая генерация бесплатно — попробуйте с другими настройками»",
+        "cr": "15-25% в re-generation",
+    },
+    "B3": {
+        "title": "Низко оценившие (low)",
+        "group": "B", "color": "#d35400",
+        "rule": "last_rating='low'",
+        "task": "Разобраться или отпустить. Собрать данные о причинах",
+        "channel": "Массовая, сухая по тону. Через 48ч",
+        "angle": "Короткий опрос «что не сработало» + бесплатная перегенерация",
+        "cr": "3-5% в активность",
+    },
+    "C1": {
+        "title": "Стартовали бота, не подписались",
+        "group": "C", "color": "#3498db",
+        "rule": "started AND NOT subscribed",
+        "task": "Вернуть в бот тех, кто не банил",
+        "channel": "Массовая. Через 72ч после старта",
+        "angle": "Один сильный кейс (видео + результат) + дедлайн доступа",
+        "cr": "5-10% в подписку",
+    },
+    "C2": {
+        "title": "Загрузили аудио, не запустили",
+        "group": "C", "color": "#3498db",
+        "rule": "audio_uploaded AND NOT generation_started",
+        "task": "Довести до запуска генерации",
+        "channel": "Автомат. Через 24ч после загрузки",
+        "angle": "«Аудио загружено — настройте параметры (или возьмите пресет) и нажмите запуск»",
+        "cr": "20-30% в запуск",
+    },
+    "D1": {
+        "title": "Старый посев — высоко оценившие без покупки",
+        "group": "D", "color": "#9b59b6",
+        "rule": "created < 30д назад AND last_rating='high' AND нет покупки",
+        "task": "Холодный дожим через месяц с апдейтом",
+        "channel": "Массовая по cohort. Разовая",
+        "angle": "«Помните нас? Исправили синхронизацию субтитров, ускорили генерацию»",
+        "cr": "3-7% в действие",
+    },
+    "D2": {
+        "title": "Старый посев — заходили в карточку пакета",
+        "group": "D", "color": "#9b59b6",
+        "rule": "created < 30д назад AND viewed_package_details AND нет покупки",
+        "task": "Точечный ремайндер по пакету, который смотрели",
+        "channel": "Менеджер вручную, разово",
+        "angle": "Напомнить цену + новые плюшки месяца + простой CTA",
+        "cr": "10-15% в покупку",
+    },
+    "P10": {
+        "title": "Trial-юзеры без апгрейда",
+        "group": "P", "color": "#16a085",
+        "rule": "купили Trial, не купили выше",
+        "task": "Апсейл в Glow или подписку Бласт",
+        "channel": "Автомат через 7-10 дней после Trial. Если ответил — менеджер",
+        "angle": "«Glow со скидкой как Trial-юзеру: 5990 вместо 7990. До конца недели»",
+        "cr": "10-20% в апгрейд",
+    },
+    "P11": {
+        "title": "Активные подписчики Бласт без Glow",
+        "group": "P", "color": "#16a085",
+        "rule": "active_subscription='blast' AND нет Glow",
+        "task": "Апгрейд до Glow или подписки выше",
+        "channel": "Менеджер. В конце 1-го месяца подписки",
+        "angle": "«За месяц вы сделали X роликов — расширим возможности?»",
+        "cr": "15-25% — самый платёжеспособный сегмент",
+    },
+    "P12": {
+        "title": "Реферреры",
+        "group": "P", "color": "#16a085",
+        "rule": "referral_made AND нет покупки",
+        "task": "Удержание + закрытое предложение",
+        "channel": "Персонально. Разово",
+        "angle": "«Ты привёл друзей — для тебя ранний доступ к [новой фиче]»",
+        "cr": "Variable, главное — удержание",
+    },
+    "P14": {
+        "title": "Тыкуны — нажали оплату, не оплатили",
+        "group": "P", "color": "#16a085",
+        "rule": "purchase_intent AND нет покупки",
+        "task": "Разделить «передумал» vs «случайно тыкнул»",
+        "channel": "Автомат с опросом через 1-3ч после клика",
+        "angle": "«Готовы оплатить — ссылка живёт 30 минут / Передумали — расскажите почему»",
+        "cr": "5-15% реальной оплаты",
+    },
+}
+
+_TIER_GROUPS = [
+    ("S", "Горячие", "Менеджер вручную, голосовые, 1-1", "#c0392b"),
+    ("A", "Тёплые", "Автомат + персонализация", "#e67e22"),
+    ("B", "Средние", "Сегментированная массовая", "#d35400"),
+    ("C", "Холодные", "Массовая, минимум усилий", "#3498db"),
+    ("D", "Старая когорта", "Точечная переактивация", "#9b59b6"),
+    ("P", "Спец-сегменты", "Зависит от сегмента", "#16a085"),
+]
+
+
+def _fmt_ts(value: Any) -> str:
+    """Format datetime / string timestamps consistently for the admin UI."""
+    if value is None:
+        return ""
+    if isinstance(value, datetime):
+        return value.strftime("%Y-%m-%d %H:%M:%S")
+    return str(value)
+
 # ── HTML templates (inline to keep it self-contained) ────────────────────
 
 _BASE_HEAD = """
@@ -247,6 +416,7 @@ _BASE_HEAD = """
   <a href="/admin/" class="brand">Blast Admin</a>
   <a href="/admin/">Dashboard</a>
   <a href="/admin/clients">Клиенты</a>
+  <a href="/admin/tiers">Тиры</a>
   <a href="/admin/broadcasts">Рассылки</a>
   <a href="/admin/lifecycle">Триггеры</a>
   <a href="/admin/cohorts">Когорты</a>
@@ -1694,6 +1864,16 @@ def build_app(
         tags = await credits_db.get_user_tags(tg_id)
         notes = await credits_db.get_user_notes(tg_id)
         manual_payments = await credits_db.list_manual_payments(tg_id, limit=50)
+        user_tier = await credits_db.get_user_tier(tg_id)
+        tier_spec = _TIER_SPEC.get(user_tier) if user_tier else None
+        tier_badge = (
+            f'<a href="/admin/tiers?tier={user_tier}" class="badge" '
+            f'style="background:{tier_spec["color"]};color:white;text-decoration:none">'
+            f'{user_tier} — {html_mod.escape(tier_spec["title"])}</a>'
+            if tier_spec else
+            ('<span class="badge badge-stage">' + html_mod.escape(user_tier) + '</span>' if user_tier
+             else '<span class="badge badge-zero">не классифицирован</span>')
+        )
         tag_badges = " ".join(
             f'<span class="badge badge-source">{html_mod.escape(t)}'
             f' <a href="#" onclick="document.getElementById(\'rmtag-{html_mod.escape(t, quote=True)}\').submit();return false" '
@@ -1741,6 +1921,7 @@ def build_app(
         <h2>{html_mod.escape(uname)} (id: {tg_id})</h2>
         <p>Credits: <strong>{user['credits']}</strong> |
            Health: <span class="badge {health_class}">{health_label}</span> |
+           Tier: {tier_badge} |
            Этап: <span class="badge badge-stage">{stage_lbl}</span> |
            Источник: {source_badge} |
            Created: {user['created_at']} | Updated: {user['updated_at']}</p>
@@ -3073,6 +3254,9 @@ def build_app(
         mode = str(audience.get("mode") or "all")
         if mode == "all":
             return "вся база"
+        if mode == "tier":
+            val = str((audience.get("tier") or {}).get("value") or "")
+            return f"Тир: {val or '—'}"
         if mode == "source":
             val = str((audience.get("source") or {}).get("value") or "")
             return f"Источник: {val or '— любой —'}"
@@ -3254,7 +3438,11 @@ def build_app(
     # ── Broadcasts: create form ───────────────────────────────────────
 
     @app.get("/admin/broadcasts/new", response_class=HTMLResponse)
-    async def broadcasts_new_form(_user: str = Depends(_check_auth)) -> str:
+    async def broadcasts_new_form(request: Request, _user: str = Depends(_check_auth)) -> str:
+        preset_tier = str(request.query_params.get("tier") or "").strip().upper()
+        if preset_tier and preset_tier not in _TIER_SPEC:
+            preset_tier = ""
+
         tags = await credits_db.list_all_tags()
         tag_opts = "".join(
             f'<option value="{html_mod.escape(t["tag"])}">{html_mod.escape(t["tag"])} ({t["count"]})</option>'
@@ -3265,6 +3453,14 @@ def build_app(
             f'<option value="{html_mod.escape(d["source"])}">{html_mod.escape(d["source"])} ({d["count"]})</option>'
             for d in sources_dist
         )
+        tier_counts = await credits_db.tier_counts()
+        tier_opts = "".join(
+            f'<option value="{code}" {"selected" if code == preset_tier else ""}>'
+            f'{code} — {html_mod.escape(spec["title"])} ({tier_counts.get(code, 0)})'
+            f'</option>'
+            for code, spec in _TIER_SPEC.items()
+        )
+        mode_default = "tier" if preset_tier else "all"
 
         body = f"""
         <div class="card">
@@ -3305,7 +3501,15 @@ def build_app(
             placeholder="Открыть бот | https://t.me/your_bot&#10;Сайт | https://blast808.com"></textarea><br><br>
 
           <h3>4. Аудитория</h3>
-          <label><input type="radio" name="mode" value="all" checked> Вся база</label><br>
+          <label><input type="radio" name="mode" value="all" {"checked" if mode_default == "all" else ""}> Вся база</label><br>
+          <label><input type="radio" name="mode" value="tier" {"checked" if mode_default == "tier" else ""}> По тиру</label>
+          <span style="margin-left:1em">
+            <select name="tier_value" style="width:380px">
+              <option value="">— выбрать тир —</option>
+              {tier_opts}
+            </select>
+            <small style="color:#666"><a href="/admin/tiers">/admin/tiers</a></small>
+          </span><br>
           <label><input type="radio" name="mode" value="source"> По источнику</label>
           <span style="margin-left:1em">
             source: <select name="source_value" style="width:240px">
@@ -3357,6 +3561,7 @@ def build_app(
         buttons_raw: str = Form(""),
         mode: str = Form("all"),
         source_value: str = Form(""),
+        tier_value: str = Form(""),
         credits_min: str = Form(""),
         credits_max: str = Form(""),
         paid: str = Form("any"),
@@ -3373,6 +3578,8 @@ def build_app(
         audience: dict = {"mode": mode, "exclude_blocked": bool(exclude_blocked)}
         if mode == "source":
             audience["source"] = {"value": source_value.strip()}
+        elif mode == "tier":
+            audience["tier"] = {"value": tier_value.strip().upper()}
         elif mode == "filter":
             audience["filter"] = {
                 "credits_min": credits_min.strip() or None,
@@ -3813,6 +4020,227 @@ def build_app(
         </div>
         """
         return _page("Когорты", body)
+
+    # ── Tier system: classification page + outreach workflow ─────────
+
+    @app.get("/admin/tiers", response_class=HTMLResponse)
+    async def tiers_view(request: Request, _user: str = Depends(_check_auth)) -> str:
+        selected_tier = str(request.query_params.get("tier") or "").strip().upper()
+        counts = await credits_db.tier_counts()
+
+        # Build the per-group dropdown options.
+        group_blocks: list = []
+        for letter, label, channel, color in _TIER_GROUPS:
+            tiers_in_group = [(code, spec) for code, spec in _TIER_SPEC.items() if spec["group"] == letter]
+            opts_html = "".join(
+                f'<option value="{code}" {"selected" if code == selected_tier else ""}>'
+                f'{code} — {html_mod.escape(spec["title"])} ({counts.get(code, 0)})'
+                f'</option>'
+                for code, spec in tiers_in_group
+            )
+            group_blocks.append((letter, label, channel, color, opts_html))
+
+        # Aggregate: total classified / unclassified for the checklist header.
+        total_classified = sum(counts.values())
+
+        # Static checklist header.
+        checklist_rows = "".join(
+            f'<tr>'
+            f'<td><span class="badge" style="background:{color};color:white">{letter}</span></td>'
+            f'<td><strong>{label}</strong></td>'
+            f'<td>{channel}</td>'
+            f'<td>{sum(counts.get(c, 0) for c, s in _TIER_SPEC.items() if s["group"] == letter)} чел</td>'
+            f'</tr>'
+            for letter, label, channel, color in _TIER_GROUPS
+        )
+        checklist_html = (
+            '<div class="card">'
+            '<h3>Чек-лист работы с тирами</h3>'
+            '<div class="table-wrap"><table>'
+            '<tr><th>Tier</th><th>Температура</th><th>Канал</th><th>Объём</th></tr>'
+            f'{checklist_rows}</table></div>'
+            f'<p style="color:#666;font-size:0.85em">Итого классифицировано: <b>{total_classified}</b> юзеров. '
+            'Тиры взаимоисключающие — каждый юзер в одном тире.</p>'
+            '</div>'
+        )
+
+        # Build dropdown UI: one <select> per group letter to make picking faster.
+        groups_select_html = ""
+        for letter, label, channel, color, opts_html in group_blocks:
+            groups_select_html += (
+                f'<form method="get" action="/admin/tiers" style="display:inline-block;margin:0.3rem 0.5rem 0.3rem 0">'
+                f'<button type="submit" class="badge" '
+                f'style="background:{color};color:white;border:none;padding:6px 10px;cursor:default;display:inline">'
+                f'{letter} — {html_mod.escape(label)}</button> '
+                f'<select name="tier" onchange="this.form.submit()">'
+                f'<option value="">— выбрать тир из {letter} —</option>'
+                f'{opts_html}'
+                f'</select>'
+                f'</form>'
+            )
+
+        # If a tier is selected, render its detail card + user table + Excel link.
+        detail_html = ""
+        if selected_tier and selected_tier in _TIER_SPEC:
+            spec = _TIER_SPEC[selected_tier]
+            users_rows = await credits_db.list_tier_users(selected_tier, limit=2000)
+            outreach_map = {}
+            if spec["group"] == "S":
+                outreach_map = await credits_db.get_outreach_map(
+                    selected_tier, [int(r["tg_id"]) for r in users_rows]
+                )
+
+            tbody = ""
+            for r in users_rows:
+                uname = f"@{r['username']}" if r['username'] else str(r['tg_id'])
+                tg_link = f"https://t.me/{r['username']}" if r['username'] else "#"
+                rating = r.get("last_rating") or "—"
+                rev_total = int(r.get("revenue_bot", 0) or 0) + int(r.get("revenue_manual", 0) or 0)
+
+                outreach_cell = ""
+                if spec["group"] == "S":
+                    o = outreach_map.get(int(r["tg_id"]))
+                    if o:
+                        status = o["status"]
+                        status_badge = {
+                            "todo": '<span class="badge badge-stage">todo</span>',
+                            "contacted": '<span class="badge badge-ok">контакт</span>',
+                            "converted": '<span class="badge" style="background:#27ae60;color:white">конверсия</span>',
+                            "dropped": '<span class="badge badge-zero">дроп</span>',
+                        }.get(status, status)
+                        actor = html_mod.escape(o["assigned_to"] or "—")
+                        outreach_cell = f"{status_badge}<br><small style='color:#666'>{actor}</small>"
+                    else:
+                        outreach_cell = '<span class="badge badge-stage">todo</span>'
+                    actions = (
+                        f'<form method="post" action="/admin/tiers/outreach" style="display:inline">'
+                        f'<input type="hidden" name="tg_id" value="{r["tg_id"]}">'
+                        f'<input type="hidden" name="tier" value="{selected_tier}">'
+                        f'<select name="status" onchange="this.form.submit()" style="font-size:0.8em">'
+                        f'<option value="">— статус —</option>'
+                        f'<option value="contacted">контакт</option>'
+                        f'<option value="converted">конверсия</option>'
+                        f'<option value="dropped">дроп</option>'
+                        f'<option value="todo">сбросить</option>'
+                        f'</select></form> '
+                        f'<a href="{tg_link}" target="_blank" rel="noopener">→ TG</a>'
+                    )
+                else:
+                    actions = f'<a href="{tg_link}" target="_blank" rel="noopener">→ TG</a>'
+
+                tbody += (
+                    f"<tr>"
+                    f"<td><a href='/admin/users/{r['tg_id']}'>{html_mod.escape(uname)}</a></td>"
+                    f"<td>{r['gens_done']}</td>"
+                    f"<td>{html_mod.escape(rating)}</td>"
+                    f"<td>{rev_total}₽</td>"
+                    f"<td>{html_mod.escape(r.get('cohort') or '(direct)')}</td>"
+                    f"<td>{html_mod.escape(_fmt_ts(r.get('last_active_at')) or '—')}</td>"
+                    f"<td>{outreach_cell}</td>"
+                    f"<td>{actions}</td>"
+                    f"</tr>"
+                )
+
+            detail_html = f"""
+            <div class="card">
+              <h3 style="margin:0">
+                <span class="badge" style="background:{spec['color']};color:white">{selected_tier}</span>
+                {html_mod.escape(spec['title'])}
+                <small style="color:#666">— {len(users_rows)} чел</small>
+              </h3>
+              <p><b>Сегментация:</b> <code>{html_mod.escape(spec['rule'])}</code></p>
+              <p><b>Задача:</b> {html_mod.escape(spec['task'])}</p>
+              <p><b>Канал:</b> {html_mod.escape(spec['channel'])}</p>
+              <p><b>Угол:</b> {html_mod.escape(spec['angle'])}</p>
+              <p><b>Ожид. конверсия:</b> {html_mod.escape(spec['cr'])}</p>
+              <a class="btn" href="/admin/tiers/{selected_tier}/export">Скачать Excel/CSV</a>
+              <a class="btn btn-success" href="/admin/broadcasts/new?tier={selected_tier}" style="margin-left:0.5rem">Создать рассылку для этого тира</a>
+            </div>
+            <div class="card">
+              <div class="table-wrap"><table>
+                <tr><th>User</th><th>gens</th><th>rating</th><th>выручка</th><th>cohort</th><th>last_active</th>
+                    <th>{('контакт' if spec['group'] == 'S' else '')}</th><th></th></tr>
+                {tbody if tbody else '<tr><td colspan=8>Никого нет в этом тире — самое время порадоваться.</td></tr>'}
+              </table></div>
+            </div>
+            """
+        elif selected_tier:
+            detail_html = f'<div class="card"><p>Неизвестный тир: <code>{html_mod.escape(selected_tier)}</code></p></div>'
+
+        body = f"""
+        {checklist_html}
+        <div class="card">
+          <h3>Выбор тира</h3>
+          <p style="color:#666;font-size:0.85em">Жми на код тира → откроется список юзеров с рекомендацией и экспортом.</p>
+          {groups_select_html}
+        </div>
+        {detail_html}
+        """
+        return _page("Тиры", body)
+
+    @app.get("/admin/tiers/{tier}/export", response_class=PlainTextResponse)
+    async def tiers_export(tier: str, _user: str = Depends(_check_auth)) -> PlainTextResponse:
+        tier_code = tier.strip().upper()
+        if tier_code not in _TIER_SPEC:
+            raise HTTPException(404, f"Unknown tier {tier_code}")
+        rows = await credits_db.list_tier_users(tier_code, limit=10_000)
+        outreach_map = await credits_db.get_outreach_map(tier_code, [int(r["tg_id"]) for r in rows])
+
+        def esc(v: Any) -> str:
+            s = str(v if v is not None else "").replace('"', '""')
+            return f'"{s}"' if ("," in s or '"' in s or "\n" in s) else s
+
+        lines = [
+            "tg_id,username,tg_link,gens_done,last_rating,revenue_rub,cohort,"
+            "last_active_at,outreach_status,outreach_actor,outreach_note"
+        ]
+        for r in rows:
+            o = outreach_map.get(int(r["tg_id"])) or {}
+            tg_link = f"https://t.me/{r['username']}" if r['username'] else ""
+            rev_total = int(r.get("revenue_bot", 0) or 0) + int(r.get("revenue_manual", 0) or 0)
+            lines.append(",".join([
+                str(r["tg_id"]),
+                esc(r["username"]),
+                esc(tg_link),
+                str(r["gens_done"]),
+                esc(r.get("last_rating")),
+                str(rev_total),
+                esc(r.get("cohort")),
+                esc(_fmt_ts(r.get("last_active_at"))),
+                esc(o.get("status") or "todo"),
+                esc(o.get("assigned_to")),
+                esc(o.get("note")),
+            ]))
+        csv_text = "﻿" + "\n".join(lines)  # BOM so Excel opens UTF-8 correctly
+        await credits_db.audit_log(_user, "tier_export", tier_code, f"rows={len(rows)}")
+        return PlainTextResponse(
+            csv_text,
+            headers={
+                "Content-Disposition": f'attachment; filename="tier_{tier_code}.csv"',
+                "Content-Type": "text/csv; charset=utf-8",
+            },
+        )
+
+    @app.post("/admin/tiers/outreach")
+    async def tiers_outreach_set(
+        tg_id: int = Form(...),
+        tier: str = Form(...),
+        status: str = Form(...),
+        note: str = Form(""),
+        _user: str = Depends(_check_auth),
+    ) -> RedirectResponse:
+        tier_code = tier.strip().upper()
+        status_clean = status.strip().lower()
+        if tier_code not in _TIER_SPEC:
+            raise HTTPException(404, f"Unknown tier {tier_code}")
+        if status_clean not in ("todo", "contacted", "converted", "dropped"):
+            return RedirectResponse(f"/admin/tiers?tier={tier_code}", status_code=303)
+        await credits_db.upsert_outreach(
+            tg_id=tg_id, tier=tier_code, status=status_clean,
+            assigned_to=_user, note=note,
+        )
+        await credits_db.audit_log(_user, "outreach_set", str(tg_id), f"{tier_code}:{status_clean}")
+        return RedirectResponse(f"/admin/tiers?tier={tier_code}", status_code=303)
 
     # ── Lifecycle rules ───────────────────────────────────────────────
 

@@ -371,6 +371,96 @@ class CreditsDB:
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_manual_payments_tg_id ON manual_payments(tg_id)")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_manual_payments_created ON manual_payments(created_at)")
 
+        # Tier outreach — manual contact log for S-tier users worked by managers.
+        await conn.execute(
+            "CREATE TABLE IF NOT EXISTS tier_outreach ("
+            "id BIGSERIAL PRIMARY KEY,"
+            "tg_id BIGINT NOT NULL,"
+            "tier TEXT NOT NULL,"
+            "status TEXT NOT NULL DEFAULT 'todo',"
+            "assigned_to TEXT NOT NULL DEFAULT '',"
+            "note TEXT NOT NULL DEFAULT '',"
+            "contacted_at TIMESTAMP,"
+            "updated_at TIMESTAMP NOT NULL DEFAULT NOW(),"
+            "UNIQUE (tg_id, tier)"
+            ")"
+        )
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_tier_outreach_status ON tier_outreach(status)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_tier_outreach_tier ON tier_outreach(tier)")
+
+        # Tier system: aggregator view + tier classifier view.
+        # Recreate on every startup so refining the CASE WHEN in this file is enough — no separate migration.
+        await conn.execute("DROP VIEW IF EXISTS user_tiers CASCADE")
+        await conn.execute("DROP VIEW IF EXISTS user_signals CASCADE")
+        await conn.execute(
+            """
+            CREATE VIEW user_signals AS
+            SELECT
+              u.tg_id,
+              u.username,
+              u.credits,
+              u.created_at,
+              u.updated_at,
+              COALESCE(NULLIF(u.source, ''), NULLIF(u.first_utm_source, ''), '(direct)') AS cohort,
+              EXISTS (SELECT 1 FROM activity_log a WHERE a.tg_id = u.tg_id AND a.event = 'subscription_ok') AS subscribed,
+              EXISTS (SELECT 1 FROM activity_log a WHERE a.tg_id = u.tg_id AND a.event = 'audio_uploaded') AS audio_uploaded,
+              EXISTS (SELECT 1 FROM activity_log a WHERE a.tg_id = u.tg_id AND a.event = 'generation_started') AS generation_started,
+              (SELECT COUNT(*) FROM activity_log a WHERE a.tg_id = u.tg_id AND a.event = 'generation_done')::INT AS gens_done,
+              (SELECT a.detail FROM activity_log a WHERE a.tg_id = u.tg_id AND a.event = 'rate_video' ORDER BY a.created_at DESC LIMIT 1) AS last_rating,
+              EXISTS (SELECT 1 FROM activity_log a WHERE a.tg_id = u.tg_id AND a.event = 'sales_pitch') AS viewed_pitch,
+              EXISTS (SELECT 1 FROM activity_log a WHERE a.tg_id = u.tg_id AND a.event = 'view_packages') AS viewed_packages_list,
+              EXISTS (SELECT 1 FROM activity_log a WHERE a.tg_id = u.tg_id AND a.event = 'select_package') AS viewed_package_details,
+              EXISTS (SELECT 1 FROM activity_log a WHERE a.tg_id = u.tg_id AND a.event IN ('purchase_intent', 'purchase_intent_recurrent')) AS purchase_intent,
+              EXISTS (SELECT 1 FROM payments p WHERE p.tg_id = u.tg_id AND p.status = 'CONFIRMED') AS has_purchase,
+              EXISTS (SELECT 1 FROM payments p WHERE p.tg_id = u.tg_id AND p.status = 'CONFIRMED' AND p.package = '5') AS bought_trial,
+              EXISTS (SELECT 1 FROM payments p WHERE p.tg_id = u.tg_id AND p.status = 'CONFIRMED' AND p.package = '15') AS bought_blast,
+              EXISTS (SELECT 1 FROM payments p WHERE p.tg_id = u.tg_id AND p.status = 'CONFIRMED' AND p.package = '30') AS bought_glow,
+              EXISTS (SELECT 1 FROM payments p WHERE p.tg_id = u.tg_id AND p.status = 'CONFIRMED' AND p.package = '50') AS bought_impulse,
+              (SELECT s.package FROM subscriptions s WHERE s.tg_id = u.tg_id AND s.status = 'active' ORDER BY s.id DESC LIMIT 1) AS active_subscription_pkg,
+              EXISTS (SELECT 1 FROM activity_log a WHERE a.tg_id = u.tg_id AND a.event = 'survey_opened') AS feedback_form_clicked,
+              EXISTS (SELECT 1 FROM activity_log a WHERE a.tg_id = u.tg_id AND a.event = 'survey_done') AS feedback_form_filled,
+              EXISTS (SELECT 1 FROM activity_log a WHERE a.tg_id = u.tg_id AND a.event = 'referral_sent') AS referral_made,
+              EXISTS (SELECT 1 FROM activity_log a WHERE a.tg_id = u.tg_id AND a.event = 'admin_dm') AS manager_contacted,
+              (SELECT MAX(a.created_at) FROM activity_log a WHERE a.tg_id = u.tg_id) AS last_active_at,
+              (SELECT COALESCE(SUM(amount_rub), 0) FROM payments p WHERE p.tg_id = u.tg_id AND p.status = 'CONFIRMED') AS revenue_bot,
+              (SELECT COALESCE(SUM(amount_rub), 0) FROM manual_payments mp WHERE mp.tg_id = u.tg_id) AS revenue_manual
+            FROM users u
+            WHERE u.tg_id NOT IN (SELECT tg_id FROM admins)
+            """
+        )
+        await conn.execute(
+            """
+            CREATE VIEW user_tiers AS
+            SELECT us.*,
+              CASE
+                -- S tier: hot, manual outreach (highest priority)
+                WHEN us.gens_done >= 2 AND us.last_rating = 'high' AND us.feedback_form_filled THEN 'S1'
+                WHEN us.feedback_form_filled AND us.last_rating = 'high' AND NOT us.has_purchase THEN 'S3'
+                WHEN us.viewed_package_details AND NOT us.has_purchase THEN 'S2'
+                -- P tier: special segments (paid + intent), checked before A/B
+                WHEN us.active_subscription_pkg = '15' AND NOT us.bought_glow AND NOT us.bought_impulse THEN 'P11'
+                WHEN us.bought_trial AND NOT us.bought_glow AND NOT us.bought_impulse THEN 'P10'
+                WHEN us.referral_made AND NOT us.has_purchase THEN 'P12'
+                WHEN us.purchase_intent AND NOT us.has_purchase THEN 'P14'
+                -- A tier: warm, auto with personalization
+                WHEN us.gens_done >= 3 AND us.last_rating = 'high' AND NOT us.has_purchase THEN 'A1'
+                WHEN us.gens_done = 1 AND us.last_rating = 'high' THEN 'A2'
+                -- D tier: old cohort (>30d since signup)
+                WHEN us.created_at < NOW() - INTERVAL '30 days' AND us.last_rating = 'high' AND NOT us.has_purchase THEN 'D1'
+                WHEN us.created_at < NOW() - INTERVAL '30 days' AND us.viewed_package_details AND NOT us.has_purchase THEN 'D2'
+                -- B tier: medium, segmented mass
+                WHEN us.last_rating = 'mid_low' AND NOT us.has_purchase THEN 'B2'
+                WHEN us.last_rating = 'low' THEN 'B3'
+                WHEN us.gens_done >= 1 AND us.last_rating IS NULL THEN 'B1'
+                -- C tier: cold, minimum effort
+                WHEN us.audio_uploaded AND NOT us.generation_started THEN 'C2'
+                WHEN NOT us.subscribed THEN 'C1'
+                ELSE NULL
+              END AS tier
+            FROM user_signals us
+            """
+        )
+
     async def close(self) -> None:
         if self._pool:
             await self._pool.close()
@@ -1875,7 +1965,7 @@ class CreditsDB:
         """Resolve audience spec → list of tg_ids.
 
         audience schema:
-          { "mode": "all" | "source" | "filter" | "manual",
+          { "mode": "all" | "source" | "filter" | "manual" | "tier",
             "source": {"value": "..."},  # matches users.source OR users.first_utm_source; "(direct)" for empty
             "filter": {"credits_min": int, "credits_max": int,
                        "paid": "any"|"yes"|"no",
@@ -1896,6 +1986,14 @@ class CreditsDB:
             async with pool.acquire() as conn:
                 rows = await conn.fetch("SELECT tg_id FROM users")
             ids = [int(r["tg_id"]) for r in rows]
+        elif mode == "tier":
+            tier_code = str((audience.get("tier") or {}).get("value", "")).strip().upper()
+            if tier_code:
+                async with pool.acquire() as conn:
+                    rows = await conn.fetch(
+                        "SELECT tg_id FROM user_tiers WHERE tier = $1", tier_code,
+                    )
+                ids = [int(r["tg_id"]) for r in rows]
         elif mode == "source":
             src = _norm_text((audience.get("source") or {}).get("value", ""), max_len=160)
             async with pool.acquire() as conn:
@@ -2489,3 +2587,112 @@ class CreditsDB:
                 "UPDATE lifecycle_rules SET last_run_at = NOW(), updated_at = NOW() WHERE id = $1",
                 int(rid),
             )
+
+    # ── Tier system ──────────────────────────────────────────────────
+
+    async def tier_counts(self) -> Dict[str, int]:
+        """Return {tier_code: count} for all classified users."""
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT tier, COUNT(*)::BIGINT AS cnt FROM user_tiers WHERE tier IS NOT NULL GROUP BY tier"
+            )
+        return {str(r["tier"]): int(r["cnt"]) for r in rows}
+
+    async def list_tier_users(self, tier: str, limit: int = 1000) -> List[Dict[str, Any]]:
+        """Return rows from user_tiers for a given tier."""
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT * FROM user_tiers WHERE tier = $1 "
+                "ORDER BY last_active_at DESC NULLS LAST, tg_id DESC LIMIT $2",
+                str(tier), int(limit),
+            )
+        return [dict(r) for r in rows]
+
+    async def get_user_tier(self, tg_id: int) -> Optional[str]:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            val = await conn.fetchval("SELECT tier FROM user_tiers WHERE tg_id = $1", int(tg_id))
+        return str(val) if val else None
+
+    async def get_user_signals(self, tg_id: int) -> Optional[Dict[str, Any]]:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow("SELECT * FROM user_tiers WHERE tg_id = $1", int(tg_id))
+        return dict(row) if row else None
+
+    async def resolve_tier_audience(self, tier: str, exclude_blocked: bool = True) -> List[int]:
+        """Audience resolver for broadcast 'tier' mode."""
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch("SELECT tg_id FROM user_tiers WHERE tier = $1", str(tier))
+        ids = [int(r["tg_id"]) for r in rows]
+        if exclude_blocked and ids:
+            async with pool.acquire() as conn:
+                blocked_rows = await conn.fetch(
+                    "SELECT DISTINCT tg_id FROM activity_log "
+                    "WHERE event = 'bot_blocked' AND tg_id = ANY($1::BIGINT[])",
+                    ids,
+                )
+            blocked = {int(r["tg_id"]) for r in blocked_rows}
+            ids = [x for x in ids if x not in blocked]
+        return sorted(set(ids))
+
+    # ── Tier outreach (S-tier manager workflow) ──────────────────────
+
+    async def upsert_outreach(
+        self,
+        tg_id: int,
+        tier: str,
+        status: str,
+        assigned_to: str = "",
+        note: str = "",
+    ) -> None:
+        pool = self._pool_or_fail()
+        contacted = "NOW()" if status in ("contacted", "converted", "dropped") else "NULL"
+        async with pool.acquire() as conn:
+            await conn.execute(
+                f"INSERT INTO tier_outreach (tg_id, tier, status, assigned_to, note, contacted_at, updated_at) "
+                f"VALUES ($1, $2, $3, $4, $5, {contacted}, NOW()) "
+                f"ON CONFLICT (tg_id, tier) DO UPDATE SET "
+                f"status = EXCLUDED.status, "
+                f"assigned_to = CASE WHEN EXCLUDED.assigned_to <> '' THEN EXCLUDED.assigned_to ELSE tier_outreach.assigned_to END, "
+                f"note = CASE WHEN EXCLUDED.note <> '' THEN EXCLUDED.note ELSE tier_outreach.note END, "
+                f"contacted_at = COALESCE(tier_outreach.contacted_at, {contacted}), "
+                f"updated_at = NOW()",
+                int(tg_id), str(tier), str(status),
+                _norm_text(assigned_to, max_len=128),
+                _norm_text(note, max_len=500),
+            )
+
+    async def get_outreach_map(self, tier: str, tg_ids: List[int]) -> Dict[int, Dict[str, Any]]:
+        if not tg_ids:
+            return {}
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT tg_id, status, assigned_to, note, contacted_at, updated_at "
+                "FROM tier_outreach WHERE tier = $1 AND tg_id = ANY($2::BIGINT[])",
+                str(tier), tg_ids,
+            )
+        return {
+            int(r["tg_id"]): {
+                "status": str(r["status"]),
+                "assigned_to": str(r["assigned_to"] or ""),
+                "note": str(r["note"] or ""),
+                "contacted_at": _fmt_ts(r["contacted_at"]),
+                "updated_at": _fmt_ts(r["updated_at"]),
+            }
+            for r in rows
+        }
+
+    async def outreach_summary(self, tier: str) -> Dict[str, int]:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT status, COUNT(*)::BIGINT AS cnt FROM tier_outreach "
+                "WHERE tier = $1 GROUP BY status",
+                str(tier),
+            )
+        return {str(r["status"]): int(r["cnt"]) for r in rows}
