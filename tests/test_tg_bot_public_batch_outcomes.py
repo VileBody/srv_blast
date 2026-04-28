@@ -25,7 +25,7 @@ if "redis.asyncio" not in sys.modules:
     sys.modules["redis.asyncio"] = redis_asyncio
 
 from services.tg_bot_public import app as public_app
-from services.tg_bot_public.state_store import ChatState, STAGE_PROCESSING, STAGE_WAIT_AUDIO
+from services.tg_bot_public.state_store import ChatState, STAGE_PROCESSING, STAGE_RATE_VIDEO, STAGE_WAIT_AUDIO
 
 
 class _FakeStore:
@@ -92,8 +92,11 @@ class _FakeCreditsDB:
 class _FakeBot:
     def __init__(self) -> None:
         self.messages: list[dict[str, Any]] = []
+        self.fail_send_message = False
 
     async def send_message(self, chat_id: int, text: str, reply_markup=None, **_kwargs):
+        if self.fail_send_message:
+            raise RuntimeError("Forbidden: bot was blocked by the user")
         self.messages.append(
             {
                 "chat_id": int(chat_id),
@@ -295,5 +298,47 @@ def test_partial_success_failed_batch_refunds_only_unsucceeded_versions(
         assert app._manager_fail_calls[-1]["job_id"] == "ver-2"
         assert any(m["text"] == public_app._GENERATION_FAILED_USER_TEXT for m in app._bot.messages)
         assert app.store.saved_states and app.store.saved_states[-1].stage == STAGE_WAIT_AUDIO
+
+    asyncio.run(_run())
+
+
+def test_completed_batch_saves_final_state_before_blocked_rating_prompt(
+    monkeypatch,
+) -> None:
+    async def _run() -> None:
+        monkeypatch.setattr(public_app, "_kb", lambda *rows: ("kb", rows))
+        app = _new_app(
+            jobs={
+                "master-ok": {
+                    "status": "SUCCEEDED",
+                    "stage": "render",
+                    "output_url": "s3://output-bucket/renders/master-ok/output.mp4",
+                }
+            }
+        )
+        app._bot.fail_send_message = True
+
+        st = ChatState(
+            chat_id=3004,
+            stage=STAGE_PROCESSING,
+            batch_id="batch-success-blocked",
+            batch_total_versions=1,
+            versions_count=1,
+            master_job_id="master-ok",
+            active_job_ids=["master-ok"],
+            job_order=["master-ok"],
+            next_version_to_enqueue=2,
+        )
+
+        await public_app.BlastBotApp._process_chat_job(app, st)
+
+        assert st.stage == STAGE_RATE_VIDEO
+        assert app.store.saved_states
+        assert app.store.saved_states[-1].stage == STAGE_RATE_VIDEO
+        done_events = [e for e in app.credits_db.events if e["event"] == "generation_done"]
+        assert len(done_events) == 1
+        blocked_events = [e for e in app.credits_db.events if e["event"] == "bot_blocked"]
+        assert blocked_events
+        assert blocked_events[-1]["detail"] == "post_generation:rating_prompt"
 
     asyncio.run(_run())

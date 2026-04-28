@@ -4465,6 +4465,40 @@ class BlastBotApp:
         st.footage_artist_id = ""
         st.subtitles_mode = SUBTITLES_MODE_IMPULSE_2ND
 
+    async def _send_post_generation_message_best_effort(
+        self,
+        *,
+        bot: Bot,
+        st: ChatState,
+        text: str,
+        reply_markup=None,
+        context: str,
+    ) -> bool:
+        try:
+            await bot.send_message(st.chat_id, text, reply_markup=reply_markup)
+            return True
+        except Exception as exc:
+            log.warning(
+                "post_generation_message_send_failed chat=%s context=%s err=%s",
+                st.chat_id,
+                context,
+                str(exc),
+            )
+            if self._runtime_outbox_terminal_error(exc):
+                try:
+                    await self.credits_db.log_event(
+                        st.chat_id,
+                        "bot_blocked",
+                        f"post_generation:{context}",
+                    )
+                except Exception as log_exc:
+                    log.warning(
+                        "post_generation_bot_blocked_log_failed chat=%s err=%s",
+                        st.chat_id,
+                        str(log_exc),
+                    )
+            return False
+
     async def _send_long_html_message(self, *, bot: Bot, chat_id: int, text: str) -> None:
         chunks = _split_telegram_chunks(text)
         for part in chunks:
@@ -5565,36 +5599,44 @@ class BlastBotApp:
         )
         self._reset_processing_state(st)  # sets stage = RATE_VIDEO
 
-        await self.credits_db.log_event(st.chat_id, "generation_done")
-
         # Credits already deducted at launch time
         bal = await self.credits_db.get_balance(st.chat_id)
         log.info("generation_complete chat=%s remaining=%s", st.chat_id, bal)
 
-        bal = await self.credits_db.get_balance(st.chat_id)
         paid = await self.credits_db.has_paid(st.chat_id)
 
         # Paid users: no rating/funnel, just loop back to generation
         if paid:
             if bal > 0:
-                await bot.send_message(
-                    st.chat_id,
-                    f"Готово — лови контент! Давай сделаем ещё:\n\n"
-                    f"Остаток генераций: {bal}\n"
-                    f"/packets — посмотреть тарифы",
-                    reply_markup=_kb([BTN_GENERATE_MORE]),
-                )
                 st.stage = STAGE_WAIT_AUDIO
-            else:
-                await bot.send_message(
-                    st.chat_id,
-                    "Готово — лови контент!\n\n"
-                    "Твои кредиты закончились. Хочешь посмотреть тарифы?\n\n"
-                    "/packets — посмотреть тарифы",
-                    reply_markup=_kb([BTN_ALL_PACKAGES]),
+                await self.store.set(st)
+                await self.credits_db.log_event(st.chat_id, "generation_done")
+                await self._send_post_generation_message_best_effort(
+                    bot=bot,
+                    st=st,
+                    text=(
+                        f"Готово — лови контент! Давай сделаем ещё:\n\n"
+                        f"Остаток генераций: {bal}\n"
+                        f"/packets — посмотреть тарифы"
+                    ),
+                    reply_markup=_kb([BTN_GENERATE_MORE]),
+                    context="paid_more",
                 )
+            else:
                 st.stage = STAGE_PACKAGES_OFFER
-            await self.store.set(st)
+                await self.store.set(st)
+                await self.credits_db.log_event(st.chat_id, "generation_done")
+                await self._send_post_generation_message_best_effort(
+                    bot=bot,
+                    st=st,
+                    text=(
+                        "Готово — лови контент!\n\n"
+                        "Твои кредиты закончились. Хочешь посмотреть тарифы?\n\n"
+                        "/packets — посмотреть тарифы"
+                    ),
+                    reply_markup=_kb([BTN_ALL_PACKAGES]),
+                    context="paid_no_credits",
+                )
             return
 
         # Free users: rating + post-generation funnel
@@ -5610,12 +5652,15 @@ class BlastBotApp:
             rating_text = f"Готово — лови первый ролик! Скажи, пожалуйста, как оцениваешь по 10-балльной шкале?{bal_suffix}"
             st.stage = STAGE_RATE_VIDEO
 
-        await bot.send_message(
-            st.chat_id,
-            rating_text,
-            reply_markup=_kb(BTN_RATE_BUTTONS),
-        )
         await self.store.set(st)
+        await self.credits_db.log_event(st.chat_id, "generation_done")
+        await self._send_post_generation_message_best_effort(
+            bot=bot,
+            st=st,
+            text=rating_text,
+            reply_markup=_kb(BTN_RATE_BUTTONS),
+            context="rating_prompt",
+        )
 
     async def _download_result_video(self, *, source: str, dest: Path) -> None:
         src = str(source or "").strip()
