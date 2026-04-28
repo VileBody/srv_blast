@@ -2466,6 +2466,10 @@ class BlastBotApp:
                 pass
         return artist_id
 
+    @staticmethod
+    def _has_forced_alignment_reference_text(st: ChatState) -> bool:
+        return bool(str(st.lyrics_text or st.target_fragment or "").strip())
+
     async def _ask_timing_choice(self, message: Message, st: ChatState) -> None:
         st.stage = STAGE_WAIT_TIMING_CHOICE
         st.user_clip_start_sec = 0.0
@@ -2749,13 +2753,13 @@ class BlastBotApp:
         st.active_job_id = ""
         st.active_job_ids = []
         st.completed_job_ids = []
-        st.stage = STAGE_WAIT_LYRICS_CHOICE
+        st.stage = STAGE_WAIT_LYRICS_TEXT
         await self.store.set(st)
 
         await message.answer(
-            "Трек готов! Пришли текст песни — это улучшит точность субтитров. "
-            "Если не отправишь, ИИ попробует распознать слова сам, но может ошибиться.",
-            reply_markup=_kb([BTN_SEND_LYRICS, BTN_SKIP_LYRICS]),
+            "Трек готов! Пришли текст песни обычным сообщением. "
+            "Он нужен для точной синхронизации субтитров с аудио.",
+            reply_markup=ReplyKeyboardRemove(),
         )
 
     async def _ensure_prepared_audio_for_confirm(self, *, message: Message, st: ChatState) -> Path | None:
@@ -2825,6 +2829,10 @@ class BlastBotApp:
 
     async def _handle_wait_lyrics_choice(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()
+        if text and text not in {BTN_SEND_LYRICS, BTN_SKIP_LYRICS} and not _is_control_button_text(text):
+            await self._handle_wait_lyrics_text(message, st)
+            return
+
         if text == BTN_SEND_LYRICS:
             st.stage = STAGE_WAIT_LYRICS_TEXT
             await self.store.set(st)
@@ -2835,12 +2843,20 @@ class BlastBotApp:
             return
 
         if text == BTN_SKIP_LYRICS:
-            st.lyrics_text = ""
-            st.target_fragment = ""
-            await self._ask_timing_choice(message, st)
+            st.stage = STAGE_WAIT_LYRICS_TEXT
+            await self.store.set(st)
+            await message.answer(
+                "Теперь запускаем генерацию только с текстом песни — пришли его обычным сообщением.",
+                reply_markup=ReplyKeyboardRemove(),
+            )
             return
 
-        await message.answer("Выбери кнопку: «Отправить текст» или «Пусть ИИ угадает».")
+        st.stage = STAGE_WAIT_LYRICS_TEXT
+        await self.store.set(st)
+        await message.answer(
+            "Пришли текст песни обычным сообщением.",
+            reply_markup=ReplyKeyboardRemove(),
+        )
 
     async def _handle_wait_lyrics_text(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()
@@ -2909,12 +2925,11 @@ class BlastBotApp:
         if text == BTN_CONFIRM_BACK:
             st.lyrics_text = ""
             st.target_fragment = ""
-            st.stage = STAGE_WAIT_LYRICS_CHOICE
+            st.stage = STAGE_WAIT_LYRICS_TEXT
             await self.store.set(st)
             await message.answer(
-                "Пришли текст песни — это улучшит точность субтитров. "
-                "Если не отправишь, ИИ попробует распознать слова сам, но может ошибиться.",
-                reply_markup=_kb([BTN_SEND_LYRICS, BTN_SKIP_LYRICS]),
+                "Пришли текст песни обычным сообщением.",
+                reply_markup=ReplyKeyboardRemove(),
             )
             return
         await message.answer("Выбери: «Да» или «Вернуться назад».", reply_markup=_kb([BTN_CONFIRM_YES, BTN_CONFIRM_BACK]))
@@ -3018,6 +3033,14 @@ class BlastBotApp:
 
         chat_id = int(message.chat.id)
         user_id = message.from_user.id if message.from_user else chat_id
+        if not self._has_forced_alignment_reference_text(st):
+            st.stage = STAGE_WAIT_LYRICS_TEXT
+            await self.store.set(st)
+            await message.answer(
+                "Для запуска нужен текст песни. Пришли его обычным сообщением.",
+                reply_markup=ReplyKeyboardRemove(),
+            )
+            return
 
         # Check and reserve credits before generation (1 credit per version)
         versions = max(1, min(5, int(st.versions_count or 1)))
@@ -4231,6 +4254,8 @@ class BlastBotApp:
                 continue
             merged_exclude_seen.add(clean)
             merged_exclude.append(clean)
+        if not self._has_forced_alignment_reference_text(st):
+            raise RuntimeError("public_bot_forced_alignment_requires_reference_text")
         enqueue = await self.orchestrator.send_audio_s3(
             audio_s3_url=audio_s3_url,
             mode="with_gemini",
