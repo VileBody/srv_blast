@@ -490,17 +490,26 @@ class CreditsDB:
               EXISTS (SELECT 1 FROM activity_log a WHERE a.tg_id = u.tg_id AND a.event = 'view_packages') AS viewed_packages_list,
               EXISTS (SELECT 1 FROM activity_log a WHERE a.tg_id = u.tg_id AND a.event = 'select_package') AS viewed_package_details,
               EXISTS (SELECT 1 FROM activity_log a WHERE a.tg_id = u.tg_id AND a.event IN ('purchase_intent', 'purchase_intent_recurrent')) AS purchase_intent,
-              -- has_purchase: any real purchase signal — bot payment, externally-logged
-              -- manual revenue, or a manager activation (admin_activate / manual_activation
-              -- transactions are issued by the "Активировать пакет" admin button when a
-              -- customer paid outside the bot). This is the canonical "is a customer"
-              -- signal, used to keep paying users out of reactivation tiers (S/A/B/D).
+              -- has_purchase: canonical "is a paying customer" signal, used to keep
+              -- customers out of reactivation tiers (S/A/B/D). Three independent
+              -- triggers — any one of them is enough:
+              --   1. Confirmed bot payment (payments table).
+              --   2. Manually-logged external revenue (manual_payments — any row;
+              --      that table is only filled when a manager records real money).
+              --   3. Manual credit grants summing to more than 5 (transactions table,
+              --      excluding system reasons like initial_grant / payment / subscription).
+              --      Threshold > 5 is intentional: small 1-3-credit goodwill grants for
+              --      free re-tries shouldn't promote a non-paying user into "customer".
+              --      The smallest paid package is 5 credits (Trial), so >5 captures
+              --      real activations like Trial(5), Бласт(15), Glow(30), Импульс(50)
+              --      and the admin_activate flow.
               (
                 EXISTS (SELECT 1 FROM payments p WHERE p.tg_id = u.tg_id AND p.status = 'CONFIRMED')
                 OR EXISTS (SELECT 1 FROM manual_payments mp WHERE mp.tg_id = u.tg_id)
-                OR EXISTS (SELECT 1 FROM transactions t WHERE t.tg_id = u.tg_id
-                           AND t.reason IN ('admin_activate', 'manual_activation')
-                           AND t.amount > 0)
+                OR (SELECT COALESCE(SUM(t.amount), 0) FROM transactions t WHERE t.tg_id = u.tg_id
+                    AND t.amount > 0
+                    AND t.reason NOT IN ('initial_grant', 'payment', 'subscription', 'subscription_charge', 'refund')
+                   ) > 5
               ) AS has_purchase,
               EXISTS (SELECT 1 FROM payments p WHERE p.tg_id = u.tg_id AND p.status = 'CONFIRMED' AND p.package = '5') AS bought_trial,
               EXISTS (SELECT 1 FROM payments p WHERE p.tg_id = u.tg_id AND p.status = 'CONFIRMED' AND p.package = '15') AS bought_blast,
@@ -2644,15 +2653,19 @@ class CreditsDB:
         "NOT EXISTS (SELECT 1 FROM activity_log adm WHERE adm.tg_id = u.tg_id "
         "AND adm.event = 'admin_dm' AND adm.created_at >= NOW() - INTERVAL '7 days')"
     )
-    # exclude_paid mirrors the broadened has_purchase signal in user_signals view:
-    # bot payment OR external revenue logged in manual_payments OR manager activation
-    # via admin_activate / manual_activation transactions (used when a customer paid
-    # outside the bot back when there was no in-bot checkout).
+    # exclude_paid mirrors the has_purchase signal in user_signals view exactly:
+    # bot payment OR external revenue logged in manual_payments OR sum of manual
+    # credit grants (admin-initiated transactions, system reasons excluded) > 5.
+    # The >5 threshold deliberately ignores small goodwill grants of 1-3 credits.
     _EXC_PAID = (
         "NOT EXISTS (SELECT 1 FROM payments pp WHERE pp.tg_id = u.tg_id AND pp.status = 'CONFIRMED') "
         "AND NOT EXISTS (SELECT 1 FROM manual_payments mpp WHERE mpp.tg_id = u.tg_id) "
-        "AND NOT EXISTS (SELECT 1 FROM transactions tt WHERE tt.tg_id = u.tg_id "
-        "AND tt.reason IN ('admin_activate', 'manual_activation') AND tt.amount > 0)"
+        "AND COALESCE("
+        "  (SELECT SUM(tt.amount) FROM transactions tt WHERE tt.tg_id = u.tg_id "
+        "   AND tt.amount > 0 "
+        "   AND tt.reason NOT IN ('initial_grant', 'payment', 'subscription', 'subscription_charge', 'refund')), "
+        "  0"
+        ") <= 5"
     )
     _EXC_ANTI_FATIGUE = (
         "(SELECT COUNT(*) FROM lifecycle_fires lf48 WHERE lf48.tg_id = u.tg_id "
@@ -2961,8 +2974,8 @@ class CreditsDB:
             )}
             paid_set: set = set()
             if rule.get("exclude_paid", True):
-                # Mirror the broadened has_purchase: bot payments + manual_payments
-                # + admin_activate / manual_activation transactions.
+                # Mirror has_purchase exactly: bot payments + manual_payments + sum
+                # of admin-initiated credit grants > 5 (small goodwill grants ignored).
                 paid_rows = await conn.fetch(
                     "SELECT DISTINCT tg_id FROM ("
                     "  SELECT tg_id FROM payments WHERE status = 'CONFIRMED' AND tg_id = ANY($1::BIGINT[]) "
@@ -2971,8 +2984,9 @@ class CreditsDB:
                     "  UNION "
                     "  SELECT tg_id FROM transactions "
                     "    WHERE tg_id = ANY($1::BIGINT[]) "
-                    "    AND reason IN ('admin_activate', 'manual_activation') "
-                    "    AND amount > 0"
+                    "    AND amount > 0 "
+                    "    AND reason NOT IN ('initial_grant', 'payment', 'subscription', 'subscription_charge', 'refund') "
+                    "    GROUP BY tg_id HAVING SUM(amount) > 5"
                     ") src",
                     raw_ids,
                 )
@@ -3300,14 +3314,18 @@ class CreditsDB:
             "u.tg_id NOT IN (SELECT tg_id FROM admins) "
             "AND NOT EXISTS (SELECT 1 FROM activity_log bb WHERE bb.tg_id = u.tg_id AND bb.event = 'bot_blocked')"
         )
-        # Broadened "is paying customer" — same definition as has_purchase in
-        # user_signals view (bot payment OR manual_payments OR admin_activate /
-        # manual_activation transaction).
+        # "Not a paying customer" — same definition as has_purchase=FALSE in
+        # user_signals view: no bot payment, no manual_payments row, and total
+        # admin-initiated credit grants ≤ 5 (small goodwill grants ignored).
         not_paid_excl = (
             "NOT EXISTS (SELECT 1 FROM payments p WHERE p.tg_id = u.tg_id AND p.status = 'CONFIRMED') "
             "AND NOT EXISTS (SELECT 1 FROM manual_payments mp WHERE mp.tg_id = u.tg_id) "
-            "AND NOT EXISTS (SELECT 1 FROM transactions t WHERE t.tg_id = u.tg_id "
-            "AND t.reason IN ('admin_activate', 'manual_activation') AND t.amount > 0)"
+            "AND COALESCE("
+            "  (SELECT SUM(t.amount) FROM transactions t WHERE t.tg_id = u.tg_id "
+            "   AND t.amount > 0 "
+            "   AND t.reason NOT IN ('initial_grant', 'payment', 'subscription', 'subscription_charge', 'refund')), "
+            "  0"
+            ") <= 5"
         )
         if tier_code == "P2":
             # Referrers — anyone who sent a friend tag. PDF doesn't require excluding
