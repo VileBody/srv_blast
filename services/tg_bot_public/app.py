@@ -246,6 +246,14 @@ _AUDIO_PREPARE_TG_FAILED_USER_TEXT = (
     "Не получилось получить файл из Telegram. "
     "Попробуй отправить трек ещё раз, лучше в mp3 или m4a."
 )
+_PACKAGE_COMMAND_ALIASES = {
+    "/packets",
+    "/package",
+    "/packages",
+    "/зackages",
+    "/пакеты",
+    "/тарифы",
+}
 _RESULT_SOURCE_MISSING_USER_TEXT = (
     "Видео собрано, но ссылка на файл не вернулась. "
     "Мы уже увидели проблему и проверяем её."
@@ -394,6 +402,64 @@ def _mask_proxy_url(raw: str) -> str:
         rest = rest.split("@", 1)[1]
     host_port = rest.split("/", 1)[0]
     return f"{scheme}://{host_port}"
+
+
+def _message_chat_id(message: Message) -> int:
+    try:
+        return int(message.chat.id) if message.chat is not None else 0
+    except Exception:
+        return 0
+
+
+def _message_username(message: Message) -> str:
+    try:
+        if message.from_user is None:
+            return ""
+        return _normalize_username(getattr(message.from_user, "username", "") or "")
+    except Exception:
+        return ""
+
+
+def _message_update_id(message: Message) -> str:
+    try:
+        event_update = getattr(message, "event_update", None)
+        uid = getattr(event_update, "update_id", "")
+        return str(uid or "")
+    except Exception:
+        return ""
+
+
+def _message_text_kind(message: Message) -> str:
+    text = str(getattr(message, "text", "") or "").strip()
+    if text:
+        if text.startswith("/"):
+            return "command"
+        if _is_control_button_text(text):
+            return "button"
+        return "text"
+    if getattr(message, "audio", None) is not None:
+        return "audio"
+    if getattr(message, "document", None) is not None:
+        return "document"
+    if getattr(message, "video", None) is not None:
+        return "video"
+    if getattr(message, "photo", None) is not None:
+        return "photo"
+    return "other"
+
+
+def _normalized_command_text(text: str) -> str:
+    raw = str(text or "").strip()
+    if not raw.startswith("/"):
+        return ""
+    first = raw.split(maxsplit=1)[0].strip().lower()
+    if "@" in first:
+        first = first.split("@", 1)[0]
+    return first
+
+
+def _is_packages_command_text(text: str) -> bool:
+    return _normalized_command_text(text) in _PACKAGE_COMMAND_ALIASES
 
 
 _SCENES_STYLE_TAGS = {"TYPE_1", "TYPE_2", "TYPE_3", "TYPE_4", "TYPE_5", "TYPE_6"}
@@ -1835,6 +1901,62 @@ class BlastBotApp:
             return True
         return False
 
+    def _log_incoming_message(self, message: Message, *, handler: str, stage: str = "") -> None:
+        text = str(getattr(message, "text", "") or "")
+        log.info(
+            "tg_in handler=%s chat=%s username=%s update_id=%s stage=%s kind=%s text=%r",
+            handler,
+            _message_chat_id(message),
+            _message_username(message),
+            _message_update_id(message),
+            str(stage or ""),
+            _message_text_kind(message),
+            _compact_text(text, limit=120),
+        )
+
+    async def _timed_answer(self, message: Message, text: str, *, op: str, **kwargs):
+        chat_id = _message_chat_id(message)
+        t0 = time.monotonic()
+        try:
+            result = await message.answer(text, **kwargs)
+        except Exception as exc:
+            log.warning(
+                "tg_out_failed op=%s method=answer chat=%s dur_ms=%d err=%r",
+                op,
+                chat_id,
+                int((time.monotonic() - t0) * 1000.0),
+                exc,
+            )
+            raise
+        log.info(
+            "tg_out_ok op=%s method=answer chat=%s dur_ms=%d",
+            op,
+            chat_id,
+            int((time.monotonic() - t0) * 1000.0),
+        )
+        return result
+
+    async def _timed_send_photo(self, *, bot: Bot, chat_id: int, photo: str, op: str, **kwargs):
+        t0 = time.monotonic()
+        try:
+            result = await bot.send_photo(chat_id, photo=photo, **kwargs)
+        except Exception as exc:
+            log.warning(
+                "tg_out_failed op=%s method=send_photo chat=%s dur_ms=%d err=%r",
+                op,
+                int(chat_id),
+                int((time.monotonic() - t0) * 1000.0),
+                exc,
+            )
+            raise
+        log.info(
+            "tg_out_ok op=%s method=send_photo chat=%s dur_ms=%d",
+            op,
+            int(chat_id),
+            int((time.monotonic() - t0) * 1000.0),
+        )
+        return result
+
     async def _maintenance_enabled(self) -> bool:
         if bool(self.settings.tg_maintenance_mode):
             return True
@@ -1973,9 +2095,11 @@ class BlastBotApp:
             if message.chat is None:
                 return
             chat_id = int(message.chat.id)
+            self._log_incoming_message(message, handler="start")
             if await self._maybe_reply_maintenance_stub(message):
                 return
             st = await self.store.get(chat_id)
+            self._log_incoming_message(message, handler="start_state", stage=st.stage)
             user_changed = self._sync_state_user_from_message(st, message)
             if user_changed:
                 await self.store.set(st)
@@ -2020,14 +2144,16 @@ class BlastBotApp:
             await self.credits_db.log_event(chat_id, "start", f"@{username}" if username else "")
             await self._move_to_onboarding(chat_id, message)
 
-        @self.router.message(Command("packets"))
+        @self.router.message(Command("packets", "packages", "package"))
         async def _on_packets(message: Message) -> None:
             if message.chat is None:
                 return
             chat_id = int(message.chat.id)
+            self._log_incoming_message(message, handler="packages_command")
             if await self._maybe_reply_maintenance_stub(message):
                 return
             st = await self.store.get(chat_id)
+            self._log_incoming_message(message, handler="packages_command_state", stage=st.stage)
             if st.stage == STAGE_PROCESSING:
                 await message.answer("Трек в процессе, подожди завершения.\nПакеты можно посмотреть после.")
                 return
@@ -2052,9 +2178,11 @@ class BlastBotApp:
             if message.chat is None:
                 return
             chat_id = int(message.chat.id)
+            self._log_incoming_message(message, handler="sendtrack_command")
             if await self._maybe_reply_maintenance_stub(message):
                 return
             st = await self.store.get(chat_id)
+            self._log_incoming_message(message, handler="sendtrack_command_state", stage=st.stage)
             if st.stage == STAGE_PROCESSING:
                 await message.answer("Трек в процессе, подожди завершения.")
                 return
@@ -2103,9 +2231,14 @@ class BlastBotApp:
             user_changed = self._sync_state_user_from_message(st, message)
             if user_changed:
                 await self.store.set(st)
+            self._log_incoming_message(message, handler="message", stage=st.stage)
 
             if st.stage == STAGE_PROCESSING:
                 await message.answer("Трек в процессе, подожди завершения.")
+                return
+
+            if _is_packages_command_text(str(message.text or "")):
+                await self._show_all_packages(message, st)
                 return
 
             if st.stage == STAGE_WAIT_START:
@@ -2239,6 +2372,7 @@ class BlastBotApp:
             BotCommand(command="start", description="Запустить бота"),
             BotCommand(command="sendtrack", description="Отправить трек"),
             BotCommand(command="packets", description="Посмотреть тарифы"),
+            BotCommand(command="packages", description="Посмотреть тарифы"),
             BotCommand(command="cancelsubscription", description="Отменить подписку"),
         ])
 
@@ -2328,19 +2462,24 @@ class BlastBotApp:
             "Нажми на кнопку рядом с кнопкой отправки сообщения, чтобы продолжить."
         )
         if banner.exists():
-            await message.answer_photo(
-                FSInputFile(banner),
+            await self._timed_send_photo(
+                bot=message.bot,
+                chat_id=chat_id,
+                photo=FSInputFile(banner),
+                op="onboarding_banner",
                 caption=welcome_text,
                 reply_markup=_kb([BTN_LETS_GO]),
             )
         else:
-            await message.answer(welcome_text, reply_markup=_kb([BTN_LETS_GO]))
+            await self._timed_answer(message, welcome_text, op="onboarding_text", reply_markup=_kb([BTN_LETS_GO]))
 
     async def _move_to_subscription(self, chat_id: int, message: Message) -> None:
         await self.store.set_stage(chat_id, STAGE_WAIT_SUBSCRIPTION)
-        await message.answer(
+        await self._timed_answer(
+            message,
             "Супер! Тогда не будем медлить, единственное условие — подписка на наш тгк: @impulsemarketing\n\n"
             "Там делимся главными фишками по продукту и продвижения, которые помогают эффективно вести контент артисту.",
+            op="subscription_prompt",
             reply_markup=_kb([BTN_SUBSCRIBED]),
         )
 
@@ -2349,14 +2488,26 @@ class BlastBotApp:
             log.info("subscription_check_bypassed_for_telegram_test_env user_id=%s", user_id)
             return True
         bot = self._require_bot()
+        t0 = time.monotonic()
         try:
             member = await bot.get_chat_member(
                 chat_id=self.settings.subscription_channel,
                 user_id=user_id,
             )
+            log.info(
+                "tg_api_ok op=subscription_check method=get_chat_member user_id=%s status=%s dur_ms=%d",
+                user_id,
+                str(getattr(member, "status", "")),
+                int((time.monotonic() - t0) * 1000.0),
+            )
             return member.status in {"member", "administrator", "creator"}
         except Exception as e:
-            log.warning("subscription check failed for user_id=%s: %s", user_id, e)
+            log.warning(
+                "tg_api_failed op=subscription_check method=get_chat_member user_id=%s dur_ms=%d err=%s",
+                user_id,
+                int((time.monotonic() - t0) * 1000.0),
+                e,
+            )
             return False
 
     async def _handle_wait_start(self, message: Message, st: ChatState) -> None:
@@ -2367,12 +2518,17 @@ class BlastBotApp:
 
     async def _handle_wait_subscription(self, message: Message, st: ChatState) -> None:
         if str(message.text or "").strip() != BTN_SUBSCRIBED:
-            await message.answer("Нажми «Подписался!», когда оформишь подписку.", reply_markup=_kb([BTN_SUBSCRIBED]))
+            await self._timed_answer(
+                message,
+                "Нажми «Подписался!», когда оформишь подписку.",
+                op="subscription_button_reminder",
+                reply_markup=_kb([BTN_SUBSCRIBED]),
+            )
             return
         user_id = int(message.from_user.id) if message.from_user else 0
         subscribed = await self._check_subscription(user_id)
         if not subscribed:
-            await message.answer("Думаешь, мы не будем проверять подписку?)")
+            await self._timed_answer(message, "Думаешь, мы не будем проверять подписку?)", op="subscription_not_ok")
             await self._move_to_subscription(int(message.chat.id), message)
             return
         chat_id = int(message.chat.id)
@@ -2390,8 +2546,10 @@ class BlastBotApp:
         await self.store.reset_to_wait_audio(chat_id)
         bal = await self.credits_db.get_balance(chat_id)
         bal_text = f"\n\nДоступно генераций: {bal}" if bal > 0 else ""
-        await message.answer(
+        await self._timed_answer(
+            message,
             f"Привет. Отправь трек аудио-файлом, и я соберу клип.{bal_text}",
+            op="wait_audio_prompt",
             reply_markup=_kb([BTN_SEND_TRACK]),
         )
 
@@ -3270,6 +3428,50 @@ class BlastBotApp:
         ),
     }
 
+    async def _send_package_photo(self, *, chat_id: int, package_name: str, op: str) -> bool:
+        s3_key = self._PKG_PHOTOS.get(str(package_name or ""))
+        if not s3_key:
+            return False
+        if not self.settings.s3_bucket_asset_storage:
+            log.warning("pkg_photo_send_skipped pkg=%s reason=empty_asset_bucket", package_name)
+            return False
+
+        try:
+            t0 = time.monotonic()
+            s3_url = make_s3_url(self.settings.s3_bucket_asset_storage, s3_key)
+            presigned = await asyncio.to_thread(
+                self.s3.generate_presigned_for_s3_url,
+                s3_url=s3_url,
+                expires_s=None,
+            )
+            log.info(
+                "pkg_photo_presigned pkg=%s key=%s dur_ms=%d",
+                package_name,
+                s3_key,
+                int((time.monotonic() - t0) * 1000.0),
+            )
+            await self._timed_send_photo(
+                bot=self._require_bot(),
+                chat_id=int(chat_id),
+                photo=presigned,
+                op=op,
+            )
+            return True
+        except Exception as e:
+            log.warning("pkg_photo_send_failed pkg=%s key=%s err=%s", package_name, s3_key, str(e))
+            return False
+
+    async def _send_package_overview_photos(self, *, chat_id: int) -> None:
+        sent = 0
+        for package_name in (BTN_PKG_TRIAL, BTN_PKG_BLAST, BTN_PKG_GLOW, BTN_PKG_IMPULSE):
+            if await self._send_package_photo(
+                chat_id=int(chat_id),
+                package_name=package_name,
+                op="packages_overview_photo",
+            ):
+                sent += 1
+        log.info("pkg_overview_photos_done chat=%s sent=%d total=4", int(chat_id), sent)
+
     # ── Post-generation flow handlers ────────────────────────────────
 
     async def _send_rating_prompt(self, bot, chat_id: int, text: str) -> None:
@@ -3462,11 +3664,14 @@ class BlastBotApp:
             reply_markup=_kb([BTN_SURVEY_DONE]),
         )
 
-    async def _show_all_packages(self, message: Message, st: ChatState) -> None:
+    async def _show_all_packages(self, message: Message, st: ChatState, *, include_photos: bool = True) -> None:
         await self.credits_db.log_event(st.chat_id, "view_packages")
         st.stage = STAGE_ALL_PACKAGES
         await self.store.set(st)
-        await message.answer(
+        if include_photos:
+            await self._send_package_overview_photos(chat_id=st.chat_id)
+        await self._timed_answer(
+            message,
             "Вот пул пакетов:\n"
             "— Бласт Trial за 990₽ (5 роликов)\n"
             "— Бласт за 1 990₽/мес (15 роликов)\n"
@@ -3475,6 +3680,7 @@ class BlastBotApp:
             "О каком рассказать подробнее?\n\n"
             "/sendtrack — вернуться к генерации\n"
             "/cancelsubscription — отменить подписку",
+            op="packages_list",
             reply_markup=_kb([BTN_PKG_TRIAL], [BTN_PKG_BLAST], [BTN_PKG_GLOW], [BTN_PKG_IMPULSE]),
         )
 
@@ -3752,25 +3958,15 @@ class BlastBotApp:
             st.selected_package = text
             st.stage = STAGE_PACKAGE_INFO
             await self.store.set(st)
-            s3_key = self._PKG_PHOTOS.get(text)
-            if s3_key and self.settings.s3_bucket_asset_storage:
-                bot = self._require_bot()
-                try:
-                    s3_url = make_s3_url(self.settings.s3_bucket_asset_storage, s3_key)
-                    presigned = await asyncio.to_thread(
-                        self.s3.generate_presigned_for_s3_url,
-                        s3_url=s3_url,
-                        expires_s=None,
-                    )
-                    await bot.send_photo(st.chat_id, photo=presigned)
-                except Exception as e:
-                    log.warning("pkg_photo_send_failed pkg=%s err=%s", text, str(e))
-            await message.answer(
+            await self._send_package_photo(chat_id=st.chat_id, package_name=text, op="package_detail_photo")
+            await self._timed_answer(
+                message,
                 self._PKG_TEXTS[text] + "\n\n/sendtrack — вернуться к генерации",
+                op="package_detail_text",
                 reply_markup=_kb([BTN_TO_TARIFFS], [BTN_NOT_NOW], [BTN_PURCHASE]),
             )
         else:
-            await self._show_all_packages(message, st)
+            await self._show_all_packages(message, st, include_photos=False)
 
     # --- Package info (К тарифам / Пока неактуально / Приобрести) ---
     async def _handle_package_info(self, message: Message, st: ChatState) -> None:
@@ -5947,6 +6143,7 @@ class BlastBotApp:
         return p
 
     async def _handle_telegram_webhook(self, request: web.Request, *, bot: Bot) -> web.Response:
+        t0 = time.monotonic()
         expected_secret = str(self.settings.tg_webhook_secret or "").strip()
         if expected_secret:
             got_secret = str(request.headers.get(_TG_WEBHOOK_SECRET_HEADER) or "").strip()
@@ -5959,15 +6156,35 @@ class BlastBotApp:
             raise web.HTTPBadRequest(text="invalid payload")
 
         update_id = int(payload.get("update_id") or 0)
+        log.info("tg_webhook_in update_id=%s keys=%s", update_id, sorted(str(k) for k in payload.keys()))
         if update_id > 0:
             is_new = await self.store.mark_webhook_update_seen(
                 update_id=update_id,
                 ttl_s=int(self.settings.tg_webhook_dedup_ttl_s),
             )
             if not is_new:
+                log.info(
+                    "tg_webhook_done update_id=%s dedup=1 dur_ms=%d",
+                    update_id,
+                    int((time.monotonic() - t0) * 1000.0),
+                )
                 return web.json_response({"ok": True, "dedup": True})
 
-        await self.dp.feed_raw_update(bot, payload)
+        try:
+            await self.dp.feed_raw_update(bot, payload)
+        except Exception as exc:
+            log.warning(
+                "tg_webhook_failed update_id=%s dur_ms=%d err=%r",
+                update_id,
+                int((time.monotonic() - t0) * 1000.0),
+                exc,
+            )
+            raise
+        log.info(
+            "tg_webhook_done update_id=%s dedup=0 dur_ms=%d",
+            update_id,
+            int((time.monotonic() - t0) * 1000.0),
+        )
         return web.json_response({"ok": True})
 
     async def _run_webhook(self, *, bot: Bot) -> None:
