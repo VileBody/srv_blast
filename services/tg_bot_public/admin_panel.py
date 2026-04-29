@@ -358,7 +358,7 @@ _TIER_SPEC: Dict[str, Dict[str, Any]] = {
     "A2": {
         "title": "Не запустили генерацию",
         "group": "A", "color": "#e67e22",
-        "rule": "audio_uploaded есть AND generation_started НЕТ AND нет оплаты",
+        "rule": "audio_uploaded есть AND gens_done=0 AND нет оплаты",
         "task": "Довести до generation_started",
         "channel": "Автомат, 2 шага",
         "angle": "Шаг 1 — короткий пинок. Шаг 2 — предложение разобраться через @impulsemanage",
@@ -374,7 +374,8 @@ _TIER_SPEC: Dict[str, Dict[str, Any]] = {
             "trigger": {
                 "event": "audio_uploaded",
                 "hours_min": 0.5, "hours_max": 24,
-                "blocking_events": ["generation_started"],
+                "blocking_events": ["generation_started", "generation_done"],
+                "require_gens_eq": 0,
             },
             "cooldown_days": 14,
         },
@@ -464,7 +465,7 @@ _TIER_SPEC: Dict[str, Dict[str, Any]] = {
     "B3": {
         "title": "Стартовали, не подписались",
         "group": "B", "color": "#d35400",
-        "rule": "start есть AND subscription_ok НЕТ AND bot_blocked=false",
+        "rule": "start есть AND subscription_ok НЕТ AND gens_done=0 AND bot_blocked=false",
         "task": "Довести до subscription_ok",
         "channel": "Автомат",
         "angle": "Что внутри + насколько быстро",
@@ -484,6 +485,7 @@ _TIER_SPEC: Dict[str, Dict[str, Any]] = {
                 "event": "start",
                 "hours_min": 1, "hours_max": 720,
                 "blocking_events": ["subscription_ok"],
+                "require_gens_eq": 0,
             },
             "cooldown_days": 14,
         },
@@ -550,6 +552,10 @@ _DEFAULT_LIFECYCLE_RULES: List[Dict[str, Any]] = [
             "event": "start",
             "hours_min": 1, "hours_max": 720,
             "blocking_events": ["subscription_ok"],
+            # Strict gens=0: users who restarted /start after generating a video
+            # have an old `start` event but generation_done events too — they
+            # shouldn't be classified as "стартовали, не подписались".
+            "require_gens_eq": 0,
         },
         "message_text": _TIER_SPEC["B3"]["trigger_text"],
         "cooldown_days": 14,
@@ -563,7 +569,10 @@ _DEFAULT_LIFECYCLE_RULES: List[Dict[str, Any]] = [
         "trigger": {
             "event": "audio_uploaded",
             "hours_min": 0.5, "hours_max": 24,
-            "blocking_events": ["generation_started"],
+            # Block on generation_done as well as generation_started — old data
+            # sometimes has missing started events but completed gens.
+            "blocking_events": ["generation_started", "generation_done"],
+            "require_gens_eq": 0,
         },
         "message_text": _TIER_SPEC["A2"]["trigger_text"],
         "cooldown_days": 14,
@@ -577,7 +586,8 @@ _DEFAULT_LIFECYCLE_RULES: List[Dict[str, Any]] = [
         "trigger": {
             "event": "audio_uploaded",
             "hours_min": 24, "hours_max": 720,
-            "blocking_events": ["generation_started"],
+            "blocking_events": ["generation_started", "generation_done"],
+            "require_gens_eq": 0,
         },
         "message_text": (
             "{{first_name}}, твой трек всё ещё ждёт генерации.\n\n"
@@ -4486,14 +4496,13 @@ def build_app(
 
     async def _resolve_tier_count(tier_code: str, primary_counts: Dict[str, int]) -> int:
         """Get count for a tier — uses primary view counts for primary tiers,
-        and audience-only resolver for P2/D1/D2.
+        and the fast audience-only count resolver for P2/D1/D2.
         """
         spec = _TIER_SPEC.get(tier_code)
         if not spec:
             return 0
         if spec.get("audience_only"):
-            ids = await credits_db._resolve_audience_only_tier(tier_code)
-            return len(ids or [])
+            return await credits_db.audience_only_tier_count(tier_code)
         return int(primary_counts.get(tier_code, 0))
 
     async def _resolve_tier_users(tier_code: str, limit: int = 2000) -> List[Dict[str, Any]]:
@@ -4509,10 +4518,14 @@ def build_app(
         selected_tier = str(request.query_params.get("tier") or "").strip().upper()
         primary_counts = await credits_db.tier_counts()
 
-        # Pre-compute counts for all tiers including audience-only.
-        all_counts: Dict[str, int] = {}
-        for code, spec in _TIER_SPEC.items():
-            all_counts[code] = await _resolve_tier_count(code, primary_counts)
+        # Pre-compute counts for all tiers including audience-only — run in
+        # parallel: 12 primary tiers are O(1) dict lookups, but the 3 audience-only
+        # tiers (P2/D1/D2) hit the DB. Sequential awaits would be 3× slower.
+        codes = list(_TIER_SPEC.keys())
+        count_results = await asyncio.gather(
+            *[_resolve_tier_count(code, primary_counts) for code in codes]
+        )
+        all_counts: Dict[str, int] = dict(zip(codes, count_results))
 
         # ── Top: tier picker grid (no checklist; tier-first UX). ──────
         groups_html = ""
@@ -4571,17 +4584,26 @@ def build_app(
     async def _render_tier_detail(tier_code: str) -> str:
         """Render the per-tier detail card: spec + active triggers + recent fires + users."""
         spec = _TIER_SPEC[tier_code]
-        users_rows = await _resolve_tier_users(tier_code, limit=2000)
+        # Run independent queries in parallel: user list, rules list, and per-tier
+        # outreach lookup are all I/O-bound and don't depend on each other.
+        users_rows, rules_in_tier = await asyncio.gather(
+            _resolve_tier_users(tier_code, limit=2000),
+            credits_db.list_lifecycle_rules(tier=tier_code),
+        )
         users_count = len(users_rows)
 
-        # Active triggers attached to this tier.
-        rules_in_tier = await credits_db.list_lifecycle_rules(tier=tier_code)
+        # Per-rule fires fetched in parallel (each rule = one query).
+        fires_lists: List[List[Dict[str, Any]]] = (
+            list(await asyncio.gather(*[
+                credits_db.recent_lifecycle_fires(rule["id"], limit=20)
+                for rule in rules_in_tier
+            ]))
+            if rules_in_tier else []
+        )
         rules_html = await _render_tier_rules_panel(tier_code, rules_in_tier)
 
-        # Recent fires across all rules for this tier (last 50).
-        fires_rows: List[Dict[str, Any]] = []
-        for rule in rules_in_tier:
-            fires_rows.extend(await credits_db.recent_lifecycle_fires(rule["id"], limit=20))
+        # Flatten + sort + cap to 50 most recent fires across the tier's rules.
+        fires_rows: List[Dict[str, Any]] = [f for sub in fires_lists for f in sub]
         fires_rows.sort(key=lambda r: r.get("created_at") or "", reverse=True)
         fires_rows = fires_rows[:50]
         fires_html = _render_fires_table(fires_rows, with_rule=False)
@@ -4723,9 +4745,12 @@ def build_app(
                 '<p style="color:#666">Триггеров для этого тира пока нет. '
                 f'<a href="/admin/lifecycle?tier={tier_code}#new">Создать первый →</a></p></div>'
             )
+        # Parallel per-rule 24h stats — was the slowest part of detail rendering.
+        all_stats = await asyncio.gather(
+            *[credits_db.lifecycle_rule_stats_24h(rule["id"]) for rule in rules]
+        )
         body = ''
-        for rule in rules:
-            stats = await credits_db.lifecycle_rule_stats_24h(rule["id"])
+        for rule, stats in zip(rules, all_stats):
             sent = stats.get("sent", 0)
             blocked = stats.get("blocked", 0)
             failed = stats.get("failed", 0)
@@ -4939,11 +4964,14 @@ def build_app(
         )
 
         # ── Rules list ──
+        # Parallel per-rule 24h stats lookup.
+        all_rule_stats = await asyncio.gather(
+            *[credits_db.lifecycle_rule_stats_24h(r["id"]) for r in rules]
+        ) if rules else []
         tr = []
-        for r in rules:
+        for r, stats in zip(rules, all_rule_stats):
             trig_lbl = _TRIGGER_LABELS.get(r["trigger_type"], r["trigger_type"])
             trig_summary = _summarize_trigger(r["trigger_type"], r.get("trigger") or {})
-            stats = await credits_db.lifecycle_rule_stats_24h(r["id"])
             sent = stats.get("sent", 0)
             blocked = stats.get("blocked", 0)
             failed = stats.get("failed", 0)

@@ -71,6 +71,11 @@ CREATE TABLE IF NOT EXISTS activity_log (
 CREATE INDEX IF NOT EXISTS idx_act_tg_id      ON activity_log(tg_id);
 CREATE INDEX IF NOT EXISTS idx_act_created_at ON activity_log(created_at);
 CREATE INDEX IF NOT EXISTS idx_act_event      ON activity_log(event);
+-- Composite indexes — dramatically speed up the user_signals view, which runs
+-- ~17 EXISTS / COUNT / MAX subqueries per user keyed on (tg_id, event[, created_at]).
+CREATE INDEX IF NOT EXISTS idx_act_tg_event   ON activity_log(tg_id, event);
+CREATE INDEX IF NOT EXISTS idx_act_tg_event_created ON activity_log(tg_id, event, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_act_tg_created ON activity_log(tg_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS payments (
     id            BIGSERIAL PRIMARY KEY,
@@ -95,6 +100,9 @@ CREATE TABLE IF NOT EXISTS payments (
 CREATE INDEX IF NOT EXISTS idx_pay_tg_id       ON payments(tg_id);
 CREATE INDEX IF NOT EXISTS idx_pay_status      ON payments(status);
 CREATE INDEX IF NOT EXISTS idx_pay_payment_id  ON payments(payment_id);
+-- Composite — speeds up "EXISTS payments WHERE tg_id=X AND status='CONFIRMED'"
+-- which runs once per user inside user_signals.has_purchase.
+CREATE INDEX IF NOT EXISTS idx_pay_tg_status   ON payments(tg_id, status);
 
 CREATE TABLE IF NOT EXISTS utm_touches (
     id             BIGSERIAL PRIMARY KEY,
@@ -564,7 +572,11 @@ class CreditsDB:
                 -- ── A group (warm; only for not-yet-purchased users) ──────
                 WHEN NOT us.bot_blocked AND us.gens_done = 1 AND us.last_rating = 'high'
                      AND NOT us.referral_made AND NOT us.has_purchase THEN 'A1'
-                WHEN NOT us.bot_blocked AND us.audio_uploaded AND NOT us.generation_started
+                -- A2: uploaded audio but didn't actually finish a generation. Use
+                -- gens_done = 0 (canonical "no completed generations") instead of
+                -- NOT generation_started — old data sometimes has missing started
+                -- events for completed gens, which let users with gens=2 leak in.
+                WHEN NOT us.bot_blocked AND us.audio_uploaded AND us.gens_done = 0
                      AND NOT us.has_purchase THEN 'A2'
                 WHEN NOT us.bot_blocked AND us.gens_done = 1 AND us.last_rating IS NULL
                      AND NOT us.has_purchase THEN 'A3'
@@ -575,7 +587,11 @@ class CreditsDB:
                 WHEN NOT us.bot_blocked AND us.last_rating = 'low'
                      AND NOT us.feedback_form_clicked
                      AND NOT us.has_purchase THEN 'B2'
-                WHEN NOT us.bot_blocked AND NOT us.subscribed AND NOT us.has_purchase THEN 'B3'
+                -- B3: explicitly require gens_done = 0 so users who restarted the
+                -- bot (clicked /start again after generating) don't get classified
+                -- as "стартовали, не подписались".
+                WHEN NOT us.bot_blocked AND NOT us.subscribed AND us.gens_done = 0
+                     AND NOT us.has_purchase THEN 'B3'
 
                 -- D group is computed via audience-only resolvers (manual broadcasts);
                 -- not assigned as a primary tier because it's a passive segment that
@@ -3427,6 +3443,63 @@ class CreditsDB:
                 )
             return [int(r["tg_id"]) for r in rows]
         return None  # primary tier — caller queries user_tiers
+
+    async def audience_only_tier_count(self, tier_code: str) -> int:
+        """Fast COUNT(*) for audience-only tiers without materializing all ids.
+
+        Used by /admin/tiers to render the tile counts without pulling 10k+ tg_ids
+        across the network for every page load.
+        """
+        pool = self._pool_or_fail()
+        code = str(tier_code).upper()
+        common_excl = (
+            "u.tg_id NOT IN (SELECT tg_id FROM admins) "
+            "AND NOT EXISTS (SELECT 1 FROM activity_log bb WHERE bb.tg_id = u.tg_id AND bb.event = 'bot_blocked')"
+        )
+        not_paid_excl = (
+            "NOT EXISTS (SELECT 1 FROM payments p WHERE p.tg_id = u.tg_id AND p.status = 'CONFIRMED') "
+            "AND NOT EXISTS (SELECT 1 FROM manual_payments mp WHERE mp.tg_id = u.tg_id) "
+            "AND COALESCE("
+            "  (SELECT SUM(t.amount) FROM transactions t WHERE t.tg_id = u.tg_id "
+            "   AND t.amount > 0 "
+            "   AND t.reason NOT IN ('initial_grant', 'payment', 'subscription', 'subscription_charge', 'refund')), "
+            "  0"
+            ") <= 5"
+        )
+        async with pool.acquire() as conn:
+            if code == "P2":
+                val = await conn.fetchval(
+                    "SELECT COUNT(*) FROM users u "
+                    "WHERE EXISTS (SELECT 1 FROM activity_log a WHERE a.tg_id = u.tg_id AND a.event = 'referral_sent') "
+                    f"AND {common_excl}"
+                )
+                return int(val or 0)
+            if code == "D1":
+                val = await conn.fetchval(
+                    "SELECT COUNT(*) FROM users u "
+                    f"WHERE {common_excl} "
+                    f"AND {not_paid_excl} "
+                    "AND COALESCE("
+                    "  (SELECT MAX(created_at) FROM activity_log a WHERE a.tg_id = u.tg_id), "
+                    "  u.created_at"
+                    ") < NOW() - INTERVAL '30 days'"
+                )
+                return int(val or 0)
+            if code == "D2":
+                val = await conn.fetchval(
+                    "SELECT COUNT(*) FROM users u "
+                    f"WHERE {common_excl} "
+                    f"AND {not_paid_excl} "
+                    "AND COALESCE("
+                    "  (SELECT MAX(created_at) FROM activity_log a WHERE a.tg_id = u.tg_id), "
+                    "  u.created_at"
+                    ") < NOW() - INTERVAL '30 days' "
+                    "AND EXISTS (SELECT 1 FROM activity_log v WHERE v.tg_id = u.tg_id AND v.event = 'select_package') "
+                    "AND (SELECT detail FROM activity_log r WHERE r.tg_id = u.tg_id AND r.event = 'rate_video' "
+                    "     ORDER BY r.created_at DESC LIMIT 1) = 'high'"
+                )
+                return int(val or 0)
+        return 0
 
     async def list_audience_only_tier_users(self, tier_code: str, limit: int = 1000) -> List[Dict[str, Any]]:
         """Detail rows for P2/D1/D2 (audience-only tiers) in same shape as list_tier_users."""
