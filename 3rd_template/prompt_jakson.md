@@ -45,8 +45,8 @@ For every consecutive word pair compute:
 5. Minimum scene duration: 0.7s. If splitting creates a shorter scene, keep merged.
 
 Repeating hook phrase (same 1–2 words opening every line, ≥3 times):
-- First occurrence → TYPE_4 (standalone, red)
-- Subsequent occurrences → TYPE_5 (outline swirl)
+- Every 1–2 word occurrence → TYPE_4 (standalone, red)
+- Never use TYPE_5 for 1–2 word repeated hooks.
 - Never omit hook words. Each gets its own scene.
 
 ### Step 3 — Assign a type
@@ -116,7 +116,7 @@ TYPE_6
 
 ### Step 4 — Decision logic (priority order)
 
-1. Hook phrase → TYPE_4 (first) or TYPE_5 (subsequent)
+1. Hook phrase → TYPE_4. Never use TYPE_5 for 1–2 word repeated hooks.
 2. 1 word → TYPE_4. Check neighbors first:
    - gap ≤ 0.1s + inseparable phrase → TYPE_4 with 2 words (Case B)
    - gap ≤ 0.1s + both are peak candidates → merge TYPE_4 (Case A)
@@ -141,7 +141,7 @@ Timestamps:
 - Round numbers (0.0, 1.5, 2.0) mean fake timestamps — fix them.
 
 Structure:
-- TYPE_5: words 4–5 AND duration > 3.0s. If not → TYPE_1.
+- TYPE_5: words 4–5 AND duration > 3.0s. If a TYPE_5 candidate has 1–2 words, use TYPE_4; otherwise use TYPE_1.
 - TYPE_3: single line only. last_gap >= 0.25s. last word ≥ 3 chars.
 - TYPE_4: 1–2 words on one line. Never split across lines.
 - TYPE_4: duration >= 0.44s. If shorter → reassign to TYPE_1.

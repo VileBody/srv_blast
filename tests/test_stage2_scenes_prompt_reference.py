@@ -23,5 +23,7 @@ def test_scenes_prompt_keeps_reference_sections_and_wrapper_contract() -> None:
     assert "Return ONLY raw JSON matching Scenes3rdPayload." in SYSTEM_PART
     assert "clip.start MUST equal stage1.audio.clip_start_abs EXACTLY." in SYSTEM_PART
     assert "All scene/start/end/word_timings values are ABSOLUTE full-track seconds." in SYSTEM_PART
+    assert "Never use TYPE_5 for 1–2 word repeated hooks." in SYSTEM_PART
+    assert "Subsequent occurrences -> TYPE_5" not in SYSTEM_PART
     assert "```json" not in SYSTEM_PART
     assert "No markdown." in SYSTEM_PART

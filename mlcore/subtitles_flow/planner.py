@@ -545,6 +545,35 @@ class Scenes3rdPlanner(_FlowPlannerBase):
             )
         )
 
+    def _maybe_fallback_type5_short_hook_to_type4(
+        self,
+        *,
+        scene: Scene3rdPayloadScene,
+        segment_id: str,
+        warnings: List[SubtitleFlowWarning],
+    ) -> None:
+        if str(scene.type) != "TYPE_5":
+            return
+
+        words = [str(w).strip() for w in list(scene.words or []) if str(w).strip()]
+        n = len(words)
+        if n not in {1, 2}:
+            return
+
+        dur = float(scene.end) - float(scene.start)
+        scene.type = "TYPE_4"
+        scene.lines = [words]
+        scene.focus_word = " ".join(words)
+        scene.focus_style = "red"
+        warnings.append(
+            SubtitleFlowWarning(
+                mode=self.mode,
+                segment_id=segment_id,
+                reason="type5_short_hook_fallback_type4",
+                action=f"words={n} dur={dur:.3f}",
+            )
+        )
+
     def _validate_reference_scene_contract(self, scene: Scene3rdPayloadScene) -> None:
         words = [str(w).strip() for w in scene.words if str(w).strip()]
         if not words:
@@ -724,6 +753,11 @@ class Scenes3rdPlanner(_FlowPlannerBase):
                 warnings=warnings,
             )
             self._maybe_fallback_type3_last_gap_to_type1(
+                scene=scene,
+                segment_id=seg_id,
+                warnings=warnings,
+            )
+            self._maybe_fallback_type5_short_hook_to_type4(
                 scene=scene,
                 segment_id=seg_id,
                 warnings=warnings,
