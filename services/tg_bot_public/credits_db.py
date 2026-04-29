@@ -2699,9 +2699,15 @@ class CreditsDB:
     ) -> tuple[str, List[Any]]:
         """Return (sql_join_and_where, params) for the trigger event match.
 
-        The fragment exposes alias `u` (joined to users) and assumes the caller
-        wraps it inside a SELECT. Params are positional and the SQL uses $1..$N
-        relative to the position they're passed in.
+        Semantics — matches user_signals.last_rating exactly so triggers and the
+        tier view stay in sync:
+          • Find the LATEST `event` of the requested type per user (any detail).
+          • If `event_detail` is set, that latest event's detail must equal it
+            (a user who rated mid_low at T1 then high at T2 has latest=high
+            and is excluded from a rule with event_detail='mid_low').
+          • Latest event's timestamp must be in [hours_min, hours_max].
+          • blocking_events checks for events strictly AFTER the latest event
+            (`>`, not `>=` — the trigger event itself isn't a blocker).
         """
         event = str(trig.get("event") or "").strip()
         detail = trig.get("event_detail")
@@ -2720,27 +2726,32 @@ class CreditsDB:
             params.append(val)
             return len(params)
 
-        # Most recent matching event timestamp.
+        # CTE: latest event of `event` type per user (no detail filter here so we
+        # can correctly catch users whose newest rating IS NOT the requested one).
         p_event = add(event)
-        if detail is not None:
-            p_detail = add(str(detail))
-            detail_filter = f"AND a_evt.detail = ${p_detail}"
-        else:
-            detail_filter = ""
-        p_hmin = add(float(hours_min))
         cte = (
             "WITH last_evt AS ("
-            f"SELECT a_evt.tg_id, MAX(a_evt.created_at) AS ts "
-            f"FROM activity_log a_evt WHERE a_evt.event = ${p_event} {detail_filter} "
-            f"GROUP BY a_evt.tg_id "
-            f"HAVING MAX(a_evt.created_at) <= NOW() - (${p_hmin}::REAL * INTERVAL '1 hour')"
+            "SELECT DISTINCT ON (a_evt.tg_id) "
+            "a_evt.tg_id, a_evt.created_at AS ts, a_evt.detail "
+            f"FROM activity_log a_evt WHERE a_evt.event = ${p_event} "
+            "ORDER BY a_evt.tg_id, a_evt.created_at DESC"
+            ")"
         )
+
+        # Inner predicate: the latest event must satisfy detail + time window.
+        inner = ["le.tg_id = u.tg_id"]
+        if detail is not None:
+            p_detail = add(str(detail))
+            inner.append(f"le.detail = ${p_detail}")
+        p_hmin = add(float(hours_min))
+        inner.append(f"le.ts <= NOW() - (${p_hmin}::REAL * INTERVAL '1 hour')")
         if hours_max is not None:
             p_hmax = add(float(hours_max))
-            cte += f" AND MAX(a_evt.created_at) >= NOW() - (${p_hmax}::REAL * INTERVAL '1 hour')"
-        cte += ")"
+            inner.append(f"le.ts >= NOW() - (${p_hmax}::REAL * INTERVAL '1 hour')")
 
-        where_parts: List[str] = ["EXISTS (SELECT 1 FROM last_evt le WHERE le.tg_id = u.tg_id)"]
+        where_parts: List[str] = [
+            "EXISTS (SELECT 1 FROM last_evt le WHERE " + " AND ".join(inner) + ")"
+        ]
 
         if blocking_events:
             p_block = add(list(blocking_events))
@@ -2748,7 +2759,7 @@ class CreditsDB:
                 "NOT EXISTS (SELECT 1 FROM activity_log ab "
                 "JOIN last_evt le2 ON le2.tg_id = ab.tg_id "
                 f"WHERE ab.tg_id = u.tg_id AND ab.event = ANY(${p_block}::TEXT[]) "
-                "AND ab.created_at >= le2.ts)"
+                "AND ab.created_at > le2.ts)"
             )
 
         if require_gens_eq is not None:

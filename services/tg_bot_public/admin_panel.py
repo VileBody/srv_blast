@@ -373,7 +373,7 @@ _TIER_SPEC: Dict[str, Dict[str, Any]] = {
             "trigger_type": "time_after_event",
             "trigger": {
                 "event": "audio_uploaded",
-                "hours_min": 0.5, "hours_max": 12,
+                "hours_min": 0.5, "hours_max": 24,
                 "blocking_events": ["generation_started"],
             },
             "cooldown_days": 14,
@@ -427,8 +427,9 @@ _TIER_SPEC: Dict[str, Dict[str, Any]] = {
             "trigger_type": "time_after_event",
             "trigger": {
                 "event": "rate_video", "event_detail": "mid_low",
-                "hours_min": 1, "hours_max": 168,
+                "hours_min": 1, "hours_max": 720,
                 "blocking_events": ["survey_opened"],
+                "require_gens_eq": 1,
             },
             "cooldown_days": 30,
         },
@@ -454,7 +455,7 @@ _TIER_SPEC: Dict[str, Dict[str, Any]] = {
             "trigger_type": "time_after_event",
             "trigger": {
                 "event": "rate_video", "event_detail": "low",
-                "hours_min": 1, "hours_max": 168,
+                "hours_min": 1, "hours_max": 720,
                 "blocking_events": ["survey_opened"],
             },
             "cooldown_days": 30,
@@ -481,7 +482,7 @@ _TIER_SPEC: Dict[str, Dict[str, Any]] = {
             "trigger_type": "time_after_event",
             "trigger": {
                 "event": "start",
-                "hours_min": 1, "hours_max": 168,
+                "hours_min": 1, "hours_max": 720,
                 "blocking_events": ["subscription_ok"],
             },
             "cooldown_days": 14,
@@ -547,7 +548,7 @@ _DEFAULT_LIFECYCLE_RULES: List[Dict[str, Any]] = [
         "trigger_type": "time_after_event",
         "trigger": {
             "event": "start",
-            "hours_min": 1, "hours_max": 168,
+            "hours_min": 1, "hours_max": 720,
             "blocking_events": ["subscription_ok"],
         },
         "message_text": _TIER_SPEC["B3"]["trigger_text"],
@@ -561,13 +562,35 @@ _DEFAULT_LIFECYCLE_RULES: List[Dict[str, Any]] = [
         "trigger_type": "time_after_event",
         "trigger": {
             "event": "audio_uploaded",
-            "hours_min": 0.5, "hours_max": 12,
+            "hours_min": 0.5, "hours_max": 24,
             "blocking_events": ["generation_started"],
         },
         "message_text": _TIER_SPEC["A2"]["trigger_text"],
         "cooldown_days": 14,
         "exclude_paid": True,
         "respect_anti_fatigue": True,
+    },
+    {
+        "tier": "A2",
+        "name": "A2 · Шаг 2 — не запустили генерацию (24ч)",
+        "trigger_type": "time_after_event",
+        "trigger": {
+            "event": "audio_uploaded",
+            "hours_min": 24, "hours_max": 720,
+            "blocking_events": ["generation_started"],
+        },
+        "message_text": (
+            "{{first_name}}, твой трек всё ещё ждёт генерации.\n\n"
+            "Если что-то непонятно с настройками, глючит интерфейс или есть вопрос — "
+            "пиши сюда, разберёмся: @impulsemanage\n\n"
+            "Без запуска в боте ролик не появится сам по себе."
+        ),
+        "cooldown_days": 30,
+        "exclude_paid": True,
+        # Step 2 of an intentional cascade — anti-fatigue would block it because
+        # step 1 already sent in the last 48h. Own cooldown_days=30 prevents
+        # re-fire of step 2 itself.
+        "respect_anti_fatigue": False,
     },
     {
         "tier": "A3",
@@ -623,8 +646,9 @@ _DEFAULT_LIFECYCLE_RULES: List[Dict[str, Any]] = [
         "trigger_type": "time_after_event",
         "trigger": {
             "event": "rate_video", "event_detail": "mid_low",
-            "hours_min": 1, "hours_max": 168,
+            "hours_min": 1, "hours_max": 720,
             "blocking_events": ["survey_opened"],
+            "require_gens_eq": 1,
         },
         "message_text": _TIER_SPEC["B1"]["trigger_text"],
         "cooldown_days": 30,
@@ -637,7 +661,7 @@ _DEFAULT_LIFECYCLE_RULES: List[Dict[str, Any]] = [
         "trigger_type": "time_after_event",
         "trigger": {
             "event": "rate_video", "event_detail": "low",
-            "hours_min": 1, "hours_max": 168,
+            "hours_min": 1, "hours_max": 720,
             "blocking_events": ["survey_opened"],
         },
         "message_text": _TIER_SPEC["B2"]["trigger_text"],
