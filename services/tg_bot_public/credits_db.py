@@ -3180,39 +3180,88 @@ class CreditsDB:
             )
         return self._row_to_rule(r) if r else None
 
-    async def seed_default_lifecycle_rules(self, defaults: List[Dict[str, Any]]) -> int:
-        """Idempotently insert default lifecycle rules.
+    async def seed_default_lifecycle_rules(
+        self,
+        defaults: List[Dict[str, Any]],
+        legacy_names_to_drop: Optional[List[Dict[str, str]]] = None,
+    ) -> Dict[str, int]:
+        """Idempotently sync default lifecycle rules with the in-code spec.
 
-        For each entry in `defaults`, look up by (tier, name): if missing → insert
-        with enabled=False (admin must flip it after preview); if present → leave
-        alone (admin may have edited the text or already enabled it).
+        For each entry in `defaults`:
+          • If no rule with (tier, name) exists → INSERT (enabled=False; admin
+            flips after preview).
+          • If a rule exists AND it's still pristine (created_by='system_seed'
+            AND fired_count=0 AND enabled=False AND last_run_at IS NULL) →
+            UPDATE its trigger_json, message_text, cooldown_days, exclude_paid,
+            respect_anti_fatigue to match the new spec. This lets us evolve seeded
+            rule definitions across deploys without leaving stale params behind.
+          • Otherwise (admin edited / enabled / it has fired) → LEAVE ALONE.
 
-        Returns count of newly inserted rules.
+        For each entry in `legacy_names_to_drop` ([{"tier":..., "name":...}]):
+          • If a rule with (tier, name) exists AND it's still pristine → DELETE.
+            This cleans up renamed seed entries from older deploys.
+
+        Returns counts: {"inserted", "updated", "dropped"}.
         """
-        inserted = 0
+        counts = {"inserted": 0, "updated": 0, "dropped": 0}
+        # 1. Drop legacy stale seeds.
+        for entry in legacy_names_to_drop or []:
+            tier = str(entry.get("tier") or "").upper()
+            name = str(entry.get("name") or "").strip()
+            if not tier or not name:
+                continue
+            existing = await self.find_lifecycle_rule_by_tier_name(tier, name)
+            if not existing:
+                continue
+            if not self._is_pristine_seed(existing):
+                continue
+            await self.delete_lifecycle_rule(existing["id"])
+            counts["dropped"] += 1
+
+        # 2. Insert / update active defaults.
         for d in defaults:
             tier = str(d.get("tier") or "").upper()
             name = str(d.get("name") or "").strip()
             if not tier or not name:
                 continue
             existing = await self.find_lifecycle_rule_by_tier_name(tier, name)
-            if existing:
-                continue
-            await self.create_lifecycle_rule(
-                name=name,
-                trigger_type=str(d["trigger_type"]),
-                trigger=dict(d.get("trigger") or {}),
-                message_text=str(d.get("message_text") or ""),
-                parse_mode=str(d.get("parse_mode") or "HTML"),
-                cooldown_days=int(d.get("cooldown_days") or 30),
-                enabled=False,  # always disabled on seed; admin enables after preview
-                created_by="system_seed",
-                tier=tier,
-                exclude_paid=bool(d.get("exclude_paid", True)),
-                respect_anti_fatigue=bool(d.get("respect_anti_fatigue", True)),
-            )
-            inserted += 1
-        return inserted
+            if existing is None:
+                await self.create_lifecycle_rule(
+                    name=name,
+                    trigger_type=str(d["trigger_type"]),
+                    trigger=dict(d.get("trigger") or {}),
+                    message_text=str(d.get("message_text") or ""),
+                    parse_mode=str(d.get("parse_mode") or "HTML"),
+                    cooldown_days=int(d.get("cooldown_days") or 30),
+                    enabled=False,
+                    created_by="system_seed",
+                    tier=tier,
+                    exclude_paid=bool(d.get("exclude_paid", True)),
+                    respect_anti_fatigue=bool(d.get("respect_anti_fatigue", True)),
+                )
+                counts["inserted"] += 1
+            elif self._is_pristine_seed(existing):
+                await self.update_lifecycle_rule(
+                    existing["id"],
+                    trigger=dict(d.get("trigger") or {}),
+                    message_text=str(d.get("message_text") or ""),
+                    cooldown_days=int(d.get("cooldown_days") or 30),
+                    exclude_paid=bool(d.get("exclude_paid", True)),
+                    respect_anti_fatigue=bool(d.get("respect_anti_fatigue", True)),
+                )
+                counts["updated"] += 1
+        return counts
+
+    @staticmethod
+    def _is_pristine_seed(rule: Dict[str, Any]) -> bool:
+        """A rule is pristine if it was inserted by the seeder and never touched
+        by an admin: still disabled, never fired, no last_run_at."""
+        return (
+            str(rule.get("created_by") or "") == "system_seed"
+            and not rule.get("enabled")
+            and int(rule.get("fired_count") or 0) == 0
+            and not rule.get("last_run_at")
+        )
 
     async def record_lifecycle_fire(self, rule_id: int, tg_id: int, status: str, error: str = "") -> None:
         pool = self._pool_or_fail()

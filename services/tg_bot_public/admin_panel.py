@@ -331,12 +331,12 @@ _TIER_SPEC: Dict[str, Dict[str, Any]] = {
     "A1": {
         "title": "Залипли на 1-м ролике",
         "group": "A", "color": "#e67e22",
-        "rule": "gens=1 AND last_rating='high' AND referral_sent НЕТ AND нет оплаты",
+        "rule": "gens=1 AND last_rating='high' AND referral_sent НЕТ AND survey_opened НЕТ AND нет оплаты",
         "task": "Дотянуть до отправки реферала → миграция к 2-му ролику и далее в S3",
         "channel": "Автомат",
         "angle": "Подсказка про второй ролик через кнопки",
         "cr": "25-35% в referral_sent",
-        "delay": "24ч после rate_video='high'",
+        "delay": "1ч после rate_video='high'",
         "kind": "auto",
         "trigger_text": (
             "{{first_name}}, привет!\n\n"
@@ -348,7 +348,8 @@ _TIER_SPEC: Dict[str, Dict[str, Any]] = {
             "trigger_type": "time_after_event",
             "trigger": {
                 "event": "rate_video", "event_detail": "high",
-                "hours_min": 24, "hours_max": 720,
+                "hours_min": 1, "hours_max": 720,
+                "blocking_events": ["survey_opened"],
                 "require_gens_eq": 1, "require_no_referral": True,
             },
             "cooldown_days": 30,
@@ -383,10 +384,10 @@ _TIER_SPEC: Dict[str, Dict[str, Any]] = {
         "group": "A", "color": "#e67e22",
         "rule": "gens=1 AND rate_video НЕТ AND нет оплаты",
         "task": "Получить оценку → юзер автоматически распределится дальше",
-        "channel": "Автомат с персонализацией",
+        "channel": "Автомат с персонализацией, 2 шага",
         "angle": "Оценка → второй ролик и продолжение бота",
         "cr": "25-35% в rate_video",
-        "delay": "24-48ч после generation_done",
+        "delay": "Шаг 1 — 1ч после generation_done · Шаг 2 — 24ч после generation_done",
         "kind": "auto",
         "trigger_text": (
             "{{first_name}}, ролик готов — что думаешь?\n\n"
@@ -398,7 +399,7 @@ _TIER_SPEC: Dict[str, Dict[str, Any]] = {
             "trigger_type": "time_after_event",
             "trigger": {
                 "event": "generation_done",
-                "hours_min": 24, "hours_max": 48,
+                "hours_min": 1, "hours_max": 720,
                 "blocking_events": ["rate_video"],
                 "require_gens_eq": 1,
             },
@@ -408,7 +409,7 @@ _TIER_SPEC: Dict[str, Dict[str, Any]] = {
     "B1": {
         "title": "Средняя оценка, не пошли дальше",
         "group": "B", "color": "#d35400",
-        "rule": "gens=1 AND last_rating='mid_low' AND нет оплаты",
+        "rule": "gens=1 AND last_rating='mid_low' AND survey_opened НЕТ AND нет оплаты",
         "task": "Довести до 2-й генерации",
         "channel": "Автомат",
         "angle": "Норм-фрейминг + предложение второй попытки или менеджера",
@@ -427,6 +428,7 @@ _TIER_SPEC: Dict[str, Dict[str, Any]] = {
             "trigger": {
                 "event": "rate_video", "event_detail": "mid_low",
                 "hours_min": 1, "hours_max": 168,
+                "blocking_events": ["survey_opened"],
             },
             "cooldown_days": 30,
         },
@@ -569,11 +571,11 @@ _DEFAULT_LIFECYCLE_RULES: List[Dict[str, Any]] = [
     },
     {
         "tier": "A3",
-        "name": "A3 · Не оценили ролик (24-48ч)",
+        "name": "A3 · Не оценили ролик — шаг 1 (1ч)",
         "trigger_type": "time_after_event",
         "trigger": {
             "event": "generation_done",
-            "hours_min": 24, "hours_max": 48,
+            "hours_min": 1, "hours_max": 24,
             "blocking_events": ["rate_video"],
             "require_gens_eq": 1,
         },
@@ -583,12 +585,31 @@ _DEFAULT_LIFECYCLE_RULES: List[Dict[str, Any]] = [
         "respect_anti_fatigue": True,
     },
     {
+        "tier": "A3",
+        "name": "A3 · Не оценили ролик — шаг 2 (24ч)",
+        "trigger_type": "time_after_event",
+        "trigger": {
+            "event": "generation_done",
+            "hours_min": 24, "hours_max": 720,
+            "blocking_events": ["rate_video"],
+            "require_gens_eq": 1,
+        },
+        "message_text": _TIER_SPEC["A3"]["trigger_text"],
+        "cooldown_days": 30,
+        "exclude_paid": True,
+        # Step 2 of an intentional cascade — anti-fatigue would otherwise block it
+        # because step 1 already sent a message in the last 48h. Own cooldown_days=30
+        # prevents re-fire of step 2 itself.
+        "respect_anti_fatigue": False,
+    },
+    {
         "tier": "A1",
-        "name": "A1 · Залипли на 1-м ролике (24ч)",
+        "name": "A1 · Залипли на 1-м ролике (1ч)",
         "trigger_type": "time_after_event",
         "trigger": {
             "event": "rate_video", "event_detail": "high",
-            "hours_min": 24, "hours_max": 720,
+            "hours_min": 1, "hours_max": 720,
+            "blocking_events": ["survey_opened"],
             "require_gens_eq": 1, "require_no_referral": True,
         },
         "message_text": _TIER_SPEC["A1"]["trigger_text"],
@@ -603,6 +624,7 @@ _DEFAULT_LIFECYCLE_RULES: List[Dict[str, Any]] = [
         "trigger": {
             "event": "rate_video", "event_detail": "mid_low",
             "hours_min": 1, "hours_max": 168,
+            "blocking_events": ["survey_opened"],
         },
         "message_text": _TIER_SPEC["B1"]["trigger_text"],
         "cooldown_days": 30,
@@ -623,6 +645,14 @@ _DEFAULT_LIFECYCLE_RULES: List[Dict[str, Any]] = [
         "exclude_paid": True,
         "respect_anti_fatigue": True,
     },
+]
+
+# Legacy seed rule names that have been renamed in the spec. The seed function
+# drops these from the DB on startup IF they're still pristine (system_seed,
+# disabled, never fired). Keeps the admin UI free of stale ghost entries.
+_LEGACY_LIFECYCLE_NAMES_TO_DROP: List[Dict[str, str]] = [
+    {"tier": "A1", "name": "A1 · Залипли на 1-м ролике (24ч)"},
+    {"tier": "A3", "name": "A3 · Не оценили ролик (24-48ч)"},
 ]
 
 
@@ -5063,10 +5093,13 @@ def build_app(
         return _page("Lifecycle-триггеры", body)
 
     @app.get("/admin/lifecycle/{rid}", response_class=HTMLResponse)
-    async def lifecycle_detail(rid: int, _user: str = Depends(_check_auth)) -> str:
+    async def lifecycle_detail(
+        rid: int, request: Request, _user: str = Depends(_check_auth),
+    ) -> str:
         rule = await credits_db.get_lifecycle_rule(rid)
         if not rule:
             raise HTTPException(404)
+        test_err = str(request.query_params.get("test_err") or "").strip()
         stats = await credits_db.lifecycle_rule_stats_24h(rid)
         fires = await credits_db.recent_lifecycle_fires(rid, limit=100)
         tier = rule.get("tier") or ""
@@ -5099,15 +5132,20 @@ def build_app(
         """
 
         # Test send block.
+        test_err_html = (
+            f'<p style="color:#c0392b"><strong>Ошибка:</strong> {html_mod.escape(test_err)}</p>'
+            if test_err else ""
+        )
         test_form = f"""
         <div class="card">
           <h3>Тестовая отправка</h3>
           <p style="color:#666;font-size:0.85em">
-            Отправляет именно это сообщение указанному tg_id. Помечается <code>test</code> в fires —
+            Отправляет именно это сообщение указанному получателю. Помечается <code>test</code> в fires —
             не учитывается в cooldown, anti-fatigue и счётчиках. Прогони на себе перед массовым включением.
           </p>
+          {test_err_html}
           <form method="post" action="/admin/lifecycle/{rid}/test_send">
-            <input type="number" name="tg_id" placeholder="tg_id" required style="width:160px">
+            <input type="text" name="recipient" placeholder="tg_id или @username" required style="width:240px">
             <button type="submit" class="btn-success">Отправить тестово</button>
           </form>
         </div>
@@ -5210,12 +5248,32 @@ def build_app(
     @app.post("/admin/lifecycle/{rid}/test_send")
     async def lifecycle_test_send(
         rid: int,
-        tg_id: int = Form(...),
+        recipient: str = Form(...),
         _user: str = Depends(_check_auth),
     ) -> RedirectResponse:
         rule = await credits_db.get_lifecycle_rule(rid)
         if not rule:
             raise HTTPException(404)
+        # Accept either a numeric tg_id or @username (with or without leading @).
+        raw = str(recipient or "").strip()
+        tg_id: Optional[int] = None
+        if raw.lstrip("-").isdigit():
+            tg_id = int(raw)
+        else:
+            uname = raw.lstrip("@").strip().lower()
+            if uname:
+                matches = await credits_db.search_users(uname, limit=5)
+                # Prefer exact username match; fall back to first hit otherwise.
+                exact = next((m for m in matches if str(m.get("username") or "").lower() == uname), None)
+                pick = exact or (matches[0] if matches else None)
+                if pick:
+                    tg_id = int(pick["tg_id"])
+        if tg_id is None:
+            await credits_db.audit_log(_user, "lifecycle_test_send_fail", str(rid), f"unresolved:{raw[:80]}")
+            return RedirectResponse(
+                f"/admin/lifecycle/{rid}?test_err={quote_plus('не нашёл юзера: ' + raw)}",
+                status_code=303,
+            )
         bot = bot_ref[0] if bot_ref else None
         if bot is None:
             await credits_db.audit_log(_user, "lifecycle_test_send_fail", str(rid), "bot not ready")
@@ -5225,8 +5283,8 @@ def build_app(
                 bot, int(tg_id),
                 text=rule["message_text"], parse_mode=rule.get("parse_mode", "HTML"),
             )
-            await credits_db.record_lifecycle_fire(rid, int(tg_id), "test", "manual_test_send")
-            await credits_db.audit_log(_user, "lifecycle_test_send", str(rid), f"tg_id={tg_id}")
+            await credits_db.record_lifecycle_fire(rid, int(tg_id), "test", f"manual_test_send by={_user}")
+            await credits_db.audit_log(_user, "lifecycle_test_send", str(rid), f"tg_id={tg_id} src={raw[:60]}")
         except Exception as e:
             await credits_db.record_lifecycle_fire(rid, int(tg_id), "failed", f"test_send:{e}"[:400])
             await credits_db.audit_log(_user, "lifecycle_test_send_fail", str(rid), str(e)[:200])
@@ -5368,12 +5426,19 @@ async def start_admin_panel(
     bot_ref: "list | None" = None,
 ) -> None:
     """Run the admin panel as an async background task."""
-    # Seed default lifecycle rules (idempotent — only inserts missing ones, all
-    # disabled by default). Failures here shouldn't block admin panel startup.
+    # Seed default lifecycle rules (idempotent — inserts missing, refreshes
+    # pristine ones with current spec, drops obsolete pristine names). Failures
+    # shouldn't block admin panel startup.
     try:
-        inserted = await credits_db.seed_default_lifecycle_rules(_DEFAULT_LIFECYCLE_RULES)
-        if inserted:
-            log.info("seeded %d default lifecycle rule(s)", inserted)
+        result = await credits_db.seed_default_lifecycle_rules(
+            _DEFAULT_LIFECYCLE_RULES,
+            legacy_names_to_drop=_LEGACY_LIFECYCLE_NAMES_TO_DROP,
+        )
+        if any(result.values()):
+            log.info(
+                "lifecycle seed: %d inserted, %d updated, %d dropped",
+                result.get("inserted", 0), result.get("updated", 0), result.get("dropped", 0),
+            )
     except Exception as e:
         log.warning("seed_default_lifecycle_rules failed: %s", e)
 
