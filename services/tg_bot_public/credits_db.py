@@ -490,7 +490,18 @@ class CreditsDB:
               EXISTS (SELECT 1 FROM activity_log a WHERE a.tg_id = u.tg_id AND a.event = 'view_packages') AS viewed_packages_list,
               EXISTS (SELECT 1 FROM activity_log a WHERE a.tg_id = u.tg_id AND a.event = 'select_package') AS viewed_package_details,
               EXISTS (SELECT 1 FROM activity_log a WHERE a.tg_id = u.tg_id AND a.event IN ('purchase_intent', 'purchase_intent_recurrent')) AS purchase_intent,
-              EXISTS (SELECT 1 FROM payments p WHERE p.tg_id = u.tg_id AND p.status = 'CONFIRMED') AS has_purchase,
+              -- has_purchase: any real purchase signal — bot payment, externally-logged
+              -- manual revenue, or a manager activation (admin_activate / manual_activation
+              -- transactions are issued by the "Активировать пакет" admin button when a
+              -- customer paid outside the bot). This is the canonical "is a customer"
+              -- signal, used to keep paying users out of reactivation tiers (S/A/B/D).
+              (
+                EXISTS (SELECT 1 FROM payments p WHERE p.tg_id = u.tg_id AND p.status = 'CONFIRMED')
+                OR EXISTS (SELECT 1 FROM manual_payments mp WHERE mp.tg_id = u.tg_id)
+                OR EXISTS (SELECT 1 FROM transactions t WHERE t.tg_id = u.tg_id
+                           AND t.reason IN ('admin_activate', 'manual_activation')
+                           AND t.amount > 0)
+              ) AS has_purchase,
               EXISTS (SELECT 1 FROM payments p WHERE p.tg_id = u.tg_id AND p.status = 'CONFIRMED' AND p.package = '5') AS bought_trial,
               EXISTS (SELECT 1 FROM payments p WHERE p.tg_id = u.tg_id AND p.status = 'CONFIRMED' AND p.package = '15') AS bought_blast,
               EXISTS (SELECT 1 FROM payments p WHERE p.tg_id = u.tg_id AND p.status = 'CONFIRMED' AND p.package = '30') AS bought_glow,
@@ -2633,9 +2644,15 @@ class CreditsDB:
         "NOT EXISTS (SELECT 1 FROM activity_log adm WHERE adm.tg_id = u.tg_id "
         "AND adm.event = 'admin_dm' AND adm.created_at >= NOW() - INTERVAL '7 days')"
     )
+    # exclude_paid mirrors the broadened has_purchase signal in user_signals view:
+    # bot payment OR external revenue logged in manual_payments OR manager activation
+    # via admin_activate / manual_activation transactions (used when a customer paid
+    # outside the bot back when there was no in-bot checkout).
     _EXC_PAID = (
-        "NOT EXISTS (SELECT 1 FROM payments pp WHERE pp.tg_id = u.tg_id "
-        "AND pp.status = 'CONFIRMED')"
+        "NOT EXISTS (SELECT 1 FROM payments pp WHERE pp.tg_id = u.tg_id AND pp.status = 'CONFIRMED') "
+        "AND NOT EXISTS (SELECT 1 FROM manual_payments mpp WHERE mpp.tg_id = u.tg_id) "
+        "AND NOT EXISTS (SELECT 1 FROM transactions tt WHERE tt.tg_id = u.tg_id "
+        "AND tt.reason IN ('admin_activate', 'manual_activation') AND tt.amount > 0)"
     )
     _EXC_ANTI_FATIGUE = (
         "(SELECT COUNT(*) FROM lifecycle_fires lf48 WHERE lf48.tg_id = u.tg_id "
@@ -2944,11 +2961,22 @@ class CreditsDB:
             )}
             paid_set: set = set()
             if rule.get("exclude_paid", True):
-                paid_set = {int(r["tg_id"]) for r in await conn.fetch(
-                    "SELECT DISTINCT tg_id FROM payments "
-                    "WHERE status = 'CONFIRMED' AND tg_id = ANY($1::BIGINT[])",
+                # Mirror the broadened has_purchase: bot payments + manual_payments
+                # + admin_activate / manual_activation transactions.
+                paid_rows = await conn.fetch(
+                    "SELECT DISTINCT tg_id FROM ("
+                    "  SELECT tg_id FROM payments WHERE status = 'CONFIRMED' AND tg_id = ANY($1::BIGINT[]) "
+                    "  UNION "
+                    "  SELECT tg_id FROM manual_payments WHERE tg_id = ANY($1::BIGINT[]) "
+                    "  UNION "
+                    "  SELECT tg_id FROM transactions "
+                    "    WHERE tg_id = ANY($1::BIGINT[]) "
+                    "    AND reason IN ('admin_activate', 'manual_activation') "
+                    "    AND amount > 0"
+                    ") src",
                     raw_ids,
-                )}
+                )
+                paid_set = {int(r["tg_id"]) for r in paid_rows}
             anti_fatigue_set: set = set()
             if rule.get("respect_anti_fatigue", True):
                 anti_fatigue_set = {int(r["tg_id"]) for r in await conn.fetch(
@@ -3272,6 +3300,15 @@ class CreditsDB:
             "u.tg_id NOT IN (SELECT tg_id FROM admins) "
             "AND NOT EXISTS (SELECT 1 FROM activity_log bb WHERE bb.tg_id = u.tg_id AND bb.event = 'bot_blocked')"
         )
+        # Broadened "is paying customer" — same definition as has_purchase in
+        # user_signals view (bot payment OR manual_payments OR admin_activate /
+        # manual_activation transaction).
+        not_paid_excl = (
+            "NOT EXISTS (SELECT 1 FROM payments p WHERE p.tg_id = u.tg_id AND p.status = 'CONFIRMED') "
+            "AND NOT EXISTS (SELECT 1 FROM manual_payments mp WHERE mp.tg_id = u.tg_id) "
+            "AND NOT EXISTS (SELECT 1 FROM transactions t WHERE t.tg_id = u.tg_id "
+            "AND t.reason IN ('admin_activate', 'manual_activation') AND t.amount > 0)"
+        )
         if tier_code == "P2":
             # Referrers — anyone who sent a friend tag. PDF doesn't require excluding
             # paying users (P2 is loyalty / appreciation), so we keep them in.
@@ -3288,7 +3325,7 @@ class CreditsDB:
                 rows = await conn.fetch(
                     "SELECT u.tg_id FROM users u "
                     f"WHERE {common_excl} "
-                    "AND NOT EXISTS (SELECT 1 FROM payments p WHERE p.tg_id = u.tg_id AND p.status = 'CONFIRMED') "
+                    f"AND {not_paid_excl} "
                     "AND COALESCE("
                     "  (SELECT MAX(created_at) FROM activity_log a WHERE a.tg_id = u.tg_id), "
                     "  u.created_at"
@@ -3301,7 +3338,7 @@ class CreditsDB:
                 rows = await conn.fetch(
                     "SELECT u.tg_id FROM users u "
                     f"WHERE {common_excl} "
-                    "AND NOT EXISTS (SELECT 1 FROM payments p WHERE p.tg_id = u.tg_id AND p.status = 'CONFIRMED') "
+                    f"AND {not_paid_excl} "
                     "AND COALESCE("
                     "  (SELECT MAX(created_at) FROM activity_log a WHERE a.tg_id = u.tg_id), "
                     "  u.created_at"
