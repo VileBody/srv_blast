@@ -2736,6 +2736,12 @@ class CreditsDB:
         require_gens_gte = trig.get("require_gens_gte")
         require_no_referral = bool(trig.get("require_no_referral"))
         require_subscribed = trig.get("require_subscribed")  # None / True / False
+        # require_last_rating: str or list[str]; user's MOST RECENT rate_video.detail
+        # must equal one of these. Used for S2 (last_rating=high) and similar tier-
+        # specific triggers fired by an event that isn't itself rate_video.
+        require_last_rating = trig.get("require_last_rating")
+        if isinstance(require_last_rating, str):
+            require_last_rating = [require_last_rating] if require_last_rating else None
         params: List[Any] = []
 
         def add(val: Any) -> int:
@@ -2804,6 +2810,13 @@ class CreditsDB:
             where_parts.append(
                 "NOT EXISTS (SELECT 1 FROM activity_log asub WHERE asub.tg_id = u.tg_id "
                 "AND asub.event = 'subscription_ok')"
+            )
+        if require_last_rating:
+            p_lr = add(list(require_last_rating))
+            where_parts.append(
+                "(SELECT a_lr.detail FROM activity_log a_lr WHERE a_lr.tg_id = u.tg_id "
+                "AND a_lr.event = 'rate_video' "
+                f"ORDER BY a_lr.created_at DESC LIMIT 1) = ANY(${p_lr}::TEXT[])"
             )
 
         return cte + "\nSELECT u.tg_id FROM users u WHERE " + " AND ".join(where_parts), params

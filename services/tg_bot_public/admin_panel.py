@@ -211,9 +211,14 @@ _TIER_SPEC: Dict[str, Dict[str, Any]] = {
             "ответит на вопросы по пакетам, если они есть."
         ),
         "trigger_template": {
-            "trigger_type": "tier_membership",
-            "trigger": {"tier": "S2"},
-            "cooldown_days": 7,
+            "trigger_type": "time_after_event",
+            "trigger": {
+                "event": "select_package",
+                "hours_min": 6, "hours_max": 720,
+                "blocking_events": ["survey_opened"],
+                "require_last_rating": "high",
+            },
+            "cooldown_days": 14,
         },
     },
     "S3": {
@@ -235,9 +240,14 @@ _TIER_SPEC: Dict[str, Dict[str, Any]] = {
             "Глянь, что внутри через команду /packets — 100% найдёшь актуальное решение под себя."
         ),
         "trigger_template": {
-            "trigger_type": "tier_membership",
-            "trigger": {"tier": "S3"},
-            "cooldown_days": 7,
+            "trigger_type": "time_after_event",
+            "trigger": {
+                "event": "rate_video", "event_detail": "high",
+                "hours_min": 24, "hours_max": 720,
+                "blocking_events": ["select_package", "survey_opened"],
+                "require_gens_eq": 2,
+            },
+            "cooldown_days": 14,
         },
     },
     "P1": {
@@ -544,6 +554,62 @@ _TIER_GROUPS = [
 # Default lifecycle rules seeded on first deploy. Each rule is created in
 # enabled=False so the admin can preview audience and test-send before flipping.
 _DEFAULT_LIFECYCLE_RULES: List[Dict[str, Any]] = [
+    {
+        "tier": "S2",
+        "name": "S2 · Изучили пакет (6-12ч)",
+        "trigger_type": "time_after_event",
+        "trigger": {
+            "event": "select_package",
+            "hours_min": 6, "hours_max": 720,
+            "blocking_events": ["survey_opened"],
+            # last rate_video must be 'high' — matches tier definition exactly.
+            "require_last_rating": "high",
+        },
+        "message_text": _TIER_SPEC["S2"]["trigger_text"],
+        "cooldown_days": 14,
+        "exclude_paid": True,
+        "respect_anti_fatigue": True,
+    },
+    {
+        "tier": "S3",
+        "name": "S3 · Шаг 1 — толкаем к /packets (24ч)",
+        "trigger_type": "time_after_event",
+        "trigger": {
+            "event": "rate_video", "event_detail": "high",
+            "hours_min": 24, "hours_max": 72,
+            # If they clicked package or opened survey, they migrated out of S3
+            # (to S2 or S1 respectively) — don't re-message.
+            "blocking_events": ["select_package", "survey_opened"],
+            "require_gens_eq": 2,
+        },
+        "message_text": _TIER_SPEC["S3"]["trigger_text"],
+        "cooldown_days": 14,
+        "exclude_paid": True,
+        "respect_anti_fatigue": True,
+    },
+    {
+        "tier": "S3",
+        "name": "S3 · Шаг 2 — толкаем к форме (72ч)",
+        "trigger_type": "time_after_event",
+        "trigger": {
+            "event": "rate_video", "event_detail": "high",
+            "hours_min": 72, "hours_max": 720,
+            "blocking_events": ["select_package", "survey_opened"],
+            "require_gens_eq": 2,
+        },
+        "message_text": (
+            "{{first_name}}, снова привет!\n\n"
+            "Ещё подсвечу: третий бесплатный ролик всё ещё доступен — нужно всего "
+            "лишь пройти короткую форму обратной связи: {{form_link}}\n\n"
+            "Это финальный бесплатный ролик. После формы менеджер отпишет лично, "
+            "подкинет кредит на баланс и ответит на все вопросы, если они есть."
+        ),
+        "cooldown_days": 30,
+        "exclude_paid": True,
+        # Step 2 of an intentional cascade — anti-fatigue would otherwise flag step
+        # 1's send within the last 7 days. Own cooldown_days=30 prevents re-fire.
+        "respect_anti_fatigue": False,
+    },
     {
         "tier": "B3",
         "name": "B3 · Стартовали, не подписались (1ч)",
@@ -4800,8 +4866,13 @@ def build_app(
             extra = []
             if trig.get("require_gens_eq") is not None:
                 extra.append(f"gens={trig['require_gens_eq']}")
+            if trig.get("require_gens_gte") is not None:
+                extra.append(f"gens≥{trig['require_gens_gte']}")
             if trig.get("require_no_referral"):
                 extra.append("no_referral")
+            lr = trig.get("require_last_rating")
+            if lr:
+                extra.append(f"last_rating={lr if isinstance(lr, str) else '|'.join(lr)}")
             ev_str = f"{ev}={det}" if det else ev
             window = f"{hmin}-{hmax}ч" if hmax else f"≥{hmin}ч"
             block_str = f", без {','.join(block)}" if block else ""
@@ -5027,6 +5098,9 @@ def build_app(
         prefill_hours_max = ""
         prefill_blocking = ""
         prefill_cooldown = "30"
+        prefill_gens_eq = ""
+        prefill_no_referral = False
+        prefill_last_rating = ""
         if tier_filter and tier_filter in _TIER_SPEC:
             spec = _TIER_SPEC[tier_filter]
             prefill_text = spec.get("trigger_text") or ""
@@ -5045,6 +5119,15 @@ def build_app(
                     prefill_blocking = ",".join(trg["blocking_events"])
                 if "cooldown_days" in tmpl:
                     prefill_cooldown = str(tmpl["cooldown_days"])
+                if "require_gens_eq" in trg:
+                    prefill_gens_eq = str(trg["require_gens_eq"])
+                if trg.get("require_no_referral"):
+                    prefill_no_referral = True
+                lr = trg.get("require_last_rating")
+                if isinstance(lr, str):
+                    prefill_last_rating = lr
+                elif isinstance(lr, list) and lr:
+                    prefill_last_rating = lr[0]
 
         new_form = f"""
         <a id="new"></a>
@@ -5087,8 +5170,16 @@ def build_app(
               <br>
               blocking_events: <input type="text" name="blocking_events" value="{html_mod.escape(prefill_blocking, quote=True)}" placeholder="через запятую: subscription_ok,generation_started" style="width:380px">
               <br>
-              <label>require_gens_eq: <input type="number" name="require_gens_eq" placeholder="опц" min="0" style="width:70px"></label>
-              <label style="margin-left:1rem"><input type="checkbox" name="require_no_referral"> require_no_referral</label>
+              <label>require_gens_eq: <input type="number" name="require_gens_eq" placeholder="опц" min="0" style="width:70px" value="{html_mod.escape(prefill_gens_eq, quote=True)}"></label>
+              <label style="margin-left:1rem"><input type="checkbox" name="require_no_referral" {'checked' if prefill_no_referral else ''}> require_no_referral</label>
+              <label style="margin-left:1rem">require_last_rating:
+                <select name="require_last_rating">
+                  <option value="" {'selected' if not prefill_last_rating else ''}>—</option>
+                  <option value="high" {'selected' if prefill_last_rating == 'high' else ''}>high</option>
+                  <option value="mid_low" {'selected' if prefill_last_rating == 'mid_low' else ''}>mid_low</option>
+                  <option value="low" {'selected' if prefill_last_rating == 'low' else ''}>low</option>
+                </select>
+              </label>
             </div>
             <div id="tp-tier" style="margin-top:0.5rem;{'display:block' if prefill_trigger_type == 'tier_membership' else 'display:none'}">
               Тир: <input type="text" name="trig_tier" placeholder="S2 / P4 / B1" style="width:80px">
@@ -5380,6 +5471,9 @@ def build_app(
                 trig["require_gens_eq"] = int(req_g)
             if form.get("require_no_referral"):
                 trig["require_no_referral"] = True
+            req_lr = str(form.get("require_last_rating") or "").strip()
+            if req_lr in ("high", "mid_low", "low"):
+                trig["require_last_rating"] = req_lr
         elif trigger_type == "tier_membership":
             trig = {"tier": str(form.get("trig_tier") or "").strip().upper()}
         elif trigger_type == "low_balance_trial":
