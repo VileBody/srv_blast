@@ -161,164 +161,468 @@ _PACKAGES = {
     "50": "Импульс (50 генераций)",
 }
 
-# ── Tier system spec (from /docs/reactivation_plan) ──────────────────────
-# Each tier carries: title, color (CSS), tier-group letter (S/A/B/C/D/P), and
-# a card with task/channel/angle/cr to show on /admin/tiers.
+# ── Tier system spec (Reactivation plan v2.0) ────────────────────────────
+# 15 tiers: 12 primary (resolved by user_tiers SQL view) + 3 audience-only
+# (P2/D1/D2, resolved on-demand for manual broadcasts).
+# Each entry has:
+#   title, group, color, rule (segmentation), task, channel, angle, cr,
+#   delay (when triggered), kind (manager/auto/broadcast),
+#   audience_only (bool — true ⇒ not in user_tiers view, computed via dedicated SQL),
+#   trigger_text (default message body for the seeded lifecycle rule, optional),
+#   trigger_template (lifecycle rule template payload, optional — used by the
+#     "Создать триггер" button to pre-fill the form for this tier).
 
-_TIER_SPEC: Dict[str, Dict[str, str]] = {
+_TIER_SPEC: Dict[str, Dict[str, Any]] = {
     "S1": {
-        "title": "Tri-signal champions",
+        "title": "Чемпионы",
         "group": "S", "color": "#c0392b",
-        "rule": "gens ≥ 2 AND last_rating='high' AND опросник заполнен",
-        "task": "Конвертировать в Глоу/Импульс через персональное касание",
-        "channel": "Менеджер вручную, голосовое. Через 24ч после позитивного фидбека",
-        "angle": "«Видим, что зашло. Лично расскажу про Glow — для тех, кто уже раскачался»",
-        "cr": "30-40% в Glow",
+        "rule": "gens ≥ 2 AND last_rating='high' AND feedback_form_clicked AND нет оплаты",
+        "task": "Познакомиться, получить ролик и фидбек. Продажа — следующим шагом",
+        "channel": "Менеджер DM (голос/текст), 1-1",
+        "angle": "Личный контакт менеджера через 24ч после клика по форме",
+        "cr": "50-70% в ответ → 25-35% в покупку",
+        "delay": "24ч после feedback_form_clicked",
+        "kind": "manager",
+        "trigger_text": (
+            "{{first_name}}, привет! Давай познакомимся — меня зовут {{manager_name}}, "
+            "я менеджер Бласта, бота, которым ты пользовался для генерации видео под свой трек.\n\n"
+            "Мы только закатили все обновления и начали анализировать обратную связь, поэтому пишу лично.\n\n"
+            "Вижу, прошлый ролик оценил высоко — это супер, рад, что вкатило. Отправишь его? "
+            "Хочется посмотреть свежим взглядом.\n\n"
+            "И ещё: будет круто, если расскажешь — что больше всего понравилось, а чего не хватило."
+        ),
     },
     "S2": {
-        "title": "Изучали карточку пакета",
+        "title": "Изучили пакет",
         "group": "S", "color": "#c0392b",
-        "rule": "viewed_package_details AND нет покупки",
-        "task": "Снять конкретные возражения по пакету, который смотрели",
-        "channel": "Менеджер персонально. Через 6-12ч после просмотра карточки",
-        "angle": "Glow → дистрибьюция; Impulse → стратегия под задачу",
-        "cr": "15-25% в покупку",
+        "rule": "last_rating='high' AND select_package есть AND feedback_form_clicked НЕТ AND нет оплаты",
+        "task": "Довести до клика по форме (далее переходит в S1)",
+        "channel": "Автомат + менеджерская эскалация",
+        "angle": "Через карточку пакета — к форме обратной связи",
+        "cr": "35-50% в feedback_form_clicked",
+        "delay": "6-12ч после select_package · эскалация менеджеру через 3 дня без формы",
+        "kind": "auto",
+        "trigger_text": (
+            "{{first_name}}, привет! Спасибо за высокие оценки — рады получать такой фидбэк.\n\n"
+            "Видим, заглядывал в карточку пакета — там короткое описание, может не все вопросы закрыть. "
+            "Если актуально пообщаться насчёт пакетов и получить третий обещанный ролик, заполни форму "
+            "обратной связи, там предметные вопросы, нам поможет: {{form_link}}\n\n"
+            "2 минуты на форму, дальше менеджер отпишет в течение дня, добавит баланс на аккаунт и "
+            "ответит на вопросы по пакетам, если они есть."
+        ),
+        "trigger_template": {
+            "trigger_type": "tier_membership",
+            "trigger": {"tier": "S2"},
+            "cooldown_days": 7,
+        },
     },
     "S3": {
-        "title": "Адвокаты бренда — позитивный фидбек без покупки",
+        "title": "Пригласил друга, не дошёл до формы",
         "group": "S", "color": "#c0392b",
-        "rule": "опросник заполнен AND last_rating='high' AND нет покупки",
-        "task": "Дожать в покупку И/ИЛИ получить реферал",
-        "channel": "Менеджер персонально, через 48ч после фидбека",
-        "angle": "Благодарность → soft offer (Trial/Бласт со скидкой) → реферал",
-        "cr": "15-20% в покупку",
+        "rule": "gens=2 AND last_rating='high' AND feedback_form_clicked НЕТ AND select_package НЕТ AND нет оплаты",
+        "task": "Шаг 1 — толкнуть к /packets (миграция в S2). Шаг 2 — толкнуть к форме (миграция в S1)",
+        "channel": "Автомат, 2 шага",
+        "angle": "Сначала /packets, через 72ч — форма",
+        "cr": "Шаг 1: 15-25% в select_package · Шаг 2: 20-30% в feedback_form_clicked",
+        "delay": "Шаг 1 — 24ч после high-оценки 2-го ролика · Шаг 2 — +72ч без миграции",
+        "kind": "auto",
+        "trigger_text": (
+            "{{first_name}}, привет!\n\n"
+            "Видим, ты сделал два ролика, везде высокие оценки — спасибо за обратку, круто, что вкатило.\n\n"
+            "Вопрос, который всегда возникает: «а что после двух роликов?». У нас есть ответ: "
+            "полноценные пакеты — это про то, как из одной mp3-шки сделать системный контент и "
+            "настроить продвижение: блогеры, дистрибьюция, стабильный охват.\n\n"
+            "Глянь, что внутри через команду /packets — 100% найдёшь актуальное решение под себя."
+        ),
+        "trigger_template": {
+            "trigger_type": "tier_membership",
+            "trigger": {"tier": "S3"},
+            "cooldown_days": 7,
+        },
     },
-    "A1": {
-        "title": "Прошли весь бесплатный флоу",
-        "group": "A", "color": "#e67e22",
-        "rule": "gens ≥ 3 AND last_rating='high' AND нет покупки",
-        "task": "Снять иллюзию «у меня всё бесплатно» — показать ценность платных пакетов",
-        "channel": "Авто-рассылка с персонализацией. Через 24ч после 3-го видео",
-        "angle": "«Прошли максимум бесплатного — что дальше? Trial −50%, 24 часа»",
-        "cr": "5-10% в Trial/Бласт",
-    },
-    "A2": {
-        "title": "Залипли на 1-м видео при высокой оценке",
-        "group": "A", "color": "#e67e22",
-        "rule": "gens = 1 AND last_rating='high'",
-        "task": "Довести до 2-й генерации",
-        "channel": "Автомат через 24ч после высокой оценки 1-го видео",
-        "angle": "«У вас доступно 2-е видео в подарок — заберите по этой ссылке»",
-        "cr": "30-40% в новую генерацию",
-    },
-    "B1": {
-        "title": "Получили ролик, не оценили",
-        "group": "B", "color": "#d35400",
-        "rule": "gens ≥ 1 AND last_rating IS NULL",
-        "task": "Вернуть в активное взаимодействие. Оценка как точка восстановления",
-        "channel": "Массовая. Через 24-48ч после генерации",
-        "angle": "«Оцените свой ролик — и получите 2-е видео без условий»",
-        "cr": "20-30% в оценку",
-    },
-    "B2": {
-        "title": "Среднеоценившие (mid_low)",
-        "group": "B", "color": "#d35400",
-        "rule": "last_rating='mid_low' AND нет покупки",
-        "task": "Дать второй шанс, узнать что не зашло",
-        "channel": "Массовая. Через 48ч после оценки",
-        "angle": "«Вторая генерация бесплатно — попробуйте с другими настройками»",
-        "cr": "15-25% в re-generation",
-    },
-    "B3": {
-        "title": "Низко оценившие (low)",
-        "group": "B", "color": "#d35400",
-        "rule": "last_rating='low'",
-        "task": "Разобраться или отпустить. Собрать данные о причинах",
-        "channel": "Массовая, сухая по тону. Через 48ч",
-        "angle": "Короткий опрос «что не сработало» + бесплатная перегенерация",
-        "cr": "3-5% в активность",
-    },
-    "C1": {
-        "title": "Стартовали бота, не подписались",
-        "group": "C", "color": "#3498db",
-        "rule": "started AND NOT subscribed",
-        "task": "Вернуть в бот тех, кто не банил",
-        "channel": "Массовая. Через 72ч после старта",
-        "angle": "Один сильный кейс (видео + результат) + дедлайн доступа",
-        "cr": "5-10% в подписку",
-    },
-    "C2": {
-        "title": "Загрузили аудио, не запустили",
-        "group": "C", "color": "#3498db",
-        "rule": "audio_uploaded AND NOT generation_started",
-        "task": "Довести до запуска генерации",
-        "channel": "Автомат. Через 24ч после загрузки",
-        "angle": "«Аудио загружено — настройте параметры (или возьмите пресет) и нажмите запуск»",
-        "cr": "20-30% в запуск",
-    },
-    "D1": {
-        "title": "Старый посев — высоко оценившие без покупки",
-        "group": "D", "color": "#9b59b6",
-        "rule": "created < 30д назад AND last_rating='high' AND нет покупки",
-        "task": "Холодный дожим через месяц с апдейтом",
-        "channel": "Массовая по cohort. Разовая",
-        "angle": "«Помните нас? Исправили синхронизацию субтитров, ускорили генерацию»",
-        "cr": "3-7% в действие",
-    },
-    "D2": {
-        "title": "Старый посев — заходили в карточку пакета",
-        "group": "D", "color": "#9b59b6",
-        "rule": "created < 30д назад AND viewed_package_details AND нет покупки",
-        "task": "Точечный ремайндер по пакету, который смотрели",
-        "channel": "Менеджер вручную, разово",
-        "angle": "Напомнить цену + новые плюшки месяца + простой CTA",
-        "cr": "10-15% в покупку",
-    },
-    "P10": {
-        "title": "Trial-юзеры без апгрейда",
+    "P1": {
+        "title": "Trial-юзеры, баланс на исходе",
         "group": "P", "color": "#16a085",
-        "rule": "купили Trial, не купили выше",
-        "task": "Апсейл в Glow или подписку Бласт",
-        "channel": "Автомат через 7-10 дней после Trial. Если ответил — менеджер",
-        "angle": "«Glow со скидкой как Trial-юзеру: 5990 вместо 7990. До конца недели»",
+        "rule": "купили Trial AND нет старшего пакета AND баланс ≤ 1 ролик",
+        "task": "Апсейл в Бласт-подписку через спецоффер",
+        "channel": "Автомат",
+        "angle": "Удваиваем ролики при апгрейде в течение 15 дней",
         "cr": "10-20% в апгрейд",
+        "delay": "При остатке на балансе ≤ 1 ролик",
+        "kind": "auto",
+        "trigger_text": (
+            "{{first_name}}, привет!\n\n"
+            "Триал у тебя на исходе — пора решать, что дальше. Если за эти дни стало ясно, что "
+            "инструмент рабочий, имеет смысл сразу переходить на Бласт: больше роликов, блогеры, "
+            "дистрибьюция и стабильный охват.\n\n"
+            "Под триал-юзеров держим спецусловие: удваиваем ролики в первый месяц, если приобрести "
+            "подписку на Бласт в течение 15 дней с момента отправки этого сообщения.\n\n"
+            "Если хочется глянуть все пакеты сразу: /packets. Если нужна связь с менеджером — @impulsemanage."
+        ),
+        "trigger_template": {
+            "trigger_type": "low_balance_trial",
+            "trigger": {"max_credits": 1},
+            "cooldown_days": 14,
+            "exclude_paid": False,  # P1 ARE paid (trial); only exclude higher packages internally
+        },
     },
-    "P11": {
-        "title": "Активные подписчики Бласт без Glow",
-        "group": "P", "color": "#16a085",
-        "rule": "active_subscription='blast' AND нет Glow",
-        "task": "Апгрейд до Glow или подписки выше",
-        "channel": "Менеджер. В конце 1-го месяца подписки",
-        "angle": "«За месяц вы сделали X роликов — расширим возможности?»",
-        "cr": "15-25% — самый платёжеспособный сегмент",
-    },
-    "P12": {
+    "P2": {
         "title": "Реферреры",
         "group": "P", "color": "#16a085",
-        "rule": "referral_made AND нет покупки",
-        "task": "Удержание + закрытое предложение",
-        "channel": "Персонально. Разово",
-        "angle": "«Ты привёл друзей — для тебя ранний доступ к [новой фиче]»",
-        "cr": "Variable, главное — удержание",
+        "rule": "referral_sent есть",
+        "task": "Удержание лояльности, без жёсткого селла",
+        "channel": "Ручная массовая, разовая по событию",
+        "angle": "Ранний доступ к фиче — благодарность за рефералы",
+        "cr": "Не считаем как продажу. Open rate + удержание",
+        "delay": "Ручной запуск по событию (новая фича / закрытая акция)",
+        "kind": "broadcast",
+        "audience_only": True,
+        "trigger_text": (
+            "{{first_name}}, привет!\n\n"
+            "Помним, что ты приводил друзей в Бласт — это сильно помогает, спасибо.\n\n"
+            "Для реферреров открываем ранний доступ к {{exclusive_thing}} — никому больше пока не "
+            "показываем: {{details_or_link}}.\n\n"
+            "Доступ до {{deadline}}, платить ничего не нужно — это благодарность за то, что делишься."
+        ),
     },
-    "P14": {
-        "title": "Тыкуны — нажали оплату, не оплатили",
+    "P3": {
+        "title": "Тыкуны с генерациями + high",
         "group": "P", "color": "#16a085",
-        "rule": "purchase_intent AND нет покупки",
-        "task": "Разделить «передумал» vs «случайно тыкнул»",
-        "channel": "Автомат с опросом через 1-3ч после клика",
-        "angle": "«Готовы оплатить — ссылка живёт 30 минут / Передумали — расскажите почему»",
-        "cr": "5-15% реальной оплаты",
+        "rule": "purchase_intent AND нет оплаты за 24ч AND gens ≥ 1 AND last_rating='high'",
+        "task": "Закрыть оплату через личный контакт",
+        "channel": "Менеджер 1-1",
+        "angle": "Уведомление менеджеру с контекстом + ручное касание",
+        "cr": "25-35% в реальную оплату",
+        "delay": "5 минут после purchase_intent (через уведомление менеджеру)",
+        "kind": "manager",
+        "trigger_text": (
+            "{{first_name}}, привет! {{manager_name}} на связи.\n\n"
+            "Вижу, ты нажимал «оплатить», но оплата не прошла, что-то остановило в моменте. "
+            "Хочу разобраться лично: технический сбой, цена или появились вопросы по пакету?\n\n"
+            "Если технический — сделаем свежую ссылку. Если по пакету — расскажу подробнее, подберу "
+            "под задачу. Если решил повременить — тоже скажи, чтобы не дёргать лишний раз."
+        ),
+    },
+    "P4": {
+        "title": "Тыкуны базовые",
+        "group": "P", "color": "#16a085",
+        "rule": "purchase_intent AND нет оплаты за 24ч AND NOT IN P3",
+        "task": "Вернуть в существующий флоу через /sendtrack или /packets",
+        "channel": "Автомат",
+        "angle": "Мягкое напоминание + три CTA",
+        "cr": "3-8% в оплату; остальное — возврат в флоу без потерь",
+        "delay": "5 минут после purchase_intent",
+        "kind": "auto",
+        "trigger_text": (
+            "{{first_name}}, привет!\n\n"
+            "Видим, ты нажимал «оплатить», но не дошёл до конца — возможно, передумал, возможно, "
+            "технический сбой.\n\n"
+            "Если хочется ещё раз посмотреть пакеты и подобрать другой — /packets. Если хочется "
+            "сначала собрать ролик и решить после — /sendtrack. Если зависла оплата — пиши "
+            "@impulsemanage, разберёмся быстро."
+        ),
+        "trigger_template": {
+            "trigger_type": "tier_membership",
+            "trigger": {"tier": "P4"},
+            "cooldown_days": 3,
+            "exclude_paid": False,
+        },
+    },
+    "A1": {
+        "title": "Залипли на 1-м ролике",
+        "group": "A", "color": "#e67e22",
+        "rule": "gens=1 AND last_rating='high' AND referral_sent НЕТ AND нет оплаты",
+        "task": "Дотянуть до отправки реферала → миграция к 2-му ролику и далее в S3",
+        "channel": "Автомат",
+        "angle": "Подсказка про второй ролик через кнопки",
+        "cr": "25-35% в referral_sent",
+        "delay": "24ч после rate_video='high'",
+        "kind": "auto",
+        "trigger_text": (
+            "{{first_name}}, привет!\n\n"
+            "Видим, оценил первый ролик высоко — кайф, что зашло.\n\n"
+            "Чтобы открыть второй, нужно просто нажать на любую кнопку рядом с клавиатурой и нырнуть "
+            "глубже в бота, там будет вся информация."
+        ),
+        "trigger_template": {
+            "trigger_type": "time_after_event",
+            "trigger": {
+                "event": "rate_video", "event_detail": "high",
+                "hours_min": 24, "hours_max": 720,
+                "require_gens_eq": 1, "require_no_referral": True,
+            },
+            "cooldown_days": 30,
+        },
+    },
+    "A2": {
+        "title": "Не запустили генерацию",
+        "group": "A", "color": "#e67e22",
+        "rule": "audio_uploaded есть AND generation_started НЕТ AND нет оплаты",
+        "task": "Довести до generation_started",
+        "channel": "Автомат, 2 шага",
+        "angle": "Шаг 1 — короткий пинок. Шаг 2 — предложение разобраться через @impulsemanage",
+        "cr": "30-50% в generation_started",
+        "delay": "Шаг 1 — 30 мин после audio_uploaded · Шаг 2 — 24ч после audio_uploaded",
+        "kind": "auto",
+        "trigger_text": (
+            "{{first_name}}, всё готово — аудио залил, осталось подтвердить настройки и ткнуть "
+            "«сгенерировать». Ролик будет моментально запущен в работу. Продолжай!"
+        ),
+        "trigger_template": {
+            "trigger_type": "time_after_event",
+            "trigger": {
+                "event": "audio_uploaded",
+                "hours_min": 0.5, "hours_max": 12,
+                "blocking_events": ["generation_started"],
+            },
+            "cooldown_days": 14,
+        },
+    },
+    "A3": {
+        "title": "Не оценили ролик",
+        "group": "A", "color": "#e67e22",
+        "rule": "gens=1 AND rate_video НЕТ AND нет оплаты",
+        "task": "Получить оценку → юзер автоматически распределится дальше",
+        "channel": "Автомат с персонализацией",
+        "angle": "Оценка → второй ролик и продолжение бота",
+        "cr": "25-35% в rate_video",
+        "delay": "24-48ч после generation_done",
+        "kind": "auto",
+        "trigger_text": (
+            "{{first_name}}, ролик готов — что думаешь?\n\n"
+            "Поставь оценку ролику через кнопки ниже, это ровно секунда. Зачем: оценка откроет "
+            "второй ролик и продолжение бота.\n\n"
+            "Давай продолжим делать контент!"
+        ),
+        "trigger_template": {
+            "trigger_type": "time_after_event",
+            "trigger": {
+                "event": "generation_done",
+                "hours_min": 24, "hours_max": 48,
+                "blocking_events": ["rate_video"],
+                "require_gens_eq": 1,
+            },
+            "cooldown_days": 7,
+        },
+    },
+    "B1": {
+        "title": "Средняя оценка, не пошли дальше",
+        "group": "B", "color": "#d35400",
+        "rule": "gens=1 AND last_rating='mid_low' AND нет оплаты",
+        "task": "Довести до 2-й генерации",
+        "channel": "Автомат",
+        "angle": "Норм-фрейминг + предложение второй попытки или менеджера",
+        "cr": "15-25% во вторую генерацию",
+        "delay": "1ч после rate_video='mid_low'",
+        "kind": "auto",
+        "trigger_text": (
+            "{{first_name}}, привет! Видим, первый ролик зашёл средненько — бывает, не каждый ролик "
+            "ловит вайб трека с первой попытки.\n\n"
+            "Это норм. Попробуй сгенерировать ещё раз, но с другими настройками: часто вторая "
+            "генерация попадает точнее, чем первая. Если хочется сначала обсудить, что не зашло, — "
+            "пиши @impulsemanage, разберёмся"
+        ),
+        "trigger_template": {
+            "trigger_type": "time_after_event",
+            "trigger": {
+                "event": "rate_video", "event_detail": "mid_low",
+                "hours_min": 1, "hours_max": 168,
+            },
+            "cooldown_days": 30,
+        },
+    },
+    "B2": {
+        "title": "Низкая оценка, не дошли до формы",
+        "group": "B", "color": "#d35400",
+        "rule": "last_rating='low' AND feedback_form_clicked НЕТ AND нет оплаты",
+        "task": "Довести до клика по форме (далее ручной разбор менеджером)",
+        "channel": "Автомат",
+        "angle": "Эмпатия + форма + обещание баланса на пересборку",
+        "cr": "15-25% в feedback_form_clicked. Главное — данные о причинах",
+        "delay": "1ч после rate_video='low'",
+        "kind": "auto",
+        "trigger_text": (
+            "{{first_name}}, привет! Видим, первый ролик зашёл слабо — может быть технический сбой, "
+            "может настройки не подобрались, может что-то ещё.\n\n"
+            "Хочется разобраться, а не оставлять как есть. Заполни короткую форму обратной связи — "
+            "это 30 секунд: {{form_link}}. После формы менеджер отпишет лично, разберет ситуацию и "
+            "закинет баланс на пересборку — на этот раз уже с понятными нам вводными."
+        ),
+        "trigger_template": {
+            "trigger_type": "time_after_event",
+            "trigger": {
+                "event": "rate_video", "event_detail": "low",
+                "hours_min": 1, "hours_max": 168,
+                "blocking_events": ["survey_opened"],
+            },
+            "cooldown_days": 30,
+        },
+    },
+    "B3": {
+        "title": "Стартовали, не подписались",
+        "group": "B", "color": "#d35400",
+        "rule": "start есть AND subscription_ok НЕТ AND bot_blocked=false",
+        "task": "Довести до subscription_ok",
+        "channel": "Автомат",
+        "angle": "Что внутри + насколько быстро",
+        "cr": "5-10% в подписку",
+        "delay": "1ч после start",
+        "kind": "auto",
+        "trigger_text": (
+            "{{first_name}}, привет!\n\n"
+            "Видим, ты зашёл в бота, но до подписки на канал не добрался — а это первый шаг, чтобы "
+            "начать собирать ролики.\n\n"
+            "Что внутри: бот за 30 секунд делает видео под твой трек, нужны только mp3 и базовые "
+            "настройки. Подписка — секунда, дальше сразу едем генерировать контент."
+        ),
+        "trigger_template": {
+            "trigger_type": "time_after_event",
+            "trigger": {
+                "event": "start",
+                "hours_min": 1, "hours_max": 168,
+                "blocking_events": ["subscription_ok"],
+            },
+            "cooldown_days": 14,
+        },
+    },
+    "D1": {
+        "title": "Старая база по источникам",
+        "group": "D", "color": "#9b59b6",
+        "rule": "last_active < NOW() − 30д AND нет оплаты",
+        "task": "Заинтересовать апдейтом и вернуть в флоу через /sendtrack",
+        "channel": "Ручная массовая, по источнику",
+        "angle": "Что нового + кейс + бонус-баланс на пересборку",
+        "cr": "3-7% в /sendtrack-активацию",
+        "delay": "Ручной запуск менеджером по апдейту/кейсу/акции",
+        "kind": "broadcast",
+        "audience_only": True,
+        "trigger_text": (
+            "{{first_name}}, привет! Это Бласт.\n\n"
+            "Ты заходил к нам {{time_ago}} назад, но до результата не добрался. С тех пор кое-что "
+            "изменилось — рассказываю коротко.\n\n"
+            "Что нового: {{whats_new}} — стало {{key_improvement}}.\n\n"
+            "Свежий кейс на выходе: {{case_link}}\n\n"
+            "До {{deadline}} закидываем {{bonus_amount}} на баланс всем, кто заходил из этой волны — "
+            "на пересборку трека с актуальными настройками. Заходи и пробуй: /sendtrack"
+        ),
+    },
+    "D2": {
+        "title": "Старая база, смотрели пакет, оценили high",
+        "group": "D", "color": "#9b59b6",
+        "rule": "select_package есть AND last_rating='high' AND last_active < NOW() − 30д AND нет оплаты",
+        "task": "Вернуть к разговору о пакетах с упоминанием обновлений",
+        "channel": "Ручная массовая, малый горячий сегмент",
+        "angle": "Обновления пакетов + менеджер на связи",
+        "cr": "10-15% в покупку",
+        "delay": "Разовая ручная массовая по сегменту",
+        "kind": "broadcast",
+        "audience_only": True,
+        "trigger_text": (
+            "{{first_name}}, привет! На связи команда Бласта.\n\n"
+            "Чуть больше месяца назад ты заглядывал в один из наших пакетов и поставил роликам "
+            "высокие оценки — пишем, вдруг сейчас актуально.\n\n"
+            "С тех пор пакеты обновились: {{packages_updates}}. Цены остались на месте.\n\n"
+            "Если интересно — глянь актуальные пакеты через /packets. Если нужна связь с "
+            "менеджером — @impulsemanage, разложит за 5 минут, что изменилось и подойдёт ли тебе сейчас."
+        ),
     },
 }
 
 _TIER_GROUPS = [
     ("S", "Горячие", "Менеджер вручную, голосовые, 1-1", "#c0392b"),
+    ("P", "Спец-сегменты", "Платящие, реферреры, тыкуны", "#16a085"),
     ("A", "Тёплые", "Автомат + персонализация", "#e67e22"),
-    ("B", "Средние", "Сегментированная массовая", "#d35400"),
-    ("C", "Холодные", "Массовая, минимум усилий", "#3498db"),
-    ("D", "Старая когорта", "Точечная переактивация", "#9b59b6"),
-    ("P", "Спец-сегменты", "Зависит от сегмента", "#16a085"),
+    ("B", "Средние", "Автомат-триггеры по оценкам", "#d35400"),
+    ("D", "Старая база", "Ручная массовая реактивация", "#9b59b6"),
+]
+
+# Default lifecycle rules seeded on first deploy. Each rule is created in
+# enabled=False so the admin can preview audience and test-send before flipping.
+_DEFAULT_LIFECYCLE_RULES: List[Dict[str, Any]] = [
+    {
+        "tier": "B3",
+        "name": "B3 · Стартовали, не подписались (1ч)",
+        "trigger_type": "time_after_event",
+        "trigger": {
+            "event": "start",
+            "hours_min": 1, "hours_max": 168,
+            "blocking_events": ["subscription_ok"],
+        },
+        "message_text": _TIER_SPEC["B3"]["trigger_text"],
+        "cooldown_days": 14,
+        "exclude_paid": True,
+        "respect_anti_fatigue": True,
+    },
+    {
+        "tier": "A2",
+        "name": "A2 · Шаг 1 — не запустили генерацию (30 мин)",
+        "trigger_type": "time_after_event",
+        "trigger": {
+            "event": "audio_uploaded",
+            "hours_min": 0.5, "hours_max": 12,
+            "blocking_events": ["generation_started"],
+        },
+        "message_text": _TIER_SPEC["A2"]["trigger_text"],
+        "cooldown_days": 14,
+        "exclude_paid": True,
+        "respect_anti_fatigue": True,
+    },
+    {
+        "tier": "A3",
+        "name": "A3 · Не оценили ролик (24-48ч)",
+        "trigger_type": "time_after_event",
+        "trigger": {
+            "event": "generation_done",
+            "hours_min": 24, "hours_max": 48,
+            "blocking_events": ["rate_video"],
+            "require_gens_eq": 1,
+        },
+        "message_text": _TIER_SPEC["A3"]["trigger_text"],
+        "cooldown_days": 7,
+        "exclude_paid": True,
+        "respect_anti_fatigue": True,
+    },
+    {
+        "tier": "A1",
+        "name": "A1 · Залипли на 1-м ролике (24ч)",
+        "trigger_type": "time_after_event",
+        "trigger": {
+            "event": "rate_video", "event_detail": "high",
+            "hours_min": 24, "hours_max": 720,
+            "require_gens_eq": 1, "require_no_referral": True,
+        },
+        "message_text": _TIER_SPEC["A1"]["trigger_text"],
+        "cooldown_days": 30,
+        "exclude_paid": True,
+        "respect_anti_fatigue": True,
+    },
+    {
+        "tier": "B1",
+        "name": "B1 · Средняя оценка (1ч)",
+        "trigger_type": "time_after_event",
+        "trigger": {
+            "event": "rate_video", "event_detail": "mid_low",
+            "hours_min": 1, "hours_max": 168,
+        },
+        "message_text": _TIER_SPEC["B1"]["trigger_text"],
+        "cooldown_days": 30,
+        "exclude_paid": True,
+        "respect_anti_fatigue": True,
+    },
+    {
+        "tier": "B2",
+        "name": "B2 · Низкая оценка (1ч)",
+        "trigger_type": "time_after_event",
+        "trigger": {
+            "event": "rate_video", "event_detail": "low",
+            "hours_min": 1, "hours_max": 168,
+            "blocking_events": ["survey_opened"],
+        },
+        "message_text": _TIER_SPEC["B2"]["trigger_text"],
+        "cooldown_days": 30,
+        "exclude_paid": True,
+        "respect_anti_fatigue": True,
+    },
 ]
 
 
@@ -1927,6 +2231,33 @@ def build_app(
                 f"<td>{a['detail']}</td><td>{a['created_at']}</td></tr>"
             )
 
+        # Lifecycle fires for the last 7 days
+        lifecycle_fires = await credits_db.recent_lifecycle_fires_for_user(tg_id, days=7)
+        lifecycle_rows = ""
+        for f in lifecycle_fires:
+            tier_html = ""
+            if f.get("rule_tier"):
+                tspec = _TIER_SPEC.get(f["rule_tier"])
+                bg = (tspec or {}).get("color", "#888")
+                tier_html = f'<span class="badge" style="background:{bg};color:white">{f["rule_tier"]}</span>'
+            else:
+                tier_html = '<span style="color:#999">—</span>'
+            status_badge = {
+                "sent": '<span class="badge badge-ok">отпр</span>',
+                "blocked": '<span class="badge badge-zero">блок</span>',
+                "failed": '<span class="badge badge-zero">ошиб</span>',
+                "throttled": '<span class="badge badge-warn">throttled</span>',
+                "test": '<span class="badge badge-stage">test</span>',
+            }.get(f.get("status", ""), html_mod.escape(f.get("status", "")))
+            lifecycle_rows += (
+                f"<tr><td>{html_mod.escape(f.get('created_at') or '')}</td>"
+                f"<td>{tier_html}</td>"
+                f"<td>#{f['rule_id']} <a href='/admin/lifecycle/{f['rule_id']}'>{html_mod.escape(f.get('rule_name') or '—')}</a></td>"
+                f"<td>{status_badge}</td>"
+                f"<td><small>{html_mod.escape((f.get('error') or '')[:160])}</small></td>"
+                f"</tr>"
+            )
+
         body = f"""
         <p><a href="/admin/users">&laquo; Все пользователи</a> |
            <a href="/admin/clients">Clients</a></p>
@@ -2024,6 +2355,15 @@ def build_app(
         <div class="table-wrap">
         <table><tr><th>#</th><th>Событие</th><th>Детали</th><th>Дата</th></tr>
         {act_rows if act_rows else '<tr><td colspan="4">Нет данных</td></tr>'}</table>
+        </div>
+        </div>
+
+        <div class="card">
+        <h3>Триггеры за 7 дней</h3>
+        <p style="color:#666;font-size:0.85em">Lifecycle-сообщения, которые до этого юзера дошли (или не дошли) за последнюю неделю — для проверки, что мы не долбим его лишнего.</p>
+        <div class="table-wrap">
+        <table><tr><th>Когда</th><th>Тир</th><th>Правило</th><th>Статус</th><th>Ошибка</th></tr>
+        {lifecycle_rows if lifecycle_rows else '<tr><td colspan="5">За 7 дней — пусто.</td></tr>'}</table>
         </div>
         </div>
 
@@ -4090,167 +4430,355 @@ def build_app(
 
     # ── Tier system: classification page + outreach workflow ─────────
 
+    async def _resolve_tier_count(tier_code: str, primary_counts: Dict[str, int]) -> int:
+        """Get count for a tier — uses primary view counts for primary tiers,
+        and audience-only resolver for P2/D1/D2.
+        """
+        spec = _TIER_SPEC.get(tier_code)
+        if not spec:
+            return 0
+        if spec.get("audience_only"):
+            ids = await credits_db._resolve_audience_only_tier(tier_code)
+            return len(ids or [])
+        return int(primary_counts.get(tier_code, 0))
+
+    async def _resolve_tier_users(tier_code: str, limit: int = 2000) -> List[Dict[str, Any]]:
+        spec = _TIER_SPEC.get(tier_code)
+        if not spec:
+            return []
+        if spec.get("audience_only"):
+            return await credits_db.list_audience_only_tier_users(tier_code, limit=limit)
+        return await credits_db.list_tier_users(tier_code, limit=limit)
+
     @app.get("/admin/tiers", response_class=HTMLResponse)
     async def tiers_view(request: Request, _user: str = Depends(_check_auth)) -> str:
         selected_tier = str(request.query_params.get("tier") or "").strip().upper()
-        counts = await credits_db.tier_counts()
+        primary_counts = await credits_db.tier_counts()
 
-        # Build the per-group dropdown options.
-        group_blocks: list = []
-        for letter, label, channel, color in _TIER_GROUPS:
+        # Pre-compute counts for all tiers including audience-only.
+        all_counts: Dict[str, int] = {}
+        for code, spec in _TIER_SPEC.items():
+            all_counts[code] = await _resolve_tier_count(code, primary_counts)
+
+        # ── Top: tier picker grid (no checklist; tier-first UX). ──────
+        groups_html = ""
+        for letter, label, group_caption, color in _TIER_GROUPS:
             tiers_in_group = [(code, spec) for code, spec in _TIER_SPEC.items() if spec["group"] == letter]
-            opts_html = "".join(
-                f'<option value="{code}" {"selected" if code == selected_tier else ""}>'
-                f'{code} — {html_mod.escape(spec["title"])} ({counts.get(code, 0)})'
-                f'</option>'
-                for code, spec in tiers_in_group
+            tile_html = ""
+            for code, spec in tiers_in_group:
+                cnt = all_counts.get(code, 0)
+                kind = spec.get("kind", "auto")
+                kind_emoji = {"manager": "👤", "auto": "⚡", "broadcast": "📣"}.get(kind, "•")
+                is_active = code == selected_tier
+                border = f"2px solid {color}" if is_active else "1px solid #e1e4e8"
+                tile_html += (
+                    f'<a href="/admin/tiers?tier={code}" '
+                    f'style="display:flex;flex-direction:column;justify-content:space-between;'
+                    f'min-width:170px;min-height:80px;padding:10px 12px;border-radius:8px;'
+                    f'border:{border};background:#fff;text-decoration:none;color:#222">'
+                    f'<div style="display:flex;justify-content:space-between;align-items:center">'
+                    f'<span class="badge" style="background:{color};color:white">{code}</span>'
+                    f'<span style="font-size:1.4em;font-weight:700">{cnt}</span>'
+                    f'</div>'
+                    f'<div style="margin-top:6px;font-size:0.85em;color:#444">'
+                    f'{kind_emoji} {html_mod.escape(spec["title"])}</div>'
+                    f'</a>'
+                )
+            groups_html += (
+                f'<div class="card" style="border-left:4px solid {color}">'
+                f'<h3 style="margin-top:0;color:{color}">{letter} — {html_mod.escape(label)}'
+                f'<small style="color:#666;font-weight:normal;margin-left:0.5rem">{html_mod.escape(group_caption)}</small></h3>'
+                f'<div style="display:flex;flex-wrap:wrap;gap:0.6rem">{tile_html}</div>'
+                f'</div>'
             )
-            group_blocks.append((letter, label, channel, color, opts_html))
 
-        # Aggregate: total classified / unclassified for the checklist header.
-        total_classified = sum(counts.values())
+        # ── Detail card (rendered when a tier is selected) ────────────
+        detail_html = ""
+        if selected_tier and selected_tier in _TIER_SPEC:
+            detail_html = await _render_tier_detail(selected_tier)
+        elif selected_tier:
+            detail_html = (
+                f'<div class="card"><p>Неизвестный тир: '
+                f'<code>{html_mod.escape(selected_tier)}</code></p></div>'
+            )
 
-        # Static checklist header.
-        checklist_rows = "".join(
-            f'<tr>'
-            f'<td><span class="badge" style="background:{color};color:white">{letter}</span></td>'
-            f'<td><strong>{label}</strong></td>'
-            f'<td>{channel}</td>'
-            f'<td>{sum(counts.get(c, 0) for c, s in _TIER_SPEC.items() if s["group"] == letter)} чел</td>'
-            f'</tr>'
-            for letter, label, channel, color in _TIER_GROUPS
+        legend_html = (
+            '<div class="info-box" style="margin-top:0">'
+            '<b>Легенда:</b> '
+            '<span style="margin-right:0.8rem">👤 — менеджер 1-1</span>'
+            '<span style="margin-right:0.8rem">⚡ — авто-триггер</span>'
+            '<span>📣 — ручная массовая рассылка</span><br>'
+            '<small>Один пользователь = один primary-тир в моменте. P2/D1/D2 — audience-only сегменты для ручных рассылок, не выводят юзера из активного S/A/B.</small>'
+            '</div>'
         )
-        checklist_html = (
+        body = f"{legend_html}{groups_html}{detail_html}"
+        return _page("Тиры", body)
+
+    async def _render_tier_detail(tier_code: str) -> str:
+        """Render the per-tier detail card: spec + active triggers + recent fires + users."""
+        spec = _TIER_SPEC[tier_code]
+        users_rows = await _resolve_tier_users(tier_code, limit=2000)
+        users_count = len(users_rows)
+
+        # Active triggers attached to this tier.
+        rules_in_tier = await credits_db.list_lifecycle_rules(tier=tier_code)
+        rules_html = await _render_tier_rules_panel(tier_code, rules_in_tier)
+
+        # Recent fires across all rules for this tier (last 50).
+        fires_rows: List[Dict[str, Any]] = []
+        for rule in rules_in_tier:
+            fires_rows.extend(await credits_db.recent_lifecycle_fires(rule["id"], limit=20))
+        fires_rows.sort(key=lambda r: r.get("created_at") or "", reverse=True)
+        fires_rows = fires_rows[:50]
+        fires_html = _render_fires_table(fires_rows, with_rule=False)
+
+        # Outreach map (only meaningful for manager-tiers).
+        outreach_map = {}
+        is_manager_tier = spec.get("kind") == "manager"
+        if is_manager_tier:
+            outreach_map = await credits_db.get_outreach_map(
+                tier_code, [int(r["tg_id"]) for r in users_rows]
+            )
+
+        # User table.
+        tbody = ""
+        for r in users_rows[:200]:  # cap visual table to 200; full list via CSV
+            uname = f"@{r['username']}" if r.get('username') else str(r['tg_id'])
+            tg_link = f"https://t.me/{r['username']}" if r.get('username') else "#"
+            rating = r.get("last_rating") or "—"
+            rev_total = int(r.get("revenue_bot", 0) or 0) + int(r.get("revenue_manual", 0) or 0)
+
+            outreach_cell = ""
+            actions = f'<a href="{tg_link}" target="_blank" rel="noopener">→ TG</a>'
+            if is_manager_tier:
+                o = outreach_map.get(int(r["tg_id"]))
+                if o:
+                    status = o["status"]
+                    status_badge = {
+                        "todo": '<span class="badge badge-stage">todo</span>',
+                        "contacted": '<span class="badge badge-ok">контакт</span>',
+                        "converted": '<span class="badge" style="background:#27ae60;color:white">конверсия</span>',
+                        "dropped": '<span class="badge badge-zero">дроп</span>',
+                    }.get(status, status)
+                    actor = html_mod.escape(o["assigned_to"] or "—")
+                    outreach_cell = f"{status_badge}<br><small style='color:#666'>{actor}</small>"
+                else:
+                    outreach_cell = '<span class="badge badge-stage">todo</span>'
+                actions = (
+                    f'<form method="post" action="/admin/tiers/outreach" style="display:inline">'
+                    f'<input type="hidden" name="tg_id" value="{r["tg_id"]}">'
+                    f'<input type="hidden" name="tier" value="{tier_code}">'
+                    f'<select name="status" onchange="this.form.submit()" style="font-size:0.8em">'
+                    f'<option value="">— статус —</option>'
+                    f'<option value="contacted">контакт</option>'
+                    f'<option value="converted">конверсия</option>'
+                    f'<option value="dropped">дроп</option>'
+                    f'<option value="todo">сбросить</option>'
+                    f'</select></form> '
+                    f'<a href="{tg_link}" target="_blank" rel="noopener">→ TG</a>'
+                )
+
+            tbody += (
+                f"<tr>"
+                f"<td><a href='/admin/users/{r['tg_id']}'>{html_mod.escape(uname)}</a></td>"
+                f"<td>{r.get('gens_done', 0)}</td>"
+                f"<td>{html_mod.escape(str(rating))}</td>"
+                f"<td>{rev_total}₽</td>"
+                f"<td>{html_mod.escape(r.get('cohort') or '(direct)')}</td>"
+                f"<td>{html_mod.escape(_fmt_ts(r.get('last_active_at')) or '—')}</td>"
+                + (f"<td>{outreach_cell}</td>" if is_manager_tier else "")
+                + f"<td>{actions}</td>"
+                f"</tr>"
+            )
+
+        users_table_header = (
+            "<tr><th>User</th><th>gens</th><th>rating</th><th>выручка</th>"
+            "<th>cohort</th><th>last_active</th>"
+            + ("<th>контакт</th>" if is_manager_tier else "")
+            + "<th></th></tr>"
+        )
+        users_colspan = 8 if is_manager_tier else 7
+        users_section = (
             '<div class="card">'
-            '<h3>Чек-лист работы с тирами</h3>'
-            '<div class="table-wrap"><table>'
-            '<tr><th>Tier</th><th>Температура</th><th>Канал</th><th>Объём</th></tr>'
-            f'{checklist_rows}</table></div>'
-            f'<p style="color:#666;font-size:0.85em">Итого классифицировано: <b>{total_classified}</b> юзеров. '
-            'Тиры взаимоисключающие — каждый юзер в одном тире.</p>'
+            f'<h3>Пользователи в тире <small style="color:#666">— {users_count} чел'
+            f' (показано {min(users_count, 200)})</small></h3>'
+            f'<div class="table-wrap"><table>{users_table_header}'
+            + (tbody if tbody else f'<tr><td colspan={users_colspan}>Никого нет в этом тире — самое время порадоваться.</td></tr>')
+            + '</table></div></div>'
+        )
+
+        # Action buttons. "Написать менеджером" → just below the spec, links to filter
+        # the user table by tier (which is already what we render).
+        kind = spec.get("kind", "auto")
+        if kind == "manager":
+            manager_button = (
+                f'<a class="btn" href="#users-list" style="background:#c0392b">Написать менеджером →</a>'
+            )
+        else:
+            manager_button = ""
+
+        # "Создать триггер" pre-fills the form for this tier with the template.
+        create_trigger_btn = (
+            f'<a class="btn btn-success" href="/admin/lifecycle?tier={tier_code}#new">'
+            f'Создать триггер для этого тира</a>'
+        )
+        # Audience-only tiers don't have lifecycle triggers (manual only).
+        if spec.get("audience_only"):
+            create_trigger_btn = (
+                '<span class="badge badge-stage" style="padding:6px 14px">'
+                'Audience-only — триггеры не создаются, только рассылки</span>'
+            )
+
+        broadcast_btn = (
+            f'<a class="btn btn-success" href="/admin/broadcasts/new?tier={tier_code}">Создать рассылку</a>'
+        )
+
+        spec_card = f"""
+        <div class="card">
+          <h3 style="margin:0">
+            <span class="badge" style="background:{spec['color']};color:white">{tier_code}</span>
+            {html_mod.escape(spec['title'])}
+            <small style="color:#666">— {users_count} чел · {html_mod.escape(spec.get('kind', 'auto'))}</small>
+          </h3>
+          <p><b>Сегментация:</b> <code>{html_mod.escape(spec['rule'])}</code></p>
+          <p><b>Задача:</b> {html_mod.escape(spec['task'])}</p>
+          <p><b>Канал:</b> {html_mod.escape(spec['channel'])} ({html_mod.escape(spec.get('delay', ''))})</p>
+          <p><b>Угол:</b> {html_mod.escape(spec['angle'])}</p>
+          <p><b>Ожид. конверсия:</b> {html_mod.escape(spec['cr'])}</p>
+          <div style="margin-top:0.8rem;display:flex;flex-wrap:wrap;gap:0.5rem">
+            {create_trigger_btn}
+            {broadcast_btn}
+            <a class="btn" href="/admin/tiers/{tier_code}/export">Скачать CSV</a>
+            {manager_button}
+          </div>
+        </div>
+        """
+        recent_fires_card = (
+            '<div class="card"><h3>Последние срабатывания триггеров этого тира</h3>'
+            + (fires_html or '<p style="color:#666">Пока ни одного срабатывания.</p>')
+            + '</div>'
+        )
+        anchor = '<a id="users-list"></a>'
+        return spec_card + rules_html + recent_fires_card + anchor + users_section
+
+    async def _render_tier_rules_panel(tier_code: str, rules: List[Dict[str, Any]]) -> str:
+        """Per-tier panel listing lifecycle rules attached to this tier with stats."""
+        if not rules:
+            return (
+                '<div class="card"><h3>Активные триггеры этого тира</h3>'
+                '<p style="color:#666">Триггеров для этого тира пока нет. '
+                f'<a href="/admin/lifecycle?tier={tier_code}#new">Создать первый →</a></p></div>'
+            )
+        body = ''
+        for rule in rules:
+            stats = await credits_db.lifecycle_rule_stats_24h(rule["id"])
+            sent = stats.get("sent", 0)
+            blocked = stats.get("blocked", 0)
+            failed = stats.get("failed", 0)
+            throttled = stats.get("throttled", 0)
+            total_attempts = sent + blocked + failed
+            err_pct = (100.0 * (blocked + failed) / total_attempts) if total_attempts else 0.0
+            err_color = "#27ae60" if err_pct <= 30 else "#e74c3c"
+            enabled_badge = (
+                '<span class="badge badge-ok">ВКЛ</span>' if rule["enabled"]
+                else '<span class="badge badge-zero">выкл</span>'
+            )
+            trig_summary = _summarize_trigger(rule["trigger_type"], rule.get("trigger") or {})
+            body += (
+                '<div style="border:1px solid #e1e4e8;border-radius:6px;padding:0.8rem 1rem;margin-bottom:0.6rem">'
+                f'<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem">'
+                f'<div><strong>#{rule["id"]} {html_mod.escape(rule["name"])}</strong> {enabled_badge}'
+                f'<br><small style="color:#666">{html_mod.escape(trig_summary)}</small></div>'
+                f'<div style="font-size:0.85em">'
+                f'<span title="отправлено за 24ч">отпр: <b>{sent}</b></span> · '
+                f'<span title="заблокированы">блок: <b>{blocked}</b></span> · '
+                f'<span title="ошибки">ошиб: <b>{failed}</b></span> · '
+                f'<span title="throttled (anti-fatigue)">throt: <b>{throttled}</b></span> · '
+                f'<span style="color:{err_color}">err {err_pct:.0f}%</span>'
+                f'</div></div>'
+                f'<div style="margin-top:0.5rem;display:flex;gap:0.4rem;flex-wrap:wrap">'
+                f'<a class="btn" href="/admin/lifecycle/{rule["id"]}/preview">Превью аудитории</a>'
+                f'<form method="post" action="/admin/lifecycle/{rule["id"]}/toggle" style="display:inline">'
+                f'<button class="{("btn-danger" if rule["enabled"] else "btn-success")}">{("Выключить" if rule["enabled"] else "Включить")}</button></form>'
+                f'<a class="btn" href="/admin/lifecycle/{rule["id"]}">Открыть / редактировать</a>'
+                f'</div>'
+                '</div>'
+            )
+        return (
+            '<div class="card"><h3>Активные триггеры этого тира</h3>'
+            f'{body}'
+            f'<p><a href="/admin/lifecycle?tier={tier_code}#new" class="btn">+ Добавить триггер для этого тира</a></p>'
             '</div>'
         )
 
-        # Build dropdown UI: one <select> per group letter to make picking faster.
-        groups_select_html = ""
-        for letter, label, channel, color, opts_html in group_blocks:
-            groups_select_html += (
-                f'<form method="get" action="/admin/tiers" style="display:inline-block;margin:0.3rem 0.5rem 0.3rem 0">'
-                f'<button type="submit" class="badge" '
-                f'style="background:{color};color:white;border:none;padding:6px 10px;cursor:default;display:inline">'
-                f'{letter} — {html_mod.escape(label)}</button> '
-                f'<select name="tier" onchange="this.form.submit()">'
-                f'<option value="">— выбрать тир из {letter} —</option>'
-                f'{opts_html}'
-                f'</select>'
-                f'</form>'
+    def _summarize_trigger(trigger_type: str, trig: Dict[str, Any]) -> str:
+        if trigger_type == "time_after_event":
+            ev = trig.get("event") or "?"
+            det = trig.get("event_detail")
+            hmin = trig.get("hours_min")
+            hmax = trig.get("hours_max")
+            block = trig.get("blocking_events") or []
+            extra = []
+            if trig.get("require_gens_eq") is not None:
+                extra.append(f"gens={trig['require_gens_eq']}")
+            if trig.get("require_no_referral"):
+                extra.append("no_referral")
+            ev_str = f"{ev}={det}" if det else ev
+            window = f"{hmin}-{hmax}ч" if hmax else f"≥{hmin}ч"
+            block_str = f", без {','.join(block)}" if block else ""
+            extra_str = f" [{', '.join(extra)}]" if extra else ""
+            return f"⚡ {ev_str} {window}{block_str}{extra_str}"
+        if trigger_type == "tier_membership":
+            return f"⚡ юзер сейчас в тире {trig.get('tier', '?')}"
+        if trigger_type == "low_balance_trial":
+            return f"⚡ trial-юзер с балансом ≤ {trig.get('max_credits', 1)}"
+        if trigger_type == "balance_low":
+            return f"⚡ баланс {trig.get('credits_geq', 1)}–{trig.get('credits_leq', 2)}"
+        if trigger_type == "inactive":
+            return f"⚡ не заходил {trig.get('days', 14)} дн"
+        if trigger_type == "generated_not_paid":
+            return f"⚡ ≥{trig.get('min_gens', 3)} ген, не платил"
+        return f"⚡ {trigger_type}"
+
+    def _render_fires_table(rows: List[Dict[str, Any]], *, with_rule: bool) -> str:
+        if not rows:
+            return ""
+        head = "<tr><th>Когда</th>"
+        if with_rule:
+            head += "<th>Правило</th><th>Тир</th>"
+        head += "<th>User</th><th>Статус</th><th>Ошибка</th></tr>"
+        body = ""
+        for r in rows:
+            uname = f"@{r['username']}" if r.get('username') else str(r['tg_id'])
+            status_badge = {
+                "sent": '<span class="badge badge-ok">отпр</span>',
+                "blocked": '<span class="badge badge-zero">блок</span>',
+                "failed": '<span class="badge badge-zero">ошиб</span>',
+                "throttled": '<span class="badge badge-warn">throt</span>',
+                "test": '<span class="badge badge-stage">test</span>',
+            }.get(r.get("status", ""), html_mod.escape(r.get("status", "")))
+            err = html_mod.escape((r.get("error") or "")[:120])
+            body += "<tr>"
+            body += f"<td>{html_mod.escape(_fmt_ts(r.get('created_at')))}</td>"
+            if with_rule:
+                body += (
+                    f"<td>#{r.get('rule_id', '')} {html_mod.escape(r.get('rule_name', ''))}</td>"
+                    f"<td>{html_mod.escape(r.get('rule_tier') or '—')}</td>"
+                )
+            body += (
+                f"<td><a href='/admin/users/{r['tg_id']}'>{html_mod.escape(uname)}</a></td>"
+                f"<td>{status_badge}</td>"
+                f"<td><small>{err}</small></td>"
+                "</tr>"
             )
-
-        # If a tier is selected, render its detail card + user table + Excel link.
-        detail_html = ""
-        if selected_tier and selected_tier in _TIER_SPEC:
-            spec = _TIER_SPEC[selected_tier]
-            users_rows = await credits_db.list_tier_users(selected_tier, limit=2000)
-            outreach_map = {}
-            if spec["group"] == "S":
-                outreach_map = await credits_db.get_outreach_map(
-                    selected_tier, [int(r["tg_id"]) for r in users_rows]
-                )
-
-            tbody = ""
-            for r in users_rows:
-                uname = f"@{r['username']}" if r['username'] else str(r['tg_id'])
-                tg_link = f"https://t.me/{r['username']}" if r['username'] else "#"
-                rating = r.get("last_rating") or "—"
-                rev_total = int(r.get("revenue_bot", 0) or 0) + int(r.get("revenue_manual", 0) or 0)
-
-                outreach_cell = ""
-                if spec["group"] == "S":
-                    o = outreach_map.get(int(r["tg_id"]))
-                    if o:
-                        status = o["status"]
-                        status_badge = {
-                            "todo": '<span class="badge badge-stage">todo</span>',
-                            "contacted": '<span class="badge badge-ok">контакт</span>',
-                            "converted": '<span class="badge" style="background:#27ae60;color:white">конверсия</span>',
-                            "dropped": '<span class="badge badge-zero">дроп</span>',
-                        }.get(status, status)
-                        actor = html_mod.escape(o["assigned_to"] or "—")
-                        outreach_cell = f"{status_badge}<br><small style='color:#666'>{actor}</small>"
-                    else:
-                        outreach_cell = '<span class="badge badge-stage">todo</span>'
-                    actions = (
-                        f'<form method="post" action="/admin/tiers/outreach" style="display:inline">'
-                        f'<input type="hidden" name="tg_id" value="{r["tg_id"]}">'
-                        f'<input type="hidden" name="tier" value="{selected_tier}">'
-                        f'<select name="status" onchange="this.form.submit()" style="font-size:0.8em">'
-                        f'<option value="">— статус —</option>'
-                        f'<option value="contacted">контакт</option>'
-                        f'<option value="converted">конверсия</option>'
-                        f'<option value="dropped">дроп</option>'
-                        f'<option value="todo">сбросить</option>'
-                        f'</select></form> '
-                        f'<a href="{tg_link}" target="_blank" rel="noopener">→ TG</a>'
-                    )
-                else:
-                    actions = f'<a href="{tg_link}" target="_blank" rel="noopener">→ TG</a>'
-
-                tbody += (
-                    f"<tr>"
-                    f"<td><a href='/admin/users/{r['tg_id']}'>{html_mod.escape(uname)}</a></td>"
-                    f"<td>{r['gens_done']}</td>"
-                    f"<td>{html_mod.escape(rating)}</td>"
-                    f"<td>{rev_total}₽</td>"
-                    f"<td>{html_mod.escape(r.get('cohort') or '(direct)')}</td>"
-                    f"<td>{html_mod.escape(_fmt_ts(r.get('last_active_at')) or '—')}</td>"
-                    f"<td>{outreach_cell}</td>"
-                    f"<td>{actions}</td>"
-                    f"</tr>"
-                )
-
-            detail_html = f"""
-            <div class="card">
-              <h3 style="margin:0">
-                <span class="badge" style="background:{spec['color']};color:white">{selected_tier}</span>
-                {html_mod.escape(spec['title'])}
-                <small style="color:#666">— {len(users_rows)} чел</small>
-              </h3>
-              <p><b>Сегментация:</b> <code>{html_mod.escape(spec['rule'])}</code></p>
-              <p><b>Задача:</b> {html_mod.escape(spec['task'])}</p>
-              <p><b>Канал:</b> {html_mod.escape(spec['channel'])}</p>
-              <p><b>Угол:</b> {html_mod.escape(spec['angle'])}</p>
-              <p><b>Ожид. конверсия:</b> {html_mod.escape(spec['cr'])}</p>
-              <a class="btn" href="/admin/tiers/{selected_tier}/export">Скачать Excel/CSV</a>
-              <a class="btn btn-success" href="/admin/broadcasts/new?tier={selected_tier}" style="margin-left:0.5rem">Создать рассылку для этого тира</a>
-            </div>
-            <div class="card">
-              <div class="table-wrap"><table>
-                <tr><th>User</th><th>gens</th><th>rating</th><th>выручка</th><th>cohort</th><th>last_active</th>
-                    <th>{('контакт' if spec['group'] == 'S' else '')}</th><th></th></tr>
-                {tbody if tbody else '<tr><td colspan=8>Никого нет в этом тире — самое время порадоваться.</td></tr>'}
-              </table></div>
-            </div>
-            """
-        elif selected_tier:
-            detail_html = f'<div class="card"><p>Неизвестный тир: <code>{html_mod.escape(selected_tier)}</code></p></div>'
-
-        body = f"""
-        {checklist_html}
-        <div class="card">
-          <h3>Выбор тира</h3>
-          <p style="color:#666;font-size:0.85em">Жми на код тира → откроется список юзеров с рекомендацией и экспортом.</p>
-          {groups_select_html}
-        </div>
-        {detail_html}
-        """
-        return _page("Тиры", body)
+        return f'<div class="table-wrap"><table>{head}{body}</table></div>'
 
     @app.get("/admin/tiers/{tier}/export", response_class=PlainTextResponse)
     async def tiers_export(tier: str, _user: str = Depends(_check_auth)) -> PlainTextResponse:
         tier_code = tier.strip().upper()
         if tier_code not in _TIER_SPEC:
             raise HTTPException(404, f"Unknown tier {tier_code}")
-        rows = await credits_db.list_tier_users(tier_code, limit=10_000)
+        rows = await _resolve_tier_users(tier_code, limit=10_000)
         outreach_map = await credits_db.get_outreach_map(tier_code, [int(r["tg_id"]) for r in rows])
 
         def esc(v: Any) -> str:
@@ -4312,51 +4840,181 @@ def build_app(
     # ── Lifecycle rules ───────────────────────────────────────────────
 
     _TRIGGER_LABELS = {
+        "time_after_event": "Через N часов после ивента",
+        "tier_membership": "Юзер сейчас в тире X",
+        "low_balance_trial": "Trial-юзер с низким балансом",
         "balance_low": "Баланс просел",
         "inactive": "Не заходил N дней",
         "generated_not_paid": "Генерил, но не платил",
     }
 
     @app.get("/admin/lifecycle", response_class=HTMLResponse)
-    async def lifecycle_list(_user: str = Depends(_check_auth)) -> str:
-        rules = await credits_db.list_lifecycle_rules()
+    async def lifecycle_list(request: Request, _user: str = Depends(_check_auth)) -> str:
+        tier_filter = str(request.query_params.get("tier") or "").strip().upper()
+        rules = await credits_db.list_lifecycle_rules(tier=tier_filter or None)
+
+        # ── Top: global summary ──
+        global_stats = await credits_db.lifecycle_global_stats_24h()
+        recent_global = await credits_db.lifecycle_recent_fires_global(limit=100)
+        summary_card = (
+            '<div class="card"><h3>Сводка за 24 часа</h3>'
+            '<div style="display:flex;flex-wrap:wrap;gap:1rem">'
+            f'<div class="stage-chip"><div class="count">{global_stats.get("sent", 0)}</div><div class="label">отправлено</div></div>'
+            f'<div class="stage-chip"><div class="count">{global_stats.get("blocked", 0)}</div><div class="label">заблокированы</div></div>'
+            f'<div class="stage-chip"><div class="count">{global_stats.get("failed", 0)}</div><div class="label">ошибки</div></div>'
+            f'<div class="stage-chip"><div class="count">{global_stats.get("throttled", 0)}</div><div class="label">throttled (anti-fatigue)</div></div>'
+            f'<div class="stage-chip"><div class="count">{global_stats.get("test", 0)}</div><div class="label">тестовых</div></div>'
+            '</div></div>'
+        )
+
+        tier_options = "".join(
+            f'<option value="{code}" {"selected" if code == tier_filter else ""}>'
+            f'{code} — {html_mod.escape(spec["title"])}</option>'
+            for code, spec in _TIER_SPEC.items()
+        )
+        filter_card = (
+            '<div class="card">'
+            '<form method="get" action="/admin/lifecycle">'
+            '<label>Фильтр по тиру: '
+            f'<select name="tier" onchange="this.form.submit()">'
+            '<option value="">— все тиры —</option>'
+            f'{tier_options}'
+            '</select></label> '
+            f'<a href="/admin/lifecycle" style="margin-left:0.5rem">сбросить</a>'
+            '</form></div>'
+        )
+
+        # ── Rules list ──
         tr = []
         for r in rules:
             trig_lbl = _TRIGGER_LABELS.get(r["trigger_type"], r["trigger_type"])
-            trig_params = ", ".join(f"{k}={v}" for k, v in (r["trigger"] or {}).items())
+            trig_summary = _summarize_trigger(r["trigger_type"], r.get("trigger") or {})
+            stats = await credits_db.lifecycle_rule_stats_24h(r["id"])
+            sent = stats.get("sent", 0)
+            blocked = stats.get("blocked", 0)
+            failed = stats.get("failed", 0)
+            throttled = stats.get("throttled", 0)
+            total = sent + blocked + failed
+            err_pct = (100.0 * (blocked + failed) / total) if total else 0.0
+            err_color = "#27ae60" if err_pct <= 30 else "#e74c3c"
+            tier_badge = ""
+            if r.get("tier"):
+                tspec = _TIER_SPEC.get(r["tier"])
+                bg = (tspec or {}).get("color", "#888")
+                tier_badge = f'<span class="badge" style="background:{bg};color:white">{r["tier"]}</span> '
             enabled_badge = (
-                '<span class="badge badge-ok">включен</span>' if r["enabled"]
-                else '<span class="badge badge-zero">выключен</span>'
+                '<span class="badge badge-ok">ВКЛ</span>' if r["enabled"]
+                else '<span class="badge badge-zero">выкл</span>'
             )
             tr.append(
-                f"<tr><td>#{r['id']}</td><td>{html_mod.escape(r['name'])}</td>"
-                f"<td>{trig_lbl}<br><small>{html_mod.escape(trig_params)}</small></td>"
+                f"<tr><td>#{r['id']}</td>"
+                f"<td>{tier_badge}<a href='/admin/lifecycle/{r['id']}'>{html_mod.escape(r['name'])}</a><br>"
+                f"<small style='color:#666'>{html_mod.escape(trig_summary)}</small></td>"
+                f"<td>{trig_lbl}</td>"
                 f"<td>{r['cooldown_days']} дн.</td>"
-                f"<td>{r['fired_count']}</td>"
+                f"<td>отпр {sent} · блок {blocked} · ошиб {failed} · thr {throttled}<br>"
+                f"<span style='color:{err_color};font-size:0.85em'>err {err_pct:.0f}%</span></td>"
                 f"<td>{r['last_run_at'] or '—'}</td>"
                 f"<td>{enabled_badge}</td>"
                 f"<td>"
+                f"<a class='btn' href='/admin/lifecycle/{r['id']}/preview' style='font-size:0.8em'>превью</a> "
                 f"<form method='post' action='/admin/lifecycle/{r['id']}/toggle' style='display:inline'>"
-                f"<button>{'Выключить' if r['enabled'] else 'Включить'}</button></form> "
+                f"<button class='{('btn-danger' if r['enabled'] else 'btn-success')}' style='font-size:0.8em'>"
+                f"{'выкл' if r['enabled'] else 'вкл'}</button></form> "
                 f"<form method='post' action='/admin/lifecycle/{r['id']}/delete' style='display:inline' "
-                f"onsubmit=\"return confirm('Удалить правило?')\"><button class='btn-danger'>Удалить</button></form>"
+                f"onsubmit=\"return confirm('Удалить правило?')\">"
+                f"<button class='btn-danger' style='font-size:0.8em'>удалить</button></form>"
                 f"</td></tr>"
             )
 
-        body = f"""
+        recent_html = _render_fires_table(recent_global, with_rule=True)
+        recent_card = (
+            '<div class="card"><h3>Последние 100 срабатываний (все правила)</h3>'
+            + (recent_html or '<p style="color:#666">Пока ни одного срабатывания.</p>')
+            + '</div>'
+        )
+
+        # ── New-rule form (anchored at #new). Pre-fills from tier when ?tier=X ──
+        prefill_text = ""
+        prefill_name = ""
+        prefill_tier = tier_filter
+        prefill_trigger_type = "time_after_event"
+        prefill_event = ""
+        prefill_event_detail = ""
+        prefill_hours_min = "1"
+        prefill_hours_max = ""
+        prefill_blocking = ""
+        prefill_cooldown = "30"
+        if tier_filter and tier_filter in _TIER_SPEC:
+            spec = _TIER_SPEC[tier_filter]
+            prefill_text = spec.get("trigger_text") or ""
+            prefill_name = f"{tier_filter} · {spec['title']}"
+            tmpl = spec.get("trigger_template") or {}
+            if tmpl:
+                prefill_trigger_type = tmpl.get("trigger_type") or prefill_trigger_type
+                trg = tmpl.get("trigger") or {}
+                prefill_event = trg.get("event") or ""
+                prefill_event_detail = trg.get("event_detail") or ""
+                if "hours_min" in trg:
+                    prefill_hours_min = str(trg["hours_min"])
+                if "hours_max" in trg:
+                    prefill_hours_max = str(trg["hours_max"])
+                if trg.get("blocking_events"):
+                    prefill_blocking = ",".join(trg["blocking_events"])
+                if "cooldown_days" in tmpl:
+                    prefill_cooldown = str(tmpl["cooldown_days"])
+
+        new_form = f"""
+        <a id="new"></a>
         <div class="card">
-          <h3>Добавить правило</h3>
+          <h3>Добавить правило{(' для ' + tier_filter) if tier_filter else ''}</h3>
           <form method="post" action="/admin/lifecycle/new">
-            <label>Название: <input type="text" name="name" required style="width:260px"></label><br><br>
+            <label>Название: <input type="text" name="name" required style="width:320px"
+                   value="{html_mod.escape(prefill_name, quote=True)}"></label>
+            <label style="margin-left:1rem">Тир:
+              <select name="tier">
+                <option value="">— без тира —</option>
+                {''.join(f'<option value="{c}" {"selected" if c == prefill_tier else ""}>{c} — {html_mod.escape(s["title"])}</option>' for c, s in _TIER_SPEC.items())}
+              </select>
+            </label>
+            <br><br>
             <label>Тип триггера:
-              <select name="trigger_type" onchange="document.getElementById('tp-bal').style.display=this.value==='balance_low'?'block':'none';document.getElementById('tp-inact').style.display=this.value==='inactive'?'block':'none';document.getElementById('tp-gnp').style.display=this.value==='generated_not_paid'?'block':'none';">
+              <select name="trigger_type" onchange="
+                document.getElementById('tp-time').style.display=this.value==='time_after_event'?'block':'none';
+                document.getElementById('tp-tier').style.display=this.value==='tier_membership'?'block':'none';
+                document.getElementById('tp-trial').style.display=this.value==='low_balance_trial'?'block':'none';
+                document.getElementById('tp-bal').style.display=this.value==='balance_low'?'block':'none';
+                document.getElementById('tp-inact').style.display=this.value==='inactive'?'block':'none';
+                document.getElementById('tp-gnp').style.display=this.value==='generated_not_paid'?'block':'none';
+              ">
+                <option value="time_after_event" {'selected' if prefill_trigger_type == 'time_after_event' else ''}>Через N часов после ивента (универсал для PDF v2.0)</option>
+                <option value="tier_membership" {'selected' if prefill_trigger_type == 'tier_membership' else ''}>Юзер сейчас в тире X</option>
+                <option value="low_balance_trial" {'selected' if prefill_trigger_type == 'low_balance_trial' else ''}>Trial-юзер, баланс низкий</option>
                 <option value="balance_low">Баланс просел (credits между X и Y)</option>
                 <option value="inactive">Не заходил N дней</option>
                 <option value="generated_not_paid">Сделал ≥N генераций, не платил</option>
               </select>
             </label><br>
 
-            <div id="tp-bal" style="margin-top:0.5rem">
+            <div id="tp-time" style="margin-top:0.5rem;{'display:block' if prefill_trigger_type == 'time_after_event' else 'display:none'}">
+              Ивент: <input type="text" name="event" value="{html_mod.escape(prefill_event, quote=True)}" placeholder="rate_video / start / audio_uploaded / generation_done" style="width:240px">
+              detail: <input type="text" name="event_detail" value="{html_mod.escape(prefill_event_detail, quote=True)}" placeholder="high / mid_low / low (опц)" style="width:120px">
+              <br>
+              hours_min: <input type="number" step="0.5" name="hours_min" value="{html_mod.escape(prefill_hours_min, quote=True)}" min="0" style="width:80px">
+              hours_max: <input type="number" step="0.5" name="hours_max" value="{html_mod.escape(prefill_hours_max, quote=True)}" min="0" placeholder="опц" style="width:80px">
+              <br>
+              blocking_events: <input type="text" name="blocking_events" value="{html_mod.escape(prefill_blocking, quote=True)}" placeholder="через запятую: subscription_ok,generation_started" style="width:380px">
+              <br>
+              <label>require_gens_eq: <input type="number" name="require_gens_eq" placeholder="опц" min="0" style="width:70px"></label>
+              <label style="margin-left:1rem"><input type="checkbox" name="require_no_referral"> require_no_referral</label>
+            </div>
+            <div id="tp-tier" style="margin-top:0.5rem;{'display:block' if prefill_trigger_type == 'tier_membership' else 'display:none'}">
+              Тир: <input type="text" name="trig_tier" placeholder="S2 / P4 / B1" style="width:80px">
+            </div>
+            <div id="tp-trial" style="margin-top:0.5rem;{'display:block' if prefill_trigger_type == 'low_balance_trial' else 'display:none'}">
+              max_credits ≤ <input type="number" name="max_credits" value="1" min="0" style="width:70px">
+            </div>
+            <div id="tp-bal" style="display:none;margin-top:0.5rem">
               credits ≥ <input type="number" name="credits_geq" value="1" min="0" style="width:70px">
               credits ≤ <input type="number" name="credits_leq" value="2" min="0" style="width:70px">
             </div>
@@ -4368,56 +5026,296 @@ def build_app(
             </div>
             <br>
             <label>Cooldown (не долбить одному юзеру чаще, чем раз в N дней):
-              <input type="number" name="cooldown_days" value="30" min="1" style="width:70px">
+              <input type="number" name="cooldown_days" value="{html_mod.escape(prefill_cooldown, quote=True)}" min="1" style="width:70px">
+            </label>
+            <label style="margin-left:1rem"><input type="checkbox" name="exclude_paid" checked> exclude_paid</label>
+            <label style="margin-left:1rem"><input type="checkbox" name="respect_anti_fatigue" checked> anti_fatigue</label>
+            <br><br>
+            <label>Сообщение:<br>
+              <textarea name="message_text" rows="6" style="width:100%" required>{html_mod.escape(prefill_text)}</textarea>
             </label><br><br>
-            <label>Сообщение (HTML):<br>
-              <textarea name="message_text" rows="4" style="width:100%" required></textarea>
-            </label><br><br>
-            <label><input type="checkbox" name="enabled" checked> Включить сразу</label><br><br>
-            <button type="submit" class="btn-success">Создать</button>
+            <p style="color:#666;font-size:0.85em">
+              Правило создаётся <b>выключенным</b>. Перед включением — нажми «Превью аудитории» и «Тестовая отправка».
+            </p>
+            <button type="submit" class="btn-success">Создать (выключенным)</button>
           </form>
         </div>
+        """
 
+        body = (
+            summary_card
+            + filter_card
+            + '<div class="card">'
+            f'<h3>Правила{(": " + tier_filter) if tier_filter else ""}</h3>'
+            '<div class="table-wrap"><table>'
+            '<tr><th>#</th><th>Название · триггер</th><th>Тип</th><th>Cooldown</th>'
+            '<th>За 24ч</th><th>Последний запуск</th><th>Статус</th><th>Действия</th></tr>'
+            + (''.join(tr) if tr else '<tr><td colspan=8>Правил ещё нет</td></tr>')
+            + '</table></div>'
+            '<p style="color:#666;font-size:0.85em">'
+            'Воркер прогоняет правила автоматически каждые 5 минут. '
+            'Перед каждой отправкой авто проверяются: bot_blocked · admin_dm за 7 дней · оплата (если exclude_paid) · '
+            'anti-fatigue (≤1/48ч и ≤2/неделю) · cooldown правила.'
+            '</p></div>'
+            + recent_card
+            + new_form
+        )
+        return _page("Lifecycle-триггеры", body)
+
+    @app.get("/admin/lifecycle/{rid}", response_class=HTMLResponse)
+    async def lifecycle_detail(rid: int, _user: str = Depends(_check_auth)) -> str:
+        rule = await credits_db.get_lifecycle_rule(rid)
+        if not rule:
+            raise HTTPException(404)
+        stats = await credits_db.lifecycle_rule_stats_24h(rid)
+        fires = await credits_db.recent_lifecycle_fires(rid, limit=100)
+        tier = rule.get("tier") or ""
+        spec = _TIER_SPEC.get(tier) if tier else None
+        tier_link = (
+            f'<a href="/admin/tiers?tier={tier}">{tier} — {html_mod.escape((spec or {}).get("title", ""))}</a>'
+            if tier else "(без тира)"
+        )
+        enabled_badge = (
+            '<span class="badge badge-ok">ВКЛ</span>' if rule["enabled"]
+            else '<span class="badge badge-zero">выкл</span>'
+        )
+        trig_summary = _summarize_trigger(rule["trigger_type"], rule.get("trigger") or {})
+
+        # Edit form (just message + cooldown + flags + enabled).
+        edit_form = f"""
+        <div class="card"><h3>Редактировать</h3>
+        <form method="post" action="/admin/lifecycle/{rid}/edit">
+          <label>Название: <input type="text" name="name" value="{html_mod.escape(rule['name'], quote=True)}" style="width:320px" required></label><br><br>
+          <label>Тир: <input type="text" name="tier" value="{html_mod.escape(tier, quote=True)}" style="width:80px"></label>
+          <label style="margin-left:1rem">Cooldown: <input type="number" name="cooldown_days" value="{rule['cooldown_days']}" min="1" style="width:70px"></label>
+          <label style="margin-left:1rem"><input type="checkbox" name="exclude_paid" {'checked' if rule.get('exclude_paid') else ''}> exclude_paid</label>
+          <label style="margin-left:1rem"><input type="checkbox" name="respect_anti_fatigue" {'checked' if rule.get('respect_anti_fatigue') else ''}> anti_fatigue</label>
+          <br><br>
+          <label>Сообщение:<br>
+            <textarea name="message_text" rows="8" style="width:100%" required>{html_mod.escape(rule['message_text'])}</textarea>
+          </label><br><br>
+          <button type="submit" class="btn-success">Сохранить</button>
+        </form></div>
+        """
+
+        # Test send block.
+        test_form = f"""
         <div class="card">
-          <div class="table-wrap"><table>
-            <tr><th>#</th><th>Название</th><th>Триггер</th><th>Cooldown</th>
-                <th>Срабатываний</th><th>Последний запуск</th><th>Статус</th><th>Действия</th></tr>
-            {''.join(tr) if tr else '<tr><td colspan=8>Правил ещё нет</td></tr>'}
-          </table></div>
+          <h3>Тестовая отправка</h3>
           <p style="color:#666;font-size:0.85em">
-            Воркер прогоняет правила автоматически раз в час (см. <code>LIFECYCLE_TICK_SECONDS</code>).
+            Отправляет именно это сообщение указанному tg_id. Помечается <code>test</code> в fires —
+            не учитывается в cooldown, anti-fatigue и счётчиках. Прогони на себе перед массовым включением.
           </p>
+          <form method="post" action="/admin/lifecycle/{rid}/test_send">
+            <input type="number" name="tg_id" placeholder="tg_id" required style="width:160px">
+            <button type="submit" class="btn-success">Отправить тестово</button>
+          </form>
         </div>
         """
-        return _page("Lifecycle-триггеры", body)
+
+        fires_html = _render_fires_table(fires, with_rule=False)
+        fires_card = (
+            '<div class="card"><h3>Последние 100 срабатываний</h3>'
+            + (fires_html or '<p style="color:#666">Пока ни одного срабатывания.</p>')
+            + '</div>'
+        )
+
+        body = f"""
+        <div class="card">
+          <h3>#{rid} · {html_mod.escape(rule['name'])} {enabled_badge}</h3>
+          <p><b>Тир:</b> {tier_link}</p>
+          <p><b>Триггер:</b> {html_mod.escape(rule['trigger_type'])} — {html_mod.escape(trig_summary)}</p>
+          <p><b>JSON:</b> <code>{html_mod.escape(json.dumps(rule.get('trigger') or {{}}, ensure_ascii=False))}</code></p>
+          <p><b>Cooldown:</b> {rule['cooldown_days']} дн ·
+             <b>exclude_paid:</b> {rule.get('exclude_paid')} ·
+             <b>anti_fatigue:</b> {rule.get('respect_anti_fatigue')}</p>
+          <p><b>За 24ч:</b> отправлено {stats.get('sent', 0)} · заблокированы {stats.get('blocked', 0)}
+             · ошибки {stats.get('failed', 0)} · throttled {stats.get('throttled', 0)} · test {stats.get('test', 0)}</p>
+          <p><b>Всего срабатываний:</b> {rule['fired_count']} · последний запуск: {rule['last_run_at'] or '—'}</p>
+          <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.5rem">
+            <a class="btn" href="/admin/lifecycle/{rid}/preview">Превью аудитории</a>
+            <form method="post" action="/admin/lifecycle/{rid}/toggle" style="display:inline">
+              <button class="{('btn-danger' if rule['enabled'] else 'btn-success')}">{'Выключить' if rule['enabled'] else 'Включить'}</button>
+            </form>
+            <form method="post" action="/admin/lifecycle/{rid}/delete" style="display:inline"
+                  onsubmit="return confirm('Удалить правило?')">
+              <button class="btn-danger">Удалить</button>
+            </form>
+            <a class="btn" href="/admin/lifecycle">← к списку</a>
+          </div>
+        </div>
+        {test_form}
+        {edit_form}
+        {fires_card}
+        """
+        return _page(f"Triger #{rid}", body)
+
+    @app.get("/admin/lifecycle/{rid}/preview", response_class=HTMLResponse)
+    async def lifecycle_preview(rid: int, _user: str = Depends(_check_auth)) -> str:
+        rule = await credits_db.get_lifecycle_rule(rid)
+        if not rule:
+            raise HTTPException(404)
+        breakdown = await credits_db.lifecycle_audience_breakdown(rule)
+
+        sample_html = ""
+        if breakdown["sample"]:
+            rows = ""
+            for s in breakdown["sample"]:
+                uname = f"@{s['username']}" if s["username"] else str(s["tg_id"])
+                tg_link = f"https://t.me/{s['username']}" if s["username"] else "#"
+                rows += (
+                    f"<tr>"
+                    f"<td><a href='/admin/users/{s['tg_id']}'>{html_mod.escape(uname)}</a></td>"
+                    f"<td>{s['gens_done']}</td>"
+                    f"<td>{html_mod.escape(s['last_rating'] or '—')}</td>"
+                    f"<td>{html_mod.escape(s['last_active_at'] or '—')}</td>"
+                    f"<td><a href='{tg_link}' target='_blank' rel='noopener'>→ TG</a></td>"
+                    f"</tr>"
+                )
+            sample_html = (
+                '<div class="table-wrap"><table>'
+                '<tr><th>User</th><th>gens</th><th>rating</th><th>last_active</th><th></th></tr>'
+                f'{rows}</table></div>'
+            )
+        else:
+            sample_html = '<p style="color:#666">Сейчас аудитория пустая.</p>'
+
+        excl = breakdown
+        bar_total = max(1, excl["matched_raw"])
+        def pct(n: int) -> int:
+            return int(round(100 * n / bar_total))
+
+        body = f"""
+        <div class="card">
+          <h3>Превью аудитории · правило #{rid} {html_mod.escape(rule['name'])}</h3>
+          <p>Матчей правила без exclusion: <b>{excl['matched_raw']}</b></p>
+          <p>Из них убрано:</p>
+          <ul>
+            <li>bot_blocked: <b>{excl['excluded_blocked']}</b> ({pct(excl['excluded_blocked'])}%)</li>
+            <li>admin_dm за 7 дней: <b>{excl['excluded_admin_dm']}</b> ({pct(excl['excluded_admin_dm'])}%)</li>
+            <li>оплата (exclude_paid): <b>{excl['excluded_paid']}</b> ({pct(excl['excluded_paid'])}%)</li>
+            <li>anti-fatigue (1/48ч, 2/нед): <b>{excl['excluded_anti_fatigue']}</b> ({pct(excl['excluded_anti_fatigue'])}%)</li>
+            <li>cooldown правила: <b>{excl['excluded_cooldown']}</b> ({pct(excl['excluded_cooldown'])}%)</li>
+          </ul>
+          <p style="font-size:1.1em">→ <b>{excl['final_count']}</b> юзеров получат сообщение при ближайшем тике.</p>
+          <a class="btn" href="/admin/lifecycle/{rid}">← к правилу</a>
+        </div>
+        <div class="card">
+          <h3>Первые 10 кандидатов</h3>
+          {sample_html}
+        </div>
+        """
+        return _page(f"Превью #{rid}", body)
+
+    @app.post("/admin/lifecycle/{rid}/test_send")
+    async def lifecycle_test_send(
+        rid: int,
+        tg_id: int = Form(...),
+        _user: str = Depends(_check_auth),
+    ) -> RedirectResponse:
+        rule = await credits_db.get_lifecycle_rule(rid)
+        if not rule:
+            raise HTTPException(404)
+        bot = bot_ref[0] if bot_ref else None
+        if bot is None:
+            await credits_db.audit_log(_user, "lifecycle_test_send_fail", str(rid), "bot not ready")
+            return RedirectResponse(f"/admin/lifecycle/{rid}", status_code=303)
+        try:
+            await send_bot_message(
+                bot, int(tg_id),
+                text=rule["message_text"], parse_mode=rule.get("parse_mode", "HTML"),
+            )
+            await credits_db.record_lifecycle_fire(rid, int(tg_id), "test", "manual_test_send")
+            await credits_db.audit_log(_user, "lifecycle_test_send", str(rid), f"tg_id={tg_id}")
+        except Exception as e:
+            await credits_db.record_lifecycle_fire(rid, int(tg_id), "failed", f"test_send:{e}"[:400])
+            await credits_db.audit_log(_user, "lifecycle_test_send_fail", str(rid), str(e)[:200])
+        return RedirectResponse(f"/admin/lifecycle/{rid}", status_code=303)
 
     @app.post("/admin/lifecycle/new")
     async def lifecycle_new(
-        name: str = Form(...),
-        trigger_type: str = Form(...),
-        credits_geq: str = Form("1"),
-        credits_leq: str = Form("2"),
-        inactive_days: str = Form("14"),
-        min_gens: str = Form("3"),
-        cooldown_days: int = Form(30),
-        message_text: str = Form(...),
-        enabled: str = Form(""),
+        request: Request,
         _user: str = Depends(_check_auth),
     ) -> RedirectResponse:
+        form = await request.form()
+        name = str(form.get("name") or "").strip()
+        tier = str(form.get("tier") or "").strip().upper()
+        trigger_type = str(form.get("trigger_type") or "").strip()
+        cooldown_days = int(str(form.get("cooldown_days") or "30") or 30)
+        message_text = str(form.get("message_text") or "")
+        exclude_paid = bool(form.get("exclude_paid"))
+        respect_anti_fatigue = bool(form.get("respect_anti_fatigue"))
+
         trig: dict = {}
-        if trigger_type == "balance_low":
-            trig = {"credits_geq": int(credits_geq or 1), "credits_leq": int(credits_leq or 2)}
+        if trigger_type == "time_after_event":
+            trig["event"] = str(form.get("event") or "").strip()
+            ev_det = str(form.get("event_detail") or "").strip()
+            if ev_det:
+                trig["event_detail"] = ev_det
+            try:
+                trig["hours_min"] = float(str(form.get("hours_min") or "1") or 1)
+            except ValueError:
+                trig["hours_min"] = 1.0
+            hmax = str(form.get("hours_max") or "").strip()
+            if hmax:
+                try:
+                    trig["hours_max"] = float(hmax)
+                except ValueError:
+                    pass
+            block = [b.strip() for b in str(form.get("blocking_events") or "").split(",") if b.strip()]
+            if block:
+                trig["blocking_events"] = block
+            req_g = str(form.get("require_gens_eq") or "").strip()
+            if req_g.isdigit():
+                trig["require_gens_eq"] = int(req_g)
+            if form.get("require_no_referral"):
+                trig["require_no_referral"] = True
+        elif trigger_type == "tier_membership":
+            trig = {"tier": str(form.get("trig_tier") or "").strip().upper()}
+        elif trigger_type == "low_balance_trial":
+            trig = {"max_credits": int(str(form.get("max_credits") or "1") or 1)}
+        elif trigger_type == "balance_low":
+            trig = {
+                "credits_geq": int(str(form.get("credits_geq") or "1") or 1),
+                "credits_leq": int(str(form.get("credits_leq") or "2") or 2),
+            }
         elif trigger_type == "inactive":
-            trig = {"days": int(inactive_days or 14)}
+            trig = {"days": int(str(form.get("inactive_days") or "14") or 14)}
         elif trigger_type == "generated_not_paid":
-            trig = {"min_gens": int(min_gens or 3)}
+            trig = {"min_gens": int(str(form.get("min_gens") or "3") or 3)}
+
         rid = await credits_db.create_lifecycle_rule(
             name=name, trigger_type=trigger_type, trigger=trig,
-            message_text=message_text, cooldown_days=int(cooldown_days),
-            enabled=bool(enabled), created_by=_user,
+            message_text=message_text, cooldown_days=cooldown_days,
+            enabled=False,  # always start disabled — admin must preview + test
+            created_by=_user, tier=tier,
+            exclude_paid=exclude_paid, respect_anti_fatigue=respect_anti_fatigue,
         )
         await credits_db.audit_log(_user, "lifecycle_create", str(rid), f"{trigger_type} {trig}")
-        return RedirectResponse("/admin/lifecycle", status_code=303)
+        # Send admin to the rule detail page so they can immediately preview / test.
+        return RedirectResponse(f"/admin/lifecycle/{rid}", status_code=303)
+
+    @app.post("/admin/lifecycle/{rid}/edit")
+    async def lifecycle_edit(
+        rid: int,
+        request: Request,
+        _user: str = Depends(_check_auth),
+    ) -> RedirectResponse:
+        form = await request.form()
+        rule = await credits_db.get_lifecycle_rule(rid)
+        if not rule:
+            raise HTTPException(404)
+        await credits_db.update_lifecycle_rule(
+            rid,
+            name=str(form.get("name") or rule["name"]),
+            tier=str(form.get("tier") or "").strip().upper(),
+            cooldown_days=int(str(form.get("cooldown_days") or rule["cooldown_days"])),
+            message_text=str(form.get("message_text") or rule["message_text"]),
+            exclude_paid=bool(form.get("exclude_paid")),
+            respect_anti_fatigue=bool(form.get("respect_anti_fatigue")),
+        )
+        await credits_db.audit_log(_user, "lifecycle_edit", str(rid))
+        return RedirectResponse(f"/admin/lifecycle/{rid}", status_code=303)
 
     @app.post("/admin/lifecycle/{rid}/toggle")
     async def lifecycle_toggle(rid: int, _user: str = Depends(_check_auth)) -> RedirectResponse:
@@ -4426,7 +5324,7 @@ def build_app(
             raise HTTPException(404)
         await credits_db.update_lifecycle_rule(rid, enabled=not rule["enabled"])
         await credits_db.audit_log(_user, "lifecycle_toggle", str(rid), f"enabled={not rule['enabled']}")
-        return RedirectResponse("/admin/lifecycle", status_code=303)
+        return RedirectResponse(f"/admin/lifecycle/{rid}", status_code=303)
 
     @app.post("/admin/lifecycle/{rid}/delete")
     async def lifecycle_delete(rid: int, _user: str = Depends(_check_auth)) -> RedirectResponse:
@@ -4470,6 +5368,15 @@ async def start_admin_panel(
     bot_ref: "list | None" = None,
 ) -> None:
     """Run the admin panel as an async background task."""
+    # Seed default lifecycle rules (idempotent — only inserts missing ones, all
+    # disabled by default). Failures here shouldn't block admin panel startup.
+    try:
+        inserted = await credits_db.seed_default_lifecycle_rules(_DEFAULT_LIFECYCLE_RULES)
+        if inserted:
+            log.info("seeded %d default lifecycle rule(s)", inserted)
+    except Exception as e:
+        log.warning("seed_default_lifecycle_rules failed: %s", e)
+
     app = build_app(credits_db, state_store, settings, tbank_client, bot_ref)
     config = uvicorn.Config(
         app,

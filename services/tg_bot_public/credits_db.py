@@ -388,9 +388,25 @@ class CreditsDB:
             "last_run_at TIMESTAMP,"
             "fired_count INTEGER NOT NULL DEFAULT 0,"
             "created_by TEXT NOT NULL DEFAULT '',"
+            "tier TEXT NOT NULL DEFAULT '',"
+            "exclude_paid BOOLEAN NOT NULL DEFAULT TRUE,"
+            "respect_anti_fatigue BOOLEAN NOT NULL DEFAULT TRUE,"
             "created_at TIMESTAMP NOT NULL DEFAULT NOW(),"
             "updated_at TIMESTAMP NOT NULL DEFAULT NOW()"
             ")"
+        )
+        # Idempotent migrations for older deployments missing the new columns.
+        await conn.execute(
+            "ALTER TABLE lifecycle_rules ADD COLUMN IF NOT EXISTS tier TEXT NOT NULL DEFAULT ''"
+        )
+        await conn.execute(
+            "ALTER TABLE lifecycle_rules ADD COLUMN IF NOT EXISTS exclude_paid BOOLEAN NOT NULL DEFAULT TRUE"
+        )
+        await conn.execute(
+            "ALTER TABLE lifecycle_rules ADD COLUMN IF NOT EXISTS respect_anti_fatigue BOOLEAN NOT NULL DEFAULT TRUE"
+        )
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_lcr_tier ON lifecycle_rules(tier)"
         )
         await conn.execute(
             "CREATE TABLE IF NOT EXISTS lifecycle_fires ("
@@ -405,6 +421,10 @@ class CreditsDB:
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_lcf_rule ON lifecycle_fires(rule_id)")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_lcf_tg ON lifecycle_fires(tg_id)")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_lcf_created ON lifecycle_fires(created_at)")
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_lcf_tg_status_created "
+            "ON lifecycle_fires(tg_id, status, created_at DESC)"
+        )
 
         # Manual payments — revenue from outside the bot (cash, external invoice, etc.)
         await conn.execute(
@@ -480,6 +500,9 @@ class CreditsDB:
               EXISTS (SELECT 1 FROM activity_log a WHERE a.tg_id = u.tg_id AND a.event = 'survey_done') AS feedback_form_filled,
               EXISTS (SELECT 1 FROM activity_log a WHERE a.tg_id = u.tg_id AND a.event = 'referral_sent') AS referral_made,
               EXISTS (SELECT 1 FROM activity_log a WHERE a.tg_id = u.tg_id AND a.event = 'admin_dm') AS manager_contacted,
+              EXISTS (SELECT 1 FROM activity_log a WHERE a.tg_id = u.tg_id AND a.event = 'admin_dm' AND a.created_at >= NOW() - INTERVAL '7 days') AS manager_contacted_7d,
+              EXISTS (SELECT 1 FROM activity_log a WHERE a.tg_id = u.tg_id AND a.event = 'bot_blocked') AS bot_blocked,
+              EXISTS (SELECT 1 FROM payments p WHERE p.tg_id = u.tg_id AND p.status = 'CONFIRMED' AND p.created_at >= NOW() - INTERVAL '24 hours') AS paid_within_24h,
               (SELECT MAX(a.created_at) FROM activity_log a WHERE a.tg_id = u.tg_id) AS last_active_at,
               (SELECT COALESCE(SUM(amount_rub), 0) FROM payments p WHERE p.tg_id = u.tg_id AND p.status = 'CONFIRMED') AS revenue_bot,
               (SELECT COALESCE(SUM(amount_rub), 0) FROM manual_payments mp WHERE mp.tg_id = u.tg_id) AS revenue_manual
@@ -492,28 +515,51 @@ class CreditsDB:
             CREATE VIEW user_tiers AS
             SELECT us.*,
               CASE
-                -- S tier: hot, manual outreach (highest priority)
-                WHEN us.gens_done >= 2 AND us.last_rating = 'high' AND us.feedback_form_filled THEN 'S1'
-                WHEN us.feedback_form_filled AND us.last_rating = 'high' AND NOT us.has_purchase THEN 'S3'
-                WHEN us.viewed_package_details AND NOT us.has_purchase THEN 'S2'
-                -- P tier: special segments (paid + intent), checked before A/B
-                WHEN us.active_subscription_pkg = '15' AND NOT us.bought_glow AND NOT us.bought_impulse THEN 'P11'
-                WHEN us.bought_trial AND NOT us.bought_glow AND NOT us.bought_impulse THEN 'P10'
-                WHEN us.referral_made AND NOT us.has_purchase THEN 'P12'
-                WHEN us.purchase_intent AND NOT us.has_purchase THEN 'P14'
-                -- A tier: warm, auto with personalization
-                WHEN us.gens_done >= 3 AND us.last_rating = 'high' AND NOT us.has_purchase THEN 'A1'
-                WHEN us.gens_done = 1 AND us.last_rating = 'high' THEN 'A2'
-                -- D tier: old cohort (>30d since signup)
-                WHEN us.created_at < NOW() - INTERVAL '30 days' AND us.last_rating = 'high' AND NOT us.has_purchase THEN 'D1'
-                WHEN us.created_at < NOW() - INTERVAL '30 days' AND us.viewed_package_details AND NOT us.has_purchase THEN 'D2'
-                -- B tier: medium, segmented mass
-                WHEN us.last_rating = 'mid_low' AND NOT us.has_purchase THEN 'B2'
-                WHEN us.last_rating = 'low' THEN 'B3'
-                WHEN us.gens_done >= 1 AND us.last_rating IS NULL THEN 'B1'
-                -- C tier: cold, minimum effort
-                WHEN us.audio_uploaded AND NOT us.generation_started THEN 'C2'
-                WHEN NOT us.subscribed THEN 'C1'
+                -- Reactivation plan v2.0: S → P → A → B → D
+                -- Global exclusions enforced INSIDE every tier predicate:
+                --   • bot_blocked = false (always; dead leads not classified)
+                --   • payment_confirmed → user falls out of all reactivation tiers (S/A/B/D);
+                --     P3/P4 use 24h freshness instead so a past-buyer who clicks pay
+                --     again counts as a fresh "тыкун".
+
+                -- ── S group (hot, manager-led conversion) ─────────────────
+                WHEN NOT us.bot_blocked AND us.gens_done >= 2 AND us.last_rating = 'high'
+                     AND us.feedback_form_clicked AND NOT us.has_purchase THEN 'S1'
+                WHEN NOT us.bot_blocked AND us.last_rating = 'high' AND us.viewed_package_details
+                     AND NOT us.feedback_form_clicked AND NOT us.has_purchase THEN 'S2'
+                WHEN NOT us.bot_blocked AND us.gens_done = 2 AND us.last_rating = 'high'
+                     AND NOT us.feedback_form_clicked AND NOT us.viewed_package_details
+                     AND NOT us.has_purchase THEN 'S3'
+
+                -- ── P group (paying / intent; non-cascading) ──────────────
+                -- P3 / P4: pressed pay but no payment_confirmed in the last 24h.
+                WHEN NOT us.bot_blocked AND us.purchase_intent AND NOT us.paid_within_24h
+                     AND us.gens_done >= 1 AND us.last_rating = 'high' THEN 'P3'
+                WHEN NOT us.bot_blocked AND us.purchase_intent AND NOT us.paid_within_24h THEN 'P4'
+                -- P1: bought trial only, no upper package, balance ≤ 1.
+                WHEN NOT us.bot_blocked AND us.bought_trial AND NOT us.bought_blast
+                     AND NOT us.bought_glow AND NOT us.bought_impulse
+                     AND us.credits <= 1 THEN 'P1'
+
+                -- ── A group (warm; only for not-yet-purchased users) ──────
+                WHEN NOT us.bot_blocked AND us.gens_done = 1 AND us.last_rating = 'high'
+                     AND NOT us.referral_made AND NOT us.has_purchase THEN 'A1'
+                WHEN NOT us.bot_blocked AND us.audio_uploaded AND NOT us.generation_started
+                     AND NOT us.has_purchase THEN 'A2'
+                WHEN NOT us.bot_blocked AND us.gens_done = 1 AND us.last_rating IS NULL
+                     AND NOT us.has_purchase THEN 'A3'
+
+                -- ── B group (medium; only for not-yet-purchased users) ────
+                WHEN NOT us.bot_blocked AND us.gens_done = 1 AND us.last_rating = 'mid_low'
+                     AND NOT us.has_purchase THEN 'B1'
+                WHEN NOT us.bot_blocked AND us.last_rating = 'low'
+                     AND NOT us.feedback_form_clicked
+                     AND NOT us.has_purchase THEN 'B2'
+                WHEN NOT us.bot_blocked AND NOT us.subscribed AND NOT us.has_purchase THEN 'B3'
+
+                -- D group is computed via audience-only resolvers (manual broadcasts);
+                -- not assigned as a primary tier because it's a passive segment that
+                -- shouldn't pull users out of S/A/B if they're still active.
                 ELSE NULL
               END AS tier
             FROM user_signals us
@@ -2450,13 +2496,15 @@ class CreditsDB:
         self, *, name: str, trigger_type: str, trigger: Dict[str, Any],
         message_text: str, parse_mode: str = "HTML", cooldown_days: int = 7,
         enabled: bool = True, created_by: str = "",
+        tier: str = "", exclude_paid: bool = True, respect_anti_fatigue: bool = True,
     ) -> int:
         pool = self._pool_or_fail()
         async with pool.acquire() as conn:
             rid = await conn.fetchval(
                 "INSERT INTO lifecycle_rules "
-                "(name, trigger_type, trigger_json, message_text, parse_mode, cooldown_days, enabled, created_by) "
-                "VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id",
+                "(name, trigger_type, trigger_json, message_text, parse_mode, cooldown_days, "
+                "enabled, created_by, tier, exclude_paid, respect_anti_fatigue) "
+                "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id",
                 _norm_text(name, max_len=120),
                 _norm_text(trigger_type, max_len=64),
                 json.dumps(trigger or {}, ensure_ascii=False),
@@ -2465,13 +2513,17 @@ class CreditsDB:
                 max(0, int(cooldown_days)),
                 bool(enabled),
                 _norm_text(created_by, max_len=64),
+                _norm_text(tier, max_len=16).upper(),
+                bool(exclude_paid),
+                bool(respect_anti_fatigue),
             )
         return int(rid or 0)
 
     async def update_lifecycle_rule(
         self, rid: int, *, name: Optional[str] = None, trigger: Optional[Dict[str, Any]] = None,
         message_text: Optional[str] = None, cooldown_days: Optional[int] = None,
-        enabled: Optional[bool] = None,
+        enabled: Optional[bool] = None, tier: Optional[str] = None,
+        exclude_paid: Optional[bool] = None, respect_anti_fatigue: Optional[bool] = None,
     ) -> None:
         sets: List[str] = ["updated_at = NOW()"]
         params: List[Any] = []
@@ -2488,6 +2540,12 @@ class CreditsDB:
             add("cooldown_days", max(0, int(cooldown_days)))
         if enabled is not None:
             add("enabled", bool(enabled))
+        if tier is not None:
+            add("tier", _norm_text(tier, max_len=16).upper())
+        if exclude_paid is not None:
+            add("exclude_paid", bool(exclude_paid))
+        if respect_anti_fatigue is not None:
+            add("respect_anti_fatigue", bool(respect_anti_fatigue))
         if len(sets) == 1:
             return
         params.append(int(rid))
@@ -2503,47 +2561,8 @@ class CreditsDB:
         async with pool.acquire() as conn:
             await conn.execute("DELETE FROM lifecycle_rules WHERE id = $1", int(rid))
 
-    async def list_lifecycle_rules(self) -> List[Dict[str, Any]]:
-        pool = self._pool_or_fail()
-        async with pool.acquire() as conn:
-            rows = await conn.fetch(
-                "SELECT id, name, trigger_type, trigger_json, message_text, parse_mode, "
-                "cooldown_days, enabled, last_run_at, fired_count, created_by, created_at, updated_at "
-                "FROM lifecycle_rules ORDER BY id DESC"
-            )
-        out: List[Dict[str, Any]] = []
-        for r in rows:
-            try:
-                trig = json.loads(r["trigger_json"] or "{}")
-            except Exception:
-                trig = {}
-            out.append({
-                "id": int(r["id"]),
-                "name": str(r["name"] or ""),
-                "trigger_type": str(r["trigger_type"] or ""),
-                "trigger": trig,
-                "message_text": str(r["message_text"] or ""),
-                "parse_mode": str(r["parse_mode"] or "HTML"),
-                "cooldown_days": int(r["cooldown_days"] or 0),
-                "enabled": bool(r["enabled"]),
-                "last_run_at": _fmt_ts(r["last_run_at"]),
-                "fired_count": int(r["fired_count"] or 0),
-                "created_by": str(r["created_by"] or ""),
-                "created_at": _fmt_ts(r["created_at"]),
-                "updated_at": _fmt_ts(r["updated_at"]),
-            })
-        return out
-
-    async def get_lifecycle_rule(self, rid: int) -> Optional[Dict[str, Any]]:
-        pool = self._pool_or_fail()
-        async with pool.acquire() as conn:
-            r = await conn.fetchrow(
-                "SELECT id, name, trigger_type, trigger_json, message_text, parse_mode, "
-                "cooldown_days, enabled, last_run_at, fired_count, created_by, created_at, updated_at "
-                "FROM lifecycle_rules WHERE id = $1", int(rid),
-            )
-        if not r:
-            return None
+    @staticmethod
+    def _row_to_rule(r: Any) -> Dict[str, Any]:
         try:
             trig = json.loads(r["trigger_json"] or "{}")
         except Exception:
@@ -2560,57 +2579,598 @@ class CreditsDB:
             "last_run_at": _fmt_ts(r["last_run_at"]),
             "fired_count": int(r["fired_count"] or 0),
             "created_by": str(r["created_by"] or ""),
+            "tier": str(r["tier"] or ""),
+            "exclude_paid": bool(r["exclude_paid"]),
+            "respect_anti_fatigue": bool(r["respect_anti_fatigue"]),
+            "created_at": _fmt_ts(r["created_at"]) if "created_at" in r.keys() else "",
+            "updated_at": _fmt_ts(r["updated_at"]) if "updated_at" in r.keys() else "",
         }
 
-    async def find_lifecycle_candidates(self, rule: Dict[str, Any], *, limit: int = 200) -> List[int]:
-        """Compute tg_ids that match rule's trigger AND haven't been fired within cooldown."""
+    async def list_lifecycle_rules(self, tier: Optional[str] = None) -> List[Dict[str, Any]]:
+        pool = self._pool_or_fail()
+        cols = (
+            "id, name, trigger_type, trigger_json, message_text, parse_mode, "
+            "cooldown_days, enabled, last_run_at, fired_count, created_by, "
+            "tier, exclude_paid, respect_anti_fatigue, created_at, updated_at"
+        )
+        async with pool.acquire() as conn:
+            if tier:
+                rows = await conn.fetch(
+                    f"SELECT {cols} FROM lifecycle_rules WHERE UPPER(tier) = $1 ORDER BY id DESC",
+                    str(tier).upper(),
+                )
+            else:
+                rows = await conn.fetch(
+                    f"SELECT {cols} FROM lifecycle_rules ORDER BY id DESC"
+                )
+        return [self._row_to_rule(r) for r in rows]
+
+    async def get_lifecycle_rule(self, rid: int) -> Optional[Dict[str, Any]]:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            r = await conn.fetchrow(
+                "SELECT id, name, trigger_type, trigger_json, message_text, parse_mode, "
+                "cooldown_days, enabled, last_run_at, fired_count, created_by, "
+                "tier, exclude_paid, respect_anti_fatigue, created_at, updated_at "
+                "FROM lifecycle_rules WHERE id = $1", int(rid),
+            )
+        if not r:
+            return None
+        return self._row_to_rule(r)
+
+    # SQL fragments shared between candidate-finder and breakdown helpers.
+    # Global exclusions applied to all auto triggers (PDF v2.0 §"глобальные exclusion-правила"):
+    #   • bot_blocked event ever
+    #   • admin_dm in last 7 days (user is being worked manually)
+    #   • payment_confirmed (when rule.exclude_paid == true)
+    #   • anti-fatigue: <1 sent in last 48h AND <2 sent in last 7 days
+    #   • this rule's own cooldown (cooldown_days)
+    _EXC_BLOCKED = (
+        "NOT EXISTS (SELECT 1 FROM activity_log abk WHERE abk.tg_id = u.tg_id "
+        "AND abk.event = 'bot_blocked')"
+    )
+    _EXC_ADMIN_DM_7D = (
+        "NOT EXISTS (SELECT 1 FROM activity_log adm WHERE adm.tg_id = u.tg_id "
+        "AND adm.event = 'admin_dm' AND adm.created_at >= NOW() - INTERVAL '7 days')"
+    )
+    _EXC_PAID = (
+        "NOT EXISTS (SELECT 1 FROM payments pp WHERE pp.tg_id = u.tg_id "
+        "AND pp.status = 'CONFIRMED')"
+    )
+    _EXC_ANTI_FATIGUE = (
+        "(SELECT COUNT(*) FROM lifecycle_fires lf48 WHERE lf48.tg_id = u.tg_id "
+        "AND lf48.status = 'sent' AND lf48.created_at >= NOW() - INTERVAL '48 hours') < 1 "
+        "AND (SELECT COUNT(*) FROM lifecycle_fires lf7 WHERE lf7.tg_id = u.tg_id "
+        "AND lf7.status = 'sent' AND lf7.created_at >= NOW() - INTERVAL '7 days') < 2"
+    )
+
+    @classmethod
+    def _global_exclusions_sql(cls, rule: Dict[str, Any]) -> str:
+        """Build AND-joined exclusion fragment using table alias `u` for users."""
+        parts = [cls._EXC_BLOCKED, cls._EXC_ADMIN_DM_7D]
+        if rule.get("exclude_paid", True):
+            parts.append(cls._EXC_PAID)
+        if rule.get("respect_anti_fatigue", True):
+            parts.append(cls._EXC_ANTI_FATIGUE)
+        return " AND ".join(parts)
+
+    @staticmethod
+    def _cooldown_exclusion_sql(rule_id_param_idx: int, cooldown_param_idx: int) -> str:
+        return (
+            f"NOT EXISTS (SELECT 1 FROM lifecycle_fires fcd "
+            f"WHERE fcd.rule_id = ${rule_id_param_idx} AND fcd.tg_id = u.tg_id "
+            f"AND fcd.status = 'sent' "
+            f"AND fcd.created_at >= NOW() - (${cooldown_param_idx}::INT * INTERVAL '1 day'))"
+        )
+
+    @staticmethod
+    def _build_time_after_event_predicate(
+        trig: Dict[str, Any],
+    ) -> tuple[str, List[Any]]:
+        """Return (sql_join_and_where, params) for the trigger event match.
+
+        The fragment exposes alias `u` (joined to users) and assumes the caller
+        wraps it inside a SELECT. Params are positional and the SQL uses $1..$N
+        relative to the position they're passed in.
+        """
+        event = str(trig.get("event") or "").strip()
+        detail = trig.get("event_detail")
+        hours_min = float(trig.get("hours_min") or 0)
+        hours_max = trig.get("hours_max")  # None or float
+        blocking_events = trig.get("blocking_events") or []
+        if isinstance(blocking_events, str):
+            blocking_events = [blocking_events]
+        require_gens_eq = trig.get("require_gens_eq")
+        require_gens_gte = trig.get("require_gens_gte")
+        require_no_referral = bool(trig.get("require_no_referral"))
+        require_subscribed = trig.get("require_subscribed")  # None / True / False
+        params: List[Any] = []
+
+        def add(val: Any) -> int:
+            params.append(val)
+            return len(params)
+
+        # Most recent matching event timestamp.
+        p_event = add(event)
+        if detail is not None:
+            p_detail = add(str(detail))
+            detail_filter = f"AND a_evt.detail = ${p_detail}"
+        else:
+            detail_filter = ""
+        p_hmin = add(float(hours_min))
+        cte = (
+            "WITH last_evt AS ("
+            f"SELECT a_evt.tg_id, MAX(a_evt.created_at) AS ts "
+            f"FROM activity_log a_evt WHERE a_evt.event = ${p_event} {detail_filter} "
+            f"GROUP BY a_evt.tg_id "
+            f"HAVING MAX(a_evt.created_at) <= NOW() - (${p_hmin}::REAL * INTERVAL '1 hour')"
+        )
+        if hours_max is not None:
+            p_hmax = add(float(hours_max))
+            cte += f" AND MAX(a_evt.created_at) >= NOW() - (${p_hmax}::REAL * INTERVAL '1 hour')"
+        cte += ")"
+
+        where_parts: List[str] = ["EXISTS (SELECT 1 FROM last_evt le WHERE le.tg_id = u.tg_id)"]
+
+        if blocking_events:
+            p_block = add(list(blocking_events))
+            where_parts.append(
+                "NOT EXISTS (SELECT 1 FROM activity_log ab "
+                "JOIN last_evt le2 ON le2.tg_id = ab.tg_id "
+                f"WHERE ab.tg_id = u.tg_id AND ab.event = ANY(${p_block}::TEXT[]) "
+                "AND ab.created_at >= le2.ts)"
+            )
+
+        if require_gens_eq is not None:
+            p_g = add(int(require_gens_eq))
+            where_parts.append(
+                f"(SELECT COUNT(*) FROM activity_log ag WHERE ag.tg_id = u.tg_id "
+                f"AND ag.event = 'generation_done') = ${p_g}"
+            )
+        if require_gens_gte is not None:
+            p_g = add(int(require_gens_gte))
+            where_parts.append(
+                f"(SELECT COUNT(*) FROM activity_log ag WHERE ag.tg_id = u.tg_id "
+                f"AND ag.event = 'generation_done') >= ${p_g}"
+            )
+        if require_no_referral:
+            where_parts.append(
+                "NOT EXISTS (SELECT 1 FROM activity_log ar WHERE ar.tg_id = u.tg_id "
+                "AND ar.event = 'referral_sent')"
+            )
+        if require_subscribed is True:
+            where_parts.append(
+                "EXISTS (SELECT 1 FROM activity_log asub WHERE asub.tg_id = u.tg_id "
+                "AND asub.event = 'subscription_ok')"
+            )
+        elif require_subscribed is False:
+            where_parts.append(
+                "NOT EXISTS (SELECT 1 FROM activity_log asub WHERE asub.tg_id = u.tg_id "
+                "AND asub.event = 'subscription_ok')"
+            )
+
+        return cte + "\nSELECT u.tg_id FROM users u WHERE " + " AND ".join(where_parts), params
+
+    async def find_lifecycle_candidates(
+        self, rule: Dict[str, Any], *, limit: int = 200,
+        skip_global_exclusions: bool = False,
+    ) -> List[int]:
+        """Compute tg_ids that match rule's trigger AND aren't excluded by global rules + cooldown.
+
+        When `skip_global_exclusions=True`, returns the raw predicate match without
+        bot_blocked / admin_dm / paid / anti-fatigue / cooldown filters — used by
+        the audience breakdown to compute exclusions as Python set differences.
+        """
         trigger_type = str(rule.get("trigger_type") or "")
         trig = rule.get("trigger") or {}
         cooldown = int(rule.get("cooldown_days") or 7)
         rid = int(rule.get("id") or 0)
 
         pool = self._pool_or_fail()
-        sql: str
-        params: List[Any]
+        if skip_global_exclusions:
+            global_exc = "TRUE"
+            cooldown_clause = "TRUE"
+        else:
+            global_exc = self._global_exclusions_sql(rule)
+            cooldown_clause = None  # filled in per-trigger-type below with proper $idx
 
-        if trigger_type == "balance_low":
+        if trigger_type == "time_after_event":
+            base_sql, params = self._build_time_after_event_predicate(trig)
+            if skip_global_exclusions:
+                sql = f"{base_sql} AND TRUE LIMIT ${len(params) + 1}"
+                params = [*params, int(limit)]
+            else:
+                p_rid = len(params) + 1
+                p_cd = len(params) + 2
+                cd_exc = self._cooldown_exclusion_sql(p_rid, p_cd)
+                sql = (
+                    f"{base_sql} "
+                    f"AND {global_exc} "
+                    f"AND {cd_exc} "
+                    f"LIMIT ${len(params) + 3}"
+                )
+                params = [*params, rid, cooldown, int(limit)]
+
+        elif trigger_type == "tier_membership":
+            tier = str(trig.get("tier") or "").upper()
+            if not tier:
+                return []
+            if skip_global_exclusions:
+                params = [tier, int(limit)]
+                sql = (
+                    "SELECT u.tg_id FROM users u "
+                    "WHERE EXISTS (SELECT 1 FROM user_tiers ut WHERE ut.tg_id = u.tg_id AND ut.tier = $1) "
+                    "LIMIT $2"
+                )
+            else:
+                params = [tier, rid, cooldown, int(limit)]
+                sql = (
+                    "SELECT u.tg_id FROM users u "
+                    "WHERE EXISTS (SELECT 1 FROM user_tiers ut WHERE ut.tg_id = u.tg_id AND ut.tier = $1) "
+                    f"AND {global_exc} "
+                    f"AND {self._cooldown_exclusion_sql(2, 3)} "
+                    "LIMIT $4"
+                )
+
+        elif trigger_type == "low_balance_trial":
+            max_credits = int(trig.get("max_credits", 1))
+            base_predicate = (
+                "u.credits <= $1 "
+                "AND EXISTS (SELECT 1 FROM payments p WHERE p.tg_id = u.tg_id "
+                "  AND p.status = 'CONFIRMED' AND p.package = '5') "
+                "AND NOT EXISTS (SELECT 1 FROM payments p WHERE p.tg_id = u.tg_id "
+                "  AND p.status = 'CONFIRMED' AND p.package IN ('15','30','50'))"
+            )
+            if skip_global_exclusions:
+                params = [max_credits, int(limit)]
+                sql = f"SELECT u.tg_id FROM users u WHERE {base_predicate} LIMIT $2"
+            else:
+                params = [max_credits, rid, cooldown, int(limit)]
+                sql = (
+                    f"SELECT u.tg_id FROM users u WHERE {base_predicate} "
+                    f"AND {self._cooldown_exclusion_sql(2, 3)} "
+                    f"AND {self._EXC_BLOCKED} "
+                    f"AND {self._EXC_ADMIN_DM_7D} "
+                    + (f"AND {self._EXC_ANTI_FATIGUE} " if rule.get("respect_anti_fatigue", True) else "")
+                    + "LIMIT $4"
+                )
+
+        elif trigger_type == "balance_low":
             threshold = int(trig.get("credits_leq", 2))
             min_balance = int(trig.get("credits_geq", 1))
-            sql = (
-                "SELECT u.tg_id FROM users u "
-                "WHERE u.credits BETWEEN $1 AND $2 "
-                "AND EXISTS (SELECT 1 FROM payments p WHERE p.tg_id = u.tg_id AND p.status = 'CONFIRMED') "
-                "AND NOT EXISTS (SELECT 1 FROM lifecycle_fires f WHERE f.rule_id = $3 AND f.tg_id = u.tg_id "
-                "AND f.created_at >= NOW() - ($4::INT * INTERVAL '1 day'))"
+            base_predicate = (
+                "u.credits BETWEEN $1 AND $2 "
+                "AND EXISTS (SELECT 1 FROM payments p WHERE p.tg_id = u.tg_id AND p.status = 'CONFIRMED')"
             )
-            params = [min_balance, threshold, rid, cooldown]
+            if skip_global_exclusions:
+                params = [min_balance, threshold, int(limit)]
+                sql = f"SELECT u.tg_id FROM users u WHERE {base_predicate} LIMIT $3"
+            else:
+                params = [min_balance, threshold, rid, cooldown, int(limit)]
+                sql = (
+                    f"SELECT u.tg_id FROM users u WHERE {base_predicate} "
+                    f"AND {self._EXC_BLOCKED} AND {self._EXC_ADMIN_DM_7D} "
+                    + (f"AND {self._EXC_ANTI_FATIGUE} " if rule.get("respect_anti_fatigue", True) else "")
+                    + f"AND {self._cooldown_exclusion_sql(3, 4)} LIMIT $5"
+                )
+
         elif trigger_type == "inactive":
             days = int(trig.get("days", 14))
-            sql = (
-                "SELECT u.tg_id FROM users u "
-                "WHERE NOT EXISTS (SELECT 1 FROM activity_log a WHERE a.tg_id = u.tg_id "
-                "AND a.created_at >= NOW() - ($1::INT * INTERVAL '1 day')) "
-                "AND u.created_at <= NOW() - ($1::INT * INTERVAL '1 day') "
-                "AND NOT EXISTS (SELECT 1 FROM lifecycle_fires f WHERE f.rule_id = $2 AND f.tg_id = u.tg_id "
-                "AND f.created_at >= NOW() - ($3::INT * INTERVAL '1 day'))"
+            base_predicate = (
+                "NOT EXISTS (SELECT 1 FROM activity_log a WHERE a.tg_id = u.tg_id "
+                "  AND a.created_at >= NOW() - ($1::INT * INTERVAL '1 day')) "
+                "AND u.created_at <= NOW() - ($1::INT * INTERVAL '1 day')"
             )
-            params = [days, rid, cooldown]
+            if skip_global_exclusions:
+                params = [days, int(limit)]
+                sql = f"SELECT u.tg_id FROM users u WHERE {base_predicate} LIMIT $2"
+            else:
+                params = [days, rid, cooldown, int(limit)]
+                sql = (
+                    f"SELECT u.tg_id FROM users u WHERE {base_predicate} "
+                    f"AND {global_exc} "
+                    f"AND {self._cooldown_exclusion_sql(2, 3)} LIMIT $4"
+                )
+
         elif trigger_type == "generated_not_paid":
             min_gens = int(trig.get("min_gens", 3))
-            sql = (
-                "SELECT u.tg_id FROM users u "
-                "WHERE (SELECT COUNT(*) FROM activity_log a WHERE a.tg_id = u.tg_id AND a.event = 'generation_done') >= $1 "
-                "AND NOT EXISTS (SELECT 1 FROM payments p WHERE p.tg_id = u.tg_id AND p.status = 'CONFIRMED') "
-                "AND NOT EXISTS (SELECT 1 FROM lifecycle_fires f WHERE f.rule_id = $2 AND f.tg_id = u.tg_id "
-                "AND f.created_at >= NOW() - ($3::INT * INTERVAL '1 day'))"
+            base_predicate = (
+                "(SELECT COUNT(*) FROM activity_log a WHERE a.tg_id = u.tg_id "
+                "  AND a.event = 'generation_done') >= $1"
             )
-            params = [min_gens, rid, cooldown]
+            if skip_global_exclusions:
+                params = [min_gens, int(limit)]
+                sql = f"SELECT u.tg_id FROM users u WHERE {base_predicate} LIMIT $2"
+            else:
+                params = [min_gens, rid, cooldown, int(limit)]
+                sql = (
+                    f"SELECT u.tg_id FROM users u WHERE {base_predicate} "
+                    f"AND {global_exc} "
+                    f"AND {self._cooldown_exclusion_sql(2, 3)} LIMIT $4"
+                )
+
         else:
             return []
 
         async with pool.acquire() as conn:
-            rows = await conn.fetch(sql + " LIMIT $" + str(len(params) + 1), *params, int(limit))
+            rows = await conn.fetch(sql, *params)
         return [int(r["tg_id"]) for r in rows]
+
+    async def lifecycle_audience_breakdown(self, rule: Dict[str, Any]) -> Dict[str, Any]:
+        """Return a breakdown of how many users match this rule and how many are
+        filtered out by each global exclusion. Plus a sample of final candidates.
+
+        Used by the admin "Превью аудитории" button to give confidence in the rule
+        before flipping enabled=true.
+        """
+        # Compute matched-without-exclusions, then per-exclusion delta. We do this
+        # with separate "counterfactual" queries — small N (single rule), and the
+        # SQL is short-lived so it's OK to run a few of them.
+        breakdown = {
+            "matched_raw": 0,
+            "excluded_blocked": 0,
+            "excluded_admin_dm": 0,
+            "excluded_paid": 0,
+            "excluded_anti_fatigue": 0,
+            "excluded_cooldown": 0,
+            "final_count": 0,
+            "sample": [],  # list of dicts with tg_id, username, last_active_at, last_rating, gens_done
+        }
+        # Final candidates first (this also limits sample size).
+        final_ids = await self.find_lifecycle_candidates(rule, limit=10000)
+        breakdown["final_count"] = len(final_ids)
+
+        # "Raw" candidates: same trigger predicate WITHOUT any global exclusion or cooldown.
+        raw_ids = await self.find_lifecycle_candidates(
+            rule, limit=10000, skip_global_exclusions=True,
+        )
+        breakdown["matched_raw"] = len(raw_ids)
+
+        if not raw_ids:
+            return breakdown
+
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            blocked_set = {int(r["tg_id"]) for r in await conn.fetch(
+                "SELECT DISTINCT tg_id FROM activity_log "
+                "WHERE event = 'bot_blocked' AND tg_id = ANY($1::BIGINT[])",
+                raw_ids,
+            )}
+            admin_dm_set = {int(r["tg_id"]) for r in await conn.fetch(
+                "SELECT DISTINCT tg_id FROM activity_log "
+                "WHERE event = 'admin_dm' AND tg_id = ANY($1::BIGINT[]) "
+                "AND created_at >= NOW() - INTERVAL '7 days'",
+                raw_ids,
+            )}
+            paid_set: set = set()
+            if rule.get("exclude_paid", True):
+                paid_set = {int(r["tg_id"]) for r in await conn.fetch(
+                    "SELECT DISTINCT tg_id FROM payments "
+                    "WHERE status = 'CONFIRMED' AND tg_id = ANY($1::BIGINT[])",
+                    raw_ids,
+                )}
+            anti_fatigue_set: set = set()
+            if rule.get("respect_anti_fatigue", True):
+                anti_fatigue_set = {int(r["tg_id"]) for r in await conn.fetch(
+                    "SELECT tg_id FROM lifecycle_fires "
+                    "WHERE status = 'sent' AND tg_id = ANY($1::BIGINT[]) "
+                    "AND created_at >= NOW() - INTERVAL '48 hours' "
+                    "GROUP BY tg_id HAVING COUNT(*) >= 1 "
+                    "UNION "
+                    "SELECT tg_id FROM lifecycle_fires "
+                    "WHERE status = 'sent' AND tg_id = ANY($1::BIGINT[]) "
+                    "AND created_at >= NOW() - INTERVAL '7 days' "
+                    "GROUP BY tg_id HAVING COUNT(*) >= 2",
+                    raw_ids,
+                )}
+            cooldown_set: set = set()
+            rid = int(rule.get("id") or 0)
+            cooldown = int(rule.get("cooldown_days") or 0)
+            if rid > 0 and cooldown > 0:
+                cooldown_set = {int(r["tg_id"]) for r in await conn.fetch(
+                    "SELECT DISTINCT tg_id FROM lifecycle_fires "
+                    "WHERE rule_id = $1 AND status = 'sent' AND tg_id = ANY($2::BIGINT[]) "
+                    "AND created_at >= NOW() - ($3::INT * INTERVAL '1 day')",
+                    rid, raw_ids, cooldown,
+                )}
+
+        breakdown["excluded_blocked"] = len(blocked_set)
+        breakdown["excluded_admin_dm"] = len(admin_dm_set - blocked_set)
+        breakdown["excluded_paid"] = len(paid_set - blocked_set - admin_dm_set)
+        breakdown["excluded_anti_fatigue"] = len(
+            anti_fatigue_set - blocked_set - admin_dm_set - paid_set
+        )
+        breakdown["excluded_cooldown"] = len(
+            cooldown_set - blocked_set - admin_dm_set - paid_set - anti_fatigue_set
+        )
+
+        # Sample 10 final candidates with enrichment.
+        sample_ids = final_ids[:10]
+        if sample_ids:
+            async with pool.acquire() as conn:
+                sample_rows = await conn.fetch(
+                    "SELECT u.tg_id, u.username, "
+                    "(SELECT MAX(created_at) FROM activity_log a WHERE a.tg_id = u.tg_id) AS last_active_at, "
+                    "(SELECT detail FROM activity_log a WHERE a.tg_id = u.tg_id AND a.event = 'rate_video' "
+                    "  ORDER BY created_at DESC LIMIT 1) AS last_rating, "
+                    "(SELECT COUNT(*) FROM activity_log a WHERE a.tg_id = u.tg_id AND a.event = 'generation_done') AS gens_done "
+                    "FROM users u WHERE u.tg_id = ANY($1::BIGINT[]) "
+                    "ORDER BY array_position($1::BIGINT[], u.tg_id)",
+                    sample_ids,
+                )
+            breakdown["sample"] = [
+                {
+                    "tg_id": int(r["tg_id"]),
+                    "username": str(r["username"] or ""),
+                    "last_active_at": _fmt_ts(r["last_active_at"]),
+                    "last_rating": str(r["last_rating"] or ""),
+                    "gens_done": int(r["gens_done"] or 0),
+                }
+                for r in sample_rows
+            ]
+        return breakdown
+
+    async def recent_lifecycle_fires(self, rule_id: int, limit: int = 50) -> List[Dict[str, Any]]:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT f.tg_id, u.username, f.status, f.error, f.created_at "
+                "FROM lifecycle_fires f LEFT JOIN users u ON u.tg_id = f.tg_id "
+                "WHERE f.rule_id = $1 ORDER BY f.created_at DESC LIMIT $2",
+                int(rule_id), int(limit),
+            )
+        return [
+            {
+                "tg_id": int(r["tg_id"]),
+                "username": str(r["username"] or ""),
+                "status": str(r["status"] or ""),
+                "error": str(r["error"] or ""),
+                "created_at": _fmt_ts(r["created_at"]),
+            }
+            for r in rows
+        ]
+
+    async def recent_lifecycle_fires_for_user(self, tg_id: int, days: int = 7) -> List[Dict[str, Any]]:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT f.rule_id, r.name AS rule_name, r.tier AS rule_tier, "
+                "f.status, f.error, f.created_at "
+                "FROM lifecycle_fires f LEFT JOIN lifecycle_rules r ON r.id = f.rule_id "
+                "WHERE f.tg_id = $1 AND f.created_at >= NOW() - ($2::INT * INTERVAL '1 day') "
+                "ORDER BY f.created_at DESC",
+                int(tg_id), int(days),
+            )
+        return [
+            {
+                "rule_id": int(r["rule_id"]),
+                "rule_name": str(r["rule_name"] or "—"),
+                "rule_tier": str(r["rule_tier"] or ""),
+                "status": str(r["status"] or ""),
+                "error": str(r["error"] or ""),
+                "created_at": _fmt_ts(r["created_at"]),
+            }
+            for r in rows
+        ]
+
+    async def lifecycle_rule_stats_24h(self, rule_id: int) -> Dict[str, int]:
+        """Return {sent, blocked, failed, throttled} count for the last 24h."""
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT status, COUNT(*)::BIGINT AS cnt FROM lifecycle_fires "
+                "WHERE rule_id = $1 AND created_at >= NOW() - INTERVAL '24 hours' GROUP BY status",
+                int(rule_id),
+            )
+        out = {"sent": 0, "blocked": 0, "failed": 0, "throttled": 0, "test": 0}
+        for r in rows:
+            out[str(r["status"])] = int(r["cnt"])
+        return out
+
+    async def lifecycle_user_recent_counts(self, tg_id: int) -> Dict[str, int]:
+        """Per-user count of `sent` lifecycle messages over the last 48h / 7d.
+
+        Used by the worker's last-mile anti-fatigue gate.
+        """
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT "
+                "COALESCE(SUM(CASE WHEN created_at >= NOW() - INTERVAL '48 hours' THEN 1 ELSE 0 END), 0)::INT AS sent_48h, "
+                "COALESCE(SUM(CASE WHEN created_at >= NOW() - INTERVAL '7 days' THEN 1 ELSE 0 END), 0)::INT AS sent_7d "
+                "FROM lifecycle_fires WHERE tg_id = $1 AND status = 'sent'",
+                int(tg_id),
+            )
+        return {
+            "sent_48h": int(row["sent_48h"]) if row else 0,
+            "sent_7d": int(row["sent_7d"]) if row else 0,
+        }
+
+    async def lifecycle_global_stats_24h(self) -> Dict[str, int]:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT status, COUNT(*)::BIGINT AS cnt FROM lifecycle_fires "
+                "WHERE created_at >= NOW() - INTERVAL '24 hours' GROUP BY status"
+            )
+        out = {"sent": 0, "blocked": 0, "failed": 0, "throttled": 0, "test": 0}
+        for r in rows:
+            out[str(r["status"])] = int(r["cnt"])
+        return out
+
+    async def lifecycle_recent_fires_global(self, limit: int = 100) -> List[Dict[str, Any]]:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT f.rule_id, r.name AS rule_name, r.tier AS rule_tier, "
+                "f.tg_id, u.username, f.status, f.error, f.created_at "
+                "FROM lifecycle_fires f "
+                "LEFT JOIN lifecycle_rules r ON r.id = f.rule_id "
+                "LEFT JOIN users u ON u.tg_id = f.tg_id "
+                "ORDER BY f.created_at DESC LIMIT $1",
+                int(limit),
+            )
+        return [
+            {
+                "rule_id": int(r["rule_id"]),
+                "rule_name": str(r["rule_name"] or "—"),
+                "rule_tier": str(r["rule_tier"] or ""),
+                "tg_id": int(r["tg_id"]),
+                "username": str(r["username"] or ""),
+                "status": str(r["status"] or ""),
+                "error": str(r["error"] or ""),
+                "created_at": _fmt_ts(r["created_at"]),
+            }
+            for r in rows
+        ]
+
+    async def find_lifecycle_rule_by_tier_name(
+        self, tier: str, name: str,
+    ) -> Optional[Dict[str, Any]]:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            r = await conn.fetchrow(
+                "SELECT id, name, trigger_type, trigger_json, message_text, parse_mode, "
+                "cooldown_days, enabled, last_run_at, fired_count, created_by, "
+                "tier, exclude_paid, respect_anti_fatigue, created_at, updated_at "
+                "FROM lifecycle_rules WHERE UPPER(tier) = $1 AND name = $2 LIMIT 1",
+                str(tier).upper(), str(name),
+            )
+        return self._row_to_rule(r) if r else None
+
+    async def seed_default_lifecycle_rules(self, defaults: List[Dict[str, Any]]) -> int:
+        """Idempotently insert default lifecycle rules.
+
+        For each entry in `defaults`, look up by (tier, name): if missing → insert
+        with enabled=False (admin must flip it after preview); if present → leave
+        alone (admin may have edited the text or already enabled it).
+
+        Returns count of newly inserted rules.
+        """
+        inserted = 0
+        for d in defaults:
+            tier = str(d.get("tier") or "").upper()
+            name = str(d.get("name") or "").strip()
+            if not tier or not name:
+                continue
+            existing = await self.find_lifecycle_rule_by_tier_name(tier, name)
+            if existing:
+                continue
+            await self.create_lifecycle_rule(
+                name=name,
+                trigger_type=str(d["trigger_type"]),
+                trigger=dict(d.get("trigger") or {}),
+                message_text=str(d.get("message_text") or ""),
+                parse_mode=str(d.get("parse_mode") or "HTML"),
+                cooldown_days=int(d.get("cooldown_days") or 30),
+                enabled=False,  # always disabled on seed; admin enables after preview
+                created_by="system_seed",
+                tier=tier,
+                exclude_paid=bool(d.get("exclude_paid", True)),
+                respect_anti_fatigue=bool(d.get("respect_anti_fatigue", True)),
+            )
+            inserted += 1
+        return inserted
 
     async def record_lifecycle_fire(self, rule_id: int, tg_id: int, status: str, error: str = "") -> None:
         pool = self._pool_or_fail()
@@ -2670,12 +3230,23 @@ class CreditsDB:
         return dict(row) if row else None
 
     async def resolve_tier_audience(self, tier: str, exclude_blocked: bool = True) -> List[int]:
-        """Audience resolver for broadcast 'tier' mode."""
-        pool = self._pool_or_fail()
-        async with pool.acquire() as conn:
-            rows = await conn.fetch("SELECT tg_id FROM user_tiers WHERE tier = $1", str(tier))
-        ids = [int(r["tg_id"]) for r in rows]
+        """Audience resolver for broadcast 'tier' mode.
+
+        For primary tiers (S/P1/P3/P4/A/B), reads from user_tiers view. For
+        audience-only tiers (P2 referrers, D1 old-cohort, D2 old-cohort+pkg+high)
+        falls through to dedicated SQL since these aren't in the view.
+        """
+        tier_code = str(tier).upper()
+        ids = await self._resolve_audience_only_tier(tier_code)
+        if ids is None:
+            pool = self._pool_or_fail()
+            async with pool.acquire() as conn:
+                rows = await conn.fetch(
+                    "SELECT tg_id FROM user_tiers WHERE tier = $1", tier_code,
+                )
+            ids = [int(r["tg_id"]) for r in rows]
         if exclude_blocked and ids:
+            pool = self._pool_or_fail()
             async with pool.acquire() as conn:
                 blocked_rows = await conn.fetch(
                     "SELECT DISTINCT tg_id FROM activity_log "
@@ -2685,6 +3256,76 @@ class CreditsDB:
             blocked = {int(r["tg_id"]) for r in blocked_rows}
             ids = [x for x in ids if x not in blocked]
         return sorted(set(ids))
+
+    async def _resolve_audience_only_tier(self, tier_code: str) -> Optional[List[int]]:
+        """Compute membership for tiers not in user_tiers view (P2, D1, D2).
+
+        Returns None if the tier is a primary tier (caller should fall through to
+        the view query).
+
+        All audience-only tiers exclude bot_blocked users, admins, and (for D1/D2)
+        users with confirmed payments — same global exclusions as the primary view.
+        """
+        pool = self._pool_or_fail()
+        # Common exclusion fragment: not admin, not bot_blocked.
+        common_excl = (
+            "u.tg_id NOT IN (SELECT tg_id FROM admins) "
+            "AND NOT EXISTS (SELECT 1 FROM activity_log bb WHERE bb.tg_id = u.tg_id AND bb.event = 'bot_blocked')"
+        )
+        if tier_code == "P2":
+            # Referrers — anyone who sent a friend tag. PDF doesn't require excluding
+            # paying users (P2 is loyalty / appreciation), so we keep them in.
+            async with pool.acquire() as conn:
+                rows = await conn.fetch(
+                    "SELECT DISTINCT u.tg_id FROM users u "
+                    "WHERE EXISTS (SELECT 1 FROM activity_log a WHERE a.tg_id = u.tg_id AND a.event = 'referral_sent') "
+                    f"AND {common_excl}"
+                )
+            return [int(r["tg_id"]) for r in rows]
+        if tier_code == "D1":
+            # Old cohort: last_active < NOW() - 30d AND no payment_confirmed.
+            async with pool.acquire() as conn:
+                rows = await conn.fetch(
+                    "SELECT u.tg_id FROM users u "
+                    f"WHERE {common_excl} "
+                    "AND NOT EXISTS (SELECT 1 FROM payments p WHERE p.tg_id = u.tg_id AND p.status = 'CONFIRMED') "
+                    "AND COALESCE("
+                    "  (SELECT MAX(created_at) FROM activity_log a WHERE a.tg_id = u.tg_id), "
+                    "  u.created_at"
+                    ") < NOW() - INTERVAL '30 days'"
+                )
+            return [int(r["tg_id"]) for r in rows]
+        if tier_code == "D2":
+            # D1 ∩ viewed_package + last rating high
+            async with pool.acquire() as conn:
+                rows = await conn.fetch(
+                    "SELECT u.tg_id FROM users u "
+                    f"WHERE {common_excl} "
+                    "AND NOT EXISTS (SELECT 1 FROM payments p WHERE p.tg_id = u.tg_id AND p.status = 'CONFIRMED') "
+                    "AND COALESCE("
+                    "  (SELECT MAX(created_at) FROM activity_log a WHERE a.tg_id = u.tg_id), "
+                    "  u.created_at"
+                    ") < NOW() - INTERVAL '30 days' "
+                    "AND EXISTS (SELECT 1 FROM activity_log v WHERE v.tg_id = u.tg_id AND v.event = 'select_package') "
+                    "AND (SELECT detail FROM activity_log r WHERE r.tg_id = u.tg_id AND r.event = 'rate_video' "
+                    "     ORDER BY r.created_at DESC LIMIT 1) = 'high'"
+                )
+            return [int(r["tg_id"]) for r in rows]
+        return None  # primary tier — caller queries user_tiers
+
+    async def list_audience_only_tier_users(self, tier_code: str, limit: int = 1000) -> List[Dict[str, Any]]:
+        """Detail rows for P2/D1/D2 (audience-only tiers) in same shape as list_tier_users."""
+        ids = await self._resolve_audience_only_tier(str(tier_code).upper())
+        if ids is None or not ids:
+            return []
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT * FROM user_signals WHERE tg_id = ANY($1::BIGINT[]) "
+                "ORDER BY last_active_at DESC NULLS LAST, tg_id DESC LIMIT $2",
+                ids, int(limit),
+            )
+        return [dict(r) for r in rows]
 
     # ── Tier outreach (S-tier manager workflow) ──────────────────────
 

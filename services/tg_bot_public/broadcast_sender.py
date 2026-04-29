@@ -239,7 +239,7 @@ class LifecycleWorker:
         bot_ref: List[Optional[Bot]],
         *,
         rate_per_sec: float = DEFAULT_RATE_PER_SEC,
-        tick_interval: float = 3600.0,
+        tick_interval: float = 300.0,
         batch_per_rule: int = 200,
     ) -> None:
         self._db = db
@@ -286,14 +286,23 @@ class LifecycleWorker:
 
     async def _fire_rule(self, bot: Bot, rule: Dict[str, Any]) -> None:
         rid = int(rule["id"])
+        # Candidate query already applies global exclusions (blocked / admin_dm /
+        # paid / anti-fatigue / cooldown), but we re-check anti-fatigue + paid
+        # right before sending to handle slow batches where state may have changed
+        # between candidate-resolve and per-user send.
         candidates = await self._db.find_lifecycle_candidates(rule, limit=self._batch)
         if not candidates:
             await self._db.touch_lifecycle_rule(rid)
             return
-        log.info("lifecycle rule %s: %d candidates", rid, len(candidates))
+        log.info("lifecycle rule %s (tier=%s): %d candidates", rid, rule.get("tier") or "—", len(candidates))
         for tg_id in candidates:
             if self._stop.is_set():
                 return
+            # Last-mile re-check: skip silently if state changed during the batch.
+            if rule.get("respect_anti_fatigue", True):
+                if await self._is_throttled(tg_id):
+                    await self._db.record_lifecycle_fire(rid, tg_id, "throttled", "anti_fatigue")
+                    continue
             status, err = await _send_with_retry(
                 bot, tg_id,
                 text=rule["message_text"],
@@ -310,6 +319,18 @@ class LifecycleWorker:
                     pass
         await self._db.touch_lifecycle_rule(rid)
 
+    async def _is_throttled(self, tg_id: int) -> bool:
+        """Last-mile anti-fatigue: ≤1 sent in 48h AND ≤2 sent in 7d."""
+        try:
+            stats = await self._db.lifecycle_user_recent_counts(int(tg_id))
+        except Exception:
+            return False
+        if stats.get("sent_48h", 0) >= 1:
+            return True
+        if stats.get("sent_7d", 0) >= 2:
+            return True
+        return False
+
 
 def _now_naive():
     from datetime import datetime, timezone
@@ -321,7 +342,7 @@ async def start_broadcast_workers(
     bot_ref: List[Optional[Bot]],
     *,
     rate_per_sec: float = DEFAULT_RATE_PER_SEC,
-    lifecycle_interval: float = 3600.0,
+    lifecycle_interval: float = 300.0,
 ) -> tuple[asyncio.Task, asyncio.Task, Callable[[], None]]:
     """Launch broadcast + lifecycle workers. Returns (tasks..., stop_fn)."""
     bc = BroadcastWorker(db, bot_ref, rate_per_sec=rate_per_sec)
