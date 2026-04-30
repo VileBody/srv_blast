@@ -200,6 +200,45 @@ require_infra_ops_public_admin_env() {
   esac
 }
 
+bootstrap_tg_webhook_ip_env() {
+  local mode current url host ip
+  mode="$(printf '%s' "$(env_file_value TG_DELIVERY_MODE)" | tr '[:upper:]' '[:lower:]')"
+  if [[ "$mode" != "webhook" ]]; then
+    return 0
+  fi
+
+  current="$(env_file_value TG_WEBHOOK_IP_ADDRESS)"
+  if [[ -n "$current" ]]; then
+    return 0
+  fi
+
+  url="$(env_file_value TG_WEBHOOK_URL)"
+  if [[ -z "$url" ]]; then
+    return 0
+  fi
+
+  host="$(python3 - "$url" <<'PY'
+from urllib.parse import urlparse
+import sys
+
+parsed = urlparse(sys.argv[1])
+print(parsed.hostname or "")
+PY
+)"
+  if [[ -z "$host" ]]; then
+    echo "[deploy] cannot parse TG_WEBHOOK_URL host: $url"
+    return 1
+  fi
+  ip="$(getent ahostsv4 "$host" | awk '{ print $1; exit }')"
+  if [[ -z "$ip" ]]; then
+    echo "[deploy] cannot resolve IPv4 for TG_WEBHOOK_URL host: $host"
+    return 1
+  fi
+
+  set_env_file_value "$REPO_DIR/.env" TG_WEBHOOK_IP_ADDRESS "$ip"
+  echo "[deploy] set TG_WEBHOOK_IP_ADDRESS=$ip for Telegram webhook DNS pin"
+}
+
 if [[ -z "$BRANCH" ]]; then
   echo "Branch is not specified. Pass it as the first argument."
   exit 1
@@ -610,6 +649,7 @@ case "$DEPLOY_STACK" in
     deploy_root_services
     ;;
   prod-path)
+    bootstrap_tg_webhook_ip_env
     deploy_prod_path_services
     dozzle_agent_status=0
     dozzle_agent_env_is_ready || dozzle_agent_status=$?
