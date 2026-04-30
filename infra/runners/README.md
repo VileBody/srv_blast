@@ -79,6 +79,11 @@ Workflow использует эту переменную, чтобы выпол
 `TG_WEBHOOK_IP_ADDRESS` текущим IPv4 адресом `TG_WEBHOOK_URL`, если переменная
 ещё не задана. Это передается в Telegram `setWebhook` и пинит доставку на
 балансировщик, минуя возможный stale DNS cache на стороне Telegram.
+Если Telegram не завершает TCP handshake с DNS-адресом домена, можно явно задать
+GitHub Repository variable `PROD_TG_WEBHOOK_IP_ADDRESS=<public ingress ip>`;
+`prod-path` deploy перезапишет `TG_WEBHOOK_IP_ADDRESS` на orchestrator-нoдах этим
+значением. URL webhook при этом остаётся доменным, например
+`https://blast808.com/telegram/webhook`, чтобы TLS/SNI продолжали совпадать.
 
 Примеры:
 

@@ -14,6 +14,7 @@ DEPLOY_PRUNE_OTHER_STACK="${DEPLOY_PRUNE_OTHER_STACK:-false}"
 DEPLOY_ORCHESTRATOR_HA="${DEPLOY_ORCHESTRATOR_HA:-false}"
 DEPLOY_ORCHESTRATOR_HA_COMPOSE_FILE="${DEPLOY_ORCHESTRATOR_HA_COMPOSE_FILE:-docker-compose.orchestrator-ha.yml}"
 PUBLIC_BOT_DELIVERY_STACK="${PUBLIC_BOT_DELIVERY_STACK:-webhook}"
+PROD_TG_WEBHOOK_IP_ADDRESS="${PROD_TG_WEBHOOK_IP_ADDRESS:-}"
 
 if [[ -z "$BRANCH" ]]; then
   echo "[deploy-remote] Branch is not specified."
@@ -51,6 +52,7 @@ printf -v q_prune '%q' "$DEPLOY_PRUNE_OTHER_STACK"
 printf -v q_ha '%q' "$DEPLOY_ORCHESTRATOR_HA"
 printf -v q_ha_file '%q' "$DEPLOY_ORCHESTRATOR_HA_COMPOSE_FILE"
 printf -v q_public_bot_delivery_stack '%q' "$PUBLIC_BOT_DELIVERY_STACK"
+printf -v q_prod_tg_webhook_ip_address '%q' "$PROD_TG_WEBHOOK_IP_ADDRESS"
 printf -v q_auth_b64 '%q' "$AUTH_B64"
 
 remote_cmd=$(
@@ -61,6 +63,7 @@ export DEPLOY_PRUNE_OTHER_STACK=$q_prune
 export DEPLOY_ORCHESTRATOR_HA=$q_ha
 export DEPLOY_ORCHESTRATOR_HA_COMPOSE_FILE=$q_ha_file
 export PUBLIC_BOT_DELIVERY_STACK=$q_public_bot_delivery_stack
+export PROD_TG_WEBHOOK_IP_ADDRESS=$q_prod_tg_webhook_ip_address
 export GIT_AUTH_TOKEN=\$(printf '%s' $q_auth_b64 | base64 -d)
 bash "$DEPLOY_REMOTE_REPO_DIR/infra/runners/deploy_branch.sh" $q_branch $q_stack
 EOF

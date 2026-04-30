@@ -7,6 +7,7 @@ DEPLOY_PRUNE_OTHER_STACK="${DEPLOY_PRUNE_OTHER_STACK:-false}"
 DEPLOY_ORCHESTRATOR_HA="${DEPLOY_ORCHESTRATOR_HA:-false}"
 DEPLOY_ORCHESTRATOR_HA_COMPOSE_FILE="${DEPLOY_ORCHESTRATOR_HA_COMPOSE_FILE:-docker-compose.orchestrator-ha.yml}"
 PUBLIC_BOT_DELIVERY_STACK="${PUBLIC_BOT_DELIVERY_STACK:-webhook}"
+PROD_TG_WEBHOOK_IP_ADDRESS="${PROD_TG_WEBHOOK_IP_ADDRESS:-}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="${REPO_DIR:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
@@ -233,12 +234,19 @@ require_infra_ops_public_admin_env() {
 }
 
 bootstrap_tg_webhook_ip_env() {
-  local mode current url host ip
+  local mode override current url host ip
   if is_ops_polling_public_bot_delivery; then
     return 0
   fi
   mode="$(printf '%s' "$(env_file_value TG_DELIVERY_MODE)" | tr '[:upper:]' '[:lower:]')"
   if [[ "$mode" != "webhook" ]]; then
+    return 0
+  fi
+
+  override="$(printf '%s' "$PROD_TG_WEBHOOK_IP_ADDRESS" | tr -d '[:space:]')"
+  if [[ -n "$override" ]]; then
+    set_env_file_value "$REPO_DIR/.env" TG_WEBHOOK_IP_ADDRESS "$override"
+    echo "[deploy] set TG_WEBHOOK_IP_ADDRESS=$override from PROD_TG_WEBHOOK_IP_ADDRESS"
     return 0
   fi
 
