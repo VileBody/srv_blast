@@ -67,6 +67,10 @@ Workflow использует эту переменную, чтобы выпол
 - `orchestrator-0` и `orchestrator-1`: `prod-path`, то есть webhook/API, queue workers, public bot delivery и render pipeline.
 
 Для `tg-bot-public-admin` на `blast_ops` выставляй `ORCHESTRATOR_PUBLIC_URL` явно на балансировщик/публичный endpoint оркестраторов, а не на локальный `http://orchestrator-api:8000`.
+`PUBLIC_BOT_DELIVERY_STACK=webhook` оставляет public bot delivery на оркестраторах.
+`PUBLIC_BOT_DELIVERY_STACK=ops-polling` отключает `tg-bot-public` на оркестраторах и
+поднимает `tg-bot-public-poller` на `blast_ops`; это аварийный режим для случаев,
+когда Telegram не может завершить входящий TCP handshake до балансировщика.
 В `prod-path` деплое при `TG_DELIVERY_MODE=webhook` скрипт один раз заполняет
 `TG_WEBHOOK_IP_ADDRESS` текущим IPv4 адресом `TG_WEBHOOK_URL`, если переменная
 ещё не задана. Это передается в Telegram `setWebhook` и пинит доставку на

@@ -6305,6 +6305,11 @@ class BlastBotApp:
             )
         delivery_mode = str(self.settings.tg_delivery_mode or "").strip().lower()
         if delivery_mode == "polling":
+            try:
+                await bot.delete_webhook(drop_pending_updates=False)
+                log.info("telegram webhook deleted before polling startup")
+            except Exception as e:
+                log.warning("telegram_delete_webhook_before_polling_failed err=%s", e)
             await self.dp.start_polling(bot)
             return
         if delivery_mode == "webhook":
