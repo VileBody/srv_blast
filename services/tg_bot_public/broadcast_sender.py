@@ -286,38 +286,49 @@ class LifecycleWorker:
 
     async def _fire_rule(self, bot: Bot, rule: Dict[str, Any]) -> None:
         rid = int(rule["id"])
-        # Candidate query already applies global exclusions (blocked / admin_dm /
-        # paid / anti-fatigue / cooldown), but we re-check anti-fatigue + paid
-        # right before sending to handle slow batches where state may have changed
-        # between candidate-resolve and per-user send.
-        candidates = await self._db.find_lifecycle_candidates(rule, limit=self._batch)
-        if not candidates:
-            await self._db.touch_lifecycle_rule(rid)
-            return
-        log.info("lifecycle rule %s (tier=%s): %d candidates", rid, rule.get("tier") or "—", len(candidates))
-        for tg_id in candidates:
-            if self._stop.is_set():
+        # Per-rule advisory lock — guards against duplicate sends when two
+        # tg-bot-public instances overlap during a rolling deploy. If another
+        # worker holds the lock, skip this rule for this tick (it'll re-tick
+        # in 5 minutes anyway).
+        async with self._db.lifecycle_rule_lock(rid) as got_lock:
+            if not got_lock:
+                log.info("lifecycle rule %s: another worker holds the lock, skipping tick", rid)
                 return
-            # Last-mile re-check: skip silently if state changed during the batch.
-            if rule.get("respect_anti_fatigue", True):
-                if await self._is_throttled(tg_id):
-                    await self._db.record_lifecycle_fire(rid, tg_id, "throttled", "anti_fatigue")
-                    continue
-            status, err = await _send_with_retry(
-                bot, tg_id,
-                text=rule["message_text"],
-                parse_mode=rule.get("parse_mode", "HTML"),
-                media_type="", media_file_id="", media_url="",
-                buttons=[],
-                limiter=self._limiter,
+            # Candidate query already applies global exclusions (blocked / admin_dm /
+            # paid / anti-fatigue / cooldown), but we re-check anti-fatigue right
+            # before sending to handle slow batches where state may have changed
+            # between candidate-resolve and per-user send.
+            candidates = await self._db.find_lifecycle_candidates(rule, limit=self._batch)
+            if not candidates:
+                await self._db.touch_lifecycle_rule(rid)
+                return
+            log.info(
+                "lifecycle rule %s (tier=%s): %d candidates",
+                rid, rule.get("tier") or "—", len(candidates),
             )
-            await self._db.record_lifecycle_fire(rid, tg_id, status, err)
-            if status == "blocked":
-                try:
-                    await self._db.log_event(tg_id, "bot_blocked", "lifecycle_detected")
-                except Exception:
-                    pass
-        await self._db.touch_lifecycle_rule(rid)
+            for tg_id in candidates:
+                if self._stop.is_set():
+                    return
+                # Last-mile re-check: skip silently if state changed during the batch.
+                if rule.get("respect_anti_fatigue", True):
+                    if await self._is_throttled(tg_id):
+                        await self._db.record_lifecycle_fire(rid, tg_id, "throttled", "anti_fatigue")
+                        continue
+                status, err = await _send_with_retry(
+                    bot, tg_id,
+                    text=rule["message_text"],
+                    parse_mode=rule.get("parse_mode", "HTML"),
+                    media_type="", media_file_id="", media_url="",
+                    buttons=[],
+                    limiter=self._limiter,
+                )
+                await self._db.record_lifecycle_fire(rid, tg_id, status, err)
+                if status == "blocked":
+                    try:
+                        await self._db.log_event(tg_id, "bot_blocked", "lifecycle_detected")
+                    except Exception:
+                        pass
+            await self._db.touch_lifecycle_rule(rid)
 
     async def _is_throttled(self, tg_id: int) -> bool:
         """Last-mile anti-fatigue: ≤1 sent in 48h AND ≤2 sent in 7d."""

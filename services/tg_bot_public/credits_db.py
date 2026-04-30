@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
+from contextlib import asynccontextmanager
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, AsyncIterator, Dict, List, Optional
 
 import asyncpg
 
@@ -3317,6 +3318,33 @@ class CreditsDB:
                         "last_run_at = NOW(), updated_at = NOW() WHERE id = $1",
                         int(rule_id),
                     )
+
+    @asynccontextmanager
+    async def lifecycle_rule_lock(self, rid: int) -> AsyncIterator[bool]:
+        """Postgres advisory lock keyed on the rule id.
+
+        During a deploy `docker compose up -d --build tg-bot-public` recreates
+        the container, but the old one keeps ticking until SIGTERM grace
+        expires (~10s). For that window two LifecycleWorker instances can race
+        on the same candidates and both call `record_lifecycle_fire` — that's
+        why some users got duplicate messages.
+
+        The advisory lock fixes it: only one worker holds the lock per rule_id
+        at a time. Second worker sees `got=False` and skips this rule for
+        this tick. Lock is auto-released on connection close (defensive).
+        """
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            got = bool(await conn.fetchval("SELECT pg_try_advisory_lock($1)", int(rid)))
+            try:
+                yield got
+            finally:
+                if got:
+                    try:
+                        await conn.execute("SELECT pg_advisory_unlock($1)", int(rid))
+                    except Exception:
+                        # Connection close on pool release will auto-unlock anyway.
+                        pass
 
     async def touch_lifecycle_rule(self, rid: int) -> None:
         pool = self._pool_or_fail()
