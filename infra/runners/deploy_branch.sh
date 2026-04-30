@@ -6,7 +6,6 @@ DEPLOY_STACK="${2:-${DEPLOY_STACK:-all}}"
 DEPLOY_PRUNE_OTHER_STACK="${DEPLOY_PRUNE_OTHER_STACK:-false}"
 DEPLOY_ORCHESTRATOR_HA="${DEPLOY_ORCHESTRATOR_HA:-false}"
 DEPLOY_ORCHESTRATOR_HA_COMPOSE_FILE="${DEPLOY_ORCHESTRATOR_HA_COMPOSE_FILE:-docker-compose.orchestrator-ha.yml}"
-PUBLIC_BOT_DELIVERY_STACK="${PUBLIC_BOT_DELIVERY_STACK:-webhook}"
 PROD_TG_WEBHOOK_IP_ADDRESS="${PROD_TG_WEBHOOK_IP_ADDRESS:-}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -17,10 +16,6 @@ is_true() {
   local v
   v="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')"
   [[ "$v" == "1" || "$v" == "true" || "$v" == "yes" || "$v" == "on" ]]
-}
-
-is_ops_polling_public_bot_delivery() {
-  [[ "$(printf '%s' "$PUBLIC_BOT_DELIVERY_STACK" | tr '[:upper:]' '[:lower:]')" == "ops-polling" ]]
 }
 
 env_file_value() {
@@ -186,30 +181,13 @@ bootstrap_dozzle_agent_env() {
 }
 
 infra_app_services() {
-  if is_ops_polling_public_bot_delivery; then
-    printf '%s\n' tg-bot tg-bot-public-admin tg-bot-public-poller asset-ui finance-bot
-    return 0
-  fi
   printf '%s\n' tg-bot tg-bot-public-admin asset-ui finance-bot
-}
-
-prepare_infra_app_delivery_mode() {
-  if is_ops_polling_public_bot_delivery; then
-    remove_root_services tg-bot-public
-    return 0
-  fi
-  remove_root_services tg-bot-public-poller
 }
 
 bootstrap_infra_orchestrator_url() {
   local value
   value="${INFRA_ORCHESTRATOR_PUBLIC_URL:-}"
   if [[ -z "$value" ]]; then
-    if is_ops_polling_public_bot_delivery; then
-      echo "[deploy] INFRA_ORCHESTRATOR_PUBLIC_URL is required when PUBLIC_BOT_DELIVERY_STACK=ops-polling"
-      echo "[deploy] set it to the existing orchestrator nginx route, for example: https://blast808.com/orchestrator"
-      return 1
-    fi
     return 0
   fi
   set_env_file_value "$REPO_DIR/.env" ORCHESTRATOR_PUBLIC_URL "$value"
@@ -235,9 +213,6 @@ require_infra_ops_public_admin_env() {
 
 bootstrap_tg_webhook_ip_env() {
   local mode override current url host ip
-  if is_ops_polling_public_bot_delivery; then
-    return 0
-  fi
   mode="$(printf '%s' "$(env_file_value TG_DELIVERY_MODE)" | tr '[:upper:]' '[:lower:]')"
   if [[ "$mode" != "webhook" ]]; then
     return 0
@@ -295,16 +270,6 @@ fi
 cd "$REPO_DIR"
 
 echo "[deploy] repo=$REPO_DIR branch=$BRANCH stack=$DEPLOY_STACK"
-
-case "$(printf '%s' "$PUBLIC_BOT_DELIVERY_STACK" | tr '[:upper:]' '[:lower:]')" in
-  webhook|ops-polling)
-    ;;
-  *)
-    echo "[deploy] PUBLIC_BOT_DELIVERY_STACK must be webhook or ops-polling (got: $PUBLIC_BOT_DELIVERY_STACK)"
-    exit 1
-    ;;
-esac
-echo "[deploy] public_bot_delivery_stack=$PUBLIC_BOT_DELIVERY_STACK"
 
 # Prefer an explicit PAT secret, then fallback to the workflow token.
 AUTH_TOKEN="${GIT_AUTH_TOKEN:-${GITHUB_TOKEN_FALLBACK:-}}"
@@ -373,11 +338,7 @@ deploy_root_services() {
 
 deploy_prod_path_services() {
   if ! is_true "$DEPLOY_ORCHESTRATOR_HA"; then
-    if is_ops_polling_public_bot_delivery; then
-      deploy_root_services orchestrator-api worker-build worker-render worker-render-poll
-    else
-      deploy_root_services orchestrator-api worker-build worker-render worker-render-poll tg-bot-public
-    fi
+    deploy_root_services orchestrator-api worker-build worker-render worker-render-poll tg-bot-public
     return 0
   fi
 
@@ -395,15 +356,9 @@ deploy_prod_path_services() {
   fi
 
   echo "[deploy] orchestrator-ha enabled compose=$compose_ha"
-  if is_ops_polling_public_bot_delivery; then
-    echo "[deploy] docker compose -f docker-compose.yml -f $compose_ha up -d --build orchestrator-api orchestrator-api-2 worker-build worker-render worker-render-poll"
-    docker compose -f docker-compose.yml -f "$compose_ha" up -d --build \
-      orchestrator-api orchestrator-api-2 worker-build worker-render worker-render-poll
-  else
-    echo "[deploy] docker compose -f docker-compose.yml -f $compose_ha up -d --build orchestrator-api orchestrator-api-2 worker-build worker-render worker-render-poll tg-bot-public"
-    docker compose -f docker-compose.yml -f "$compose_ha" up -d --build \
-      orchestrator-api orchestrator-api-2 worker-build worker-render worker-render-poll tg-bot-public
-  fi
+  echo "[deploy] docker compose -f docker-compose.yml -f $compose_ha up -d --build orchestrator-api orchestrator-api-2 worker-build worker-render worker-render-poll tg-bot-public"
+  docker compose -f docker-compose.yml -f "$compose_ha" up -d --build \
+    orchestrator-api orchestrator-api-2 worker-build worker-render worker-render-poll tg-bot-public
 }
 
 stop_root_services() {
@@ -714,9 +669,6 @@ case "$DEPLOY_STACK" in
   prod-path)
     bootstrap_tg_webhook_ip_env
     deploy_prod_path_services
-    if is_ops_polling_public_bot_delivery; then
-      remove_root_services tg-bot-public
-    fi
     dozzle_agent_status=0
     dozzle_agent_env_is_ready || dozzle_agent_status=$?
     if [[ "$dozzle_agent_status" -eq 0 ]]; then
@@ -726,13 +678,12 @@ case "$DEPLOY_STACK" in
     fi
     deploy_runner_compose_if_present "$RUNNERS_DIR/docker-compose.promtail-edge.yml" "$RUNNERS_DIR/.env.promtail-edge"
     if is_true "$DEPLOY_PRUNE_OTHER_STACK"; then
-      stop_root_services tg-bot tg-bot-public-admin tg-bot-public-poller asset-ui finance-bot
+      stop_root_services tg-bot tg-bot-public-admin asset-ui finance-bot
     fi
     ;;
   infra-apps)
     bootstrap_infra_orchestrator_url
     require_infra_ops_public_admin_env
-    prepare_infra_app_delivery_mode
     mapfile -t services < <(infra_app_services)
     deploy_root_services "${services[@]}"
     if is_true "$DEPLOY_PRUNE_OTHER_STACK"; then
@@ -742,7 +693,6 @@ case "$DEPLOY_STACK" in
   infra-ops)
     bootstrap_infra_orchestrator_url
     require_infra_ops_public_admin_env
-    prepare_infra_app_delivery_mode
     mapfile -t services < <(infra_app_services)
     deploy_root_services "${services[@]}"
     dozzle_central_status=0
