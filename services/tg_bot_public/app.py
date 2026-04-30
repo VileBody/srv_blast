@@ -1936,7 +1936,7 @@ class BlastBotApp:
         )
         return result
 
-    async def _timed_send_photo(self, *, bot: Bot, chat_id: int, photo: str, op: str, **kwargs):
+    async def _timed_send_photo(self, *, bot: Bot, chat_id: int, photo: Any, op: str, **kwargs):
         t0 = time.monotonic()
         try:
             result = await bot.send_photo(chat_id, photo=photo, **kwargs)
@@ -3438,22 +3438,28 @@ class BlastBotApp:
 
         try:
             t0 = time.monotonic()
-            s3_url = make_s3_url(self.settings.s3_bucket_asset_storage, s3_key)
-            presigned = await asyncio.to_thread(
-                self.s3.generate_presigned_for_s3_url,
-                s3_url=s3_url,
-                expires_s=None,
-            )
+            cache_dir = self.settings.tmp_dir / "package_assets"
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            local_path = cache_dir / Path(s3_key).name
+            if not local_path.exists() or local_path.stat().st_size <= 0:
+                await asyncio.to_thread(
+                    self.s3.download_file,
+                    bucket=self.settings.s3_bucket_asset_storage,
+                    key=s3_key,
+                    dest=local_path,
+                )
             log.info(
-                "pkg_photo_presigned pkg=%s key=%s dur_ms=%d",
+                "pkg_photo_cached pkg=%s key=%s path=%s size=%d dur_ms=%d",
                 package_name,
                 s3_key,
+                local_path,
+                int(local_path.stat().st_size),
                 int((time.monotonic() - t0) * 1000.0),
             )
             await self._timed_send_photo(
                 bot=self._require_bot(),
                 chat_id=int(chat_id),
-                photo=presigned,
+                photo=FSInputFile(local_path),
                 op=op,
             )
             return True

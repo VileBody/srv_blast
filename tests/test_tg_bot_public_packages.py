@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import types
+from pathlib import Path
 
 from services.tg_bot_public import app as public_app
 from services.tg_bot_public.state_store import ChatState, STAGE_ALL_PACKAGES, STAGE_PACKAGE_INFO
@@ -25,11 +26,13 @@ class _FakeStore:
 
 class _FakeS3:
     def __init__(self) -> None:
-        self.urls: list[str] = []
+        self.downloads: list[tuple[str, str, Path]] = []
 
-    def generate_presigned_for_s3_url(self, *, s3_url: str, expires_s: int | None = None) -> str:
-        self.urls.append(str(s3_url))
-        return "https://assets.example/" + str(s3_url).split("/", 3)[-1].replace(" ", "%20")
+    def download_file(self, *, bucket: str, key: str, dest: Path) -> Path:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(b"fake-png")
+        self.downloads.append((str(bucket), str(key), dest))
+        return dest
 
 
 class _FakeBot:
@@ -53,9 +56,9 @@ class _FakeMessage:
         return types.SimpleNamespace(message_id=len(self.answers))
 
 
-def _new_app() -> public_app.BlastBotApp:
+def _new_app(tmp_path: Path) -> public_app.BlastBotApp:
     app = object.__new__(public_app.BlastBotApp)
-    app.settings = types.SimpleNamespace(s3_bucket_asset_storage="asset-bucket")
+    app.settings = types.SimpleNamespace(s3_bucket_asset_storage="asset-bucket", tmp_dir=tmp_path)
     app.credits_db = _FakeCreditsDB()
     app.store = _FakeStore()
     app.s3 = _FakeS3()
@@ -71,9 +74,9 @@ def test_package_command_aliases_include_packages_and_typo() -> None:
     assert public_app._is_packages_command_text("/packets")
 
 
-def test_show_all_packages_sends_overview_photos_and_text() -> None:
+def test_show_all_packages_sends_overview_photos_and_text(tmp_path: Path) -> None:
     async def _run() -> None:
-        app = _new_app()
+        app = _new_app(tmp_path)
         msg = _FakeMessage(text="/packages", chat_id=42)
         st = ChatState(chat_id=42, stage="IDLE")
 
@@ -81,6 +84,7 @@ def test_show_all_packages_sends_overview_photos_and_text() -> None:
 
         assert st.stage == STAGE_ALL_PACKAGES
         assert len(app._bot.photos) == 4
+        assert len(app.s3.downloads) == 4
         assert len(msg.answers) == 1
         assert "Вот пул пакетов" in str(msg.answers[0]["text"])
         assert app.credits_db.events == [(42, "view_packages", "")]
@@ -88,9 +92,9 @@ def test_show_all_packages_sends_overview_photos_and_text() -> None:
     asyncio.run(_run())
 
 
-def test_package_detail_sends_selected_photo_and_text() -> None:
+def test_package_detail_sends_selected_photo_and_text(tmp_path: Path) -> None:
     async def _run() -> None:
-        app = _new_app()
+        app = _new_app(tmp_path)
         msg = _FakeMessage(text=public_app.BTN_PKG_BLAST, chat_id=77)
         st = ChatState(chat_id=77, stage=STAGE_ALL_PACKAGES)
 
@@ -99,7 +103,10 @@ def test_package_detail_sends_selected_photo_and_text() -> None:
         assert st.stage == STAGE_PACKAGE_INFO
         assert st.selected_package == public_app.BTN_PKG_BLAST
         assert len(app._bot.photos) == 1
-        assert "Frame%201008.png" in str(app._bot.photos[0][1])
+        photo = app._bot.photos[0][1]
+        photo_args = getattr(photo, "args", ())
+        photo_path = str(photo_args[0] if photo_args else getattr(photo, "path", photo))
+        assert "Frame 1008.png" in photo_path
         assert len(msg.answers) == 1
         assert "Бласт — 1 990" in str(msg.answers[0]["text"])
         assert app.credits_db.events == [(77, "select_package", public_app.BTN_PKG_BLAST)]
