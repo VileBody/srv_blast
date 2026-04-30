@@ -17,7 +17,7 @@ from aiohttp import web
 from aiogram import Bot, Dispatcher, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandStart
-from aiogram.types import BotCommand, CallbackQuery, ChatMemberUpdated, FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, Message, ReplyKeyboardMarkup, ReplyKeyboardRemove
+from aiogram.types import BotCommand, CallbackQuery, ChatMemberUpdated, FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, Message, ReplyKeyboardMarkup, ReplyKeyboardRemove, Update
 from core.telegram_api import build_aiogram_session, make_telegram_api
 from core.clip_window import CLIP_WINDOW_RANGE_S_LABEL
 from core.filesystem_hygiene import cleanup_jobs_artifacts, cleanup_tmp_chat_dirs
@@ -2413,7 +2413,7 @@ class BlastBotApp:
             )
         else:
             await self._set_startup_maintenance_enabled(False)
-        log.info("startup complete: polling loop started")
+        log.info("startup complete: background workers started")
 
     async def _on_shutdown(self, bot: Bot) -> None:
         del bot
@@ -6177,7 +6177,7 @@ class BlastBotApp:
                 return web.json_response({"ok": True, "dedup": True})
 
         try:
-            await self.dp.feed_raw_update(bot, payload)
+            update = Update.model_validate(payload, context={"bot": bot})
         except Exception as exc:
             log.warning(
                 "tg_webhook_failed update_id=%s dur_ms=%d err=%r",
@@ -6185,13 +6185,51 @@ class BlastBotApp:
                 int((time.monotonic() - t0) * 1000.0),
                 exc,
             )
-            raise
+            raise web.HTTPBadRequest(text="invalid update") from exc
+
+        task = asyncio.create_task(
+            self._dispatch_telegram_webhook_update(bot=bot, update=update, update_id=update_id, started_at=t0),
+            name=f"tg_webhook_dispatch_{update_id or 'unknown'}",
+        )
+
+        def _log_task_error(done: asyncio.Task[None]) -> None:
+            if done.cancelled():
+                return
+            exc = done.exception()
+            if exc is not None:
+                log.error("tg_webhook_task_crashed update_id=%s err=%r", update_id, exc)
+
+        task.add_done_callback(_log_task_error)
         log.info(
-            "tg_webhook_done update_id=%s dedup=0 dur_ms=%d",
+            "tg_webhook_accepted update_id=%s dedup=0 dur_ms=%d",
             update_id,
             int((time.monotonic() - t0) * 1000.0),
         )
         return web.json_response({"ok": True})
+
+    async def _dispatch_telegram_webhook_update(
+        self,
+        *,
+        bot: Bot,
+        update: Update,
+        update_id: int,
+        started_at: float,
+    ) -> None:
+        try:
+            await self.dp.feed_update(bot, update)
+        except Exception as exc:
+            log.warning(
+                "tg_webhook_dispatch_failed update_id=%s dur_ms=%d err=%r",
+                update_id,
+                int((time.monotonic() - started_at) * 1000.0),
+                exc,
+            )
+            return
+        log.info(
+            "tg_webhook_done update_id=%s dedup=0 dur_ms=%d",
+            update_id,
+            int((time.monotonic() - started_at) * 1000.0),
+        )
 
     async def _run_webhook(self, *, bot: Bot) -> None:
         webhook_path = self._normalize_webhook_path(self.settings.tg_webhook_path)
@@ -6225,6 +6263,7 @@ class BlastBotApp:
             ok = await bot.set_webhook(
                 url=webhook_url,
                 secret_token=str(self.settings.tg_webhook_secret or "").strip() or None,
+                ip_address=str(self.settings.tg_webhook_ip_address or "").strip() or None,
                 drop_pending_updates=False,
             )
             if not ok:
@@ -6239,10 +6278,11 @@ class BlastBotApp:
             )
             await asyncio.Future()
         finally:
-            try:
-                await bot.delete_webhook(drop_pending_updates=False)
-            except Exception as e:
-                log.warning("telegram_delete_webhook_failed err=%s", e)
+            if bool(self.settings.tg_webhook_delete_on_shutdown):
+                try:
+                    await bot.delete_webhook(drop_pending_updates=False)
+                except Exception as e:
+                    log.warning("telegram_delete_webhook_failed err=%s", e)
             if runner is not None:
                 try:
                     await runner.cleanup()

@@ -183,6 +183,8 @@ class Settings:
     tg_webhook_bind_host: str = _env("TG_WEBHOOK_BIND_HOST", "0.0.0.0")
     tg_webhook_port: int = _int_env("TG_WEBHOOK_PORT", 8081)
     tg_webhook_dedup_ttl_s: int = _int_env("TG_WEBHOOK_DEDUP_TTL_S", 86400)
+    tg_webhook_ip_address: str = _env("TG_WEBHOOK_IP_ADDRESS", "")
+    tg_webhook_delete_on_shutdown: bool = _bool_env("TG_WEBHOOK_DELETE_ON_SHUTDOWN", False)
     bot_status_update_interval_s: float = _float_env("BOT_STATUS_UPDATE_INTERVAL_S", 20.0)
     bot_recovery_poll_interval_s: float = _float_env("BOT_RECOVERY_POLL_INTERVAL_S", 60.0)
     bot_job_timeout_h: float = _float_env("BOT_JOB_TIMEOUT_H", 4.0)

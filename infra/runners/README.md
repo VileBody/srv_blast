@@ -58,8 +58,15 @@ Workflow использует эту переменную, чтобы выпол
 
 - `all` (по умолчанию): legacy single-node deploy.
 - `prod-path`: `orchestrator-api`, `worker-build`, `worker-render`, `tg-bot-public` + опционально `orchestrator-api-2` (если `DEPLOY_ORCHESTRATOR_HA=true`) + Dozzle agent (env создается автоматически) + опционально `promtail-edge`.
-- `infra-apps`: `tg-bot`, `asset-ui`, `finance-bot`.
+- `infra-apps`: `tg-bot`, `tg-bot-public-admin`, `asset-ui`, `finance-bot`.
 - `infra-ops`: `infra-apps` + `dozzle` + `observability` + `github-runner` (если есть соответствующие `.env`).
+
+Топология без canary-режима:
+
+- `blast_ops`: runner, admin panel (`tg-bot-public-admin`), asset UI, finance bot, логи/observability.
+- `orchestrator-0` и `orchestrator-1`: `prod-path`, то есть webhook/API, queue workers, public bot delivery и render pipeline.
+
+Для `tg-bot-public-admin` на `blast_ops` выставляй `ORCHESTRATOR_PUBLIC_URL` явно на балансировщик/публичный endpoint оркестраторов, а не на локальный `http://orchestrator-api:8000`.
 
 Примеры:
 

@@ -179,25 +179,25 @@ bootstrap_dozzle_agent_env() {
   ensure_env_file_value "$env_file" DOZZLE_AGENT_LEVEL "info"
 }
 
-is_canary_runtime_node() {
-  local node_name enqueue_enabled
-  node_name="$(env_file_value ORCHESTRATOR_NODE_NAME)"
-  enqueue_enabled="$(env_file_value ORCHESTRATOR_ENQUEUE_ENABLED)"
-  if [[ "$node_name" == "blast-ops-canary" ]]; then
-    return 0
-  fi
-  if [[ -n "$enqueue_enabled" ]] && ! is_true "$enqueue_enabled"; then
-    return 0
-  fi
-  return 1
+infra_app_services() {
+  printf '%s\n' tg-bot tg-bot-public-admin asset-ui finance-bot
 }
 
-infra_app_services() {
-  if is_canary_runtime_node; then
-    printf '%s\n' asset-ui finance-bot
-    return 0
+require_infra_ops_public_admin_env() {
+  local orchestrator_url
+  orchestrator_url="$(env_file_value ORCHESTRATOR_PUBLIC_URL)"
+  if [[ -z "$orchestrator_url" ]]; then
+    echo "[deploy] ORCHESTRATOR_PUBLIC_URL is required for tg-bot-public-admin on infra stack"
+    echo "[deploy] set it to the orchestrator load balancer/public endpoint, not a local compose service"
+    return 1
   fi
-  printf '%s\n' tg-bot asset-ui finance-bot
+  case "$orchestrator_url" in
+    http://orchestrator-api:*|http://127.*|https://127.*|http://localhost*|https://localhost*)
+      echo "[deploy] invalid ORCHESTRATOR_PUBLIC_URL for infra stack: $orchestrator_url"
+      echo "[deploy] blast_ops must point tg-bot-public-admin to the orchestrator load balancer/public endpoint"
+      return 1
+      ;;
+  esac
 }
 
 if [[ -z "$BRANCH" ]]; then
@@ -620,10 +620,11 @@ case "$DEPLOY_STACK" in
     fi
     deploy_runner_compose_if_present "$RUNNERS_DIR/docker-compose.promtail-edge.yml" "$RUNNERS_DIR/.env.promtail-edge"
     if is_true "$DEPLOY_PRUNE_OTHER_STACK"; then
-      stop_root_services tg-bot asset-ui finance-bot
+      stop_root_services tg-bot tg-bot-public-admin asset-ui finance-bot
     fi
     ;;
   infra-apps)
+    require_infra_ops_public_admin_env
     mapfile -t services < <(infra_app_services)
     deploy_root_services "${services[@]}"
     if is_true "$DEPLOY_PRUNE_OTHER_STACK"; then
@@ -631,6 +632,7 @@ case "$DEPLOY_STACK" in
     fi
     ;;
   infra-ops)
+    require_infra_ops_public_admin_env
     mapfile -t services < <(infra_app_services)
     deploy_root_services "${services[@]}"
     dozzle_central_status=0
