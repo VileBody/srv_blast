@@ -200,6 +200,21 @@ prepare_infra_app_delivery_mode() {
   remove_root_services tg-bot-public-poller
 }
 
+bootstrap_infra_orchestrator_url() {
+  local value
+  value="${INFRA_ORCHESTRATOR_PUBLIC_URL:-}"
+  if [[ -z "$value" ]]; then
+    if is_ops_polling_public_bot_delivery; then
+      echo "[deploy] INFRA_ORCHESTRATOR_PUBLIC_URL is required when PUBLIC_BOT_DELIVERY_STACK=ops-polling"
+      echo "[deploy] set it to the existing orchestrator nginx route, for example: https://blast808.com/orchestrator"
+      return 1
+    fi
+    return 0
+  fi
+  set_env_file_value "$REPO_DIR/.env" ORCHESTRATOR_PUBLIC_URL "$value"
+  echo "[deploy] set ORCHESTRATOR_PUBLIC_URL for infra stack"
+}
+
 require_infra_ops_public_admin_env() {
   local orchestrator_url
   orchestrator_url="$(env_file_value ORCHESTRATOR_PUBLIC_URL)"
@@ -707,6 +722,7 @@ case "$DEPLOY_STACK" in
     fi
     ;;
   infra-apps)
+    bootstrap_infra_orchestrator_url
     require_infra_ops_public_admin_env
     prepare_infra_app_delivery_mode
     mapfile -t services < <(infra_app_services)
@@ -716,6 +732,7 @@ case "$DEPLOY_STACK" in
     fi
     ;;
   infra-ops)
+    bootstrap_infra_orchestrator_url
     require_infra_ops_public_admin_env
     prepare_infra_app_delivery_mode
     mapfile -t services < <(infra_app_services)

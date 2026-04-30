@@ -71,6 +71,10 @@ Workflow использует эту переменную, чтобы выпол
 `PUBLIC_BOT_DELIVERY_STACK=ops-polling` отключает `tg-bot-public` на оркестраторах и
 поднимает `tg-bot-public-poller` на `blast_ops`; это аварийный режим для случаев,
 когда Telegram не может завершить входящий TCP handshake до балансировщика.
+При `ops-polling` в GitHub Repository variables должен быть задан
+`INFRA_ORCHESTRATOR_PUBLIC_URL=https://blast808.com/orchestrator`; infra-deploy
+записывает его в серверный `.env` как `ORCHESTRATOR_PUBLIC_URL`, чтобы poller
+ходил через существующий nginx route на `orchestrator-0/1`, а не в корень домена.
 В `prod-path` деплое при `TG_DELIVERY_MODE=webhook` скрипт один раз заполняет
 `TG_WEBHOOK_IP_ADDRESS` текущим IPv4 адресом `TG_WEBHOOK_URL`, если переменная
 ещё не задана. Это передается в Telegram `setWebhook` и пинит доставку на

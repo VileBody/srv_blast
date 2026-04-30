@@ -126,6 +126,7 @@ jobs:
       GITHUB_TOKEN_FALLBACK: ${{ github.token }}
       DEPLOY_PRUNE_OTHER_STACK: ${{ vars.DEPLOY_PRUNE_OTHER_STACK }}
       PUBLIC_BOT_DELIVERY_STACK: ${{ vars.PUBLIC_BOT_DELIVERY_STACK }}
+      INFRA_ORCHESTRATOR_PUBLIC_URL: ${{ vars.INFRA_ORCHESTRATOR_PUBLIC_URL }}
     steps:
       - name: Validate Runner Repo Path
         run: |
