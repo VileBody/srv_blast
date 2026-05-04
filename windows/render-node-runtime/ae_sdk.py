@@ -204,6 +204,16 @@ class AeRenderer:
         return raw in {"1", "true", "yes", "on"}
 
     @staticmethod
+    def _env_float(key: str, default: float) -> float:
+        raw = (os.getenv(key) or "").strip()
+        if not raw:
+            return float(default)
+        try:
+            return float(raw)
+        except ValueError:
+            return float(default)
+
+    @staticmethod
     def _job_root_dir(app_dir: Path) -> Path:
         # expected: .../<job_id>/app -> upload/delete whole <job_id>
         if app_dir.name.lower() == "app":
@@ -430,6 +440,7 @@ class AeRenderer:
                                 job_id=spec.job_id,
                                 entry_comp=comp_for_render,
                                 output_path=output_path,
+                                job_dir=job_dir,
                             )
                         except Exception as e:
                             log.exception("aerender error for job %s", spec.job_id)
@@ -613,17 +624,217 @@ class AeRenderer:
                 return False, None, None, f"Timeout waiting for ae_status.txt for job {job_id}"
             time.sleep(0.5)
 
-    def _run_aerender(self, project_path: Path, job_id: str, entry_comp: str, output_path: Path) -> None:
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        cmd = [self.aerender_bin, "-project", str(project_path), "-comp", entry_comp, "-output", str(output_path)]
-        proc = subprocess.run(cmd, env=os.environ.copy(), capture_output=True, text=True)
+    @staticmethod
+    def _file_progress_sig(path: Path) -> tuple[int, int]:
+        try:
+            st = path.stat()
+        except FileNotFoundError:
+            return (-1, -1)
+        except Exception:
+            return (-1, -1)
+        return (int(st.st_size), int(st.st_mtime_ns))
 
-        stdout = proc.stdout or ""
-        stderr = proc.stderr or ""
+    @staticmethod
+    def _tail_text(path: Path, max_bytes: int = 64 * 1024) -> str:
+        try:
+            with open(path, "rb") as f:
+                try:
+                    f.seek(0, os.SEEK_END)
+                    size = f.tell()
+                    f.seek(max(0, size - max_bytes), os.SEEK_SET)
+                except Exception:
+                    pass
+                data = f.read()
+                text = data.decode("utf-8", errors="replace")
+                if "\x00" not in text:
+                    return text
+                try:
+                    return data.decode("utf-16", errors="replace")
+                except Exception:
+                    return text
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _project_log_dir(project_path: Path) -> Path:
+        return project_path.parent / f"{project_path.name} Logs"
+
+    def _project_logs(self, project_path: Path) -> list[Path]:
+        log_dir = self._project_log_dir(project_path)
+        try:
+            return sorted(
+                [p for p in log_dir.glob("*.txt") if p.is_file()],
+                key=lambda p: p.stat().st_mtime_ns,
+            )
+        except Exception:
+            return []
+
+    def _project_logs_progress_sig(self, project_path: Path) -> tuple[int, int, int]:
+        total_size = 0
+        newest_mtime = -1
+        count = 0
+        for path in self._project_logs(project_path):
+            size, mtime = self._file_progress_sig(path)
+            if size < 0:
+                continue
+            count += 1
+            total_size += size
+            newest_mtime = max(newest_mtime, mtime)
+        return (count, total_size, newest_mtime)
+
+    def _aerender_progress_sig(
+        self,
+        *,
+        project_path: Path,
+        output_path: Path,
+        stdout_log_path: Path,
+        stderr_log_path: Path,
+    ) -> tuple[tuple[int, int], tuple[int, int], tuple[int, int], tuple[int, int, int]]:
+        return (
+            self._file_progress_sig(output_path),
+            self._file_progress_sig(stdout_log_path),
+            self._file_progress_sig(stderr_log_path),
+            self._project_logs_progress_sig(project_path),
+        )
+
+    def _project_log_reports_finished(self, project_path: Path) -> bool:
+        for path in reversed(self._project_logs(project_path)):
+            text = self._tail_text(path)
+            if "Finished composition" in text and "Total Time Elapsed" in text:
+                return True
+        return False
+
+    @staticmethod
+    def _output_file_is_stable(output_path: Path, *, stable_seconds: float = 3.0) -> bool:
+        try:
+            st = output_path.stat()
+        except Exception:
+            return False
+        if st.st_size <= 0:
+            return False
+        return (time.time() - float(st.st_mtime)) >= float(stable_seconds)
+
+    def _render_completed_despite_idle(self, *, project_path: Path, output_path: Path) -> bool:
+        return self._project_log_reports_finished(project_path) and self._output_file_is_stable(
+            output_path,
+            stable_seconds=max(1.0, self._env_float("AERENDER_OUTPUT_STABLE_S", 3.0)),
+        )
+
+    @staticmethod
+    def _terminate_process(proc: subprocess.Popen[Any], *, reason: str) -> None:
+        pid = getattr(proc, "pid", None)
+        if pid and os.name == "nt":
+            try:
+                subprocess.run(
+                    ["taskkill", "/PID", str(pid), "/T", "/F"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=30,
+                    check=False,
+                )
+            except Exception:
+                pass
+
+        try:
+            if proc.poll() is None:
+                proc.terminate()
+                proc.wait(timeout=10)
+        except Exception:
+            try:
+                if proc.poll() is None:
+                    proc.kill()
+                    proc.wait(timeout=10)
+            except Exception:
+                pass
+
+    def _run_aerender(self, project_path: Path, job_id: str, entry_comp: str, output_path: Path, job_dir: Path) -> None:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        logs_dir = job_dir / "logs"
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        stdout_log_path = logs_dir / "aerender.stdout.log"
+        stderr_log_path = logs_dir / "aerender.stderr.log"
+
+        total_timeout_s = self._env_float("AERENDER_TIMEOUT_S", 7200.0)
+        idle_timeout_s = self._env_float("AERENDER_IDLE_TIMEOUT_S", 300.0)
+        watchdog_poll_s = max(0.1, self._env_float("AERENDER_WATCHDOG_POLL_S", 5.0))
+
+        cmd = [self.aerender_bin, "-project", str(project_path), "-comp", entry_comp, "-output", str(output_path)]
+        started_at = time.time()
+        rc: int | None = None
+        with open(stdout_log_path, "w", encoding="utf-8", errors="replace") as f_out, open(
+            stderr_log_path, "w", encoding="utf-8", errors="replace"
+        ) as f_err:
+            f_out.write(
+                f"[aerender] job_id={job_id} started_at={started_at:.3f} "
+                f"timeout_s={total_timeout_s} idle_timeout_s={idle_timeout_s} poll_s={watchdog_poll_s}\n"
+            )
+            f_out.write(f"[aerender] cmd={' '.join(cmd)}\n")
+            f_out.flush()
+
+            proc = subprocess.Popen(cmd, env=os.environ.copy(), stdout=f_out, stderr=f_err)
+            last_sig = self._aerender_progress_sig(
+                project_path=project_path,
+                output_path=output_path,
+                stdout_log_path=stdout_log_path,
+                stderr_log_path=stderr_log_path,
+            )
+            last_progress_at = time.time()
+
+            while True:
+                rc = proc.poll()
+                now = time.time()
+                sig = self._aerender_progress_sig(
+                    project_path=project_path,
+                    output_path=output_path,
+                    stdout_log_path=stdout_log_path,
+                    stderr_log_path=stderr_log_path,
+                )
+                if sig != last_sig:
+                    last_sig = sig
+                    last_progress_at = now
+
+                if rc is not None:
+                    break
+
+                if total_timeout_s > 0 and (now - started_at) > total_timeout_s:
+                    self._terminate_process(proc, reason=f"total_timeout>{total_timeout_s}s")
+                    raise RuntimeError(
+                        f"aerender timeout total>{total_timeout_s}s; "
+                        f"logs={stdout_log_path};{stderr_log_path}"
+                    )
+
+                if idle_timeout_s > 0 and (now - last_progress_at) > idle_timeout_s:
+                    if self._render_completed_despite_idle(project_path=project_path, output_path=output_path):
+                        log.warning(
+                            "aerender idle watchdog saw completed AE render; accepting output and terminating stuck process "
+                            "job_id=%s output=%s",
+                            job_id,
+                            output_path,
+                        )
+                        self._terminate_process(proc, reason=f"completed_after_idle>{idle_timeout_s}s")
+                        rc = 0
+                        break
+
+                    self._terminate_process(proc, reason=f"idle_timeout>{idle_timeout_s}s")
+                    raise RuntimeError(
+                        f"aerender timeout idle>{idle_timeout_s}s without progress; "
+                        f"logs={stdout_log_path};{stderr_log_path}"
+                    )
+
+                time.sleep(watchdog_poll_s)
+
+            f_out.flush()
+            f_err.flush()
+
+        stdout = self._tail_text(stdout_log_path)
+        stderr = self._tail_text(stderr_log_path)
         has_text_error = any(m in stdout or m in stderr for m in ["aerender ERROR:", "After Effects error:"])
 
-        if proc.returncode != 0 or has_text_error:
-            raise RuntimeError(f"aerender failed (code={proc.returncode}, error_markers={has_text_error})")
+        if rc != 0 or has_text_error:
+            raise RuntimeError(
+                f"aerender failed (code={rc}, error_markers={has_text_error}); "
+                f"logs={stdout_log_path};{stderr_log_path}"
+            )
 
     def _wait_for_output(self, output_path: Path, timeout_seconds: int = 1800, stable_seconds: int = 3) -> bool:
         start = time.time()

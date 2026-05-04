@@ -92,7 +92,8 @@ jobs:
             tests/test_windows_node_pool.py \
             tests/test_orchestrator_windows_nodes_api.py \
             tests/test_orchestrator_windows_node_auto_disable.py \
-            tests/test_windows_node_rollout.py
+            tests/test_windows_node_rollout.py \
+            tests/test_windows_ae_sdk_watchdog.py
 
       - name: Run logs pipeline tests
         run: |
