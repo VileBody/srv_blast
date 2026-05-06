@@ -4130,6 +4130,10 @@ def build_app(
         )
         await credits_db.audit_log(_user, "broadcast_create", str(bid), _aud_summary(audience))
 
+        if when == "draft":
+            # Pre-resolve audience so the draft preview shows real counts instead of 0.
+            ids = await credits_db.resolve_audience(audience)
+            await credits_db.set_broadcast_status(bid, "draft", audience_size=len(ids))
         if when == "now":
             # Resolve audience, seed, mark sending — worker picks up.
             ids = await credits_db.resolve_audience(audience)
@@ -4143,6 +4147,227 @@ def build_app(
             ids = await credits_db.resolve_audience(audience)
             await credits_db.set_broadcast_status(bid, "scheduled", audience_size=len(ids))
             await credits_db.audit_log(_user, "broadcast_schedule", str(bid), f"at={sched_dt} audience={len(ids)}")
+        return RedirectResponse(f"/admin/broadcasts/{bid}", status_code=303)
+
+    # ── Broadcasts: edit (drafts only) ────────────────────────────────
+
+    @app.get("/admin/broadcasts/{bid}/edit", response_class=HTMLResponse)
+    async def broadcasts_edit_form(bid: int, _user: str = Depends(_check_auth)) -> str:
+        bc = await credits_db.get_broadcast(bid)
+        if not bc:
+            raise HTTPException(404, "Broadcast not found")
+        if bc["status"] != "draft":
+            raise HTTPException(400, "Можно редактировать только черновики")
+
+        aud = bc["audience"] or {}
+        cur_mode = str(aud.get("mode") or "all").lower()
+        cur_source = str((aud.get("source") or {}).get("value") or "")
+        cur_tier = str((aud.get("tier") or {}).get("value") or "").upper()
+        f = aud.get("filter") or {}
+        m = aud.get("manual") or {}
+        cur_manual = ""
+        if m:
+            parts: list[str] = []
+            parts.extend(str(x) for x in (m.get("tg_ids") or []))
+            parts.extend(f"@{u}" for u in (m.get("usernames") or []))
+            cur_manual = ", ".join(parts)
+        cur_exclude_blocked = bool(aud.get("exclude_blocked", True))
+
+        tags = await credits_db.list_all_tags()
+        cur_tag = str(f.get("tag") or "")
+        tag_opts = '<option value="">—</option>' + "".join(
+            f'<option value="{html_mod.escape(t["tag"])}" {"selected" if t["tag"] == cur_tag else ""}>'
+            f'{html_mod.escape(t["tag"])} ({t["count"]})</option>'
+            for t in tags
+        )
+        sources_dist = await credits_db.source_distribution()
+        src_opts = '<option value="">— любой —</option>' + "".join(
+            f'<option value="{html_mod.escape(d["source"])}" {"selected" if d["source"] == cur_source else ""}>'
+            f'{html_mod.escape(d["source"])} ({d["count"]})</option>'
+            for d in sources_dist
+        )
+        tier_counts = await credits_db.tier_counts()
+        tier_opts = '<option value="">— выбрать тир —</option>' + "".join(
+            f'<option value="{code}" {"selected" if code == cur_tier else ""}>'
+            f'{code} — {html_mod.escape(spec["title"])} ({tier_counts.get(code, 0)})'
+            f'</option>'
+            for code, spec in _TIER_SPEC.items()
+        )
+
+        def _chk(mode: str) -> str:
+            return "checked" if cur_mode == mode else ""
+
+        def _pm_sel(v: str) -> str:
+            cur = (bc["parse_mode"] or "HTML").upper()
+            return "selected" if v.upper() == cur else ""
+
+        def _mt_sel(v: str) -> str:
+            return "selected" if v == bc["media_type"] else ""
+
+        buttons_raw = "\n".join(
+            f"{b.get('text','')} | {b.get('url','')}" for b in (bc["buttons"] or [])
+        )
+
+        sched_val = ""
+        if bc.get("_schedule_raw"):
+            try:
+                sched_val = bc["_schedule_raw"].strftime("%Y-%m-%dT%H:%M")
+            except Exception:
+                sched_val = ""
+
+        body = f"""
+        <p><a href="/admin/broadcasts/{bid}">&laquo; Рассылка #{bid}</a></p>
+        <div class="card">
+        <form method="post" action="/admin/broadcasts/{bid}/edit">
+          <h3>1. Сообщение</h3>
+          <label>Название: <input type="text" name="title" value="{html_mod.escape(bc['title'], quote=True)}" required style="width:400px"></label><br><br>
+          <label>Текст (HTML разрешён):<br>
+            <textarea name="text" rows="6" style="width:100%;font-family:inherit" required>{html_mod.escape(bc['text'])}</textarea>
+          </label><br>
+          <label>Parse mode:
+            <select name="parse_mode">
+              <option value="HTML" {_pm_sel("HTML")}>HTML</option>
+              <option value="MARKDOWN" {_pm_sel("MARKDOWN")}>Markdown</option>
+              <option value="" {_pm_sel("")}>plain</option>
+            </select>
+          </label><br><br>
+
+          <h3>2. Медиа</h3>
+          <label>Тип:
+            <select name="media_type">
+              <option value="" {_mt_sel("")}>без медиа</option>
+              <option value="photo" {_mt_sel("photo")}>photo</option>
+              <option value="video" {_mt_sel("video")}>video</option>
+              <option value="animation" {_mt_sel("animation")}>animation (gif)</option>
+              <option value="document" {_mt_sel("document")}>document</option>
+            </select>
+          </label>
+          <label>URL: <input type="text" name="media_url" value="{html_mod.escape(bc['media_url'], quote=True)}" style="width:380px"></label><br>
+          <label>или file_id: <input type="text" name="media_file_id" value="{html_mod.escape(bc['media_file_id'], quote=True)}" style="width:420px"></label><br><br>
+
+          <h3>3. Кнопки</h3>
+          <p style="color:#666;font-size:0.85em">По одной на строку: <code>Текст | https://url</code></p>
+          <textarea name="buttons_raw" rows="3" style="width:100%;font-family:monospace">{html_mod.escape(buttons_raw)}</textarea><br><br>
+
+          <h3>4. Аудитория</h3>
+          <label><input type="radio" name="mode" value="all" {_chk("all")}> Вся база</label><br>
+          <label><input type="radio" name="mode" value="tier" {_chk("tier")}> По тиру</label>
+          <span style="margin-left:1em">
+            <select name="tier_value" style="width:380px">{tier_opts}</select>
+          </span><br>
+          <label><input type="radio" name="mode" value="source" {_chk("source")}> По источнику</label>
+          <span style="margin-left:1em">
+            source: <select name="source_value" style="width:240px">{src_opts}</select>
+          </span><br>
+          <label><input type="radio" name="mode" value="filter" {_chk("filter")}> Фильтр по базе</label>
+          <span style="margin-left:1em">
+            credits≥ <input type="number" name="credits_min" value="{html_mod.escape(str(f.get('credits_min') or ''), quote=True)}" style="width:60px">
+            credits≤ <input type="number" name="credits_max" value="{html_mod.escape(str(f.get('credits_max') or ''), quote=True)}" style="width:60px">
+            платил:
+            <select name="paid">
+              <option value="any" {"selected" if (f.get("paid") or "any") == "any" else ""}>—</option>
+              <option value="yes" {"selected" if f.get("paid") == "yes" else ""}>да</option>
+              <option value="no" {"selected" if f.get("paid") == "no" else ""}>нет</option>
+            </select>
+            генерил:
+            <select name="generated">
+              <option value="any" {"selected" if (f.get("generated") or "any") == "any" else ""}>—</option>
+              <option value="yes" {"selected" if f.get("generated") == "yes" else ""}>да</option>
+              <option value="no" {"selected" if f.get("generated") == "no" else ""}>нет</option>
+            </select>
+            tag: <select name="tag">{tag_opts}</select>
+            с: <input type="date" name="created_from" value="{html_mod.escape(str(f.get('created_from') or ''), quote=True)}">
+            до: <input type="date" name="created_to" value="{html_mod.escape(str(f.get('created_to') or ''), quote=True)}">
+          </span><br>
+          <label><input type="radio" name="mode" value="manual" {_chk("manual")}> Точечно</label>
+          <span style="margin-left:1em">
+            <input type="text" name="manual_raw" value="{html_mod.escape(cur_manual, quote=True)}" placeholder="@username, 123456789, ..." style="width:560px">
+          </span><br><br>
+          <label><input type="checkbox" name="exclude_blocked" {"checked" if cur_exclude_blocked else ""}> Исключить тех, кто блокнул бота</label><br><br>
+
+          <h3>5. Расписание</h3>
+          <label><input type="radio" name="when" value="draft" checked> Оставить черновиком</label><br>
+          <label><input type="radio" name="when" value="schedule"> Запланировать на:
+            <input type="datetime-local" name="schedule_at" value="{sched_val}"> <small>(UTC)</small>
+          </label><br>
+          <label><input type="radio" name="when" value="clear"> Снять расписание</label><br><br>
+
+          <button type="submit" class="btn-success">Сохранить</button>
+          <a href="/admin/broadcasts/{bid}" style="margin-left:1rem">Отмена</a>
+        </form>
+        </div>
+        """
+        return _page(f"Изменить рассылку #{bid}", body)
+
+    @app.post("/admin/broadcasts/{bid}/edit")
+    async def broadcasts_edit_submit(
+        bid: int,
+        title: str = Form(...),
+        text: str = Form(""),
+        parse_mode: str = Form("HTML"),
+        media_type: str = Form(""),
+        media_url: str = Form(""),
+        media_file_id: str = Form(""),
+        buttons_raw: str = Form(""),
+        mode: str = Form("all"),
+        source_value: str = Form(""),
+        tier_value: str = Form(""),
+        credits_min: str = Form(""),
+        credits_max: str = Form(""),
+        paid: str = Form("any"),
+        generated: str = Form("any"),
+        tag: str = Form(""),
+        created_from: str = Form(""),
+        created_to: str = Form(""),
+        manual_raw: str = Form(""),
+        exclude_blocked: str = Form(""),
+        when: str = Form("draft"),
+        schedule_at: str = Form(""),
+        _user: str = Depends(_check_auth),
+    ) -> RedirectResponse:
+        bc = await credits_db.get_broadcast(bid)
+        if not bc:
+            raise HTTPException(404, "Broadcast not found")
+        if bc["status"] != "draft":
+            raise HTTPException(400, "Можно редактировать только черновики")
+
+        audience: dict = {"mode": mode, "exclude_blocked": bool(exclude_blocked)}
+        if mode == "source":
+            audience["source"] = {"value": source_value.strip()}
+        elif mode == "tier":
+            audience["tier"] = {"value": tier_value.strip().upper()}
+        elif mode == "filter":
+            audience["filter"] = {
+                "credits_min": credits_min.strip() or None,
+                "credits_max": credits_max.strip() or None,
+                "paid": paid, "generated": generated,
+                "tag": tag.strip(),
+                "created_from": created_from.strip() or None,
+                "created_to": created_to.strip() or None,
+            }
+        elif mode == "manual":
+            audience["manual"] = _parse_manual_list(manual_raw)
+
+        buttons = _parse_buttons(buttons_raw)
+
+        kwargs: dict = dict(
+            title=title, text=text, parse_mode=parse_mode,
+            media_type=media_type, media_file_id=media_file_id, media_url=media_url,
+            buttons=buttons, audience=audience,
+        )
+        if when == "schedule":
+            sched_dt = _parse_dt_local(schedule_at)
+            if sched_dt is not None:
+                kwargs["schedule_at"] = sched_dt
+            else:
+                kwargs["clear_schedule"] = True
+        elif when == "clear":
+            kwargs["clear_schedule"] = True
+
+        await credits_db.update_broadcast(bid, **kwargs)
+        ids = await credits_db.resolve_audience(audience)
+        await credits_db.set_broadcast_status(bid, "draft", audience_size=len(ids))
+        await credits_db.audit_log(_user, "broadcast_edit", str(bid), _aud_summary(audience))
         return RedirectResponse(f"/admin/broadcasts/{bid}", status_code=303)
 
     # ── Broadcasts: detail ────────────────────────────────────────────
@@ -4177,6 +4402,9 @@ def build_app(
                 f'<form method="post" action="/admin/broadcasts/{bid}/delete" '
                 f'onsubmit="return confirm(\'Удалить черновик?\')">'
                 f'<button class="btn-danger">Удалить</button></form>'
+            )
+            action_buttons.append(
+                f'<a class="btn" href="/admin/broadcasts/{bid}/edit">Изменить</a>'
             )
         if bc["status"] == "sending":
             action_buttons.append(
