@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from aiogram import Router
+from aiogram import F, Router
 from aiogram.filters import Command
 
 if TYPE_CHECKING:
@@ -147,5 +147,54 @@ def make_admin_router(credits_db: CreditsDB, settings: Settings) -> Router:
         else:
             lines.append("\nДополнительных админов нет.")
         await message.answer("\n".join(lines))
+
+    def _extract_file_id(msg: Message) -> tuple[str, str]:
+        """Return (media_type, file_id) for a media message, or ("", "")."""
+        if msg.photo:
+            return "photo", str(msg.photo[-1].file_id)
+        if msg.video:
+            return "video", str(msg.video.file_id)
+        if msg.animation:
+            return "animation", str(msg.animation.file_id)
+        if msg.document:
+            return "document", str(msg.document.file_id)
+        if msg.audio:
+            return "audio", str(msg.audio.file_id)
+        if msg.voice:
+            return "voice", str(msg.voice.file_id)
+        return "", ""
+
+    @router.message(Command("fileid"))
+    async def _fileid(message: Message) -> None:
+        if not await _is_admin(message):
+            return
+        target = message.reply_to_message or message
+        media_type, fid = _extract_file_id(target)
+        if not fid:
+            await message.answer(
+                "Пришли мне фото/видео/гифку/документ с подписью <code>/fileid</code> "
+                "или ответь командой /fileid на сообщение с медиа.",
+                parse_mode="HTML",
+            )
+            return
+        await message.answer(
+            f"<b>media_type:</b> <code>{media_type}</code>\n"
+            f"<b>file_id:</b>\n<code>{fid}</code>\n\n"
+            f"Этот id валиден только для этого бота. Вставь его в форму рассылки в поле «file_id».",
+            parse_mode="HTML",
+        )
+
+    @router.message(F.caption == "/fileid")
+    async def _fileid_caption(message: Message) -> None:
+        if not await _is_admin(message):
+            return
+        media_type, fid = _extract_file_id(message)
+        if not fid:
+            return
+        await message.answer(
+            f"<b>media_type:</b> <code>{media_type}</code>\n"
+            f"<b>file_id:</b>\n<code>{fid}</code>",
+            parse_mode="HTML",
+        )
 
     return router
