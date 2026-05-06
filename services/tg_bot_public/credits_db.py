@@ -2463,13 +2463,20 @@ class CreditsDB:
         return [int(r["tg_id"]) for r in rows]
 
     async def mark_delivery(self, bid: int, tg_id: int, status: str, error: str = "") -> None:
+        # Idempotent on retries / overlapping replicas: only flip a row that's
+        # still pending, and only bump the broadcast counter if we actually
+        # changed it. Without the WHERE-status guard a concurrent worker that
+        # processed the same row would double-count sent_count/blocked_count.
         pool = self._pool_or_fail()
         async with pool.acquire() as conn:
-            await conn.execute(
+            tag = await conn.execute(
                 "UPDATE broadcast_deliveries SET status = $1, error = $2, attempts = attempts + 1, sent_at = NOW() "
-                "WHERE broadcast_id = $3 AND tg_id = $4",
+                "WHERE broadcast_id = $3 AND tg_id = $4 AND status = 'pending'",
                 str(status), str(error or "")[:500], int(bid), int(tg_id),
             )
+            changed = _rowcount_from_tag(tag) > 0
+            if not changed:
+                return
             if status == "sent":
                 await conn.execute(
                     "UPDATE broadcasts SET sent_count = sent_count + 1 WHERE id = $1", int(bid),
@@ -3318,6 +3325,34 @@ class CreditsDB:
                         "last_run_at = NOW(), updated_at = NOW() WHERE id = $1",
                         int(rule_id),
                     )
+
+    @asynccontextmanager
+    async def broadcast_lock(self, bid: int) -> AsyncIterator[bool]:
+        """Postgres advisory lock keyed on broadcast id.
+
+        Mirrors lifecycle_rule_lock — protects against rolling-deploy windows
+        where two tg-bot-public replicas overlap and both call
+        `fetch_pending_deliveries(bid)`, which would Telegram-deliver the same
+        message twice and inflate sent_count.
+
+        Uses the 2-arg advisory lock form with namespace=1 so the keyspace
+        cannot collide with the 1-arg lifecycle locks.
+        """
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            got = bool(await conn.fetchval(
+                "SELECT pg_try_advisory_lock($1, $2)", 1, int(bid),
+            ))
+            try:
+                yield got
+            finally:
+                if got:
+                    try:
+                        await conn.execute(
+                            "SELECT pg_advisory_unlock($1, $2)", 1, int(bid),
+                        )
+                    except Exception:
+                        pass
 
     @asynccontextmanager
     async def lifecycle_rule_lock(self, rid: int) -> AsyncIterator[bool]:

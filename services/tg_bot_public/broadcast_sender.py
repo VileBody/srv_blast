@@ -189,45 +189,54 @@ class BroadcastWorker:
             log.warning("broadcast %s: bot not ready, skipping", bid)
             return
 
-        if bc["status"] == "scheduled":
-            # Resolve audience now, seed deliveries, flip to sending.
-            audience_ids = await self._db.resolve_audience(bc["audience"])
-            await self._db.seed_broadcast_deliveries(bid, audience_ids)
-            await self._db.set_broadcast_status(
-                bid, "sending", started_at=_now_naive(), audience_size=len(audience_ids),
-            )
-            log.info("broadcast %s: started (audience=%d)", bid, len(audience_ids))
+        # Per-broadcast advisory lock — guards against duplicate deliveries
+        # when two tg-bot-public replicas overlap during a rolling deploy.
+        # If another replica already holds the lock, skip this tick; the
+        # holder will keep draining and we'll re-poll in poll_interval.
+        async with self._db.broadcast_lock(bid) as got_lock:
+            if not got_lock:
+                log.info("broadcast %s: another worker holds the lock, skipping", bid)
+                return
 
-        # Drain pending deliveries in batches.
-        while not self._stop.is_set():
-            pending = await self._db.fetch_pending_deliveries(bid, batch=BATCH_SIZE)
-            if not pending:
-                break
-            for tg_id in pending:
-                if self._stop.is_set():
-                    return
-                status, err = await _send_with_retry(
-                    bot, tg_id,
-                    text=bc["text"],
-                    parse_mode=bc["parse_mode"],
-                    media_type=bc["media_type"],
-                    media_file_id=bc["media_file_id"],
-                    media_url=bc["media_url"],
-                    buttons=bc["buttons"],
-                    limiter=self._limiter,
+            if bc["status"] == "scheduled":
+                # Resolve audience now, seed deliveries, flip to sending.
+                audience_ids = await self._db.resolve_audience(bc["audience"])
+                await self._db.seed_broadcast_deliveries(bid, audience_ids)
+                await self._db.set_broadcast_status(
+                    bid, "sending", started_at=_now_naive(), audience_size=len(audience_ids),
                 )
-                await self._db.mark_delivery(bid, tg_id, status, err)
-                if status == "blocked":
-                    try:
-                        await self._db.log_event(tg_id, "bot_blocked", "broadcast_detected")
-                    except Exception:
-                        pass
+                log.info("broadcast %s: started (audience=%d)", bid, len(audience_ids))
 
-        # Nothing left → mark done.
-        remaining = await self._db.fetch_pending_deliveries(bid, batch=1)
-        if not remaining:
-            await self._db.set_broadcast_status(bid, "done", finished_at=_now_naive())
-            log.info("broadcast %s: finished", bid)
+            # Drain pending deliveries in batches.
+            while not self._stop.is_set():
+                pending = await self._db.fetch_pending_deliveries(bid, batch=BATCH_SIZE)
+                if not pending:
+                    break
+                for tg_id in pending:
+                    if self._stop.is_set():
+                        return
+                    status, err = await _send_with_retry(
+                        bot, tg_id,
+                        text=bc["text"],
+                        parse_mode=bc["parse_mode"],
+                        media_type=bc["media_type"],
+                        media_file_id=bc["media_file_id"],
+                        media_url=bc["media_url"],
+                        buttons=bc["buttons"],
+                        limiter=self._limiter,
+                    )
+                    await self._db.mark_delivery(bid, tg_id, status, err)
+                    if status == "blocked":
+                        try:
+                            await self._db.log_event(tg_id, "bot_blocked", "broadcast_detected")
+                        except Exception:
+                            pass
+
+            # Nothing left → mark done.
+            remaining = await self._db.fetch_pending_deliveries(bid, batch=1)
+            if not remaining:
+                await self._db.set_broadcast_status(bid, "done", finished_at=_now_naive())
+                log.info("broadcast %s: finished", bid)
 
 
 class LifecycleWorker:
