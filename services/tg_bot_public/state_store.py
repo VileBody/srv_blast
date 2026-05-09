@@ -24,6 +24,8 @@ STAGE_WAIT_FRAGMENT_CHOICE = "WAIT_FRAGMENT_CHOICE"
 STAGE_WAIT_FRAGMENT_TEXT = "WAIT_FRAGMENT_TEXT"
 STAGE_WAIT_TIMING_CHOICE = "WAIT_TIMING_CHOICE"
 STAGE_WAIT_TIMING_INPUT = "WAIT_TIMING_INPUT"
+STAGE_WAIT_BG_MODE = "WAIT_BG_MODE"
+STAGE_WAIT_BG_COLOR = "WAIT_BG_COLOR"
 STAGE_WAIT_FOOTAGE_GENRE = "WAIT_FOOTAGE_GENRE"
 STAGE_WAIT_FOOTAGE_ARTIST = "WAIT_FOOTAGE_ARTIST"
 STAGE_WAIT_CONFIRM_TEXT = "WAIT_CONFIRM_TEXT"
@@ -103,6 +105,13 @@ class ChatState(BaseModel):
     footage_genre_key: str = ""
     footage_artist_key: str = ""
     footage_artist_id: str = ""
+    # Background mode: "footage" (default — pick footage stack via genre/artist)
+    # or "solid" (skip footage selection, render solid color under text/audio).
+    # Public bot UX is parity-mirrored from tg_bot_botapi but the entry point
+    # for the bg-mode picker is intentionally NOT wired in user flow yet.
+    bg_mode: str = "footage"
+    # Solid background color key when bg_mode == "solid": "white" | "green".
+    bg_solid_color: str = ""
     user_clip_start_sec: float = 0.0
     user_clip_end_sec: float = 0.0
     subtitles_mode: str = SUBTITLES_MODE_IMPULSE_2ND

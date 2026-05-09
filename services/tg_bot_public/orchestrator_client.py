@@ -45,6 +45,8 @@ class OrchestratorClient:
         maintenance_bypass_token: str | None = None,
         rotation_theme: str = "",
         rotation_tags_group: str = "",
+        bg_mode: str = "footage",
+        bg_solid_color: str = "",
     ) -> Dict[str, Any]:
         payload = {
             "audio_s3_url": str(audio_s3_url),
@@ -72,6 +74,8 @@ class OrchestratorClient:
             "maintenance_bypass_token": str(maintenance_bypass_token or "") or None,
             "rotation_theme": str(rotation_theme or "").strip(),
             "rotation_tags_group": str(rotation_tags_group or "").strip(),
+            "bg_mode": str(bg_mode or "footage").strip() or "footage",
+            "bg_solid_color": str(bg_solid_color or "").strip(),
         }
         resp = await self._client.post(f"{self._base_url}/send_audio_s3", json=payload)
         if resp.status_code >= 300:
