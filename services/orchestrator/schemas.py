@@ -50,6 +50,13 @@ class SendAudioS3Request(BaseModel):
     # (theme, tags_group) pair instead of picking from the artist profile.
     rotation_theme: str = ""
     rotation_tags_group: str = ""
+    # Background mode: "footage" (default) or "solid". When "solid", the AE
+    # composition replaces the footage stack with a single solid color layer.
+    # Stage 2 footage planning still runs (its picks are simply ignored at
+    # composition time), so footage_artist_id must still be a valid id.
+    bg_mode: Literal["footage", "solid"] = "footage"
+    # Solid color key when bg_mode == "solid": "white" or "green".
+    bg_solid_color: str = ""
     # Internal routing pinning metadata.
     # Public callers should not set these fields directly.
     origin_node: Optional[str] = None

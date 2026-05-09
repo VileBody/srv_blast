@@ -88,6 +88,19 @@ def _as_float(v: Any) -> float | None:
         return None
 
 
+def _parse_hex_color_rgb01(s: str) -> Optional[Tuple[float, float, float]]:
+    raw = str(s or "").strip().lstrip("#")
+    if len(raw) != 6:
+        return None
+    try:
+        r = int(raw[0:2], 16)
+        g = int(raw[2:4], 16)
+        b = int(raw[4:6], 16)
+    except ValueError:
+        return None
+    return (r / 255.0, g / 255.0, b / 255.0)
+
+
 _WIN_BAD_CHARS_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _MULTI_WS_RE = re.compile(r"\s+")
 
@@ -953,6 +966,52 @@ def build_footage_layers(
             pre.props["tf_opacity"] = PropertyData("ADBE Opacity", value=precomp_placement["opacity"])
 
     out.append(pre)
+
+    # Solid background mode short-circuit: keep TEXT precomp + audio_only,
+    # drop overlays/adjustments/footages, replace footage stack with one
+    # full-duration solid color layer. Used for chroma-key / white-bg renders.
+    bg_mode_env = str(os.environ.get("BG_MODE") or "footage").strip().lower()
+    if bg_mode_env == "solid":
+        bg_hex = str(os.environ.get("BG_SOLID_COLOR_HEX") or "").strip()
+        rgb01 = _parse_hex_color_rgb01(bg_hex)
+        if rgb01 is None:
+            raise RuntimeError(
+                f"BG_MODE=solid but BG_SOLID_COLOR_HEX missing or invalid: {bg_hex!r}"
+            )
+        for it in layers_cfg:
+            if str(it.get("type")) == "audio_only":
+                out.append(_audio_only_bp(it=it, z_index=2))
+
+        solid_bp = LayerBlueprint(
+            name="solid_bg",
+            type="solid",
+            in_point=0.0,
+            out_point=float(text_dur_sec),
+            z_index=200,
+        )
+        solid_bp.text_data["layer_meta"] = {
+            "comp_name_target": main_comp_name,
+            "startTime": 0.0,
+            "enabled": True,
+            "motionBlur": False,
+            "collapseTransformation": False,
+            "blendingModeCode": "5212",
+        }
+        solid_bp.text_data["solid_source"] = {
+            "color_rgb01": list(rgb01),
+            "width": int(comp_w),
+            "height": int(comp_h),
+        }
+        out.append(solid_bp)
+        LOGGER.info(
+            "bg_mode_solid applied hex=%s rgb01=%s comp=%sx%s dur=%s",
+            bg_hex,
+            rgb01,
+            comp_w,
+            comp_h,
+            text_dur_sec,
+        )
+        return [asdict(x) for x in sorted(out, key=lambda b: int(b.z_index))]
 
     # (2) Overlay footage (between text and regular footage stack)
     overlay_items = [it for it in layers_cfg if str(it.get("type")) == "overlay"]

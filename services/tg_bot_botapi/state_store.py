@@ -25,6 +25,8 @@ STAGE_WAIT_LYRICS_CHOICE = "WAIT_LYRICS_CHOICE"
 STAGE_WAIT_LYRICS_TEXT = "WAIT_LYRICS_TEXT"
 STAGE_WAIT_FRAGMENT_CHOICE = "WAIT_FRAGMENT_CHOICE"
 STAGE_WAIT_FRAGMENT_TEXT = "WAIT_FRAGMENT_TEXT"
+STAGE_WAIT_BG_MODE = "WAIT_BG_MODE"
+STAGE_WAIT_BG_COLOR = "WAIT_BG_COLOR"
 STAGE_WAIT_FOOTAGE_GENRE = "WAIT_FOOTAGE_GENRE"
 STAGE_WAIT_FOOTAGE_ARTIST = "WAIT_FOOTAGE_ARTIST"
 STAGE_WAIT_TIMING_CHOICE = "WAIT_TIMING_CHOICE"
@@ -53,6 +55,11 @@ class ChatState(BaseModel):
     footage_genre_key: str = ""
     footage_artist_key: str = ""
     footage_artist_id: str = ""
+    # Background mode: "footage" (default — pick footage stack via genre/artist)
+    # or "solid" (skip footage selection, render solid color under text/audio).
+    bg_mode: str = "footage"
+    # Solid background color key when bg_mode == "solid": "white" | "green".
+    bg_solid_color: str = ""
     user_clip_start_sec: float = 0.0
     user_clip_end_sec: float = 0.0
     subtitles_mode: str = SUBTITLES_MODE_LEGACY_BLOCKS

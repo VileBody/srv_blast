@@ -50,6 +50,8 @@ from .state_store import (
     STAGE_PROCESSING,
     STAGE_WAIT_AUDIO,
     STAGE_WAIT_CONFIRM,
+    STAGE_WAIT_BG_COLOR,
+    STAGE_WAIT_BG_MODE,
     STAGE_WAIT_FOOTAGE_ARTIST,
     STAGE_WAIT_FOOTAGE_GENRE,
     STAGE_WAIT_FRAGMENT_CHOICE,
@@ -81,6 +83,10 @@ BTN_SKIP_FRAGMENT = "На усмотрение ИИ"
 BTN_SET_TIMING = "Указать тайминг"
 BTN_SKIP_TIMING = "Весь трек / на усмотрение ИИ"
 BTN_BACK = "Назад"
+BTN_BG_FOOTAGE = "Футажи"
+BTN_BG_SOLID = "Цветной фон"
+BTN_BG_WHITE = "Белый"
+BTN_BG_GREEN = "Зелёный (хромакей)"
 BTN_LAUNCH = "Запустить"
 BTN_NEXT = "Сделать следующий"
 BTN_VER_1 = "1"
@@ -117,6 +123,10 @@ _CONTROL_BUTTONS = {
     BTN_SET_TIMING,
     BTN_SKIP_TIMING,
     BTN_BACK,
+    BTN_BG_FOOTAGE,
+    BTN_BG_SOLID,
+    BTN_BG_WHITE,
+    BTN_BG_GREEN,
     BTN_SUB_MODE_LEGACY,
     BTN_SUB_MODE_IMPULSE,
     BTN_SUB_MODE_SCENES,
@@ -977,6 +987,14 @@ class BlastBotApp:
                 await self._handle_wait_fragment_text(message, st)
                 return
 
+            if st.stage == STAGE_WAIT_BG_MODE:
+                await self._handle_wait_bg_mode(message, st)
+                return
+
+            if st.stage == STAGE_WAIT_BG_COLOR:
+                await self._handle_wait_bg_color(message, st)
+                return
+
             if st.stage == STAGE_WAIT_FOOTAGE_GENRE:
                 await self._handle_wait_footage_genre(message, st)
                 return
@@ -1138,7 +1156,7 @@ class BlastBotApp:
         if text == BTN_SKIP_TIMING:
             st.user_clip_start_sec = 0.0
             st.user_clip_end_sec = 0.0
-            await self._ask_footage_genre(message, st)
+            await self._ask_bg_mode(message, st)
             return
         await message.answer(
             "Выбери кнопку: «Указать тайминг» или «Весь трек / на усмотрение ИИ».",
@@ -1168,7 +1186,74 @@ class BlastBotApp:
         await message.answer(
             f"Тайминг установлен: {self._fmt_timing(start_sec)} – {self._fmt_timing(end_sec)} ({duration:.0f} сек)."
         )
-        await self._ask_footage_genre(message, st)
+        await self._ask_bg_mode(message, st)
+
+    async def _ask_bg_mode(self, message: Message, st: ChatState) -> None:
+        st.stage = STAGE_WAIT_BG_MODE
+        st.bg_mode = "footage"
+        st.bg_solid_color = ""
+        await self.store.set(st)
+        await message.answer(
+            "Что будет на фоне?",
+            reply_markup=_kb([BTN_BG_FOOTAGE], [BTN_BG_SOLID], [BTN_BACK]),
+        )
+
+    async def _handle_wait_bg_mode(self, message: Message, st: ChatState) -> None:
+        text = str(message.text or "").strip()
+        if text == BTN_BACK:
+            await self._ask_timing_choice(message, st)
+            return
+        if text == BTN_BG_FOOTAGE:
+            st.bg_mode = "footage"
+            st.bg_solid_color = ""
+            await self.store.set(st)
+            await self._ask_footage_genre(message, st)
+            return
+        if text == BTN_BG_SOLID:
+            st.bg_mode = "solid"
+            await self.store.set(st)
+            await self._ask_bg_color(message, st)
+            return
+        await message.answer(
+            f"Выбери кнопкой: «{BTN_BG_FOOTAGE}» или «{BTN_BG_SOLID}».",
+        )
+
+    async def _ask_bg_color(self, message: Message, st: ChatState) -> None:
+        st.stage = STAGE_WAIT_BG_COLOR
+        await self.store.set(st)
+        await message.answer(
+            "Выбери цвет фона:",
+            reply_markup=_kb([BTN_BG_WHITE], [BTN_BG_GREEN], [BTN_BACK]),
+        )
+
+    async def _handle_wait_bg_color(self, message: Message, st: ChatState) -> None:
+        text = str(message.text or "").strip()
+        if text == BTN_BACK:
+            await self._ask_bg_mode(message, st)
+            return
+        color_by_btn = {BTN_BG_WHITE: "white", BTN_BG_GREEN: "green"}
+        if text not in color_by_btn:
+            await message.answer(
+                f"Выбери цвет кнопкой: «{BTN_BG_WHITE}» или «{BTN_BG_GREEN}».",
+            )
+            return
+        st.bg_solid_color = color_by_btn[text]
+        # Solid bg still needs a footage_artist_id so Stage 2 footage planner
+        # runs without errors — its picks are dropped at AE composition time.
+        # Pick the first available artist as a deterministic placeholder.
+        if not str(st.footage_artist_id or "").strip():
+            try:
+                first_genre = get_genres()[0]
+                first_artist_key = str(first_genre["artists"][0]["key"])
+                st.footage_genre_key = str(first_genre["key"])
+                st.footage_artist_key = first_artist_key
+                st.footage_artist_id = first_artist_key
+            except Exception as exc:
+                log.exception("solid_bg_default_artist_pick_failed: %s", exc)
+                await message.answer("Внутренняя ошибка при выборе фона. Попробуй ещё раз позже.")
+                return
+        await self.store.set(st)
+        await self._ask_subtitles_mode(message, st)
 
     async def _ask_footage_genre(self, message: Message, st: ChatState) -> None:
         st.stage = STAGE_WAIT_FOOTAGE_GENRE
@@ -1186,7 +1271,7 @@ class BlastBotApp:
     async def _handle_wait_footage_genre(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()
         if text == BTN_BACK:
-            await self._ask_timing_choice(message, st)
+            await self._ask_bg_mode(message, st)
             return
         genres = get_genres()
         genre_by_label = {g["label"]: g for g in genres}
@@ -1672,6 +1757,8 @@ class BlastBotApp:
             variants_total=int(versions_total),
             rotation_theme=rotation_theme,
             rotation_tags_group=rotation_group,
+            bg_mode=str(st.bg_mode or "footage"),
+            bg_solid_color=str(st.bg_solid_color or ""),
         )
         job_id = str(enqueue.get("job_id") or "").strip()
         if not job_id:
@@ -1798,6 +1885,8 @@ class BlastBotApp:
         st.footage_genre_key = ""
         st.footage_artist_key = ""
         st.footage_artist_id = ""
+        st.bg_mode = "footage"
+        st.bg_solid_color = ""
         st.user_clip_start_sec = 0.0
         st.user_clip_end_sec = 0.0
         st.subtitles_mode = SUBTITLES_MODE_LEGACY_BLOCKS

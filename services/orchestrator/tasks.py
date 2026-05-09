@@ -1573,6 +1573,22 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
     env["SUBTITLES_MODE"] = subtitles_mode
     if footage_artist_id:
         env["FOOTAGE_ARTIST_ID"] = footage_artist_id
+
+    bg_mode = str(req.get("bg_mode") or "footage").strip().lower() or "footage"
+    if bg_mode not in {"footage", "solid"}:
+        raise RuntimeError(f"invalid bg_mode={bg_mode!r}")
+    bg_solid_color_key = str(req.get("bg_solid_color") or "").strip().lower()
+    bg_solid_hex_by_key = {"white": "#FFFFFF", "green": "#00FF00"}
+    if bg_mode == "solid":
+        if bg_solid_color_key not in bg_solid_hex_by_key:
+            raise RuntimeError(
+                f"bg_mode=solid requires bg_solid_color in {sorted(bg_solid_hex_by_key)}, "
+                f"got {bg_solid_color_key!r}"
+            )
+        env["BG_MODE"] = "solid"
+        env["BG_SOLID_COLOR_HEX"] = bg_solid_hex_by_key[bg_solid_color_key]
+    else:
+        env["BG_MODE"] = "footage"
     if user_clip_start_sec is not None and user_clip_end_sec is not None:
         env["USER_CLIP_START_SEC"] = str(float(user_clip_start_sec))
         env["USER_CLIP_END_SEC"] = str(float(user_clip_end_sec))

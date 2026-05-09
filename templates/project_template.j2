@@ -1301,6 +1301,20 @@
           layer = target.layers.addSolid([1,1,1], lData.name, target.width, target.height, 1.0, target.duration);
           layer.adjustmentLayer = true;
 
+        } else if (lData.type === "solid") {
+          var solidSrc = (td && td.solid_source) ? td.solid_source : null;
+          var solidRgb = (solidSrc && solidSrc.color_rgb01 && solidSrc.color_rgb01.length === 3) ? solidSrc.color_rgb01 : [1,1,1];
+          var solidW = (solidSrc && solidSrc.width) ? Number(solidSrc.width) : target.width;
+          var solidH = (solidSrc && solidSrc.height) ? Number(solidSrc.height) : target.height;
+          layer = target.layers.addSolid(
+            [Number(solidRgb[0]), Number(solidRgb[1]), Number(solidRgb[2])],
+            lData.name,
+            solidW,
+            solidH,
+            1.0,
+            target.duration
+          );
+
         } else if (lData.type === "precomp") {
           var srcName = null;
           if (lData.comp_name) srcName = lData.comp_name;
