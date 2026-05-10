@@ -72,6 +72,27 @@ def test_public_orchestrator_payload_forwards_bg_mode(monkeypatch) -> None:
     assert fake.payload["bg_solid_color"] == "green"
 
 
+def test_public_orchestrator_payload_supports_black(monkeypatch) -> None:
+    fake = _FakeAsyncClient()
+    monkeypatch.setattr(public_client.httpx, "AsyncClient", lambda **_: fake)
+    client = public_client.OrchestratorClient(base_url="http://orchestrator")
+
+    asyncio.run(
+        client.send_audio_s3(
+            audio_s3_url="s3://bucket/audio.mp3",
+            mode="with_gemini",
+            lyrics_text="hello",
+            target_fragment="hello",
+            bg_mode="solid",
+            bg_solid_color="black",
+        )
+    )
+
+    assert fake.payload is not None
+    assert fake.payload["bg_mode"] == "solid"
+    assert fake.payload["bg_solid_color"] == "black"
+
+
 def test_public_orchestrator_payload_defaults_bg_mode_footage(monkeypatch) -> None:
     fake = _FakeAsyncClient()
     monkeypatch.setattr(public_client.httpx, "AsyncClient", lambda **_: fake)

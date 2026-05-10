@@ -1578,7 +1578,7 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
     if bg_mode not in {"footage", "solid"}:
         raise RuntimeError(f"invalid bg_mode={bg_mode!r}")
     bg_solid_color_key = str(req.get("bg_solid_color") or "").strip().lower()
-    bg_solid_hex_by_key = {"white": "#FFFFFF", "green": "#00FF00"}
+    bg_solid_hex_by_key = {"white": "#FFFFFF", "black": "#000000", "green": "#00FF00"}
     if bg_mode == "solid":
         if bg_solid_color_key not in bg_solid_hex_by_key:
             raise RuntimeError(
@@ -1587,6 +1587,10 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
             )
         env["BG_MODE"] = "solid"
         env["BG_SOLID_COLOR_HEX"] = bg_solid_hex_by_key[bg_solid_color_key]
+        # Default subtitle fill is white; flip to black on white background so
+        # text stays readable. Other bg colors leave subtitles untouched.
+        if bg_solid_color_key == "white":
+            env["SUBTITLES_FORCE_FILL_HEX"] = "#000000"
     else:
         env["BG_MODE"] = "footage"
     if user_clip_start_sec is not None and user_clip_end_sec is not None:

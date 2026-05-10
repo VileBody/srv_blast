@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from jinja2 import Environment, FileSystemLoader
 
@@ -60,6 +61,46 @@ def _apply_comp_duration_overrides(
         out.append(cc)
 
     return out
+
+
+def _parse_hex_color_rgb01(s: str) -> Optional[List[float]]:
+    raw = str(s or "").strip().lstrip("#")
+    if len(raw) != 6:
+        return None
+    try:
+        r = int(raw[0:2], 16)
+        g = int(raw[2:4], 16)
+        b = int(raw[4:6], 16)
+    except ValueError:
+        return None
+    return [r / 255.0, g / 255.0, b / 255.0]
+
+
+def _is_pure_white_rgb(value: Any) -> bool:
+    if not isinstance(value, list) or len(value) != 3:
+        return False
+    try:
+        return all(float(c) >= 0.999 for c in value)
+    except (TypeError, ValueError):
+        return False
+
+
+def _override_white_fill_colors(node: Any, target_rgb01: List[float]) -> int:
+    """In-place replace any fillColor == [1,1,1] (pure white) with target.
+    Returns number of replacements. Other colors (e.g. red accent) untouched.
+    """
+    replaced = 0
+    if isinstance(node, dict):
+        for key, val in list(node.items()):
+            if key == "fillColor" and _is_pure_white_rgb(val):
+                node[key] = list(target_rgb01)
+                replaced += 1
+            else:
+                replaced += _override_white_fill_colors(val, target_rgb01)
+    elif isinstance(node, list):
+        for item in node:
+            replaced += _override_white_fill_colors(item, target_rgb01)
+    return replaced
 
 
 def _tojson_filter(v: Any) -> str:
@@ -162,6 +203,21 @@ def build_full_project(
         "footage_layers": footage_layers,
         "text_layers": text_layers,
     }
+
+    force_fill_hex = str(os.environ.get("SUBTITLES_FORCE_FILL_HEX") or "").strip()
+    if force_fill_hex:
+        target = _parse_hex_color_rgb01(force_fill_hex)
+        if target is None:
+            raise RuntimeError(
+                f"SUBTITLES_FORCE_FILL_HEX is set but invalid: {force_fill_hex!r}"
+            )
+        replaced = _override_white_fill_colors(payload, target)
+        LOGGER.info(
+            "subtitles_fill_override hex=%s rgb01=%s replacements=%d",
+            force_fill_hex,
+            target,
+            replaced,
+        )
 
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "logs").mkdir(parents=True, exist_ok=True)

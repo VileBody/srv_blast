@@ -125,6 +125,7 @@ BTN_BACK = "Назад"
 BTN_BG_FOOTAGE = "Футажи"
 BTN_BG_SOLID = "Цветной фон"
 BTN_BG_WHITE = "Белый"
+BTN_BG_BLACK = "Чёрный"
 BTN_BG_GREEN = "Зелёный (хромакей)"
 BTN_LAUNCH = "Запустить"
 BTN_RESTART = "Начать заново"
@@ -216,6 +217,7 @@ _CONTROL_BUTTONS = {
     BTN_BG_FOOTAGE,
     BTN_BG_SOLID,
     BTN_BG_WHITE,
+    BTN_BG_BLACK,
     BTN_BG_GREEN,
     BTN_SUB_MODE_IMPULSE,
     BTN_SUB_MODE_SCENES,
@@ -2745,7 +2747,7 @@ class BlastBotApp:
         await self.store.set(st)
         await message.answer(
             "Выбери цвет фона:",
-            reply_markup=_kb([BTN_BG_WHITE], [BTN_BG_GREEN], [BTN_BACK]),
+            reply_markup=_kb([BTN_BG_WHITE], [BTN_BG_BLACK], [BTN_BG_GREEN], [BTN_BACK]),
         )
 
     async def _handle_wait_bg_color(self, message: Message, st: ChatState) -> None:
@@ -2753,10 +2755,10 @@ class BlastBotApp:
         if text == BTN_BACK:
             await self._ask_bg_mode(message, st)
             return
-        color_by_btn = {BTN_BG_WHITE: "white", BTN_BG_GREEN: "green"}
+        color_by_btn = {BTN_BG_WHITE: "white", BTN_BG_BLACK: "black", BTN_BG_GREEN: "green"}
         if text not in color_by_btn:
             await message.answer(
-                f"Выбери цвет кнопкой: «{BTN_BG_WHITE}» или «{BTN_BG_GREEN}».",
+                f"Выбери цвет кнопкой: «{BTN_BG_WHITE}», «{BTN_BG_BLACK}» или «{BTN_BG_GREEN}».",
             )
             return
         st.bg_solid_color = color_by_btn[text]
