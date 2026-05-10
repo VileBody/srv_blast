@@ -2678,7 +2678,7 @@ class BlastBotApp:
         if text == BTN_SKIP_TIMING:
             st.user_clip_start_sec = 0.0
             st.user_clip_end_sec = 0.0
-            await self._ask_footage_genre(message, st)
+            await self._ask_bg_mode(message, st)
             return
         await message.answer(
             "Выбери кнопку: «Указать тайминг» или «На усмотрение ИИ».",
@@ -2708,11 +2708,8 @@ class BlastBotApp:
         await message.answer(
             f"Тайминг установлен: {self._fmt_timing(start_sec)} - {self._fmt_timing(end_sec)} ({duration:.0f} сек)."
         )
-        await self._ask_footage_genre(message, st)
+        await self._ask_bg_mode(message, st)
 
-    # Solid-bg picker — parity-mirrored from tg_bot_botapi. The entry point
-    # for this flow is intentionally NOT wired into user UX yet; it will be
-    # activated once Solid-bg renders are validated on the test bot.
     async def _ask_bg_mode(self, message: Message, st: ChatState) -> None:
         st.stage = STAGE_WAIT_BG_MODE
         st.bg_mode = "footage"
@@ -2795,7 +2792,7 @@ class BlastBotApp:
     async def _handle_wait_footage_genre(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()
         if text == BTN_BACK:
-            await self._ask_timing_choice(message, st)
+            await self._ask_bg_mode(message, st)
             return
         genres = get_genres()
         genre_by_label = {g["label"]: g for g in genres}
