@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
 import html
 import json
 import logging
@@ -5470,6 +5471,66 @@ class BlastBotApp:
         if not ok:
             raise RuntimeError(f"processing_lock_lost chat={int(chat_id)} owner={owner!r}")
 
+    @staticmethod
+    def _is_processing_lock_lost_error(exc: BaseException) -> bool:
+        return "processing_lock_lost" in str(exc)
+
+    def _processing_lock_heartbeat_interval_s(self, ttl_s: int) -> float:
+        ttl = max(5, int(ttl_s or 0))
+        return max(5.0, min(60.0, float(ttl) / 3.0))
+
+    @asynccontextmanager
+    async def _processing_lock_heartbeat(
+        self,
+        *,
+        chat_id: int,
+        owner_id: str,
+        ttl_s: int,
+    ):
+        owner = str(owner_id or "").strip()
+        if not owner:
+            yield
+            return
+
+        ttl = max(5, int(ttl_s or 0))
+        interval_s = self._processing_lock_heartbeat_interval_s(ttl)
+        stop = asyncio.Event()
+
+        async def _heartbeat() -> None:
+            while True:
+                try:
+                    await asyncio.wait_for(stop.wait(), timeout=interval_s)
+                    return
+                except asyncio.TimeoutError:
+                    pass
+                ok = await self.store.refresh_processing_lock(
+                    chat_id=int(chat_id),
+                    owner_id=owner,
+                    ttl_s=ttl,
+                )
+                if not ok:
+                    log.warning(
+                        "processing_lock_heartbeat_lost chat=%s owner=%r",
+                        int(chat_id),
+                        owner,
+                    )
+                    return
+
+        task = asyncio.create_task(_heartbeat())
+        try:
+            yield
+        finally:
+            stop.set()
+            try:
+                await task
+            except Exception as exc:
+                log.warning(
+                    "processing_lock_heartbeat_failed chat=%s owner=%r err=%r",
+                    int(chat_id),
+                    owner,
+                    exc,
+                )
+
     async def _process_chat_job(
         self,
         st: ChatState,
@@ -5556,7 +5617,17 @@ class BlastBotApp:
                 owner_id=lock_owner_id,
                 ttl_s=lock_ttl_s,
             )
-            await self._finalize_one_job(bot=bot, st=st, job_id=jid, job=job)
+            async with self._processing_lock_heartbeat(
+                chat_id=st.chat_id,
+                owner_id=lock_owner_id,
+                ttl_s=lock_ttl_s,
+            ):
+                await self._finalize_one_job(bot=bot, st=st, job_id=jid, job=job)
+            await self._refresh_processing_lock_or_raise(
+                chat_id=st.chat_id,
+                owner_id=lock_owner_id,
+                ttl_s=lock_ttl_s,
+            )
             completed.add(jid)
             if str(job.get("status") or "").upper() == "SUCCEEDED":
                 used_now = _load_used_footage_file_names_for_job(jid)
@@ -5788,6 +5859,14 @@ class BlastBotApp:
                     await self.store.set(st)
                     return
                 except Exception as e:
+                    if self._is_processing_lock_lost_error(e):
+                        log.warning(
+                            "enqueue_next_version_processing_lock_lost_handoff chat=%s owner=%r err=%s",
+                            st.chat_id,
+                            str(lock_owner_id or ""),
+                            str(e),
+                        )
+                        return
                     err_text = str(e)
                     succeeded_versions = sum(1 for r in rows if str(r.get("status") or "").upper() == "SUCCEEDED")
                     refund_versions = max(0, int(total_versions) - int(succeeded_versions))

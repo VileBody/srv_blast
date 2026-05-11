@@ -225,6 +225,7 @@ def _install_aiogram_stub() -> None:
     aiogram_types_mod.ReplyKeyboardRemove = _Dummy
     aiogram_types_mod.InlineKeyboardMarkup = _Dummy
     aiogram_types_mod.InlineKeyboardButton = _Dummy
+    aiogram_types_mod.Update = _Dummy
     aiogram_client_telegram_mod.TelegramAPIServer = TelegramAPIServer
     aiogram_client_session_aiohttp_mod.AiohttpSession = _Dummy
 

@@ -35,6 +35,40 @@ def _new_app(settings: SimpleNamespace) -> public_app.BlastBotApp:
     return app
 
 
+def test_processing_lock_heartbeat_refreshes_during_long_delivery() -> None:
+    class _FakeStore:
+        def __init__(self) -> None:
+            self.refresh_calls: list[dict[str, object]] = []
+
+        async def refresh_processing_lock(self, *, chat_id: int, owner_id: str, ttl_s: int) -> bool:
+            self.refresh_calls.append(
+                {
+                    "chat_id": int(chat_id),
+                    "owner_id": str(owner_id),
+                    "ttl_s": int(ttl_s),
+                }
+            )
+            return True
+
+    async def _run() -> None:
+        app = _new_app(SimpleNamespace())
+        app.store = _FakeStore()
+        app._processing_lock_heartbeat_interval_s = lambda _ttl_s: 0.01
+
+        async with public_app.BlastBotApp._processing_lock_heartbeat(
+            app,
+            chat_id=123,
+            owner_id="node-a:1",
+            ttl_s=30,
+        ):
+            await asyncio.sleep(0.08)
+
+        assert len(app.store.refresh_calls) >= 2
+        assert app.store.refresh_calls[-1]["owner_id"] == "node-a:1"
+
+    asyncio.run(_run())
+
+
 def test_send_result_video_with_retry_uses_timeout_and_retries(tmp_path: Path) -> None:
     class _FakeBot:
         def __init__(self) -> None:

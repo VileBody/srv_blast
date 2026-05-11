@@ -243,6 +243,51 @@ def test_enqueue_next_version_failed_refunds_remaining_and_resets(
     asyncio.run(_run())
 
 
+def test_enqueue_next_version_processing_lock_lost_does_not_fail_or_refund(
+    monkeypatch,
+) -> None:
+    async def _run() -> None:
+        monkeypatch.setattr(public_app, "_kb", lambda *rows: ("kb", rows))
+        app = _new_app(
+            jobs={
+                "master-ok": {
+                    "status": "SUCCEEDED",
+                    "stage": "render",
+                    "output_url": "s3://output-bucket/renders/master-ok/output.mp4",
+                }
+            }
+        )
+
+        async def _lock_lost_enqueue(**_kwargs):
+            raise RuntimeError("processing_lock_lost chat=3005 owner='node-a:1'")
+
+        app._enqueue_batch_version = _lock_lost_enqueue
+
+        st = ChatState(
+            chat_id=3005,
+            stage=STAGE_PROCESSING,
+            batch_id="batch-lock-lost-handoff",
+            batch_audio_s3_url="s3://raw-bucket/audio.mp3",
+            batch_total_versions=2,
+            versions_count=2,
+            master_job_id="master-ok",
+            active_job_ids=["master-ok"],
+            completed_job_ids=["master-ok"],
+            job_order=["master-ok"],
+            next_version_to_enqueue=2,
+        )
+
+        await public_app.BlastBotApp._process_chat_job(app, st)
+
+        assert st.stage == STAGE_PROCESSING
+        assert not app.credits_db.add_calls
+        assert not [e for e in app.credits_db.events if e["event"] == "generation_failed"]
+        assert not app._manager_fail_calls
+        assert not any(m["text"] == public_app._GENERATION_FAILED_USER_TEXT for m in app._bot.messages)
+
+    asyncio.run(_run())
+
+
 def test_partial_success_failed_batch_refunds_only_unsucceeded_versions(
     monkeypatch,
 ) -> None:
