@@ -4950,11 +4950,12 @@ def build_app(
             code = _normalize_pkg_code(str(p))
             if code:
                 codes_bought.add(code)
-        if has_sub and "15" in codes_bought:
-            labels.append('<span class="badge" style="background:#16a085;color:white">Бласт (sub)</span>')
-            codes_bought.discard("15")
-        elif has_sub:
+        # An active subscription is always shown as "Подписка" (teal). Its
+        # underlying payments row with package='15'/'Бласт' would otherwise
+        # also render as one-off "Бласт" — drop it to avoid the duplicate.
+        if has_sub:
             labels.append('<span class="badge" style="background:#16a085;color:white">Подписка</span>')
+            codes_bought.discard("15")
         pkg_styles = {
             "5":  ('Триал', '#3498db'),
             "15": ('Бласт', '#27ae60'),
