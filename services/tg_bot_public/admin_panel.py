@@ -3945,6 +3945,9 @@ def build_app(
         order_id = str(data.get("OrderId", ""))
         status = str(data.get("Status", "")).strip().upper()
         payment_id = str(data.get("PaymentId", ""))
+        # T-Bank sends RebillId only in the notification body for recurrent
+        # payments (it is NOT available via GetState). Capture it here.
+        notif_rebill_id = str(data.get("RebillId", "")).strip()
 
         if not order_id:
             return PlainTextResponse("OK", status_code=200)
@@ -4023,36 +4026,35 @@ def build_app(
             )
             await credits_db.log_event(tg_id, "payment_confirmed", f"{pkg} \u2014 {amount_rub}\u20bd")
 
-            # Subscription bootstrap for recurrent payments: pull RebillId from
-            # T-Bank GetState and create a subscription row. Without this, the
-            # daily rebill loop has no entry to charge against \u2014 the user paid
-            # for a recurring product but would never be auto-charged again.
+            # Subscription bootstrap for recurrent payments. RebillId is sent
+            # by T-Bank ONLY in this notification body (GetState does NOT
+            # return it \u2014 that was the prior bug). Without saving it here,
+            # the daily rebill loop has no key to charge against.
             is_recurrent_pay = bool(payment.get("is_recurrent", False))
-            if is_recurrent_pay and tbank_client and payment_id:
-                try:
-                    gs = await tbank_client.get_state(payment_id)
-                    rebill_id = str(gs.get("RebillId", "")) if gs else ""
-                    if rebill_id:
-                        await credits_db.update_rebill_id(order_id, rebill_id)
+            if is_recurrent_pay:
+                if notif_rebill_id:
+                    try:
+                        await credits_db.update_rebill_id(order_id, notif_rebill_id)
                         await credits_db.create_subscription(
-                            tg_id, pkg, rebill_id, amount_rub,
+                            tg_id, pkg, notif_rebill_id, amount_rub,
                         )
                         await credits_db.log_event(
-                            tg_id, "subscription_created", f"{pkg} rebill={rebill_id}",
+                            tg_id, "subscription_created", f"{pkg} rebill={notif_rebill_id}",
                         )
                         log.info(
                             "tbank notify: subscription bootstrap ok order=%s rebill=%s",
-                            order_id, rebill_id,
+                            order_id, notif_rebill_id,
                         )
-                    else:
+                    except Exception as e:
                         log.warning(
-                            "tbank notify: is_recurrent payment but no RebillId from GetState order=%s",
-                            order_id,
+                            "tbank notify: subscription bootstrap failed order=%s err=%s",
+                            order_id, e,
                         )
-                except Exception as e:
+                else:
                     log.warning(
-                        "tbank notify: subscription bootstrap failed order=%s err=%s",
-                        order_id, e,
+                        "tbank notify: is_recurrent payment confirmed but RebillId absent "
+                        "from notification \u2014 user will not be auto-charged. order=%s",
+                        order_id,
                     )
 
             try:
@@ -5223,12 +5225,18 @@ def build_app(
             orphans_card = f"""
             <div class="card" style="border:2px solid #e67e22">
               <h2 style="color:#e67e22">⚠ Сироты: оплачено, но подписки нет ({len(orphans)})</h2>
-              <p>Эти юзеры купили подписку, но в таблице <code>subscriptions</code> записи нет — авто-списание им не придёт.
-                 Скорее всего, при первой оплате webhook сработал быстрее, чем poll-loop, и логика создания подписки была пропущена. Сейчас webhook чинит это автоматически, а для исторических — жми кнопку:</p>
-              <form method="post" action="/admin/subscriptions/reconcile" style="margin-bottom:8px"
-                    onsubmit="return confirm('Подтянуть RebillId из T-Bank и создать подписки для {len(orphans)} юзеров?')">
-                <button type="submit" class="btn-success">Восстановить подписки ({len(orphans)})</button>
-              </form>
+              <p>Эти юзеры купили подписку, но <code>RebillId</code> от T-Bank в наш webhook не дошёл — карта не сохранена,
+                 авто-списание не сработает. <b>Программно восстановить нельзя</b>: T-Bank возвращает <code>RebillId</code>
+                 только в теле webhook-нотификации (в <code>GetState</code> его нет).</p>
+              <p>Как починить вручную:</p>
+              <ol>
+                <li>Зайти в <b>T-Bank Эквайринг → личный кабинет</b>, найти каждый <code>order_id</code> ниже.</li>
+                <li>Нажать «Перепослать нотификацию» — наш webhook теперь корректно сохранит <code>RebillId</code>
+                    и создаст подписку.</li>
+                <li>Если в кабинете такой кнопки нет — написать саппорту T-Bank с просьбой перезапустить нотификации
+                    по этим Order ID.</li>
+                <li>Альтернатива: попросить этих юзеров оформить подписку заново.</li>
+              </ol>
               <div class="table-wrap">
               <table><tr><th>tg_id</th><th>Пакет</th><th>Сумма</th><th>Order</th><th>Когда оплачено</th></tr>
               {orphan_rows}</table>
@@ -5281,59 +5289,6 @@ def build_app(
         </div>
         """
         return _page("Subscriptions", body)
-
-    @app.post("/admin/subscriptions/reconcile")
-    async def subscriptions_reconcile(_user: str = Depends(_check_auth)) -> RedirectResponse:
-        """Find users who paid for a subscription but lack a subscriptions row,
-        re-fetch RebillId from T-Bank, and create the missing subscription. Use
-        this after deploying the webhook fix to backfill historical purchases.
-        """
-        if not tbank_client:
-            return RedirectResponse(
-                f"/admin/subscriptions?err={quote_plus('T-Bank клиент не настроен')}",
-                status_code=303,
-            )
-        orphans = await credits_db.find_orphan_recurrent_payments()
-        if not orphans:
-            return RedirectResponse(
-                f"/admin/subscriptions?ok={quote_plus('Сирот не найдено — все рекуррентные платежи привязаны к подпискам')}",
-                status_code=303,
-            )
-        repaired = 0
-        skipped = 0
-        errors: list[str] = []
-        for p in orphans:
-            try:
-                gs = await tbank_client.get_state(p["payment_id"])
-                rebill_id = str(gs.get("RebillId", "")) if gs else ""
-                if not rebill_id:
-                    skipped += 1
-                    errors.append(f"tg={p['tg_id']}: T-Bank не вернул RebillId")
-                    continue
-                await credits_db.update_rebill_id(p["order_id"], rebill_id)
-                await credits_db.create_subscription(
-                    p["tg_id"], p["package"], rebill_id, p["amount_rub"],
-                )
-                await credits_db.log_event(
-                    p["tg_id"], "subscription_created",
-                    f"{p['package']} rebill={rebill_id} (reconcile)",
-                )
-                repaired += 1
-            except Exception as e:
-                skipped += 1
-                errors.append(f"tg={p['tg_id']}: {e}")
-        await credits_db.audit_log(
-            _user, "subscriptions_reconcile",
-            target=f"{repaired}/{len(orphans)}",
-            details="; ".join(errors[:5]),
-        )
-        msg = f"Восстановлено: {repaired}, пропущено: {skipped} из {len(orphans)}"
-        if errors:
-            msg += f". Первые ошибки: {'; '.join(errors[:3])}"
-        return RedirectResponse(
-            f"/admin/subscriptions?ok={quote_plus(msg)}",
-            status_code=303,
-        )
 
     @app.post("/admin/subscriptions/{sub_id}/charge")
     async def subscriptions_manual_charge(
