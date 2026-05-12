@@ -83,6 +83,12 @@ class TBankClient:
         if recurrent and customer_key:
             params["Recurrent"] = "Y"
             params["CustomerKey"] = customer_key
+            # Per T-Bank acquiring docs: for a parent recurrent payment the
+            # DATA.OperationInitiatorType field must equal "1" (CIT — payment
+            # initiated by the customer). Without it the terminal accepts the
+            # transaction but does not save card details, so RebillId comes
+            # back empty and subsequent Charge calls become impossible.
+            params["DATA"] = {"OperationInitiatorType": "1"}
         if self._notify_url:
             params["NotificationURL"] = self._notify_url
 
@@ -126,6 +132,11 @@ class TBankClient:
             "OrderId": order_id,
             "Description": description[:250],
             "Receipt": receipt,
+            # Per T-Bank acquiring docs: child (recurring) charges must declare
+            # DATA.OperationInitiatorType="R" (MIT COF Recurring). Without this
+            # tag the Charge step rejects the request or downgrades the trans-
+            # action class.
+            "DATA": {"OperationInitiatorType": "R"},
         }
         if self._notify_url:
             params["NotificationURL"] = self._notify_url
