@@ -99,7 +99,35 @@ from .state_store import (
     STAGE_KEEP_IN_TOUCH,
     STAGE_REMIND_RELEASE,
     STAGE_NO_FRIENDS_FORM,
+    # Season flow (Hooks S1) — gated by SEASON_FLOW_ENABLED below.
+    SEASON_STAGES,
+    STAGE_SEASON_INTRO_1,
+    STAGE_SEASON_INTRO_2,
+    STAGE_SEASON_CONSENT,
+    STAGE_SEASON_MENU,
 )
+
+
+# Season flow toggle. Public bot ships the mirrored module so the parity gate
+# is satisfied, but the runtime entry into the season flow stays off until the
+# botapi rollout is validated and we flip this to "1" in env.
+SEASON_FLOW_ENABLED = (os.environ.get("SEASON_FLOW_ENABLED", "0").strip().lower()
+                       in {"1", "true", "yes", "on", "enabled"})
+
+
+def _should_route_to_season(st: ChatState) -> bool:
+    """Return True iff this chat should land in the season flow on /start.
+
+    The check is gated by SEASON_FLOW_ENABLED so we ship the mirror without
+    changing prod behavior. When the flag is on, an existing season stage or
+    completed intro is enough to keep the user in season; otherwise the
+    standard onboarding runs.
+    """
+    if not SEASON_FLOW_ENABLED:
+        return False
+    if st.stage in SEASON_STAGES:
+        return True
+    return bool(getattr(st, "season_intro_completed", False))
 
 
 logging.basicConfig(
@@ -2123,6 +2151,16 @@ class BlastBotApp:
             if st.stage == STAGE_PROCESSING:
                 await message.answer("Трек в процессе, подожди завершения.")
                 return
+
+            # Season flow gate — parity-mirrored from tg_bot_botapi. When
+            # SEASON_FLOW_ENABLED is off (default) this is a no-op and the
+            # standard onboarding path below runs unchanged.
+            if _should_route_to_season(st):
+                log.info(
+                    "season_flow_routed chat=%s stage=%s — falling back to "
+                    "standard onboarding (handlers not yet wired in public).",
+                    chat_id, st.stage,
+                )
 
             start_payload = _extract_start_payload(message)
             if start_payload:

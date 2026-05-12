@@ -92,6 +92,23 @@ def _parse_bool_text(raw: str, *, default: bool = False) -> bool:
     return bool(default)
 
 
+# Season flow (Hooks S1) — mirrored from tg_bot_botapi per parity gate.
+# In public the season flow is gated by SEASON_FLOW_ENABLED env flag (default
+# off); these constants exist so state_store/import-time wiring stays in sync.
+STAGE_SEASON_INTRO_1 = "SEASON_INTRO_1"
+STAGE_SEASON_INTRO_2 = "SEASON_INTRO_2"
+STAGE_SEASON_CONSENT = "SEASON_CONSENT"
+STAGE_SEASON_MENU = "SEASON_MENU"
+
+
+SEASON_STAGES = frozenset({
+    STAGE_SEASON_INTRO_1,
+    STAGE_SEASON_INTRO_2,
+    STAGE_SEASON_CONSENT,
+    STAGE_SEASON_MENU,
+})
+
+
 class ChatState(BaseModel):
     chat_id: int
     stage: str = STAGE_IDLE
@@ -150,6 +167,16 @@ class ChatState(BaseModel):
     referral_tag: str = ""
     referral_wait_started_at: float = 0.0
     reminder_at: float = 0.0
+
+    # Season flow (Hooks S1) — mirrored from tg_bot_botapi.ChatState.
+    # Populated only when SEASON_FLOW_ENABLED is on; defaults match botapi.
+    season_intro_step: int = 0
+    season_intro_completed: bool = False
+    season_update_frequency: str = "finals_only"  # all | finals_only
+    season_account_status: str = "new_free"       # new_free | exhausted_free | paid_active | paid_churned
+    season_waitlist: bool = False
+    season_referrer_tier: int = 0
+    season_referrals_count: int = 0
 
 
 class RedisChatStateStore:
