@@ -2222,7 +2222,15 @@ class CreditsDB:
         ]
 
     async def subscriptions_summary(self) -> Dict[str, Any]:
-        """Counts + sum for the admin subscriptions dashboard."""
+        """Counts + sum for the admin subscriptions dashboard.
+
+        Real auto-charges (rebills) are counted via activity_log events
+        `subscription_charged*` / `subscription_charge_failed`, which are
+        emitted only by the daily charge loop (or admin manual trigger).
+        This avoids counting INITIAL subscription purchases — those also
+        have payments.is_recurrent=TRUE but represent a user paying for the
+        first time, not an automatic monthly rebill.
+        """
         pool = self._pool_or_fail()
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
@@ -2243,15 +2251,42 @@ class CreditsDB:
             charge_stats = await conn.fetchrow(
                 """
                 SELECT
-                  COUNT(*) FILTER (WHERE status = 'CONFIRMED' AND created_at >= NOW() - INTERVAL '30 days')::BIGINT AS ok_30d,
-                  COUNT(*) FILTER (WHERE status = 'charge_failed' AND created_at >= NOW() - INTERVAL '30 days')::BIGINT AS fail_30d,
-                  COALESCE(SUM(amount_rub) FILTER (WHERE status = 'CONFIRMED' AND created_at >= NOW() - INTERVAL '30 days'), 0)::BIGINT AS revenue_30d
-                FROM payments WHERE is_recurrent = TRUE
+                  COUNT(*) FILTER (WHERE event IN ('subscription_charged', 'subscription_charged_manual'))::BIGINT AS ok_30d,
+                  COUNT(*) FILTER (WHERE event = 'subscription_charge_failed')::BIGINT AS fail_30d
+                FROM activity_log
+                WHERE created_at >= NOW() - INTERVAL '30 days'
+                  AND event IN ('subscription_charged', 'subscription_charged_manual', 'subscription_charge_failed')
                 """
+            )
+            # Revenue: sum amount_rub from active subscriptions × successful charge count,
+            # or fall back to joining payments with the charge events.
+            # Cleanest: payments where order_id matches a successful charge event
+            # in the same minute. But each charge writes a NEW payments row with
+            # is_recurrent=TRUE and status='confirmed' (lowercase, from the loop).
+            # The INITIAL sub payment ends up status='CONFIRMED' (uppercase, from
+            # the webhook). So lowercase 'confirmed' on is_recurrent rows reliably
+            # marks rebills.
+            revenue_row = await conn.fetchrow(
+                """
+                SELECT COALESCE(SUM(amount_rub), 0)::BIGINT AS revenue_30d
+                FROM payments
+                WHERE is_recurrent = TRUE
+                  AND status = 'confirmed'
+                  AND created_at >= NOW() - INTERVAL '30 days'
+                """
+            )
+            # Total subscribers ever started (any status), for context.
+            ever_row = await conn.fetchrow(
+                "SELECT COUNT(*)::BIGINT AS n FROM subscriptions"
+            )
+            cancelled_row = await conn.fetchrow(
+                "SELECT COUNT(*)::BIGINT AS n FROM subscriptions WHERE status = 'cancelled'"
             )
         return {
             "active_cnt": int(row["active_cnt"] or 0) if row else 0,
             "paused_cnt": int(row["paused_cnt"] or 0) if row else 0,
+            "ever_cnt": int(ever_row["n"] or 0) if ever_row else 0,
+            "cancelled_cnt": int(cancelled_row["n"] or 0) if cancelled_row else 0,
             "due_today_cnt": int(row["due_today_cnt"] or 0) if row else 0,
             "due_today_rub": int(row["due_today_rub"] or 0) if row else 0,
             "due_7d_cnt": int(row["due_7d_cnt"] or 0) if row else 0,
@@ -2261,8 +2296,47 @@ class CreditsDB:
             "overdue_cnt": int(row["overdue_cnt"] or 0) if row else 0,
             "recurrent_ok_30d": int(charge_stats["ok_30d"] or 0) if charge_stats else 0,
             "recurrent_fail_30d": int(charge_stats["fail_30d"] or 0) if charge_stats else 0,
-            "recurrent_revenue_30d": int(charge_stats["revenue_30d"] or 0) if charge_stats else 0,
+            "recurrent_revenue_30d": int(revenue_row["revenue_30d"] or 0) if revenue_row else 0,
         }
+
+    async def find_orphan_recurrent_payments(self) -> List[Dict[str, Any]]:
+        """Confirmed `is_recurrent=TRUE` payments that have no corresponding
+        active subscription row. These are users who paid for a subscription
+        but whose subscription record was never bootstrapped — they would
+        never be auto-charged. The admin reconcile flow uses this to repair
+        them by re-fetching RebillId from T-Bank.
+        """
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT DISTINCT ON (p.tg_id)
+                       p.order_id, p.tg_id, p.amount_rub, p.package,
+                       p.payment_id, p.rebill_id, p.created_at
+                FROM payments p
+                WHERE p.is_recurrent = TRUE
+                  AND UPPER(p.status) = 'CONFIRMED'
+                  AND p.payment_id <> ''
+                  AND NOT EXISTS (
+                      SELECT 1 FROM subscriptions s
+                       WHERE s.tg_id = p.tg_id
+                         AND s.status IN ('active', 'paused')
+                  )
+                ORDER BY p.tg_id, p.created_at DESC
+                """
+            )
+        return [
+            {
+                "order_id": str(r["order_id"]),
+                "tg_id": int(r["tg_id"]),
+                "amount_rub": int(r["amount_rub"] or 0),
+                "package": str(r["package"] or ""),
+                "payment_id": str(r["payment_id"] or ""),
+                "rebill_id": str(r["rebill_id"] or ""),
+                "created_at": _fmt_ts(r["created_at"]),
+            }
+            for r in rows
+        ]
 
     async def get_subscription_by_id(self, sub_id: int) -> Optional[Dict[str, Any]]:
         pool = self._pool_or_fail()
