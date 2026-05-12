@@ -131,9 +131,13 @@ class _FakeCreditsDBNotify:
             "tg_id": 777,
             "package": "Триал",
             "amount_rub": 149,
+            "is_recurrent": False,
+            "rebill_id": "",
         }
         self.add_calls: list[dict[str, Any]] = []
         self.update_calls: list[tuple[str, str, str]] = []
+        self.rebill_updates: list[tuple[str, str]] = []
+        self.subscriptions: list[tuple[int, str, str, int]] = []
         self.events: list[tuple[int, str, str]] = []
 
     async def is_payment_processed(self, payment_id: str, status: str) -> bool:
@@ -171,6 +175,12 @@ class _FakeCreditsDBNotify:
     async def log_event(self, tg_id: int, event: str, detail: str = "") -> None:
         self.events.append((int(tg_id), str(event), str(detail)))
 
+    async def update_rebill_id(self, order_id: str, rebill_id: str) -> None:
+        self.rebill_updates.append((str(order_id), str(rebill_id)))
+
+    async def create_subscription(self, tg_id: int, package: str, rebill_id: str, amount_rub: int) -> None:
+        self.subscriptions.append((int(tg_id), str(package), str(rebill_id), int(amount_rub)))
+
     async def get_balance(self, tg_id: int) -> int:
         return 5
 
@@ -181,6 +191,7 @@ class _FakeCreditsDBNotify:
 class _FakeStateStore:
     def __init__(self) -> None:
         self.reset_calls: list[int] = []
+        self.redis = object()
 
     async def reset_to_wait_audio(self, tg_id: int) -> None:
         self.reset_calls.append(int(tg_id))
@@ -196,8 +207,16 @@ class _FailingBot:
 
 
 class _FakeTBankClient:
+    def __init__(self, rebill_id: str = "") -> None:
+        self.rebill_id = str(rebill_id)
+        self.get_state_calls: list[str] = []
+
     def verify_notification(self, data: dict[str, Any]) -> bool:
         return True
+
+    async def get_state(self, payment_id: str) -> dict[str, Any]:
+        self.get_state_calls.append(str(payment_id))
+        return {"RebillId": self.rebill_id}
 
 
 def test_tbank_notify_unlocks_state_even_when_user_notify_fails() -> None:
@@ -228,6 +247,7 @@ def test_tbank_notify_unlocks_state_even_when_user_notify_fails() -> None:
         tg_bot_username="",
         manager_chat_id=0,
         admin_panel_port=18080,
+        season_redis_prefix="test:season",
     )
 
     app = build_app(
@@ -257,3 +277,44 @@ def test_tbank_notify_unlocks_state_even_when_user_notify_fails() -> None:
     assert credits_db.add_calls[0]["actor"] == "tbank_webhook"
     assert credits_db.add_calls[0]["order_id"] == "ord-1"
     assert credits_db.events and credits_db.events[0][1] == "payment_confirmed"
+
+
+def test_tbank_notify_creates_subscription_for_recurrent_payment() -> None:
+    credits_db = _FakeCreditsDBNotify()
+    credits_db.payment["is_recurrent"] = True
+    state_store = _FakeStateStore()
+    tbank_client = _FakeTBankClient()
+
+    settings = SimpleNamespace(
+        admin_panel_password="secret",
+        tg_bot_username="",
+        manager_chat_id=0,
+        admin_panel_port=18080,
+        season_redis_prefix="test:season",
+    )
+
+    app = build_app(
+        credits_db=credits_db,
+        state_store=state_store,
+        settings=settings,
+        tbank_client=tbank_client,
+        bot_ref=[None],
+    )
+
+    client = TestClient(app)
+    resp = client.post(
+        "/api/tbank/notify",
+        json={
+            "OrderId": "ord-1",
+            "Status": "CONFIRMED",
+            "PaymentId": "pay-1",
+            "RebillId": "rebill-123",
+            "Token": "ok",
+        },
+    )
+
+    assert resp.status_code == 200
+    assert tbank_client.get_state_calls == []
+    assert credits_db.rebill_updates == [("ord-1", "rebill-123")]
+    assert credits_db.subscriptions == [(777, "Триал", "rebill-123", 149)]
+    assert ("subscription_created" in [event for _, event, _ in credits_db.events])

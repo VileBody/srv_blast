@@ -1230,6 +1230,7 @@ class CreditsDB:
         async with pool.acquire() as conn:
             r = await conn.fetchrow(
                 "SELECT id, order_id, tg_id, amount_rub, package, status, payment_id, "
+                "rebill_id, is_recurrent, "
                 "utm_source, utm_medium, utm_campaign, utm_content, utm_term, utm_payload, "
                 "created_at, updated_at "
                 "FROM payments WHERE order_id = $1",
@@ -1245,6 +1246,8 @@ class CreditsDB:
             "package": str(r["package"] or ""),
             "status": str(r["status"] or ""),
             "payment_id": str(r["payment_id"] or ""),
+            "rebill_id": str(r["rebill_id"] or ""),
+            "is_recurrent": bool(r["is_recurrent"]),
             "utm_source": str(r["utm_source"] or ""),
             "utm_medium": str(r["utm_medium"] or ""),
             "utm_campaign": str(r["utm_campaign"] or ""),
@@ -1293,12 +1296,14 @@ class CreditsDB:
         ]
 
     async def get_pending_payments(self) -> List[Dict[str, Any]]:
-        """Return all payments with status 'pending' (not yet confirmed/rejected)."""
+        """Return all payments not yet confirmed/rejected for T-Bank polling."""
         pool = self._pool_or_fail()
         async with pool.acquire() as conn:
             rows = await conn.fetch(
                 "SELECT id, order_id, tg_id, amount_rub, package, status, payment_id, is_recurrent, created_at "
-                "FROM payments WHERE status = 'pending' ORDER BY created_at ASC",
+                "FROM payments "
+                "WHERE status = 'pending' OR UPPER(status) IN ('NEW', 'FORM_SHOWED', 'AUTHORIZED') "
+                "ORDER BY created_at ASC",
             )
             return [
                 {"id": r["id"], "order_id": r["order_id"], "tg_id": r["tg_id"],
@@ -1314,8 +1319,11 @@ class CreditsDB:
         async with pool.acquire() as conn:
             await conn.execute(
                 "UPDATE payments SET rebill_id = $1 "
-                "WHERE tg_id = $2 AND status = 'confirmed' AND rebill_id = '' "
-                "ORDER BY updated_at DESC LIMIT 1",
+                "WHERE id = ("
+                "  SELECT id FROM payments "
+                "  WHERE tg_id = $2 AND UPPER(status) = 'CONFIRMED' AND rebill_id = '' "
+                "  ORDER BY updated_at DESC LIMIT 1"
+                ")",
                 str(rebill_id),
                 int(tg_id),
             )
@@ -1326,7 +1334,7 @@ class CreditsDB:
         async with pool.acquire() as conn:
             val = await conn.fetchval(
                 "SELECT rebill_id FROM payments "
-                "WHERE tg_id = $1 AND rebill_id <> '' AND is_recurrent = TRUE AND status = 'confirmed' "
+                "WHERE tg_id = $1 AND rebill_id <> '' AND is_recurrent = TRUE AND UPPER(status) = 'CONFIRMED' "
                 "ORDER BY updated_at DESC LIMIT 1",
                 int(tg_id),
             )
@@ -1374,7 +1382,7 @@ class CreditsDB:
         pool = self._pool_or_fail()
         async with pool.acquire() as conn:
             row = await conn.fetchval(
-                "SELECT 1 FROM payments WHERE payment_id = $1 AND status = $2 LIMIT 1",
+                "SELECT 1 FROM payments WHERE payment_id = $1 AND UPPER(status) = UPPER($2) LIMIT 1",
                 str(payment_id),
                 str(status),
             )

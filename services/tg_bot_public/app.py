@@ -5195,7 +5195,7 @@ class BlastBotApp:
                                 pkg = pay["package"]
                                 tg_id = pay["tg_id"]
                                 credits_to_add = self._PKG_CREDITS.get(pkg, 5)
-                                await self.credits_db.update_payment_status(order_id, "confirmed", payment_id)
+                                await self.credits_db.update_payment_status(order_id, "CONFIRMED", payment_id)
                                 await self.credits_db.add_credits(tg_id, credits_to_add, "payment", f"Пакет «{pkg}»")
                                 await self.credits_db.log_event(tg_id, "payment_confirmed", f"{pkg} +{credits_to_add} кредитов")
                                 # Save RebillId and create subscription for recurrent payments
@@ -5210,9 +5210,9 @@ class BlastBotApp:
                                                 tg_id, pkg, rebill_id, pay["amount_rub"],
                                             )
                                             await self.credits_db.log_event(
-                                                tg_id, "subscription_created", f"{pkg} rebill={rebill_id}",
+                                                tg_id, "subscription_created", f"{pkg} rebill=***{rebill_id[-6:]}",
                                             )
-                                            log.info("subscription created order=%s rebill=%s", order_id, rebill_id)
+                                            log.info("subscription created order=%s rebill=***%s", order_id, rebill_id[-6:])
                                     except Exception as e:
                                         log.warning("subscription create failed order=%s err=%s", order_id, e)
                                 username = ""
@@ -5245,7 +5245,7 @@ class BlastBotApp:
                                     log.warning("payment state update err=%s", e)
                                 log.info("payment confirmed order=%s tg_id=%s pkg=%s credits=%s", order_id, tg_id, pkg, credits_to_add)
                             elif status in ("REJECTED", "DEADLINE_EXPIRED", "CANCELED", "REVERSED"):
-                                await self.credits_db.update_payment_status(order_id, status.lower(), payment_id)
+                                await self.credits_db.update_payment_status(order_id, status, payment_id)
                                 username = ""
                                 try:
                                     user_data = await self.credits_db.get_user(pay["tg_id"])

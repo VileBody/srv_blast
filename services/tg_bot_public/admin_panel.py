@@ -4025,7 +4025,6 @@ def build_app(
                 order_id=order_id,
             )
             await credits_db.log_event(tg_id, "payment_confirmed", f"{pkg} \u2014 {amount_rub}\u20bd")
-
             # Subscription bootstrap for recurrent payments. RebillId is sent
             # by T-Bank ONLY in this notification body (GetState does NOT
             # return it \u2014 that was the prior bug). Without saving it here,
@@ -4034,16 +4033,17 @@ def build_app(
             if is_recurrent_pay:
                 if notif_rebill_id:
                     try:
+                        masked_rebill_id = f"***{notif_rebill_id[-6:]}"
                         await credits_db.update_rebill_id(order_id, notif_rebill_id)
                         await credits_db.create_subscription(
                             tg_id, pkg, notif_rebill_id, amount_rub,
                         )
                         await credits_db.log_event(
-                            tg_id, "subscription_created", f"{pkg} rebill={notif_rebill_id}",
+                            tg_id, "subscription_created", f"{pkg} rebill={masked_rebill_id}",
                         )
                         log.info(
                             "tbank notify: subscription bootstrap ok order=%s rebill=%s",
-                            order_id, notif_rebill_id,
+                            order_id, masked_rebill_id,
                         )
                     except Exception as e:
                         # RebillId was received but we failed to persist it.
