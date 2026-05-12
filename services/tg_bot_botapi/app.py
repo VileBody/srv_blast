@@ -14,8 +14,15 @@ from typing import Any, Dict, List, Optional, Tuple
 import httpx
 from aiogram import Bot, Dispatcher, Router
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.filters import CommandStart
-from aiogram.types import FSInputFile, KeyboardButton, Message, ReplyKeyboardMarkup, ReplyKeyboardRemove
+from aiogram.filters import CommandStart, CommandObject
+from aiogram.types import (
+    CallbackQuery,
+    FSInputFile,
+    KeyboardButton,
+    Message,
+    ReplyKeyboardMarkup,
+    ReplyKeyboardRemove,
+)
 from core.telegram_api import build_aiogram_session, make_telegram_api
 from core.clip_window import CLIP_WINDOW_RANGE_S_LABEL
 from core.filesystem_hygiene import cleanup_jobs_artifacts, cleanup_tmp_chat_dirs
@@ -45,9 +52,14 @@ from .s3_client import S3Client, make_s3_url
 from .state_store import (
     ChatState,
     RedisChatStateStore,
+    SEASON_STAGES,
     STAGE_IDLE,
     STAGE_LOCKED,
     STAGE_PROCESSING,
+    STAGE_SEASON_CONSENT,
+    STAGE_SEASON_INTRO_1,
+    STAGE_SEASON_INTRO_2,
+    STAGE_SEASON_MENU,
     STAGE_WAIT_AUDIO,
     STAGE_WAIT_CONFIRM,
     STAGE_WAIT_BG_COLOR,
@@ -66,6 +78,24 @@ from .state_store import (
     STAGE_WAITING_REFERRAL,
 )
 from .user_store import UserStore
+from .season import (
+    INTRO_1, INTRO_2, CONSENT, WELCOME,
+    MENU_HEADER,
+    PhaseStore, SeasonReferralStore,
+    build_referral_link,
+    consent_kb, intro_next_kb, menu_kb, back_to_menu_kb,
+    notifications_kb, share_kb, waitlist_kb,
+    determine_flow, parse_start_param,
+    render_about_season, render_examples_screen, render_generation_screen,
+    render_history_screen, render_invite_screen, render_pricing_screen,
+)
+from .season.keyboards import (
+    CB_CONSENT_ALL, CB_CONSENT_FINALS, CB_INTRO_NEXT,
+    CB_MENU_ABOUT, CB_MENU_BACK, CB_MENU_EXAMPLES, CB_MENU_GENERATION,
+    CB_MENU_HISTORY, CB_MENU_INVITE, CB_MENU_PRICING,
+    CB_NOTIF_ALL, CB_NOTIF_FINALS, CB_NOTIF_OFF,
+    CB_WAITLIST_JOIN, CB_WAITLIST_SKIP,
+)
 
 
 logging.basicConfig(
@@ -872,6 +902,14 @@ class BlastBotApp:
         self.users: UserStore | None = None
         self.referrals: ReferralStore | None = None
 
+        # Season flow (Hooks S1) — phase reader (Redis) + qualified-after-intro
+        # referrals. Both rely on shared Redis / Postgres initialized in _on_startup.
+        self.season_phase: PhaseStore = PhaseStore(
+            self.store.redis,
+            prefix=settings.season_redis_prefix,
+        )
+        self.season_referrals: SeasonReferralStore | None = None
+
         self.dp = Dispatcher()
         self.router = Router()
         self.dp.include_router(self.router)
@@ -923,7 +961,7 @@ class BlastBotApp:
 
     def _register_handlers(self) -> None:
         @self.router.message(CommandStart())
-        async def _on_start(message: Message) -> None:
+        async def _on_start(message: Message, command: CommandObject) -> None:
             if message.chat is None:
                 return
             chat_id = int(message.chat.id)
@@ -932,10 +970,44 @@ class BlastBotApp:
             if user_changed:
                 await self.store.set(st)
             await self._ensure_user_profile(st)
+
+            # Parse referral deep-link payload BEFORE flow routing so the
+            # inviter↔invitee link is recorded even if the user abandons
+            # mid-intro and only completes onboarding much later.
+            inviter_chat_id = parse_start_param(getattr(command, "args", None))
+            if inviter_chat_id and self.season_referrals is not None:
+                if inviter_chat_id != chat_id:
+                    try:
+                        await self.season_referrals.register(chat_id, inviter_chat_id)
+                    except Exception as exc:
+                        log.warning("season_referral_register chat=%s err=%r", chat_id, exc)
+
             if st.stage == STAGE_PROCESSING:
                 await message.answer("Трек в процессе, подожди завершения.")
                 return
-            await self._move_to_wait_audio(chat_id, message)
+
+            flow = await self._resolve_flow(chat_id, st)
+            if flow == "existing":
+                await self._move_to_wait_audio(chat_id, message)
+                return
+
+            await self._season_resume_or_start(chat_id, st, message)
+
+        @self.router.callback_query()
+        async def _on_callback(cb: CallbackQuery) -> None:
+            if cb.data is None:
+                try:
+                    await cb.answer()
+                except Exception:
+                    pass
+                return
+            if cb.data.startswith("season:"):
+                await self._season_handle_callback(cb)
+                return
+            try:
+                await cb.answer()
+            except Exception:
+                pass
 
         @self.router.message()
         async def _on_any_message(message: Message) -> None:
@@ -965,7 +1037,20 @@ class BlastBotApp:
                 )
                 return
 
+            if st.stage in SEASON_STAGES:
+                # Season flow is driven by inline buttons; ignore freeform
+                # text and re-show the menu so the user can keep navigating.
+                if st.stage == STAGE_SEASON_MENU:
+                    await self._season_show_menu(chat_id, st, message)
+                else:
+                    await self._season_resume_or_start(chat_id, st, message)
+                return
+
             if st.stage in {STAGE_IDLE, ""}:
+                flow = await self._resolve_flow(chat_id, st)
+                if flow == "season":
+                    await self._season_resume_or_start(chat_id, st, message)
+                    return
                 await self._move_to_wait_audio(chat_id, message)
                 return
 
@@ -1058,7 +1143,8 @@ class BlastBotApp:
                 self.users,
                 referral_bonus_credits=self.settings.referral_bonus_credits,
             )
-            log.info("startup: PostgreSQL pool ready, user_store active")
+            self.season_referrals = SeasonReferralStore(self.users.pool)
+            log.info("startup: PostgreSQL pool ready, user_store + season active")
         elif self.settings.credits_required:
             raise RuntimeError("CREDITS_REQUIRED=true but CREDITS_DB_URL (or POSTGRES_*) is not set")
         else:
@@ -1085,6 +1171,283 @@ class BlastBotApp:
             await self.users.close()
         self._bot = None
         log.info("shutdown complete")
+
+    # ------------------------------------------------------------------ #
+    # Season flow (Hooks S1) — entry-point routing + onboarding + menu
+    # ------------------------------------------------------------------ #
+
+    async def _resolve_flow(self, chat_id: int, st: ChatState) -> str:
+        """Decide whether this chat belongs to the legacy or season flow."""
+        if self.users is None:
+            # Without a DB we can't know status — default to legacy product so
+            # local dev without CREDITS_DB_URL keeps working unchanged.
+            return "existing"
+        season = await self.users.get_season_state(chat_id)
+        if season is None:
+            return "season"
+        # Mirror DB fields into chat state so renderers don't re-query Postgres.
+        st.season_intro_step = season["intro_step"]
+        st.season_intro_completed = season["intro_completed"]
+        st.season_update_frequency = season["update_frequency"]
+        st.season_account_status = season["account_status"]
+        st.season_waitlist = season["waitlist"]
+        st.season_referrer_tier = season["referrer_tier"]
+        st.season_referrals_count = season["referrals_count"]
+        await self.store.set(st)
+        return determine_flow(season["account_status"], season["paid_until"])
+
+    async def _season_resume_or_start(
+        self, chat_id: int, st: ChatState, message: Message,
+    ) -> None:
+        """Send the right onboarding step on /start in the season flow."""
+        if st.season_intro_completed:
+            await self._season_show_menu(chat_id, st, message)
+            return
+        step = max(0, min(3, int(st.season_intro_step or 0)))
+        if step >= 3:
+            # Steps 1-2 are intro screens; step 3 = consent (per TZ §2 Msg 3).
+            await self._season_send_consent(chat_id, st, message)
+            return
+        # Always (re)start from step 1 to keep the narrative coherent — the
+        # tiny cost of replaying intro_1 outweighs landing the user mid-arc.
+        await self._season_send_intro(chat_id, st, message, step=1)
+
+    async def _season_send_intro(
+        self,
+        chat_id: int,
+        st: ChatState,
+        message_or_cb: Message | CallbackQuery,
+        *,
+        step: int,
+    ) -> None:
+        text = {1: INTRO_1, 2: INTRO_2}.get(step)
+        if text is None:
+            return
+        stage = {
+            1: STAGE_SEASON_INTRO_1,
+            2: STAGE_SEASON_INTRO_2,
+        }[step]
+        st.stage = stage
+        await self.store.set(st)
+        if self.users is not None:
+            await self.users.set_intro_step(chat_id, step)
+        await self._season_send(
+            message_or_cb, text, reply_markup=intro_next_kb(),
+        )
+
+    async def _season_send_consent(
+        self, chat_id: int, st: ChatState, message_or_cb: Message | CallbackQuery,
+    ) -> None:
+        st.stage = STAGE_SEASON_CONSENT
+        await self.store.set(st)
+        if self.users is not None:
+            await self.users.set_intro_step(chat_id, 3)
+        await self._season_send(message_or_cb, CONSENT, reply_markup=consent_kb())
+
+    async def _season_show_menu(
+        self, chat_id: int, st: ChatState, message_or_cb: Message | CallbackQuery,
+        *, prefix_text: Optional[str] = None,
+    ) -> None:
+        st.stage = STAGE_SEASON_MENU
+        await self.store.set(st)
+        text = prefix_text + "\n\n" + MENU_HEADER if prefix_text else MENU_HEADER
+        await self._season_send(message_or_cb, text, reply_markup=menu_kb())
+
+    async def _season_send(
+        self,
+        message_or_cb: Message | CallbackQuery,
+        text: str,
+        *,
+        reply_markup=None,
+    ) -> None:
+        """Helper that sends a new message regardless of trigger type.
+
+        For callbacks we send a fresh message (instead of editing) so the user
+        keeps the full thread of the onboarding visible.
+        """
+        if isinstance(message_or_cb, CallbackQuery):
+            target = message_or_cb.message
+        else:
+            target = message_or_cb
+        if target is None:
+            return
+        await target.answer(text, reply_markup=reply_markup, parse_mode="HTML")
+
+    async def _season_handle_callback(self, cb: CallbackQuery) -> None:
+        if cb.data is None or cb.message is None or cb.message.chat is None:
+            return
+        chat_id = int(cb.message.chat.id)
+        st = await self.store.get(chat_id)
+        data = cb.data
+
+        # Re-sync DB → state on every callback so a stale state.cache doesn't
+        # let a user proceed past consent without intro_completed actually set.
+        if self.users is not None:
+            await self._resolve_flow(chat_id, st)
+
+        try:
+            if data == CB_INTRO_NEXT:
+                await self._on_intro_next(chat_id, st, cb)
+            elif data == CB_CONSENT_ALL:
+                await self._on_consent(chat_id, st, cb, frequency="all")
+            elif data == CB_CONSENT_FINALS:
+                await self._on_consent(chat_id, st, cb, frequency="finals_only")
+            elif data == CB_MENU_GENERATION:
+                await self._on_menu_generation(chat_id, st, cb)
+            elif data == CB_MENU_PRICING:
+                await self._on_menu_pricing(chat_id, st, cb)
+            elif data == CB_MENU_EXAMPLES:
+                await self._on_menu_examples(chat_id, st, cb)
+            elif data == CB_MENU_ABOUT:
+                await self._on_menu_about(chat_id, st, cb)
+            elif data == CB_MENU_INVITE:
+                await self._on_menu_invite(chat_id, st, cb)
+            elif data == CB_MENU_HISTORY:
+                await self._on_menu_history(chat_id, st, cb)
+            elif data == CB_MENU_BACK:
+                await self._season_show_menu(chat_id, st, cb)
+            elif data == CB_WAITLIST_JOIN:
+                await self._on_waitlist(chat_id, st, cb, joined=True)
+            elif data == CB_WAITLIST_SKIP:
+                await self._on_waitlist(chat_id, st, cb, joined=False)
+            elif data in (CB_NOTIF_ALL, CB_NOTIF_FINALS, CB_NOTIF_OFF):
+                choice = {
+                    CB_NOTIF_ALL: "all",
+                    CB_NOTIF_FINALS: "finals_only",
+                    CB_NOTIF_OFF: "off",
+                }[data]
+                await self._on_notification_pref(chat_id, st, cb, choice=choice)
+            else:
+                log.info("season_cb_unknown chat=%s data=%s", chat_id, data)
+        finally:
+            try:
+                await cb.answer()
+            except Exception:
+                pass
+
+    async def _on_intro_next(self, chat_id: int, st: ChatState, cb: CallbackQuery) -> None:
+        current = {
+            STAGE_SEASON_INTRO_1: 1,
+            STAGE_SEASON_INTRO_2: 2,
+        }.get(st.stage, 0)
+        if current < 2:
+            await self._season_send_intro(chat_id, st, cb, step=2)
+        else:
+            await self._season_send_consent(chat_id, st, cb)
+
+    async def _on_consent(
+        self, chat_id: int, st: ChatState, cb: CallbackQuery, *, frequency: str,
+    ) -> None:
+        st.season_intro_completed = True
+        st.season_update_frequency = frequency
+        await self.store.set(st)
+        if self.users is not None:
+            await self.users.complete_intro(chat_id, update_frequency=frequency)
+        # Qualify the inviter (if any) the moment onboarding completes.
+        await self._qualify_inviter_if_any(chat_id)
+        snap = await self.season_phase.snapshot()
+        await self._season_show_menu(chat_id, st, cb, prefix_text=WELCOME(snap))
+
+    async def _qualify_inviter_if_any(self, invitee_chat_id: int) -> None:
+        if self.season_referrals is None or self._bot is None:
+            return
+        try:
+            result = await self.season_referrals.mark_qualified(invitee_chat_id)
+        except Exception as exc:
+            log.warning("season_qualify err chat=%s err=%r", invitee_chat_id, exc)
+            return
+        if result is None or not result.qualified_now:
+            return
+        # Notify the inviter — friend joined; mention tier-up if reached.
+        msg = (
+            f"👥 Друг пришёл по твоей ссылке. "
+            f"Всего: <b>{result.inviter_new_count}/5</b>."
+        )
+        if result.tier_up:
+            msg += f"\n\n🎉 Тир <b>{result.inviter_new_tier}</b> разблокирован."
+        try:
+            await self._bot.send_message(
+                result.inviter_chat_id, msg, parse_mode="HTML",
+            )
+        except Exception as exc:
+            log.info(
+                "season_notify_inviter_skipped inviter=%s err=%r",
+                result.inviter_chat_id, exc,
+            )
+
+    async def _on_menu_generation(self, chat_id: int, st: ChatState, cb: CallbackQuery) -> None:
+        snap = await self.season_phase.snapshot()
+        text = render_generation_screen(snap, account_status=st.season_account_status)
+        from core.season_phase import SeasonPhase as _SP  # local to avoid wider import surface
+        if snap.phase in (_SP.DEV_EARLY, _SP.DEV_LATE):
+            kb = waitlist_kb(already_in=st.season_waitlist)
+        else:
+            kb = back_to_menu_kb()
+        await self._season_send(cb, text, reply_markup=kb)
+
+    async def _on_menu_pricing(self, chat_id: int, st: ChatState, cb: CallbackQuery) -> None:
+        text = render_pricing_screen()
+        await self._season_send(cb, text, reply_markup=back_to_menu_kb())
+
+    async def _on_menu_examples(self, chat_id: int, st: ChatState, cb: CallbackQuery) -> None:
+        text = render_examples_screen(
+            brand_account_link=self.settings.season_brand_account_link,
+        )
+        await self._season_send(cb, text, reply_markup=back_to_menu_kb())
+
+    async def _on_menu_about(self, chat_id: int, st: ChatState, cb: CallbackQuery) -> None:
+        snap = await self.season_phase.snapshot()
+        text = render_about_season(
+            snap,
+            tt_link=self.settings.season_tt_link,
+            tg_link=self.settings.season_tg_link,
+        )
+        await self._season_send(cb, text, reply_markup=back_to_menu_kb())
+
+    async def _on_menu_invite(self, chat_id: int, st: ChatState, cb: CallbackQuery) -> None:
+        link = build_referral_link(self.settings.tg_bot_username, chat_id)
+        if self.season_referrals is not None:
+            count, tier = await self.season_referrals.stats_for(chat_id)
+        else:
+            count, tier = (0, 0)
+        text = render_invite_screen(
+            referral_link=link, referrals_count=count, tier=tier,
+        )
+        await self._season_send(cb, text, reply_markup=share_kb(link))
+
+    async def _on_menu_history(self, chat_id: int, st: ChatState, cb: CallbackQuery) -> None:
+        total = 0
+        if self.users is not None:
+            season = await self.users.get_season_state(chat_id)
+            if season is not None:
+                total = season["total_gens"]
+        text = render_history_screen(total_gens=total)
+        await self._season_send(
+            cb, text, reply_markup=notifications_kb(current=st.season_update_frequency),
+        )
+
+    async def _on_waitlist(
+        self, chat_id: int, st: ChatState, cb: CallbackQuery, *, joined: bool,
+    ) -> None:
+        st.season_waitlist = joined
+        await self.store.set(st)
+        if self.users is not None:
+            await self.users.set_waitlist(chat_id, joined=joined)
+        snap = await self.season_phase.snapshot()
+        text = render_generation_screen(snap, account_status=st.season_account_status)
+        await self._season_send(cb, text, reply_markup=waitlist_kb(already_in=joined))
+
+    async def _on_notification_pref(
+        self, chat_id: int, st: ChatState, cb: CallbackQuery, *, choice: str,
+    ) -> None:
+        st.season_update_frequency = choice if choice != "off" else "finals_only"
+        await self.store.set(st)
+        if self.users is not None:
+            await self.users.set_notification_pref(chat_id, choice)
+        await self._season_send(
+            cb, "Готово. Настройки уведомлений обновлены.",
+            reply_markup=notifications_kb(current=st.season_update_frequency),
+        )
 
     async def _move_to_wait_audio(self, chat_id: int, message: Message) -> None:
         await self.store.reset_to_wait_audio(chat_id)

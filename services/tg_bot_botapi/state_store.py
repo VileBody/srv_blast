@@ -41,6 +41,21 @@ STAGE_WAITING_REFERRAL = "WAITING_REFERRAL"
 # User account exists but has no credits (not yet paid).
 STAGE_LOCKED = "LOCKED"
 
+# Season flow (Hooks S1) — parallel onboarding + info menu for free users.
+# Two intro screens + consent (third TZ message IS the consent prompt).
+STAGE_SEASON_INTRO_1 = "SEASON_INTRO_1"
+STAGE_SEASON_INTRO_2 = "SEASON_INTRO_2"
+STAGE_SEASON_CONSENT = "SEASON_CONSENT"
+STAGE_SEASON_MENU = "SEASON_MENU"
+
+
+SEASON_STAGES = frozenset({
+    STAGE_SEASON_INTRO_1,
+    STAGE_SEASON_INTRO_2,
+    STAGE_SEASON_CONSENT,
+    STAGE_SEASON_MENU,
+})
+
 
 class ChatState(BaseModel):
     chat_id: int
@@ -102,6 +117,15 @@ class ChatState(BaseModel):
     # Timestamp when we entered WAITING_REFERRAL so recovery can unstick us.
     waiting_referral_since: float = 0.0
 
+    # Season flow (Hooks S1) — onboarding/menu state mirrored from blast_users.
+    season_intro_step: int = 0
+    season_intro_completed: bool = False
+    season_update_frequency: str = "finals_only"  # all | finals_only
+    season_account_status: str = "new_free"       # new_free | exhausted_free | paid_active | paid_churned
+    season_waitlist: bool = False
+    season_referrer_tier: int = 0
+    season_referrals_count: int = 0
+
 
 class RedisChatStateStore:
     def __init__(self, settings: Settings):
@@ -121,6 +145,11 @@ class RedisChatStateStore:
         )
         # Legacy key kept for backward compatibility with old deployments.
         self._processing_set_key = f"{self._prefix}:__index:processing"
+
+    @property
+    def redis(self) -> Redis:
+        """Shared Redis client — exposed for cross-module reuse (season phase store)."""
+        return self._redis
 
     def _key(self, chat_id: int) -> str:
         return f"{self._prefix}:{int(chat_id)}"

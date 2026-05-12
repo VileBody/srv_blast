@@ -189,6 +189,21 @@ class Settings:
     # Hours before a stuck WAITING_REFERRAL chat is automatically reset.
     bot_referral_timeout_h: float = _float_env("BOT_REFERRAL_TIMEOUT_H", 48.0)
 
+    # ------------------------------------------------------------------ #
+    # Season flow (Hooks S1)
+    # ------------------------------------------------------------------ #
+    # Public bot username (without @) used to render referral deep-links.
+    # Falls back to TG_TEST_BOT_USERNAME so the test bot can self-link.
+    tg_bot_username: str = _env("TG_BOT_USERNAME", "") or _env("TG_TEST_BOT_USERNAME", "")
+    # Redis key namespace where the season phase lives. Both bots and admin
+    # read/write this key. Default matches admin convention.
+    season_redis_prefix: str = _env("SEASON_REDIS_PREFIX", "blast:season")
+    # Brand handles shown in the "О сезоне" menu screen.
+    season_tt_link: str = _env("SEASON_TT_LINK", "")
+    season_tg_link: str = _env("SEASON_TG_LINK", "")
+    # Brand account link for "Примеры" footer.
+    season_brand_account_link: str = _env("SEASON_BRAND_ACCOUNT_LINK", "")
+
     @property
     def tmp_dir(self) -> Path:
         p = Path(self.bot_tmp_dir).expanduser()

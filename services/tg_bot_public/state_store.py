@@ -180,6 +180,11 @@ class RedisChatStateStore:
             decode_responses=True,
         )
 
+    @property
+    def redis(self) -> Redis:
+        """Shared Redis client — exposed for cross-module reuse (season phase store)."""
+        return self._redis
+
     def _key(self, chat_id: int) -> str:
         return f"{self._prefix}:{int(chat_id)}"
 

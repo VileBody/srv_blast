@@ -874,6 +874,7 @@ _BASE_HEAD = """
   <a href="/admin/jobs">Jobs</a>
   <a href="/admin/runs">Runs</a>
   <a href="/admin/ops">Ops</a>
+  <a href="/admin/season">Season</a>
   <a href="/admin/render-nodes">Render Nodes</a>
   <a href="/admin/assets/" target="_blank" rel="noopener noreferrer">Assets</a>
   <a href="/admin/llm-workers">LLM Workers</a>
@@ -2030,6 +2031,137 @@ def build_app(
         except Exception as e:
             return RedirectResponse(
                 f"/admin/ops?err={quote_plus(str(e))}",
+                status_code=303,
+            )
+
+    # ── Season phase switcher (Hooks S1) ─────────────────────────────
+    # Writes the active phase + meta to Redis under SEASON_REDIS_PREFIX.
+    # tg_bot_botapi reads the same key on every menu render.
+
+    from core.season_phase import PhaseStore, SeasonPhase  # type: ignore
+    _season_store = PhaseStore(state_store.redis, prefix=settings.season_redis_prefix)
+
+    _SEASON_PHASE_LABELS = [
+        ("DEV_EARLY",      "DEV_EARLY — ранняя разработка (W1-W2)"),
+        ("DEV_LATE",       "DEV_LATE — финал разработки (W3)"),
+        ("PRE_LAUNCH",     "PRE_LAUNCH — подготовка к окну (W4)"),
+        ("WINDOW_OPEN",    "WINDOW_OPEN — окно открыто (W5+)"),
+        ("WINDOW_CLOSING", "WINDOW_CLOSING — последние 48ч"),
+    ]
+
+    @app.get("/admin/season", response_class=HTMLResponse)
+    async def season_page(request: Request, _user: str = Depends(_check_auth)) -> str:
+        snap = await _season_store.snapshot()
+        ok_msg = html_mod.escape(str(request.query_params.get("ok", "")).strip())
+        err_msg = html_mod.escape(str(request.query_params.get("err", "")).strip())
+
+        next_window_iso = ""
+        if snap.next_window_at > 0:
+            next_window_iso = datetime.fromtimestamp(
+                snap.next_window_at, tz=timezone.utc,
+            ).strftime("%Y-%m-%dT%H:%M")
+
+        phase_options = "".join(
+            f'<option value="{val}"{" selected" if snap.phase.value == val else ""}>'
+            f'{html_mod.escape(label)}</option>'
+            for val, label in _SEASON_PHASE_LABELS
+        )
+
+        return f"""
+<!doctype html>
+<html lang="ru"><head>
+<meta charset="utf-8"><title>Season — Hooks S1</title>
+<style>
+ body{{font-family:system-ui,sans-serif;max-width:720px;margin:32px auto;padding:0 16px;color:#1a1a1a}}
+ h1{{margin-bottom:8px}}
+ form{{display:flex;flex-direction:column;gap:14px;background:#f7f7f8;padding:18px;border-radius:8px;border:1px solid #e3e3e6}}
+ label{{font-weight:600;font-size:14px}}
+ input,select{{padding:8px 10px;font-size:15px;border:1px solid #c8c8cc;border-radius:6px;background:#fff}}
+ button{{padding:10px 14px;background:#1a1a1a;color:#fff;border:0;border-radius:6px;font-size:15px;cursor:pointer;align-self:flex-start}}
+ .meta{{display:grid;grid-template-columns:160px 1fr;gap:6px 12px;margin:16px 0;font-size:14px}}
+ .meta b{{color:#555}}
+ .flash{{padding:10px 14px;border-radius:6px;margin:12px 0;font-size:14px}}
+ .flash-ok{{background:#e7f5ec;border:1px solid #b6dec1;color:#1f6f3a}}
+ .flash-err{{background:#fde9e9;border:1px solid #f0b9b9;color:#9b2a2a}}
+ .nav a{{margin-right:14px;color:#3a6df0;text-decoration:none}}
+</style>
+</head><body>
+<div class="nav">
+  <a href="/admin/">← Дашборд</a>
+  <a href="/admin/ops">Ops</a>
+</div>
+<h1>Season — Hooks S1</h1>
+<p style="color:#666;margin-top:0">Тумблер фазы сезона. Запись идёт в Redis под <code>{html_mod.escape(settings.season_redis_prefix)}</code>; tg_bot_botapi читает значение при каждом рендере меню.</p>
+
+{f'<div class="flash flash-ok">{ok_msg}</div>' if ok_msg else ''}
+{f'<div class="flash flash-err">{err_msg}</div>' if err_msg else ''}
+
+<div class="meta">
+  <b>Текущая фаза</b><span>{html_mod.escape(snap.phase.value)} ({html_mod.escape(snap.phase_label)})</span>
+  <b>Сезон</b><span>№{snap.season_number} · {html_mod.escape(snap.season_theme)}</span>
+  <b>Неделя</b><span>{snap.week} / 6</span>
+  <b>До окна</b><span>{snap.days_until_window} дн.</span>
+</div>
+
+<form method="post" action="/admin/season">
+  <label>Фаза
+    <select name="phase">{phase_options}</select>
+  </label>
+  <label>Дата открытия окна (UTC)
+    <input type="datetime-local" name="next_window_at" value="{next_window_iso}">
+  </label>
+  <label>Тема сезона
+    <input type="text" name="season_theme" value="{html_mod.escape(snap.season_theme)}">
+  </label>
+  <label>Номер сезона
+    <input type="number" name="season_number" value="{snap.season_number}" min="1">
+  </label>
+  <label>Неделя (1-6)
+    <input type="number" name="week" value="{snap.week}" min="1" max="6">
+  </label>
+  <button type="submit">Применить</button>
+</form>
+</body></html>
+"""
+
+    @app.post("/admin/season")
+    async def season_apply(
+        phase: str = Form(...),
+        next_window_at: str = Form(""),
+        season_theme: str = Form(""),
+        season_number: str = Form(""),
+        week: str = Form(""),
+        _user: str = Depends(_check_auth),
+    ) -> RedirectResponse:
+        try:
+            new_phase = SeasonPhase.parse(phase)
+            await _season_store.set_phase(new_phase)
+
+            window_ts: Optional[float] = None
+            if next_window_at.strip():
+                try:
+                    dt = datetime.fromisoformat(next_window_at.strip())
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=timezone.utc)
+                    window_ts = dt.timestamp()
+                except ValueError:
+                    pass
+
+            await _season_store.set_meta(
+                next_window_at=window_ts,
+                season_theme=season_theme.strip() or None,
+                season_number=int(season_number) if season_number.strip().isdigit() else None,
+                week=int(week) if week.strip().isdigit() else None,
+            )
+            log.info("season_admin_applied phase=%s actor=%s", new_phase.value, _user)
+            return RedirectResponse(
+                f"/admin/season?ok={quote_plus('Фаза обновлена')}",
+                status_code=303,
+            )
+        except Exception as e:
+            log.exception("season_admin_failed: %s", e)
+            return RedirectResponse(
+                f"/admin/season?err={quote_plus(str(e))}",
                 status_code=303,
             )
 

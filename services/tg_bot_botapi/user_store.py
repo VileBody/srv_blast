@@ -80,6 +80,67 @@ CREATE TABLE IF NOT EXISTS blast_referral_bonuses (
 """
 
 
+# Season flow (Hooks S1) — mirrored from migrations/002_season.sql.
+_SCHEMA_SEASON = """
+ALTER TABLE blast_users ADD COLUMN IF NOT EXISTS intro_step        INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE blast_users ADD COLUMN IF NOT EXISTS intro_completed   BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE blast_users ADD COLUMN IF NOT EXISTS updates_enabled   BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE blast_users ADD COLUMN IF NOT EXISTS update_frequency  TEXT    NOT NULL DEFAULT 'finals_only';
+ALTER TABLE blast_users ADD COLUMN IF NOT EXISTS account_status    TEXT    NOT NULL DEFAULT 'new_free';
+ALTER TABLE blast_users ADD COLUMN IF NOT EXISTS waitlist          BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE blast_users ADD COLUMN IF NOT EXISTS referrer_tier     INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE blast_users ADD COLUMN IF NOT EXISTS referrals_count   INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE blast_users ADD COLUMN IF NOT EXISTS total_gens        INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE blast_users ADD COLUMN IF NOT EXISTS paid_until        DOUBLE PRECISION NOT NULL DEFAULT 0;
+ALTER TABLE blast_users ADD COLUMN IF NOT EXISTS last_active       DOUBLE PRECISION NOT NULL DEFAULT 0;
+
+CREATE TABLE IF NOT EXISTS season_referrals (
+    invitee_chat_id  BIGINT           PRIMARY KEY,
+    inviter_chat_id  BIGINT           NOT NULL,
+    qualified        BOOLEAN          NOT NULL DEFAULT FALSE,
+    qualified_at     DOUBLE PRECISION NOT NULL DEFAULT 0,
+    registered_at    DOUBLE PRECISION NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())
+);
+
+CREATE INDEX IF NOT EXISTS idx_season_referrals_inviter
+    ON season_referrals (inviter_chat_id);
+
+CREATE TABLE IF NOT EXISTS season_generations (
+    id            BIGSERIAL        PRIMARY KEY,
+    chat_id       BIGINT           NOT NULL,
+    metadata_hash TEXT             NOT NULL DEFAULT '',
+    status        TEXT             NOT NULL DEFAULT 'pending',
+    created_at    DOUBLE PRECISION NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())
+);
+
+CREATE INDEX IF NOT EXISTS idx_season_generations_chat_ts
+    ON season_generations (chat_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_season_generations_meta
+    ON season_generations (metadata_hash)
+    WHERE metadata_hash != '';
+
+CREATE TABLE IF NOT EXISTS content_events (
+    id          BIGSERIAL        PRIMARY KEY,
+    event_type  TEXT             NOT NULL,
+    payload     JSONB            NOT NULL DEFAULT '{}'::jsonb,
+    created_at  DOUBLE PRECISION NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW()),
+    delivered   BOOLEAN          NOT NULL DEFAULT FALSE
+);
+
+CREATE TABLE IF NOT EXISTS season_broadcasts_log (
+    id           BIGSERIAL        PRIMARY KEY,
+    chat_id      BIGINT           NOT NULL,
+    event_id     BIGINT           NOT NULL REFERENCES content_events(id),
+    delivered_at DOUBLE PRECISION NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW()),
+    status       TEXT             NOT NULL DEFAULT 'sent'
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_season_broadcasts_log_chat_event
+    ON season_broadcasts_log (chat_id, event_id);
+"""
+
+
 # ---------------------------------------------------------------------------
 # Models
 # ---------------------------------------------------------------------------
@@ -122,6 +183,7 @@ class UserStore:
         async with self._pool.acquire() as conn:
             await conn.execute("SET TIME ZONE 'UTC'")
             await conn.execute(_SCHEMA)
+            await conn.execute(_SCHEMA_SEASON)
         log.info("user_store: initialized postgres pool")
 
     async def close(self) -> None:
@@ -470,6 +532,117 @@ class UserStore:
                 int(chat_id), limit,
             )
         return [_row_to_ledger(r) for r in rows]
+
+    # ------------------------------------------------------------------
+    # Season flow (Hooks S1) — onboarding state + status flags
+    # ------------------------------------------------------------------
+
+    async def get_season_state(self, chat_id: int) -> Optional[dict]:
+        """Return season-flow fields for a user, or None if user is unknown."""
+        pool = self._require_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT intro_step, intro_completed, updates_enabled,
+                       update_frequency, account_status, waitlist,
+                       referrer_tier, referrals_count, total_gens, paid_until
+                FROM blast_users
+                WHERE chat_id = $1
+                """,
+                int(chat_id),
+            )
+        if row is None:
+            return None
+        return {
+            "intro_step": int(row["intro_step"] or 0),
+            "intro_completed": bool(row["intro_completed"]),
+            "updates_enabled": bool(row["updates_enabled"]),
+            "update_frequency": str(row["update_frequency"] or "finals_only"),
+            "account_status": str(row["account_status"] or "new_free"),
+            "waitlist": bool(row["waitlist"]),
+            "referrer_tier": int(row["referrer_tier"] or 0),
+            "referrals_count": int(row["referrals_count"] or 0),
+            "total_gens": int(row["total_gens"] or 0),
+            "paid_until": float(row["paid_until"] or 0.0),
+        }
+
+    async def set_intro_step(self, chat_id: int, step: int) -> None:
+        pool = self._require_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE blast_users SET intro_step = $2 WHERE chat_id = $1",
+                int(chat_id), int(step),
+            )
+
+    async def complete_intro(
+        self,
+        chat_id: int,
+        *,
+        update_frequency: str,
+    ) -> None:
+        """Flip intro_completed=TRUE and store the user's notification choice."""
+        freq = update_frequency if update_frequency in ("all", "finals_only") else "finals_only"
+        pool = self._require_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """
+                UPDATE blast_users
+                SET intro_completed  = TRUE,
+                    intro_step       = 3,
+                    updates_enabled  = TRUE,
+                    update_frequency = $2,
+                    last_active      = $3
+                WHERE chat_id = $1
+                """,
+                int(chat_id), freq, time.time(),
+            )
+
+    async def set_notification_pref(self, chat_id: int, choice: str) -> None:
+        """Update updates_enabled + update_frequency from a single user choice.
+
+        choice ∈ {'all', 'finals_only', 'off'}.
+        """
+        if choice not in ("all", "finals_only", "off"):
+            raise ValueError(f"invalid notification choice: {choice!r}")
+        enabled = choice != "off"
+        freq = choice if choice != "off" else "finals_only"
+        pool = self._require_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """
+                UPDATE blast_users
+                SET updates_enabled  = $2,
+                    update_frequency = $3
+                WHERE chat_id = $1
+                """,
+                int(chat_id), enabled, freq,
+            )
+
+    async def set_waitlist(self, chat_id: int, *, joined: bool) -> None:
+        pool = self._require_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE blast_users SET waitlist = $2 WHERE chat_id = $1",
+                int(chat_id), bool(joined),
+            )
+
+    async def set_account_status(self, chat_id: int, status: str) -> None:
+        if status not in ("new_free", "exhausted_free", "paid_active", "paid_churned"):
+            raise ValueError(f"invalid account_status: {status!r}")
+        pool = self._require_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE blast_users SET account_status = $2 WHERE chat_id = $1",
+                int(chat_id), status,
+            )
+
+    async def touch_last_active(self, chat_id: int) -> None:
+        pool = self._require_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE blast_users SET last_active = $2 WHERE chat_id = $1",
+                int(chat_id), time.time(),
+            )
 
 
 # ---------------------------------------------------------------------------
