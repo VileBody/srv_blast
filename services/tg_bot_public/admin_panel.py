@@ -27,6 +27,7 @@ from core.llm_worker_types import LLM_WORKER_TYPES
 from services.generation_runtime import GenerationRuntimeStore
 from services.orchestrator.windows_node_pool import normalize_windows_urls, runtime_windows_urls_key
 
+from .credits_db import normalize_package_code as _normalize_pkg_code
 from .render_node_pool import (
     list_render_servers,
     probe_render_node,
@@ -1602,9 +1603,9 @@ def build_app(
             revenue_bucket = "month"
         revenue_periods = 12 if revenue_bucket == "month" else 12
 
-        total, ratings_v2, funnel_raw, stage_counts, users, recent, payments_summary, period_stats_row, metrics_data, windows_nodes_data, llm_workers_data, webhook_info, revenue_series, subs_summary = await asyncio.gather(
+        total, ratings_raw, funnel_raw, stage_counts, users, recent, payments_summary, period_stats_row, metrics_data, windows_nodes_data, llm_workers_data, webhook_info, revenue_series, subs_summary = await asyncio.gather(
             credits_db.count_users(),
-            credits_db.rating_distribution_v2(),
+            credits_db.rating_distribution(),
             credits_db.funnel_reach_counts(),
             state_store.list_stage_counts(),
             credits_db.list_users(limit=10),
@@ -1619,12 +1620,13 @@ def build_app(
             credits_db.subscriptions_summary(),
         )
 
-        # ── Rating distribution (4 buckets: low / 5-6 / 7-8 / 9-10) ──
-        rating_keys = ["low", "mid_low", "mid_high", "high"]
-        rating_chart_labels = json.dumps([_RATING_LABELS_V2[k] for k in rating_keys])
-        rating_chart_data = json.dumps([int(ratings_v2.get(k, 0)) for k in rating_keys])
-        rating_chart_colors = json.dumps([_RATING_COLORS_V2[k] for k in rating_keys])
-        total_ratings = sum(int(ratings_v2.get(k, 0)) for k in rating_keys)
+        # ── Rating distribution (3 buckets matching data we log: low/5-6/7-10) ──
+        rating_map = {r["rating"]: r["count"] for r in ratings_raw}
+        rating_keys = ["low", "mid_low", "high"]
+        rating_chart_labels = json.dumps([_RATING_LABELS[k] for k in rating_keys])
+        rating_chart_data = json.dumps([int(rating_map.get(k, 0)) for k in rating_keys])
+        rating_chart_colors = json.dumps([_RATING_COLORS[k] for k in rating_keys])
+        total_ratings = sum(int(rating_map.get(k, 0)) for k in rating_keys)
 
         # ── Funnel grouped into 3 stage mini-cards + other ──
         funnel_map = {r["event"]: r["count"] for r in funnel_raw}
@@ -1786,7 +1788,11 @@ def build_app(
         # ── Revenue chart payload ──
         rev_labels_json = json.dumps([str(r["bucket"]) for r in revenue_series])
         rev_data_json = json.dumps([int(r["rub"]) for r in revenue_series])
-        rev_bucket_lbl = "Месяцы" if revenue_bucket == "month" else "Недели"
+        rev_bucket_lbl = (
+            "Текущий месяц · по дням"
+            if revenue_bucket == "month"
+            else f"Последние {len(revenue_series)} недель"
+        )
         rev_week_btn = (
             f'<a href="/admin/?rev_bucket=week" class="btn" '
             f'style="{"background:#2c3e50;font-weight:700" if revenue_bucket == "week" else "background:#bdc3c7;color:#333"}">Неделя</a>'
@@ -1821,14 +1827,14 @@ def build_app(
         <div class="card">
           <h2>Выручка: {visible_rub:,}&nbsp;&#8381;</h2>
           <div style="display:flex;gap:6px;margin-bottom:8px">{rev_week_btn} {rev_month_btn}
-            <span style="color:#888;align-self:center;margin-left:8px">{rev_bucket_lbl} · последние {len(revenue_series)}</span>
+            <span style="color:#888;align-self:center;margin-left:8px">{rev_bucket_lbl}</span>
           </div>
           <canvas id="revenueChart" height="80"></canvas>
         </div>
 
         <div class="card">
           <h2>Оценки видео</h2>
-          {"<p>Нет данных</p>" if total_ratings == 0 else f'<canvas id="ratingsChart" height="120"></canvas><p style="text-align:center;color:#888;font-size:0.85em">Всего оценок: {total_ratings}</p>'}
+          {"<p>Нет данных</p>" if total_ratings == 0 else f'<div style="max-width:280px;margin:0 auto"><canvas id="ratingsChart"></canvas></div><p style="text-align:center;color:#888;font-size:0.85em">Всего оценок: {total_ratings}</p>'}
         </div>
 
         <div style="display:flex;gap:12px;flex-wrap:wrap">
@@ -1944,8 +1950,10 @@ def build_app(
             },
             options: {
               responsive: true,
+              maintainAspectRatio: true,
+              aspectRatio: 1.4,
               plugins: {
-                legend: { position: "bottom", labels: { padding: 16, font: { size: 13 } } },
+                legend: { position: "bottom", labels: { padding: 12, font: { size: 12 } } },
               }
             }
           });
@@ -4893,10 +4901,15 @@ def build_app(
 
     def _bought_packages_html(bought: list, has_sub: bool) -> str:
         labels = []
-        bought_set = {str(p) for p in (bought or [])}
-        if has_sub and "15" in bought_set:
+        # payments.package may be either a numeric code or a Russian name.
+        codes_bought: set[str] = set()
+        for p in (bought or []):
+            code = _normalize_pkg_code(str(p))
+            if code:
+                codes_bought.add(code)
+        if has_sub and "15" in codes_bought:
             labels.append('<span class="badge" style="background:#16a085;color:white">Бласт (sub)</span>')
-            bought_set.discard("15")
+            codes_bought.discard("15")
         elif has_sub:
             labels.append('<span class="badge" style="background:#16a085;color:white">Подписка</span>')
         pkg_styles = {
@@ -4906,7 +4919,7 @@ def build_app(
             "50": ('Импульс', '#c0392b'),
         }
         for code in ("5", "15", "30", "50"):
-            if code in bought_set:
+            if code in codes_bought:
                 lbl, color = pkg_styles[code]
                 labels.append(f'<span class="badge" style="background:{color};color:white">{lbl}</span>')
         return " ".join(labels) if labels else '<span style="color:#999">—</span>'
@@ -5044,8 +5057,9 @@ def build_app(
             def esc(v: Any) -> str:
                 s = str(v or "").replace('"', '""')
                 return f'"{s}"' if ("," in s or '"' in s) else s
+            code_to_slug = {"5": "trial", "15": "blast", "30": "glow", "50": "impulse"}
             products_str = "/".join(
-                {"5": "trial", "15": "blast", "30": "glow", "50": "impulse"}.get(str(p), str(p))
+                code_to_slug.get(_normalize_pkg_code(str(p)), str(p))
                 for p in (r.get("bought_packages") or [])
             )
             sub_str = "yes" if r.get("has_active_subscription") else ""

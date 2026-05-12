@@ -170,52 +170,69 @@ def _norm_text(value: Any, *, max_len: int = 160) -> str:
     return compact[:max_len]
 
 
+# payments.package is historically stored as either a numeric code ('5', '15',
+# '30', '50') or the human name ('Триал', 'Бласт', 'Глоу', 'Импульс'),
+# depending on which code path created the row. Filters and rendering must
+# accept BOTH spellings for the same product.
+_PKG_ALIASES = {
+    "trial":   ("'5'", "'Триал'"),
+    "blast":   ("'15'", "'Бласт'"),
+    "glow":    ("'30'", "'Глоу'"),
+    "impulse": ("'50'", "'Импульс'"),
+}
+
+
 def _client_product_where(tg_id_col: str, product: str) -> str:
     """SQL fragment for filtering clients by purchased product.
 
-    Returns "" when no filter applies. The fragment references `tg_id_col`
-    (e.g. 'u.tg_id') for the user-side join and produces a fully-qualified
-    EXISTS / NOT EXISTS expression — no parameters, only literals.
+    Returns "" when no filter applies. Accepts both legacy numeric codes
+    and the Russian package names actually stored by the bot today.
     """
     if not product:
         return ""
-    if product == "trial":
+
+    if product in _PKG_ALIASES:
+        aliases = _PKG_ALIASES[product]
+        in_list = ", ".join(aliases)
         return (
             f"EXISTS (SELECT 1 FROM payments p WHERE p.tg_id = {tg_id_col} "
-            f"AND p.status = 'CONFIRMED' AND p.package = '5')"
-        )
-    if product == "blast":
-        # one-off Blast purchase, no active subscription
-        return (
-            f"EXISTS (SELECT 1 FROM payments p WHERE p.tg_id = {tg_id_col} "
-            f"AND p.status = 'CONFIRMED' AND p.package = '15') "
-            f"AND NOT EXISTS (SELECT 1 FROM subscriptions s WHERE s.tg_id = {tg_id_col} "
-            f"AND s.status = 'active' AND s.package = '15')"
+            f"AND p.status = 'CONFIRMED' AND p.package IN ({in_list}))"
         )
     if product == "blast_subscription":
+        b_aliases = ", ".join(_PKG_ALIASES["blast"])
         return (
             f"EXISTS (SELECT 1 FROM subscriptions s WHERE s.tg_id = {tg_id_col} "
-            f"AND s.status = 'active' AND s.package = '15')"
-        )
-    if product == "glow":
-        return (
-            f"EXISTS (SELECT 1 FROM payments p WHERE p.tg_id = {tg_id_col} "
-            f"AND p.status = 'CONFIRMED' AND p.package = '30')"
-        )
-    if product == "impulse":
-        return (
-            f"EXISTS (SELECT 1 FROM payments p WHERE p.tg_id = {tg_id_col} "
-            f"AND p.status = 'CONFIRMED' AND p.package = '50')"
+            f"AND s.status = 'active' AND s.package IN ({b_aliases}))"
         )
     if product == "any":
         return (
-            f"EXISTS (SELECT 1 FROM payments p WHERE p.tg_id = {tg_id_col} AND p.status = 'CONFIRMED')"
+            f"EXISTS (SELECT 1 FROM payments p WHERE p.tg_id = {tg_id_col} "
+            f"AND p.status = 'CONFIRMED')"
         )
     if product == "none":
         return (
             f"NOT EXISTS (SELECT 1 FROM payments p WHERE p.tg_id = {tg_id_col} AND p.status = 'CONFIRMED') "
             f"AND NOT EXISTS (SELECT 1 FROM subscriptions s WHERE s.tg_id = {tg_id_col} AND s.status = 'active')"
         )
+    return ""
+
+
+def normalize_package_code(value: str) -> str:
+    """Map a stored payments.package value to a canonical code (5/15/30/50).
+
+    Returns "" if the value isn't recognised.
+    """
+    s = str(value or "").strip()
+    if not s:
+        return ""
+    name_to_code = {
+        "Триал": "5", "Бласт": "15", "Глоу": "30", "Импульс": "50",
+        "trial": "5", "blast": "15", "glow": "30", "impulse": "50",
+    }
+    if s in name_to_code:
+        return name_to_code[s]
+    if s in {"5", "15", "30", "50"}:
+        return s
     return ""
 
 
@@ -2092,48 +2109,67 @@ class CreditsDB:
     async def revenue_timeseries(
         self, *, bucket: str = "month", periods: int = 12,
     ) -> List[Dict[str, Any]]:
-        """Revenue per week or per month from CONFIRMED payments.
+        """Revenue chart series from CONFIRMED payments.
 
-        Returns list ordered oldest → newest:
-          [{"bucket": "2025-11", "rub": 12345}, ...]
+        bucket="month" → current calendar month, one bar per DAY (1..N).
+        bucket="week"  → last `periods` weeks, one bar per ISO week.
+
+        Returns list ordered oldest → newest: [{"bucket": "...", "rub": N}, ...]
         """
         bucket = str(bucket or "month").lower()
         if bucket not in {"week", "month"}:
             bucket = "month"
-        periods = max(1, min(int(periods or 12), 60))
-        if bucket == "month":
-            trunc = "month"
-            label_fmt = "YYYY-MM"
-            step = "1 month"
-        else:
-            trunc = "week"
-            label_fmt = "IYYY-IW"
-            step = "1 week"
         pool = self._pool_or_fail()
-        async with pool.acquire() as conn:
-            rows = await conn.fetch(
-                f"""
-                WITH buckets AS (
-                    SELECT generate_series(
-                        DATE_TRUNC('{trunc}', NOW()) - ($1::INT - 1) * INTERVAL '{step}',
-                        DATE_TRUNC('{trunc}', NOW()),
-                        INTERVAL '{step}'
-                    ) AS b
+        if bucket == "month":
+            async with pool.acquire() as conn:
+                rows = await conn.fetch(
+                    """
+                    WITH buckets AS (
+                        SELECT generate_series(
+                            DATE_TRUNC('month', NOW()),
+                            (DATE_TRUNC('month', NOW()) + INTERVAL '1 month' - INTERVAL '1 day'),
+                            INTERVAL '1 day'
+                        ) AS b
+                    )
+                    SELECT
+                      TO_CHAR(b.b, 'DD') AS lbl,
+                      b.b AS bucket_start,
+                      COALESCE((
+                        SELECT SUM(amount_rub)::BIGINT FROM payments p
+                         WHERE p.status = 'CONFIRMED'
+                           AND p.created_at >= b.b
+                           AND p.created_at <  b.b + INTERVAL '1 day'
+                      ), 0) AS rub
+                    FROM buckets b
+                    ORDER BY b.b ASC
+                    """,
                 )
-                SELECT
-                  TO_CHAR(b.b, '{label_fmt}') AS lbl,
-                  b.b AS bucket_start,
-                  COALESCE((
-                    SELECT SUM(amount_rub)::BIGINT FROM payments p
-                     WHERE p.status = 'CONFIRMED'
-                       AND p.created_at >= b.b
-                       AND p.created_at <  b.b + INTERVAL '{step}'
-                  ), 0) AS rub
-                FROM buckets b
-                ORDER BY b.b ASC
-                """,
-                int(periods),
-            )
+        else:
+            periods = max(1, min(int(periods or 12), 60))
+            async with pool.acquire() as conn:
+                rows = await conn.fetch(
+                    """
+                    WITH buckets AS (
+                        SELECT generate_series(
+                            DATE_TRUNC('week', NOW()) - ($1::INT - 1) * INTERVAL '1 week',
+                            DATE_TRUNC('week', NOW()),
+                            INTERVAL '1 week'
+                        ) AS b
+                    )
+                    SELECT
+                      TO_CHAR(b.b, 'IYYY-"W"IW') AS lbl,
+                      b.b AS bucket_start,
+                      COALESCE((
+                        SELECT SUM(amount_rub)::BIGINT FROM payments p
+                         WHERE p.status = 'CONFIRMED'
+                           AND p.created_at >= b.b
+                           AND p.created_at <  b.b + INTERVAL '1 week'
+                      ), 0) AS rub
+                    FROM buckets b
+                    ORDER BY b.b ASC
+                    """,
+                    int(periods),
+                )
         return [
             {"bucket": str(r["lbl"]), "rub": int(r["rub"] or 0)}
             for r in rows
