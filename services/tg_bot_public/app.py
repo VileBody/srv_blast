@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 import html
 import json
 import logging
@@ -2444,6 +2445,7 @@ class BlastBotApp:
             start_admin_panel(
                 self.credits_db, self.store, self.settings,
                 tbank_client=self.tbank, bot_ref=self._bot_ref,
+                bot_app=self,
             ),
             name="admin_panel",
         )
@@ -5174,84 +5176,151 @@ class BlastBotApp:
                 log.warning("payment poll loop error=%r", e)
             await asyncio.sleep(30)
 
-    async def _subscription_charge_loop(self) -> None:
-        """Once per day, charge active subscriptions that are due."""
-        while True:
+    # ── Subscription charge loop: keys for heartbeat + cross-instance lock ──
+    _SUB_LOOP_LOCK_KEY = "tg_bot_public:sub_charge_loop:lock"
+    _SUB_LOOP_HEARTBEAT_KEY = "tg_bot_public:sub_charge_loop:last_tick"
+    _SUB_LOOP_STATS_KEY = "tg_bot_public:sub_charge_loop:last_stats"
+
+    async def charge_subscription_once(self, sub: dict, *, manual: bool = False) -> tuple[bool, str]:
+        """Run a single Charge for one subscription row.
+
+        Used by the daily loop and by the admin manual-trigger endpoint.
+        Returns (success, error_message). On failure, the subscription row
+        is already advanced (retries+=1 or paused).
+        """
+        if not self.tbank:
+            return False, "tbank not configured"
+        tg_id = sub["tg_id"]
+        pkg = sub["package"]
+        rebill_id = sub["rebill_id"]
+        amount_rub = sub["amount_rub"]
+        sub_id = sub["id"]
+        bot = self._require_bot()
+
+        order_id = f"{tg_id}-{pkg.replace(' ', '_')}-sub-{uuid.uuid4().hex[:8]}"
+        last_utm = await self.credits_db.get_last_utm(tg_id)
+        await self.credits_db.create_recurrent_payment(
+            order_id, tg_id, amount_rub, pkg, utm=last_utm,
+        )
+        desc = f"Подписка «{pkg}» — ежемесячное списание"
+        if manual:
+            desc = f"Подписка «{pkg}» — ручное списание (admin)"
+        payment_id = await self.tbank.init_for_charge(
+            amount_rub=amount_rub, order_id=order_id, description=desc,
+        )
+        if not payment_id:
+            log.warning("sub charge init failed sub=%s tg_id=%s manual=%s", sub_id, tg_id, manual)
+            new_status = await self.credits_db.subscription_charge_failed(sub_id)
+            if new_status == "paused":
+                await self._notify_subscription_paused(bot, tg_id, pkg)
+            return False, "init_for_charge failed"
+
+        success, err = await self.tbank.charge(payment_id, rebill_id)
+        if success:
+            await self.credits_db.update_payment_status(order_id, "confirmed", payment_id)
+            credits_to_add = self._PKG_CREDITS.get(pkg, 5)
+            await self.credits_db.add_credits(tg_id, credits_to_add, "subscription", f"Подписка «{pkg}»")
+            await self.credits_db.subscription_charge_success(sub_id)
+            event = "subscription_charged_manual" if manual else "subscription_charged"
+            await self.credits_db.log_event(tg_id, event, f"{pkg} +{credits_to_add}")
+            bal = await self.credits_db.get_balance(tg_id)
             try:
-                if self.tbank:
-                    due = await self.credits_db.get_subscriptions_due()
-                    bot = self._require_bot()
-                    for sub in due:
-                        try:
-                            tg_id = sub["tg_id"]
-                            pkg = sub["package"]
-                            rebill_id = sub["rebill_id"]
-                            amount_rub = sub["amount_rub"]
-                            sub_id = sub["id"]
+                await bot.send_message(
+                    tg_id,
+                    f"Подписка «{pkg}» продлена!\n\n"
+                    f"Начислено кредитов: {credits_to_add}\n"
+                    f"Баланс: {bal}\n\n"
+                    "Отправь трек, чтобы начать генерацию.\n\n"
+                    "/cancelsubscription — отменить подписку",
+                    reply_markup=_kb(["Отправить трек"]),
+                )
+            except Exception as e:
+                log.warning("sub charge notify user=%s err=%s", tg_id, e)
+            username = ""
+            try:
+                user_data = await self.credits_db.get_user(tg_id)
+                username = user_data.get("username", "") if user_data else ""
+            except Exception:
+                pass
+            uname = f"@{username}" if username else str(tg_id)
+            await self._notify_manager_payment(uname, pkg, amount_rub, "Подписка" + (" (ручное)" if manual else ""))
+            await self._notify_finance_bot_income(amount_rub, uname, pkg)
+            log.info("subscription charged sub=%s tg_id=%s pkg=%s manual=%s", sub_id, tg_id, pkg, manual)
+            return True, ""
 
-                            # Init a new payment for Charge
-                            order_id = f"{tg_id}-{pkg.replace(' ', '_')}-sub-{uuid.uuid4().hex[:8]}"
-                            last_utm = await self.credits_db.get_last_utm(tg_id)
-                            await self.credits_db.create_recurrent_payment(
-                                order_id, tg_id, amount_rub, pkg, utm=last_utm,
-                            )
-                            payment_id = await self.tbank.init_for_charge(
-                                amount_rub=amount_rub,
-                                order_id=order_id,
-                                description=f"Подписка «{pkg}» — ежемесячное списание",
-                            )
-                            if not payment_id:
-                                log.warning("sub charge init failed sub=%s tg_id=%s", sub_id, tg_id)
-                                new_status = await self.credits_db.subscription_charge_failed(sub_id)
-                                if new_status == "paused":
-                                    await self._notify_subscription_paused(bot, tg_id, pkg)
-                                continue
+        await self.credits_db.update_payment_status(order_id, "charge_failed", payment_id)
+        new_status = await self.credits_db.subscription_charge_failed(sub_id)
+        await self.credits_db.log_event(tg_id, "subscription_charge_failed", err)
+        if new_status == "paused":
+            await self._notify_subscription_paused(bot, tg_id, pkg)
+        else:
+            log.info("sub charge failed, will retry sub=%s retries=%s", sub_id, sub["charge_retries"] + 1)
+        return False, err
 
-                            # Charge the saved card
-                            success, err = await self.tbank.charge(payment_id, rebill_id)
-                            if success:
-                                await self.credits_db.update_payment_status(order_id, "confirmed", payment_id)
-                                credits_to_add = self._PKG_CREDITS.get(pkg, 5)
-                                await self.credits_db.add_credits(tg_id, credits_to_add, "subscription", f"Подписка «{pkg}»")
-                                await self.credits_db.subscription_charge_success(sub_id)
-                                await self.credits_db.log_event(tg_id, "subscription_charged", f"{pkg} +{credits_to_add}")
-                                bal = await self.credits_db.get_balance(tg_id)
-                                try:
-                                    await bot.send_message(
-                                        tg_id,
-                                        f"Подписка «{pkg}» продлена!\n\n"
-                                        f"Начислено кредитов: {credits_to_add}\n"
-                                        f"Баланс: {bal}\n\n"
-                                        "Отправь трек, чтобы начать генерацию.\n\n"
-                                        "/cancelsubscription — отменить подписку",
-                                        reply_markup=_kb(["Отправить трек"]),
-                                    )
-                                except Exception as e:
-                                    log.warning("sub charge notify user=%s err=%s", tg_id, e)
-                                username = ""
-                                try:
-                                    user_data = await self.credits_db.get_user(tg_id)
-                                    username = user_data.get("username", "") if user_data else ""
-                                except Exception:
-                                    pass
-                                uname = f"@{username}" if username else str(tg_id)
-                                await self._notify_manager_payment(uname, pkg, amount_rub, "Подписка")
-                                await self._notify_finance_bot_income(amount_rub, uname, pkg)
-                                log.info("subscription charged sub=%s tg_id=%s pkg=%s", sub_id, tg_id, pkg)
-                            else:
-                                await self.credits_db.update_payment_status(order_id, "charge_failed", payment_id)
-                                new_status = await self.credits_db.subscription_charge_failed(sub_id)
-                                await self.credits_db.log_event(tg_id, "subscription_charge_failed", err)
-                                if new_status == "paused":
-                                    await self._notify_subscription_paused(bot, tg_id, pkg)
+    async def _subscription_charge_loop(self) -> None:
+        """Once per day, charge active subscriptions that are due.
+
+        Cross-instance safe: SET NX EX advisory lock prevents two bot replicas
+        from racing the same Charge. Writes a heartbeat marker to Redis at the
+        start of every successful iteration so the admin dashboard can show
+        liveness.
+        """
+        instance_id = uuid.uuid4().hex[:12]
+        loop_ttl_s = 7200  # 2h — far longer than any iteration but expires if process dies
+        heartbeat_ttl_s = 172800  # 2 days — admin reads it for liveness
+
+        while True:
+            acquired = False
+            try:
+                redis = self.store.redis
+                acquired = bool(
+                    await redis.set(self._SUB_LOOP_LOCK_KEY, instance_id, nx=True, ex=loop_ttl_s)
+                )
+                if not acquired:
+                    log.info("sub_charge_loop: lock held by another instance, skipping tick")
+                else:
+                    await redis.set(
+                        self._SUB_LOOP_HEARTBEAT_KEY,
+                        datetime.now(timezone.utc).isoformat(),
+                        ex=heartbeat_ttl_s,
+                    )
+                    succeeded = 0
+                    failed = 0
+                    if self.tbank:
+                        due = await self.credits_db.get_subscriptions_due()
+                        for sub in due:
+                            try:
+                                ok, _ = await self.charge_subscription_once(sub, manual=False)
+                                if ok:
+                                    succeeded += 1
                                 else:
-                                    log.info("sub charge failed, will retry sub=%s retries=%s", sub_id, sub["charge_retries"] + 1)
-                        except Exception as e:
-                            log.warning("sub charge error sub=%s err=%r", sub.get("id"), e)
+                                    failed += 1
+                            except Exception as e:
+                                failed += 1
+                                log.warning("sub charge error sub=%s err=%r", sub.get("id"), e)
+                    await redis.set(
+                        self._SUB_LOOP_STATS_KEY,
+                        json.dumps({
+                            "ts": datetime.now(timezone.utc).isoformat(),
+                            "succeeded": succeeded,
+                            "failed": failed,
+                            "instance": instance_id,
+                        }),
+                        ex=heartbeat_ttl_s,
+                    )
             except asyncio.CancelledError:
                 raise
             except Exception as e:
                 log.warning("subscription charge loop error=%r", e)
+            finally:
+                if acquired:
+                    try:
+                        # Best-effort lock release; expiry covers crashes.
+                        cur = await self.store.redis.get(self._SUB_LOOP_LOCK_KEY)
+                        if cur == instance_id:
+                            await self.store.redis.delete(self._SUB_LOOP_LOCK_KEY)
+                    except Exception:
+                        pass
             await asyncio.sleep(86400)  # once per day
 
     async def _notify_subscription_paused(self, bot: Bot, tg_id: int, pkg: str) -> None:

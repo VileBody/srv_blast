@@ -123,6 +123,39 @@ _RATING_COLORS = {
     "high": "#27ae60",
 }
 
+# 4-bucket rating breakdown for the dashboard (low / 5-6 / 7-8 / 9-10).
+_RATING_LABELS_V2 = {
+    "low": "1-4",
+    "mid_low": "5-6",
+    "mid_high": "7-8",
+    "high": "9-10",
+}
+_RATING_COLORS_V2 = {
+    "low": "#e74c3c",
+    "mid_low": "#f39c12",
+    "mid_high": "#3498db",
+    "high": "#27ae60",
+}
+
+# Funnel grouping for the dashboard mini-cards (split by lifecycle stage).
+_FUNNEL_GROUPS = (
+    ("Генерация", "#3498db", [
+        "start", "subscription_ok", "audio_uploaded",
+        "generation_started", "generation_done",
+    ]),
+    ("Питч", "#9b59b6", [
+        "rate_video", "sales_pitch",
+    ]),
+    ("Продажа", "#27ae60", [
+        "view_packages", "purchase_intent", "purchase_intent_recurrent",
+        "payment_confirmed", "subscription_charged",
+    ]),
+)
+_FUNNEL_OTHER_EVENTS = (
+    "survey_opened", "survey_done", "referral_sent", "referral_matched",
+    "admin_dm",
+)
+
 # Canonical funnel order for visualization.
 # Acquisition → activation → engagement → monetization. Branches like feedback
 # form / referral / manager DM live alongside the purchase path.
@@ -863,6 +896,7 @@ _BASE_HEAD = """
   <a href="/admin/" class="brand">Blast Admin</a>
   <a href="/admin/">Dashboard</a>
   <a href="/admin/clients">Clients</a>
+  <a href="/admin/subscriptions">Subscriptions</a>
   <a href="/admin/tiers">Tiers</a>
   <a href="/admin/broadcasts">Broadcasts</a>
   <a href="/admin/lifecycle">Triggers</a>
@@ -1067,6 +1101,7 @@ def build_app(
     settings: "Settings",
     tbank_client: "TBankClient | None" = None,
     bot_ref: "list | None" = None,
+    bot_app: "Any | None" = None,
 ) -> FastAPI:
     app = FastAPI(docs_url=None, redoc_url=None)
     security = HTTPBasic()
@@ -1561,9 +1596,15 @@ def build_app(
             active_period = "30d"
             _, period_from, period_to = _PERIOD_PRESETS["30d"]
 
-        total, ratings, funnel_raw, stage_counts, users, recent, payments_summary, period_stats_row, metrics_data, windows_nodes_data, llm_workers_data, webhook_info = await asyncio.gather(
+        # Revenue chart: weekly vs monthly toggle (default "month").
+        revenue_bucket = str(request.query_params.get("rev_bucket", "month")).strip().lower()
+        if revenue_bucket not in {"week", "month"}:
+            revenue_bucket = "month"
+        revenue_periods = 12 if revenue_bucket == "month" else 12
+
+        total, ratings_v2, funnel_raw, stage_counts, users, recent, payments_summary, period_stats_row, metrics_data, windows_nodes_data, llm_workers_data, webhook_info, revenue_series, subs_summary = await asyncio.gather(
             credits_db.count_users(),
-            credits_db.rating_distribution(),
+            credits_db.rating_distribution_v2(),
             credits_db.funnel_reach_counts(),
             state_store.list_stage_counts(),
             credits_db.list_users(limit=10),
@@ -1574,32 +1615,58 @@ def build_app(
             _safe_get_windows_nodes(),
             _safe_get_llm_workers(),
             _safe_get_webhook_info(),
+            credits_db.revenue_timeseries(bucket=revenue_bucket, periods=revenue_periods),
+            credits_db.subscriptions_summary(),
         )
 
-        # ── Rating distribution for doughnut chart ──
-        rating_map = {r["rating"]: r["count"] for r in ratings}
-        chart_labels = json.dumps([_RATING_LABELS.get(k, k) for k in ["low", "mid_low", "high"]])
-        chart_data = json.dumps([rating_map.get(k, 0) for k in ["low", "mid_low", "high"]])
-        chart_colors = json.dumps([_RATING_COLORS.get(k, "#999") for k in ["low", "mid_low", "high"]])
-        total_ratings = sum(rating_map.values())
+        # ── Rating distribution (4 buckets: low / 5-6 / 7-8 / 9-10) ──
+        rating_keys = ["low", "mid_low", "mid_high", "high"]
+        rating_chart_labels = json.dumps([_RATING_LABELS_V2[k] for k in rating_keys])
+        rating_chart_data = json.dumps([int(ratings_v2.get(k, 0)) for k in rating_keys])
+        rating_chart_colors = json.dumps([_RATING_COLORS_V2[k] for k in rating_keys])
+        total_ratings = sum(int(ratings_v2.get(k, 0)) for k in rating_keys)
 
-        # ── Funnel reach counts with conversion ──
+        # ── Funnel grouped into 3 stage mini-cards + other ──
         funnel_map = {r["event"]: r["count"] for r in funnel_raw}
-        max_funnel = max(funnel_map.values()) if funnel_map else 1
-        first_cnt = funnel_map.get(_FUNNEL_ORDER[0], 0) or 1
-        funnel_html = ""
-        for i, event in enumerate(_FUNNEL_ORDER):
-            cnt = funnel_map.get(event, 0)
-            pct = max(15, cnt / max_funnel * 100) if max_funnel > 0 else 15
-            conv = cnt / first_cnt * 100
-            color = _FUNNEL_COLORS[i] if i < len(_FUNNEL_COLORS) else "#999"
-            label = _event_label(event)
-            funnel_html += (
-                f'<div class="funnel-bar-wrap">'
-                f'<div class="funnel-bar" style="width:{pct:.0f}%;background:{color}">'
-                f'<span class="flabel">{label}</span>'
-                f'<span class="fcount">{cnt} <small>({conv:.0f}%)</small></span>'
-                f'</div></div>\n'
+
+        def _funnel_group_html(events: list[str], color: str) -> str:
+            counts = [(ev, int(funnel_map.get(ev, 0))) for ev in events]
+            base = counts[0][1] if counts else 0
+            base = base if base > 0 else 1
+            local_max = max((c for _, c in counts), default=1) or 1
+            out = ""
+            for idx, (ev, cnt) in enumerate(counts):
+                bar_pct = max(15, cnt / local_max * 100) if local_max else 15
+                conv_from_start = cnt / base * 100
+                if idx == 0:
+                    step_lbl = "—"
+                else:
+                    prev = counts[idx - 1][1] or 1
+                    step_lbl = f"{cnt / prev * 100:.0f}% от пред."
+                out += (
+                    f'<div class="funnel-bar-wrap" title="{step_lbl}">'
+                    f'<div class="funnel-bar" style="width:{bar_pct:.0f}%;background:{color}">'
+                    f'<span class="flabel">{_event_label(ev)}</span>'
+                    f'<span class="fcount">{cnt} <small>({conv_from_start:.0f}%)</small></span>'
+                    f'</div></div>\n'
+                )
+            return out or '<p style="color:#999">Нет данных</p>'
+
+        funnel_cards_html = ""
+        for group_title, group_color, group_events in _FUNNEL_GROUPS:
+            funnel_cards_html += (
+                f'<div class="card" style="flex:1;min-width:280px">'
+                f'<h3 style="margin-top:0">Воронка · {group_title}</h3>'
+                f'{_funnel_group_html(list(group_events), group_color)}'
+                f'</div>'
+            )
+
+        other_rows = ""
+        for ev in _FUNNEL_OTHER_EVENTS:
+            cnt = int(funnel_map.get(ev, 0))
+            other_rows += (
+                f'<div class="stage-chip"><div class="count">{cnt}</div>'
+                f'<div class="label">{_event_label(ev)}</div></div>'
             )
 
         # ── Current stage snapshot from indexed Redis counters ──
@@ -1716,110 +1783,175 @@ def build_app(
         </div>
         """
 
-        body = f"""
+        # ── Revenue chart payload ──
+        rev_labels_json = json.dumps([str(r["bucket"]) for r in revenue_series])
+        rev_data_json = json.dumps([int(r["rub"]) for r in revenue_series])
+        rev_bucket_lbl = "Месяцы" if revenue_bucket == "month" else "Недели"
+        rev_week_btn = (
+            f'<a href="/admin/?rev_bucket=week" class="btn" '
+            f'style="{"background:#2c3e50;font-weight:700" if revenue_bucket == "week" else "background:#bdc3c7;color:#333"}">Неделя</a>'
+        )
+        rev_month_btn = (
+            f'<a href="/admin/?rev_bucket=month" class="btn" '
+            f'style="{"background:#2c3e50;font-weight:700" if revenue_bucket == "month" else "background:#bdc3c7;color:#333"}">Месяц</a>'
+        )
+
+        visible_rub = int(payments_summary.get('visible_revenue_rub', 0))
+
+        # ── Subscriptions teaser (links to /admin/subscriptions) ──
+        subs_card = f"""
         <div class="card">
-        <h2>Всего пользователей: {total}</h2>
-        <p>Выручка (CONFIRMED): <strong>{int(payments_summary.get('confirmed_revenue_rub', 0)):,}&nbsp;&#8381;</strong></p>
-        <p>Ожидает списания (AUTHORIZED): <strong>{int(payments_summary.get('authorized_revenue_rub', 0)):,}&nbsp;&#8381;</strong></p>
-        <p>Видимая сумма (CONFIRMED + AUTHORIZED): <strong>{int(payments_summary.get('visible_revenue_rub', 0)):,}&nbsp;&#8381;</strong></p>
-        <div class="chart-row">
-          <div class="chart-box">
-            <h3>Оценки видео</h3>
-            {"<p>Нет данных</p>" if total_ratings == 0 else f'<canvas id="ratingsChart"></canvas><p style="text-align:center;color:#888;font-size:0.85em">Всего оценок: {total_ratings}</p>'}
-          </div>
-          <div class="funnel-box">
-            <h2>Воронка</h2>
-            {funnel_html if funnel_html else '<p>Нет данных</p>'}
+          <h2>Подписки <a href="/admin/subscriptions" style="font-size:0.6em">подробнее →</a></h2>
+          <div class="stage-grid">
+            <div class="stage-chip"><div class="count" style="color:#27ae60">{subs_summary.get('active_cnt', 0)}</div><div class="label">активны</div></div>
+            <div class="stage-chip"><div class="count" style="color:#e74c3c">{subs_summary.get('paused_cnt', 0)}</div><div class="label">на паузе</div></div>
+            <div class="stage-chip"><div class="count">{subs_summary.get('due_today_cnt', 0)}</div><div class="label">сегодня к списанию ({int(subs_summary.get('due_today_rub', 0)):,}&nbsp;&#8381;)</div></div>
+            <div class="stage-chip"><div class="count">{subs_summary.get('due_7d_cnt', 0)}</div><div class="label">7 дней ({int(subs_summary.get('due_7d_rub', 0)):,}&nbsp;&#8381;)</div></div>
+            <div class="stage-chip"><div class="count" style="color:#27ae60">{subs_summary.get('recurrent_ok_30d', 0)}</div><div class="label">списано за 30д ({int(subs_summary.get('recurrent_revenue_30d', 0)):,}&nbsp;&#8381;)</div></div>
+            <div class="stage-chip"><div class="count" style="color:#e74c3c">{subs_summary.get('recurrent_fail_30d', 0)}</div><div class="label">фейлов за 30д</div></div>
           </div>
         </div>
+        """
+
+        body = f"""
+        <div class="card">
+          <h2>Всего пользователей: {total}</h2>
         </div>
 
         <div class="card">
-        <h2>Текущий этап (live)</h2>
-        <div class="stage-grid">{stage_html if stage_html else '<p>Нет данных</p>'}</div>
+          <h2>Выручка: {visible_rub:,}&nbsp;&#8381;</h2>
+          <div style="display:flex;gap:6px;margin-bottom:8px">{rev_week_btn} {rev_month_btn}
+            <span style="color:#888;align-self:center;margin-left:8px">{rev_bucket_lbl} · последние {len(revenue_series)}</span>
+          </div>
+          <canvas id="revenueChart" height="80"></canvas>
+        </div>
+
+        <div class="card">
+          <h2>Оценки видео</h2>
+          {"<p>Нет данных</p>" if total_ratings == 0 else f'<canvas id="ratingsChart" height="120"></canvas><p style="text-align:center;color:#888;font-size:0.85em">Всего оценок: {total_ratings}</p>'}
+        </div>
+
+        <div style="display:flex;gap:12px;flex-wrap:wrap">
+          {funnel_cards_html}
+        </div>
+
+        <div class="card">
+          <h2>Прочие события</h2>
+          <div class="stage-grid">{other_rows or '<p>Нет данных</p>'}</div>
+          <p style="color:#888;font-size:0.85em;margin-top:8px">«Сообщение от менеджера» (admin_dm) — это исходящее сообщение, отправленное оператором через карточку клиента (/admin/users/&lt;tg_id&gt; → форма «Сообщение»).</p>
+        </div>
+
+        {subs_card}
+
+        <div class="card">
+          <h2>Текущий этап (live)</h2>
+          <div class="stage-grid">{stage_html if stage_html else '<p>Нет данных</p>'}</div>
         </div>
 
         {health_card}
 
         <div class="card">
-        <h2>Статистика по периодам</h2>
-        <div style="display:flex;gap:4px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
-          {period_pills_html}
-        </div>
-        <form method="get" action="/admin/" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
-          <label>С: <input type="date" name="date_from" value="{period_date_from_val}"></label>
-          <label>По: <input type="date" name="date_to" value="{period_date_to_val}"></label>
-          <button type="submit">Показать</button>
-          {period_custom_badge}
-        </form>
-        <div class="table-wrap">
-        <table>
-          <tr>
-            <th>Новые пользователи</th>
-            <th>Отписки</th>
-            <th>Стартовали</th>
-            <th>Генерация старт</th>
-            <th>Генерация done</th>
-            <th>Генерация fail</th>
-            <th>Интент покупки</th>
-            <th>Оплат подтвержд.</th>
-            <th>Выручка</th>
-          </tr>
-          <tr>
-            <td>{int(period_stats_row.get('users_new', 0))}</td>
-            <td>{int(period_stats_row.get('bot_blocked_users', 0))}</td>
-            <td>{int(period_stats_row.get('starts_users', 0))}</td>
-            <td>{int(period_stats_row.get('generation_started_users', 0))}</td>
-            <td>{int(period_stats_row.get('generation_done_users', 0))}</td>
-            <td>{int(period_stats_row.get('generation_failed_users', 0))}</td>
-            <td>{int(period_stats_row.get('purchase_intent_users', 0))}</td>
-            <td>{int(period_stats_row.get('paid_orders', 0))}</td>
-            <td>{int(period_stats_row.get('revenue_rub', 0)):,}&nbsp;&#8381;</td>
-          </tr>
-        </table>
-        </div>
+          <h2>Статистика по периодам</h2>
+          <div style="display:flex;gap:4px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
+            {period_pills_html}
+          </div>
+          <form method="get" action="/admin/" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+            <label>С: <input type="date" name="date_from" value="{period_date_from_val}"></label>
+            <label>По: <input type="date" name="date_to" value="{period_date_to_val}"></label>
+            <button type="submit">Показать</button>
+            {period_custom_badge}
+          </form>
+          <div class="table-wrap">
+          <table>
+            <tr>
+              <th>Новые пользователи</th>
+              <th>Отписки</th>
+              <th>Стартовали</th>
+              <th>Генерация старт</th>
+              <th>Генерация done</th>
+              <th>Генерация fail</th>
+              <th>Интент покупки</th>
+              <th>Оплат подтвержд.</th>
+              <th>Выручка</th>
+            </tr>
+            <tr>
+              <td>{int(period_stats_row.get('users_new', 0))}</td>
+              <td>{int(period_stats_row.get('bot_blocked_users', 0))}</td>
+              <td>{int(period_stats_row.get('starts_users', 0))}</td>
+              <td>{int(period_stats_row.get('generation_started_users', 0))}</td>
+              <td>{int(period_stats_row.get('generation_done_users', 0))}</td>
+              <td>{int(period_stats_row.get('generation_failed_users', 0))}</td>
+              <td>{int(period_stats_row.get('purchase_intent_users', 0))}</td>
+              <td>{int(period_stats_row.get('paid_orders', 0))}</td>
+              <td>{int(period_stats_row.get('revenue_rub', 0)):,}&nbsp;&#8381;</td>
+            </tr>
+          </table>
+          </div>
         </div>
 
         {metrics_card}
 
         <div class="card">
-        <h2>Последние пользователи</h2>
-        <div class="table-wrap">
-        <table><tr><th>Username</th><th>tg_id</th><th>Credits</th><th>Updated</th></tr>
-        {user_rows}</table>
-        </div>
+          <h2>Последние пользователи</h2>
+          <div class="table-wrap">
+          <table><tr><th>Username</th><th>tg_id</th><th>Credits</th><th>Updated</th></tr>
+          {user_rows}</table>
+          </div>
         </div>
 
         <div class="card">
-        <h2>Последние действия</h2>
-        <div class="table-wrap">
-        <table><tr><th>tg_id</th><th>Событие</th><th>Детали</th><th>Дата</th></tr>
-        {act_rows}</table>
-        </div>
+          <h2>Последние действия</h2>
+          <div class="table-wrap">
+          <table><tr><th>tg_id</th><th>Событие</th><th>Детали</th><th>Дата</th></tr>
+          {act_rows}</table>
+          </div>
         </div>
 
-        {"" if total_ratings == 0 else '''
         <script>
-        new Chart(document.getElementById("ratingsChart"), {
-          type: "doughnut",
-          data: {
-            labels: ''' + chart_labels + ''',
-            datasets: [{
-              data: ''' + chart_data + ''',
-              backgroundColor: ''' + chart_colors + ''',
-              borderWidth: 2,
-              borderColor: "#fff",
-            }]
-          },
-          options: {
-            responsive: true,
-            plugins: {
-              legend: { position: "bottom", labels: { padding: 16, font: { size: 13 } } },
+        (function() {{
+          const revLabels = {rev_labels_json};
+          const revData = {rev_data_json};
+          if (revLabels.length) {{
+            new Chart(document.getElementById("revenueChart"), {{
+              type: "bar",
+              data: {{
+                labels: revLabels,
+                datasets: [{{
+                  label: "Выручка (₽)",
+                  data: revData,
+                  backgroundColor: "#3498db",
+                  borderRadius: 4,
+                }}]
+              }},
+              options: {{
+                responsive: true,
+                plugins: {{ legend: {{ display: false }} }},
+                scales: {{ y: {{ beginAtZero: true }} }}
+              }}
+            }});
+          }}
+          {"" if total_ratings == 0 else '''
+          new Chart(document.getElementById("ratingsChart"), {
+            type: "doughnut",
+            data: {
+              labels: ''' + rating_chart_labels + ''',
+              datasets: [{
+                data: ''' + rating_chart_data + ''',
+                backgroundColor: ''' + rating_chart_colors + ''',
+                borderWidth: 2,
+                borderColor: "#fff",
+              }]
+            },
+            options: {
+              responsive: true,
+              plugins: {
+                legend: { position: "bottom", labels: { padding: 16, font: { size: 13 } } },
+              }
             }
-          }
-        });
+          });
+          '''}
+        }})();
         </script>
-        '''}
         """
         return _page("Blast Admin", body)
 
@@ -2484,6 +2616,50 @@ def build_app(
                 f"<td>{t['admin_note']}</td><td>{t['created_at']}</td></tr>"
             )
 
+        # Payment history (bot orders only — manual payments are rendered separately).
+        payments_hist = await credits_db.user_payments_history(tg_id, limit=50)
+        pay_rows = ""
+        for p in payments_hist:
+            st = str(p["status"] or "").upper()
+            color = {
+                "CONFIRMED": "#27ae60", "AUTHORIZED": "#3498db",
+                "CHARGE_FAILED": "#c0392b", "REJECTED": "#c0392b",
+                "REFUNDED": "#7f8c8d", "CANCELED": "#7f8c8d",
+            }.get(st, "#95a5a6")
+            kind = "↻ авто" if p["is_recurrent"] else "разовый"
+            pay_rows += (
+                f"<tr><td>{p['created_at']}</td>"
+                f"<td>{p['amount_rub']}₽</td>"
+                f"<td>{html_mod.escape(p['package'])}</td>"
+                f"<td>{kind}</td>"
+                f"<td><span class='badge' style='background:{color};color:white'>{html_mod.escape(st)}</span></td>"
+                f"<td><code style='font-size:0.8em'>{html_mod.escape(p['order_id'])}</code></td></tr>"
+            )
+
+        # Active subscription card data
+        active_sub = await credits_db.get_active_subscription(tg_id)
+        sub_card_html = ""
+        if active_sub:
+            nc = active_sub.get("next_charge_at")
+            nc_str = nc.strftime("%Y-%m-%d %H:%M") if hasattr(nc, "strftime") else "—"
+            rb = active_sub.get("rebill_id", "")
+            rb_masked = (rb[:4] + "…" + rb[-4:]) if len(rb) > 8 else rb
+            sub_card_html = f"""
+            <div class="card">
+              <h3>Активная подписка</h3>
+              <p>Пакет: <b>{html_mod.escape(active_sub['package'])}</b> ·
+                 Сумма: <b>{active_sub['amount_rub']}₽</b> ·
+                 След. списание: <b style="color:#16a085">{nc_str}</b> ·
+                 Retries: {active_sub.get('charge_retries', 0)} ·
+                 RebillId: <code>{html_mod.escape(rb_masked)}</code></p>
+              <form method="post" action="/admin/subscriptions/{active_sub['id']}/charge" style="display:inline"
+                    onsubmit="return confirm('Запустить ручное списание ПРЯМО СЕЙЧАС? Карта будет реально списана.')">
+                <button type="submit" class="btn-success">Списать сейчас (тест)</button>
+              </form>
+              <a href="/admin/subscriptions" class="btn" style="background:#bdc3c7;color:#333">Все подписки →</a>
+            </div>
+            """
+
         # Activity log
         acts = await credits_db.get_activity(tg_id, limit=50)
         act_rows = ""
@@ -2541,6 +2717,16 @@ def build_app(
         <div class="card">
           <h3>Покупки</h3>
           {_purchases_html(purchases)}
+        </div>
+
+        {sub_card_html}
+
+        <div class="card">
+          <h3>История платежей (бот)</h3>
+          <div class="table-wrap">
+          <table><tr><th>Дата</th><th>Сумма</th><th>Пакет</th><th>Тип</th><th>Статус</th><th>Order</th></tr>
+          {pay_rows if pay_rows else '<tr><td colspan="6">Платежей через бота пока нет</td></tr>'}</table>
+          </div>
         </div>
 
         <div class="card">
@@ -4728,23 +4914,47 @@ def build_app(
     @app.get("/admin/clients", response_class=HTMLResponse)
     async def clients_list(request: Request, _user: str = Depends(_check_auth)) -> str:
         page = _query_int(request, "page", default=1, min_value=1, max_value=10_000)
-        min_c = _query_int(request, "min_credits", default=5, min_value=1, max_value=10_000)
+        min_c = _query_int(request, "min_credits", default=5, min_value=0, max_value=10_000)
         tag_filter = str(request.query_params.get("tag") or "").strip()
         product_filter = str(request.query_params.get("product") or "").strip().lower()
         sort = str(request.query_params.get("sort") or "credits")
         per_page = 50
 
-        summary = await credits_db.clients_summary(min_credits=min_c)
+        # When filtering by product, the user may have burned through their
+        # credits — clamp the balance threshold so they still show up.
+        effective_min_c = 0 if product_filter else min_c
+
+        summary = await credits_db.clients_summary(min_credits=effective_min_c)
         rows = await credits_db.list_clients(
-            min_credits=min_c, limit=per_page, offset=(page - 1) * per_page,
+            min_credits=effective_min_c, limit=per_page, offset=(page - 1) * per_page,
             tag=tag_filter, sort=sort, product=product_filter,
         )
         total = await credits_db.count_clients(
-            min_credits=min_c, tag=tag_filter, product=product_filter,
+            min_credits=effective_min_c, tag=tag_filter, product=product_filter,
         )
         total_pages = max(1, (total + per_page - 1) // per_page)
         tags_map = await credits_db.get_tags_for_users([r["tg_id"] for r in rows])
         all_tags = await credits_db.list_all_tags()
+
+        # Pull next_charge_at for displayed users' active subscriptions.
+        next_charge_map: Dict[int, str] = {}
+        if rows:
+            ids = [r["tg_id"] for r in rows]
+            try:
+                pool = credits_db._pool_or_fail()
+                async with pool.acquire() as conn:
+                    nc_rows = await conn.fetch(
+                        "SELECT tg_id, next_charge_at FROM subscriptions "
+                        "WHERE status = 'active' AND tg_id = ANY($1::BIGINT[])",
+                        ids,
+                    )
+                for nr in nc_rows:
+                    nca = nr["next_charge_at"]
+                    next_charge_map[int(nr["tg_id"])] = (
+                        nca.strftime("%Y-%m-%d") if nca else ""
+                    )
+            except Exception as e:
+                log.warning("clients next_charge lookup failed: %s", e)
 
         tag_opts = '<option value="">— все теги —</option>' + "".join(
             f'<option value="{html_mod.escape(t["tag"])}" '
@@ -4762,19 +4972,22 @@ def build_app(
 
         tr = []
         for r in rows:
-            tags = tags_map.get(r["tg_id"], [])
-            tag_badges = " ".join(f'<span class="badge badge-source">{html_mod.escape(t)}</span>' for t in tags)
             uname = f"@{r['username']}" if r['username'] else str(r['tg_id'])
             products_cell = _bought_packages_html(r.get("bought_packages") or [], r.get("has_active_subscription"))
+            next_charge = next_charge_map.get(int(r["tg_id"]), "")
+            next_charge_cell = (
+                f'<span style="color:#16a085">{html_mod.escape(next_charge)}</span>'
+                if next_charge else '<span style="color:#999">—</span>'
+            )
             tr.append(
                 f"<tr><td><a href='/admin/users/{r['tg_id']}'>{html_mod.escape(uname)}</a></td>"
                 f"<td><b>{r['credits']}</b></td>"
                 f"<td>{r['gens_done']}</td>"
                 f"<td>{r['revenue_rub']}₽</td>"
                 f"<td>{products_cell}</td>"
+                f"<td>{next_charge_cell}</td>"
                 f"<td>{html_mod.escape(r['last_activity_at'] or '—')}</td>"
-                f"<td>{html_mod.escape(r['source'] or '(direct)')}</td>"
-                f"<td>{tag_badges}</td></tr>"
+                f"<td>{html_mod.escape(r['source'] or '(direct)')}</td></tr>"
             )
 
         export_qs = (
@@ -4807,8 +5020,8 @@ def build_app(
         <div class="card">
           <div class="table-wrap"><table>
             <tr><th>User</th><th>Баланс</th><th>Генераций</th><th>Выручка</th><th>Продукты</th>
-                <th>Последняя активность</th><th>Источник</th><th>Теги</th></tr>
-            {''.join(tr) if tr else '<tr><td colspan=8>Клиентов пока нет — поднимите порог ниже.</td></tr>'}
+                <th>След. списание</th><th>Последняя активность</th><th>Источник</th></tr>
+            {''.join(tr) if tr else '<tr><td colspan=8>Клиентов пока нет — поднимите порог ниже или измените фильтры.</td></tr>'}
           </table></div>
           {_pagination_html(page, total_pages, base_url=f'?{export_qs}&sort={sort}&')}
         </div>
@@ -4847,6 +5060,202 @@ def build_app(
                 "Content-Disposition": 'attachment; filename="clients.csv"',
                 "Content-Type": "text/csv; charset=utf-8",
             },
+        )
+
+    # ── Subscriptions: list + manual charge trigger ─────────────────────
+
+    @app.get("/admin/subscriptions", response_class=HTMLResponse)
+    async def subscriptions_list(request: Request, _user: str = Depends(_check_auth)) -> str:
+        from datetime import datetime as _dt, timezone as _tz
+
+        ok_msg = html_mod.escape(str(request.query_params.get("ok", "")).strip())
+        err_msg = html_mod.escape(str(request.query_params.get("err", "")).strip())
+
+        subs, summary = await asyncio.gather(
+            credits_db.list_active_subscriptions(),
+            credits_db.subscriptions_summary(),
+        )
+
+        # Loop liveness from Redis heartbeat.
+        last_tick_str = ""
+        last_tick_age_str = ""
+        last_stats_str = ""
+        loop_health_color = "#7f8c8d"
+        try:
+            redis = state_store.redis
+            ht = await redis.get("tg_bot_public:sub_charge_loop:last_tick")
+            stats_raw = await redis.get("tg_bot_public:sub_charge_loop:last_stats")
+            if ht:
+                last_tick_str = str(ht)
+                try:
+                    ts = _dt.fromisoformat(str(ht))
+                    age_s = (_dt.now(_tz.utc) - ts).total_seconds()
+                    if age_s < 3600:
+                        last_tick_age_str = f"{int(age_s // 60)} мин назад"
+                        loop_health_color = "#27ae60"
+                    elif age_s < 30 * 3600:
+                        last_tick_age_str = f"{int(age_s // 3600)} ч назад"
+                        loop_health_color = "#27ae60"
+                    else:
+                        last_tick_age_str = f"{int(age_s // 3600)} ч назад — проверь воркер!"
+                        loop_health_color = "#c0392b"
+                except Exception:
+                    pass
+            if stats_raw:
+                try:
+                    s = json.loads(str(stats_raw))
+                    last_stats_str = f"{s.get('succeeded', 0)} ок / {s.get('failed', 0)} фейл (instance: {s.get('instance', '?')})"
+                except Exception:
+                    pass
+        except Exception as e:
+            log.warning("subs loop heartbeat read failed: %s", e)
+
+        now_utc = _dt.now(_tz.utc)
+        rows_html = ""
+        for s in subs:
+            uname = f"@{s['username']}" if s["username"] else str(s["tg_id"])
+            nc_raw = s.get("_next_charge_raw")
+            if hasattr(nc_raw, "tzinfo"):
+                nc_dt = nc_raw if nc_raw.tzinfo else nc_raw.replace(tzinfo=_tz.utc)
+                delta_days = (nc_dt - now_utc).total_seconds() / 86400.0
+                if delta_days < 0:
+                    when_lbl = f'<span style="color:#c0392b">overdue {abs(int(delta_days))}д</span>'
+                elif delta_days < 1:
+                    when_lbl = '<span style="color:#e67e22">сегодня</span>'
+                elif delta_days < 7:
+                    when_lbl = f'<span style="color:#f39c12">через {int(delta_days)}д</span>'
+                else:
+                    when_lbl = f'через {int(delta_days)}д'
+            else:
+                when_lbl = "—"
+            status_color = {"active": "#27ae60", "paused": "#c0392b"}.get(s["status"], "#7f8c8d")
+            last_color = {"CONFIRMED": "#27ae60", "charge_failed": "#c0392b"}.get(s["last_charge_status"], "#95a5a6")
+            last_html = (
+                f'<span style="color:{last_color}">{html_mod.escape(s["last_charge_status"])}</span>'
+                f' <small style="color:#888">{html_mod.escape(s["last_charge_at"])}</small>'
+                if s["last_charge_status"] else '<span style="color:#999">—</span>'
+            )
+            rb = s["rebill_id"]
+            rb_masked = (rb[:4] + "…" + rb[-4:]) if len(rb) > 8 else rb
+            rows_html += (
+                f"<tr>"
+                f"<td><a href='/admin/users/{s['tg_id']}'>{html_mod.escape(uname)}</a></td>"
+                f"<td>{html_mod.escape(s['package'])}</td>"
+                f"<td>{s['amount_rub']}₽</td>"
+                f"<td><span class='badge' style='background:{status_color};color:white'>{s['status']}</span></td>"
+                f"<td>{html_mod.escape(s['next_charge_at'])}<br><small>{when_lbl}</small></td>"
+                f"<td>{last_html}</td>"
+                f"<td>{s['charge_retries']}</td>"
+                f"<td><code style='font-size:0.75em'>{html_mod.escape(rb_masked)}</code></td>"
+                f"<td>"
+                f"<form method='post' action='/admin/subscriptions/{s['id']}/charge' style='display:inline' "
+                f"onsubmit=\"return confirm('Списать сейчас? Карта будет реально списана.')\">"
+                f"<button type='submit' class='btn-success' style='font-size:0.8em;padding:4px 8px'>Списать</button>"
+                f"</form></td>"
+                f"</tr>"
+            )
+
+        flash = ""
+        if ok_msg:
+            flash = f'<div class="card" style="background:#d4edda">{ok_msg}</div>'
+        elif err_msg:
+            flash = f'<div class="card" style="background:#f8d7da">{err_msg}</div>'
+
+        body = f"""
+        {flash}
+        <div class="card">
+          <h2>Здоровье механизма</h2>
+          <div class="stage-grid">
+            <div class="stage-chip"><div class="count" style="color:{loop_health_color}">{html_mod.escape(last_tick_age_str or '—')}</div><div class="label">Последний тик</div></div>
+            <div class="stage-chip"><div class="count">{summary.get('recurrent_ok_30d', 0)}</div><div class="label">Успешных списаний за 30д</div></div>
+            <div class="stage-chip"><div class="count" style="color:#c0392b">{summary.get('recurrent_fail_30d', 0)}</div><div class="label">Фейлов за 30д</div></div>
+            <div class="stage-chip"><div class="count">{summary.get('recurrent_revenue_30d', 0):,}&nbsp;&#8381;</div><div class="label">Выручка с подписок за 30д</div></div>
+          </div>
+          <p style="color:#888;font-size:0.85em;margin-top:8px">
+            Цикл крутится в процессе tg_bot_public, проход раз в 24ч. Heartbeat пишется в Redis в начале каждого прохода;
+            advisory-лок не даёт двум инстансам списывать карту дважды.
+            {f"<br>Последний проход: <code>{html_mod.escape(last_tick_str)}</code> · {html_mod.escape(last_stats_str)}" if last_tick_str else ""}
+          </p>
+        </div>
+
+        <div class="card">
+          <h2>Календарь будущих списаний</h2>
+          <div class="stage-grid">
+            <div class="stage-chip"><div class="count" style="color:#27ae60">{summary.get('active_cnt', 0)}</div><div class="label">активных</div></div>
+            <div class="stage-chip"><div class="count" style="color:#c0392b">{summary.get('paused_cnt', 0)}</div><div class="label">на паузе</div></div>
+            <div class="stage-chip"><div class="count" style="color:#e67e22">{summary.get('overdue_cnt', 0)}</div><div class="label">overdue (ждут тика)</div></div>
+            <div class="stage-chip"><div class="count">{summary.get('due_today_cnt', 0)}</div><div class="label">сегодня · {summary.get('due_today_rub', 0):,}&nbsp;&#8381;</div></div>
+            <div class="stage-chip"><div class="count">{summary.get('due_7d_cnt', 0)}</div><div class="label">7 дней · {summary.get('due_7d_rub', 0):,}&nbsp;&#8381;</div></div>
+            <div class="stage-chip"><div class="count">{summary.get('due_this_month_cnt', 0)}</div><div class="label">в этом месяце · {summary.get('due_this_month_rub', 0):,}&nbsp;&#8381;</div></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>Все подписки</h2>
+          <div class="table-wrap">
+          <table>
+            <tr>
+              <th>User</th><th>Пакет</th><th>Сумма</th><th>Статус</th>
+              <th>След. списание</th><th>Последнее списание</th>
+              <th>Retries</th><th>RebillId</th><th></th>
+            </tr>
+            {rows_html if rows_html else '<tr><td colspan="9">Подписок ещё нет.</td></tr>'}
+          </table>
+          </div>
+        </div>
+        """
+        return _page("Subscriptions", body)
+
+    @app.post("/admin/subscriptions/{sub_id}/charge")
+    async def subscriptions_manual_charge(
+        sub_id: int, request: Request, _user: str = Depends(_check_auth),
+    ) -> RedirectResponse:
+        redirect_back = request.headers.get("referer") or "/admin/subscriptions"
+
+        if bot_app is None or not hasattr(bot_app, "charge_subscription_once"):
+            return RedirectResponse(
+                f"/admin/subscriptions?err={quote_plus('Бот недоступен (bot_app не передан)')}",
+                status_code=303,
+            )
+        sub = await credits_db.get_subscription_by_id(sub_id)
+        if not sub:
+            return RedirectResponse(
+                f"/admin/subscriptions?err={quote_plus('Подписка не найдена')}",
+                status_code=303,
+            )
+        if sub["status"] != "active":
+            sub_status = sub["status"]
+            return RedirectResponse(
+                f"/admin/subscriptions?err={quote_plus(f'Статус подписки: {sub_status}')}",
+                status_code=303,
+            )
+        if not sub["rebill_id"]:
+            return RedirectResponse(
+                f"/admin/subscriptions?err={quote_plus('У подписки нет RebillId')}",
+                status_code=303,
+            )
+
+        try:
+            success, err = await bot_app.charge_subscription_once(sub, manual=True)
+        except Exception as e:
+            log.exception("manual charge failed sub=%s", sub_id)
+            await credits_db.audit_log(_user, "subscription_manual_charge_error", str(sub_id), str(e))
+            return RedirectResponse(
+                f"/admin/subscriptions?err={quote_plus(f'Ошибка: {e}')}",
+                status_code=303,
+            )
+
+        if success:
+            await credits_db.audit_log(_user, "subscription_manual_charge_ok", str(sub_id), f"tg_id={sub['tg_id']}")
+            target = redirect_back if "/admin/users/" in redirect_back else "/admin/subscriptions"
+            return RedirectResponse(
+                f"{target}?ok={quote_plus(f'Списание sub={sub_id} прошло успешно')}",
+                status_code=303,
+            )
+        await credits_db.audit_log(_user, "subscription_manual_charge_fail", str(sub_id), err or "")
+        return RedirectResponse(
+            f"/admin/subscriptions?err={quote_plus(f'Списание не прошло: {err}')}",
+            status_code=303,
         )
 
     # ── User card extensions: tags, notes, send message ───────────────
@@ -5931,6 +6340,7 @@ async def start_admin_panel(
     settings: "Settings",
     tbank_client: "TBankClient | None" = None,
     bot_ref: "list | None" = None,
+    bot_app: "Any | None" = None,
 ) -> None:
     """Run the admin panel as an async background task."""
     # Seed default lifecycle rules (idempotent — inserts missing, refreshes
@@ -5949,7 +6359,7 @@ async def start_admin_panel(
     except Exception as e:
         log.warning("seed_default_lifecycle_rules failed: %s", e)
 
-    app = build_app(credits_db, state_store, settings, tbank_client, bot_ref)
+    app = build_app(credits_db, state_store, settings, tbank_client, bot_ref, bot_app)
     config = uvicorn.Config(
         app,
         host="0.0.0.0",

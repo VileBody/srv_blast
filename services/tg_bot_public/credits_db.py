@@ -133,7 +133,7 @@ CREATE TABLE IF NOT EXISTS subscriptions (
     rebill_id       TEXT      NOT NULL DEFAULT '',
     amount_rub      INTEGER   NOT NULL DEFAULT 0,
     status          TEXT      NOT NULL DEFAULT 'active',
-    next_charge_at  TIMESTAMP NOT NULL DEFAULT (NOW() + INTERVAL '30 days'),
+    next_charge_at  TIMESTAMP NOT NULL DEFAULT (NOW() + INTERVAL '1 month'),
     charge_retries  INTEGER   NOT NULL DEFAULT 0,
     created_at      TIMESTAMP NOT NULL DEFAULT NOW(),
     cancelled_at    TIMESTAMP,
@@ -1666,7 +1666,7 @@ class CreditsDB:
         async with pool.acquire() as conn:
             await conn.execute(
                 "UPDATE subscriptions "
-                "SET next_charge_at = NOW() + INTERVAL '30 days', "
+                "SET next_charge_at = NOW() + INTERVAL '1 month', "
                 "    charge_retries = 0, updated_at = NOW() "
                 "WHERE id = $1",
                 int(sub_id),
@@ -2051,6 +2051,231 @@ class CreditsDB:
             "dormant_14d": int(row["dormant_14d"] or 0) if row else 0,
             "revenue_rub_total": int(revenue_paid or 0) + int(revenue_manual or 0),
         }
+
+    # ── Admin dashboard helpers ─────────────────────────────────────────
+
+    async def rating_distribution_v2(self) -> Dict[str, int]:
+        """Like rating_distribution but with 4 buckets:
+        low (1-4), mid_low (5-6), mid_high (7-8), high (9-10).
+        Returns {bucket: count} dict so admin can render a 4-way chart.
+        """
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT detail, COUNT(*)::BIGINT AS cnt "
+                "FROM activity_log WHERE event = 'rate_video' AND detail <> '' "
+                "GROUP BY detail"
+            )
+        out = {"low": 0, "mid_low": 0, "mid_high": 0, "high": 0}
+        # Existing data is stored as either numeric "1".."10" or legacy
+        # bucket strings. Map both.
+        for r in rows:
+            d = str(r["detail"] or "").strip().lower()
+            cnt = int(r["cnt"] or 0)
+            if d in {"low", "mid_low", "mid_high", "high"}:
+                out[d] += cnt
+                continue
+            try:
+                n = int(d.split()[0])
+            except Exception:
+                continue
+            if n <= 4:
+                out["low"] += cnt
+            elif n <= 6:
+                out["mid_low"] += cnt
+            elif n <= 8:
+                out["mid_high"] += cnt
+            else:
+                out["high"] += cnt
+        return out
+
+    async def revenue_timeseries(
+        self, *, bucket: str = "month", periods: int = 12,
+    ) -> List[Dict[str, Any]]:
+        """Revenue per week or per month from CONFIRMED payments.
+
+        Returns list ordered oldest → newest:
+          [{"bucket": "2025-11", "rub": 12345}, ...]
+        """
+        bucket = str(bucket or "month").lower()
+        if bucket not in {"week", "month"}:
+            bucket = "month"
+        periods = max(1, min(int(periods or 12), 60))
+        if bucket == "month":
+            trunc = "month"
+            label_fmt = "YYYY-MM"
+            step = "1 month"
+        else:
+            trunc = "week"
+            label_fmt = "IYYY-IW"
+            step = "1 week"
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"""
+                WITH buckets AS (
+                    SELECT generate_series(
+                        DATE_TRUNC('{trunc}', NOW()) - ($1::INT - 1) * INTERVAL '{step}',
+                        DATE_TRUNC('{trunc}', NOW()),
+                        INTERVAL '{step}'
+                    ) AS b
+                )
+                SELECT
+                  TO_CHAR(b.b, '{label_fmt}') AS lbl,
+                  b.b AS bucket_start,
+                  COALESCE((
+                    SELECT SUM(amount_rub)::BIGINT FROM payments p
+                     WHERE p.status = 'CONFIRMED'
+                       AND p.created_at >= b.b
+                       AND p.created_at <  b.b + INTERVAL '{step}'
+                  ), 0) AS rub
+                FROM buckets b
+                ORDER BY b.b ASC
+                """,
+                int(periods),
+            )
+        return [
+            {"bucket": str(r["lbl"]), "rub": int(r["rub"] or 0)}
+            for r in rows
+        ]
+
+    async def list_active_subscriptions(self) -> List[Dict[str, Any]]:
+        """All subscriptions (active + paused) sorted by next_charge_at.
+
+        Joins username + last recurrent payment status for the admin
+        verification view.
+        """
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT s.id, s.tg_id, s.package, s.amount_rub, s.status,
+                       s.next_charge_at, s.charge_retries, s.rebill_id,
+                       s.created_at, s.cancelled_at,
+                       u.username,
+                       (SELECT created_at FROM payments p
+                          WHERE p.tg_id = s.tg_id AND p.is_recurrent = TRUE
+                          ORDER BY created_at DESC LIMIT 1) AS last_charge_at,
+                       (SELECT status FROM payments p
+                          WHERE p.tg_id = s.tg_id AND p.is_recurrent = TRUE
+                          ORDER BY created_at DESC LIMIT 1) AS last_charge_status
+                  FROM subscriptions s
+                  LEFT JOIN users u ON u.tg_id = s.tg_id
+                 WHERE s.status IN ('active', 'paused')
+                 ORDER BY (s.status = 'active') DESC, s.next_charge_at ASC
+                """
+            )
+        return [
+            {
+                "id": int(r["id"]),
+                "tg_id": int(r["tg_id"]),
+                "username": str(r["username"] or ""),
+                "package": str(r["package"] or ""),
+                "amount_rub": int(r["amount_rub"] or 0),
+                "status": str(r["status"] or ""),
+                "next_charge_at": _fmt_ts(r["next_charge_at"]),
+                "_next_charge_raw": r["next_charge_at"],
+                "charge_retries": int(r["charge_retries"] or 0),
+                "rebill_id": str(r["rebill_id"] or ""),
+                "created_at": _fmt_ts(r["created_at"]),
+                "cancelled_at": _fmt_ts(r["cancelled_at"]),
+                "last_charge_at": _fmt_ts(r["last_charge_at"]),
+                "last_charge_status": str(r["last_charge_status"] or ""),
+            }
+            for r in rows
+        ]
+
+    async def subscriptions_summary(self) -> Dict[str, Any]:
+        """Counts + sum for the admin subscriptions dashboard."""
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT
+                  COUNT(*) FILTER (WHERE status = 'active')::BIGINT AS active_cnt,
+                  COUNT(*) FILTER (WHERE status = 'paused')::BIGINT AS paused_cnt,
+                  COUNT(*) FILTER (WHERE status = 'active' AND next_charge_at::date = CURRENT_DATE)::BIGINT AS due_today_cnt,
+                  COALESCE(SUM(amount_rub) FILTER (WHERE status = 'active' AND next_charge_at::date = CURRENT_DATE), 0)::BIGINT AS due_today_rub,
+                  COUNT(*) FILTER (WHERE status = 'active' AND next_charge_at < NOW() + INTERVAL '7 days')::BIGINT AS due_7d_cnt,
+                  COALESCE(SUM(amount_rub) FILTER (WHERE status = 'active' AND next_charge_at < NOW() + INTERVAL '7 days'), 0)::BIGINT AS due_7d_rub,
+                  COUNT(*) FILTER (WHERE status = 'active' AND DATE_TRUNC('month', next_charge_at) = DATE_TRUNC('month', NOW()))::BIGINT AS due_this_month_cnt,
+                  COALESCE(SUM(amount_rub) FILTER (WHERE status = 'active' AND DATE_TRUNC('month', next_charge_at) = DATE_TRUNC('month', NOW())), 0)::BIGINT AS due_this_month_rub,
+                  COUNT(*) FILTER (WHERE status = 'active' AND next_charge_at <= NOW())::BIGINT AS overdue_cnt
+                FROM subscriptions
+                """
+            )
+            charge_stats = await conn.fetchrow(
+                """
+                SELECT
+                  COUNT(*) FILTER (WHERE status = 'CONFIRMED' AND created_at >= NOW() - INTERVAL '30 days')::BIGINT AS ok_30d,
+                  COUNT(*) FILTER (WHERE status = 'charge_failed' AND created_at >= NOW() - INTERVAL '30 days')::BIGINT AS fail_30d,
+                  COALESCE(SUM(amount_rub) FILTER (WHERE status = 'CONFIRMED' AND created_at >= NOW() - INTERVAL '30 days'), 0)::BIGINT AS revenue_30d
+                FROM payments WHERE is_recurrent = TRUE
+                """
+            )
+        return {
+            "active_cnt": int(row["active_cnt"] or 0) if row else 0,
+            "paused_cnt": int(row["paused_cnt"] or 0) if row else 0,
+            "due_today_cnt": int(row["due_today_cnt"] or 0) if row else 0,
+            "due_today_rub": int(row["due_today_rub"] or 0) if row else 0,
+            "due_7d_cnt": int(row["due_7d_cnt"] or 0) if row else 0,
+            "due_7d_rub": int(row["due_7d_rub"] or 0) if row else 0,
+            "due_this_month_cnt": int(row["due_this_month_cnt"] or 0) if row else 0,
+            "due_this_month_rub": int(row["due_this_month_rub"] or 0) if row else 0,
+            "overdue_cnt": int(row["overdue_cnt"] or 0) if row else 0,
+            "recurrent_ok_30d": int(charge_stats["ok_30d"] or 0) if charge_stats else 0,
+            "recurrent_fail_30d": int(charge_stats["fail_30d"] or 0) if charge_stats else 0,
+            "recurrent_revenue_30d": int(charge_stats["revenue_30d"] or 0) if charge_stats else 0,
+        }
+
+    async def get_subscription_by_id(self, sub_id: int) -> Optional[Dict[str, Any]]:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            r = await conn.fetchrow(
+                "SELECT id, tg_id, package, rebill_id, amount_rub, status, "
+                "next_charge_at, charge_retries, created_at, cancelled_at "
+                "FROM subscriptions WHERE id = $1",
+                int(sub_id),
+            )
+        if not r:
+            return None
+        return {
+            "id": int(r["id"]),
+            "tg_id": int(r["tg_id"]),
+            "package": str(r["package"] or ""),
+            "rebill_id": str(r["rebill_id"] or ""),
+            "amount_rub": int(r["amount_rub"] or 0),
+            "status": str(r["status"] or ""),
+            "next_charge_at": r["next_charge_at"],
+            "charge_retries": int(r["charge_retries"] or 0),
+            "created_at": _fmt_ts(r["created_at"]),
+            "cancelled_at": _fmt_ts(r["cancelled_at"]),
+        }
+
+    async def user_payments_history(self, tg_id: int, limit: int = 50) -> List[Dict[str, Any]]:
+        """Full payment history for one user (bot + manual)."""
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT order_id, amount_rub, package, status, is_recurrent, "
+                "created_at, updated_at, payment_id "
+                "FROM payments WHERE tg_id = $1 "
+                "ORDER BY created_at DESC LIMIT $2",
+                int(tg_id), int(limit),
+            )
+        return [
+            {
+                "order_id": str(r["order_id"] or ""),
+                "amount_rub": int(r["amount_rub"] or 0),
+                "package": str(r["package"] or ""),
+                "status": str(r["status"] or ""),
+                "is_recurrent": bool(r["is_recurrent"]),
+                "created_at": _fmt_ts(r["created_at"]),
+                "updated_at": _fmt_ts(r["updated_at"]),
+                "payment_id": str(r["payment_id"] or ""),
+            }
+            for r in rows
+        ]
 
     async def user_health_metrics(self, tg_id: int) -> Dict[str, Any]:
         pool = self._pool_or_fail()
