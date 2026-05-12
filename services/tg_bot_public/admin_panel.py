@@ -4046,9 +4046,17 @@ def build_app(
                             order_id, notif_rebill_id,
                         )
                     except Exception as e:
-                        log.warning(
-                            "tbank notify: subscription bootstrap failed order=%s err=%s",
+                        # RebillId was received but we failed to persist it.
+                        # Return 500 so T-Bank retries the notification rather
+                        # than dropping it permanently \u2014 otherwise this user
+                        # would become an orphan with auto-charge dead.
+                        log.error(
+                            "tbank notify: subscription bootstrap FAILED order=%s err=%s "
+                            "(returning 500 to trigger T-Bank retry)",
                             order_id, e,
+                        )
+                        return PlainTextResponse(
+                            f"bootstrap failed: {e}", status_code=500,
                         )
                 else:
                     log.warning(
@@ -5201,7 +5209,15 @@ def build_app(
                 f"<form method='post' action='/admin/subscriptions/{s['id']}/charge' style='display:inline' "
                 f"onsubmit=\"return confirm('Списать сейчас? Карта будет реально списана.')\">"
                 f"<button type='submit' class='btn-success' style='font-size:0.8em;padding:4px 8px'>Списать</button>"
-                f"</form></td>"
+                f"</form>"
+                + (
+                    f" <form method='post' action='/admin/subscriptions/{s['id']}/cancel' style='display:inline' "
+                    f"onsubmit=\"return confirm('Отменить подписку? Списаний больше не будет.')\">"
+                    f"<button type='submit' style='background:#c0392b;color:white;font-size:0.8em;padding:4px 8px'>Отменить</button>"
+                    f"</form>"
+                    if s["status"] == "active" else ""
+                )
+                + f"</td>"
                 f"</tr>"
             )
 
@@ -5289,6 +5305,40 @@ def build_app(
         </div>
         """
         return _page("Subscriptions", body)
+
+    @app.post("/admin/subscriptions/{sub_id}/cancel")
+    async def subscriptions_admin_cancel(
+        sub_id: int, _user: str = Depends(_check_auth),
+    ) -> RedirectResponse:
+        sub = await credits_db.get_subscription_by_id(sub_id)
+        if not sub:
+            return RedirectResponse(
+                f"/admin/subscriptions?err={quote_plus('Подписка не найдена')}",
+                status_code=303,
+            )
+        if sub["status"] != "active":
+            sub_status = sub["status"]
+            return RedirectResponse(
+                f"/admin/subscriptions?err={quote_plus(f'Подписка уже не активна: {sub_status}')}",
+                status_code=303,
+            )
+        ok = await credits_db.cancel_subscription(sub["tg_id"])
+        if ok:
+            await credits_db.log_event(
+                sub["tg_id"], "subscription_cancelled", f"by admin {_user}",
+            )
+            await credits_db.audit_log(
+                _user, "subscription_cancelled",
+                target=str(sub_id), details=f"tg_id={sub['tg_id']}",
+            )
+            return RedirectResponse(
+                f"/admin/subscriptions?ok={quote_plus(f'Подписка sub={sub_id} отменена')}",
+                status_code=303,
+            )
+        return RedirectResponse(
+            f"/admin/subscriptions?err={quote_plus('Не удалось отменить')}",
+            status_code=303,
+        )
 
     @app.post("/admin/subscriptions/{sub_id}/charge")
     async def subscriptions_manual_charge(

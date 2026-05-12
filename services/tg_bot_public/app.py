@@ -1120,6 +1120,16 @@ class BlastBotApp:
             password=settings.tbank_password,
             notify_url=settings.tbank_notify_url,
         ) if settings.tbank_terminal_key else None
+        if self.tbank:
+            notify_url = str(settings.tbank_notify_url or "").strip()
+            if not notify_url:
+                log.error(
+                    "TBANK_NOTIFY_URL is empty — T-Bank webhooks (incl. RebillId) "
+                    "will not be delivered, subscriptions will not bootstrap. "
+                    "Set TBANK_NOTIFY_URL=https://<your-host>/api/tbank/notify."
+                )
+            else:
+                log.info("tbank notify URL configured: %s", notify_url)
         self._bot_ref: list = [None]  # mutable ref for admin panel webhook
 
         self.dp = Dispatcher()
@@ -2221,13 +2231,91 @@ class BlastBotApp:
                 return
             chat_id = int(message.chat.id)
             await self.credits_db.log_event(chat_id, "cancel_subscription_request")
-            await message.answer(
-                "Для отмены подписки свяжись с нашим менеджером: @impulsemanage\n\n"
-                "Он поможет отменить подписку и ответит на все вопросы.\n\n"
-                "/packets — посмотреть тарифы\n"
-                "/sendtrack — вернуться к генерации",
-                reply_markup=ReplyKeyboardRemove(),
+            active_sub = await self.credits_db.get_active_subscription(chat_id)
+            if not active_sub:
+                await message.answer(
+                    "Активной подписки нет. Если ты считаешь, что это ошибка — "
+                    "напиши @impulsemanage.\n\n/packets — посмотреть тарифы",
+                    reply_markup=ReplyKeyboardRemove(),
+                )
+                return
+            pkg = active_sub.get("package", "")
+            nc = active_sub.get("next_charge_at")
+            nc_str = nc.strftime("%d.%m.%Y") if hasattr(nc, "strftime") else "—"
+            kb = InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(
+                        text="Да, отменить подписку",
+                        callback_data="cancel_sub:confirm",
+                    )],
+                    [InlineKeyboardButton(
+                        text="Передумал, оставить",
+                        callback_data="cancel_sub:abort",
+                    )],
+                ]
             )
+            await message.answer(
+                f"Сейчас активна подписка «{pkg}». Следующее списание было бы {nc_str}.\n\n"
+                "Если отменишь:\n"
+                "• С тебя больше ничего не спишется.\n"
+                "• Накопленные кредиты остаются — можешь использовать в любое время.\n"
+                "• Чтобы возобновиться, нужно оформить подписку заново через /packets.\n\n"
+                "Точно отменяем?",
+                reply_markup=kb,
+            )
+
+        @self.router.callback_query(lambda c: c.data and c.data.startswith("cancel_sub:"))
+        async def _on_cancel_subscription_choice(callback: CallbackQuery) -> None:
+            if callback.message is None or callback.message.chat is None:
+                return
+            chat_id = int(callback.message.chat.id)
+            choice = str(callback.data or "").split(":", 1)[1] if callback.data else ""
+            await callback.answer()
+            if choice == "abort":
+                try:
+                    await callback.message.edit_text("Хорошо, подписка остаётся активной.")
+                except Exception:
+                    await callback.message.answer("Хорошо, подписка остаётся активной.")
+                return
+            if choice != "confirm":
+                return
+            cancelled = await self.credits_db.cancel_subscription(chat_id)
+            if cancelled:
+                await self.credits_db.log_event(
+                    chat_id, "subscription_cancelled", "user_request",
+                )
+                try:
+                    await callback.message.edit_text(
+                        "Подписка отменена. Списаний больше не будет.\n\n"
+                        "Если захочешь вернуться — /packets.",
+                    )
+                except Exception:
+                    await callback.message.answer(
+                        "Подписка отменена. Списаний больше не будет.",
+                    )
+                # Notify manager so they're in the loop.
+                if self.settings.manager_chat_id:
+                    try:
+                        user_info = await self.credits_db.get_user(chat_id)
+                        uname = (
+                            f"@{user_info['username']}"
+                            if user_info and user_info.get("username") else str(chat_id)
+                        )
+                        await self._require_bot().send_message(
+                            self.settings.manager_chat_id,
+                            f"⛔ Подписка отменена\n\nПользователь: {uname}\ntg_id: {chat_id}",
+                        )
+                    except Exception as e:
+                        log.warning("cancel_sub manager notify failed: %s", e)
+            else:
+                try:
+                    await callback.message.edit_text(
+                        "Активной подписки не нашёл. Если что-то не так — @impulsemanage.",
+                    )
+                except Exception:
+                    await callback.message.answer(
+                        "Активной подписки не нашёл. Напиши @impulsemanage.",
+                    )
 
         @self.router.message(Command("sendtrack"))
         async def _on_sendtrack(message: Message) -> None:

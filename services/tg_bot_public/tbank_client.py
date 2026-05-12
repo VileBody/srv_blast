@@ -187,8 +187,22 @@ class TBankClient:
                 err = f"{data.get('ErrorCode', '')}: {data.get('Message', '')} {data.get('Details', '')}"
                 log.error("tbank charge error: %s", err)
                 return False, err
-            log.info("tbank charge ok payment_id=%s rebill_id=%s status=%s",
-                     payment_id, rebill_id, data.get("Status"))
+            # T-Bank distinguishes request-level success (`Success=true` = the
+            # API accepted our call) from operation-level outcome (`Status`).
+            # A REJECTED Charge — e.g. insufficient funds — still returns
+            # Success=true, so we MUST gate on Status before granting credits.
+            status = str(data.get("Status", "")).strip().upper()
+            if status not in {"CONFIRMED", "AUTHORIZED"}:
+                err = (
+                    f"Charge Status={status} ErrorCode={data.get('ErrorCode', '')} "
+                    f"{data.get('Message', '')} {data.get('Details', '')}"
+                ).strip()
+                log.error("tbank charge non-final status: %s", err)
+                return False, err
+            log.info(
+                "tbank charge ok payment_id=%s rebill_id=%s status=%s",
+                payment_id, rebill_id, status,
+            )
             return True, ""
 
     async def cancel_payment(self, payment_id: str, amount_kop: int = 0) -> bool:
