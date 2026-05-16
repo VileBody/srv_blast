@@ -2309,38 +2309,59 @@ class CreditsDB:
 
     async def find_orphan_recurrent_payments(self) -> List[Dict[str, Any]]:
         """Confirmed `is_recurrent=TRUE` payments that have no corresponding
-        active subscription row. These are users who paid for a subscription
-        but whose subscription record was never bootstrapped — they would
-        never be auto-charged. The admin reconcile flow uses this to repair
-        them by re-fetching RebillId from T-Bank.
+        active/paused subscription row.
+
+        Rows with `rebill_id <> ''` are recoverable: the saved card key reached
+        us, so the admin panel can bootstrap the missing subscription. Rows
+        without RebillId are paid purchases that cannot be auto-charged until
+        the user saves a card again or T-Bank replays a notification containing
+        RebillId.
         """
         pool = self._pool_or_fail()
         async with pool.acquire() as conn:
             rows = await conn.fetch(
                 """
-                SELECT DISTINCT ON (p.tg_id)
-                       p.order_id, p.tg_id, p.amount_rub, p.package,
-                       p.payment_id, p.rebill_id, p.created_at
-                FROM payments p
-                WHERE p.is_recurrent = TRUE
-                  AND UPPER(p.status) = 'CONFIRMED'
-                  AND p.payment_id <> ''
-                  AND NOT EXISTS (
-                      SELECT 1 FROM subscriptions s
-                       WHERE s.tg_id = p.tg_id
-                         AND s.status IN ('active', 'paused')
-                  )
-                ORDER BY p.tg_id, p.created_at DESC
+                WITH latest AS (
+                  SELECT DISTINCT ON (p.tg_id)
+                         p.order_id, p.tg_id, p.amount_rub, p.package,
+                         p.payment_id, p.rebill_id, p.created_at,
+                         COALESCE(u.username, '') AS username,
+                         EXISTS (
+                           SELECT 1 FROM transactions t
+                            WHERE t.tg_id = p.tg_id
+                              AND t.reason = 'payment'
+                              AND (
+                                t.context_order_id = p.order_id
+                                OR t.admin_note LIKE '%' || p.order_id || '%'
+                              )
+                         ) AS has_payment_transaction
+                  FROM payments p
+                  LEFT JOIN users u ON u.tg_id = p.tg_id
+                  WHERE p.is_recurrent = TRUE
+                    AND UPPER(p.status) = 'CONFIRMED'
+                    AND p.payment_id <> ''
+                    AND NOT EXISTS (
+                        SELECT 1 FROM subscriptions s
+                         WHERE s.tg_id = p.tg_id
+                           AND s.status IN ('active', 'paused')
+                    )
+                  ORDER BY p.tg_id, p.created_at DESC
+                )
+                SELECT *
+                FROM latest
+                ORDER BY created_at DESC
                 """
             )
         return [
             {
                 "order_id": str(r["order_id"]),
                 "tg_id": int(r["tg_id"]),
+                "username": str(r["username"] or ""),
                 "amount_rub": int(r["amount_rub"] or 0),
                 "package": str(r["package"] or ""),
                 "payment_id": str(r["payment_id"] or ""),
                 "rebill_id": str(r["rebill_id"] or ""),
+                "has_payment_transaction": bool(r["has_payment_transaction"]),
                 "created_at": _fmt_ts(r["created_at"]),
             }
             for r in rows

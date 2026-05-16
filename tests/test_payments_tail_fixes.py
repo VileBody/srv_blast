@@ -217,6 +217,105 @@ class _FakeStateStore:
         self.reset_calls.append(int(tg_id))
 
 
+class _FakeRedis:
+    async def get(self, key: str) -> None:
+        return None
+
+
+class _FakeStateStoreWithRedis:
+    def __init__(self) -> None:
+        self.redis = _FakeRedis()
+
+
+class _FakeCreditsDBSubscriptions:
+    def __init__(self) -> None:
+        self.payment = {
+            "order_id": "ord-recover",
+            "tg_id": 777,
+            "package": "Бласт",
+            "amount_rub": 1990,
+            "status": "CONFIRMED",
+            "payment_id": "pay-777",
+            "is_recurrent": True,
+            "rebill_id": "rebill-recover-123456",
+        }
+        self.created_subscriptions: list[tuple[int, str, str, int]] = []
+        self.events: list[tuple[int, str, str]] = []
+        self.audit_events: list[tuple[str, str, str, str]] = []
+        self.active_subscription: dict[str, Any] | None = None
+
+    async def list_active_subscriptions(self) -> list[dict[str, Any]]:
+        return []
+
+    async def subscriptions_summary(self) -> dict[str, Any]:
+        return {
+            "active_cnt": 0,
+            "paused_cnt": 0,
+            "due_today_cnt": 0,
+            "due_today_rub": 0,
+            "due_7d_cnt": 0,
+            "due_7d_rub": 0,
+            "due_this_month_cnt": 0,
+            "due_this_month_rub": 0,
+            "overdue_cnt": 0,
+            "recurrent_ok_30d": 0,
+            "recurrent_fail_30d": 0,
+            "recurrent_revenue_30d": 0,
+        }
+
+    async def find_orphan_recurrent_payments(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "order_id": "ord-recover",
+                "tg_id": 777,
+                "username": "recoverable",
+                "amount_rub": 1990,
+                "package": "Бласт",
+                "payment_id": "pay-777",
+                "rebill_id": "rebill-recover-123456",
+                "has_payment_transaction": True,
+                "created_at": "2026-05-16 10:00:00",
+            },
+            {
+                "order_id": "ord-no-autopay",
+                "tg_id": 888,
+                "username": "qr_user",
+                "amount_rub": 1990,
+                "package": "Бласт",
+                "payment_id": "pay-888",
+                "rebill_id": "",
+                "has_payment_transaction": True,
+                "created_at": "2026-05-16 11:00:00",
+            },
+        ]
+
+    async def get_payment(self, order_id: str) -> dict[str, Any] | None:
+        if str(order_id) == self.payment["order_id"]:
+            return dict(self.payment)
+        return None
+
+    async def get_active_subscription(self, tg_id: int) -> dict[str, Any] | None:
+        if self.active_subscription and int(self.active_subscription["tg_id"]) == int(tg_id):
+            return dict(self.active_subscription)
+        return None
+
+    async def create_subscription(self, tg_id: int, package: str, rebill_id: str, amount_rub: int) -> None:
+        self.created_subscriptions.append((int(tg_id), str(package), str(rebill_id), int(amount_rub)))
+        self.active_subscription = {
+            "id": len(self.created_subscriptions),
+            "tg_id": int(tg_id),
+            "package": str(package),
+            "rebill_id": str(rebill_id),
+            "amount_rub": int(amount_rub),
+        }
+
+    async def log_event(self, tg_id: int, event: str, detail: str = "") -> None:
+        self.events.append((int(tg_id), str(event), str(detail)))
+
+    async def audit_log(self, admin_user: str, action: str, target: str = "", details: str = "") -> None:
+        self.audit_events.append((str(admin_user), str(action), str(target), str(details)))
+
+
 class _FailingBot:
     def __init__(self) -> None:
         self.calls = 0
@@ -429,3 +528,61 @@ def test_tbank_notify_bootstraps_recurrent_subscription_on_authorized_after_conf
     assert credits_db.add_calls == []
     assert credits_db.rebill_updates == [("ord-1", "rebill-auth")]
     assert credits_db.subscriptions == [(777, "Триал", "rebill-auth", 149)]
+
+
+def test_admin_subscriptions_splits_recoverable_and_paid_without_autopay() -> None:
+    credits_db = _FakeCreditsDBSubscriptions()
+    settings = SimpleNamespace(
+        admin_panel_password="secret",
+        tg_bot_username="",
+        manager_chat_id=0,
+        admin_panel_port=18080,
+        season_redis_prefix="test:season",
+    )
+    app = build_app(
+        credits_db=credits_db,
+        state_store=_FakeStateStoreWithRedis(),
+        settings=settings,
+        tbank_client=None,
+        bot_ref=[None],
+    )
+
+    client = TestClient(app)
+    resp = client.get("/admin/subscriptions", auth=("admin", "secret"))
+
+    assert resp.status_code == 200
+    assert "Recoverable: есть RebillId, но нет подписки" in resp.text
+    assert "Оплачено, но без автосписания" in resp.text
+    assert "Создать подписку" in resp.text
+    assert "Сироты:" not in resp.text
+
+
+def test_admin_subscription_recover_creates_subscription_from_saved_rebill() -> None:
+    credits_db = _FakeCreditsDBSubscriptions()
+    settings = SimpleNamespace(
+        admin_panel_password="secret",
+        tg_bot_username="",
+        manager_chat_id=0,
+        admin_panel_port=18080,
+        season_redis_prefix="test:season",
+    )
+    app = build_app(
+        credits_db=credits_db,
+        state_store=_FakeStateStoreWithRedis(),
+        settings=settings,
+        tbank_client=None,
+        bot_ref=[None],
+    )
+
+    client = TestClient(app)
+    resp = client.post(
+        "/admin/subscriptions/recover",
+        data={"order_id": "ord-recover"},
+        auth=("admin", "secret"),
+        follow_redirects=False,
+    )
+
+    assert resp.status_code == 303
+    assert credits_db.created_subscriptions == [(777, "Бласт", "rebill-recover-123456", 1990)]
+    assert credits_db.events and credits_db.events[0][1] == "subscription_created"
+    assert credits_db.audit_events and credits_db.audit_events[0][1] == "subscription_recovered"

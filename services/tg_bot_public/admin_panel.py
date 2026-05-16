@@ -5252,42 +5252,75 @@ def build_app(
         elif err_msg:
             flash = f'<div class="card" style="background:#f8d7da">{err_msg}</div>'
 
-        orphans_card = ""
-        if orphans:
-            orphan_rows = ""
-            for p in orphans[:50]:
-                orphan_rows += (
-                    f"<tr><td><a href='/admin/users/{p['tg_id']}'>{p['tg_id']}</a></td>"
+        orphan_recoverable = [p for p in orphans if str(p.get("rebill_id", "")).strip()]
+        paid_without_autopay = [p for p in orphans if not str(p.get("rebill_id", "")).strip()]
+        orphan_cards = ""
+
+        def _orphan_user_link(p: dict[str, Any]) -> str:
+            uname = str(p.get("username", "") or "").strip()
+            label = f"@{uname}" if uname else str(p["tg_id"])
+            return f"<a href='/admin/users/{p['tg_id']}'>{html_mod.escape(label)}</a>"
+
+        if orphan_recoverable:
+            recoverable_rows = ""
+            for p in orphan_recoverable[:50]:
+                rb = str(p.get("rebill_id", "") or "")
+                rb_masked = (rb[:4] + "…" + rb[-4:]) if len(rb) > 8 else rb
+                recoverable_rows += (
+                    f"<tr><td>{_orphan_user_link(p)}</td>"
                     f"<td>{html_mod.escape(p['package'])}</td>"
                     f"<td>{p['amount_rub']}₽</td>"
                     f"<td><code style='font-size:0.75em'>{html_mod.escape(p['order_id'])}</code></td>"
-                    f"<td>{html_mod.escape(p['created_at'])}</td></tr>"
+                    f"<td><code style='font-size:0.75em'>{html_mod.escape(rb_masked)}</code></td>"
+                    f"<td>{html_mod.escape(p['created_at'])}</td>"
+                    f"<td><form method='post' action='/admin/subscriptions/recover' style='display:inline' "
+                    f"onsubmit=\"return confirm('Создать активную подписку из сохранённого RebillId?')\">"
+                    f"<input type='hidden' name='order_id' value='{html_mod.escape(p['order_id'], quote=True)}'>"
+                    f"<button type='submit' class='btn-success' style='font-size:0.8em;padding:4px 8px'>Создать подписку</button>"
+                    f"</form></td></tr>"
                 )
-            orphans_card = f"""
-            <div class="card" style="border:2px solid #e67e22">
-              <h2 style="color:#e67e22">⚠ Сироты: оплачено, но подписки нет ({len(orphans)})</h2>
-              <p>Эти юзеры купили подписку, но <code>RebillId</code> от T-Bank в наш webhook не дошёл — карта не сохранена,
-                 авто-списание не сработает. <b>Программно восстановить нельзя</b>: T-Bank возвращает <code>RebillId</code>
-                 только в теле webhook-нотификации (в <code>GetState</code> его нет).</p>
-              <p>Как починить вручную:</p>
-              <ol>
-                <li>Зайти в <b>T-Bank Эквайринг → личный кабинет</b>, найти каждый <code>order_id</code> ниже.</li>
-                <li>Нажать «Перепослать нотификацию» — наш webhook теперь корректно сохранит <code>RebillId</code>
-                    и создаст подписку.</li>
-                <li>Если в кабинете такой кнопки нет — написать саппорту T-Bank с просьбой перезапустить нотификации
-                    по этим Order ID.</li>
-                <li>Альтернатива: попросить этих юзеров оформить подписку заново.</li>
-              </ol>
+            orphan_cards += f"""
+            <div class="card" style="border:2px solid #27ae60">
+              <h2 style="color:#1e8449">Recoverable: есть RebillId, но нет подписки ({len(orphan_recoverable)})</h2>
+              <p>Оплата уже подтверждена, ключ карты сохранён в <code>payments.rebill_id</code>, но строки в
+                 <code>subscriptions</code> нет. Эти кейсы можно восстановить прямо отсюда: кнопка создаст активную
+                 подписку, следующее списание будет через стандартный месяц.</p>
               <div class="table-wrap">
-              <table><tr><th>tg_id</th><th>Пакет</th><th>Сумма</th><th>Order</th><th>Когда оплачено</th></tr>
-              {orphan_rows}</table>
+              <table><tr><th>Юзер</th><th>Пакет</th><th>Сумма</th><th>Order</th><th>RebillId</th><th>Когда оплачено</th><th></th></tr>
+              {recoverable_rows}</table>
+              </div>
+            </div>
+            """
+
+        if paid_without_autopay:
+            no_autopay_rows = ""
+            for p in paid_without_autopay[:50]:
+                no_autopay_rows += (
+                    f"<tr><td>{_orphan_user_link(p)}</td>"
+                    f"<td>{html_mod.escape(p['package'])}</td>"
+                    f"<td>{p['amount_rub']}₽</td>"
+                    f"<td><code style='font-size:0.75em'>{html_mod.escape(p['order_id'])}</code></td>"
+                    f"<td>{html_mod.escape(p['created_at'])}</td>"
+                    f"<td><span class='badge badge-warn'>RebillId пустой</span></td></tr>"
+                )
+            orphan_cards += f"""
+            <div class="card" style="border:2px solid #e67e22">
+              <h2 style="color:#e67e22">Оплачено, но без автосписания ({len(paid_without_autopay)})</h2>
+              <p><b>Это не неоплаченные платежи.</b> Статус платежа <code>CONFIRMED</code>; в этом блоке нет активной
+                 подписки, потому что T-Bank не дал <code>RebillId</code>. Чаще всего это QR/SBP или notification без
+                 ключа карты. Автосписание по таким строкам не стартует.</p>
+              <p>Варианты: перепослать notification в кабинете T-Bank, если там была оплата картой; иначе попросить
+                 юзера оформить подписку заново через карту.</p>
+              <div class="table-wrap">
+              <table><tr><th>Юзер</th><th>Пакет</th><th>Сумма</th><th>Order</th><th>Когда оплачено</th><th>Причина</th></tr>
+              {no_autopay_rows}</table>
               </div>
             </div>
             """
 
         body = f"""
         {flash}
-        {orphans_card}
+        {orphan_cards}
         <div class="card">
           <h2>Здоровье механизма</h2>
           <div class="stage-grid">
@@ -5330,6 +5363,74 @@ def build_app(
         </div>
         """
         return _page("Subscriptions", body)
+
+    @app.post("/admin/subscriptions/recover")
+    async def subscriptions_recover_from_payment(
+        order_id: str = Form(...),
+        _user: str = Depends(_check_auth),
+    ) -> RedirectResponse:
+        clean_order_id = str(order_id or "").strip()
+        if not clean_order_id:
+            return RedirectResponse(
+                f"/admin/subscriptions?err={quote_plus('Order ID пустой')}",
+                status_code=303,
+            )
+
+        payment = await credits_db.get_payment(clean_order_id)
+        if not payment:
+            return RedirectResponse(
+                f"/admin/subscriptions?err={quote_plus('Платёж не найден')}",
+                status_code=303,
+            )
+
+        tg_id = int(payment["tg_id"])
+        if str(payment.get("status", "")).strip().upper() != "CONFIRMED":
+            return RedirectResponse(
+                f"/admin/subscriptions?err={quote_plus('Платёж ещё не CONFIRMED')}",
+                status_code=303,
+            )
+        if not bool(payment.get("is_recurrent", False)):
+            return RedirectResponse(
+                f"/admin/subscriptions?err={quote_plus('Платёж не recurrent')}",
+                status_code=303,
+            )
+
+        rebill_id = str(payment.get("rebill_id", "") or "").strip()
+        if not rebill_id:
+            return RedirectResponse(
+                f"/admin/subscriptions?err={quote_plus('У платежа нет RebillId')}",
+                status_code=303,
+            )
+
+        active_sub = await credits_db.get_active_subscription(tg_id)
+        if active_sub:
+            existing_sub_id = active_sub.get("id", "?")
+            return RedirectResponse(
+                f"/admin/subscriptions?ok={quote_plus(f'У пользователя уже есть активная подписка sub={existing_sub_id}')}",
+                status_code=303,
+            )
+
+        pkg = str(payment.get("package", "") or "")
+        amount_rub = int(payment.get("amount_rub", 0) or 0)
+        await credits_db.create_subscription(tg_id, pkg, rebill_id, amount_rub)
+        await credits_db.log_event(
+            tg_id,
+            "subscription_created",
+            f"{pkg} rebill=***{rebill_id[-6:]} admin_recover order={clean_order_id}",
+        )
+        try:
+            await credits_db.audit_log(
+                _user,
+                "subscription_recovered",
+                target=str(tg_id),
+                details=f"order={clean_order_id}",
+            )
+        except Exception as e:
+            log.warning("subscription recover audit failed order=%s err=%s", clean_order_id, e)
+        return RedirectResponse(
+            f"/admin/subscriptions?ok={quote_plus(f'Подписка восстановлена для {tg_id}')}",
+            status_code=303,
+        )
 
     @app.post("/admin/subscriptions/{sub_id}/cancel")
     async def subscriptions_admin_cancel(

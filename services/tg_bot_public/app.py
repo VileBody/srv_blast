@@ -5196,7 +5196,14 @@ class BlastBotApp:
                                 tg_id = pay["tg_id"]
                                 credits_to_add = self._PKG_CREDITS.get(pkg, 5)
                                 await self.credits_db.update_payment_status(order_id, "CONFIRMED", payment_id)
-                                await self.credits_db.add_credits(tg_id, credits_to_add, "payment", f"Пакет «{pkg}»")
+                                await self.credits_db.add_credits(
+                                    tg_id,
+                                    credits_to_add,
+                                    "payment",
+                                    f"Пакет «{pkg}» order={order_id}",
+                                    actor="tbank_poll",
+                                    order_id=order_id,
+                                )
                                 await self.credits_db.log_event(tg_id, "payment_confirmed", f"{pkg} +{credits_to_add} кредитов")
                                 # Save RebillId and create subscription for recurrent payments
                                 is_recurrent = pay.get("is_recurrent", False)
