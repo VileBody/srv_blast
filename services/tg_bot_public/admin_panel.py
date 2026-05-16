@@ -3952,12 +3952,65 @@ def build_app(
         if not order_id:
             return PlainTextResponse("OK", status_code=200)
 
+        existing_payment = await credits_db.get_payment(order_id)
+
+        async def _bootstrap_recurrent_from_rebill(payment_row: dict | None, *, warn_missing: bool = False):
+            if not payment_row or not bool(payment_row.get("is_recurrent", False)):
+                return None
+            if str(payment_row.get("status", "")).strip().upper() != "CONFIRMED":
+                return None
+            if not notif_rebill_id:
+                if warn_missing:
+                    log.warning(
+                        "tbank notify: is_recurrent payment confirmed but RebillId absent "
+                        "from notification \u2014 user will not be auto-charged. order=%s",
+                        order_id,
+                    )
+                return None
+
+            try:
+                tg_id_boot = int(payment_row["tg_id"])
+                pkg_boot = str(payment_row["package"])
+                amount_boot = int(payment_row["amount_rub"])
+                masked_rebill_id = f"***{notif_rebill_id[-6:]}"
+                if not str(payment_row.get("rebill_id", "")).strip():
+                    await credits_db.update_rebill_id(order_id, notif_rebill_id)
+                active_sub = await credits_db.get_active_subscription(tg_id_boot)
+                if not active_sub:
+                    await credits_db.create_subscription(
+                        tg_id_boot, pkg_boot, notif_rebill_id, amount_boot,
+                    )
+                    await credits_db.log_event(
+                        tg_id_boot, "subscription_created", f"{pkg_boot} rebill={masked_rebill_id}",
+                    )
+                    log.info(
+                        "tbank notify: subscription bootstrap ok order=%s rebill=%s",
+                        order_id, masked_rebill_id,
+                    )
+                else:
+                    log.info(
+                        "tbank notify: subscription bootstrap skipped order=%s active_sub=%s rebill=%s",
+                        order_id, active_sub.get("id", "?"), masked_rebill_id,
+                    )
+            except Exception as e:
+                # RebillId was received but we failed to persist it. Return 500
+                # so T-Bank retries the notification rather than dropping it.
+                log.error(
+                    "tbank notify: subscription bootstrap FAILED order=%s err=%s "
+                    "(returning 500 to trigger T-Bank retry)",
+                    order_id, e,
+                )
+                return PlainTextResponse(f"bootstrap failed: {e}", status_code=500)
+            return None
+
         # Dedup check
         if payment_id and await credits_db.is_payment_processed(payment_id, status):
             log.info("tbank notify: duplicate payment_id=%s status=%s", payment_id, status)
+            bootstrap_resp = await _bootstrap_recurrent_from_rebill(existing_payment)
+            if bootstrap_resp is not None:
+                return bootstrap_resp
             return PlainTextResponse("OK", status_code=200)
 
-        existing_payment = await credits_db.get_payment(order_id)
         current_status = str(existing_payment.get("status", "")).strip().upper() if existing_payment else ""
         should_apply_status = _should_apply_payment_status_update(current_status, status)
         if should_apply_status:
@@ -3974,6 +4027,9 @@ def build_app(
             )
 
         effective_status = str(payment.get("status", status) if payment else status).strip().upper()
+        bootstrap_resp = await _bootstrap_recurrent_from_rebill(payment)
+        if bootstrap_resp is not None:
+            return bootstrap_resp
 
         # Get payment info for notifications
         tg_id = payment["tg_id"] if payment else 0
@@ -4030,40 +4086,8 @@ def build_app(
             # return it \u2014 that was the prior bug). Without saving it here,
             # the daily rebill loop has no key to charge against.
             is_recurrent_pay = bool(payment.get("is_recurrent", False))
-            if is_recurrent_pay:
-                if notif_rebill_id:
-                    try:
-                        masked_rebill_id = f"***{notif_rebill_id[-6:]}"
-                        await credits_db.update_rebill_id(order_id, notif_rebill_id)
-                        await credits_db.create_subscription(
-                            tg_id, pkg, notif_rebill_id, amount_rub,
-                        )
-                        await credits_db.log_event(
-                            tg_id, "subscription_created", f"{pkg} rebill={masked_rebill_id}",
-                        )
-                        log.info(
-                            "tbank notify: subscription bootstrap ok order=%s rebill=%s",
-                            order_id, masked_rebill_id,
-                        )
-                    except Exception as e:
-                        # RebillId was received but we failed to persist it.
-                        # Return 500 so T-Bank retries the notification rather
-                        # than dropping it permanently \u2014 otherwise this user
-                        # would become an orphan with auto-charge dead.
-                        log.error(
-                            "tbank notify: subscription bootstrap FAILED order=%s err=%s "
-                            "(returning 500 to trigger T-Bank retry)",
-                            order_id, e,
-                        )
-                        return PlainTextResponse(
-                            f"bootstrap failed: {e}", status_code=500,
-                        )
-                else:
-                    log.warning(
-                        "tbank notify: is_recurrent payment confirmed but RebillId absent "
-                        "from notification \u2014 user will not be auto-charged. order=%s",
-                        order_id,
-                    )
+            if is_recurrent_pay and not notif_rebill_id:
+                await _bootstrap_recurrent_from_rebill(payment, warn_missing=True)
 
             try:
                 await state_store.reset_to_wait_audio(tg_id)

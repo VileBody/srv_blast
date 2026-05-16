@@ -131,9 +131,13 @@ class _FakeCreditsDBNotify:
             "tg_id": 777,
             "package": "Триал",
             "amount_rub": 149,
+            "status": "NEW",
+            "payment_id": "",
             "is_recurrent": False,
             "rebill_id": "",
         }
+        self.processed = False
+        self.active_subscription: dict[str, Any] | None = None
         self.add_calls: list[dict[str, Any]] = []
         self.update_calls: list[tuple[str, str, str]] = []
         self.rebill_updates: list[tuple[str, str]] = []
@@ -141,10 +145,13 @@ class _FakeCreditsDBNotify:
         self.events: list[tuple[int, str, str]] = []
 
     async def is_payment_processed(self, payment_id: str, status: str) -> bool:
-        return False
+        return self.processed
 
     async def update_payment_status(self, order_id: str, status: str, payment_id: str = "") -> bool:
         self.update_calls.append((str(order_id), str(status), str(payment_id)))
+        self.payment["status"] = str(status)
+        if payment_id:
+            self.payment["payment_id"] = str(payment_id)
         return True
 
     async def get_payment(self, order_id: str) -> dict[str, Any]:
@@ -177,9 +184,22 @@ class _FakeCreditsDBNotify:
 
     async def update_rebill_id(self, order_id: str, rebill_id: str) -> None:
         self.rebill_updates.append((str(order_id), str(rebill_id)))
+        self.payment["rebill_id"] = str(rebill_id)
 
     async def create_subscription(self, tg_id: int, package: str, rebill_id: str, amount_rub: int) -> None:
         self.subscriptions.append((int(tg_id), str(package), str(rebill_id), int(amount_rub)))
+        self.active_subscription = {
+            "id": len(self.subscriptions),
+            "tg_id": int(tg_id),
+            "package": str(package),
+            "rebill_id": str(rebill_id),
+            "amount_rub": int(amount_rub),
+        }
+
+    async def get_active_subscription(self, tg_id: int) -> dict[str, Any] | None:
+        if self.active_subscription and int(self.active_subscription["tg_id"]) == int(tg_id):
+            return dict(self.active_subscription)
+        return None
 
     async def get_balance(self, tg_id: int) -> int:
         return 5
@@ -318,3 +338,94 @@ def test_tbank_notify_creates_subscription_for_recurrent_payment() -> None:
     assert credits_db.rebill_updates == [("ord-1", "rebill-123")]
     assert credits_db.subscriptions == [(777, "Триал", "rebill-123", 149)]
     assert ("subscription_created" in [event for _, event, _ in credits_db.events])
+
+
+def test_tbank_notify_bootstraps_recurrent_subscription_on_duplicate_confirmed() -> None:
+    credits_db = _FakeCreditsDBNotify()
+    credits_db.payment.update(
+        {
+            "is_recurrent": True,
+            "status": "CONFIRMED",
+            "payment_id": "pay-1",
+        }
+    )
+    credits_db.processed = True
+    state_store = _FakeStateStore()
+
+    settings = SimpleNamespace(
+        admin_panel_password="secret",
+        tg_bot_username="",
+        manager_chat_id=0,
+        admin_panel_port=18080,
+        season_redis_prefix="test:season",
+    )
+
+    app = build_app(
+        credits_db=credits_db,
+        state_store=state_store,
+        settings=settings,
+        tbank_client=_FakeTBankClient(),
+        bot_ref=[None],
+    )
+
+    client = TestClient(app)
+    resp = client.post(
+        "/api/tbank/notify",
+        json={
+            "OrderId": "ord-1",
+            "Status": "CONFIRMED",
+            "PaymentId": "pay-1",
+            "RebillId": "rebill-dup",
+            "Token": "ok",
+        },
+    )
+
+    assert resp.status_code == 200
+    assert credits_db.add_calls == []
+    assert credits_db.rebill_updates == [("ord-1", "rebill-dup")]
+    assert credits_db.subscriptions == [(777, "Триал", "rebill-dup", 149)]
+
+
+def test_tbank_notify_bootstraps_recurrent_subscription_on_authorized_after_confirmed() -> None:
+    credits_db = _FakeCreditsDBNotify()
+    credits_db.payment.update(
+        {
+            "is_recurrent": True,
+            "status": "CONFIRMED",
+            "payment_id": "pay-1",
+        }
+    )
+    state_store = _FakeStateStore()
+
+    settings = SimpleNamespace(
+        admin_panel_password="secret",
+        tg_bot_username="",
+        manager_chat_id=0,
+        admin_panel_port=18080,
+        season_redis_prefix="test:season",
+    )
+
+    app = build_app(
+        credits_db=credits_db,
+        state_store=state_store,
+        settings=settings,
+        tbank_client=_FakeTBankClient(),
+        bot_ref=[None],
+    )
+
+    client = TestClient(app)
+    resp = client.post(
+        "/api/tbank/notify",
+        json={
+            "OrderId": "ord-1",
+            "Status": "AUTHORIZED",
+            "PaymentId": "pay-1",
+            "RebillId": "rebill-auth",
+            "Token": "ok",
+        },
+    )
+
+    assert resp.status_code == 200
+    assert credits_db.add_calls == []
+    assert credits_db.rebill_updates == [("ord-1", "rebill-auth")]
+    assert credits_db.subscriptions == [(777, "Триал", "rebill-auth", 149)]
