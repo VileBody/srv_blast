@@ -2183,6 +2183,93 @@ class CreditsDB:
             for r in rows
         ]
 
+    async def users_timeseries(
+        self, *, bucket: str = "month",
+    ) -> Dict[str, Any]:
+        """Inflow vs outflow users per bucket.
+
+        bucket="month" → current calendar month, one bar per DAY.
+        bucket="week"  → last 12 weeks, one bar per ISO week.
+
+        Inflow  = `users.created_at` (new signups in the bucket).
+        Outflow = distinct tg_ids with `activity_log.event='bot_blocked'`
+                  in the bucket (Telegram MyChatMember kicked/left).
+
+        Returns {"series": [{"bucket": str, "inflow": int, "outflow": int}, ...],
+                 "total_users": int, "blocked_total": int, "active_total": int}.
+        """
+        bucket = str(bucket or "month").lower()
+        if bucket not in {"week", "month"}:
+            bucket = "month"
+        pool = self._pool_or_fail()
+        if bucket == "month":
+            sql = """
+                WITH buckets AS (
+                    SELECT generate_series(
+                        DATE_TRUNC('month', NOW()),
+                        (DATE_TRUNC('month', NOW()) + INTERVAL '1 month' - INTERVAL '1 day'),
+                        INTERVAL '1 day'
+                    ) AS b
+                )
+                SELECT
+                  TO_CHAR(b.b, 'DD') AS lbl,
+                  (SELECT COUNT(*)::BIGINT FROM users u
+                     WHERE u.created_at >= b.b
+                       AND u.created_at <  b.b + INTERVAL '1 day') AS inflow,
+                  (SELECT COUNT(DISTINCT a.tg_id)::BIGINT FROM activity_log a
+                     WHERE a.event = 'bot_blocked'
+                       AND a.created_at >= b.b
+                       AND a.created_at <  b.b + INTERVAL '1 day') AS outflow
+                FROM buckets b
+                ORDER BY b.b ASC
+            """
+            params: list = []
+        else:
+            sql = """
+                WITH buckets AS (
+                    SELECT generate_series(
+                        DATE_TRUNC('week', NOW()) - 11 * INTERVAL '1 week',
+                        DATE_TRUNC('week', NOW()),
+                        INTERVAL '1 week'
+                    ) AS b
+                )
+                SELECT
+                  TO_CHAR(b.b, 'IYYY-"W"IW') AS lbl,
+                  (SELECT COUNT(*)::BIGINT FROM users u
+                     WHERE u.created_at >= b.b
+                       AND u.created_at <  b.b + INTERVAL '1 week') AS inflow,
+                  (SELECT COUNT(DISTINCT a.tg_id)::BIGINT FROM activity_log a
+                     WHERE a.event = 'bot_blocked'
+                       AND a.created_at >= b.b
+                       AND a.created_at <  b.b + INTERVAL '1 week') AS outflow
+                FROM buckets b
+                ORDER BY b.b ASC
+            """
+            params = []
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(sql, *params)
+            totals = await conn.fetchrow(
+                """
+                SELECT
+                  (SELECT COUNT(*)::BIGINT FROM users) AS total_users,
+                  (SELECT COUNT(DISTINCT tg_id)::BIGINT FROM activity_log
+                     WHERE event = 'bot_blocked') AS blocked_total
+                """
+            )
+        total_users = int(totals["total_users"] or 0) if totals else 0
+        blocked_total = int(totals["blocked_total"] or 0) if totals else 0
+        return {
+            "series": [
+                {"bucket": str(r["lbl"]),
+                 "inflow": int(r["inflow"] or 0),
+                 "outflow": int(r["outflow"] or 0)}
+                for r in rows
+            ],
+            "total_users": total_users,
+            "blocked_total": blocked_total,
+            "active_total": max(0, total_users - blocked_total),
+        }
+
     async def list_active_subscriptions(self) -> List[Dict[str, Any]]:
         """All subscriptions (active + paused) sorted by next_charge_at.
 

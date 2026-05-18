@@ -1603,8 +1603,12 @@ def build_app(
             revenue_bucket = "month"
         revenue_periods = 12 if revenue_bucket == "month" else 12
 
-        total, ratings_raw, funnel_raw, stage_counts, users, recent, payments_summary, period_stats_row, metrics_data, windows_nodes_data, llm_workers_data, webhook_info, revenue_series, subs_summary = await asyncio.gather(
-            credits_db.count_users(),
+        # Users chart: same toggle pattern.
+        users_bucket = str(request.query_params.get("users_bucket", "month")).strip().lower()
+        if users_bucket not in {"week", "month"}:
+            users_bucket = "month"
+
+        ratings_raw, funnel_raw, stage_counts, users, recent, payments_summary, period_stats_row, metrics_data, windows_nodes_data, llm_workers_data, webhook_info, revenue_series, subs_summary, users_data = await asyncio.gather(
             credits_db.rating_distribution(),
             credits_db.funnel_reach_counts(),
             state_store.list_stage_counts(),
@@ -1618,6 +1622,7 @@ def build_app(
             _safe_get_webhook_info(),
             credits_db.revenue_timeseries(bucket=revenue_bucket, periods=revenue_periods),
             credits_db.subscriptions_summary(),
+            credits_db.users_timeseries(bucket=users_bucket),
         )
 
         # ── Rating distribution (3 buckets matching data we log: low/5-6/7-10) ──
@@ -1819,9 +1824,38 @@ def build_app(
         </div>
         """
 
+        # ── Users chart payload ──
+        users_series = users_data.get("series", []) if isinstance(users_data, dict) else []
+        users_labels_json = json.dumps([str(s["bucket"]) for s in users_series])
+        users_inflow_json = json.dumps([int(s["inflow"]) for s in users_series])
+        users_outflow_json = json.dumps([int(s["outflow"]) for s in users_series])
+        users_total = int(users_data.get("total_users", 0) or 0) if isinstance(users_data, dict) else 0
+        users_blocked = int(users_data.get("blocked_total", 0) or 0) if isinstance(users_data, dict) else 0
+        users_active = int(users_data.get("active_total", 0) or 0) if isinstance(users_data, dict) else 0
+        users_bucket_lbl = (
+            "Текущий месяц · по дням" if users_bucket == "month"
+            else f"Последние {len(users_series)} недель"
+        )
+        users_week_btn = (
+            f'<a href="/admin/?users_bucket=week" class="btn" '
+            f'style="{"background:#2c3e50;font-weight:700" if users_bucket == "week" else "background:#bdc3c7;color:#333"}">Неделя</a>'
+        )
+        users_month_btn = (
+            f'<a href="/admin/?users_bucket=month" class="btn" '
+            f'style="{"background:#2c3e50;font-weight:700" if users_bucket == "month" else "background:#bdc3c7;color:#333"}">Месяц</a>'
+        )
+
         body = f"""
         <div class="card">
-          <h2>Всего пользователей: {total}</h2>
+          <h2>Пользователи: {users_active:,} активных
+            <span style="font-size:0.6em;color:#888;font-weight:400">
+              ({users_total:,} зарегистрировались всего, {users_blocked:,} отписались)
+            </span>
+          </h2>
+          <div style="display:flex;gap:6px;margin-bottom:8px">{users_week_btn} {users_month_btn}
+            <span style="color:#888;align-self:center;margin-left:8px">{users_bucket_lbl}</span>
+          </div>
+          <canvas id="usersChart" height="80"></canvas>
         </div>
 
         <div class="card">
@@ -1932,6 +1966,36 @@ def build_app(
               options: {{
                 responsive: true,
                 plugins: {{ legend: {{ display: false }} }},
+                scales: {{ y: {{ beginAtZero: true }} }}
+              }}
+            }});
+          }}
+          const usersLabels = {users_labels_json};
+          const usersInflow = {users_inflow_json};
+          const usersOutflow = {users_outflow_json};
+          if (usersLabels.length) {{
+            new Chart(document.getElementById("usersChart"), {{
+              type: "bar",
+              data: {{
+                labels: usersLabels,
+                datasets: [
+                  {{
+                    label: "Приток",
+                    data: usersInflow,
+                    backgroundColor: "#27ae60",
+                    borderRadius: 4,
+                  }},
+                  {{
+                    label: "Отток",
+                    data: usersOutflow,
+                    backgroundColor: "#e74c3c",
+                    borderRadius: 4,
+                  }}
+                ]
+              }},
+              options: {{
+                responsive: true,
+                plugins: {{ legend: {{ position: "top" }} }},
                 scales: {{ y: {{ beginAtZero: true }} }}
               }}
             }});
