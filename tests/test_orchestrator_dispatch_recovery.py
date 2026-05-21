@@ -111,6 +111,7 @@ def _patch_dispatch_common(
     monkeypatch.setattr(tasks, "_windows_default_urls", lambda: ["http://win-node:8000"])
     monkeypatch.setattr(tasks, "build_windows_job_payload", lambda **kwargs: {"job_id": kwargs["job_id"]})
     monkeypatch.setattr(tasks, "_s3_head_exists", lambda **kwargs: output_exists)
+    monkeypatch.setattr(tasks, "_probe_windows_node_ready", lambda *args, **kwargs: None)
 
     class _FailingWindowsClient:
         def __init__(
@@ -182,3 +183,45 @@ def test_dispatch_transient_all_nodes_failed_retries_if_output_missing(
     assert "windows_dispatch_transient" in str(kwargs["exc"])
     assert "all_nodes_failed" in str(kwargs["exc"])
     assert get_counter_map(store, metric="dispatch_recovery_outcomes") == {"false": 1}
+
+
+def test_dispatch_node_not_ready_retries_before_payload_post(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    job_id = "job_dispatch_node_not_ready"
+    store = _FakeStore(job_id=job_id, request={"audio_s3_url": "s3://bucket/raw/audio.mp3"})
+    _patch_dispatch_common(monkeypatch, tmp_path=tmp_path, store=store, output_exists=False)
+
+    monkeypatch.setattr(
+        tasks,
+        "_probe_windows_node_ready",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            tasks.WindowsNodeNotReady("windows_node_not_ready: health_probe_failed")
+        ),
+    )
+
+    class _NeverCalledWindowsClient:
+        def __init__(self, _base_url: str, *, timeout_s: float = 30.0, api_mode: str = "jobs") -> None:
+            _ = (_base_url, timeout_s, api_mode)
+
+        def dispatch_render(self, payload):
+            raise AssertionError(f"dispatch_render should not be called while node is not ready: {payload}")
+
+    monkeypatch.setattr(tasks, "WindowsRenderClient", _NeverCalledWindowsClient)
+
+    retry_calls: list[dict[str, Any]] = []
+
+    def _fake_retry(*args, **kwargs):
+        retry_calls.append({"args": args, "kwargs": kwargs})
+        raise _RetryCalled("retry_called")
+
+    monkeypatch.setattr(tasks.dispatch_to_windows, "retry", _fake_retry)
+
+    with pytest.raises(_RetryCalled):
+        tasks.dispatch_to_windows.run(job_id)
+
+    assert len(retry_calls) == 1
+    kwargs = retry_calls[0]["kwargs"]
+    assert float(kwargs["countdown"]) == 5.0
+    assert "windows_dispatch_transient" in str(kwargs["exc"])
+    assert "windows_node_not_ready" in str(kwargs["exc"])
