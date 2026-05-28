@@ -27,6 +27,8 @@ aiohttp-socks>=0.10.1
 httpx>=0.27.0
 boto3>=1.35.0
 librosa>=0.10.2
+scipy>=1.11.0   # explicit: mlcore/audio_analysis.py uses scipy.signal.find_peaks
+                # (librosa pulls scipy transitively but we want a hard pin)
 asyncpg>=0.29.0
 python-multipart>=0.0.9
 prometheus-client>=0.20.0

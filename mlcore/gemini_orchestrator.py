@@ -2079,7 +2079,7 @@ def build_all_via_gemini_one_call(
     max_thinking_tokens = _optional_int_env("GEMINI_MAX_THINKING_TOKENS", 40000)
     provider_mode = normalize_provider_mode(os.environ.get("LLM_PROVIDER_MODE", PROVIDER_MODE_GEMINI))
     hedge_delay_s = _float_env("LLM_HEDGE_DELAY_S", 60.0)
-    timing_mode = _require_choice_env("STAGE2_TIMING_MODE", allowed=["prompts", "hybrid"])
+    timing_mode = _require_choice_env("STAGE2_TIMING_MODE", allowed=["prompts", "hybrid", "hook_aware"])
     fast_start_seconds = _require_float_env("STAGE2_FAST_START_SECONDS")
     if fast_start_seconds < 0.0:
         raise RuntimeError(f"Invalid STAGE2_FAST_START_SECONDS: {fast_start_seconds!r}")
@@ -3468,6 +3468,7 @@ def build_all_via_gemini_one_call(
     stage1_timing_json["audio"] = stage1_timing_audio
 
     bpm: Optional[float] = None
+    hook_analysis_dict: Optional[Dict[str, object]] = None
     if timing_mode == "hybrid":
         if not audio_files:
             raise RuntimeError("No audio files available for BPM detection in STAGE2_TIMING_MODE=hybrid")
@@ -3489,6 +3490,49 @@ def build_all_via_gemini_one_call(
         (logs_dir / "stage2_bpm_librosa.json").write_text(
             json.dumps(bpm_obj, ensure_ascii=False, indent=2),
             encoding="utf-8",
+        )
+    elif timing_mode == "hook_aware":
+        # Phase A: full hook audio analysis (BPM + beats + onsets + drop + sections).
+        # No-fallback policy: any failure here must surface as an explicit error;
+        # do NOT silently degrade to hybrid or prompts.
+        if not audio_files:
+            raise RuntimeError(
+                "No audio files available for hook analysis in STAGE2_TIMING_MODE=hook_aware"
+            )
+        from mlcore.audio_analysis import analyze_focus_clip, to_jsonable
+        hook_analysis = analyze_focus_clip(
+            audio_path=audio_files[0],
+            clip_start_abs=clip_start_abs,
+            clip_end_abs=clip_end_abs,
+        )
+        bpm = float(hook_analysis.bpm)
+        full_hook_dict = to_jsonable(hook_analysis)
+        full_hook_dict["audio_file"] = str(audio_files[0])
+        (logs_dir / f"stage2_hook_analysis_{stamp}.json").write_text(
+            json.dumps(full_hook_dict, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        (logs_dir / "stage2_hook_analysis.json").write_text(
+            json.dumps(full_hook_dict, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        # Trim heavy fields not useful inside the LLM prompt: density_curve is
+        # already aggregated into sections[], and energy_envelope is purely
+        # for downstream JSX/effects (AE wiggle/glow). Keep both on disk.
+        hook_analysis_dict = {
+            k: v for k, v in full_hook_dict.items()
+            if k not in ("density_curve", "energy_envelope")
+        }
+        logger.info(
+            "stage2_hook_analysis_ok version=%s bpm=%.2f beats=%d onsets=%d sections=%d "
+            "drop_t=%s drop_conf=%s",
+            hook_analysis.analysis_version,
+            bpm,
+            len(hook_analysis.beats),
+            len(hook_analysis.onsets),
+            len(hook_analysis.sections),
+            (f"{hook_analysis.drop_candidates[0].t:.3f}" if hook_analysis.drop_candidates else "none"),
+            (f"{hook_analysis.drop_candidates[0].confidence:.2f}" if hook_analysis.drop_candidates else "none"),
         )
     else:
         logger.info("stage2_bpm_skipped mode=%s source=gemini_only", timing_mode)
@@ -3523,6 +3567,7 @@ def build_all_via_gemini_one_call(
             fast_start_seconds=float(fast_start_seconds),
             timing_mode=timing_mode,
             schema_name="Stage2TimingAnalysisPayload",
+            hook_analysis=hook_analysis_dict,
         )
 
         timing_analysis_payload = _run_stage_with_model_validation_retries(
@@ -3551,6 +3596,7 @@ def build_all_via_gemini_one_call(
             fast_start_seconds=float(fast_start_seconds),
             timing_mode=timing_mode,
             schema_name="Stage2TimingCutsPayload",
+            hook_analysis=hook_analysis_dict,
         )
 
         timing_cuts_payload = _run_stage_with_model_validation_retries(
@@ -3585,6 +3631,9 @@ def build_all_via_gemini_one_call(
             min_segment_sec=0.3,
             compact_short_segments=True,
         )
+        # hook_aware mode does NOT need fast-start beat synthesis: the LLM
+        # already receives full beats[]/onsets[]/sections[] in its prompt and
+        # is expected to place cuts on real measured anchors.
         if timing_mode == "hybrid":
             if bpm is None:
                 raise RuntimeError("Hybrid timing mode requires librosa BPM before fast-start beat synthesis")

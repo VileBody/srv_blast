@@ -35,6 +35,7 @@ from .stage2_timing_switches import (
     SYSTEM_BASE_JSON as STAGE2_TIMING_BASE_JSON,
     SYSTEM_FAST_START_BY_BEAT as STAGE2_TIMING_FAST_START,
     SYSTEM_SEMANTIC_AFTER_FAST_START as STAGE2_TIMING_SEMANTIC_AFTER,
+    SYSTEM_HOOK_AWARE as STAGE2_TIMING_HOOK_AWARE,
     SYSTEM_TIMING_ANALYSIS as STAGE2_TIMING_ANALYSIS,
     SYSTEM_TIMING_CUTS as STAGE2_TIMING_CUTS,
 )
@@ -600,11 +601,15 @@ def _timing_semantic_context_from_subtitles(subtitles_json: Dict[str, object]) -
 
 def _build_stage2_timing_modules(*, timing_mode: str) -> str:
     mode = str(timing_mode or "").strip()
-    if mode not in {"prompts", "hybrid"}:
+    if mode not in {"prompts", "hybrid", "hook_aware"}:
         raise ValueError(f"Unsupported timing_mode for prompt assembly: {mode!r}")
     parts = [STAGE2_TIMING_SEMANTIC_AFTER.strip()]
     if mode == "hybrid":
         parts.insert(0, STAGE2_TIMING_FAST_START.strip())
+    elif mode == "hook_aware":
+        # Hook-aware replaces the FAST_START heuristic with measured-audio
+        # rules; semantic-after still applies but as a softer baseline.
+        parts.insert(0, STAGE2_TIMING_HOOK_AWARE.strip())
     return "\n\n".join(parts)
 
 
@@ -628,6 +633,7 @@ def build_stage2_timing_analysis_user_prompt(
     fast_start_seconds: float,
     timing_mode: str,
     schema_name: str = "Stage2TimingAnalysisPayload",
+    hook_analysis: Optional[Dict[str, object]] = None,
 ) -> str:
     clip = ((stage1_json or {}).get("audio") or {}) if isinstance(stage1_json, dict) else {}
     semantic_ctx = _timing_semantic_context_from_subtitles(subtitles_json)
@@ -638,12 +644,16 @@ def build_stage2_timing_analysis_user_prompt(
     }
     if bpm is not None:
         clip_ctx["bpm_librosa"] = float(bpm)
+    hook_block = ""
+    if hook_analysis is not None:
+        hook_block = "\n\nHOOK_ANALYSIS_JSON:\n" + json.dumps(hook_analysis, ensure_ascii=False)
     return (
         f"Return ONLY JSON matching schema: {schema_name}\n\n"
         "TIMING_MODE:\n"
         + json.dumps({"mode": str(timing_mode)}, ensure_ascii=False)
         + "\n\nAUDIO_CLIP_JSON:\n"
         + json.dumps(clip_ctx, ensure_ascii=False)
+        + hook_block
         + "\n\nSEMANTIC_SUBTITLES_CONTEXT_JSON:\n"
         + json.dumps(semantic_ctx, ensure_ascii=False)
     )
@@ -669,6 +679,7 @@ def build_stage2_timing_cuts_user_prompt(
     fast_start_seconds: float,
     timing_mode: str,
     schema_name: str = "Stage2TimingCutsPayload",
+    hook_analysis: Optional[Dict[str, object]] = None,
 ) -> str:
     clip = ((stage1_json or {}).get("audio") or {}) if isinstance(stage1_json, dict) else {}
     clip_ctx = {
@@ -678,12 +689,16 @@ def build_stage2_timing_cuts_user_prompt(
     }
     if bpm is not None:
         clip_ctx["bpm_librosa"] = float(bpm)
+    hook_block = ""
+    if hook_analysis is not None:
+        hook_block = "\n\nHOOK_ANALYSIS_JSON:\n" + json.dumps(hook_analysis, ensure_ascii=False)
     return (
         f"Return ONLY JSON matching schema: {schema_name}\n\n"
         "TIMING_MODE:\n"
         + json.dumps({"mode": str(timing_mode)}, ensure_ascii=False)
         + "\n\nAUDIO_CLIP_JSON:\n"
         + json.dumps(clip_ctx, ensure_ascii=False)
+        + hook_block
         + "\n\nTIMING_ANALYSIS_JSON:\n"
         + json.dumps(timing_analysis_json, ensure_ascii=False)
     )
