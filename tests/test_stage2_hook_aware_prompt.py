@@ -26,13 +26,20 @@ from mlcore.prompts.assemble import (
 _STAGE1_STUB = {"audio": {"clip_start_abs": 0.0, "clip_end_abs": 22.0}}
 _SUBS_STUB: dict = {}
 _HOOK_FIXTURE = {
-    "analysis_version": "v7",
+    "analysis_version": "v8",
     "bpm": 120.0,
     "bpm_raw": 120.0,
     "bpm_doubled": False,
     "beats": [0.5, 1.0, 1.5, 2.0],
     "downbeats": [0.5, 2.5],
     "onsets": [0.5, 0.7, 1.0, 1.3, 1.5],
+    "onsets_classified": [
+        {"t": 0.5, "type": "kick", "confidence": 0.92, "band_energies": {}},
+        {"t": 0.7, "type": "snare", "confidence": 0.71, "band_energies": {}},
+        {"t": 1.0, "type": "transient", "confidence": 0.88, "band_energies": {}},
+        {"t": 1.3, "type": "hat", "confidence": 0.55, "band_energies": {}},
+        {"t": 1.5, "type": "unknown", "confidence": 0.0, "band_energies": {}},
+    ],
     "drop_candidates": [
         {"t": 5.0, "confidence": 0.95, "score_raw": 6.1, "score_adj": 6.6,
          "snapped_to_beat": True, "source": "rms_jump+flux+low_band"},
@@ -57,6 +64,16 @@ def test_hook_aware_system_instruction_has_module():
         text = builder(timing_mode="hook_aware")
         assert "HOOK_AWARE module" in text, f"{builder.__name__} missing HOOK_AWARE block"
         assert "HOOK_ANALYSIS_JSON" in text, f"{builder.__name__} should reference HOOK_ANALYSIS_JSON"
+
+
+def test_hook_aware_system_instruction_describes_onset_types():
+    """v8: SYSTEM_HOOK_AWARE block must document onsets_classified semantics."""
+    text = build_stage2_timing_analysis_system_instruction(timing_mode="hook_aware")
+    assert "onsets_classified[]" in text
+    for type_name in ("kick", "snare", "transient", "hat", "unknown"):
+        assert f'type="{type_name}"' in text, f"missing type {type_name!r} in prompt"
+    # SKIP rule for hats is critical (prevents epileptic edits)
+    assert "SKIP" in text and "hat" in text
 
 
 def test_hook_aware_analysis_user_prompt_embeds_hook_json():

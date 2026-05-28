@@ -9,14 +9,21 @@ All output timestamps are absolute (relative to the source file, NOT to the
 focus clip), so downstream consumers (AE JSX builder, switch_timing
 normalizer) can use them directly.
 
-v4 changes vs v3:
-- Density curve: per-window composite of spectral_flatness, spectral_bandwidth,
-  RMS energy, and onset rate. Tells how "dense" the mix is at each moment.
-- Sections: density curve discretized into low/mid/high regions, with the
-  region containing drop_t auto-labeled "drop". Each section carries a
-  suggested max_cuts_per_sec cap for downstream LLM/JSX consumers.
-- Expected focus clip duration is ~10-22s (hook working window), not full
-  track. Density windowing tuned for this scale.
+v8 changes vs v7:
+- Onset classification (Phase A.5): each detected onset gets a frequency-band
+  type label — kick / body / snare / transient / hat — based on which band
+  dominates a ±30ms window around the onset, normalized to the track's
+  per-band baseline. Output as parallel field `onsets_classified[]`. The
+  flat `onsets[]` array is preserved for backward compat.
+
+v7 changes vs v6:
+- build cut-rate cap lowered 0.90 → 0.55 (long pre-drop runs were too dense).
+
+v6 zone-aware section labeling:
+  pre-drop      → low or mid (no "high" before drop_t)
+  drop window   → "drop" for 3s after drop_t
+  sustain       → low / mid / high (strict 0.85 threshold)
+  build         → section adjacent to drop_t
 
 CLI:
     python -m mlcore.audio_analysis path/to/track.mp3 \
@@ -33,13 +40,13 @@ import math
 import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, List, Literal, Optional
+from typing import TYPE_CHECKING, Dict, List, Literal, Optional, Tuple
 
 if TYPE_CHECKING:
     import numpy as np
 
 
-ANALYSIS_VERSION = "v7"
+ANALYSIS_VERSION = "v8"
 
 # --- core extraction params -------------------------------------------------
 DEFAULT_SR = 22050
@@ -64,27 +71,40 @@ CONF_LOGISTIC_CENTER = 6.0
 CONF_LOGISTIC_SLOPE = 0.4
 
 # --- density + sections -----------------------------------------------------
-DENSITY_WIN_SEC = 0.5              # window size for per-frame density sample
-DENSITY_HOP_SEC = 0.25             # stride between samples (2 Hz curve)
-DENSITY_SMOOTH_TAPS = 3            # moving-avg taps to denoise curve
+DENSITY_WIN_SEC = 0.5
+DENSITY_HOP_SEC = 0.25
+DENSITY_SMOOTH_TAPS = 3
 DENSITY_W_FLATNESS = 0.30
 DENSITY_W_BANDWIDTH = 0.20
 DENSITY_W_RMS = 0.30
 DENSITY_W_ONSET_RATE = 0.20
-DENSITY_LOW_THR = 0.40             # < low: "low" section
-DENSITY_HIGH_THR = 0.70            # > high: "high" (used only when no drop_t)
-DENSITY_HIGH_SUSTAIN_THR = 0.85    # post-drop: stricter "high" — only extra-dense
-DROP_WINDOW_SEC = 3.0              # "meat-grinder" window right after drop_t
-SECTION_MIN_DURATION_SEC = 0.8     # absorb shorter regions into neighbors
-# Suggested cut rates per section label (cuts per second). LLM/JSX may treat
-# these as caps, not mandates. Tune from real-track audits.
+DENSITY_LOW_THR = 0.40
+DENSITY_HIGH_THR = 0.70
+DENSITY_HIGH_SUSTAIN_THR = 0.85
+DROP_WINDOW_SEC = 3.0
+SECTION_MIN_DURATION_SEC = 0.8
 CUT_RATE_BY_LABEL = {
     "low":   0.30,
     "mid":   0.70,
     "high":  1.40,
     "drop":  1.70,
-    "build": 0.55,  # v7: lowered from 0.90 to keep long pre-drop runs cheap
+    "build": 0.55,
 }
+
+# --- onset classification (v8) ----------------------------------------------
+# Bands chosen by typical instrumental signatures in pop/rap/EDM mixes.
+# Order matters only for stable lookup; the classifier picks whichever band
+# is dominant at the onset moment relative to its track-wide baseline.
+ONSET_BANDS_HZ: List[Tuple[str, float, float]] = [
+    ("kick",      60.0,    150.0),   # bass drum fundamental
+    ("body",      150.0,   500.0),   # bass, vocal low end, low toms
+    ("snare",     500.0,   2000.0),  # snare body, vocal consonants
+    ("transient", 2000.0,  6000.0),  # claps, percussion attacks, gun-shot-like FX
+    ("hat",       6000.0,  12000.0), # hi-hats, cymbals, sibilants
+]
+ONSET_WIN_SEC = 0.030              # ±30 ms window around onset for spectrum
+ONSET_DOMINANCE_MIN = 0.5          # below this normalized energy → "unknown"
+ONSET_CONF_RATIO_SAT = 3.0         # dominant/second ratio that maps to conf=1.0
 
 
 @dataclass
@@ -107,11 +127,11 @@ class SpectralPeak:
 @dataclass
 class DensitySample:
     t: float
-    density: float                 # 0..1
+    density: float
     flatness: float
     bandwidth_norm: float
     rms_norm: float
-    onset_rate: float              # onsets per second in window
+    onset_rate: float
 
 
 @dataclass
@@ -122,6 +142,14 @@ class Section:
     mean_density: float
     peak_density: float
     max_cuts_per_sec: float
+
+
+@dataclass
+class OnsetEvent:
+    t: float
+    type: str                       # one of ONSET_BANDS_HZ keys or "unknown"
+    confidence: float               # 0..1, how dominant the chosen band is
+    band_energies: Dict[str, float] # per-band energy, normalized to track baseline
 
 
 @dataclass
@@ -144,6 +172,7 @@ class HookAnalysis:
     beats: List[float]
     downbeats: List[float]
     onsets: List[float]
+    onsets_classified: List[OnsetEvent]
     drop_candidates: List[DropCandidate]
     spectral_peaks: List[SpectralPeak]
     density_curve: List[DensitySample]
@@ -178,6 +207,9 @@ def _params_hash() -> str:
         f"d_lo={DENSITY_LOW_THR}", f"d_hi={DENSITY_HIGH_THR}",
         f"d_hi_sus={DENSITY_HIGH_SUSTAIN_THR}", f"drop_win={DROP_WINDOW_SEC}",
         f"sec_min={SECTION_MIN_DURATION_SEC}",
+        f"onset_bands={[b[0] for b in ONSET_BANDS_HZ]}",
+        f"onset_win={ONSET_WIN_SEC}", f"onset_dom={ONSET_DOMINANCE_MIN}",
+        f"onset_csat={ONSET_CONF_RATIO_SAT}",
     ]
     return hashlib.sha1("|".join(parts).encode("utf-8")).hexdigest()[:12]
 
@@ -232,7 +264,6 @@ def _detect_beats(y, sr: int, clip_start_abs: float):
         bpm = bpm_raw / 2.0
         beats_abs = beats_abs_all[::2]
     elif bpm_halved:
-        # double the BPM; interpolate missing beats by inserting midpoints
         bpm = bpm_raw * 2.0
         interp: List[float] = []
         for i in range(len(beats_abs_all)):
@@ -254,6 +285,94 @@ def _detect_onsets(y, sr: int, clip_start_abs: float) -> List[float]:
     )
     times_rel = librosa.frames_to_time(onset_frames, sr=sr, hop_length=DEFAULT_HOP)
     return [float(t) + float(clip_start_abs) for t in times_rel.tolist()]
+
+
+def _classify_onsets(
+    y, sr: int, clip_start_abs: float, onset_times_abs: List[float],
+) -> List[OnsetEvent]:
+    """
+    For each onset, compute spectrum in a ±ONSET_WIN_SEC window (FFT on the
+    short chunk), sum energy per band, and normalize by the track-wide mean
+    of that band's per-frame energy. The dominant (highest normalized) band
+    wins. Confidence is derived from the dominant/second ratio.
+    """
+    if not onset_times_abs:
+        return []
+    librosa = _load_librosa()
+    import numpy as np
+
+    # Track-wide per-band baseline energy (mean of band-summed STFT magnitude).
+    S = np.abs(librosa.stft(y, n_fft=DEFAULT_FRAME, hop_length=DEFAULT_HOP))
+    freqs = librosa.fft_frequencies(sr=sr, n_fft=DEFAULT_FRAME)
+    band_means: Dict[str, float] = {}
+    for name, lo, hi in ONSET_BANDS_HZ:
+        mask = _band_mask(freqs, lo, hi)
+        if mask.any():
+            band_energy = S[mask, :].sum(axis=0)
+            band_means[name] = max(float(band_energy.mean()), 1e-9)
+        else:
+            band_means[name] = 1e-9
+
+    win_samples = int(round(ONSET_WIN_SEC * 2.0 * sr))  # full window = ±win
+    half_win = max(1, win_samples // 2)
+    freqs_rfft = np.fft.rfftfreq(DEFAULT_FRAME, d=1.0 / sr)
+
+    classified: List[OnsetEvent] = []
+    for t_abs in onset_times_abs:
+        t_rel = t_abs - clip_start_abs
+        center_sample = int(round(t_rel * sr))
+        lo_s = max(0, center_sample - half_win)
+        hi_s = min(len(y), center_sample + half_win)
+        chunk_len = hi_s - lo_s
+        if chunk_len < 16:
+            classified.append(OnsetEvent(
+                t=round(t_abs, 3), type="unknown",
+                confidence=0.0, band_energies={},
+            ))
+            continue
+
+        # zero-pad to DEFAULT_FRAME for consistent frequency bins
+        chunk = y[lo_s:hi_s].astype(np.float32)
+        window = np.hanning(chunk_len).astype(np.float32)
+        windowed = chunk * window
+        if chunk_len < DEFAULT_FRAME:
+            padded = np.zeros(DEFAULT_FRAME, dtype=np.float32)
+            padded[:chunk_len] = windowed
+            spectrum_full = np.abs(np.fft.rfft(padded))
+        else:
+            spectrum_full = np.abs(np.fft.rfft(windowed[:DEFAULT_FRAME]))
+
+        band_energies_norm: Dict[str, float] = {}
+        for name, lo, hi in ONSET_BANDS_HZ:
+            mask = _band_mask(freqs_rfft, lo, hi)
+            energy = float(spectrum_full[mask].sum()) if mask.any() else 0.0
+            band_energies_norm[name] = energy / band_means[name]
+
+        max_norm = max(band_energies_norm.values()) if band_energies_norm else 0.0
+        if max_norm < ONSET_DOMINANCE_MIN:
+            classified.append(OnsetEvent(
+                t=round(t_abs, 3), type="unknown",
+                confidence=0.0,
+                band_energies={k: round(v, 3) for k, v in band_energies_norm.items()},
+            ))
+            continue
+
+        sorted_energies = sorted(band_energies_norm.values(), reverse=True)
+        dominant_name = max(band_energies_norm.items(), key=lambda kv: kv[1])[0]
+        if len(sorted_energies) >= 2 and sorted_energies[1] > 1e-6:
+            ratio = sorted_energies[0] / sorted_energies[1]
+            conf = max(0.0, min(1.0, (ratio - 1.0) / (ONSET_CONF_RATIO_SAT - 1.0)))
+        else:
+            conf = 1.0
+
+        classified.append(OnsetEvent(
+            t=round(t_abs, 3),
+            type=dominant_name,
+            confidence=round(conf, 3),
+            band_energies={k: round(v, 3) for k, v in band_energies_norm.items()},
+        ))
+
+    return classified
 
 
 def _detect_spectral_peaks(y, sr: int, clip_start_abs: float) -> List[SpectralPeak]:
@@ -368,13 +487,6 @@ def _detect_drop_candidates(y, sr: int, clip_start_abs: float, beats_abs: List[f
 
 
 def _compute_density_curve(y, sr: int, clip_start_abs: float, onsets_abs: List[float]) -> List[DensitySample]:
-    """
-    Sample density at DENSITY_HOP_SEC strides. Each sample combines:
-      - spectral flatness (0=tonal, 1=noisy)
-      - spectral bandwidth (normalized to Nyquist)
-      - RMS energy (normalized to max in clip)
-      - onset rate inside the window
-    """
     librosa = _load_librosa()
     import numpy as np
 
@@ -384,7 +496,6 @@ def _compute_density_curve(y, sr: int, clip_start_abs: float, onsets_abs: List[f
     if total < win_samples:
         return []
 
-    # precompute frame-level features at native hop, then aggregate per window
     flatness = librosa.feature.spectral_flatness(y=y, n_fft=DEFAULT_FRAME, hop_length=DEFAULT_HOP)[0]
     bandwidth = librosa.feature.spectral_bandwidth(y=y, sr=sr, n_fft=DEFAULT_FRAME, hop_length=DEFAULT_HOP)[0]
     rms = librosa.feature.rms(y=y, frame_length=DEFAULT_FRAME, hop_length=DEFAULT_HOP)[0]
@@ -411,7 +522,7 @@ def _compute_density_curve(y, sr: int, clip_start_abs: float, onsets_abs: List[f
         abs_hi = win_t_end_rel + clip_start_abs
         n_onsets = sum(1 for o in onsets_abs if abs_lo <= o < abs_hi)
         onset_rate = float(n_onsets) / DENSITY_WIN_SEC
-        onset_rate_norm = min(onset_rate / 8.0, 1.0)  # 8 onsets/sec = saturation
+        onset_rate_norm = min(onset_rate / 8.0, 1.0)
 
         density = (
             DENSITY_W_FLATNESS * flat_v
@@ -431,7 +542,6 @@ def _compute_density_curve(y, sr: int, clip_start_abs: float, onsets_abs: List[f
         ))
         t += hop_samples
 
-    # smooth with moving average to denoise
     if len(samples) >= DENSITY_SMOOTH_TAPS:
         taps = DENSITY_SMOOTH_TAPS
         smoothed_d = []
@@ -440,11 +550,8 @@ def _compute_density_curve(y, sr: int, clip_start_abs: float, onsets_abs: List[f
             hi = min(len(samples), i + taps // 2 + 1)
             smoothed_d.append(sum(s.density for s in samples[lo:hi]) / (hi - lo))
         for s, d in zip(samples, smoothed_d):
-            s.density = d  # leave unrounded until after renormalization
+            s.density = d
 
-    # per-clip normalization: stretch [p10, p90] → [0, 1] so thresholds
-    # (low/mid/high) compare relative intensity within THIS clip, not
-    # against absolute librosa values (which vary by mix/master).
     arr = sorted(s.density for s in samples)
     if len(arr) >= 4:
         p10 = arr[max(0, int(len(arr) * 0.10))]
@@ -460,14 +567,6 @@ def _compute_density_curve(y, sr: int, clip_start_abs: float, onsets_abs: List[f
 
 
 def _segment_sections(density_curve: List[DensitySample], drop_t: Optional[float]) -> List[Section]:
-    """
-    Zone-aware labeling rules:
-      pre-drop  (t < drop_t)                      → low or mid; "high" forbidden
-      drop window (drop_t ≤ t < drop_t + 3s)      → always "drop"
-      sustain   (t ≥ drop_t + 3s)                 → low / mid / high (strict thr)
-      build     last pre-drop section adj. to drop_t → relabeled
-    No drop_t: pure low/mid/high by absolute thresholds.
-    """
     if not density_curve:
         return []
 
@@ -477,12 +576,9 @@ def _segment_sections(density_curve: List[DensitySample], drop_t: Optional[float
             if d > DENSITY_HIGH_THR: return "high"
             return "mid"
         if t < drop_t:
-            # pre-drop: high is logically impossible (no drop yet) → cap at mid
             return "low" if d < DENSITY_LOW_THR else "mid"
         if t < drop_t + DROP_WINDOW_SEC:
-            # mandatory "meat-grinder" window after the drop
             return "drop"
-        # post-drop sustain: only truly extra-dense reads as high
         if d < DENSITY_LOW_THR:           return "low"
         if d > DENSITY_HIGH_SUSTAIN_THR:  return "high"
         return "mid"
@@ -520,7 +616,6 @@ def _segment_sections(density_curve: List[DensitySample], drop_t: Optional[float
         max_cuts_per_sec=CUT_RATE_BY_LABEL.get(cur_label, 0.7),
     ))
 
-    # absorb sub-minimum-duration sections (do not absorb "drop" — it's exact)
     merged: List[Section] = []
     for sec in raw:
         too_short = (sec.t_end - sec.t_start) < SECTION_MIN_DURATION_SEC
@@ -541,7 +636,6 @@ def _segment_sections(density_curve: List[DensitySample], drop_t: Optional[float
         else:
             merged.append(sec)
 
-    # promote last pre-drop section (adjacent to drop) to "build"
     if drop_t is not None:
         for i, sec in enumerate(merged):
             if sec.label == "drop":
@@ -571,6 +665,7 @@ def analyze_focus_clip(
     y, sr_out = _load_clip(Path(audio_path), clip_start_abs, clip_end_abs, sr)
     bpm, bpm_raw, bpm_doubled, beats_abs, downbeats_abs = _detect_beats(y, sr_out, clip_start_abs)
     onsets_abs = _detect_onsets(y, sr_out, clip_start_abs)
+    onsets_classified = _classify_onsets(y, sr_out, clip_start_abs, onsets_abs)
     spectral_peaks = _detect_spectral_peaks(y, sr_out, clip_start_abs)
     drops, envelope, hop_sec = _detect_drop_candidates(y, sr_out, clip_start_abs, beats_abs)
     density_curve = _compute_density_curve(y, sr_out, clip_start_abs, onsets_abs)
@@ -593,6 +688,7 @@ def analyze_focus_clip(
         beats=[round(t, 3) for t in beats_abs],
         downbeats=[round(t, 3) for t in downbeats_abs],
         onsets=[round(t, 3) for t in onsets_abs],
+        onsets_classified=onsets_classified,
         drop_candidates=drops,
         spectral_peaks=spectral_peaks,
         density_curve=density_curve,
@@ -603,18 +699,18 @@ def analyze_focus_clip(
 
 
 def to_jsonable(obj: HookAnalysis) -> dict:
-    """Serialize HookAnalysis to a JSON-safe dict. Stable across versions of
-    the dataclass — extra fields just appear in the dict."""
+    """Serialize HookAnalysis to a JSON-safe dict."""
     d = asdict(obj)
     d["focus_clip"] = asdict(obj.focus_clip)
     d["drop_candidates"] = [asdict(c) for c in obj.drop_candidates]
     d["spectral_peaks"] = [asdict(p) for p in obj.spectral_peaks]
     d["density_curve"] = [asdict(s) for s in obj.density_curve]
     d["sections"] = [asdict(s) for s in obj.sections]
+    d["onsets_classified"] = [asdict(o) for o in obj.onsets_classified]
     return d
 
 
-# Backward-compat alias for any caller that imported the underscore name.
+# Backward-compat alias
 _to_jsonable = to_jsonable
 
 
@@ -635,7 +731,7 @@ def _main():
         sr=args.sr,
         include_envelope=args.envelope,
     )
-    payload = json.dumps(_to_jsonable(result), ensure_ascii=False, indent=2)
+    payload = json.dumps(to_jsonable(result), ensure_ascii=False, indent=2)
     if args.out is not None:
         args.out.parent.mkdir(parents=True, exist_ok=True)
         args.out.write_text(payload, encoding="utf-8")

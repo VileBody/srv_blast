@@ -35,6 +35,23 @@ Available fields and how to use each:
 - `onsets[]` (abs seconds): every detected attack (drum hit, transient,
   hard syllable). Use for `snare_clap` and intra-section cuts inside dense
   passages. They are dense — do not use all of them, pick the strongest.
+- `onsets_classified[]` (preferred over the flat `onsets[]` when present):
+  each element = `{t, type, confidence, band_energies}` where `type` is one
+  of: kick / body / snare / transient / hat / unknown.
+    * type="kick"      → strong sub-bass / bass-drum hit. Best for
+                         `kick_bass` bucket and for cut points in drop/high
+                         sections.
+    * type="transient" → broadband attack (claps, percussion, gun-shot-like
+                         FX). Best for `semantic_peaks` inside high
+                         sections; pair with hard visual cuts.
+    * type="snare"     → snare body / vocal consonant. Use for `snare_clap`.
+    * type="hat"       → hi-hats / cymbals. SKIP for cuts (they are too
+                         frequent and would cause epileptic editing).
+    * type="body"      → bass / vocal low. Soft anchor; use only if no
+                         higher-confidence onset is available nearby.
+    * type="unknown"   → low energy or ambiguous. Ignore.
+  Always filter to `confidence >= 0.5` first — low-confidence labels are
+  noisy and using them harms the result.
 - `drop_candidates[]` ordered by confidence — `drop_candidates[0].t` is the
   best-guess audio drop. The pre-drop section MUST end at this moment;
   place a transition exactly there if drop confidence > 0.85.
@@ -50,12 +67,18 @@ Available fields and how to use each:
   dominates). Useful for `semantic_peaks` when no semantic word lands there.
 
 Output mapping (still emit Stage2TimingAnalysisPayload schema):
-- `kick_bass`     ← subset of `beats[]` falling in drop/high/build sections.
-- `snare_clap`    ← strongest `onsets[]` not already in `kick_bass`.
+- `kick_bass`     ← high-confidence onsets with type="kick", plus any
+                    beats in drop/high sections that don't already have a
+                    kick onset within ±60 ms.
+- `snare_clap`    ← high-confidence onsets with type∈{snare, transient}
+                    not already in `kick_bass`.
 - `vocal_phrases` ← keep semantic phrase starts from lyrics, but snap them
                     to the nearest `beats[]` element within ±120 ms.
-- `semantic_peaks`← include `drop_candidates[0].t` always; add up to two
-                    `spectral_peaks[]` if they fall in mid/high sections.
+- `semantic_peaks`← include `drop_candidates[0].t` always; add high-
+                    confidence type="transient" onsets that fall in
+                    mid/high sections (they often mark hooks/gun-shot FX).
+                    Add up to two `spectral_peaks[]` only if no transient
+                    onset already covers that moment.
 
 For Stage2TimingCutsPayload (`final_cut_timings`):
 - Honor each section's `max_cuts_per_sec` cap.
