@@ -3499,15 +3499,69 @@ def build_all_via_gemini_one_call(
             raise RuntimeError(
                 "No audio files available for hook analysis in STAGE2_TIMING_MODE=hook_aware"
             )
-        from mlcore.audio_analysis import analyze_focus_clip, to_jsonable
+        from mlcore.audio_analysis import (
+            DropCandidate as _DropCand,
+            analyze_focus_clip,
+            to_jsonable,
+        )
         hook_analysis = analyze_focus_clip(
             audio_path=audio_files[0],
             clip_start_abs=clip_start_abs,
             clip_end_abs=clip_end_abs,
         )
         bpm = float(hook_analysis.bpm)
+        # User-confirmed drop override (Phase A-UX). If USER_DROP_T was set by
+        # the build task, the user picked a specific drop moment in the bot.
+        # Replace the algorithmic top-1 with the user value so downstream
+        # sections segmentation pivots around what the user actually heard.
+        # The original computed top-1 is preserved further down the list for
+        # debugging and A/B analysis.
+        user_drop_t_raw = (os.environ.get("USER_DROP_T") or "").strip()
+        algorithmic_top1: Optional[float] = (
+            float(hook_analysis.drop_candidates[0].t)
+            if hook_analysis.drop_candidates else None
+        )
+        user_drop_t_value: Optional[float] = None
+        if user_drop_t_raw:
+            try:
+                user_drop_t_value = float(user_drop_t_raw)
+            except Exception as e:
+                raise RuntimeError(f"invalid USER_DROP_T={user_drop_t_raw!r}") from e
+            if not (clip_start_abs <= user_drop_t_value <= clip_end_abs):
+                raise RuntimeError(
+                    f"USER_DROP_T={user_drop_t_value!r} outside clip window "
+                    f"[{clip_start_abs}, {clip_end_abs}]"
+                )
+            user_pick = _DropCand(
+                t=round(float(user_drop_t_value), 3),
+                confidence=1.0,
+                score_raw=0.0,
+                score_adj=0.0,
+                snapped_to_beat=False,
+                source="user_override",
+            )
+            preserved = [
+                c for c in hook_analysis.drop_candidates
+                if abs(float(c.t) - float(user_drop_t_value)) > 0.5
+            ]
+            hook_analysis.drop_candidates = [user_pick] + preserved[: max(0, 4)]
+            # Re-segment sections around the user-picked drop_t.
+            from mlcore.audio_analysis import _segment_sections as _segment_for_user_drop  # type: ignore
+            hook_analysis.sections = _segment_for_user_drop(
+                hook_analysis.density_curve, float(user_drop_t_value)
+            )
+            logger.info(
+                "stage2_hook_user_drop_override user_t=%.3f algorithmic_top1_t=%s",
+                float(user_drop_t_value),
+                f"{algorithmic_top1:.3f}" if algorithmic_top1 is not None else "none",
+            )
         full_hook_dict = to_jsonable(hook_analysis)
         full_hook_dict["audio_file"] = str(audio_files[0])
+        if user_drop_t_value is not None:
+            full_hook_dict["user_drop_t_override"] = float(user_drop_t_value)
+            full_hook_dict["algorithmic_top1_drop_t"] = (
+                float(algorithmic_top1) if algorithmic_top1 is not None else None
+            )
         (logs_dir / f"stage2_hook_analysis_{stamp}.json").write_text(
             json.dumps(full_hook_dict, ensure_ascii=False, indent=2),
             encoding="utf-8",

@@ -39,6 +39,14 @@ class SendAudioS3Request(BaseModel):
     footage_artist_id: Optional[str] = None
     user_clip_start_sec: Optional[float] = Field(default=None, ge=0.0)
     user_clip_end_sec: Optional[float] = Field(default=None, ge=0.0)
+    # Hook feature (Phase A-UX). When `hook_enabled` is true the orchestrator
+    # is told the job wants hook-aware Stage2 timing AND any AE-FX downstream.
+    # `user_drop_t` is the user-confirmed audio drop moment inside the focus
+    # clip; when set, it overrides the algorithmic top-1 drop candidate. None
+    # means either "user picked no-drop" or "hook off entirely" — they are
+    # disambiguated by `hook_enabled`.
+    hook_enabled: bool = False
+    user_drop_t: Optional[float] = Field(default=None, ge=0.0)
     # Optional internal batch controls for multi-version generation.
     reuse_text_job_id: Optional[str] = None
     exclude_file_names: List[str] = Field(default_factory=list)
@@ -69,11 +77,18 @@ class SendAudioS3Request(BaseModel):
         start = self.user_clip_start_sec
         end = self.user_clip_end_sec
         if start is None and end is None:
-            return self
-        if start is None or end is None:
+            pass
+        elif start is None or end is None:
             raise ValueError("user_clip_start_sec and user_clip_end_sec must be provided together")
-        if float(end) <= float(start):
+        elif float(end) <= float(start):
             raise ValueError("user_clip_end_sec must be > user_clip_start_sec")
+        # If user picked a drop, it must lie inside the focus clip window.
+        if self.user_drop_t is not None and start is not None and end is not None:
+            if not (float(start) <= float(self.user_drop_t) <= float(end)):
+                raise ValueError(
+                    f"user_drop_t must be inside user clip window "
+                    f"[{start}, {end}], got {self.user_drop_t}"
+                )
         return self
 
 

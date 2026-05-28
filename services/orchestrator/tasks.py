@@ -1596,6 +1596,29 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
     if user_clip_start_sec is not None and user_clip_end_sec is not None:
         env["USER_CLIP_START_SEC"] = str(float(user_clip_start_sec))
         env["USER_CLIP_END_SEC"] = str(float(user_clip_end_sec))
+    # Hook feature pass-through. HOOK_ENABLED is a boolean flag the pipeline
+    # uses to decide whether to surface hook-specific AE-FX downstream.
+    # USER_DROP_T, when present, replaces the algorithmic top-1 drop candidate
+    # in hook_aware Stage2 mode (the original computed value is still saved
+    # to disk for A/B comparison).
+    hook_enabled_raw = req.get("hook_enabled")
+    if hook_enabled_raw is True or str(hook_enabled_raw).strip().lower() == "true":
+        env["HOOK_ENABLED"] = "true"
+    user_drop_t_raw = req.get("user_drop_t")
+    if user_drop_t_raw is not None:
+        try:
+            user_drop_t = float(user_drop_t_raw)
+        except Exception as e:
+            raise RuntimeError(f"invalid user_drop_t={user_drop_t_raw!r}") from e
+        if user_drop_t < 0.0:
+            raise RuntimeError(f"user_drop_t must be >= 0 (got {user_drop_t!r})")
+        if user_clip_start_sec is not None and user_clip_end_sec is not None:
+            if not (user_clip_start_sec <= user_drop_t <= user_clip_end_sec):
+                raise RuntimeError(
+                    f"user_drop_t={user_drop_t!r} must be within user clip window "
+                    f"[{user_clip_start_sec}, {user_clip_end_sec}]"
+                )
+        env["USER_DROP_T"] = str(user_drop_t)
     if exclude_file_names:
         env["FOOTAGE_EXCLUDE_FILE_NAMES_JSON"] = json.dumps(exclude_file_names, ensure_ascii=False)
     if rotation_theme and rotation_tags_group:
