@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import time
-from typing import List
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 from redis.asyncio import Redis
@@ -32,6 +32,11 @@ STAGE_WAIT_FOOTAGE_ARTIST = "WAIT_FOOTAGE_ARTIST"
 STAGE_WAIT_TIMING_CHOICE = "WAIT_TIMING_CHOICE"
 STAGE_WAIT_TIMING_INPUT = "WAIT_TIMING_INPUT"
 STAGE_WAIT_SUBTITLES_MODE = "WAIT_SUBTITLES_MODE"
+# Hook feature (Phase A-UX). Inserted after subtitles, before versions.
+STAGE_WAIT_HOOK_CHOICE = "WAIT_HOOK_CHOICE"        # yes/no
+STAGE_WAIT_HOOK_DROP = "WAIT_HOOK_DROP"            # 4-button drop_t picker
+STAGE_WAIT_HOOK_DROP_MANUAL = "WAIT_HOOK_DROP_MANUAL"  # text input
+STAGE_WAIT_HOOK_TYPE = "WAIT_HOOK_TYPE"            # type stub (single button)
 STAGE_WAIT_VERSIONS = "WAIT_VERSIONS"
 STAGE_WAIT_CONFIRM = "WAIT_CONFIRM"
 STAGE_PROCESSING = "PROCESSING"
@@ -78,6 +83,26 @@ class ChatState(BaseModel):
     user_clip_start_sec: float = 0.0
     user_clip_end_sec: float = 0.0
     subtitles_mode: str = SUBTITLES_MODE_LEGACY_BLOCKS
+    # Hook feature (Phase A-UX) — analysis is computed by the bot as a
+    # background asyncio task right after the user confirms the focus clip
+    # timing. By the time the user reaches WAIT_HOOK_CHOICE the result is
+    # ready in hook_analysis_status="ready" with drop_candidates pre-loaded.
+    hook_enabled: bool = False
+    hook_drop_t: Optional[float] = None          # None = user picked "no drop"
+    hook_type: str = "standard"                  # stub for now; type UI later
+    # "" | "pending" | "ready" | "failed"
+    hook_analysis_status: str = ""
+    # Source audio path used to compute the analysis — if it ever doesn't
+    # match the current prepared_audio_local_path (e.g. user re-uploaded
+    # audio), the cached candidates are stale and must be recomputed.
+    hook_analysis_audio_path: str = ""
+    hook_analysis_clip_start: float = 0.0
+    hook_analysis_clip_end: float = 0.0
+    # Top 3 drop candidates as small dicts (t, confidence, source). Kept
+    # compact because the full HookAnalysis JSON is ~10KB; we only need a
+    # handful of numbers for the bot UI.
+    hook_drop_candidates: List[Dict[str, Any]] = Field(default_factory=list)
+    hook_analysis_error: str = ""
     versions_count: int = 1
     # Batch metadata for sequential multi-version generation.
     batch_id: str = ""

@@ -67,6 +67,10 @@ from .state_store import (
     STAGE_WAIT_FOOTAGE_ARTIST,
     STAGE_WAIT_FOOTAGE_GENRE,
     STAGE_WAIT_FRAGMENT_CHOICE,
+    STAGE_WAIT_HOOK_CHOICE,
+    STAGE_WAIT_HOOK_DROP,
+    STAGE_WAIT_HOOK_DROP_MANUAL,
+    STAGE_WAIT_HOOK_TYPE,
     STAGE_WAIT_TIMING_CHOICE,
     STAGE_WAIT_TIMING_INPUT,
     STAGE_WAIT_FRAGMENT_TEXT,
@@ -130,6 +134,12 @@ BTN_SUB_MODE_IMPULSE = "Impulse 2nd"
 BTN_SUB_MODE_SCENES = "Scenes 3rd"
 BTN_SUB_MODE_SCENES_SINGLE = "Scenes 3rd Single-Step"
 BTN_SUB_MODE_4TH = "Template 4th"
+# Hook feature (Phase A-UX).
+BTN_HOOK_YES = "Сделать хук"
+BTN_HOOK_NO = "Без хука"
+BTN_HOOK_DROP_NONE = "В отрывке нет дропа"
+BTN_HOOK_DROP_MANUAL = "Ввести вручную"
+BTN_HOOK_TYPE_STANDARD = "Стандартный"
 VERSION_BUTTONS = [BTN_VER_1, BTN_VER_2, BTN_VER_3, BTN_VER_4, BTN_VER_5]
 SUBTITLES_MODE_BUTTONS = [
     BTN_SUB_MODE_LEGACY,
@@ -1102,6 +1112,22 @@ class BlastBotApp:
                 await self._handle_wait_subtitles_mode(message, st)
                 return
 
+            if st.stage == STAGE_WAIT_HOOK_CHOICE:
+                await self._handle_wait_hook_choice(message, st)
+                return
+
+            if st.stage == STAGE_WAIT_HOOK_DROP:
+                await self._handle_wait_hook_drop(message, st)
+                return
+
+            if st.stage == STAGE_WAIT_HOOK_DROP_MANUAL:
+                await self._handle_wait_hook_drop_manual(message, st)
+                return
+
+            if st.stage == STAGE_WAIT_HOOK_TYPE:
+                await self._handle_wait_hook_type(message, st)
+                return
+
             if st.stage == STAGE_WAIT_VERSIONS:
                 await self._handle_wait_versions(message, st)
                 return
@@ -1521,7 +1547,10 @@ class BlastBotApp:
         if text == BTN_SKIP_TIMING:
             st.user_clip_start_sec = 0.0
             st.user_clip_end_sec = 0.0
-            await self._ask_bg_mode(message, st)
+            # No focus clip = no hook analysis (would have to analyze the whole
+            # track). User can still enable hook later — they will get
+            # algorithmic top-1 on the full track as the default candidate.
+            await self._ask_lyrics_choice(message, st)
             return
         await message.answer(
             "Выбери кнопку: «Указать тайминг» или «Весь трек / на усмотрение ИИ».",
@@ -1551,7 +1580,10 @@ class BlastBotApp:
         await message.answer(
             f"Тайминг установлен: {self._fmt_timing(start_sec)} – {self._fmt_timing(end_sec)} ({duration:.0f} сек)."
         )
-        await self._ask_bg_mode(message, st)
+        # Kick off the hook analysis in the background — by the time the user
+        # finishes lyrics/fragment/bg/footage/subtitles the result is ready.
+        await self._trigger_hook_analysis_task(st)
+        await self._ask_lyrics_choice(message, st)
 
     async def _ask_bg_mode(self, message: Message, st: ChatState) -> None:
         st.stage = STAGE_WAIT_BG_MODE
@@ -1566,7 +1598,9 @@ class BlastBotApp:
     async def _handle_wait_bg_mode(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()
         if text == BTN_BACK:
-            await self._ask_timing_choice(message, st)
+            # Phase A-UX: bg now comes after fragment (was after timing), so
+            # the back step lands on the fragment choice rather than timing.
+            await self._ask_fragment_choice(message, st)
             return
         if text == BTN_BG_FOOTAGE:
             st.bg_mode = "footage"
@@ -1791,16 +1825,15 @@ class BlastBotApp:
         st.active_job_id = ""
         st.active_job_ids = []
         st.completed_job_ids = []
-        st.stage = STAGE_WAIT_LYRICS_CHOICE
-        await self.store.set(st)
-
         size_mb = prep.size_bytes / (1024 * 1024)
         limit_note = "<= лимита" if prep.under_limit else "> лимита (best-effort)"
         await message.answer(
-            f"Трек готов: mp3 {prep.bitrate}, {size_mb:.2f}MB ({limit_note}).\n"
-            "Хочешь прислать текст песни для субтитров?",
-            reply_markup=_kb([BTN_SEND_LYRICS, BTN_SKIP_LYRICS]),
+            f"Трек готов: mp3 {prep.bitrate}, {size_mb:.2f}MB ({limit_note})."
         )
+        # Phase A-UX: timing comes FIRST after audio (was after fragment), so
+        # the bot can launch a background hook-analysis task while the user
+        # fills in lyrics / fragment / footage / subtitles.
+        await self._ask_timing_choice(message, st)
 
     async def _handle_wait_lyrics_choice(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()
@@ -1853,7 +1886,7 @@ class BlastBotApp:
 
         if text == BTN_SKIP_FRAGMENT:
             st.target_fragment = ""
-            await self._ask_timing_choice(message, st)
+            await self._ask_bg_mode(message, st)
             return
 
         await message.answer("Выбери кнопку: «Отправить интересующий фрагмент» или «На усмотрение ИИ».")
@@ -1868,7 +1901,7 @@ class BlastBotApp:
             return
 
         st.target_fragment = text
-        await self._ask_timing_choice(message, st)
+        await self._ask_bg_mode(message, st)
 
     async def _handle_wait_subtitles_mode(self, message: Message, st: ChatState) -> None:
         mode = _parse_subtitles_mode_choice(message.text or "")
@@ -1879,7 +1912,332 @@ class BlastBotApp:
             )
             return
         st.subtitles_mode = mode
+        await self._ask_hook_choice(message, st)
+
+    # ---------- Phase A-UX helpers (lyrics / fragment factoring) ----------
+
+    async def _ask_lyrics_choice(self, message: Message, st: ChatState) -> None:
+        st.stage = STAGE_WAIT_LYRICS_CHOICE
+        await self.store.set(st)
+        await message.answer(
+            "Хочешь прислать текст песни для субтитров?",
+            reply_markup=_kb([BTN_SEND_LYRICS, BTN_SKIP_LYRICS]),
+        )
+
+    async def _ask_fragment_choice(self, message: Message, st: ChatState) -> None:
+        st.stage = STAGE_WAIT_FRAGMENT_CHOICE
+        await self.store.set(st)
+        await message.answer(
+            "Хочешь указать интересующий фрагмент?",
+            reply_markup=_kb([BTN_SEND_FRAGMENT, BTN_SKIP_FRAGMENT]),
+        )
+
+    # ---------- Phase A-UX: hook flow ----------
+
+    async def _trigger_hook_analysis_task(self, st: ChatState) -> None:
+        """
+        Fire-and-forget background analysis of the user-picked focus clip.
+        Stores top-3 drop candidates in chat state by the time the user reaches
+        the hook step. Idempotent: a second call with the same audio path and
+        window is a no-op.
+        """
+        audio_path = str(st.prepared_audio_local_path or "").strip()
+        if not audio_path:
+            log.info("hook_bg_skip reason=no_audio chat=%s", st.chat_id)
+            return
+        clip_start = float(st.user_clip_start_sec or 0.0)
+        clip_end = float(st.user_clip_end_sec or 0.0)
+        if clip_end <= clip_start:
+            # No explicit focus clip — skip background analysis. The user can
+            # still opt into hook later; we will run the analysis on demand
+            # when they reach WAIT_HOOK_CHOICE.
+            log.info("hook_bg_skip reason=no_focus_clip chat=%s", st.chat_id)
+            return
+        # De-dup: if we already analyzed this exact path+window, do nothing.
+        if (
+            st.hook_analysis_status == "ready"
+            and st.hook_analysis_audio_path == audio_path
+            and abs(st.hook_analysis_clip_start - clip_start) < 1e-3
+            and abs(st.hook_analysis_clip_end - clip_end) < 1e-3
+        ):
+            return
+        st.hook_analysis_status = "pending"
+        st.hook_analysis_audio_path = audio_path
+        st.hook_analysis_clip_start = clip_start
+        st.hook_analysis_clip_end = clip_end
+        st.hook_drop_candidates = []
+        st.hook_analysis_error = ""
+        await self.store.set(st)
+
+        import asyncio as _asyncio
+        _asyncio.create_task(
+            self._run_hook_analysis_bg(
+                chat_id=int(st.chat_id),
+                audio_path=audio_path,
+                clip_start=clip_start,
+                clip_end=clip_end,
+            )
+        )
+
+    async def _run_hook_analysis_bg(
+        self, *, chat_id: int, audio_path: str, clip_start: float, clip_end: float
+    ) -> None:
+        """Background runner — must never raise into the asyncio loop."""
+        import asyncio as _asyncio
+        try:
+            from pathlib import Path as _Path
+            from mlcore.audio_analysis import analyze_focus_clip as _analyze
+            loop = _asyncio.get_running_loop()
+            result = await loop.run_in_executor(
+                None,
+                lambda: _analyze(
+                    audio_path=_Path(audio_path),
+                    clip_start_abs=clip_start,
+                    clip_end_abs=clip_end,
+                ),
+            )
+            # Persist a compact form: just the data we need for the UI.
+            candidates = [
+                {
+                    "t": float(c.t),
+                    "confidence": float(c.confidence),
+                    "snapped_to_beat": bool(c.snapped_to_beat),
+                    "source": str(c.source),
+                }
+                for c in result.drop_candidates[:3]
+            ]
+            st = await self.store.get(chat_id)
+            # Stale audio guard: only persist if the user hasn't changed clip.
+            if (
+                st.hook_analysis_audio_path == audio_path
+                and abs(st.hook_analysis_clip_start - clip_start) < 1e-3
+                and abs(st.hook_analysis_clip_end - clip_end) < 1e-3
+            ):
+                st.hook_drop_candidates = candidates
+                st.hook_analysis_status = "ready"
+                st.hook_analysis_error = ""
+                await self.store.set(st)
+                log.info(
+                    "hook_bg_ok chat=%s bpm=%.2f cands=%d",
+                    chat_id, result.bpm, len(candidates),
+                )
+        except Exception as e:
+            log.warning("hook_bg_fail chat=%s err=%r", chat_id, e)
+            try:
+                st = await self.store.get(chat_id)
+                st.hook_analysis_status = "failed"
+                st.hook_analysis_error = str(e)[:300]
+                await self.store.set(st)
+            except Exception:
+                pass
+
+    async def _ask_hook_choice(self, message: Message, st: ChatState) -> None:
+        st.stage = STAGE_WAIT_HOOK_CHOICE
+        await self.store.set(st)
+        # If the background analysis exists, hint at it; otherwise stay neutral.
+        note = ""
+        if st.hook_analysis_status == "ready" and st.hook_drop_candidates:
+            top = st.hook_drop_candidates[0]
+            note = (
+                f"\n\nЗвуковой дроп найден на ~{self._fmt_timing(float(top['t']))} "
+                f"(уверенность {float(top['confidence']):.0%})."
+            )
+        elif st.hook_analysis_status == "pending":
+            note = "\n\nЕщё считаю анализ — выбери, когда определишься."
+        elif st.hook_analysis_status == "failed":
+            note = "\n\nАнализ аудио не удался, дроп можно ввести вручную."
+        await message.answer(
+            "Сделать хук в ролик? Хук — это короткий FX-акцент на дропе, "
+            "помогает удерживать зрителя." + note,
+            reply_markup=_kb([BTN_HOOK_YES, BTN_HOOK_NO]),
+        )
+
+    async def _handle_wait_hook_choice(self, message: Message, st: ChatState) -> None:
+        text = str(message.text or "").strip()
+        if text == BTN_HOOK_NO:
+            st.hook_enabled = False
+            st.hook_drop_t = None
+            await self.store.set(st)
+            await self._ask_versions(message, st)
+            return
+        if text == BTN_HOOK_YES:
+            st.hook_enabled = True
+            await self.store.set(st)
+            await self._ask_hook_drop(message, st)
+            return
+        await message.answer(
+            f"Выбери кнопку: «{BTN_HOOK_YES}» или «{BTN_HOOK_NO}».",
+        )
+
+    async def _ask_hook_drop(self, message: Message, st: ChatState) -> None:
+        st.stage = STAGE_WAIT_HOOK_DROP
+        await self.store.set(st)
+        # Build button rows from cached candidates.
+        cands = list(st.hook_drop_candidates or [])
+        primary_rows: List[List[str]] = []
+        if cands:
+            for idx, c in enumerate(cands[:3]):
+                t_label = self._fmt_timing(float(c["t"]))
+                conf_label = f"{int(round(float(c['confidence']) * 100))}%"
+                tag = "🎯 " if idx == 0 else ""
+                primary_rows.append([f"{tag}{t_label} ({conf_label})"])
+        primary_rows.append([BTN_HOOK_DROP_NONE])
+        primary_rows.append([BTN_HOOK_DROP_MANUAL])
+        primary_rows.append([BTN_BACK])
+        if not cands:
+            if st.hook_analysis_status == "pending":
+                hint = (
+                    "Анализ ещё не готов — попробуй через несколько секунд, "
+                    "или выбери «Ввести вручную» / «В отрывке нет дропа»."
+                )
+            elif st.hook_analysis_status == "failed":
+                hint = (
+                    f"Анализ не удался ({st.hook_analysis_error or 'unknown'}). "
+                    "Можно ввести тайминг вручную."
+                )
+            else:
+                hint = (
+                    "Анализ дропа недоступен (нет focus clip). "
+                    "Введи тайминг вручную, либо «В отрывке нет дропа»."
+                )
+            await message.answer(hint, reply_markup=_kb(*primary_rows))
+            return
+        await message.answer(
+            "Выбери момент дропа. 🎯 — лучший кандидат, остальные — близкие "
+            "альтернативы. Если ни один не подходит — «Ввести вручную».",
+            reply_markup=_kb(*primary_rows),
+        )
+
+    async def _handle_wait_hook_drop(self, message: Message, st: ChatState) -> None:
+        text = str(message.text or "").strip()
+        if text == BTN_BACK:
+            await self._ask_hook_choice(message, st)
+            return
+        if text == BTN_HOOK_DROP_NONE:
+            st.hook_drop_t = None
+            await self.store.set(st)
+            await self._ask_hook_type(message, st)
+            return
+        if text == BTN_HOOK_DROP_MANUAL:
+            st.stage = STAGE_WAIT_HOOK_DROP_MANUAL
+            await self.store.set(st)
+            await message.answer(
+                "Отправь момент дропа в формате 1:23 или 83 (секунды).",
+                reply_markup=ReplyKeyboardRemove(),
+            )
+            return
+        # Otherwise: parse a label like "1:23 (87%)" or "🎯 1:23 (87%)".
+        chosen = self._parse_hook_drop_label(text, candidates=st.hook_drop_candidates)
+        if chosen is None:
+            await message.answer(
+                "Не распознал выбор — нажми одну из кнопок ниже.",
+            )
+            return
+        if not self._validate_hook_drop_inside_clip(chosen, st):
+            await message.answer(
+                "Момент дропа должен быть внутри выбранного фрагмента. "
+                "Попробуй другой вариант или введи вручную.",
+            )
+            return
+        st.hook_drop_t = float(chosen)
+        await self.store.set(st)
+        await message.answer(
+            f"Дроп зафиксирован на {self._fmt_timing(float(chosen))}."
+        )
+        await self._ask_hook_type(message, st)
+
+    async def _handle_wait_hook_drop_manual(self, message: Message, st: ChatState) -> None:
+        text = str(message.text or "").strip()
+        parsed = self._parse_single_timing(text)
+        if parsed is None:
+            await message.answer(
+                "Не распознал тайминг. Формат: 1:23 или 83 (секунды). Попробуй ещё раз."
+            )
+            return
+        if not self._validate_hook_drop_inside_clip(parsed, st):
+            await message.answer(
+                "Этот момент за пределами выбранного фрагмента. "
+                f"Допустимый диапазон: {self._fmt_timing(st.user_clip_start_sec)} – "
+                f"{self._fmt_timing(st.user_clip_end_sec)}."
+            )
+            return
+        st.hook_drop_t = float(parsed)
+        await self.store.set(st)
+        await message.answer(f"Дроп зафиксирован на {self._fmt_timing(float(parsed))}.")
+        await self._ask_hook_type(message, st)
+
+    async def _ask_hook_type(self, message: Message, st: ChatState) -> None:
+        st.stage = STAGE_WAIT_HOOK_TYPE
+        await self.store.set(st)
+        # Type selection is a stub for now — only one option, exists to keep
+        # the flow in place for the upcoming Phase A-UX type-picker work.
+        await message.answer(
+            "Тип хука (пока один вариант, скоро добавим больше):",
+            reply_markup=_kb([BTN_HOOK_TYPE_STANDARD]),
+        )
+
+    async def _handle_wait_hook_type(self, message: Message, st: ChatState) -> None:
+        text = str(message.text or "").strip()
+        if text != BTN_HOOK_TYPE_STANDARD:
+            await message.answer(
+                f"Сейчас доступен только «{BTN_HOOK_TYPE_STANDARD}».",
+            )
+            return
+        st.hook_type = "standard"
+        await self.store.set(st)
         await self._ask_versions(message, st)
+
+    @staticmethod
+    def _parse_single_timing(text: str) -> Optional[float]:
+        """Parse a single mm:ss or seconds string. Returns None on bad input."""
+        s = str(text or "").strip()
+        if not s:
+            return None
+        try:
+            if ":" in s:
+                m_str, sec_str = s.split(":", 1)
+                mins = int(m_str.strip())
+                secs = float(sec_str.strip())
+                if mins < 0 or secs < 0 or secs >= 60.0:
+                    return None
+                return float(mins) * 60.0 + secs
+            v = float(s)
+            return v if v >= 0.0 else None
+        except Exception:
+            return None
+
+    @staticmethod
+    def _parse_hook_drop_label(
+        text: str, *, candidates: List[Dict[str, Any]]
+    ) -> Optional[float]:
+        """
+        Reverse-match a button label like "🎯 1:23 (87%)" back to the candidate
+        time. Compares formatted labels so we tolerate copy-paste / lookalike
+        characters without parsing the number directly.
+        """
+        s = str(text or "").strip()
+        if not s:
+            return None
+        s = s.lstrip("🎯 ").strip()
+        for c in candidates or []:
+            try:
+                t = float(c["t"])
+                conf = float(c["confidence"])
+            except Exception:
+                continue
+            label = f"{BlastBotApp._fmt_timing(t)} ({int(round(conf * 100))}%)"
+            if s == label:
+                return t
+        return None
+
+    @staticmethod
+    def _validate_hook_drop_inside_clip(t_sec: float, st: ChatState) -> bool:
+        cs = float(st.user_clip_start_sec or 0.0)
+        ce = float(st.user_clip_end_sec or 0.0)
+        if ce <= cs:
+            # No focus clip → accept any non-negative value.
+            return float(t_sec) >= 0.0
+        return cs <= float(t_sec) <= ce
 
     async def _handle_wait_versions(self, message: Message, st: ChatState) -> None:
         n = _parse_versions_choice(message.text or "")
@@ -2124,6 +2482,8 @@ class BlastBotApp:
             rotation_tags_group=rotation_group,
             bg_mode=str(st.bg_mode or "footage"),
             bg_solid_color=str(st.bg_solid_color or ""),
+            hook_enabled=bool(st.hook_enabled),
+            user_drop_t=(float(st.hook_drop_t) if st.hook_drop_t is not None else None),
         )
         job_id = str(enqueue.get("job_id") or "").strip()
         if not job_id:

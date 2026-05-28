@@ -46,6 +46,8 @@ class OrchestratorClient:
         rotation_tags_group: str = "",
         bg_mode: str = "footage",
         bg_solid_color: str = "",
+        hook_enabled: bool = False,
+        user_drop_t: float | None = None,
     ) -> Dict[str, Any]:
         payload = {
             "audio_s3_url": str(audio_s3_url),
@@ -74,6 +76,8 @@ class OrchestratorClient:
             "rotation_tags_group": str(rotation_tags_group or "").strip(),
             "bg_mode": str(bg_mode or "footage").strip() or "footage",
             "bg_solid_color": str(bg_solid_color or "").strip(),
+            "hook_enabled": bool(hook_enabled),
+            "user_drop_t": float(user_drop_t) if user_drop_t is not None else None,
         }
         resp = await self._client.post(f"{self._base_url}/send_audio_s3", json=payload)
         if resp.status_code >= 300:
