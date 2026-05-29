@@ -93,6 +93,22 @@ config/styles/           — пресеты: artist_presets.json, effects_librar
 
 ---
 
+## Хуки (раздел «Выбор хука» в боте)
+
+В боте перед рендером — выбор хука из 5 кнопок:
+
+| Хук | Модуль | Что делает |
+|-----|--------|-----------|
+| Звук     | `mlcore/hooks/f1_sound/`     | TBD |
+| Объект   | `mlcore/hooks/f2_object/`    | TBD |
+| Эффект   | `mlcore/hooks/f3_effect/`    | TBD |
+| Движение | `mlcore/hooks/f4_motion/`    | TBD |
+| **Мысль** | `mlcore/hooks/f5_cognition/` | **готово** — TTS-вставка 2–3.5с поверх focal_start трека (Gemini), подключено в боте |
+
+**F5 Cognition (Мысль) — статус 2026-05-29:** модуль рабочий end-to-end. Stage1 (текст) + Stage2 (TTS) подключены через `google.genai.Client` напрямую (хелпер `_gemini.py`). TTS-модель = `gemini-2.5-flash-preview-tts` (3.1-preview отдаёт 500 INTERNAL; переключение = смена env `GEMINI_MODEL_F5_TTS`). Точка вызова: `mlcore/hooks/f5_cognition/orchestrator_hook.py::build_f5_block_if_requested()` врезана в `gemini_orchestrator.py` между merge и `render_all_steps`; блок кладётся в `full_edit_config["f5"]`, который `app/project_builder.build_full_project` читает → `inject.py::apply_f5()` добавляет audio-слой (z=5, между трек-аудио=2 и видео=100+) + TTS text-слой (клон стиля), удаляя перекрытые трек-субтитры. Управление env: `F5_HOOK_DEVICE` (вкл/выбор), `F5_HOOK_INJECT_FOCAL_MS` (дефолт 0), `F5_HOOK_SEED`, `F5_HOOK_S3_UPLOAD`/`F5_HOOK_S3_BUCKET`/`F5_HOOK_S3_PREFIX`. Нет device → zero impact. Mixer.py — только preview (`pipeline.generate_preview()`). Ducking пока no-op. **Бот подключён (2026-05-29):** в `tg_bot_botapi` на стадии `STAGE_WAIT_HOOK_TYPE` теперь 5 кнопок-категорий (Звук/Объект/Эффект/Движение/Мысль); 4 — заглушки «скоро», «Мысль» → новая стадия `STAGE_WAIT_HOOK_DEVICE` с 5 приёмами (Панчлайн/Пропущенное слово/Эхо/Вопрос к треку/Инверсия) → F5Device. Выбор едет `send_audio_s3(hook_device=…)` → schema `SendAudioS3Request.hook_device` → `tasks.py env["F5_HOOK_DEVICE"]` → orchestrator_hook. `user_drop_t` пробрасывается в `F5Request.drop_at_sec` (orchestrator_hook конвертит abs→relative от clip_start). Зеркало в `tg_bot_public` (state-поля + стадия + HOOK_STAGES + orchestrator_client) для CI parity; UI там за `HOOK_FLOW_ENABLED`. **Осталось:** ручная прослушка голоса; (некритично) reverb/ducking, 5 демо-роликов. Источник ТЗ: `outputs/tz_f5_gemini_tts.md` (v1.2 + v1.3). Детали: память `project_hooks_f5.md`.
+
+---
+
 ## Шаблоны субтитров
 
 ### impulse (`2nd_template/`)
@@ -167,3 +183,6 @@ config/styles/           — пресеты: artist_presets.json, effects_librar
 | Дата | Что сделано |
 |------|-------------|
 | 2026-05-22 | Первичный анализ всего проекта, создание CLAUDE.md |
+| 2026-05-29 | Создан скелет `mlcore/hooks/f5_cognition/` (Мысль = TTS-хук через Gemini 3.1). Добавлен раздел «Хуки» с картой 5 категорий. |
+| 2026-05-29 | F5 завершён end-to-end: подключены Gemini Stage1+Stage2 (TTS=`gemini-2.5-flash-preview-tts`, 3.1-preview даёт 500), врезана точка вызова `orchestrator_hook.py` между merge и `render_all_steps` → блок в `full_edit_config["f5"]`. |
+| 2026-05-29 | F5 подключён в боте: `STAGE_WAIT_HOOK_TYPE`=5 категорий хука, «Мысль»→новая `STAGE_WAIT_HOOK_DEVICE` (5 приёмов→F5Device). Проброс `hook_device` через send_audio_s3 → `SendAudioS3Request.hook_device` → `F5_HOOK_DEVICE`; `user_drop_t`→`F5Request.drop_at_sec`. Зеркало в tg_bot_public (CI parity). |

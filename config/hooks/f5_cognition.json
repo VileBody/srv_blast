@@ -1,0 +1,36 @@
+{
+  "_comment": "Config for F5 Cognition hook. See outputs/tz_f5_gemini_tts.md (v1.2 + v1.3 deltas).",
+  "gemini": {
+    "text_model_env": "GEMINI_MODEL_F5_TEXT",
+    "audio_model_env": "GEMINI_MODEL_F5_TTS",
+    "api_key_env": "GEMINI_API_KEY",
+    "timeout_sec": 30,
+    "max_retries": 2
+  },
+  "generation": {
+    "tts_target_duration_ms": [2500, 3500],
+    "tts_acceptable_window_ms": [1500, 4000],
+    "tts_max_output_ms": 4000,
+    "tts_cut_fade_ms": 80,
+    "words_min": 3,
+    "words_max": 8,
+    "stage2_max_retries_on_short": 2
+  },
+  "mixing": {
+    "duck_db": 4,
+    "tts_offset_ms": 100,
+    "tts_normalize_headroom_db": 3.0,
+    "master_peak_dbfs": -1.0,
+    "output_sample_rate": 48000,
+    "output_channels": 2,
+    "min_output_ms": 3000
+  },
+  "cache": {
+    "enabled": false,
+    "_comment": "Disabled to keep voice persona variety on repeated generations."
+  },
+  "logging": {
+    "log_voice_persona": true,
+    "log_rationale": true
+  }
+}

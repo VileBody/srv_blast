@@ -112,6 +112,52 @@ def _tojson_filter(v: Any) -> str:
     return json.dumps(v, ensure_ascii=False, separators=(",", ":"))
 
 
+def _apply_f5_if_present(
+    *,
+    full_edit_config: Dict[str, Any],
+    footage_layers: List[Dict[str, Any]],
+    text_layers: List[Dict[str, Any]],
+    main_comp_name: str,
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """
+    Если в full_edit_config есть блок "f5" — применяет F5-инжекторы.
+
+    Блок "f5" формируется оркестратором: F5Response.to_config_block(
+        focal_start_ms=..., audio_url="s3://...").
+
+    Импорт mlcore.hooks делаем лениво внутри функции, чтобы project_builder
+    не тянул ML-зависимости когда хука нет.
+    """
+    f5_block = full_edit_config.get("f5") if isinstance(full_edit_config, dict) else None
+    if not f5_block or not isinstance(f5_block, dict):
+        return footage_layers, text_layers
+
+    try:
+        from mlcore.hooks.f5_cognition.inject import apply_f5
+        from mlcore.hooks.f5_cognition.models import F5Response
+    except Exception as e:  # noqa: BLE001
+        LOGGER.error("f5 block present but mlcore.hooks import failed: %s", e)
+        raise
+
+    f5_resp = F5Response.from_config_block(f5_block)
+    focal_start_ms = int(f5_block.get("focal_start_ms", 0))
+    audio_url = f5_block.get("audio_url")
+
+    LOGGER.info(
+        "f5 hook present device=%s focal_ms=%d audio_url=%s tts=%r",
+        f5_resp.chosen_device.value, focal_start_ms, bool(audio_url), f5_resp.tts_text,
+    )
+
+    return apply_f5(
+        footage_layers=footage_layers,
+        text_layers=text_layers,
+        f5=f5_resp,
+        focal_start_ms=focal_start_ms,
+        tts_remote_url=audio_url,
+        target_comp_name=main_comp_name,
+    )
+
+
 def build_full_project(
     *,
     repo_root: Path,
@@ -195,6 +241,16 @@ def build_full_project(
         full_edit_config=full_edit_config,
         text_comp_name=text_name,
         mine_comp_name=mine_name,
+    )
+
+    # 2.5) F5 Cognition hook («Мысль»): если в config есть блок "f5" — добавляем
+    #      TTS audio-слой + TTS subtitle-слой и вырезаем перекрытые трек-субтитры.
+    #      Если блока нет — zero impact, обычные job'ы не затрагиваются.
+    footage_layers, text_layers = _apply_f5_if_present(
+        full_edit_config=full_edit_config,
+        footage_layers=footage_layers,
+        text_layers=text_layers,
+        main_comp_name=main_name,
     )
 
     payload: Dict[str, Any] = {

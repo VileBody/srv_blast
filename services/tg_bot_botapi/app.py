@@ -71,6 +71,7 @@ from .state_store import (
     STAGE_WAIT_HOOK_DROP,
     STAGE_WAIT_HOOK_DROP_MANUAL,
     STAGE_WAIT_HOOK_TYPE,
+    STAGE_WAIT_HOOK_DEVICE,
     STAGE_WAIT_TIMING_CHOICE,
     STAGE_WAIT_TIMING_INPUT,
     STAGE_WAIT_FRAGMENT_TEXT,
@@ -140,6 +141,56 @@ BTN_HOOK_NO = "Без хука"
 BTN_HOOK_DROP_NONE = "В отрывке нет дропа"
 BTN_HOOK_DROP_MANUAL = "Ввести вручную"
 BTN_HOOK_TYPE_STANDARD = "Стандартный"
+# Hook category picker — 5 buttons. Only "Мысль" (F5 Cognition) is implemented;
+# the other four are not-yet-available stubs.
+BTN_HOOK_CAT_SOUND = "Звук"
+BTN_HOOK_CAT_OBJECT = "Объект"
+BTN_HOOK_CAT_EFFECT = "Эффект"
+BTN_HOOK_CAT_MOTION = "Движение"
+BTN_HOOK_CAT_THOUGHT = "Мысль"
+HOOK_CATEGORY_BUTTONS = [
+    BTN_HOOK_CAT_SOUND,
+    BTN_HOOK_CAT_OBJECT,
+    BTN_HOOK_CAT_EFFECT,
+    BTN_HOOK_CAT_MOTION,
+    BTN_HOOK_CAT_THOUGHT,
+]
+# category button -> internal category key. Only "thought" is wired downstream.
+_HOOK_CATEGORY_BY_BUTTON = {
+    BTN_HOOK_CAT_SOUND: "sound",
+    BTN_HOOK_CAT_OBJECT: "object",
+    BTN_HOOK_CAT_EFFECT: "effect",
+    BTN_HOOK_CAT_MOTION: "motion",
+    BTN_HOOK_CAT_THOUGHT: "thought",
+}
+# Categories that are not implemented yet (everything except "Мысль").
+_HOOK_CATEGORY_NOT_READY = {
+    BTN_HOOK_CAT_SOUND,
+    BTN_HOOK_CAT_OBJECT,
+    BTN_HOOK_CAT_EFFECT,
+    BTN_HOOK_CAT_MOTION,
+}
+# F5 («Мысль») device picker — labels mirror DeviceSpec.title_ru in
+# mlcore/hooks/f5_cognition/devices.py. Button text -> F5Device value.
+BTN_HOOK_DEV_PUNCHLINE = "Панчлайн"
+BTN_HOOK_DEV_MISSING_WORD = "Пропущенное слово"
+BTN_HOOK_DEV_LYRIC_ECHO = "Эхо"
+BTN_HOOK_DEV_QUESTION = "Вопрос к треку"
+BTN_HOOK_DEV_INVERSE = "Инверсия"
+HOOK_DEVICE_BUTTONS = [
+    BTN_HOOK_DEV_PUNCHLINE,
+    BTN_HOOK_DEV_MISSING_WORD,
+    BTN_HOOK_DEV_LYRIC_ECHO,
+    BTN_HOOK_DEV_QUESTION,
+    BTN_HOOK_DEV_INVERSE,
+]
+_HOOK_DEVICE_BY_BUTTON = {
+    BTN_HOOK_DEV_PUNCHLINE: "punchline",
+    BTN_HOOK_DEV_MISSING_WORD: "missing_word",
+    BTN_HOOK_DEV_LYRIC_ECHO: "lyric_echo",
+    BTN_HOOK_DEV_QUESTION: "question_to_track",
+    BTN_HOOK_DEV_INVERSE: "inverse_lyric",
+}
 VERSION_BUTTONS = [BTN_VER_1, BTN_VER_2, BTN_VER_3, BTN_VER_4, BTN_VER_5]
 SUBTITLES_MODE_BUTTONS = [
     BTN_SUB_MODE_LEGACY,
@@ -1128,6 +1179,10 @@ class BlastBotApp:
                 await self._handle_wait_hook_type(message, st)
                 return
 
+            if st.stage == STAGE_WAIT_HOOK_DEVICE:
+                await self._handle_wait_hook_device(message, st)
+                return
+
             if st.stage == STAGE_WAIT_VERSIONS:
                 await self._handle_wait_versions(message, st)
                 return
@@ -2057,6 +2112,8 @@ class BlastBotApp:
         if text == BTN_HOOK_NO:
             st.hook_enabled = False
             st.hook_drop_t = None
+            st.hook_category = ""
+            st.hook_device = ""
             await self.store.set(st)
             await self._ask_versions(message, st)
             return
@@ -2167,24 +2224,71 @@ class BlastBotApp:
         await self._ask_hook_type(message, st)
 
     async def _ask_hook_type(self, message: Message, st: ChatState) -> None:
+        """Hook category picker — 5 buttons. Only «Мысль» is implemented."""
         st.stage = STAGE_WAIT_HOOK_TYPE
         await self.store.set(st)
-        # Type selection is a stub for now — only one option, exists to keep
-        # the flow in place for the upcoming Phase A-UX type-picker work.
         await message.answer(
-            "Тип хука (пока один вариант, скоро добавим больше):",
-            reply_markup=_kb([BTN_HOOK_TYPE_STANDARD]),
+            "Выбери тип хука:\n"
+            "• «Мысль» — голосовая TTS-вставка в первые секунды (готово).\n"
+            "• Звук / Объект / Эффект / Движение — скоро добавим.",
+            reply_markup=_kb(
+                [BTN_HOOK_CAT_SOUND, BTN_HOOK_CAT_OBJECT],
+                [BTN_HOOK_CAT_EFFECT, BTN_HOOK_CAT_MOTION],
+                [BTN_HOOK_CAT_THOUGHT],
+                [BTN_BACK],
+            ),
         )
 
     async def _handle_wait_hook_type(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()
-        if text != BTN_HOOK_TYPE_STANDARD:
+        if text == BTN_BACK:
+            await self._ask_hook_drop(message, st)
+            return
+        if text in _HOOK_CATEGORY_NOT_READY:
             await message.answer(
-                f"Сейчас доступен только «{BTN_HOOK_TYPE_STANDARD}».",
+                f"«{text}» пока в разработке — скоро добавим. "
+                "Сейчас доступна «Мысль»."
             )
             return
-        st.hook_type = "standard"
+        if text == BTN_HOOK_CAT_THOUGHT:
+            st.hook_category = "thought"
+            await self.store.set(st)
+            await self._ask_hook_device(message, st)
+            return
+        await message.answer("Выбери тип хука кнопкой ниже.")
+
+    async def _ask_hook_device(self, message: Message, st: ChatState) -> None:
+        """F5 («Мысль») device sub-picker — 5 rhetorical devices."""
+        st.stage = STAGE_WAIT_HOOK_DEVICE
         await self.store.set(st)
+        await message.answer(
+            "Какой приём «Мысли»?\n"
+            "• Панчлайн — голос подводит, трек добивает.\n"
+            "• Пропущенное слово — голос обрывается, трек закрывает.\n"
+            "• Эхо — голос заранее произносит фразу-крючок трека.\n"
+            "• Вопрос к треку — голос спрашивает, трек отвечает.\n"
+            "• Инверсия — голос говорит противоположное.",
+            reply_markup=_kb(
+                [BTN_HOOK_DEV_PUNCHLINE, BTN_HOOK_DEV_MISSING_WORD],
+                [BTN_HOOK_DEV_LYRIC_ECHO, BTN_HOOK_DEV_QUESTION],
+                [BTN_HOOK_DEV_INVERSE],
+                [BTN_BACK],
+            ),
+        )
+
+    async def _handle_wait_hook_device(self, message: Message, st: ChatState) -> None:
+        text = str(message.text or "").strip()
+        if text == BTN_BACK:
+            await self._ask_hook_type(message, st)
+            return
+        device = _HOOK_DEVICE_BY_BUTTON.get(text)
+        if device is None:
+            await message.answer("Выбери приём кнопкой ниже.")
+            return
+        st.hook_device = device
+        st.hook_type = "standard"  # legacy compat field
+        await self.store.set(st)
+        await message.answer(f"Ок, «Мысль»: {text}.")
         await self._ask_versions(message, st)
 
     @staticmethod
@@ -2484,6 +2588,11 @@ class BlastBotApp:
             bg_solid_color=str(st.bg_solid_color or ""),
             hook_enabled=bool(st.hook_enabled),
             user_drop_t=(float(st.hook_drop_t) if st.hook_drop_t is not None else None),
+            hook_device=(
+                str(st.hook_device)
+                if (st.hook_enabled and st.hook_category == "thought" and st.hook_device)
+                else None
+            ),
         )
         job_id = str(enqueue.get("job_id") or "").strip()
         if not job_id:

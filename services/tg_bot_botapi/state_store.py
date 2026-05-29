@@ -36,7 +36,8 @@ STAGE_WAIT_SUBTITLES_MODE = "WAIT_SUBTITLES_MODE"
 STAGE_WAIT_HOOK_CHOICE = "WAIT_HOOK_CHOICE"        # yes/no
 STAGE_WAIT_HOOK_DROP = "WAIT_HOOK_DROP"            # 4-button drop_t picker
 STAGE_WAIT_HOOK_DROP_MANUAL = "WAIT_HOOK_DROP_MANUAL"  # text input
-STAGE_WAIT_HOOK_TYPE = "WAIT_HOOK_TYPE"            # type stub (single button)
+STAGE_WAIT_HOOK_TYPE = "WAIT_HOOK_TYPE"            # 5 hook categories (Звук/Объект/Эффект/Движение/Мысль)
+STAGE_WAIT_HOOK_DEVICE = "WAIT_HOOK_DEVICE"        # F5 («Мысль») device sub-picker (5 devices)
 STAGE_WAIT_VERSIONS = "WAIT_VERSIONS"
 STAGE_WAIT_CONFIRM = "WAIT_CONFIRM"
 STAGE_PROCESSING = "PROCESSING"
@@ -89,7 +90,16 @@ class ChatState(BaseModel):
     # ready in hook_analysis_status="ready" with drop_candidates pre-loaded.
     hook_enabled: bool = False
     hook_drop_t: Optional[float] = None          # None = user picked "no drop"
-    hook_type: str = "standard"                  # stub for now; type UI later
+    hook_type: str = "standard"                  # legacy compat; superseded by category/device
+    # Hook category chosen on the 5-button picker:
+    # "" | "sound" | "object" | "effect" | "motion" | "thought".
+    # Only "thought" (Мысль) is implemented (=> F5 Cognition); the other four
+    # are not-yet-available stubs.
+    hook_category: str = ""
+    # F5 («Мысль») device when hook_category == "thought":
+    # "" | "punchline" | "missing_word" | "lyric_echo"
+    # | "question_to_track" | "inverse_lyric".
+    hook_device: str = ""
     # "" | "pending" | "ready" | "failed"
     hook_analysis_status: str = ""
     # Source audio path used to compute the analysis — if it ever doesn't

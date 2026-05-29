@@ -1619,6 +1619,24 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
                     f"[{user_clip_start_sec}, {user_clip_end_sec}]"
                 )
         env["USER_DROP_T"] = str(user_drop_t)
+    # F5 Cognition («Мысль») device pass-through. When set, switches on the F5
+    # hook pipeline in mlcore.hooks.f5_cognition.orchestrator_hook (it reads
+    # F5_HOOK_DEVICE from the build subprocess env). Absent => no F5 hook.
+    hook_device_raw = req.get("hook_device")
+    if hook_device_raw is not None:
+        hook_device = str(hook_device_raw).strip().lower()
+        allowed_devices = {
+            "punchline",
+            "missing_word",
+            "lyric_echo",
+            "question_to_track",
+            "inverse_lyric",
+        }
+        if hook_device not in allowed_devices:
+            raise RuntimeError(
+                f"invalid hook_device={hook_device_raw!r}; allowed={sorted(allowed_devices)}"
+            )
+        env["F5_HOOK_DEVICE"] = hook_device
     if exclude_file_names:
         env["FOOTAGE_EXCLUDE_FILE_NAMES_JSON"] = json.dumps(exclude_file_names, ensure_ascii=False)
     if rotation_theme and rotation_tags_group:

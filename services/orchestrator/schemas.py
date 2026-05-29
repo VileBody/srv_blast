@@ -47,6 +47,20 @@ class SendAudioS3Request(BaseModel):
     # disambiguated by `hook_enabled`.
     hook_enabled: bool = False
     user_drop_t: Optional[float] = Field(default=None, ge=0.0)
+    # F5 Cognition («Мысль») device. When the user picks the "Мысль" hook
+    # category, the bot sends the chosen F5 device here (one of:
+    # punchline / missing_word / lyric_echo / question_to_track / inverse_lyric).
+    # Propagated to the build env as F5_HOOK_DEVICE, which switches on the F5
+    # pipeline in mlcore.hooks.f5_cognition.orchestrator_hook. None => no F5 hook.
+    hook_device: Optional[
+        Literal[
+            "punchline",
+            "missing_word",
+            "lyric_echo",
+            "question_to_track",
+            "inverse_lyric",
+        ]
+    ] = None
     # Optional internal batch controls for multi-version generation.
     reuse_text_job_id: Optional[str] = None
     exclude_file_names: List[str] = Field(default_factory=list)

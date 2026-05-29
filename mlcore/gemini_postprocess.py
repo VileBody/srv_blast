@@ -841,6 +841,7 @@ def render_all_steps(
     footage_inventory_json: Path,
     out_dir: Path,
     data_dir: Path | None = None,
+    f5_block: Dict[str, Any] | None = None,
 ) -> Dict[str, Path]:
     repo_root = repo_root.resolve()
     out_dir = out_dir.resolve()
@@ -1027,6 +1028,15 @@ def render_all_steps(
         audio_file_path=audio_file_path,
     )
     footage_obj = json.loads(footage_str)
+
+    # -------------------------
+    # F5 Cognition hook («Мысль»): если оркестратор сгенерировал блок —
+    # вкладываем его в full_edit_config. project_builder.build_full_project
+    # прочитает full_edit_config["f5"] и вызовет apply_f5() (audio + subtitle
+    # слои). Нет блока → full_edit_config без изменений (обычный job).
+    # -------------------------
+    if f5_block:
+        full_edit_obj["f5"] = f5_block
 
     # -------------------------
     # Write to DATA_DIR + mirror to OUT_DIR

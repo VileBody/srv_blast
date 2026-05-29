@@ -48,6 +48,7 @@ class OrchestratorClient:
         bg_solid_color: str = "",
         hook_enabled: bool = False,
         user_drop_t: float | None = None,
+        hook_device: str | None = None,
     ) -> Dict[str, Any]:
         payload = {
             "audio_s3_url": str(audio_s3_url),
@@ -78,6 +79,7 @@ class OrchestratorClient:
             "bg_solid_color": str(bg_solid_color or "").strip(),
             "hook_enabled": bool(hook_enabled),
             "user_drop_t": float(user_drop_t) if user_drop_t is not None else None,
+            "hook_device": (str(hook_device).strip() or None) if hook_device is not None else None,
         }
         resp = await self._client.post(f"{self._base_url}/send_audio_s3", json=payload)
         if resp.status_code >= 300:

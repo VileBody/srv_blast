@@ -40,6 +40,7 @@ STAGE_WAIT_HOOK_CHOICE = "WAIT_HOOK_CHOICE"
 STAGE_WAIT_HOOK_DROP = "WAIT_HOOK_DROP"
 STAGE_WAIT_HOOK_DROP_MANUAL = "WAIT_HOOK_DROP_MANUAL"
 STAGE_WAIT_HOOK_TYPE = "WAIT_HOOK_TYPE"
+STAGE_WAIT_HOOK_DEVICE = "WAIT_HOOK_DEVICE"
 STAGE_WAIT_VERSIONS = "WAIT_VERSIONS"
 STAGE_WAIT_CONFIRM = "WAIT_CONFIRM"
 STAGE_PROCESSING = "PROCESSING"
@@ -148,6 +149,11 @@ class ChatState(BaseModel):
     hook_enabled: bool = False
     hook_drop_t: Optional[float] = None
     hook_type: str = "standard"
+    # Hook category ("" | sound | object | effect | motion | thought) and the
+    # F5 («Мысль») device ("" | punchline | missing_word | lyric_echo
+    # | question_to_track | inverse_lyric). Mirror of tg_bot_botapi fields.
+    hook_category: str = ""
+    hook_device: str = ""
     hook_analysis_status: str = ""
     hook_analysis_audio_path: str = ""
     hook_analysis_clip_start: float = 0.0
