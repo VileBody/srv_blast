@@ -17,6 +17,10 @@ pydantic>=2.7.0
 # Gemini client (google.genai)
 google-genai>=0.6.0
 
+# F5 Cognition («Мысль») hook — audio decode/measure/encode for the TTS wav.
+# Requires the ffmpeg system binary (installed in the base Dockerfile).
+pydub>=0.25.1
+
 # Retries
 tenacity>=8.2.3
 
