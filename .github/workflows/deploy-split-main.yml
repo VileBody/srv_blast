@@ -115,7 +115,9 @@ jobs:
           bash "$REPO_DIR/infra/runners/deploy_remote_fanout.sh" "$BRANCH" "prod-path"
 
   deploy-infra-ops:
-    if: ${{ vars.DEPLOY_SPLIT_ENABLED == 'true' && (github.event_name == 'push' || inputs.target == 'all' || inputs.target == 'infra-ops') }}
+    needs:
+      - deploy-prod-path
+    if: ${{ always() && vars.DEPLOY_SPLIT_ENABLED == 'true' && (github.event_name == 'push' || inputs.target == 'all' || inputs.target == 'infra-ops') && needs.deploy-prod-path.result != 'failure' && needs.deploy-prod-path.result != 'cancelled' }}
     name: Deploy Infra Ops
     runs-on: [self-hosted, blast-deploy-infra]
     timeout-minutes: 30
