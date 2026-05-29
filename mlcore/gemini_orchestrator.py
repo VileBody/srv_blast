@@ -4048,17 +4048,30 @@ def build_all_via_gemini_one_call(
     #    Если в env есть F5_HOOK_DEVICE — гоняем F5 pipeline (Stage1 текст + Stage2
     #    TTS), грузим .wav в S3 и получаем блок для full_edit_config["f5"].
     #    Нет device → f5_block=None → обычный job не затрагивается.
+    #    Хук — опциональное усиление, НЕ должен ронять основной рендер. Любая
+    #    ошибка F5 (Gemini 5xx, короткий TTS, focal out-of-bounds, S3, ffmpeg…)
+    #    логируется с трейсбеком, и джоб рендерится БЕЗ хука (f5_block=None).
     _emit(progress_cb, "f5_hook")
-    from mlcore.hooks.f5_cognition.orchestrator_hook import build_f5_block_if_requested
+    f5_block = None
+    try:
+        from mlcore.hooks.f5_cognition.orchestrator_hook import build_f5_block_if_requested
 
-    f5_block = build_f5_block_if_requested(
-        track_path=str(audio_files[0]) if audio_files else "",
-        lyrics=str(stage1_json.get("lyrics_text") or ""),
-        clip_start_abs_sec=float(stage1_json["audio"]["clip_start_abs"]),
-        out_dir=out_dir,
-        job_tag=(os.environ.get("JOB_ID") or out_dir.name),
-        is_prod=(mode == MODE_PROD),
-    )
+        f5_block = build_f5_block_if_requested(
+            track_path=str(audio_files[0]) if audio_files else "",
+            lyrics=str(stage1_json.get("lyrics_text") or ""),
+            clip_start_abs_sec=float(stage1_json["audio"]["clip_start_abs"]),
+            out_dir=out_dir,
+            job_tag=(os.environ.get("JOB_ID") or out_dir.name),
+            is_prod=(mode == MODE_PROD),
+        )
+    except Exception:
+        logger.exception(
+            "f5.hook FAILED — продолжаю рендер БЕЗ хука "
+            "(device=%s job=%s)",
+            os.environ.get("F5_HOOK_DEVICE") or "<none>",
+            os.environ.get("JOB_ID") or out_dir.name,
+        )
+        f5_block = None
 
     outputs = render_all_steps(
         repo_root=ROOT,

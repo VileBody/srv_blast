@@ -34,8 +34,10 @@ logger = logging.getLogger(__name__)
 # TTS ставим между — слышен поверх трека, не конфликтует с видео.
 F5_AUDIO_Z_INDEX = 5
 
-# Лёгкая задержка TTS от старта focal-окна (мс). Совпадает с TTS_OFFSET_MS в mixer.
-F5_TTS_OFFSET_MS = 100
+# TTS-аудио и его субтитр обязаны стартовать в один и тот же кадр — иначе в
+# отрендеренном проекте появляется рассинхрон голоса и подписи. Поэтому смещение
+# = 0: и audio_layer, и subtitle_layer берут ровно focal_start_ms.
+F5_TTS_OFFSET_MS = 0
 
 # Имена композиций (подсмотрено в render.jsx)
 DEFAULT_AUDIO_COMP = "Comp 1"
@@ -135,12 +137,6 @@ def inject_audio_layer(
 # Subtitle-слой
 # ─────────────────────────────────────────────────────────────────────────────
 
-# В text_layer text дублируется в нескольких местах внутри text_data
-# (text_base / char_styles_ungrouped / box_text). Чтобы не ломать стиль —
-# клонируем существующий шаблон и переопределяем поля, где встречается текст.
-_TEXT_DATA_TEXT_KEYS = ("text_base", "char_styles_ungrouped", "box_text")
-
-
 # Запас по краям окна TTS (сек): чуть шире, чтобы гарантированно вырезать
 # субтитры, которые краешком заходят под TTS. Жёсткое требование: НИКОГДА
 # не наслаивать субтитры трека и TTS.
@@ -213,23 +209,20 @@ def _clone_text_layer_template(
     return None
 
 
-def _override_text_recursive(obj: Any, new_text: str) -> None:
+def _rebuild_char_styles(template_td: dict[str, Any], *, text_len: int) -> list[dict[str, Any]]:
     """
-    Рекурсивно ищет поля text/string/value/sourceText/raw_text и заменяет
-    на new_text. Грубо, но безопасно для наших целей (один новый слой).
+    Перестраивает char_styles_ungrouped под длину нового текста.
 
-    TODO: после первого реального теста — заменить на точечное обновление
-    конкретных ключей text_base/char_styles_ungrouped/box_text.
+    AE рендерит видимую строку из layer["text"]; char_styles_ungrouped несёт
+    только по-символьные стили ({"i", "font", "fontSize", ...}) и обязан совпадать
+    по длине с текстом, иначе хвост символов отрендерится без стиля. Берём стиль
+    первого символа шаблона как базовый для всех индексов нового текста.
     """
-    if isinstance(obj, dict):
-        for k, v in obj.items():
-            if k in {"text", "sourceText", "raw_text", "source_text"} and isinstance(v, str):
-                obj[k] = new_text
-            else:
-                _override_text_recursive(v, new_text)
-    elif isinstance(obj, list):
-        for item in obj:
-            _override_text_recursive(item, new_text)
+    base_style: dict[str, Any] = {}
+    existing = template_td.get("char_styles_ungrouped")
+    if isinstance(existing, list) and existing and isinstance(existing[0], dict):
+        base_style = {k: v for k, v in existing[0].items() if k != "i"}
+    return [{"i": i, **base_style} for i in range(max(0, int(text_len)))]
 
 
 def inject_subtitle_layer(
@@ -280,15 +273,13 @@ def inject_subtitle_layer(
     template["out_point"] = float(out_sec)
     template["z_index"] = max_z + 1
 
-    # Внутри text_data тоже обновляем text где встречается + startTime.
+    # text_data: стартовое время + перестроенные по-символьные стили под новый
+    # текст (видимая строка берётся из template["text"], выставленного выше).
     td = template.setdefault("text_data", {})
     meta = td.setdefault("layer_meta", {})
     meta["startTime"] = float(in_sec)
     meta["enabled"] = True
-
-    for key in _TEXT_DATA_TEXT_KEYS:
-        if key in td:
-            _override_text_recursive(td[key], f5.tts_text)
+    td["char_styles_ungrouped"] = _rebuild_char_styles(td, text_len=len(f5.tts_text))
 
     logger.info(
         "f5.inject subtitle_layer text=%r in=%.3f out=%.3f z=%d",
