@@ -181,7 +181,7 @@ bootstrap_dozzle_agent_env() {
 }
 
 infra_app_services() {
-  printf '%s\n' tg-bot tg-bot-public-admin asset-ui finance-bot
+  printf '%s\n' tg-bot tg-bot-public tg-bot-public-admin asset-ui finance-bot
 }
 
 bootstrap_infra_orchestrator_url() {
@@ -209,6 +209,17 @@ require_infra_ops_public_admin_env() {
       return 1
       ;;
   esac
+}
+
+bootstrap_infra_public_bot_polling_env() {
+  set_env_file_value "$REPO_DIR/.env" TG_DELIVERY_MODE "polling"
+  set_env_file_value "$REPO_DIR/.env" TG_BOT_PUBLIC_RUNTIME_ADMIN_BIND_HOST "127.0.0.1"
+  set_env_file_value "$REPO_DIR/.env" TG_BOT_PUBLIC_RUNTIME_ADMIN_BIND_PORT "18182"
+  ensure_env_file_value "$REPO_DIR/.env" TG_BOT_PUBLIC_ADMIN_BIND_HOST "127.0.0.1"
+  ensure_env_file_value "$REPO_DIR/.env" TG_BOT_PUBLIC_ADMIN_BIND_PORT "18081"
+  ensure_env_file_value "$REPO_DIR/.env" TG_BOT_PUBLIC_WEBHOOK_BIND_HOST "127.0.0.1"
+  ensure_env_file_value "$REPO_DIR/.env" TG_BOT_PUBLIC_WEBHOOK_BIND_PORT "18083"
+  echo "[deploy] set tg-bot-public delivery to polling on infra stack"
 }
 
 bootstrap_tg_webhook_ip_env() {
@@ -338,7 +349,8 @@ deploy_root_services() {
 
 deploy_prod_path_services() {
   if ! is_true "$DEPLOY_ORCHESTRATOR_HA"; then
-    deploy_root_services orchestrator-api worker-build worker-render worker-render-poll tg-bot-public
+    deploy_root_services orchestrator-api worker-build worker-render worker-render-poll
+    remove_root_services tg-bot-public
     return 0
   fi
 
@@ -356,9 +368,10 @@ deploy_prod_path_services() {
   fi
 
   echo "[deploy] orchestrator-ha enabled compose=$compose_ha"
-  echo "[deploy] docker compose -f docker-compose.yml -f $compose_ha up -d --build orchestrator-api orchestrator-api-2 worker-build worker-render worker-render-poll tg-bot-public"
+  echo "[deploy] docker compose -f docker-compose.yml -f $compose_ha up -d --build orchestrator-api orchestrator-api-2 worker-build worker-render worker-render-poll"
   docker compose -f docker-compose.yml -f "$compose_ha" up -d --build \
-    orchestrator-api orchestrator-api-2 worker-build worker-render worker-render-poll tg-bot-public
+    orchestrator-api orchestrator-api-2 worker-build worker-render worker-render-poll
+  remove_root_services tg-bot-public
 }
 
 stop_root_services() {
@@ -684,15 +697,17 @@ case "$DEPLOY_STACK" in
   infra-apps)
     bootstrap_infra_orchestrator_url
     require_infra_ops_public_admin_env
+    bootstrap_infra_public_bot_polling_env
     mapfile -t services < <(infra_app_services)
     deploy_root_services "${services[@]}"
     if is_true "$DEPLOY_PRUNE_OTHER_STACK"; then
-      remove_root_services orchestrator-api orchestrator-api-2 worker-build worker-render worker-render-poll tg-bot-public
+      remove_root_services orchestrator-api orchestrator-api-2 worker-build worker-render worker-render-poll
     fi
     ;;
   infra-ops)
     bootstrap_infra_orchestrator_url
     require_infra_ops_public_admin_env
+    bootstrap_infra_public_bot_polling_env
     mapfile -t services < <(infra_app_services)
     deploy_root_services "${services[@]}"
     dozzle_central_status=0
@@ -705,7 +720,7 @@ case "$DEPLOY_STACK" in
     deploy_runner_compose_if_present "$RUNNERS_DIR/docker-compose.observability.yml" "$RUNNERS_DIR/.env.observability"
     deploy_github_runner_compose_if_allowed "$RUNNERS_DIR/docker-compose.github-runner.yml" "$RUNNERS_DIR/.env.github-runner"
     if is_true "$DEPLOY_PRUNE_OTHER_STACK"; then
-      remove_root_services orchestrator-api orchestrator-api-2 worker-build worker-render worker-render-poll tg-bot-public
+      remove_root_services orchestrator-api orchestrator-api-2 worker-build worker-render worker-render-poll
     fi
     ;;
   *)

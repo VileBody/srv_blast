@@ -251,7 +251,7 @@ services:
     volumes:
       - ./work:/app/work
     ports:
-      - "${TG_BOT_PUBLIC_ADMIN_BIND_HOST:-127.0.0.1}:${TG_BOT_PUBLIC_ADMIN_BIND_PORT:-18081}:${ADMIN_PANEL_PORT:-8080}"
+      - "${TG_BOT_PUBLIC_RUNTIME_ADMIN_BIND_HOST:-127.0.0.1}:${TG_BOT_PUBLIC_RUNTIME_ADMIN_BIND_PORT:-18182}:${ADMIN_PANEL_PORT:-8080}"
       - "${TG_BOT_PUBLIC_WEBHOOK_BIND_HOST:-127.0.0.1}:${TG_BOT_PUBLIC_WEBHOOK_BIND_PORT:-18083}:${TG_WEBHOOK_PORT:-8081}"
     command: >
       bash -lc "python -m services.tg_bot_public.app"

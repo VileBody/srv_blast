@@ -57,28 +57,22 @@ Workflow использует эту переменную, чтобы выпол
 `infra/runners/deploy_branch.sh` поддерживает второй аргумент:
 
 - `all` (по умолчанию): legacy single-node deploy.
-- `prod-path`: `orchestrator-api`, `worker-build`, `worker-render`, `tg-bot-public` + опционально `orchestrator-api-2` (если `DEPLOY_ORCHESTRATOR_HA=true`) + Dozzle agent (env создается автоматически) + опционально `promtail-edge`.
-- `infra-apps`: `tg-bot`, `tg-bot-public-admin`, `asset-ui`, `finance-bot`.
+- `prod-path`: `orchestrator-api`, `worker-build`, `worker-render` + опционально `orchestrator-api-2` (если `DEPLOY_ORCHESTRATOR_HA=true`) + Dozzle agent (env создается автоматически) + опционально `promtail-edge`; старый `tg-bot-public` на orchestrator-нoдах останавливается и удаляется.
+- `infra-apps`: `tg-bot`, `tg-bot-public` в polling-режиме, `tg-bot-public-admin`, `asset-ui`, `finance-bot`.
 - `infra-ops`: `infra-apps` + `dozzle` + `observability` + `github-runner` (если есть соответствующие `.env`).
 
 Топология без canary-режима:
 
-- `blast_ops`: runner, admin panel (`tg-bot-public-admin`), asset UI, finance bot, логи/observability.
-- `orchestrator-0` и `orchestrator-1`: `prod-path`, то есть webhook/API, queue workers, public bot delivery и render pipeline.
+- `blast_ops`: public bot delivery через Telegram polling (`tg-bot-public`), admin panel (`tg-bot-public-admin`), asset UI, finance bot, runner, логи/observability.
+- `orchestrator-0` и `orchestrator-1`: `prod-path`, то есть orchestrator API, queue workers и render pipeline.
 
 Для `tg-bot-public-admin` на `blast_ops` выставляй `ORCHESTRATOR_PUBLIC_URL` явно на балансировщик/публичный endpoint оркестраторов, а не на локальный `http://orchestrator-api:8000`.
 Для CI/CD можно задать GitHub Repository variable
 `INFRA_ORCHESTRATOR_PUBLIC_URL=https://blast808.com/orchestrator`; infra-deploy
 запишет его в серверный `.env` как `ORCHESTRATOR_PUBLIC_URL`.
-В `prod-path` деплое при `TG_DELIVERY_MODE=webhook` скрипт один раз заполняет
-`TG_WEBHOOK_IP_ADDRESS` текущим IPv4 адресом `TG_WEBHOOK_URL`, если переменная
-ещё не задана. Это передается в Telegram `setWebhook` и пинит доставку на
-балансировщик, минуя возможный stale DNS cache на стороне Telegram.
-Если Telegram не завершает TCP handshake с DNS-адресом домена, можно явно задать
-GitHub Repository variable `PROD_TG_WEBHOOK_IP_ADDRESS=<public ingress ip>`;
-`prod-path` deploy перезапишет `TG_WEBHOOK_IP_ADDRESS` на orchestrator-нoдах этим
-значением. URL webhook при этом остаётся доменным, например
-`https://blast808.com/telegram/webhook`, чтобы TLS/SNI продолжали совпадать.
+`infra-apps`/`infra-ops` принудительно выставляет `TG_DELIVERY_MODE=polling`
+для `tg-bot-public` на `blast_ops`. Это фиксирует Telegram delivery в CI/CD:
+после деплоя public bot удаляет webhook перед стартом long polling.
 
 Примеры:
 
