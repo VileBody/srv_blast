@@ -115,9 +115,9 @@ from .state_store import (
 )
 
 
-# Season flow toggle. Public bot ships the mirrored module so the parity gate
-# is satisfied, but the runtime entry into the season flow stays off until the
-# botapi rollout is validated and we flip this to "1" in env.
+# Season flow kill-switch. Shared with tg_bot_botapi via the same env var so
+# both bots flip together: when SEASON_FLOW_ENABLED is off (default), neither
+# bot enters the season onboarding — generation works end-to-end as before.
 SEASON_FLOW_ENABLED = (os.environ.get("SEASON_FLOW_ENABLED", "0").strip().lower()
                        in {"1", "true", "yes", "on", "enabled"})
 
@@ -141,10 +141,9 @@ HOOK_STAGES = frozenset({
 def _should_route_to_season(st: ChatState) -> bool:
     """Return True iff this chat should land in the season flow on /start.
 
-    The check is gated by SEASON_FLOW_ENABLED so we ship the mirror without
-    changing prod behavior. When the flag is on, an existing season stage or
-    completed intro is enough to keep the user in season; otherwise the
-    standard onboarding runs.
+    Gated by SEASON_FLOW_ENABLED (kill-switch). When off — always False so
+    the standard onboarding runs and generation stays reachable. When on,
+    an existing season stage or completed intro keeps the user in season.
     """
     if not SEASON_FLOW_ENABLED:
         return False

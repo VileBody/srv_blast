@@ -64,6 +64,17 @@ def test_chatstate_defaults_match_botapi_contract() -> None:
     assert st.season_referrals_count == 0
 
 
+def test_kill_switch_env_var_name_is_shared(monkeypatch) -> None:
+    """SEASON_FLOW_ENABLED is the single env var shared by both bots; if
+    someone renames it here, the botapi gate will silently diverge."""
+    monkeypatch.delenv("SEASON_FLOW_ENABLED", raising=False)
+    if "services.tg_bot_public.app" in sys.modules:
+        del sys.modules["services.tg_bot_public.app"]
+    from services.tg_bot_public import app as public_app
+
+    assert public_app.SEASON_FLOW_ENABLED is False
+
+
 def test_route_guard_off_by_default(monkeypatch) -> None:
     """Without SEASON_FLOW_ENABLED the guard must short-circuit to False
     even for a chat that looks like a season participant."""

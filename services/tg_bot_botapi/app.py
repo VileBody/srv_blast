@@ -110,6 +110,19 @@ logging.basicConfig(
 log = logging.getLogger("tg_bot")
 
 
+def _season_flow_enabled() -> bool:
+    """Kill-switch for the season flow in botapi.
+
+    Default OFF: /start lands in the existing product flow (generation works
+    end-to-end). Set SEASON_FLOW_ENABLED=1 in env to opt back into the
+    onboarding + info menu. Mirrors the public-bot gate so both bots share
+    one env var.
+    """
+    return os.environ.get("SEASON_FLOW_ENABLED", "0").strip().lower() in {
+        "1", "true", "yes", "on", "enabled",
+    }
+
+
 BTN_SEND_TRACK = "Отправить трек"
 BTN_SEND_LYRICS = "Отправить текст"
 BTN_SKIP_LYRICS = "Не присылать текст"
@@ -1259,6 +1272,11 @@ class BlastBotApp:
 
     async def _resolve_flow(self, chat_id: int, st: ChatState) -> str:
         """Decide whether this chat belongs to the legacy or season flow."""
+        # Kill-switch: when SEASON_FLOW_ENABLED is off (default), always route
+        # to the existing product flow so generation works end-to-end while
+        # we polish the season UX. Flip the env var to "1" to re-enable.
+        if not _season_flow_enabled():
+            return "existing"
         if self.users is None:
             # Without a DB we can't know status — default to legacy product so
             # local dev without CREDITS_DB_URL keeps working unchanged.
