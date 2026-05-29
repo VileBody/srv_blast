@@ -3518,10 +3518,15 @@ def build_all_via_gemini_one_call(
             analyze_focus_clip,
             to_jsonable,
         )
+        # include_envelope=True so the persisted artifact carries the RMS
+        # loudness curve for the downstream AE-FX phase (wiggle amplitude /
+        # glow intensity that follow loudness). It is trimmed out of the LLM
+        # prompt below — kept on disk only.
         hook_analysis = analyze_focus_clip(
             audio_path=audio_files[0],
             clip_start_abs=clip_start_abs,
             clip_end_abs=clip_end_abs,
+            include_envelope=True,
         )
         bpm = float(hook_analysis.bpm)
         # User-confirmed drop override (Phase A-UX). If USER_DROP_T was set by
@@ -3605,6 +3610,15 @@ def build_all_via_gemini_one_call(
     else:
         logger.info("stage2_bpm_skipped mode=%s source=gemini_only", timing_mode)
 
+    # Current user-picked drop (if any) participates in the resume-cache key:
+    # cached switch points computed under a different drop must NOT be reused.
+    # Normalized identically on read and write; None when no override is set
+    # (so non-hook modes always compare None==None and resume cleanly).
+    _cur_user_drop_raw = (os.environ.get("USER_DROP_T") or "").strip()
+    _cur_user_drop_t: Optional[float] = (
+        round(float(_cur_user_drop_raw), 3) if _cur_user_drop_raw else None
+    )
+
     switch_payload: SwitchTimingPayload | None = None
     switch_cached = resume_state.get("stage2_switch_timestamps")
     switch_mode_cached = str(resume_state.get("stage2_timing_mode") or "").strip()
@@ -3615,6 +3629,12 @@ def build_all_via_gemini_one_call(
                 raise RuntimeError("timing mode mismatch in resume state")
             if float(switch_fast_cached) != float(fast_start_seconds):
                 raise RuntimeError("fast-start seconds mismatch in resume state")
+            _cached_drop = resume_state.get("stage2_user_drop_t")
+            _cached_drop_norm: Optional[float] = (
+                round(float(_cached_drop), 3) if _cached_drop is not None else None
+            )
+            if _cached_drop_norm != _cur_user_drop_t:
+                raise RuntimeError("user_drop_t mismatch in resume state")
             switch_payload = SwitchTimingPayload.model_validate(switch_cached)
             if abs(float(switch_payload.clip_start_abs) - clip_start_abs) > 1e-6:
                 raise RuntimeError("clip_start_abs mismatch in resume stage2_switch_timestamps")
@@ -3733,6 +3753,7 @@ def build_all_via_gemini_one_call(
         )
         resume_state["stage2_timing_mode"] = timing_mode
         resume_state["stage2_fast_start_seconds"] = float(fast_start_seconds)
+        resume_state["stage2_user_drop_t"] = _cur_user_drop_t
         resume_state["stage2_switch_timestamps"] = switch_payload.model_dump(mode="json")
         _save_resume_state(resume_state_path, logger=logger, state=resume_state)
 

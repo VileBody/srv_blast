@@ -1,9 +1,10 @@
 """
 Audio analysis for hook/drop detection inside a user-selected focus clip.
 
-Pathfinder module. Not yet wired into the Stage2 pipeline — used standalone
-via the CLI below to tune heuristics on real tracks. See memory
-project-hook-audio-analysis for the roadmap (phase A → phase B integration).
+Wired into the Stage2 pipeline via STAGE2_TIMING_MODE="hook_aware"
+(`mlcore.gemini_orchestrator`). Also runnable standalone via the CLI below
+to tune heuristics on real tracks. See memory project-hook-audio-analysis
+for the roadmap (phase A done → AE-FX → phase B deterministic bypass).
 
 All output timestamps are absolute (relative to the source file, NOT to the
 focus clip), so downstream consumers (AE JSX builder, switch_timing
