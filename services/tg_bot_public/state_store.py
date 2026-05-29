@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import time
-from typing import Iterable, List
+from typing import Any, Dict, Iterable, List, Optional
 
 from pydantic import BaseModel, Field
 from redis.asyncio import Redis
@@ -31,6 +31,15 @@ STAGE_WAIT_FOOTAGE_ARTIST = "WAIT_FOOTAGE_ARTIST"
 STAGE_WAIT_CONFIRM_TEXT = "WAIT_CONFIRM_TEXT"
 STAGE_WAIT_SUBTITLES_MODE = "WAIT_SUBTITLES_MODE"
 STAGE_WAIT_CONFIRM_MODE = "WAIT_CONFIRM_MODE"
+# Hook feature (Phase A-UX) — parity-mirrored from tg_bot_botapi. The actual
+# handlers are not wired into the public user flow; HOOK_FLOW_ENABLED in
+# app.py gates entry. This commit just lands the schema so the CI parity
+# gate is satisfied and the public bot can deserialize chat states that
+# include hook_* fields (e.g. after a state migration test).
+STAGE_WAIT_HOOK_CHOICE = "WAIT_HOOK_CHOICE"
+STAGE_WAIT_HOOK_DROP = "WAIT_HOOK_DROP"
+STAGE_WAIT_HOOK_DROP_MANUAL = "WAIT_HOOK_DROP_MANUAL"
+STAGE_WAIT_HOOK_TYPE = "WAIT_HOOK_TYPE"
 STAGE_WAIT_VERSIONS = "WAIT_VERSIONS"
 STAGE_WAIT_CONFIRM = "WAIT_CONFIRM"
 STAGE_PROCESSING = "PROCESSING"
@@ -132,6 +141,19 @@ class ChatState(BaseModel):
     user_clip_start_sec: float = 0.0
     user_clip_end_sec: float = 0.0
     subtitles_mode: str = SUBTITLES_MODE_IMPULSE_2ND
+    # Hook feature mirror (Phase A-UX). Defaults exactly match tg_bot_botapi
+    # so a chat state copied across bots round-trips cleanly. Entry into the
+    # hook handlers is gated by HOOK_FLOW_ENABLED in public app.py — disabled
+    # by default until the test bot validates the flow on real users.
+    hook_enabled: bool = False
+    hook_drop_t: Optional[float] = None
+    hook_type: str = "standard"
+    hook_analysis_status: str = ""
+    hook_analysis_audio_path: str = ""
+    hook_analysis_clip_start: float = 0.0
+    hook_analysis_clip_end: float = 0.0
+    hook_drop_candidates: List[Dict[str, Any]] = Field(default_factory=list)
+    hook_analysis_error: str = ""
     versions_count: int = 1
     generation_run_id: str = ""
     # Batch metadata for sequential multi-version generation.

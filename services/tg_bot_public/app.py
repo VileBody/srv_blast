@@ -106,6 +106,11 @@ from .state_store import (
     STAGE_SEASON_INTRO_2,
     STAGE_SEASON_CONSENT,
     STAGE_SEASON_MENU,
+    # Hook flow (Phase A-UX) — gated by HOOK_FLOW_ENABLED below.
+    STAGE_WAIT_HOOK_CHOICE,
+    STAGE_WAIT_HOOK_DROP,
+    STAGE_WAIT_HOOK_DROP_MANUAL,
+    STAGE_WAIT_HOOK_TYPE,
 )
 
 
@@ -114,6 +119,21 @@ from .state_store import (
 # botapi rollout is validated and we flip this to "1" in env.
 SEASON_FLOW_ENABLED = (os.environ.get("SEASON_FLOW_ENABLED", "0").strip().lower()
                        in {"1", "true", "yes", "on", "enabled"})
+
+# Hook flow toggle. Same pattern as SEASON_FLOW_ENABLED — the public bot
+# carries the mirrored state machine and the orchestrator-client wiring
+# (hook_enabled / user_drop_t kwargs land in the payload regardless), but the
+# 4-stage hook picker is NOT exposed in the user flow until tg_bot_botapi
+# validates the UX on real test users. Flip to "1" in env to wire it on.
+HOOK_FLOW_ENABLED = (os.environ.get("HOOK_FLOW_ENABLED", "0").strip().lower()
+                     in {"1", "true", "yes", "on", "enabled"})
+
+HOOK_STAGES = frozenset({
+    STAGE_WAIT_HOOK_CHOICE,
+    STAGE_WAIT_HOOK_DROP,
+    STAGE_WAIT_HOOK_DROP_MANUAL,
+    STAGE_WAIT_HOOK_TYPE,
+})
 
 
 def _should_route_to_season(st: ChatState) -> bool:
@@ -129,6 +149,19 @@ def _should_route_to_season(st: ChatState) -> bool:
     if st.stage in SEASON_STAGES:
         return True
     return bool(getattr(st, "season_intro_completed", False))
+
+
+def _should_route_to_hook_flow(st: ChatState) -> bool:
+    """Return True iff this chat should enter the hook picker step.
+
+    Gated by HOOK_FLOW_ENABLED. When the flag is off, public bot behavior is
+    unchanged regardless of mirrored hook_* state on the chat. When on, an
+    existing hook stage on the chat state is enough to route — useful for
+    resuming a session that was rolled into the hook picker mid-flight.
+    """
+    if not HOOK_FLOW_ENABLED:
+        return False
+    return st.stage in HOOK_STAGES
 
 
 logging.basicConfig(
