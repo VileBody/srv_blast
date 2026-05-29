@@ -139,11 +139,23 @@ def _collect_media_specs_from_render_payload(payload_text: str, audio_url: str) 
         fn = str(src.get("file_name") or "").strip()
         if not fn:
             continue
-        if _is_audio_by_meta(layer) or _is_audio_by_ext(fn):
-            continue
 
         remote_url = str(src.get("remote_url") or "").strip()
         file_path = str(src.get("file_path") or "").strip()
+
+        if _is_audio_by_meta(layer) or _is_audio_by_ext(fn):
+            # Main track is fetched via `audio_url` (above) and its layer has no
+            # remote source — skip. Extra audio layers that DO carry a remote
+            # source (e.g. F5 «Мысль» TTS wav) download into media/audio/<name>.
+            audio_src = remote_url if _is_remote(remote_url) else file_path if _is_remote(file_path) else ""
+            if not audio_src:
+                continue
+            rel = f"media/audio/{fn}"
+            if rel in seen:
+                continue
+            seen.add(rel)
+            out.append(MediaFileSpec(url=audio_src, relpath=rel))
+            continue
 
         url = remote_url if _is_remote(remote_url) else file_path if _is_remote(file_path) else ""
         if not url:

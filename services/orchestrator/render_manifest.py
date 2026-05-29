@@ -85,11 +85,28 @@ def collect_media_urls_from_render_payload(
         if not fn:
             continue
 
-        if _is_audio_by_meta(layer) or _is_audio_by_ext(fn):
-            continue
-
         remote_url = str(src.get("remote_url") or "").strip()
         file_path = str(src.get("file_path") or "").strip()
+
+        if _is_audio_by_meta(layer) or _is_audio_by_ext(fn):
+            # The main track is fetched separately via `audio_url` (above) and
+            # its layer carries no remote source — skip it here. Any *extra*
+            # audio layer that does carry a remote source (e.g. the F5 «Мысль»
+            # TTS wav injected by mlcore.hooks.f5_cognition) must be downloaded
+            # into media/audio/<file_name> so AE can resolve it.
+            audio_src = (
+                remote_url if _is_remote(remote_url)
+                else file_path if _is_remote(file_path)
+                else ""
+            )
+            if not audio_src:
+                continue
+            rel = f"media/audio/{fn}"
+            if rel in seen:
+                continue
+            seen.add(rel)
+            out.append({"url": audio_src, "relpath": rel})
+            continue
 
         url = ""
         if _is_remote(remote_url):
