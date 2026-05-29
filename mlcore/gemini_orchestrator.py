@@ -108,6 +108,13 @@ MODEL_VALIDATION_IMMEDIATE_RETRIES = 2
 _STRUCTURAL_TAG_TOKEN_RE = re.compile(r"^\[[a-zа-яё0-9_\-:+./]+\]$", flags=re.IGNORECASE)
 _SCENES_3RD_SINGLE_STEP_MODEL = "gemini-2.5-pro"
 
+# Code-level default for Stage2 timing mode. This is a switch we control via
+# git, not a secret. Operators can still set STAGE2_TIMING_MODE in env for
+# emergency rollback without a deploy. Allowed: "prompts" | "hybrid" |
+# "hook_aware". See `mlcore.audio_analysis` and the SYSTEM_HOOK_AWARE prompt
+# block for the hook_aware contract.
+STAGE2_TIMING_MODE_DEFAULT = "hook_aware"
+
 
 class _Stage1AUserClipEmptyError(RuntimeError):
     """Forced alignment missed the explicit user clip window; safe to retry Stage1A."""
@@ -2079,7 +2086,26 @@ def build_all_via_gemini_one_call(
     max_thinking_tokens = _optional_int_env("GEMINI_MAX_THINKING_TOKENS", 40000)
     provider_mode = normalize_provider_mode(os.environ.get("LLM_PROVIDER_MODE", PROVIDER_MODE_GEMINI))
     hedge_delay_s = _float_env("LLM_HEDGE_DELAY_S", 60.0)
-    timing_mode = _require_choice_env("STAGE2_TIMING_MODE", allowed=["prompts", "hybrid", "hook_aware"])
+    # STAGE2_TIMING_MODE is a code-level switch (not a secret) — default lives
+    # in code so flipping it is a git push, not an .env edit. Env override is
+    # honored when explicitly set, for emergency rollback without a deploy.
+    _allowed_timing_modes = ["prompts", "hybrid", "hook_aware"]
+    _default_timing_mode = STAGE2_TIMING_MODE_DEFAULT
+    _env_timing_mode = (os.environ.get("STAGE2_TIMING_MODE") or "").strip()
+    if _env_timing_mode:
+        if _env_timing_mode not in _allowed_timing_modes:
+            raise RuntimeError(
+                f"Invalid STAGE2_TIMING_MODE={_env_timing_mode!r}; "
+                f"allowed={_allowed_timing_modes}"
+            )
+        timing_mode = _env_timing_mode
+    else:
+        if _default_timing_mode not in _allowed_timing_modes:
+            raise RuntimeError(
+                f"Invalid STAGE2_TIMING_MODE_DEFAULT={_default_timing_mode!r}; "
+                f"allowed={_allowed_timing_modes}"
+            )
+        timing_mode = _default_timing_mode
     fast_start_seconds = _require_float_env("STAGE2_FAST_START_SECONDS")
     if fast_start_seconds < 0.0:
         raise RuntimeError(f"Invalid STAGE2_FAST_START_SECONDS: {fast_start_seconds!r}")
@@ -4030,12 +4056,29 @@ def build_all_via_gemini_one_call(
         encoding="utf-8",
     )
 
+    # ── F5 Cognition hook («Мысль»): между Stage 2 (футаж) и Stage 3 (JSON для AE).
+    #    Если в env есть F5_HOOK_DEVICE — гоняем F5 pipeline (Stage1 текст + Stage2
+    #    TTS), грузим .wav в S3 и получаем блок для full_edit_config["f5"].
+    #    Нет device → f5_block=None → обычный job не затрагивается.
+    _emit(progress_cb, "f5_hook")
+    from mlcore.hooks.f5_cognition.orchestrator_hook import build_f5_block_if_requested
+
+    f5_block = build_f5_block_if_requested(
+        track_path=str(audio_files[0]) if audio_files else "",
+        lyrics=str(stage1_json.get("lyrics_text") or ""),
+        clip_start_abs_sec=float(stage1_json["audio"]["clip_start_abs"]),
+        out_dir=out_dir,
+        job_tag=(os.environ.get("JOB_ID") or out_dir.name),
+        is_prod=(mode == MODE_PROD),
+    )
+
     outputs = render_all_steps(
         repo_root=ROOT,
         plan=full_payload,
         footage_inventory_json=inv_path,
         out_dir=out_dir,
         data_dir=Path(os.environ.get("DATA_DIR", str(ROOT / "data"))).resolve(),
+        f5_block=f5_block,
     )
 
     logger.info("render_done %s", {k: str(v) for k, v in outputs.items()})
