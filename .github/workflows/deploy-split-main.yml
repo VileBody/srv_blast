@@ -32,7 +32,12 @@ jobs:
     if: ${{ vars.DEPLOY_SPLIT_ENABLED == 'true' && (github.event_name == 'push' || inputs.target == 'all' || inputs.target == 'prod-path') }}
     name: Deploy Prod Path (Fan-out)
     runs-on: [self-hosted, blast-deploy-infra]
-    timeout-minutes: 45
+    # 90 (was 45): the node's docker layer cache is cold and PyPI egress is
+    # ~60 KB/s, so a from-scratch image rebuild must pull ~110 MB of heavy ML
+    # wheels (llvmlite 56MB + scipy 35MB + numba + botocore 15MB, all pulled by
+    # the baseline librosa/boto3 deps) ≈ 30+ min of download — over the old cap.
+    # Once ONE build completes the pip layer caches and deploys are fast again.
+    timeout-minutes: 90
     env:
       REPO_DIR: ${{ vars.BLAST_REPO_DIR_INFRA != '' && vars.BLAST_REPO_DIR_INFRA || vars.BLAST_REPO_DIR }}
       INPUT_BRANCH: ${{ inputs.branch }}
