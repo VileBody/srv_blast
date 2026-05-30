@@ -2385,7 +2385,6 @@ class BlastBotApp:
             st.hook_device = device
             st.hook_type = "standard"  # legacy compat field
             await self.store.set(st)
-            new_start = drop - lead
             core = float(st.user_clip_end_sec or 0.0) - drop
             core_note = ""
             if core < 6.0:
@@ -2394,10 +2393,8 @@ class BlastBotApp:
                     "В идеале 10–12с после дропа: выбери дроп раньше или расширь отрывок."
                 )
             await message.answer(
-                f"Ок, «Движение»: {text}.\n"
-                f"Сценарий: разгон с {self._fmt_timing(new_start)} → "
-                f"дроп на {self._fmt_timing(drop)} → кора ~{core:.0f}с. "
-                f"Ролик начнётся с {self._fmt_timing(new_start)}." + core_note
+                f"Ок, «Движение»: {text}. Дроп на {self._fmt_timing(drop)}, "
+                f"кора ~{core:.0f}с." + core_note
             )
             await self._ask_versions(message, st)
             return
@@ -2709,16 +2706,12 @@ class BlastBotApp:
             from mlcore.hooks.f4_motion.overlay import LEAD_BY_DEVICE
             if f4_device not in LEAD_BY_DEVICE:
                 raise RuntimeError(f"unknown F4 device {f4_device!r}")
-            lead = self._f4_effective_lead(f4_device, bpm)
-            new_start = float(st.hook_drop_t) - lead
-            if new_start < 0.0:
-                raise RuntimeError(
-                    f"F4 reframe: drop {st.hook_drop_t} - lead {lead:.3f} (bpm={bpm}) < 0 "
-                    "(hook too close to track start)"
-                )
-            user_clip_start_sec = new_start
-            if user_clip_end_sec is None or user_clip_end_sec <= new_start:
-                user_clip_end_sec = float(end)
+            # HOTFIX: do NOT reframe the clip window. Reframing user_clip_start_sec
+            # moved the Stage1 ASR/subtitles window away from the user's selected
+            # text, breaking transcription alignment. The content window MUST stay
+            # exactly the user's selection. Overlay-to-drop alignment will be done
+            # via an in-comp offset (passed to the JSX) instead — see follow-up.
+            # user_clip_start_sec / user_clip_end_sec are left untouched here.
         rotation_theme, rotation_group, rotation_history = (
             await self._resolve_rotation_slot_for_enqueue(st=st)
         )

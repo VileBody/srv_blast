@@ -150,10 +150,14 @@ F4_MOTION_DEVICE_LABELS_RU = {
     "Задержи палец": "holdfinger",
     "Качай головой": "head",
 }
-# Reference BPM the F4 device keyframes were authored under. The botapi reframe
-# computes clip_start = drop - LEAD[device] * F4_REF_BPM / bpm so the overlay
-# cover-end lands on the drop at any tempo. Mirrored here for parity (the public
-# picker UX is gated behind HOOK_FLOW_ENABLED).
+# Reference BPM the F4 device keyframes were authored under. Mirrored for parity
+# (the public picker UX is gated behind HOOK_FLOW_ENABLED).
+#
+# IMPORTANT (mirrors tg_bot_botapi hotfix): the F4 overlay must NOT reframe the
+# user's clip window. Moving user_clip_start_sec shifts the Stage1 ASR/subtitles
+# window away from the user's selected text and breaks transcription alignment.
+# Overlay-to-drop alignment is done via an in-comp offset passed to the JSX, not
+# by mutating the content window.
 F4_REF_BPM = 128.0
 
 

@@ -175,4 +175,7 @@ def test_f4_motion_device_ids_mirrored() -> None:
 
     from services.tg_bot_public.app import F4_REF_BPM
 
+    # Mirrored constant. NOTE (hotfix invariant): the F4 overlay must never
+    # reframe the user's clip window — moving user_clip_start_sec breaks Stage1
+    # ASR/subtitle alignment. Alignment is via an in-comp offset, not the window.
     assert F4_REF_BPM == 128.0
