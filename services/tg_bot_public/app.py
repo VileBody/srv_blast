@@ -137,12 +137,19 @@ HOOK_STAGES = frozenset({
     STAGE_WAIT_HOOK_DEVICE,
 })
 
-# F4 «Движение» motion-hook device ids. The picker UX lives in tg_bot_botapi;
-# the public bot mirrors only the id set + the orchestrator-client `f4_device`
-# kwarg (which lands in the payload regardless of HOOK_FLOW_ENABLED, so a chat
-# state pre-populated with a motion device propagates cleanly). Only "swipe"
-# is wired downstream so far (mlcore/hooks/f4_motion).
+# F4 «Движение» motion-hook devices. The picker UX lives in tg_bot_botapi; the
+# public bot mirrors the id set + RU-label map + the orchestrator-client
+# `f4_device` kwarg (which lands in the payload regardless of HOOK_FLOW_ENABLED,
+# so a chat state pre-populated with a motion device propagates cleanly). All
+# five devices are wired downstream (mlcore/hooks/f4_motion).
 F4_MOTION_DEVICE_IDS = frozenset({"swipe", "tap", "pinch", "holdfinger", "head"})
+F4_MOTION_DEVICE_LABELS_RU = {
+    "Свайп": "swipe",
+    "Тап": "tap",
+    "Зум": "pinch",
+    "Задержи палец": "holdfinger",
+    "Качай головой": "head",
+}
 
 
 def _should_route_to_season(st: ChatState) -> bool:

@@ -161,7 +161,13 @@ def test_f4_motion_device_ids_mirrored() -> None:
     """Public bot mirrors the F4 motion device id set so a chat state
     pre-populated with a motion device round-trips through the payload even
     while the picker UX is botapi-only."""
-    from services.tg_bot_public.app import F4_MOTION_DEVICE_IDS
+    from services.tg_bot_public.app import (
+        F4_MOTION_DEVICE_IDS,
+        F4_MOTION_DEVICE_LABELS_RU,
+    )
 
     assert "swipe" in F4_MOTION_DEVICE_IDS
     assert F4_MOTION_DEVICE_IDS == {"swipe", "tap", "pinch", "holdfinger", "head"}
+    # RU label map mirrors the botapi picker; values are exactly the id set.
+    assert set(F4_MOTION_DEVICE_LABELS_RU.values()) == F4_MOTION_DEVICE_IDS
+    assert F4_MOTION_DEVICE_LABELS_RU["Свайп"] == "swipe"

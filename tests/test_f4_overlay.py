@@ -28,8 +28,22 @@ def test_lead_table_has_all_five_devices():
     assert LEAD_BY_DEVICE["head"] == pytest.approx(4.004004, abs=1e-4)
 
 
-def test_swipe_is_wired():
-    assert "swipe" in F4_DEVICES
+def test_all_five_devices_wired():
+    assert set(F4_DEVICES) == {"swipe", "tap", "pinch", "holdfinger", "head"}
+
+
+@pytest.mark.parametrize("device", ["swipe", "tap", "pinch", "holdfinger", "head"])
+def test_every_device_builds_clean(device):
+    """Each wired device must produce a token-free IIFE over MAIN_COMP that
+    carries its own device marker and the cover solid (the layer whose end
+    lands on the hook)."""
+    js = build_overlay_jsx(device=device, bpm=120.0)
+    assert "__F4_BPM__" not in js
+    assert "__F4_DEVICE__" not in js
+    assert f"[F4][{device}]" in js
+    assert js.rstrip().endswith("(MAIN_COMP);")
+    assert "(function (comp)" in js
+    assert "Сплошная заливка Черный 1" in js  # cover solid present in every device
 
 
 def test_build_overlay_bakes_bpm_and_leaves_no_tokens():
@@ -60,12 +74,6 @@ def test_build_overlay_case_insensitive_device():
 def test_unknown_device_raises():
     with pytest.raises(ValueError, match="unknown F4 device"):
         build_overlay_jsx(device="teleport", bpm=120.0)
-
-
-def test_unwired_device_raises():
-    # 'head' is a known device but its injectable template is not added yet.
-    with pytest.raises(ValueError, match="not wired yet"):
-        build_overlay_jsx(device="head", bpm=120.0)
 
 
 @pytest.mark.parametrize("bad", [0.0, -10.0, float("nan"), float("inf")])

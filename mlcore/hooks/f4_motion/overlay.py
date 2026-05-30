@@ -34,9 +34,9 @@ LEAD_BY_DEVICE: Dict[str, float] = {
     "head": 4.004004004004,
 }
 
-# Devices wired into the pipeline so far. A device is "ready" once its
+# Devices wired into the pipeline. A device is "ready" once its
 # devices/<device>.jsx injectable template exists.
-F4_DEVICES = ("swipe",)
+F4_DEVICES = ("swipe", "tap", "pinch", "holdfinger", "head")
 
 
 def build_overlay_jsx(*, device: str, bpm: float) -> str:

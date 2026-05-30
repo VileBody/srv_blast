@@ -325,6 +325,34 @@ if git ls-files --error-unmatch "$RUNTIME_TRACKED_FILE" >/dev/null 2>&1; then
   fi
 fi
 
+# Self-hosted prod nodes accumulate root-owned paths under the repo (e.g.
+# __pycache__ written by containers that bind-mount the source). A root-owned
+# parent directory makes `git checkout`/`reset --hard` fail to create new
+# tracked directories ("cannot create directory ... Permission denied"), which
+# blocks any deploy that adds a new package dir. Best-effort normalize repo
+# ownership to the current deploy user BEFORE checkout so git can write freely.
+# Non-interactive (sudo -n): if it can't elevate, warn and continue — the
+# checkout then fails loudly exactly as before, never worse.
+normalize_repo_ownership() {
+  local me grp
+  me="$(id -un)"
+  grp="$(id -gn)"
+  # Skip if everything under the repo is already owned by us.
+  if ! find "$REPO_DIR" -not -user "$me" -print -quit 2>/dev/null | grep -q .; then
+    return 0
+  fi
+  echo "[deploy] normalizing repo ownership -> $me:$grp (found foreign-owned paths)"
+  if [[ "$(id -u)" -eq 0 ]]; then
+    chown -R "$me:$grp" "$REPO_DIR" 2>/dev/null || true
+  elif command -v sudo >/dev/null 2>&1; then
+    sudo -n chown -R "$me:$grp" "$REPO_DIR" 2>/dev/null \
+      || echo "[deploy] WARN: could not normalize repo ownership (sudo -n failed); checkout may fail on root-owned paths"
+  else
+    echo "[deploy] WARN: cannot normalize repo ownership (no root/sudo); checkout may fail on root-owned paths"
+  fi
+}
+normalize_repo_ownership
+
 git_run fetch origin "$BRANCH"
 
 if git show-ref --verify --quiet "refs/heads/$BRANCH"; then

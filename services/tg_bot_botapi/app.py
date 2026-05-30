@@ -186,9 +186,23 @@ _HOOK_CATEGORY_NOT_READY = {
 # wired so far (mlcore/hooks/f4_motion). LEAD_BY_DEVICE is imported lazily where
 # the clip-window reframe happens (clip_start := drop - LEAD[device]).
 BTN_HOOK_DEV_SWIPE = "Свайп"
-HOOK_MOTION_DEVICE_BUTTONS = [BTN_HOOK_DEV_SWIPE]
+BTN_HOOK_DEV_TAP = "Тап"
+BTN_HOOK_DEV_PINCH = "Зум"
+BTN_HOOK_DEV_HOLD = "Задержи палец"
+BTN_HOOK_DEV_HEAD = "Качай головой"
+HOOK_MOTION_DEVICE_BUTTONS = [
+    BTN_HOOK_DEV_SWIPE,
+    BTN_HOOK_DEV_TAP,
+    BTN_HOOK_DEV_PINCH,
+    BTN_HOOK_DEV_HOLD,
+    BTN_HOOK_DEV_HEAD,
+]
 _HOOK_MOTION_DEVICE_BY_BUTTON = {
     BTN_HOOK_DEV_SWIPE: "swipe",
+    BTN_HOOK_DEV_TAP: "tap",
+    BTN_HOOK_DEV_PINCH: "pinch",
+    BTN_HOOK_DEV_HOLD: "holdfinger",
+    BTN_HOOK_DEV_HEAD: "head",
 }
 # F5 («Мысль») device picker — labels mirror DeviceSpec.title_ru in
 # mlcore/hooks/f5_cognition/devices.py. Button text -> F5Device value.
@@ -2301,10 +2315,17 @@ class BlastBotApp:
         await self.store.set(st)
         if st.hook_category == "motion":
             await message.answer(
-                "Какой приём «Движения»?\n"
-                "• Свайп — рука свайпает в такт, на дропе срабатывает вспышка.",
+                "Какой приём «Движения»? Рука/голова двигается в такт, "
+                "на дропе срабатывает вспышка:\n"
+                "• Свайп — палец свайпает.\n"
+                "• Тап — палец тапает по кругу.\n"
+                "• Зум — пальцы разводят зум.\n"
+                "• Задержи палец — палец держит круг.\n"
+                "• Качай головой — голова качает в такт.",
                 reply_markup=_kb(
-                    [BTN_HOOK_DEV_SWIPE],
+                    [BTN_HOOK_DEV_SWIPE, BTN_HOOK_DEV_TAP],
+                    [BTN_HOOK_DEV_PINCH, BTN_HOOK_DEV_HOLD],
+                    [BTN_HOOK_DEV_HEAD],
                     [BTN_BACK],
                 ),
             )
@@ -2351,7 +2372,13 @@ class BlastBotApp:
             st.hook_device = device
             st.hook_type = "standard"  # legacy compat field
             await self.store.set(st)
-            await message.answer(f"Ок, «Движение»: {text}.")
+            new_start = float(st.hook_drop_t) - lead
+            await message.answer(
+                f"Ок, «Движение»: {text}.\n"
+                f"Разгон хука пойдёт с {self._fmt_timing(new_start)}, "
+                f"дроп на {self._fmt_timing(float(st.hook_drop_t))} — "
+                f"ролик начнётся с этого момента."
+            )
             await self._ask_versions(message, st)
             return
 
