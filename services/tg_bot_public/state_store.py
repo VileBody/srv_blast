@@ -159,6 +159,9 @@ class ChatState(BaseModel):
     hook_analysis_clip_start: float = 0.0
     hook_analysis_clip_end: float = 0.0
     hook_drop_candidates: List[Dict[str, Any]] = Field(default_factory=list)
+    # Mirror of tg_bot_botapi: measured BPM from focus-clip analysis, used by
+    # the F4 «Движение» reframe (lead_eff = lead * refBpm/bpm). 0.0 = none.
+    hook_analysis_bpm: float = 0.0
     hook_analysis_error: str = ""
     versions_count: int = 1
     generation_run_id: str = ""

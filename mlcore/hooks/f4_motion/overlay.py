@@ -24,6 +24,13 @@ from typing import Dict
 
 _DEVICES_DIR = Path(__file__).resolve().parent / "devices"
 
+# BPM the device keyframes were authored under. The injectable JSX reflows its
+# internal timings by refBpm/bpm; the bot reframes the clip window by the SAME
+# factor (lead_eff = LEAD_BY_DEVICE * F4_REF_BPM / bpm) so the cover-layer end
+# lands exactly on the drop at any tempo. Keep in sync with CONFIG.refBpm in
+# the device .jsx files.
+F4_REF_BPM = 128.0
+
 # Cover-layer outPoint (seconds) taken from each source script's black solid.
 # swipe/tap/holdfinger: 4.304s ; pinch: 4.204s ; head: 4.004s.
 LEAD_BY_DEVICE: Dict[str, float] = {

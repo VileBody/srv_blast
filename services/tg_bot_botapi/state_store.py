@@ -112,6 +112,11 @@ class ChatState(BaseModel):
     # compact because the full HookAnalysis JSON is ~10KB; we only need a
     # handful of numbers for the bot UI.
     hook_drop_candidates: List[Dict[str, Any]] = Field(default_factory=list)
+    # Measured BPM from the focus-clip analysis. Used by the F4 «Движение»
+    # reframe to scale the per-device lead (lead_eff = lead * refBpm/bpm) so the
+    # overlay cover-end lands exactly on the drop at any tempo. 0.0 = not yet
+    # analyzed.
+    hook_analysis_bpm: float = 0.0
     hook_analysis_error: str = ""
     versions_count: int = 1
     # Batch metadata for sequential multi-version generation.

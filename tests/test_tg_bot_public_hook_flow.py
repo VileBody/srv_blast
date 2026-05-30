@@ -62,6 +62,7 @@ def test_chatstate_hook_defaults_match_botapi_contract() -> None:
     assert st.hook_analysis_clip_start == 0.0
     assert st.hook_analysis_clip_end == 0.0
     assert st.hook_drop_candidates == []
+    assert st.hook_analysis_bpm == 0.0
     assert st.hook_analysis_error == ""
 
 
@@ -171,3 +172,7 @@ def test_f4_motion_device_ids_mirrored() -> None:
     # RU label map mirrors the botapi picker; values are exactly the id set.
     assert set(F4_MOTION_DEVICE_LABELS_RU.values()) == F4_MOTION_DEVICE_IDS
     assert F4_MOTION_DEVICE_LABELS_RU["Свайп"] == "swipe"
+
+    from services.tg_bot_public.app import F4_REF_BPM
+
+    assert F4_REF_BPM == 128.0

@@ -18,7 +18,8 @@ Alignment contract:
 from mlcore.hooks.f4_motion.overlay import (
     LEAD_BY_DEVICE,
     F4_DEVICES,
+    F4_REF_BPM,
     build_overlay_jsx,
 )
 
-__all__ = ["LEAD_BY_DEVICE", "F4_DEVICES", "build_overlay_jsx"]
+__all__ = ["LEAD_BY_DEVICE", "F4_DEVICES", "F4_REF_BPM", "build_overlay_jsx"]

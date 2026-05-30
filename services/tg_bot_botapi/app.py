@@ -2108,6 +2108,7 @@ class BlastBotApp:
                 and abs(st.hook_analysis_clip_end - clip_end) < 1e-3
             ):
                 st.hook_drop_candidates = candidates
+                st.hook_analysis_bpm = float(result.bpm)
                 st.hook_analysis_status = "ready"
                 st.hook_analysis_error = ""
                 await self.store.set(st)
@@ -2200,7 +2201,10 @@ class BlastBotApp:
             return
         await message.answer(
             "Выбери момент дропа. 🎯 — лучший кандидат, остальные — близкие "
-            "альтернативы. Если ни один не подходит — «Ввести вручную».",
+            "альтернативы. Если ни один не подходит — «Ввести вручную».\n\n"
+            "ℹ️ Хук строится по сценарию: ~3–4с разгон ДО дропа + 10–12с кора "
+            "ПОСЛЕ. Выбирай дроп так, чтобы после него в отрывке осталось "
+            "~10–12с трека.",
             reply_markup=_kb(*primary_rows),
         )
 
@@ -2360,24 +2364,40 @@ class BlastBotApp:
                 await message.answer("Сначала выбери момент дропа.")
                 await self._ask_hook_drop(message, st)
                 return
-            from mlcore.hooks.f4_motion.overlay import LEAD_BY_DEVICE
-            lead = float(LEAD_BY_DEVICE[device])
-            if float(st.hook_drop_t) - lead < 0.0:
+            bpm = float(st.hook_analysis_bpm or 0.0)
+            if bpm <= 0.0:
                 await message.answer(
-                    f"Хук слишком близко к началу трека: для «{text}» нужно "
-                    f"≥ {lead:.1f}с разгона до дропа. Выбери момент дропа позже."
+                    "Для «Движения» нужен анализ трека (BPM ещё не посчитан). "
+                    "Подожди пару секунд и попробуй снова, либо выбери другой хук."
+                )
+                return
+            # Variant B: lead scales with bpm exactly like the JSX (refBpm/bpm),
+            # so the overlay cover-end lands on the drop at any tempo.
+            lead = self._f4_effective_lead(device, bpm)
+            drop = float(st.hook_drop_t)
+            if drop - lead < 0.0:
+                await message.answer(
+                    f"Хук слишком близко к началу трека: для «{text}» при {bpm:.0f} BPM "
+                    f"нужно ≥ {lead:.1f}с разгона до дропа. Выбери момент дропа позже."
                 )
                 await self._ask_hook_drop(message, st)
                 return
             st.hook_device = device
             st.hook_type = "standard"  # legacy compat field
             await self.store.set(st)
-            new_start = float(st.hook_drop_t) - lead
+            new_start = drop - lead
+            core = float(st.user_clip_end_sec or 0.0) - drop
+            core_note = ""
+            if core < 6.0:
+                core_note = (
+                    f"\n⚠️ После дропа всего ~{core:.0f}с — кора будет короткой. "
+                    "В идеале 10–12с после дропа: выбери дроп раньше или расширь отрывок."
+                )
             await message.answer(
                 f"Ок, «Движение»: {text}.\n"
-                f"Разгон хука пойдёт с {self._fmt_timing(new_start)}, "
-                f"дроп на {self._fmt_timing(float(st.hook_drop_t))} — "
-                f"ролик начнётся с этого момента."
+                f"Сценарий: разгон с {self._fmt_timing(new_start)} → "
+                f"дроп на {self._fmt_timing(drop)} → кора ~{core:.0f}с. "
+                f"Ролик начнётся с {self._fmt_timing(new_start)}." + core_note
             )
             await self._ask_versions(message, st)
             return
@@ -2391,6 +2411,22 @@ class BlastBotApp:
         await self.store.set(st)
         await message.answer(f"Ок, «Мысль»: {text}.")
         await self._ask_versions(message, st)
+
+    @staticmethod
+    def _f4_effective_lead(device: str, bpm: float) -> float:
+        """F4 «Движение» effective lead = LEAD[device] * refBpm/bpm (Variant B).
+
+        Matches the JSX, which reflows internal timings by refBpm/bpm — so the
+        clip-window reframe (clip_start = drop - lead_eff) keeps the overlay
+        cover-end exactly on the drop at any tempo. Falls back to the unscaled
+        lead if bpm is missing (caller is expected to guard bpm > 0).
+        """
+        from mlcore.hooks.f4_motion.overlay import F4_REF_BPM, LEAD_BY_DEVICE
+
+        lead = float(LEAD_BY_DEVICE[device])
+        if bpm and float(bpm) > 0.0:
+            return lead * (float(F4_REF_BPM) / float(bpm))
+        return lead
 
     @staticmethod
     def _parse_single_timing(text: str) -> Optional[float]:
@@ -2666,15 +2702,18 @@ class BlastBotApp:
         if st.hook_enabled and st.hook_category == "motion" and st.hook_device:
             if st.hook_drop_t is None:
                 raise RuntimeError("F4 motion hook requires a drop (hook_drop_t)")
-            from mlcore.hooks.f4_motion.overlay import LEAD_BY_DEVICE
+            bpm = float(st.hook_analysis_bpm or 0.0)
+            if bpm <= 0.0:
+                raise RuntimeError("F4 motion hook requires measured bpm (hook_analysis_bpm)")
             f4_device = str(st.hook_device)
-            lead = LEAD_BY_DEVICE.get(f4_device)
-            if lead is None:
+            from mlcore.hooks.f4_motion.overlay import LEAD_BY_DEVICE
+            if f4_device not in LEAD_BY_DEVICE:
                 raise RuntimeError(f"unknown F4 device {f4_device!r}")
-            new_start = float(st.hook_drop_t) - float(lead)
+            lead = self._f4_effective_lead(f4_device, bpm)
+            new_start = float(st.hook_drop_t) - lead
             if new_start < 0.0:
                 raise RuntimeError(
-                    f"F4 reframe: drop {st.hook_drop_t} - lead {lead} < 0 "
+                    f"F4 reframe: drop {st.hook_drop_t} - lead {lead:.3f} (bpm={bpm}) < 0 "
                     "(hook too close to track start)"
                 )
             user_clip_start_sec = new_start

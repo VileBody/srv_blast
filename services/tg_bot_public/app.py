@@ -150,6 +150,11 @@ F4_MOTION_DEVICE_LABELS_RU = {
     "Задержи палец": "holdfinger",
     "Качай головой": "head",
 }
+# Reference BPM the F4 device keyframes were authored under. The botapi reframe
+# computes clip_start = drop - LEAD[device] * F4_REF_BPM / bpm so the overlay
+# cover-end lands on the drop at any tempo. Mirrored here for parity (the public
+# picker UX is gated behind HOOK_FLOW_ENABLED).
+F4_REF_BPM = 128.0
 
 
 def _should_route_to_season(st: ChatState) -> bool:
