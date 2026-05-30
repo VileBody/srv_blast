@@ -9,11 +9,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 # minimal system deps (расширишь по мере надобности)
-# ffmpeg нужен pydub в F5-хуке («Мысль»): декод mp3-трека + замер/экспорт wav
-# в build-сабпроцессе (worker-build собирается из этого Dockerfile).
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
-    ffmpeg \
   && rm -rf /var/lib/apt/lists/*
 
 # deps first (кешируется лучше)
