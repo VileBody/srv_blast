@@ -842,6 +842,7 @@ def render_all_steps(
     out_dir: Path,
     data_dir: Path | None = None,
     f5_block: Dict[str, Any] | None = None,
+    f4_block: Dict[str, Any] | None = None,
 ) -> Dict[str, Path]:
     repo_root = repo_root.resolve()
     out_dir = out_dir.resolve()
@@ -1037,6 +1038,15 @@ def render_all_steps(
     # -------------------------
     if f5_block:
         full_edit_obj["f5"] = f5_block
+
+    # -------------------------
+    # F4 «Движение» motion hook: если оркестратор сгенерировал блок {device,bpm}
+    # — вкладываем его в full_edit_config. project_builder._build_f4_overlay_js
+    # прочитает full_edit_config["f4"] и впишет инъектируемый JSX оверлея.
+    # Нет блока → full_edit_config без изменений (обычный job).
+    # -------------------------
+    if f4_block:
+        full_edit_obj["f4"] = f4_block
 
     # -------------------------
     # Write to DATA_DIR + mirror to OUT_DIR

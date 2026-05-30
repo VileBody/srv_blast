@@ -176,12 +176,19 @@ _HOOK_CATEGORY_BY_BUTTON = {
     BTN_HOOK_CAT_MOTION: "motion",
     BTN_HOOK_CAT_THOUGHT: "thought",
 }
-# Categories that are not implemented yet (everything except "Мысль").
+# Categories that are not implemented yet ("Мысль"=F5 and "Движение"=F4 are wired).
 _HOOK_CATEGORY_NOT_READY = {
     BTN_HOOK_CAT_SOUND,
     BTN_HOOK_CAT_OBJECT,
     BTN_HOOK_CAT_EFFECT,
-    BTN_HOOK_CAT_MOTION,
+}
+# F4 («Движение») device picker. Button text -> f4 device id. Only "swipe" is
+# wired so far (mlcore/hooks/f4_motion). LEAD_BY_DEVICE is imported lazily where
+# the clip-window reframe happens (clip_start := drop - LEAD[device]).
+BTN_HOOK_DEV_SWIPE = "Свайп"
+HOOK_MOTION_DEVICE_BUTTONS = [BTN_HOOK_DEV_SWIPE]
+_HOOK_MOTION_DEVICE_BY_BUTTON = {
+    BTN_HOOK_DEV_SWIPE: "swipe",
 }
 # F5 («Мысль») device picker — labels mirror DeviceSpec.title_ru in
 # mlcore/hooks/f5_cognition/devices.py. Button text -> F5Device value.
@@ -2248,7 +2255,8 @@ class BlastBotApp:
         await message.answer(
             "Выбери тип хука:\n"
             "• «Мысль» — голосовая TTS-вставка в первые секунды (готово).\n"
-            "• Звук / Объект / Эффект / Движение — скоро добавим.",
+            "• «Движение» — свайп-оверлей в такт, разрешается вспышкой на дропе (бета).\n"
+            "• Звук / Объект / Эффект — скоро добавим.",
             reply_markup=_kb(
                 [BTN_HOOK_CAT_SOUND, BTN_HOOK_CAT_OBJECT],
                 [BTN_HOOK_CAT_EFFECT, BTN_HOOK_CAT_MOTION],
@@ -2265,7 +2273,7 @@ class BlastBotApp:
         if text in _HOOK_CATEGORY_NOT_READY:
             await message.answer(
                 f"«{text}» пока в разработке — скоро добавим. "
-                "Сейчас доступна «Мысль»."
+                "Сейчас доступны «Мысль» и «Движение»."
             )
             return
         if text == BTN_HOOK_CAT_THOUGHT:
@@ -2273,12 +2281,34 @@ class BlastBotApp:
             await self.store.set(st)
             await self._ask_hook_device(message, st)
             return
+        if text == BTN_HOOK_CAT_MOTION:
+            # F4 motion overlay needs a drop to align against (cover-end == drop).
+            if st.hook_drop_t is None:
+                await message.answer(
+                    "Для «Движения» нужен момент дропа — вернись и выбери его."
+                )
+                await self._ask_hook_drop(message, st)
+                return
+            st.hook_category = "motion"
+            await self.store.set(st)
+            await self._ask_hook_device(message, st)
+            return
         await message.answer("Выбери тип хука кнопкой ниже.")
 
     async def _ask_hook_device(self, message: Message, st: ChatState) -> None:
-        """F5 («Мысль») device sub-picker — 5 rhetorical devices."""
+        """Device sub-picker. Category-aware: F4 «Движение» vs F5 «Мысль»."""
         st.stage = STAGE_WAIT_HOOK_DEVICE
         await self.store.set(st)
+        if st.hook_category == "motion":
+            await message.answer(
+                "Какой приём «Движения»?\n"
+                "• Свайп — рука свайпает в такт, на дропе срабатывает вспышка.",
+                reply_markup=_kb(
+                    [BTN_HOOK_DEV_SWIPE],
+                    [BTN_BACK],
+                ),
+            )
+            return
         await message.answer(
             "Какой приём «Мысли»?\n"
             "• Панчлайн — голос подводит, трек добивает.\n"
@@ -2299,6 +2329,32 @@ class BlastBotApp:
         if text == BTN_BACK:
             await self._ask_hook_type(message, st)
             return
+
+        if st.hook_category == "motion":
+            device = _HOOK_MOTION_DEVICE_BY_BUTTON.get(text)
+            if device is None:
+                await message.answer("Выбери приём кнопкой ниже.")
+                return
+            if st.hook_drop_t is None:
+                await message.answer("Сначала выбери момент дропа.")
+                await self._ask_hook_drop(message, st)
+                return
+            from mlcore.hooks.f4_motion.overlay import LEAD_BY_DEVICE
+            lead = float(LEAD_BY_DEVICE[device])
+            if float(st.hook_drop_t) - lead < 0.0:
+                await message.answer(
+                    f"Хук слишком близко к началу трека: для «{text}» нужно "
+                    f"≥ {lead:.1f}с разгона до дропа. Выбери момент дропа позже."
+                )
+                await self._ask_hook_drop(message, st)
+                return
+            st.hook_device = device
+            st.hook_type = "standard"  # legacy compat field
+            await self.store.set(st)
+            await message.answer(f"Ок, «Движение»: {text}.")
+            await self._ask_versions(message, st)
+            return
+
         device = _HOOK_DEVICE_BY_BUTTON.get(text)
         if device is None:
             await message.answer("Выбери приём кнопкой ниже.")
@@ -2574,6 +2630,29 @@ class BlastBotApp:
         if end > start >= 0.0:
             user_clip_start_sec = start
             user_clip_end_sec = end
+
+        # F4 «Движение»: reframe the clip window so the overlay's cover-end lands
+        # exactly on the hook. clip_start := drop - LEAD[device]; clip_end stays.
+        # The literal user-picked start is intentionally discarded (we may extend
+        # backward into earlier track footage). Floored at 0 (else blocked earlier).
+        f4_device: str | None = None
+        if st.hook_enabled and st.hook_category == "motion" and st.hook_device:
+            if st.hook_drop_t is None:
+                raise RuntimeError("F4 motion hook requires a drop (hook_drop_t)")
+            from mlcore.hooks.f4_motion.overlay import LEAD_BY_DEVICE
+            f4_device = str(st.hook_device)
+            lead = LEAD_BY_DEVICE.get(f4_device)
+            if lead is None:
+                raise RuntimeError(f"unknown F4 device {f4_device!r}")
+            new_start = float(st.hook_drop_t) - float(lead)
+            if new_start < 0.0:
+                raise RuntimeError(
+                    f"F4 reframe: drop {st.hook_drop_t} - lead {lead} < 0 "
+                    "(hook too close to track start)"
+                )
+            user_clip_start_sec = new_start
+            if user_clip_end_sec is None or user_clip_end_sec <= new_start:
+                user_clip_end_sec = float(end)
         rotation_theme, rotation_group, rotation_history = (
             await self._resolve_rotation_slot_for_enqueue(st=st)
         )
@@ -2611,6 +2690,7 @@ class BlastBotApp:
                 if (st.hook_enabled and st.hook_category == "thought" and st.hook_device)
                 else None
             ),
+            f4_device=f4_device,
         )
         job_id = str(enqueue.get("job_id") or "").strip()
         if not job_id:

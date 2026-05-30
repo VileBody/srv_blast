@@ -152,3 +152,16 @@ def test_orchestrator_client_payload_carries_hook_fields() -> None:
     assert "user_drop_t" in sig.parameters
     assert sig.parameters["hook_enabled"].default is False
     assert sig.parameters["user_drop_t"].default is None
+    # F4 «Движение» motion device kwarg mirrored (Phase: AE-FX).
+    assert "f4_device" in sig.parameters
+    assert sig.parameters["f4_device"].default is None
+
+
+def test_f4_motion_device_ids_mirrored() -> None:
+    """Public bot mirrors the F4 motion device id set so a chat state
+    pre-populated with a motion device round-trips through the payload even
+    while the picker UX is botapi-only."""
+    from services.tg_bot_public.app import F4_MOTION_DEVICE_IDS
+
+    assert "swipe" in F4_MOTION_DEVICE_IDS
+    assert F4_MOTION_DEVICE_IDS == {"swipe", "tap", "pinch", "holdfinger", "head"}

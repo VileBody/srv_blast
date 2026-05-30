@@ -1637,6 +1637,18 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
                 f"invalid hook_device={hook_device_raw!r}; allowed={sorted(allowed_devices)}"
             )
         env["F5_HOOK_DEVICE"] = hook_device
+    # F4 «Движение» device pass-through. When set, the orchestrator emits
+    # full_edit_config["f4"] {device, bpm} and project_builder injects the AE
+    # overlay JSX. Absent => no F4 hook.
+    f4_device_raw = req.get("f4_device")
+    if f4_device_raw is not None:
+        f4_device = str(f4_device_raw).strip().lower()
+        allowed_f4_devices = {"swipe", "tap", "pinch", "holdfinger", "head"}
+        if f4_device not in allowed_f4_devices:
+            raise RuntimeError(
+                f"invalid f4_device={f4_device_raw!r}; allowed={sorted(allowed_f4_devices)}"
+            )
+        env["F4_HOOK_DEVICE"] = f4_device
     if exclude_file_names:
         env["FOOTAGE_EXCLUDE_FILE_NAMES_JSON"] = json.dumps(exclude_file_names, ensure_ascii=False)
     if rotation_theme and rotation_tags_group:

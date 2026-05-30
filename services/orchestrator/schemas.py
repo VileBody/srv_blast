@@ -61,6 +61,15 @@ class SendAudioS3Request(BaseModel):
             "inverse_lyric",
         ]
     ] = None
+    # F4 «Движение» motion-hook device. When the user picks the "Движение" hook
+    # category, the bot sends the chosen device here (swipe / tap / pinch /
+    # holdfinger / head). Propagated to the build env as F4_HOOK_DEVICE, which
+    # makes the orchestrator emit full_edit_config["f4"] for the AE overlay.
+    # The bot pre-reframes the clip window so clip_start == drop - LEAD[device].
+    # None => no F4 hook.
+    f4_device: Optional[
+        Literal["swipe", "tap", "pinch", "holdfinger", "head"]
+    ] = None
     # Optional internal batch controls for multi-version generation.
     reuse_text_job_id: Optional[str] = None
     exclude_file_names: List[str] = Field(default_factory=list)

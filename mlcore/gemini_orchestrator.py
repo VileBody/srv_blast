@@ -4094,6 +4094,32 @@ def build_all_via_gemini_one_call(
         )
         f5_block = None
 
+    # ── F4 Cognition («Движение»): visual engagement-bait overlay. If env
+    #    F4_HOOK_DEVICE is set, emit a block {device, bpm} that
+    #    project_builder injects as an AE overlay JSX. bpm comes from the
+    #    hook_aware Stage2 analysis (`bpm` in scope). Optional enhancement —
+    #    any failure logs and renders WITHOUT the overlay (f4_block=None).
+    f4_block = None
+    _f4_device_env = (os.environ.get("F4_HOOK_DEVICE") or "").strip().lower()
+    if _f4_device_env:
+        try:
+            from mlcore.hooks.f4_motion.overlay import F4_DEVICES, LEAD_BY_DEVICE
+            if _f4_device_env not in LEAD_BY_DEVICE:
+                raise RuntimeError(f"unknown F4_HOOK_DEVICE={_f4_device_env!r}")
+            if _f4_device_env not in F4_DEVICES:
+                raise RuntimeError(f"F4 device {_f4_device_env!r} not wired yet")
+            if bpm is None or not (float(bpm) > 0.0):
+                raise RuntimeError("F4 hook requires measured bpm (hook_aware)")
+            f4_block = {"device": _f4_device_env, "bpm": float(bpm)}
+            logger.info("f4.hook block device=%s bpm=%.2f", _f4_device_env, float(bpm))
+        except Exception:
+            logger.exception(
+                "f4.hook FAILED — render without overlay (device=%s job=%s)",
+                _f4_device_env,
+                os.environ.get("JOB_ID") or out_dir.name,
+            )
+            f4_block = None
+
     outputs = render_all_steps(
         repo_root=ROOT,
         plan=full_payload,
@@ -4101,6 +4127,7 @@ def build_all_via_gemini_one_call(
         out_dir=out_dir,
         data_dir=Path(os.environ.get("DATA_DIR", str(ROOT / "data"))).resolve(),
         f5_block=f5_block,
+        f4_block=f4_block,
     )
 
     logger.info("render_done %s", {k: str(v) for k, v in outputs.items()})
