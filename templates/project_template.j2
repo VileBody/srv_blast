@@ -1501,6 +1501,17 @@
     // flash on cuts for impulse + tape templates
     addFlashOnCuts();
 
+    // ==========================================================
+    // 5.5) F4 «Движение» motion-hook overlay (injected by build worker)
+    // Empty string when no f4 block => no-op. Builds device layers on top of
+    // MAIN_COMP from comp-time 0 (clip window pre-reframed so cover-end == hook).
+    // ==========================================================
+    try {
+      {{ f4_overlay_js }}
+    } catch(eF4) {
+      logErr("f4 overlay injection failed", eF4);
+    }
+
     if (__SUPPRESSED_UI_CALLS.length > 0) {
       logLine("WARN", "suppressed_ui_calls=" + safeJson(__SUPPRESSED_UI_CALLS, 2000));
     }

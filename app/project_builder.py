@@ -158,6 +158,36 @@ def _apply_f5_if_present(
     )
 
 
+def _build_f4_overlay_js(full_edit_config: Dict[str, Any]) -> str:
+    """
+    Если в full_edit_config есть блок "f4" — собирает инъектируемый JSX-блок
+    оверлея выбранного приёма («Движение»). Блок встраивается в шаблон сырым
+    куском (после addFlashOnCuts, до сохранения проекта).
+
+    Блок "f4" формируется оркестратором: {"device": "...", "bpm": <float>}.
+    Нет блока => пустая строка => ноль влияния на обычные джобы.
+
+    Импорт mlcore.hooks делаем лениво, чтобы project_builder не тянул
+    ML-зависимости когда хука нет.
+    """
+    f4_block = full_edit_config.get("f4") if isinstance(full_edit_config, dict) else None
+    if not f4_block or not isinstance(f4_block, dict):
+        return ""
+
+    device = str(f4_block.get("device") or "").strip().lower()
+    if not device:
+        raise RuntimeError("f4 block present but 'device' is empty")
+    bpm = f4_block.get("bpm")
+    if bpm is None:
+        raise RuntimeError("f4 block present but 'bpm' is missing")
+
+    from mlcore.hooks.f4_motion.overlay import build_overlay_jsx
+
+    overlay = build_overlay_jsx(device=device, bpm=float(bpm))
+    LOGGER.info("f4 hook present device=%s bpm=%s js_len=%d", device, bpm, len(overlay))
+    return overlay
+
+
 def build_full_project(
     *,
     repo_root: Path,
@@ -275,6 +305,12 @@ def build_full_project(
             replaced,
         )
 
+    # F4 «Движение» motion-hook overlay. If full_edit_config carries an "f4"
+    # block ({device, bpm}) we build the chosen device's injectable JSX and pass
+    # it to the template as a raw block (rendered after addFlashOnCuts, before
+    # save). Absent block => empty string => zero impact on regular jobs.
+    f4_overlay_js = _build_f4_overlay_js(full_edit_config)
+
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "logs").mkdir(parents=True, exist_ok=True)
 
@@ -288,7 +324,7 @@ def build_full_project(
     env.filters["tojson"] = _tojson_filter
 
     tpl = env.get_template("project_template.j2")
-    jsx = tpl.render(**payload)
+    jsx = tpl.render(**payload, f4_overlay_js=f4_overlay_js)
     out_jsx.write_text(jsx, encoding="utf-8")
 
     return out_json, out_jsx
