@@ -153,11 +153,11 @@ F4_MOTION_DEVICE_LABELS_RU = {
 # Reference BPM the F4 device keyframes were authored under. Mirrored for parity
 # (the public picker UX is gated behind HOOK_FLOW_ENABLED).
 #
-# IMPORTANT (mirrors tg_bot_botapi hotfix): the F4 overlay must NOT reframe the
-# user's clip window. Moving user_clip_start_sec shifts the Stage1 ASR/subtitles
-# window away from the user's selected text and breaks transcription alignment.
-# Overlay-to-drop alignment is done via an in-comp offset passed to the JSX, not
-# by mutating the content window.
+# Overlay-to-drop alignment (mirrors tg_bot_botapi): for a motion hook the bot
+# reframes the clip window to clip_start = drop - lead_eff
+# (lead_eff = LEAD[device] * F4_REF_BPM / bpm), so the overlay's cover-layer end
+# lands exactly on the drop. For a motion hook the rolled clip IS [drop-lead, end]
+# and Stage1 subtitles align to that same window.
 F4_REF_BPM = 128.0
 
 

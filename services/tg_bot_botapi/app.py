@@ -2706,12 +2706,21 @@ class BlastBotApp:
             from mlcore.hooks.f4_motion.overlay import LEAD_BY_DEVICE
             if f4_device not in LEAD_BY_DEVICE:
                 raise RuntimeError(f"unknown F4 device {f4_device!r}")
-            # HOTFIX: do NOT reframe the clip window. Reframing user_clip_start_sec
-            # moved the Stage1 ASR/subtitles window away from the user's selected
-            # text, breaking transcription alignment. The content window MUST stay
-            # exactly the user's selection. Overlay-to-drop alignment will be done
-            # via an in-comp offset (passed to the JSX) instead — see follow-up.
-            # user_clip_start_sec / user_clip_end_sec are left untouched here.
+            # Reframe the clip window so the overlay's cover-end lands exactly on
+            # the drop: clip_start := drop - lead_eff (Variant B: lead scales with
+            # bpm like the JSX). clip_end is unchanged. The literal user-picked
+            # start is intentionally discarded — for a motion hook the rolled clip
+            # IS [drop-lead, end], and Stage1 subtitles align to that same window.
+            lead = self._f4_effective_lead(f4_device, bpm)
+            new_start = float(st.hook_drop_t) - lead
+            if new_start < 0.0:
+                raise RuntimeError(
+                    f"F4 reframe: drop {st.hook_drop_t} - lead {lead:.3f} (bpm={bpm}) < 0 "
+                    "(hook too close to track start)"
+                )
+            user_clip_start_sec = new_start
+            if user_clip_end_sec is None or user_clip_end_sec <= new_start:
+                user_clip_end_sec = float(end)
         rotation_theme, rotation_group, rotation_history = (
             await self._resolve_rotation_slot_for_enqueue(st=st)
         )
