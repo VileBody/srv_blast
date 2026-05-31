@@ -46,6 +46,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.branch != '' && inputs.branch || github.ref_name }}
 
       - name: Define image refs
         id: images
@@ -53,9 +55,11 @@ jobs:
           set -euo pipefail
           owner_lc="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
           prefix="ghcr.io/${owner_lc}/srv-blast"
-          tag="$GITHUB_SHA"
+          tag="$(git rev-parse HEAD)"
           {
             echo "registry=ghcr.io"
+            echo "image_prefix=${prefix}"
+            echo "image_tag=${tag}"
             echo "runtime_image=${prefix}/runtime:${tag}"
             echo "tg_bot_image=${prefix}/tg-bot:${tag}"
             echo "tg_bot_public_image=${prefix}/tg-bot-public:${tag}"
@@ -68,35 +72,16 @@ jobs:
           set -euo pipefail
           printf '%s\n' "$GITHUB_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
 
-      - name: Build and push runtime image
+      - name: Build/push missing images
+        env:
+          BLAST_IMAGE_PREFIX: ${{ steps.images.outputs.image_prefix }}
+          BLAST_IMAGE_TAG: ${{ steps.images.outputs.image_tag }}
+          BLAST_IMAGE_PLATFORM: linux/amd64
+          BLAST_IMAGE_REGISTRY_USERNAME: ${{ github.actor }}
+          BLAST_IMAGE_REGISTRY_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          docker build -f Dockerfile -t "${{ steps.images.outputs.runtime_image }}" .
-          docker push "${{ steps.images.outputs.runtime_image }}"
-
-      - name: Build and push bot image
-        run: |
-          set -euo pipefail
-          docker build -f Dockerfile.tg-bot -t "${{ steps.images.outputs.tg_bot_image }}" .
-          docker push "${{ steps.images.outputs.tg_bot_image }}"
-
-      - name: Build and push public bot image
-        run: |
-          set -euo pipefail
-          docker build -f Dockerfile.tg-bot-public -t "${{ steps.images.outputs.tg_bot_public_image }}" .
-          docker push "${{ steps.images.outputs.tg_bot_public_image }}"
-
-      - name: Build and push asset UI image
-        run: |
-          set -euo pipefail
-          docker build -f Dockerfile.asset-ui -t "${{ steps.images.outputs.asset_ui_image }}" .
-          docker push "${{ steps.images.outputs.asset_ui_image }}"
-
-      - name: Build and push finance bot image
-        run: |
-          set -euo pipefail
-          docker build -f finance_bot/Dockerfile -t "${{ steps.images.outputs.finance_bot_image }}" finance_bot
-          docker push "${{ steps.images.outputs.finance_bot_image }}"
+          bash infra/runners/build_push_images.sh
 
   deploy-prod-path:
     needs:
