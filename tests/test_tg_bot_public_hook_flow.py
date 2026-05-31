@@ -157,6 +157,11 @@ def test_orchestrator_client_payload_carries_hook_fields() -> None:
     assert "f4_device" in sig.parameters
     assert sig.parameters["f4_device"].default is None
 
+    # Hook focus-clip analysis is delegated to the orchestrator (librosa lives in
+    # the runtime image, not the slim bot image). Both bots expose analyze_hook.
+    ah = inspect.signature(OrchestratorClient.analyze_hook)
+    assert {"audio_s3_url", "clip_start_sec", "clip_end_sec"}.issubset(ah.parameters)
+
 
 def test_f4_motion_device_ids_mirrored() -> None:
     """Public bot mirrors the F4 motion device id set so a chat state

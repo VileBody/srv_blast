@@ -142,6 +142,9 @@ HOOK_STAGES = frozenset({
 # `f4_device` kwarg (which lands in the payload regardless of HOOK_FLOW_ENABLED,
 # so a chat state pre-populated with a motion device propagates cleanly). All
 # five devices are wired downstream (mlcore/hooks/f4_motion).
+# NOTE (mirrors tg_bot_botapi): focus-clip hook analysis is delegated to the
+# orchestrator via OrchestratorClient.analyze_hook — librosa lives in the
+# runtime image, NOT in the slim bot image. The bots must never import librosa.
 F4_MOTION_DEVICE_IDS = frozenset({"swipe", "tap", "pinch", "holdfinger", "head"})
 F4_MOTION_DEVICE_LABELS_RU = {
     "Свайп": "swipe",

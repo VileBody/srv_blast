@@ -93,6 +93,31 @@ class OrchestratorClient:
             raise RuntimeError(f"orchestrator /send_audio_s3 returned non-object: {out!r}")
         return out
 
+    async def analyze_hook(
+        self,
+        *,
+        audio_s3_url: str,
+        clip_start_sec: float,
+        clip_end_sec: float,
+    ) -> Dict[str, Any]:
+        """Mirror of tg_bot_botapi: F4 «Движение» picker asks the orchestrator
+        (it has librosa) for {bpm, drop_candidates}. Keeps librosa out of the
+        slim bot image."""
+        payload = {
+            "audio_s3_url": str(audio_s3_url),
+            "clip_start_sec": float(clip_start_sec),
+            "clip_end_sec": float(clip_end_sec),
+        }
+        resp = await self._client.post(f"{self._base_url}/hook/analyze", json=payload)
+        if resp.status_code >= 300:
+            raise RuntimeError(
+                f"orchestrator /hook/analyze failed status={resp.status_code} body={resp.text}"
+            )
+        out = resp.json()
+        if not isinstance(out, dict):
+            raise RuntimeError(f"orchestrator /hook/analyze returned non-object: {out!r}")
+        return out
+
     async def get_job(self, job_id: str) -> Dict[str, Any]:
         jid = str(job_id or "").strip()
         if not jid:

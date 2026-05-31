@@ -258,3 +258,31 @@ class WindowsNodesStatusResponse(BaseModel):
 # If you want to remove old names later — delete these aliases and the /send_video route in app.py.
 SendVideoRequest = SendAudioS3Request
 SendVideoResponse = EnqueueJobResponse
+
+
+# ---- Hook focus-clip analysis (F4 «Движение» picker) ----
+# The bots are slim (no librosa). They call this so the orchestrator (runtime
+# image, has librosa) runs analyze_focus_clip and returns just the picker data:
+# top drop candidates + measured bpm. Keeps the heavy ML dep out of the bots.
+class HookAnalyzeRequest(BaseModel):
+    audio_s3_url: str = Field(min_length=1)
+    clip_start_sec: float = Field(ge=0.0)
+    clip_end_sec: float = Field(gt=0.0)
+
+    @model_validator(mode="after")
+    def _validate_window(self) -> "HookAnalyzeRequest":
+        if float(self.clip_end_sec) <= float(self.clip_start_sec):
+            raise ValueError("clip_end_sec must be > clip_start_sec")
+        return self
+
+
+class HookDropCandidate(BaseModel):
+    t: float
+    confidence: float
+    snapped_to_beat: bool = False
+    source: str = ""
+
+
+class HookAnalyzeResponse(BaseModel):
+    bpm: float
+    drop_candidates: List[HookDropCandidate] = Field(default_factory=list)

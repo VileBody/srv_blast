@@ -41,6 +41,8 @@ from .runtime_config import (
 from .schemas import (
     ActiveJobsResponse,
     ActiveJobSummary,
+    HookAnalyzeRequest,
+    HookAnalyzeResponse,
     JobState,
     JobsBatchRequest,
     JobsBatchResponse,
@@ -569,6 +571,55 @@ def create_app() -> FastAPI:
     def send_video(req: SendVideoRequest) -> SendVideoResponse:
         # Aliases to the new endpoint implementation
         return send_audio_s3(req)
+
+    # ==========================================================
+    # Hook focus-clip analysis (F4 «Движение» picker).
+    # Slim bots have no librosa → they call this; the orchestrator (runtime
+    # image, has librosa) downloads the clip audio, runs analyze_focus_clip and
+    # returns top drop candidates + bpm. Sync def => runs in the threadpool.
+    # ==========================================================
+    @app.post("/hook/analyze", response_model=HookAnalyzeResponse)
+    def hook_analyze(req: HookAnalyzeRequest) -> HookAnalyzeResponse:
+        import tempfile
+        from urllib.parse import urlparse
+
+        url = str(req.audio_s3_url).strip()
+        if not url.startswith("s3://"):
+            raise HTTPException(status_code=400, detail="audio_s3_url must be an s3:// url")
+        parsed = urlparse(url)
+        bucket = parsed.netloc
+        key = parsed.path.lstrip("/")
+        if not bucket or not key:
+            raise HTTPException(status_code=400, detail=f"invalid s3 url: {url!r}")
+
+        try:
+            from src.storage.s3 import get_s3_client
+            from mlcore.audio_analysis import analyze_focus_clip, to_jsonable  # noqa: F401
+
+            with tempfile.TemporaryDirectory(prefix="hook_analyze_") as td:
+                suffix = Path(key).suffix or ".mp3"
+                local = Path(td) / f"audio{suffix}"
+                get_s3_client().download_file(bucket, key, str(local))
+                result = analyze_focus_clip(
+                    audio_path=local,
+                    clip_start_abs=float(req.clip_start_sec),
+                    clip_end_abs=float(req.clip_end_sec),
+                )
+        except Exception as e:
+            log.exception("hook_analyze failed url=%s window=%.3f..%.3f",
+                          url, req.clip_start_sec, req.clip_end_sec)
+            raise HTTPException(status_code=500, detail=f"hook analyze failed: {e}")
+
+        cands = [
+            {
+                "t": float(c.t),
+                "confidence": float(c.confidence),
+                "snapped_to_beat": bool(c.snapped_to_beat),
+                "source": str(c.source),
+            }
+            for c in (result.drop_candidates or [])[:3]
+        ]
+        return HookAnalyzeResponse(bpm=float(result.bpm), drop_candidates=cands)
 
     @app.get("/jobs/active", response_model=ActiveJobsResponse)
     def list_active_jobs(min_age_seconds: int = 900, limit: int = 100) -> ActiveJobsResponse:

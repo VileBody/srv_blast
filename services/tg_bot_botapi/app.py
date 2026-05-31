@@ -2076,30 +2076,40 @@ class BlastBotApp:
     async def _run_hook_analysis_bg(
         self, *, chat_id: int, audio_path: str, clip_start: float, clip_end: float
     ) -> None:
-        """Background runner — must never raise into the asyncio loop."""
-        import asyncio as _asyncio
+        """Background runner — must never raise into the asyncio loop.
+
+        The bot image is slim (no librosa). It uploads the focus-clip audio to
+        S3 and asks the orchestrator (runtime image, has librosa) to run
+        analyze_focus_clip, returning {bpm, drop_candidates} for the picker.
+        """
         try:
             from pathlib import Path as _Path
-            from mlcore.audio_analysis import analyze_focus_clip as _analyze
-            loop = _asyncio.get_running_loop()
-            result = await loop.run_in_executor(
-                None,
-                lambda: _analyze(
-                    audio_path=_Path(audio_path),
-                    clip_start_abs=clip_start,
-                    clip_end_abs=clip_end,
-                ),
+            prepared = _Path(audio_path).expanduser().resolve()
+            key = self._build_raw_audio_key(chat_id=chat_id, file_name=prepared.name)
+            audio_s3_url = await asyncio.to_thread(
+                self.s3.upload_file,
+                path=prepared,
+                bucket=self.settings.s3_bucket_raw_audio,
+                key=key,
+                content_type="audio/mpeg",
             )
-            # Persist a compact form: just the data we need for the UI.
+            result = await self.orchestrator.analyze_hook(
+                audio_s3_url=str(audio_s3_url),
+                clip_start_sec=clip_start,
+                clip_end_sec=clip_end,
+            )
+            raw_cands = result.get("drop_candidates") or []
             candidates = [
                 {
-                    "t": float(c.t),
-                    "confidence": float(c.confidence),
-                    "snapped_to_beat": bool(c.snapped_to_beat),
-                    "source": str(c.source),
+                    "t": float(c.get("t")),
+                    "confidence": float(c.get("confidence", 0.0)),
+                    "snapped_to_beat": bool(c.get("snapped_to_beat", False)),
+                    "source": str(c.get("source", "")),
                 }
-                for c in result.drop_candidates[:3]
+                for c in raw_cands[:3]
+                if isinstance(c, dict) and c.get("t") is not None
             ]
+            bpm = float(result.get("bpm") or 0.0)
             st = await self.store.get(chat_id)
             # Stale audio guard: only persist if the user hasn't changed clip.
             if (
@@ -2108,13 +2118,13 @@ class BlastBotApp:
                 and abs(st.hook_analysis_clip_end - clip_end) < 1e-3
             ):
                 st.hook_drop_candidates = candidates
-                st.hook_analysis_bpm = float(result.bpm)
+                st.hook_analysis_bpm = bpm
                 st.hook_analysis_status = "ready"
                 st.hook_analysis_error = ""
                 await self.store.set(st)
                 log.info(
                     "hook_bg_ok chat=%s bpm=%.2f cands=%d",
-                    chat_id, result.bpm, len(candidates),
+                    chat_id, bpm, len(candidates),
                 )
         except Exception as e:
             log.warning("hook_bg_fail chat=%s err=%r", chat_id, e)
