@@ -125,7 +125,9 @@ jobs:
     if: ${{ always() && vars.DEPLOY_SPLIT_ENABLED == 'true' && (github.event_name == 'push' || inputs.target == 'all' || inputs.target == 'infra-ops') && needs.deploy-prod-path.result != 'failure' && needs.deploy-prod-path.result != 'cancelled' }}
     name: Deploy Infra Ops
     runs-on: [self-hosted, blast-deploy-infra]
-    timeout-minutes: 30
+    # Infra builds the same Python dependency layer as prod-path; keep its cap
+    # aligned with prod-path so cold PyPI/cache days do not cancel the rollout.
+    timeout-minutes: 90
     env:
       REPO_DIR: ${{ vars.BLAST_REPO_DIR_INFRA != '' && vars.BLAST_REPO_DIR_INFRA || vars.BLAST_REPO_DIR }}
       INPUT_BRANCH: ${{ inputs.branch }}
