@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM python:3.13-slim
+FROM python:3.13-alpine
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -8,10 +8,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates \
-    ffmpeg \
-  && rm -rf /var/lib/apt/lists/*
+RUN apk add --no-cache bash ca-certificates ffmpeg
 
 COPY requirements.infra.txt /app/requirements.infra.txt
 RUN pip install --no-cache-dir -r /app/requirements.infra.txt
