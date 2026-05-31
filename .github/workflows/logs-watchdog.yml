@@ -28,13 +28,14 @@ jobs:
             echo "REPO_DIR does not point to a git repo: $REPO_DIR"
             exit 1
           fi
-          if [ ! -f /etc/blast/logs-backup.env ]; then
-            echo "logs env not found: /etc/blast/logs-backup.env"
+          logs_env="${REPO_DIR}/infra/runners/.env.logs-backup"
+          if [ ! -f "$logs_env" ]; then
+            echo "logs env not found: $logs_env"
             exit 1
           fi
 
           set -a
-          . /etc/blast/logs-backup.env
+          . "$logs_env"
           set +a
 
           logs_python=""
