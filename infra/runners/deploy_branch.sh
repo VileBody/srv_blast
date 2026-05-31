@@ -10,6 +10,7 @@ PROD_TG_WEBHOOK_IP_ADDRESS="${PROD_TG_WEBHOOK_IP_ADDRESS:-}"
 DEPLOY_USE_PREBUILT_IMAGES="${DEPLOY_USE_PREBUILT_IMAGES:-false}"
 BLAST_IMAGE_REGISTRY="${BLAST_IMAGE_REGISTRY:-ghcr.io}"
 BLAST_IMAGE_REGISTRY_USERNAME="${BLAST_IMAGE_REGISTRY_USERNAME:-}"
+BLAST_IMAGE_REGISTRY_TOKEN="${BLAST_IMAGE_REGISTRY_TOKEN:-}"
 
 if [[ -n "${REPO_DIR:-}" ]]; then
   SCRIPT_DIR="$REPO_DIR/infra/runners"
@@ -415,10 +416,12 @@ require_prebuilt_image_env() {
 }
 
 docker_registry_login_if_needed() {
+  local registry_token
   if [[ -z "$BLAST_IMAGE_REGISTRY" ]]; then
     return 0
   fi
-  if [[ -z "$AUTH_TOKEN" ]]; then
+  registry_token="${BLAST_IMAGE_REGISTRY_TOKEN:-$AUTH_TOKEN}"
+  if [[ -z "$registry_token" ]]; then
     echo "[deploy] GitHub token is required to pull prebuilt images from $BLAST_IMAGE_REGISTRY"
     return 1
   fi
@@ -431,7 +434,7 @@ docker_registry_login_if_needed() {
     export DOCKER_CONFIG="$DEPLOY_DOCKER_CONFIG_DIR"
   fi
   echo "[deploy] docker login $BLAST_IMAGE_REGISTRY as $BLAST_IMAGE_REGISTRY_USERNAME"
-  printf '%s\n' "$AUTH_TOKEN" | docker login "$BLAST_IMAGE_REGISTRY" -u "$BLAST_IMAGE_REGISTRY_USERNAME" --password-stdin >/dev/null
+  printf '%s\n' "$registry_token" | docker login "$BLAST_IMAGE_REGISTRY" -u "$BLAST_IMAGE_REGISTRY_USERNAME" --password-stdin >/dev/null
 }
 
 deploy_root_services_prebuilt() {

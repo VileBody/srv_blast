@@ -114,6 +114,7 @@ jobs:
       DEPLOY_USE_PREBUILT_IMAGES: "true"
       BLAST_IMAGE_REGISTRY: ${{ needs.build-images.outputs.registry }}
       BLAST_IMAGE_REGISTRY_USERNAME: ${{ github.actor }}
+      BLAST_IMAGE_REGISTRY_TOKEN: ${{ github.token }}
       BLAST_RUNTIME_IMAGE: ${{ needs.build-images.outputs.runtime_image }}
       BLAST_TG_BOT_IMAGE: ${{ needs.build-images.outputs.tg_bot_image }}
       BLAST_TG_BOT_PUBLIC_IMAGE: ${{ needs.build-images.outputs.tg_bot_public_image }}
@@ -233,6 +234,7 @@ jobs:
       DEPLOY_USE_PREBUILT_IMAGES: "true"
       BLAST_IMAGE_REGISTRY: ${{ needs.build-images.outputs.registry }}
       BLAST_IMAGE_REGISTRY_USERNAME: ${{ github.actor }}
+      BLAST_IMAGE_REGISTRY_TOKEN: ${{ github.token }}
       BLAST_RUNTIME_IMAGE: ${{ needs.build-images.outputs.runtime_image }}
       BLAST_TG_BOT_IMAGE: ${{ needs.build-images.outputs.tg_bot_image }}
       BLAST_TG_BOT_PUBLIC_IMAGE: ${{ needs.build-images.outputs.tg_bot_public_image }}
