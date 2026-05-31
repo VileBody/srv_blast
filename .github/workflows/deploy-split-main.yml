@@ -22,28 +22,103 @@ on:
 
 permissions:
   contents: read
+  packages: write
 
 concurrency:
   group: deploy-split-${{ github.event_name == 'workflow_dispatch' && (inputs.branch != '' && inputs.branch || github.ref_name) || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
+  build-images:
+    if: ${{ vars.DEPLOY_SPLIT_ENABLED == 'true' && (github.event_name == 'push' || inputs.target == 'all' || inputs.target == 'prod-path' || inputs.target == 'infra-ops') }}
+    name: Build Images
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+    outputs:
+      registry: ${{ steps.images.outputs.registry }}
+      runtime_image: ${{ steps.images.outputs.runtime_image }}
+      tg_bot_image: ${{ steps.images.outputs.tg_bot_image }}
+      tg_bot_public_image: ${{ steps.images.outputs.tg_bot_public_image }}
+      asset_ui_image: ${{ steps.images.outputs.asset_ui_image }}
+      finance_bot_image: ${{ steps.images.outputs.finance_bot_image }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Define image refs
+        id: images
+        run: |
+          set -euo pipefail
+          owner_lc="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
+          prefix="ghcr.io/${owner_lc}/srv-blast"
+          tag="$GITHUB_SHA"
+          {
+            echo "registry=ghcr.io"
+            echo "runtime_image=${prefix}/runtime:${tag}"
+            echo "tg_bot_image=${prefix}/tg-bot:${tag}"
+            echo "tg_bot_public_image=${prefix}/tg-bot-public:${tag}"
+            echo "asset_ui_image=${prefix}/asset-ui:${tag}"
+            echo "finance_bot_image=${prefix}/finance-bot:${tag}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Login to GHCR
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$GITHUB_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+
+      - name: Build and push runtime image
+        run: |
+          set -euo pipefail
+          docker build -f Dockerfile -t "${{ steps.images.outputs.runtime_image }}" .
+          docker push "${{ steps.images.outputs.runtime_image }}"
+
+      - name: Build and push bot image
+        run: |
+          set -euo pipefail
+          docker build -f Dockerfile.tg-bot -t "${{ steps.images.outputs.tg_bot_image }}" .
+          docker push "${{ steps.images.outputs.tg_bot_image }}"
+
+      - name: Build and push public bot image
+        run: |
+          set -euo pipefail
+          docker build -f Dockerfile.tg-bot-public -t "${{ steps.images.outputs.tg_bot_public_image }}" .
+          docker push "${{ steps.images.outputs.tg_bot_public_image }}"
+
+      - name: Build and push asset UI image
+        run: |
+          set -euo pipefail
+          docker build -f Dockerfile.asset-ui -t "${{ steps.images.outputs.asset_ui_image }}" .
+          docker push "${{ steps.images.outputs.asset_ui_image }}"
+
+      - name: Build and push finance bot image
+        run: |
+          set -euo pipefail
+          docker build -f finance_bot/Dockerfile -t "${{ steps.images.outputs.finance_bot_image }}" finance_bot
+          docker push "${{ steps.images.outputs.finance_bot_image }}"
+
   deploy-prod-path:
+    needs:
+      - build-images
     if: ${{ vars.DEPLOY_SPLIT_ENABLED == 'true' && (github.event_name == 'push' || inputs.target == 'all' || inputs.target == 'prod-path') }}
     name: Deploy Prod Path (Fan-out)
     runs-on: [self-hosted, blast-deploy-infra]
-    # 90 (was 45): the node's docker layer cache is cold and PyPI egress is
-    # ~60 KB/s, so a from-scratch image rebuild must pull ~110 MB of heavy ML
-    # wheels (llvmlite 56MB + scipy 35MB + numba + botocore 15MB, all pulled by
-    # the baseline librosa/boto3 deps) ≈ 30+ min of download — over the old cap.
-    # Once ONE build completes the pip layer caches and deploys are fast again.
-    timeout-minutes: 90
+    timeout-minutes: 30
     env:
       REPO_DIR: ${{ vars.BLAST_REPO_DIR_INFRA != '' && vars.BLAST_REPO_DIR_INFRA || vars.BLAST_REPO_DIR }}
       INPUT_BRANCH: ${{ inputs.branch }}
       REF_NAME: ${{ github.ref_name }}
       GIT_AUTH_TOKEN: ${{ secrets.DEPLOY_GH_TOKEN }}
       GITHUB_TOKEN_FALLBACK: ${{ github.token }}
+      DEPLOY_USE_PREBUILT_IMAGES: "true"
+      BLAST_IMAGE_REGISTRY: ${{ needs.build-images.outputs.registry }}
+      BLAST_IMAGE_REGISTRY_USERNAME: ${{ github.actor }}
+      BLAST_RUNTIME_IMAGE: ${{ needs.build-images.outputs.runtime_image }}
+      BLAST_TG_BOT_IMAGE: ${{ needs.build-images.outputs.tg_bot_image }}
+      BLAST_TG_BOT_PUBLIC_IMAGE: ${{ needs.build-images.outputs.tg_bot_public_image }}
+      BLAST_ASSET_UI_IMAGE: ${{ needs.build-images.outputs.asset_ui_image }}
+      BLAST_FINANCE_BOT_IMAGE: ${{ needs.build-images.outputs.finance_bot_image }}
       DEPLOY_PRUNE_OTHER_STACK: ${{ vars.DEPLOY_PRUNE_OTHER_STACK }}
       PROD_TG_WEBHOOK_IP_ADDRESS: ${{ vars.PROD_TG_WEBHOOK_IP_ADDRESS }}
       DEPLOY_ORCHESTRATOR_HA: ${{ vars.DEPLOY_ORCHESTRATOR_HA }}
@@ -87,6 +162,28 @@ jobs:
             exit 1
           fi
 
+      - name: Sync runner repo to deploy ref
+        run: |
+          set -euo pipefail
+          BRANCH="${INPUT_BRANCH:-$REF_NAME}"
+          if [ -z "$BRANCH" ]; then
+            echo "Branch is empty"
+            exit 1
+          fi
+          token="${GIT_AUTH_TOKEN:-$GITHUB_TOKEN_FALLBACK}"
+          git config --global --add safe.directory "$REPO_DIR" || true
+          git -C "$REPO_DIR" \
+            -c "url.https://x-access-token:${token}@github.com/.insteadof=git@github.com:" \
+            -c "url.https://x-access-token:${token}@github.com/.insteadof=ssh://git@github.com/" \
+            -c "url.https://x-access-token:${token}@github.com/.insteadof=https://github.com/" \
+            fetch origin "$BRANCH"
+          if git -C "$REPO_DIR" show-ref --verify --quiet "refs/heads/$BRANCH"; then
+            git -C "$REPO_DIR" checkout -f "$BRANCH"
+          else
+            git -C "$REPO_DIR" checkout -B "$BRANCH" "origin/$BRANCH"
+          fi
+          git -C "$REPO_DIR" reset --hard "origin/$BRANCH"
+
       - name: Deploy prod-path fan-out to orchestrator-0 and orchestrator-1
         run: |
           set -euo pipefail
@@ -121,8 +218,9 @@ jobs:
 
   deploy-infra-ops:
     needs:
+      - build-images
       - deploy-prod-path
-    if: ${{ always() && vars.DEPLOY_SPLIT_ENABLED == 'true' && (github.event_name == 'push' || inputs.target == 'all' || inputs.target == 'infra-ops') && needs.deploy-prod-path.result != 'failure' && needs.deploy-prod-path.result != 'cancelled' }}
+    if: ${{ always() && vars.DEPLOY_SPLIT_ENABLED == 'true' && (github.event_name == 'push' || inputs.target == 'all' || inputs.target == 'infra-ops') && needs.build-images.result == 'success' && needs.deploy-prod-path.result != 'failure' && needs.deploy-prod-path.result != 'cancelled' }}
     name: Deploy Infra Ops
     runs-on: [self-hosted, blast-deploy-infra]
     timeout-minutes: 30
@@ -132,6 +230,14 @@ jobs:
       REF_NAME: ${{ github.ref_name }}
       GIT_AUTH_TOKEN: ${{ secrets.DEPLOY_GH_TOKEN }}
       GITHUB_TOKEN_FALLBACK: ${{ github.token }}
+      DEPLOY_USE_PREBUILT_IMAGES: "true"
+      BLAST_IMAGE_REGISTRY: ${{ needs.build-images.outputs.registry }}
+      BLAST_IMAGE_REGISTRY_USERNAME: ${{ github.actor }}
+      BLAST_RUNTIME_IMAGE: ${{ needs.build-images.outputs.runtime_image }}
+      BLAST_TG_BOT_IMAGE: ${{ needs.build-images.outputs.tg_bot_image }}
+      BLAST_TG_BOT_PUBLIC_IMAGE: ${{ needs.build-images.outputs.tg_bot_public_image }}
+      BLAST_ASSET_UI_IMAGE: ${{ needs.build-images.outputs.asset_ui_image }}
+      BLAST_FINANCE_BOT_IMAGE: ${{ needs.build-images.outputs.finance_bot_image }}
       DEPLOY_PRUNE_OTHER_STACK: ${{ vars.DEPLOY_PRUNE_OTHER_STACK }}
       INFRA_ORCHESTRATOR_PUBLIC_URL: ${{ vars.INFRA_ORCHESTRATOR_PUBLIC_URL }}
     steps:
@@ -146,6 +252,28 @@ jobs:
             echo "REPO_DIR does not point to a git repo: $REPO_DIR"
             exit 1
           fi
+
+      - name: Sync runner repo to deploy ref
+        run: |
+          set -euo pipefail
+          BRANCH="${INPUT_BRANCH:-$REF_NAME}"
+          if [ -z "$BRANCH" ]; then
+            echo "Branch is empty"
+            exit 1
+          fi
+          token="${GIT_AUTH_TOKEN:-$GITHUB_TOKEN_FALLBACK}"
+          git config --global --add safe.directory "$REPO_DIR" || true
+          git -C "$REPO_DIR" \
+            -c "url.https://x-access-token:${token}@github.com/.insteadof=git@github.com:" \
+            -c "url.https://x-access-token:${token}@github.com/.insteadof=ssh://git@github.com/" \
+            -c "url.https://x-access-token:${token}@github.com/.insteadof=https://github.com/" \
+            fetch origin "$BRANCH"
+          if git -C "$REPO_DIR" show-ref --verify --quiet "refs/heads/$BRANCH"; then
+            git -C "$REPO_DIR" checkout -f "$BRANCH"
+          else
+            git -C "$REPO_DIR" checkout -B "$BRANCH" "origin/$BRANCH"
+          fi
+          git -C "$REPO_DIR" reset --hard "origin/$BRANCH"
 
       - name: Deploy infra-ops stack
         run: |

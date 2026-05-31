@@ -1,5 +1,6 @@
 services:
   orchestrator-api-2:
+    image: ${BLAST_RUNTIME_IMAGE:-blast_final-runtime:local}
     build:
       context: .
       dockerfile: Dockerfile

@@ -1,5 +1,6 @@
 services:
   orchestrator-api:
+    image: ${BLAST_RUNTIME_IMAGE:-blast_final-runtime:local}
     build:
       context: .
       dockerfile: Dockerfile
@@ -43,6 +44,7 @@ services:
     restart: unless-stopped
 
   worker-build:
+    image: ${BLAST_RUNTIME_IMAGE:-blast_final-runtime:local}
     build:
       context: .
       dockerfile: Dockerfile
@@ -84,6 +86,7 @@ services:
     restart: unless-stopped
 
   worker-render:
+    image: ${BLAST_RUNTIME_IMAGE:-blast_final-runtime:local}
     build:
       context: .
       dockerfile: Dockerfile
@@ -125,6 +128,7 @@ services:
     restart: unless-stopped
 
   worker-render-poll:
+    image: ${BLAST_RUNTIME_IMAGE:-blast_final-runtime:local}
     build:
       context: .
       dockerfile: Dockerfile
@@ -179,6 +183,7 @@ services:
     restart: unless-stopped
 
   tg-bot:
+    image: ${BLAST_TG_BOT_IMAGE:-blast_final-tg-bot:local}
     build:
       context: .
       dockerfile: Dockerfile.tg-bot
@@ -200,6 +205,7 @@ services:
     restart: unless-stopped
 
   tg-bot-public:
+    image: ${BLAST_TG_BOT_PUBLIC_IMAGE:-blast_final-tg-bot-public:local}
     build:
       context: .
       dockerfile: Dockerfile.tg-bot-public
@@ -260,6 +266,7 @@ services:
   tg-bot-public-admin:
     profiles:
       - ops
+    image: ${BLAST_TG_BOT_PUBLIC_IMAGE:-blast_final-tg-bot-public:local}
     build:
       context: .
       dockerfile: Dockerfile.tg-bot-public
@@ -305,6 +312,7 @@ services:
     restart: unless-stopped
 
   asset-ui:
+    image: ${BLAST_ASSET_UI_IMAGE:-blast_final-asset-ui:local}
     build:
       context: .
       dockerfile: Dockerfile.asset-ui
@@ -323,6 +331,7 @@ services:
     restart: unless-stopped
 
   finance-bot:
+    image: ${BLAST_FINANCE_BOT_IMAGE:-blast_final-finance-bot:local}
     build:
       context: ./finance_bot
       dockerfile: Dockerfile

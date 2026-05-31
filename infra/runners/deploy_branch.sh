@@ -7,16 +7,31 @@ DEPLOY_PRUNE_OTHER_STACK="${DEPLOY_PRUNE_OTHER_STACK:-false}"
 DEPLOY_ORCHESTRATOR_HA="${DEPLOY_ORCHESTRATOR_HA:-false}"
 DEPLOY_ORCHESTRATOR_HA_COMPOSE_FILE="${DEPLOY_ORCHESTRATOR_HA_COMPOSE_FILE:-docker-compose.orchestrator-ha.yml}"
 PROD_TG_WEBHOOK_IP_ADDRESS="${PROD_TG_WEBHOOK_IP_ADDRESS:-}"
+DEPLOY_USE_PREBUILT_IMAGES="${DEPLOY_USE_PREBUILT_IMAGES:-false}"
+BLAST_IMAGE_REGISTRY="${BLAST_IMAGE_REGISTRY:-ghcr.io}"
+BLAST_IMAGE_REGISTRY_USERNAME="${BLAST_IMAGE_REGISTRY_USERNAME:-}"
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_DIR="${REPO_DIR:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
+if [[ -n "${REPO_DIR:-}" ]]; then
+  SCRIPT_DIR="$REPO_DIR/infra/runners"
+else
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  REPO_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+fi
 RUNNERS_DIR="$REPO_DIR/infra/runners"
+DEPLOY_DOCKER_CONFIG_DIR=""
 
 is_true() {
   local v
   v="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')"
   [[ "$v" == "1" || "$v" == "true" || "$v" == "yes" || "$v" == "on" ]]
 }
+
+cleanup_deploy() {
+  if [[ -n "$DEPLOY_DOCKER_CONFIG_DIR" && -d "$DEPLOY_DOCKER_CONFIG_DIR" ]]; then
+    rm -rf "$DEPLOY_DOCKER_CONFIG_DIR"
+  fi
+}
+trap cleanup_deploy EXIT
 
 env_file_value() {
   local key="$1"
@@ -366,12 +381,73 @@ git_run reset --hard "origin/$BRANCH"
 
 deploy_root_services() {
   local services=("$@")
+  if is_true "$DEPLOY_USE_PREBUILT_IMAGES"; then
+    deploy_root_services_prebuilt "${services[@]}"
+    return 0
+  fi
   if [[ ${#services[@]} -eq 0 ]]; then
     echo "[deploy] docker compose up -d --build"
     docker compose up -d --build
   else
     echo "[deploy] docker compose up -d --build ${services[*]}"
     docker compose up -d --build "${services[@]}"
+  fi
+}
+
+require_prebuilt_image_env() {
+  local missing=0
+  local key
+  for key in \
+    BLAST_RUNTIME_IMAGE \
+    BLAST_TG_BOT_IMAGE \
+    BLAST_TG_BOT_PUBLIC_IMAGE \
+    BLAST_ASSET_UI_IMAGE \
+    BLAST_FINANCE_BOT_IMAGE
+  do
+    if [[ -z "${!key:-}" ]]; then
+      echo "[deploy] missing required prebuilt image env: $key"
+      missing=1
+    fi
+  done
+  if [[ "$missing" -ne 0 ]]; then
+    return 1
+  fi
+}
+
+docker_registry_login_if_needed() {
+  if [[ -z "$BLAST_IMAGE_REGISTRY" ]]; then
+    return 0
+  fi
+  if [[ -z "$AUTH_TOKEN" ]]; then
+    echo "[deploy] GitHub token is required to pull prebuilt images from $BLAST_IMAGE_REGISTRY"
+    return 1
+  fi
+  if [[ -z "$BLAST_IMAGE_REGISTRY_USERNAME" ]]; then
+    echo "[deploy] BLAST_IMAGE_REGISTRY_USERNAME is required for prebuilt image pull"
+    return 1
+  fi
+  if [[ -z "$DEPLOY_DOCKER_CONFIG_DIR" ]]; then
+    DEPLOY_DOCKER_CONFIG_DIR="$(mktemp -d)"
+    export DOCKER_CONFIG="$DEPLOY_DOCKER_CONFIG_DIR"
+  fi
+  echo "[deploy] docker login $BLAST_IMAGE_REGISTRY as $BLAST_IMAGE_REGISTRY_USERNAME"
+  printf '%s\n' "$AUTH_TOKEN" | docker login "$BLAST_IMAGE_REGISTRY" -u "$BLAST_IMAGE_REGISTRY_USERNAME" --password-stdin >/dev/null
+}
+
+deploy_root_services_prebuilt() {
+  local services=("$@")
+  require_prebuilt_image_env
+  docker_registry_login_if_needed
+  if [[ ${#services[@]} -eq 0 ]]; then
+    echo "[deploy] docker compose pull"
+    docker compose pull
+    echo "[deploy] docker compose up -d --no-build"
+    docker compose up -d --no-build
+  else
+    echo "[deploy] docker compose pull ${services[*]}"
+    docker compose pull "${services[@]}"
+    echo "[deploy] docker compose up -d --no-build ${services[*]}"
+    docker compose up -d --no-build "${services[@]}"
   fi
 }
 
@@ -396,6 +472,18 @@ deploy_prod_path_services() {
   fi
 
   echo "[deploy] orchestrator-ha enabled compose=$compose_ha"
+  if is_true "$DEPLOY_USE_PREBUILT_IMAGES"; then
+    require_prebuilt_image_env
+    docker_registry_login_if_needed
+    echo "[deploy] docker compose -f docker-compose.yml -f $compose_ha pull orchestrator-api orchestrator-api-2 worker-build worker-render worker-render-poll"
+    docker compose -f docker-compose.yml -f "$compose_ha" pull \
+      orchestrator-api orchestrator-api-2 worker-build worker-render worker-render-poll
+    echo "[deploy] docker compose -f docker-compose.yml -f $compose_ha up -d --no-build orchestrator-api orchestrator-api-2 worker-build worker-render worker-render-poll"
+    docker compose -f docker-compose.yml -f "$compose_ha" up -d --no-build \
+      orchestrator-api orchestrator-api-2 worker-build worker-render worker-render-poll
+    remove_root_services tg-bot-public
+    return 0
+  fi
   echo "[deploy] docker compose -f docker-compose.yml -f $compose_ha up -d --build orchestrator-api orchestrator-api-2 worker-build worker-render worker-render-poll"
   docker compose -f docker-compose.yml -f "$compose_ha" up -d --build \
     orchestrator-api orchestrator-api-2 worker-build worker-render worker-render-poll
