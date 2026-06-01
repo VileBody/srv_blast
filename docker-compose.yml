@@ -4,6 +4,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      network: host
     container_name: orchestrator-api
     env_file:
       - .env
@@ -48,6 +49,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      network: host
     container_name: worker-build
     env_file:
       - .env
@@ -90,6 +92,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      network: host
     container_name: worker-render
     env_file:
       - .env
@@ -132,6 +135,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      network: host
     container_name: worker-render-poll
     env_file:
       - .env
@@ -187,6 +191,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.tg-bot
+      network: host
     container_name: tg-bot
     env_file:
       - .env
@@ -209,6 +214,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.tg-bot-public
+      network: host
     container_name: tg-bot-public
     env_file:
       - .env
@@ -270,6 +276,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.tg-bot-public
+      network: host
     container_name: tg-bot-public-admin
     env_file:
       - .env
@@ -316,6 +323,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.asset-ui
+      network: host
     container_name: asset-ui
     env_file:
       - .env
@@ -335,6 +343,7 @@ services:
     build:
       context: ./finance_bot
       dockerfile: Dockerfile
+      network: host
     container_name: finance-bot
     environment:
       DB_PATH: /app/data/finance.db
