@@ -2,6 +2,7 @@ services:
   github-runner:
     image: myoung34/github-runner:latest
     container_name: github-runner-blast
+    network_mode: host
     restart: unless-stopped
     env_file:
       - .env.github-runner
