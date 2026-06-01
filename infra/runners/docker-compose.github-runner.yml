@@ -13,10 +13,14 @@ services:
       RUNNER_LABELS: ${GH_RUNNER_LABELS:-self-hosted,blast-deploy}
       RUNNER_WORKDIR: /tmp/runner/work
       DISABLE_AUTO_UPDATE: "true"
+      CONFIGURED_ACTIONS_RUNNER_FILES_DIR: /runner-config
+      DISABLE_AUTOMATIC_DEREGISTRATION: "true"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - github-runner-config:/runner-config
       - github-runner-data:/tmp/runner
       - ${BLAST_REPO_DIR}:${BLAST_REPO_DIR}
 
 volumes:
+  github-runner-config:
   github-runner-data:
