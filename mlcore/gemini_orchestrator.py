@@ -4120,6 +4120,52 @@ def build_all_via_gemini_one_call(
             )
             f4_block = None
 
+    # ── F3 «Эффект»: visual FX overlay (hook/transition/extra + sound + logo).
+    #    Env F3_HOOK / F3_TRANSITION / F3_EXTRA (+ F3_HOOK_EXTEND) выбирают эффекты;
+    #    drop_time — COMP-relative (= USER_DROP_T - clip_start_abs), как у f5.
+    #    Опциональное усиление — любая ошибка логируется и рендер идёт БЕЗ fx.
+    f3_block = None
+    _f3_hook = (os.environ.get("F3_HOOK") or "").strip().lower()
+    _f3_trans = (os.environ.get("F3_TRANSITION") or "").strip().lower()
+    _f3_extra = (os.environ.get("F3_EXTRA") or "").strip().lower()
+    if _f3_hook or _f3_trans or _f3_extra:
+        try:
+            from mlcore.hooks.f3_effect.overlay import F3_HOOKS, F3_TRANSITIONS, F3_EXTRAS
+            if _f3_hook and _f3_hook not in F3_HOOKS:
+                raise RuntimeError(f"unknown F3_HOOK={_f3_hook!r}")
+            if _f3_trans and _f3_trans not in F3_TRANSITIONS:
+                raise RuntimeError(f"unknown F3_TRANSITION={_f3_trans!r}")
+            if _f3_extra and _f3_extra not in F3_EXTRAS:
+                raise RuntimeError(f"unknown F3_EXTRA={_f3_extra!r}")
+            _cs = float(stage1_json["audio"]["clip_start_abs"])
+            _udt = (os.environ.get("USER_DROP_T") or "").strip()
+            if not _udt:
+                raise RuntimeError("F3 fx requires USER_DROP_T (drop anchor)")
+            _drop_rel = float(_udt) - _cs
+            if not (_drop_rel > 0.0):
+                raise RuntimeError(
+                    f"F3 drop_rel must be > 0 (USER_DROP_T={_udt}, clip_start={_cs})"
+                )
+            f3_block = {
+                "hook": _f3_hook or None,
+                "transition": _f3_trans or None,
+                "extra": _f3_extra or None,
+                "hook_extend": (os.environ.get("F3_HOOK_EXTEND") or "").strip().lower() or None,
+                "drop_time": _drop_rel,
+                # asset relpaths (sound/logo) заполняются стадией S3-каталога; пусто => без звука/лого
+                "assets": {},
+            }
+            logger.info(
+                "f3.fx block hook=%s trans=%s extra=%s drop_rel=%.3f",
+                _f3_hook or "-", _f3_trans or "-", _f3_extra or "-", _drop_rel,
+            )
+        except Exception:
+            logger.exception(
+                "f3.fx FAILED — render without fx (job=%s)",
+                os.environ.get("JOB_ID") or out_dir.name,
+            )
+            f3_block = None
+
     outputs = render_all_steps(
         repo_root=ROOT,
         plan=full_payload,
@@ -4128,6 +4174,7 @@ def build_all_via_gemini_one_call(
         data_dir=Path(os.environ.get("DATA_DIR", str(ROOT / "data"))).resolve(),
         f5_block=f5_block,
         f4_block=f4_block,
+        f3_block=f3_block,
     )
 
     logger.info("render_done %s", {k: str(v) for k, v in outputs.items()})

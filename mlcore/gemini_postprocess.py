@@ -843,6 +843,7 @@ def render_all_steps(
     data_dir: Path | None = None,
     f5_block: Dict[str, Any] | None = None,
     f4_block: Dict[str, Any] | None = None,
+    f3_block: Dict[str, Any] | None = None,
 ) -> Dict[str, Path]:
     repo_root = repo_root.resolve()
     out_dir = out_dir.resolve()
@@ -1047,6 +1048,16 @@ def render_all_steps(
     # -------------------------
     if f4_block:
         full_edit_obj["f4"] = f4_block
+
+    # -------------------------
+    # F3 «Эффект» FX overlay: если оркестратор сгенерировал блок
+    # {hook,transition,extra,hook_extend,drop_time,assets} — вкладываем в
+    # full_edit_config. project_builder._build_f3_overlay_js прочитает
+    # full_edit_config["f3"] и впишет инъектируемый JSX эффектов.
+    # Нет блока → full_edit_config без изменений (обычный job).
+    # -------------------------
+    if f3_block:
+        full_edit_obj["f3"] = f3_block
 
     # -------------------------
     # Write to DATA_DIR + mirror to OUT_DIR

@@ -38,6 +38,16 @@ _MANIFEST_PATH = _F3_DIR / "manifest.json"
 # place ref layer inside MAIN_COMP (the "Текст" precomp layer). Effects go below it.
 _PLACE_REF = "Текст"
 
+# Wired effect ids per group (mirror manifest.json). Used for request/env
+# validation (orchestrator, tasks) and as the source for the bot's 3-step UI.
+F3_HOOKS = ("hook_light", "shutter_effect", "flash_slow_shutter")
+F3_TRANSITIONS = (
+    "snap_wipe", "minimax", "invert_flash", "extract_flash", "flash_on_cuts", "layer_shake",
+)
+F3_EXTRAS = (
+    "xerox", "analog_glitch", "neon_extract", "old_camera", "pixel_grain", "warm_map",
+)
+
 
 def _load_manifest() -> Dict[str, Any]:
     obj = json.loads(_MANIFEST_PATH.read_text(encoding="utf-8"))

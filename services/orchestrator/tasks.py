@@ -1649,6 +1649,39 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
                 f"invalid f4_device={f4_device_raw!r}; allowed={sorted(allowed_f4_devices)}"
             )
         env["F4_HOOK_DEVICE"] = f4_device
+    # F3 «Эффект» visual-FX selection pass-through. Set => orchestrator emits
+    # full_edit_config["f3"] and project_builder injects the AE overlay JSX.
+    # Requires USER_DROP_T (drop anchor); absent ids => no F3 fx.
+    _f3_allowed = {
+        "hook": {"hook_light", "shutter_effect", "flash_slow_shutter"},
+        "transition": {"snap_wipe", "minimax", "invert_flash", "extract_flash", "flash_on_cuts", "layer_shake"},
+        "extra": {"xerox", "analog_glitch", "neon_extract", "old_camera", "pixel_grain", "warm_map"},
+    }
+    for _req_key, _env_key, _group in (
+        ("effect_hook", "F3_HOOK", "hook"),
+        ("effect_transition", "F3_TRANSITION", "transition"),
+        ("effect_extra", "F3_EXTRA", "extra"),
+    ):
+        _raw = req.get(_req_key)
+        if _raw is not None and str(_raw).strip():
+            _val = str(_raw).strip().lower()
+            if _val not in _f3_allowed[_group]:
+                raise RuntimeError(
+                    f"invalid {_req_key}={_raw!r}; allowed={sorted(_f3_allowed[_group])}"
+                )
+            env[_env_key] = _val
+    _f3_extend_raw = req.get("effect_hook_extend")
+    if _f3_extend_raw is not None and str(_f3_extend_raw).strip():
+        _ext = str(_f3_extend_raw).strip().lower()
+        _ext_ok = _ext == "to_end" or (
+            _ext.startswith("after_drop:") and _ext.split(":", 1)[1].isdigit()
+            and int(_ext.split(":", 1)[1]) >= 1
+        )
+        if not _ext_ok:
+            raise RuntimeError(
+                f"invalid effect_hook_extend={_f3_extend_raw!r}; expected 'to_end' or 'after_drop:N'"
+            )
+        env["F3_HOOK_EXTEND"] = _ext
     if exclude_file_names:
         env["FOOTAGE_EXCLUDE_FILE_NAMES_JSON"] = json.dumps(exclude_file_names, ensure_ascii=False)
     if rotation_theme and rotation_tags_group:

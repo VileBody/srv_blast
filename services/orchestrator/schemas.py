@@ -70,6 +70,30 @@ class SendAudioS3Request(BaseModel):
     f4_device: Optional[
         Literal["swipe", "tap", "pinch", "holdfinger", "head"]
     ] = None
+    # F3 «Эффект» visual-FX selection (3-step: hook / transition / extra). When
+    # the user picks the "Эффект" hook category, the bot sends the chosen effect
+    # ids here. Propagated to the build env as F3_HOOK / F3_TRANSITION / F3_EXTRA
+    # (+ F3_HOOK_EXTEND); the orchestrator emits full_edit_config["f3"] and
+    # project_builder injects the AE overlay. Requires user_drop_t (drop anchor).
+    # None on all => no F3 fx.
+    effect_hook: Optional[
+        Literal["hook_light", "shutter_effect", "flash_slow_shutter"]
+    ] = None
+    effect_transition: Optional[
+        Literal[
+            "snap_wipe", "minimax", "invert_flash",
+            "extract_flash", "flash_on_cuts", "layer_shake",
+        ]
+    ] = None
+    effect_extra: Optional[
+        Literal[
+            "xerox", "analog_glitch", "neon_extract",
+            "old_camera", "pixel_grain", "warm_map",
+        ]
+    ] = None
+    # Slow-shutter trail extension (only for extendable hooks): "to_end" or
+    # "after_drop:N" (N = footages after the drop). None => default duration.
+    effect_hook_extend: Optional[str] = Field(default=None, max_length=24)
     # Optional internal batch controls for multi-version generation.
     reuse_text_job_id: Optional[str] = None
     exclude_file_names: List[str] = Field(default_factory=list)
@@ -112,6 +136,20 @@ class SendAudioS3Request(BaseModel):
                     f"user_drop_t must be inside user clip window "
                     f"[{start}, {end}], got {self.user_drop_t}"
                 )
+        # F3 effect-hook extend must be "to_end" or "after_drop:N" (N >= 1).
+        ext = (self.effect_hook_extend or "").strip().lower()
+        if ext:
+            ok = ext == "to_end"
+            if not ok and ext.startswith("after_drop:"):
+                tail = ext.split(":", 1)[1]
+                ok = tail.isdigit() and int(tail) >= 1
+            if not ok:
+                raise ValueError(
+                    f"effect_hook_extend must be 'to_end' or 'after_drop:N' (N>=1), got {self.effect_hook_extend!r}"
+                )
+        # F3 fx needs a drop anchor (the hook lands on the drop).
+        if (self.effect_hook or self.effect_transition or self.effect_extra) and self.user_drop_t is None:
+            raise ValueError("effect_* requires user_drop_t (drop anchor) to be set")
         return self
 
 
