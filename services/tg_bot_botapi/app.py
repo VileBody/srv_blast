@@ -72,6 +72,10 @@ from .state_store import (
     STAGE_WAIT_HOOK_DROP_MANUAL,
     STAGE_WAIT_HOOK_TYPE,
     STAGE_WAIT_HOOK_DEVICE,
+    STAGE_WAIT_EFFECT_HOOK,
+    STAGE_WAIT_EFFECT_TRANSITION,
+    STAGE_WAIT_EFFECT_EXTRA,
+    STAGE_WAIT_EFFECT_EXTEND,
     STAGE_WAIT_TIMING_CHOICE,
     STAGE_WAIT_TIMING_INPUT,
     STAGE_WAIT_FRAGMENT_TEXT,
@@ -176,11 +180,10 @@ _HOOK_CATEGORY_BY_BUTTON = {
     BTN_HOOK_CAT_MOTION: "motion",
     BTN_HOOK_CAT_THOUGHT: "thought",
 }
-# Categories that are not implemented yet ("Мысль"=F5 and "Движение"=F4 are wired).
+# Categories not implemented yet. "Мысль"=F5, "Движение"=F4, "Эффект"=F3 are wired.
 _HOOK_CATEGORY_NOT_READY = {
     BTN_HOOK_CAT_SOUND,
     BTN_HOOK_CAT_OBJECT,
-    BTN_HOOK_CAT_EFFECT,
 }
 # F4 («Движение») device picker. Button text -> f4 device id. Only "swipe" is
 # wired so far (mlcore/hooks/f4_motion). LEAD_BY_DEVICE is imported lazily where
@@ -224,6 +227,57 @@ _HOOK_DEVICE_BY_BUTTON = {
     BTN_HOOK_DEV_LYRIC_ECHO: "lyric_echo",
     BTN_HOOK_DEV_QUESTION: "question_to_track",
     BTN_HOOK_DEV_INVERSE: "inverse_lyric",
+}
+# F3 «Эффект» — 3-step picker. Each step has a "skip" button; at least one of
+# hook/transition/extra must be chosen. Effect ids mirror mlcore/hooks/f3_effect.
+BTN_FX_SKIP = "Пропустить"
+# step 1 — hook (on the drop)
+BTN_FX_HOOK_LIGHT = "Молния"
+BTN_FX_HOOK_SHUTTER = "Затвор"
+BTN_FX_HOOK_SLOW = "Слоу-шаттер"
+_FX_HOOK_BY_BUTTON = {
+    BTN_FX_HOOK_LIGHT: "hook_light",
+    BTN_FX_HOOK_SHUTTER: "shutter_effect",
+    BTN_FX_HOOK_SLOW: "flash_slow_shutter",
+}
+# step 2 — transition (on cuts)
+BTN_FX_TR_SNAP = "Снап-вайп"
+BTN_FX_TR_MINIMAX = "Минимакс"
+BTN_FX_TR_INVERT = "Инверт"
+BTN_FX_TR_EXTRACT = "Экстракт"
+BTN_FX_TR_FLASH = "Вспышки"
+BTN_FX_TR_SHAKE = "Тряска"
+_FX_TRANSITION_BY_BUTTON = {
+    BTN_FX_TR_SNAP: "snap_wipe",
+    BTN_FX_TR_MINIMAX: "minimax",
+    BTN_FX_TR_INVERT: "invert_flash",
+    BTN_FX_TR_EXTRACT: "extract_flash",
+    BTN_FX_TR_FLASH: "flash_on_cuts",
+    BTN_FX_TR_SHAKE: "layer_shake",
+}
+# step 3 — extra grade (0..drop)
+BTN_FX_EX_XEROX = "Ксерокс"
+BTN_FX_EX_ANALOG = "Аналог-глитч"
+BTN_FX_EX_NEON = "Неон"
+BTN_FX_EX_OLDCAM = "Старая камера"
+BTN_FX_EX_PIXEL = "Пиксель-зерно"
+BTN_FX_EX_WARM = "Тепловая карта"
+_FX_EXTRA_BY_BUTTON = {
+    BTN_FX_EX_XEROX: "xerox",
+    BTN_FX_EX_ANALOG: "analog_glitch",
+    BTN_FX_EX_NEON: "neon_extract",
+    BTN_FX_EX_OLDCAM: "old_camera",
+    BTN_FX_EX_PIXEL: "pixel_grain",
+    BTN_FX_EX_WARM: "warm_map",
+}
+# slow-shutter trail extend (only when hook == flash_slow_shutter)
+BTN_FX_EXT_STD = "Стандарт"
+BTN_FX_EXT_END = "До конца ролика"
+BTN_FX_EXT_3 = "3 футажа после"
+_FX_EXTEND_BY_BUTTON = {
+    BTN_FX_EXT_STD: "",
+    BTN_FX_EXT_END: "to_end",
+    BTN_FX_EXT_3: "after_drop:3",
 }
 VERSION_BUTTONS = [BTN_VER_1, BTN_VER_2, BTN_VER_3, BTN_VER_4, BTN_VER_5]
 SUBTITLES_MODE_BUTTONS = [
@@ -1215,6 +1269,22 @@ class BlastBotApp:
 
             if st.stage == STAGE_WAIT_HOOK_DEVICE:
                 await self._handle_wait_hook_device(message, st)
+                return
+
+            if st.stage == STAGE_WAIT_EFFECT_HOOK:
+                await self._handle_wait_effect_hook(message, st)
+                return
+
+            if st.stage == STAGE_WAIT_EFFECT_TRANSITION:
+                await self._handle_wait_effect_transition(message, st)
+                return
+
+            if st.stage == STAGE_WAIT_EFFECT_EXTRA:
+                await self._handle_wait_effect_extra(message, st)
+                return
+
+            if st.stage == STAGE_WAIT_EFFECT_EXTEND:
+                await self._handle_wait_effect_extend(message, st)
                 return
 
             if st.stage == STAGE_WAIT_VERSIONS:
@@ -2301,8 +2371,24 @@ class BlastBotApp:
         if text in _HOOK_CATEGORY_NOT_READY:
             await message.answer(
                 f"«{text}» пока в разработке — скоро добавим. "
-                "Сейчас доступны «Мысль» и «Движение»."
+                "Сейчас доступны «Мысль», «Движение» и «Эффект»."
             )
+            return
+        if text == BTN_HOOK_CAT_EFFECT:
+            # F3 visual FX needs a drop anchor (hook lands on the drop).
+            if st.hook_drop_t is None:
+                await message.answer(
+                    "Для «Эффекта» нужен момент дропа — вернись и выбери его."
+                )
+                await self._ask_hook_drop(message, st)
+                return
+            st.hook_category = "effect"
+            st.effect_hook = ""
+            st.effect_transition = ""
+            st.effect_extra = ""
+            st.effect_hook_extend = ""
+            await self.store.set(st)
+            await self._ask_effect_hook(message, st)
             return
         if text == BTN_HOOK_CAT_THOUGHT:
             st.hook_category = "thought"
@@ -2417,6 +2503,159 @@ class BlastBotApp:
         st.hook_type = "standard"  # legacy compat field
         await self.store.set(st)
         await message.answer(f"Ок, «Мысль»: {text}.")
+        await self._ask_versions(message, st)
+
+    # ── F3 «Эффект» — 3-step picker (hook -> transition -> extra) + extend ──
+    async def _ask_effect_hook(self, message: Message, st: ChatState) -> None:
+        st.stage = STAGE_WAIT_EFFECT_HOOK
+        await self.store.set(st)
+        await message.answer(
+            "«Эффект» — шаг 1/3: хук на дропе.\n"
+            "• Молния — вспышка-молнии + шейк.\n"
+            "• Затвор — нарезка затвора + лого-штамп.\n"
+            "• Слоу-шаттер — echo-шлейф + вспышка (можно растянуть).\n"
+            "Можно пропустить, если хук не нужен.",
+            reply_markup=_kb(
+                [BTN_FX_HOOK_LIGHT, BTN_FX_HOOK_SHUTTER],
+                [BTN_FX_HOOK_SLOW],
+                [BTN_FX_SKIP],
+                [BTN_BACK],
+            ),
+        )
+
+    async def _handle_wait_effect_hook(self, message: Message, st: ChatState) -> None:
+        text = str(message.text or "").strip()
+        if text == BTN_BACK:
+            await self._ask_hook_type(message, st)
+            return
+        if text == BTN_FX_SKIP:
+            st.effect_hook = ""
+            await self.store.set(st)
+            await self._ask_effect_transition(message, st)
+            return
+        hook = _FX_HOOK_BY_BUTTON.get(text)
+        if hook is None:
+            await message.answer("Выбери хук кнопкой ниже или «Пропустить».")
+            return
+        st.effect_hook = hook
+        await self.store.set(st)
+        await self._ask_effect_transition(message, st)
+
+    async def _ask_effect_transition(self, message: Message, st: ChatState) -> None:
+        st.stage = STAGE_WAIT_EFFECT_TRANSITION
+        await self.store.set(st)
+        await message.answer(
+            "Шаг 2/3: переход на склейках футажа.\n"
+            "Можно пропустить.",
+            reply_markup=_kb(
+                [BTN_FX_TR_SNAP, BTN_FX_TR_MINIMAX],
+                [BTN_FX_TR_INVERT, BTN_FX_TR_EXTRACT],
+                [BTN_FX_TR_FLASH, BTN_FX_TR_SHAKE],
+                [BTN_FX_SKIP],
+                [BTN_BACK],
+            ),
+        )
+
+    async def _handle_wait_effect_transition(self, message: Message, st: ChatState) -> None:
+        text = str(message.text or "").strip()
+        if text == BTN_BACK:
+            await self._ask_effect_hook(message, st)
+            return
+        if text == BTN_FX_SKIP:
+            st.effect_transition = ""
+            await self.store.set(st)
+            await self._ask_effect_extra(message, st)
+            return
+        tr = _FX_TRANSITION_BY_BUTTON.get(text)
+        if tr is None:
+            await message.answer("Выбери переход кнопкой ниже или «Пропустить».")
+            return
+        st.effect_transition = tr
+        await self.store.set(st)
+        await self._ask_effect_extra(message, st)
+
+    async def _ask_effect_extra(self, message: Message, st: ChatState) -> None:
+        st.stage = STAGE_WAIT_EFFECT_EXTRA
+        await self.store.set(st)
+        await message.answer(
+            "Шаг 3/3: стилизация футажа до дропа (грейд 00:00 → дроп).\n"
+            "Можно пропустить.",
+            reply_markup=_kb(
+                [BTN_FX_EX_XEROX, BTN_FX_EX_ANALOG],
+                [BTN_FX_EX_NEON, BTN_FX_EX_OLDCAM],
+                [BTN_FX_EX_PIXEL, BTN_FX_EX_WARM],
+                [BTN_FX_SKIP],
+                [BTN_BACK],
+            ),
+        )
+
+    async def _handle_wait_effect_extra(self, message: Message, st: ChatState) -> None:
+        text = str(message.text or "").strip()
+        if text == BTN_BACK:
+            await self._ask_effect_transition(message, st)
+            return
+        if text == BTN_FX_SKIP:
+            st.effect_extra = ""
+        else:
+            ex = _FX_EXTRA_BY_BUTTON.get(text)
+            if ex is None:
+                await message.answer("Выбери эффект кнопкой ниже или «Пропустить».")
+                return
+            st.effect_extra = ex
+        await self.store.set(st)
+        # at least one of hook/transition/extra is required
+        if not (st.effect_hook or st.effect_transition or st.effect_extra):
+            await message.answer(
+                "Нужно выбрать хотя бы один эффект из трёх. Начнём заново с хука."
+            )
+            await self._ask_effect_hook(message, st)
+            return
+        # slow-shutter trail extend sub-step (only for the extendable hook)
+        if st.effect_hook == "flash_slow_shutter":
+            await self._ask_effect_extend(message, st)
+            return
+        await self._effect_summary_and_continue(message, st)
+
+    async def _ask_effect_extend(self, message: Message, st: ChatState) -> None:
+        st.stage = STAGE_WAIT_EFFECT_EXTEND
+        await self.store.set(st)
+        await message.answer(
+            "Слоу-шаттер: длина echo-шлейфа?\n"
+            "• Стандарт — короткий импульс.\n"
+            "• До конца ролика — футажи красиво наслаиваются.\n"
+            "• 3 футажа после — шлейф до 3-й склейки после дропа.",
+            reply_markup=_kb(
+                [BTN_FX_EXT_STD],
+                [BTN_FX_EXT_END, BTN_FX_EXT_3],
+                [BTN_BACK],
+            ),
+        )
+
+    async def _handle_wait_effect_extend(self, message: Message, st: ChatState) -> None:
+        text = str(message.text or "").strip()
+        if text == BTN_BACK:
+            await self._ask_effect_extra(message, st)
+            return
+        if text not in _FX_EXTEND_BY_BUTTON:
+            await message.answer("Выбери вариант длины кнопкой ниже.")
+            return
+        st.effect_hook_extend = _FX_EXTEND_BY_BUTTON[text]
+        await self.store.set(st)
+        await self._effect_summary_and_continue(message, st)
+
+    async def _effect_summary_and_continue(self, message: Message, st: ChatState) -> None:
+        st.hook_type = "standard"  # legacy compat field
+        await self.store.set(st)
+        parts: List[str] = []
+        if st.effect_hook:
+            parts.append(f"хук «{st.effect_hook}»")
+        if st.effect_transition:
+            parts.append(f"переход «{st.effect_transition}»")
+        if st.effect_extra:
+            parts.append(f"грейд «{st.effect_extra}»")
+        if st.effect_hook_extend:
+            parts.append(f"растяжка «{st.effect_hook_extend}»")
+        await message.answer("Ок, «Эффект»: " + ", ".join(parts) + ".")
         await self._ask_versions(message, st)
 
     @staticmethod
@@ -2769,6 +3008,26 @@ class BlastBotApp:
                 else None
             ),
             f4_device=f4_device,
+            effect_hook=(
+                str(st.effect_hook)
+                if (st.hook_enabled and st.hook_category == "effect" and st.effect_hook)
+                else None
+            ),
+            effect_transition=(
+                str(st.effect_transition)
+                if (st.hook_enabled and st.hook_category == "effect" and st.effect_transition)
+                else None
+            ),
+            effect_extra=(
+                str(st.effect_extra)
+                if (st.hook_enabled and st.hook_category == "effect" and st.effect_extra)
+                else None
+            ),
+            effect_hook_extend=(
+                str(st.effect_hook_extend)
+                if (st.hook_enabled and st.hook_category == "effect" and st.effect_hook_extend)
+                else None
+            ),
         )
         job_id = str(enqueue.get("job_id") or "").strip()
         if not job_id:

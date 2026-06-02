@@ -112,6 +112,10 @@ from .state_store import (
     STAGE_WAIT_HOOK_DROP_MANUAL,
     STAGE_WAIT_HOOK_TYPE,
     STAGE_WAIT_HOOK_DEVICE,
+    STAGE_WAIT_EFFECT_HOOK,
+    STAGE_WAIT_EFFECT_TRANSITION,
+    STAGE_WAIT_EFFECT_EXTRA,
+    STAGE_WAIT_EFFECT_EXTEND,
 )
 
 
@@ -135,7 +139,34 @@ HOOK_STAGES = frozenset({
     STAGE_WAIT_HOOK_DROP_MANUAL,
     STAGE_WAIT_HOOK_TYPE,
     STAGE_WAIT_HOOK_DEVICE,
+    STAGE_WAIT_EFFECT_HOOK,
+    STAGE_WAIT_EFFECT_TRANSITION,
+    STAGE_WAIT_EFFECT_EXTRA,
+    STAGE_WAIT_EFFECT_EXTEND,
 })
+
+# F3 «Эффект» visual-FX ids (mirror of mlcore/hooks/f3_effect + tg_bot_botapi).
+# The 3-step picker UX lives in tg_bot_botapi; the public bot mirrors the id sets
+# + RU-label maps + the orchestrator-client effect_* kwargs (which land in the
+# payload regardless of HOOK_FLOW_ENABLED). At least one of hook/transition/extra
+# is required downstream; effect_hook_extend applies only to flash_slow_shutter.
+F3_HOOK_IDS = frozenset({"hook_light", "shutter_effect", "flash_slow_shutter"})
+F3_TRANSITION_IDS = frozenset({
+    "snap_wipe", "minimax", "invert_flash", "extract_flash", "flash_on_cuts", "layer_shake",
+})
+F3_EXTRA_IDS = frozenset({
+    "xerox", "analog_glitch", "neon_extract", "old_camera", "pixel_grain", "warm_map",
+})
+F3_HOOK_LABELS_RU = {"Молния": "hook_light", "Затвор": "shutter_effect", "Слоу-шаттер": "flash_slow_shutter"}
+F3_TRANSITION_LABELS_RU = {
+    "Снап-вайп": "snap_wipe", "Минимакс": "minimax", "Инверт": "invert_flash",
+    "Экстракт": "extract_flash", "Вспышки": "flash_on_cuts", "Тряска": "layer_shake",
+}
+F3_EXTRA_LABELS_RU = {
+    "Ксерокс": "xerox", "Аналог-глитч": "analog_glitch", "Неон": "neon_extract",
+    "Старая камера": "old_camera", "Пиксель-зерно": "pixel_grain", "Тепловая карта": "warm_map",
+}
+F3_EXTEND_LABELS_RU = {"Стандарт": "", "До конца ролика": "to_end", "3 футажа после": "after_drop:3"}
 
 # F4 «Движение» motion-hook devices. The picker UX lives in tg_bot_botapi; the
 # public bot mirrors the id set + RU-label map + the orchestrator-client

@@ -41,6 +41,11 @@ STAGE_WAIT_HOOK_DROP = "WAIT_HOOK_DROP"
 STAGE_WAIT_HOOK_DROP_MANUAL = "WAIT_HOOK_DROP_MANUAL"
 STAGE_WAIT_HOOK_TYPE = "WAIT_HOOK_TYPE"
 STAGE_WAIT_HOOK_DEVICE = "WAIT_HOOK_DEVICE"
+# F3 «Эффект» — 3-step picker (mirror of tg_bot_botapi; UI gated by HOOK_FLOW_ENABLED).
+STAGE_WAIT_EFFECT_HOOK = "WAIT_EFFECT_HOOK"
+STAGE_WAIT_EFFECT_TRANSITION = "WAIT_EFFECT_TRANSITION"
+STAGE_WAIT_EFFECT_EXTRA = "WAIT_EFFECT_EXTRA"
+STAGE_WAIT_EFFECT_EXTEND = "WAIT_EFFECT_EXTEND"
 STAGE_WAIT_VERSIONS = "WAIT_VERSIONS"
 STAGE_WAIT_CONFIRM = "WAIT_CONFIRM"
 STAGE_PROCESSING = "PROCESSING"
@@ -154,6 +159,11 @@ class ChatState(BaseModel):
     # | question_to_track | inverse_lyric). Mirror of tg_bot_botapi fields.
     hook_category: str = ""
     hook_device: str = ""
+    # F3 «Эффект» selection when hook_category == "effect" (mirror of tg_bot_botapi).
+    effect_hook: str = ""        # "" | hook_light | shutter_effect | flash_slow_shutter
+    effect_transition: str = ""  # "" | snap_wipe | minimax | invert_flash | extract_flash | flash_on_cuts | layer_shake
+    effect_extra: str = ""       # "" | xerox | analog_glitch | neon_extract | old_camera | pixel_grain | warm_map
+    effect_hook_extend: str = "" # "" | to_end | after_drop:N
     hook_analysis_status: str = ""
     hook_analysis_audio_path: str = ""
     hook_analysis_clip_start: float = 0.0

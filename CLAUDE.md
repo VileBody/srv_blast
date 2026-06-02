@@ -101,7 +101,7 @@ config/styles/           — пресеты: artist_presets.json, effects_librar
 |-----|--------|-----------|
 | Звук     | `mlcore/hooks/f1_sound/`     | TBD |
 | Объект   | `mlcore/hooks/f2_object/`    | TBD |
-| Эффект   | `mlcore/hooks/f3_effect/`    | TBD |
+| **Эффект** | `mlcore/hooks/f3_effect/`  | **провязано (build+threading+бот)** — визуал-FX: хук/переход/грейд + звук/лого, инъекция в AE как f4. Осталось: S3-каталог ассетов + живой smoke. |
 | Движение | `mlcore/hooks/f4_motion/`    | TBD |
 | **Мысль** | `mlcore/hooks/f5_cognition/` | **готово** — TTS-вставка 2–3.5с поверх focal_start трека (Gemini), подключено в боте |
 
@@ -186,3 +186,4 @@ config/styles/           — пресеты: artist_presets.json, effects_librar
 | 2026-05-29 | Создан скелет `mlcore/hooks/f5_cognition/` (Мысль = TTS-хук через Gemini 3.1). Добавлен раздел «Хуки» с картой 5 категорий. |
 | 2026-05-29 | F5 завершён end-to-end: подключены Gemini Stage1+Stage2 (TTS=`gemini-2.5-flash-preview-tts`, 3.1-preview даёт 500), врезана точка вызова `orchestrator_hook.py` между merge и `render_all_steps` → блок в `full_edit_config["f5"]`. |
 | 2026-05-29 | F5 подключён в боте: `STAGE_WAIT_HOOK_TYPE`=5 категорий хука, «Мысль»→новая `STAGE_WAIT_HOOK_DEVICE` (5 приёмов→F5Device). Проброс `hook_device` через send_audio_s3 → `SendAudioS3Request.hook_device` → `F5_HOOK_DEVICE`; `user_drop_t`→`F5Request.drop_at_sec`. Зеркало в tg_bot_public (CI parity). |
+| 2026-06-03 | **F3 «Эффект» провязан end-to-end (зеркало f4).** Build-side: `mlcore/hooks/f3_effect/overlay.py::build_overlay_jsx` (бандлер: manifest+дочерние .jsx → один инъект-блок, хук/переход/грейд+звук/лого, синхрон по дропу, cut-sounds до дропа с дедупом, slow-shutter extend) → `project_builder._build_f3_overlay_js` → токен `{{ f3_overlay_js }}` в `project_template.j2` (после f4, до save). Threading: `schemas.SendAudioS3Request.effect_hook/transition/extra/hook_extend` → `tasks` env `F3_HOOK/F3_TRANSITION/F3_EXTRA/F3_HOOK_EXTEND` (subprocess env) → `gemini_orchestrator` собирает `f3_block` (drop comp-relative = USER_DROP_T−clip_start) → `render_all_steps(f3_block=)` → `full_edit_config["f3"]`. Бот: категория «Эффект» (3 под-шага hook→transition→extra + extend для slow shutter), зеркало в tg_bot_public + parity-тест. Ассеты звук/лого = S3 media[] (каталог `assets.json` пока пуст → визуал работает без звука). Дев-харнесс: `run_job.jsx`+`manifest.json`. **Осталось: S3-каталог ассетов + живой smoke f3/f4/f5.** |
