@@ -79,17 +79,23 @@ function runScript(relPath, params){
     $.global.__BLAST = null;
 }
 
+// конец КОНТЕНТА (не компа): workArea, т.к. Comp 1 длиннее видимого ролика.
+function contentEnd(comp){
+    var wa = comp.workAreaStart + comp.workAreaDuration;
+    return (wa > 0 && wa <= comp.duration) ? wa : comp.duration;
+}
 // ---- длительность хука: дефолт = default_duration; extendable-хуки можно тянуть ----
 function hookDuration(h, comp, drop, cuts, extend){
     var base = (h.default_duration!=null) ? h.default_duration : 0.5;
     if (!h.extendable || !extend) return base;
-    if (extend === "to_end") return Math.max(base, comp.duration - drop);
+    var endT = contentEnd(comp);
+    if (extend === "to_end") return Math.max(base, endT - drop);
     var m = String(extend).match(/^after_drop:(\d+)$/);
     if (m){
         var n = parseInt(m[1], 10), after = [], fr = comp.frameDuration, i;
         for (i=0;i<cuts.length;i++){ if (cuts[i] > drop + fr) after.push(cuts[i]); }
         if (after.length >= n) return Math.max(base, after[n-1] - drop); // до n-й склейки после дропа
-        return Math.max(base, comp.duration - drop);                     // склеек < n -> до конца
+        return Math.max(base, endT - drop);                              // склеек < n -> до конца контента
     }
     return base;
 }
