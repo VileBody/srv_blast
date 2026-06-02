@@ -188,6 +188,55 @@ def _build_f4_overlay_js(full_edit_config: Dict[str, Any]) -> str:
     return overlay
 
 
+def _build_f3_overlay_js(full_edit_config: Dict[str, Any]) -> str:
+    """
+    Если в full_edit_config есть блок "f3" — собирает инъектируемый JSX-блок
+    эффектов («Эффект»: хук + переход + грейд + звук + лого). Блок встраивается
+    в шаблон сырым куском (рядом с f4-блоком, до сохранения проекта).
+
+    Блок "f3" формируется оркестратором:
+      {"hook": <id|null>, "transition": <id|null>, "extra": <id|null>,
+       "hook_extend": <"to_end"|"after_drop:N"|null>, "drop_time": <float>,
+       "assets": {"hook_sound": "media/audio/..", "transition_sound": ..,
+                  "extra_sound": .., "logo": "media/img/.."}}.
+    Нет блока / пустой выбор => пустая строка => ноль влияния.
+
+    Импорт mlcore.hooks делаем лениво, чтобы project_builder не тянул лишнее,
+    когда эффектов нет.
+    """
+    f3_block = full_edit_config.get("f3") if isinstance(full_edit_config, dict) else None
+    if not f3_block or not isinstance(f3_block, dict):
+        return ""
+
+    hook = (str(f3_block.get("hook") or "").strip() or None)
+    transition = (str(f3_block.get("transition") or "").strip() or None)
+    extra = (str(f3_block.get("extra") or "").strip() or None)
+    if not (hook or transition or extra):
+        return ""
+
+    drop_time = f3_block.get("drop_time")
+    if drop_time is None:
+        raise RuntimeError("f3 block present but 'drop_time' is missing")
+    hook_extend = (str(f3_block.get("hook_extend") or "").strip() or None)
+    assets = f3_block.get("assets") if isinstance(f3_block.get("assets"), dict) else {}
+
+    from mlcore.hooks.f3_effect.overlay import build_overlay_jsx
+
+    overlay = build_overlay_jsx(
+        hook=hook,
+        transition=transition,
+        extra=extra,
+        hook_extend=hook_extend,
+        drop_time=float(drop_time),
+        assets=assets,
+    )
+    LOGGER.info(
+        "f3 fx present hook=%s trans=%s extra=%s extend=%s js_len=%d",
+        hook, transition, extra, hook_extend, len(overlay),
+    )
+    return overlay
+
+
 def build_full_project(
     *,
     repo_root: Path,
@@ -310,6 +359,8 @@ def build_full_project(
     # it to the template as a raw block (rendered after addFlashOnCuts, before
     # save). Absent block => empty string => zero impact on regular jobs.
     f4_overlay_js = _build_f4_overlay_js(full_edit_config)
+    # F3 «Эффект» overlay (hook/transition/extra + sound + logo). Absent => "".
+    f3_overlay_js = _build_f3_overlay_js(full_edit_config)
 
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "logs").mkdir(parents=True, exist_ok=True)
@@ -324,7 +375,7 @@ def build_full_project(
     env.filters["tojson"] = _tojson_filter
 
     tpl = env.get_template("project_template.j2")
-    jsx = tpl.render(**payload, f4_overlay_js=f4_overlay_js)
+    jsx = tpl.render(**payload, f4_overlay_js=f4_overlay_js, f3_overlay_js=f3_overlay_js)
     out_jsx.write_text(jsx, encoding="utf-8")
 
     return out_json, out_jsx

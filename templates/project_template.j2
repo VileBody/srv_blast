@@ -1512,6 +1512,17 @@
       logErr("f4 overlay injection failed", eF4);
     }
 
+    // ==========================================================
+    // 5.6) F3 «Эффект» overlay (injected by build worker)
+    // Empty string when no f3 block => no-op. Applies chosen hook + transition
+    // + extra (+ sound + logo) on top of MAIN_COMP, synced to the drop.
+    // ==========================================================
+    try {
+      {{ f3_overlay_js }}
+    } catch(eF3) {
+      logErr("f3 overlay injection failed", eF3);
+    }
+
     if (__SUPPRESSED_UI_CALLS.length > 0) {
       logLine("WARN", "suppressed_ui_calls=" + safeJson(__SUPPRESSED_UI_CALLS, 2000));
     }
