@@ -48,8 +48,8 @@
     "pick": "random",
     "limits": { "max_duration_sec": 3, "fade_out_sec": 0.1 },
     "rules": {
-      "drop_hit": { "pool": "subdrop", "count": 1, "place": "on_drop", "desc": "ОДИН сабдроп ровно на дроп. НЕ вешать на каждую склейку (оверфит, звук тяжёлый)." },
-      "cut_sounds": { "pool": null, "default": "off", "note": "Сабдроп на каждой склейке — перебор. Глитч на склейках — опционально, частоту подбираем на реальном примере (sound_freq_tbd)." }
+      "drop_sound": { "source": "hook_only", "desc": "Звук на дропе даёт ТОЛЬКО хук: молния (hook light) или вспышка камеры (shutter / slow shutter). Сабдроп НЕ применяется." },
+      "cut_sounds": { "scope": "before_drop_only", "per_cut": 1, "dedup": "transition+extra", "desc": "Звук перехода/грейда (его pool) вешается на склейки СТРОГО до дропа; после дропа — тишина. Один звук на склейку, переход и грейд между собой не дублируются." }
     },
     "user_sound": { "handled": false, "note": "Юзерский звук — отдельный формат, в этом разделе не трогаем." }
   },
@@ -74,6 +74,8 @@
       "branding": true, "branding_style": "stamp_flash", "branding_note": "Добавляем лого-штамп поверх (чистый канвас под бренд).",
       "sound": { "pool": "camera_flash", "sync": "on_drop" },
       "default_duration": 0.5, "placement": "hook_start",
+      "extendable": true, "extend_options": ["to_end", "after_drop:N"],
+      "extend_note": "Echo-шлейф можно растянуть: до конца ролика (футажи красиво наслаиваются) или на N футажей после дропа. Управляется job.hookExtend ('to_end' | 'after_drop:3'). Кандидат на доп. шаг в боте.",
       "desc": "Echo-шлейф + Posterize + вспышка экспозиции + лого-штамп Бласта." },
 
     { "id": "snap_wipe", "label": "Snap Wipe", "group": "transition", "apply_mode": "adjustment",

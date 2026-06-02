@@ -26,19 +26,24 @@ afterfx.exe -r run_job.jsx          # проект уже открыт; job.json
 ```
 `job.json`:
 ```json
-{ "dropTime": 4.2, "hook": "hook_light", "transition": "snap_wipe", "extra": "warm_map" }
+{ "dropTime": 4.2, "hook": "flash_slow_shutter", "transition": "snap_wipe",
+  "extra": "warm_map", "hookExtend": "to_end" }
 ```
-Параметры в дочерние скрипты прокидываются через `$.global.__BLAST` (merge в CONFIG на старте каждого скрипта).
+- `dropTime` — **COMP-relative** секунды в `Comp 1` (= `user_drop_t` минус начало рендер-сегмента; конвертация как в `f5_cognition` abs→relative). Кто пишет job.json (в `services/orchestrator/tasks.py`), тот и делает конвертацию.
+- `hookExtend` (опц., только для `extendable`-хуков, см. slow shutter): `"to_end"` | `"after_drop:N"`.
+- Параметры в дочерние скрипты — через `$.global.__BLAST` (merge в CONFIG на старте каждого скрипта).
 
-## Синхронизация
-Всё относительно **drop_time** (мастер-якорь). Звук с импульсом внутри файла: `audio.inPoint = drop_time - impact_at`
-(Light Sound: импульс на 0.5с → старт за 0.5с до дропа). Лого stamp_flash вспыхивает ровно на дропе.
+## Целевой комп
+`findComp` ищет комп, содержащий слой `"Текст"` → это корневой **`Comp 1`** (1080×1960), куда `app/footage_comp.build_footage_layers` кладёт футаж и где лежит прекомп-слой `"Текст"`. Туда же садятся эффекты, `detectCuts` берёт `inPoint` футаж-слоёв этого компа.
 
-## ⚠️ TODO интеграции (asset roots)
-- В `manifest.json` пути `Звуки/*` и `branding.logo_default` (`Хуки/Лого и шейпы/...`) — **относительные** и сейчас
-  резолвятся `run_job.jsx` через `BASE_ROOT = <скрипт>/../..`. На рендер-ноде это укажет на `mlcore/hooks` — **ассетов там нет.**
-  Нужно прокинуть реальный корень ассетов (звуки/лого) на ноде: либо положить ассеты под этот корень,
-  либо завести в `run_job.jsx` переменную `BLAST_ASSET_ROOT` (env) и резолвить пути от неё.
-- Плагины: часть эффектов требует **Sapphire** (`S_*`) и **VISINF Grain** — должны стоять на ноде.
-- `.aep`-зависимости только у двух extra: `pixel_grain` и `warm_map` (Colorama/Grain-пресет читаются copyToComp из .aep — лежат рядом в `extra/`).
+## Синхронизация звука (политика)
+- **Дроп:** звук даёт ТОЛЬКО хук (молния у hook light / вспышка камеры у shutter, slow shutter). **Сабдроп не применяется.** Звук с импульсом: `audio.inPoint = drop - impact_at` (Light Sound impact 0.5с).
+- **Склейки:** звук перехода/грейда (его `sound.pool`) вешается на склейки **строго до дропа**, после дропа — тишина. Один звук на склейку, переход+грейд дедупятся (`attachCutSounds` в run_job).
+- Лого `stamp_flash` вспыхивает ровно на дропе.
+
+## ⚠️ TODO интеграции
+- **Asset root:** пути `Звуки/*` и лого в `manifest.json` относительные; `run_job.jsx` резолвит их от env **`BLAST_ASSET_ROOT`** (без env — падает на `BASE_ROOT = mlcore/hooks`, где ассетов нет). На рендер-ноде **обязательно задать `BLAST_ASSET_ROOT`** на папку с `Звуки/` и `Хуки/Лого и шейпы/`.
+- **Плагины на ноде:** Sapphire (`S_*`) + VISINF Grain.
+- **`.aep`-зависимости** только у `pixel_grain` и `warm_map` (Colorama/Grain-пресет через copyToComp — `.aep` лежат рядом в `extra/`).
+- **dropTime-конвертация** в `tasks.py` (см. выше) — обязательна, иначе хук уедет.
 - `user_sound` — отдельный формат, в этом пайплайне НЕ трогается.
