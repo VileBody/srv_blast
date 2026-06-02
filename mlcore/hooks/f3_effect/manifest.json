@@ -1,0 +1,139 @@
+{
+  "version": 2,
+  "note": "Большой реестр: эффекты + брендинг + звук. Всё синхронизируется относительно ДРОПА (drop_time). Пайплайн читает manifest, прокидывает в CONFIG скрипта тайминги/плейсмент и запускает headless на рендер-ноде.",
+
+  "sync": {
+    "anchor": "drop_time",
+    "desc": "drop_time — мастер-якорь (момент дропа в ролике, известен пайплайну). Эффекты и звуки позиционируются относительно него: layer.startTime = drop_time + offset. У звука с импульсом внутри файла аудио стартует так, чтобы импульс лёг на дроп: audio.inPoint = drop_time - impact_at.",
+    "example_hook_light": "Light Sound: импульс на 0.5с -> audio.inPoint = drop_time - 0.5; сам эффект hook light тоже выставлен относительно drop_time."
+  },
+
+  "apply_modes": {
+    "adjustment":     "adjustment-слой со стеком эффектов поверх видео (place=below:Текст)",
+    "cut_overlay":    "белый солид-вспышка в inPoint клипов (на склейках)",
+    "clip_transform": "анимирует сам слой-футаж (scale/rotation/blur)",
+    "overlay_png":    "PNG поверх (лого-штамп / watermark)"
+  },
+
+  "groups": {
+    "hook":       "Эффект-хук в начале ролика (+ звук + лого-штамп)",
+    "transition": "Переход/удар на склейке или бите",
+    "extra":      "Стилизация/грейд футажа перед дропом"
+  },
+
+  "branding": {
+    "logo_default": "Хуки/Лого и шейпы/Лого Бласта/Group 1245.png",
+    "logo_pool_dir": "Хуки/Лого и шейпы/Лого Бласта",
+    "logo_pool_note": "Кидай альтернативные лого в эту папку — пайплайн берёт из пула для разнообразия.",
+    "script": "branding/brand_logo.jsx",
+    "styles": {
+      "stamp_flash": { "scale": 23, "effects": ["Minimax(Radius 326->0->300)", "Brightness +150"], "opacity": "100->0", "sync": "on_drop", "desc": "Лого вспыхивает-штампуется на дропе (паттерн из shutter)." },
+      "clean_fade":  { "scale": 23, "opacity": "0->100->0", "desc": "Мягкое проявление/угасание." },
+      "corner_watermark": { "scale": 12, "position": "corner", "opacity": 60, "persistent": true, "desc": "Мелкое лого в углу весь ролик." },
+      "glitch_in":   { "scale": 23, "pair_sound": "Glitch Transform", "desc": "Появляется с глитчем." }
+    },
+    "default_style": "stamp_flash",
+    "applies_to": ["hook"]
+  },
+
+  "sounds": {
+    "root": "Звуки",
+    "pools": {
+      "camera_flash":   "Звуки/Camera Flash",
+      "glitch":         "Звуки/Glitch Transform",
+      "subdrop":        "Звуки/Subdrop Impact",
+      "signature":      "Звуки/Signature Sounds",
+      "car":            "Звуки/Car"
+    },
+    "pick": "random",
+    "limits": { "max_duration_sec": 3, "fade_out_sec": 0.1 },
+    "rules": {
+      "drop_hit": { "pool": "subdrop", "count": 1, "place": "on_drop", "desc": "ОДИН сабдроп ровно на дроп. НЕ вешать на каждую склейку (оверфит, звук тяжёлый)." },
+      "cut_sounds": { "pool": null, "default": "off", "note": "Сабдроп на каждой склейке — перебор. Глитч на склейках — опционально, частоту подбираем на реальном примере (sound_freq_tbd)." }
+    },
+    "user_sound": { "handled": false, "note": "Юзерский звук — отдельный формат, в этом разделе не трогаем." }
+  },
+
+  "effects": [
+    { "id": "hook_light", "label": "Hook Light", "group": "hook", "apply_mode": "adjustment",
+      "script": "hooks/rebuild_light.jsx", "needs_aep": false, "needs_plugin": ["Sapphire"],
+      "branding": false, "branding_note": "Сам по себе сигнатурный (молнии/свет). Лого = оверфит, НЕ вешаем.",
+      "sound": { "file": "Звуки/Light Sound/myinstants.mp3", "impact_at": 0.5, "sync": "impact_on_drop" },
+      "default_duration": 0.63, "placement": "hook_start",
+      "desc": "Молнии + вспышка + шейк. Фирменный хук Бласта (бренд держит сам визуал + Light Sound на дропе)." },
+
+    { "id": "shutter_effect", "label": "Shutter", "group": "hook", "apply_mode": "adjustment",
+      "script": "hooks/rebuild_shutter.jsx", "needs_aep": false, "needs_plugin": [],
+      "branding": "built_in", "branding_note": "Лого-штамп уже в оригинале (Group 1245.png на нечётных чанках).",
+      "sound": { "pool": "camera_flash", "sync": "on_drop" },
+      "default_duration": 0.6, "placement": "hook_start",
+      "desc": "Нарезка по 0.1с: смаз затвора + инверт/оверлей + встроенный лого-штамп." },
+
+    { "id": "flash_slow_shutter", "label": "Slow Shutter", "group": "hook", "apply_mode": "adjustment",
+      "script": "hooks/rebuild_flash_slow_shutter.jsx", "needs_aep": false, "needs_plugin": [],
+      "branding": true, "branding_style": "stamp_flash", "branding_note": "Добавляем лого-штамп поверх (чистый канвас под бренд).",
+      "sound": { "pool": "camera_flash", "sync": "on_drop" },
+      "default_duration": 0.5, "placement": "hook_start",
+      "desc": "Echo-шлейф + Posterize + вспышка экспозиции + лого-штамп Бласта." },
+
+    { "id": "snap_wipe", "label": "Snap Wipe", "group": "transition", "apply_mode": "adjustment",
+      "script": "transitions/snap_wipe.jsx", "needs_aep": false, "needs_plugin": [],
+      "sound": { "pool": null, "optional": true }, "default_duration": 0.07, "placement": "at_cut",
+      "desc": "Горизонтальная световая полоса: Transform+Directional Blur+Minimax+Optics." },
+
+    { "id": "minimax", "label": "Minimax Flash", "group": "transition", "apply_mode": "adjustment",
+      "script": "transitions/minimax.jsx", "needs_aep": false, "needs_plugin": [],
+      "sound": { "pool": null, "optional": true }, "default_duration": 0.05, "placement": "at_cut",
+      "desc": "Вертикальная световая полоса: Minimax+Luma Key+Scatter+Exposure." },
+
+    { "id": "invert_flash", "label": "Invert Flash", "group": "transition", "apply_mode": "adjustment",
+      "script": "transitions/invert_flash.jsx", "needs_aep": false, "needs_plugin": [],
+      "sound": { "pool": "glitch", "optional": true, "freq_tbd": true }, "default_duration": 0.28, "placement": "at_cut",
+      "desc": "Ч/б пульс-инверт: Invert + Lumetri(Saturation 0) + Noise." },
+
+    { "id": "extract_flash", "label": "Extract Flash", "group": "transition", "apply_mode": "adjustment",
+      "script": "transitions/extract_flash.jsx", "needs_aep": false, "needs_plugin": [],
+      "sound": { "pool": "glitch", "optional": true, "freq_tbd": true }, "default_duration": 0.28, "placement": "at_cut",
+      "desc": "Агрессивный инверт-импульс: Invert(аним Blend) + Extract." },
+
+    { "id": "flash_on_cuts", "label": "Flash on Cuts", "group": "transition", "apply_mode": "cut_overlay",
+      "script": "transitions/flash_on_cuts.jsx", "needs_aep": false, "needs_plugin": [],
+      "sound": { "pool": null, "optional": true }, "default_duration": 0.633, "placement": "at_cut",
+      "desc": "Белая вспышка (ADD, opacity 25->0) в начале каждого клипа." },
+
+    { "id": "layer_shake", "label": "Layer Shake", "group": "transition", "apply_mode": "clip_transform",
+      "script": "transitions/layer_shake.jsx", "needs_aep": false, "needs_plugin": ["Sapphire"],
+      "sound": { "pool": null, "optional": true }, "default_duration": 0.63, "placement": "on_clip",
+      "desc": "Панч-влёт клипа: scale 265->100 + ротация-вобл + баунс + S_BlurMotion зум." },
+
+    { "id": "xerox", "label": "Xerox", "group": "extra", "apply_mode": "adjustment",
+      "script": "extra/xerox.jsx", "needs_aep": false, "needs_plugin": ["VISINF Grain"],
+      "sound": { "pool": "glitch", "optional": true, "freq_tbd": true }, "default_duration": null, "placement": "below:Текст",
+      "desc": "Ксерокопия: Add Grain + Curves + Threshold + Box Blur + Glow + Noise. (Roto Brush выкинут.)" },
+
+    { "id": "analog_glitch", "label": "Analog Glitch", "group": "extra", "apply_mode": "adjustment",
+      "script": "extra/rebuild_analog_glitch.jsx", "needs_aep": false, "needs_plugin": [],
+      "sound": { "pool": "glitch", "optional": true, "freq_tbd": true }, "default_duration": null, "placement": "below:Текст",
+      "desc": "VHS-глитч: Жалюзи x2 + Choker + Wave Warp + Glow x2 + Posterize." },
+
+    { "id": "neon_extract", "label": "Neon Extract", "group": "extra", "apply_mode": "adjustment",
+      "script": "extra/rebuild_neon_extract.jsx", "needs_aep": false, "needs_plugin": [],
+      "sound": { "pool": "glitch", "optional": true, "freq_tbd": true }, "default_duration": null, "placement": "below:Текст",
+      "desc": "Неоновый контур: Noise + Extract + Tint + Strobe." },
+
+    { "id": "old_camera", "label": "Old Camera", "group": "extra", "apply_mode": "adjustment",
+      "script": "extra/rebuild_old_camera.jsx", "needs_aep": false, "needs_plugin": ["Sapphire"],
+      "sound": { "pool": "glitch", "optional": true, "freq_tbd": true }, "default_duration": null, "placement": "below:Текст",
+      "desc": "Старая камера: Unsharp + Mosaic + Gaussian + Posterize + Transform + S_GlowEdges." },
+
+    { "id": "pixel_grain", "label": "Pixel Grain", "group": "extra", "apply_mode": "adjustment",
+      "script": "extra/rebuild_pixel_grain.jsx", "needs_aep": true, "needs_plugin": ["VISINF Grain"],
+      "sound": { "pool": "glitch", "optional": true, "freq_tbd": true }, "default_duration": null, "placement": "below:Текст",
+      "desc": "Пиксельное зерно: Grid + Grain(пресет) + Exposure + CC Threshold + Posterize." },
+
+    { "id": "warm_map", "label": "Warm Map", "group": "extra", "apply_mode": "adjustment",
+      "script": "extra/rebuild_warm_map.jsx", "needs_aep": true, "needs_plugin": [],
+      "sound": { "pool": "glitch", "optional": true, "freq_tbd": true }, "default_duration": null, "placement": "below:Текст",
+      "desc": "Тепловая карта: Box Blur + Noise + Colorama(тёплый градиент из .aep)." }
+  ]
+}
