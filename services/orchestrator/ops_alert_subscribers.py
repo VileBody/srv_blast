@@ -222,15 +222,25 @@ class OpsAlertBotPoller:
         bot_token: str,
         store: OpsAlertSubscriberStore,
         api_env: str = "prod",
+        proxy_url: str = "",
         poll_timeout_s: float = 25.0,
         retry_sleep_s: float = 2.0,
     ) -> None:
         self._token = _to_str(bot_token)
         self._telegram_api = make_telegram_api(api_env, name="ALERT_TELEGRAM_API_ENV")
         self._store = store
+        self._opener = self._build_opener(_to_str(proxy_url))
         self._poll_timeout_s = max(1.0, float(poll_timeout_s))
         self._retry_sleep_s = max(0.2, float(retry_sleep_s))
         self._offset = 0
+
+    @staticmethod
+    def _build_opener(proxy_url: str) -> urllib.request.OpenerDirector:
+        if not proxy_url:
+            return urllib.request.build_opener()
+        return urllib.request.build_opener(
+            urllib.request.ProxyHandler({"http": proxy_url, "https": proxy_url})
+        )
 
     def _api_url(self, method: str) -> str:
         return self._telegram_api.method_url(token=self._token, method=method)
@@ -241,7 +251,7 @@ class OpsAlertBotPoller:
             params["offset"] = str(int(offset))
         url = self._api_url("getUpdates") + "?" + urllib.parse.urlencode(params)
         req = urllib.request.Request(url=url, method="GET")
-        with urllib.request.urlopen(req, timeout=float(timeout_s) + 8.0) as resp:
+        with self._opener.open(req, timeout=float(timeout_s) + 8.0) as resp:
             body = resp.read()
         payload = json.loads(body.decode("utf-8", "ignore"))
         if not isinstance(payload, dict) or not bool(payload.get("ok", False)):
@@ -268,7 +278,7 @@ class OpsAlertBotPoller:
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        with urllib.request.urlopen(req, timeout=10.0) as resp:
+        with self._opener.open(req, timeout=10.0) as resp:
             _ = resp.read()
 
     async def _handle_message(self, message: dict[str, Any]) -> None:

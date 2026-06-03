@@ -228,6 +228,13 @@ def _notify_ops_telegram(text: str) -> None:
     if not recipients:
         return
 
+    proxy_url = str(getattr(SETTINGS, "tg_file_proxy_url", "") or "").strip()
+    opener = None
+    if proxy_url:
+        opener = urllib.request.build_opener(
+            urllib.request.ProxyHandler({"http": proxy_url, "https": proxy_url})
+        )
+
     msg_text = str(text or "").strip()[:3500]
     for chat_id in sorted(recipients):
         payload = {
@@ -243,7 +250,11 @@ def _notify_ops_telegram(text: str) -> None:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(req, timeout=8.0) as resp:
+            if opener is None:
+                resp_ctx = urllib.request.urlopen(req, timeout=8.0)
+            else:
+                resp_ctx = opener.open(req, timeout=8.0)
+            with resp_ctx as resp:
                 _ = resp.read()
         except urllib.error.HTTPError as exc:
             status_code = int(getattr(exc, "code", 0) or 0)

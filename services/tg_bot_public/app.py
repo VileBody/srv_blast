@@ -3849,8 +3849,12 @@ class BlastBotApp:
             "disable_web_page_preview": True,
         }
         url = f"https://api.telegram.org/bot{token}/sendMessage"
+        tg_proxy = str(self.settings.tg_file_proxy_url or "").strip()
+        client_kwargs: Dict[str, Any] = {"timeout": 10.0}
+        if tg_proxy:
+            client_kwargs["proxy"] = tg_proxy
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with httpx.AsyncClient(**client_kwargs) as client:
                 resp = await client.post(url, json=payload)
             if resp.status_code >= 300:
                 raise RuntimeError(f"status={resp.status_code} body={resp.text[:300]}")

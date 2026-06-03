@@ -220,6 +220,7 @@ class Settings:
     alert_telegram_bot_token: str = _env("ALERT_TELEGRAM_BOT_TOKEN", "")
     alert_telegram_chat_id: str = _env("ALERT_TELEGRAM_CHAT_ID", "")
     alert_telegram_api_env: str = _telegram_api_env("ALERT_TELEGRAM_API_ENV", "prod")
+    tg_file_proxy_url: str = _env("TG_FILE_PROXY_URL", "")
     alert_subscribers_enabled: bool = _bool_env("ALERT_SUBSCRIBERS_ENABLED", True)
     alert_subscribers_poll_timeout_s: float = _float_env("ALERT_SUBSCRIBERS_POLL_TIMEOUT_S", 25.0)
     alert_subscribers_retry_sleep_s: float = _float_env("ALERT_SUBSCRIBERS_RETRY_SLEEP_S", 2.0)

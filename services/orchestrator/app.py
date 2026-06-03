@@ -241,6 +241,7 @@ def create_app() -> FastAPI:
                     bot_token=SETTINGS.alert_telegram_bot_token,
                     store=_ops_alert_store,
                     api_env=SETTINGS.alert_telegram_api_env,
+                    proxy_url=SETTINGS.tg_file_proxy_url,
                     poll_timeout_s=SETTINGS.alert_subscribers_poll_timeout_s,
                     retry_sleep_s=SETTINGS.alert_subscribers_retry_sleep_s,
                 )

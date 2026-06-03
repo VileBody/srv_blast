@@ -1280,7 +1280,7 @@ def build_app(
         token = str(settings.tg_bot_token or "").strip()
         if not token:
             return {}
-        async with httpx.AsyncClient(timeout=15.0) as client:
+        async with httpx.AsyncClient(timeout=15.0, **_telegram_proxy_kwargs()) as client:
             resp = await client.get(f"https://api.telegram.org/bot{token}/getWebhookInfo")
         if resp.status_code >= 300:
             raise RuntimeError(f"telegram getWebhookInfo failed: {resp.status_code} {resp.text}")
@@ -1308,6 +1308,10 @@ def build_app(
         except Exception as e:
             return {"error": str(e)}
 
+    def _telegram_proxy_kwargs() -> dict[str, str]:
+        proxy = str(getattr(settings, "tg_file_proxy_url", "") or "").strip()
+        return {"proxy": proxy} if proxy else {}
+
     async def _send_alert_telegram_message(text: str) -> dict:
         token = str(getattr(settings, "alert_telegram_bot_token", "") or "").strip()
         chat_id = str(getattr(settings, "alert_telegram_chat_id", "") or "").strip()
@@ -1318,7 +1322,7 @@ def build_app(
         msg = str(text or "").strip()
         if not msg:
             raise RuntimeError("alert text is empty")
-        async with httpx.AsyncClient(timeout=15.0) as client:
+        async with httpx.AsyncClient(timeout=15.0, **_telegram_proxy_kwargs()) as client:
             resp = await client.post(
                 f"https://api.telegram.org/bot{token}/sendMessage",
                 json={
