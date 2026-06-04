@@ -177,6 +177,14 @@ class ChatState(BaseModel):
     season_referrer_tier: int = 0
     season_referrals_count: int = 0
 
+    # Bigtest mode — mass-test all hook configs on a single input.
+    # Gated by BIGTEST_ENABLED in app.py (True on team bot, False on public bot).
+    bigtest_mode: bool = False
+    bigtest_index: int = 0           # index of currently-running case (0-based)
+    bigtest_total: int = 0           # total cases in this run
+    bigtest_current_label: str = ""  # label string shown in result caption
+    bigtest_master_job_id: str = ""  # job_id to reuse ASR/subtitles from
+
 
 class RedisChatStateStore:
     def __init__(self, settings: Settings):

@@ -133,6 +133,10 @@ SEASON_FLOW_ENABLED = (os.environ.get("SEASON_FLOW_ENABLED", "0").strip().lower(
 HOOK_FLOW_ENABLED = (os.environ.get("HOOK_FLOW_ENABLED", "0").strip().lower()
                      in {"1", "true", "yes", "on", "enabled"})
 
+# /bigtest is a team-bot-only command. Constant is False here so the handler
+# (registered below for parity) immediately rejects the request in production.
+BIGTEST_ENABLED: bool = False
+
 HOOK_STAGES = frozenset({
     STAGE_WAIT_HOOK_CHOICE,
     STAGE_WAIT_HOOK_DROP,
@@ -2454,6 +2458,11 @@ class BlastBotApp:
             chat_id = int(callback.message.chat.id)
             await callback.answer()
             await self._move_to_wait_audio(chat_id, callback.message)
+
+        @self.router.message(Command("bigtest"))
+        async def _on_bigtest(message: Message) -> None:
+            # Parity stub — /bigtest is available only on the team bot.
+            await message.answer("Эта команда недоступна.")
 
         @self.router.message()
         async def _on_any_message(message: Message) -> None:

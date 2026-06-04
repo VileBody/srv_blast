@@ -219,6 +219,14 @@ class ChatState(BaseModel):
     season_referrer_tier: int = 0
     season_referrals_count: int = 0
 
+    # Bigtest mode — parity with tg_bot_botapi. Gated by BIGTEST_ENABLED in
+    # app.py (False here; True only on the team bot).
+    bigtest_mode: bool = False
+    bigtest_index: int = 0
+    bigtest_total: int = 0
+    bigtest_current_label: str = ""
+    bigtest_master_job_id: str = ""
+
 
 class RedisChatStateStore:
     def __init__(self, settings: Settings):
