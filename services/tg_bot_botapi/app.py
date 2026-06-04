@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import httpx
 from aiogram import Bot, Dispatcher, Router
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.filters import CommandStart, CommandObject
+from aiogram.filters import Command, CommandStart, CommandObject
 from aiogram.types import (
     CallbackQuery,
     FSInputFile,
@@ -127,6 +127,11 @@ def _season_flow_enabled() -> bool:
     }
 
 
+# /bigtest is available only on the team bot. Set False in tg_bot_public/app.py
+# so parity code is present in both bots but the command is blocked in public.
+BIGTEST_ENABLED: bool = True
+
+
 BTN_SEND_TRACK = "Отправить трек"
 BTN_SEND_LYRICS = "Отправить текст"
 BTN_SKIP_LYRICS = "Не присылать текст"
@@ -142,6 +147,7 @@ BTN_BG_BLACK = "Чёрный"
 BTN_BG_GREEN = "Зелёный (хромакей)"
 BTN_LAUNCH = "Запустить"
 BTN_NEXT = "Сделать следующий"
+BTN_REUSE_INPUT = "Сделать под тот же трек"
 BTN_VER_1 = "1"
 BTN_VER_2 = "2"
 BTN_VER_3 = "3"
@@ -315,8 +321,106 @@ _CONTROL_BUTTONS = {
     BTN_SUB_MODE_4TH,
     BTN_LAUNCH,
     BTN_NEXT,
+    BTN_REUSE_INPUT,
     *VERSION_BUTTONS,
 }
+
+
+# 28-case bigtest matrix: each entry maps to ChatState hook fields.
+# F3 tested in isolation (one step at a time); F4/F5 per device.
+# hook_drop_t and hook_analysis_bpm are NOT in this dict — reused from state.
+_BIGTEST_CASES: List[Dict[str, Any]] = [
+    # ── Baseline ────────────────────────────────────────────────────────────
+    {"label": "Без хука",
+     "hook_enabled": False, "hook_category": "", "hook_device": "",
+     "effect_hook": "", "effect_transition": "", "effect_extra": "", "effect_hook_extend": ""},
+    # ── F3 / Хук на дропе ───────────────────────────────────────────────────
+    {"label": "F3/хук: Молния",
+     "hook_enabled": True, "hook_category": "effect", "hook_device": "",
+     "effect_hook": "hook_light", "effect_transition": "", "effect_extra": "", "effect_hook_extend": ""},
+    {"label": "F3/хук: Затвор",
+     "hook_enabled": True, "hook_category": "effect", "hook_device": "",
+     "effect_hook": "shutter_effect", "effect_transition": "", "effect_extra": "", "effect_hook_extend": ""},
+    {"label": "F3/хук: Слоу-шаттер",
+     "hook_enabled": True, "hook_category": "effect", "hook_device": "",
+     "effect_hook": "flash_slow_shutter", "effect_transition": "", "effect_extra": "", "effect_hook_extend": ""},
+    {"label": "F3/хук: Слоу-шаттер (до конца)",
+     "hook_enabled": True, "hook_category": "effect", "hook_device": "",
+     "effect_hook": "flash_slow_shutter", "effect_transition": "", "effect_extra": "", "effect_hook_extend": "to_end"},
+    {"label": "F3/хук: Слоу-шаттер (3 футажа)",
+     "hook_enabled": True, "hook_category": "effect", "hook_device": "",
+     "effect_hook": "flash_slow_shutter", "effect_transition": "", "effect_extra": "", "effect_hook_extend": "after_drop:3"},
+    # ── F3 / Переходы (step 2 only) ─────────────────────────────────────────
+    {"label": "F3/переход: Снап-вайп",
+     "hook_enabled": True, "hook_category": "effect", "hook_device": "",
+     "effect_hook": "", "effect_transition": "snap_wipe", "effect_extra": "", "effect_hook_extend": ""},
+    {"label": "F3/переход: Минимакс",
+     "hook_enabled": True, "hook_category": "effect", "hook_device": "",
+     "effect_hook": "", "effect_transition": "minimax", "effect_extra": "", "effect_hook_extend": ""},
+    {"label": "F3/переход: Инверт",
+     "hook_enabled": True, "hook_category": "effect", "hook_device": "",
+     "effect_hook": "", "effect_transition": "invert_flash", "effect_extra": "", "effect_hook_extend": ""},
+    {"label": "F3/переход: Экстракт",
+     "hook_enabled": True, "hook_category": "effect", "hook_device": "",
+     "effect_hook": "", "effect_transition": "extract_flash", "effect_extra": "", "effect_hook_extend": ""},
+    {"label": "F3/переход: Вспышки",
+     "hook_enabled": True, "hook_category": "effect", "hook_device": "",
+     "effect_hook": "", "effect_transition": "flash_on_cuts", "effect_extra": "", "effect_hook_extend": ""},
+    {"label": "F3/переход: Тряска",
+     "hook_enabled": True, "hook_category": "effect", "hook_device": "",
+     "effect_hook": "", "effect_transition": "layer_shake", "effect_extra": "", "effect_hook_extend": ""},
+    # ── F3 / Грейды (step 3 only) ────────────────────────────────────────────
+    {"label": "F3/грейд: Ксерокс",
+     "hook_enabled": True, "hook_category": "effect", "hook_device": "",
+     "effect_hook": "", "effect_transition": "", "effect_extra": "xerox", "effect_hook_extend": ""},
+    {"label": "F3/грейд: Аналог-глитч",
+     "hook_enabled": True, "hook_category": "effect", "hook_device": "",
+     "effect_hook": "", "effect_transition": "", "effect_extra": "analog_glitch", "effect_hook_extend": ""},
+    {"label": "F3/грейд: Неон",
+     "hook_enabled": True, "hook_category": "effect", "hook_device": "",
+     "effect_hook": "", "effect_transition": "", "effect_extra": "neon_extract", "effect_hook_extend": ""},
+    {"label": "F3/грейд: Старая камера",
+     "hook_enabled": True, "hook_category": "effect", "hook_device": "",
+     "effect_hook": "", "effect_transition": "", "effect_extra": "old_camera", "effect_hook_extend": ""},
+    {"label": "F3/грейд: Пиксель-зерно",
+     "hook_enabled": True, "hook_category": "effect", "hook_device": "",
+     "effect_hook": "", "effect_transition": "", "effect_extra": "pixel_grain", "effect_hook_extend": ""},
+    {"label": "F3/грейд: Тепловая карта",
+     "hook_enabled": True, "hook_category": "effect", "hook_device": "",
+     "effect_hook": "", "effect_transition": "", "effect_extra": "warm_map", "effect_hook_extend": ""},
+    # ── F4 / Движение ────────────────────────────────────────────────────────
+    {"label": "F4/движение: Свайп",
+     "hook_enabled": True, "hook_category": "motion", "hook_device": "swipe",
+     "effect_hook": "", "effect_transition": "", "effect_extra": "", "effect_hook_extend": ""},
+    {"label": "F4/движение: Тап",
+     "hook_enabled": True, "hook_category": "motion", "hook_device": "tap",
+     "effect_hook": "", "effect_transition": "", "effect_extra": "", "effect_hook_extend": ""},
+    {"label": "F4/движение: Зум",
+     "hook_enabled": True, "hook_category": "motion", "hook_device": "pinch",
+     "effect_hook": "", "effect_transition": "", "effect_extra": "", "effect_hook_extend": ""},
+    {"label": "F4/движение: Задержи палец",
+     "hook_enabled": True, "hook_category": "motion", "hook_device": "holdfinger",
+     "effect_hook": "", "effect_transition": "", "effect_extra": "", "effect_hook_extend": ""},
+    {"label": "F4/движение: Качай головой",
+     "hook_enabled": True, "hook_category": "motion", "hook_device": "head",
+     "effect_hook": "", "effect_transition": "", "effect_extra": "", "effect_hook_extend": ""},
+    # ── F5 / Мысль ───────────────────────────────────────────────────────────
+    {"label": "F5/мысль: Панчлайн",
+     "hook_enabled": True, "hook_category": "thought", "hook_device": "punchline",
+     "effect_hook": "", "effect_transition": "", "effect_extra": "", "effect_hook_extend": ""},
+    {"label": "F5/мысль: Пропущенное слово",
+     "hook_enabled": True, "hook_category": "thought", "hook_device": "missing_word",
+     "effect_hook": "", "effect_transition": "", "effect_extra": "", "effect_hook_extend": ""},
+    {"label": "F5/мысль: Эхо",
+     "hook_enabled": True, "hook_category": "thought", "hook_device": "lyric_echo",
+     "effect_hook": "", "effect_transition": "", "effect_extra": "", "effect_hook_extend": ""},
+    {"label": "F5/мысль: Вопрос к треку",
+     "hook_enabled": True, "hook_category": "thought", "hook_device": "question_to_track",
+     "effect_hook": "", "effect_transition": "", "effect_extra": "", "effect_hook_extend": ""},
+    {"label": "F5/мысль: Инверсия",
+     "hook_enabled": True, "hook_category": "thought", "hook_device": "inverse_lyric",
+     "effect_hook": "", "effect_transition": "", "effect_extra": "", "effect_hook_extend": ""},
+]
 
 
 _AUDIO_EXTS = {".wav", ".mp3", ".m4a", ".aac", ".flac", ".ogg"}
@@ -1158,6 +1262,41 @@ class BlastBotApp:
             except Exception:
                 pass
 
+        @self.router.message(Command("bigtest"))
+        async def _on_bigtest(message: Message) -> None:
+            if not BIGTEST_ENABLED:
+                await message.answer("Эта команда недоступна.")
+                return
+            if message.chat is None:
+                return
+            chat_id = int(message.chat.id)
+            st = await self.store.get(chat_id)
+            if st.stage == STAGE_PROCESSING:
+                await message.answer("Генерация в процессе. Дождись завершения и повтори /bigtest.")
+                return
+            if not str(st.batch_audio_s3_url or "").strip():
+                await message.answer(
+                    "Для /bigtest нужен трек с предыдущей генерации.\n"
+                    "Сделай хотя бы один обычный ролик, а потом запускай bigtest."
+                )
+                return
+            last_master = str(st.master_job_id or "").strip()
+            total = len(_BIGTEST_CASES)
+            st.bigtest_mode = True
+            st.bigtest_index = 0
+            st.bigtest_total = total
+            st.bigtest_current_label = ""
+            st.bigtest_master_job_id = last_master
+            bot_inst = self._require_bot()
+            reuse_note = f"reuse_text={last_master}" if last_master else "без reuse (субтитры будут генерироваться каждый раз)"
+            await bot_inst.send_message(
+                chat_id,
+                f"🔬 Bigtest: {total} кейсов на том же треке.\n"
+                f"Результат каждого будет подписан названием кейса.\n"
+                f"({reuse_note})",
+            )
+            await self._bigtest_try_enqueue_from_current(st, bot_inst)
+
         @self.router.message()
         async def _on_any_message(message: Message) -> None:
             if message.chat is None:
@@ -1903,10 +2042,50 @@ class BlastBotApp:
             ),
         )
 
+    @staticmethod
+    def _can_reuse_input(st: ChatState) -> bool:
+        if str(st.pending_audio_file_id or "").strip():
+            return True
+        prepared_raw = str(st.prepared_audio_local_path or "").strip()
+        if not prepared_raw:
+            return False
+        try:
+            return Path(prepared_raw).expanduser().resolve().exists()
+        except Exception:
+            return False
+
+    @staticmethod
+    def _wait_next_kb(can_reuse: bool) -> ReplyKeyboardMarkup:
+        if can_reuse:
+            return _kb([BTN_NEXT], [BTN_REUSE_INPUT])
+        return _kb([BTN_NEXT])
+
+    @staticmethod
+    def _apply_bigtest_config(st: ChatState, case: Dict[str, Any]) -> None:
+        """Overlay bigtest hook fields onto state. hook_drop_t / hook_analysis_bpm
+        are NOT touched — they are reused from whatever was set in prior runs."""
+        st.hook_enabled = bool(case.get("hook_enabled", False))
+        st.hook_category = str(case.get("hook_category", ""))
+        st.hook_device = str(case.get("hook_device", ""))
+        st.effect_hook = str(case.get("effect_hook", ""))
+        st.effect_transition = str(case.get("effect_transition", ""))
+        st.effect_extra = str(case.get("effect_extra", ""))
+        st.effect_hook_extend = str(case.get("effect_hook_extend", ""))
+
     async def _handle_wait_audio(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()
         if text == BTN_SEND_TRACK:
             await message.answer("Жду аудио-файл.")
+            return
+        if text == BTN_REUSE_INPUT:
+            if not self._can_reuse_input(st):
+                await message.answer(
+                    "Не вижу сохранённого трека. Нажми «Отправить трек» и пришли файл.",
+                    reply_markup=_kb([BTN_SEND_TRACK]),
+                )
+                return
+            st.versions_count = 1
+            await self._ask_bg_mode(message, st)
             return
 
         spec = _extract_audio_spec(message)
@@ -2888,14 +3067,117 @@ class BlastBotApp:
 
     async def _handle_wait_next(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()
+
+        if text == BTN_REUSE_INPUT:
+            if not self._can_reuse_input(st):
+                await message.answer(
+                    "Не вижу сохранённого трека. Нажми «Отправить трек» и пришли файл.",
+                    reply_markup=_kb([BTN_SEND_TRACK]),
+                )
+                return
+            if message.chat is None:
+                return
+            # Reset selection fields, preserve audio/lyrics/timing from previous run.
+            st.hook_enabled = False
+            st.hook_category = ""
+            st.hook_device = ""
+            st.hook_drop_t = None
+            st.effect_hook = ""
+            st.effect_transition = ""
+            st.effect_extra = ""
+            st.effect_hook_extend = ""
+            st.footage_genre_key = ""
+            st.footage_artist_key = ""
+            st.footage_artist_id = ""
+            st.versions_count = 1
+            st.bigtest_mode = False
+            st.bigtest_index = 0
+            st.bigtest_total = 0
+            st.bigtest_current_label = ""
+            await self._ask_bg_mode(message, st)
+            return
+
         if text != BTN_NEXT:
-            await message.answer("Если хочешь новый ролик, нажми «Сделать следующий».", reply_markup=_kb([BTN_NEXT]))
+            await message.answer(
+                "Если хочешь новый ролик, нажми «Сделать следующий».",
+                reply_markup=self._wait_next_kb(self._can_reuse_input(st)),
+            )
             return
 
         if message.chat is None:
             return
 
         await self._move_to_wait_audio(int(message.chat.id), message)
+
+    async def _bigtest_try_enqueue_from_current(self, st: ChatState, bot: Bot) -> None:
+        """Enqueue bigtest_index case. Skips (with message) any cases that
+        fail to enqueue (e.g. F4 without drop_t), then tries the next one.
+        Calls itself-as-loop until a case succeeds or all remaining are skipped."""
+        while st.bigtest_index < st.bigtest_total:
+            idx = int(st.bigtest_index)
+            case = _BIGTEST_CASES[idx]
+            label = str(case["label"])
+            st.bigtest_current_label = label
+            self._apply_bigtest_config(st, case)
+
+            new_batch_id = f"bigtest-{st.chat_id}-{idx}-{uuid.uuid4().hex[:6]}"
+            st.batch_id = new_batch_id
+            st.active_job_id = ""
+            st.active_job_ids = []
+            st.completed_job_ids = []
+            st.job_order = []
+            st.next_version_to_enqueue = 2
+            st.batch_total_versions = 1
+            st.versions_count = 1
+            st.master_job_id = ""
+            st.last_status_msg_at = 0.0
+            st.status_message_id = 0
+            st.last_status_text = ""
+            st.poll_attempts = 0
+            st.last_job_stage = ""
+            st.last_job_error = ""
+
+            try:
+                job_id = await self._enqueue_batch_version(
+                    st=st,
+                    audio_s3_url=str(st.batch_audio_s3_url or ""),
+                    version_index=1,
+                    versions_total=1,
+                    batch_id=new_batch_id,
+                    reuse_text_job_id=str(st.bigtest_master_job_id or ""),
+                )
+                st.active_job_id = job_id
+                st.active_job_ids = [job_id]
+                st.job_order = [job_id]
+                st.master_job_id = job_id
+                st.active_job_started_at = time.time()
+                st.stage = STAGE_PROCESSING
+                await bot.send_message(
+                    st.chat_id,
+                    f"🔬 [{idx + 1}/{st.bigtest_total}] {label}",
+                )
+                await self.store.set(st)
+                return  # waiting for poll loop to call us back on completion
+            except Exception as e:
+                log.warning("bigtest_skip chat=%s idx=%d label=%s err=%r", st.chat_id, idx, label, e)
+                await bot.send_message(
+                    st.chat_id,
+                    f"⏭ [{idx + 1}/{st.bigtest_total}] {label} — пропущен: {_compact_text(str(e), 120)}",
+                )
+                st.bigtest_index += 1
+
+        # All remaining cases exhausted (all skipped)
+        await bot.send_message(
+            st.chat_id,
+            f"🎬 Bigtest завершён: все оставшиеся кейсы пропущены.\nСделать следующий?",
+            reply_markup=self._wait_next_kb(self._can_reuse_input(st)),
+        )
+        st.bigtest_mode = False
+        st.bigtest_index = 0
+        st.bigtest_total = 0
+        st.bigtest_current_label = ""
+        st.stage = STAGE_WAIT_NEXT
+        await self.store.set(st)
 
     def _build_raw_audio_key(self, *, chat_id: int, file_name: str) -> str:
         safe = _safe_name(file_name)
@@ -3309,7 +3591,7 @@ class BlastBotApp:
                     await bot.send_message(
                         st.chat_id,
                         "Задачи зависли (> 2 часов без прогресса). Сброс состояния. Попробуй ещё раз.",
-                        reply_markup=_kb([BTN_NEXT]),
+                        reply_markup=self._wait_next_kb(self._can_reuse_input(st)),
                     )
                 except Exception as e:
                     log.warning("stuck_recovery_msg_failed chat=%s err=%r", st.chat_id, e)
@@ -3334,7 +3616,7 @@ class BlastBotApp:
                 st.chat_id,
                 "Генерация зависла слишком долго и была сброшена автоматически. "
                 "Попробуй отправить трек заново.",
-                reply_markup=_kb([BTN_NEXT]),
+                reply_markup=self._wait_next_kb(self._can_reuse_input(st)),
             )
         except Exception as e:
             log.warning("stuck_recovery_notify_failed chat=%s err=%r", st.chat_id, e)
@@ -3419,6 +3701,10 @@ class BlastBotApp:
         total = max(1, int(st.batch_total_versions or len(st.job_order or st.active_job_ids or []) or 1))
         ver = self._version_num_for_job(st, job_id)
         ver_label = f"Версия {ver}/{total}" if ver > 0 else f"job_id={job_id}"
+
+        # In bigtest mode, replace the generic version label with the case name.
+        if st.bigtest_mode and str(st.bigtest_current_label or "").strip():
+            ver_label = f"🔬 [{st.bigtest_index + 1}/{st.bigtest_total}] {st.bigtest_current_label}"
 
         status = str(job.get("status") or "").upper()
         stage = str(job.get("stage") or "").strip()
@@ -3745,10 +4031,53 @@ class BlastBotApp:
         else:
             summary = f"Все {total_versions} версий завершились ошибкой."
 
+        # Save input fields that _reset_processing_state would otherwise wipe.
+        # These are needed for BTN_REUSE_INPUT and /bigtest on the next run.
+        _saved_audio_s3 = str(st.batch_audio_s3_url or "")
+        _saved_clip_start = float(st.user_clip_start_sec or 0.0)
+        _saved_clip_end = float(st.user_clip_end_sec or 0.0)
+        _saved_target_fragment = str(st.target_fragment or "")
+        _saved_master_job_id = str(st.master_job_id or "")
+
+        # ── Bigtest: advance to the next case instead of returning to idle ──
+        if st.bigtest_mode:
+            next_idx = st.bigtest_index + 1
+            if next_idx < st.bigtest_total:
+                st.bigtest_index = next_idx
+                self._reset_processing_state(st)
+                st.batch_audio_s3_url = _saved_audio_s3
+                st.user_clip_start_sec = _saved_clip_start
+                st.user_clip_end_sec = _saved_clip_end
+                st.target_fragment = _saved_target_fragment
+                await self._bigtest_try_enqueue_from_current(st, bot)
+                return
+            # All cases done — show final summary.
+            await bot.send_message(
+                st.chat_id,
+                f"🎬 Bigtest завершён: {st.bigtest_total} кейсов. "
+                f"Успешно: {succeeded_count}, ошибок: {failed_count}.\n"
+                "Сделать следующий?",
+                reply_markup=self._wait_next_kb(self._can_reuse_input(st)),
+            )
+            st.bigtest_mode = False
+            st.bigtest_index = 0
+            st.bigtest_total = 0
+            st.bigtest_current_label = ""
+            self._reset_processing_state(st)
+            st.batch_audio_s3_url = _saved_audio_s3
+            st.user_clip_start_sec = _saved_clip_start
+            st.user_clip_end_sec = _saved_clip_end
+            st.target_fragment = _saved_target_fragment
+            st.master_job_id = _saved_master_job_id
+            st.versions_count = 1
+            await self.store.set(st)
+            return
+
+        # ── Normal completion ─────────────────────────────────────────────────
         await bot.send_message(
             st.chat_id,
             summary + "\nСделать следующий?",
-            reply_markup=_kb([BTN_NEXT]),
+            reply_markup=self._wait_next_kb(self._can_reuse_input(st)),
         )
 
         # Grant referral bonus to inviter if this was the user's first successful generation.
@@ -3756,11 +4085,19 @@ class BlastBotApp:
             await self._maybe_grant_referral_bonus_after_generation(st)
 
         self._reset_processing_state(st)
-        st.prepared_audio_local_path = ""
-        st.pending_audio_file_id = ""
-        st.pending_audio_filename = ""
-        st.lyrics_text = ""
-        st.target_fragment = ""
+        # Restore input fields for BTN_REUSE_INPUT:
+        #   audio S3 URL — needed by /bigtest to re-enqueue on the same file
+        #   clip timing — preserved so "same track" means same clip window
+        #   target_fragment — part of the user's original request
+        #   master_job_id — bigtest uses it as reuse_text_job_id
+        # pending_audio_file_id / prepared_audio_local_path / lyrics_text are
+        # NOT in _reset_processing_state, so they survive naturally.
+        # All of these are fully overwritten when the user starts a fresh run.
+        st.batch_audio_s3_url = _saved_audio_s3
+        st.user_clip_start_sec = _saved_clip_start
+        st.user_clip_end_sec = _saved_clip_end
+        st.target_fragment = _saved_target_fragment
+        st.master_job_id = _saved_master_job_id
         st.versions_count = 1
         await self.store.set(st)
 
