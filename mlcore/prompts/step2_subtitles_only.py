@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+PROMPT_VERSION = "v1"
+
 SYSTEM_PART = r"""
 ========================
 STAGE 2A — SUBTITLES (TOKENS ALIGNMENT)

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+PROMPT_VERSION = "v1"
+
 SCENES_REFERENCE_PROMPT_BODY = r"""
 You are a music video subtitle engine.
 You receive stage1 context with:

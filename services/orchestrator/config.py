@@ -226,5 +226,22 @@ class Settings:
     alert_subscribers_retry_sleep_s: float = _float_env("ALERT_SUBSCRIBERS_RETRY_SLEEP_S", 2.0)
     alert_subscribers_max_chat_ids: int = _int_env("ALERT_SUBSCRIBERS_MAX_CHAT_IDS", 200)
 
+    # ------------------------------------------------------------------ #
+    # LLM output cache (per-user, S3-backed, stage-level granularity)
+    # Stage 2B Footage is NEVER cached — users expect clip variety each run.
+    #
+    # S3 Lifecycle TTL: add a lifecycle rule on LLM_CACHE_S3_BUCKET to expire
+    # objects under LLM_CACHE_S3_PREFIX after 30 days (or as desired).
+    # MinIO: mc ilm rule add --expiry-days 30 <alias>/<bucket> --prefix llm_cache/
+    # AWS:   add lifecycle rule with prefix "llm_cache/" and expiry 30 days.
+    # ------------------------------------------------------------------ #
+    llm_cache_enabled: bool = _bool_env("LLM_CACHE_ENABLED", False)
+    # When true, write results to cache after successful LLM run (default: same as llm_cache_enabled).
+    llm_cache_save_enabled: bool = _bool_env("LLM_CACHE_SAVE_ENABLED", False)
+    llm_cache_s3_bucket: str = _env("LLM_CACHE_S3_BUCKET", "")
+    llm_cache_s3_prefix: str = _env("LLM_CACHE_S3_PREFIX", "llm_cache")
+    # Redis SETNX lock TTL in seconds. Should exceed worst-case LLM stage duration.
+    llm_cache_lock_ttl_s: int = _int_env("LLM_CACHE_LOCK_TTL_S", 900)
+
 
 SETTINGS = Settings()

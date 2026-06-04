@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+PROMPT_VERSION = "v1"
+
 SYSTEM_BASE_JSON = r"""
 Return STRICT JSON only. No markdown. No comments. No extra keys.
 Use absolute seconds on full-track timeline.

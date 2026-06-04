@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+PROMPT_VERSION = "v1"
+
 from pathlib import Path
 
 

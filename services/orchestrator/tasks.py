@@ -1552,6 +1552,32 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
     local_audio = paths.data_dir / "inputs" / "audio" / audio_name
     _download(audio_url, local_audio, timeout_s=600.0)
 
+    # Build LLM cache key after audio is on disk (hash requires the bytes).
+    # telegram_id comes from chat_id injected by the bot into the job request.
+    _llm_ck = None
+    _llm_cache_lock_held = False
+    try:
+        from . import llm_cache as _llm_cache_mod
+        _asr_mode = "forced_alignment" if str(lyrics_text or "").strip() else "asr"
+        _user_drop_t_for_cache: Optional[float] = None
+        if req.get("user_drop_t") is not None:
+            try:
+                _user_drop_t_for_cache = float(req["user_drop_t"])
+            except Exception:
+                pass
+        _llm_ck = _llm_cache_mod.build_cache_key(
+            telegram_id=str(req.get("chat_id") or "").strip(),
+            audio_hash=_llm_cache_mod.compute_audio_hash(local_audio),
+            clip_start_sec=user_clip_start_sec,
+            clip_end_sec=user_clip_end_sec,
+            asr_mode=_asr_mode,
+            lyrics_text=lyrics_text,
+            subtitles_mode=subtitles_mode,
+            user_drop_t=_user_drop_t_for_cache,
+        )
+    except Exception as _ck_err:
+        log.warning("llm_cache key_build_failed job=%s err=%r", job_id, _ck_err)
+
     mode = str(req.get("mode") or "with_gemini")
     build_cmd = (
         f"{SETTINGS.pipeline_cmd} "
@@ -1736,10 +1762,41 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
                     resume_state_path=llm_resume_state_path,
                     source="reuse_text_seed",
                 )
+            elif _llm_ck is not None:
+                # Try to pre-populate resume state from S3 cache so the orchestrator
+                # can skip already-computed stages. reuse_text_job_id takes priority
+                # (explicit operator override), so we only do this in the else branch.
+                try:
+                    cache_hits = _llm_cache_mod.try_populate_resume_state(
+                        _llm_ck, llm_resume_state_path
+                    )
+                    if any(cache_hits.values()):
+                        log.info(
+                            "llm_cache_populated job=%s hits=%s",
+                            job_id,
+                            {k: v for k, v in cache_hits.items() if v},
+                        )
+                        _persist_resume_state_snapshot(
+                            store=store,
+                            job_id=job_id,
+                            resume_state_path=llm_resume_state_path,
+                            source="llm_cache_seed",
+                        )
+                except Exception as _pop_err:
+                    log.warning("llm_cache populate_error job=%s err=%r", job_id, _pop_err)
+                try:
+                    _llm_cache_lock_held = _llm_cache_mod.try_acquire_lock(store.r, _llm_ck)
+                except Exception as _lock_err:
+                    log.warning("llm_cache lock_error job=%s err=%r", job_id, _lock_err)
             build_all_fn(
                 progress_cb=lambda stage: store.set_status(job_id, "RUNNING", stage=str(stage)),
                 resume_state_path=llm_resume_state_path,
             )
+            if _llm_ck is not None and _llm_cache_lock_held:
+                try:
+                    _llm_cache_mod.save_resume_state_to_cache(_llm_ck, llm_resume_state_path)
+                except Exception as _save_err:
+                    log.warning("llm_cache save_error job=%s err=%r", job_id, _save_err)
             _persist_resume_state_snapshot(
                 store=store,
                 job_id=job_id,
@@ -1819,6 +1876,12 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
                 )
             raise
         finally:
+            if _llm_cache_lock_held and _llm_ck is not None:
+                try:
+                    _llm_cache_mod.release_lock(store.r, _llm_ck)
+                except Exception as _rel_err:
+                    log.warning("llm_cache lock_release_error job=%s err=%r", job_id, _rel_err)
+                _llm_cache_lock_held = False
             for k, old in backup.items():
                 if old is None:
                     os.environ.pop(k, None)
@@ -1918,6 +1981,16 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
                             progress_cb=lambda stage: store.set_status(job_id, "RUNNING", stage=str(stage)),
                             resume_state_path=llm_resume_state_path,
                         )
+                        if _llm_ck is not None and _llm_cache_lock_held:
+                            try:
+                                _llm_cache_mod.save_resume_state_to_cache(
+                                    _llm_ck, llm_resume_state_path
+                                )
+                            except Exception as _save_err:
+                                log.warning(
+                                    "llm_cache save_error job=%s phase=preflight_retry err=%r",
+                                    job_id, _save_err,
+                                )
                         _persist_resume_state_snapshot(
                             store=store,
                             job_id=job_id,

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+PROMPT_VERSION = "v1"
+
 from core.clip_window import (
     CLIP_WINDOW_MAX_LABEL,
     CLIP_WINDOW_MIN_LABEL,
