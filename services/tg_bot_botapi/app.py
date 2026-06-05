@@ -1288,12 +1288,22 @@ class BlastBotApp:
             st.bigtest_current_label = ""
             st.bigtest_master_job_id = last_master
             bot_inst = self._require_bot()
-            reuse_note = f"reuse_text={last_master}" if last_master else "без reuse (субтитры будут генерироваться каждый раз)"
+            if last_master:
+                reuse_note = (
+                    f"Кейс 1 переиспользует resume_state job={last_master} "
+                    f"(LLM не вызывается). Кейсы 2–{total} переиспользуют кейс 1."
+                )
+            else:
+                reuse_note = (
+                    f"⚠️ Нет источника resume_state (master_job_id пуст).\n"
+                    f"Кейс 1 прогонит ASR + subtitles полностью. "
+                    f"Кейсы 2–{total} переиспользуют результат кейса 1 — LLM только 1 раз."
+                )
             await bot_inst.send_message(
                 chat_id,
                 f"🔬 Bigtest: {total} кейсов на том же треке.\n"
                 f"Результат каждого будет подписан названием кейса.\n"
-                f"({reuse_note})",
+                f"{reuse_note}",
             )
             await self._bigtest_try_enqueue_from_current(st, bot_inst)
 
@@ -4044,6 +4054,12 @@ class BlastBotApp:
             next_idx = st.bigtest_index + 1
             if next_idx < st.bigtest_total:
                 st.bigtest_index = next_idx
+                # Promote the just-completed job as the new reuse source so that
+                # every subsequent case reuses its resume_state (ASR/plan/subs/
+                # timing). This guarantees LLM is called at most once per bigtest
+                # run — even if the pre-bigtest master_job_id was stale or empty.
+                if _saved_master_job_id:
+                    st.bigtest_master_job_id = _saved_master_job_id
                 self._reset_processing_state(st)
                 st.batch_audio_s3_url = _saved_audio_s3
                 st.user_clip_start_sec = _saved_clip_start
