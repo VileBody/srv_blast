@@ -104,3 +104,28 @@ def test_team_bot_bigtest_state_fields_in_state_store() -> None:
     for field in ("bigtest_mode", "bigtest_index", "bigtest_total",
                   "bigtest_current_label", "bigtest_master_job_id"):
         assert field in src, f"Team ChatState missing bigtest field: {field}"
+
+
+# ── bigtest LLM-reuse roll-forward (fix: bigtest_master_job_id updated per case)
+
+def test_team_bot_bigtest_promotes_master_job_after_each_case_source() -> None:
+    """After each completed bigtest case, bigtest_master_job_id must be promoted
+    to the just-finished job's id so LLM stages run at most once per bigtest run."""
+    src = _team_app_source()
+    # The roll-forward assignment must exist inside the bigtest batch-completion path
+    assert "st.bigtest_master_job_id = _saved_master_job_id" in src, (
+        "Team bot must promote bigtest_master_job_id to the last completed job id "
+        "so subsequent cases reuse its resume_state instead of re-running LLM."
+    )
+
+
+def test_team_bot_bigtest_guard_distinguishes_reuse_source_source() -> None:
+    """The /bigtest startup message must distinguish between 'has master_job_id
+    (no LLM)' and 'no master_job_id (first case will run LLM)'."""
+    src = _team_app_source()
+    assert "Кейс 1 переиспользует resume_state" in src, (
+        "When master_job_id is set, /bigtest must tell the operator LLM won't run."
+    )
+    assert "Кейс 1 прогонит ASR" in src, (
+        "When master_job_id is absent, /bigtest must warn that first case runs LLM."
+    )

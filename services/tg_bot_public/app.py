@@ -135,6 +135,8 @@ HOOK_FLOW_ENABLED = (os.environ.get("HOOK_FLOW_ENABLED", "0").strip().lower()
 
 # /bigtest is a team-bot-only command. Constant is False here so the handler
 # (registered below for parity) immediately rejects the request in production.
+# Parity note: the LLM-reuse roll-forward logic (promoting bigtest_master_job_id
+# to the last completed case after every step) lives entirely in tg_bot_botapi.
 BIGTEST_ENABLED: bool = False
 
 HOOK_STAGES = frozenset({
