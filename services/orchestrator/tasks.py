@@ -91,6 +91,18 @@ _LLM_ENV_KEYS = (
     "BATCH_VARIANTS_TOTAL",
     "REUSE_TEXT_JOB_ID",
     "GEMINI_MAX_THINKING_TOKENS",
+    # hook env vars (F3/F4/F5 + drop anchor)
+    "HOOK_ENABLED",
+    "USER_DROP_T",
+    "F5_HOOK_DEVICE",
+    "F4_HOOK_DEVICE",
+    "F3_HOOK",
+    "F3_TRANSITION",
+    "F3_EXTRA",
+    "F3_HOOK_EXTEND",
+    "BG_MODE",
+    "BG_SOLID_COLOR_HEX",
+    "SUBTITLES_FORCE_FILL_HEX",
 )
 
 

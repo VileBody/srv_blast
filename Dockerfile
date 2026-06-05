@@ -9,8 +9,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 # minimal system deps (расширишь по мере надобности)
+# ffmpeg: нужен pydub в F5-хуке («Мысль»), который выполняется в build-субпроцессе
+# (worker-build/orchestrator собираются из этого Dockerfile = runtime-образ).
+# Безопасно: образ собирается в CI (build-images) и нода тянет готовый из GHCR,
+# а не строит сам. Слим-боты (Dockerfile.tg-bot, requirements.infra.txt) это не
+# затрагивает — F5 в ботах не выполняется.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
+    ffmpeg \
   && rm -rf /var/lib/apt/lists/*
 
 # deps first (кешируется лучше)
