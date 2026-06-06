@@ -358,8 +358,13 @@ def test_overlay_blueprint_propagates_ae_tiling_meta(monkeypatch) -> None:
     assert int(meta.get("overlayTileMaxRepeats", 0)) == 100
 
 
-def test_footage_blueprint_enables_shake_expression_for_jakson(monkeypatch) -> None:
-    monkeypatch.delenv("FOOTAGE_SHAKE_ENABLED", raising=False)
+def test_footage_blueprint_no_base_shake_for_jakson(monkeypatch) -> None:
+    # Base per-clip footage shake is disabled: the F3 «Эффект» overlay
+    # (transitions/layer_shake.jsx) is now the sole source of clip shake, so even
+    # for jakson/scenes_3rd the footage blueprint must NOT carry the base shake
+    # position expression (otherwise it would double with the F3 layer_shake).
+    # Forcing FOOTAGE_SHAKE_ENABLED=1 proves the binding is gone regardless of env.
+    monkeypatch.setenv("FOOTAGE_SHAKE_ENABLED", "1")
     cfg = {
         "text_dur_hint": 5.0,
         "layers": [
@@ -387,8 +392,8 @@ def test_footage_blueprint_enables_shake_expression_for_jakson(monkeypatch) -> N
     footage = next(it for it in layers if str(it.get("name")) == "bg")
     tf_position = (footage.get("props") or {}).get("tf_position") or {}
     expr = str(tf_position.get("expression") or "")
-    assert "intro=0.63" in expr
-    assert "outro=0.63" in expr
+    assert "intro=0.63" not in expr
+    assert "outro=0.63" not in expr
 
 
 def test_overlay_blueprint_does_not_use_footage_shake_expression(monkeypatch) -> None:

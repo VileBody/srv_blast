@@ -1055,8 +1055,11 @@ def build_footage_layers(
     n = len(footage_items)
     for i, it in enumerate(footage_items):
         z = base_z_foot + (n - 1 - i)
-        # Layer shake only for jakson template (scenes_3rd / scenes_3rd_single_step)
-        shake_for_layer = subtitles_mode in ("scenes_3rd", "scenes_3rd_single_step")
+        # Base per-clip footage shake disabled: the F3 «Эффект» overlay
+        # (transitions/layer_shake.jsx) is now the sole source of clip shake, so
+        # selecting it in the bot no longer doubles with an always-on base shake.
+        # (Previously enabled for scenes_3rd / scenes_3rd_single_step.)
+        shake_for_layer = False
         out.append(
             _footage_bp(
                 it=it,

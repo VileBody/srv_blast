@@ -36,9 +36,13 @@ def test_template_uses_strict_audio_file_match_no_auto_fallback() -> None:
     assert "audio fallback by single media/audio file" not in tpl
 
 
-def test_template_contains_flash_on_cuts_hook() -> None:
+def test_template_flash_on_cuts_defined_but_not_auto_invoked() -> None:
+    # Base auto flash-on-cuts is disabled: the F3 «Эффект» overlay
+    # (transitions/flash_on_cuts.jsx) is now the sole source of cut flashes to
+    # avoid doubling when the user picks it. The function stays defined for easy
+    # revert, but it must NOT be auto-invoked from the build flow.
     tpl = Path("templates/project_template.j2").read_text(encoding="utf-8")
     assert '=== "template_4th" || m === "impulse_2nd"' in tpl
     assert "function addFlashOnCuts()" in tpl
     assert "BlendingMode.ADD" in tpl
-    assert "addFlashOnCuts();" in tpl
+    assert "addFlashOnCuts();" not in tpl

@@ -1498,8 +1498,10 @@
       createLayerFromBlueprint(text_layers[i]);
     }
 
-    // flash on cuts for impulse + tape templates
-    addFlashOnCuts();
+    // Base auto flash-on-cuts disabled: the F3 «Эффект» overlay
+    // (transitions/flash_on_cuts.jsx) is now the sole source of cut flashes, so
+    // picking it in the bot no longer doubles with an always-on base flash.
+    // addFlashOnCuts() is kept defined above for easy revert but not auto-invoked.
 
     // ==========================================================
     // 5.5) F4 «Движение» motion-hook overlay (injected by build worker)
