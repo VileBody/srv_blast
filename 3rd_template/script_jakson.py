@@ -143,6 +143,34 @@ def text_base_dict(font=None, fill_color=None, italic=False,
     }
 
 
+def s_drop_shadow() -> Dict:
+    """Sapphire S_DropShadow — мягкая тень субтитра.
+
+    Индексы свойств сняты дампом реального текстового слоя; значения — по
+    согласованному скрину. Применяется только к текстовым слоям.
+    """
+    return {
+        "0050": prop("S_DropShadow-0050", [0, 0, 0, 1]),  # Shadow Color (чёрный)
+        "0051": prop("S_DropShadow-0051", 2.0),           # Shadow Opacity
+        "0052": prop("S_DropShadow-0052", 60),            # Shadow Blur
+        "0053": prop("S_DropShadow-0053", 0),             # Shift X
+        "0054": prop("S_DropShadow-0054", 0),             # Shift Y
+        "0055": prop("S_DropShadow-0055", 1.0),           # Fg Opacity
+        "0056": prop("S_DropShadow-0056", 1),             # Comp Premult
+        "0057": prop("S_DropShadow-0057", 2),             # Matte Use = Alpha
+        "0058": prop("S_DropShadow-0058", 0),             # Invert Matte
+        "0059": prop("S_DropShadow-0059", 1),             # Expand Borders
+        "0200": prop("S_DropShadow-0200", 1),             # Show Shift
+    }
+
+
+def _with_subtitle_shadow(effects: Dict) -> Dict:
+    """Подмешивает S_DropShadow в effects текстового слоя (идемпотентно)."""
+    eff = dict(effects or {})
+    eff.setdefault("S_DropShadow", s_drop_shadow())
+    return eff
+
+
 def turbulent_displace() -> Dict:
     return {
         "0001": prop("ADBE Turbulent Displace-0001", 1),
@@ -608,10 +636,10 @@ class LayerFactory:
             "adjustment_layer": False,
             "source_rect":      {},
             "props":            p,
-            "effects":          effects_extra or {
+            "effects":          _with_subtitle_shadow(effects_extra or {
                 "ADBE Turbulent Displace": turbulent_displace(),
                 "ADBE Posterize Time":    posterize_time(),
-            },
+            }),
             "style_instructions": [],
             "text_data":        td,
         }
