@@ -54,6 +54,46 @@ def _kf(t: float, value: Any, interpolation: str = "bezier") -> Dict[str, Any]:
     }
 
 
+def _subtitle_drop_shadow() -> Dict[str, Any]:
+    """Sapphire S_DropShadow на субтитрах (мягкая тень).
+
+    Индексы свойств сняты дампом реального текстового слоя AE; значения —
+    по согласованному скрину. Ключ эффекта "S_DropShadow" → addProperty,
+    параметры применяются по match_name (ключ словаря — просто метка).
+    """
+    return {
+        "0050": _prop("S_DropShadow-0050", [0, 0, 0, 1]),  # Shadow Color (чёрный)
+        "0051": _prop("S_DropShadow-0051", 2.0),           # Shadow Opacity
+        "0052": _prop("S_DropShadow-0052", 60),            # Shadow Blur
+        "0053": _prop("S_DropShadow-0053", 0),             # Shift X
+        "0054": _prop("S_DropShadow-0054", 0),             # Shift Y
+        "0055": _prop("S_DropShadow-0055", 1.0),           # Fg Opacity
+        "0056": _prop("S_DropShadow-0056", 1),             # Comp Premult
+        "0057": _prop("S_DropShadow-0057", 2),             # Matte Use = Alpha
+        "0058": _prop("S_DropShadow-0058", 0),             # Invert Matte
+        "0059": _prop("S_DropShadow-0059", 1),             # Expand Borders
+        "0200": _prop("S_DropShadow-0200", 1),             # Show Shift
+    }
+
+
+def _inject_subtitle_shadow(layers: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Добавляет S_DropShadow в effects каждого ТЕКСТОВОГО слоя (субтитра).
+
+    Adjustment-слои и прочие типы не трогаются. Идемпотентно: если тень уже
+    есть — не дублирует.
+    """
+    for layer in layers:
+        if layer.get("type") != "text":
+            continue
+        eff = layer.get("effects")
+        if not isinstance(eff, dict):
+            eff = {}
+            layer["effects"] = eff
+        if "S_DropShadow" not in eff:
+            eff["S_DropShadow"] = _subtitle_drop_shadow()
+    return layers
+
+
 @dataclass(frozen=True)
 class KeyframePoint:
     at: float
@@ -1274,10 +1314,10 @@ class FlowTextLayerRenderer:
         mine_comp_name: str,
     ) -> List[Dict[str, Any]]:
         if self.mode == SUBTITLES_MODE_IMPULSE_2ND:
-            return self._render_impulse_layers(
+            return _inject_subtitle_shadow(self._render_impulse_layers(
                 flow_plan=flow_plan,
                 text_comp_name=text_comp_name,
-            )
+            ))
 
         layers: List[Dict[str, Any]] = []
         z = 1000
@@ -1346,7 +1386,7 @@ class FlowTextLayerRenderer:
             )
             layers.append(layer)
             z -= 1
-        return layers
+        return _inject_subtitle_shadow(layers)
 
 
 class TextFlowRendererFactory:

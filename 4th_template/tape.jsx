@@ -305,6 +305,25 @@ function createSubtitle(comp, sub, wordList) {
     glo2.property("ADBE Glo2-0003").setValue(25);
     glo2.property("ADBE Glo2-0004").setValue(0.52);
     glo2.enabled = false;
+
+    // ---- Sapphire S_DropShadow (мягкая тень субтитра) ----
+    // matchName/индексы свойств сняты дампом реального текст-слоя.
+    // try/catch: если Sapphire не установлен, сборка слоя не падает.
+    try {
+        var sds = fx.addProperty("S_DropShadow");
+        sds.name = "Тень (Sapphire)";
+        sds.property("S_DropShadow-0050").setValue([0, 0, 0, 1]); // Shadow Color
+        sds.property("S_DropShadow-0051").setValue(2.0);          // Shadow Opacity
+        sds.property("S_DropShadow-0052").setValue(60);           // Shadow Blur
+        sds.property("S_DropShadow-0053").setValue(0);            // Shift X
+        sds.property("S_DropShadow-0054").setValue(0);            // Shift Y
+        sds.property("S_DropShadow-0055").setValue(1.0);          // Fg Opacity
+        sds.property("S_DropShadow-0056").setValue(1);            // Comp Premult
+        sds.property("S_DropShadow-0057").setValue(2);            // Matte Use = Alpha
+        sds.property("S_DropShadow-0058").setValue(0);            // Invert Matte
+        sds.property("S_DropShadow-0059").setValue(1);            // Expand Borders
+        sds.property("S_DropShadow-0200").setValue(1);            // Show Shift
+    } catch (eSDS) {}
 }
 
 // ============================================================

@@ -98,6 +98,20 @@ def _effects() -> Dict[str, Any]:
             "0005": _prop("ADBE Drop Shadow-0005", 15),
             "0006": _prop("ADBE Drop Shadow-0006", 0),
         },
+        # Sapphire S_DropShadow — мягкая тень субтитра (индексы сняты дампом текст-слоя).
+        "S_DropShadow": {
+            "0050": _prop("S_DropShadow-0050", [0, 0, 0, 1]),  # Shadow Color (чёрный)
+            "0051": _prop("S_DropShadow-0051", 2.0),           # Shadow Opacity
+            "0052": _prop("S_DropShadow-0052", 60),            # Shadow Blur
+            "0053": _prop("S_DropShadow-0053", 0),             # Shift X
+            "0054": _prop("S_DropShadow-0054", 0),             # Shift Y
+            "0055": _prop("S_DropShadow-0055", 1.0),           # Fg Opacity
+            "0056": _prop("S_DropShadow-0056", 1),             # Comp Premult
+            "0057": _prop("S_DropShadow-0057", 2),             # Matte Use = Alpha
+            "0058": _prop("S_DropShadow-0058", 0),             # Invert Matte
+            "0059": _prop("S_DropShadow-0059", 1),             # Expand Borders
+            "0200": _prop("S_DropShadow-0200", 1),             # Show Shift
+        },
     }
 
 
