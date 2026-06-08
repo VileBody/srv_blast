@@ -138,6 +138,9 @@ HOOK_FLOW_ENABLED = (os.environ.get("HOOK_FLOW_ENABLED", "0").strip().lower()
 # (registered below for parity) immediately rejects the request in production.
 # Parity note: the LLM-reuse roll-forward logic (promoting bigtest_master_job_id
 # to the last completed case after every step) lives entirely in tg_bot_botapi.
+# Parity note 2: reuse_stage2_footage, stage2_selection_seed_override and
+# bigtest_footage_seed fields exist in state_store/schemas for schema parity;
+# they are never set to non-default values here (BIGTEST_ENABLED=False).
 BIGTEST_ENABLED: bool = False
 
 HOOK_STAGES = frozenset({

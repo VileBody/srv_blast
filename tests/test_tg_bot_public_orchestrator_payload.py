@@ -67,6 +67,52 @@ def test_public_orchestrator_payload_forwards_hook_device(monkeypatch) -> None:
     assert fake.payload.get("hook_device") == "punchline"
 
 
+def test_public_orchestrator_payload_defaults_bigtest_footage_fields(monkeypatch) -> None:
+    """Schema parity: the bigtest footage-reuse fields exist in the public
+    payload and default to off (public bot never enables /bigtest)."""
+    fake = _FakeAsyncClient()
+    monkeypatch.setattr(public_client.httpx, "AsyncClient", lambda **_: fake)
+
+    client = public_client.OrchestratorClient(base_url="http://orchestrator")
+
+    asyncio.run(
+        client.send_audio_s3(
+            audio_s3_url="s3://bucket/audio.mp3",
+            mode="with_gemini",
+            lyrics_text="hello",
+            target_fragment="hello",
+        )
+    )
+
+    assert fake.payload is not None
+    assert fake.payload.get("reuse_stage2_footage") is False
+    assert fake.payload.get("stage2_selection_seed_override") is None
+
+
+def test_public_orchestrator_payload_forwards_bigtest_footage_fields(monkeypatch) -> None:
+    """When set, the bigtest footage-reuse fields must reach the payload
+    (mechanical mirror of tg_bot_botapi; values are coerced like the team bot)."""
+    fake = _FakeAsyncClient()
+    monkeypatch.setattr(public_client.httpx, "AsyncClient", lambda **_: fake)
+
+    client = public_client.OrchestratorClient(base_url="http://orchestrator")
+
+    asyncio.run(
+        client.send_audio_s3(
+            audio_s3_url="s3://bucket/audio.mp3",
+            mode="with_gemini",
+            lyrics_text="hello",
+            target_fragment="hello",
+            reuse_stage2_footage=True,
+            stage2_selection_seed_override="  bigtest-1-2-abc:v1  ",
+        )
+    )
+
+    assert fake.payload is not None
+    assert fake.payload.get("reuse_stage2_footage") is True
+    assert fake.payload.get("stage2_selection_seed_override") == "bigtest-1-2-abc:v1"
+
+
 def test_public_chat_state_has_hook_category_and_device_defaults() -> None:
     """Mirror parity: public ChatState carries the new hook fields."""
     from services.tg_bot_public.state_store import ChatState

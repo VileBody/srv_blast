@@ -232,6 +232,7 @@ class ChatState(BaseModel):
     bigtest_total: int = 0
     bigtest_current_label: str = ""
     bigtest_master_job_id: str = ""
+    bigtest_footage_seed: str = ""  # parity with tg_bot_botapi; unused here (BIGTEST_ENABLED=False)
 
 
 class RedisChatStateStore:

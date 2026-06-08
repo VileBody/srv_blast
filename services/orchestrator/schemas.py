@@ -105,6 +105,12 @@ class SendAudioS3Request(BaseModel):
     ] = None
     # Optional internal batch controls for multi-version generation.
     reuse_text_job_id: Optional[str] = None
+    # When True (bigtest only): seed stage2_style + stage2_style_rotation from
+    # reuse_text_job_id so the footage genre/style is identical across all cases.
+    reuse_stage2_footage: bool = False
+    # When set (bigtest only): override STAGE2_SELECTION_SEED so the footage
+    # picker uses the same random seed as the source job → identical clips.
+    stage2_selection_seed_override: Optional[str] = None
     exclude_file_names: List[str] = Field(default_factory=list)
     variant_index: Optional[int] = None
     variants_total: Optional[int] = None
