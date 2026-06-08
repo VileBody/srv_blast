@@ -142,10 +142,13 @@ def _apply_f5_if_present(
     f5_resp = F5Response.from_config_block(f5_block)
     focal_start_ms = int(f5_block.get("focal_start_ms", 0))
     audio_url = f5_block.get("audio_url")
+    drop_rel_raw = f5_block.get("drop_rel_sec")
+    drop_rel_sec = float(drop_rel_raw) if drop_rel_raw is not None else None
 
     LOGGER.info(
-        "f5 hook present device=%s focal_ms=%d audio_url=%s tts=%r",
-        f5_resp.chosen_device.value, focal_start_ms, bool(audio_url), f5_resp.tts_text,
+        "f5 hook present device=%s focal_ms=%d audio_url=%s drop_rel=%s tts=%r",
+        f5_resp.chosen_device.value, focal_start_ms, bool(audio_url),
+        drop_rel_sec, f5_resp.tts_text,
     )
 
     return apply_f5(
@@ -155,6 +158,7 @@ def _apply_f5_if_present(
         focal_start_ms=focal_start_ms,
         tts_remote_url=audio_url,
         target_comp_name=main_comp_name,
+        drop_rel_sec=drop_rel_sec,
     )
 
 

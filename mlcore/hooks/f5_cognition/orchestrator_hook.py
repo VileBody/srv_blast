@@ -287,8 +287,15 @@ def build_f5_block_if_requested(
         )
 
     block = resp.to_config_block(focal_start_ms=inject_focal_ms, audio_url=audio_url)
+    # Comp-relative drop seconds for track ducking (трек приглушается под голос и
+    # возвращается к дропу). drop_at_sec уже comp-relative (= USER_DROP_T −
+    # clip_start). None → ducking не применяется.
+    if drop_at_sec is not None and float(drop_at_sec) > 0.0:
+        block["drop_rel_sec"] = float(drop_at_sec)
     logger.info(
-        "f5.hook block ready device=%s tts_text=%r audio_dur_ms=%d inject_focal_ms=%d url=%s",
-        device.value, resp.tts_text, resp.audio_duration_ms, inject_focal_ms, audio_url or "<local>",
+        "f5.hook block ready device=%s tts_text=%r audio_dur_ms=%d inject_focal_ms=%d drop_rel=%s url=%s",
+        device.value, resp.tts_text, resp.audio_duration_ms, inject_focal_ms,
+        ("%.3f" % drop_at_sec) if drop_at_sec is not None else "<none>",
+        audio_url or "<local>",
     )
     return block

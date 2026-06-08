@@ -43,16 +43,19 @@ F5_TTS_OFFSET_MS = 0
 DEFAULT_AUDIO_COMP = "Comp 1"
 DEFAULT_TEXT_COMP = "Текст"
 
-# Envelope для TTS. Помимо коротких фейдов — плавный подъём громкости голоса
-# 25%→100% к концу окна (= к дропу): голос не тонет в вокале трека на старте и
-# выходит на полную к моменту хука. (Эксперимент — подбираем на слух.)
+# Envelope для TTS-голоса — короткие фейды, играет на полной громкости.
+# (Чтобы голос не тонул в вокале трека, приглушается САМ ТРЕК — см.
+# inject_track_duck / F5_TRACK_DUCK_* ниже.)
 F5_AUDIO_ENVELOPE = {
     "fade_in_s": 0.05,
     "fade_out_s": 0.10,
     "min_db": -48.0,
-    "ramp_start_pct": 25.0,
-    "ramp_end_pct": 100.0,
 }
+
+# Ducking трека под F5-голос: трек приглушается до F5_TRACK_DUCK_FROM_PCT в
+# момент старта голоса и плавно возвращается к F5_TRACK_DUCK_TO_PCT к дропу.
+F5_TRACK_DUCK_FROM_PCT = 25.0
+F5_TRACK_DUCK_TO_PCT = 100.0
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -337,25 +340,64 @@ def inject_subtitle_layer(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Track ducking — пока no-op (согласовано в чате 2026-05-28)
+# Track ducking — приглушаем ТРЕК под голос, возвращаем громкость к дропу
 # ─────────────────────────────────────────────────────────────────────────────
+
+def _is_track_audio_layer(layer: dict[str, Any]) -> bool:
+    """True для основного трек-аудио слоя (audioEnabled, не наш F5/F1 хук)."""
+    if not isinstance(layer, dict) or layer.get("type") != "footage":
+        return False
+    name = str(layer.get("name") or "")
+    if name.startswith("f5_hook") or name.startswith("f1_hook"):
+        return False
+    meta = ((layer.get("text_data") or {}).get("layer_meta") or {})
+    return bool(meta.get("audioEnabled"))
+
 
 def inject_track_duck(
     footage_layers: list[dict[str, Any]],
     *,
-    focal_start_ms: int,
-    duck_window_ms: int,
-    duck_db: float = -3.0,
+    duck_from_sec: float,
+    duck_to_sec: float,
+    from_pct: float = F5_TRACK_DUCK_FROM_PCT,
+    to_pct: float = F5_TRACK_DUCK_TO_PCT,
 ) -> list[dict[str, Any]]:
     """
-    Сейчас no-op. Если на ручной прослушке голос будет тонуть — реализуем
-    через audio_envelope или volume keyframes на трек-аудио слое.
+    Приглушает основной ТРЕК под F5-голос: на duck_from_sec громкость падает до
+    from_pct%, затем линейно растёт до to_pct% к duck_to_sec (= дропу), дальше
+    100%. Реализуется через duck_* поля в audio_envelope трек-слоя (выражение на
+    ADBE Audio Levels в шаблоне). Pure (исходный список не мутируется).
     """
-    logger.debug(
-        "f5.inject track_duck disabled (no-op), focal_start_ms=%d window=%d duck_db=%.1f",
-        focal_start_ms, duck_window_ms, duck_db,
-    )
-    return footage_layers
+    if not (duck_to_sec > duck_from_sec):
+        logger.info(
+            "f5.duck skipped: non-positive window [%.3f..%.3f]",
+            duck_from_sec, duck_to_sec,
+        )
+        return footage_layers
+
+    out: list[dict[str, Any]] = []
+    ducked = 0
+    for layer in footage_layers:
+        if _is_track_audio_layer(layer):
+            L = copy.deepcopy(layer)
+            td = L.setdefault("text_data", {})
+            env = dict(td.get("audio_envelope") or {})
+            env["duck_from_s"] = float(duck_from_sec)
+            env["duck_to_s"] = float(duck_to_sec)
+            env["duck_from_pct"] = float(from_pct)
+            env["duck_to_pct"] = float(to_pct)
+            td["audio_envelope"] = env
+            out.append(L)
+            ducked += 1
+            logger.info(
+                "f5.duck track=%s window=[%.3f..%.3f] %.0f%%->%.0f%%",
+                L.get("name"), duck_from_sec, duck_to_sec, from_pct, to_pct,
+            )
+        else:
+            out.append(layer)
+    if ducked == 0:
+        logger.info("f5.duck: no track audio layer found — track left at full volume")
+    return out
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -371,14 +413,27 @@ def apply_f5(
     tts_remote_url: str | None = None,
     tts_local_path: str | None = None,
     target_comp_name: str = DEFAULT_AUDIO_COMP,
+    drop_rel_sec: float | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """
     Главная точка входа для project_builder.
 
     f5 is None → возвращает входные списки без изменений (job без F5-хука).
+    drop_rel_sec (comp-relative секунды дропа) → если задан и > старта голоса,
+    приглушаем трек под голос с возвратом громкости к дропу.
     """
     if f5 is None:
         return footage_layers, text_layers
+
+    # Duck the TRACK under the voice FIRST (before adding the voice layer, so the
+    # duck only touches the real track audio, never our own f5 voice layer).
+    voice_in_sec = focal_start_ms / 1000.0
+    if drop_rel_sec is not None and float(drop_rel_sec) > voice_in_sec:
+        footage_layers = inject_track_duck(
+            footage_layers,
+            duck_from_sec=voice_in_sec,
+            duck_to_sec=float(drop_rel_sec),
+        )
 
     new_footage = inject_audio_layer(
         footage_layers, f5,

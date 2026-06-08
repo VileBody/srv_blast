@@ -1151,12 +1151,16 @@
       if (!isFinite(fadeOut) || fadeOut < 0) fadeOut = 0;
       if (!isFinite(minDb)) minDb = -48;
 
-      // Optional linear gain ramp in PERCENT across the layer window (e.g. F5
-      // voice 25%->100% toward the drop so it cuts through the track vocal).
-      // Absent => no ramp (db base stays 0). Combined with the fades via min().
-      var rampStart = Number(cfg.ramp_start_pct);
-      var rampEnd = Number(cfg.ramp_end_pct);
-      var rampOn = (isFinite(rampStart) && isFinite(rampEnd));
+      // Optional windowed duck in ABSOLUTE comp time (e.g. duck the TRACK under
+      // the F5 voice: at duck_from_s drop to duck_from_pct%, ramp back to
+      // duck_to_pct% by duck_to_s = the drop; outside the window = 100%).
+      // Absent => no duck. Combined with the fades via min().
+      var duckFrom = Number(cfg.duck_from_s);
+      var duckTo = Number(cfg.duck_to_s);
+      var duckFromPct = Number(cfg.duck_from_pct);
+      var duckToPct = Number(cfg.duck_to_pct);
+      var duckOn = (isFinite(duckFrom) && isFinite(duckTo) && isFinite(duckFromPct)
+                    && isFinite(duckToPct) && duckTo > duckFrom);
 
       try {
         var ag = layer.property("ADBE Audio Group");
@@ -1167,13 +1171,15 @@
           + "var fadeIn=" + String(fadeIn) + ";\n"
           + "var fadeOut=" + String(fadeOut) + ";\n"
           + "var minDb=" + String(minDb) + ";\n"
-          + "var rampOn=" + (rampOn ? "true" : "false") + ";\n"
-          + "var rampStart=" + String(rampOn ? rampStart : 100) + ";\n"
-          + "var rampEnd=" + String(rampOn ? rampEnd : 100) + ";\n"
+          + "var duckOn=" + (duckOn ? "true" : "false") + ";\n"
+          + "var duckFrom=" + String(duckOn ? duckFrom : 0) + ";\n"
+          + "var duckTo=" + String(duckOn ? duckTo : 0) + ";\n"
+          + "var duckFromPct=" + String(duckOn ? duckFromPct : 100) + ";\n"
+          + "var duckToPct=" + String(duckOn ? duckToPct : 100) + ";\n"
           + "var t=time-inPoint;\n"
           + "var dur=Math.max(0.0001,outPoint-inPoint);\n"
           + "var db=0;\n"
-          + "if (rampOn){var p=Math.min(Math.max(t/dur,0),1);var pct=(rampStart+(rampEnd-rampStart)*p)/100;db=(pct>0.00001)?(20*Math.log(pct)/Math.LN10):minDb;}\n"
+          + "if (duckOn && time>=duckFrom && time<=duckTo){var p=(time-duckFrom)/Math.max(0.0001,(duckTo-duckFrom));var pct=(duckFromPct+(duckToPct-duckFromPct)*p)/100;db=(pct>0.00001)?(20*Math.log(pct)/Math.LN10):minDb;}\n"
           + "if (fadeIn>0){var x=Math.min(Math.max(t/fadeIn,0),1);var a=Math.sin(x*Math.PI*0.5);db=Math.min(db,(a>0.00001)?(20*Math.log(a)/Math.LN10):minDb);}\n"
           + "if (fadeOut>0){var y=Math.min(Math.max((dur-t)/fadeOut,0),1);var b=Math.sin(y*Math.PI*0.5);db=Math.min(db,(b>0.00001)?(20*Math.log(b)/Math.LN10):minDb);}\n"
           + "[db,db];";
