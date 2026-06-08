@@ -4153,12 +4153,37 @@ def build_all_via_gemini_one_call(
                 "extra": _f3_extra or None,
                 "hook_extend": (os.environ.get("F3_HOOK_EXTEND") or "").strip().lower() or None,
                 "drop_time": _drop_rel,
-                # asset relpaths (sound/logo) заполняются стадией S3-каталога; пусто => без звука/лого
+                # filled by asset_picker below; empty => visual only (silent slots)
                 "assets": {},
+                # download list для рендер-ноды; project_builder перепишет в payload.f3_media
+                "_media": [],
             }
+            # S3-резолв звуков/лого по манифесту (FX_ASSETS_S3_BUCKET). Падение
+            # не валит рендер — fx будет без звука/лого, визуал работает.
+            try:
+                from mlcore.hooks.f3_effect.asset_picker import resolve_assets as _f3_resolve_assets
+                _seed = (
+                    os.environ.get("STAGE2_SELECTION_SEED")
+                    or os.environ.get("JOB_ID")
+                    or out_dir.name
+                )
+                _resolved = _f3_resolve_assets(
+                    hook=_f3_hook or None,
+                    transition=_f3_trans or None,
+                    extra=_f3_extra or None,
+                    seed=str(_seed),
+                )
+                f3_block["assets"] = dict(_resolved.get("assets") or {})
+                f3_block["_media"] = list(_resolved.get("media") or [])
+            except Exception:
+                logger.exception(
+                    "f3.assets resolve failed — render without sound/logo (job=%s)",
+                    os.environ.get("JOB_ID") or out_dir.name,
+                )
             logger.info(
-                "f3.fx block hook=%s trans=%s extra=%s drop_rel=%.3f",
+                "f3.fx block hook=%s trans=%s extra=%s drop_rel=%.3f slots=%d media=%d",
                 _f3_hook or "-", _f3_trans or "-", _f3_extra or "-", _drop_rel,
+                len(f3_block.get("assets") or {}), len(f3_block.get("_media") or []),
             )
         except Exception:
             logger.exception(

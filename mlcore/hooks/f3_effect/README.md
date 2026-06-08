@@ -41,9 +41,44 @@ afterfx.exe -r run_job.jsx          # проект уже открыт; job.json
 - **Склейки:** звук перехода/грейда (его `sound.pool`) вешается на склейки **строго до дропа**, после дропа — тишина. Один звук на склейку, переход+грейд дедупятся (`attachCutSounds` в run_job).
 - Лого `stamp_flash` вспыхивает ровно на дропе.
 
-## ⚠️ TODO интеграции
-- **Asset root:** пути `Звуки/*` и лого в `manifest.json` относительные; `run_job.jsx` резолвит их от env **`BLAST_ASSET_ROOT`** (без env — падает на `BASE_ROOT = mlcore/hooks`, где ассетов нет). На рендер-ноде **обязательно задать `BLAST_ASSET_ROOT`** на папку с `Звуки/` и `Хуки/Лого и шейпы/`.
-- **Плагины на ноде:** Sapphire (`S_*`) + VISINF Grain.
+## S3-каталог ассетов
+Звук и лого живут в S3 (одна корзина, тот же `S3_BUCKET_ASSET_STORAGE`, что и для футажа), под отдельным префиксом. Доставка идёт через стандартный `media[]` рядом с футажом — никаких локальных папок и `BLAST_ASSET_ROOT` на ноде не нужно.
+
+```
+s3://${FX_ASSETS_S3_BUCKET}/${FX_ASSETS_S3_PREFIX}/
+├── sounds/
+│   ├── camera_flash/     ← пул для shutter / slow shutter
+│   ├── glitch/           ← пул для переходов invert/extract + грейдов на склейках
+│   ├── light_sound/
+│   │   └── myinstants.mp3  ← КОНКРЕТНЫЙ файл (impact_at=0.5) для hook_light
+│   ├── subdrop/          ← резерв (пайплайн не использует)
+│   ├── signature/        ← резерв
+│   └── car/              ← резерв
+└── logo/
+    └── group_1245.png    ← брендовый штамп (stamp_flash на дропе)
+```
+
+**Env (на orchestrator-api, worker-build, worker-render):**
+```
+FX_ASSETS_S3_BUCKET=${S3_BUCKET_ASSET_STORAGE}
+FX_ASSETS_S3_PREFIX=fx_assets/
+```
+**Без env** — F3 fx работает как чисто визуальный (звук/лого слоты пропускаются, ничего не падает).
+
+**Пути в manifest.json** — это S3-keys *относительно* `FX_ASSETS_S3_PREFIX` (`sounds/camera_flash`, `sounds/light_sound/myinstants.mp3`, `logo/group_1245.png`).
+
+**Поток ассетов end-to-end:**
+1. бот → request `effect_*` → env `F3_*` (tasks.py)
+2. orchestrator: собирает `f3_block`; `asset_picker.resolve_assets(seed=JOB_ID)` пикает файл из пула / резолвит singleton → кладёт `assets` (relpath) + `_media` (S3-URL+relpath) в `f3_block`
+3. project_builder: `_extract_f3_media(full_edit_config)` → `payload["f3_media"]`
+4. tasks.py: `collect_media_urls_from_render_payload` подцепляет `f3_media` в Windows-payload `media[]`
+5. нода: качает в `__APP_DIR/media/audio/*` и `media/img/*`
+6. `overlay.py` резолвит `__APP_DIR + "/" + relpath` → AE звучит
+
+Пикер — детерминированный (`random.Random(seed)`): один и тот же job + variant → один и тот же SFX. `seed` = `STAGE2_SELECTION_SEED` (или `JOB_ID`).
+
+## ⚠️ Прочие требования
+- **Плагины на ноде:** Sapphire (`S_*`) + VISINF Grain (если нет — соответствующие эффекты молча пустые).
 - **`.aep`-зависимости** только у `pixel_grain` и `warm_map` (Colorama/Grain-пресет через copyToComp — `.aep` лежат рядом в `extra/`).
 - **dropTime-конвертация** в `tasks.py` (см. выше) — обязательна, иначе хук уедет.
 - `user_sound` — отдельный формат, в этом пайплайне НЕ трогается.

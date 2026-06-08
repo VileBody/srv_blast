@@ -127,6 +127,22 @@ def collect_media_urls_from_render_payload(
         seen.add(rel)
         out.append({"url": url, "relpath": rel})
 
+    # F3 «Эффект» sound/logo assets: resolved by build-worker asset_picker into
+    # full_edit_config["f3"]._media, copied into payload["f3_media"] by
+    # project_builder._extract_f3_media. The render node downloads them into
+    # __APP_DIR/media/... where overlay.py expects them.
+    for it in d.get("f3_media") or []:
+        if not isinstance(it, dict):
+            continue
+        url = str(it.get("url") or "").strip()
+        rel = str(it.get("relpath") or "").strip().strip("/")
+        if not url or not rel or not _is_remote(url):
+            continue
+        if rel in seen:
+            continue
+        seen.add(rel)
+        out.append({"url": url, "relpath": rel})
+
     return out
 
 

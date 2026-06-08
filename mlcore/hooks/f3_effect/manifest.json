@@ -22,9 +22,9 @@
   },
 
   "branding": {
-    "logo_default": "Хуки/Лого и шейпы/Лого Бласта/Group 1245.png",
-    "logo_pool_dir": "Хуки/Лого и шейпы/Лого Бласта",
-    "logo_pool_note": "Кидай альтернативные лого в эту папку — пайплайн берёт из пула для разнообразия.",
+    "logo_default": "logo/group_1245.png",
+    "logo_pool_dir": "logo",
+    "logo_pool_note": "S3-prefix внутри FX_ASSETS_S3_PREFIX. Кидай альтернативные лого в logo/ — picker возьмёт детерминированный (seed = JOB_ID).",
     "script": "branding/brand_logo.jsx",
     "styles": {
       "stamp_flash": { "scale": 23, "effects": ["Minimax(Radius 326->0->300)", "Brightness +150"], "opacity": "100->0", "sync": "on_drop", "desc": "Лого вспыхивает-штампуется на дропе (паттерн из shutter)." },
@@ -37,13 +37,14 @@
   },
 
   "sounds": {
-    "root": "Звуки",
+    "root": "sounds",
+    "_paths_note": "Все pool и file пути — S3-keys относительно FX_ASSETS_S3_PREFIX (см. .env). Подъезжают на ноду через media[] (asset_picker → render_payload.f3_media → collect_media_urls).",
     "pools": {
-      "camera_flash":   "Звуки/Camera Flash",
-      "glitch":         "Звуки/Glitch Transform",
-      "subdrop":        "Звуки/Subdrop Impact",
-      "signature":      "Звуки/Signature Sounds",
-      "car":            "Звуки/Car"
+      "camera_flash":   "sounds/camera_flash",
+      "glitch":         "sounds/glitch",
+      "subdrop":        "sounds/subdrop",
+      "signature":      "sounds/signature",
+      "car":            "sounds/car"
     },
     "pick": "random",
     "limits": { "max_duration_sec": 3, "fade_out_sec": 0.1 },
@@ -58,7 +59,7 @@
     { "id": "hook_light", "label": "Hook Light", "group": "hook", "apply_mode": "adjustment",
       "script": "hooks/rebuild_light.jsx", "needs_aep": false, "needs_plugin": ["Sapphire"],
       "branding": false, "branding_note": "Сам по себе сигнатурный (молнии/свет). Лого = оверфит, НЕ вешаем.",
-      "sound": { "file": "Звуки/Light Sound/myinstants.mp3", "impact_at": 0.5, "sync": "impact_on_drop" },
+      "sound": { "file": "sounds/light_sound/myinstants.mp3", "impact_at": 0.5, "sync": "impact_on_drop" },
       "default_duration": 0.63, "placement": "hook_start",
       "desc": "Молнии + вспышка + шейк. Фирменный хук Бласта (бренд держит сам визуал + Light Sound на дропе)." },
 

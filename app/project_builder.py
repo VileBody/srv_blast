@@ -335,6 +335,36 @@ def _build_f3_overlay_js(full_edit_config: Dict[str, Any]) -> str:
     return overlay
 
 
+def _extract_f3_media(full_edit_config: Dict[str, Any]) -> List[Dict[str, str]]:
+    """
+    Извлекает f3.assets download list (S3-URL + relpath) из full_edit_config,
+    отфильтровывая мусор. Возвращает [{url, relpath}, ...] для записи в payload
+    под ключом "f3_media" — render_manifest.collect_media_urls_from_render_payload
+    подцепит и положит рядом с футажом в Windows-payload.media[].
+    Нет блока / пустой список => [].
+    """
+    f3 = full_edit_config.get("f3") if isinstance(full_edit_config, dict) else None
+    if not isinstance(f3, dict):
+        return []
+    raw = f3.get("_media")
+    if not isinstance(raw, list):
+        return []
+    out: List[Dict[str, str]] = []
+    seen: set[str] = set()
+    for it in raw:
+        if not isinstance(it, dict):
+            continue
+        url = str(it.get("url") or "").strip()
+        rel = str(it.get("relpath") or "").strip().strip("/")
+        if not url or not rel:
+            continue
+        if rel in seen:
+            continue
+        seen.add(rel)
+        out.append({"url": url, "relpath": rel})
+    return out
+
+
 def build_full_project(
     *,
     repo_root: Path,
@@ -474,6 +504,12 @@ def build_full_project(
     # F1 «Звук» visual combo (hook_light + post-drop random; no pre-drop shapes,
     # the user's sound plays there). Absent block => "".
     f1_overlay_js = _build_f1_overlay_js(full_edit_config)
+    # F3 ассет-download list (sound/logo S3-URL'ы + relpath под __APP_DIR/media).
+    # render_manifest.collect_media_urls_from_render_payload подцепит и положит
+    # в Windows-payload.media[] рядом с футажом. Пусто => без звука/лого.
+    f3_media = _extract_f3_media(full_edit_config)
+    if f3_media:
+        payload["f3_media"] = f3_media
 
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "logs").mkdir(parents=True, exist_ok=True)
