@@ -845,6 +845,7 @@ def render_all_steps(
     f4_block: Dict[str, Any] | None = None,
     f3_block: Dict[str, Any] | None = None,
     f2_block: Dict[str, Any] | None = None,
+    f1_block: Dict[str, Any] | None = None,
 ) -> Dict[str, Path]:
     repo_root = repo_root.resolve()
     out_dir = out_dir.resolve()
@@ -1070,6 +1071,15 @@ def render_all_steps(
     # -------------------------
     if f2_block:
         full_edit_obj["f2"] = f2_block
+
+    # -------------------------
+    # F1 «Звук» combo: user-uploaded pre-drop sound + F2-style visual (hook_light
+    # на дропе + рандомный F3-переход после). Блок {sound_url, drop_time, seed}.
+    # project_builder инжектит audio-слой и впишет визуальный JSX.
+    # Нет блока → full_edit_config без изменений (обычный job).
+    # -------------------------
+    if f1_block:
+        full_edit_obj["f1"] = f1_block
 
     # -------------------------
     # Write to DATA_DIR + mirror to OUT_DIR

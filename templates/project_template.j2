@@ -1537,6 +1537,18 @@
       logErr("f2 overlay injection failed", eF2);
     }
 
+    // ==========================================================
+    // 5.8) F1 «Звук» visual combo (injected by build worker)
+    // Empty string when no f1 block => no-op. Same as F2 minus pre-drop shapes:
+    // F3 hook_light at the drop + seeded-random F3 transition on post-drop cuts.
+    // The pre-drop region carries the user's uploaded sound (audio layer).
+    // ==========================================================
+    try {
+      {{ f1_overlay_js }}
+    } catch(eF1) {
+      logErr("f1 overlay injection failed", eF1);
+    }
+
     if (__SUPPRESSED_UI_CALLS.length > 0) {
       logLine("WARN", "suppressed_ui_calls=" + safeJson(__SUPPRESSED_UI_CALLS, 2000));
     }

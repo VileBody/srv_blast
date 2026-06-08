@@ -70,6 +70,58 @@ def _optional_int_env(name: str) -> Optional[int]:
         raise RuntimeError(f"Invalid {name}={raw!r}") from e
 
 
+def _post_drop_focus_line(
+    transcript_words: Optional[list[dict[str, Any]]],
+    *,
+    drop_abs_sec: Optional[float],
+    pause_gap_sec: float = 0.45,
+    max_words: int = 12,
+) -> Optional[str]:
+    """Строка лирики, начинающаяся ПОСЛЕ дропа.
+
+    Берём ASR word-timings (абсолютные секунды трека: t_start/t_end), находим
+    первое слово с t_start ≥ drop_abs_sec, затем набираем фразу до первой паузы
+    (gap между словами ≥ pause_gap_sec) или до max_words. Это и есть «строка
+    после дропа», с которой Stage1 должен взаимодействовать.
+
+    None, если: нет таймингов, нет дропа, или после дропа слов не осталось.
+    """
+    if not transcript_words or drop_abs_sec is None:
+        return None
+    # Normalize + sort by start.
+    words: list[tuple[float, float, str]] = []
+    for w in transcript_words:
+        try:
+            ts = float(w["t_start"])
+            te = float(w["t_end"])
+            txt = str(w["text"]).strip()
+        except (KeyError, TypeError, ValueError):
+            continue
+        if txt:
+            words.append((ts, te, txt))
+    if not words:
+        return None
+    words.sort(key=lambda x: x[0])
+
+    # First word starting at/after the drop.
+    start_idx = next((i for i, (ts, _, _) in enumerate(words) if ts >= float(drop_abs_sec)), None)
+    if start_idx is None:
+        return None
+
+    phrase: list[str] = [words[start_idx][2]]
+    prev_end = words[start_idx][1]
+    for i in range(start_idx + 1, len(words)):
+        ts, te, txt = words[i]
+        if (ts - prev_end) >= pause_gap_sec:
+            break
+        phrase.append(txt)
+        prev_end = te
+        if len(phrase) >= max_words:
+            break
+    line = " ".join(phrase).strip()
+    return line or None
+
+
 def _resolve_drop_at_sec(clip_start_abs_sec: float) -> Optional[float]:
     """
     Дроп для F5Request.drop_at_sec — ОТНОСИТЕЛЬНО начала фокуса (см.
@@ -160,6 +212,7 @@ def build_f5_block_if_requested(
     out_dir: Path,
     job_tag: str = "",
     lyrics_timings: Optional[list[dict[str, Any]]] = None,
+    transcript_words: Optional[list[dict[str, Any]]] = None,
     is_prod: bool = False,
 ) -> Optional[dict]:
     """
@@ -184,6 +237,21 @@ def build_f5_block_if_requested(
 
     drop_at_sec = _resolve_drop_at_sec(float(clip_start_abs_sec))
 
+    # Post-drop target line (abs USER_DROP_T vs ASR word-timings). The TTS must
+    # interact with the line that lands right after the drop — not the clip start.
+    _udt_raw = (os.environ.get("USER_DROP_T") or "").strip()
+    _drop_abs = None
+    if _udt_raw:
+        try:
+            _drop_abs = float(_udt_raw)
+        except ValueError:
+            _drop_abs = None
+    focus_line = _post_drop_focus_line(transcript_words, drop_abs_sec=_drop_abs)
+    if focus_line:
+        logger.info("f5.hook focus_line (post-drop) = %r", focus_line)
+    else:
+        logger.info("f5.hook no post-drop focus_line — fallback to first lyric line")
+
     req = F5Request(
         track_path=track_path,
         lyrics=lyrics,
@@ -192,6 +260,7 @@ def build_f5_block_if_requested(
         device=device,
         drop_at_sec=drop_at_sec,
         seed=seed,
+        focus_line=focus_line,
     )
 
     f5_dir = Path(out_dir) / "f5"

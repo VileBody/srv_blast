@@ -188,6 +188,64 @@ def _build_f4_overlay_js(full_edit_config: Dict[str, Any]) -> str:
     return overlay
 
 
+def _apply_f1_audio_if_present(
+    *,
+    full_edit_config: Dict[str, Any],
+    footage_layers: List[Dict[str, Any]],
+    main_comp_name: str,
+) -> List[Dict[str, Any]]:
+    """
+    Если в full_edit_config есть блок "f1" — добавляет audio-слой с загруженным
+    пользователем звуком в окне [0.5, drop−0.5]. Визуал (hook_light + post-drop
+    random) идёт отдельно через токен f1_overlay_js. Нет блока => без изменений.
+    """
+    f1_block = full_edit_config.get("f1") if isinstance(full_edit_config, dict) else None
+    if not f1_block or not isinstance(f1_block, dict):
+        return footage_layers
+
+    sound_url = str(f1_block.get("sound_url") or "").strip()
+    if not sound_url:
+        raise RuntimeError("f1 block present but 'sound_url' is empty")
+    drop_time = f1_block.get("drop_time")
+    if drop_time is None:
+        raise RuntimeError("f1 block present but 'drop_time' is missing")
+
+    from mlcore.hooks.f1_sound.inject import inject_f1_audio
+
+    new_layers = inject_f1_audio(
+        footage_layers,
+        sound_url=sound_url,
+        drop_time=float(drop_time),
+        target_comp_name=main_comp_name,
+    )
+    LOGGER.info("f1 audio present sound=%s drop_time=%s", sound_url[:80], drop_time)
+    return new_layers
+
+
+def _build_f1_overlay_js(full_edit_config: Dict[str, Any]) -> str:
+    """
+    Если в full_edit_config есть блок "f1" — собирает визуальный JSX combo
+    (hook_light на дропе + рандомный F3-переход на post-drop склейках; pre-drop
+    шейпов нет — там играет звук). Нет блока => пустая строка => ноль влияния.
+    """
+    f1_block = full_edit_config.get("f1") if isinstance(full_edit_config, dict) else None
+    if not f1_block or not isinstance(f1_block, dict):
+        return ""
+
+    drop_time = f1_block.get("drop_time")
+    if drop_time is None:
+        raise RuntimeError("f1 block present but 'drop_time' is missing")
+    seed = f1_block.get("seed")
+    if seed is None:
+        raise RuntimeError("f1 block present but 'seed' is missing")
+
+    from mlcore.hooks.f1_sound.overlay import build_overlay_jsx
+
+    overlay = build_overlay_jsx(drop_time=float(drop_time), seed=int(seed))
+    LOGGER.info("f1 overlay present drop_time=%s seed=%s js_len=%d", drop_time, seed, len(overlay))
+    return overlay
+
+
 def _build_f2_overlay_js(full_edit_config: Dict[str, Any]) -> str:
     """
     Если в full_edit_config есть блок "f2" — собирает инъектируемый JSX-блок
@@ -372,6 +430,15 @@ def build_full_project(
         main_comp_name=main_name,
     )
 
+    # 2.6) F1 «Звук» hook: если в config есть блок "f1" — добавляем audio-слой с
+    #      загруженным пользователем звуком в окне [0.5, drop−0.5]. Визуальная
+    #      часть (hook_light + post-drop random) идёт через токен f1_overlay_js.
+    footage_layers = _apply_f1_audio_if_present(
+        full_edit_config=full_edit_config,
+        footage_layers=footage_layers,
+        main_comp_name=main_name,
+    )
+
     payload: Dict[str, Any] = {
         "project": {"mainCompName": main_name, "subtitlesMode": subtitles_mode},
         "comps": [main_comp, text_comp, mine_comp],
@@ -404,6 +471,9 @@ def build_full_project(
     # F2 «Объект» packaged-combo overlay (shape pre-drop + hook_light + random
     # F3 transition post-drop). Absent block => empty string => zero impact.
     f2_overlay_js = _build_f2_overlay_js(full_edit_config)
+    # F1 «Звук» visual combo (hook_light + post-drop random; no pre-drop shapes,
+    # the user's sound plays there). Absent block => "".
+    f1_overlay_js = _build_f1_overlay_js(full_edit_config)
 
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "logs").mkdir(parents=True, exist_ok=True)
@@ -423,6 +493,7 @@ def build_full_project(
         f4_overlay_js=f4_overlay_js,
         f3_overlay_js=f3_overlay_js,
         f2_overlay_js=f2_overlay_js,
+        f1_overlay_js=f1_overlay_js,
     )
     out_jsx.write_text(jsx, encoding="utf-8")
 

@@ -4083,6 +4083,7 @@ def build_all_via_gemini_one_call(
             clip_start_abs_sec=float(stage1_json["audio"]["clip_start_abs"]),
             out_dir=out_dir,
             job_tag=(os.environ.get("JOB_ID") or out_dir.name),
+            transcript_words=stage1_json.get("transcript_words"),
             is_prod=(mode == MODE_PROD),
         )
     except Exception:
@@ -4212,6 +4213,47 @@ def build_all_via_gemini_one_call(
             )
             f2_block = None
 
+    # ── F1 «Звук»: user-uploaded pre-drop sound + F2-style visual combo.
+    #    Env F1_SOUND_URL — S3/HTTP ссылка на загруженный пользователем звук;
+    #    drop_time COMP-relative (= USER_DROP_T − clip_start). Seed = F2_SEED env
+    #    или job-derived (визуал — тот же combo, что у f2). Аудио ляжет в окно
+    #    [0.5, drop−0.5]. Любая ошибка → лог + рендер БЕЗ f1.
+    f1_block = None
+    _f1_sound = (os.environ.get("F1_SOUND_URL") or "").strip()
+    if _f1_sound:
+        try:
+            _cs = float(stage1_json["audio"]["clip_start_abs"])
+            _udt = (os.environ.get("USER_DROP_T") or "").strip()
+            if not _udt:
+                raise RuntimeError("F1 combo requires USER_DROP_T (drop anchor)")
+            _drop_rel_f1 = float(_udt) - _cs
+            # Need room for the [0.5, drop-0.5] audio window + a real post-drop.
+            if not (_drop_rel_f1 > 1.0):
+                raise RuntimeError(
+                    f"F1 drop_rel must be > 1.0 (USER_DROP_T={_udt}, clip_start={_cs})"
+                )
+            _seed_env_f1 = (os.environ.get("F2_SEED") or "").strip()
+            if _seed_env_f1:
+                _f1_seed = int(_seed_env_f1) & 0xFFFFFFFF
+            else:
+                _seed_src_f1 = os.environ.get("JOB_ID") or out_dir.name
+                _f1_seed = abs(hash(("f1", _seed_src_f1))) & 0xFFFFFFFF
+            f1_block = {
+                "sound_url": _f1_sound,
+                "drop_time": _drop_rel_f1,
+                "seed": int(_f1_seed),
+            }
+            logger.info(
+                "f1.combo block sound=%s drop_rel=%.3f seed=%d",
+                _f1_sound[:80], _drop_rel_f1, _f1_seed,
+            )
+        except Exception:
+            logger.exception(
+                "f1.combo FAILED — render without f1 (job=%s)",
+                os.environ.get("JOB_ID") or out_dir.name,
+            )
+            f1_block = None
+
     outputs = render_all_steps(
         repo_root=ROOT,
         plan=full_payload,
@@ -4222,6 +4264,7 @@ def build_all_via_gemini_one_call(
         f4_block=f4_block,
         f3_block=f3_block,
         f2_block=f2_block,
+        f1_block=f1_block,
     )
 
     logger.info("render_done %s", {k: str(v) for k, v in outputs.items()})

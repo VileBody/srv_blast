@@ -45,6 +45,8 @@ STAGE_WAIT_EFFECT_EXTRA = "WAIT_EFFECT_EXTRA"
 STAGE_WAIT_EFFECT_EXTEND = "WAIT_EFFECT_EXTEND"
 # F2 «Объект» — single sub-picker (5 shape buttons).
 STAGE_WAIT_F2_SHAPE = "WAIT_F2_SHAPE"
+# F1 «Звук» — wait for the user to upload a sound file for the pre-drop window.
+STAGE_WAIT_F1_SOUND = "WAIT_F1_SOUND"
 STAGE_WAIT_VERSIONS = "WAIT_VERSIONS"
 STAGE_WAIT_CONFIRM = "WAIT_CONFIRM"
 STAGE_PROCESSING = "PROCESSING"
@@ -117,6 +119,11 @@ class ChatState(BaseModel):
     # — the rest of the combo (hook_light at drop + seeded-random F3 transition
     # on post-drop cuts) is forced server-side. None/"" => no F2.
     f2_shape: str = ""           # "" | rhomb | square | star1 | star2 | elipse
+    # F1 «Звук» selection when hook_category == "object"... no — == "sound".
+    # S3/HTTP URL of the user-uploaded pre-drop sound. The rest of the combo
+    # (hook_light at drop + seeded-random F3 transition post-drop) is forced
+    # server-side. "" => no F1.
+    f1_sound_url: str = ""
     # "" | "pending" | "ready" | "failed"
     hook_analysis_status: str = ""
     # Source audio path used to compute the analysis — if it ever doesn't

@@ -102,6 +102,7 @@ _LLM_ENV_KEYS = (
     "F3_HOOK_EXTEND",
     "F2_SHAPE",
     "F2_SEED",
+    "F1_SOUND_URL",
     "BG_MODE",
     "BG_SOLID_COLOR_HEX",
     "SUBTITLES_FORCE_FILL_HEX",
@@ -1758,6 +1759,17 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
                 f"invalid f2_shape={_f2_shape_raw!r}; allowed={sorted(_f2_allowed_shapes)}"
             )
         env["F2_SHAPE"] = _f2_shape
+    # F1 «Звук» pass-through: S3/HTTP URL of the user-uploaded pre-drop sound.
+    # Set => orchestrator emits full_edit_config["f1"] (audio + visual combo).
+    # Requires USER_DROP_T; absent => no F1.
+    _f1_sound_raw = req.get("f1_sound_url")
+    if _f1_sound_raw is not None and str(_f1_sound_raw).strip():
+        _f1_sound = str(_f1_sound_raw).strip()
+        if not _is_remote_url(_f1_sound):
+            raise RuntimeError(
+                f"f1_sound_url must be remote (http/https/s3). got={_f1_sound!r}"
+            )
+        env["F1_SOUND_URL"] = _f1_sound
     if exclude_file_names:
         env["FOOTAGE_EXCLUDE_FILE_NAMES_JSON"] = json.dumps(exclude_file_names, ensure_ascii=False)
     if rotation_theme and rotation_tags_group:

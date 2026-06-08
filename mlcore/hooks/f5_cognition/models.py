@@ -79,6 +79,12 @@ class F5Request(BaseModel):
     drop_at_sec: Optional[float] = None
     seed: Optional[int] = None
 
+    # Строка лирики, начинающаяся ПОСЛЕ дропа (определена по ASR word-timings в
+    # оркестраторе: первое слово с t_start ≥ USER_DROP_T → конец фразы). Именно
+    # с ней Stage1 должен семантически взаимодействовать (а не с началом клипа).
+    # None/"" → fallback на старое поведение (первая строка лирики).
+    focus_line: Optional[str] = None
+
 
 class F5Response(BaseModel):
     """Выход модуля F5."""

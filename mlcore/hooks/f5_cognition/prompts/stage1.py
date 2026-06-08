@@ -44,14 +44,11 @@ SYSTEM_PROMPT_TEMPLATE = """\
 
 
 USER_PROMPT_TEMPLATE = """\
-Лирика трека (первые 30 секунд):
+Лирика трека (контекст, первые 30 секунд):
 \"\"\"
 {lyrics}
 \"\"\"
-
-Первая строка трека: "{first_line}"
-Первое слово трека: "{first_word}"
-
+{focus_block}
 Метаданные:
 - BPM: {bpm}
 - Тональность: {key}
@@ -103,10 +100,27 @@ def build_user_prompt(req: F5Request) -> str:
             f"TTS должен закончиться до {max_ms} мс.\n"
         )
 
+    # Target line: prefer the post-drop line (resolved upstream from ASR
+    # word-timings). The TTS must interact with THIS line — not the clip start.
+    # Fallback to the first lyric line only when focus_line is absent.
+    focus = (req.focus_line or "").strip()
+    if focus:
+        focus_block = (
+            "\n══════════════════════════════════════════════════════════\n"
+            "ЦЕЛЕВАЯ СТРОКА (звучит СРАЗУ ПОСЛЕ дропа — взаимодействуй ИМЕННО с ней,\n"
+            "по выбранному устройству; начало клипа и первые строки — только фон):\n"
+            f'"{focus}"\n'
+            "══════════════════════════════════════════════════════════\n"
+        )
+    else:
+        focus_block = (
+            f'\nЦелевая строка (начало отрывка): "{_first_line(req.lyrics)}"\n'
+            f'Первое слово: "{_first_word(req.lyrics)}"\n'
+        )
+
     return USER_PROMPT_TEMPLATE.format(
         lyrics=req.lyrics.strip()[:2000],
-        first_line=_first_line(req.lyrics),
-        first_word=_first_word(req.lyrics),
+        focus_block=focus_block,
         bpm=meta.bpm if meta.bpm is not None else "—",
         key=meta.key or "—",
         genre=meta.genre or "—",

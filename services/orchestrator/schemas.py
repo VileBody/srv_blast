@@ -103,6 +103,12 @@ class SendAudioS3Request(BaseModel):
     f2_shape: Optional[
         Literal["rhomb", "square", "star1", "star2", "elipse"]
     ] = None
+    # F1 «Звук» packaged-combo: S3/HTTP URL of the user-uploaded sound that plays
+    # in the pre-drop window [0.5, drop−0.5]. When set, the bot threads it here;
+    # the orchestrator emits full_edit_config["f1"] (audio layer + F2-style visual
+    # combo: hook_light at drop + seeded-random F3 transition post-drop).
+    # Requires user_drop_t (drop anchor). None => no F1 combo.
+    f1_sound_url: Optional[str] = Field(default=None, max_length=2048)
     # Optional internal batch controls for multi-version generation.
     reuse_text_job_id: Optional[str] = None
     # When True (bigtest only): seed stage2_style + stage2_style_rotation from
@@ -168,6 +174,9 @@ class SendAudioS3Request(BaseModel):
         # F2 combo also pivots on the drop (pre/post split + hook_light on drop).
         if self.f2_shape and self.user_drop_t is None:
             raise ValueError("f2_shape requires user_drop_t (drop anchor) to be set")
+        # F1 combo pivots on the drop too (audio window [0.5, drop−0.5] + combo).
+        if self.f1_sound_url and self.user_drop_t is None:
+            raise ValueError("f1_sound_url requires user_drop_t (drop anchor) to be set")
         return self
 
 

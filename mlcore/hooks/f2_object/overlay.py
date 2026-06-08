@@ -131,21 +131,23 @@ _JS_PRELUDE = r"""
 
 def build_overlay_jsx(
     *,
-    shape: str,
+    shape: Optional[str] = None,
     drop_time: float,
     seed: int,
     post_drop_pool: tuple[str, ...] = F2_POST_DROP_TRANSITION_POOL,
 ) -> str:
-    """Return the injectable F2 JSX block.
+    """Return the injectable F2 combo JSX block.
 
     Args:
-        shape: one of F2_SHAPES.
+        shape: one of F2_SHAPES, or None to SKIP the pre-drop shape phase
+            (used by F1 «Звук», whose pre-drop region is the user's audio, not a
+            visual transition — the drop hook_light + post-drop random remain).
         drop_time: COMP-relative drop seconds (same convention as f3.drop_time).
         seed: 32-bit-ish int for the post-drop random assignment PRNG.
         post_drop_pool: pool of F3 transition ids to randomize from (default:
             all 6). Empty pool → post-drop section is a no-op.
     """
-    if shape not in F2_SHAPES:
+    if shape is not None and shape not in F2_SHAPES:
         raise ValueError(f"unknown F2 shape {shape!r}; allowed={list(F2_SHAPES)}")
     try:
         drop = float(drop_time)
@@ -181,18 +183,20 @@ def build_overlay_jsx(
     parts.append("  }")
 
     # ---------------- (1) PRE-DROP: chosen shape on every pre-drop cut ----------------
-    shape_src = _read_shape_script(shape)
-    parts.append("  /* -- (1) PRE-DROP shape transitions -- */")
-    parts.append(f"  var __f2_t_fx_offset = {_js(_SHAPE_T_FX_OFFSET)};")
-    parts.append("  for (__f2_i=0; __f2_i<__f2_pre.length; __f2_i++){")
-    parts.append("    var __f2_pcut = __f2_pre[__f2_i];")
-    parts.append("    var __f2_startT = __f2_pcut - __f2_t_fx_offset;")
-    parts.append("    if (__f2_startT < 0) continue;")
-    parts.append("    $.global.__BLAST = { targetCompName: __f2_name, placeRef: " + _js(_PLACE_REF) + ", startTime: __f2_startT };")
-    parts.append("    (function(){")
-    parts.append(shape_src)
-    parts.append("    })(); $.global.__BLAST = null;")
-    parts.append("  }")
+    # Skipped entirely when shape is None (F1 «Звук» reuse — no pre-drop visual).
+    if shape is not None:
+        shape_src = _read_shape_script(shape)
+        parts.append("  /* -- (1) PRE-DROP shape transitions -- */")
+        parts.append(f"  var __f2_t_fx_offset = {_js(_SHAPE_T_FX_OFFSET)};")
+        parts.append("  for (__f2_i=0; __f2_i<__f2_pre.length; __f2_i++){")
+        parts.append("    var __f2_pcut = __f2_pre[__f2_i];")
+        parts.append("    var __f2_startT = __f2_pcut - __f2_t_fx_offset;")
+        parts.append("    if (__f2_startT < 0) continue;")
+        parts.append("    $.global.__BLAST = { targetCompName: __f2_name, placeRef: " + _js(_PLACE_REF) + ", startTime: __f2_startT };")
+        parts.append("    (function(){")
+        parts.append(shape_src)
+        parts.append("    })(); $.global.__BLAST = null;")
+        parts.append("  }")
 
     # ---------------- (2) DROP: F3 hook_light ----------------
     hook_light_src = _read_f3_script(_F3_HOOK_LIGHT_SCRIPT)

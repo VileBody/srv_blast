@@ -77,6 +77,7 @@ from .state_store import (
     STAGE_WAIT_EFFECT_EXTRA,
     STAGE_WAIT_EFFECT_EXTEND,
     STAGE_WAIT_F2_SHAPE,
+    STAGE_WAIT_F1_SOUND,
     STAGE_WAIT_TIMING_CHOICE,
     STAGE_WAIT_TIMING_INPUT,
     STAGE_WAIT_FRAGMENT_TEXT,
@@ -187,11 +188,9 @@ _HOOK_CATEGORY_BY_BUTTON = {
     BTN_HOOK_CAT_MOTION: "motion",
     BTN_HOOK_CAT_THOUGHT: "thought",
 }
-# Categories not implemented yet. "Мысль"=F5, "Движение"=F4, "Эффект"=F3,
-# "Объект"=F2 are wired. Only "Звук"=F1 is still a stub.
-_HOOK_CATEGORY_NOT_READY = {
-    BTN_HOOK_CAT_SOUND,
-}
+# All 5 hook categories are now wired: "Мысль"=F5, "Движение"=F4, "Эффект"=F3,
+# "Объект"=F2, "Звук"=F1. Kept as an (empty) gate for future stubs.
+_HOOK_CATEGORY_NOT_READY: set[str] = set()
 # F4 («Движение») device picker. Button text -> f4 device id. Only "swipe" is
 # wired so far (mlcore/hooks/f4_motion). LEAD_BY_DEVICE is imported lazily where
 # the clip-window reframe happens (clip_start := drop - LEAD[device]).
@@ -1456,6 +1455,10 @@ class BlastBotApp:
                 await self._handle_wait_f2_shape(message, st)
                 return
 
+            if st.stage == STAGE_WAIT_F1_SOUND:
+                await self._handle_wait_f1_sound(message, st)
+                return
+
             if st.stage == STAGE_WAIT_VERSIONS:
                 await self._handle_wait_versions(message, st)
                 return
@@ -2444,6 +2447,7 @@ class BlastBotApp:
             st.hook_category = ""
             st.hook_device = ""
             st.f2_shape = ""
+            st.f1_sound_url = ""
             await self.store.set(st)
             await self._ask_versions(message, st)
             return
@@ -2599,6 +2603,27 @@ class BlastBotApp:
             st.f2_shape = ""
             await self.store.set(st)
             await self._ask_f2_shape(message, st)
+            return
+        if text == BTN_HOOK_CAT_SOUND:
+            # F1 combo needs a drop anchor (audio window [0.5, drop−0.5] + combo).
+            if st.hook_drop_t is None:
+                await message.answer(
+                    "Для «Звука» нужен момент дропа — вернись и выбери его."
+                )
+                await self._ask_hook_drop(message, st)
+                return
+            _clip_start = float(st.user_clip_start_sec or 0.0)
+            if (float(st.hook_drop_t) - _clip_start) <= 1.0:
+                await message.answer(
+                    "Дроп слишком близко к началу отрывка: для «Звука» нужно ≥1с "
+                    "до дропа (звук играет в окне до хука). Выбери дроп позже."
+                )
+                await self._ask_hook_drop(message, st)
+                return
+            st.hook_category = "sound"
+            st.f1_sound_url = ""
+            await self.store.set(st)
+            await self._ask_f1_sound(message, st)
             return
         if text == BTN_HOOK_CAT_EFFECT:
             # F3 visual FX needs a drop anchor (hook lands on the drop).
@@ -2927,6 +2952,83 @@ class BlastBotApp:
         await message.answer(
             f"Ок, «Объект»: фигура «{text}». На склейках до дропа — она; "
             f"на дропе — молния; после дропа — рандомные F3-переходы."
+        )
+        await self._ask_versions(message, st)
+
+    # ── F1 «Звук» — upload a pre-drop sound (no LLM; user provides the file) ──
+    async def _ask_f1_sound(self, message: Message, st: ChatState) -> None:
+        st.stage = STAGE_WAIT_F1_SOUND
+        await self.store.set(st)
+        await message.answer(
+            "«Звук»: пришли аудио-файл, который заиграет ДО дропа (разгон/риза).\n"
+            "Он встанет в окно до хука; на дропе сработает молния, после — "
+            "рандомный визуал-переход.\n"
+            "Просто отправь аудио сообщением (mp3/m4a/wav).",
+            reply_markup=_kb([BTN_BACK]),
+        )
+
+    async def _handle_wait_f1_sound(self, message: Message, st: ChatState) -> None:
+        text = str(message.text or "").strip()
+        if text == BTN_BACK:
+            await self._ask_hook_type(message, st)
+            return
+
+        spec = _extract_audio_spec(message)
+        if spec is None:
+            await message.answer(
+                "Нужен аудио-файл для «Звука». Пришли mp3/m4a/wav сообщением "
+                "или нажми «Назад»."
+            )
+            return
+        if message.chat is None:
+            return
+        if st.hook_drop_t is None:
+            await message.answer("Для «Звука» нужен момент дропа — вернись и выбери его.")
+            await self._ask_hook_drop(message, st)
+            return
+
+        chat_id = int(message.chat.id)
+        file_id, original_name = spec
+        incoming_dir = self.settings.tmp_dir / str(chat_id) / "hook_sound"
+        incoming_dir.mkdir(parents=True, exist_ok=True)
+        src_name = f"{_now_tag()}_{uuid.uuid4().hex[:8]}_{_safe_name(original_name)}"
+        src_path = incoming_dir / src_name
+
+        try:
+            await message.answer("Загружаю звук…")
+            await self._download_telegram_audio_with_retry(
+                bot=message.bot,
+                file_id=file_id,
+                dest=src_path,
+                chat_id=chat_id,
+                original_name=original_name,
+            )
+            key = self._build_raw_audio_key(chat_id=chat_id, file_name=f"f1hook_{src_path.name}")
+            sound_url = await asyncio.to_thread(
+                self.s3.upload_file,
+                path=src_path,
+                bucket=self.settings.s3_bucket_raw_audio,
+                key=key,
+                content_type="audio/mpeg",
+            )
+        except TelegramBadRequest as e:
+            log.exception("f1_sound_tg_bad_request chat=%s file_id=%s err=%s", chat_id, file_id, e)
+            await message.answer(
+                "Не удалось скачать звук из Telegram (возможно, слишком большой). "
+                "Пришли файл полегче (mp3/m4a) или нажми «Назад»."
+            )
+            return
+        except Exception as e:
+            log.exception("f1_sound_upload_failed chat=%s file_id=%s err=%s", chat_id, file_id, e)
+            await message.answer(f"Не удалось загрузить звук: {e}. Попробуй ещё раз или «Назад».")
+            return
+
+        st.f1_sound_url = str(sound_url)
+        st.hook_type = "standard"  # legacy compat field
+        await self.store.set(st)
+        await message.answer(
+            "Ок, «Звук»: твой звук заиграет до дропа, на дропе — молния, "
+            "после — рандомный визуал-переход."
         )
         await self._ask_versions(message, st)
 
@@ -3419,6 +3521,11 @@ class BlastBotApp:
             f2_shape=(
                 str(st.f2_shape)
                 if (st.hook_enabled and st.hook_category == "object" and st.f2_shape)
+                else None
+            ),
+            f1_sound_url=(
+                str(st.f1_sound_url)
+                if (st.hook_enabled and st.hook_category == "sound" and st.f1_sound_url)
                 else None
             ),
         )
