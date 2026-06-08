@@ -184,6 +184,7 @@ class ChatState(BaseModel):
     bigtest_total: int = 0           # total cases in this run
     bigtest_current_label: str = ""  # label string shown in result caption
     bigtest_master_job_id: str = ""  # job_id to reuse ASR/subtitles from
+    bigtest_footage_seed: str = ""   # STAGE2_SELECTION_SEED of case-0 (reused by cases 1-27)
 
 
 class RedisChatStateStore:

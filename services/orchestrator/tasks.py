@@ -1312,6 +1312,7 @@ def _seed_resume_state_from_source_job(
     source_job_id: str,
     target_resume_state_path: Path,
     store: JobStore | None = None,
+    include_footage: bool = False,
 ) -> None:
     src_job = str(source_job_id or "").strip()
     if not src_job:
@@ -1358,10 +1359,18 @@ def _seed_resume_state_from_source_job(
 
     for k in _REUSE_RESUME_STATE_KEYS:
         dst_obj[k] = src_obj[k]
-    # Reuse copies only text/timing state. Preserve an existing destination
-    # style if the operator/user already selected one, but never copy footage
-    # selection from the source job.
-    dst_obj.pop("stage2_footage", None)
+    if include_footage:
+        # Bigtest: also copy footage style so every case uses the same genre/theme.
+        # Only copied when present — if absent the orchestrator re-runs style LLM.
+        for k in ("stage2_style", "stage2_style_rotation"):
+            if k in src_obj:
+                dst_obj[k] = src_obj[k]
+    else:
+        # Normal reuse: never carry footage selection from source job so each
+        # new generation gets fresh clips (intentional diversity).
+        # stage2_style is NOT removed — the destination may have its own partial
+        # value from a prior run; only stage2_footage (raw clip list) is cleared.
+        dst_obj.pop("stage2_footage", None)
 
     target_resume_state_path.parent.mkdir(parents=True, exist_ok=True)
     target_resume_state_path.write_text(
@@ -1485,6 +1494,8 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
     lyrics_text = str(req.get("lyrics_text") or "")
     target_fragment = str(req.get("target_fragment") or "")
     reuse_text_job_id = str(req.get("reuse_text_job_id") or "").strip()
+    reuse_stage2_footage = bool(req.get("reuse_stage2_footage"))
+    stage2_selection_seed_override = str(req.get("stage2_selection_seed_override") or "").strip()
     exclude_raw = req.get("exclude_file_names")
     exclude_file_names: List[str] = []
     if isinstance(exclude_raw, list):
@@ -1739,6 +1750,10 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
     seed_variant = variant_index if variant_index is not None else 1
     seed_base = project_id or f"job-{job_id}"
     env["STAGE2_SELECTION_SEED"] = f"{seed_base}:v{seed_variant}"
+    if stage2_selection_seed_override:
+        # Bigtest cases 1-27: pin to case-0's seed so footage_picker picks the
+        # same clips regardless of the per-case batch_id randomisation.
+        env["STAGE2_SELECTION_SEED"] = stage2_selection_seed_override
     env["BATCH_VARIANT_INDEX"] = str(seed_variant)
     if variant_total is not None:
         env["BATCH_VARIANTS_TOTAL"] = str(int(variant_total))
@@ -1767,6 +1782,7 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
                     source_job_id=reuse_text_job_id,
                     target_resume_state_path=llm_resume_state_path,
                     store=store,
+                    include_footage=reuse_stage2_footage,
                 )
                 _persist_resume_state_snapshot(
                     store=store,

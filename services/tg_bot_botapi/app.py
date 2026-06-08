@@ -3155,11 +3155,20 @@ class BlastBotApp:
                     versions_total=1,
                     batch_id=new_batch_id,
                     reuse_text_job_id=str(st.bigtest_master_job_id or ""),
+                    # Cases 1-27: reuse case-0's footage style + its selection seed
+                    # so every case gets the exact same clips (only effects differ).
+                    reuse_stage2_footage=(idx > 0),
+                    stage2_selection_seed_override=(
+                        str(st.bigtest_footage_seed) if idx > 0 and st.bigtest_footage_seed else None
+                    ),
                 )
                 st.active_job_id = job_id
                 st.active_job_ids = [job_id]
                 st.job_order = [job_id]
                 st.master_job_id = job_id
+                # Store case-0's selection seed so cases 1-27 can pin to it.
+                if idx == 0:
+                    st.bigtest_footage_seed = f"{new_batch_id}:v1"
                 st.active_job_started_at = time.time()
                 st.stage = STAGE_PROCESSING
                 await bot.send_message(
@@ -3221,6 +3230,8 @@ class BlastBotApp:
         versions_total: int,
         batch_id: str,
         reuse_text_job_id: str = "",
+        reuse_stage2_footage: bool = False,
+        stage2_selection_seed_override: Optional[str] = None,
         exclude_file_names: Optional[List[str]] = None,
     ) -> str:
         idem = f"tg-{st.chat_id}-batch-{batch_id}-v{int(version_index)}"
@@ -3285,6 +3296,8 @@ class BlastBotApp:
             idempotency_key=idem,
             project_id=batch_id or None,
             reuse_text_job_id=str(reuse_text_job_id or "") or None,
+            reuse_stage2_footage=bool(reuse_stage2_footage),
+            stage2_selection_seed_override=str(stage2_selection_seed_override).strip() if stage2_selection_seed_override else None,
             exclude_file_names=merged_exclude,
             variant_index=int(version_index),
             variants_total=int(versions_total),
@@ -4048,6 +4061,10 @@ class BlastBotApp:
         _saved_clip_end = float(st.user_clip_end_sec or 0.0)
         _saved_target_fragment = str(st.target_fragment or "")
         _saved_master_job_id = str(st.master_job_id or "")
+        # subtitles_mode is reset to LEGACY_BLOCKS by _reset_processing_state;
+        # preserve the user's actual choice so bigtest cases all use the same
+        # mode as case-0 (mismatch would invalidate the stage2_subtitles cache).
+        _saved_subtitles_mode = str(st.subtitles_mode or "")
 
         # ── Bigtest: advance to the next case instead of returning to idle ──
         if st.bigtest_mode:
@@ -4065,6 +4082,7 @@ class BlastBotApp:
                 st.user_clip_start_sec = _saved_clip_start
                 st.user_clip_end_sec = _saved_clip_end
                 st.target_fragment = _saved_target_fragment
+                st.subtitles_mode = _saved_subtitles_mode
                 await self._bigtest_try_enqueue_from_current(st, bot)
                 return
             # All cases done — show final summary.

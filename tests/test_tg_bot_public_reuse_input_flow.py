@@ -129,3 +129,76 @@ def test_team_bot_bigtest_guard_distinguishes_reuse_source_source() -> None:
     assert "Кейс 1 прогонит ASR" in src, (
         "When master_job_id is absent, /bigtest must warn that first case runs LLM."
     )
+
+
+# ── bigtest full-reuse fix (footage + subtitles_mode) ────────────────────────
+
+def test_bigtest_footage_seed_in_team_state_store() -> None:
+    src = _TEAM_SS_PATH.read_text(encoding="utf-8")
+    assert "bigtest_footage_seed" in src, (
+        "Team ChatState must have bigtest_footage_seed field for STAGE2_SELECTION_SEED pinning"
+    )
+
+
+def test_bigtest_footage_seed_in_public_state_store() -> None:
+    src = _PUBLIC_SS_PATH.read_text(encoding="utf-8")
+    assert "bigtest_footage_seed" in src, (
+        "Public ChatState must have bigtest_footage_seed field for schema parity"
+    )
+
+
+def test_schemas_has_reuse_stage2_footage_field() -> None:
+    schemas_path = (
+        Path(__file__).resolve().parents[1]
+        / "services" / "orchestrator" / "schemas.py"
+    )
+    src = schemas_path.read_text(encoding="utf-8")
+    assert "reuse_stage2_footage" in src, (
+        "SendAudioS3Request must have reuse_stage2_footage field"
+    )
+    assert "stage2_selection_seed_override" in src, (
+        "SendAudioS3Request must have stage2_selection_seed_override field"
+    )
+
+
+def test_team_bot_bigtest_preserves_subtitles_mode_source() -> None:
+    """subtitles_mode must be saved before _reset_processing_state and restored
+    after, so every bigtest case uses the same mode as case-0 instead of the
+    LEGACY_BLOCKS default that _reset_processing_state writes."""
+    src = _team_app_source()
+    assert '_saved_subtitles_mode = str(st.subtitles_mode or "")' in src, (
+        "Bigtest batch completion must save subtitles_mode before _reset_processing_state"
+    )
+    assert "st.subtitles_mode = _saved_subtitles_mode" in src, (
+        "Bigtest batch completion must restore subtitles_mode after _reset_processing_state"
+    )
+
+
+def test_team_bot_bigtest_sets_footage_seed_after_case0_source() -> None:
+    """After case-0 enqueues, st.bigtest_footage_seed must be populated so
+    cases 1-27 can reuse the same STAGE2_SELECTION_SEED."""
+    src = _team_app_source()
+    assert 'st.bigtest_footage_seed = f"{new_batch_id}:v1"' in src, (
+        "Team bot must store bigtest_footage_seed = f'{new_batch_id}:v1' after case-0 enqueues"
+    )
+
+
+def test_team_bot_bigtest_cases_pass_reuse_stage2_footage_source() -> None:
+    """Cases 1-27 must pass reuse_stage2_footage=True so stage2_style /
+    stage2_style_rotation are copied alongside the text resume state."""
+    src = _team_app_source()
+    assert "reuse_stage2_footage=(idx > 0)" in src, (
+        "Team bot must pass reuse_stage2_footage=(idx > 0) for bigtest cases"
+    )
+
+
+def test_team_bot_bigtest_cases_pass_selection_seed_override_source() -> None:
+    """Cases 1-27 must forward st.bigtest_footage_seed as
+    stage2_selection_seed_override so footage_picker uses identical clips."""
+    src = _team_app_source()
+    assert "st.bigtest_footage_seed" in src, (
+        "Team bot must reference st.bigtest_footage_seed when building bigtest enqueue calls"
+    )
+    assert "stage2_selection_seed_override" in src, (
+        "Team bot must pass stage2_selection_seed_override to _enqueue_batch_version"
+    )
