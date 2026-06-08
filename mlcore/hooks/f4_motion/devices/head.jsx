@@ -121,7 +121,12 @@
     var L = comp.layers.addSolid([0,0,0], "Сплошная заливка Черный 1", comp.width, comp.height, 1);
     L.startTime = 0; L.inPoint = 0; L.outPoint = t(4.004004004004);
     var tr = L.property("ADBE Transform Group");
-    setConst(tr.property("ADBE Position"), [540,960,0]);
+    // Cover must span the WHOLE comp ("Comp 1" is 1080x1960, not 1920). Center on
+    // the actual comp dims + 10% over-scale so footage never pokes out at bottom.
+    var __cx = comp.width/2, __cy = comp.height/2;
+    setConst(tr.property("ADBE Anchor Point"), [__cx,__cy,0]);
+    setConst(tr.property("ADBE Position"),      [__cx,__cy,0]);
+    setConst(tr.property("ADBE Scale"),         [110,110,100]);
     setConst(tr.property("ADBE Opacity"),  96);
     return L;
   }

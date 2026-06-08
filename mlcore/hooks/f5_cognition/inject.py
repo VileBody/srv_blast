@@ -43,11 +43,15 @@ F5_TTS_OFFSET_MS = 0
 DEFAULT_AUDIO_COMP = "Comp 1"
 DEFAULT_TEXT_COMP = "Текст"
 
-# Envelope для TTS
+# Envelope для TTS. Помимо коротких фейдов — плавный подъём громкости голоса
+# 25%→100% к концу окна (= к дропу): голос не тонет в вокале трека на старте и
+# выходит на полную к моменту хука. (Эксперимент — подбираем на слух.)
 F5_AUDIO_ENVELOPE = {
     "fade_in_s": 0.05,
     "fade_out_s": 0.10,
     "min_db": -48.0,
+    "ramp_start_pct": 25.0,
+    "ramp_end_pct": 100.0,
 }
 
 
@@ -225,6 +229,33 @@ def _rebuild_char_styles(template_td: dict[str, Any], *, text_len: int) -> list[
     return [{"i": i, **base_style} for i in range(max(0, int(text_len)))]
 
 
+# Max words per TTS subtitle chunk. The TTS phrase (3–8 words) is split into
+# sequential chunks shown across the voice window — like default subtitles
+# (one layer per segment), instead of one layer dumping the whole phrase.
+F5_SUBTITLE_MAX_WORDS_PER_CHUNK = 3
+
+
+def _split_tts_text(text: str, *, max_words: int = F5_SUBTITLE_MAX_WORDS_PER_CHUNK) -> list[str]:
+    words = [w for w in str(text or "").split() if w]
+    if not words:
+        return []
+    return [" ".join(words[i:i + max_words]) for i in range(0, len(words), max_words)]
+
+
+def _strip_time_animated(d: Any) -> dict[str, Any]:
+    """Drop keyframed (time-animated) entries from a props/effects dict.
+
+    A cloned template segment carries its OWN reveal keyframes (e.g.
+    props["reveal"] = ADBE Text Percent Start with keyframes at the template's
+    times). Left in place after re-timing, they misfire — the text "reveals" in
+    ~1s at the wrong moment then vanishes. We keep only static entries so each
+    chunk just shows cleanly for its slice.
+    """
+    if not isinstance(d, dict):
+        return {}
+    return {k: v for k, v in d.items() if not (isinstance(v, dict) and "keyframes" in v)}
+
+
 def inject_subtitle_layer(
     text_layers: list[dict[str, Any]],
     f5: F5Response,
@@ -232,14 +263,12 @@ def inject_subtitle_layer(
     focal_start_ms: int,
 ) -> list[dict[str, Any]]:
     """
-    Клонирует первый существующий text-слой как шаблон стиля,
-    подставляет TTS-фразу, выставляет тайминги.
-
-    z_index — на 1 выше максимального существующего, чтобы перебить
-    лирику в окне focal..focal+tts.
+    Клонирует первый существующий text-слой как шаблон стиля и раскладывает
+    TTS-фразу на ПОСЛЕДОВАТЕЛЬНЫЕ чанки (как дефолтные субтитры — слой на
+    сегмент), равномерно по окну голоса [focal..focal+tts]. У каждого чанка
+    снимаются stale reveal-кейфреймы и отключается text-аниматор, чтобы текст
+    показывался ровно в свой слайс, а не «раскрывался за секунду» весь сразу.
     """
-    # 1) Клонируем шаблон стиля ДО удаления (среди удаляемых может быть
-    #    единственный text-слой, с которого берём стиль).
     template = _clone_text_layer_template(text_layers)
     if template is None:
         logger.warning(
@@ -250,7 +279,7 @@ def inject_subtitle_layer(
     in_sec = focal_start_ms / 1000.0
     out_sec = in_sec + f5.audio_duration_ms / 1000.0
 
-    # 2) Жёсткое требование: вырезаем ВСЕ трек-субтитры, пересекающие окно TTS.
+    # Жёсткое требование: вырезаем ВСЕ трек-субтитры, пересекающие окно TTS.
     cleaned, removed = _remove_track_subtitles_in_window(
         text_layers, window_start_sec=in_sec, window_end_sec=out_sec,
     )
@@ -259,35 +288,52 @@ def inject_subtitle_layer(
         removed, in_sec, out_sec,
     )
 
-    # z_index — следующий ВЫШЕ существующих (в проекте z_index=1000 — самый
-    # верхний субтитр; добавляем 1001+). Считаем по исходному списку, чтобы
-    # номер был стабилен независимо от удалений.
+    chunks = _split_tts_text(f5.tts_text)
+    if not chunks:
+        logger.warning("f5.inject subtitle skipped: empty tts_text")
+        return cleaned
+
     max_z = max(
         (int(L.get("z_index", 0)) for L in text_layers if isinstance(L, dict)),
         default=1000,
     )
 
-    template["name"] = f"f5_hook_subtitle_{f5.chosen_device.value}"
-    template["text"] = f5.tts_text
-    template["in_point"] = float(in_sec)
-    template["out_point"] = float(out_sec)
-    template["z_index"] = max_z + 1
+    n = len(chunks)
+    span = max(0.0001, out_sec - in_sec)
+    slice_dur = span / n
 
-    # text_data: стартовое время + перестроенные по-символьные стили под новый
-    # текст (видимая строка берётся из template["text"], выставленного выше).
-    td = template.setdefault("text_data", {})
-    meta = td.setdefault("layer_meta", {})
-    meta["startTime"] = float(in_sec)
-    meta["enabled"] = True
-    td["char_styles_ungrouped"] = _rebuild_char_styles(td, text_len=len(f5.tts_text))
+    new_layers: list[dict[str, Any]] = []
+    for i, chunk in enumerate(chunks):
+        seg_in = in_sec + i * slice_dur
+        seg_out = out_sec if i == n - 1 else in_sec + (i + 1) * slice_dur
 
-    logger.info(
-        "f5.inject subtitle_layer text=%r in=%.3f out=%.3f z=%d",
-        f5.tts_text, in_sec, out_sec, template["z_index"],
-    )
+        layer = copy.deepcopy(template)
+        layer["name"] = f"f5_hook_subtitle_{f5.chosen_device.value}_{i + 1}"
+        layer["text"] = chunk
+        layer["in_point"] = float(seg_in)
+        layer["out_point"] = float(seg_out)
+        layer["z_index"] = max_z + 1 + i
+        # Strip the cloned segment's stale reveal keyframes (props/effects) so the
+        # chunk doesn't inherit a misfiring per-character reveal.
+        layer["props"] = _strip_time_animated(layer.get("props"))
+        layer["effects"] = _strip_time_animated(layer.get("effects"))
 
-    # Возвращаем ОЧИЩЕННЫЙ список (без пересекающихся трек-субтитров) + наш слой.
-    return cleaned + [template]
+        td = layer.setdefault("text_data", {})
+        meta = td.setdefault("layer_meta", {})
+        meta["startTime"] = float(seg_in)
+        meta["enabled"] = True
+        # Disable the reveal animator: each chunk shows fully for its slice.
+        td.pop("text_animator", None)
+        td["no_text_animator"] = True
+        td["char_styles_ungrouped"] = _rebuild_char_styles(td, text_len=len(chunk))
+
+        logger.info(
+            "f5.inject subtitle chunk %d/%d text=%r in=%.3f out=%.3f z=%d",
+            i + 1, n, chunk, seg_in, seg_out, layer["z_index"],
+        )
+        new_layers.append(layer)
+
+    return cleaned + new_layers
 
 
 # ─────────────────────────────────────────────────────────────────────────────
