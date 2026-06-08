@@ -188,6 +188,46 @@ def _build_f4_overlay_js(full_edit_config: Dict[str, Any]) -> str:
     return overlay
 
 
+def _build_f2_overlay_js(full_edit_config: Dict[str, Any]) -> str:
+    """
+    Если в full_edit_config есть блок "f2" — собирает инъектируемый JSX-блок
+    F2 «Объект» packaged-combo (shape на pre-drop склейках + hook_light на
+    дропе + рандомный F3-переход на post-drop склейках). Блок встраивается в
+    шаблон сырым куском (рядом с f3/f4 блоками, до сохранения проекта).
+
+    Блок "f2" формируется оркестратором: {"shape": <id>, "drop_time": <float>,
+    "seed": <int>}. Нет блока => пустая строка => ноль влияния.
+
+    Импорт mlcore.hooks делаем лениво, чтобы project_builder не тянул лишнее.
+    """
+    f2_block = full_edit_config.get("f2") if isinstance(full_edit_config, dict) else None
+    if not f2_block or not isinstance(f2_block, dict):
+        return ""
+
+    shape = str(f2_block.get("shape") or "").strip().lower()
+    if not shape:
+        raise RuntimeError("f2 block present but 'shape' is empty")
+    drop_time = f2_block.get("drop_time")
+    if drop_time is None:
+        raise RuntimeError("f2 block present but 'drop_time' is missing")
+    seed = f2_block.get("seed")
+    if seed is None:
+        raise RuntimeError("f2 block present but 'seed' is missing")
+
+    from mlcore.hooks.f2_object.overlay import build_overlay_jsx
+
+    overlay = build_overlay_jsx(
+        shape=shape,
+        drop_time=float(drop_time),
+        seed=int(seed),
+    )
+    LOGGER.info(
+        "f2 combo present shape=%s drop_time=%s seed=%s js_len=%d",
+        shape, drop_time, seed, len(overlay),
+    )
+    return overlay
+
+
 def _build_f3_overlay_js(full_edit_config: Dict[str, Any]) -> str:
     """
     Если в full_edit_config есть блок "f3" — собирает инъектируемый JSX-блок
@@ -361,6 +401,9 @@ def build_full_project(
     f4_overlay_js = _build_f4_overlay_js(full_edit_config)
     # F3 «Эффект» overlay (hook/transition/extra + sound + logo). Absent => "".
     f3_overlay_js = _build_f3_overlay_js(full_edit_config)
+    # F2 «Объект» packaged-combo overlay (shape pre-drop + hook_light + random
+    # F3 transition post-drop). Absent block => empty string => zero impact.
+    f2_overlay_js = _build_f2_overlay_js(full_edit_config)
 
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "logs").mkdir(parents=True, exist_ok=True)
@@ -375,7 +418,12 @@ def build_full_project(
     env.filters["tojson"] = _tojson_filter
 
     tpl = env.get_template("project_template.j2")
-    jsx = tpl.render(**payload, f4_overlay_js=f4_overlay_js, f3_overlay_js=f3_overlay_js)
+    jsx = tpl.render(
+        **payload,
+        f4_overlay_js=f4_overlay_js,
+        f3_overlay_js=f3_overlay_js,
+        f2_overlay_js=f2_overlay_js,
+    )
     out_jsx.write_text(jsx, encoding="utf-8")
 
     return out_json, out_jsx

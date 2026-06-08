@@ -844,6 +844,7 @@ def render_all_steps(
     f5_block: Dict[str, Any] | None = None,
     f4_block: Dict[str, Any] | None = None,
     f3_block: Dict[str, Any] | None = None,
+    f2_block: Dict[str, Any] | None = None,
 ) -> Dict[str, Path]:
     repo_root = repo_root.resolve()
     out_dir = out_dir.resolve()
@@ -1058,6 +1059,17 @@ def render_all_steps(
     # -------------------------
     if f3_block:
         full_edit_obj["f3"] = f3_block
+
+    # -------------------------
+    # F2 «Объект» packaged-combo overlay: если оркестратор сгенерировал блок
+    # {shape, drop_time, seed} — вкладываем в full_edit_config.
+    # project_builder._build_f2_overlay_js прочитает full_edit_config["f2"] и
+    # впишет инъектируемый JSX комбо (shape на pre-drop склейках +
+    # hook_light на дропе + рандомный F3-переход на post-drop склейках).
+    # Нет блока → full_edit_config без изменений (обычный job).
+    # -------------------------
+    if f2_block:
+        full_edit_obj["f2"] = f2_block
 
     # -------------------------
     # Write to DATA_DIR + mirror to OUT_DIR

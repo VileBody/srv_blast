@@ -76,6 +76,7 @@ from .state_store import (
     STAGE_WAIT_EFFECT_TRANSITION,
     STAGE_WAIT_EFFECT_EXTRA,
     STAGE_WAIT_EFFECT_EXTEND,
+    STAGE_WAIT_F2_SHAPE,
     STAGE_WAIT_TIMING_CHOICE,
     STAGE_WAIT_TIMING_INPUT,
     STAGE_WAIT_FRAGMENT_TEXT,
@@ -186,10 +187,10 @@ _HOOK_CATEGORY_BY_BUTTON = {
     BTN_HOOK_CAT_MOTION: "motion",
     BTN_HOOK_CAT_THOUGHT: "thought",
 }
-# Categories not implemented yet. "Мысль"=F5, "Движение"=F4, "Эффект"=F3 are wired.
+# Categories not implemented yet. "Мысль"=F5, "Движение"=F4, "Эффект"=F3,
+# "Объект"=F2 are wired. Only "Звук"=F1 is still a stub.
 _HOOK_CATEGORY_NOT_READY = {
     BTN_HOOK_CAT_SOUND,
-    BTN_HOOK_CAT_OBJECT,
 }
 # F4 («Движение») device picker. Button text -> f4 device id. Only "swipe" is
 # wired so far (mlcore/hooks/f4_motion). LEAD_BY_DEVICE is imported lazily where
@@ -284,6 +285,21 @@ _FX_EXTEND_BY_BUTTON = {
     BTN_FX_EXT_STD: "",
     BTN_FX_EXT_END: "to_end",
     BTN_FX_EXT_3: "after_drop:3",
+}
+# F2 «Объект» — 5 shape buttons (single sub-picker). Maps to f2_shape, the rest
+# of the combo (hook_light on drop + seeded-random F3 transition on post-drop
+# cuts) is forced server-side.
+BTN_F2_SHAPE_RHOMB = "Ромб"
+BTN_F2_SHAPE_SQUARE = "Квадрат"
+BTN_F2_SHAPE_STAR1 = "Звезда-10"
+BTN_F2_SHAPE_STAR2 = "Звезда-5"
+BTN_F2_SHAPE_ELIPSE = "Эллипс"
+_F2_SHAPE_BY_BUTTON = {
+    BTN_F2_SHAPE_RHOMB: "rhomb",
+    BTN_F2_SHAPE_SQUARE: "square",
+    BTN_F2_SHAPE_STAR1: "star1",
+    BTN_F2_SHAPE_STAR2: "star2",
+    BTN_F2_SHAPE_ELIPSE: "elipse",
 }
 VERSION_BUTTONS = [BTN_VER_1, BTN_VER_2, BTN_VER_3, BTN_VER_4, BTN_VER_5]
 SUBTITLES_MODE_BUTTONS = [
@@ -1436,6 +1452,10 @@ class BlastBotApp:
                 await self._handle_wait_effect_extend(message, st)
                 return
 
+            if st.stage == STAGE_WAIT_F2_SHAPE:
+                await self._handle_wait_f2_shape(message, st)
+                return
+
             if st.stage == STAGE_WAIT_VERSIONS:
                 await self._handle_wait_versions(message, st)
                 return
@@ -2423,6 +2443,7 @@ class BlastBotApp:
             st.hook_drop_t = None
             st.hook_category = ""
             st.hook_device = ""
+            st.f2_shape = ""
             await self.store.set(st)
             await self._ask_versions(message, st)
             return
@@ -2541,9 +2562,12 @@ class BlastBotApp:
         await self.store.set(st)
         await message.answer(
             "Выбери тип хука:\n"
-            "• «Мысль» — голосовая TTS-вставка в первые секунды (готово).\n"
-            "• «Движение» — свайп-оверлей в такт, разрешается вспышкой на дропе (бета).\n"
-            "• Звук / Объект / Эффект — скоро добавим.",
+            "• «Мысль» — голосовая TTS-вставка в первые секунды.\n"
+            "• «Движение» — морфинг руки/головы в такт, вспышка на дропе.\n"
+            "• «Эффект» — хук + переход + грейд (3 шага).\n"
+            "• «Объект» — фигура-переход на склейках до дропа, молния на дропе, "
+            "рандомный визуал-переход после.\n"
+            "• Звук — скоро добавим.",
             reply_markup=_kb(
                 [BTN_HOOK_CAT_SOUND, BTN_HOOK_CAT_OBJECT],
                 [BTN_HOOK_CAT_EFFECT, BTN_HOOK_CAT_MOTION],
@@ -2560,8 +2584,21 @@ class BlastBotApp:
         if text in _HOOK_CATEGORY_NOT_READY:
             await message.answer(
                 f"«{text}» пока в разработке — скоро добавим. "
-                "Сейчас доступны «Мысль», «Движение» и «Эффект»."
+                "Сейчас доступны «Мысль», «Движение», «Эффект», «Объект»."
             )
+            return
+        if text == BTN_HOOK_CAT_OBJECT:
+            # F2 packaged combo needs a drop anchor (pre/post split + hook_light).
+            if st.hook_drop_t is None:
+                await message.answer(
+                    "Для «Объекта» нужен момент дропа — вернись и выбери его."
+                )
+                await self._ask_hook_drop(message, st)
+                return
+            st.hook_category = "object"
+            st.f2_shape = ""
+            await self.store.set(st)
+            await self._ask_f2_shape(message, st)
             return
         if text == BTN_HOOK_CAT_EFFECT:
             # F3 visual FX needs a drop anchor (hook lands on the drop).
@@ -2845,6 +2882,52 @@ class BlastBotApp:
         if st.effect_hook_extend:
             parts.append(f"растяжка «{st.effect_hook_extend}»")
         await message.answer("Ок, «Эффект»: " + ", ".join(parts) + ".")
+        await self._ask_versions(message, st)
+
+    # ── F2 «Объект» — single shape sub-picker (rest of combo is server-side) ──
+    async def _ask_f2_shape(self, message: Message, st: ChatState) -> None:
+        st.stage = STAGE_WAIT_F2_SHAPE
+        await self.store.set(st)
+        await message.answer(
+            "Какая фигура-переход на склейках до дропа?\n"
+            "На дропе сработает молния, после дропа — рандомный визуал-переход.\n"
+            "• Ромб — полигон 4 точки.\n"
+            "• Квадрат — белый солид.\n"
+            "• Звезда-10 — 10 лучей, тонкая обводка.\n"
+            "• Звезда-5 — 5 лучей, тонкая обводка.\n"
+            "• Эллипс — белый круг.",
+            reply_markup=_kb(
+                [BTN_F2_SHAPE_RHOMB, BTN_F2_SHAPE_SQUARE],
+                [BTN_F2_SHAPE_STAR1, BTN_F2_SHAPE_STAR2],
+                [BTN_F2_SHAPE_ELIPSE],
+                [BTN_BACK],
+            ),
+        )
+
+    async def _handle_wait_f2_shape(self, message: Message, st: ChatState) -> None:
+        text = str(message.text or "").strip()
+        if text == BTN_BACK:
+            await self._ask_hook_type(message, st)
+            return
+        shape = _F2_SHAPE_BY_BUTTON.get(text)
+        if shape is None:
+            await message.answer("Выбери фигуру кнопкой ниже.")
+            return
+        if st.hook_drop_t is None:
+            # Defensive: category-level check should have caught this, but the
+            # state can be re-entered from a back-nav after the drop got cleared.
+            await message.answer(
+                "Для «Объекта» нужен момент дропа — вернись и выбери его."
+            )
+            await self._ask_hook_drop(message, st)
+            return
+        st.f2_shape = shape
+        st.hook_type = "standard"  # legacy compat field
+        await self.store.set(st)
+        await message.answer(
+            f"Ок, «Объект»: фигура «{text}». На склейках до дропа — она; "
+            f"на дропе — молния; после дропа — рандомные F3-переходы."
+        )
         await self._ask_versions(message, st)
 
     @staticmethod
@@ -3318,6 +3401,11 @@ class BlastBotApp:
             effect_hook_extend=(
                 str(st.effect_hook_extend)
                 if (st.hook_enabled and st.hook_category == "effect" and st.effect_hook_extend)
+                else None
+            ),
+            f2_shape=(
+                str(st.f2_shape)
+                if (st.hook_enabled and st.hook_category == "object" and st.f2_shape)
                 else None
             ),
         )

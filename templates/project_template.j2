@@ -1525,6 +1525,18 @@
       logErr("f3 overlay injection failed", eF3);
     }
 
+    // ==========================================================
+    // 5.7) F2 «Объект» packaged-combo overlay (injected by build worker)
+    // Empty string when no f2 block => no-op. Combo wires three mechanisms in
+    // one pass: chosen shape transition on every PRE-DROP cut, F3 hook_light
+    // at the drop, and a seeded-random F3 transition on every POST-DROP cut.
+    // ==========================================================
+    try {
+      {{ f2_overlay_js }}
+    } catch(eF2) {
+      logErr("f2 overlay injection failed", eF2);
+    }
+
     if (__SUPPRESSED_UI_CALLS.length > 0) {
       logLine("WARN", "suppressed_ui_calls=" + safeJson(__SUPPRESSED_UI_CALLS, 2000));
     }

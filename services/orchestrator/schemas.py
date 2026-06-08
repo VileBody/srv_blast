@@ -94,6 +94,15 @@ class SendAudioS3Request(BaseModel):
     # Slow-shutter trail extension (only for extendable hooks): "to_end" or
     # "after_drop:N" (N = footages after the drop). None => default duration.
     effect_hook_extend: Optional[str] = Field(default=None, max_length=24)
+    # F2 «Объект» packaged-combo selection. When the user picks the "Объект"
+    # hook category, the bot sends the chosen shape id here. Propagated to the
+    # build env as F2_SHAPE; the orchestrator emits full_edit_config["f2"] and
+    # project_builder injects the AE overlay (shape on pre-drop cuts +
+    # hook_light at drop + seeded-random F3 transition on post-drop cuts).
+    # Requires user_drop_t (drop anchor). None => no F2 combo.
+    f2_shape: Optional[
+        Literal["rhomb", "square", "star1", "star2", "elipse"]
+    ] = None
     # Optional internal batch controls for multi-version generation.
     reuse_text_job_id: Optional[str] = None
     exclude_file_names: List[str] = Field(default_factory=list)
@@ -150,6 +159,9 @@ class SendAudioS3Request(BaseModel):
         # F3 fx needs a drop anchor (the hook lands on the drop).
         if (self.effect_hook or self.effect_transition or self.effect_extra) and self.user_drop_t is None:
             raise ValueError("effect_* requires user_drop_t (drop anchor) to be set")
+        # F2 combo also pivots on the drop (pre/post split + hook_light on drop).
+        if self.f2_shape and self.user_drop_t is None:
+            raise ValueError("f2_shape requires user_drop_t (drop anchor) to be set")
         return self
 
 

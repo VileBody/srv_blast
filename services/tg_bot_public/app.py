@@ -116,6 +116,7 @@ from .state_store import (
     STAGE_WAIT_EFFECT_TRANSITION,
     STAGE_WAIT_EFFECT_EXTRA,
     STAGE_WAIT_EFFECT_EXTEND,
+    STAGE_WAIT_F2_SHAPE,
 )
 
 
@@ -149,6 +150,7 @@ HOOK_STAGES = frozenset({
     STAGE_WAIT_EFFECT_TRANSITION,
     STAGE_WAIT_EFFECT_EXTRA,
     STAGE_WAIT_EFFECT_EXTEND,
+    STAGE_WAIT_F2_SHAPE,
 })
 
 # F3 «Эффект» visual-FX ids (mirror of mlcore/hooks/f3_effect + tg_bot_botapi).
@@ -189,6 +191,20 @@ F4_MOTION_DEVICE_LABELS_RU = {
     "Зум": "pinch",
     "Задержи палец": "holdfinger",
     "Качай головой": "head",
+}
+# F2 «Объект» packaged-combo shape ids (mirror of mlcore/hooks/f2_object +
+# tg_bot_botapi). The single-step picker UX lives in tg_bot_botapi; the public
+# bot mirrors the id set + RU-label map + the orchestrator-client `f2_shape`
+# kwarg (which lands in the payload regardless of HOOK_FLOW_ENABLED, so a chat
+# state pre-populated with a shape propagates cleanly). All five shapes are
+# wired downstream (mlcore/hooks/f2_object/shapes/).
+F2_SHAPE_IDS = frozenset({"rhomb", "square", "star1", "star2", "elipse"})
+F2_SHAPE_LABELS_RU = {
+    "Ромб": "rhomb",
+    "Квадрат": "square",
+    "Звезда-10": "star1",
+    "Звезда-5": "star2",
+    "Эллипс": "elipse",
 }
 # Reference BPM the F4 device keyframes were authored under. Mirrored for parity
 # (the public picker UX is gated behind HOOK_FLOW_ENABLED).

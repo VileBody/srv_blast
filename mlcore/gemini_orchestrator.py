@@ -4166,6 +4166,52 @@ def build_all_via_gemini_one_call(
             )
             f3_block = None
 
+    # ── F2 «Объект»: packaged-combo overlay (shape на pre-drop склейках +
+    #    hook_light на дропе + рандомный F3-переход на post-drop склейках).
+    #    Env F2_SHAPE выбирает форму; drop_time COMP-relative (= USER_DROP_T −
+    #    clip_start_abs). Seed = F2_SEED или job_id-derived (детерминизм).
+    #    Опциональное усиление — любая ошибка логируется и рендер идёт БЕЗ f2.
+    f2_block = None
+    _f2_shape = (os.environ.get("F2_SHAPE") or "").strip().lower()
+    if _f2_shape:
+        try:
+            from mlcore.hooks.f2_object.overlay import F2_SHAPES
+            if _f2_shape not in F2_SHAPES:
+                raise RuntimeError(f"unknown F2_SHAPE={_f2_shape!r}; allowed={list(F2_SHAPES)}")
+            _cs = float(stage1_json["audio"]["clip_start_abs"])
+            _udt = (os.environ.get("USER_DROP_T") or "").strip()
+            if not _udt:
+                raise RuntimeError("F2 combo requires USER_DROP_T (drop anchor)")
+            _drop_rel_f2 = float(_udt) - _cs
+            if not (_drop_rel_f2 > 0.0):
+                raise RuntimeError(
+                    f"F2 drop_rel must be > 0 (USER_DROP_T={_udt}, clip_start={_cs})"
+                )
+            _seed_env = (os.environ.get("F2_SEED") or "").strip()
+            if _seed_env:
+                _f2_seed = int(_seed_env) & 0xFFFFFFFF
+            else:
+                # Derive a stable 32-bit seed from job id (fall back to out_dir
+                # name) so reruns of the same job pick the same post-drop
+                # transitions.
+                _seed_src = os.environ.get("JOB_ID") or out_dir.name
+                _f2_seed = abs(hash(("f2", _seed_src))) & 0xFFFFFFFF
+            f2_block = {
+                "shape": _f2_shape,
+                "drop_time": _drop_rel_f2,
+                "seed": int(_f2_seed),
+            }
+            logger.info(
+                "f2.combo block shape=%s drop_rel=%.3f seed=%d",
+                _f2_shape, _drop_rel_f2, _f2_seed,
+            )
+        except Exception:
+            logger.exception(
+                "f2.combo FAILED — render without f2 (shape=%s job=%s)",
+                _f2_shape, os.environ.get("JOB_ID") or out_dir.name,
+            )
+            f2_block = None
+
     outputs = render_all_steps(
         repo_root=ROOT,
         plan=full_payload,
@@ -4175,6 +4221,7 @@ def build_all_via_gemini_one_call(
         f5_block=f5_block,
         f4_block=f4_block,
         f3_block=f3_block,
+        f2_block=f2_block,
     )
 
     logger.info("render_done %s", {k: str(v) for k, v in outputs.items()})

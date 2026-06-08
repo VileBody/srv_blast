@@ -100,6 +100,8 @@ _LLM_ENV_KEYS = (
     "F3_TRANSITION",
     "F3_EXTRA",
     "F3_HOOK_EXTEND",
+    "F2_SHAPE",
+    "F2_SEED",
     "BG_MODE",
     "BG_SOLID_COLOR_HEX",
     "SUBTITLES_FORCE_FILL_HEX",
@@ -1731,6 +1733,20 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
                 f"invalid effect_hook_extend={_f3_extend_raw!r}; expected 'to_end' or 'after_drop:N'"
             )
         env["F3_HOOK_EXTEND"] = _ext
+    # F2 «Объект» packaged-combo selection pass-through. Set => orchestrator
+    # emits full_edit_config["f2"] (shape on pre-drop cuts + hook_light at
+    # drop + seeded-random F3 transition on post-drop cuts) and
+    # project_builder injects the AE overlay JSX. Requires USER_DROP_T;
+    # absent => no F2 combo.
+    _f2_allowed_shapes = {"rhomb", "square", "star1", "star2", "elipse"}
+    _f2_shape_raw = req.get("f2_shape")
+    if _f2_shape_raw is not None and str(_f2_shape_raw).strip():
+        _f2_shape = str(_f2_shape_raw).strip().lower()
+        if _f2_shape not in _f2_allowed_shapes:
+            raise RuntimeError(
+                f"invalid f2_shape={_f2_shape_raw!r}; allowed={sorted(_f2_allowed_shapes)}"
+            )
+        env["F2_SHAPE"] = _f2_shape
     if exclude_file_names:
         env["FOOTAGE_EXCLUDE_FILE_NAMES_JSON"] = json.dumps(exclude_file_names, ensure_ascii=False)
     if rotation_theme and rotation_tags_group:

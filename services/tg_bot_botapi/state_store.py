@@ -43,6 +43,8 @@ STAGE_WAIT_EFFECT_HOOK = "WAIT_EFFECT_HOOK"
 STAGE_WAIT_EFFECT_TRANSITION = "WAIT_EFFECT_TRANSITION"
 STAGE_WAIT_EFFECT_EXTRA = "WAIT_EFFECT_EXTRA"
 STAGE_WAIT_EFFECT_EXTEND = "WAIT_EFFECT_EXTEND"
+# F2 «Объект» — single sub-picker (5 shape buttons).
+STAGE_WAIT_F2_SHAPE = "WAIT_F2_SHAPE"
 STAGE_WAIT_VERSIONS = "WAIT_VERSIONS"
 STAGE_WAIT_CONFIRM = "WAIT_CONFIRM"
 STAGE_PROCESSING = "PROCESSING"
@@ -111,6 +113,10 @@ class ChatState(BaseModel):
     effect_transition: str = ""  # "" | snap_wipe | minimax | invert_flash | extract_flash | flash_on_cuts | layer_shake
     effect_extra: str = ""       # "" | xerox | analog_glitch | neon_extract | old_camera | pixel_grain | warm_map
     effect_hook_extend: str = "" # "" | to_end | after_drop:N (only for extendable hooks, e.g. flash_slow_shutter)
+    # F2 «Объект» selection when hook_category == "object". Single shape pick
+    # — the rest of the combo (hook_light at drop + seeded-random F3 transition
+    # on post-drop cuts) is forced server-side. None/"" => no F2.
+    f2_shape: str = ""           # "" | rhomb | square | star1 | star2 | elipse
     # "" | "pending" | "ready" | "failed"
     hook_analysis_status: str = ""
     # Source audio path used to compute the analysis — if it ever doesn't
