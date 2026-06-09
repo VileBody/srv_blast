@@ -260,3 +260,74 @@ def test_team_bot_apply_bigtest_config_sets_f2_shape_source() -> None:
     assert 'st.f1_sound_url = str(case.get("f1_sound_url", ""))' in src, (
         "_apply_bigtest_config must reset st.f1_sound_url from the case dict"
     )
+
+
+# ── bigtest reuse safety-breaker (cjson coercion + Layer1/Layer2 abort) ───────
+
+_TEAM_CLIENT_PATH = Path(__file__).resolve().parents[1] / "services" / "tg_bot_botapi" / "orchestrator_client.py"
+_PUBLIC_CLIENT_PATH = Path(__file__).resolve().parents[1] / "services" / "tg_bot_public" / "orchestrator_client.py"
+
+
+def test_kill_job_mirrored_in_both_clients() -> None:
+    team = _TEAM_CLIENT_PATH.read_text(encoding="utf-8")
+    public = _PUBLIC_CLIENT_PATH.read_text(encoding="utf-8")
+    assert "async def kill_job(" in team, "team client must expose kill_job"
+    assert "async def kill_job(" in public, "public client must mirror kill_job (parity)"
+    assert "/kill" in team and "/kill" in public
+
+
+def test_team_bot_has_safety_breaker_methods_source() -> None:
+    src = _team_app_source()
+    assert "async def _bigtest_precheck_reuse_source(" in src, (
+        "Layer 1 precondition method must exist"
+    )
+    assert "async def _bigtest_emergency_stop(" in src, (
+        "Layer 2 runtime-abort method must exist"
+    )
+    assert "async def _bigtest_halt(" in src
+
+
+def test_team_bot_layer1_precondition_runs_before_reuse_case_source() -> None:
+    """Before enqueuing a reuse case (idx>0) the bot must precheck the source
+    resume_state and halt if it is not reusable."""
+    src = _team_app_source()
+    assert "if idx > 0:" in src
+    assert "self._bigtest_precheck_reuse_source(st.bigtest_master_job_id)" in src
+    # precondition checks stage1/stage2 presence
+    assert '"нет stage1_asr"' in src or "stage1_asr.transcript_words пуст" in src
+    assert '"нет stage2_subtitles"' in src
+
+
+def test_team_bot_layer2_aborts_on_stage1_reinvoke_source() -> None:
+    """If a reuse case actually re-invokes Stage1 ASR, the batch is aborted."""
+    src = _team_app_source()
+    assert 'reuse_stage1_miss' in src, "bot must watch the reuse_stage1_miss flag"
+    assert 'stage == "llm_stage1a_asr_invoke"' in src, (
+        "bot must also watch the dedicated stage1-invoke stage"
+    )
+    assert "self._bigtest_emergency_stop(" in src
+    assert "kill_job(" in src or "orchestrator.kill_job" in src
+
+
+def test_orchestrator_emits_stage1_invoke_signal_source() -> None:
+    """The orchestrator must emit the post-resume-check signal only on a real
+    Stage1 ASR cache miss, and tasks.py must turn it into a sticky flag."""
+    gem = (Path(__file__).resolve().parents[1] / "mlcore" / "gemini_orchestrator.py").read_text(encoding="utf-8")
+    tasks = (Path(__file__).resolve().parents[1] / "services" / "orchestrator" / "tasks.py").read_text(encoding="utf-8")
+    assert '_emit(progress_cb, "llm_stage1a_asr_invoke")' in gem, (
+        "orchestrator must emit llm_stage1a_asr_invoke inside the cache-miss branch"
+    )
+    assert '"llm_stage1a_asr_invoke"' in tasks and "reuse_stage1_miss" in tasks, (
+        "tasks must persist reuse_stage1_miss when ASR is invoked under reuse"
+    )
+
+
+def test_resume_payload_models_have_cjson_coercion_source() -> None:
+    """All reuse-validated payload models must carry the {}->[] coercion."""
+    base = Path(__file__).resolve().parents[1] / "mlcore" / "models"
+    for fname in ("stage1_asr.py", "stage1_plan.py", "switch_timing.py",
+                  "subtitles_tokens.py", "subtitles_flow.py"):
+        src = (base / fname).read_text(encoding="utf-8")
+        assert "restore_cjson_empty_lists" in src, (
+            f"{fname} must apply restore_cjson_empty_lists (cjson [] -> {{}} fix)"
+        )

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import List, Literal, Optional
+from typing import Any, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -11,6 +11,7 @@ from core.subtitles_mode import (
     SUBTITLES_MODE_TEMPLATE_4TH,
     SubtitlesMode,
 )
+from ._cjson_compat import restore_cjson_empty_lists
 from .subtitles_tokens import ClipWindow
 
 
@@ -61,6 +62,11 @@ class SubtitleFlowPlan(BaseModel):
     mode: SubtitlesMode
     clip: ClipWindow
     segments: List[SubtitleFlowSegment] = Field(min_length=1)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _restore_cjson_empty_lists(cls, data: Any) -> Any:
+        return restore_cjson_empty_lists(cls, data)
 
     @model_validator(mode="after")
     def _check_contract(self) -> "SubtitleFlowPlan":

@@ -147,6 +147,10 @@ HOOK_FLOW_ENABLED = (os.environ.get("HOOK_FLOW_ENABLED", "0").strip().lower()
 # the LLM cache is invalidated). It exists here for state parity only and is
 # never read in the public flow. The /bigtest F2 «Объект» cases live in
 # tg_bot_botapi's _BIGTEST_CASES / _apply_bigtest_config exclusively.
+# Parity note 4: the /bigtest reuse safety-breaker (Layer 1 precondition
+# _bigtest_precheck_reuse_source + Layer 2 runtime abort _bigtest_emergency_stop
+# on reuse_stage1_miss) lives entirely in tg_bot_botapi. The shared
+# OrchestratorClient.kill_job helper is mirrored below for parity but unused here.
 BIGTEST_ENABLED: bool = False
 
 HOOK_STAGES = frozenset({

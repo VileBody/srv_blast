@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-from typing import List, Literal, Optional
+from typing import Any, List, Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
+
+from ._cjson_compat import restore_cjson_empty_lists
 
 
 TimingRule = Literal["Dynamic Contrast", "Lyrical Phrases"]
@@ -65,6 +67,11 @@ class SwitchTimingPayload(BaseModel):
     fast_start_seconds: float = Field(ge=0.0)
     bpm: Optional[float] = None
     switch_points_abs: List[float] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _restore_cjson_empty_lists(cls, data: Any) -> Any:
+        return restore_cjson_empty_lists(cls, data)
 
     @model_validator(mode="after")
     def _check(self) -> "SwitchTimingPayload":

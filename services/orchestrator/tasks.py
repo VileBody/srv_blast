@@ -1844,8 +1844,22 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
                     _llm_cache_lock_held = _llm_cache_mod.try_acquire_lock(store.r, _llm_ck)
                 except Exception as _lock_err:
                     log.warning("llm_cache lock_error job=%s err=%r", job_id, _lock_err)
+            def _progress(stage: Any) -> None:
+                s = str(stage)
+                # Bigtest safety-breaker signal: when this job was asked to reuse
+                # text (reuse_text_job_id set) but Stage1 ASR is actually being
+                # invoked, the resume failed. Persist a sticky result flag so the
+                # bot can halt the whole /bigtest batch before more tokens burn.
+                if reuse_text_job_id and s == "llm_stage1a_asr_invoke":
+                    store.set_status(
+                        job_id, "RUNNING", stage=s,
+                        result={"reuse_stage1_miss": True},
+                    )
+                else:
+                    store.set_status(job_id, "RUNNING", stage=s)
+
             build_all_fn(
-                progress_cb=lambda stage: store.set_status(job_id, "RUNNING", stage=str(stage)),
+                progress_cb=_progress,
                 resume_state_path=llm_resume_state_path,
             )
             if _llm_ck is not None and _llm_cache_lock_held:

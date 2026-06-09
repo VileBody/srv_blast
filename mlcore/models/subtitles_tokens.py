@@ -1,8 +1,10 @@
 # mlcore/models/subtitles_tokens.py
 from __future__ import annotations
 
-from typing import List, Literal
+from typing import Any, List, Literal
 from pydantic import BaseModel, Field, model_validator
+
+from ._cjson_compat import restore_cjson_empty_lists
 
 Trailing = Literal[" ", "\r", ""]
 
@@ -183,6 +185,11 @@ class BlocksTokensPayload(BaseModel):
     block_5: Block5Glitch
     block_6: Block6DualTruth
     block_7: Block7Finale
+
+    @model_validator(mode="before")
+    @classmethod
+    def _restore_cjson_empty_lists(cls, data: Any) -> Any:
+        return restore_cjson_empty_lists(cls, data)
 
     @model_validator(mode="after")
     def _all_tokens_inside_clip(self) -> "BlocksTokensPayload":
