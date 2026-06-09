@@ -1323,13 +1323,18 @@ class BlastBotApp:
             st.bigtest_total = total
             st.bigtest_current_label = ""
             st.bigtest_master_job_id = last_master
-            # Pin subtitles_mode to whatever the reuse-source generation used.
-            # The prior normal completion reset st.subtitles_mode to LEGACY_BLOCKS,
-            # so without this every bigtest case would send "blocks" while the
-            # seeded resume_state carries the source's real mode (e.g. scenes_3rd)
-            # — a mismatch that invalidates the LLM cache and re-runs ASR/subtitles
-            # on every case. last_subtitles_mode survives the reset.
-            if str(st.last_subtitles_mode or "").strip():
+            # Pin subtitles_mode to whatever the reuse-source job ACTUALLY rendered
+            # with — read straight from its cached resume_state.stage2_subtitles_mode
+            # (ground truth). The prior normal completion reset st.subtitles_mode to
+            # LEGACY_BLOCKS, so without this case-0 would send "blocks" while the
+            # seeded resume_state carries the source's real mode (e.g. scenes_3rd) —
+            # a mismatch that invalidates the subtitles cache and renders blocks.
+            # Fallbacks: last_subtitles_mode (set at the source gen's completion),
+            # then the current value, if the source mode can't be read.
+            _src_mode = await self._bigtest_fetch_source_subtitles_mode(last_master)
+            if _src_mode:
+                st.subtitles_mode = _src_mode
+            elif str(st.last_subtitles_mode or "").strip():
                 st.subtitles_mode = str(st.last_subtitles_mode).strip()
             bot_inst = self._require_bot()
             if last_master:
@@ -3339,36 +3344,57 @@ class BlastBotApp:
 
         await self._move_to_wait_audio(int(message.chat.id), message)
 
-    async def _bigtest_precheck_reuse_source(self, master_job_id: str) -> Tuple[bool, str]:
+    async def _bigtest_precheck_reuse_source(self, master_job_id: str) -> Tuple[bool, str, str]:
         """Safety-breaker Layer 1 (precondition): before enqueuing case idx>0,
         confirm the reuse-source job carries a reusable resume_state. Returns
-        (ok, reason_if_not_ok). Structural check only (slim bot has no mlcore
-        models); the orchestrator does the full model_validate (+ cjson coercion)."""
+        (ok, reason_if_not_ok, source_subtitles_mode). The third element is the
+        source job's cached stage2_subtitles_mode — the deterministic ground
+        truth the case must echo so the request mode matches the seed (otherwise
+        the orchestrator invalidates the subtitles cache and renders the default
+        blocks mode). Structural check only (slim bot has no mlcore models); the
+        orchestrator does the full model_validate (+ cjson coercion)."""
         jid = str(master_job_id or "").strip()
         if not jid:
-            return False, "master_job_id пуст"
+            return False, "master_job_id пуст", ""
         try:
             job = await self.orchestrator.get_job(jid)
         except Exception as e:
-            return False, f"get_job упал: {e!r}"
+            return False, f"get_job упал: {e!r}", ""
         status = str(job.get("status") or "").upper()
         if status != "SUCCEEDED":
-            return False, f"источник не SUCCEEDED (status={status or 'unknown'})"
+            return False, f"источник не SUCCEEDED (status={status or 'unknown'})", ""
         res = job.get("result") if isinstance(job.get("result"), dict) else {}
         rs = res.get("resume_state") if isinstance(res.get("resume_state"), dict) else {}
         if not rs:
-            return False, "resume_state пуст"
+            return False, "resume_state пуст", ""
         asr = rs.get("stage1_asr")
         if not isinstance(asr, dict):
-            return False, "нет stage1_asr"
+            return False, "нет stage1_asr", ""
         tw = asr.get("transcript_words")
         if not isinstance(tw, list) or not tw:
-            return False, "stage1_asr.transcript_words пуст"
+            return False, "stage1_asr.transcript_words пуст", ""
         if not isinstance(rs.get("stage2_subtitles"), dict):
-            return False, "нет stage2_subtitles"
-        if not str(rs.get("stage2_subtitles_mode") or "").strip():
-            return False, "нет stage2_subtitles_mode"
-        return True, ""
+            return False, "нет stage2_subtitles", ""
+        src_mode = str(rs.get("stage2_subtitles_mode") or "").strip()
+        if not src_mode:
+            return False, "нет stage2_subtitles_mode", ""
+        return True, "", src_mode
+
+    async def _bigtest_fetch_source_subtitles_mode(self, master_job_id: str) -> str:
+        """Read the reuse-source job's cached stage2_subtitles_mode (best-effort).
+        Returns "" if unavailable, so callers can fall back. Used to pin the
+        bigtest subtitles_mode to the mode the source actually rendered with."""
+        jid = str(master_job_id or "").strip()
+        if not jid:
+            return ""
+        try:
+            job = await self.orchestrator.get_job(jid)
+        except Exception as e:
+            log.warning("bigtest_source_subtitles_mode_fetch_failed job=%s err=%r", jid, e)
+            return ""
+        res = job.get("result") if isinstance(job.get("result"), dict) else {}
+        rs = res.get("resume_state") if isinstance(res.get("resume_state"), dict) else {}
+        return str(rs.get("stage2_subtitles_mode") or "").strip()
 
     async def _bigtest_halt(self, *, st: ChatState, bot: Bot, text: str) -> None:
         """Tear down a /bigtest run (no more cases) and notify, preserving the
@@ -3419,7 +3445,7 @@ class BlastBotApp:
             # source job's resume_state is reuse-ready. If not, halt the batch
             # now rather than re-running LLM on every remaining case.
             if idx > 0:
-                ok, why = await self._bigtest_precheck_reuse_source(st.bigtest_master_job_id)
+                ok, why, src_mode = await self._bigtest_precheck_reuse_source(st.bigtest_master_job_id)
                 if not ok:
                     await self._bigtest_halt(
                         st=st, bot=bot,
@@ -3430,6 +3456,11 @@ class BlastBotApp:
                         ),
                     )
                     return
+                # Echo the source job's actual subtitles_mode so this case's
+                # request matches the seeded resume_state (else the orchestrator
+                # invalidates the subtitles cache and renders blocks).
+                if src_mode:
+                    st.subtitles_mode = src_mode
             case = _BIGTEST_CASES[idx]
             label = str(case["label"])
             st.bigtest_current_label = label

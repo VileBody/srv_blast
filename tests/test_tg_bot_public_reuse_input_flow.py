@@ -331,3 +331,48 @@ def test_resume_payload_models_have_cjson_coercion_source() -> None:
         assert "restore_cjson_empty_lists" in src, (
             f"{fname} must apply restore_cjson_empty_lists (cjson [] -> {{}} fix)"
         )
+
+
+# ── bigtest subtitles_mode pinned from SOURCE job's resume_state ──────────────
+# Fix: the fragile last_subtitles_mode pin let scenes_3rd degrade to blocks.
+# Now the mode is read straight from the reuse-source job's cached
+# resume_state.stage2_subtitles_mode (ground truth) at /bigtest start and per
+# reuse case, with last_subtitles_mode kept only as a fallback.
+
+def test_team_bot_has_fetch_source_subtitles_mode_helper_source() -> None:
+    src = _team_app_source()
+    assert "async def _bigtest_fetch_source_subtitles_mode(" in src, (
+        "helper that reads source job's stage2_subtitles_mode must exist"
+    )
+    assert 'rs.get("stage2_subtitles_mode")' in src
+
+
+def test_team_bot_precheck_returns_source_subtitles_mode_source() -> None:
+    src = _team_app_source()
+    assert "async def _bigtest_precheck_reuse_source(self, master_job_id: str) -> Tuple[bool, str, str]:" in src, (
+        "precheck must return (ok, reason, source_subtitles_mode) 3-tuple"
+    )
+    assert "return True, \"\", src_mode" in src, (
+        "precheck must return the source stage2_subtitles_mode on success"
+    )
+
+
+def test_team_bot_bigtest_start_pins_subtitles_from_source_source() -> None:
+    src = _team_app_source()
+    assert "_src_mode = await self._bigtest_fetch_source_subtitles_mode(last_master)" in src, (
+        "/bigtest start must fetch the source job's subtitles_mode"
+    )
+    # source mode takes precedence; last_subtitles_mode is only a fallback.
+    assert "if _src_mode:" in src
+    assert 'elif str(st.last_subtitles_mode or "").strip():' in src, (
+        "last_subtitles_mode must remain a fallback after the source-mode pin"
+    )
+
+
+def test_team_bot_reuse_case_echoes_source_subtitles_mode_source() -> None:
+    src = _team_app_source()
+    # idx>0 path unpacks the 3-tuple and pins the source mode before enqueue.
+    assert "ok, why, src_mode = await self._bigtest_precheck_reuse_source(" in src
+    assert "if src_mode:\n                    st.subtitles_mode = src_mode" in src, (
+        "each reuse case (idx>0) must echo the source's subtitles_mode"
+    )
