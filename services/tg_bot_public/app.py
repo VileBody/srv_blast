@@ -151,10 +151,11 @@ HOOK_FLOW_ENABLED = (os.environ.get("HOOK_FLOW_ENABLED", "0").strip().lower()
 # _bigtest_precheck_reuse_source + Layer 2 runtime abort _bigtest_emergency_stop
 # on reuse_stage1_miss) lives entirely in tg_bot_botapi. The shared
 # OrchestratorClient.kill_job helper is mirrored below for parity but unused here.
-# Parity note 5: /bigtest pins subtitles_mode from the reuse-source job's cached
-# resume_state.stage2_subtitles_mode (_bigtest_fetch_source_subtitles_mode at
-# start, and the precheck's returned mode for idx>0) so every case echoes the
-# source's real mode — team-bot-only, not used here.
+# Parity note 5: /bigtest validates the reuse-source (incl. case-0) via
+# _bigtest_precheck_reuse_source, refuses to start on an invalid/FAILED source,
+# pins subtitles_mode to the source's real resume_state.stage2_subtitles_mode,
+# and reuses footage style for every case (incl. case-0) so the stage2 LLM runs
+# at most once. All team-bot-only; not used here.
 BIGTEST_ENABLED: bool = False
 
 HOOK_STAGES = frozenset({

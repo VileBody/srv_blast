@@ -1318,34 +1318,51 @@ class BlastBotApp:
                 return
             last_master = str(st.master_job_id or "").strip()
             total = len(_BIGTEST_CASES)
+            bot_inst = self._require_bot()
+            # The whole bigtest replicates ONE reference generation (the last
+            # master) and only varies effects. If that source is present it MUST
+            # be a SUCCEEDED job with a valid resume_state, otherwise case-0 would
+            # silently reuse a broken/blocks job (proven failure: a FAILED blocks
+            # job became master → every case rendered blocks instead of scenes_3rd).
+            # Validate it up front; pin case-0's request mode to the source's REAL
+            # cached mode so the request matches the seed and reuse holds.
+            src_mode = ""
+            if last_master:
+                ok, why, src_mode = await self._bigtest_precheck_reuse_source(last_master)
+                if not ok:
+                    await bot_inst.send_message(
+                        chat_id,
+                        f"⛔ /bigtest не запущен: источник (последняя генерация "
+                        f"job={last_master}) непригоден к reuse: {why}.\n"
+                        f"Сделай УСПЕШНУЮ генерацию в нужном режиме субтитров "
+                        f"(например scenes 3rd) и повтори /bigtest — все 28 кейсов "
+                        f"возьмут её субтитры/тайминги/футаж, меняя только эффекты.",
+                    )
+                    st.bigtest_mode = False
+                    await self.store.set(st)
+                    return
             st.bigtest_mode = True
             st.bigtest_index = 0
             st.bigtest_total = total
             st.bigtest_current_label = ""
             st.bigtest_master_job_id = last_master
-            # Pin subtitles_mode to whatever the reuse-source job ACTUALLY rendered
-            # with — read straight from its cached resume_state.stage2_subtitles_mode
-            # (ground truth). The prior normal completion reset st.subtitles_mode to
-            # LEGACY_BLOCKS, so without this case-0 would send "blocks" while the
-            # seeded resume_state carries the source's real mode (e.g. scenes_3rd) —
-            # a mismatch that invalidates the subtitles cache and renders blocks.
-            # Fallbacks: last_subtitles_mode (set at the source gen's completion),
-            # then the current value, if the source mode can't be read.
-            _src_mode = await self._bigtest_fetch_source_subtitles_mode(last_master)
-            if _src_mode:
-                st.subtitles_mode = _src_mode
+            # Pin subtitles_mode to the source job's REAL rendered mode (ground
+            # truth from its resume_state). Without a source, fall back to the last
+            # explicit choice, then current value.
+            if src_mode:
+                st.subtitles_mode = src_mode
             elif str(st.last_subtitles_mode or "").strip():
                 st.subtitles_mode = str(st.last_subtitles_mode).strip()
-            bot_inst = self._require_bot()
             if last_master:
                 reuse_note = (
                     f"Кейс 1 переиспользует resume_state job={last_master} "
-                    f"(LLM не вызывается). Кейсы 2–{total} переиспользуют кейс 1."
+                    f"(режим {st.subtitles_mode}, ASR/субтитры/футаж — без LLM). "
+                    f"Кейсы 2–{total} переиспользуют кейс 1."
                 )
             else:
                 reuse_note = (
                     f"⚠️ Нет источника resume_state (master_job_id пуст).\n"
-                    f"Кейс 1 прогонит ASR + subtitles полностью. "
+                    f"Кейс 1 прогонит ASR + subtitles полностью (режим {st.subtitles_mode}). "
                     f"Кейсы 2–{total} переиспользуют результат кейса 1 — LLM только 1 раз."
                 )
             await bot_inst.send_message(
@@ -3380,22 +3397,6 @@ class BlastBotApp:
             return False, "нет stage2_subtitles_mode", ""
         return True, "", src_mode
 
-    async def _bigtest_fetch_source_subtitles_mode(self, master_job_id: str) -> str:
-        """Read the reuse-source job's cached stage2_subtitles_mode (best-effort).
-        Returns "" if unavailable, so callers can fall back. Used to pin the
-        bigtest subtitles_mode to the mode the source actually rendered with."""
-        jid = str(master_job_id or "").strip()
-        if not jid:
-            return ""
-        try:
-            job = await self.orchestrator.get_job(jid)
-        except Exception as e:
-            log.warning("bigtest_source_subtitles_mode_fetch_failed job=%s err=%r", jid, e)
-            return ""
-        res = job.get("result") if isinstance(job.get("result"), dict) else {}
-        rs = res.get("resume_state") if isinstance(res.get("resume_state"), dict) else {}
-        return str(rs.get("stage2_subtitles_mode") or "").strip()
-
     async def _bigtest_halt(self, *, st: ChatState, bot: Bot, text: str) -> None:
         """Tear down a /bigtest run (no more cases) and notify, preserving the
         audio so the operator can retry. Used by both safety-breaker layers."""
@@ -3491,9 +3492,13 @@ class BlastBotApp:
                     versions_total=1,
                     batch_id=new_batch_id,
                     reuse_text_job_id=str(st.bigtest_master_job_id or ""),
-                    # Cases 1-27: reuse case-0's footage style + its selection seed
-                    # so every case gets the exact same clips (only effects differ).
-                    reuse_stage2_footage=(idx > 0),
+                    # Reuse the footage STYLE from the source whenever one exists —
+                    # including case-0, which inherits the validated source's genre
+                    # so the footage-style LLM never runs in bigtest at all. Case-0
+                    # then picks clips with its own seed and stores it; cases 1-27
+                    # pin that seed so every case yields identical clips. Without a
+                    # source (master empty) case-0 picks footage fresh.
+                    reuse_stage2_footage=bool(str(st.bigtest_master_job_id or "").strip()),
                     stage2_selection_seed_override=(
                         str(st.bigtest_footage_seed) if idx > 0 and st.bigtest_footage_seed else None
                     ),

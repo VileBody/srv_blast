@@ -184,11 +184,11 @@ def test_team_bot_bigtest_sets_footage_seed_after_case0_source() -> None:
 
 
 def test_team_bot_bigtest_cases_pass_reuse_stage2_footage_source() -> None:
-    """Cases 1-27 must pass reuse_stage2_footage=True so stage2_style /
-    stage2_style_rotation are copied alongside the text resume state."""
+    """Bigtest cases must reuse footage style whenever a source exists (incl.
+    case-0), so stage2_style is copied and the footage-style LLM never runs."""
     src = _team_app_source()
-    assert "reuse_stage2_footage=(idx > 0)" in src, (
-        "Team bot must pass reuse_stage2_footage=(idx > 0) for bigtest cases"
+    assert 'reuse_stage2_footage=bool(str(st.bigtest_master_job_id or "").strip())' in src, (
+        "Team bot must reuse footage style whenever a source is present (incl. case-0)"
     )
 
 
@@ -339,14 +339,6 @@ def test_resume_payload_models_have_cjson_coercion_source() -> None:
 # resume_state.stage2_subtitles_mode (ground truth) at /bigtest start and per
 # reuse case, with last_subtitles_mode kept only as a fallback.
 
-def test_team_bot_has_fetch_source_subtitles_mode_helper_source() -> None:
-    src = _team_app_source()
-    assert "async def _bigtest_fetch_source_subtitles_mode(" in src, (
-        "helper that reads source job's stage2_subtitles_mode must exist"
-    )
-    assert 'rs.get("stage2_subtitles_mode")' in src
-
-
 def test_team_bot_precheck_returns_source_subtitles_mode_source() -> None:
     src = _team_app_source()
     assert "async def _bigtest_precheck_reuse_source(self, master_job_id: str) -> Tuple[bool, str, str]:" in src, (
@@ -357,15 +349,21 @@ def test_team_bot_precheck_returns_source_subtitles_mode_source() -> None:
     )
 
 
-def test_team_bot_bigtest_start_pins_subtitles_from_source_source() -> None:
+def test_team_bot_bigtest_start_validates_source_and_pins_mode_source() -> None:
+    """/bigtest start must validate the source (when present) via the precheck
+    and refuse to start on an invalid/FAILED source — instead of silently
+    reusing a broken/blocks job — then pin the source's real mode."""
     src = _team_app_source()
-    assert "_src_mode = await self._bigtest_fetch_source_subtitles_mode(last_master)" in src, (
-        "/bigtest start must fetch the source job's subtitles_mode"
+    assert "ok, why, src_mode = await self._bigtest_precheck_reuse_source(last_master)" in src, (
+        "/bigtest start must precheck last_master"
     )
-    # source mode takes precedence; last_subtitles_mode is only a fallback.
-    assert "if _src_mode:" in src
+    assert "/bigtest не запущен" in src, (
+        "start must refuse to launch on an invalid source"
+    )
+    # source mode takes precedence; last_subtitles_mode only a fallback.
+    assert "if src_mode:" in src
     assert 'elif str(st.last_subtitles_mode or "").strip():' in src, (
-        "last_subtitles_mode must remain a fallback after the source-mode pin"
+        "last_subtitles_mode must remain a fallback when there is no source"
     )
 
 
@@ -375,4 +373,13 @@ def test_team_bot_reuse_case_echoes_source_subtitles_mode_source() -> None:
     assert "ok, why, src_mode = await self._bigtest_precheck_reuse_source(" in src
     assert "if src_mode:\n                    st.subtitles_mode = src_mode" in src, (
         "each reuse case (idx>0) must echo the source's subtitles_mode"
+    )
+
+
+def test_team_bot_footage_reuse_extended_to_case0_source() -> None:
+    """Footage style must be reused whenever a source exists (incl. case-0), so
+    the footage-style LLM never runs in bigtest and all 28 share the source genre."""
+    src = _team_app_source()
+    assert 'reuse_stage2_footage=bool(str(st.bigtest_master_job_id or "").strip())' in src, (
+        "case-0 must also reuse footage style when a source is present"
     )
