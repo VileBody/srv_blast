@@ -202,3 +202,61 @@ def test_team_bot_bigtest_cases_pass_selection_seed_override_source() -> None:
     assert "stage2_selection_seed_override" in src, (
         "Team bot must pass stage2_selection_seed_override to _enqueue_batch_version"
     )
+
+
+# ── bigtest subtitles_mode pinning (fix: reuse not invalidated at bigtest entry)
+
+def test_last_subtitles_mode_field_in_both_state_stores() -> None:
+    team = _TEAM_SS_PATH.read_text(encoding="utf-8")
+    public = _PUBLIC_SS_PATH.read_text(encoding="utf-8")
+    assert "last_subtitles_mode" in team, (
+        "Team ChatState must have last_subtitles_mode (survives _reset_processing_state)"
+    )
+    assert "last_subtitles_mode" in public, (
+        "Public ChatState must mirror last_subtitles_mode for parity"
+    )
+
+
+def test_team_bot_saves_last_subtitles_mode_on_completion_source() -> None:
+    """On generation completion the bot must persist the mode it ran with into
+    last_subtitles_mode so a later /bigtest can pin it."""
+    src = _team_app_source()
+    assert "st.last_subtitles_mode = _saved_subtitles_mode" in src, (
+        "Completion handler must store last_subtitles_mode = _saved_subtitles_mode"
+    )
+
+
+def test_team_bot_pins_subtitles_mode_at_bigtest_start_source() -> None:
+    """At /bigtest start the bot must pin subtitles_mode to last_subtitles_mode
+    so every case matches the reuse-source job's cached stage2_subtitles_mode."""
+    src = _team_app_source()
+    assert "st.subtitles_mode = str(st.last_subtitles_mode).strip()" in src, (
+        "/bigtest must pin st.subtitles_mode from st.last_subtitles_mode"
+    )
+
+
+# ── bigtest F2 «Объект» cases ────────────────────────────────────────────────
+
+def test_team_bot_bigtest_pool_includes_f2_object_cases_source() -> None:
+    """The bigtest pool must include F2 «Объект» shape cases — they were missing
+    entirely (only F3/F4/F5 were present)."""
+    src = _team_app_source()
+    for shape in ("rhomb", "square", "star1", "star2", "elipse"):
+        assert f'"f2_shape": "{shape}"' in src, (
+            f"bigtest pool must contain an F2 case with f2_shape={shape!r}"
+        )
+    # All F2 cases must be wired as object-category hooks.
+    assert 'F2/объект' in src, "F2 bigtest cases must be labelled (F2/объект: ...)"
+
+
+def test_team_bot_apply_bigtest_config_sets_f2_shape_source() -> None:
+    """_apply_bigtest_config must set/reset st.f2_shape (and st.f1_sound_url)
+    from the case dict — otherwise an F2 case never applies its shape and a
+    prior F2 case could leak into the next one."""
+    src = _team_app_source()
+    assert 'st.f2_shape = str(case.get("f2_shape", ""))' in src, (
+        "_apply_bigtest_config must set st.f2_shape from the case dict"
+    )
+    assert 'st.f1_sound_url = str(case.get("f1_sound_url", ""))' in src, (
+        "_apply_bigtest_config must reset st.f1_sound_url from the case dict"
+    )

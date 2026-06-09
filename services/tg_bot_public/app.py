@@ -142,6 +142,11 @@ HOOK_FLOW_ENABLED = (os.environ.get("HOOK_FLOW_ENABLED", "0").strip().lower()
 # Parity note 2: reuse_stage2_footage, stage2_selection_seed_override and
 # bigtest_footage_seed fields exist in state_store/schemas for schema parity;
 # they are never set to non-default values here (BIGTEST_ENABLED=False).
+# Parity note 3: last_subtitles_mode (ChatState) is pinned at /bigtest start in
+# tg_bot_botapi so every case reuses the source job's subtitles_mode (otherwise
+# the LLM cache is invalidated). It exists here for state parity only and is
+# never read in the public flow. The /bigtest F2 «Объект» cases live in
+# tg_bot_botapi's _BIGTEST_CASES / _apply_bigtest_config exclusively.
 BIGTEST_ENABLED: bool = False
 
 HOOK_STAGES = frozenset({

@@ -198,6 +198,11 @@ class ChatState(BaseModel):
     bigtest_current_label: str = ""  # label string shown in result caption
     bigtest_master_job_id: str = ""  # job_id to reuse ASR/subtitles from
     bigtest_footage_seed: str = ""   # STAGE2_SELECTION_SEED of case-0 (reused by cases 1-27)
+    # subtitles_mode of the last COMPLETED generation; survives _reset_processing_state
+    # (which resets subtitles_mode to LEGACY_BLOCKS). /bigtest pins this so every case
+    # uses the same mode as the reuse-source job — otherwise the seeded resume_state's
+    # stage2_subtitles_mode mismatches the request and the LLM cache is invalidated.
+    last_subtitles_mode: str = ""
 
 
 class RedisChatStateStore:

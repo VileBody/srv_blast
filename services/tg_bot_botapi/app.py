@@ -435,6 +435,27 @@ _BIGTEST_CASES: List[Dict[str, Any]] = [
     {"label": "F5/мысль: Инверсия",
      "hook_enabled": True, "hook_category": "thought", "hook_device": "inverse_lyric",
      "effect_hook": "", "effect_transition": "", "effect_extra": "", "effect_hook_extend": ""},
+    # ── F2 / Объект (shape packaged-combo, requires drop) ────────────────────
+    {"label": "F2/объект: Ромб",
+     "hook_enabled": True, "hook_category": "object", "hook_device": "",
+     "effect_hook": "", "effect_transition": "", "effect_extra": "", "effect_hook_extend": "",
+     "f2_shape": "rhomb"},
+    {"label": "F2/объект: Квадрат",
+     "hook_enabled": True, "hook_category": "object", "hook_device": "",
+     "effect_hook": "", "effect_transition": "", "effect_extra": "", "effect_hook_extend": "",
+     "f2_shape": "square"},
+    {"label": "F2/объект: Звезда-10",
+     "hook_enabled": True, "hook_category": "object", "hook_device": "",
+     "effect_hook": "", "effect_transition": "", "effect_extra": "", "effect_hook_extend": "",
+     "f2_shape": "star1"},
+    {"label": "F2/объект: Звезда-5",
+     "hook_enabled": True, "hook_category": "object", "hook_device": "",
+     "effect_hook": "", "effect_transition": "", "effect_extra": "", "effect_hook_extend": "",
+     "f2_shape": "star2"},
+    {"label": "F2/объект: Эллипс",
+     "hook_enabled": True, "hook_category": "object", "hook_device": "",
+     "effect_hook": "", "effect_transition": "", "effect_extra": "", "effect_hook_extend": "",
+     "f2_shape": "elipse"},
 ]
 
 
@@ -1302,6 +1323,14 @@ class BlastBotApp:
             st.bigtest_total = total
             st.bigtest_current_label = ""
             st.bigtest_master_job_id = last_master
+            # Pin subtitles_mode to whatever the reuse-source generation used.
+            # The prior normal completion reset st.subtitles_mode to LEGACY_BLOCKS,
+            # so without this every bigtest case would send "blocks" while the
+            # seeded resume_state carries the source's real mode (e.g. scenes_3rd)
+            # — a mismatch that invalidates the LLM cache and re-runs ASR/subtitles
+            # on every case. last_subtitles_mode survives the reset.
+            if str(st.last_subtitles_mode or "").strip():
+                st.subtitles_mode = str(st.last_subtitles_mode).strip()
             bot_inst = self._require_bot()
             if last_master:
                 reuse_note = (
@@ -2104,6 +2133,12 @@ class BlastBotApp:
         st.effect_transition = str(case.get("effect_transition", ""))
         st.effect_extra = str(case.get("effect_extra", ""))
         st.effect_hook_extend = str(case.get("effect_hook_extend", ""))
+        # F2 «Объект» (shape) / F1 «Звук» (sound url). Set from the case when
+        # present, otherwise cleared so a prior F2/F1 case does not leak into
+        # the next one. The send_audio_s3 callsite gates f2_shape on
+        # hook_category == "object" (and f1_sound_url on "sound").
+        st.f2_shape = str(case.get("f2_shape", ""))
+        st.f1_sound_url = str(case.get("f1_sound_url", ""))
 
     async def _handle_wait_audio(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()
@@ -4260,6 +4295,12 @@ class BlastBotApp:
         # preserve the user's actual choice so bigtest cases all use the same
         # mode as case-0 (mismatch would invalidate the stage2_subtitles cache).
         _saved_subtitles_mode = str(st.subtitles_mode or "")
+        # Remember the mode this generation actually ran with. It survives
+        # _reset_processing_state so a later /bigtest can pin it as the request
+        # mode — matching the reuse-source job's cached stage2_subtitles_mode and
+        # thus keeping the LLM cache valid across all 28 cases.
+        if _saved_subtitles_mode:
+            st.last_subtitles_mode = _saved_subtitles_mode
 
         # ── Bigtest: advance to the next case instead of returning to idle ──
         if st.bigtest_mode:

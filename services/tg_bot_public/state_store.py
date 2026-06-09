@@ -237,6 +237,7 @@ class ChatState(BaseModel):
     bigtest_current_label: str = ""
     bigtest_master_job_id: str = ""
     bigtest_footage_seed: str = ""  # parity with tg_bot_botapi; unused here (BIGTEST_ENABLED=False)
+    last_subtitles_mode: str = ""   # parity with tg_bot_botapi; unused here (BIGTEST_ENABLED=False)
 
 
 class RedisChatStateStore:
