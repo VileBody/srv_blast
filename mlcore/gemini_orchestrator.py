@@ -2523,6 +2523,11 @@ def build_all_via_gemini_one_call(
             resume_state.pop("stage1_asr", None)
 
     if stage1_asr is None:
+        # Cache MISS: the Stage1 ASR LLM is about to be invoked for real.
+        # Emitted only here (after the resume check), unlike "llm_stage1a_asr"
+        # above which is set unconditionally. The bigtest safety-breaker watches
+        # this stage to halt the batch if a reuse case re-runs ASR.
+        _emit(progress_cb, "llm_stage1a_asr_invoke")
         if use_forced_alignment:
             stage1_forced_checked_asr: Stage1AsrPayload | None = None
 

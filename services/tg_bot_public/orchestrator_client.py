@@ -148,6 +148,25 @@ class OrchestratorClient:
             raise RuntimeError("get_queue_estimate requires non-empty job_id")
         return await self._get_json(f"/jobs/{jid}/queue-estimate")
 
+    async def kill_job(self, job_id: str, *, reason: str = "") -> Dict[str, Any]:
+        """Parity with tg_bot_botapi (used by /bigtest safety-breaker, which is
+        team-only). Best-effort kill of a RUNNING/QUEUED job."""
+        jid = str(job_id or "").strip()
+        if not jid:
+            raise RuntimeError("kill_job requires non-empty job_id")
+        resp = await self._client.post(
+            f"{self._base_url}/jobs/{jid}/kill",
+            json={"reason": str(reason or "")},
+        )
+        if resp.status_code >= 300:
+            raise RuntimeError(
+                f"orchestrator /jobs/{jid}/kill failed status={resp.status_code} body={resp.text}"
+            )
+        out = resp.json()
+        if not isinstance(out, dict):
+            raise RuntimeError(f"kill_job returned non-object: {out!r}")
+        return out
+
     async def get_jobs(self, job_ids: List[str]) -> Dict[str, Dict[str, Any]]:
         cleaned: List[str] = []
         seen: set[str] = set()

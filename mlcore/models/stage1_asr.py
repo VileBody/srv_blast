@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from typing import List
+from typing import Any, List
 
 from pydantic import BaseModel, Field, model_validator
 
+from ._cjson_compat import restore_cjson_empty_lists
 from .stage1_plan import FragmentAnalytics, PauseSpan, Stage1AudioWindow, TranscriptWord
 
 
@@ -25,6 +26,11 @@ class Stage1AsrSelectedFragment(BaseModel):
     pause_spans: List[PauseSpan] = Field(default_factory=list)
     srt_items: List[SrtItem] = Field(default_factory=list)
     fragment_analytics: FragmentAnalytics | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _restore_cjson_empty_lists(cls, data: Any) -> Any:
+        return restore_cjson_empty_lists(cls, data)
 
     @model_validator(mode="after")
     def _check(self) -> "Stage1AsrSelectedFragment":
@@ -59,3 +65,8 @@ class Stage1AsrPayload(BaseModel):
     pause_spans: List[PauseSpan] = Field(default_factory=list)
     srt_items: List[SrtItem] = Field(default_factory=list)
     selected_fragment: Stage1AsrSelectedFragment | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _restore_cjson_empty_lists(cls, data: Any) -> Any:
+        return restore_cjson_empty_lists(cls, data)

@@ -3339,12 +3339,97 @@ class BlastBotApp:
 
         await self._move_to_wait_audio(int(message.chat.id), message)
 
+    async def _bigtest_precheck_reuse_source(self, master_job_id: str) -> Tuple[bool, str]:
+        """Safety-breaker Layer 1 (precondition): before enqueuing case idx>0,
+        confirm the reuse-source job carries a reusable resume_state. Returns
+        (ok, reason_if_not_ok). Structural check only (slim bot has no mlcore
+        models); the orchestrator does the full model_validate (+ cjson coercion)."""
+        jid = str(master_job_id or "").strip()
+        if not jid:
+            return False, "master_job_id пуст"
+        try:
+            job = await self.orchestrator.get_job(jid)
+        except Exception as e:
+            return False, f"get_job упал: {e!r}"
+        status = str(job.get("status") or "").upper()
+        if status != "SUCCEEDED":
+            return False, f"источник не SUCCEEDED (status={status or 'unknown'})"
+        res = job.get("result") if isinstance(job.get("result"), dict) else {}
+        rs = res.get("resume_state") if isinstance(res.get("resume_state"), dict) else {}
+        if not rs:
+            return False, "resume_state пуст"
+        asr = rs.get("stage1_asr")
+        if not isinstance(asr, dict):
+            return False, "нет stage1_asr"
+        tw = asr.get("transcript_words")
+        if not isinstance(tw, list) or not tw:
+            return False, "stage1_asr.transcript_words пуст"
+        if not isinstance(rs.get("stage2_subtitles"), dict):
+            return False, "нет stage2_subtitles"
+        if not str(rs.get("stage2_subtitles_mode") or "").strip():
+            return False, "нет stage2_subtitles_mode"
+        return True, ""
+
+    async def _bigtest_halt(self, *, st: ChatState, bot: Bot, text: str) -> None:
+        """Tear down a /bigtest run (no more cases) and notify, preserving the
+        audio so the operator can retry. Used by both safety-breaker layers."""
+        try:
+            await bot.send_message(st.chat_id, text, parse_mode="HTML")
+        except Exception as e:
+            log.warning("bigtest_halt_notify_failed chat=%s err=%r", st.chat_id, e)
+        st.bigtest_mode = False
+        st.bigtest_index = 0
+        st.bigtest_total = 0
+        st.bigtest_current_label = ""
+        _saved_audio = str(st.batch_audio_s3_url or "")
+        self._reset_processing_state(st)
+        st.batch_audio_s3_url = _saved_audio
+        await self.store.set(st)
+
+    async def _bigtest_emergency_stop(self, *, st: ChatState, bot: Bot, job_id: str, reason: str) -> None:
+        """Safety-breaker Layer 2 (runtime abort): a reuse case actually
+        re-invoked Stage1 ASR. Kill it and halt the whole batch."""
+        idx = int(st.bigtest_index)
+        label = str(st.bigtest_current_label or "")
+        try:
+            await self.orchestrator.kill_job(job_id, reason=f"bigtest_reuse_failed:{reason}")
+        except Exception as e:
+            log.warning("bigtest_emergency_kill_failed chat=%s job=%s err=%r", st.chat_id, job_id, e)
+        log.warning(
+            "bigtest_emergency_stop chat=%s idx=%d job=%s reason=%s", st.chat_id, idx, job_id, reason
+        )
+        await self._bigtest_halt(
+            st=st, bot=bot,
+            text=(
+                f"⛔ Bigtest ПРЕРВАН на кейсе [{idx + 1}/{st.bigtest_total}] «{label}».\n"
+                f"Причина: reuse не сработал — кейс заново запустил stage1 ASR через LLM "
+                f"(<code>{reason}</code>). Убил джобу и остановил батч, чтобы не жечь токены "
+                f"на остальных кейсах.\n"
+                f"resume_state первого кейса непригоден к переиспользованию — нужен разбор."
+            ),
+        )
+
     async def _bigtest_try_enqueue_from_current(self, st: ChatState, bot: Bot) -> None:
         """Enqueue bigtest_index case. Skips (with message) any cases that
         fail to enqueue (e.g. F4 without drop_t), then tries the next one.
         Calls itself-as-loop until a case succeeds or all remaining are skipped."""
         while st.bigtest_index < st.bigtest_total:
             idx = int(st.bigtest_index)
+            # Safety-breaker Layer 1: before any reuse case (idx>0), verify the
+            # source job's resume_state is reuse-ready. If not, halt the batch
+            # now rather than re-running LLM on every remaining case.
+            if idx > 0:
+                ok, why = await self._bigtest_precheck_reuse_source(st.bigtest_master_job_id)
+                if not ok:
+                    await self._bigtest_halt(
+                        st=st, bot=bot,
+                        text=(
+                            f"⛔ Bigtest ПРЕРВАН перед кейсом [{idx + 1}/{st.bigtest_total}].\n"
+                            f"resume_state источника непригоден к reuse: <code>{why}</code>.\n"
+                            f"Остановил, чтобы не гонять LLM заново на остальных кейсах."
+                        ),
+                    )
+                    return
             case = _BIGTEST_CASES[idx]
             label = str(case["label"])
             st.bigtest_current_label = label
@@ -4081,6 +4166,17 @@ class BlastBotApp:
             status = str(job.get("status") or "").upper()
             stage = str(job.get("stage") or "").strip()
             error_text = str(job.get("error") or "").strip()
+            # Safety-breaker Layer 2: a reuse case (idx>0) actually re-invoked
+            # Stage1 ASR (resume failed despite reuse_text_job_id). Detect via the
+            # sticky orchestrator flag (or the dedicated stage) and abort the
+            # whole /bigtest batch before more tokens burn.
+            if st.bigtest_mode and int(st.bigtest_index) > 0:
+                _res = job.get("result") if isinstance(job.get("result"), dict) else {}
+                if bool(_res.get("reuse_stage1_miss")) or stage == "llm_stage1a_asr_invoke":
+                    await self._bigtest_emergency_stop(
+                        st=st, bot=bot, job_id=jid, reason="stage1_asr_reinvoked"
+                    )
+                    return
             rows.append(
                 {
                     "job_id": jid,

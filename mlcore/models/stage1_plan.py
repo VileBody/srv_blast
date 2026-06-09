@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-from typing import List, Literal, Optional
+from typing import Any, List, Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
+
+from ._cjson_compat import restore_cjson_empty_lists
 
 class TranscriptWord(BaseModel):
     text: str = Field(min_length=1)
@@ -108,3 +110,8 @@ class Stage1PlanPayload(BaseModel):
     pause_spans: List[PauseSpan] = Field(default_factory=list)
     draft_blocks: Stage1DraftBlocks
     fragment_analytics: Optional[FragmentAnalytics] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _restore_cjson_empty_lists(cls, data: Any) -> Any:
+        return restore_cjson_empty_lists(cls, data)
