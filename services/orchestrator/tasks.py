@@ -1344,11 +1344,28 @@ def _seed_resume_state_from_source_job(
             f"source_job_id={src_job!r} checked={sources_checked!r} path={src_path}"
         )
 
-    missing = [k for k in _REUSE_RESUME_STATE_KEYS if k not in src_obj]
-    if missing:
+    # stage1_asr is the only reused stage the orchestrator cannot rebuild cheaply
+    # (the expensive ASR). Every other reuse key degrades gracefully when absent:
+    #   - stage1_plan / stage1_plan_source: rebuilt for FREE from
+    #     stage1_asr.selected_fragment (non-legacy) or re-derived via stage1b
+    #     (legacy) — see gemini_orchestrator stage1 block.
+    #   - stage2_* payloads: re-run if missing.
+    # A SUCCEEDED non-legacy reuse job can legitimately persist WITHOUT stage1_plan
+    # (it reuses/rebuilds it at runtime), so hard-failing on its absence would
+    # crash every downstream bigtest case for no reason. Copy whatever is present
+    # and only fail when stage1_asr itself is missing (nothing meaningful to reuse).
+    if "stage1_asr" not in src_obj:
         raise RuntimeError(
             "reuse_text_source_resume_missing_keys "
-            f"source_job_id={src_job!r} missing={missing!r}"
+            f"source_job_id={src_job!r} missing=['stage1_asr']"
+        )
+    skipped = [k for k in _REUSE_RESUME_STATE_KEYS if k not in src_obj]
+    if skipped:
+        log.info(
+            "reuse_text_seed_partial source_job_id=%s skipped=%r "
+            "(orchestrator will rebuild/recompute these)",
+            src_job,
+            skipped,
         )
 
     dst_obj: Dict[str, Any] = {}
@@ -1361,7 +1378,8 @@ def _seed_resume_state_from_source_job(
             dst_obj = {}
 
     for k in _REUSE_RESUME_STATE_KEYS:
-        dst_obj[k] = src_obj[k]
+        if k in src_obj:
+            dst_obj[k] = src_obj[k]
     if include_footage:
         # Bigtest: also copy footage style so every case uses the same genre/theme.
         # Only copied when present — if absent the orchestrator re-runs style LLM.

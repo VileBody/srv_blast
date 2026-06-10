@@ -61,15 +61,48 @@ def test_seed_resume_state_from_source_job_fails_when_source_missing(tmp_path: P
         )
 
 
-def test_seed_resume_state_from_source_job_fails_when_source_missing_keys(tmp_path: Path) -> None:
+def test_seed_resume_state_from_source_job_fails_only_when_stage1_asr_missing(tmp_path: Path) -> None:
+    """stage1_asr is the only mandatory reuse key (the expensive ASR the
+    orchestrator cannot rebuild). A source without it is unusable -> raise."""
     work_dir = tmp_path / "work"
     src_job = "src_job"
     src = work_dir / "jobs" / src_job / "data" / "llm_resume_state.json"
-    _write_json(src, {"stage1_asr": {"transcript_words": []}})
+    # Present keys but NO stage1_asr.
+    _write_json(src, {"stage2_subtitles_mode": "scenes_3rd"})
 
-    with pytest.raises(RuntimeError, match="reuse_text_source_resume_missing_keys"):
+    with pytest.raises(RuntimeError, match=r"missing=\['stage1_asr'\]"):
         tasks._seed_resume_state_from_source_job(
             work_dir=work_dir,
             source_job_id=src_job,
             target_resume_state_path=work_dir / "jobs" / "dst" / "data" / "llm_resume_state.json",
         )
+
+
+def test_seed_resume_state_tolerates_missing_stage1_plan(tmp_path: Path) -> None:
+    """Regression: a SUCCEEDED non-legacy (scenes_3rd) reuse source can persist
+    WITHOUT stage1_plan/stage1_plan_source (rebuilt for free at runtime from
+    stage1_asr.selected_fragment). Seeding must NOT crash — it copies the present
+    keys and skips the absent rebuildable ones. (Prod: /bigtest case-19 crashed
+    with reuse_text_source_resume_missing_keys missing stage1_plan.)"""
+    work_dir = tmp_path / "work"
+    src_job = "src_job"
+    src = work_dir / "jobs" / src_job / "data" / "llm_resume_state.json"
+    state = _valid_source_state()
+    # Mimic the prod source 1e7b5b39: stage1_plan absent, everything else present.
+    state.pop("stage1_plan", None)
+    state.pop("stage1_plan_source", None)
+    _write_json(src, state)
+
+    dst = work_dir / "jobs" / "dst_job" / "data" / "llm_resume_state.json"
+    # Must not raise.
+    tasks._seed_resume_state_from_source_job(
+        work_dir=work_dir,
+        source_job_id=src_job,
+        target_resume_state_path=dst,
+    )
+    out = json.loads(dst.read_text(encoding="utf-8"))
+    # Present keys copied; absent rebuildable keys simply not present.
+    assert out["stage1_asr"] == state["stage1_asr"]
+    assert out["stage2_subtitles_mode"] == "impulse_2nd"
+    assert "stage1_plan" not in out
+    assert "stage1_plan_source" not in out
