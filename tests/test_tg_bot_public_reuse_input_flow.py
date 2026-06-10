@@ -449,3 +449,26 @@ def test_team_bot_enqueue_loop_has_outer_guard_source() -> None:
     )
     assert "bigtest_enqueue_loop_failed" in src, "outer guard must log + surface uncaught errors"
     assert "Bigtest остановлен из-за внутренней ошибки" in src
+
+
+# ── bigtest: _compact_text keyword bug (caused total silence) + resume clip restore
+
+def test_team_bot_compact_text_called_with_keyword_limit_source() -> None:
+    """_compact_text(s, *, limit=...) — limit is keyword-only. The skip and
+    guard messages passed it positionally -> TypeError -> the messages crashed
+    and the run went SILENT. Both must use limit=."""
+    src = _team_app_source()
+    assert "_compact_text(str(e), 120)" not in src and "_compact_text(str(e), 160)" not in src, (
+        "_compact_text must be called with limit= keyword (positional limit raises TypeError)"
+    )
+    assert "_compact_text(str(e), limit=120)" in src
+    assert "_compact_text(str(e), limit=160)" in src
+
+
+def test_team_bot_resume_restores_clip_window_from_source_source() -> None:
+    """Resume must restore user_clip_end_sec/start from the source job's request,
+    else F4/F5/F2 cases enqueue with user_clip_end_sec=0 → orchestrator 422."""
+    src = _team_app_source()
+    assert "bigtest_resume_clip_restore_failed" in src
+    assert 'st.user_clip_end_sec = float(_ce)' in src
+    assert '_rq.get("user_clip_end_sec")' in src

@@ -1359,6 +1359,24 @@ class BlastBotApp:
                 st.bigtest_master_job_id = resume_source
                 if src_mode:
                     st.subtitles_mode = src_mode
+                # Restore the clip window + drop from the source job's request.
+                # A prior halt's _reset_processing_state zeroes user_clip_*; without
+                # this, reframe/F4/F5/F2 cases enqueue with user_clip_end_sec=0 and
+                # the orchestrator rejects (422: end must be > start).
+                try:
+                    _sj = await self.orchestrator.get_job(resume_source)
+                    _rq = _sj.get("request") if isinstance(_sj.get("request"), dict) else {}
+                    _ce = _rq.get("user_clip_end_sec")
+                    _cs = _rq.get("user_clip_start_sec")
+                    _dt = _rq.get("user_drop_t")
+                    if isinstance(_ce, (int, float)) and float(_ce) > 0:
+                        st.user_clip_end_sec = float(_ce)
+                    if isinstance(_cs, (int, float)) and float(_cs) >= 0:
+                        st.user_clip_start_sec = float(_cs)
+                    if st.hook_drop_t is None and isinstance(_dt, (int, float)):
+                        st.hook_drop_t = float(_dt)
+                except Exception as _e:
+                    log.warning("bigtest_resume_clip_restore_failed src=%s err=%r", resume_source, _e)
                 await bot_inst.send_message(
                     chat_id,
                     f"🔬 Bigtest RESUME: продолжаю с кейса [{resume_idx + 1}/{total}] "
@@ -3521,7 +3539,7 @@ class BlastBotApp:
                 await bot.send_message(
                     st.chat_id,
                     f"⛔ Bigtest остановлен из-за внутренней ошибки на кейсе "
-                    f"[{_idx + 1}/{st.bigtest_total}]: {_compact_text(str(e), 160)}{hint}",
+                    f"[{_idx + 1}/{st.bigtest_total}]: {_compact_text(str(e), limit=160)}{hint}",
                 )
             except Exception:
                 pass
@@ -3621,7 +3639,7 @@ class BlastBotApp:
                 log.warning("bigtest_skip chat=%s idx=%d label=%s err=%r", st.chat_id, idx, label, e)
                 await bot.send_message(
                     st.chat_id,
-                    f"⏭ [{idx + 1}/{st.bigtest_total}] {label} — пропущен: {_compact_text(str(e), 120)}",
+                    f"⏭ [{idx + 1}/{st.bigtest_total}] {label} — пропущен: {_compact_text(str(e), limit=120)}",
                 )
                 st.bigtest_index += 1
 

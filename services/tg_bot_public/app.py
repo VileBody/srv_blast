@@ -163,6 +163,10 @@ HOOK_FLOW_ENABLED = (os.environ.get("HOOK_FLOW_ENABLED", "0").strip().lower()
 # messages are plain text (no HTML to break on error reprs), the source precheck
 # retries get_job on transient hiccups, and an outer guard surfaces any uncaught
 # error with a resume hint. team-only.
+# Parity note 8: bigtest skip/guard messages call _compact_text(s, limit=N)
+# (keyword — limit is keyword-only); `/bigtest resume` restores the clip window
+# (user_clip_*) + drop from the source job's request so reframe/F4/F5/F2 cases
+# don't enqueue with user_clip_end_sec=0 (orchestrator 422). team-only.
 BIGTEST_ENABLED: bool = False
 
 HOOK_STAGES = frozenset({
