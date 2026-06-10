@@ -2260,6 +2260,17 @@ class BlastBotApp:
                 error_text=repr(exc),
             )
 
+    async def _allow_maintenance_bypass_paid_client(self, message: Message) -> bool:
+        """Платящие клиенты не должны попадать под техработы — пускаем их генерировать."""
+        chat_id = _message_chat_id(message)
+        if chat_id <= 0:
+            return False
+        try:
+            return await self.credits_db.has_paid(chat_id)
+        except Exception as e:
+            log.warning("maintenance_paid_client_check_failed chat=%s err=%r", chat_id, e)
+            return False
+
     async def _maybe_reply_maintenance_stub(self, message: Message) -> bool:
         try:
             enabled = await self._maintenance_enabled()
@@ -2269,6 +2280,8 @@ class BlastBotApp:
         if not enabled:
             return False
         if self._allow_maintenance_bypass_for_message(message):
+            return False
+        if await self._allow_maintenance_bypass_paid_client(message):
             return False
         await message.answer(self._maintenance_message_text())
         return True
@@ -4808,7 +4821,13 @@ class BlastBotApp:
             user_clip_start_sec = start
             user_clip_end_sec = end
         maintenance_bypass_token = ""
-        if self._allow_maintenance_bypass_for_state(st):
+        allow_bypass = self._allow_maintenance_bypass_for_state(st)
+        if not allow_bypass and int(st.chat_id or 0) > 0:
+            try:
+                allow_bypass = await self.credits_db.has_paid(int(st.chat_id))
+            except Exception as e:
+                log.warning("maintenance_paid_client_check_failed chat=%s err=%r", st.chat_id, e)
+        if allow_bypass:
             maintenance_bypass_token = str(self.settings.system_maintenance_bypass_token or "").strip()
         rotation_theme, rotation_group, rotation_history = (
             await self._resolve_rotation_slot_for_enqueue(st=st)
