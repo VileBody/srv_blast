@@ -1316,9 +1316,59 @@ class BlastBotApp:
                     "Сделай хотя бы один обычный ролик, а потом запускай bigtest."
                 )
                 return
-            last_master = str(st.master_job_id or "").strip()
             total = len(_BIGTEST_CASES)
             bot_inst = self._require_bot()
+
+            # ── RESUME: continue an interrupted run without re-rendering done cases.
+            #   /bigtest resume                       → use the saved resume point
+            #   /bigtest resume <source_job_id> <idx> → explicit (e.g. recover a run
+            #                                            whose state was already lost)
+            _parts = str(message.text or "").split()
+            if len(_parts) >= 2 and _parts[1].lower() == "resume":
+                if len(_parts) >= 4:
+                    resume_source = _parts[2].strip()
+                    try:
+                        resume_idx = int(_parts[3])
+                    except ValueError:
+                        await message.answer("Использование: /bigtest resume <source_job_id> <from_index(0-based)>")
+                        return
+                else:
+                    resume_source = str(st.bigtest_resume_source_job or "").strip()
+                    resume_idx = int(st.bigtest_resume_index or 0)
+                if not resume_source or resume_idx <= 0:
+                    await message.answer(
+                        "Нет сохранённой точки возобновления. Запусти обычный /bigtest "
+                        "или укажи явно: /bigtest resume <source_job_id> <from_index>."
+                    )
+                    return
+                if resume_idx >= total:
+                    await message.answer(f"Индекс возобновления {resume_idx} ≥ размера пула {total}. Нечего продолжать.")
+                    return
+                ok, why, src_mode = await self._bigtest_precheck_reuse_source(resume_source)
+                if not ok:
+                    await bot_inst.send_message(
+                        chat_id,
+                        f"⛔ /bigtest resume: источник job={resume_source} непригоден к reuse: {why}.\n"
+                        f"Укажи job_id последнего УСПЕШНОГО кейса: /bigtest resume <job_id> <from_index>.",
+                    )
+                    return
+                st.bigtest_mode = True
+                st.bigtest_index = resume_idx
+                st.bigtest_total = total
+                st.bigtest_current_label = ""
+                st.bigtest_master_job_id = resume_source
+                if src_mode:
+                    st.subtitles_mode = src_mode
+                await bot_inst.send_message(
+                    chat_id,
+                    f"🔬 Bigtest RESUME: продолжаю с кейса [{resume_idx + 1}/{total}] "
+                    f"(пропускаю уже готовые 1–{resume_idx}).\n"
+                    f"Источник reuse: job={resume_source} (режим {st.subtitles_mode}, без LLM).",
+                )
+                await self._bigtest_try_enqueue_from_current(st, bot_inst)
+                return
+
+            last_master = str(st.master_job_id or "").strip()
             # The whole bigtest replicates ONE reference generation (the last
             # master) and only varies effects. If that source is present it MUST
             # be a SUCCEEDED job with a valid resume_state, otherwise case-0 would
@@ -1346,6 +1396,9 @@ class BlastBotApp:
             st.bigtest_total = total
             st.bigtest_current_label = ""
             st.bigtest_master_job_id = last_master
+            # Fresh run from case 0 — drop any stale resume point.
+            st.bigtest_resume_index = 0
+            st.bigtest_resume_source_job = ""
             # Pin subtitles_mode to the source job's REAL rendered mode (ground
             # truth from its resume_state). Without a source, fall back to the last
             # explicit choice, then current value.
@@ -4436,15 +4489,19 @@ class BlastBotApp:
 
         # ── Bigtest: advance to the next case instead of returning to idle ──
         if st.bigtest_mode:
+            case_succeeded = succeeded_count > 0
             next_idx = st.bigtest_index + 1
+            # Promote the just-completed job as the new reuse source ONLY on
+            # success — a failed/partial job must never become the source (it
+            # would crash or corrupt every following case). On success also record
+            # a resume point so `/bigtest resume` can continue from next_idx using
+            # this succeeded case as the reuse source instead of re-rendering.
+            if case_succeeded and _saved_master_job_id:
+                st.bigtest_master_job_id = _saved_master_job_id
+                st.bigtest_resume_index = next_idx
+                st.bigtest_resume_source_job = _saved_master_job_id
             if next_idx < st.bigtest_total:
                 st.bigtest_index = next_idx
-                # Promote the just-completed job as the new reuse source so that
-                # every subsequent case reuses its resume_state (ASR/plan/subs/
-                # timing). This guarantees LLM is called at most once per bigtest
-                # run — even if the pre-bigtest master_job_id was stale or empty.
-                if _saved_master_job_id:
-                    st.bigtest_master_job_id = _saved_master_job_id
                 self._reset_processing_state(st)
                 st.batch_audio_s3_url = _saved_audio_s3
                 st.user_clip_start_sec = _saved_clip_start

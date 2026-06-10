@@ -238,6 +238,8 @@ class ChatState(BaseModel):
     bigtest_master_job_id: str = ""
     bigtest_footage_seed: str = ""  # parity with tg_bot_botapi; unused here (BIGTEST_ENABLED=False)
     last_subtitles_mode: str = ""   # parity with tg_bot_botapi; unused here (BIGTEST_ENABLED=False)
+    bigtest_resume_index: int = 0           # parity with tg_bot_botapi; unused here
+    bigtest_resume_source_job: str = ""     # parity with tg_bot_botapi; unused here
 
 
 class RedisChatStateStore:

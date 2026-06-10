@@ -383,3 +383,42 @@ def test_team_bot_footage_reuse_extended_to_case0_source() -> None:
     assert 'reuse_stage2_footage=bool(str(st.bigtest_master_job_id or "").strip())' in src, (
         "case-0 must also reuse footage style when a source is present"
     )
+
+
+# ── bigtest resume (continue an interrupted run without re-rendering) ─────────
+
+def test_bigtest_resume_fields_in_both_state_stores() -> None:
+    team = _TEAM_SS_PATH.read_text(encoding="utf-8")
+    public = _PUBLIC_SS_PATH.read_text(encoding="utf-8")
+    for field in ("bigtest_resume_index", "bigtest_resume_source_job"):
+        assert field in team, f"team ChatState missing {field}"
+        assert field in public, f"public ChatState must mirror {field} (parity)"
+
+
+def test_team_bot_bigtest_resume_command_source() -> None:
+    src = _team_app_source()
+    assert '_parts[1].lower() == "resume"' in src, "/bigtest must accept a 'resume' subcommand"
+    # explicit + saved-point forms
+    assert "st.bigtest_resume_source_job" in src and "st.bigtest_resume_index" in src
+    assert "Bigtest RESUME" in src
+    # resume validates the source via the same precheck
+    assert "await self._bigtest_precheck_reuse_source(resume_source)" in src
+
+
+def test_team_bot_promotes_master_only_on_success_source() -> None:
+    """A failed/partial case must NOT become the reuse source, and the resume
+    point is recorded only on success."""
+    src = _team_app_source()
+    assert "case_succeeded = succeeded_count > 0" in src
+    assert "if case_succeeded and _saved_master_job_id:" in src, (
+        "master promotion + resume snapshot must be gated on success"
+    )
+    assert "st.bigtest_resume_index = next_idx" in src
+    assert "st.bigtest_resume_source_job = _saved_master_job_id" in src
+
+
+def test_team_bot_fresh_bigtest_clears_resume_point_source() -> None:
+    src = _team_app_source()
+    assert "st.bigtest_resume_index = 0" in src and 'st.bigtest_resume_source_job = ""' in src, (
+        "a fresh /bigtest run must clear any stale resume point"
+    )

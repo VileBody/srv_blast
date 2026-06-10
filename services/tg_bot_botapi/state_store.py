@@ -203,6 +203,12 @@ class ChatState(BaseModel):
     # uses the same mode as the reuse-source job — otherwise the seeded resume_state's
     # stage2_subtitles_mode mismatches the request and the LLM cache is invalidated.
     last_subtitles_mode: str = ""
+    # Resume point for an interrupted /bigtest run. Updated after each SUCCESSFUL
+    # case (index of the next case to run + that case's job_id as the reuse
+    # source). Survive _reset_processing_state so `/bigtest resume` can continue
+    # from where the run broke instead of re-rendering cases from scratch.
+    bigtest_resume_index: int = 0
+    bigtest_resume_source_job: str = ""
 
 
 class RedisChatStateStore:

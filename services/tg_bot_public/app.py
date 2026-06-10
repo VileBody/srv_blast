@@ -156,6 +156,9 @@ HOOK_FLOW_ENABLED = (os.environ.get("HOOK_FLOW_ENABLED", "0").strip().lower()
 # pins subtitles_mode to the source's real resume_state.stage2_subtitles_mode,
 # and reuses footage style for every case (incl. case-0) so the stage2 LLM runs
 # at most once. All team-bot-only; not used here.
+# Parity note 6: `/bigtest resume` continues an interrupted run from the saved
+# resume point (bigtest_resume_index / bigtest_resume_source_job, recorded after
+# each successful case; the failed job is never promoted as source). team-only.
 BIGTEST_ENABLED: bool = False
 
 HOOK_STAGES = frozenset({
