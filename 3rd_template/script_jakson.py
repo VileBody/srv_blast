@@ -361,51 +361,61 @@ def geometry2_type3b(t_in: float, t_out: float) -> Dict:
 def reveal_keyframes(words_with_times: List[Tuple[str, float, float]],
                      n_words_total: int) -> List[Dict]:
     """
-    Генерирует PercentStart keyframes.
-    words_with_times: [(word, start, end), ...]  — только видимые слова (не focus отдельный)
-    n_words_total: общее число слов в аниматоре (для процентного расчёта)
+    Генерирует PercentStart keyframes для Range Selector «На основе: Слова».
 
-    Паттерн: на каждом слове — hold, потом прыжок до следующего порога.
-    Начинаем с 25% (первое слово уже частично открыто), каждое слово +шаг.
+    Word-точная математика: при basedOn=Words процент равномерен ПО СЛОВАМ,
+    N слов → граница слова k на pct(k)=k/N*100. Слово i становится видимым,
+    когда Start% ≥ pct(i+1). На старте слова держим pct(i), через кадр прыгаем
+    на pct(i+1) — открываем РОВНО это слово. Т.к. hold(i+1)==jump(i)==pct(i+1),
+    между словами значение постоянно — ничего не «уезжает» и не сшивается.
+
+    (Старая версия брала 25+75/N·i — уровни попадали в СЕРЕДИНУ слова, и
+    квадратный селектор цеплял половину следующего. Это и был рассинхрон.)
     """
     n = len(words_with_times)
     if n == 0:
         return []
 
-    # Делим 100% на n шагов, начиная с 25
-    # Пример 3 слова: 25, 50, 75, 100  → 4 якоря
-    step = 75.0 / n   # от 25 до 100
-    thresholds = [25.0 + step * i for i in range(n + 1)]
-    # thresholds[0]=25, thresholds[n]=100
+    def pct(k: int) -> float:
+        return k / n * 100.0   # граница k-го слова (basedOn=Words)
 
     kfs = []
     jump_duration = FRAME * 1  # 1 кадр на прыжок
+    prev_jump = None
 
     for i, (word, t_start, t_end) in enumerate(words_with_times):
-        hold_t  = t_start
-        jump_t  = t_start + jump_duration
-        v_before = thresholds[i]
-        v_after  = thresholds[i + 1]
+        hold_t = t_start
+        # слова ближе кадра — не накладываем кейфреймы друг на друга
+        if prev_jump is not None and hold_t <= prev_jump:
+            hold_t = prev_jump + FRAME * 0.5
+        jump_t = hold_t + jump_duration
 
-        # Hold на текущем пороге
-        kfs.append(kf_ease(hold_t, v_before, speed_out=0.0 if i == 0 else 599.4))
-        # Прыжок
-        kfs.append(kf_ease(jump_t, v_after,  speed_in=599.4, speed_out=0.0))
+        # Hold на текущей границе → прыжок на следующую (раскрытие ровно слова i)
+        kfs.append(kf_ease(hold_t, pct(i),     speed_out=0.0 if i == 0 else 599.4))
+        kfs.append(kf_ease(jump_t, pct(i + 1), speed_in=599.4, speed_out=0.0))
+        prev_jump = jump_t
 
     return kfs
 
 
-MIN_REVEAL_DUR = 0.43   # если последнее слово строки короче — синхронизируем со предыдущим
-REVEAL_SHIFT   = 0.15   # не используется при sync-режиме, оставлен для совместимости
+MIN_REVEAL_DUR = 0.30   # «очень короткое» последнее слово строки (с)
+SHORT_WORD_LEAD = 0.12  # на сколько раньше его открыть (НЕ слияние!)
+REVEAL_SHIFT   = 0.15   # оставлен для совместимости
 
 def compensate_short_words(word_times: List[Tuple[str, float, float]],
                             lines: List[List[str]],
                             threshold: float = MIN_REVEAL_DUR,
+                            lead: float = SHORT_WORD_LEAD,
                             ) -> List[Tuple[str, float, float]]:
     """
-    Для последнего слова каждой строки: если его длительность < threshold,
-    синхронизируем его t_start с t_start предыдущего слова —
-    они раскрываются одновременно.
+    Последнее слово каждой строки: если оно очень короткое (< threshold),
+    открываем его ЧУТЬ РАНЬШЕ — сдвигаем start назад на lead, чтобы оно
+    успело раскрыться до конца строки/сцены.
+
+    Важно: НЕ сливаем с предыдущим словом (как было раньше) — у короткого
+    слова остаётся СВОЙ процент-слот, раскрытие остаётся пословным, просто с
+    форой по времени. Кламп: не раньше старта предыдущего слова + кадр, чтобы
+    не нарушить порядок слов.
     """
     if not lines:
         return word_times
@@ -425,9 +435,11 @@ def compensate_short_words(word_times: List[Tuple[str, float, float]],
             continue
         if i == 0:
             continue  # первое слово — нет предыдущего
-        # Синхронизируем со стартом предыдущего слова
+        new_start = t_start - lead
         prev_start = result[i - 1][1]
-        result[i] = (word, prev_start, t_end)
+        if new_start < prev_start + FRAME:
+            new_start = prev_start + FRAME   # не обгоняем предыдущее слово
+        result[i] = (word, new_start, t_end)
 
     return result
 

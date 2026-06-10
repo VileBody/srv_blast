@@ -437,10 +437,26 @@ docker_registry_login_if_needed() {
   printf '%s\n' "$registry_token" | docker login "$BLAST_IMAGE_REGISTRY" -u "$BLAST_IMAGE_REGISTRY_USERNAME" --password-stdin >/dev/null
 }
 
+reclaim_disk_for_pull() {
+  # Free disk before pulling heavy prebuilt images. The orchestrator image
+  # carries librosa/llvmlite and is large; frequent deploys pile up unused
+  # images + build-cache and exhaust the node disk -> "no space left on device"
+  # during containerd layer extraction. Removes ONLY unused images and build
+  # cache: volumes are never touched (Postgres/Redis/MinIO data is safe) and
+  # images of running containers are preserved (re-pulled from GHCR if needed).
+  echo "[deploy] reclaim disk before pull (df before):"
+  df -h / 2>/dev/null || true
+  docker image prune -af   >/dev/null 2>&1 || true
+  docker builder prune -af >/dev/null 2>&1 || true
+  echo "[deploy] reclaim disk done (df after):"
+  df -h / 2>/dev/null || true
+}
+
 deploy_root_services_prebuilt() {
   local services=("$@")
   require_prebuilt_image_env
   docker_registry_login_if_needed
+  reclaim_disk_for_pull
   if [[ ${#services[@]} -eq 0 ]]; then
     echo "[deploy] docker compose pull"
     docker compose pull
@@ -478,6 +494,7 @@ deploy_prod_path_services() {
   if is_true "$DEPLOY_USE_PREBUILT_IMAGES"; then
     require_prebuilt_image_env
     docker_registry_login_if_needed
+    reclaim_disk_for_pull
     echo "[deploy] docker compose -f docker-compose.yml -f $compose_ha pull orchestrator-api orchestrator-api-2 worker-build worker-render worker-render-poll"
     docker compose -f docker-compose.yml -f "$compose_ha" pull \
       orchestrator-api orchestrator-api-2 worker-build worker-render worker-render-poll
