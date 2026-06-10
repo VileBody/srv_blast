@@ -174,3 +174,58 @@ def test_reserve_round_robin_and_release() -> None:
     snap2 = pool.inflight_snapshot(urls)
     assert snap2[urls[0]] == 0
     assert snap2[urls[1]] == 1
+
+
+# ── env fallback when runtime pool has no ENABLED node (fix: one disabled node
+#    must not block all dispatch) ───────────────────────────────────────────────
+
+def _pool() -> WindowsNodePool:
+    return WindowsNodePool(redis_client=_FakeRedis(), key_prefix="blast", lease_ttl_s=7200)
+
+
+def test_get_active_urls_all_disabled_falls_back_to_env() -> None:
+    pool = _pool()
+    # Runtime pool: a single DISABLED node (e.g. auto-disabled on a render failure).
+    pool.set_runtime_nodes([{"url": "http://192.168.0.7:18000", "enabled": False,
+                             "disabled_reason": "broken AE"}])
+    env = ["http://fallback-node:18000"]
+    assert pool.get_active_urls(default_urls=env) == ["http://fallback-node:18000"], (
+        "all runtime nodes disabled -> must fall back to env default_urls"
+    )
+
+
+def test_get_active_urls_prefers_enabled_runtime_over_env() -> None:
+    pool = _pool()
+    pool.set_runtime_nodes([
+        {"url": "http://node-a:18000", "enabled": True},
+        {"url": "http://node-b:18000", "enabled": False},
+    ])
+    # An enabled runtime node exists -> env is ignored entirely (unchanged behaviour).
+    assert pool.get_active_urls(default_urls=["http://fallback-node:18000"]) == ["http://node-a:18000"]
+
+
+def test_get_active_urls_empty_runtime_uses_env() -> None:
+    pool = _pool()  # nothing set
+    assert pool.get_active_urls(default_urls=["http://fallback-node:18000"]) == ["http://fallback-node:18000"]
+
+
+def test_get_active_urls_empty_runtime_and_empty_env_is_empty() -> None:
+    pool = _pool()
+    assert pool.get_active_urls(default_urls=[]) == []
+
+
+def test_get_active_urls_all_disabled_and_empty_env_is_empty() -> None:
+    pool = _pool()
+    pool.set_runtime_nodes([{"url": "http://192.168.0.7:18000", "enabled": False}])
+    # No enabled runtime node AND no env -> still empty (same loud failure as before).
+    assert pool.get_active_urls(default_urls=[]) == []
+
+
+def test_get_effective_nodes_unchanged_for_enable_disable_bookkeeping() -> None:
+    """get_effective_nodes (used by enable/disable) must still return the runtime
+    list as-is when present, so the disabled-node record is preserved."""
+    pool = _pool()
+    pool.set_runtime_nodes([{"url": "http://192.168.0.7:18000", "enabled": False, "disabled_reason": "x"}])
+    nodes = pool.get_effective_nodes(default_urls=["http://fallback-node:18000"])
+    assert [n["url"] for n in nodes] == ["http://192.168.0.7:18000"]
+    assert nodes[0]["enabled"] is False

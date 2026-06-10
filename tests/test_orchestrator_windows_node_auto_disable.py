@@ -182,3 +182,55 @@ def test_poll_timeout_auto_disables_node(monkeypatch: pytest.MonkeyPatch) -> Non
     assert len(auto_disable_calls) == 1
     assert auto_disable_calls[0]["node_url"] == "http://win-node:8000"
     assert auto_disable_calls[0]["reason"] == "poll_timeout_before_poll"
+
+
+# ── pool-exhaustion alert: disabling the LAST enabled node must fire an alert ──
+
+def test_auto_disable_node_alerts_on_pool_exhaustion(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _PoolAllDisabled:
+        def disable_node(self, *, url, reason, default_urls):
+            _ = default_urls
+            return ([{"url": url, "enabled": False, "disabled_reason": reason}], True)
+
+    notes: list[str] = []
+    errors: list[Any] = []
+    monkeypatch.setattr(tasks, "_notify_ops_telegram", lambda msg: notes.append(str(msg)))
+    monkeypatch.setattr(tasks, "_obs_event", lambda *a, **k: None)
+    monkeypatch.setattr(tasks, "_inc_labeled_metric", lambda *a, **k: None)
+    monkeypatch.setattr(tasks, "_windows_default_urls", lambda: [])
+    monkeypatch.setattr(tasks.log, "error", lambda *a, **k: errors.append((a, k)))
+
+    store = SimpleNamespace(r=object(), key_prefix="blast")
+    ok = tasks._auto_disable_node(
+        store=store, pool=_PoolAllDisabled(), node_url="http://n:18000",
+        reason="poll_timeout_before_poll", job_id="j1",
+    )
+    assert ok is True
+    assert any("EXHAUSTED" in m for m in notes), "must send a pool-exhausted ops alert"
+    assert errors, "must emit an error-level log on pool exhaustion"
+
+
+def test_auto_disable_node_no_alert_when_enabled_nodes_remain(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _PoolStillHasEnabled:
+        def disable_node(self, *, url, reason, default_urls):
+            _ = default_urls
+            return (
+                [
+                    {"url": url, "enabled": False, "disabled_reason": reason},
+                    {"url": "http://other:18000", "enabled": True},
+                ],
+                True,
+            )
+
+    notes: list[str] = []
+    monkeypatch.setattr(tasks, "_notify_ops_telegram", lambda msg: notes.append(str(msg)))
+    monkeypatch.setattr(tasks, "_obs_event", lambda *a, **k: None)
+    monkeypatch.setattr(tasks, "_inc_labeled_metric", lambda *a, **k: None)
+    monkeypatch.setattr(tasks, "_windows_default_urls", lambda: [])
+
+    store = SimpleNamespace(r=object(), key_prefix="blast")
+    tasks._auto_disable_node(
+        store=store, pool=_PoolStillHasEnabled(), node_url="http://n:18000",
+        reason="x", job_id="j1",
+    )
+    assert not any("EXHAUSTED" in m for m in notes), "no exhaustion alert while an enabled node remains"

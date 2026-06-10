@@ -216,8 +216,23 @@ class WindowsNodePool:
         return normalize_windows_nodes(default_urls)
 
     def get_active_urls(self, *, default_urls: Sequence[str]) -> list[str]:
-        nodes = self.get_effective_nodes(default_urls=default_urls)
-        return [str(node["url"]) for node in nodes if bool(node.get("enabled", True))]
+        # Active = enabled runtime nodes. If the runtime pool has at least one
+        # enabled node, use it as-is (unchanged behaviour).
+        runtime_nodes = self.get_runtime_nodes()
+        active = [
+            str(node["url"]) for node in runtime_nodes if bool(node.get("enabled", True))
+        ]
+        if active:
+            return active
+        # Runtime pool is EMPTY *or* every runtime node is disabled -> fall back to
+        # the static env defaults (WINDOWS_RENDER_URL / WINDOWS_RENDER_URLS). Without
+        # this a single disabled node (e.g. auto-disabled on a render failure) would
+        # block ALL dispatch even when an env fallback target exists.
+        return [
+            str(node["url"])
+            for node in normalize_windows_nodes(default_urls)
+            if bool(node.get("enabled", True))
+        ]
 
     def set_runtime_nodes(self, nodes: Sequence[Any]) -> list[dict[str, Any]]:
         normalized = normalize_windows_nodes(nodes)

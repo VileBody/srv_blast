@@ -353,6 +353,43 @@ def _auto_disable_node(
             ]
         )
     )
+    # Pool-exhaustion alert: if disabling this node left ZERO enabled render nodes
+    # in the runtime pool, every subsequent dispatch will fail (unless a
+    # WINDOWS_RENDER_URL env fallback is set). Surface it loudly instead of letting
+    # the operator discover it only via a failed job.
+    try:
+        enabled_left = sum(1 for n in (_nodes or []) if bool(n.get("enabled", True)))
+    except Exception:
+        enabled_left = -1
+    if enabled_left == 0:
+        log.error(
+            "windows_pool_exhausted no_enabled_render_nodes_left last_disabled=%s reason=%s job_id=%s "
+            "(dispatch falls back to WINDOWS_RENDER_URL env if set, else fails)",
+            node_url, reason_txt, job_id,
+        )
+        _obs_event(
+            "windows_pool_exhausted",
+            node=node,
+            reason=reason_label,
+            job_id=job_id,
+            render_id=render_id or None,
+        )
+        _inc_labeled_metric(
+            store,
+            metric="windows_node_state_change_total",
+            labels={"node": "_pool_", "event": "exhausted", "reason": reason_label},
+        )
+        _notify_ops_telegram(
+            "\n".join(
+                [
+                    "⚠️ Windows render pool EXHAUSTED — no enabled nodes left!",
+                    f"last disabled node: {node_url}",
+                    f"reason: {reason_txt}",
+                    "All renders will FAIL at dispatch until a node is re-enabled "
+                    "or WINDOWS_RENDER_URL env fallback is set.",
+                ]
+            )
+        )
     return True
 
 
