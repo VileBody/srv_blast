@@ -3426,10 +3426,19 @@ class BlastBotApp:
         jid = str(master_job_id or "").strip()
         if not jid:
             return False, "master_job_id пуст", ""
-        try:
-            job = await self.orchestrator.get_job(jid)
-        except Exception as e:
-            return False, f"get_job упал: {e!r}", ""
+        # Retry get_job a few times: a transient orchestrator hiccup must NOT
+        # abort the whole batch (it previously caused a silent halt).
+        job = None
+        last_err: Exception | None = None
+        for _attempt in range(3):
+            try:
+                job = await self.orchestrator.get_job(jid)
+                break
+            except Exception as e:
+                last_err = e
+                await asyncio.sleep(1.5)
+        if job is None:
+            return False, f"get_job не ответил (3 попытки): {last_err!r}", ""
         status = str(job.get("status") or "").upper()
         if status != "SUCCEEDED":
             return False, f"источник не SUCCEEDED (status={status or 'unknown'})", ""
@@ -3453,8 +3462,12 @@ class BlastBotApp:
     async def _bigtest_halt(self, *, st: ChatState, bot: Bot, text: str) -> None:
         """Tear down a /bigtest run (no more cases) and notify, preserving the
         audio so the operator can retry. Used by both safety-breaker layers."""
+        # Plain text on purpose: the message interpolates dynamic error reprs
+        # which can contain '<', '>', '&'. With parse_mode=HTML those break
+        # Telegram parsing, the send fails, and the halt becomes SILENT — the
+        # operator sees nothing. Plain text always delivers.
         try:
-            await bot.send_message(st.chat_id, text, parse_mode="HTML")
+            await bot.send_message(st.chat_id, text)
         except Exception as e:
             log.warning("bigtest_halt_notify_failed chat=%s err=%r", st.chat_id, e)
         st.bigtest_mode = False
@@ -3483,13 +3496,46 @@ class BlastBotApp:
             text=(
                 f"⛔ Bigtest ПРЕРВАН на кейсе [{idx + 1}/{st.bigtest_total}] «{label}».\n"
                 f"Причина: reuse не сработал — кейс заново запустил stage1 ASR через LLM "
-                f"(<code>{reason}</code>). Убил джобу и остановил батч, чтобы не жечь токены "
+                f"({reason}). Убил джобу и остановил батч, чтобы не жечь токены "
                 f"на остальных кейсах.\n"
                 f"resume_state первого кейса непригоден к переиспользованию — нужен разбор."
             ),
         )
 
     async def _bigtest_try_enqueue_from_current(self, st: ChatState, bot: Bot) -> None:
+        """Outer guard: never let the bigtest enqueue loop die SILENTLY. Any
+        uncaught error is surfaced to the operator with a resume hint, and the
+        run is stopped cleanly (instead of leaving the user staring at a frozen
+        chat with no job and no message)."""
+        try:
+            await self._bigtest_try_enqueue_from_current_impl(st, bot)
+        except Exception as e:
+            log.exception(
+                "bigtest_enqueue_loop_failed chat=%s idx=%s err=%r",
+                st.chat_id, st.bigtest_index, e,
+            )
+            _idx = int(st.bigtest_index or 0)
+            _src = str(st.bigtest_master_job_id or "").strip()
+            try:
+                hint = (f"\nПродолжить: /bigtest resume {_src} {_idx}" if _src else "")
+                await bot.send_message(
+                    st.chat_id,
+                    f"⛔ Bigtest остановлен из-за внутренней ошибки на кейсе "
+                    f"[{_idx + 1}/{st.bigtest_total}]: {_compact_text(str(e), 160)}{hint}",
+                )
+            except Exception:
+                pass
+            st.bigtest_mode = False
+            st.bigtest_index = 0
+            st.bigtest_total = 0
+            st.bigtest_current_label = ""
+            st.stage = STAGE_WAIT_NEXT
+            try:
+                await self.store.set(st)
+            except Exception:
+                pass
+
+    async def _bigtest_try_enqueue_from_current_impl(self, st: ChatState, bot: Bot) -> None:
         """Enqueue bigtest_index case. Skips (with message) any cases that
         fail to enqueue (e.g. F4 without drop_t), then tries the next one.
         Calls itself-as-loop until a case succeeds or all remaining are skipped."""
@@ -3505,7 +3551,7 @@ class BlastBotApp:
                         st=st, bot=bot,
                         text=(
                             f"⛔ Bigtest ПРЕРВАН перед кейсом [{idx + 1}/{st.bigtest_total}].\n"
-                            f"resume_state источника непригоден к reuse: <code>{why}</code>.\n"
+                            f"resume_state источника непригоден к reuse: {why}.\n"
                             f"Остановил, чтобы не гонять LLM заново на остальных кейсах."
                         ),
                     )

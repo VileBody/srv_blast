@@ -422,3 +422,30 @@ def test_team_bot_fresh_bigtest_clears_resume_point_source() -> None:
     assert "st.bigtest_resume_index = 0" in src and 'st.bigtest_resume_source_job = ""' in src, (
         "a fresh /bigtest run must clear any stale resume point"
     )
+
+
+# ── bigtest never dies silently (plain-text halt + get_job retry + outer guard)
+
+def test_team_bot_bigtest_halt_is_plain_text_not_html_source() -> None:
+    """_bigtest_halt must send plain text — HTML parse_mode broke on dynamic
+    error reprs containing <,>,& and made the halt silent."""
+    src = _team_app_source()
+    start = src.index("async def _bigtest_halt(")
+    body = src[start:start + 900]
+    assert 'parse_mode="HTML"' not in body, "_bigtest_halt must not use parse_mode=HTML"
+    assert "await bot.send_message(st.chat_id, text)" in body
+
+
+def test_team_bot_precheck_retries_get_job_source() -> None:
+    src = _team_app_source()
+    assert "get_job не ответил" in src, "precheck must retry get_job and report after retries"
+    assert "for _attempt in range(3):" in src
+
+
+def test_team_bot_enqueue_loop_has_outer_guard_source() -> None:
+    src = _team_app_source()
+    assert "async def _bigtest_try_enqueue_from_current_impl(" in src, (
+        "loop body must live in _impl wrapped by an outer guard"
+    )
+    assert "bigtest_enqueue_loop_failed" in src, "outer guard must log + surface uncaught errors"
+    assert "Bigtest остановлен из-за внутренней ошибки" in src

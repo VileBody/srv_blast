@@ -159,6 +159,10 @@ HOOK_FLOW_ENABLED = (os.environ.get("HOOK_FLOW_ENABLED", "0").strip().lower()
 # Parity note 6: `/bigtest resume` continues an interrupted run from the saved
 # resume point (bigtest_resume_index / bigtest_resume_source_job, recorded after
 # each successful case; the failed job is never promoted as source). team-only.
+# Parity note 7: the bigtest enqueue loop never dies silently — halt/skip
+# messages are plain text (no HTML to break on error reprs), the source precheck
+# retries get_job on transient hiccups, and an outer guard surfaces any uncaught
+# error with a resume hint. team-only.
 BIGTEST_ENABLED: bool = False
 
 HOOK_STAGES = frozenset({
