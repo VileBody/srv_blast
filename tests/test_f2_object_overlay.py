@@ -130,3 +130,14 @@ def test_pool_default_is_all_six_f3_transitions() -> None:
     assert sorted(F2_POST_DROP_TRANSITION_POOL) == sorted(
         ["snap_wipe", "minimax", "invert_flash", "extract_flash", "flash_on_cuts", "layer_shake"]
     )
+
+
+def test_predrop_shape_only_first_footage():
+    # Rule: the object plays once on the FIRST renderable pre-drop cut, not on
+    # every cut (dense cutting otherwise clutters the pre-drop region).
+    js = build_overlay_jsx(shape="rhomb", drop_time=6.0, seed=1)
+    assert "first footage only" in js
+    assert "var __f2_first = -1;" in js
+    # No per-cut shape loop anymore (the shape body sits under the single
+    # `if (__f2_first >= 0)` guard, not a `for ... __f2_pre.length` loop).
+    assert "for (__f2_i=0; __f2_i<__f2_pre.length; __f2_i++){\n    var __f2_pcut" not in js

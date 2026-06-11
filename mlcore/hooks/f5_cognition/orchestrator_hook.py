@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import logging
 import os
+import zlib
 from pathlib import Path
 from typing import Any, Optional
 
@@ -288,10 +289,13 @@ def build_f5_block_if_requested(
 
     block = resp.to_config_block(focal_start_ms=inject_focal_ms, audio_url=audio_url)
     # Comp-relative drop seconds for track ducking (трек приглушается под голос и
-    # возвращается к дропу). drop_at_sec уже comp-relative (= USER_DROP_T −
-    # clip_start). None → ducking не применяется.
+    # возвращается к дропу) И для визуал-combo (hook_light на дропе + рандомный
+    # F3-переход после, как у F1/F2). drop_at_sec уже comp-relative (= USER_DROP_T
+    # − clip_start). None → ни ducking, ни визуал не применяются.
     if drop_at_sec is not None and float(drop_at_sec) > 0.0:
         block["drop_rel_sec"] = float(drop_at_sec)
+        # Deterministic seed for the post-drop random transition pick.
+        block["combo_seed"] = int(zlib.crc32((str(job_tag) + ":f5combo").encode("utf-8"))) & 0xFFFFFFFF
     logger.info(
         "f5.hook block ready device=%s tts_text=%r audio_dur_ms=%d inject_focal_ms=%d drop_rel=%s url=%s",
         device.value, resp.tts_text, resp.audio_duration_ms, inject_focal_ms,

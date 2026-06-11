@@ -6,6 +6,7 @@ from json import JSONDecodeError
 import os
 import re
 import subprocess
+import zlib
 from concurrent.futures import FIRST_EXCEPTION, Future, ThreadPoolExecutor, wait
 from datetime import datetime, timezone
 from pathlib import Path
@@ -4070,6 +4071,36 @@ def build_all_via_gemini_one_call(
         encoding="utf-8",
     )
 
+    # ── АВТОРИТЕТНЫЙ старт окна рендера для ВСЕХ хук-эффектов ───────────────────
+    # КРИТИЧНО: рендер-комп строится по окну STAGE2-СУБТИТРОВ (render_all_steps
+    # берёт flow_abs.clip.start / subs.clip.start), а НЕ по stage1-audio окну.
+    # Когда stage2 переопределяет окно (см. "[stage3] clip window override"),
+    # они расходятся — и если считать drop_rel от stage1-audio clip_start, все
+    # хуки (hook_light на дропе + переходы) уезжают на (stage2_start −
+    # stage1_start) секунд. Поэтому drop_rel для f2/f3/f4/f5 считаем ИМЕННО от
+    # этого clip_start.
+    _stage1_clip_start = float(stage1_json["audio"]["clip_start_abs"])
+    _hook_clip_start = _stage1_clip_start
+    try:
+        _hook_clip_start = float(full_payload.subtitles.clip.start)
+    except Exception:
+        logger.warning("hook_clip_start: cannot read stage2 subtitles clip.start; using stage1 audio")
+    if abs(_hook_clip_start - _stage1_clip_start) > 1e-6:
+        logger.warning(
+            "hook_clip_start override: stage1_audio=%.3f stage2_subtitles=%.3f "
+            "(using stage2 for drop_rel — keeps hooks on the drop)",
+            _stage1_clip_start, _hook_clip_start,
+        )
+    _udt_dbg = (os.environ.get("USER_DROP_T") or "").strip()
+    if _udt_dbg:
+        try:
+            logger.info(
+                "hook_drop_verify USER_DROP_T=%.3f clip_start=%.3f drop_rel=%.3f",
+                float(_udt_dbg), _hook_clip_start, float(_udt_dbg) - _hook_clip_start,
+            )
+        except ValueError:
+            pass
+
     # ── F5 Cognition hook («Мысль»): между Stage 2 (футаж) и Stage 3 (JSON для AE).
     #    Если в env есть F5_HOOK_DEVICE — гоняем F5 pipeline (Stage1 текст + Stage2
     #    TTS), грузим .wav в S3 и получаем блок для full_edit_config["f5"].
@@ -4085,7 +4116,7 @@ def build_all_via_gemini_one_call(
         f5_block = build_f5_block_if_requested(
             track_path=str(audio_files[0]) if audio_files else "",
             lyrics=str(stage1_json.get("lyrics_text") or ""),
-            clip_start_abs_sec=float(stage1_json["audio"]["clip_start_abs"]),
+            clip_start_abs_sec=_hook_clip_start,
             out_dir=out_dir,
             job_tag=(os.environ.get("JOB_ID") or out_dir.name),
             transcript_words=stage1_json.get("transcript_words"),
@@ -4114,10 +4145,39 @@ def build_all_via_gemini_one_call(
                 raise RuntimeError(f"unknown F4_HOOK_DEVICE={_f4_device_env!r}")
             if _f4_device_env not in F4_DEVICES:
                 raise RuntimeError(f"F4 device {_f4_device_env!r} not wired yet")
-            if bpm is None or not (float(bpm) > 0.0):
-                raise RuntimeError("F4 hook requires measured bpm (hook_aware)")
-            f4_block = {"device": _f4_device_env, "bpm": float(bpm)}
-            logger.info("f4.hook block device=%s bpm=%.2f", _f4_device_env, float(bpm))
+            # BPM must match what the BOT used to reframe the clip window
+            # (clip_start = drop − LEAD·refBpm/bpm). The bot analyzes the
+            # ORIGINAL clip; if we re-measure here on the already-reframed clip
+            # the two bpm diverge → cover-layer end misses the drop. So prefer
+            # the bot's bpm (env F4_BPM) and fall back to the local measure.
+            _f4_bpm_env = (os.environ.get("F4_BPM") or "").strip()
+            _f4_bpm = None
+            if _f4_bpm_env:
+                try:
+                    _f4_bpm = float(_f4_bpm_env)
+                except ValueError:
+                    _f4_bpm = None
+            if _f4_bpm is None or not (_f4_bpm > 0.0):
+                _f4_bpm = float(bpm) if (bpm is not None and float(bpm) > 0.0) else None
+            if _f4_bpm is None or not (_f4_bpm > 0.0):
+                raise RuntimeError("F4 hook requires bpm (env F4_BPM or hook_aware measure)")
+            # Drop comp-relative (= USER_DROP_T − clip_start) for the explicit
+            # lightning on the drop. None/<=0 → overlay relies on cover-end only.
+            _f4_drop_rel = None
+            _udt_f4 = (os.environ.get("USER_DROP_T") or "").strip()
+            if _udt_f4:
+                try:
+                    _f4_drop_rel = float(_udt_f4) - _hook_clip_start
+                except (ValueError, KeyError, TypeError):
+                    _f4_drop_rel = None
+            f4_block = {"device": _f4_device_env, "bpm": float(_f4_bpm)}
+            if _f4_drop_rel is not None and _f4_drop_rel > 0.0:
+                f4_block["drop_time"] = float(_f4_drop_rel)
+            logger.info(
+                "f4.hook block device=%s bpm=%.2f (env=%s) drop_rel=%s",
+                _f4_device_env, float(_f4_bpm), _f4_bpm_env or "<none>",
+                ("%.3f" % _f4_drop_rel) if _f4_drop_rel is not None else "<none>",
+            )
         except Exception:
             logger.exception(
                 "f4.hook FAILED — render without overlay (device=%s job=%s)",
@@ -4143,7 +4203,7 @@ def build_all_via_gemini_one_call(
                 raise RuntimeError(f"unknown F3_TRANSITION={_f3_trans!r}")
             if _f3_extra and _f3_extra not in F3_EXTRAS:
                 raise RuntimeError(f"unknown F3_EXTRA={_f3_extra!r}")
-            _cs = float(stage1_json["audio"]["clip_start_abs"])
+            _cs = _hook_clip_start
             _udt = (os.environ.get("USER_DROP_T") or "").strip()
             if not _udt:
                 raise RuntimeError("F3 fx requires USER_DROP_T (drop anchor)")
@@ -4209,7 +4269,7 @@ def build_all_via_gemini_one_call(
             from mlcore.hooks.f2_object.overlay import F2_SHAPES
             if _f2_shape not in F2_SHAPES:
                 raise RuntimeError(f"unknown F2_SHAPE={_f2_shape!r}; allowed={list(F2_SHAPES)}")
-            _cs = float(stage1_json["audio"]["clip_start_abs"])
+            _cs = _hook_clip_start
             _udt = (os.environ.get("USER_DROP_T") or "").strip()
             if not _udt:
                 raise RuntimeError("F2 combo requires USER_DROP_T (drop anchor)")
@@ -4222,11 +4282,11 @@ def build_all_via_gemini_one_call(
             if _seed_env:
                 _f2_seed = int(_seed_env) & 0xFFFFFFFF
             else:
-                # Derive a stable 32-bit seed from job id (fall back to out_dir
-                # name) so reruns of the same job pick the same post-drop
-                # transitions.
+                # Stable 32-bit seed from job id (crc32 — deterministic across
+                # reruns, unlike hash() which is per-process randomized). Same
+                # scheme as F1/F5 so reruns pick the same post-drop transitions.
                 _seed_src = os.environ.get("JOB_ID") or out_dir.name
-                _f2_seed = abs(hash(("f2", _seed_src))) & 0xFFFFFFFF
+                _f2_seed = zlib.crc32(("f2:" + str(_seed_src)).encode("utf-8")) & 0xFFFFFFFF
             f2_block = {
                 "shape": _f2_shape,
                 "drop_time": _drop_rel_f2,
@@ -4252,7 +4312,7 @@ def build_all_via_gemini_one_call(
     _f1_sound = (os.environ.get("F1_SOUND_URL") or "").strip()
     if _f1_sound:
         try:
-            _cs = float(stage1_json["audio"]["clip_start_abs"])
+            _cs = _hook_clip_start
             _udt = (os.environ.get("USER_DROP_T") or "").strip()
             if not _udt:
                 raise RuntimeError("F1 combo requires USER_DROP_T (drop anchor)")
@@ -4267,7 +4327,7 @@ def build_all_via_gemini_one_call(
                 _f1_seed = int(_seed_env_f1) & 0xFFFFFFFF
             else:
                 _seed_src_f1 = os.environ.get("JOB_ID") or out_dir.name
-                _f1_seed = abs(hash(("f1", _seed_src_f1))) & 0xFFFFFFFF
+                _f1_seed = zlib.crc32(("f1:" + str(_seed_src_f1)).encode("utf-8")) & 0xFFFFFFFF
             f1_block = {
                 "sound_url": _f1_sound,
                 "drop_time": _drop_rel_f1,

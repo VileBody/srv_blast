@@ -232,31 +232,43 @@ def _rebuild_char_styles(template_td: dict[str, Any], *, text_len: int) -> list[
     return [{"i": i, **base_style} for i in range(max(0, int(text_len)))]
 
 
-# Max words per TTS subtitle chunk. The TTS phrase (3–8 words) is split into
-# sequential chunks shown across the voice window — like default subtitles
-# (one layer per segment), instead of one layer dumping the whole phrase.
-F5_SUBTITLE_MAX_WORDS_PER_CHUNK = 3
+def _retime_keyframes_inplace(obj: Any, *, src_in: float, src_out: float,
+                              dst_in: float, dst_out: float) -> None:
+    """Recursively remap every keyframe time `t` from the source segment window
+    [src_in, src_out] to the destination (voice) window [dst_in, dst_out].
 
-
-def _split_tts_text(text: str, *, max_words: int = F5_SUBTITLE_MAX_WORDS_PER_CHUNK) -> list[str]:
-    words = [w for w in str(text or "").split() if w]
-    if not words:
-        return []
-    return [" ".join(words[i:i + max_words]) for i in range(0, len(words), max_words)]
-
-
-def _strip_time_animated(d: Any) -> dict[str, Any]:
-    """Drop keyframed (time-animated) entries from a props/effects dict.
-
-    A cloned template segment carries its OWN reveal keyframes (e.g.
-    props["reveal"] = ADBE Text Percent Start with keyframes at the template's
-    times). Left in place after re-timing, they misfire — the text "reveals" in
-    ~1s at the wrong moment then vanishes. We keep only static entries so each
-    chunk just shows cleanly for its slice.
+    This is the KEY to "same subtitle type as the track": we clone a real track
+    subtitle layer WITH its reveal animator/keyframes, then just slide+scale the
+    keyframe times onto the voice window so the reveal plays correctly over the
+    voice (instead of stale times → the old "reveals in 1s then vanishes" bug).
     """
-    if not isinstance(d, dict):
-        return {}
-    return {k: v for k, v in d.items() if not (isinstance(v, dict) and "keyframes" in v)}
+    src_span = float(src_out) - float(src_in)
+    dst_span = float(dst_out) - float(dst_in)
+    if src_span <= 1e-9:
+        return
+
+    def remap(t: float) -> float:
+        p = (float(t) - float(src_in)) / src_span
+        return float(dst_in) + p * dst_span
+
+    def walk(node: Any) -> None:
+        if isinstance(node, dict):
+            kfs = node.get("keyframes")
+            if isinstance(kfs, list):
+                for kf in kfs:
+                    if isinstance(kf, dict) and "t" in kf:
+                        try:
+                            kf["t"] = remap(kf["t"])
+                        except (TypeError, ValueError):
+                            pass
+            for k, v in node.items():
+                if k != "keyframes":
+                    walk(v)
+        elif isinstance(node, list):
+            for it in node:
+                walk(it)
+
+    walk(obj)
 
 
 def inject_subtitle_layer(
@@ -266,11 +278,11 @@ def inject_subtitle_layer(
     focal_start_ms: int,
 ) -> list[dict[str, Any]]:
     """
-    Клонирует первый существующий text-слой как шаблон стиля и раскладывает
-    TTS-фразу на ПОСЛЕДОВАТЕЛЬНЫЕ чанки (как дефолтные субтитры — слой на
-    сегмент), равномерно по окну голоса [focal..focal+tts]. У каждого чанка
-    снимаются stale reveal-кейфреймы и отключается text-аниматор, чтобы текст
-    показывался ровно в свой слайс, а не «раскрывался за секунду» весь сразу.
+    Клонирует первый существующий трек-субтитр КАК ЕСТЬ (со стилем, аниматором и
+    reveal-кейфреймами — т.е. ровно тот же ТИП субтитров, что у трека), ставит
+    TTS-фразу и ретаймит все кейфреймы из окна шаблона в окно голоса
+    [focal..focal+tts]. Reveal проигрывается прогрессивно по окну (как дефолтные
+    субтитры трека), а не «весь текст за секунду».
     """
     template = _clone_text_layer_template(text_layers)
     if template is None:
@@ -291,8 +303,7 @@ def inject_subtitle_layer(
         removed, in_sec, out_sec,
     )
 
-    chunks = _split_tts_text(f5.tts_text)
-    if not chunks:
+    if not str(f5.tts_text or "").strip():
         logger.warning("f5.inject subtitle skipped: empty tts_text")
         return cleaned
 
@@ -301,42 +312,40 @@ def inject_subtitle_layer(
         default=1000,
     )
 
-    n = len(chunks)
-    span = max(0.0001, out_sec - in_sec)
-    slice_dur = span / n
+    # Source window = the cloned track segment's own window (keyframes are timed
+    # to it). Retime them onto the voice window so the same reveal plays here.
+    src_in = float(template.get("in_point", in_sec))
+    src_out = float(template.get("out_point", src_in + max(0.0001, out_sec - in_sec)))
 
-    new_layers: list[dict[str, Any]] = []
-    for i, chunk in enumerate(chunks):
-        seg_in = in_sec + i * slice_dur
-        seg_out = out_sec if i == n - 1 else in_sec + (i + 1) * slice_dur
+    layer = copy.deepcopy(template)
+    layer["name"] = f"f5_hook_subtitle_{f5.chosen_device.value}"
+    layer["text"] = f5.tts_text
+    layer["in_point"] = float(in_sec)
+    layer["out_point"] = float(out_sec)
+    layer["z_index"] = max_z + 1
 
-        layer = copy.deepcopy(template)
-        layer["name"] = f"f5_hook_subtitle_{f5.chosen_device.value}_{i + 1}"
-        layer["text"] = chunk
-        layer["in_point"] = float(seg_in)
-        layer["out_point"] = float(seg_out)
-        layer["z_index"] = max_z + 1 + i
-        # Strip the cloned segment's stale reveal keyframes (props/effects) so the
-        # chunk doesn't inherit a misfiring per-character reveal.
-        layer["props"] = _strip_time_animated(layer.get("props"))
-        layer["effects"] = _strip_time_animated(layer.get("effects"))
+    # Retime reveal/animation keyframes (props + effects + text_data) onto voice.
+    _retime_keyframes_inplace(layer.get("props"), src_in=src_in, src_out=src_out,
+                              dst_in=in_sec, dst_out=out_sec)
+    _retime_keyframes_inplace(layer.get("effects"), src_in=src_in, src_out=src_out,
+                              dst_in=in_sec, dst_out=out_sec)
 
-        td = layer.setdefault("text_data", {})
-        meta = td.setdefault("layer_meta", {})
-        meta["startTime"] = float(seg_in)
-        meta["enabled"] = True
-        # Disable the reveal animator: each chunk shows fully for its slice.
-        td.pop("text_animator", None)
-        td["no_text_animator"] = True
-        td["char_styles_ungrouped"] = _rebuild_char_styles(td, text_len=len(chunk))
+    td = layer.setdefault("text_data", {})
+    _retime_keyframes_inplace(td, src_in=src_in, src_out=src_out,
+                              dst_in=in_sec, dst_out=out_sec)
+    meta = td.setdefault("layer_meta", {})
+    meta["startTime"] = float(in_sec)
+    meta["enabled"] = True
+    # Rebuild per-char styles for the new text length (animator reveals by % so
+    # it stays correct regardless of word count → same type as the track).
+    td["char_styles_ungrouped"] = _rebuild_char_styles(td, text_len=len(f5.tts_text))
 
-        logger.info(
-            "f5.inject subtitle chunk %d/%d text=%r in=%.3f out=%.3f z=%d",
-            i + 1, n, chunk, seg_in, seg_out, layer["z_index"],
-        )
-        new_layers.append(layer)
-
-    return cleaned + new_layers
+    logger.info(
+        "f5.inject subtitle (track-type) text=%r in=%.3f out=%.3f z=%d "
+        "retimed_from=[%.3f..%.3f]",
+        f5.tts_text, in_sec, out_sec, layer["z_index"], src_in, src_out,
+    )
+    return cleaned + [layer]
 
 
 # ─────────────────────────────────────────────────────────────────────────────

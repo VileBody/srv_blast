@@ -1167,23 +1167,43 @@
         var lv = safeProp(ag, "ADBE Audio Levels");
         if (!lv) return;
 
-        var expr = ""
-          + "var fadeIn=" + String(fadeIn) + ";\n"
-          + "var fadeOut=" + String(fadeOut) + ";\n"
-          + "var minDb=" + String(minDb) + ";\n"
-          + "var duckOn=" + (duckOn ? "true" : "false") + ";\n"
-          + "var duckFrom=" + String(duckOn ? duckFrom : 0) + ";\n"
-          + "var duckTo=" + String(duckOn ? duckTo : 0) + ";\n"
-          + "var duckFromPct=" + String(duckOn ? duckFromPct : 100) + ";\n"
-          + "var duckToPct=" + String(duckOn ? duckToPct : 100) + ";\n"
-          + "var t=time-inPoint;\n"
-          + "var dur=Math.max(0.0001,outPoint-inPoint);\n"
-          + "var db=0;\n"
-          + "if (duckOn && time>=duckFrom && time<=duckTo){var p=(time-duckFrom)/Math.max(0.0001,(duckTo-duckFrom));var pct=(duckFromPct+(duckToPct-duckFromPct)*p)/100;db=(pct>0.00001)?(20*Math.log(pct)/Math.LN10):minDb;}\n"
-          + "if (fadeIn>0){var x=Math.min(Math.max(t/fadeIn,0),1);var a=Math.sin(x*Math.PI*0.5);db=Math.min(db,(a>0.00001)?(20*Math.log(a)/Math.LN10):minDb);}\n"
-          + "if (fadeOut>0){var y=Math.min(Math.max((dur-t)/fadeOut,0),1);var b=Math.sin(y*Math.PI*0.5);db=Math.min(db,(b>0.00001)?(20*Math.log(b)/Math.LN10):minDb);}\n"
-          + "[db,db];";
-        lv.expression = expr;
+        if (duckOn) {
+          // Ducking via EXPLICIT KEYFRAMES — expressions on Audio Levels are
+          // unreliable in headless aerender; keyframes always render. Duck the
+          // track to from_pct at duck_from, ramp to to_pct (=100%) by duck_to
+          // (the drop), hold, then a short end fade-out.
+          var fromDb = (duckFromPct > 0.00001) ? (20*Math.log(duckFromPct/100)/Math.LN10) : minDb;
+          var toDb   = (duckToPct   > 0.00001) ? (20*Math.log(duckToPct/100)/Math.LN10) : minDb;
+          try { lv.expression = ""; } catch(_e0) {}
+          try { while (lv.numKeys > 0) lv.removeKey(1); } catch(_e1) {}
+          lv.setValueAtTime(duckFrom, [fromDb, fromDb]);
+          lv.setValueAtTime(duckTo,   [toDb,   toDb]);
+          var endT = outPoint;
+          if (fadeOut > 0 && (endT - fadeOut) > duckTo) {
+            lv.setValueAtTime(endT - fadeOut, [toDb,  toDb]);
+            lv.setValueAtTime(endT,           [minDb, minDb]);
+          }
+          try {
+            for (var ki = 1; ki <= lv.numKeys; ki++) {
+              lv.setInterpolationTypeAtKey(ki, KeyframeInterpolationType.LINEAR, KeyframeInterpolationType.LINEAR);
+            }
+          } catch(_e2) {}
+          logLine("INFO", "audio duck keyframes layer=" + layer.name
+            + " " + fmtNum(duckFrom) + "s->" + fmtNum(duckTo) + "s "
+            + fmtNum(fromDb) + "dB->" + fmtNum(toDb) + "dB");
+        } else {
+          var expr = ""
+            + "var fadeIn=" + String(fadeIn) + ";\n"
+            + "var fadeOut=" + String(fadeOut) + ";\n"
+            + "var minDb=" + String(minDb) + ";\n"
+            + "var t=time-inPoint;\n"
+            + "var dur=Math.max(0.0001,outPoint-inPoint);\n"
+            + "var db=0;\n"
+            + "if (fadeIn>0){var x=Math.min(Math.max(t/fadeIn,0),1);var a=Math.sin(x*Math.PI*0.5);db=Math.min(db,(a>0.00001)?(20*Math.log(a)/Math.LN10):minDb);}\n"
+            + "if (fadeOut>0){var y=Math.min(Math.max((dur-t)/fadeOut,0),1);var b=Math.sin(y*Math.PI*0.5);db=Math.min(db,(b>0.00001)?(20*Math.log(b)/Math.LN10):minDb);}\n"
+            + "[db,db];";
+          lv.expression = expr;
+        }
       } catch(e) { logErr("apply audio envelope failed layer=" + layer.name, e); }
     }
 
@@ -1564,6 +1584,18 @@
       {{ f1_overlay_js }}
     } catch(eF1) {
       logErr("f1 overlay injection failed", eF1);
+    }
+
+    // ==========================================================
+    // 5.9) F5 «Мысль» visual combo (injected by build worker)
+    // Empty string when no f5 drop => no-op. Same combo as F1: F3 hook_light at
+    // the drop + seeded-random F3 transition on post-drop cuts. The TTS voice
+    // and its subtitle are injected separately (into footage/text layers).
+    // ==========================================================
+    try {
+      {{ f5_overlay_js }}
+    } catch(eF5v) {
+      logErr("f5 overlay injection failed", eF5v);
     }
 
     if (__SUPPRESSED_UI_CALLS.length > 0) {

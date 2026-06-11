@@ -18,11 +18,16 @@ only the keyframes inside shapes are reflowed to the beat).
 
 from __future__ import annotations
 
+import json
 import math
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Optional
 
 _DEVICES_DIR = Path(__file__).resolve().parent / "devices"
+# F3 lightning (hook_light) reused for the explicit drop flash — single source.
+_F3_DIR = Path(__file__).resolve().parent.parent / "f3_effect"
+_F3_HOOK_LIGHT_SCRIPT = "hooks/rebuild_light.jsx"
+_PLACE_REF = "Текст"
 
 # BPM the device keyframes were authored under. The injectable JSX reflows its
 # internal timings by refBpm/bpm; the bot reframes the clip window by the SAME
@@ -46,11 +51,23 @@ LEAD_BY_DEVICE: Dict[str, float] = {
 F4_DEVICES = ("swipe", "tap", "pinch", "holdfinger", "head")
 
 
-def build_overlay_jsx(*, device: str, bpm: float) -> str:
+def _read_f3_hook_light() -> str:
+    p = (_F3_DIR / _F3_HOOK_LIGHT_SCRIPT).resolve()
+    if not p.exists():
+        raise FileNotFoundError(f"f3 hook_light script missing: {p}")
+    return p.read_text(encoding="utf-8")
+
+
+def build_overlay_jsx(*, device: str, bpm: float, drop_time: Optional[float] = None) -> str:
     """Return the injectable JSX block for `device` with `bpm` baked in.
 
     No-fallback: unknown device or invalid bpm raises. The caller (build worker)
     must only pass devices it intends to render.
+
+    drop_time (comp-relative seconds): when provided, an explicit F3 lightning
+    (hook_light) is fired on the drop on top of the device overlay — a clear,
+    device-independent flash so the drop always reads (the device's own subtle
+    minimax flash stays too). None → no extra lightning.
     """
     dev = str(device or "").strip().lower()
     if dev not in LEAD_BY_DEVICE:
@@ -77,4 +94,35 @@ def build_overlay_jsx(*, device: str, bpm: float) -> str:
     # bpm is embedded as a numeric literal; round to 3 decimals for stability.
     text = text.replace("__F4_BPM__", repr(round(b, 3)))
     text = text.replace("__F4_DEVICE__", dev)
+
+    # Drop-anchor offset (TOFF) added inside the device's t(): shifts ALL
+    # t()-based timings so the cover-layer end (t(LEAD)) lands on the ACTUAL
+    # drop, even if stage2 trimmed the render window away from the bot's
+    # reframed clip_start. When the reframe is exact, drop_time ≈ t(LEAD) →
+    # offset ≈ 0 → no-op (common case untouched). No drop → 0.
+    toff = 0.0
+    if drop_time is not None and float(drop_time) > 0.0:
+        lead_eff = LEAD_BY_DEVICE[dev] * (F4_REF_BPM / b)
+        toff = float(drop_time) - lead_eff
+    if "__F4_TOFF__" not in text:
+        raise RuntimeError(f"F4 device template {tmpl_path} missing __F4_TOFF__ token")
+    text = text.replace("__F4_TOFF__", repr(round(toff, 4)))
+
+    # Explicit lightning on the drop (reuses F3 rebuild_light.jsx).
+    if drop_time is not None and float(drop_time) > 0.0:
+        drop = float(drop_time)
+        parts = [text]
+        parts.append("/* == F4 drop lightning (F3 hook_light) == */")
+        parts.append("(function(){")
+        parts.append('  if (typeof MAIN_COMP === "undefined" || !MAIN_COMP) { return; }')
+        parts.append(
+            "  $.global.__BLAST = { targetCompName: MAIN_COMP.name, dropTime: "
+            + json.dumps(drop) + ', place: "below:' + _PLACE_REF + '", cuts: [] };'
+        )
+        parts.append("  (function(){")
+        parts.append(_read_f3_hook_light())
+        parts.append("  })(); $.global.__BLAST = null;")
+        parts.append("})();")
+        text = "\n".join(parts)
+
     return text

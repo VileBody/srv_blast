@@ -182,16 +182,20 @@ def build_overlay_jsx(
     parts.append("    else if (__f2_ct > __f2_drop + __f2_fr) __f2_post.push(__f2_ct);")
     parts.append("  }")
 
-    # ---------------- (1) PRE-DROP: chosen shape on every pre-drop cut ----------------
+    # ---------------- (1) PRE-DROP: chosen shape on the FIRST footage only ----------------
+    # Rule: the object plays ONCE — on the first renderable pre-drop cut. Dense
+    # pre-drop cutting otherwise stamps the shape on every clip → cluttered.
     # Skipped entirely when shape is None (F1 «Звук» reuse — no pre-drop visual).
     if shape is not None:
         shape_src = _read_shape_script(shape)
-        parts.append("  /* -- (1) PRE-DROP shape transitions -- */")
+        parts.append("  /* -- (1) PRE-DROP shape transition (first footage only) -- */")
         parts.append(f"  var __f2_t_fx_offset = {_js(_SHAPE_T_FX_OFFSET)};")
+        parts.append("  var __f2_first = -1;")
         parts.append("  for (__f2_i=0; __f2_i<__f2_pre.length; __f2_i++){")
-        parts.append("    var __f2_pcut = __f2_pre[__f2_i];")
-        parts.append("    var __f2_startT = __f2_pcut - __f2_t_fx_offset;")
-        parts.append("    if (__f2_startT < 0) continue;")
+        parts.append("    if ((__f2_pre[__f2_i] - __f2_t_fx_offset) >= 0){ __f2_first = __f2_i; break; }")
+        parts.append("  }")
+        parts.append("  if (__f2_first >= 0){")
+        parts.append("    var __f2_startT = __f2_pre[__f2_first] - __f2_t_fx_offset;")
         parts.append("    $.global.__BLAST = { targetCompName: __f2_name, placeRef: " + _js(_PLACE_REF) + ", startTime: __f2_startT };")
         parts.append("    (function(){")
         parts.append(shape_src)

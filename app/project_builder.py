@@ -184,11 +184,16 @@ def _build_f4_overlay_js(full_edit_config: Dict[str, Any]) -> str:
     bpm = f4_block.get("bpm")
     if bpm is None:
         raise RuntimeError("f4 block present but 'bpm' is missing")
+    drop_raw = f4_block.get("drop_time")
+    drop_time = float(drop_raw) if drop_raw is not None else None
 
     from mlcore.hooks.f4_motion.overlay import build_overlay_jsx
 
-    overlay = build_overlay_jsx(device=device, bpm=float(bpm))
-    LOGGER.info("f4 hook present device=%s bpm=%s js_len=%d", device, bpm, len(overlay))
+    overlay = build_overlay_jsx(device=device, bpm=float(bpm), drop_time=drop_time)
+    LOGGER.info(
+        "f4 hook present device=%s bpm=%s drop_time=%s js_len=%d",
+        device, bpm, drop_time, len(overlay),
+    )
     return overlay
 
 
@@ -224,6 +229,30 @@ def _apply_f1_audio_if_present(
     )
     LOGGER.info("f1 audio present sound=%s drop_time=%s", sound_url[:80], drop_time)
     return new_layers
+
+
+def _build_f5_overlay_js(full_edit_config: Dict[str, Any]) -> str:
+    """
+    Визуал-combo для F5 «Мысль» — тот же, что у F1/F2 без шейпов: hook_light на
+    дропе + seeded-random F3-переход на post-drop склейках. Берётся из блока
+    "f5" (drop_rel_sec + combo_seed, проставлены оркестратором). Нет дропа =>
+    пустая строка (только голос, без визуала).
+    """
+    f5_block = full_edit_config.get("f5") if isinstance(full_edit_config, dict) else None
+    if not f5_block or not isinstance(f5_block, dict):
+        return ""
+    drop_raw = f5_block.get("drop_rel_sec")
+    if drop_raw is None:
+        return ""
+    seed = f5_block.get("combo_seed")
+    if seed is None:
+        return ""
+
+    from mlcore.hooks.f1_sound.overlay import build_overlay_jsx
+
+    overlay = build_overlay_jsx(drop_time=float(drop_raw), seed=int(seed))
+    LOGGER.info("f5 overlay present drop_time=%s seed=%s js_len=%d", drop_raw, seed, len(overlay))
+    return overlay
 
 
 def _build_f1_overlay_js(full_edit_config: Dict[str, Any]) -> str:
@@ -508,6 +537,9 @@ def build_full_project(
     # F1 «Звук» visual combo (hook_light + post-drop random; no pre-drop shapes,
     # the user's sound plays there). Absent block => "".
     f1_overlay_js = _build_f1_overlay_js(full_edit_config)
+    # F5 «Мысль» visual combo (hook_light at drop + post-drop random F3). Voice
+    # is injected separately (_apply_f5_if_present). Absent drop => "".
+    f5_overlay_js = _build_f5_overlay_js(full_edit_config)
     # F3 ассет-download list (sound/logo S3-URL'ы + relpath под __APP_DIR/media).
     # render_manifest.collect_media_urls_from_render_payload подцепит и положит
     # в Windows-payload.media[] рядом с футажом. Пусто => без звука/лого.
@@ -534,6 +566,7 @@ def build_full_project(
         f3_overlay_js=f3_overlay_js,
         f2_overlay_js=f2_overlay_js,
         f1_overlay_js=f1_overlay_js,
+        f5_overlay_js=f5_overlay_js,
     )
     out_jsx.write_text(jsx, encoding="utf-8")
 

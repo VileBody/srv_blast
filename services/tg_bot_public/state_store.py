@@ -166,7 +166,7 @@ class ChatState(BaseModel):
     # F3 «Эффект» selection when hook_category == "effect" (mirror of tg_bot_botapi).
     effect_hook: str = ""        # "" | hook_light | shutter_effect | flash_slow_shutter
     effect_transition: str = ""  # "" | snap_wipe | minimax | invert_flash | extract_flash | flash_on_cuts | layer_shake
-    effect_extra: str = ""       # "" | xerox | analog_glitch | neon_extract | old_camera | pixel_grain | warm_map
+    effect_extra: str = ""       # "" | xerox | analog_glitch | neon_extract | old_camera
     effect_hook_extend: str = "" # "" | to_end | after_drop:N
     # F2 «Объект» selection when hook_category == "object" (mirror of tg_bot_botapi).
     # Single shape pick — the rest of the combo (hook_light at drop + seeded-random

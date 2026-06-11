@@ -204,7 +204,7 @@ function buildSheik(comp){
         var w = fx.addProperty("S_WarpRepeat");
         setEffParam(w, "S_WarpRepeat-0050", 100);                 // Steps
         setEffParam(w, "S_WarpRepeat-0051", [40,1854.81480577257]); // Center XY
-        setEffKeys (w, "S_WarpRepeat-0052", [{time:4.5045045045045,val:1.05},{time:6.17283950617284,val:1}]); // From Z Dist
+        setEffKeys (w, "S_WarpRepeat-0052", [{time:4.5045045045045,val:1.2},{time:6.17283950617284,val:1}]); // From Z Dist
         setEffParam(w, "S_WarpRepeat-0053", -1);  // From Rotate
         setEffParam(w, "S_WarpRepeat-0054", 10);  // From Shift X
         setEffParam(w, "S_WarpRepeat-0055", 10);  // From Shift Y

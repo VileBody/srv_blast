@@ -38,7 +38,8 @@
   var TS = CONFIG.refBpm / CONFIG.bpm;
   var TAP_DIV = (CONFIG.bpm > CONFIG.tapHalveAboveBpm) ? 2 : 1;
 
-  function t(x){ return x * TS; }
+  var TOFF = __F4_TOFF__;  // drop-anchor offset (overlay.py)
+  function t(x){ return x * TS + TOFF; }
   function beat(n){ return n * 60 / CONFIG.bpm; }
 
   function setKeys(prop, keys, ease){
@@ -77,7 +78,7 @@
     td.applyStroke = false;
     try { td.justification = ParagraphJustification.CENTER_JUSTIFY; } catch(e){}
     try { td.tracking = -60; } catch(e){}
-    try { td.autoLeading = false; td.leading = 131; } catch(e){}
+    try { td.autoLeading = false; td.leading = 140; } catch(e){}
     return td;
   }
 
@@ -129,6 +130,7 @@
 
     var tr = L.property("ADBE Transform Group");
     setConst(tr.property("ADBE Position"), [540,325.000002235174,0]);
+    setConst(tr.property("ADBE Scale"), [100,240,100]);  // вертик. масштаб 240% (исходник)
     setKeys(tr.property("ADBE Opacity"), [
       {time:3.30328, val:100},
       {time:3.56855, val:0}
@@ -171,6 +173,7 @@
 
     var tr = L.property("ADBE Transform Group");
     setConst(tr.property("ADBE Position"), [540,325.000002235174,0]);
+    setConst(tr.property("ADBE Scale"), [100,240,100]);  // вертик. масштаб 240% (исходник)
     setKeys(tr.property("ADBE Opacity"), [
       {time:3.97896, val:100},
       {time:4.24423, val:0}
@@ -329,7 +332,7 @@
     buildHoldText(comp);
     buildReleaseText(comp);
     buildFinger(comp);
-    buildFlashAdjustment(comp);
+    // buildFlashAdjustment removed — drop flash = F3 hook_light (added by overlay.py)
     try { $.writeln("[F4][__F4_DEVICE__] overlay built bpm=" + CONFIG.bpm); } catch(_){}
   } catch(err){
     try { $.writeln("[F4][__F4_DEVICE__] ERROR " + err.toString()); } catch(_){}

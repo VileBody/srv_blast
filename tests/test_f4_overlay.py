@@ -80,3 +80,52 @@ def test_unknown_device_raises():
 def test_bad_bpm_raises(bad):
     with pytest.raises(ValueError, match="invalid bpm"):
         build_overlay_jsx(device="swipe", bpm=bad)
+
+
+def test_drop_time_injects_lightning():
+    js = build_overlay_jsx(device="swipe", bpm=120.0, drop_time=4.59)
+    # Explicit F3 lightning on the drop appended after the device overlay.
+    assert "F4 drop lightning" in js
+    assert "buildVspyshka" in js  # rebuild_light.jsx body
+    assert "dropTime" in js
+
+
+def test_no_drop_time_no_lightning():
+    js = build_overlay_jsx(device="swipe", bpm=120.0)
+    assert "F4 drop lightning" not in js
+
+
+def test_non_positive_drop_time_no_lightning():
+    js = build_overlay_jsx(device="swipe", bpm=120.0, drop_time=0.0)
+    assert "F4 drop lightning" not in js
+
+
+def test_toff_zero_when_reframe_exact():
+    import re
+    from mlcore.hooks.f4_motion.overlay import LEAD_BY_DEVICE, F4_REF_BPM
+    b = 120.0
+    lead_eff = LEAD_BY_DEVICE["swipe"] * (F4_REF_BPM / b)
+    js = build_overlay_jsx(device="swipe", bpm=b, drop_time=lead_eff)
+    m = re.search(r"var TOFF = ([-0-9.]+);", js)
+    assert m and abs(float(m.group(1))) < 1e-3   # exact reframe → no-op
+
+
+def test_toff_corrects_on_window_override():
+    import re
+    from mlcore.hooks.f4_motion.overlay import LEAD_BY_DEVICE, F4_REF_BPM
+    b = 120.0
+    lead_eff = LEAD_BY_DEVICE["swipe"] * (F4_REF_BPM / b)
+    js = build_overlay_jsx(device="swipe", bpm=b, drop_time=lead_eff - 1.2)
+    m = re.search(r"var TOFF = ([-0-9.]+);", js)
+    assert m and abs(float(m.group(1)) + 1.2) < 1e-3   # offset = drop - lead_eff
+
+
+def test_toff_zero_without_drop():
+    js = build_overlay_jsx(device="swipe", bpm=120.0)
+    assert "var TOFF = 0" in js
+
+
+def test_device_flash_call_removed_lightning_is_source():
+    js = build_overlay_jsx(device="swipe", bpm=120.0, drop_time=4.5)
+    assert "removed — drop flash" in js     # buildFlashAdjustment() call gone
+    assert "F4 drop lightning" in js        # single drop flash = hook_light

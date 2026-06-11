@@ -266,15 +266,13 @@ BTN_FX_EX_XEROX = "Ксерокс"
 BTN_FX_EX_ANALOG = "Аналог-глитч"
 BTN_FX_EX_NEON = "Неон"
 BTN_FX_EX_OLDCAM = "Старая камера"
-BTN_FX_EX_PIXEL = "Пиксель-зерно"
-BTN_FX_EX_WARM = "Тепловая карта"
+# pixel_grain / warm_map убраны из пикера — они тянут .aep, который не доезжает
+# до рендер-ноды (см. mlcore/hooks/f3_effect/overlay.py::F3_EXTRAS).
 _FX_EXTRA_BY_BUTTON = {
     BTN_FX_EX_XEROX: "xerox",
     BTN_FX_EX_ANALOG: "analog_glitch",
     BTN_FX_EX_NEON: "neon_extract",
     BTN_FX_EX_OLDCAM: "old_camera",
-    BTN_FX_EX_PIXEL: "pixel_grain",
-    BTN_FX_EX_WARM: "warm_map",
 }
 # slow-shutter trail extend (only when hook == flash_slow_shutter)
 BTN_FX_EXT_STD = "Стандарт"
@@ -397,12 +395,7 @@ _BIGTEST_CASES: List[Dict[str, Any]] = [
     {"label": "F3/грейд: Старая камера",
      "hook_enabled": True, "hook_category": "effect", "hook_device": "",
      "effect_hook": "", "effect_transition": "", "effect_extra": "old_camera", "effect_hook_extend": ""},
-    {"label": "F3/грейд: Пиксель-зерно",
-     "hook_enabled": True, "hook_category": "effect", "hook_device": "",
-     "effect_hook": "", "effect_transition": "", "effect_extra": "pixel_grain", "effect_hook_extend": ""},
-    {"label": "F3/грейд: Тепловая карта",
-     "hook_enabled": True, "hook_category": "effect", "hook_device": "",
-     "effect_hook": "", "effect_transition": "", "effect_extra": "warm_map", "effect_hook_extend": ""},
+    # pixel_grain / warm_map убраны — тянут .aep, не доезжающий до ноды.
     # ── F4 / Движение ────────────────────────────────────────────────────────
     {"label": "F4/движение: Свайп",
      "hook_enabled": True, "hook_category": "motion", "hook_device": "swipe",
@@ -2962,7 +2955,6 @@ class BlastBotApp:
             reply_markup=_kb(
                 [BTN_FX_EX_XEROX, BTN_FX_EX_ANALOG],
                 [BTN_FX_EX_NEON, BTN_FX_EX_OLDCAM],
-                [BTN_FX_EX_PIXEL, BTN_FX_EX_WARM],
                 [BTN_FX_SKIP],
                 [BTN_BACK],
             ),
@@ -3706,6 +3698,7 @@ class BlastBotApp:
         # The literal user-picked start is intentionally discarded (we may extend
         # backward into earlier track footage). Floored at 0 (else blocked earlier).
         f4_device: str | None = None
+        f4_bpm: float | None = None
         if st.hook_enabled and st.hook_category == "motion" and st.hook_device:
             if st.hook_drop_t is None:
                 raise RuntimeError("F4 motion hook requires a drop (hook_drop_t)")
@@ -3731,6 +3724,9 @@ class BlastBotApp:
             user_clip_start_sec = new_start
             if user_clip_end_sec is None or user_clip_end_sec <= new_start:
                 user_clip_end_sec = float(end)
+            # Send the SAME bpm to the orchestrator so the overlay's t() scaling
+            # matches the reframe → cover-end lands exactly on the drop.
+            f4_bpm = bpm
         rotation_theme, rotation_group, rotation_history = (
             await self._resolve_rotation_slot_for_enqueue(st=st)
         )
@@ -3771,6 +3767,7 @@ class BlastBotApp:
                 else None
             ),
             f4_device=f4_device,
+            f4_bpm=f4_bpm,
             effect_hook=(
                 str(st.effect_hook)
                 if (st.hook_enabled and st.hook_category == "effect" and st.effect_hook)

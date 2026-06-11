@@ -193,7 +193,7 @@ F3_TRANSITION_IDS = frozenset({
     "snap_wipe", "minimax", "invert_flash", "extract_flash", "flash_on_cuts", "layer_shake",
 })
 F3_EXTRA_IDS = frozenset({
-    "xerox", "analog_glitch", "neon_extract", "old_camera", "pixel_grain", "warm_map",
+    "xerox", "analog_glitch", "neon_extract", "old_camera",
 })
 F3_HOOK_LABELS_RU = {"Молния": "hook_light", "Затвор": "shutter_effect", "Слоу-шаттер": "flash_slow_shutter"}
 F3_TRANSITION_LABELS_RU = {
@@ -202,7 +202,7 @@ F3_TRANSITION_LABELS_RU = {
 }
 F3_EXTRA_LABELS_RU = {
     "Ксерокс": "xerox", "Аналог-глитч": "analog_glitch", "Неон": "neon_extract",
-    "Старая камера": "old_camera", "Пиксель-зерно": "pixel_grain", "Тепловая карта": "warm_map",
+    "Старая камера": "old_camera",
 }
 F3_EXTEND_LABELS_RU = {"Стандарт": "", "До конца ролика": "to_end", "3 футажа после": "after_drop:3"}
 

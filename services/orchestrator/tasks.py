@@ -96,6 +96,7 @@ _LLM_ENV_KEYS = (
     "USER_DROP_T",
     "F5_HOOK_DEVICE",
     "F4_HOOK_DEVICE",
+    "F4_BPM",
     "F3_HOOK",
     "F3_TRANSITION",
     "F3_EXTRA",
@@ -1767,13 +1768,22 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
                 f"invalid f4_device={f4_device_raw!r}; allowed={sorted(allowed_f4_devices)}"
             )
         env["F4_HOOK_DEVICE"] = f4_device
+    # BPM the bot used for the F4 clip-window reframe — overlay must use the same.
+    _f4_bpm_raw = req.get("f4_bpm")
+    if _f4_bpm_raw is not None:
+        try:
+            _f4_bpm_val = float(_f4_bpm_raw)
+        except (TypeError, ValueError) as e:
+            raise RuntimeError(f"invalid f4_bpm={_f4_bpm_raw!r}") from e
+        if _f4_bpm_val > 0.0:
+            env["F4_BPM"] = repr(_f4_bpm_val)
     # F3 «Эффект» visual-FX selection pass-through. Set => orchestrator emits
     # full_edit_config["f3"] and project_builder injects the AE overlay JSX.
     # Requires USER_DROP_T (drop anchor); absent ids => no F3 fx.
     _f3_allowed = {
         "hook": {"hook_light", "shutter_effect", "flash_slow_shutter"},
         "transition": {"snap_wipe", "minimax", "invert_flash", "extract_flash", "flash_on_cuts", "layer_shake"},
-        "extra": {"xerox", "analog_glitch", "neon_extract", "old_camera", "pixel_grain", "warm_map"},
+        "extra": {"xerox", "analog_glitch", "neon_extract", "old_camera"},
     }
     for _req_key, _env_key, _group in (
         ("effect_hook", "F3_HOOK", "hook"),

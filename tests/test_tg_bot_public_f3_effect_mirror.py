@@ -35,7 +35,7 @@ def test_effect_id_sets_and_labels_consistent():
         "snap_wipe", "minimax", "invert_flash", "extract_flash", "flash_on_cuts", "layer_shake",
     }
     assert pub.F3_EXTRA_IDS == {
-        "xerox", "analog_glitch", "neon_extract", "old_camera", "pixel_grain", "warm_map",
+        "xerox", "analog_glitch", "neon_extract", "old_camera",
     }
     # every RU label maps to a known id
     assert set(pub.F3_HOOK_LABELS_RU.values()) == pub.F3_HOOK_IDS

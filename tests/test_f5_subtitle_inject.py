@@ -1,11 +1,10 @@
 # -*- coding: utf-8 -*-
-"""F5 subtitle inject: split into sequential chunks + strip stale reveal."""
+"""F5 subtitle inject: clone the track subtitle type 1:1 + retime reveal."""
 from __future__ import annotations
 
 from mlcore.hooks.f5_cognition.inject import (
     F5_AUDIO_ENVELOPE,
-    _split_tts_text,
-    _strip_time_animated,
+    _retime_keyframes_inplace,
     inject_subtitle_layer,
 )
 from mlcore.hooks.f5_cognition.models import F5Device, F5Response
@@ -49,61 +48,48 @@ def _template_text_layer():
     }
 
 
-def test_split_tts_text():
-    assert _split_tts_text("a b c d e", max_words=3) == ["a b c", "d e"]
-    assert _split_tts_text("one two", max_words=3) == ["one two"]
-    assert _split_tts_text("") == []
-    assert _split_tts_text("   ") == []
+def test_retime_keyframes_inplace_remaps_times():
+    obj = {"reveal": {"keyframes": [{"t": 1.0, "v": 0}, {"t": 2.5, "v": 100}]}}
+    _retime_keyframes_inplace(obj, src_in=1.0, src_out=2.5, dst_in=0.0, dst_out=3.0)
+    kfs = obj["reveal"]["keyframes"]
+    assert abs(kfs[0]["t"] - 0.0) < 1e-6   # 1.0 -> dst_in
+    assert abs(kfs[1]["t"] - 3.0) < 1e-6   # 2.5 -> dst_out
 
 
-def test_strip_time_animated_removes_keyframed_entries():
-    d = {
-        "position": {"match_name": "ADBE Position", "value": [1, 2]},
-        "reveal": {"match_name": "ADBE Text Percent Start", "keyframes": [{"t": 0, "v": 0}]},
-    }
-    out = _strip_time_animated(d)
-    assert "position" in out
-    assert "reveal" not in out
-    assert _strip_time_animated(None) == {}
-
-
-def test_subtitle_split_into_sequential_chunks():
+def test_voice_subtitle_keeps_track_type_and_retimes_reveal():
     layers = inject_subtitle_layer([_template_text_layer()], _f5(), focal_start_ms=0)
-    # template had no overlap-clear issues; result = chunk layers only (template
-    # was the style source, consumed). 5 words / 3 = 2 chunks.
-    chunks = [L for L in layers if str(L.get("name", "")).startswith("f5_hook_subtitle_")]
-    assert len(chunks) == 2
-    # sequential, covering [0, 3.0]
-    assert chunks[0]["in_point"] == 0.0
-    assert abs(chunks[0]["out_point"] - 1.5) < 1e-6
-    assert abs(chunks[1]["in_point"] - 1.5) < 1e-6
-    assert abs(chunks[1]["out_point"] - 3.0) < 1e-6
-    assert chunks[0]["text"] == "первое второе третье"
-    assert chunks[1]["text"] == "четвёртое пятое"
-    # z-index strictly increasing above template
-    assert chunks[0]["z_index"] == 1001
-    assert chunks[1]["z_index"] == 1002
+    subs = [L for L in layers if str(L.get("name", "")).startswith("f5_hook_subtitle")]
+    # ONE layer (same type as the track), not stripped chunks.
+    assert len(subs) == 1
+    L = subs[0]
+    assert L["in_point"] == 0.0
+    assert abs(L["out_point"] - 3.0) < 1e-6
+    assert L["text"] == "первое второе третье четвёртое пятое"
+    # Animator preserved (same type as track) — NOT disabled.
+    td = L["text_data"]
+    assert td.get("no_text_animator") is not True
+    assert td.get("text_animator") == {"some": "cfg"}
+    # Reveal keyframes retimed from template window [1.0,2.5] onto [0.0,3.0].
+    kfs = L["props"]["reveal"]["keyframes"]
+    assert abs(kfs[0]["t"] - 0.0) < 1e-6
+    assert abs(kfs[1]["t"] - 0.4) < 1e-6   # (1.2-1.0)/1.5*3.0 = 0.4
+    # char styles rebuilt to full text length
+    assert len(td["char_styles_ungrouped"]) == len(L["text"])
 
 
-def test_subtitle_chunks_strip_reveal_and_disable_animator():
+def test_voice_subtitle_position_style_preserved():
     layers = inject_subtitle_layer([_template_text_layer()], _f5(), focal_start_ms=0)
-    chunks = [L for L in layers if str(L.get("name", "")).startswith("f5_hook_subtitle_")]
-    for L in chunks:
-        assert "reveal" not in (L.get("props") or {})  # stale keyframes gone
-        assert "position" in (L.get("props") or {})     # static style kept
-        td = L["text_data"]
-        assert td.get("no_text_animator") is True
-        assert "text_animator" not in td
-        # char styles rebuilt to chunk length
-        assert len(td["char_styles_ungrouped"]) == len(L["text"])
+    L = next(x for x in layers if str(x.get("name", "")).startswith("f5_hook_subtitle"))
+    # static style (position) carried over unchanged — same look as the track.
+    assert L["props"]["position"]["value"] == [540, 1700]
 
 
-def test_subtitle_single_chunk_when_short():
+def test_voice_subtitle_short_phrase_one_layer():
     layers = inject_subtitle_layer([_template_text_layer()], _f5(text="бум", dur_ms=2500), focal_start_ms=500)
-    chunks = [L for L in layers if str(L.get("name", "")).startswith("f5_hook_subtitle_")]
-    assert len(chunks) == 1
-    assert chunks[0]["in_point"] == 0.5
-    assert abs(chunks[0]["out_point"] - 3.0) < 1e-6
+    subs = [L for L in layers if str(L.get("name", "")).startswith("f5_hook_subtitle")]
+    assert len(subs) == 1
+    assert subs[0]["in_point"] == 0.5
+    assert abs(subs[0]["out_point"] - 3.0) < 1e-6
 
 
 def test_subtitle_no_template_is_noop():
@@ -123,7 +109,10 @@ def test_template_audio_envelope_expr_supports_track_duck():
     tpl = Path("templates/project_template.j2").read_text(encoding="utf-8")
     assert "duck_from_s" in tpl
     assert "duck_to_s" in tpl
-    assert "var duckOn=" in tpl
+    # Duck is applied via explicit keyframes (reliable in headless aerender),
+    # not an expression.
+    assert "audio duck keyframes" in tpl
+    assert "setValueAtTime(duckFrom" in tpl
 
 
 def _track_audio_layer():
@@ -199,3 +188,22 @@ def test_apply_f5_ducks_track_with_drop():
     # f5 voice layer added at full volume (no duck fields)
     voice = next(L for L in footage if str(L["name"]).startswith("f5_hook"))
     assert "duck_from_s" not in (voice["text_data"].get("audio_envelope") or {})
+
+
+def test_f5_visual_combo_overlay_built_from_block():
+    from app.project_builder import _build_f5_overlay_js
+
+    cfg = {"f5": {"drop_rel_sec": 3.48, "combo_seed": 12345}}
+    js = _build_f5_overlay_js(cfg)
+    assert "DROP: F3 hook_light" in js
+    assert "buildBolt" in js                       # rebuild_light.jsx body
+    assert "__f2_groups" in js                     # post-drop random transitions
+    assert "PRE-DROP shape transitions" not in js  # no shapes (like F1)
+
+
+def test_f5_visual_combo_absent_without_drop():
+    from app.project_builder import _build_f5_overlay_js
+
+    assert _build_f5_overlay_js({}) == ""
+    assert _build_f5_overlay_js({"f5": {"audio_url": "x"}}) == ""           # no drop
+    assert _build_f5_overlay_js({"f5": {"drop_rel_sec": 3.0}}) == ""        # no seed

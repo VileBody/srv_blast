@@ -44,8 +44,12 @@ F3_HOOKS = ("hook_light", "shutter_effect", "flash_slow_shutter")
 F3_TRANSITIONS = (
     "snap_wipe", "minimax", "invert_flash", "extract_flash", "flash_on_cuts", "layer_shake",
 )
+# NOTE: pixel_grain / warm_map removed from the selectable pool — they import a
+# .aep at runtime (needs_aep) which isn't shipped to the render node and whose
+# $.fileName path breaks once the script is inlined into render_full.jsx. The
+# .jsx + manifest entries are kept for a future S3-delivery integration.
 F3_EXTRAS = (
-    "xerox", "analog_glitch", "neon_extract", "old_camera", "pixel_grain", "warm_map",
+    "xerox", "analog_glitch", "neon_extract", "old_camera",
 )
 
 

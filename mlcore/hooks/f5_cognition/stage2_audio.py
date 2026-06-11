@@ -85,9 +85,9 @@ def _call_gemini_tts(prompt: str, *, spec: VoiceSpec, model: str) -> bytes:
     inline PCM (mime вида 'audio/L16;codec=pcm;rate=24000'); оборачиваем в WAV,
     чтобы pydub/AE могли его читать.
 
-    Модель по умолчанию (env GEMINI_MODEL_F5_TTS) — gemini-2.5-flash-preview-tts.
-    Переключение на gemini-3.1-flash-tts-preview = одна строка в .env, когда
-    preview-модель 3.1 перестанет отдавать 500 INTERNAL.
+    Модель по умолчанию (env GEMINI_MODEL_F5_TTS) — gemini-3.1-flash-tts-preview.
+    Откат на gemini-2.5-flash-preview-tts = одна строка в .env, если 3.1 начнёт
+    отдавать 500 INTERNAL / пустой контент.
     """
     from google.genai import types
 
@@ -108,15 +108,34 @@ def _call_gemini_tts(prompt: str, *, spec: VoiceSpec, model: str) -> bytes:
         ),
     )
 
+    # Gemini may return HTTP 200 with NO audio: a candidate whose content is
+    # None (blocked / non-STOP finish reason) or empty parts. Inspect why and
+    # raise a retryable error with diagnostics instead of crashing on .parts.
+    cands = getattr(resp, "candidates", None) or []
+    if not cands:
+        fb = getattr(resp, "prompt_feedback", None)
+        raise F5GeminiTimeout(f"Gemini TTS returned no candidates (prompt_feedback={fb!r})")
+    cand = cands[0]
+    content = getattr(cand, "content", None)
+    finish = getattr(cand, "finish_reason", None)
+    if content is None or not getattr(content, "parts", None):
+        fb = getattr(resp, "prompt_feedback", None)
+        raise F5GeminiTimeout(
+            f"Gemini TTS returned empty content (finish_reason={finish!r}, "
+            f"prompt_feedback={fb!r})"
+        )
+
     try:
-        part = resp.candidates[0].content.parts[0]
+        part = content.parts[0]
         inline = getattr(part, "inline_data", None)
         pcm = getattr(inline, "data", None) if inline is not None else None
     except (AttributeError, IndexError, TypeError) as e:
         raise F5GeminiTimeout(f"Gemini TTS returned malformed response: {e}") from e
 
     if not pcm:
-        raise F5GeminiTimeout("Gemini TTS returned no inline audio data")
+        raise F5GeminiTimeout(
+            f"Gemini TTS returned no inline audio data (finish_reason={finish!r})"
+        )
 
     mime = getattr(inline, "mime_type", "") or ""
     rate, width = parse_audio_mime(mime)
@@ -137,12 +156,13 @@ def synthesize_voice(spec: VoiceSpec) -> tuple[bytes, int]:
 
     > 4с считается ОК — mixer обрежет с fade-out.
     """
-    # v1.3: 3.1-preview-tts отдаёт 500 INTERNAL, используем 2.5 как рабочую.
-    # Переключение на 3.1 = смена значения env, без правок кода.
-    model = os.getenv("GEMINI_MODEL_F5_TTS", "gemini-2.5-flash-preview-tts")
+    # Дефолт — 3.1 TTS (gemini-3.1-flash-tts-preview). Откат на 2.5
+    # (gemini-2.5-flash-preview-tts) = смена env GEMINI_MODEL_F5_TTS, без правок кода.
+    model = os.getenv("GEMINI_MODEL_F5_TTS", "gemini-3.1-flash-tts-preview")
 
     last_audio: bytes | None = None
     last_duration_ms: int = 0
+    last_blocked_err: F5GeminiTimeout | None = None
 
     for attempt in range(MAX_TTS_RETRIES + 1):
         retry_hint = ""
@@ -156,7 +176,16 @@ def synthesize_voice(spec: VoiceSpec) -> tuple[bytes, int]:
         prompt = build_voice_prompt(spec, retry_hint=retry_hint)
         logger.info("f5.stage2 attempt=%d model=%s", attempt, model)
 
-        audio_bytes = _call_gemini_tts(prompt, spec=spec, model=model)
+        # A blocked/empty TTS response (HTTP 200 but content=None) is retryable:
+        # re-call rather than aborting F5 entirely. Keep the last error so we can
+        # surface a clear reason if every attempt is blocked.
+        try:
+            audio_bytes = _call_gemini_tts(prompt, spec=spec, model=model)
+        except F5GeminiTimeout as e:
+            last_blocked_err = e
+            logger.warning("f5.stage2 attempt=%d blocked/empty: %s", attempt, e)
+            continue
+
         duration_ms = _measure_duration_ms(audio_bytes)
 
         logger.info("f5.stage2 attempt=%d duration_ms=%d", attempt, duration_ms)
@@ -167,9 +196,12 @@ def synthesize_voice(spec: VoiceSpec) -> tuple[bytes, int]:
             # Длиннее 4с не считаем ошибкой — mixer cut+fade.
             return audio_bytes, duration_ms
 
-    # Все попытки короткие — отдаём наружу, вызывающий код решит:
-    # либо reverb extension, либо F5TtsRetryExhausted.
-    assert last_audio is not None
+    # No usable audio after all attempts. If we never got ANY audio (every call
+    # was blocked/empty), surface the block reason; otherwise it was too short.
+    if last_audio is None:
+        raise last_blocked_err or F5GeminiTimeout(
+            f"Gemini TTS returned no audio after {MAX_TTS_RETRIES + 1} attempts"
+        )
     raise F5TtsTooShort(
         f"TTS too short after {MAX_TTS_RETRIES + 1} attempts: "
         f"{last_duration_ms} ms < {TTS_MIN_ACCEPTABLE_MS} ms"

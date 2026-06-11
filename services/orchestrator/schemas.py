@@ -70,6 +70,12 @@ class SendAudioS3Request(BaseModel):
     f4_device: Optional[
         Literal["swipe", "tap", "pinch", "holdfinger", "head"]
     ] = None
+    # BPM the bot used to reframe the clip window for F4 (clip_start =
+    # drop − LEAD·refBpm/bpm). The orchestrator must build the overlay with the
+    # SAME bpm, else cover-end (t(LEAD) = LEAD·refBpm/bpm) misses the drop. The
+    # bot measures bpm on the ORIGINAL clip; re-measuring on the reframed clip
+    # downstream diverges. None → orchestrator falls back to its own measure.
+    f4_bpm: Optional[float] = Field(default=None, gt=0.0)
     # F3 «Эффект» visual-FX selection (3-step: hook / transition / extra). When
     # the user picks the "Эффект" hook category, the bot sends the chosen effect
     # ids here. Propagated to the build env as F3_HOOK / F3_TRANSITION / F3_EXTRA
@@ -87,8 +93,7 @@ class SendAudioS3Request(BaseModel):
     ] = None
     effect_extra: Optional[
         Literal[
-            "xerox", "analog_glitch", "neon_extract",
-            "old_camera", "pixel_grain", "warm_map",
+            "xerox", "analog_glitch", "neon_extract", "old_camera",
         ]
     ] = None
     # Slow-shutter trail extension (only for extendable hooks): "to_end" or
