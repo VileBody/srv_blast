@@ -25,6 +25,32 @@ def _validate_sorted_unique_non_negative(points: List[float], *, field_name: str
     return out
 
 
+def _normalize_raw_points(points: List[float], *, field_name: str) -> List[float]:
+    """Canonicalize an order-free bucket of raw detector timestamps.
+
+    raw_timings buckets are unordered candidate sets that the LLM concatenates
+    from several detector sources (kick onsets, beats, spectral/transient
+    peaks), so their input order is meaningless and frequently non-monotonic.
+    Sort + dedupe (within _EPS) instead of hard-failing — order/uniqueness only
+    matter downstream in final_cut_timings, which is validated separately and
+    re-sorted in normalize_switch_points. Negatives are still genuinely
+    malformed and rejected.
+    """
+    cleaned: List[float] = []
+    for idx, x in enumerate(points):
+        val = float(x)
+        if val < 0.0:
+            raise ValueError(f"{field_name}[{idx}] must be >= 0")
+        cleaned.append(val)
+
+    out: List[float] = []
+    for val in sorted(cleaned):
+        if out and val <= out[-1] + _EPS:
+            continue
+        out.append(val)
+    return out
+
+
 class RawTimingBuckets(BaseModel):
     kick_bass: List[float] = Field(default_factory=list)
     snare_clap: List[float] = Field(default_factory=list)
@@ -33,10 +59,10 @@ class RawTimingBuckets(BaseModel):
 
     @model_validator(mode="after")
     def _check(self) -> "RawTimingBuckets":
-        self.kick_bass = _validate_sorted_unique_non_negative(self.kick_bass, field_name="kick_bass")
-        self.snare_clap = _validate_sorted_unique_non_negative(self.snare_clap, field_name="snare_clap")
-        self.vocal_phrases = _validate_sorted_unique_non_negative(self.vocal_phrases, field_name="vocal_phrases")
-        self.semantic_peaks = _validate_sorted_unique_non_negative(self.semantic_peaks, field_name="semantic_peaks")
+        self.kick_bass = _normalize_raw_points(self.kick_bass, field_name="kick_bass")
+        self.snare_clap = _normalize_raw_points(self.snare_clap, field_name="snare_clap")
+        self.vocal_phrases = _normalize_raw_points(self.vocal_phrases, field_name="vocal_phrases")
+        self.semantic_peaks = _normalize_raw_points(self.semantic_peaks, field_name="semantic_peaks")
         return self
 
 

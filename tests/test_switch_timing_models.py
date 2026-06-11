@@ -2,7 +2,13 @@ from __future__ import annotations
 
 import pytest
 
-from mlcore.models.switch_timing import Stage2TimingCutsPayload, SwitchTimingPayload, normalize_switch_points
+from mlcore.models.switch_timing import (
+    RawTimingBuckets,
+    Stage2TimingAnalysisPayload,
+    Stage2TimingCutsPayload,
+    SwitchTimingPayload,
+    normalize_switch_points,
+)
 
 
 def test_switch_timing_payload_validates_internal_points() -> None:
@@ -51,6 +57,46 @@ def test_stage2_timing_cuts_payload_rejects_empty_cuts() -> None:
                 "final_cut_timings": [],
             }
         )
+
+
+def test_raw_timing_buckets_sort_unsorted_input() -> None:
+    # Raw detector buckets are order-free candidate sets; the LLM concatenates
+    # them from multiple sources and routinely emits non-monotonic order. These
+    # are the exact shapes that previously crashed stage2_timing_analysis (and
+    # therefore the whole build) for entire batches.
+    buckets = RawTimingBuckets.model_validate(
+        {
+            "kick_bass": [2.985, 4.1, 5.284, 8.372, 7.327],
+            "semantic_peaks": [89.036, 75.568, 78.68],
+        }
+    )
+    assert buckets.kick_bass == [2.985, 4.1, 5.284, 7.327, 8.372]
+    assert buckets.semantic_peaks == [75.568, 78.68, 89.036]
+
+
+def test_raw_timing_buckets_dedupe_near_duplicates() -> None:
+    buckets = RawTimingBuckets.model_validate(
+        {"snare_clap": [1.0, 1.0000001, 1.0000002, 2.0]}
+    )
+    assert buckets.snare_clap == [1.0, 2.0]
+
+
+def test_raw_timing_buckets_still_reject_negative() -> None:
+    with pytest.raises(ValueError, match="must be >= 0"):
+        RawTimingBuckets.model_validate({"vocal_phrases": [1.0, -0.5]})
+
+
+def test_stage2_timing_analysis_payload_accepts_unsorted_raw_timings() -> None:
+    payload = Stage2TimingAnalysisPayload.model_validate(
+        {
+            "selected_rule": "Dynamic Contrast",
+            "reason": "drop-heavy track",
+            "raw_timings": {
+                "kick_bass": [67.464, 70.0, 89.036, 75.568, 78.68],
+            },
+        }
+    )
+    assert payload.raw_timings.kick_bass == [67.464, 70.0, 75.568, 78.68, 89.036]
 
 
 def test_normalize_switch_points_merges_near_points() -> None:
