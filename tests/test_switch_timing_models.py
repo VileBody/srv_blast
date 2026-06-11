@@ -99,6 +99,18 @@ def test_stage2_timing_analysis_payload_accepts_unsorted_raw_timings() -> None:
     assert payload.raw_timings.kick_bass == [67.464, 70.0, 75.568, 78.68, 89.036]
 
 
+def test_stage2_timing_cuts_payload_sorts_unsorted_cuts() -> None:
+    # LLM-emitted cut set, non-monotonic; normalize_switch_points re-sorts
+    # downstream anyway, so the model must not hard-fail on order.
+    payload = Stage2TimingCutsPayload.model_validate(
+        {
+            "applied_rule": "Dynamic Contrast",
+            "final_cut_timings": [2.0, 1.0, 1.0, 3.5, 3.0],
+        }
+    )
+    assert payload.final_cut_timings == [1.0, 2.0, 3.0, 3.5]
+
+
 def test_normalize_switch_points_merges_near_points() -> None:
     out = normalize_switch_points(
         raw_cut_timings=[0.5, 0.62, 2.0, 2.1, 4.0],

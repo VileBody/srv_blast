@@ -78,7 +78,12 @@ class Stage2TimingCutsPayload(BaseModel):
 
     @model_validator(mode="after")
     def _check(self) -> "Stage2TimingCutsPayload":
-        self.final_cut_timings = _validate_sorted_unique_non_negative(
+        # final_cut_timings is an LLM-emitted set of cut moments that is
+        # re-sorted (and window/min-segment filtered) downstream in
+        # normalize_switch_points, so input order is irrelevant. Sort + dedupe
+        # instead of hard-failing — a non-monotonic LLM response must not kill
+        # the build. The non-empty contract still holds.
+        self.final_cut_timings = _normalize_raw_points(
             self.final_cut_timings,
             field_name="final_cut_timings",
         )
