@@ -41,22 +41,31 @@ def make_client():
 
     Импорт genai ленивый — чтобы модуль F5 не падал на импорте, когда SDK
     отсутствует (например в окружении без ML-зависимостей).
+
+    ВАЖНО: всегда выставляем HTTP-таймаут (env F5_GEMINI_TIMEOUT_S, дефолт 120с).
+    Без него подвисший Gemini-вызов (stage1 text / stage2 TTS) вешает ВЕСЬ билд
+    навечно — джоба застревает на f5_hook и ничего не отдаёт (см. инцидент
+    97d4ba…). С таймаутом запрос падает → F5 уходит в graceful no-hook.
     """
     from google import genai
+    from google.genai import types as _types
 
     api_key = load_api_key()
 
-    http_options = None
+    try:
+        timeout_s = float(os.environ.get("F5_GEMINI_TIMEOUT_S", "120") or "120")
+    except ValueError:
+        timeout_s = 120.0
+    if not (timeout_s > 0.0):
+        timeout_s = 120.0
+
+    http_kwargs: dict = {"timeout": int(timeout_s * 1000)}  # genai HttpOptions.timeout = ms
     proxy = (os.environ.get("OUTBOUND_PROXY") or "").strip()
     if proxy:
         # genai прокидывает proxy через http_options.client_args (httpx)
-        from google.genai import types as _types
+        http_kwargs["client_args"] = {"proxy": proxy}
 
-        http_options = _types.HttpOptions(client_args={"proxy": proxy})
-
-    if http_options is not None:
-        return genai.Client(api_key=api_key, http_options=http_options)
-    return genai.Client(api_key=api_key)
+    return genai.Client(api_key=api_key, http_options=_types.HttpOptions(**http_kwargs))
 
 
 def parse_audio_mime(mime: str) -> tuple[int, int]:

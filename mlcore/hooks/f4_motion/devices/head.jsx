@@ -115,6 +115,7 @@
     try { td.justification = ParagraphJustification.CENTER_JUSTIFY; } catch(e){}
     try { td.tracking = -60; } catch(e){}
     try { td.autoLeading = false; td.leading = 140; } catch(e){}
+    try { td.verticalScale = 240; } catch(e){}  // Character-панель верт.масштаб 240% (исходник)
     return td;
   }
 
@@ -153,7 +154,6 @@
     var td = srcProp.value; styleText(td, CONFIG.textHold); srcProp.setValue(td);
     var tr = L.property("ADBE Transform Group");
     setConst(tr.property("ADBE Position"), [540,325.000002235174,0]);
-    setConst(tr.property("ADBE Scale"), [100,240,100]);  // вертик. масштаб 240% (исходник)
     setKeys(tr.property("ADBE Opacity"), [{time:3.30328,val:100},{time:3.56855,val:0}]);
     var animers = L.property("ADBE Text Properties").property("ADBE Text Animators");
     var anim = animers.addProperty("ADBE Text Animator");
@@ -176,7 +176,6 @@
     var td = srcProp.value; styleText(td, CONFIG.textRelease); srcProp.setValue(td);
     var tr = L.property("ADBE Transform Group");
     setConst(tr.property("ADBE Position"), [540,325.000002235174,0]);
-    setConst(tr.property("ADBE Scale"), [100,240,100]);  // вертик. масштаб 240% (исходник)
     setKeys(tr.property("ADBE Opacity"), [{time:3.97896,val:100},{time:4.24423,val:0}]);
     var fx = L.property("ADBE Effect Parade");
     var mm = fx.addProperty("ADBE Minimax");

@@ -207,3 +207,36 @@ def test_f5_visual_combo_absent_without_drop():
     assert _build_f5_overlay_js({}) == ""
     assert _build_f5_overlay_js({"f5": {"audio_url": "x"}}) == ""           # no drop
     assert _build_f5_overlay_js({"f5": {"drop_rel_sec": 3.0}}) == ""        # no seed
+
+
+def _scenes3rd_template():
+    # scenes_3rd-style text layer: empty char_styles_ungrouped (styling via base
+    # text_data + text_animator), reveal keyframes live in props["reveal"].
+    return {
+        "name": "scene_001", "type": "text",
+        "in_point": 1.0, "out_point": 2.5, "z_index": 1000, "text": "оригинал",
+        "props": {
+            "position": {"match_name": "ADBE Position", "value": [540, 1700]},
+            "reveal": {"match_name": "ADBE Text Percent Start", "keyframes": [
+                {"t": 1.0, "v": 25}, {"t": 2.4, "v": 100},
+            ]},
+        },
+        "effects": {},
+        "text_data": {
+            "layer_meta": {"startTime": 1.0, "enabled": True},
+            "text_animator": {"some": "cfg"},
+            "char_styles_ungrouped": [],  # scenes_3rd: empty
+        },
+    }
+
+
+def test_scenes3rd_voice_keeps_empty_char_styles():
+    # Regression: empty char_styles must stay empty (rebuilding to index-only
+    # entries clobbers the scene style → flat "blocks" look).
+    layers = inject_subtitle_layer([_scenes3rd_template()], _f5(), focal_start_ms=0)
+    L = next(x for x in layers if str(x.get("name", "")).startswith("f5_hook_subtitle"))
+    assert L["text_data"]["char_styles_ungrouped"] == []
+    # animator preserved + reveal retimed onto the voice window
+    assert L["text_data"].get("text_animator") == {"some": "cfg"}
+    kfs = L["props"]["reveal"]["keyframes"]
+    assert abs(kfs[0]["t"] - 0.0) < 1e-6

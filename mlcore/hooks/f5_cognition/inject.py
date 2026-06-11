@@ -336,9 +336,15 @@ def inject_subtitle_layer(
     meta = td.setdefault("layer_meta", {})
     meta["startTime"] = float(in_sec)
     meta["enabled"] = True
-    # Rebuild per-char styles for the new text length (animator reveals by % so
-    # it stays correct regardless of word count → same type as the track).
-    td["char_styles_ungrouped"] = _rebuild_char_styles(td, text_len=len(f5.tts_text))
+    # Rebuild per-char styles ONLY if the template actually carries them.
+    # scenes_3rd/flow layers keep char_styles_ungrouped=[] (styling comes from
+    # base text_data + the text_animator) — rebuilding to index-only entries
+    # there CLOBBERS the scene style and the voice subtitle renders as a flat
+    # "blocks"-looking line. Empty template → leave empty (animator/base style
+    # carry the look = same TYPE as the track).
+    existing_cs = td.get("char_styles_ungrouped")
+    if isinstance(existing_cs, list) and existing_cs:
+        td["char_styles_ungrouped"] = _rebuild_char_styles(td, text_len=len(f5.tts_text))
 
     logger.info(
         "f5.inject subtitle (track-type) text=%r in=%.3f out=%.3f z=%d "
