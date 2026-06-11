@@ -861,7 +861,7 @@ def build_footage_layers(
       Footages
     """
     comp_w = int(footage_cfg.get("main_comp_w", 1080))
-    comp_h = int(footage_cfg.get("main_comp_h", 1960))
+    comp_h = int(footage_cfg.get("main_comp_h", 1920))
 
     layers_cfg = list(footage_cfg.get("layers") or [])
     used_media_names: set[str] = set()

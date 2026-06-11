@@ -1020,7 +1020,7 @@ def render_all_steps(
     t3 = env.get_template("step3_template.j2")
     footage_str = t3.render(
         main_comp_w=1080,
-        main_comp_h=1960,
+        main_comp_h=1920,
         main_comp_fps=float(AE_FPS),  # ✅ FIX: was missing (caused UndefinedError)
         text_dur_hint=float(comp_dur),
         adjustment_preset=preset,

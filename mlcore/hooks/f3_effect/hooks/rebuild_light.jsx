@@ -129,9 +129,9 @@ function buildVspyshka(comp){
 
     var tr = L.property("ADBE Transform Group");
     setConst(tr.property("ADBE Anchor Point"), [0,0,0]);
-    setConst(tr.property("ADBE Position"), [540,960,0]);
-    setConst(tr.property("ADBE Scale"),    [150,150,100]);
-    setKeys(tr.property("ADBE Opacity"), [{time:4.5045045045045,val:30},{time:4.8048048048048,val:0}]);
+    setConst(tr.property("ADBE Position"), [540,940,0]);          // точечная подгонка (скрин 4)
+    setConst(tr.property("ADBE Scale"),    [150,215.2,100]);      // верт. растяжка вспышки
+    setKeys(tr.property("ADBE Opacity"), [{time:4.5045045045045,val:34},{time:4.8048048048048,val:0}]);
 
     var fx = L.property("ADBE Effect Parade");
     try { var h = fx.addProperty("S_HueSatBright"); setEffParam(h, "S_HueSatBright-0050", 0.09); } catch(e){}
@@ -222,8 +222,8 @@ function main(){
         // снизу-вверх => последний наверху
         built.push(buildSheik(comp));
         built.push(buildMasshtab(comp));
-        built.push(buildBolt(comp, "правая молния", BOLT_R, [551.855363638947,958.229843374908,0], [-101.454254889199,162.863194367404,100]));
-        built.push(buildBolt(comp, "левая молния",  BOLT_L, [333.371005082326,993.066496712682,0], [154.369491122141,154.369491122141,100]));
+        built.push(buildBolt(comp, "правая молния", BOLT_R, [545.9,977.2,0], [-96.6,163.4,100]));   // точечная подгонка (скрин 3)
+        built.push(buildBolt(comp, "левая молния",  BOLT_L, [319.1,990.2,0], [131.9,168.5,100]));   // точечная подгонка (скрин 2)
         built.push(buildVspyshka(comp));
         built.push(buildMorgachka(comp)); // -> верх группы
 

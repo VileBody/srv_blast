@@ -8,7 +8,7 @@ AE_PROJECT = {
     "main_comp": {
         "name": "Comp 1",
         "w": 1080,
-        "h": 1960,
+        "h": 1920,
         "fps": float(AE_FPS),
         "dur": 60.0600600600601,
         "pixelAspect": 1.0,
@@ -61,10 +61,10 @@ AE_PROJECT = {
     "root_precomp_z_index": 9999,
 
     # Placement сабкомпа "Текст" внутри "Comp 1"
-    # (под vertical 1080x1960 и вертикальный сабкомп 1080x1920)
+    # (vertical 1080x1920 main + вертикальный сабкомп 1080x1920 — центр в центр)
     "root_precomp_placement": {
         "anchor": [540, 960, 0],
-        "position": [540, 980, 0],
+        "position": [540, 960, 0],
         "scale": [100, 100, 100],
         "rotationZ": 0,
         "opacity": 100,
