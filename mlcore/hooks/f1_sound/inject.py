@@ -100,3 +100,30 @@ def inject_f1_audio(
         new_layer["name"], in_sec, out_sec, sound_url[:80],
     )
     return list(footage_layers) + [new_layer]
+
+
+def inject_f1_subtitle(
+    text_layers: list[dict[str, Any]],
+    *,
+    text: str,
+    drop_time: float,
+) -> list[dict[str, Any]]:
+    """Субтитр под звук F1 (если юзер приложил текст) — тот же трек-тип, что у F5.
+
+    Окно субтитра = окно звука [0.5, drop−0.5] (как сам звук). Реюз ядра из F5
+    (inject_voice_subtitle): клон трек-субтитра + чанки + капс + ретайм reveal.
+    Пустой текст → text_layers без изменений (нет текста = без субтитра).
+    """
+    if not str(text or "").strip():
+        return list(text_layers)
+    from mlcore.hooks.f5_cognition.inject import inject_voice_subtitle
+
+    in_sec, out_sec = f1_audio_window(drop_time)
+    return inject_voice_subtitle(
+        text_layers,
+        text=text,
+        in_sec=in_sec,
+        out_sec=out_sec,
+        name_prefix="f1_hook_subtitle",
+        log_tag="f1",
+    )

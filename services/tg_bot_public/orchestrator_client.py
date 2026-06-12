@@ -60,6 +60,7 @@ class OrchestratorClient:
         effect_hook_extend: str | None = None,
         f2_shape: str | None = None,
         f1_sound_url: str | None = None,
+        f1_sound_text: str | None = None,
     ) -> Dict[str, Any]:
         payload = {
             "audio_s3_url": str(audio_s3_url),
@@ -104,6 +105,7 @@ class OrchestratorClient:
             "effect_hook_extend": (str(effect_hook_extend).strip() or None) if effect_hook_extend is not None else None,
             "f2_shape": (str(f2_shape).strip() or None) if f2_shape is not None else None,
             "f1_sound_url": (str(f1_sound_url).strip() or None) if f1_sound_url is not None else None,
+            "f1_sound_text": (str(f1_sound_text).strip() or None) if f1_sound_text is not None else None,
         }
         resp = await self._client.post(f"{self._base_url}/send_audio_s3", json=payload)
         if resp.status_code >= 300:

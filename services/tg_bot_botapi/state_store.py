@@ -47,6 +47,8 @@ STAGE_WAIT_EFFECT_EXTEND = "WAIT_EFFECT_EXTEND"
 STAGE_WAIT_F2_SHAPE = "WAIT_F2_SHAPE"
 # F1 «Звук» — wait for the user to upload a sound file for the pre-drop window.
 STAGE_WAIT_F1_SOUND = "WAIT_F1_SOUND"
+# F1 «Звук» — wait for optional subtitle text for the uploaded sound (or skip).
+STAGE_WAIT_F1_TEXT = "WAIT_F1_TEXT"
 STAGE_WAIT_VERSIONS = "WAIT_VERSIONS"
 STAGE_WAIT_CONFIRM = "WAIT_CONFIRM"
 STAGE_PROCESSING = "PROCESSING"
@@ -124,6 +126,8 @@ class ChatState(BaseModel):
     # (hook_light at drop + seeded-random F3 transition post-drop) is forced
     # server-side. "" => no F1.
     f1_sound_url: str = ""
+    # F1 «Звук» optional subtitle text (what the sound "says"). "" => no subtitle.
+    f1_sound_text: str = ""
     # "" | "pending" | "ready" | "failed"
     hook_analysis_status: str = ""
     # Source audio path used to compute the analysis — if it ever doesn't

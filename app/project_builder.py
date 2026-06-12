@@ -197,20 +197,23 @@ def _build_f4_overlay_js(full_edit_config: Dict[str, Any]) -> str:
     return overlay
 
 
-def _apply_f1_audio_if_present(
+def _apply_f1_if_present(
     *,
     full_edit_config: Dict[str, Any],
     footage_layers: List[Dict[str, Any]],
+    text_layers: List[Dict[str, Any]],
     main_comp_name: str,
-) -> List[Dict[str, Any]]:
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     """
     Если в full_edit_config есть блок "f1" — добавляет audio-слой с загруженным
-    пользователем звуком в окне [0.5, drop−0.5]. Визуал (hook_light + post-drop
-    random) идёт отдельно через токен f1_overlay_js. Нет блока => без изменений.
+    пользователем звуком в окне [0.5, drop−0.5], приглушает ТРЕК под звук (как
+    F5: 25%→100% к дропу) и, если юзер приложил текст, кладёт субтитр того же
+    типа, что трек (как F5). Визуал (hook_light + post-drop random) идёт отдельно
+    через токен f1_overlay_js. Нет блока => без изменений.
     """
     f1_block = full_edit_config.get("f1") if isinstance(full_edit_config, dict) else None
     if not f1_block or not isinstance(f1_block, dict):
-        return footage_layers
+        return footage_layers, text_layers
 
     sound_url = str(f1_block.get("sound_url") or "").strip()
     if not sound_url:
@@ -218,17 +221,43 @@ def _apply_f1_audio_if_present(
     drop_time = f1_block.get("drop_time")
     if drop_time is None:
         raise RuntimeError("f1 block present but 'drop_time' is missing")
+    drop_time = float(drop_time)
 
-    from mlcore.hooks.f1_sound.inject import inject_f1_audio
+    from mlcore.hooks.f1_sound.inject import (
+        f1_audio_window,
+        inject_f1_audio,
+        inject_f1_subtitle,
+    )
+    from mlcore.hooks.f5_cognition.inject import inject_track_duck
 
-    new_layers = inject_f1_audio(
+    # 1) Duck the TRACK under the user's sound (before adding the f1 sound layer
+    #    so the duck only touches the real track audio — same as F5). Window =
+    #    [sound start .. drop], volume 25%→100% returning to full at the drop.
+    sound_in, _sound_out = f1_audio_window(drop_time)
+    footage_layers = inject_track_duck(
+        footage_layers, duck_from_sec=sound_in, duck_to_sec=drop_time,
+    )
+
+    # 2) User's pre-drop sound as an audio layer.
+    footage_layers = inject_f1_audio(
         footage_layers,
         sound_url=sound_url,
-        drop_time=float(drop_time),
+        drop_time=drop_time,
         target_comp_name=main_comp_name,
     )
-    LOGGER.info("f1 audio present sound=%s drop_time=%s", sound_url[:80], drop_time)
-    return new_layers
+
+    # 3) Optional subtitle — only if the user attached text for the sound.
+    f1_text = str(f1_block.get("text") or "").strip()
+    if f1_text:
+        text_layers = inject_f1_subtitle(
+            text_layers, text=f1_text, drop_time=drop_time,
+        )
+
+    LOGGER.info(
+        "f1 present sound=%s drop_time=%s subtitle=%s",
+        sound_url[:80], drop_time, bool(f1_text),
+    )
+    return footage_layers, text_layers
 
 
 def _build_f5_overlay_js(full_edit_config: Dict[str, Any]) -> str:
@@ -496,9 +525,10 @@ def build_full_project(
     # 2.6) F1 «Звук» hook: если в config есть блок "f1" — добавляем audio-слой с
     #      загруженным пользователем звуком в окне [0.5, drop−0.5]. Визуальная
     #      часть (hook_light + post-drop random) идёт через токен f1_overlay_js.
-    footage_layers = _apply_f1_audio_if_present(
+    footage_layers, text_layers = _apply_f1_if_present(
         full_edit_config=full_edit_config,
         footage_layers=footage_layers,
+        text_layers=text_layers,
         main_comp_name=main_name,
     )
 

@@ -78,6 +78,7 @@ from .state_store import (
     STAGE_WAIT_EFFECT_EXTEND,
     STAGE_WAIT_F2_SHAPE,
     STAGE_WAIT_F1_SOUND,
+    STAGE_WAIT_F1_TEXT,
     STAGE_WAIT_TIMING_CHOICE,
     STAGE_WAIT_TIMING_INPUT,
     STAGE_WAIT_FRAGMENT_TEXT,
@@ -142,6 +143,8 @@ BTN_SKIP_FRAGMENT = "На усмотрение ИИ"
 BTN_SET_TIMING = "Указать тайминг"
 BTN_SKIP_TIMING = "Весь трек / на усмотрение ИИ"
 BTN_BACK = "Назад"
+# F1 «Звук» — skip the optional subtitle step.
+BTN_F1_NO_SUBS = "Без субтитров"
 BTN_BG_FOOTAGE = "Футажи"
 BTN_BG_SOLID = "Цветной фон"
 BTN_BG_WHITE = "Белый"
@@ -1574,6 +1577,10 @@ class BlastBotApp:
                 await self._handle_wait_f1_sound(message, st)
                 return
 
+            if st.stage == STAGE_WAIT_F1_TEXT:
+                await self._handle_wait_f1_text(message, st)
+                return
+
             if st.stage == STAGE_WAIT_VERSIONS:
                 await self._handle_wait_versions(message, st)
                 return
@@ -2225,6 +2232,7 @@ class BlastBotApp:
         # hook_category == "object" (and f1_sound_url on "sound").
         st.f2_shape = str(case.get("f2_shape", ""))
         st.f1_sound_url = str(case.get("f1_sound_url", ""))
+        st.f1_sound_text = str(case.get("f1_sound_text", ""))
 
     async def _handle_wait_audio(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()
@@ -2569,6 +2577,7 @@ class BlastBotApp:
             st.hook_device = ""
             st.f2_shape = ""
             st.f1_sound_url = ""
+            st.f1_sound_text = ""
             await self.store.set(st)
             await self._ask_versions(message, st)
             return
@@ -2743,6 +2752,7 @@ class BlastBotApp:
                 return
             st.hook_category = "sound"
             st.f1_sound_url = ""
+            st.f1_sound_text = ""
             await self.store.set(st)
             await self._ask_f1_sound(message, st)
             return
@@ -3150,6 +3160,38 @@ class BlastBotApp:
             "Ок, «Звук»: твой звук заиграет до дропа, на дропе — молния, "
             "после — рандомный визуал-переход."
         )
+        await self._ask_f1_text(message, st)
+
+    async def _ask_f1_text(self, message: Message, st: ChatState) -> None:
+        st.stage = STAGE_WAIT_F1_TEXT
+        await self.store.set(st)
+        await message.answer(
+            "Хочешь субтитры под этот звук? Пришли текст сообщением — он ляжет "
+            "поверх трека тем же стилем, что субтитры (и трек на это время "
+            "приглушится). Или нажми «Без субтитров».",
+            reply_markup=_kb([BTN_F1_NO_SUBS, BTN_BACK]),
+        )
+
+    async def _handle_wait_f1_text(self, message: Message, st: ChatState) -> None:
+        text = str(message.text or "").strip()
+        if text == BTN_BACK:
+            await self._ask_f1_sound(message, st)
+            return
+        if text == BTN_F1_NO_SUBS:
+            st.f1_sound_text = ""
+            await self.store.set(st)
+            await message.answer("Ок, без субтитров — только звук + визуал.")
+            await self._ask_versions(message, st)
+            return
+        if not text:
+            await message.answer(
+                "Пришли текст субтитра сообщением или нажми «Без субтитров»."
+            )
+            return
+
+        st.f1_sound_text = text
+        await self.store.set(st)
+        await message.answer("Принял текст субтитра для звука.")
         await self._ask_versions(message, st)
 
     @staticmethod
@@ -3796,6 +3838,16 @@ class BlastBotApp:
             f1_sound_url=(
                 str(st.f1_sound_url)
                 if (st.hook_enabled and st.hook_category == "sound" and st.f1_sound_url)
+                else None
+            ),
+            f1_sound_text=(
+                str(st.f1_sound_text)
+                if (
+                    st.hook_enabled
+                    and st.hook_category == "sound"
+                    and st.f1_sound_url
+                    and st.f1_sound_text
+                )
                 else None
             ),
         )

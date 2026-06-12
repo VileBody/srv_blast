@@ -10,6 +10,7 @@ from mlcore.hooks.f1_sound.inject import (
     F1_TAIL_PAD_SEC,
     f1_audio_window,
     inject_f1_audio,
+    inject_f1_subtitle,
 )
 from mlcore.hooks.f2_object.overlay import build_overlay_jsx as f2_overlay
 
@@ -81,28 +82,90 @@ def test_inject_f1_audio_rejects_empty_url():
         inject_f1_audio([], sound_url="", drop_time=4.0)
 
 
+# ---------- subtitle (reuse F5 core) + ducking ----------
+
+def _track_text_layer():
+    return {
+        "name": "ЕЩЁ ОДИН ОТКАЗ", "type": "text",
+        "in_point": 5.0, "out_point": 6.5, "z_index": 1000, "text": "ЕЩЁ ОДИН ОТКАЗ",
+        "props": {"reveal": {"match_name": "ADBE Text Percent Start",
+                             "keyframes": [{"t": 5.0, "v": 0}, {"t": 6.5, "v": 100}]}},
+        "effects": {},
+        "text_data": {"layer_meta": {"startTime": 5.0, "enabled": True},
+                      "text_base": {"allCaps": True},
+                      "text_animator": {"some": "cfg"},
+                      "char_styles_ungrouped": []},
+    }
+
+
+def test_inject_f1_subtitle_in_sound_window():
+    out = inject_f1_subtitle([_track_text_layer()], text="давай по новой", drop_time=4.0)
+    subs = [L for L in out if str(L.get("name", "")).startswith("f1_hook_subtitle")]
+    assert subs, "expected an f1 subtitle layer"
+    # window = the F1 sound window [0.5, drop-0.5]
+    subs_sorted = sorted(subs, key=lambda L: L["in_point"])
+    assert abs(subs_sorted[0]["in_point"] - 0.5) < 1e-6
+    assert abs(subs_sorted[-1]["out_point"] - 3.5) < 1e-6
+    # caps inherited from the track template (allCaps=True)
+    assert subs_sorted[0]["text"] == subs_sorted[0]["text"].upper()
+
+
+def test_inject_f1_subtitle_empty_text_noop():
+    src = [_track_text_layer()]
+    assert inject_f1_subtitle(src, text="  ", drop_time=4.0) == src
+
+
 # ---------- project_builder wiring ----------
 
 def test_project_builder_f1_dispatch():
-    from app.project_builder import _build_f1_overlay_js, _apply_f1_audio_if_present
+    from app.project_builder import _build_f1_overlay_js, _apply_f1_if_present
 
     cfg = {"f1": {"sound_url": "s3://b/riser.mp3", "drop_time": 4.0, "seed": 99}}
     js = _build_f1_overlay_js(cfg)
     assert "DROP: F3 hook_light" in js
     assert "var __f2_seed = 99" in js
 
-    layers = _apply_f1_audio_if_present(
-        full_edit_config=cfg, footage_layers=[], main_comp_name="Comp 1",
+    footage, text = _apply_f1_if_present(
+        full_edit_config=cfg, footage_layers=[], text_layers=[], main_comp_name="Comp 1",
     )
-    assert layers[-1]["name"] == "f1_hook_sound"
-    assert layers[-1]["text_data"]["source_footage"]["remote_url"] == "s3://b/riser.mp3"
+    assert footage[-1]["name"] == "f1_hook_sound"
+    assert footage[-1]["text_data"]["source_footage"]["remote_url"] == "s3://b/riser.mp3"
+    # no text in block → no subtitle layers
+    assert text == []
+
+
+def test_project_builder_f1_with_text_ducks_and_subtitles():
+    from app.project_builder import _apply_f1_if_present
+
+    cfg = {"f1": {"sound_url": "s3://b/riser.mp3", "drop_time": 4.0,
+                  "seed": 99, "text": "давай по новой"}}
+    track = {
+        "name": "audio_track", "type": "footage", "in_point": 0.0, "out_point": 30.0,
+        "z_index": 2,
+        "text_data": {"layer_meta": {"audioEnabled": True, "comp_name_target": "Comp 1"},
+                      "audio_envelope": {"fade_in_s": 0.5}},
+    }
+    footage, text = _apply_f1_if_present(
+        full_edit_config=cfg, footage_layers=[track],
+        text_layers=[_track_text_layer()], main_comp_name="Comp 1",
+    )
+    # track ducked under the sound [0.5 .. 4.0]
+    duck = next(L for L in footage if L["name"] == "audio_track")["text_data"]["audio_envelope"]
+    assert duck["duck_from_s"] == 0.5 and duck["duck_to_s"] == 4.0
+    # f1 sound layer added (duck excludes it)
+    assert any(L["name"] == "f1_hook_sound" for L in footage)
+    # subtitle present (user provided text)
+    assert any(str(L.get("name", "")).startswith("f1_hook_subtitle") for L in text)
 
 
 def test_project_builder_no_f1_block_is_noop():
-    from app.project_builder import _build_f1_overlay_js, _apply_f1_audio_if_present
+    from app.project_builder import _build_f1_overlay_js, _apply_f1_if_present
 
     assert _build_f1_overlay_js({}) == ""
-    assert _apply_f1_audio_if_present(full_edit_config={}, footage_layers=[], main_comp_name="Comp 1") == []
+    footage, text = _apply_f1_if_present(
+        full_edit_config={}, footage_layers=[], text_layers=[], main_comp_name="Comp 1",
+    )
+    assert footage == [] and text == []
 
 
 def test_template_has_f1_token():

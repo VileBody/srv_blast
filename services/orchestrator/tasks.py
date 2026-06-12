@@ -104,6 +104,7 @@ _LLM_ENV_KEYS = (
     "F2_SHAPE",
     "F2_SEED",
     "F1_SOUND_URL",
+    "F1_SOUND_TEXT",
     "BG_MODE",
     "BG_SOLID_COLOR_HEX",
     "SUBTITLES_FORCE_FILL_HEX",
@@ -1835,6 +1836,10 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
                 f"f1_sound_url must be remote (http/https/s3). got={_f1_sound!r}"
             )
         env["F1_SOUND_URL"] = _f1_sound
+        # Optional subtitle text for the F1 sound (only meaningful with a sound).
+        _f1_text_raw = req.get("f1_sound_text")
+        if _f1_text_raw is not None and str(_f1_text_raw).strip():
+            env["F1_SOUND_TEXT"] = str(_f1_text_raw).strip()
     if exclude_file_names:
         env["FOOTAGE_EXCLUDE_FILE_NAMES_JSON"] = json.dumps(exclude_file_names, ensure_ascii=False)
     if rotation_theme and rotation_tags_group:

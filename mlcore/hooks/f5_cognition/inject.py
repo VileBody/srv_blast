@@ -323,43 +323,44 @@ def _retime_keyframes_inplace(obj: Any, *, src_in: float, src_out: float,
     walk(obj)
 
 
-def inject_subtitle_layer(
+def inject_voice_subtitle(
     text_layers: list[dict[str, Any]],
-    f5: F5Response,
     *,
-    focal_start_ms: int,
+    text: str,
+    in_sec: float,
+    out_sec: float,
+    name_prefix: str,
+    log_tag: str = "voice",
 ) -> list[dict[str, Any]]:
-    """
-    Клонирует существующий трек-субтитр КАК ЕСТЬ (со стилем, аниматором и
-    reveal-кейфреймами — т.е. ровно тот же ТИП субтитров, что у трека) и кладёт
-    фразу голоса как трек: режет её на трек-размерные строки (≤
-    F5_SUBTITLE_MAX_CHARS символов) и показывает ПОСЛЕДОВАТЕЛЬНО по окну голоса
-    [focal..focal+tts] — слой-на-строку, у каждого reveal ретаймится в её
-    под-окно. Так каждая строка короткая → рендерится на 100% (без width-fit
-    ужима) → 1:1 как трек по размеру и позиции.
+    """Кладёт произвольную голосовую фразу как трек-субтитр в окне [in_sec, out_sec].
+
+    Переиспользуемое ядро (F5 «Мысль» и F1 «Звук» зовут его): клонирует
+    существующий трек-субтитр КАК ЕСТЬ (стиль + аниматор + reveal = ровно тот же
+    ТИП), режет фразу на трек-размерные строки (≤ F5_SUBTITLE_MAX_CHARS) и
+    показывает ПОСЛЕДОВАТЕЛЬНО по окну — слой-на-строку, reveal ретаймится в
+    под-окно. Каждая строка короткая → рендерится на 100% (без width-fit ужима)
+    → 1:1 как трек по размеру/позиции. Капс наследуется от шаблона. Все
+    пересекающие окно трек-субтитры вырезаются (никогда не наслаиваем).
     """
     template = _clone_text_layer_template(text_layers)
     if template is None:
         logger.warning(
-            "f5.inject subtitle_layer skipped: no text_layers to clone style from"
+            "%s.inject subtitle skipped: no text_layers to clone style from", log_tag
         )
         return list(text_layers)
 
-    in_sec = focal_start_ms / 1000.0
-    out_sec = in_sec + f5.audio_duration_ms / 1000.0
-
-    # Жёсткое требование: вырезаем ВСЕ трек-субтитры, пересекающие окно TTS.
+    # Жёсткое требование: вырезаем ВСЕ трек-субтитры, пересекающие окно голоса.
     cleaned, removed = _remove_track_subtitles_in_window(
         text_layers, window_start_sec=in_sec, window_end_sec=out_sec,
     )
     logger.info(
-        "f5.inject cleared %d track subtitle(s) in TTS window [%.3f..%.3f]",
-        removed, in_sec, out_sec,
+        "%s.inject cleared %d track subtitle(s) in window [%.3f..%.3f]",
+        log_tag, removed, in_sec, out_sec,
     )
 
-    lines = _split_tts_text(f5.tts_text)
+    lines = _split_tts_text(text)
     if not lines:
-        logger.warning("f5.inject subtitle skipped: empty tts_text")
+        logger.warning("%s.inject subtitle skipped: empty text", log_tag)
         return cleaned
 
     max_z = max(
@@ -396,7 +397,7 @@ def inject_subtitle_layer(
 
         layer = copy.deepcopy(template)
         suffix = "" if len(lines) == 1 else f"_{idx + 1}"
-        layer["name"] = f"f5_hook_subtitle_{f5.chosen_device.value}{suffix}"
+        layer["name"] = f"{name_prefix}{suffix}"
         layer["text"] = line
         layer["in_point"] = float(seg_in)
         layer["out_point"] = float(seg_out)
@@ -425,17 +426,36 @@ def inject_subtitle_layer(
             td["char_styles_ungrouped"] = _rebuild_char_styles(td, text_len=len(line))
 
         logger.info(
-            "f5.inject subtitle line=%r in=%.3f out=%.3f z=%d",
-            line, seg_in, seg_out, layer["z_index"],
+            "%s.inject subtitle line=%r in=%.3f out=%.3f z=%d",
+            log_tag, line, seg_in, seg_out, layer["z_index"],
         )
         new_subs.append(layer)
 
     logger.info(
-        "f5.inject subtitle (track-type) lines=%d window=[%.3f..%.3f] "
+        "%s.inject subtitle (track-type) lines=%d window=[%.3f..%.3f] "
         "retimed_from=[%.3f..%.3f]",
-        len(new_subs), in_sec, out_sec, src_in, src_out,
+        log_tag, len(new_subs), in_sec, out_sec, src_in, src_out,
     )
     return cleaned + new_subs
+
+
+def inject_subtitle_layer(
+    text_layers: list[dict[str, Any]],
+    f5: F5Response,
+    *,
+    focal_start_ms: int,
+) -> list[dict[str, Any]]:
+    """F5-обёртка над inject_voice_subtitle: окно = [focal..focal+tts]."""
+    in_sec = focal_start_ms / 1000.0
+    out_sec = in_sec + f5.audio_duration_ms / 1000.0
+    return inject_voice_subtitle(
+        text_layers,
+        text=f5.tts_text,
+        in_sec=in_sec,
+        out_sec=out_sec,
+        name_prefix=f"f5_hook_subtitle_{f5.chosen_device.value}",
+        log_tag="f5",
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────

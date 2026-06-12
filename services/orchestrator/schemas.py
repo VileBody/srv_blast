@@ -114,6 +114,10 @@ class SendAudioS3Request(BaseModel):
     # combo: hook_light at drop + seeded-random F3 transition post-drop).
     # Requires user_drop_t (drop anchor). None => no F1 combo.
     f1_sound_url: Optional[str] = Field(default=None, max_length=2048)
+    # Optional subtitle text for the F1 sound (the user types what their sound
+    # "says"). When present, the orchestrator renders it as a track-type subtitle
+    # over the sound window (same machinery as F5). Empty/None => no subtitle.
+    f1_sound_text: Optional[str] = Field(default=None, max_length=2000)
     # Optional internal batch controls for multi-version generation.
     reuse_text_job_id: Optional[str] = None
     # When True (bigtest only): seed stage2_style + stage2_style_rotation from

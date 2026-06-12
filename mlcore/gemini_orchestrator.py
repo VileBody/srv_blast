@@ -4328,14 +4328,16 @@ def build_all_via_gemini_one_call(
             else:
                 _seed_src_f1 = os.environ.get("JOB_ID") or out_dir.name
                 _f1_seed = zlib.crc32(("f1:" + str(_seed_src_f1)).encode("utf-8")) & 0xFFFFFFFF
+            _f1_text = (os.environ.get("F1_SOUND_TEXT") or "").strip()
             f1_block = {
                 "sound_url": _f1_sound,
                 "drop_time": _drop_rel_f1,
                 "seed": int(_f1_seed),
+                "text": _f1_text or None,
             }
             logger.info(
-                "f1.combo block sound=%s drop_rel=%.3f seed=%d",
-                _f1_sound[:80], _drop_rel_f1, _f1_seed,
+                "f1.combo block sound=%s drop_rel=%.3f seed=%d subtitle=%s",
+                _f1_sound[:80], _drop_rel_f1, _f1_seed, bool(_f1_text),
             )
         except Exception:
             logger.exception(

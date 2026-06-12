@@ -118,6 +118,7 @@ from .state_store import (
     STAGE_WAIT_EFFECT_EXTEND,
     STAGE_WAIT_F2_SHAPE,
     STAGE_WAIT_F1_SOUND,
+    STAGE_WAIT_F1_TEXT,
 )
 
 
@@ -181,6 +182,7 @@ HOOK_STAGES = frozenset({
     STAGE_WAIT_EFFECT_EXTEND,
     STAGE_WAIT_F2_SHAPE,
     STAGE_WAIT_F1_SOUND,
+    STAGE_WAIT_F1_TEXT,
 })
 
 # F3 «Эффект» visual-FX ids (mirror of mlcore/hooks/f3_effect + tg_bot_botapi).
