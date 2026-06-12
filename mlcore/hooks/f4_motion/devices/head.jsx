@@ -109,13 +109,18 @@
   var F2_B = makeShape([[-91.9999847412109,178.285705566406],[-78.2857055664062,256]], F2_inT, F2_outT, false);
 
   function styleText(td, txt){
+    try { td.resetCharStyle(); } catch(e){}  // сброс наследования Character-панели ноды (иначе sticky-дефолт)
     td.text = txt;
     try { td.font = "TimesNewRomanPS-ItalicMT"; } catch(e){}
     td.fontSize = 72; td.applyFill = true; td.fillColor = [0.92157,0.92157,0.92157]; td.applyStroke = false;
     try { td.justification = ParagraphJustification.CENTER_JUSTIFY; } catch(e){}
     try { td.tracking = -60; } catch(e){}
     try { td.autoLeading = false; td.leading = 140; } catch(e){}
-    try { td.verticalScale = 240; } catch(e){}  // Character-панель верт.масштаб 240% (исходник)
+    try { td.verticalScale = 240; } catch(e){}  // doc-level fallback (flaky headless)
+    // Надёжный канал верт.масштаба = characterRange (как fontSize у трека):
+    // doc-level td.verticalScale в headless aerender дропается на setValue,
+    // глиф наследует sticky verticalScale Character-панели ноды (наблюдалось 400%).
+    try { var __vr = td.characterRange(0, (txt && txt.length) ? txt.length : 1); __vr.verticalScale = 240; } catch(e){}
     return td;
   }
 

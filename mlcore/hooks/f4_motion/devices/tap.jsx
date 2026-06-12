@@ -50,6 +50,7 @@
   function setEffKeys(eff, mn, keys, ease){ try { setKeys(eff.property(mn), keys, ease); } catch(e){} }
 
   function styleText(td, txt){
+    try { td.resetCharStyle(); } catch(e){}  // сброс наследования Character-панели ноды (иначе sticky-дефолт)
     td.text = txt;
     try { td.font = "TimesNewRomanPS-ItalicMT"; } catch(e){}
     td.fontSize = 72;
@@ -59,7 +60,11 @@
     try { td.justification = ParagraphJustification.CENTER_JUSTIFY; } catch(e){}
     try { td.tracking = -60; } catch(e){}
     try { td.autoLeading = false; td.leading = 140; } catch(e){}
-    try { td.verticalScale = 240; } catch(e){}  // Character-панель верт.масштаб 240% (исходник)
+    try { td.verticalScale = 240; } catch(e){}  // doc-level fallback (flaky headless)
+    // Надёжный канал верт.масштаба = characterRange (как fontSize у трека):
+    // doc-level td.verticalScale в headless aerender дропается на setValue,
+    // глиф наследует sticky verticalScale Character-панели ноды (наблюдалось 400%).
+    try { var __vr = td.characterRange(0, (txt && txt.length) ? txt.length : 1); __vr.verticalScale = 240; } catch(e){}
     return td;
   }
 
