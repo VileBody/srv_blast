@@ -108,6 +108,17 @@
   var F2_A = makeShape([[-160.571411132812,173.714294433594],[-146.857147216797,251.428558349609]], F2_inT, F2_outT, false);
   var F2_B = makeShape([[-91.9999847412109,178.285705566406],[-78.2857055664062,256]], F2_inT, F2_outT, false);
 
+  // Верт.масштаб через text-animator Scale — надёжно в headless aerender
+  // (как reveal-аниматор opacity ниже); пивот per-glyph от baseline =
+  // визуально Character-панель «верт.масштаб», без сдвига слоя.
+  function f4VScale(L){
+    try {
+      var __an = L.property("ADBE Text Properties").property("ADBE Text Animators").addProperty("ADBE Text Animator");
+      try { __an.name = "vscale240"; } catch(e){}
+      var __sc = __an.property("ADBE Text Animator Properties").addProperty("ADBE Text Scale 3D");
+      __sc.setValue([100, 240, 100]);
+    } catch(e){}
+  }
   function styleText(td, txt){
     try { td.resetCharStyle(); } catch(e){}  // сброс наследования Character-панели ноды (иначе sticky-дефолт)
     td.text = txt;
@@ -116,11 +127,10 @@
     try { td.justification = ParagraphJustification.CENTER_JUSTIFY; } catch(e){}
     try { td.tracking = -60; } catch(e){}
     try { td.autoLeading = false; td.leading = 140; } catch(e){}
-    try { td.verticalScale = 240; } catch(e){}  // doc-level fallback (flaky headless)
-    // Надёжный канал верт.масштаба = characterRange (как fontSize у трека):
-    // doc-level td.verticalScale в headless aerender дропается на setValue,
-    // глиф наследует sticky verticalScale Character-панели ноды (наблюдалось 400%).
-    try { var __vr = td.characterRange(0, (txt && txt.length) ? txt.length : 1); __vr.verticalScale = 240; } catch(e){}
+    // верт.масштаб 240% ставится через text-animator Scale (f4VScale,
+    // вызывается после создания текст-слоя): ни doc-level td.verticalScale,
+    // ни characterRange.verticalScale не пишутся в headless aerender
+    // (наблюдалось 400%, затем 100%).
     return td;
   }
 
@@ -156,7 +166,7 @@
     L.name = "КАЧАЙ ГОЛОВОЙ В ТАКТ";
     L.startTime = 0; L.inPoint = 0; L.outPoint = t(5.10510510510511);
     var srcProp = L.property("ADBE Text Properties").property("ADBE Text Document");
-    var td = srcProp.value; styleText(td, CONFIG.textHold); srcProp.setValue(td);
+    var td = srcProp.value; styleText(td, CONFIG.textHold); srcProp.setValue(td); f4VScale(L);
     var tr = L.property("ADBE Transform Group");
     setConst(tr.property("ADBE Position"), [540,325.000002235174,0]);
     setKeys(tr.property("ADBE Opacity"), [{time:3.30328,val:100},{time:3.56855,val:0}]);
@@ -178,7 +188,7 @@
     L.name = "КАЧАЙ!";
     L.startTime = 0; L.inPoint = t(3.53687020353687); L.outPoint = t(5.10510510510511);
     var srcProp = L.property("ADBE Text Properties").property("ADBE Text Document");
-    var td = srcProp.value; styleText(td, CONFIG.textRelease); srcProp.setValue(td);
+    var td = srcProp.value; styleText(td, CONFIG.textRelease); srcProp.setValue(td); f4VScale(L);
     var tr = L.property("ADBE Transform Group");
     setConst(tr.property("ADBE Position"), [540,325.000002235174,0]);
     setKeys(tr.property("ADBE Opacity"), [{time:3.97896,val:100},{time:4.24423,val:0}]);

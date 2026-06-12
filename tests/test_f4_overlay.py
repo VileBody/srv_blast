@@ -46,6 +46,21 @@ def test_every_device_builds_clean(device):
     assert "Сплошная заливка Черный 1" in js  # cover solid present in every device
 
 
+@pytest.mark.parametrize("device", ["swipe", "tap", "pinch", "holdfinger", "head"])
+def test_vertical_scale_via_text_animator(device):
+    """Vertical scale 240% must go through a text-animator Scale (reliable in
+    headless aerender) — NOT td.verticalScale, which is silently dropped there
+    (observed 400%, then 100%). f4VScale must be defined and called per text."""
+    js = build_overlay_jsx(device=device, bpm=120.0)
+    assert "function f4VScale(L)" in js
+    assert "ADBE Text Scale 3D" in js
+    assert "[100, 240, 100]" in js
+    assert js.count("f4VScale(L);") >= 2  # hold + release text
+    # the flaky doc-level/characterRange paths must be gone
+    assert "td.verticalScale = 240" not in js
+    assert "characterRange(0," not in js
+
+
 def test_build_overlay_bakes_bpm_and_leaves_no_tokens():
     js = build_overlay_jsx(device="swipe", bpm=124.6)
     assert "__F4_BPM__" not in js
