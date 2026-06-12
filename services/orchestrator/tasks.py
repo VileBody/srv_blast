@@ -131,6 +131,48 @@ def _windows_default_urls() -> list[str]:
     return parse_windows_urls_csv((SETTINGS.windows_base_url + "," + SETTINGS.windows_base_urls_csv).strip(","))
 
 
+class WindowsNodeNotReady(RuntimeError):
+    pass
+
+
+def _settings_float(name: str, default: float) -> float:
+    try:
+        return float(getattr(SETTINGS, name, default) or default)
+    except Exception:
+        return float(default)
+
+
+def _probe_windows_node_ready(base_url: str, *, timeout_s: float) -> None:
+    base = str(base_url or "").strip().rstrip("/")
+    if not base:
+        raise WindowsNodeNotReady("windows_node_not_ready: empty base_url")
+    timeout = max(0.5, float(timeout_s or 0.0))
+    req = urllib.request.Request(
+        url=f"{base}/health",
+        headers={"Accept": "application/json"},
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+            code = int(getattr(resp, "status", 200) or 200)
+    except Exception as exc:
+        raise WindowsNodeNotReady(f"windows_node_not_ready: health_probe_failed err={exc!r}") from exc
+
+    if code != 200:
+        raise WindowsNodeNotReady(f"windows_node_not_ready: health_status={code}")
+
+    try:
+        payload = json.loads(raw) if raw.strip() else {}
+    except Exception as exc:
+        raise WindowsNodeNotReady(f"windows_node_not_ready: health_non_json body={raw[:200]!r}") from exc
+    if isinstance(payload, dict):
+        status = str(payload.get("status") or "").strip().lower()
+        if payload.get("ok") is True or status == "ok":
+            return
+    raise WindowsNodeNotReady(f"windows_node_not_ready: health_unhealthy payload={payload!r}")
+
+
 def _job_queue_from_request(req: Dict[str, Any], *, key: str, default: str) -> str:
     value = str(req.get(key) or "").strip()
     if value:
@@ -1137,6 +1179,9 @@ def _drop_resume_stage_key(path: Path, *, key: str) -> bool:
 
 
 def _is_transient_windows_error(e: BaseException) -> bool:
+    if isinstance(e, WindowsNodeNotReady):
+        return True
+
     # Network / transport issues.
     if isinstance(e, urllib.error.URLError):
         return True
@@ -2325,7 +2370,11 @@ def build_job_vertex_sdk_mix(self, job_id: str) -> Dict[str, Any]:
     return _build_job_impl(self, job_id, worker_type="vertex_sdk_mix")
 
 
-@celery_app.task(name="orchestrator.dispatch_to_windows", bind=True, max_retries=10)
+@celery_app.task(
+    name="orchestrator.dispatch_to_windows",
+    bind=True,
+    max_retries=max(0, int(getattr(SETTINGS, "windows_dispatch_max_retries", 30) or 30)),
+)
 def dispatch_to_windows(self, job_id: str) -> Dict[str, Any]:
     store = JobStore.from_env()
     st = store.get(job_id)
@@ -2421,12 +2470,21 @@ def dispatch_to_windows(self, job_id: str) -> Dict[str, Any]:
             },
         )
 
+        dispatch_timeout_s = _settings_float(
+            "windows_dispatch_timeout_s",
+            _settings_float("windows_timeout_s", 30.0),
+        )
+        ready_probe_timeout_s = _settings_float(
+            "windows_dispatch_ready_probe_timeout_s",
+            min(5.0, dispatch_timeout_s),
+        )
         client = WindowsRenderClient(
             candidate,
-            timeout_s=SETTINGS.windows_timeout_s,
+            timeout_s=dispatch_timeout_s,
             api_mode="render",
         )
         try:
+            _probe_windows_node_ready(candidate, timeout_s=ready_probe_timeout_s)
             maybe_res = client.dispatch_render(win_payload)
             if not isinstance(maybe_res, dict):
                 _inc_labeled_metric(
@@ -2454,6 +2512,7 @@ def dispatch_to_windows(self, job_id: str) -> Dict[str, Any]:
             fail_streak = _inc_dispatch_fail_streak(store, node_url=candidate)
 
             is_transient = _is_transient_windows_error(e)
+            is_node_not_ready = isinstance(e, WindowsNodeNotReady)
             code = 0
             if isinstance(e, urllib.error.HTTPError):
                 try:
@@ -2461,7 +2520,15 @@ def dispatch_to_windows(self, job_id: str) -> Dict[str, Any]:
                 except Exception:
                     code = 0
             is_contract_404 = code == 404
-            err_outcome = "contract_404" if is_contract_404 else ("transient_error" if is_transient else "non_transient_error")
+            err_outcome = (
+                "node_not_ready"
+                if is_node_not_ready
+                else (
+                    "contract_404"
+                    if is_contract_404
+                    else ("transient_error" if is_transient else "non_transient_error")
+                )
+            )
             _inc_labeled_metric(
                 store,
                 metric="dispatch_attempt_total",
@@ -2489,7 +2556,7 @@ def dispatch_to_windows(self, job_id: str) -> Dict[str, Any]:
             elif not is_transient:
                 should_disable = True
                 disable_reason = "dispatch_non_transient_error"
-            elif disable_threshold > 0 and fail_streak >= disable_threshold:
+            elif not is_node_not_ready and disable_threshold > 0 and fail_streak >= disable_threshold:
                 should_disable = True
                 disable_reason = f"dispatch_transient_streak_{fail_streak}"
             if should_disable:
@@ -2517,7 +2584,11 @@ def dispatch_to_windows(self, job_id: str) -> Dict[str, Any]:
                         )
                         return recovered
                     attempt = int(getattr(self.request, "retries", 0)) + 1
-                    backoff = _retry_backoff_s(attempt=attempt, base_s=5.0, cap_s=120.0)
+                    backoff = _retry_backoff_s(
+                        attempt=attempt,
+                        base_s=max(0.5, _settings_float("windows_dispatch_retry_base_s", 5.0)),
+                        cap_s=max(1.0, _settings_float("windows_dispatch_retry_cap_s", 120.0)),
+                    )
                     _inc_labeled_metric(
                         store,
                         metric="dispatch_attempt_total",

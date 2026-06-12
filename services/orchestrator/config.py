@@ -177,6 +177,14 @@ class Settings:
     windows_base_urls_csv: str = _env("WINDOWS_RENDER_URLS", "")  # comma-separated
     windows_render_api_mode: str = _windows_render_api_mode_env()
     windows_timeout_s: float = float(_env("WINDOWS_TIMEOUT_S", "30") or "30")
+    windows_dispatch_timeout_s: float = _float_env("WINDOWS_DISPATCH_TIMEOUT_S", min(30.0, windows_timeout_s))
+    windows_dispatch_ready_probe_timeout_s: float = _float_env(
+        "WINDOWS_DISPATCH_READY_PROBE_TIMEOUT_S",
+        min(5.0, windows_dispatch_timeout_s),
+    )
+    windows_dispatch_max_retries: int = _int_env("WINDOWS_DISPATCH_MAX_RETRIES", 30)
+    windows_dispatch_retry_base_s: float = _float_env("WINDOWS_DISPATCH_RETRY_BASE_S", 5.0)
+    windows_dispatch_retry_cap_s: float = _float_env("WINDOWS_DISPATCH_RETRY_CAP_S", 120.0)
     windows_node_lease_ttl_s: int = int(_env("WINDOWS_NODE_LEASE_TTL_S", "7200") or "7200")
     windows_node_disable_after_dispatch_errors: int = int(
         _env("WINDOWS_NODE_DISABLE_AFTER_DISPATCH_ERRORS", "3") or "3"

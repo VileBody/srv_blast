@@ -87,6 +87,7 @@ def _patch_common(
     monkeypatch.setattr(tasks, "make_job_paths", lambda **kwargs: paths)
     monkeypatch.setattr(tasks, "_windows_default_urls", lambda: ["http://win-node:8000"])
     monkeypatch.setattr(tasks, "build_windows_job_payload", lambda **kwargs: {"job_id": kwargs["job_id"]})
+    monkeypatch.setattr(tasks, "_probe_windows_node_ready", lambda *args, **kwargs: None)
 
     monkeypatch.setattr(
         tasks,
