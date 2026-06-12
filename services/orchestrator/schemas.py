@@ -5,7 +5,7 @@ from typing import Any, Dict, Optional, Literal, List
 from pydantic import BaseModel, Field, model_validator
 
 from core.llm_worker_types import LLM_WORKER_TYPE_SDK
-from core.subtitles_mode import SUBTITLES_MODE_LEGACY_BLOCKS
+from core.subtitles_mode import SUBTITLES_MODE_LEGACY_BLOCKS, SubtitlesMode
 
 
 LLMWorkerTypeLiteral = Literal["sdk", "openrouter", "hybrid", "vertex_sdk_mix"]
@@ -29,13 +29,9 @@ class SendAudioS3Request(BaseModel):
     idempotency_key: Optional[str] = Field(default=None, min_length=1)
     lyrics_text: str = ""
     target_fragment: str = ""
-    subtitles_mode: Literal[
-        "legacy_blocks",
-        "impulse_2nd",
-        "scenes_3rd",
-        "scenes_3rd_single_step",
-        "template_4th",
-    ] = SUBTITLES_MODE_LEGACY_BLOCKS
+    # Use the canonical SubtitlesMode (core) so new modes never drift from the
+    # API contract (trendy_5th/brat_5th were added there).
+    subtitles_mode: SubtitlesMode = SUBTITLES_MODE_LEGACY_BLOCKS
     footage_artist_id: Optional[str] = None
     user_clip_start_sec: Optional[float] = Field(default=None, ge=0.0)
     user_clip_end_sec: Optional[float] = Field(default=None, ge=0.0)

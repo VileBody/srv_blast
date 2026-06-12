@@ -113,6 +113,20 @@ def test_project_builder_consumes_subtitles_jsx_block():
     assert _build_jsx_subtitles_js({}) == ""
 
 
+def test_schema_accepts_5th_modes():
+    from services.orchestrator.schemas import SendAudioS3Request
+
+    for m in ("trendy_5th", "brat_5th"):
+        req = SendAudioS3Request(
+            audio_s3_url="https://example.com/a.mp3",
+            mode="with_gemini",
+            lyrics_text="x",
+            target_fragment="x",
+            subtitles_mode=m,
+        )
+        assert req.subtitles_mode == m
+
+
 def test_template_has_jsx_subtitles_token():
     from pathlib import Path
 
