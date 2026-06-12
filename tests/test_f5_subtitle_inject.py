@@ -104,6 +104,33 @@ def test_voice_subtitle_splits_long_phrase_into_track_sized_lines():
         assert abs(rk[0]["t"] - L["in_point"]) < 1e-6
 
 
+def test_voice_inherits_caps_when_template_allcaps():
+    # jakson/3rd track layer: text_base.allCaps=True → voice lines uppercased.
+    tpl = _template_text_layer()
+    tpl["text_data"]["text_base"] = {"allCaps": True}
+    layers = inject_subtitle_layer([tpl], _f5(text="бум бам"), focal_start_ms=0)
+    L = next(x for x in layers if str(x.get("name", "")).startswith("f5_hook_subtitle"))
+    assert L["text"] == "БУМ БАМ"
+
+
+def test_voice_inherits_caps_from_uppercase_template_text():
+    # Pre-uppercased track text (allCaps may be False) → still uppercase voice.
+    tpl = _template_text_layer()
+    tpl["text"] = "ЕЩЁ ОДИН ОТКАЗ"
+    tpl["text_data"]["text_base"] = {"allCaps": False}
+    layers = inject_subtitle_layer([tpl], _f5(text="привет мир"), focal_start_ms=0)
+    L = next(x for x in layers if str(x.get("name", "")).startswith("f5_hook_subtitle"))
+    assert L["text"] == "ПРИВЕТ МИР"
+
+
+def test_voice_keeps_case_for_lowercase_template():
+    # Mixed/lowercase template → leave the voice text as produced (no forced caps).
+    tpl = _template_text_layer()  # text="оригинал" (lowercase), no text_base
+    layers = inject_subtitle_layer([tpl], _f5(text="привет мир"), focal_start_ms=0)
+    L = next(x for x in layers if str(x.get("name", "")).startswith("f5_hook_subtitle"))
+    assert L["text"] == "привет мир"
+
+
 def test_voice_subtitle_position_style_preserved():
     layers = inject_subtitle_layer([_template_text_layer()], _f5(), focal_start_ms=0)
     L = next(x for x in layers if str(x.get("name", "")).startswith("f5_hook_subtitle"))

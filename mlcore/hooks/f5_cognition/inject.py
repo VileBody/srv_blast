@@ -233,6 +233,27 @@ def _remove_track_subtitles_in_window(
     return kept, removed
 
 
+def _template_renders_uppercase(template: dict[str, Any]) -> bool:
+    """True, если клонируемый трек-субтитр визуально в ВЕРХНЕМ регистре.
+
+    Капс у трека приходит из двух механизмов (часто обоих сразу):
+      1) свойство text_base.allCaps=True (AE сам аплит верхний регистр);
+      2) сам текст заранее зааплен в .upper() билдером (scenes_3rd /
+         text_flow_renderer) — тогда allCaps может быть и False.
+
+    Клон тянет (1) через text_base, но НЕ тянет (2): текст голоса приходит от
+    Gemini в нормальном регистре. Поэтому решаем по визуальному факту шаблона —
+    и если он капсовый, сами аплим .upper() к строкам голоса (как делает трек).
+    """
+    td = template.get("text_data") or {}
+    base = td.get("text_base") or {}
+    if base.get("allCaps"):
+        return True
+    txt = str(template.get("text") or "")
+    alpha = [c for c in txt if c.isalpha()]
+    return bool(alpha) and all(c.isupper() for c in alpha)
+
+
 def _clone_text_layer_template(
     text_layers: list[dict[str, Any]],
 ) -> dict[str, Any] | None:
@@ -354,9 +375,16 @@ def inject_subtitle_layer(
     window = max(0.0001, out_sec - in_sec)
     total_chars = sum(len(s) for s in lines) or 1
 
+    # Match the track's case: jakson/impulse pre-uppercase the displayed text, so
+    # a normal-case voice line under the same style looks out of place. If the
+    # cloned template renders uppercase → uppercase the voice lines too.
+    force_upper = _template_renders_uppercase(template)
+
     new_subs: list[dict[str, Any]] = []
     cursor = in_sec
     for idx, line in enumerate(lines):
+        if force_upper:
+            line = line.upper()
         # Длительность строки пропорциональна её длине; последняя добивает до конца
         # окна, чтобы не накопить погрешность округления.
         if idx == len(lines) - 1:
