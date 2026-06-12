@@ -1598,6 +1598,18 @@
       logErr("f5 overlay injection failed", eF5v);
     }
 
+    // ==========================================================
+    // 5.10) 5th-template JSX subtitles (trendy/brat), injected by build worker.
+    // Empty string in non-JSX modes => no-op. The script reads inlined
+    // word-timings ($.global.__BLAST_SUBS_JSON) and builds the subtitle layers
+    // itself over the main comp; normal text_layers are skipped in these modes.
+    // ==========================================================
+    try {
+      {{ jsx_subtitles_js }}
+    } catch(eJsxSubs) {
+      logErr("jsx subtitles injection failed", eJsxSubs);
+    }
+
     if (__SUPPRESSED_UI_CALLS.length > 0) {
       logLine("WARN", "suppressed_ui_calls=" + safeJson(__SUPPRESSED_UI_CALLS, 2000));
     }

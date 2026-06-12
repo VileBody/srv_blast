@@ -13,7 +13,11 @@ from jinja2 import Environment, FileSystemLoader
 from app.project_config import AE_PROJECT
 from app.footage_comp import build_footage_layers, resolve_text_duration_sec
 from app.text_comp import build_text_layers
-from core.subtitles_mode import SUBTITLES_MODE_LEGACY_BLOCKS, normalize_subtitles_mode
+from core.subtitles_mode import (
+    SUBTITLES_MODE_JSX_5TH,
+    SUBTITLES_MODE_LEGACY_BLOCKS,
+    normalize_subtitles_mode,
+)
 
 LOGGER = logging.getLogger("app.project_builder")
 
@@ -308,6 +312,34 @@ def _build_f1_overlay_js(full_edit_config: Dict[str, Any]) -> str:
     return overlay
 
 
+def _build_jsx_subtitles_js(full_edit_config: Dict[str, Any]) -> str:
+    """5th-template JSX subtitle generator (trendy/brat).
+
+    Orchestrator emits full_edit_config["subtitles_jsx"] = {mode, word_timings,
+    bpm} for these modes; we inline it into the chosen script (read by the
+    template token, after the hook overlays, before save). Absent => "".
+    """
+    block = full_edit_config.get("subtitles_jsx") if isinstance(full_edit_config, dict) else None
+    if not block or not isinstance(block, dict):
+        return ""
+
+    from app.jsx_subtitles_builder import build_jsx_subtitles_overlay
+
+    mode = str(block.get("mode") or "").strip()
+    word_timings = block.get("word_timings") or []
+    bpm = block.get("bpm")
+    overlay = build_jsx_subtitles_overlay(
+        mode=mode,
+        word_timings=list(word_timings),
+        bpm=(float(bpm) if bpm is not None else None),
+    )
+    LOGGER.info(
+        "jsx subtitles present mode=%s words=%d bpm=%s js_len=%d",
+        mode, len(word_timings), bpm, len(overlay),
+    )
+    return overlay
+
+
 def _build_f2_overlay_js(full_edit_config: Dict[str, Any]) -> str:
     """
     Если в full_edit_config есть блок "f2" — собирает инъектируемый JSX-блок
@@ -505,12 +537,18 @@ def build_full_project(
         subtitles_mode=subtitles_mode,
     )
 
-    # 2) Text layers
-    text_layers = build_text_layers(
-        full_edit_config=full_edit_config,
-        text_comp_name=text_name,
-        mine_comp_name=mine_name,
-    )
+    # 2) Text layers. In 5th-template JSX subtitle modes (trendy/brat) the
+    #    injected script generates the subtitle layers itself from word-timings,
+    #    so we skip the normal Python text_layers entirely.
+    if subtitles_mode in SUBTITLES_MODE_JSX_5TH:
+        text_layers = []
+        LOGGER.info("subtitles_mode=%s → JSX-generated subtitles (text_layers skipped)", subtitles_mode)
+    else:
+        text_layers = build_text_layers(
+            full_edit_config=full_edit_config,
+            text_comp_name=text_name,
+            mine_comp_name=mine_name,
+        )
 
     # 2.5) F5 Cognition hook («Мысль»): если в config есть блок "f5" — добавляем
     #      TTS audio-слой + TTS subtitle-слой и вырезаем перекрытые трек-субтитры.
@@ -570,6 +608,9 @@ def build_full_project(
     # F5 «Мысль» visual combo (hook_light at drop + post-drop random F3). Voice
     # is injected separately (_apply_f5_if_present). Absent drop => "".
     f5_overlay_js = _build_f5_overlay_js(full_edit_config)
+    # 5th-template JSX subtitles (trendy/brat). Injected over the main comp; the
+    # script builds the subtitle layers from word-timings. Absent block => "".
+    jsx_subtitles_js = _build_jsx_subtitles_js(full_edit_config)
     # F3 ассет-download list (sound/logo S3-URL'ы + relpath под __APP_DIR/media).
     # render_manifest.collect_media_urls_from_render_payload подцепит и положит
     # в Windows-payload.media[] рядом с футажом. Пусто => без звука/лого.
@@ -597,6 +638,7 @@ def build_full_project(
         f2_overlay_js=f2_overlay_js,
         f1_overlay_js=f1_overlay_js,
         f5_overlay_js=f5_overlay_js,
+        jsx_subtitles_js=jsx_subtitles_js,
     )
     out_jsx.write_text(jsx, encoding="utf-8")
 
