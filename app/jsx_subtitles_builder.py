@@ -75,15 +75,18 @@ def word_timings_from_transcript(
     words: list[Any],
     *,
     clip_start: float = 0.0,
+    clip_end: float | None = None,
 ) -> list[dict[str, Any]]:
     """Build COMP-RELATIVE [{word, start, end, focus}] from transcript words.
 
     clip_start is the render comp's clip-window start (absolute track seconds);
     every timing is shifted by −clip_start so it aligns with the rendered comp.
-    Words that end at/under clip_start (fully before the window) are dropped;
-    a word straddling the start is clamped to start=0.
+    Words ending at/under clip_start (fully before the window) are dropped; a
+    word straddling the start is clamped to start=0. If clip_end is given
+    (absolute), words starting at/after it are dropped and ends are clamped.
     """
     cs = float(clip_start or 0.0)
+    win = (float(clip_end) - cs) if clip_end is not None else None
     out: list[dict[str, Any]] = []
     for w in words or []:
         text = _w_text(w).strip()
@@ -96,8 +99,12 @@ def word_timings_from_transcript(
             continue
         if t1 <= 0.0:  # fully before the clip window
             continue
+        if win is not None and t0 >= win:  # fully after the clip window
+            continue
         if t0 < 0.0:
             t0 = 0.0
+        if win is not None and t1 > win:
+            t1 = win
         if t1 <= t0:
             t1 = t0 + 0.05
         out.append({

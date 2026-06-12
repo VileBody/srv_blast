@@ -846,6 +846,7 @@ def render_all_steps(
     f3_block: Dict[str, Any] | None = None,
     f2_block: Dict[str, Any] | None = None,
     f1_block: Dict[str, Any] | None = None,
+    jsx_subtitles_block: Dict[str, Any] | None = None,
 ) -> Dict[str, Path]:
     repo_root = repo_root.resolve()
     out_dir = out_dir.resolve()
@@ -1080,6 +1081,14 @@ def render_all_steps(
     # -------------------------
     if f1_block:
         full_edit_obj["f1"] = f1_block
+
+    # -------------------------
+    # 5th-template JSX subtitles (trendy/brat): {mode, word_timings, bpm}.
+    # project_builder._build_jsx_subtitles_js inlines it into the chosen script;
+    # normal text_layers are skipped in these modes. Нет блока → обычный job.
+    # -------------------------
+    if jsx_subtitles_block:
+        full_edit_obj["subtitles_jsx"] = jsx_subtitles_block
 
     # -------------------------
     # Write to DATA_DIR + mirror to OUT_DIR

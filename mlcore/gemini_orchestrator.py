@@ -59,7 +59,8 @@ from mlcore.models.stage1_plan import FragmentAnalytics, PauseSpan, Stage1PlanPa
 from mlcore.models.stage1_plan import TranscriptWord
 from mlcore.models.stage1_scenario import Stage1ScenarioPayload
 from mlcore.models.subtitles_spans import BlocksTokenSpansPayload, TokenSpan
-from mlcore.models.subtitles_flow import SubtitleFlowPlan
+from mlcore.models.subtitles_flow import SubtitleFlowPlan, SubtitleFlowSegment
+from mlcore.models.subtitles_tokens import ClipWindow as _JsxClipWindow
 from mlcore.models.subtitles_tokens import BlocksTokensPayload
 from mlcore.subtitles_flow import SubtitlesPlannerFactory
 from mlcore.models.switch_timing import (
@@ -86,6 +87,7 @@ from mlcore.prompts import (
 )
 from mlcore.stage1_tools import align_stage1_draft_to_transcript, build_stage1_report
 from core.subtitles_mode import (
+    SUBTITLES_MODE_JSX_5TH,
     SUBTITLES_MODE_LEGACY_BLOCKS,
     SUBTITLES_MODE_SCENES_3RD_SINGLE_STEP,
     normalize_subtitles_mode,
@@ -3122,6 +3124,31 @@ def build_all_via_gemini_one_call(
     timing_cuts_user = logs_dir / f"gemini_prompt_stage2_timing_cuts_{stamp}.txt"
 
     def _run_subtitles_once() -> BlocksTokensPayload | SubtitleFlowPlan:
+        # 5th-template JSX subtitles (trendy/brat): the AE generator builds the
+        # subtitle layers from raw ASR word-timings — there is NO LLM subtitle
+        # stage. Synthesize a minimal valid SubtitleFlowPlan carrying just the
+        # stage1 clip window; the real subtitles are injected as JSX downstream
+        # and the Python text_layers are skipped in project_builder.
+        if subtitles_mode in SUBTITLES_MODE_JSX_5TH:
+            _cs = float(stage1.audio.clip_start_abs)
+            _ce = float(stage1.audio.clip_end_abs)
+            _seg = SubtitleFlowSegment(
+                segment_id="jsx_subtitles",
+                text="·",
+                in_point=_cs,
+                out_point=min(_ce, _cs + 0.1),
+                style_tag="jsx",
+            )
+            logger.info(
+                "stage2_subtitles_jsx_passthrough mode=%s clip=%.3f..%.3f (no LLM)",
+                subtitles_mode, _cs, _ce,
+            )
+            return SubtitleFlowPlan(
+                mode=subtitles_mode,
+                clip=_JsxClipWindow(start=_cs, end=_ce),
+                segments=[_seg],
+            )
+
         subtitles_audio_paths = list(audio_files) if subtitles_planner.attach_audio_for_stage2 else []
         subtitles_client = (
             client_subtitles_single_step
@@ -4346,6 +4373,38 @@ def build_all_via_gemini_one_call(
             )
             f1_block = None
 
+    # ── 5th-template JSX subtitles (trendy/brat): raw ASR word-timings →
+    #    injected AE generator (NO LLM subtitle stage). Comp-relative to the
+    #    render clip window (_hook_clip_start). brat uses the stage2 `bpm`.
+    #    Any failure logs and renders without subtitles (block=None).
+    jsx_subtitles_block = None
+    if subtitles_mode in SUBTITLES_MODE_JSX_5TH:
+        try:
+            from app.jsx_subtitles_builder import word_timings_from_transcript
+
+            _clip_end_abs = float(full_payload.subtitles.clip.end)
+            _word_timings = word_timings_from_transcript(
+                stage1_json.get("transcript_words") or [],
+                clip_start=float(_hook_clip_start),
+                clip_end=_clip_end_abs,
+            )
+            jsx_subtitles_block = {
+                "mode": subtitles_mode,
+                "word_timings": _word_timings,
+                "bpm": (float(bpm) if (bpm is not None and float(bpm) > 0.0) else None),
+            }
+            logger.info(
+                "jsx_subtitles block mode=%s words=%d bpm=%s clip=%.3f..%.3f",
+                subtitles_mode, len(_word_timings), bpm,
+                float(_hook_clip_start), _clip_end_abs,
+            )
+        except Exception:
+            logger.exception(
+                "jsx_subtitles FAILED — render WITHOUT subtitles (mode=%s job=%s)",
+                subtitles_mode, os.environ.get("JOB_ID") or out_dir.name,
+            )
+            jsx_subtitles_block = None
+
     outputs = render_all_steps(
         repo_root=ROOT,
         plan=full_payload,
@@ -4357,6 +4416,7 @@ def build_all_via_gemini_one_call(
         f3_block=f3_block,
         f2_block=f2_block,
         f1_block=f1_block,
+        jsx_subtitles_block=jsx_subtitles_block,
     )
 
     logger.info("render_done %s", {k: str(v) for k, v in outputs.items()})

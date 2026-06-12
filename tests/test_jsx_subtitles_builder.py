@@ -52,6 +52,18 @@ def test_word_timings_drops_pre_window_and_clamps_straddler():
     assert abs(wt[0]["end"] - 0.4) < 1e-9
 
 
+def test_word_timings_filters_post_window_and_clamps_end():
+    words = [
+        {"text": "in", "t_start": 2.0, "t_end": 2.5},
+        {"text": "edge", "t_start": 4.8, "t_end": 5.4},   # straddles clip_end 5.0
+        {"text": "after", "t_start": 5.1, "t_end": 5.6},  # past clip_end → dropped
+    ]
+    wt = word_timings_from_transcript(words, clip_start=2.0, clip_end=5.0)
+    assert [w["word"] for w in wt] == ["in", "edge"]
+    # edge end clamped to window (5.0-2.0=3.0)
+    assert abs(wt[1]["end"] - 3.0) < 1e-9
+
+
 def test_word_timings_accepts_transcriptword_objects():
     wt = word_timings_from_transcript([_Word("привет", 0.0, 0.5)], clip_start=0.0)
     assert wt == [{"word": "привет", "start": 0.0, "end": 0.5, "focus": False}]
