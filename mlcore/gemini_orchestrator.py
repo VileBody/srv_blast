@@ -3042,11 +3042,20 @@ def build_all_via_gemini_one_call(
     )
 
     _emit(progress_cb, "llm_stage2_parallel")
-    subtitles_planner = SubtitlesPlannerFactory.create(subtitles_mode)
+    subtitles_planner = (
+        None
+        if subtitles_mode in SUBTITLES_MODE_JSX_5TH
+        else SubtitlesPlannerFactory.create(subtitles_mode)
+    )
     subtitles_model_effective = (
         _SCENES_3RD_SINGLE_STEP_MODEL
         if subtitles_mode == SUBTITLES_MODE_SCENES_3RD_SINGLE_STEP
         else model_subtitles
+    )
+    subtitles_schema_name = (
+        "jsx_passthrough"
+        if subtitles_planner is None
+        else subtitles_planner.schema_model.__name__
     )
     logger.info(
         "stage2_start subtitles_model=%s footage_style_model=%s timing_model=%s timing_mode=%s style_groups=%d subtitles_mode=%s subtitles_schema=%s",
@@ -3056,7 +3065,7 @@ def build_all_via_gemini_one_call(
         timing_mode,
         len(style_groups),
         subtitles_mode,
-        subtitles_planner.schema_model.__name__,
+        subtitles_schema_name,
     )
 
     stage1_words_in_clip = _words_in_window(
@@ -3081,10 +3090,14 @@ def build_all_via_gemini_one_call(
             stage1.audio.clip_end_abs,
         )
 
-    sub_system = subtitles_planner.build_system_instruction()
-    sub_prompt = subtitles_planner.build_user_prompt(stage1_json=stage1_json)
+    if subtitles_planner is None:
+        sub_system = ""
+        sub_prompt = ""
+    else:
+        sub_system = subtitles_planner.build_system_instruction()
+        sub_prompt = subtitles_planner.build_user_prompt(stage1_json=stage1_json)
     subtitles_retry_hint = (os.environ.get("STAGE2_SUBTITLES_RETRY_HINT") or "").strip()
-    if subtitles_retry_hint:
+    if subtitles_retry_hint and subtitles_planner is not None:
         sub_prompt = (
             str(sub_prompt)
             + "\n\nSUBTITLES_RETRY_HINT:\n"
@@ -3149,6 +3162,8 @@ def build_all_via_gemini_one_call(
                 segments=[_seg],
             )
 
+        if subtitles_planner is None:
+            raise RuntimeError(f"subtitles planner missing for non-JSX mode={subtitles_mode!r}")
         subtitles_audio_paths = list(audio_files) if subtitles_planner.attach_audio_for_stage2 else []
         subtitles_client = (
             client_subtitles_single_step
