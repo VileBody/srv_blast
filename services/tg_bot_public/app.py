@@ -30,6 +30,8 @@ from core.subtitles_mode import (
     SUBTITLES_MODE_SCENES_3RD,
     SUBTITLES_MODE_SCENES_3RD_SINGLE_STEP,
     SUBTITLES_MODE_TEMPLATE_4TH,
+    SUBTITLES_MODE_TRENDY_5TH,
+    SUBTITLES_MODE_BRAT_5TH,
     normalize_subtitles_mode,
 )
 from config.styles.artist_presets_loader import get_artists, get_genres
@@ -308,6 +310,10 @@ BTN_NEXT = "Сделать следующий"
 BTN_SUB_MODE_IMPULSE = "Impulse"
 BTN_SUB_MODE_SCENES = "Jakson"
 BTN_SUB_MODE_4TH = "Tape"
+# 5th-template JSX modes — data mirrored from tg_bot_botapi for parity; not yet
+# surfaced in the public picker (validated in the test bot first).
+BTN_SUB_MODE_TRENDY = "Trendy"
+BTN_SUB_MODE_BRAT = "Brat"
 
 # Post-generation flow buttons
 BTN_RATE_LOW = "До 5"
@@ -368,6 +374,9 @@ _SUBTITLES_MODE_BY_BUTTON = {
     BTN_SUB_MODE_IMPULSE: SUBTITLES_MODE_IMPULSE_2ND,
     BTN_SUB_MODE_SCENES: SUBTITLES_MODE_SCENES_3RD,
     BTN_SUB_MODE_4TH: SUBTITLES_MODE_TEMPLATE_4TH,
+    # Mirrored for parity; not in SUBTITLES_MODE_BUTTONS (curated public picker).
+    BTN_SUB_MODE_TRENDY: SUBTITLES_MODE_TRENDY_5TH,
+    BTN_SUB_MODE_BRAT: SUBTITLES_MODE_BRAT_5TH,
 }
 _BUTTON_BY_SUBTITLES_MODE = {v: k for k, v in _SUBTITLES_MODE_BY_BUTTON.items()}
 _SUBTITLES_EXAMPLE_VIDEO = {
@@ -397,6 +406,8 @@ _CONTROL_BUTTONS = {
     BTN_SUB_MODE_IMPULSE,
     BTN_SUB_MODE_SCENES,
     BTN_SUB_MODE_4TH,
+    BTN_SUB_MODE_TRENDY,
+    BTN_SUB_MODE_BRAT,
     BTN_LAUNCH,
     BTN_NEXT,
     BTN_RESTART,
