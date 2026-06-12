@@ -149,6 +149,37 @@ def inject_audio_layer(
 # не наслаивать субтитры трека и TTS.
 F5_SUBTITLE_CLEAR_MARGIN_SEC = 0.15
 
+# Макс. длина одной строки субтитра голоса (символов). Трек-строки рендерятся
+# на 100% при длине ~до 20 символов; более длинную point-text строку AE ужимает
+# width-fit'ом (наблюдалось: строка 31 символ → scale 85.8%, «другой размер» по
+# сравнению с треком). Поэтому фразу голоса режем на трек-размерные строки и
+# показываем их ПОСЛЕДОВАТЕЛЬНО по окну голоса (как трек: музыка непрерывна,
+# строки сменяются) — каждая строка короткая → каждая на 100% → 1:1 как трек.
+F5_SUBTITLE_MAX_CHARS = 20
+
+
+def _split_tts_text(text: str, max_chars: int = F5_SUBTITLE_MAX_CHARS) -> list[str]:
+    """Жадно пакует слова в строки длиной ≤ max_chars (по границам слов).
+
+    Порядок слов сохраняется; одно слово длиннее max_chars кладётся в свою
+    строку как есть (резать слово не будем — лучше один ужатый кадр, чем
+    разорванное слово).
+    """
+    words = str(text or "").split()
+    lines: list[str] = []
+    cur = ""
+    for w in words:
+        if not cur:
+            cur = w
+        elif len(cur) + 1 + len(w) <= int(max_chars):
+            cur = cur + " " + w
+        else:
+            lines.append(cur)
+            cur = w
+    if cur:
+        lines.append(cur)
+    return lines
+
 
 def _remove_track_subtitles_in_window(
     text_layers: list[dict[str, Any]],
@@ -278,11 +309,13 @@ def inject_subtitle_layer(
     focal_start_ms: int,
 ) -> list[dict[str, Any]]:
     """
-    Клонирует первый существующий трек-субтитр КАК ЕСТЬ (со стилем, аниматором и
-    reveal-кейфреймами — т.е. ровно тот же ТИП субтитров, что у трека), ставит
-    TTS-фразу и ретаймит все кейфреймы из окна шаблона в окно голоса
-    [focal..focal+tts]. Reveal проигрывается прогрессивно по окну (как дефолтные
-    субтитры трека), а не «весь текст за секунду».
+    Клонирует существующий трек-субтитр КАК ЕСТЬ (со стилем, аниматором и
+    reveal-кейфреймами — т.е. ровно тот же ТИП субтитров, что у трека) и кладёт
+    фразу голоса как трек: режет её на трек-размерные строки (≤
+    F5_SUBTITLE_MAX_CHARS символов) и показывает ПОСЛЕДОВАТЕЛЬНО по окну голоса
+    [focal..focal+tts] — слой-на-строку, у каждого reveal ретаймится в её
+    под-окно. Так каждая строка короткая → рендерится на 100% (без width-fit
+    ужима) → 1:1 как трек по размеру и позиции.
     """
     template = _clone_text_layer_template(text_layers)
     if template is None:
@@ -303,7 +336,8 @@ def inject_subtitle_layer(
         removed, in_sec, out_sec,
     )
 
-    if not str(f5.tts_text or "").strip():
+    lines = _split_tts_text(f5.tts_text)
+    if not lines:
         logger.warning("f5.inject subtitle skipped: empty tts_text")
         return cleaned
 
@@ -313,45 +347,67 @@ def inject_subtitle_layer(
     )
 
     # Source window = the cloned track segment's own window (keyframes are timed
-    # to it). Retime them onto the voice window so the same reveal plays here.
+    # to it). Retime them onto each line's sub-window so the same reveal plays.
     src_in = float(template.get("in_point", in_sec))
     src_out = float(template.get("out_point", src_in + max(0.0001, out_sec - in_sec)))
 
-    layer = copy.deepcopy(template)
-    layer["name"] = f"f5_hook_subtitle_{f5.chosen_device.value}"
-    layer["text"] = f5.tts_text
-    layer["in_point"] = float(in_sec)
-    layer["out_point"] = float(out_sec)
-    layer["z_index"] = max_z + 1
+    window = max(0.0001, out_sec - in_sec)
+    total_chars = sum(len(s) for s in lines) or 1
 
-    # Retime reveal/animation keyframes (props + effects + text_data) onto voice.
-    _retime_keyframes_inplace(layer.get("props"), src_in=src_in, src_out=src_out,
-                              dst_in=in_sec, dst_out=out_sec)
-    _retime_keyframes_inplace(layer.get("effects"), src_in=src_in, src_out=src_out,
-                              dst_in=in_sec, dst_out=out_sec)
+    new_subs: list[dict[str, Any]] = []
+    cursor = in_sec
+    for idx, line in enumerate(lines):
+        # Длительность строки пропорциональна её длине; последняя добивает до конца
+        # окна, чтобы не накопить погрешность округления.
+        if idx == len(lines) - 1:
+            seg_out = out_sec
+        else:
+            seg_out = cursor + window * (len(line) / total_chars)
+        seg_in = cursor
+        cursor = seg_out
 
-    td = layer.setdefault("text_data", {})
-    _retime_keyframes_inplace(td, src_in=src_in, src_out=src_out,
-                              dst_in=in_sec, dst_out=out_sec)
-    meta = td.setdefault("layer_meta", {})
-    meta["startTime"] = float(in_sec)
-    meta["enabled"] = True
-    # Rebuild per-char styles ONLY if the template actually carries them.
-    # scenes_3rd/flow layers keep char_styles_ungrouped=[] (styling comes from
-    # base text_data + the text_animator) — rebuilding to index-only entries
-    # there CLOBBERS the scene style and the voice subtitle renders as a flat
-    # "blocks"-looking line. Empty template → leave empty (animator/base style
-    # carry the look = same TYPE as the track).
-    existing_cs = td.get("char_styles_ungrouped")
-    if isinstance(existing_cs, list) and existing_cs:
-        td["char_styles_ungrouped"] = _rebuild_char_styles(td, text_len=len(f5.tts_text))
+        layer = copy.deepcopy(template)
+        suffix = "" if len(lines) == 1 else f"_{idx + 1}"
+        layer["name"] = f"f5_hook_subtitle_{f5.chosen_device.value}{suffix}"
+        layer["text"] = line
+        layer["in_point"] = float(seg_in)
+        layer["out_point"] = float(seg_out)
+        layer["z_index"] = max_z + 1 + idx
+
+        # Retime reveal/animation keyframes (props + effects + text_data) onto
+        # this line's sub-window.
+        _retime_keyframes_inplace(layer.get("props"), src_in=src_in, src_out=src_out,
+                                  dst_in=seg_in, dst_out=seg_out)
+        _retime_keyframes_inplace(layer.get("effects"), src_in=src_in, src_out=src_out,
+                                  dst_in=seg_in, dst_out=seg_out)
+
+        td = layer.setdefault("text_data", {})
+        _retime_keyframes_inplace(td, src_in=src_in, src_out=src_out,
+                                  dst_in=seg_in, dst_out=seg_out)
+        meta = td.setdefault("layer_meta", {})
+        meta["startTime"] = float(seg_in)
+        meta["enabled"] = True
+        # Rebuild per-char styles ONLY if the template actually carries them.
+        # scenes_3rd/flow layers keep char_styles_ungrouped=[] (styling comes
+        # from base text_data + the text_animator) — rebuilding to index-only
+        # entries there CLOBBERS the scene style and the voice subtitle renders
+        # as a flat "blocks"-looking line. Empty template → leave empty.
+        existing_cs = td.get("char_styles_ungrouped")
+        if isinstance(existing_cs, list) and existing_cs:
+            td["char_styles_ungrouped"] = _rebuild_char_styles(td, text_len=len(line))
+
+        logger.info(
+            "f5.inject subtitle line=%r in=%.3f out=%.3f z=%d",
+            line, seg_in, seg_out, layer["z_index"],
+        )
+        new_subs.append(layer)
 
     logger.info(
-        "f5.inject subtitle (track-type) text=%r in=%.3f out=%.3f z=%d "
+        "f5.inject subtitle (track-type) lines=%d window=[%.3f..%.3f] "
         "retimed_from=[%.3f..%.3f]",
-        f5.tts_text, in_sec, out_sec, layer["z_index"], src_in, src_out,
+        len(new_subs), in_sec, out_sec, src_in, src_out,
     )
-    return cleaned + [layer]
+    return cleaned + new_subs
 
 
 # ─────────────────────────────────────────────────────────────────────────────

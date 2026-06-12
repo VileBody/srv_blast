@@ -115,14 +115,24 @@ _JS_PRELUDE = r"""
     for (var k=0;k<cuts.length;k++){ if (!out.length || Math.abs(cuts[k]-out[out.length-1])>fr) out.push(cuts[k]); }
     return out;
   }
+  // ES3-safe 32-bit imul: AE/ExtendScript has no Math.imul (it's ES3), so the
+  // mulberry32 below must not rely on it — otherwise the whole overlay block
+  // throws "Math.imul is not defined" and silently fails to inject in headless
+  // aerender (observed: F5 combo dropped, no hook_light / no post-drop FX).
+  function __f2_imul(a, b){
+    a = a >>> 0; b = b >>> 0;
+    var ah = (a >>> 16) & 0xffff, al = a & 0xffff;
+    var bh = (b >>> 16) & 0xffff, bl = b & 0xffff;
+    return ((al * bl) + ((((ah * bl + al * bh) & 0xffff) << 16) >>> 0)) | 0;
+  }
   // mulberry32 seeded PRNG — deterministic per (job seed, cut count).
   function __f2_rng(seed){
     var t = (seed >>> 0) || 1;
     return function(){
       t = (t + 0x6D2B79F5) >>> 0;
       var x = t;
-      x = Math.imul(x ^ (x >>> 15), x | 1);
-      x ^= x + Math.imul(x ^ (x >>> 7), x | 61);
+      x = __f2_imul(x ^ (x >>> 15), x | 1);
+      x ^= x + __f2_imul(x ^ (x >>> 7), x | 61);
       return ((x ^ (x >>> 14)) >>> 0) / 4294967296;
     };
   }

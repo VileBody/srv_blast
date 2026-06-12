@@ -10,7 +10,7 @@ from mlcore.hooks.f5_cognition.inject import (
 from mlcore.hooks.f5_cognition.models import F5Device, F5Response
 
 
-def _f5(text="первое второе третье четвёртое пятое", dur_ms=3000):
+def _f5(text="первое второе", dur_ms=3000):
     return F5Response(
         audio_path="/x.wav",
         audio_duration_ms=dur_ms,
@@ -57,14 +57,14 @@ def test_retime_keyframes_inplace_remaps_times():
 
 
 def test_voice_subtitle_keeps_track_type_and_retimes_reveal():
+    # Short phrase → ONE line (same type as the track), not stripped.
     layers = inject_subtitle_layer([_template_text_layer()], _f5(), focal_start_ms=0)
     subs = [L for L in layers if str(L.get("name", "")).startswith("f5_hook_subtitle")]
-    # ONE layer (same type as the track), not stripped chunks.
     assert len(subs) == 1
     L = subs[0]
     assert L["in_point"] == 0.0
     assert abs(L["out_point"] - 3.0) < 1e-6
-    assert L["text"] == "первое второе третье четвёртое пятое"
+    assert L["text"] == "первое второе"
     # Animator preserved (same type as track) — NOT disabled.
     td = L["text_data"]
     assert td.get("no_text_animator") is not True
@@ -73,8 +73,35 @@ def test_voice_subtitle_keeps_track_type_and_retimes_reveal():
     kfs = L["props"]["reveal"]["keyframes"]
     assert abs(kfs[0]["t"] - 0.0) < 1e-6
     assert abs(kfs[1]["t"] - 0.4) < 1e-6   # (1.2-1.0)/1.5*3.0 = 0.4
-    # char styles rebuilt to full text length
+    # char styles rebuilt to line length
     assert len(td["char_styles_ungrouped"]) == len(L["text"])
+
+
+def test_voice_subtitle_splits_long_phrase_into_track_sized_lines():
+    from mlcore.hooks.f5_cognition.inject import F5_SUBTITLE_MAX_CHARS
+
+    long = "первое второе третье четвёртое пятое шестое седьмое"
+    layers = inject_subtitle_layer(
+        [_template_text_layer()], _f5(text=long, dur_ms=4000), focal_start_ms=0,
+    )
+    subs = [L for L in layers if str(L.get("name", "")).startswith("f5_hook_subtitle")]
+    # Long phrase → multiple track-sized lines shown sequentially.
+    assert len(subs) >= 2
+    for L in subs:
+        assert len(L["text"]) <= F5_SUBTITLE_MAX_CHARS
+    subs_sorted = sorted(subs, key=lambda L: L["in_point"])
+    # Cover the whole voice window, no gaps/overlaps.
+    assert abs(subs_sorted[0]["in_point"] - 0.0) < 1e-6
+    assert abs(subs_sorted[-1]["out_point"] - 4.0) < 1e-6
+    for a, b in zip(subs_sorted, subs_sorted[1:]):
+        assert abs(a["out_point"] - b["in_point"]) < 1e-6
+    # Word order preserved across lines.
+    assert " ".join(L["text"] for L in subs_sorted) == long
+    # Each line carries the cloned track style + retimed reveal (same type).
+    for L in subs_sorted:
+        assert L["text_data"].get("text_animator") == {"some": "cfg"}
+        rk = L["props"]["reveal"]["keyframes"]
+        assert abs(rk[0]["t"] - L["in_point"]) < 1e-6
 
 
 def test_voice_subtitle_position_style_preserved():
