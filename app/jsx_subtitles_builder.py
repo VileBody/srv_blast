@@ -116,6 +116,55 @@ def word_timings_from_transcript(
     return out
 
 
+def splice_voice_phrase(
+    word_timings: list[dict[str, Any]],
+    *,
+    window_start: float,
+    window_end: float,
+    phrase: str,
+    margin: float = 0.08,
+) -> list[dict[str, Any]]:
+    """Replace the clip words inside [window_start, window_end] with a hook voice
+    phrase (F5 «Мысль» / F1 «Звук»), so the voice caption renders in the SAME
+    trendy/brat style instead of a cloned Python layer.
+
+    Comp-relative seconds throughout. Clip words overlapping the window (±margin)
+    are dropped; the phrase is split into words distributed across the window
+    proportional to length. Returns a new sorted list (input not mutated).
+    """
+    ws, we = float(window_start), float(window_end)
+    text = str(phrase or "").strip()
+    if we <= ws or not text:
+        return list(word_timings)
+
+    lo, hi = ws - float(margin), we + float(margin)
+    kept = [
+        w for w in (word_timings or [])
+        if not (float(w.get("start", 0.0)) < hi and float(w.get("end", 0.0)) > lo)
+    ]
+
+    words = text.split()
+    if not words:
+        return kept
+
+    total = sum(len(x) for x in words) or 1
+    span = max(1e-4, we - ws)
+    out = list(kept)
+    cur = ws
+    for i, wd in enumerate(words):
+        seg_out = we if i == len(words) - 1 else cur + span * (len(wd) / total)
+        out.append({
+            "word": wd,
+            "start": round(cur, 3),
+            "end": round(seg_out, 3),
+            "focus": True,
+        })
+        cur = seg_out
+
+    out.sort(key=lambda w: float(w.get("start", 0.0)))
+    return out
+
+
 def _flip_flag_false(src: str, flag: str) -> str:
     """Force `flag:     true` → `flag:     false` (first CONFIG occurrence)."""
     return re.sub(rf"({flag}\s*:\s*)true", r"\1false", src, count=1)

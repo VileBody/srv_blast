@@ -69,6 +69,36 @@ def test_word_timings_accepts_transcriptword_objects():
     assert wt == [{"word": "привет", "start": 0.0, "end": 0.5, "focus": False}]
 
 
+def test_splice_voice_phrase_replaces_window_words():
+    from app.jsx_subtitles_builder import splice_voice_phrase
+
+    wt = [
+        {"word": "a", "start": 0.0, "end": 0.5, "focus": False},
+        {"word": "b", "start": 1.0, "end": 1.5, "focus": False},   # inside window → dropped
+        {"word": "c", "start": 1.6, "end": 2.0, "focus": False},   # inside window → dropped
+        {"word": "d", "start": 3.0, "end": 3.5, "focus": False},
+    ]
+    out = splice_voice_phrase(wt, window_start=0.9, window_end=2.1, phrase="мысль моя")
+    words = [w["word"] for w in out]
+    # clip words b,c removed; voice words inserted; a,d kept
+    assert "b" not in words and "c" not in words
+    assert "a" in words and "d" in words
+    assert "мысль" in words and "моя" in words
+    # voice words sit inside the window and are sorted
+    voice = [w for w in out if w["word"] in ("мысль", "моя")]
+    assert abs(voice[0]["start"] - 0.9) < 1e-6
+    assert abs(voice[-1]["end"] - 2.1) < 1e-6
+    assert out == sorted(out, key=lambda w: w["start"])
+
+
+def test_splice_voice_phrase_noop_on_empty():
+    from app.jsx_subtitles_builder import splice_voice_phrase
+
+    wt = [{"word": "a", "start": 0.0, "end": 0.5, "focus": False}]
+    assert splice_voice_phrase(wt, window_start=1.0, window_end=2.0, phrase="  ") == wt
+    assert splice_voice_phrase(wt, window_start=2.0, window_end=1.0, phrase="x") == wt
+
+
 def test_overlay_trendy_inlines_json_and_disables_dialog():
     wt = word_timings_from_transcript([{"text": "йо", "t_start": 0.0, "t_end": 0.4}])
     js = build_jsx_subtitles_overlay(mode=SUBTITLES_MODE_TRENDY_5TH, word_timings=wt)

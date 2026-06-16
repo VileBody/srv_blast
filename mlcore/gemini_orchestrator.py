@@ -4395,7 +4395,10 @@ def build_all_via_gemini_one_call(
     jsx_subtitles_block = None
     if subtitles_mode in SUBTITLES_MODE_JSX_5TH:
         try:
-            from app.jsx_subtitles_builder import word_timings_from_transcript
+            from app.jsx_subtitles_builder import (
+                splice_voice_phrase,
+                word_timings_from_transcript,
+            )
 
             _clip_end_abs = float(full_payload.subtitles.clip.end)
             _word_timings = word_timings_from_transcript(
@@ -4403,6 +4406,31 @@ def build_all_via_gemini_one_call(
                 clip_start=float(_hook_clip_start),
                 clip_end=_clip_end_abs,
             )
+            # Weave the hook voice phrase (F5 «Мысль» / F1 «Звук») into the SAME
+            # JSX subtitle stream so it renders in the trendy/brat style: clip
+            # words in the voice window are replaced by the voice phrase (no
+            # cloned Python layer, no overlap). F1/F5 are mutually exclusive, so
+            # at most one voice window. Comp-relative seconds.
+            _voice_win = None
+            if f5_block and str(f5_block.get("tts_text") or "").strip():
+                _v_in = float(f5_block.get("focal_start_ms", 0)) / 1000.0
+                _v_out = _v_in + float(f5_block.get("audio_duration_ms", 0)) / 1000.0
+                _voice_win = (_v_in, _v_out, str(f5_block["tts_text"]))
+            elif f1_block and str(f1_block.get("text") or "").strip():
+                from mlcore.hooks.f1_sound.inject import f1_audio_window
+                _v_in, _v_out = f1_audio_window(float(f1_block["drop_time"]))
+                _voice_win = (_v_in, _v_out, str(f1_block["text"]))
+            if _voice_win:
+                _word_timings = splice_voice_phrase(
+                    _word_timings,
+                    window_start=_voice_win[0],
+                    window_end=_voice_win[1],
+                    phrase=_voice_win[2],
+                )
+                logger.info(
+                    "jsx_subtitles voice-spliced window=%.2f..%.2f phrase=%r",
+                    _voice_win[0], _voice_win[1], _voice_win[2][:40],
+                )
             jsx_subtitles_block = {
                 "mode": subtitles_mode,
                 "word_timings": _word_timings,
