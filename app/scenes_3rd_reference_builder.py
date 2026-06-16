@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 from typing import Any, Dict, List, Optional, Tuple
 
 from core.video_timing import AE_FPS
@@ -1377,6 +1378,18 @@ def _scene_from_segment(seg: Any) -> Dict[str, Any]:
     }
 
 
+def _apply_focus_color_override() -> None:
+    """Custom focus/accent word color (jakson TYPE_4): env SUBTITLES_FOCUS_HEX
+    overrides RENDER["color_red"]. Absent/invalid → keep the default red."""
+    s = str(os.environ.get("SUBTITLES_FOCUS_HEX") or "").strip().lstrip("#")
+    if len(s) != 6:
+        return
+    try:
+        RENDER["color_red"] = [int(s[i:i + 2], 16) / 255.0 for i in (0, 2, 4)]
+    except ValueError:
+        pass
+
+
 def build_scenes_3rd_reference_layers(
     *,
     flow_plan: SubtitleFlowPlan,
@@ -1385,6 +1398,7 @@ def build_scenes_3rd_reference_layers(
 ) -> List[Dict[str, Any]]:
     RENDER["comp_text"] = str(text_comp_name)
     RENDER["comp_mine"] = str(mine_comp_name)
+    _apply_focus_color_override()
 
     scenes = [_scene_from_segment(seg) for seg in flow_plan.segments]
     scenes.sort(key=lambda s: (float(s["start"]), int(s["id"])))
