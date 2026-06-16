@@ -230,6 +230,9 @@ services:
       TG_PREVIEW_SOURCE_BOT_TOKEN: ${TG_BOT_TOKEN:-}
       TG_STATE_PREFIX: ${TG_PUBLIC_STATE_PREFIX:-blast:tg:public:chat_state}
       SUBSCRIPTION_CHANNEL: ${SUBSCRIPTION_CHANNEL:-@impulsemarketing}
+      # Surface the 5-category hook flow + color pickers in the public bot.
+      # Default ON; set HOOK_FLOW_ENABLED=0 in .env to hide it again.
+      HOOK_FLOW_ENABLED: ${HOOK_FLOW_ENABLED:-1}
       ORCHESTRATOR_PUBLIC_URL: ${ORCHESTRATOR_PUBLIC_URL:-http://orchestrator-api:8000}
       BOT_POLL_INTERVAL_S: ${BOT_POLL_INTERVAL_S:-5}
       BOT_STATUS_UPDATE_INTERVAL_S: ${BOT_STATUS_UPDATE_INTERVAL_S:-20}
@@ -292,6 +295,9 @@ services:
       TG_PREVIEW_SOURCE_BOT_TOKEN: ${TG_BOT_TOKEN:-}
       TG_STATE_PREFIX: ${TG_PUBLIC_STATE_PREFIX:-blast:tg:public:chat_state}
       SUBSCRIPTION_CHANNEL: ${SUBSCRIPTION_CHANNEL:-@impulsemarketing}
+      # Surface the 5-category hook flow + color pickers in the public bot.
+      # Default ON; set HOOK_FLOW_ENABLED=0 in .env to hide it again.
+      HOOK_FLOW_ENABLED: ${HOOK_FLOW_ENABLED:-1}
       ORCHESTRATOR_PUBLIC_URL: ${ORCHESTRATOR_PUBLIC_URL:-}
       TG_FILE_PROXY_URL: ${TG_FILE_PROXY_URL:-}
       CREDITS_DB_URL: ${CREDITS_DB_URL:-}
