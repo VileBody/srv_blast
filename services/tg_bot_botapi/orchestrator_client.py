@@ -60,6 +60,8 @@ class OrchestratorClient:
         f2_shape: str | None = None,
         f1_sound_url: str | None = None,
         f1_sound_text: str | None = None,
+        subtitle_color_hex: str | None = None,
+        accent_color_hex: str | None = None,
     ) -> Dict[str, Any]:
         payload = {
             "audio_s3_url": str(audio_s3_url),
@@ -102,6 +104,8 @@ class OrchestratorClient:
             "f2_shape": (str(f2_shape).strip() or None) if f2_shape is not None else None,
             "f1_sound_url": (str(f1_sound_url).strip() or None) if f1_sound_url is not None else None,
             "f1_sound_text": (str(f1_sound_text).strip() or None) if f1_sound_text is not None else None,
+            "subtitle_color_hex": (str(subtitle_color_hex).strip() or None) if subtitle_color_hex is not None else None,
+            "accent_color_hex": (str(accent_color_hex).strip() or None) if accent_color_hex is not None else None,
         }
         resp = await self._client.post(f"{self._base_url}/send_audio_s3", json=payload)
         if resp.status_code >= 300:

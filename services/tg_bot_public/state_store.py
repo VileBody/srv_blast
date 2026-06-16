@@ -52,6 +52,9 @@ STAGE_WAIT_F2_SHAPE = "WAIT_F2_SHAPE"
 STAGE_WAIT_F1_SOUND = "WAIT_F1_SOUND"
 # F1 «Звук» — wait for optional subtitle text (or skip). Mirror of tg_bot_botapi.
 STAGE_WAIT_F1_TEXT = "WAIT_F1_TEXT"
+# Customization color pickers. Mirror of tg_bot_botapi.
+STAGE_WAIT_SUBTITLE_COLOR = "WAIT_SUBTITLE_COLOR"
+STAGE_WAIT_ACCENT_COLOR = "WAIT_ACCENT_COLOR"
 STAGE_WAIT_VERSIONS = "WAIT_VERSIONS"
 STAGE_WAIT_CONFIRM = "WAIT_CONFIRM"
 STAGE_PROCESSING = "PROCESSING"
@@ -178,6 +181,9 @@ class ChatState(BaseModel):
     f1_sound_url: str = ""
     # F1 «Звук»: optional subtitle text for the sound. Mirror of tg_bot_botapi.
     f1_sound_text: str = ""
+    # Customization colors (hex). Mirror of tg_bot_botapi.
+    subtitle_color_hex: str = ""
+    accent_color_hex: str = ""
     hook_analysis_status: str = ""
     hook_analysis_audio_path: str = ""
     hook_analysis_clip_start: float = 0.0

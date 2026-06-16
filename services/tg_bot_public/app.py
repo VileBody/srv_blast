@@ -121,6 +121,8 @@ from .state_store import (
     STAGE_WAIT_F2_SHAPE,
     STAGE_WAIT_F1_SOUND,
     STAGE_WAIT_F1_TEXT,
+    STAGE_WAIT_SUBTITLE_COLOR,
+    STAGE_WAIT_ACCENT_COLOR,
 )
 
 
@@ -315,6 +317,29 @@ BTN_SUB_MODE_4TH = "Tape"
 BTN_SUB_MODE_TRENDY = "Trendy"
 BTN_SUB_MODE_BRAT = "Brat"
 
+# Customization color palette (mirror of tg_bot_botapi). Data layer mirrored for
+# parity; the picker UX lands in public when the hooks/customization flow does.
+BTN_COLOR_DEFAULT = "По умолчанию"
+_COLOR_PALETTE: dict[str, str] = {
+    "Белый": "#FFFFFF",
+    "Чёрный": "#000000",
+    "Красный": "#FF2D55",
+    "Оранжевый": "#FF9500",
+    "Жёлтый": "#FFD60A",
+    "Зелёный": "#34C759",
+    "Голубой": "#32ADE6",
+    "Фиолетовый": "#AF52DE",
+    "Розовый": "#FF2D92",
+}
+COLOR_PALETTE_BUTTONS = list(_COLOR_PALETTE.keys())
+
+
+def _parse_color_choice(text: str) -> str | None:
+    raw = str(text or "").strip()
+    if raw == BTN_COLOR_DEFAULT:
+        return ""
+    return _COLOR_PALETTE.get(raw)
+
 # Post-generation flow buttons
 BTN_RATE_LOW = "До 5"
 BTN_RATE_MID_LOW = "5-6"
@@ -408,6 +433,8 @@ _CONTROL_BUTTONS = {
     BTN_SUB_MODE_4TH,
     BTN_SUB_MODE_TRENDY,
     BTN_SUB_MODE_BRAT,
+    BTN_COLOR_DEFAULT,
+    *COLOR_PALETTE_BUTTONS,
     BTN_LAUNCH,
     BTN_NEXT,
     BTN_RESTART,

@@ -50,6 +50,9 @@ STAGE_WAIT_F1_SOUND = "WAIT_F1_SOUND"
 # F1 «Звук» — wait for optional subtitle text for the uploaded sound (or skip).
 STAGE_WAIT_F1_TEXT = "WAIT_F1_TEXT"
 STAGE_WAIT_VERSIONS = "WAIT_VERSIONS"
+# Customization: subtitle color + accent color (shapes/focus) palette pickers.
+STAGE_WAIT_SUBTITLE_COLOR = "WAIT_SUBTITLE_COLOR"
+STAGE_WAIT_ACCENT_COLOR = "WAIT_ACCENT_COLOR"
 STAGE_WAIT_CONFIRM = "WAIT_CONFIRM"
 STAGE_PROCESSING = "PROCESSING"
 STAGE_WAIT_NEXT = "WAIT_NEXT"
@@ -128,6 +131,9 @@ class ChatState(BaseModel):
     f1_sound_url: str = ""
     # F1 «Звук» optional subtitle text (what the sound "says"). "" => no subtitle.
     f1_sound_text: str = ""
+    # Customization colors (hex like "#FF2D55"). "" => default.
+    subtitle_color_hex: str = ""   # subtitle text fill (all modes)
+    accent_color_hex: str = ""     # F2 shape + focus/accent word color
     # "" | "pending" | "ready" | "failed"
     hook_analysis_status: str = ""
     # Source audio path used to compute the analysis — if it ever doesn't

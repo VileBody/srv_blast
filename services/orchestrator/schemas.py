@@ -114,6 +114,10 @@ class SendAudioS3Request(BaseModel):
     # "says"). When present, the orchestrator renders it as a track-type subtitle
     # over the sound window (same machinery as F5). Empty/None => no subtitle.
     f1_sound_text: Optional[str] = Field(default=None, max_length=2000)
+    # Customization colors (hex '#RRGGBB'). subtitle = text fill (all modes);
+    # accent = F2 shape + focus/accent word. None/empty => script default.
+    subtitle_color_hex: Optional[str] = Field(default=None, pattern=r"^#?[0-9a-fA-F]{6}$")
+    accent_color_hex: Optional[str] = Field(default=None, pattern=r"^#?[0-9a-fA-F]{6}$")
     # Optional internal batch controls for multi-version generation.
     reuse_text_job_id: Optional[str] = None
     # When True (bigtest only): seed stage2_style + stage2_style_rotation from

@@ -108,6 +108,8 @@ _LLM_ENV_KEYS = (
     "BG_MODE",
     "BG_SOLID_COLOR_HEX",
     "SUBTITLES_FORCE_FILL_HEX",
+    "F2_SHAPE_COLOR_HEX",
+    "SUBTITLES_FOCUS_HEX",
 )
 
 
@@ -1713,6 +1715,23 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
             env["SUBTITLES_FORCE_FILL_HEX"] = "#000000"
     else:
         env["BG_MODE"] = "footage"
+
+    # Customization colors (override the bg-driven default above). subtitle →
+    # SUBTITLES_FORCE_FILL_HEX (all modes); accent → F2 shape + focus word.
+    def _norm_hex(v: Any) -> Optional[str]:
+        s = str(v or "").strip()
+        if not s:
+            return None
+        if not s.startswith("#"):
+            s = "#" + s
+        return s
+    _sub_color = _norm_hex(req.get("subtitle_color_hex"))
+    if _sub_color:
+        env["SUBTITLES_FORCE_FILL_HEX"] = _sub_color
+    _accent_color = _norm_hex(req.get("accent_color_hex"))
+    if _accent_color:
+        env["F2_SHAPE_COLOR_HEX"] = _accent_color
+        env["SUBTITLES_FOCUS_HEX"] = _accent_color
     if user_clip_start_sec is not None and user_clip_end_sec is not None:
         env["USER_CLIP_START_SEC"] = str(float(user_clip_start_sec))
         env["USER_CLIP_END_SEC"] = str(float(user_clip_end_sec))

@@ -88,6 +88,8 @@ from .state_store import (
     STAGE_WAIT_LYRICS_TEXT,
     STAGE_WAIT_NEXT,
     STAGE_WAIT_SUBTITLES_MODE,
+    STAGE_WAIT_SUBTITLE_COLOR,
+    STAGE_WAIT_ACCENT_COLOR,
     STAGE_WAIT_VERSIONS,
     STAGE_WAITING_REFERRAL,
 )
@@ -147,6 +149,29 @@ BTN_SKIP_TIMING = "Весь трек / на усмотрение ИИ"
 BTN_BACK = "Назад"
 # F1 «Звук» — skip the optional subtitle step.
 BTN_F1_NO_SUBS = "Без субтитров"
+
+# Customization color palette (label → hex). "По умолчанию" → keep script default.
+BTN_COLOR_DEFAULT = "По умолчанию"
+_COLOR_PALETTE: dict[str, str] = {
+    "Белый": "#FFFFFF",
+    "Чёрный": "#000000",
+    "Красный": "#FF2D55",
+    "Оранжевый": "#FF9500",
+    "Жёлтый": "#FFD60A",
+    "Зелёный": "#34C759",
+    "Голубой": "#32ADE6",
+    "Фиолетовый": "#AF52DE",
+    "Розовый": "#FF2D92",
+}
+COLOR_PALETTE_BUTTONS = list(_COLOR_PALETTE.keys())
+
+
+def _parse_color_choice(text: str) -> Optional[str]:
+    """Return '' for «По умолчанию», a hex for a palette label, else None."""
+    raw = str(text or "").strip()
+    if raw == BTN_COLOR_DEFAULT:
+        return ""
+    return _COLOR_PALETTE.get(raw)
 BTN_BG_FOOTAGE = "Футажи"
 BTN_BG_SOLID = "Цветной фон"
 BTN_BG_WHITE = "Белый"
@@ -348,6 +373,8 @@ _CONTROL_BUTTONS = {
     BTN_LAUNCH,
     BTN_NEXT,
     BTN_REUSE_INPUT,
+    BTN_COLOR_DEFAULT,
+    *COLOR_PALETTE_BUTTONS,
     *VERSION_BUTTONS,
 }
 
@@ -1539,6 +1566,14 @@ class BlastBotApp:
                 await self._handle_wait_timing_input(message, st)
                 return
 
+            if st.stage == STAGE_WAIT_SUBTITLE_COLOR:
+                await self._handle_wait_subtitle_color(message, st)
+                return
+
+            if st.stage == STAGE_WAIT_ACCENT_COLOR:
+                await self._handle_wait_accent_color(message, st)
+                return
+
             if st.stage == STAGE_WAIT_SUBTITLES_MODE:
                 await self._handle_wait_subtitles_mode(message, st)
                 return
@@ -2245,6 +2280,8 @@ class BlastBotApp:
         st.f2_shape = str(case.get("f2_shape", ""))
         st.f1_sound_url = str(case.get("f1_sound_url", ""))
         st.f1_sound_text = str(case.get("f1_sound_text", ""))
+        st.subtitle_color_hex = str(case.get("subtitle_color_hex", ""))
+        st.accent_color_hex = str(case.get("accent_color_hex", ""))
 
     async def _handle_wait_audio(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()
@@ -2429,6 +2466,45 @@ class BlastBotApp:
             )
             return
         st.subtitles_mode = mode
+        await self._ask_subtitle_color(message, st)
+
+    def _color_kb(self):
+        # Palette in rows of 3 + default on its own row.
+        rows = [COLOR_PALETTE_BUTTONS[i:i + 3] for i in range(0, len(COLOR_PALETTE_BUTTONS), 3)]
+        rows.append([BTN_COLOR_DEFAULT])
+        return _kb(*rows)
+
+    async def _ask_subtitle_color(self, message: Message, st: ChatState) -> None:
+        st.stage = STAGE_WAIT_SUBTITLE_COLOR
+        await self.store.set(st)
+        await message.answer(
+            "Цвет субтитров? Выбери из палитры или «По умолчанию».",
+            reply_markup=self._color_kb(),
+        )
+
+    async def _handle_wait_subtitle_color(self, message: Message, st: ChatState) -> None:
+        choice = _parse_color_choice(message.text or "")
+        if choice is None:
+            await message.answer("Выбери цвет кнопкой из палитры или «По умолчанию».")
+            return
+        st.subtitle_color_hex = choice
+        await self._ask_accent_color(message, st)
+
+    async def _ask_accent_color(self, message: Message, st: ChatState) -> None:
+        st.stage = STAGE_WAIT_ACCENT_COLOR
+        await self.store.set(st)
+        await message.answer(
+            "Акцентный цвет (фигуры «Объект» + фокус-слово)? Палитра или «По умолчанию».",
+            reply_markup=self._color_kb(),
+        )
+
+    async def _handle_wait_accent_color(self, message: Message, st: ChatState) -> None:
+        choice = _parse_color_choice(message.text or "")
+        if choice is None:
+            await message.answer("Выбери цвет кнопкой из палитры или «По умолчанию».")
+            return
+        st.accent_color_hex = choice
+        await self.store.set(st)
         await self._ask_hook_choice(message, st)
 
     # ---------- Phase A-UX helpers (lyrics / fragment factoring) ----------
@@ -3862,6 +3938,8 @@ class BlastBotApp:
                 )
                 else None
             ),
+            subtitle_color_hex=(str(st.subtitle_color_hex) or None),
+            accent_color_hex=(str(st.accent_color_hex) or None),
         )
         job_id = str(enqueue.get("job_id") or "").strip()
         if not job_id:
