@@ -41,6 +41,17 @@ _MODE_USES_BPM = {SUBTITLES_MODE_BRAT_5TH}
 DEFAULT_TARGET_COMP = "Comp 1"
 
 
+def hex_to_rgb01(hex_str: str) -> list[float] | None:
+    """'#RRGGBB' (or 'RRGGBB') → [r, g, b] floats in 0..1, else None."""
+    s = str(hex_str or "").strip().lstrip("#")
+    if len(s) != 6:
+        return None
+    try:
+        return [int(s[i:i + 2], 16) / 255.0 for i in (0, 2, 4)]
+    except ValueError:
+        return None
+
+
 def _w_text(w: Any) -> str:
     if isinstance(w, dict):
         v = w.get("text", w.get("word", w.get("w")))
@@ -176,10 +187,13 @@ def build_jsx_subtitles_overlay(
     word_timings: list[dict[str, Any]],
     bpm: Optional[float] = None,
     target_comp: str = DEFAULT_TARGET_COMP,
+    fill_hex: Optional[str] = None,
 ) -> str:
     """Return an injectable JSX block: prelude ($.global injects) + the script.
 
-    Raises if mode is not a 5th-template JSX mode or the script is missing.
+    fill_hex (e.g. '#FF2D55') overrides the subtitle text fill color in the
+    trendy/brat script (via $.global.__BLAST_FILL). Raises if mode is not a
+    5th-template JSX mode or the script is missing.
     """
     script_name = _SCRIPT_BY_MODE.get(mode)
     if not script_name:
@@ -205,6 +219,9 @@ def build_jsx_subtitles_overlay(
     ]
     if mode in _MODE_USES_BPM and bpm is not None and float(bpm) > 0.0:
         prelude_lines.append(f"$.global.__BLAST_BPM = {float(bpm)!r};")
+    rgb = hex_to_rgb01(fill_hex) if fill_hex else None
+    if rgb is not None:
+        prelude_lines.append(f"$.global.__BLAST_FILL = [{rgb[0]!r}, {rgb[1]!r}, {rgb[2]!r}];")
     prelude = "\n".join(prelude_lines)
 
     return prelude + "\n" + body

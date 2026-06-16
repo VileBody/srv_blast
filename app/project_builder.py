@@ -328,10 +328,14 @@ def _build_jsx_subtitles_js(full_edit_config: Dict[str, Any]) -> str:
     mode = str(block.get("mode") or "").strip()
     word_timings = block.get("word_timings") or []
     bpm = block.get("bpm")
+    # Subtitle color: same env that recolors Python subtitle fills
+    # (SUBTITLES_FORCE_FILL_HEX) — apply it to the trendy/brat text too.
+    fill_hex = str(os.environ.get("SUBTITLES_FORCE_FILL_HEX") or "").strip() or None
     overlay = build_jsx_subtitles_overlay(
         mode=mode,
         word_timings=list(word_timings),
         bpm=(float(bpm) if bpm is not None else None),
+        fill_hex=fill_hex,
     )
     LOGGER.info(
         "jsx subtitles present mode=%s words=%d bpm=%s js_len=%d",

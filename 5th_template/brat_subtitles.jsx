@@ -71,6 +71,10 @@ function injectedData(){
     try { if (typeof $.global.__BLAST_SUBS_JSON !== "undefined" && $.global.__BLAST_SUBS_JSON) return $.global.__BLAST_SUBS_JSON; } catch(e){}
     return null;
 }
+function injectedFill(){
+    try { if (typeof $.global.__BLAST_FILL !== "undefined" && $.global.__BLAST_FILL && $.global.__BLAST_FILL.length >= 3) return $.global.__BLAST_FILL; } catch(e){}
+    return null;
+}
 function injectedBpm(){
     try { if (typeof $.global.__BLAST_BPM !== "undefined" && $.global.__BLAST_BPM){ var b = Number($.global.__BLAST_BPM); if (b > 0) return b; } } catch(e){}
     return null;
@@ -208,6 +212,7 @@ function addBlinker(tcomp, spanIn, spanOut){
 (function(){
     if (!app.project){ say("нет открытого проекта"); return; }
     var __bpm = injectedBpm(); if (__bpm) CONFIG.bpm = __bpm;
+    var __fill = injectedFill(); if (__fill) CONFIG.fillColor = __fill;  // blast: custom subtitle color
     var data = injectedData();
     if (!data){
         var jf = pickFile(); if (!jf){ say("файл не выбран"); return; }

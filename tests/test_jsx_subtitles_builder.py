@@ -118,6 +118,30 @@ def test_overlay_trendy_inlines_json_and_disables_dialog():
     assert json.loads(js[start:end])["word_timings"][0]["word"] == "йо"
 
 
+def test_hex_to_rgb01():
+    from app.jsx_subtitles_builder import hex_to_rgb01
+
+    assert hex_to_rgb01("#FFFFFF") == [1.0, 1.0, 1.0]
+    assert hex_to_rgb01("000000") == [0.0, 0.0, 0.0]
+    r = hex_to_rgb01("#FF0000")
+    assert r[0] == 1.0 and r[1] == 0.0 and r[2] == 0.0
+    assert hex_to_rgb01("nope") is None
+    assert hex_to_rgb01("") is None
+
+
+def test_overlay_injects_custom_fill_color():
+    wt = word_timings_from_transcript([{"text": "йо", "t_start": 0.0, "t_end": 0.4}])
+    js = build_jsx_subtitles_overlay(
+        mode=SUBTITLES_MODE_TRENDY_5TH, word_timings=wt, fill_hex="#FF0000",
+    )
+    assert "$.global.__BLAST_FILL = [1.0, 0.0, 0.0]" in js
+    # script reads it
+    assert "injectedFill" in js
+    # no fill ASSIGNMENT injected when not requested (the reader helper stays)
+    js2 = build_jsx_subtitles_overlay(mode=SUBTITLES_MODE_TRENDY_5TH, word_timings=wt)
+    assert "$.global.__BLAST_FILL = [" not in js2
+
+
 def test_overlay_brat_injects_bpm():
     wt = word_timings_from_transcript([{"text": "бам", "t_start": 0.0, "t_end": 0.4}])
     js = build_jsx_subtitles_overlay(

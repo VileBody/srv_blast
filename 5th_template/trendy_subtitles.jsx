@@ -71,6 +71,10 @@ function injectedData(){
     try { if (typeof $.global.__BLAST_SUBS_JSON !== "undefined" && $.global.__BLAST_SUBS_JSON) return $.global.__BLAST_SUBS_JSON; } catch(e){}
     return null;
 }
+function injectedFill(){
+    try { if (typeof $.global.__BLAST_FILL !== "undefined" && $.global.__BLAST_FILL && $.global.__BLAST_FILL.length >= 3) return $.global.__BLAST_FILL; } catch(e){}
+    return null;
+}
 function pickFile(){
     if (CONFIG.INTERACTIVE){ var f = File.openDialog("Выбери JSON с таймингами субтитров"); return f ? f : null; }
     try { var sf = new File($.fileName); return new File(sf.parent.fsName + "/subtitles.json"); } catch(e){ return null; }
@@ -151,6 +155,7 @@ function addSapphire(L){
 // ============================ MAIN ============================
 (function(){
     if (!app.project){ say("нет открытого проекта"); return; }
+    var __fill = injectedFill(); if (__fill) CONFIG.fillColor = __fill;  // blast: custom subtitle color
     var data = injectedData();
     if (!data){
         var jf = pickFile(); if (!jf){ say("файл не выбран"); return; }
