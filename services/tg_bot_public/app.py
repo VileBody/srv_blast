@@ -341,6 +341,121 @@ def _parse_color_choice(text: str) -> str | None:
         return ""
     return _COLOR_PALETTE.get(raw)
 
+
+# ── Hook flow buttons (ported 1:1 from tg_bot_botapi; public UX behind
+#    HOOK_FLOW_ENABLED). All 5 categories: Звук=F1, Объект=F2, Эффект=F3,
+#    Движение=F4, Мысль=F5.
+BTN_HOOK_YES = "Сделать хук"
+BTN_HOOK_NO = "Без хука"
+BTN_HOOK_DROP_NONE = "В отрывке нет дропа"
+BTN_HOOK_DROP_MANUAL = "Ввести вручную"
+BTN_HOOK_CAT_SOUND = "Звук"
+BTN_HOOK_CAT_OBJECT = "Объект"
+BTN_HOOK_CAT_EFFECT = "Эффект"
+BTN_HOOK_CAT_MOTION = "Движение"
+BTN_HOOK_CAT_THOUGHT = "Мысль"
+HOOK_CATEGORY_BUTTONS = [
+    BTN_HOOK_CAT_SOUND, BTN_HOOK_CAT_OBJECT, BTN_HOOK_CAT_EFFECT,
+    BTN_HOOK_CAT_MOTION, BTN_HOOK_CAT_THOUGHT,
+]
+_HOOK_CATEGORY_BY_BUTTON = {
+    BTN_HOOK_CAT_SOUND: "sound",
+    BTN_HOOK_CAT_OBJECT: "object",
+    BTN_HOOK_CAT_EFFECT: "effect",
+    BTN_HOOK_CAT_MOTION: "motion",
+    BTN_HOOK_CAT_THOUGHT: "thought",
+}
+_HOOK_CATEGORY_NOT_READY: set[str] = set()
+# F4 «Движение» device picker
+BTN_HOOK_DEV_SWIPE = "Свайп"
+BTN_HOOK_DEV_TAP = "Тап"
+BTN_HOOK_DEV_PINCH = "Зум"
+BTN_HOOK_DEV_HOLD = "Задержи палец"
+BTN_HOOK_DEV_HEAD = "Качай головой"
+HOOK_MOTION_DEVICE_BUTTONS = [
+    BTN_HOOK_DEV_SWIPE, BTN_HOOK_DEV_TAP, BTN_HOOK_DEV_PINCH,
+    BTN_HOOK_DEV_HOLD, BTN_HOOK_DEV_HEAD,
+]
+_HOOK_MOTION_DEVICE_BY_BUTTON = {
+    BTN_HOOK_DEV_SWIPE: "swipe",
+    BTN_HOOK_DEV_TAP: "tap",
+    BTN_HOOK_DEV_PINCH: "pinch",
+    BTN_HOOK_DEV_HOLD: "holdfinger",
+    BTN_HOOK_DEV_HEAD: "head",
+}
+# F5 «Мысль» device picker
+BTN_HOOK_DEV_PUNCHLINE = "Панчлайн"
+BTN_HOOK_DEV_MISSING_WORD = "Пропущенное слово"
+BTN_HOOK_DEV_LYRIC_ECHO = "Эхо"
+BTN_HOOK_DEV_QUESTION = "Вопрос к треку"
+BTN_HOOK_DEV_INVERSE = "Инверсия"
+HOOK_DEVICE_BUTTONS = [
+    BTN_HOOK_DEV_PUNCHLINE, BTN_HOOK_DEV_MISSING_WORD, BTN_HOOK_DEV_LYRIC_ECHO,
+    BTN_HOOK_DEV_QUESTION, BTN_HOOK_DEV_INVERSE,
+]
+_HOOK_DEVICE_BY_BUTTON = {
+    BTN_HOOK_DEV_PUNCHLINE: "punchline",
+    BTN_HOOK_DEV_MISSING_WORD: "missing_word",
+    BTN_HOOK_DEV_LYRIC_ECHO: "lyric_echo",
+    BTN_HOOK_DEV_QUESTION: "question_to_track",
+    BTN_HOOK_DEV_INVERSE: "inverse_lyric",
+}
+# F3 «Эффект» 3-step picker
+BTN_FX_SKIP = "Пропустить"
+BTN_FX_HOOK_LIGHT = "Молния"
+BTN_FX_HOOK_SHUTTER = "Затвор"
+BTN_FX_HOOK_SLOW = "Слоу-шаттер"
+_FX_HOOK_BY_BUTTON = {
+    BTN_FX_HOOK_LIGHT: "hook_light",
+    BTN_FX_HOOK_SHUTTER: "shutter_effect",
+    BTN_FX_HOOK_SLOW: "flash_slow_shutter",
+}
+BTN_FX_TR_SNAP = "Снап-вайп"
+BTN_FX_TR_MINIMAX = "Минимакс"
+BTN_FX_TR_INVERT = "Инверт"
+BTN_FX_TR_EXTRACT = "Экстракт"
+BTN_FX_TR_FLASH = "Вспышки"
+BTN_FX_TR_SHAKE = "Тряска"
+_FX_TRANSITION_BY_BUTTON = {
+    BTN_FX_TR_SNAP: "snap_wipe",
+    BTN_FX_TR_MINIMAX: "minimax",
+    BTN_FX_TR_INVERT: "invert_flash",
+    BTN_FX_TR_EXTRACT: "extract_flash",
+    BTN_FX_TR_FLASH: "flash_on_cuts",
+    BTN_FX_TR_SHAKE: "layer_shake",
+}
+BTN_FX_EX_XEROX = "Ксерокс"
+BTN_FX_EX_ANALOG = "Аналог-глитч"
+BTN_FX_EX_NEON = "Неон"
+BTN_FX_EX_OLDCAM = "Старая камера"
+_FX_EXTRA_BY_BUTTON = {
+    BTN_FX_EX_XEROX: "xerox",
+    BTN_FX_EX_ANALOG: "analog_glitch",
+    BTN_FX_EX_NEON: "neon_extract",
+    BTN_FX_EX_OLDCAM: "old_camera",
+}
+BTN_FX_EXT_STD = "Стандарт"
+BTN_FX_EXT_END = "До конца ролика"
+BTN_FX_EXT_3 = "3 футажа после"
+_FX_EXTEND_BY_BUTTON = {
+    BTN_FX_EXT_STD: "",
+    BTN_FX_EXT_END: "to_end",
+    BTN_FX_EXT_3: "after_drop:3",
+}
+# F2 «Объект» shape picker
+BTN_F2_SHAPE_RHOMB = "Ромб"
+BTN_F2_SHAPE_SQUARE = "Квадрат"
+BTN_F2_SHAPE_STAR1 = "Звезда-10"
+BTN_F2_SHAPE_STAR2 = "Звезда-5"
+BTN_F2_SHAPE_ELIPSE = "Эллипс"
+_F2_SHAPE_BY_BUTTON = {
+    BTN_F2_SHAPE_RHOMB: "rhomb",
+    BTN_F2_SHAPE_SQUARE: "square",
+    BTN_F2_SHAPE_STAR1: "star1",
+    BTN_F2_SHAPE_STAR2: "star2",
+    BTN_F2_SHAPE_ELIPSE: "elipse",
+}
+
 # Post-generation flow buttons
 BTN_RATE_LOW = "До 5"
 BTN_RATE_MID_LOW = "5-6"
