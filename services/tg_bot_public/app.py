@@ -512,6 +512,8 @@ SUBTITLES_MODE_BUTTONS = [
     BTN_SUB_MODE_IMPULSE,
     BTN_SUB_MODE_SCENES,
     BTN_SUB_MODE_4TH,
+    BTN_SUB_MODE_TRENDY,
+    BTN_SUB_MODE_BRAT,
 ]
 _SUBTITLES_MODE_BY_BUTTON = {
     BTN_SUB_MODE_IMPULSE: SUBTITLES_MODE_IMPULSE_2ND,
@@ -3411,8 +3413,9 @@ class BlastBotApp:
             await message.answer("Выбери цвет кнопкой из палитры или «По умолчанию».")
             return
         st.accent_color_hex = choice
+        st.colors_done = True
         await self.store.set(st)
-        await self._ask_hook_choice(message, st)
+        await self._proceed_to_versions_or_confirm(message, st)
 
     async def _trigger_hook_analysis_task(self, st: ChatState) -> None:
         audio_path = str(st.prepared_audio_local_path or "").strip()
@@ -4136,6 +4139,7 @@ class BlastBotApp:
                 [BTN_SUB_MODE_IMPULSE],
                 [BTN_SUB_MODE_SCENES],
                 [BTN_SUB_MODE_4TH],
+                [BTN_SUB_MODE_TRENDY, BTN_SUB_MODE_BRAT],
             ),
         )
 
@@ -4448,7 +4452,7 @@ class BlastBotApp:
         mode = _parse_subtitles_mode_choice(message.text or "")
         if mode is None:
             await message.answer(
-                "Выбери режим кнопкой: «Impulse», «Jakson» или «Tape»."
+                "Выбери режим кнопкой: «Impulse», «Jakson», «Tape», «Trendy» или «Brat»."
             )
             return
         st.subtitles_mode = mode
@@ -4515,7 +4519,13 @@ class BlastBotApp:
         return "\n".join(lines)
 
     async def _proceed_to_versions_or_confirm(self, message: Message, st: ChatState) -> None:
-        """Post-settings entry: paid → version count picker, else → final confirm."""
+        """Post-settings entry: paid → version count picker, else → final confirm.
+
+        Customization (colors) runs AFTER the hook flow — if it hasn't run yet
+        this redirects into the color pickers once, then comes back here."""
+        if HOOK_FLOW_ENABLED and not st.colors_done:
+            await self._ask_subtitle_color(message, st)
+            return
         paid = await self.credits_db.has_paid(st.chat_id)
         if paid:
             st.stage = STAGE_WAIT_VERSIONS
@@ -4537,10 +4547,12 @@ class BlastBotApp:
     async def _handle_wait_confirm_mode(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()
         if text == BTN_CONFIRM_YES:
-            # Enter the color + hook flow when enabled; otherwise go straight to
-            # version/confirm (legacy behavior).
+            # Hook flow first; customization (colors) runs after it (see
+            # _proceed_to_versions_or_confirm). Legacy path when the flag is off.
             if HOOK_FLOW_ENABLED:
-                await self._ask_subtitle_color(message, st)
+                st.colors_done = False
+                await self.store.set(st)
+                await self._ask_hook_choice(message, st)
             else:
                 await self._proceed_to_versions_or_confirm(message, st)
             return

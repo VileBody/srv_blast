@@ -186,6 +186,9 @@ class ChatState(BaseModel):
     # Customization colors (hex). Mirror of tg_bot_botapi.
     subtitle_color_hex: str = ""
     accent_color_hex: str = ""
+    # True once the color pickers ran (they come AFTER the hook flow). Reset at
+    # the start of each settings flow.
+    colors_done: bool = False
     # Hook battery (team bot only; mirrored for parity). [] => normal flow.
     battery_mode: bool = False
     battery_cases: list = Field(default_factory=list)

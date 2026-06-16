@@ -20,12 +20,12 @@ def test_public_maps_trendy_and_brat_modes():
     assert SUBTITLES_MODE_BRAT_5TH in modes
 
 
-def test_public_curated_picker_excludes_5th_modes():
-    # Mirrored for parity but NOT surfaced in the public keyboard yet.
+def test_public_picker_includes_5th_modes():
+    # trendy/brat are now surfaced in the public subtitle picker.
     from services.tg_bot_public import app as pub
 
-    assert pub.BTN_SUB_MODE_TRENDY not in pub.SUBTITLES_MODE_BUTTONS
-    assert pub.BTN_SUB_MODE_BRAT not in pub.SUBTITLES_MODE_BUTTONS
+    assert pub.BTN_SUB_MODE_TRENDY in pub.SUBTITLES_MODE_BUTTONS
+    assert pub.BTN_SUB_MODE_BRAT in pub.SUBTITLES_MODE_BUTTONS
 
 
 def test_5th_modes_normalize_in_core():
