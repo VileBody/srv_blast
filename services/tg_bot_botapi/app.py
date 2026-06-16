@@ -82,6 +82,7 @@ from .state_store import (
     STAGE_WAIT_F2_SHAPE,
     STAGE_WAIT_F1_SOUND,
     STAGE_WAIT_F1_TEXT,
+    STAGE_WAIT_BATTERY_SOUND,
     STAGE_WAIT_TIMING_CHOICE,
     STAGE_WAIT_TIMING_INPUT,
     STAGE_WAIT_FRAGMENT_TEXT,
@@ -138,6 +139,9 @@ def _season_flow_enabled() -> bool:
 # /bigtest is available only on the team bot. Set False in tg_bot_public/app.py
 # so parity code is present in both bots but the command is blocked in public.
 BIGTEST_ENABLED: bool = True
+# Hook battery (one button → N videos, one per category, random sub-picks).
+# Team bot only; mirrored as False in tg_bot_public for parity.
+BATTERY_ENABLED: bool = True
 
 
 BTN_SEND_TRACK = "Отправить трек"
@@ -196,6 +200,8 @@ BTN_SUB_MODE_BRAT = "Brat (blocks)"
 # Hook feature (Phase A-UX).
 BTN_HOOK_YES = "Сделать хук"
 BTN_HOOK_NO = "Без хука"
+BTN_HOOK_BATTERY = "🎲 Батарея (5 хуков)"
+BTN_BATTERY_NO_SOUND = "Без звука (4 ролика)"
 BTN_HOOK_DROP_NONE = "В отрывке нет дропа"
 BTN_HOOK_DROP_MANUAL = "Ввести вручную"
 BTN_HOOK_TYPE_STANDARD = "Стандартный"
@@ -1627,6 +1633,10 @@ class BlastBotApp:
                 await self._handle_wait_f1_text(message, st)
                 return
 
+            if st.stage == STAGE_WAIT_BATTERY_SOUND:
+                await self._handle_wait_battery_sound(message, st)
+                return
+
             if st.stage == STAGE_WAIT_VERSIONS:
                 await self._handle_wait_versions(message, st)
                 return
@@ -2651,10 +2661,15 @@ class BlastBotApp:
             note = "\n\nЕщё считаю анализ — выбери, когда определишься."
         elif st.hook_analysis_status == "failed":
             note = "\n\nАнализ аудио не удался, дроп можно ввести вручную."
+        rows = [[BTN_HOOK_YES, BTN_HOOK_NO]]
+        if BATTERY_ENABLED:
+            rows.append([BTN_HOOK_BATTERY])
         await message.answer(
             "Сделать хук в ролик? Хук — это короткий FX-акцент на дропе, "
-            "помогает удерживать зрителя." + note,
-            reply_markup=_kb([BTN_HOOK_YES, BTN_HOOK_NO]),
+            "помогает удерживать зрителя." + note
+            + ("\n\n🎲 Батарея — один трек, по ролику на каждую категорию хука "
+               "с рандомными настройками." if BATTERY_ENABLED else ""),
+            reply_markup=_kb(*rows),
         )
 
     async def _handle_wait_hook_choice(self, message: Message, st: ChatState) -> None:
@@ -2667,12 +2682,23 @@ class BlastBotApp:
             st.f2_shape = ""
             st.f1_sound_url = ""
             st.f1_sound_text = ""
+            st.battery_mode = False
+            st.battery_cases = []
             await self.store.set(st)
             await self._ask_versions(message, st)
             return
         if text == BTN_HOOK_YES:
             st.hook_enabled = True
+            st.battery_mode = False
             await self.store.set(st)
+            await self._ask_hook_drop(message, st)
+            return
+        if BATTERY_ENABLED and text == BTN_HOOK_BATTERY:
+            st.hook_enabled = True
+            st.battery_mode = True
+            await self.store.set(st)
+            # Battery reuses the drop picker; after a drop is chosen we branch to
+            # the (optional) F1 sound, then enqueue one video per category.
             await self._ask_hook_drop(message, st)
             return
         await message.answer(
@@ -2727,6 +2753,9 @@ class BlastBotApp:
             await self._ask_hook_choice(message, st)
             return
         if text == BTN_HOOK_DROP_NONE:
+            if st.battery_mode:
+                await message.answer("Для батареи нужен момент дропа — выбери его кнопкой или введи вручную.")
+                return
             st.hook_drop_t = None
             await self.store.set(st)
             await self._ask_hook_type(message, st)
@@ -2757,7 +2786,112 @@ class BlastBotApp:
         await message.answer(
             f"Дроп зафиксирован на {self._fmt_timing(float(chosen))}."
         )
-        await self._ask_hook_type(message, st)
+        await self._after_hook_drop(message, st)
+
+    async def _after_hook_drop(self, message: Message, st: ChatState) -> None:
+        """Route after a drop is fixed: battery → F1 sound step; else category."""
+        if st.battery_mode:
+            await self._ask_battery_sound(message, st)
+        else:
+            await self._ask_hook_type(message, st)
+
+    # ── Hook battery (team bot): one button → N videos, one per category ──
+    async def _ask_battery_sound(self, message: Message, st: ChatState) -> None:
+        st.stage = STAGE_WAIT_BATTERY_SOUND
+        await self.store.set(st)
+        await message.answer(
+            "🎲 Батарея: пришли звук для ролика «Звук» (F1) — он заиграет до дропа.\n"
+            "Или «Без звука» → сгенерю 4 ролика (Объект/Эффект/Движение/Мысль).",
+            reply_markup=_kb([BTN_BATTERY_NO_SOUND], [BTN_BACK]),
+        )
+
+    async def _handle_wait_battery_sound(self, message: Message, st: ChatState) -> None:
+        text = str(message.text or "").strip()
+        if text == BTN_BACK:
+            await self._ask_hook_drop(message, st)
+            return
+        if text == BTN_BATTERY_NO_SOUND:
+            st.f1_sound_url = ""
+            await self.store.set(st)
+            await self._start_battery(message, st)
+            return
+        spec = _extract_audio_spec(message)
+        if spec is None:
+            await message.answer("Нужен аудио-файл (mp3/m4a/wav) или нажми «Без звука».")
+            return
+        if message.chat is None:
+            return
+        chat_id = int(message.chat.id)
+        file_id, original_name = spec
+        incoming_dir = self.settings.tmp_dir / str(chat_id) / "hook_sound"
+        incoming_dir.mkdir(parents=True, exist_ok=True)
+        src_path = incoming_dir / f"{_now_tag()}_{uuid.uuid4().hex[:8]}_{_safe_name(original_name)}"
+        try:
+            await message.answer("Загружаю звук…")
+            await self._download_telegram_audio_with_retry(
+                bot=message.bot, file_id=file_id, dest=src_path,
+                chat_id=chat_id, original_name=original_name,
+            )
+            key = self._build_raw_audio_key(chat_id=chat_id, file_name=f"f1hook_{src_path.name}")
+            sound_url = await asyncio.to_thread(
+                self.s3.upload_file, path=src_path,
+                bucket=self.settings.s3_bucket_raw_audio, key=key,
+                content_type="audio/mpeg",
+            )
+        except Exception as e:
+            log.exception("battery_sound_upload_failed chat=%s err=%s", chat_id, e)
+            await message.answer(f"Не удалось загрузить звук: {e}. Попробуй ещё раз или «Без звука».")
+            return
+        st.f1_sound_url = str(sound_url)
+        await self.store.set(st)
+        await self._start_battery(message, st)
+
+    def _build_battery_cases(self, st: ChatState) -> List[Dict[str, Any]]:
+        """One random case per hook category (no category repeats within a track).
+        F4 «Движение» only when bpm is measured; F1 «Звук» only when a sound was
+        uploaded. Sub-picks are random per press."""
+        import random
+        rng = random.Random()
+        cases: List[Dict[str, Any]] = []
+        shape = rng.choice(["rhomb", "square", "star1", "star2", "elipse"])
+        cases.append({"label": f"Объект: {shape}", "hook_enabled": True,
+                      "hook_category": "object", "f2_shape": shape})
+        fx_hook = rng.choice(["hook_light", "shutter_effect", "flash_slow_shutter"])
+        fx_tr = rng.choice(["snap_wipe", "minimax", "invert_flash", "extract_flash", "flash_on_cuts", "layer_shake"])
+        fx_extra = rng.choice(["", "xerox", "analog_glitch", "neon_extract", "old_camera"])
+        cases.append({"label": "Эффект", "hook_enabled": True, "hook_category": "effect",
+                      "effect_hook": fx_hook, "effect_transition": fx_tr, "effect_extra": fx_extra})
+        if float(st.hook_analysis_bpm or 0.0) > 0.0:
+            dev = rng.choice(["swipe", "tap", "pinch", "holdfinger", "head"])
+            cases.append({"label": f"Движение: {dev}", "hook_enabled": True,
+                          "hook_category": "motion", "hook_device": dev})
+        dev5 = rng.choice(["punchline", "missing_word", "lyric_echo", "question_to_track", "inverse_lyric"])
+        cases.append({"label": f"Мысль: {dev5}", "hook_enabled": True,
+                      "hook_category": "thought", "hook_device": dev5})
+        if str(st.f1_sound_url or "").strip():
+            cases.append({"label": "Звук", "hook_enabled": True, "hook_category": "sound",
+                          "f1_sound_url": str(st.f1_sound_url)})
+        return cases[:5]
+
+    async def _start_battery(self, message: Message, st: ChatState) -> None:
+        if st.hook_drop_t is None:
+            await message.answer("Для батареи нужен дроп — выбери его.")
+            await self._ask_hook_drop(message, st)
+            return
+        cases = self._build_battery_cases(st)
+        if not cases:
+            await message.answer("Не удалось собрать батарею. Попробуй другой трек.")
+            return
+        st.battery_cases = cases
+        st.versions_count = len(cases)
+        st.stage = STAGE_WAIT_CONFIRM
+        await self.store.set(st)
+        labels = "\n".join(f"{i + 1}. {c['label']}" for i, c in enumerate(cases))
+        await message.answer(
+            f"🎲 Батарея: {len(cases)} ролика, по одному на категорию:\n{labels}\n\n"
+            f"Дроп {self._fmt_timing(float(st.hook_drop_t))}. Запустить?",
+            reply_markup=_kb([BTN_LAUNCH]),
+        )
 
     async def _handle_wait_hook_drop_manual(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()
@@ -2777,7 +2911,7 @@ class BlastBotApp:
         st.hook_drop_t = float(parsed)
         await self.store.set(st)
         await message.answer(f"Дроп зафиксирован на {self._fmt_timing(float(parsed))}.")
-        await self._ask_hook_type(message, st)
+        await self._after_hook_drop(message, st)
 
     async def _send_hook_intro(self, message: Message, key: str) -> None:
         """Send a hook option's intro: video+caption once a clip is set, else
@@ -3426,9 +3560,15 @@ class BlastBotApp:
             enqueue_failed_from_version: int | None = None
             enqueue_failed_error: str = ""
 
-            if self.settings.bot_enqueue_all_versions_async:
+            # Battery: each version is an INDEPENDENT job with a different hook
+            # config, so force the parallel/per-version path (no master reuse).
+            if self.settings.bot_enqueue_all_versions_async or st.battery_cases:
                 next_version_to_enqueue = int(versions) + 1
                 for version_index in range(1, int(versions) + 1):
+                    # Overlay this version's hook battery case before enqueue.
+                    if st.battery_cases and version_index <= len(st.battery_cases):
+                        self._apply_bigtest_config(st, st.battery_cases[version_index - 1])
+                        await self.store.set(st)
                     try:
                         job_id = await self._enqueue_batch_version(
                             st=st,
@@ -3463,6 +3603,10 @@ class BlastBotApp:
             if not job_order:
                 raise RuntimeError("Не удалось поставить в очередь ни одной версии.")
             master_job_id = job_order[0]
+
+            # Battery done — clear so the next normal run isn't affected.
+            st.battery_cases = []
+            st.battery_mode = False
 
             st.pending_deduction_ref_id = ""
             st.stage = STAGE_PROCESSING

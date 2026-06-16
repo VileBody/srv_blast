@@ -174,6 +174,8 @@ HOOK_FLOW_ENABLED = (os.environ.get("HOOK_FLOW_ENABLED", "0").strip().lower()
 # (user_clip_*) + drop from the source job's request so reframe/F4/F5/F2 cases
 # don't enqueue with user_clip_end_sec=0 (orchestrator 422). team-only.
 BIGTEST_ENABLED: bool = False
+# Hook battery is team-bot only; mirrored here as False (button never shown).
+BATTERY_ENABLED: bool = False
 
 HOOK_STAGES = frozenset({
     STAGE_WAIT_HOOK_CHOICE,

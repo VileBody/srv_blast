@@ -49,6 +49,8 @@ STAGE_WAIT_F2_SHAPE = "WAIT_F2_SHAPE"
 STAGE_WAIT_F1_SOUND = "WAIT_F1_SOUND"
 # F1 «Звук» — wait for optional subtitle text for the uploaded sound (or skip).
 STAGE_WAIT_F1_TEXT = "WAIT_F1_TEXT"
+# Hook battery — wait for the (optional) F1 sound before generating N videos.
+STAGE_WAIT_BATTERY_SOUND = "WAIT_BATTERY_SOUND"
 STAGE_WAIT_VERSIONS = "WAIT_VERSIONS"
 # Customization: subtitle color + accent color (shapes/focus) palette pickers.
 STAGE_WAIT_SUBTITLE_COLOR = "WAIT_SUBTITLE_COLOR"
@@ -134,6 +136,11 @@ class ChatState(BaseModel):
     # Customization colors (hex like "#FF2D55"). "" => default.
     subtitle_color_hex: str = ""   # subtitle text fill (all modes)
     accent_color_hex: str = ""     # F2 shape + focus/accent word color
+    # Hook battery (team bot): one button → N videos, one per hook category with
+    # random sub-picks. battery_mode = inside the battery sub-flow; battery_cases
+    # = the per-version hook configs applied at enqueue. [] => normal flow.
+    battery_mode: bool = False
+    battery_cases: list = Field(default_factory=list)
     # "" | "pending" | "ready" | "failed"
     hook_analysis_status: str = ""
     # Source audio path used to compute the analysis — if it ever doesn't
