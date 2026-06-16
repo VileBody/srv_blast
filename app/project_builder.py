@@ -372,14 +372,17 @@ def _build_f2_overlay_js(full_edit_config: Dict[str, Any]) -> str:
 
     from mlcore.hooks.f2_object.overlay import build_overlay_jsx
 
+    # Custom shape color (F2 «Объект» customization). Absent → script default.
+    shape_fill_hex = str(os.environ.get("F2_SHAPE_COLOR_HEX") or "").strip() or None
     overlay = build_overlay_jsx(
         shape=shape,
         drop_time=float(drop_time),
         seed=int(seed),
+        shape_fill_hex=shape_fill_hex,
     )
     LOGGER.info(
-        "f2 combo present shape=%s drop_time=%s seed=%s js_len=%d",
-        shape, drop_time, seed, len(overlay),
+        "f2 combo present shape=%s drop_time=%s seed=%s color=%s js_len=%d",
+        shape, drop_time, seed, shape_fill_hex, len(overlay),
     )
     return overlay
 

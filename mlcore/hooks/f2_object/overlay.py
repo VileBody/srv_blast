@@ -29,6 +29,7 @@ No f2 selection → caller passes nothing → `_build_f2_overlay_js` returns ""
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any, Optional
 
@@ -139,12 +140,24 @@ _JS_PRELUDE = r"""
 """
 
 
+def _shape_fill_rgba(hex_str: str) -> Optional[list[float]]:
+    """'#RRGGBB' → [r, g, b, 1.0] floats 0..1 (AE shape fill is RGBA)."""
+    s = str(hex_str or "").strip().lstrip("#")
+    if len(s) != 6:
+        return None
+    try:
+        return [int(s[i:i + 2], 16) / 255.0 for i in (0, 2, 4)] + [1.0]
+    except ValueError:
+        return None
+
+
 def build_overlay_jsx(
     *,
     shape: Optional[str] = None,
     drop_time: float,
     seed: int,
     post_drop_pool: tuple[str, ...] = F2_POST_DROP_TRANSITION_POOL,
+    shape_fill_hex: Optional[str] = None,
 ) -> str:
     """Return the injectable F2 combo JSX block.
 
@@ -198,6 +211,16 @@ def build_overlay_jsx(
     # Skipped entirely when shape is None (F1 «Звук» reuse — no pre-drop visual).
     if shape is not None:
         shape_src = _read_shape_script(shape)
+        # Custom shape color (F2 «Объект» customization): override the SHAPE.fill
+        # RGBA in the shape body. None → keep the script's default.
+        rgba = _shape_fill_rgba(shape_fill_hex) if shape_fill_hex else None
+        if rgba is not None:
+            shape_src = re.sub(
+                r"fill:\s*\[[^\]]*\]",
+                f"fill: [{rgba[0]!r}, {rgba[1]!r}, {rgba[2]!r}, 1]",
+                shape_src,
+                count=1,
+            )
         parts.append("  /* -- (1) PRE-DROP shape transition (first footage only) -- */")
         parts.append(f"  var __f2_t_fx_offset = {_js(_SHAPE_T_FX_OFFSET)};")
         parts.append("  var __f2_first = -1;")

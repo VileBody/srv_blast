@@ -55,6 +55,14 @@ def test_build_overlay_minimal_structure() -> None:
     assert "__f2_groups" in js
 
 
+def test_build_overlay_custom_shape_color() -> None:
+    # F2 «Объект» customization: SHAPE.fill overridden by shape_fill_hex.
+    js = build_overlay_jsx(shape="rhomb", drop_time=4.0, seed=1, shape_fill_hex="#FF0000")
+    assert "fill: [1.0, 0.0, 0.0, 1]" in js
+    js_def = build_overlay_jsx(shape="rhomb", drop_time=4.0, seed=1)
+    assert "fill: [1.0, 0.0, 0.0, 1]" not in js_def
+
+
 def test_build_overlay_inlines_all_pool_transitions() -> None:
     js = build_overlay_jsx(shape="square", drop_time=10.5, seed=1)
     # Each transition has a script body marker. Pull a tiny unique substring
