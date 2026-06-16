@@ -24,6 +24,7 @@ from core.telegram_api import build_aiogram_session, make_telegram_api
 from core.clip_window import CLIP_WINDOW_RANGE_S_LABEL
 from core.filesystem_hygiene import cleanup_jobs_artifacts, cleanup_tmp_chat_dirs
 from core.queue_estimate import format_queue_estimate_lines, pick_queue_estimate_job_id
+from core.hook_intros import hook_intro
 from core.subtitles_mode import (
     SUBTITLES_MODE_IMPULSE_2ND,
     SUBTITLES_MODE_LEGACY_BLOCKS,
@@ -3191,6 +3192,19 @@ class BlastBotApp:
         st.footage_artist_key = artist["key"]
         st.footage_artist_id = artist["key"]
         await self._ask_subtitles_mode(message, st)
+
+    async def _send_hook_intro(self, message: Message, key: str) -> None:
+        """Send a hook option's intro (video+caption once a clip is set, else
+        text). Mirror of tg_bot_botapi — used when the public hook flow lands."""
+        intro = hook_intro(key)
+        if not intro:
+            return
+        if intro["video"]:
+            await message.answer_video(
+                video=intro["video"], caption=intro["text"], parse_mode="Markdown"
+            )
+        else:
+            await message.answer(intro["text"], parse_mode="Markdown")
 
     async def _ask_subtitles_mode(self, message: Message, st: ChatState) -> None:
         st.stage = STAGE_WAIT_SUBTITLES_MODE

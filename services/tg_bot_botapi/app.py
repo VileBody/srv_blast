@@ -27,6 +27,7 @@ from core.telegram_api import build_aiogram_session, make_telegram_api
 from core.clip_window import CLIP_WINDOW_RANGE_S_LABEL
 from core.filesystem_hygiene import cleanup_jobs_artifacts, cleanup_tmp_chat_dirs
 from core.queue_estimate import format_queue_estimate_lines, pick_queue_estimate_job_id
+from core.hook_intros import HOOK_CATEGORY_ORDER, hook_intro
 from core.subtitles_mode import (
     SUBTITLES_MODE_IMPULSE_2ND,
     SUBTITLES_MODE_LEGACY_BLOCKS,
@@ -2778,18 +2779,27 @@ class BlastBotApp:
         await message.answer(f"Дроп зафиксирован на {self._fmt_timing(float(parsed))}.")
         await self._ask_hook_type(message, st)
 
+    async def _send_hook_intro(self, message: Message, key: str) -> None:
+        """Send a hook option's intro: video+caption once a clip is set, else
+        text. Same upgrade path as the subtitle-mode previews."""
+        intro = hook_intro(key)
+        if not intro:
+            return
+        if intro["video"]:
+            await message.answer_video(
+                video=intro["video"], caption=intro["text"], parse_mode="Markdown"
+            )
+        else:
+            await message.answer(intro["text"], parse_mode="Markdown")
+
     async def _ask_hook_type(self, message: Message, st: ChatState) -> None:
-        """Hook category picker — 5 buttons. Only «Мысль» is implemented."""
+        """Hook category picker — per-category intro (text now, video later) + 5 buttons."""
         st.stage = STAGE_WAIT_HOOK_TYPE
         await self.store.set(st)
+        for _key in HOOK_CATEGORY_ORDER:
+            await self._send_hook_intro(message, _key)
         await message.answer(
-            "Выбери тип хука:\n"
-            "• «Мысль» — голосовая TTS-вставка в первые секунды.\n"
-            "• «Движение» — морфинг руки/головы в такт, вспышка на дропе.\n"
-            "• «Эффект» — хук + переход + грейд (3 шага).\n"
-            "• «Объект» — фигура-переход на склейках до дропа, молния на дропе, "
-            "рандомный визуал-переход после.\n"
-            "• Звук — скоро добавим.",
+            "Выбери тип хука:",
             reply_markup=_kb(
                 [BTN_HOOK_CAT_SOUND, BTN_HOOK_CAT_OBJECT],
                 [BTN_HOOK_CAT_EFFECT, BTN_HOOK_CAT_MOTION],
