@@ -24,7 +24,7 @@ from core.telegram_api import build_aiogram_session, make_telegram_api
 from core.clip_window import CLIP_WINDOW_RANGE_S_LABEL
 from core.filesystem_hygiene import cleanup_jobs_artifacts, cleanup_tmp_chat_dirs
 from core.queue_estimate import format_queue_estimate_lines, pick_queue_estimate_job_id
-from core.hook_intros import hook_intro
+from core.hook_intros import HOOK_CATEGORY_ORDER, hook_intro
 from core.subtitles_mode import (
     SUBTITLES_MODE_IMPULSE_2ND,
     SUBTITLES_MODE_LEGACY_BLOCKS,
@@ -2770,6 +2770,50 @@ class BlastBotApp:
                 await self._handle_wait_confirm_mode(message, st)
                 return
 
+            # Customization color + hook flow (behind HOOK_FLOW_ENABLED).
+            if st.stage == STAGE_WAIT_SUBTITLE_COLOR:
+                await self._handle_wait_subtitle_color(message, st)
+                return
+            if st.stage == STAGE_WAIT_ACCENT_COLOR:
+                await self._handle_wait_accent_color(message, st)
+                return
+            if st.stage == STAGE_WAIT_HOOK_CHOICE:
+                await self._handle_wait_hook_choice(message, st)
+                return
+            if st.stage == STAGE_WAIT_HOOK_DROP:
+                await self._handle_wait_hook_drop(message, st)
+                return
+            if st.stage == STAGE_WAIT_HOOK_DROP_MANUAL:
+                await self._handle_wait_hook_drop_manual(message, st)
+                return
+            if st.stage == STAGE_WAIT_HOOK_TYPE:
+                await self._handle_wait_hook_type(message, st)
+                return
+            if st.stage == STAGE_WAIT_HOOK_DEVICE:
+                await self._handle_wait_hook_device(message, st)
+                return
+            if st.stage == STAGE_WAIT_EFFECT_HOOK:
+                await self._handle_wait_effect_hook(message, st)
+                return
+            if st.stage == STAGE_WAIT_EFFECT_TRANSITION:
+                await self._handle_wait_effect_transition(message, st)
+                return
+            if st.stage == STAGE_WAIT_EFFECT_EXTRA:
+                await self._handle_wait_effect_extra(message, st)
+                return
+            if st.stage == STAGE_WAIT_EFFECT_EXTEND:
+                await self._handle_wait_effect_extend(message, st)
+                return
+            if st.stage == STAGE_WAIT_F2_SHAPE:
+                await self._handle_wait_f2_shape(message, st)
+                return
+            if st.stage == STAGE_WAIT_F1_SOUND:
+                await self._handle_wait_f1_sound(message, st)
+                return
+            if st.stage == STAGE_WAIT_F1_TEXT:
+                await self._handle_wait_f1_text(message, st)
+                return
+
             if st.stage == STAGE_WAIT_VERSIONS:
                 await self._handle_wait_versions(message, st)
                 return
@@ -3153,6 +3197,11 @@ class BlastBotApp:
             return
         st.user_clip_start_sec = round(start_sec, 3)
         st.user_clip_end_sec = round(end_sec, 3)
+        await self.store.set(st)
+        # Pre-warm hook drop/bpm analysis (fire-and-forget) so the picker has
+        # candidates ready by the hook step. Self-skips when no focus clip.
+        if HOOK_FLOW_ENABLED:
+            await self._trigger_hook_analysis_task(st)
         await message.answer(
             f"Тайминг установлен: {self._fmt_timing(start_sec)} - {self._fmt_timing(end_sec)} ({duration:.0f} сек)."
         )
@@ -3320,6 +3369,756 @@ class BlastBotApp:
             )
         else:
             await message.answer(intro["text"], parse_mode="Markdown")
+
+    # ====================================================================
+    # Hook flow — ported 1:1 from tg_bot_botapi (behind HOOK_FLOW_ENABLED).
+    # Exit goes to _proceed_to_versions_or_confirm (public's post-settings).
+    # ====================================================================
+    def _color_kb(self):
+        rows = [COLOR_PALETTE_BUTTONS[i:i + 3] for i in range(0, len(COLOR_PALETTE_BUTTONS), 3)]
+        rows.append([BTN_COLOR_DEFAULT])
+        return _kb(*rows)
+
+    async def _ask_subtitle_color(self, message: Message, st: ChatState) -> None:
+        st.stage = STAGE_WAIT_SUBTITLE_COLOR
+        await self.store.set(st)
+        await message.answer(
+            "Цвет субтитров? Выбери из палитры или «По умолчанию».",
+            reply_markup=self._color_kb(),
+        )
+
+    async def _handle_wait_subtitle_color(self, message: Message, st: ChatState) -> None:
+        choice = _parse_color_choice(message.text or "")
+        if choice is None:
+            await message.answer("Выбери цвет кнопкой из палитры или «По умолчанию».")
+            return
+        st.subtitle_color_hex = choice
+        await self._ask_accent_color(message, st)
+
+    async def _ask_accent_color(self, message: Message, st: ChatState) -> None:
+        st.stage = STAGE_WAIT_ACCENT_COLOR
+        await self.store.set(st)
+        await message.answer(
+            "Акцентный цвет (фигуры «Объект» + фокус-слово)? Палитра или «По умолчанию».",
+            reply_markup=self._color_kb(),
+        )
+
+    async def _handle_wait_accent_color(self, message: Message, st: ChatState) -> None:
+        choice = _parse_color_choice(message.text or "")
+        if choice is None:
+            await message.answer("Выбери цвет кнопкой из палитры или «По умолчанию».")
+            return
+        st.accent_color_hex = choice
+        await self.store.set(st)
+        await self._ask_hook_choice(message, st)
+
+    async def _trigger_hook_analysis_task(self, st: ChatState) -> None:
+        audio_path = str(st.prepared_audio_local_path or "").strip()
+        if not audio_path:
+            log.info("hook_bg_skip reason=no_audio chat=%s", st.chat_id)
+            return
+        clip_start = float(st.user_clip_start_sec or 0.0)
+        clip_end = float(st.user_clip_end_sec or 0.0)
+        if clip_end <= clip_start:
+            log.info("hook_bg_skip reason=no_focus_clip chat=%s", st.chat_id)
+            return
+        if (
+            st.hook_analysis_status == "ready"
+            and st.hook_analysis_audio_path == audio_path
+            and abs(st.hook_analysis_clip_start - clip_start) < 1e-3
+            and abs(st.hook_analysis_clip_end - clip_end) < 1e-3
+        ):
+            return
+        st.hook_analysis_status = "pending"
+        st.hook_analysis_audio_path = audio_path
+        st.hook_analysis_clip_start = clip_start
+        st.hook_analysis_clip_end = clip_end
+        st.hook_drop_candidates = []
+        st.hook_analysis_error = ""
+        await self.store.set(st)
+        import asyncio as _asyncio
+        _asyncio.create_task(
+            self._run_hook_analysis_bg(
+                chat_id=int(st.chat_id),
+                audio_path=audio_path,
+                clip_start=clip_start,
+                clip_end=clip_end,
+            )
+        )
+
+    async def _run_hook_analysis_bg(
+        self, *, chat_id: int, audio_path: str, clip_start: float, clip_end: float
+    ) -> None:
+        try:
+            from pathlib import Path as _Path
+            prepared = _Path(audio_path).expanduser().resolve()
+            key = self._build_raw_audio_key(chat_id=chat_id, file_name=prepared.name)
+            audio_s3_url = await asyncio.to_thread(
+                self.s3.upload_file,
+                path=prepared,
+                bucket=self.settings.s3_bucket_raw_audio,
+                key=key,
+                content_type="audio/mpeg",
+            )
+            result = await self.orchestrator.analyze_hook(
+                audio_s3_url=str(audio_s3_url),
+                clip_start_sec=clip_start,
+                clip_end_sec=clip_end,
+            )
+            raw_cands = result.get("drop_candidates") or []
+            candidates = [
+                {
+                    "t": float(c.get("t")),
+                    "confidence": float(c.get("confidence", 0.0)),
+                    "snapped_to_beat": bool(c.get("snapped_to_beat", False)),
+                    "source": str(c.get("source", "")),
+                }
+                for c in raw_cands[:3]
+                if isinstance(c, dict) and c.get("t") is not None
+            ]
+            bpm = float(result.get("bpm") or 0.0)
+            st = await self.store.get(chat_id)
+            if (
+                st.hook_analysis_audio_path == audio_path
+                and abs(st.hook_analysis_clip_start - clip_start) < 1e-3
+                and abs(st.hook_analysis_clip_end - clip_end) < 1e-3
+            ):
+                st.hook_drop_candidates = candidates
+                st.hook_analysis_bpm = bpm
+                st.hook_analysis_status = "ready"
+                st.hook_analysis_error = ""
+                await self.store.set(st)
+                log.info("hook_bg_ok chat=%s bpm=%.2f cands=%d", chat_id, bpm, len(candidates))
+        except Exception as e:
+            log.warning("hook_bg_fail chat=%s err=%r", chat_id, e)
+            try:
+                st = await self.store.get(chat_id)
+                st.hook_analysis_status = "failed"
+                st.hook_analysis_error = str(e)[:300]
+                await self.store.set(st)
+            except Exception:
+                pass
+
+    async def _ask_hook_choice(self, message: Message, st: ChatState) -> None:
+        st.stage = STAGE_WAIT_HOOK_CHOICE
+        await self.store.set(st)
+        note = ""
+        if st.hook_analysis_status == "ready" and st.hook_drop_candidates:
+            top = st.hook_drop_candidates[0]
+            note = (
+                f"\n\nЗвуковой дроп найден на ~{self._fmt_timing(float(top['t']))} "
+                f"(уверенность {float(top['confidence']):.0%})."
+            )
+        elif st.hook_analysis_status == "pending":
+            note = "\n\nЕщё считаю анализ — выбери, когда определишься."
+        elif st.hook_analysis_status == "failed":
+            note = "\n\nАнализ аудио не удался, дроп можно ввести вручную."
+        await message.answer(
+            "Сделать хук в ролик? Хук — это короткий FX-акцент на дропе, "
+            "помогает удерживать зрителя." + note,
+            reply_markup=_kb([BTN_HOOK_YES, BTN_HOOK_NO]),
+        )
+
+    async def _handle_wait_hook_choice(self, message: Message, st: ChatState) -> None:
+        text = str(message.text or "").strip()
+        if text == BTN_HOOK_NO:
+            st.hook_enabled = False
+            st.hook_drop_t = None
+            st.hook_category = ""
+            st.hook_device = ""
+            st.f2_shape = ""
+            st.f1_sound_url = ""
+            st.f1_sound_text = ""
+            await self.store.set(st)
+            await self._proceed_to_versions_or_confirm(message, st)
+            return
+        if text == BTN_HOOK_YES:
+            st.hook_enabled = True
+            await self.store.set(st)
+            await self._ask_hook_drop(message, st)
+            return
+        await message.answer(f"Выбери кнопку: «{BTN_HOOK_YES}» или «{BTN_HOOK_NO}».")
+
+    async def _ask_hook_drop(self, message: Message, st: ChatState) -> None:
+        st.stage = STAGE_WAIT_HOOK_DROP
+        await self.store.set(st)
+        cands = list(st.hook_drop_candidates or [])
+        primary_rows: List[List[str]] = []
+        if cands:
+            for idx, c in enumerate(cands[:3]):
+                t_label = self._fmt_timing(float(c["t"]))
+                conf_label = f"{int(round(float(c['confidence']) * 100))}%"
+                tag = "🎯 " if idx == 0 else ""
+                primary_rows.append([f"{tag}{t_label} ({conf_label})"])
+        primary_rows.append([BTN_HOOK_DROP_NONE])
+        primary_rows.append([BTN_HOOK_DROP_MANUAL])
+        primary_rows.append([BTN_BACK])
+        if not cands:
+            if st.hook_analysis_status == "pending":
+                hint = ("Анализ ещё не готов — попробуй через несколько секунд, "
+                        "или выбери «Ввести вручную» / «В отрывке нет дропа».")
+            elif st.hook_analysis_status == "failed":
+                hint = (f"Анализ не удался ({st.hook_analysis_error or 'unknown'}). "
+                        "Можно ввести тайминг вручную.")
+            else:
+                hint = ("Анализ дропа недоступен (нет focus clip). "
+                        "Введи тайминг вручную, либо «В отрывке нет дропа».")
+            await message.answer(hint, reply_markup=_kb(*primary_rows))
+            return
+        await message.answer(
+            "Выбери момент дропа. 🎯 — лучший кандидат, остальные — близкие "
+            "альтернативы. Если ни один не подходит — «Ввести вручную».\n\n"
+            "ℹ️ Хук строится по сценарию: ~3–4с разгон ДО дропа + 10–12с кора "
+            "ПОСЛЕ. Выбирай дроп так, чтобы после него в отрывке осталось "
+            "~10–12с трека.",
+            reply_markup=_kb(*primary_rows),
+        )
+
+    async def _handle_wait_hook_drop(self, message: Message, st: ChatState) -> None:
+        text = str(message.text or "").strip()
+        if text == BTN_BACK:
+            await self._ask_hook_choice(message, st)
+            return
+        if text == BTN_HOOK_DROP_NONE:
+            st.hook_drop_t = None
+            await self.store.set(st)
+            await self._ask_hook_type(message, st)
+            return
+        if text == BTN_HOOK_DROP_MANUAL:
+            st.stage = STAGE_WAIT_HOOK_DROP_MANUAL
+            await self.store.set(st)
+            await message.answer(
+                "Отправь момент дропа в формате 1:23 или 83 (секунды).",
+                reply_markup=ReplyKeyboardRemove(),
+            )
+            return
+        chosen = self._parse_hook_drop_label(text, candidates=st.hook_drop_candidates)
+        if chosen is None:
+            await message.answer("Не распознал выбор — нажми одну из кнопок ниже.")
+            return
+        if not self._validate_hook_drop_inside_clip(chosen, st):
+            await message.answer(
+                "Момент дропа должен быть внутри выбранного фрагмента. "
+                "Попробуй другой вариант или введи вручную."
+            )
+            return
+        st.hook_drop_t = float(chosen)
+        await self.store.set(st)
+        await message.answer(f"Дроп зафиксирован на {self._fmt_timing(float(chosen))}.")
+        await self._ask_hook_type(message, st)
+
+    async def _handle_wait_hook_drop_manual(self, message: Message, st: ChatState) -> None:
+        text = str(message.text or "").strip()
+        parsed = self._parse_single_timing(text)
+        if parsed is None:
+            await message.answer("Не распознал тайминг. Формат: 1:23 или 83 (секунды). Попробуй ещё раз.")
+            return
+        if not self._validate_hook_drop_inside_clip(parsed, st):
+            await message.answer(
+                "Этот момент за пределами выбранного фрагмента. "
+                f"Допустимый диапазон: {self._fmt_timing(st.user_clip_start_sec)} – "
+                f"{self._fmt_timing(st.user_clip_end_sec)}."
+            )
+            return
+        st.hook_drop_t = float(parsed)
+        await self.store.set(st)
+        await message.answer(f"Дроп зафиксирован на {self._fmt_timing(float(parsed))}.")
+        await self._ask_hook_type(message, st)
+
+    async def _ask_hook_type(self, message: Message, st: ChatState) -> None:
+        st.stage = STAGE_WAIT_HOOK_TYPE
+        await self.store.set(st)
+        for _key in HOOK_CATEGORY_ORDER:
+            await self._send_hook_intro(message, _key)
+        await message.answer(
+            "Выбери тип хука:",
+            reply_markup=_kb(
+                [BTN_HOOK_CAT_SOUND, BTN_HOOK_CAT_OBJECT],
+                [BTN_HOOK_CAT_EFFECT, BTN_HOOK_CAT_MOTION],
+                [BTN_HOOK_CAT_THOUGHT],
+                [BTN_BACK],
+            ),
+        )
+
+    async def _handle_wait_hook_type(self, message: Message, st: ChatState) -> None:
+        text = str(message.text or "").strip()
+        if text == BTN_BACK:
+            await self._ask_hook_drop(message, st)
+            return
+        if text in _HOOK_CATEGORY_NOT_READY:
+            await message.answer(f"«{text}» пока в разработке — скоро добавим.")
+            return
+        if text == BTN_HOOK_CAT_OBJECT:
+            if st.hook_drop_t is None:
+                await message.answer("Для «Объекта» нужен момент дропа — вернись и выбери его.")
+                await self._ask_hook_drop(message, st)
+                return
+            st.hook_category = "object"
+            st.f2_shape = ""
+            await self.store.set(st)
+            await self._ask_f2_shape(message, st)
+            return
+        if text == BTN_HOOK_CAT_SOUND:
+            if st.hook_drop_t is None:
+                await message.answer("Для «Звука» нужен момент дропа — вернись и выбери его.")
+                await self._ask_hook_drop(message, st)
+                return
+            _clip_start = float(st.user_clip_start_sec or 0.0)
+            if (float(st.hook_drop_t) - _clip_start) <= 1.0:
+                await message.answer(
+                    "Дроп слишком близко к началу отрывка: для «Звука» нужно ≥1с "
+                    "до дропа (звук играет в окне до хука). Выбери дроп позже."
+                )
+                await self._ask_hook_drop(message, st)
+                return
+            st.hook_category = "sound"
+            st.f1_sound_url = ""
+            st.f1_sound_text = ""
+            await self.store.set(st)
+            await self._ask_f1_sound(message, st)
+            return
+        if text == BTN_HOOK_CAT_EFFECT:
+            if st.hook_drop_t is None:
+                await message.answer("Для «Эффекта» нужен момент дропа — вернись и выбери его.")
+                await self._ask_hook_drop(message, st)
+                return
+            st.hook_category = "effect"
+            st.effect_hook = ""
+            st.effect_transition = ""
+            st.effect_extra = ""
+            st.effect_hook_extend = ""
+            await self.store.set(st)
+            await self._ask_effect_hook(message, st)
+            return
+        if text == BTN_HOOK_CAT_THOUGHT:
+            st.hook_category = "thought"
+            await self.store.set(st)
+            await self._ask_hook_device(message, st)
+            return
+        if text == BTN_HOOK_CAT_MOTION:
+            if st.hook_drop_t is None:
+                await message.answer("Для «Движения» нужен момент дропа — вернись и выбери его.")
+                await self._ask_hook_drop(message, st)
+                return
+            st.hook_category = "motion"
+            await self.store.set(st)
+            await self._ask_hook_device(message, st)
+            return
+        await message.answer("Выбери тип хука кнопкой ниже.")
+
+    async def _ask_hook_device(self, message: Message, st: ChatState) -> None:
+        st.stage = STAGE_WAIT_HOOK_DEVICE
+        await self.store.set(st)
+        if st.hook_category == "motion":
+            await message.answer(
+                "Какой приём «Движения»? Рука/голова двигается в такт, "
+                "на дропе срабатывает вспышка:\n"
+                "• Свайп — палец свайпает.\n• Тап — палец тапает по кругу.\n"
+                "• Зум — пальцы разводят зум.\n• Задержи палец — палец держит круг.\n"
+                "• Качай головой — голова качает в такт.",
+                reply_markup=_kb(
+                    [BTN_HOOK_DEV_SWIPE, BTN_HOOK_DEV_TAP],
+                    [BTN_HOOK_DEV_PINCH, BTN_HOOK_DEV_HOLD],
+                    [BTN_HOOK_DEV_HEAD],
+                    [BTN_BACK],
+                ),
+            )
+            return
+        await message.answer(
+            "Какой приём «Мысли»?\n"
+            "• Панчлайн — голос подводит, трек добивает.\n"
+            "• Пропущенное слово — голос обрывается, трек закрывает.\n"
+            "• Эхо — голос заранее произносит фразу-крючок трека.\n"
+            "• Вопрос к треку — голос спрашивает, трек отвечает.\n"
+            "• Инверсия — голос говорит противоположное.",
+            reply_markup=_kb(
+                [BTN_HOOK_DEV_PUNCHLINE, BTN_HOOK_DEV_MISSING_WORD],
+                [BTN_HOOK_DEV_LYRIC_ECHO, BTN_HOOK_DEV_QUESTION],
+                [BTN_HOOK_DEV_INVERSE],
+                [BTN_BACK],
+            ),
+        )
+
+    async def _handle_wait_hook_device(self, message: Message, st: ChatState) -> None:
+        text = str(message.text or "").strip()
+        if text == BTN_BACK:
+            await self._ask_hook_type(message, st)
+            return
+        if st.hook_category == "motion":
+            device = _HOOK_MOTION_DEVICE_BY_BUTTON.get(text)
+            if device is None:
+                await message.answer("Выбери приём кнопкой ниже.")
+                return
+            if st.hook_drop_t is None:
+                await message.answer("Сначала выбери момент дропа.")
+                await self._ask_hook_drop(message, st)
+                return
+            bpm = float(st.hook_analysis_bpm or 0.0)
+            if bpm <= 0.0:
+                await message.answer(
+                    "Для «Движения» нужен анализ трека (BPM ещё не посчитан). "
+                    "Подожди пару секунд и попробуй снова, либо выбери другой хук."
+                )
+                return
+            lead = self._f4_effective_lead(device, bpm)
+            drop = float(st.hook_drop_t)
+            if drop - lead < 0.0:
+                await message.answer(
+                    f"Хук слишком близко к началу трека: для «{text}» при {bpm:.0f} BPM "
+                    f"нужно ≥ {lead:.1f}с разгона до дропа. Выбери момент дропа позже."
+                )
+                await self._ask_hook_drop(message, st)
+                return
+            st.hook_device = device
+            st.hook_type = "standard"
+            await self.store.set(st)
+            core = float(st.user_clip_end_sec or 0.0) - drop
+            core_note = ""
+            if core < 6.0:
+                core_note = (
+                    f"\n⚠️ После дропа всего ~{core:.0f}с — кора будет короткой. "
+                    "В идеале 10–12с после дропа: выбери дроп раньше или расширь отрывок."
+                )
+            await message.answer(
+                f"Ок, «Движение»: {text}. Дроп на {self._fmt_timing(drop)}, "
+                f"кора ~{core:.0f}с." + core_note
+            )
+            await self._proceed_to_versions_or_confirm(message, st)
+            return
+        device = _HOOK_DEVICE_BY_BUTTON.get(text)
+        if device is None:
+            await message.answer("Выбери приём кнопкой ниже.")
+            return
+        st.hook_device = device
+        st.hook_type = "standard"
+        await self.store.set(st)
+        await message.answer(f"Ок, «Мысль»: {text}.")
+        await self._proceed_to_versions_or_confirm(message, st)
+
+    async def _ask_effect_hook(self, message: Message, st: ChatState) -> None:
+        st.stage = STAGE_WAIT_EFFECT_HOOK
+        await self.store.set(st)
+        await message.answer(
+            "«Эффект» — шаг 1/3: хук на дропе.\n"
+            "• Молния — вспышка-молнии + шейк.\n• Затвор — нарезка затвора + лого-штамп.\n"
+            "• Слоу-шаттер — echo-шлейф + вспышка (можно растянуть).\n"
+            "Можно пропустить, если хук не нужен.",
+            reply_markup=_kb(
+                [BTN_FX_HOOK_LIGHT, BTN_FX_HOOK_SHUTTER],
+                [BTN_FX_HOOK_SLOW],
+                [BTN_FX_SKIP],
+                [BTN_BACK],
+            ),
+        )
+
+    async def _handle_wait_effect_hook(self, message: Message, st: ChatState) -> None:
+        text = str(message.text or "").strip()
+        if text == BTN_BACK:
+            await self._ask_hook_type(message, st)
+            return
+        if text == BTN_FX_SKIP:
+            st.effect_hook = ""
+            await self.store.set(st)
+            await self._ask_effect_transition(message, st)
+            return
+        hook = _FX_HOOK_BY_BUTTON.get(text)
+        if hook is None:
+            await message.answer("Выбери хук кнопкой ниже или «Пропустить».")
+            return
+        st.effect_hook = hook
+        await self.store.set(st)
+        await self._ask_effect_transition(message, st)
+
+    async def _ask_effect_transition(self, message: Message, st: ChatState) -> None:
+        st.stage = STAGE_WAIT_EFFECT_TRANSITION
+        await self.store.set(st)
+        await message.answer(
+            "Шаг 2/3: переход на склейках футажа.\nМожно пропустить.",
+            reply_markup=_kb(
+                [BTN_FX_TR_SNAP, BTN_FX_TR_MINIMAX],
+                [BTN_FX_TR_INVERT, BTN_FX_TR_EXTRACT],
+                [BTN_FX_TR_FLASH, BTN_FX_TR_SHAKE],
+                [BTN_FX_SKIP],
+                [BTN_BACK],
+            ),
+        )
+
+    async def _handle_wait_effect_transition(self, message: Message, st: ChatState) -> None:
+        text = str(message.text or "").strip()
+        if text == BTN_BACK:
+            await self._ask_effect_hook(message, st)
+            return
+        if text == BTN_FX_SKIP:
+            st.effect_transition = ""
+            await self.store.set(st)
+            await self._ask_effect_extra(message, st)
+            return
+        tr = _FX_TRANSITION_BY_BUTTON.get(text)
+        if tr is None:
+            await message.answer("Выбери переход кнопкой ниже или «Пропустить».")
+            return
+        st.effect_transition = tr
+        await self.store.set(st)
+        await self._ask_effect_extra(message, st)
+
+    async def _ask_effect_extra(self, message: Message, st: ChatState) -> None:
+        st.stage = STAGE_WAIT_EFFECT_EXTRA
+        await self.store.set(st)
+        await message.answer(
+            "Шаг 3/3: стилизация футажа до дропа (грейд 00:00 → дроп).\nМожно пропустить.",
+            reply_markup=_kb(
+                [BTN_FX_EX_XEROX, BTN_FX_EX_ANALOG],
+                [BTN_FX_EX_NEON, BTN_FX_EX_OLDCAM],
+                [BTN_FX_SKIP],
+                [BTN_BACK],
+            ),
+        )
+
+    async def _handle_wait_effect_extra(self, message: Message, st: ChatState) -> None:
+        text = str(message.text or "").strip()
+        if text == BTN_BACK:
+            await self._ask_effect_transition(message, st)
+            return
+        if text == BTN_FX_SKIP:
+            st.effect_extra = ""
+        else:
+            ex = _FX_EXTRA_BY_BUTTON.get(text)
+            if ex is None:
+                await message.answer("Выбери эффект кнопкой ниже или «Пропустить».")
+                return
+            st.effect_extra = ex
+        await self.store.set(st)
+        if not (st.effect_hook or st.effect_transition or st.effect_extra):
+            await message.answer("Нужно выбрать хотя бы один эффект из трёх. Начнём заново с хука.")
+            await self._ask_effect_hook(message, st)
+            return
+        if st.effect_hook == "flash_slow_shutter":
+            await self._ask_effect_extend(message, st)
+            return
+        await self._effect_summary_and_continue(message, st)
+
+    async def _ask_effect_extend(self, message: Message, st: ChatState) -> None:
+        st.stage = STAGE_WAIT_EFFECT_EXTEND
+        await self.store.set(st)
+        await message.answer(
+            "Слоу-шаттер: длина echo-шлейфа?\n"
+            "• Стандарт — короткий импульс.\n• До конца ролика — футажи наслаиваются.\n"
+            "• 3 футажа после — шлейф до 3-й склейки после дропа.",
+            reply_markup=_kb(
+                [BTN_FX_EXT_STD],
+                [BTN_FX_EXT_END, BTN_FX_EXT_3],
+                [BTN_BACK],
+            ),
+        )
+
+    async def _handle_wait_effect_extend(self, message: Message, st: ChatState) -> None:
+        text = str(message.text or "").strip()
+        if text == BTN_BACK:
+            await self._ask_effect_extra(message, st)
+            return
+        if text not in _FX_EXTEND_BY_BUTTON:
+            await message.answer("Выбери вариант длины кнопкой ниже.")
+            return
+        st.effect_hook_extend = _FX_EXTEND_BY_BUTTON[text]
+        await self.store.set(st)
+        await self._effect_summary_and_continue(message, st)
+
+    async def _effect_summary_and_continue(self, message: Message, st: ChatState) -> None:
+        st.hook_type = "standard"
+        await self.store.set(st)
+        parts: List[str] = []
+        if st.effect_hook:
+            parts.append(f"хук «{st.effect_hook}»")
+        if st.effect_transition:
+            parts.append(f"переход «{st.effect_transition}»")
+        if st.effect_extra:
+            parts.append(f"грейд «{st.effect_extra}»")
+        if st.effect_hook_extend:
+            parts.append(f"растяжка «{st.effect_hook_extend}»")
+        await message.answer("Ок, «Эффект»: " + ", ".join(parts) + ".")
+        await self._proceed_to_versions_or_confirm(message, st)
+
+    async def _ask_f2_shape(self, message: Message, st: ChatState) -> None:
+        st.stage = STAGE_WAIT_F2_SHAPE
+        await self.store.set(st)
+        await message.answer(
+            "Какая фигура-переход на склейках до дропа?\n"
+            "На дропе сработает молния, после дропа — рандомный визуал-переход.\n"
+            "• Ромб • Квадрат • Звезда-10 • Звезда-5 • Эллипс",
+            reply_markup=_kb(
+                [BTN_F2_SHAPE_RHOMB, BTN_F2_SHAPE_SQUARE],
+                [BTN_F2_SHAPE_STAR1, BTN_F2_SHAPE_STAR2],
+                [BTN_F2_SHAPE_ELIPSE],
+                [BTN_BACK],
+            ),
+        )
+
+    async def _handle_wait_f2_shape(self, message: Message, st: ChatState) -> None:
+        text = str(message.text or "").strip()
+        if text == BTN_BACK:
+            await self._ask_hook_type(message, st)
+            return
+        shape = _F2_SHAPE_BY_BUTTON.get(text)
+        if shape is None:
+            await message.answer("Выбери фигуру кнопкой ниже.")
+            return
+        if st.hook_drop_t is None:
+            await message.answer("Для «Объекта» нужен момент дропа — вернись и выбери его.")
+            await self._ask_hook_drop(message, st)
+            return
+        st.f2_shape = shape
+        st.hook_type = "standard"
+        await self.store.set(st)
+        await message.answer(
+            f"Ок, «Объект»: фигура «{text}». На склейках до дропа — она; "
+            f"на дропе — молния; после дропа — рандомные F3-переходы."
+        )
+        await self._proceed_to_versions_or_confirm(message, st)
+
+    async def _ask_f1_sound(self, message: Message, st: ChatState) -> None:
+        st.stage = STAGE_WAIT_F1_SOUND
+        await self.store.set(st)
+        await message.answer(
+            "«Звук»: пришли аудио-файл, который заиграет ДО дропа (разгон/риза).\n"
+            "Он встанет в окно до хука; на дропе сработает молния, после — "
+            "рандомный визуал-переход.\nПросто отправь аудио сообщением (mp3/m4a/wav).",
+            reply_markup=_kb([BTN_BACK]),
+        )
+
+    async def _handle_wait_f1_sound(self, message: Message, st: ChatState) -> None:
+        text = str(message.text or "").strip()
+        if text == BTN_BACK:
+            await self._ask_hook_type(message, st)
+            return
+        spec = _extract_audio_spec(message)
+        if spec is None:
+            await message.answer(
+                "Нужен аудио-файл для «Звука». Пришли mp3/m4a/wav сообщением или нажми «Назад»."
+            )
+            return
+        if message.chat is None:
+            return
+        if st.hook_drop_t is None:
+            await message.answer("Для «Звука» нужен момент дропа — вернись и выбери его.")
+            await self._ask_hook_drop(message, st)
+            return
+        chat_id = int(message.chat.id)
+        file_id, original_name = spec
+        incoming_dir = self.settings.tmp_dir / str(chat_id) / "hook_sound"
+        incoming_dir.mkdir(parents=True, exist_ok=True)
+        src_name = f"{_now_tag()}_{uuid.uuid4().hex[:8]}_{_safe_name(original_name)}"
+        src_path = incoming_dir / src_name
+        try:
+            await message.answer("Загружаю звук…")
+            await self._download_telegram_audio_with_retry(
+                bot=message.bot, file_id=file_id, dest=src_path,
+                chat_id=chat_id, original_name=original_name,
+            )
+            key = self._build_raw_audio_key(chat_id=chat_id, file_name=f"f1hook_{src_path.name}")
+            sound_url = await asyncio.to_thread(
+                self.s3.upload_file, path=src_path,
+                bucket=self.settings.s3_bucket_raw_audio, key=key,
+                content_type="audio/mpeg",
+            )
+        except TelegramBadRequest as e:
+            log.exception("f1_sound_tg_bad_request chat=%s file_id=%s err=%s", chat_id, file_id, e)
+            await message.answer(
+                "Не удалось скачать звук из Telegram (возможно, слишком большой). "
+                "Пришли файл полегче (mp3/m4a) или нажми «Назад»."
+            )
+            return
+        except Exception as e:
+            log.exception("f1_sound_upload_failed chat=%s file_id=%s err=%s", chat_id, file_id, e)
+            await message.answer(f"Не удалось загрузить звук: {e}. Попробуй ещё раз или «Назад».")
+            return
+        st.f1_sound_url = str(sound_url)
+        st.hook_type = "standard"
+        await self.store.set(st)
+        await message.answer(
+            "Ок, «Звук»: твой звук заиграет до дропа, на дропе — молния, "
+            "после — рандомный визуал-переход."
+        )
+        await self._ask_f1_text(message, st)
+
+    async def _ask_f1_text(self, message: Message, st: ChatState) -> None:
+        st.stage = STAGE_WAIT_F1_TEXT
+        await self.store.set(st)
+        await message.answer(
+            "Хочешь субтитры под этот звук? Пришли текст сообщением — он ляжет "
+            "поверх трека тем же стилем, что субтитры (и трек на это время "
+            "приглушится). Или нажми «Без субтитров».",
+            reply_markup=_kb([BTN_F1_NO_SUBS, BTN_BACK]),
+        )
+
+    async def _handle_wait_f1_text(self, message: Message, st: ChatState) -> None:
+        text = str(message.text or "").strip()
+        if text == BTN_BACK:
+            await self._ask_f1_sound(message, st)
+            return
+        if text == BTN_F1_NO_SUBS:
+            st.f1_sound_text = ""
+            await self.store.set(st)
+            await message.answer("Ок, без субтитров — только звук + визуал.")
+            await self._proceed_to_versions_or_confirm(message, st)
+            return
+        if not text:
+            await message.answer("Пришли текст субтитра сообщением или нажми «Без субтитров».")
+            return
+        st.f1_sound_text = text
+        await self.store.set(st)
+        await message.answer("Принял текст субтитра для звука.")
+        await self._proceed_to_versions_or_confirm(message, st)
+
+    @staticmethod
+    def _f4_effective_lead(device: str, bpm: float) -> float:
+        from mlcore.hooks.f4_motion.overlay import F4_REF_BPM, LEAD_BY_DEVICE
+        lead = float(LEAD_BY_DEVICE[device])
+        if bpm and float(bpm) > 0.0:
+            return lead * (float(F4_REF_BPM) / float(bpm))
+        return lead
+
+    @staticmethod
+    def _parse_single_timing(text: str) -> Optional[float]:
+        s = str(text or "").strip()
+        if not s:
+            return None
+        try:
+            if ":" in s:
+                m_str, sec_str = s.split(":", 1)
+                mins = int(m_str.strip())
+                secs = float(sec_str.strip())
+                if mins < 0 or secs < 0 or secs >= 60.0:
+                    return None
+                return float(mins) * 60.0 + secs
+            v = float(s)
+            return v if v >= 0.0 else None
+        except Exception:
+            return None
+
+    @staticmethod
+    def _parse_hook_drop_label(text: str, *, candidates: List[Dict[str, Any]]) -> Optional[float]:
+        s = str(text or "").strip()
+        if not s:
+            return None
+        s = s.lstrip("🎯 ").strip()
+        for c in candidates or []:
+            try:
+                t = float(c["t"])
+                conf = float(c["confidence"])
+            except Exception:
+                continue
+            label = f"{BlastBotApp._fmt_timing(t)} ({int(round(conf * 100))}%)"
+            if s == label:
+                return t
+        return None
+
+    @staticmethod
+    def _validate_hook_drop_inside_clip(t_sec: float, st: ChatState) -> bool:
+        cs = float(st.user_clip_start_sec or 0.0)
+        ce = float(st.user_clip_end_sec or 0.0)
+        if ce <= cs:
+            return float(t_sec) >= 0.0
+        return cs <= float(t_sec) <= ce
 
     async def _ask_subtitles_mode(self, message: Message, st: ChatState) -> None:
         st.stage = STAGE_WAIT_SUBTITLES_MODE
@@ -3661,36 +4460,87 @@ class BlastBotApp:
             reply_markup=_kb([BTN_CONFIRM_YES, BTN_CONFIRM_BACK]),
         )
 
+    def _hook_summary_line(self, st: ChatState) -> str:
+        if not st.hook_enabled:
+            return "*Хук:* нет"
+        cat = {
+            "sound": "Звук", "object": "Объект", "effect": "Эффект",
+            "motion": "Движение", "thought": "Мысль",
+        }.get(st.hook_category, st.hook_category or "—")
+        extra = ""
+        if st.hook_category in ("motion", "thought") and st.hook_device:
+            extra = f" / {st.hook_device}"
+        elif st.hook_category == "object" and st.f2_shape:
+            extra = f" / {st.f2_shape}"
+        elif st.hook_category == "sound":
+            extra = " / звук" + (" + субтитр" if st.f1_sound_text else "")
+        elif st.hook_category == "effect":
+            fx = [x for x in (st.effect_hook, st.effect_transition, st.effect_extra) if x]
+            if fx:
+                extra = " / " + ", ".join(fx)
+        drop = ""
+        if st.hook_drop_t is not None:
+            drop = f", дроп {self._fmt_timing(float(st.hook_drop_t))}"
+        return f"*Хук:* «{cat}»{extra}{drop}"
+
+    def _color_summary_line(self, st: ChatState) -> str:
+        parts: List[str] = []
+        if st.subtitle_color_hex:
+            parts.append(f"субтитры {st.subtitle_color_hex}")
+        if st.accent_color_hex:
+            parts.append(f"акцент {st.accent_color_hex}")
+        return ("*Цвета:* " + ", ".join(parts)) if parts else ""
+
+    def _final_confirm_text(self, st: ChatState, *, versions: Optional[int] = None) -> str:
+        mode_display = _BUTTON_BY_SUBTITLES_MODE.get(st.subtitles_mode, st.subtitles_mode)
+        fragment_display = st.target_fragment or "на усмотрение ИИ"
+        lines = [
+            f"*Режим субтитров:* «{mode_display}»",
+            f"*Фрагмент:* «{fragment_display}»",
+        ]
+        # Hook/color echo only when the hook flow is active (keeps the confirm
+        # text identical to the legacy one when HOOK_FLOW_ENABLED is off).
+        if HOOK_FLOW_ENABLED:
+            cl = self._color_summary_line(st)
+            if cl:
+                lines.append(cl)
+            lines.append(self._hook_summary_line(st))
+        lines.append(f"\n*Тайминг:* «{self._timing_label(st)}»")
+        lines.append(f"*Исходники:* «{self._source_label(st)}»")
+        if versions is not None:
+            lines.append(f"*Версий:* {versions}")
+        lines.append("\nЗапустить генерацию?")
+        return "\n".join(lines)
+
+    async def _proceed_to_versions_or_confirm(self, message: Message, st: ChatState) -> None:
+        """Post-settings entry: paid → version count picker, else → final confirm."""
+        paid = await self.credits_db.has_paid(st.chat_id)
+        if paid:
+            st.stage = STAGE_WAIT_VERSIONS
+            await self.store.set(st)
+            await message.answer(
+                "Сколько версий сгенерировать?",
+                reply_markup=_kb(["1", "2", "3", "4", "5"]),
+            )
+            return
+        st.versions_count = 1
+        st.stage = STAGE_WAIT_CONFIRM
+        await self.store.set(st)
+        await message.answer(
+            self._final_confirm_text(st),
+            parse_mode="Markdown",
+            reply_markup=_kb([BTN_LAUNCH, BTN_RESTART]),
+        )
+
     async def _handle_wait_confirm_mode(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()
         if text == BTN_CONFIRM_YES:
-            # If user has paid — offer version count selection (1-5)
-            paid = await self.credits_db.has_paid(st.chat_id)
-            if paid:
-                st.stage = STAGE_WAIT_VERSIONS
-                await self.store.set(st)
-                await message.answer(
-                    "Сколько версий сгенерировать?",
-                    reply_markup=_kb(["1", "2", "3", "4", "5"]),
-                )
-                return
-            # Free users — always 1 version
-            st.versions_count = 1
-            st.stage = STAGE_WAIT_CONFIRM
-            await self.store.set(st)
-            mode_display = _BUTTON_BY_SUBTITLES_MODE.get(st.subtitles_mode, st.subtitles_mode)
-            fragment_display = st.target_fragment or "на усмотрение ИИ"
-            timing_display = self._timing_label(st)
-            source_display = self._source_label(st)
-            await message.answer(
-                f"*Режим субтитров:* «{mode_display}»\n"
-                f"*Фрагмент:* «{fragment_display}»\n\n"
-                f"*Тайминг:* «{timing_display}»\n"
-                f"*Исходники:* «{source_display}»\n\n"
-                f"Запустить генерацию?",
-                parse_mode="Markdown",
-                reply_markup=_kb([BTN_LAUNCH, BTN_RESTART]),
-            )
+            # Enter the color + hook flow when enabled; otherwise go straight to
+            # version/confirm (legacy behavior).
+            if HOOK_FLOW_ENABLED:
+                await self._ask_subtitle_color(message, st)
+            else:
+                await self._proceed_to_versions_or_confirm(message, st)
             return
         if text == BTN_CONFIRM_BACK:
             await self._ask_subtitles_mode(message, st)
@@ -3712,17 +4562,8 @@ class BlastBotApp:
             return
         st.stage = STAGE_WAIT_CONFIRM
         await self.store.set(st)
-        mode_display = _BUTTON_BY_SUBTITLES_MODE.get(st.subtitles_mode, st.subtitles_mode)
-        fragment_display = st.target_fragment or "на усмотрение ИИ"
-        timing_display = self._timing_label(st)
-        source_display = self._source_label(st)
         await message.answer(
-            f"*Режим субтитров:* «{mode_display}»\n"
-            f"*Фрагмент:* «{fragment_display}»\n"
-            f"*Тайминг:* «{timing_display}»\n"
-            f"*Исходники:* «{source_display}»\n"
-            f"*Версий:* {n}\n\n"
-            f"Запустить генерацию?",
+            self._final_confirm_text(st, versions=int(n)),
             parse_mode="Markdown",
             reply_markup=_kb([BTN_LAUNCH, BTN_RESTART]),
         )
@@ -4997,6 +5838,30 @@ class BlastBotApp:
         if end > start >= 0.0:
             user_clip_start_sec = start
             user_clip_end_sec = end
+        # F4 «Движение»: reframe the clip so the overlay cover-end lands on the
+        # drop (clip_start := drop - lead_eff; lead scales with bpm like the JSX).
+        f4_device: str | None = None
+        f4_bpm: float | None = None
+        if st.hook_enabled and st.hook_category == "motion" and st.hook_device:
+            if st.hook_drop_t is None:
+                raise RuntimeError("F4 motion hook requires a drop (hook_drop_t)")
+            bpm = float(st.hook_analysis_bpm or 0.0)
+            if bpm <= 0.0:
+                raise RuntimeError("F4 motion hook requires measured bpm (hook_analysis_bpm)")
+            f4_device = str(st.hook_device)
+            from mlcore.hooks.f4_motion.overlay import LEAD_BY_DEVICE
+            if f4_device not in LEAD_BY_DEVICE:
+                raise RuntimeError(f"unknown F4 device {f4_device!r}")
+            lead = self._f4_effective_lead(f4_device, bpm)
+            new_start = float(st.hook_drop_t) - lead
+            if new_start < 0.0:
+                raise RuntimeError(
+                    f"F4 reframe: drop {st.hook_drop_t} - lead {lead:.3f} (bpm={bpm}) < 0"
+                )
+            user_clip_start_sec = new_start
+            if user_clip_end_sec is None or user_clip_end_sec <= new_start:
+                user_clip_end_sec = float(end)
+            f4_bpm = bpm
         maintenance_bypass_token = ""
         allow_bypass = self._allow_maintenance_bypass_for_state(st)
         if not allow_bypass and int(st.chat_id or 0) > 0:
@@ -5039,6 +5904,57 @@ class BlastBotApp:
             rotation_tags_group=rotation_group,
             bg_mode=str(st.bg_mode or "footage"),
             bg_solid_color=str(st.bg_solid_color or ""),
+            hook_enabled=bool(st.hook_enabled),
+            user_drop_t=(float(st.hook_drop_t) if st.hook_drop_t is not None else None),
+            hook_device=(
+                str(st.hook_device)
+                if (st.hook_enabled and st.hook_category == "thought" and st.hook_device)
+                else None
+            ),
+            f4_device=f4_device,
+            f4_bpm=f4_bpm,
+            effect_hook=(
+                str(st.effect_hook)
+                if (st.hook_enabled and st.hook_category == "effect" and st.effect_hook)
+                else None
+            ),
+            effect_transition=(
+                str(st.effect_transition)
+                if (st.hook_enabled and st.hook_category == "effect" and st.effect_transition)
+                else None
+            ),
+            effect_extra=(
+                str(st.effect_extra)
+                if (st.hook_enabled and st.hook_category == "effect" and st.effect_extra)
+                else None
+            ),
+            effect_hook_extend=(
+                str(st.effect_hook_extend)
+                if (st.hook_enabled and st.hook_category == "effect" and st.effect_hook_extend)
+                else None
+            ),
+            f2_shape=(
+                str(st.f2_shape)
+                if (st.hook_enabled and st.hook_category == "object" and st.f2_shape)
+                else None
+            ),
+            f1_sound_url=(
+                str(st.f1_sound_url)
+                if (st.hook_enabled and st.hook_category == "sound" and st.f1_sound_url)
+                else None
+            ),
+            f1_sound_text=(
+                str(st.f1_sound_text)
+                if (
+                    st.hook_enabled
+                    and st.hook_category == "sound"
+                    and st.f1_sound_url
+                    and st.f1_sound_text
+                )
+                else None
+            ),
+            subtitle_color_hex=(str(st.subtitle_color_hex) or None),
+            accent_color_hex=(str(st.accent_color_hex) or None),
         )
         job_id = str(enqueue.get("job_id") or "").strip()
         if not job_id:
