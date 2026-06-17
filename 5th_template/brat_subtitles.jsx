@@ -31,10 +31,6 @@ var CONFIG = {
 
     WORDS_PER_LINE:  2,
     MAX_LINES:       4,
-    // Anti-stretch: a block whose line has a single word OR a word longer than
-    // this many chars is CENTER-justified instead of full-justified, so long /
-    // lone words never get spread letter-by-letter across the whole line.
-    maxWordChars:    11,
 
     boxWFactor:      0.80,
     boxHFactor:      0.50,
@@ -60,6 +56,7 @@ var CONFIG = {
     blinker:         true,
     bpm:             120,                  // BPM трека (дамп был на 120)
     beatOffset:      0,                    // время первого бита, с (фаза)
+    blinkSubdiv:     2,                    // блинков на долю: 2 = 1/8, 4 = 1/16
     blinkPeak:      0.8,                   // пик Completion (CC Image Wipe)
     blinkBorderSoftness: 0.03,
     blinkInfluence:  33.333333
@@ -119,15 +116,13 @@ function findComp(){
 }
 
 function _packRun(run, wpl, maxLines, isVoice){
+    // Strict 2-words-per-line, NO tail-merge: an odd remainder stays a lone
+    // 1-word line (the block is then LEFT-justified so it never stretches).
     var perBlock = wpl * maxLines, blocks = [], i, j;
     for (i = 0; i < run.length; i += perBlock){
         var slice = run.slice(i, Math.min(i + perBlock, run.length));
         var lines = [];
         for (j = 0; j < slice.length; j += wpl) lines.push(slice.slice(j, Math.min(j + wpl, slice.length)));
-        if (lines.length > 1 && lines[lines.length - 1].length < wpl){
-            var tail = lines.pop(); var prev = lines[lines.length - 1];
-            for (j = 0; j < tail.length; j++) prev.push(tail[j]);
-        }
         blocks.push({ words: slice, lines: lines, voice: !!isVoice });
     }
     return blocks;
@@ -180,16 +175,14 @@ function addRevealAnimator(L, slice, t0){
     }
 }
 
-// A block is CENTER-justified (no stretch) when a line has a single word or any
-// word is too long — full-justify would otherwise spread its letters across the
-// whole line. Normal 2-word lines keep the signature brat full-justify look.
-function blockNeedsCenter(block){
+// A block is LEFT-justified (no stretch) when ANY line has a single word —
+// full-justify would otherwise spread that lone word's letters across the line.
+// Length doesn't matter (a 6-char lone word stretches just like a 15-char one),
+// so this is purely "line has fewer than 2 words". Uniform 2-word blocks keep
+// the signature brat full-justify look.
+function blockNeedsLeft(block){
     for (var i = 0; i < block.lines.length; i++){
-        var ln = block.lines[i];
-        if (ln.length < 2) return true;
-        for (var j = 0; j < ln.length; j++){
-            if (wWord(ln[j]).length > CONFIG.maxWordChars) return true;
-        }
+        if (block.lines[i].length < 2) return true;
     }
     return false;
 }
@@ -220,23 +213,25 @@ function addBlinker(tcomp, spanIn, spanOut){
     var w = fx.addProperty("CC Image Wipe");
     try { w.property("CC Image Wipe-0002").setValue(CONFIG.blinkBorderSoftness); } catch (e) {} // Border Softness
     var cmp = w.property("CC Image Wipe-0001");           // Completion
-    var beat = 60.0 / Math.max(1, CONFIG.bpm);            // длина бита
+    var beat = 60.0 / Math.max(1, CONFIG.bpm);            // длина доли
+    var subdiv = Math.max(1, CONFIG.blinkSubdiv || 1);    // блинков на долю
+    var period = beat / subdiv;                           // период блинка (1/8 при subdiv=2)
     // Медленный BPM → реже моргает → делаем каждый блинк ИНТЕНСИВНЕЕ (глубже
     // wipe). Пик масштабируется обратно BPM относительно 120, клампится в
     // [blinkPeak, 1.0]. Быстрый трек — базовый пик; медленный — почти полный.
     var refBpm = 120.0;
     var peak = Math.max(CONFIG.blinkPeak,
                         Math.min(1.0, CONFIG.blinkPeak * (refBpm / Math.max(1, CONFIG.bpm))));
-    // фаза: первая граница бита <= spanIn
-    var k0 = Math.floor((spanIn - CONFIG.beatOffset) / beat);
-    var t  = CONFIG.beatOffset + k0 * beat;
+    // фаза: первая граница блинка <= spanIn
+    var k0 = Math.floor((spanIn - CONFIG.beatOffset) / period);
+    var t  = CONFIG.beatOffset + k0 * period;
     cmp.setValueAtTime(Math.max(spanIn, t), 0);
     var guard = 0;
     while (t < spanOut && guard < 100000){
-        var bStart = t, bMid = t + beat * 0.5;
-        if (bStart > spanIn && bStart < spanOut) cmp.setValueAtTime(bStart, 0);   // граница бита -> видно
-        if (bMid   > spanIn && bMid   < spanOut) cmp.setValueAtTime(bMid, peak);  // центр бита -> блинк
-        t += beat; guard++;
+        var bStart = t, bMid = t + period * 0.5;
+        if (bStart > spanIn && bStart < spanOut) cmp.setValueAtTime(bStart, 0);   // граница -> видно
+        if (bMid   > spanIn && bMid   < spanOut) cmp.setValueAtTime(bMid, peak);  // центр -> блинк
+        t += period; guard++;
     }
     cmp.setValueAtTime(spanOut, 0);
     for (var ki = 1; ki <= cmp.numKeys; ki++){
@@ -301,15 +296,20 @@ function addBlinker(tcomp, spanIn, spanOut){
                 if (L.inPoint < spanIn) spanIn = L.inPoint;
                 if (L.outPoint > spanOut) spanOut = L.outPoint;
 
-                var jKind = blockNeedsCenter(block)
-                    ? ParagraphJustification.CENTER_JUSTIFY
+                var isLeft = blockNeedsLeft(block);
+                var jKind = isLeft
+                    ? ParagraphJustification.LEFT_JUSTIFY
                     : ParagraphJustification.FULL_JUSTIFY_LASTLINE_FULL;
                 styleText(L, jKind);
 
-                // центровка по реальным границам текста -> центр кадра (любой размер компа)
+                // Центровка. Full-justify: anchor по центру текста (текст = ширина
+                // бокса). Left-justify: anchor по центру БОКСА (r.left = левый край
+                // бокса) → бокс центрируется в кадре, а слово стоит у ЛЕВОГО края
+                // бокса (а не растягивается). Вертикаль — по центру текста в обоих.
                 var r = L.sourceRectAtTime(L.inPoint, false);
+                var anchorX = isLeft ? (r.left + BOX_W / 2) : (r.left + r.width / 2);
                 var tg = L.property("ADBE Transform Group");
-                tg.property("ADBE Anchor Point").setValue([r.left + r.width / 2, r.top + r.height / 2, 0]);
+                tg.property("ADBE Anchor Point").setValue([anchorX, r.top + r.height / 2, 0]);
                 tg.property("ADBE Position").setValue([CW / 2, CH / 2 + CONFIG.yNudge, 0]);
                 tg.property("ADBE Scale").setValue(CONFIG.scale);
 
