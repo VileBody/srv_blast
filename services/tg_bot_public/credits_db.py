@@ -1621,20 +1621,27 @@ class CreditsDB:
         """Create an active subscription after first recurrent payment."""
         pool = self._pool_or_fail()
         async with pool.acquire() as conn:
-            # Cancel any existing active subscription for this user
-            await conn.execute(
-                "UPDATE subscriptions SET status = 'replaced', cancelled_at = NOW(), updated_at = NOW() "
-                "WHERE tg_id = $1 AND status = 'active'",
-                int(tg_id),
-            )
-            await conn.execute(
-                "INSERT INTO subscriptions (tg_id, package, rebill_id, amount_rub) "
-                "VALUES ($1, $2, $3, $4)",
-                int(tg_id),
-                str(package or ""),
-                str(rebill_id),
-                int(amount_rub),
-            )
+            async with conn.transaction():
+                # Lock existing active rows for this user to prevent concurrent duplicate inserts.
+                existing = await conn.fetch(
+                    "SELECT id FROM subscriptions WHERE tg_id = $1 AND status = 'active' FOR UPDATE",
+                    int(tg_id),
+                )
+                if existing:
+                    # Replace all active rows (covers rare duplicates too).
+                    await conn.execute(
+                        "UPDATE subscriptions SET status = 'replaced', cancelled_at = NOW(), updated_at = NOW() "
+                        "WHERE tg_id = $1 AND status = 'active'",
+                        int(tg_id),
+                    )
+                await conn.execute(
+                    "INSERT INTO subscriptions (tg_id, package, rebill_id, amount_rub) "
+                    "VALUES ($1, $2, $3, $4)",
+                    int(tg_id),
+                    str(package or ""),
+                    str(rebill_id),
+                    int(amount_rub),
+                )
 
     async def get_active_subscription(self, tg_id: int) -> Optional[Dict[str, Any]]:
         """Get the active subscription for a user, if any."""
@@ -2315,6 +2322,27 @@ class CreditsDB:
             }
             for r in rows
         ]
+
+    async def dedup_active_subscriptions(self) -> int:
+        """Cancel duplicate active subscriptions, keeping only the newest per user.
+
+        Returns the number of rows cancelled.
+        """
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                tag = await conn.execute(
+                    """
+                    UPDATE subscriptions SET status = 'replaced', cancelled_at = NOW(), updated_at = NOW()
+                    WHERE status = 'active'
+                      AND id NOT IN (
+                          SELECT MAX(id) FROM subscriptions
+                          WHERE status = 'active'
+                          GROUP BY tg_id
+                      )
+                    """
+                )
+                return _rowcount_from_tag(tag)
 
     async def subscriptions_summary(self) -> Dict[str, Any]:
         """Counts + sum for the admin subscriptions dashboard.

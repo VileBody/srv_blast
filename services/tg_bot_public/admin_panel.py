@@ -5417,7 +5417,14 @@ def build_app(
         </div>
 
         <div class="card">
-          <h2>Все подписки</h2>
+          <h2>Все подписки
+            <form method="post" action="/admin/subscriptions/dedup" style="display:inline;margin-left:12px"
+                  onsubmit="return confirm('Оставить только самую новую активную подписку на каждого пользователя?')">
+              <button type="submit" style="background:#e67e22;color:white;border:none;padding:3px 10px;border-radius:4px;cursor:pointer;font-size:0.65em">
+                Дедуп дублей
+              </button>
+            </form>
+          </h2>
           <div class="table-wrap">
           <table>
             <tr>
@@ -5431,6 +5438,22 @@ def build_app(
         </div>
         """
         return _page("Subscriptions", body)
+
+    @app.post("/admin/subscriptions/dedup")
+    async def subscriptions_dedup(
+        _user: str = Depends(_check_auth),
+    ) -> RedirectResponse:
+        cancelled = await credits_db.dedup_active_subscriptions()
+        if cancelled:
+            await credits_db.audit_log(_user, "subscriptions_dedup", details=f"cancelled={cancelled}")
+            return RedirectResponse(
+                f"/admin/subscriptions?ok={quote_plus(f'Дедуп: отменено {cancelled} дублей')}",
+                status_code=303,
+            )
+        return RedirectResponse(
+            f"/admin/subscriptions?ok={quote_plus('Дублей нет, всё чисто')}",
+            status_code=303,
+        )
 
     @app.post("/admin/subscriptions/recover")
     async def subscriptions_recover_from_payment(
