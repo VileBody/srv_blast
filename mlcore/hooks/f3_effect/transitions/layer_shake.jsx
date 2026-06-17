@@ -3,7 +3,11 @@ var CONFIG = { targetCompName:null, placeRef:"Текст" };
 var SILENT = true;
 if (typeof $!=="undefined" && $.global && $.global.__BLAST){ var __p=$.global.__BLAST; for (var __k in __p){ if (__p[__k]!=null) CONFIG[__k]=__p[__k]; } }
 var CFG = { intro_dur:0.63, outro_dur:0.63, min_hold:0.10, rot_peak1:-2.31, rot_peak2:2.35, rot_damp:-0.68,
-            scale_from:265, scale_to:100, pos_y_offset:242, blur_idle:0.5, blur_peak:0.8 };
+            scale_from:265, scale_to:100, pos_y_offset:242, blur_idle:0.5, blur_peak:0.8,
+            // Sapphire S_BlurMotion (zoom blur) — OFF: the geometry shake was tuned
+            // to look right WITHOUT the plugin. The new node HAS Sapphire, so the
+            // zoom blur kicked in and made the shake far too strong. Leave false.
+            useSapphireBlur:false };
 
 function log(m){ if(SILENT){try{$.writeln(m);}catch(e){}}else alert(m); }
 function findLayer(c,n){ for(var i=1;i<=c.numLayers;i++) if(c.layer(i).name===n) return c.layer(i); return null; }
@@ -61,7 +65,7 @@ function applyShake(layer,comp){
   pos.setValueAtTime(s_in+frame,[cx,cy]); var k2=pos.nearestKeyIndex(s_in+frame);
   pos.setSpatialTangentsAtKey(k2,[0,40.33],[0,-40.33]); pos.setTemporalEaseAtKey(k2,[new KeyframeEase(5802.19,16.67)],[new KeyframeEase(0,16.67)]);
   pos.expression=bounce; pos.expressionEnabled=true;
-  try{ var blur=layer.Effects.addProperty("S_BlurMotion"); blur.name="Zoom Blur"; blur.property("S_BlurMotion-0050").setValue([cxC,cyC]);
+  if(CFG.useSapphireBlur){ try{ var blur=layer.Effects.addProperty("S_BlurMotion"); blur.name="Zoom Blur"; blur.property("S_BlurMotion-0050").setValue([cxC,cyC]);
     var fz=blur.property("S_BlurMotion-0051");
     addKey(fz,b_in1,CFG.blur_idle); setEase(fz,fz.nearestKeyIndex(b_in1),16.67,7.49);
     addKey(fz,b_in2,CFG.blur_peak); setEase(fz,fz.nearestKeyIndex(b_in2),100,16.67);
@@ -70,7 +74,7 @@ function applyShake(layer,comp){
       addKey(fz,b_out1,CFG.blur_peak); setEase(fz,fz.nearestKeyIndex(b_out1),100,7.49);
       addKey(fz,b_out2,CFG.blur_idle); setEase(fz,fz.nearestKeyIndex(b_out2),7.49,16.67); }
     blur.property("S_BlurMotion-0055").setValue(CFG.blur_peak); blur.property("S_BlurMotion-0068").setValue(2);
-  }catch(e){}
+  }catch(e){} }
   return true;
 }
 

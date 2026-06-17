@@ -89,6 +89,9 @@ def test_splice_voice_phrase_replaces_window_words():
     assert abs(voice[0]["start"] - 0.9) < 1e-6
     assert abs(voice[-1]["end"] - 2.1) < 1e-6
     assert out == sorted(out, key=lambda w: w["start"])
+    # voice words are marked so brat keeps them in their own container
+    assert all(w.get("voice") for w in voice)
+    assert not any(w.get("voice") for w in out if w["word"] in ("a", "d"))
 
 
 def test_splice_voice_phrase_noop_on_empty():

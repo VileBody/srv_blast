@@ -31,6 +31,10 @@ var CONFIG = {
 
     WORDS_PER_LINE:  2,
     MAX_LINES:       4,
+    // Anti-stretch: a block whose line has a single word OR a word longer than
+    // this many chars is CENTER-justified instead of full-justified, so long /
+    // lone words never get spread letter-by-letter across the whole line.
+    maxWordChars:    11,
 
     boxWFactor:      0.80,
     boxHFactor:      0.50,
@@ -100,6 +104,7 @@ function extractWords(data){
 function wWord(w){ var v = (w.word != null) ? w.word : (w.text != null ? w.text : w.w); return String(v == null ? "" : v); }
 function wStart(w){ var v = (w.start != null) ? w.start : (w.t_start != null ? w.t_start : w.s); return Number(v); }
 function wEnd(w){ var v = (w.end != null) ? w.end : (w.t_end != null ? w.t_end : w.e); return Number(v); }
+function wVoice(w){ return !!(w && w.voice); }  // hook voice phrase (F5/F1) — own container
 
 function targetCompName(){
     try { if (typeof $.global.__BLAST_TARGET_COMP !== "undefined" && $.global.__BLAST_TARGET_COMP) return String($.global.__BLAST_TARGET_COMP); } catch(e){}
@@ -113,18 +118,34 @@ function findComp(){
     return null;
 }
 
-function packBlocks(words, wpl, maxLines){
-    var perBlock = wpl * maxLines, blocks = [], i;
-    for (i = 0; i < words.length; i += perBlock){
-        var slice = words.slice(i, Math.min(i + perBlock, words.length));
-        var lines = [], j;
+function _packRun(run, wpl, maxLines, isVoice){
+    var perBlock = wpl * maxLines, blocks = [], i, j;
+    for (i = 0; i < run.length; i += perBlock){
+        var slice = run.slice(i, Math.min(i + perBlock, run.length));
+        var lines = [];
         for (j = 0; j < slice.length; j += wpl) lines.push(slice.slice(j, Math.min(j + wpl, slice.length)));
         if (lines.length > 1 && lines[lines.length - 1].length < wpl){
             var tail = lines.pop(); var prev = lines[lines.length - 1];
             for (j = 0; j < tail.length; j++) prev.push(tail[j]);
         }
-        blocks.push({ words: slice, lines: lines });
+        blocks.push({ words: slice, lines: lines, voice: !!isVoice });
     }
+    return blocks;
+}
+function packBlocks(words, wpl, maxLines){
+    // Split into runs of same voice-flag FIRST so a hook voice phrase (F5/F1)
+    // never shares a text container with track subtitles, then pack each run.
+    var blocks = [], i, run = [], runVoice = null;
+    for (i = 0; i < words.length; i++){
+        var v = wVoice(words[i]);
+        if (runVoice === null) runVoice = v;
+        if (v !== runVoice){
+            blocks = blocks.concat(_packRun(run, wpl, maxLines, runVoice));
+            run = []; runVoice = v;
+        }
+        run.push(words[i]);
+    }
+    if (run.length) blocks = blocks.concat(_packRun(run, wpl, maxLines, runVoice));
     return blocks;
 }
 function blockText(block){
@@ -159,7 +180,20 @@ function addRevealAnimator(L, slice, t0){
     }
 }
 
-function styleText(L){
+// A block is CENTER-justified (no stretch) when a line has a single word or any
+// word is too long — full-justify would otherwise spread its letters across the
+// whole line. Normal 2-word lines keep the signature brat full-justify look.
+function blockNeedsCenter(block){
+    for (var i = 0; i < block.lines.length; i++){
+        var ln = block.lines[i];
+        if (ln.length < 2) return true;
+        for (var j = 0; j < ln.length; j++){
+            if (wWord(ln[j]).length > CONFIG.maxWordChars) return true;
+        }
+    }
+    return false;
+}
+function styleText(L, justify){
     var stProp = L.property("ADBE Text Properties").property("ADBE Text Document");
     var td = stProp.value;
     td.resetCharStyle();
@@ -171,7 +205,7 @@ function styleText(L){
     td.tracking      = CONFIG.tracking;
     try { td.autoLeading = false; } catch (eA) {}
     try { td.leading     = CONFIG.leading; } catch (eL) {}
-    td.justification = ParagraphJustification.FULL_JUSTIFY_LASTLINE_FULL;
+    td.justification = justify || ParagraphJustification.FULL_JUSTIFY_LASTLINE_FULL;
     stProp.setValue(td);
     try { var chk = stProp.value; if (String(chk.font) !== CONFIG.font){ chk.font = CONFIG.fontFallback; stProp.setValue(chk); } } catch (eF) {}
 }
@@ -187,6 +221,12 @@ function addBlinker(tcomp, spanIn, spanOut){
     try { w.property("CC Image Wipe-0002").setValue(CONFIG.blinkBorderSoftness); } catch (e) {} // Border Softness
     var cmp = w.property("CC Image Wipe-0001");           // Completion
     var beat = 60.0 / Math.max(1, CONFIG.bpm);            // длина бита
+    // Медленный BPM → реже моргает → делаем каждый блинк ИНТЕНСИВНЕЕ (глубже
+    // wipe). Пик масштабируется обратно BPM относительно 120, клампится в
+    // [blinkPeak, 1.0]. Быстрый трек — базовый пик; медленный — почти полный.
+    var refBpm = 120.0;
+    var peak = Math.max(CONFIG.blinkPeak,
+                        Math.min(1.0, CONFIG.blinkPeak * (refBpm / Math.max(1, CONFIG.bpm))));
     // фаза: первая граница бита <= spanIn
     var k0 = Math.floor((spanIn - CONFIG.beatOffset) / beat);
     var t  = CONFIG.beatOffset + k0 * beat;
@@ -194,8 +234,8 @@ function addBlinker(tcomp, spanIn, spanOut){
     var guard = 0;
     while (t < spanOut && guard < 100000){
         var bStart = t, bMid = t + beat * 0.5;
-        if (bStart > spanIn && bStart < spanOut) cmp.setValueAtTime(bStart, 0);          // граница бита -> видно
-        if (bMid   > spanIn && bMid   < spanOut) cmp.setValueAtTime(bMid, CONFIG.blinkPeak); // центр бита -> вытерто (блинк)
+        if (bStart > spanIn && bStart < spanOut) cmp.setValueAtTime(bStart, 0);   // граница бита -> видно
+        if (bMid   > spanIn && bMid   < spanOut) cmp.setValueAtTime(bMid, peak);  // центр бита -> блинк
         t += beat; guard++;
     }
     cmp.setValueAtTime(spanOut, 0);
@@ -261,7 +301,10 @@ function addBlinker(tcomp, spanIn, spanOut){
                 if (L.inPoint < spanIn) spanIn = L.inPoint;
                 if (L.outPoint > spanOut) spanOut = L.outPoint;
 
-                styleText(L);
+                var jKind = blockNeedsCenter(block)
+                    ? ParagraphJustification.CENTER_JUSTIFY
+                    : ParagraphJustification.FULL_JUSTIFY_LASTLINE_FULL;
+                styleText(L, jKind);
 
                 // центровка по реальным границам текста -> центр кадра (любой размер компа)
                 var r = L.sourceRectAtTime(L.inPoint, false);

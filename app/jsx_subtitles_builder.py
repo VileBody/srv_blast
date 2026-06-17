@@ -169,6 +169,9 @@ def splice_voice_phrase(
             "start": round(cur, 3),
             "end": round(seg_out, 3),
             "focus": True,
+            # Mark as hook voice so brat keeps it in its OWN text container,
+            # never mixed with track-subtitle words.
+            "voice": True,
         })
         cur = seg_out
 
