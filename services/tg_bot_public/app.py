@@ -3114,6 +3114,13 @@ class BlastBotApp:
         return start_sec, end_sec
 
     @staticmethod
+    def _esc_md(text: str) -> str:
+        """Escape Telegram Markdown v1 special chars in user-supplied strings."""
+        for ch in ("*", "_", "`", "["):
+            text = text.replace(ch, f"\\{ch}")
+        return text
+
+    @staticmethod
     def _fmt_timing(sec: float) -> str:
         m = int(sec) // 60
         s = int(sec) % 60
@@ -4472,16 +4479,16 @@ class BlastBotApp:
         cat = {
             "sound": "Звук", "object": "Объект", "effect": "Эффект",
             "motion": "Движение", "thought": "Мысль",
-        }.get(st.hook_category, st.hook_category or "—")
+        }.get(st.hook_category, self._esc_md(st.hook_category or "—"))
         extra = ""
         if st.hook_category in ("motion", "thought") and st.hook_device:
-            extra = f" / {st.hook_device}"
+            extra = f" / {self._esc_md(st.hook_device)}"
         elif st.hook_category == "object" and st.f2_shape:
-            extra = f" / {st.f2_shape}"
+            extra = f" / {self._esc_md(st.f2_shape)}"
         elif st.hook_category == "sound":
             extra = " / звук" + (" + субтитр" if st.f1_sound_text else "")
         elif st.hook_category == "effect":
-            fx = [x for x in (st.effect_hook, st.effect_transition, st.effect_extra) if x]
+            fx = [self._esc_md(x) for x in (st.effect_hook, st.effect_transition, st.effect_extra) if x]
             if fx:
                 extra = " / " + ", ".join(fx)
         drop = ""
@@ -4498,8 +4505,8 @@ class BlastBotApp:
         return ("*Цвета:* " + ", ".join(parts)) if parts else ""
 
     def _final_confirm_text(self, st: ChatState, *, versions: Optional[int] = None) -> str:
-        mode_display = _BUTTON_BY_SUBTITLES_MODE.get(st.subtitles_mode, st.subtitles_mode)
-        fragment_display = st.target_fragment or "на усмотрение ИИ"
+        mode_display = self._esc_md(_BUTTON_BY_SUBTITLES_MODE.get(st.subtitles_mode, st.subtitles_mode))
+        fragment_display = self._esc_md(st.target_fragment or "на усмотрение ИИ")
         lines = [
             f"*Режим субтитров:* «{mode_display}»",
             f"*Фрагмент:* «{fragment_display}»",
