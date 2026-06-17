@@ -25,6 +25,8 @@ var CONFIG = {
     font:            "ArialNarrow",
     fontFallback:    "Arial-BoldMT",
     fontSize:        130,
+    minFontSize:     56,                   // нижняя граница глобального fit
+    fitMargin:       0.97,                 // доля BOX_W, в которую должна влезть самая широкая строка
     leading:         130,
     tracking:        -20,
     fillColor:       [1, 1, 1],
@@ -116,13 +118,19 @@ function findComp(){
 }
 
 function _packRun(run, wpl, maxLines, isVoice){
-    // Strict 2-words-per-line, NO tail-merge: an odd remainder stays a lone
-    // 1-word line (the block is then LEFT-justified so it never stretches).
+    // 2 words per line; an odd tail word is MERGED into the previous line (→ a
+    // 3-word last line) so there is never a lone 1-word line — every line has
+    // ≥2 words. A genuine 1-word block (whole run = 1 word) is the only case
+    // left with <2 words, handled by LEFT-justify downstream.
     var perBlock = wpl * maxLines, blocks = [], i, j;
     for (i = 0; i < run.length; i += perBlock){
         var slice = run.slice(i, Math.min(i + perBlock, run.length));
         var lines = [];
         for (j = 0; j < slice.length; j += wpl) lines.push(slice.slice(j, Math.min(j + wpl, slice.length)));
+        if (lines.length > 1 && lines[lines.length - 1].length < wpl){
+            var tail = lines.pop(); var prev = lines[lines.length - 1];
+            for (j = 0; j < tail.length; j++) prev.push(tail[j]);
+        }
         blocks.push({ words: slice, lines: lines, voice: !!isVoice });
     }
     return blocks;
@@ -175,32 +183,63 @@ function addRevealAnimator(L, slice, t0){
     }
 }
 
-// A block is LEFT-justified (no stretch) when ANY line has a single word —
-// full-justify would otherwise spread that lone word's letters across the line.
-// Length doesn't matter (a 6-char lone word stretches just like a 15-char one),
-// so this is purely "line has fewer than 2 words". Uniform 2-word blocks keep
-// the signature brat full-justify look.
+// After the tail-merge the only block left with a <2-word line is a GENUINE
+// 1-word block (the whole run is one word, e.g. a short voice phrase). It can't
+// be paired, so LEFT-justify it (natural width, no letter-stretch) instead of
+// full-justify. Everything else has ≥2 words per line → full-justify.
 function blockNeedsLeft(block){
-    for (var i = 0; i < block.lines.length; i++){
-        if (block.lines[i].length < 2) return true;
-    }
-    return false;
+    return block.words.length < 2;
 }
-function styleText(L, justify){
+function styleText(L, justify, fontSize){
     var stProp = L.property("ADBE Text Properties").property("ADBE Text Document");
     var td = stProp.value;
     td.resetCharStyle();
     td.font          = CONFIG.font;
-    td.fontSize      = CONFIG.fontSize;
+    td.fontSize      = fontSize || CONFIG.fontSize;
     td.applyFill     = true;
     td.fillColor     = CONFIG.fillColor;
     td.applyStroke   = false;
     td.tracking      = CONFIG.tracking;
     try { td.autoLeading = false; } catch (eA) {}
-    try { td.leading     = CONFIG.leading; } catch (eL) {}
+    try { td.leading     = (fontSize || CONFIG.fontSize) * (CONFIG.leading / CONFIG.fontSize); } catch (eL) {}
     td.justification = justify || ParagraphJustification.FULL_JUSTIFY_LASTLINE_FULL;
     stProp.setValue(td);
     try { var chk = stProp.value; if (String(chk.font) !== CONFIG.font){ chk.font = CONFIG.fontFallback; stProp.setValue(chk); } } catch (eF) {}
+}
+
+// Single line's words as the rendered string (for width probing).
+function lineString(line){
+    var ws = [], j;
+    for (j = 0; j < line.length; j++) ws.push(wWord(line[j]));
+    return ws.join(" ").toLowerCase();
+}
+// GLOBAL fit: measure the widest line across ALL blocks (point-text probe, no
+// wrap) and return one fontSize for the WHOLE video so the widest line fits the
+// box → no auto-wrap anywhere → every visual line keeps its 2–3 words, and the
+// subtitle size is uniform across the clip (no per-block jumping).
+function computeFitFontSize(tcomp, blocks, boxW){
+    var probe = tcomp.layers.addText("x");
+    var sp = probe.property("ADBE Text Properties").property("ADBE Text Document");
+    var maxW = 1, b, i;
+    for (b = 0; b < blocks.length; b++){
+        for (i = 0; i < blocks[b].lines.length; i++){
+            var s = lineString(blocks[b].lines[i]); if (!s.length) continue;
+            var td = sp.value;
+            td.resetCharStyle();
+            td.text = s;
+            td.font = CONFIG.font;
+            td.fontSize = CONFIG.fontSize;
+            td.tracking = CONFIG.tracking;
+            td.applyStroke = false;
+            sp.setValue(td);
+            var w = probe.sourceRectAtTime(0, false).width;
+            if (w > maxW) maxW = w;
+        }
+    }
+    try { probe.remove(); } catch (e) {}
+    var avail = boxW * (CONFIG.fitMargin || 0.97);
+    if (maxW > avail) return Math.max(CONFIG.minFontSize || 40, CONFIG.fontSize * (avail / maxW));
+    return CONFIG.fontSize;
 }
 
 // ---- моргачка: adjustment + CC Image Wipe, кейфреймы по BPM (блинк/бит) ----
@@ -277,6 +316,11 @@ function addBlinker(tcomp, spanIn, spanOut){
             tcomp = app.project.items.addComp(CONFIG.textCompName, CW, CH, srcComp.pixelAspect, srcComp.duration, srcComp.frameRate);
         }
 
+        // ГЛОБАЛЬНЫЙ fit: один fontSize на весь ролик, чтобы самая широкая строка
+        // влезала в бокс (без авто-переноса → 2–3 слова держатся в строке) и
+        // размер был одинаков во всех блоках (не скакал).
+        var fitFontSize = computeFitFontSize(tcomp, blocks, BOX_W);
+
         for (var b = 0; b < blocks.length; b++){
             var block = blocks[b]; if (!block.words.length) continue;
             var slice = block.words;
@@ -300,7 +344,7 @@ function addBlinker(tcomp, spanIn, spanOut){
                 var jKind = isLeft
                     ? ParagraphJustification.LEFT_JUSTIFY
                     : ParagraphJustification.FULL_JUSTIFY_LASTLINE_FULL;
-                styleText(L, jKind);
+                styleText(L, jKind, fitFontSize);
 
                 // Центровка. Full-justify: anchor по центру текста (текст = ширина
                 // бокса). Left-justify: anchor по центру БОКСА (r.left = левый край
