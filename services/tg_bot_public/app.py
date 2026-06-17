@@ -4771,12 +4771,28 @@ class BlastBotApp:
 
     async def _handle_wait_next(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()
+
+        if text == BTN_REUSE_INPUT:
+            if not self._can_reuse_input(st):
+                await message.answer(
+                    "Не вижу сохранённого трека. Нажми «Отправить трек» и пришли файл.",
+                    reply_markup=_kb([BTN_NEXT]),
+                )
+                return
+            if message.chat is None:
+                return
+            st.subtitles_mode = SUBTITLES_MODE_IMPULSE_2ND
+            st.versions_count = 1
+            await self._ask_footage_genre(message, st)
+            return
+
+        can_reuse = self._can_reuse_input(st)
         if text != BTN_NEXT:
             await message.answer(
                 "Если хочешь новый ролик, нажми «Сделать следующий».\n\n"
                 "/sendtrack — отправить трек\n"
                 "/packets — посмотреть тарифы",
-                reply_markup=_kb([BTN_NEXT]),
+                reply_markup=_kb([BTN_NEXT], [BTN_REUSE_INPUT]) if can_reuse else _kb([BTN_NEXT]),
             )
             return
 
@@ -7475,7 +7491,11 @@ class BlastBotApp:
                         f"Остаток генераций: {bal}\n"
                         f"/packets — посмотреть тарифы"
                     ),
-                    reply_markup=_kb([BTN_GENERATE_MORE]),
+                    reply_markup=(
+                        _kb([BTN_GENERATE_MORE], [BTN_REUSE_INPUT])
+                        if self._can_reuse_input(st)
+                        else _kb([BTN_GENERATE_MORE])
+                    ),
                     context="paid_more",
                 )
             else:
