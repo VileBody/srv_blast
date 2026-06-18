@@ -30,6 +30,14 @@ services:
       # point mlcore to shared paths
       FOOTAGE_INVENTORY_JSON: /app/data/footage_inventory.json
       DESCRIPTIONS_BUNDLE_PATH: /app/pins/descriptions_bundle_selected.json
+
+      # Native-thread pins for the /hook/analyze librosa path (avoid OpenBLAS
+      # oversubscription; mirror the worker-build SIGSEGV mitigation).
+      OPENBLAS_NUM_THREADS: "1"
+      OMP_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      NUMBA_NUM_THREADS: "1"
+      NUMBA_THREADING_LAYER: workqueue
     volumes:
       - ./work:/app/work
       - ./output:/app/output
@@ -75,6 +83,19 @@ services:
       # point mlcore to shared paths
       FOOTAGE_INVENTORY_JSON: /app/data/footage_inventory.json
       DESCRIPTIONS_BUNDLE_PATH: /app/pins/descriptions_bundle_selected.json
+
+      # --- SIGSEGV mitigation for the hook audio analysis (librosa) ---
+      # Celery runs prefork (forked children); librosa pulls numba/llvmlite +
+      # OpenBLAS whose native thread pools are NOT fork-safe and segfault the
+      # child mid-stage2 (observed: job dies right after stage2_style during
+      # beat/onset/structural analysis). Pin native pools to 1 thread and use
+      # numba's fork-safe threading layer. Must be set in the container env so
+      # they apply before numpy/OpenBLAS import.
+      OPENBLAS_NUM_THREADS: "1"
+      OMP_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      NUMBA_NUM_THREADS: "1"
+      NUMBA_THREADING_LAYER: workqueue
     volumes:
       - ./work:/app/work
       - ./output:/app/output
