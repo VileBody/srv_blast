@@ -159,7 +159,8 @@ BTN_F1_NO_SUBS = "Без субтитров"
 BTN_COLOR_DEFAULT = "По умолчанию"
 _COLOR_PALETTE: dict[str, str] = {
     "Белый": "#FFFFFF",
-    "Чёрный": "#000000",
+    # Чёрный убран из палитры текста — сливается с тёмными фонами. Чёрный фон
+    # остаётся отдельным выбором фона (BTN_BG_BLACK).
     "Красный": "#FF2D55",
     "Оранжевый": "#FF9500",
     "Жёлтый": "#FFD60A",
@@ -2293,6 +2294,11 @@ class BlastBotApp:
         st.f1_sound_text = str(case.get("f1_sound_text", ""))
         st.subtitle_color_hex = str(case.get("subtitle_color_hex", ""))
         st.accent_color_hex = str(case.get("accent_color_hex", ""))
+        # Battery: each case may carry its OWN drop (a later candidate when the
+        # format needs more lead, e.g. F4). Set it so each version reframes with
+        # the right drop. bigtest cases omit this → drop reused from state.
+        if case.get("hook_drop_t") is not None:
+            st.hook_drop_t = float(case["hook_drop_t"])
 
     async def _handle_wait_audio(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()
@@ -2848,29 +2854,88 @@ class BlastBotApp:
 
     def _build_battery_cases(self, st: ChatState) -> List[Dict[str, Any]]:
         """One random case per hook category (no category repeats within a track).
-        F4 «Движение» only when bpm is measured; F1 «Звук» only when a sound was
-        uploaded. Sub-picks are random per press."""
+        Each case carries its OWN hook_drop_t: most use the primary drop, but
+        formats with a hard timing requirement (F4 needs drop ≥ lead; F1 needs
+        drop−clip_start > 1s) walk the next drop candidates until one fits — and
+        are dropped from the battery if none does. Sub-picks are random per press.
+        """
         import random
         rng = random.Random()
+        clip_start = float(st.user_clip_start_sec or 0.0)
+        bpm = float(st.hook_analysis_bpm or 0.0)
+
+        # Ordered, de-duplicated drop candidates: primary first, then the rest.
+        drops: List[float] = []
+        if st.hook_drop_t is not None:
+            drops.append(float(st.hook_drop_t))
+        for c in (st.hook_drop_candidates or []):
+            try:
+                t = float(c.get("t"))
+            except (TypeError, ValueError):
+                continue
+            if all(abs(t - d) > 1e-6 for d in drops):
+                drops.append(t)
+        primary = drops[0] if drops else None
+
+        def _pick(predicate) -> Optional[float]:
+            for d in drops:
+                if predicate(d):
+                    return d
+            return None
+
         cases: List[Dict[str, Any]] = []
-        shape = rng.choice(["rhomb", "square", "star1", "star2", "elipse"])
-        cases.append({"label": f"Объект: {shape}", "hook_enabled": True,
-                      "hook_category": "object", "f2_shape": shape})
-        fx_hook = rng.choice(["hook_light", "shutter_effect", "flash_slow_shutter"])
-        fx_tr = rng.choice(["snap_wipe", "minimax", "invert_flash", "extract_flash", "flash_on_cuts", "layer_shake"])
-        fx_extra = rng.choice(["", "xerox", "analog_glitch", "neon_extract", "old_camera"])
-        cases.append({"label": "Эффект", "hook_enabled": True, "hook_category": "effect",
-                      "effect_hook": fx_hook, "effect_transition": fx_tr, "effect_extra": fx_extra})
-        if float(st.hook_analysis_bpm or 0.0) > 0.0:
+
+        # F2 «Объект» — primary drop (no extra lead requirement).
+        if primary is not None:
+            shape = rng.choice(["rhomb", "square", "star1", "star2", "elipse"])
+            cases.append({"label": f"Объект: {shape}", "hook_enabled": True,
+                          "hook_category": "object", "f2_shape": shape,
+                          "hook_drop_t": primary})
+
+        # F3 «Эффект» — primary drop.
+        if primary is not None:
+            fx_hook = rng.choice(["hook_light", "shutter_effect", "flash_slow_shutter"])
+            fx_tr = rng.choice(["snap_wipe", "minimax", "invert_flash", "extract_flash", "flash_on_cuts", "layer_shake"])
+            fx_extra = rng.choice(["", "xerox", "analog_glitch", "neon_extract", "old_camera"])
+            cases.append({"label": "Эффект", "hook_enabled": True, "hook_category": "effect",
+                          "effect_hook": fx_hook, "effect_transition": fx_tr,
+                          "effect_extra": fx_extra, "hook_drop_t": primary})
+
+        # F4 «Движение» — needs bpm AND a drop with drop ≥ lead (room to reframe
+        # the clip backward). Walk candidates for the first that fits; skip if none.
+        if bpm > 0.0 and drops:
             dev = rng.choice(["swipe", "tap", "pinch", "holdfinger", "head"])
-            cases.append({"label": f"Движение: {dev}", "hook_enabled": True,
-                          "hook_category": "motion", "hook_device": dev})
-        dev5 = rng.choice(["punchline", "missing_word", "lyric_echo", "question_to_track", "inverse_lyric"])
-        cases.append({"label": f"Мысль: {dev5}", "hook_enabled": True,
-                      "hook_category": "thought", "hook_device": dev5})
-        if str(st.f1_sound_url or "").strip():
-            cases.append({"label": "Звук", "hook_enabled": True, "hook_category": "sound",
-                          "f1_sound_url": str(st.f1_sound_url)})
+            lead = self._f4_effective_lead(dev, bpm)
+            f4_drop = _pick(lambda d: d - lead >= 0.0)
+            if f4_drop is not None:
+                cases.append({"label": f"Движение: {dev}", "hook_enabled": True,
+                              "hook_category": "motion", "hook_device": dev,
+                              "hook_drop_t": f4_drop})
+            else:
+                log.info("battery: F4 skipped — no drop candidate with lead=%.2f (bpm=%.1f)", lead, bpm)
+
+        # F5 «Мысль» — primary drop.
+        if primary is not None:
+            dev5 = rng.choice(["punchline", "missing_word", "lyric_echo", "question_to_track", "inverse_lyric"])
+            cases.append({"label": f"Мысль: {dev5}", "hook_enabled": True,
+                          "hook_category": "thought", "hook_device": dev5,
+                          "hook_drop_t": primary})
+
+        # F1 «Звук» — only with an uploaded sound; needs drop−clip_start > 1s.
+        if str(st.f1_sound_url or "").strip() and drops:
+            f1_drop = _pick(lambda d: (d - clip_start) > 1.0)
+            if f1_drop is not None:
+                cases.append({"label": "Звук", "hook_enabled": True, "hook_category": "sound",
+                              "f1_sound_url": str(st.f1_sound_url), "hook_drop_t": f1_drop})
+            else:
+                log.info("battery: F1 skipped — no drop candidate with drop−clip_start > 1s")
+
+        # Carry the user's picked colors onto every battery case so
+        # _apply_bigtest_config doesn't wipe them (cases default colors to "").
+        for c in cases:
+            c["subtitle_color_hex"] = str(st.subtitle_color_hex or "")
+            c["accent_color_hex"] = str(st.accent_color_hex or "")
+
         return cases[:5]
 
     async def _start_battery(self, message: Message, st: ChatState) -> None:
@@ -3582,6 +3647,12 @@ class BlastBotApp:
                             exclude_file_names=[],
                         )
                     except Exception as e:
+                        # Battery: each version is independent — one bad version
+                        # must NOT skip the rest (e.g. an F4 reframe error used to
+                        # break the loop and drop F5/F1). Log and continue.
+                        if st.battery_cases:
+                            log.warning("battery version %d skipped: %s", version_index, e)
+                            continue
                         if version_index == 1:
                             raise RuntimeError(f"Не удалось поставить в очередь Версию 1/{versions}: {e}") from e
                         enqueue_failed_from_version = version_index

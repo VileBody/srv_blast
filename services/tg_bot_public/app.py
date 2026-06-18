@@ -175,6 +175,8 @@ HOOK_FLOW_ENABLED = (os.environ.get("HOOK_FLOW_ENABLED", "0").strip().lower()
 # don't enqueue with user_clip_end_sec=0 (orchestrator 422). team-only.
 BIGTEST_ENABLED: bool = False
 # Hook battery is team-bot only; mirrored here as False (button never shown).
+# Its case-building (incl. per-format drop selection — F4 needs drop >= lead,
+# so it walks the next drop candidates) lives only in tg_bot_botapi.
 BATTERY_ENABLED: bool = False
 
 HOOK_STAGES = frozenset({
@@ -325,7 +327,8 @@ BTN_SUB_MODE_BRAT = "Brat"
 BTN_COLOR_DEFAULT = "По умолчанию"
 _COLOR_PALETTE: dict[str, str] = {
     "Белый": "#FFFFFF",
-    "Чёрный": "#000000",
+    # Чёрный убран из палитры текста — сливается с тёмными фонами. Чёрный фон
+    # остаётся отдельным выбором фона (BTN_BG_BLACK).
     "Красный": "#FF2D55",
     "Оранжевый": "#FF9500",
     "Жёлтый": "#FFD60A",
