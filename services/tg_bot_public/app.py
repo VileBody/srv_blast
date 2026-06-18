@@ -3852,7 +3852,7 @@ class BlastBotApp:
             reply_markup=_kb(
                 [BTN_FX_TR_SNAP, BTN_FX_TR_MINIMAX],
                 [BTN_FX_TR_INVERT, BTN_FX_TR_EXTRACT],
-                [BTN_FX_TR_FLASH, BTN_FX_TR_SHAKE],
+                [BTN_FX_TR_FLASH],
                 [BTN_FX_SKIP],
                 [BTN_BACK],
             ),
@@ -5836,12 +5836,17 @@ class BlastBotApp:
         return f"tg-{int(chat_id)}-batch-{str(batch_id or '').strip()}-v{int(version_index)}"
 
     async def _resolve_rotation_slot_for_enqueue(
-        self, *, st: ChatState
+        self, *, st: ChatState, offset: int = 0
     ) -> Tuple[str, str, List[str]]:
         """Return (theme, group, persistent_history_names) for the current user.
 
         Returns empty ("", "", []) when artist_id has no rotation slots
         (unknown artist or no themes) — callers should then skip override.
+
+        `offset` spreads a multi-version batch across consecutive rotation slots:
+        version 0 keeps the persisted cursor (the advance-on-exhaustion base),
+        versions 1..N step forward so each batch video lands on a different
+        subgroup instead of all sharing one slot.
         """
         artist_id = str(st.footage_artist_id or "").strip()
         if not artist_id:
@@ -5850,7 +5855,7 @@ class BlastBotApp:
         if not slots:
             return "", "", []
         cursor = await self.store.get_rotation_cursor(int(st.chat_id), artist_id)
-        slot = slots[int(cursor) % len(slots)]
+        slot = slots[(int(cursor) + int(offset)) % len(slots)]
         history = await self.store.get_rotation_history(int(st.chat_id), artist_id)
         return slot[0], slot[1], history
 
@@ -5912,7 +5917,7 @@ class BlastBotApp:
         if allow_bypass:
             maintenance_bypass_token = str(self.settings.system_maintenance_bypass_token or "").strip()
         rotation_theme, rotation_group, rotation_history = (
-            await self._resolve_rotation_slot_for_enqueue(st=st)
+            await self._resolve_rotation_slot_for_enqueue(st=st, offset=int(version_index))
         )
         merged_exclude_seen: set[str] = set()
         merged_exclude: List[str] = []

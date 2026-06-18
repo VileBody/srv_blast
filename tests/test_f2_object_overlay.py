@@ -73,7 +73,6 @@ def test_build_overlay_inlines_all_pool_transitions() -> None:
         "invert_flash": "invert_flash",
         "extract_flash": "extract_flash",
         "flash_on_cuts": "flash_on_cuts",
-        "layer_shake": "layer_shake",
     }
     for tid, marker in markers.items():
         # group dispatch reference: __f2_groups["<tid>"]
@@ -83,7 +82,12 @@ def test_build_overlay_inlines_all_pool_transitions() -> None:
 
 
 def test_build_overlay_layer_shake_invoked_globally_if_in_pool() -> None:
-    js = build_overlay_jsx(shape="star1", drop_time=2.0, seed=7)
+    # layer_shake is excluded from the default pool (2026-06-18, re-tune), but
+    # the per-clip global-invoke path still works when explicitly requested.
+    js = build_overlay_jsx(
+        shape="star1", drop_time=2.0, seed=7,
+        post_drop_pool=("snap_wipe", "minimax", "layer_shake"),
+    )
     # When layer_shake's group is non-empty, the BLAST passes __f2_cuts (global,
     # all cuts) — NOT just the group subset. This is the per-clip exception.
     shake_branch_idx = js.find('__f2_groups["layer_shake"]')
@@ -134,10 +138,12 @@ def test_build_overlay_rejects_non_positive_drop() -> None:
         build_overlay_jsx(shape="rhomb", drop_time=-1.0, seed=1)
 
 
-def test_pool_default_is_all_six_f3_transitions() -> None:
+def test_pool_default_excludes_layer_shake() -> None:
+    # layer_shake temporarily removed from the random pool (2026-06-18, re-tune).
     assert sorted(F2_POST_DROP_TRANSITION_POOL) == sorted(
-        ["snap_wipe", "minimax", "invert_flash", "extract_flash", "flash_on_cuts", "layer_shake"]
+        ["snap_wipe", "minimax", "invert_flash", "extract_flash", "flash_on_cuts"]
     )
+    assert "layer_shake" not in F2_POST_DROP_TRANSITION_POOL
 
 
 def test_predrop_shape_only_first_footage():

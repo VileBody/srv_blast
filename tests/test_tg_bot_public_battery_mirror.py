@@ -2,6 +2,52 @@
 """Parity: hook battery is team-bot only; public mirrors the data + gate=False."""
 from __future__ import annotations
 
+import asyncio
+
+
+class _StubStore:
+    def __init__(self, cursor):
+        self._cursor = cursor
+
+    async def get_rotation_cursor(self, chat_id, artist_id):
+        return self._cursor
+
+    async def get_rotation_history(self, chat_id, artist_id):
+        return []
+
+
+def _resolve(mod, *, cursor, offset, slots):
+    """Drive a bot's _resolve_rotation_slot_for_enqueue with stubbed deps."""
+    orig = mod.get_artist_rotation_slots
+    mod.get_artist_rotation_slots = lambda artist_id: slots
+    try:
+        stub = mod.BlastBotApp.__new__(mod.BlastBotApp)
+        stub.store = _StubStore(cursor)
+
+        class _St:
+            footage_artist_id = "artist_x"
+            chat_id = 7
+
+        coro = mod.BlastBotApp._resolve_rotation_slot_for_enqueue(stub, st=_St(), offset=offset)
+        return asyncio.run(coro)
+    finally:
+        mod.get_artist_rotation_slots = orig
+
+
+def test_rotation_offset_spreads_versions_both_bots():
+    """offset=version_index lands each batch version on a different subgroup."""
+    from services.tg_bot_botapi import app as team
+    from services.tg_bot_public import app as pub
+
+    slots = [("t0", "g0"), ("t1", "g1"), ("t2", "g2")]
+    for mod in (team, pub):
+        # cursor=0: version 0 keeps base slot, versions 1/2 step forward.
+        assert _resolve(mod, cursor=0, offset=0, slots=slots)[:2] == ("t0", "g0")
+        assert _resolve(mod, cursor=0, offset=1, slots=slots)[:2] == ("t1", "g1")
+        assert _resolve(mod, cursor=0, offset=2, slots=slots)[:2] == ("t2", "g2")
+        # wraps around the slot list, and respects the persisted cursor base.
+        assert _resolve(mod, cursor=2, offset=2, slots=slots)[:2] == ("t1", "g1")
+
 
 def test_public_battery_disabled():
     from services.tg_bot_public import app as pub

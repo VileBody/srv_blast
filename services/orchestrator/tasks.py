@@ -19,6 +19,8 @@ from typing import Any, Dict, List, Optional
 import boto3
 from botocore.config import Config
 
+from celery.signals import task_failure
+
 from core.telegram_api import make_telegram_api
 
 from .artifacts import make_job_paths
@@ -2321,6 +2323,57 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
     else:
         dispatch_to_windows.delay(job_id)
     return {"ok": True, "stage": "build_done", "paths": paths.manifest()}
+
+
+# Task names whose first positional arg is the job_id, used by the orphan-reaper
+# below to flip a job to FAILED when its worker dies mid-execution.
+_JOB_ID_FIRST_ARG_TASKS = frozenset({
+    "orchestrator.build_job",
+    "orchestrator.build_job_sdk",
+    "orchestrator.build_job_openrouter",
+    "orchestrator.build_job_hybrid",
+    "orchestrator.build_job_vertex_sdk_mix",
+})
+
+
+@task_failure.connect
+def _reap_orphaned_job_on_failure(sender=None, task_id=None, exception=None,
+                                  args=None, kwargs=None, einfo=None, **_extra):
+    """Flip a job to FAILED when its build task dies without a terminal update.
+
+    A native SIGSEGV (librosa/grpc/etc.) kills the Celery child mid-task, so the
+    in-task try/finally never runs and the job is left stuck RUNNING forever
+    (the bot then polls `llm_stage2_parallel` indefinitely). Celery's parent
+    still raises WorkerLostError → fires this signal, which lets us mark the job
+    FAILED so the bot surfaces the error instead of hanging. Also covers any
+    other unhandled task exception that escaped the impl's own error handling.
+    """
+    try:
+        name = getattr(sender, "name", "") or ""
+        if name not in _JOB_ID_FIRST_ARG_TASKS:
+            return
+        job_id = None
+        if args:
+            job_id = args[0]
+        elif kwargs:
+            job_id = kwargs.get("job_id")
+        job_id = str(job_id or "").strip()
+        if not job_id:
+            return
+        store = JobStore.from_env()
+        cur = store.get(job_id)
+        # Don't clobber a job that already reached a terminal state (e.g. the
+        # impl caught the error and set FAILED, or a retry later SUCCEEDED).
+        if cur is not None and str(getattr(cur, "status", "")).upper() in {"SUCCEEDED", "FAILED"}:
+            return
+        err = f"worker_lost_or_unhandled: {type(exception).__name__}: {exception}"
+        store.set_status(job_id, "FAILED", stage="worker_lost", error=err[:500])
+        log.error("orphaned_job_reaped job_id=%s task=%s err=%s", job_id, name, err)
+    except Exception as e:  # never let the signal handler itself raise
+        try:
+            log.warning("orphan_reaper_failed task_id=%s err=%s", task_id, str(e))
+        except Exception:
+            pass
 
 
 @celery_app.task(name="orchestrator.build_job", bind=True, max_retries=8)

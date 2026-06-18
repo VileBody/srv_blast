@@ -58,7 +58,7 @@ var CONFIG = {
     blinker:         true,
     bpm:             120,                  // BPM трека (дамп был на 120)
     beatOffset:      0,                    // время первого бита, с (фаза)
-    blinkSubdiv:     2,                    // блинков на долю: 2 = 1/8, 4 = 1/16
+    blinkSubdiv:     4,                    // блинков на долю: 2 = 1/8, 4 = 1/16
     blinkPeak:      0.8,                   // пик Completion (CC Image Wipe)
     blinkBorderSoftness: 0.03,
     blinkInfluence:  33.333333

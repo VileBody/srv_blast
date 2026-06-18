@@ -42,15 +42,16 @@ _PLACE_REF = "Текст"
 # Wired shape ids (= filenames under shapes/). Mirror to the bot picker.
 F2_SHAPES = ("rhomb", "square", "star1", "star2", "elipse")
 
-# Post-drop random transition pool = all 6 F3 transitions.
-# Mirror to mlcore.hooks.f3_effect.overlay.F3_TRANSITIONS — keep in sync.
+# Post-drop random transition pool of F3 transitions.
+# NOTE: layer_shake temporarily excluded (2026-06-18) — visually too harsh,
+# pending re-tune. Keep it in _F3_TRANSITION_SCRIPTS so explicit F3 picks still
+# resolve, just don't let the random combo pick it.
 F2_POST_DROP_TRANSITION_POOL = (
     "snap_wipe",
     "minimax",
     "invert_flash",
     "extract_flash",
     "flash_on_cuts",
-    "layer_shake",
 )
 
 # F3 transition script paths (relative to f3_effect/). Single source of truth =
