@@ -143,6 +143,13 @@ BIGTEST_ENABLED: bool = True
 # Team bot only; mirrored as False in tg_bot_public for parity.
 BATTERY_ENABLED: bool = True
 
+# F5 «Мысль»: lead (seconds) the clip is reframed BACK from the drop, so the TTS
+# voice (~3s) plays in the run-up and lands INTO the drop (post-drop focus line
+# right after). Symmetric to F4's per-device cover lead. clip_start := drop −
+# F5_LEAD_SEC; the drop must therefore sit at least this far into the track.
+# Mirrored in tg_bot_public for parity.
+F5_LEAD_SEC: float = 4.0
+
 
 BTN_SEND_TRACK = "Отправить трек"
 BTN_SEND_LYRICS = "Отправить текст"
@@ -2914,12 +2921,17 @@ class BlastBotApp:
             else:
                 log.info("battery: F4 skipped — no drop candidate with lead=%.2f (bpm=%.1f)", lead, bpm)
 
-        # F5 «Мысль» — primary drop.
-        if primary is not None:
-            dev5 = rng.choice(["punchline", "missing_word", "lyric_echo", "question_to_track", "inverse_lyric"])
-            cases.append({"label": f"Мысль: {dev5}", "hook_enabled": True,
-                          "hook_category": "thought", "hook_device": dev5,
-                          "hook_drop_t": primary})
+        # F5 «Мысль» — needs a drop with room to reframe the voice run-up
+        # (drop ≥ F5_LEAD_SEC, same as F4). Walk candidates; skip if none fit.
+        if drops:
+            f5_drop = _pick(lambda d: d - F5_LEAD_SEC >= 0.0)
+            if f5_drop is not None:
+                dev5 = rng.choice(["punchline", "missing_word", "lyric_echo", "question_to_track", "inverse_lyric"])
+                cases.append({"label": f"Мысль: {dev5}", "hook_enabled": True,
+                              "hook_category": "thought", "hook_device": dev5,
+                              "hook_drop_t": f5_drop})
+            else:
+                log.info("battery: F5 skipped — no drop candidate with lead=%.2f", F5_LEAD_SEC)
 
         # F1 «Звук» — only with an uploaded sound; needs drop−clip_start > 1s.
         if str(st.f1_sound_url or "").strip() and drops:
@@ -4087,6 +4099,28 @@ class BlastBotApp:
             # Send the SAME bpm to the orchestrator so the overlay's t() scaling
             # matches the reframe → cover-end lands exactly on the drop.
             f4_bpm = bpm
+
+        # F5 «Мысль»: reframe the clip toward the drop just like F4 so the TTS
+        # voice (~3s) plays in the run-up and lands INTO the drop, with the
+        # post-drop focus line right after. Without this the voice plays from
+        # clip-second-0 and the user-drop sits wherever the user picked → total
+        # desync (worst with a pre-cut mp3 fragment as input). clip_start :=
+        # drop − F5_LEAD_SEC; clip_end stays. The post-drop focus line and
+        # drop_at_sec are derived orchestrator-side from USER_DROP_T − clip_start,
+        # so they follow this reframe automatically.
+        if st.hook_enabled and st.hook_category == "thought" and st.hook_device:
+            if st.hook_drop_t is None:
+                raise RuntimeError("F5 thought hook requires a drop (hook_drop_t)")
+            new_start = float(st.hook_drop_t) - F5_LEAD_SEC
+            if new_start < 0.0:
+                raise RuntimeError(
+                    f"F5 reframe: drop {st.hook_drop_t} - lead {F5_LEAD_SEC:.2f} < 0 "
+                    "(hook too close to track start — use a fuller track)"
+                )
+            user_clip_start_sec = new_start
+            if user_clip_end_sec is None or user_clip_end_sec <= new_start:
+                user_clip_end_sec = float(end)
+
         rotation_theme, rotation_group, rotation_history = (
             await self._resolve_rotation_slot_for_enqueue(st=st, offset=int(version_index))
         )

@@ -179,6 +179,10 @@ BIGTEST_ENABLED: bool = False
 # so it walks the next drop candidates) lives only in tg_bot_botapi.
 BATTERY_ENABLED: bool = False
 
+# F5 «Мысль» clip-reframe lead (seconds): clip_start := drop − F5_LEAD_SEC so the
+# TTS voice runs up INTO the drop. Mirrors tg_bot_botapi for parity.
+F5_LEAD_SEC: float = 4.0
+
 HOOK_STAGES = frozenset({
     STAGE_WAIT_HOOK_CHOICE,
     STAGE_WAIT_HOOK_DROP,
@@ -5907,6 +5911,24 @@ class BlastBotApp:
             if user_clip_end_sec is None or user_clip_end_sec <= new_start:
                 user_clip_end_sec = float(end)
             f4_bpm = bpm
+
+        # F5 «Мысль»: reframe the clip toward the drop like F4 so the TTS voice
+        # (~3s) plays in the run-up and lands INTO the drop, post-drop focus line
+        # right after. clip_start := drop − F5_LEAD_SEC; clip_end stays. drop_at_sec
+        # and the focus line follow this reframe orchestrator-side. (Parity mirror.)
+        if st.hook_enabled and st.hook_category == "thought" and st.hook_device:
+            if st.hook_drop_t is None:
+                raise RuntimeError("F5 thought hook requires a drop (hook_drop_t)")
+            new_start = float(st.hook_drop_t) - F5_LEAD_SEC
+            if new_start < 0.0:
+                raise RuntimeError(
+                    f"F5 reframe: drop {st.hook_drop_t} - lead {F5_LEAD_SEC:.2f} < 0 "
+                    "(hook too close to track start — use a fuller track)"
+                )
+            user_clip_start_sec = new_start
+            if user_clip_end_sec is None or user_clip_end_sec <= new_start:
+                user_clip_end_sec = float(end)
+
         maintenance_bypass_token = ""
         allow_bypass = self._allow_maintenance_bypass_for_state(st)
         if not allow_bypass and int(st.chat_id or 0) > 0:
