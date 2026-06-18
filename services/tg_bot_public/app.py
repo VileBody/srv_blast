@@ -2436,7 +2436,9 @@ class BlastBotApp:
             )
 
     async def _allow_maintenance_bypass_paid_client(self, message: Message) -> bool:
-        """Платящие клиенты не должны попадать под техработы — пускаем их генерировать."""
+        """Платящие клиенты не попадают под техработы — если это не полный стоп."""
+        if not bool(getattr(self.settings, "tg_maintenance_allow_paid_clients", True)):
+            return False
         chat_id = _message_chat_id(message)
         if chat_id <= 0:
             return False
@@ -5931,7 +5933,11 @@ class BlastBotApp:
 
         maintenance_bypass_token = ""
         allow_bypass = self._allow_maintenance_bypass_for_state(st)
-        if not allow_bypass and int(st.chat_id or 0) > 0:
+        if (
+            not allow_bypass
+            and bool(getattr(self.settings, "tg_maintenance_allow_paid_clients", True))
+            and int(st.chat_id or 0) > 0
+        ):
             try:
                 allow_bypass = await self.credits_db.has_paid(int(st.chat_id))
             except Exception as e:

@@ -256,10 +256,12 @@ services:
       HOOK_FLOW_ENABLED: ${HOOK_FLOW_ENABLED:-1}
       # Maintenance switch for the PUBLIC bot only (orchestrator/internal bot untouched).
       # ON now: bot answers every incoming message with the maintenance stub.
-      # Paying clients (credits_db.has_paid) bypass it and keep generating.
-      # To re-enable the bot for everyone: set this to "false" and redeploy.
+      # To re-enable the bot for everyone: set TG_MAINTENANCE_MODE to "false" and redeploy.
       TG_MAINTENANCE_MODE: ${TG_MAINTENANCE_MODE:-true}
       TG_MAINTENANCE_MESSAGE: ${TG_MAINTENANCE_MESSAGE:-Мы на техработах. Скоро вернемся.}
+      # FULL STOP: false = nobody (paying clients included) may generate during maintenance.
+      # Set to "true" for the softer mode where paying clients keep generating.
+      TG_MAINTENANCE_ALLOW_PAID_CLIENTS: ${TG_MAINTENANCE_ALLOW_PAID_CLIENTS:-false}
       ORCHESTRATOR_PUBLIC_URL: ${ORCHESTRATOR_PUBLIC_URL:-http://orchestrator-api:8000}
       BOT_POLL_INTERVAL_S: ${BOT_POLL_INTERVAL_S:-5}
       BOT_STATUS_UPDATE_INTERVAL_S: ${BOT_STATUS_UPDATE_INTERVAL_S:-20}

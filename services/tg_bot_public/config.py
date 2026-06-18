@@ -216,6 +216,9 @@ class Settings:
         _env("TG_MAINTENANCE_MESSAGE", "Мы на техработах. Скоро вернемся.")
     )
     tg_maintenance_state_key: str = _env("TG_MAINTENANCE_STATE_KEY", "blast:tg:public:maintenance_mode")
+    # When True, paying clients (credits_db.has_paid) bypass maintenance and keep generating.
+    # Set False for a full stop where nobody — clients included — may generate.
+    tg_maintenance_allow_paid_clients: bool = _bool_env("TG_MAINTENANCE_ALLOW_PAID_CLIENTS", True)
     system_maintenance_bypass_usernames: tuple[str, ...] = _username_allowlist_env(
         "SYSTEM_MAINTENANCE_BYPASS_USERNAMES"
     ) or (
