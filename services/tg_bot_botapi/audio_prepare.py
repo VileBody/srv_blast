@@ -35,9 +35,9 @@ def _run_ffmpeg(*, ffmpeg_bin: str, src: Path, dst: Path, bitrate: str) -> None:
         str(bitrate),
         str(dst),
     ]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    proc = subprocess.run(cmd, capture_output=True)
     if proc.returncode != 0:
-        err_tail = (proc.stderr or "")[-4000:]
+        err_tail = (proc.stderr or b"").decode("utf-8", errors="replace")[-4000:]
         raise RuntimeError(f"ffmpeg failed rc={proc.returncode} bitrate={bitrate} stderr_tail={err_tail}")
 
 
