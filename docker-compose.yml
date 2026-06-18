@@ -254,6 +254,12 @@ services:
       # Surface the 5-category hook flow + color pickers in the public bot.
       # Default ON; set HOOK_FLOW_ENABLED=0 in .env to hide it again.
       HOOK_FLOW_ENABLED: ${HOOK_FLOW_ENABLED:-1}
+      # Maintenance switch for the PUBLIC bot only (orchestrator/internal bot untouched).
+      # ON now: bot answers every incoming message with the maintenance stub.
+      # Paying clients (credits_db.has_paid) bypass it and keep generating.
+      # To re-enable the bot for everyone: set this to "false" and redeploy.
+      TG_MAINTENANCE_MODE: ${TG_MAINTENANCE_MODE:-true}
+      TG_MAINTENANCE_MESSAGE: ${TG_MAINTENANCE_MESSAGE:-Мы на техработах. Скоро вернемся.}
       ORCHESTRATOR_PUBLIC_URL: ${ORCHESTRATOR_PUBLIC_URL:-http://orchestrator-api:8000}
       BOT_POLL_INTERVAL_S: ${BOT_POLL_INTERVAL_S:-5}
       BOT_STATUS_UPDATE_INTERVAL_S: ${BOT_STATUS_UPDATE_INTERVAL_S:-20}
