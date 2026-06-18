@@ -55,7 +55,7 @@ var CONFIG = {
     nestIntoActive:  true,                 // вложить комп субтитров в активный (поверх футажа)
 
     // ---- моргачка (CC Image Wipe, по BPM) ----
-    blinker:         true,
+    blinker:         false,                // OFF (2026-06-18): моргание плохо выглядит
     bpm:             120,                  // BPM трека (дамп был на 120)
     beatOffset:      0,                    // время первого бита, с (фаза)
     blinkSubdiv:     4,                    // блинков на долю: 2 = 1/8, 4 = 1/16

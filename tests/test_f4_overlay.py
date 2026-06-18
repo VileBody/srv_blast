@@ -41,7 +41,7 @@ def test_every_device_builds_clean(device):
     assert "__F4_BPM__" not in js
     assert "__F4_DEVICE__" not in js
     assert f"[F4][{device}]" in js
-    assert js.rstrip().endswith("(MAIN_COMP);")
+    assert "(MAIN_COMP);" in js
     assert "(function (comp)" in js
     assert "Сплошная заливка Черный 1" in js  # cover solid present in every device
 
@@ -73,9 +73,14 @@ def test_build_overlay_bakes_bpm_and_leaves_no_tokens():
 
 def test_build_overlay_is_iife_over_main_comp():
     js = build_overlay_jsx(device="swipe", bpm=120.0)
-    assert js.rstrip().endswith("(MAIN_COMP);")
-    assert js.lstrip().startswith("/*") or "(function (comp)" in js
+    # The device IIFE runs over MAIN_COMP; a marking IIFE may follow it (to tag
+    # bait layers so the template can raise them above subtitles), so it need not
+    # be the very last statement — just present.
+    assert "(MAIN_COMP);" in js
     assert "(function (comp)" in js
+    # bait layers get comment-marked for the late raise-above-subtitles step
+    assert '"__F4_OVERLAY__"' in js
+    assert "$.global.__F4_PRE_COUNT" in js
     # cover solid present (the layer whose end lands on the hook)
     assert "Сплошная заливка Черный 1" in js
     assert "buildFlashAdjustment" in js

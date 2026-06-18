@@ -108,6 +108,23 @@ def build_overlay_jsx(*, device: str, bpm: float, drop_time: Optional[float] = N
         raise RuntimeError(f"F4 device template {tmpl_path} missing __F4_TOFF__ token")
     text = text.replace("__F4_TOFF__", repr(round(toff, 4)))
 
+    # Tag the device's bait layers (black cover + hold/release text + finger) so a
+    # late template step can raise them back above the JSX subtitles, which are
+    # injected AFTER this overlay and otherwise land on top (AE adds new layers at
+    # index 1). The device script builds its layers at the top; everything added
+    # between the pre-count snapshot and here is a device layer → comment-mark it.
+    # The drop lightning below is intentionally left UNmarked (it stays placed
+    # `below:Текст`). Keep "__F4_OVERLAY__" in sync with the raise step in the
+    # render template.
+    text = (
+        '(function(){ if (typeof MAIN_COMP !== "undefined" && MAIN_COMP) {'
+        ' $.global.__F4_PRE_COUNT = MAIN_COMP.numLayers; } })();\n'
+        + text + "\n"
+        + '(function(){ if (typeof MAIN_COMP === "undefined" || !MAIN_COMP) { return; }'
+        ' var pre = $.global.__F4_PRE_COUNT || 0; var added = MAIN_COMP.numLayers - pre;'
+        ' for (var i = 1; i <= added; i++) { try { MAIN_COMP.layer(i).comment = "__F4_OVERLAY__"; } catch (e) {} } })();\n'
+    )
+
     # Explicit lightning on the drop (reuses F3 rebuild_light.jsx).
     if drop_time is not None and float(drop_time) > 0.0:
         drop = float(drop_time)

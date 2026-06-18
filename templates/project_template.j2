@@ -1610,6 +1610,34 @@
       logErr("jsx subtitles injection failed", eJsxSubs);
     }
 
+    // ==========================================================
+    // 5.11) Raise F4 «Движение» bait overlay above the JSX subtitles.
+    // The F4 overlay (5.5) is injected BEFORE the subtitles (5.10), so the
+    // subtitle layers — added at index 1 — end up covering the F4 cover/bait
+    // text. F4 marks its bait layers with comment "__F4_OVERLAY__"; move them
+    // back to the top here (preserving their relative order). No-op when no F4.
+    // ==========================================================
+    try {
+      if (typeof MAIN_COMP !== "undefined" && MAIN_COMP) {
+        var __f4marked = [];
+        for (var __zi = 1; __zi <= MAIN_COMP.numLayers; __zi++) {
+          if (MAIN_COMP.layer(__zi).comment === "__F4_OVERLAY__") {
+            __f4marked.push(MAIN_COMP.layer(__zi));
+          }
+        }
+        // Move bottom-most first so the original top→bottom order is preserved
+        // at the top of the stack.
+        for (var __zj = __f4marked.length - 1; __zj >= 0; __zj--) {
+          __f4marked[__zj].moveToBeginning();
+        }
+        if (__f4marked.length > 0) {
+          logLine("INFO", "f4 overlay raised above subtitles layers=" + __f4marked.length);
+        }
+      }
+    } catch(eF4z) {
+      logErr("f4 overlay raise failed", eF4z);
+    }
+
     if (__SUPPRESSED_UI_CALLS.length > 0) {
       logLine("WARN", "suppressed_ui_calls=" + safeJson(__SUPPRESSED_UI_CALLS, 2000));
     }
