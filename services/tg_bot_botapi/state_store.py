@@ -51,6 +51,7 @@ STAGE_WAIT_F1_SOUND = "WAIT_F1_SOUND"
 STAGE_WAIT_F1_TEXT = "WAIT_F1_TEXT"
 # Hook battery — wait for the (optional) F1 sound before generating N videos.
 STAGE_WAIT_BATTERY_SOUND = "WAIT_BATTERY_SOUND"
+STAGE_WAIT_BATTERY_F4_DROP = "WAIT_BATTERY_F4_DROP"
 STAGE_WAIT_VERSIONS = "WAIT_VERSIONS"
 # Customization: subtitle color + accent color (shapes/focus) palette pickers.
 STAGE_WAIT_SUBTITLE_COLOR = "WAIT_SUBTITLE_COLOR"
@@ -141,6 +142,10 @@ class ChatState(BaseModel):
     # = the per-version hook configs applied at enqueue. [] => normal flow.
     battery_mode: bool = False
     battery_cases: list = Field(default_factory=list)
+    # F4 «Движение» needs a drop with intro >= F4_MIN_INTRO_SEC. When the battery's
+    # candidate pool has none, the user types one manually (hundredths ok). None =
+    # not asked yet; >0 = manual F4 drop; <0 = user chose to skip F4.
+    battery_f4_drop: Optional[float] = None
     # "" | "pending" | "ready" | "failed"
     hook_analysis_status: str = ""
     # Source audio path used to compute the analysis — if it ever doesn't

@@ -135,14 +135,31 @@
     setConst(tr.property("ADBE Anchor Point"), [0,0,0]);
     setConst(tr.property("ADBE Position"),     [540,960,0]);
 
-    var expr =
-      'bpm = thisComp.layer("bpm control").effect("ползунок")("Ползунок");\r' +
-      'beatDur = 60 / bpm;\r' +
-      't = time % beatDur;\r' +
-      'smooth = ' + CONFIG.sagSmooth + ';\r' +
-      's = ease(t, 0, beatDur * smooth, ' + CONFIG.sagPulseHi + ', ' + CONFIG.sagPulseLo + ');\r' +
-      '[s, s]';
-    setExpr(tr.property("ADBE Scale"), expr);
+    // Per-beat pulse BAKED to keyframes. The original expression read bpm from a
+    // Cyrillic-named slider on "bpm control" (thisComp.layer(...).effect("ползунок"))
+    // — that lookup is unreliable in headless aerender and silently left Scale
+    // static → the tap circle never pulsed (NO visible movement). Bake the
+    // sawtooth (Hi at each beat, ease to Lo by beat end) from CONFIG.bpm instead.
+    (function(){
+      var sc = tr.property("ADBE Scale");
+      var beatDur = 60.0 / CONFIG.bpm;
+      var winEnd = 5.30530530530531;            // sag layer authored length (pre-TS)
+      var hi = [CONFIG.sagPulseHi, CONFIG.sagPulseHi];
+      var lo = [CONFIG.sagPulseLo, CONFIG.sagPulseLo];
+      var n = 0, bs = 0.0;
+      while (bs <= winEnd + 1e-6 && n < 400){
+        sc.setValueAtTime(t(bs), hi);
+        sc.setValueAtTime(t(Math.min(bs + beatDur * 0.98, winEnd)), lo);
+        n++; bs = n * beatDur;
+      }
+      for (var i = 1; i <= sc.numKeys; i++){
+        try { sc.setInterpolationTypeAtKey(i,
+          KeyframeInterpolationType.BEZIER, KeyframeInterpolationType.BEZIER); } catch(e){}
+        try { sc.setTemporalEaseAtKey(i,
+          [new KeyframeEase(0,33.333), new KeyframeEase(0,33.333)],
+          [new KeyframeEase(0,33.333), new KeyframeEase(0,33.333)]); } catch(e){}
+      }
+    })();
 
     setKeys(tr.property("ADBE Opacity"), [
       {time:3.97898,  val:100},

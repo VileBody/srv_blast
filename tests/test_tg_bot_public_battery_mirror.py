@@ -80,6 +80,24 @@ def test_battery_stage_mirrored():
     assert A == B == "WAIT_BATTERY_SOUND"
 
 
+def test_battery_f4_drop_stage_and_field_mirrored():
+    from services.tg_bot_botapi.state_store import (
+        STAGE_WAIT_BATTERY_F4_DROP as A, ChatState as CT_team)
+    from services.tg_bot_public.state_store import (
+        STAGE_WAIT_BATTERY_F4_DROP as B, ChatState as CT_pub)
+
+    assert A == B == "WAIT_BATTERY_F4_DROP"
+    assert CT_team(chat_id=1).battery_f4_drop is None
+    assert CT_pub(chat_id=1).battery_f4_drop is None
+
+
+def test_f4_min_intro_sec_mirrored():
+    from services.tg_bot_public import app as pub
+    from services.tg_bot_botapi import app as team
+
+    assert team.F4_MIN_INTRO_SEC == pub.F4_MIN_INTRO_SEC == 3.0
+
+
 def _battery_stub(team):
     # _build_battery_cases calls self._f4_effective_lead — provide it.
     class _Stub:
@@ -176,3 +194,36 @@ def test_team_battery_f4_avoids_too_late_drop_on_short_clip():
     assert "motion" in cats
     # nearest fitting drop is the early user drop, not the late 10.7 candidate
     assert cats["motion"]["hook_drop_t"] == 4.5
+
+
+def test_team_battery_f4_manual_drop_overrides_walk():
+    """A manual F4 drop (battery_f4_drop > 0) is used directly for F4."""
+    from services.tg_bot_botapi import app as team
+    from services.tg_bot_botapi.state_store import ChatState
+
+    stub = _battery_stub(team)
+    st = ChatState(chat_id=5)
+    st.hook_analysis_bpm = 120.0
+    st.hook_drop_t = 1.0                 # too early for auto F4
+    st.hook_drop_candidates = []
+    # no manual yet → F4 omitted (the bot then asks for a manual drop)
+    assert "motion" not in {c["hook_category"] for c in stub._build_battery_cases(st)}
+    # manual drop given → F4 present with exactly that drop
+    st.battery_f4_drop = 5.25
+    cats = {c["hook_category"]: c for c in stub._build_battery_cases(st)}
+    assert "motion" in cats and abs(cats["motion"]["hook_drop_t"] - 5.25) < 1e-6
+
+
+def test_team_battery_f4_skip_sentinel_omits_motion():
+    """battery_f4_drop < 0 means the user chose to skip F4 — it stays omitted."""
+    from services.tg_bot_botapi import app as team
+    from services.tg_bot_botapi.state_store import ChatState
+
+    stub = _battery_stub(team)
+    st = ChatState(chat_id=6)
+    st.hook_analysis_bpm = 120.0
+    st.hook_drop_t = 8.0                 # would normally qualify for F4
+    st.battery_f4_drop = -1.0            # explicit skip
+    cats = {c["hook_category"] for c in stub._build_battery_cases(st)}
+    assert "motion" not in cats
+    assert "object" in cats and "thought" in cats

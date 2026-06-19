@@ -54,6 +54,7 @@ STAGE_WAIT_F1_SOUND = "WAIT_F1_SOUND"
 STAGE_WAIT_F1_TEXT = "WAIT_F1_TEXT"
 # Hook battery — wait for optional F1 sound. Mirror of tg_bot_botapi.
 STAGE_WAIT_BATTERY_SOUND = "WAIT_BATTERY_SOUND"
+STAGE_WAIT_BATTERY_F4_DROP = "WAIT_BATTERY_F4_DROP"
 # Customization color pickers. Mirror of tg_bot_botapi.
 STAGE_WAIT_SUBTITLE_COLOR = "WAIT_SUBTITLE_COLOR"
 STAGE_WAIT_ACCENT_COLOR = "WAIT_ACCENT_COLOR"
@@ -192,6 +193,8 @@ class ChatState(BaseModel):
     # Hook battery (team bot only; mirrored for parity). [] => normal flow.
     battery_mode: bool = False
     battery_cases: list = Field(default_factory=list)
+    # Manual F4 drop for the battery (team only; mirrored). None=unset, >0=manual, <0=skip.
+    battery_f4_drop: Optional[float] = None
     hook_analysis_status: str = ""
     hook_analysis_audio_path: str = ""
     hook_analysis_clip_start: float = 0.0

@@ -83,6 +83,7 @@ from .state_store import (
     STAGE_WAIT_F1_SOUND,
     STAGE_WAIT_F1_TEXT,
     STAGE_WAIT_BATTERY_SOUND,
+    STAGE_WAIT_BATTERY_F4_DROP,
     STAGE_WAIT_TIMING_CHOICE,
     STAGE_WAIT_TIMING_INPUT,
     STAGE_WAIT_FRAGMENT_TEXT,
@@ -158,6 +159,13 @@ F5_LEAD_SEC: float = 4.0
 # Mirrored in tg_bot_public for parity.
 MIN_REFRAME_CLIP_SEC: float = 7.0
 
+# F4 «Движение» minimum visible intro length (seconds). The intro is anchored to
+# END on the drop and clipped at the front on early drops, so visible intro =
+# min(lead, drop). Below this the intro reads as a confusing flash, so the battery
+# only auto-picks an F4 drop with intro ≥ this; otherwise it asks the user for a
+# manual F4 drop. Mirrored in tg_bot_public for parity.
+F4_MIN_INTRO_SEC: float = 3.0
+
 
 BTN_SEND_TRACK = "Отправить трек"
 BTN_SEND_LYRICS = "Отправить текст"
@@ -218,6 +226,7 @@ BTN_HOOK_YES = "Сделать хук"
 BTN_HOOK_NO = "Без хука"
 BTN_HOOK_BATTERY = "🎲 Батарея (5 хуков)"
 BTN_BATTERY_NO_SOUND = "Без звука (4 ролика)"
+BTN_BATTERY_F4_SKIP = "Без движения"
 BTN_HOOK_DROP_NONE = "В отрывке нет дропа"
 BTN_HOOK_DROP_MANUAL = "Ввести вручную"
 BTN_HOOK_TYPE_STANDARD = "Стандартный"
@@ -1653,6 +1662,10 @@ class BlastBotApp:
                 await self._handle_wait_battery_sound(message, st)
                 return
 
+            if st.stage == STAGE_WAIT_BATTERY_F4_DROP:
+                await self._handle_wait_battery_f4_drop(message, st)
+                return
+
             if st.stage == STAGE_WAIT_VERSIONS:
                 await self._handle_wait_versions(message, st)
                 return
@@ -2708,6 +2721,7 @@ class BlastBotApp:
             st.f1_sound_text = ""
             st.battery_mode = False
             st.battery_cases = []
+            st.battery_f4_drop = None
             await self.store.set(st)
             await self._ask_versions(message, st)
             return
@@ -2720,6 +2734,7 @@ class BlastBotApp:
         if BATTERY_ENABLED and text == BTN_HOOK_BATTERY:
             st.hook_enabled = True
             st.battery_mode = True
+            st.battery_f4_drop = None  # fresh battery: re-evaluate F4 drop need
             await self.store.set(st)
             # Battery reuses the drop picker; after a drop is chosen we branch to
             # the (optional) F1 sound, then enqueue one video per category.
@@ -2943,19 +2958,28 @@ class BlastBotApp:
         # reframe (drop ≥ lead) and (b) leaves enough clip after the reframe.
         # Pick the candidate NEAREST the user's drop (avoids grabbing a strong but
         # too-late drop that shrinks the clip below the fast-start). Skip if none.
-        if bpm > 0.0 and drops:
+        # An explicit manual F4 drop (>0) overrides the walk; a sentinel <0 means
+        # the user chose to skip F4 entirely. None → auto-walk for a drop whose
+        # visible intro (min(lead, drop), front-clipped on early drops) is ≥
+        # F4_MIN_INTRO_SEC and leaves enough clip after. If none, F4 is omitted and
+        # _start_battery asks the user for a manual drop.
+        if bpm > 0.0 and drops and not (st.battery_f4_drop is not None and float(st.battery_f4_drop) < 0.0):
             dev = rng.choice(["swipe", "tap", "pinch", "holdfinger", "head"])
             lead = self._f4_effective_lead(dev, bpm)
-            f4_drop = _pick_nearest(
-                lambda d: d - lead >= 0.0 and _leaves_enough_clip(d - lead)
-            )
+            if st.battery_f4_drop is not None and float(st.battery_f4_drop) > 0.0:
+                f4_drop = float(st.battery_f4_drop)
+            else:
+                f4_drop = _pick_nearest(
+                    lambda d: min(lead, d) >= F4_MIN_INTRO_SEC
+                    and _leaves_enough_clip(max(0.0, d - lead))
+                )
             if f4_drop is not None:
                 cases.append({"label": f"Движение: {dev}", "hook_enabled": True,
                               "hook_category": "motion", "hook_device": dev,
                               "hook_drop_t": f4_drop})
             else:
-                log.info("battery: F4 skipped — no drop fits lead=%.2f + min-clip=%.1f (bpm=%.1f)",
-                         lead, MIN_REFRAME_CLIP_SEC, bpm)
+                log.info("battery: F4 needs manual drop — no candidate with intro≥%.1f + min-clip=%.1f (bpm=%.1f)",
+                         F4_MIN_INTRO_SEC, MIN_REFRAME_CLIP_SEC, bpm)
 
         # F5 «Мысль» — use the user's primary drop directly. F5's lead is adaptive
         # (clip_start = max(0, drop − F5_LEAD_SEC)), so the primary drop always
@@ -2994,6 +3018,17 @@ class BlastBotApp:
         if not cases:
             await message.answer("Не удалось собрать батарею. Попробуй другой трек.")
             return
+        # F4 «Движение» needs a drop with intro ≥ F4_MIN_INTRO_SEC. If the candidate
+        # pool had none (and the user hasn't already given/skipped a manual one),
+        # ask for it instead of silently dropping F4 from the battery.
+        cats = {c["hook_category"] for c in cases}
+        if (
+            float(st.hook_analysis_bpm or 0.0) > 0.0
+            and "motion" not in cats
+            and st.battery_f4_drop is None
+        ):
+            await self._ask_battery_f4_drop(message, st)
+            return
         st.battery_cases = cases
         st.versions_count = len(cases)
         st.stage = STAGE_WAIT_CONFIRM
@@ -3004,6 +3039,46 @@ class BlastBotApp:
             f"Дроп {self._fmt_timing(float(st.hook_drop_t))}. Запустить?",
             reply_markup=_kb([BTN_LAUNCH]),
         )
+
+    async def _ask_battery_f4_drop(self, message: Message, st: ChatState) -> None:
+        st.stage = STAGE_WAIT_BATTERY_F4_DROP
+        await self.store.set(st)
+        await message.answer(
+            "Для ролика «Движение» (F4) нужен дроп с разгоном интро "
+            f"≥{F4_MIN_INTRO_SEC:.0f}с — среди найденных такого нет.\n\n"
+            "Введи момент дропа для F4 вручную (можно до сотых): напр. 4.5 или 0:04.50.\n"
+            f"Остальные ролики используют дроп {self._fmt_timing(float(st.hook_drop_t))}.",
+            reply_markup=_kb([BTN_BATTERY_F4_SKIP]),
+        )
+
+    async def _handle_wait_battery_f4_drop(self, message: Message, st: ChatState) -> None:
+        text = str(message.text or "").strip()
+        if text == BTN_BATTERY_F4_SKIP:
+            st.battery_f4_drop = -1.0  # sentinel: skip F4 in this battery
+            await self.store.set(st)
+            await self._start_battery(message, st)
+            return
+        parsed = self._parse_single_timing(text)
+        if parsed is None:
+            await message.answer("Не распознал тайминг. Формат: 4.5 или 0:04.50. Ещё раз.")
+            return
+        if not self._validate_hook_drop_inside_clip(parsed, st):
+            await message.answer(
+                "Этот момент за пределами выбранного фрагмента. Допустимый диапазон: "
+                f"{self._fmt_timing(st.user_clip_start_sec)} – {self._fmt_timing(st.user_clip_end_sec)}."
+            )
+            return
+        # Visible F4 intro = min(lead, drop−clip_start); require it ≥ the minimum.
+        if (float(parsed) - float(st.user_clip_start_sec or 0.0)) < F4_MIN_INTRO_SEC:
+            await message.answer(
+                f"Слишком рано для F4 — нужно ≥{F4_MIN_INTRO_SEC:.0f}с от начала фрагмента "
+                "(иначе интро слишком короткое). Введи момент позже."
+            )
+            return
+        st.battery_f4_drop = float(parsed)
+        await self.store.set(st)
+        await message.answer(f"Дроп для «Движение»: {self._fmt_timing(float(parsed))}.")
+        await self._start_battery(message, st)
 
     async def _handle_wait_hook_drop_manual(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()
@@ -4116,18 +4191,17 @@ class BlastBotApp:
             from mlcore.hooks.f4_motion.overlay import LEAD_BY_DEVICE
             if f4_device not in LEAD_BY_DEVICE:
                 raise RuntimeError(f"unknown F4 device {f4_device!r}")
-            # Reframe the clip window so the overlay's cover-end lands exactly on
-            # the drop: clip_start := drop - lead_eff (Variant B: lead scales with
-            # bpm like the JSX). clip_end is unchanged. The literal user-picked
-            # start is intentionally discarded — for a motion hook the rolled clip
-            # IS [drop-lead, end], and Stage1 subtitles align to that same window.
+            # Reframe the clip window so the overlay's cover-end lands on the drop:
+            # clip_start := drop - lead_eff (lead scales with bpm like the JSX).
+            # clip_end is unchanged. The literal user-picked start is intentionally
+            # discarded — the rolled clip IS [drop-lead, end].
+            # EARLY DROP: when drop < lead the clip can't extend before track-0, so
+            # clamp clip_start to 0 (do NOT error). The overlay then anchors the
+            # intro END on the drop (TOFF = drop_rel − lead < 0) and AE clips the
+            # pre-0 part of the intro — no compression (except holdfinger's fill
+            # circle, handled inside its device script). drop_rel = drop − 0 = drop.
             lead = self._f4_effective_lead(f4_device, bpm)
-            new_start = float(st.hook_drop_t) - lead
-            if new_start < 0.0:
-                raise RuntimeError(
-                    f"F4 reframe: drop {st.hook_drop_t} - lead {lead:.3f} (bpm={bpm}) < 0 "
-                    "(hook too close to track start)"
-                )
+            new_start = max(0.0, float(st.hook_drop_t) - lead)
             user_clip_start_sec = new_start
             if user_clip_end_sec is None or user_clip_end_sec <= new_start:
                 user_clip_end_sec = float(end)

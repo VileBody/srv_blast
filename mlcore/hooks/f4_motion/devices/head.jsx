@@ -27,13 +27,6 @@
   var HEAD_ZOOM_T0  = 3.73707040373707;
   var HEAD_ZOOM_T1  = 3.97063730397064;
 
-  var EXPR_POS_BOB =
-    'bpm = thisComp.layer("bpm control").effect("ползунок")("Ползунок");\r' +
-    'w = wiggle(bpm/60, 15);\r[value[0], w[1]]';
-  var EXPR_ROT_WIG =
-    'bpm = thisComp.layer("bpm control").effect("ползунок")("Ползунок");\r' +
-    'wiggle(bpm/60, 3)';
-
   var TOFF = __F4_TOFF__;  // drop-anchor offset (overlay.py)
   function t(x){ return x * TS + TOFF; }
   function beat(n){ return n * 60 / CONFIG.bpm; }
@@ -220,13 +213,45 @@
     var tr = L.property("ADBE Transform Group");
     setConst(tr.property("ADBE Anchor Point"), [0,0,0]);
     setConst(tr.property("ADBE Position"),     [277.108840942383, 927.477739741489, 0]);
-    setExpr (tr.property("ADBE Position"),     EXPR_POS_BOB);
     setKeys(tr.property("ADBE Scale"), [
       {time:HEAD_ZOOM_T0, val:[-134,147.413291020099,100]},
       {time:HEAD_ZOOM_T1, val:[-289,317.928664961257,100]}
     ]);
     setConst(tr.property("ADBE Rotate Z"), -1.07629316392788);
-    setExpr (tr.property("ADBE Rotate Z"), EXPR_ROT_WIG);
+    // Head bob (Y) + rotation wiggle BAKED to keyframes. The original expressions
+    // read bpm from a Cyrillic slider on "bpm control" (thisComp.layer(...).
+    // effect("ползунок")) — that lookup fails in headless aerender, so the head
+    // had NO movement. Bake a deterministic in-tempo sine (freq = bpm/60 Hz,
+    // bob ±15px, rot ±3°) from CONFIG.bpm; sampled ~12×/beat over the window.
+    (function(){
+      var pos = tr.property("ADBE Position");
+      var rot = tr.property("ADBE Rotate Z");
+      var baseX = 277.108840942383, baseY = 927.477739741489, baseRot = -1.07629316392788;
+      var beatDur = 60.0 / CONFIG.bpm;          // comp-time seconds per beat
+      var w0 = 0.0, w1 = 4.004004004004;        // authored window (pre-TS)
+      var step = (beatDur / 12.0) / TS;          // authored step ≈ 1/12 beat
+      if (!(step > 0)) step = 0.05;
+      var PI2 = Math.PI * 2.0, x = w0, n = 0;
+      while (x <= w1 + 1e-6 && n < 600){
+        var ct = t(x), ph = PI2 * ct / beatDur;
+        pos.setValueAtTime(ct, [baseX, baseY + 15.0 * Math.sin(ph), 0]);
+        rot.setValueAtTime(ct, baseRot + 3.0 * Math.sin(ph + 1.3));
+        x += step; n++;
+      }
+      var props = [[pos, 3], [rot, 1]];
+      for (var p = 0; p < props.length; p++){
+        var pr = props[p][0], dim = props[p][1];
+        for (var i = 1; i <= pr.numKeys; i++){
+          try { pr.setInterpolationTypeAtKey(i,
+            KeyframeInterpolationType.BEZIER, KeyframeInterpolationType.BEZIER); } catch(e){}
+          try {
+            var ie = [], oe = [];
+            for (var d = 0; d < dim; d++){ ie.push(new KeyframeEase(0,33.333)); oe.push(new KeyframeEase(0,33.333)); }
+            pr.setTemporalEaseAtKey(i, ie, oe);
+          } catch(e){}
+        }
+      }
+    })();
     addBlur(L, [{time:HEAD_ZOOM_T0,val:0},{time:HEAD_ZOOM_T1,val:120}], 0.11, 1.16);
     return L;
   }

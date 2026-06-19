@@ -187,6 +187,10 @@ F5_LEAD_SEC: float = 4.0
 # battery uses it to bound drop auto-selection). Keep ≥ STAGE2_FAST_START_SECONDS.
 MIN_REFRAME_CLIP_SEC: float = 7.0
 
+# F4 minimum visible intro length (mirrors tg_bot_botapi). Battery auto-picks an
+# F4 drop only with intro ≥ this; else asks for a manual F4 drop.
+F4_MIN_INTRO_SEC: float = 3.0
+
 HOOK_STAGES = frozenset({
     STAGE_WAIT_HOOK_CHOICE,
     STAGE_WAIT_HOOK_DROP,
@@ -5909,12 +5913,11 @@ class BlastBotApp:
             from mlcore.hooks.f4_motion.overlay import LEAD_BY_DEVICE
             if f4_device not in LEAD_BY_DEVICE:
                 raise RuntimeError(f"unknown F4 device {f4_device!r}")
+            # Early drop (drop < lead): clamp clip_start to 0 instead of erroring;
+            # the overlay anchors the intro END on the drop (TOFF < 0) and AE clips
+            # the pre-0 intro. No compression. (Parity mirror.)
             lead = self._f4_effective_lead(f4_device, bpm)
-            new_start = float(st.hook_drop_t) - lead
-            if new_start < 0.0:
-                raise RuntimeError(
-                    f"F4 reframe: drop {st.hook_drop_t} - lead {lead:.3f} (bpm={bpm}) < 0"
-                )
+            new_start = max(0.0, float(st.hook_drop_t) - lead)
             user_clip_start_sec = new_start
             if user_clip_end_sec is None or user_clip_end_sec <= new_start:
                 user_clip_end_sec = float(end)
