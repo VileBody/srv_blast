@@ -1,6 +1,7 @@
 # services/orchestrator/celery_app.py
 from __future__ import annotations
 
+import faulthandler
 import time
 from typing import Any, Optional
 
@@ -8,6 +9,17 @@ from celery import Celery, Task
 
 from .config import SETTINGS
 from .job_store import JobStore
+
+# Dump a Python traceback to stderr on fatal signals (SIGSEGV/SIGABRT/SIGFPE/
+# SIGBUS). The hook audio analysis (librosa/numba/OpenBLAS) intermittently
+# segfaults the forked worker child; with this enabled the crash prints the
+# offending Python stack just before the process dies, so the next occurrence
+# pinpoints the call instead of leaving only "WorkerLostError signal 11". The
+# handler is inherited by forked children. Best-effort: never block startup.
+try:
+    faulthandler.enable(all_threads=True)
+except Exception:
+    pass
 
 
 def _now() -> float:

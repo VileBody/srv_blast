@@ -183,6 +183,10 @@ BATTERY_ENABLED: bool = False
 # TTS voice runs up INTO the drop. Mirrors tg_bot_botapi for parity.
 F5_LEAD_SEC: float = 4.0
 
+# Minimum clip length a hook reframe must leave (mirrors tg_bot_botapi; the team
+# battery uses it to bound drop auto-selection). Keep ≥ STAGE2_FAST_START_SECONDS.
+MIN_REFRAME_CLIP_SEC: float = 7.0
+
 HOOK_STAGES = frozenset({
     STAGE_WAIT_HOOK_CHOICE,
     STAGE_WAIT_HOOK_DROP,

@@ -150,6 +150,14 @@ BATTERY_ENABLED: bool = True
 # Mirrored in tg_bot_public for parity.
 F5_LEAD_SEC: float = 4.0
 
+# Minimum clip length (seconds) a reframe (F4/F5) must leave AFTER pushing
+# clip_start to drop−lead. Picking a drop near the clip end shrinks the window
+# below STAGE2_FAST_START_SECONDS (orchestrator, =6) → the build's
+# SwitchTimingPayload validator rejects it. Keep ≥ that fast-start. Used to bound
+# the battery drop auto-walk so it never reframes against a too-late drop.
+# Mirrored in tg_bot_public for parity.
+MIN_REFRAME_CLIP_SEC: float = 7.0
+
 
 BTN_SEND_TRACK = "Отправить трек"
 BTN_SEND_LYRICS = "Отправить текст"
@@ -2886,12 +2894,32 @@ class BlastBotApp:
             if all(abs(t - d) > 1e-6 for d in drops):
                 drops.append(t)
         primary = drops[0] if drops else None
+        clip_end = float(st.user_clip_end_sec or 0.0)
 
         def _pick(predicate) -> Optional[float]:
             for d in drops:
                 if predicate(d):
                     return d
             return None
+
+        def _leaves_enough_clip(reframed_start: float) -> bool:
+            # After a reframe, clip = [reframed_start, clip_end]. Reject drops that
+            # would leave < MIN_REFRAME_CLIP_SEC (else the build's fast-start
+            # validator trips and the post-drop content is tiny). Unknown clip_end
+            # → no upper bound.
+            if clip_end <= 0.0:
+                return True
+            return (clip_end - reframed_start) >= MIN_REFRAME_CLIP_SEC
+
+        def _pick_nearest(predicate) -> Optional[float]:
+            # Among fitting candidates, choose the one CLOSEST to the user's drop
+            # — not the highest-score one, which may sit near the clip end and
+            # make the reframe eat almost the whole clip.
+            ok = [d for d in drops if predicate(d)]
+            if not ok:
+                return None
+            anchor = primary if primary is not None else ok[0]
+            return min(ok, key=lambda d: abs(d - anchor))
 
         cases: List[Dict[str, Any]] = []
 
@@ -2911,32 +2939,34 @@ class BlastBotApp:
                           "effect_hook": fx_hook, "effect_transition": fx_tr,
                           "effect_extra": fx_extra, "hook_drop_t": primary})
 
-        # F4 «Движение» — needs bpm AND a drop with drop ≥ lead (room to reframe
-        # the clip backward). Walk candidates for the first that fits; skip if none.
+        # F4 «Движение» — needs bpm AND a drop that (a) has room before it to
+        # reframe (drop ≥ lead) and (b) leaves enough clip after the reframe.
+        # Pick the candidate NEAREST the user's drop (avoids grabbing a strong but
+        # too-late drop that shrinks the clip below the fast-start). Skip if none.
         if bpm > 0.0 and drops:
             dev = rng.choice(["swipe", "tap", "pinch", "holdfinger", "head"])
             lead = self._f4_effective_lead(dev, bpm)
-            f4_drop = _pick(lambda d: d - lead >= 0.0)
+            f4_drop = _pick_nearest(
+                lambda d: d - lead >= 0.0 and _leaves_enough_clip(d - lead)
+            )
             if f4_drop is not None:
                 cases.append({"label": f"Движение: {dev}", "hook_enabled": True,
                               "hook_category": "motion", "hook_device": dev,
                               "hook_drop_t": f4_drop})
             else:
-                log.info("battery: F4 skipped — no drop candidate with lead=%.2f (bpm=%.1f)", lead, bpm)
+                log.info("battery: F4 skipped — no drop fits lead=%.2f + min-clip=%.1f (bpm=%.1f)",
+                         lead, MIN_REFRAME_CLIP_SEC, bpm)
 
-        # F5 «Мысль» — prefer a drop with a full voice run-up (≥ F5_LEAD_SEC) from
-        # the fuller candidate pool; otherwise fall back to the primary drop with
-        # an adaptive (shorter) lead. F5's voice tolerates a short run-up, so it
-        # NEVER skips (unlike F4's fixed cover).
+        # F5 «Мысль» — use the user's primary drop directly. F5's lead is adaptive
+        # (clip_start = max(0, drop − F5_LEAD_SEC)), so the primary drop always
+        # reframes safely and stays musically where the user picked it. We do NOT
+        # auto-walk to a later candidate (that risked grabbing a too-late drop and
+        # shrinking the clip).
         if primary is not None:
-            f5_drop = _pick(lambda d: d - F5_LEAD_SEC >= 0.0)
-            if f5_drop is None:
-                f5_drop = primary
-                log.info("battery: F5 using primary drop %.2f (no candidate with lead=%.2f)", primary, F5_LEAD_SEC)
             dev5 = rng.choice(["punchline", "missing_word", "lyric_echo", "question_to_track", "inverse_lyric"])
             cases.append({"label": f"Мысль: {dev5}", "hook_enabled": True,
                           "hook_category": "thought", "hook_device": dev5,
-                          "hook_drop_t": f5_drop})
+                          "hook_drop_t": primary})
 
         # F1 «Звук» — only with an uploaded sound; needs drop−clip_start > 1s.
         if str(st.f1_sound_url or "").strip() and drops:

@@ -127,26 +127,52 @@ def test_team_battery_cases_inherit_colors():
     assert sorted(c["hook_category"] for c in cases2) == ["effect", "object", "thought"]
 
 
-def test_team_battery_f4_skipped_but_f5_falls_back_on_early_drop():
+def test_min_reframe_clip_sec_mirrored():
+    from services.tg_bot_public import app as pub
+    from services.tg_bot_botapi import app as team
+
+    assert team.MIN_REFRAME_CLIP_SEC == pub.MIN_REFRAME_CLIP_SEC == 7.0
+
+
+def test_team_battery_f4_skipped_but_f5_uses_primary_on_early_drop():
     """F4's fixed cover needs drop >= lead → skipped on an early drop with no
-    later candidate. F5's voice tolerates a short run-up → it falls back to the
-    primary drop instead of skipping. object/effect (primary drop) stay."""
+    later candidate. F5 always uses the user's primary drop (adaptive lead), so
+    it renders without auto-walking to a later drop. object/effect stay."""
     from services.tg_bot_botapi import app as team
     from services.tg_bot_botapi.state_store import ChatState
 
     stub = _battery_stub(team)
     st = ChatState(chat_id=3)
     st.hook_analysis_bpm = 92.0          # slow → big F4 lead (~6s)
-    st.hook_drop_t = 1.4                 # too early for F4; F5 falls back
+    st.hook_drop_t = 1.4                 # too early for F4
     st.hook_drop_candidates = []         # no later candidate
-    cases = stub._build_battery_cases(st)
-    cats = {c["hook_category"]: c for c in cases}
+    cats = {c["hook_category"]: c for c in stub._build_battery_cases(st)}
     assert "motion" not in cats          # F4 dropped (fixed cover, no room)
-    assert "thought" in cats             # F5 still renders (adaptive lead)
-    assert abs(cats["thought"]["hook_drop_t"] - 1.4) < 1e-6  # primary fallback
+    assert "thought" in cats             # F5 renders on primary
+    assert abs(cats["thought"]["hook_drop_t"] - 1.4) < 1e-6
     assert "object" in cats and "effect" in cats
-    # a later candidate rescues F4 and gives F5 the full-pre-roll drop
+    # A later candidate rescues F4; F5 still stays on the user's primary drop.
     st.hook_drop_candidates = [{"t": 10.0, "confidence": 0.5}]
     cases2 = {c["hook_category"]: c for c in stub._build_battery_cases(st)}
     assert abs(cases2["motion"]["hook_drop_t"] - 10.0) < 1e-6
-    assert abs(cases2["thought"]["hook_drop_t"] - 10.0) < 1e-6
+    assert abs(cases2["thought"]["hook_drop_t"] - 1.4) < 1e-6  # primary, not walked
+
+
+def test_team_battery_f4_avoids_too_late_drop_on_short_clip():
+    """On a short clip, F4 must not pick a late drop that shrinks the reframed
+    window below MIN_REFRAME_CLIP_SEC (which would crash the build's fast-start)."""
+    from services.tg_bot_botapi import app as team
+    from services.tg_bot_botapi.state_store import ChatState
+
+    stub = _battery_stub(team)
+    st = ChatState(chat_id=4)
+    st.hook_analysis_bpm = 150.0         # fast → small lead (~3.7s)
+    st.user_clip_start_sec = 0.0
+    st.user_clip_end_sec = 11.5          # short clip
+    st.hook_drop_t = 4.5                 # user's drop: leaves 11.5-(4.5-lead) clip
+    # a strong but very late candidate at 10.7 → reframe would leave < 7s → reject
+    st.hook_drop_candidates = [{"t": 10.7, "confidence": 0.9}]
+    cats = {c["hook_category"]: c for c in stub._build_battery_cases(st)}
+    assert "motion" in cats
+    # nearest fitting drop is the early user drop, not the late 10.7 candidate
+    assert cats["motion"]["hook_drop_t"] == 4.5

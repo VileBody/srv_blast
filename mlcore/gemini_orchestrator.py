@@ -3790,11 +3790,23 @@ def build_all_via_gemini_one_call(
                 compact_short_segments=True,
             )
 
+        # Clamp fast-start to the clip duration: a hook reframe (F4/F5) can shrink
+        # the clip below STAGE2_FAST_START_SECONDS, which would otherwise trip the
+        # SwitchTimingPayload validator (fast_start_seconds <= clip duration). The
+        # downstream fast_end is already clamped to clip_end (line above), so this
+        # only keeps the payload valid for short clips instead of crashing the build.
+        _clip_dur = float(clip_end_abs) - float(clip_start_abs)
+        _effective_fast_start = min(float(fast_start_seconds), max(0.0, _clip_dur))
+        if _effective_fast_start < float(fast_start_seconds) - 1e-6:
+            logger.warning(
+                "stage2_fast_start_clamped requested=%.3f clip_dur=%.3f used=%.3f",
+                float(fast_start_seconds), _clip_dur, _effective_fast_start,
+            )
         switch_payload = SwitchTimingPayload.model_validate(
             {
                 "clip_start_abs": clip_start_abs,
                 "clip_end_abs": clip_end_abs,
-                "fast_start_seconds": float(fast_start_seconds),
+                "fast_start_seconds": _effective_fast_start,
                 "bpm": float(bpm) if bpm is not None else None,
                 "switch_points_abs": switch_points,
             }
