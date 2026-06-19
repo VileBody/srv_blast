@@ -31,8 +31,9 @@ services:
       FOOTAGE_INVENTORY_JSON: /app/data/footage_inventory.json
       DESCRIPTIONS_BUNDLE_PATH: /app/pins/descriptions_bundle_selected.json
 
-      # Native-thread pins for the /hook/analyze librosa path (avoid OpenBLAS
-      # oversubscription; mirror the worker-build SIGSEGV mitigation).
+      # /hook/analyze librosa path: disable numba JIT (fork-unsafe gufunc segfault,
+      # see worker-build note) + pin native threads. Mirror of worker-build.
+      NUMBA_DISABLE_JIT: "1"
       OPENBLAS_NUM_THREADS: "1"
       OMP_NUM_THREADS: "1"
       MKL_NUM_THREADS: "1"
@@ -85,12 +86,17 @@ services:
       DESCRIPTIONS_BUNDLE_PATH: /app/pins/descriptions_bundle_selected.json
 
       # --- SIGSEGV mitigation for the hook audio analysis (librosa) ---
-      # Celery runs prefork (forked children); librosa pulls numba/llvmlite +
-      # OpenBLAS whose native thread pools are NOT fork-safe and segfault the
-      # child mid-stage2 (observed: job dies right after stage2_style during
-      # beat/onset/structural analysis). Pin native pools to 1 thread and use
-      # numba's fork-safe threading layer. Must be set in the container env so
-      # they apply before numpy/OpenBLAS import.
+      # Celery runs prefork (forked children) and the segfault was pinpointed by
+      # faulthandler to a numba JIT gufunc dispatch:
+      #   numba/np/ufunc/gufunc.py __call__  <-  librosa peak_pick / onset_detect
+      # numba's compiled runtime is initialised in the parent and is NOT fork-safe
+      # → the gufunc call crashes the child. NUMBA_DISABLE_JIT=1 makes librosa use
+      # its pure-NumPy fallbacks (no compiled gufunc, no crash); the perf hit is
+      # negligible on the 12-15s focus clip. Thread pins kept for OpenBLAS
+      # oversubscription. All must be set in container env (apply before import).
+      # NOTE: env changes require a container RECREATE (compose up --force-recreate),
+      # not just an image pull, to take effect.
+      NUMBA_DISABLE_JIT: "1"
       OPENBLAS_NUM_THREADS: "1"
       OMP_NUM_THREADS: "1"
       MKL_NUM_THREADS: "1"
