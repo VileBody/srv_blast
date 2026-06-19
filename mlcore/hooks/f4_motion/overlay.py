@@ -46,6 +46,29 @@ LEAD_BY_DEVICE: Dict[str, float] = {
     "head": 4.004004004004,
 }
 
+# Devices whose JSX uses a FIXED time scale (TS = CONFIG.timeScale = 1.0) instead
+# of reflowing by refBpm/bpm. For them the cover length is the literal LEAD (not
+# bpm-scaled), so the effective lead used for the clip reframe + TOFF must NOT be
+# bpm-scaled either — otherwise cover-end misses the drop at bpm != refBpm. Keep
+# in sync with the `var TS = CONFIG.timeScale` devices.
+F4_FIXED_LEAD_DEVICES = frozenset({"tap", "holdfinger"})
+
+
+def effective_lead(device: str, bpm: float) -> float:
+    """Lead (seconds) the clip is reframed back from the drop for `device`.
+
+    Fixed-lead (TS=1) devices use the literal LEAD; the rest scale by refBpm/bpm
+    to match their JSX time reflow. Single source of truth for both the bot
+    reframe (clip_start = drop - lead) and the overlay TOFF below.
+    """
+    lead = float(LEAD_BY_DEVICE[device])
+    if device in F4_FIXED_LEAD_DEVICES:
+        return lead
+    b = float(bpm)
+    if b > 0.0:
+        return lead * (F4_REF_BPM / b)
+    return lead
+
 # Devices wired into the pipeline. A device is "ready" once its
 # devices/<device>.jsx injectable template exists.
 F4_DEVICES = ("swipe", "tap", "pinch", "holdfinger", "head")
@@ -102,8 +125,9 @@ def build_overlay_jsx(*, device: str, bpm: float, drop_time: Optional[float] = N
     # offset ≈ 0 → no-op (common case untouched). No drop → 0.
     toff = 0.0
     if drop_time is not None and float(drop_time) > 0.0:
-        lead_eff = LEAD_BY_DEVICE[dev] * (F4_REF_BPM / b)
-        toff = float(drop_time) - lead_eff
+        # Use the SAME effective lead the bot reframed with (fixed for TS=1
+        # devices, bpm-scaled otherwise) so cover-end == drop at any tempo.
+        toff = float(drop_time) - effective_lead(dev, b)
     if "__F4_TOFF__" not in text:
         raise RuntimeError(f"F4 device template {tmpl_path} missing __F4_TOFF__ token")
     text = text.replace("__F4_TOFF__", repr(round(toff, 4)))

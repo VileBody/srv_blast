@@ -14,8 +14,20 @@ import pytest
 from mlcore.hooks.f4_motion.overlay import (
     LEAD_BY_DEVICE,
     F4_DEVICES,
+    F4_FIXED_LEAD_DEVICES,
     build_overlay_jsx,
+    effective_lead,
 )
+
+
+def test_effective_lead_fixed_vs_scaled():
+    # TS=1 devices (tap/holdfinger) keep the literal lead at any bpm; others scale.
+    assert F4_FIXED_LEAD_DEVICES == {"tap", "holdfinger"}
+    for dev in F4_FIXED_LEAD_DEVICES:
+        assert effective_lead(dev, 96.0) == LEAD_BY_DEVICE[dev]
+        assert effective_lead(dev, 150.0) == LEAD_BY_DEVICE[dev]
+    assert abs(effective_lead("swipe", 128.0) - LEAD_BY_DEVICE["swipe"]) < 1e-9
+    assert effective_lead("swipe", 64.0) > LEAD_BY_DEVICE["swipe"]  # slower → longer lead
 
 
 def test_lead_table_has_all_five_devices():

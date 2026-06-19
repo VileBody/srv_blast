@@ -108,6 +108,29 @@
       comp.width, comp.height, 1, comp.duration, comp.frameRate);
     sub.bgColor = [0,0,0];
 
+    // The filling-circle layer is the ONE holdfinger layer that COMPRESSES (not
+    // clips) on an early drop: a progress ring must fill 0→100% from comp-0 up to
+    // the drop, so clipping the front (what the other layers do via t()/TOFF)
+    // would leave it starting already part-filled. tc() maps authored time so the
+    // authored lead (4.3043) lands on the cover-end (= drop); normal case
+    // (TOFF=0) → identity, so the non-clipped render is byte-for-byte unchanged.
+    var __sagDrop = t(4.3043043043043);
+    var __sagK = (__sagDrop > 0.05 ? __sagDrop : 0.05) / 4.3043043043043;
+    function tc(x){ return x * __sagK; }
+    function setKeysC(prop, keys){
+      var i, dim = (keys.length && keys[0].val instanceof Array) ? keys[0].val.length : 1;
+      for (i = 0; i < keys.length; i++) prop.setValueAtTime(tc(keys[i].time), keys[i].val);
+      for (i = 1; i <= prop.numKeys; i++){
+        try { prop.setInterpolationTypeAtKey(i,
+          KeyframeInterpolationType.BEZIER, KeyframeInterpolationType.BEZIER); } catch(e){}
+        try {
+          var ie = [], oe = [];
+          for (var d = 0; d < dim; d++){ ie.push(new KeyframeEase(0,33.333)); oe.push(new KeyframeEase(0,33.333)); }
+          prop.setTemporalEaseAtKey(i, ie, oe);
+        } catch(e){}
+      }
+    }
+
     var grad = sub.layers.addSolid([1,1,1], "grad", comp.width, comp.height, 1);
     var ramp = grad.property("ADBE Effect Parade").addProperty("ADBE Ramp");
     setEffParam(ramp, "ADBE Ramp-0001", [340,960]);
@@ -134,7 +157,7 @@
     var trim = rroot.addProperty("ADBE Vector Filter - Trim");
     trim.name = "Обрезать контуры 1";
     setConst(trim.property("ADBE Vector Trim Start"), 0);
-    setKeys(trim.property("ADBE Vector Trim End"), [
+    setKeysC(trim.property("ADBE Vector Trim End"), [
       {time:0.00311, val:0.686},
       {time:3.96451, val:100}
     ]);
@@ -144,15 +167,15 @@
 
     var L = comp.layers.add(sub);
     L.name = "sag1 белый";
-    L.startTime = 0; L.inPoint = 0; L.outPoint = t(5.30530530530531);
+    L.startTime = 0; L.inPoint = 0; L.outPoint = tc(5.30530530530531);
     var tr = L.property("ADBE Transform Group");
     setConst(tr.property("ADBE Anchor Point"), [540,960,0]);
     setConst(tr.property("ADBE Position"),     [540,960,0]);
-    setKeys(tr.property("ADBE Scale"), [
+    setKeysC(tr.property("ADBE Scale"), [
       {time:0,        val:[60,60,100]},
       {time:3.97898,  val:[100,100,100]}
     ]);
-    setKeys(tr.property("ADBE Opacity"), [
+    setKeysC(tr.property("ADBE Opacity"), [
       {time:3.97898,  val:100},
       {time:4.24424,  val:0}
     ]);

@@ -4102,11 +4102,8 @@ class BlastBotApp:
 
     @staticmethod
     def _f4_effective_lead(device: str, bpm: float) -> float:
-        from mlcore.hooks.f4_motion.overlay import F4_REF_BPM, LEAD_BY_DEVICE
-        lead = float(LEAD_BY_DEVICE[device])
-        if bpm and float(bpm) > 0.0:
-            return lead * (float(F4_REF_BPM) / float(bpm))
-        return lead
+        from mlcore.hooks.f4_motion.overlay import effective_lead
+        return effective_lead(device, float(bpm) if bpm else 0.0)
 
     @staticmethod
     def _parse_single_timing(text: str) -> Optional[float]:
