@@ -30,6 +30,11 @@ CLI:
     python -m mlcore.audio_analysis path/to/track.mp3 \
         --start 0 --end 22 \
         --out local_test/audio_analysis/out/track.json
+
+Implementation note:
+    Do not import librosa here. In prod it pulls numba guvectorize code while
+    Celery uses prefork workers; this has caused both native SIGSEGV and numba
+    compile-time crashes. Decode with ffmpeg, then use numpy/scipy only.
 """
 
 from __future__ import annotations
@@ -38,6 +43,7 @@ import argparse
 import hashlib
 import json
 import math
+import subprocess
 import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -184,17 +190,6 @@ class HookAnalysis:
     energy_envelope: List[float] = field(default_factory=list)
 
 
-def _load_librosa():
-    try:
-        import librosa  # type: ignore
-        return librosa
-    except Exception as e:
-        raise RuntimeError(
-            "librosa is required for audio analysis. "
-            "Install dependency and rebuild runtime image."
-        ) from e
-
-
 def _params_hash() -> str:
     parts = [
         ANALYSIS_VERSION,
@@ -226,7 +221,8 @@ def _logistic_conf(score: float) -> float:
 
 
 def _load_clip(audio_path: Path, clip_start_abs: float, clip_end_abs: float, sr: int):
-    librosa = _load_librosa()
+    import numpy as np
+
     p = Path(audio_path).expanduser().resolve()
     if not p.exists() or not p.is_file():
         raise FileNotFoundError(f"audio_path missing: {p}")
@@ -235,59 +231,221 @@ def _load_clip(audio_path: Path, clip_start_abs: float, clip_end_abs: float, sr:
     if clip_end_abs <= clip_start_abs:
         raise ValueError("clip_end_abs must be > clip_start_abs")
     duration = float(clip_end_abs) - float(clip_start_abs)
-    y, sr_out = librosa.load(
-        str(p), sr=int(sr), mono=True,
-        offset=float(clip_start_abs), duration=duration,
+
+    cmd = [
+        "ffmpeg",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-ss",
+        f"{float(clip_start_abs):.6f}",
+        "-t",
+        f"{duration:.6f}",
+        "-i",
+        str(p),
+        "-map",
+        "0:a:0",
+        "-ac",
+        "1",
+        "-ar",
+        str(int(sr)),
+        "-f",
+        "f32le",
+        "-",
+    ]
+    proc = subprocess.run(
+        cmd,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
     )
+    if proc.returncode != 0:
+        stderr = proc.stderr.decode("utf-8", errors="replace").strip()
+        raise RuntimeError(
+            f"ffmpeg audio decode failed rc={proc.returncode}: {stderr[-1000:]}"
+        )
+    y = np.frombuffer(proc.stdout, dtype=np.float32).copy()
     if y.size < int(sr) // 2:
-        raise ValueError(f"focus clip too short: {y.size} samples at sr={sr_out}")
-    return y, int(sr_out)
+        raise ValueError(f"focus clip too short: {y.size} samples at sr={sr}")
+    return y, int(sr)
 
 
 def _band_mask(freqs, lo: float, hi: float):
     return (freqs >= lo) & (freqs < hi)
 
 
-def _detect_beats(y, sr: int, clip_start_abs: float):
-    librosa = _load_librosa()
+def _frame_signal(y, frame_length: int = DEFAULT_FRAME, hop_length: int = DEFAULT_HOP):
     import numpy as np
-    tempo, beat_frames = librosa.beat.beat_track(
-        y=y, sr=sr, hop_length=DEFAULT_HOP, units="frames",
-    )
-    tempo_arr = np.asarray(tempo).reshape(-1)
-    if tempo_arr.size == 0 or float(tempo_arr[0]) <= 0.0:
-        raise RuntimeError(f"invalid BPM from librosa: {tempo!r}")
-    bpm_raw = float(tempo_arr[0])
-    beat_times_rel = librosa.frames_to_time(beat_frames, sr=sr, hop_length=DEFAULT_HOP)
-    beats_abs_all = [float(t) + float(clip_start_abs) for t in beat_times_rel.tolist()]
+
+    if y.ndim != 1:
+        raise ValueError("audio signal must be mono 1-D array")
+    if y.size < frame_length:
+        y = np.pad(y, (0, frame_length - y.size), mode="constant")
+    n_frames = 1 + max(0, (y.size - frame_length) // hop_length)
+    if n_frames <= 0:
+        return np.zeros((0, frame_length), dtype=np.float32)
+    shape = (n_frames, frame_length)
+    strides = (y.strides[0] * hop_length, y.strides[0])
+    return np.lib.stride_tricks.as_strided(y, shape=shape, strides=strides)
+
+
+def _frame_times(n_frames: int, sr: int):
+    import numpy as np
+
+    centers = np.arange(int(n_frames), dtype=np.float64) * float(DEFAULT_HOP)
+    centers += float(DEFAULT_FRAME) / 2.0
+    return centers / float(sr)
+
+
+def _mag_spectrogram(y, sr: int):
+    import numpy as np
+
+    frames = _frame_signal(y)
+    if frames.size == 0:
+        freqs = np.fft.rfftfreq(DEFAULT_FRAME, d=1.0 / float(sr))
+        return np.zeros((freqs.size, 0), dtype=np.float32), freqs
+    window = np.hanning(DEFAULT_FRAME).astype(np.float32)
+    S = np.abs(np.fft.rfft(frames * window, n=DEFAULT_FRAME, axis=1)).T
+    freqs = np.fft.rfftfreq(DEFAULT_FRAME, d=1.0 / float(sr))
+    return S.astype(np.float32, copy=False), freqs
+
+
+def _frame_rms(y):
+    import numpy as np
+
+    frames = _frame_signal(y)
+    if frames.size == 0:
+        return np.zeros(0, dtype=np.float32)
+    return np.sqrt(np.mean(np.square(frames.astype(np.float32)), axis=1))
+
+
+def _spectral_flux(S):
+    import numpy as np
+
+    if S.shape[1] == 0:
+        return np.zeros(0, dtype=np.float32)
+    log_s = np.log1p(S.astype(np.float32, copy=False))
+    diff = np.diff(log_s, axis=1, prepend=log_s[:, :1])
+    flux = np.maximum(diff, 0.0).sum(axis=0)
+    return flux.astype(np.float32, copy=False)
+
+
+def _zscore(arr):
+    import numpy as np
+
+    arr = np.asarray(arr, dtype=np.float32)
+    if arr.size == 0:
+        return arr
+    std = float(arr.std())
+    if std < 1e-9:
+        return np.zeros_like(arr)
+    return (arr - float(arr.mean())) / std
+
+
+def _detect_beats(y, sr: int, clip_start_abs: float):
+    import numpy as np
+
+    S, _freqs = _mag_spectrogram(y, sr)
+    flux = _spectral_flux(S)
+    if flux.size < 4:
+        raise RuntimeError("invalid BPM: onset envelope is too short")
+
+    env = _zscore(flux)
+    env = np.maximum(env, 0.0)
+    if float(env.max(initial=0.0)) <= 0.0:
+        raise RuntimeError("invalid BPM: onset envelope is flat")
+
+    hop_sec = float(DEFAULT_HOP) / float(sr)
+    min_bpm = 45.0
+    max_bpm = 220.0
+    min_lag = max(1, int(round(60.0 / (max_bpm * hop_sec))))
+    max_lag = min(env.size - 1, int(round(60.0 / (min_bpm * hop_sec))))
+    if max_lag <= min_lag:
+        raise RuntimeError("invalid BPM: clip too short for beat estimation")
+
+    best_lag = 0
+    best_score = -1.0
+    for lag in range(min_lag, max_lag + 1):
+        a = env[:-lag]
+        b = env[lag:]
+        if a.size == 0 or b.size == 0:
+            continue
+        score = float(np.dot(a, b)) / float(a.size)
+        if score > best_score:
+            best_lag = lag
+            best_score = score
+    if best_lag <= 0 or best_score <= 0.0:
+        raise RuntimeError("invalid BPM: no positive beat autocorrelation")
+
+    bpm_raw = 60.0 / (float(best_lag) * hop_sec)
 
     bpm_doubled = bpm_raw > BPM_DOUBLING_THRESHOLD
     bpm_halved = bpm_raw < BPM_HALVING_THRESHOLD
     if bpm_doubled:
         bpm = bpm_raw / 2.0
-        beats_abs = beats_abs_all[::2]
     elif bpm_halved:
         bpm = bpm_raw * 2.0
-        interp: List[float] = []
-        for i in range(len(beats_abs_all)):
-            interp.append(beats_abs_all[i])
-            if i + 1 < len(beats_abs_all):
-                interp.append((beats_abs_all[i] + beats_abs_all[i + 1]) / 2.0)
-        beats_abs = interp
     else:
         bpm = bpm_raw
-        beats_abs = beats_abs_all
+
+    period = 60.0 / float(bpm)
+    frame_times = _frame_times(env.size, sr)
+    anchor_idx = int(np.argmax(env))
+    anchor_rel = float(frame_times[anchor_idx])
+    while anchor_rel - period >= 0.0:
+        anchor_rel -= period
+    clip_duration = float(len(y)) / float(sr)
+    beats_abs = []
+    t = anchor_rel
+    while t <= clip_duration + (period * 0.5):
+        if t >= 0.0:
+            beats_abs.append(float(t) + float(clip_start_abs))
+        t += period
+
     downbeats_abs = beats_abs[::4]
     return bpm, bpm_raw, (bpm_doubled or bpm_halved), beats_abs, downbeats_abs
 
 
 def _detect_onsets(y, sr: int, clip_start_abs: float) -> List[float]:
-    librosa = _load_librosa()
-    onset_frames = librosa.onset.onset_detect(
-        y=y, sr=sr, hop_length=DEFAULT_HOP, backtrack=True, units="frames",
+    import numpy as np
+    from scipy.signal import find_peaks  # type: ignore
+
+    S, _freqs = _mag_spectrogram(y, sr)
+    flux = _spectral_flux(S)
+    if flux.size == 0:
+        return []
+    env = np.maximum(_zscore(flux), 0.0)
+    if float(env.max(initial=0.0)) <= 0.0:
+        return []
+
+    min_dist = max(1, int(round(0.08 * float(sr) / float(DEFAULT_HOP))))
+    height_thr = max(0.25, float(np.percentile(env, 70.0)))
+    prominence = max(0.05, float(env.std()) * 0.15)
+    idxs, _props = find_peaks(
+        env,
+        height=height_thr,
+        prominence=prominence,
+        distance=min_dist,
     )
-    times_rel = librosa.frames_to_time(onset_frames, sr=sr, hop_length=DEFAULT_HOP)
-    return [float(t) + float(clip_start_abs) for t in times_rel.tolist()]
+    if idxs.size == 0:
+        return []
+
+    rms = _frame_rms(y)
+    times_rel = _frame_times(env.size, sr)
+    out: List[float] = []
+    last_t = -999.0
+    for idx in idxs.tolist():
+        back_lo = max(0, int(idx) - 3)
+        back_hi = min(rms.size, int(idx) + 1)
+        if back_hi > back_lo:
+            local = rms[back_lo:back_hi]
+            idx = back_lo + int(np.argmin(local))
+        t = float(times_rel[int(idx)]) + float(clip_start_abs)
+        if t - last_t < 0.03:
+            continue
+        out.append(t)
+        last_t = t
+    return out
 
 
 def _classify_onsets(
@@ -301,12 +459,10 @@ def _classify_onsets(
     """
     if not onset_times_abs:
         return []
-    librosa = _load_librosa()
     import numpy as np
 
     # Track-wide per-band baseline energy (mean of band-summed STFT magnitude).
-    S = np.abs(librosa.stft(y, n_fft=DEFAULT_FRAME, hop_length=DEFAULT_HOP))
-    freqs = librosa.fft_frequencies(sr=sr, n_fft=DEFAULT_FRAME)
+    S, freqs = _mag_spectrogram(y, sr)
     band_means: Dict[str, float] = {}
     for name, lo, hi in ONSET_BANDS_HZ:
         mask = _band_mask(freqs, lo, hi)
@@ -379,13 +535,11 @@ def _classify_onsets(
 
 
 def _detect_spectral_peaks(y, sr: int, clip_start_abs: float) -> List[SpectralPeak]:
-    librosa = _load_librosa()
     import numpy as np
     from scipy.signal import find_peaks  # type: ignore
 
-    S = np.abs(librosa.stft(y, n_fft=DEFAULT_FRAME, hop_length=DEFAULT_HOP))
-    freqs = librosa.fft_frequencies(sr=sr, n_fft=DEFAULT_FRAME)
-    times_rel = librosa.frames_to_time(np.arange(S.shape[1]), sr=sr, hop_length=DEFAULT_HOP)
+    S, freqs = _mag_spectrogram(y, sr)
+    times_rel = _frame_times(S.shape[1], sr)
 
     peaks: List[SpectralPeak] = []
     for name, (lo, hi) in [("low", LOW_BAND_HZ), ("mid", MID_BAND_HZ), ("high", HIGH_BAND_HZ)]:
@@ -409,14 +563,12 @@ def _detect_spectral_peaks(y, sr: int, clip_start_abs: float) -> List[SpectralPe
 
 
 def _detect_drop_candidates(y, sr: int, clip_start_abs: float, beats_abs: List[float]):
-    librosa = _load_librosa()
     import numpy as np
     from scipy.signal import find_peaks  # type: ignore
 
-    rms = librosa.feature.rms(y=y, frame_length=DEFAULT_FRAME, hop_length=DEFAULT_HOP)[0]
-    flux = librosa.onset.onset_strength(y=y, sr=sr, hop_length=DEFAULT_HOP)
-    S = np.abs(librosa.stft(y, n_fft=DEFAULT_FRAME, hop_length=DEFAULT_HOP))
-    freqs = librosa.fft_frequencies(sr=sr, n_fft=DEFAULT_FRAME)
+    rms = _frame_rms(y)
+    S, freqs = _mag_spectrogram(y, sr)
+    flux = _spectral_flux(S)
     low_mask = _band_mask(freqs, *LOW_BAND_HZ)
     low_energy = S[low_mask, :].sum(axis=0) if low_mask.any() else np.zeros(S.shape[1])
 
@@ -428,18 +580,12 @@ def _detect_drop_candidates(y, sr: int, clip_start_abs: float, beats_abs: List[f
         prev = np.concatenate([np.full(win, arr[0]), arr[:-win]])
         return np.maximum(arr - prev, 0.0)
 
-    def zscore(arr):
-        std = float(arr.std())
-        if std < 1e-9:
-            return np.zeros_like(arr)
-        return (arr - float(arr.mean())) / std
-
-    z_rms = zscore(pos_jump(rms))
-    z_flux = zscore(flux)
-    z_low = zscore(pos_jump(low_energy))
+    z_rms = _zscore(pos_jump(rms))
+    z_flux = _zscore(flux)
+    z_low = _zscore(pos_jump(low_energy))
     score = DROP_W_RMS * z_rms + DROP_W_FLUX * z_flux + DROP_W_LOWJUMP * z_low
 
-    times_rel = librosa.frames_to_time(np.arange(n), sr=sr, hop_length=DEFAULT_HOP)
+    times_rel = _frame_times(n, sr)
     min_dist = max(1, int(round(DROP_DEDUP_SEC * sr / DEFAULT_HOP)))
     height_thr = float(np.percentile(score, 85.0))
     idxs, props = find_peaks(score, height=height_thr, distance=min_dist)
@@ -490,7 +636,6 @@ def _detect_drop_candidates(y, sr: int, clip_start_abs: float, beats_abs: List[f
 
 
 def _compute_density_curve(y, sr: int, clip_start_abs: float, onsets_abs: List[float]) -> List[DensitySample]:
-    librosa = _load_librosa()
     import numpy as np
 
     win_samples = int(DENSITY_WIN_SEC * sr)
@@ -499,9 +644,14 @@ def _compute_density_curve(y, sr: int, clip_start_abs: float, onsets_abs: List[f
     if total < win_samples:
         return []
 
-    flatness = librosa.feature.spectral_flatness(y=y, n_fft=DEFAULT_FRAME, hop_length=DEFAULT_HOP)[0]
-    bandwidth = librosa.feature.spectral_bandwidth(y=y, sr=sr, n_fft=DEFAULT_FRAME, hop_length=DEFAULT_HOP)[0]
-    rms = librosa.feature.rms(y=y, frame_length=DEFAULT_FRAME, hop_length=DEFAULT_HOP)[0]
+    S, freqs = _mag_spectrogram(y, sr)
+    eps = 1e-9
+    S_safe = S + eps
+    flatness = np.exp(np.mean(np.log(S_safe), axis=0)) / np.mean(S_safe, axis=0)
+    mag_sum = S_safe.sum(axis=0)
+    centroid = (freqs[:, None] * S_safe).sum(axis=0) / mag_sum
+    bandwidth = np.sqrt((((freqs[:, None] - centroid) ** 2) * S_safe).sum(axis=0) / mag_sum)
+    rms = _frame_rms(y)
     nyquist = float(sr) / 2.0
     bandwidth_norm = np.clip(bandwidth / nyquist, 0.0, 1.0)
     rms_max = float(rms.max()) if rms.max() > 0 else 1.0
