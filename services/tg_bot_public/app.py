@@ -3494,7 +3494,9 @@ class BlastBotApp:
                     "snapped_to_beat": bool(c.get("snapped_to_beat", False)),
                     "source": str(c.get("source", "")),
                 }
-                for c in raw_cands[:3]
+                # Keep the FULL detected pool (not just the top 3) so auto drop
+                # selection can reach a later candidate; picker still shows [:3].
+                for c in raw_cands
                 if isinstance(c, dict) and c.get("t") is not None
             ]
             bpm = float(result.get("bpm") or 0.0)
@@ -5921,12 +5923,11 @@ class BlastBotApp:
         if st.hook_enabled and st.hook_category == "thought" and st.hook_device:
             if st.hook_drop_t is None:
                 raise RuntimeError("F5 thought hook requires a drop (hook_drop_t)")
-            new_start = float(st.hook_drop_t) - F5_LEAD_SEC
-            if new_start < 0.0:
-                raise RuntimeError(
-                    f"F5 reframe: drop {st.hook_drop_t} - lead {F5_LEAD_SEC:.2f} < 0 "
-                    "(hook too close to track start — use a fuller track)"
-                )
+            # Adaptive lead: up to F5_LEAD_SEC of voice run-up, capped at the room
+            # before the drop, so clip_start = max(0, drop − lead) ≥ 0 always and
+            # F5 never hard-fails on an early drop. (Parity mirror.)
+            lead_f5 = min(F5_LEAD_SEC, float(st.hook_drop_t))
+            new_start = max(0.0, float(st.hook_drop_t) - lead_f5)
             user_clip_start_sec = new_start
             if user_clip_end_sec is None or user_clip_end_sec <= new_start:
                 user_clip_end_sec = float(end)

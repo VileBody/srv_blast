@@ -58,7 +58,9 @@ MID_BAND_HZ = (200.0, 2000.0)
 HIGH_BAND_HZ = (2000.0, 8000.0)
 
 # --- drop detection ---------------------------------------------------------
-DROP_TOPK = 5
+DROP_TOPK = 12  # was 5; keep a fuller pool so the bot can auto-walk to a later
+                # drop for F4/F5 (which need pre-roll) even when the top few are
+                # all early. The user-facing picker still shows only the top 3.
 DROP_DEDUP_SEC = 0.5
 DROP_W_RMS = 1.0
 DROP_W_FLUX = 0.8

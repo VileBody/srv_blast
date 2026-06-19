@@ -2629,7 +2629,10 @@ class BlastBotApp:
                     "snapped_to_beat": bool(c.get("snapped_to_beat", False)),
                     "source": str(c.get("source", "")),
                 }
-                for c in raw_cands[:3]
+                # Keep the FULL detected pool (not just the top 3): the battery
+                # auto-walks it to find a later drop with enough pre-roll for
+                # F4/F5. The user-facing drop picker still shows only cands[:3].
+                for c in raw_cands
                 if isinstance(c, dict) and c.get("t") is not None
             ]
             bpm = float(result.get("bpm") or 0.0)
@@ -2921,17 +2924,19 @@ class BlastBotApp:
             else:
                 log.info("battery: F4 skipped — no drop candidate with lead=%.2f (bpm=%.1f)", lead, bpm)
 
-        # F5 «Мысль» — needs a drop with room to reframe the voice run-up
-        # (drop ≥ F5_LEAD_SEC, same as F4). Walk candidates; skip if none fit.
-        if drops:
+        # F5 «Мысль» — prefer a drop with a full voice run-up (≥ F5_LEAD_SEC) from
+        # the fuller candidate pool; otherwise fall back to the primary drop with
+        # an adaptive (shorter) lead. F5's voice tolerates a short run-up, so it
+        # NEVER skips (unlike F4's fixed cover).
+        if primary is not None:
             f5_drop = _pick(lambda d: d - F5_LEAD_SEC >= 0.0)
-            if f5_drop is not None:
-                dev5 = rng.choice(["punchline", "missing_word", "lyric_echo", "question_to_track", "inverse_lyric"])
-                cases.append({"label": f"Мысль: {dev5}", "hook_enabled": True,
-                              "hook_category": "thought", "hook_device": dev5,
-                              "hook_drop_t": f5_drop})
-            else:
-                log.info("battery: F5 skipped — no drop candidate with lead=%.2f", F5_LEAD_SEC)
+            if f5_drop is None:
+                f5_drop = primary
+                log.info("battery: F5 using primary drop %.2f (no candidate with lead=%.2f)", primary, F5_LEAD_SEC)
+            dev5 = rng.choice(["punchline", "missing_word", "lyric_echo", "question_to_track", "inverse_lyric"])
+            cases.append({"label": f"Мысль: {dev5}", "hook_enabled": True,
+                          "hook_category": "thought", "hook_device": dev5,
+                          "hook_drop_t": f5_drop})
 
         # F1 «Звук» — only with an uploaded sound; needs drop−clip_start > 1s.
         if str(st.f1_sound_url or "").strip() and drops:
@@ -4111,12 +4116,13 @@ class BlastBotApp:
         if st.hook_enabled and st.hook_category == "thought" and st.hook_device:
             if st.hook_drop_t is None:
                 raise RuntimeError("F5 thought hook requires a drop (hook_drop_t)")
-            new_start = float(st.hook_drop_t) - F5_LEAD_SEC
-            if new_start < 0.0:
-                raise RuntimeError(
-                    f"F5 reframe: drop {st.hook_drop_t} - lead {F5_LEAD_SEC:.2f} < 0 "
-                    "(hook too close to track start — use a fuller track)"
-                )
+            # Adaptive lead: the voice gets up to F5_LEAD_SEC of run-up, but never
+            # more than the room actually before the drop. clip_start = max(0,
+            # drop − F5_LEAD_SEC) ≥ 0 ALWAYS, so F5 never hard-fails on an early
+            # drop — it just gets a shorter run-up (voice may slightly overlap the
+            # drop). Unlike F4's fixed cover, the voice tolerates this.
+            lead_f5 = min(F5_LEAD_SEC, float(st.hook_drop_t))
+            new_start = max(0.0, float(st.hook_drop_t) - lead_f5)
             user_clip_start_sec = new_start
             if user_clip_end_sec is None or user_clip_end_sec <= new_start:
                 user_clip_end_sec = float(end)

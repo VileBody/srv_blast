@@ -127,26 +127,26 @@ def test_team_battery_cases_inherit_colors():
     assert sorted(c["hook_category"] for c in cases2) == ["effect", "object", "thought"]
 
 
-def test_team_battery_f4_and_f5_skipped_when_drop_too_early():
-    """F4 and F5 both need a drop with room to reframe (drop >= lead). An early
-    drop with no later candidate drops both; object/effect (primary drop) stay."""
+def test_team_battery_f4_skipped_but_f5_falls_back_on_early_drop():
+    """F4's fixed cover needs drop >= lead → skipped on an early drop with no
+    later candidate. F5's voice tolerates a short run-up → it falls back to the
+    primary drop instead of skipping. object/effect (primary drop) stay."""
     from services.tg_bot_botapi import app as team
     from services.tg_bot_botapi.state_store import ChatState
 
     stub = _battery_stub(team)
     st = ChatState(chat_id=3)
     st.hook_analysis_bpm = 92.0          # slow → big F4 lead (~6s)
-    st.hook_drop_t = 1.4                 # too early for F4 AND F5 (< F5_LEAD_SEC)
+    st.hook_drop_t = 1.4                 # too early for F4; F5 falls back
     st.hook_drop_candidates = []         # no later candidate
     cases = stub._build_battery_cases(st)
-    cats = [c["hook_category"] for c in cases]
-    assert "motion" not in cats          # F4 dropped (no room)
-    assert "thought" not in cats         # F5 dropped (drop < F5_LEAD_SEC)
-    assert "object" in cats and "effect" in cats  # primary-drop formats stay
-    # a later candidate rescues both F4 and F5
+    cats = {c["hook_category"]: c for c in cases}
+    assert "motion" not in cats          # F4 dropped (fixed cover, no room)
+    assert "thought" in cats             # F5 still renders (adaptive lead)
+    assert abs(cats["thought"]["hook_drop_t"] - 1.4) < 1e-6  # primary fallback
+    assert "object" in cats and "effect" in cats
+    # a later candidate rescues F4 and gives F5 the full-pre-roll drop
     st.hook_drop_candidates = [{"t": 10.0, "confidence": 0.5}]
-    cases2 = stub._build_battery_cases(st)
-    motion = [c for c in cases2 if c["hook_category"] == "motion"]
-    thought = [c for c in cases2 if c["hook_category"] == "thought"]
-    assert motion and abs(motion[0]["hook_drop_t"] - 10.0) < 1e-6
-    assert thought and abs(thought[0]["hook_drop_t"] - 10.0) < 1e-6
+    cases2 = {c["hook_category"]: c for c in stub._build_battery_cases(st)}
+    assert abs(cases2["motion"]["hook_drop_t"] - 10.0) < 1e-6
+    assert abs(cases2["thought"]["hook_drop_t"] - 10.0) < 1e-6
