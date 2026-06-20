@@ -6,6 +6,7 @@ import { NavigationBar } from './NavigationBar';
 import { AssetInfo } from './AssetInfo';
 import { BulkExport } from './BulkExport';
 import { BulkImport } from './BulkImport';
+import { TagUntaggedButton } from './TagUntaggedButton';
 
 type Panel = 'export' | 'import' | null;
 
@@ -43,6 +44,7 @@ export function AssetBrowser() {
         <button className="toolbar-btn" onClick={() => setPanel('import')}>
           ⬆ Импорт
         </button>
+        <TagUntaggedButton onDone={reload} />
         <span className="toolbar-spacer" />
         <span className="toolbar-counter">Всего: {total}</span>
       </div>

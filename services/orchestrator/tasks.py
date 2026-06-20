@@ -2402,6 +2402,64 @@ def build_job_vertex_sdk_mix(self, job_id: str) -> Dict[str, Any]:
     return _build_job_impl(self, job_id, worker_type="vertex_sdk_mix")
 
 
+_FOOTAGE_TAGGING_PROGRESS_KEY = "footage_tagging:progress"
+
+
+def _footage_tagging_source_prefix() -> str:
+    explicit = (os.environ.get("ASSET_UI_SOURCE_PREFIX") or "").strip().strip("/")
+    if explicit:
+        return explicit
+    s3_prefix = (os.environ.get("S3_ASSET_PREFIX") or "").strip().strip("/")
+    if s3_prefix:
+        return s3_prefix.split("/", 1)[0]
+    return "pinterest_collection"
+
+
+@celery_app.task(name="orchestrator.tag_untagged_footage", bind=True, max_retries=0)
+def tag_untagged_footage(self, limit: int = 0) -> Dict[str, Any]:
+    """Tag every untagged S3 footage clip via Groq and upsert into footage_tags.
+
+    Progress is published to Redis (_FOOTAGE_TAGGING_PROGRESS_KEY) so the admin
+    UI can poll status. Single-flight is enforced by the API endpoint before
+    enqueue, not here.
+    """
+    from mlcore.footage_tagger import run_tagging_batch
+
+    bucket = str(os.environ.get("S3_BUCKET_ASSET_STORAGE") or "").strip()
+    db_url = str(getattr(SETTINGS, "credits_db_url", "") or "").strip()
+    if not bucket:
+        raise RuntimeError("S3_BUCKET_ASSET_STORAGE not configured")
+    if not db_url:
+        raise RuntimeError("Postgres not configured (CREDITS_DB_URL / POSTGRES_*)")
+
+    r = JobStore.from_env().r
+
+    def _publish(state: str, **extra: Any) -> None:
+        payload = {"state": state, "updated_at": time.time(), **extra}
+        try:
+            r.set(_FOOTAGE_TAGGING_PROGRESS_KEY, json.dumps(payload), ex=86400)
+        except Exception:
+            pass
+
+    def _progress(done: int, total: int, written: int) -> None:
+        _publish("running", done=int(done), total=int(total), written=int(written))
+
+    _publish("running", done=0, total=0, written=0)
+    try:
+        summary = run_tagging_batch(
+            bucket=bucket,
+            source_prefix=_footage_tagging_source_prefix(),
+            db_url=db_url,
+            limit=int(limit or 0),
+            progress_cb=_progress,
+        )
+    except Exception as exc:
+        _publish("failed", error=str(exc))
+        raise
+    _publish("done", **summary)
+    return summary
+
+
 @celery_app.task(name="orchestrator.dispatch_to_windows", bind=True, max_retries=10)
 def dispatch_to_windows(self, job_id: str) -> Dict[str, Any]:
     store = JobStore.from_env()

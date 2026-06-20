@@ -145,6 +145,9 @@ celery_app.conf.update(
         "orchestrator.build_job_vertex_sdk_mix": {"queue": SETTINGS.celery_queue_build},
         "orchestrator.dispatch_to_windows": {"queue": SETTINGS.celery_queue_render},
         "orchestrator.poll_windows_render": {"queue": SETTINGS.celery_queue_render},
+        # Footage auto-tagging runs on the build worker (has ffmpeg + mlcore deps).
+        # Long batches share the build queue — use the `limit` arg to chunk.
+        "orchestrator.tag_untagged_footage": {"queue": SETTINGS.celery_queue_build},
     },
 )
 

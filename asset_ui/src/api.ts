@@ -148,6 +148,37 @@ export function exportZipUrl(genre?: string, tag?: string): string {
   return `${BASE}/assets/export?${params}`;
 }
 
+// --- Server-side auto-tagging (Groq Vision) ---
+
+export interface TaggingStatus {
+  state: 'idle' | 'queued' | 'running' | 'done' | 'failed' | 'unknown';
+  done?: number;
+  total?: number;
+  written?: number;
+  failed?: number;
+  untagged_processed?: number;
+  total_s3?: number;
+  already_tagged?: number;
+  error?: string;
+  updated_at?: number;
+}
+
+export async function startTagUntagged(limit = 0): Promise<{ ok: boolean; task_id: string }> {
+  const params = new URLSearchParams();
+  if (limit > 0) params.set('limit', String(limit));
+  const suffix = params.toString() ? `?${params.toString()}` : '';
+  const res = await fetch(`${BASE}/assets/tag-untagged${suffix}`, { method: 'POST' });
+  if (res.status === 409) throw new Error('Разметка уже выполняется');
+  if (!res.ok) throw new Error(`startTagUntagged: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchTagUntaggedStatus(): Promise<TaggingStatus> {
+  const res = await fetch(`${BASE}/assets/tag-untagged/status`);
+  if (!res.ok) throw new Error(`fetchTagUntaggedStatus: ${res.status}`);
+  return res.json();
+}
+
 export function importAssets(
   files: File[],
   genre: string,

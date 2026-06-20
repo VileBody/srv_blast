@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import tempfile
+import time
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -479,6 +480,54 @@ def create_asset_router(*, prefix: str = "/asset-ui/api") -> APIRouter:
     @router.get("/assets/taxonomy")
     def get_taxonomy_endpoint() -> Dict[str, Any]:
         return {"themes": get_taxonomy()}
+
+    # --- auto-tagging (server-side Groq Vision) ---
+    _TAGGING_PROGRESS_KEY = "footage_tagging:progress"
+
+    def _tagging_redis():
+        from .job_store import _redis_client_from_env
+
+        return _redis_client_from_env()
+
+    @router.post("/assets/tag-untagged")
+    def tag_untagged(limit: int = Query(0, ge=0)) -> Dict[str, Any]:
+        """Enqueue a batch that tags every untagged S3 clip via Groq.
+
+        Single-flight: refuses if a run is already in progress (Redis state).
+        Pass ?limit=N to cap how many clips this run processes.
+        """
+        r = _tagging_redis()
+        try:
+            raw = r.get(_TAGGING_PROGRESS_KEY)
+        except Exception:
+            raw = None
+        if raw:
+            try:
+                state = json.loads(raw).get("state")
+            except Exception:
+                state = None
+            if state == "running":
+                raise HTTPException(status_code=409, detail="Tagging already running")
+
+        from .celery_app import celery_app
+
+        r.set(_TAGGING_PROGRESS_KEY, json.dumps({"state": "queued", "updated_at": time.time()}), ex=86400)
+        async_result = celery_app.send_task("orchestrator.tag_untagged_footage", args=[int(limit)])
+        return {"ok": True, "task_id": str(async_result.id), "limit": int(limit)}
+
+    @router.get("/assets/tag-untagged/status")
+    def tag_untagged_status() -> Dict[str, Any]:
+        r = _tagging_redis()
+        try:
+            raw = r.get(_TAGGING_PROGRESS_KEY)
+        except Exception:
+            raw = None
+        if not raw:
+            return {"state": "idle"}
+        try:
+            return json.loads(raw)
+        except Exception:
+            return {"state": "unknown"}
 
     # --- tag overrides ---
     @router.get("/tag-overrides")
