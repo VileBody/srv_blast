@@ -496,7 +496,11 @@ def create_asset_router(*, prefix: str = "/asset-ui/api") -> APIRouter:
         Single-flight: refuses if a run is already in progress (Redis state).
         Pass ?limit=N to cap how many clips this run processes.
         """
-        r = _tagging_redis()
+        try:
+            r = _tagging_redis()
+        except Exception as e:  # redis client construction failed
+            raise HTTPException(status_code=503, detail=f"Redis unavailable: {e}")
+
         try:
             raw = r.get(_TAGGING_PROGRESS_KEY)
         except Exception:
@@ -509,10 +513,23 @@ def create_asset_router(*, prefix: str = "/asset-ui/api") -> APIRouter:
             if state == "running":
                 raise HTTPException(status_code=409, detail="Tagging already running")
 
-        from .celery_app import celery_app
+        # Enqueue onto the Celery broker. asset-ui is a slim image — surface a
+        # clear 503 if celery isn't installed or the broker is unreachable,
+        # instead of an opaque 500.
+        try:
+            from .celery_app import celery_app
+        except Exception as e:
+            raise HTTPException(status_code=503, detail=f"Task queue unavailable (celery import failed): {e}")
 
-        r.set(_TAGGING_PROGRESS_KEY, json.dumps({"state": "queued", "updated_at": time.time()}), ex=86400)
-        async_result = celery_app.send_task("orchestrator.tag_untagged_footage", args=[int(limit)])
+        try:
+            async_result = celery_app.send_task("orchestrator.tag_untagged_footage", args=[int(limit)])
+        except Exception as e:
+            raise HTTPException(status_code=503, detail=f"Failed to enqueue tagging task (broker unreachable?): {e}")
+
+        try:
+            r.set(_TAGGING_PROGRESS_KEY, json.dumps({"state": "queued", "updated_at": time.time()}), ex=86400)
+        except Exception:
+            pass  # progress is best-effort; the task republishes on start
         return {"ok": True, "task_id": str(async_result.id), "limit": int(limit)}
 
     @router.get("/assets/tag-untagged/status")

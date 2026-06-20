@@ -169,7 +169,16 @@ export async function startTagUntagged(limit = 0): Promise<{ ok: boolean; task_i
   const suffix = params.toString() ? `?${params.toString()}` : '';
   const res = await fetch(`${BASE}/assets/tag-untagged${suffix}`, { method: 'POST' });
   if (res.status === 409) throw new Error('Разметка уже выполняется');
-  if (!res.ok) throw new Error(`startTagUntagged: ${res.status}`);
+  if (!res.ok) {
+    // Surface the server's `detail` (e.g. broker/redis unavailable) instead of a bare code.
+    let detail = '';
+    try {
+      detail = (await res.json()).detail ?? '';
+    } catch {
+      /* non-JSON body */
+    }
+    throw new Error(detail ? `${res.status}: ${detail}` : `startTagUntagged: ${res.status}`);
+  }
   return res.json();
 }
 
