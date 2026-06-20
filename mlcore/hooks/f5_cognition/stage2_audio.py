@@ -150,11 +150,13 @@ def synthesize_voice(spec: VoiceSpec) -> tuple[bytes, int]:
     """
     Возвращает (audio_bytes, actual_duration_ms).
 
-    Делает до MAX_TTS_RETRIES попыток если TTS оказался короче 1.5с.
-    Если все попытки короткие — поднимает F5TtsTooShort (вызывающий код
-    может попробовать reverb extension в mixer).
-
-    > 4с считается ОК — mixer обрежет с fade-out.
+    Делает до MAX_TTS_RETRIES попыток если TTS вне окна [1.5с, 4с]:
+      - короче 1.5с → retry «произнеси полнее»; все короткие → F5TtsTooShort
+        (вызывающий код может попробовать reverb extension в mixer).
+      - длиннее 4с → retry «произнеси быстрее/короче» (иначе mixer режет фразу
+        посреди предложения, а субтитр показывает невысказанный хвост). Если
+        модель так и не уложилась — берём САМУЮ короткую из длинных попыток
+        (минимум на отрез) и отдаём в mixer cut+fade.
     """
     # Дефолт — 3.1 TTS (gemini-3.1-flash-tts-preview). Откат на 2.5
     # (gemini-2.5-flash-preview-tts) = смена env GEMINI_MODEL_F5_TTS, без правок кода.
@@ -163,14 +165,22 @@ def synthesize_voice(spec: VoiceSpec) -> tuple[bytes, int]:
     last_audio: bytes | None = None
     last_duration_ms: int = 0
     last_blocked_err: F5GeminiTimeout | None = None
+    best_long_audio: bytes | None = None   # shortest over-4s take (least to cut)
+    best_long_ms: int = 0
 
     for attempt in range(MAX_TTS_RETRIES + 1):
         retry_hint = ""
-        if attempt > 0:
+        if attempt > 0 and 0 < last_duration_ms < TTS_MIN_ACCEPTABLE_MS:
             retry_hint = (
                 "Предыдущая попытка вышла слишком короткой "
                 f"({last_duration_ms} мс). Произнеси полнее, добавь выразительности, "
                 "не ускоряй."
+            )
+        elif attempt > 0 and last_duration_ms > TTS_MAX_ACCEPTABLE_MS:
+            retry_hint = (
+                "Предыдущая попытка вышла слишком длинной "
+                f"({last_duration_ms} мс). Произнеси заметно быстрее и компактнее, "
+                f"уложись в {TTS_MAX_ACCEPTABLE_MS} мс, без длинных пауз между словами."
             )
 
         prompt = build_voice_prompt(spec, retry_hint=retry_hint)
@@ -192,9 +202,22 @@ def synthesize_voice(spec: VoiceSpec) -> tuple[bytes, int]:
 
         last_audio, last_duration_ms = audio_bytes, duration_ms
 
-        if duration_ms >= TTS_MIN_ACCEPTABLE_MS:
-            # Длиннее 4с не считаем ошибкой — mixer cut+fade.
+        if TTS_MIN_ACCEPTABLE_MS <= duration_ms <= TTS_MAX_ACCEPTABLE_MS:
             return audio_bytes, duration_ms
+        if duration_ms > TTS_MAX_ACCEPTABLE_MS:
+            # Over-long: keep the SHORTEST such take as a fallback, then retry
+            # asking the voice to speak faster.
+            if best_long_audio is None or duration_ms < best_long_ms:
+                best_long_audio, best_long_ms = audio_bytes, duration_ms
+
+    # Prefer the shortest over-long take (mixer cut+fade) over failing — the voice
+    # never fit the window but at least we cut the least.
+    if best_long_audio is not None:
+        logger.warning(
+            "f5.stage2 all attempts over %d ms; using shortest=%d ms (mixer cut+fade)",
+            TTS_MAX_ACCEPTABLE_MS, best_long_ms,
+        )
+        return best_long_audio, best_long_ms
 
     # No usable audio after all attempts. If we never got ANY audio (every call
     # was blocked/empty), surface the block reason; otherwise it was too short.

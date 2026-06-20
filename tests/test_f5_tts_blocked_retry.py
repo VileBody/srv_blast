@@ -44,6 +44,35 @@ def test_blocked_then_success_retries(monkeypatch):
     assert calls["n"] == 2  # retried once after the block
 
 
+def test_too_long_retries_then_accepts_shorter(monkeypatch):
+    # First take is over 4s (would be cut mid-phrase) → retry asking to speak
+    # faster; second take fits the window → returned.
+    durations = iter([7400, 3600])
+    hints = []
+
+    def fake_call(prompt, *, spec, model):
+        hints.append("слишком длинной" in prompt)
+        return b"WAV"
+
+    monkeypatch.setattr(s2, "_call_gemini_tts", fake_call)
+    monkeypatch.setattr(s2, "_measure_duration_ms", lambda b: next(durations))
+
+    audio, dur = s2.synthesize_voice(_spec())
+    assert dur == 3600                 # in-window take returned, not the 7400 one
+    assert hints[1] is True            # 2nd attempt got the "too long" hint
+
+
+def test_all_too_long_returns_shortest(monkeypatch):
+    # Every take overshoots 4s → return the SHORTEST (least to cut), don't raise.
+    durations = iter([8000, 5200, 6100])
+
+    monkeypatch.setattr(s2, "_call_gemini_tts", lambda p, *, spec, model: b"WAV")
+    monkeypatch.setattr(s2, "_measure_duration_ms", lambda b: next(durations))
+
+    audio, dur = s2.synthesize_voice(_spec())
+    assert dur == 5200                 # shortest over-long take
+
+
 def test_all_blocked_raises_gemini_timeout(monkeypatch):
     def fake_call(prompt, *, spec, model):
         raise F5GeminiTimeout("empty content (finish_reason=OTHER)")
