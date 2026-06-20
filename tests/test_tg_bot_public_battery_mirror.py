@@ -98,6 +98,22 @@ def test_f4_min_intro_sec_mirrored():
     assert team.F4_MIN_INTRO_SEC == pub.F4_MIN_INTRO_SEC == 3.0
 
 
+def test_f4_effective_lead_mirrored():
+    """Both bots delegate _f4_effective_lead to the shared overlay.effective_lead
+    — fixed for TS=1 devices (tap/holdfinger), bpm-scaled otherwise. Must match."""
+    from services.tg_bot_public import app as pub
+    from services.tg_bot_botapi import app as team
+
+    for dev in ("swipe", "tap", "pinch", "holdfinger", "head"):
+        for bpm in (96.0, 128.0, 150.0):
+            a = team.BlastBotApp._f4_effective_lead(dev, bpm)
+            b = pub.BlastBotApp._f4_effective_lead(dev, bpm)
+            assert a == b, (dev, bpm, a, b)
+    # tap/holdfinger are fixed-lead → identical at any bpm
+    assert team.BlastBotApp._f4_effective_lead("tap", 96.0) == \
+        team.BlastBotApp._f4_effective_lead("tap", 150.0)
+
+
 def _battery_stub(team):
     # _build_battery_cases calls self._f4_effective_lead — provide it.
     class _Stub:
