@@ -3,11 +3,12 @@ import { fetchTagUntaggedStatus, startTagUntagged, type TaggingStatus } from '..
 
 const POLL_MS = 3000;
 
-/** Toolbar control: start server-side Groq auto-tagging of untagged clips and
- *  poll progress. Resumes showing progress if a run is already in flight. */
+/** Toolbar control: start server-side Groq auto-tagging of untagged clips with
+ *  an optional limit, and show a minimal progress bar (tagged / total). */
 export function TagUntaggedButton({ onDone }: { onDone?: () => void }) {
   const [status, setStatus] = useState<TaggingStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [limit, setLimit] = useState<number>(0);
   const timer = useRef<number | null>(null);
   const wasRunning = useRef(false);
 
@@ -50,25 +51,55 @@ export function TagUntaggedButton({ onDone }: { onDone?: () => void }) {
   const handleStart = useCallback(async () => {
     setError(null);
     try {
-      await startTagUntagged(0);
+      await startTagUntagged(limit);
       wasRunning.current = true;
       startPolling();
     } catch (e) {
       setError((e as Error).message);
     }
-  }, [startPolling]);
+  }, [limit, startPolling]);
 
   const running = status?.state === 'running' || status?.state === 'queued';
-  const label = running
-    ? `Разметка… ${status?.done ?? 0}/${status?.total ?? '?'}`
-    : '🏷 Разметить без тегов';
+  const done = status?.done ?? 0;
+  const total = status?.total ?? 0;
+  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
 
   return (
-    <>
+    <span className="tag-untagged" style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+      <input
+        type="number"
+        min={0}
+        value={limit || ''}
+        placeholder="все"
+        title="Лимит клипов за прогон (0 / пусто = все)"
+        disabled={running}
+        onChange={(e) => setLimit(Math.max(0, Number(e.target.value) || 0))}
+        style={{ width: 56, padding: '4px 6px' }}
+      />
       <button className="toolbar-btn" onClick={handleStart} disabled={running}>
-        {label}
+        🏷 Разметить
       </button>
-      {status?.state === 'done' && status.written != null && (
+
+      {running && (
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          <span
+            style={{
+              display: 'inline-block', width: 120, height: 8, borderRadius: 4,
+              background: 'rgba(127,127,127,0.25)', overflow: 'hidden',
+            }}
+          >
+            <span
+              style={{
+                display: 'block', height: '100%', width: `${pct}%`,
+                background: '#4a9eff', transition: 'width 0.3s',
+              }}
+            />
+          </span>
+          <span className="toolbar-counter">размечено {done} / {total}</span>
+        </span>
+      )}
+
+      {!running && status?.state === 'done' && status.written != null && (
         <span className="toolbar-counter">✓ размечено: {status.written}</span>
       )}
       {(error || status?.state === 'failed') && (
@@ -76,6 +107,6 @@ export function TagUntaggedButton({ onDone }: { onDone?: () => void }) {
           ⚠ {error || status?.error || 'ошибка'}
         </span>
       )}
-    </>
+    </span>
   );
 }
