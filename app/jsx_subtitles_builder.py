@@ -52,6 +52,17 @@ def hex_to_rgb01(hex_str: str) -> list[float] | None:
         return None
 
 
+# Strip leading/trailing punctuation from a transcript word so trendy/brat match
+# the other subtitle types, which carry punctuation-free LLM text. Edge-only —
+# keeps intra-word apostrophe/hyphen (don't, rock-n-roll). \w is Unicode-aware
+# (Cyrillic included), so commas/dots/ellipsis/dashes/quotes at the ends go.
+_PUNCT_EDGE_RE = re.compile(r"^[^\w]+|[^\w]+$", re.UNICODE)
+
+
+def _strip_edge_punct(s: str) -> str:
+    return _PUNCT_EDGE_RE.sub("", s)
+
+
 def _w_text(w: Any) -> str:
     if isinstance(w, dict):
         v = w.get("text", w.get("word", w.get("w")))
@@ -100,7 +111,7 @@ def word_timings_from_transcript(
     win = (float(clip_end) - cs) if clip_end is not None else None
     out: list[dict[str, Any]] = []
     for w in words or []:
-        text = _w_text(w).strip()
+        text = _strip_edge_punct(_w_text(w).strip())
         if not text:
             continue
         try:

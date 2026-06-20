@@ -69,6 +69,18 @@ def test_word_timings_accepts_transcriptword_objects():
     assert wt == [{"word": "привет", "start": 0.0, "end": 0.5, "focus": False}]
 
 
+def test_word_timings_strips_edge_punctuation():
+    words = [
+        {"text": "Дэнсил,", "t_start": 0.0, "t_end": 0.4},
+        {"text": "город...", "t_start": 0.4, "t_end": 0.8},
+        {"text": "«Burberry»", "t_start": 0.8, "t_end": 1.2},
+        {"text": "don't", "t_start": 1.2, "t_end": 1.6},   # intra-word apostrophe kept
+        {"text": "—", "t_start": 1.6, "t_end": 1.7},        # punctuation-only → dropped
+    ]
+    wt = word_timings_from_transcript(words, clip_start=0.0)
+    assert [w["word"] for w in wt] == ["Дэнсил", "город", "Burberry", "don't"]
+
+
 def test_splice_voice_phrase_replaces_window_words():
     from app.jsx_subtitles_builder import splice_voice_phrase
 
