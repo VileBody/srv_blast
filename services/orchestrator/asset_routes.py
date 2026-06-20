@@ -483,11 +483,30 @@ def create_asset_router(*, prefix: str = "/asset-ui/api") -> APIRouter:
 
     # --- auto-tagging (server-side Groq Vision) ---
     _TAGGING_PROGRESS_KEY = "footage_tagging:progress"
+    # If a run's progress hasn't been updated within this window we treat it as
+    # dead (worker crashed) so a new run can start instead of being blocked
+    # forever by a stale "running"/"queued" key.
+    _TAGGING_STALE_S = 180.0
 
     def _tagging_redis():
         from .job_store import _redis_client_from_env
 
         return _redis_client_from_env()
+
+    def _tagging_active(raw: Any) -> bool:
+        if not raw:
+            return False
+        try:
+            obj = json.loads(raw)
+        except Exception:
+            return False
+        if obj.get("state") not in ("running", "queued"):
+            return False
+        try:
+            age = time.time() - float(obj.get("updated_at") or 0.0)
+        except Exception:
+            return True
+        return age < _TAGGING_STALE_S
 
     @router.post("/assets/tag-untagged")
     def tag_untagged(limit: int = Query(0, ge=0)) -> Dict[str, Any]:
@@ -505,13 +524,8 @@ def create_asset_router(*, prefix: str = "/asset-ui/api") -> APIRouter:
             raw = r.get(_TAGGING_PROGRESS_KEY)
         except Exception:
             raw = None
-        if raw:
-            try:
-                state = json.loads(raw).get("state")
-            except Exception:
-                state = None
-            if state == "running":
-                raise HTTPException(status_code=409, detail="Tagging already running")
+        if _tagging_active(raw):
+            raise HTTPException(status_code=409, detail="Tagging already running")
 
         # Enqueue onto the Celery broker. asset-ui is a slim image — surface a
         # clear 503 if celery isn't installed or the broker is unreachable,
@@ -521,10 +535,23 @@ def create_asset_router(*, prefix: str = "/asset-ui/api") -> APIRouter:
         except Exception as e:
             raise HTTPException(status_code=503, detail=f"Task queue unavailable (celery import failed): {e}")
 
+        # Bound the enqueue: with a missing/wrong CELERY_BROKER_URL, Celery would
+        # otherwise block for a long time retrying the connection, hanging the
+        # request. Use a short connect timeout and no publish retry so a broker
+        # problem fails fast as a clear 503 instead of an unresponsive button.
         try:
-            async_result = celery_app.send_task("orchestrator.tag_untagged_footage", args=[int(limit)])
+            with celery_app.connection_for_write(connect_timeout=5) as conn:
+                async_result = celery_app.send_task(
+                    "orchestrator.tag_untagged_footage",
+                    args=[int(limit)],
+                    connection=conn,
+                    retry=False,
+                )
         except Exception as e:
-            raise HTTPException(status_code=503, detail=f"Failed to enqueue tagging task (broker unreachable?): {e}")
+            raise HTTPException(
+                status_code=503,
+                detail=f"Failed to enqueue tagging task (broker unreachable? check CELERY_BROKER_URL): {e}",
+            )
 
         try:
             r.set(_TAGGING_PROGRESS_KEY, json.dumps({"state": "queued", "updated_at": time.time()}), ex=86400)

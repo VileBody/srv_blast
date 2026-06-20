@@ -8,6 +8,7 @@ const POLL_MS = 3000;
 export function TagUntaggedButton({ onDone }: { onDone?: () => void }) {
   const [status, setStatus] = useState<TaggingStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [starting, setStarting] = useState(false);
   const [limit, setLimit] = useState<number>(0);
   const timer = useRef<number | null>(null);
   const wasRunning = useRef(false);
@@ -50,12 +51,15 @@ export function TagUntaggedButton({ onDone }: { onDone?: () => void }) {
 
   const handleStart = useCallback(async () => {
     setError(null);
+    setStarting(true);
     try {
       await startTagUntagged(limit);
       wasRunning.current = true;
       startPolling();
     } catch (e) {
       setError((e as Error).message);
+    } finally {
+      setStarting(false);
     }
   }, [limit, startPolling]);
 
@@ -72,12 +76,12 @@ export function TagUntaggedButton({ onDone }: { onDone?: () => void }) {
         value={limit || ''}
         placeholder="все"
         title="Лимит клипов за прогон (0 / пусто = все)"
-        disabled={running}
+        disabled={running || starting}
         onChange={(e) => setLimit(Math.max(0, Number(e.target.value) || 0))}
         style={{ width: 56, padding: '4px 6px' }}
       />
-      <button className="toolbar-btn" onClick={handleStart} disabled={running}>
-        🏷 Разметить
+      <button className="toolbar-btn" onClick={handleStart} disabled={running || starting}>
+        {starting ? 'Запускаю…' : '🏷 Разметить'}
       </button>
 
       {running && (
