@@ -1,0 +1,62 @@
+{
+  "_comment": "Maps free-form clip theme_tags (from scan.py vision tagger) -> canonical taxonomy tags used in footage_v2.py. Applied ONLY to clip meta_theme_tags during picking, so a clip tagged 'rainy' matches an LLM pick of 'rain'. Keys/values are lowercase, whitespace-normalized. Curated by hand; only add semantically-correct mappings whose value EXISTS in the footage_v2 taxonomy.",
+  "aliases": {
+    "rainy": "rain",
+    "rainy day": "rain",
+    "rainy road": "rain",
+    "rainy street": "rain",
+    "wet pavement": "wet road",
+
+    "red light": "red lights",
+    "blue light": "blue lighting",
+    "blue": "blue lighting",
+    "streetlight": "street lights",
+    "street light": "street lights",
+    "traffic light": "street lights",
+    "traffic lights": "street lights",
+    "night lights": "city lights",
+
+    "mountains": "mountain",
+    "mountain view": "mountain",
+    "mountain road": "mountain",
+    "mountain landscape": "mountain",
+
+    "foggy": "fog",
+    "foggy road": "fog",
+    "foggy atmosphere": "fog",
+    "misty": "fog",
+    "cloudy": "cloudy sky",
+    "grey sky": "cloudy sky",
+
+    "tree": "trees",
+    "evergreen trees": "trees",
+    "night forest": "dark forest",
+
+    "blurred motion": "blurry motion",
+    "silhouettes": "silhouette",
+    "shadow": "shadows",
+
+    "snowy landscape": "winter landscape",
+    "winter road": "snowy road",
+
+    "city view": "cityscape",
+    "nighttime city": "night city",
+    "nighttime cityscape": "night city",
+    "dark buildings": "night city",
+
+    "stormy sea": "storm",
+    "station": "train station",
+    "moving train": "train station",
+    "parked car": "car",
+    "nightlife": "night",
+    "racing": "night racing",
+    "ocean view": "ocean",
+    "outdoor setting": "outdoor",
+    "casual clothing": "casual",
+    "casual wear": "casual",
+    "interior": "indoor setting",
+    "field": "grass",
+    "parking lot": "parking garage",
+    "empty parking lot": "parking garage"
+  }
+}

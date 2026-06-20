@@ -103,6 +103,41 @@ _GLOBAL_BAN_TAGS: frozenset = _load_global_ban_tags()
 _SELECTION_RANK_SCORE_KEY = "_selection_rank_score"
 
 
+def _load_tag_aliases() -> Dict[str, str]:
+    """Load free-form -> canonical taxonomy tag aliases from data/tag_aliases.json.
+
+    The vision tagger (scan.py) emits open-vocabulary tags (e.g. "rainy",
+    "mountains") while the LLM footage prompt picks from a curated taxonomy
+    (e.g. "rain", "mountain"). Without aliasing, ~43% of clip tag-instances are
+    invisible to the picker. This map is applied to clip meta_theme_tags only,
+    so a clip tagged "rainy" matches an LLM pick of "rain". Missing file or
+    parse error degrades gracefully to no aliasing (picker keeps working).
+    """
+    src = Path(__file__).resolve().parents[1] / "data" / "tag_aliases.json"
+    if not src.exists():
+        warnings.warn(f"Tag aliases source is missing: {src}", RuntimeWarning, stacklevel=2)
+        return {}
+    try:
+        data = json.loads(src.read_text(encoding="utf-8"))
+    except Exception as e:
+        warnings.warn(f"Tag aliases parse failed ({src}): {e!r}", RuntimeWarning, stacklevel=2)
+        return {}
+    raw = data.get("aliases") if isinstance(data, dict) else None
+    if not isinstance(raw, dict):
+        warnings.warn(f"Tag aliases missing 'aliases' object: {src}", RuntimeWarning, stacklevel=2)
+        return {}
+    out: Dict[str, str] = {}
+    for k, v in raw.items():
+        key = " ".join(str(k or "").strip().lower().split())
+        val = " ".join(str(v or "").strip().lower().split())
+        if key and val and key != val:
+            out[key] = val
+    return out
+
+
+_TAG_ALIASES: Dict[str, str] = _load_tag_aliases()
+
+
 def _load_tag_overrides() -> Dict[str, Any]:
     """Load user tag overrides from asset_tag_overrides.json (if exists)."""
     src = Path(__file__).resolve().parents[1] / "data" / "asset_tag_overrides.json"
@@ -796,7 +831,7 @@ def _build_raw_pool(
                 continue
             if str(it.get("tag") or "").strip() != str(style_tag).strip():
                 continue
-        meta_tags = {_normalize_theme_tag(x) for x in (it.get("meta_theme_tags") or [])}
+        meta_tags = {_normalize_meta_tag(x) for x in (it.get("meta_theme_tags") or [])}
         meta_tags.discard("")
         meta_tags -= blacklisted
         overlap = len(priority_tags.intersection(meta_tags))
@@ -1350,7 +1385,7 @@ def pick_footage_clips_by_intervals_deterministic(
         # - score is pure overlap count with priority_theme_tags.
         primary_pool = []
         for it in assets:
-            meta_tags = {_normalize_theme_tag(x) for x in list(it.get("meta_theme_tags") or [])}
+            meta_tags = {_normalize_meta_tag(x) for x in list(it.get("meta_theme_tags") or [])}
             meta_tags.discard("")
             overlap = int(len(priority_tags.intersection(meta_tags)))
             if overlap <= 0:
@@ -1570,6 +1605,18 @@ def _normalize_theme_tag(v: Any) -> str:
     return " ".join(str(v or "").strip().lower().split())
 
 
+def _normalize_meta_tag(v: Any) -> str:
+    """Normalize a CLIP-side theme tag and remap free-form -> canonical taxonomy.
+
+    Use this (not _normalize_theme_tag) for clip meta_theme_tags so the
+    open-vocabulary tagger output matches the curated taxonomy the LLM picks
+    from. LLM-side tags (priority_theme_tags / exclude_tags) stay on
+    _normalize_theme_tag — they are already canonical and must not be remapped.
+    """
+    base = _normalize_theme_tag(v)
+    return _TAG_ALIASES.get(base, base)
+
+
 def _normalize_people_type(v: Any) -> str:
     out = _normalize_theme_tag(v)
     if out == "guy":
@@ -1746,7 +1793,7 @@ def resolve_style_pick_from_raw_filters(
         tag = str(it.get("tag") or "").strip()
         if not genre or not tag:
             continue
-        tags = {_normalize_theme_tag(x) for x in list(it.get("meta_theme_tags") or [])}
+        tags = {_normalize_meta_tag(x) for x in list(it.get("meta_theme_tags") or [])}
         tags.discard("")
         overlap = int(len(priority_tags.intersection(tags)))
         color_hit = 1 if _normalize_color_tone(it.get("meta_color_tone")) in color_priority else 0
