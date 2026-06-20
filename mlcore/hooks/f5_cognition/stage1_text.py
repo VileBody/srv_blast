@@ -46,6 +46,19 @@ def _parse_voice_spec(raw: str) -> VoiceSpec:
     except json.JSONDecodeError as e:
         raise F5Stage1ParseError(f"Stage 1 returned non-JSON: {e}; raw={raw[:300]!r}") from e
 
+    # Pre-clamp the model's expected_duration_ms estimate into the VoiceSpec field
+    # bounds [1500, 4000] BEFORE validation. It is only an estimate (clamped to the
+    # 2500-3500 target just below), so an out-of-range guess must NOT crash all of
+    # F5 — which it did: a sub-1500 estimate tripped VoiceSpec's ge=1500 → the
+    # render had no voice (job 08a98492…, missing_word). The soft clamp below was
+    # dead for that case because Pydantic rejected the value first.
+    if isinstance(data, dict):
+        try:
+            _edm = int(data["expected_duration_ms"])
+            data["expected_duration_ms"] = max(1500, min(4000, _edm))
+        except (KeyError, TypeError, ValueError):
+            pass  # missing/non-numeric → let VoiceSpec raise a clear error
+
     try:
         spec = VoiceSpec(**data)
     except Exception as e:
