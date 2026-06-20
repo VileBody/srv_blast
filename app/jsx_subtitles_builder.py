@@ -138,6 +138,23 @@ def word_timings_from_transcript(
     return out
 
 
+def trim_phrase_to_spoken(phrase: str, *, audio_ms: float, tts_ms: float) -> str:
+    """Drop the trailing words a cut TTS never spoke.
+
+    F5 caps the voice at TTS_MAX_OUTPUT_MS (4s) via cut_with_fade, so a thought
+    whose natural speech is longer (`tts_ms`) ends up with only its leading
+    fraction audible (`audio_ms`). The subtitle uses the FULL tts_text, which
+    then shows words that were cut from the voice (observed: 7.4s speech cut to
+    4s, subtitle still showed "под полным контролем"). Keep only the leading
+    round(n · audio_ms/tts_ms) words. No cut (tts_ms ≤ audio_ms) → unchanged.
+    """
+    words = str(phrase or "").split()
+    if not words or not (tts_ms > audio_ms > 0.0):
+        return phrase
+    keep = max(1, int(round(len(words) * float(audio_ms) / float(tts_ms))))
+    return phrase if keep >= len(words) else " ".join(words[:keep])
+
+
 def splice_voice_phrase(
     word_timings: list[dict[str, Any]],
     *,

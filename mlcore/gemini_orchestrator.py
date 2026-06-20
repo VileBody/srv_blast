@@ -4409,6 +4409,7 @@ def build_all_via_gemini_one_call(
         try:
             from app.jsx_subtitles_builder import (
                 splice_voice_phrase,
+                trim_phrase_to_spoken,
                 word_timings_from_transcript,
             )
 
@@ -4426,8 +4427,16 @@ def build_all_via_gemini_one_call(
             _voice_win = None
             if f5_block and str(f5_block.get("tts_text") or "").strip():
                 _v_in = float(f5_block.get("focal_start_ms", 0)) / 1000.0
-                _v_out = _v_in + float(f5_block.get("audio_duration_ms", 0)) / 1000.0
-                _voice_win = (_v_in, _v_out, str(f5_block["tts_text"]))
+                _audio_ms = float(f5_block.get("audio_duration_ms", 0))
+                _v_out = _v_in + _audio_ms / 1000.0
+                # Trim the subtitle phrase to what the (possibly cut-to-4s) voice
+                # actually speaks — else it shows words cut from the audio.
+                _f5_phrase = trim_phrase_to_spoken(
+                    str(f5_block["tts_text"]),
+                    audio_ms=_audio_ms,
+                    tts_ms=float(f5_block.get("tts_duration_ms", 0)),
+                )
+                _voice_win = (_v_in, _v_out, _f5_phrase)
             elif f1_block and str(f1_block.get("text") or "").strip():
                 from mlcore.hooks.f1_sound.inject import f1_audio_window
                 _v_in, _v_out = f1_audio_window(float(f1_block["drop_time"]))

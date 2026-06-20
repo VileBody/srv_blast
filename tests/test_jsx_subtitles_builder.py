@@ -69,6 +69,20 @@ def test_word_timings_accepts_transcriptword_objects():
     assert wt == [{"word": "привет", "start": 0.0, "end": 0.5, "focus": False}]
 
 
+def test_trim_phrase_to_spoken():
+    from app.jsx_subtitles_builder import trim_phrase_to_spoken
+
+    # the real case: 7.4s speech cut to 4.0s → keep round(7*4000/7400)=4 words
+    p = "Я абсолютно не расслаблен, под полным контролем."
+    assert trim_phrase_to_spoken(p, audio_ms=4000, tts_ms=7400) == "Я абсолютно не расслаблен,"
+    # no cut (tts <= audio) → unchanged
+    assert trim_phrase_to_spoken(p, audio_ms=4000, tts_ms=4000) == p
+    assert trim_phrase_to_spoken(p, audio_ms=4000, tts_ms=0) == p
+    # never trims below 1 word
+    assert trim_phrase_to_spoken("один два", audio_ms=10, tts_ms=99999) == "один"
+    assert trim_phrase_to_spoken("", audio_ms=1, tts_ms=9) == ""
+
+
 def test_word_timings_strips_edge_punctuation():
     words = [
         {"text": "Дэнсил,", "t_start": 0.0, "t_end": 0.4},
