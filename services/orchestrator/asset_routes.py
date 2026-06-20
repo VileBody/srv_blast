@@ -535,22 +535,43 @@ def create_asset_router(*, prefix: str = "/asset-ui/api") -> APIRouter:
         except Exception as e:
             raise HTTPException(status_code=503, detail=f"Task queue unavailable (celery import failed): {e}")
 
-        # Bound the enqueue: with a missing/wrong CELERY_BROKER_URL, Celery would
-        # otherwise block for a long time retrying the connection, hanging the
-        # request. Use a short connect timeout and no publish retry so a broker
-        # problem fails fast as a clear 503 instead of an unresponsive button.
+        # Enqueue through a dedicated producer with NO result backend: asset-ui
+        # only PRODUCES the task and never reads its result, and the shared
+        # celery_app's result backend (CELERY_RESULT_BACKEND) is unreachable
+        # from this container — touching it makes send_task fail. Route to the
+        # build queue explicitly (no task_routes on this throwaway app). Bound
+        # the call with a wall-clock timeout so a broker problem returns ~6s.
+        import concurrent.futures
+        from celery import Celery as _Celery
+
+        broker_uri = str(getattr(celery_app.conf, "broker_url", "") or "") or "(empty → amqp://localhost default)"
+        build_queue = os.getenv("CELERY_QUEUE_BUILD", "build")
+
+        def _mask(uri: str) -> str:
+            return re.sub(r"://([^:/@]+):([^@]+)@", r"://\1:***@", uri)
+
+        def _do_enqueue():
+            producer = _Celery("asset_ui_producer", broker=celery_app.conf.broker_url, backend=None)
+            return producer.send_task(
+                "orchestrator.tag_untagged_footage",
+                args=[int(limit)],
+                queue=build_queue,
+                ignore_result=True,
+                retry=False,
+            )
+
         try:
-            with celery_app.connection_for_write(connect_timeout=5) as conn:
-                async_result = celery_app.send_task(
-                    "orchestrator.tag_untagged_footage",
-                    args=[int(limit)],
-                    connection=conn,
-                    retry=False,
-                )
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                async_result = ex.submit(_do_enqueue).result(timeout=8)
+        except concurrent.futures.TimeoutError:
+            raise HTTPException(
+                status_code=503,
+                detail=f"Enqueue timed out — broker unreachable. broker={_mask(broker_uri)}",
+            )
         except Exception as e:
             raise HTTPException(
                 status_code=503,
-                detail=f"Failed to enqueue tagging task (broker unreachable? check CELERY_BROKER_URL): {e}",
+                detail=f"Enqueue failed: {e}. broker={_mask(broker_uri)}",
             )
 
         try:
