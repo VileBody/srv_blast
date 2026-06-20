@@ -50,13 +50,31 @@ Rules:
 # --------------------------------------------------------------------------- #
 # Config (env)
 # --------------------------------------------------------------------------- #
+def _fallback_groq_keys() -> List[str]:
+    """TEMPORARY: committed fallback keys (config/groq_keys_fallback.json) used
+    only when no env key is set, so tagging works before GROQ_API_KEYS is wired
+    into .env. Delete the file + rotate keys once env is configured."""
+    from pathlib import Path as _P
+
+    src = _P(__file__).resolve().parents[1] / "config" / "groq_keys_fallback.json"
+    if not src.exists():
+        return []
+    try:
+        data = json.loads(src.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    return [str(k).strip() for k in (data.get("keys") or []) if str(k).strip()]
+
+
 def groq_api_keys() -> List[str]:
-    """Groq keys from env. Prefer GROQ_API_KEYS (comma-separated), else GROQ_API_KEY."""
+    """Groq keys: GROQ_API_KEYS (csv) > GROQ_API_KEY > committed fallback file."""
     multi = (os.environ.get("GROQ_API_KEYS") or "").strip()
     if multi:
         return [k.strip() for k in multi.split(",") if k.strip()]
     single = (os.environ.get("GROQ_API_KEY") or "").strip()
-    return [single] if single else []
+    if single:
+        return [single]
+    return _fallback_groq_keys()
 
 
 def groq_model() -> str:

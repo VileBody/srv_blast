@@ -104,6 +104,13 @@ CREDITS_DB_URL=...                      # уже есть
 # ffmpeg/ffprobe уже в runtime-образе
 ```
 
+⚠️ **Временный fallback ключей:** чтобы заработало без правки `.env`, в репо
+закоммичен `config/groq_keys_fallback.json` (6 Groq-ключей из старого scan.py).
+Он используется ТОЛЬКО когда `GROQ_API_KEYS`/`GROQ_API_KEY` пусты. Когда выставишь
+env — **удали файл и ротируй ключи** (закоммиченные ключи может зарезать
+secret-scanning). Брокер: asset-ui тянет `.env` целиком, так что `CELERY_BROKER_URL`
+там уже должен быть.
+
 ### Запуск
 
 **Через API (admin):**
