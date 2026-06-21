@@ -2,6 +2,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { fetchTagUntaggedStatus, startTagUntagged, type TaggingStatus } from '../api';
 
 const POLL_MS = 3000;
+// Mirror backend staleness: a run whose progress hasn't updated within this
+// window is treated as dead, so a leftover "queued"/"running" key doesn't
+// disable the button forever.
+const STALE_S = 180;
 
 /** Toolbar control: start server-side Groq auto-tagging of untagged clips with
  *  an optional limit, and show a minimal progress bar (tagged / total). */
@@ -63,7 +67,9 @@ export function TagUntaggedButton({ onDone }: { onDone?: () => void }) {
     }
   }, [limit, startPolling]);
 
-  const running = status?.state === 'running' || status?.state === 'queued';
+  const active = status?.state === 'running' || status?.state === 'queued';
+  const fresh = status?.updated_at ? Date.now() / 1000 - status.updated_at < STALE_S : false;
+  const running = active && fresh;
   const done = status?.done ?? 0;
   const total = status?.total ?? 0;
   const pct = total > 0 ? Math.round((done / total) * 100) : 0;
