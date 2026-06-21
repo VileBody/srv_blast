@@ -8,7 +8,16 @@ COPY asset_ui/package.json asset_ui/package-lock.json ./
 RUN npm ci
 
 COPY asset_ui/ ./
-RUN npm run build
+# Fast path uses the lockfile (npm ci above). If the build fails because npm
+# didn't install a platform-specific native binding (npm optional-deps bug
+# npm/cli#4828 — vite/rolldown's musl binding can be missing when the lockfile
+# was generated on another OS), fall back to a clean per-platform reinstall.
+RUN npm run build || ( \
+      echo "asset-ui build failed; reinstalling deps fresh (npm#4828) and retrying" && \
+      rm -rf node_modules package-lock.json && \
+      npm install --no-audit --no-fund && \
+      npm run build \
+    )
 
 
 FROM python:3.13-alpine
