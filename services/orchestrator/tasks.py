@@ -2423,15 +2423,9 @@ def tag_untagged_footage(self, limit: int = 0) -> Dict[str, Any]:
     UI can poll status. Single-flight is enforced by the API endpoint before
     enqueue, not here.
     """
-    from mlcore.footage_tagger import run_tagging_batch
-
-    bucket = str(os.environ.get("S3_BUCKET_ASSET_STORAGE") or "").strip()
-    db_url = str(getattr(SETTINGS, "credits_db_url", "") or "").strip()
-    if not bucket:
-        raise RuntimeError("S3_BUCKET_ASSET_STORAGE not configured")
-    if not db_url:
-        raise RuntimeError("Postgres not configured (CREDITS_DB_URL / POSTGRES_*)")
-
+    # Publish "running" and a Redis handle FIRST, before any validation, so an
+    # early failure (missing env, bad config) surfaces as state="failed" with a
+    # message in the UI instead of leaving the UI stuck on "queued".
     r = JobStore.from_env().r
 
     def _publish(state: str, **extra: Any) -> None:
@@ -2446,6 +2440,15 @@ def tag_untagged_footage(self, limit: int = 0) -> Dict[str, Any]:
 
     _publish("running", done=0, total=0, written=0)
     try:
+        from mlcore.footage_tagger import run_tagging_batch
+
+        bucket = str(os.environ.get("S3_BUCKET_ASSET_STORAGE") or "").strip()
+        db_url = str(getattr(SETTINGS, "credits_db_url", "") or "").strip()
+        if not bucket:
+            raise RuntimeError("S3_BUCKET_ASSET_STORAGE not configured")
+        if not db_url:
+            raise RuntimeError("Postgres not configured (CREDITS_DB_URL / POSTGRES_*)")
+
         summary = run_tagging_batch(
             bucket=bucket,
             source_prefix=_footage_tagging_source_prefix(),
