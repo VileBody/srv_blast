@@ -4,8 +4,19 @@ from mlcore.footage_tags_db import (
     build_tag_record,
     extract_clip_id,
     merge_records_by_clip_id,
+    pick_snapshot_path,
     snapshot_row_from_record,
 )
+
+
+def test_pick_snapshot_path_priority() -> None:
+    # explicit wins
+    assert pick_snapshot_path(explicit="x/y.json", metadata_paths_json='["a.json"]') == "x/y.json"
+    # else first entry of the metadata paths json (what the picker reads)
+    assert pick_snapshot_path(metadata_paths_json='["data/footage_tags_snapshot.json","b.json"]') == "data/footage_tags_snapshot.json"
+    # else default; malformed json falls back too
+    assert pick_snapshot_path() == "data/footage_tags_snapshot.json"
+    assert pick_snapshot_path(metadata_paths_json="not json") == "data/footage_tags_snapshot.json"
 
 
 def test_extract_clip_id() -> None:

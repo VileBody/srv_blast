@@ -227,3 +227,36 @@ async def fetch_all_records(conn: Any) -> List[Dict[str, Any]]:
 async def fetch_tagged_clip_ids(conn: Any) -> set:
     recs = await conn.fetch("SELECT clip_id FROM footage_tags WHERE array_length(theme_tags, 1) > 0")
     return {str(r["clip_id"]) for r in recs}
+
+
+async def build_snapshot(conn: Any) -> List[Dict[str, Any]]:
+    """All footage_tags rows in the legacy video_database shape the picker reads."""
+    recs = await fetch_all_records(conn)
+    return [snapshot_row_from_record(r) for r in recs]
+
+
+def pick_snapshot_path(
+    *,
+    explicit: str = "",
+    metadata_paths_json: str = "",
+    default: str = "data/footage_tags_snapshot.json",
+) -> str:
+    """Resolve where to write the tags snapshot so it matches what the picker
+    reads. Priority: explicit env > first path in FOOTAGE_STYLE_METADATA_DB_PATHS_JSON
+    > default. Pure (no env access) for testability."""
+    e = str(explicit or "").strip()
+    if e:
+        return e
+    raw = str(metadata_paths_json or "").strip()
+    if raw:
+        try:
+            import json as _json
+
+            arr = _json.loads(raw)
+            if isinstance(arr, list) and arr:
+                first = str(arr[0] or "").strip()
+                if first:
+                    return first
+        except Exception:
+            pass
+    return default

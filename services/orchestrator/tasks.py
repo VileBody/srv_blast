@@ -2459,8 +2459,45 @@ def tag_untagged_footage(self, limit: int = 0) -> Dict[str, Any]:
     except Exception as exc:
         _publish("failed", error=str(exc))
         raise
+
+    # Auto-export the snapshot the picker reads, so freshly tagged clips are
+    # visible without a manual export step. Best-effort: a failure here doesn't
+    # fail the tagging run (the upserts already landed in Postgres). On a
+    # multi-node deploy this refreshes the local node; distribution to other
+    # nodes still happens at deploy time.
+    try:
+        snap = _export_footage_tags_snapshot(db_url=db_url)
+        summary = {**summary, "snapshot": snap.get("path"), "snapshot_rows": snap.get("rows")}
+    except Exception as exc:
+        log.warning("footage_tags snapshot auto-export failed: %r", exc)
+        summary = {**summary, "snapshot_error": str(exc)}
+
     _publish("done", **summary)
     return summary
+
+
+def _export_footage_tags_snapshot(*, db_url: str) -> Dict[str, Any]:
+    """Write data/footage_tags_snapshot.json (the picker's tag source) from Postgres."""
+    from mlcore.footage_tags_db import build_snapshot, pick_snapshot_path
+
+    out_path = Path(pick_snapshot_path(
+        explicit=os.environ.get("FOOTAGE_TAGS_SNAPSHOT_PATH", ""),
+        metadata_paths_json=os.environ.get("FOOTAGE_STYLE_METADATA_DB_PATHS_JSON", ""),
+    ))
+
+    async def _go():
+        import asyncpg  # type: ignore
+
+        conn = await asyncpg.connect(dsn=db_url)
+        try:
+            return await build_snapshot(conn)
+        finally:
+            await conn.close()
+
+    rows = asyncio.run(_go())
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {"path": str(out_path), "rows": len(rows)}
 
 
 @celery_app.task(name="orchestrator.dispatch_to_windows", bind=True, max_retries=10)
