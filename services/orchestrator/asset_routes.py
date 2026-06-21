@@ -728,10 +728,18 @@ def create_asset_router(*, prefix: str = "/asset-ui/api") -> APIRouter:
                 detail=f"Enqueue failed: {e}. broker={_mask(broker_uri)}",
             )
 
-        # NOTE: we deliberately do NOT write a "queued" state here. If the worker
-        # never picks up the task (broker/queue mismatch, worker on old code),
-        # a stuck "queued" key would disable the button forever. State is owned
-        # solely by the worker (running/done/failed); until then status is idle.
+        # Mark "queued" for single-flight between enqueue and the worker's first
+        # "running" heartbeat. Safe against deadlock: the status endpoint
+        # normalizes a stale active state (updated_at older than _TAGGING_STALE_S)
+        # back to idle, so a task that never gets picked up auto-recovers.
+        try:
+            r.set(
+                _TAGGING_PROGRESS_KEY,
+                json.dumps({"state": "queued", "updated_at": time.time()}),
+                ex=86400,
+            )
+        except Exception:
+            pass  # best-effort; the worker republishes on start
         # Surface broker + queue so a producer/worker mismatch (wrong redis db
         # or queue name) is diagnosable from the POST response.
         return {
