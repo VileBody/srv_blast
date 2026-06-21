@@ -2472,8 +2472,51 @@ def tag_untagged_footage(self, limit: int = 0) -> Dict[str, Any]:
         log.warning("footage_tags snapshot auto-export failed: %r", exc)
         summary = {**summary, "snapshot_error": str(exc)}
 
+    # Also refresh the tag-overrides snapshot (blacklist) the picker reads, so an
+    # admin blacklist change applied since the last run takes effect without a
+    # separate manual export.
+    try:
+        ov = _export_tag_overrides_snapshot(db_url=db_url)
+        summary = {**summary, "tag_overrides_rows": ov.get("rows")}
+    except Exception as exc:
+        log.warning("tag_overrides snapshot auto-export failed: %r", exc)
+
     _publish("done", **summary)
     return summary
+
+
+def _export_tag_overrides_snapshot(*, db_url: str) -> Dict[str, Any]:
+    """Write data/tag_overrides.json (blacklist the picker reads) from Postgres,
+    preserving any existing file-based tag_assignments."""
+    from mlcore.footage_overrides_db import (
+        build_tag_overrides_doc,
+        fetch_blacklisted_tags,
+        init_schema,
+    )
+
+    out_path = Path(os.environ.get("FOOTAGE_TAG_OVERRIDES_PATH", "data/tag_overrides.json"))
+    existing_assignments: List[Any] = []
+    if out_path.exists():
+        try:
+            existing_assignments = json.loads(out_path.read_text(encoding="utf-8")).get("tag_assignments", []) or []
+        except Exception:
+            existing_assignments = []
+
+    async def _go():
+        import asyncpg  # type: ignore
+
+        conn = await asyncpg.connect(dsn=db_url)
+        try:
+            await init_schema(conn)
+            return await fetch_blacklisted_tags(conn)
+        finally:
+            await conn.close()
+
+    blacklist = asyncio.run(_go())
+    doc = build_tag_overrides_doc(blacklist, existing_assignments)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {"path": str(out_path), "rows": len(doc["blacklisted_tags"])}
 
 
 def _export_footage_tags_snapshot(*, db_url: str) -> Dict[str, Any]:
