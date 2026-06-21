@@ -76,3 +76,59 @@ def get_rotation_slot(artist_id: str, cursor: int) -> Optional[Tuple[str, str]]:
 
 def get_rotation_length(artist_id: str) -> int:
     return len(get_artist_rotation_slots(artist_id))
+
+
+# Human-readable RU labels for the theme keys, shown as buttons in the bot when
+# the user picks a theme explicitly. Keep in sync with THEME_GROUPS keys
+# (CI gate: tests/test_footage_taxonomy_gates covers theme<->prompt; the bot
+# parity test covers labels coverage).
+THEME_LABELS_RU: Dict[str, str] = {
+    "romance_major": "Романтика (тёплая)",
+    "romance_minor": "Романтика (грустная)",
+    "epic_love_major": "Большая любовь (светлая)",
+    "epic_love_minor": "Большая любовь (драма)",
+    "heartbreak_minor": "Разбитое сердце",
+    "betrayal_minor": "Предательство",
+    "jealousy_minor": "Ревность",
+    "depression_minor": "Депрессия",
+    "self_destruction_minor": "Саморазрушение",
+    "aggression_minor": "Агрессия",
+    "motivation_major": "Мотивация (светлая)",
+    "motivation_minor": "Мотивация (тёмная)",
+    "hustle_minor": "Хастл / деньги",
+    "sex_major": "Чувственность (тёплая)",
+    "sex_minor": "Чувственность (тёмная)",
+    "nostalgia_city_minor": "Ностальгия / город",
+    "adrenaline_flex_major": "Адреналин / тачки",
+    "escapism_dreams_minor": "Эскапизм / сны",
+    "loneliness_isolation_minor": "Одиночество",
+    "youth_rebellion_major": "Молодёжный бунт",
+    "mysticism_fate_minor": "Мистика / судьба",
+    "cyber_alienation_minor": "Киберотчуждение",
+}
+
+
+def get_theme_label(theme: str) -> str:
+    """RU label for a theme key; falls back to a prettified key if unmapped."""
+    t = str(theme or "").strip()
+    if t in THEME_LABELS_RU:
+        return THEME_LABELS_RU[t]
+    return t.replace("_minor", "").replace("_major", "").replace("_", " ").strip().capitalize()
+
+
+def get_artist_theme_choices(artist_id: str) -> List[Tuple[str, str, bool]]:
+    """Ordered [(theme_key, label, is_primary)] for the bot's theme picker.
+
+    Themes come from the artist profile order (deduped). The first theme is the
+    primary one — the one shown in the artist's example video — so the bot marks
+    it "как в примере".
+    """
+    out: List[Tuple[str, str, bool]] = []
+    seen: set[str] = set()
+    for theme in get_artist_themes(artist_id):
+        t = str(theme or "").strip()
+        if not t or t in seen:
+            continue
+        seen.add(t)
+        out.append((t, get_theme_label(t), not out))
+    return out
