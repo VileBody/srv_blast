@@ -235,36 +235,101 @@ def _save_overrides(overrides: Dict[str, Any]) -> None:
 
 
 _theme_tags_index: Optional[Dict[str, List[str]]] = None
-_CLIP_ID_RE = re.compile(r"(\d{10,})")
+_theme_tags_index_at: float = 0.0
+_THEME_TAGS_TTL_S = 120.0
+_CLIP_ID_RE = re.compile(r"(\d{8,})")
 
 
 def _normalize_tag(tag: str) -> str:
     return " ".join(tag.lower().strip().split())
 
 
+def _theme_tags_db_url() -> str:
+    """DSN for the footage_tags store (CREDITS_DB_URL or POSTGRES_* fallback)."""
+    explicit = (os.getenv("CREDITS_DB_URL") or "").strip()
+    if explicit:
+        return explicit
+    host = (os.getenv("POSTGRES_HOST") or "").strip()
+    db = (os.getenv("POSTGRES_DB") or "").strip()
+    user = (os.getenv("POSTGRES_USER") or "").strip()
+    if not host or not db or not user:
+        return ""
+    from urllib.parse import quote_plus
+
+    pw = (os.getenv("POSTGRES_PASSWORD") or "").strip()
+    port = (os.getenv("POSTGRES_PORT") or "5432").strip()
+    sslmode = (os.getenv("POSTGRES_SSLMODE") or "prefer").strip()
+    return (
+        f"postgresql://{quote_plus(user)}:{quote_plus(pw)}@{host}:{int(port)}/{db}"
+        f"?sslmode={quote_plus(sslmode)}"
+    )
+
+
+def _load_theme_tags_from_pg() -> Optional[Dict[str, List[str]]]:
+    """clip_id -> theme_tags from Postgres footage_tags (picker's source of truth).
+
+    Returns None if the DB is unavailable, so callers fall back to the legacy
+    JSON files. This keeps the admin UI tag display consistent with what the
+    footage picker actually matches against.
+    """
+    db_url = _theme_tags_db_url()
+    if not db_url:
+        return None
+    try:
+        import asyncio
+
+        import asyncpg  # type: ignore
+
+        from mlcore.footage_tags_db import fetch_all_records
+
+        async def _go():
+            conn = await asyncpg.connect(dsn=db_url)
+            try:
+                return await fetch_all_records(conn)
+            finally:
+                await conn.close()
+
+        recs = asyncio.run(_go())
+    except Exception as e:
+        log.warning("theme_tags: Postgres read failed, falling back to JSON: %s", e)
+        return None
+
+    out: Dict[str, List[str]] = {}
+    for r in recs:
+        cid = str(r.get("clip_id") or "").strip()
+        tags = [str(t) for t in (r.get("theme_tags") or []) if str(t).strip()]
+        if cid and tags:
+            out[cid] = tags
+    return out or None
+
+
 def _load_theme_tags_index() -> Dict[str, List[str]]:
-    """Build clip_id -> theme_tags lookup from video database files."""
-    global _theme_tags_index
-    if _theme_tags_index is not None:
+    """clip_id -> theme_tags. Prefers Postgres footage_tags (same source the
+    picker uses); falls back to legacy video_database JSON files."""
+    global _theme_tags_index, _theme_tags_index_at
+    if _theme_tags_index is not None and (time.time() - _theme_tags_index_at) < _THEME_TAGS_TTL_S:
         return _theme_tags_index
 
-    index: Dict[str, List[str]] = {}
-    for db_path in _VIDEO_DB_PATHS:
-        if not db_path.exists():
-            continue
-        try:
-            entries = json.loads(db_path.read_text(encoding="utf-8"))
-        except Exception:
-            continue
-        for entry in entries:
-            vk = entry.get("video_key", "")
-            m = _CLIP_ID_RE.search(vk)
-            if not m:
+    index = _load_theme_tags_from_pg()
+    if index is None:
+        index = {}
+        for db_path in _VIDEO_DB_PATHS:
+            if not db_path.exists():
                 continue
-            tags = entry.get("theme_tags", [])
-            if tags:
-                index[m.group(1)] = tags
+            try:
+                entries = json.loads(db_path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            for entry in entries:
+                vk = entry.get("video_key", "")
+                m = _CLIP_ID_RE.search(vk)
+                if not m:
+                    continue
+                tags = entry.get("theme_tags", [])
+                if tags:
+                    index[m.group(1)] = tags
     _theme_tags_index = index
+    _theme_tags_index_at = time.time()
     return index
 
 
