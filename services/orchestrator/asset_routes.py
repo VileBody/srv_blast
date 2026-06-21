@@ -552,17 +552,36 @@ def create_asset_router(*, prefix: str = "/asset-ui/api") -> APIRouter:
 
         def _do_enqueue():
             producer = _Celery("asset_ui_producer", broker=celery_app.conf.broker_url, backend=None)
-            return producer.send_task(
+            # Queue names are per-instance (e.g. build.orchestrator-1) and this
+            # service's CELERY_QUEUE_BUILD may not match any live worker. Ask the
+            # broker which build.* queues are actually consumed and target one,
+            # so tagging works without per-service env alignment. Fall back to
+            # the configured queue if inspection yields nothing.
+            target = build_queue
+            try:
+                aq = producer.control.inspect(timeout=2).active_queues() or {}
+                names = sorted({
+                    str(q.get("name") or "")
+                    for qs in aq.values() for q in (qs or [])
+                    if q.get("name")
+                })
+                build_names = [n for n in names if n.startswith("build")]
+                if build_names:
+                    target = build_names[0]
+            except Exception:
+                pass
+            res = producer.send_task(
                 "orchestrator.tag_untagged_footage",
                 args=[int(limit)],
-                queue=build_queue,
+                queue=target,
                 ignore_result=True,
                 retry=False,
             )
+            return res, target
 
         try:
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-                async_result = ex.submit(_do_enqueue).result(timeout=8)
+                async_result, build_queue = ex.submit(_do_enqueue).result(timeout=10)
         except concurrent.futures.TimeoutError:
             raise HTTPException(
                 status_code=503,
