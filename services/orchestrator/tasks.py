@@ -1573,11 +1573,11 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
 
     rotation_theme = str(req.get("rotation_theme") or "").strip()
     rotation_tags_group = str(req.get("rotation_tags_group") or "").strip()
-    # Either both set (override active) or both empty (no override).
-    if bool(rotation_theme) != bool(rotation_tags_group):
-        raise RuntimeError(
-            "rotation_theme and rotation_tags_group must be provided together"
-        )
+    # Modes: (theme+group) = exact slot lock; (theme only) = theme lock, group
+    # picked by lyrics; (neither) = no override. A group without a theme is
+    # invalid.
+    if rotation_tags_group and not rotation_theme:
+        raise RuntimeError("rotation_tags_group requires rotation_theme")
 
     variant_index: Optional[int] = None
     variant_total: Optional[int] = None
@@ -1863,9 +1863,10 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
             env["F1_SOUND_TEXT"] = str(_f1_text_raw).strip()
     if exclude_file_names:
         env["FOOTAGE_EXCLUDE_FILE_NAMES_JSON"] = json.dumps(exclude_file_names, ensure_ascii=False)
-    if rotation_theme and rotation_tags_group:
+    if rotation_theme:
         env["FOOTAGE_ROTATION_THEME"] = rotation_theme
-        env["FOOTAGE_ROTATION_GROUP"] = rotation_tags_group
+        if rotation_tags_group:
+            env["FOOTAGE_ROTATION_GROUP"] = rotation_tags_group
     seed_variant = variant_index if variant_index is not None else 1
     seed_base = project_id or f"job-{job_id}"
     env["STAGE2_SELECTION_SEED"] = f"{seed_base}:v{seed_variant}"

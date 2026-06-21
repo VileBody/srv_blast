@@ -3307,11 +3307,14 @@ def build_all_via_gemini_one_call(
 
         # Resolve genre/tag from highest-priority subgroup that can be mapped to inventory groups.
         # Rotation-override hard check: if we pinned (theme, tags_group), enforce exact match.
-        if rotation_theme_override and rotation_group_override:
+        if rotation_theme_override:
+            # Theme lock (group optional). Force exactly one subgroup on the
+            # requested theme. If a group is also pinned, enforce it exactly;
+            # otherwise the LLM picked the best group within the theme by lyrics.
             if len(rotation.subgroups) != 1:
                 raise RuntimeError(
                     "stage2_style_rotation_override_violation: expected exactly 1 subgroup "
-                    f"when cursor override is set, got {len(rotation.subgroups)}"
+                    f"when theme override is set, got {len(rotation.subgroups)}"
                 )
             only = rotation.subgroups[0]
             if str(only.theme).strip() != rotation_theme_override:
@@ -3319,7 +3322,7 @@ def build_all_via_gemini_one_call(
                     "stage2_style_rotation_override_theme_mismatch: "
                     f"expected={rotation_theme_override!r} got={only.theme!r}"
                 )
-            if str(only.tags_group or "").strip() != rotation_group_override:
+            if rotation_group_override and str(only.tags_group or "").strip() != rotation_group_override:
                 raise RuntimeError(
                     "stage2_style_rotation_override_group_mismatch: "
                     f"expected={rotation_group_override!r} got={only.tags_group!r}"

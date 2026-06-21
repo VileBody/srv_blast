@@ -505,6 +505,21 @@ def build_stage2_footage_user_prompt(
             "  `color`), and exclude_people from the theme's `exclude` list.\n"
             "- Still obey the banned tags and valid enums from CONSTRAINTS.\n\n"
         )
+    elif theme_override:
+        # Theme lock: the user picked the theme explicitly; the LLM still picks
+        # the single best tags_group within it for the lyrics. No group mixing.
+        rotation_block = (
+            "THEME_LOCK (HARD CONSTRAINT, TAKES PRIORITY OVER STEP 2):\n"
+            f"- Output EXACTLY ONE subgroup in `subgroups` — no more, no less.\n"
+            f"- The subgroup MUST use theme = {json.dumps(theme_override, ensure_ascii=False)}.\n"
+            "- Within that theme, PICK THE SINGLE BEST tags_group for the lyrics\n"
+            "  (from that theme's `tags_groups` in THEMES LOGIC). Do NOT mix groups.\n"
+            "- Then pick 6-10 priority_theme_tags from that group's `_tags`, copy its\n"
+            "  `_exclude_tags` verbatim, color_priority (group `_color` else theme\n"
+            "  `color`), and exclude_people from the theme's `exclude` list.\n"
+            "- Ignore the profile theme order for this call — the user locked this theme.\n"
+            "- Still obey the banned tags and valid enums from CONSTRAINTS.\n\n"
+        )
 
     return (
         f"Return ONLY JSON matching schema: {schema_name}\n\n"
