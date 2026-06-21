@@ -574,10 +574,10 @@ def create_asset_router(*, prefix: str = "/asset-ui/api") -> APIRouter:
                 detail=f"Enqueue failed: {e}. broker={_mask(broker_uri)}",
             )
 
-        try:
-            r.set(_TAGGING_PROGRESS_KEY, json.dumps({"state": "queued", "updated_at": time.time()}), ex=86400)
-        except Exception:
-            pass  # progress is best-effort; the task republishes on start
+        # NOTE: we deliberately do NOT write a "queued" state here. If the worker
+        # never picks up the task (broker/queue mismatch, worker on old code),
+        # a stuck "queued" key would disable the button forever. State is owned
+        # solely by the worker (running/done/failed); until then status is idle.
         # Surface broker + queue so a producer/worker mismatch (wrong redis db
         # or queue name) is diagnosable from the POST response.
         return {
@@ -597,6 +597,15 @@ def create_asset_router(*, prefix: str = "/asset-ui/api") -> APIRouter:
             raw = None
         if not raw:
             return {"state": "idle"}
+        # Normalize a stale active state (dead worker) to idle so the button
+        # re-enables regardless of the frontend version.
+        if not _tagging_active(raw):
+            try:
+                obj = json.loads(raw)
+            except Exception:
+                obj = None
+            if isinstance(obj, dict) and obj.get("state") in ("running", "queued"):
+                return {"state": "idle", "stale_from": obj.get("state")}
         try:
             return json.loads(raw)
         except Exception:
