@@ -578,7 +578,15 @@ def create_asset_router(*, prefix: str = "/asset-ui/api") -> APIRouter:
             r.set(_TAGGING_PROGRESS_KEY, json.dumps({"state": "queued", "updated_at": time.time()}), ex=86400)
         except Exception:
             pass  # progress is best-effort; the task republishes on start
-        return {"ok": True, "task_id": str(async_result.id), "limit": int(limit)}
+        # Surface broker + queue so a producer/worker mismatch (wrong redis db
+        # or queue name) is diagnosable from the POST response.
+        return {
+            "ok": True,
+            "task_id": str(async_result.id),
+            "limit": int(limit),
+            "broker": _mask(broker_uri),
+            "queue": build_queue,
+        }
 
     @router.get("/assets/tag-untagged/status")
     def tag_untagged_status() -> Dict[str, Any]:
