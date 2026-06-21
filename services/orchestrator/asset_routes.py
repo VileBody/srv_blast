@@ -341,7 +341,7 @@ def _get_theme_tags_for_asset(file_name: str) -> List[str]:
     return idx.get(m.group(1), [])
 
 
-def _load_tag_overrides() -> Dict[str, Any]:
+def _load_tag_overrides_file() -> Dict[str, Any]:
     if not _TAG_OVERRIDES_PATH.exists():
         return {"blacklisted_tags": [], "tag_assignments": []}
     try:
@@ -351,6 +351,76 @@ def _load_tag_overrides() -> Dict[str, Any]:
         return data
     except Exception:
         return {"blacklisted_tags": [], "tag_assignments": []}
+
+
+def _pg_blacklist_fetch() -> Optional[List[str]]:
+    """Blacklisted tags from Postgres, or None if the DB is unavailable."""
+    db_url = _theme_tags_db_url()
+    if not db_url:
+        return None
+    try:
+        import asyncio
+
+        import asyncpg  # type: ignore
+
+        from mlcore.footage_overrides_db import fetch_blacklisted_tags, init_schema
+
+        async def _go():
+            conn = await asyncpg.connect(dsn=db_url)
+            try:
+                await init_schema(conn)
+                return await fetch_blacklisted_tags(conn)
+            finally:
+                await conn.close()
+
+        return asyncio.run(_go())
+    except Exception as e:
+        log.warning("blacklist: Postgres read failed, falling back to file: %s", e)
+        return None
+
+
+def _pg_blacklist_write(tag: str, *, add: bool) -> bool:
+    """Add/remove a blacklisted tag in Postgres. Returns False if DB unavailable."""
+    db_url = _theme_tags_db_url()
+    if not db_url:
+        return False
+    try:
+        import asyncio
+
+        import asyncpg  # type: ignore
+
+        from mlcore.footage_overrides_db import (
+            add_blacklisted_tag,
+            init_schema,
+            remove_blacklisted_tag,
+        )
+
+        async def _go():
+            conn = await asyncpg.connect(dsn=db_url)
+            try:
+                await init_schema(conn)
+                if add:
+                    await add_blacklisted_tag(conn, tag)
+                else:
+                    await remove_blacklisted_tag(conn, tag)
+            finally:
+                await conn.close()
+
+        asyncio.run(_go())
+        return True
+    except Exception as e:
+        log.warning("blacklist: Postgres write failed, falling back to file: %s", e)
+        return False
+
+
+def _load_tag_overrides() -> Dict[str, Any]:
+    """Curation overrides for the UI. Blacklist comes from Postgres (shared
+    across nodes, written by admin); tag_assignments stay file-based (unused)."""
+    file_doc = _load_tag_overrides_file()
+    pg_blacklist = _pg_blacklist_fetch()
+    if pg_blacklist is not None:
+        return {"blacklisted_tags": pg_blacklist, "tag_assignments": file_doc.get("tag_assignments", [])}
+    return file_doc
 
 
 def _save_tag_overrides(data: Dict[str, Any]) -> None:
@@ -705,19 +775,23 @@ def create_asset_router(*, prefix: str = "/asset-ui/api") -> APIRouter:
         tag = _normalize_tag(body.tag)
         if not tag:
             raise HTTPException(status_code=422, detail="Empty tag")
-        data = _load_tag_overrides()
-        bl = {_normalize_tag(t) for t in data["blacklisted_tags"]}
-        if tag not in bl:
-            data["blacklisted_tags"].append(tag)
-            _save_tag_overrides(data)
+        # Prefer Postgres (shared across nodes -> reaches the picker via the
+        # exported tag_overrides snapshot). Fall back to the local file only if
+        # the DB is unavailable.
+        if not _pg_blacklist_write(tag, add=True):
+            data = _load_tag_overrides_file()
+            if tag not in {_normalize_tag(t) for t in data["blacklisted_tags"]}:
+                data["blacklisted_tags"].append(tag)
+                _save_tag_overrides(data)
         return {"ok": True, "tag": tag}
 
     @router.delete("/tag-overrides/blacklist/{tag}")
     def unblacklist_tag(tag: str) -> Dict[str, Any]:
         norm = _normalize_tag(tag)
-        data = _load_tag_overrides()
-        data["blacklisted_tags"] = [t for t in data["blacklisted_tags"] if _normalize_tag(t) != norm]
-        _save_tag_overrides(data)
+        if not _pg_blacklist_write(norm, add=False):
+            data = _load_tag_overrides_file()
+            data["blacklisted_tags"] = [t for t in data["blacklisted_tags"] if _normalize_tag(t) != norm]
+            _save_tag_overrides(data)
         return {"ok": True, "tag": norm}
 
     @router.post("/tag-overrides/assign")
