@@ -97,6 +97,25 @@ def heuristic_rank(lyrics: str, buckets: List[Bucket]) -> List[str]:
     return [b.bucket_id for b in ranked]
 
 
+def gemini_rank_call(system: str, user: str) -> str:
+    """I/O adapter: one cheap Gemini Flash text call. Raises on any failure so
+    rank_buckets() falls back to the heuristic (never breaks the endpoint)."""
+    import os
+
+    from mlcore.hooks.f5_cognition._gemini import make_client
+
+    model = (os.environ.get("FOOTAGE_RANKER_MODEL") or "gemini-2.0-flash").strip()
+    client = make_client()
+    resp = client.models.generate_content(
+        model=model,
+        contents=f"{system}\n\n{user}",
+    )
+    text = getattr(resp, "text", "") or ""
+    if not text.strip():
+        raise RuntimeError("empty ranker response")
+    return text
+
+
 def rank_buckets(
     *,
     lyrics: str,

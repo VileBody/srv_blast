@@ -52,6 +52,9 @@ from .schemas import (
     LLMWorkersConfigRequest,
     LLMWorkersStatusResponse,
     QueueEstimateResponse,
+    RankBucketsRequest,
+    RankBucketsResponse,
+    RankedBucket,
     RequeueJobRequest,
     RequeueJobResponse,
     SendVideoRequest,
@@ -579,6 +582,35 @@ def create_app() -> FastAPI:
     # image, has librosa) downloads the clip audio, runs analyze_focus_clip and
     # returns top drop candidates + bpm. Sync def => runs in the threadpool.
     # ==========================================================
+    @app.post("/footage/rank-buckets", response_model=RankBucketsResponse)
+    def rank_footage_buckets(req: RankBucketsRequest) -> RankBucketsResponse:
+        """Rank footage buckets by relevance to the track lyrics. One cheap LLM
+        call (Gemini Flash) with graceful heuristic fallback — never 500s."""
+        from mlcore.footage_bucket_catalog import get_bucket_catalog
+        from mlcore.footage_bucket_ranker import gemini_rank_call, rank_buckets
+
+        catalog = get_bucket_catalog()
+        by_id = {b.bucket_id: b for b in catalog}
+        used_llm = True
+        try:
+            ranked_ids = rank_buckets(
+                lyrics=req.lyrics, mood=req.mood, catalog=catalog, llm_call=gemini_rank_call
+            )
+        except Exception:
+            used_llm = False
+            ranked_ids = rank_buckets(lyrics=req.lyrics, mood=req.mood, catalog=catalog, llm_call=None)
+
+        if req.top and req.top > 0:
+            ranked_ids = ranked_ids[: int(req.top)]
+        items = [
+            RankedBucket(
+                bucket_id=b.bucket_id, theme=b.theme, tags_group=b.tags_group,
+                mood=b.mood, label=b.label,
+            )
+            for b in (by_id[i] for i in ranked_ids if i in by_id)
+        ]
+        return RankBucketsResponse(buckets=items, used_llm=used_llm)
+
     @app.post("/hook/analyze", response_model=HookAnalyzeResponse)
     def hook_analyze(req: HookAnalyzeRequest) -> HookAnalyzeResponse:
         import tempfile

@@ -360,3 +360,22 @@ class HookDropCandidate(BaseModel):
 class HookAnalyzeResponse(BaseModel):
     bpm: float
     drop_candidates: List[HookDropCandidate] = Field(default_factory=list)
+
+
+class RankBucketsRequest(BaseModel):
+    lyrics: str = ""
+    mood: str = ""  # "minor" | "major" | "" (no filter)
+    top: int = Field(default=0, ge=0)  # 0 = full ranked list
+
+
+class RankedBucket(BaseModel):
+    bucket_id: str
+    theme: str
+    tags_group: str
+    mood: str
+    label: str
+
+
+class RankBucketsResponse(BaseModel):
+    buckets: List[RankedBucket] = Field(default_factory=list)
+    used_llm: bool = False
