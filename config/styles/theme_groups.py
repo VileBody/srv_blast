@@ -108,6 +108,78 @@ THEME_LABELS_RU: Dict[str, str] = {
 }
 
 
+# RU labels for tags_group (subtheme) keys — the user-facing name of a footage
+# bucket's VISUAL. Draft; refine freely. Fallback = prettified key.
+SUBTHEME_LABELS_RU: Dict[str, str] = {
+    "action_movement": "Экшн / движение",
+    "blurry_reality": "Размытая реальность",
+    "bright_starts": "Светлое начало",
+    "car_action": "Тачки / дрифт",
+    "chaos_elements": "Хаос / огонь",
+    "cinematic_nature": "Кино-природа",
+    "cosmic_journey": "Космос",
+    "couple_moments": "Пара / моменты",
+    "cyberpunk_city": "Киберпанк-город",
+    "dark_dreamscape": "Тёмный сон",
+    "dark_elements": "Тёмные элементы",
+    "digital_glitch": "Диджитал-глитч",
+    "dramatic_landscape": "Драматичный пейзаж",
+    "dynamic_couple": "Пара в движении",
+    "eerie_nature": "Жуткая природа",
+    "empty_spaces": "Пустые пространства",
+    "foggy_desolation": "Туманная пустошь",
+    "friend_hangouts": "Тусовка с друзьями",
+    "girl_portrait_sad": "Грустный портрет девушки",
+    "girl_unease": "Тревога / девушка",
+    "girl_urban_night": "Девушка / ночной город",
+    "glitchy_mind": "Глитч-сознание",
+    "gothic_architecture": "Готическая архитектура",
+    "intimacy_fading": "Угасающая близость",
+    "intimate_details": "Интимные детали",
+    "lofi_textures": "Lo-fi текстуры",
+    "lonely_nature": "Одинокая природа",
+    "lonely_paths": "Одинокие тропы",
+    "luxury_lifestyle": "Лакшери-лайфстайл",
+    "mental_fog": "Туман в голове",
+    "messy_aftermath": "После хаоса",
+    "nature_sunset": "Природа / закат",
+    "neon_passion": "Неоновая страсть",
+    "night_grind": "Ночной грайнд",
+    "night_intensity": "Ночной драйв",
+    "night_streets": "Ночные улицы",
+    "nightlife_decay": "Ночная жизнь / упадок",
+    "retro_city": "Ретро-город",
+    "silhouette_vibe": "Силуэты",
+    "soft_intimacy": "Нежная близость",
+    "solitary_focus": "Одиночество / фокус",
+    "stormy_elements": "Буря / стихия",
+    "street_action": "Уличный экшн",
+    "street_culture": "Уличная культура",
+    "sunset_vibes": "Закатный вайб",
+    "surreal_magic": "Сюрреал / магия",
+    "surveillance_isolation": "Слежка / изоляция",
+    "tough_environment": "Суровая среда",
+    "tragic_couple": "Трагичная пара",
+    "urban_grit": "Городская жесть",
+    "urban_isolation": "Городская изоляция",
+    "urban_solitude": "Городское одиночество",
+    "urban_triumph": "Городской триумф",
+    "urban_wealth": "Городское богатство",
+    "vintage_tech": "Винтажная техника",
+    "warm_aesthetics": "Тёплая эстетика",
+    "warm_vibes": "Тёплый вайб",
+    "winter_isolation": "Зимняя изоляция",
+}
+
+
+def get_subtheme_label(group: str) -> str:
+    """RU label for a tags_group (subtheme) key; prettified fallback if unmapped."""
+    g = str(group or "").strip()
+    if g in SUBTHEME_LABELS_RU:
+        return SUBTHEME_LABELS_RU[g]
+    return g.replace("_", " ").strip().capitalize()
+
+
 def get_theme_label(theme: str) -> str:
     """RU label for a theme key; falls back to a prettified key if unmapped."""
     t = str(theme or "").strip()
