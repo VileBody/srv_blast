@@ -52,6 +52,9 @@ STAGE_WAIT_F1_TEXT = "WAIT_F1_TEXT"
 # Hook battery — wait for the (optional) F1 sound before generating N videos.
 STAGE_WAIT_BATTERY_SOUND = "WAIT_BATTERY_SOUND"
 STAGE_WAIT_BATTERY_F4_DROP = "WAIT_BATTERY_F4_DROP"
+# Footage precision flow (Phase 2b): ranked-shortlist vibe picker (multi-select).
+# Replaces the genre/artist footage stages when FOOTAGE_VIBE_FLOW_ENABLED is on.
+STAGE_WAIT_VIBE = "WAIT_VIBE"
 STAGE_WAIT_VERSIONS = "WAIT_VERSIONS"
 # Customization: subtitle color + accent color (shapes/focus) palette pickers.
 STAGE_WAIT_SUBTITLE_COLOR = "WAIT_SUBTITLE_COLOR"
@@ -146,6 +149,19 @@ class ChatState(BaseModel):
     # candidate pool has none, the user types one manually (hundredths ok). None =
     # not asked yet; >0 = manual F4 drop; <0 = user chose to skip F4.
     battery_f4_drop: Optional[float] = None
+    # Footage precision flow (Phase 2b). The ranker (orchestrator /footage/rank-buckets)
+    # is fired in the background right after lyrics; by the time the user reaches the
+    # "выбери фон → футажи" step the ranked shortlist is ready here.
+    #   vibe_ranked_ids   — full ranked list of bucket_ids ("theme:tags_group"), best first.
+    #   vibe_labels_by_id — bucket_id → human label (from the ranker response, for display).
+    #   vibe_page         — current page into vibe_ranked_ids (3 buckets/page); "Обновить" pages.
+    #   vibe_selected_ids — multi-select set, PERSISTS across pages (combine vibes).
+    #   vibe_rank_status  — "" | "pending" | "ready" | "failed".
+    vibe_ranked_ids: List[str] = Field(default_factory=list)
+    vibe_labels_by_id: Dict[str, str] = Field(default_factory=dict)
+    vibe_page: int = 0
+    vibe_selected_ids: List[str] = Field(default_factory=list)
+    vibe_rank_status: str = ""
     # "" | "pending" | "ready" | "failed"
     hook_analysis_status: str = ""
     # Source audio path used to compute the analysis — if it ever doesn't

@@ -115,6 +115,33 @@ class OrchestratorClient:
             raise RuntimeError(f"orchestrator /send_audio_s3 returned non-object: {out!r}")
         return out
 
+    async def rank_buckets(
+        self,
+        *,
+        lyrics: str,
+        mood: str = "",
+        top: int = 0,
+    ) -> Dict[str, Any]:
+        """Footage precision flow: rank the footage bucket catalog by relevance
+        to the track lyrics. One cheap LLM call (Gemini Flash) on the
+        orchestrator side with heuristic fallback — it never 500s. Returns
+        {buckets:[{bucket_id, theme, tags_group, mood, label}], used_llm}.
+        top=0 → full ranked list (the bot pages through it locally)."""
+        payload = {
+            "lyrics": str(lyrics or ""),
+            "mood": str(mood or "").strip(),
+            "top": int(top or 0),
+        }
+        resp = await self._client.post(f"{self._base_url}/footage/rank-buckets", json=payload)
+        if resp.status_code >= 300:
+            raise RuntimeError(
+                f"orchestrator /footage/rank-buckets failed status={resp.status_code} body={resp.text}"
+            )
+        out = resp.json()
+        if not isinstance(out, dict):
+            raise RuntimeError(f"orchestrator /footage/rank-buckets returned non-object: {out!r}")
+        return out
+
     async def analyze_hook(
         self,
         *,

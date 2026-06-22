@@ -122,6 +122,7 @@ from .state_store import (
     STAGE_WAIT_F2_SHAPE,
     STAGE_WAIT_F1_SOUND,
     STAGE_WAIT_F1_TEXT,
+    STAGE_WAIT_VIBE,
     STAGE_WAIT_SUBTITLE_COLOR,
     STAGE_WAIT_ACCENT_COLOR,
 )
@@ -140,6 +141,15 @@ SEASON_FLOW_ENABLED = (os.environ.get("SEASON_FLOW_ENABLED", "0").strip().lower(
 # validates the UX on real test users. Flip to "1" in env to wire it on.
 HOOK_FLOW_ENABLED = (os.environ.get("HOOK_FLOW_ENABLED", "0").strip().lower()
                      in {"1", "true", "yes", "on", "enabled"})
+
+# Footage precision flow (Phase 2b) toggle. Same pattern as HOOK_FLOW_ENABLED —
+# the public bot mirrors the STAGE_WAIT_VIBE stage + ChatState vibe_* fields +
+# the OrchestratorClient.rank_buckets wiring for parity, but the ranked-shortlist
+# vibe multi-select UX (and the genre/artist → vibe reroute, enqueue bucket
+# distribution, auto-cursor removal) live in tg_bot_botapi until validated.
+# Default OFF here (team bot defaults ON). Flip to "1" in env to roll forward.
+FOOTAGE_VIBE_FLOW_ENABLED = (os.environ.get("FOOTAGE_VIBE_FLOW_ENABLED", "0").strip().lower()
+                             in {"1", "true", "yes", "on", "enabled"})
 
 # /bigtest is a team-bot-only command. Constant is False here so the handler
 # (registered below for parity) immediately rejects the request in production.
@@ -204,6 +214,12 @@ HOOK_STAGES = frozenset({
     STAGE_WAIT_F2_SHAPE,
     STAGE_WAIT_F1_SOUND,
     STAGE_WAIT_F1_TEXT,
+})
+
+# Footage precision flow (Phase 2b): stage(s) carrying the vibe multi-select.
+# Mirror of tg_bot_botapi; routing is gated behind FOOTAGE_VIBE_FLOW_ENABLED.
+VIBE_STAGES = frozenset({
+    STAGE_WAIT_VIBE,
 })
 
 # F3 «Эффект» visual-FX ids (mirror of mlcore/hooks/f3_effect + tg_bot_botapi).
@@ -295,6 +311,18 @@ def _should_route_to_hook_flow(st: ChatState) -> bool:
     if not HOOK_FLOW_ENABLED:
         return False
     return st.stage in HOOK_STAGES
+
+
+def _should_route_to_vibe_flow(st: ChatState) -> bool:
+    """Return True iff this chat should enter the footage vibe picker step.
+
+    Gated by FOOTAGE_VIBE_FLOW_ENABLED. When the flag is off (default in public),
+    behavior is unchanged regardless of mirrored vibe_* state on the chat — the
+    handlers are not ported here, so this stays False until roll-forward.
+    """
+    if not FOOTAGE_VIBE_FLOW_ENABLED:
+        return False
+    return st.stage in VIBE_STAGES
 
 
 logging.basicConfig(

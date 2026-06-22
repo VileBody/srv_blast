@@ -55,6 +55,9 @@ STAGE_WAIT_F1_TEXT = "WAIT_F1_TEXT"
 # Hook battery — wait for optional F1 sound. Mirror of tg_bot_botapi.
 STAGE_WAIT_BATTERY_SOUND = "WAIT_BATTERY_SOUND"
 STAGE_WAIT_BATTERY_F4_DROP = "WAIT_BATTERY_F4_DROP"
+# Footage precision flow (Phase 2b): ranked-shortlist vibe picker (multi-select).
+# Mirror of tg_bot_botapi — UX gated behind FOOTAGE_VIBE_FLOW_ENABLED (off here).
+STAGE_WAIT_VIBE = "WAIT_VIBE"
 # Customization color pickers. Mirror of tg_bot_botapi.
 STAGE_WAIT_SUBTITLE_COLOR = "WAIT_SUBTITLE_COLOR"
 STAGE_WAIT_ACCENT_COLOR = "WAIT_ACCENT_COLOR"
@@ -195,6 +198,13 @@ class ChatState(BaseModel):
     battery_cases: list = Field(default_factory=list)
     # Manual F4 drop for the battery (team only; mirrored). None=unset, >0=manual, <0=skip.
     battery_f4_drop: Optional[float] = None
+    # Footage precision flow (Phase 2b) — mirror of tg_bot_botapi for state
+    # round-trip parity. UX gated behind FOOTAGE_VIBE_FLOW_ENABLED (off here).
+    vibe_ranked_ids: List[str] = Field(default_factory=list)
+    vibe_labels_by_id: Dict[str, str] = Field(default_factory=dict)
+    vibe_page: int = 0
+    vibe_selected_ids: List[str] = Field(default_factory=list)
+    vibe_rank_status: str = ""
     hook_analysis_status: str = ""
     hook_analysis_audio_path: str = ""
     hook_analysis_clip_start: float = 0.0

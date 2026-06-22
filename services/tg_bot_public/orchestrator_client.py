@@ -119,6 +119,33 @@ class OrchestratorClient:
             raise RuntimeError(f"orchestrator /send_audio_s3 returned non-object: {out!r}")
         return out
 
+    async def rank_buckets(
+        self,
+        *,
+        lyrics: str,
+        mood: str = "",
+        top: int = 0,
+    ) -> Dict[str, Any]:
+        """Mirror of tg_bot_botapi: footage precision flow ranks the bucket
+        catalog by lyrics relevance (one cheap LLM call on the orchestrator with
+        heuristic fallback). Returns {buckets:[...], used_llm}. Present for
+        schema parity; the vibe UX is gated behind FOOTAGE_VIBE_FLOW_ENABLED
+        (default off in public)."""
+        payload = {
+            "lyrics": str(lyrics or ""),
+            "mood": str(mood or "").strip(),
+            "top": int(top or 0),
+        }
+        resp = await self._client.post(f"{self._base_url}/footage/rank-buckets", json=payload)
+        if resp.status_code >= 300:
+            raise RuntimeError(
+                f"orchestrator /footage/rank-buckets failed status={resp.status_code} body={resp.text}"
+            )
+        out = resp.json()
+        if not isinstance(out, dict):
+            raise RuntimeError(f"orchestrator /footage/rank-buckets returned non-object: {out!r}")
+        return out
+
     async def analyze_hook(
         self,
         *,

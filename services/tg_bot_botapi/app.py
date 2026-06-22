@@ -18,6 +18,8 @@ from aiogram.filters import Command, CommandStart, CommandObject
 from aiogram.types import (
     CallbackQuery,
     FSInputFile,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
     KeyboardButton,
     Message,
     ReplyKeyboardMarkup,
@@ -84,6 +86,7 @@ from .state_store import (
     STAGE_WAIT_F1_TEXT,
     STAGE_WAIT_BATTERY_SOUND,
     STAGE_WAIT_BATTERY_F4_DROP,
+    STAGE_WAIT_VIBE,
     STAGE_WAIT_TIMING_CHOICE,
     STAGE_WAIT_TIMING_INPUT,
     STAGE_WAIT_FRAGMENT_TEXT,
@@ -133,6 +136,19 @@ def _season_flow_enabled() -> bool:
     one env var.
     """
     return os.environ.get("SEASON_FLOW_ENABLED", "0").strip().lower() in {
+        "1", "true", "yes", "on", "enabled",
+    }
+
+
+def _footage_vibe_flow_enabled() -> bool:
+    """Footage precision flow (Phase 2b) gate.
+
+    Default ON in the team bot (tg_bot_botapi): the "Футажи" background choice
+    leads to the ranked-shortlist vibe multi-select instead of genre/artist.
+    Mirrored as default-OFF in tg_bot_public until the flow is validated and
+    rolled out. Overridable via FOOTAGE_VIBE_FLOW_ENABLED for both bots.
+    """
+    return os.environ.get("FOOTAGE_VIBE_FLOW_ENABLED", "1").strip().lower() in {
         "1", "true", "yes", "on", "enabled",
     }
 
@@ -203,6 +219,16 @@ def _parse_color_choice(text: str) -> Optional[str]:
     return _COLOR_PALETTE.get(raw)
 BTN_BG_FOOTAGE = "Футажи"
 BTN_BG_SOLID = "Цветной фон"
+# Footage precision flow (Phase 2b): a "pictures" background stub shown alongside
+# footage/solid when the vibe flow is on. Not implemented yet → replies "скоро".
+BTN_BG_PICTURES = "Картинки (скоро)"
+# Vibe shortlist (inline) control buttons + callback-data prefix.
+VIBE_CB_PREFIX = "vibe:"          # vibe:tog:<idx> | vibe:more | vibe:done | vibe:auto
+BTN_VIBE_REFRESH = "🔄 Обновить"
+BTN_VIBE_DONE = "▶️ Готово"
+BTN_VIBE_AUTO = "✨ По треку (авто)"
+# How many buckets to show per shortlist page.
+VIBE_PAGE_SIZE = 3
 BTN_BG_WHITE = "Белый"
 BTN_BG_BLACK = "Чёрный"
 BTN_BG_GREEN = "Зелёный (хромакей)"
@@ -1358,6 +1384,9 @@ class BlastBotApp:
             if cb.data.startswith("season:"):
                 await self._season_handle_callback(cb)
                 return
+            if cb.data.startswith(VIBE_CB_PREFIX):
+                await self._handle_vibe_callback(cb)
+                return
             try:
                 await cb.answer()
             except Exception:
@@ -1588,6 +1617,10 @@ class BlastBotApp:
 
             if st.stage == STAGE_WAIT_FOOTAGE_ARTIST:
                 await self._handle_wait_footage_artist(message, st)
+                return
+
+            if st.stage == STAGE_WAIT_VIBE:
+                await self._handle_wait_vibe_text(message, st)
                 return
 
             if st.stage == STAGE_WAIT_TIMING_CHOICE:
@@ -2133,10 +2166,13 @@ class BlastBotApp:
         st.bg_mode = "footage"
         st.bg_solid_color = ""
         await self.store.set(st)
-        await message.answer(
-            "Что будет на фоне?",
-            reply_markup=_kb([BTN_BG_FOOTAGE], [BTN_BG_SOLID], [BTN_BACK]),
-        )
+        # Phase 2b: offer a "pictures (soon)" stub next to footage/solid so the
+        # background menu matches the target UX. The stub just replies "скоро".
+        rows = [[BTN_BG_FOOTAGE], [BTN_BG_SOLID]]
+        if _footage_vibe_flow_enabled():
+            rows.append([BTN_BG_PICTURES])
+        rows.append([BTN_BACK])
+        await message.answer("Что будет на фоне?", reply_markup=_kb(*rows))
 
     async def _handle_wait_bg_mode(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()
@@ -2145,11 +2181,18 @@ class BlastBotApp:
             # the back step lands on the fragment choice rather than timing.
             await self._ask_fragment_choice(message, st)
             return
+        if text == BTN_BG_PICTURES and _footage_vibe_flow_enabled():
+            await message.answer("Картинки скоро будут доступны. Пока выбери «Футажи» или «Цветной фон».")
+            return
         if text == BTN_BG_FOOTAGE:
             st.bg_mode = "footage"
             st.bg_solid_color = ""
             await self.store.set(st)
-            await self._ask_footage_genre(message, st)
+            # Phase 2b: ranked-shortlist vibe picker replaces genre/artist.
+            if _footage_vibe_flow_enabled():
+                await self._ask_vibe_shortlist(message, st)
+            else:
+                await self._ask_footage_genre(message, st)
             return
         if text == BTN_BG_SOLID:
             st.bg_mode = "solid"
@@ -2265,6 +2308,252 @@ class BlastBotApp:
         st.footage_artist_key = artist["key"]
         st.footage_artist_id = artist["key"]
         await self._ask_subtitles_mode(message, st)
+
+    # ===================== Footage precision flow (Phase 2b) =====================
+    # Ranked-shortlist vibe picker. After lyrics we rank the bucket catalog in
+    # the background (orchestrator /footage/rank-buckets); the user multi-selects
+    # vibes from a paged inline shortlist; at enqueue, N videos are distributed
+    # round-robin over the selected buckets (exact-slot theme+tags_group each).
+    # Artist/genre are dropped → footage_artist_id="" (tag-only matching).
+
+    async def _trigger_vibe_ranker_task(self, st: ChatState) -> None:
+        """Fire-and-forget background ranking of the footage buckets by lyrics.
+        Resets any previous shortlist/selection (called once per track when the
+        user submits lyrics). No-op when the vibe flow is disabled."""
+        if not _footage_vibe_flow_enabled():
+            return
+        lyrics = str(st.lyrics_text or "").strip()
+        st.vibe_rank_status = "pending"
+        st.vibe_ranked_ids = []
+        st.vibe_labels_by_id = {}
+        st.vibe_selected_ids = []
+        st.vibe_page = 0
+        await self.store.set(st)
+        import asyncio as _asyncio
+        _asyncio.create_task(
+            self._run_vibe_ranker_bg(chat_id=int(st.chat_id), lyrics=lyrics, mood="")
+        )
+
+    async def _run_vibe_ranker_bg(self, *, chat_id: int, lyrics: str, mood: str) -> None:
+        """Background runner — must never raise into the asyncio loop."""
+        try:
+            result = await self.orchestrator.rank_buckets(lyrics=lyrics, mood=mood)
+            ranked_ids, labels = self._parse_ranked_buckets(result)
+            st = await self.store.get(chat_id)
+            # Stale guard: only persist if the user hasn't moved on / re-ranked.
+            if st.vibe_rank_status not in {"pending", "ready"}:
+                return
+            st.vibe_ranked_ids = ranked_ids
+            st.vibe_labels_by_id = labels
+            st.vibe_rank_status = "ready" if ranked_ids else "failed"
+            await self.store.set(st)
+            log.info("vibe_rank_ok chat=%s buckets=%d used_llm=%s",
+                     chat_id, len(ranked_ids), bool(result.get("used_llm")))
+        except Exception as e:
+            log.warning("vibe_rank_fail chat=%s err=%r", chat_id, e)
+            try:
+                st = await self.store.get(chat_id)
+                st.vibe_rank_status = "failed"
+                await self.store.set(st)
+            except Exception:
+                pass
+
+    @staticmethod
+    def _parse_ranked_buckets(result: Dict[str, Any]) -> Tuple[List[str], Dict[str, str]]:
+        """(ranked bucket_ids, bucket_id→label) from a rank-buckets response."""
+        ranked_ids: List[str] = []
+        labels: Dict[str, str] = {}
+        for b in (result.get("buckets") or []):
+            if not isinstance(b, dict):
+                continue
+            bid = str(b.get("bucket_id") or "").strip()
+            if not bid or ":" not in bid or bid in labels:
+                continue
+            ranked_ids.append(bid)
+            label = str(b.get("label") or "").strip() or str(b.get("tags_group") or "").strip() or bid
+            labels[bid] = label
+        return ranked_ids, labels
+
+    async def _ensure_vibe_ranked(self, st: ChatState) -> bool:
+        """Make sure st has a ranked shortlist. If the background ranker hasn't
+        finished (or failed), rank synchronously now. Returns False only when
+        ranking yields nothing (caller falls back to the legacy genre picker)."""
+        if st.vibe_ranked_ids:
+            return True
+        try:
+            result = await self.orchestrator.rank_buckets(
+                lyrics=str(st.lyrics_text or "").strip(), mood=""
+            )
+            ranked_ids, labels = self._parse_ranked_buckets(result)
+        except Exception as e:
+            log.warning("vibe_rank_sync_fail chat=%s err=%r", st.chat_id, e)
+            return False
+        st.vibe_ranked_ids = ranked_ids
+        st.vibe_labels_by_id = labels
+        st.vibe_rank_status = "ready" if ranked_ids else "failed"
+        await self.store.set(st)
+        return bool(ranked_ids)
+
+    def _vibe_page_count(self, st: ChatState) -> int:
+        n = len(st.vibe_ranked_ids or [])
+        if n <= 0:
+            return 0
+        return (n + VIBE_PAGE_SIZE - 1) // VIBE_PAGE_SIZE
+
+    def _build_vibe_keyboard(self, st: ChatState) -> InlineKeyboardMarkup:
+        """Inline multi-select for the current page + control row. Toggle state
+        (✅) is read from vibe_selected_ids so it persists across pages."""
+        ranked = list(st.vibe_ranked_ids or [])
+        selected = set(st.vibe_selected_ids or [])
+        pages = max(1, self._vibe_page_count(st))
+        page = int(st.vibe_page or 0) % pages
+        start = page * VIBE_PAGE_SIZE
+        rows: List[List[InlineKeyboardButton]] = []
+        for idx in range(start, min(start + VIBE_PAGE_SIZE, len(ranked))):
+            bid = ranked[idx]
+            label = st.vibe_labels_by_id.get(bid, bid)
+            mark = "✅ " if bid in selected else "▫️ "
+            rows.append([InlineKeyboardButton(
+                text=f"{mark}{label}", callback_data=f"{VIBE_CB_PREFIX}tog:{idx}"
+            )])
+        controls = []
+        if pages > 1:
+            controls.append(InlineKeyboardButton(
+                text=BTN_VIBE_REFRESH, callback_data=f"{VIBE_CB_PREFIX}more"
+            ))
+        controls.append(InlineKeyboardButton(
+            text=BTN_VIBE_DONE, callback_data=f"{VIBE_CB_PREFIX}done"
+        ))
+        rows.append(controls)
+        rows.append([InlineKeyboardButton(
+            text=BTN_VIBE_AUTO, callback_data=f"{VIBE_CB_PREFIX}auto"
+        )])
+        return InlineKeyboardMarkup(inline_keyboard=rows)
+
+    def _vibe_shortlist_text(self, st: ChatState) -> str:
+        pages = max(1, self._vibe_page_count(st))
+        page = int(st.vibe_page or 0) % pages
+        n_sel = len(st.vibe_selected_ids or [])
+        lines = [
+            "Выбери вайб(ы) для футажа — можно несколько (тап = ✓ в набор).",
+            f"Страница {page + 1}/{pages}. Выбрано: {n_sel}.",
+            "«🔄 Обновить» — листать варианты (выбор сохраняется). "
+            "«▶️ Готово» — продолжить. «✨ По треку (авто)» — топ-1 по треку.",
+        ]
+        return "\n".join(lines)
+
+    async def _ask_vibe_shortlist(self, message: Message, st: ChatState) -> None:
+        st.stage = STAGE_WAIT_VIBE
+        # Vibe flow drops artist/genre → tag-only footage matching server-side.
+        st.footage_genre_key = ""
+        st.footage_artist_key = ""
+        st.footage_artist_id = ""
+        # Fresh selection each time the footage step is entered (e.g. reuse-input
+        # re-runs keep the cached ranking but start the multi-select clean).
+        st.vibe_selected_ids = []
+        st.vibe_page = 0
+        await self.store.set(st)
+        ok = await self._ensure_vibe_ranked(st)
+        if not ok:
+            await message.answer(
+                "Не удалось подобрать вайбы по треку — выбери стиль вручную."
+            )
+            await self._ask_footage_genre(message, st)
+            return
+        # Drop the reply keyboard, then send the inline multi-select.
+        await message.answer("Готовлю шортлист вайбов…", reply_markup=ReplyKeyboardRemove())
+        await message.answer(
+            self._vibe_shortlist_text(st),
+            reply_markup=self._build_vibe_keyboard(st),
+        )
+
+    async def _handle_vibe_callback(self, cb: CallbackQuery) -> None:
+        """Handle vibe:tog:<idx> | vibe:more | vibe:done | vibe:auto callbacks."""
+        data = str(cb.data or "")
+        if cb.message is None or cb.message.chat is None:
+            await cb.answer()
+            return
+        chat_id = int(cb.message.chat.id)
+        st = await self.store.get(chat_id)
+        if st.stage != STAGE_WAIT_VIBE:
+            await cb.answer("Шаг уже пройден.", show_alert=False)
+            return
+        action = data[len(VIBE_CB_PREFIX):]
+
+        if action.startswith("tog:"):
+            try:
+                idx = int(action.split(":", 1)[1])
+            except (ValueError, IndexError):
+                await cb.answer()
+                return
+            ranked = list(st.vibe_ranked_ids or [])
+            if not (0 <= idx < len(ranked)):
+                await cb.answer()
+                return
+            bid = ranked[idx]
+            sel = list(st.vibe_selected_ids or [])
+            if bid in sel:
+                sel.remove(bid)
+            else:
+                sel.append(bid)
+            st.vibe_selected_ids = sel
+            await self.store.set(st)
+            try:
+                await cb.message.edit_text(
+                    self._vibe_shortlist_text(st),
+                    reply_markup=self._build_vibe_keyboard(st),
+                )
+            except TelegramBadRequest:
+                pass
+            await cb.answer("В наборе" if bid in sel else "Убрано")
+            return
+
+        if action == "more":
+            pages = max(1, self._vibe_page_count(st))
+            st.vibe_page = (int(st.vibe_page or 0) + 1) % pages
+            await self.store.set(st)
+            try:
+                await cb.message.edit_text(
+                    self._vibe_shortlist_text(st),
+                    reply_markup=self._build_vibe_keyboard(st),
+                )
+            except TelegramBadRequest:
+                pass
+            await cb.answer()
+            return
+
+        if action in {"done", "auto"}:
+            if action == "auto":
+                ranked = list(st.vibe_ranked_ids or [])
+                st.vibe_selected_ids = [ranked[0]] if ranked else []
+            if not st.vibe_selected_ids:
+                await cb.answer("Выбери хотя бы один вайб или нажми «По треку (авто)».", show_alert=True)
+                return
+            await self.store.set(st)
+            labels = [st.vibe_labels_by_id.get(b, b) for b in st.vibe_selected_ids]
+            try:
+                await cb.message.edit_reply_markup(reply_markup=None)
+            except TelegramBadRequest:
+                pass
+            await cb.answer("Готово")
+            await cb.message.answer("Вайбы: " + ", ".join(labels))
+            await self._ask_subtitles_mode(cb.message, st)
+            return
+
+        await cb.answer()
+
+    async def _handle_wait_vibe_text(self, message: Message, st: ChatState) -> None:
+        """The vibe picker is an inline keyboard; a typed message means the user
+        ignored the buttons. Re-send the shortlist so they can tap."""
+        if not st.vibe_ranked_ids:
+            ok = await self._ensure_vibe_ranked(st)
+            if not ok:
+                await self._ask_footage_genre(message, st)
+                return
+        await message.answer(
+            self._vibe_shortlist_text(st),
+            reply_markup=self._build_vibe_keyboard(st),
+        )
 
     async def _ask_subtitles_mode(self, message: Message, st: ChatState) -> None:
         st.stage = STAGE_WAIT_SUBTITLES_MODE
@@ -2466,6 +2755,10 @@ class BlastBotApp:
         st.target_fragment = ""
         st.stage = STAGE_WAIT_FRAGMENT_CHOICE
         await self.store.set(st)
+        # Phase 2b: kick off the footage-bucket ranker in the background now that
+        # we have lyrics. By the time the user reaches the "Футажи" step the
+        # ranked shortlist is ready (zero added latency).
+        await self._trigger_vibe_ranker_task(st)
         await message.answer(
             "Текст получил. Хочешь указать интересующий фрагмент?",
             reply_markup=_kb([BTN_SEND_FRAGMENT, BTN_SKIP_FRAGMENT]),
@@ -4139,6 +4432,21 @@ class BlastBotApp:
         versions 1..N step forward so each battery video lands on a different
         subgroup instead of all sharing one slot.
         """
+        # Phase 2b: when the vibe flow drove the footage choice, distribute the
+        # N versions round-robin over the user-selected buckets (exact-slot
+        # theme+tags_group each). offset == version_index (1-based) → (offset-1)
+        # picks the top-ranked selected bucket for version 1, next for version 2…
+        if _footage_vibe_flow_enabled():
+            sel = [s for s in (getattr(st, "vibe_selected_ids", None) or []) if ":" in s]
+            if sel:
+                # Phase 3 distribution rule: video[i] = selected[i % K]. offset is
+                # the 1-based version_index → i = offset-1. resolve_bucket_slot
+                # with catalog=[] forces the pure id-split (no footage_v2.py read
+                # in the slim bot image).
+                from mlcore.footage_batch_distribution import resolve_bucket_slot
+                bucket_id = sel[(int(offset) - 1) % len(sel)]
+                theme, group = resolve_bucket_slot(bucket_id, catalog=[])
+                return theme, group, []
         artist_id = str(st.footage_artist_id or "").strip()
         if not artist_id:
             return "", "", []
@@ -4909,7 +5217,11 @@ class BlastBotApp:
 
                 # Advance-trigger evaluation: inspect rotation diagnostics and
                 # bump cursor + notify user on any bad-run signal.
-                if artist_id_for_rotation:
+                # Phase 2b: the vibe flow makes rotation explicit + deterministic
+                # (re-running the same track → same shortlist), so the legacy
+                # auto-cursor is disabled there. It already no-ops on empty
+                # artist_id (vibe sets it ""), but gate it explicitly too.
+                if artist_id_for_rotation and not _footage_vibe_flow_enabled():
                     diag = _load_rotation_diag_for_job(jid)
                     should_advance, reason = _should_advance_rotation(diag)
                     if should_advance:
