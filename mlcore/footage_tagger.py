@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import os
 import subprocess
 import tempfile
@@ -22,6 +23,8 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
 from mlcore.footage_tags_db import build_tag_record, extract_clip_id
+
+log = logging.getLogger("footage_tagger")
 
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 
@@ -217,11 +220,20 @@ def call_groq_vision(image_b64: str, *, api_key: str, model: str, timeout: float
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     try:
         resp = requests.post(GROQ_URL, json=payload, headers=headers, timeout=timeout)
+    except Exception as e:
+        log.warning("groq_vision request error: %r", e)
+        return None
+    if resp.status_code != 200:
+        log.warning("groq_vision HTTP %s model=%s body=%s", resp.status_code, model, (resp.text or "")[:300])
+        return None
+    try:
         data = resp.json()
-    except Exception:
+    except Exception as e:
+        log.warning("groq_vision bad JSON: %r", e)
         return None
     choices = data.get("choices") if isinstance(data, dict) else None
     if not choices:
+        log.warning("groq_vision no choices: %s", json.dumps(data)[:300] if isinstance(data, dict) else type(data))
         return None
     return parse_groq_json(choices[0].get("message", {}).get("content", ""))
 
@@ -229,11 +241,11 @@ def call_groq_vision(image_b64: str, *, api_key: str, model: str, timeout: float
 def tag_video_file(path: Path, *, keys: List[str], model: str) -> Optional[Dict[str, Any]]:
     """Extract frames, tag each via Groq (round-robin keys), majority-vote merge."""
     if not keys:
-        raise RuntimeError("No Groq API keys configured (set GROQ_API_KEYS or GROQ_API_KEY)")
+        raise RuntimeError("no_groq_keys")  # set GROQ_API_KEYS / GROQ_API_KEY
     with tempfile.TemporaryDirectory(prefix="tagframes_") as tmp:
         frames = extract_frames(path, Path(tmp))
         if not frames:
-            return None
+            raise RuntimeError("no_frames")  # ffmpeg/ffprobe failed or 0-duration
         results: List[Dict[str, Any]] = []
         for i, fp in enumerate(frames):
             key = keys[i % len(keys)]
@@ -241,22 +253,30 @@ def tag_video_file(path: Path, *, keys: List[str], model: str) -> Optional[Dict[
             if parsed:
                 results.append(parsed)
     if not results:
-        return None
+        raise RuntimeError("groq_no_result")  # all Groq calls failed (see groq_vision logs)
     return merge_frame_votes(results)
 
 
 def tag_clip_from_s3(*, bucket: str, s3_key: str, keys: List[str], model: str) -> Optional[Dict[str, Any]]:
-    """Download an S3 clip, tag it, return a footage_tags record (or None)."""
+    """Download an S3 clip, tag it, return a footage_tags record.
+
+    Raises a short categorized RuntimeError on failure (download_failed /
+    no_frames / groq_no_result / no_clip_id) so the batch can tally reasons.
+    """
     from src.storage.s3 import download_from_s3
 
     with tempfile.TemporaryDirectory(prefix="tagclip_") as tmp:
         suffix = Path(s3_key).suffix or ".mp4"
         dest = Path(tmp) / f"clip{suffix}"
-        download_from_s3(bucket, s3_key, dest)
+        try:
+            download_from_s3(bucket, s3_key, dest)
+        except Exception as e:
+            raise RuntimeError(f"download_failed: {e}") from e
         votes = tag_video_file(dest, keys=keys, model=model)
-    if not votes:
-        return None
-    return record_from_votes(s3_key=s3_key, votes=votes, tagger="groq")
+    rec = record_from_votes(s3_key=s3_key, votes=votes, tagger="groq")
+    if not rec:
+        raise RuntimeError("no_clip_id")
+    return rec
 
 
 # --------------------------------------------------------------------------- #
@@ -348,12 +368,15 @@ def run_tagging_batch(
     total = len(untagged)
     written = 0
     failed = 0
+    reasons: Counter = Counter()
     pending: List[Dict[str, Any]] = []
     for i, key in enumerate(untagged, start=1):
+        rec = None
         try:
             rec = tag_fn(key)
-        except Exception:
-            rec = None
+        except Exception as e:
+            # Keep the reason short (token before ':') for tallying.
+            reasons[str(e).split(":", 1)[0].strip()[:40] or "error"] += 1
         if rec:
             pending.append(rec)
         else:
@@ -366,10 +389,14 @@ def run_tagging_batch(
     if pending:
         written += upsert_fn(pending)
 
+    top_failures = dict(reasons.most_common(5))
+    if failed:
+        log.warning("tagging batch: processed=%d written=%d failed=%d reasons=%s", total, written, failed, top_failures)
     return {
         "total_s3": len(all_keys),
         "already_tagged": len(tagged_ids),
         "untagged_processed": total,
         "written": written,
         "failed": failed,
+        "failure_reasons": top_failures,
     }

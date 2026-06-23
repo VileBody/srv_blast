@@ -194,6 +194,8 @@ export interface ActivationStatus {
   done?: number;
   total?: number;
   written?: number;
+  failed?: number;
+  failure_reasons?: Record<string, number>;
   indexed?: number;
   error?: string;
   updated_at?: number;

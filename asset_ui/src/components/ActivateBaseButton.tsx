@@ -90,7 +90,14 @@ export function ActivateBaseButton({ onDone }: { onDone?: () => void }) {
         </span>
       )}
       {!running && status?.state === 'done' && (
-        <span className="toolbar-counter">✓ активировано (индекс: {status.indexed ?? '—'}, размечено: {status.written ?? 0})</span>
+        <span className="toolbar-counter">
+          ✓ активировано (индекс: {status.indexed ?? '—'}, размечено: {status.written ?? 0})
+          {(status.failed ?? 0) > 0 && status.failure_reasons && (
+            <span style={{ color: '#e0a060' }}>
+              {' '}· не удалось {status.failed}: {Object.entries(status.failure_reasons).map(([k, v]) => `${k}×${v}`).join(', ')}
+            </span>
+          )}
+        </span>
       )}
       {(error || status?.state === 'failed') && (
         <span className="toolbar-counter" style={{ color: '#e06060' }}>
