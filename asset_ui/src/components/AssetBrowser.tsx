@@ -7,6 +7,7 @@ import { AssetInfo } from './AssetInfo';
 import { BulkExport } from './BulkExport';
 import { BulkImport } from './BulkImport';
 import { TagUntaggedButton } from './TagUntaggedButton';
+import { ActivateBaseButton } from './ActivateBaseButton';
 
 type Panel = 'export' | 'import' | null;
 
@@ -45,6 +46,7 @@ export function AssetBrowser() {
           ⬆ Импорт
         </button>
         <TagUntaggedButton onDone={reload} />
+        <ActivateBaseButton onDone={reload} />
         <span className="toolbar-spacer" />
         <span className="toolbar-counter">Всего: {total}</span>
       </div>

@@ -148,6 +148,8 @@ celery_app.conf.update(
         # Footage auto-tagging runs on the build worker (has ffmpeg + mlcore deps).
         # Long batches share the build queue — use the `limit` arg to chunk.
         "orchestrator.tag_untagged_footage": {"queue": SETTINGS.celery_queue_build},
+        # Full ingest (index rebuild + inventory + tag + snapshot) — build worker.
+        "orchestrator.activate_footage_base": {"queue": SETTINGS.celery_queue_build},
     },
 )
 

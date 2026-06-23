@@ -188,6 +188,37 @@ export async function fetchTagUntaggedStatus(): Promise<TaggingStatus> {
   return res.json();
 }
 
+export interface ActivationStatus {
+  state: 'idle' | 'queued' | 'running' | 'done' | 'failed' | 'unknown';
+  phase?: 'starting' | 'indexing' | 'inventory' | 'tagging' | 'snapshot';
+  done?: number;
+  total?: number;
+  written?: number;
+  indexed?: number;
+  error?: string;
+  updated_at?: number;
+}
+
+export async function startActivate(limit = 0): Promise<{ ok: boolean; task_id: string }> {
+  const params = new URLSearchParams();
+  if (limit > 0) params.set('limit', String(limit));
+  const suffix = params.toString() ? `?${params.toString()}` : '';
+  const res = await fetch(`${BASE}/assets/activate${suffix}`, { method: 'POST' });
+  if (res.status === 409) throw new Error('Активация уже выполняется');
+  if (!res.ok) {
+    let detail = '';
+    try { detail = (await res.json()).detail ?? ''; } catch { /* non-JSON */ }
+    throw new Error(detail ? `${res.status}: ${detail}` : `startActivate: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function fetchActivateStatus(): Promise<ActivationStatus> {
+  const res = await fetch(`${BASE}/assets/activate/status`);
+  if (!res.ok) throw new Error(`fetchActivateStatus: ${res.status}`);
+  return res.json();
+}
+
 export function importAssets(
   files: File[],
   genre: string,

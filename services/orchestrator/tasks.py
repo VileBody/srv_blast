@@ -2544,6 +2544,99 @@ def _export_footage_tags_snapshot(*, db_url: str) -> Dict[str, Any]:
     return {"path": str(out_path), "rows": len(rows)}
 
 
+_FOOTAGE_ACTIVATION_PROGRESS_KEY = "footage_activation:progress"
+
+
+@celery_app.task(name="orchestrator.activate_footage_base", bind=True, max_retries=0)
+def activate_footage_base(self, limit: int = 0) -> Dict[str, Any]:
+    """Full self-serve ingest after a web upload: rebuild the S3 static index ->
+    rebuild the picker inventory -> tag untagged clips (Groq) -> export the tags
+    & blacklist snapshots. Makes freshly-uploaded clips enter the selection pool
+    without any server-side command. Progress phases published to Redis.
+    """
+    from pathlib import Path as _Path
+
+    bucket = str(os.environ.get("S3_BUCKET_ASSET_STORAGE") or "").strip()
+    db_url = str(getattr(SETTINGS, "credits_db_url", "") or "").strip()
+    r = JobStore.from_env().r
+
+    def _publish(state: str, **extra: Any) -> None:
+        try:
+            r.set(_FOOTAGE_ACTIVATION_PROGRESS_KEY, json.dumps({"state": state, "updated_at": time.time(), **extra}), ex=86400)
+        except Exception:
+            pass
+
+    _publish("running", phase="starting")
+    try:
+        if not bucket:
+            raise RuntimeError("S3_BUCKET_ASSET_STORAGE not configured")
+        if not db_url:
+            raise RuntimeError("Postgres not configured (CREDITS_DB_URL / POSTGRES_*)")
+
+        repo_root = _Path(__file__).resolve().parents[2]
+        static_index_path = _Path(
+            os.environ.get("STATIC_ASSETS_INDEX_JSON", str(repo_root / "data" / "static_assets_index_1to1.json"))
+        )
+        inventory_out = _Path(os.environ.get("FOOTAGE_INVENTORY_OUT", str(repo_root / "data" / "footage_inventory.json")))
+        bundle_out = _Path(os.environ.get("DESCRIPTIONS_BUNDLE_OUT", str(repo_root / "pins" / "descriptions_bundle.json")))
+        prefix = _footage_tagging_source_prefix()
+
+        # 1) rebuild the S3 static index (pool source of truth)
+        def _idx_progress(done: int, total: int) -> None:
+            _publish("running", phase="indexing", done=int(done), total=int(total))
+
+        from scripts.build_static_assets_index import build_index
+
+        _publish("running", phase="indexing", done=0, total=0)
+        idx = build_index(bucket=bucket, prefix=prefix, out_path=static_index_path, progress_cb=_idx_progress)
+
+        # 2) rebuild the picker inventory from the static index
+        _publish("running", phase="inventory", indexed=idx.get("assets_count"))
+        from footage_config import build_inventory_and_bundle
+
+        max_assets_env = (os.environ.get("DESCRIPTIONS_BUNDLE_MAX_ASSETS") or "").strip()
+        build_inventory_and_bundle(
+            repo_root=repo_root,
+            footage_dir=_Path(os.environ.get("FOOTAGE_DIR", str(repo_root / "footage"))),
+            static_assets_index_path=static_index_path,
+            inventory_out_path=inventory_out,
+            bundle_out_path=bundle_out,
+            max_assets_in_bundle=int(max_assets_env) if max_assets_env else None,
+        )
+
+        # 3) tag untagged clips
+        from mlcore.footage_tagger import run_tagging_batch
+
+        def _tag_progress(done: int, total: int, written: int) -> None:
+            _publish("running", phase="tagging", done=int(done), total=int(total), written=int(written))
+
+        _publish("running", phase="tagging", done=0, total=0, written=0)
+        tag_summary = run_tagging_batch(
+            bucket=bucket, source_prefix=prefix, db_url=db_url,
+            limit=int(limit or 0), progress_cb=_tag_progress,
+        )
+
+        # 4) export the snapshots the picker reads
+        _publish("running", phase="snapshot")
+        snap = _export_footage_tags_snapshot(db_url=db_url)
+        try:
+            _export_tag_overrides_snapshot(db_url=db_url)
+        except Exception as exc:
+            log.warning("activate: tag_overrides export failed: %r", exc)
+
+        summary = {
+            "indexed": idx.get("assets_count"),
+            "index_failed": idx.get("failed"),
+            **tag_summary,
+            "snapshot_rows": snap.get("rows"),
+        }
+    except Exception as exc:
+        _publish("failed", error=str(exc))
+        raise
+    _publish("done", **summary)
+    return summary
+
+
 @celery_app.task(name="orchestrator.dispatch_to_windows", bind=True, max_retries=10)
 def dispatch_to_windows(self, job_id: str) -> Dict[str, Any]:
     store = JobStore.from_env()

@@ -616,8 +616,9 @@ def create_asset_router(*, prefix: str = "/asset-ui/api") -> APIRouter:
     def get_taxonomy_endpoint() -> Dict[str, Any]:
         return {"themes": get_taxonomy()}
 
-    # --- auto-tagging (server-side Groq Vision) ---
+    # --- server-side footage ingest tasks (tagging + full activation) ---
     _TAGGING_PROGRESS_KEY = "footage_tagging:progress"
+    _ACTIVATION_PROGRESS_KEY = "footage_activation:progress"
     # If a run's progress hasn't been updated within this window we treat it as
     # dead (worker crashed) so a new run can start instead of being blocked
     # forever by a stale "running"/"queued" key.
@@ -643,118 +644,22 @@ def create_asset_router(*, prefix: str = "/asset-ui/api") -> APIRouter:
             return True
         return age < _TAGGING_STALE_S
 
-    @router.post("/assets/tag-untagged")
-    def tag_untagged(limit: int = Query(0, ge=0)) -> Dict[str, Any]:
-        """Enqueue a batch that tags every untagged S3 clip via Groq.
-
-        Single-flight: refuses if a run is already in progress (Redis state).
-        Pass ?limit=N to cap how many clips this run processes.
-        """
+    def _is_active(key: str) -> bool:
         try:
-            r = _tagging_redis()
-        except Exception as e:  # redis client construction failed
-            raise HTTPException(status_code=503, detail=f"Redis unavailable: {e}")
-
-        try:
-            raw = r.get(_TAGGING_PROGRESS_KEY)
+            raw = _tagging_redis().get(key)
         except Exception:
             raw = None
-        if _tagging_active(raw):
-            raise HTTPException(status_code=409, detail="Tagging already running")
+        return _tagging_active(raw)
 
-        # Enqueue onto the Celery broker. asset-ui is a slim image — surface a
-        # clear 503 if celery isn't installed or the broker is unreachable,
-        # instead of an opaque 500.
+    def _mark_queued(key: str) -> None:
         try:
-            from .celery_app import celery_app
-        except Exception as e:
-            raise HTTPException(status_code=503, detail=f"Task queue unavailable (celery import failed): {e}")
-
-        # Enqueue through a dedicated producer with NO result backend: asset-ui
-        # only PRODUCES the task and never reads its result, and the shared
-        # celery_app's result backend (CELERY_RESULT_BACKEND) is unreachable
-        # from this container — touching it makes send_task fail. Route to the
-        # build queue explicitly (no task_routes on this throwaway app). Bound
-        # the call with a wall-clock timeout so a broker problem returns ~6s.
-        import concurrent.futures
-        from celery import Celery as _Celery
-
-        broker_uri = str(getattr(celery_app.conf, "broker_url", "") or "") or "(empty → amqp://localhost default)"
-        build_queue = os.getenv("CELERY_QUEUE_BUILD", "build")
-
-        def _mask(uri: str) -> str:
-            return re.sub(r"://([^:/@]+):([^@]+)@", r"://\1:***@", uri)
-
-        def _do_enqueue():
-            producer = _Celery("asset_ui_producer", broker=celery_app.conf.broker_url, backend=None)
-            # Queue names are per-instance (e.g. build.orchestrator-1) and this
-            # service's CELERY_QUEUE_BUILD may not match any live worker. Ask the
-            # broker which build.* queues are actually consumed and target one,
-            # so tagging works without per-service env alignment. Fall back to
-            # the configured queue if inspection yields nothing.
-            target = build_queue
-            try:
-                aq = producer.control.inspect(timeout=2).active_queues() or {}
-                names = sorted({
-                    str(q.get("name") or "")
-                    for qs in aq.values() for q in (qs or [])
-                    if q.get("name")
-                })
-                build_names = [n for n in names if n.startswith("build")]
-                if build_names:
-                    target = build_names[0]
-            except Exception:
-                pass
-            res = producer.send_task(
-                "orchestrator.tag_untagged_footage",
-                args=[int(limit)],
-                queue=target,
-                ignore_result=True,
-                retry=False,
-            )
-            return res, target
-
-        try:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-                async_result, build_queue = ex.submit(_do_enqueue).result(timeout=10)
-        except concurrent.futures.TimeoutError:
-            raise HTTPException(
-                status_code=503,
-                detail=f"Enqueue timed out — broker unreachable. broker={_mask(broker_uri)}",
-            )
-        except Exception as e:
-            raise HTTPException(
-                status_code=503,
-                detail=f"Enqueue failed: {e}. broker={_mask(broker_uri)}",
-            )
-
-        # Mark "queued" for single-flight between enqueue and the worker's first
-        # "running" heartbeat. Safe against deadlock: the status endpoint
-        # normalizes a stale active state (updated_at older than _TAGGING_STALE_S)
-        # back to idle, so a task that never gets picked up auto-recovers.
-        try:
-            r.set(
-                _TAGGING_PROGRESS_KEY,
-                json.dumps({"state": "queued", "updated_at": time.time()}),
-                ex=86400,
-            )
+            _tagging_redis().set(key, json.dumps({"state": "queued", "updated_at": time.time()}), ex=86400)
         except Exception:
             pass  # best-effort; the worker republishes on start
-        # Surface broker + queue so a producer/worker mismatch (wrong redis db
-        # or queue name) is diagnosable from the POST response.
-        return {
-            "ok": True,
-            "task_id": str(async_result.id),
-            "limit": int(limit),
-            "broker": _mask(broker_uri),
-            "queue": build_queue,
-        }
 
-    @router.get("/assets/tag-untagged/status")
-    def tag_untagged_status() -> Dict[str, Any]:
-        r = _tagging_redis()
+    def _read_progress(key: str) -> Dict[str, Any]:
         try:
-            raw = r.get(_TAGGING_PROGRESS_KEY)
+            raw = _tagging_redis().get(key)
         except Exception:
             raw = None
         if not raw:
@@ -772,6 +677,79 @@ def create_asset_router(*, prefix: str = "/asset-ui/api") -> APIRouter:
             return json.loads(raw)
         except Exception:
             return {"state": "unknown"}
+
+    def _enqueue_build_task(task_name: str, args: list) -> Dict[str, Any]:
+        """Enqueue a build-queue task from the slim asset-ui: backend-less
+        producer (its CELERY_RESULT_BACKEND is unreachable), auto-discovers a
+        live build.* queue, bounded by a wall-clock timeout. Returns
+        {task_id, broker, queue} or raises HTTPException(503)."""
+        try:
+            from .celery_app import celery_app
+        except Exception as e:
+            raise HTTPException(status_code=503, detail=f"Task queue unavailable (celery import failed): {e}")
+        import concurrent.futures
+        from celery import Celery as _Celery
+
+        broker_uri = str(getattr(celery_app.conf, "broker_url", "") or "") or "(empty → amqp://localhost default)"
+        default_queue = os.getenv("CELERY_QUEUE_BUILD", "build")
+
+        def _mask(uri: str) -> str:
+            return re.sub(r"://([^:/@]+):([^@]+)@", r"://\1:***@", uri)
+
+        def _do():
+            producer = _Celery("asset_ui_producer", broker=celery_app.conf.broker_url, backend=None)
+            target = default_queue
+            try:
+                aq = producer.control.inspect(timeout=2).active_queues() or {}
+                names = sorted({
+                    str(q.get("name") or "")
+                    for qs in aq.values() for q in (qs or [])
+                    if q.get("name")
+                })
+                build_names = [n for n in names if n.startswith("build")]
+                if build_names:
+                    target = build_names[0]
+            except Exception:
+                pass
+            res = producer.send_task(task_name, args=args, queue=target, ignore_result=True, retry=False)
+            return res, target
+
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                async_result, target = ex.submit(_do).result(timeout=10)
+        except concurrent.futures.TimeoutError:
+            raise HTTPException(status_code=503, detail=f"Enqueue timed out — broker unreachable. broker={_mask(broker_uri)}")
+        except Exception as e:
+            raise HTTPException(status_code=503, detail=f"Enqueue failed: {e}. broker={_mask(broker_uri)}")
+        return {"task_id": str(async_result.id), "broker": _mask(broker_uri), "queue": target}
+
+    @router.post("/assets/tag-untagged")
+    def tag_untagged(limit: int = Query(0, ge=0)) -> Dict[str, Any]:
+        """Tag every untagged S3 clip via Groq. Single-flight via Redis state."""
+        if _is_active(_TAGGING_PROGRESS_KEY):
+            raise HTTPException(status_code=409, detail="Tagging already running")
+        out = _enqueue_build_task("orchestrator.tag_untagged_footage", [int(limit)])
+        _mark_queued(_TAGGING_PROGRESS_KEY)
+        return {"ok": True, "limit": int(limit), **out}
+
+    @router.get("/assets/tag-untagged/status")
+    def tag_untagged_status() -> Dict[str, Any]:
+        return _read_progress(_TAGGING_PROGRESS_KEY)
+
+    @router.post("/assets/activate")
+    def activate_base(limit: int = Query(0, ge=0)) -> Dict[str, Any]:
+        """Full self-serve ingest after upload: rebuild S3 static index ->
+        inventory -> tag untagged -> export snapshots, so freshly uploaded clips
+        enter the picker pool. Single-flight via Redis state."""
+        if _is_active(_ACTIVATION_PROGRESS_KEY):
+            raise HTTPException(status_code=409, detail="Activation already running")
+        out = _enqueue_build_task("orchestrator.activate_footage_base", [int(limit)])
+        _mark_queued(_ACTIVATION_PROGRESS_KEY)
+        return {"ok": True, "limit": int(limit), **out}
+
+    @router.get("/assets/activate/status")
+    def activate_status() -> Dict[str, Any]:
+        return _read_progress(_ACTIVATION_PROGRESS_KEY)
 
     # --- tag overrides ---
     @router.get("/tag-overrides")
@@ -998,52 +976,58 @@ def create_asset_router(*, prefix: str = "/asset-ui/api") -> APIRouter:
             upload_file_to_s3(bucket, key, src, content_type=_mime_for_ext(ext))
             uploaded.append({"file_name": safe_name, "s3_key": key})
 
+        # The S3 upload + ZIP extraction are blocking (network + disk). Run each
+        # file's processing in a worker thread so a large batch doesn't block the
+        # asset-ui event loop (keeps the server responsive during big uploads).
+        def _process_one(name: str, ext: str, file_obj: Any) -> None:
+            if ext == ".zip":
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".zip") as tmp_zip:
+                    shutil.copyfileobj(file_obj, tmp_zip)
+                    tmp_zip_path = Path(tmp_zip.name)
+                try:
+                    with zipfile.ZipFile(tmp_zip_path, "r") as zf:
+                        for zinfo in zf.infolist():
+                            if zinfo.is_dir():
+                                continue
+                            inner = zinfo.filename
+                            inner_base = Path(inner).name
+                            inner_ext = Path(inner).suffix.lower()
+                            if not inner_base or inner_base.startswith("."):
+                                continue
+                            if inner_ext not in _VIDEO_EXTENSIONS:
+                                continue
+                            with zf.open(zinfo, "r") as src_fh:
+                                with tempfile.NamedTemporaryFile(delete=False, suffix=inner_ext) as tmp_vid:
+                                    shutil.copyfileobj(src_fh, tmp_vid)
+                                    tmp_vid_path = Path(tmp_vid.name)
+                            try:
+                                _upload_from_path(inner_base, tmp_vid_path, inner_ext)
+                            except Exception as e:
+                                errors.append({"file": f"{name}::{inner_base}", "error": str(e)})
+                            finally:
+                                tmp_vid_path.unlink(missing_ok=True)
+                finally:
+                    tmp_zip_path.unlink(missing_ok=True)
+            elif ext in _VIDEO_EXTENSIONS:
+                with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
+                    shutil.copyfileobj(file_obj, tmp)
+                    tmp_path = Path(tmp.name)
+                try:
+                    _upload_from_path(name, tmp_path, ext)
+                except Exception as e:
+                    errors.append({"file": name, "error": str(e)})
+                finally:
+                    tmp_path.unlink(missing_ok=True)
+            else:
+                errors.append({"file": name, "error": f"unsupported extension {ext}"})
+
+        import asyncio as _asyncio
+
         for f in files:
             name = f.filename or "unknown"
             ext = Path(name).suffix.lower()
-
             try:
-                if ext == ".zip":
-                    # Spool upload to disk, then iterate entries
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=".zip") as tmp_zip:
-                        shutil.copyfileobj(f.file, tmp_zip)
-                        tmp_zip_path = Path(tmp_zip.name)
-                    try:
-                        with zipfile.ZipFile(tmp_zip_path, "r") as zf:
-                            for zinfo in zf.infolist():
-                                if zinfo.is_dir():
-                                    continue
-                                inner = zinfo.filename
-                                inner_base = Path(inner).name
-                                inner_ext = Path(inner).suffix.lower()
-                                if not inner_base or inner_base.startswith("."):
-                                    continue
-                                if inner_ext not in _VIDEO_EXTENSIONS:
-                                    continue
-                                with zf.open(zinfo, "r") as src_fh:
-                                    with tempfile.NamedTemporaryFile(delete=False, suffix=inner_ext) as tmp_vid:
-                                        shutil.copyfileobj(src_fh, tmp_vid)
-                                        tmp_vid_path = Path(tmp_vid.name)
-                                try:
-                                    _upload_from_path(inner_base, tmp_vid_path, inner_ext)
-                                except Exception as e:
-                                    errors.append({"file": f"{name}::{inner_base}", "error": str(e)})
-                                finally:
-                                    tmp_vid_path.unlink(missing_ok=True)
-                    finally:
-                        tmp_zip_path.unlink(missing_ok=True)
-                elif ext in _VIDEO_EXTENSIONS:
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
-                        shutil.copyfileobj(f.file, tmp)
-                        tmp_path = Path(tmp.name)
-                    try:
-                        _upload_from_path(name, tmp_path, ext)
-                    except Exception as e:
-                        errors.append({"file": name, "error": str(e)})
-                    finally:
-                        tmp_path.unlink(missing_ok=True)
-                else:
-                    errors.append({"file": name, "error": f"unsupported extension {ext}"})
+                await _asyncio.to_thread(_process_one, name, ext, f.file)
             except Exception as e:
                 errors.append({"file": name, "error": str(e)})
             finally:

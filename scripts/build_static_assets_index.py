@@ -121,12 +121,19 @@ def _ffprobe_url(url: str, *, ffprobe_bin: str = "ffprobe", timeout: float = 60.
         return None
 
 
-def main() -> int:
-    out_path = Path(sys.argv[1] if len(sys.argv) > 1 else _DEFAULT_OUT)
-    bucket = (os.environ.get("S3_BUCKET_ASSET_STORAGE") or "").strip()
-    prefix = (os.environ.get("S3_ASSET_PREFIX") or "pinterest_collection").strip().strip("/")
+def build_index(
+    *,
+    bucket: str,
+    prefix: str,
+    out_path: Path,
+    progress_cb=None,
+) -> Dict[str, Any]:
+    """List S3 videos under prefix, ffprobe dims/duration, write the static
+    index. Reusable from the activation Celery task. progress_cb(done, total)
+    is called periodically. Returns {assets_count, failed, out_path}."""
+    prefix = str(prefix or "").strip().strip("/")
     if not bucket:
-        raise SystemExit("S3_BUCKET_ASSET_STORAGE not set")
+        raise RuntimeError("S3_BUCKET_ASSET_STORAGE not set")
 
     from src.storage.s3 import generate_presigned_url, list_s3_objects
 
@@ -188,6 +195,8 @@ def main() -> int:
                 failed.append(futs[fut])
             if done % 100 == 0:
                 print(f"[probe] {done}/{len(keys)} ok={len(assets)} failed={len(failed)}")
+                if progress_cb:
+                    progress_cb(done, len(keys))
 
     assets.sort(key=lambda a: (str(a["genre"]).lower(), str(a["tag"]).lower(), str(a["file_name"])))
     obj = {
@@ -201,6 +210,16 @@ def main() -> int:
     print(f"[done] wrote {len(assets)} assets -> {out_path}  (failed/skipped={len(failed)})")
     if failed:
         print("[warn] first failed keys:", failed[:10])
+    if progress_cb:
+        progress_cb(len(keys), len(keys))
+    return {"assets_count": len(assets), "failed": len(failed), "out_path": str(out_path)}
+
+
+def main() -> int:
+    out_path = Path(sys.argv[1] if len(sys.argv) > 1 else _DEFAULT_OUT)
+    bucket = (os.environ.get("S3_BUCKET_ASSET_STORAGE") or "").strip()
+    prefix = (os.environ.get("S3_ASSET_PREFIX") or "pinterest_collection").strip().strip("/")
+    build_index(bucket=bucket, prefix=prefix, out_path=out_path)
     return 0
 
 
