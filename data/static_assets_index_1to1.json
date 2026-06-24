@@ -4033,37 +4033,6 @@
       ]
     },
     {
-      "file_name": "931119291716076943_nycmood nyc newyorkcity rain rainyday cine trend t.mp4",
-      "genre": "Alternative",
-      "tag": "dark_social_aesthetic",
-      "src_w": 720,
-      "src_h": 1280,
-      "duration_sec": 10.567,
-      "dominant_color": "H08_L0",
-      "palette_bins": [
-        {
-          "bin": "H08_L0",
-          "weight": 0.361111
-        },
-        {
-          "bin": "H11_L0",
-          "weight": 0.188889
-        },
-        {
-          "bin": "H07_L0",
-          "weight": 0.163889
-        },
-        {
-          "bin": "H01_L1",
-          "weight": 0.154861
-        },
-        {
-          "bin": "H01_L0",
-          "weight": 0.13125
-        }
-      ]
-    },
-    {
       "file_name": "931119291721942687_nycmood nyc newyorkcity rain rainyday cine trend t.mp4",
       "genre": "Alternative",
       "tag": "dark_social_aesthetic",
