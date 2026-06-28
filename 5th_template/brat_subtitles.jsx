@@ -55,13 +55,23 @@ var CONFIG = {
     nestIntoActive:  true,                 // вложить комп субтитров в активный (поверх футажа)
 
     // ---- моргачка (CC Image Wipe, по BPM) ----
-    blinker:         false,                // OFF (2026-06-18): моргание плохо выглядит
+    // 2026-06-22: вернули ON, но мягче — дело было в ИНТЕНСИВНОСТИ, не скорости.
+    // peak (глубина wipe на пике) снижен 0.8→0.4, край мягче (softness 0.03→0.08),
+    // скорость возвращена к исходной (subdiv 4→2 = 1/8).
+    blinker:         true,
     bpm:             120,                  // BPM трека (дамп был на 120)
     beatOffset:      0,                    // время первого бита, с (фаза)
-    blinkSubdiv:     4,                    // блинков на долю: 2 = 1/8, 4 = 1/16
-    blinkPeak:      0.8,                   // пик Completion (CC Image Wipe)
-    blinkBorderSoftness: 0.03,
-    blinkInfluence:  33.333333
+    blinkSubdiv:     2,                    // блинков на долю: 2 = 1/8, 4 = 1/16
+    blinkPeak:      0.4,                   // пик Completion (CC Image Wipe), мягче
+    blinkBorderSoftness: 0.08,
+    blinkInfluence:  33.333333,
+
+    // ---- мягкая тень для читаемости на ярких фонах (нативный Drop Shadow) ----
+    shadow:          true,
+    shadowOpacity:   55,                   // %
+    shadowDirection: 135,                  // °
+    shadowDistance:  9,
+    shadowSoftness:  22
 };
 // ================================================================
 
@@ -205,6 +215,25 @@ function styleText(L, justify, fontSize){
     td.justification = justify || ParagraphJustification.FULL_JUSTIFY_LASTLINE_FULL;
     stProp.setValue(td);
     try { var chk = stProp.value; if (String(chk.font) !== CONFIG.font){ chk.font = CONFIG.fontFallback; stProp.setValue(chk); } } catch (eF) {}
+    addSoftShadow(L);
+}
+
+// Лёгкая тень под текстом — читаемость на ярких фонах (нативный ADBE Drop
+// Shadow, надёжен в headless aerender). Идемпотентно: не дублируем, если уже есть.
+function addSoftShadow(L){
+    if (!CONFIG.shadow) return;
+    try {
+        var fx = L.property("ADBE Effect Parade");
+        for (var i = 1; i <= fx.numProperties; i++){
+            if (fx.property(i).matchName === "ADBE Drop Shadow") return;
+        }
+        var ds = fx.addProperty("ADBE Drop Shadow");
+        try { ds.property("ADBE Drop Shadow-0001").setValue([0,0,0]); } catch(e){}                       // Shadow Color
+        try { ds.property("ADBE Drop Shadow-0002").setValue(CONFIG.shadowOpacity * 255 / 100); } catch(e){} // Opacity (0..255)
+        try { ds.property("ADBE Drop Shadow-0003").setValue(CONFIG.shadowDirection); } catch(e){}        // Direction
+        try { ds.property("ADBE Drop Shadow-0004").setValue(CONFIG.shadowDistance); } catch(e){}         // Distance
+        try { ds.property("ADBE Drop Shadow-0005").setValue(CONFIG.shadowSoftness); } catch(e){}         // Softness
+    } catch (e) {}
 }
 
 // Single line's words as the rendered string (for width probing).
