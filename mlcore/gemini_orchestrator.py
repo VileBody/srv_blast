@@ -4269,10 +4269,12 @@ def build_all_via_gemini_one_call(
                 raise RuntimeError(
                     f"F3 drop_rel must be > 0 (USER_DROP_T={_udt}, clip_start={_cs})"
                 )
+            _f3_extra_full = (os.environ.get("F3_EXTRA_FULL") or "").strip().lower() in ("1", "true", "yes")
             f3_block = {
                 "hook": _f3_hook or None,
                 "transition": _f3_trans or None,
                 "extra": _f3_extra or None,
+                "extra_full": _f3_extra_full,
                 "hook_extend": (os.environ.get("F3_HOOK_EXTEND") or "").strip().lower() or None,
                 "drop_time": _drop_rel,
                 # filled by asset_picker below; empty => visual only (silent slots)

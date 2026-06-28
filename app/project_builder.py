@@ -417,6 +417,7 @@ def _build_f3_overlay_js(full_edit_config: Dict[str, Any]) -> str:
     if drop_time is None:
         raise RuntimeError("f3 block present but 'drop_time' is missing")
     hook_extend = (str(f3_block.get("hook_extend") or "").strip() or None)
+    extra_full = bool(f3_block.get("extra_full"))
     assets = f3_block.get("assets") if isinstance(f3_block.get("assets"), dict) else {}
 
     from mlcore.hooks.f3_effect.overlay import build_overlay_jsx
@@ -425,13 +426,14 @@ def _build_f3_overlay_js(full_edit_config: Dict[str, Any]) -> str:
         hook=hook,
         transition=transition,
         extra=extra,
+        extra_full=extra_full,
         hook_extend=hook_extend,
         drop_time=float(drop_time),
         assets=assets,
     )
     LOGGER.info(
-        "f3 fx present hook=%s trans=%s extra=%s extend=%s js_len=%d",
-        hook, transition, extra, hook_extend, len(overlay),
+        "f3 fx present hook=%s trans=%s extra=%s extra_full=%s extend=%s js_len=%d",
+        hook, transition, extra, extra_full, hook_extend, len(overlay),
     )
     return overlay
 

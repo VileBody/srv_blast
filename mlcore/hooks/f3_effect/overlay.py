@@ -115,6 +115,7 @@ def build_overlay_jsx(
     hook: Optional[str] = None,
     transition: Optional[str] = None,
     extra: Optional[str] = None,
+    extra_full: bool = False,
     hook_extend: Optional[str] = None,
     drop_time: float,
     assets: Optional[Dict[str, Any]] = None,
@@ -220,10 +221,17 @@ def build_overlay_jsx(
         if ts_path_js:
             parts.append(_cut_sounds_js(ts_path_js))
 
-    # ---------------- EXTRA (grade 0..drop) ----------------
+    # ---------------- EXTRA (grade) ----------------
+    # Default: pre-drop only (0..drop). extra_full=True → null duration = whole
+    # comp (the same "no-drop" path the script already handles), so the stylize
+    # (e.g. xerox) runs over the ENTIRE video to bump uniqueness.
     if e_eff:
+        _extra_dur_js = "null" if extra_full else "(__f3_drop>0?__f3_drop:null)"
         parts.append("  /* -- EXTRA -- */")
-        parts.append("  $.global.__BLAST = { targetCompName: __f3_name, dropTime: __f3_drop, startTime: 0, duration: (__f3_drop>0?__f3_drop:null), place: __f3_place, cuts: __f3_cuts };")
+        parts.append(
+            "  $.global.__BLAST = { targetCompName: __f3_name, dropTime: __f3_drop, "
+            f"startTime: 0, duration: {_extra_dur_js}, place: __f3_place, cuts: __f3_cuts }};"
+        )
         parts.append("  (function(){")
         parts.append(_read_script(e_eff["script"]))
         parts.append("  })(); $.global.__BLAST = null;")

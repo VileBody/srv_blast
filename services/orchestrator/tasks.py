@@ -102,6 +102,7 @@ _LLM_ENV_KEYS = (
     "F3_HOOK",
     "F3_TRANSITION",
     "F3_EXTRA",
+    "F3_EXTRA_FULL",
     "F3_HOOK_EXTEND",
     "F2_SHAPE",
     "F2_SEED",
@@ -1820,6 +1821,10 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
                     f"invalid {_req_key}={_raw!r}; allowed={sorted(_f3_allowed[_group])}"
                 )
             env[_env_key] = _val
+    # Stretch the EXTRA (grade, e.g. xerox) over the whole video instead of just
+    # the pre-drop region — bumps uniqueness. Bool flag → "1" env.
+    if bool(req.get("effect_extra_full")):
+        env["F3_EXTRA_FULL"] = "1"
     _f3_extend_raw = req.get("effect_hook_extend")
     if _f3_extend_raw is not None and str(_f3_extend_raw).strip():
         _ext = str(_f3_extend_raw).strip().lower()

@@ -92,6 +92,8 @@ class SendAudioS3Request(BaseModel):
             "xerox", "analog_glitch", "neon_extract", "old_camera",
         ]
     ] = None
+    # Stretch effect_extra (grade) over the whole video instead of pre-drop only.
+    effect_extra_full: bool = False
     # Slow-shutter trail extension (only for extendable hooks): "to_end" or
     # "after_drop:N" (N = footages after the drop). None => default duration.
     effect_hook_extend: Optional[str] = Field(default=None, max_length=24)

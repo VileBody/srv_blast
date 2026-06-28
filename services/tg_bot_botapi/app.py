@@ -80,6 +80,7 @@ from .state_store import (
     STAGE_WAIT_EFFECT_HOOK,
     STAGE_WAIT_EFFECT_TRANSITION,
     STAGE_WAIT_EFFECT_EXTRA,
+    STAGE_WAIT_EFFECT_EXTRA_FULL,
     STAGE_WAIT_EFFECT_EXTEND,
     STAGE_WAIT_F2_SHAPE,
     STAGE_WAIT_F1_SOUND,
@@ -374,6 +375,10 @@ _FX_EXTEND_BY_BUTTON = {
     BTN_FX_EXT_END: "to_end",
     BTN_FX_EXT_3: "after_drop:3",
 }
+
+# Stretch the grade/stylization (extra) over the whole video vs only pre-drop.
+BTN_FX_EXTRA_FULL_ALL = "Стилизация на весь ролик"
+BTN_FX_EXTRA_FULL_PREDROP = "Только до дропа"
 # F2 «Объект» — 5 shape buttons (single sub-picker). Maps to f2_shape, the rest
 # of the combo (hook_light on drop + seeded-random F3 transition on post-drop
 # cuts) is forced server-side.
@@ -1674,6 +1679,10 @@ class BlastBotApp:
 
             if st.stage == STAGE_WAIT_EFFECT_EXTRA:
                 await self._handle_wait_effect_extra(message, st)
+                return
+
+            if st.stage == STAGE_WAIT_EFFECT_EXTRA_FULL:
+                await self._handle_wait_effect_extra_full(message, st)
                 return
 
             if st.stage == STAGE_WAIT_EFFECT_EXTEND:
@@ -3495,6 +3504,7 @@ class BlastBotApp:
             st.effect_hook = ""
             st.effect_transition = ""
             st.effect_extra = ""
+            st.effect_extra_full = False
             st.effect_hook_extend = ""
             await self.store.set(st)
             await self._ask_effect_hook(message, st)
@@ -3710,6 +3720,8 @@ class BlastBotApp:
                 await message.answer("Выбери эффект кнопкой ниже или «Пропустить».")
                 return
             st.effect_extra = ex
+        if not st.effect_extra:
+            st.effect_extra_full = False  # no grade → nothing to stretch
         await self.store.set(st)
         # at least one of hook/transition/extra is required
         if not (st.effect_hook or st.effect_transition or st.effect_extra):
@@ -3718,6 +3730,38 @@ class BlastBotApp:
             )
             await self._ask_effect_hook(message, st)
             return
+        # grade chosen → ask whether to stretch it over the whole video
+        if st.effect_extra:
+            await self._ask_effect_extra_full(message, st)
+            return
+        await self._after_effect_extra(message, st)
+
+    async def _ask_effect_extra_full(self, message: Message, st: ChatState) -> None:
+        st.stage = STAGE_WAIT_EFFECT_EXTRA_FULL
+        await self.store.set(st)
+        await message.answer(
+            f"Стилизация «{st.effect_extra}»: на весь ролик или только до дропа?\n"
+            "• Весь ролик — грейд тянется на всё видео, выше уникальность.\n"
+            "• Только до дропа — как обычно, грейд в интро.",
+            reply_markup=_kb([BTN_FX_EXTRA_FULL_ALL], [BTN_FX_EXTRA_FULL_PREDROP], [BTN_BACK]),
+        )
+
+    async def _handle_wait_effect_extra_full(self, message: Message, st: ChatState) -> None:
+        text = str(message.text or "").strip()
+        if text == BTN_BACK:
+            await self._ask_effect_extra(message, st)
+            return
+        if text == BTN_FX_EXTRA_FULL_ALL:
+            st.effect_extra_full = True
+        elif text == BTN_FX_EXTRA_FULL_PREDROP:
+            st.effect_extra_full = False
+        else:
+            await message.answer("Выбери кнопкой ниже.")
+            return
+        await self.store.set(st)
+        await self._after_effect_extra(message, st)
+
+    async def _after_effect_extra(self, message: Message, st: ChatState) -> None:
         # slow-shutter trail extend sub-step (only for the extendable hook)
         if st.effect_hook == "flash_slow_shutter":
             await self._ask_effect_extend(message, st)
@@ -3760,7 +3804,10 @@ class BlastBotApp:
         if st.effect_transition:
             parts.append(f"переход «{st.effect_transition}»")
         if st.effect_extra:
-            parts.append(f"грейд «{st.effect_extra}»")
+            parts.append(
+                f"грейд «{st.effect_extra}»"
+                + (" (весь ролик)" if st.effect_extra_full else "")
+            )
         if st.effect_hook_extend:
             parts.append(f"растяжка «{st.effect_hook_extend}»")
         await message.answer("Ок, «Эффект»: " + ", ".join(parts) + ".")
@@ -4182,6 +4229,7 @@ class BlastBotApp:
             st.effect_hook = ""
             st.effect_transition = ""
             st.effect_extra = ""
+            st.effect_extra_full = False
             st.effect_hook_extend = ""
             st.footage_genre_key = ""
             st.footage_artist_key = ""
@@ -4606,6 +4654,10 @@ class BlastBotApp:
                 str(st.effect_extra)
                 if (st.hook_enabled and st.hook_category == "effect" and st.effect_extra)
                 else None
+            ),
+            effect_extra_full=bool(
+                st.hook_enabled and st.hook_category == "effect"
+                and st.effect_extra and st.effect_extra_full
             ),
             effect_hook_extend=(
                 str(st.effect_hook_extend)

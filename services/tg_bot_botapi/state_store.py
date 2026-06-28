@@ -42,6 +42,7 @@ STAGE_WAIT_HOOK_DEVICE = "WAIT_HOOK_DEVICE"        # F5 («Мысль») device 
 STAGE_WAIT_EFFECT_HOOK = "WAIT_EFFECT_HOOK"
 STAGE_WAIT_EFFECT_TRANSITION = "WAIT_EFFECT_TRANSITION"
 STAGE_WAIT_EFFECT_EXTRA = "WAIT_EFFECT_EXTRA"
+STAGE_WAIT_EFFECT_EXTRA_FULL = "WAIT_EFFECT_EXTRA_FULL"
 STAGE_WAIT_EFFECT_EXTEND = "WAIT_EFFECT_EXTEND"
 # F2 «Объект» — single sub-picker (5 shape buttons).
 STAGE_WAIT_F2_SHAPE = "WAIT_F2_SHAPE"
@@ -125,6 +126,7 @@ class ChatState(BaseModel):
     effect_hook: str = ""        # "" | hook_light | shutter_effect | flash_slow_shutter
     effect_transition: str = ""  # "" | snap_wipe | minimax | invert_flash | extract_flash | flash_on_cuts | layer_shake
     effect_extra: str = ""       # "" | xerox | analog_glitch | neon_extract | old_camera
+    effect_extra_full: bool = False  # stretch the grade over the whole video (not just pre-drop)
     effect_hook_extend: str = "" # "" | to_end | after_drop:N (only for extendable hooks, e.g. flash_slow_shutter)
     # F2 «Объект» selection when hook_category == "object". Single shape pick
     # — the rest of the combo (hook_light at drop + seeded-random F3 transition
