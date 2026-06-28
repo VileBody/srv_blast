@@ -333,10 +333,12 @@ BTN_FX_SKIP = "Пропустить"
 BTN_FX_HOOK_LIGHT = "Молния"
 BTN_FX_HOOK_SHUTTER = "Затвор"
 BTN_FX_HOOK_SLOW = "Слоу-шаттер"
+BTN_FX_HOOK_NEGZOOM = "Негатив-зум"
 _FX_HOOK_BY_BUTTON = {
     BTN_FX_HOOK_LIGHT: "hook_light",
     BTN_FX_HOOK_SHUTTER: "shutter_effect",
     BTN_FX_HOOK_SLOW: "flash_slow_shutter",
+    BTN_FX_HOOK_NEGZOOM: "negative_zoom",
 }
 # step 2 — transition (on cuts)
 BTN_FX_TR_SNAP = "Снап-вайп"
@@ -3633,10 +3635,11 @@ class BlastBotApp:
             "• Молния — вспышка-молнии + шейк.\n"
             "• Затвор — нарезка затвора + лого-штамп.\n"
             "• Слоу-шаттер — echo-шлейф + вспышка (можно растянуть).\n"
+            "• Негатив-зум — инверт-вспышка + зум на дропе.\n"
             "Можно пропустить, если хук не нужен.",
             reply_markup=_kb(
                 [BTN_FX_HOOK_LIGHT, BTN_FX_HOOK_SHUTTER],
-                [BTN_FX_HOOK_SLOW],
+                [BTN_FX_HOOK_SLOW, BTN_FX_HOOK_NEGZOOM],
                 [BTN_FX_SKIP],
                 [BTN_BACK],
             ),

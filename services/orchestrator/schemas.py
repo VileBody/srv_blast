@@ -79,7 +79,7 @@ class SendAudioS3Request(BaseModel):
     # project_builder injects the AE overlay. Requires user_drop_t (drop anchor).
     # None on all => no F3 fx.
     effect_hook: Optional[
-        Literal["hook_light", "shutter_effect", "flash_slow_shutter"]
+        Literal["hook_light", "shutter_effect", "flash_slow_shutter", "negative_zoom"]
     ] = None
     effect_transition: Optional[
         Literal[

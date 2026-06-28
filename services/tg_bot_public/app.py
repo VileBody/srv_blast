@@ -229,14 +229,14 @@ VIBE_STAGES = frozenset({
 # + RU-label maps + the orchestrator-client effect_* kwargs (which land in the
 # payload regardless of HOOK_FLOW_ENABLED). At least one of hook/transition/extra
 # is required downstream; effect_hook_extend applies only to flash_slow_shutter.
-F3_HOOK_IDS = frozenset({"hook_light", "shutter_effect", "flash_slow_shutter"})
+F3_HOOK_IDS = frozenset({"hook_light", "shutter_effect", "flash_slow_shutter", "negative_zoom"})
 F3_TRANSITION_IDS = frozenset({
     "snap_wipe", "minimax", "invert_flash", "extract_flash", "flash_on_cuts", "layer_shake",
 })
 F3_EXTRA_IDS = frozenset({
     "xerox", "analog_glitch", "neon_extract", "old_camera",
 })
-F3_HOOK_LABELS_RU = {"Молния": "hook_light", "Затвор": "shutter_effect", "Слоу-шаттер": "flash_slow_shutter"}
+F3_HOOK_LABELS_RU = {"Молния": "hook_light", "Затвор": "shutter_effect", "Слоу-шаттер": "flash_slow_shutter", "Негатив-зум": "negative_zoom"}
 F3_TRANSITION_LABELS_RU = {
     "Снап-вайп": "snap_wipe", "Минимакс": "minimax", "Инверт": "invert_flash",
     "Экстракт": "extract_flash", "Вспышки": "flash_on_cuts", "Тряска": "layer_shake",
@@ -457,10 +457,12 @@ BTN_FX_SKIP = "Пропустить"
 BTN_FX_HOOK_LIGHT = "Молния"
 BTN_FX_HOOK_SHUTTER = "Затвор"
 BTN_FX_HOOK_SLOW = "Слоу-шаттер"
+BTN_FX_HOOK_NEGZOOM = "Негатив-зум"
 _FX_HOOK_BY_BUTTON = {
     BTN_FX_HOOK_LIGHT: "hook_light",
     BTN_FX_HOOK_SHUTTER: "shutter_effect",
     BTN_FX_HOOK_SLOW: "flash_slow_shutter",
+    BTN_FX_HOOK_NEGZOOM: "negative_zoom",
 }
 BTN_FX_TR_SNAP = "Снап-вайп"
 BTN_FX_TR_MINIMAX = "Минимакс"
@@ -3877,7 +3879,7 @@ class BlastBotApp:
             "Можно пропустить, если хук не нужен.",
             reply_markup=_kb(
                 [BTN_FX_HOOK_LIGHT, BTN_FX_HOOK_SHUTTER],
-                [BTN_FX_HOOK_SLOW],
+                [BTN_FX_HOOK_SLOW, BTN_FX_HOOK_NEGZOOM],
                 [BTN_FX_SKIP],
                 [BTN_BACK],
             ),

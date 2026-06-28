@@ -79,6 +79,14 @@
       "extend_note": "Echo-шлейф можно растянуть: до конца ролика (футажи красиво наслаиваются) или на N футажей после дропа. Управляется job.hookExtend ('to_end' | 'after_drop:3'). Кандидат на доп. шаг в боте.",
       "desc": "Echo-шлейф + Posterize + вспышка экспозиции + лого-штамп Бласта." },
 
+    { "id": "negative_zoom", "label": "Negative Zoom", "group": "hook", "apply_mode": "adjustment",
+      "script": "hooks/rebuild_negative_zoom.jsx", "needs_aep": false, "needs_plugin": [],
+      "branding": false,
+      "branding_note": "Сигнатурный визуал (негатив-вспышка/зум). Лого = оверфит, НЕ вешаем.",
+      "sound": { "pool": "camera_flash", "sync": "on_drop" },
+      "default_duration": 0.25, "placement": "hook_start",
+      "desc": "Негатив-зум на дропе: инверт-вспышка + зум (Geometry) + шум + пульс яркости. Нативный (Lumetri/Noise/Invert), без Sapphire." },
+
     { "id": "snap_wipe", "label": "Snap Wipe", "group": "transition", "apply_mode": "adjustment",
       "script": "transitions/snap_wipe.jsx", "needs_aep": false, "needs_plugin": [],
       "sound": { "pool": null, "optional": true }, "default_duration": 0.07, "placement": "at_cut",

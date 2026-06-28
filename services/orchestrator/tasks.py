@@ -1804,7 +1804,7 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
     # full_edit_config["f3"] and project_builder injects the AE overlay JSX.
     # Requires USER_DROP_T (drop anchor); absent ids => no F3 fx.
     _f3_allowed = {
-        "hook": {"hook_light", "shutter_effect", "flash_slow_shutter"},
+        "hook": {"hook_light", "shutter_effect", "flash_slow_shutter", "negative_zoom"},
         "transition": {"snap_wipe", "minimax", "invert_flash", "extract_flash", "flash_on_cuts", "layer_shake"},
         "extra": {"xerox", "analog_glitch", "neon_extract", "old_camera"},
     }

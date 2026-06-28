@@ -40,7 +40,7 @@ _PLACE_REF = "Текст"
 
 # Wired effect ids per group (mirror manifest.json). Used for request/env
 # validation (orchestrator, tasks) and as the source for the bot's 3-step UI.
-F3_HOOKS = ("hook_light", "shutter_effect", "flash_slow_shutter")
+F3_HOOKS = ("hook_light", "shutter_effect", "flash_slow_shutter", "negative_zoom")
 F3_TRANSITIONS = (
     "snap_wipe", "minimax", "invert_flash", "extract_flash", "flash_on_cuts", "layer_shake",
 )
