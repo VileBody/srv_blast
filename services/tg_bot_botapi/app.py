@@ -250,6 +250,7 @@ BTN_SUB_MODE_BRAT = "Brat (blocks)"
 # Hook feature (Phase A-UX).
 BTN_HOOK_YES = "Сделать хук"
 BTN_HOOK_NO = "Без хука"
+BTN_HOOK_REFRESH = "🔄 Обновить тайминг"
 BTN_HOOK_BATTERY = "🎲 Батарея (5 хуков)"
 BTN_BATTERY_NO_SOUND = "Без звука (4 ролика)"
 BTN_BATTERY_F4_SKIP = "Без движения"
@@ -2988,10 +2989,16 @@ class BlastBotApp:
                 f"(уверенность {float(top['confidence']):.0%})."
             )
         elif st.hook_analysis_status == "pending":
-            note = "\n\nЕщё считаю анализ — выбери, когда определишься."
+            note = ("\n\nЕщё считаю анализ дропа — нажми «🔄 Обновить тайминг» "
+                    "через пару секунд (или выбери, когда определишься).")
         elif st.hook_analysis_status == "failed":
-            note = "\n\nАнализ аудио не удался, дроп можно ввести вручную."
+            note = ("\n\nАнализ аудио не удался — «🔄 Обновить тайминг» перезапустит "
+                    "его, либо дроп можно ввести вручную.")
         rows = [[BTN_HOOK_YES, BTN_HOOK_NO]]
+        # Refresh button while the background drop analysis isn't ready yet — the
+        # user often reaches this step before it finishes and thinks it failed.
+        if st.hook_analysis_status in ("pending", "failed"):
+            rows.append([BTN_HOOK_REFRESH])
         if BATTERY_ENABLED:
             rows.append([BTN_HOOK_BATTERY])
         await message.answer(
@@ -3004,6 +3011,14 @@ class BlastBotApp:
 
     async def _handle_wait_hook_choice(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()
+        if text == BTN_HOOK_REFRESH:
+            # Re-read the analysis status and redraw. If it failed, kick off a
+            # fresh analysis first (idempotent — _trigger dedups ready results).
+            if st.hook_analysis_status == "failed":
+                await self._trigger_hook_analysis_task(st)
+                st = await self.store.get(st.chat_id)
+            await self._ask_hook_choice(message, st)
+            return
         if text == BTN_HOOK_NO:
             st.hook_enabled = False
             st.hook_drop_t = None

@@ -183,3 +183,20 @@ def test_f4_motion_device_ids_mirrored() -> None:
     # Mirrored constant: the motion-hook reframe uses lead_eff =
     # LEAD[device] * F4_REF_BPM / bpm so the overlay cover-end lands on the drop.
     assert F4_REF_BPM == 128.0
+
+
+def test_refresh_button_is_team_only_and_no_real_librosa_import() -> None:
+    """Parity guard: the hook-timing "Обновить" button is a team-bot-only UX
+    (public hook flow is gated behind HOOK_FLOW_ENABLED), and the slim public
+    bot never actually imports librosa (analysis is delegated to the
+    orchestrator)."""
+    import re
+    import services.tg_bot_public.app as pub
+
+    text = open(pub.__file__, encoding="utf-8").read()
+    # No real `import librosa` / `from librosa ...` statement (comments are fine).
+    assert not re.search(r"(?m)^\s*(import\s+librosa|from\s+librosa\b)", text)
+    # The refresh button constant is botapi-only; public must not define it.
+    assert "BTN_HOOK_REFRESH =" not in text
+    # …but the mirror note documenting it IS present.
+    assert "🔄 Обновить" in text

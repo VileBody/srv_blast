@@ -253,6 +253,11 @@ F3_EXTEND_LABELS_RU = {"Стандарт": "", "До конца ролика": "
 # NOTE (mirrors tg_bot_botapi): focus-clip hook analysis is delegated to the
 # orchestrator via OrchestratorClient.analyze_hook — librosa lives in the
 # runtime image, NOT in the slim bot image. The bots must never import librosa.
+#
+# NOTE (mirrors tg_bot_botapi): the hook-choice step offers a "🔄 Обновить
+# тайминг" button while the background drop analysis is pending/failed, so the
+# user can re-check instead of assuming it failed. That UX is team-bot only
+# (the public hook flow is gated behind HOOK_FLOW_ENABLED).
 F4_MOTION_DEVICE_IDS = frozenset({"swipe", "tap", "pinch", "holdfinger", "head"})
 F4_MOTION_DEVICE_LABELS_RU = {
     "Свайп": "swipe",
