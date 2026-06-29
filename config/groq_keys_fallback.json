@@ -1,11 +1,10 @@
 {
-  "_comment": "TEMPORARY committed fallback so footage auto-tagging works without setting GROQ_API_KEYS in .env. Used ONLY when GROQ_API_KEYS / GROQ_API_KEY env is empty. Once the env var is set on the server, DELETE this file and ROTATE these keys (committed keys may be auto-revoked by GitHub/Groq secret scanning).",
+  "_comment": "TEMPORARY committed fallback so footage auto-tagging works without setting GROQ_API_KEYS in .env. Used ONLY when GROQ_API_KEYS / GROQ_API_KEY env is empty. Once the env var is set on the server, DELETE this file and ROTATE these keys (committed keys may be auto-revoked by GitHub/Groq secret scanning). Validated 200 against meta-llama/llama-4-scout-17b-16e-instruct on 2026-06-29.",
   "keys": [
-    "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",
-    "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",
-    "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",
-    "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",
-    "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",
-    "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"
+    "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",
+    "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",
+    "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",
+    "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",
+    "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"
   ]
 }
