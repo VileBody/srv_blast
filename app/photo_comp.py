@@ -1,0 +1,156 @@
+# app/photo_comp.py
+# -*- coding: utf-8 -*-
+"""Photo flow (4:3) payload builder.
+
+Separate from the footage path (footage_comp.py) — the photo flow renders its own
+standalone 1920×1440 composition (founder's cover-fit + scale-anim + flash JSX,
+ported into templates/photo_template.j2). It does NOT touch the footage template.
+
+build_photo_payload turns a list of picked photos (file_name + remote S3 url)
+into:
+  - footage_layers: minimal blueprints carrying source_footage{file_name,
+    remote_url} so the SAME render manifest (render_manifest.collect_media_urls_
+    from_render_payload) downloads the photos into media/video/<file_name> on the
+    node — identical media contract to footage.
+  - photo_job: the layout spec the photo JSX reads (comp dims, fps, per-photo
+    segments, style grade, transition, cover/scale/flash constants).
+
+Pure / no I/O so it is unit-testable.
+"""
+from __future__ import annotations
+
+from typing import Any, Dict, List, Optional
+
+from core.video_timing import AE_FPS
+
+# Comp geometry for the photo flow: a standalone horizontal 4:3 render (the
+# founder's reference comp), independent of the vertical footage main comp.
+PHOTO_COMP_W = 1920
+PHOTO_COMP_H = 1440
+
+# Default per-photo on-screen length: 36 frames @ 23.976fps ≈ 1.5015s (matches
+# the founder's reference timing). Configurable per job.
+DEFAULT_SEGMENT_FRAMES = 36
+
+# Scale-animation constants (in scale POINTS, not pixels) — see the founder's
+# build_photos.jsx: base cover scale → +grow over the clip → +punch shootout in
+# the final punch_frames frames.
+PHOTO_ANIM = {
+    "grow": 10,
+    "punch": 20,
+    "punch_frames": 4,
+    "overscan": 1.002,
+    "ease": 33.33,
+    # Flash adjustment (Brightness & Contrast): peak → 0 → 0 → peak.
+    "flash_amount": 30,
+    "flash_in_frames": 6,
+    "flash_out_frames": 8,
+}
+
+# Allowed stylization grades + transitions (kept in sync with the schema literals
+# in services/orchestrator/schemas.py — phase 3). "none" = founder's plain look.
+PHOTO_STYLES = ("none", "warm", "cold", "vintage", "bw", "vhs")
+PHOTO_TRANSITIONS = ("flash", "none", "slide", "zoom", "whip")
+
+
+def _photo_layer_blueprint(*, file_name: str, remote_url: str, z_index: int) -> Dict[str, Any]:
+    """Minimal blueprint whose only job is to make the render manifest download
+    the photo into media/video/<file_name>. The photo JSX does the real layout
+    from photo_job, so this carries no transform/keyframes."""
+    return {
+        "name": file_name,
+        "type": "video",  # render_manifest routes non-audio source_footage to media/video/
+        "z_index": int(z_index),
+        "text_data": {
+            "source_footage": {
+                "file_name": file_name,
+                "remote_url": str(remote_url or ""),
+                "file_path": str(remote_url or ""),
+            },
+        },
+    }
+
+
+def build_photo_segments(
+    photos: List[Dict[str, Any]],
+    *,
+    fps: float = AE_FPS,
+    segment_frames: int = DEFAULT_SEGMENT_FRAMES,
+) -> List[Dict[str, Any]]:
+    """Sequential [in, out, file_name] segments — one slot per picked photo, each
+    segment_frames long, back-to-back (out of one == in of next)."""
+    fps = float(fps)
+    if fps <= 0:
+        raise ValueError("fps must be positive")
+    if segment_frames <= 0:
+        raise ValueError("segment_frames must be positive")
+    seg_dur = segment_frames / fps
+    out: List[Dict[str, Any]] = []
+    for i, p in enumerate(photos):
+        fn = str(p.get("file_name") or "").strip()
+        if not fn:
+            raise RuntimeError(f"photo #{i} has no file_name")
+        t_in = round(i * seg_dur, 6)
+        t_out = round((i + 1) * seg_dur, 6)
+        out.append({"in": t_in, "out": t_out, "file_name": fn})
+    return out
+
+
+def build_photo_payload(
+    photos: List[Dict[str, Any]],
+    *,
+    style: str = "none",
+    transition: str = "flash",
+    fps: float = AE_FPS,
+    segment_frames: int = DEFAULT_SEGMENT_FRAMES,
+    comp_w: int = PHOTO_COMP_W,
+    comp_h: int = PHOTO_COMP_H,
+    anim: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Build the full photo render payload (footage_layers + photo_job).
+
+    photos: [{file_name, remote_url}] in display order (the picker's photo pool).
+    Raises on empty input or invalid style/transition so the operator sees a hard
+    fail (No Fallback Policy) rather than a silent empty render.
+    """
+    if not photos:
+        raise RuntimeError("build_photo_payload: no photos provided")
+    style = (str(style or "none").strip().lower() or "none")
+    transition = (str(transition or "flash").strip().lower() or "flash")
+    if style not in PHOTO_STYLES:
+        raise RuntimeError(f"unknown photo style {style!r} (allowed: {PHOTO_STYLES})")
+    if transition not in PHOTO_TRANSITIONS:
+        raise RuntimeError(f"unknown photo transition {transition!r} (allowed: {PHOTO_TRANSITIONS})")
+
+    segments = build_photo_segments(photos, fps=fps, segment_frames=segment_frames)
+
+    footage_layers: List[Dict[str, Any]] = []
+    seen: set = set()
+    z = 100
+    for p in photos:
+        fn = str(p.get("file_name") or "").strip()
+        remote = str(p.get("remote_url") or p.get("file_path") or "").strip()
+        if not remote:
+            raise RuntimeError(f"photo {fn!r} has no remote_url/file_path (render node needs s3/http)")
+        if fn in seen:
+            continue
+        seen.add(fn)
+        footage_layers.append(_photo_layer_blueprint(file_name=fn, remote_url=remote, z_index=z))
+        z += 1
+
+    photo_job = {
+        "comp_w": int(comp_w),
+        "comp_h": int(comp_h),
+        "fps": float(fps),
+        "style": style,
+        "transition": transition,
+        "config": dict(anim or PHOTO_ANIM),
+        "segments": segments,
+    }
+
+    return {
+        "project": {"mainCompName": "Photo Render", "mediaType": "photo"},
+        "photo_job": photo_job,
+        "footage_layers": footage_layers,
+        "text_layers": [],
+    }

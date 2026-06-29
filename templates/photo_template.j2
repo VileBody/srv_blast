@@ -1,0 +1,256 @@
+{# templates/photo_template.j2 — standalone 4:3 PHOTO render (does NOT touch the
+   footage template). Ports the founder's build_photos/build_flash logic
+   (cover-fit 1920×1440 + scale anim base→+grow→+punch + flash) and adds a
+   PHOTO_STYLE grade + PHOTO_TRANSITION between photos. Driven by `photo_job`.
+   RULE: headless aerender expressions are unreliable — everything is keyframed. #}
+(function () {
+  app.beginUndoGroup("AE_PHOTO_FLOW_4x3");
+
+  // ---- ENV / APP_DIR (same contract as the footage template) ----
+  var __APP_DIR = "";
+  try { __APP_DIR = $.getenv("APP_DIR"); } catch (e) { __APP_DIR = ""; }
+  if (!__APP_DIR || __APP_DIR === "") {
+    try { if ($.fileName) { __APP_DIR = new File($.fileName).parent.fsName; } } catch (_) {}
+  }
+  if (!__APP_DIR || __APP_DIR === "") {
+    try { __APP_DIR = Folder.temp.fsName; } catch (_) { __APP_DIR = ""; }
+  }
+
+  function __writeAeStatusOk(aepFsName, compName) {
+    try {
+      var st = new File(__APP_DIR + "/ae_status.txt");
+      st.encoding = "UTF-8";
+      if (st.open("w")) { st.writeln("OK"); st.writeln("aep=" + String(aepFsName || "")); st.writeln("compName=" + String(compName || "")); st.close(); }
+    } catch (e) {}
+  }
+  function __writeAeStatusErr(msg) {
+    try {
+      var st = new File(__APP_DIR + "/ae_status.txt");
+      st.encoding = "UTF-8";
+      if (st.open("w")) { st.writeln("ERROR"); st.writeln(String(msg || "unknown error")); st.close(); }
+    } catch (e) {}
+  }
+  function logLine(lvl, msg) { try { $.writeln("[" + lvl + "] " + String(msg)); } catch (_) {} }
+
+  // suppress modal dialogs in headless mode
+  try { alert = function (m) { logLine("WARN", "suppressed alert: " + String(m)); }; } catch (_) {}
+  try { confirm = function () { return true; }; } catch (_) {}
+  try { app.beginSuppressDialogs(); } catch (_) {}
+
+  try {
+    // ====================================================================
+    // 0) PAYLOAD
+    // ====================================================================
+    var photo_job = {{ photo_job | tojson }};
+    var footage_layers = {{ footage_layers | tojson }};
+
+    var CFG = photo_job.config || {};
+    var COMP_W = photo_job.comp_w || 1920;
+    var COMP_H = photo_job.comp_h || 1440;
+    var FPS = photo_job.fps || 23.976023976023978;
+    var STYLE = String(photo_job.style || "none");
+    var TRANSITION = String(photo_job.transition || "flash");
+    var SEGMENTS = photo_job.segments || [];
+    if (!SEGMENTS.length) { throw new Error("photo_job has no segments"); }
+
+    var GROW = (CFG.grow != null) ? CFG.grow : 10;
+    var PUNCH = (CFG.punch != null) ? CFG.punch : 20;
+    var PUNCH_FRAMES = (CFG.punch_frames != null) ? CFG.punch_frames : 4;
+    var OVERSCAN = (CFG.overscan != null) ? CFG.overscan : 1.002;
+    var EASE = (CFG.ease != null) ? CFG.ease : 33.33;
+    var FLASH_AMOUNT = (CFG.flash_amount != null) ? CFG.flash_amount : 30;
+    var FLASH_IN_F = (CFG.flash_in_frames != null) ? CFG.flash_in_frames : 6;
+    var FLASH_OUT_F = (CFG.flash_out_frames != null) ? CFG.flash_out_frames : 8;
+
+    // ====================================================================
+    // 1) HELPERS (ported from _common.jsx)
+    // ====================================================================
+    var FD = 1.0 / FPS;
+    function snap(t) { return Math.round(t / FD) * FD; }
+    function coverScale(srcW, srcH) {
+      return Math.max(COMP_W / srcW, COMP_H / srcH) * 100 * OVERSCAN;
+    }
+    function scaleVec(prop, s) { return (prop.value.length === 3) ? [s, s, 100] : [s, s]; }
+    function easeAllKeys(prop, infl) {
+      var e = new KeyframeEase(0, infl);
+      var dim = (prop.value instanceof Array) ? prop.value.length : 1;
+      for (var k = 1; k <= prop.numKeys; k++) {
+        prop.setInterpolationTypeAtKey(k, KeyframeInterpolationType.BEZIER, KeyframeInterpolationType.BEZIER);
+        var arr = []; for (var d = 0; d < dim; d++) { arr.push(e); }
+        prop.setTemporalEaseAtKey(k, arr);
+      }
+    }
+
+    // ====================================================================
+    // 2) PROJECT + COMP (1920×1440)
+    // ====================================================================
+    var project = app.project || app.newProject();
+    var totalDur = 0;
+    for (var s = 0; s < SEGMENTS.length; s++) { if (SEGMENTS[s]["out"] > totalDur) totalDur = SEGMENTS[s]["out"]; }
+    totalDur = snap(totalDur) + FD;
+
+    var COMP_NAME = "Photo Render";
+    var comp = project.items.addComp(COMP_NAME, COMP_W, COMP_H, 1.0, totalDur, FPS);
+    logLine("INFO", "photo comp " + COMP_W + "x" + COMP_H + " dur=" + totalDur + " segs=" + SEGMENTS.length + " style=" + STYLE + " trans=" + TRANSITION);
+
+    // ====================================================================
+    // 3) IMPORT PHOTOS (media/video/<file_name>, downloaded by the node)
+    // ====================================================================
+    var importedByName = {};
+    function importPhoto(fileName) {
+      if (importedByName[fileName]) return importedByName[fileName];
+      var fp = String(__APP_DIR || "") + "/media/video/" + fileName;
+      var f = new File(fp);
+      if (!f.exists) { throw new Error("photo file missing on node: " + fp); }
+      var io = new ImportOptions(f);
+      var item = project.importFile(io);
+      importedByName[fileName] = item;
+      return item;
+    }
+
+    // ====================================================================
+    // 4) LAY OUT PHOTOS — cover-fit + scale anim + per-cut transition
+    // ====================================================================
+    function placePhoto(seg) {
+      var tIn = snap(seg["in"]);
+      var tOut = snap(seg["out"]);
+      if (tOut <= tIn) return null;
+      var item = importPhoto(String(seg.file_name));
+      var w = item.width, h = item.height;
+
+      var lyr = comp.layers.add(item);
+      lyr.startTime = tIn;
+      try { lyr.outPoint = tOut; } catch (e1) {}
+      try { lyr.inPoint = tIn; } catch (e2) {}
+      try { lyr.outPoint = tOut; } catch (e3) {}
+
+      var tg = lyr.property("ADBE Transform Group");
+      var anchor = tg.property("ADBE Anchor Point");
+      var pos = tg.property("ADBE Position");
+      anchor.setValue(anchor.value.length === 3 ? [w / 2, h / 2, 0] : [w / 2, h / 2]);
+      pos.setValue(pos.value.length === 3 ? [COMP_W / 2, COMP_H / 2, 0] : [COMP_W / 2, COMP_H / 2]);
+
+      var scale = tg.property("ADBE Scale");
+      var s0 = coverScale(w, h);
+      var tPunch = tOut - PUNCH_FRAMES * FD;
+      if (tPunch <= tIn) tPunch = (tIn + tOut) / 2;
+      scale.setValueAtTime(tIn, scaleVec(scale, s0));
+      scale.setValueAtTime(tPunch, scaleVec(scale, s0 + GROW));
+      scale.setValueAtTime(tOut, scaleVec(scale, s0 + PUNCH));
+      easeAllKeys(scale, EASE);
+
+      applyTransitionIntro(lyr, tIn, tOut, s0);
+      return lyr;
+    }
+
+    // Non-flash transitions = a short intro on the incoming photo (keyframed).
+    function applyTransitionIntro(lyr, tIn, tOut, s0) {
+      var introF = 4;
+      var t1 = tIn + introF * FD;
+      if (t1 >= tOut) t1 = (tIn + tOut) / 2;
+      var tg = lyr.property("ADBE Transform Group");
+      if (TRANSITION === "slide") {
+        var pos = tg.property("ADBE Position");
+        var cx = COMP_W / 2, cy = COMP_H / 2;
+        pos.setValueAtTime(tIn, pos.value.length === 3 ? [cx + COMP_W * 0.25, cy, 0] : [cx + COMP_W * 0.25, cy]);
+        pos.setValueAtTime(t1, pos.value.length === 3 ? [cx, cy, 0] : [cx, cy]);
+        easeAllKeys(pos, EASE);
+      } else if (TRANSITION === "zoom") {
+        var scale = tg.property("ADBE Scale");
+        // brief over-zoom settling into the cover scale (prepended before grow keys)
+        scale.setValueAtTime(tIn, scaleVec(scale, s0 + PUNCH));
+        scale.setValueAtTime(t1, scaleVec(scale, s0));
+        easeAllKeys(scale, EASE);
+      } else if (TRANSITION === "whip" || TRANSITION === "slide") {
+        var op = tg.property("ADBE Opacity");
+        op.setValueAtTime(tIn, 0);
+        op.setValueAtTime(t1, 100);
+        easeAllKeys(op, EASE);
+      }
+      // "flash" and "none" add no per-layer intro (flash handled by adjustments).
+    }
+
+    // ---- flash adjustment per cut (founder's build_flash) ----
+    function addFlash(seg) {
+      var tIn = snap(seg["in"]);
+      var tOut = snap(seg["out"]);
+      if (tOut <= tIn) return;
+      var al = comp.layers.addSolid([1, 1, 1], "FLASH", COMP_W, COMP_H, 1.0);
+      al.adjustmentLayer = true;
+      al.startTime = tIn;
+      try { al.outPoint = tOut; } catch (e1) {}
+      try { al.inPoint = tIn; } catch (e2) {}
+      try { al.outPoint = tOut; } catch (e3) {}
+      var bc = al.property("ADBE Effect Parade").addProperty("ADBE Brightness & Contrast 2");
+      var br = bc.property("ADBE Brightness & Contrast 2-0001");
+      var ct = bc.property("ADBE Brightness & Contrast 2-0002");
+      var t1 = tIn + FLASH_IN_F * FD;
+      var t2 = tOut - FLASH_OUT_F * FD;
+      if (t1 >= t2) { var mid = (tIn + tOut) / 2; t1 = mid; t2 = mid; }
+      function keys(p) {
+        p.setValueAtTime(tIn, FLASH_AMOUNT);
+        p.setValueAtTime(t1, 0);
+        p.setValueAtTime(t2, 0);
+        p.setValueAtTime(tOut, FLASH_AMOUNT);
+        easeAllKeys(p, EASE);
+      }
+      keys(br); keys(ct);
+    }
+
+    // ---- global stylization grade (one adjustment over the whole comp) ----
+    function addStyleGrade() {
+      if (STYLE === "none") return;
+      var al = comp.layers.addSolid([1, 1, 1], "GRADE_" + STYLE, COMP_W, COMP_H, 1.0);
+      al.adjustmentLayer = true;
+      al.startTime = 0;
+      try { al.inPoint = 0; al.outPoint = totalDur; } catch (_) {}
+      var fx = al.property("ADBE Effect Parade");
+      // Hue/Saturation: reliable matchname, covers saturation + master hue.
+      var hs = fx.addProperty("ADBE HUE SATURATION");
+      var bc = fx.addProperty("ADBE Brightness & Contrast 2");
+      function setHS(masterHue, masterSat, masterLight) {
+        try { hs.property("ADBE HUE SATURATION-0002").setValue(masterHue); } catch (_) {}   // Master Hue
+        try { hs.property("ADBE HUE SATURATION-0003").setValue(masterSat); } catch (_) {}    // Master Saturation
+        try { hs.property("ADBE HUE SATURATION-0004").setValue(masterLight); } catch (_) {}  // Master Lightness
+      }
+      function setBC(bright, contrast) {
+        try { bc.property("ADBE Brightness & Contrast 2-0001").setValue(bright); } catch (_) {}
+        try { bc.property("ADBE Brightness & Contrast 2-0002").setValue(contrast); } catch (_) {}
+      }
+      if (STYLE === "bw") { setHS(0, -100, 0); setBC(0, 12); }
+      else if (STYLE === "warm") { setHS(10, 12, 0); setBC(4, 8); }
+      else if (STYLE === "cold") { setHS(-12, 6, 0); setBC(-2, 10); }
+      else if (STYLE === "vintage") { setHS(8, -25, 4); setBC(6, -6); }
+      else if (STYLE === "vhs") { setHS(-6, 18, 0); setBC(2, 16); }
+    }
+
+    // ====================================================================
+    // 5) BUILD (photos bottom, flash above, grade on top)
+    // ====================================================================
+    for (var i = 0; i < SEGMENTS.length; i++) { placePhoto(SEGMENTS[i]); }
+    if (TRANSITION === "flash") {
+      for (var j = 0; j < SEGMENTS.length; j++) { addFlash(SEGMENTS[j]); }
+    }
+    addStyleGrade();
+
+    // ====================================================================
+    // 6) SAVE + STATUS
+    // ====================================================================
+    var aepPath = String(__APP_DIR || "") + "/work/photo_project.aep";
+    try {
+      var workFld = new Folder(String(__APP_DIR || "") + "/work");
+      if (!workFld.exists) workFld.create();
+      project.save(new File(aepPath));
+    } catch (eSave) { logLine("WARN", "save failed: " + String(eSave)); }
+
+    __writeAeStatusOk(aepPath, COMP_NAME);
+    logLine("INFO", "photo render ready comp=" + COMP_NAME);
+  } catch (err) {
+    __writeAeStatusErr(err && err.message ? err.message : String(err));
+    logLine("ERROR", "photo template failed: " + String(err));
+    throw err;
+  } finally {
+    try { app.endSuppressDialogs(); } catch (_) {}
+    try { app.endUndoGroup(); } catch (_) {}
+  }
+})();

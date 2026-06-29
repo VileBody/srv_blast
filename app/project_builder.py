@@ -652,3 +652,64 @@ def build_full_project(
     out_jsx.write_text(jsx, encoding="utf-8")
 
     return out_json, out_jsx
+
+
+def build_photo_project(
+    *,
+    repo_root: Path,
+    photos: List[Dict[str, Any]],
+    out_dir: Path,
+    style: str = "none",
+    transition: str = "flash",
+    fps: Optional[float] = None,
+    segment_frames: Optional[int] = None,
+) -> Tuple[Path, Path]:
+    """Build the standalone 4:3 PHOTO render (photo_template.j2).
+
+    Parallel to build_full_project but for the photo flow: it does NOT touch the
+    footage template/comp. Emits photo_render.jsx + the payload JSON; the photo
+    layers carry remote source urls so render_manifest downloads them into
+    media/video/<file_name> on the node (same media contract as footage). The
+    render dispatch (tasks.py) points entry_comp at "Photo Render".
+
+    photos: [{file_name, remote_url}] in display order (the picker's photo pool).
+    """
+    from app.photo_comp import (
+        DEFAULT_SEGMENT_FRAMES,
+        PHOTO_COMP_H,
+        PHOTO_COMP_W,
+        build_photo_payload,
+    )
+    from core.video_timing import AE_FPS
+
+    repo_root = repo_root.resolve()
+    out_dir = out_dir.resolve()
+
+    payload = build_photo_payload(
+        photos,
+        style=style,
+        transition=transition,
+        fps=float(fps) if fps is not None else float(AE_FPS),
+        segment_frames=int(segment_frames) if segment_frames is not None else DEFAULT_SEGMENT_FRAMES,
+        comp_w=PHOTO_COMP_W,
+        comp_h=PHOTO_COMP_H,
+    )
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "logs").mkdir(parents=True, exist_ok=True)
+
+    out_json = out_dir / "final_photo_render_instructions.json"
+    out_jsx = out_dir / "photo_render.jsx"
+    out_json.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    env = Environment(loader=FileSystemLoader(str(repo_root / "templates")), autoescape=False)
+    env.filters["tojson"] = _tojson_filter
+    tpl = env.get_template("photo_template.j2")
+    jsx = tpl.render(photo_job=payload["photo_job"], footage_layers=payload["footage_layers"])
+    out_jsx.write_text(jsx, encoding="utf-8")
+
+    LOGGER.info(
+        "photo project built photos=%d style=%s transition=%s segs=%d",
+        len(payload["footage_layers"]), style, transition, len(payload["photo_job"]["segments"]),
+    )
+    return out_json, out_jsx
