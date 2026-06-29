@@ -1,0 +1,169 @@
+#!/usr/bin/env python3
+"""Generate data/photo_assets_index_1to1.json from the S3 PHOTO bucket prefix.
+
+Photo analogue of scripts/build_static_assets_index.py. Photos are the asset pool
+for the 4:3 photo flow (parallel to the footage flow). Differences vs the video
+indexer:
+  - scans image keys (.jpg/.png/...) under S3_PHOTO_PREFIX, not video keys
+  - probes width/height only (photos have no playback duration); a nominal
+    on-screen duration (PHOTO_DISPLAY_SEC, default 1.5s = the ~36-frame photo
+    segment at 23.976fps) is stamped so footage_config.build_inventory_and_bundle
+    consumes the index unchanged (it requires a positive duration_sec)
+
+Output shape matches the video index (file_name/genre/tag/src_w/src_h/
+duration_sec/dominant_color/palette_bins) so the shared inventory builder needs
+no special case beyond the index path + S3 prefix.
+
+Usage:
+  S3_BUCKET_ASSET_STORAGE=... S3_ACCESS_KEY_ID=... S3_SECRET_ACCESS_KEY=... \
+  S3_PHOTO_PREFIX=photo_collection/photos_4x3 \
+  python scripts/build_photo_assets_index.py [out_path]
+
+Default out_path: data/photo_assets_index_1to1.json
+"""
+from __future__ import annotations
+
+import concurrent.futures
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+# Reuse the pure key-parsing + color-merge helpers from the video indexer so the
+# folder→genre/tag convention stays identical across pools.
+from scripts.build_static_assets_index import load_existing_color_meta, parse_key  # noqa: E402
+
+_IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"}
+_DEFAULT_OUT = "data/photo_assets_index_1to1.json"
+
+
+def _photo_display_sec() -> float:
+    raw = (os.environ.get("PHOTO_DISPLAY_SEC") or "1.5").strip()
+    try:
+        v = float(raw)
+    except ValueError:
+        v = 1.5
+    return v if v > 0 else 1.5
+
+
+def parse_ffprobe_dims(raw: str) -> Optional[Tuple[int, int]]:
+    """(width, height) from ffprobe -of json output, or None. Duration ignored —
+    photos have none; the index stamps a nominal display duration instead."""
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return None
+    for s in data.get("streams") or []:
+        try:
+            w = int(s.get("width") or 0)
+            h = int(s.get("height") or 0)
+        except Exception:
+            w = h = 0
+        if w > 0 and h > 0:
+            return w, h
+    return None
+
+
+def _ffprobe_dims_url(url: str, *, ffprobe_bin: str = "ffprobe", timeout: float = 60.0) -> Optional[str]:
+    try:
+        proc = subprocess.run(
+            [ffprobe_bin, "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=width,height", "-of", "json", url],
+            capture_output=True, text=True, check=False, timeout=timeout,
+        )
+        return proc.stdout if proc.returncode == 0 else None
+    except Exception:
+        return None
+
+
+def main() -> int:
+    out_path = Path(sys.argv[1] if len(sys.argv) > 1 else _DEFAULT_OUT)
+    bucket = (os.environ.get("S3_BUCKET_ASSET_STORAGE") or "").strip()
+    prefix = (os.environ.get("S3_PHOTO_PREFIX") or "photo_collection").strip().strip("/")
+    if not bucket:
+        raise SystemExit("S3_BUCKET_ASSET_STORAGE not set")
+
+    from src.storage.s3 import generate_presigned_url, list_s3_objects
+
+    keys: List[str] = []
+    token = None
+    while True:
+        page = list_s3_objects(bucket, prefix=f"{prefix}/", continuation_token=token, max_keys=1000, delimiter="")
+        for obj in page.get("objects") or []:
+            k = str(obj.get("key") or "").strip().lstrip("/")
+            if k and not k.endswith("/") and Path(k).suffix.lower() in _IMAGE_EXTS:
+                keys.append(k)
+        token = page.get("next_continuation_token")
+        if not page.get("is_truncated") or not token:
+            break
+    print(f"[s3] bucket={bucket} prefix={prefix} photos={len(keys)}")
+
+    color_meta = load_existing_color_meta(out_path)
+    ffprobe_bin = os.environ.get("FFPROBE_BIN", "ffprobe")
+    display_sec = round(_photo_display_sec(), 3)
+
+    def _probe(key: str) -> Optional[Dict[str, Any]]:
+        parsed = parse_key(key, prefix)
+        if not parsed:
+            return None
+        file_name, genre, tag = parsed
+        try:
+            url = generate_presigned_url(bucket, key, expires_in=3600)
+        except Exception:
+            return None
+        dims = parse_ffprobe_dims(_ffprobe_dims_url(url, ffprobe_bin=ffprobe_bin) or "")
+        if not dims:
+            return None
+        w, h = dims
+        cm = color_meta.get(file_name, {})
+        return {
+            "file_name": file_name,
+            "genre": genre,
+            "tag": tag,
+            "src_w": w,
+            "src_h": h,
+            # Nominal on-screen duration so the shared inventory builder (which
+            # validates duration_sec > 0) consumes photo rows unchanged.
+            "duration_sec": display_sec,
+            "dominant_color": cm.get("dominant_color"),
+            "palette_bins": cm.get("palette_bins") or [],
+        }
+
+    assets: List[Dict[str, Any]] = []
+    failed: List[str] = []
+    max_workers = int(os.environ.get("INDEX_BUILD_WORKERS", "8") or "8")
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as ex:
+        futs = {ex.submit(_probe, k): k for k in keys}
+        done = 0
+        for fut in concurrent.futures.as_completed(futs):
+            done += 1
+            row = fut.result()
+            if row:
+                assets.append(row)
+            else:
+                failed.append(futs[fut])
+            if done % 100 == 0:
+                print(f"[probe] {done}/{len(keys)} ok={len(assets)} failed={len(failed)}")
+
+    assets.sort(key=lambda a: (str(a["genre"]).lower(), str(a["tag"]).lower(), str(a["file_name"])))
+    obj = {
+        "version": "photo-1to1-v1",
+        "media_type": "photo",
+        "source_root": f"s3://{bucket}/{prefix}",
+        "assets_count": len(assets),
+        "assets": assets,
+    }
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(obj, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"[done] wrote {len(assets)} photos -> {out_path}  (failed/skipped={len(failed)})")
+    if failed:
+        print("[warn] first failed keys:", failed[:10])
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

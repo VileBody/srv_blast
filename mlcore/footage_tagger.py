@@ -203,15 +203,20 @@ def _encode_image_b64(path: Path) -> str:
     return base64.b64encode(path.read_bytes()).decode("utf-8")
 
 
-def call_groq_vision(image_b64: str, *, api_key: str, model: str, timeout: float = 30.0) -> Optional[Dict[str, Any]]:
-    """Single Groq vision request -> parsed JSON dict (or None on failure)."""
+def call_groq_vision(
+    image_b64: str, *, api_key: str, model: str, timeout: float = 30.0, prompt: str = "",
+) -> Optional[Dict[str, Any]]:
+    """Single Groq vision request -> parsed JSON dict (or None on failure).
+
+    prompt defaults to the video-frame taxonomy prompt; the photo tagger passes
+    its own still-image prompt (same JSON schema)."""
     import requests  # local import: keep module import-light for unit tests
 
     payload = {
         "model": model,
         "response_format": {"type": "json_object"},
         "messages": [{"role": "user", "content": [
-            {"type": "text", "text": _PROMPT},
+            {"type": "text", "text": prompt or _PROMPT},
             {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}},
         ]}],
         "temperature": 0.1,

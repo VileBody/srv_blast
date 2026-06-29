@@ -38,11 +38,21 @@ CREATE TABLE IF NOT EXISTS footage_tags (
     people_type  TEXT      NOT NULL DEFAULT 'none',
     theme_tags   TEXT[]    NOT NULL DEFAULT '{}',
     tagger       TEXT      NOT NULL DEFAULT '',
+    source       TEXT      NOT NULL DEFAULT 'video',
     updated_at   TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
+-- Idempotent migration for tables created before the photo pool existed:
+-- pre-existing rows are video by definition, so the default keeps them correct.
+ALTER TABLE footage_tags ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'video';
+
 CREATE INDEX IF NOT EXISTS idx_footage_tags_updated ON footage_tags(updated_at);
+CREATE INDEX IF NOT EXISTS idx_footage_tags_source ON footage_tags(source);
 """
+
+# Asset pool sources. video = footage clips (default), photo = 4:3 photo flow.
+SOURCE_VIDEO = "video"
+SOURCE_PHOTO = "photo"
 
 
 # --------------------------------------------------------------------------- #
@@ -110,6 +120,53 @@ def build_tag_record(raw: Dict[str, Any], *, tagger: str = "") -> Optional[Dict[
         "people_type": _norm_people(raw.get("people_type")),
         "theme_tags": _dedup_tags(raw.get("theme_tags") or []),
         "tagger": str(tagger or ""),
+        "source": SOURCE_VIDEO,
+    }
+
+
+def photo_clip_id(value: Any) -> Optional[str]:
+    """Stable, namespaced id for a PHOTO from its file name / s3 key.
+
+    Photos carry no embedded 8+ digit clip id (the video identity scheme), so we
+    key them by their normalized file stem under a ``photo:`` namespace. The
+    prefix guarantees photo ids never collide with the pure-digit video clip_ids
+    that share the footage_tags primary key.
+    """
+    name = str(value or "").strip().lstrip("/").split("/")[-1]
+    stem = name.rsplit(".", 1)[0] if "." in name else name
+    stem = _norm(stem).replace(" ", "_")
+    return f"photo:{stem}" if stem else None
+
+
+def build_photo_tag_record(raw: Dict[str, Any], *, tagger: str = "") -> Optional[Dict[str, Any]]:
+    """Map one Groq-Vision photo result -> a footage_tags record (source=photo).
+
+    Mirrors build_tag_record but keys by photo_clip_id (no embedded clip id) and
+    stamps source='photo'. video_key is set to the file_name so the photo picker
+    matches snapshot rows to the photo inventory by name. Returns None when the
+    row has no keyable file_name / s3_key.
+    """
+    if not isinstance(raw, dict):
+        return None
+    file_name = str(raw.get("file_name") or "")
+    clip_id = (
+        photo_clip_id(file_name)
+        or photo_clip_id(raw.get("s3_key"))
+        or photo_clip_id(raw.get("video_key"))
+    )
+    if not clip_id:
+        return None
+    return {
+        "clip_id": clip_id,
+        "file_name": file_name,
+        "s3_key": str(raw.get("s3_key") or ""),
+        "video_key": file_name,
+        "mood": _norm_mood(raw.get("mood")),
+        "color_tone": _norm_color(raw.get("color_tone")),
+        "people_type": _norm_people(raw.get("people_type")),
+        "theme_tags": _dedup_tags(raw.get("theme_tags") or []),
+        "tagger": str(tagger or ""),
+        "source": SOURCE_PHOTO,
     }
 
 
@@ -190,6 +247,7 @@ async def upsert_records(conn: Any, records: List[Dict[str, Any]]) -> int:
             r.get("people_type", "none"),
             list(r.get("theme_tags") or []),
             r.get("tagger", ""),
+            r.get("source", SOURCE_VIDEO) or SOURCE_VIDEO,
         )
         for r in records
         if r.get("clip_id")
@@ -198,8 +256,8 @@ async def upsert_records(conn: Any, records: List[Dict[str, Any]]) -> int:
         """
         INSERT INTO footage_tags
             (clip_id, file_name, s3_key, video_key, mood, color_tone,
-             people_type, theme_tags, tagger, updated_at)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9, NOW())
+             people_type, theme_tags, tagger, source, updated_at)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, NOW())
         ON CONFLICT (clip_id) DO UPDATE SET
             file_name   = EXCLUDED.file_name,
             s3_key      = EXCLUDED.s3_key,
@@ -209,6 +267,7 @@ async def upsert_records(conn: Any, records: List[Dict[str, Any]]) -> int:
             people_type = EXCLUDED.people_type,
             theme_tags  = EXCLUDED.theme_tags,
             tagger      = EXCLUDED.tagger,
+            source      = EXCLUDED.source,
             updated_at  = NOW()
         """,
         rows,
@@ -216,22 +275,35 @@ async def upsert_records(conn: Any, records: List[Dict[str, Any]]) -> int:
     return len(rows)
 
 
-async def fetch_all_records(conn: Any) -> List[Dict[str, Any]]:
-    recs = await conn.fetch(
-        "SELECT clip_id, file_name, s3_key, video_key, mood, color_tone, "
-        "people_type, theme_tags FROM footage_tags"
-    )
+async def fetch_all_records(conn: Any, *, source: Optional[str] = None) -> List[Dict[str, Any]]:
+    """All tag rows. source=None → every pool; source='video'|'photo' → one pool."""
+    cols = ("clip_id, file_name, s3_key, video_key, mood, color_tone, "
+            "people_type, theme_tags, source")
+    if source:
+        recs = await conn.fetch(f"SELECT {cols} FROM footage_tags WHERE source = $1", source)
+    else:
+        recs = await conn.fetch(f"SELECT {cols} FROM footage_tags")
     return [dict(r) for r in recs]
 
 
-async def fetch_tagged_clip_ids(conn: Any) -> set:
-    recs = await conn.fetch("SELECT clip_id FROM footage_tags WHERE array_length(theme_tags, 1) > 0")
+async def fetch_tagged_clip_ids(conn: Any, *, source: Optional[str] = None) -> set:
+    """clip_ids that already have tags, optionally scoped to one pool."""
+    if source:
+        recs = await conn.fetch(
+            "SELECT clip_id FROM footage_tags "
+            "WHERE array_length(theme_tags, 1) > 0 AND source = $1",
+            source,
+        )
+    else:
+        recs = await conn.fetch(
+            "SELECT clip_id FROM footage_tags WHERE array_length(theme_tags, 1) > 0"
+        )
     return {str(r["clip_id"]) for r in recs}
 
 
-async def build_snapshot(conn: Any) -> List[Dict[str, Any]]:
+async def build_snapshot(conn: Any, *, source: Optional[str] = None) -> List[Dict[str, Any]]:
     """All footage_tags rows in the legacy video_database shape the picker reads."""
-    recs = await fetch_all_records(conn)
+    recs = await fetch_all_records(conn, source=source)
     return [snapshot_row_from_record(r) for r in recs]
 
 
