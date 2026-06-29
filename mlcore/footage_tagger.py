@@ -308,6 +308,17 @@ def run_tagging_batch(
 
     keys = groq_api_keys()
     model = groq_model()
+    # Diagnostic: which keys did this worker actually load, and from where.
+    # If suffixes don't match the freshly-committed fallback keys, the worker is
+    # using env GROQ_API_KEYS (override) or a stale image — not the fallback file.
+    log.warning(
+        "tagging start: keys=%d env_GROQ_API_KEYS=%s env_GROQ_API_KEY=%s suffixes=%s model=%s",
+        len(keys),
+        bool((os.environ.get("GROQ_API_KEYS") or "").strip()),
+        bool((os.environ.get("GROQ_API_KEY") or "").strip()),
+        [k[-4:] for k in keys],
+        model,
+    )
 
     if list_keys_fn is None:
         def list_keys_fn() -> List[str]:
