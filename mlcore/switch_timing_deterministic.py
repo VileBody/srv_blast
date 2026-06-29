@@ -39,7 +39,8 @@ class SwitchTimingParams:
     drop_gap_beats: float = 1.0           # target spacing in the drop window (beats)
     drop_gap_floor_sec: float = 0.9       # but never tighter than this (user: 0.8-1.0)
     default_gap_beats: float = 2.0        # target spacing elsewhere (beats)
-    default_gap_floor_sec: float = 1.4    # calmer floor outside the drop
+    default_gap_floor_sec: float = 1.6    # calmer floor outside the drop (~1.8-2.0s effective)
+    max_hold_sec: float = 3.5             # never hold one shot longer than this
     beat_snap_tol_sec: float = 0.08       # snap a chosen cut to a beat within this
     # Anchor priority: kick (true sub-bass accent) → body (bass / low — adds
     # density when kicks are sparse) → snare. A "kick" labelled at low
@@ -118,8 +119,16 @@ def generate_switch_points(
 
     drop = float(drop_t) if drop_t is not None else None
 
+    def _in_drop(t: float) -> bool:
+        return drop is not None and drop <= t < drop + p.drop_window_sec
+
+    def floor_at(t: float) -> float:
+        # the hard minimum gap for this window (never go below it, even when
+        # snapping or allowing a little back-tolerance toward a strong kick)
+        return p.drop_gap_floor_sec if _in_drop(t) else p.default_gap_floor_sec
+
     def gap_at(t: float) -> float:
-        if drop is not None and drop <= t < drop + p.drop_window_sec:
+        if _in_drop(t):
             return max(p.drop_gap_beats * beat_sec, p.drop_gap_floor_sec)
         return max(p.default_gap_beats * beat_sec, p.default_gap_floor_sec)
 
@@ -136,10 +145,13 @@ def generate_switch_points(
     while last < clip_end and guard < 100000:
         guard += 1
         g = gap_at(last)
+        fl = floor_at(last)
         target = last + g
         if target >= clip_end:
             break
-        lo = target - p.search_back_frac * g
+        # back-tolerance toward a strong kick, but NEVER below the window floor
+        # (drop must stay >= ~0.8-1.0s, not slip to 0.6-0.7s).
+        lo = max(target - p.search_back_frac * g, last + fl)
         hi = target + p.search_fwd_frac * g
 
         pick = None
@@ -150,8 +162,17 @@ def generate_switch_points(
                 src = typ
                 break
         if pick is None:
-            # Don't invent a cut: jump to the next real low (kick/body) after the
-            # target — a longer hold beats a synthetic, off-music cut.
+            # No low/snare near the target. Don't hold static longer than
+            # max_hold: place a cut on the nearest BEAT inside
+            # [last+floor, last+max_hold] (on-tempo, not an invented off-beat
+            # cut). Beats are ~every 60/bpm, so this caps holds without mush.
+            pick = _nearest_in_window(
+                beats_in, target, last + fl, last + p.max_hold_sec
+            )
+            src = "beat"
+        if pick is None:
+            # No beats either (degenerate) — jump to the next real low rather
+            # than invent a time.
             nxt = next((t for t in lows if t > target), None)
             if nxt is None or nxt >= clip_end:
                 break

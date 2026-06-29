@@ -3699,80 +3699,115 @@ def build_all_via_gemini_one_call(
     timing_analysis_payload: Stage2TimingAnalysisPayload | None = None
     timing_cuts_payload: Stage2TimingCutsPayload | None = None
     if switch_payload is None:
-        timing_analysis_prompt = build_stage2_timing_analysis_user_prompt(
-            stage1_json=stage1_timing_json,
-            subtitles_json=subtitles_payload.model_dump(mode="json"),
-            bpm=bpm,
-            fast_start_seconds=float(fast_start_seconds),
-            timing_mode=timing_mode,
-            schema_name="Stage2TimingAnalysisPayload",
-            hook_analysis=hook_analysis_dict,
-        )
-
-        timing_analysis_payload = _run_stage_with_model_validation_retries(
-            stage_name="stage2_timing_analysis",
-            logger=logger,
-            fn=lambda: call_timing_analysis_once(
-                client=client_timing,
-                openrouter_client=openrouter_timing,
-                provider_mode=provider_mode,
-                hedge_delay_s=hedge_delay_s,
-                logger=logger,
-                system_instruction=timing_analysis_system,
-                user_prompt=timing_analysis_prompt,
-                audio_paths=[],
-                raw_response_path=timing_analysis_raw,
-                cache_path=cache_path,
-                prompt_dump_path=timing_analysis_user,
-                system_dump_path=timing_analysis_sys,
-            ),
-        )
-
-        timing_cuts_prompt = build_stage2_timing_cuts_user_prompt(
-            stage1_json=stage1_timing_json,
-            timing_analysis_json=timing_analysis_payload.model_dump(mode="json"),
-            bpm=bpm,
-            fast_start_seconds=float(fast_start_seconds),
-            timing_mode=timing_mode,
-            schema_name="Stage2TimingCutsPayload",
-            hook_analysis=hook_analysis_dict,
-        )
-
-        timing_cuts_payload = _run_stage_with_model_validation_retries(
-            stage_name="stage2_timing_cuts",
-            logger=logger,
-            fn=lambda: call_timing_cuts_once(
-                client=client_timing,
-                openrouter_client=openrouter_timing,
-                provider_mode=provider_mode,
-                hedge_delay_s=hedge_delay_s,
-                logger=logger,
-                system_instruction=timing_cuts_system,
-                user_prompt=timing_cuts_prompt,
-                audio_paths=[],
-                raw_response_path=timing_cuts_raw,
-                cache_path=cache_path,
-                prompt_dump_path=timing_cuts_user,
-                system_dump_path=timing_cuts_sys,
-            ),
-        )
-        if timing_cuts_payload.applied_rule != timing_analysis_payload.selected_rule:
-            raise RuntimeError(
-                "stage2_timing_cuts.applied_rule must match stage2_timing_analysis.selected_rule "
-                f"({timing_cuts_payload.applied_rule!r} != {timing_analysis_payload.selected_rule!r})"
+        # hook_aware: generate footage cut timings DETERMINISTICALLY from the
+        # measured onsets (kick-driven, rhythm-locked) — no Stage2 timing LLM
+        # call. See mlcore.switch_timing_deterministic. Other timing modes keep
+        # the legacy 2-call LLM path below.
+        use_deterministic = (timing_mode == "hook_aware" and hook_analysis is not None)
+        if use_deterministic:
+            from mlcore.switch_timing_deterministic import generate_switch_points
+            _onsets = [
+                (float(o.t), str(o.type), float(o.confidence))
+                for o in hook_analysis.onsets_classified
+            ]
+            _drop_t = (
+                float(hook_analysis.drop_candidates[0].t)
+                if hook_analysis.drop_candidates else None
+            )
+            _det = generate_switch_points(
+                onsets_classified=_onsets,
+                beats=[float(b) for b in hook_analysis.beats],
+                bpm=float(bpm) if bpm else 0.0,
+                drop_t=_drop_t,
+                clip_start=clip_start_abs,
+                clip_end=clip_end_abs,
+            )
+            switch_points = normalize_switch_points(
+                raw_cut_timings=list(_det.switch_points_abs),
+                clip_start_abs=clip_start_abs,
+                clip_end_abs=clip_end_abs,
+                merge_gap_sec=0.2,
+                min_segment_sec=0.3,
+                compact_short_segments=True,
+            )
+            logger.info(
+                "stage2_deterministic_cuts cuts=%d bpm=%.1f drop=%s",
+                len(switch_points), float(_det.bpm),
+                (f"{_drop_t:.3f}" if _drop_t is not None else "none"),
+            )
+        else:
+            timing_analysis_prompt = build_stage2_timing_analysis_user_prompt(
+                stage1_json=stage1_timing_json,
+                subtitles_json=subtitles_payload.model_dump(mode="json"),
+                bpm=bpm,
+                fast_start_seconds=float(fast_start_seconds),
+                timing_mode=timing_mode,
+                schema_name="Stage2TimingAnalysisPayload",
+                hook_analysis=hook_analysis_dict,
             )
 
-        switch_points = normalize_switch_points(
-            raw_cut_timings=list(timing_cuts_payload.final_cut_timings),
-            clip_start_abs=clip_start_abs,
-            clip_end_abs=clip_end_abs,
-            merge_gap_sec=0.2,
-            min_segment_sec=0.3,
-            compact_short_segments=True,
-        )
-        # hook_aware mode does NOT need fast-start beat synthesis: the LLM
-        # already receives full beats[]/onsets[]/sections[] in its prompt and
-        # is expected to place cuts on real measured anchors.
+            timing_analysis_payload = _run_stage_with_model_validation_retries(
+                stage_name="stage2_timing_analysis",
+                logger=logger,
+                fn=lambda: call_timing_analysis_once(
+                    client=client_timing,
+                    openrouter_client=openrouter_timing,
+                    provider_mode=provider_mode,
+                    hedge_delay_s=hedge_delay_s,
+                    logger=logger,
+                    system_instruction=timing_analysis_system,
+                    user_prompt=timing_analysis_prompt,
+                    audio_paths=[],
+                    raw_response_path=timing_analysis_raw,
+                    cache_path=cache_path,
+                    prompt_dump_path=timing_analysis_user,
+                    system_dump_path=timing_analysis_sys,
+                ),
+            )
+
+            timing_cuts_prompt = build_stage2_timing_cuts_user_prompt(
+                stage1_json=stage1_timing_json,
+                timing_analysis_json=timing_analysis_payload.model_dump(mode="json"),
+                bpm=bpm,
+                fast_start_seconds=float(fast_start_seconds),
+                timing_mode=timing_mode,
+                schema_name="Stage2TimingCutsPayload",
+                hook_analysis=hook_analysis_dict,
+            )
+
+            timing_cuts_payload = _run_stage_with_model_validation_retries(
+                stage_name="stage2_timing_cuts",
+                logger=logger,
+                fn=lambda: call_timing_cuts_once(
+                    client=client_timing,
+                    openrouter_client=openrouter_timing,
+                    provider_mode=provider_mode,
+                    hedge_delay_s=hedge_delay_s,
+                    logger=logger,
+                    system_instruction=timing_cuts_system,
+                    user_prompt=timing_cuts_prompt,
+                    audio_paths=[],
+                    raw_response_path=timing_cuts_raw,
+                    cache_path=cache_path,
+                    prompt_dump_path=timing_cuts_user,
+                    system_dump_path=timing_cuts_sys,
+                ),
+            )
+            if timing_cuts_payload.applied_rule != timing_analysis_payload.selected_rule:
+                raise RuntimeError(
+                    "stage2_timing_cuts.applied_rule must match stage2_timing_analysis.selected_rule "
+                    f"({timing_cuts_payload.applied_rule!r} != {timing_analysis_payload.selected_rule!r})"
+                )
+
+            switch_points = normalize_switch_points(
+                raw_cut_timings=list(timing_cuts_payload.final_cut_timings),
+                clip_start_abs=clip_start_abs,
+                clip_end_abs=clip_end_abs,
+                merge_gap_sec=0.2,
+                min_segment_sec=0.3,
+                compact_short_segments=True,
+            )
+        # hook_aware/deterministic mode does NOT need fast-start beat synthesis.
         if timing_mode == "hybrid":
             if bpm is None:
                 raise RuntimeError("Hybrid timing mode requires librosa BPM before fast-start beat synthesis")

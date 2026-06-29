@@ -45,37 +45,63 @@ def test_drop_window_is_denser_but_floored():
     assert min(drop_gaps) <= 1.05         # but it IS denser than default
 
 
+# Logic tests use an explicit small-gap params object so they assert the
+# priority/fallback rules independent of the production tuning constants.
+_LOGIC = SwitchTimingParams(
+    default_gap_beats=0.0, default_gap_floor_sec=0.5,
+    drop_gap_beats=0.0, drop_gap_floor_sec=0.5,
+    beat_snap_tol_sec=0.0, search_back_frac=0.4, search_fwd_frac=0.8,
+)
+
+
 def test_kick_beats_snare():
     """When a kick and a snare are both near the target, the kick wins."""
-    # kick at 1.4 (right at the default target), snare at 1.5
-    onsets = [(1.4, "kick", 0.3), (1.5, "snare", 0.9)]
+    onsets = [(0.6, "kick", 0.3), (0.65, "snare", 0.9)]
     r = generate_switch_points(
         onsets_classified=onsets, beats=[], bpm=120.0,
-        drop_t=None, clip_start=0.0, clip_end=4.0,
+        drop_t=None, clip_start=0.0, clip_end=4.0, params=_LOGIC,
     )
-    assert r.switch_points_abs == [1.4]
+    assert r.switch_points_abs == [0.6]
     assert r.sources[0] == "kick"
 
 
 def test_snare_fallback_when_no_kick():
-    onsets = [(1.5, "snare", 0.9), (3.0, "snare", 0.9)]
+    onsets = [(0.6, "snare", 0.9), (1.2, "snare", 0.9)]
     r = generate_switch_points(
         onsets_classified=onsets, beats=[], bpm=120.0,
-        drop_t=None, clip_start=0.0, clip_end=4.0,
+        drop_t=None, clip_start=0.0, clip_end=4.0, params=_LOGIC,
     )
     assert r.switch_points_abs and r.sources[0] == "snare"
 
 
 def test_does_not_invent_cuts_when_lows_sparse():
-    """A long stretch with no low onsets yields a long hold, not a synthetic
-    cut (user rule: 'не выдумывать')."""
-    onsets = [(1.5, "kick", 0.4), (12.0, "kick", 0.4)]
+    """A long stretch with no low onsets (and no beats to fall back on) yields a
+    long hold, not a synthetic cut (user rule: 'не выдумывать')."""
+    onsets = [(0.6, "kick", 0.4), (12.0, "kick", 0.4)]
     r = generate_switch_points(
         onsets_classified=onsets, beats=[], bpm=120.0,
-        drop_t=None, clip_start=0.0, clip_end=14.0,
+        drop_t=None, clip_start=0.0, clip_end=14.0, params=_LOGIC,
     )
-    # only the two real kicks become cuts — nothing invented in the 1.5..12 gap
-    assert r.switch_points_abs == [1.5, 12.0]
+    # only the two real kicks become cuts — nothing invented in the 0.6..12 gap
+    assert r.switch_points_abs == [0.6, 12.0]
+
+
+def test_beat_fill_caps_long_holds():
+    """With beats available, a stretch without lows is filled on-beat instead of
+    holding past max_hold_sec (user rule #2)."""
+    onsets = [(0.6, "kick", 0.4), (12.0, "kick", 0.4)]
+    beats = [round(0.5 * i, 3) for i in range(28)]  # a beat every 0.5s
+    p = SwitchTimingParams(
+        default_gap_beats=0.0, default_gap_floor_sec=1.0,
+        drop_gap_floor_sec=1.0, max_hold_sec=3.5, beat_snap_tol_sec=0.0,
+    )
+    r = generate_switch_points(
+        onsets_classified=onsets, beats=beats, bpm=120.0,
+        drop_t=None, clip_start=0.0, clip_end=14.0, params=p,
+    )
+    gaps = _gaps(r.switch_points_abs)
+    assert max(gaps) <= 3.5 + 1e-6  # no static hold longer than max_hold
+    assert "beat" in r.sources       # the gap was bridged on-beat
 
 
 def test_hard_floor_respected():
