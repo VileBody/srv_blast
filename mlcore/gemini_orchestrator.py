@@ -2071,6 +2071,15 @@ def build_all_via_gemini_one_call(
       - stage2: subtitles + style + timing + interval footage picking
       - stage3: merge -> FullPlanPayload -> render_all_steps
     """
+    # Photo flow (bg_mode=photo): route the media-agnostic footage picker to the
+    # PHOTO pool (same buckets/ranking) by pointing its inventory + tags snapshot
+    # at the photo paths before stage2 runs. Footage jobs are untouched.
+    if (os.environ.get("BG_MODE") or "").strip().lower() == "photo":
+        _photo_inv = (os.environ.get("PHOTO_INVENTORY_JSON") or "data/photo_inventory.json").strip()
+        _photo_snap = (os.environ.get("PHOTO_TAGS_SNAPSHOT_JSON") or "data/photo_tags_snapshot.json").strip()
+        os.environ["FOOTAGE_INVENTORY_JSON"] = _photo_inv
+        os.environ["FOOTAGE_STYLE_METADATA_DB_PATHS_JSON"] = json.dumps([_photo_snap])
+
     gemini_api_key = os.environ.get("GEMINI_API_KEY", "").strip()
     gemini_asr_key = os.environ.get("GEMINI_ASR_KEY", "").strip()
     vertex_ai_api_key = os.environ.get("VERTEX_AI_API_KEY_V1", "").strip()

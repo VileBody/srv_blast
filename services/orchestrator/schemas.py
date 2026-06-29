@@ -141,9 +141,24 @@ class SendAudioS3Request(BaseModel):
     # composition replaces the footage stack with a single solid color layer.
     # Stage 2 footage planning still runs (its picks are simply ignored at
     # composition time), so footage_artist_id must still be a valid id.
-    bg_mode: Literal["footage", "solid", "solid_strobe"] = "footage"
+    # "photo" switches to the standalone 4:3 photo flow: the picker selects from
+    # the PHOTO pool (same buckets/ranking, media_type=photo) and the render uses
+    # the photo template (cover-fit 1920×1440 + style + transition) instead of the
+    # footage stack. Gated behind PHOTO_FLOW_ENABLED in the bot.
+    bg_mode: Literal["footage", "solid", "solid_strobe", "photo"] = "footage"
     # Solid color key when bg_mode == "solid": "white" or "green".
     bg_solid_color: str = ""
+    # Photo flow (bg_mode == "photo") selections — two F3-style steps:
+    #   photo_style      = stylization grade/look applied over the whole render
+    #   photo_transition = transition between photos
+    # Propagated to the build env as PHOTO_STYLE / PHOTO_TRANSITION. Ignored when
+    # bg_mode != "photo".
+    photo_style: Optional[
+        Literal["none", "warm", "cold", "vintage", "bw", "vhs"]
+    ] = None
+    photo_transition: Optional[
+        Literal["flash", "none", "slide", "zoom", "whip"]
+    ] = None
     # Internal routing pinning metadata.
     # Public callers should not set these fields directly.
     origin_node: Optional[str] = None

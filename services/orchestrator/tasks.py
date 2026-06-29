@@ -113,6 +113,11 @@ _LLM_ENV_KEYS = (
     "SUBTITLES_FORCE_FILL_HEX",
     "F2_SHAPE_COLOR_HEX",
     "SUBTITLES_FOCUS_HEX",
+    # photo flow (bg_mode == "photo")
+    "PHOTO_STYLE",
+    "PHOTO_TRANSITION",
+    "PHOTO_INVENTORY_JSON",
+    "PHOTO_TAGS_SNAPSHOT_JSON",
 )
 
 
@@ -1700,7 +1705,7 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
         env["FOOTAGE_ARTIST_ID"] = footage_artist_id
 
     bg_mode = str(req.get("bg_mode") or "footage").strip().lower() or "footage"
-    if bg_mode not in {"footage", "solid", "solid_strobe"}:
+    if bg_mode not in {"footage", "solid", "solid_strobe", "photo"}:
         raise RuntimeError(f"invalid bg_mode={bg_mode!r}")
     bg_solid_color_key = str(req.get("bg_solid_color") or "").strip().lower()
     bg_solid_hex_by_key = {"white": "#FFFFFF", "black": "#000000", "green": "#00FF00"}
@@ -1721,6 +1726,33 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
         # so force white fill (custom subtitle color is ignored in this mode).
         env["BG_MODE"] = "solid_strobe"
         env["SUBTITLES_FORCE_FILL_HEX"] = "#FFFFFF"
+    elif bg_mode == "photo":
+        # Photo flow (4:3). The picker is media-agnostic, so we just point it at
+        # the PHOTO pool (same buckets/ranking) and switch the build to the photo
+        # template. Hard-validate the two F3-style selections (No Fallback Policy).
+        env["BG_MODE"] = "photo"
+        photo_style = str(req.get("photo_style") or "none").strip().lower() or "none"
+        photo_transition = str(req.get("photo_transition") or "flash").strip().lower() or "flash"
+        _photo_styles = {"none", "warm", "cold", "vintage", "bw", "vhs"}
+        _photo_transitions = {"flash", "none", "slide", "zoom", "whip"}
+        if photo_style not in _photo_styles:
+            raise RuntimeError(f"bg_mode=photo: invalid photo_style={photo_style!r}")
+        if photo_transition not in _photo_transitions:
+            raise RuntimeError(f"bg_mode=photo: invalid photo_transition={photo_transition!r}")
+        env["PHOTO_STYLE"] = photo_style
+        env["PHOTO_TRANSITION"] = photo_transition
+        # Photo pool paths (defaults; overridable per-deploy). We DON'T override
+        # FOOTAGE_INVENTORY_JSON / FOOTAGE_STYLE_METADATA_DB_PATHS_JSON here: the
+        # in-process env bridge only pushes _LLM_ENV_KEYS and POPS the rest, which
+        # would strip the footage pool on normal jobs. Instead the build step
+        # (run.py) reads BG_MODE=photo + these PHOTO_* paths and routes the picker
+        # to the photo pool itself.
+        env["PHOTO_INVENTORY_JSON"] = str(
+            os.environ.get("PHOTO_INVENTORY_JSON") or "data/photo_inventory.json"
+        ).strip()
+        env["PHOTO_TAGS_SNAPSHOT_JSON"] = str(
+            os.environ.get("PHOTO_TAGS_SNAPSHOT_JSON") or "data/photo_tags_snapshot.json"
+        ).strip()
     else:
         env["BG_MODE"] = "footage"
 
@@ -2692,12 +2724,22 @@ def dispatch_to_windows(self, job_id: str) -> Dict[str, Any]:
 
     output_bucket = (os.environ.get("S3_BUCKET_OUTPUT_VIDEO") or "").strip()
 
+    # entry_comp: the footage build renders "Main Render"; the photo build
+    # (bg_mode=photo) writes its own payload carrying entry_comp="Photo Render".
+    # Read it from the render payload so the node renders the right comp.
+    entry_comp = "Main Render"
+    try:
+        _rp = json.loads(paths.render_payload.read_text(encoding="utf-8"))
+        entry_comp = str(_rp.get("entry_comp") or "Main Render")
+    except Exception:
+        entry_comp = "Main Render"
+
     win_payload = build_windows_job_payload(
         job_id=job_id,
         render_jsx_path=paths.render_jsx,
         render_payload_path=paths.render_payload,
         audio_url=audio_url,
-        entry_comp="Main Render",
+        entry_comp=entry_comp,
         output_relpath="work/output.mp4",
         output_s3_bucket=output_bucket,
         output_s3_key=f"renders/{job_id}/output.mp4",

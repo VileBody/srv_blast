@@ -96,6 +96,46 @@ def build_photo_segments(
     return out
 
 
+def extract_photos_and_segments_from_footage_cfg(
+    footage_cfg: Dict[str, Any],
+) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """From a stage2 footage_config (picker output for the photo pool) derive:
+      - photos:   unique [{file_name, remote_url}] for the render manifest
+      - segments: [{in, out, file_name}] from each footage layer's interval
+
+    Reusing stage2's interval timing keeps the photo render aligned to the track
+    (instead of fixed-length slots). Only type=='footage' layers are photos; the
+    audio_only layer and overlays are ignored.
+    """
+    layers = footage_cfg.get("layers") if isinstance(footage_cfg, dict) else None
+    if not isinstance(layers, list):
+        raise RuntimeError("footage_config has no layers[] for photo extraction")
+    photos: List[Dict[str, Any]] = []
+    segments: List[Dict[str, Any]] = []
+    seen: set = set()
+    for it in layers:
+        if not isinstance(it, dict) or str(it.get("type")) != "footage":
+            continue
+        fn = str(it.get("file_name") or "").strip()
+        remote = str(it.get("file_path") or it.get("remote_url") or "").strip()
+        if not fn:
+            continue
+        try:
+            t_in = float(it["in_point"])
+            t_out = float(it["out_point"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if t_out <= t_in:
+            continue
+        segments.append({"in": round(t_in, 6), "out": round(t_out, 6), "file_name": fn})
+        if fn not in seen:
+            seen.add(fn)
+            photos.append({"file_name": fn, "remote_url": remote})
+    if not segments:
+        raise RuntimeError("no usable photo layers in footage_config (need type=footage with in/out)")
+    return photos, segments
+
+
 def build_photo_payload(
     photos: List[Dict[str, Any]],
     *,
@@ -106,12 +146,15 @@ def build_photo_payload(
     comp_w: int = PHOTO_COMP_W,
     comp_h: int = PHOTO_COMP_H,
     anim: Optional[Dict[str, Any]] = None,
+    segments: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """Build the full photo render payload (footage_layers + photo_job).
 
     photos: [{file_name, remote_url}] in display order (the picker's photo pool).
-    Raises on empty input or invalid style/transition so the operator sees a hard
-    fail (No Fallback Policy) rather than a silent empty render.
+    segments: optional explicit [{in,out,file_name}] (e.g. from stage2 timing);
+    when omitted, sequential fixed-length slots are generated. Raises on empty
+    input or invalid style/transition (No Fallback Policy) rather than rendering
+    silently empty.
     """
     if not photos:
         raise RuntimeError("build_photo_payload: no photos provided")
@@ -122,7 +165,15 @@ def build_photo_payload(
     if transition not in PHOTO_TRANSITIONS:
         raise RuntimeError(f"unknown photo transition {transition!r} (allowed: {PHOTO_TRANSITIONS})")
 
-    segments = build_photo_segments(photos, fps=fps, segment_frames=segment_frames)
+    if segments is not None:
+        if not segments:
+            raise RuntimeError("build_photo_payload: explicit segments are empty")
+        segments = [
+            {"in": float(s["in"]), "out": float(s["out"]), "file_name": str(s["file_name"])}
+            for s in segments
+        ]
+    else:
+        segments = build_photo_segments(photos, fps=fps, segment_frames=segment_frames)
 
     footage_layers: List[Dict[str, Any]] = []
     seen: set = set()
@@ -150,6 +201,9 @@ def build_photo_payload(
 
     return {
         "project": {"mainCompName": "Photo Render", "mediaType": "photo"},
+        # entry_comp is read by the render dispatch (render_manifest) so the node
+        # renders the photo comp instead of the footage "Main Render".
+        "entry_comp": "Photo Render",
         "photo_job": photo_job,
         "footage_layers": footage_layers,
         "text_layers": [],

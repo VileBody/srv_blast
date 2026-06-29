@@ -78,6 +78,71 @@ def test_render_manifest_collects_photos_into_media_video(tmp_path: Path) -> Non
     assert rels == {"media/video/a.jpg", "media/video/b.jpg", "media/video/c.jpg"}
 
 
+_FOOTAGE_CFG = {
+    "layers": [
+        {"type": "audio_only", "file_name": "audio_source.mp3", "in_point": 0.0, "out_point": 10.0},
+        {"type": "footage", "file_name": "a.jpg", "file_path": "s3://b/photo/a.jpg", "in_point": 0.0, "out_point": 1.5},
+        {"type": "footage", "file_name": "b.jpg", "file_path": "s3://b/photo/b.jpg", "in_point": 1.5, "out_point": 3.2},
+        {"type": "overlay", "file_name": "ov.mp4", "file_path": "s3://b/ov.mp4", "in_point": 0.0, "out_point": 3.0},
+        {"type": "footage", "file_name": "a.jpg", "file_path": "s3://b/photo/a.jpg", "in_point": 3.2, "out_point": 4.7},
+    ]
+}
+
+
+def test_extract_photos_and_segments_from_footage_cfg() -> None:
+    from app.photo_comp import extract_photos_and_segments_from_footage_cfg
+
+    photos, segments = extract_photos_and_segments_from_footage_cfg(_FOOTAGE_CFG)
+    # only type=footage layers; audio_only + overlay ignored
+    assert [s["file_name"] for s in segments] == ["a.jpg", "b.jpg", "a.jpg"]
+    assert segments[1]["in"] == 1.5 and segments[1]["out"] == 3.2
+    # photos deduped, remote from file_path
+    assert [p["file_name"] for p in photos] == ["a.jpg", "b.jpg"]
+    assert photos[0]["remote_url"] == "s3://b/photo/a.jpg"
+
+
+def test_extract_raises_without_footage_layers() -> None:
+    with pytest.raises(RuntimeError):
+        from app.photo_comp import extract_photos_and_segments_from_footage_cfg
+
+        extract_photos_and_segments_from_footage_cfg({"layers": [{"type": "audio_only", "file_name": "a"}]})
+
+
+def test_payload_uses_explicit_segments_from_stage2() -> None:
+    photos, segments = (
+        [{"file_name": "a.jpg", "remote_url": "s3://b/a.jpg"}, {"file_name": "b.jpg", "remote_url": "s3://b/b.jpg"}],
+        [{"in": 0.0, "out": 1.5, "file_name": "a.jpg"}, {"in": 1.5, "out": 3.2, "file_name": "b.jpg"}],
+    )
+    pl = build_photo_payload(photos, style="cold", transition="slide", segments=segments)
+    # explicit (stage2-aligned) timing is kept verbatim, not regenerated
+    assert pl["photo_job"]["segments"] == segments
+    assert pl["entry_comp"] == "Photo Render"
+
+
+def test_schema_accepts_photo_bg_and_selections() -> None:
+    from services.orchestrator.schemas import SendAudioS3Request
+
+    req = SendAudioS3Request(
+        audio_s3_url="https://x/a.mp3",
+        bg_mode="photo",
+        photo_style="vintage",
+        photo_transition="zoom",
+    )
+    assert req.bg_mode == "photo"
+    assert req.photo_style == "vintage" and req.photo_transition == "zoom"
+
+
+def test_schema_rejects_bad_photo_selections() -> None:
+    from pydantic import ValidationError
+
+    from services.orchestrator.schemas import SendAudioS3Request
+
+    with pytest.raises(ValidationError):
+        SendAudioS3Request(audio_s3_url="https://x/a.mp3", bg_mode="photo", photo_style="neon")
+    with pytest.raises(ValidationError):
+        SendAudioS3Request(audio_s3_url="https://x/a.mp3", photo_transition="warp")
+
+
 def test_build_photo_project_emits_jsx_and_payload(tmp_path: Path) -> None:
     from app.project_builder import build_photo_project
 

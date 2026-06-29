@@ -663,6 +663,7 @@ def build_photo_project(
     transition: str = "flash",
     fps: Optional[float] = None,
     segment_frames: Optional[int] = None,
+    segments: Optional[List[Dict[str, Any]]] = None,
 ) -> Tuple[Path, Path]:
     """Build the standalone 4:3 PHOTO render (photo_template.j2).
 
@@ -693,13 +694,16 @@ def build_photo_project(
         segment_frames=int(segment_frames) if segment_frames is not None else DEFAULT_SEGMENT_FRAMES,
         comp_w=PHOTO_COMP_W,
         comp_h=PHOTO_COMP_H,
+        segments=segments,
     )
 
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "logs").mkdir(parents=True, exist_ok=True)
 
-    out_json = out_dir / "final_photo_render_instructions.json"
-    out_jsx = out_dir / "photo_render.jsx"
+    # Canonical artifact names (drop-in for build_full_project) so the render
+    # worker picks them up unchanged; only entry_comp differs (carried in payload).
+    out_json = out_dir / "final_render_instructions_full.json"
+    out_jsx = out_dir / "render_full.jsx"
     out_json.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
     env = Environment(loader=FileSystemLoader(str(repo_root / "templates")), autoescape=False)

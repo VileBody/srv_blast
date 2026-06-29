@@ -223,14 +223,36 @@ def main() -> int:
 
     # 2) AE build step: produce render_full.jsx
     if not args.skip_ae:
-        from app.project_builder import build_full_project  # noqa: E402
+        bg_mode = (os.environ.get("BG_MODE") or "footage").strip().lower()
+        if bg_mode == "photo":
+            # Photo flow (4:3): build the standalone photo render from the stage2
+            # picks (footage_config now holds PHOTO picks + interval timing, since
+            # the picker was routed to the photo pool). Writes the SAME canonical
+            # artifact names as build_full_project (drop-in for the render worker).
+            from app.photo_comp import extract_photos_and_segments_from_footage_cfg  # noqa: E402
+            from app.project_builder import build_photo_project  # noqa: E402
 
-        out_json, out_jsx = build_full_project(
-            repo_root=REPO_ROOT,
-            full_edit_config_path=full_edit_config_path,
-            footage_config_path=footage_config_path,
-            out_dir=out_dir,
-        )
+            footage_cfg = json.loads(footage_config_path.read_text(encoding="utf-8"))
+            photos, segments = extract_photos_and_segments_from_footage_cfg(footage_cfg)
+            out_json, out_jsx = build_photo_project(
+                repo_root=REPO_ROOT,
+                photos=photos,
+                segments=segments,
+                out_dir=out_dir,
+                style=(os.environ.get("PHOTO_STYLE") or "none").strip().lower() or "none",
+                transition=(os.environ.get("PHOTO_TRANSITION") or "flash").strip().lower() or "flash",
+            )
+            print("\n[OK] PHOTO project build (4:3):")
+            print(f"  - photos: {len(photos)}  segments: {len(segments)}")
+        else:
+            from app.project_builder import build_full_project  # noqa: E402
+
+            out_json, out_jsx = build_full_project(
+                repo_root=REPO_ROOT,
+                full_edit_config_path=full_edit_config_path,
+                footage_config_path=footage_config_path,
+                out_dir=out_dir,
+            )
 
         print("\n[OK] AE project build:")
         print(f"  - json: {out_json}")
