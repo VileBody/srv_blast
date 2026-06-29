@@ -1700,7 +1700,7 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
         env["FOOTAGE_ARTIST_ID"] = footage_artist_id
 
     bg_mode = str(req.get("bg_mode") or "footage").strip().lower() or "footage"
-    if bg_mode not in {"footage", "solid"}:
+    if bg_mode not in {"footage", "solid", "solid_strobe"}:
         raise RuntimeError(f"invalid bg_mode={bg_mode!r}")
     bg_solid_color_key = str(req.get("bg_solid_color") or "").strip().lower()
     bg_solid_hex_by_key = {"white": "#FFFFFF", "black": "#000000", "green": "#00FF00"}
@@ -1716,6 +1716,11 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
         # text stays readable. Other bg colors leave subtitles untouched.
         if bg_solid_color_key == "white":
             env["SUBTITLES_FORCE_FILL_HEX"] = "#000000"
+    elif bg_mode == "solid_strobe":
+        # B/W strobe bg + Difference-blend text. The auto-invert needs WHITE text,
+        # so force white fill (custom subtitle color is ignored in this mode).
+        env["BG_MODE"] = "solid_strobe"
+        env["SUBTITLES_FORCE_FILL_HEX"] = "#FFFFFF"
     else:
         env["BG_MODE"] = "footage"
 

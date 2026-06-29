@@ -141,7 +141,7 @@ class SendAudioS3Request(BaseModel):
     # composition replaces the footage stack with a single solid color layer.
     # Stage 2 footage planning still runs (its picks are simply ignored at
     # composition time), so footage_artist_id must still be a valid id.
-    bg_mode: Literal["footage", "solid"] = "footage"
+    bg_mode: Literal["footage", "solid", "solid_strobe"] = "footage"
     # Solid color key when bg_mode == "solid": "white" or "green".
     bg_solid_color: str = ""
     # Internal routing pinning metadata.

@@ -771,6 +771,10 @@
     function resolveBlendingModeByCode(code) {
       try { if (String(code) === "5212") return BlendingMode.NORMAL; } catch(e) {}
       try { if (String(code).toLowerCase() === "screen") return BlendingMode.SCREEN; } catch(e2) {}
+      try { if (String(code).toLowerCase() === "add") return BlendingMode.ADD; } catch(e3) {}
+      // "difference" = B/W strobe-bg auto-invert: white text over a flipping
+      // white/black bg renders as |255-bg| → black on white, white on black.
+      try { if (String(code).toLowerCase() === "difference") return BlendingMode.DIFFERENCE; } catch(e4) {}
       return null;
     }
 

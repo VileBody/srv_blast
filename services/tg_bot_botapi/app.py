@@ -220,6 +220,7 @@ def _parse_color_choice(text: str) -> Optional[str]:
     return _COLOR_PALETTE.get(raw)
 BTN_BG_FOOTAGE = "Футажи"
 BTN_BG_SOLID = "Цветной фон"
+BTN_BG_STROBE = "Строб Ч/Б"
 # Footage precision flow (Phase 2b): a "pictures" background stub shown alongside
 # footage/solid when the vibe flow is on. Not implemented yet → replies "скоро".
 BTN_BG_PICTURES = "Картинки (скоро)"
@@ -2180,7 +2181,7 @@ class BlastBotApp:
         await self.store.set(st)
         # Phase 2b: offer a "pictures (soon)" stub next to footage/solid so the
         # background menu matches the target UX. The stub just replies "скоро".
-        rows = [[BTN_BG_FOOTAGE], [BTN_BG_SOLID]]
+        rows = [[BTN_BG_FOOTAGE], [BTN_BG_SOLID], [BTN_BG_STROBE]]
         if _footage_vibe_flow_enabled():
             rows.append([BTN_BG_PICTURES])
         rows.append([BTN_BACK])
@@ -2211,8 +2212,20 @@ class BlastBotApp:
             await self.store.set(st)
             await self._ask_bg_color(message, st)
             return
+        if text == BTN_BG_STROBE:
+            # B/W strobe bg flipping on scene cuts + auto-inverting (Difference)
+            # white text. No color pick (fixed W/B); text forced white downstream.
+            st.bg_mode = "solid_strobe"
+            st.bg_solid_color = ""
+            if not self._ensure_solid_default_artist(st):
+                await message.answer("Внутренняя ошибка при выборе фона. Попробуй ещё раз позже.")
+                return
+            await self.store.set(st)
+            await message.answer("Фон: строб Ч/Б на склейках. Текст авто-инвертируется (всегда читаемый).")
+            await self._ask_subtitles_mode(message, st)
+            return
         await message.answer(
-            f"Выбери кнопкой: «{BTN_BG_FOOTAGE}» или «{BTN_BG_SOLID}».",
+            f"Выбери кнопкой: «{BTN_BG_FOOTAGE}», «{BTN_BG_SOLID}» или «{BTN_BG_STROBE}».",
         )
 
     async def _ask_bg_color(self, message: Message, st: ChatState) -> None:
@@ -2235,22 +2248,29 @@ class BlastBotApp:
             )
             return
         st.bg_solid_color = color_by_btn[text]
-        # Solid bg still needs a footage_artist_id so Stage 2 footage planner
-        # runs without errors — its picks are dropped at AE composition time.
-        # Pick the first available artist as a deterministic placeholder.
-        if not str(st.footage_artist_id or "").strip():
-            try:
-                first_genre = get_genres()[0]
-                first_artist_key = str(first_genre["artists"][0]["key"])
-                st.footage_genre_key = str(first_genre["key"])
-                st.footage_artist_key = first_artist_key
-                st.footage_artist_id = first_artist_key
-            except Exception as exc:
-                log.exception("solid_bg_default_artist_pick_failed: %s", exc)
-                await message.answer("Внутренняя ошибка при выборе фона. Попробуй ещё раз позже.")
-                return
+        if not self._ensure_solid_default_artist(st):
+            await message.answer("Внутренняя ошибка при выборе фона. Попробуй ещё раз позже.")
+            return
         await self.store.set(st)
         await self._ask_subtitles_mode(message, st)
+
+    def _ensure_solid_default_artist(self, st: ChatState) -> bool:
+        """Solid/strobe bg still needs a footage_artist_id so Stage 2 footage
+        planner runs (its picks are dropped at AE time, but the scene CUTS it
+        produces drive the strobe). Pick the first available artist as a
+        deterministic placeholder. Returns False on failure."""
+        if str(st.footage_artist_id or "").strip():
+            return True
+        try:
+            first_genre = get_genres()[0]
+            first_artist_key = str(first_genre["artists"][0]["key"])
+            st.footage_genre_key = str(first_genre["key"])
+            st.footage_artist_key = first_artist_key
+            st.footage_artist_id = first_artist_key
+            return True
+        except Exception as exc:
+            log.exception("solid_bg_default_artist_pick_failed: %s", exc)
+            return False
 
     async def _ask_footage_genre(self, message: Message, st: ChatState) -> None:
         st.stage = STAGE_WAIT_FOOTAGE_GENRE
@@ -4687,8 +4707,10 @@ class BlastBotApp:
                 )
                 else None
             ),
-            subtitle_color_hex=(str(st.subtitle_color_hex) or None),
-            accent_color_hex=(str(st.accent_color_hex) or None),
+            # Strobe bg auto-inverts WHITE text (Difference blend) — ignore any
+            # custom subtitle color so the text stays white.
+            subtitle_color_hex=(None if st.bg_mode == "solid_strobe" else (str(st.subtitle_color_hex) or None)),
+            accent_color_hex=(None if st.bg_mode == "solid_strobe" else (str(st.accent_color_hex) or None)),
         )
         job_id = str(enqueue.get("job_id") or "").strip()
         if not job_id:

@@ -967,10 +967,63 @@ def build_footage_layers(
 
     out.append(pre)
 
+    bg_mode_env = str(os.environ.get("BG_MODE") or "footage").strip().lower()
+
+    # Solid STROBE background: like solid (no footage), but the bg flips white↔black
+    # on every scene cut, with a short white flash on each switch. Cuts are the
+    # footage in-points (the same scene cuts that would have driven the footage
+    # stack). The TEXT precomp is set to Difference blend so WHITE text auto-inverts
+    # against the flipping bg (|255-bg| → black on white, white on black) — no color
+    # keyframes, frame-perfect, headless-safe.
+    if bg_mode_env == "solid_strobe":
+        for it in layers_cfg:
+            if str(it.get("type")) == "audio_only":
+                out.append(_audio_only_bp(it=it, z_index=2))
+
+        # Scene cuts = sorted unique footage in-points strictly inside (0, dur).
+        _cuts = sorted({
+            float(it["in_point"]) for it in layers_cfg
+            if str(it.get("type")) == "footage" and it.get("in_point") is not None
+            and 0.0 < float(it["in_point"]) < float(text_dur_sec)
+        })
+        _bounds = [0.0] + _cuts + [float(text_dur_sec)]
+        _white = [1.0, 1.0, 1.0]
+        _black = [0.0, 0.0, 0.0]
+
+        def _strobe_solid(name, color, t_in, t_out, z):
+            bp = LayerBlueprint(name=name, type="solid", in_point=float(t_in),
+                                out_point=float(t_out), z_index=int(z))
+            bp.text_data["layer_meta"] = {
+                "comp_name_target": main_comp_name, "startTime": 0.0, "enabled": True,
+                "motionBlur": False, "collapseTransformation": False, "blendingModeCode": "5212",
+            }
+            bp.text_data["solid_source"] = {
+                "color_rgb01": list(color), "width": int(comp_w), "height": int(comp_h),
+            }
+            return bp
+
+        # bg segments: start WHITE, alternate per cut (z=200.. behind everything)
+        for i in range(len(_bounds) - 1):
+            color = _white if (i % 2 == 0) else _black
+            out.append(_strobe_solid(f"strobe_bg_{i}", color, _bounds[i], _bounds[i + 1], 200 + i))
+
+        # white flash (~2 frames) on each interior switch, between bg and text (z=150)
+        _flash_dur = 0.07
+        for j, c in enumerate(_cuts):
+            out.append(_strobe_solid(f"strobe_flash_{j}", _white, c, min(c + _flash_dur, float(text_dur_sec)), 150))
+
+        # TEXT precomp → Difference blend = auto-inverting white text over B/W bg.
+        pre.text_data["layer_meta"]["blendingModeCode"] = "difference"
+
+        LOGGER.info(
+            "bg_mode_solid_strobe applied cuts=%d segments=%d comp=%sx%s dur=%s",
+            len(_cuts), len(_bounds) - 1, comp_w, comp_h, text_dur_sec,
+        )
+        return [asdict(x) for x in sorted(out, key=lambda b: int(b.z_index))]
+
     # Solid background mode short-circuit: keep TEXT precomp + audio_only,
     # drop overlays/adjustments/footages, replace footage stack with one
     # full-duration solid color layer. Used for chroma-key / white-bg renders.
-    bg_mode_env = str(os.environ.get("BG_MODE") or "footage").strip().lower()
     if bg_mode_env == "solid":
         bg_hex = str(os.environ.get("BG_SOLID_COLOR_HEX") or "").strip()
         rgb01 = _parse_hex_color_rgb01(bg_hex)

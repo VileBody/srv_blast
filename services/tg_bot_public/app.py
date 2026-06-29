@@ -355,6 +355,7 @@ BTN_CONFIRM_BACK = "Вернуться назад"
 BTN_BACK = "Назад"
 BTN_BG_FOOTAGE = "Футажи"
 BTN_BG_SOLID = "Цветной фон"
+BTN_BG_STROBE = "Строб Ч/Б"
 BTN_BG_WHITE = "Белый"
 BTN_BG_BLACK = "Чёрный"
 BTN_BG_GREEN = "Зелёный (хромакей)"
@@ -3284,8 +3285,24 @@ class BlastBotApp:
         await self.store.set(st)
         await message.answer(
             "Что будет на фоне?",
-            reply_markup=_kb([BTN_BG_FOOTAGE], [BTN_BG_SOLID], [BTN_BACK]),
+            reply_markup=_kb([BTN_BG_FOOTAGE], [BTN_BG_SOLID], [BTN_BG_STROBE], [BTN_BACK]),
         )
+
+    def _ensure_solid_default_artist(self, st: ChatState) -> bool:
+        """Solid/strobe bg needs a footage_artist_id so Stage 2 runs (its picks are
+        dropped at AE time, but the scene CUTS drive the strobe). Mirror of team."""
+        if str(st.footage_artist_id or "").strip():
+            return True
+        try:
+            first_genre = get_genres()[0]
+            first_artist_key = str(first_genre["artists"][0]["key"])
+            st.footage_genre_key = str(first_genre["key"])
+            st.footage_artist_key = first_artist_key
+            st.footage_artist_id = first_artist_key
+            return True
+        except Exception as exc:
+            log.exception("solid_bg_default_artist_pick_failed: %s", exc)
+            return False
 
     async def _handle_wait_bg_mode(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()
@@ -3303,8 +3320,18 @@ class BlastBotApp:
             await self.store.set(st)
             await self._ask_bg_color(message, st)
             return
+        if text == BTN_BG_STROBE:
+            st.bg_mode = "solid_strobe"
+            st.bg_solid_color = ""
+            if not self._ensure_solid_default_artist(st):
+                await message.answer("Внутренняя ошибка при выборе фона. Попробуй ещё раз позже.")
+                return
+            await self.store.set(st)
+            await message.answer("Фон: строб Ч/Б на склейках. Текст авто-инвертируется (всегда читаемый).")
+            await self._ask_subtitles_mode(message, st)
+            return
         await message.answer(
-            f"Выбери кнопкой: «{BTN_BG_FOOTAGE}» или «{BTN_BG_SOLID}».",
+            f"Выбери кнопкой: «{BTN_BG_FOOTAGE}», «{BTN_BG_SOLID}» или «{BTN_BG_STROBE}».",
         )
 
     async def _ask_bg_color(self, message: Message, st: ChatState) -> None:
@@ -6114,8 +6141,9 @@ class BlastBotApp:
                 )
                 else None
             ),
-            subtitle_color_hex=(str(st.subtitle_color_hex) or None),
-            accent_color_hex=(str(st.accent_color_hex) or None),
+            # Strobe bg auto-inverts WHITE text (Difference) — ignore custom color.
+            subtitle_color_hex=(None if st.bg_mode == "solid_strobe" else (str(st.subtitle_color_hex) or None)),
+            accent_color_hex=(None if st.bg_mode == "solid_strobe" else (str(st.accent_color_hex) or None)),
         )
         job_id = str(enqueue.get("job_id") or "").strip()
         if not job_id:
