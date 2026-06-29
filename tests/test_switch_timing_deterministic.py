@@ -115,6 +115,29 @@ def test_hard_floor_respected():
     assert all(g >= 0.3 for g in gaps)
 
 
+def test_forced_cut_lands_exactly_on_drop():
+    """A hard footage cut must land exactly on the drop (not beat-snapped)."""
+    onsets = [(round(0.5 * i, 3), "kick", 0.4) for i in range(1, 40)]
+    beats = [round(0.5 * i, 3) for i in range(40)]
+    drop = 7.3  # deliberately off the 0.5s kick/beat grid
+    r = generate_switch_points(
+        onsets_classified=onsets, beats=beats, bpm=120.0,
+        drop_t=drop, clip_start=0.0, clip_end=20.0,
+    )
+    assert any(abs(c - drop) < 1e-6 for c in r.switch_points_abs)
+    assert "drop" in r.sources
+
+
+def test_drop_anchor_can_be_disabled():
+    onsets = [(round(0.5 * i, 3), "kick", 0.4) for i in range(1, 40)]
+    r = generate_switch_points(
+        onsets_classified=onsets, beats=[], bpm=120.0, drop_t=7.3,
+        clip_start=0.0, clip_end=20.0,
+        params=SwitchTimingParams(force_cut_on_drop=False),
+    )
+    assert not any(abs(c - 7.3) < 1e-6 for c in r.switch_points_abs)
+
+
 def test_empty_input_is_safe():
     r = generate_switch_points(
         onsets_classified=[], beats=[], bpm=0.0,

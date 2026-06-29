@@ -51,6 +51,7 @@ class SwitchTimingParams:
     low_types: Tuple[str, ...] = ("kick", "body")   # used for the "don't invent" fallback
     min_conf: float = 0.0                 # rely on band classification, not ratio
     hard_floor_sec: float = 0.3           # absolute minimum between any two cuts
+    force_cut_on_drop: bool = True        # always place a hard cut EXACTLY on the drop
     search_back_frac: float = 0.4         # search window before the target (× gap)
     search_fwd_frac: float = 0.6          # search window after the target (× gap)
     fallback_bpm: float = 120.0           # used if bpm is missing/invalid
@@ -146,6 +147,19 @@ def generate_switch_points(
         guard += 1
         g = gap_at(last)
         fl = floor_at(last)
+        # Forced drop anchor: when the drop is within the next step's reach,
+        # snap the cut EXACTLY onto it (a hard footage cut on the drop, not
+        # beat-snapped) and resume the walk from there with drop-window spacing.
+        if (
+            p.force_cut_on_drop
+            and drop is not None
+            and last + p.hard_floor_sec <= drop < clip_end
+            and drop <= last + g + p.search_fwd_frac * g
+        ):
+            cuts.append(round(float(drop), 3))
+            sources.append("drop")
+            last = float(drop)
+            continue
         target = last + g
         if target >= clip_end:
             break
