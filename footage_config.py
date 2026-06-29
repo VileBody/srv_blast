@@ -53,8 +53,19 @@ def _s3_preflight_mode() -> str:
     return raw
 
 
-def _s3_asset_key(*, file_name: str, genre: str, tag: str) -> str:
-    prefix = _s3_assets_prefix()
+def _s3_photo_prefix() -> str:
+    raw = _env("S3_PHOTO_PREFIX", "photo_collection").strip().strip("/")
+    if get_runtime_mode() == MODE_PROD and not raw:
+        raise RuntimeError("MODE=prod requires non-empty S3_PHOTO_PREFIX")
+    return raw
+
+
+def _s3_prefix_for(media_type: str) -> str:
+    return _s3_photo_prefix() if str(media_type) == "photo" else _s3_assets_prefix()
+
+
+def _s3_asset_key(*, file_name: str, genre: str, tag: str, media_type: str = "video") -> str:
+    prefix = _s3_prefix_for(media_type)
     return f"{prefix}/{genre}/{tag}/{file_name}" if prefix else f"{genre}/{tag}/{file_name}"
 
 
@@ -142,9 +153,9 @@ def _as_pos_float(v: Any) -> Optional[float]:
     return x
 
 
-def _s3_locator_for_asset(*, file_name: str, genre: str, tag: str) -> str:
+def _s3_locator_for_asset(*, file_name: str, genre: str, tag: str, media_type: str = "video") -> str:
     bucket = _s3_bucket_assets()
-    key = _s3_asset_key(file_name=file_name, genre=genre, tag=tag)
+    key = _s3_asset_key(file_name=file_name, genre=genre, tag=tag, media_type=media_type)
     return f"s3://{bucket}/{key}"
 
 
@@ -216,11 +227,17 @@ def build_inventory_and_bundle(
     bundle_out_path: Path,
     adjustment_preset: Optional[Dict[str, Any]] = None,
     max_assets_in_bundle: Optional[int] = None,
+    media_type: str = "video",
 ) -> Tuple[Path, Path]:
     """
     Build both shared artifacts from static technical index:
       1) inventory: includes deterministic file_path (local path in dev, s3:// in prod)
       2) bundle: technical-only rows for Gemini context
+
+    media_type selects the S3 prefix for file_path derivation in prod:
+    'video' → S3_ASSET_PREFIX (default), 'photo' → S3_PHOTO_PREFIX. The photo
+    pool feeds the 4:3 photo flow; the picker scoring is media-agnostic, so the
+    only difference is the index path (passed by the caller) + this prefix.
 
     Source index must be data/static_assets_index.json-like format.
     """
@@ -294,7 +311,7 @@ def build_inventory_and_bundle(
             continue
 
         if mode == "s3":
-            s3_key = _s3_asset_key(file_name=file_name, genre=genre, tag=tag)
+            s3_key = _s3_asset_key(file_name=file_name, genre=genre, tag=tag, media_type=media_type)
             file_path = f"s3://{_s3_bucket_assets()}/{s3_key}"
             s3_preflight_rows.append((file_name, genre, tag, s3_key))
         else:
@@ -429,16 +446,24 @@ def build_inventory_and_bundle(
 
 def main() -> None:
     repo_root = Path(__file__).resolve().parent
+    media_type = _env("MEDIA_TYPE", "video").strip().lower() or "video"
+    if media_type not in ("video", "photo"):
+        raise SystemExit(f"MEDIA_TYPE must be 'video' or 'photo', got {media_type!r}")
+    is_photo = media_type == "photo"
+
     footage_dir = Path(_env("FOOTAGE_DIR", str(repo_root / "footage"))).resolve()
+    default_index = "photo_assets_index_1to1.json" if is_photo else "static_assets_index.json"
     static_assets_index_path = Path(
-        _env("STATIC_ASSETS_INDEX_JSON", str(repo_root / "data" / "static_assets_index.json"))
+        _env("STATIC_ASSETS_INDEX_JSON", str(repo_root / "data" / default_index))
     ).resolve()
 
+    default_inventory = "photo_inventory.json" if is_photo else "footage_inventory.json"
     inventory_out = Path(
-        _env("FOOTAGE_INVENTORY_OUT", str(repo_root / "data" / "footage_inventory.json"))
+        _env("FOOTAGE_INVENTORY_OUT", str(repo_root / "data" / default_inventory))
     ).resolve()
+    default_bundle = "photo_descriptions_bundle.json" if is_photo else "descriptions_bundle.json"
     bundle_out = Path(
-        _env("DESCRIPTIONS_BUNDLE_OUT", str(repo_root / "pins" / "descriptions_bundle.json"))
+        _env("DESCRIPTIONS_BUNDLE_OUT", str(repo_root / "pins" / default_bundle))
     ).resolve()
 
     max_assets_env = _env("DESCRIPTIONS_BUNDLE_MAX_ASSETS", "")
@@ -451,12 +476,13 @@ def main() -> None:
         inventory_out_path=inventory_out,
         bundle_out_path=bundle_out,
         max_assets_in_bundle=max_assets,
+        media_type=media_type,
     )
 
     mode = "s3" if get_runtime_mode() == MODE_PROD else "local"
-    print(f"[OK] mode: {mode}")
+    print(f"[OK] mode: {mode}  media_type: {media_type}")
     if mode == "s3":
-        print(f"[OK] s3 asset prefix: {_s3_assets_prefix()}")
+        print(f"[OK] s3 asset prefix: {_s3_prefix_for(media_type)}")
     print(f"[OK] static index: {static_assets_index_path}")
     print(f"[OK] inventory: {inv_p}")
     print(f"[OK] bundle: {bun_p}")

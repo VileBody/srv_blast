@@ -47,6 +47,50 @@ def test_inventory_uses_s3_asset_prefix_in_prod(tmp_path: Path, monkeypatch) -> 
     )
 
 
+def test_inventory_uses_photo_prefix_for_media_type_photo(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("MODE", "prod")
+    monkeypatch.setenv("S3_BUCKET_ASSET_STORAGE", "bucket")
+    monkeypatch.setenv("S3_ASSET_PREFIX", "pinterest_collection/selected")
+    monkeypatch.setenv("S3_PHOTO_PREFIX", "photo_collection/photos_4x3")
+    monkeypatch.setenv("FOOTAGE_S3_PREFLIGHT_MODE", "off")
+
+    src = {
+        "media_type": "photo",
+        "assets": [
+            {
+                "file_name": "shot.jpg",
+                "genre": "Alternative",
+                "tag": "dark_social_aesthetic",
+                "src_w": 1500,
+                "src_h": 2000,
+                "duration_sec": 1.5,  # nominal display duration for photos
+            }
+        ],
+    }
+    static_index = tmp_path / "photo_index.json"
+    static_index.write_text(json.dumps(src, ensure_ascii=False), encoding="utf-8")
+
+    inv_out = tmp_path / "photo_inventory.json"
+    bun_out = tmp_path / "photo_bundle.json"
+
+    build_inventory_and_bundle(
+        repo_root=tmp_path,
+        footage_dir=tmp_path / "footage",
+        static_assets_index_path=static_index,
+        inventory_out_path=inv_out,
+        bundle_out_path=bun_out,
+        media_type="photo",
+    )
+
+    inv = json.loads(inv_out.read_text(encoding="utf-8"))
+    assert len(inv["assets"]) == 1
+    # photo pool → S3_PHOTO_PREFIX, not the footage S3_ASSET_PREFIX
+    assert (
+        inv["assets"][0]["file_path"]
+        == "s3://bucket/photo_collection/photos_4x3/Alternative/dark_social_aesthetic/shot.jpg"
+    )
+
+
 def test_inventory_enriches_color_meta_from_fallback_index(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("MODE", "prod")
     monkeypatch.setenv("S3_BUCKET_ASSET_STORAGE", "bucket")
