@@ -4198,9 +4198,11 @@ class BlastBotApp:
             )
             await message.answer(
                 "Какой приём «Движения»? Рука/голова двигается в такт, "
-                "на дропе срабатывает вспышка:\n"
-                "• Свайп — палец свайпает.\n• Тап — палец тапает по кругу.\n"
-                "• Зум — пальцы разводят зум.\n• Задержи палец — палец держит круг.\n"
+                "на дропе срабатывает вспышка:\n\n"
+                "• Свайп — палец свайпает.\n"
+                "• Тап — палец тапает по кругу.\n"
+                "• Зум — пальцы разводят зум.\n"
+                "• Задержи палец — палец держит круг.\n"
                 "• Качай головой — голова качает в такт.",
                 reply_markup=_kb(
                     [BTN_HOOK_DEV_SWIPE, BTN_HOOK_DEV_TAP],
@@ -4288,9 +4290,11 @@ class BlastBotApp:
             message, [f"effect_hook:{v}" for v in _FX_HOOK_BY_BUTTON.values()]
         )
         await message.answer(
-            "«Эффект» — шаг 1/3: хук на дропе.\n"
-            "• Молния — вспышка-молнии + шейк.\n• Затвор — нарезка затвора + лого-штамп.\n"
+            "«Эффект» — шаг 1/3: хук на дропе.\n\n"
+            "• Молния — вспышка-молнии + шейк.\n"
+            "• Затвор — нарезка затвора + лого-штамп.\n"
             "• Слоу-шаттер — echo-шлейф + вспышка (можно растянуть).\n"
+            "• Негатив-зум — инверт-вспышка + зум на дропе.\n\n"
             "Можно пропустить, если хук не нужен.",
             reply_markup=_kb(
                 [BTN_FX_HOOK_LIGHT, BTN_FX_HOOK_SHUTTER],
@@ -4325,7 +4329,7 @@ class BlastBotApp:
             message, [f"effect_transition:{v}" for v in _FX_TRANSITION_BY_BUTTON.values()]
         )
         await message.answer(
-            "Шаг 2/3: переход на склейках футажа.\nМожно пропустить.",
+            "Шаг 2/3: переход на склейках футажа.\n\nМожно пропустить.",
             reply_markup=_kb(
                 [BTN_FX_TR_SNAP, BTN_FX_TR_MINIMAX],
                 [BTN_FX_TR_INVERT, BTN_FX_TR_EXTRACT],
@@ -4360,7 +4364,7 @@ class BlastBotApp:
             message, [f"effect_extra:{v}" for v in _FX_EXTRA_BY_BUTTON.values()]
         )
         await message.answer(
-            "Шаг 3/3: стилизация футажа до дропа (грейд 00:00 → дроп).\nМожно пропустить.",
+            "Шаг 3/3: стилизация футажа до дропа (грейд 00:00 → дроп).\n\nМожно пропустить.",
             reply_markup=_kb(
                 [BTN_FX_EX_XEROX, BTN_FX_EX_ANALOG],
                 [BTN_FX_EX_NEON, BTN_FX_EX_OLDCAM],
@@ -4477,7 +4481,7 @@ class BlastBotApp:
         )
         await message.answer(
             "Какая фигура-переход на склейках до дропа?\n"
-            "На дропе сработает молния, после дропа — рандомный визуал-переход.\n"
+            "На дропе сработает молния, после дропа — рандомный визуал-переход.\n\n"
             "• Ромб • Квадрат • Звезда-10 • Звезда-5 • Эллипс",
             reply_markup=_kb(
                 [BTN_F2_SHAPE_RHOMB, BTN_F2_SHAPE_SQUARE],
