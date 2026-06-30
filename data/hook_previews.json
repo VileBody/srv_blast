@@ -1,0 +1,180 @@
+{
+  "version": 1,
+  "previews": {
+    "effect_extra:analog_glitch": {
+      "label": "Аналог-глитч",
+      "file_id": "BAACAgIAAxkDAAItE2pDzNLqEf5l5KqkfXZqWGje_hDpAAKRnAACbEogSr_mXMiHWMmMPAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8JZqQ8zU92zKBN_DxkIICuwoTsLMrAACg5wAAmk1IUonbmij4IoDaDwE",
+      "source": "Хуки/Эффекты/stylize/примеры стилей/analogglitch.mp4",
+      "built_at": "2026-06-30T14:04:06Z"
+    },
+    "effect_extra:neon_extract": {
+      "label": "Неон",
+      "file_id": "BAACAgIAAxkDAAItFGpDzNWIODO42Qsq3H1dEJS11mKLAAKSnAACbEogSl-_uNplZP7lPAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8JdqQ8zXQvS0pb7eTs6ub7eYG9EczAAChpwAAmk1IUqYNc5lmjO34zwE",
+      "source": "Хуки/Эффекты/stylize/примеры стилей/neonextract.mp4",
+      "built_at": "2026-06-30T14:04:10Z"
+    },
+    "effect_extra:old_camera": {
+      "label": "Старая камера",
+      "file_id": "BAACAgIAAxkDAAItFWpDzNqqZKj5e1dbFRNq_d0T395TAAKTnAACbEogSj0F8CRvYhOfPAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8JhqQ8zbnyArbodL9SB02n-aizA51AACh5wAAmk1IUqIUNvSKptttzwE",
+      "source": "Хуки/Эффекты/stylize/примеры стилей/oldcamera.mp4",
+      "built_at": "2026-06-30T14:04:13Z"
+    },
+    "effect_extra:xerox": {
+      "label": "Ксерокс",
+      "file_id": "BAACAgIAAxkDAAItEmpDzMtBf6UEsaXCir4GnQ1PpAkLAAKQnAACbEogSrqZN0q53F-9PAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8JVqQ8zNxcfKtqnv1ucunzqrZ_ED5gACgZwAAmk1IUrr8rhnr6Lw2jwE",
+      "source": "Хуки/Эффекты/stylize/примеры стилей/xerox.mp4",
+      "built_at": "2026-06-30T14:04:00Z"
+    },
+    "effect_hook:flash_slow_shutter": {
+      "label": "Слоу-шаттер",
+      "file_id": "BAACAgIAAxkDAAItC2pDzK5rDrvPRM5sPOybVO6O782-AAKJnAACbEogSg8nJkd-Zqa2PAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8I5qQ8ywHeVkdvt_WPddhtlvMB__ZwACdpwAAmk1IUpkI9S-JxE2STwE",
+      "source": "Хуки/Эффекты/hook/Примеры хуков/exampleflashslowahutter.mp4",
+      "built_at": "2026-06-30T14:03:30Z"
+    },
+    "effect_hook:hook_light": {
+      "label": "Молния",
+      "file_id": "BAACAgIAAxkDAAItCWpDzKY77SzETgh1Bk6-0F1_WcfYAAKHnAACbEogSvsNg3hOJ8XRPAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8IxqQ8yoWAofg271FAPSdfbdoiWLxQACc5wAAmk1IUoiKQcEsLwStDwE",
+      "source": "Хуки/Эффекты/hook/Примеры хуков/examplelight.mp4",
+      "built_at": "2026-06-30T14:03:22Z"
+    },
+    "effect_hook:negative_zoom": {
+      "label": "Негатив-зум",
+      "file_id": "BAACAgIAAxkDAAItDGpDzLKFyDZ6Z1f9nGWhqj1ZoCiXAAKKnAACbEogShQUdbRujNK2PAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8I9qQ8y0UTaj7B4yzwABc5KSojy3xFgAAnecAAJpNSFKbw4-XO7S1ko8BA",
+      "source": "Хуки/Эффекты/hook/Примеры хуков/examplenegativezoom.mp4",
+      "built_at": "2026-06-30T14:03:34Z"
+    },
+    "effect_hook:shutter_effect": {
+      "label": "Затвор",
+      "file_id": "BAACAgIAAxkDAAItCmpDzKln2mOmsPXWF5UxNTK7UDi-AAKInAACbEogSoIa9YVfFcHEPAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8I1qQ8yrFdzA8F7qBHWrpw1BCbNx_wACdZwAAmk1IUqDF1H92WZZATwE",
+      "source": "Хуки/Эффекты/hook/Примеры хуков/exampleshuttereffect.mp4",
+      "built_at": "2026-06-30T14:03:25Z"
+    },
+    "effect_transition:extract_flash": {
+      "label": "Экстракт",
+      "file_id": "BAACAgIAAxkDAAItEGpDzMNAr6oOIL4OZz6WhtXffbRxAAKOnAACbEogSrM-WQsj9PNTPAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8JNqQ8zFdUgk5Rq523x_wPKwsCaqGAACfJwAAmk1IUoESgGTMA2dgzwE",
+      "source": "Хуки/Эффекты/transitions/Примеры переходов/extractflashes.mp4",
+      "built_at": "2026-06-30T14:03:51Z"
+    },
+    "effect_transition:flash_on_cuts": {
+      "label": "Вспышки",
+      "file_id": "BAACAgIAAxkDAAItEWpDzMcGd2oLgGWMhjDbG9umSG9vAAKPnAACbEogSsOavPBoioviPAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8JRqQ8zJZIgSSDhuWHZC5HiGJndpHAACfZwAAmk1IUoI8xLKclCu_DwE",
+      "source": "Хуки/Эффекты/transitions/Примеры переходов/flashoncuts.mp4",
+      "built_at": "2026-06-30T14:03:55Z"
+    },
+    "effect_transition:invert_flash": {
+      "label": "Инверт",
+      "file_id": "BAACAgIAAxkDAAItD2pDzL_H_yj6QGueVIfWLpi0rBWWAAKNnAACbEogSjfSRh13jBjsPAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8JJqQ8zBbc0NxtF-ZsdhK4cZvWspKAACe5wAAmk1IUq6I66SKpQzHTwE",
+      "source": "Хуки/Эффекты/transitions/Примеры переходов/invertsflash.mp4",
+      "built_at": "2026-06-30T14:03:47Z"
+    },
+    "effect_transition:minimax": {
+      "label": "Минимакс",
+      "file_id": "BAACAgIAAxkDAAItDmpDzLuh29jDeXUi3NPe2HMxj7PbAAKMnAACbEogStFJRHyjPqJIPAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8JFqQ8y9ZzZPAm3XX0ehpPJvAkp-7gACepwAAmk1IUr2e4WVjYr7yzwE",
+      "source": "Хуки/Эффекты/transitions/Примеры переходов/minimax.mp4",
+      "built_at": "2026-06-30T14:03:43Z"
+    },
+    "effect_transition:snap_wipe": {
+      "label": "Снап-вайп",
+      "file_id": "BAACAgIAAxkDAAItDWpDzLY0bBGB8HjxWAYdCeW1s49bAAKLnAACbEogSman-h55-ok2PAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8JBqQ8y4JH_N-cTXEj1JBb3rJeHgcgACeJwAAmk1IUoAAe4iVqdp5AU8BA",
+      "source": "Хуки/Эффекты/transitions/Примеры переходов/snapwipe.mp4",
+      "built_at": "2026-06-30T14:03:39Z"
+    },
+    "motion:head": {
+      "label": "Качай головой",
+      "file_id": "BAACAgIAAxkDAAItA2pDzIt8XhTbKEV9TGxa2r_Wrc8hAAKBnAACbEogSpMW-t6sy0JRPAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8IZqQ8yOAhsfm0FakWiWzkZvkXdk-wACapwAAmk1IUoe5IpQXSx5TzwE",
+      "source": "Хуки/Движение/Примеры/head.mp4",
+      "built_at": "2026-06-30T14:02:56Z"
+    },
+    "motion:holdfinger": {
+      "label": "Задержи палец",
+      "file_id": "BAACAgIAAxkDAAItAmpDzIPMvHsFlHSPaMyvrbgyXtPwAAJ_nAACbEogSusfQtVy7YpCPAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8IVqQ8yJhNrjv9DbXwEvLRrx33lVZAACaZwAAmk1IUrzNS9QcqQJKzwE",
+      "source": "Хуки/Движение/Примеры/holdfinger.mp4",
+      "built_at": "2026-06-30T14:02:51Z"
+    },
+    "motion:pinch": {
+      "label": "Зум",
+      "file_id": "BAACAgIAAxkDAAItAWpDzH4dwBrlxSpgwC1f85NvS-IcAAJ-nAACbEogSm4olg5ZEgiPPAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8IRqQ8yA8PdX0y_0pRPwKBDA3YVD7AACZZwAAmk1IUojLHEZmyExdzwE",
+      "source": "Хуки/Движение/Примеры/pinch.mp4",
+      "built_at": "2026-06-30T14:02:43Z"
+    },
+    "motion:swipe": {
+      "label": "Свайп",
+      "file_id": "BAACAgIAAxkDAAItGGpDzPhP4QPx6rgj6VRXNn7C-HQNAAKXnAACbEogSkGA0ZkL0go5PAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8JtqQ8z8LpiyQ34kC65-a239F8xLwAACi5wAAmk1IUra4g03RJTLYzwE",
+      "source": "Хуки/Движение/Примеры/swipeinbeat1.mp4",
+      "built_at": "2026-06-30T14:04:46Z"
+    },
+    "motion:tap": {
+      "label": "Тап",
+      "file_id": "BAACAgIAAxkDAAItAAFqQ8x5ViuXuJcuu04mrilF5lKreQACfZwAAmxKIEogV15B9CksmzwE",
+      "file_id_public": "BAACAgIAAxkDAAEB8INqQ8x7cJcuMikqM1Sv7nxa4h2CbAACZJwAAmk1IUrguRo2tao7ZzwE",
+      "source": "Хуки/Движение/Примеры/tapinbeat.mp4",
+      "built_at": "2026-06-30T14:02:37Z"
+    },
+    "shape:elipse": {
+      "label": "Эллипс",
+      "file_id": "BAACAgIAAxkDAAItCGpDzKKNu2MVsmvKYFM0RI1j6vO6AAKGnAACbEogStyGBUZ72pYdPAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8ItqQ8yjZzEMAAE1fO5-g9pxw-5zUXcAAnKcAAJpNSFKL0wrHuuLNVI8BA",
+      "source": "Хуки/Лого и шейпы/Шейпы примеры/examplecircle.mp4",
+      "built_at": "2026-06-30T14:03:18Z"
+    },
+    "shape:rhomb": {
+      "label": "Ромб",
+      "file_id": "BAACAgIAAxkDAAItBGpDzJC3-cfKzx2neAc7kJ52159SAAKCnAACbEogSnzlceG85SpqPAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8IdqQ8yS4fVXXmJLj5sOdja3PxVKHwACa5wAAmk1IUpOe9GOcI_MdTwE",
+      "source": "Хуки/Лого и шейпы/Шейпы примеры/examplerhomb.mp4",
+      "built_at": "2026-06-30T14:03:00Z"
+    },
+    "shape:square": {
+      "label": "Квадрат",
+      "file_id": "BAACAgIAAxkDAAItBWpDzJSZIigp4outu0gYAyB6oPQRAAKDnAACbEogSqyRS-61Sv5SPAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8IhqQ8yWRDsZp4bGwJhxBXy1PZv00gACbJwAAmk1IUpBZeoKFLYcqDwE",
+      "source": "Хуки/Лого и шейпы/Шейпы примеры/examplesquare.mp4",
+      "built_at": "2026-06-30T14:03:05Z"
+    },
+    "shape:star1": {
+      "label": "Звезда-10",
+      "file_id": "BAACAgIAAxkDAAItBmpDzJhnCbY9YjUtNyi-qfDttEi2AAKEnAACbEogShyW1QcORvtxPAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8IlqQ8ybcE-FPpgGsl2jLNDBL8HSGQACbpwAAmk1IUoybZyBYLjcIjwE",
+      "source": "Хуки/Лого и шейпы/Шейпы примеры/examplestar1.mp4",
+      "built_at": "2026-06-30T14:03:09Z"
+    },
+    "shape:star2": {
+      "label": "Звезда-5",
+      "file_id": "BAACAgIAAxkDAAItB2pDzJ1JdjB0cKYGAyT-GRdTf2CBAAKFnAACbEogSkY2W9rZkDqpPAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8IpqQ8yfNSCCVMVW8ZW1yCPL8alKtgACcJwAAmk1IUqEkVIJJRQfsTwE",
+      "source": "Хуки/Лого и шейпы/Шейпы примеры/examplestar2.mp4",
+      "built_at": "2026-06-30T14:03:14Z"
+    },
+    "subtitles:brat_5th": {
+      "label": "Brat (blocks)",
+      "file_id": "BAACAgIAAxkDAAItF2pDzOWmZW1UumFBUGlv4uSmgLYRAAKWnAACbEogSgO-KkJroGyqPAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8JpqQ8zop9dGg4dmsKJNXK3Ze8cMlQACiZwAAmk1IUoXDQf1YASq2TwE",
+      "source": "Субтитры примеры/brat.MP4",
+      "built_at": "2026-06-30T14:04:26Z"
+    },
+    "subtitles:trendy_5th": {
+      "label": "Trendy (1 слово)",
+      "file_id": "BAACAgIAAxkDAAItFmpDzN_UsRssqJ7jPHVts_MCuhkBAAKUnAACbEogSjwutCi330a_PAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8JlqQ8zjeSzT7I3oVXrco18cCyeDdAACiJwAAmk1IUrlmj9SKtydVDwE",
+      "source": "Субтитры примеры/trendy.mp4",
+      "built_at": "2026-06-30T14:04:21Z"
+    }
+  }
+}
