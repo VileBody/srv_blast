@@ -33,6 +33,8 @@ import logging
 import os
 import sys
 import tempfile
+import shutil
+import subprocess
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -232,10 +234,14 @@ def capture_telegram_file_id(*, token: str, chat_id: str, video_path: Path, capt
     bot -> file_id_public), exactly like artist previews.
     """
     url = f"https://api.telegram.org/bot{token}/sendVideo"
+    # bypass the Windows system SOCKS proxy (no PySocks here); this box reaches
+    # the internet directly (same as the asset_ui/S3 calls).
+    sess = requests.Session()
+    sess.trust_env = False
     with open(video_path, "rb") as fh:
         files = {"video": (video_path.name, fh, "video/mp4")}
         data = {"chat_id": str(chat_id), "caption": caption[:1024], "supports_streaming": "true"}
-        resp = requests.post(url, data=data, files=files, timeout=300)
+        resp = sess.post(url, data=data, files=files, timeout=300)
     resp.raise_for_status()
     payload = resp.json()
     if not payload.get("ok"):
@@ -264,6 +270,204 @@ def _download_to_temp(url: str, dest_dir: Path) -> Path:
             if chunk:
                 f.write(chunk)
     return dest
+
+
+# --------------------------------------------------------------------------- #
+# Local mode (no S3): clips already pulled into a local folder, render with
+# the locally-installed AE, send the local mp4 straight to Telegram.
+# --------------------------------------------------------------------------- #
+_VIDEO_EXTS = {".mp4", ".mov", ".m4v", ".webm"}
+
+
+def index_local_footage(footage_dir: Path) -> Dict[str, str]:
+    """file_name -> absolute local path (recursive). First match wins."""
+    out: Dict[str, str] = {}
+    for p in footage_dir.rglob("*"):
+        if p.is_file() and p.suffix.lower() in _VIDEO_EXTS:
+            out.setdefault(p.name, str(p.resolve()))
+    return out
+
+
+def pull_clips_from_asset_ui(
+    needed_files: List[str],
+    *,
+    base_url: str,
+    dest_dir: Path,
+    auth: Optional[Tuple[str, str]] = None,
+) -> int:
+    """Download needed clips into dest_dir via the asset_ui presigned-url API
+    (GET <base_url>/assets/<file_name>/video-url -> {"url": ...}). The asset_ui
+    backend holds the S3 creds; we only fetch presigned URLs, so this box needs
+    no S3 access. `base_url` is the API root, e.g.
+    https://host/admin/assets/api . Skips files already present; returns count
+    fetched.
+    """
+    from urllib.parse import quote
+
+    api = base_url.rstrip("/")
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    # asset_ui + S3 are reached directly (no SOCKS proxy — same rule as s3.py);
+    # the env proxy exists only for region-blocked Gemini/Telegram.
+    sess = requests.Session()
+    sess.trust_env = False
+    fetched = 0
+    for fn in needed_files:
+        dest = dest_dir / fn
+        if dest.exists() and dest.stat().st_size > 0:
+            continue
+        try:
+            r = sess.get(f"{api}/assets/{quote(fn)}/video-url", auth=auth, timeout=60)
+            r.raise_for_status()
+            url = str(r.json().get("url") or "").strip()
+            if not url:
+                log.warning("asset_ui returned no url for %s", fn)
+                continue
+            dl = sess.get(url, stream=True, timeout=300)
+            dl.raise_for_status()
+            with open(dest, "wb") as f:
+                for chunk in dl.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
+            fetched += 1
+        except Exception as e:
+            log.warning("asset_ui pull failed for %s: %r", fn, e)
+    return fetched
+
+
+_RENDER_ONLY_FLAG_DIRS = [
+    Path(r"C:\Users\Public\Documents\Adobe"),
+    Path(os.path.expanduser(r"~\Documents\Adobe")),
+]
+_RENDER_ONLY_FLAG_NAME = "ae_render_only_node.txt"
+
+
+def enable_render_only_mode() -> List[Path]:
+    """Create AE's render-only flag (headless: no Home screen / sign-in, like the
+    render node). Returns the flag files WE created (to clean up afterwards)."""
+    created: List[Path] = []
+    for d in _RENDER_ONLY_FLAG_DIRS:
+        f = d / _RENDER_ONLY_FLAG_NAME
+        try:
+            d.mkdir(parents=True, exist_ok=True)
+            if not f.exists():
+                f.write_text("", encoding="utf-8")
+                created.append(f)
+        except Exception as e:
+            log.warning("could not create render-only flag %s: %r", f, e)
+    return created
+
+
+def disable_render_only_mode(created: List[Path]) -> None:
+    for f in created or []:
+        try:
+            f.unlink()
+        except Exception:
+            pass
+
+
+def kill_stale_ae() -> None:
+    """A normal-mode AE already on the Home screen would swallow the -r and never
+    run the script; kill any running AE/aerender so a fresh render-only instance
+    launches."""
+    for img in ("AfterFX.exe", "AfterFX.com", "aerender.exe"):
+        try:
+            subprocess.run(["taskkill", "/IM", img, "/F", "/T"],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
+        except Exception:
+            pass
+    time.sleep(2.0)
+
+
+def _default_ae_bins(ae_bin: str, aerender_bin: str) -> Tuple[str, str]:
+    afx = (ae_bin or os.environ.get("AFTERFX_BIN") or "").strip()
+    aer = (aerender_bin or os.environ.get("AERENDER_BIN") or "").strip()
+    if not afx:
+        # common default install path
+        cand = Path(r"C:\Program Files\Adobe\Adobe After Effects 2025\Support Files\AfterFX.com")
+        afx = str(cand) if cand.exists() else "AfterFX.com"
+    if not aer:
+        p = Path(afx)
+        aer = str(p.with_name("aerender.exe")) if p.name.lower().startswith("afterfx") else "aerender.exe"
+    return afx, aer
+
+
+def _read_ae_status(status_path: Path) -> Tuple[str, Optional[str], Optional[str], str]:
+    text = status_path.read_text(encoding="utf-8", errors="ignore")
+    lines = text.splitlines()
+    status = (lines[0].strip().upper() if lines else "")
+    aep = comp = None
+    for ln in lines[1:]:
+        s = ln.strip()
+        if s.lower().startswith("aep="):
+            aep = s[4:].strip()
+        elif s.lower().startswith("compname="):
+            comp = s[len("compname="):].strip()
+    return status, aep, comp, "\n".join(lines[1:]).strip()
+
+
+def render_montage_local(
+    *,
+    clips: List[Dict[str, Any]],
+    render_jsx: str,
+    comp_name: str,
+    job_id: str,
+    ae_bin: str,
+    aerender_bin: str,
+    workdir: Path,
+    timeout_s: float,
+) -> Path:
+    """Render the montage with the locally-installed AE. The JSX builds the comp
+    AND renders the mp4 via AE's render queue in a single AfterFX -r run (no
+    separate aerender step), then writes ae_status.txt with output=<path>. We
+    poll for that status. Clips are copied into APP_DIR/media/video/<file_name>."""
+    app_dir = (workdir / job_id / "app").resolve()
+    (app_dir / "media" / "video").mkdir(parents=True, exist_ok=True)
+    (app_dir / "work").mkdir(parents=True, exist_ok=True)
+
+    for c in clips:
+        src = Path(c["_local_path"])
+        shutil.copy2(src, app_dir / "media" / "video" / c["file_name"])
+
+    jsx_path = app_dir / "render.jsx"
+    jsx_path.write_text(render_jsx, encoding="utf-8")
+
+    env = os.environ.copy()
+    env["APP_DIR"] = str(app_dir)
+    env["JOB_ID"] = job_id
+    env["COMP_NAME"] = comp_name
+    env["OUTPUT_REL"] = "work/output.mp4"
+
+    afx, _ = _default_ae_bins(ae_bin, aerender_bin)
+    status_path = app_dir / "ae_status.txt"
+    out_path = app_dir / "work" / "output.mp4"
+    if status_path.exists():
+        status_path.unlink()
+    if out_path.exists():
+        out_path.unlink()
+
+    # AfterFX -r launches AE asynchronously; the JSX builds + renders (render
+    # queue) and writes ae_status.txt(output=...) when the mp4 is done. We poll.
+    # Run WITH a window so AE's render progress is visible (helps debugging).
+    log.info("local AE render: %s -r %s", afx, jsx_path)
+    subprocess.Popen([afx, "-r", str(jsx_path)], env=env, cwd=str(app_dir))
+
+    deadline = time.time() + timeout_s
+    status = msg = ""
+    while time.time() < deadline:
+        if status_path.exists():
+            status, _aep, _comp, msg = _read_ae_status(status_path)
+            if status:
+                break
+        time.sleep(2.0)
+    if status != "OK":
+        raise RuntimeError(
+            f"AE render did not finish OK (status={status!r} msg={msg!r}). "
+            f"See {app_dir / 'ae_job_log'}. If AE shows a dialog on launch "
+            "(fonts/sign-in/Home), dismiss it once so the script can run."
+        )
+    if not out_path.exists() or out_path.stat().st_size <= 0:
+        raise RuntimeError(f"AE reported OK but no output mp4 at {out_path}")
+    return out_path
 
 
 # --------------------------------------------------------------------------- #
@@ -313,12 +517,18 @@ def build_one_bucket(
     url_by_fn: Dict[str, str],
     args: argparse.Namespace,
 ) -> bp.PreviewEntry:
+    local_mode = bool(args.local_footage_dir)
     seed = f"{args.seed}:{bucket.bucket_id}"
     candidates = bp.select_bucket_clips(
         bucket, mapped_assets, seed=seed, top_n=max(args.top_n * 3, args.top_n)
     )
-    in_s3 = _filter_clips_in_s3(candidates, url_by_fn, check_s3=not args.no_s3_check)
-    clips = in_s3[: args.top_n]
+    if local_mode:
+        # mapped_assets are pre-filtered to locally-available clips (with
+        # _local_path), so no S3 existence check is needed here.
+        clips = candidates[: args.top_n]
+    else:
+        in_s3 = _filter_clips_in_s3(candidates, url_by_fn, check_s3=not args.no_s3_check)
+        clips = in_s3[: args.top_n]
 
     description = bp.build_bucket_description(bucket)
     entry = bp.PreviewEntry(
@@ -332,7 +542,7 @@ def build_one_bucket(
     if len(clips) < args.min_clips:
         entry.status = "thin"
         log.warning(
-            "THIN bucket %s: only %d clips in S3 (need >=%d) — marking 'thin', skipping render",
+            "THIN bucket %s: only %d clips available (need >=%d) — marking 'thin', skipping render",
             bucket.bucket_id, len(clips), args.min_clips,
         )
         return entry
@@ -343,15 +553,43 @@ def build_one_bucket(
                  bucket.bucket_id, len(clips), [c["file_name"] for c in clips])
         return entry
 
-    # 2. AE example montage on the node
     spec = bp.build_montage_spec(bucket, clips)
     render_jsx = bp.render_montage_jsx(spec, _montage_template_text())
-    media = bp.montage_media_payload(clips, url_by_file_name=url_by_fn)
+    job_id = f"bucketprev_{bucket.bucket_id.replace(':', '__')}"
+    caption = f"{bucket.label} — {description}\nbucket: {bucket.bucket_id}"
 
+    if local_mode:
+        # render with local AE -> local mp4 -> Telegram (no S3 anywhere).
+        # AE chokes on non-ASCII (Cyrillic) output paths, so the AE job runs in an
+        # ASCII-only workdir (like the node's C:\ae_jobs); Python then copies the
+        # finished mp4 into the repo outputs/ (Python handles Cyrillic fine).
+        ae_workdir = Path(args.local_render_dir or r"C:\ae_jobs\bucket_previews").resolve()
+        ae_workdir.mkdir(parents=True, exist_ok=True)
+        local_mp4 = render_montage_local(
+            clips=clips,
+            render_jsx=render_jsx,
+            comp_name="Bucket Preview",
+            job_id=job_id,
+            ae_bin=args.ae_bin,
+            aerender_bin=args.aerender_bin,
+            workdir=ae_workdir,
+            timeout_s=args.render_timeout_s,
+        )
+        final_dir = (ROOT / "outputs" / "bucket_previews")
+        final_dir.mkdir(parents=True, exist_ok=True)
+        keep = final_dir / f"{bucket.bucket_id.replace(':', '__')}.mp4"
+        shutil.copy2(local_mp4, keep)
+        entry.s3_url = ""  # local-only run; bot uses file_id
+        log.info("rendered (local) %s -> %s", bucket.bucket_id, keep)
+        if not args.no_telegram:
+            entry.file_id, entry.file_id_public = _capture_file_ids(keep, caption)
+        entry.status = "ok"
+        return entry
+
+    # node (S3) path
+    media = bp.montage_media_payload(clips, url_by_file_name=url_by_fn)
     out_bucket, out_prefix = _output_s3_target()
     out_key = f"{out_prefix}/{bucket.bucket_id.replace(':', '__')}.mp4"
-    job_id = f"bucketprev_{bucket.bucket_id.replace(':', '__')}"
-
     output_url = _render_via_node(
         node_url=args.node_url,
         job_id=job_id,
@@ -365,11 +603,9 @@ def build_one_bucket(
     entry.s3_url = f"s3://{out_bucket}/{out_key}"
     log.info("rendered %s -> %s", bucket.bucket_id, entry.s3_url)
 
-    # 5. register Telegram file_id(s) from the rendered mp4
     if not args.no_telegram:
         with tempfile.TemporaryDirectory(prefix="bucketprev_") as td:
             local = _download_to_temp(output_url or entry.s3_url, Path(td))
-            caption = f"{bucket.label} — {description}\nbucket: {bucket.bucket_id}"
             entry.file_id, entry.file_id_public = _capture_file_ids(local, caption)
     entry.status = "ok"
     return entry
@@ -378,6 +614,53 @@ def build_one_bucket(
 # --------------------------------------------------------------------------- #
 # CLI
 # --------------------------------------------------------------------------- #
+def _run_register_only(targets: List[Bucket], store_path: Path, args: argparse.Namespace) -> int:
+    """Send each target bucket's already-rendered mp4 to Telegram and record the
+    file_id(s) in the store (no inventory, no AE render)."""
+    final_dir = ROOT / "outputs" / "bucket_previews"
+    store = bp.load_previews_store(store_path)
+    sent = skipped = missing = failed = 0
+    for bucket in targets:
+        mp4 = final_dir / f"{bucket.bucket_id.replace(':', '__')}.mp4"
+        if not mp4.exists():
+            log.warning("register skip %s: no mp4 at %s", bucket.bucket_id, mp4)
+            missing += 1
+            continue
+        existing = (store.get("previews") or {}).get(bucket.bucket_id) or {}
+        if not args.force and str(existing.get("file_id") or "").strip():
+            log.info("register skip %s (file_id already set)", bucket.bucket_id)
+            skipped += 1
+            continue
+        description = existing.get("description") or bp.build_bucket_description(bucket)
+        # No caption: previews are sent caption-less (the name lives on the video
+        # and on the button); a caption would just get truncated.
+        try:
+            file_id, file_id_public = _capture_file_ids(mp4, "")
+        except Exception as e:
+            log.exception("register FAILED %s: %r", bucket.bucket_id, e)
+            failed += 1
+            continue
+        entry = bp.PreviewEntry(
+            bucket_id=bucket.bucket_id,
+            label=bp.display_label(bucket.label),
+            description=description,
+            s3_url=str(existing.get("s3_url") or ""),
+            file_id=file_id,
+            file_id_public=file_id_public,
+            clip_ids=list(existing.get("clip_ids") or []),
+            status="ok",
+            built_at=bp.now_iso(),
+        )
+        bp.previews_upsert(store, entry)
+        bp.save_previews_store(store_path, store)
+        log.info("registered %s file_id=%s file_id_public=%s",
+                 bucket.bucket_id, file_id[:12] + "…" if file_id else "-",
+                 file_id_public[:12] + "…" if file_id_public else "-")
+        sent += 1
+    log.info("register done: sent=%d skipped=%d missing=%d failed=%d", sent, skipped, missing, failed)
+    return 1 if failed else 0
+
+
 def _select_buckets(catalog: List[Bucket], args: argparse.Namespace) -> List[Bucket]:
     if args.only:
         wanted = set(args.only)
@@ -416,8 +699,35 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--dry-run", action="store_true",
                     help="clip-selection only: no render / no Telegram / no S3 upload")
     ap.add_argument("--no-telegram", action="store_true", help="render + S3, but skip file_id capture")
+    ap.add_argument("--register-only", action="store_true",
+                    help="skip render: send the EXISTING outputs/*.mp4 to Telegram and capture "
+                         "file_id(s) into the store (use after a --no-telegram render batch)")
     ap.add_argument("--no-s3-check", action="store_true",
                     help="skip the S3 existence filter (dev/local inventories)")
+    ap.add_argument("--no-dedup-labels", action="store_true",
+                    help="keep label-duplicate buckets (default drops repeats like lonely_paths)")
+    # local mode: clips already pulled into a folder, render with local AE, no S3
+    ap.add_argument("--local-footage-dir", default="",
+                    help="LOCAL MODE: folder with already-downloaded clips (recursive, by "
+                         "file_name). Renders with local AE and sends the mp4 straight to "
+                         "Telegram — no S3 needed.")
+    ap.add_argument("--local-render-dir", default="",
+                    help="where local-mode AE jobs/outputs go (default outputs/bucket_previews)")
+    ap.add_argument("--asset-ui-url", default="",
+                    help="LOCAL MODE auto-pull: asset_ui API base url (e.g. "
+                         "https://host/admin/assets/api); downloads each target bucket's clips "
+                         "into --local-footage-dir via presigned urls (no S3 creds here)")
+    ap.add_argument("--asset-ui-user", default=os.environ.get("ASSET_UI_USER", ""),
+                    help="basic-auth user for asset_ui (or env ASSET_UI_USER)")
+    ap.add_argument("--asset-ui-pass", default=os.environ.get("ASSET_UI_PASS", ""),
+                    help="basic-auth password for asset_ui (or env ASSET_UI_PASS)")
+    ap.add_argument("--ae-render-only", action="store_true",
+                    help="opt-in: launch AE headless in render-only mode (kills any open AE first)")
+    ap.add_argument("--ae-bin", default="", help="AfterFX.com path (else AFTERFX_BIN / default install)")
+    ap.add_argument("--aerender-bin", default="", help="aerender.exe path (else next to AfterFX.com)")
+    ap.add_argument("--manifest-out", default="",
+                    help="write {bucket_id: [file_names]} + flat needed-files list and exit "
+                         "(use it to know which clips to pull from asset_ui)")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args(argv)
 
@@ -429,15 +739,89 @@ def main(argv: Optional[List[str]] = None) -> int:
     catalog = get_bucket_catalog()
     log.info("catalog: %d buckets", len(catalog))
     targets = _select_buckets(catalog, args)
+    # Drop label-duplicate buckets (e.g. lonely_paths under heartbreak+betrayal)
+    # so the shortlist never shows the same vibe name twice. Not for --only.
+    if not args.only and not args.no_dedup_labels:
+        before = len(targets)
+        targets = bp.dedup_buckets_by_label(targets)
+        if len(targets) != before:
+            log.info("label-dedup: %d -> %d buckets", before, len(targets))
     log.info("targets: %d buckets", len(targets))
+
+    store_path = (ROOT / args.previews_path) if not os.path.isabs(args.previews_path) else Path(args.previews_path)
+
+    # REGISTER-ONLY: no inventory/render — just send the already-rendered mp4s to
+    # Telegram and record file_id(s). Used after a --no-telegram render batch.
+    if args.register_only:
+        return _run_register_only(targets, store_path, args)
 
     inv_path = _ensure_inventory(_resolve_inventory_path())
     inv = _load_inventory_raw(inv_path)
     mapped_assets = _build_mapped_assets(inv)
     url_by_fn = _url_by_file_name(inv)
 
-    store_path = (ROOT / args.previews_path) if not os.path.isabs(args.previews_path) else Path(args.previews_path)
+    # LOCAL MODE auto-pull: fetch each target bucket's clips from asset_ui into
+    # the local folder (presigned urls; no S3 creds needed on this box).
+    if args.asset_ui_url:
+        if not args.local_footage_dir:
+            raise SystemExit("--asset-ui-url requires --local-footage-dir (where to download)")
+        dest = Path(args.local_footage_dir).expanduser().resolve()
+        needed: set[str] = set()
+        for bucket in targets:
+            seed = f"{args.seed}:{bucket.bucket_id}"
+            for c in bp.select_bucket_clips(bucket, mapped_assets, seed=seed, top_n=args.top_n):
+                needed.add(c["file_name"])
+        auth = (args.asset_ui_user, args.asset_ui_pass) if args.asset_ui_user else None
+        log.info("asset_ui pull: %d clips -> %s", len(needed), dest)
+        got = pull_clips_from_asset_ui(sorted(needed), base_url=args.asset_ui_url, dest_dir=dest, auth=auth)
+        log.info("asset_ui pull: fetched %d new file(s)", got)
+
+    # LOCAL MODE: restrict selection to clips actually present in the folder and
+    # tag each with its local path (so the montage copies from disk, not S3).
+    if args.local_footage_dir:
+        local_dir = Path(args.local_footage_dir).expanduser().resolve()
+        if not local_dir.is_dir():
+            raise SystemExit(f"--local-footage-dir not a directory: {local_dir}")
+        local_index = index_local_footage(local_dir)
+        log.info("local footage: %d video files in %s", len(local_index), local_dir)
+        before = len(mapped_assets)
+        mapped_assets = [
+            {**a, "_local_path": local_index[a["file_name"]]}
+            for a in mapped_assets if a.get("file_name") in local_index
+        ]
+        log.info("local-available mapped assets: %d / %d", len(mapped_assets), before)
+        if not mapped_assets:
+            raise SystemExit(
+                "no local clips matched the tagged inventory by file_name — "
+                "pull clips into the folder (keep original file names)"
+            )
+
+    # MANIFEST: emit which clips each target bucket wants, then exit.
+    if args.manifest_out:
+        manifest: Dict[str, Any] = {"buckets": {}, "needed_files": []}
+        needed: set[str] = set()
+        for bucket in targets:
+            seed = f"{args.seed}:{bucket.bucket_id}"
+            clips = bp.select_bucket_clips(bucket, mapped_assets, seed=seed, top_n=args.top_n)
+            names = [c["file_name"] for c in clips]
+            manifest["buckets"][bucket.bucket_id] = names
+            needed.update(names)
+        manifest["needed_files"] = sorted(needed)
+        out_p = Path(args.manifest_out)
+        out_p.parent.mkdir(parents=True, exist_ok=True)
+        out_p.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        log.info("manifest: %d buckets, %d unique files -> %s",
+                 len(manifest["buckets"]), len(needed), out_p)
+        return 0
+
     store = bp.load_previews_store(store_path)
+
+    # Local AE: render-only/headless is OPT-IN (the montage runs fine in a normal
+    # open AE instance). Only enable it (and clear a stale instance) when asked.
+    render_only_created: List[Path] = []
+    if args.local_footage_dir and not args.dry_run and args.ae_render_only:
+        render_only_created = enable_render_only_mode()
+        kill_stale_ae()
 
     built = skipped = thin = failed = 0
     for bucket in targets:
@@ -458,6 +842,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             thin += 1
         else:
             built += 1
+
+    disable_render_only_mode(render_only_created)
 
     log.info("done: built=%d thin=%d skipped=%d failed=%d store=%s",
              built, thin, skipped, failed, store_path)

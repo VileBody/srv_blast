@@ -1,0 +1,991 @@
+{
+  "version": 1,
+  "previews": {
+    "adrenaline_flex_major:car_action": {
+      "bucket_id": "adrenaline_flex_major:car_action",
+      "label": "Тачки, дрифт",
+      "description": "Тачки / дрифт: night racing, drifting, speed, night drive (мажор)",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAIsuGpDw3reS3LUHnGQOqnJ3qabW72pAAIVnAACbEogShv_kUaKfcu-PAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8HRqQ8N9cBf2IYY1ESU04bmrZTPq2wAC65sAAmk1IUoaccggMTXZzDwE",
+      "clip_ids": [
+        "17381148558091096",
+        "17029304838887868",
+        "2181499816372518",
+        "14847873767472711",
+        "470766967321351857"
+      ],
+      "status": "ok",
+      "built_at": "2026-06-30T13:24:16Z"
+    },
+    "adrenaline_flex_major:night_streets": {
+      "bucket_id": "adrenaline_flex_major:night_streets",
+      "label": "Ночные улицы",
+      "description": "Ночные улицы: neon lights, city lights, night city, street lights (мажор)",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAIsuWpDw4DQ6IaGbD7hb-XgTtsvsr31AAIWnAACbEogSlqd5Vb7KVlNPAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8HVqQ8ODAqBBq-W5bQvwSpNSJJUQ8QAC7JsAAmk1IUrN9fm90aCisjwE",
+      "clip_ids": [
+        "6614730698188136",
+        "609393393353744333",
+        "5770305766362555",
+        "597571444345468809",
+        "1149543873645720268"
+      ],
+      "status": "ok",
+      "built_at": "2026-06-30T13:24:21Z"
+    },
+    "adrenaline_flex_major:street_action": {
+      "bucket_id": "adrenaline_flex_major:street_action",
+      "label": "Уличный экшн",
+      "description": "Уличный экшн: skateboarding, action, running, graffiti (мажор)",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAIsumpDw4Ti217QLGuAp9ZyLCIxB2hNAAIXnAACbEogSrHqr9ovJi1HPAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8HZqQ8OGX7jMU7Jq8pj9eHvZXygz5wAC7ZsAAmk1IUqTdXYa0wZG_zwE",
+      "clip_ids": [
+        "1030831802218661849",
+        "4785143350997799",
+        "138767232264533041",
+        "1120129738550025458",
+        "1074319686111173339"
+      ],
+      "status": "ok",
+      "built_at": "2026-06-30T13:24:25Z"
+    },
+    "aggression_minor:chaos_elements": {
+      "bucket_id": "aggression_minor:chaos_elements",
+      "label": "Хаос, огонь",
+      "description": "Хаос / огонь: fire, explosion, smoke, destruction (минор)",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAIspmpDwzLAV0Pr7I0XEIGuuJp9hKvoAAOcAAJsSiBKDehiXxRABAw8BA",
+      "file_id_public": "BAACAgIAAxkDAAEB8GJqQ8M01MnhGG4DyDuy-rYbYDItbwAC2ZsAAmk1IUpaBygKRqJvQjwE",
+      "clip_ids": [
+        "111886371987049888",
+        "385057836913682503",
+        "283375001552956848",
+        "16325617396751345",
+        "654288652158377961"
+      ],
+      "status": "ok",
+      "built_at": "2026-06-30T13:23:02Z"
+    },
+    "aggression_minor:night_intensity": {
+      "bucket_id": "aggression_minor:night_intensity",
+      "label": "Ночной драйв",
+      "description": "Ночной драйв: night racing, speed, night drive, drifting (минор)",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAIsqGpDwzqr4c-I3jDTKrY8gSwnxD--AAICnAACbEogSvUQinFjglN7PAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8GRqQ8M8EHyMtlNybxu8qXkUREeA_AAC25sAAmk1IUrjV4B9xZnaVTwE",
+      "clip_ids": [
+        "271904896247731348",
+        "35958497019879548",
+        "271904896247175388",
+        "2181499816372518",
+        "86835099496305661"
+      ],
+      "status": "ok",
+      "built_at": "2026-06-30T13:23:10Z"
+    },
+    "aggression_minor:urban_grit": {
+      "bucket_id": "aggression_minor:urban_grit",
+      "label": "Городская жесть",
+      "description": "Городская жесть: night city, graffiti, urban, city street (минор)",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAIsp2pDwzbjVbs6zXN_neQS3JbQOoJWAAIBnAACbEogSplOc5ffWNnsPAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8GNqQ8M5IduaytBy7d7Ve1R_p_22LgAC2psAAmk1IUpoPUepGcTkvjwE",
+      "clip_ids": [
+        "1120129738550025458",
+        "70437490847155",
+        "27373510229082742",
+        "4996249580516881",
+        "59672763807298042"
+      ],
+      "status": "ok",
+      "built_at": "2026-06-30T13:23:07Z"
+    },
+    "betrayal_minor:dark_elements": {
+      "bucket_id": "betrayal_minor:dark_elements",
+      "label": "Тёмные элементы",
+      "description": "Тёмные элементы: night, rain, shadows, smoke (минор)",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAIsnGpDwwfJTpWIN63pJk6dM_0q2W8mAAL2mwACbEogSgFSMMJ6NdtvPAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8FhqQ8MJxB3nWYpw2ytKM9G6r970QwACzJsAAmk1IUqXUIWhgc2AwTwE",
+      "clip_ids": [
+        "4996249580516881",
+        "70437490869316",
+        "39406565483648645",
+        "70437490847155",
+        "537898749264559366"
+      ],
+      "status": "ok",
+      "built_at": "2026-06-30T13:22:19Z"
+    },
+    "betrayal_minor:girl_urban_night": {
+      "bucket_id": "betrayal_minor:girl_urban_night",
+      "label": "Девушка, ночной город",
+      "description": "Девушка / ночной город: night, nighttime, night city, neon lights (минор)",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAIsm2pDwwMpZhpmTmgAAT952t5eVPNmfQAC9ZsAAmxKIErsgDU_pU3UkjwE",
+      "file_id_public": "BAACAgIAAxkDAAEB8FdqQ8MF7XfhiSW-BcnS_9plQPzBLQACy5sAAmk1IUomKYa_k39rYzwE",
+      "clip_ids": [
+        "388294799140695949",
+        "70437490872432",
+        "335588609749735874",
+        "204280533091761853",
+        "86835099496305661"
+      ],
+      "status": "ok",
+      "built_at": "2026-06-30T13:22:15Z"
+    },
+    "cyber_alienation_minor:cyberpunk_city": {
+      "bucket_id": "cyber_alienation_minor:cyberpunk_city",
+      "label": "Киберпанк-город",
+      "description": "Киберпанк-город: neon lights, night city, city lights, skyscrapers (минор)",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAIsxGpDw6nVnzUcQ38jvncLs-mt5zDcAAIinAACbEogSheoj0-iw5nfPAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8IBqQ8Ors6hc9cjQ9Zgpi260qBeGZQAC95sAAmk1IUrg1tT6TqPn_DwE",
+      "clip_ids": [
+        "335729347239730107",
+        "86835099496305661",
+        "609393393353744333",
+        "39054721765620880",
+        "608900812171530398"
+      ],
+      "status": "ok",
+      "built_at": "2026-06-30T13:25:01Z"
+    },
+    "cyber_alienation_minor:digital_glitch": {
+      "bucket_id": "cyber_alienation_minor:digital_glitch",
+      "label": "Диджитал-глитч",
+      "description": "Диджитал-глитч: glitch, digital art, abstract, blurry (минор)",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAIsw2pDw6WCKXDaVoD_kKuWiNdo5XexAAIgnAACbEogSourp3S4H5b5PAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8H9qQ8OncHpZUREQygJOuU4a7lkwbwAC9psAAmk1IUq_jJjXXZRYLTwE",
+      "clip_ids": [
+        "335588609749735874",
+        "13721973860715712",
+        "86835099496305661",
+        "35184440831949847",
+        "271904896247731348"
+      ],
+      "status": "ok",
+      "built_at": "2026-06-30T13:24:58Z"
+    },
+    "cyber_alienation_minor:surveillance_isolation": {
+      "bucket_id": "cyber_alienation_minor:surveillance_isolation",
+      "label": "Слежка, изоляция",
+      "description": "Слежка / изоляция: subway, tunnel, platform, empty street (минор)",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAIsxWpDw626PIKLZPCPuoubxjLKhLkpAAIjnAACbEogSjznuOZ5Ttl3PAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8IFqQ8OvkhenaYMe1HZigz4CRwXkxQAC-JsAAmk1IUorUgdcNeHSPzwE",
+      "clip_ids": [
+        "43417583904581246",
+        "588634613836766964",
+        "931119291716042550",
+        "971792425824032615",
+        "43417583904447153"
+      ],
+      "status": "ok",
+      "built_at": "2026-06-30T13:25:05Z"
+    },
+    "depression_minor:empty_spaces": {
+      "bucket_id": "depression_minor:empty_spaces",
+      "label": "Пустые пространства",
+      "description": "Пустые пространства: empty road, empty street, abandoned, dark room (минор)",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAIsoGpDwxY4fOY7Ke3ac1CvJgam28DeAAL6mwACbEogSo0qcGKsDxeXPAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8FxqQ8MXpiZxYROxr7mh6cVuLGlsXQAC0psAAmk1IUrEIGJ0URiKbTwE",
+      "clip_ids": [
+        "1143632899097465926",
+        "5770305766555811",
+        "588634613836766964",
+        "971792425824032615",
+        "9499849209256303"
+      ],
+      "status": "ok",
+      "built_at": "2026-06-30T13:22:33Z"
+    },
+    "depression_minor:mental_fog": {
+      "bucket_id": "depression_minor:mental_fog",
+      "label": "Туман в голове",
+      "description": "Туман в голове: fog, foggy, dark sky, shadows (минор)",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAIsoWpDwxlBbR3FmCwh0LmZuXdGTTiUAAL7mwACbEogSugnAAFpCFwB5zwE",
+      "file_id_public": "BAACAgIAAxkDAAEB8F1qQ8MbEvT3A3s7bYuVNNhs9_K9wQAC05sAAmk1IUo9GqXyQnJ2cTwE",
+      "clip_ids": [
+        "49821139620434943",
+        "865394884629754697",
+        "2251868558327024",
+        "9781324186451441",
+        "654288652158394468"
+      ],
+      "status": "ok",
+      "built_at": "2026-06-30T13:22:37Z"
+    },
+    "depression_minor:urban_isolation": {
+      "bucket_id": "depression_minor:urban_isolation",
+      "label": "Городская изоляция",
+      "description": "Городская изоляция: night city, streetlights, rain, rainy night (минор)",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAIsompDwxzG9Gef1jvtaHHMsX00XfZhAAL8mwACbEogSumHOIXVpuYsPAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8F5qQ8MeKDdVgmGTQBS72dGjeZztHAAC1JsAAmk1IUpJTva6adloWjwE",
+      "clip_ids": [
+        "4996249580516881",
+        "37506609389883133",
+        "464081936619116860",
+        "335729347239730107",
+        "8022105582050492"
+      ],
+      "status": "ok",
+      "built_at": "2026-06-30T13:22:40Z"
+    },
+    "epic_love_major:cinematic_nature": {
+      "bucket_id": "epic_love_major:cinematic_nature",
+      "label": "Кино-природа",
+      "description": "Кино-природа: sunset, beach, golden hour, ocean (мажор)",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAIskmpDwsoxME-lPe82Mtz88EpOfTREAALsmwACbEogStqF3nA5MWZ3PAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8E5qQ8LMpzjuRXJFTtYYBDPJ7PAxOQACwZsAAmk1IUpHw9RwFusChjwE",
+      "clip_ids": [
+        "728175833493056288",
+        "420664421467269088",
+        "654288652158449297",
+        "17944098510425763",
+        "20336635813582721"
+      ],
+      "status": "ok",
+      "built_at": "2026-06-30T13:21:18Z"
+    },
+    "epic_love_major:dynamic_couple": {
+      "bucket_id": "epic_love_major:dynamic_couple",
+      "label": "Пара в движении",
+      "description": "Пара в движении: couple, couple dancing, beach run, couple walking (мажор)",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAIsxmpDw8C_1YDqzizpGCr_82DazHvBAAInnAACbEogSj_uOz1yoTTUPAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8IJqQ8PC9Y4oYjfVRiCr0_aAWlhaGQAC-psAAmk1IUqkO_9idzQ4CjwE",
+      "clip_ids": [
+        "6403624465989541",
+        "48554502228818408",
+        "142496775705512836",
+        "130885932913088443",
+        "121034308732156762"
+      ],
+      "status": "ok",
+      "built_at": "2026-06-30T13:25:24Z"
+    },
+    "epic_love_minor:dramatic_landscape": {
+      "bucket_id": "epic_love_minor:dramatic_landscape",
+      "label": "Драматичный пейзаж",
+      "description": "Драматичный пейзаж: mountain, dark landscape, dark forest, dark trees (минор)",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAIslGpDwuexorPBdZ6P6BVPxsw3Iv6dAALumwACbEogSkio5g79k34sPAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8FBqQ8Lp_CBWDguGUIlb62lQRQRtxwACw5sAAmk1IUqSuO1hB38FDzwE",
+      "clip_ids": [
+        "10625749117237766",
+        "635781672400529798",
+        "1027594839965696603",
+        "8514686791323137",
+        "614459942946467855"
+      ],
+      "status": "ok",
+      "built_at": "2026-06-30T13:21:48Z"
+    },
+    "epic_love_minor:stormy_elements": {
+      "bucket_id": "epic_love_minor:stormy_elements",
+      "label": "Буря, стихия",
+      "description": "Буря / стихия: rain, lightning, stormy weather, fog (минор)",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAIsk2pDwuMZROg_EbpOLGHviTavhGB4AALtmwACbEogSuVsp6YjemB8PAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8E9qQ8Lldk-raKbO8KnYPmb259gKQgACwpsAAmk1IUrNtwvVCVns_DwE",
+      "clip_ids": [
+        "464081936619116860",
+        "147704062771893190",
+        "43487952649145063",
+        "744782857146935231",
+        "37506609389883133"
+      ],
+      "status": "ok",
+      "built_at": "2026-06-30T13:21:43Z"
+    },
+    "epic_love_minor:tragic_couple": {
+      "bucket_id": "epic_love_minor:tragic_couple",
+      "label": "Трагичная пара",
+      "description": "Трагичная пара: couple, silhouette, rain, lonely (минор)",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAIslWpDwuvgQ7CXHCU23xLT1vcaSLdVAALvmwACbEogSrL2bKI_2I6vPAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8FFqQ8LtIdKOgsmR2Y8mXEdtVRNeMgACxJsAAmk1IUoFFHbTZ2VaTDwE",
+      "clip_ids": [
+        "744782857146935231",
+        "588634613836766964",
+        "43487952649145063",
+        "70437490869316",
+        "6403624465989541"
+      ],
+      "status": "ok",
+      "built_at": "2026-06-30T13:21:51Z"
+    },
+    "escapism_dreams_minor:cosmic_journey": {
+      "bucket_id": "escapism_dreams_minor:cosmic_journey",
+      "label": "Космос",
+      "description": "Космос: space, stars, night sky, starry night (минор)",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAIsu2pDw4gsELN8RzjZYiWPdXu7MeJ_AAIYnAACbEogSlblRb8kmxS_PAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8HdqQ8OKx3gRGBElv4NcOmAb1ilstwAC7psAAmk1IUo_vHt9wvDpUzwE",
+      "clip_ids": [
+        "654288652158378059",
+        "14355292557338491",
+        "436778863873648528",
+        "9781324186451441",
+        "321725967146230746"
+      ],
+      "status": "ok",
+      "built_at": "2026-06-30T13:24:28Z"
+    },
+    "escapism_dreams_minor:dark_dreamscape": {
+      "bucket_id": "escapism_dreams_minor:dark_dreamscape",
+      "label": "Тёмный сон",
+      "description": "Тёмный сон: night, fog, forest, dark forest (минор)",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAIsvWpDw4-qYC41gWmZUg6WtGsDAAFpYwACGpwAAmxKIEpLtsT-PowaojwE",
+      "file_id_public": "BAACAgIAAxkDAAEB8HlqQ8ORXlRWLhDOy_lcjeNXGVM_ZAAC8JsAAmk1IUpj8uIoWYCxazwE",
+      "clip_ids": [
+        "863776403541237528",
+        "49821139620434943",
+        "1046524032142870448",
+        "8514686791323137",
+        "373587731605027328"
+      ],
+      "status": "ok",
+      "built_at": "2026-06-30T13:24:35Z"
+    },
+    "escapism_dreams_minor:surreal_magic": {
+      "bucket_id": "escapism_dreams_minor:surreal_magic",
+      "label": "Сюрреал, магия",
+      "description": "Сюрреал / магия: glowing figure, glowing hand, abstract, digital art (минор)",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAIsvGpDw4wd0TlVNoPEj5A4OBqnVOpMAAIZnAACbEogSndheB0iXMmVPAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8HhqQ8ONJQzWbY9x_QJmMb8H5somggAC75sAAmk1IUpU68BlzpOykzwE",
+      "clip_ids": [
+        "654288652158377961",
+        "16325617396751345",
+        "68749240568",
+        "63543044737376562",
+        "1337074889200013"
+      ],
+      "status": "ok",
+      "built_at": "2026-06-30T13:24:32Z"
+    },
+    "heartbreak_minor:foggy_desolation": {
+      "bucket_id": "heartbreak_minor:foggy_desolation",
+      "label": "Туманная пустошь",
+      "description": "Туманная пустошь: foggy, fog, foggy forest, misty forest (минор)",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAIsmGpDwvZzf6wHFcYWkdbGrcHvmxw9AALymwACbEogSiNUKtAxHXloPAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8FRqQ8L4I5HBZArpFNlve3SghY3LtAACx5sAAmk1IUqfTWJ1lJKfAzwE",
+      "clip_ids": [
+        "373587731605027328",
+        "865394884629754697",
+        "12103492740758756",
+        "1027594839965696603",
+        "62768988550196668"
+      ],
+      "status": "ok",
+      "built_at": "2026-06-30T13:22:02Z"
+    },
+    "heartbreak_minor:girl_portrait_sad": {
+      "bucket_id": "heartbreak_minor:girl_portrait_sad",
+      "label": "Грустный портрет девушки",
+      "description": "Грустный портрет девушки: close-up, night, nighttime, indoor setting (минор)",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAIslmpDwu8H0r1MEIT5wOav1IJCqs0xAALwmwACbEogSgIiaOhykbXRPAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8FJqQ8Lw54meDHwi39brs6b3n1LCwQACxZsAAmk1IUpGhSNR11TAgTwE",
+      "clip_ids": [
+        "677510337715255061",
+        "14777505023070773",
+        "337277459617315412",
+        "37154765670509573",
+        "7810999349866203"
+      ],
+      "status": "ok",
+      "built_at": "2026-06-30T13:21:55Z"
+    },
+    "heartbreak_minor:lonely_paths": {
+      "bucket_id": "heartbreak_minor:lonely_paths",
+      "label": "Одинокие тропы",
+      "description": "Одинокие тропы: lonely, lonely figure, alone, lonely walk (минор)",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAIsmWpDwvoo6XviF9PdUP5xyAr6Nd4cAALzmwACbEogShN-s1sYpSEoPAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8FVqQ8L8oGnSZYZqJU69Uw2crz9t7wACyJsAAmk1IUrg-2W9dQ0QpzwE",
+      "clip_ids": [
+        "2322237302755707",
+        "825073594273291404",
+        "22025485672043292",
+        "1110559589386918990",
+        "12103492740758756"
+      ],
+      "status": "ok",
+      "built_at": "2026-06-30T13:22:06Z"
+    },
+    "heartbreak_minor:silhouette_vibe": {
+      "bucket_id": "heartbreak_minor:silhouette_vibe",
+      "label": "Силуэты",
+      "description": "Силуэты: silhouette (минор)",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAIsmmpDwv4LnbTfeufkOWxo1bIwzndCAAL0mwACbEogStfNBQFbRKJMPAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8FZqQ8MBmIwZlL6I5VdLSBs1c1VUWwACypsAAmk1IUr1IikYvIa5jDwE",
+      "clip_ids": [
+        "21040323255157994",
+        "422281212082806",
+        "8092474327055058",
+        "2392606048172838",
+        "283375001553253309"
+      ],
+      "status": "ok",
+      "built_at": "2026-06-30T13:22:11Z"
+    },
+    "heartbreak_minor:winter_isolation": {
+      "bucket_id": "heartbreak_minor:winter_isolation",
+      "label": "Зимняя изоляция",
+      "description": "Зимняя изоляция: snowfall, snow, winter, winter landscape (минор)",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAIsl2pDwvIHnWJGLgTuEZ4e3qmZlNCpAALxmwACbEogSilU8YWmQoHZPAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8FNqQ8L0GLW9zBntwUqDyElWqmSQFwACxpsAAmk1IUpez1V4bjZs-jwE",
+      "clip_ids": [
+        "45950858693789926",
+        "751960469050497400",
+        "25755029113145611",
+        "14144186323585134",
+        "1005569423040554473"
+      ],
+      "status": "ok",
+      "built_at": "2026-06-30T13:21:58Z"
+    },
+    "hustle_minor:luxury_lifestyle": {
+      "bucket_id": "hustle_minor:luxury_lifestyle",
+      "label": "Лакшери-лайфстайл",
+      "description": "Лакшери-лайфстайл: gold, car interior, car, night city (минор)",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAIssGpDw1l-7wtS5d-2SsL3VlW-y6ZRAAILnAACbEogStRednVY5d0bPAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8GxqQ8NbIZP03c2Cq00roXp88UtymgAC45sAAmk1IUrFTxehv_xIEDwE",
+      "clip_ids": [
+        "17381148558091096",
+        "37154765671279272",
+        "46373071158027501",
+        "20969954511868980",
+        "70437490872432"
+      ],
+      "status": "ok",
+      "built_at": "2026-06-30T13:23:42Z"
+    },
+    "hustle_minor:urban_wealth": {
+      "bucket_id": "hustle_minor:urban_wealth",
+      "label": "Городское богатство",
+      "description": "Городское богатство: night city, neon lights, skyscrapers, city lights (минор)",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAIsr2pDw1bdQOUsQzA2Go3E-dwuJPS6AAIKnAACbEogSqEZHkCUQMScPAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8GtqQ8NYNiuVHXNn78DCG5QvaSLzPAAC4psAAmk1IUrQs661DgediDwE",
+      "clip_ids": [
+        "609393393353744333",
+        "6614730698188136",
+        "271904896247731348",
+        "271904896247601404",
+        "34691859628043773"
+      ],
+      "status": "ok",
+      "built_at": "2026-06-30T13:23:38Z"
+    },
+    "jealousy_minor:eerie_nature": {
+      "bucket_id": "jealousy_minor:eerie_nature",
+      "label": "Жуткая природа",
+      "description": "Жуткая природа: misty forest, foggy forest, fog, dark forest (минор)",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAIsnmpDww8ccExCSJ0Y4vwwIMPY3qgAA_ibAAJsSiBKHX4v7vkjrx08BA",
+      "file_id_public": "BAACAgIAAxkDAAEB8FpqQ8MRYWSs0cTSPl2o6EoRkf9E6gACz5sAAmk1IUr2WcryEoEwPDwE",
+      "clip_ids": [
+        "49821139620434943",
+        "1046524032142870448",
+        "863776403541237528",
+        "141793088262621033",
+        "635781672400529798"
+      ],
+      "status": "ok",
+      "built_at": "2026-06-30T13:22:27Z"
+    },
+    "jealousy_minor:girl_unease": {
+      "bucket_id": "jealousy_minor:girl_unease",
+      "label": "Тревога, девушка",
+      "description": "Тревога / девушка: blurry, blue lighting, neon lights, night city (минор)",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAIsnWpDwwsvCOdW2bF65SspeZ4WQFg5AAL3mwACbEogSlboUnwBEwyePAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8FlqQ8MN7k9wm6e_8q4qRbYGIHIjtwACzZsAAmk1IUobzh7MMXX2zDwE",
+      "clip_ids": [
+        "70437490872432",
+        "50595195805462102",
+        "5559199537125434",
+        "1196337403686577",
+        "162692605282940916"
+      ],
+      "status": "ok",
+      "built_at": "2026-06-30T13:22:23Z"
+    },
+    "jealousy_minor:glitchy_mind": {
+      "bucket_id": "jealousy_minor:glitchy_mind",
+      "label": "Глитч-сознание",
+      "description": "Глитч-сознание: glitch, digital art, blurry, abstract (минор)",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAIsn2pDwxLB5db1Uai0pRZKyP0hy1qxAAL5mwACbEogSmTu5TYipLrOPAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8FtqQ8MUuyT7VxLwHaYL7Xn8bMLzeQAC0ZsAAmk1IUpsZQhDJF7ZDDwE",
+      "clip_ids": [
+        "1196337403686577",
+        "3659243441228231",
+        "19421842138649190",
+        "5629568279338183",
+        "5559199537127236"
+      ],
+      "status": "ok",
+      "built_at": "2026-06-30T13:22:30Z"
+    },
+    "loneliness_isolation_minor:urban_solitude": {
+      "bucket_id": "loneliness_isolation_minor:urban_solitude",
+      "label": "Городское одиночество",
+      "description": "Городское одиночество: night walk, lonely figure, silhouette, darkness (минор)",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAIsvmpDw5MoNhWx3gfOfvuH93kAAbkqqgACG5wAAmxKIEoKzUnau_KlwTwE",
+      "file_id_public": "BAACAgIAAxkDAAEB8HpqQ8OVVpGJMc8MKEObSDatMO0XsgAC8ZsAAmk1IUpwun5OJjHpKTwE",
+      "clip_ids": [
+        "654288652158377976",
+        "192951165281258216",
+        "70437490847489",
+        "20336635812900151",
+        "882635226953603935"
+      ],
+      "status": "ok",
+      "built_at": "2026-06-30T13:24:39Z"
+    },
+    "motivation_major:action_movement": {
+      "bucket_id": "motivation_major:action_movement",
+      "label": "Экшн, движение",
+      "description": "Экшн / движение: running, dancing, beach run, speed (мажор)",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAIsqmpDw0OlHA6Y_HJesIWJUmtKuHCaAAIEnAACbEogSkn2Z6cj8K4AATwE",
+      "file_id_public": "BAACAgIAAxkDAAEB8GZqQ8NFC9-d1MZMEuUBEvWOMWLhmQAC3ZsAAmk1IUrhkhOQqRjTbTwE",
+      "clip_ids": [
+        "1055599908558126",
+        "28640147623006362",
+        "56717276552056503",
+        "140806233621892",
+        "204280533091761857"
+      ],
+      "status": "ok",
+      "built_at": "2026-06-30T13:23:19Z"
+    },
+    "motivation_major:bright_starts": {
+      "bucket_id": "motivation_major:bright_starts",
+      "label": "Светлое начало",
+      "description": "Светлое начало: sunset, golden hour, sunlight, beach (мажор)",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAIsq2pDw0cGUn93cGtqB-mbNqckv-91AAIFnAACbEogSjI9S8CA8OIKPAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8GdqQ8NJwq_Qc3Rqu_DKYs6O5P3CLgAC3psAAmk1IUq6-ZH7LGQnWTwE",
+      "clip_ids": [
+        "420664421467269088",
+        "24136548000455920",
+        "22095854416401859",
+        "492649953555943",
+        "728175833493056288"
+      ],
+      "status": "ok",
+      "built_at": "2026-06-30T13:23:23Z"
+    },
+    "motivation_major:urban_triumph": {
+      "bucket_id": "motivation_major:urban_triumph",
+      "label": "Городской триумф",
+      "description": "Городской триумф: cityscape, skyscrapers, city life, urban (мажор)",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAIsqWpDwz4F-9-8IRWUHVzRB-HZSFKeAAIDnAACbEogSnhKVZQzxDLLPAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8GVqQ8NBZ1xQ-61qEo7YGdqeoxG6BQAC3JsAAmk1IUoMLOk9tFtlrTwE",
+      "clip_ids": [
+        "57561701483721787",
+        "11259067814317218",
+        "20125529579851281",
+        "1018376534470499694",
+        "70437490847081"
+      ],
+      "status": "ok",
+      "built_at": "2026-06-30T13:23:15Z"
+    },
+    "motivation_minor:night_grind": {
+      "bucket_id": "motivation_minor:night_grind",
+      "label": "Ночной грайнд",
+      "description": "Ночной грайнд: night city, street lights, rain, rainy night (минор)",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAIsrGpDw0uTYfroQci_CpDY57AGivmxAAIHnAACbEogSs13s80TTDuWPAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8GhqQ8NM_dKsl1NWWqV5zPlRupeXgwAC35sAAmk1IUrHjNcyoh1jNTwE",
+      "clip_ids": [
+        "464081936619116860",
+        "4996249580516881",
+        "335729347239730107",
+        "37506609389883133",
+        "86835099495663966"
+      ],
+      "status": "ok",
+      "built_at": "2026-06-30T13:23:27Z"
+    },
+    "motivation_minor:solitary_focus": {
+      "bucket_id": "motivation_minor:solitary_focus",
+      "label": "Одиночество, фокус",
+      "description": "Одиночество / фокус: alone, lonely, dark room, night walk (минор)",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAIsrmpDw1KCuvmn_lxfTc2_HXt_n3QAAwmcAAJsSiBKw9XjPXAoI-88BA",
+      "file_id_public": "BAACAgIAAxkDAAEB8GpqQ8NU0qzEASDi5CS3SPkdd_jQ-wAC4ZsAAmk1IUr8gcwFuhG0FjwE",
+      "clip_ids": [
+        "654288652158377976",
+        "8092474327083646",
+        "838021443207869747",
+        "825073594273291404",
+        "283375001553331306"
+      ],
+      "status": "ok",
+      "built_at": "2026-06-30T13:23:34Z"
+    },
+    "motivation_minor:tough_environment": {
+      "bucket_id": "motivation_minor:tough_environment",
+      "label": "Суровая среда",
+      "description": "Суровая среда: urban, graffiti, city street, urban setting (минор)",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAIsrWpDw04eUadoT36gXM7cj50nNyU3AAIInAACbEogSuzQiG-T1HvdPAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8GlqQ8NQ2cUAATxnUFaA35uJoOGEQ1IAAuCbAAJpNSFK51iYw8EX-x08BA",
+      "clip_ids": [
+        "1120129738550025458",
+        "144607838031813717",
+        "27373510229082742",
+        "4996249580516881",
+        "447615650488149432"
+      ],
+      "status": "ok",
+      "built_at": "2026-06-30T13:23:30Z"
+    },
+    "mysticism_fate_minor:gothic_architecture": {
+      "bucket_id": "mysticism_fate_minor:gothic_architecture",
+      "label": "Готическая архитектура",
+      "description": "Готическая архитектура: castle, ruins, architecture, dark atmosphere (минор)",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAIswmpDw6K-NH1FogoUrp6M_NU7LRMDAAIfnAACbEogSkHD0bj2cKoLPAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8H5qQ8OjqnLrJuCjIEIgkqsh_jdquwAC9ZsAAmk1IUoVARoIY9TFsDwE",
+      "clip_ids": [
+        "863776403541237528",
+        "635781672400529798",
+        "49821139620434943",
+        "141793088262621033",
+        "614459942946467855"
+      ],
+      "status": "ok",
+      "built_at": "2026-06-30T13:24:54Z"
+    },
+    "nostalgia_city_minor:lofi_textures": {
+      "bucket_id": "nostalgia_city_minor:lofi_textures",
+      "label": "Lo-fi текстуры",
+      "description": "Lo-fi текстуры: smoke, relaxation, indoor, dark interior (минор)",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAIst2pDw3ZS2-wzn6HitTDtAerpFGHFAAIUnAACbEogSlPt0HpBDpNFPAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8HNqQ8N4FYayQe0jltIy_WvqcVYeNwAC6psAAmk1IUr5q00_QjPPgTwE",
+      "clip_ids": [
+        "1100004277748597720",
+        "129408189289329784",
+        "23151385577755092",
+        "388294799140695949",
+        "677510337715255061"
+      ],
+      "status": "ok",
+      "built_at": "2026-06-30T13:24:10Z"
+    },
+    "nostalgia_city_minor:retro_city": {
+      "bucket_id": "nostalgia_city_minor:retro_city",
+      "label": "Ретро-город",
+      "description": "Ретро-город: sunset, cityscape, city life, evening (минор)",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAIstmpDw3LsRb4sYk2sa5sMcKm_s3HJAAISnAACbEogSl0ScT7dekTvPAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8HJqQ8N0iEla5Jhb3IPQsds11GDkQQAC6ZsAAmk1IUpW9Hy9UeC06TwE",
+      "clip_ids": [
+        "57561701483721787",
+        "11962755252030733",
+        "86835099527190892",
+        "1018376534470499694",
+        "117656609006130811"
+      ],
+      "status": "ok",
+      "built_at": "2026-06-30T13:24:06Z"
+    },
+    "nostalgia_city_minor:vintage_tech": {
+      "bucket_id": "nostalgia_city_minor:vintage_tech",
+      "label": "Винтажная техника",
+      "description": "Винтажная техника: car, car interior, architecture, street scene (минор)",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAIstWpDw210RdJ3i31gruSwgSpTuwQgAAIRnAACbEogShNE-15U_5S1PAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8HFqQ8Nw8ZHpzwKnOtb-IYg8zZdfQAAC6JsAAmk1IUoXhlq6ia2ngDwE",
+      "clip_ids": [
+        "86835099527190892",
+        "9218374232955776",
+        "11962755252030733",
+        "17381148558091096",
+        "117656609006130811"
+      ],
+      "status": "ok",
+      "built_at": "2026-06-30T13:24:02Z"
+    },
+    "romance_major:couple_moments": {
+      "bucket_id": "romance_major:couple_moments",
+      "label": "Пара, моменты",
+      "description": "Пара / моменты: couple, couple hug, couple walking, couple watching sunset (мажор)",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAIsjmpDwrfVzTCNBLJHbXQle72Pr6VoAALomwACbEogSlQGmlSmJ702PAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8EpqQ8K5AnHFXqWBFp_-0o2u5Q8n9QACvJsAAmk1IUpEUSKOhDSXKTwE",
+      "clip_ids": [
+        "130885932913088443",
+        "28147566418900600",
+        "48554502228818408",
+        "142496775705512836",
+        "6403624465989541"
+      ],
+      "status": "ok",
+      "built_at": "2026-06-30T13:21:00Z"
+    },
+    "romance_major:nature_sunset": {
+      "bucket_id": "romance_major:nature_sunset",
+      "label": "Природа, закат",
+      "description": "Природа / закат: sunset, beach, golden hour, ocean (мажор)",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAIsjGpDwfFZCdWclIQE8WvCxQpufLH6AAL_owACakQgSoVRE5BEUpHuPAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8ElqQ8Hzbm_l8lkpUZZMQra8E8ocxwACO54AAsMHIErLq8UDq9e6JTwE",
+      "clip_ids": [
+        "728175833493056288",
+        "20336635813582721",
+        "654288652158449297",
+        "151996556165239571",
+        "420664421467269088"
+      ],
+      "status": "ok",
+      "built_at": "2026-06-30T13:17:41Z"
+    },
+    "romance_major:warm_vibes": {
+      "bucket_id": "romance_major:warm_vibes",
+      "label": "Тёплый вайб",
+      "description": "Тёплый вайб: warm lighting, sunlight, relaxation, dancing (мажор)",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAIsj2pDwrtzf19jqjFeQRrcYT70P_lYAALpmwACbEogSk0yGdKxdwwvPAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8EtqQ8K9PbqLanGsoLRC6yODlOFUgwACvZsAAmk1IUrsgRhbe3M7ATwE",
+      "clip_ids": [
+        "22095854416401859",
+        "20336635812900109",
+        "17451517301931924",
+        "129408189289329784",
+        "83809243059675983"
+      ],
+      "status": "ok",
+      "built_at": "2026-06-30T13:21:03Z"
+    },
+    "romance_minor:intimacy_fading": {
+      "bucket_id": "romance_minor:intimacy_fading",
+      "label": "Угасающая близость",
+      "description": "Угасающая близость: couple, silhouette, reflection, smiling (минор)",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAIskWpDwsb8X0G629lzSj_pAAFWbk4uWwAC65sAAmxKIEp_v_39x-N0dzwE",
+      "file_id_public": "BAACAgIAAxkDAAEB8E1qQ8LIeCWeNBev673yiMvZ3ZFcEQACwJsAAmk1IUpMDrseXj2mxzwE",
+      "clip_ids": [
+        "6403624465989541",
+        "43487952649145063",
+        "867013365775349699",
+        "382594930870560968",
+        "4996249580516881"
+      ],
+      "status": "ok",
+      "built_at": "2026-06-30T13:21:14Z"
+    },
+    "romance_minor:lonely_nature": {
+      "bucket_id": "romance_minor:lonely_nature",
+      "label": "Одинокая природа",
+      "description": "Одинокая природа: foggy forest, misty forest, cloudy sky, fog (минор)",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAIskGpDwsD4DiBA_7fKkIpBQSGM02f_AALqmwACbEogSqOmBdDMlRcAATwE",
+      "file_id_public": "BAACAgIAAxkDAAEB8ExqQ8LE7ZWdv0xEA86R71LYuFg63wACvpsAAmk1IUqEdU0BXU29EjwE",
+      "clip_ids": [
+        "605945324890817969",
+        "10907224092159326",
+        "1046524032150062233",
+        "290482244730193947",
+        "942096815785467661"
+      ],
+      "status": "ok",
+      "built_at": "2026-06-30T13:21:10Z"
+    },
+    "self_destruction_minor:blurry_reality": {
+      "bucket_id": "self_destruction_minor:blurry_reality",
+      "label": "Размытая реальность",
+      "description": "Размытая реальность: blurry motion, blurry, red lights, glitch (минор)",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAIspGpDwyQAAWsigLqCuRJKUfCem2Ly_gAC_psAAmxKIEpKwT0lIi4dejwE",
+      "file_id_public": "BAACAgIAAxkDAAEB8GBqQ8Msn2rHXxY6l1PBE7Tu2A39cAAC15sAAmk1IUokXS1-OidzRTwE",
+      "clip_ids": [
+        "1196337403686577",
+        "4785143350997799",
+        "335588609749735874",
+        "37506609392422207",
+        "3659243441228231"
+      ],
+      "status": "ok",
+      "built_at": "2026-06-30T13:22:54Z"
+    },
+    "self_destruction_minor:messy_aftermath": {
+      "bucket_id": "self_destruction_minor:messy_aftermath",
+      "label": "После хаоса",
+      "description": "После хаоса: dark interior, alone, abandoned, darkness (минор)",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAIspWpDwy5CIYd4-fGfBrCb9AR6jIuEAAL_mwACbEogSgZ-8nHqPlWEPAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8GFqQ8Mxg06fD_1Mces2yUUyJ984KwAC2JsAAmk1IUp-3zplAfA-yDwE",
+      "clip_ids": [
+        "9710955442299255",
+        "126804545750803289",
+        "5770305766219403",
+        "9781324186451441",
+        "46373071158027501"
+      ],
+      "status": "ok",
+      "built_at": "2026-06-30T13:22:59Z"
+    },
+    "self_destruction_minor:nightlife_decay": {
+      "bucket_id": "self_destruction_minor:nightlife_decay",
+      "label": "Ночная жизнь, упадок",
+      "description": "Ночная жизнь / упадок: night, smoke, neon lights, red lights (минор)",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAIso2pDwyCB2PyKqAGd1F124rTzCGIBAAL9mwACbEogStoEq5fsrIHuPAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8F9qQ8Mia7SbOb5lfHKZgntFZpyJvgAC1psAAmk1IUrOu-hjqvkxPjwE",
+      "clip_ids": [
+        "335588609749735874",
+        "6614730698188136",
+        "4996249580516881",
+        "70437490872432",
+        "654288652158377976"
+      ],
+      "status": "ok",
+      "built_at": "2026-06-30T13:22:44Z"
+    },
+    "sex_major:soft_intimacy": {
+      "bucket_id": "sex_major:soft_intimacy",
+      "label": "Нежная близость",
+      "description": "Нежная близость: relaxation, smiling, close-up, warm lighting (мажор)",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAIssWpDw13QquACnNkM_kxATcxWKSdHAAIMnAACbEogSpU-oapGYyn3PAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8G1qQ8NfJ-L8NQxYJgPt8vulFd6obwAC5JsAAmk1IUpjFG_7rEY6fjwE",
+      "clip_ids": [
+        "213709944813694777",
+        "195414071326640588",
+        "844493675992119",
+        "686939749459447138",
+        "40250990412885798"
+      ],
+      "status": "ok",
+      "built_at": "2026-06-30T13:23:46Z"
+    },
+    "sex_major:warm_aesthetics": {
+      "bucket_id": "sex_major:warm_aesthetics",
+      "label": "Тёплая эстетика",
+      "description": "Тёплая эстетика: sunset, beach, flowers, warm lighting (мажор)",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAIssmpDw2FUu_3z_rEoMY4_pUlMZ16sAAINnAACbEogSiaLqAE3W2Y4PAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8G5qQ8NjOlO2a_KSfZ5c6RKJK8-ZNwAC5ZsAAmk1IUpYZ5xwf5SDLzwE",
+      "clip_ids": [
+        "654288652158449297",
+        "20336635813582721",
+        "420664421467269088",
+        "5136987070352363",
+        "2111131072398962"
+      ],
+      "status": "ok",
+      "built_at": "2026-06-30T13:23:49Z"
+    },
+    "sex_minor:intimate_details": {
+      "bucket_id": "sex_minor:intimate_details",
+      "label": "Интимные детали",
+      "description": "Интимные детали: close-up, portrait, shadows, dim lighting (минор)",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAIstGpDw2kXQmnSCfTWoXVI1HunCmnmAAIQnAACbEogSsAqrOummCrXPAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8HBqQ8Nrnxgn5PNGRUwSLQeQhZDKeQAC55sAAmk1IUqjDWcWnhBlvjwE",
+      "clip_ids": [
+        "337277459617315412",
+        "14777505023070773",
+        "751327150363635228",
+        "305681893477858724",
+        "677510337715255061"
+      ],
+      "status": "ok",
+      "built_at": "2026-06-30T13:23:57Z"
+    },
+    "sex_minor:neon_passion": {
+      "bucket_id": "sex_minor:neon_passion",
+      "label": "Неоновая страсть",
+      "description": "Неоновая страсть: neon lights, red lights, dark room, silhouette (минор)",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAIss2pDw2VQ83YYtUX07eRnxPvGIEMSAAIOnAACbEogSsrzD8ze0CS4PAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8G9qQ8NnAo71IZ-NFI1H5a2phniPUwAC5psAAmk1IUpxZ9c7y7QOFjwE",
+      "clip_ids": [
+        "87398049015169321",
+        "7810999349866203",
+        "4785143350997799",
+        "5559199537125434",
+        "119978777572943332"
+      ],
+      "status": "ok",
+      "built_at": "2026-06-30T13:23:53Z"
+    },
+    "youth_rebellion_major:friend_hangouts": {
+      "bucket_id": "youth_rebellion_major:friend_hangouts",
+      "label": "Тусовка с друзьями",
+      "description": "Тусовка с друзьями: dancing, smiling, couple dancing, outdoor (мажор)",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAIswGpDw5qwOsC_tlIRePlLtxcoYaFWAAIdnAACbEogSq_BK1yuyq_RPAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8HxqQ8OcLoB_TpcgOkUiSKYFh8rmcgAC85sAAmk1IUoYljCfMD4a-zwE",
+      "clip_ids": [
+        "24136548000455920",
+        "20336635812900109",
+        "27866091441598146",
+        "2251868558798177",
+        "13933080092565185"
+      ],
+      "status": "ok",
+      "built_at": "2026-06-30T13:24:46Z"
+    },
+    "youth_rebellion_major:street_culture": {
+      "bucket_id": "youth_rebellion_major:street_culture",
+      "label": "Уличная культура",
+      "description": "Уличная культура: skateboarding, graffiti, urban setting, city street (мажор)",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAIsv2pDw5arNzrMeQulMh4kBsg9wRUMAAIcnAACbEogSqu4uBa_7t4WPAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8HtqQ8OYiPL5jWxq_hglLkbhfI4h2QAC8psAAmk1IUrkD7o9NlTn4jwE",
+      "clip_ids": [
+        "86835099495663966",
+        "92886811061201801",
+        "7036943159853172",
+        "1030831802218661849",
+        "738238563936717813"
+      ],
+      "status": "ok",
+      "built_at": "2026-06-30T13:24:43Z"
+    },
+    "youth_rebellion_major:sunset_vibes": {
+      "bucket_id": "youth_rebellion_major:sunset_vibes",
+      "label": "Закатный вайб",
+      "description": "Закатный вайб: sunset, beach, beach sunset, city life (мажор)",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAIswWpDw554t5kCzmPvnlIHVNr-6cNcAAIenAACbEogShLhJvh52wJPPAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8H1qQ8OgwUBrcwvpT6t7rOjUqfzjnQAC9JsAAmk1IUr30a9vlLfW8TwE",
+      "clip_ids": [
+        "492649953555943",
+        "420664421467269088",
+        "22095854416401859",
+        "20336635813582721",
+        "5136987070352363"
+      ],
+      "status": "ok",
+      "built_at": "2026-06-30T13:24:50Z"
+    }
+  }
+}

@@ -98,43 +98,44 @@
         var FPS = MONTAGE.fps    || 23.976;
         var SPC = MONTAGE.seconds_per_clip || 1.5;
         var compName = MONTAGE.comp_name || COMP_NAME || "Bucket Preview";
-        var duration = SPC * clips.length;
-
         app.beginSuppressDialogs();
 
-        var comp = app.project.items.addComp(compName, W, H, 1.0, duration, FPS);
-
+        // Import clips first; keep only the ones AE can actually read. Unsupported
+        // codecs / missing files are SKIPPED (no ugly placeholder) — the montage
+        // is built from the good clips only, so it's just slightly shorter.
+        var items = [];
         for (var i = 0; i < clips.length; i++) {
             var clip = clips[i];
             var rel = clip.relpath || ("media/video/" + clip.file_name);
             var f = new File(APP_DIR + "/" + rel);
-            var item = null;
-            if (f.exists) {
-                try {
-                    var io = new ImportOptions(f);
-                    if (io.canImportAs(ImportAsType.FOOTAGE)) {
-                        item = app.project.importFile(io);
-                    }
-                } catch (eImp) {
-                    logLine("import failed for " + rel + ": " + eImp.toString());
-                }
-            } else {
-                logLine("clip missing on disk: " + f.fsName);
+            if (!f.exists) { logLine("clip missing on disk: " + f.fsName); continue; }
+            var imp = null;
+            try {
+                var io = new ImportOptions(f);
+                if (io.canImportAs(ImportAsType.FOOTAGE)) imp = app.project.importFile(io);
+            } catch (eImp) {
+                logLine("import skipped (unreadable) " + clip.file_name + ": " + eImp.toString());
             }
-            if (!item) {
-                item = app.project.importPlaceholder(clip.file_name || ("clip" + i), W, H, FPS, SPC);
-            }
+            if (imp) items.push(imp);
+            else logLine("clip skipped: " + clip.file_name);
+        }
+        if (!items.length) throw new Error("no importable clips for montage");
 
-            var layer = comp.layers.add(item);
-            // place clip i into slot [i*SPC, (i+1)*SPC], showing its first SPC seconds
-            layer.startTime = i * SPC;
-            try { layer.inPoint  = i * SPC; } catch (eIn) {}
-            try { layer.outPoint = (i + 1) * SPC; } catch (eOut) {}
+        var duration = SPC * items.length;
+        var comp = app.project.items.addComp(compName, W, H, 1.0, duration, FPS);
+
+        for (var k = 0; k < items.length; k++) {
+            var it = items[k];
+            var layer = comp.layers.add(it);
+            // place clip k into slot [k*SPC, (k+1)*SPC], showing its first SPC seconds
+            layer.startTime = k * SPC;
+            try { layer.inPoint  = k * SPC; } catch (eIn) {}
+            try { layer.outPoint = (k + 1) * SPC; } catch (eOut) {}
             if (layer.hasAudio) { try { layer.audioEnabled = false; } catch (eA) {} }
 
             // cover-fit to fill the vertical frame
             var sw = 0, sh = 0;
-            try { sw = item.width; sh = item.height; } catch (eDim) {}
+            try { sw = it.width; sh = it.height; } catch (eDim) {}
             if (sw > 0 && sh > 0) {
                 var sx = W / sw * 100.0;
                 var sy = H / sh * 100.0;
@@ -152,13 +153,11 @@
                 var tp = txt.property("Source Text");
                 var td = tp.value;
                 td.text = label;
-                try { td.font = MONTAGE.label_font || "Calibri-Bold"; } catch (eF) { try { td.font = "Calibri"; } catch (eF2) {} }
+                try { td.font = MONTAGE.label_font || "Point-Regular"; } catch (eF) { try { td.font = "Point-Regular"; } catch (eF2) {} }
                 td.fontSize = MONTAGE.label_size || 64;
                 td.fillColor = [1, 1, 1];
                 td.applyFill = true;
-                td.applyStroke = true;
-                td.strokeColor = [0, 0, 0];
-                td.strokeWidth = 6;
+                td.applyStroke = false;   // no outline (per design)
                 td.justification = ParagraphJustification.CENTER_JUSTIFY;
                 tp.setValue(td);
             } catch (eTxt) {
@@ -167,24 +166,61 @@
             try { txt.property("Position").setValue([W / 2, H - 220]); } catch (ePos2) {}
         }
 
-        if (!APP_DIR) throw new Error("APP_DIR is empty, cannot save AEP");
-        var projFile = new File(APP_DIR + "/debug_" + (JOB_ID || "bucket_preview") + ".aep");
-        if (projFile.parent && !projFile.parent.exists) projFile.parent.create();
-        app.project.save(projFile);
+        if (!APP_DIR) throw new Error("APP_DIR is empty, cannot render");
+
+        // ---- render the mp4 right here via the render queue (one visible step;
+        //      no separate aerender, no waiting on a detached process) ----
+        var outRel = (typeof OUTPUT_REL !== "undefined" && OUTPUT_REL) ? OUTPUT_REL : "work/output.mp4";
+        var outFile = new File(APP_DIR + "/" + outRel);
+        if (outFile.parent && !outFile.parent.exists) outFile.parent.create();
+        if (outFile.exists) { try { outFile.remove(); } catch (eRm) {} }
+
+        // save a debug project too (handy for re-render / inspection)
+        try { app.project.save(new File(APP_DIR + "/debug_" + (JOB_ID || "bucket_preview") + ".aep")); } catch (eSave) {}
+
+        var rqItem = app.project.renderQueue.items.add(comp);
+        var om = rqItem.outputModule(1);
+        var picked = "";
+        try {
+            var tmpls = om.templates;
+            for (var ti = 0; ti < tmpls.length; ti++) {
+                if (/h\.?264|mp4|264/i.test(String(tmpls[ti]))) { picked = tmpls[ti]; break; }
+            }
+        } catch (eTpl) {}
+        logLine("render templates picked=" + picked);
+        if (picked) { try { om.applyTemplate(picked); } catch (eApply) { logLine("applyTemplate failed: " + eApply.toString()); } }
+        try { om.file = outFile; } catch (eFile) { logLine("set om.file failed: " + eFile.toString()); }
 
         app.endSuppressDialogs(false);
+        logLine("render start -> " + outFile.fsName);
+        app.project.renderQueue.render();
 
-        var msg = "aep=" + projFile.fsName + "\ncompName=" + comp.name;
-        logLine("MONTAGE OK: " + msg);
-        writeStatus("OK", msg);
+        var ok = false;
+        try { ok = (outFile.exists && outFile.length > 0); } catch (eChk) { ok = outFile.exists; }
+        if (ok) {
+            var msg = "output=" + outFile.fsName + "\ncompName=" + comp.name;
+            logLine("MONTAGE RENDERED: " + msg);
+            writeStatus("OK", msg);
+        } else {
+            fail("render produced no output file: " + outFile.fsName + " (template=" + picked + ")");
+        }
     } catch (err) {
         try { app.endSuppressDialogs(false); } catch (e3) {}
         fail(err && err.toString ? err.toString() : String(err));
     } finally {
+        // clean up so the project doesn't accumulate junk across jobs: clear the
+        // render queue, then remove every imported footage item and comp.
         try {
-            if (app.project && typeof CloseOptions !== "undefined") {
-                app.project.close(CloseOptions.DO_NOT_SAVE_CHANGES);
+            var rq = app.project.renderQueue;
+            while (rq.numItems > 0) { rq.item(1).remove(); }
+        } catch (eRq) {}
+        try {
+            var proj = app.project;
+            for (var ci = proj.numItems; ci >= 1; ci--) {
+                try { proj.item(ci).remove(); } catch (eItem) {}
             }
-        } catch (eClose) {}
+        } catch (eClean) {}
+        // free RAM/cache so AE doesn't bloat over a long batch and hang
+        try { app.purge(PurgeTarget.ALL_CACHES); } catch (ePurge) {}
     }
 })();

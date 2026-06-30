@@ -46,6 +46,29 @@ DEFAULT_PREVIEWS_PATH = "data/footage_bucket_previews.json"
 
 _MOOD_RU = {"minor": "минор", "major": "мажор"}
 
+LABEL_FONT = "Point-Regular"  # AE PostScript name (Point family is installed on the node)
+
+
+def display_label(label: str) -> str:
+    """Tidy a bucket label for on-screen display: slash -> comma."""
+    import re
+    return re.sub(r"\s*/\s*", ", ", str(label or "")).strip()
+
+
+def dedup_buckets_by_label(buckets: List["Bucket"]) -> List["Bucket"]:
+    """Keep one bucket per unique display label (first in order). Two buckets can
+    share a tags_group label across themes (e.g. lonely_paths under heartbreak and
+    betrayal); the shortlist should not show the same vibe name twice."""
+    seen: set = set()
+    out: List["Bucket"] = []
+    for b in buckets:
+        key = display_label(b.label).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(b)
+    return out
+
 
 # --------------------------------------------------------------------------- #
 # Clip selection (reuses the production picker scoring)
@@ -137,7 +160,8 @@ def build_montage_spec(
         "height": int(height),
         "fps": float(fps),
         "seconds_per_clip": float(seconds_per_clip),
-        "label": str(bucket.label or "") if with_label else "",
+        "label": display_label(bucket.label) if with_label else "",
+        "label_font": LABEL_FONT,
         "clips": [
             {"file_name": str(c["file_name"]), "relpath": f"media/video/{c['file_name']}"}
             for c in clips

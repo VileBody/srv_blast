@@ -106,7 +106,9 @@ def test_montage_spec_and_jsx_injection():
     clips = [_asset("a.mp4", ["sunset"]), _asset("b.mp4", ["beach"])]
     spec = bp.build_montage_spec(b, clips, comp_name="Bucket Preview")
     assert spec["width"] == 1080 and spec["height"] == 1920
-    assert spec["label"] == b.label
+    # label is tidied for display: slash -> comma
+    assert spec["label"] == "Природа, закат"
+    assert spec["label_font"] == "Point-Regular"
     assert [c["relpath"] for c in spec["clips"]] == ["media/video/a.mp4", "media/video/b.mp4"]
 
     template = "head\n/*__MONTAGE_DATA__*/\ntail"
@@ -235,3 +237,28 @@ def test_parse_s3_url():
     assert _script._parse_s3_url("s3://bkt/a/b.mp4") == ("bkt", "a/b.mp4")
     assert _script._parse_s3_url("https://x/y.mp4") is None
     assert _script._parse_s3_url("s3://nokey") is None
+
+
+def test_index_local_footage_recursive_by_file_name(tmp_path):
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "a.mp4").write_bytes(b"x")
+    (tmp_path / "sub" / "b.mov").write_bytes(b"x")
+    (tmp_path / "notes.txt").write_bytes(b"x")  # ignored (not video)
+    idx = _script.index_local_footage(tmp_path)
+    assert set(idx) == {"a.mp4", "b.mov"}
+    assert idx["b.mov"].endswith("b.mov")
+
+
+def test_default_ae_bins_derives_aerender_from_afterfx():
+    afx, aer = _script._default_ae_bins(r"C:\AE\Support Files\AfterFX.com", "")
+    assert afx.endswith("AfterFX.com")
+    assert aer.endswith("aerender.exe")
+
+
+def test_read_ae_status_parses_ok_block(tmp_path):
+    p = tmp_path / "ae_status.txt"
+    p.write_text("OK\naep=C:/j/app/debug.aep\ncompName=Bucket Preview\n", encoding="utf-8")
+    status, aep, comp, _ = _script._read_ae_status(p)
+    assert status == "OK"
+    assert aep == "C:/j/app/debug.aep"
+    assert comp == "Bucket Preview"
