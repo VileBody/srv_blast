@@ -163,9 +163,15 @@ export interface TaggingStatus {
   updated_at?: number;
 }
 
-export async function startTagUntagged(limit = 0): Promise<{ ok: boolean; task_id: string }> {
+export type MediaType = 'video' | 'photo';
+
+export async function startTagUntagged(
+  limit = 0,
+  mediaType: MediaType = 'video',
+): Promise<{ ok: boolean; task_id: string }> {
   const params = new URLSearchParams();
   if (limit > 0) params.set('limit', String(limit));
+  if (mediaType !== 'video') params.set('media_type', mediaType);
   const suffix = params.toString() ? `?${params.toString()}` : '';
   const res = await fetch(`${BASE}/assets/tag-untagged${suffix}`, { method: 'POST' });
   if (res.status === 409) throw new Error('Разметка уже выполняется');
@@ -182,8 +188,9 @@ export async function startTagUntagged(limit = 0): Promise<{ ok: boolean; task_i
   return res.json();
 }
 
-export async function fetchTagUntaggedStatus(): Promise<TaggingStatus> {
-  const res = await fetch(`${BASE}/assets/tag-untagged/status`);
+export async function fetchTagUntaggedStatus(mediaType: MediaType = 'video'): Promise<TaggingStatus> {
+  const q = mediaType !== 'video' ? `?media_type=${mediaType}` : '';
+  const res = await fetch(`${BASE}/assets/tag-untagged/status${q}`);
   if (!res.ok) throw new Error(`fetchTagUntaggedStatus: ${res.status}`);
   return res.json();
 }
@@ -201,9 +208,13 @@ export interface ActivationStatus {
   updated_at?: number;
 }
 
-export async function startActivate(limit = 0): Promise<{ ok: boolean; task_id: string }> {
+export async function startActivate(
+  limit = 0,
+  mediaType: MediaType = 'video',
+): Promise<{ ok: boolean; task_id: string }> {
   const params = new URLSearchParams();
   if (limit > 0) params.set('limit', String(limit));
+  if (mediaType !== 'video') params.set('media_type', mediaType);
   const suffix = params.toString() ? `?${params.toString()}` : '';
   const res = await fetch(`${BASE}/assets/activate${suffix}`, { method: 'POST' });
   if (res.status === 409) throw new Error('Активация уже выполняется');
@@ -215,8 +226,9 @@ export async function startActivate(limit = 0): Promise<{ ok: boolean; task_id: 
   return res.json();
 }
 
-export async function fetchActivateStatus(): Promise<ActivationStatus> {
-  const res = await fetch(`${BASE}/assets/activate/status`);
+export async function fetchActivateStatus(mediaType: MediaType = 'video'): Promise<ActivationStatus> {
+  const q = mediaType !== 'video' ? `?media_type=${mediaType}` : '';
+  const res = await fetch(`${BASE}/assets/activate/status${q}`);
   if (!res.ok) throw new Error(`fetchActivateStatus: ${res.status}`);
   return res.json();
 }
@@ -226,8 +238,10 @@ export function importAssets(
   genre: string,
   tag: string,
   onProgress?: (pct: number) => void,
+  mediaType: MediaType = 'video',
 ): Promise<ImportResult> {
   const params = new URLSearchParams({ genre, tag });
+  if (mediaType !== 'video') params.set('media_type', mediaType);
   return new Promise<ImportResult>((resolve, reject) => {
     const form = new FormData();
     for (const file of files) form.append('files', file, file.name);

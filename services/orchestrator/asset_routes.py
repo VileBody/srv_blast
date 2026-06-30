@@ -27,6 +27,7 @@ _STATIC_INDEX = _REPO_ROOT / "data" / "static_assets_index.json"
 _OVERRIDES_PATH = _REPO_ROOT / "data" / "asset_tag_overrides.json"
 _TAG_OVERRIDES_PATH = _REPO_ROOT / "data" / "tag_overrides.json"
 _VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm"}
+_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"}
 
 _VIDEO_DB_PATHS = [
     _REPO_ROOT / "2nd_footage_selection_prompt" / "video_database (2).json",
@@ -616,9 +617,27 @@ def create_asset_router(*, prefix: str = "/asset-ui/api") -> APIRouter:
     def get_taxonomy_endpoint() -> Dict[str, Any]:
         return {"themes": get_taxonomy()}
 
-    # --- server-side footage ingest tasks (tagging + full activation) ---
+    # --- server-side asset ingest tasks (tagging + full activation) ---
+    # Per-pool Redis progress keys so the photo pool (media_type=photo) has its
+    # own single-flight, independent from the footage pool. Must match the keys
+    # the Celery tasks publish to (tasks._{FOOTAGE,PHOTO}_{TAGGING,ACTIVATION}_*).
     _TAGGING_PROGRESS_KEY = "footage_tagging:progress"
     _ACTIVATION_PROGRESS_KEY = "footage_activation:progress"
+    _PHOTO_TAGGING_PROGRESS_KEY = "photo_tagging:progress"
+    _PHOTO_ACTIVATION_PROGRESS_KEY = "photo_activation:progress"
+
+    def _norm_media_type(raw: Any) -> str:
+        mt = str(raw or "video").strip().lower() or "video"
+        if mt not in ("video", "photo"):
+            raise HTTPException(status_code=422, detail="media_type must be 'video' or 'photo'")
+        return mt
+
+    def _tagging_key(media_type: str) -> str:
+        return _PHOTO_TAGGING_PROGRESS_KEY if media_type == "photo" else _TAGGING_PROGRESS_KEY
+
+    def _activation_key(media_type: str) -> str:
+        return _PHOTO_ACTIVATION_PROGRESS_KEY if media_type == "photo" else _ACTIVATION_PROGRESS_KEY
+
     # If a run's progress hasn't been updated within this window we treat it as
     # dead (worker crashed) so a new run can start instead of being blocked
     # forever by a stale "running"/"queued" key.
@@ -724,32 +743,44 @@ def create_asset_router(*, prefix: str = "/asset-ui/api") -> APIRouter:
         return {"task_id": str(async_result.id), "broker": _mask(broker_uri), "queue": target}
 
     @router.post("/assets/tag-untagged")
-    def tag_untagged(limit: int = Query(0, ge=0)) -> Dict[str, Any]:
-        """Tag every untagged S3 clip via Groq. Single-flight via Redis state."""
-        if _is_active(_TAGGING_PROGRESS_KEY):
+    def tag_untagged(
+        limit: int = Query(0, ge=0),
+        media_type: str = Query("video"),
+    ) -> Dict[str, Any]:
+        """Tag every untagged S3 asset via Groq. Single-flight via Redis state.
+        media_type=photo tags the photo pool (independent single-flight)."""
+        mt = _norm_media_type(media_type)
+        key = _tagging_key(mt)
+        if _is_active(key):
             raise HTTPException(status_code=409, detail="Tagging already running")
-        out = _enqueue_build_task("orchestrator.tag_untagged_footage", [int(limit)])
-        _mark_queued(_TAGGING_PROGRESS_KEY)
-        return {"ok": True, "limit": int(limit), **out}
+        out = _enqueue_build_task("orchestrator.tag_untagged_footage", [int(limit), mt])
+        _mark_queued(key)
+        return {"ok": True, "limit": int(limit), "media_type": mt, **out}
 
     @router.get("/assets/tag-untagged/status")
-    def tag_untagged_status() -> Dict[str, Any]:
-        return _read_progress(_TAGGING_PROGRESS_KEY)
+    def tag_untagged_status(media_type: str = Query("video")) -> Dict[str, Any]:
+        return _read_progress(_tagging_key(_norm_media_type(media_type)))
 
     @router.post("/assets/activate")
-    def activate_base(limit: int = Query(0, ge=0)) -> Dict[str, Any]:
+    def activate_base(
+        limit: int = Query(0, ge=0),
+        media_type: str = Query("video"),
+    ) -> Dict[str, Any]:
         """Full self-serve ingest after upload: rebuild S3 static index ->
-        inventory -> tag untagged -> export snapshots, so freshly uploaded clips
-        enter the picker pool. Single-flight via Redis state."""
-        if _is_active(_ACTIVATION_PROGRESS_KEY):
+        inventory -> tag untagged -> export snapshots, so freshly uploaded assets
+        enter the picker pool. Single-flight via Redis state. media_type=photo
+        ingests the photo pool."""
+        mt = _norm_media_type(media_type)
+        key = _activation_key(mt)
+        if _is_active(key):
             raise HTTPException(status_code=409, detail="Activation already running")
-        out = _enqueue_build_task("orchestrator.activate_footage_base", [int(limit)])
-        _mark_queued(_ACTIVATION_PROGRESS_KEY)
-        return {"ok": True, "limit": int(limit), **out}
+        out = _enqueue_build_task("orchestrator.activate_footage_base", [int(limit), mt])
+        _mark_queued(key)
+        return {"ok": True, "limit": int(limit), "media_type": mt, **out}
 
     @router.get("/assets/activate/status")
-    def activate_status() -> Dict[str, Any]:
-        return _read_progress(_ACTIVATION_PROGRESS_KEY)
+    def activate_status(media_type: str = Query("video")) -> Dict[str, Any]:
+        return _read_progress(_activation_key(_norm_media_type(media_type)))
 
     # --- tag overrides ---
     @router.get("/tag-overrides")
@@ -942,12 +973,18 @@ def create_asset_router(*, prefix: str = "/asset-ui/api") -> APIRouter:
         files: List[UploadFile] = File(...),
         genre: str = Query(...),
         tag: str = Query(...),
+        media_type: str = Query("video"),
     ) -> Dict[str, Any]:
-        """Upload one or more videos (or a ZIP containing videos) to the configured S3
-        bucket under ``<prefix>/<genre>/<tag>/<file>``. Invalidates the asset cache
-        so newly uploaded assets appear in the list on the next request.
+        """Upload one or more assets (or a ZIP) to the configured S3 bucket under
+        ``<prefix>/<genre>/<tag>/<file>``. Invalidates the asset cache so newly
+        uploaded assets appear in the list on the next request. media_type=photo
+        uploads images under the photo prefix (S3_PHOTO_PREFIX).
         """
         global _assets_cache
+
+        mt = _norm_media_type(media_type)
+        is_photo = mt == "photo"
+        allowed_exts = _IMAGE_EXTENSIONS if is_photo else _VIDEO_EXTENSIONS
 
         genre_clean = genre.strip()
         tag_clean = tag.strip()
@@ -961,7 +998,10 @@ def create_asset_router(*, prefix: str = "/asset-ui/api") -> APIRouter:
         if not bucket:
             raise HTTPException(status_code=503, detail="S3 not configured")
 
-        prefix = (os.getenv("S3_ASSET_PREFIX") or "pinterest_collection").strip("/")
+        if is_photo:
+            prefix = (os.getenv("S3_PHOTO_PREFIX") or "photo_collection").strip("/")
+        else:
+            prefix = (os.getenv("S3_ASSET_PREFIX") or "pinterest_collection").strip("/")
 
         from src.storage.s3 import upload_file_to_s3
 
@@ -994,7 +1034,7 @@ def create_asset_router(*, prefix: str = "/asset-ui/api") -> APIRouter:
                             inner_ext = Path(inner).suffix.lower()
                             if not inner_base or inner_base.startswith("."):
                                 continue
-                            if inner_ext not in _VIDEO_EXTENSIONS:
+                            if inner_ext not in allowed_exts:
                                 continue
                             with zf.open(zinfo, "r") as src_fh:
                                 with tempfile.NamedTemporaryFile(delete=False, suffix=inner_ext) as tmp_vid:
@@ -1008,7 +1048,7 @@ def create_asset_router(*, prefix: str = "/asset-ui/api") -> APIRouter:
                                 tmp_vid_path.unlink(missing_ok=True)
                 finally:
                     tmp_zip_path.unlink(missing_ok=True)
-            elif ext in _VIDEO_EXTENSIONS:
+            elif ext in allowed_exts:
                 with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
                     shutil.copyfileobj(file_obj, tmp)
                     tmp_path = Path(tmp.name)

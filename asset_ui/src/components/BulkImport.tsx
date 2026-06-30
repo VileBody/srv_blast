@@ -1,9 +1,10 @@
 import { useRef, useState } from 'react';
-import { importAssets, type ImportResult } from '../api';
+import { importAssets, type ImportResult, type MediaType } from '../api';
 
 interface Props {
   onClose: () => void;
   onUploaded: () => void;
+  mediaType?: MediaType;
 }
 
 function fmtSize(bytes: number): string {
@@ -13,14 +14,16 @@ function fmtSize(bytes: number): string {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
-const ACCEPTED_EXT = ['.mp4', '.mov', '.webm', '.m4v', '.zip'];
+const ACCEPTED_EXT_VIDEO = ['.mp4', '.mov', '.webm', '.m4v', '.zip'];
+const ACCEPTED_EXT_PHOTO = ['.jpg', '.jpeg', '.png', '.webp', '.zip'];
 
-function isAccepted(name: string): boolean {
+function isAccepted(name: string, exts: string[]): boolean {
   const lower = name.toLowerCase();
-  return ACCEPTED_EXT.some((ext) => lower.endsWith(ext));
+  return exts.some((ext) => lower.endsWith(ext));
 }
 
-export function BulkImport({ onClose, onUploaded }: Props) {
+export function BulkImport({ onClose, onUploaded, mediaType = 'video' }: Props) {
+  const ACCEPTED_EXT = mediaType === 'photo' ? ACCEPTED_EXT_PHOTO : ACCEPTED_EXT_VIDEO;
   const [genre, setGenre] = useState('');
   const [tag, setTag] = useState('');
   const [files, setFiles] = useState<File[]>([]);
@@ -32,7 +35,7 @@ export function BulkImport({ onClose, onUploaded }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
 
   const addFiles = (incoming: FileList | File[]) => {
-    const arr = Array.from(incoming).filter((f) => isAccepted(f.name));
+    const arr = Array.from(incoming).filter((f) => isAccepted(f.name, ACCEPTED_EXT));
     if (arr.length === 0) {
       setErr('Допустимые форматы: ' + ACCEPTED_EXT.join(', '));
       return;
@@ -86,7 +89,7 @@ export function BulkImport({ onClose, onUploaded }: Props) {
     setBusy(true);
     setProgress(0);
     try {
-      const res = await importAssets(files, genre.trim(), tag.trim(), setProgress);
+      const res = await importAssets(files, genre.trim(), tag.trim(), setProgress, mediaType);
       setResult(res);
       if (res.uploaded > 0) {
         onUploaded();
@@ -149,7 +152,7 @@ export function BulkImport({ onClose, onUploaded }: Props) {
             ref={inputRef}
             type="file"
             multiple
-            accept={ACCEPTED_EXT.join(',') + ',video/*,application/zip'}
+            accept={ACCEPTED_EXT.join(',') + (mediaType === 'photo' ? ',image/*' : ',video/*') + ',application/zip'}
             onChange={onInputChange}
             disabled={busy}
             style={{ display: 'none' }}

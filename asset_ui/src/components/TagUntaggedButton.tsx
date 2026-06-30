@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { fetchTagUntaggedStatus, startTagUntagged, type TaggingStatus } from '../api';
+import { fetchTagUntaggedStatus, startTagUntagged, type MediaType, type TaggingStatus } from '../api';
 
 const POLL_MS = 3000;
 // Mirror backend staleness: a run whose progress hasn't updated within this
@@ -9,7 +9,7 @@ const STALE_S = 180;
 
 /** Toolbar control: start server-side Groq auto-tagging of untagged clips with
  *  an optional limit, and show a minimal progress bar (tagged / total). */
-export function TagUntaggedButton({ onDone }: { onDone?: () => void }) {
+export function TagUntaggedButton({ onDone, mediaType = 'video' }: { onDone?: () => void; mediaType?: MediaType }) {
   const [status, setStatus] = useState<TaggingStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
@@ -26,7 +26,7 @@ export function TagUntaggedButton({ onDone }: { onDone?: () => void }) {
 
   const poll = useCallback(async () => {
     try {
-      const s = await fetchTagUntaggedStatus();
+      const s = await fetchTagUntaggedStatus(mediaType);
       setStatus(s);
       const active = s.state === 'running' || s.state === 'queued';
       if (active) {
@@ -39,7 +39,7 @@ export function TagUntaggedButton({ onDone }: { onDone?: () => void }) {
     } catch {
       /* transient — keep polling */
     }
-  }, [onDone, stopPolling]);
+  }, [onDone, stopPolling, mediaType]);
 
   const startPolling = useCallback(() => {
     stopPolling();
@@ -57,7 +57,7 @@ export function TagUntaggedButton({ onDone }: { onDone?: () => void }) {
     setError(null);
     setStarting(true);
     try {
-      await startTagUntagged(limit);
+      await startTagUntagged(limit, mediaType);
       wasRunning.current = true;
       startPolling();
     } catch (e) {
@@ -65,7 +65,7 @@ export function TagUntaggedButton({ onDone }: { onDone?: () => void }) {
     } finally {
       setStarting(false);
     }
-  }, [limit, startPolling]);
+  }, [limit, startPolling, mediaType]);
 
   const active = status?.state === 'running' || status?.state === 'queued';
   const fresh = status?.updated_at ? Date.now() / 1000 - status.updated_at < STALE_S : false;

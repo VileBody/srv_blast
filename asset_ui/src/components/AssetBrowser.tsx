@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import type { MediaType } from '../api';
 import { useAssets } from '../hooks/useAssets';
 import { useTaxonomy } from '../hooks/useTaxonomy';
 import { VideoPreview } from './VideoPreview';
@@ -15,6 +16,8 @@ export function AssetBrowser() {
   const { current, index, total, loading, next, prev, remove, reload } = useAssets();
   const taxonomy = useTaxonomy();
   const [panel, setPanel] = useState<Panel>(null);
+  // Asset pool the ingest controls (import / tag / activate) operate on.
+  const [mediaType, setMediaType] = useState<MediaType>('video');
 
   // Keyboard navigation — disabled while a bulk panel is open so typing in
   // inputs doesn't move through the asset list.
@@ -45,8 +48,15 @@ export function AssetBrowser() {
         <button className="toolbar-btn" onClick={() => setPanel('import')}>
           ⬆ Импорт
         </button>
-        <TagUntaggedButton onDone={reload} />
-        <ActivateBaseButton onDone={reload} />
+        <button
+          className="toolbar-btn"
+          title="Пул ассетов для импорта/разметки/активации"
+          onClick={() => setMediaType((m) => (m === 'video' ? 'photo' : 'video'))}
+        >
+          {mediaType === 'photo' ? '🖼 Пул: фото' : '🎞 Пул: видео'}
+        </button>
+        <TagUntaggedButton onDone={reload} mediaType={mediaType} />
+        <ActivateBaseButton onDone={reload} mediaType={mediaType} />
         <span className="toolbar-spacer" />
         <span className="toolbar-counter">Всего: {total}</span>
       </div>
@@ -76,6 +86,7 @@ export function AssetBrowser() {
           <BulkImport
             onClose={() => setPanel(null)}
             onUploaded={reload}
+            mediaType={mediaType}
           />
         </div>
       )}

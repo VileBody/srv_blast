@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { fetchActivateStatus, startActivate, type ActivationStatus } from '../api';
+import { fetchActivateStatus, startActivate, type ActivationStatus, type MediaType } from '../api';
 
 const POLL_MS = 3000;
 const STALE_S = 180;
@@ -15,7 +15,7 @@ const PHASE_RU: Record<string, string> = {
 /** Toolbar control: run the full ingest (rebuild index -> inventory -> tag ->
  *  snapshot) so freshly uploaded clips enter the picker pool. Shows phase +
  *  progress; re-enables on stale state. */
-export function ActivateBaseButton({ onDone }: { onDone?: () => void }) {
+export function ActivateBaseButton({ onDone, mediaType = 'video' }: { onDone?: () => void; mediaType?: MediaType }) {
   const [status, setStatus] = useState<ActivationStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
@@ -31,7 +31,7 @@ export function ActivateBaseButton({ onDone }: { onDone?: () => void }) {
 
   const poll = useCallback(async () => {
     try {
-      const s = await fetchActivateStatus();
+      const s = await fetchActivateStatus(mediaType);
       setStatus(s);
       const active = s.state === 'running' || s.state === 'queued';
       if (active) {
@@ -44,7 +44,7 @@ export function ActivateBaseButton({ onDone }: { onDone?: () => void }) {
     } catch {
       /* transient */
     }
-  }, [onDone, stopPolling]);
+  }, [onDone, stopPolling, mediaType]);
 
   const startPolling = useCallback(() => {
     stopPolling();
@@ -61,7 +61,7 @@ export function ActivateBaseButton({ onDone }: { onDone?: () => void }) {
     setError(null);
     setStarting(true);
     try {
-      await startActivate(0);
+      await startActivate(0, mediaType);
       wasRunning.current = true;
       startPolling();
     } catch (e) {
@@ -69,7 +69,7 @@ export function ActivateBaseButton({ onDone }: { onDone?: () => void }) {
     } finally {
       setStarting(false);
     }
-  }, [startPolling]);
+  }, [startPolling, mediaType]);
 
   const active = status?.state === 'running' || status?.state === 'queued';
   const fresh = status?.updated_at ? Date.now() / 1000 - status.updated_at < STALE_S : false;

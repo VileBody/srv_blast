@@ -2446,6 +2446,10 @@ def build_job_vertex_sdk_mix(self, job_id: str) -> Dict[str, Any]:
 
 
 _FOOTAGE_TAGGING_PROGRESS_KEY = "footage_tagging:progress"
+# Photo pool (media_type=photo) progress keys — separate single-flight from the
+# footage pool so both can run/poll independently.
+_PHOTO_TAGGING_PROGRESS_KEY = "photo_tagging:progress"
+_PHOTO_ACTIVATION_PROGRESS_KEY = "photo_activation:progress"
 
 
 def _footage_tagging_source_prefix() -> str:
@@ -2458,23 +2462,44 @@ def _footage_tagging_source_prefix() -> str:
     return "pinterest_collection"
 
 
-@celery_app.task(name="orchestrator.tag_untagged_footage", bind=True, max_retries=0)
-def tag_untagged_footage(self, limit: int = 0) -> Dict[str, Any]:
-    """Tag every untagged S3 footage clip via Groq and upsert into footage_tags.
+def _photo_tagging_source_prefix() -> str:
+    explicit = (os.environ.get("ASSET_UI_PHOTO_SOURCE_PREFIX") or "").strip().strip("/")
+    if explicit:
+        return explicit
+    photo_prefix = (os.environ.get("S3_PHOTO_PREFIX") or "").strip().strip("/")
+    if photo_prefix:
+        return photo_prefix.split("/", 1)[0]
+    return "photo_collection"
 
-    Progress is published to Redis (_FOOTAGE_TAGGING_PROGRESS_KEY) so the admin
-    UI can poll status. Single-flight is enforced by the API endpoint before
-    enqueue, not here.
+
+def _norm_media_type(media_type: Any) -> str:
+    mt = str(media_type or "video").strip().lower() or "video"
+    if mt not in ("video", "photo"):
+        raise RuntimeError(f"invalid media_type={mt!r} (expected video|photo)")
+    return mt
+
+
+@celery_app.task(name="orchestrator.tag_untagged_footage", bind=True, max_retries=0)
+def tag_untagged_footage(self, limit: int = 0, media_type: str = "video") -> Dict[str, Any]:
+    """Tag every untagged S3 asset via Groq and upsert into footage_tags.
+
+    media_type='video' (default) tags the footage pool; 'photo' tags the photo
+    pool (run_photo_tagging_batch, S3_PHOTO_PREFIX, source='photo' snapshot).
+    Progress is published to Redis (per-pool key) so the admin UI can poll status.
+    Single-flight is enforced by the API endpoint before enqueue, not here.
     """
+    mt = _norm_media_type(media_type)
+    progress_key = _PHOTO_TAGGING_PROGRESS_KEY if mt == "photo" else _FOOTAGE_TAGGING_PROGRESS_KEY
+
     # Publish "running" and a Redis handle FIRST, before any validation, so an
     # early failure (missing env, bad config) surfaces as state="failed" with a
     # message in the UI instead of leaving the UI stuck on "queued".
     r = JobStore.from_env().r
 
     def _publish(state: str, **extra: Any) -> None:
-        payload = {"state": state, "updated_at": time.time(), **extra}
+        payload = {"state": state, "updated_at": time.time(), "media_type": mt, **extra}
         try:
-            r.set(_FOOTAGE_TAGGING_PROGRESS_KEY, json.dumps(payload), ex=86400)
+            r.set(progress_key, json.dumps(payload), ex=86400)
         except Exception:
             pass
 
@@ -2483,8 +2508,6 @@ def tag_untagged_footage(self, limit: int = 0) -> Dict[str, Any]:
 
     _publish("running", done=0, total=0, written=0)
     try:
-        from mlcore.footage_tagger import run_tagging_batch
-
         bucket = str(os.environ.get("S3_BUCKET_ASSET_STORAGE") or "").strip()
         db_url = str(getattr(SETTINGS, "credits_db_url", "") or "").strip()
         if not bucket:
@@ -2492,13 +2515,26 @@ def tag_untagged_footage(self, limit: int = 0) -> Dict[str, Any]:
         if not db_url:
             raise RuntimeError("Postgres not configured (CREDITS_DB_URL / POSTGRES_*)")
 
-        summary = run_tagging_batch(
-            bucket=bucket,
-            source_prefix=_footage_tagging_source_prefix(),
-            db_url=db_url,
-            limit=int(limit or 0),
-            progress_cb=_progress,
-        )
+        if mt == "photo":
+            from mlcore.photo_tagger import run_photo_tagging_batch
+
+            summary = run_photo_tagging_batch(
+                bucket=bucket,
+                source_prefix=_photo_tagging_source_prefix(),
+                db_url=db_url,
+                limit=int(limit or 0),
+                progress_cb=_progress,
+            )
+        else:
+            from mlcore.footage_tagger import run_tagging_batch
+
+            summary = run_tagging_batch(
+                bucket=bucket,
+                source_prefix=_footage_tagging_source_prefix(),
+                db_url=db_url,
+                limit=int(limit or 0),
+                progress_cb=_progress,
+            )
     except Exception as exc:
         _publish("failed", error=str(exc))
         raise
@@ -2509,7 +2545,7 @@ def tag_untagged_footage(self, limit: int = 0) -> Dict[str, Any]:
     # multi-node deploy this refreshes the local node; distribution to other
     # nodes still happens at deploy time.
     try:
-        snap = _export_footage_tags_snapshot(db_url=db_url)
+        snap = _export_footage_tags_snapshot(db_url=db_url, source=mt)
         summary = {**summary, "snapshot": snap.get("path"), "snapshot_rows": snap.get("rows")}
     except Exception as exc:
         log.warning("footage_tags snapshot auto-export failed: %r", exc)
@@ -2562,21 +2598,30 @@ def _export_tag_overrides_snapshot(*, db_url: str) -> Dict[str, Any]:
     return {"path": str(out_path), "rows": len(doc["blacklisted_tags"])}
 
 
-def _export_footage_tags_snapshot(*, db_url: str) -> Dict[str, Any]:
-    """Write data/footage_tags_snapshot.json (the picker's tag source) from Postgres."""
+def _export_footage_tags_snapshot(*, db_url: str, source: str = "video") -> Dict[str, Any]:
+    """Write the picker's tag snapshot from Postgres, scoped to one pool.
+
+    source='video' → data/footage_tags_snapshot.json (FOOTAGE_* env);
+    source='photo' → data/photo_tags_snapshot.json (PHOTO_TAGS_SNAPSHOT_JSON env).
+    """
     from mlcore.footage_tags_db import build_snapshot, pick_snapshot_path
 
-    out_path = Path(pick_snapshot_path(
-        explicit=os.environ.get("FOOTAGE_TAGS_SNAPSHOT_PATH", ""),
-        metadata_paths_json=os.environ.get("FOOTAGE_STYLE_METADATA_DB_PATHS_JSON", ""),
-    ))
+    if source == "photo":
+        out_path = Path(
+            (os.environ.get("PHOTO_TAGS_SNAPSHOT_JSON") or "data/photo_tags_snapshot.json").strip()
+        )
+    else:
+        out_path = Path(pick_snapshot_path(
+            explicit=os.environ.get("FOOTAGE_TAGS_SNAPSHOT_PATH", ""),
+            metadata_paths_json=os.environ.get("FOOTAGE_STYLE_METADATA_DB_PATHS_JSON", ""),
+        ))
 
     async def _go():
         import asyncpg  # type: ignore
 
         conn = await asyncpg.connect(dsn=db_url)
         try:
-            return await build_snapshot(conn)
+            return await build_snapshot(conn, source=source)
         finally:
             await conn.close()
 
@@ -2590,13 +2635,21 @@ _FOOTAGE_ACTIVATION_PROGRESS_KEY = "footage_activation:progress"
 
 
 @celery_app.task(name="orchestrator.activate_footage_base", bind=True, max_retries=0)
-def activate_footage_base(self, limit: int = 0) -> Dict[str, Any]:
+def activate_footage_base(self, limit: int = 0, media_type: str = "video") -> Dict[str, Any]:
     """Full self-serve ingest after a web upload: rebuild the S3 static index ->
     rebuild the picker inventory -> tag untagged clips (Groq) -> export the tags
-    & blacklist snapshots. Makes freshly-uploaded clips enter the selection pool
+    & blacklist snapshots. Makes freshly-uploaded assets enter the selection pool
     without any server-side command. Progress phases published to Redis.
+
+    media_type='video' (default) ingests the footage pool; 'photo' ingests the
+    photo pool (photo index/inventory/prefix + photo tagger + source='photo'
+    snapshot), parallel and independent from the footage pool.
     """
     from pathlib import Path as _Path
+
+    mt = _norm_media_type(media_type)
+    is_photo = mt == "photo"
+    progress_key = _PHOTO_ACTIVATION_PROGRESS_KEY if is_photo else _FOOTAGE_ACTIVATION_PROGRESS_KEY
 
     bucket = str(os.environ.get("S3_BUCKET_ASSET_STORAGE") or "").strip()
     db_url = str(getattr(SETTINGS, "credits_db_url", "") or "").strip()
@@ -2604,7 +2657,7 @@ def activate_footage_base(self, limit: int = 0) -> Dict[str, Any]:
 
     def _publish(state: str, **extra: Any) -> None:
         try:
-            r.set(_FOOTAGE_ACTIVATION_PROGRESS_KEY, json.dumps({"state": state, "updated_at": time.time(), **extra}), ex=86400)
+            r.set(progress_key, json.dumps({"state": state, "updated_at": time.time(), "media_type": mt, **extra}), ex=86400)
         except Exception:
             pass
 
@@ -2616,21 +2669,34 @@ def activate_footage_base(self, limit: int = 0) -> Dict[str, Any]:
             raise RuntimeError("Postgres not configured (CREDITS_DB_URL / POSTGRES_*)")
 
         repo_root = _Path(__file__).resolve().parents[2]
-        static_index_path = _Path(
-            os.environ.get("STATIC_ASSETS_INDEX_JSON", str(repo_root / "data" / "static_assets_index_1to1.json"))
-        )
-        inventory_out = _Path(os.environ.get("FOOTAGE_INVENTORY_OUT", str(repo_root / "data" / "footage_inventory.json")))
-        bundle_out = _Path(os.environ.get("DESCRIPTIONS_BUNDLE_OUT", str(repo_root / "pins" / "descriptions_bundle.json")))
-        prefix = _footage_tagging_source_prefix()
+        if is_photo:
+            static_index_path = _Path(
+                os.environ.get("PHOTO_ASSETS_INDEX_JSON", str(repo_root / "data" / "photo_assets_index_1to1.json"))
+            )
+            inventory_out = _Path(os.environ.get("PHOTO_INVENTORY_JSON", str(repo_root / "data" / "photo_inventory.json")))
+            bundle_out = _Path(os.environ.get("PHOTO_DESCRIPTIONS_BUNDLE_OUT", str(repo_root / "pins" / "photo_descriptions_bundle.json")))
+            prefix = _photo_tagging_source_prefix()
+        else:
+            static_index_path = _Path(
+                os.environ.get("STATIC_ASSETS_INDEX_JSON", str(repo_root / "data" / "static_assets_index_1to1.json"))
+            )
+            inventory_out = _Path(os.environ.get("FOOTAGE_INVENTORY_OUT", str(repo_root / "data" / "footage_inventory.json")))
+            bundle_out = _Path(os.environ.get("DESCRIPTIONS_BUNDLE_OUT", str(repo_root / "pins" / "descriptions_bundle.json")))
+            prefix = _footage_tagging_source_prefix()
 
         # 1) rebuild the S3 static index (pool source of truth)
         def _idx_progress(done: int, total: int) -> None:
             _publish("running", phase="indexing", done=int(done), total=int(total))
 
-        from scripts.build_static_assets_index import build_index
-
         _publish("running", phase="indexing", done=0, total=0)
-        idx = build_index(bucket=bucket, prefix=prefix, out_path=static_index_path, progress_cb=_idx_progress)
+        if is_photo:
+            from scripts.build_photo_assets_index import build_photo_index
+
+            idx = build_photo_index(bucket=bucket, prefix=prefix, out_path=static_index_path, progress_cb=_idx_progress)
+        else:
+            from scripts.build_static_assets_index import build_index
+
+            idx = build_index(bucket=bucket, prefix=prefix, out_path=static_index_path, progress_cb=_idx_progress)
 
         # 2) rebuild the picker inventory from the static index
         _publish("running", phase="inventory", indexed=idx.get("assets_count"))
@@ -2644,23 +2710,32 @@ def activate_footage_base(self, limit: int = 0) -> Dict[str, Any]:
             inventory_out_path=inventory_out,
             bundle_out_path=bundle_out,
             max_assets_in_bundle=int(max_assets_env) if max_assets_env else None,
+            media_type=mt,
         )
 
         # 3) tag untagged clips
-        from mlcore.footage_tagger import run_tagging_batch
-
         def _tag_progress(done: int, total: int, written: int) -> None:
             _publish("running", phase="tagging", done=int(done), total=int(total), written=int(written))
 
         _publish("running", phase="tagging", done=0, total=0, written=0)
-        tag_summary = run_tagging_batch(
-            bucket=bucket, source_prefix=prefix, db_url=db_url,
-            limit=int(limit or 0), progress_cb=_tag_progress,
-        )
+        if is_photo:
+            from mlcore.photo_tagger import run_photo_tagging_batch
+
+            tag_summary = run_photo_tagging_batch(
+                bucket=bucket, source_prefix=prefix, db_url=db_url,
+                limit=int(limit or 0), progress_cb=_tag_progress,
+            )
+        else:
+            from mlcore.footage_tagger import run_tagging_batch
+
+            tag_summary = run_tagging_batch(
+                bucket=bucket, source_prefix=prefix, db_url=db_url,
+                limit=int(limit or 0), progress_cb=_tag_progress,
+            )
 
         # 4) export the snapshots the picker reads
         _publish("running", phase="snapshot")
-        snap = _export_footage_tags_snapshot(db_url=db_url)
+        snap = _export_footage_tags_snapshot(db_url=db_url, source=mt)
         try:
             _export_tag_overrides_snapshot(db_url=db_url)
         except Exception as exc:
