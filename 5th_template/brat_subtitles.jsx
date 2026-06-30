@@ -411,7 +411,15 @@ function addBlinker(tcomp, spanIn, spanOut){
 
         // вложить комп субтитров в активный (поверх футажа)
         if (CONFIG.separateComp && CONFIG.nestIntoActive && tcomp !== srcComp){
-            try { var nl = srcComp.layers.add(tcomp); nl.moveToBeginning(); } catch (eN){ if (!firstErr) firstErr = "nest: " + eN; }
+            try {
+                var nl = srcComp.layers.add(tcomp); nl.moveToBeginning();
+                // Strobe Ч/Б: Difference на вложенном компе → белый текст авто-
+                // инвертируется под мигающим Ч/Б фоном (читаем на любом сегменте).
+                try {
+                    var __bl = ($.global && $.global.__BLAST_SUBS_BLEND) ? String($.global.__BLAST_SUBS_BLEND).toLowerCase() : "";
+                    if (__bl === "difference") nl.blendingMode = BlendingMode.DIFFERENCE;
+                } catch (eBl){}
+            } catch (eN){ if (!firstErr) firstErr = "nest: " + eN; }
         }
     } catch (err){ firstErr = String(err); }
     finally { app.endUndoGroup(); }

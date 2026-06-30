@@ -331,11 +331,16 @@ def _build_jsx_subtitles_js(full_edit_config: Dict[str, Any]) -> str:
     # Subtitle color: same env that recolors Python subtitle fills
     # (SUBTITLES_FORCE_FILL_HEX) — apply it to the trendy/brat text too.
     fill_hex = str(os.environ.get("SUBTITLES_FORCE_FILL_HEX") or "").strip() or None
+    # B/W strobe bg: trendy/brat build a separate nested comp, so auto-invert via
+    # Difference must be set on THAT comp (the template's Текст-precomp blend
+    # doesn't reach it). White text + Difference → readable on any segment.
+    subs_blend = "difference" if str(os.environ.get("BG_MODE") or "").strip().lower() == "solid_strobe" else None
     overlay = build_jsx_subtitles_overlay(
         mode=mode,
         word_timings=list(word_timings),
         bpm=(float(bpm) if bpm is not None else None),
         fill_hex=fill_hex,
+        subs_blend=subs_blend,
     )
     LOGGER.info(
         "jsx subtitles present mode=%s words=%d bpm=%s js_len=%d",

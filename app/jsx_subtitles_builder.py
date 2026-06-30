@@ -219,6 +219,7 @@ def build_jsx_subtitles_overlay(
     bpm: Optional[float] = None,
     target_comp: str = DEFAULT_TARGET_COMP,
     fill_hex: Optional[str] = None,
+    subs_blend: Optional[str] = None,
 ) -> str:
     """Return an injectable JSX block: prelude ($.global injects) + the script.
 
@@ -253,6 +254,11 @@ def build_jsx_subtitles_overlay(
     rgb = hex_to_rgb01(fill_hex) if fill_hex else None
     if rgb is not None:
         prelude_lines.append(f"$.global.__BLAST_FILL = [{rgb[0]!r}, {rgb[1]!r}, {rgb[2]!r}];")
+    # Blend mode for the subtitle comp/layers (e.g. "difference" for the B/W
+    # strobe bg auto-invert — trendy/brat build a separate nested comp, so the
+    # render template's Difference-on-Текст-precomp doesn't reach them).
+    if subs_blend:
+        prelude_lines.append(f"$.global.__BLAST_SUBS_BLEND = {json.dumps(str(subs_blend))};")
     prelude = "\n".join(prelude_lines)
 
     return prelude + "\n" + body

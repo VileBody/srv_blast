@@ -190,6 +190,11 @@ function addSapphire(L){
                 var L = comp.layers.addText(phrase);
                 L.name = "trendy " + (i + 1) + " " + phrase;
                 L.motionBlur = false;
+                // Strobe Ч/Б: Difference → белый текст авто-инвертируется под фоном.
+                try {
+                    var __bl = ($.global && $.global.__BLAST_SUBS_BLEND) ? String($.global.__BLAST_SUBS_BLEND).toLowerCase() : "";
+                    if (__bl === "difference") L.blendingMode = BlendingMode.DIFFERENCE;
+                } catch (eBl){}
 
                 var stProp = L.property("ADBE Text Properties").property("ADBE Text Document");
 

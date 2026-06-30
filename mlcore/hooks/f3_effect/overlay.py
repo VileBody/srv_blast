@@ -89,7 +89,9 @@ _JS_PRELUDE = r"""
     var cuts=[], i;
     for (i=1;i<=comp.numLayers;i++){ var L=comp.layer(i);
       var isF = (L.source && (L.source instanceof FootageItem) && L.hasVideo && !L.adjustmentLayer);
-      if (isF) cuts.push(L.inPoint); }
+      // Strobe Ч/Б bg has NO footage — the B/W segment solids ARE the cuts.
+      var isStrobe = (L.name && String(L.name).indexOf("strobe_bg_")===0);
+      if (isF || isStrobe) cuts.push(L.inPoint); }
     cuts.sort(function(a,b){return a-b;});
     var out=[], fr=comp.frameDuration;
     for (var k=0;k<cuts.length;k++){ if (!out.length || Math.abs(cuts[k]-out[out.length-1])>fr) out.push(cuts[k]); }

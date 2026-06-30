@@ -64,6 +64,7 @@ from .state_store import (
     STAGE_WAIT_FRAGMENT_CHOICE,
     STAGE_WAIT_FRAGMENT_TEXT,
     STAGE_WAIT_BG_COLOR,
+    STAGE_WAIT_STROBE_CUT,
     STAGE_WAIT_BG_MODE,
     STAGE_WAIT_FOOTAGE_ARTIST,
     STAGE_WAIT_FOOTAGE_GENRE,
@@ -2893,6 +2894,10 @@ class BlastBotApp:
                 await self._handle_wait_bg_color(message, st)
                 return
 
+            if st.stage == STAGE_WAIT_STROBE_CUT:
+                await self._handle_wait_strobe_cut(message, st)
+                return
+
             if st.stage == STAGE_WAIT_FOOTAGE_GENRE:
                 await self._handle_wait_footage_genre(message, st)
                 return
@@ -5056,11 +5061,71 @@ class BlastBotApp:
         lines.append("\nЗапустить генерацию?")
         return "\n".join(lines)
 
+    async def _ask_strobe_cut(self, message: Message, st: ChatState) -> None:
+        st.stage = STAGE_WAIT_STROBE_CUT
+        await self.store.set(st)
+        await message.answer(
+            "Строб Ч/Б: стиль перехода на склейках видео.\n"
+            "Снап-вайп / Минимакс / Инверт / Экстракт / Вспышки — или без перехода.",
+            reply_markup=_kb(
+                [BTN_FX_TR_SNAP, BTN_FX_TR_MINIMAX],
+                [BTN_FX_TR_INVERT, BTN_FX_TR_EXTRACT],
+                [BTN_FX_TR_FLASH],
+                [BTN_FX_SKIP],
+                [BTN_BACK],
+            ),
+        )
+
+    def _default_strobe_drop(self, st: ChatState) -> float:
+        cs = float(st.user_clip_start_sec or 0.0)
+        ce = float(st.user_clip_end_sec or 0.0)
+        cand = None
+        for c in (st.hook_drop_candidates or []):
+            try:
+                cand = float(c.get("t"))
+                break
+            except (TypeError, ValueError):
+                continue
+        drop = cand if (cand is not None and cs < cand < ce) else (cs + 1.0)
+        if ce > cs:
+            drop = min(max(drop, cs + 0.5), ce - 0.1)
+        return float(drop)
+
+    async def _handle_wait_strobe_cut(self, message: Message, st: ChatState) -> None:
+        text = str(message.text or "").strip()
+        if text == BTN_BACK:
+            await self._proceed_to_versions_or_confirm(message, st)
+            return
+        st.hook_category = "effect"
+        st.effect_hook = ""
+        st.effect_extra = ""
+        st.effect_extra_full = False
+        st.effect_hook_extend = ""
+        if text == BTN_FX_SKIP:
+            st.hook_enabled = False
+            st.effect_transition = ""
+        else:
+            tr = _FX_TRANSITION_BY_BUTTON.get(text)
+            if tr is None:
+                await message.answer("Выбери стиль кнопкой или «Пропустить».")
+                return
+            st.hook_enabled = True
+            st.effect_transition = tr
+            st.hook_drop_t = self._default_strobe_drop(st)
+        st.colors_done = True
+        await self.store.set(st)
+        await self._proceed_to_versions_or_confirm(message, st)
+
     async def _proceed_to_versions_or_confirm(self, message: Message, st: ChatState) -> None:
         """Post-settings entry: paid → version count picker, else → final confirm.
 
         Customization (colors) runs AFTER the hook flow — if it hasn't run yet
         this redirects into the color pickers once, then comes back here."""
+        # Strobe bg: skip color pickers (white auto-invert) + offer ONLY the cut
+        # transition style once (not the full hook flow).
+        if st.bg_mode == "solid_strobe" and not st.colors_done and st.stage != STAGE_WAIT_STROBE_CUT:
+            await self._ask_strobe_cut(message, st)
+            return
         if HOOK_FLOW_ENABLED and not st.colors_done:
             await self._ask_subtitle_color(message, st)
             return
