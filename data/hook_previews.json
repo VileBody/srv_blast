@@ -163,18 +163,18 @@
       "built_at": "2026-06-30T14:03:14Z"
     },
     "subtitles:brat_5th": {
-      "label": "Brat (blocks)",
-      "file_id": "BAACAgIAAxkDAAItF2pDzOWmZW1UumFBUGlv4uSmgLYRAAKWnAACbEogSgO-KkJroGyqPAQ",
-      "file_id_public": "BAACAgIAAxkDAAEB8JpqQ8zop9dGg4dmsKJNXK3Ze8cMlQACiZwAAmk1IUoXDQf1YASq2TwE",
+      "label": "Пример: Brat",
+      "file_id": "BAACAgIAAxkDAAIt5GpEEVYW-Xl_6NmP38Rh1Bge9HvKAAKGoAACbEogSoxt1x6PP_xmPAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8UJqRBFg-dAMXowaD8g8peAoFkmUtgACdqAAAmk1IUo96vceWrhWfDwE",
       "source": "Субтитры примеры/brat.MP4",
-      "built_at": "2026-06-30T14:04:26Z"
+      "built_at": "2026-06-30T18:56:34Z"
     },
     "subtitles:trendy_5th": {
-      "label": "Trendy (1 слово)",
-      "file_id": "BAACAgIAAxkDAAItFmpDzN_UsRssqJ7jPHVts_MCuhkBAAKUnAACbEogSjwutCi330a_PAQ",
-      "file_id_public": "BAACAgIAAxkDAAEB8JlqQ8zjeSzT7I3oVXrco18cCyeDdAACiJwAAmk1IUrlmj9SKtydVDwE",
+      "label": "Пример: Trendy",
+      "file_id": "BAACAgIAAxkDAAIt42pEEU-IG5lqI49my_yQkAGTHQaFAAKFoAACbEogSr4QA6_dBD1TPAQ",
+      "file_id_public": "BAACAgIAAxkDAAEB8UFqRBFTP5QFBD-8Qg1hJpPlyLzcNgACdKAAAmk1IUrSviqQ0erwAzwE",
       "source": "Субтитры примеры/trendy.mp4",
-      "built_at": "2026-06-30T14:04:21Z"
+      "built_at": "2026-06-30T18:56:21Z"
     }
   }
 }

@@ -64,10 +64,31 @@ EXAMPLES: Dict[str, Tuple[str, str, str]] = {
     "effect_extra:analog_glitch": ("Хуки/Эффекты/stylize/примеры стилей", "analogglitch.mp4", "Аналог-глитч"),
     "effect_extra:neon_extract": ("Хуки/Эффекты/stylize/примеры стилей", "neonextract.mp4", "Неон"),
     "effect_extra:old_camera":   ("Хуки/Эффекты/stylize/примеры стилей", "oldcamera.mp4", "Старая камера"),
-    # Subtitles
-    "subtitles:trendy_5th": ("Субтитры примеры", "trendy.mp4", "Trendy (1 слово)"),
-    "subtitles:brat_5th":   ("Субтитры примеры", "brat.MP4", "Brat (blocks)"),
+    # Subtitles (caption = label, so it shows "Пример: Trendy" / "Пример: Brat")
+    "subtitles:trendy_5th": ("Субтитры примеры", "trendy.mp4", "Пример: Trendy"),
+    "subtitles:brat_5th":   ("Субтитры примеры", "brat.MP4", "Пример: Brat"),
 }
+
+
+def _probe_video_dims(path: Path) -> Tuple[int, int, int]:
+    """(width, height, duration_sec) via ffprobe; (0,0,0) if unavailable. Telegram
+    needs explicit width/height or it can mis-render aspect (e.g. files without
+    display_aspect_ratio metadata get squished)."""
+    import shutil as _sh
+    import subprocess as _sp
+    ffprobe = (os.environ.get("FFPROBE_BIN") or "").strip() or _sh.which("ffprobe") or "ffprobe"
+    try:
+        out = _sp.run(
+            [ffprobe, "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=width,height:format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", str(path)],
+            capture_output=True, text=True, timeout=60,
+        ).stdout.split()
+        w = int(float(out[0])); h = int(float(out[1]))
+        dur = int(float(out[2])) if len(out) > 2 else 0
+        return w, h, dur
+    except Exception:
+        return 0, 0, 0
 
 
 def _now_iso() -> str:
@@ -77,13 +98,20 @@ def _now_iso() -> str:
 def capture_telegram_file_id(*, token: str, chat_id: str, video_path: Path) -> str:
     """Send the video (no caption) via `token`; return the resulting file_id.
     Direct connection (bypass the Windows system SOCKS proxy — same as the S3/
-    asset_ui calls; Telegram is reachable directly here)."""
+    asset_ui calls; Telegram is reachable directly here). Sends explicit
+    width/height/duration so Telegram renders the correct (9:16) aspect."""
     sess = requests.Session()
     sess.trust_env = False
     url = f"https://api.telegram.org/bot{token}/sendVideo"
+    w, h, dur = _probe_video_dims(video_path)
     with open(video_path, "rb") as fh:
         files = {"video": (video_path.name, fh, "video/mp4")}
         data = {"chat_id": str(chat_id), "supports_streaming": "true"}
+        if w and h:
+            data["width"] = str(w)
+            data["height"] = str(h)
+        if dur:
+            data["duration"] = str(dur)
         resp = sess.post(url, data=data, files=files, timeout=300)
     resp.raise_for_status()
     payload = resp.json()
