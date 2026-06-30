@@ -65,3 +65,12 @@ def test_hook_preview_file_id_reads_per_bot_field(monkeypatch):
     assert team._hook_preview_file_id("motion:swipe") == "TEAM_FID"
     assert pub._hook_preview_file_id("motion:swipe") == "PUB_FID"
     assert team._hook_preview_file_id("nope:x") == ""
+
+
+def test_send_option_previews_method_mirrored():
+    # both bots expose the per-step preview sender (captioned hook/effect reels)
+    import inspect
+    for mod in (team, pub):
+        meth = getattr(mod.BlastBotApp, "_send_option_previews", None)
+        assert callable(meth)
+        assert inspect.iscoroutinefunction(meth)

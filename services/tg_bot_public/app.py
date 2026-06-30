@@ -3871,10 +3871,29 @@ class BlastBotApp:
             return
         await message.answer("Выбери тип хука кнопкой ниже.")
 
+    async def _send_option_previews(self, message: Message, keys: List[str]) -> None:
+        """Mirror of tg_bot_botapi: send example reels for a menu step's options
+        WITH a short caption = the option name (the effect name is not on the
+        video). Uses file_id_public. Keys without a preview are skipped."""
+        previews = _load_hook_previews()
+        for key in keys:
+            e = previews.get(key) or {}
+            fid = str(e.get(_BUCKET_PREVIEW_FILE_ID_FIELD) or "").strip()
+            if not fid:
+                continue
+            caption = str(e.get("label") or "").strip()
+            try:
+                await message.answer_video(video=fid, caption=caption or None)
+            except Exception:
+                log.warning("failed to send option preview for %s", key)
+
     async def _ask_hook_device(self, message: Message, st: ChatState) -> None:
         st.stage = STAGE_WAIT_HOOK_DEVICE
         await self.store.set(st)
         if st.hook_category == "motion":
+            await self._send_option_previews(
+                message, [f"motion:{v}" for v in _HOOK_MOTION_DEVICE_BY_BUTTON.values()]
+            )
             await message.answer(
                 "Какой приём «Движения»? Рука/голова двигается в такт, "
                 "на дропе срабатывает вспышка:\n"
@@ -3963,6 +3982,9 @@ class BlastBotApp:
     async def _ask_effect_hook(self, message: Message, st: ChatState) -> None:
         st.stage = STAGE_WAIT_EFFECT_HOOK
         await self.store.set(st)
+        await self._send_option_previews(
+            message, [f"effect_hook:{v}" for v in _FX_HOOK_BY_BUTTON.values()]
+        )
         await message.answer(
             "«Эффект» — шаг 1/3: хук на дропе.\n"
             "• Молния — вспышка-молнии + шейк.\n• Затвор — нарезка затвора + лого-штамп.\n"
@@ -3997,6 +4019,9 @@ class BlastBotApp:
     async def _ask_effect_transition(self, message: Message, st: ChatState) -> None:
         st.stage = STAGE_WAIT_EFFECT_TRANSITION
         await self.store.set(st)
+        await self._send_option_previews(
+            message, [f"effect_transition:{v}" for v in _FX_TRANSITION_BY_BUTTON.values()]
+        )
         await message.answer(
             "Шаг 2/3: переход на склейках футажа.\nМожно пропустить.",
             reply_markup=_kb(
@@ -4029,6 +4054,9 @@ class BlastBotApp:
     async def _ask_effect_extra(self, message: Message, st: ChatState) -> None:
         st.stage = STAGE_WAIT_EFFECT_EXTRA
         await self.store.set(st)
+        await self._send_option_previews(
+            message, [f"effect_extra:{v}" for v in _FX_EXTRA_BY_BUTTON.values()]
+        )
         await message.answer(
             "Шаг 3/3: стилизация футажа до дропа (грейд 00:00 → дроп).\nМожно пропустить.",
             reply_markup=_kb(
@@ -4142,6 +4170,9 @@ class BlastBotApp:
     async def _ask_f2_shape(self, message: Message, st: ChatState) -> None:
         st.stage = STAGE_WAIT_F2_SHAPE
         await self.store.set(st)
+        await self._send_option_previews(
+            message, [f"shape:{v}" for v in _F2_SHAPE_BY_BUTTON.values()]
+        )
         await message.answer(
             "Какая фигура-переход на склейках до дропа?\n"
             "На дропе сработает молния, после дропа — рандомный визуал-переход.\n"
@@ -4323,9 +4354,13 @@ class BlastBotApp:
         if not str(st.subtitles_mode or "").strip():
             st.subtitles_mode = SUBTITLES_MODE_IMPULSE_2ND
         await self.store.set(st)
-        # Send example videos for each mode
+        # Send example videos for each mode (legacy hardcoded impulse/scenes/4th +
+        # the registered trendy/brat reels from hook_previews.json).
         for btn_name, file_id in _SUBTITLES_EXAMPLE_VIDEO.items():
             await message.answer_video(video=file_id, caption=f"Пример: *{btn_name}*", parse_mode="Markdown")
+        await self._send_option_previews(
+            message, ["subtitles:trendy_5th", "subtitles:brat_5th"]
+        )
         await message.answer(
             "Выбери режим субтитров:",
             reply_markup=_kb(
