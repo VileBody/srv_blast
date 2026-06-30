@@ -2585,15 +2585,19 @@ class BlastBotApp:
                 log.warning("failed to send vibe preview for %s", ranked[idx])
 
     async def _send_option_previews(self, message: Message, keys: List[str]) -> None:
-        """Send captionless example reels for a menu step's options (hook/shape/
-        effect/subtitle). The option name lives on the video + the button, so no
-        caption. Keys without a registered preview are skipped (button-only)."""
+        """Send example reels for a menu step's options (hook/shape/effect/subtitle)
+        WITH a short caption = the option name. Unlike vibe reels, the effect name
+        is NOT on the video, so a text caption is needed to tell them apart. Keys
+        without a registered preview are skipped (button-only)."""
+        previews = _load_hook_previews()
         for key in keys:
-            fid = _hook_preview_file_id(key)
+            e = previews.get(key) or {}
+            fid = str(e.get(_BUCKET_PREVIEW_FILE_ID_FIELD) or "").strip()
             if not fid:
                 continue
+            caption = str(e.get("label") or "").strip()
             try:
-                await message.answer_video(video=fid)
+                await message.answer_video(video=fid, caption=caption or None)
             except Exception:
                 log.warning("failed to send option preview for %s", key)
 
