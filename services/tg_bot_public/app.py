@@ -420,6 +420,17 @@ BTN_BACK = "Назад"
 BTN_BG_FOOTAGE = "Футажи"
 BTN_BG_SOLID = "Цветной фон"
 BTN_BG_STROBE = "Строб Ч/Б"
+# Footage precision flow (Phase 2b): a "pictures (soon)" background stub shown
+# alongside footage/solid when the vibe flow is on. Mirror of tg_bot_botapi —
+# not implemented yet → replies "скоро".
+BTN_BG_PICTURES = "Картинки (скоро)"
+# Vibe shortlist (inline) control buttons + callback-data prefix. Mirror of team.
+VIBE_CB_PREFIX = "vibe:"          # vibe:tog:<idx> | vibe:more | vibe:done | vibe:auto
+BTN_VIBE_REFRESH = "🔄 Обновить"
+BTN_VIBE_DONE = "▶️ Готово"
+BTN_VIBE_AUTO = "✨ По треку (авто)"
+# How many buckets to show per shortlist page.
+VIBE_PAGE_SIZE = 3
 BTN_BG_WHITE = "Белый"
 BTN_BG_BLACK = "Чёрный"
 BTN_BG_GREEN = "Зелёный (хромакей)"
@@ -3517,6 +3528,276 @@ class BlastBotApp:
         st.footage_artist_key = artist["key"]
         st.footage_artist_id = artist["key"]
         await self._ask_subtitles_mode(message, st)
+
+    # ===================== Footage precision flow (Phase 2b) =====================
+    # Ranked-shortlist vibe picker, ported 1:1 from tg_bot_botapi. After lyrics we
+    # rank the bucket catalog in the background (orchestrator /footage/rank-buckets);
+    # the user multi-selects vibes from a paged inline shortlist; at enqueue, N
+    # videos are distributed round-robin over the selected buckets (exact-slot
+    # theme+tags_group each). Artist/genre are dropped → footage_artist_id=""
+    # (tag-only matching). Gated behind FOOTAGE_VIBE_FLOW_ENABLED.
+
+    async def _trigger_vibe_ranker_task(self, st: ChatState) -> None:
+        """Fire-and-forget background ranking of the footage buckets by lyrics.
+        Resets any previous shortlist/selection (called once per track when the
+        user submits lyrics). No-op when the vibe flow is disabled."""
+        if not FOOTAGE_VIBE_FLOW_ENABLED:
+            return
+        lyrics = str(st.lyrics_text or "").strip()
+        st.vibe_rank_status = "pending"
+        st.vibe_ranked_ids = []
+        st.vibe_labels_by_id = {}
+        st.vibe_selected_ids = []
+        st.vibe_page = 0
+        await self.store.set(st)
+        import asyncio as _asyncio
+        _asyncio.create_task(
+            self._run_vibe_ranker_bg(chat_id=int(st.chat_id), lyrics=lyrics, mood="")
+        )
+
+    async def _run_vibe_ranker_bg(self, *, chat_id: int, lyrics: str, mood: str) -> None:
+        """Background runner — must never raise into the asyncio loop."""
+        try:
+            result = await self.orchestrator.rank_buckets(lyrics=lyrics, mood=mood)
+            ranked_ids, labels = self._parse_ranked_buckets(result)
+            st = await self.store.get(chat_id)
+            # Stale guard: only persist if the user hasn't moved on / re-ranked.
+            if st.vibe_rank_status not in {"pending", "ready"}:
+                return
+            st.vibe_ranked_ids = ranked_ids
+            st.vibe_labels_by_id = labels
+            st.vibe_rank_status = "ready" if ranked_ids else "failed"
+            await self.store.set(st)
+            log.info("vibe_rank_ok chat=%s buckets=%d used_llm=%s",
+                     chat_id, len(ranked_ids), bool(result.get("used_llm")))
+        except Exception as e:
+            log.warning("vibe_rank_fail chat=%s err=%r", chat_id, e)
+            try:
+                st = await self.store.get(chat_id)
+                st.vibe_rank_status = "failed"
+                await self.store.set(st)
+            except Exception:
+                pass
+
+    @staticmethod
+    def _parse_ranked_buckets(result: Dict[str, Any]) -> Tuple[List[str], Dict[str, str]]:
+        """(ranked bucket_ids, bucket_id→label) from a rank-buckets response."""
+        ranked_ids: List[str] = []
+        labels: Dict[str, str] = {}
+        for b in (result.get("buckets") or []):
+            if not isinstance(b, dict):
+                continue
+            bid = str(b.get("bucket_id") or "").strip()
+            if not bid or ":" not in bid or bid in labels:
+                continue
+            ranked_ids.append(bid)
+            label = str(b.get("label") or "").strip() or str(b.get("tags_group") or "").strip() or bid
+            labels[bid] = label
+        return ranked_ids, labels
+
+    async def _ensure_vibe_ranked(self, st: ChatState) -> bool:
+        """Make sure st has a ranked shortlist. If the background ranker hasn't
+        finished (or failed), rank synchronously now. Returns False only when
+        ranking yields nothing (caller falls back to the legacy genre picker)."""
+        if st.vibe_ranked_ids:
+            return True
+        try:
+            result = await self.orchestrator.rank_buckets(
+                lyrics=str(st.lyrics_text or "").strip(), mood=""
+            )
+            ranked_ids, labels = self._parse_ranked_buckets(result)
+        except Exception as e:
+            log.warning("vibe_rank_sync_fail chat=%s err=%r", st.chat_id, e)
+            return False
+        st.vibe_ranked_ids = ranked_ids
+        st.vibe_labels_by_id = labels
+        st.vibe_rank_status = "ready" if ranked_ids else "failed"
+        await self.store.set(st)
+        return bool(ranked_ids)
+
+    def _vibe_page_count(self, st: ChatState) -> int:
+        n = len(st.vibe_ranked_ids or [])
+        if n <= 0:
+            return 0
+        return (n + VIBE_PAGE_SIZE - 1) // VIBE_PAGE_SIZE
+
+    def _build_vibe_keyboard(self, st: ChatState) -> InlineKeyboardMarkup:
+        """Inline multi-select for the current page + control row. Toggle state
+        (✅) is read from vibe_selected_ids so it persists across pages."""
+        ranked = list(st.vibe_ranked_ids or [])
+        selected = set(st.vibe_selected_ids or [])
+        pages = max(1, self._vibe_page_count(st))
+        page = int(st.vibe_page or 0) % pages
+        start = page * VIBE_PAGE_SIZE
+        rows: List[List[InlineKeyboardButton]] = []
+        for idx in range(start, min(start + VIBE_PAGE_SIZE, len(ranked))):
+            bid = ranked[idx]
+            label = _vibe_display_label(st.vibe_labels_by_id.get(bid, bid))
+            mark = "✅ " if bid in selected else "▫️ "
+            rows.append([InlineKeyboardButton(
+                text=f"{mark}{label}", callback_data=f"{VIBE_CB_PREFIX}tog:{idx}"
+            )])
+        controls = []
+        if pages > 1:
+            controls.append(InlineKeyboardButton(
+                text=BTN_VIBE_REFRESH, callback_data=f"{VIBE_CB_PREFIX}more"
+            ))
+        controls.append(InlineKeyboardButton(
+            text=BTN_VIBE_DONE, callback_data=f"{VIBE_CB_PREFIX}done"
+        ))
+        rows.append(controls)
+        rows.append([InlineKeyboardButton(
+            text=BTN_VIBE_AUTO, callback_data=f"{VIBE_CB_PREFIX}auto"
+        )])
+        return InlineKeyboardMarkup(inline_keyboard=rows)
+
+    def _vibe_shortlist_text(self, st: ChatState) -> str:
+        pages = max(1, self._vibe_page_count(st))
+        page = int(st.vibe_page or 0) % pages
+        n_sel = len(st.vibe_selected_ids or [])
+        lines = [
+            "Выбери вайб(ы) для футажа — можно несколько (тап = ✓ в набор).",
+            f"Страница {page + 1}/{pages}. Выбрано: {n_sel}.",
+            "«🔄 Обновить» — листать варианты (выбор сохраняется). "
+            "«▶️ Готово» — продолжить. «✨ По треку (авто)» — топ-1 по треку.",
+        ]
+        return "\n".join(lines)
+
+    async def _ask_vibe_shortlist(self, message: Message, st: ChatState) -> None:
+        st.stage = STAGE_WAIT_VIBE
+        # Vibe flow drops artist/genre → tag-only footage matching server-side.
+        st.footage_genre_key = ""
+        st.footage_artist_key = ""
+        st.footage_artist_id = ""
+        # Fresh selection each time the footage step is entered (e.g. reuse-input
+        # re-runs keep the cached ranking but start the multi-select clean).
+        st.vibe_selected_ids = []
+        st.vibe_page = 0
+        await self.store.set(st)
+        ok = await self._ensure_vibe_ranked(st)
+        if not ok:
+            await message.answer(
+                "Не удалось подобрать вайбы по треку — выбери стиль вручную."
+            )
+            await self._ask_footage_genre(message, st)
+            return
+        # Drop the reply keyboard, then send preview reels + the inline multi-select.
+        await message.answer("Готовлю шортлист вайбов…", reply_markup=ReplyKeyboardRemove())
+        await self._send_vibe_previews(message, st)
+        await message.answer(
+            self._vibe_shortlist_text(st),
+            reply_markup=self._build_vibe_keyboard(st),
+        )
+
+    async def _send_vibe_previews(self, message: Message, st: ChatState) -> None:
+        """Send a captionless preview reel for each vibe on the current page (the
+        vibe name lives on the video + the button, so no caption — it would just
+        get truncated). Buckets without a preview fall back to button-only.
+        Uses the file_id_public variant (this is the public bot)."""
+        ranked = list(st.vibe_ranked_ids or [])
+        if not ranked:
+            return
+        pages = max(1, self._vibe_page_count(st))
+        page = int(st.vibe_page or 0) % pages
+        start = page * VIBE_PAGE_SIZE
+        for idx in range(start, min(start + VIBE_PAGE_SIZE, len(ranked))):
+            fid = _bucket_preview_file_id(ranked[idx])
+            if not fid:
+                continue
+            try:
+                await message.answer_video(video=fid)
+            except Exception:
+                log.warning("failed to send vibe preview for %s", ranked[idx])
+
+    async def _handle_vibe_callback(self, cb: CallbackQuery) -> None:
+        """Handle vibe:tog:<idx> | vibe:more | vibe:done | vibe:auto callbacks."""
+        data = str(cb.data or "")
+        if cb.message is None or cb.message.chat is None:
+            await cb.answer()
+            return
+        chat_id = int(cb.message.chat.id)
+        st = await self.store.get(chat_id)
+        if st.stage != STAGE_WAIT_VIBE:
+            await cb.answer("Шаг уже пройден.", show_alert=False)
+            return
+        action = data[len(VIBE_CB_PREFIX):]
+
+        if action.startswith("tog:"):
+            try:
+                idx = int(action.split(":", 1)[1])
+            except (ValueError, IndexError):
+                await cb.answer()
+                return
+            ranked = list(st.vibe_ranked_ids or [])
+            if not (0 <= idx < len(ranked)):
+                await cb.answer()
+                return
+            bid = ranked[idx]
+            sel = list(st.vibe_selected_ids or [])
+            if bid in sel:
+                sel.remove(bid)
+            else:
+                sel.append(bid)
+            st.vibe_selected_ids = sel
+            await self.store.set(st)
+            try:
+                await cb.message.edit_text(
+                    self._vibe_shortlist_text(st),
+                    reply_markup=self._build_vibe_keyboard(st),
+                )
+            except TelegramBadRequest:
+                pass
+            await cb.answer("В наборе" if bid in sel else "Убрано")
+            return
+
+        if action == "more":
+            pages = max(1, self._vibe_page_count(st))
+            st.vibe_page = (int(st.vibe_page or 0) + 1) % pages
+            await self.store.set(st)
+            # show the new page's preview reels, then refresh the keyboard below
+            await self._send_vibe_previews(cb.message, st)
+            try:
+                await cb.message.answer(
+                    self._vibe_shortlist_text(st),
+                    reply_markup=self._build_vibe_keyboard(st),
+                )
+            except TelegramBadRequest:
+                pass
+            await cb.answer()
+            return
+
+        if action in {"done", "auto"}:
+            if action == "auto":
+                ranked = list(st.vibe_ranked_ids or [])
+                st.vibe_selected_ids = [ranked[0]] if ranked else []
+            if not st.vibe_selected_ids:
+                await cb.answer("Выбери хотя бы один вайб или нажми «По треку (авто)».", show_alert=True)
+                return
+            await self.store.set(st)
+            labels = [_vibe_display_label(st.vibe_labels_by_id.get(b, b)) for b in st.vibe_selected_ids]
+            try:
+                await cb.message.edit_reply_markup(reply_markup=None)
+            except TelegramBadRequest:
+                pass
+            await cb.answer("Готово")
+            await cb.message.answer("Вайбы: " + ", ".join(labels))
+            await self._ask_subtitles_mode(cb.message, st)
+            return
+
+        await cb.answer()
+
+    async def _handle_wait_vibe_text(self, message: Message, st: ChatState) -> None:
+        """The vibe picker is an inline keyboard; a typed message means the user
+        ignored the buttons. Re-send the shortlist so they can tap."""
+        if not st.vibe_ranked_ids:
+            ok = await self._ensure_vibe_ranked(st)
+            if not ok:
+                await self._ask_footage_genre(message, st)
+                return
+        await message.answer(
+            self._vibe_shortlist_text(st),
+            reply_markup=self._build_vibe_keyboard(st),
+        )
 
     async def _send_hook_intro(self, message: Message, key: str) -> None:
         """Send a hook option's intro (video+caption once a clip is set, else
