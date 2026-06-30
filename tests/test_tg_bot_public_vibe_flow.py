@@ -1,18 +1,24 @@
 # -*- coding: utf-8 -*-
-"""Parity test: tg_bot_public mirrors the footage precision (vibe) flow data
-layer of tg_bot_botapi (Phase 2b).
+"""Parity test: tg_bot_public mirrors the footage precision (vibe) flow of
+tg_bot_botapi (Phase 2b).
 
-The ranked-shortlist vibe multi-select UX (genre/artist → vibe reroute, enqueue
-bucket distribution, auto-cursor removal) lives in tg_bot_botapi. The public bot
-only mirrors the state machine (STAGE_WAIT_VIBE + ChatState vibe_* fields), the
-OrchestratorClient.rank_buckets wiring, and an env flag + routing guard that
-stays OFF (handlers are not ported) until roll-forward.
+The ranked-shortlist vibe multi-select UX is now ported 1:1 into the public bot
+(genre/artist → vibe reroute, paged inline picker, enqueue bucket distribution,
+auto-cursor removal). These tests pin both the data layer (stage + ChatState
+vibe_* fields + OrchestratorClient.rank_buckets wiring) and the behaviour
+(shortlist → multi-select → done → enqueue distribution), and assert the one
+required difference: previews are sent via the `file_id_public` variant.
 """
 from __future__ import annotations
 
+import asyncio
+import importlib
 import inspect
 
 
+# --------------------------------------------------------------------------- #
+# Data-layer parity                                                            #
+# --------------------------------------------------------------------------- #
 def test_vibe_stage_strings_match_across_bots():
     from services.tg_bot_botapi.state_store import STAGE_WAIT_VIBE as team_stage
     from services.tg_bot_public.state_store import STAGE_WAIT_VIBE as pub_stage
@@ -77,16 +83,227 @@ def test_orchestrator_client_rank_buckets_signature_parity():
         assert name in pub_sig.parameters
 
 
-def test_public_vibe_flow_flag_off_by_default(monkeypatch):
-    """Default-off in public: with no env override the routing guard is False
-    even for a chat already parked on STAGE_WAIT_VIBE (handlers not ported)."""
-    monkeypatch.delenv("FOOTAGE_VIBE_FLOW_ENABLED", raising=False)
-    import importlib
+def test_vibe_methods_present_in_public_with_team_signatures():
+    """Every ported vibe method exists in public with the same signature."""
+    from services.tg_bot_botapi.app import BlastBotApp as Team
+    from services.tg_bot_public.app import BlastBotApp as Pub
 
+    methods = [
+        "_ask_vibe_shortlist",
+        "_build_vibe_keyboard",
+        "_vibe_shortlist_text",
+        "_vibe_page_count",
+        "_handle_vibe_callback",
+        "_send_vibe_previews",
+        "_parse_ranked_buckets",
+        "_ensure_vibe_ranked",
+        "_trigger_vibe_ranker_task",
+        "_run_vibe_ranker_bg",
+        "_handle_wait_vibe_text",
+    ]
+    for name in methods:
+        assert hasattr(Pub, name), f"public bot missing {name}"
+        assert inspect.signature(getattr(Pub, name)) == inspect.signature(getattr(Team, name)), name
+
+
+def test_vibe_callback_prefix_and_controls_match_across_bots():
+    from services.tg_bot_botapi import app as team
+    from services.tg_bot_public import app as pub
+
+    assert pub.VIBE_CB_PREFIX == team.VIBE_CB_PREFIX == "vibe:"
+    assert pub.VIBE_PAGE_SIZE == team.VIBE_PAGE_SIZE
+    assert pub.BTN_VIBE_REFRESH == team.BTN_VIBE_REFRESH
+    assert pub.BTN_VIBE_DONE == team.BTN_VIBE_DONE
+    assert pub.BTN_VIBE_AUTO == team.BTN_VIBE_AUTO
+
+
+def test_public_preview_uses_file_id_public_field():
+    """The one mandatory difference vs team: previews resolve file_id_public."""
+    from services.tg_bot_public import app as pub
+    from services.tg_bot_botapi import app as team
+
+    assert pub._BUCKET_PREVIEW_FILE_ID_FIELD == "file_id_public"
+    assert team._BUCKET_PREVIEW_FILE_ID_FIELD == "file_id"
+
+
+def test_public_vibe_flow_flag_default_on(monkeypatch):
+    """Default-on in both bots now that the UX is ported. With an explicit "0"
+    the routing guard falls back to the legacy genre/artist picker."""
+    monkeypatch.delenv("FOOTAGE_VIBE_FLOW_ENABLED", raising=False)
     from services.tg_bot_public import app as pub
     pub = importlib.reload(pub)
-    from services.tg_bot_public.state_store import ChatState, STAGE_WAIT_VIBE
+    assert pub.FOOTAGE_VIBE_FLOW_ENABLED is True
 
+    from services.tg_bot_public.state_store import ChatState, STAGE_WAIT_VIBE
+    st = ChatState(chat_id=1, stage=STAGE_WAIT_VIBE)
+    assert pub._should_route_to_vibe_flow(st) is True
+
+    monkeypatch.setenv("FOOTAGE_VIBE_FLOW_ENABLED", "0")
+    pub = importlib.reload(pub)
     assert pub.FOOTAGE_VIBE_FLOW_ENABLED is False
     st = ChatState(chat_id=1, stage=STAGE_WAIT_VIBE)
     assert pub._should_route_to_vibe_flow(st) is False
+    # restore default-on module for the rest of the session
+    monkeypatch.delenv("FOOTAGE_VIBE_FLOW_ENABLED", raising=False)
+    importlib.reload(pub)
+
+
+# --------------------------------------------------------------------------- #
+# Behavioural parity (drives the real public handlers with in-process fakes)   #
+# --------------------------------------------------------------------------- #
+def _make_app(monkeypatch, ranked):
+    monkeypatch.setenv("FOOTAGE_VIBE_FLOW_ENABLED", "1")
+    from services.tg_bot_public import app as pub
+    pub = importlib.reload(pub)
+
+    class _Store:
+        def __init__(self):
+            self.by_id = {}
+
+        async def get(self, chat_id):
+            from services.tg_bot_public.state_store import ChatState
+            return self.by_id.get(int(chat_id)) or ChatState(chat_id=int(chat_id))
+
+        async def set(self, st):
+            self.by_id[int(st.chat_id)] = st
+
+    class _Orchestrator:
+        def __init__(self):
+            self.rank_calls = 0
+
+        async def rank_buckets(self, *, lyrics, mood="", top=0):
+            self.rank_calls += 1
+            return {
+                "buckets": [
+                    {"bucket_id": b, "theme": b.split(":")[0],
+                     "tags_group": b.split(":")[1], "mood": "minor", "label": b.split(":")[1]}
+                    for b in ranked
+                ],
+                "used_llm": True,
+            }
+
+    app = pub.BlastBotApp.__new__(pub.BlastBotApp)
+    app.store = _Store()
+    app.orchestrator = _Orchestrator()
+    return pub, app
+
+
+class _Msg:
+    def __init__(self, chat_id=7, text=""):
+        self.text = text
+        self._chat_id = chat_id
+        self.answers = []
+
+        class _Chat:
+            id = chat_id
+        self.chat = _Chat()
+
+    async def answer(self, text="", reply_markup=None, **kwargs):
+        self.answers.append((text, reply_markup))
+        return self
+
+    async def answer_video(self, *args, **kwargs):
+        self.answers.append(("video", kwargs.get("video")))
+        return self
+
+    async def edit_text(self, text="", reply_markup=None):
+        self.answers.append(("edit", text, reply_markup))
+        return self
+
+    async def edit_reply_markup(self, reply_markup=None):
+        self.answers.append(("edit_markup", reply_markup))
+        return self
+
+
+class _CB:
+    def __init__(self, data, chat_id=7):
+        self.data = data
+        self.message = _Msg(chat_id=chat_id)
+        self.answers = []
+
+    async def answer(self, text="", show_alert=False):
+        self.answers.append(text)
+
+
+def test_vibe_flow_end_to_end(monkeypatch):
+    ranked = ["t0:g0", "t1:g1", "t2:g2", "t3:g3"]  # 4 buckets → 2 pages of 3+1
+    pub, app = _make_app(monkeypatch, ranked)
+    from services.tg_bot_public.state_store import (
+        ChatState, STAGE_WAIT_VIBE, STAGE_WAIT_SUBTITLES_MODE,
+    )
+
+    async def _run():
+        st = ChatState(chat_id=7, lyrics_text="some lyrics", bg_mode="footage")
+        await app.store.set(st)
+
+        # 1) Enter the shortlist: ranks (sync fallback) + parks on WAIT_VIBE.
+        await app._ask_vibe_shortlist(_Msg(), st)
+        st = await app.store.get(7)
+        assert st.stage == STAGE_WAIT_VIBE
+        assert st.vibe_ranked_ids == ranked
+        assert st.footage_artist_id == ""
+
+        # 2) Toggle bucket 0 (page 0) → selected.
+        await app._handle_vibe_callback(_CB("vibe:tog:0"))
+        st = await app.store.get(7)
+        assert st.vibe_selected_ids == ["t0:g0"]
+
+        # 3) Next page, then toggle bucket 3 → selection PERSISTS across pages.
+        await app._handle_vibe_callback(_CB("vibe:more"))
+        st = await app.store.get(7)
+        assert st.vibe_page == 1
+        await app._handle_vibe_callback(_CB("vibe:tog:3"))
+        st = await app.store.get(7)
+        assert st.vibe_selected_ids == ["t0:g0", "t3:g3"]
+
+        # 4) Done → advances to the subtitles step.
+        await app._handle_vibe_callback(_CB("vibe:done"))
+        st = await app.store.get(7)
+        assert st.stage == STAGE_WAIT_SUBTITLES_MODE
+
+        # 5) Enqueue distribution: video[i]=selected[(offset-1) % K], round-robin.
+        v1 = await app._resolve_rotation_slot_for_enqueue(st=st, offset=1)
+        v2 = await app._resolve_rotation_slot_for_enqueue(st=st, offset=2)
+        v3 = await app._resolve_rotation_slot_for_enqueue(st=st, offset=3)
+        assert v1[:2] == ("t0", "g0")
+        assert v2[:2] == ("t3", "g3")
+        assert v3[:2] == ("t0", "g0")  # wraps round-robin
+
+    asyncio.run(_run())
+
+
+def test_vibe_done_requires_selection(monkeypatch):
+    ranked = ["t0:g0", "t1:g1"]
+    pub, app = _make_app(monkeypatch, ranked)
+    from services.tg_bot_public.state_store import ChatState, STAGE_WAIT_VIBE
+
+    async def _run():
+        st = ChatState(chat_id=7, lyrics_text="x", bg_mode="footage")
+        await app.store.set(st)
+        await app._ask_vibe_shortlist(_Msg(), st)
+        cb = _CB("vibe:done")
+        await app._handle_vibe_callback(cb)
+        st = await app.store.get(7)
+        assert st.stage == STAGE_WAIT_VIBE
+        assert st.vibe_selected_ids == []
+
+    asyncio.run(_run())
+
+
+def test_vibe_auto_picks_top1(monkeypatch):
+    ranked = ["t0:g0", "t1:g1", "t2:g2"]
+    pub, app = _make_app(monkeypatch, ranked)
+    from services.tg_bot_public.state_store import ChatState, STAGE_WAIT_SUBTITLES_MODE
+
+    async def _run():
+        st = ChatState(chat_id=7, lyrics_text="x", bg_mode="footage")
+        await app.store.set(st)
+        await app._ask_vibe_shortlist(_Msg(), st)
+        await app._handle_vibe_callback(_CB("vibe:auto"))
+        st = await app.store.get(7)
+        assert st.vibe_selected_ids == ["t0:g0"]
+        assert st.stage == STAGE_WAIT_SUBTITLES_MODE
+        slot = await app._resolve_rotation_slot_for_enqueue(st=st, offset=1)
+        assert slot[:2] == ("t0", "g0")
+
+    asyncio.run(_run())

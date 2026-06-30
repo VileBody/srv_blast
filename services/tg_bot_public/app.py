@@ -143,13 +143,12 @@ SEASON_FLOW_ENABLED = (os.environ.get("SEASON_FLOW_ENABLED", "0").strip().lower(
 HOOK_FLOW_ENABLED = (os.environ.get("HOOK_FLOW_ENABLED", "0").strip().lower()
                      in {"1", "true", "yes", "on", "enabled"})
 
-# Footage precision flow (Phase 2b) toggle. Same pattern as HOOK_FLOW_ENABLED —
-# the public bot mirrors the STAGE_WAIT_VIBE stage + ChatState vibe_* fields +
-# the OrchestratorClient.rank_buckets wiring for parity, but the ranked-shortlist
-# vibe multi-select UX (and the genre/artist → vibe reroute, enqueue bucket
-# distribution, auto-cursor removal) live in tg_bot_botapi until validated.
-# Default OFF here (team bot defaults ON). Flip to "1" in env to roll forward.
-FOOTAGE_VIBE_FLOW_ENABLED = (os.environ.get("FOOTAGE_VIBE_FLOW_ENABLED", "0").strip().lower()
+# Footage precision flow (Phase 2b) toggle. The ranked-shortlist vibe multi-select
+# UX is now ported 1:1 from tg_bot_botapi (genre/artist → vibe reroute, paged
+# inline picker, enqueue bucket distribution, auto-cursor removal). Default ON in
+# both bots; overridable via FOOTAGE_VIBE_FLOW_ENABLED to fall back to the legacy
+# genre/artist picker.
+FOOTAGE_VIBE_FLOW_ENABLED = (os.environ.get("FOOTAGE_VIBE_FLOW_ENABLED", "1").strip().lower()
                              in {"1", "true", "yes", "on", "enabled"})
 
 # /bigtest is a team-bot-only command. Constant is False here so the handler
@@ -323,9 +322,9 @@ def _should_route_to_hook_flow(st: ChatState) -> bool:
 def _should_route_to_vibe_flow(st: ChatState) -> bool:
     """Return True iff this chat should enter the footage vibe picker step.
 
-    Gated by FOOTAGE_VIBE_FLOW_ENABLED. When the flag is off (default in public),
-    behavior is unchanged regardless of mirrored vibe_* state on the chat — the
-    handlers are not ported here, so this stays False until roll-forward.
+    Gated by FOOTAGE_VIBE_FLOW_ENABLED. When the flag is off, behavior falls back
+    to the legacy genre/artist picker regardless of mirrored vibe_* state on the
+    chat.
     """
     if not FOOTAGE_VIBE_FLOW_ENABLED:
         return False
@@ -2812,6 +2811,14 @@ class BlastBotApp:
             await callback.answer()
             await self._move_to_wait_audio(chat_id, callback.message)
 
+        @self.router.callback_query(lambda c: c.data and c.data.startswith(VIBE_CB_PREFIX))
+        async def _on_vibe_callback(callback: CallbackQuery) -> None:
+            # Phase 2b footage precision flow (mirror of tg_bot_botapi). The
+            # methods are gated upstream by FOOTAGE_VIBE_FLOW_ENABLED (the picker
+            # is only ever shown when the flag is on), and the handler no-ops on
+            # any chat not parked on STAGE_WAIT_VIBE.
+            await self._handle_vibe_callback(callback)
+
         @self.router.message(Command("bigtest"))
         async def _on_bigtest(message: Message) -> None:
             # Parity stub — /bigtest is available only on the team bot.
@@ -2892,6 +2899,10 @@ class BlastBotApp:
 
             if st.stage == STAGE_WAIT_FOOTAGE_ARTIST:
                 await self._handle_wait_footage_artist(message, st)
+                return
+
+            if st.stage == STAGE_WAIT_VIBE:
+                await self._handle_wait_vibe_text(message, st)
                 return
 
             if st.stage == STAGE_WAIT_CONFIRM_TEXT:
@@ -3358,10 +3369,13 @@ class BlastBotApp:
         st.bg_mode = "footage"
         st.bg_solid_color = ""
         await self.store.set(st)
-        await message.answer(
-            "Что будет на фоне?",
-            reply_markup=_kb([BTN_BG_FOOTAGE], [BTN_BG_SOLID], [BTN_BG_STROBE], [BTN_BACK]),
-        )
+        # Phase 2b: offer a "pictures (soon)" stub next to footage/solid when the
+        # vibe flow is on so the menu matches the target UX. The stub replies "скоро".
+        rows = [[BTN_BG_FOOTAGE], [BTN_BG_SOLID], [BTN_BG_STROBE]]
+        if FOOTAGE_VIBE_FLOW_ENABLED:
+            rows.append([BTN_BG_PICTURES])
+        rows.append([BTN_BACK])
+        await message.answer("Что будет на фоне?", reply_markup=_kb(*rows))
 
     def _ensure_solid_default_artist(self, st: ChatState) -> bool:
         """Solid/strobe bg needs a footage_artist_id so Stage 2 runs (its picks are
@@ -3384,11 +3398,18 @@ class BlastBotApp:
         if text == BTN_BACK:
             await self._ask_timing_choice(message, st)
             return
+        if text == BTN_BG_PICTURES and FOOTAGE_VIBE_FLOW_ENABLED:
+            await message.answer("Картинки скоро будут доступны. Пока выбери «Футажи» или «Цветной фон».")
+            return
         if text == BTN_BG_FOOTAGE:
             st.bg_mode = "footage"
             st.bg_solid_color = ""
             await self.store.set(st)
-            await self._ask_footage_genre(message, st)
+            # Phase 2b: ranked-shortlist vibe picker replaces genre/artist.
+            if FOOTAGE_VIBE_FLOW_ENABLED:
+                await self._ask_vibe_shortlist(message, st)
+            else:
+                await self._ask_footage_genre(message, st)
             return
         if text == BTN_BG_SOLID:
             st.bg_mode = "solid"
@@ -4894,6 +4915,10 @@ class BlastBotApp:
         st.target_fragment = ""
         st.stage = STAGE_WAIT_FRAGMENT_CHOICE
         await self.store.set(st)
+        # Phase 2b: kick off the footage-bucket ranker in the background now that
+        # we have lyrics. By the time the user reaches the "Футажи" step the
+        # ranked shortlist is ready (zero added latency). No-op when flow is off.
+        await self._trigger_vibe_ranker_task(st)
         await message.answer(
             "Текст получил. Хочешь указать конкретные строки, которые должны войти в клип?",
             reply_markup=_kb([BTN_SEND_FRAGMENT, BTN_SKIP_FRAGMENT]),
@@ -6347,6 +6372,21 @@ class BlastBotApp:
         versions 1..N step forward so each batch video lands on a different
         subgroup instead of all sharing one slot.
         """
+        # Phase 2b: when the vibe flow drove the footage choice, distribute the
+        # N versions round-robin over the user-selected buckets (exact-slot
+        # theme+tags_group each). offset == version_index (1-based) → (offset-1)
+        # picks the top-ranked selected bucket for version 1, next for version 2…
+        if FOOTAGE_VIBE_FLOW_ENABLED:
+            sel = [s for s in (getattr(st, "vibe_selected_ids", None) or []) if ":" in s]
+            if sel:
+                # Phase 3 distribution rule: video[i] = selected[i % K]. offset is
+                # the 1-based version_index → i = offset-1. resolve_bucket_slot
+                # with catalog=[] forces the pure id-split (no footage_v2.py read
+                # in the slim bot image).
+                from mlcore.footage_batch_distribution import resolve_bucket_slot
+                bucket_id = sel[(int(offset) - 1) % len(sel)]
+                theme, group = resolve_bucket_slot(bucket_id, catalog=[])
+                return theme, group, []
         artist_id = str(st.footage_artist_id or "").strip()
         if not artist_id:
             return "", "", []
@@ -7695,7 +7735,11 @@ class BlastBotApp:
 
                 # Always advance rotation cursor on success — diag signals
                 # are folded into the reason code for log observability only.
-                if artist_id_for_rotation:
+                # Phase 2b: the vibe flow makes rotation explicit + deterministic
+                # (re-running the same track → same shortlist), so the legacy
+                # auto-cursor is disabled there. It already no-ops on empty
+                # artist_id (vibe sets it ""), but gate it explicitly too.
+                if artist_id_for_rotation and not FOOTAGE_VIBE_FLOW_ENABLED:
                     diag = _load_rotation_diag_for_job(jid)
                     should_advance, reason = _should_advance_rotation(diag)
                     if should_advance:
