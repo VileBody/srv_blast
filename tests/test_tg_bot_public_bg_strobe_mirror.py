@@ -28,6 +28,17 @@ def test_both_bots_have_default_artist_helper():
     assert hasattr(P, "_ensure_solid_default_artist")
 
 
+def test_strobe_cut_sends_transition_previews_both_bots():
+    import inspect
+    from services.tg_bot_botapi.app import BlastBotApp as T
+    from services.tg_bot_public.app import BlastBotApp as P
+
+    for cls in (T, P):
+        src = inspect.getsource(cls._ask_strobe_cut)
+        assert "_send_option_previews" in src
+        assert "effect_transition:" in src
+
+
 def test_strobe_cut_stage_and_methods_mirrored():
     from services.tg_bot_botapi.state_store import STAGE_WAIT_STROBE_CUT as A
     from services.tg_bot_public.state_store import STAGE_WAIT_STROBE_CUT as B
