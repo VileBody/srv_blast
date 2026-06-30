@@ -13,11 +13,17 @@ import { ActivateBaseButton } from './ActivateBaseButton';
 type Panel = 'export' | 'import' | null;
 
 export function AssetBrowser() {
-  const { current, index, total, loading, next, prev, remove, reload } = useAssets();
+  // Asset pool the browser + ingest controls operate on. The browse list is
+  // scoped to this pool — photos and footage never mix; an empty photo pool
+  // shows nothing.
+  const [mediaType, setMediaType] = useState<MediaType>('video');
+  const { current, index, total, loading, next, prev, remove, reload } = useAssets(
+    undefined,
+    undefined,
+    mediaType,
+  );
   const taxonomy = useTaxonomy();
   const [panel, setPanel] = useState<Panel>(null);
-  // Asset pool the ingest controls (import / tag / activate) operate on.
-  const [mediaType, setMediaType] = useState<MediaType>('video');
 
   // Keyboard navigation — disabled while a bulk panel is open so typing in
   // inputs doesn't move through the asset list.

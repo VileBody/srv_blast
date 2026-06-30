@@ -7,10 +7,12 @@ export async function fetchAssets(
   perPage = 50,
   genre?: string,
   tag?: string,
+  mediaType: MediaType = 'video',
 ): Promise<PaginatedAssets> {
   const params = new URLSearchParams({ page: String(page), per_page: String(perPage) });
   if (genre) params.set('genre', genre);
   if (tag) params.set('tag', tag);
+  if (mediaType !== 'video') params.set('media_type', mediaType);
   const res = await fetch(`${BASE}/assets?${params}`);
   if (!res.ok) throw new Error(`fetchAssets: ${res.status}`);
   return res.json();
@@ -49,9 +51,14 @@ export async function fetchVideoUrl(fileName: string, s3Key?: string): Promise<s
   return data.url;
 }
 
-export async function deleteAsset(fileName: string, s3Key?: string): Promise<void> {
+export async function deleteAsset(
+  fileName: string,
+  s3Key?: string,
+  mediaType: MediaType = 'video',
+): Promise<void> {
   const params = new URLSearchParams();
   if (s3Key) params.set('s3_key', s3Key);
+  if (mediaType !== 'video') params.set('media_type', mediaType);
   const suffix = params.toString() ? `?${params.toString()}` : '';
   const res = await fetch(`${BASE}/assets/${encodeURIComponent(fileName)}${suffix}`, {
     method: 'DELETE',

@@ -38,9 +38,15 @@ _VIDEO_DB_PATHS = [
 # Helpers
 # ---------------------------------------------------------------------------
 
-_assets_cache: Optional[List[Dict[str, Any]]] = None
-_index_meta_by_triplet_cache: Optional[Dict[tuple[str, str, str], Dict[str, Any]]] = None
-_index_meta_by_file_name_cache: Optional[Dict[str, List[Dict[str, Any]]]] = None
+# Per-pool caches (keyed by media_type 'video'|'photo') so the photo pool browses
+# its OWN sources and never mixes with the footage pool. Empty pool → empty list.
+_assets_cache: Dict[str, List[Dict[str, Any]]] = {}
+_index_meta_cache: Dict[str, tuple] = {}
+
+
+def _invalidate_asset_caches() -> None:
+    _assets_cache.clear()
+    _index_meta_cache.clear()
 
 
 def _normalize_prefix(raw: str) -> str:
@@ -65,14 +71,25 @@ def _asset_ui_source_prefix() -> str:
     return "pinterest_collection"
 
 
-def _load_assets_index_metadata() -> tuple[Dict[tuple[str, str, str], Dict[str, Any]], Dict[str, List[Dict[str, Any]]]]:
-    global _index_meta_by_triplet_cache
-    global _index_meta_by_file_name_cache
+def _assets_index_path_for(media_type: str) -> Path:
+    if media_type == "photo":
+        return Path(os.getenv("PHOTO_ASSETS_INDEX_JSON", "data/photo_assets_index_1to1.json"))
+    return Path(os.getenv("STATIC_ASSETS_INDEX_JSON", str(_STATIC_INDEX)))
 
-    if _index_meta_by_triplet_cache is not None and _index_meta_by_file_name_cache is not None:
-        return _index_meta_by_triplet_cache, _index_meta_by_file_name_cache
 
-    idx_path = Path(os.getenv("STATIC_ASSETS_INDEX_JSON", str(_STATIC_INDEX)))
+def _load_assets_index_metadata(
+    media_type: str = "video",
+) -> tuple[Dict[tuple[str, str, str], Dict[str, Any]], Dict[str, List[Dict[str, Any]]]]:
+    cached = _index_meta_cache.get(media_type)
+    if cached is not None:
+        return cached
+
+    idx_path = _assets_index_path_for(media_type)
+    # Missing photo index (no photos uploaded yet) → empty metadata, empty pool.
+    if not idx_path.exists():
+        empty: tuple = ({}, {})
+        _index_meta_cache[media_type] = empty
+        return empty
     data = json.loads(idx_path.read_text(encoding="utf-8"))
     assets = data.get("assets", [])
 
@@ -91,14 +108,15 @@ def _load_assets_index_metadata() -> tuple[Dict[tuple[str, str, str], Dict[str, 
             by_triplet[(genre.lower(), tag.lower(), file_name)] = raw
         by_file_name.setdefault(file_name, []).append(raw)
 
-    _index_meta_by_triplet_cache = by_triplet
-    _index_meta_by_file_name_cache = by_file_name
-    return by_triplet, by_file_name
+    result = (by_triplet, by_file_name)
+    _index_meta_cache[media_type] = result
+    return result
 
 
-def _list_s3_video_keys(*, bucket: str, prefix: str) -> List[str]:
+def _list_s3_video_keys(*, bucket: str, prefix: str, exts: Optional[set] = None) -> List[str]:
     from src.storage.s3 import list_s3_objects
 
+    allowed = exts if exts is not None else _VIDEO_EXTENSIONS
     keys: List[str] = []
     continuation_token: Optional[str] = None
     normalized_prefix = _normalize_prefix(prefix)
@@ -116,7 +134,7 @@ def _list_s3_video_keys(*, bucket: str, prefix: str) -> List[str]:
             key = str(obj.get("key") or "").strip().lstrip("/")
             if not key or key.endswith("/"):
                 continue
-            if Path(key).suffix.lower() not in _VIDEO_EXTENSIONS:
+            if Path(key).suffix.lower() not in allowed:
                 continue
             keys.append(key)
 
@@ -183,22 +201,42 @@ def _asset_from_s3_key(
     return item
 
 
-def _load_assets() -> List[Dict[str, Any]]:
-    global _assets_cache
-    if _assets_cache is not None:
-        return _assets_cache
+def _asset_ui_photo_source_prefix() -> str:
+    """Top-level S3 folder the Asset UI browses for the PHOTO pool."""
+    explicit = _normalize_prefix(os.getenv("ASSET_UI_PHOTO_SOURCE_PREFIX", ""))
+    if explicit:
+        return explicit
+    photo_prefix = _normalize_prefix(os.getenv("S3_PHOTO_PREFIX", ""))
+    if photo_prefix:
+        return photo_prefix.split("/", 1)[0]
+    return "photo_collection"
 
+
+def _load_assets(media_type: str = "video") -> List[Dict[str, Any]]:
+    """Asset list for ONE pool. media_type='photo' browses the photo sources
+    (S3_PHOTO_PREFIX + image keys + photo index). Pools never mix; an empty photo
+    pool (nothing uploaded) returns []."""
+    cached = _assets_cache.get(media_type)
+    if cached is not None:
+        return cached
+
+    is_photo = media_type == "photo"
     bucket = str(os.getenv("S3_BUCKET_ASSET_STORAGE") or "").strip()
     if not bucket:
-        idx_path = Path(os.getenv("STATIC_ASSETS_INDEX_JSON", str(_STATIC_INDEX)))
+        idx_path = _assets_index_path_for(media_type)
+        if not idx_path.exists():
+            _assets_cache[media_type] = []
+            return []
         data = json.loads(idx_path.read_text(encoding="utf-8"))
-        _assets_cache = data.get("assets", [])
-        return _assets_cache
+        items = data.get("assets", [])
+        _assets_cache[media_type] = items
+        return items
 
-    source_prefix = _asset_ui_source_prefix()
+    source_prefix = _asset_ui_photo_source_prefix() if is_photo else _asset_ui_source_prefix()
+    exts = _IMAGE_EXTENSIONS if is_photo else _VIDEO_EXTENSIONS
     try:
-        meta_by_triplet, meta_by_file_name = _load_assets_index_metadata()
-        keys = _list_s3_video_keys(bucket=bucket, prefix=source_prefix)
+        meta_by_triplet, meta_by_file_name = _load_assets_index_metadata(media_type)
+        keys = _list_s3_video_keys(bucket=bucket, prefix=source_prefix, exts=exts)
     except Exception as e:  # pragma: no cover - surfaced via endpoint error
         raise RuntimeError(
             "Failed to load asset list from "
@@ -215,8 +253,8 @@ def _load_assets() -> List[Dict[str, Any]]:
         for key in keys
     ]
     items.sort(key=lambda x: str(x.get("s3_key") or x.get("file_name") or ""))
-    _assets_cache = items
-    return _assets_cache
+    _assets_cache[media_type] = items
+    return items
 
 
 def _load_overrides() -> Dict[str, Any]:
@@ -850,8 +888,9 @@ def create_asset_router(*, prefix: str = "/asset-ui/api") -> APIRouter:
         per_page: int = Query(50, ge=1, le=500),
         genre: Optional[str] = Query(None),
         tag: Optional[str] = Query(None),
+        media_type: str = Query("video"),
     ) -> PaginatedAssets:
-        assets = _load_assets()
+        assets = _load_assets(_norm_media_type(media_type))
         overrides = _load_overrides()
         tag_ov = _load_tag_overrides()
 
@@ -891,13 +930,14 @@ def create_asset_router(*, prefix: str = "/asset-ui/api") -> APIRouter:
         genre: Optional[str] = Query(None),
         tag: Optional[str] = Query(None),
         format: str = Query("manifest", pattern="^(manifest|zip)$"),
+        media_type: str = Query("video"),
     ):
         """Export the currently visible asset set.
 
         - format=manifest (default): JSON with metadata + presigned URLs (1h TTL).
         - format=zip: streaming ZIP archive built directly from S3 (no ZIP cached on disk).
         """
-        assets = _load_assets()
+        assets = _load_assets(_norm_media_type(media_type))
         overrides = _load_overrides()
 
         filtered: List[Dict[str, Any]] = []
@@ -980,8 +1020,6 @@ def create_asset_router(*, prefix: str = "/asset-ui/api") -> APIRouter:
         uploaded assets appear in the list on the next request. media_type=photo
         uploads images under the photo prefix (S3_PHOTO_PREFIX).
         """
-        global _assets_cache
-
         mt = _norm_media_type(media_type)
         is_photo = mt == "photo"
         allowed_exts = _IMAGE_EXTENSIONS if is_photo else _VIDEO_EXTENSIONS
@@ -1074,7 +1112,7 @@ def create_asset_router(*, prefix: str = "/asset-ui/api") -> APIRouter:
                 await f.close()
 
         # Invalidate cache so new files show up in the next /assets call
-        _assets_cache = None
+        _invalidate_asset_caches()
 
         return {
             "uploaded": len(uploaded),
@@ -1085,8 +1123,8 @@ def create_asset_router(*, prefix: str = "/asset-ui/api") -> APIRouter:
 
     # --- single asset ---
     @router.get("/assets/{file_name}")
-    def get_asset(file_name: str, s3_key: Optional[str] = Query(None)) -> Dict[str, Any]:
-        assets = _load_assets()
+    def get_asset(file_name: str, s3_key: Optional[str] = Query(None), media_type: str = Query("video")) -> Dict[str, Any]:
+        assets = _load_assets(_norm_media_type(media_type))
         overrides = _load_overrides()
         tag_ov = _load_tag_overrides()
         asset = _find_asset(assets, file_name=file_name, s3_key=s3_key)
@@ -1104,8 +1142,8 @@ def create_asset_router(*, prefix: str = "/asset-ui/api") -> APIRouter:
 
     # --- video presigned URL ---
     @router.get("/assets/{file_name}/video-url")
-    def get_video_url(file_name: str, s3_key: Optional[str] = Query(None)) -> Dict[str, str]:
-        assets = _load_assets()
+    def get_video_url(file_name: str, s3_key: Optional[str] = Query(None), media_type: str = Query("video")) -> Dict[str, str]:
+        assets = _load_assets(_norm_media_type(media_type))
         asset = _find_asset(assets, file_name=file_name, s3_key=s3_key)
         if not asset:
             raise HTTPException(status_code=404, detail="Asset not found")
@@ -1125,8 +1163,8 @@ def create_asset_router(*, prefix: str = "/asset-ui/api") -> APIRouter:
 
     # --- update tags ---
     @router.put("/assets/{file_name}/tags")
-    def update_tags(file_name: str, body: TagUpdateRequest, s3_key: Optional[str] = Query(None)) -> Dict[str, Any]:
-        assets = _load_assets()
+    def update_tags(file_name: str, body: TagUpdateRequest, s3_key: Optional[str] = Query(None), media_type: str = Query("video")) -> Dict[str, Any]:
+        assets = _load_assets(_norm_media_type(media_type))
         asset = _find_asset(assets, file_name=file_name, s3_key=s3_key)
         if not asset:
             raise HTTPException(status_code=404, detail="Asset not found")
@@ -1141,10 +1179,8 @@ def create_asset_router(*, prefix: str = "/asset-ui/api") -> APIRouter:
 
     # --- soft delete ---
     @router.delete("/assets/{file_name}")
-    def delete_asset(file_name: str, s3_key: Optional[str] = Query(None)) -> Dict[str, Any]:
-        global _assets_cache
-
-        assets = _load_assets()
+    def delete_asset(file_name: str, s3_key: Optional[str] = Query(None), media_type: str = Query("video")) -> Dict[str, Any]:
+        assets = _load_assets(_norm_media_type(media_type))
         asset = _find_asset(assets, file_name=file_name, s3_key=s3_key)
         if not asset:
             raise HTTPException(status_code=404, detail="Asset not found")
@@ -1182,7 +1218,7 @@ def create_asset_router(*, prefix: str = "/asset-ui/api") -> APIRouter:
             entry["trash_key"] = trash_key
         overrides[override_key] = entry
         _save_overrides(overrides)
-        _assets_cache = None
+        _invalidate_asset_caches()
         return {
             "ok": True,
             "file_name": file_name,

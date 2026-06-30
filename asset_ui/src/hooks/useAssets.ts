@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { Asset } from '../types';
-import { fetchAssets, deleteAsset as apiDelete } from '../api';
+import { fetchAssets, deleteAsset as apiDelete, type MediaType } from '../api';
 
-export function useAssets(genre?: string, tag?: string) {
+export function useAssets(genre?: string, tag?: string, mediaType: MediaType = 'video') {
   const [assets, setAssets] = useState<Asset[]>([]);
   const [total, setTotal] = useState(0);
   const [index, setIndex] = useState(0);
@@ -11,12 +11,13 @@ export function useAssets(genre?: string, tag?: string) {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      // Load all assets (paginate through)
-      const first = await fetchAssets(1, 500, genre, tag);
+      // Load all assets (paginate through) — scoped to the selected pool so the
+      // photo pool browses only photos (empty if none uploaded).
+      const first = await fetchAssets(1, 500, genre, tag, mediaType);
       let all = first.items;
       const pages = Math.ceil(first.total / 500);
       for (let p = 2; p <= pages; p++) {
-        const page = await fetchAssets(p, 500, genre, tag);
+        const page = await fetchAssets(p, 500, genre, tag, mediaType);
         all = all.concat(page.items);
       }
       setAssets(all);
@@ -27,7 +28,7 @@ export function useAssets(genre?: string, tag?: string) {
     } finally {
       setLoading(false);
     }
-  }, [genre, tag]);
+  }, [genre, tag, mediaType]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -44,7 +45,7 @@ export function useAssets(genre?: string, tag?: string) {
   const remove = useCallback(async () => {
     if (!current) return;
     try {
-      await apiDelete(current.file_name, current.s3_key);
+      await apiDelete(current.file_name, current.s3_key, mediaType);
       setAssets((prev) =>
         prev.filter((a) =>
           current.s3_key
@@ -56,7 +57,7 @@ export function useAssets(genre?: string, tag?: string) {
     } catch (e) {
       console.error('Failed to delete asset', e);
     }
-  }, [current]);
+  }, [current, mediaType]);
 
   return { assets, current, index, total, loading, next, prev, remove, reload: load };
 }
