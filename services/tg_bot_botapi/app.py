@@ -2959,6 +2959,9 @@ class BlastBotApp:
     async def _ask_strobe_cut(self, message: Message, st: ChatState) -> None:
         st.stage = STAGE_WAIT_STROBE_CUT
         await self.store.set(st)
+        await self._send_option_previews(
+            message, [f"effect_transition:{v}" for v in _FX_TRANSITION_BY_BUTTON.values()]
+        )
         await message.answer(
             "Строб Ч/Б: стиль перехода на склейках видео.\n"
             "Снап-вайп / Минимакс / Инверт / Экстракт / Вспышки — или без перехода.",
