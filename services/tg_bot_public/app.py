@@ -339,6 +339,43 @@ logging.basicConfig(
 log = logging.getLogger("tg_bot")
 
 
+# --- Footage bucket previews mirror (precision flow, phase 4) -----------------
+# Mirror of tg_bot_botapi: bucket_id -> preview. The public bot sends the
+# `file_id_public` variant (captured via the public bot). Infra is mirrored for
+# parity; the public vibe shortlist UI is wired separately behind its flag.
+_BUCKET_PREVIEWS_CACHE: Optional[Dict[str, Dict[str, Any]]] = None
+_BUCKET_PREVIEW_FILE_ID_FIELD = "file_id_public"
+
+
+def _bucket_previews_path() -> Path:
+    return Path(__file__).resolve().parents[2] / "data" / "footage_bucket_previews.json"
+
+
+def _load_bucket_previews() -> Dict[str, Dict[str, Any]]:
+    global _BUCKET_PREVIEWS_CACHE
+    if _BUCKET_PREVIEWS_CACHE is None:
+        try:
+            obj = json.loads(_bucket_previews_path().read_text(encoding="utf-8"))
+            prev = obj.get("previews") if isinstance(obj, dict) else None
+            _BUCKET_PREVIEWS_CACHE = prev if isinstance(prev, dict) else {}
+        except Exception:
+            _BUCKET_PREVIEWS_CACHE = {}
+    return _BUCKET_PREVIEWS_CACHE
+
+
+def _bucket_preview_file_id(bucket_id: str) -> str:
+    e = _load_bucket_previews().get(str(bucket_id or "").strip())
+    if not isinstance(e, dict):
+        return ""
+    return str(e.get(_BUCKET_PREVIEW_FILE_ID_FIELD) or "").strip()
+
+
+def _vibe_display_label(label: str) -> str:
+    """Tidy a vibe label so it matches the on-video caption: '/' -> ','."""
+    import re as _re
+    return _re.sub(r"\s*/\s*", ", ", str(label or "")).strip()
+
+
 BTN_LETS_GO = "Едем!"
 BTN_SUBSCRIBED = "Подписался!"
 BTN_SEND_TRACK = "Отправить трек"

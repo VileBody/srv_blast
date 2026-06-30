@@ -231,6 +231,43 @@ BTN_VIBE_DONE = "▶️ Готово"
 BTN_VIBE_AUTO = "✨ По треку (авто)"
 # How many buckets to show per shortlist page.
 VIBE_PAGE_SIZE = 3
+
+# Footage bucket previews (precision flow, phase 4): bucket_id -> {file_id,
+# file_id_public, ...}. Rendered + registered offline by scripts/build_bucket_previews.py.
+_BUCKET_PREVIEWS_CACHE: Optional[Dict[str, Dict[str, Any]]] = None
+# Which file_id field this bot sends (team bot -> file_id; public mirror overrides).
+_BUCKET_PREVIEW_FILE_ID_FIELD = "file_id"
+
+
+def _bucket_previews_path() -> Path:
+    return Path(__file__).resolve().parents[2] / "data" / "footage_bucket_previews.json"
+
+
+def _load_bucket_previews() -> Dict[str, Dict[str, Any]]:
+    global _BUCKET_PREVIEWS_CACHE
+    if _BUCKET_PREVIEWS_CACHE is None:
+        try:
+            obj = json.loads(_bucket_previews_path().read_text(encoding="utf-8"))
+            prev = obj.get("previews") if isinstance(obj, dict) else None
+            _BUCKET_PREVIEWS_CACHE = prev if isinstance(prev, dict) else {}
+        except Exception:
+            _BUCKET_PREVIEWS_CACHE = {}
+    return _BUCKET_PREVIEWS_CACHE
+
+
+def _bucket_preview_file_id(bucket_id: str) -> str:
+    e = _load_bucket_previews().get(str(bucket_id or "").strip())
+    if not isinstance(e, dict):
+        return ""
+    return str(e.get(_BUCKET_PREVIEW_FILE_ID_FIELD) or "").strip()
+
+
+def _vibe_display_label(label: str) -> str:
+    """Tidy a vibe label for buttons so it matches the on-video caption: '/' -> ','."""
+    import re as _re
+    return _re.sub(r"\s*/\s*", ", ", str(label or "")).strip()
+
+
 BTN_BG_WHITE = "Белый"
 BTN_BG_BLACK = "Чёрный"
 BTN_BG_GREEN = "Зелёный (хромакей)"
@@ -2443,7 +2480,7 @@ class BlastBotApp:
         rows: List[List[InlineKeyboardButton]] = []
         for idx in range(start, min(start + VIBE_PAGE_SIZE, len(ranked))):
             bid = ranked[idx]
-            label = st.vibe_labels_by_id.get(bid, bid)
+            label = _vibe_display_label(st.vibe_labels_by_id.get(bid, bid))
             mark = "✅ " if bid in selected else "▫️ "
             rows.append([InlineKeyboardButton(
                 text=f"{mark}{label}", callback_data=f"{VIBE_CB_PREFIX}tog:{idx}"
@@ -2492,12 +2529,32 @@ class BlastBotApp:
             )
             await self._ask_footage_genre(message, st)
             return
-        # Drop the reply keyboard, then send the inline multi-select.
+        # Drop the reply keyboard, then send preview reels + the inline multi-select.
         await message.answer("Готовлю шортлист вайбов…", reply_markup=ReplyKeyboardRemove())
+        await self._send_vibe_previews(message, st)
         await message.answer(
             self._vibe_shortlist_text(st),
             reply_markup=self._build_vibe_keyboard(st),
         )
+
+    async def _send_vibe_previews(self, message: Message, st: ChatState) -> None:
+        """Send a captionless preview reel for each vibe on the current page (the
+        vibe name lives on the video + the button, so no caption — it would just
+        get truncated). Buckets without a preview fall back to button-only."""
+        ranked = list(st.vibe_ranked_ids or [])
+        if not ranked:
+            return
+        pages = max(1, self._vibe_page_count(st))
+        page = int(st.vibe_page or 0) % pages
+        start = page * VIBE_PAGE_SIZE
+        for idx in range(start, min(start + VIBE_PAGE_SIZE, len(ranked))):
+            fid = _bucket_preview_file_id(ranked[idx])
+            if not fid:
+                continue
+            try:
+                await message.answer_video(video=fid)
+            except Exception:
+                log.warning("failed to send vibe preview for %s", ranked[idx])
 
     async def _handle_vibe_callback(self, cb: CallbackQuery) -> None:
         """Handle vibe:tog:<idx> | vibe:more | vibe:done | vibe:auto callbacks."""
@@ -2544,8 +2601,10 @@ class BlastBotApp:
             pages = max(1, self._vibe_page_count(st))
             st.vibe_page = (int(st.vibe_page or 0) + 1) % pages
             await self.store.set(st)
+            # show the new page's preview reels, then refresh the keyboard below
+            await self._send_vibe_previews(cb.message, st)
             try:
-                await cb.message.edit_text(
+                await cb.message.answer(
                     self._vibe_shortlist_text(st),
                     reply_markup=self._build_vibe_keyboard(st),
                 )
@@ -2562,7 +2621,7 @@ class BlastBotApp:
                 await cb.answer("Выбери хотя бы один вайб или нажми «По треку (авто)».", show_alert=True)
                 return
             await self.store.set(st)
-            labels = [st.vibe_labels_by_id.get(b, b) for b in st.vibe_selected_ids]
+            labels = [_vibe_display_label(st.vibe_labels_by_id.get(b, b)) for b in st.vibe_selected_ids]
             try:
                 await cb.message.edit_reply_markup(reply_markup=None)
             except TelegramBadRequest:

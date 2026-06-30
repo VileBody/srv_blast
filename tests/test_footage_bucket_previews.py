@@ -207,12 +207,12 @@ def test_capture_telegram_file_id_parses_video_file_id(tmp_path, monkeypatch):
     video.write_bytes(b"\x00\x01")
     captured = {}
 
-    def fake_post(url, data=None, files=None, timeout=None):
+    def fake_post(self, url, data=None, files=None, timeout=None):
         captured["url"] = url
         captured["chat_id"] = data["chat_id"]
         return _FakeResp({"ok": True, "result": {"video": {"file_id": "ABC123"}}})
 
-    monkeypatch.setattr(_script.requests, "post", fake_post)
+    monkeypatch.setattr(_script.requests.Session, "post", fake_post)
     fid = _script.capture_telegram_file_id(
         token="TKN", chat_id="42", video_path=video, caption="hi"
     )
@@ -226,8 +226,8 @@ def test_capture_telegram_file_id_raises_on_not_ok(tmp_path, monkeypatch):
     video.write_bytes(b"\x00")
 
     monkeypatch.setattr(
-        _script.requests, "post",
-        lambda *a, **k: _FakeResp({"ok": False, "description": "blocked"}),
+        _script.requests.Session, "post",
+        lambda self, *a, **k: _FakeResp({"ok": False, "description": "blocked"}),
     )
     with pytest.raises(RuntimeError):
         _script.capture_telegram_file_id(token="T", chat_id="1", video_path=video, caption="c")
