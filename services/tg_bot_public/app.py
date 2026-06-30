@@ -376,6 +376,33 @@ def _vibe_display_label(label: str) -> str:
     return _re.sub(r"\s*/\s*", ", ", str(label or "")).strip()
 
 
+# Hook/shape/effect/subtitle example previews mirror (file_id_public variant).
+_HOOK_PREVIEWS_CACHE: Optional[Dict[str, Dict[str, Any]]] = None
+
+
+def _hook_previews_path() -> Path:
+    return Path(__file__).resolve().parents[2] / "data" / "hook_previews.json"
+
+
+def _load_hook_previews() -> Dict[str, Dict[str, Any]]:
+    global _HOOK_PREVIEWS_CACHE
+    if _HOOK_PREVIEWS_CACHE is None:
+        try:
+            obj = json.loads(_hook_previews_path().read_text(encoding="utf-8"))
+            prev = obj.get("previews") if isinstance(obj, dict) else None
+            _HOOK_PREVIEWS_CACHE = prev if isinstance(prev, dict) else {}
+        except Exception:
+            _HOOK_PREVIEWS_CACHE = {}
+    return _HOOK_PREVIEWS_CACHE
+
+
+def _hook_preview_file_id(key: str) -> str:
+    e = _load_hook_previews().get(str(key or "").strip())
+    if not isinstance(e, dict):
+        return ""
+    return str(e.get(_BUCKET_PREVIEW_FILE_ID_FIELD) or "").strip()
+
+
 BTN_LETS_GO = "Едем!"
 BTN_SUBSCRIBED = "Подписался!"
 BTN_SEND_TRACK = "Отправить трек"

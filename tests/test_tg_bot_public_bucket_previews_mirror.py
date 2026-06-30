@@ -47,3 +47,21 @@ def test_previews_path_points_at_repo_data():
         p = mod._bucket_previews_path()
         assert p.name == "footage_bucket_previews.json"
         assert p.parent.name == "data"
+
+
+def test_hook_preview_helpers_exist_and_path():
+    for mod in (team, pub):
+        assert callable(getattr(mod, "_load_hook_previews", None))
+        assert callable(getattr(mod, "_hook_preview_file_id", None))
+        p = mod._hook_previews_path()
+        assert p.name == "hook_previews.json"
+        assert p.parent.name == "data"
+
+
+def test_hook_preview_file_id_reads_per_bot_field(monkeypatch):
+    store = {"motion:swipe": {"file_id": "TEAM_FID", "file_id_public": "PUB_FID"}}
+    monkeypatch.setattr(team, "_HOOK_PREVIEWS_CACHE", store, raising=False)
+    monkeypatch.setattr(pub, "_HOOK_PREVIEWS_CACHE", store, raising=False)
+    assert team._hook_preview_file_id("motion:swipe") == "TEAM_FID"
+    assert pub._hook_preview_file_id("motion:swipe") == "PUB_FID"
+    assert team._hook_preview_file_id("nope:x") == ""

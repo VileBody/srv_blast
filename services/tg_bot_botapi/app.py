@@ -268,6 +268,34 @@ def _vibe_display_label(label: str) -> str:
     return _re.sub(r"\s*/\s*", ", ", str(label or "")).strip()
 
 
+# Hook/shape/effect/subtitle example previews: "<category>:<bot_id>" -> {file_id,
+# file_id_public, ...}. Hand-made reels registered by scripts/register_hook_previews.py.
+_HOOK_PREVIEWS_CACHE: Optional[Dict[str, Dict[str, Any]]] = None
+
+
+def _hook_previews_path() -> Path:
+    return Path(__file__).resolve().parents[2] / "data" / "hook_previews.json"
+
+
+def _load_hook_previews() -> Dict[str, Dict[str, Any]]:
+    global _HOOK_PREVIEWS_CACHE
+    if _HOOK_PREVIEWS_CACHE is None:
+        try:
+            obj = json.loads(_hook_previews_path().read_text(encoding="utf-8"))
+            prev = obj.get("previews") if isinstance(obj, dict) else None
+            _HOOK_PREVIEWS_CACHE = prev if isinstance(prev, dict) else {}
+        except Exception:
+            _HOOK_PREVIEWS_CACHE = {}
+    return _HOOK_PREVIEWS_CACHE
+
+
+def _hook_preview_file_id(key: str) -> str:
+    e = _load_hook_previews().get(str(key or "").strip())
+    if not isinstance(e, dict):
+        return ""
+    return str(e.get(_BUCKET_PREVIEW_FILE_ID_FIELD) or "").strip()
+
+
 BTN_BG_WHITE = "Белый"
 BTN_BG_BLACK = "Чёрный"
 BTN_BG_GREEN = "Зелёный (хромакей)"
@@ -2556,6 +2584,19 @@ class BlastBotApp:
             except Exception:
                 log.warning("failed to send vibe preview for %s", ranked[idx])
 
+    async def _send_option_previews(self, message: Message, keys: List[str]) -> None:
+        """Send captionless example reels for a menu step's options (hook/shape/
+        effect/subtitle). The option name lives on the video + the button, so no
+        caption. Keys without a registered preview are skipped (button-only)."""
+        for key in keys:
+            fid = _hook_preview_file_id(key)
+            if not fid:
+                continue
+            try:
+                await message.answer_video(video=fid)
+            except Exception:
+                log.warning("failed to send option preview for %s", key)
+
     async def _handle_vibe_callback(self, cb: CallbackQuery) -> None:
         """Handle vibe:tog:<idx> | vibe:more | vibe:done | vibe:auto callbacks."""
         data = str(cb.data or "")
@@ -2651,6 +2692,9 @@ class BlastBotApp:
         if not str(st.subtitles_mode or "").strip():
             st.subtitles_mode = SUBTITLES_MODE_LEGACY_BLOCKS
         await self.store.set(st)
+        await self._send_option_previews(
+            message, [f"subtitles:{m}" for m in _SUBTITLES_MODE_BY_BUTTON.values()]
+        )
         await message.answer(
             "Выбери режим субтитров:",
             reply_markup=_kb(
@@ -3614,6 +3658,9 @@ class BlastBotApp:
         st.stage = STAGE_WAIT_HOOK_DEVICE
         await self.store.set(st)
         if st.hook_category == "motion":
+            await self._send_option_previews(
+                message, [f"motion:{v}" for v in _HOOK_MOTION_DEVICE_BY_BUTTON.values()]
+            )
             await message.answer(
                 "Какой приём «Движения»? Рука/голова двигается в такт, "
                 "на дропе срабатывает вспышка:\n"
@@ -3709,6 +3756,9 @@ class BlastBotApp:
     async def _ask_effect_hook(self, message: Message, st: ChatState) -> None:
         st.stage = STAGE_WAIT_EFFECT_HOOK
         await self.store.set(st)
+        await self._send_option_previews(
+            message, [f"effect_hook:{v}" for v in _FX_HOOK_BY_BUTTON.values()]
+        )
         await message.answer(
             "«Эффект» — шаг 1/3: хук на дропе.\n"
             "• Молния — вспышка-молнии + шейк.\n"
@@ -3745,6 +3795,9 @@ class BlastBotApp:
     async def _ask_effect_transition(self, message: Message, st: ChatState) -> None:
         st.stage = STAGE_WAIT_EFFECT_TRANSITION
         await self.store.set(st)
+        await self._send_option_previews(
+            message, [f"effect_transition:{v}" for v in _FX_TRANSITION_BY_BUTTON.values()]
+        )
         await message.answer(
             "Шаг 2/3: переход на склейках футажа.\n"
             "Можно пропустить.",
@@ -3778,6 +3831,9 @@ class BlastBotApp:
     async def _ask_effect_extra(self, message: Message, st: ChatState) -> None:
         st.stage = STAGE_WAIT_EFFECT_EXTRA
         await self.store.set(st)
+        await self._send_option_previews(
+            message, [f"effect_extra:{v}" for v in _FX_EXTRA_BY_BUTTON.values()]
+        )
         await message.answer(
             "Шаг 3/3: стилизация футажа до дропа (грейд 00:00 → дроп).\n"
             "Можно пропустить.",
@@ -3899,6 +3955,9 @@ class BlastBotApp:
     async def _ask_f2_shape(self, message: Message, st: ChatState) -> None:
         st.stage = STAGE_WAIT_F2_SHAPE
         await self.store.set(st)
+        await self._send_option_previews(
+            message, [f"shape:{v}" for v in _F2_SHAPE_BY_BUTTON.values()]
+        )
         await message.answer(
             "Какая фигура-переход на склейках до дропа?\n"
             "На дропе сработает молния, после дропа — рандомный визуал-переход.\n"
