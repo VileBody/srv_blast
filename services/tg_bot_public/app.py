@@ -124,6 +124,8 @@ from .state_store import (
     STAGE_WAIT_F2_SHAPE,
     STAGE_WAIT_F1_SOUND,
     STAGE_WAIT_F1_TEXT,
+    STAGE_WAIT_PHOTO_STYLE,
+    STAGE_WAIT_PHOTO_TRANSITION,
     STAGE_WAIT_VIBE,
     STAGE_WAIT_SUBTITLE_COLOR,
     STAGE_WAIT_ACCENT_COLOR,
@@ -151,6 +153,15 @@ HOOK_FLOW_ENABLED = (os.environ.get("HOOK_FLOW_ENABLED", "0").strip().lower()
 # genre/artist picker.
 FOOTAGE_VIBE_FLOW_ENABLED = (os.environ.get("FOOTAGE_VIBE_FLOW_ENABLED", "1").strip().lower()
                              in {"1", "true", "yes", "on", "enabled"})
+
+# Photo flow (4:3) toggle. The "Картинки" background routes to bg_mode="photo":
+# the vibe shortlist is reused (PHOTO pool), then two F3-style picker steps
+# (photo_style → photo_transition) run before the version count, and the render
+# uses the 1920×1440 photo template. UX ported 1:1 from tg_bot_botapi but gated
+# OFF here until the team bot validates it; state/client/stages mirror regardless
+# for CI parity. Overridable via PHOTO_FLOW_ENABLED.
+PHOTO_FLOW_ENABLED = (os.environ.get("PHOTO_FLOW_ENABLED", "0").strip().lower()
+                      in {"1", "true", "yes", "on", "enabled"})
 
 # /bigtest is a team-bot-only command. Constant is False here so the handler
 # (registered below for parity) immediately rejects the request in production.
@@ -222,6 +233,13 @@ HOOK_STAGES = frozenset({
 # Mirror of tg_bot_botapi; routing is gated behind FOOTAGE_VIBE_FLOW_ENABLED.
 VIBE_STAGES = frozenset({
     STAGE_WAIT_VIBE,
+})
+
+# Photo flow (4:3): stage(s) carrying the two F3-style photo picker steps.
+# Mirror of tg_bot_botapi; routing is gated behind PHOTO_FLOW_ENABLED.
+PHOTO_STAGES = frozenset({
+    STAGE_WAIT_PHOTO_STYLE,
+    STAGE_WAIT_PHOTO_TRANSITION,
 })
 
 # F3 «Эффект» visual-FX ids (mirror of mlcore/hooks/f3_effect + tg_bot_botapi).
@@ -424,6 +442,9 @@ BTN_BG_STROBE = "Строб Ч/Б"
 # alongside footage/solid when the vibe flow is on. Mirror of tg_bot_botapi —
 # not implemented yet → replies "скоро".
 BTN_BG_PICTURES = "Картинки (скоро)"
+# Photo flow (4:3) ready button — shown instead of the stub when PHOTO_FLOW_ENABLED.
+# Mirror of tg_bot_botapi; selecting it sets bg_mode="photo".
+BTN_BG_PICTURES_PHOTO = "🖼 Картинки"
 # Vibe shortlist (inline) control buttons + callback-data prefix. Mirror of team.
 VIBE_CB_PREFIX = "vibe:"          # vibe:tog:<idx> | vibe:more | vibe:done | vibe:auto
 BTN_VIBE_REFRESH = "🔄 Обновить"
@@ -587,6 +608,40 @@ _F2_SHAPE_BY_BUTTON = {
     BTN_F2_SHAPE_STAR2: "star2",
     BTN_F2_SHAPE_ELIPSE: "elipse",
 }
+
+# Photo flow (4:3) — two F3-style picker steps. Mirror of tg_bot_botapi; UX is
+# gated behind PHOTO_FLOW_ENABLED but the data layer (buttons/maps/id sets) is
+# mirrored for CI parity. Id sets must stay in sync with the schema Literals.
+BTN_PHOTO_STYLE_NONE = "Без стилизации"
+BTN_PHOTO_STYLE_WARM = "Тёплый"
+BTN_PHOTO_STYLE_COLD = "Холодный"
+BTN_PHOTO_STYLE_VINTAGE = "Винтаж"
+BTN_PHOTO_STYLE_BW = "Ч/Б"
+BTN_PHOTO_STYLE_VHS = "VHS"
+_PHOTO_STYLE_BY_BUTTON = {
+    BTN_PHOTO_STYLE_NONE: "none",
+    BTN_PHOTO_STYLE_WARM: "warm",
+    BTN_PHOTO_STYLE_COLD: "cold",
+    BTN_PHOTO_STYLE_VINTAGE: "vintage",
+    BTN_PHOTO_STYLE_BW: "bw",
+    BTN_PHOTO_STYLE_VHS: "vhs",
+}
+BTN_PHOTO_TR_FLASH = "Вспышка"
+BTN_PHOTO_TR_NONE = "Без перехода"
+BTN_PHOTO_TR_SLIDE = "Слайд"
+BTN_PHOTO_TR_ZOOM = "Зум"
+BTN_PHOTO_TR_WHIP = "Вжух"
+_PHOTO_TRANSITION_BY_BUTTON = {
+    BTN_PHOTO_TR_FLASH: "flash",
+    BTN_PHOTO_TR_NONE: "none",
+    BTN_PHOTO_TR_SLIDE: "slide",
+    BTN_PHOTO_TR_ZOOM: "zoom",
+    BTN_PHOTO_TR_WHIP: "whip",
+}
+PHOTO_STYLE_IDS = set(_PHOTO_STYLE_BY_BUTTON.values())
+PHOTO_STYLE_LABELS_RU = dict(_PHOTO_STYLE_BY_BUTTON)
+PHOTO_TRANSITION_IDS = set(_PHOTO_TRANSITION_BY_BUTTON.values())
+PHOTO_TRANSITION_LABELS_RU = dict(_PHOTO_TRANSITION_BY_BUTTON)
 
 # Post-generation flow buttons
 BTN_RATE_LOW = "До 5"
@@ -2962,6 +3017,12 @@ class BlastBotApp:
             if st.stage == STAGE_WAIT_F2_SHAPE:
                 await self._handle_wait_f2_shape(message, st)
                 return
+            if st.stage == STAGE_WAIT_PHOTO_STYLE:
+                await self._handle_wait_photo_style(message, st)
+                return
+            if st.stage == STAGE_WAIT_PHOTO_TRANSITION:
+                await self._handle_wait_photo_transition(message, st)
+                return
             if st.stage == STAGE_WAIT_F1_SOUND:
                 await self._handle_wait_f1_sound(message, st)
                 return
@@ -3377,7 +3438,11 @@ class BlastBotApp:
         # Phase 2b: offer a "pictures (soon)" stub next to footage/solid when the
         # vibe flow is on so the menu matches the target UX. The stub replies "скоро".
         rows = [[BTN_BG_FOOTAGE], [BTN_BG_SOLID], [BTN_BG_STROBE]]
-        if FOOTAGE_VIBE_FLOW_ENABLED:
+        # Photo flow (4:3): a real "Картинки" button when PHOTO_FLOW_ENABLED;
+        # otherwise the "(скоро)" stub if the vibe flow is on. Mirror of team.
+        if PHOTO_FLOW_ENABLED:
+            rows.append([BTN_BG_PICTURES_PHOTO])
+        elif FOOTAGE_VIBE_FLOW_ENABLED:
             rows.append([BTN_BG_PICTURES])
         rows.append([BTN_BACK])
         await message.answer("Что будет на фоне?", reply_markup=_kb(*rows))
@@ -3402,6 +3467,14 @@ class BlastBotApp:
         text = str(message.text or "").strip()
         if text == BTN_BACK:
             await self._ask_timing_choice(message, st)
+            return
+        if text == BTN_BG_PICTURES_PHOTO and PHOTO_FLOW_ENABLED:
+            # Photo flow (4:3): reuse the vibe shortlist (PHOTO pool); the two
+            # F3-style photo picker steps run after the vibe is confirmed.
+            st.bg_mode = "photo"
+            st.bg_solid_color = ""
+            await self.store.set(st)
+            await self._ask_vibe_shortlist(message, st)
             return
         if text == BTN_BG_PICTURES and FOOTAGE_VIBE_FLOW_ENABLED:
             await message.answer("Картинки скоро будут доступны. Пока выбери «Футажи» или «Цветной фон».")
@@ -3807,7 +3880,12 @@ class BlastBotApp:
                 pass
             await cb.answer("Готово")
             await cb.message.answer("Вайбы: " + ", ".join(labels))
-            await self._ask_subtitles_mode(cb.message, st)
+            # Photo flow (4:3): after the vibe, ask the two photo picker steps.
+            # Mirror of tg_bot_botapi (gated by PHOTO_FLOW_ENABLED at entry).
+            if st.bg_mode == "photo":
+                await self._ask_photo_style(cb.message, st)
+            else:
+                await self._ask_subtitles_mode(cb.message, st)
             return
 
         await cb.answer()
@@ -4286,6 +4364,67 @@ class BlastBotApp:
         st.hook_type = "standard"
         await self.store.set(st)
         await message.answer(f"Ок, «Мысль»: {text}.")
+        await self._proceed_to_versions_or_confirm(message, st)
+
+    # ── Photo flow (4:3) — 2-step picker (style -> transition). Mirror of team;
+    # UX gated behind PHOTO_FLOW_ENABLED, exit goes to public's post-settings. ──
+    async def _ask_photo_style(self, message: Message, st: ChatState) -> None:
+        st.stage = STAGE_WAIT_PHOTO_STYLE
+        await self.store.set(st)
+        await message.answer(
+            "Картинки — шаг 1/2: стилизация (грейд на весь ролик).\n"
+            "• Тёплый / Холодный — цветовая температура.\n"
+            "• Винтаж / Ч/Б / VHS — плёночные луки.\n"
+            "• Без стилизации — оставить как есть.",
+            reply_markup=_kb(
+                [BTN_PHOTO_STYLE_WARM, BTN_PHOTO_STYLE_COLD],
+                [BTN_PHOTO_STYLE_VINTAGE, BTN_PHOTO_STYLE_BW],
+                [BTN_PHOTO_STYLE_VHS, BTN_PHOTO_STYLE_NONE],
+                [BTN_BACK],
+            ),
+        )
+
+    async def _handle_wait_photo_style(self, message: Message, st: ChatState) -> None:
+        text = str(message.text or "").strip()
+        if text == BTN_BACK:
+            await self._ask_vibe_shortlist(message, st)
+            return
+        style = _PHOTO_STYLE_BY_BUTTON.get(text)
+        if style is None:
+            await message.answer("Выбери стилизацию кнопкой ниже.")
+            return
+        st.photo_style = style
+        await self.store.set(st)
+        await self._ask_photo_transition(message, st)
+
+    async def _ask_photo_transition(self, message: Message, st: ChatState) -> None:
+        st.stage = STAGE_WAIT_PHOTO_TRANSITION
+        await self.store.set(st)
+        await message.answer(
+            "Шаг 2/2: переход между фото.\n"
+            "• Вспышка / Слайд / Зум / Вжух — варианты смены кадра.\n"
+            "• Без перехода — резкая склейка.",
+            reply_markup=_kb(
+                [BTN_PHOTO_TR_FLASH, BTN_PHOTO_TR_SLIDE],
+                [BTN_PHOTO_TR_ZOOM, BTN_PHOTO_TR_WHIP],
+                [BTN_PHOTO_TR_NONE],
+                [BTN_BACK],
+            ),
+        )
+
+    async def _handle_wait_photo_transition(self, message: Message, st: ChatState) -> None:
+        text = str(message.text or "").strip()
+        if text == BTN_BACK:
+            await self._ask_photo_style(message, st)
+            return
+        tr = _PHOTO_TRANSITION_BY_BUTTON.get(text)
+        if tr is None:
+            await message.answer("Выбери переход кнопкой ниже.")
+            return
+        st.photo_transition = tr
+        await self.store.set(st)
+        # Photo render is horizontal 1920×1440 — subtitles aren't baked in 4:3,
+        # so skip the subtitles/hook steps and go straight to the version count.
         await self._proceed_to_versions_or_confirm(message, st)
 
     async def _ask_effect_hook(self, message: Message, st: ChatState) -> None:
@@ -6631,6 +6770,17 @@ class BlastBotApp:
                     and st.f1_sound_url
                     and st.f1_sound_text
                 )
+                else None
+            ),
+            # Photo flow (4:3): stylization + transition, only when bg_mode=="photo".
+            photo_style=(
+                str(st.photo_style)
+                if (st.bg_mode == "photo" and st.photo_style)
+                else None
+            ),
+            photo_transition=(
+                str(st.photo_transition)
+                if (st.bg_mode == "photo" and st.photo_transition)
                 else None
             ),
             # Strobe bg auto-inverts WHITE text (Difference) — ignore custom color.

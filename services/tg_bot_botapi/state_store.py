@@ -51,6 +51,10 @@ STAGE_WAIT_F2_SHAPE = "WAIT_F2_SHAPE"
 STAGE_WAIT_F1_SOUND = "WAIT_F1_SOUND"
 # F1 «Звук» — wait for optional subtitle text for the uploaded sound (or skip).
 STAGE_WAIT_F1_TEXT = "WAIT_F1_TEXT"
+# Photo flow (bg_mode == "photo", behind PHOTO_FLOW_ENABLED) — two F3-style steps:
+# (1) stylization grade/look, then (2) transition between photos.
+STAGE_WAIT_PHOTO_STYLE = "WAIT_PHOTO_STYLE"
+STAGE_WAIT_PHOTO_TRANSITION = "WAIT_PHOTO_TRANSITION"
 # Hook battery — wait for the (optional) F1 sound before generating N videos.
 STAGE_WAIT_BATTERY_SOUND = "WAIT_BATTERY_SOUND"
 STAGE_WAIT_BATTERY_F4_DROP = "WAIT_BATTERY_F4_DROP"
@@ -103,6 +107,13 @@ class ChatState(BaseModel):
     bg_mode: str = "footage"
     # Solid background color key when bg_mode == "solid": "white" | "green".
     bg_solid_color: str = ""
+    # Photo flow (bg_mode == "photo") — two F3-style picks. photo_style =
+    # stylization grade applied over the whole render
+    # ("" | none | warm | cold | vintage | bw | vhs); photo_transition =
+    # transition between photos ("" | flash | none | slide | zoom | whip).
+    # "" => not chosen. Sent via send_audio_s3 only when bg_mode == "photo".
+    photo_style: str = ""
+    photo_transition: str = ""
     user_clip_start_sec: float = 0.0
     user_clip_end_sec: float = 0.0
     subtitles_mode: str = SUBTITLES_MODE_LEGACY_BLOCKS
