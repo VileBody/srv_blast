@@ -258,7 +258,7 @@ def _collect_overlay_metadata_indexes(repo_root: Path) -> Tuple[Dict[str, Dict[s
         (os.environ.get("FOOTAGE_INVENTORY_JSON") or "").strip(),
         (os.environ.get("STATIC_ASSETS_INDEX_JSON") or "").strip(),
         str((repo_root / "data" / "footage_inventory.json").resolve()),
-        str((repo_root / "data" / "static_assets_index.json").resolve()),
+        str((repo_root / "data" / "static_assets_index_1to1.json").resolve()),
     ]
 
     seen: set[str] = set()

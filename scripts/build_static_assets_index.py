@@ -33,6 +33,29 @@ _VIDEO_EXTS = {".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi"}
 _DEFAULT_OUT = "data/static_assets_index_1to1.json"
 
 
+def resolve_pool_source_prefix() -> str:
+    """The S3 prefix that IS the footage pool — single source of truth.
+
+    Both builders (this script's main() AND the activate_footage_base Celery
+    task) MUST use this so a manual index rebuild can never scan a different
+    prefix than activation and silently shrink the pool. It mirrors the Asset
+    UI browse prefix (asset_routes._asset_ui_source_prefix) so the pool == what
+    the UI lists == what tagging scans.
+
+    Priority: ASSET_UI_SOURCE_PREFIX (explicit) > top-level of S3_ASSET_PREFIX
+    (e.g. `pinterest_collection` from `pinterest_collection/pins2_1to1_...`) >
+    `pinterest_collection`. The top-level split is deliberate: the pool is the
+    whole collection, not one dated 1:1 subfolder.
+    """
+    explicit = (os.environ.get("ASSET_UI_SOURCE_PREFIX") or "").strip().strip("/")
+    if explicit:
+        return explicit
+    s3_prefix = (os.environ.get("S3_ASSET_PREFIX") or "").strip().strip("/")
+    if s3_prefix:
+        return s3_prefix.split("/", 1)[0]
+    return "pinterest_collection"
+
+
 # --------------------------------------------------------------------------- #
 # Pure helpers (no I/O) — unit tested
 # --------------------------------------------------------------------------- #
@@ -218,7 +241,10 @@ def build_index(
 def main() -> int:
     out_path = Path(sys.argv[1] if len(sys.argv) > 1 else _DEFAULT_OUT)
     bucket = (os.environ.get("S3_BUCKET_ASSET_STORAGE") or "").strip()
-    prefix = (os.environ.get("S3_ASSET_PREFIX") or "pinterest_collection").strip().strip("/")
+    # Use the SHARED pool-prefix resolver so a manual rebuild scans exactly the
+    # same prefix as the activation task — never a narrower subfolder that would
+    # silently shrink the pool (the old default read the full S3_ASSET_PREFIX).
+    prefix = resolve_pool_source_prefix()
     build_index(bucket=bucket, prefix=prefix, out_path=out_path)
     return 0
 

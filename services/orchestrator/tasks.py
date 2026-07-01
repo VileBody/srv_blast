@@ -2453,13 +2453,11 @@ _PHOTO_ACTIVATION_PROGRESS_KEY = "photo_activation:progress"
 
 
 def _footage_tagging_source_prefix() -> str:
-    explicit = (os.environ.get("ASSET_UI_SOURCE_PREFIX") or "").strip().strip("/")
-    if explicit:
-        return explicit
-    s3_prefix = (os.environ.get("S3_ASSET_PREFIX") or "").strip().strip("/")
-    if s3_prefix:
-        return s3_prefix.split("/", 1)[0]
-    return "pinterest_collection"
+    # Single source of truth for the footage pool prefix — shared with the
+    # manual index builder so index-scan == tag-scan == Asset-UI browse.
+    from scripts.build_static_assets_index import resolve_pool_source_prefix
+
+    return resolve_pool_source_prefix()
 
 
 def _photo_tagging_source_prefix() -> str:

@@ -262,7 +262,7 @@ def build_inventory_and_bundle(
     if not isinstance(source_assets, list):
         raise RuntimeError(f"Invalid static assets index (missing assets[]): {static_assets_index_path}")
 
-    fallback_meta_path_raw = _env("STATIC_ASSETS_ENRICH_INDEX_JSON", str(repo_root / "data" / "static_assets_index.json"))
+    fallback_meta_path_raw = _env("STATIC_ASSETS_ENRICH_INDEX_JSON", str(repo_root / "data" / "static_assets_index_1to1.json"))
     fallback_meta_path = Path(fallback_meta_path_raw).resolve()
     fallback_color_meta: Dict[str, Dict[str, Any]] = {}
     fallback_color_meta_norm: Dict[str, Dict[str, Any]] = {}
