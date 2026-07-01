@@ -23,7 +23,7 @@ from .taxonomy_parser import get_taxonomy
 log = logging.getLogger(__name__)
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_STATIC_INDEX = _REPO_ROOT / "data" / "static_assets_index.json"
+_STATIC_INDEX = _REPO_ROOT / "data" / "static_assets_index_1to1.json"
 _OVERRIDES_PATH = _REPO_ROOT / "data" / "asset_tag_overrides.json"
 _TAG_OVERRIDES_PATH = _REPO_ROOT / "data" / "tag_overrides.json"
 _VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm"}

@@ -196,6 +196,10 @@ def build_index(
             "file_name": file_name,
             "genre": genre,
             "tag": tag,
+            # The REAL S3 key the scan saw — stored so downstream (footage_assets
+            # registry, render) never reconstructs a key from prefix+genre+tag,
+            # which breaks for any clip not under exactly S3_ASSET_PREFIX.
+            "s3_key": key,
             "src_w": w,
             "src_h": h,
             "duration_sec": round(dur, 3),

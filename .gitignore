@@ -42,6 +42,10 @@ data/footage_tags_snapshot.json
 data/photo_assets_index_1to1.json
 data/photo_inventory.json
 data/photo_tags_snapshot.json
+# diagnostic report outputs (footage_pool_reconcile / bucket_pool_report / alias_report)
+data/footage_pool_reconcile.json
+data/footage_bucket_pool_report.json
+data/tag_alias_report.json
 video_database.json
 pins2/
 

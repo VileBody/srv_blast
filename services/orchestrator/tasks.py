@@ -2596,6 +2596,35 @@ def _export_tag_overrides_snapshot(*, db_url: str) -> Dict[str, Any]:
     return {"path": str(out_path), "rows": len(doc["blacklisted_tags"])}
 
 
+def _register_pool_assets(*, db_url: str, static_index_path: Any, source: str = "video") -> Dict[str, Any]:
+    """Register the freshly-built static index into the Postgres footage_assets
+    registry (upsert + prune) so the pool has a durable, queryable source of
+    truth that survives deploys. Returns {written, pruned, total, pickable}.
+
+    The JSON index remains the render-hot-path cache; this makes Postgres the
+    place asset_ui / health read ONE canonical count (pool ∩ tags = pickable).
+    """
+    from mlcore.footage_assets_db import pool_health, records_from_index, replace_source_assets
+
+    idx_obj = json.loads(Path(static_index_path).read_text(encoding="utf-8"))
+    assets = idx_obj.get("assets") if isinstance(idx_obj, dict) else idx_obj
+    records = records_from_index(assets or [], source=source)
+
+    async def _go():
+        import asyncpg  # type: ignore
+
+        conn = await asyncpg.connect(dsn=db_url)
+        try:
+            res = await replace_source_assets(conn, records, source=source)
+            health = await pool_health(conn, source=source)
+            res["pickable"] = health.get("pickable")
+            return res
+        finally:
+            await conn.close()
+
+    return asyncio.run(_go())
+
+
 def _export_footage_tags_snapshot(*, db_url: str, source: str = "video") -> Dict[str, Any]:
     """Write the picker's tag snapshot from Postgres, scoped to one pool.
 
@@ -2696,6 +2725,17 @@ def activate_footage_base(self, limit: int = 0, media_type: str = "video") -> Di
 
             idx = build_index(bucket=bucket, prefix=prefix, out_path=static_index_path, progress_cb=_idx_progress)
 
+        # 1b) register the pool into Postgres (durable registry that survives
+        # deploys; the JSON index is only a render cache). Non-fatal: a registry
+        # hiccup must not block the pipeline that already has the JSON pool.
+        pool_registry: Dict[str, Any] = {}
+        try:
+            _publish("running", phase="registering_pool")
+            pool_registry = _register_pool_assets(db_url=db_url, static_index_path=static_index_path, source=mt)
+        except Exception as exc:
+            log.warning("activate: pool registry upsert failed (non-fatal): %r", exc)
+            pool_registry = {"error": str(exc)}
+
         # 2) rebuild the picker inventory from the static index
         _publish("running", phase="inventory", indexed=idx.get("assets_count"))
         from footage_config import build_inventory_and_bundle
@@ -2744,6 +2784,10 @@ def activate_footage_base(self, limit: int = 0, media_type: str = "video") -> Di
             "index_failed": idx.get("failed"),
             **tag_summary,
             "snapshot_rows": snap.get("rows"),
+            # canonical pool numbers from the Postgres registry (one source of truth):
+            "pool_registered": pool_registry.get("total"),
+            "pool_pruned": pool_registry.get("pruned"),
+            "pool_pickable": pool_registry.get("pickable"),
         }
     except Exception as exc:
         _publish("failed", error=str(exc))
