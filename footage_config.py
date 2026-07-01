@@ -452,10 +452,24 @@ def main() -> None:
     is_photo = media_type == "photo"
 
     footage_dir = Path(_env("FOOTAGE_DIR", str(repo_root / "footage"))).resolve()
-    default_index = "photo_assets_index_1to1.json" if is_photo else "static_assets_index.json"
+    default_index = "photo_assets_index_1to1.json" if is_photo else "static_assets_index_1to1.json"
     static_assets_index_path = Path(
         _env("STATIC_ASSETS_INDEX_JSON", str(repo_root / "data" / default_index))
     ).resolve()
+
+    # The static index is a REGENERABLE cache (built by "Активировать базу" from
+    # S3). It is intentionally NOT tracked in git. If it is missing — a fresh
+    # node, or a pool not built yet — this prestart step must NOT crash the
+    # container (compose runs `python footage_config.py && <server>`): degrade
+    # gracefully so the service boots and activation can build the pool. The
+    # picker will surface a clear per-job error until the pool exists.
+    if not static_assets_index_path.exists():
+        print(
+            f"[WARN] static assets index missing: {static_assets_index_path}\n"
+            f"[WARN] skipping inventory/bundle prebuild — run \"Активировать базу\" "
+            f"(orchestrator.activate_footage_base) to build the pool. Booting anyway."
+        )
+        return
 
     default_inventory = "photo_inventory.json" if is_photo else "footage_inventory.json"
     inventory_out = Path(
