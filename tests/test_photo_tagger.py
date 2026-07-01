@@ -7,8 +7,12 @@ from mlcore.footage_tags_db import (
     build_tag_record,
     photo_clip_id,
 )
+from pathlib import Path
+
 from mlcore.photo_tagger import (
+    _downscale_photo,
     record_from_photo_result,
+    run_photo_tagging_batch,
     select_untagged_photo_keys,
 )
 
@@ -74,6 +78,52 @@ def test_record_from_photo_result_shape() -> None:
     assert rec["source"] == SOURCE_PHOTO
     assert rec["clip_id"] == "photo:rainy_street"
     assert rec["theme_tags"] == ["rain", "street"]
+
+
+def test_downscale_falls_back_to_src_when_ffmpeg_missing(tmp_path, monkeypatch) -> None:
+    src = tmp_path / "big.jpg"
+    src.write_bytes(b"not-a-real-jpeg")
+    dst = tmp_path / "small.jpg"
+    monkeypatch.setenv("FFMPEG_BIN", "definitely-not-a-real-ffmpeg-binary")
+    out = _downscale_photo(src, dst)
+    # resize failed -> original returned so tagging still proceeds
+    assert out == src
+    assert not dst.exists()
+
+
+def test_batch_reports_providers_and_writes_with_injected_io(monkeypatch) -> None:
+    # Qwen-lead chain must be visible in the summary; I/O fully injected.
+    monkeypatch.setenv("DASHSCOPE_API_KEYS", "qwen-key-1")
+    monkeypatch.setenv("GROQ_API_KEYS", "groq-key-1")
+
+    written_records = []
+
+    def list_keys_fn():
+        return ["photo_collection/a/one.jpg", "photo_collection/a/two.png"]
+
+    def fetch_tagged_fn():
+        return set()
+
+    def tag_fn(s3_key):
+        return record_from_photo_result(
+            s3_key=s3_key,
+            result={"mood": "minor", "color_tone": "cold", "people_type": "none",
+                    "theme_tags": ["rain"]},
+        )
+
+    def upsert_fn(records):
+        written_records.extend(records)
+        return len(records)
+
+    out = run_photo_tagging_batch(
+        bucket="b", source_prefix="photo_collection", db_url="",
+        list_keys_fn=list_keys_fn, fetch_tagged_fn=fetch_tagged_fn,
+        tag_fn=tag_fn, upsert_fn=upsert_fn,
+    )
+    assert out["untagged_processed"] == 2
+    assert out["written"] == 2
+    assert out["failed"] == 0
+    assert out["providers"] and out["providers"][0] == "qwen"  # Qwen leads
 
 
 def test_select_untagged_photo_keys_dedups_and_skips_tagged() -> None:

@@ -17,15 +17,15 @@ mlcore.footage_tagger to avoid duplication.
 from __future__ import annotations
 
 import os
+import subprocess
 import tempfile
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
 from mlcore.footage_tagger import (
-    call_groq_vision,
-    groq_api_keys,
-    groq_model,
     _encode_image_b64,
+    _tag_one_frame,
+    vision_endpoints,
 )
 from mlcore.footage_tags_db import (
     SOURCE_PHOTO,
@@ -97,16 +97,49 @@ def record_from_photo_result(
 # --------------------------------------------------------------------------- #
 # I/O layer
 # --------------------------------------------------------------------------- #
-def tag_photo_file(path: Path, *, keys: List[str], model: str) -> Optional[Dict[str, Any]]:
-    """One Groq Vision call on a single still image -> parsed taxonomy dict."""
-    if not keys:
-        raise RuntimeError("No Groq API keys configured (set GROQ_API_KEYS or GROQ_API_KEY)")
-    return call_groq_vision(
-        _encode_image_b64(path), api_key=keys[0], model=model, prompt=_PHOTO_PROMPT,
+# Full-resolution phone/DSLR photos make the base64 payload huge (413 errors and
+# needless vision tokens). Downscale the longest side before sending — quality is
+# more than enough for tagging. Reuses ffmpeg (already in the runtime image), so
+# no new Pillow dependency.
+_PHOTO_MAX_SIDE = int(os.environ.get("PHOTO_TAG_MAX_SIDE", "1280") or "1280")
+
+
+def _downscale_photo(src: Path, dst: Path, *, max_side: int = _PHOTO_MAX_SIDE, ffmpeg_bin: str = "") -> Path:
+    """Downscale the longer side to <= max_side (never upscale). Returns dst on
+    success, else the original src (tagging must not fail just because resize did)."""
+    ffmpeg_bin = ffmpeg_bin or os.environ.get("FFMPEG_BIN", "ffmpeg")
+    vf = (
+        f"scale='if(gte(iw,ih),min({max_side},iw),-2)':"
+        f"'if(gte(iw,ih),-2,min({max_side},ih))'"
     )
+    try:
+        proc = subprocess.run(
+            [ffmpeg_bin, "-y", "-i", str(src), "-vf", vf, "-q:v", "3", str(dst)],
+            capture_output=True, text=True, check=False,
+        )
+        if proc.returncode == 0 and dst.exists() and dst.stat().st_size > 0:
+            return dst
+    except Exception:
+        pass
+    return src
 
 
-def tag_photo_from_s3(*, bucket: str, s3_key: str, keys: List[str], model: str) -> Optional[Dict[str, Any]]:
+def tag_photo_file(path: Path, *, endpoints: Optional[List[Dict[str, str]]] = None) -> Optional[Dict[str, Any]]:
+    """Tag a single still image via the vision provider chain (Qwen-VL lead, Groq
+    fallback) — the SAME chain the video tagger uses, so photos get Qwen capacity
+    and a real fallback instead of a single Groq key."""
+    if endpoints is None:
+        endpoints = vision_endpoints()
+    if not endpoints:
+        raise RuntimeError("no_vision_keys: set DASHSCOPE_API_KEYS (Qwen) or GROQ_API_KEYS")
+    with tempfile.TemporaryDirectory(prefix="tagphoto_scale_") as tmp:
+        scaled = _downscale_photo(path, Path(tmp) / "small.jpg")
+        return _tag_one_frame(_encode_image_b64(scaled), endpoints, _PHOTO_PROMPT)
+
+
+def tag_photo_from_s3(
+    *, bucket: str, s3_key: str, endpoints: Optional[List[Dict[str, str]]] = None,
+) -> Optional[Dict[str, Any]]:
     """Download an S3 photo, tag it, return a footage_tags record (or None)."""
     from src.storage.s3 import download_from_s3
 
@@ -114,10 +147,10 @@ def tag_photo_from_s3(*, bucket: str, s3_key: str, keys: List[str], model: str) 
         suffix = Path(s3_key).suffix or ".jpg"
         dest = Path(tmp) / f"photo{suffix}"
         download_from_s3(bucket, s3_key, dest)
-        result = tag_photo_file(dest, keys=keys, model=model)
+        result = tag_photo_file(dest, endpoints=endpoints)
     if not result:
         return None
-    return record_from_photo_result(s3_key=s3_key, result=result, tagger="groq")
+    return record_from_photo_result(s3_key=s3_key, result=result, tagger="vision")
 
 
 # --------------------------------------------------------------------------- #
@@ -144,8 +177,8 @@ def run_photo_tagging_batch(
     """
     import asyncio as _asyncio
 
-    keys = groq_api_keys()
-    model = groq_model()
+    endpoints = vision_endpoints()
+    providers = [str(e.get("provider") or "") for e in endpoints]
 
     if list_keys_fn is None:
         def list_keys_fn() -> List[str]:
@@ -194,7 +227,7 @@ def run_photo_tagging_batch(
 
     if tag_fn is None:
         def tag_fn(s3_key: str) -> Optional[Dict[str, Any]]:
-            return tag_photo_from_s3(bucket=bucket, s3_key=s3_key, keys=keys, model=model)
+            return tag_photo_from_s3(bucket=bucket, s3_key=s3_key, endpoints=endpoints)
 
     tagged_ids = fetch_tagged_fn()
     all_keys = list_keys_fn()
@@ -229,4 +262,5 @@ def run_photo_tagging_batch(
         "untagged_processed": total,
         "written": written,
         "failed": failed,
+        "providers": providers,
     }
