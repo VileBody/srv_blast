@@ -41,9 +41,15 @@ export async function updateTags(
   if (!res.ok) throw new Error(`updateTags: ${res.status}`);
 }
 
-export async function fetchVideoUrl(fileName: string, s3Key?: string): Promise<string> {
+export async function fetchVideoUrl(
+  fileName: string,
+  s3Key?: string,
+  mediaType: MediaType = 'video',
+): Promise<string> {
   const params = new URLSearchParams();
   if (s3Key) params.set('s3_key', s3Key);
+  // Without media_type the backend defaults to the VIDEO pool and 404s photos.
+  if (mediaType !== 'video') params.set('media_type', mediaType);
   const suffix = params.toString() ? `?${params.toString()}` : '';
   const res = await fetch(`${BASE}/assets/${encodeURIComponent(fileName)}/video-url${suffix}`);
   if (!res.ok) throw new Error(`fetchVideoUrl: ${res.status}`);
