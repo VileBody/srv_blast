@@ -74,8 +74,19 @@ def _norm_people(v: Any) -> str:
     return out if out in _PEOPLE_ALLOWED else "none"
 
 
+# Vision models sometimes return synonyms outside the enum (e.g. "cool" for
+# "cold"); map the common ones so the color signal isn't dropped.
+_COLOR_SYNONYMS = {
+    "cool": "cold", "blue": "cold", "cold tone": "cold", "cold tones": "cold",
+    "warm tone": "warm", "warm tones": "warm", "golden": "warm", "orange": "warm",
+    "bright": "light", "dark tone": "dark", "black": "dark", "monochrome": "neutral",
+    "grayscale": "neutral", "greyscale": "neutral", "mixed": "neutral", "grey": "neutral", "gray": "neutral",
+}
+
+
 def _norm_color(v: Any) -> str:
     out = _norm(v)
+    out = _COLOR_SYNONYMS.get(out, out)
     return out if out in _COLOR_ALLOWED else ""
 
 

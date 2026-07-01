@@ -1,0 +1,6 @@
+{
+  "_comment": "TEMPORARY committed fallback Qwen-VL (Alibaba DashScope) keys, used ONLY when DASHSCOPE_API_KEYS / DASHSCOPE_API_KEY env is empty. Qwen-VL is ~16x cheaper in tokens/image than Groq Llama-4 (110 image tokens vs ~2700), so it leads the tagging provider chain. Once DASHSCOPE_API_KEYS is in .env, DELETE this file and ROTATE the keys (committed keys risk secret-scanning revocation). Endpoint: https://dashscope-intl.aliyuncs.com/compatible-mode/v1 ; model qwen-vl-max. Validated 200 (text + vision) on 2026-06-29.",
+  "keys": [
+    "sk-ws-H.YHHLXE.on8w.MEUCIQCSm6p5g3W34GjdvhYbK0anSZZiIYh9rt_T6ChJds5H-gIgSH3k3C26yG-p-5GlwBhir3UyUMsJoETnJoCaeaS2IKE"
+  ]
+}

@@ -84,6 +84,63 @@ def groq_model() -> str:
     return (os.environ.get("GROQ_VISION_MODEL") or "meta-llama/llama-4-scout-17b-16e-instruct").strip()
 
 
+# --- Qwen-VL (Alibaba DashScope, OpenAI-compatible) — ~16x fewer tokens/image
+#     than Groq's Llama-4, so it stretches free quotas dramatically. -----------
+_GROQ_BASE = "https://api.groq.com/openai/v1"
+_QWEN_BASE_DEFAULT = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+
+
+def _fallback_dashscope_keys() -> List[str]:
+    from pathlib import Path as _P
+
+    src = _P(__file__).resolve().parents[1] / "config" / "dashscope_keys_fallback.json"
+    if not src.exists():
+        return []
+    try:
+        data = json.loads(src.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    return [str(k).strip() for k in (data.get("keys") or []) if str(k).strip()]
+
+
+def dashscope_api_keys() -> List[str]:
+    """Qwen/DashScope keys: DASHSCOPE_API_KEYS (csv) > DASHSCOPE_API_KEY > file."""
+    multi = (os.environ.get("DASHSCOPE_API_KEYS") or "").strip()
+    if multi:
+        return [k.strip() for k in multi.split(",") if k.strip()]
+    single = (os.environ.get("DASHSCOPE_API_KEY") or "").strip()
+    if single:
+        return [single]
+    return _fallback_dashscope_keys()
+
+
+def qwen_model() -> str:
+    return (os.environ.get("QWEN_VISION_MODEL") or "qwen-vl-max").strip()
+
+
+def qwen_base_url() -> str:
+    return (os.environ.get("DASHSCOPE_BASE_URL") or _QWEN_BASE_DEFAULT).strip().rstrip("/")
+
+
+def vision_endpoints() -> List[Dict[str, str]]:
+    """Ordered list of {provider, base_url, api_key, model} to try per frame.
+
+    Order controlled by TAG_PROVIDER_ORDER (default "qwen,groq"). Qwen first
+    because it's far cheaper in tokens; Groq is the fallback. Only providers
+    with configured keys appear.
+    """
+    order = [p.strip().lower() for p in (os.environ.get("TAG_PROVIDER_ORDER") or "qwen,groq").split(",") if p.strip()]
+    out: List[Dict[str, str]] = []
+    for provider in order:
+        if provider == "qwen":
+            for k in dashscope_api_keys():
+                out.append({"provider": "qwen", "base_url": qwen_base_url(), "api_key": k, "model": qwen_model()})
+        elif provider == "groq":
+            for k in groq_api_keys():
+                out.append({"provider": "groq", "base_url": _GROQ_BASE, "api_key": k, "model": groq_model()})
+    return out
+
+
 # --------------------------------------------------------------------------- #
 # Pure helpers (no I/O)
 # --------------------------------------------------------------------------- #
@@ -203,13 +260,11 @@ def _encode_image_b64(path: Path) -> str:
     return base64.b64encode(path.read_bytes()).decode("utf-8")
 
 
-def call_groq_vision(
-    image_b64: str, *, api_key: str, model: str, timeout: float = 30.0, prompt: str = "",
+def call_openai_vision(
+    image_b64: str, *, base_url: str, api_key: str, model: str, timeout: float = 30.0, prompt: str = "",
 ) -> Optional[Dict[str, Any]]:
-    """Single Groq vision request -> parsed JSON dict (or None on failure).
-
-    prompt defaults to the video-frame taxonomy prompt; the photo tagger passes
-    its own still-image prompt (same JSON schema)."""
+    """One vision request to any OpenAI-compatible endpoint (Groq / Qwen-DashScope
+    / OpenRouter / Together / ...) -> parsed JSON dict, or None on failure."""
     import requests  # local import: keep module import-light for unit tests
 
     payload = {
@@ -223,50 +278,81 @@ def call_groq_vision(
         "max_tokens": 300,
     }
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    url = f"{base_url.rstrip('/')}/chat/completions"
     try:
-        resp = requests.post(GROQ_URL, json=payload, headers=headers, timeout=timeout)
+        resp = requests.post(url, json=payload, headers=headers, timeout=timeout)
     except Exception as e:
-        log.warning("groq_vision request error: %r", e)
+        log.warning("vision request error (%s): %r", base_url, e)
         return None
     if resp.status_code != 200:
-        log.warning("groq_vision HTTP %s model=%s body=%s", resp.status_code, model, (resp.text or "")[:300])
+        log.warning("vision HTTP %s base=%s model=%s body=%s", resp.status_code, base_url, model, (resp.text or "")[:300])
         return None
     try:
         data = resp.json()
     except Exception as e:
-        log.warning("groq_vision bad JSON: %r", e)
+        log.warning("vision bad JSON (%s): %r", base_url, e)
         return None
     choices = data.get("choices") if isinstance(data, dict) else None
     if not choices:
-        log.warning("groq_vision no choices: %s", json.dumps(data)[:300] if isinstance(data, dict) else type(data))
+        log.warning("vision no choices (%s): %s", base_url, json.dumps(data)[:300] if isinstance(data, dict) else type(data))
         return None
     return parse_groq_json(choices[0].get("message", {}).get("content", ""))
 
 
-def tag_video_file(path: Path, *, keys: List[str], model: str) -> Optional[Dict[str, Any]]:
-    """Extract frames, tag each via Groq (round-robin keys), majority-vote merge."""
-    if not keys:
-        raise RuntimeError("no_groq_keys")  # set GROQ_API_KEYS / GROQ_API_KEY
+def call_groq_vision(image_b64: str, *, api_key: str, model: str, timeout: float = 30.0, prompt: str = "") -> Optional[Dict[str, Any]]:
+    """Backward-compatible Groq wrapper over call_openai_vision."""
+    return call_openai_vision(image_b64, base_url=_GROQ_BASE, api_key=api_key, model=model, timeout=timeout, prompt=prompt)
+
+
+def _tag_one_frame(image_b64: str, endpoints: List[Dict[str, str]], start: int, prompt: str) -> Optional[Dict[str, Any]]:
+    """Try providers/keys in rotation until one returns a parsed result."""
+    n = len(endpoints)
+    for j in range(n):
+        ep = endpoints[(start + j) % n]
+        parsed = call_openai_vision(
+            image_b64, base_url=ep["base_url"], api_key=ep["api_key"], model=ep["model"], prompt=prompt,
+        )
+        if parsed:
+            return parsed
+    return None
+
+
+def tag_video_file(
+    path: Path, *, endpoints: Optional[List[Dict[str, str]]] = None,
+    keys: Optional[List[str]] = None, model: str = "", prompt: str = "",
+) -> Optional[Dict[str, Any]]:
+    """Extract frames, tag each via the provider chain (Qwen->Groq failover),
+    majority-vote merge. `endpoints` overrides the default; legacy keys/model
+    build a Groq-only chain."""
+    if endpoints is None:
+        if keys is not None:
+            endpoints = [{"provider": "groq", "base_url": _GROQ_BASE, "api_key": k, "model": model or groq_model()} for k in keys]
+        else:
+            endpoints = vision_endpoints()
+    if not endpoints:
+        raise RuntimeError("no_vision_keys")  # set DASHSCOPE_API_KEYS / GROQ_API_KEYS
     with tempfile.TemporaryDirectory(prefix="tagframes_") as tmp:
         frames = extract_frames(path, Path(tmp))
         if not frames:
             raise RuntimeError("no_frames")  # ffmpeg/ffprobe failed or 0-duration
         results: List[Dict[str, Any]] = []
         for i, fp in enumerate(frames):
-            key = keys[i % len(keys)]
-            parsed = call_groq_vision(_encode_image_b64(fp), api_key=key, model=model)
+            parsed = _tag_one_frame(_encode_image_b64(fp), endpoints, start=i, prompt=prompt)
             if parsed:
                 results.append(parsed)
     if not results:
-        raise RuntimeError("groq_no_result")  # all Groq calls failed (see groq_vision logs)
+        raise RuntimeError("vision_no_result")  # all providers failed (see vision logs)
     return merge_frame_votes(results)
 
 
-def tag_clip_from_s3(*, bucket: str, s3_key: str, keys: List[str], model: str) -> Optional[Dict[str, Any]]:
+def tag_clip_from_s3(
+    *, bucket: str, s3_key: str, endpoints: Optional[List[Dict[str, str]]] = None,
+    keys: Optional[List[str]] = None, model: str = "",
+) -> Optional[Dict[str, Any]]:
     """Download an S3 clip, tag it, return a footage_tags record.
 
     Raises a short categorized RuntimeError on failure (download_failed /
-    no_frames / groq_no_result / no_clip_id) so the batch can tally reasons.
+    no_frames / vision_no_result / no_clip_id) so the batch can tally reasons.
     """
     from src.storage.s3 import download_from_s3
 
@@ -277,7 +363,7 @@ def tag_clip_from_s3(*, bucket: str, s3_key: str, keys: List[str], model: str) -
             download_from_s3(bucket, s3_key, dest)
         except Exception as e:
             raise RuntimeError(f"download_failed: {e}") from e
-        votes = tag_video_file(dest, keys=keys, model=model)
+        votes = tag_video_file(dest, endpoints=endpoints, keys=keys, model=model)
     rec = record_from_votes(s3_key=s3_key, votes=votes, tagger="groq")
     if not rec:
         raise RuntimeError("no_clip_id")
@@ -311,18 +397,17 @@ def run_tagging_batch(
     """
     import asyncio as _asyncio
 
-    keys = groq_api_keys()
-    model = groq_model()
-    # Diagnostic: which keys did this worker actually load, and from where.
-    # If suffixes don't match the freshly-committed fallback keys, the worker is
-    # using env GROQ_API_KEYS (override) or a stale image — not the fallback file.
+    endpoints = vision_endpoints()
+    # Diagnostic: which providers/keys did this worker load. Qwen-VL is ~16x
+    # cheaper in tokens than Groq's Llama-4, so it should lead.
+    from collections import Counter as _Counter
+    by_provider = _Counter(ep["provider"] for ep in endpoints)
     log.warning(
-        "tagging start: keys=%d env_GROQ_API_KEYS=%s env_GROQ_API_KEY=%s suffixes=%s model=%s",
-        len(keys),
-        bool((os.environ.get("GROQ_API_KEYS") or "").strip()),
-        bool((os.environ.get("GROQ_API_KEY") or "").strip()),
-        [k[-4:] for k in keys],
-        model,
+        "tagging start: endpoints=%d providers=%s order=%s suffixes=%s",
+        len(endpoints),
+        dict(by_provider),
+        os.environ.get("TAG_PROVIDER_ORDER") or "qwen,groq",
+        [ep["api_key"][-4:] for ep in endpoints],
     )
 
     if list_keys_fn is None:
@@ -373,7 +458,7 @@ def run_tagging_batch(
 
     if tag_fn is None:
         def tag_fn(s3_key: str) -> Optional[Dict[str, Any]]:
-            return tag_clip_from_s3(bucket=bucket, s3_key=s3_key, keys=keys, model=model)
+            return tag_clip_from_s3(bucket=bucket, s3_key=s3_key, endpoints=endpoints)
 
     tagged_ids = fetch_tagged_fn()
     all_keys = list_keys_fn()
