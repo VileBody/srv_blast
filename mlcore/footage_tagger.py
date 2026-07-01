@@ -304,11 +304,11 @@ def call_groq_vision(image_b64: str, *, api_key: str, model: str, timeout: float
     return call_openai_vision(image_b64, base_url=_GROQ_BASE, api_key=api_key, model=model, timeout=timeout, prompt=prompt)
 
 
-def _tag_one_frame(image_b64: str, endpoints: List[Dict[str, str]], start: int, prompt: str) -> Optional[Dict[str, Any]]:
-    """Try providers/keys in rotation until one returns a parsed result."""
-    n = len(endpoints)
-    for j in range(n):
-        ep = endpoints[(start + j) % n]
+def _tag_one_frame(image_b64: str, endpoints: List[Dict[str, str]], prompt: str) -> Optional[Dict[str, Any]]:
+    """Try endpoints STRICTLY in priority order (qwen keys first, then groq) so
+    the lead provider is always tried first and fallbacks only fire when it
+    fails — no cross-provider rotation."""
+    for ep in endpoints:
         parsed = call_openai_vision(
             image_b64, base_url=ep["base_url"], api_key=ep["api_key"], model=ep["model"], prompt=prompt,
         )
@@ -336,8 +336,8 @@ def tag_video_file(
         if not frames:
             raise RuntimeError("no_frames")  # ffmpeg/ffprobe failed or 0-duration
         results: List[Dict[str, Any]] = []
-        for i, fp in enumerate(frames):
-            parsed = _tag_one_frame(_encode_image_b64(fp), endpoints, start=i, prompt=prompt)
+        for fp in frames:
+            parsed = _tag_one_frame(_encode_image_b64(fp), endpoints, prompt=prompt)
             if parsed:
                 results.append(parsed)
     if not results:

@@ -26,24 +26,35 @@ def test_vision_endpoints_order_and_key_gating(monkeypatch) -> None:
     assert {e["provider"] for e in eps3} == {"qwen"}
 
 
-def test_tag_one_frame_fails_over_to_next_provider(monkeypatch) -> None:
+def test_tag_one_frame_qwen_first_groq_only_on_failure(monkeypatch) -> None:
     endpoints = [
         {"provider": "qwen", "base_url": "b1", "api_key": "k1", "model": "qwen-vl-max"},
         {"provider": "groq", "base_url": "b2", "api_key": "k2", "model": "llama"},
     ]
     calls = []
 
-    def fake_call(image_b64, *, base_url, api_key, model, prompt="", timeout=30.0):
+    # qwen succeeds -> groq must NOT be called (groq "rests")
+    def qwen_ok(image_b64, *, base_url, api_key, model, prompt="", timeout=30.0):
         calls.append(base_url)
-        return {"mood": "minor"} if base_url == "b2" else None  # qwen 429s, groq answers
+        return {"mood": "minor"} if base_url == "b1" else None
 
-    monkeypatch.setattr(ft, "call_openai_vision", fake_call)
-    out = ft._tag_one_frame("img", endpoints, start=0, prompt="p")
-    assert out == {"mood": "minor"}
-    assert calls == ["b1", "b2"]  # tried qwen first, fell over to groq
+    monkeypatch.setattr(ft, "call_openai_vision", qwen_ok)
+    assert ft._tag_one_frame("img", endpoints, prompt="p") == {"mood": "minor"}
+    assert calls == ["b1"]  # qwen only; groq not touched
+
+    # qwen fails -> falls over to groq, in order
+    calls.clear()
+
+    def qwen_429(image_b64, *, base_url, api_key, model, prompt="", timeout=30.0):
+        calls.append(base_url)
+        return {"mood": "minor"} if base_url == "b2" else None
+
+    monkeypatch.setattr(ft, "call_openai_vision", qwen_429)
+    assert ft._tag_one_frame("img", endpoints, prompt="p") == {"mood": "minor"}
+    assert calls == ["b1", "b2"]  # qwen tried first, then groq
 
 
 def test_tag_one_frame_all_fail_returns_none(monkeypatch) -> None:
     endpoints = [{"provider": "qwen", "base_url": "b1", "api_key": "k", "model": "m"}]
     monkeypatch.setattr(ft, "call_openai_vision", lambda *a, **k: None)
-    assert ft._tag_one_frame("img", endpoints, start=0, prompt="p") is None
+    assert ft._tag_one_frame("img", endpoints, prompt="p") is None
