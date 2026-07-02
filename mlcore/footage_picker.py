@@ -34,6 +34,16 @@ _SCORE_JITTER_MAG = 2.5
 #   _SOFTMAX_TOP_K: how many candidates compete (cuts long tail of bad files)
 _SOFTMAX_TEMP = 2.0
 _SOFTMAX_TOP_K = 5
+# Quality band (Wave 1). The head of an interval is chosen among clips whose
+# relevance score is within _QUALITY_BAND_DELTA of the best AND at least
+# _QUALITY_BAND_FLOOR. Score = overlap count + 0.5*color, so floor 2.0 == "matched
+# >= 2 theme tags" (overlap 1 + color = 1.5 < 2.0 is excluded). This replaces the
+# flat _SCORE_JITTER_MAG noise: cross-user/seed variety now comes from a seeded
+# pick WITHIN the band of near-best clips, so a weak overlap-1 clip can never win
+# just because random jitter overpowered the real score gap. Thin bucket
+# (best < floor) → the floor is dropped so the pool never empties.
+_QUALITY_BAND_FLOOR = 2.0
+_QUALITY_BAND_DELTA = 1.0
 # Safety margin (seconds) kept at the head/tail of a source video when
 # picking a random in-source offset. Relaxed from 0.1 to 0.05 to unlock
 # offsets for sources whose duration is just barely above the interval.
@@ -674,6 +684,36 @@ def _dedupe_assets_by_file_name(pool: List[Dict[str, Any]]) -> List[Dict[str, An
     return out
 
 
+def _quality_band_enabled() -> bool:
+    """Wave 1 selection. Default ON; FOOTAGE_QUALITY_BAND=0 rolls back to the
+    legacy flat-jitter path instantly (same escape-hatch pattern as
+    STAGE2B_DETERMINISTIC)."""
+    import os
+    return (os.environ.get("FOOTAGE_QUALITY_BAND") or "1").strip().lower() not in ("0", "false", "no", "off")
+
+
+def _quality_band(
+    file_names: List[str], scores_by_name: Dict[str, float] | None
+) -> List[str]:
+    """Names within the quality band: score >= max(floor, best - delta). The
+    floor is dropped when even the best clip is below it (thin bucket) so the
+    band never empties. Preserves input order."""
+    def _s(name: str) -> float:
+        try:
+            return float((scores_by_name or {}).get(name) or 0.0)
+        except Exception:
+            return 0.0
+
+    if not file_names:
+        return []
+    best = max(_s(n) for n in file_names)
+    if best >= _QUALITY_BAND_FLOOR:
+        thresh = max(_QUALITY_BAND_FLOOR, best - _QUALITY_BAND_DELTA)
+    else:
+        thresh = best - _QUALITY_BAND_DELTA
+    return [n for n in file_names if _s(n) >= thresh - 1e-9]
+
+
 def _deterministic_file_name_order(
     *,
     file_names: List[str],
@@ -684,23 +724,48 @@ def _deterministic_file_name_order(
 ) -> List[str]:
     """Return file_names ordered by descending preference.
 
-    The first element comes from a softmax-weighted pick within top-K, so
-    different seeds produce genuinely different "winners" of an interval
-    (not just hash-tie-break orderings). The remaining elements are filled
-    by deterministic strict-rank order so callers that walk down the list
-    on conflicts still see a sensible fallback chain.
+    Quality-band mode (default, Wave 1): the head is a seeded softmax pick WITHIN
+    the near-best band (no flat jitter), so different seeds/users get different
+    but genuinely on-theme winners; weak clips never win by noise. The tail lists
+    the rest of the band first (by score, seeded), then out-of-band clips as a
+    last-resort fallback when the band is exhausted across intervals.
+
+    Legacy mode (FOOTAGE_QUALITY_BAND=0): the old score+jitter softmax-top-K.
     """
     if not file_names:
         return []
 
+    def _base(name: str) -> float:
+        try:
+            return float((scores_by_name or {}).get(name) or 0.0)
+        except Exception:
+            return 0.0
+
+    if _quality_band_enabled():
+        band = _quality_band(file_names, scores_by_name)
+        pool_head = band or list(file_names)
+        band_set = set(pool_head)
+        # Band membership already guarantees near-best relevance, so pick the head
+        # UNIFORMLY (seeded) across the band — this maximizes cross-user/seed
+        # variety among equally-good clips without ever choosing a weak one. (Once
+        # the global cooldown lands, in-band order becomes LRU with the seed only
+        # breaking ties; a uniform seed here is consistent with that.)
+        ordered_band = sorted(pool_head, key=lambda n: (-_base(n), n))  # stable, quality-first
+        u = _seeded_unit_random(seed_value, interval_idx, interval_start, salt="filename")
+        head = ordered_band[min(len(ordered_band) - 1, int(u * len(ordered_band)))]
+
+        def _key(name: str) -> Tuple[int, float, str, str]:
+            material = f"{seed_value}:{interval_idx}:{interval_start:.6f}:{name}"
+            h = hashlib.sha256(material.encode("utf-8")).hexdigest()
+            # in-band first, then by score desc, then seeded hash
+            return (0 if name in band_set else 1, -_base(name), h, name)
+
+        rest = [n for n in file_names if n != head]
+        return [head, *sorted(rest, key=_key)]
+
+    # ── legacy flat-jitter path (FOOTAGE_QUALITY_BAND=0) ──────────────────────
     def _score(name: str) -> float:
-        base = 0.0
-        if scores_by_name:
-            try:
-                base = float(scores_by_name.get(name) or 0.0)
-            except Exception:
-                base = 0.0
-        return base + _score_jitter(seed_value, name, interval_idx)
+        return _base(name) + _score_jitter(seed_value, name, interval_idx)
 
     scores = [_score(n) for n in file_names]
     pick_idx = _softmax_pick_index(
