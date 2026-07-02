@@ -1,13 +1,15 @@
-"""Rank footage buckets by relevance to a track's lyrics.
+"""Rank footage buckets by relevance to a track's lyrics — THEME-FIRST.
 
-One cheap LLM call (injected) returns the FULL ranked list of bucket_ids, so
-the bot shows the top-3 and "Обновить" just pages further — no extra calls.
-Pure helpers (prompt build / response parse / heuristic fallback / mood filter)
-are separated from the LLM I/O for testing and determinism.
+Principle (restored 2026-07-02): don't ask the LLM to blind-rank 48 flat vibes.
+Instead CLASSIFY the track into emotional/topical THEMES (heartbreak, aggression,
+hustle, party, serene…) with real instructions (config/styles/theme_relevance
+descriptions), then EXPAND the ranked themes to their relevant visual BUCKETS via
+the many-to-many THEME_BUCKETS map. Smaller, grounded LLM task; the prompt carries
+actual rules; the shortlist is a complete, ordered list of bucket_ids.
 
-Determinism: caller uses temp=0 + caches by hash(lyrics); parse always returns a
-COMPLETE, deduped list (valid ids the model omitted are appended in catalog
-order) so pagination never runs out unexpectedly.
+One cheap LLM call (injected) returns the ranked THEMES; expansion is
+deterministic. Pure helpers (prompt/parse/heuristic/mood) are separated from the
+LLM I/O for testing. Determinism: temp=0 in the adapter + cache by hash(lyrics).
 """
 from __future__ import annotations
 
@@ -16,11 +18,18 @@ import json
 import re
 from typing import Any, Callable, Dict, List, Optional
 
+from config.styles.theme_groups import get_theme_label
+from config.styles.theme_relevance import (
+    THEME_DESCRIPTIONS_RU,
+    buckets_for_themes,
+    candidate_themes,
+    theme_mood,
+)
 from mlcore.footage_bucket_catalog import Bucket, get_bucket_catalog
 
-# Bump when the ranker prompt/parse semantics change so cached rankings for the
-# same lyrics are invalidated (a cache miss re-ranks with the new prompt).
-RANKER_PROMPT_VERSION = "v1"
+# Bump when the ranker prompt/parse/relevance semantics change so cached rankings
+# for the same lyrics are invalidated (a cache miss re-ranks with the new logic).
+RANKER_PROMPT_VERSION = "v2-theme"
 
 
 def _norm(v: Any) -> str:
@@ -34,59 +43,46 @@ def catalog_fingerprint(catalog: List[Bucket]) -> str:
     return hashlib.sha256(material.encode("utf-8")).hexdigest()[:16]
 
 
-def ranker_cache_key(
-    *,
-    lyrics: str,
-    mood: str,
-    catalog: List[Bucket],
-    model: str,
-) -> str:
-    """Deterministic cache key for a ranking.
-
-    Includes EVERY input that affects the output — normalized lyrics, mood,
-    catalog fingerprint, model id, prompt version — so a hit can never serve a
-    ranking computed for different inputs. Same inputs → same key.
-    """
-    lyr = _norm(lyrics)
-    lyr_h = hashlib.sha256(lyr.encode("utf-8")).hexdigest()[:24]
+def ranker_cache_key(*, lyrics: str, mood: str, catalog: List[Bucket], model: str) -> str:
+    """Deterministic cache key — normalized lyrics + mood + catalog fingerprint +
+    model + prompt version. Same inputs → same key; a hit is always for the exact
+    same request."""
+    lyr_h = hashlib.sha256(_norm(lyrics).encode("utf-8")).hexdigest()[:24]
     mood_norm = _norm(mood) or "any"
     fp = catalog_fingerprint(catalog)
     model_norm = str(model or "").strip() or "unknown"
     return f"ranker:{RANKER_PROMPT_VERSION}:{model_norm}:{fp}:{mood_norm}:{lyr_h}"
 
 
-def filter_by_mood(buckets: List[Bucket], mood: str) -> List[Bucket]:
-    """Hard mood filter (don't offer major vibes for a minor track). Empty/unknown
-    mood → no filtering. If the filter would empty the list, fall back to all."""
-    m = _norm(mood)
-    if m not in {"major", "minor"}:
-        return list(buckets)
-    kept = [b for b in buckets if b.mood == m]
-    return kept or list(buckets)
-
-
-def build_ranker_prompt(lyrics: str, buckets: List[Bucket]) -> Dict[str, str]:
-    """System + user prompt for the ranker. Returns {"system","user"}."""
-    lines = []
-    for b in buckets:
-        sample = ", ".join(b.priority_tags[:5])
-        lines.append(f"{b.bucket_id} | {b.label} | {sample}")
-    catalog = "\n".join(lines)
+# --------------------------------------------------------------------------- #
+# Theme classification (the LLM's task)
+# --------------------------------------------------------------------------- #
+def build_theme_prompt(lyrics: str, theme_ids: List[str]) -> Dict[str, str]:
+    """System + user prompt to CLASSIFY the track into themes, most fitting first.
+    The system prompt carries the actual rules (theme descriptions)."""
+    lines = [
+        f"{t} | {get_theme_label(t)} | {THEME_DESCRIPTIONS_RU.get(t, '')}"
+        for t in theme_ids
+    ]
     system = (
-        "You are a music-video art director. Given a song's lyrics and a catalog of "
-        "footage vibes (each: id | name | sample visual tags), rank the vibes by how "
-        "well their VISUALS fit the song. Consider mood, imagery, and setting in the "
-        "lyrics. Return ONLY a JSON array of bucket ids, most relevant first, "
-        "including every id exactly once. No prose."
+        "Ты арт-директор музыкальных клипов. По тексту трека определи, О ЧЁМ он "
+        "и какое у него настроение, и отранжируй ТЕМЫ ниже по тому, насколько "
+        "каждая подходит треку. Каждая тема = тип трека (id | название | описание). "
+        "Верни ТОЛЬКО JSON-массив id тем, самая подходящая первой, каждый id ровно "
+        "один раз. Без пояснений."
     )
-    user = f"LYRICS:\n{lyrics.strip()}\n\nVIBES (id | name | tags):\n{catalog}\n\nReturn JSON array of ids."
+    user = (
+        f"ТЕКСТ ТРЕКА:\n{lyrics.strip()}\n\n"
+        f"ТЕМЫ (id | название | описание):\n" + "\n".join(lines) +
+        "\n\nВерни JSON-массив id тем по убыванию соответствия."
+    )
     return {"system": system, "user": user}
 
 
-def parse_ranking_response(raw: str, valid_ids: List[str]) -> List[str]:
-    """Parse the model's id array; keep valid+unique, then append any missing
-    valid ids in catalog order so the result is always complete."""
-    valid = list(dict.fromkeys(valid_ids))
+def parse_theme_ranking(raw: str, valid_theme_ids: List[str]) -> List[str]:
+    """Parse the model's theme-id array; keep valid+unique, then append any
+    missing valid themes in input order so the result is always complete."""
+    valid = list(dict.fromkeys(valid_theme_ids))
     valid_set = set(valid)
     s = str(raw or "").strip()
     if s.startswith("```"):
@@ -101,39 +97,43 @@ def parse_ranking_response(raw: str, valid_ids: List[str]) -> List[str]:
         arr = json.loads(s)
         if isinstance(arr, list):
             for x in arr:
-                xid = str(x or "").strip()
+                xid = _norm(x).replace(" ", "_")
                 if xid in valid_set and xid not in ordered:
                     ordered.append(xid)
     except Exception:
-        # tolerant fallback: pull ids by regex in appearance order
-        for xid in re.findall(r"[a-z0-9_]+:[a-z0-9_]+", s):
+        for xid in re.findall(r"[a-z0-9_]+", s.lower()):
             if xid in valid_set and xid not in ordered:
                 ordered.append(xid)
-    for vid in valid:  # complete the list deterministically
+    for vid in valid:  # complete deterministically
         if vid not in ordered:
             ordered.append(vid)
     return ordered
 
 
-def heuristic_rank(lyrics: str, buckets: List[Bucket]) -> List[str]:
-    """LLM-free fallback: score by overlap of lyrics words with label+tags."""
-    words = set(re.findall(r"[a-zа-я0-9]+", _norm(lyrics)))
+def heuristic_theme_rank(lyrics: str, theme_ids: List[str]) -> List[str]:
+    """LLM-free fallback: score each theme by word overlap of the lyrics with its
+    RU description + label. RU-aware (descriptions are Russian), unlike the old
+    English-tag heuristic which scored ~0 on Russian lyrics."""
+    words = set(re.findall(r"[a-zа-яё0-9]+", _norm(lyrics)))
 
-    def score(b: Bucket) -> int:
-        terms = set()
-        for t in b.priority_tags:
-            terms |= set(t.split())
-        terms |= set(_norm(b.label).split())
+    def score(t: str) -> int:
+        terms = set(re.findall(r"[a-zа-яё0-9]+", _norm(THEME_DESCRIPTIONS_RU.get(t, ""))))
+        terms |= set(re.findall(r"[a-zа-яё0-9]+", _norm(get_theme_label(t))))
         return len(words & terms)
 
-    ranked = sorted(buckets, key=lambda b: (-score(b), b.bucket_id))
-    return [b.bucket_id for b in ranked]
+    return sorted(theme_ids, key=lambda t: (-score(t), t))
 
 
+# --------------------------------------------------------------------------- #
+# LLM I/O adapter
+# --------------------------------------------------------------------------- #
 def gemini_rank_call(system: str, user: str) -> str:
-    """I/O adapter: one cheap Gemini Flash text call. Raises on any failure so
-    rank_buckets() falls back to the heuristic (never breaks the endpoint)."""
+    """One cheap Gemini Flash text call at temperature 0 (deterministic — matches
+    the cache design). Raises on any failure so rank_buckets() falls back to the
+    heuristic (never breaks the endpoint)."""
     import os
+
+    from google.genai import types  # type: ignore
 
     from mlcore.hooks.f5_cognition._gemini import make_client
 
@@ -142,6 +142,7 @@ def gemini_rank_call(system: str, user: str) -> str:
     resp = client.models.generate_content(
         model=model,
         contents=f"{system}\n\n{user}",
+        config=types.GenerateContentConfig(temperature=0.0),
     )
     text = getattr(resp, "text", "") or ""
     if not text.strip():
@@ -149,6 +150,9 @@ def gemini_rank_call(system: str, user: str) -> str:
     return text
 
 
+# --------------------------------------------------------------------------- #
+# Public entry
+# --------------------------------------------------------------------------- #
 def rank_buckets(
     *,
     lyrics: str,
@@ -157,26 +161,40 @@ def rank_buckets(
     llm_call: Optional[Callable[[str, str], str]] = None,
     raise_on_llm_error: bool = False,
 ) -> List[str]:
-    """Return the full ranked list of bucket_ids for these lyrics.
+    """Full ranked list of bucket_ids for these lyrics, THEME-FIRST.
 
-    llm_call(system, user) -> raw text. If None or it fails, falls back to the
-    heuristic. Mood hard-filters the candidate set first.
+    1) classify the track into ranked themes (LLM with instructions, or heuristic);
+    2) expand themes -> their relevant buckets (deterministic), mood-filtered;
+    3) append any remaining live buckets so the list is always complete.
 
-    raise_on_llm_error: when True, a failing llm_call re-raises instead of
-    silently returning the heuristic. Callers that CACHE the result use this so a
-    degraded heuristic (produced while the LLM is down) is never stored as if it
-    were the real ranking.
+    raise_on_llm_error: when True a failing llm_call re-raises (so a caller that
+    CACHES never stores a degraded heuristic as the real ranking).
     """
-    buckets = filter_by_mood(catalog if catalog is not None else get_bucket_catalog(), mood)
-    valid_ids = [b.bucket_id for b in buckets]
+    cat = catalog if catalog is not None else get_bucket_catalog()
+    valid_ids = {b.bucket_id for b in cat}
+    catalog_order = [b.bucket_id for b in cat]
+
+    def _mood_ok(bid: str) -> bool:
+        m = _norm(mood)
+        return m not in {"major", "minor"} or theme_mood(bid.split(":", 1)[0]) == m
+
     if not str(lyrics or "").strip():
-        return valid_ids  # nothing to rank on → catalog order
+        return [b for b in catalog_order if _mood_ok(b)]  # no lyrics → catalog order
+
+    themes = candidate_themes(mood)
+    ranked_themes: Optional[List[str]] = None
     if llm_call is not None:
         try:
-            prompt = build_ranker_prompt(lyrics, buckets)
-            raw = llm_call(prompt["system"], prompt["user"])
-            return parse_ranking_response(raw, valid_ids)
+            p = build_theme_prompt(lyrics, themes)
+            ranked_themes = parse_theme_ranking(llm_call(p["system"], p["user"]), themes)
         except Exception:
             if raise_on_llm_error:
                 raise
-    return heuristic_rank(lyrics, buckets)
+    if ranked_themes is None:
+        ranked_themes = heuristic_theme_rank(lyrics, themes)
+
+    ordered = buckets_for_themes(ranked_themes, valid_ids=valid_ids, mood=mood)
+    for bid in catalog_order:  # complete the list with any bucket not yet covered
+        if bid not in ordered and _mood_ok(bid):
+            ordered.append(bid)
+    return ordered
