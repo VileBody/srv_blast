@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional
 
-from fastapi import APIRouter, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, File, HTTPException, Query, Response, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -654,6 +654,45 @@ def create_asset_router(*, prefix: str = "/asset-ui/api") -> APIRouter:
     @router.get("/assets/taxonomy")
     def get_taxonomy_endpoint() -> Dict[str, Any]:
         return {"themes": get_taxonomy()}
+
+    @router.get("/assets/tags-snapshot")
+    def get_tags_snapshot(media_type: str = Query("video")) -> Response:
+        """Download the current footage_tags snapshot straight from Postgres, in
+        the video_database shape the alias/pool reports consume — so tag-hygiene
+        tuning can run offline without node access. media_type=video|photo."""
+        mt = _norm_media_type(media_type)
+        db_url = _theme_tags_db_url()
+        if not db_url:
+            raise HTTPException(status_code=503, detail="Postgres not configured")
+
+        import asyncio
+
+        import asyncpg  # type: ignore
+
+        from mlcore.footage_tags_db import build_snapshot
+
+        async def _go() -> List[Dict[str, Any]]:
+            conn = await asyncpg.connect(dsn=db_url)
+            try:
+                return await build_snapshot(conn, source=mt)
+            finally:
+                await conn.close()
+
+        try:
+            rows = asyncio.run(_go())
+        except Exception as e:  # pragma: no cover - surfaced via endpoint error
+            log.error("tags-snapshot read failed: %s", e)
+            raise HTTPException(status_code=500, detail=str(e))
+
+        body = json.dumps(rows, ensure_ascii=False, indent=2)
+        return Response(
+            content=body,
+            media_type="application/json",
+            headers={
+                "Content-Disposition": f'attachment; filename="footage_tags_snapshot_{mt}.json"',
+                "X-Snapshot-Rows": str(len(rows)),
+            },
+        )
 
     # --- server-side asset ingest tasks (tagging + full activation) ---
     # Per-pool Redis progress keys so the photo pool (media_type=photo) has its
