@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { MediaType } from '../api';
+import type { MediaType, BucketOption } from '../api';
+import { fetchBuckets } from '../api';
 import { useAssets } from '../hooks/useAssets';
 import { useTaxonomy } from '../hooks/useTaxonomy';
 import { VideoPreview } from './VideoPreview';
@@ -17,13 +18,26 @@ export function AssetBrowser() {
   // scoped to this pool — photos and footage never mix; an empty photo pool
   // shows nothing.
   const [mediaType, setMediaType] = useState<MediaType>('video');
+  // Bucket (vibe) browser: '' = all clips, otherwise browse exactly that bucket.
+  const [bucket, setBucket] = useState<string>('');
+  const [buckets, setBuckets] = useState<BucketOption[]>([]);
   const { current, index, total, loading, next, prev, remove, reload } = useAssets(
     undefined,
     undefined,
     mediaType,
+    bucket || undefined,
   );
   const taxonomy = useTaxonomy();
   const [panel, setPanel] = useState<Panel>(null);
+
+  // Bucket list for the dropdown (video pool only — buckets are footage vibes).
+  useEffect(() => {
+    if (mediaType === 'video') {
+      fetchBuckets().then(setBuckets).catch((e) => console.error('fetchBuckets', e));
+    } else {
+      setBucket('');  // buckets are footage vibes; the photo pool has none
+    }
+  }, [mediaType]);
 
   // Keyboard navigation — disabled while a bulk panel is open so typing in
   // inputs doesn't move through the asset list.
@@ -63,8 +77,25 @@ export function AssetBrowser() {
         </button>
         <TagUntaggedButton onDone={reload} mediaType={mediaType} />
         <ActivateBaseButton onDone={reload} mediaType={mediaType} />
+        {mediaType === 'video' && (
+          <select
+            className="toolbar-btn"
+            title="Смотреть клипы одного вайба (бакета)"
+            value={bucket}
+            onChange={(e) => setBucket(e.target.value)}
+          >
+            <option value="">🎬 Все клипы</option>
+            {buckets.map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.theme_label} · {b.label} ({b.mood})
+              </option>
+            ))}
+          </select>
+        )}
         <span className="toolbar-spacer" />
-        <span className="toolbar-counter">Всего: {total}</span>
+        <span className="toolbar-counter">
+          {bucket ? `Бакет: ${total}` : `Всего: ${total}`}
+        </span>
       </div>
       <div className="asset-browser">
         <div className="main-column">

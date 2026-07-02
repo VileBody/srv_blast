@@ -8,14 +8,31 @@ export async function fetchAssets(
   genre?: string,
   tag?: string,
   mediaType: MediaType = 'video',
+  bucket?: string,
 ): Promise<PaginatedAssets> {
   const params = new URLSearchParams({ page: String(page), per_page: String(perPage) });
   if (genre) params.set('genre', genre);
   if (tag) params.set('tag', tag);
   if (mediaType !== 'video') params.set('media_type', mediaType);
+  if (bucket) params.set('bucket', bucket);
   const res = await fetch(`${BASE}/assets?${params}`);
   if (!res.ok) throw new Error(`fetchAssets: ${res.status}`);
   return res.json();
+}
+
+export interface BucketOption {
+  id: string;
+  label: string;
+  theme_label: string;
+  mood: string;
+  tags: string[];
+}
+
+export async function fetchBuckets(): Promise<BucketOption[]> {
+  const res = await fetch(`${BASE}/assets/buckets`);
+  if (!res.ok) throw new Error(`fetchBuckets: ${res.status}`);
+  const data = await res.json();
+  return data.buckets ?? [];
 }
 
 export async function fetchTaxonomy(): Promise<Taxonomy> {

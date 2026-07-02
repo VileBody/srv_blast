@@ -380,6 +380,18 @@ def _get_theme_tags_for_asset(file_name: str) -> List[str]:
     return idx.get(m.group(1), [])
 
 
+_bucket_catalog_cache: Optional[Dict[str, Any]] = None
+
+
+def _bucket_catalog() -> Dict[str, Any]:
+    """bucket_id -> Bucket for the Asset UI vibe browser (deduped catalog)."""
+    global _bucket_catalog_cache
+    if _bucket_catalog_cache is None:
+        from mlcore.footage_bucket_catalog import get_bucket_catalog
+        _bucket_catalog_cache = {b.bucket_id: b for b in get_bucket_catalog()}
+    return _bucket_catalog_cache
+
+
 def _load_tag_overrides_file() -> Dict[str, Any]:
     if not _TAG_OVERRIDES_PATH.exists():
         return {"blacklisted_tags": [], "tag_assignments": []}
@@ -654,6 +666,23 @@ def create_asset_router(*, prefix: str = "/asset-ui/api") -> APIRouter:
     @router.get("/assets/taxonomy")
     def get_taxonomy_endpoint() -> Dict[str, Any]:
         return {"themes": get_taxonomy()}
+
+    @router.get("/assets/buckets")
+    def list_buckets() -> Dict[str, Any]:
+        """Selectable footage buckets (vibes) for the Asset UI dropdown — pick one
+        to browse exactly the clips that bucket matches (tag overlap), for QA."""
+        out = [
+            {
+                "id": b.bucket_id,
+                "label": b.label,
+                "theme_label": b.theme_label,
+                "mood": b.mood,
+                "tags": list(b.priority_tags),
+            }
+            for b in _bucket_catalog().values()
+        ]
+        out.sort(key=lambda x: (str(x["theme_label"]), str(x["label"])))
+        return {"buckets": out}
 
     @router.get("/assets/tags-snapshot")
     def get_tags_snapshot(media_type: str = Query("video")) -> Response:
@@ -935,10 +964,24 @@ def create_asset_router(*, prefix: str = "/asset-ui/api") -> APIRouter:
         genre: Optional[str] = Query(None),
         tag: Optional[str] = Query(None),
         media_type: str = Query("video"),
+        bucket: Optional[str] = Query(None),
     ) -> PaginatedAssets:
         assets = _load_assets(_norm_media_type(media_type))
         overrides = _load_overrides()
         tag_ov = _load_tag_overrides()
+
+        # Bucket (vibe) filter: show exactly the clips this bucket matches, ranked
+        # by tag overlap — same normalization the picker uses. Overrides genre/tag.
+        b_ptags = b_xtags = None
+        if bucket:
+            from mlcore.footage_picker import _normalize_theme_tag
+            b = _bucket_catalog().get(bucket)
+            if not b:
+                raise HTTPException(status_code=404, detail=f"bucket not found: {bucket}")
+            b_ptags = {_normalize_theme_tag(t) for t in b.priority_tags}
+            b_ptags.discard("")
+            b_xtags = {_normalize_theme_tag(t) for t in b.exclude_tags}
+            b_xtags.discard("")
 
         # Filter out excluded
         filtered = []
@@ -949,16 +992,30 @@ def create_asset_router(*, prefix: str = "/asset-ui/api") -> APIRouter:
             ) or overrides.get(str(a.get("file_name") or ""), {})
             if ov.get("excluded"):
                 continue
-            if genre and a.get("genre", "").lower() != genre.lower():
-                continue
-            if tag and a.get("tag", "").lower() != tag.lower():
-                continue
+            overlap = None
+            if bucket:
+                from mlcore.footage_picker import _normalize_meta_tag
+                ctags = {_normalize_meta_tag(t) for t in _get_theme_tags_for_asset(str(a.get("file_name") or ""))}
+                ctags.discard("")
+                overlap = len(b_ptags & ctags)
+                if overlap < 1 or (b_xtags & ctags):
+                    continue
+            else:
+                if genre and a.get("genre", "").lower() != genre.lower():
+                    continue
+                if tag and a.get("tag", "").lower() != tag.lower():
+                    continue
             # Merge override info
             item = {**a}
             if ov:
                 item["overrides"] = ov
             _enrich_asset_tags(item, tag_ov)
+            if overlap is not None:
+                item["_overlap"] = overlap
             filtered.append(item)
+
+        if bucket:
+            filtered.sort(key=lambda x: -int(x.get("_overlap") or 0))
 
         total = len(filtered)
         start = (page - 1) * per_page
