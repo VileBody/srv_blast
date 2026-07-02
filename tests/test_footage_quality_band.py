@@ -84,6 +84,34 @@ def test_deterministic_same_seed_same_order(monkeypatch):
     assert o1[-1] == "d"                       # out-of-band clip sinks to the tail
 
 
+def test_cooldown_picks_least_recently_used_within_band(monkeypatch):
+    monkeypatch.setenv("FOOTAGE_QUALITY_BAND", "1")
+    names = ["a", "b", "c", "weak"]
+    scores = {"a": 3.0, "b": 3.0, "c": 3.0, "weak": 1.0}  # a,b,c in band; weak out
+    # a served most recently (hottest), b older, c never -> c is coldest
+    cooldown = {"a": 0.0, "b": 5.0, "c": 31.0}  # higher = colder = preferred
+    order = fp._deterministic_file_name_order(
+        file_names=names, seed_value=1, interval_idx=0, interval_start=0.0,
+        scores_by_name=scores, cooldown_by_name=cooldown,
+    )
+    assert order[0] == "c"        # coldest in-band wins regardless of seed
+    assert "weak" not in order[:3]  # out-of-band never near the head
+    assert order[-1] == "weak"
+
+
+def test_cooldown_head_is_deterministic_given_state(monkeypatch):
+    monkeypatch.setenv("FOOTAGE_QUALITY_BAND", "1")
+    names = ["a", "b"]
+    scores = {"a": 2.0, "b": 2.0}
+    cooldown = {"a": 1.0, "b": 9.0}
+    for seed in (1, 2, 3, 99):
+        order = fp._deterministic_file_name_order(
+            file_names=names, seed_value=seed, interval_idx=0, interval_start=0.0,
+            scores_by_name=scores, cooldown_by_name=cooldown,
+        )
+        assert order[0] == "b"  # colder clip always first, independent of seed
+
+
 def test_legacy_path_still_works_when_disabled(monkeypatch):
     monkeypatch.setenv("FOOTAGE_QUALITY_BAND", "0")
     names = ["a", "b", "c"]
