@@ -321,6 +321,27 @@ def _segment_targeting_enabled() -> bool:
     return (os.environ.get("FOOTAGE_SEGMENT_TARGETING") or "1").strip().lower() not in ("0", "false", "no", "off")
 
 
+# High-energy taxonomy tags — a clip carrying any of these reads as DYNAMIC. On
+# the drop interval we add them to the line tags so energetic clips get boosted
+# (energy-on-drop derived from existing tags — no re-tag, no schema change).
+_DROP_ENERGY_TAGS = {
+    "running", "speed", "high speed", "fast motion", "drifting", "night racing",
+    "night drift", "action", "jumping", "athlete", "dancing", "explosion", "fire",
+    "chaos", "destruction", "blurry motion", "skateboarding",
+}
+
+
+def _drop_time_abs(clip_start_abs: float, clip_end_abs: float) -> Optional[float]:
+    raw = (os.environ.get("USER_DROP_T") or "").strip()
+    if not raw:
+        return None
+    try:
+        d = float(raw)
+    except Exception:
+        return None
+    return d if float(clip_start_abs) <= d <= float(clip_end_abs) else None
+
+
 def _build_interval_line_tags(
     *,
     clip_start_abs: float,
@@ -336,7 +357,7 @@ def _build_interval_line_tags(
     if not _segment_targeting_enabled():
         return None
     try:
-        from mlcore.footage_picker import build_intervals_from_switch_points
+        from mlcore.footage_picker import build_intervals_from_switch_points, drop_interval_index
         from mlcore.lyrics_lexicon import extract_tags, load_lexicon
 
         intervals = build_intervals_from_switch_points(
@@ -354,9 +375,14 @@ def _build_interval_line_tags(
                 if float(getattr(w, "t_start", 0.0)) < b and float(getattr(w, "t_end", 0.0)) > a
             )
             out.append(set(extract_tags(txt, lex).keys()))
+        # Energy-on-drop + hero-word: on the cut that lands on the drop, add the
+        # high-energy tags so DYNAMIC clips win there (the biggest moment).
+        _drop_idx = drop_interval_index(intervals, _drop_time_abs(clip_start_abs, clip_end_abs))
+        if _drop_idx >= 0:
+            out[_drop_idx] = out[_drop_idx] | _DROP_ENERGY_TAGS
         logger.info(
-            "segment_targeting intervals=%d with_line_tags=%d",
-            len(out), sum(1 for s in out if s),
+            "segment_targeting intervals=%d with_line_tags=%d drop_interval=%d",
+            len(out), sum(1 for s in out if s), _drop_idx,
         )
         return out
     except Exception as e:  # noqa: BLE001

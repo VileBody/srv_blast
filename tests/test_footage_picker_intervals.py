@@ -547,3 +547,14 @@ def test_raw_priority_selection_falls_forward_to_next_theme_when_first_theme_emp
     assert int(attempts[0]["candidate_count"]) == 0
     assert int(attempts[1]["subgroup_idx"]) == 1
     assert int(attempts[1]["candidate_count"]) >= 1
+
+
+def test_drop_interval_index():
+    from mlcore.footage_picker import drop_interval_index
+    iv = [(0.0, 2.0), (2.0, 5.0), (5.0, 8.0)]
+    assert drop_interval_index(iv, None) == -1
+    assert drop_interval_index(iv, 3.0) == 1        # inside 2nd
+    assert drop_interval_index(iv, 0.0) == 0        # left edge -> first
+    assert drop_interval_index(iv, 8.0) == 2        # last boundary -> last
+    assert drop_interval_index(iv, 100.0) == -1     # outside
+    assert drop_interval_index([], 1.0) == -1

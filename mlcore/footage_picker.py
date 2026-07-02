@@ -559,6 +559,22 @@ def build_intervals_from_switch_points(
     return intervals
 
 
+def drop_interval_index(intervals: List[Tuple[float, float]], drop_t: float | None) -> int:
+    """Index of the interval containing drop_t (half-open [a, b)), or -1 when
+    drop_t is None / outside every interval. Used to put the DROP's energy boost
+    on the right footage cut."""
+    if drop_t is None:
+        return -1
+    d = float(drop_t)
+    for i, (a, b) in enumerate(intervals):
+        if a - _EPS <= d < b - _EPS:
+            return i
+    # drop exactly on the last boundary → last interval
+    if intervals and abs(d - intervals[-1][1]) <= _EPS:
+        return len(intervals) - 1
+    return -1
+
+
 def _fits_interval(asset: Dict[str, Any], *, interval_len: float) -> bool:
     try:
         dur = float(asset["duration_sec"])
