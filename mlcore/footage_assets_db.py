@@ -79,7 +79,10 @@ def build_asset_record(raw: Dict[str, Any], *, source: str = SOURCE_VIDEO) -> Op
         return None
     file_name = _s(raw.get("file_name"))
     s3_key = _s(raw.get("s3_key"))
-    clip_id = extract_clip_id(s3_key) or extract_clip_id(file_name)
+    # Extract from the BASENAME, never the full s3 key: the key prefix (e.g.
+    # .../pins2_1to1_20260323/...) contains an 8-digit date that the clip_id regex
+    # would otherwise grab as a bogus id, collapsing every asset onto one PK.
+    clip_id = extract_clip_id(file_name) or extract_clip_id(s3_key.rsplit("/", 1)[-1])
     if not clip_id:
         return None
     dom = raw.get("dominant_color")

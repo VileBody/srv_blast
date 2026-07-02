@@ -59,6 +59,25 @@ def test_index_row_roundtrip_shape():
     assert row["dominant_color"] == "warm"
 
 
+def test_clip_id_ignores_8digit_date_in_s3_prefix():
+    # the prefix .../pins2_1to1_20260323/... has an 8-digit date; the real clip id
+    # is in the basename and must win (else every asset collapses onto "20260323")
+    rec = adb.build_asset_record({
+        "file_name": "1002332460812809099.mp4",
+        "s3_key": "pinterest_collection/pins2_1to1_20260323/hiphop/night/1002332460812809099.mp4",
+        "src_w": 1080, "src_h": 1080, "duration_sec": 5.0,
+    })
+    assert rec["clip_id"] == "1002332460812809099"
+
+    # even if file_name is missing, the s3 BASENAME (not the dated prefix) is used
+    rec2 = adb.build_asset_record({
+        "file_name": "",
+        "s3_key": "pinterest_collection/pins2_1to1_20260323/x/y/1002332460812809099.mp4",
+        "src_w": 1080, "src_h": 1080, "duration_sec": 5.0,
+    })
+    assert rec2["clip_id"] == "1002332460812809099"
+
+
 def test_numeric_coercion_is_defensive():
     rec = adb.build_asset_record(_asset(w="1080", h=None, dur="5.5"))
     assert rec["src_w"] == 1080 and rec["src_h"] == 0 and rec["duration_sec"] == 5.5
