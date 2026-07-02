@@ -20,12 +20,23 @@ from typing import Any, Callable, Dict, List, Optional
 
 from config.styles.theme_groups import get_theme_label
 from config.styles.theme_relevance import (
+    THEME_BUCKETS,
     THEME_DESCRIPTIONS_RU,
     buckets_for_themes,
     candidate_themes,
     theme_mood,
 )
 from mlcore.footage_bucket_catalog import Bucket, get_bucket_catalog
+from mlcore.lyrics_lexicon import extract_tags, load_lexicon
+
+_LEXICON: Dict[str, List[str]] | None = None
+
+
+def _get_lexicon() -> Dict[str, List[str]]:
+    global _LEXICON
+    if _LEXICON is None:
+        _LEXICON = load_lexicon()
+    return _LEXICON
 
 # Bump when the ranker prompt/parse/relevance semantics change so cached rankings
 # for the same lyrics are invalidated (a cache miss re-ranks with the new logic).
@@ -110,18 +121,47 @@ def parse_theme_ranking(raw: str, valid_theme_ids: List[str]) -> List[str]:
     return ordered
 
 
-def heuristic_theme_rank(lyrics: str, theme_ids: List[str]) -> List[str]:
-    """LLM-free fallback: score each theme by word overlap of the lyrics with its
-    RU description + label. RU-aware (descriptions are Russian), unlike the old
-    English-tag heuristic which scored ~0 on Russian lyrics."""
+def _theme_tag_index(catalog: List[Bucket]) -> Dict[str, set]:
+    """theme -> union of its buckets' priority tags (canonical)."""
+    by_id = {b.bucket_id: b for b in catalog}
+    idx: Dict[str, set] = {}
+    for t, bids in THEME_BUCKETS.items():
+        tags: set = set()
+        for bid in bids:
+            b = by_id.get(bid)
+            if b:
+                tags |= {_norm(x) for x in b.priority_tags}
+        idx[t] = tags
+    return idx
+
+
+def _desc_words(t: str) -> set:
+    return set(re.findall(r"[a-zа-яё0-9]+", _norm(THEME_DESCRIPTIONS_RU.get(t, "")))) | set(
+        re.findall(r"[a-zа-яё0-9]+", _norm(get_theme_label(t)))
+    )
+
+
+def lexicon_theme_rank(
+    lyrics: str, theme_ids: List[str], catalog: List[Bucket],
+    lexicon: Dict[str, List[str]] | None = None,
+) -> List[str]:
+    """DETERMINISTIC, RU-aware theme ranking (no LLM): map lyrics -> taxonomy tags
+    via the lexicon, score each theme by how much its buckets' tags are hit. Ties
+    break by lyric-word overlap with the theme's RU description, then theme order.
+    This is what lets the ranker run with zero LLM calls."""
+    lex = lexicon if lexicon is not None else _get_lexicon()
+    lyric_tags = extract_tags(lyrics, lex)          # Counter{tag: count}
+    tt = _theme_tag_index(catalog)
     words = set(re.findall(r"[a-zа-яё0-9]+", _norm(lyrics)))
 
-    def score(t: str) -> int:
-        terms = set(re.findall(r"[a-zа-яё0-9]+", _norm(THEME_DESCRIPTIONS_RU.get(t, ""))))
-        terms |= set(re.findall(r"[a-zа-яё0-9]+", _norm(get_theme_label(t))))
-        return len(words & terms)
+    def tag_score(t: str) -> int:
+        tags = tt.get(t, set())
+        return sum(c for tag, c in lyric_tags.items() if tag in tags)
 
-    return sorted(theme_ids, key=lambda t: (-score(t), t))
+    def desc_score(t: str) -> int:
+        return len(words & _desc_words(t))
+
+    return sorted(theme_ids, key=lambda t: (-tag_score(t), -desc_score(t), t))
 
 
 # --------------------------------------------------------------------------- #
@@ -191,7 +231,8 @@ def rank_buckets(
             if raise_on_llm_error:
                 raise
     if ranked_themes is None:
-        ranked_themes = heuristic_theme_rank(lyrics, themes)
+        # Deterministic, RU-aware, no LLM — the default path.
+        ranked_themes = lexicon_theme_rank(lyrics, themes, cat)
 
     ordered = buckets_for_themes(ranked_themes, valid_ids=valid_ids, mood=mood)
     for bid in catalog_order:  # complete the list with any bucket not yet covered

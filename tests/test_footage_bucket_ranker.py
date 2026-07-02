@@ -11,7 +11,7 @@ from mlcore.footage_bucket_catalog import get_bucket_catalog
 from mlcore.footage_bucket_ranker import (
     build_theme_prompt,
     catalog_fingerprint,
-    heuristic_theme_rank,
+    lexicon_theme_rank,
     parse_theme_ranking,
     rank_buckets,
     ranker_cache_key,
@@ -63,10 +63,11 @@ def test_parse_theme_ranking_completes_and_validates() -> None:
     assert parse_theme_ranking("сначала hustle_minor потом heartbreak_minor", themes)[0] == "hustle_minor"
 
 
-def test_heuristic_theme_rank_is_ru_aware() -> None:
+def test_lexicon_theme_rank_is_ru_aware_and_deterministic() -> None:
     themes = ["heartbreak_minor", "hustle_minor", "serene_landscape_major"]
-    assert heuristic_theme_rank("деньги успех роскошь флекс", themes)[0] == "hustle_minor"
-    assert heuristic_theme_rank("спокойствие природа умиротворение пейзаж", themes)[0] == "serene_landscape_major"
+    # lyrics -> tags (lexicon) -> theme scored by overlap with its buckets' tags
+    assert lexicon_theme_rank("деньги тачки золото украшения", themes, _CAT)[0] == "hustle_minor"
+    assert lexicon_theme_rank("море пляж закат солнце", themes, _CAT)[0] == "serene_landscape_major"
 
 
 # --------------------------------------------------------------------------- #

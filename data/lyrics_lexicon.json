@@ -1,0 +1,795 @@
+{
+  "_note": "Lyric word (RU/EN) -> taxonomy tags. Stem-matched. Extensible: add rows to grow coverage. Values must be real taxonomy tags (validated by tests/test_lyrics_lexicon).",
+  "lexicon": {
+    "дождь": [
+      "rain",
+      "rainy night"
+    ],
+    "rain": [
+      "rain",
+      "rainy night"
+    ],
+    "дождливый": [
+      "rain",
+      "rainy night"
+    ],
+    "ливень": [
+      "rain",
+      "rainy night"
+    ],
+    "слезы": [
+      "rain",
+      "rainy night"
+    ],
+    "tears": [
+      "rain",
+      "rainy night"
+    ],
+    "снег": [
+      "snow",
+      "winter",
+      "snowfall"
+    ],
+    "snow": [
+      "snow",
+      "winter",
+      "snowfall"
+    ],
+    "зима": [
+      "snow",
+      "winter",
+      "winter landscape"
+    ],
+    "winter": [
+      "snow",
+      "winter",
+      "winter landscape"
+    ],
+    "туман": [
+      "fog",
+      "foggy",
+      "misty forest"
+    ],
+    "fog": [
+      "fog",
+      "foggy",
+      "misty forest"
+    ],
+    "мгла": [
+      "fog",
+      "foggy",
+      "darkness"
+    ],
+    "misty": [
+      "misty forest",
+      "fog",
+      "foggy"
+    ],
+    "солнце": [
+      "sunlight",
+      "sunny day",
+      "golden hour"
+    ],
+    "sun": [
+      "sunlight",
+      "sunny day",
+      "golden hour"
+    ],
+    "солнечный": [
+      "sunlight",
+      "sunny day"
+    ],
+    "sunny": [
+      "sunlight",
+      "sunny day"
+    ],
+    "закат": [
+      "sunset",
+      "golden hour",
+      "evening"
+    ],
+    "sunset": [
+      "sunset",
+      "golden hour",
+      "evening"
+    ],
+    "рассвет": [
+      "sunrise",
+      "clouds"
+    ],
+    "sunrise": [
+      "sunrise",
+      "clouds"
+    ],
+    "небо": [
+      "clouds",
+      "cloudy sky",
+      "blue sky"
+    ],
+    "sky": [
+      "clouds",
+      "cloudy sky",
+      "blue sky"
+    ],
+    "облака": [
+      "clouds",
+      "cloudy sky"
+    ],
+    "clouds": [
+      "clouds",
+      "cloudy sky"
+    ],
+    "гроза": [
+      "stormy weather",
+      "lightning",
+      "dark sky"
+    ],
+    "шторм": [
+      "stormy weather",
+      "dark sky"
+    ],
+    "storm": [
+      "stormy weather",
+      "dark sky"
+    ],
+    "буря": [
+      "stormy weather",
+      "dark sky"
+    ],
+    "молния": [
+      "lightning",
+      "stormy weather"
+    ],
+    "луна": [
+      "moonlight",
+      "night sky"
+    ],
+    "moon": [
+      "moonlight",
+      "night sky"
+    ],
+    "звезды": [
+      "stars",
+      "night sky",
+      "galaxy"
+    ],
+    "stars": [
+      "stars",
+      "night sky",
+      "galaxy"
+    ],
+    "космос": [
+      "space",
+      "stars",
+      "galaxy",
+      "night sky"
+    ],
+    "space": [
+      "space",
+      "stars",
+      "galaxy"
+    ],
+    "лес": [
+      "forest",
+      "dark forest",
+      "misty forest",
+      "trees"
+    ],
+    "forest": [
+      "forest",
+      "dark forest",
+      "misty forest"
+    ],
+    "деревья": [
+      "trees",
+      "forest",
+      "dark trees"
+    ],
+    "trees": [
+      "trees",
+      "forest"
+    ],
+    "море": [
+      "ocean",
+      "sea",
+      "waves",
+      "water"
+    ],
+    "sea": [
+      "ocean",
+      "sea",
+      "waves",
+      "water"
+    ],
+    "океан": [
+      "ocean",
+      "waves",
+      "water"
+    ],
+    "ocean": [
+      "ocean",
+      "waves",
+      "water"
+    ],
+    "волны": [
+      "waves",
+      "ocean",
+      "water"
+    ],
+    "waves": [
+      "waves",
+      "ocean",
+      "water"
+    ],
+    "озеро": [
+      "lake",
+      "water"
+    ],
+    "lake": [
+      "lake",
+      "water"
+    ],
+    "горы": [
+      "mountain",
+      "cliffs"
+    ],
+    "mountain": [
+      "mountain",
+      "cliffs"
+    ],
+    "поле": [
+      "green field",
+      "flowers",
+      "wildflowers",
+      "grass"
+    ],
+    "field": [
+      "green field",
+      "flowers",
+      "grass"
+    ],
+    "цветы": [
+      "flowers",
+      "wildflowers",
+      "green field"
+    ],
+    "flowers": [
+      "flowers",
+      "wildflowers",
+      "green field"
+    ],
+    "пляж": [
+      "beach",
+      "ocean",
+      "waves"
+    ],
+    "beach": [
+      "beach",
+      "ocean",
+      "waves"
+    ],
+    "водопад": [
+      "waterfall",
+      "water"
+    ],
+    "waterfall": [
+      "waterfall",
+      "water"
+    ],
+    "берег": [
+      "coast",
+      "waterfront",
+      "water"
+    ],
+    "coast": [
+      "coast",
+      "waterfront",
+      "water"
+    ],
+    "город": [
+      "night city",
+      "city street",
+      "cityscape",
+      "urban"
+    ],
+    "city": [
+      "night city",
+      "city street",
+      "cityscape",
+      "urban"
+    ],
+    "улица": [
+      "city street",
+      "street scene",
+      "street lights"
+    ],
+    "street": [
+      "city street",
+      "street scene",
+      "street lights"
+    ],
+    "ночь": [
+      "night",
+      "night city",
+      "nighttime"
+    ],
+    "night": [
+      "night",
+      "night city",
+      "nighttime"
+    ],
+    "ночной": [
+      "night",
+      "night city"
+    ],
+    "неон": [
+      "neon lights",
+      "city lights"
+    ],
+    "neon": [
+      "neon lights",
+      "city lights"
+    ],
+    "огни": [
+      "city lights",
+      "street lights",
+      "neon lights"
+    ],
+    "фонари": [
+      "street lights",
+      "city lights"
+    ],
+    "небоскреб": [
+      "skyscrapers",
+      "cityscape"
+    ],
+    "skyscraper": [
+      "skyscrapers",
+      "cityscape"
+    ],
+    "район": [
+      "apartment building",
+      "tall buildings",
+      "urban"
+    ],
+    "панельки": [
+      "apartment building",
+      "tall buildings",
+      "urban"
+    ],
+    "метро": [
+      "subway",
+      "tunnel",
+      "platform"
+    ],
+    "subway": [
+      "subway",
+      "tunnel",
+      "platform"
+    ],
+    "комната": [
+      "dark room",
+      "indoor setting",
+      "indoor"
+    ],
+    "room": [
+      "dark room",
+      "indoor setting",
+      "indoor"
+    ],
+    "клуб": [
+      "night club",
+      "dance floor",
+      "neon lights"
+    ],
+    "club": [
+      "night club",
+      "dance floor",
+      "neon lights"
+    ],
+    "рейв": [
+      "night club",
+      "dance floor",
+      "laser lights"
+    ],
+    "rave": [
+      "night club",
+      "dance floor",
+      "laser lights"
+    ],
+    "туса": [
+      "night club",
+      "crowd",
+      "dance floor"
+    ],
+    "party": [
+      "night club",
+      "crowd",
+      "dance floor"
+    ],
+    "вечеринка": [
+      "night club",
+      "crowd",
+      "dance floor"
+    ],
+    "концерт": [
+      "concert",
+      "stage lights",
+      "crowd"
+    ],
+    "concert": [
+      "concert",
+      "stage lights",
+      "crowd"
+    ],
+    "заброшка": [
+      "abandoned",
+      "abandoned building",
+      "empty street"
+    ],
+    "abandoned": [
+      "abandoned",
+      "abandoned building"
+    ],
+    "замок": [
+      "castle",
+      "ruins",
+      "architecture"
+    ],
+    "castle": [
+      "castle",
+      "ruins",
+      "architecture"
+    ],
+    "машина": [
+      "car",
+      "cars",
+      "car interior",
+      "sports car"
+    ],
+    "car": [
+      "car",
+      "cars",
+      "car interior"
+    ],
+    "тачка": [
+      "car",
+      "cars",
+      "sports car",
+      "car interior"
+    ],
+    "тачки": [
+      "car",
+      "cars",
+      "sports car"
+    ],
+    "гонки": [
+      "night racing",
+      "drifting",
+      "speed",
+      "night drive"
+    ],
+    "racing": [
+      "night racing",
+      "drifting",
+      "speed"
+    ],
+    "дрифт": [
+      "drifting",
+      "night drift",
+      "speed"
+    ],
+    "drift": [
+      "drifting",
+      "night drift",
+      "speed"
+    ],
+    "скорость": [
+      "speed",
+      "high speed",
+      "fast motion"
+    ],
+    "speed": [
+      "speed",
+      "high speed",
+      "fast motion"
+    ],
+    "деньги": [
+      "gold",
+      "luxury car",
+      "jewelry"
+    ],
+    "money": [
+      "gold",
+      "luxury car",
+      "jewelry"
+    ],
+    "золото": [
+      "gold",
+      "gold jewelry"
+    ],
+    "gold": [
+      "gold",
+      "gold jewelry"
+    ],
+    "украшения": [
+      "jewelry",
+      "gold jewelry"
+    ],
+    "jewelry": [
+      "jewelry",
+      "gold jewelry"
+    ],
+    "флекс": [
+      "gold",
+      "luxury car",
+      "night city",
+      "neon lights"
+    ],
+    "flex": [
+      "gold",
+      "luxury car",
+      "night city",
+      "neon lights"
+    ],
+    "огонь": [
+      "fire",
+      "explosion",
+      "smoke"
+    ],
+    "fire": [
+      "fire",
+      "explosion",
+      "smoke"
+    ],
+    "пламя": [
+      "fire",
+      "smoke"
+    ],
+    "дым": [
+      "smoke"
+    ],
+    "smoke": [
+      "smoke"
+    ],
+    "взрыв": [
+      "explosion",
+      "fire",
+      "destruction"
+    ],
+    "explosion": [
+      "explosion",
+      "fire",
+      "destruction"
+    ],
+    "один": [
+      "lonely",
+      "alone",
+      "silhouette",
+      "lonely figure",
+      "night walk"
+    ],
+    "одна": [
+      "lonely",
+      "alone",
+      "silhouette",
+      "lonely figure"
+    ],
+    "alone": [
+      "lonely",
+      "alone",
+      "silhouette",
+      "lonely figure"
+    ],
+    "одиночество": [
+      "lonely",
+      "alone",
+      "silhouette",
+      "night walk"
+    ],
+    "lonely": [
+      "lonely",
+      "alone",
+      "silhouette",
+      "lonely figure"
+    ],
+    "толпа": [
+      "crowd"
+    ],
+    "crowd": [
+      "crowd"
+    ],
+    "пара": [
+      "couple",
+      "couple walking",
+      "couple hug"
+    ],
+    "couple": [
+      "couple",
+      "couple walking",
+      "couple hug"
+    ],
+    "поцелуй": [
+      "kiss",
+      "couple",
+      "intimate moment"
+    ],
+    "kiss": [
+      "kiss",
+      "couple",
+      "intimate moment"
+    ],
+    "танец": [
+      "dancing",
+      "dance floor"
+    ],
+    "танцы": [
+      "dancing",
+      "dance floor"
+    ],
+    "dance": [
+      "dancing",
+      "dance floor"
+    ],
+    "бег": [
+      "running",
+      "action"
+    ],
+    "run": [
+      "running",
+      "action"
+    ],
+    "грусть": [
+      "lonely",
+      "dark atmosphere",
+      "rain",
+      "silhouette"
+    ],
+    "грустный": [
+      "lonely",
+      "dark atmosphere",
+      "rain"
+    ],
+    "sad": [
+      "lonely",
+      "dark atmosphere",
+      "rain"
+    ],
+    "тоска": [
+      "lonely",
+      "dark atmosphere",
+      "silhouette"
+    ],
+    "боль": [
+      "dark atmosphere",
+      "shadows",
+      "silhouette"
+    ],
+    "pain": [
+      "dark atmosphere",
+      "shadows"
+    ],
+    "любовь": [
+      "couple",
+      "romance",
+      "romantic moment"
+    ],
+    "love": [
+      "couple",
+      "romance",
+      "romantic moment"
+    ],
+    "сердце": [
+      "couple",
+      "silhouette"
+    ],
+    "heart": [
+      "couple",
+      "silhouette"
+    ],
+    "злость": [
+      "fire",
+      "chaos",
+      "dark atmosphere",
+      "smoke"
+    ],
+    "гнев": [
+      "fire",
+      "chaos",
+      "smoke"
+    ],
+    "anger": [
+      "fire",
+      "chaos",
+      "smoke"
+    ],
+    "ярость": [
+      "fire",
+      "chaos",
+      "destruction"
+    ],
+    "страх": [
+      "darkness",
+      "shadows",
+      "dark atmosphere"
+    ],
+    "fear": [
+      "darkness",
+      "shadows",
+      "dark atmosphere"
+    ],
+    "тьма": [
+      "darkness",
+      "dark atmosphere",
+      "shadows"
+    ],
+    "dark": [
+      "darkness",
+      "dark atmosphere",
+      "shadows"
+    ],
+    "свобода": [
+      "running",
+      "outdoor",
+      "sunset"
+    ],
+    "freedom": [
+      "running",
+      "outdoor",
+      "sunset"
+    ],
+    "мечта": [
+      "abstract",
+      "glowing",
+      "light trails",
+      "space"
+    ],
+    "dream": [
+      "abstract",
+      "glowing",
+      "light trails",
+      "space"
+    ],
+    "сон": [
+      "abstract",
+      "glowing",
+      "darkness"
+    ],
+    "дорога": [
+      "road",
+      "empty road",
+      "night drive",
+      "dark road"
+    ],
+    "road": [
+      "road",
+      "empty road",
+      "night drive"
+    ],
+    "путь": [
+      "road",
+      "empty road",
+      "night walk"
+    ],
+    "глитч": [
+      "glitch",
+      "digital art",
+      "distortion"
+    ],
+    "glitch": [
+      "glitch",
+      "digital art",
+      "distortion"
+    ],
+    "цифра": [
+      "glitch",
+      "digital art",
+      "abstract"
+    ],
+    "digital": [
+      "glitch",
+      "digital art",
+      "abstract"
+    ]
+  }
+}

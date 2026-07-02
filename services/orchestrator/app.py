@@ -658,35 +658,43 @@ def create_app() -> FastAPI:
         # deterministic, so re-uploads / re-entries of the same track reuse it
         # instead of burning another Gemini call. Key covers every input, so a
         # hit is always for the exact same request.
-        ranker_model = (os.environ.get("FOOTAGE_RANKER_MODEL") or "gemini-2.0-flash").strip()
-        _cache_key = ranker_cache_key(
-            lyrics=req.lyrics, mood=req.mood, catalog=catalog, model=ranker_model
-        )
-        used_llm = True
-        cached_ids = _ranker_cache_get(store.r, _cache_key)
-        if cached_ids is not None:
-            used_llm = False  # served from cache, no LLM call this request
-            ranked_ids = [i for i in cached_ids if i in by_id]
-            if not ranked_ids:
-                cached_ids = None  # catalog drifted under the key → recompute
-        if cached_ids is None:
-            try:
-                # raise_on_llm_error=True so a heuristic produced while Gemini is
-                # down is NOT cached (would otherwise be served for the full TTL).
-                ranked_ids = rank_buckets(
-                    lyrics=req.lyrics,
-                    mood=req.mood,
-                    catalog=catalog,
-                    llm_call=gemini_rank_call,
-                    raise_on_llm_error=True,
-                )
-                used_llm = True
-                _ranker_cache_set(store.r, _cache_key, ranked_ids)
-            except Exception:
-                used_llm = False
-                ranked_ids = rank_buckets(
-                    lyrics=req.lyrics, mood=req.mood, catalog=catalog, llm_call=None
-                )
+        # Default: DETERMINISTIC ranking via the lyrics lexicon — no LLM call, no
+        # cache needed (it's instant and stable). Set FOOTAGE_RANKER_LLM=1 to use
+        # the Gemini theme-classifier instead (cached, graceful fallback).
+        use_llm = (os.environ.get("FOOTAGE_RANKER_LLM") or "0").strip().lower() in ("1", "true", "yes", "on")
+        if not use_llm:
+            ranked_ids = rank_buckets(lyrics=req.lyrics, mood=req.mood, catalog=catalog, llm_call=None)
+            used_llm = False
+        else:
+            ranker_model = (os.environ.get("FOOTAGE_RANKER_MODEL") or "gemini-2.0-flash").strip()
+            _cache_key = ranker_cache_key(
+                lyrics=req.lyrics, mood=req.mood, catalog=catalog, model=ranker_model
+            )
+            used_llm = True
+            cached_ids = _ranker_cache_get(store.r, _cache_key)
+            if cached_ids is not None:
+                used_llm = False  # served from cache, no LLM call this request
+                ranked_ids = [i for i in cached_ids if i in by_id]
+                if not ranked_ids:
+                    cached_ids = None  # catalog drifted under the key → recompute
+            if cached_ids is None:
+                try:
+                    # raise_on_llm_error=True so a heuristic produced while Gemini is
+                    # down is NOT cached (would otherwise be served for the full TTL).
+                    ranked_ids = rank_buckets(
+                        lyrics=req.lyrics,
+                        mood=req.mood,
+                        catalog=catalog,
+                        llm_call=gemini_rank_call,
+                        raise_on_llm_error=True,
+                    )
+                    used_llm = True
+                    _ranker_cache_set(store.r, _cache_key, ranked_ids)
+                except Exception:
+                    used_llm = False
+                    ranked_ids = rank_buckets(
+                        lyrics=req.lyrics, mood=req.mood, catalog=catalog, llm_call=None
+                    )
 
         if req.top and req.top > 0:
             ranked_ids = ranked_ids[: int(req.top)]
