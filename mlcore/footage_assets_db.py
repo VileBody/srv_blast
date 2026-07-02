@@ -221,6 +221,17 @@ async def count_pickable(conn: Any, *, source: str = SOURCE_VIDEO) -> int:
     ) or 0)
 
 
+async def fetch_pool_clip_ids(conn: Any, *, source: Optional[str] = None) -> set:
+    """clip_ids currently in the pool registry (used to filter orphan tags out of
+    the exported snapshot). Empty set when the registry is empty."""
+    await init_schema(conn)
+    if source:
+        recs = await conn.fetch("SELECT clip_id FROM footage_assets WHERE source = $1", source)
+    else:
+        recs = await conn.fetch("SELECT clip_id FROM footage_assets")
+    return {str(r["clip_id"]) for r in recs}
+
+
 async def fetch_all_assets(conn: Any, *, source: Optional[str] = None) -> List[Dict[str, Any]]:
     cols = "clip_id, s3_key, file_name, genre, tag, src_w, src_h, duration_sec, dominant_color, source"
     if source:

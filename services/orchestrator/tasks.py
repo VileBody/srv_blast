@@ -2638,7 +2638,7 @@ def _export_footage_tags_snapshot(*, db_url: str, source: str = "video") -> Dict
     source='video' → data/footage_tags_snapshot.json (FOOTAGE_* env);
     source='photo' → data/photo_tags_snapshot.json (PHOTO_TAGS_SNAPSHOT_JSON env).
     """
-    from mlcore.footage_tags_db import build_snapshot, pick_snapshot_path
+    from mlcore.footage_tags_db import build_snapshot, filter_snapshot_to_pool, pick_snapshot_path
 
     if source == "photo":
         out_path = Path(
@@ -2653,16 +2653,25 @@ def _export_footage_tags_snapshot(*, db_url: str, source: str = "video") -> Dict
     async def _go():
         import asyncpg  # type: ignore
 
+        from mlcore.footage_assets_db import fetch_pool_clip_ids
+
         conn = await asyncpg.connect(dsn=db_url)
         try:
-            return await build_snapshot(conn, source=source)
+            rows = await build_snapshot(conn, source=source)
+            # Drop orphan tags (clips deleted from the pool) so the picker/reports
+            # never see tags for clips that no longer exist. Fail-safe: no-op when
+            # the registry is empty. Non-destructive (footage_tags rows stay).
+            pool_ids = await fetch_pool_clip_ids(conn, source=source)
+            return filter_snapshot_to_pool(rows, pool_ids), len(rows), len(pool_ids)
         finally:
             await conn.close()
 
-    rows = asyncio.run(_go())
+    rows, total_rows, pool_n = asyncio.run(_go())
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
-    return {"path": str(out_path), "rows": len(rows)}
+    log.info("footage_tags_snapshot rows=%d (from %d tags, pool=%d) -> %s",
+             len(rows), total_rows, pool_n, out_path)
+    return {"path": str(out_path), "rows": len(rows), "orphans_dropped": max(0, total_rows - len(rows))}
 
 
 _FOOTAGE_ACTIVATION_PROGRESS_KEY = "footage_activation:progress"

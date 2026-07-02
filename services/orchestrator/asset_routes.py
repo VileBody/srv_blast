@@ -669,12 +669,16 @@ def create_asset_router(*, prefix: str = "/asset-ui/api") -> APIRouter:
 
         import asyncpg  # type: ignore
 
-        from mlcore.footage_tags_db import build_snapshot
+        from mlcore.footage_assets_db import fetch_pool_clip_ids
+        from mlcore.footage_tags_db import build_snapshot, filter_snapshot_to_pool
 
         async def _go() -> List[Dict[str, Any]]:
             conn = await asyncpg.connect(dsn=db_url)
             try:
-                return await build_snapshot(conn, source=mt)
+                rows = await build_snapshot(conn, source=mt)
+                # drop orphan tags of deleted clips (fail-safe if registry empty)
+                pool_ids = await fetch_pool_clip_ids(conn, source=mt)
+                return filter_snapshot_to_pool(rows, pool_ids)
             finally:
                 await conn.close()
 
@@ -1258,12 +1262,44 @@ def create_asset_router(*, prefix: str = "/asset-ui/api") -> APIRouter:
         overrides[override_key] = entry
         _save_overrides(overrides)
         _invalidate_asset_caches()
+
+        # Also drop the clip's tag row so it stops polluting the snapshot/reports
+        # (the picker already ignores it — it joins tags to the live pool — but
+        # this keeps footage_tags in sync with what actually exists). Non-fatal.
+        tags_deleted = 0
+        db_url = _theme_tags_db_url()
+        if db_url:
+            try:
+                import asyncio
+
+                import asyncpg  # type: ignore
+
+                from mlcore.footage_tags_db import delete_by_clip_ids, extract_clip_id, photo_clip_id
+
+                mt = _norm_media_type(media_type)
+                if mt == "photo":
+                    clip_id = photo_clip_id(file_name) or photo_clip_id(resolved_s3_key)
+                else:
+                    clip_id = extract_clip_id(resolved_s3_key) or extract_clip_id(file_name)
+
+                if clip_id:
+                    async def _go() -> int:
+                        conn = await asyncpg.connect(dsn=db_url)
+                        try:
+                            return await delete_by_clip_ids(conn, [clip_id], source=mt)
+                        finally:
+                            await conn.close()
+
+                    tags_deleted = asyncio.run(_go())
+            except Exception as e:  # non-fatal: S3 delete already succeeded
+                log.warning("delete_asset: footage_tags prune failed for %s: %s", file_name, e)
         return {
             "ok": True,
             "file_name": file_name,
             "s3_key": resolved_s3_key or None,
             "excluded": True,
             "trash_key": trash_key,
+            "tags_deleted": tags_deleted,
         }
 
     return router

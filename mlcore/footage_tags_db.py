@@ -318,6 +318,49 @@ async def build_snapshot(conn: Any, *, source: Optional[str] = None) -> List[Dic
     return [snapshot_row_from_record(r) for r in recs]
 
 
+async def delete_by_clip_ids(conn: Any, clip_ids: Iterable[str], *, source: Optional[str] = None) -> int:
+    """Delete tag rows for the given clip_ids (used when a clip leaves the pool,
+    e.g. an Asset-UI delete). Returns the number deleted."""
+    ids = [str(c).strip() for c in (clip_ids or []) if str(c or "").strip()]
+    if not ids:
+        return 0
+    if source:
+        res = await conn.execute(
+            "DELETE FROM footage_tags WHERE clip_id = ANY($1::text[]) AND source = $2", ids, source
+        )
+    else:
+        res = await conn.execute("DELETE FROM footage_tags WHERE clip_id = ANY($1::text[])", ids)
+    try:
+        return int(str(res).split()[-1])
+    except Exception:
+        return 0
+
+
+def filter_snapshot_to_pool(
+    rows: List[Dict[str, Any]], pool_clip_ids: Optional[set]
+) -> List[Dict[str, Any]]:
+    """Keep only snapshot rows whose clip_id is in the live pool (footage_assets),
+    dropping orphans left by deleted clips. FAIL-SAFE: when pool_clip_ids is empty
+    or None (registry not populated), return rows unchanged so we never blank the
+    snapshot the picker reads. Non-destructive — footage_tags rows stay put."""
+    if not pool_clip_ids:
+        return list(rows or [])
+    out: List[Dict[str, Any]] = []
+    for r in rows or []:
+        # video ids are pure digits, photo ids are 'photo:'-prefixed → disjoint,
+        # so trying both against the pool is unambiguous (works for either pool).
+        candidates = {
+            extract_clip_id(r.get("video_key")),
+            extract_clip_id(r.get("video_path")),
+            extract_clip_id(r.get("file_name")),
+            photo_clip_id(r.get("video_key")),
+            photo_clip_id(r.get("file_name")),
+        }
+        if candidates & pool_clip_ids:
+            out.append(r)
+    return out
+
+
 def pick_snapshot_path(
     *,
     explicit: str = "",
