@@ -223,6 +223,100 @@ def _resolve_footage_seed_key(*, out_dir: Path, logger: logging.Logger) -> str:
     return key
 
 
+def _footage_usage_enabled() -> bool:
+    return (os.environ.get("FOOTAGE_USAGE_ENABLED") or "1").strip().lower() not in ("0", "false", "no", "off")
+
+
+def _footage_usage_db_url() -> str:
+    return (os.environ.get("FOOTAGE_USAGE_DB_URL") or os.environ.get("CREDITS_DB_URL") or "").strip()
+
+
+_FOOTAGE_COOLDOWN_WINDOW = int((os.environ.get("FOOTAGE_COOLDOWN_WINDOW") or "30").strip() or "30")
+
+
+def _load_footage_cooldown(
+    bucket_id: str, assets: List[Dict[str, Any]], *, logger: logging.Logger
+) -> Optional[Dict[str, float]]:
+    """Wave 1 Поток B: file_name -> coldness for the picker's quality band, from
+    the per-bucket usage ledger (least-recently-served-globally = coldest = picked
+    first). Only on the exact-slot vibe path (bucket_id set). Non-fatal: any DB
+    issue returns None (picker falls back to the uniform seeded pick)."""
+    if not bucket_id or not _footage_usage_enabled():
+        return None
+    db_url = _footage_usage_db_url()
+    if not db_url:
+        return None
+    try:
+        import asyncio
+        import asyncpg  # type: ignore
+
+        from mlcore.footage_picker import _extract_clip_id
+        from mlcore.footage_usage_db import coldness, fetch_recent_clip_ids, recency_index
+
+        window = _FOOTAGE_COOLDOWN_WINDOW
+
+        async def _go() -> List[str]:
+            conn = await asyncpg.connect(dsn=db_url)
+            try:
+                return await fetch_recent_clip_ids(conn, bucket_id=bucket_id, limit=window)
+            finally:
+                await conn.close()
+
+        idx = recency_index(asyncio.run(_go()))
+        out: Dict[str, float] = {}
+        for a in assets or []:
+            fn = str((a or {}).get("file_name") or "").strip()
+            if not fn:
+                continue
+            cid = _extract_clip_id(fn)
+            if cid:
+                out[fn] = coldness(cid, idx, window=window)
+        logger.info("footage_cooldown_loaded bucket=%s recent=%d mapped=%d", bucket_id, len(idx), len(out))
+        return out or None
+    except Exception as e:  # noqa: BLE001
+        logger.warning("footage_cooldown_load_failed bucket=%s err=%r", bucket_id, e)
+        return None
+
+
+def _record_footage_usage(
+    bucket_id: str, file_names: List[str], *, logger: logging.Logger
+) -> None:
+    """Append the served clips to the usage ledger (soft cooldown signal; recorded
+    at selection, not render-success, because the cooldown only reorders — a
+    failed render just briefly cools a few clips). Non-fatal."""
+    if not bucket_id or not _footage_usage_enabled():
+        return
+    db_url = _footage_usage_db_url()
+    if not db_url:
+        return
+    try:
+        import asyncio
+        import asyncpg  # type: ignore
+
+        from mlcore.footage_picker import _extract_clip_id
+        from mlcore.footage_usage_db import record_usages
+
+        clip_ids = [cid for fn in (file_names or []) if (cid := _extract_clip_id(str(fn)))]
+        if not clip_ids:
+            return
+        chat_id = (os.environ.get("FOOTAGE_USAGE_CHAT_ID") or "").strip()
+        job_id = (os.environ.get("JOB_ID") or "").strip()
+
+        async def _go() -> int:
+            conn = await asyncpg.connect(dsn=db_url)
+            try:
+                return await record_usages(
+                    conn, bucket_id=bucket_id, clip_ids=clip_ids, chat_id=chat_id, job_id=job_id
+                )
+            finally:
+                await conn.close()
+
+        n = asyncio.run(_go())
+        logger.info("footage_usage_recorded bucket=%s clips=%d chat=%s", bucket_id, n, chat_id or "-")
+    except Exception as e:  # noqa: BLE001
+        logger.warning("footage_usage_record_failed bucket=%s err=%r", bucket_id, e)
+
+
 def _resolve_style_metadata_db_paths(*, root: Path) -> List[Path]:
     raw = (os.environ.get("FOOTAGE_STYLE_METADATA_DB_PATHS_JSON") or "").strip()
     if raw:
@@ -3959,6 +4053,15 @@ def build_all_via_gemini_one_call(
             len(selection_assets),
             len(style_rotation_payload.subgroups),
         )
+    # Wave 1 Поток B: global per-bucket cooldown so consecutive renders/users
+    # rotate through the quality band (cross-user non-duplication). Only on the
+    # exact-slot vibe path (both rotation overrides set); non-fatal.
+    _usage_bucket_id = (
+        f"{rotation_theme_override}:{rotation_group_override}"
+        if rotation_theme_override and rotation_group_override
+        else ""
+    )
+    _cooldown_by_name = _load_footage_cooldown(_usage_bucket_id, selection_assets, logger=logger)
     footage_payload, interval_diag = pick_footage_clips_by_intervals_deterministic(
         style_pick=style_payload,
         assets=selection_assets,
@@ -3970,6 +4073,12 @@ def build_all_via_gemini_one_call(
         exclude_file_names=exclude_file_names,
         raw_pick=None,
         raw_picks=style_rotation_payload.subgroups if style_rotation_payload is not None else None,
+        cooldown_by_name=_cooldown_by_name,
+    )
+    _record_footage_usage(
+        _usage_bucket_id,
+        list(getattr(interval_diag, "selected_file_names", []) or []),
+        logger=logger,
     )
     if getattr(interval_diag, "exclude_relaxed", False):
         logger.warning(

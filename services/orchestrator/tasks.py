@@ -1909,6 +1909,13 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
         env["FOOTAGE_ROTATION_THEME"] = rotation_theme
         if rotation_tags_group:
             env["FOOTAGE_ROTATION_GROUP"] = rotation_tags_group
+    # Wave 1 Поток B: the picker's global per-bucket cooldown ledger (footage_usage)
+    # needs the DSN + the serving chat. Passed explicitly so it doesn't depend on
+    # CREDITS_DB_URL being present in the raw subprocess env.
+    _usage_db_url = str(getattr(SETTINGS, "credits_db_url", "") or "").strip()
+    if _usage_db_url:
+        env["FOOTAGE_USAGE_DB_URL"] = _usage_db_url
+    env["FOOTAGE_USAGE_CHAT_ID"] = str(req.get("chat_id") or "").strip()
     seed_variant = variant_index if variant_index is not None else 1
     seed_base = project_id or f"job-{job_id}"
     env["STAGE2_SELECTION_SEED"] = f"{seed_base}:v{seed_variant}"
