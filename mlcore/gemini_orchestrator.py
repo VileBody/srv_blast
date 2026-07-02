@@ -308,6 +308,22 @@ def _float_env(name: str, default: float) -> float:
         raise RuntimeError(f"Invalid {name}: {raw!r}") from e
 
 
+def _stage2b_deterministic_enabled() -> bool:
+    """Stage2B footage-style resolution on the exact-slot (theme+group) precision
+    path: deterministic catalog resolver instead of an LLM call.
+
+    Default ON — on that path the LLM only copied fields out of footage_v2.py, so
+    the resolver is equivalent and free. Set STAGE2B_DETERMINISTIC=0 to fall back
+    to the LLM (instant rollback, no deploy of code). Only affects jobs that pin
+    BOTH FOOTAGE_ROTATION_THEME and FOOTAGE_ROTATION_GROUP with no artist lock;
+    legacy artist/theme-only paths always keep the LLM.
+    """
+    raw = (os.environ.get("STAGE2B_DETERMINISTIC") or "").strip().lower()
+    if not raw:
+        return True
+    return raw in {"1", "true", "yes", "on"}
+
+
 def _optional_int_env(name: str, default: Optional[int] = None) -> Optional[int]:
     raw = (os.environ.get(name) or "").strip()
     if not raw:
@@ -3277,36 +3293,58 @@ def build_all_via_gemini_one_call(
             )
             return pick
 
-        payload_any = call_footage_style_once(
-            client=client_footage,
-            openrouter_client=openrouter_footage,
-            provider_mode=provider_mode,
-            hedge_delay_s=hedge_delay_s,
-            logger=logger,
-            system_instruction=foot_system,
-            user_prompt=str(foot_prompt),
-            # Style selection needs only Stage1 context + style pool groups.
-            audio_paths=[],
-            extra_file_paths=None,
-            raw_response_path=foot_raw,
-            cache_path=cache_path,
-            prompt_dump_path=foot_user,
-            system_dump_path=foot_sys,
-            schema_model=FootageStyleRotation,
-        )
-
-        if isinstance(payload_any, FootageStylePickPayload):
-            return _accept_direct_pick(payload_any, source="model")
-
-        if isinstance(payload_any, FootageStyleRotation):
-            rotation = payload_any
+        if (
+            _stage2b_deterministic_enabled()
+            and rotation_theme_override
+            and rotation_group_override
+            and not footage_artist_id
+        ):
+            # Exact-slot precision path: build the style filters straight from the
+            # bucket catalog — NO Stage2B LLM call. On this path the LLM only
+            # copied footage_v2 fields, so this is equivalent and free. Downstream
+            # resolution is identical (resolve_style_pick_from_raw_filters below).
+            from mlcore.footage_style_resolver import resolve_style_rotation
+            rotation = resolve_style_rotation(
+                rotation_theme_override, rotation_group_override
+            )
+            logger.info(
+                "stage2_style_deterministic theme=%s group=%s subgroups=%d tags=%d (no LLM)",
+                rotation_theme_override,
+                rotation_group_override,
+                len(rotation.subgroups),
+                len(rotation.subgroups[0].filters.priority_theme_tags),
+            )
         else:
-            try:
-                direct_pick = FootageStylePickPayload.model_validate(payload_any)
-            except Exception:
-                rotation = FootageStyleRotation.model_validate(payload_any)
+            payload_any = call_footage_style_once(
+                client=client_footage,
+                openrouter_client=openrouter_footage,
+                provider_mode=provider_mode,
+                hedge_delay_s=hedge_delay_s,
+                logger=logger,
+                system_instruction=foot_system,
+                user_prompt=str(foot_prompt),
+                # Style selection needs only Stage1 context + style pool groups.
+                audio_paths=[],
+                extra_file_paths=None,
+                raw_response_path=foot_raw,
+                cache_path=cache_path,
+                prompt_dump_path=foot_user,
+                system_dump_path=foot_sys,
+                schema_model=FootageStyleRotation,
+            )
+
+            if isinstance(payload_any, FootageStylePickPayload):
+                return _accept_direct_pick(payload_any, source="model")
+
+            if isinstance(payload_any, FootageStyleRotation):
+                rotation = payload_any
             else:
-                return _accept_direct_pick(direct_pick, source="compat")
+                try:
+                    direct_pick = FootageStylePickPayload.model_validate(payload_any)
+                except Exception:
+                    rotation = FootageStyleRotation.model_validate(payload_any)
+                else:
+                    return _accept_direct_pick(direct_pick, source="compat")
 
         if not mapped_picker_assets:
             raise RuntimeError(

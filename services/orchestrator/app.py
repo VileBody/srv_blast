@@ -166,6 +166,62 @@ def _revoke_celery_tasks_for_job(job_id: str) -> list[str]:
     return revoked
 
 
+def _ranker_cache_ttl_s() -> int:
+    """TTL for cached bucket rankings. Default 30 days; the ranking is
+    deterministic per (lyrics, mood, catalog, model) so a long TTL is safe —
+    the key itself invalidates on any input change."""
+    import os
+
+    raw = (os.environ.get("FOOTAGE_RANKER_CACHE_TTL_S") or "").strip()
+    try:
+        return max(60, int(raw)) if raw else 2592000
+    except Exception:
+        return 2592000
+
+
+def _ranker_cache_enabled() -> bool:
+    import os
+
+    raw = (os.environ.get("FOOTAGE_RANKER_CACHE_ENABLED") or "").strip().lower()
+    if not raw:
+        return True  # Redis-backed, cheap, fail-safe → on by default
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _ranker_cache_get(redis_client: Any, key: str) -> "list[str] | None":
+    """Return the cached ranked id list, or None on miss / any Redis error.
+    Never raises — a cache problem must not break the ranker endpoint."""
+    if not _ranker_cache_enabled():
+        return None
+    try:
+        import json
+
+        raw = redis_client.get(key)
+        if not raw:
+            return None
+        if isinstance(raw, bytes):
+            raw = raw.decode("utf-8")
+        data = json.loads(raw)
+        if isinstance(data, list) and all(isinstance(x, str) for x in data):
+            return data
+        return None
+    except Exception as exc:  # noqa: BLE001
+        logging.getLogger(__name__).warning("ranker_cache_get_failed key=%s err=%r", key, exc)
+        return None
+
+
+def _ranker_cache_set(redis_client: Any, key: str, ranked_ids: "list[str]") -> None:
+    """Store the ranked id list with TTL. Never raises."""
+    if not _ranker_cache_enabled():
+        return
+    try:
+        import json
+
+        redis_client.set(key, json.dumps(list(ranked_ids)), ex=_ranker_cache_ttl_s())
+    except Exception as exc:  # noqa: BLE001
+        logging.getLogger(__name__).warning("ranker_cache_set_failed key=%s err=%r", key, exc)
+
+
 def create_app() -> FastAPI:
     app = FastAPI(title="Blast Orchestrator", version="0.4")
 
@@ -586,19 +642,51 @@ def create_app() -> FastAPI:
     def rank_footage_buckets(req: RankBucketsRequest) -> RankBucketsResponse:
         """Rank footage buckets by relevance to the track lyrics. One cheap LLM
         call (Gemini Flash) with graceful heuristic fallback — never 500s."""
+        import os
+
         from mlcore.footage_bucket_catalog import get_bucket_catalog
-        from mlcore.footage_bucket_ranker import gemini_rank_call, rank_buckets
+        from mlcore.footage_bucket_ranker import (
+            gemini_rank_call,
+            rank_buckets,
+            ranker_cache_key,
+        )
 
         catalog = get_bucket_catalog()
         by_id = {b.bucket_id: b for b in catalog}
+
+        # Persistent per-(lyrics, mood, catalog, model) cache: the ranking is
+        # deterministic, so re-uploads / re-entries of the same track reuse it
+        # instead of burning another Gemini call. Key covers every input, so a
+        # hit is always for the exact same request.
+        ranker_model = (os.environ.get("FOOTAGE_RANKER_MODEL") or "gemini-2.0-flash").strip()
+        _cache_key = ranker_cache_key(
+            lyrics=req.lyrics, mood=req.mood, catalog=catalog, model=ranker_model
+        )
         used_llm = True
-        try:
-            ranked_ids = rank_buckets(
-                lyrics=req.lyrics, mood=req.mood, catalog=catalog, llm_call=gemini_rank_call
-            )
-        except Exception:
-            used_llm = False
-            ranked_ids = rank_buckets(lyrics=req.lyrics, mood=req.mood, catalog=catalog, llm_call=None)
+        cached_ids = _ranker_cache_get(store.r, _cache_key)
+        if cached_ids is not None:
+            used_llm = False  # served from cache, no LLM call this request
+            ranked_ids = [i for i in cached_ids if i in by_id]
+            if not ranked_ids:
+                cached_ids = None  # catalog drifted under the key → recompute
+        if cached_ids is None:
+            try:
+                # raise_on_llm_error=True so a heuristic produced while Gemini is
+                # down is NOT cached (would otherwise be served for the full TTL).
+                ranked_ids = rank_buckets(
+                    lyrics=req.lyrics,
+                    mood=req.mood,
+                    catalog=catalog,
+                    llm_call=gemini_rank_call,
+                    raise_on_llm_error=True,
+                )
+                used_llm = True
+                _ranker_cache_set(store.r, _cache_key, ranked_ids)
+            except Exception:
+                used_llm = False
+                ranked_ids = rank_buckets(
+                    lyrics=req.lyrics, mood=req.mood, catalog=catalog, llm_call=None
+                )
 
         if req.top and req.top > 0:
             ranked_ids = ranked_ids[: int(req.top)]

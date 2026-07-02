@@ -54,6 +54,18 @@ def test_parse_matches_theme_groups_mirror() -> None:
     assert not only_mirror, f"(theme,group) in THEME_GROUPS but not footage_v2: {sorted(only_mirror)}"
 
 
+def test_theme_level_exclude_people_parsed() -> None:
+    """The theme "exclude" (people axis) must land on every bucket of that theme
+    so the deterministic Stage2B resolver can copy it into filters.exclude."""
+    buckets = build_buckets(_SRC)
+    by_id = {b.bucket_id: b for b in buckets}
+    b = by_id["romance_major:nature_sunset"]
+    assert set(b.exclude) == {"crowd", "none", "driver"}
+    # every bucket carries an exclude list (possibly empty), never None
+    for bk in buckets:
+        assert isinstance(bk.exclude, list)
+
+
 def test_dedup_is_deterministic_keeps_first() -> None:
     raw = build_buckets(_SRC)
     deduped = dedup_buckets(raw)

@@ -11,15 +11,48 @@ order) so pagination never runs out unexpectedly.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from typing import Any, Callable, Dict, List, Optional
 
 from mlcore.footage_bucket_catalog import Bucket, get_bucket_catalog
 
+# Bump when the ranker prompt/parse semantics change so cached rankings for the
+# same lyrics are invalidated (a cache miss re-ranks with the new prompt).
+RANKER_PROMPT_VERSION = "v1"
+
 
 def _norm(v: Any) -> str:
     return " ".join(str(v or "").strip().lower().split())
+
+
+def catalog_fingerprint(catalog: List[Bucket]) -> str:
+    """Short stable hash of the catalog's bucket-id set. Changing the catalog
+    (add/remove/rename a bucket) changes the fingerprint → old rankings miss."""
+    material = "|".join(sorted(str(b.bucket_id) for b in catalog))
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()[:16]
+
+
+def ranker_cache_key(
+    *,
+    lyrics: str,
+    mood: str,
+    catalog: List[Bucket],
+    model: str,
+) -> str:
+    """Deterministic cache key for a ranking.
+
+    Includes EVERY input that affects the output — normalized lyrics, mood,
+    catalog fingerprint, model id, prompt version — so a hit can never serve a
+    ranking computed for different inputs. Same inputs → same key.
+    """
+    lyr = _norm(lyrics)
+    lyr_h = hashlib.sha256(lyr.encode("utf-8")).hexdigest()[:24]
+    mood_norm = _norm(mood) or "any"
+    fp = catalog_fingerprint(catalog)
+    model_norm = str(model or "").strip() or "unknown"
+    return f"ranker:{RANKER_PROMPT_VERSION}:{model_norm}:{fp}:{mood_norm}:{lyr_h}"
 
 
 def filter_by_mood(buckets: List[Bucket], mood: str) -> List[Bucket]:
@@ -122,11 +155,17 @@ def rank_buckets(
     mood: str = "",
     catalog: Optional[List[Bucket]] = None,
     llm_call: Optional[Callable[[str, str], str]] = None,
+    raise_on_llm_error: bool = False,
 ) -> List[str]:
     """Return the full ranked list of bucket_ids for these lyrics.
 
     llm_call(system, user) -> raw text. If None or it fails, falls back to the
     heuristic. Mood hard-filters the candidate set first.
+
+    raise_on_llm_error: when True, a failing llm_call re-raises instead of
+    silently returning the heuristic. Callers that CACHE the result use this so a
+    degraded heuristic (produced while the LLM is down) is never stored as if it
+    were the real ranking.
     """
     buckets = filter_by_mood(catalog if catalog is not None else get_bucket_catalog(), mood)
     valid_ids = [b.bucket_id for b in buckets]
@@ -138,5 +177,6 @@ def rank_buckets(
             raw = llm_call(prompt["system"], prompt["user"])
             return parse_ranking_response(raw, valid_ids)
         except Exception:
-            pass
+            if raise_on_llm_error:
+                raise
     return heuristic_rank(lyrics, buckets)

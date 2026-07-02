@@ -3,10 +3,12 @@ from __future__ import annotations
 from mlcore.footage_bucket_catalog import Bucket
 from mlcore.footage_bucket_ranker import (
     build_ranker_prompt,
+    catalog_fingerprint,
     filter_by_mood,
     heuristic_rank,
     parse_ranking_response,
     rank_buckets,
+    ranker_cache_key,
 )
 
 
@@ -79,6 +81,23 @@ def test_rank_buckets_uses_llm_then_falls_back() -> None:
     assert out2[0] == "heartbreak_minor:winter_isolation"
 
 
+def test_rank_buckets_raise_on_llm_error_reraises() -> None:
+    import pytest
+
+    def boom(system, user):
+        raise RuntimeError("llm down")
+
+    # default: swallow + heuristic
+    out = rank_buckets(lyrics="snow winter", mood="", catalog=_CAT, llm_call=boom)
+    assert out[0] == "heartbreak_minor:winter_isolation"
+    # strict: re-raise so the caller does NOT cache a heuristic
+    with pytest.raises(RuntimeError):
+        rank_buckets(
+            lyrics="snow winter", mood="", catalog=_CAT, llm_call=boom,
+            raise_on_llm_error=True,
+        )
+
+
 def test_empty_lyrics_returns_catalog_order() -> None:
     out = rank_buckets(lyrics="   ", mood="", catalog=_CAT, llm_call=None)
     assert out == [b.bucket_id for b in _CAT]
@@ -89,3 +108,31 @@ def test_build_prompt_lists_every_bucket() -> None:
     for b in _CAT:
         assert b.bucket_id in p["user"]
     assert "JSON array" in p["system"]
+
+
+# ---- ranker cache key -----------------------------------------------------
+
+def test_cache_key_same_inputs_same_key() -> None:
+    k1 = ranker_cache_key(lyrics="Snow winter cold", mood="minor", catalog=_CAT, model="m1")
+    k2 = ranker_cache_key(lyrics="  snow   WINTER cold ", mood="Minor", catalog=_CAT, model="m1")
+    assert k1 == k2  # normalized lyrics/mood → identical key
+
+
+def test_cache_key_changes_on_any_input() -> None:
+    base = ranker_cache_key(lyrics="a b c", mood="minor", catalog=_CAT, model="m1")
+    assert base != ranker_cache_key(lyrics="a b d", mood="minor", catalog=_CAT, model="m1")
+    assert base != ranker_cache_key(lyrics="a b c", mood="major", catalog=_CAT, model="m1")
+    assert base != ranker_cache_key(lyrics="a b c", mood="minor", catalog=_CAT, model="m2")
+    # catalog change (drop a bucket) → different fingerprint → different key
+    smaller = _CAT[:-1]
+    assert base != ranker_cache_key(lyrics="a b c", mood="minor", catalog=smaller, model="m1")
+
+
+def test_catalog_fingerprint_is_order_independent() -> None:
+    assert catalog_fingerprint(_CAT) == catalog_fingerprint(list(reversed(_CAT)))
+    assert catalog_fingerprint(_CAT) != catalog_fingerprint(_CAT[:-1])
+
+
+def test_cache_key_prefixed_and_versioned() -> None:
+    k = ranker_cache_key(lyrics="x", mood="", catalog=_CAT, model="gemini-2.0-flash")
+    assert k.startswith("ranker:v1:gemini-2.0-flash:")

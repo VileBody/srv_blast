@@ -87,6 +87,10 @@ class Bucket:
     priority_tags: List[str] = field(default_factory=list)
     exclude_tags: List[str] = field(default_factory=list)
     color: List[str] = field(default_factory=list)
+    # Theme-level people exclusions (footage_v2 theme "exclude": e.g. crowd/driver).
+    # Group-scoped tag exclusions live in exclude_tags; this is the people axis
+    # that the deterministic Stage2B resolver copies into filters.exclude.
+    exclude: List[str] = field(default_factory=list)
     theme_label: str = ""
     subtheme_label: str = ""
 
@@ -109,6 +113,7 @@ def build_buckets(src: Optional[str] = None) -> List[Bucket]:
         if not isinstance(tv, dict):
             continue
         theme_color = [c for c in (_norm(x) for x in (tv.get("color") or [])) if c]
+        theme_exclude = [p for p in (_norm(x) for x in (tv.get("exclude") or [])) if p]
         groups = tv.get("tags_groups") or {}
         for group, gv in groups.items():
             f = _group_fields(gv, theme_color)
@@ -122,6 +127,7 @@ def build_buckets(src: Optional[str] = None) -> List[Bucket]:
                 priority_tags=f["priority_tags"],
                 exclude_tags=f["exclude_tags"],
                 color=f["color"],
+                exclude=theme_exclude,
                 theme_label=get_theme_label(theme),
                 subtheme_label=get_subtheme_label(group),
             ))
