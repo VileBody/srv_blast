@@ -317,6 +317,53 @@ def _record_footage_usage(
         logger.warning("footage_usage_record_failed bucket=%s err=%r", bucket_id, e)
 
 
+def _segment_targeting_enabled() -> bool:
+    return (os.environ.get("FOOTAGE_SEGMENT_TARGETING") or "1").strip().lower() not in ("0", "false", "no", "off")
+
+
+def _build_interval_line_tags(
+    *,
+    clip_start_abs: float,
+    clip_end_abs: float,
+    switch_points_abs: List[float],
+    transcript_words: Any,
+    logger: logging.Logger,
+) -> Optional[List[set]]:
+    """Wave 2 per-segment targeting: for each footage interval, the taxonomy tags
+    of the lyric line playing then (transcript words overlapping the interval →
+    lexicon). Aligned to the picker's interval order. None disables the line
+    boost (picker stays vibe-only). Non-fatal."""
+    if not _segment_targeting_enabled():
+        return None
+    try:
+        from mlcore.footage_picker import build_intervals_from_switch_points
+        from mlcore.lyrics_lexicon import extract_tags, load_lexicon
+
+        intervals = build_intervals_from_switch_points(
+            clip_start_abs=float(clip_start_abs),
+            clip_end_abs=float(clip_end_abs),
+            switch_points_abs=[float(x) for x in switch_points_abs],
+        )
+        lex = load_lexicon()
+        words = list(transcript_words or [])
+        out: List[set] = []
+        for a, b in intervals:
+            txt = " ".join(
+                str(getattr(w, "text", "") or "")
+                for w in words
+                if float(getattr(w, "t_start", 0.0)) < b and float(getattr(w, "t_end", 0.0)) > a
+            )
+            out.append(set(extract_tags(txt, lex).keys()))
+        logger.info(
+            "segment_targeting intervals=%d with_line_tags=%d",
+            len(out), sum(1 for s in out if s),
+        )
+        return out
+    except Exception as e:  # noqa: BLE001
+        logger.warning("segment_targeting_failed err=%r", e)
+        return None
+
+
 def _resolve_style_metadata_db_paths(*, root: Path) -> List[Path]:
     raw = (os.environ.get("FOOTAGE_STYLE_METADATA_DB_PATHS_JSON") or "").strip()
     if raw:
@@ -4062,6 +4109,15 @@ def build_all_via_gemini_one_call(
         else ""
     )
     _cooldown_by_name = _load_footage_cooldown(_usage_bucket_id, selection_assets, logger=logger)
+    # Wave 2: per-interval lyric tags — each footage cut is boosted toward clips
+    # matching the words playing then (never leaves the bucket). Non-fatal.
+    _interval_line_tags = _build_interval_line_tags(
+        clip_start_abs=clip_start_abs,
+        clip_end_abs=clip_end_abs,
+        switch_points_abs=list(switch_payload.switch_points_abs),
+        transcript_words=stage1.transcript_words,
+        logger=logger,
+    )
     footage_payload, interval_diag = pick_footage_clips_by_intervals_deterministic(
         style_pick=style_payload,
         assets=selection_assets,
@@ -4074,6 +4130,7 @@ def build_all_via_gemini_one_call(
         raw_pick=None,
         raw_picks=style_rotation_payload.subgroups if style_rotation_payload is not None else None,
         cooldown_by_name=_cooldown_by_name,
+        interval_line_tags=_interval_line_tags,
     )
     _record_footage_usage(
         _usage_bucket_id,

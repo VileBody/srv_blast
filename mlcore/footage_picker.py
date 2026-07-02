@@ -722,15 +722,18 @@ def _deterministic_file_name_order(
     interval_start: float,
     scores_by_name: Dict[str, float] | None = None,
     cooldown_by_name: Dict[str, float] | None = None,
+    boost_by_name: Dict[str, float] | None = None,
 ) -> List[str]:
     """Return file_names ordered by descending preference.
 
     Quality-band mode (default, Wave 1): the head is chosen WITHIN the near-best
-    band (no flat jitter), so weak clips never win by noise. Head selection:
-      - with `cooldown_by_name` (Поток B): least-recently-served-globally first
-        (coldness DESC), seed breaks ties → consecutive renders/users rotate
-        through the band (cross-user non-duplication).
-      - without it: a uniform seeded pick across the band (cross-seed variety).
+    band (bucket relevance ≥ floor), so weak clips never win by noise. Within the
+    band the priority is (Wave 2 decision C): LINE MATCH > cooldown > score > seed.
+      - `boost_by_name` (Wave 2): clips whose tags match the lyric line playing on
+        this interval win — the clip illustrates the words. Never leaves the band
+        (line tags are a bonus, not a gate); no line match → falls through to…
+      - `cooldown_by_name` (Поток B): least-recently-served-globally (coldness);
+      - else: a uniform seeded pick across the band (Поток A, cross-seed variety).
     The tail lists the rest of the band first, then out-of-band clips as a
     last-resort fallback when the band is exhausted across intervals.
 
@@ -751,6 +754,12 @@ def _deterministic_file_name_order(
         except Exception:
             return 0.0
 
+    def _boost(name: str) -> float:
+        try:
+            return float((boost_by_name or {}).get(name) or 0.0)
+        except Exception:
+            return 0.0
+
     if _quality_band_enabled():
         band = _quality_band(file_names, scores_by_name)
         pool_head = band or list(file_names)
@@ -760,10 +769,12 @@ def _deterministic_file_name_order(
             material = f"{seed_value}:{interval_idx}:{interval_start:.6f}:{name}"
             return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
-        if cooldown_by_name:
-            # Least-recently-used-globally first; seed only breaks ties among
-            # equally-cold clips. Score is a secondary preference within that.
-            head = sorted(pool_head, key=lambda n: (-_cold(n), -_base(n), _seed_hash(n)))[0]
+        if boost_by_name or cooldown_by_name:
+            # Deterministic band order: line match first (illustrate the words),
+            # then coldest (freshness), then score, then seed. When there is no
+            # line match / cooldown for a clip these are 0, so it degrades to the
+            # same order Поток B / A produced.
+            head = sorted(pool_head, key=lambda n: (-_boost(n), -_cold(n), -_base(n), _seed_hash(n)))[0]
         else:
             # Uniform seeded pick across the band (near-best relevance guaranteed
             # by band membership) → cross-seed variety without choosing a weak clip.
@@ -771,9 +782,9 @@ def _deterministic_file_name_order(
             u = _seeded_unit_random(seed_value, interval_idx, interval_start, salt="filename")
             head = ordered_band[min(len(ordered_band) - 1, int(u * len(ordered_band)))]
 
-        def _key(name: str) -> Tuple[int, float, float, str, str]:
-            # in-band first, then coldness desc (if any), then score desc, then seed
-            return (0 if name in band_set else 1, -_cold(name), -_base(name), _seed_hash(name), name)
+        def _key(name: str) -> Tuple[int, float, float, float, str, str]:
+            # in-band first, then line-boost desc, coldness desc, score desc, seed
+            return (0 if name in band_set else 1, -_boost(name), -_cold(name), -_base(name), _seed_hash(name), name)
 
         rest = [n for n in file_names if n != head]
         return [head, *sorted(rest, key=_key)]
@@ -1102,6 +1113,7 @@ def pick_footage_clips_by_intervals_deterministic(
     raw_pick: FootageStyleRawPayload | None = None,
     raw_picks: List[FootageStyleRawPayload] | None = None,
     cooldown_by_name: Dict[str, float] | None = None,
+    interval_line_tags: List[set] | None = None,
 ) -> Tuple[FootageSelectionPayload, FootageIntervalPickerDiagnostics]:
     genre = str(style_pick.genre).strip()
     tag = str(style_pick.tag).strip()
@@ -1275,6 +1287,19 @@ def pick_footage_clips_by_intervals_deterministic(
                     viable_names.append(nm)
             if not viable_names:
                 return None, 0
+            # Wave 2: boost clips whose tags match the lyric LINE on this interval
+            # (line tags come from the lexicon in the orchestrator). Bonus within
+            # the band only — never gates, so we never leave the bucket.
+            boost_by_name: Dict[str, float] | None = None
+            if interval_line_tags and 0 <= interval_idx < len(interval_line_tags):
+                line = interval_line_tags[interval_idx]
+                if line:
+                    boost_by_name = {}
+                    for nm in viable_names:
+                        asset = subgroup_map.get(nm)
+                        if isinstance(asset, dict):
+                            ctags = {_normalize_meta_tag(x) for x in (asset.get("meta_theme_tags") or [])}
+                            boost_by_name[nm] = float(len(ctags & line))
             ranked = _deterministic_file_name_order(
                 file_names=viable_names,
                 seed_value=seed_value,
@@ -1282,6 +1307,7 @@ def pick_footage_clips_by_intervals_deterministic(
                 interval_start=interval_start,
                 scores_by_name=subgroup_scores,
                 cooldown_by_name=cooldown_by_name,
+                boost_by_name=boost_by_name,
             )
             avoid = str(avoid_name or "").strip()
             if avoid and len(ranked) > 1:

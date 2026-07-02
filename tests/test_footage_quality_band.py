@@ -112,6 +112,44 @@ def test_cooldown_head_is_deterministic_given_state(monkeypatch):
         assert order[0] == "b"  # colder clip always first, independent of seed
 
 
+def test_line_boost_wins_within_band(monkeypatch):
+    monkeypatch.setenv("FOOTAGE_QUALITY_BAND", "1")
+    names = ["a", "b", "c"]
+    scores = {"a": 3.0, "b": 3.0, "c": 3.0}   # all in band
+    boost = {"a": 0.0, "b": 2.0, "c": 0.0}    # b matches the lyric line
+    for seed in (1, 2, 3, 99):
+        order = fp._deterministic_file_name_order(
+            file_names=names, seed_value=seed, interval_idx=0, interval_start=0.0,
+            scores_by_name=scores, boost_by_name=boost,
+        )
+        assert order[0] == "b"                # line match wins regardless of seed
+
+
+def test_line_boost_beats_cooldown(monkeypatch):
+    monkeypatch.setenv("FOOTAGE_QUALITY_BAND", "1")
+    names = ["a", "b"]
+    scores = {"a": 3.0, "b": 3.0}
+    boost = {"a": 1.0, "b": 0.0}              # a matches the line
+    cooldown = {"a": 0.0, "b": 31.0}          # b is colder
+    order = fp._deterministic_file_name_order(
+        file_names=names, seed_value=1, interval_idx=0, interval_start=0.0,
+        scores_by_name=scores, cooldown_by_name=cooldown, boost_by_name=boost,
+    )
+    assert order[0] == "a"                    # line > cooldown
+
+
+def test_line_boost_never_leaves_the_band(monkeypatch):
+    monkeypatch.setenv("FOOTAGE_QUALITY_BAND", "1")
+    names = ["strong", "weak"]
+    scores = {"strong": 3.0, "weak": 1.0}     # weak is out of band (floor 2)
+    boost = {"strong": 0.0, "weak": 5.0}      # weak matches the line but is weak vibe
+    order = fp._deterministic_file_name_order(
+        file_names=names, seed_value=1, interval_idx=0, interval_start=0.0,
+        scores_by_name=scores, boost_by_name=boost,
+    )
+    assert order[0] == "strong"               # never leave the bucket for a weak clip
+
+
 def test_legacy_path_still_works_when_disabled(monkeypatch):
     monkeypatch.setenv("FOOTAGE_QUALITY_BAND", "0")
     names = ["a", "b", "c"]
