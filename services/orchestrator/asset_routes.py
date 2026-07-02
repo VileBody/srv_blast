@@ -1015,6 +1015,12 @@ def create_asset_router(*, prefix: str = "/asset-ui/api") -> APIRouter:
             filtered.append(item)
 
         if bucket:
+            # Match the picker's quality-band floor: require >=2 matching tags
+            # (one generic tag like "night" shouldn't pull a clip in), relaxed to
+            # >=1 only for a thin bucket where nothing reaches 2 (so it's not empty).
+            mx = max((int(x.get("_overlap") or 0) for x in filtered), default=0)
+            floor = 2 if mx >= 2 else 1
+            filtered = [x for x in filtered if int(x.get("_overlap") or 0) >= floor]
             filtered.sort(key=lambda x: -int(x.get("_overlap") or 0))
 
         total = len(filtered)

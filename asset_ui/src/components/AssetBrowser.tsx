@@ -94,7 +94,9 @@ export function AssetBrowser() {
         )}
         <span className="toolbar-spacer" />
         <span className="toolbar-counter">
-          {bucket ? `Бакет: ${total}` : `Всего: ${total}`}
+          {bucket
+            ? `Бакет: ${total} · совпало тегов: ${(current as { _overlap?: number } | null)?._overlap ?? '—'}`
+            : `Всего: ${total}`}
         </span>
       </div>
       <div className="asset-browser">
