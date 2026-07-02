@@ -112,7 +112,10 @@ def test_vibe_callback_prefix_and_controls_match_across_bots():
 
     assert pub.VIBE_CB_PREFIX == team.VIBE_CB_PREFIX == "vibe:"
     assert pub.VIBE_PAGE_SIZE == team.VIBE_PAGE_SIZE
-    assert pub.BTN_VIBE_REFRESH == team.BTN_VIBE_REFRESH
+    # Paging button reads as "show more options", NOT a reload — the "🔄 Обновить"
+    # copy was misread by users as re-rank/reset. Pin the literal so both bots
+    # stay in sync on the label.
+    assert pub.BTN_VIBE_REFRESH == team.BTN_VIBE_REFRESH == "Ещё варианты ›"
     assert pub.BTN_VIBE_DONE == team.BTN_VIBE_DONE
     assert pub.BTN_VIBE_AUTO == team.BTN_VIBE_AUTO
 

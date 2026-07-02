@@ -447,7 +447,7 @@ BTN_BG_PICTURES = "Картинки (скоро)"
 BTN_BG_PICTURES_PHOTO = "🖼 Картинки"
 # Vibe shortlist (inline) control buttons + callback-data prefix. Mirror of team.
 VIBE_CB_PREFIX = "vibe:"          # vibe:tog:<idx> | vibe:more | vibe:done | vibe:auto
-BTN_VIBE_REFRESH = "🔄 Обновить"
+BTN_VIBE_REFRESH = "Ещё варианты ›"
 BTN_VIBE_DONE = "▶️ Готово"
 BTN_VIBE_AUTO = "✨ По треку (авто)"
 # How many buckets to show per shortlist page.
@@ -3757,7 +3757,7 @@ class BlastBotApp:
         lines = [
             "Выбери вайб(ы) для футажа — можно несколько (тап = ✓ в набор).",
             f"Страница {page + 1}/{pages}. Выбрано: {n_sel}.",
-            "«🔄 Обновить» — листать варианты (выбор сохраняется). "
+            "«Ещё варианты ›» — показать другие вайбы (выбор сохраняется). "
             "«▶️ Готово» — продолжить. «✨ По треку (авто)» — топ-1 по треку.",
         ]
         return "\n".join(lines)
