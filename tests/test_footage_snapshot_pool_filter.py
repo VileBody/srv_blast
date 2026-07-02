@@ -23,9 +23,17 @@ def test_failsafe_empty_pool_returns_all():
     assert len(filter_snapshot_to_pool(rows, None)) == 2
 
 
-def test_photo_namespaced_ids_pass_through_when_pooled():
-    rows = [{"video_key": "sunset.jpg", "theme_tags": ["warm"]}]
-    # photo clip_id is namespaced 'photo:sunset'
-    assert filter_snapshot_to_pool(rows, {"photo:sunset"}) == rows
-    # not in pool -> dropped
-    assert filter_snapshot_to_pool(rows, {"photo:other"}) == []
+def test_photo_namespaced_ids_partial_drop():
+    rows = [
+        {"video_key": "sunset.jpg", "theme_tags": ["warm"]},   # photo:sunset
+        {"video_key": "rain.jpg", "theme_tags": ["cold"]},     # photo:rain (orphan)
+    ]
+    out = filter_snapshot_to_pool(rows, {"photo:sunset"})
+    assert [r["video_key"] for r in out] == ["sunset.jpg"]     # rain dropped
+
+
+def test_failsafe_never_blanks_nonempty_snapshot():
+    # pool is non-empty but shares NO clip_id with the tags (registry out of sync)
+    rows = [_row("10000001"), _row("10000002")]
+    out = filter_snapshot_to_pool(rows, {"99999999", "88888888"})
+    assert out == rows   # keep everything rather than emit an empty snapshot

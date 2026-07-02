@@ -672,18 +672,19 @@ def create_asset_router(*, prefix: str = "/asset-ui/api") -> APIRouter:
         from mlcore.footage_assets_db import fetch_pool_clip_ids
         from mlcore.footage_tags_db import build_snapshot, filter_snapshot_to_pool
 
-        async def _go() -> List[Dict[str, Any]]:
+        async def _go() -> tuple:
             conn = await asyncpg.connect(dsn=db_url)
             try:
                 rows = await build_snapshot(conn, source=mt)
-                # drop orphan tags of deleted clips (fail-safe if registry empty)
+                # drop orphan tags of deleted clips (fail-safe if registry empty
+                # or out of sync — never blanks a non-empty snapshot)
                 pool_ids = await fetch_pool_clip_ids(conn, source=mt)
-                return filter_snapshot_to_pool(rows, pool_ids)
+                return filter_snapshot_to_pool(rows, pool_ids), len(rows), len(pool_ids)
             finally:
                 await conn.close()
 
         try:
-            rows = asyncio.run(_go())
+            rows, total_tags, pool_size = asyncio.run(_go())
         except Exception as e:  # pragma: no cover - surfaced via endpoint error
             log.error("tags-snapshot read failed: %s", e)
             raise HTTPException(status_code=500, detail=str(e))
@@ -694,7 +695,9 @@ def create_asset_router(*, prefix: str = "/asset-ui/api") -> APIRouter:
             media_type="application/json",
             headers={
                 "Content-Disposition": f'attachment; filename="footage_tags_snapshot_{mt}.json"',
-                "X-Snapshot-Rows": str(len(rows)),
+                "X-Snapshot-Rows": str(len(rows)),      # rows returned (after pool filter)
+                "X-Tags-Total": str(total_tags),        # footage_tags rows for this source
+                "X-Pool-Size": str(pool_size),          # footage_assets clip_ids for this source
             },
         )
 

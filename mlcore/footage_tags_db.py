@@ -358,6 +358,13 @@ def filter_snapshot_to_pool(
         }
         if candidates & pool_clip_ids:
             out.append(r)
+    # FAIL-SAFE: if filtering wiped a NON-empty snapshot, the pool registry is out
+    # of sync with footage_tags (e.g. registry not populated for this source, or
+    # a keying mismatch) — NEVER emit an empty snapshot (it would break all
+    # picking). Keep the tags; orphans are harmless (the picker joins to the live
+    # inventory anyway). Only a true partial overlap actually drops orphans.
+    if rows and not out:
+        return list(rows)
     return out
 
 
