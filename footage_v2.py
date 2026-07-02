@@ -241,7 +241,8 @@ THEMES LOGIC (Themes & Tags)
     "exclude": ["crowd", "none", "driver"],
     "tags_groups": {
       "nature_sunset":  ["sunset", "beach", "golden hour", "ocean", "water", "palm trees",
-                         "flowers", "grass", "beach sunset", "evening", "landscape", "waves"],
+                         "flowers", "grass", "beach sunset", "evening", "landscape", "waves",
+                         "mountain", "clouds", "silhouette", "outdoor", "sunlight", "serenity"],
       "couple_moments": ["couple", "couple hug", "couple walking", "couple watching sunset",
                          "romantic moment", "kiss", "romance", "couple dancing", "smiling",
                          "beach run", "couple holding hands", "intimate moment"],
@@ -256,9 +257,6 @@ THEMES LOGIC (Themes & Tags)
     "color": ["cold", "neutral"],
     "exclude": ["crowd", "driver"],
     "tags_groups": {
-      "lonely_nature":   ["foggy forest", "misty forest", "cloudy sky",
-                          "fog", "forest", "misty trees", "bare trees",
-                          "dark trees", "trees"],
       "intimacy_fading": ["couple", "silhouette", "reflection", "smiling", "rain",
                           "night", "castle", "couple walking", "couple hug",
                           "rainy night", "intimate moment", "city life"]
@@ -268,8 +266,6 @@ THEMES LOGIC (Themes & Tags)
     "color": ["warm", "light"],
     "exclude": ["crowd", "driver"],
     "tags_groups": {
-      "cinematic_nature": ["sunset", "beach", "golden hour", "ocean", "water", "landscape",
-                           "mountain", "beach sunset", "waves", "trees", "evening", "clouds"],
       "dynamic_couple":   ["couple", "couple dancing", "beach run", "couple walking",
                            "running", "romance", "couple hug", "smiling", "outdoor", "dancing"]
     }
@@ -318,25 +314,6 @@ THEMES LOGIC (Themes & Tags)
                   "snowstorm", "snowy forest", "snowy night", "snowy road",
                   "blizzard", "frost", "ice", "winter scene"]
       },
-      "foggy_desolation": {
-        "_exclude_tags": ["train", "winter decorations", "winter wonderland", "skyscrapers",
-                          "cityscape", "car", "red snake", "hooded figure", "urban",
-                          "vintage style", "smoke", "beach", "party", "red lights",
-                          "intimacy", "group", "dance", "car interior", "running",
-                          "long hair", "subway"],
-        "_tags": ["foggy", "fog", "foggy forest", "misty forest", "misty atmosphere",
-                  "bare trees", "cloudy sky", "dark forest", "dark trees",
-                  "overcast", "misty trees", "forest"]
-      },
-      "lonely_paths": {
-        "_exclude_tags": ["train", "winter decorations", "winter wonderland", "skyscrapers",
-                          "cityscape", "car", "red snake", "hooded figure", "urban",
-                          "vintage style", "smoke", "beach", "party", "red lights",
-                          "intimacy", "group", "dance", "car interior", "running",
-                          "long hair", "subway", "scape", "tv"],
-        "_tags": ["lonely", "lonely figure", "alone", "lonely walk",
-                  "darkness", "silhouette", "night walk", "dark atmosphere"]
-      },
       "silhouette_vibe": {
         "_exclude_tags": ["train", "winter decorations", "winter wonderland", "skyscrapers",
                           "cityscape", "car", "red snake", "hooded figure", "urban",
@@ -358,13 +335,6 @@ THEMES LOGIC (Themes & Tags)
                   "urban", "dark room", "purple lighting", "alone", "selfie",
                   "indoor setting", "low light", "city lights", "blue lighting"]
       },
-      "lonely_paths": {
-        "_exclude_tags": ["train", "winter decorations", "winter wonderland", "skyscrapers",
-                          "cityscape", "car", "urban", "vintage style", "smoke", "beach",
-                          "party", "red lights", "dance", "car interior", "running",
-                          "long hair", "subway", "tram"],
-        "_tags": ["lonely", "alone", "lonely walk", "lonely figure", "darkness", "silhouette", "night walk"]
-      },
       "dark_elements": {
         "_exclude_tags": ["train", "winter decorations", "skyscrapers", "cityscape",
                           "car", "beach", "party", "dance", "car interior", "running",
@@ -378,22 +348,12 @@ THEMES LOGIC (Themes & Tags)
     "color": ["dark", "cold"],
     "exclude": ["couple", "crowd"],
     "tags_groups": {
-      "girl_unease": {
-        "_color": ["dark", "cold"],
-        "_exclude_tags": ["subway", "dramatic pose", "car", "cars", "car interior"],
-        "_tags": ["blurry", "blue lighting", "neon lights", "night city", "dark room",
-                  "nighttime", "alone", "indoor setting", "selfie", "night",
-                  "purple lighting", "indoor lighting"]
-      },
       "eerie_nature": {
         "_exclude_tags":  ["metal grille", "campers", "cape"],
         "_tags": ["misty forest", "foggy forest", "fog", "dark forest", "dark trees",
-                         "night", "shadows", "darkness", "dark atmosphere", "moonlight"]
-      },
-      "glitchy_mind": {
-        "_exclude_tags": ["purple light", "car", "cars", "night drive"],
-        "_tags": ["glitch", "digital art", "blurry", "abstract", "blue lighting",
-                         "red lights", "neon lights", "dark room", "distortion"]
+                         "night", "shadows", "darkness", "dark atmosphere", "moonlight",
+                         "foggy", "forest", "bare trees", "cloudy sky", "overcast",
+                         "misty trees", "misty atmosphere", "silhouette", "trees"]
       }
     }
   },
@@ -411,9 +371,7 @@ THEMES LOGIC (Themes & Tags)
         "_tags": ["fog", "foggy", "dark sky", "shadows", "darkness", "blurry",
                           "dark atmosphere", "dark forest", "foggy forest", "overcast",
                           "cloudy sky", "night"]
-      },
-      "urban_isolation": ["night city", "streetlights", "rain", "rainy night", "lonely", "alone",
-                          "dark road", "wet road", "city street", "night drive", "street lights"]
+      }
     }
   },
   "self_destruction_minor": {
@@ -424,16 +382,6 @@ THEMES LOGIC (Themes & Tags)
         "_exclude_tags": ["cars", "burnout", "intense"],
         "_tags": ["night", "smoke", "neon lights", "red lights", "dark room",
                           "dark interior", "night city", "city lights", "darkness", "rain"]
-      },
-      "blurry_reality": {
-        "_exclude_tags": ["purple light", "abstract design", "protest", "car", "cars", "night drive"],
-        "_tags": ["blurry motion", "blurry", "red lights", "glitch", "abstract",
-                          "digital art", "neon lights", "dark atmosphere", "distortion"]
-      },
-      "messy_aftermath": {
-        "_exclude_tags": ["heart shape", "light trails"],
-        "_tags": ["dark interior", "alone", "abandoned", "darkness", "empty street",
-                          "night", "shadows", "lonely", "dim lighting", "dark room"]
       }
     }
   },
@@ -468,9 +416,7 @@ THEMES LOGIC (Themes & Tags)
                           "urban setting", "urban landscape", "city traffic", "architecture", "city"]
       },
       "action_movement": ["running", "dancing", "beach run", "speed",
-                          "action", "blurry motion", "high speed", "athlete", "jumping"],
-      "bright_starts":   ["sunset", "golden hour", "sunlight", "beach", "water", "ocean",
-                          "serenity", "outdoor", "landscape", "evening", "silhouette"]
+                          "action", "blurry motion", "high speed", "athlete", "jumping"]
     }
   },
   "motivation_minor": {
@@ -478,11 +424,10 @@ THEMES LOGIC (Themes & Tags)
     "exclude": ["girls", "couple"],
     "tags_groups": {
       "night_grind": ["night city", "street lights", "rain", "rainy night", "dark road",
-                            "wet road", "night drive", "city street", "darkness", "night"],
+                            "wet road", "night drive", "city street", "darkness", "night",
+                            "lonely", "alone"],
       "tough_environment": ["urban", "graffiti", "city street", "urban setting", "dark road",
-                            "smoke", "night", "running", "action"],
-      "solitary_focus":    ["alone", "lonely", "dark room", "night walk", "silhouette",
-                            "darkness", "shadows", "empty street", "empty road", "night"]
+                            "smoke", "night", "running", "action"]
     }
   },
   "hustle_minor": {
@@ -495,7 +440,8 @@ THEMES LOGIC (Themes & Tags)
                            "night drive", "traffic", "cityscape", "urban landscape", "night", "cars"]
       },
       "luxury_lifestyle": ["gold", "car interior", "car", "night city",
-                           "night", "speed", "dark interior", "neon lights", "traffic"]
+                           "night", "speed", "dark interior", "neon lights", "traffic",
+                           "jewelry", "gold jewelry", "luxury car", "sports car"]
     }
   },
   "sex_major": {
@@ -531,10 +477,9 @@ THEMES LOGIC (Themes & Tags)
     "color": ["warm", "neutral"],
     "exclude": ["crowd", "couple"],
     "tags_groups": {
-      "vintage_tech":  ["car", "car interior", "architecture", "street scene",
-                        "city life", "urban", "road", "evening", "old car", "traffic"],
       "retro_city":    ["sunset", "cityscape", "city life", "evening", "street scene",
-                        "architecture", "urban", "road", "traffic", "skyscrapers", "city"],
+                        "architecture", "urban", "road", "traffic", "skyscrapers", "city",
+                        "car", "car interior", "old car"],
       "lofi_textures": ["smoke", "relaxation", "indoor", "dark interior", "dark room",
                         "dimly lit", "warm lighting", "low light", "indoor setting", "close-up"]
     }
@@ -546,12 +491,11 @@ THEMES LOGIC (Themes & Tags)
       "car_action": {
         "_exclude_tags": ["smoke tires", "red car", "masked person", "burnout", "tuned car", "running horse", "dark track", "fast motion", "parking garage", "neon text", "car in water", "trees", "city traffic"],
         "_tags": ["night racing", "drifting", "speed", "night drive", "car", "cars",
-                        "smoke", "night drift", "high speed", "rainy night", "wet road", "car interior"]
+                        "smoke", "night drift", "high speed", "rainy night", "wet road", "car interior",
+                        "sports car", "headlights"]
       },
       "night_streets": ["neon lights", "city lights", "night city", "street lights", "night",
-                        "cityscape", "skyscrapers", "urban landscape", "night traffic", "urban"],
-      "street_action": ["skateboarding", "action", "running", "graffiti", "city street",
-                        "urban setting", "night walk", "jumping", "fire", "street scene"]
+                        "cityscape", "skyscrapers", "urban landscape", "night traffic", "urban"]
     }
   },
   "escapism_dreams_minor": {
@@ -568,21 +512,16 @@ THEMES LOGIC (Themes & Tags)
         "_tags":   ["glowing figure", "glowing hand", "abstract", "digital art",
                           "underwater", "light trails", "glowing", "neon lights",
                           "blurry motion", "reflection"]
-      },
-      "dark_dreamscape": ["night", "fog", "forest", "dark forest", "darkness", "silhouette",
-                          "misty forest", "foggy forest", "dark trees", "lonely"]
+      }
     }
   },
   "loneliness_isolation_minor": {
     "color": ["dark", "cold"],
     "exclude": ["crowd"],
     "tags_groups": {
-      "eerie_nature": {
-        "_exclude_tags":  ["metal grille", "campers", "cape"],
-        "_tags": ["misty forest", "foggy forest", "fog", "dark forest", "dark trees",
-                         "night", "shadows", "darkness", "dark atmosphere", "moonlight"]
-      },
-      "urban_solitude": ["night walk", "lonely figure", "silhouette", "darkness", "night city", "rain", "alone", "tunnel"]
+      "urban_solitude": ["night walk", "lonely figure", "silhouette", "darkness", "night city",
+                         "rain", "alone", "tunnel", "lonely", "lonely walk", "dark atmosphere",
+                         "empty street", "empty road", "shadows", "dark room", "abandoned", "night"]
     }
   },
   "youth_rebellion_major": {
@@ -590,11 +529,10 @@ THEMES LOGIC (Themes & Tags)
     "exclude": ["none"],
     "tags_groups": {
       "street_culture":  ["skateboarding", "graffiti", "urban setting", "city street",
-                          "street scene", "running", "action", "jumping", "night", "cityscape"],
+                          "street scene", "running", "action", "jumping", "night", "cityscape",
+                          "night walk", "fire"],
       "friend_hangouts": ["dancing", "smiling", "couple dancing", "outdoor", "sunset",
-                          "beach", "relaxation", "serenity", "city life", "music"],
-      "sunset_vibes":    ["sunset", "beach", "beach sunset", "city life", "golden hour",
-                          "water", "evening", "outdoor", "landscape", "silhouette"]
+                          "beach", "relaxation", "serenity", "city life", "music"]
     }
   },
   "mysticism_fate_minor": {
@@ -605,11 +543,6 @@ THEMES LOGIC (Themes & Tags)
         "_exclude_tags": ["vinyl record"],
         "_tags": ["castle", "ruins", "architecture", "dark atmosphere",
                               "dark forest", "dark trees", "night", "fog", "shadows"]
-      },
-      "eerie_nature": {
-        "_exclude_tags":  ["metal grille", "campers", "cape"],
-        "_tags": ["misty forest", "foggy forest", "fog", "dark forest", "dark trees",
-                         "night", "shadows", "darkness", "dark atmosphere", "moonlight"]
       }
     }
   },
@@ -620,13 +553,53 @@ THEMES LOGIC (Themes & Tags)
       "digital_glitch": {
         "_exclude_tags": ["train on track"],
         "_tags": ["glitch", "digital art", "abstract", "blurry", "neon lights",
-                                 "red lights", "blue lighting", "city lights", "night city"]
+                                 "red lights", "blue lighting", "city lights", "night city",
+                                 "distortion", "blurry motion"]
       },
       "cyberpunk_city":         ["neon lights", "night city", "city lights", "skyscrapers",
                                  "rain", "rainy night", "cityscape", "street lights",
                                  "urban", "night drive"],
       "surveillance_isolation": ["subway", "tunnel", "platform", "empty street", "alone",
                                  "darkness", "shadows", "dark room", "lonely", "night walk"]
+    }
+  },
+  "serene_landscape_major": {
+    "color": ["warm", "light"],
+    "exclude": ["crowd", "driver"],
+    "tags_groups": {
+      "open_landscapes": {
+        "_color": ["warm", "light"],
+        "_tags": ["flowers", "sunlight", "grass", "wildflowers", "green field",
+                  "green landscape", "hills", "meadow", "flower field", "open field"]
+      },
+      "water_coast": {
+        "_color": ["cold", "light"],
+        "_tags": ["water", "ocean", "waves", "beach", "waterfront", "lake",
+                  "waterfall", "sea", "coast", "rocky shore"]
+      },
+      "bright_sky": {
+        "_color": ["warm", "neutral"],
+        "_tags": ["clouds", "golden hour", "cloudy sky", "blue sky", "clear sky",
+                  "sunrise", "sunny day"]
+      }
+    }
+  },
+  "nightlife_electro_minor": {
+    "color": ["dark"],
+    "exclude": ["driver"],
+    "tags_groups": {
+      "nightlife_party": ["neon lights", "city lights", "crowd", "night city",
+                          "concert", "night club", "dance floor", "laser lights",
+                          "stage lights", "glitch", "distortion"]
+    }
+  },
+  "urban_blocks_minor": {
+    "color": ["dark", "cold"],
+    "exclude": ["couple"],
+    "tags_groups": {
+      "residential_blocks": ["urban", "city street", "night city", "skyscrapers",
+                             "apartment building", "tall buildings", "high-rise buildings",
+                             "concrete building", "old architecture"]
     }
   }
 

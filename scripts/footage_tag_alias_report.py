@@ -162,12 +162,29 @@ def _load_tag_freq() -> Tuple[Dict[str, int], str]:
     return _tag_freq_from_records(records), "video_database JSONs"
 
 
+def _tag_freq_from_files(paths: List[str]) -> Tuple[Dict[str, int], str]:
+    """Tag frequency from explicit snapshot file(s) (video_database / footage_tags
+    snapshot shape). Lets the report run on the REAL grown base pulled via the
+    /assets/tags-snapshot endpoint, without node/PG access."""
+    records: List[Dict[str, Any]] = []
+    for p in paths:
+        data = json.loads(Path(p).read_text(encoding="utf-8"))
+        rows = data if isinstance(data, list) else (data.get("items") or data.get("assets") or data.get("videos") or [])
+        records.extend(r for r in rows if isinstance(r, dict))
+    return _tag_freq_from_records(records), f"{len(paths)} snapshot file(s)"
+
+
 def main() -> int:
     args = [a for a in sys.argv[1:]]
     min_freq = 5
     if "--min-freq" in args:
         i = args.index("--min-freq")
         min_freq = int(args[i + 1])
+        del args[i:i + 2]
+    metadata_paths: List[str] = []
+    while "--metadata" in args:
+        i = args.index("--metadata")
+        metadata_paths.append(args[i + 1])
         del args[i:i + 2]
     out_path = Path(args[0] if args else _DEFAULT_OUT)
 
@@ -176,7 +193,7 @@ def main() -> int:
     alias_file = _ROOT / "data" / "tag_aliases.json"
     if alias_file.exists():
         aliases = json.loads(alias_file.read_text(encoding="utf-8")).get("aliases", {})
-    tag_freq, source = _load_tag_freq()
+    tag_freq, source = _tag_freq_from_files(metadata_paths) if metadata_paths else _load_tag_freq()
 
     report = classify(tag_freq, taxonomy, aliases, min_freq=min_freq)
     report["source"] = source

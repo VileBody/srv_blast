@@ -15,14 +15,14 @@ _SRC = (Path(__file__).resolve().parents[1] / "footage_v2.py").read_text(encodin
 
 def test_parse_themes_logic_yields_all_themes() -> None:
     logic = parse_themes_logic(_SRC)
-    assert len(logic) == 22
+    assert len(logic) == 25
     assert "heartbreak_minor" in logic
     assert "tags_groups" in logic["heartbreak_minor"]
 
 
 def test_build_buckets_have_tags_label_and_mood() -> None:
     buckets = build_buckets(_SRC)
-    assert len(buckets) >= 55
+    assert len(buckets) >= 45
     for b in buckets:
         assert b.priority_tags, f"{b.bucket_id} has no tags"
         assert b.label, f"{b.bucket_id} has no label"

@@ -13,33 +13,30 @@ from .artist_presets_loader import get_artist_themes
 
 THEME_GROUPS: Dict[str, List[str]] = {
     "romance_major": ["nature_sunset", "couple_moments", "warm_vibes"],
-    "romance_minor": ["lonely_nature", "intimacy_fading"],
-    "epic_love_major": ["cinematic_nature", "dynamic_couple"],
+    "romance_minor": ["intimacy_fading"],
+    "epic_love_major": ["dynamic_couple"],
     "epic_love_minor": ["stormy_elements", "dramatic_landscape", "tragic_couple"],
-    "heartbreak_minor": [
-        "girl_portrait_sad",
-        "winter_isolation",
-        "foggy_desolation",
-        "lonely_paths",
-        "silhouette_vibe",
-    ],
-    "betrayal_minor": ["girl_urban_night", "lonely_paths", "dark_elements"],
-    "jealousy_minor": ["girl_unease", "eerie_nature", "glitchy_mind"],
-    "depression_minor": ["empty_spaces", "mental_fog", "urban_isolation"],
-    "self_destruction_minor": ["nightlife_decay", "blurry_reality", "messy_aftermath"],
+    "heartbreak_minor": ["girl_portrait_sad", "winter_isolation", "silhouette_vibe"],
+    "betrayal_minor": ["girl_urban_night", "dark_elements"],
+    "jealousy_minor": ["eerie_nature"],
+    "depression_minor": ["empty_spaces", "mental_fog"],
+    "self_destruction_minor": ["nightlife_decay"],
     "aggression_minor": ["chaos_elements", "urban_grit", "night_intensity"],
-    "motivation_major": ["urban_triumph", "action_movement", "bright_starts"],
-    "motivation_minor": ["night_grind", "tough_environment", "solitary_focus"],
+    "motivation_major": ["urban_triumph", "action_movement"],
+    "motivation_minor": ["night_grind", "tough_environment"],
     "hustle_minor": ["urban_wealth", "luxury_lifestyle"],
     "sex_major": ["soft_intimacy", "warm_aesthetics"],
     "sex_minor": ["neon_passion", "intimate_details"],
-    "nostalgia_city_minor": ["vintage_tech", "retro_city", "lofi_textures"],
-    "adrenaline_flex_major": ["car_action", "night_streets", "street_action"],
-    "escapism_dreams_minor": ["cosmic_journey", "surreal_magic", "dark_dreamscape"],
-    "loneliness_isolation_minor": ["eerie_nature", "urban_solitude"],
-    "youth_rebellion_major": ["street_culture", "friend_hangouts", "sunset_vibes"],
-    "mysticism_fate_minor": ["gothic_architecture", "eerie_nature"],
+    "nostalgia_city_minor": ["retro_city", "lofi_textures"],
+    "adrenaline_flex_major": ["car_action", "night_streets"],
+    "escapism_dreams_minor": ["cosmic_journey", "surreal_magic"],
+    "loneliness_isolation_minor": ["urban_solitude"],
+    "youth_rebellion_major": ["street_culture", "friend_hangouts"],
+    "mysticism_fate_minor": ["gothic_architecture"],
     "cyber_alienation_minor": ["digital_glitch", "cyberpunk_city", "surveillance_isolation"],
+    "serene_landscape_major": ["open_landscapes", "water_coast", "bright_sky"],
+    "nightlife_electro_minor": ["nightlife_party"],
+    "urban_blocks_minor": ["residential_blocks"],
 }
 
 
@@ -105,6 +102,9 @@ THEME_LABELS_RU: Dict[str, str] = {
     "youth_rebellion_major": "Молодёжный бунт",
     "mysticism_fate_minor": "Мистика / судьба",
     "cyber_alienation_minor": "Киберотчуждение",
+    "serene_landscape_major": "Пейзаж / природа",
+    "nightlife_electro_minor": "Тусовка / электро",
+    "urban_blocks_minor": "Панельки / мрачный урбан",
 }
 
 
@@ -169,6 +169,11 @@ SUBTHEME_LABELS_RU: Dict[str, str] = {
     "warm_aesthetics": "Тёплая эстетика",
     "warm_vibes": "Тёплый вайб",
     "winter_isolation": "Зимняя изоляция",
+    "open_landscapes": "Открытые пейзажи",
+    "water_coast": "Вода / берег",
+    "bright_sky": "Яркое небо",
+    "nightlife_party": "Тусовка / клуб",
+    "residential_blocks": "Панельки / кварталы",
 }
 
 
