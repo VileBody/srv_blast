@@ -3460,7 +3460,27 @@ def build_all_via_gemini_one_call(
             )
             return pick
 
-        if (
+        _bg_mode_now = (os.environ.get("BG_MODE") or "").strip().lower()
+        if _bg_mode_now in ("solid", "solid_strobe"):
+            # Solid / strobe bg: the footage stack is DROPPED at AE composition
+            # time (only a solid / B-W-strobe layer renders). The actual footage
+            # style is irrelevant — only the interval CUTS matter (strobe segments
+            # come from switch_points, which are style-independent). So DON'T call
+            # Gemini for the style (a wasted call that 503s on a solid-bg job) —
+            # use a deterministic bucket. Keep the artist_id on subgroups so the
+            # downstream artist check passes (the bot sets a placeholder artist).
+            from mlcore.footage_bucket_catalog import build_buckets
+            from mlcore.footage_style_resolver import resolve_style_rotation
+            _b0 = build_buckets()[0]
+            rotation = resolve_style_rotation(_b0.theme, _b0.tags_group)
+            if footage_artist_id:
+                for _sg in rotation.subgroups:
+                    _sg.artist_id = footage_artist_id
+            logger.info(
+                "stage2_style_solid_bg_deterministic bucket=%s:%s (no LLM, footage dropped)",
+                _b0.theme, _b0.tags_group,
+            )
+        elif (
             _stage2b_deterministic_enabled()
             and rotation_theme_override
             and rotation_group_override
