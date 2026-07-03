@@ -644,57 +644,83 @@ def create_app() -> FastAPI:
         call (Gemini Flash) with graceful heuristic fallback — never 500s."""
         import os
 
-        from mlcore.footage_bucket_catalog import get_bucket_catalog
-        from mlcore.footage_bucket_ranker import (
-            gemini_rank_call,
-            rank_buckets,
-            ranker_cache_key,
-        )
-
-        catalog = get_bucket_catalog()
+        # get_bucket_catalog is required for ANY response. If even that fails,
+        # return an empty ranking rather than 500 — a 500 here pushes the bot into
+        # the legacy artist-theme fallback (the symptom we're fixing).
+        try:
+            from mlcore.footage_bucket_catalog import get_bucket_catalog
+            catalog = get_bucket_catalog()
+        except Exception:
+            log.exception("rank-buckets: catalog load failed — empty ranking")
+            return RankBucketsResponse(buckets=[], used_llm=False)
         by_id = {b.bucket_id: b for b in catalog}
 
-        # Persistent per-(lyrics, mood, catalog, model) cache: the ranking is
-        # deterministic, so re-uploads / re-entries of the same track reuse it
-        # instead of burning another Gemini call. Key covers every input, so a
-        # hit is always for the exact same request.
-        # Default: DETERMINISTIC ranking via the lyrics lexicon — no LLM call, no
-        # cache needed (it's instant and stable). Set FOOTAGE_RANKER_LLM=1 to use
-        # the Gemini theme-classifier instead (cached, graceful fallback).
-        use_llm = (os.environ.get("FOOTAGE_RANKER_LLM") or "0").strip().lower() in ("1", "true", "yes", "on")
-        if not use_llm:
-            ranked_ids = rank_buckets(lyrics=req.lyrics, mood=req.mood, catalog=catalog, llm_call=None)
-            used_llm = False
-        else:
-            ranker_model = (os.environ.get("FOOTAGE_RANKER_MODEL") or "gemini-2.0-flash").strip()
-            _cache_key = ranker_cache_key(
-                lyrics=req.lyrics, mood=req.mood, catalog=catalog, model=ranker_model
+        def _safe_default_ids() -> list:
+            # Deterministic, never-raising fallback: mood-matching buckets first
+            # (if a mood was given), then the rest, in catalog order.
+            m = (req.mood or "").strip().lower()
+            matched = (
+                [b.bucket_id for b in catalog if str(getattr(b, "mood", "") or "").strip().lower() == m]
+                if m else []
             )
-            used_llm = True
-            cached_ids = _ranker_cache_get(store.r, _cache_key)
-            if cached_ids is not None:
-                used_llm = False  # served from cache, no LLM call this request
-                ranked_ids = [i for i in cached_ids if i in by_id]
-                if not ranked_ids:
-                    cached_ids = None  # catalog drifted under the key → recompute
-            if cached_ids is None:
-                try:
-                    # raise_on_llm_error=True so a heuristic produced while Gemini is
-                    # down is NOT cached (would otherwise be served for the full TTL).
-                    ranked_ids = rank_buckets(
-                        lyrics=req.lyrics,
-                        mood=req.mood,
-                        catalog=catalog,
-                        llm_call=gemini_rank_call,
-                        raise_on_llm_error=True,
-                    )
-                    used_llm = True
-                    _ranker_cache_set(store.r, _cache_key, ranked_ids)
-                except Exception:
-                    used_llm = False
-                    ranked_ids = rank_buckets(
-                        lyrics=req.lyrics, mood=req.mood, catalog=catalog, llm_call=None
-                    )
+            seen = set(matched)
+            return matched + [b.bucket_id for b in catalog if b.bucket_id not in seen]
+
+        # The whole ranking is wrapped: ANY failure (ranker import, lexicon file,
+        # heuristic bug, Redis cache) → safe default. This endpoint must NEVER
+        # 500 and never return empty, whatever the input or environment.
+        used_llm = False
+        ranked_ids: list = []
+        try:
+            from mlcore.footage_bucket_ranker import (
+                gemini_rank_call,
+                rank_buckets,
+                ranker_cache_key,
+            )
+            # Default: DETERMINISTIC ranking via the lyrics lexicon — no LLM call,
+            # no cache (instant + stable). FOOTAGE_RANKER_LLM=1 → Gemini classifier
+            # (cached, graceful fallback).
+            use_llm = (os.environ.get("FOOTAGE_RANKER_LLM") or "0").strip().lower() in ("1", "true", "yes", "on")
+            if not use_llm:
+                ranked_ids = rank_buckets(lyrics=req.lyrics, mood=req.mood, catalog=catalog, llm_call=None)
+            else:
+                ranker_model = (os.environ.get("FOOTAGE_RANKER_MODEL") or "gemini-2.0-flash").strip()
+                _cache_key = ranker_cache_key(
+                    lyrics=req.lyrics, mood=req.mood, catalog=catalog, model=ranker_model
+                )
+                used_llm = True
+                cached_ids = _ranker_cache_get(store.r, _cache_key)
+                if cached_ids is not None:
+                    used_llm = False  # served from cache, no LLM call this request
+                    ranked_ids = [i for i in cached_ids if i in by_id]
+                    if not ranked_ids:
+                        cached_ids = None  # catalog drifted under the key → recompute
+                if cached_ids is None:
+                    try:
+                        # raise_on_llm_error=True so a heuristic produced while Gemini
+                        # is down is NOT cached (would be served for the full TTL).
+                        ranked_ids = rank_buckets(
+                            lyrics=req.lyrics,
+                            mood=req.mood,
+                            catalog=catalog,
+                            llm_call=gemini_rank_call,
+                            raise_on_llm_error=True,
+                        )
+                        used_llm = True
+                        _ranker_cache_set(store.r, _cache_key, ranked_ids)
+                    except Exception:
+                        used_llm = False
+                        ranked_ids = rank_buckets(
+                            lyrics=req.lyrics, mood=req.mood, catalog=catalog, llm_call=None
+                        )
+        except Exception:
+            log.exception("rank-buckets: ranking failed — safe default (mood-first catalog order)")
+            ranked_ids = _safe_default_ids()
+            used_llm = False
+
+        # An empty ranking would also strand the bot → safe default.
+        if not ranked_ids:
+            ranked_ids = _safe_default_ids()
 
         if req.top and req.top > 0:
             ranked_ids = ranked_ids[: int(req.top)]

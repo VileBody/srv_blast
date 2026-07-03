@@ -131,3 +131,27 @@ def test_cache_key_changes_on_any_input() -> None:
 def test_catalog_fingerprint_order_independent() -> None:
     assert catalog_fingerprint(_CAT) == catalog_fingerprint(list(reversed(_CAT)))
     assert catalog_fingerprint(_CAT) != catalog_fingerprint(_CAT[:-1])
+
+
+# --- deterministic ranker robustness (urgent: rank-buckets endpoint must never
+# 500 → bot must never fall to the legacy artist path) --------------------------
+
+@pytest.mark.parametrize("lyrics", [None, "", "   ", "деньги тачки", pytest.param("x" * 5000, id="long"), 123, ["a"], {"k": 1}])
+@pytest.mark.parametrize("mood", [None, "", "minor", "major", "ZZZ_unknown", 7])
+def test_rank_buckets_deterministic_never_raises(lyrics, mood):
+    out = rank_buckets(lyrics=lyrics, mood=mood, catalog=_CAT, llm_call=None)
+    assert isinstance(out, list)
+    # every id is a real catalog bucket
+    assert all(i in _IDS for i in out)
+
+
+def test_rank_buckets_empty_catalog_is_safe():
+    assert rank_buckets(lyrics="anything", mood="", catalog=[], llm_call=None) == []
+
+
+def test_rank_buckets_deterministic_smoke_top():
+    # hustle/luxury lyrics → a hustle/adrenaline bucket near the top
+    top = rank_buckets(lyrics="деньги тачки успех флекс", mood="", catalog=_CAT, llm_call=None)[:5]
+    assert any(_theme_of(b) in ("hustle_minor", "adrenaline_flex_major") for b in top), top
+    top2 = rank_buckets(lyrics="клуб рейв танцпол неон", mood="", catalog=_CAT, llm_call=None)[:5]
+    assert any("nightlife" in _theme_of(b) or "night" in b for b in top2), top2
