@@ -3471,14 +3471,37 @@ def build_all_via_gemini_one_call(
             # downstream artist check passes (the bot sets a placeholder artist).
             from mlcore.footage_bucket_catalog import build_buckets
             from mlcore.footage_style_resolver import resolve_style_rotation
-            _b0 = build_buckets()[0]
-            rotation = resolve_style_rotation(_b0.theme, _b0.tags_group)
+            _catalog = build_buckets()
+            if rotation_theme_override:
+                # A rotation slot was pinned upstream (e.g. bot's solid/strobe
+                # default artist has rotation slots) — the downstream hard
+                # check at ~3544 requires the resolved rotation's theme/group
+                # to match exactly, or stage2 raises
+                # stage2_style_rotation_override_theme_mismatch. Build the
+                # deterministic bucket FROM the override instead of always
+                # taking build_buckets()[0], so solid/strobe jobs with a
+                # rotation-slotted artist don't fail this check.
+                _theme = rotation_theme_override
+                if rotation_group_override:
+                    _group = rotation_group_override
+                else:
+                    _theme_buckets = [b for b in _catalog if b.theme == _theme]
+                    if not _theme_buckets:
+                        raise RuntimeError(
+                            "stage2_style_solid_bg_override_theme_not_found: "
+                            f"theme={_theme!r} has no buckets in catalog"
+                        )
+                    _group = _theme_buckets[0].tags_group
+            else:
+                _b0 = _catalog[0]
+                _theme, _group = _b0.theme, _b0.tags_group
+            rotation = resolve_style_rotation(_theme, _group)
             if footage_artist_id:
                 for _sg in rotation.subgroups:
                     _sg.artist_id = footage_artist_id
             logger.info(
                 "stage2_style_solid_bg_deterministic bucket=%s:%s (no LLM, footage dropped)",
-                _b0.theme, _b0.tags_group,
+                _theme, _group,
             )
         elif (
             _stage2b_deterministic_enabled()
