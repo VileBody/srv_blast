@@ -293,6 +293,65 @@ def test_vibe_done_requires_selection(monkeypatch):
     asyncio.run(_run())
 
 
+def test_ensure_vibe_ranked_retries_transient_failures(monkeypatch):
+    """Regression: a single client-side hiccup (timeout/connection reset) on
+    the sync rank call must NOT permanently strand the chat in the legacy
+    genre/artist picker. The server endpoint never 500s/empties, so a failure
+    here is transient — retry before giving up."""
+    pub, app = _make_app(monkeypatch, ranked=["t0:g0"])
+    monkeypatch.setattr(pub.asyncio, "sleep", lambda *_a, **_k: _immediate())
+
+    async def _immediate():
+        return None
+
+    calls = {"n": 0}
+    real_rank_buckets = app.orchestrator.rank_buckets
+
+    async def _flaky_rank_buckets(*, lyrics, mood="", top=0):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise ConnectionError("simulated transient failure")
+        return await real_rank_buckets(lyrics=lyrics, mood=mood, top=top)
+
+    app.orchestrator.rank_buckets = _flaky_rank_buckets
+
+    from services.tg_bot_public.state_store import ChatState
+
+    async def _run():
+        st = ChatState(chat_id=7, lyrics_text="x", bg_mode="footage")
+        ok = await app._ensure_vibe_ranked(st)
+        assert ok is True
+        assert calls["n"] == 3
+        assert st.vibe_ranked_ids == ["t0:g0"]
+
+    asyncio.run(_run())
+
+
+def test_ensure_vibe_ranked_gives_up_after_exhausting_retries(monkeypatch):
+    """After retries are exhausted, still falls back cleanly (caller routes to
+    the legacy genre picker) rather than raising."""
+    pub, app = _make_app(monkeypatch, ranked=["t0:g0"])
+    monkeypatch.setattr(pub.asyncio, "sleep", lambda *_a, **_k: _immediate())
+
+    async def _immediate():
+        return None
+
+    async def _always_fails(*, lyrics, mood="", top=0):
+        raise ConnectionError("simulated persistent failure")
+
+    app.orchestrator.rank_buckets = _always_fails
+
+    from services.tg_bot_public.state_store import ChatState
+
+    async def _run():
+        st = ChatState(chat_id=7, lyrics_text="x", bg_mode="footage")
+        ok = await app._ensure_vibe_ranked(st)
+        assert ok is False
+        assert st.vibe_ranked_ids == []
+
+    asyncio.run(_run())
+
+
 def test_vibe_auto_picks_top1(monkeypatch):
     ranked = ["t0:g0", "t1:g1", "t2:g2"]
     pub, app = _make_app(monkeypatch, ranked)

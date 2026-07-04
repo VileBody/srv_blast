@@ -2554,22 +2554,40 @@ class BlastBotApp:
     async def _ensure_vibe_ranked(self, st: ChatState) -> bool:
         """Make sure st has a ranked shortlist. If the background ranker hasn't
         finished (or failed), rank synchronously now. Returns False only when
-        ranking yields nothing (caller falls back to the legacy genre picker)."""
+        ranking yields nothing after retries (caller falls back to the legacy
+        genre picker).
+
+        Retries a couple of times with a short backoff: the orchestrator
+        endpoint is hardened to never 500/empty, so a failure here is a
+        transient client-side hiccup (timeout/connection reset) — without a
+        retry, one bad request permanently strands the chat in the legacy
+        artist flow (nothing else re-triggers ranking until new lyrics)."""
         if st.vibe_ranked_ids:
             return True
-        try:
-            result = await self.orchestrator.rank_buckets(
-                lyrics=str(st.lyrics_text or "").strip(), mood=""
-            )
-            ranked_ids, labels = self._parse_ranked_buckets(result)
-        except Exception as e:
-            log.warning("vibe_rank_sync_fail chat=%s err=%r", st.chat_id, e)
-            return False
-        st.vibe_ranked_ids = ranked_ids
-        st.vibe_labels_by_id = labels
-        st.vibe_rank_status = "ready" if ranked_ids else "failed"
-        await self.store.set(st)
-        return bool(ranked_ids)
+        lyrics = str(st.lyrics_text or "").strip()
+        last_err: Exception | None = None
+        for attempt in range(3):
+            if attempt:
+                await asyncio.sleep(0.5 * attempt)
+            try:
+                result = await self.orchestrator.rank_buckets(lyrics=lyrics, mood="")
+                ranked_ids, labels = self._parse_ranked_buckets(result)
+            except Exception as e:
+                last_err = e
+                log.warning(
+                    "vibe_rank_sync_fail chat=%s attempt=%d err=%r",
+                    st.chat_id, attempt + 1, e,
+                )
+                continue
+            st.vibe_ranked_ids = ranked_ids
+            st.vibe_labels_by_id = labels
+            st.vibe_rank_status = "ready" if ranked_ids else "failed"
+            await self.store.set(st)
+            return bool(ranked_ids)
+        log.error(
+            "vibe_rank_sync_exhausted chat=%s attempts=3 last_err=%r", st.chat_id, last_err
+        )
+        return False
 
     def _vibe_page_count(self, st: ChatState) -> int:
         n = len(st.vibe_ranked_ids or [])
