@@ -352,6 +352,105 @@ def test_ensure_vibe_ranked_gives_up_after_exhausting_retries(monkeypatch):
     asyncio.run(_run())
 
 
+def test_reuse_input_routes_to_bg_mode_not_genre(monkeypatch):
+    """Regression: «Сделать под тот же трек» must re-enter at the background
+    step (Футажи/Цветной/Строб) so «Футажи» reaches the vibe bucket picker —
+    NOT drop straight into the legacy genre picker (which bypassed the whole
+    precision flow). Also wipes stale per-run selection."""
+    pub, app = _make_app(monkeypatch, ranked=["t0:g0"])
+    from services.tg_bot_public.state_store import ChatState, STAGE_WAIT_BG_MODE
+
+    async def _run():
+        st = ChatState(
+            chat_id=7,
+            pending_audio_file_id="file123",  # → _can_reuse_input True
+            lyrics_text="x",
+            footage_artist_id="stale_artist",
+            hook_enabled=True,
+            hook_category="effect",
+            effect_transition="minimax",
+            colors_done=True,
+            vibe_selected_ids=["old:bucket"],
+        )
+        await app.store.set(st)
+        await app._handle_wait_audio(_Msg(text=pub.BTN_REUSE_INPUT), st)
+        st = await app.store.get(7)
+        assert st.stage == STAGE_WAIT_BG_MODE
+        assert st.footage_artist_id == ""
+        assert st.hook_enabled is False
+        assert st.hook_category == ""
+        assert st.effect_transition == ""
+        assert st.colors_done is False
+        assert st.vibe_selected_ids == []
+
+    asyncio.run(_run())
+
+
+def test_reuse_input_from_wait_next_routes_to_bg_mode(monkeypatch):
+    """Same reuse fix on the post-generation «Сделать следующий» path."""
+    pub, app = _make_app(monkeypatch, ranked=["t0:g0"])
+    from services.tg_bot_public.state_store import ChatState, STAGE_WAIT_BG_MODE
+
+    async def _run():
+        st = ChatState(chat_id=7, pending_audio_file_id="file123", lyrics_text="x")
+        await app.store.set(st)
+        await app._handle_wait_next(_Msg(text=pub.BTN_REUSE_INPUT), st)
+        st = await app.store.get(7)
+        assert st.stage == STAGE_WAIT_BG_MODE
+
+    asyncio.run(_run())
+
+
+def test_strobe_confirm_skips_hook_flow_goes_to_cut(monkeypatch):
+    """Regression: after confirming the subtitle mode, a Строб Ч/Б job must go
+    straight to the cut-transition step — NOT through the full hook flow (which
+    duplicated the effect: hook prompt + then cut prompt)."""
+    pub, app = _make_app(monkeypatch, ranked=["t0:g0"])
+    from services.tg_bot_public.state_store import (
+        ChatState, STAGE_WAIT_STROBE_CUT, STAGE_WAIT_CONFIRM_MODE,
+    )
+
+    async def _run():
+        st = ChatState(
+            chat_id=7,
+            bg_mode="solid_strobe",
+            stage=STAGE_WAIT_CONFIRM_MODE,
+            user_clip_start_sec=1.0,
+            user_clip_end_sec=15.0,
+        )
+        await app.store.set(st)
+        await app._handle_wait_confirm_mode(_Msg(text=pub.BTN_CONFIRM_YES), st)
+        st = await app.store.get(7)
+        assert st.stage == STAGE_WAIT_STROBE_CUT
+
+    asyncio.run(_run())
+
+
+def test_footage_confirm_still_enters_hook_flow(monkeypatch):
+    """Contrast: a normal footage job still routes confirm → hook flow (the
+    strobe skip must not leak into other bg modes)."""
+    # HOOK_FLOW_ENABLED read at import; set it BEFORE _make_app's reload.
+    monkeypatch.setenv("HOOK_FLOW_ENABLED", "1")
+    pub, app = _make_app(monkeypatch, ranked=["t0:g0"])
+    assert pub.HOOK_FLOW_ENABLED is True
+    from services.tg_bot_public.state_store import (
+        ChatState, STAGE_WAIT_HOOK_CHOICE, STAGE_WAIT_CONFIRM_MODE,
+    )
+
+    async def _run():
+        st = ChatState(
+            chat_id=7,
+            bg_mode="footage",
+            stage=STAGE_WAIT_CONFIRM_MODE,
+        )
+        await app.store.set(st)
+        await app._handle_wait_confirm_mode(_Msg(text=pub.BTN_CONFIRM_YES), st)
+        st = await app.store.get(7)
+        assert st.stage == STAGE_WAIT_HOOK_CHOICE
+
+    asyncio.run(_run())
+
+
 def test_vibe_auto_picks_top1(monkeypatch):
     ranked = ["t0:g0", "t1:g1", "t2:g2"]
     pub, app = _make_app(monkeypatch, ranked)

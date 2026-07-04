@@ -4839,6 +4839,36 @@ class BlastBotApp:
             ),
         )
 
+    def _reset_reuse_selection(self, st: ChatState) -> None:
+        """Reuse-input («Сделать под тот же трек»): wipe the per-run *selection*
+        (background / footage / vibe / hook / colors) so the user re-picks from
+        a clean slate, while audio / lyrics / timing are preserved.
+
+        Crucially this re-enters at the background step (_ask_bg_mode), NOT the
+        legacy genre picker — otherwise reuse skipped the «Футажи / Цветной /
+        Строб» choice and dropped straight into the old artist flow, bypassing
+        the vibe bucket picker (and stale hook/color flags leaked forward)."""
+        st.footage_genre_key = ""
+        st.footage_artist_key = ""
+        st.footage_artist_id = ""
+        st.vibe_selected_ids = []
+        st.hook_enabled = False
+        st.hook_category = ""
+        st.hook_device = ""
+        st.hook_drop_t = None
+        st.effect_hook = ""
+        st.effect_transition = ""
+        st.effect_extra = ""
+        st.effect_extra_full = False
+        st.effect_hook_extend = ""
+        st.f1_sound_url = ""
+        st.f1_sound_text = ""
+        st.f2_shape = ""
+        st.colors_done = False
+        st.subtitle_color_hex = ""
+        st.accent_color_hex = ""
+        st.versions_count = 1
+
     async def _handle_wait_audio(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()
         if text == BTN_ALL_PACKAGES:
@@ -4852,8 +4882,8 @@ class BlastBotApp:
                 )
                 return
             st.subtitles_mode = SUBTITLES_MODE_IMPULSE_2ND
-            st.versions_count = 1
-            await self._ask_footage_genre(message, st)
+            self._reset_reuse_selection(st)
+            await self._ask_bg_mode(message, st)
             return
         if text in (BTN_SEND_TRACK, BTN_GENERATE_MORE):
             await message.answer("Жду аудио-файл.", reply_markup=ReplyKeyboardRemove())
@@ -5310,6 +5340,16 @@ class BlastBotApp:
     async def _handle_wait_confirm_mode(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()
         if text == BTN_CONFIRM_YES:
+            # Strobe bg: NO hook flow and NO color pickers. The strobe already
+            # IS the effect (B/W flip on cuts); text is forced white + auto-
+            # inverts. The ONLY strobe setting is the cut-transition style,
+            # asked once by _proceed_to_versions_or_confirm. Routing through the
+            # full hook flow here duplicated it (hook prompt + then cut prompt).
+            if st.bg_mode == "solid_strobe":
+                st.colors_done = False
+                await self.store.set(st)
+                await self._proceed_to_versions_or_confirm(message, st)
+                return
             # Hook flow first; customization (colors) runs after it (see
             # _proceed_to_versions_or_confirm). Legacy path when the flag is off.
             if HOOK_FLOW_ENABLED:
@@ -5538,8 +5578,8 @@ class BlastBotApp:
             if message.chat is None:
                 return
             st.subtitles_mode = SUBTITLES_MODE_IMPULSE_2ND
-            st.versions_count = 1
-            await self._ask_footage_genre(message, st)
+            self._reset_reuse_selection(st)
+            await self._ask_bg_mode(message, st)
             return
 
         can_reuse = self._can_reuse_input(st)
