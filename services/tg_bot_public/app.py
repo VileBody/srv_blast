@@ -3110,7 +3110,8 @@ class BlastBotApp:
         await bot.set_my_commands([
             BotCommand(command="start", description="Запустить бота"),
             BotCommand(command="sendtrack", description="Отправить трек"),
-            BotCommand(command="packets", description="Посмотреть тарифы"),
+            # /packets stays a valid alias (handler still accepts it) but is
+            # dropped from the menu — it duplicated /packages.
             BotCommand(command="packages", description="Посмотреть тарифы"),
             BotCommand(command="cancelsubscription", description="Отменить подписку"),
         ])
