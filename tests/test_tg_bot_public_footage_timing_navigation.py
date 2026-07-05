@@ -74,7 +74,7 @@ def _keyboard_labels(reply_markup) -> list[str]:
     return labels
 
 
-def test_timing_choice_keyboard_has_set_and_skip(monkeypatch) -> None:
+def test_timing_choice_goes_straight_to_input(monkeypatch) -> None:
     async def _run() -> None:
         monkeypatch.setattr(public_app, "_kb", lambda *rows: ("kb", rows))
         app = _new_app()
@@ -83,10 +83,14 @@ def test_timing_choice_keyboard_has_set_and_skip(monkeypatch) -> None:
 
         await public_app.BlastBotApp._ask_timing_choice(app, msg, st)
 
-        assert st.stage == STAGE_WAIT_TIMING_CHOICE
+        # The "let AI decide" fork was removed — the timing is now always
+        # user-supplied, so we jump straight to the input step with no
+        # «Указать тайминг»/«На усмотрение ИИ» buttons.
+        assert st.stage == public_app.STAGE_WAIT_TIMING_INPUT
         labels = _keyboard_labels(msg.answers[-1]["reply_markup"])
-        assert public_app.BTN_SET_TIMING in labels
-        assert public_app.BTN_SKIP_TIMING in labels
+        assert public_app.BTN_SET_TIMING not in labels
+        assert public_app.BTN_SKIP_TIMING not in labels
+        assert "15" in str(msg.answers[-1]["text"])
 
     asyncio.run(_run())
 

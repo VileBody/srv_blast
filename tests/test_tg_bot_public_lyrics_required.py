@@ -26,7 +26,7 @@ from services.tg_bot_public import app as public_app
 from services.tg_bot_public.state_store import (
     ChatState,
     STAGE_WAIT_CONFIRM,
-    STAGE_WAIT_FRAGMENT_CHOICE,
+    STAGE_WAIT_FRAGMENT_TEXT,
     STAGE_WAIT_LYRICS_CHOICE,
     STAGE_WAIT_LYRICS_TEXT,
 )
@@ -93,7 +93,9 @@ def test_legacy_lyrics_choice_accepts_plain_lyrics_text() -> None:
         await public_app.BlastBotApp._handle_wait_lyrics_choice(app, msg, st)
 
         assert st.lyrics_text == "я пришел сюда чтобы сиять"
-        assert st.stage == STAGE_WAIT_FRAGMENT_CHOICE
+        # The fragment fork was removed — lyrics lead straight to the
+        # "paste the lines" input step.
+        assert st.stage == STAGE_WAIT_FRAGMENT_TEXT
 
     asyncio.run(_run())
 

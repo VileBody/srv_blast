@@ -609,6 +609,16 @@ _F2_SHAPE_BY_BUTTON = {
     BTN_F2_SHAPE_ELIPSE: "elipse",
 }
 
+# Reverse id -> RU-label maps. The chat state stores pipeline ids (e.g.
+# "snap_wipe"/"rhomb"/"swipe"/"punchline"); the confirm summary echoes the picks
+# in Russian for the user instead of the raw English ids.
+_F3_HOOK_RU_BY_ID = {v: k for k, v in F3_HOOK_LABELS_RU.items()}
+_F3_TRANSITION_RU_BY_ID = {v: k for k, v in F3_TRANSITION_LABELS_RU.items()}
+_F3_EXTRA_RU_BY_ID = {v: k for k, v in F3_EXTRA_LABELS_RU.items()}
+_F2_SHAPE_RU_BY_ID = {v: k for k, v in F2_SHAPE_LABELS_RU.items()}
+_F4_DEVICE_RU_BY_ID = {v: k for k, v in F4_MOTION_DEVICE_LABELS_RU.items()}
+_F5_DEVICE_RU_BY_ID = {v: k for k, v in _HOOK_DEVICE_BY_BUTTON.items()}
+
 # Photo flow (4:3) — two F3-style picker steps. Mirror of tg_bot_botapi; UX is
 # gated behind PHOTO_FLOW_ENABLED but the data layer (buttons/maps/id sets) is
 # mirrored for CI parity. Id sets must stay in sync with the schema Literals.
@@ -3343,12 +3353,12 @@ class BlastBotApp:
         end = float(st.user_clip_end_sec or 0.0)
         if end > start > 0.0:
             return f"{self._fmt_timing(start)} - {self._fmt_timing(end)}"
-        return "весь трек / на усмотрение ИИ"
+        return "весь трек"
 
     def _source_label(self, st: ChatState) -> str:
         artist_id = str(st.footage_artist_id or "").strip()
         if not artist_id:
-            return "на усмотрение ИИ"
+            return "по треку"
         genre_key = str(st.footage_genre_key or "").strip()
         if genre_key:
             try:
@@ -3366,18 +3376,21 @@ class BlastBotApp:
         return bool(str(st.lyrics_text or st.target_fragment or "").strip())
 
     async def _ask_timing_choice(self, message: Message, st: ChatState) -> None:
-        st.stage = STAGE_WAIT_TIMING_CHOICE
+        # No fork: the "let AI decide" option was removed — the timing is now
+        # always user-supplied. Go straight to the input step.
+        st.stage = STAGE_WAIT_TIMING_INPUT
         st.user_clip_start_sec = 0.0
         st.user_clip_end_sec = 0.0
         await self.store.set(st)
         await message.answer(
-            "Хочешь указать конкретный тайминг трека для клипа?\n"
-            "Например: 1:20-1:50 или 80-110 (в секундах).\n"
-            "Максимальный тайминг: 15с.\n\n"
-            "<b>Это строгое ограничение, если ты поставишь больше, "
-            "то задача вернется с ошибкой и придется заполнять все заново.</b>",
+            "Укажи конкретный тайминг трека для клипа следующим образом: "
+            "1:20-1:50 (минуты:секунды).\n\n"
+            "Проверь, что отрывок текста и тайминг — сходятся.\n\n"
+            "<b>Максимальный тайминг: 15с.</b> Это строгое ограничение — если "
+            "поставишь больше, задача вернётся с ошибкой и придётся заполнять "
+            "заново.",
             parse_mode="HTML",
-            reply_markup=_kb([BTN_SET_TIMING, BTN_SKIP_TIMING]),
+            reply_markup=ReplyKeyboardRemove(),
         )
 
     async def _handle_wait_timing_choice(self, message: Message, st: ChatState) -> None:
@@ -3415,8 +3428,14 @@ class BlastBotApp:
         if duration < 5.0:
             await message.answer("Слишком короткий фрагмент (минимум 5 сек). Попробуй ещё раз.")
             return
+        # Hard cap is 22s (buffer for the hook scenario); the UI communicates a
+        # stricter 15s so users aim short. Deliberate: 15–22s still passes, only
+        # past 22s hard-fails. Keep the user-facing number at 15.
         if duration > 22.0:
-            await message.answer("Слишком длинный фрагмент (максимум 22 сек). Попробуй ещё раз.")
+            await message.answer(
+                "Слишком длинный фрагмент (максимум 15 сек) — укажи отрезок "
+                "покороче, например 1:20-1:33."
+            )
             return
         st.user_clip_start_sec = round(start_sec, 3)
         st.user_clip_end_sec = round(end_sec, 3)
@@ -3763,9 +3782,8 @@ class BlastBotApp:
             text=BTN_VIBE_DONE, callback_data=f"{VIBE_CB_PREFIX}done"
         ))
         rows.append(controls)
-        rows.append([InlineKeyboardButton(
-            text=BTN_VIBE_AUTO, callback_data=f"{VIBE_CB_PREFIX}auto"
-        )])
+        # NB: the "✨ По треку (авто)" button was removed — vibe selection is now
+        # always explicit (multi-select + «Готово»).
         return InlineKeyboardMarkup(inline_keyboard=rows)
 
     def _vibe_shortlist_text(self, st: ChatState) -> str:
@@ -3773,10 +3791,15 @@ class BlastBotApp:
         page = int(st.vibe_page or 0) % pages
         n_sel = len(st.vibe_selected_ids or [])
         lines = [
-            "Выбери вайб(ы) для футажа — можно несколько (тап = ✓ в набор).",
+            "Выбери вайб футажей — можно несколько.",
+            "",
             f"Страница {page + 1}/{pages}. Выбрано: {n_sel}.",
-            "«Ещё варианты ›» — показать другие вайбы (выбор сохраняется). "
-            "«▶️ Готово» — продолжить. «✨ По треку (авто)» — топ-1 по треку.",
+            "",
+            "Механика проста: тап на кнопку — вайб попадает в набор ✓",
+            "",
+            "Остальные кнопки:",
+            "1. «Ещё варианты» — показать другие варианты, выбор сохраняется.",
+            "2. «Готово» — перейти к настройке субтитров.",
         ]
         return "\n".join(lines)
 
@@ -3884,11 +3907,13 @@ class BlastBotApp:
             return
 
         if action in {"done", "auto"}:
+            # "auto" kept only for backward-compat with in-flight callbacks; the
+            # button is gone, so the normal path is an explicit multi-select.
             if action == "auto":
                 ranked = list(st.vibe_ranked_ids or [])
                 st.vibe_selected_ids = [ranked[0]] if ranked else []
             if not st.vibe_selected_ids:
-                await cb.answer("Выбери хотя бы один вайб или нажми «По треку (авто)».", show_alert=True)
+                await cb.answer("Выбери хотя бы один вайб — тапни по кнопке.", show_alert=True)
                 return
             await self.store.set(st)
             labels = [_vibe_display_label(st.vibe_labels_by_id.get(b, b)) for b in st.vibe_selected_ids]
@@ -3963,7 +3988,7 @@ class BlastBotApp:
         st.stage = STAGE_WAIT_ACCENT_COLOR
         await self.store.set(st)
         await message.answer(
-            "Акцентный цвет (фигуры «Объект» + фокус-слово)? Палитра или «По умолчанию».",
+            "Выбери акцентный цвет для фигур и фокус-слов: палитра или «По умолчанию».",
             reply_markup=self._color_kb(),
         )
 
@@ -4110,46 +4135,54 @@ class BlastBotApp:
         st.stage = STAGE_WAIT_HOOK_DROP
         await self.store.set(st)
         cands = list(st.hook_drop_candidates or [])
+        cs = float(st.user_clip_start_sec or 0.0)
+        ce = float(st.user_clip_end_sec or 0.0)
+        has_clip = ce > cs
         primary_rows: List[List[str]] = []
+        breakdown: List[str] = []
         if cands:
             for idx, c in enumerate(cands[:3]):
-                t_label = self._fmt_timing(float(c["t"]))
-                conf_label = f"{int(round(float(c['confidence']) * 100))}%"
+                t = float(c["t"])
+                t_label = self._fmt_timing(t)
                 tag = "🎯 " if idx == 0 else ""
-                primary_rows.append([f"{tag}{t_label} ({conf_label})"])
-        primary_rows.append([BTN_HOOK_DROP_NONE])
+                primary_rows.append([f"{tag}{t_label}"])
+                if has_clip:
+                    lead = max(0, int(round(t - cs)))
+                    core = max(0, int(round(ce - t)))
+                    line_tag = "🎯 " if idx == 0 else "     "
+                    breakdown.append(f"{line_tag}{t_label} — разгон {lead}с · кора {core}с")
         primary_rows.append([BTN_HOOK_DROP_MANUAL])
         primary_rows.append([BTN_BACK])
         if not cands:
             if st.hook_analysis_status == "pending":
                 hint = ("Анализ ещё не готов — попробуй через несколько секунд, "
-                        "или выбери «Ввести вручную» / «В отрывке нет дропа».")
+                        "или выбери «Ввести вручную».")
             elif st.hook_analysis_status == "failed":
                 hint = (f"Анализ не удался ({st.hook_analysis_error or 'unknown'}). "
                         "Можно ввести тайминг вручную.")
             else:
                 hint = ("Анализ дропа недоступен (нет focus clip). "
-                        "Введи тайминг вручную, либо «В отрывке нет дропа».")
+                        "Введи тайминг вручную.")
             await message.answer(hint, reply_markup=_kb(*primary_rows))
             return
-        await message.answer(
-            "Выбери момент дропа. 🎯 — лучший кандидат, остальные — близкие "
-            "альтернативы. Если ни один не подходит — «Ввести вручную».\n\n"
-            "ℹ️ Хук строится по сценарию: ~3–4с разгон ДО дропа + 10–12с кора "
-            "ПОСЛЕ. Выбирай дроп так, чтобы после него в отрывке осталось "
-            "~10–12с трека.",
-            reply_markup=_kb(*primary_rows),
+        clip_span = f" (отрезок {self._fmt_timing(cs)}–{self._fmt_timing(ce)})" if has_clip else ""
+        body: List[str] = [f"Выбери момент дропа в треке{clip_span}:"]
+        if breakdown:
+            body.append("")
+            body.extend(breakdown)
+        body.append("")
+        body.append(
+            "Тайминг с 🎯 — лучший кандидат. Если ни один не подходит — "
+            "«Ввести вручную»."
         )
+        body.append("")
+        body.append("Хук: ~3–4с разгон до дропа + 10–12с кора после.")
+        await message.answer("\n".join(body), reply_markup=_kb(*primary_rows))
 
     async def _handle_wait_hook_drop(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()
         if text == BTN_BACK:
             await self._ask_hook_choice(message, st)
-            return
-        if text == BTN_HOOK_DROP_NONE:
-            st.hook_drop_t = None
-            await self.store.set(st)
-            await self._ask_hook_type(message, st)
             return
         if text == BTN_HOOK_DROP_MANUAL:
             st.stage = STAGE_WAIT_HOOK_DROP_MANUAL
@@ -4195,10 +4228,17 @@ class BlastBotApp:
     async def _ask_hook_type(self, message: Message, st: ChatState) -> None:
         st.stage = STAGE_WAIT_HOOK_TYPE
         await self.store.set(st)
-        for _key in HOOK_CATEGORY_ORDER:
-            await self._send_hook_intro(message, _key)
+        # One compact teaser message instead of 5 separate intro bubbles: the
+        # per-category one-liner sits next to its button (full descriptions live
+        # in core.hook_intros for the team bot / future on-demand expansion).
         await message.answer(
-            "Выбери тип хука:",
+            "Хук — приём в первые секунды, который цепляет зрителя.\n\n"
+            "🔊 Звук — свой звук до дропа + вспышка-молния\n"
+            "🟦 Объект — фигура в такт на склейке до дропа\n"
+            "✨ Эффект — визуальные FX: хук, переход, грейд\n"
+            "👆 Движение — engagement-байт: рука/голова в такт\n"
+            "💭 Мысль — голос-ИИ перед дропом\n\n"
+            "Выбери тип ↓",
             reply_markup=_kb(
                 [BTN_HOOK_CAT_SOUND, BTN_HOOK_CAT_OBJECT],
                 [BTN_HOOK_CAT_EFFECT, BTN_HOOK_CAT_MOTION],
@@ -4298,8 +4338,7 @@ class BlastBotApp:
                 message, [f"motion:{v}" for v in _HOOK_MOTION_DEVICE_BY_BUTTON.values()]
             )
             await message.answer(
-                "Какой приём «Движения»? Рука/голова двигается в такт, "
-                "на дропе срабатывает вспышка:\n\n"
+                "Какой приём для «Движения» пойдёт в клип?\n\n"
                 "• Свайп — палец свайпает.\n"
                 "• Тап — палец тапает по кругу.\n"
                 "• Зум — пальцы разводят зум.\n"
@@ -4491,7 +4530,13 @@ class BlastBotApp:
             message, [f"effect_transition:{v}" for v in _FX_TRANSITION_BY_BUTTON.values()]
         )
         await message.answer(
-            "Шаг 2/3: переход на склейках футажа.\n\nМожно пропустить.",
+            "Шаг 2/3: переход на склейках футажа.\n\n"
+            "• Снап-вайп\n"
+            "• Минимакс\n"
+            "• Инверт\n"
+            "• Экстракт\n"
+            "• Вспышки\n\n"
+            "Можно пропустить.",
             reply_markup=_kb(
                 [BTN_FX_TR_SNAP, BTN_FX_TR_MINIMAX],
                 [BTN_FX_TR_INVERT, BTN_FX_TR_EXTRACT],
@@ -4526,7 +4571,12 @@ class BlastBotApp:
             message, [f"effect_extra:{v}" for v in _FX_EXTRA_BY_BUTTON.values()]
         )
         await message.answer(
-            "Шаг 3/3: стилизация футажа до дропа (грейд 00:00 → дроп).\n\nМожно пропустить.",
+            "Шаг 3/3: стилизация футажа до дропа.\n\n"
+            "• Ксерокс\n"
+            "• Аналог-глитч\n"
+            "• Неон\n"
+            "• Старая камера\n\n"
+            "Можно пропустить.",
             reply_markup=_kb(
                 [BTN_FX_EX_XEROX, BTN_FX_EX_ANALOG],
                 [BTN_FX_EX_NEON, BTN_FX_EX_OLDCAM],
@@ -4642,9 +4692,12 @@ class BlastBotApp:
             message, [f"shape:{v}" for v in _F2_SHAPE_BY_BUTTON.values()]
         )
         await message.answer(
-            "Какая фигура-переход на склейках до дропа?\n"
-            "На дропе сработает молния, после дропа — рандомный визуал-переход.\n\n"
-            "• Ромб • Квадрат • Звезда-10 • Звезда-5 • Эллипс",
+            "Какая фигура пойдёт на склейку до дропа?\n\n"
+            "• Ромб\n"
+            "• Квадрат\n"
+            "• Звезда-10\n"
+            "• Звезда-5\n"
+            "• Эллипс",
             reply_markup=_kb(
                 [BTN_F2_SHAPE_RHOMB, BTN_F2_SHAPE_SQUARE],
                 [BTN_F2_SHAPE_STAR1, BTN_F2_SHAPE_STAR2],
@@ -4801,11 +4854,9 @@ class BlastBotApp:
         for c in candidates or []:
             try:
                 t = float(c["t"])
-                conf = float(c["confidence"])
             except Exception:
                 continue
-            label = f"{BlastBotApp._fmt_timing(t)} ({int(round(conf * 100))}%)"
-            if s == label:
+            if s == BlastBotApp._fmt_timing(t):
                 return t
         return None
 
@@ -5109,15 +5160,19 @@ class BlastBotApp:
 
         st.lyrics_text = text
         st.target_fragment = ""
-        st.stage = STAGE_WAIT_FRAGMENT_CHOICE
+        # No fork: go straight to the "paste the lines" step (the "let AI decide"
+        # branch was removed — the fragment is now always user-supplied).
+        st.stage = STAGE_WAIT_FRAGMENT_TEXT
         await self.store.set(st)
         # Phase 2b: kick off the footage-bucket ranker in the background now that
         # we have lyrics. By the time the user reaches the "Футажи" step the
         # ranked shortlist is ready (zero added latency). No-op when flow is off.
         await self._trigger_vibe_ranker_task(st)
         await message.answer(
-            "Текст получил. Хочешь указать конкретные строки, которые должны войти в клип?",
-            reply_markup=_kb([BTN_SEND_FRAGMENT, BTN_SKIP_FRAGMENT]),
+            "Скопируй и пришли нужные строки прямо из текста песни — те слова, "
+            "которые хочешь видеть в клипе. Например — припев трека, без "
+            "пояснительных слов типа «куплет:» и т.п.",
+            reply_markup=ReplyKeyboardRemove(),
         )
 
     async def _handle_wait_fragment_choice(self, message: Message, st: ChatState) -> None:
@@ -5203,21 +5258,28 @@ class BlastBotApp:
             "sound": "Звук", "object": "Объект", "effect": "Эффект",
             "motion": "Движение", "thought": "Мысль",
         }.get(st.hook_category, self._esc_md(st.hook_category or "—"))
+        # Echo the picks in Russian (state holds pipeline ids). Drop timing is
+        # shown on its own «Тайминг дропа» line, so it's not repeated here.
         extra = ""
-        if st.hook_category in ("motion", "thought") and st.hook_device:
-            extra = f" / {self._esc_md(st.hook_device)}"
+        if st.hook_category == "motion" and st.hook_device:
+            extra = f" / {self._esc_md(_F4_DEVICE_RU_BY_ID.get(st.hook_device, st.hook_device))}"
+        elif st.hook_category == "thought" and st.hook_device:
+            extra = f" / {self._esc_md(_F5_DEVICE_RU_BY_ID.get(st.hook_device, st.hook_device))}"
         elif st.hook_category == "object" and st.f2_shape:
-            extra = f" / {self._esc_md(st.f2_shape)}"
+            extra = f" / {self._esc_md(_F2_SHAPE_RU_BY_ID.get(st.f2_shape, st.f2_shape))}"
         elif st.hook_category == "sound":
             extra = " / звук" + (" + субтитр" if st.f1_sound_text else "")
         elif st.hook_category == "effect":
-            fx = [self._esc_md(x) for x in (st.effect_hook, st.effect_transition, st.effect_extra) if x]
+            fx: List[str] = []
+            if st.effect_hook:
+                fx.append(_F3_HOOK_RU_BY_ID.get(st.effect_hook, st.effect_hook))
+            if st.effect_transition:
+                fx.append(_F3_TRANSITION_RU_BY_ID.get(st.effect_transition, st.effect_transition))
+            if st.effect_extra:
+                fx.append(_F3_EXTRA_RU_BY_ID.get(st.effect_extra, st.effect_extra))
             if fx:
-                extra = " / " + ", ".join(fx)
-        drop = ""
-        if st.hook_drop_t is not None:
-            drop = f", дроп {self._fmt_timing(float(st.hook_drop_t))}"
-        return f"*Хук:* «{cat}»{extra}{drop}"
+                extra = " / " + ", ".join(self._esc_md(x) for x in fx)
+        return f"*Хук:* «{cat}»{extra}"
 
     def _color_summary_line(self, st: ChatState) -> str:
         parts: List[str] = []
@@ -5227,25 +5289,46 @@ class BlastBotApp:
             parts.append(f"акцент {st.accent_color_hex}")
         return ("*Цвета:* " + ", ".join(parts)) if parts else ""
 
+    def _sources_summary_line(self, st: ChatState) -> str:
+        """Confirm-summary line for the footage source. Prefers the explicit vibe
+        multi-select (labels the user actually picked); falls back to the legacy
+        artist/source label when the vibe flow wasn't used."""
+        sel = list(st.vibe_selected_ids or [])
+        if sel:
+            labels = [
+                _vibe_display_label(st.vibe_labels_by_id.get(b, b)) for b in sel
+            ]
+            labels = [lbl for lbl in labels if lbl]
+            if labels:
+                return "*Вайбы:* " + self._esc_md(", ".join(labels))
+        return f"*Исходники:* «{self._esc_md(self._source_label(st))}»"
+
     def _final_confirm_text(self, st: ChatState, *, versions: Optional[int] = None) -> str:
         mode_display = self._esc_md(_BUTTON_BY_SUBTITLES_MODE.get(st.subtitles_mode, st.subtitles_mode))
-        fragment_display = self._esc_md(st.target_fragment or "на усмотрение ИИ")
-        lines = [
-            f"*Режим субтитров:* «{mode_display}»",
-            f"*Фрагмент:* «{fragment_display}»",
+        fragment_display = self._esc_md(st.target_fragment or "весь трек")
+        version_count = versions if versions is not None else int(st.versions_count or 1)
+        # Grouped, spaced layout so the user can scan the summary at a glance.
+        lines: List[str] = [
+            "*Отрывок текста:*",
+            fragment_display,
+            "",
+            f"*Тайминг отрывка:* {self._esc_md(self._timing_label(st))}",
         ]
-        # Hook/color echo only when the hook flow is active (keeps the confirm
-        # text identical to the legacy one when HOOK_FLOW_ENABLED is off).
+        if HOOK_FLOW_ENABLED and st.hook_enabled and st.hook_drop_t is not None:
+            lines.append(f"*Тайминг дропа:* {self._fmt_timing(float(st.hook_drop_t))}")
+        lines.append("")
+        lines.append(self._sources_summary_line(st))
+        lines.append(f"*Режим субтитров:* «{mode_display}»")
+        # Hook/color echo only when the hook flow is active.
         if HOOK_FLOW_ENABLED:
+            lines.append(self._hook_summary_line(st))
             cl = self._color_summary_line(st)
             if cl:
                 lines.append(cl)
-            lines.append(self._hook_summary_line(st))
-        lines.append(f"\n*Тайминг:* «{self._timing_label(st)}»")
-        lines.append(f"*Исходники:* «{self._source_label(st)}»")
-        if versions is not None:
-            lines.append(f"*Версий:* {versions}")
-        lines.append("\nЗапустить генерацию?")
+        lines.append("")
+        lines.append(f"*Количество версий:* {version_count} видео")
+        lines.append("")
+        lines.append("Запустить генерацию?")
         return "\n".join(lines)
 
     async def _ask_strobe_cut(self, message: Message, st: ChatState) -> None:
