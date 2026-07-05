@@ -2738,6 +2738,34 @@ class BlastBotApp:
                 return
             await self._show_all_packages(message, st)
 
+        @self.router.message(Command("freeflow1"))
+        async def _on_freeflow1(message: Message) -> None:
+            # Hidden admin-only helper: jump straight into the free post-gen
+            # funnel entry (round-1 rating) so it can be reviewed without a real
+            # generation or the has_paid gate. Not in the menu; silently ignored
+            # for non-admins.
+            if message.chat is None or message.from_user is None:
+                return
+            uid = int(message.from_user.id)
+            is_owner = uid == self.settings.manager_chat_id
+            if not (is_owner or await self.credits_db.is_admin(uid)):
+                return
+            chat_id = int(message.chat.id)
+            st = await self.store.get(chat_id)
+            if st.stage == STAGE_PROCESSING:
+                await message.answer("Трек в процессе — дождись завершения, потом зови /freeflow1.")
+                return
+            st.video_round = 1
+            st.last_rating = ""
+            st.stage = STAGE_RATE_VIDEO
+            await self.store.set(st)
+            await message.answer(
+                "🧪 Тест free-флоу: ты в точке входа фаннела (как будто ролик "
+                "только что выдан). Оцени по 10-балльной шкале — дальше пойдёт "
+                "обычный бесплатный сценарий.",
+                reply_markup=_kb(BTN_RATE_BUTTONS),
+            )
+
         @self.router.message(Command("cancelsubscription"))
         async def _on_cancel_subscription(message: Message) -> None:
             if message.chat is None:
