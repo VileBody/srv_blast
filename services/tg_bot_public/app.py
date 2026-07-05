@@ -2766,6 +2766,33 @@ class BlastBotApp:
                 reply_markup=_kb(BTN_RATE_BUTTONS),
             )
 
+        @self.router.message(Command("freeflow2"))
+        async def _on_freeflow2(message: Message) -> None:
+            # Hidden admin-only helper: jump into the round-2 funnel entry
+            # (STAGE_RATE_VIDEO_2 — the "friend activated → 2nd video" branch),
+            # so the later part of the free flow can be reviewed. Not in the menu.
+            if message.chat is None or message.from_user is None:
+                return
+            uid = int(message.from_user.id)
+            is_owner = uid == self.settings.manager_chat_id
+            if not (is_owner or await self.credits_db.is_admin(uid)):
+                return
+            chat_id = int(message.chat.id)
+            st = await self.store.get(chat_id)
+            if st.stage == STAGE_PROCESSING:
+                await message.answer("Трек в процессе — дождись завершения, потом зови /freeflow2.")
+                return
+            st.video_round = 2
+            st.last_rating = ""
+            st.stage = STAGE_RATE_VIDEO_2
+            await self.store.set(st)
+            await message.answer(
+                "🧪 Тест free-флоу (раунд 2): ты в точке входа второго ролика "
+                "(как будто друг подписался и пришёл 2-й ролик). Оцени по "
+                "10-балльной шкале — дальше пойдёт обычный сценарий раунда 2.",
+                reply_markup=_kb(BTN_RATE_BUTTONS),
+            )
+
         @self.router.message(Command("cancelsubscription"))
         async def _on_cancel_subscription(message: Message) -> None:
             if message.chat is None:
