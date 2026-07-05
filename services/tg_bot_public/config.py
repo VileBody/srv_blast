@@ -38,6 +38,20 @@ def _bool_env(name: str, default: bool) -> bool:
     return bool(default)
 
 
+def _int_set_env(name: str) -> frozenset[int]:
+    """Parse a comma/space separated list of ints from env into a frozenset.
+
+    Used for hidden test overrides scoped to specific chat_ids (empty -> off)."""
+    raw = _env(name, "")
+    out: set[int] = set()
+    for tok in raw.replace(",", " ").split():
+        try:
+            out.add(int(tok))
+        except Exception:
+            continue
+    return frozenset(out)
+
+
 def _delivery_mode_env(name: str, default: str = "polling") -> str:
     mode = str(_env(name, default) or "").strip().lower()
     if mode not in {"polling", "webhook"}:
@@ -167,6 +181,10 @@ class Settings:
     tg_test_bot_token: str = _env("TG_TEST_BOT_TOKEN", "")
     tg_test_bot_username: str = _env("TG_TEST_BOT_USERNAME", "")
     tg_test_bypass_subscription: bool = _bool_env("TG_TEST_BYPASS_SUBSCRIPTION", False)
+    # Hidden test override: chat_ids listed here always run the FREE post-gen
+    # funnel (rating → pitch → referral) even if they have paid/credits, so the
+    # funnel can be reviewed end-to-end from a paid account. Empty -> off.
+    tg_force_free_funnel_chat_ids: frozenset = _int_set_env("TG_FORCE_FREE_FUNNEL_CHAT_IDS")
     tg_bot_token: str = _active_tg_bot_token_env()
     tg_preview_source_bot_token: str = _active_preview_source_bot_token_env()
     tg_bot_username: str = _active_tg_bot_username_env()

@@ -2748,7 +2748,7 @@ class BlastBotApp:
             if not active_sub:
                 await message.answer(
                     "Активной подписки нет. Если ты считаешь, что это ошибка — "
-                    "напиши @impulsemanage.\n\n/packets — посмотреть тарифы",
+                    "напиши @impulsemanage.\n\n/packages — посмотреть тарифы",
                     reply_markup=ReplyKeyboardRemove(),
                 )
                 return
@@ -2772,7 +2772,7 @@ class BlastBotApp:
                 "Если отменишь:\n"
                 "• С тебя больше ничего не спишется.\n"
                 "• Накопленные кредиты остаются — можешь использовать в любое время.\n"
-                "• Чтобы возобновиться, нужно оформить подписку заново через /packets.\n\n"
+                "• Чтобы возобновиться, нужно оформить подписку заново через /packages.\n\n"
                 "Точно отменяем?",
                 reply_markup=kb,
             )
@@ -2800,7 +2800,7 @@ class BlastBotApp:
                 try:
                     await callback.message.edit_text(
                         "Подписка отменена. Списаний больше не будет.\n\n"
-                        "Если захочешь вернуться — /packets.",
+                        "Если захочешь вернуться — /packages.",
                     )
                 except Exception:
                     await callback.message.answer(
@@ -5500,7 +5500,7 @@ class BlastBotApp:
             await self.credits_db.log_event(chat_id, "no_credits")
             await message.answer(
                 "Твои кредиты закончились. Хочешь посмотреть тарифы?\n\n"
-                "/packets — посмотреть тарифы",
+                "/packages — посмотреть тарифы",
                 reply_markup=_kb([BTN_ALL_PACKAGES]),
             )
             st.stage = STAGE_PACKAGES_OFFER
@@ -5671,7 +5671,7 @@ class BlastBotApp:
             await message.answer(
                 "Если хочешь новый ролик, нажми «Сделать следующий».\n\n"
                 "/sendtrack — отправить трек\n"
-                "/packets — посмотреть тарифы",
+                "/packages — посмотреть тарифы",
                 reply_markup=_kb([BTN_NEXT], [BTN_REUSE_INPUT]) if can_reuse else _kb([BTN_NEXT]),
             )
             return
@@ -7655,7 +7655,7 @@ class BlastBotApp:
                 f"Не удалось списать оплату за подписку «{pkg}».\n\n"
                 "Подписка приостановлена. Проверь карту и свяжись с менеджером "
                 "для возобновления: @impulsemanage\n\n"
-                "/packets — посмотреть тарифы",
+                "/packages — посмотреть тарифы",
                 reply_markup=ReplyKeyboardRemove(),
             )
         except Exception as e:
@@ -8417,6 +8417,12 @@ class BlastBotApp:
 
         paid = await self.credits_db.has_paid(st.chat_id)
 
+        # Hidden test override: force the free funnel for whitelisted chat_ids so
+        # the rating → pitch → referral flow can be reviewed from a paid account.
+        if paid and int(st.chat_id) in self.settings.tg_force_free_funnel_chat_ids:
+            log.info("force_free_funnel_override chat=%s", st.chat_id)
+            paid = False
+
         # Paid users: no rating/funnel, just loop back to generation
         if paid:
             if bal > 0:
@@ -8429,7 +8435,7 @@ class BlastBotApp:
                     text=(
                         f"Готово — лови контент! Давай сделаем ещё:\n\n"
                         f"Остаток генераций: {bal}\n"
-                        f"/packets — посмотреть тарифы"
+                        f"/packages — посмотреть тарифы"
                     ),
                     reply_markup=(
                         _kb([BTN_GENERATE_MORE], [BTN_REUSE_INPUT])
@@ -8448,7 +8454,7 @@ class BlastBotApp:
                     text=(
                         "Готово — лови контент!\n\n"
                         "Твои кредиты закончились. Хочешь посмотреть тарифы?\n\n"
-                        "/packets — посмотреть тарифы"
+                        "/packages — посмотреть тарифы"
                     ),
                     reply_markup=_kb([BTN_ALL_PACKAGES]),
                     context="paid_no_credits",
