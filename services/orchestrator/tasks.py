@@ -19,6 +19,13 @@ from typing import Any, Dict, List, Optional
 import boto3
 from botocore.config import Config
 
+# Side-effect import: src/core/config/env.py на импорте форсит прокси-переменные
+# (OUTBOUND_PROXY + HTTP(S)_PROXY, см. коммент там). Тянем это на самом верху
+# tasks.py, чтобы override отработал при старте воркера — ДО первого S3-вызова в
+# любой build-таске (иначе первый boto-клиент подхватил бы протухший HTTPS_PROXY
+# из env_file раньше, чем ленивый import gemini_orchestrator внутри таски).
+import src.core.config.env as _force_outbound_proxy  # noqa: F401,E402
+
 from celery.signals import task_failure
 
 from core.telegram_api import make_telegram_api
