@@ -421,6 +421,8 @@ def _hook_preview_file_id(key: str) -> str:
     return str(e.get(_BUCKET_PREVIEW_FILE_ID_FIELD) or "").strip()
 
 
+# Onboarding welcome reel (Telegram file_id). Replaces the static banner photo.
+ONBOARDING_VIDEO_FILE_ID = "BAACAgIAAxkBAAEB-glqSiZ4jI6G4bLdR66LPl_X_6uXhAACvpoAAnC7UErgia72fPHcIDwE"
 BTN_LETS_GO = "Едем!"
 BTN_SUBSCRIBED = "Подписался!"
 BTN_SEND_TRACK = "Отправить трек"
@@ -662,7 +664,7 @@ BTN_RATE_BUTTONS = [BTN_RATE_LOW, BTN_RATE_MID_LOW, BTN_RATE_MID_HIGH, BTN_RATE_
 
 BTN_LETS_DO_IT = "Делаем!"
 BTN_HOW_SO = "Как же?"
-BTN_WANT_THIS = "Хочу так"
+BTN_WANT_THIS = "Хочу так!"
 
 BTN_TELL_MORE = "Рассказывайте!"
 BTN_ALL_PACKAGES = "Все пакеты"
@@ -2511,6 +2513,27 @@ class BlastBotApp:
         )
         return result
 
+    async def _timed_send_video(self, *, bot: Bot, chat_id: int, video: Any, op: str, **kwargs):
+        t0 = time.monotonic()
+        try:
+            result = await bot.send_video(chat_id, video=video, **kwargs)
+        except Exception as exc:
+            log.warning(
+                "tg_out_failed op=%s method=send_video chat=%s dur_ms=%d err=%r",
+                op,
+                int(chat_id),
+                int((time.monotonic() - t0) * 1000.0),
+                exc,
+            )
+            raise
+        log.info(
+            "tg_out_ok op=%s method=send_video chat=%s dur_ms=%d",
+            op,
+            int(chat_id),
+            int((time.monotonic() - t0) * 1000.0),
+        )
+        return result
+
     async def _maintenance_enabled(self) -> bool:
         if bool(self.settings.tg_maintenance_mode):
             return True
@@ -3249,24 +3272,24 @@ class BlastBotApp:
 
     async def _move_to_onboarding(self, chat_id: int, message: Message) -> None:
         await self.store.set_stage(chat_id, STAGE_WAIT_START)
-        banner = Path(__file__).parent / "assets" / "blast_banner.jpg"
         welcome_text = (
-            "Привет! Давай познакомимся. Это бот для нашего технологического решения: "
-            "Blast — co-pilot в продвижении музыки.\n\n"
-            "Наш AI-агент поможет артисту развивать контент: генерировать идеи и муз. ролики с нуля. "
-            "Готов затестить его на своем треке?\n\n"
-            "Нажми на кнопку рядом с кнопкой отправки сообщения, чтобы продолжить."
+            "Добро пожаловать! Это Blast — co-pilot в продвижении музыки.\n\n"
+            "Наш AI-агент помогает артистам развивать контент: создавать, "
+            "выкладывать и анализировать ролики с нуля.\n\n"
+            "Готов затестить его на своём треке? Тогда жми на кнопку «Едем!», "
+            "чтобы продолжить."
         )
-        if banner.exists():
-            await self._timed_send_photo(
+        try:
+            await self._timed_send_video(
                 bot=message.bot,
                 chat_id=chat_id,
-                photo=FSInputFile(banner),
-                op="onboarding_banner",
+                video=ONBOARDING_VIDEO_FILE_ID,
+                op="onboarding_video",
                 caption=welcome_text,
                 reply_markup=_kb([BTN_LETS_GO]),
             )
-        else:
+        except Exception:
+            # Fallback to plain text if the reel can't be sent (e.g. bad file_id).
             await self._timed_answer(message, welcome_text, op="onboarding_text", reply_markup=_kb([BTN_LETS_GO]))
 
     async def _move_to_subscription(self, chat_id: int, message: Message) -> None:
@@ -3274,7 +3297,7 @@ class BlastBotApp:
         await self._timed_answer(
             message,
             "Супер! Тогда не будем медлить, единственное условие — подписка на наш тгк: @impulsemarketing\n\n"
-            "Там делимся главными фишками по продукту и продвижения, которые помогают эффективно вести контент артисту.",
+            "Там делимся главными фишками по продукту и продвижению, которые помогают эффективно вести контент артисту.",
             op="subscription_prompt",
             reply_markup=_kb([BTN_SUBSCRIBED]),
         )
@@ -6204,10 +6227,11 @@ class BlastBotApp:
             st.stage = STAGE_SALES_PITCH
             await self.store.set(st)
             await message.answer(
-                "Отлично, значит мы попали!\n\n"
-                "Это один ролик — а представь: каждую неделю у тебя появляется свежий "
-                "контент под твои треки, в твоём стиле и вайбе. Без съёмок и монтажа — "
-                "просто закидываешь треки, а Blast собирает контент.",
+                "Отлично, значит мы попали! Это всего один ролик — а теперь "
+                "представь, что это не разовая проба, а поток: 3-4 таких ролика "
+                "каждый день, весь месяц, под твои треки, в твоём стиле и вайбе. "
+                "Без съёмок и монтажа — просто закидываешь треки, а Blast собирает "
+                "контент.",
                 reply_markup=_kb([BTN_WANT_THIS]),
             )
         else:
@@ -6268,14 +6292,17 @@ class BlastBotApp:
             st.stage = STAGE_PACKAGES_OFFER
             await self.store.set(st)
             await message.answer(
-                "Мы только запускаем технологию — и делаем вкусное предложение первым юзерам.\n\n"
-                "Подписка на Бласт: 15 роликов в месяц за 1.990₽ вместо 4.000₽. -50% off. "
-                "Это наш ходовой пакет:\n"
-                "— видео под твой стиль, жанр и настроение\n"
-                "— регулярный контент, выкладка и аналитика\n"
-                "— без съёмок, продюсеров и мишуры\n\n"
-                "Отмена в любой момент, удвоение роликов, блогеры и дистрибьюция со "
-                "следующих месяцев. Рассказать больше про все плюшки?",
+                "Соц. сети продвигают тех, кто выкладывает часто и стабильно — "
+                "а не того, кто выдал один «гениальный» ролик и пропал на месяц. "
+                "Чтобы попасть в этот ритм без выгорания: Blast — 100 роликов под "
+                "твой стиль, жанр и настроение за 2.000₽ в месяц.\n\n"
+                "Для сравнения: у монтажёра ролик такого уровня стоит от 300₽ — "
+                "то есть за эти же деньги ты получишь в 15 раз больше контента:\n"
+                "— регулярный, разнообразный контент без повторов\n"
+                "— без съёмок, продюсеров и мишуры\n"
+                "— до 4 треков в первый месяц\n\n"
+                "Отмена в любой момент, а дальше — трек-лимит продолжит расти "
+                "каждый месяц. Рассказать больше про все плюшки?",
                 reply_markup=_kb([BTN_TELL_MORE], [BTN_ALL_PACKAGES], [BTN_NOT_NOW]),
             )
         else:
@@ -6290,12 +6317,15 @@ class BlastBotApp:
             st.stage = STAGE_PACKAGE_DETAILS
             await self.store.set(st)
             await message.answer(
-                "Отлично! В первый же месяц ты получишь:\n"
-                "— 15 индивидуальных роликов, которые автоматически появятся на твоем "
-                "аккаунте в соц. сетях, их развернутую аналитику и рекомендации.\n\n"
-                "Во второй месяц — удвоение роликов, то есть 30 шт, в третий — бонусного "
-                "блогера, в четвертый — безлимитную дистрибьюции через наших партнеров.\n\n"
-                "Готов попробовать все преимущества Бласта за 2.000₽ в месяц?",
+                "Отлично! Уже в этом месяце:\n"
+                "— 100 роликов в разных стилях\n"
+                "— до 4 треков к загрузке\n"
+                "— генерация роликов пачками и расширенный тайминг видео\n\n"
+                "А дальше:\n"
+                "— лимит по трекам растёт на 1 штуку каждый месяц\n"
+                "— каждый третий месяц: безлимит на ролики\n"
+                "— с релизом сайта — загрузка своих исходников, автопостинг и аналитика\n\n"
+                "Готов попробовать всё за 2.000₽ в месяц?",
                 reply_markup=_kb([BTN_READY], [BTN_ALL_PACKAGES], [BTN_MAYBE_LATER]),
             )
         elif text == BTN_ALL_PACKAGES:
@@ -6680,10 +6710,11 @@ class BlastBotApp:
             st.stage = STAGE_SALES_PITCH
             await self.store.set(st)
             await message.answer(
-                "Отлично, значит мы попали!\n\n"
-                "Это один ролик — а представь: каждую неделю у тебя появляется свежий "
-                "контент под твои треки, в твоём стиле и вайбе. Без съёмок и монтажа — "
-                "просто закидываешь треки, а Blast собирает контент.",
+                "Отлично, значит мы попали! Это всего один ролик — а теперь "
+                "представь, что это не разовая проба, а поток: 3-4 таких ролика "
+                "каждый день, весь месяц, под твои треки, в твоём стиле и вайбе. "
+                "Без съёмок и монтажа — просто закидываешь треки, а Blast собирает "
+                "контент.",
                 reply_markup=_kb([BTN_WANT_THIS]),
             )
         else:
