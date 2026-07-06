@@ -74,7 +74,7 @@ def test_package_command_aliases_include_packages_and_typo() -> None:
     assert public_app._is_packages_command_text("/packets")
 
 
-def test_show_all_packages_is_text_only_without_trial(tmp_path: Path) -> None:
+def test_show_all_packages_sends_cards_without_trial(tmp_path: Path) -> None:
     async def _run() -> None:
         app = _new_app(tmp_path)
         msg = _FakeMessage(text="/packages", chat_id=42)
@@ -83,8 +83,8 @@ def test_show_all_packages_is_text_only_without_trial(tmp_path: Path) -> None:
         await public_app.BlastBotApp._show_all_packages(app, msg, st)
 
         assert st.stage == STAGE_ALL_PACKAGES
-        # Cards are disabled during the tariff refresh -> text-only, no photos.
-        assert len(app._bot.photos) == 0
+        # Cards re-enabled via file_id: 3 photos (Бласт/Глоу/Импульс), no S3.
+        assert len(app._bot.photos) == 3
         assert len(app.s3.downloads) == 0
         assert len(msg.answers) == 1
         body = str(msg.answers[0]["text"])
@@ -97,7 +97,7 @@ def test_show_all_packages_is_text_only_without_trial(tmp_path: Path) -> None:
     asyncio.run(_run())
 
 
-def test_package_detail_is_text_only(tmp_path: Path) -> None:
+def test_package_detail_sends_card_by_file_id(tmp_path: Path) -> None:
     async def _run() -> None:
         app = _new_app(tmp_path)
         msg = _FakeMessage(text=public_app.BTN_PKG_BLAST, chat_id=77)
@@ -107,8 +107,9 @@ def test_package_detail_is_text_only(tmp_path: Path) -> None:
 
         assert st.stage == STAGE_PACKAGE_INFO
         assert st.selected_package == public_app.BTN_PKG_BLAST
-        # Cards disabled -> no photo, just the description text.
-        assert len(app._bot.photos) == 0
+        # Card sent by Telegram file_id (no S3 download).
+        assert len(app._bot.photos) == 1
+        assert app._bot.photos[0][1] == public_app.BlastBotApp._PKG_PHOTOS[public_app.BTN_PKG_BLAST]
         assert len(msg.answers) == 1
         assert "Бласт — 1 990" in str(msg.answers[0]["text"])
         assert app.credits_db.events == [(77, "select_package", public_app.BTN_PKG_BLAST)]

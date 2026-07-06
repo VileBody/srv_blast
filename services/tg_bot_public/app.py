@@ -5823,11 +5823,11 @@ class BlastBotApp:
         await self._move_to_wait_audio(int(message.chat.id), message)
 
     # ── Package descriptions ──────────────────────────────────────────
+    # Card images as Telegram photo file_ids (Trial dropped from the UI).
     _PKG_PHOTOS = {
-        BTN_PKG_TRIAL: "tariffs/Frame 1011.png",
-        BTN_PKG_BLAST: "tariffs/Frame 1008.png",
-        BTN_PKG_GLOW: "tariffs/Frame 1009.png",
-        BTN_PKG_IMPULSE: "tariffs/Frame 1010.png",
+        BTN_PKG_BLAST: "AgACAgIAAxkBAAEB-lRqS3TXIZtZYKPuCIPVRNwq0VbFFgACIh1rG3C7YEo3e6VUDRm8YQEAAwIAA3gAAzwE",
+        BTN_PKG_GLOW: "AgACAgIAAxkBAAEB-nBqS4y3js5NA102ZOI0xkD230J_bAACzR1rG3C7YErGuRJtKFP7zwEAAwIAA3kAAzwE",
+        BTN_PKG_IMPULSE: "AgACAgIAAxkBAAEB-nJqS4zFo7igpAQTIt6NRJrGILOHYwACzh1rG3C7YEpbGqYB1yLB9AEAAwIAA3kAAzwE",
     }
 
     _PKG_TEXTS = {
@@ -5877,47 +5877,24 @@ class BlastBotApp:
 
     # Cards temporarily disabled (tariffs mid-refresh, no card file_ids yet).
     # Flip to True once the new card assets/file_ids are wired.
-    _PKG_CARDS_ENABLED = False
+    _PKG_CARDS_ENABLED = True
 
     async def _send_package_photo(self, *, chat_id: int, package_name: str, op: str) -> bool:
         if not self._PKG_CARDS_ENABLED:
             return False
-        s3_key = self._PKG_PHOTOS.get(str(package_name or ""))
-        if not s3_key:
+        file_id = self._PKG_PHOTOS.get(str(package_name or ""))
+        if not file_id:
             return False
-        if not self.settings.s3_bucket_asset_storage:
-            log.warning("pkg_photo_send_skipped pkg=%s reason=empty_asset_bucket", package_name)
-            return False
-
         try:
-            t0 = time.monotonic()
-            cache_dir = self.settings.tmp_dir / "package_assets"
-            cache_dir.mkdir(parents=True, exist_ok=True)
-            local_path = cache_dir / Path(s3_key).name
-            if not local_path.exists() or local_path.stat().st_size <= 0:
-                await asyncio.to_thread(
-                    self.s3.download_file,
-                    bucket=self.settings.s3_bucket_asset_storage,
-                    key=s3_key,
-                    dest=local_path,
-                )
-            log.info(
-                "pkg_photo_cached pkg=%s key=%s path=%s size=%d dur_ms=%d",
-                package_name,
-                s3_key,
-                local_path,
-                int(local_path.stat().st_size),
-                int((time.monotonic() - t0) * 1000.0),
-            )
             await self._timed_send_photo(
                 bot=self._require_bot(),
                 chat_id=int(chat_id),
-                photo=FSInputFile(local_path),
+                photo=file_id,
                 op=op,
             )
             return True
         except Exception as e:
-            log.warning("pkg_photo_send_failed pkg=%s key=%s err=%s", package_name, s3_key, str(e))
+            log.warning("pkg_photo_send_failed pkg=%s err=%s", package_name, str(e))
             return False
 
     async def _send_package_overview_photos(self, *, chat_id: int) -> None:
@@ -6304,9 +6281,10 @@ class BlastBotApp:
             st.stage = STAGE_SALES_PITCH
             await self.store.set(st)
             await message.answer(
-                "Отлично, значит мы попали! Это всего один ролик — а теперь "
-                "представь, что это не разовая проба, а поток: 3-4 таких ролика "
-                "каждый день, весь месяц, под твои треки, в твоём стиле и вайбе. "
+                "Отлично, значит мы попали!\n\n"
+                "Это всего один ролик — а теперь представь, что это не разовая "
+                "проба, а поток: 3-4 таких ролика каждый день, весь месяц, под "
+                "твои треки, в твоём стиле и вайбе.\n\n"
                 "Без съёмок и монтажа — просто закидываешь треки, а Blast собирает "
                 "контент.",
                 reply_markup=_kb([BTN_WANT_THIS]),
@@ -6371,17 +6349,14 @@ class BlastBotApp:
             st.stage = STAGE_PACKAGES_OFFER
             await self.store.set(st)
             await message.answer(
-                "Соц. сети продвигают тех, кто выкладывает часто и стабильно — "
-                "а не того, кто выдал один «гениальный» ролик и пропал на месяц. "
+                "Соц. сети продвигают тех, кто выкладывает часто и стабильно!\n\n"
                 "Чтобы попасть в этот ритм без выгорания: Blast — 100 роликов под "
                 "твой стиль, жанр и настроение за 1 990₽ в месяц.\n\n"
                 "Для сравнения: у монтажёра ролик такого уровня стоит от 300₽ — "
-                "то есть за эти же деньги ты получишь в 15 раз больше контента:\n"
+                "то есть за эти же деньги ты получишь в 15 раз больше контента:\n\n"
                 "— регулярный, разнообразный контент без повторов\n"
-                "— без съёмок, продюсеров и мишуры\n"
-                "— до 4 треков в первый месяц\n\n"
-                "Отмена в любой момент, а дальше — трек-лимит продолжит расти "
-                "каждый месяц. Рассказать больше про все плюшки?",
+                "— без съёмок, продюсеров и мишуры\n\n"
+                "Рассказать больше про все плюшки?",
                 reply_markup=_kb([BTN_TELL_MORE], [BTN_ALL_PACKAGES], [BTN_NOT_NOW]),
             )
         else:
@@ -6793,9 +6768,10 @@ class BlastBotApp:
             st.stage = STAGE_SALES_PITCH
             await self.store.set(st)
             await message.answer(
-                "Отлично, значит мы попали! Это всего один ролик — а теперь "
-                "представь, что это не разовая проба, а поток: 3-4 таких ролика "
-                "каждый день, весь месяц, под твои треки, в твоём стиле и вайбе. "
+                "Отлично, значит мы попали!\n\n"
+                "Это всего один ролик — а теперь представь, что это не разовая "
+                "проба, а поток: 3-4 таких ролика каждый день, весь месяц, под "
+                "твои треки, в твоём стиле и вайбе.\n\n"
                 "Без съёмок и монтажа — просто закидываешь треки, а Blast собирает "
                 "контент.",
                 reply_markup=_kb([BTN_WANT_THIS]),
