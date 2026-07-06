@@ -7,6 +7,16 @@ from dotenv import load_dotenv
 # Подхватываем .env один раз на старте процесса
 load_dotenv()
 
+# --- OUTBOUND_PROXY зашит в код (временно) ---
+# Серверный .env недоступен для правки без SSH, поэтому актуальный прокси живёт
+# здесь и меняется через git push (тот же приём, что и STAGE2_TIMING_MODE в
+# gemini_orchestrator.py). Форсим значение ПОВЕРХ того, что пришло из .env через
+# docker env_file (там могло остаться протухшее). Все читатели OUTBOUND_PROXY
+# (Config.from_env, GenaiClientBase, gemini_orchestrator, hooks/_gemini) берут
+# уже перекрытое значение. Когда вернётся доступ к серверному .env — убрать эту
+# строку и хранить прокси в .env.
+os.environ["OUTBOUND_PROXY"] = "http://FazPoo:U6WHvC@45.153.20.238:10506"
+
 
 @dataclass
 class Config:

@@ -16,6 +16,14 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar
 import logging
 from pydantic import ValidationError
 
+# Импорт ради сайд-эффекта: src/core/config/env.py на импорте форсит OUTBOUND_PROXY
+# (прокси зашит в код, см. коммент там). mlcore ничего из config не тянет, поэтому
+# без этой строки in-process build-путь прочитал бы os.environ["OUTBOUND_PROXY"]
+# (ниже, proxy = os.environ.get(...)) до того, как override успел отработать.
+# NB: именно src.core.config.env, а НЕ `import config` — в корне есть пакет
+# config/ (пустой __init__.py), который перекрывает config.py и override не дал бы.
+import src.core.config.env as _force_outbound_proxy  # noqa: F401
+
 from mlcore.gemini_call import (
     call_footage_style_once,
     call_stage1_asr_once,
