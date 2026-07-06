@@ -6298,7 +6298,7 @@ class BlastBotApp:
                 "Соц. сети продвигают тех, кто выкладывает часто и стабильно — "
                 "а не того, кто выдал один «гениальный» ролик и пропал на месяц. "
                 "Чтобы попасть в этот ритм без выгорания: Blast — 100 роликов под "
-                "твой стиль, жанр и настроение за 2.000₽ в месяц.\n\n"
+                "твой стиль, жанр и настроение за 1 990₽ в месяц.\n\n"
                 "Для сравнения: у монтажёра ролик такого уровня стоит от 300₽ — "
                 "то есть за эти же деньги ты получишь в 15 раз больше контента:\n"
                 "— регулярный, разнообразный контент без повторов\n"
@@ -6328,7 +6328,7 @@ class BlastBotApp:
                 "— лимит по трекам растёт на 1 штуку каждый месяц\n"
                 "— каждый третий месяц: безлимит на ролики\n"
                 "— с релизом сайта — загрузка своих исходников, автопостинг и аналитика\n\n"
-                "Готов попробовать всё за 2.000₽ в месяц?",
+                "Готов попробовать всё за 1 990₽ в месяц?",
                 reply_markup=_kb([BTN_READY], [BTN_ALL_PACKAGES], [BTN_MAYBE_LATER]),
             )
         elif text == BTN_ALL_PACKAGES:
@@ -6346,7 +6346,8 @@ class BlastBotApp:
         text = str(message.text or "").strip()
         if text == BTN_READY:
             st.selected_package = "Бласт"
-            await self._show_purchase_choice(message, st)
+            # Бласт is subscription-only now (no one-time option).
+            await self._show_subscription_confirm(message, st)
         elif text == BTN_ALL_PACKAGES:
             await self._show_all_packages(message, st)
         elif text == BTN_MAYBE_LATER:
@@ -6384,7 +6385,8 @@ class BlastBotApp:
             await self._show_why_not(message, st)
         elif text == BTN_PURCHASE:
             if st.selected_package == "Бласт":
-                await self._show_purchase_choice(message, st)
+                # Бласт is subscription-only now (no one-time option).
+                await self._show_subscription_confirm(message, st)
             else:
                 await self._show_purchase_stub(message, st)
                 st.stage = STAGE_WAIT_PAYMENT
@@ -6449,7 +6451,8 @@ class BlastBotApp:
             st.stage = STAGE_WAIT_PAYMENT
             await self.store.set(st)
         elif text == BTN_BACK:
-            await self._show_purchase_choice(message, st)
+            # No more purchase-choice fork — go back to the packages list.
+            await self._show_all_packages(message, st)
         else:
             await message.answer(
                 "Выбери кнопку: «Подтвердить» или «Назад».",
