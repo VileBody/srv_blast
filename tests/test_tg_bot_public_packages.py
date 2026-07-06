@@ -74,7 +74,7 @@ def test_package_command_aliases_include_packages_and_typo() -> None:
     assert public_app._is_packages_command_text("/packets")
 
 
-def test_show_all_packages_sends_overview_photos_and_text(tmp_path: Path) -> None:
+def test_show_all_packages_is_text_only_without_trial(tmp_path: Path) -> None:
     async def _run() -> None:
         app = _new_app(tmp_path)
         msg = _FakeMessage(text="/packages", chat_id=42)
@@ -83,16 +83,21 @@ def test_show_all_packages_sends_overview_photos_and_text(tmp_path: Path) -> Non
         await public_app.BlastBotApp._show_all_packages(app, msg, st)
 
         assert st.stage == STAGE_ALL_PACKAGES
-        assert len(app._bot.photos) == 4
-        assert len(app.s3.downloads) == 4
+        # Cards are disabled during the tariff refresh -> text-only, no photos.
+        assert len(app._bot.photos) == 0
+        assert len(app.s3.downloads) == 0
         assert len(msg.answers) == 1
-        assert "Вот пул пакетов" in str(msg.answers[0]["text"])
+        body = str(msg.answers[0]["text"])
+        assert "Вот пул пакетов" in body
+        assert "100 роликов" in body
+        # Trial is removed from the enumeration.
+        assert "Trial" not in body and "Триал" not in body
         assert app.credits_db.events == [(42, "view_packages", "")]
 
     asyncio.run(_run())
 
 
-def test_package_detail_sends_selected_photo_and_text(tmp_path: Path) -> None:
+def test_package_detail_is_text_only(tmp_path: Path) -> None:
     async def _run() -> None:
         app = _new_app(tmp_path)
         msg = _FakeMessage(text=public_app.BTN_PKG_BLAST, chat_id=77)
@@ -102,11 +107,8 @@ def test_package_detail_sends_selected_photo_and_text(tmp_path: Path) -> None:
 
         assert st.stage == STAGE_PACKAGE_INFO
         assert st.selected_package == public_app.BTN_PKG_BLAST
-        assert len(app._bot.photos) == 1
-        photo = app._bot.photos[0][1]
-        photo_args = getattr(photo, "args", ())
-        photo_path = str(photo_args[0] if photo_args else getattr(photo, "path", photo))
-        assert "Frame 1008.png" in photo_path
+        # Cards disabled -> no photo, just the description text.
+        assert len(app._bot.photos) == 0
         assert len(msg.answers) == 1
         assert "Бласт — 1 990" in str(msg.answers[0]["text"])
         assert app.credits_db.events == [(77, "select_package", public_app.BTN_PKG_BLAST)]
