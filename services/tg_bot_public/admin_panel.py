@@ -195,6 +195,16 @@ _PACKAGES = {
     "50": "Импульс (50 генераций)",
 }
 
+# Unique-track allowance granted on manual package activation. Mirrors
+# app.BlastBotApp._PKG_TRACKS (keyed here by numeric package code). Trial has
+# no track quota → falls back to the user's default. Admin activation is a
+# manual "give them this package" action, so it grants the tariff base.
+_PACKAGE_TRACKS = {
+    "15": 4,
+    "30": 10,
+    "50": 24,
+}
+
 # ── Tier system spec (Reactivation plan v2.0) ────────────────────────────
 # 15 tiers: 12 primary (resolved by user_tiers SQL view) + 3 audience-only
 # (P2/D1/D2, resolved on-demand for manual broadcasts).
@@ -2933,6 +2943,14 @@ def build_app(
             reason="admin_activate",
             admin_note=f"{pkg_label} — activated by {_user}",
         )
+        # 1b. Add the tariff's unique-track allowance (no runtime payment row
+        # exists for a manual activation, so grant the base directly).
+        tracks_to_add = _PACKAGE_TRACKS.get(str(package), 0)
+        if tracks_to_add:
+            await credits_db.add_track_credits(
+                tg_id, tracks_to_add, "admin_activate",
+                admin_note=f"{pkg_label} — activated by {_user}",
+            )
         # 2. Move to WAIT_AUDIO
         await state_store.reset_to_wait_audio(tg_id)
         # 3. Log event
@@ -2941,10 +2959,13 @@ def build_app(
         if bot_ref and bot_ref[0]:
             try:
                 bal = await credits_db.get_balance(tg_id)
+                track_bal = await credits_db.get_track_balance(tg_id)
+                tracks_line = f"Доступно уникальных треков: {track_bal}\n" if track_bal > 0 else ""
                 await bot_ref[0].send_message(
                     tg_id,
                     f"Пакет активирован!\n"
-                    f"Начислено {package} генераций. Доступно: {bal}\n\n"
+                    f"Начислено {package} генераций. Доступно: {bal}\n"
+                    f"{tracks_line}\n"
                     "Отправь трек аудио-файлом, и я соберу клип.",
                 )
             except Exception as e:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+import hashlib
 import html
 import json
 import logging
@@ -3359,12 +3360,21 @@ class BlastBotApp:
             if not already_granted:
                 await self.credits_db.add_credits(chat_id, self.settings.initial_credits, "initial_grant")
                 await self.credits_db.log_event(chat_id, "initial_grant", f"+{self.settings.initial_credits}")
+                # Grant the free unique-track slot alongside the video credits
+                # (guarded by the same has_initial_grant check so it fires once).
+                if self.settings.initial_track_credits > 0:
+                    await self.credits_db.add_track_credits(
+                        chat_id, self.settings.initial_track_credits, "initial_grant",
+                    )
         await self._move_to_wait_audio(chat_id, message)
 
     async def _move_to_wait_audio(self, chat_id: int, message: Message) -> None:
         await self.store.reset_to_wait_audio(chat_id)
         bal = await self.credits_db.get_balance(chat_id)
+        track_bal = await self.credits_db.get_track_balance(chat_id)
         bal_text = f"\n\nДоступно генераций: {bal}" if bal > 0 else ""
+        if track_bal > 0:
+            bal_text += f"\nДоступно уникальных треков: {track_bal}"
         await self._timed_answer(
             message,
             f"Привет. Отправь трек аудио-файлом, и я соберу клип.{bal_text}",
@@ -5596,6 +5606,33 @@ class BlastBotApp:
             await self._move_to_wait_audio(chat_id, message)
             return
 
+        # Gate on the unique-track quota before touching credits: a reused
+        # (already-known) track never spends a slot; a brand-new track does,
+        # and is blocked outright if the tariff's track quota is exhausted.
+        # Fail closed on a hashing error — never let it bypass the track gate.
+        try:
+            audio_hash = await asyncio.to_thread(self._sha256_file, prepared_path)
+        except Exception as hash_e:
+            log.warning("audio_hash_gate_failed chat=%s err=%s", chat_id, str(hash_e))
+            await message.answer(
+                "Не удалось обработать трек. Пришли файл ещё раз.",
+                reply_markup=self._wait_audio_reuse_kb(),
+            )
+            return
+        is_known_track = await self.credits_db.has_track_hash(chat_id, audio_hash)
+        if not is_known_track and await self.credits_db.get_track_balance(chat_id) < 1:
+            await self.credits_db.log_event(chat_id, "no_track_slots")
+            await message.answer(
+                "Лимит уникальных треков на твоём тарифе исчерпан. "
+                "Пришли уже использованный трек ещё раз или обнови тариф — "
+                "количество треков увеличится.\n\n"
+                "/packages — посмотреть тарифы",
+                reply_markup=_kb([BTN_ALL_PACKAGES]),
+            )
+            st.stage = STAGE_PACKAGES_OFFER
+            await self.store.set(st)
+            return
+
         # Reserve credits only after we have a prepared mp3 on current node.
         deducted_versions = 0
         for _ in range(versions):
@@ -5622,6 +5659,32 @@ class BlastBotApp:
             await message.answer("Не удалось зарезервировать генерации. Нажми «Запустить» еще раз.")
             return
         await self.credits_db.log_event(chat_id, "credits_reserved", f"versions={versions}")
+
+        # Spend the track slot now (right before the point of no return). A
+        # "blocked" result here means another concurrent request took the
+        # last slot between the check above and here — refund the reserved
+        # credits and bail, same as the reserve_partial_refund path above.
+        track_status = await self.credits_db.consume_track_slot(chat_id, audio_hash)
+        if track_status == "blocked":
+            try:
+                await self.credits_db.add_credits(
+                    chat_id,
+                    int(versions),
+                    "generation_failed_refund",
+                    admin_note="batch=no_track_slots",
+                )
+            except Exception as add_e:
+                log.warning("track_slot_refund_failed chat=%s err=%s", chat_id, str(add_e))
+            await self.credits_db.log_event(chat_id, "no_track_slots")
+            await message.answer(
+                "Лимит уникальных треков на твоём тарифе исчерпан. "
+                "Пришли уже использованный трек ещё раз или обнови тариф.\n\n"
+                "/packages — посмотреть тарифы",
+                reply_markup=_kb([BTN_ALL_PACKAGES]),
+            )
+            st.stage = STAGE_PACKAGES_OFFER
+            await self.store.set(st)
+            return
 
         key = self._build_raw_audio_key(chat_id=chat_id, file_name=prepared_path.name)
         try:
@@ -6114,9 +6177,20 @@ class BlastBotApp:
 
     _PKG_CREDITS = {
         "Триал": 5,
-        "Бласт": 15,
-        "Глоу": 30,
-        "Импульс": 50,
+        "Бласт": 100,
+        "Глоу": 400,
+        # Импульс = видео без ограничения; сентинел вместо реального счётчика,
+        # чтобы не трогать существующие проверки/показ баланса кредитов.
+        "Импульс": 100_000,
+    }
+
+    # Лимит уникальных треков на тариф (топ-ап при каждой покупке/продлении,
+    # как и _PKG_CREDITS — не сбрасывается, а прибавляется). Триала нет
+    # намеренно — пакет убирается.
+    _PKG_TRACKS = {
+        "Бласт": 4,
+        "Глоу": 10,
+        "Импульс": 24,
     }
 
     async def _show_purchase_stub(self, message: Message, st: ChatState, recurrent: bool = False) -> None:
@@ -6273,13 +6347,15 @@ class BlastBotApp:
     async def _send_improvement_thanks(self, message: Message, st: ChatState) -> None:
         chat_id = st.chat_id
         bal = await self.credits_db.get_balance(chat_id)
+        track_bal = await self.credits_db.get_track_balance(chat_id)
+        tracks_note = f" Доступно уникальных треков: {track_bal}." if track_bal > 0 else ""
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="Отправить трек", callback_data="sendtrack")],
         ])
         await message.answer(
             f"Записал! Мы постоянно докручиваем качество — и с каждым обновлением "
             f"ролики становятся точнее. А пока — у тебя ещё {bal} бесплатных генераций, "
-            f"попробуй на другом треке. Результат может быть совсем другим, "
+            f"попробуй на другом треке.{tracks_note} Результат может быть совсем другим, "
             f"тк это итеративная работа. Особенно, если ты точно укажешь тайминг "
             f"и текст отрывка.",
             reply_markup=kb,
@@ -6797,6 +6873,14 @@ class BlastBotApp:
     def _build_raw_audio_key(self, *, chat_id: int, file_name: str) -> str:
         safe = _safe_name(file_name)
         return f"{self.settings.s3_raw_audio_prefix.strip('/')}/{chat_id}/{_now_tag()}_{uuid.uuid4().hex[:10]}_{safe}"
+
+    @staticmethod
+    def _sha256_file(path: Path) -> str:
+        h = hashlib.sha256()
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                h.update(chunk)
+        return h.hexdigest()
 
     def _build_referral_batch_id(self, chat_id: int) -> str:
         return f"tg-{int(chat_id)}-referral-round-2"
@@ -7526,6 +7610,20 @@ class BlastBotApp:
                                     actor="tbank_poll",
                                     order_id=order_id,
                                 )
+                                # Track quota: the FIRST track-eligible payment grants
+                                # the tariff base; every later one adds just +1 (a
+                                # renewal tops up the limit by a single track). Count
+                                # is taken after the status flip, so it includes this one.
+                                track_base = self._PKG_TRACKS.get(pkg, 0)
+                                if track_base:
+                                    prior = await self.credits_db.count_confirmed_track_payments(tg_id)
+                                    tracks_to_add = track_base if prior <= 1 else 1
+                                    await self.credits_db.add_track_credits(
+                                        tg_id,
+                                        tracks_to_add,
+                                        "payment",
+                                        f"Пакет «{pkg}» order={order_id}",
+                                    )
                                 await self.credits_db.log_event(tg_id, "payment_confirmed", f"{pkg} +{credits_to_add} кредитов")
                                 # Save RebillId and create subscription for recurrent payments
                                 is_recurrent = pay.get("is_recurrent", False)
@@ -7551,12 +7649,14 @@ class BlastBotApp:
                                 except Exception:
                                     pass
                                 bal = await self.credits_db.get_balance(tg_id)
+                                track_bal = await self.credits_db.get_track_balance(tg_id)
                                 try:
                                     await bot.send_message(
                                         tg_id,
                                         f"Оплата прошла успешно! Пакет «{pkg}» активирован.\n\n"
                                         f"Начислено кредитов: {credits_to_add}\n"
-                                        f"Баланс: {bal}\n\n"
+                                        f"Баланс: {bal}\n"
+                                        f"Доступно уникальных треков: {track_bal}\n\n"
                                         "Отправь трек, чтобы начать генерацию.",
                                         reply_markup=_kb(["Отправить трек"]),
                                     )
@@ -7637,16 +7737,24 @@ class BlastBotApp:
             await self.credits_db.update_payment_status(order_id, "confirmed", payment_id)
             credits_to_add = self._PKG_CREDITS.get(pkg, 5)
             await self.credits_db.add_credits(tg_id, credits_to_add, "subscription", f"Подписка «{pkg}»")
+            # First track-eligible charge grants the tariff base; renewals +1.
+            track_base = self._PKG_TRACKS.get(pkg, 0)
+            if track_base:
+                prior = await self.credits_db.count_confirmed_track_payments(tg_id)
+                tracks_to_add = track_base if prior <= 1 else 1
+                await self.credits_db.add_track_credits(tg_id, tracks_to_add, "subscription", f"Подписка «{pkg}»")
             await self.credits_db.subscription_charge_success(sub_id)
             event = "subscription_charged_manual" if manual else "subscription_charged"
             await self.credits_db.log_event(tg_id, event, f"{pkg} +{credits_to_add}")
             bal = await self.credits_db.get_balance(tg_id)
+            track_bal = await self.credits_db.get_track_balance(tg_id)
             try:
                 await bot.send_message(
                     tg_id,
                     f"Подписка «{pkg}» продлена!\n\n"
                     f"Начислено кредитов: {credits_to_add}\n"
-                    f"Баланс: {bal}\n\n"
+                    f"Баланс: {bal}\n"
+                    f"Доступно уникальных треков: {track_bal}\n\n"
                     "Отправь трек, чтобы начать генерацию.\n\n"
                     "/cancelsubscription — отменить подписку",
                     reply_markup=_kb(["Отправить трек"]),
@@ -8506,7 +8614,8 @@ class BlastBotApp:
 
         # Credits already deducted at launch time
         bal = await self.credits_db.get_balance(st.chat_id)
-        log.info("generation_complete chat=%s remaining=%s", st.chat_id, bal)
+        track_bal = await self.credits_db.get_track_balance(st.chat_id)
+        log.info("generation_complete chat=%s remaining=%s tracks_remaining=%s", st.chat_id, bal, track_bal)
 
         paid = await self.credits_db.has_paid(st.chat_id)
 
@@ -8522,12 +8631,14 @@ class BlastBotApp:
                 st.stage = STAGE_WAIT_AUDIO
                 await self.store.set(st)
                 await self.credits_db.log_event(st.chat_id, "generation_done")
+                tracks_line = f"Доступно уникальных треков: {track_bal}\n" if track_bal > 0 else ""
                 await self._send_post_generation_message_best_effort(
                     bot=bot,
                     st=st,
                     text=(
                         f"Готово — лови контент! Давай сделаем ещё:\n\n"
                         f"Остаток генераций: {bal}\n"
+                        f"{tracks_line}"
                         f"/packages — посмотреть тарифы"
                     ),
                     reply_markup=(

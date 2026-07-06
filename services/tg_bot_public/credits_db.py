@@ -15,11 +15,16 @@ log = logging.getLogger("credits_db")
 _UTM_KEYS = ("source", "medium", "campaign", "content", "term")
 _PAID_REASONS = ("payment", "admin_activate", "manual_activation")
 
+
+class _TrackQuotaExhausted(Exception):
+    """Internal sentinel: rolls back consume_track_slot when no quota is left."""
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
     tg_id               BIGINT PRIMARY KEY,
     username            TEXT      NOT NULL DEFAULT '',
     credits             INTEGER   NOT NULL DEFAULT 0,
+    track_credits       INTEGER   NOT NULL DEFAULT 0,
     created_at          TIMESTAMP NOT NULL DEFAULT NOW(),
     updated_at          TIMESTAMP NOT NULL DEFAULT NOW(),
     source              TEXT      NOT NULL DEFAULT '',
@@ -143,6 +148,16 @@ CREATE TABLE IF NOT EXISTS subscriptions (
 CREATE INDEX IF NOT EXISTS idx_sub_tg_id       ON subscriptions(tg_id);
 CREATE INDEX IF NOT EXISTS idx_sub_status      ON subscriptions(status);
 CREATE INDEX IF NOT EXISTS idx_sub_next_charge ON subscriptions(next_charge_at);
+
+CREATE TABLE IF NOT EXISTS user_tracks (
+    id          BIGSERIAL PRIMARY KEY,
+    tg_id       BIGINT    NOT NULL,
+    audio_hash  TEXT      NOT NULL,
+    created_at  TIMESTAMP NOT NULL DEFAULT NOW(),
+    UNIQUE (tg_id, audio_hash)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_tracks_tg_id ON user_tracks(tg_id);
 """
 
 
@@ -268,6 +283,7 @@ class CreditsDB:
     async def _ensure_migrations(self, conn: asyncpg.Connection) -> None:
         # Keep old databases compatible when tables were created before UTM columns existed.
         await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT ''")
+        await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS track_credits INTEGER NOT NULL DEFAULT 0")
         await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS first_utm_source TEXT NOT NULL DEFAULT ''")
         await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS first_utm_medium TEXT NOT NULL DEFAULT ''")
         await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS first_utm_campaign TEXT NOT NULL DEFAULT ''")
@@ -482,6 +498,75 @@ class CreditsDB:
         )
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_tier_outreach_status ON tier_outreach(status)")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_tier_outreach_tier ON tier_outreach(tier)")
+
+        # Unique-track tracking — one row per (tg_id, audio_hash) ever uploaded.
+        await conn.execute(
+            "CREATE TABLE IF NOT EXISTS user_tracks ("
+            "id BIGSERIAL PRIMARY KEY,"
+            "tg_id BIGINT NOT NULL,"
+            "audio_hash TEXT NOT NULL,"
+            "created_at TIMESTAMP NOT NULL DEFAULT NOW(),"
+            "UNIQUE (tg_id, audio_hash)"
+            ")"
+        )
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_user_tracks_tg_id ON user_tracks(tg_id)")
+
+        # One-time migration ledger — guards backfills that must run exactly
+        # once (unlike the idempotent CREATE/ALTER statements above).
+        await conn.execute(
+            "CREATE TABLE IF NOT EXISTS app_migrations ("
+            "name TEXT PRIMARY KEY,"
+            "applied_at TIMESTAMP NOT NULL DEFAULT NOW()"
+            ")"
+        )
+        # Backfill unique-track quota for users that predate the track-limit
+        # feature (everyone starts at track_credits = 0). Mirrors the runtime
+        # accrual: the FIRST track-eligible payment grants the tariff base, and
+        # every later one adds +1 → base(first tariff) + (payments − 1). Users
+        # with no track-eligible payments (free / trial-only) fall to the
+        # default 1 so the free "2 videos / 1 track" funnel works.
+        # SET-to-absolute + advisory lock + ledger row → safe to run under
+        # concurrent bot instances and idempotent across restarts.
+        async with conn.transaction():
+            await conn.execute("SELECT pg_advisory_xact_lock(hashtext('track_credits_backfill_v1'))")
+            done = await conn.fetchval(
+                "SELECT 1 FROM app_migrations WHERE name = 'track_credits_backfill_v1'"
+            )
+            if done is None:
+                await conn.execute(
+                    """
+                    WITH tp AS (
+                        SELECT
+                            p.tg_id,
+                            p.created_at,
+                            CASE
+                                WHEN p.package IN ('15', 'Бласт')   THEN 4
+                                WHEN p.package IN ('30', 'Глоу')    THEN 10
+                                WHEN p.package IN ('50', 'Импульс') THEN 24
+                            END AS base
+                        FROM payments p
+                        WHERE UPPER(p.status) = 'CONFIRMED'
+                          AND p.package IN ('15', 'Бласт', '30', 'Глоу', '50', 'Импульс')
+                    ),
+                    agg AS (
+                        SELECT
+                            tg_id,
+                            COUNT(*) AS n,
+                            (ARRAY_AGG(base ORDER BY created_at ASC))[1] AS first_base
+                        FROM tp
+                        GROUP BY tg_id
+                    )
+                    UPDATE users u SET track_credits = GREATEST(1, COALESCE(
+                        (SELECT a.first_base + (a.n - 1) FROM agg a WHERE a.tg_id = u.tg_id),
+                        0
+                    ))
+                    """
+                )
+                await conn.execute(
+                    "INSERT INTO app_migrations (name) VALUES ('track_credits_backfill_v1') "
+                    "ON CONFLICT DO NOTHING"
+                )
+                log.info("credits_db: applied track_credits_backfill_v1")
 
         # Seed core team into admins table by username — runs on every startup,
         # idempotent. Anyone in this list is filtered out of CRM/clients views.
@@ -734,6 +819,138 @@ class CreditsDB:
                     int(tg_id),
                 )
                 return True
+
+    # Unique tracks
+
+    async def has_track_hash(self, tg_id: int, audio_hash: str) -> bool:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            row = await conn.fetchval(
+                "SELECT 1 FROM user_tracks WHERE tg_id = $1 AND audio_hash = $2",
+                int(tg_id),
+                str(audio_hash),
+            )
+            return row is not None
+
+    async def count_user_tracks(self, tg_id: int) -> int:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            row = await conn.fetchval(
+                "SELECT COUNT(*) FROM user_tracks WHERE tg_id = $1",
+                int(tg_id),
+            )
+            return int(row or 0)
+
+    async def add_track_hash(self, tg_id: int, audio_hash: str) -> bool:
+        """Record a new (tg_id, audio_hash) pair. Returns True if newly inserted."""
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "INSERT INTO user_tracks (tg_id, audio_hash) VALUES ($1, $2) "
+                "ON CONFLICT (tg_id, audio_hash) DO NOTHING RETURNING id",
+                int(tg_id),
+                str(audio_hash),
+            )
+            return row is not None
+
+    async def get_track_balance(self, tg_id: int) -> int:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            bal = await conn.fetchval("SELECT track_credits FROM users WHERE tg_id = $1", int(tg_id))
+            return int(bal) if bal is not None else 0
+
+    async def count_confirmed_track_payments(self, tg_id: int) -> int:
+        """Count CONFIRMED payments for track-eligible tariffs (Бласт/Глоу/Импульс).
+
+        Accepts both stored spellings (numeric code and RU name) and is
+        case-insensitive on status (poll writes 'CONFIRMED', the subscription
+        charge path writes 'confirmed'). Drives the "base on first payment,
+        +1 on each renewal" track-quota accrual.
+        """
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            row = await conn.fetchval(
+                "SELECT COUNT(*) FROM payments "
+                "WHERE tg_id = $1 AND UPPER(status) = 'CONFIRMED' "
+                "AND package IN ('15', 'Бласт', '30', 'Глоу', '50', 'Импульс')",
+                int(tg_id),
+            )
+            return int(row or 0)
+
+    async def add_track_credits(
+        self,
+        tg_id: int,
+        amount: int,
+        reason: str,
+        admin_note: str = "",
+    ) -> int:
+        """Top up the unique-track quota (mirrors add_credits, but for track_credits)."""
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                await conn.execute(
+                    "INSERT INTO users (tg_id, username) VALUES ($1, '') ON CONFLICT (tg_id) DO NOTHING",
+                    int(tg_id),
+                )
+                row = await conn.fetchrow(
+                    "UPDATE users SET track_credits = track_credits + $1, updated_at = NOW() "
+                    "WHERE tg_id = $2 RETURNING track_credits",
+                    int(amount),
+                    int(tg_id),
+                )
+                after = int(row["track_credits"]) if row else 0
+        await self.log_event(tg_id, "track_credits_granted", f"{reason}: +{int(amount)} ({admin_note})".strip(": ()"))
+        return after
+
+    async def consume_track_slot(self, tg_id: int, audio_hash: str) -> str:
+        """Atomically resolve a track upload against the user's unique-track quota.
+
+        Returns "known" (already-seen track, quota untouched), "consumed"
+        (new track, one track_credit spent), or "blocked" (new track, no
+        quota left).
+
+        The INSERT is the arbiter of newness: only the transaction that
+        actually inserts the (tg_id, audio_hash) row proceeds to spend a
+        slot. A concurrent request for the SAME new track blocks on the
+        unique constraint, then sees no inserted row → "known" (no double
+        charge). If quota is exhausted, the whole transaction rolls back so
+        the row is NOT persisted (the track stays chargeable next time).
+        """
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            try:
+                async with conn.transaction():
+                    inserted = await conn.fetchval(
+                        "INSERT INTO user_tracks (tg_id, audio_hash) VALUES ($1, $2) "
+                        "ON CONFLICT (tg_id, audio_hash) DO NOTHING RETURNING id",
+                        int(tg_id),
+                        str(audio_hash),
+                    )
+                    if inserted is None:
+                        return "known"
+                    row = await conn.fetchrow(
+                        "UPDATE users SET track_credits = track_credits - 1, updated_at = NOW() "
+                        "WHERE tg_id = $1 AND track_credits >= 1 RETURNING tg_id",
+                        int(tg_id),
+                    )
+                    if row is None:
+                        raise _TrackQuotaExhausted()
+                    return "consumed"
+            except _TrackQuotaExhausted:
+                return "blocked"
+
+    async def list_user_tracks(self, tg_id: int) -> List[Dict[str, Any]]:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT audio_hash, created_at FROM user_tracks "
+                "WHERE tg_id = $1 ORDER BY created_at",
+                int(tg_id),
+            )
+        return [
+            {"audio_hash": str(r["audio_hash"]), "created_at": _fmt_ts(r["created_at"])}
+            for r in rows
+        ]
 
     # UTM
 
