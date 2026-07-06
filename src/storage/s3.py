@@ -55,10 +55,14 @@ def get_s3_client():
     # всех ассетов в asset-ui или заливка многогигабайтного файла) могут между
     # чанками ответа ждать дольше дефолтных 60с, если S3 подтормаживает;
     # ставим верхнюю границу 1ч, чтобы не обрывать длинные операции.
+    # proxies={} явно отключает наследование HTTPS_PROXY из env: иначе boto ходил бы
+    # через зарубежный OUTBOUND-прокси, а он до Timeweb S3 не туннелит (502 Bad
+    # Gateway). Прокси нужен только для Gemini, не для S3.
     boto_config = BotoConfig(
         connect_timeout=30,
         read_timeout=3600,
         retries={"max_attempts": 3, "mode": "standard"},
+        proxies={},
     )
 
     session = boto3.session.Session(

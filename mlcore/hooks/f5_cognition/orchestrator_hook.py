@@ -166,7 +166,8 @@ def _make_s3_client():
     kwargs: dict[str, Any] = {
         "service_name": "s3",
         "region_name": region,
-        "config": Config(signature_version="s3v4"),
+        # proxies={}: S3 напрямую, мимо зарубежного OUTBOUND-прокси (до Timeweb 502).
+        "config": Config(signature_version="s3v4", proxies={}),
     }
     if endpoint is not None:
         kwargs["endpoint_url"] = endpoint

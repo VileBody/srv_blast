@@ -508,7 +508,10 @@ def _make_s3_client():
     kwargs: Dict[str, Any] = {
         "service_name": "s3",
         "region_name": region,
-        "config": Config(signature_version="s3v4"),
+        # proxies={}: S3 (Timeweb, РФ) ходит НАПРЯМУЮ, мимо OUTBOUND-прокси. Прокси
+        # зарубежный (для Gemini) и до Timeweb S3 не туннелит (502 Bad Gateway);
+        # boto по умолчанию наследует HTTPS_PROXY из env — здесь его отключаем.
+        "config": Config(signature_version="s3v4", proxies={}),
     }
     if endpoint is not None:
         kwargs["endpoint_url"] = endpoint
