@@ -448,8 +448,12 @@ def render_montage_local(
     # AfterFX -r launches AE asynchronously; the JSX builds + renders (render
     # queue) and writes ae_status.txt(output=...) when the mp4 is done. We poll.
     # Run WITH a window so AE's render progress is visible (helps debugging).
-    log.info("local AE render: %s -r %s", afx, jsx_path)
-    subprocess.Popen([afx, "-r", str(jsx_path)], env=env, cwd=str(app_dir))
+    ae_args = [afx]
+    if os.environ.get("BUCKET_PREVIEW_AE_NEW_INSTANCE", "").strip() == "1":
+        ae_args.extend(["-m", "-noui"])
+    ae_args.extend(["-r", str(jsx_path)])
+    log.info("local AE render: %s", " ".join(ae_args))
+    subprocess.Popen(ae_args, env=env, cwd=str(app_dir))
 
     deadline = time.time() + timeout_s
     status = msg = ""

@@ -125,6 +125,13 @@ def _theme_tag_index(catalog: List[Bucket]) -> Dict[str, set]:
     """theme -> union of its buckets' priority tags (canonical)."""
     by_id = {b.bucket_id: b for b in catalog}
     idx: Dict[str, set] = {}
+    if any(str(b.bucket_id).startswith("visual:") for b in catalog):
+        from mlcore.footage_visual_catalog import load_theme_buckets
+        for theme, bids in load_theme_buckets().items():
+            idx[theme] = set().union(*(
+                {_norm(x) for x in by_id[bid].priority_tags} for bid in bids if bid in by_id
+            )) if bids else set()
+        return idx
     for t, bids in THEME_BUCKETS.items():
         tags: set = set()
         for bid in bids:
@@ -213,15 +220,18 @@ def rank_buckets(
     cat = catalog if catalog is not None else get_bucket_catalog()
     valid_ids = {b.bucket_id for b in cat}
     catalog_order = [b.bucket_id for b in cat]
+    visual_mode = any(str(x).startswith("visual:") for x in valid_ids)
 
     def _mood_ok(bid: str) -> bool:
+        if visual_mode:
+            return True
         m = _norm(mood)
         return m not in {"major", "minor"} or theme_mood(bid.split(":", 1)[0]) == m
 
     if not str(lyrics or "").strip():
         return [b for b in catalog_order if _mood_ok(b)]  # no lyrics → catalog order
 
-    themes = candidate_themes(mood)
+    themes = candidate_themes("") if visual_mode else candidate_themes(mood)
     ranked_themes: Optional[List[str]] = None
     if llm_call is not None:
         try:
@@ -234,7 +244,18 @@ def rank_buckets(
         # Deterministic, RU-aware, no LLM — the default path.
         ranked_themes = lexicon_theme_rank(lyrics, themes, cat)
 
-    ordered = buckets_for_themes(ranked_themes, valid_ids=valid_ids, mood=mood)
+    if visual_mode:
+        from mlcore.footage_visual_catalog import load_theme_buckets
+        mapping = load_theme_buckets()
+        ordered = []
+        seen = set()
+        for theme in ranked_themes:
+            for bid in mapping.get(theme, []):
+                if bid in valid_ids and bid not in seen:
+                    seen.add(bid)
+                    ordered.append(bid)
+    else:
+        ordered = buckets_for_themes(ranked_themes, valid_ids=valid_ids, mood=mood)
     for bid in catalog_order:  # complete the list with any bucket not yet covered
         if bid not in ordered and _mood_ok(bid):
             ordered.append(bid)

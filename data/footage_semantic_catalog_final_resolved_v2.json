@@ -1,0 +1,488 @@
+{
+  "schema_version": 1,
+  "status": "final_resolved_for_preview_wave",
+  "snapshot_rows": 2090,
+  "global_hard_gates": {
+    "visible_text": "exclude",
+    "quality_override": "exclude",
+    "mood": "ignored",
+    "brightness_first": true,
+    "temperature_second": true,
+    "neutral_maps_to": "light",
+    "temperature_only_brightness": "unknown"
+  },
+  "preview_variants": {
+    "bot": {
+      "with_on_video_label": true,
+      "telegram_file_ids": true
+    },
+    "site": {
+      "with_on_video_label": false,
+      "telegram_file_ids": false
+    }
+  },
+  "buckets": [
+    {
+      "bucket_id": "visual:vehicle_drift_racing",
+      "label_ru": "Дрифт / гонки",
+      "potential": 12,
+      "sources": [
+        "1037094620447443022",
+        "1039276051501566273",
+        "1039276051519904948",
+        "1135329387296454662",
+        "1152569729642774101"
+      ]
+    },
+    {
+      "bucket_id": "visual:vehicle_motion_aesthetic",
+      "label_ru": "Машины в движении",
+      "potential": 39,
+      "sources": [
+        "1078049229538562156",
+        "1099089484094398945",
+        "1131318368877508210",
+        "1134414593624220101",
+        "922604673670938763"
+      ]
+    },
+    {
+      "bucket_id": "visual:forest_fog_dark",
+      "label_ru": "Тёмный лес / туман",
+      "potential": 59,
+      "sources": [
+        "1054405331523330344",
+        "1080863979336828110",
+        "1100919071507673079",
+        "1107392995877116904",
+        "1133429431290570963"
+      ]
+    },
+    {
+      "bucket_id": "visual:digital_human_silhouette_cold",
+      "label_ru": "Digital-силуэты / холодные",
+      "potential": 29,
+      "family_potential": 38,
+      "sources": [
+        "1074741898548478968",
+        "832954893627641142",
+        "862650503659989287",
+        "862650503661854693",
+        "938508009846936355"
+      ]
+    },
+    {
+      "bucket_id": "visual:digital_human_silhouette_warm",
+      "label_ru": "Digital-силуэты / тёплые",
+      "potential": 9,
+      "family_potential": 38,
+      "sources": [
+        "937733953679165821",
+        "707768897712891613",
+        "640214903307939370",
+        "25262447905055075"
+      ]
+    },
+    {
+      "bucket_id": "visual:digital_glitch_dark_cold",
+      "label_ru": "Digital / glitch",
+      "potential": 27,
+      "fallback_potential": 10,
+      "sources": [
+        "1091208184865281449",
+        "862650503660226272",
+        "862650503660496388",
+        "862650503662238217",
+        "877779783639516993"
+      ]
+    },
+    {
+      "bucket_id": "visual:urban_solitude_dark",
+      "label_ru": "Пустой ночной город",
+      "potential": 30,
+      "sources": [
+        "1101200546393269049",
+        "182184747420101470",
+        "433682639139618393",
+        "447474912997213192",
+        "647251777734799348"
+      ]
+    },
+    {
+      "bucket_id": "visual:urban_weather_dark",
+      "label_ru": "Город / дождь и снег",
+      "potential": 115,
+      "sources": [
+        "1014998834772481683",
+        "1024217140259940931",
+        "1024428246472350148",
+        "1046172188438731810",
+        "1050886894293549401"
+      ]
+    },
+    {
+      "bucket_id": "visual:couple_intimacy_light_warm",
+      "label_ru": "Пара / близость",
+      "potential": 35,
+      "sources": [
+        "1040613057654878559",
+        "1124422231963247868",
+        "1109644795712835741",
+        "1138566349565563001",
+        "326299935518543123"
+      ]
+    },
+    {
+      "bucket_id": "visual:solitary_person_dark_cold",
+      "label_ru": "Человек / одиночество",
+      "potential": 73,
+      "sources": [
+        "1067071705466132114",
+        "1083749098168031315",
+        "1104930089846002809",
+        "832954893624111715",
+        "891994270132831016"
+      ]
+    },
+    {
+      "bucket_id": "visual:performance_crowd_dark",
+      "label_ru": "Сцена / толпа",
+      "potential": 31,
+      "sources": [
+        "1010706341356354231",
+        "1031254014669725329",
+        "1080723241837930450",
+        "1138284874601486254",
+        "240379698853184524"
+      ]
+    },
+    {
+      "bucket_id": "visual:girls_portrait_light_warm",
+      "label_ru": "Портрет девушки / светлый",
+      "potential": 90,
+      "sources": [
+        "1066016174306109110",
+        "1077415910866602686",
+        "1115626138951629872",
+        "1119355682398118457",
+        "1138777455782525779"
+      ]
+    },
+    {
+      "bucket_id": "visual:girls_portrait_dark_cold",
+      "label_ru": "Портрет девушки / тёмный",
+      "potential": 49,
+      "sources": [
+        "1068338342862554531",
+        "1069956823942339541",
+        "1129488781561647353",
+        "271904896248389897",
+        "758152918559736668"
+      ]
+    },
+    {
+      "bucket_id": "visual:active_life_dark_cold",
+      "label_ru": "Активная жизнь",
+      "potential": 33,
+      "sources": [
+        "1038009414120001167",
+        "144255994310548827",
+        "421508846397040729",
+        "824299538078731810",
+        "831969731198751557"
+      ]
+    },
+    {
+      "bucket_id": "visual:warm_coastal_romance_light",
+      "label_ru": "Романтика у воды",
+      "potential": 51,
+      "sources": [
+        "1040613057654878559",
+        "1123788913269116129",
+        "1124422231963247868",
+        "1127588825461842625",
+        "610308187033112545"
+      ]
+    },
+    {
+      "bucket_id": "visual:ocean_storm_dark_cold",
+      "label_ru": "Тёмный океан / шторм",
+      "potential": 49,
+      "sources": [
+        "1040613057658724719",
+        "986710599609989135",
+        "1121888957156574280",
+        "1124070388264326720",
+        "745838388327811288"
+      ],
+      "hard_exclude": [
+        "urban",
+        "city",
+        "street",
+        "building",
+        "skyscraper",
+        "apartment"
+      ]
+    },
+    {
+      "bucket_id": "visual:nature_sunset_light_warm",
+      "label_ru": "Природа / тёплый закат",
+      "potential": 50,
+      "sources": [
+        "1039979738956734141",
+        "1015350678479940121",
+        "1039979738954738254",
+        "1108167052080577295",
+        "1124844444451025793"
+      ],
+      "hard_exclude": [
+        "mountain",
+        "cliff",
+        "urban",
+        "city",
+        "street",
+        "building",
+        "house",
+        "architecture",
+        "road",
+        "car",
+        "vehicle",
+        "person",
+        "people",
+        "girl",
+        "guy",
+        "man",
+        "woman",
+        "couple",
+        "crowd",
+        "silhouette",
+        "interior",
+        "indoor"
+      ]
+    },
+    {
+      "bucket_id": "visual:rain_nature_dark_cold",
+      "label_ru": "Дождливая природа",
+      "potential": 79,
+      "sources": [
+        "1149684611131771118",
+        "1061231099700421659",
+        "1076712223418852221",
+        "1136384918456054982",
+        "1005991635486851479"
+      ]
+    },
+    {
+      "bucket_id": "visual:mountain_dark_cold",
+      "label_ru": "Горы / тёмные",
+      "potential": 56,
+      "sources": [
+        "1124070388264326720",
+        "1124633338187039691",
+        "858850591498984010",
+        "926474954585445957",
+        "1054405331523082362"
+      ]
+    },
+    {
+      "bucket_id": "visual:mountain_light_warm",
+      "label_ru": "Горы / светлые",
+      "potential": 44,
+      "sources": [
+        "1013239616147036118",
+        "1039979738955562956",
+        "1044061126127706401",
+        "700028335874500132",
+        "779826491749681048"
+      ]
+    },
+    {
+      "bucket_id": "visual:winter_nature_dark_cold",
+      "label_ru": "Зимняя природа",
+      "potential": 43,
+      "sources": [
+        "1040261213936567731",
+        "1066719861738198401",
+        "1117737201283323986",
+        "1144336586555232643",
+        "1018165428259235123"
+      ]
+    },
+    {
+      "bucket_id": "visual:dark_interior_atmosphere",
+      "label_ru": "Тёмный интерьер",
+      "potential": 50,
+      "sources": [
+        "1018587640724143197",
+        "1018587640724917571",
+        "1100356121477288876",
+        "1135681231018333792",
+        "440015826116609804"
+      ]
+    },
+    {
+      "bucket_id": "visual:night_sky_space_dark_cold",
+      "label_ru": "Ночное небо",
+      "potential": 46,
+      "sources": [
+        "1074741898558256439",
+        "1104015296145405303",
+        "1124000019486494740",
+        "628463323028594161",
+        "755549275025272488"
+      ]
+    }
+  ],
+  "theme_buckets": {
+    "romance_major": [
+      "visual:couple_intimacy_light_warm",
+      "visual:warm_coastal_romance_light",
+      "visual:nature_sunset_light_warm",
+      "visual:girls_portrait_light_warm",
+      "visual:mountain_light_warm"
+    ],
+    "romance_minor": [
+      "visual:couple_intimacy_light_warm",
+      "visual:girls_portrait_dark_cold",
+      "visual:solitary_person_dark_cold",
+      "visual:rain_nature_dark_cold"
+    ],
+    "epic_love_major": [
+      "visual:warm_coastal_romance_light",
+      "visual:nature_sunset_light_warm",
+      "visual:mountain_light_warm",
+      "visual:active_life_dark_cold"
+    ],
+    "epic_love_minor": [
+      "visual:ocean_storm_dark_cold",
+      "visual:rain_nature_dark_cold",
+      "visual:mountain_dark_cold",
+      "visual:couple_intimacy_light_warm"
+    ],
+    "heartbreak_minor": [
+      "visual:girls_portrait_dark_cold",
+      "visual:solitary_person_dark_cold",
+      "visual:winter_nature_dark_cold",
+      "visual:urban_solitude_dark",
+      "visual:digital_human_silhouette_cold"
+    ],
+    "betrayal_minor": [
+      "visual:solitary_person_dark_cold",
+      "visual:urban_solitude_dark",
+      "visual:dark_interior_atmosphere",
+      "visual:digital_human_silhouette_cold"
+    ],
+    "jealousy_minor": [
+      "visual:girls_portrait_dark_cold",
+      "visual:digital_glitch_dark_cold",
+      "visual:digital_human_silhouette_cold",
+      "visual:urban_solitude_dark"
+    ],
+    "depression_minor": [
+      "visual:solitary_person_dark_cold",
+      "visual:dark_interior_atmosphere",
+      "visual:urban_solitude_dark",
+      "visual:winter_nature_dark_cold",
+      "visual:forest_fog_dark"
+    ],
+    "self_destruction_minor": [
+      "visual:digital_glitch_dark_cold",
+      "visual:performance_crowd_dark",
+      "visual:urban_weather_dark",
+      "visual:vehicle_motion_aesthetic"
+    ],
+    "aggression_minor": [
+      "visual:vehicle_drift_racing",
+      "visual:vehicle_motion_aesthetic",
+      "visual:active_life_dark_cold",
+      "visual:digital_glitch_dark_cold",
+      "visual:ocean_storm_dark_cold"
+    ],
+    "motivation_major": [
+      "visual:active_life_dark_cold",
+      "visual:vehicle_motion_aesthetic",
+      "visual:mountain_light_warm",
+      "visual:nature_sunset_light_warm"
+    ],
+    "motivation_minor": [
+      "visual:active_life_dark_cold",
+      "visual:urban_weather_dark",
+      "visual:mountain_dark_cold",
+      "visual:solitary_person_dark_cold"
+    ],
+    "hustle_minor": [
+      "visual:vehicle_motion_aesthetic",
+      "visual:urban_solitude_dark",
+      "visual:performance_crowd_dark"
+    ],
+    "sex_major": [
+      "visual:couple_intimacy_light_warm",
+      "visual:girls_portrait_light_warm",
+      "visual:warm_coastal_romance_light"
+    ],
+    "sex_minor": [
+      "visual:couple_intimacy_light_warm",
+      "visual:girls_portrait_dark_cold",
+      "visual:digital_human_silhouette_warm",
+      "visual:performance_crowd_dark"
+    ],
+    "nostalgia_city_minor": [
+      "visual:urban_solitude_dark",
+      "visual:urban_weather_dark",
+      "visual:dark_interior_atmosphere"
+    ],
+    "adrenaline_flex_major": [
+      "visual:vehicle_drift_racing",
+      "visual:vehicle_motion_aesthetic",
+      "visual:active_life_dark_cold"
+    ],
+    "escapism_dreams_minor": [
+      "visual:night_sky_space_dark_cold",
+      "visual:digital_human_silhouette_cold",
+      "visual:digital_glitch_dark_cold",
+      "visual:forest_fog_dark",
+      "visual:mountain_dark_cold"
+    ],
+    "loneliness_isolation_minor": [
+      "visual:solitary_person_dark_cold",
+      "visual:urban_solitude_dark",
+      "visual:forest_fog_dark",
+      "visual:winter_nature_dark_cold",
+      "visual:night_sky_space_dark_cold"
+    ],
+    "youth_rebellion_major": [
+      "visual:active_life_dark_cold",
+      "visual:performance_crowd_dark",
+      "visual:warm_coastal_romance_light",
+      "visual:girls_portrait_light_warm"
+    ],
+    "mysticism_fate_minor": [
+      "visual:forest_fog_dark",
+      "visual:night_sky_space_dark_cold",
+      "visual:digital_human_silhouette_cold",
+      "visual:mountain_dark_cold"
+    ],
+    "cyber_alienation_minor": [
+      "visual:digital_glitch_dark_cold",
+      "visual:digital_human_silhouette_cold",
+      "visual:digital_human_silhouette_warm",
+      "visual:urban_solitude_dark"
+    ],
+    "serene_landscape_major": [
+      "visual:nature_sunset_light_warm",
+      "visual:mountain_light_warm",
+      "visual:warm_coastal_romance_light"
+    ],
+    "nightlife_electro_minor": [
+      "visual:performance_crowd_dark",
+      "visual:digital_glitch_dark_cold",
+      "visual:urban_weather_dark"
+    ],
+    "urban_blocks_minor": [
+      "visual:urban_solitude_dark",
+      "visual:urban_weather_dark",
+      "visual:dark_interior_atmosphere"
+    ]
+  },
+  "applied_overrides": "C:/Users/Пользователь/srv_blast/data/footage_semantic_catalog_final_overrides_v2.json"
+}

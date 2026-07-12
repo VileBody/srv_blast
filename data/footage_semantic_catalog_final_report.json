@@ -1,0 +1,166 @@
+{
+  "status": "final_resolved_audit",
+  "snapshot_rows": 2090,
+  "current_raw_slots": 48,
+  "final_visual_slots": 23,
+  "slot_reduction": 25,
+  "slot_reduction_pct": 52.1,
+  "track_themes_covered": 25,
+  "total_slot_potential": 1099,
+  "total_slot_potential_vs_snapshot_pct": 52.6,
+  "average_slot_potential": 47.8,
+  "thin_slots": [
+    {
+      "bucket_id": "visual:vehicle_drift_racing",
+      "potential": 12,
+      "family_potential": 0,
+      "fallback_potential": 0
+    },
+    {
+      "bucket_id": "visual:digital_human_silhouette_cold",
+      "potential": 29,
+      "family_potential": 38,
+      "fallback_potential": 0
+    },
+    {
+      "bucket_id": "visual:digital_human_silhouette_warm",
+      "potential": 9,
+      "family_potential": 38,
+      "fallback_potential": 0
+    },
+    {
+      "bucket_id": "visual:digital_glitch_dark_cold",
+      "potential": 27,
+      "family_potential": 0,
+      "fallback_potential": 10
+    }
+  ],
+  "coverage_note": "slot potential is not unique asset coverage because compatible buckets may overlap",
+  "theme_report": {
+    "romance_major": {
+      "bucket_count": 5,
+      "slot_potential_sum": 270,
+      "semantic_risk": "normal"
+    },
+    "romance_minor": {
+      "bucket_count": 4,
+      "slot_potential_sum": 236,
+      "semantic_risk": "normal"
+    },
+    "epic_love_major": {
+      "bucket_count": 4,
+      "slot_potential_sum": 178,
+      "semantic_risk": "normal"
+    },
+    "epic_love_minor": {
+      "bucket_count": 4,
+      "slot_potential_sum": 219,
+      "semantic_risk": "normal"
+    },
+    "heartbreak_minor": {
+      "bucket_count": 5,
+      "slot_potential_sum": 224,
+      "semantic_risk": "normal"
+    },
+    "betrayal_minor": {
+      "bucket_count": 4,
+      "slot_potential_sum": 182,
+      "semantic_risk": "normal"
+    },
+    "jealousy_minor": {
+      "bucket_count": 4,
+      "slot_potential_sum": 135,
+      "semantic_risk": "normal"
+    },
+    "depression_minor": {
+      "bucket_count": 5,
+      "slot_potential_sum": 255,
+      "semantic_risk": "normal"
+    },
+    "self_destruction_minor": {
+      "bucket_count": 4,
+      "slot_potential_sum": 212,
+      "semantic_risk": "normal"
+    },
+    "aggression_minor": {
+      "bucket_count": 5,
+      "slot_potential_sum": 160,
+      "semantic_risk": "normal"
+    },
+    "motivation_major": {
+      "bucket_count": 4,
+      "slot_potential_sum": 166,
+      "semantic_risk": "normal"
+    },
+    "motivation_minor": {
+      "bucket_count": 4,
+      "slot_potential_sum": 277,
+      "semantic_risk": "normal"
+    },
+    "hustle_minor": {
+      "bucket_count": 3,
+      "slot_potential_sum": 100,
+      "semantic_risk": "high: no verified luxury/static-brand bucket"
+    },
+    "sex_major": {
+      "bucket_count": 3,
+      "slot_potential_sum": 176,
+      "semantic_risk": "normal"
+    },
+    "sex_minor": {
+      "bucket_count": 4,
+      "slot_potential_sum": 124,
+      "semantic_risk": "medium: no standalone dark-intimate-detail bucket"
+    },
+    "nostalgia_city_minor": {
+      "bucket_count": 3,
+      "slot_potential_sum": 195,
+      "semantic_risk": "high: no verified retro/lofi bucket"
+    },
+    "adrenaline_flex_major": {
+      "bucket_count": 3,
+      "slot_potential_sum": 84,
+      "semantic_risk": "normal"
+    },
+    "escapism_dreams_minor": {
+      "bucket_count": 5,
+      "slot_potential_sum": 217,
+      "semantic_risk": "normal"
+    },
+    "loneliness_isolation_minor": {
+      "bucket_count": 5,
+      "slot_potential_sum": 251,
+      "semantic_risk": "normal"
+    },
+    "youth_rebellion_major": {
+      "bucket_count": 4,
+      "slot_potential_sum": 205,
+      "semantic_risk": "normal"
+    },
+    "mysticism_fate_minor": {
+      "bucket_count": 4,
+      "slot_potential_sum": 190,
+      "semantic_risk": "medium: no standalone gothic-architecture bucket"
+    },
+    "cyber_alienation_minor": {
+      "bucket_count": 4,
+      "slot_potential_sum": 95,
+      "semantic_risk": "low-medium: cyberpunk city removed; glitch/silhouette remain"
+    },
+    "serene_landscape_major": {
+      "bucket_count": 3,
+      "slot_potential_sum": 145,
+      "semantic_risk": "normal"
+    },
+    "nightlife_electro_minor": {
+      "bucket_count": 3,
+      "slot_potential_sum": 173,
+      "semantic_risk": "normal"
+    },
+    "urban_blocks_minor": {
+      "bucket_count": 3,
+      "slot_potential_sum": 195,
+      "semantic_risk": "normal"
+    }
+  }
+}

@@ -932,12 +932,35 @@ def _build_raw_pool(
     color_priority.discard("")
 
     pool: List[Dict[str, Any]] = []
+    visual_contract = None
+    if str(raw_pick.theme or "").strip() == "visual":
+        from mlcore.footage_visual_catalog import load_visual_catalog
+        wanted = f"visual:{str(raw_pick.tags_group or '').strip()}"
+        visual_contract = next((x for x in load_visual_catalog() if x.bucket_id == wanted), None)
+        if visual_contract is None:
+            raise RuntimeError(f"unknown visual contract: {wanted}")
     for it in assets:
         if style_genre is not None and style_tag is not None:
             if str(it.get("genre") or "").strip() != str(style_genre).strip():
                 continue
             if str(it.get("tag") or "").strip() != str(style_tag).strip():
                 continue
+        if visual_contract is not None:
+            from mlcore.footage_visual_catalog import evaluate_asset
+            ok, stage, diag = evaluate_asset(visual_contract, it)
+            if not ok:
+                continue
+            clip_color = _normalize_color_tone(it.get("meta_color_tone"))
+            normalized_color = "light" if clip_color == "neutral" else clip_color
+            matched_groups = list(diag.get("matched_groups") or [])
+            semantic_score = float(max(1, len(matched_groups)))
+            if normalized_color and normalized_color in color_priority:
+                semantic_score += 0.5
+            row = dict(it)
+            row[_SELECTION_RANK_SCORE_KEY] = semantic_score
+            row["_visual_contract"] = {**diag, "stage": stage}
+            pool.append(row)
+            continue
         meta_tags = {_normalize_meta_tag(x) for x in (it.get("meta_theme_tags") or [])}
         meta_tags.discard("")
         meta_tags -= blacklisted

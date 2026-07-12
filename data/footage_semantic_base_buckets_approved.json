@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "status": "approved_for_final_catalog",
+  "decision": {
+    "urban_weather_dark": "accepted",
+    "urban_architecture_dark": "rejected_as_duplicate_of_urban_solitude_dark"
+  },
+  "buckets": [
+    {
+      "bucket_id": "visual:urban_weather_dark",
+      "label_ru": "Город / дождь и снег",
+      "potential": 115,
+      "brightness": "dark",
+      "require_no_people": true,
+      "include_all": [
+        "urban|city|street|building|cityscape",
+        "rain|snow|fog|mist|storm"
+      ],
+      "exclude": [
+        "car|cars|vehicle|automobile|motorcycle|train|tram|bus|truck",
+        "night drive|night driving|traffic jam|traffic flow|city traffic|night traffic|headlights|camper|drift|windshield",
+        "interior|indoor|room|bedroom|hallway|corridor|window scene|garage|window view|bedroom window",
+        "digital|glitch|abstract|animation|graphic|overlay|screen|pixel|vhs",
+        "destruction|disaster|tornado|fire|burning|explosion|gas station|abandoned"
+      ],
+      "preview_sources": [
+        "1014998834772481683",
+        "1024217140259940931",
+        "1024428246472350148",
+        "1046172188438731810",
+        "1050886894293549401"
+      ]
+    }
+  ]
+}

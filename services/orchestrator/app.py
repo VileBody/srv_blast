@@ -648,8 +648,8 @@ def create_app() -> FastAPI:
         # return an empty ranking rather than 500 — a 500 here pushes the bot into
         # the legacy artist-theme fallback (the symptom we're fixing).
         try:
-            from mlcore.footage_bucket_catalog import get_bucket_catalog
-            catalog = get_bucket_catalog()
+            from mlcore.footage_visual_catalog import load_visual_catalog
+            catalog = load_visual_catalog()
         except Exception:
             log.exception("rank-buckets: catalog load failed — empty ranking")
             return RankBucketsResponse(buckets=[], used_llm=False)

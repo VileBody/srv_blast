@@ -51,6 +51,13 @@ def find_bucket(
             "deterministic Stage2B requires both theme and tags_group "
             f"(got theme={theme!r} tags_group={tags_group!r})"
         )
+    if t == "visual":
+        from mlcore.footage_visual_catalog import load_visual_catalog
+        wanted = f"visual:{g}"
+        for contract in load_visual_catalog():
+            if contract.bucket_id == wanted:
+                return contract  # type: ignore[return-value]
+        raise RuntimeError(f"visual contract not found: {wanted!r}")
     buckets = catalog if catalog is not None else build_buckets()
     for b in buckets:
         if b.theme == t and b.tags_group == g:
@@ -67,22 +74,28 @@ def bucket_to_style_raw(bucket: Bucket) -> FootageStyleRawPayload:
     pydantic models — an unexpected footage_v2 value surfaces as an explicit error
     instead of a silent fallback (No Fallback Policy).
     """
-    if not bucket.mood:
+    is_visual = str(bucket.bucket_id).startswith("visual:")
+    if not bucket.mood and not is_visual:
         raise RuntimeError(
             f"deterministic Stage2B: bucket {bucket.bucket_id!r} has no mood "
             "(theme must end in _major/_minor)"
         )
+    people_mode = "any" if is_visual else str(getattr(bucket, "people", "any"))
+    exclude_people = (
+        ["girls", "guys", "couple", "crowd", "driver"] if people_mode == "none" else []
+    )
+    require_people = "girls" if people_mode == "girls" else None
     filters = FootageStyleRawFilters(
-        color_priority=list(bucket.color),
-        exclude=list(bucket.exclude),
-        exclude_tags=list(bucket.exclude_tags),
-        require_people=None,
+        color_priority=list(bucket.color) or ["dark", "light", "warm", "cold"],
+        exclude=exclude_people or list(bucket.exclude),
+        exclude_tags=[] if is_visual else list(bucket.exclude_tags),
+        require_people=require_people,
         priority_theme_tags=list(bucket.priority_tags),
     )
     return FootageStyleRawPayload(
         artist_id=None,
         theme=bucket.theme,
-        mood=bucket.mood,
+        mood=bucket.mood or "minor",
         tags_group=bucket.tags_group,
         filters=filters,
     )

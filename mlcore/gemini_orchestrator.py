@@ -3515,7 +3515,7 @@ def build_all_via_gemini_one_call(
             _stage2b_deterministic_enabled()
             and rotation_theme_override
             and rotation_group_override
-            and not footage_artist_id
+            and (not footage_artist_id or rotation_theme_override == "visual")
         ):
             # Exact-slot precision path: build the style filters straight from the
             # bucket catalog — NO Stage2B LLM call. On this path the LLM only
