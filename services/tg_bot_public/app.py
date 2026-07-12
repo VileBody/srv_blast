@@ -3814,7 +3814,18 @@ class BlastBotApp:
         retry, one bad request permanently strands the chat in the legacy
         artist flow (nothing else re-triggers ranking until new lyrics)."""
         if st.vibe_ranked_ids:
-            return True
+            legacy_ids = [
+                bid for bid in st.vibe_ranked_ids
+                if bid.split(":", 1)[0].endswith(("_major", "_minor"))
+            ]
+            if not legacy_ids:
+                return True
+            log.info("vibe_catalog_migration chat=%s legacy_ids=%d action=rerank",
+                     st.chat_id, len(legacy_ids))
+            st.vibe_ranked_ids = []
+            st.vibe_labels_by_id = {}
+            st.vibe_selected_ids = []
+            st.vibe_rank_status = "pending"
         lyrics = str(st.lyrics_text or "").strip()
         last_err: Exception | None = None
         for attempt in range(3):
