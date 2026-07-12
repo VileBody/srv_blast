@@ -1853,7 +1853,10 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
     _f3_allowed = {
         "hook": {"hook_light", "shutter_effect", "flash_slow_shutter", "negative_zoom"},
         "transition": {"snap_wipe", "minimax", "invert_flash", "extract_flash", "flash_on_cuts", "layer_shake"},
-        "extra": {"xerox", "analog_glitch", "neon_extract", "old_camera"},
+        "extra": {
+            "xerox", "analog_glitch", "neon_extract", "old_camera",
+            "blackwhite", "crystal_glow", "night_vision", "wave",
+        },
     }
     for _req_key, _env_key, _group in (
         ("effect_hook", "F3_HOOK", "hook"),

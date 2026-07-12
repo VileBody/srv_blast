@@ -25,6 +25,7 @@ STAGE_WAIT_FRAGMENT_TEXT = "WAIT_FRAGMENT_TEXT"
 STAGE_WAIT_TIMING_CHOICE = "WAIT_TIMING_CHOICE"
 STAGE_WAIT_TIMING_INPUT = "WAIT_TIMING_INPUT"
 STAGE_WAIT_BG_MODE = "WAIT_BG_MODE"
+STAGE_WAIT_BG_INFO = "WAIT_BG_INFO"
 STAGE_WAIT_BG_COLOR = "WAIT_BG_COLOR"
 STAGE_WAIT_STROBE_CUT = "WAIT_STROBE_CUT"
 STAGE_WAIT_FOOTAGE_GENRE = "WAIT_FOOTAGE_GENRE"
@@ -48,6 +49,8 @@ STAGE_WAIT_EFFECT_TRANSITION = "WAIT_EFFECT_TRANSITION"
 STAGE_WAIT_EFFECT_EXTRA = "WAIT_EFFECT_EXTRA"
 STAGE_WAIT_EFFECT_EXTRA_FULL = "WAIT_EFFECT_EXTRA_FULL"
 STAGE_WAIT_EFFECT_EXTEND = "WAIT_EFFECT_EXTEND"
+STAGE_WAIT_VISUAL_TRANSITION = "WAIT_VISUAL_TRANSITION"
+STAGE_WAIT_VISUAL_STYLE = "WAIT_VISUAL_STYLE"
 # F2 «Объект» single sub-picker (5 shape buttons). Mirror of tg_bot_botapi.
 STAGE_WAIT_F2_SHAPE = "WAIT_F2_SHAPE"
 # F1 «Звук» — wait for user-uploaded pre-drop sound. Mirror of tg_bot_botapi.
@@ -163,6 +166,7 @@ class ChatState(BaseModel):
     # Public bot UX is parity-mirrored from tg_bot_botapi but the entry point
     # for the bg-mode picker is intentionally NOT wired in user flow yet.
     bg_mode: str = "footage"
+    pending_bg_mode: str = ""
     # Solid background color key when bg_mode == "solid": "white" | "green".
     bg_solid_color: str = ""
     # Photo flow (bg_mode == "photo") — two F3-style picks, mirror of tg_bot_botapi.
@@ -191,6 +195,9 @@ class ChatState(BaseModel):
     effect_extra: str = ""       # "" | xerox | analog_glitch | neon_extract | old_camera
     effect_extra_full: bool = False  # stretch the grade over the whole video (mirror)
     effect_hook_extend: str = "" # "" | to_end | after_drop:N
+    visual_transition: str = ""
+    visual_style: str = ""
+    visuals_done: bool = False
     # F2 «Объект» selection when hook_category == "object" (mirror of tg_bot_botapi).
     # Single shape pick — the rest of the combo (hook_light at drop + seeded-random
     # F3 transition on post-drop cuts) is forced server-side.

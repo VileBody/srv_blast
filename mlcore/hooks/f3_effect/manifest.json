@@ -137,6 +137,26 @@
       "sound": { "pool": "glitch", "optional": true, "freq_tbd": true }, "default_duration": null, "placement": "below:Текст",
       "desc": "Старая камера: Unsharp + Mosaic + Gaussian + Posterize + Transform + S_GlowEdges." },
 
+    { "id": "blackwhite", "label": "Black & White", "group": "extra", "apply_mode": "adjustment",
+      "script": "extra/rebuild_blackwhite.jsx", "needs_aep": false, "needs_plugin": [],
+      "sound": { "pool": null, "optional": true }, "default_duration": null, "placement": "below:Текст",
+      "desc": "Чёрно-белая стилизация с холодным оттенком." },
+
+    { "id": "crystal_glow", "label": "Crystal Glow", "group": "extra", "apply_mode": "adjustment",
+      "script": "extra/rebuild_crystal_glow.jsx", "needs_aep": false, "needs_plugin": ["Sapphire"],
+      "sound": { "pool": null, "optional": true }, "default_duration": null, "placement": "below:Текст",
+      "desc": "Резкое кристальное свечение через Sapphire S_Glint." },
+
+    { "id": "night_vision", "label": "Night Vision", "group": "extra", "apply_mode": "adjustment",
+      "script": "extra/rebuild_night_vision.jsx", "needs_aep": false, "needs_plugin": [],
+      "sound": { "pool": null, "optional": true }, "default_duration": null, "placement": "below:Текст",
+      "desc": "Зелёное ночное видение с шумом и крупным пикселем." },
+
+    { "id": "wave", "label": "Wave", "group": "extra", "apply_mode": "adjustment",
+      "script": "extra/rebuild_wave.jsx", "needs_aep": false, "needs_plugin": [],
+      "sound": { "pool": null, "optional": true }, "default_duration": null, "placement": "below:Текст",
+      "desc": "Мягкая волновая деформация всего кадра." },
+
     { "id": "pixel_grain", "label": "Pixel Grain", "group": "extra", "apply_mode": "adjustment",
       "script": "extra/rebuild_pixel_grain.jsx", "needs_aep": true, "needs_plugin": ["VISINF Grain"],
       "sound": { "pool": "glitch", "optional": true, "freq_tbd": true }, "default_duration": null, "placement": "below:Текст",

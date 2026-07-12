@@ -36,6 +36,7 @@ def test_effect_id_sets_and_labels_consistent():
     }
     assert pub.F3_EXTRA_IDS == {
         "xerox", "analog_glitch", "neon_extract", "old_camera",
+        "blackwhite", "crystal_glow", "night_vision", "wave",
     }
     # every RU label maps to a known id
     assert set(pub.F3_HOOK_LABELS_RU.values()) == pub.F3_HOOK_IDS

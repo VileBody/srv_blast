@@ -447,6 +447,10 @@ BTN_FX_EX_XEROX = "Ксерокс"
 BTN_FX_EX_ANALOG = "Аналог-глитч"
 BTN_FX_EX_NEON = "Неон"
 BTN_FX_EX_OLDCAM = "Старая камера"
+BTN_FX_EX_BLACKWHITE = "Ч/Б"
+BTN_FX_EX_CRYSTAL = "Crystal Glow"
+BTN_FX_EX_NIGHT = "Night Vision"
+BTN_FX_EX_WAVE = "Wave"
 # pixel_grain / warm_map убраны из пикера — они тянут .aep, который не доезжает
 # до рендер-ноды (см. mlcore/hooks/f3_effect/overlay.py::F3_EXTRAS).
 _FX_EXTRA_BY_BUTTON = {
@@ -454,6 +458,10 @@ _FX_EXTRA_BY_BUTTON = {
     BTN_FX_EX_ANALOG: "analog_glitch",
     BTN_FX_EX_NEON: "neon_extract",
     BTN_FX_EX_OLDCAM: "old_camera",
+    BTN_FX_EX_BLACKWHITE: "blackwhite",
+    BTN_FX_EX_CRYSTAL: "crystal_glow",
+    BTN_FX_EX_NIGHT: "night_vision",
+    BTN_FX_EX_WAVE: "wave",
 }
 # slow-shutter trail extend (only when hook == flash_slow_shutter)
 BTN_FX_EXT_STD = "Стандарт"
@@ -4089,6 +4097,8 @@ class BlastBotApp:
             reply_markup=_kb(
                 [BTN_FX_EX_XEROX, BTN_FX_EX_ANALOG],
                 [BTN_FX_EX_NEON, BTN_FX_EX_OLDCAM],
+                [BTN_FX_EX_BLACKWHITE, BTN_FX_EX_CRYSTAL],
+                [BTN_FX_EX_NIGHT, BTN_FX_EX_WAVE],
                 [BTN_FX_SKIP],
                 [BTN_BACK],
             ),

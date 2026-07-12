@@ -4587,13 +4587,19 @@ def build_all_via_gemini_one_call(
                 raise RuntimeError(f"unknown F3_EXTRA={_f3_extra!r}")
             _cs = _hook_clip_start
             _udt = (os.environ.get("USER_DROP_T") or "").strip()
-            if not _udt:
-                raise RuntimeError("F3 fx requires USER_DROP_T (drop anchor)")
-            _drop_rel = float(_udt) - _cs
-            if not (_drop_rel > 0.0):
-                raise RuntimeError(
-                    f"F3 drop_rel must be > 0 (USER_DROP_T={_udt}, clip_start={_cs})"
-                )
+            if _f3_hook:
+                if not _udt:
+                    raise RuntimeError("F3 hook requires USER_DROP_T (drop anchor)")
+                _drop_rel = float(_udt) - _cs
+                if not (_drop_rel > 0.0):
+                    raise RuntimeError(
+                        f"F3 hook drop_rel must be > 0 (USER_DROP_T={_udt}, clip_start={_cs})"
+                    )
+            else:
+                # No semantic drop: composition end is only a legacy scope boundary.
+                _drop_rel = float(full_payload.subtitles.clip.end) - _cs
+                if not (_drop_rel > 0.0):
+                    raise RuntimeError("standalone F3 transition/style requires a positive clip duration")
             _f3_extra_full = (os.environ.get("F3_EXTRA_FULL") or "").strip().lower() in ("1", "true", "yes")
             f3_block = {
                 "hook": _f3_hook or None,

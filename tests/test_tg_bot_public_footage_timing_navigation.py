@@ -95,19 +95,19 @@ def test_timing_choice_goes_straight_to_input(monkeypatch) -> None:
     asyncio.run(_run())
 
 
-def test_skip_timing_goes_to_footage_genre(monkeypatch) -> None:
+def test_skip_timing_goes_to_background_choice(monkeypatch) -> None:
     async def _run() -> None:
         app = _new_app()
         st = ChatState(chat_id=2002, stage=STAGE_WAIT_TIMING_CHOICE)
         msg = _FakeMessage(text=public_app.BTN_SKIP_TIMING)
-        called = {"genre": 0}
+        called = {"background": 0}
 
-        async def _ask_footage_genre(_message, _state) -> None:
-            called["genre"] += 1
+        async def _ask_bg_mode(_message, _state) -> None:
+            called["background"] += 1
 
-        app._ask_footage_genre = _ask_footage_genre  # type: ignore[method-assign]
+        app._ask_bg_mode = _ask_bg_mode  # type: ignore[method-assign]
         await public_app.BlastBotApp._handle_wait_timing_choice(app, msg, st)
-        assert called["genre"] == 1
+        assert called["background"] == 1
 
     asyncio.run(_run())
 
@@ -141,16 +141,16 @@ def test_footage_flow_has_back_navigation(monkeypatch) -> None:
         labels = _keyboard_labels(ask_msg.answers[-1]["reply_markup"])
         assert public_app.BTN_BACK in labels
 
-        # Back from genre -> timing choice.
+        # Back from genre -> background type choice.
         back_genre_msg = _FakeMessage(text=public_app.BTN_BACK)
-        called = {"timing": 0}
+        called = {"background": 0}
 
-        async def _ask_timing_choice(_message, _state) -> None:
-            called["timing"] += 1
+        async def _ask_bg_mode(_message, _state) -> None:
+            called["background"] += 1
 
-        app._ask_timing_choice = _ask_timing_choice  # type: ignore[method-assign]
+        app._ask_bg_mode = _ask_bg_mode  # type: ignore[method-assign]
         await public_app.BlastBotApp._handle_wait_footage_genre(app, back_genre_msg, st)
-        assert called["timing"] == 1
+        assert called["background"] == 1
 
         # Select genre -> artist screen with Back.
         st2 = ChatState(chat_id=2004, stage=STAGE_WAIT_FOOTAGE_GENRE)

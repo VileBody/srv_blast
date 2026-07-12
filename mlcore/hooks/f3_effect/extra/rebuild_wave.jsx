@@ -1,0 +1,10 @@
+/*** wave — generated from total_dump_v5 layer JSON ***/
+var CONFIG = { targetCompName:null, placeRef:"Текст", startTime:null, duration:null, place:"below:Текст" };
+var SILENT = true;
+if (typeof $!=="undefined" && $.global && $.global.__BLAST){ var __p=$.global.__BLAST; for (var __k in __p){ if (__p[__k]!=null) CONFIG[__k]=__p[__k]; } }
+function log(m){ if(SILENT){try{$.writeln(m);}catch(e){}}else alert(m); }
+function findLayer(c,n){ for(var i=1;i<=c.numLayers;i++) if(c.layer(i).name===n) return c.layer(i); return null; }
+function findComp(){ var a=app.project.activeItem,i,it; if(CONFIG.targetCompName){for(i=1;i<=app.project.numItems;i++){it=app.project.item(i);if(it instanceof CompItem&&it.name===CONFIG.targetCompName)return it;}} if(CONFIG.placeRef){for(i=1;i<=app.project.numItems;i++){it=app.project.item(i);if(it instanceof CompItem&&findLayer(it,CONFIG.placeRef))return it;}} if(a&&a instanceof CompItem)return a; return null; }
+function place(comp,L){ var ref=findLayer(comp,CONFIG.placeRef); if(ref)try{L.moveAfter(ref);}catch(e){} var t=(CONFIG.startTime!=null)?CONFIG.startTime:0; L.startTime=0; L.inPoint=t; L.outPoint=(CONFIG.duration!=null)?Math.min(comp.duration,t+CONFIG.duration):comp.duration; }
+function setP(e,n,v){ try{var p=e.property(n);if(p)p.setValue(v);}catch(x){} }
+(function(){ if(!app.project){return;} var comp=findComp(); if(!comp){throw new Error("wave: target comp not found");} app.beginUndoGroup("wave"); try{ var L=comp.layers.addSolid([1,1,1],"wave",comp.width,comp.height,1); L.adjustmentLayer=true; var fx=L.property("ADBE Effect Parade"); var w=fx.addProperty("ADBE Wave Warp"); setP(w,"ADBE Wave Warp-0001",5); setP(w,"ADBE Wave Warp-0002",2); setP(w,"ADBE Wave Warp-0003",125.4); setP(w,"ADBE Wave Warp-0005",-0.62); setP(w,"ADBE Wave Warp-0006",3); var td=fx.addProperty("ADBE Turbulent Displace"); setP(td,"ADBE Turbulent Displace-0002",4); setP(td,"ADBE Turbulent Displace-0003",1000); setP(td,"ADBE Turbulent Displace-0005",1.97); var tr=fx.addProperty("ADBE Geometry2"); setP(tr,"ADBE Geometry2-0003",103); place(comp,L); log("wave -> "+comp.name); }finally{app.endUndoGroup();} })();

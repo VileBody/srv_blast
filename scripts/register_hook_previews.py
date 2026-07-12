@@ -64,6 +64,10 @@ EXAMPLES: Dict[str, Tuple[str, str, str]] = {
     "effect_extra:analog_glitch": ("Хуки/Эффекты/stylize/примеры стилей", "analogglitch.mp4", "Аналог-глитч"),
     "effect_extra:neon_extract": ("Хуки/Эффекты/stylize/примеры стилей", "neonextract.mp4", "Неон"),
     "effect_extra:old_camera":   ("Хуки/Эффекты/stylize/примеры стилей", "oldcamera.mp4", "Старая камера"),
+    "effect_extra:blackwhite":   ("Хуки/Эффекты/stylize/примеры стилей", "blackwhite.mp4", "Ч/Б"),
+    "effect_extra:crystal_glow": ("Хуки/Эффекты/stylize/примеры стилей", "crystalglow.mp4", "Crystal Glow"),
+    "effect_extra:night_vision": ("Хуки/Эффекты/stylize/примеры стилей", "nightvision.mp4", "Night Vision"),
+    "effect_extra:wave":         ("Хуки/Эффекты/stylize/примеры стилей", "wave.mp4", "Wave"),
     # Subtitles (caption = label, so it shows "Пример: Trendy" / "Пример: Brat")
     "subtitles:trendy_5th": ("Субтитры примеры", "trendy.mp4", "Пример: Trendy"),
     "subtitles:brat_5th":   ("Субтитры примеры", "brat.MP4", "Пример: Brat"),

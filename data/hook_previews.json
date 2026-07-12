@@ -8,6 +8,20 @@
       "source": "Хуки/Эффекты/stylize/примеры стилей/analogglitch.mp4",
       "built_at": "2026-06-30T14:04:06Z"
     },
+    "effect_extra:blackwhite": {
+      "label": "Ч/Б",
+      "file_id": "BAACAgIAAxkDAAIx4mpUHViTsBhtbAJOKT27x-9MC_Y5AAIPrAAC0TqgSs6t0Dhz5riUPAQ",
+      "file_id_public": "BAACAgIAAxkDAAECA7BqVB1ZN0KKwqa94LZChPQ7pxdEBgACJZsAAlLzoUqcadeiwq8xxDwE",
+      "source": "Хуки/Эффекты/stylize/примеры стилей/blackwhite.mp4",
+      "built_at": "2026-07-12T23:03:54Z"
+    },
+    "effect_extra:crystal_glow": {
+      "label": "Crystal Glow",
+      "file_id": "BAACAgIAAxkDAAIx42pUHVtZvsuMTBulbBAJvb9Hz5dxAAIQrAAC0TqgStck291mB4sgPAQ",
+      "file_id_public": "BAACAgIAAxkDAAECA7FqVB1cmC5gFk732ScItJhCphf7IwACJpsAAlLzoUruHtJK4PvSRjwE",
+      "source": "Хуки/Эффекты/stylize/примеры стилей/crystalglow.mp4",
+      "built_at": "2026-07-12T23:03:57Z"
+    },
     "effect_extra:neon_extract": {
       "label": "Неон",
       "file_id": "BAACAgIAAxkDAAItFGpDzNWIODO42Qsq3H1dEJS11mKLAAKSnAACbEogSl-_uNplZP7lPAQ",
@@ -15,12 +29,26 @@
       "source": "Хуки/Эффекты/stylize/примеры стилей/neonextract.mp4",
       "built_at": "2026-06-30T14:04:10Z"
     },
+    "effect_extra:night_vision": {
+      "label": "Night Vision",
+      "file_id": "BAACAgIAAxkDAAIx5GpUHV6Xy2Qt6_DZW_4NhuwKbWXjAAIRrAAC0TqgSoM5wvH41R3nPAQ",
+      "file_id_public": "BAACAgIAAxkDAAECA7JqVB1g_IVCh1Xp9xnpZ6tdpvnncwACJ5sAAlLzoUoQKCvIGLTYEDwE",
+      "source": "Хуки/Эффекты/stylize/примеры стилей/nightvision.mp4",
+      "built_at": "2026-07-12T23:04:01Z"
+    },
     "effect_extra:old_camera": {
       "label": "Старая камера",
       "file_id": "BAACAgIAAxkDAAItFWpDzNqqZKj5e1dbFRNq_d0T395TAAKTnAACbEogSj0F8CRvYhOfPAQ",
       "file_id_public": "BAACAgIAAxkDAAEB8JhqQ8zbnyArbodL9SB02n-aizA51AACh5wAAmk1IUqIUNvSKptttzwE",
       "source": "Хуки/Эффекты/stylize/примеры стилей/oldcamera.mp4",
       "built_at": "2026-06-30T14:04:13Z"
+    },
+    "effect_extra:wave": {
+      "label": "Wave",
+      "file_id": "BAACAgIAAxkDAAIx5WpUHWKnt_uTDQz3rTgO7d-a5jQIAAISrAAC0TqgSodAMySTi5utPAQ",
+      "file_id_public": "BAACAgIAAxkDAAECA7NqVB1jAbz5-NK9iOIsHCSFOHZ2ywACKZsAAlLzoUoTb8kSbp6bdTwE",
+      "source": "Хуки/Эффекты/stylize/примеры стилей/wave.mp4",
+      "built_at": "2026-07-12T23:04:04Z"
     },
     "effect_extra:xerox": {
       "label": "Ксерокс",

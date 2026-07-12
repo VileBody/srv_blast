@@ -90,6 +90,7 @@ class SendAudioS3Request(BaseModel):
     effect_extra: Optional[
         Literal[
             "xerox", "analog_glitch", "neon_extract", "old_camera",
+            "blackwhite", "crystal_glow", "night_vision", "wave",
         ]
     ] = None
     # Stretch effect_extra (grade) over the whole video instead of pre-drop only.
@@ -194,9 +195,10 @@ class SendAudioS3Request(BaseModel):
                 raise ValueError(
                     f"effect_hook_extend must be 'to_end' or 'after_drop:N' (N>=1), got {self.effect_hook_extend!r}"
                 )
-        # F3 fx needs a drop anchor (the hook lands on the drop).
-        if (self.effect_hook or self.effect_transition or self.effect_extra) and self.user_drop_t is None:
-            raise ValueError("effect_* requires user_drop_t (drop anchor) to be set")
+        # Only F3 hooks require a drop. Transitions use detected cuts and
+        # whole-video extras are independent from the user's drop selection.
+        if self.effect_hook and self.user_drop_t is None:
+            raise ValueError("effect_hook requires user_drop_t (drop anchor) to be set")
         # F2 combo also pivots on the drop (pre/post split + hook_light on drop).
         if self.f2_shape and self.user_drop_t is None:
             raise ValueError("f2_shape requires user_drop_t (drop anchor) to be set")

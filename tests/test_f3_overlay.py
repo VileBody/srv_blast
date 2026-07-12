@@ -109,3 +109,17 @@ def test_orchestrator_helper_builds_block():
     assert js != ""
     assert "var __f3_drop = 3.5" in js
     assert '"to_end"' in js
+
+@pytest.mark.parametrize(
+    ("effect_id", "marker"),
+    [
+        ("blackwhite", "blackwhite: target comp not found"),
+        ("crystal_glow", "Sapphire S_Glint unavailable"),
+        ("night_vision", "night vision green"),
+        ("wave", "wave: target comp not found"),
+    ],
+)
+def test_new_full_video_styles_inline(effect_id: str, marker: str):
+    js = build_overlay_jsx(extra=effect_id, extra_full=True, drop_time=2.0)
+    assert marker in js
+    assert "startTime: 0, duration: null" in js

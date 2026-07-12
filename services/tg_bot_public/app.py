@@ -67,6 +67,7 @@ from .state_store import (
     STAGE_WAIT_BG_COLOR,
     STAGE_WAIT_STROBE_CUT,
     STAGE_WAIT_BG_MODE,
+    STAGE_WAIT_BG_INFO,
     STAGE_WAIT_FOOTAGE_ARTIST,
     STAGE_WAIT_FOOTAGE_GENRE,
     STAGE_WAIT_LYRICS_CHOICE,
@@ -122,6 +123,8 @@ from .state_store import (
     STAGE_WAIT_EFFECT_EXTRA,
     STAGE_WAIT_EFFECT_EXTRA_FULL,
     STAGE_WAIT_EFFECT_EXTEND,
+    STAGE_WAIT_VISUAL_TRANSITION,
+    STAGE_WAIT_VISUAL_STYLE,
     STAGE_WAIT_F2_SHAPE,
     STAGE_WAIT_F1_SOUND,
     STAGE_WAIT_F1_TEXT,
@@ -225,6 +228,8 @@ HOOK_STAGES = frozenset({
     STAGE_WAIT_EFFECT_EXTRA,
     STAGE_WAIT_EFFECT_EXTRA_FULL,
     STAGE_WAIT_EFFECT_EXTEND,
+    STAGE_WAIT_VISUAL_TRANSITION,
+    STAGE_WAIT_VISUAL_STYLE,
     STAGE_WAIT_F2_SHAPE,
     STAGE_WAIT_F1_SOUND,
     STAGE_WAIT_F1_TEXT,
@@ -254,6 +259,7 @@ F3_TRANSITION_IDS = frozenset({
 })
 F3_EXTRA_IDS = frozenset({
     "xerox", "analog_glitch", "neon_extract", "old_camera",
+    "blackwhite", "crystal_glow", "night_vision", "wave",
 })
 F3_HOOK_LABELS_RU = {"Молния": "hook_light", "Затвор": "shutter_effect", "Слоу-шаттер": "flash_slow_shutter", "Негатив-зум": "negative_zoom"}
 F3_TRANSITION_LABELS_RU = {
@@ -263,6 +269,8 @@ F3_TRANSITION_LABELS_RU = {
 F3_EXTRA_LABELS_RU = {
     "Ксерокс": "xerox", "Аналог-глитч": "analog_glitch", "Неон": "neon_extract",
     "Старая камера": "old_camera",
+    "Ч/Б": "blackwhite", "Crystal Glow": "crystal_glow",
+    "Night Vision": "night_vision", "Wave": "wave",
 }
 F3_EXTEND_LABELS_RU = {"Стандарт": "", "До конца ролика": "to_end", "3 футажа после": "after_drop:3"}
 
@@ -441,6 +449,7 @@ BTN_BACK = "Назад"
 BTN_BG_FOOTAGE = "Футажи"
 BTN_BG_SOLID = "Цветной фон"
 BTN_BG_STROBE = "Строб Ч/Б"
+BTN_BG_INFO_NEXT = "Продолжить"
 # Footage precision flow (Phase 2b): a "pictures (soon)" background stub shown
 # alongside footage/solid when the vibe flow is on. Mirror of tg_bot_botapi —
 # not implemented yet → replies "скоро".
@@ -452,6 +461,7 @@ BTN_BG_PICTURES_PHOTO = "🖼 Картинки"
 VIBE_CB_PREFIX = "vibe:"          # vibe:tog:<idx> | vibe:more | vibe:done | vibe:auto
 BTN_VIBE_REFRESH = "Ещё варианты ›"
 BTN_VIBE_DONE = "▶️ Готово"
+BTN_VIBE_BACK = "‹ Назад"
 BTN_VIBE_AUTO = "✨ По треку (авто)"
 # How many buckets to show per shortlist page.
 VIBE_PAGE_SIZE = 3
@@ -582,11 +592,19 @@ BTN_FX_EX_XEROX = "Ксерокс"
 BTN_FX_EX_ANALOG = "Аналог-глитч"
 BTN_FX_EX_NEON = "Неон"
 BTN_FX_EX_OLDCAM = "Старая камера"
+BTN_FX_EX_BLACKWHITE = "Ч/Б"
+BTN_FX_EX_CRYSTAL = "Crystal Glow"
+BTN_FX_EX_NIGHT = "Night Vision"
+BTN_FX_EX_WAVE = "Wave"
 _FX_EXTRA_BY_BUTTON = {
     BTN_FX_EX_XEROX: "xerox",
     BTN_FX_EX_ANALOG: "analog_glitch",
     BTN_FX_EX_NEON: "neon_extract",
     BTN_FX_EX_OLDCAM: "old_camera",
+    BTN_FX_EX_BLACKWHITE: "blackwhite",
+    BTN_FX_EX_CRYSTAL: "crystal_glow",
+    BTN_FX_EX_NIGHT: "night_vision",
+    BTN_FX_EX_WAVE: "wave",
 }
 BTN_FX_EXT_STD = "Стандарт"
 BTN_FX_EXT_END = "До конца ролика"
@@ -3034,6 +3052,10 @@ class BlastBotApp:
                 await self._handle_wait_bg_mode(message, st)
                 return
 
+            if st.stage == STAGE_WAIT_BG_INFO:
+                await self._handle_wait_bg_info(message, st)
+                return
+
             if st.stage == STAGE_WAIT_BG_COLOR:
                 await self._handle_wait_bg_color(message, st)
                 return
@@ -3099,6 +3121,12 @@ class BlastBotApp:
                 return
             if st.stage == STAGE_WAIT_EFFECT_EXTRA:
                 await self._handle_wait_effect_extra(message, st)
+                return
+            if st.stage == STAGE_WAIT_VISUAL_TRANSITION:
+                await self._handle_wait_visual_transition(message, st)
+                return
+            if st.stage == STAGE_WAIT_VISUAL_STYLE:
+                await self._handle_wait_visual_style(message, st)
                 return
             if st.stage == STAGE_WAIT_EFFECT_EXTEND:
                 await self._handle_wait_effect_extend(message, st)
@@ -3555,6 +3583,67 @@ class BlastBotApp:
         rows.append([BTN_BACK])
         await message.answer("Что будет на фоне?", reply_markup=_kb(*rows))
 
+    async def _ask_bg_info(self, message: Message, st: ChatState, mode: str) -> None:
+        st.stage = STAGE_WAIT_BG_INFO
+        st.pending_bg_mode = mode
+        await self.store.set(st)
+        texts = {
+            "footage": (
+                "Футажи\n\nПодберём фоновые видео под настроение трека. "
+                "Можно выбрать несколько вайбов — бот будет чередовать их в роликах.\n\n"
+                "Дальше покажем варианты с превью."
+            ),
+            "solid": (
+                "Цветной фон\n\nВесь ролик будет на одном цвете: без видео на фоне, "
+                "только музыка и субтитры.\n\nДальше выбери цвет."
+            ),
+            "solid_strobe": (
+                "Строб Ч/Б\n\nФон будет переключаться между чёрным и белым на склейках. "
+                "Текст автоматически меняет цвет и остаётся читаемым.\n\n"
+                "Дальше настроим субтитры и стиль переходов."
+            ),
+            "photo": (
+                "Картинки\n\nПодберём изображения под трек и соберём из них ролик. "
+                "Потом можно выбрать обработку и переход между картинками.\n\n"
+                "Дальше покажем варианты с превью."
+            ),
+        }
+        await message.answer(texts[mode], reply_markup=_kb([BTN_BG_INFO_NEXT], [BTN_BACK]))
+
+    async def _handle_wait_bg_info(self, message: Message, st: ChatState) -> None:
+        text = str(message.text or "").strip()
+        if text == BTN_BACK:
+            st.pending_bg_mode = ""
+            await self._ask_bg_mode(message, st)
+            return
+        if text != BTN_BG_INFO_NEXT:
+            await message.answer("Выбери «Продолжить» или «Назад».")
+            return
+        mode = str(st.pending_bg_mode or "")
+        st.pending_bg_mode = ""
+        st.bg_mode = mode
+        st.bg_solid_color = ""
+        await self.store.set(st)
+        if mode == "footage":
+            if FOOTAGE_VIBE_FLOW_ENABLED:
+                await self._ask_vibe_shortlist(message, st)
+            else:
+                await self._ask_footage_genre(message, st)
+            return
+        if mode == "solid":
+            await self._ask_bg_color(message, st)
+            return
+        if mode == "solid_strobe":
+            if not self._ensure_solid_default_artist(st):
+                await message.answer("Внутренняя ошибка при выборе фона. Попробуй ещё раз позже.")
+                return
+            await self.store.set(st)
+            await self._ask_subtitles_mode(message, st)
+            return
+        if mode == "photo" and PHOTO_FLOW_ENABLED:
+            await self._ask_vibe_shortlist(message, st)
+            return
+        raise RuntimeError(f"unsupported pending bg mode: {mode!r}")
     def _ensure_solid_default_artist(self, st: ChatState) -> bool:
         """Solid/strobe bg needs a footage_artist_id so Stage 2 runs (its picks are
         dropped at AE time, but the scene CUTS drive the strobe). Mirror of team."""
@@ -3577,40 +3666,19 @@ class BlastBotApp:
             await self._ask_timing_choice(message, st)
             return
         if text == BTN_BG_PICTURES_PHOTO and PHOTO_FLOW_ENABLED:
-            # Photo flow (4:3): reuse the vibe shortlist (PHOTO pool); the two
-            # F3-style photo picker steps run after the vibe is confirmed.
-            st.bg_mode = "photo"
-            st.bg_solid_color = ""
-            await self.store.set(st)
-            await self._ask_vibe_shortlist(message, st)
+            await self._ask_bg_info(message, st, "photo")
             return
         if text == BTN_BG_PICTURES and FOOTAGE_VIBE_FLOW_ENABLED:
             await message.answer("Картинки скоро будут доступны. Пока выбери «Футажи» или «Цветной фон».")
             return
         if text == BTN_BG_FOOTAGE:
-            st.bg_mode = "footage"
-            st.bg_solid_color = ""
-            await self.store.set(st)
-            # Phase 2b: ranked-shortlist vibe picker replaces genre/artist.
-            if FOOTAGE_VIBE_FLOW_ENABLED:
-                await self._ask_vibe_shortlist(message, st)
-            else:
-                await self._ask_footage_genre(message, st)
+            await self._ask_bg_info(message, st, "footage")
             return
         if text == BTN_BG_SOLID:
-            st.bg_mode = "solid"
-            await self.store.set(st)
-            await self._ask_bg_color(message, st)
+            await self._ask_bg_info(message, st, "solid")
             return
         if text == BTN_BG_STROBE:
-            st.bg_mode = "solid_strobe"
-            st.bg_solid_color = ""
-            if not self._ensure_solid_default_artist(st):
-                await message.answer("Внутренняя ошибка при выборе фона. Попробуй ещё раз позже.")
-                return
-            await self.store.set(st)
-            await message.answer("Фон: строб Ч/Б на склейках. Текст авто-инвертируется (всегда читаемый).")
-            await self._ask_subtitles_mode(message, st)
+            await self._ask_bg_info(message, st, "solid_strobe")
             return
         await message.answer(
             f"Выбери кнопкой: «{BTN_BG_FOOTAGE}», «{BTN_BG_SOLID}» или «{BTN_BG_STROBE}».",
@@ -3882,6 +3950,9 @@ class BlastBotApp:
             text=BTN_VIBE_DONE, callback_data=f"{VIBE_CB_PREFIX}done"
         ))
         rows.append(controls)
+        rows.append([InlineKeyboardButton(
+            text=BTN_VIBE_BACK, callback_data=f"{VIBE_CB_PREFIX}back"
+        )])
         # NB: the "✨ По треку (авто)" button was removed — vibe selection is now
         # always explicit (multi-select + «Готово»).
         return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -3900,6 +3971,7 @@ class BlastBotApp:
             "Остальные кнопки:",
             "1. «Ещё варианты» — показать другие варианты, выбор сохраняется.",
             "2. «Готово» — перейти к настройке субтитров.",
+            "3. «Назад» — выбрать другой тип фона.",
         ]
         return "\n".join(lines)
 
@@ -3990,6 +4062,14 @@ class BlastBotApp:
             await cb.answer("В наборе" if bid in sel else "Убрано")
             return
 
+        if action == "back":
+            try:
+                await cb.message.edit_reply_markup(reply_markup=None)
+            except TelegramBadRequest:
+                pass
+            await cb.answer()
+            await self._ask_bg_mode(cb.message, st)
+            return
         if action == "more":
             pages = max(1, self._vibe_page_count(st))
             st.vibe_page = (int(st.vibe_page or 0) + 1) % pages
@@ -4395,6 +4475,9 @@ class BlastBotApp:
             st.effect_extra = ""
             st.effect_extra_full = False
             st.effect_hook_extend = ""
+            st.visual_transition = ""
+            st.visual_style = ""
+            st.visuals_done = False
             await self.store.set(st)
             await self._ask_effect_hook(message, st)
             return
@@ -4584,6 +4667,76 @@ class BlastBotApp:
         # so skip the subtitles/hook steps and go straight to the version count.
         await self._proceed_to_versions_or_confirm(message, st)
 
+    async def _ask_visual_transition(self, message: Message, st: ChatState) -> None:
+        st.stage = STAGE_WAIT_VISUAL_TRANSITION
+        await self.store.set(st)
+        await self._send_option_previews(
+            message, [f"effect_transition:{v}" for v in _FX_TRANSITION_BY_BUTTON.values()]
+        )
+        await message.answer(
+            "Шаг 1/2: переход на склейках футажа.\n\n"
+            "• Снап-вайп\n• Минимакс\n• Инверт\n• Экстракт\n• Вспышки\n\n"
+            "Можно пропустить.",
+            reply_markup=_kb(
+                [BTN_FX_TR_SNAP, BTN_FX_TR_MINIMAX],
+                [BTN_FX_TR_INVERT, BTN_FX_TR_EXTRACT],
+                [BTN_FX_TR_FLASH], [BTN_FX_SKIP], [BTN_BACK],
+            ),
+        )
+
+    async def _handle_wait_visual_transition(self, message: Message, st: ChatState) -> None:
+        text = str(message.text or "").strip()
+        if text == BTN_BACK:
+            await self._ask_hook_choice(message, st)
+            return
+        if text == BTN_FX_SKIP:
+            st.visual_transition = ""
+        else:
+            transition = _FX_TRANSITION_BY_BUTTON.get(text)
+            if transition is None:
+                await message.answer("Выбери переход кнопкой ниже или «Пропустить».")
+                return
+            st.visual_transition = transition
+        await self.store.set(st)
+        await self._ask_visual_style(message, st)
+
+    async def _ask_visual_style(self, message: Message, st: ChatState) -> None:
+        st.stage = STAGE_WAIT_VISUAL_STYLE
+        await self.store.set(st)
+        await self._send_option_previews(
+            message, [f"effect_extra:{v}" for v in _FX_EXTRA_BY_BUTTON.values()]
+        )
+        await message.answer(
+            "Шаг 2/2: стилизация футажа.\n\n"
+            "Выбранный эффект применяется ко всему ролику.\n\n"
+            "• Ксерокс\n• Аналог-глитч\n• Неон\n• Старая камера\n"
+            "• Ч/Б\n• Crystal Glow\n• Night Vision\n• Wave\n\n"
+            "Можно пропустить.",
+            reply_markup=_kb(
+                [BTN_FX_EX_XEROX, BTN_FX_EX_ANALOG],
+                [BTN_FX_EX_NEON, BTN_FX_EX_OLDCAM],
+                [BTN_FX_EX_BLACKWHITE, BTN_FX_EX_CRYSTAL],
+                [BTN_FX_EX_NIGHT, BTN_FX_EX_WAVE],
+                [BTN_FX_SKIP], [BTN_BACK],
+            ),
+        )
+
+    async def _handle_wait_visual_style(self, message: Message, st: ChatState) -> None:
+        text = str(message.text or "").strip()
+        if text == BTN_BACK:
+            await self._ask_visual_transition(message, st)
+            return
+        if text == BTN_FX_SKIP:
+            st.visual_style = ""
+        else:
+            style = _FX_EXTRA_BY_BUTTON.get(text)
+            if style is None:
+                await message.answer("Выбери стилизацию кнопкой ниже или «Пропустить».")
+                return
+            st.visual_style = style
+        st.visuals_done = True
+        await self.store.set(st)
+        await self._proceed_to_versions_or_confirm(message, st)
     async def _ask_effect_hook(self, message: Message, st: ChatState) -> None:
         st.stage = STAGE_WAIT_EFFECT_HOOK
         await self.store.set(st)
@@ -4613,7 +4766,7 @@ class BlastBotApp:
         if text == BTN_FX_SKIP:
             st.effect_hook = ""
             await self.store.set(st)
-            await self._ask_effect_transition(message, st)
+            await self._effect_summary_and_continue(message, st)
             return
         hook = _FX_HOOK_BY_BUTTON.get(text)
         if hook is None:
@@ -4621,7 +4774,7 @@ class BlastBotApp:
             return
         st.effect_hook = hook
         await self.store.set(st)
-        await self._ask_effect_transition(message, st)
+        await self._after_effect_extra(message, st)
 
     async def _ask_effect_transition(self, message: Message, st: ChatState) -> None:
         st.stage = STAGE_WAIT_EFFECT_TRANSITION
@@ -4680,6 +4833,8 @@ class BlastBotApp:
             reply_markup=_kb(
                 [BTN_FX_EX_XEROX, BTN_FX_EX_ANALOG],
                 [BTN_FX_EX_NEON, BTN_FX_EX_OLDCAM],
+                [BTN_FX_EX_BLACKWHITE, BTN_FX_EX_CRYSTAL],
+                [BTN_FX_EX_NIGHT, BTN_FX_EX_WAVE],
                 [BTN_FX_SKIP],
                 [BTN_BACK],
             ),
@@ -4758,7 +4913,7 @@ class BlastBotApp:
     async def _handle_wait_effect_extend(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()
         if text == BTN_BACK:
-            await self._ask_effect_extra(message, st)
+            await self._ask_effect_hook(message, st)
             return
         if text not in _FX_EXTEND_BY_BUTTON:
             await message.answer("Выбери вариант длины кнопкой ниже.")
@@ -4782,7 +4937,10 @@ class BlastBotApp:
             )
         if st.effect_hook_extend:
             parts.append(f"растяжка «{st.effect_hook_extend}»")
-        await message.answer("Ок, «Эффект»: " + ", ".join(parts) + ".")
+        if parts:
+            await message.answer("Ок, «Эффект»: " + ", ".join(parts) + ".")
+        else:
+            await message.answer("Хук-эффект пропущен.")
         await self._proceed_to_versions_or_confirm(message, st)
 
     async def _ask_f2_shape(self, message: Message, st: ChatState) -> None:
@@ -5012,6 +5170,9 @@ class BlastBotApp:
         st.effect_extra = ""
         st.effect_extra_full = False
         st.effect_hook_extend = ""
+        st.visual_transition = ""
+        st.visual_style = ""
+        st.visuals_done = False
         st.f1_sound_url = ""
         st.f1_sound_text = ""
         st.f2_shape = ""
@@ -5437,8 +5598,9 @@ class BlastBotApp:
         await self._send_option_previews(
             message, [f"effect_transition:{v}" for v in _FX_TRANSITION_BY_BUTTON.values()]
         )
+        label = "Строб Ч/Б" if st.bg_mode == "solid_strobe" else "Цветной фон"
         await message.answer(
-            "Строб Ч/Б: стиль перехода на склейках видео.\n"
+            f"{label}: стиль перехода на склейках видео.\n"
             "Снап-вайп / Минимакс / Инверт / Экстракт / Вспышки — или без перехода.",
             reply_markup=_kb(
                 [BTN_FX_TR_SNAP, BTN_FX_TR_MINIMAX],
@@ -5467,24 +5629,21 @@ class BlastBotApp:
     async def _handle_wait_strobe_cut(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()
         if text == BTN_BACK:
-            await self._proceed_to_versions_or_confirm(message, st)
+            await self._ask_subtitles_mode(message, st)
             return
-        st.hook_category = "effect"
-        st.effect_hook = ""
-        st.effect_extra = ""
-        st.effect_extra_full = False
-        st.effect_hook_extend = ""
         if text == BTN_FX_SKIP:
-            st.hook_enabled = False
-            st.effect_transition = ""
+            st.visual_transition = ""
         else:
             tr = _FX_TRANSITION_BY_BUTTON.get(text)
             if tr is None:
                 await message.answer("Выбери стиль кнопкой или «Пропустить».")
                 return
-            st.hook_enabled = True
-            st.effect_transition = tr
-            st.hook_drop_t = self._default_strobe_drop(st)
+            st.visual_transition = tr
+        st.visual_style = ""
+        st.visuals_done = True
+        st.hook_enabled = False
+        st.hook_category = ""
+        st.hook_drop_t = None
         st.colors_done = True
         await self.store.set(st)
         await self._proceed_to_versions_or_confirm(message, st)
@@ -5496,8 +5655,13 @@ class BlastBotApp:
         this redirects into the color pickers once, then comes back here."""
         # Strobe bg: skip color pickers (white auto-invert) + offer ONLY the cut
         # transition style once (not the full hook flow).
-        if st.bg_mode == "solid_strobe" and not st.colors_done and st.stage != STAGE_WAIT_STROBE_CUT:
+        if st.bg_mode in {"solid", "solid_strobe"} and not st.visuals_done and st.stage != STAGE_WAIT_STROBE_CUT:
             await self._ask_strobe_cut(message, st)
+            return
+        if st.bg_mode == "footage" and not st.visuals_done and st.stage not in {
+            STAGE_WAIT_VISUAL_TRANSITION, STAGE_WAIT_VISUAL_STYLE
+        }:
+            await self._ask_visual_transition(message, st)
             return
         if HOOK_FLOW_ENABLED and not st.colors_done:
             await self._ask_subtitle_color(message, st)
@@ -5528,7 +5692,7 @@ class BlastBotApp:
             # inverts. The ONLY strobe setting is the cut-transition style,
             # asked once by _proceed_to_versions_or_confirm. Routing through the
             # full hook flow here duplicated it (hook prompt + then cut prompt).
-            if st.bg_mode == "solid_strobe":
+            if st.bg_mode in {"solid", "solid_strobe"}:
                 st.colors_done = False
                 await self.store.set(st)
                 await self._proceed_to_versions_or_confirm(message, st)
@@ -7039,20 +7203,9 @@ class BlastBotApp:
                 if (st.hook_enabled and st.hook_category == "effect" and st.effect_hook)
                 else None
             ),
-            effect_transition=(
-                str(st.effect_transition)
-                if (st.hook_enabled and st.hook_category == "effect" and st.effect_transition)
-                else None
-            ),
-            effect_extra=(
-                str(st.effect_extra)
-                if (st.hook_enabled and st.hook_category == "effect" and st.effect_extra)
-                else None
-            ),
-            effect_extra_full=bool(
-                st.hook_enabled and st.hook_category == "effect"
-                and st.effect_extra and st.effect_extra_full
-            ),
+            effect_transition=(str(st.visual_transition) if st.visual_transition else None),
+            effect_extra=(str(st.visual_style) if st.visual_style else None),
+            effect_extra_full=bool(st.visual_style),
             effect_hook_extend=(
                 str(st.effect_hook_extend)
                 if (st.hook_enabled and st.hook_category == "effect" and st.effect_hook_extend)

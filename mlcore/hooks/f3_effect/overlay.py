@@ -50,6 +50,7 @@ F3_TRANSITIONS = (
 # .jsx + manifest entries are kept for a future S3-delivery integration.
 F3_EXTRAS = (
     "xerox", "analog_glitch", "neon_extract", "old_camera",
+    "blackwhite", "crystal_glow", "night_vision", "wave",
 )
 
 
