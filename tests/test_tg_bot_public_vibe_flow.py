@@ -468,3 +468,25 @@ def test_vibe_auto_picks_top1(monkeypatch):
         assert slot[:2] == ("t0", "g0")
 
     asyncio.run(_run())
+
+
+def test_ensure_vibe_ranked_migrates_persisted_legacy_catalog(monkeypatch):
+    """A pre-deploy chat must rerank old theme:group IDs after restart."""
+    new_ids = ["visual:urban_weather_dark", "visual:solitary_person_dark_cold"]
+    pub, app = _make_app(monkeypatch, ranked=new_ids)
+    from services.tg_bot_public.state_store import ChatState
+
+    async def _run():
+        st = ChatState(chat_id=7, lyrics_text="night city rain", bg_mode="footage")
+        st.vibe_ranked_ids = ["romance_minor:couple", "heartbreak_minor:lonely_paths"]
+        st.vibe_labels_by_id = {st.vibe_ranked_ids[0]: "old"}
+        st.vibe_selected_ids = [st.vibe_ranked_ids[0]]
+        st.vibe_rank_status = "ready"
+        ok = await app._ensure_vibe_ranked(st)
+        assert ok is True
+        assert app.orchestrator.rank_calls == 1
+        assert st.vibe_ranked_ids == new_ids
+        assert st.vibe_selected_ids == []
+        assert set(st.vibe_labels_by_id) == set(new_ids)
+
+    asyncio.run(_run())
