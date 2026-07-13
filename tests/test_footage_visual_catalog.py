@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 from pathlib import Path
 
 from mlcore import footage_picker
@@ -60,6 +61,39 @@ def test_reviewed_source_cannot_bypass_palette_gate():
     )
     assert not ok
     assert stage == "color"
+
+
+def test_reviewed_couple_source_cannot_bypass_water_conflict():
+    contract = next(x for x in load_visual_catalog() if x.bucket_id == "visual:couple_intimacy_light_warm")
+    ok, stage, _ = evaluate_asset(
+        contract,
+        _asset(contract.sources[0], ["couple hug", "beach", "ocean view"], color="light", people="couple"),
+    )
+    assert not ok
+    assert stage == "hard_semantic_exclude"
+
+
+def test_girls_portrait_requires_indoor_and_rejects_vehicle_context():
+    contract = next(x for x in load_visual_catalog() if x.bucket_id == "visual:girls_portrait_dark_cold")
+
+    ok, stage, _ = evaluate_asset(
+        contract, _asset("outdoor", ["girl", "portrait", "city street"], people="girls")
+    )
+    assert not ok
+    assert stage == "hard_semantic_exclude"
+
+    reviewed_vehicle = replace(contract, sources=contract.sources + ("reviewed_vehicle",))
+    ok, stage, _ = evaluate_asset(
+        reviewed_vehicle, _asset("reviewed_vehicle", ["girl", "close-up", "car interior"], people="girls")
+    )
+    assert not ok
+    assert stage == "hard_semantic_exclude"
+
+    ok, stage, _ = evaluate_asset(
+        contract, _asset("indoor", ["girl", "close-up", "indoor setting"], people="girls")
+    )
+    assert ok
+    assert stage == "eligible"
 
 
 def test_visual_ranker_ignores_mood_and_returns_only_live_ids():

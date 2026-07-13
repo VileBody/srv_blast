@@ -6,9 +6,9 @@
   "slot_reduction": 25,
   "slot_reduction_pct": 52.1,
   "track_themes_covered": 25,
-  "total_slot_potential": 1099,
-  "total_slot_potential_vs_snapshot_pct": 52.6,
-  "average_slot_potential": 47.8,
+  "total_slot_potential": 1080,
+  "total_slot_potential_vs_snapshot_pct": 51.7,
+  "average_slot_potential": 47.0,
   "thin_slots": [
     {
       "bucket_id": "visual:vehicle_drift_racing",
@@ -39,12 +39,12 @@
   "theme_report": {
     "romance_major": {
       "bucket_count": 5,
-      "slot_potential_sum": 270,
+      "slot_potential_sum": 269,
       "semantic_risk": "normal"
     },
     "romance_minor": {
       "bucket_count": 4,
-      "slot_potential_sum": 236,
+      "slot_potential_sum": 232,
       "semantic_risk": "normal"
     },
     "epic_love_major": {
@@ -54,12 +54,12 @@
     },
     "epic_love_minor": {
       "bucket_count": 4,
-      "slot_potential_sum": 219,
+      "slot_potential_sum": 233,
       "semantic_risk": "normal"
     },
     "heartbreak_minor": {
       "bucket_count": 5,
-      "slot_potential_sum": 224,
+      "slot_potential_sum": 206,
       "semantic_risk": "normal"
     },
     "betrayal_minor": {
@@ -69,7 +69,7 @@
     },
     "jealousy_minor": {
       "bucket_count": 4,
-      "slot_potential_sum": 135,
+      "slot_potential_sum": 117,
       "semantic_risk": "normal"
     },
     "depression_minor": {
@@ -104,12 +104,12 @@
     },
     "sex_major": {
       "bucket_count": 3,
-      "slot_potential_sum": 176,
+      "slot_potential_sum": 175,
       "semantic_risk": "normal"
     },
     "sex_minor": {
       "bucket_count": 4,
-      "slot_potential_sum": 124,
+      "slot_potential_sum": 120,
       "semantic_risk": "medium: no standalone dark-intimate-detail bucket"
     },
     "nostalgia_city_minor": {
@@ -134,7 +134,7 @@
     },
     "youth_rebellion_major": {
       "bucket_count": 4,
-      "slot_potential_sum": 205,
+      "slot_potential_sum": 190,
       "semantic_risk": "normal"
     },
     "mysticism_fate_minor": {

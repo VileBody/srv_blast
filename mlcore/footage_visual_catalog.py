@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Sequence, Tuple
 
 CATALOG_PATH = Path(__file__).resolve().parents[1] / "data" / "footage_semantic_catalog_final_resolved_v2.json"
-CATALOG_VERSION = "semantic-v2-2026-07-13"
+CATALOG_VERSION = "semantic-v2.1-2026-07-13"
 
 
 def _norm(value: Any) -> str:
@@ -51,6 +51,9 @@ class VisualContract:
     # phrase contained in that tag ("mountain" matches "mountain road").
     require_groups: Tuple[Tuple[str, ...], ...] = ()
     exclude_terms: Tuple[str, ...] = ()
+    # Semantic invariants checked before manually reviewed sources.
+    hard_require_groups: Tuple[Tuple[str, ...], ...] = ()
+    hard_exclude_terms: Tuple[str, ...] = ()
     colors: Tuple[str, ...] = ()
     people: str = "any"  # any | none | girls | present
     fallback_terms: Tuple[str, ...] = ()
@@ -93,7 +96,21 @@ DIGITAL = _terms("digital", "animation", "3d", "cgi", "abstract", "visual effect
 SILHOUETTE = _terms("silhouette", "human silhouette", "glowing silhouette", "neon silhouette")
 WEATHER = _terms("rain", "snow", "fog", "mist", "storm")
 COAST = _terms("ocean", "sea", "coast", "coastal", "beach", "shore", "waves")
+WATER = COAST + _terms("water", "lake", "river", "pool", "waterfall")
 MOUNTAIN = _terms("mountain", "mountains", "cliff", "mountain view", "mountain road")
+INDOOR = _terms(
+    "interior", "indoor", "indoor setting", "room", "bedroom", "hallway",
+    "studio", "home", "apartment", "dim room", "dark interior",
+)
+VEHICLE_CONTEXT = VEHICLE + MOTION + _terms(
+    "automobile", "motorcycle", "train", "tram", "bus", "truck", "highway",
+    "traffic", "night drive", "night driving", "car interior", "car wheel",
+    "garage", "headlights", "road trip",
+)
+OUTDOOR_URBAN = _terms(
+    "urban", "city", "cityscape", "street", "building", "skyscraper",
+    "downtown", "architecture",
+)
 
 # Contract vocabulary is deliberately conservative.  It can grow after logged
 # false negatives; semantic conflicts must never be relaxed as a fallback.
@@ -106,11 +123,11 @@ RULES: Mapping[str, Dict[str, Any]] = {
     "visual:digital_glitch_dark_cold": dict(require_groups=(_terms("glitch", "digital distortion", "datamosh", "noise", "distorted"),), colors=("dark", "cold"), exclude_terms=VEHICLE + URBAN, fallback_terms=SILHOUETTE),
     "visual:urban_solitude_dark": dict(require_groups=(URBAN,), exclude_terms=VEHICLE + DIGITAL + _terms("interior", "room", "party", "crowd", "rain", "snow", "storm"), colors=("dark", "cold"), people="none"),
     "visual:urban_weather_dark": dict(require_groups=(_terms("urban", "city", "street", "building", "cityscape"), WEATHER), exclude_terms=VEHICLE + _terms("automobile", "motorcycle", "train", "tram", "bus", "truck", "night drive", "night driving", "traffic jam", "traffic flow", "city traffic", "night traffic", "headlights", "camper", "drift", "windshield") + DIGITAL + _terms("interior", "indoor", "room", "bedroom", "hallway", "corridor", "window scene", "garage", "window view", "bedroom window", "destruction", "disaster", "tornado", "fire", "burning", "explosion", "gas station", "abandoned"), colors=("dark",), people="none"),
-    "visual:couple_intimacy_light_warm": dict(require_groups=(_terms("couple", "romance", "romantic", "kiss", "hug", "intimacy", "love"),), exclude_terms=_terms("crowd", "performance", "sport"), colors=("light", "warm"), people="present"),
+    "visual:couple_intimacy_light_warm": dict(require_groups=(_terms("couple", "romance", "romantic", "kiss", "hug", "intimacy", "love"),), exclude_terms=_terms("crowd", "performance", "sport"), hard_exclude_terms=WATER, colors=("light", "warm"), people="present"),
     "visual:solitary_person_dark_cold": dict(require_groups=(_terms("alone", "solitude", "lonely", "single person", "portrait", "man", "woman", "guy", "girl"),), exclude_terms=_terms("couple", "crowd", "group", "party", "performance"), colors=("dark", "cold"), people="present"),
     "visual:performance_crowd_dark": dict(require_groups=(_terms("concert", "performance", "stage", "crowd", "audience", "club", "party", "rave"),), colors=("dark",), people="present"),
-    "visual:girls_portrait_light_warm": dict(require_groups=(_terms("portrait", "face", "close up", "close-up", "girl", "woman", "long hair", "casual pose"),), exclude_terms=_terms("sport", "skate", "running", "crowd", "couple"), colors=("light", "warm"), people="girls"),
-    "visual:girls_portrait_dark_cold": dict(require_groups=(_terms("portrait", "face", "close up", "close-up", "girl", "woman", "long hair", "low light"),), exclude_terms=_terms("sport", "skate", "running", "crowd", "couple"), colors=("dark", "cold"), people="girls"),
+    "visual:girls_portrait_light_warm": dict(require_groups=(_terms("portrait", "face", "close up", "close-up", "girl", "woman", "long hair", "casual pose"),), exclude_terms=_terms("sport", "skate", "running", "crowd", "couple"), hard_require_groups=(INDOOR,), hard_exclude_terms=VEHICLE_CONTEXT + OUTDOOR_URBAN, colors=("light", "warm"), people="girls"),
+    "visual:girls_portrait_dark_cold": dict(require_groups=(_terms("portrait", "face", "close up", "close-up", "girl", "woman", "long hair", "low light"),), exclude_terms=_terms("sport", "skate", "running", "crowd", "couple"), hard_require_groups=(INDOOR,), hard_exclude_terms=VEHICLE_CONTEXT + OUTDOOR_URBAN, colors=("dark", "cold"), people="girls"),
     "visual:active_life_dark_cold": dict(require_groups=(_terms("skate", "skateboard", "running", "dance", "dancing", "sport", "action", "movement", "jump", "cycling", "nightlife"),), exclude_terms=_terms("couple", "romance", "beach romance", "portrait"), colors=("dark", "cold"), people="present"),
     "visual:warm_coastal_romance_light": dict(require_groups=(COAST, _terms("romance", "couple", "love", "girl", "woman", "man", "guy", "running", "walking")), exclude_terms=_terms("storm", "dark ocean", "sport", "skate"), colors=("light", "warm"), people="present"),
     "visual:ocean_storm_dark_cold": dict(require_groups=(COAST, _terms("storm", "rain", "fog", "mist", "night", "dark clouds", "rough waves")), exclude_terms=URBAN + VEHICLE + _terms("interior", "building", "house"), colors=("dark", "cold"), people="none"),
@@ -168,9 +185,17 @@ def evaluate_asset(contract: VisualContract, asset: Mapping[str, Any]) -> Tuple[
         normalized_color = "light" if color == "neutral" else color
         if normalized_color not in contract.colors:
             return False, "color", diag
+    if any(_matches(tags, x) for x in contract.hard_exclude_terms):
+        return False, "hard_semantic_exclude", diag
+    hard_matched = []
+    for group in contract.hard_require_groups:
+        hits = [x for x in group if _matches(tags, x)]
+        if not hits:
+            return False, "hard_missing_anchor", {**diag, "matched_groups": hard_matched}
+        hard_matched.append(hits[:3])
     if clip_id in contract.sources:
-        # Review can override noisy tags/people, never the global palette gate.
-        return True, "reviewed_source", {**diag, "matched_groups": [["manual_review"]]}
+        # Review can override noisy tags/people, never global or hard semantic gates.
+        return True, "reviewed_source", {**diag, "matched_groups": hard_matched + [["manual_review"]]}
     if contract.people == "none" and people not in NONE:
         return False, "people", diag
     if contract.people == "present" and people in NONE + ("",):
