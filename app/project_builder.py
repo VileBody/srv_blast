@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import subprocess
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -16,6 +17,35 @@ from app.text_comp import build_text_layers
 from core.subtitles_mode import SUBTITLES_MODE_LEGACY_BLOCKS, normalize_subtitles_mode
 
 LOGGER = logging.getLogger("app.project_builder")
+
+
+def _emit_native_render_request(*, render_jsx: Path, out_dir: Path) -> Optional[Path]:
+    """Optionally emit the Rust renderer request from the final AE source of truth."""
+    renderer_bin = str(os.environ.get("AE_NATIVE_RENDERER_BIN") or "").strip()
+    if not renderer_bin:
+        return None
+
+    request_path = out_dir / "ae-native-render-request.json"
+    completed = subprocess.run(
+        [
+            renderer_bin,
+            "extract-jsx-request",
+            "--jsx",
+            str(render_jsx),
+            "--out",
+            str(request_path),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout or "unknown error").strip()
+        raise RuntimeError(f"native render request extraction failed: {detail}")
+    if not request_path.exists():
+        raise RuntimeError("native render request extraction returned no request file")
+    LOGGER.info("native_render_request_written path=%s", request_path)
+    return request_path
 
 
 def _apply_comp_duration_overrides(
@@ -234,5 +264,6 @@ def build_full_project(
     tpl = env.get_template("project_template.j2")
     jsx = tpl.render(**payload)
     out_jsx.write_text(jsx, encoding="utf-8")
+    _emit_native_render_request(render_jsx=out_jsx, out_dir=out_dir)
 
     return out_json, out_jsx
