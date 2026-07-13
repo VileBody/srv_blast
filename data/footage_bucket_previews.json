@@ -958,17 +958,17 @@
       "label": "Пара, близость",
       "description": "Пара / близость",
       "s3_url": "",
-      "file_id": "BAACAgIAAxkDAAIx2WpUCwKL8ub0-ehFvKNCRGr_tgcSAAJWqwAC0TqgStW-jH0PLfuCPAQ",
-      "file_id_public": "BAACAgIAAxkDAAECAzJqVAsF_EP7LTH7ZZN7a1EbBCZfTwACopoAAlLzoUoNXFbVoPnl-zwE",
+      "file_id": "BAACAgIAAxkDAAIx6WpU5pcG7KIORjb-5yc5-NTYSh7cAAK-nQAC0TqoSvNbr3qm-KxBPAQ",
+      "file_id_public": "BAACAgIAAxkDAAECBS5qVOaZQ-Iz2koT5OMzb3jyyjcDzAACGKEAAlLzoUo6OW5sjwIw2DwE",
       "clip_ids": [
-        "1040613057654878559",
-        "1124422231963247868",
-        "1109644795712835741",
-        "1138566349565563001",
-        "326299935518543123"
+        "1013309984902234343",
+        "639018634671115791",
+        "787707791112766926",
+        "661044051586072484",
+        "1139762618213987740"
       ],
       "status": "ok",
-      "built_at": "2026-07-12T21:45:41Z"
+      "built_at": "2026-07-13T13:22:34Z"
     },
     "visual:dark_interior_atmosphere": {
       "bucket_id": "visual:dark_interior_atmosphere",

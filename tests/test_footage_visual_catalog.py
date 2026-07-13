@@ -73,6 +73,16 @@ def test_reviewed_couple_source_cannot_bypass_water_conflict():
     assert stage == "hard_semantic_exclude"
 
 
+def test_user_reviewed_text_and_people_mismatch_is_quality_rejected():
+    contract = next(x for x in load_visual_catalog() if x.bucket_id == "visual:couple_intimacy_light_warm")
+    ok, stage, _ = evaluate_asset(
+        contract,
+        _asset("728457308528976739", ["intimate", "indoor setting"], color="light", people="couple"),
+    )
+    assert not ok
+    assert stage == "quality_override"
+
+
 def test_girls_portrait_requires_indoor_and_rejects_vehicle_context():
     contract = next(x for x in load_visual_catalog() if x.bucket_id == "visual:girls_portrait_dark_cold")
 
