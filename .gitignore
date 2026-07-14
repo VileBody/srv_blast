@@ -3,6 +3,11 @@
 
 # Local env
 .env
+.env.rust-gen.iac
+infra/timeweb/rust-gen-node/backend.tf
+infra/timeweb/rust-gen-node/.terraform/
+infra/timeweb/rust-gen-node/*.tfstate
+infra/timeweb/rust-gen-node/*.tfstate.*
 .env.iac
 .env.telegram-test
 .telegram-test-sessions/
