@@ -19,7 +19,7 @@ jobs:
   deploy:
     if: ${{ vars.DEPLOY_SPLIT_ENABLED != 'true' }}
     name: Deploy On Self-Hosted Runner
-    runs-on: [self-hosted, blast-deploy]
+    runs-on: [self-hosted, blast-deploy-infra]
     timeout-minutes: 30
     steps:
       - name: Validate Runner Repo Path

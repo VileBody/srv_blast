@@ -30,7 +30,7 @@ cp .env.github-runner.example .env.github-runner
 docker compose -f docker-compose.github-runner.yml --env-file .env.github-runner up -d
 ```
 
-Runner поднимется с label: `self-hosted,blast-deploy`.
+Runner поднимется с label: `self-hosted,blast-deploy-infra`.
 
 ## 2) Настроить GitHub variable
 
