@@ -107,6 +107,8 @@ jobs:
           repo="$1"
           manager_url="$2"
           manager_token="$3"
+          manager_chat_id="$(awk -F= '/^[[:space:]]*MANAGER_CHAT_ID=/{ value=$2 } END { print value }' "$repo/.env" | tr -d '[:space:]')"
+          test -n "$manager_chat_id"
           update_env() {
             local key="$1" value="$2" tmp
             tmp="$(mktemp)"
@@ -118,7 +120,7 @@ jobs:
           update_env RUST_GEN_MANAGER_TOKEN "$manager_token"
           update_env RUST_GEN_CANARY_ENABLED 1
           update_env RUST_GEN_BOT_DEFAULT_ENABLED 0
-          update_env RUST_GEN_ALLOWED_CHAT_IDS ""
+          update_env RUST_GEN_ALLOWED_CHAT_IDS "$manager_chat_id"
           cd "$repo"
           docker compose -f docker-compose.yml -f docker-compose.orchestrator-ha.yml up -d --force-recreate orchestrator-api orchestrator-api-2 worker-build worker-render worker-render-poll
           REMOTE
