@@ -20,6 +20,11 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
       - name: Team/Public parity gate
         env:
           EVENT_NAME: ${{ github.event_name }}
@@ -48,11 +53,6 @@ jobs:
           python scripts/check_team_public_parity.py \
             --base-ref "$BASE_REF" \
             --head-ref "$HEAD_SHA"
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
 
       - name: Install dependencies
         run: |
