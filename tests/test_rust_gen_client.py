@@ -30,7 +30,10 @@ def test_rust_gen_client_uses_manager_contract_and_bearer(monkeypatch) -> None:
         seen["timeout"] = timeout
         return _Response({"status": "accepted", "render_id": "rust-job-1"})
 
-    monkeypatch.setattr("urllib.request.urlopen", _urlopen)
+    class _PrivateOpener:
+        open = staticmethod(_urlopen)
+
+    monkeypatch.setattr("urllib.request.build_opener", lambda *_handlers: _PrivateOpener())
     client = RustGenClient("https://rust-gen.internal/", token="manager-token", timeout_s=12)
     out = client.dispatch_render({"schema": "ae-native-renderer.manager-request.v1", "job_id": "job-1"})
 

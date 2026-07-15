@@ -34,7 +34,10 @@ class RustGenClient:
             method=method,
         )
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout_s) as response:
+            # The manager is a private worker address; never route render
+            # payloads through process-wide HTTP(S) proxy settings.
+            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+            with opener.open(request, timeout=self.timeout_s) as response:
                 raw = response.read().decode("utf-8", errors="replace")
         except HTTPError as exc:
             body = exc.read().decode("utf-8", errors="replace").strip()
