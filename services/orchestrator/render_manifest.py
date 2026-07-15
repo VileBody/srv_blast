@@ -240,7 +240,10 @@ def build_rust_gen_job_payload(
     return {
         "schema": "ae-native-renderer.manager-request.v1",
         "job_id": str(job_id),
-        "input": {"kind": "bot_payload", "inline": native_payload},
+        # Stage 4 already writes the extracted AE/JSX payload.  It is therefore
+        # a native renderer request body, not the older BotRenderEnvelope that
+        # `adapt-bot-payload` consumes.
+        "input": {"kind": "native_request", "inline": native_payload},
         "assets": assets,
         "uploads": uploads,
     }
