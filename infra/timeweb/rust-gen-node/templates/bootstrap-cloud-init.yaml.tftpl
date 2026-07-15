@@ -26,5 +26,4 @@ write_files:
 runcmd:
   - install -d -o rustgen -g rustgen -m 0700 /var/lib/rust-gen/jobs
   - loginctl enable-linger rustgen
-  - runuser -l rustgen -c 'XDG_RUNTIME_DIR=/run/user/${rustgen_uid} systemctl --user enable podman.socket'
-final_message: "Rust Gen node bootstrap completed. Deploy the immutable manager image before opening the manager API to traffic."
+final_message: "Rust Gen node bootstrap completed. The manager deploy enables the rootless Podman socket after package installation."
