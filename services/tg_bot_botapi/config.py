@@ -117,6 +117,7 @@ class Settings:
     tg_bot_token: str = _active_tg_bot_token_env()
     tg_file_proxy_url: str = _env("TG_FILE_PROXY_URL", "")
     orchestrator_public_url: str = _env("ORCHESTRATOR_PUBLIC_URL", "http://orchestrator-api:8000")
+    rust_gen_bot_default_enabled: bool = _bool_env("RUST_GEN_BOT_DEFAULT_ENABLED", False)
 
     bot_poll_interval_s: float = _float_env("BOT_POLL_INTERVAL_S", 5.0)
     bot_status_update_interval_s: float = _float_env("BOT_STATUS_UPDATE_INTERVAL_S", 20.0)

@@ -65,6 +65,7 @@ class OrchestratorClient:
         photo_transition: str | None = None,
         subtitle_color_hex: str | None = None,
         accent_color_hex: str | None = None,
+        render_engine: str = "ae",
     ) -> Dict[str, Any]:
         payload = {
             "audio_s3_url": str(audio_s3_url),
@@ -112,6 +113,7 @@ class OrchestratorClient:
             "photo_transition": (str(photo_transition).strip() or None) if photo_transition is not None else None,
             "subtitle_color_hex": (str(subtitle_color_hex).strip() or None) if subtitle_color_hex is not None else None,
             "accent_color_hex": (str(accent_color_hex).strip() or None) if accent_color_hex is not None else None,
+            "render_engine": str(render_engine or "ae").strip().lower() or "ae",
         }
         resp = await self._client.post(f"{self._base_url}/send_audio_s3", json=payload)
         if resp.status_code >= 300:

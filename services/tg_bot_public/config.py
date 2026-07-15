@@ -190,6 +190,11 @@ class Settings:
     tg_bot_username: str = _active_tg_bot_username_env()
     tg_file_proxy_url: str = _env("TG_FILE_PROXY_URL", "")
     orchestrator_public_url: str = _env("ORCHESTRATOR_PUBLIC_URL", "http://orchestrator-api:8000")
+    # Opt-in default for the separate native-renderer bot flow. The
+    # orchestrator remains the source of truth and can still refuse it via its
+    # own canary gate.
+    rust_gen_bot_default_enabled: bool = _bool_env("RUST_GEN_BOT_DEFAULT_ENABLED", False)
+    rust_gen_allowed_chat_ids: frozenset = _int_set_env("RUST_GEN_ALLOWED_CHAT_IDS")
 
     bot_poll_interval_s: float = _float_env("BOT_POLL_INTERVAL_S", 5.0)
     tg_processing_node_id: str = _env("TG_PROCESSING_NODE_ID", _default_processing_node_id())

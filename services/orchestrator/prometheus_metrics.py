@@ -55,6 +55,16 @@ _LABELED_COUNTER_METRICS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
         ("node", "outcome"),
     ),
     (
+        "rust_gen_dispatch_total",
+        "Native Rust renderer dispatch outcomes",
+        ("engine", "subtitle_mode", "outcome"),
+    ),
+    (
+        "rust_gen_poll_total",
+        "Native Rust renderer poll outcomes",
+        ("engine", "subtitle_mode", "outcome"),
+    ),
+    (
         "render_poll_timeout_total",
         "Windows render poll timeout outcomes",
         ("phase",),

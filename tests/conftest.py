@@ -90,10 +90,18 @@ def _install_celery_stub() -> None:
     celery_utils_mod = types.ModuleType("celery.utils")
     celery_utils_log_mod = types.ModuleType("celery.utils.log")
     celery_utils_log_mod.get_task_logger = logging.getLogger
+    celery_signals_mod = types.ModuleType("celery.signals")
+
+    class _FakeSignal:
+        def connect(self, fn):
+            return fn
+
+    celery_signals_mod.task_failure = _FakeSignal()
 
     sys.modules["celery"] = celery_mod
     sys.modules["celery.utils"] = celery_utils_mod
     sys.modules["celery.utils.log"] = celery_utils_log_mod
+    sys.modules["celery.signals"] = celery_signals_mod
 
 
 def _install_aiogram_stub() -> None:

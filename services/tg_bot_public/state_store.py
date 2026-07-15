@@ -177,6 +177,9 @@ class ChatState(BaseModel):
     user_clip_start_sec: float = 0.0
     user_clip_end_sec: float = 0.0
     subtitles_mode: str = SUBTITLES_MODE_IMPULSE_2ND
+    # Empty inherits the bot deployment default. The hidden /rustgen command
+    # pins a selected canary chat to the native worker without changing its UX.
+    render_engine: str = ""
     # Hook feature mirror (Phase A-UX). Defaults exactly match tg_bot_botapi
     # so a chat state copied across bots round-trips cleanly. Entry into the
     # hook handlers is gated by HOOK_FLOW_ENABLED in public app.py — disabled

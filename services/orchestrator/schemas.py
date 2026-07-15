@@ -9,6 +9,7 @@ from core.subtitles_mode import SUBTITLES_MODE_LEGACY_BLOCKS, SubtitlesMode
 
 
 LLMWorkerTypeLiteral = Literal["sdk", "openrouter", "hybrid", "vertex_sdk_mix"]
+RenderEngineLiteral = Literal["ae", "rust-gen"]
 
 
 JobStatus = Literal["NEW", "QUEUED", "RUNNING", "SUCCEEDED", "FAILED"]
@@ -25,6 +26,9 @@ class SendAudioS3Request(BaseModel):
     audio_s3_url: str = Field(min_length=1)
     project_id: Optional[str] = None
     mode: Literal["with_gemini", "no_gemini"] = "with_gemini"
+    # Explicit renderer choice. "ae" stays the production default while the
+    # native worker is rolled out behind the Rust Gen canary controls.
+    render_engine: RenderEngineLiteral = "ae"
     llm_worker_type: Optional[LLMWorkerTypeLiteral] = None
     idempotency_key: Optional[str] = Field(default=None, min_length=1)
     lyrics_text: str = ""

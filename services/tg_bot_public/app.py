@@ -2780,6 +2780,25 @@ class BlastBotApp:
                 return
             await self._show_all_packages(message, st)
 
+        @self.router.message(Command("rustgen", "ae"))
+        async def _on_render_engine(message: Message) -> None:
+            if message.chat is None:
+                return
+            chat_id = int(message.chat.id)
+            command = str(message.text or "").split(maxsplit=1)[0].split("@", 1)[0].lower()
+            st = await self.store.get(chat_id)
+            if command == "/rustgen":
+                allowed = set(self.settings.rust_gen_allowed_chat_ids or frozenset())
+                if chat_id not in allowed:
+                    return
+                st.render_engine = "rust-gen"
+                await self.store.set(st)
+                await message.answer("Native renderer selected for this chat.")
+                return
+            st.render_engine = "ae"
+            await self.store.set(st)
+            await message.answer("AE renderer selected for this chat.")
+
         @self.router.message(Command("freeflow1"))
         async def _on_freeflow1(message: Message) -> None:
             # Hidden admin-only helper: jump straight into the free post-gen
@@ -7245,6 +7264,11 @@ class BlastBotApp:
             # Strobe bg auto-inverts WHITE text (Difference) — ignore custom color.
             subtitle_color_hex=(None if st.bg_mode == "solid_strobe" else (str(st.subtitle_color_hex) or None)),
             accent_color_hex=(None if st.bg_mode == "solid_strobe" else (str(st.accent_color_hex) or None)),
+            render_engine=(
+                "rust-gen"
+                if str(getattr(st, "render_engine", "") or "").strip().lower() == "rust-gen"
+                else ("rust-gen" if self.settings.rust_gen_bot_default_enabled else "ae")
+            ),
         )
         job_id = str(enqueue.get("job_id") or "").strip()
         if not job_id:

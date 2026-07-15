@@ -46,7 +46,8 @@ from .ops_alert_subscribers import (
     fetch_active_chat_ids_sync,
     is_terminal_telegram_delivery_error,
 )
-from .render_manifest import build_windows_job_payload
+from .render_manifest import build_rust_gen_job_payload, build_windows_job_payload
+from .rust_gen_client import RustGenClient
 from .runtime_config import get_runtime_values
 from .windows_client import WindowsRenderClient
 from .windows_node_pool import WindowsNodePool, parse_windows_urls_csv
@@ -147,6 +148,31 @@ def _is_remote_url(u: str) -> bool:
 def _windows_default_urls() -> list[str]:
     # Keep a deterministic merged list from WINDOWS_RENDER_URL + WINDOWS_RENDER_URLS.
     return parse_windows_urls_csv((SETTINGS.windows_base_url + "," + SETTINGS.windows_base_urls_csv).strip(","))
+
+
+def _requested_render_engine(req: Dict[str, Any]) -> str:
+    engine = str(req.get("render_engine") or "ae").strip().lower()
+    if engine not in {"ae", "rust-gen"}:
+        raise RuntimeError(f"unsupported_render_engine: {engine!r}")
+    return engine
+
+
+def _ensure_rust_gen_route(req: Dict[str, Any]) -> None:
+    if not bool(getattr(SETTINGS, "rust_gen_enabled", False)):
+        raise RuntimeError("rust_gen_disabled")
+    if not str(getattr(SETTINGS, "rust_gen_manager_url", "") or "").strip():
+        raise RuntimeError("RUST_GEN_MANAGER_URL is not set")
+    if bool(getattr(SETTINGS, "rust_gen_canary_enabled", False)):
+        allowed = {
+            str(mode or "").strip().lower()
+            for mode in (getattr(SETTINGS, "rust_gen_canary_subtitle_modes", ()) or ())
+            if str(mode or "").strip()
+        }
+        subtitle_mode = str(req.get("subtitles_mode") or "").strip().lower()
+        if allowed and subtitle_mode not in allowed:
+            raise RuntimeError(
+                f"rust_gen_canary_subtitle_mode_not_enabled: {subtitle_mode or 'unknown'}"
+            )
 
 
 def _job_queue_from_request(req: Dict[str, Any], *, key: str, default: str) -> str:
@@ -2346,8 +2372,13 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
                 f"--- stderr (tail) ---\n{err[-8000:]}\n"
             )
 
-    # Hard contract: build must emit artifacts for Windows dispatch.
-    if not paths.render_jsx.exists() or not paths.render_payload.exists():
+    # The AE and native workers consume the same bot payload. JSX remains
+    # required for AE jobs only; Rust uses the canonical JSON directly.
+    render_engine = _requested_render_engine(req)
+    artifacts_ready = paths.render_payload.exists() and (
+        render_engine == "rust-gen" or paths.render_jsx.exists()
+    )
+    if not artifacts_ready:
         raise RuntimeError(
             "pipeline_ok_but_missing_artifacts: "
             f"render_jsx_exists={paths.render_jsx.exists()} "
@@ -2381,10 +2412,11 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
         key="render_queue",
         default=SETTINGS.celery_queue_render,
     )
+    dispatch_task = dispatch_to_rust_gen if render_engine == "rust-gen" else dispatch_to_windows
     if render_queue:
-        dispatch_to_windows.apply_async(args=[job_id], queue=render_queue)
+        dispatch_task.apply_async(args=[job_id], queue=render_queue)
     else:
-        dispatch_to_windows.delay(job_id)
+        dispatch_task.delay(job_id)
     return {"ok": True, "stage": "build_done", "paths": paths.manifest()}
 
 
@@ -3322,3 +3354,153 @@ def poll_windows_render(self, job_id: str, render_id: str) -> Dict[str, Any]:
     poll_windows_render.apply_async(**kwargs)
     store.set_status(job_id, "RUNNING", stage="poll", result={"render_id": render_id, "windows": res})
     return {"ok": True, "status": "running", "windows": res}
+
+
+@celery_app.task(name="orchestrator.dispatch_to_rust_gen", bind=True, max_retries=10)
+def dispatch_to_rust_gen(self, job_id: str) -> Dict[str, Any]:
+    store = JobStore.from_env()
+    st = store.get(job_id)
+    if not st:
+        raise RuntimeError("job_not_found")
+
+    req = st.request if isinstance(st.request, dict) else {}
+    if _requested_render_engine(req) != "rust-gen":
+        raise RuntimeError("rust_gen_dispatch_requires_render_engine=rust-gen")
+    _ensure_rust_gen_route(req)
+
+    audio_url = str(req.get("audio_s3_url") or "").strip()
+    if not audio_url or not _is_remote_url(audio_url):
+        raise RuntimeError("dispatch_to_rust_gen requires remote audio_s3_url (http/https/s3)")
+
+    paths = make_job_paths(work_dir=SETTINGS.work_dir, output_dir=SETTINGS.output_dir, job_id=job_id)
+    if not paths.render_payload.exists():
+        raise RuntimeError(
+            "missing_render_payload: "
+            f"expected_render_payload={str(paths.render_payload)}. "
+            "Build and render workers must share the output volume."
+        )
+
+    output_bucket = (os.environ.get("S3_BUCKET_OUTPUT_VIDEO") or "").strip()
+    dispatch_started_at = time.time()
+    mode = str(req.get("subtitles_mode") or "unknown").strip().lower() or "unknown"
+    labels = {"engine": "rust_gen", "subtitle_mode": mode}
+    _inc_labeled_metric(store, metric="rust_gen_dispatch_total", labels={**labels, "outcome": "attempt"})
+    _obs_event("rust_gen_dispatch_attempt", job_id=job_id, subtitle_mode=mode)
+
+    payload = build_rust_gen_job_payload(
+        job_id=job_id,
+        render_payload_path=paths.render_payload,
+        audio_url=audio_url,
+        output_s3_bucket=output_bucket,
+        presign_ttl_s=int(getattr(SETTINGS, "rust_gen_presign_ttl_s", 7200) or 7200),
+    )
+    client = RustGenClient(
+        str(SETTINGS.rust_gen_manager_url),
+        token=str(getattr(SETTINGS, "rust_gen_manager_token", "") or ""),
+        timeout_s=float(getattr(SETTINGS, "rust_gen_timeout_s", 30.0) or 30.0),
+    )
+    try:
+        res = client.dispatch_render(payload)
+    except Exception as exc:
+        _inc_labeled_metric(store, metric="rust_gen_dispatch_total", labels={**labels, "outcome": "error"})
+        _observe_stage_duration(store, stage="rust_gen_dispatch", started_at=dispatch_started_at, outcome="failed")
+        _obs_event("rust_gen_dispatch_error", job_id=job_id, err=repr(exc))
+        raise
+
+    render_id = str(res.get("render_id") or "").strip()
+    status = str(res.get("status") or "").strip().lower()
+    if not render_id or status not in {"accepted", "queued", "running"}:
+        _inc_labeled_metric(store, metric="rust_gen_dispatch_total", labels={**labels, "outcome": "bad_response"})
+        _observe_stage_duration(store, stage="rust_gen_dispatch", started_at=dispatch_started_at, outcome="failed")
+        raise RuntimeError(f"rust_gen_bad_response: {res!r}")
+
+    _inc_labeled_metric(store, metric="rust_gen_dispatch_total", labels={**labels, "outcome": "accepted"})
+    _observe_stage_duration(store, stage="rust_gen_dispatch", started_at=dispatch_started_at, outcome="accepted")
+    store.set_status(
+        job_id,
+        "RUNNING",
+        stage="poll",
+        result={
+            "render_id": render_id,
+            "rust_gen": res,
+            "dispatch": {"engine": "rust-gen", "manager_url": str(SETTINGS.rust_gen_manager_url)},
+            "poll_started_at": time.time(),
+        },
+    )
+    poll_queue = _job_queue_from_request(req, key="render_poll_queue", default=SETTINGS.celery_queue_render_poll)
+    kwargs: Dict[str, Any] = {
+        "args": [job_id, render_id],
+        "countdown": float(getattr(SETTINGS, "rust_gen_poll_interval_s", 2.0) or 2.0),
+    }
+    if poll_queue:
+        kwargs["queue"] = poll_queue
+    poll_rust_gen_render.apply_async(**kwargs)
+    _obs_event("rust_gen_dispatch_accepted", job_id=job_id, render_id=render_id)
+    return {"ok": True, "mode": "rust-gen", "render_id": render_id, "rust_gen": res}
+
+
+@celery_app.task(name="orchestrator.poll_rust_gen_render", bind=True, max_retries=50)
+def poll_rust_gen_render(self, job_id: str, render_id: str) -> Dict[str, Any]:
+    store = JobStore.from_env()
+    st = store.get(job_id)
+    if not st:
+        raise RuntimeError("job_not_found")
+    req = st.request if isinstance(st.request, dict) else {}
+    if _requested_render_engine(req) != "rust-gen":
+        raise RuntimeError("rust_gen_poll_requires_render_engine=rust-gen")
+    _ensure_rust_gen_route(req)
+
+    started_at = _poll_started_at_from_state(st)
+    timeout_s = float(getattr(SETTINGS, "rust_gen_poll_timeout_s", 3600.0) or 3600.0)
+    mode = str(req.get("subtitles_mode") or "unknown").strip().lower() or "unknown"
+    labels = {"engine": "rust_gen", "subtitle_mode": mode}
+    if time.time() - started_at > timeout_s:
+        _inc_labeled_metric(store, metric="rust_gen_poll_total", labels={**labels, "outcome": "timeout"})
+        _observe_stage_duration(store, stage="rust_gen_poll", started_at=started_at, outcome="timeout")
+        raise RuntimeError(f"rust_gen_poll_timeout render_id={render_id}")
+
+    client = RustGenClient(
+        str(SETTINGS.rust_gen_manager_url),
+        token=str(getattr(SETTINGS, "rust_gen_manager_token", "") or ""),
+        timeout_s=float(getattr(SETTINGS, "rust_gen_timeout_s", 30.0) or 30.0),
+    )
+    try:
+        res = client.get_render_status(render_id)
+    except Exception as exc:
+        _inc_labeled_metric(store, metric="rust_gen_poll_total", labels={**labels, "outcome": "error"})
+        raise self.retry(
+            countdown=min(30.0, float(getattr(SETTINGS, "rust_gen_poll_interval_s", 2.0) or 2.0) * 2.0),
+            exc=RuntimeError(f"rust_gen_poll_error: {exc!r}"),
+        )
+
+    status = str(res.get("status") or "").strip().lower()
+    job = res.get("job") if isinstance(res.get("job"), dict) else {}
+    artifact_refs = job.get("artifact_refs") if isinstance(job, dict) else {}
+    artifact_refs = artifact_refs if isinstance(artifact_refs, dict) else {}
+    if status in {"succeeded", "success", "done", "ok"}:
+        out_url = str(artifact_refs.get("video") or "").strip() or None
+        result: Dict[str, Any] = {"render_id": render_id, "rust_gen": res, "output_url": out_url}
+        manifest = str(artifact_refs.get("manifest") or "").strip()
+        if manifest:
+            result["output_manifest_url"] = manifest
+        store.set_status(job_id, "SUCCEEDED", stage="render", result=result)
+        _inc_labeled_metric(store, metric="rust_gen_poll_total", labels={**labels, "outcome": "succeeded"})
+        _observe_stage_duration(store, stage="rust_gen_poll", started_at=started_at, outcome="succeeded")
+        _obs_event("rust_gen_render_outcome", job_id=job_id, render_id=render_id, outcome="succeeded")
+        return {"ok": True, "status": "succeeded", "rust_gen": res}
+    if status in {"failed", "error", "cancelled", "canceled"}:
+        _inc_labeled_metric(store, metric="rust_gen_poll_total", labels={**labels, "outcome": "failed"})
+        _observe_stage_duration(store, stage="rust_gen_poll", started_at=started_at, outcome="failed")
+        raise RuntimeError(f"rust_gen_failed: {res!r}")
+
+    _inc_labeled_metric(store, metric="rust_gen_poll_total", labels={**labels, "outcome": "running"})
+    poll_queue = _job_queue_from_request(req, key="render_poll_queue", default=SETTINGS.celery_queue_render_poll)
+    kwargs: Dict[str, Any] = {
+        "args": [job_id, render_id],
+        "countdown": float(getattr(SETTINGS, "rust_gen_poll_interval_s", 2.0) or 2.0),
+    }
+    if poll_queue:
+        kwargs["queue"] = poll_queue
+    poll_rust_gen_render.apply_async(**kwargs)
+    store.set_status(job_id, "RUNNING", stage="poll", result={"render_id": render_id, "rust_gen": res})
+    return {"ok": True, "status": "running", "rust_gen": res}

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Callable, Dict, List
 from urllib.parse import unquote
 
 _AUDIO_EXTS = {".wav", ".mp3", ".m4a", ".aac", ".flac", ".ogg"}
@@ -172,3 +172,75 @@ def build_windows_job_payload(
     if output_s3_key:
         payload["output_s3_key"] = str(output_s3_key)
     return payload
+
+
+def _s3_bucket_key(url: str) -> tuple[str, str]:
+    raw = str(url or "").strip()
+    if not raw.startswith("s3://"):
+        raise ValueError(f"expected s3 url, got {url!r}")
+    tail = raw[5:]
+    if "/" not in tail:
+        raise ValueError(f"invalid s3 url, missing key: {url!r}")
+    bucket, key = tail.split("/", 1)
+    if not bucket or not key:
+        raise ValueError(f"invalid s3 url: {url!r}")
+    return bucket, key
+
+
+def build_rust_gen_job_payload(
+    *,
+    job_id: str,
+    render_payload_path: Path,
+    audio_url: str,
+    output_s3_bucket: str,
+    presign_ttl_s: int = 7200,
+    presign_download: Callable[[str, str, int], str] | None = None,
+    presign_upload: Callable[[str, str, int], str] | None = None,
+) -> Dict[str, Any]:
+    """Turn the bot's canonical render payload into a render-manager request."""
+    if not str(output_s3_bucket or "").strip():
+        raise RuntimeError("S3_BUCKET_OUTPUT_VIDEO is required for rust-gen dispatch")
+
+    if presign_download is None or presign_upload is None:
+        from src.storage.s3 import generate_presigned_upload_url, generate_presigned_url
+
+        presign_download = presign_download or generate_presigned_url
+        presign_upload = presign_upload or generate_presigned_upload_url
+
+    native_payload = _read_json(render_payload_path)
+    assets: List[Dict[str, Any]] = []
+    for media in collect_media_urls_from_render_payload(render_payload_path, audio_url=audio_url):
+        source_url = str(media["url"])
+        if source_url.startswith("s3://"):
+            bucket, key = _s3_bucket_key(source_url)
+            source_url = presign_download(bucket, key, int(presign_ttl_s))
+        assets.append(
+            {
+                "role": "audio" if str(media["relpath"]).startswith("media/audio/") else "overlay",
+                "url": source_url,
+                "destination": str(media["relpath"]),
+            }
+        )
+
+    job_key = f"renders/{str(job_id).strip()}"
+    base_key = f"{job_key}/rust-gen"
+    uploads: Dict[str, Dict[str, str]] = {}
+    for name, filename in (
+        ("video", "output.mp4"),
+        ("manifest", "output-manifest.json"),
+        ("response", "render-response.json"),
+        ("logs", "render.log"),
+    ):
+        key = f"{job_key}/{filename}" if name == "video" else f"{base_key}/{filename}"
+        uploads[name] = {
+            "url": presign_upload(str(output_s3_bucket), key, int(presign_ttl_s)),
+            "artifact_ref": f"s3://{output_s3_bucket}/{key}",
+        }
+
+    return {
+        "schema": "ae-native-renderer.manager-request.v1",
+        "job_id": str(job_id),
+        "input": {"kind": "bot_payload", "inline": native_payload},
+        "assets": assets,
+        "uploads": uploads,
+    }

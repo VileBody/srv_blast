@@ -85,6 +85,11 @@ def test_prometheus_payload_contains_new_observability_metrics() -> None:
     )
     increment_labeled_counter(
         store,
+        metric="rust_gen_dispatch_total",
+        labels={"engine": "rust_gen", "subtitle_mode": "brat_5th", "outcome": "accepted"},
+    )
+    increment_labeled_counter(
+        store,
         metric="gemini_call_total",
         labels={
             "model": "gemini-3-pro-preview",
@@ -136,6 +141,7 @@ def test_prometheus_payload_contains_new_observability_metrics() -> None:
     assert "capacity_policy_state" in body
     assert "runtime_config_numeric_value" in body
     assert "dispatch_attempt_total" in body
+    assert "rust_gen_dispatch_total" in body
     assert "gemini_call_total" in body
     assert "gemini_token_total" in body
     assert "gemini_latency_seconds_bucket" in body

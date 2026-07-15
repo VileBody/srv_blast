@@ -80,6 +80,27 @@ from services.tg_bot_botapi.user_store import UserStore
 log = logging.getLogger(__name__)
 
 
+def _ensure_render_engine_available(request_payload: Dict[str, Any]) -> None:
+    engine = str(request_payload.get("render_engine") or "ae").strip().lower()
+    if engine == "ae":
+        return
+    if engine != "rust-gen":
+        raise HTTPException(status_code=422, detail=f"unsupported render_engine={engine!r}")
+    if not bool(getattr(SETTINGS, "rust_gen_enabled", False)):
+        raise HTTPException(status_code=503, detail="rust-gen renderer is disabled")
+    if not str(getattr(SETTINGS, "rust_gen_manager_url", "") or "").strip():
+        raise HTTPException(status_code=503, detail="rust-gen renderer is not configured")
+    canary_modes = tuple(getattr(SETTINGS, "rust_gen_canary_subtitle_modes", ()) or ())
+    if bool(getattr(SETTINGS, "rust_gen_canary_enabled", False)) and canary_modes:
+        mode = str(request_payload.get("subtitles_mode") or "").strip().lower()
+        allowed = set(canary_modes)
+        if mode not in allowed:
+            raise HTTPException(
+                status_code=503,
+                detail=f"rust-gen canary does not include subtitles_mode={mode or 'unknown'}",
+            )
+
+
 def _maintenance_bypass_allowed(req: object) -> bool:
     expected = str(getattr(SETTINGS, "system_maintenance_bypass_token", "") or "").strip()
     provided = str(getattr(req, "maintenance_bypass_token", "") or "").strip()
@@ -572,6 +593,7 @@ def create_app() -> FastAPI:
         _ensure_accepting_new_jobs(req)
         _ensure_supported_mode(req.mode)
         request_payload = req.model_dump(mode="json", exclude_none=True)
+        _ensure_render_engine_available(request_payload)
         routing = _resolve_job_routing(request_payload=request_payload)
         request_payload.update(routing)
         st, created = store.new_job(
