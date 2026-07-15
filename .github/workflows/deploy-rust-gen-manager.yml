@@ -26,18 +26,7 @@ jobs:
     timeout-minutes: 30
     env:
       REPO_DIR: ${{ vars.BLAST_REPO_DIR_INFRA != '' && vars.BLAST_REPO_DIR_INFRA || vars.BLAST_REPO_DIR }}
-      TWC_TOKEN: ${{ secrets.TWC_TOKEN }}
-      TWC_PROJECT_ID: "1955611"
-      TWC_LINUX_OS_ID: "95"
-      TWC_PRESET_ID: "4807"
-      TWC_AZ: "msk-1"
-      TWC_SERVER_NAME: blast-rust-gen-1
-      TWC_ENABLE_PUBLIC_IPV4: "true"
-      TWC_SSH_KEY_IDS: "437463"
-      RUST_GEN_MANAGER_API_CIDRS: 81.17.154.249/32,45.144.221.108/32
-      TWC_STATE_KEY: terraform/rust-gen-node.tfstate
-      TWC_STATE_ENDPOINT: https://s3.twcstorage.ru
-      TWC_STATE_REGION: ru-1
+      RUST_GEN_DEPLOY_HOST: ${{ vars.RUST_GEN_DEPLOY_HOST }}
       RUST_GEN_MANAGER_IMAGE: ${{ inputs.image }}
       RUST_GEN_MANAGER_TOKEN: ${{ secrets.RUST_GEN_MANAGER_TOKEN }}
       RUST_GEN_REGISTRY_TOKEN: ${{ secrets.RUST_GEN_REGISTRY_TOKEN }}
@@ -54,39 +43,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Terraform 1.5.7
+      - name: Validate immutable deployment inputs
         shell: bash
         run: |
           set -euo pipefail
-          install_dir="$RUNNER_TEMP/terraform-1.5.7"
-          mkdir -p "$install_dir"
-          curl -fsSL --retry 3 --retry-delay 2 \
-            https://releases.hashicorp.com/terraform/1.5.7/terraform_1.5.7_linux_amd64.zip \
-            -o "$RUNNER_TEMP/terraform.zip"
-          unzip -q -o "$RUNNER_TEMP/terraform.zip" -d "$install_dir"
-          echo "$install_dir" >> "$GITHUB_PATH"
-          "$install_dir/terraform" version
-
-      - name: Resolve worker address from remote Terraform state
-        id: node
-        shell: bash
-        run: |
-          set -euo pipefail
+          test -n "$RUST_GEN_DEPLOY_HOST"
           test "${RUST_GEN_MANAGER_IMAGE#*@sha256:}" != "$RUST_GEN_MANAGER_IMAGE"
           : "${RUST_GEN_MANAGER_TOKEN:?RUST_GEN_MANAGER_TOKEN secret is required}"
           : "${RUST_GEN_REGISTRY_TOKEN:?RUST_GEN_REGISTRY_TOKEN secret is required}"
-          set -a
-          source "$REPO_DIR/.env"
-          set +a
-          export AWS_ACCESS_KEY_ID="$S3_ACCESS_KEY_ID"
-          export AWS_SECRET_ACCESS_KEY="$S3_SECRET_ACCESS_KEY"
-          export TWC_STATE_BUCKET="$S3_BUCKET_OUTPUT_VIDEO"
-          export RUST_GEN_SSH_ALLOWED_CIDRS="$(curl -4fsS --max-time 10 https://api.ipify.org)/32"
-          export RUST_GEN_IAC_ENV_FILE=/dev/null
-          infra/timeweb/rust-gen-node/terraform.sh init -reconfigure
-          host="$(infra/timeweb/rust-gen-node/terraform.sh output -raw public_ipv4)"
-          test -n "$host"
-          echo "host=$host" >> "$GITHUB_OUTPUT"
 
       - name: Configure SSH
         shell: bash
@@ -97,8 +61,6 @@ jobs:
           chmod 600 "$HOME/.ssh/rust_gen"
 
       - name: Install immutable manager image
-        env:
-          RUST_GEN_DEPLOY_HOST: ${{ steps.node.outputs.host }}
         shell: bash
         run: |
           set -euo pipefail
@@ -122,8 +84,6 @@ jobs:
 
       - name: Enable private canary route in both orchestrators
         if: ${{ inputs.enable_orchestrator }}
-        env:
-          RUST_GEN_DEPLOY_HOST: ${{ steps.node.outputs.host }}
         shell: bash
         run: |
           set -euo pipefail
@@ -163,5 +123,5 @@ jobs:
           set -euo pipefail
           key="$HOME/.ssh/rust_gen"
           for host in "$DEPLOY_PROD_NODE0_HOST" "$DEPLOY_PROD_NODE1_HOST"; do
-            ssh -i "$key" -o BatchMode=yes -o StrictHostKeyChecking=accept-new "${DEPLOY_PROD_NODE0_USER:-deploy}@$host" "curl --fail --silent --connect-timeout 10 http://${{ steps.node.outputs.host }}:8090/health"
+            ssh -i "$key" -o BatchMode=yes -o StrictHostKeyChecking=accept-new "${DEPLOY_PROD_NODE0_USER:-deploy}@$host" "curl --fail --silent --connect-timeout 10 http://$RUST_GEN_DEPLOY_HOST:8090/health"
           done

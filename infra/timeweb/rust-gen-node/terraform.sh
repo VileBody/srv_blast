@@ -58,8 +58,6 @@ if [[ "${1:-}" = "init" ]]; then
     -backend-config="skip_region_validation=true" \
     -backend-config="skip_credentials_validation=true" \
     -backend-config="skip_metadata_api_check=true" \
-    -backend-config="skip_requesting_account_id=true" \
-    -backend-config="skip_s3_checksum=true" \
     "${@:2}"
 fi
 
