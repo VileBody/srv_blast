@@ -25,12 +25,7 @@ resource "twc_server_ip" "public_ipv4" {
 
 resource "twc_firewall" "rust_gen" {
   name        = "${var.server_name}-fw"
-  description = "Deny-by-default ingress for Rust renderer manager"
-
-  link {
-    id   = twc_server.rust_gen.id
-    type = "server"
-  }
+  description = "Reserved network rule group for the Rust renderer manager"
 }
 
 resource "twc_firewall_rule" "manager_ingress" {
@@ -53,4 +48,28 @@ resource "twc_firewall_rule" "ssh_ingress" {
   protocol    = "tcp"
   port        = 22
   cidr        = each.value
+}
+
+# Keep the cloud firewall rules documented in state. The group intentionally
+# remains unlinked: Timeweb currently blocks the node's egress when this
+# firewall is attached even with explicit DNS/HTTP(S) egress rules. The manager
+# ingress allow-list is instead enforced by the bootstrap/deploy nftables unit.
+resource "twc_firewall_rule" "egress_tcp" {
+  for_each = toset(["53", "80", "443"])
+
+  firewall_id = twc_firewall.rust_gen.id
+  description = "Allow worker outbound TCP ${each.value}"
+  direction   = "egress"
+  protocol    = "tcp"
+  port        = tonumber(each.value)
+  cidr        = "0.0.0.0/0"
+}
+
+resource "twc_firewall_rule" "egress_udp_dns" {
+  firewall_id = twc_firewall.rust_gen.id
+  description = "Allow worker outbound DNS"
+  direction   = "egress"
+  protocol    = "udp"
+  port        = 53
+  cidr        = "0.0.0.0/0"
 }

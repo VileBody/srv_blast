@@ -1,0 +1,11 @@
+[Unit]
+Description=Rust Gen manager ingress allow-list
+Before=network.target rust-gen-manager.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c '/usr/sbin/nft delete table inet rust_gen 2>/dev/null || true; /usr/sbin/nft -f /etc/nftables.d/rust-gen-manager.nft'
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
