@@ -5,8 +5,13 @@ on:
     inputs:
       image:
         description: Immutable GHCR image reference (image@sha256:...)
-        required: true
+        required: false
         type: string
+      install_manager:
+        description: Install or replace the manager image on the Rust Gen node
+        required: true
+        default: true
+        type: boolean
       enable_orchestrator:
         description: Write manager URL/token and restart the orchestrator render services
         required: true
@@ -48,9 +53,11 @@ jobs:
         run: |
           set -euo pipefail
           test -n "$RUST_GEN_DEPLOY_HOST"
-          test "${RUST_GEN_MANAGER_IMAGE#*@sha256:}" != "$RUST_GEN_MANAGER_IMAGE"
           : "${RUST_GEN_MANAGER_TOKEN:?RUST_GEN_MANAGER_TOKEN secret is required}"
-          : "${RUST_GEN_REGISTRY_TOKEN:?RUST_GEN_REGISTRY_TOKEN secret is required}"
+          if [[ "${{ inputs.install_manager }}" == "true" ]]; then
+            test "${RUST_GEN_MANAGER_IMAGE#*@sha256:}" != "$RUST_GEN_MANAGER_IMAGE"
+            : "${RUST_GEN_REGISTRY_TOKEN:?RUST_GEN_REGISTRY_TOKEN secret is required}"
+          fi
 
       - name: Configure SSH
         shell: bash
@@ -61,18 +68,22 @@ jobs:
           chmod 600 "$HOME/.ssh/rust_gen"
 
       - name: Install immutable manager image
+        if: ${{ inputs.install_manager }}
         shell: bash
         run: |
           set -euo pipefail
           key="$HOME/.ssh/rust_gen"
           ssh_base=(ssh -i "$key" -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 root@"$RUST_GEN_DEPLOY_HOST")
           scp -i "$key" -o BatchMode=yes -o StrictHostKeyChecking=accept-new infra/rust-gen/rust-gen-manager.service "root@$RUST_GEN_DEPLOY_HOST:/tmp/rust-gen-manager.service"
+          scp -i "$key" -o BatchMode=yes -o StrictHostKeyChecking=accept-new infra/rust-gen/rust-gen-firewall.nft infra/rust-gen/rust-gen-firewall.service "root@$RUST_GEN_DEPLOY_HOST:/tmp/"
+          "${ssh_base[@]}" "install -D -m 600 /tmp/rust-gen-firewall.nft /etc/nftables.d/rust-gen-manager.nft; install -m 644 /tmp/rust-gen-firewall.service /etc/systemd/system/rust-gen-firewall.service; rm -f /tmp/rust-gen-firewall.nft /tmp/rust-gen-firewall.service; systemctl daemon-reload; systemctl enable --now rust-gen-firewall.service"
           "${ssh_base[@]}" "set -euo pipefail; id rustgen >/dev/null; install -d -o rustgen -g rustgen -m 700 /home/rustgen/.config/rust-gen /home/rustgen/.config/systemd/user; loginctl enable-linger rustgen; runuser -u rustgen -- env XDG_RUNTIME_DIR=/run/user/\$(id -u rustgen) systemctl --user enable --now podman.socket"
           printf '%s' "$RUST_GEN_REGISTRY_TOKEN" | "${ssh_base[@]}" "runuser -u rustgen -- podman login --username VileBody --password-stdin ghcr.io"
           "${ssh_base[@]}" "install -o rustgen -g rustgen -m 600 /tmp/rust-gen-manager.service /home/rustgen/.config/systemd/user/rust-gen-manager.service; rm -f /tmp/rust-gen-manager.service"
           {
             printf 'RUST_GEN_MANAGER_IMAGE=%s\n' "$RUST_GEN_MANAGER_IMAGE"
             printf 'RUST_GEN_RENDERER_IMAGE=%s\n' "$RUST_GEN_MANAGER_IMAGE"
+            printf 'RUST_GEN_MANAGER_PULL=1\n'
             printf 'RUST_GEN_MANAGER_TOKEN=%s\n' "$RUST_GEN_MANAGER_TOKEN"
             printf 'RUST_GEN_WORK_ROOT=/var/lib/rust-gen/jobs\n'
             printf 'RUST_GEN_MAX_PARALLEL_JOBS=1\n'
@@ -122,6 +133,9 @@ jobs:
         run: |
           set -euo pipefail
           key="$HOME/.ssh/rust_gen"
-          for host in "$DEPLOY_PROD_NODE0_HOST" "$DEPLOY_PROD_NODE1_HOST"; do
-            ssh -i "$key" -o BatchMode=yes -o StrictHostKeyChecking=accept-new "${DEPLOY_PROD_NODE0_USER:-deploy}@$host" "curl --fail --silent --connect-timeout 10 http://$RUST_GEN_DEPLOY_HOST:8090/health"
-          done
+          verify_node() {
+            local host="$1" user="$2" port="$3"
+            ssh -i "$key" -p "$port" -o BatchMode=yes -o StrictHostKeyChecking=accept-new "$user@$host" "curl --fail --silent --connect-timeout 10 http://$RUST_GEN_DEPLOY_HOST:8090/health"
+          }
+          verify_node "$DEPLOY_PROD_NODE0_HOST" "${DEPLOY_PROD_NODE0_USER:-deploy}" "${DEPLOY_PROD_NODE0_PORT:-22}"
+          verify_node "$DEPLOY_PROD_NODE1_HOST" "${DEPLOY_PROD_NODE1_USER:-deploy}" "${DEPLOY_PROD_NODE1_PORT:-22}"
