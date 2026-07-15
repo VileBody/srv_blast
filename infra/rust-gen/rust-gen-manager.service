@@ -1,0 +1,17 @@
+[Unit]
+Description=Rust Gen render manager
+After=network-online.target podman.socket
+Wants=network-online.target podman.socket
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.config/rust-gen/manager.env
+ExecStartPre=/usr/bin/podman pull ${RUST_GEN_MANAGER_IMAGE}
+ExecStart=/usr/bin/podman run --rm --replace --name rust-gen-manager --network host --userns keep-id --user %U:%G --security-opt no-new-privileges --cap-drop ALL -v %t/podman/podman.sock:%t/podman/podman.sock -v ${RUST_GEN_WORK_ROOT}:${RUST_GEN_WORK_ROOT}:Z -e CONTAINER_HOST=unix://%t/podman/podman.sock -e RUST_GEN_BIND=0.0.0.0:8090 -e RUST_GEN_WORK_ROOT=${RUST_GEN_WORK_ROOT} -e RUST_GEN_RENDERER_IMAGE=${RUST_GEN_RENDERER_IMAGE} -e RUST_GEN_MAX_PARALLEL_JOBS=${RUST_GEN_MAX_PARALLEL_JOBS} -e RUST_GEN_DEFAULT_TIMEOUT_S=${RUST_GEN_DEFAULT_TIMEOUT_S} -e RUST_GEN_DEFAULT_MEMORY=${RUST_GEN_DEFAULT_MEMORY} -e RUST_GEN_DEFAULT_CPUS=${RUST_GEN_DEFAULT_CPUS} -e RUST_GEN_JOB_RETENTION_S=${RUST_GEN_JOB_RETENTION_S} -e RUST_GEN_MANAGER_TOKEN=${RUST_GEN_MANAGER_TOKEN} --entrypoint render-manager ${RUST_GEN_MANAGER_IMAGE}
+ExecStop=/usr/bin/podman stop --ignore --time 30 rust-gen-manager
+Restart=always
+RestartSec=5
+TimeoutStopSec=45
+
+[Install]
+WantedBy=default.target

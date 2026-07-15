@@ -41,9 +41,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: 1.5.7
+      # setup-terraform currently returns a 404 on the existing self-hosted
+      # runner before it reaches the module. Keep the required 1.5.x pin, but
+      # fetch the official Linux archive directly.
+      - name: Install Terraform 1.5.7
+        shell: bash
+        run: |
+          set -euo pipefail
+          install_dir="$RUNNER_TEMP/terraform-1.5.7"
+          mkdir -p "$install_dir"
+          curl -fsSL --retry 3 --retry-delay 2 \
+            https://releases.hashicorp.com/terraform/1.5.7/terraform_1.5.7_linux_amd64.zip \
+            -o "$RUNNER_TEMP/terraform.zip"
+          unzip -q -o "$RUNNER_TEMP/terraform.zip" -d "$install_dir"
+          echo "$install_dir" >> "$GITHUB_PATH"
+          "$install_dir/terraform" version
 
       - name: Initialize remote state and plan
         id: plan
