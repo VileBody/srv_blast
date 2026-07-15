@@ -48,7 +48,7 @@ def test_build_rust_gen_manifest_presigns_inputs_and_preserves_output_contract(t
     )
 
     assert out["schema"] == "ae-native-renderer.manager-request.v1"
-    assert out["input"]["kind"] == "bot_payload"
+    assert out["input"]["kind"] == "native_request"
     assert out["input"]["inline"]["footage_layers"][1]["text_data"]["source_footage"]["file_name"] == "clip.mp4"
     assert downloads == [("raw", "track.mp3", 42), ("footage", "clips/clip.mp4", 42)]
     assert out["assets"][0]["destination"] == "media/audio/track.mp3"
