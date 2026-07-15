@@ -5,15 +5,15 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 MODULE="$ROOT/infra/timeweb/rust-gen-node"
 ENV_FILE="${RUST_GEN_IAC_ENV_FILE:-$ROOT/.env.rust-gen.iac}"
 
-if [[ ! -f "$ENV_FILE" ]]; then
-  echo "Missing $ENV_FILE. Start from infra/timeweb/rust-gen-node/env.rust-gen.iac.example." >&2
+if [[ -f "$ENV_FILE" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$ENV_FILE"
+  set +a
+elif [[ -z "${TWC_TOKEN:-}" ]]; then
+  echo "Missing $ENV_FILE and TWC_TOKEN is not set." >&2
   exit 2
 fi
-
-set -a
-# shellcheck disable=SC1090
-source "$ENV_FILE"
-set +a
 
 split_cidrs() {
   local value="$1"
@@ -45,5 +45,22 @@ export TF_VAR_manager_api_cidrs="$(split_cidrs "${RUST_GEN_MANAGER_API_CIDRS:-}"
 export TF_VAR_ssh_allowed_cidrs="$(split_cidrs "${RUST_GEN_SSH_ALLOWED_CIDRS:-}")"
 export TF_VAR_ssh_key_ids="$(split_numbers "${TWC_SSH_KEY_IDS:-}")"
 if [[ -n "${TWC_PROJECT_ID:-}" ]]; then export TF_VAR_project_id="$TWC_PROJECT_ID"; fi
+
+if [[ "${1:-}" = "init" ]]; then
+  : "${TWC_STATE_BUCKET:?set TWC_STATE_BUCKET to a private Timeweb S3 bucket}"
+  : "${AWS_ACCESS_KEY_ID:?set AWS_ACCESS_KEY_ID for the Terraform state backend}"
+  : "${AWS_SECRET_ACCESS_KEY:?set AWS_SECRET_ACCESS_KEY for the Terraform state backend}"
+  exec terraform -chdir="$MODULE" init \
+    -backend-config="endpoint=${TWC_STATE_ENDPOINT:-https://s3.twcstorage.ru}" \
+    -backend-config="region=${TWC_STATE_REGION:-ru-1}" \
+    -backend-config="bucket=${TWC_STATE_BUCKET}" \
+    -backend-config="key=${TWC_STATE_KEY:-terraform/rust-gen-node.tfstate}" \
+    -backend-config="skip_region_validation=true" \
+    -backend-config="skip_credentials_validation=true" \
+    -backend-config="skip_metadata_api_check=true" \
+    -backend-config="skip_requesting_account_id=true" \
+    -backend-config="skip_s3_checksum=true" \
+    "${@:2}"
+fi
 
 exec terraform -chdir="$MODULE" "$@"
