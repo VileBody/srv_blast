@@ -377,6 +377,26 @@ class CreditsDB:
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_bcd_broadcast ON broadcast_deliveries(broadcast_id)")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_bcd_status ON broadcast_deliveries(status)")
 
+        # Highest warm-up message reached for every user. Test runs are kept
+        # separate from production, so they never inflate live conversion.
+        await conn.execute(
+            "CREATE TABLE IF NOT EXISTS warmup_progress ("
+            "campaign TEXT NOT NULL,"
+            "tg_id BIGINT NOT NULL,"
+            "is_test BOOLEAN NOT NULL DEFAULT FALSE,"
+            "stage SMALLINT NOT NULL CHECK (stage BETWEEN 1 AND 3),"
+            "stage_1_at TIMESTAMP,"
+            "stage_2_at TIMESTAMP,"
+            "stage_3_at TIMESTAMP,"
+            "updated_at TIMESTAMP NOT NULL DEFAULT NOW(),"
+            "PRIMARY KEY (campaign, tg_id, is_test)"
+            ")"
+        )
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_warmup_progress_campaign "
+            "ON warmup_progress(campaign, is_test, stage)"
+        )
+
         # CRM: tags and notes
         await conn.execute(
             "CREATE TABLE IF NOT EXISTS user_tags ("
@@ -2940,6 +2960,53 @@ class CreditsDB:
         return [str(r["v"]) for r in rows]
 
     # ── Broadcasts ───────────────────────────────────────────────────
+
+    async def advance_warmup_stage(
+        self, campaign: str, tg_id: int, stage: int, *, is_test: bool,
+    ) -> int:
+        """Record the highest reached stage; duplicate callbacks cannot regress it."""
+        if stage not in (1, 2, 3):
+            raise ValueError("warmup stage must be 1, 2, or 3")
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "INSERT INTO warmup_progress "
+                "(campaign, tg_id, is_test, stage, stage_1_at, stage_2_at, stage_3_at) "
+                "VALUES ($1, $2, $3, $4, "
+                "CASE WHEN $4 >= 1 THEN NOW() END, "
+                "CASE WHEN $4 >= 2 THEN NOW() END, "
+                "CASE WHEN $4 >= 3 THEN NOW() END) "
+                "ON CONFLICT (campaign, tg_id, is_test) DO UPDATE SET "
+                "stage = GREATEST(warmup_progress.stage, EXCLUDED.stage), "
+                "stage_1_at = COALESCE(warmup_progress.stage_1_at, EXCLUDED.stage_1_at), "
+                "stage_2_at = COALESCE(warmup_progress.stage_2_at, EXCLUDED.stage_2_at), "
+                "stage_3_at = COALESCE(warmup_progress.stage_3_at, EXCLUDED.stage_3_at), "
+                "updated_at = NOW() RETURNING stage",
+                str(campaign)[:80], int(tg_id), bool(is_test), int(stage),
+            )
+        return int(row["stage"])
+
+    async def warmup_stage(self, campaign: str, tg_id: int, *, is_test: bool) -> int:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            value = await conn.fetchval(
+                "SELECT stage FROM warmup_progress WHERE campaign = $1 AND tg_id = $2 AND is_test = $3",
+                str(campaign)[:80], int(tg_id), bool(is_test),
+            )
+        return int(value or 0)
+
+    async def warmup_stats(self, campaign: str, *, is_test: bool) -> Dict[int, int]:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT stage, COUNT(*) AS n FROM warmup_progress "
+                "WHERE campaign = $1 AND is_test = $2 GROUP BY stage",
+                str(campaign)[:80], bool(is_test),
+            )
+        exact = {int(r["stage"]): int(r["n"]) for r in rows}
+        return {1: sum(n for s, n in exact.items() if s >= 1),
+                2: sum(n for s, n in exact.items() if s >= 2),
+                3: sum(n for s, n in exact.items() if s >= 3)}
 
     async def create_broadcast(
         self,
