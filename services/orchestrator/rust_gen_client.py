@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import urllib.request
+from urllib.error import HTTPError
 from typing import Any, Dict
 
 
@@ -32,8 +33,12 @@ class RustGenClient:
             headers=headers,
             method=method,
         )
-        with urllib.request.urlopen(request, timeout=self.timeout_s) as response:
-            raw = response.read().decode("utf-8", errors="replace")
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout_s) as response:
+                raw = response.read().decode("utf-8", errors="replace")
+        except HTTPError as exc:
+            body = exc.read().decode("utf-8", errors="replace").strip()
+            raise RuntimeError(f"rust-gen HTTP {exc.code}: {body or exc.reason}") from exc
         decoded = json.loads(raw) if raw else {}
         if not isinstance(decoded, dict):
             raise RuntimeError(f"rust-gen returned non-object: {decoded!r}")
