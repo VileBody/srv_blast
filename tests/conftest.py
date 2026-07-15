@@ -181,6 +181,17 @@ def _install_aiogram_stub() -> None:
             _ = (args, kwargs)
             return None
 
+    class _InlineKeyboardMarkup(_Dummy):
+        def __init__(self, *args, inline_keyboard=None, **kwargs) -> None:
+            super().__init__(*args, **kwargs)
+            self.inline_keyboard = list(inline_keyboard or [])
+
+    class _InlineKeyboardButton(_Dummy):
+        def __init__(self, *args, **kwargs) -> None:
+            super().__init__(*args, **kwargs)
+            self.text = kwargs.get("text")
+            self.callback_data = kwargs.get("callback_data")
+
     class TelegramBadRequest(Exception):
         pass
 
@@ -231,8 +242,8 @@ def _install_aiogram_stub() -> None:
     aiogram_types_mod.Message = _Dummy
     aiogram_types_mod.ReplyKeyboardMarkup = _Dummy
     aiogram_types_mod.ReplyKeyboardRemove = _Dummy
-    aiogram_types_mod.InlineKeyboardMarkup = _Dummy
-    aiogram_types_mod.InlineKeyboardButton = _Dummy
+    aiogram_types_mod.InlineKeyboardMarkup = _InlineKeyboardMarkup
+    aiogram_types_mod.InlineKeyboardButton = _InlineKeyboardButton
     aiogram_types_mod.Update = _Dummy
     aiogram_client_telegram_mod.TelegramAPIServer = TelegramAPIServer
     aiogram_client_session_aiohttp_mod.AiohttpSession = _Dummy
