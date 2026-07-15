@@ -122,7 +122,7 @@ jobs:
           update_env RUST_GEN_BOT_DEFAULT_ENABLED 0
           update_env RUST_GEN_ALLOWED_CHAT_IDS "$manager_chat_id"
           cd "$repo"
-          docker compose -f docker-compose.yml -f docker-compose.orchestrator-ha.yml up -d --no-build --force-recreate orchestrator-api orchestrator-api-2 worker-build worker-render worker-render-poll
+          docker compose -f docker-compose.yml -f docker-compose.orchestrator-ha.yml up -d --pull never --no-build --force-recreate orchestrator-api orchestrator-api-2 worker-build worker-render worker-render-poll
           REMOTE
             ssh -i "$key" -p "$port" -o BatchMode=yes -o StrictHostKeyChecking=accept-new "$user@$host" "bash -s -- '$repo' 'http://$RUST_GEN_DEPLOY_HOST:8090' '$RUST_GEN_MANAGER_TOKEN'" <<< "$script"
           }
