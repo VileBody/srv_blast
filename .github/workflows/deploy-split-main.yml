@@ -32,7 +32,7 @@ jobs:
   build-images:
     if: ${{ vars.DEPLOY_SPLIT_ENABLED == 'true' && (github.event_name == 'push' || inputs.target == 'all' || inputs.target == 'prod-path' || inputs.target == 'infra-ops') }}
     name: Build Images
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, blast-deploy-infra]
     timeout-minutes: 60
     env:
       GITHUB_TOKEN: ${{ github.token }}

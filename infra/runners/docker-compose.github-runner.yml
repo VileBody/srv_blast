@@ -11,7 +11,7 @@ services:
       ACCESS_TOKEN: ${GH_RUNNER_ACCESS_TOKEN}
       RUNNER_SCOPE: repo
       RUNNER_NAME: ${GH_RUNNER_NAME:-blast-deploy-01}
-      RUNNER_LABELS: ${GH_RUNNER_LABELS:-self-hosted,blast-deploy}
+      RUNNER_LABELS: ${GH_RUNNER_LABELS:-self-hosted,blast-deploy-infra}
       RUNNER_WORKDIR: /tmp/runner/work
       DISABLE_AUTO_UPDATE: "true"
       CONFIGURED_ACTIONS_RUNNER_FILES_DIR: /runner-config

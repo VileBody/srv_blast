@@ -1,0 +1,92 @@
+name: Provision Rust Gen Node
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Terraform action
+        required: true
+        default: plan
+        type: choice
+        options:
+          - plan
+          - apply
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rust-gen-terraform
+  cancel-in-progress: false
+
+jobs:
+  terraform:
+    name: Terraform ${{ inputs.action }}
+    runs-on: [self-hosted, blast-deploy-infra]
+    timeout-minutes: 30
+    env:
+      REPO_DIR: ${{ vars.BLAST_REPO_DIR_INFRA != '' && vars.BLAST_REPO_DIR_INFRA || vars.BLAST_REPO_DIR }}
+      TWC_TOKEN: ${{ secrets.TWC_TOKEN }}
+      TWC_PROJECT_ID: "1955611"
+      TWC_LINUX_OS_ID: "95"
+      TWC_PRESET_ID: "4807"
+      TWC_AZ: "msk-1"
+      TWC_SERVER_NAME: blast-rust-gen-1
+      TWC_ENABLE_PUBLIC_IPV4: "true"
+      TWC_SSH_KEY_IDS: "437463"
+      RUST_GEN_MANAGER_API_CIDRS: 81.17.154.249/32,45.144.221.108/32
+      TWC_STATE_KEY: terraform/rust-gen-node.tfstate
+      TWC_STATE_ENDPOINT: https://s3.twcstorage.ru
+      TWC_STATE_REGION: ru-1
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.5.7
+
+      - name: Initialize remote state and plan
+        id: plan
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${REPO_DIR:?BLAST_REPO_DIR_INFRA or BLAST_REPO_DIR is required}"
+          : "${TWC_TOKEN:?TWC_TOKEN secret is required}"
+          test -f "$REPO_DIR/.env"
+          set -a
+          source "$REPO_DIR/.env"
+          set +a
+          : "${S3_BUCKET_OUTPUT_VIDEO:?S3_BUCKET_OUTPUT_VIDEO is required for state}"
+          : "${S3_ACCESS_KEY_ID:?S3_ACCESS_KEY_ID is required for state}"
+          : "${S3_SECRET_ACCESS_KEY:?S3_SECRET_ACCESS_KEY is required for state}"
+          export AWS_ACCESS_KEY_ID="$S3_ACCESS_KEY_ID"
+          export AWS_SECRET_ACCESS_KEY="$S3_SECRET_ACCESS_KEY"
+          export TWC_STATE_BUCKET="$S3_BUCKET_OUTPUT_VIDEO"
+          export RUST_GEN_SSH_ALLOWED_CIDRS="$(curl -4fsS --max-time 10 https://api.ipify.org)/32"
+          export RUST_GEN_IAC_ENV_FILE=/dev/null
+          infra/timeweb/rust-gen-node/terraform.sh init -reconfigure
+          infra/timeweb/rust-gen-node/terraform.sh plan -out="$RUNNER_TEMP/rust-gen.tfplan"
+          echo "state_bucket=$TWC_STATE_BUCKET" >> "$GITHUB_OUTPUT"
+
+      - name: Apply
+        if: ${{ inputs.action == 'apply' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${REPO_DIR:?BLAST_REPO_DIR_INFRA or BLAST_REPO_DIR is required}"
+          set -a
+          source "$REPO_DIR/.env"
+          set +a
+          export AWS_ACCESS_KEY_ID="$S3_ACCESS_KEY_ID"
+          export AWS_SECRET_ACCESS_KEY="$S3_SECRET_ACCESS_KEY"
+          export TWC_STATE_BUCKET="$S3_BUCKET_OUTPUT_VIDEO"
+          export RUST_GEN_SSH_ALLOWED_CIDRS="$(curl -4fsS --max-time 10 https://api.ipify.org)/32"
+          export RUST_GEN_IAC_ENV_FILE=/dev/null
+          infra/timeweb/rust-gen-node/terraform.sh apply -auto-approve "$RUNNER_TEMP/rust-gen.tfplan"
+          {
+            echo "## Rust Gen node"
+            echo
+            echo "\`\`\`"
+            infra/timeweb/rust-gen-node/terraform.sh output
+            echo "\`\`\`"
+          } >> "$GITHUB_STEP_SUMMARY"

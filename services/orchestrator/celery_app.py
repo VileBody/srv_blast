@@ -50,7 +50,11 @@ class JobBoundTask(Task):
             return "build"
         if "dispatch_to_windows" in name:
             return "dispatch"
+        if "dispatch_to_rust_gen" in name:
+            return "dispatch"
         if "poll_windows_render" in name:
+            return "poll"
+        if "poll_rust_gen_render" in name:
             return "poll"
         return "task"
 
@@ -145,6 +149,8 @@ celery_app.conf.update(
         "orchestrator.build_job_vertex_sdk_mix": {"queue": SETTINGS.celery_queue_build},
         "orchestrator.dispatch_to_windows": {"queue": SETTINGS.celery_queue_render},
         "orchestrator.poll_windows_render": {"queue": SETTINGS.celery_queue_render},
+        "orchestrator.dispatch_to_rust_gen": {"queue": SETTINGS.celery_queue_render},
+        "orchestrator.poll_rust_gen_render": {"queue": SETTINGS.celery_queue_render_poll},
         # Footage auto-tagging runs on the build worker (has ffmpeg + mlcore deps).
         # Long batches share the build queue — use the `limit` arg to chunk.
         "orchestrator.tag_untagged_footage": {"queue": SETTINGS.celery_queue_build},

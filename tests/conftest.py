@@ -90,10 +90,18 @@ def _install_celery_stub() -> None:
     celery_utils_mod = types.ModuleType("celery.utils")
     celery_utils_log_mod = types.ModuleType("celery.utils.log")
     celery_utils_log_mod.get_task_logger = logging.getLogger
+    celery_signals_mod = types.ModuleType("celery.signals")
+
+    class _FakeSignal:
+        def connect(self, fn):
+            return fn
+
+    celery_signals_mod.task_failure = _FakeSignal()
 
     sys.modules["celery"] = celery_mod
     sys.modules["celery.utils"] = celery_utils_mod
     sys.modules["celery.utils.log"] = celery_utils_log_mod
+    sys.modules["celery.signals"] = celery_signals_mod
 
 
 def _install_aiogram_stub() -> None:
@@ -173,6 +181,17 @@ def _install_aiogram_stub() -> None:
             _ = (args, kwargs)
             return None
 
+    class _InlineKeyboardMarkup(_Dummy):
+        def __init__(self, *args, inline_keyboard=None, **kwargs) -> None:
+            super().__init__(*args, **kwargs)
+            self.inline_keyboard = list(inline_keyboard or [])
+
+    class _InlineKeyboardButton(_Dummy):
+        def __init__(self, *args, **kwargs) -> None:
+            super().__init__(*args, **kwargs)
+            self.text = kwargs.get("text")
+            self.callback_data = kwargs.get("callback_data")
+
     class TelegramBadRequest(Exception):
         pass
 
@@ -223,8 +242,8 @@ def _install_aiogram_stub() -> None:
     aiogram_types_mod.Message = _Dummy
     aiogram_types_mod.ReplyKeyboardMarkup = _Dummy
     aiogram_types_mod.ReplyKeyboardRemove = _Dummy
-    aiogram_types_mod.InlineKeyboardMarkup = _Dummy
-    aiogram_types_mod.InlineKeyboardButton = _Dummy
+    aiogram_types_mod.InlineKeyboardMarkup = _InlineKeyboardMarkup
+    aiogram_types_mod.InlineKeyboardButton = _InlineKeyboardButton
     aiogram_types_mod.Update = _Dummy
     aiogram_client_telegram_mod.TelegramAPIServer = TelegramAPIServer
     aiogram_client_session_aiohttp_mod.AiohttpSession = _Dummy

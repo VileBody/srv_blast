@@ -43,6 +43,26 @@ def test_public_orchestrator_payload_does_not_send_source_bot(monkeypatch) -> No
     assert "source_bot" not in fake.payload
     # hook_device is part of the F5 («Мысль») mirror; default is None.
     assert fake.payload.get("hook_device") is None
+    assert fake.payload.get("render_engine") == "ae"
+
+
+def test_public_orchestrator_payload_forwards_native_render_engine(monkeypatch) -> None:
+    fake = _FakeAsyncClient()
+    monkeypatch.setattr(public_client.httpx, "AsyncClient", lambda **_: fake)
+    client = public_client.OrchestratorClient(base_url="http://orchestrator")
+
+    asyncio.run(
+        client.send_audio_s3(
+            audio_s3_url="s3://bucket/audio.mp3",
+            mode="with_gemini",
+            lyrics_text="hello",
+            target_fragment="hello",
+            render_engine="rust-gen",
+        )
+    )
+
+    assert fake.payload is not None
+    assert fake.payload["render_engine"] == "rust-gen"
 
 
 def test_public_orchestrator_payload_forwards_hook_device(monkeypatch) -> None:
@@ -190,3 +210,4 @@ def test_public_chat_state_has_hook_category_and_device_defaults() -> None:
     st = ChatState(chat_id=1)
     assert st.hook_category == ""
     assert st.hook_device == ""
+    assert st.render_engine == ""

@@ -252,6 +252,27 @@ def generate_presigned_url(bucket: str, key: str, expires_in: int = 3600) -> str
     return url
 
 
+def generate_presigned_upload_url(bucket: str, key: str, expires_in: int = 3600) -> str:
+    """Generate a PUT URL for a worker-owned render artifact."""
+    s3 = get_s3_client()
+    try:
+        url = s3.generate_presigned_url(
+            ClientMethod="put_object",
+            Params={"Bucket": bucket, "Key": key},
+            ExpiresIn=expires_in,
+        )
+    except (BotoCoreError, ClientError) as e:
+        log.error(
+            "Failed to generate upload URL for s3://%s/%s: %s",
+            bucket,
+            key,
+            e,
+        )
+        raise
+    log.info("Generated presigned upload URL for s3://%s/%s", bucket, key)
+    return url
+
+
 def soft_delete_s3_object(bucket: str, key: str, *, trash_prefix: str) -> str:
     """
     Soft-delete object by moving it to trash prefix:

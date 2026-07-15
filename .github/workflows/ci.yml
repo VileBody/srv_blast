@@ -12,13 +12,18 @@ permissions:
 jobs:
   validate:
     name: Validate Python + Landing
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, blast-deploy-infra]
     timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
 
       - name: Team/Public parity gate
         env:
@@ -48,11 +53,6 @@ jobs:
           python scripts/check_team_public_parity.py \
             --base-ref "$BASE_REF" \
             --head-ref "$HEAD_SHA"
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
 
       - name: Install dependencies
         run: |

@@ -196,6 +196,22 @@ class Settings:
     windows_poll_interval_s: float = float(_env("WINDOWS_POLL_INTERVAL_S", "2.0") or "2.0")
     windows_poll_timeout_s: float = float(_env("WINDOWS_POLL_TIMEOUT_S", "3600") or "3600")
 
+    # Native Rust renderer. This remains opt-in per request; enabling the
+    # endpoint never silently redirects legacy AE jobs.
+    rust_gen_enabled: bool = _bool_env("RUST_GEN_ENABLED", False)
+    rust_gen_manager_url: str = _env("RUST_GEN_MANAGER_URL", "")
+    rust_gen_manager_token: str = _env("RUST_GEN_MANAGER_TOKEN", "")
+    rust_gen_timeout_s: float = _float_env("RUST_GEN_TIMEOUT_S", 30.0)
+    rust_gen_poll_interval_s: float = _float_env("RUST_GEN_POLL_INTERVAL_S", 2.0)
+    rust_gen_poll_timeout_s: float = _float_env("RUST_GEN_POLL_TIMEOUT_S", 3600.0)
+    rust_gen_presign_ttl_s: int = _int_env("RUST_GEN_PRESIGN_TTL_S", 7200)
+    rust_gen_canary_enabled: bool = _bool_env("RUST_GEN_CANARY_ENABLED", False)
+    rust_gen_canary_subtitle_modes: tuple[str, ...] = tuple(
+        v.strip().lower()
+        for v in _env("RUST_GEN_CANARY_SUBTITLE_MODES", "").split(",")
+        if v.strip()
+    )
+
     # Job artifact cleanup
     job_artifact_max_age_h: int = int(_env("JOB_ARTIFACT_MAX_AGE_H", "72") or "72")  # hours
     job_artifact_cleanup_enabled: bool = _env("JOB_ARTIFACT_CLEANUP_ENABLED", "0") not in {"0", "false", "False", "no", "NO"}

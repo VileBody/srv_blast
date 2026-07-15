@@ -5099,6 +5099,7 @@ class BlastBotApp:
             # custom subtitle color so the text stays white.
             subtitle_color_hex=(None if st.bg_mode == "solid_strobe" else (str(st.subtitle_color_hex) or None)),
             accent_color_hex=(None if st.bg_mode == "solid_strobe" else (str(st.accent_color_hex) or None)),
+            render_engine=("rust-gen" if self.settings.rust_gen_bot_default_enabled else "ae"),
         )
         job_id = str(enqueue.get("job_id") or "").strip()
         if not job_id:

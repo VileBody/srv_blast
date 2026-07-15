@@ -1,0 +1,30 @@
+#cloud-config
+package_update: true
+package_upgrade: false
+packages:
+  - ca-certificates
+  - curl
+  - fuse-overlayfs
+  - podman
+  - slirp4netns
+  - uidmap
+users:
+  - name: rustgen
+    uid: ${rustgen_uid}
+    groups: ["users"]
+    shell: /bin/bash
+    lock_passwd: true
+write_files:
+  - path: /etc/subuid
+    append: true
+    content: |
+      rustgen:100000:65536
+  - path: /etc/subgid
+    append: true
+    content: |
+      rustgen:100000:65536
+runcmd:
+  - install -d -o rustgen -g rustgen -m 0700 /var/lib/rust-gen/jobs
+  - loginctl enable-linger rustgen
+  - runuser -l rustgen -c 'XDG_RUNTIME_DIR=/run/user/${rustgen_uid} systemctl --user enable podman.socket'
+final_message: "Rust Gen node bootstrap completed. Deploy the immutable manager image before opening the manager API to traffic."
