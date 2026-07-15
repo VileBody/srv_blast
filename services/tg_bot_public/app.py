@@ -50,6 +50,7 @@ from .audio_prepare import AudioPrepareResult, prepare_audio_best_effort
 from .config import SETTINGS, Settings
 from .credits_db import CreditsDB
 from .tbank_client import TBankClient
+from .warmup_chain import CALLBACK_PREFIX as WARMUP_CALLBACK_PREFIX, CAMPAIGN as WARMUP_CAMPAIGN, keyboard_for_next as warmup_keyboard, message_for_stage as warmup_message
 from .orchestrator_client import OrchestratorClient
 from .s3_client import S3Client, make_s3_url
 from services.generation_runtime import GenerationRuntimeStore
@@ -2826,6 +2827,88 @@ class BlastBotApp:
                 "обычный бесплатный сценарий.",
                 reply_markup=_kb(BTN_RATE_BUTTONS),
             )
+
+        async def _warmup_admin(message: Message) -> bool:
+            if message.from_user is None:
+                return False
+            uid = int(message.from_user.id)
+            return uid == self.settings.manager_chat_id or await self.credits_db.is_admin(uid)
+
+        async def _send_warmup_stage(chat_id: int, stage: int, *, is_test: bool) -> None:
+            bot = self._require_bot()
+            await bot.send_message(
+                chat_id,
+                warmup_message(stage),
+                reply_markup=warmup_keyboard(stage, is_test=is_test),
+            )
+            await self.credits_db.advance_warmup_stage(
+                WARMUP_CAMPAIGN, chat_id, stage, is_test=is_test,
+            )
+
+        @self.router.message(Command("warmup_test"))
+        async def _on_warmup_test(message: Message) -> None:
+            """Admin-only, sends the full chain entry only to the caller."""
+            if message.chat is None or not await _warmup_admin(message):
+                return
+            await _send_warmup_stage(int(message.chat.id), 1, is_test=True)
+
+        @self.router.message(Command("warmup_send"))
+        async def _on_warmup_send(message: Message) -> None:
+            """Explicit production launch. Never runs without the literal CONFIRM."""
+            if message.chat is None or not await _warmup_admin(message):
+                return
+            command_parts = (message.text or "").strip().split(maxsplit=1)
+            confirmed = len(command_parts) == 2 and command_parts[1].strip().upper() == "CONFIRM"
+            if not confirmed:
+                await message.answer("Боевой запуск: /warmup_send CONFIRM\nСначала проверь /warmup_test.")
+                return
+            audience = await self.credits_db.resolve_audience({"mode": "all", "exclude_admins": True})
+
+            async def _run() -> None:
+                for tg_id in audience:
+                    try:
+                        await _send_warmup_stage(tg_id, 1, is_test=False)
+                    except Exception as exc:
+                        log.warning("warmup_stage_1_failed chat=%s err=%r", tg_id, exc)
+                    await asyncio.sleep(0.05)
+
+            asyncio.create_task(_run(), name="warmup_broadcast_stage_1")
+            await message.answer(f"Запущена рассылка сообщения 1: аудитория {len(audience)}. /warmup_stats — конверсия.")
+
+        @self.router.message(Command("warmup_stats"))
+        async def _on_warmup_stats(message: Message) -> None:
+            if message.chat is None or not await _warmup_admin(message):
+                return
+            prod = await self.credits_db.warmup_stats(WARMUP_CAMPAIGN, is_test=False)
+            test = await self.credits_db.warmup_stats(WARMUP_CAMPAIGN, is_test=True)
+            def _line(label: str, value: Dict[int, int]) -> str:
+                base = value[1]
+                pct2 = (100 * value[2] / base) if base else 0
+                pct3 = (100 * value[3] / base) if base else 0
+                return f"{label}: 1={base}, 2={value[2]} ({pct2:.1f}%), 3={value[3]} ({pct3:.1f}%)"
+            await message.answer("Прогревочная цепочка\n" + _line("Прод", prod) + "\n" + _line("Тест", test))
+
+        @self.router.callback_query(lambda c: c.data and c.data.startswith(WARMUP_CALLBACK_PREFIX))
+        async def _on_warmup_callback(callback: CallbackQuery) -> None:
+            if callback.message is None or callback.message.chat is None:
+                return
+            try:
+                _, mode, raw_stage = str(callback.data).split(":", 2)
+                is_test = mode == "test"
+                stage = int(raw_stage)
+            except (TypeError, ValueError):
+                await callback.answer("Некорректная кнопка.", show_alert=True)
+                return
+            if mode not in {"test", "prod"} or stage not in {2, 3}:
+                await callback.answer("Некорректная кнопка.", show_alert=True)
+                return
+            chat_id = int(callback.message.chat.id)
+            current = await self.credits_db.warmup_stage(WARMUP_CAMPAIGN, chat_id, is_test=is_test)
+            if current != stage - 1:
+                await callback.answer("Этот шаг уже пройден или ещё не доступен.", show_alert=True)
+                return
+            await _send_warmup_stage(chat_id, stage, is_test=is_test)
+            await callback.answer()
 
         @self.router.message(Command("freeflow2"))
         async def _on_freeflow2(message: Message) -> None:
