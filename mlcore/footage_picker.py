@@ -947,7 +947,8 @@ def _build_raw_pool(
                 continue
         if visual_contract is not None:
             from mlcore.footage_visual_catalog import evaluate_asset
-            ok, stage, diag = evaluate_asset(visual_contract, it)
+            media_type = "photo" if (os.environ.get("BG_MODE") or "").strip().lower() == "photo" else "video"
+            ok, stage, diag = evaluate_asset(visual_contract, it, media_type=media_type)
             if not ok:
                 continue
             clip_color = _normalize_color_tone(it.get("meta_color_tone"))

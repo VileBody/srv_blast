@@ -106,6 +106,48 @@ def test_girls_portrait_requires_indoor_and_rejects_vehicle_context():
     assert stage == "eligible"
 
 
+def test_photo_contracts_tighten_only_the_dense_still_pools():
+    catalog = {x.bucket_id: x for x in load_visual_catalog()}
+
+    silhouette = catalog["visual:digital_human_silhouette_cold"]
+    generic = _asset("generic", ["silhouette"], color="cold")
+    assert evaluate_asset(silhouette, generic)[0]  # footage contract unchanged
+    assert evaluate_asset(silhouette, generic, media_type="photo")[1] == "photo_missing_anchor"
+    assert evaluate_asset(
+        silhouette,
+        _asset("digital", ["silhouette", "glowing"], color="cold"),
+        media_type="photo",
+    )[0]
+
+    urban = catalog["visual:urban_solitude_dark"]
+    assert evaluate_asset(urban, _asset("city", ["cityscape"]), media_type="photo")[1] == "photo_missing_anchor"
+    assert evaluate_asset(urban, _asset("night", ["night city"]), media_type="photo")[0]
+
+    solitary = catalog["visual:solitary_person_dark_cold"]
+    assert evaluate_asset(
+        solitary,
+        _asset("portrait", ["portrait", "alone", "indoor setting"], people="girls"),
+        media_type="photo",
+    )[0]
+    assert evaluate_asset(
+        solitary,
+        _asset("broad", ["portrait"], people="girls"),
+        media_type="photo",
+    )[1] == "photo_missing_anchor"
+
+
+def test_visual_picker_uses_photo_profile_when_bg_mode_is_photo(monkeypatch):
+    monkeypatch.setenv("BG_MODE", "photo")
+    rotation = resolve_style_rotation("visual", "digital_human_silhouette_cold")
+    generic = _asset("generic", ["silhouette"], color="cold")
+    strong = _asset("strong", ["silhouette", "glowing"], color="cold")
+    for row in (generic, strong):
+        row.update({"genre": "g", "tag": "t"})
+    pool = footage_picker._build_raw_pool(
+        rotation.subgroups[0], [generic, strong], style_genre="g", style_tag="t"
+    )
+    assert [x["file_name"] for x in pool] == [strong["file_name"]]
+
 def test_visual_ranker_ignores_mood_and_returns_only_live_ids():
     catalog = load_visual_catalog()
     major = rank_buckets(lyrics="ночной город дождь", mood="major", catalog=catalog)
