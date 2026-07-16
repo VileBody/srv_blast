@@ -51,7 +51,7 @@ def test_build_photo_record_normalizes_and_keys() -> None:
             "people_type": "guy",  # -> guys
             "theme_tags": ["Sunset", "beach", "beach", " gold "],
         },
-        tagger="groq",
+        tagger="qwen",
     )
     assert rec is not None
     assert rec["source"] == SOURCE_PHOTO
@@ -61,7 +61,7 @@ def test_build_photo_record_normalizes_and_keys() -> None:
     assert rec["color_tone"] == "warm"
     assert rec["people_type"] == "guys"
     assert rec["theme_tags"] == ["sunset", "beach", "gold"]
-    assert rec["tagger"] == "groq"
+    assert rec["tagger"] == "qwen"
 
 
 def test_build_photo_record_rejects_unkeyable_row() -> None:
@@ -94,7 +94,6 @@ def test_downscale_falls_back_to_src_when_ffmpeg_missing(tmp_path, monkeypatch) 
 def test_batch_reports_providers_and_writes_with_injected_io(monkeypatch) -> None:
     # Qwen-lead chain must be visible in the summary; I/O fully injected.
     monkeypatch.setenv("DASHSCOPE_API_KEYS", "qwen-key-1")
-    monkeypatch.setenv("GROQ_API_KEYS", "groq-key-1")
 
     written_records = []
 
@@ -123,7 +122,7 @@ def test_batch_reports_providers_and_writes_with_injected_io(monkeypatch) -> Non
     assert out["untagged_processed"] == 2
     assert out["written"] == 2
     assert out["failed"] == 0
-    assert out["providers"] and out["providers"][0] == "qwen"  # Qwen leads
+    assert out["providers"] == ["qwen"]
 
 
 def test_select_untagged_photo_keys_dedups_and_skips_tagged() -> None:

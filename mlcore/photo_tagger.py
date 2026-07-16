@@ -3,7 +3,7 @@
 Photo analogue of mlcore/footage_tagger.py. The only differences vs the video
 tagger are structural, not conceptual:
   - the source is a single still image (no ffmpeg frame extraction, no majority
-    vote across 3 frames) — one Groq Vision call per photo
+    vote across 3 frames) — one Qwen Vision call per photo
   - records are keyed by photo_clip_id and stamped source='photo'
 
 The taxonomy (color_tone/people_type/theme_tags/mood) is identical
@@ -63,7 +63,7 @@ def select_untagged_photo_keys(s3_keys: Iterable[str], tagged_clip_ids: set) -> 
 def record_from_photo_result(
     *, s3_key: str, result: Dict[str, Any], tagger: str = TAGGER_VERSION,
 ) -> Optional[Dict[str, Any]]:
-    """Shape a single Groq Vision result into a footage_tags record (source=photo)."""
+    """Shape a single Qwen Vision result into a footage_tags record (source=photo)."""
     file_name = Path(str(s3_key)).name
     raw = {
         "file_name": file_name,
@@ -108,13 +108,11 @@ def _downscale_photo(src: Path, dst: Path, *, max_side: int = _PHOTO_MAX_SIDE, f
 
 
 def tag_photo_file(path: Path, *, endpoints: Optional[List[Dict[str, str]]] = None) -> Optional[Dict[str, Any]]:
-    """Tag a single still image via the vision provider chain (Qwen-VL lead, Groq
-    fallback) — the SAME chain the video tagger uses, so photos get Qwen capacity
-    and a real fallback instead of a single Groq key."""
+    """Tag a single still image with Qwen-VL using the same strict taxonomy as video."""
     if endpoints is None:
         endpoints = vision_endpoints()
     if not endpoints:
-        raise RuntimeError("no_vision_keys: set DASHSCOPE_API_KEYS (Qwen) or GROQ_API_KEYS")
+        raise RuntimeError("no_vision_keys: set DASHSCOPE_API_KEYS (Qwen)")
     with tempfile.TemporaryDirectory(prefix="tagphoto_scale_") as tmp:
         scaled = _downscale_photo(path, Path(tmp) / "small.jpg")
         return _tag_one_frame(_encode_image_b64(scaled), endpoints, _PHOTO_PROMPT)
@@ -155,8 +153,8 @@ def run_photo_tagging_batch(
     """Tag every untagged S3 photo and upsert results into Postgres (source=photo).
 
     I/O is injectable (list_keys_fn / tag_fn / fetch_tagged_fn / upsert_fn) so the
-    orchestration is unit-testable without S3, Groq, or a DB. In production the
-    defaults wire to S3 + Groq + asyncpg, scoped to the photo pool.
+    orchestration is unit-testable without S3, Qwen, or a DB. In production the
+    defaults wire to S3 + Qwen + asyncpg, scoped to the photo pool.
     """
     import asyncio as _asyncio
 

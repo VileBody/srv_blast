@@ -150,7 +150,7 @@ def photo_clip_id(value: Any) -> Optional[str]:
 
 
 def build_photo_tag_record(raw: Dict[str, Any], *, tagger: str = "") -> Optional[Dict[str, Any]]:
-    """Map one Groq-Vision photo result -> a footage_tags record (source=photo).
+    """Map one Qwen-Vision photo result -> a footage_tags record (source=photo).
 
     Mirrors build_tag_record but keys by photo_clip_id (no embedded clip id) and
     stamps source='photo'. video_key is set to the file_name so the photo picker
