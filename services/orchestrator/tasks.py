@@ -1769,7 +1769,7 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
         env["BG_MODE"] = "photo"
         photo_style = str(req.get("photo_style") or "none").strip().lower() or "none"
         photo_transition = str(req.get("photo_transition") or "flash").strip().lower() or "flash"
-        _photo_styles = {"none", "warm", "cold", "vintage", "bw", "vhs"}
+        _photo_styles = {"none", "warm", "cold", "vintage", "bw", "vhs", "night_vision"}
         _photo_transitions = {"flash", "none", "slide", "zoom", "whip"}
         if photo_style not in _photo_styles:
             raise RuntimeError(f"bg_mode=photo: invalid photo_style={photo_style!r}")

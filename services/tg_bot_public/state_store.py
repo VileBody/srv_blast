@@ -171,7 +171,7 @@ class ChatState(BaseModel):
     # Solid background color key when bg_mode == "solid": "white" | "green".
     bg_solid_color: str = ""
     # Photo flow (bg_mode == "photo") — two F3-style picks, mirror of tg_bot_botapi.
-    # photo_style: "" | none | warm | cold | vintage | bw | vhs.
+    # photo_style: "" | none | warm | cold | vintage | bw | vhs | night_vision.
     # photo_transition: "" | flash | none | slide | zoom | whip.
     photo_style: str = ""
     photo_transition: str = ""

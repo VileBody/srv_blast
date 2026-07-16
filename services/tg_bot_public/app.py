@@ -654,6 +654,7 @@ BTN_PHOTO_STYLE_COLD = "Холодный"
 BTN_PHOTO_STYLE_VINTAGE = "Винтаж"
 BTN_PHOTO_STYLE_BW = "Ч/Б"
 BTN_PHOTO_STYLE_VHS = "VHS"
+BTN_PHOTO_STYLE_NIGHT = "Night Vision"
 _PHOTO_STYLE_BY_BUTTON = {
     BTN_PHOTO_STYLE_NONE: "none",
     BTN_PHOTO_STYLE_WARM: "warm",
@@ -661,6 +662,7 @@ _PHOTO_STYLE_BY_BUTTON = {
     BTN_PHOTO_STYLE_VINTAGE: "vintage",
     BTN_PHOTO_STYLE_BW: "bw",
     BTN_PHOTO_STYLE_VHS: "vhs",
+    BTN_PHOTO_STYLE_NIGHT: "night_vision",
 }
 BTN_PHOTO_TR_FLASH = "Вспышка"
 BTN_PHOTO_TR_NONE = "Без перехода"
@@ -4759,11 +4761,13 @@ class BlastBotApp:
             "Картинки — шаг 1/2: стилизация (грейд на весь ролик).\n"
             "• Тёплый / Холодный — цветовая температура.\n"
             "• Винтаж / Ч/Б / VHS — плёночные луки.\n"
+            "• Night Vision — зелёное ночное видение с шумом и пикселем.\n"
             "• Без стилизации — оставить как есть.",
             reply_markup=_kb(
                 [BTN_PHOTO_STYLE_WARM, BTN_PHOTO_STYLE_COLD],
                 [BTN_PHOTO_STYLE_VINTAGE, BTN_PHOTO_STYLE_BW],
-                [BTN_PHOTO_STYLE_VHS, BTN_PHOTO_STYLE_NONE],
+                [BTN_PHOTO_STYLE_VHS, BTN_PHOTO_STYLE_NIGHT],
+                [BTN_PHOTO_STYLE_NONE],
                 [BTN_BACK],
             ),
         )
