@@ -816,20 +816,24 @@ def create_asset_router(*, prefix: str = "/asset-ui/api") -> APIRouter:
         live build.* queue, bounded by a wall-clock timeout. Returns
         {task_id, broker, queue} or raises HTTPException(503)."""
         try:
-            from .celery_app import celery_app
+            from celery import Celery as _Celery
         except Exception as e:
             raise HTTPException(status_code=503, detail=f"Task queue unavailable (celery import failed): {e}")
         import concurrent.futures
-        from celery import Celery as _Celery
 
-        broker_uri = str(getattr(celery_app.conf, "broker_url", "") or "") or "(empty → amqp://localhost default)"
+        # asset-ui is intentionally a slim, producer-only image. Importing the
+        # orchestrator's celery_app also imports tasks.py and therefore the full
+        # build-worker dependency tree (dotenv, ML clients, media libraries...).
+        # The producer only needs the broker URL and queue name.
+        configured_broker = str(os.getenv("CELERY_BROKER_URL", "") or "").strip() or None
+        producer = _Celery("asset_ui_producer", broker=configured_broker, backend=None)
+        broker_uri = str(getattr(producer.conf, "broker_url", "") or "") or "(empty → amqp://localhost default)"
         default_queue = os.getenv("CELERY_QUEUE_BUILD", "build")
 
         def _mask(uri: str) -> str:
             return re.sub(r"://([^:/@]+):([^@]+)@", r"://\1:***@", uri)
 
         def _do():
-            producer = _Celery("asset_ui_producer", broker=celery_app.conf.broker_url, backend=None)
             target = default_queue
             try:
                 aq = producer.control.inspect(timeout=2).active_queues() or {}

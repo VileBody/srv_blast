@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+import sys
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
@@ -38,6 +40,53 @@ def test_root_serves_react_dist(tmp_path: Path, monkeypatch) -> None:
     res = client.get("/")
     assert res.status_code == 200
     assert "React Asset UI" in res.text
+
+
+def test_tag_untagged_uses_slim_celery_producer(tmp_path: Path, monkeypatch) -> None:
+    sent: list[dict[str, object]] = []
+
+    class _Inspect:
+        def active_queues(self):
+            return {"worker@node": [{"name": "build.node-0"}]}
+
+    class _Control:
+        def inspect(self, timeout: int):
+            assert timeout == 2
+            return _Inspect()
+
+    class _Producer:
+        def __init__(self, name: str, *, broker: str | None, backend: None):
+            assert name == "asset_ui_producer"
+            assert broker == "redis://queue.example/0"
+            assert backend is None
+            self.conf = SimpleNamespace(broker_url=broker)
+            self.control = _Control()
+
+        def send_task(self, task_name: str, **kwargs):
+            sent.append({"task_name": task_name, **kwargs})
+            return SimpleNamespace(id="tag-task-1")
+
+    import celery
+
+    monkeypatch.setattr(celery, "Celery", _Producer)
+    monkeypatch.setenv("CELERY_BROKER_URL", "redis://queue.example/0")
+    monkeypatch.setitem(sys.modules, "services.orchestrator.celery_app", None)
+
+    client = _make_app(tmp_path, monkeypatch)
+    res = client.post("/api/assets/tag-untagged", params={"limit": 25, "media_type": "photo"})
+
+    assert res.status_code == 200
+    assert res.json()["task_id"] == "tag-task-1"
+    assert res.json()["queue"] == "build.node-0"
+    assert sent == [
+        {
+            "task_name": "orchestrator.tag_untagged_footage",
+            "args": [25, "photo"],
+            "queue": "build.node-0",
+            "ignore_result": True,
+            "retry": False,
+        }
+    ]
 
 
 def test_assets_list_filters_excluded_and_supports_filtering(tmp_path: Path, monkeypatch) -> None:
