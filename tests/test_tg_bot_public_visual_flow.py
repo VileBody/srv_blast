@@ -110,3 +110,41 @@ def test_new_style_previews_have_captions() -> None:
         assert store[key]["label"] == label
         assert store[key]["file_id"]
         assert store[key]["file_id_public"]
+
+def test_no_hook_reopens_visual_pickers_after_stale_previous_run() -> None:
+    import types
+
+    async def run():
+        app = _App()
+        called = {"transition": 0}
+
+        async def ask_visual_transition(_message, _state):
+            called["transition"] += 1
+
+        app._ask_visual_transition = ask_visual_transition
+        app._proceed_to_versions_or_confirm = types.MethodType(
+            public_app.BlastBotApp._proceed_to_versions_or_confirm, app
+        )
+        st = ChatState(
+            chat_id=1,
+            bg_mode="footage",
+            visuals_done=True,
+            visual_transition="snap_wipe",
+            visual_style="night_vision",
+            effect_hook="hook_light",
+            effect_transition="minimax",
+            effect_extra="wave",
+        )
+        msg = _Message(public_app.BTN_HOOK_NO)
+
+        await public_app.BlastBotApp._handle_wait_hook_choice(app, msg, st)
+
+        assert called["transition"] == 1
+        assert st.visuals_done is False
+        assert st.visual_transition == ""
+        assert st.visual_style == ""
+        assert st.effect_hook == ""
+        assert st.effect_transition == ""
+        assert st.effect_extra == ""
+
+    asyncio.run(run())
