@@ -12,7 +12,9 @@ permissions:
 jobs:
   validate:
     name: Validate Python + Landing
-    runs-on: [self-hosted, blast-deploy-infra]
+    # Public PRs must never execute untrusted code on the deployment runner.
+    # Keep self-hosted runners for trusted deploy/manual ops workflows only.
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - name: Checkout

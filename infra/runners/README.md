@@ -315,6 +315,13 @@ Workflow:
 
 - `.github/workflows/deploy-split-main.yml`
 
+Security note for public repositories:
+
+- Pull-request CI must use GitHub-hosted runners (`ubuntu-latest`), not
+  `self-hosted`. Fork PRs are untrusted code.
+- Self-hosted runner labels such as `blast-deploy-infra` are reserved for
+  trusted `push` deploys and manually dispatched ops workflows.
+
 Repository variables:
 
 - `DEPLOY_SPLIT_ENABLED=true`
