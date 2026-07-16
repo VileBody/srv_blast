@@ -16,6 +16,16 @@ def test_chain_uses_callback_buttons_and_three_distinct_stages() -> None:
     assert keyboard_for_next(3, is_test=False) is None
 
 
+def test_callback_repairs_missing_delivery_progress() -> None:
+    from services.tg_bot_public.warmup_chain import callback_progress
+
+    assert callback_progress(0, 2) == (True, 1)
+    assert callback_progress(1, 2) == (True, 1)
+    assert callback_progress(0, 3) == (True, 2)
+    assert callback_progress(2, 3) == (True, 2)
+    assert callback_progress(3, 3) == (False, 3)
+
+
 def test_public_app_has_safe_test_and_explicit_production_entrypoints() -> None:
     src = Path("services/tg_bot_public/app.py").read_text(encoding="utf-8")
     assert 'Command("warmup_test")' in src

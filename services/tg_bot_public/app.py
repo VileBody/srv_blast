@@ -50,7 +50,7 @@ from .audio_prepare import AudioPrepareResult, prepare_audio_best_effort
 from .config import SETTINGS, Settings
 from .credits_db import CreditsDB
 from .tbank_client import TBankClient
-from .warmup_chain import CALLBACK_PREFIX as WARMUP_CALLBACK_PREFIX, CAMPAIGN as WARMUP_CAMPAIGN, keyboard_for_next as warmup_keyboard, message_for_stage as warmup_message
+from .warmup_chain import CALLBACK_PREFIX as WARMUP_CALLBACK_PREFIX, CAMPAIGN as WARMUP_CAMPAIGN, callback_progress as warmup_callback_progress, keyboard_for_next as warmup_keyboard, message_for_stage as warmup_message
 from .orchestrator_client import OrchestratorClient
 from .s3_client import S3Client, make_s3_url
 from services.generation_runtime import GenerationRuntimeStore
@@ -2904,9 +2904,18 @@ class BlastBotApp:
                 return
             chat_id = int(callback.message.chat.id)
             current = await self.credits_db.warmup_stage(WARMUP_CAMPAIGN, chat_id, is_test=is_test)
-            if current != stage - 1:
-                await callback.answer("Этот шаг уже пройден или ещё не доступен.", show_alert=True)
+            should_send, repair_stage = warmup_callback_progress(current, stage)
+            if not should_send:
+                await callback.answer("Этот шаг уже пройден.", show_alert=True)
                 return
+            if repair_stage > current:
+                log.warning(
+                    "warmup_progress_repaired chat=%s mode=%s current=%s repaired=%s requested=%s",
+                    chat_id, mode, current, repair_stage, stage,
+                )
+                await self.credits_db.advance_warmup_stage(
+                    WARMUP_CAMPAIGN, chat_id, repair_stage, is_test=is_test,
+                )
             await _send_warmup_stage(chat_id, stage, is_test=is_test)
             await callback.answer()
 

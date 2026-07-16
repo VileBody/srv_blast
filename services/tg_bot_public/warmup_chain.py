@@ -51,3 +51,18 @@ def keyboard_for_next(stage: int, *, is_test: bool) -> InlineKeyboardMarkup | No
 
 def message_for_stage(stage: int) -> str:
     return {1: MESSAGE_1, 2: MESSAGE_2, 3: MESSAGE_3}[stage]
+
+
+def callback_progress(current_stage: int, requested_stage: int) -> tuple[bool, int]:
+    """Return ``(should_send, repair_stage)`` for an inline transition.
+
+    Receiving a valid stage-N callback proves that Telegram delivered stage
+    N-1, even if the DB write after that delivery was interrupted.  In that
+    case the handler repairs progress before sending the next message.
+    """
+    if requested_stage not in (2, 3):
+        raise ValueError("warmup callback stage must be 2 or 3")
+    current = max(0, int(current_stage))
+    if current >= requested_stage:
+        return False, current
+    return True, max(current, requested_stage - 1)
