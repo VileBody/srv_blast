@@ -3,7 +3,7 @@
 Ported from the offline pin/scan.py pipeline, adapted for the server:
   - source is an S3 object (downloaded), not a local file
   - frames extracted with ffmpeg/ffprobe (already in the runtime image), no cv2
-  - explicit Qwen/Groq endpoint chain; API keys come from env, never hardcoded
+  - Qwen/DashScope vision only; API keys come from env, never hardcoded
   - output is a footage_tags record (see footage_tags_db.build_tag_record)
 
 PURE helpers (parse / vote / untagged-diff / record shaping) are separated from
@@ -26,8 +26,6 @@ from typing import Any, Dict, Iterable, List, Optional
 from mlcore.footage_tags_db import build_tag_record, extract_clip_id
 
 log = logging.getLogger("footage_tagger")
-
-GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 TAGGER_VERSION = "vision-v2"
 
@@ -111,40 +109,7 @@ _PROMPT = build_vision_prompt(media_kind="video frame")
 # --------------------------------------------------------------------------- #
 # Config (env)
 # --------------------------------------------------------------------------- #
-def _fallback_groq_keys() -> List[str]:
-    """TEMPORARY: committed fallback keys (config/groq_keys_fallback.json) used
-    only when no env key is set, so tagging works before GROQ_API_KEYS is wired
-    into .env. Delete the file + rotate keys once env is configured."""
-    from pathlib import Path as _P
-
-    src = _P(__file__).resolve().parents[1] / "config" / "groq_keys_fallback.json"
-    if not src.exists():
-        return []
-    try:
-        data = json.loads(src.read_text(encoding="utf-8"))
-    except Exception:
-        return []
-    return [str(k).strip() for k in (data.get("keys") or []) if str(k).strip()]
-
-
-def groq_api_keys() -> List[str]:
-    """Groq keys: GROQ_API_KEYS (csv) > GROQ_API_KEY > committed fallback file."""
-    multi = (os.environ.get("GROQ_API_KEYS") or "").strip()
-    if multi:
-        return [k.strip() for k in multi.split(",") if k.strip()]
-    single = (os.environ.get("GROQ_API_KEY") or "").strip()
-    if single:
-        return [single]
-    return _fallback_groq_keys()
-
-
-def groq_model() -> str:
-    return (os.environ.get("GROQ_VISION_MODEL") or "meta-llama/llama-4-scout-17b-16e-instruct").strip()
-
-
-# --- Qwen-VL (Alibaba DashScope, OpenAI-compatible) — ~16x fewer tokens/image
-#     than Groq's Llama-4, so it stretches free quotas dramatically. -----------
-_GROQ_BASE = "https://api.groq.com/openai/v1"
+# --- Qwen-VL (Alibaba DashScope, OpenAI-compatible). -------------------------
 _QWEN_BASE_DEFAULT = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
 
 
@@ -181,28 +146,26 @@ def qwen_base_url() -> str:
 
 
 def vision_endpoints() -> List[Dict[str, str]]:
-    """Ordered list of {provider, base_url, api_key, model} to try per frame.
+    """Qwen/DashScope endpoints, one per configured API key.
 
-    Order controlled by TAG_PROVIDER_ORDER (default "qwen,groq"). Qwen first
-    because it's far cheaper in tokens; Groq is the fallback. Only providers
-    with configured keys appear.
+    Groq is intentionally not a tagging provider. Old GROQ_* and
+    TAG_PROVIDER_ORDER environment values are ignored.
     """
-    order = [p.strip().lower() for p in (os.environ.get("TAG_PROVIDER_ORDER") or "qwen,groq").split(",") if p.strip()]
-    out: List[Dict[str, str]] = []
-    for provider in order:
-        if provider == "qwen":
-            for k in dashscope_api_keys():
-                out.append({"provider": "qwen", "base_url": qwen_base_url(), "api_key": k, "model": qwen_model()})
-        elif provider == "groq":
-            for k in groq_api_keys():
-                out.append({"provider": "groq", "base_url": _GROQ_BASE, "api_key": k, "model": groq_model()})
-    return out
+    return [
+        {
+            "provider": "qwen",
+            "base_url": qwen_base_url(),
+            "api_key": key,
+            "model": qwen_model(),
+        }
+        for key in dashscope_api_keys()
+    ]
 
 
 # --------------------------------------------------------------------------- #
 # Pure helpers (no I/O)
 # --------------------------------------------------------------------------- #
-def parse_groq_json(raw: str) -> Optional[Dict[str, Any]]:
+def parse_vision_json(raw: str) -> Optional[Dict[str, Any]]:
     """Parse a model JSON reply, tolerating ```json fences."""
     s = str(raw or "").strip()
     if s.startswith("```"):
@@ -396,8 +359,7 @@ def _encode_image_b64(path: Path) -> str:
 def call_openai_vision(
     image_b64: str, *, base_url: str, api_key: str, model: str, timeout: float = 30.0, prompt: str = "",
 ) -> Optional[Dict[str, Any]]:
-    """One vision request to any OpenAI-compatible endpoint (Groq / Qwen-DashScope
-    / OpenRouter / Together / ...) -> parsed JSON dict, or None on failure."""
+    """One Qwen/DashScope vision request -> parsed JSON dict, or None on failure."""
     import requests  # local import: keep module import-light for unit tests
 
     payload = {
@@ -412,11 +374,22 @@ def call_openai_vision(
     }
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     url = f"{base_url.rstrip('/')}/chat/completions"
+    # The build worker has a global HTTP(S)_PROXY for unrelated outbound
+    # traffic. That proxy currently returns 502 while tunnelling to DashScope.
+    # Qwen therefore uses a direct session by default. A dedicated working proxy
+    # can still be opted in explicitly without inheriting the global one.
+    session = requests.Session()
+    session.trust_env = False
+    explicit_proxy = str(os.environ.get("DASHSCOPE_PROXY_URL") or "").strip()
+    if explicit_proxy:
+        session.proxies.update({"http": explicit_proxy, "https": explicit_proxy})
     try:
-        resp = requests.post(url, json=payload, headers=headers, timeout=timeout)
+        resp = session.post(url, json=payload, headers=headers, timeout=timeout)
     except Exception as e:
         log.warning("vision request error (%s): %r", base_url, e)
         return None
+    finally:
+        session.close()
     if resp.status_code != 200:
         log.warning("vision HTTP %s base=%s model=%s body=%s", resp.status_code, base_url, model, (resp.text or "")[:300])
         return None
@@ -429,18 +402,11 @@ def call_openai_vision(
     if not choices:
         log.warning("vision no choices (%s): %s", base_url, json.dumps(data)[:300] if isinstance(data, dict) else type(data))
         return None
-    return parse_groq_json(choices[0].get("message", {}).get("content", ""))
-
-
-def call_groq_vision(image_b64: str, *, api_key: str, model: str, timeout: float = 30.0, prompt: str = "") -> Optional[Dict[str, Any]]:
-    """Backward-compatible Groq wrapper over call_openai_vision."""
-    return call_openai_vision(image_b64, base_url=_GROQ_BASE, api_key=api_key, model=model, timeout=timeout, prompt=prompt)
+    return parse_vision_json(choices[0].get("message", {}).get("content", ""))
 
 
 def _tag_one_frame(image_b64: str, endpoints: List[Dict[str, str]], prompt: str) -> Optional[Dict[str, Any]]:
-    """Try endpoints STRICTLY in priority order (qwen keys first, then groq) so
-    the lead provider is always tried first and fallbacks only fire when it
-    fails — no cross-provider rotation."""
+    """Try configured Qwen keys in order until one returns a valid result."""
     for ep in endpoints:
         parsed = call_openai_vision(
             image_b64, base_url=ep["base_url"], api_key=ep["api_key"], model=ep["model"], prompt=prompt,
@@ -458,19 +424,13 @@ def _tag_one_frame(image_b64: str, endpoints: List[Dict[str, str]], prompt: str)
 
 
 def tag_video_file(
-    path: Path, *, endpoints: Optional[List[Dict[str, str]]] = None,
-    keys: Optional[List[str]] = None, model: str = "", prompt: str = "",
+    path: Path, *, endpoints: Optional[List[Dict[str, str]]] = None, prompt: str = "",
 ) -> Optional[Dict[str, Any]]:
-    """Extract frames, tag each via the provider chain (Qwen->Groq failover),
-    majority-vote merge. `endpoints` overrides the default; legacy keys/model
-    build a Groq-only chain."""
+    """Extract frames, tag each with Qwen, and majority-vote the results."""
     if endpoints is None:
-        if keys is not None:
-            endpoints = [{"provider": "groq", "base_url": _GROQ_BASE, "api_key": k, "model": model or groq_model()} for k in keys]
-        else:
-            endpoints = vision_endpoints()
+        endpoints = vision_endpoints()
     if not endpoints:
-        raise RuntimeError("no_vision_keys")  # set DASHSCOPE_API_KEYS / GROQ_API_KEYS
+        raise RuntimeError("no_vision_keys")  # set DASHSCOPE_API_KEYS
     with tempfile.TemporaryDirectory(prefix="tagframes_") as tmp:
         frames = extract_frames(path, Path(tmp))
         if not frames:
@@ -481,13 +441,12 @@ def tag_video_file(
             if parsed:
                 results.append(parsed)
     if not results:
-        raise RuntimeError("vision_no_result")  # all providers failed (see vision logs)
+        raise RuntimeError("vision_no_result")  # all Qwen keys failed (see vision logs)
     return merge_frame_votes(results)
 
 
 def tag_clip_from_s3(
     *, bucket: str, s3_key: str, endpoints: Optional[List[Dict[str, str]]] = None,
-    keys: Optional[List[str]] = None, model: str = "",
 ) -> Optional[Dict[str, Any]]:
     """Download an S3 clip, tag it, return a footage_tags record.
 
@@ -503,7 +462,7 @@ def tag_clip_from_s3(
             download_from_s3(bucket, s3_key, dest)
         except Exception as e:
             raise RuntimeError(f"download_failed: {e}") from e
-        votes = tag_video_file(dest, endpoints=endpoints, keys=keys, model=model)
+        votes = tag_video_file(dest, endpoints=endpoints)
     rec = record_from_votes(s3_key=s3_key, votes=votes, tagger=TAGGER_VERSION)
     if not rec:
         raise RuntimeError("no_clip_id")
@@ -529,8 +488,8 @@ def run_tagging_batch(
     """Tag every untagged S3 clip and upsert results into Postgres.
 
     I/O is injectable (list_keys_fn / tag_fn / fetch_tagged_fn / upsert_fn) so
-    the orchestration is unit-testable without S3, ffmpeg, Groq, or a DB. In
-    production the defaults wire to S3 + Groq + asyncpg.
+    the orchestration is unit-testable without S3, ffmpeg, Qwen, or a DB. In
+    production the defaults wire to S3 + Qwen + asyncpg.
 
     progress_cb(done:int, total:int, written:int) is called after each clip.
     Returns a summary dict.
@@ -538,16 +497,11 @@ def run_tagging_batch(
     import asyncio as _asyncio
 
     endpoints = vision_endpoints()
-    # Diagnostic: which providers/keys did this worker load. Qwen-VL is ~16x
-    # cheaper in tokens than Groq's Llama-4, so it should lead.
-    from collections import Counter as _Counter
-    by_provider = _Counter(ep["provider"] for ep in endpoints)
     log.warning(
-        "tagging start: endpoints=%d providers=%s order=%s suffixes=%s",
+        "tagging start: provider=qwen endpoints=%d suffixes=%s direct=%s",
         len(endpoints),
-        dict(by_provider),
-        os.environ.get("TAG_PROVIDER_ORDER") or "qwen,groq",
         [ep["api_key"][-4:] for ep in endpoints],
+        not bool(str(os.environ.get("DASHSCOPE_PROXY_URL") or "").strip()),
     )
 
     if list_keys_fn is None:

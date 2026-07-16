@@ -3,17 +3,17 @@ from __future__ import annotations
 from mlcore.footage_tagger import (
     TAGGER_VERSION,
     merge_frame_votes,
-    parse_groq_json,
+    parse_vision_json,
     record_from_votes,
     run_tagging_batch,
     select_untagged_keys,
 )
 
 
-def test_parse_groq_json_plain_and_fenced() -> None:
-    assert parse_groq_json('{"mood": "minor"}') == {"mood": "minor"}
-    assert parse_groq_json('```json\n{"mood": "major"}\n```') == {"mood": "major"}
-    assert parse_groq_json("not json") is None
+def test_parse_vision_json_plain_and_fenced() -> None:
+    assert parse_vision_json('{"mood": "minor"}') == {"mood": "minor"}
+    assert parse_vision_json('```json\n{"mood": "major"}\n```') == {"mood": "major"}
+    assert parse_vision_json("not json") is None
 
 
 def test_merge_frame_votes_majority_and_tag_union() -> None:
@@ -67,7 +67,7 @@ def test_run_tagging_batch_with_injected_io() -> None:
         cid = key.split("/")[-1].split("_")[0]
         return {"clip_id": cid, "file_name": key.split("/")[-1], "s3_key": key,
                 "video_key": key.split("/")[-1], "mood": "minor", "color_tone": "cold",
-                "people_type": "none", "theme_tags": ["night"], "tagger": "groq"}
+                "people_type": "none", "theme_tags": ["night"], "tagger": "qwen"}
 
     progress: list = []
     summary = run_tagging_batch(
