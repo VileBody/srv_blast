@@ -1789,6 +1789,15 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
         env["PHOTO_TAGS_SNAPSHOT_JSON"] = str(
             os.environ.get("PHOTO_TAGS_SNAPSHOT_JSON") or "data/photo_tags_snapshot.json"
         ).strip()
+        # Activation runs on one build queue, while jobs are routed across both
+        # orchestrator nodes. Rehydrate this node's disposable JSON caches from
+        # the shared Postgres registry before entering the picker.
+        _ensure_photo_picker_artifacts_from_registry(
+            repo_root=repo_root,
+            inventory_path=env["PHOTO_INVENTORY_JSON"],
+            snapshot_path=env["PHOTO_TAGS_SNAPSHOT_JSON"],
+            cache_key=str(job_id),
+        )
     else:
         env["BG_MODE"] = "footage"
 
@@ -2646,6 +2655,123 @@ def _export_tag_overrides_snapshot(*, db_url: str) -> Dict[str, Any]:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8")
     return {"path": str(out_path), "rows": len(doc["blacklisted_tags"])}
+
+
+def _photo_registry_index_obj(records: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Convert durable photo registry rows back to the technical index shape."""
+    from mlcore.footage_assets_db import index_row_from_record
+
+    assets = [index_row_from_record(rec) for rec in records if isinstance(rec, dict)]
+    return {
+        "version": "photo-registry-v1",
+        "media_type": "photo",
+        "assets_count": len(assets),
+        "assets": assets,
+    }
+
+
+def _ensure_photo_picker_artifacts_from_registry(
+    *,
+    repo_root: Path,
+    inventory_path: str,
+    snapshot_path: str,
+    cache_key: str,
+) -> Dict[str, Any]:
+    """Hydrate node-local photo picker caches from the shared Postgres pool.
+
+    Asset activation is intentionally single-flight and executes on one build
+    queue. Build jobs are round-robin routed, so another node may not have the
+    generated JSON files. PostgreSQL is the durable cross-node source of truth;
+    these files are only disposable render caches.
+    """
+    root = Path(repo_root).resolve()
+
+    def _path(raw: str) -> Path:
+        p = Path(str(raw or "").strip())
+        return p if p.is_absolute() else root / p
+
+    inv_path = _path(inventory_path)
+    snap_path = _path(snapshot_path)
+    if inv_path.exists() and snap_path.exists():
+        return {"hydrated": False, "inventory": str(inv_path), "snapshot": str(snap_path)}
+
+    db_url = str(getattr(SETTINGS, "credits_db_url", "") or "").strip()
+    if not db_url:
+        raise RuntimeError("photo picker cache missing and Postgres is not configured")
+
+    async def _load() -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        import asyncpg  # type: ignore
+        from mlcore.footage_assets_db import fetch_all_assets
+        from mlcore.footage_tags_db import build_snapshot, filter_snapshot_to_pool
+
+        conn = await asyncpg.connect(dsn=db_url)
+        try:
+            records = await fetch_all_assets(conn, source="photo")
+            snapshot_rows = await build_snapshot(conn, source="photo")
+            pool_ids = {str(rec.get("clip_id") or "") for rec in records}
+            return records, filter_snapshot_to_pool(snapshot_rows, pool_ids)
+        finally:
+            await conn.close()
+
+    records, snapshot_rows = asyncio.run(_load())
+    if not records:
+        raise RuntimeError("photo picker cache missing and Postgres photo registry is empty")
+
+    safe_key = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(cache_key or "job"))[:80]
+    index_path = _path(os.environ.get("PHOTO_ASSETS_INDEX_JSON") or "data/photo_assets_index_1to1.json")
+    bundle_path = _path(os.environ.get("PHOTO_DESCRIPTIONS_BUNDLE_OUT") or "pins/photo_descriptions_bundle.json")
+    index_tmp = index_path.with_name(f".{index_path.name}.{safe_key}.tmp")
+    inv_tmp = inv_path.with_name(f".{inv_path.name}.{safe_key}.tmp")
+    bundle_tmp = bundle_path.with_name(f".{bundle_path.name}.{safe_key}.tmp")
+    snap_tmp = snap_path.with_name(f".{snap_path.name}.{safe_key}.tmp")
+    for p in (index_path, inv_path, bundle_path, snap_path):
+        p.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        index_tmp.write_text(
+            json.dumps(_photo_registry_index_obj(records), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        os.replace(index_tmp, index_path)
+
+        if not inv_path.exists():
+            from footage_config import build_inventory_and_bundle
+
+            build_inventory_and_bundle(
+                repo_root=root,
+                footage_dir=Path(os.environ.get("FOOTAGE_DIR", str(root / "footage"))),
+                static_assets_index_path=index_path,
+                inventory_out_path=inv_tmp,
+                bundle_out_path=bundle_tmp,
+                media_type="photo",
+            )
+            os.replace(inv_tmp, inv_path)
+            os.replace(bundle_tmp, bundle_path)
+
+        if not snap_path.exists():
+            snap_tmp.write_text(
+                json.dumps(snapshot_rows, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            os.replace(snap_tmp, snap_path)
+    finally:
+        for tmp in (index_tmp, inv_tmp, bundle_tmp, snap_tmp):
+            try:
+                tmp.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+    log.info(
+        "photo picker cache hydrated registry_rows=%d snapshot_rows=%d inventory=%s",
+        len(records), len(snapshot_rows), inv_path,
+    )
+    return {
+        "hydrated": True,
+        "registry_rows": len(records),
+        "snapshot_rows": len(snapshot_rows),
+        "inventory": str(inv_path),
+        "snapshot": str(snap_path),
+    }
 
 
 def _register_pool_assets(*, db_url: str, static_index_path: Any, source: str = "video") -> Dict[str, Any]:
