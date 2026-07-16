@@ -409,3 +409,35 @@ def test_rotation_cursor_advances_and_history_caps_at_max() -> None:
 
     asyncio.run(_run())
 
+
+
+def test_reset_to_wait_audio_clears_previous_visual_choices() -> None:
+    async def _run() -> None:
+        redis = _FakeRedis()
+        store = _make_store(redis)
+        await store.set(ChatState(
+            chat_id=601,
+            visuals_done=True,
+            visual_transition="snap_wipe",
+            visual_style="wave",
+            effect_hook="hook_light",
+            effect_transition="minimax",
+            effect_extra="night_vision",
+            colors_done=True,
+            subtitle_color_hex="#ffffff",
+            accent_color_hex="#ff0000",
+        ))
+
+        reset = await store.reset_to_wait_audio(601)
+
+        assert reset.visuals_done is False
+        assert reset.visual_transition == ""
+        assert reset.visual_style == ""
+        assert reset.effect_hook == ""
+        assert reset.effect_transition == ""
+        assert reset.effect_extra == ""
+        assert reset.colors_done is False
+        assert reset.subtitle_color_hex == ""
+        assert reset.accent_color_hex == ""
+
+    asyncio.run(_run())

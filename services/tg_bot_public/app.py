@@ -4434,11 +4434,22 @@ class BlastBotApp:
             st.f2_shape = ""
             st.f1_sound_url = ""
             st.f1_sound_text = ""
+            st.effect_hook = ""
+            st.effect_transition = ""
+            st.effect_extra = ""
+            st.effect_extra_full = False
+            st.effect_hook_extend = ""
+            st.visual_transition = ""
+            st.visual_style = ""
+            st.visuals_done = False
             await self.store.set(st)
             await self._proceed_to_versions_or_confirm(message, st)
             return
         if text == BTN_HOOK_YES:
             st.hook_enabled = True
+            st.visual_transition = ""
+            st.visual_style = ""
+            st.visuals_done = False
             await self.store.set(st)
             await self._ask_hook_drop(message, st)
             return
@@ -5417,6 +5428,7 @@ class BlastBotApp:
         st.pending_audio_filename = _safe_name(original_name)
         st.prepared_audio_local_path = str(prep.output_path)
         await self.credits_db.log_event(st.chat_id, "audio_uploaded", original_name)
+        self._reset_reuse_selection(st)
         st.lyrics_text = ""
         st.target_fragment = ""
         st.footage_genre_key = ""
