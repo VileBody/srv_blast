@@ -46,9 +46,10 @@ jobs:
               | sed -E 's/(bot[0-9]+:)[A-Za-z0-9_-]+/\1[redacted]/g' \
               || true
             echo "=== ${container}: Telegram network probes ==="
-            docker exec "$container" python - <<'PY' || true
+            docker exec -i "$container" python - <<'PY' || true
           import os
           import socket
+          import asyncio
           from urllib.parse import urlparse
 
           proxy = os.environ.get("TG_FILE_PROXY_URL", "").strip()
@@ -63,5 +64,19 @@ jobs:
                       print(f"{name}=reachable host={host} port={port}")
               except OSError as error:
                   print(f"{name}=unreachable host={host} port={port} error={type(error).__name__}")
+
+          async def probe_https(label, proxy_url=None):
+              try:
+                  import aiohttp
+                  timeout = aiohttp.ClientTimeout(total=12, connect=8)
+                  async with aiohttp.ClientSession(timeout=timeout) as session:
+                      async with session.get("https://api.telegram.org", proxy=proxy_url) as response:
+                          print(f"{label}=http_{response.status}")
+              except Exception as error:
+                  print(f"{label}=failed error={type(error).__name__}")
+
+          asyncio.run(probe_https("telegram_direct"))
+          if proxy:
+              asyncio.run(probe_https("telegram_via_proxy", proxy))
           PY
           done

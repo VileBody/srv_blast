@@ -30,3 +30,5 @@ def test_progress_is_separated_between_test_and_production() -> None:
     assert "CREATE TABLE IF NOT EXISTS warmup_progress" in src
     assert "PRIMARY KEY (campaign, tg_id, is_test)" in src
     assert "GREATEST(warmup_progress.stage, EXCLUDED.stage)" in src
+    assert "VALUES ($1, $2, $3, $4::SMALLINT," in src
+    assert "CASE WHEN $4::SMALLINT >= 3 THEN NOW() END" in src
