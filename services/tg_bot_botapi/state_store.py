@@ -109,7 +109,7 @@ class ChatState(BaseModel):
     bg_solid_color: str = ""
     # Photo flow (bg_mode == "photo") — two F3-style picks. photo_style =
     # stylization grade applied over the whole render
-    # ("" | none | warm | cold | vintage | bw | vhs); photo_transition =
+    # ("" | none | warm | cold | vintage | bw | vhs | night_vision); photo_transition =
     # transition between photos ("" | flash | none | slide | zoom | whip).
     # "" => not chosen. Sent via send_audio_s3 only when bg_mode == "photo".
     photo_style: str = ""

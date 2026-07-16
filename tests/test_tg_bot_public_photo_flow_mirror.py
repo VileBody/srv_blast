@@ -38,13 +38,23 @@ def test_photo_stages_present_and_in_photo_stages():
     assert STAGE_WAIT_PHOTO_TRANSITION in pub.PHOTO_STAGES
 
 
+def test_team_photo_flag_defaults_on_and_public_stays_default_off(monkeypatch):
+    from services.tg_bot_botapi import app as team
+
+    monkeypatch.delenv("PHOTO_FLOW_ENABLED", raising=False)
+    assert team._photo_flow_enabled()
+
+    root = Path(__file__).resolve().parents[1]
+    public_src = (root / "services" / "tg_bot_public" / "app.py").read_text(encoding="utf-8")
+    assert 'os.environ.get("PHOTO_FLOW_ENABLED", "0")' in public_src
+
 def test_photo_style_id_set_and_labels_consistent():
     from services.tg_bot_public import app as pub
 
-    assert pub.PHOTO_STYLE_IDS == {"none", "warm", "cold", "vintage", "bw", "vhs"}
+    assert pub.PHOTO_STYLE_IDS == {"none", "warm", "cold", "vintage", "bw", "vhs", "night_vision"}
     # every RU label maps to a known id
     assert set(pub.PHOTO_STYLE_LABELS_RU.values()) == pub.PHOTO_STYLE_IDS
-    assert len(pub.PHOTO_STYLE_LABELS_RU) == 6
+    assert len(pub.PHOTO_STYLE_LABELS_RU) == 7
 
 
 def test_photo_transition_id_set_and_labels_consistent():

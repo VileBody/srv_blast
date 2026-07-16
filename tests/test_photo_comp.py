@@ -55,6 +55,16 @@ def test_payload_dedups_repeated_file_names() -> None:
     assert len(pl["footage_layers"]) == 3
 
 
+def test_night_vision_is_a_supported_full_frame_photo_style() -> None:
+    pl = build_photo_payload(_PHOTOS, style="night_vision", transition="flash")
+    assert pl["photo_job"]["style"] == "night_vision"
+
+    template = (Path(__file__).resolve().parents[1] / "templates" / "photo_template.j2").read_text(encoding="utf-8")
+    assert 'STYLE === "night_vision"' in template
+    assert '"NIGHT_VISION_GREEN", COMP_W, COMP_H' in template
+    assert 'property("ADBE Geometry2-0004").setValue(115)' in template
+    assert '"FLASH", COMP_W, COMP_H' in template
+
 def test_payload_rejects_empty_and_bad_enums() -> None:
     with pytest.raises(RuntimeError):
         build_photo_payload([])
@@ -125,11 +135,11 @@ def test_schema_accepts_photo_bg_and_selections() -> None:
     req = SendAudioS3Request(
         audio_s3_url="https://x/a.mp3",
         bg_mode="photo",
-        photo_style="vintage",
+        photo_style="night_vision",
         photo_transition="zoom",
     )
     assert req.bg_mode == "photo"
-    assert req.photo_style == "vintage" and req.photo_transition == "zoom"
+    assert req.photo_style == "night_vision" and req.photo_transition == "zoom"
 
 
 def test_schema_rejects_bad_photo_selections() -> None:

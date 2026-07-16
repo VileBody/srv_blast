@@ -49,7 +49,7 @@ PHOTO_ANIM = {
 
 # Allowed stylization grades + transitions (kept in sync with the schema literals
 # in services/orchestrator/schemas.py — phase 3). "none" = founder's plain look.
-PHOTO_STYLES = ("none", "warm", "cold", "vintage", "bw", "vhs")
+PHOTO_STYLES = ("none", "warm", "cold", "vintage", "bw", "vhs", "night_vision")
 PHOTO_TRANSITIONS = ("flash", "none", "slide", "zoom", "whip")
 
 

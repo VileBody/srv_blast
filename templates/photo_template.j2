@@ -222,6 +222,41 @@
       else if (STYLE === "cold") { setHS(-12, 6, 0); setBC(-2, 10); }
       else if (STYLE === "vintage") { setHS(8, -25, 4); setBC(6, -6); }
       else if (STYLE === "vhs") { setHS(-6, 18, 0); setBC(2, 16); }
+      else if (STYLE === "night_vision") {
+        // Port of F3 night_vision for the 4:3 comp. Every generated layer uses
+        // COMP_W/COMP_H, and Transform overscans the adjustment to 115%, so the
+        // wider frame cannot expose untreated side edges during photo motion.
+        setHS(85, 65, -10); setBC(-8, 28);
+        try {
+          var noise = fx.addProperty("ADBE Noise2");
+          noise.property("ADBE Noise2-0001").setValue(15);
+          noise.property("ADBE Noise2-0002").setValue(0);
+        } catch (_) {}
+        try {
+          var sharp = fx.addProperty("ADBE Unsharp Mask2");
+          sharp.property("ADBE Unsharp Mask2-0001").setValue(400);
+          sharp.property("ADBE Unsharp Mask2-0002").setValue(3);
+        } catch (_) {}
+        try {
+          var mosaic = fx.addProperty("ADBE Mosaic");
+          mosaic.property("ADBE Mosaic-0001").setValue(500);
+          mosaic.property("ADBE Mosaic-0002").setValue(500);
+        } catch (_) {}
+        try {
+          var blur = fx.addProperty("ADBE Gaussian Blur 2");
+          blur.property("ADBE Gaussian Blur 2-0001").setValue(5);
+        } catch (_) {}
+        try {
+          var overscan = fx.addProperty("ADBE Geometry2");
+          overscan.property("ADBE Geometry2-0011").setValue(0);
+          overscan.property("ADBE Geometry2-0004").setValue(115);
+        } catch (_) {}
+        var green = comp.layers.addSolid([0, 1, 0.0235294342], "NIGHT_VISION_GREEN", COMP_W, COMP_H, 1.0);
+        green.startTime = 0;
+        try { green.inPoint = 0; green.outPoint = totalDur; } catch (_) {}
+        try { green.blendingMode = BlendingMode.ADD; } catch (_) {}
+        try { green.property("ADBE Transform Group").property("ADBE Opacity").setValue(30); } catch (_) {}
+      }
     }
 
     // ====================================================================

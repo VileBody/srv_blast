@@ -159,7 +159,7 @@ class SendAudioS3Request(BaseModel):
     # Propagated to the build env as PHOTO_STYLE / PHOTO_TRANSITION. Ignored when
     # bg_mode != "photo".
     photo_style: Optional[
-        Literal["none", "warm", "cold", "vintage", "bw", "vhs"]
+        Literal["none", "warm", "cold", "vintage", "bw", "vhs", "night_vision"]
     ] = None
     photo_transition: Optional[
         Literal["flash", "none", "slide", "zoom", "whip"]

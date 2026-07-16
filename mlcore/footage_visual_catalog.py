@@ -141,6 +141,23 @@ RULES: Mapping[str, Dict[str, Any]] = {
     "visual:night_sky_space_dark_cold": dict(require_groups=(_terms("night sky", "stars", "starry sky", "moon", "milky way"),), exclude_terms=DIGITAL + URBAN + _terms("space animation", "planet animation"), colors=("dark", "cold"), people="none"),
 }
 
+# The photo pool is much denser than footage for a few broad visual contracts.
+# Keep the canonical footage rules untouched and require extra semantic anchors
+# only when the picker is drawing stills. These were calibrated against the
+# 2026-07-16 photo snapshot: broad pools 411/282/198 -> about 96/127/104.
+PHOTO_REQUIRE_GROUPS: Mapping[str, Tuple[Tuple[str, ...], ...]] = {
+    "visual:digital_human_silhouette_cold": (
+        _terms("digital", "glowing", "neon", "abstract", "blue lighting"),
+    ),
+    "visual:urban_solitude_dark": (
+        _terms("night city", "nighttime"),
+    ),
+    "visual:solitary_person_dark_cold": (
+        _terms("alone", "solitude", "lonely figure", "solo"),
+        _terms("indoor", "room", "interior", "urban", "city", "night"),
+    ),
+}
+
 
 def load_visual_catalog(path: Path = CATALOG_PATH) -> List[VisualContract]:
     raw = json.loads(path.read_text(encoding="utf-8"))
@@ -170,7 +187,12 @@ def _matches(tags: Sequence[str], term: str) -> bool:
     return any(needle == tag or needle in tag for tag in tags)
 
 
-def evaluate_asset(contract: VisualContract, asset: Mapping[str, Any]) -> Tuple[bool, str, Dict[str, Any]]:
+def evaluate_asset(
+    contract: VisualContract,
+    asset: Mapping[str, Any],
+    *,
+    media_type: str = "video",
+) -> Tuple[bool, str, Dict[str, Any]]:
     """Return eligibility, rejection stage and compact diagnostics."""
     file_name = str(asset.get("file_name") or asset.get("video_key") or "")
     clip_id = Path(file_name).stem
@@ -194,6 +216,17 @@ def evaluate_asset(contract: VisualContract, asset: Mapping[str, Any]) -> Tuple[
         if not hits:
             return False, "hard_missing_anchor", {**diag, "matched_groups": hard_matched}
         hard_matched.append(hits[:3])
+    if _norm(media_type) == "photo":
+        photo_matched = []
+        for group in PHOTO_REQUIRE_GROUPS.get(contract.bucket_id, ()):
+            hits = [x for x in group if _matches(tags, x)]
+            if not hits:
+                return False, "photo_missing_anchor", {
+                    **diag,
+                    "matched_groups": hard_matched + photo_matched,
+                }
+            photo_matched.append(hits[:3])
+        hard_matched.extend(photo_matched)
     if clip_id in contract.sources:
         # Review can override noisy tags/people, never global or hard semantic gates.
         return True, "reviewed_source", {**diag, "matched_groups": hard_matched + [["manual_review"]]}
