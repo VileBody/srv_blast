@@ -11,6 +11,11 @@ def test_chain_uses_callback_buttons_and_three_distinct_stages() -> None:
     )
 
     assert all(message_for_stage(stage).strip() for stage in (1, 2, 3))
+    assert "с 15 до 100 роликов" in message_for_stage(1)
+    assert "бесплатный тестовый режим" in message_for_stage(1)
+    assert "обновляем условия подписки" in message_for_stage(3)
+    assert "100 роликов в месяц за 1 990 ₽" in message_for_stage(3)
+    assert "от генерации до публикации и анализа результатов" in message_for_stage(3)
     assert keyboard_for_next(1, is_test=True).inline_keyboard[0][0].callback_data == f"{CALLBACK_PREFIX}test:2"
     assert keyboard_for_next(2, is_test=False).inline_keyboard[0][0].callback_data == f"{CALLBACK_PREFIX}prod:3"
     assert keyboard_for_next(3, is_test=False) is None
