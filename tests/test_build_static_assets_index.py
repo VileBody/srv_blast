@@ -54,3 +54,21 @@ def test_parse_ffprobe_json_rejects_missing_dims_or_duration() -> None:
     assert parse_ffprobe_json('{"streams":[{"width":720,"height":1280}],"format":{}}') is None
     assert parse_ffprobe_json('{"streams":[],"format":{"duration":"5"}}') is None
     assert parse_ffprobe_json("not json") is None
+
+def test_probe_s3_video_downloads_before_ffprobe(monkeypatch) -> None:
+    downloaded = []
+
+    def fake_download(bucket, key, dest):
+        downloaded.append((bucket, key, dest.suffix))
+        dest.write_bytes(b"video")
+        return dest
+
+    monkeypatch.setattr("src.storage.s3.download_from_s3", fake_download)
+    monkeypatch.setattr(
+        _mod,
+        "_ffprobe_url",
+        lambda path, **kwargs: '{"streams":[{"width":1080,"height":1920}],"format":{"duration":"4.25"}}',
+    )
+
+    assert _mod.probe_s3_video("assets", "root/a.mp4") == (1080, 1920, 4.25)
+    assert downloaded == [("assets", "root/a.mp4", ".mp4")]

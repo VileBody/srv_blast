@@ -2912,6 +2912,14 @@ def activate_footage_base(self, limit: int = 0, media_type: str = "video") -> Di
 
             idx = build_index(bucket=bucket, prefix=prefix, out_path=static_index_path, progress_cb=_idx_progress)
 
+        indexed_count = int(idx.get("assets_count") or 0)
+        failed_count = int(idx.get("failed") or 0)
+        if indexed_count <= 0 and failed_count > 0:
+            raise RuntimeError(
+                "activation_zero_index_guard: refusing inventory/registry replacement "
+                f"media_type={mt} failed={failed_count}"
+            )
+
         # 1b) register the pool into Postgres (durable registry that survives
         # deploys; the JSON index is only a render cache). Non-fatal: a registry
         # hiccup must not block the pipeline that already has the JSON pool.

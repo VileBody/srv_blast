@@ -24,6 +24,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -144,6 +145,28 @@ def _ffprobe_url(url: str, *, ffprobe_bin: str = "ffprobe", timeout: float = 60.
         return None
 
 
+def probe_s3_video(
+    bucket: str,
+    key: str,
+    *,
+    ffprobe_bin: str = "ffprobe",
+    timeout: float = 60.0,
+) -> Optional[Tuple[int, int, float]]:
+    """Download a private S3 video through boto, then ffprobe it locally."""
+    from src.storage.s3 import download_from_s3
+
+    suffix = Path(key).suffix.lower() or ".mp4"
+    try:
+        with tempfile.TemporaryDirectory(prefix="video_index_") as td:
+            local_path = Path(td) / f"video{suffix}"
+            download_from_s3(bucket, key, local_path)
+            return parse_ffprobe_json(
+                _ffprobe_url(str(local_path), ffprobe_bin=ffprobe_bin, timeout=timeout) or ""
+            )
+    except Exception:
+        return None
+
+
 def build_index(
     *,
     bucket: str,
@@ -158,7 +181,7 @@ def build_index(
     if not bucket:
         raise RuntimeError("S3_BUCKET_ASSET_STORAGE not set")
 
-    from src.storage.s3 import generate_presigned_url, list_s3_objects
+    from src.storage.s3 import list_s3_objects
 
     # 1) list video keys under the prefix
     keys: List[str] = []
@@ -182,12 +205,7 @@ def build_index(
         if not parsed:
             return None
         file_name, genre, tag = parsed
-        try:
-            url = generate_presigned_url(bucket, key, expires_in=3600)
-        except Exception:
-            return None
-        raw = _ffprobe_url(url, ffprobe_bin=ffprobe_bin)
-        dims = parse_ffprobe_json(raw or "")
+        dims = probe_s3_video(bucket, key, ffprobe_bin=ffprobe_bin)
         if not dims:
             return None
         w, h, dur = dims
@@ -224,6 +242,11 @@ def build_index(
                 print(f"[probe] {done}/{len(keys)} ok={len(assets)} failed={len(failed)}")
                 if progress_cb:
                     progress_cb(done, len(keys))
+
+    if keys and not assets:
+        raise RuntimeError(
+            f"Refusing to replace footage index with zero assets: listed={len(keys)} failed={len(failed)}"
+        )
 
     assets.sort(key=lambda a: (str(a["genre"]).lower(), str(a["tag"]).lower(), str(a["file_name"])))
     obj = {
