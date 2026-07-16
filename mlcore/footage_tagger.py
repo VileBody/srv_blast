@@ -1,13 +1,13 @@
-"""Server-side footage tagger: S3 clip -> 3 ffmpeg frames -> Groq Vision -> record.
+"""Server-side footage tagger: S3 clip -> 3 ffmpeg frames -> Vision -> record.
 
 Ported from the offline pin/scan.py pipeline, adapted for the server:
   - source is an S3 object (downloaded), not a local file
   - frames extracted with ffmpeg/ffprobe (already in the runtime image), no cv2
-  - Groq only (Gemini dropped); API keys come from env, never hardcoded
+  - explicit Qwen/Groq endpoint chain; API keys come from env, never hardcoded
   - output is a footage_tags record (see footage_tags_db.build_tag_record)
 
 PURE helpers (parse / vote / untagged-diff / record shaping) are separated from
-the I/O layer (ffmpeg subprocess, Groq HTTP, S3 download) so the logic is unit
+the I/O layer (ffmpeg subprocess, Vision HTTP, S3 download) so the logic is unit
 testable without network, ffmpeg, or a live DB.
 """
 from __future__ import annotations
@@ -19,6 +19,7 @@ import os
 import subprocess
 import tempfile
 from collections import Counter
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -28,26 +29,83 @@ log = logging.getLogger("footage_tagger")
 
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 
-_PROMPT = """Analyze this video frame and return ONLY valid JSON, no markdown, no extra text.
+TAGGER_VERSION = "vision-v2"
 
-{
+_COLOR_ALLOWED = frozenset({"dark", "light", "warm", "cold", "neutral"})
+_MOOD_ALLOWED = frozenset({"minor", "major"})
+_PEOPLE_ALLOWED = frozenset({"none", "girls", "guys", "couple", "crowd", "driver"})
+_MIN_CANONICAL_TAGS = 4
+_MAX_CANONICAL_TAGS = 10
+
+
+def _norm(value: Any) -> str:
+    return " ".join(str(value or "").strip().lower().split())
+
+
+@lru_cache(maxsize=1)
+def canonical_theme_tags() -> frozenset[str]:
+    """Tags that can actually affect production bucket matching."""
+    from mlcore.footage_bucket_catalog import build_buckets
+
+    tags: set[str] = set()
+    for bucket in build_buckets():
+        tags.update(_norm(x) for x in bucket.priority_tags)
+        tags.update(_norm(x) for x in bucket.exclude_tags)
+    tags.discard("")
+    if not tags:
+        raise RuntimeError("canonical footage tag vocabulary is empty")
+    return frozenset(tags)
+
+
+@lru_cache(maxsize=1)
+def _tag_aliases() -> Dict[str, str]:
+    path = Path(__file__).resolve().parents[1] / "data" / "tag_aliases.json"
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise RuntimeError(f"tag alias vocabulary is unavailable: {path}: {exc!r}") from exc
+    aliases = raw.get("aliases") if isinstance(raw, dict) else None
+    if not isinstance(aliases, dict):
+        raise RuntimeError(f"tag alias vocabulary has no aliases object: {path}")
+    allowed = canonical_theme_tags()
+    return {
+        _norm(source): _norm(target)
+        for source, target in aliases.items()
+        if _norm(source) and _norm(target) in allowed
+    }
+
+
+def build_vision_prompt(*, media_kind: str) -> str:
+    """Strict V2 prompt shared by still photos and extracted video frames."""
+    vocabulary = ", ".join(sorted(canonical_theme_tags()))
+    return f"""Analyze this {media_kind} for visual footage selection.
+Return ONLY one valid JSON object, with no markdown and no commentary:
+
+{{
   "color_tone": "dark | light | warm | cold | neutral",
-  "energy": "calm | dynamic | aggressive",
-  "scene": "street | interior | nature | garage | track | city",
-  "has_people": true or false,
   "people_type": "none | girls | guys | couple | crowd | driver",
-  "theme_tags": ["2-4 short english tags describing what is happening"],
+  "theme_tags": ["6-10 values copied exactly from ALLOWED THEME TAGS"],
   "mood": "minor | major"
-}
+}}
 
-Rules:
-- color_tone: dark=night/shadows, light=bright daylight, warm=sunset/orange/gold, cold=blue/grey/rain, neutral=mixed
-- energy: calm=slow/static, dynamic=movement/speed, aggressive=chaos/burnout/fight
-- scene: pick the single best match
-- people_type: if no people -> "none". If mixed -> pick dominant group
-- theme_tags: specific, e.g. ["night drift", "wet road", "neon lights"]
-- mood: overall emotional feel of the frame
+STRICT RULES:
+- Describe only clearly visible content. Never infer story, profession, relationship or location.
+- theme_tags must contain 6-10 DISTINCT values copied EXACTLY from ALLOWED THEME TAGS below.
+- Cover the strongest visible subject, setting, action, lighting/time and weather when available.
+- Prefer specific tags ("wet road", "night city") over generic tags ("road", "city") when visible.
+- Do not output synonyms, explanations, adjectives or any tag outside the allowed list.
+- people_type: none=no visible person; couple=exactly two people presented together; crowd=3+ people;
+  driver=person clearly inside/operating a vehicle; girls/guys=dominant visible gender group.
+- color_tone: dark=low-light/night/shadows; light=bright daylight/high-key; warm=orange/gold/sunset;
+  cold=blue/grey/rain/snow; neutral=no clear dominant treatment. Choose the dominant treatment only.
+- mood: major=bright/uplifting/peaceful/celebratory; minor=tense/lonely/dark/melancholic/aggressive.
+
+ALLOWED THEME TAGS:
+{vocabulary}
 """
+
+
+_PROMPT = build_vision_prompt(media_kind="video frame")
 
 
 # --------------------------------------------------------------------------- #
@@ -161,16 +219,91 @@ def parse_groq_json(raw: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+_COLOR_SYNONYMS = {
+    "cool": "cold",
+    "blue": "cold",
+    "grey": "neutral",
+    "gray": "neutral",
+    "mixed": "neutral",
+    "bright": "light",
+    "golden": "warm",
+    "orange": "warm",
+}
+_PEOPLE_SYNONYMS = {
+    "no people": "none",
+    "guy": "guys",
+    "man": "guys",
+    "male": "guys",
+    "girl": "girls",
+    "woman": "girls",
+    "female": "girls",
+    "group": "crowd",
+}
+
+
+def normalize_vision_result(raw: Any) -> Optional[Dict[str, Any]]:
+    """Validate one model response and map known synonyms to picker vocabulary.
+
+    A syntactically valid but semantically weak response is a failed endpoint
+    result: the explicitly configured next provider may be tried. Unknown tags
+    are never persisted.
+    """
+    if not isinstance(raw, dict):
+        return None
+
+    color = _COLOR_SYNONYMS.get(_norm(raw.get("color_tone")), _norm(raw.get("color_tone")))
+    mood = _norm(raw.get("mood"))
+    people = _PEOPLE_SYNONYMS.get(_norm(raw.get("people_type")), _norm(raw.get("people_type")))
+    if color not in _COLOR_ALLOWED or mood not in _MOOD_ALLOWED or people not in _PEOPLE_ALLOWED:
+        return None
+
+    raw_tags = raw.get("theme_tags")
+    if not isinstance(raw_tags, list):
+        return None
+    allowed = canonical_theme_tags()
+    aliases = _tag_aliases()
+    tags: List[str] = []
+    seen: set[str] = set()
+    for value in raw_tags:
+        tag = _norm(value)
+        tag = aliases.get(tag, tag)
+        if tag in allowed and tag not in seen:
+            seen.add(tag)
+            tags.append(tag)
+        if len(tags) >= _MAX_CANONICAL_TAGS:
+            break
+    if len(tags) < _MIN_CANONICAL_TAGS:
+        return None
+
+    return {
+        "color_tone": color,
+        "people_type": people,
+        "has_people": people != "none",
+        "theme_tags": tags,
+        "mood": mood,
+    }
+
+
 def merge_frame_votes(frames: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Majority vote across per-frame results; theme_tags unioned (top 8)."""
+    """Majority vote fields; rank canonical tags by cross-frame frequency."""
     def vote(field: str) -> str:
         vals = [str(f[field]) for f in frames if field in f and f[field] is not None]
         return Counter(vals).most_common(1)[0][0] if vals else ""
 
-    all_tags: List[str] = []
-    for f in frames:
-        all_tags.extend(f.get("theme_tags") or [])
-    unique_tags = list(dict.fromkeys(all_tags))[:8]
+    tag_counts: Counter[str] = Counter()
+    first_seen: Dict[str, int] = {}
+    position = 0
+    for frame in frames:
+        for value in frame.get("theme_tags") or []:
+            tag = _norm(value)
+            if not tag:
+                continue
+            tag_counts[tag] += 1
+            first_seen.setdefault(tag, position)
+            position += 1
+    unique_tags = sorted(tag_counts, key=lambda tag: (-tag_counts[tag], first_seen[tag]))[
+        :_MAX_CANONICAL_TAGS
+    ]
 
     return {
         "color_tone": vote("color_tone"),
@@ -201,7 +334,7 @@ def select_untagged_keys(s3_keys: Iterable[str], tagged_clip_ids: set) -> List[s
     return out
 
 
-def record_from_votes(*, s3_key: str, votes: Dict[str, Any], tagger: str = "groq") -> Optional[Dict[str, Any]]:
+def record_from_votes(*, s3_key: str, votes: Dict[str, Any], tagger: str = TAGGER_VERSION) -> Optional[Dict[str, Any]]:
     """Shape merged votes into a footage_tags record (clip_id-keyed, normalized)."""
     file_name = Path(str(s3_key)).name
     raw = {
@@ -312,8 +445,15 @@ def _tag_one_frame(image_b64: str, endpoints: List[Dict[str, str]], prompt: str)
         parsed = call_openai_vision(
             image_b64, base_url=ep["base_url"], api_key=ep["api_key"], model=ep["model"], prompt=prompt,
         )
-        if parsed:
-            return parsed
+        normalized = normalize_vision_result(parsed)
+        if normalized:
+            return normalized
+        if parsed is not None:
+            log.warning(
+                "vision semantic validation failed provider=%s model=%s; trying next configured endpoint",
+                ep.get("provider"),
+                ep.get("model"),
+            )
     return None
 
 
@@ -364,7 +504,7 @@ def tag_clip_from_s3(
         except Exception as e:
             raise RuntimeError(f"download_failed: {e}") from e
         votes = tag_video_file(dest, endpoints=endpoints, keys=keys, model=model)
-    rec = record_from_votes(s3_key=s3_key, votes=votes, tagger="groq")
+    rec = record_from_votes(s3_key=s3_key, votes=votes, tagger=TAGGER_VERSION)
     if not rec:
         raise RuntimeError("no_clip_id")
     return rec

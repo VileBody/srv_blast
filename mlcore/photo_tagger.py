@@ -1,4 +1,4 @@
-"""Server-side PHOTO tagger: S3 image -> Groq Vision -> footage_tags record.
+"""Server-side PHOTO tagger: S3 image -> Vision -> footage_tags record.
 
 Photo analogue of mlcore/footage_tagger.py. The only differences vs the video
 tagger are structural, not conceptual:
@@ -6,12 +6,12 @@ tagger are structural, not conceptual:
     vote across 3 frames) — one Groq Vision call per photo
   - records are keyed by photo_clip_id and stamped source='photo'
 
-The taxonomy (color_tone/energy/scene/people_type/theme_tags/mood) is identical
+The taxonomy (color_tone/people_type/theme_tags/mood) is identical
 to the video tagger so the photo pool ranks against the SAME buckets.
 
-PURE helpers (parse/shape/untagged-diff) are separated from the I/O layer (Groq
+PURE helpers (parse/shape/untagged-diff) are separated from the I/O layer (Vision
 HTTP, S3 download) so the logic is unit-testable without network or a live DB.
-The Groq plumbing (keys, model, HTTP call, json parse, b64) is reused from
+The provider plumbing (keys, model, HTTP call, json parse, b64) is reused from
 mlcore.footage_tagger to avoid duplication.
 """
 from __future__ import annotations
@@ -23,8 +23,10 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
 from mlcore.footage_tagger import (
+    TAGGER_VERSION,
     _encode_image_b64,
     _tag_one_frame,
+    build_vision_prompt,
     vision_endpoints,
 )
 from mlcore.footage_tags_db import (
@@ -35,26 +37,7 @@ from mlcore.footage_tags_db import (
 
 _IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"}
 
-_PHOTO_PROMPT = """Analyze this photo and return ONLY valid JSON, no markdown, no extra text.
-
-{
-  "color_tone": "dark | light | warm | cold | neutral",
-  "energy": "calm | dynamic | aggressive",
-  "scene": "street | interior | nature | garage | track | city",
-  "has_people": true or false,
-  "people_type": "none | girls | guys | couple | crowd | driver",
-  "theme_tags": ["2-4 short english tags describing what is in the photo"],
-  "mood": "minor | major"
-}
-
-Rules:
-- color_tone: dark=night/shadows, light=bright daylight, warm=sunset/orange/gold, cold=blue/grey/rain, neutral=mixed
-- energy: calm=slow/static, dynamic=movement/speed, aggressive=chaos/burnout/fight
-- scene: pick the single best match
-- people_type: if no people -> "none". If mixed -> pick dominant group
-- theme_tags: specific, e.g. ["night drift", "wet road", "neon lights"]
-- mood: overall emotional feel of the photo
-"""
+_PHOTO_PROMPT = build_vision_prompt(media_kind="photo")
 
 
 # --------------------------------------------------------------------------- #
@@ -78,7 +61,7 @@ def select_untagged_photo_keys(s3_keys: Iterable[str], tagged_clip_ids: set) -> 
 
 
 def record_from_photo_result(
-    *, s3_key: str, result: Dict[str, Any], tagger: str = "groq",
+    *, s3_key: str, result: Dict[str, Any], tagger: str = TAGGER_VERSION,
 ) -> Optional[Dict[str, Any]]:
     """Shape a single Groq Vision result into a footage_tags record (source=photo)."""
     file_name = Path(str(s3_key)).name
@@ -150,7 +133,7 @@ def tag_photo_from_s3(
         result = tag_photo_file(dest, endpoints=endpoints)
     if not result:
         return None
-    return record_from_photo_result(s3_key=s3_key, result=result, tagger="vision")
+    return record_from_photo_result(s3_key=s3_key, result=result, tagger=TAGGER_VERSION)
 
 
 # --------------------------------------------------------------------------- #
