@@ -7,6 +7,8 @@ from datetime import datetime, timezone
 
 from aiogram import Bot
 
+from core.telegram_api import build_aiogram_session
+
 from .broadcast_sender import build_s1_manager_alert, send_bot_message
 from .config import Settings
 
@@ -40,7 +42,13 @@ async def _run() -> None:
         + build_s1_manager_alert(candidate, settings.admin_panel_public_url)
     )
 
-    bot = Bot(token=settings.tg_bot_token)
+    bot = Bot(
+        token=settings.tg_bot_token,
+        session=build_aiogram_session(
+            api_env=settings.tg_bot_api_env,
+            proxy_url=settings.tg_file_proxy_url,
+        ),
+    )
     try:
         await send_bot_message(
             bot,
