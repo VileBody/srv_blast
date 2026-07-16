@@ -285,6 +285,7 @@ class Settings:
     credits_db_path: str = _env("CREDITS_DB_PATH", "/app/work/credits.db")
     admin_panel_port: int = _int_env("ADMIN_PANEL_PORT", 8080)
     admin_panel_password: str = _env("ADMIN_PANEL_PASSWORD", "changeme")
+    admin_panel_public_url: str = _env("ADMIN_PANEL_PUBLIC_URL", "")
     # Redis namespace shared with tg_bot_botapi for the season phase tumbler.
     season_redis_prefix: str = _env("SEASON_REDIS_PREFIX", "blast:season")
     admin_panel_enable_donor_restart: bool = _bool_env("ADMIN_PANEL_ENABLE_DONOR_RESTART", False)

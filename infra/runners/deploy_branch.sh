@@ -210,6 +210,24 @@ bootstrap_infra_orchestrator_url() {
   echo "[deploy] set ORCHESTRATOR_PUBLIC_URL for infra stack"
 }
 
+bootstrap_infra_admin_panel_url() {
+  local value
+  value="${INFRA_ADMIN_PANEL_PUBLIC_URL:-}"
+  if [[ -z "$value" ]]; then
+    echo "[deploy] INFRA_ADMIN_PANEL_PUBLIC_URL is required for infra-apps/infra-ops"
+    return 1
+  fi
+  case "$value" in
+    http://*|https://*) ;;
+    *)
+      echo "[deploy] invalid INFRA_ADMIN_PANEL_PUBLIC_URL: expected an absolute http(s) URL"
+      return 1
+      ;;
+  esac
+  set_env_file_value "$REPO_DIR/.env" ADMIN_PANEL_PUBLIC_URL "$value"
+  echo "[deploy] set ADMIN_PANEL_PUBLIC_URL for S1 manager alerts"
+}
+
 require_infra_ops_public_admin_env() {
   local orchestrator_url
   orchestrator_url="$(env_file_value ORCHESTRATOR_PUBLIC_URL)"
@@ -813,6 +831,9 @@ show_status() {
 
 case "$DEPLOY_STACK" in
   all)
+    if [[ -n "${INFRA_ADMIN_PANEL_PUBLIC_URL:-}" ]]; then
+      bootstrap_infra_admin_panel_url
+    fi
     deploy_root_services
     ;;
   prod-path)
@@ -832,6 +853,7 @@ case "$DEPLOY_STACK" in
     ;;
   infra-apps)
     bootstrap_infra_orchestrator_url
+    bootstrap_infra_admin_panel_url
     require_infra_ops_public_admin_env
     bootstrap_infra_public_bot_polling_env
     mapfile -t services < <(infra_app_services)
@@ -842,6 +864,7 @@ case "$DEPLOY_STACK" in
     ;;
   infra-ops)
     bootstrap_infra_orchestrator_url
+    bootstrap_infra_admin_panel_url
     require_infra_ops_public_admin_env
     bootstrap_infra_public_bot_polling_env
     mapfile -t services < <(infra_app_services)

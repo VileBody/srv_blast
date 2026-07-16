@@ -518,6 +518,27 @@ class CreditsDB:
         )
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_tier_outreach_status ON tier_outreach(status)")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_tier_outreach_tier ON tier_outreach(tier)")
+        await conn.execute(
+            "ALTER TABLE tier_outreach ADD COLUMN IF NOT EXISTS first_seen_at "
+            "TIMESTAMP NOT NULL DEFAULT NOW()"
+        )
+        await conn.execute("ALTER TABLE tier_outreach ADD COLUMN IF NOT EXISTS notified_at TIMESTAMP")
+        await conn.execute(
+            "ALTER TABLE tier_outreach ADD COLUMN IF NOT EXISTS notify_attempts "
+            "INTEGER NOT NULL DEFAULT 0"
+        )
+        await conn.execute(
+            "ALTER TABLE tier_outreach ADD COLUMN IF NOT EXISTS notify_last_error "
+            "TEXT NOT NULL DEFAULT ''"
+        )
+        await conn.execute(
+            "ALTER TABLE tier_outreach ADD COLUMN IF NOT EXISTS baseline "
+            "BOOLEAN NOT NULL DEFAULT FALSE"
+        )
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_tier_outreach_s1_notify "
+            "ON tier_outreach(tier, baseline, notified_at, notify_attempts)"
+        )
 
         # Unique-track tracking — one row per (tg_id, audio_hash) ever uploaded.
         await conn.execute(
@@ -724,6 +745,29 @@ class CreditsDB:
             FROM user_signals us
             """
         )
+
+        # Establish the notification baseline exactly once, after user_tiers is
+        # available.  The advisory transaction lock makes concurrent rolling
+        # deploys deterministic: every S1 member present at feature enablement
+        # is visible in manager outreach, but none is Telegram-notified.
+        async with conn.transaction():
+            await conn.execute(
+                "SELECT pg_advisory_xact_lock(hashtext('s1_manager_alert_baseline_v1'))"
+            )
+            baseline_done = await conn.fetchval(
+                "SELECT 1 FROM app_migrations WHERE name = 's1_manager_alert_baseline_v1'"
+            )
+            if baseline_done is None:
+                await conn.execute(
+                    "INSERT INTO tier_outreach (tg_id, tier, status, first_seen_at, baseline) "
+                    "SELECT tg_id, 'S1', 'todo', NOW(), TRUE FROM user_tiers WHERE tier = 'S1' "
+                    "ON CONFLICT (tg_id, tier) DO UPDATE SET baseline = TRUE"
+                )
+                await conn.execute(
+                    "INSERT INTO app_migrations (name) VALUES ('s1_manager_alert_baseline_v1') "
+                    "ON CONFLICT DO NOTHING"
+                )
+                log.info("credits_db: initialized S1 manager-alert baseline")
 
     async def close(self) -> None:
         if self._pool:
@@ -4387,7 +4431,8 @@ class CreditsDB:
         pool = self._pool_or_fail()
         async with pool.acquire() as conn:
             rows = await conn.fetch(
-                "SELECT tg_id, status, assigned_to, note, contacted_at, updated_at "
+                "SELECT tg_id, status, assigned_to, note, contacted_at, updated_at, "
+                "notified_at, notify_attempts, notify_last_error, baseline "
                 "FROM tier_outreach WHERE tier = $1 AND tg_id = ANY($2::BIGINT[])",
                 str(tier), tg_ids,
             )
@@ -4398,9 +4443,91 @@ class CreditsDB:
                 "note": str(r["note"] or ""),
                 "contacted_at": _fmt_ts(r["contacted_at"]),
                 "updated_at": _fmt_ts(r["updated_at"]),
+                "notified_at": _fmt_ts(r["notified_at"]),
+                "notify_attempts": int(r["notify_attempts"] or 0),
+                "notify_last_error": str(r["notify_last_error"] or ""),
+                "baseline": bool(r["baseline"]),
             }
             for r in rows
         }
+
+    @asynccontextmanager
+    async def s1_manager_alert_lock(self) -> AsyncIterator[bool]:
+        """Single cross-process lock for S1 discovery and manager delivery."""
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            got = bool(await conn.fetchval(
+                "SELECT pg_try_advisory_lock($1, $2)", 2, 1,
+            ))
+            try:
+                yield got
+            finally:
+                if got:
+                    try:
+                        await conn.execute("SELECT pg_advisory_unlock($1, $2)", 2, 1)
+                    except Exception:
+                        pass
+
+    async def discover_new_s1_outreach(self) -> int:
+        """Persist newly observed S1 members; never considers any other tier."""
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            tag = await conn.execute(
+                "INSERT INTO tier_outreach (tg_id, tier, status, first_seen_at, baseline) "
+                "SELECT tg_id, 'S1', 'todo', NOW(), FALSE "
+                "FROM user_tiers WHERE tier = 'S1' "
+                "ON CONFLICT (tg_id, tier) DO NOTHING"
+            )
+        return _rowcount_from_tag(tag)
+
+    async def pending_s1_manager_alert_ids(self, *, max_attempts: int, limit: int = 100) -> List[int]:
+        """Return persisted, non-baseline S1 alerts eligible for a send attempt."""
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT o.tg_id FROM tier_outreach o "
+                "JOIN user_tiers ut ON ut.tg_id = o.tg_id AND ut.tier = 'S1' "
+                "WHERE o.tier = 'S1' AND o.status = 'todo' "
+                "AND o.contacted_at IS NULL AND o.notified_at IS NULL "
+                "AND NOT o.baseline AND o.notify_attempts < $1 "
+                "AND NOT ut.manager_contacted "
+                "ORDER BY o.first_seen_at, o.tg_id LIMIT $2",
+                int(max_attempts), int(limit),
+            )
+        return [int(r["tg_id"]) for r in rows]
+
+    async def get_s1_manager_alert_candidate(self, tg_id: int) -> Optional[Dict[str, Any]]:
+        """Last-mile S1/payment/block/contact re-check plus message data."""
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT ut.*, o.first_seen_at, "
+                "(SELECT MAX(a.created_at) FROM activity_log a "
+                " WHERE a.tg_id = ut.tg_id AND a.event = 'survey_opened') AS survey_opened_at "
+                "FROM tier_outreach o "
+                "JOIN user_tiers ut ON ut.tg_id = o.tg_id "
+                "WHERE o.tg_id = $1 AND o.tier = 'S1' AND ut.tier = 'S1' "
+                "AND o.status = 'todo' AND o.contacted_at IS NULL "
+                "AND o.notified_at IS NULL AND NOT o.baseline "
+                "AND NOT ut.has_purchase AND NOT ut.bot_blocked AND NOT ut.manager_contacted",
+                int(tg_id),
+            )
+        return dict(row) if row else None
+
+    async def record_s1_manager_alert_result(
+        self, tg_id: int, *, sent: bool, error: str = "",
+    ) -> None:
+        """Persist every outer attempt and seal successful delivery."""
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE tier_outreach SET notify_attempts = notify_attempts + 1, "
+                "notify_last_error = $2, "
+                "notified_at = CASE WHEN $3 THEN NOW() ELSE notified_at END, "
+                "updated_at = NOW() "
+                "WHERE tg_id = $1 AND tier = 'S1' AND notified_at IS NULL",
+                int(tg_id), str(error or "")[:500], bool(sent),
+            )
 
     async def outreach_summary(self, tier: str) -> Dict[str, int]:
         pool = self._pool_or_fail()

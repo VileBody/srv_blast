@@ -49,6 +49,7 @@ jobs:
           GITHUB_TOKEN_FALLBACK: ${{ github.token }}
           DEPLOY_ORCHESTRATOR_HA: ${{ vars.DEPLOY_ORCHESTRATOR_HA }}
           DEPLOY_ORCHESTRATOR_HA_COMPOSE_FILE: ${{ vars.DEPLOY_ORCHESTRATOR_HA_COMPOSE_FILE }}
+          INFRA_ADMIN_PANEL_PUBLIC_URL: ${{ vars.INFRA_ADMIN_PANEL_PUBLIC_URL }}
         run: |
           set -euo pipefail
           AUTH_TOKEN="${GIT_AUTH_TOKEN:-${GITHUB_TOKEN_FALLBACK:-}}"

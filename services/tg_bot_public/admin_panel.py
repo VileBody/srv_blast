@@ -5833,6 +5833,7 @@ def build_app(
             rev_total = int(r.get("revenue_bot", 0) or 0) + int(r.get("revenue_manual", 0) or 0)
 
             outreach_cell = ""
+            notify_cells = ""
             actions = f'<a href="{tg_link}" target="_blank" rel="noopener">→ TG</a>'
             if is_manager_tier:
                 o = outreach_map.get(int(r["tg_id"]))
@@ -5848,6 +5849,18 @@ def build_app(
                     outreach_cell = f"{status_badge}<br><small style='color:#666'>{actor}</small>"
                 else:
                     outreach_cell = '<span class="badge badge-stage">todo</span>'
+                if tier_code == "S1":
+                    notified_at = (o or {}).get("notified_at") or ""
+                    notify_error = (o or {}).get("notify_last_error") or ""
+                    notified_badge = (
+                        '<span class="badge badge-ok">да</span>' if notified_at
+                        else '<span class="badge badge-zero">нет</span>'
+                    )
+                    notify_cells = (
+                        f"<td>{notified_badge}</td>"
+                        f"<td>{html_mod.escape(notified_at or '—')}</td>"
+                        f"<td><small>{html_mod.escape(notify_error or '—')}</small></td>"
+                    )
                 actions = (
                     f'<form method="post" action="/admin/tiers/outreach" style="display:inline">'
                     f'<input type="hidden" name="tg_id" value="{r["tg_id"]}">'
@@ -5871,6 +5884,7 @@ def build_app(
                 f"<td>{html_mod.escape(r.get('cohort') or '(direct)')}</td>"
                 f"<td>{html_mod.escape(_fmt_ts(r.get('last_active_at')) or '—')}</td>"
                 + (f"<td>{outreach_cell}</td>" if is_manager_tier else "")
+                + notify_cells
                 + f"<td>{actions}</td>"
                 f"</tr>"
             )
@@ -5879,9 +5893,10 @@ def build_app(
             "<tr><th>User</th><th>gens</th><th>rating</th><th>выручка</th>"
             "<th>cohort</th><th>last_active</th>"
             + ("<th>контакт</th>" if is_manager_tier else "")
+            + ("<th>менеджер уведомлён</th><th>время уведомления</th><th>ошибка уведомления</th>" if tier_code == "S1" else "")
             + "<th></th></tr>"
         )
-        users_colspan = 8 if is_manager_tier else 7
+        users_colspan = (11 if tier_code == "S1" else 8) if is_manager_tier else 7
         users_section = (
             '<div class="card">'
             f'<h3>Пользователи в тире <small style="color:#666">— {users_count} чел'

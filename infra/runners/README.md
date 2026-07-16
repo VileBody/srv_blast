@@ -70,6 +70,10 @@ Workflow использует эту переменную, чтобы выпол
 Для CI/CD можно задать GitHub Repository variable
 `INFRA_ORCHESTRATOR_PUBLIC_URL=https://blast808.com/orchestrator`; infra-deploy
 запишет его в серверный `.env` как `ORCHESTRATOR_PUBLIC_URL`.
+
+Для ссылок из S1-уведомлений задай GitHub repository variable
+`INFRA_ADMIN_PANEL_PUBLIC_URL=https://blast808.com/admin`; infra-deploy явно
+запишет его в серверный `.env` как `ADMIN_PANEL_PUBLIC_URL`.
 `infra-apps`/`infra-ops` принудительно выставляет `TG_DELIVERY_MODE=polling`
 для `tg-bot-public` на `blast_ops`. Это фиксирует Telegram delivery в CI/CD:
 после деплоя public bot удаляет webhook перед стартом long polling.

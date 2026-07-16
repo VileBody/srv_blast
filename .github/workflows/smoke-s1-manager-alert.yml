@@ -1,0 +1,47 @@
+name: Smoke S1 Manager Alert
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_send:
+        description: "Send one clearly marked test message to MANAGER_CHAT_ID"
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: smoke-s1-manager-alert
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    name: Send S1 manager-alert smoke
+    runs-on: [self-hosted, blast-deploy-infra]
+    timeout-minutes: 5
+    steps:
+      - name: Require explicit confirmation
+        env:
+          CONFIRM_SEND: ${{ inputs.confirm_send }}
+        run: |
+          set -euo pipefail
+          if [ "$CONFIRM_SEND" != "true" ]; then
+            echo "confirm_send must be enabled"
+            exit 1
+          fi
+
+      - name: Validate deployed public bot
+        run: |
+          set -euo pipefail
+          state="$(docker inspect tg-bot-public --format '{{.State.Running}}' 2>/dev/null || true)"
+          if [ "$state" != "true" ]; then
+            echo "tg-bot-public is not running"
+            exit 1
+          fi
+
+      - name: Send marked Telegram smoke message
+        run: |
+          set -euo pipefail
+          docker exec tg-bot-public python -m services.tg_bot_public.s1_manager_alert_smoke
