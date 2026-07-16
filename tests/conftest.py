@@ -228,6 +228,7 @@ def _install_aiogram_stub() -> None:
 
     aiogram_mod.Bot = _DummyBot
     aiogram_mod.Dispatcher = _DummyDispatcher
+    aiogram_mod.F = _Dummy()
     aiogram_mod.Router = _DummyRouter
     aiogram_exceptions_mod.TelegramBadRequest = TelegramBadRequest
     aiogram_exceptions_mod.TelegramForbiddenError = TelegramForbiddenError

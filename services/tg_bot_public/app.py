@@ -79,6 +79,7 @@ from .state_store import (
     STAGE_WAIT_SUBSCRIPTION,
     STAGE_WAIT_TIMING_CHOICE,
     STAGE_WAIT_TIMING_INPUT,
+    STAGE_WAIT_RENDER_ENGINE,
     STAGE_WAIT_SUBTITLES_MODE,
     STAGE_WAIT_VERSIONS,
     # Post-generation stages
@@ -480,6 +481,8 @@ BTN_SUB_MODE_4TH = "Tape"
 # surfaced in the public picker (validated in the test bot first).
 BTN_SUB_MODE_TRENDY = "Trendy"
 BTN_SUB_MODE_BRAT = "Brat"
+BTN_RENDER_AE = "AE"
+BTN_RENDER_RUST = "Rust"
 
 # Customization color palette (mirror of tg_bot_botapi). Data layer mirrored for
 # parity; the picker UX lands in public when the hooks/customization flow does.
@@ -742,6 +745,14 @@ _SUBTITLES_MODE_BY_BUTTON = {
     BTN_SUB_MODE_BRAT: SUBTITLES_MODE_BRAT_5TH,
 }
 _BUTTON_BY_SUBTITLES_MODE = {v: k for k, v in _SUBTITLES_MODE_BY_BUTTON.items()}
+_RENDER_ENGINE_BY_BUTTON = {
+    BTN_RENDER_AE: "ae",
+    BTN_RENDER_RUST: "rust-gen",
+}
+_RENDER_ENGINE_LABEL_BY_ID = {
+    "ae": "AE",
+    "rust-gen": "Rust",
+}
 _SUBTITLES_EXAMPLE_VIDEO = {
     BTN_SUB_MODE_IMPULSE: "BAACAgIAAx0CdKlg9AADQ2mnL7EFHHNkgsKZQHLNHLQhU35jAALTkQAC8jc5SbjhU7JLg4UAAToE",
     BTN_SUB_MODE_SCENES: "BAACAgIAAx0CdKlg9AADQmmnL7EawTRkBbRPX0OaE1oBsy_4AALRkQAC8jc5Sbt4v4pv5zj1OgQ",
@@ -771,6 +782,8 @@ _CONTROL_BUTTONS = {
     BTN_SUB_MODE_4TH,
     BTN_SUB_MODE_TRENDY,
     BTN_SUB_MODE_BRAT,
+    BTN_RENDER_AE,
+    BTN_RENDER_RUST,
     BTN_COLOR_DEFAULT,
     *COLOR_PALETTE_BUTTONS,
     BTN_LAUNCH,
@@ -3198,6 +3211,10 @@ class BlastBotApp:
 
             if st.stage == STAGE_WAIT_CONFIRM_MODE:
                 await self._handle_wait_confirm_mode(message, st)
+                return
+
+            if st.stage == STAGE_WAIT_RENDER_ENGINE:
+                await self._handle_wait_render_engine(message, st)
                 return
 
             # Customization color + hook flow (behind HOOK_FLOW_ENABLED).
@@ -5676,6 +5693,23 @@ class BlastBotApp:
                 return "*Вайбы:* " + self._esc_md(", ".join(labels))
         return f"*Исходники:* «{self._esc_md(self._source_label(st))}»"
 
+    def _render_engine_for_state(self, st: ChatState) -> str:
+        raw = str(getattr(st, "render_engine", "") or "").strip().lower()
+        if raw in _RENDER_ENGINE_LABEL_BY_ID:
+            return raw
+        return "rust-gen" if self.settings.rust_gen_bot_default_enabled else "ae"
+
+    def _render_engine_summary_line(self, st: ChatState) -> str:
+        engine = self._render_engine_for_state(st)
+        label = _RENDER_ENGINE_LABEL_BY_ID.get(engine, engine)
+        return f"*Рендер:* «{self._esc_md(label)}»"
+
+    def _render_engine_selector_enabled(self) -> bool:
+        return bool(
+            getattr(self.settings, "rust_gen_enabled", False)
+            or getattr(self.settings, "rust_gen_bot_default_enabled", False)
+        )
+
     def _final_confirm_text(self, st: ChatState, *, versions: Optional[int] = None) -> str:
         mode_display = self._esc_md(_BUTTON_BY_SUBTITLES_MODE.get(st.subtitles_mode, st.subtitles_mode))
         fragment_display = self._esc_md(st.target_fragment or "весь трек")
@@ -5692,6 +5726,7 @@ class BlastBotApp:
         lines.append("")
         lines.append(self._sources_summary_line(st))
         lines.append(f"*Режим субтитров:* «{mode_display}»")
+        lines.append(self._render_engine_summary_line(st))
         # Hook/color echo only when the hook flow is active.
         if HOOK_FLOW_ENABLED:
             lines.append(self._hook_summary_line(st))
@@ -5778,6 +5813,25 @@ class BlastBotApp:
         if HOOK_FLOW_ENABLED and not st.colors_done:
             await self._ask_subtitle_color(message, st)
             return
+        if self._render_engine_selector_enabled():
+            await self._ask_render_engine(message, st)
+            return
+        if not str(getattr(st, "render_engine", "") or "").strip():
+            st.render_engine = "ae"
+            await self.store.set(st)
+        await self._proceed_after_render_engine(message, st)
+
+    async def _ask_render_engine(self, message: Message, st: ChatState) -> None:
+        st.stage = STAGE_WAIT_RENDER_ENGINE
+        await self.store.set(st)
+        await message.answer(
+            "Выбери движок рендера.\n\n"
+            "AE — стабильный текущий рендер.\n"
+            "Rust — новый быстрый рендер, пока в canary.",
+            reply_markup=_kb([BTN_RENDER_AE], [BTN_RENDER_RUST], [BTN_CONFIRM_BACK]),
+        )
+
+    async def _proceed_after_render_engine(self, message: Message, st: ChatState) -> None:
         paid = await self.credits_db.has_paid(st.chat_id)
         if paid:
             st.stage = STAGE_WAIT_VERSIONS
@@ -5795,6 +5849,22 @@ class BlastBotApp:
             parse_mode="Markdown",
             reply_markup=_kb([BTN_LAUNCH, BTN_RESTART]),
         )
+
+    async def _handle_wait_render_engine(self, message: Message, st: ChatState) -> None:
+        text = str(message.text or "").strip()
+        if text == BTN_CONFIRM_BACK:
+            await self._ask_subtitles_mode(message, st)
+            return
+        engine = _RENDER_ENGINE_BY_BUTTON.get(text)
+        if engine is None:
+            await message.answer(
+                "Выбери движок кнопкой: «AE» или «Rust».",
+                reply_markup=_kb([BTN_RENDER_AE], [BTN_RENDER_RUST], [BTN_CONFIRM_BACK]),
+            )
+            return
+        st.render_engine = engine
+        await self.store.set(st)
+        await self._proceed_after_render_engine(message, st)
 
     async def _handle_wait_confirm_mode(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()
@@ -7357,11 +7427,7 @@ class BlastBotApp:
             # Strobe bg auto-inverts WHITE text (Difference) — ignore custom color.
             subtitle_color_hex=(None if st.bg_mode == "solid_strobe" else (str(st.subtitle_color_hex) or None)),
             accent_color_hex=(None if st.bg_mode == "solid_strobe" else (str(st.accent_color_hex) or None)),
-            render_engine=(
-                "rust-gen"
-                if str(getattr(st, "render_engine", "") or "").strip().lower() == "rust-gen"
-                else ("rust-gen" if self.settings.rust_gen_bot_default_enabled else "ae")
-            ),
+            render_engine=self._render_engine_for_state(st),
         )
         job_id = str(enqueue.get("job_id") or "").strip()
         if not job_id:
@@ -7554,6 +7620,7 @@ class BlastBotApp:
         st.bg_mode = "footage"
         st.bg_solid_color = ""
         st.subtitles_mode = SUBTITLES_MODE_IMPULSE_2ND
+        st.render_engine = ""
 
     async def _send_post_generation_message_best_effort(
         self,

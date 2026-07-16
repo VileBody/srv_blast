@@ -33,6 +33,7 @@ STAGE_WAIT_FOOTAGE_ARTIST = "WAIT_FOOTAGE_ARTIST"
 STAGE_WAIT_CONFIRM_TEXT = "WAIT_CONFIRM_TEXT"
 STAGE_WAIT_SUBTITLES_MODE = "WAIT_SUBTITLES_MODE"
 STAGE_WAIT_CONFIRM_MODE = "WAIT_CONFIRM_MODE"
+STAGE_WAIT_RENDER_ENGINE = "WAIT_RENDER_ENGINE"
 # Hook feature (Phase A-UX) — parity-mirrored from tg_bot_botapi. The actual
 # handlers are not wired into the public user flow; HOOK_FLOW_ENABLED in
 # app.py gates entry. This commit just lands the schema so the CI parity
@@ -177,8 +178,8 @@ class ChatState(BaseModel):
     user_clip_start_sec: float = 0.0
     user_clip_end_sec: float = 0.0
     subtitles_mode: str = SUBTITLES_MODE_IMPULSE_2ND
-    # Empty inherits the bot deployment default. The hidden /rustgen command
-    # pins a selected canary chat to the native worker without changing its UX.
+    # Empty inherits the bot deployment default until the per-job render picker
+    # or hidden /rustgen command pins an explicit engine for the current run.
     render_engine: str = ""
     # Hook feature mirror (Phase A-UX). Defaults exactly match tg_bot_botapi
     # so a chat state copied across bots round-trips cleanly. Entry into the
@@ -583,6 +584,7 @@ class RedisChatStateStore:
         existing.user_clip_start_sec = 0.0
         existing.user_clip_end_sec = 0.0
         existing.subtitles_mode = ""
+        existing.render_engine = ""
         existing.versions_count = 1
         existing.referral_tag = ""
         existing.referral_wait_started_at = 0.0
