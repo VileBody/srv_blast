@@ -193,6 +193,7 @@ class Settings:
     # Opt-in default for the separate native-renderer bot flow. The
     # orchestrator remains the source of truth and can still refuse it via its
     # own canary gate.
+    rust_gen_enabled: bool = _bool_env("RUST_GEN_ENABLED", False)
     rust_gen_bot_default_enabled: bool = _bool_env("RUST_GEN_BOT_DEFAULT_ENABLED", False)
     rust_gen_allowed_chat_ids: frozenset = _int_set_env("RUST_GEN_ALLOWED_CHAT_IDS")
 
