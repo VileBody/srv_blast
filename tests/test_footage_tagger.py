@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from mlcore.footage_tagger import (
+    TAGGER_VERSION,
     merge_frame_votes,
     parse_groq_json,
     record_from_votes,
@@ -26,7 +27,7 @@ def test_merge_frame_votes_majority_and_tag_union() -> None:
     assert merged["mood"] == "minor"
     assert merged["has_people"] is True  # 2 of 3
     assert merged["people_type"] == "guys"
-    assert merged["theme_tags"] == ["night", "rain", "city", "fog"]  # unioned, order-preserved
+    assert merged["theme_tags"] == ["rain", "night", "city", "fog"]  # repeated tags rank first
 
 
 def test_select_untagged_keys_dedups_and_skips() -> None:
@@ -49,7 +50,7 @@ def test_record_from_votes_shapes_and_keys() -> None:
     assert rec is not None
     assert rec["clip_id"] == "1001276929637034910"
     assert rec["theme_tags"] == ["fog", "night"]  # normalized + deduped
-    assert rec["tagger"] == "groq"
+    assert rec["tagger"] == TAGGER_VERSION
 
 
 def test_run_tagging_batch_with_injected_io() -> None:

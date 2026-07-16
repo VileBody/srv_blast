@@ -3,6 +3,15 @@ from __future__ import annotations
 import mlcore.footage_tagger as ft
 
 
+def _valid_result():
+    return {
+        "color_tone": "cold",
+        "people_type": "none",
+        "theme_tags": ["night", "night city", "rain", "wet road"],
+        "mood": "minor",
+    }
+
+
 def test_vision_endpoints_order_and_key_gating(monkeypatch) -> None:
     monkeypatch.setenv("TAG_PROVIDER_ORDER", "qwen,groq")
     monkeypatch.setenv("DASHSCOPE_API_KEYS", "dk1,dk2")
@@ -36,10 +45,10 @@ def test_tag_one_frame_qwen_first_groq_only_on_failure(monkeypatch) -> None:
     # qwen succeeds -> groq must NOT be called (groq "rests")
     def qwen_ok(image_b64, *, base_url, api_key, model, prompt="", timeout=30.0):
         calls.append(base_url)
-        return {"mood": "minor"} if base_url == "b1" else None
+        return _valid_result() if base_url == "b1" else None
 
     monkeypatch.setattr(ft, "call_openai_vision", qwen_ok)
-    assert ft._tag_one_frame("img", endpoints, prompt="p") == {"mood": "minor"}
+    assert ft._tag_one_frame("img", endpoints, prompt="p") == ft.normalize_vision_result(_valid_result())
     assert calls == ["b1"]  # qwen only; groq not touched
 
     # qwen fails -> falls over to groq, in order
@@ -47,10 +56,10 @@ def test_tag_one_frame_qwen_first_groq_only_on_failure(monkeypatch) -> None:
 
     def qwen_429(image_b64, *, base_url, api_key, model, prompt="", timeout=30.0):
         calls.append(base_url)
-        return {"mood": "minor"} if base_url == "b2" else None
+        return _valid_result() if base_url == "b2" else None
 
     monkeypatch.setattr(ft, "call_openai_vision", qwen_429)
-    assert ft._tag_one_frame("img", endpoints, prompt="p") == {"mood": "minor"}
+    assert ft._tag_one_frame("img", endpoints, prompt="p") == ft.normalize_vision_result(_valid_result())
     assert calls == ["b1", "b2"]  # qwen tried first, then groq
 
 
@@ -58,3 +67,47 @@ def test_tag_one_frame_all_fail_returns_none(monkeypatch) -> None:
     endpoints = [{"provider": "qwen", "base_url": "b1", "api_key": "k", "model": "m"}]
     monkeypatch.setattr(ft, "call_openai_vision", lambda *a, **k: None)
     assert ft._tag_one_frame("img", endpoints, prompt="p") is None
+
+
+def test_normalize_vision_result_maps_aliases_and_drops_unknown_tags() -> None:
+    out = ft.normalize_vision_result({
+        "color_tone": "cool",
+        "people_type": "man",
+        "theme_tags": ["Night", "rainy", "wet pavement", "neon glow", "invented tag"],
+        "mood": "MINOR",
+    })
+
+    assert out == {
+        "color_tone": "cold",
+        "people_type": "guys",
+        "has_people": True,
+        "theme_tags": ["night", "rain", "wet road", "neon lights"],
+        "mood": "minor",
+    }
+
+
+def test_semantically_invalid_qwen_result_uses_next_configured_endpoint(monkeypatch) -> None:
+    endpoints = [
+        {"provider": "qwen", "base_url": "b1", "api_key": "k1", "model": "qwen-vl-max"},
+        {"provider": "groq", "base_url": "b2", "api_key": "k2", "model": "llama"},
+    ]
+    calls = []
+
+    def response(image_b64, *, base_url, api_key, model, prompt="", timeout=30.0):
+        calls.append(base_url)
+        if base_url == "b1":
+            return {"color_tone": "cold", "people_type": "none", "theme_tags": ["night"], "mood": "minor"}
+        return _valid_result()
+
+    monkeypatch.setattr(ft, "call_openai_vision", response)
+    assert ft._tag_one_frame("img", endpoints, prompt="p") == ft.normalize_vision_result(_valid_result())
+    assert calls == ["b1", "b2"]
+
+
+def test_v2_prompt_is_bound_to_production_vocabulary() -> None:
+    prompt = ft.build_vision_prompt(media_kind="photo")
+
+    assert "6-10 DISTINCT values" in prompt
+    assert "ALLOWED THEME TAGS" in prompt
+    assert "wet road" in prompt
+    assert "Never infer" in prompt
