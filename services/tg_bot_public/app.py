@@ -22,6 +22,7 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandStart
 from aiogram.types import BotCommand, CallbackQuery, ChatMemberUpdated, FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, Message, ReplyKeyboardMarkup, ReplyKeyboardRemove, Update
 from core.telegram_api import build_aiogram_session, make_telegram_api
+from core.telegram_polling import run_polling_with_retries
 from core.clip_window import CLIP_WINDOW_RANGE_S_LABEL
 from core.filesystem_hygiene import cleanup_jobs_artifacts, cleanup_tmp_chat_dirs
 from core.queue_estimate import format_queue_estimate_lines, pick_queue_estimate_job_id
@@ -9361,7 +9362,7 @@ class BlastBotApp:
                     log.warning("telegram_webhook_runner_cleanup_failed err=%s", e)
             await self.dp.emit_shutdown(bot=bot)
 
-    async def run(self) -> None:
+    def _build_polling_bot(self) -> Bot:
         tg_proxy = str(self.settings.tg_file_proxy_url or "").strip()
         if tg_proxy:
             bot = Bot(
@@ -9374,16 +9375,28 @@ class BlastBotApp:
                 token=self.settings.tg_bot_token,
                 session=build_aiogram_session(api_env=self.settings.tg_bot_api_env),
             )
+        return bot
+
+    async def _delete_webhook_before_polling(self, bot: Bot) -> None:
+        try:
+            await bot.delete_webhook(drop_pending_updates=False)
+            log.info("telegram webhook deleted before polling startup")
+        except Exception as e:
+            log.warning("telegram_delete_webhook_before_polling_failed err=%s", e)
+
+    async def run(self) -> None:
         delivery_mode = str(self.settings.tg_delivery_mode or "").strip().lower()
         if delivery_mode == "polling":
-            try:
-                await bot.delete_webhook(drop_pending_updates=False)
-                log.info("telegram webhook deleted before polling startup")
-            except Exception as e:
-                log.warning("telegram_delete_webhook_before_polling_failed err=%s", e)
-            await self.dp.start_polling(bot)
+            await run_polling_with_retries(
+                self.dp,
+                self._build_polling_bot,
+                log=log,
+                label="tg-bot-public",
+                before_polling=self._delete_webhook_before_polling,
+            )
             return
         if delivery_mode == "webhook":
+            bot = self._build_polling_bot()
             await self._run_webhook(bot=bot)
             return
         raise RuntimeError(f"Unsupported TG_DELIVERY_MODE={delivery_mode!r}")

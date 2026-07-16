@@ -26,6 +26,7 @@ from aiogram.types import (
     ReplyKeyboardRemove,
 )
 from core.telegram_api import build_aiogram_session, make_telegram_api
+from core.telegram_polling import run_polling_with_retries
 from core.clip_window import CLIP_WINDOW_RANGE_S_LABEL
 from core.filesystem_hygiene import cleanup_jobs_artifacts, cleanup_tmp_chat_dirs
 from core.queue_estimate import format_queue_estimate_lines, pick_queue_estimate_job_id
@@ -6202,7 +6203,7 @@ class BlastBotApp:
             raise RuntimeError("bot instance is not ready")
         return self._bot
 
-    async def run(self) -> None:
+    def _build_polling_bot(self) -> Bot:
         tg_proxy = str(self.settings.tg_file_proxy_url or "").strip()
         if tg_proxy:
             bot = Bot(
@@ -6215,7 +6216,15 @@ class BlastBotApp:
                 token=self.settings.tg_bot_token,
                 session=build_aiogram_session(api_env=self.settings.tg_bot_api_env),
             )
-        await self.dp.start_polling(bot)
+        return bot
+
+    async def run(self) -> None:
+        await run_polling_with_retries(
+            self.dp,
+            self._build_polling_bot,
+            log=log,
+            label="tg-bot",
+        )
 
 
 def main() -> None:
