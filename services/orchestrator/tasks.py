@@ -1801,6 +1801,24 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
     else:
         env["BG_MODE"] = "footage"
 
+    if bg_mode != "photo":
+        # Activation is single-flight on orchestrator-0, while builds are routed
+        # across both nodes. Generated JSON files are node-local caches; refresh
+        # them from Postgres (revision marker makes unchanged pools a cheap no-op).
+        _ensure_video_picker_artifacts_from_registry(
+            repo_root=repo_root,
+            inventory_path=str(
+                os.environ.get("FOOTAGE_INVENTORY_JSON")
+                or os.environ.get("FOOTAGE_INVENTORY_OUT")
+                or "data/footage_inventory.json"
+            ).strip(),
+            snapshot_path=str(
+                os.environ.get("FOOTAGE_TAGS_SNAPSHOT_PATH")
+                or "data/footage_tags_snapshot.json"
+            ).strip(),
+            cache_key=str(job_id),
+        )
+
     # Customization colors (override the bg-driven default above). subtitle →
     # SUBTITLES_FORCE_FILL_HEX (all modes); accent → F2 shape + focus word.
     def _norm_hex(v: Any) -> Optional[str]:
@@ -2669,6 +2687,148 @@ def _photo_registry_index_obj(records: List[Dict[str, Any]]) -> Dict[str, Any]:
         "assets": assets,
     }
 
+
+def _video_registry_index_obj(records: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Convert durable video registry rows back to the technical index shape."""
+    from mlcore.footage_assets_db import index_row_from_record
+
+    assets = [index_row_from_record(rec) for rec in records if isinstance(rec, dict)]
+    return {
+        "version": "video-registry-v1",
+        "media_type": "video",
+        "assets_count": len(assets),
+        "assets": assets,
+    }
+
+
+def _ensure_video_picker_artifacts_from_registry(
+    *,
+    repo_root: Path,
+    inventory_path: str,
+    snapshot_path: str,
+    cache_key: str,
+) -> Dict[str, Any]:
+    """Keep every build node's video picker cache aligned with Postgres."""
+    root = Path(repo_root).resolve()
+
+    def _path(raw: str) -> Path:
+        p = Path(str(raw or "").strip())
+        return p if p.is_absolute() else root / p
+
+    inv_path = _path(inventory_path)
+    snap_path = _path(snapshot_path)
+    index_path = _path(
+        os.environ.get("STATIC_ASSETS_INDEX_JSON") or "data/static_assets_index_1to1.json"
+    )
+    bundle_path = _path(
+        os.environ.get("DESCRIPTIONS_BUNDLE_OUT") or "pins/descriptions_bundle.json"
+    )
+    marker_path = inv_path.with_name(f".{inv_path.name}.registry.json")
+
+    db_url = str(getattr(SETTINGS, "credits_db_url", "") or "").strip()
+    if not db_url:
+        if inv_path.exists() and snap_path.exists():
+            return {"hydrated": False, "reason": "postgres_not_configured"}
+        raise RuntimeError("video picker cache missing and Postgres is not configured")
+
+    async def _load() -> tuple[List[Dict[str, Any]], List[Dict[str, Any]], str]:
+        import asyncpg  # type: ignore
+        from mlcore.footage_assets_db import fetch_all_assets
+        from mlcore.footage_tags_db import build_snapshot, filter_snapshot_to_pool
+
+        conn = await asyncpg.connect(dsn=db_url)
+        try:
+            records = await fetch_all_assets(conn, source="video")
+            snapshot_rows = await build_snapshot(conn, source="video")
+            pool_ids = {str(rec.get("clip_id") or "") for rec in records}
+            revision = await conn.fetchval(
+                """
+                SELECT COALESCE(MAX(updated_at)::text, '')
+                FROM footage_assets
+                WHERE source = 'video'
+                """
+            )
+            return (
+                records,
+                filter_snapshot_to_pool(snapshot_rows, pool_ids),
+                f"{len(records)}:{str(revision or '')}",
+            )
+        finally:
+            await conn.close()
+
+    records, snapshot_rows, revision = asyncio.run(_load())
+    if not records:
+        raise RuntimeError("video picker cache missing and Postgres video registry is empty")
+
+    if inv_path.exists() and snap_path.exists() and marker_path.exists():
+        try:
+            marker = json.loads(marker_path.read_text(encoding="utf-8"))
+            if str(marker.get("revision") or "") == revision:
+                return {
+                    "hydrated": False,
+                    "revision": revision,
+                    "inventory": str(inv_path),
+                    "snapshot": str(snap_path),
+                }
+        except Exception:
+            pass
+
+    safe_key = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(cache_key or "job"))[:80]
+    index_tmp = index_path.with_name(f".{index_path.name}.{safe_key}.tmp")
+    inv_tmp = inv_path.with_name(f".{inv_path.name}.{safe_key}.tmp")
+    bundle_tmp = bundle_path.with_name(f".{bundle_path.name}.{safe_key}.tmp")
+    snap_tmp = snap_path.with_name(f".{snap_path.name}.{safe_key}.tmp")
+    marker_tmp = marker_path.with_name(f".{marker_path.name}.{safe_key}.tmp")
+    for p in (index_path, inv_path, bundle_path, snap_path, marker_path):
+        p.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        index_tmp.write_text(
+            json.dumps(_video_registry_index_obj(records), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        from footage_config import build_inventory_and_bundle
+
+        build_inventory_and_bundle(
+            repo_root=root,
+            footage_dir=Path(os.environ.get("FOOTAGE_DIR", str(root / "footage"))),
+            static_assets_index_path=index_tmp,
+            inventory_out_path=inv_tmp,
+            bundle_out_path=bundle_tmp,
+            media_type="video",
+        )
+        snap_tmp.write_text(
+            json.dumps(snapshot_rows, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        marker_tmp.write_text(
+            json.dumps({"revision": revision}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        os.replace(index_tmp, index_path)
+        os.replace(inv_tmp, inv_path)
+        os.replace(bundle_tmp, bundle_path)
+        os.replace(snap_tmp, snap_path)
+        os.replace(marker_tmp, marker_path)
+    finally:
+        for tmp in (index_tmp, inv_tmp, bundle_tmp, snap_tmp, marker_tmp):
+            try:
+                tmp.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+    log.info(
+        "video picker cache hydrated registry_rows=%d snapshot_rows=%d revision=%s inventory=%s",
+        len(records), len(snapshot_rows), revision, inv_path,
+    )
+    return {
+        "hydrated": True,
+        "registry_rows": len(records),
+        "snapshot_rows": len(snapshot_rows),
+        "revision": revision,
+        "inventory": str(inv_path),
+        "snapshot": str(snap_path),
+    }
 
 def _ensure_photo_picker_artifacts_from_registry(
     *,

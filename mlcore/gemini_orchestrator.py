@@ -2160,6 +2160,35 @@ def _deterministic_subtitles_spans_from_stage1(stage1: Stage1PlanPayload) -> Blo
     return BlocksTokenSpansPayload.model_validate(obj)
 
 
+def _build_solid_background_footage_payload(
+    *,
+    clip_start_abs: float,
+    clip_end_abs: float,
+    switch_points_abs: List[float],
+    placeholder_file_name: str,
+) -> FootageSelectionPayload:
+    """Build scene boundaries for a solid background without duration picking."""
+    start = float(clip_start_abs)
+    end = float(clip_end_abs)
+    cuts = sorted({
+        float(point)
+        for point in switch_points_abs
+        if start < float(point) < end
+    })
+    bounds = [start, *cuts, end]
+    clips = [
+        {
+            "file_name": placeholder_file_name,
+            "fit_mode": "cover",
+            "in_point": left,
+            "out_point": right,
+            "start_time": left,
+            "source_offset_sec": 0.0,
+        }
+        for left, right in zip(bounds, bounds[1:])
+    ]
+    return FootageSelectionPayload.model_validate({"clips": clips, "allow_gaps": False})
+
 def _validate_footage_coverage_abs(
     payload: FootageSelectionPayload,
     *,
@@ -4195,37 +4224,61 @@ def build_all_via_gemini_one_call(
         transcript_words=stage1.transcript_words,
         logger=logger,
     )
-    footage_payload, interval_diag = pick_footage_clips_by_intervals_deterministic(
-        style_pick=style_payload,
-        assets=selection_assets,
-        clip_start_abs=clip_start_abs,
-        clip_end_abs=clip_end_abs,
-        switch_points_abs=list(switch_payload.switch_points_abs),
-        seed_key=selection_seed_key,
-        fit_mode="cover",
-        exclude_file_names=exclude_file_names,
-        raw_pick=None,
-        raw_picks=style_rotation_payload.subgroups if style_rotation_payload is not None else None,
-        cooldown_by_name=_cooldown_by_name,
-        interval_line_tags=_interval_line_tags,
-    )
-    _record_footage_usage(
-        _usage_bucket_id,
-        list(getattr(interval_diag, "selected_file_names", []) or []),
-        logger=logger,
-    )
-    if getattr(interval_diag, "exclude_relaxed", False):
-        logger.warning(
-            "footage_exclude_relaxed excluded_count=%d selected_excluded_count=%d",
-            int(getattr(interval_diag, "excluded_input_count", 0)),
-            int(getattr(interval_diag, "selected_excluded_count", 0)),
+    _bg_mode_picker = (os.environ.get("BG_MODE") or "footage").strip().lower()
+    interval_diag = None
+    if _bg_mode_picker in ("solid", "solid_strobe"):
+        # No footage layer survives composition in these modes. Preserve the
+        # switch-point cuts (strobe uses them), but never reject a solid render
+        # because a real video is shorter than an interval.
+        placeholder_asset = next(iter(selection_assets), None) or next(iter(picker_assets), None)
+        placeholder_name = str((placeholder_asset or {}).get("file_name") or "").strip()
+        if not placeholder_name:
+            raise RuntimeError("solid background requires a non-empty inventory placeholder")
+        footage_payload = _build_solid_background_footage_payload(
+            clip_start_abs=clip_start_abs,
+            clip_end_abs=clip_end_abs,
+            switch_points_abs=list(switch_payload.switch_points_abs),
+            placeholder_file_name=placeholder_name,
         )
+        logger.info(
+            "footage_selection_bypassed bg_mode=%s intervals=%d placeholder=%s",
+            _bg_mode_picker,
+            len(footage_payload.clips),
+            placeholder_name,
+        )
+    else:
+        footage_payload, interval_diag = pick_footage_clips_by_intervals_deterministic(
+            style_pick=style_payload,
+            assets=selection_assets,
+            clip_start_abs=clip_start_abs,
+            clip_end_abs=clip_end_abs,
+            switch_points_abs=list(switch_payload.switch_points_abs),
+            seed_key=selection_seed_key,
+            fit_mode="cover",
+            exclude_file_names=exclude_file_names,
+            raw_pick=None,
+            raw_picks=style_rotation_payload.subgroups if style_rotation_payload is not None else None,
+            cooldown_by_name=_cooldown_by_name,
+            interval_line_tags=_interval_line_tags,
+        )
+        _record_footage_usage(
+            _usage_bucket_id,
+            list(getattr(interval_diag, "selected_file_names", []) or []),
+            logger=logger,
+        )
+        if getattr(interval_diag, "exclude_relaxed", False):
+            logger.warning(
+                "footage_exclude_relaxed excluded_count=%d selected_excluded_count=%d",
+                int(getattr(interval_diag, "excluded_input_count", 0)),
+                int(getattr(interval_diag, "selected_excluded_count", 0)),
+            )
     _validate_footage_coverage_abs(
         footage_payload,
         clip_start_abs=clip_start_abs,
         clip_end_abs=clip_end_abs,
     )
-    _log_footage_interval_picker_diagnostics(logger=logger, diagnostics=interval_diag)
+    if interval_diag is not None:
+        _log_footage_interval_picker_diagnostics(logger=logger, diagnostics=interval_diag)
 
     # Debug artifacts (like Stage1): dump parsed Stage2 payloads so we can inspect what the model returned
     # without digging into the raw response wrapper.
