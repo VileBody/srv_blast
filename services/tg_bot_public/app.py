@@ -2870,7 +2870,7 @@ class BlastBotApp:
 
         @self.router.message(Command("warmup_send"))
         async def _on_warmup_send(message: Message) -> None:
-            """Explicit production launch. Never runs without the literal CONFIRM."""
+            """Seed or resume the durable production warm-up broadcast."""
             if message.chat is None or not await _warmup_admin(message):
                 return
             command_parts = (message.text or "").strip().split(maxsplit=1)
@@ -2878,18 +2878,37 @@ class BlastBotApp:
             if not confirmed:
                 await message.answer("Боевой запуск: /warmup_send CONFIRM\nСначала проверь /warmup_test.")
                 return
-            audience = await self.credits_db.resolve_audience({"mode": "all", "exclude_admins": True})
-
-            async def _run() -> None:
-                for tg_id in audience:
-                    try:
-                        await _send_warmup_stage(tg_id, 1, is_test=False)
-                    except Exception as exc:
-                        log.warning("warmup_stage_1_failed chat=%s err=%r", tg_id, exc)
-                    await asyncio.sleep(0.05)
-
-            asyncio.create_task(_run(), name="warmup_broadcast_stage_1")
-            await message.answer(f"Запущена рассылка сообщения 1: аудитория {len(audience)}. /warmup_stats — конверсия.")
+            audience_spec = {"mode": "all", "exclude_admins": True}
+            audience = await self.credits_db.resolve_audience(audience_spec)
+            remaining = await self.credits_db.filter_warmup_unreached(
+                WARMUP_CAMPAIGN, audience, 1, is_test=False,
+            )
+            title = f"[warmup] {WARMUP_CAMPAIGN}"
+            broadcast = await self.credits_db.get_broadcast_by_title(title)
+            if broadcast is None:
+                bid = await self.credits_db.create_broadcast(
+                    title=title,
+                    text=warmup_message(1),
+                    parse_mode="",
+                    buttons=[{
+                        "text": "Как получить безлимит",
+                        "callback_data": f"{WARMUP_CALLBACK_PREFIX}prod:2",
+                    }],
+                    audience=audience_spec,
+                    created_by=f"warmup:{WARMUP_CAMPAIGN}",
+                )
+            else:
+                bid = int(broadcast["id"])
+            seeded = await self.credits_db.seed_broadcast_deliveries(bid, remaining)
+            await self.credits_db.set_broadcast_status(
+                bid, "sending", started_at=datetime.now(timezone.utc),
+                audience_size=len(remaining),
+            )
+            await message.answer(
+                f"Рассылка сообщения 1 поставлена в durable-очередь: "
+                f"осталось {len(remaining)}, новых pending {seeded}, broadcast #{bid}. "
+                "/warmup_stats — конверсия."
+            )
 
         @self.router.message(Command("warmup_stats"))
         async def _on_warmup_stats(message: Message) -> None:
