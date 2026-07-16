@@ -33,6 +33,8 @@ jobs:
 
           docker ps -a --filter 'name=^/tg-bot$' --filter 'name=^/tg-bot-public$' \
             --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}'
+          echo '=== proxy listener candidates ==='
+          docker ps --format 'table {{.Names}}\t{{.Ports}}' | grep '18088' || true
 
           for container in tg-bot tg-bot-public; do
             echo "=== ${container}: state ==="
@@ -43,4 +45,23 @@ jobs:
             docker logs --tail "$LOG_TAIL" "$container" 2>&1 \
               | sed -E 's/(bot[0-9]+:)[A-Za-z0-9_-]+/\1[redacted]/g' \
               || true
+            echo "=== ${container}: Telegram network probes ==="
+            docker exec "$container" python - <<'PY' || true
+          import os
+          import socket
+          from urllib.parse import urlparse
+
+          proxy = os.environ.get("TG_FILE_PROXY_URL", "").strip()
+          parsed = urlparse(proxy)
+          targets = []
+          if parsed.hostname and parsed.port:
+              targets.append(("proxy", parsed.hostname, parsed.port))
+          targets.append(("telegram", "api.telegram.org", 443))
+          for name, host, port in targets:
+              try:
+                  with socket.create_connection((host, port), timeout=8):
+                      print(f"{name}=reachable host={host} port={port}")
+              except OSError as error:
+                  print(f"{name}=unreachable host={host} port={port} error={type(error).__name__}")
+          PY
           done
