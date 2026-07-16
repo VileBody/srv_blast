@@ -260,9 +260,12 @@ def test_ci_deploy_wires_admin_url_and_smoke_requires_confirmation():
     deploy_script = (root / "infra/runners/deploy_branch.sh").read_text(encoding="utf-8")
     deploy_workflow = (root / ".github/workflows/deploy-split-main.yml").read_text(encoding="utf-8")
     smoke_workflow = (root / ".github/workflows/smoke-s1-manager-alert.yml").read_text(encoding="utf-8")
+    smoke_module = (root / "services/tg_bot_public/s1_manager_alert_smoke.py").read_text(encoding="utf-8")
 
     assert "INFRA_ADMIN_PANEL_PUBLIC_URL" in deploy_workflow
     assert "set_env_file_value \"$REPO_DIR/.env\" ADMIN_PANEL_PUBLIC_URL" in deploy_script
     assert "bootstrap_infra_admin_panel_url" in deploy_script
     assert "confirm_send" in smoke_workflow
     assert "s1_manager_alert_smoke" in smoke_workflow
+    assert "build_aiogram_session" in smoke_module
+    assert "proxy_url=settings.tg_file_proxy_url" in smoke_module
