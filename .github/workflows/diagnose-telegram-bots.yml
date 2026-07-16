@@ -1,0 +1,46 @@
+name: Diagnose Telegram Bots
+
+on:
+  workflow_dispatch:
+    inputs:
+      log_tail:
+        description: "How many recent log lines to inspect per bot"
+        required: false
+        default: "160"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: diagnose-telegram-bots
+  cancel-in-progress: false
+
+jobs:
+  diagnose:
+    runs-on: [self-hosted, blast-deploy-infra]
+    timeout-minutes: 10
+    steps:
+      - name: Inspect bot containers and recent errors
+        env:
+          LOG_TAIL: ${{ inputs.log_tail }}
+        run: |
+          set -euo pipefail
+          case "${LOG_TAIL}" in
+            ''|*[!0-9]*) LOG_TAIL=160 ;;
+          esac
+          LOG_TAIL="${LOG_TAIL:-160}"
+
+          docker ps -a --filter 'name=^/tg-bot$' --filter 'name=^/tg-bot-public$' \
+            --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}'
+
+          for container in tg-bot tg-bot-public; do
+            echo "=== ${container}: state ==="
+            docker inspect "$container" --format \
+              'status={{.State.Status}} running={{.State.Running}} restart_count={{.RestartCount}} error={{.State.Error}}' \
+              2>&1 || true
+            echo "=== ${container}: recent log ==="
+            docker logs --tail "$LOG_TAIL" "$container" 2>&1 \
+              | sed -E 's/(bot[0-9]+:)[A-Za-z0-9_-]+/\1[redacted]/g' \
+              || true
+          done
