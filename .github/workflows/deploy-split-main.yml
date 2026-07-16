@@ -227,6 +227,7 @@ jobs:
       BLAST_FINANCE_BOT_IMAGE: ${{ needs.build-images.outputs.finance_bot_image }}
       DEPLOY_PRUNE_OTHER_STACK: ${{ vars.DEPLOY_PRUNE_OTHER_STACK }}
       INFRA_ORCHESTRATOR_PUBLIC_URL: ${{ vars.INFRA_ORCHESTRATOR_PUBLIC_URL }}
+      INFRA_ADMIN_PANEL_PUBLIC_URL: ${{ vars.INFRA_ADMIN_PANEL_PUBLIC_URL }}
     steps:
       - name: Validate Runner Repo Path
         run: |

@@ -3363,11 +3363,14 @@ class BlastBotApp:
         )
 
         # Broadcast + lifecycle workers
-        bc_task, lc_task, bc_stop = await start_broadcast_workers(
+        bc_task, lc_task, manager_alert_task, bc_stop = await start_broadcast_workers(
             self.credits_db, self._bot_ref,
+            manager_chat_id=self.settings.manager_chat_id,
+            admin_panel_public_url=self.settings.admin_panel_public_url,
         )
         self._broadcast_task = bc_task
         self._lifecycle_task = lc_task
+        self._manager_alert_task = manager_alert_task
         self._broadcast_stop = bc_stop
 
         self._processing_task = asyncio.create_task(self._processing_loop(), name="tg_bot_processing_loop")
@@ -3411,6 +3414,7 @@ class BlastBotApp:
             getattr(self, "_subscription_charge_task", None),
             getattr(self, "_broadcast_task", None),
             getattr(self, "_lifecycle_task", None),
+            getattr(self, "_manager_alert_task", None),
             getattr(self, "_startup_maintenance_task", None),
             getattr(self, "_outbox_task", None),
         ]:

@@ -8,10 +8,12 @@ rate-limiting, retries, and graceful handling of blocked users.
 from __future__ import annotations
 
 import asyncio
+import html
 import json
 import logging
 import time
 from typing import Any, Callable, Dict, List, Optional
+from urllib.parse import quote
 
 from aiogram import Bot
 from aiogram.exceptions import (
@@ -28,6 +30,8 @@ log = logging.getLogger("broadcast_sender")
 # Telegram hard limit is 30 msg/sec for bots across all chats; stay conservative.
 DEFAULT_RATE_PER_SEC = 20.0
 BATCH_SIZE = 200
+S1_ALERT_POLL_SECONDS = 15.0
+S1_ALERT_MAX_ATTEMPTS = 5
 
 
 def _parse_mode_or_none(value: str) -> Optional[str]:
@@ -352,6 +356,164 @@ class LifecycleWorker:
         return False
 
 
+def _yes_no(value: Any) -> str:
+    return "да" if bool(value) else "нет"
+
+
+def _alert_ts(value: Any) -> str:
+    if value is None:
+        return "—"
+    if hasattr(value, "strftime"):
+        return value.strftime("%Y-%m-%d %H:%M UTC")
+    return str(value)
+
+
+def build_s1_manager_alert(candidate: Dict[str, Any], admin_panel_public_url: str) -> str:
+    """Build the internal manager ping, escaping every user-controlled value."""
+    tg_id = int(candidate["tg_id"])
+    username = str(candidate.get("username") or "").strip().lstrip("@")
+    admin_base = str(admin_panel_public_url or "").strip().rstrip("/")
+    if not admin_base:
+        raise ValueError("ADMIN_PANEL_PUBLIC_URL is empty")
+    if not (admin_base.startswith("https://") or admin_base.startswith("http://")):
+        raise ValueError("ADMIN_PANEL_PUBLIC_URL must start with http:// or https://")
+
+    if username:
+        safe_username = html.escape(username, quote=True)
+        telegram_user = (
+            f'<a href="https://t.me/{quote(username, safe="")}">@{safe_username}</a>'
+        )
+        greeting = f"Привет, @{safe_username}!"
+    else:
+        telegram_user = str(tg_id)
+        greeting = "Привет!"
+
+    user_url = html.escape(f"{admin_base}/users/{tg_id}", quote=True)
+    tiers_url = html.escape(f"{admin_base}/tiers?tier=S1", quote=True)
+    rating = html.escape(str(candidate.get("last_rating") or "—"), quote=True)
+    cohort = html.escape(str(candidate.get("cohort") or "(direct)"), quote=True)
+    survey_at = html.escape(_alert_ts(candidate.get("survey_opened_at")), quote=True)
+    last_active = html.escape(_alert_ts(candidate.get("last_active_at")), quote=True)
+
+    recommended = (
+        f"{greeting} Увидел, что ты уже сделал несколько роликов и высоко оценил результат. "
+        "Если хочешь, помогу подобрать оптимальный пакет и продолжить работу над контентом."
+    )
+    return (
+        "🔥 <b>Новый лид S1</b>\n\n"
+        f"Пользователь: {telegram_user}\n"
+        f"tg_id: <code>{tg_id}</code>\n"
+        f"Завершённых генераций: {int(candidate.get('gens_done') or 0)}\n"
+        f"Последняя оценка: {rating}\n"
+        f"Форма открыта: {_yes_no(candidate.get('feedback_form_clicked'))}\n"
+        f"survey_opened: {survey_at}\n"
+        f"Пакеты: список — {_yes_no(candidate.get('viewed_packages_list'))}; "
+        f"карточка — {_yes_no(candidate.get('viewed_package_details'))}\n"
+        f"Баланс: {int(candidate.get('credits') or 0)}\n"
+        f"Cohort/source: {cohort}\n"
+        f"Последняя активность: {last_active}\n\n"
+        f'<a href="{user_url}">Карточка пользователя</a> · '
+        f'<a href="{tiers_url}">Все S1</a>\n\n'
+        "<b>Рекомендуемое первое сообщение:</b>\n"
+        f"<code>{recommended}</code>"
+    )
+
+
+class ManagerTierAlertWorker:
+    """Discover and reliably notify the manager about newly-entered S1 users."""
+
+    def __init__(
+        self,
+        db: CreditsDB,
+        bot_ref: List[Optional[Bot]],
+        *,
+        manager_chat_id: int,
+        admin_panel_public_url: str,
+        poll_interval: float = S1_ALERT_POLL_SECONDS,
+        max_attempts: int = S1_ALERT_MAX_ATTEMPTS,
+    ) -> None:
+        self._db = db
+        self._bot_ref = bot_ref
+        self._manager_chat_id = int(manager_chat_id or 0)
+        self._admin_panel_public_url = str(admin_panel_public_url or "").strip()
+        self._poll = min(60.0, max(1.0, float(poll_interval)))
+        self._max_attempts = max(1, int(max_attempts))
+        self._limiter = RateLimiter(5.0)
+        self._stop = asyncio.Event()
+
+    def stop(self) -> None:
+        self._stop.set()
+
+    async def run(self) -> None:
+        log.info("S1 manager-alert worker started (interval=%.0fs)", self._poll)
+        while not self._stop.is_set():
+            try:
+                await self._tick_once()
+            except Exception as e:
+                log.exception("S1 manager-alert tick failed: %s", e)
+            try:
+                await asyncio.wait_for(self._stop.wait(), timeout=self._poll)
+            except asyncio.TimeoutError:
+                pass
+        log.info("S1 manager-alert worker stopped")
+
+    async def _tick_once(self) -> None:
+        async with self._db.s1_manager_alert_lock() as got_lock:
+            if not got_lock:
+                log.info("S1 manager-alert: another worker holds the lock")
+                return
+
+            discovered = await self._db.discover_new_s1_outreach()
+            if discovered:
+                log.info("S1 manager-alert: discovered %d new users", discovered)
+
+            if not self._manager_chat_id:
+                log.warning(
+                    "S1 manager-alert disabled: MANAGER_CHAT_ID is not configured; "
+                    "outreach rows are still persisted"
+                )
+                return
+            if not self._admin_panel_public_url:
+                log.error(
+                    "S1 manager-alert cannot send: ADMIN_PANEL_PUBLIC_URL is not configured"
+                )
+                return
+            bot = self._bot_ref[0] if self._bot_ref else None
+            if bot is None:
+                log.warning("S1 manager-alert: bot not ready")
+                return
+
+            pending = await self._db.pending_s1_manager_alert_ids(
+                max_attempts=self._max_attempts,
+            )
+            for tg_id in pending:
+                if self._stop.is_set():
+                    return
+                # Query immediately before Telegram delivery. This re-evaluates
+                # the canonical view and excludes payment, blocking and manager contact.
+                candidate = await self._db.get_s1_manager_alert_candidate(tg_id)
+                if candidate is None:
+                    continue
+                try:
+                    text = build_s1_manager_alert(candidate, self._admin_panel_public_url)
+                except Exception as e:
+                    await self._db.record_s1_manager_alert_result(
+                        tg_id, sent=False, error=f"format_error: {e}",
+                    )
+                    continue
+                status, err = await _send_with_retry(
+                    bot, self._manager_chat_id,
+                    text=text, parse_mode="HTML",
+                    media_type="", media_file_id="", media_url="",
+                    buttons=[], limiter=self._limiter,
+                )
+                await self._db.record_s1_manager_alert_result(
+                    tg_id,
+                    sent=status == "sent",
+                    error="" if status == "sent" else f"{status}: {err}",
+                )
+
+
 def _now_naive():
     from datetime import datetime, timezone
     return datetime.now(timezone.utc).replace(tzinfo=None)
@@ -363,15 +525,24 @@ async def start_broadcast_workers(
     *,
     rate_per_sec: float = DEFAULT_RATE_PER_SEC,
     lifecycle_interval: float = 300.0,
-) -> tuple[asyncio.Task, asyncio.Task, Callable[[], None]]:
-    """Launch broadcast + lifecycle workers. Returns (tasks..., stop_fn)."""
+    manager_chat_id: int = 0,
+    admin_panel_public_url: str = "",
+) -> tuple[asyncio.Task, asyncio.Task, asyncio.Task, Callable[[], None]]:
+    """Launch broadcast, lifecycle and S1 manager-alert workers."""
     bc = BroadcastWorker(db, bot_ref, rate_per_sec=rate_per_sec)
     lc = LifecycleWorker(db, bot_ref, rate_per_sec=rate_per_sec, tick_interval=lifecycle_interval)
+    ma = ManagerTierAlertWorker(
+        db, bot_ref,
+        manager_chat_id=manager_chat_id,
+        admin_panel_public_url=admin_panel_public_url,
+    )
     t1 = asyncio.create_task(bc.run(), name="broadcast_worker")
     t2 = asyncio.create_task(lc.run(), name="lifecycle_worker")
+    t3 = asyncio.create_task(ma.run(), name="s1_manager_alert_worker")
 
     def _stop() -> None:
         bc.stop()
         lc.stop()
+        ma.stop()
 
-    return t1, t2, _stop
+    return t1, t2, t3, _stop
