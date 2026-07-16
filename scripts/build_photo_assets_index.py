@@ -28,6 +28,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -80,6 +81,34 @@ def _ffprobe_dims_url(url: str, *, ffprobe_bin: str = "ffprobe", timeout: float 
         return None
 
 
+def probe_s3_photo_dims(
+    bucket: str,
+    key: str,
+    *,
+    ffprobe_bin: str = "ffprobe",
+    timeout: float = 60.0,
+) -> Optional[Tuple[int, int]]:
+    """Download through the configured S3 client, then probe the local image.
+
+    The photo bucket is private. In production ffprobe cannot reliably consume
+    Timeweb presigned URLs, while the boto client used by tagging can download
+    the same objects. Keep indexing on that proven transport.
+    """
+    from src.storage.s3 import download_from_s3
+
+    suffix = Path(key).suffix.lower() or ".img"
+    try:
+        with tempfile.TemporaryDirectory(prefix="photo_index_") as td:
+            local_path = Path(td) / f"photo{suffix}"
+            download_from_s3(bucket, key, local_path)
+            raw = _ffprobe_dims_url(
+                str(local_path), ffprobe_bin=ffprobe_bin, timeout=timeout
+            )
+            return parse_ffprobe_dims(raw or "")
+    except Exception:
+        return None
+
+
 def build_photo_index(
     *,
     bucket: str,
@@ -94,7 +123,7 @@ def build_photo_index(
     if not bucket:
         raise RuntimeError("S3_BUCKET_ASSET_STORAGE not set")
 
-    from src.storage.s3 import generate_presigned_url, list_s3_objects
+    from src.storage.s3 import list_s3_objects
 
     keys: List[str] = []
     token = None
@@ -118,11 +147,7 @@ def build_photo_index(
         if not parsed:
             return None
         file_name, genre, tag = parsed
-        try:
-            url = generate_presigned_url(bucket, key, expires_in=3600)
-        except Exception:
-            return None
-        dims = parse_ffprobe_dims(_ffprobe_dims_url(url, ffprobe_bin=ffprobe_bin) or "")
+        dims = probe_s3_photo_dims(bucket, key, ffprobe_bin=ffprobe_bin)
         if not dims:
             return None
         w, h = dims
