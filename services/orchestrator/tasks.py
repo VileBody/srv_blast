@@ -2852,14 +2852,15 @@ def _ensure_photo_picker_artifacts_from_registry(
 
     inv_path = _path(inventory_path)
     snap_path = _path(snapshot_path)
-    if inv_path.exists() and snap_path.exists():
-        return {"hydrated": False, "inventory": str(inv_path), "snapshot": str(snap_path)}
+    marker_path = inv_path.with_name(f".{inv_path.name}.registry.json")
 
     db_url = str(getattr(SETTINGS, "credits_db_url", "") or "").strip()
     if not db_url:
+        if inv_path.exists() and snap_path.exists():
+            return {"hydrated": False, "reason": "postgres_not_configured"}
         raise RuntimeError("photo picker cache missing and Postgres is not configured")
 
-    async def _load() -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    async def _load() -> tuple[List[Dict[str, Any]], List[Dict[str, Any]], str]:
         import asyncpg  # type: ignore
         from mlcore.footage_assets_db import fetch_all_assets
         from mlcore.footage_tags_db import build_snapshot, filter_snapshot_to_pool
@@ -2869,14 +2870,34 @@ def _ensure_photo_picker_artifacts_from_registry(
             records = await fetch_all_assets(conn, source="photo")
             snapshot_rows = await build_snapshot(conn, source="photo")
             pool_ids = {str(rec.get("clip_id") or "") for rec in records}
-            return records, filter_snapshot_to_pool(snapshot_rows, pool_ids)
+            revision_raw = await conn.fetchval(
+                """
+                SELECT COALESCE(MAX(updated_at)::text, '')
+                FROM footage_assets
+                WHERE source = 'photo'
+                """
+            )
+            revision = f"{len(records)}:{str(revision_raw or '')}"
+            return records, filter_snapshot_to_pool(snapshot_rows, pool_ids), revision
         finally:
             await conn.close()
 
-    records, snapshot_rows = asyncio.run(_load())
+    records, snapshot_rows, revision = asyncio.run(_load())
     if not records:
         raise RuntimeError("photo picker cache missing and Postgres photo registry is empty")
 
+    if inv_path.exists() and snap_path.exists() and marker_path.exists():
+        try:
+            marker = json.loads(marker_path.read_text(encoding="utf-8"))
+            if str(marker.get("revision") or "") == revision:
+                return {
+                    "hydrated": False,
+                    "revision": revision,
+                    "inventory": str(inv_path),
+                    "snapshot": str(snap_path),
+                }
+        except Exception:
+            pass
     safe_key = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(cache_key or "job"))[:80]
     index_path = _path(os.environ.get("PHOTO_ASSETS_INDEX_JSON") or "data/photo_assets_index_1to1.json")
     bundle_path = _path(os.environ.get("PHOTO_DESCRIPTIONS_BUNDLE_OUT") or "pins/photo_descriptions_bundle.json")
@@ -2884,7 +2905,8 @@ def _ensure_photo_picker_artifacts_from_registry(
     inv_tmp = inv_path.with_name(f".{inv_path.name}.{safe_key}.tmp")
     bundle_tmp = bundle_path.with_name(f".{bundle_path.name}.{safe_key}.tmp")
     snap_tmp = snap_path.with_name(f".{snap_path.name}.{safe_key}.tmp")
-    for p in (index_path, inv_path, bundle_path, snap_path):
+    marker_tmp = marker_path.with_name(f".{marker_path.name}.{safe_key}.tmp")
+    for p in (index_path, inv_path, bundle_path, snap_path, marker_path):
         p.parent.mkdir(parents=True, exist_ok=True)
 
     try:
@@ -2892,43 +2914,45 @@ def _ensure_photo_picker_artifacts_from_registry(
             json.dumps(_photo_registry_index_obj(records), ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
+        from footage_config import build_inventory_and_bundle
+
+        build_inventory_and_bundle(
+            repo_root=root,
+            footage_dir=Path(os.environ.get("FOOTAGE_DIR", str(root / "footage"))),
+            static_assets_index_path=index_tmp,
+            inventory_out_path=inv_tmp,
+            bundle_out_path=bundle_tmp,
+            media_type="photo",
+        )
+        snap_tmp.write_text(
+            json.dumps(snapshot_rows, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        marker_tmp.write_text(
+            json.dumps({"revision": revision}, ensure_ascii=False),
+            encoding="utf-8",
+        )
         os.replace(index_tmp, index_path)
-
-        if not inv_path.exists():
-            from footage_config import build_inventory_and_bundle
-
-            build_inventory_and_bundle(
-                repo_root=root,
-                footage_dir=Path(os.environ.get("FOOTAGE_DIR", str(root / "footage"))),
-                static_assets_index_path=index_path,
-                inventory_out_path=inv_tmp,
-                bundle_out_path=bundle_tmp,
-                media_type="photo",
-            )
-            os.replace(inv_tmp, inv_path)
-            os.replace(bundle_tmp, bundle_path)
-
-        if not snap_path.exists():
-            snap_tmp.write_text(
-                json.dumps(snapshot_rows, ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
-            os.replace(snap_tmp, snap_path)
+        os.replace(inv_tmp, inv_path)
+        os.replace(bundle_tmp, bundle_path)
+        os.replace(snap_tmp, snap_path)
+        os.replace(marker_tmp, marker_path)
     finally:
-        for tmp in (index_tmp, inv_tmp, bundle_tmp, snap_tmp):
+        for tmp in (index_tmp, inv_tmp, bundle_tmp, snap_tmp, marker_tmp):
             try:
                 tmp.unlink(missing_ok=True)
             except Exception:
                 pass
 
     log.info(
-        "photo picker cache hydrated registry_rows=%d snapshot_rows=%d inventory=%s",
-        len(records), len(snapshot_rows), inv_path,
+        "photo picker cache hydrated registry_rows=%d snapshot_rows=%d revision=%s inventory=%s",
+        len(records), len(snapshot_rows), revision, inv_path,
     )
     return {
         "hydrated": True,
         "registry_rows": len(records),
         "snapshot_rows": len(snapshot_rows),
+        "revision": revision,
         "inventory": str(inv_path),
         "snapshot": str(snap_path),
     }

@@ -183,15 +183,13 @@ def _pool() -> WindowsNodePool:
     return WindowsNodePool(redis_client=_FakeRedis(), key_prefix="blast", lease_ttl_s=7200)
 
 
-def test_get_active_urls_all_disabled_falls_back_to_env() -> None:
+def test_get_active_urls_all_disabled_does_not_resurrect_env_node() -> None:
     pool = _pool()
     # Runtime pool: a single DISABLED node (e.g. auto-disabled on a render failure).
     pool.set_runtime_nodes([{"url": "http://192.168.0.7:18000", "enabled": False,
                              "disabled_reason": "broken AE"}])
     env = ["http://fallback-node:18000"]
-    assert pool.get_active_urls(default_urls=env) == ["http://fallback-node:18000"], (
-        "all runtime nodes disabled -> must fall back to env default_urls"
-    )
+    assert pool.get_active_urls(default_urls=env) == []
 
 
 def test_get_active_urls_prefers_enabled_runtime_over_env() -> None:

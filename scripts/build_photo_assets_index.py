@@ -36,7 +36,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 # Reuse the pure key-parsing + color-merge helpers from the video indexer so the
 # folder→genre/tag convention stays identical across pools.
-from scripts.build_static_assets_index import load_existing_color_meta, parse_key  # noqa: E402
+from scripts.build_static_assets_index import (  # noqa: E402
+    _write_index_atomic,
+    load_existing_color_meta,
+    parse_key,
+)
 
 _IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"}
 _DEFAULT_OUT = "data/photo_assets_index_1to1.json"
@@ -115,6 +119,7 @@ def build_photo_index(
     prefix: str,
     out_path: Path,
     progress_cb=None,
+    force_empty: bool = False,
 ) -> Dict[str, Any]:
     """List S3 photos under prefix, probe dims (no duration), write the photo
     index. Photo analogue of build_static_assets_index.build_index — reusable
@@ -137,6 +142,12 @@ def build_photo_index(
         if not page.get("is_truncated") or not token:
             break
     print(f"[s3] bucket={bucket} prefix={prefix} photos={len(keys)}")
+    if not keys and not force_empty:
+        raise RuntimeError(
+            "Refusing to replace photo index from an empty S3 listing: "
+            f"bucket={bucket!r} prefix={prefix!r}; pass force_empty=True explicitly to override"
+        )
+
 
     color_meta = load_existing_color_meta(out_path)
     ffprobe_bin = os.environ.get("FFPROBE_BIN", "ffprobe")
@@ -182,6 +193,11 @@ def build_photo_index(
                 print(f"[probe] {done}/{len(keys)} ok={len(assets)} failed={len(failed)}")
                 if progress_cb:
                     progress_cb(done, len(keys))
+    if keys and not assets:
+        raise RuntimeError(
+            f"Refusing to replace photo index with zero assets: listed={len(keys)} failed={len(failed)}"
+        )
+
 
     assets.sort(key=lambda a: (str(a["genre"]).lower(), str(a["tag"]).lower(), str(a["file_name"])))
     obj = {
@@ -191,8 +207,7 @@ def build_photo_index(
         "assets_count": len(assets),
         "assets": assets,
     }
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps(obj, ensure_ascii=False, indent=2), encoding="utf-8")
+    _write_index_atomic(out_path, obj)
     print(f"[done] wrote {len(assets)} photos -> {out_path}  (failed/skipped={len(failed)})")
     if failed:
         print("[warn] first failed keys:", failed[:10])
@@ -202,12 +217,19 @@ def build_photo_index(
 
 
 def main() -> int:
-    out_path = Path(sys.argv[1] if len(sys.argv) > 1 else _DEFAULT_OUT)
+    args = list(sys.argv[1:])
+    force_empty = False
+    if "--force-empty" in args:
+        args.remove("--force-empty")
+        force_empty = True
+    if len(args) > 1:
+        raise SystemExit("usage: build_photo_assets_index.py [out_path] [--force-empty]")
+    out_path = Path(args[0] if args else _DEFAULT_OUT)
     bucket = (os.environ.get("S3_BUCKET_ASSET_STORAGE") or "").strip()
     prefix = (os.environ.get("S3_PHOTO_PREFIX") or "photo_collection").strip().strip("/")
     if not bucket:
         raise SystemExit("S3_BUCKET_ASSET_STORAGE not set")
-    build_photo_index(bucket=bucket, prefix=prefix, out_path=out_path)
+    build_photo_index(bucket=bucket, prefix=prefix, out_path=out_path, force_empty=force_empty)
     return 0
 
 

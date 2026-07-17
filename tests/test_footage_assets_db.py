@@ -2,6 +2,8 @@
 pool registry. asyncpg I/O is not exercised here (no live DB)."""
 from __future__ import annotations
 
+import pytest
+
 from mlcore import footage_assets_db as adb
 
 
@@ -81,3 +83,28 @@ def test_clip_id_ignores_8digit_date_in_s3_prefix():
 def test_numeric_coercion_is_defensive():
     rec = adb.build_asset_record(_asset(w="1080", h=None, dur="5.5"))
     assert rec["src_w"] == 1080 and rec["src_h"] == 0 and rec["duration_sec"] == 5.5
+
+
+def test_registry_replacement_rejects_empty_candidate():
+    with pytest.raises(RuntimeError, match="registry_empty_candidate_guard"):
+        adb.validate_registry_replacement(
+            current_count=2090,
+            candidate_count=0,
+            source="video",
+        )
+
+
+def test_registry_replacement_rejects_large_shrink_but_allows_explicit_force():
+    with pytest.raises(RuntimeError, match="registry_shrink_guard"):
+        adb.validate_registry_replacement(
+            current_count=2090,
+            candidate_count=1000,
+            source="video",
+        )
+    result = adb.validate_registry_replacement(
+        current_count=2090,
+        candidate_count=0,
+        source="video",
+        allow_destructive=True,
+    )
+    assert result["forced"] is True

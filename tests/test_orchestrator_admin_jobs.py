@@ -208,6 +208,11 @@ def _build_client(monkeypatch, store: _FakeStore) -> TestClient:
     )
     monkeypatch.setattr(orchestrator_app, "ensure_config_initialized", lambda _store: None)
     monkeypatch.setattr(orchestrator_app, "_payment_enabled", False, raising=False)
+    monkeypatch.setattr(
+        orchestrator_app,
+        "probe_render_capacity",
+        lambda _urls: {"ready": True, "retry_after_seconds": 15},
+    )
     app = orchestrator_app.create_app()
     return TestClient(app)
 
@@ -606,3 +611,27 @@ def test_send_audio_rejects_when_no_enabled_worker_types(monkeypatch) -> None:
     assert resp.status_code == 503
     body = resp.json()
     assert "llm_workers_no_enabled_types" in body["detail"]
+
+
+def test_send_audio_rejects_without_render_capacity(monkeypatch) -> None:
+    store = _FakeStore([])
+    client = _build_client(monkeypatch, store)
+    monkeypatch.setattr(
+        orchestrator_app,
+        "probe_render_capacity",
+        lambda _urls: {"ready": False, "retry_after_seconds": 15},
+    )
+
+    with client:
+        resp = client.post(
+            "/send_audio_s3",
+            json={
+                "audio_s3_url": "s3://bucket/raw/audio.mp3",
+                "mode": "with_gemini",
+            },
+        )
+
+    assert resp.status_code == 503
+    assert resp.headers["retry-after"] == "15"
+    assert resp.json()["detail"]["code"] == "no_healthy_render_nodes"
+    assert store.list_jobs() == []

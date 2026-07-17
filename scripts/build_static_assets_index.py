@@ -34,6 +34,24 @@ _VIDEO_EXTS = {".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi"}
 _DEFAULT_OUT = "data/static_assets_index_1to1.json"
 
 
+def _write_index_atomic(out_path: Path, obj: Dict[str, Any]) -> None:
+    """Publish a complete index without exposing a partial/truncated file."""
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{out_path.name}.", suffix=".tmp", dir=str(out_path.parent)
+    )
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(obj, fh, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, out_path)
+    finally:
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
 def resolve_pool_source_prefix() -> str:
     """The S3 prefix that IS the footage pool — single source of truth.
 
@@ -173,6 +191,7 @@ def build_index(
     prefix: str,
     out_path: Path,
     progress_cb=None,
+    force_empty: bool = False,
 ) -> Dict[str, Any]:
     """List S3 videos under prefix, ffprobe dims/duration, write the static
     index. Reusable from the activation Celery task. progress_cb(done, total)
@@ -196,6 +215,12 @@ def build_index(
         if not page.get("is_truncated") or not token:
             break
     print(f"[s3] bucket={bucket} prefix={prefix} videos={len(keys)}")
+    if not keys and not force_empty:
+        raise RuntimeError(
+            "Refusing to replace footage index from an empty S3 listing: "
+            f"bucket={bucket!r} prefix={prefix!r}; pass force_empty=True explicitly to override"
+        )
+
 
     color_meta = load_existing_color_meta(out_path)
     ffprobe_bin = os.environ.get("FFPROBE_BIN", "ffprobe")
@@ -255,8 +280,7 @@ def build_index(
         "assets_count": len(assets),
         "assets": assets,
     }
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps(obj, ensure_ascii=False, indent=2), encoding="utf-8")
+    _write_index_atomic(out_path, obj)
     print(f"[done] wrote {len(assets)} assets -> {out_path}  (failed/skipped={len(failed)})")
     if failed:
         print("[warn] first failed keys:", failed[:10])
@@ -266,13 +290,20 @@ def build_index(
 
 
 def main() -> int:
-    out_path = Path(sys.argv[1] if len(sys.argv) > 1 else _DEFAULT_OUT)
+    args = list(sys.argv[1:])
+    force_empty = False
+    if "--force-empty" in args:
+        args.remove("--force-empty")
+        force_empty = True
+    if len(args) > 1:
+        raise SystemExit("usage: build_static_assets_index.py [out_path] [--force-empty]")
+    out_path = Path(args[0] if args else _DEFAULT_OUT)
     bucket = (os.environ.get("S3_BUCKET_ASSET_STORAGE") or "").strip()
     # Use the SHARED pool-prefix resolver so a manual rebuild scans exactly the
     # same prefix as the activation task — never a narrower subfolder that would
     # silently shrink the pool (the old default read the full S3_ASSET_PREFIX).
     prefix = resolve_pool_source_prefix()
-    build_index(bucket=bucket, prefix=prefix, out_path=out_path)
+    build_index(bucket=bucket, prefix=prefix, out_path=out_path, force_empty=force_empty)
     return 0
 
 

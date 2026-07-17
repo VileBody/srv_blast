@@ -74,6 +74,7 @@ from .config import SETTINGS, derive_render_poll_queue
 from .bundle_bootstrap import ensure_descriptions_bundle
 from .asset_routes import create_asset_router
 from .ops_alert_subscribers import OpsAlertBotPoller, OpsAlertSubscriberStore
+from .render_capacity import probe_render_capacity
 from .windows_node_pool import WindowsNodePool, parse_windows_urls_csv
 from services.tg_bot_botapi.user_store import UserStore
 
@@ -300,6 +301,22 @@ def create_app() -> FastAPI:
             inflight=inflight,
         )
 
+    def _render_capacity_snapshot() -> Dict[str, Any]:
+        urls = _windows_pool().get_active_urls(default_urls=_default_windows_urls())
+        return probe_render_capacity(urls)
+
+    def _ensure_render_capacity(request_payload: Dict[str, Any]) -> None:
+        if str(request_payload.get("render_engine") or "ae").strip().lower() != "ae":
+            return
+        capacity = _render_capacity_snapshot()
+        if not bool(capacity.get("ready")):
+            retry_after = max(1, int(capacity.get("retry_after_seconds") or 15))
+            raise HTTPException(
+                status_code=503,
+                detail={"code": "no_healthy_render_nodes", "retry_after_seconds": retry_after},
+                headers={"Retry-After": str(retry_after)},
+            )
+
     # Payment webhook/router DB + persistent ops alert subscribers.
     _user_store: UserStore | None = None
     _ops_alert_store: OpsAlertSubscriberStore | None = None
@@ -461,6 +478,17 @@ def create_app() -> FastAPI:
         runtime_nodes = _windows_pool().get_runtime_nodes()
         return _build_windows_nodes_status(runtime_nodes=runtime_nodes)
 
+    @app.get("/render-capacity")
+    def get_render_capacity() -> Dict[str, Any]:
+        capacity = _render_capacity_snapshot()
+        return {
+            "ready": bool(capacity.get("ready")),
+            "reason": str(capacity.get("reason") or ""),
+            "configured_count": int(capacity.get("configured_count") or 0),
+            "retry_after_seconds": int(capacity.get("retry_after_seconds") or 15),
+            "observed_at": float(capacity.get("observed_at") or 0.0),
+        }
+
     @app.put("/windows-nodes", response_model=WindowsNodesStatusResponse)
     def put_windows_nodes(req: WindowsNodesUpdateRequest) -> WindowsNodesStatusResponse:
         pool = _windows_pool()
@@ -594,6 +622,7 @@ def create_app() -> FastAPI:
         _ensure_supported_mode(req.mode)
         request_payload = req.model_dump(mode="json", exclude_none=True)
         _ensure_render_engine_available(request_payload)
+        _ensure_render_capacity(request_payload)
         routing = _resolve_job_routing(request_payload=request_payload)
         request_payload.update(routing)
         st, created = store.new_job(

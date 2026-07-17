@@ -5958,6 +5958,21 @@ class BlastBotApp:
             )
             return
 
+        try:
+            render_capacity = await self.orchestrator.get_render_capacity()
+        except Exception as capacity_e:
+            log.warning("render_capacity_check_failed chat=%s err=%s", chat_id, str(capacity_e))
+            await message.answer(
+                "Проводим технические работы — сейчас генерация временно недоступна. "
+                "Кредит не списан. Попробуй снова чуть позже."
+            )
+            return
+        if not bool(render_capacity.get("ready")):
+            await message.answer(
+                "Проводим технические работы — сейчас нет доступной render-ноды. "
+                "Кредит не списан. Попробуй снова чуть позже."
+            )
+            return
         # Check and reserve credits before generation (1 credit per version)
         versions = max(1, min(5, int(st.versions_count or 1)))
         balance = await self.credits_db.get_balance(user_id)

@@ -70,6 +70,23 @@ def _photo_layer_blueprint(*, file_name: str, remote_url: str, z_index: int) -> 
         },
     }
 
+def _audio_layer_blueprint(*, file_name: str, locator: str) -> Dict[str, Any]:
+    """Declare the already-downloaded main track for manifest naming + JSX."""
+    return {
+        "name": "MAIN_AUDIO",
+        "type": "audio",
+        "z_index": 10000,
+        "text_data": {
+            "layer_meta": {"audioEnabled": True},
+            "source_footage": {
+                "file_name": file_name,
+                "remote_url": "",
+                "file_path": locator,
+            },
+        },
+    }
+
+
 
 def build_photo_segments(
     photos: List[Dict[str, Any]],
@@ -147,6 +164,8 @@ def build_photo_payload(
     comp_h: int = PHOTO_COMP_H,
     anim: Optional[Dict[str, Any]] = None,
     segments: Optional[List[Dict[str, Any]]] = None,
+    audio_file_name: str = "",
+    audio_locator: str = "",
 ) -> Dict[str, Any]:
     """Build the full photo render payload (footage_layers + photo_job).
 
@@ -175,7 +194,20 @@ def build_photo_payload(
     else:
         segments = build_photo_segments(photos, fps=fps, segment_frames=segment_frames)
 
+    audio_name = str(audio_file_name or "").strip()
+    locator = str(audio_locator or "").strip()
+    if audio_name:
+        if "/" in audio_name or "\\" in audio_name:
+            raise RuntimeError(f"photo audio_file_name must be a basename, got {audio_name!r}")
+        locator = locator or f"media/audio/{audio_name}"
+        if not locator.startswith("media/audio/") or ".." in locator:
+            raise RuntimeError(f"photo audio locator must stay under media/audio, got {locator!r}")
+    elif locator:
+        raise RuntimeError("photo audio locator requires audio_file_name")
+
     footage_layers: List[Dict[str, Any]] = []
+    if audio_name:
+        footage_layers.append(_audio_layer_blueprint(file_name=audio_name, locator=locator))
     seen: set = set()
     z = 100
     for p in photos:
@@ -197,6 +229,7 @@ def build_photo_payload(
         "transition": transition,
         "config": dict(anim or PHOTO_ANIM),
         "segments": segments,
+        "audio": ({"file_name": audio_name, "locator": locator} if audio_name else None),
     }
 
     return {
