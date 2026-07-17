@@ -184,17 +184,103 @@ ROMANCE = _terms("romance", "romantic", "kiss", "hug", "embrace", "intimacy", "l
 SOLITUDE = _terms("alone", "solitude", "lonely", "lonely figure", "solo", "loneliness")
 PORTRAIT = _terms("portrait", "face", "close up", "close-up", "headshot", "selfie", "plain portrait")
 
+# Per-bucket exclusions calibrated on the 2026-07-17 photo snapshot (2341 stills).
+# For each bucket we picked ONE leading semantic unit (comment) and strip the tags
+# that pull a neighbouring theme in — the goal is one theme leading, not a broad
+# "close enough" pool. Each list was tuned to shed roughly a quarter to a third of
+# the bucket (total ~36%); when a tag was ambiguous we cut it (thin-but-pure beats
+# wide-but-mixed). Substring match (_matches), photo-only, unreviewable-override.
 PHOTO_EXCLUDE_TERMS: Mapping[str, Tuple[str, ...]] = {
-    # A generic portrait is not a digital silhouette. The contract already
-    # requires a silhouette anchor, but stills are routinely tagged both.
-    "visual:digital_human_silhouette_cold": PORTRAIT,
-    "visual:digital_human_silhouette_warm": PORTRAIT,
-    # Nightlife is people out at night, not an abandoned building at night.
-    "visual:active_life_dark_cold": DECAY,
-    "visual:performance_crowd_dark": DECAY,
-    # Solitude and romance are opposite briefs; neither may absorb the other.
-    "visual:solitary_person_dark_cold": ROMANCE,
-    "visual:couple_intimacy_light_warm": SOLITUDE,
+    # warm sunset NATURE landscape (no people): drop human subjects + dark markers
+    "visual:nature_sunset_light_warm": _terms(
+        "silhouette", "lonely figure", "lonely", "alone", "dark forest",
+        "dark atmosphere", "dark sky",
+    ),
+    # a lone PERSON in a dark/cold moody setting: drop coastal / vehicle / romance / fashion
+    "visual:solitary_person_dark_cold": ROMANCE + _terms(
+        "couple", "beach", "ocean", "sea", "coast", "water", "waves",
+        "car interior", "night drive", "night drift", "jewelry",
+    ),
+    # dark empty NORMAL interior (no people): drop decay/industrial + outdoor + digital.
+    # (keep silhouette/dim/shadows — that IS the dark-interior look.)
+    "visual:dark_interior_atmosphere": _terms(
+        "abandoned", "ruins", "derelict", "destruction", "rubble", "tunnel",
+        "control room", "monitor wall", "office", "trees", "forest", "ocean",
+        "mountain", "dark landscape", "night sky", "stars", "wet road",
+        "abstract", "digital art", "distortion", "glitch",
+    ),
+    # cold digital/neon human SILHOUETTE: drop generic portrait / romance / performance /
+    # nature / indoor-domestic / vehicle
+    "visual:digital_human_silhouette_cold": PORTRAIT + _terms(
+        "couple", "intimate", "romance", "night club", "dance floor", "dance",
+        "night beach", "field", "empty road", "bedroom", "dark room",
+        "car interior", "water", "stormy weather",
+    ),
+    # warm digital SILHOUETTE: drop generic portrait + the "two mages" / romance / fire
+    "visual:digital_human_silhouette_warm": PORTRAIT + _terms(
+        "couple", "romance", "romantic", "intimacy", "fire",
+    ),
+    # empty NIGHT CITY (no people): drop decay / coastal-nature / people
+    "visual:urban_solitude_dark": _terms(
+        "abandoned", "ruins", "silhouette", "lonely figure", "alone", "beach",
+        "palm trees", "trees", "waterfront", "airplane",
+    ),
+    # rainy/weathery NIGHT CITY (no people): drop nature
+    "visual:urban_weather_dark": _terms("silhouette", "trees", "palm trees", "forest"),
+    # strictly foggy dark FOREST: drop buildings/decay + other landforms + interior mislabels
+    # (keep forest roads + tree silhouettes — that is the vibe)
+    "visual:forest_fog_dark": _terms(
+        "abandoned", "old architecture", "architecture", "mountain", "bedroom",
+        "dark interior", "ruins",
+    ),
+    # rainy dark NATURAL landscape: drop urban + buildings/decay
+    "visual:rain_nature_dark_cold": _terms(
+        "urban", "city", "street", "building", "abandoned", "architecture",
+        "silhouette", "lonely figure",
+    ),
+    # dark cold MOUNTAINS: drop buildings/decay + sea (snow/forest on a mountain is fine)
+    "visual:mountain_dark_cold": _terms(
+        "castle", "architecture", "ruins", "abandoned", "ocean", "sea",
+        "red lights", "glowing",
+    ),
+    # light warm MOUNTAINS: drop buildings + open sea (a mountain lake is fine)
+    "visual:mountain_light_warm": _terms("castle", "architecture", "ocean", "sea", "coast"),
+    # dark stormy OCEAN: drop other landforms / roads / vehicle
+    "visual:ocean_storm_dark_cold": _terms("mountain", "architecture", "wet road", "night drive"),
+    # dark WINTER nature: drop non-winter sea + urban light glow
+    "visual:winter_nature_dark_cold": _terms("ocean", "coast", "red lights", "glowing"),
+    # NIGHT SKY / stars (sky-dominant): drop foreground interior / buildings / road
+    "visual:night_sky_space_dark_cold": _terms(
+        "dark interior", "interior", "castle", "ruins", "architecture",
+        "abandoned", "night drive", "road",
+    ),
+    # car in motion at night: drop aircraft
+    "visual:vehicle_motion_aesthetic": _terms("airplane", "aircraft"),
+    # warm COUPLE by the water: drop dark/night markers
+    "visual:warm_coastal_romance_light": _terms("dark atmosphere", "wet road", "night"),
+    # LIGHT warm loving COUPLE (daytime/golden): drop solitude + dark/night/fantasy/urban
+    "visual:couple_intimacy_light_warm": SOLITUDE + _terms(
+        "night", "silhouette", "dark forest", "dark sky", "dark atmosphere",
+        "fire", "castle", "black and white", "glowing", "dim lighting", "rain",
+        "wet road", "city",
+    ),
+    # CROWD / stage / club performance: drop decay + solo-portrait / vehicle / luxury / plain street
+    "visual:performance_crowd_dark": DECAY + _terms(
+        "private jet", "car interior", "portrait", "close-up", "close up",
+        "jewelry", "street scene", "city life",
+    ),
+    # a PERSON in motion / nightlife: drop decay + vehicles + pure crowd/audience (crowd bucket)
+    "visual:active_life_dark_cold": DECAY + _terms(
+        "sports car", "car", "cars", "night drift", "vehicle", "crowd", "audience",
+    ),
+    # girl PORTRAIT (light warm): drop silhouette (not a face) + dark leak
+    "visual:girls_portrait_light_warm": _terms(
+        "silhouette", "dark atmosphere", "dark interior", "dim lighting",
+    ),
+    # girl PORTRAIT (dark cold): drop silhouette (hides the face) + romance/couple
+    "visual:girls_portrait_dark_cold": _terms(
+        "silhouette", "intimate", "intimacy", "tender", "couple",
+    ),
 }
 
 

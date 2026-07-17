@@ -160,6 +160,60 @@ def test_photo_exclude_ids_are_real_buckets(contracts):
     assert set(PHOTO_REQUIRE_GROUPS) <= set(contracts)
 
 
+def test_dark_interior_keeps_normal_rejects_creepy_and_outdoors(contracts):
+    """User-flagged: creepy/abandoned interiors were mixing with normal ones, and
+    outdoor scenes leaked in. A plain dark room stays; a decaying/industrial one
+    or a mislabeled outdoor scene is cut."""
+    c = contracts["visual:dark_interior_atmosphere"]
+
+    normal = _asset(["dark interior", "bedroom", "dim lighting", "shadows"], people="none")
+    _, (ok, _) = _verdicts(c, normal)
+    assert ok
+
+    for tags in (
+        ["dark interior", "abandoned", "ruins"],       # decay / creepy
+        ["dark interior", "control room", "monitor wall"],  # industrial
+        ["dark interior", "mountain", "dark landscape"],    # outdoor mislabel
+        ["dark room", "abstract", "digital art"],           # digital
+    ):
+        _, (photo_ok, stage) = _verdicts(c, _asset(tags, people="none"))
+        assert not photo_ok, tags
+        assert stage == "photo_semantic_exclude", tags
+
+
+def test_landscape_buckets_reject_foreign_landforms_and_buildings(contracts):
+    """"If it's a forest, strictly a forest" — nature buckets must not absorb a
+    neighbouring landform or a building/ruin in the frame."""
+    cases = [
+        ("visual:forest_fog_dark", ["forest", "fog", "mountain"]),       # forest != mountain
+        ("visual:forest_fog_dark", ["forest", "fog", "abandoned", "old architecture"]),
+        ("visual:mountain_dark_cold", ["mountain", "castle", "ruins"]),  # mountain != castle
+        ("visual:mountain_light_warm", ["mountain", "ocean", "coast"]),  # mountain != sea
+        ("visual:nature_sunset_light_warm", ["beach", "sunset", "silhouette", "lonely figure"]),
+    ]
+    for bucket_id, tags in cases:
+        c = contracts[bucket_id]
+        color = "dark" if "dark" in bucket_id else "warm"
+        _, (photo_ok, stage) = _verdicts(c, _asset(tags, color=color, people="none"))
+        assert not photo_ok, (bucket_id, tags)
+        assert stage == "photo_semantic_exclude", (bucket_id, tags)
+
+
+def test_couple_rejects_the_two_mages_and_dark_scenes(contracts):
+    """User-flagged: two robed figures by fire/castle read as a couple. The light
+    warm couple bucket must reject dark/fantasy scenes."""
+    c = contracts["visual:couple_intimacy_light_warm"]
+
+    mages = _asset(["couple", "fire", "castle", "dark forest", "silhouette"], color="warm")
+    _, (photo_ok, stage) = _verdicts(c, mages)
+    assert not photo_ok
+    assert stage == "photo_semantic_exclude"
+
+    real = _asset(["couple", "romance", "golden hour", "outdoor"], color="warm")
+    _, (ok, _) = _verdicts(c, real)
+    assert ok
+
+
 # --------------------------------------------------------------------------- #
 # The report that replaces manual review of the base
 # --------------------------------------------------------------------------- #
