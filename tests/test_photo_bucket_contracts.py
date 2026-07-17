@@ -64,6 +64,24 @@ def test_nightlife_bucket_does_not_absorb_decay(contracts):
     assert ok
 
 
+def test_warm_silhouette_requires_a_digital_anchor_on_photos(contracts):
+    """Calibrated on the real photo snapshot: without a digital anchor the warm
+    silhouette bucket became a beach/sunset-silhouette dumping ground (96 of 118).
+    A beach-sunset silhouette must not land here; a digital-warm one must."""
+    c = contracts["visual:digital_human_silhouette_warm"]
+
+    beach = _asset(["silhouette", "sunset", "beach", "golden hour", "ocean"], color="warm")
+    (video_ok, _), (photo_ok, photo_stage) = _verdicts(c, beach)
+    assert not photo_ok
+    assert photo_stage == "photo_missing_anchor"
+    # Footage keeps its verdict (a moving silhouette clip reads unambiguously).
+    assert video_ok
+
+    digital = _asset(["silhouette", "glowing", "neon", "abstract"], color="warm")
+    _, (ok, _) = _verdicts(c, digital)
+    assert ok
+
+
 def test_crowd_performance_does_not_absorb_decay(contracts):
     c = contracts["visual:performance_crowd_dark"]
     asset = _asset(["club", "derelict", "ruins"], color="dark")

@@ -149,6 +149,15 @@ PHOTO_REQUIRE_GROUPS: Mapping[str, Tuple[Tuple[str, ...], ...]] = {
     "visual:digital_human_silhouette_cold": (
         _terms("digital", "glowing", "neon", "abstract", "blue lighting"),
     ),
+    # Same digital anchor as the cold sibling, minus the cold-only "blue lighting".
+    # Calibrated on the 2026-07-17 photo snapshot: without it the warm silhouette
+    # bucket was 118 stills of which 96 were beach/sunset silhouettes (sunset ×72,
+    # golden hour ×69, ocean ×30) — a sunset dumping ground, not digital
+    # silhouettes. The anchor drops it to the ~14 genuine digital-warm silhouettes;
+    # thin-but-honest (grow or drop is a base decision, not a contract one).
+    "visual:digital_human_silhouette_warm": (
+        _terms("digital", "glowing", "neon", "led", "abstract", "light trail"),
+    ),
     "visual:urban_solitude_dark": (
         _terms("night city", "nighttime"),
     ),
