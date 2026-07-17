@@ -55,29 +55,43 @@ log = logging.getLogger("build_bucket_previews")
 # --------------------------------------------------------------------------- #
 # Inventory + metadata (reuses the production loaders)
 # --------------------------------------------------------------------------- #
-def _resolve_inventory_path() -> Path:
+def _resolve_inventory_path(media: str = "video") -> Path:
+    if media == "photo":
+        env = (os.environ.get("PHOTO_INVENTORY_JSON") or "").strip()
+        return Path(env).expanduser().resolve() if env else (ROOT / "data" / "photo_inventory.json").resolve()
     env = (os.environ.get("FOOTAGE_INVENTORY_JSON") or "").strip()
     if env:
         return Path(env).expanduser().resolve()
     return (ROOT / "data" / "footage_inventory.json").resolve()
 
 
-def _ensure_inventory(inv_path: Path) -> Path:
-    """Load the inventory; build it from the 1:1 static assets index if missing."""
+def _ensure_inventory(inv_path: Path, *, media: str = "video") -> Path:
+    """Load the inventory; build it from the media's static assets index if missing.
+
+    On a node the inventory is hydrated from Postgres before this runs; the
+    local build path is a dev convenience only.
+    """
     if inv_path.exists():
         return inv_path
-    log.info("inventory missing -> building from static_assets_index_1to1.json: %s", inv_path)
+    static_default = "photo_assets_index.json" if media == "photo" else "static_assets_index_1to1.json"
+    static_index = (ROOT / "data" / static_default).resolve()
+    if not static_index.exists():
+        raise SystemExit(
+            f"{media} inventory missing ({inv_path}) and no static index to build it from "
+            f"({static_index}). On a node hydrate the {media} pool first."
+        )
+    log.info("inventory missing -> building from %s: %s", static_index.name, inv_path)
     from footage_config import build_inventory_and_bundle
 
-    static_index = (ROOT / "data" / "static_assets_index_1to1.json").resolve()
     footage_dir = Path(os.environ.get("FOOTAGE_DIR", str(ROOT / "footage"))).resolve()
-    bundle_out = (ROOT / "pins" / "descriptions_bundle.json").resolve()
+    bundle_out = (ROOT / "pins" / f"descriptions_bundle_{media}.json").resolve()
     build_inventory_and_bundle(
         repo_root=ROOT,
         footage_dir=footage_dir,
         static_assets_index_path=static_index,
         inventory_out_path=inv_path,
         bundle_out_path=bundle_out,
+        media_type=media,
     )
     return inv_path
 
@@ -89,12 +103,20 @@ def _load_inventory_raw(inv_path: Path) -> Dict[str, Any]:
     return obj
 
 
-def _build_mapped_assets(inv: Dict[str, Any]) -> List[Dict[str, Any]]:
+def _photo_snapshot_db_paths() -> List[Path]:
+    env = (os.environ.get("PHOTO_TAGS_SNAPSHOT_JSON") or "").strip()
+    p = Path(env).expanduser().resolve() if env else (ROOT / "data" / "photo_tags_snapshot.json").resolve()
+    if not p.exists():
+        raise SystemExit(f"photo tags snapshot missing: {p} (hydrate the photo pool first)")
+    return [p]
+
+
+def _build_mapped_assets(inv: Dict[str, Any], *, media: str = "video") -> List[Dict[str, Any]]:
     """Inventory assets enriched with footage_tags metadata (prod path)."""
     from mlcore.gemini_orchestrator import _resolve_style_metadata_db_paths
 
     picker_assets = fp.load_picker_assets_from_inventory(inv)
-    db_paths = _resolve_style_metadata_db_paths(root=ROOT)
+    db_paths = _photo_snapshot_db_paths() if media == "photo" else _resolve_style_metadata_db_paths(root=ROOT)
     rows = fp.load_footage_style_metadata_rows(db_paths=db_paths)
     index = fp.merge_footage_style_metadata_rows(rows)
     mapped, unmapped = fp.map_inventory_assets_with_style_metadata(
@@ -177,8 +199,9 @@ def _filter_clips_in_s3(
 # --------------------------------------------------------------------------- #
 # Render node (inline AE example-montage; async /render + poll)
 # --------------------------------------------------------------------------- #
-def _montage_template_text() -> str:
-    return (ROOT / "templates" / "bucket_preview" / "montage_template.jsx").read_text(encoding="utf-8")
+def _montage_template_text(media: str = "video") -> str:
+    name = "photo_montage_template.jsx" if media == "photo" else "montage_template.jsx"
+    return (ROOT / "templates" / "bucket_preview" / name).read_text(encoding="utf-8")
 
 
 def _render_via_node(
@@ -477,12 +500,13 @@ def render_montage_local(
 # --------------------------------------------------------------------------- #
 # Per-bucket pipeline
 # --------------------------------------------------------------------------- #
-def _output_s3_target() -> Tuple[str, str]:
+def _output_s3_target(media: str = "video") -> Tuple[str, str]:
     bucket = (os.environ.get("FOOTAGE_PREVIEW_S3_BUCKET")
               or os.environ.get("S3_BUCKET_ASSET_STORAGE") or "").strip()
     if not bucket:
         raise RuntimeError("set FOOTAGE_PREVIEW_S3_BUCKET or S3_BUCKET_ASSET_STORAGE")
-    prefix = (os.environ.get("FOOTAGE_PREVIEW_S3_PREFIX") or "footage_bucket_previews").strip().strip("/")
+    default_prefix = "photo_bucket_previews" if media == "photo" else "footage_bucket_previews"
+    prefix = (os.environ.get("FOOTAGE_PREVIEW_S3_PREFIX") or default_prefix).strip().strip("/")
     return bucket, prefix
 
 
@@ -522,9 +546,11 @@ def build_one_bucket(
     args: argparse.Namespace,
 ) -> bp.PreviewEntry:
     local_mode = bool(args.local_footage_dir)
+    media = getattr(args, "media", "video")
     seed = f"{args.seed}:{bucket.bucket_id}"
     candidates = bp.select_bucket_clips(
-        bucket, mapped_assets, seed=seed, top_n=max(args.top_n * 3, args.top_n)
+        bucket, mapped_assets, seed=seed, top_n=max(args.top_n * 3, args.top_n),
+        media_type=media,
     )
     if local_mode:
         # mapped_assets are pre-filtered to locally-available clips (with
@@ -557,8 +583,11 @@ def build_one_bucket(
                  bucket.bucket_id, len(clips), [c["file_name"] for c in clips])
         return entry
 
-    spec = bp.build_montage_spec(bucket, clips)
-    render_jsx = bp.render_montage_jsx(spec, _montage_template_text())
+    if media == "photo":
+        spec = bp.build_photo_montage_spec(bucket, clips)
+    else:
+        spec = bp.build_montage_spec(bucket, clips)
+    render_jsx = bp.render_montage_jsx(spec, _montage_template_text(media))
     job_id = f"bucketprev_{bucket.bucket_id.replace(':', '__')}"
     caption = f"{bucket.label} — {description}\nbucket: {bucket.bucket_id}"
 
@@ -591,14 +620,14 @@ def build_one_bucket(
         return entry
 
     # node (S3) path
-    media = bp.montage_media_payload(clips, url_by_file_name=url_by_fn)
-    out_bucket, out_prefix = _output_s3_target()
+    media_payload = bp.montage_media_payload(clips, url_by_file_name=url_by_fn)
+    out_bucket, out_prefix = _output_s3_target(media)
     out_key = f"{out_prefix}/{bucket.bucket_id.replace(':', '__')}.mp4"
     output_url = _render_via_node(
         node_url=args.node_url,
         job_id=job_id,
         render_jsx=render_jsx,
-        media=media,
+        media=media_payload,
         output_s3_bucket=out_bucket,
         output_s3_key=out_key,
         timeout_s=args.render_timeout_s,
@@ -687,6 +716,9 @@ def _select_buckets(catalog: List[Bucket], args: argparse.Namespace) -> List[Buc
 
 def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(description="Build footage bucket previews (precision flow, phase 4)")
+    ap.add_argument("--media", choices=("video", "photo"), default="video",
+                    help="video = footage previews (default); photo = 4:3 photo bucket previews "
+                         "(visual catalog, photo pool, 1920x1440 montage).")
     ap.add_argument("--only", nargs="*", default=None, help="specific bucket_id(s) to (re)build")
     ap.add_argument("--limit", type=int, default=0, help="build the first N buckets (catalog order)")
     ap.add_argument("--all", action="store_true", help="build ALL buckets (explicit full sweep)")
@@ -699,7 +731,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                     help="render node base url")
     ap.add_argument("--render-timeout-s", type=float, default=1800.0)
     ap.add_argument("--poll-s", type=float, default=5.0)
-    ap.add_argument("--previews-path", default=bp.DEFAULT_PREVIEWS_PATH)
+    ap.add_argument("--previews-path", default="",
+                    help="store path (default: footage or photo previews store per --media)")
     ap.add_argument("--dry-run", action="store_true",
                     help="clip-selection only: no render / no Telegram / no S3 upload")
     ap.add_argument("--no-telegram", action="store_true", help="render + S3, but skip file_id capture")
@@ -740,8 +773,14 @@ def main(argv: Optional[List[str]] = None) -> int:
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
 
-    catalog = get_bucket_catalog()
-    log.info("catalog: %d buckets", len(catalog))
+    # Photo previews rank/pick the VISUAL contracts (visual:*) — the same catalog
+    # the photo flow's ranker + picker use — not the footage theme catalog.
+    if args.media == "photo":
+        from mlcore.footage_visual_catalog import load_visual_catalog
+        catalog = load_visual_catalog()
+    else:
+        catalog = get_bucket_catalog()
+    log.info("catalog (%s): %d buckets", args.media, len(catalog))
     targets = _select_buckets(catalog, args)
     # Drop label-duplicate buckets (e.g. lonely_paths under heartbreak+betrayal)
     # so the shortlist never shows the same vibe name twice. Not for --only.
@@ -752,16 +791,19 @@ def main(argv: Optional[List[str]] = None) -> int:
             log.info("label-dedup: %d -> %d buckets", before, len(targets))
     log.info("targets: %d buckets", len(targets))
 
-    store_path = (ROOT / args.previews_path) if not os.path.isabs(args.previews_path) else Path(args.previews_path)
+    previews_path = args.previews_path or (
+        bp.DEFAULT_PHOTO_PREVIEWS_PATH if args.media == "photo" else bp.DEFAULT_PREVIEWS_PATH
+    )
+    store_path = (ROOT / previews_path) if not os.path.isabs(previews_path) else Path(previews_path)
 
     # REGISTER-ONLY: no inventory/render — just send the already-rendered mp4s to
     # Telegram and record file_id(s). Used after a --no-telegram render batch.
     if args.register_only:
         return _run_register_only(targets, store_path, args)
 
-    inv_path = _ensure_inventory(_resolve_inventory_path())
+    inv_path = _ensure_inventory(_resolve_inventory_path(args.media), media=args.media)
     inv = _load_inventory_raw(inv_path)
-    mapped_assets = _build_mapped_assets(inv)
+    mapped_assets = _build_mapped_assets(inv, media=args.media)
     url_by_fn = _url_by_file_name(inv)
 
     # LOCAL MODE auto-pull: fetch each target bucket's clips from asset_ui into
@@ -773,7 +815,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         needed: set[str] = set()
         for bucket in targets:
             seed = f"{args.seed}:{bucket.bucket_id}"
-            for c in bp.select_bucket_clips(bucket, mapped_assets, seed=seed, top_n=args.top_n):
+            for c in bp.select_bucket_clips(
+                bucket, mapped_assets, seed=seed, top_n=args.top_n, media_type=args.media
+            ):
                 needed.add(c["file_name"])
         auth = (args.asset_ui_user, args.asset_ui_pass) if args.asset_ui_user else None
         log.info("asset_ui pull: %d clips -> %s", len(needed), dest)
