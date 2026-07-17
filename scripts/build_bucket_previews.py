@@ -317,13 +317,15 @@ def pull_clips_from_asset_ui(
     base_url: str,
     dest_dir: Path,
     auth: Optional[Tuple[str, str]] = None,
+    media_type: str = "video",
 ) -> int:
     """Download needed clips into dest_dir via the asset_ui presigned-url API
-    (GET <base_url>/assets/<file_name>/video-url -> {"url": ...}). The asset_ui
-    backend holds the S3 creds; we only fetch presigned URLs, so this box needs
-    no S3 access. `base_url` is the API root, e.g.
-    https://host/admin/assets/api . Skips files already present; returns count
-    fetched.
+    (GET <base_url>/assets/<file_name>/video-url?media_type=<mt> -> {"url": ...}).
+    The asset_ui backend holds the S3 creds; we only fetch presigned URLs, so this
+    box needs no S3 access. `base_url` is the API root, e.g.
+    https://host/admin/assets/api . media_type MUST match the pool — the endpoint
+    looks the asset up in that pool's index, so a photo pull with media_type=video
+    404s every file. Skips files already present; returns count fetched.
     """
     from urllib.parse import quote
 
@@ -339,7 +341,11 @@ def pull_clips_from_asset_ui(
         if dest.exists() and dest.stat().st_size > 0:
             continue
         try:
-            r = sess.get(f"{api}/assets/{quote(fn)}/video-url", auth=auth, timeout=60)
+            r = sess.get(
+                f"{api}/assets/{quote(fn)}/video-url",
+                params={"media_type": media_type},
+                auth=auth, timeout=60,
+            )
             r.raise_for_status()
             url = str(r.json().get("url") or "").strip()
             if not url:
@@ -821,7 +827,10 @@ def main(argv: Optional[List[str]] = None) -> int:
                 needed.add(c["file_name"])
         auth = (args.asset_ui_user, args.asset_ui_pass) if args.asset_ui_user else None
         log.info("asset_ui pull: %d clips -> %s", len(needed), dest)
-        got = pull_clips_from_asset_ui(sorted(needed), base_url=args.asset_ui_url, dest_dir=dest, auth=auth)
+        got = pull_clips_from_asset_ui(
+            sorted(needed), base_url=args.asset_ui_url, dest_dir=dest, auth=auth,
+            media_type=args.media,
+        )
         log.info("asset_ui pull: fetched %d new file(s)", got)
 
     # LOCAL MODE: restrict selection to clips actually present in the folder and
