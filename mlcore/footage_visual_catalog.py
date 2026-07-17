@@ -158,6 +158,36 @@ PHOTO_REQUIRE_GROUPS: Mapping[str, Tuple[Tuple[str, ...], ...]] = {
     ),
 }
 
+# Themes that must stay APART in the photo pool.
+#
+# A still carries no motion, so a tag set that reads unambiguously on footage goes
+# flat on a photo: "nightlife" on a moving clip is people out at night, on a still
+# it is just as often an empty decaying facade; "romance" on a clip is two people
+# interacting, on a still it can be one person in warm light. The footage rules
+# stay untouched — these exclusions apply only when the picker draws stills, and
+# like the photo anchors they are semantic gates a manual source review cannot
+# override.
+DECAY = _terms(
+    "decay", "urban decay", "abandoned", "abandoned building", "derelict",
+    "dilapidated", "ruins", "rubble", "demolition", "wreckage", "rust",
+)
+ROMANCE = _terms("romance", "romantic", "kiss", "hug", "embrace", "intimacy", "love", "date")
+SOLITUDE = _terms("alone", "solitude", "lonely", "lonely figure", "solo", "loneliness")
+PORTRAIT = _terms("portrait", "face", "close up", "close-up", "headshot", "selfie", "plain portrait")
+
+PHOTO_EXCLUDE_TERMS: Mapping[str, Tuple[str, ...]] = {
+    # A generic portrait is not a digital silhouette. The contract already
+    # requires a silhouette anchor, but stills are routinely tagged both.
+    "visual:digital_human_silhouette_cold": PORTRAIT,
+    "visual:digital_human_silhouette_warm": PORTRAIT,
+    # Nightlife is people out at night, not an abandoned building at night.
+    "visual:active_life_dark_cold": DECAY,
+    "visual:performance_crowd_dark": DECAY,
+    # Solitude and romance are opposite briefs; neither may absorb the other.
+    "visual:solitary_person_dark_cold": ROMANCE,
+    "visual:couple_intimacy_light_warm": SOLITUDE,
+}
+
 
 def load_visual_catalog(path: Path = CATALOG_PATH) -> List[VisualContract]:
     raw = json.loads(path.read_text(encoding="utf-8"))
@@ -217,6 +247,9 @@ def evaluate_asset(
             return False, "hard_missing_anchor", {**diag, "matched_groups": hard_matched}
         hard_matched.append(hits[:3])
     if _norm(media_type) == "photo":
+        for term in PHOTO_EXCLUDE_TERMS.get(contract.bucket_id, ()):
+            if _matches(tags, term):
+                return False, "photo_semantic_exclude", {**diag, "matched_term": term}
         photo_matched = []
         for group in PHOTO_REQUIRE_GROUPS.get(contract.bucket_id, ()):
             hits = [x for x in group if _matches(tags, x)]
