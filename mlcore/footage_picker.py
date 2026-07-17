@@ -920,8 +920,16 @@ def _build_raw_pool(
     *,
     style_genre: Optional[str] = None,
     style_tag: Optional[str] = None,
+    media_type: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    """Build a scored clip pool from a single raw subgroup payload."""
+    """Build a scored clip pool from a single raw subgroup payload.
+
+    media_type selects the visual-contract gate variant ("photo" adds the denser
+    PHOTO_REQUIRE_GROUPS anchors). None = derive from BG_MODE, which is what the
+    build subprocess sets. Callers that evaluate a pool OUT of band (readiness
+    dry-run, bucket reports) must pass it explicitly so they never depend on the
+    ambient env of the process they happen to run in.
+    """
     assets = _apply_tag_overrides(assets)
     global_tag_ov = _load_global_tag_overrides()
     blacklisted = {_normalize_theme_tag(t) for t in global_tag_ov.get("blacklisted_tags", [])}
@@ -944,6 +952,11 @@ def _build_raw_pool(
     color_priority = {_normalize_color_tone(x) for x in list(raw_pick.filters.color_priority or [])}
     color_priority.discard("")
 
+    effective_media_type = (
+        str(media_type).strip().lower()
+        if media_type is not None
+        else ("photo" if (os.environ.get("BG_MODE") or "").strip().lower() == "photo" else "video")
+    )
     pool: List[Dict[str, Any]] = []
     visual_contract = None
     if str(raw_pick.theme or "").strip() == "visual":
@@ -960,8 +973,7 @@ def _build_raw_pool(
                 continue
         if visual_contract is not None:
             from mlcore.footage_visual_catalog import evaluate_asset
-            media_type = "photo" if (os.environ.get("BG_MODE") or "").strip().lower() == "photo" else "video"
-            ok, stage, diag = evaluate_asset(visual_contract, it, media_type=media_type)
+            ok, stage, diag = evaluate_asset(visual_contract, it, media_type=effective_media_type)
             if not ok:
                 continue
             clip_color = _normalize_color_tone(it.get("meta_color_tone"))
