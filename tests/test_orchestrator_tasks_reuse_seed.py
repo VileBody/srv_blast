@@ -106,3 +106,46 @@ def test_seed_resume_state_tolerates_missing_stage1_plan(tmp_path: Path) -> None
     assert out["stage2_subtitles_mode"] == "impulse_2nd"
     assert "stage1_plan" not in out
     assert "stage1_plan_source" not in out
+
+
+def test_seed_resume_state_drops_window_bound_payloads_when_clip_window_changes(tmp_path: Path) -> None:
+    """F4/F5 reframe the clip around the user drop before enqueueing.
+
+    Reusing stage2 switch/subtitle payloads from the source clip leaks cut
+    points from the old window into the new one and crashes the footage picker.
+    The ASR and style can still be reused; window-bound stages must rebuild.
+    """
+    work_dir = tmp_path / "work"
+    src_job = "src_job"
+    src = work_dir / "jobs" / src_job / "data" / "llm_resume_state.json"
+    state = _valid_source_state()
+    state["stage1_plan"]["audio"]["clip_start_abs"] = 0.0
+    state["stage1_plan"]["audio"]["clip_end_abs"] = 12.0
+    state["stage2_subtitles"]["clip"] = {"start": 0.0, "end": 12.0}
+    state["stage2_switch_timestamps"] = {
+        "clip_start_abs": 0.0,
+        "clip_end_abs": 12.0,
+        "fast_start_seconds": 6.0,
+        "switch_points_abs": [0.998, 3.0, 6.0],
+    }
+    _write_json(src, state)
+
+    dst = work_dir / "jobs" / "dst_job" / "data" / "llm_resume_state.json"
+    tasks._seed_resume_state_from_source_job(
+        work_dir=work_dir,
+        source_job_id=src_job,
+        target_resume_state_path=dst,
+        include_footage=True,
+        destination_clip_window=(2.0, 12.0),
+    )
+
+    out = json.loads(dst.read_text(encoding="utf-8"))
+    assert out["stage1_asr"] == state["stage1_asr"]
+    assert out["stage2_style"] == state["stage2_style"]
+    assert "stage1_plan" not in out
+    assert "stage1_plan_source" not in out
+    assert "stage2_subtitles" not in out
+    assert "stage2_subtitles_mode" not in out
+    assert "stage2_switch_timestamps" not in out
+    assert "stage2_timing_mode" not in out
+    assert "stage2_fast_start_seconds" not in out

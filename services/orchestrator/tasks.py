@@ -1403,6 +1403,7 @@ def _seed_resume_state_from_source_job(
     target_resume_state_path: Path,
     store: JobStore | None = None,
     include_footage: bool = False,
+    destination_clip_window: tuple[float, float] | None = None,
 ) -> None:
     src_job = str(source_job_id or "").strip()
     if not src_job:
@@ -1467,6 +1468,61 @@ def _seed_resume_state_from_source_job(
     for k in _REUSE_RESUME_STATE_KEYS:
         if k in src_obj:
             dst_obj[k] = src_obj[k]
+
+    if destination_clip_window is not None:
+        dst_start, dst_end = float(destination_clip_window[0]), float(destination_clip_window[1])
+
+        def _clip_from_mapping(obj: Any) -> tuple[float, float] | None:
+            if not isinstance(obj, dict):
+                return None
+            audio = obj.get("audio")
+            if isinstance(audio, dict):
+                try:
+                    return float(audio["clip_start_abs"]), float(audio["clip_end_abs"])
+                except Exception:
+                    return None
+            clip = obj.get("clip")
+            if isinstance(clip, dict):
+                try:
+                    return float(clip["start"]), float(clip["end"])
+                except Exception:
+                    return None
+            try:
+                return float(obj["clip_start_abs"]), float(obj["clip_end_abs"])
+            except Exception:
+                return None
+
+        source_windows = [
+            w for w in (
+                _clip_from_mapping(src_obj.get("stage1_plan")),
+                _clip_from_mapping(src_obj.get("stage2_subtitles")),
+                _clip_from_mapping(src_obj.get("stage2_switch_timestamps")),
+            )
+            if w is not None
+        ]
+        if any(
+            abs(float(src_start) - dst_start) > 1e-6 or abs(float(src_end) - dst_end) > 1e-6
+            for src_start, src_end in source_windows
+        ):
+            for key in (
+                "stage1_plan",
+                "stage1_plan_source",
+                "stage2_subtitles",
+                "stage2_subtitles_mode",
+                "stage2_switch_timestamps",
+                "stage2_timing_mode",
+                "stage2_fast_start_seconds",
+                "stage2_user_drop_t",
+            ):
+                dst_obj.pop(key, None)
+            log.info(
+                "reuse_text_seed_drop_window_bound source_job_id=%s "
+                "destination_clip=%.3f..%.3f source_windows=%r",
+                src_job,
+                dst_start,
+                dst_end,
+                source_windows,
+            )
     if include_footage:
         # Bigtest: also copy footage style so every case uses the same genre/theme.
         # Only copied when present — if absent the orchestrator re-runs style LLM.
@@ -2029,6 +2085,11 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
                     target_resume_state_path=llm_resume_state_path,
                     store=store,
                     include_footage=reuse_stage2_footage,
+                    destination_clip_window=(
+                        (float(user_clip_start_sec), float(user_clip_end_sec))
+                        if user_clip_start_sec is not None and user_clip_end_sec is not None
+                        else None
+                    ),
                 )
                 _persist_resume_state_snapshot(
                     store=store,
