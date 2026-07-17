@@ -51,6 +51,7 @@
     var STYLE = String(photo_job.style || "none");
     var TRANSITION = String(photo_job.transition || "flash");
     var SEGMENTS = photo_job.segments || [];
+    var AUDIO = photo_job.audio || null;
     if (!SEGMENTS.length) { throw new Error("photo_job has no segments"); }
 
     var GROW = (CFG.grow != null) ? CFG.grow : 10;
@@ -106,6 +107,19 @@
       var item = project.importFile(io);
       importedByName[fileName] = item;
       return item;
+    }
+
+    function addMainAudio() {
+      if (!AUDIO || !AUDIO.file_name || !AUDIO.locator) { throw new Error("photo_job.audio is required"); }
+      var fp = String(__APP_DIR || "") + "/" + String(AUDIO.locator);
+      var f = new File(fp);
+      if (!f.exists) { throw new Error("photo audio missing on node: " + fp); }
+      var item = project.importFile(new ImportOptions(f));
+      var lyr = comp.layers.add(item);
+      lyr.name = "MAIN_AUDIO";
+      lyr.startTime = 0;
+      try { lyr.inPoint = 0; lyr.outPoint = totalDur; lyr.audioEnabled = true; } catch (_) {}
+      return lyr;
     }
 
     // ====================================================================
@@ -263,6 +277,7 @@
     // 5) BUILD (photos bottom, flash above, grade on top)
     // ====================================================================
     for (var i = 0; i < SEGMENTS.length; i++) { placePhoto(SEGMENTS[i]); }
+    addMainAudio();
     if (TRANSITION === "flash") {
       for (var j = 0; j < SEGMENTS.length; j++) { addFlash(SEGMENTS[j]); }
     }

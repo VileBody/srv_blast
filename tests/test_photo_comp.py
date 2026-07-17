@@ -159,7 +159,7 @@ def test_build_photo_project_emits_jsx_and_payload(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     out_json, out_jsx = build_photo_project(
         repo_root=repo_root, photos=_PHOTOS, out_dir=tmp_path,
-        style="bw", transition="zoom",
+        style="bw", transition="zoom", audio_file_name="audio_source.mp3",
     )
     assert out_json.exists() and out_jsx.exists()
     jsx = out_jsx.read_text(encoding="utf-8")
@@ -169,3 +169,5 @@ def test_build_photo_project_emits_jsx_and_payload(tmp_path: Path) -> None:
     assert payload["photo_job"]["style"] == "bw"
     assert payload["photo_job"]["transition"] == "zoom"
     assert payload["photo_job"]["config"]["grow"] == 10
+    assert payload["photo_job"]["audio"]["file_name"] == "audio_source.mp3"
+    assert payload["footage_layers"][0]["file_name"] == "audio_source.mp3"

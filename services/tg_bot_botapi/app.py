@@ -4467,6 +4467,21 @@ class BlastBotApp:
             await self._move_to_wait_audio(chat_id, message)
             return
 
+        try:
+            render_capacity = await self.orchestrator.get_render_capacity()
+        except Exception as capacity_e:
+            log.warning("render_capacity_check_failed chat=%s err=%s", chat_id, str(capacity_e))
+            await message.answer(
+                "Проводим технические работы — сейчас генерация временно недоступна. "
+                "Кредит не списан. Попробуй снова чуть позже."
+            )
+            return
+        if not bool(render_capacity.get("ready")):
+            await message.answer(
+                "Проводим технические работы — сейчас нет доступной render-ноды. "
+                "Кредит не списан. Попробуй снова чуть позже."
+            )
+            return
         key = self._build_raw_audio_key(chat_id=chat_id, file_name=prepared_path.name)
         versions = max(1, min(5, int(st.versions_count or 1)))
         batch_id = f"tg-{chat_id}-{uuid.uuid4().hex[:12]}"

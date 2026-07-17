@@ -669,6 +669,8 @@ def build_photo_project(
     fps: Optional[float] = None,
     segment_frames: Optional[int] = None,
     segments: Optional[List[Dict[str, Any]]] = None,
+    audio_file_name: Optional[str] = None,
+    audio_locator: Optional[str] = None,
 ) -> Tuple[Path, Path]:
     """Build the standalone 4:3 PHOTO render (photo_template.j2).
 
@@ -691,6 +693,10 @@ def build_photo_project(
     repo_root = repo_root.resolve()
     out_dir = out_dir.resolve()
 
+    resolved_audio_name = str(audio_file_name or os.environ.get("AUDIO_FILE_NAME") or "").strip()
+    if not resolved_audio_name:
+        raise RuntimeError("Photo Render requires AUDIO_FILE_NAME or audio_file_name")
+    resolved_audio_locator = str(audio_locator or f"media/audio/{resolved_audio_name}").strip()
     payload = build_photo_payload(
         photos,
         style=style,
@@ -700,6 +706,8 @@ def build_photo_project(
         comp_w=PHOTO_COMP_W,
         comp_h=PHOTO_COMP_H,
         segments=segments,
+        audio_file_name=resolved_audio_name,
+        audio_locator=resolved_audio_locator,
     )
 
     out_dir.mkdir(parents=True, exist_ok=True)

@@ -25,6 +25,9 @@ class OrchestratorClient:
             raise RuntimeError(f"orchestrator {path} returned non-object: {out!r}")
         return out
 
+    async def get_render_capacity(self) -> Dict[str, Any]:
+        return await self._get_json("/render-capacity")
+
     async def send_audio_s3(
         self,
         *,

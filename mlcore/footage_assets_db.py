@@ -24,6 +24,7 @@ as footage_tags so the join is exact. This module separates PURE transforms
 """
 from __future__ import annotations
 
+import math
 from typing import Any, Dict, Iterable, List, Optional
 
 from mlcore.footage_tags_db import SOURCE_PHOTO, SOURCE_VIDEO, extract_clip_id
@@ -46,6 +47,9 @@ CREATE TABLE IF NOT EXISTS footage_assets (
 CREATE INDEX IF NOT EXISTS idx_footage_assets_source ON footage_assets(source);
 CREATE INDEX IF NOT EXISTS idx_footage_assets_updated ON footage_assets(updated_at);
 """
+DEFAULT_REGISTRY_MIN_RETAIN_RATIO = 0.80
+DEFAULT_REGISTRY_SHRINK_GUARD_MIN_CURRENT = 100
+
 
 
 # --------------------------------------------------------------------------- #
@@ -67,6 +71,50 @@ def _float(v: Any) -> float:
         return float(v or 0.0)
     except Exception:
         return 0.0
+
+
+def validate_registry_replacement(
+    *,
+    current_count: int,
+    candidate_count: int,
+    source: str,
+    allow_destructive: bool = False,
+    min_retain_ratio: float = DEFAULT_REGISTRY_MIN_RETAIN_RATIO,
+    guard_min_current: int = DEFAULT_REGISTRY_SHRINK_GUARD_MIN_CURRENT,
+) -> Dict[str, Any]:
+    """Fail closed before a scan can destructively shrink a durable registry."""
+    current = max(0, int(current_count))
+    candidate = max(0, int(candidate_count))
+    try:
+        ratio = float(min_retain_ratio)
+    except Exception as exc:
+        raise RuntimeError(f"invalid registry min_retain_ratio={min_retain_ratio!r}") from exc
+    floor = int(guard_min_current)
+    if not 0.0 <= ratio <= 1.0:
+        raise RuntimeError(f"registry min_retain_ratio must be within 0..1, got {ratio!r}")
+    if floor < 0:
+        raise RuntimeError(f"registry guard_min_current must be >= 0, got {floor!r}")
+    if allow_destructive:
+        return {"current": current, "candidate": candidate, "forced": True}
+    if candidate <= 0:
+        raise RuntimeError(
+            "registry_empty_candidate_guard: refusing to prune source registry "
+            f"source={source!r} current={current} candidate={candidate}"
+        )
+    if current >= floor and current > 0:
+        required = int(math.ceil(current * ratio))
+        if candidate < required:
+            shrink_ratio = 1.0 - (candidate / current)
+            raise RuntimeError(
+                "registry_shrink_guard: refusing destructive registry replacement "
+                f"source={source!r} current={current} candidate={candidate} "
+                f"min_required={required} min_retain_ratio={ratio:.3f} "
+                f"shrink_ratio={shrink_ratio:.3f} guard_min_current={floor}; "
+                "set force=True explicitly only after verifying the S3 scan"
+            )
+    return {"current": current, "candidate": candidate, "forced": False}
+
+
 
 
 def build_asset_record(raw: Dict[str, Any], *, source: str = SOURCE_VIDEO) -> Optional[Dict[str, Any]]:
@@ -193,13 +241,34 @@ async def prune_missing(conn: Any, *, source: str, keep_clip_ids: Iterable[str])
         return 0
 
 
-async def replace_source_assets(conn: Any, records: List[Dict[str, Any]], *, source: str) -> Dict[str, int]:
-    """Upsert this scan's assets and prune stale ones, so the registry mirrors
-    the current S3 state for `source`. Returns {written, pruned, total}."""
+async def replace_source_assets(
+    conn: Any,
+    records: List[Dict[str, Any]],
+    *,
+    source: str,
+    allow_destructive: bool = False,
+    min_retain_ratio: float = DEFAULT_REGISTRY_MIN_RETAIN_RATIO,
+    guard_min_current: int = DEFAULT_REGISTRY_SHRINK_GUARD_MIN_CURRENT,
+) -> Dict[str, int]:
+    """Atomically upsert/prune after validating candidate-pool safety."""
     await init_schema(conn)
-    written = await upsert_assets(conn, records)
-    pruned = await prune_missing(conn, source=source, keep_clip_ids=[r["clip_id"] for r in records if r.get("clip_id")])
-    total = await count_assets(conn, source=source)
+    current = await count_assets(conn, source=source)
+    validate_registry_replacement(
+        current_count=current,
+        candidate_count=len(records or []),
+        source=source,
+        allow_destructive=allow_destructive,
+        min_retain_ratio=min_retain_ratio,
+        guard_min_current=guard_min_current,
+    )
+    async with conn.transaction():
+        written = await upsert_assets(conn, records)
+        pruned = await prune_missing(
+            conn,
+            source=source,
+            keep_clip_ids=[r["clip_id"] for r in records if r.get("clip_id")],
+        )
+        total = await count_assets(conn, source=source)
     return {"written": written, "pruned": pruned, "total": total}
 
 

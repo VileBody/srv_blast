@@ -275,6 +275,17 @@ def _as_pos_float(v: Any) -> float:
     return x
 
 
+def _is_reusable_still(asset: Dict[str, Any]) -> bool:
+    return bool(asset.get("is_reusable_still"))
+
+
+def _effective_asset_duration(asset: Dict[str, Any]) -> float:
+    """Still images can cover any interval; video keeps its measured duration."""
+    if _is_reusable_still(asset):
+        return math.inf
+    return _as_pos_float(asset.get("duration_sec"))
+
+
 def _normalize_genre_name(v: Any) -> str:
     raw = " ".join(str(v or "").strip().lower().split())
     if not raw:
@@ -335,6 +346,7 @@ def load_picker_assets_from_inventory(inv: Dict[str, Any]) -> List[Dict[str, Any
 
     out: List[Dict[str, Any]] = []
     seen: set[str] = set()
+    reusable_still = (os.environ.get("BG_MODE") or "").strip().lower() == "photo"
     for idx, it in enumerate(assets_raw):
         if not isinstance(it, dict):
             raise RuntimeError(f"Inventory assets[{idx}] must be object")
@@ -359,6 +371,7 @@ def load_picker_assets_from_inventory(inv: Dict[str, Any]) -> List[Dict[str, Any
                 "genre": genre,
                 "tag": tag,
                 "duration_sec": float(duration_sec),
+                "is_reusable_still": reusable_still,
                 "src_w": src_w,
                 "src_h": src_h,
             }
@@ -374,7 +387,7 @@ def build_style_groups_from_assets(assets: List[Dict[str, Any]]) -> List[Dict[st
     for it in assets:
         genre = _require_non_empty_str(it.get("genre"), field="genre")
         tag = _require_non_empty_str(it.get("tag"), field="tag")
-        dur = _as_pos_float(it.get("duration_sec"))
+        dur = _effective_asset_duration(it)
         key = (genre, tag)
         row = agg.get(key)
         if row is None:
@@ -416,7 +429,7 @@ def deterministic_seed_from_key(seed_key: str) -> int:
 
 
 def _duration_sum(pool: List[Dict[str, Any]]) -> float:
-    return float(sum(min(float(it["duration_sec"]), _MAX_SWITCH_SEC) for it in pool))
+    return float(sum(min(_effective_asset_duration(it), _MAX_SWITCH_SEC) for it in pool))
 
 
 def _deterministic_sort_assets(pool: List[Dict[str, Any]], *, seed_value: int) -> List[Dict[str, Any]]:
@@ -484,7 +497,7 @@ def pick_footage_clips_deterministic(
 
         asset = ordered_pool[idx]
         idx += 1
-        file_dur = float(asset["duration_sec"])
+        file_dur = _effective_asset_duration(asset)
         if file_dur <= _EPS:
             raise RuntimeError(f"Non-positive asset duration: {asset['file_name']!r}")
         slot_dur = min(file_dur, _MAX_SWITCH_SEC)
@@ -577,7 +590,7 @@ def drop_interval_index(intervals: List[Tuple[float, float]], drop_t: float | No
 
 def _fits_interval(asset: Dict[str, Any], *, interval_len: float) -> bool:
     try:
-        dur = float(asset["duration_sec"])
+        dur = _effective_asset_duration(asset)
     except Exception:
         return False
     return dur + _EPS >= float(interval_len)
@@ -1471,7 +1484,7 @@ def pick_footage_clips_by_intervals_deterministic(
                     seed_value=seed_value,
                     interval_idx=idx,
                 )
-                if offset_enabled and asset_dur > 0
+                if offset_enabled and asset_dur > 0 and not _is_reusable_still(all_assets_by_name.get(chosen_name) or {})
                 else 0.0
             )
             clips.append(
@@ -1655,7 +1668,7 @@ def pick_footage_clips_by_intervals_deterministic(
                     seed_value=seed_value,
                     interval_idx=idx,
                 )
-                if offset_enabled and asset_dur > 0
+                if offset_enabled and asset_dur > 0 and not _is_reusable_still(chosen)
                 else 0.0
             )
             clips.append(
@@ -1684,7 +1697,7 @@ def pick_footage_clips_by_intervals_deterministic(
                     seed_value=seed_value,
                     interval_idx=idx,
                 )
-                if offset_enabled and asset_dur > 0
+                if offset_enabled and asset_dur > 0 and not _is_reusable_still(by_name.get(chosen_name) or {})
                 else 0.0
             )
             clips.append(
@@ -1961,7 +1974,7 @@ def resolve_style_pick_from_raw_filters(
             }
             grouped[key] = row
         row["score"] = float(row["score"]) + float(score)
-        row["duration"] = float(row["duration"]) + float(min(float(it.get("duration_sec") or 0.0), _MAX_SWITCH_SEC))
+        row["duration"] = float(row["duration"]) + float(min(_effective_asset_duration(it), _MAX_SWITCH_SEC))
         row["assets_count"] = int(row["assets_count"]) + 1
         row["overlap_sum"] = int(row["overlap_sum"]) + int(overlap)
         row["color_hits"] = int(row["color_hits"]) + int(color_hit)
