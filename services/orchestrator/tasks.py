@@ -96,6 +96,8 @@ _LLM_ENV_KEYS = (
     "FOOTAGE_EXCLUDE_FILE_NAMES_JSON",
     "FOOTAGE_ROTATION_THEME",
     "FOOTAGE_ROTATION_GROUP",
+    "FOOTAGE_INVENTORY_JSON",
+    "FOOTAGE_STYLE_METADATA_DB_PATHS_JSON",
     "STAGE2_SELECTION_SEED",
     "BATCH_VARIANT_INDEX",
     "BATCH_VARIANTS_TOTAL",
@@ -1805,18 +1807,27 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
         # Activation is single-flight on orchestrator-0, while builds are routed
         # across both nodes. Generated JSON files are node-local caches; refresh
         # them from Postgres (revision marker makes unchanged pools a cheap no-op).
+        video_inventory_path = str(
+            os.environ.get("FOOTAGE_INVENTORY_JSON")
+            or os.environ.get("FOOTAGE_INVENTORY_OUT")
+            or "data/footage_inventory.json"
+        ).strip()
+        video_snapshot_path = str(
+            os.environ.get("FOOTAGE_TAGS_SNAPSHOT_PATH")
+            or "data/footage_tags_snapshot.json"
+        ).strip()
         _ensure_video_picker_artifacts_from_registry(
             repo_root=repo_root,
-            inventory_path=str(
-                os.environ.get("FOOTAGE_INVENTORY_JSON")
-                or os.environ.get("FOOTAGE_INVENTORY_OUT")
-                or "data/footage_inventory.json"
-            ).strip(),
-            snapshot_path=str(
-                os.environ.get("FOOTAGE_TAGS_SNAPSHOT_PATH")
-                or "data/footage_tags_snapshot.json"
-            ).strip(),
+            inventory_path=video_inventory_path,
+            snapshot_path=video_snapshot_path,
             cache_key=str(job_id),
+        )
+        # Pin both sides of the picker mapping to the artifacts hydrated above.
+        # Otherwise a fresh node can combine the new inventory with packaged
+        # legacy metadata and report zero mapped assets for a healthy pool.
+        env["FOOTAGE_INVENTORY_JSON"] = video_inventory_path
+        env["FOOTAGE_STYLE_METADATA_DB_PATHS_JSON"] = json.dumps(
+            [video_snapshot_path]
         )
 
     # Customization colors (override the bg-driven default above). subtitle →
