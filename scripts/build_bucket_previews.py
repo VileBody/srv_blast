@@ -300,13 +300,19 @@ def _download_to_temp(url: str, dest_dir: Path) -> Path:
 # the locally-installed AE, send the local mp4 straight to Telegram.
 # --------------------------------------------------------------------------- #
 _VIDEO_EXTS = {".mp4", ".mov", ".m4v", ".webm"}
+_PHOTO_EXTS = {".jpg", ".jpeg", ".png", ".webp"}
 
 
-def index_local_footage(footage_dir: Path) -> Dict[str, str]:
+def _media_exts(media: str) -> set:
+    return _PHOTO_EXTS if media == "photo" else _VIDEO_EXTS
+
+
+def index_local_footage(footage_dir: Path, *, media: str = "video") -> Dict[str, str]:
     """file_name -> absolute local path (recursive). First match wins."""
+    exts = _media_exts(media)
     out: Dict[str, str] = {}
     for p in footage_dir.rglob("*"):
-        if p.is_file() and p.suffix.lower() in _VIDEO_EXTS:
+        if p.is_file() and p.suffix.lower() in exts:
             out.setdefault(p.name, str(p.resolve()))
     return out
 
@@ -839,7 +845,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         local_dir = Path(args.local_footage_dir).expanduser().resolve()
         if not local_dir.is_dir():
             raise SystemExit(f"--local-footage-dir not a directory: {local_dir}")
-        local_index = index_local_footage(local_dir)
+        local_index = index_local_footage(local_dir, media=args.media)
         log.info("local footage: %d video files in %s", len(local_index), local_dir)
         before = len(mapped_assets)
         mapped_assets = [
