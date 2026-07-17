@@ -105,15 +105,23 @@ def select_bucket_clips(
     *,
     seed: str,
     top_n: int = DEFAULT_TOP_N,
+    media_type: str = "video",
 ) -> List[Dict[str, Any]]:
     """Top-N representative clips for a bucket, deterministic by seed.
 
     `mapped_assets` are inventory assets enriched with style metadata
     (meta_theme_tags / meta_color_tone / meta_people_type) via
     footage_picker.map_inventory_assets_with_style_metadata().
+
+    media_type must match the pool being previewed. For photo buckets it has to be
+    "photo" so the picker applies the photo-only anchors/exclusions
+    (PHOTO_REQUIRE_GROUPS / PHOTO_EXCLUDE_TERMS) — otherwise a preview would draw
+    stills the real photo flow would never pick (e.g. beach silhouettes for the
+    digital-silhouette bucket). Passed explicitly rather than read from BG_MODE so
+    an offline preview build does not depend on the ambient env.
     """
     raw_pick = _raw_pick_from_bucket(bucket)
-    pool = fp._build_raw_pool(raw_pick, mapped_assets)
+    pool = fp._build_raw_pool(raw_pick, mapped_assets, media_type=media_type)
     pool.sort(key=lambda it: _clip_sort_key(it, seed=seed))
     n = max(0, int(top_n))
     return pool[:n]
