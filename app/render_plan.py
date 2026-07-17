@@ -17,6 +17,7 @@ from core.subtitles_mode import (
 
 RENDER_REQUEST_SCHEMA = "ae-native-renderer.render-request.v1"
 RENDER_PLAN_VERSION = "render-plan.v1"
+RENDER_PLAN_SCHEMA_VERSION = "render-plan.v1.1"
 
 
 class VisualOperationTarget(BaseModel):
@@ -66,12 +67,21 @@ class RenderPlanV1(BaseModel):
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
+    schema_version: str = Field(
+        default=RENDER_PLAN_SCHEMA_VERSION,
+        alias="schemaVersion",
+        serialization_alias="schemaVersion",
+    )
     project_spec: Dict[str, Any] = Field(alias="projectSpec", serialization_alias="projectSpec")
     comps_spec: List[Dict[str, Any]] = Field(alias="compsSpec", serialization_alias="compsSpec")
     footage_layers: List[Dict[str, Any]] = Field(default_factory=list)
     text_layers: List[Dict[str, Any]] = Field(default_factory=list)
     visual_ops: List[VisualOperationV1] = Field(default_factory=list, alias="visualOps", serialization_alias="visualOps")
     f3_media: List[Dict[str, str]] = Field(default_factory=list)
+    requirements: Dict[str, Any] = Field(default_factory=dict)
+    style_registry: List[Dict[str, Any]] = Field(default_factory=list, alias="styleRegistry", serialization_alias="styleRegistry")
+    effect_registry: List[Dict[str, Any]] = Field(default_factory=list, alias="effectRegistry", serialization_alias="effectRegistry")
+    golden_refs: List[Dict[str, Any]] = Field(default_factory=list, alias="goldenRefs", serialization_alias="goldenRefs")
 
     def to_ae_payload(self) -> Dict[str, Any]:
         payload: Dict[str, Any] = {
@@ -128,6 +138,8 @@ def build_render_plan_v1(
         full_edit_config=full_edit_config,
         f3_media=f3_media,
     )
+    style_registry = _style_registry(subtitles_mode, full_edit_config, visual_ops)
+    effect_registry = _effect_registry(footage_layers, text_layers, visual_ops)
     return RenderPlanV1(
         projectSpec=project_spec,
         compsSpec=comps,
@@ -135,6 +147,10 @@ def build_render_plan_v1(
         text_layers=text_layers,
         visualOps=visual_ops,
         f3_media=f3_media,
+        requirements=_requirements(footage_layers, text_layers, visual_ops, f3_media),
+        styleRegistry=style_registry,
+        effectRegistry=effect_registry,
+        goldenRefs=_golden_refs(subtitles_mode, full_edit_config),
     )
 
 
@@ -159,6 +175,133 @@ def build_visual_ops(
         if op is not None:
             ops.append(op)
     return ops
+
+
+def _requirements(
+    footage_layers: List[Dict[str, Any]],
+    text_layers: List[Dict[str, Any]],
+    visual_ops: List[VisualOperationV1],
+    f3_media: List[Dict[str, str]],
+) -> Dict[str, Any]:
+    fonts = sorted(
+        {
+            str(layer.get("text_data", {}).get("text_base", {}).get("font") or "").strip()
+            for layer in text_layers
+            if isinstance(layer.get("text_data"), dict)
+        }
+        - {""}
+    )
+    required_asset_roles = sorted(
+        {
+            asset.role
+            for op in visual_ops
+            for asset in op.assets
+            if not asset.optional
+        }
+    )
+    layer_types = sorted(
+        {
+            str(layer.get("type") or "").strip()
+            for layer in [*footage_layers, *text_layers]
+            if str(layer.get("type") or "").strip()
+        }
+    )
+    plugins = sorted(
+        {
+            plugin
+            for layer in [*footage_layers, *text_layers]
+            for plugin in _plugins_for_layer(layer)
+        }
+    )
+    return {
+        "fonts": fonts,
+        "asset_roles": required_asset_roles,
+        "layer_types": layer_types,
+        "plugins": plugins,
+        "f3_media_count": len(f3_media),
+        "audio_required": "audio" in required_asset_roles or "tts_audio" in required_asset_roles,
+        "external_plugins_policy": "unsupported_without_ofx_or_sidecar",
+    }
+
+
+def _style_registry(
+    subtitles_mode: str,
+    full_edit_config: Dict[str, Any],
+    visual_ops: List[VisualOperationV1],
+) -> List[Dict[str, Any]]:
+    style_ids = []
+    semantic = _dict(full_edit_config.get("semantic_style"))
+    if _clean(semantic.get("style_id")):
+        style_ids.append(_clean(semantic.get("style_id")))
+    for op in visual_ops:
+        if op.type.startswith("subtitle."):
+            style_ids.append(op.type)
+        if op.type.startswith("hook."):
+            style_ids.append(op.type)
+    if subtitles_mode:
+        style_ids.append(f"subtitles_mode:{subtitles_mode}")
+    out = []
+    for style_id in sorted(set(style_ids)):
+        out.append(
+            {
+                "styleId": style_id,
+                "version": "v1",
+                "backend": "native_approximation",
+                "parity": "approximate",
+                "fallbackPolicy": "capability_report",
+            }
+        )
+    return out
+
+
+def _effect_registry(
+    footage_layers: List[Dict[str, Any]],
+    text_layers: List[Dict[str, Any]],
+    visual_ops: List[VisualOperationV1],
+) -> List[Dict[str, Any]]:
+    match_names = {
+        _normalize_effect_match_name(effect_name)
+        for layer in [*footage_layers, *text_layers]
+        for effect_name in _dict(layer.get("effects")).keys()
+    }
+    match_names.update(_native_effects_for_visual_op(op) for op in visual_ops)
+    out = []
+    for match_name in sorted(name for name in match_names if name):
+        out.append(
+            {
+                "stableId": _stable_effect_id(match_name),
+                "aeMatchName": match_name,
+                "backend": _effect_backend(match_name),
+                "parity": "approximate",
+                "fallbackPolicy": "capability_report",
+            }
+        )
+    return out
+
+
+def _golden_refs(subtitles_mode: str, full_edit_config: Dict[str, Any]) -> List[Dict[str, Any]]:
+    refs = []
+    if subtitles_mode == SUBTITLES_MODE_TRENDY_5TH:
+        refs.append(
+            {
+                "id": "trendy_5th_real_job",
+                "artifactJobId": "9ef2717145c04318927ca738f5882541",
+                "family": "Trendy",
+                "status": "reference_required",
+            }
+        )
+    if subtitles_mode == SUBTITLES_MODE_BRAT_5TH:
+        refs.append(
+            {
+                "id": "brat_5th_real_job",
+                "artifactJobId": "a15d4c02d67843b787402bb27aeb5830",
+                "family": "Brat",
+                "status": "reference_required",
+            }
+        )
+    if _clean(full_edit_config.get("job_id")):
+        refs.append({"id": "source_job", "jobId": _clean(full_edit_config.get("job_id"))})
+    return refs
 
 
 def _subtitle_operation(mode: str, cfg: Dict[str, Any]) -> Optional[VisualOperationV1]:
@@ -446,6 +589,56 @@ def _audio_local_path(url: str) -> str:
     raw_name = (str(url).split("?", 1)[0].rstrip("/").split("/")[-1] or "audio.wav").strip()
     file_name = unquote(raw_name) or raw_name
     return f"media/audio/{Path(file_name).name}"
+
+
+def _plugins_for_layer(layer: Dict[str, Any]) -> List[str]:
+    plugins = []
+    for effect_name in _dict(layer.get("effects")).keys():
+        match_name = _normalize_effect_match_name(effect_name)
+        if match_name.startswith("S_"):
+            plugins.append("sapphire")
+        elif match_name.startswith("BCC "):
+            plugins.append("boris_bcc")
+        elif match_name.startswith("VISINF "):
+            plugins.append("visinf")
+    return plugins
+
+
+def _native_effects_for_visual_op(op: VisualOperationV1) -> str:
+    mapped = {
+        "subtitle.trendy.v1": "ANR Subtitle Trendy",
+        "subtitle.brat.v1": "ANR Subtitle Brat",
+        "hook.f1.sound.v1": "ANR Hook F1 Sound",
+        "hook.f2.object.v1": "ANR Shape Overlay",
+        "hook.f3.effect.v1": "ANR F3 Stylize",
+        "hook.f4.motion.v1": "ANR Hook F4 Motion",
+        "hook.f5.cognition.v1": "ANR Hook F5 Cognition",
+    }.get(op.type, "")
+    if mapped:
+        return mapped
+    if op.type.startswith("subtitle.bot."):
+        return "ANR Subtitle Bot"
+    return ""
+
+
+def _normalize_effect_match_name(effect_name: str) -> str:
+    return str(effect_name or "").split(":", 1)[-1].strip()
+
+
+def _stable_effect_id(match_name: str) -> str:
+    return (
+        str(match_name)
+        .lower()
+        .replace(" ", ".")
+        .replace("_", ".")
+        .replace("-", ".")
+    )
+
+
+def _effect_backend(match_name: str) -> str:
+    if match_name.startswith(("S_", "BCC ", "VISINF ")):
+        return "unsupported_external_plugin"
+    return "native_approximation"
 
 
 def _dict(value: Any) -> Dict[str, Any]:

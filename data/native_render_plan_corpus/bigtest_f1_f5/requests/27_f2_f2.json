@@ -12,6 +12,22 @@
       "w": 1080
     }
   ],
+  "effectRegistry": [
+    {
+      "aeMatchName": "ANR Shape Overlay",
+      "backend": "native_approximation",
+      "fallbackPolicy": "capability_report",
+      "parity": "approximate",
+      "stableId": "anr.shape.overlay"
+    },
+    {
+      "aeMatchName": "ANR Subtitle Bot",
+      "backend": "native_approximation",
+      "fallbackPolicy": "capability_report",
+      "parity": "approximate",
+      "stableId": "anr.subtitle.bot"
+    }
+  ],
   "f3_media": [],
   "footage_layers": [
     {
@@ -28,6 +44,12 @@
       "z_index": 100
     }
   ],
+  "goldenRefs": [
+    {
+      "id": "source_job",
+      "jobId": "27_f2_f2"
+    }
+  ],
   "outputSpec": {
     "directory": "out/27_f2_f2",
     "video": "27_f2_f2.mp4",
@@ -42,7 +64,42 @@
     "subtitlesMode": "impulse_2nd"
   },
   "requestId": "27_f2_f2",
+  "requirements": {
+    "asset_roles": [],
+    "audio_required": false,
+    "external_plugins_policy": "unsupported_without_ofx_or_sidecar",
+    "f3_media_count": 0,
+    "fonts": [],
+    "layer_types": [
+      "footage"
+    ],
+    "plugins": []
+  },
   "schema": "ae-native-renderer.render-request.v1",
+  "schemaVersion": "render-plan.v1.1",
+  "styleRegistry": [
+    {
+      "backend": "native_approximation",
+      "fallbackPolicy": "capability_report",
+      "parity": "approximate",
+      "styleId": "hook.f2.object.v1",
+      "version": "v1"
+    },
+    {
+      "backend": "native_approximation",
+      "fallbackPolicy": "capability_report",
+      "parity": "approximate",
+      "styleId": "subtitle.bot.impulse_2nd.v1",
+      "version": "v1"
+    },
+    {
+      "backend": "native_approximation",
+      "fallbackPolicy": "capability_report",
+      "parity": "approximate",
+      "styleId": "subtitles_mode:impulse_2nd",
+      "version": "v1"
+    }
+  ],
   "text_layers": [],
   "visualOps": [
     {

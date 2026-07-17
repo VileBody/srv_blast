@@ -53,11 +53,15 @@ def test_render_plan_writes_canonical_native_request_and_ae_payload() -> None:
 
     native = plan.to_native_request(request_id="job-1")
     assert native["schema"] == "ae-native-renderer.render-request.v1"
+    assert native["schemaVersion"] == "render-plan.v1.1"
     assert native["payloadVersion"] == "render-plan.v1"
     assert native["projectSpec"]["mainCompName"] == "Comp 1"
     assert "project" not in native
     assert native["visualOps"][0]["type"] == "subtitle.bot.impulse_2nd.v1"
     assert native["visualOps"][0]["params"]["segments"][0]["words"][0]["word"] == "hello"
+    assert native["requirements"]["layer_types"] == ["footage"]
+    assert native["styleRegistry"]
+    assert native["effectRegistry"]
 
     ae_payload = plan.to_ae_payload()
     assert ae_payload["project"]["mainCompName"] == "Comp 1"
@@ -82,6 +86,7 @@ def test_trendy_and_brat_keep_word_timings_even_when_text_layers_are_empty() -> 
         op = request["visualOps"][0]
         assert op["type"] == expected_type
         assert op["params"]["word_timings"][0]["word"] == "брат"
+        assert request["goldenRefs"][0]["family"] in {"Trendy", "Brat"}
         if mode == "brat_5th":
             assert op["params"]["bpm"] == 128.0
 
@@ -124,6 +129,9 @@ def test_hook_visual_ops_preserve_ids_timing_assets_and_audio_roles() -> None:
     assert ops["hook.f4.motion.v1"]["params"]["device"] == "tap"
     assert ops["hook.f1.sound.v1"]["assets"][0]["path"] == "media/audio/impact.mp3"
     assert ops["hook.f5.cognition.v1"]["assets"][0]["role"] == "tts_audio"
+    request = plan.to_native_request()
+    assert sorted(request["requirements"]["asset_roles"]) == ["audio", "tts_audio"]
+    assert any(entry["aeMatchName"] == "ANR F3 Stylize" for entry in request["effectRegistry"])
 
 
 def test_project_builder_emits_native_request_json(tmp_path: Path, monkeypatch) -> None:
