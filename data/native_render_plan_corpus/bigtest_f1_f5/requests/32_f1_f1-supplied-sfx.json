@@ -1,0 +1,123 @@
+{
+  "action": "render",
+  "assetsSpec": {
+    "root": "."
+  },
+  "compsSpec": [
+    {
+      "dur": 8.0,
+      "fps": 24,
+      "h": 1920,
+      "name": "Comp 1",
+      "w": 1080
+    }
+  ],
+  "f3_media": [],
+  "footage_layers": [
+    {
+      "in_point": 0.0,
+      "name": "corpus_clip",
+      "out_point": 8.0,
+      "text_data": {
+        "source_footage": {
+          "file_name": "corpus_clip.mp4",
+          "remote_url": "s3://native-renderer-corpus/footage/corpus_clip.mp4"
+        }
+      },
+      "type": "footage",
+      "z_index": 100
+    }
+  ],
+  "outputSpec": {
+    "directory": "out/32_f1_f1-supplied-sfx",
+    "video": "32_f1_f1-supplied-sfx.mp4",
+    "writeScene": true
+  },
+  "payloadVersion": "render-plan.v1",
+  "policy": {
+    "onUnsupported": "report"
+  },
+  "projectSpec": {
+    "mainCompName": "Comp 1",
+    "subtitlesMode": "impulse_2nd"
+  },
+  "requestId": "32_f1_f1-supplied-sfx",
+  "schema": "ae-native-renderer.render-request.v1",
+  "text_layers": [],
+  "visualOps": [
+    {
+      "assets": [],
+      "id": "subtitles_impulse_2nd",
+      "params": {
+        "segments": [
+          {
+            "end": 2.2,
+            "focusStyle": null,
+            "focusWord": null,
+            "id": 1,
+            "lines": [],
+            "start": 0.5,
+            "text": "native render corpus",
+            "type": "impulse_2nd",
+            "words": [
+              {
+                "end": 0.95,
+                "focus": false,
+                "start": 0.5,
+                "word": "native"
+              },
+              {
+                "end": 1.45,
+                "focus": false,
+                "start": 0.95,
+                "word": "render"
+              },
+              {
+                "end": 2.2,
+                "focus": false,
+                "start": 1.45,
+                "word": "corpus"
+              }
+            ]
+          }
+        ],
+        "source_mode": "impulse_2nd"
+      },
+      "required": true,
+      "target": {},
+      "timing": {},
+      "type": "subtitle.bot.impulse_2nd.v1"
+    },
+    {
+      "assets": [
+        {
+          "optional": false,
+          "path": "media/audio/f1-supplied-sfx.wav",
+          "role": "audio"
+        }
+      ],
+      "id": "hook_f1_sound",
+      "params": {
+        "drop_time": 3.2,
+        "duck": {
+          "amountDb": -12.0,
+          "attack": 0.05,
+          "release": 0.25
+        },
+        "duration": 2.2,
+        "fadeOut": 0.1,
+        "impactAt": 0.5,
+        "seed": 9365,
+        "subtitle_text": "звук"
+      },
+      "required": true,
+      "target": {},
+      "timing": {
+        "anchor": "drop",
+        "duration": 2.2,
+        "start": 0.5
+      },
+      "type": "hook.f1.sound.v1"
+    }
+  ]
+}
