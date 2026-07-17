@@ -1,0 +1,110 @@
+{
+  "action": "render",
+  "assetsSpec": {
+    "root": "."
+  },
+  "compsSpec": [
+    {
+      "dur": 8.0,
+      "fps": 24,
+      "h": 1920,
+      "name": "Comp 1",
+      "w": 1080
+    }
+  ],
+  "f3_media": [],
+  "footage_layers": [
+    {
+      "in_point": 0.0,
+      "name": "corpus_clip",
+      "out_point": 8.0,
+      "text_data": {
+        "source_footage": {
+          "file_name": "corpus_clip.mp4",
+          "remote_url": "s3://native-renderer-corpus/footage/corpus_clip.mp4"
+        }
+      },
+      "type": "footage",
+      "z_index": 100
+    }
+  ],
+  "outputSpec": {
+    "directory": "out/02_f3_f3",
+    "video": "02_f3_f3.mp4",
+    "writeScene": true
+  },
+  "payloadVersion": "render-plan.v1",
+  "policy": {
+    "onUnsupported": "report"
+  },
+  "projectSpec": {
+    "mainCompName": "Comp 1",
+    "subtitlesMode": "impulse_2nd"
+  },
+  "requestId": "02_f3_f3",
+  "schema": "ae-native-renderer.render-request.v1",
+  "text_layers": [],
+  "visualOps": [
+    {
+      "assets": [],
+      "id": "subtitles_impulse_2nd",
+      "params": {
+        "segments": [
+          {
+            "end": 2.2,
+            "focusStyle": null,
+            "focusWord": null,
+            "id": 1,
+            "lines": [],
+            "start": 0.5,
+            "text": "native render corpus",
+            "type": "impulse_2nd",
+            "words": [
+              {
+                "end": 0.95,
+                "focus": false,
+                "start": 0.5,
+                "word": "native"
+              },
+              {
+                "end": 1.45,
+                "focus": false,
+                "start": 0.95,
+                "word": "render"
+              },
+              {
+                "end": 2.2,
+                "focus": false,
+                "start": 1.45,
+                "word": "corpus"
+              }
+            ]
+          }
+        ],
+        "source_mode": "impulse_2nd"
+      },
+      "required": true,
+      "target": {},
+      "timing": {},
+      "type": "subtitle.bot.impulse_2nd.v1"
+    },
+    {
+      "assets": [],
+      "id": "hook_f3_effect",
+      "params": {
+        "detected_effect_ids": [
+          "hook_light"
+        ],
+        "drop_time": 3.2,
+        "extra": "",
+        "extra_full": false,
+        "hook": "hook_light",
+        "transition": ""
+      },
+      "required": true,
+      "target": {},
+      "timing": {},
+      "type": "hook.f3.effect.v1"
+    }
+  ]
+}

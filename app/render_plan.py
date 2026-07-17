@@ -317,6 +317,9 @@ def _f5_operation(cfg: Dict[str, Any]) -> Optional[VisualOperationV1]:
         timing.duration = max(0.0, float(f5["audio_duration_ms"]) / 1000.0)
     if f5.get("combo_seed") is not None:
         params["seed"] = int(f5["combo_seed"])
+    word_timings = _list(f5.get("word_timings")) or _list(f5.get("words"))
+    if word_timings:
+        params["word_timings"] = word_timings
     assets = []
     if audio_url:
         assets.append(VisualOperationAsset(role="tts_audio", path=_audio_local_path(audio_url), optional=False))

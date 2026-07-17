@@ -1,0 +1,743 @@
+{
+  "cases": [
+    {
+      "family": "Baseline",
+      "id": "01_baseline_case",
+      "label": "Без хука",
+      "raw_bigtest_case": {
+        "effect_extra": "",
+        "effect_hook": "",
+        "effect_hook_extend": "",
+        "effect_transition": "",
+        "hook_category": "",
+        "hook_device": "",
+        "hook_enabled": false,
+        "label": "Без хука"
+      },
+      "request": "requests/01_baseline_case.json",
+      "required_assets": [],
+      "source": "static_bigtest",
+      "visual_ops": [
+        "subtitle.bot.impulse_2nd.v1"
+      ]
+    },
+    {
+      "family": "F3",
+      "id": "02_f3_f3",
+      "label": "F3/хук: Молния",
+      "raw_bigtest_case": {
+        "effect_extra": "",
+        "effect_hook": "hook_light",
+        "effect_hook_extend": "",
+        "effect_transition": "",
+        "hook_category": "effect",
+        "hook_device": "",
+        "hook_enabled": true,
+        "label": "F3/хук: Молния"
+      },
+      "request": "requests/02_f3_f3.json",
+      "required_assets": [],
+      "source": "static_bigtest",
+      "visual_ops": [
+        "subtitle.bot.impulse_2nd.v1",
+        "hook.f3.effect.v1"
+      ]
+    },
+    {
+      "family": "F3",
+      "id": "03_f3_f3",
+      "label": "F3/хук: Затвор",
+      "raw_bigtest_case": {
+        "effect_extra": "",
+        "effect_hook": "shutter_effect",
+        "effect_hook_extend": "",
+        "effect_transition": "",
+        "hook_category": "effect",
+        "hook_device": "",
+        "hook_enabled": true,
+        "label": "F3/хук: Затвор"
+      },
+      "request": "requests/03_f3_f3.json",
+      "required_assets": [],
+      "source": "static_bigtest",
+      "visual_ops": [
+        "subtitle.bot.impulse_2nd.v1",
+        "hook.f3.effect.v1"
+      ]
+    },
+    {
+      "family": "F3",
+      "id": "04_f3_f3",
+      "label": "F3/хук: Слоу-шаттер",
+      "raw_bigtest_case": {
+        "effect_extra": "",
+        "effect_hook": "flash_slow_shutter",
+        "effect_hook_extend": "",
+        "effect_transition": "",
+        "hook_category": "effect",
+        "hook_device": "",
+        "hook_enabled": true,
+        "label": "F3/хук: Слоу-шаттер"
+      },
+      "request": "requests/04_f3_f3.json",
+      "required_assets": [],
+      "source": "static_bigtest",
+      "visual_ops": [
+        "subtitle.bot.impulse_2nd.v1",
+        "hook.f3.effect.v1"
+      ]
+    },
+    {
+      "family": "F3",
+      "id": "05_f3_f3",
+      "label": "F3/хук: Слоу-шаттер (до конца)",
+      "raw_bigtest_case": {
+        "effect_extra": "",
+        "effect_hook": "flash_slow_shutter",
+        "effect_hook_extend": "to_end",
+        "effect_transition": "",
+        "hook_category": "effect",
+        "hook_device": "",
+        "hook_enabled": true,
+        "label": "F3/хук: Слоу-шаттер (до конца)"
+      },
+      "request": "requests/05_f3_f3.json",
+      "required_assets": [],
+      "source": "static_bigtest",
+      "visual_ops": [
+        "subtitle.bot.impulse_2nd.v1",
+        "hook.f3.effect.v1"
+      ]
+    },
+    {
+      "family": "F3",
+      "id": "06_f3_f3-3",
+      "label": "F3/хук: Слоу-шаттер (3 футажа)",
+      "raw_bigtest_case": {
+        "effect_extra": "",
+        "effect_hook": "flash_slow_shutter",
+        "effect_hook_extend": "after_drop:3",
+        "effect_transition": "",
+        "hook_category": "effect",
+        "hook_device": "",
+        "hook_enabled": true,
+        "label": "F3/хук: Слоу-шаттер (3 футажа)"
+      },
+      "request": "requests/06_f3_f3-3.json",
+      "required_assets": [],
+      "source": "static_bigtest",
+      "visual_ops": [
+        "subtitle.bot.impulse_2nd.v1",
+        "hook.f3.effect.v1"
+      ]
+    },
+    {
+      "family": "F3",
+      "id": "07_f3_f3",
+      "label": "F3/переход: Снап-вайп",
+      "raw_bigtest_case": {
+        "effect_extra": "",
+        "effect_hook": "",
+        "effect_hook_extend": "",
+        "effect_transition": "snap_wipe",
+        "hook_category": "effect",
+        "hook_device": "",
+        "hook_enabled": true,
+        "label": "F3/переход: Снап-вайп"
+      },
+      "request": "requests/07_f3_f3.json",
+      "required_assets": [],
+      "source": "static_bigtest",
+      "visual_ops": [
+        "subtitle.bot.impulse_2nd.v1",
+        "hook.f3.effect.v1"
+      ]
+    },
+    {
+      "family": "F3",
+      "id": "08_f3_f3",
+      "label": "F3/переход: Минимакс",
+      "raw_bigtest_case": {
+        "effect_extra": "",
+        "effect_hook": "",
+        "effect_hook_extend": "",
+        "effect_transition": "minimax",
+        "hook_category": "effect",
+        "hook_device": "",
+        "hook_enabled": true,
+        "label": "F3/переход: Минимакс"
+      },
+      "request": "requests/08_f3_f3.json",
+      "required_assets": [],
+      "source": "static_bigtest",
+      "visual_ops": [
+        "subtitle.bot.impulse_2nd.v1",
+        "hook.f3.effect.v1"
+      ]
+    },
+    {
+      "family": "F3",
+      "id": "09_f3_f3",
+      "label": "F3/переход: Инверт",
+      "raw_bigtest_case": {
+        "effect_extra": "",
+        "effect_hook": "",
+        "effect_hook_extend": "",
+        "effect_transition": "invert_flash",
+        "hook_category": "effect",
+        "hook_device": "",
+        "hook_enabled": true,
+        "label": "F3/переход: Инверт"
+      },
+      "request": "requests/09_f3_f3.json",
+      "required_assets": [],
+      "source": "static_bigtest",
+      "visual_ops": [
+        "subtitle.bot.impulse_2nd.v1",
+        "hook.f3.effect.v1"
+      ]
+    },
+    {
+      "family": "F3",
+      "id": "10_f3_f3",
+      "label": "F3/переход: Экстракт",
+      "raw_bigtest_case": {
+        "effect_extra": "",
+        "effect_hook": "",
+        "effect_hook_extend": "",
+        "effect_transition": "extract_flash",
+        "hook_category": "effect",
+        "hook_device": "",
+        "hook_enabled": true,
+        "label": "F3/переход: Экстракт"
+      },
+      "request": "requests/10_f3_f3.json",
+      "required_assets": [],
+      "source": "static_bigtest",
+      "visual_ops": [
+        "subtitle.bot.impulse_2nd.v1",
+        "hook.f3.effect.v1"
+      ]
+    },
+    {
+      "family": "F3",
+      "id": "11_f3_f3",
+      "label": "F3/переход: Вспышки",
+      "raw_bigtest_case": {
+        "effect_extra": "",
+        "effect_hook": "",
+        "effect_hook_extend": "",
+        "effect_transition": "flash_on_cuts",
+        "hook_category": "effect",
+        "hook_device": "",
+        "hook_enabled": true,
+        "label": "F3/переход: Вспышки"
+      },
+      "request": "requests/11_f3_f3.json",
+      "required_assets": [],
+      "source": "static_bigtest",
+      "visual_ops": [
+        "subtitle.bot.impulse_2nd.v1",
+        "hook.f3.effect.v1"
+      ]
+    },
+    {
+      "family": "F3",
+      "id": "12_f3_f3",
+      "label": "F3/переход: Тряска",
+      "raw_bigtest_case": {
+        "effect_extra": "",
+        "effect_hook": "",
+        "effect_hook_extend": "",
+        "effect_transition": "layer_shake",
+        "hook_category": "effect",
+        "hook_device": "",
+        "hook_enabled": true,
+        "label": "F3/переход: Тряска"
+      },
+      "request": "requests/12_f3_f3.json",
+      "required_assets": [],
+      "source": "static_bigtest",
+      "visual_ops": [
+        "subtitle.bot.impulse_2nd.v1",
+        "hook.f3.effect.v1"
+      ]
+    },
+    {
+      "family": "F3",
+      "id": "13_f3_f3",
+      "label": "F3/грейд: Ксерокс",
+      "raw_bigtest_case": {
+        "effect_extra": "xerox",
+        "effect_hook": "",
+        "effect_hook_extend": "",
+        "effect_transition": "",
+        "hook_category": "effect",
+        "hook_device": "",
+        "hook_enabled": true,
+        "label": "F3/грейд: Ксерокс"
+      },
+      "request": "requests/13_f3_f3.json",
+      "required_assets": [],
+      "source": "static_bigtest",
+      "visual_ops": [
+        "subtitle.bot.impulse_2nd.v1",
+        "hook.f3.effect.v1"
+      ]
+    },
+    {
+      "family": "F3",
+      "id": "14_f3_f3",
+      "label": "F3/грейд: Аналог-глитч",
+      "raw_bigtest_case": {
+        "effect_extra": "analog_glitch",
+        "effect_hook": "",
+        "effect_hook_extend": "",
+        "effect_transition": "",
+        "hook_category": "effect",
+        "hook_device": "",
+        "hook_enabled": true,
+        "label": "F3/грейд: Аналог-глитч"
+      },
+      "request": "requests/14_f3_f3.json",
+      "required_assets": [],
+      "source": "static_bigtest",
+      "visual_ops": [
+        "subtitle.bot.impulse_2nd.v1",
+        "hook.f3.effect.v1"
+      ]
+    },
+    {
+      "family": "F3",
+      "id": "15_f3_f3",
+      "label": "F3/грейд: Неон",
+      "raw_bigtest_case": {
+        "effect_extra": "neon_extract",
+        "effect_hook": "",
+        "effect_hook_extend": "",
+        "effect_transition": "",
+        "hook_category": "effect",
+        "hook_device": "",
+        "hook_enabled": true,
+        "label": "F3/грейд: Неон"
+      },
+      "request": "requests/15_f3_f3.json",
+      "required_assets": [],
+      "source": "static_bigtest",
+      "visual_ops": [
+        "subtitle.bot.impulse_2nd.v1",
+        "hook.f3.effect.v1"
+      ]
+    },
+    {
+      "family": "F3",
+      "id": "16_f3_f3",
+      "label": "F3/грейд: Старая камера",
+      "raw_bigtest_case": {
+        "effect_extra": "old_camera",
+        "effect_hook": "",
+        "effect_hook_extend": "",
+        "effect_transition": "",
+        "hook_category": "effect",
+        "hook_device": "",
+        "hook_enabled": true,
+        "label": "F3/грейд: Старая камера"
+      },
+      "request": "requests/16_f3_f3.json",
+      "required_assets": [],
+      "source": "static_bigtest",
+      "visual_ops": [
+        "subtitle.bot.impulse_2nd.v1",
+        "hook.f3.effect.v1"
+      ]
+    },
+    {
+      "family": "F4",
+      "id": "17_f4_f4",
+      "label": "F4/движение: Свайп",
+      "raw_bigtest_case": {
+        "effect_extra": "",
+        "effect_hook": "",
+        "effect_hook_extend": "",
+        "effect_transition": "",
+        "hook_category": "motion",
+        "hook_device": "swipe",
+        "hook_enabled": true,
+        "label": "F4/движение: Свайп"
+      },
+      "request": "requests/17_f4_f4.json",
+      "required_assets": [],
+      "source": "static_bigtest",
+      "visual_ops": [
+        "subtitle.bot.impulse_2nd.v1",
+        "hook.f4.motion.v1"
+      ]
+    },
+    {
+      "family": "F4",
+      "id": "18_f4_f4",
+      "label": "F4/движение: Тап",
+      "raw_bigtest_case": {
+        "effect_extra": "",
+        "effect_hook": "",
+        "effect_hook_extend": "",
+        "effect_transition": "",
+        "hook_category": "motion",
+        "hook_device": "tap",
+        "hook_enabled": true,
+        "label": "F4/движение: Тап"
+      },
+      "request": "requests/18_f4_f4.json",
+      "required_assets": [],
+      "source": "static_bigtest",
+      "visual_ops": [
+        "subtitle.bot.impulse_2nd.v1",
+        "hook.f4.motion.v1"
+      ]
+    },
+    {
+      "family": "F4",
+      "id": "19_f4_f4",
+      "label": "F4/движение: Зум",
+      "raw_bigtest_case": {
+        "effect_extra": "",
+        "effect_hook": "",
+        "effect_hook_extend": "",
+        "effect_transition": "",
+        "hook_category": "motion",
+        "hook_device": "pinch",
+        "hook_enabled": true,
+        "label": "F4/движение: Зум"
+      },
+      "request": "requests/19_f4_f4.json",
+      "required_assets": [],
+      "source": "static_bigtest",
+      "visual_ops": [
+        "subtitle.bot.impulse_2nd.v1",
+        "hook.f4.motion.v1"
+      ]
+    },
+    {
+      "family": "F4",
+      "id": "20_f4_f4",
+      "label": "F4/движение: Задержи палец",
+      "raw_bigtest_case": {
+        "effect_extra": "",
+        "effect_hook": "",
+        "effect_hook_extend": "",
+        "effect_transition": "",
+        "hook_category": "motion",
+        "hook_device": "holdfinger",
+        "hook_enabled": true,
+        "label": "F4/движение: Задержи палец"
+      },
+      "request": "requests/20_f4_f4.json",
+      "required_assets": [],
+      "source": "static_bigtest",
+      "visual_ops": [
+        "subtitle.bot.impulse_2nd.v1",
+        "hook.f4.motion.v1"
+      ]
+    },
+    {
+      "family": "F4",
+      "id": "21_f4_f4",
+      "label": "F4/движение: Качай головой",
+      "raw_bigtest_case": {
+        "effect_extra": "",
+        "effect_hook": "",
+        "effect_hook_extend": "",
+        "effect_transition": "",
+        "hook_category": "motion",
+        "hook_device": "head",
+        "hook_enabled": true,
+        "label": "F4/движение: Качай головой"
+      },
+      "request": "requests/21_f4_f4.json",
+      "required_assets": [],
+      "source": "static_bigtest",
+      "visual_ops": [
+        "subtitle.bot.impulse_2nd.v1",
+        "hook.f4.motion.v1"
+      ]
+    },
+    {
+      "family": "F5",
+      "id": "22_f5_f5",
+      "label": "F5/мысль: Панчлайн",
+      "raw_bigtest_case": {
+        "effect_extra": "",
+        "effect_hook": "",
+        "effect_hook_extend": "",
+        "effect_transition": "",
+        "hook_category": "thought",
+        "hook_device": "punchline",
+        "hook_enabled": true,
+        "label": "F5/мысль: Панчлайн"
+      },
+      "request": "requests/22_f5_f5.json",
+      "required_assets": [
+        "tts_audio"
+      ],
+      "source": "static_bigtest",
+      "visual_ops": [
+        "subtitle.bot.impulse_2nd.v1",
+        "hook.f5.cognition.v1"
+      ]
+    },
+    {
+      "family": "F5",
+      "id": "23_f5_f5",
+      "label": "F5/мысль: Пропущенное слово",
+      "raw_bigtest_case": {
+        "effect_extra": "",
+        "effect_hook": "",
+        "effect_hook_extend": "",
+        "effect_transition": "",
+        "hook_category": "thought",
+        "hook_device": "missing_word",
+        "hook_enabled": true,
+        "label": "F5/мысль: Пропущенное слово"
+      },
+      "request": "requests/23_f5_f5.json",
+      "required_assets": [
+        "tts_audio"
+      ],
+      "source": "static_bigtest",
+      "visual_ops": [
+        "subtitle.bot.impulse_2nd.v1",
+        "hook.f5.cognition.v1"
+      ]
+    },
+    {
+      "family": "F5",
+      "id": "24_f5_f5",
+      "label": "F5/мысль: Эхо",
+      "raw_bigtest_case": {
+        "effect_extra": "",
+        "effect_hook": "",
+        "effect_hook_extend": "",
+        "effect_transition": "",
+        "hook_category": "thought",
+        "hook_device": "lyric_echo",
+        "hook_enabled": true,
+        "label": "F5/мысль: Эхо"
+      },
+      "request": "requests/24_f5_f5.json",
+      "required_assets": [
+        "tts_audio"
+      ],
+      "source": "static_bigtest",
+      "visual_ops": [
+        "subtitle.bot.impulse_2nd.v1",
+        "hook.f5.cognition.v1"
+      ]
+    },
+    {
+      "family": "F5",
+      "id": "25_f5_f5",
+      "label": "F5/мысль: Вопрос к треку",
+      "raw_bigtest_case": {
+        "effect_extra": "",
+        "effect_hook": "",
+        "effect_hook_extend": "",
+        "effect_transition": "",
+        "hook_category": "thought",
+        "hook_device": "question_to_track",
+        "hook_enabled": true,
+        "label": "F5/мысль: Вопрос к треку"
+      },
+      "request": "requests/25_f5_f5.json",
+      "required_assets": [
+        "tts_audio"
+      ],
+      "source": "static_bigtest",
+      "visual_ops": [
+        "subtitle.bot.impulse_2nd.v1",
+        "hook.f5.cognition.v1"
+      ]
+    },
+    {
+      "family": "F5",
+      "id": "26_f5_f5",
+      "label": "F5/мысль: Инверсия",
+      "raw_bigtest_case": {
+        "effect_extra": "",
+        "effect_hook": "",
+        "effect_hook_extend": "",
+        "effect_transition": "",
+        "hook_category": "thought",
+        "hook_device": "inverse_lyric",
+        "hook_enabled": true,
+        "label": "F5/мысль: Инверсия"
+      },
+      "request": "requests/26_f5_f5.json",
+      "required_assets": [
+        "tts_audio"
+      ],
+      "source": "static_bigtest",
+      "visual_ops": [
+        "subtitle.bot.impulse_2nd.v1",
+        "hook.f5.cognition.v1"
+      ]
+    },
+    {
+      "family": "F2",
+      "id": "27_f2_f2",
+      "label": "F2/объект: Ромб",
+      "raw_bigtest_case": {
+        "effect_extra": "",
+        "effect_hook": "",
+        "effect_hook_extend": "",
+        "effect_transition": "",
+        "f2_shape": "rhomb",
+        "hook_category": "object",
+        "hook_device": "",
+        "hook_enabled": true,
+        "label": "F2/объект: Ромб"
+      },
+      "request": "requests/27_f2_f2.json",
+      "required_assets": [],
+      "source": "static_bigtest",
+      "visual_ops": [
+        "subtitle.bot.impulse_2nd.v1",
+        "hook.f2.object.v1"
+      ]
+    },
+    {
+      "family": "F2",
+      "id": "28_f2_f2",
+      "label": "F2/объект: Квадрат",
+      "raw_bigtest_case": {
+        "effect_extra": "",
+        "effect_hook": "",
+        "effect_hook_extend": "",
+        "effect_transition": "",
+        "f2_shape": "square",
+        "hook_category": "object",
+        "hook_device": "",
+        "hook_enabled": true,
+        "label": "F2/объект: Квадрат"
+      },
+      "request": "requests/28_f2_f2.json",
+      "required_assets": [],
+      "source": "static_bigtest",
+      "visual_ops": [
+        "subtitle.bot.impulse_2nd.v1",
+        "hook.f2.object.v1"
+      ]
+    },
+    {
+      "family": "F2",
+      "id": "29_f2_f2-10",
+      "label": "F2/объект: Звезда-10",
+      "raw_bigtest_case": {
+        "effect_extra": "",
+        "effect_hook": "",
+        "effect_hook_extend": "",
+        "effect_transition": "",
+        "f2_shape": "star1",
+        "hook_category": "object",
+        "hook_device": "",
+        "hook_enabled": true,
+        "label": "F2/объект: Звезда-10"
+      },
+      "request": "requests/29_f2_f2-10.json",
+      "required_assets": [],
+      "source": "static_bigtest",
+      "visual_ops": [
+        "subtitle.bot.impulse_2nd.v1",
+        "hook.f2.object.v1"
+      ]
+    },
+    {
+      "family": "F2",
+      "id": "30_f2_f2-5",
+      "label": "F2/объект: Звезда-5",
+      "raw_bigtest_case": {
+        "effect_extra": "",
+        "effect_hook": "",
+        "effect_hook_extend": "",
+        "effect_transition": "",
+        "f2_shape": "star2",
+        "hook_category": "object",
+        "hook_device": "",
+        "hook_enabled": true,
+        "label": "F2/объект: Звезда-5"
+      },
+      "request": "requests/30_f2_f2-5.json",
+      "required_assets": [],
+      "source": "static_bigtest",
+      "visual_ops": [
+        "subtitle.bot.impulse_2nd.v1",
+        "hook.f2.object.v1"
+      ]
+    },
+    {
+      "family": "F2",
+      "id": "31_f2_f2",
+      "label": "F2/объект: Эллипс",
+      "raw_bigtest_case": {
+        "effect_extra": "",
+        "effect_hook": "",
+        "effect_hook_extend": "",
+        "effect_transition": "",
+        "f2_shape": "elipse",
+        "hook_category": "object",
+        "hook_device": "",
+        "hook_enabled": true,
+        "label": "F2/объект: Эллипс"
+      },
+      "request": "requests/31_f2_f2.json",
+      "required_assets": [],
+      "source": "static_bigtest",
+      "visual_ops": [
+        "subtitle.bot.impulse_2nd.v1",
+        "hook.f2.object.v1"
+      ]
+    },
+    {
+      "family": "F1",
+      "id": "32_f1_f1-supplied-sfx",
+      "label": "F1/звук: supplied SFX",
+      "raw_bigtest_case": {
+        "f1_sound_text": "звук",
+        "f1_sound_url": "s3://native-renderer-corpus/audio/f1-supplied-sfx.wav",
+        "hook_category": "sound",
+        "hook_drop_t": 3.2,
+        "hook_enabled": true,
+        "label": "F1/звук: supplied SFX"
+      },
+      "request": "requests/32_f1_f1-supplied-sfx.json",
+      "required_assets": [
+        "audio"
+      ],
+      "source": "battery_f1_representative",
+      "visual_ops": [
+        "subtitle.bot.impulse_2nd.v1",
+        "hook.f1.sound.v1"
+      ]
+    }
+  ],
+  "coverage": {
+    "Baseline": 1,
+    "F1": 1,
+    "F2": 5,
+    "F3": 15,
+    "F4": 5,
+    "F5": 5,
+    "Unknown": 0
+  },
+  "defaults": {
+    "bpm": 128.0,
+    "drop_time": 3.2,
+    "subtitles_mode": "impulse_2nd"
+  },
+  "description": "Canonical render-request exports for the team bot /bigtest hook matrix plus the production F1 battery branch.",
+  "schema": "blast.native-render-plan-corpus.v1",
+  "source": {
+    "f1_note": "F1 is emitted by the battery flow when f1_sound_url is present; it is represented here with a supplied SFX asset.",
+    "static_bigtest_count": 31,
+    "static_bigtest_source": "services/tg_bot_botapi/app.py"
+  }
+}
