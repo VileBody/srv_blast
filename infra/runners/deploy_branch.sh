@@ -398,6 +398,13 @@ fi
 # Deterministic deploy target: exact remote branch revision.
 git_run reset --hard "origin/$BRANCH"
 
+# Sourced only AFTER the checkout: this script is piped in from the CI runner,
+# but SCRIPT_DIR points at the repo ON THE NODE, which carries the previous
+# revision until the reset above. Sourcing earlier would load a stale library (or
+# none at all on the first deploy that introduces it).
+# shellcheck source=infra/runners/lib_prod_path.sh
+. "$SCRIPT_DIR/lib_prod_path.sh"
+
 deploy_root_services() {
   local services=("$@")
   if is_true "$DEPLOY_USE_PREBUILT_IMAGES"; then
@@ -489,8 +496,21 @@ deploy_root_services_prebuilt() {
 }
 
 deploy_prod_path_services() {
+  # The prod path is the only stack that attaches Celery workers to user queues,
+  # so it never goes through deploy_root_services (pull+up in one step). It rolls
+  # out via prod_path_rollout: stage the image, prove the picker pools on a
+  # candidate container, and only then start anything. A readiness FAIL leaves the
+  # currently running containers untouched and fails the deploy.
   if ! is_true "$DEPLOY_ORCHESTRATOR_HA"; then
-    deploy_root_services orchestrator-api worker-build worker-render worker-render-poll
+    PROD_PATH_COMPOSE_ARGS=()
+    PROD_PATH_SERVICES=(orchestrator-api worker-build worker-render worker-render-poll)
+    PROD_PATH_USE_PREBUILT="$DEPLOY_USE_PREBUILT_IMAGES"
+    if is_true "$DEPLOY_USE_PREBUILT_IMAGES"; then
+      require_prebuilt_image_env
+      docker_registry_login_if_needed
+      reclaim_disk_for_pull
+    fi
+    prod_path_rollout
     remove_root_services tg-bot-public
     return 0
   fi
@@ -509,22 +529,17 @@ deploy_prod_path_services() {
   fi
 
   echo "[deploy] orchestrator-ha enabled compose=$compose_ha"
+  PROD_PATH_COMPOSE_ARGS=(-f docker-compose.yml -f "$compose_ha")
+  PROD_PATH_SERVICES=(
+    orchestrator-api orchestrator-api-2 worker-build worker-render worker-render-poll
+  )
+  PROD_PATH_USE_PREBUILT="$DEPLOY_USE_PREBUILT_IMAGES"
   if is_true "$DEPLOY_USE_PREBUILT_IMAGES"; then
     require_prebuilt_image_env
     docker_registry_login_if_needed
     reclaim_disk_for_pull
-    echo "[deploy] docker compose -f docker-compose.yml -f $compose_ha pull orchestrator-api orchestrator-api-2 worker-build worker-render worker-render-poll"
-    docker compose -f docker-compose.yml -f "$compose_ha" pull \
-      orchestrator-api orchestrator-api-2 worker-build worker-render worker-render-poll
-    echo "[deploy] docker compose -f docker-compose.yml -f $compose_ha up -d --no-build orchestrator-api orchestrator-api-2 worker-build worker-render worker-render-poll"
-    docker compose -f docker-compose.yml -f "$compose_ha" up -d --no-build \
-      orchestrator-api orchestrator-api-2 worker-build worker-render worker-render-poll
-    remove_root_services tg-bot-public
-    return 0
   fi
-  echo "[deploy] docker compose -f docker-compose.yml -f $compose_ha up -d --build orchestrator-api orchestrator-api-2 worker-build worker-render worker-render-poll"
-  docker compose -f docker-compose.yml -f "$compose_ha" up -d --build \
-    orchestrator-api orchestrator-api-2 worker-build worker-render worker-render-poll
+  prod_path_rollout
   remove_root_services tg-bot-public
 }
 
