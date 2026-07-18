@@ -75,6 +75,14 @@ SNOW = _t("snow", "winter", "ice", "frost", "blizzard", "winter landscape", "sno
 DARKMOOD = _t("dark atmosphere", "dim lighting", "moody", "dramatic lighting", "low light", "shadows", "dark landscape", "dark sky")
 ACTION = _t("skate", "skateboard", "running", "dance", "dancing", "sport", "action", "movement", "jump", "cycling", "nightlife", "motion blur")
 
+# reusable exclude groups (facet-breakers)
+WATER_ANY = _t("water", "ocean", "sea", "coast", "coastal", "beach", "lake", "river", "waves", "waterfront", "beach sunset", "shore")
+KNIGHT = _t("knight", "knights", "wizard", "mage", "medieval", "armor", "warrior", "castle", "fantasy", "sword")
+BOATS = _t("boat", "boats", "ship", "ships", "sailboat", "yacht", "fishing boat")
+DIGITAL_STYLE = _t("neon", "neon lights", "glow", "glowing", "led", "red lights", "blue lighting", "purple lighting", "digital art", "abstract", "glitch", "distortion")
+ROMANCE_ANY = _t("romance", "romantic", "romantic moment", "kiss", "hug", "embrace", "intimacy", "intimate", "intimate moment", "love", "couple", "date", "tender")
+PEOPLE_ANY = _t("man", "woman", "guy", "girl", "person", "people", "couple", "crowd", "portrait", "face", "man on sidewalk")
+
 
 @dataclass(frozen=True)
 class PhotoBucket:
@@ -161,60 +169,62 @@ def _b(bucket_id, label, lead, facets, require, colors=(), people="any", exclude
 
 PHOTO_BUCKETS: List[PhotoBucket] = [
     # ---- NATURE / LANDSCAPE (people=none) ----
-    _b("photo:nature_golden_warm", "Природа / золотой час", "тёплый природный пейзаж на закате",
-       {"subject": "nature", "time": "golden", "people": "none", "color": "warm", "energy": "serene"},
-       [COAST + FIELD + FOREST + MOUNTAIN + _t("landscape", "nature"), GOLDEN],
+    # iter2: exclude water entirely — golden-hour LAND nature only.
+    _b("photo:nature_golden_warm", "Природа / золотой час", "тёплый природный пейзаж на закате (без воды)",
+       {"subject": "land nature", "time": "golden", "people": "none", "color": "warm", "energy": "serene"},
+       [FIELD + FOREST + MOUNTAIN + _t("landscape", "nature", "trees", "hills"), GOLDEN],
        colors=("warm", "light"), people="none",
-       exclude=SILHOUETTE + DECAY + CITY + NIGHT + _t("dark atmosphere", "dark forest")),
+       exclude=SILHOUETTE + DECAY + CITY + NIGHT + WATER_ANY + _t("dark atmosphere", "dark forest")),
     _b("photo:forest_fog_dark", "Тёмный лес / туман", "строго туманный тёмный лес",
        {"subject": "forest", "weather": "fog", "people": "none", "color": "dark"},
        [FOREST, FOG], colors=("dark", "cold"), people="none",
        exclude=DECAY + MOUNTAIN + CITY + _t("architecture", "bedroom", "dark interior")),
-    _b("photo:rain_nature_dark", "Дождливая природа", "дождь/непогода в природном пейзаже",
-       {"subject": "nature", "weather": "rain", "people": "none", "color": "dark"},
-       [FOREST + MOUNTAIN + COAST + FIELD + _t("nature", "landscape"), RAIN],
+    # iter2: no ocean/sea — rain over LAND nature (ocean_storm owns the sea).
+    _b("photo:rain_nature_dark", "Дождливая природа", "дождь/непогода в природном пейзаже (без моря)",
+       {"subject": "land nature", "weather": "rain", "people": "none", "color": "dark"},
+       [FOREST + MOUNTAIN + FIELD + _t("nature", "landscape"), RAIN],
        colors=("dark", "cold"), people="none",
-       exclude=CITY + DECAY + _t("architecture")),
+       exclude=CITY + DECAY + _t("architecture", "ocean", "sea", "coast", "beach")),
+    # iter2: dark only, no urban, no people.
     _b("photo:mountain_dark", "Тёмные горы", "суровые тёмные горы",
        {"subject": "mountain", "people": "none", "color": "dark"},
        [MOUNTAIN], colors=("dark", "cold"), people="none",
-       exclude=DECAY + COAST + _t("castle", "architecture", "red lights", "glowing")),
+       exclude=DECAY + COAST + CITY + PEOPLE_ANY + _t("castle", "architecture", "red lights", "glowing", "city lights")),
+    # iter2: no people, no knights/fantasy.
     _b("photo:mountain_light", "Светлые горы", "светлые горы днём",
        {"subject": "mountain", "people": "none", "color": "light"},
        [MOUNTAIN], colors=("light", "warm"), people="none",
-       exclude=DECAY + _t("castle", "architecture", "ocean", "sea", "coast")),
+       exclude=DECAY + KNIGHT + PEOPLE_ANY + _t("architecture", "ocean", "sea", "coast")),
+    # iter2: no boats, no people, no buildings.
     _b("photo:ocean_storm_dark", "Тёмный океан / шторм", "штормовой тёмный океан",
        {"subject": "ocean", "weather": "storm", "people": "none", "color": "dark"},
        [COAST, RAIN + FOG + NIGHT + _t("dark clouds", "rough waves", "dark sky")],
        colors=("dark", "cold"), people="none",
-       exclude=MOUNTAIN + CITY + _t("architecture", "wet road", "night drive")),
+       exclude=MOUNTAIN + CITY + BOATS + PEOPLE_ANY + _t("architecture", "building", "wet road", "night drive")),
+    # iter2: no urban.
     _b("photo:winter_dark", "Тёмная зима", "тёмная зимняя природа",
        {"subject": "nature", "weather": "snow", "people": "none", "color": "dark"},
        [SNOW], colors=("dark", "cold"), people="none",
-       exclude=CITY + _t("ocean", "coast", "red lights", "glowing")),
-    _b("photo:night_sky_stars", "Ночное небо / звёзды", "звёздное ночное небо",
-       {"subject": "sky", "time": "night", "people": "none", "color": "dark"},
-       [SKY], colors=("dark", "cold"), people="none",
-       exclude=INTERIOR + DECAY + CAR + _t("castle", "architecture", "road")),
+       exclude=CITY + _t("architecture", "ocean", "coast", "red lights", "glowing")),
+    # iter2: no people/silhouettes.
     _b("photo:calm_water", "Спокойная вода / отражения", "зеркальная вода, озеро, отражение",
        {"subject": "water", "energy": "calm", "people": "none"},
        [CALMWATER], people="none",
-       exclude=CITY + DECAY + NEON + _t("storm", "night city", "wet road")),
+       exclude=CITY + DECAY + NEON + SILHOUETTE + PEOPLE_ANY + _t("storm", "night city", "wet road", "ocean", "beach")),
+    # iter2: no silhouettes, no knights.
     _b("photo:warm_field_flowers", "Поле / цветы", "тёплое поле, луг, цветы",
        {"subject": "field", "people": "none", "color": "warm"},
        [_t("flowers", "wildflowers", "flower field", "meadow", "green field", "grass", "field")],
        colors=("warm", "light", "neutral"), people="none",
-       exclude=CITY + NIGHT + DECAY + _t("dark atmosphere")),
+       exclude=CITY + NIGHT + DECAY + SILHOUETTE + KNIGHT + _t("dark atmosphere")),
 
     # ---- URBAN (people=none) ----
-    _b("photo:urban_night_empty", "Пустой ночной город", "пустой ночной город, скайлайн",
-       {"subject": "city", "time": "night", "people": "none", "color": "dark"},
-       [CITY, NIGHT], colors=("dark", "cold"), people="none",
-       exclude=DECAY + COAST + SILHOUETTE + _t("palm trees", "trees", "airplane", "neon")),
+    # (removed urban_night_empty — too varied to control.)
+    # iter2: strip cyberpunk traces (neon / digital art).
     _b("photo:urban_rain_night", "Дождливый ночной город", "мокрый ночной город, дождь",
        {"subject": "city", "time": "night", "weather": "rain", "people": "none", "color": "dark"},
        [CITY, RAIN], colors=("dark",), people="none",
-       exclude=_t("silhouette", "trees", "palm trees", "forest")),
+       exclude=DIGITAL_STYLE + _t("silhouette", "trees", "palm trees", "forest")),
     _b("photo:urban_decay_dark", "Заброшка / распад", "заброшенные здания, руины",
        {"subject": "decay", "people": "none", "color": "dark"},
        [DECAY], colors=("dark", "cold", "neutral"), people="none",
@@ -233,39 +243,49 @@ PHOTO_BUCKETS: List[PhotoBucket] = [
        {"visual_style": "glitch", "color": "dark"},
        [GLITCH], colors=("dark", "cold"), exclude=()),
 
-    # ---- LONE FIGURE / PEOPLE (none-tagged silhouettes) ----
+    # ---- LONE FIGURE (none-tagged silhouettes) ----
+    # (removed girl_silhouette_mood — uncontrollable.)
+    # iter2: no warm.
     _b("photo:lone_figure_scene", "Одинокий силуэт в кадре", "одинокая фигура/силуэт в пейзаже",
-       {"subject": "lone figure", "energy": "moody", "people": "none"},
-       [SILHOUETTE + _t("lonely figure", "lonely", "alone")], people="none",
+       {"subject": "lone figure", "energy": "moody", "people": "none", "color": "dark/cold"},
+       [SILHOUETTE + _t("lonely figure", "lonely", "alone")], colors=("dark", "cold", "neutral"), people="none",
        exclude=DECAY + NEON + COUPLE + _t("night club", "dance floor")),
 
     # ---- SOLO PERSON ----
+    # iter2: drop all intimacy + indoor setting.
     _b("photo:solitary_person_dark", "Человек / одиночество", "один человек в тёмном настроенческом кадре",
        {"subject": "person", "energy": "solitude", "time": "night", "color": "dark"},
        [_t("alone", "solitude", "lonely", "single person", "man", "woman", "guy", "girl", "solo", "sitting alone")],
        colors=("dark", "cold"), people="present",
-       exclude=COUPLE + COAST + CAR + _t("romance", "romantic", "intimate", "intimacy", "kiss", "hug", "jewelry", "night drive")),
+       exclude=COUPLE + COAST + CAR + _t("romance", "romantic", "intimate", "intimacy", "intimate moment",
+              "kiss", "hug", "jewelry", "night drive", "indoor setting")),
+    # iter2: no warm; no romance of any kind.
     _b("photo:guy_solo_mood", "Парень / настроение", "одинокий парень, настроенческий кадр",
-       {"subject": "guy", "energy": "moody", "people": "guys"},
+       {"subject": "guy", "energy": "moody", "people": "guys", "color": "dark/cold"},
        [PERSON + PORTRAIT + SILHOUETTE + _t("man", "guy", "male", "solo", "streetwear")],
-       people="guys", exclude=COUPLE + CROWD),
+       colors=("dark", "cold", "neutral"), people="guys",
+       exclude=ROMANCE_ANY + CROWD + _t("flowers", "pink", "heart")),
 
     # ---- GIRL ----
+    # iter2: drop ALL intimacy.
     _b("photo:girl_portrait_light", "Портрет девушки / светлый", "портрет девушки в тёплом свете",
        {"subject": "girl", "visual_style": "portrait", "setting": "indoor", "color": "warm"},
        [PORTRAIT + _t("girl", "woman", "long hair"), INTERIOR],
        colors=("light", "warm"), people="girls",
-       exclude=SILHOUETTE + _t("dark atmosphere", "dark interior", "dim lighting", "sport", "skate", "couple")),
+       exclude=SILHOUETTE + _t("dark atmosphere", "dark interior", "dim lighting", "sport", "skate", "couple",
+              "intimate", "intimacy", "intimate moment")),
+    # iter2: split — "plain" dark portrait EXCLUDES jewelry/fashion (those go to the lux bucket).
     _b("photo:girl_portrait_dark", "Портрет девушки / тёмный", "тёмный портрет девушки, лицо видно",
        {"subject": "girl", "visual_style": "portrait", "setting": "indoor", "color": "dark"},
        [PORTRAIT + _t("girl", "woman", "long hair"), INTERIOR],
        colors=("dark", "cold"), people="girls",
-       exclude=SILHOUETTE + COUPLE + _t("intimate", "intimacy", "tender", "sport", "skate")),
-    _b("photo:girl_silhouette_mood", "Девушка / силуэт", "силуэт/бэклит девушки, настроение",
-       {"subject": "girl", "visual_style": "silhouette", "color": "dark"},
-       [_t("girl", "woman", "long hair", "solo"), SILHOUETTE + _t("backlit", "dim lighting", "low light")],
+       exclude=SILHOUETTE + COUPLE + FASHION + _t("intimate", "intimacy", "tender", "sport", "skate")),
+    # iter2 NEW: same girls but WITH jewelry/fashion — niche/"жеманные" girls.
+    _b("photo:girl_portrait_dark_lux", "Портрет девушки / украшения", "тёмный портрет девушки с украшениями/фэшн",
+       {"subject": "girl", "visual_style": "portrait+jewelry", "setting": "indoor", "color": "dark"},
+       [PORTRAIT + _t("girl", "woman", "long hair"), _t("jewelry", "fashion", "streetwear", "accessories", "earrings", "necklace")],
        colors=("dark", "cold"), people="girls",
-       exclude=COUPLE + CROWD),
+       exclude=SILHOUETTE + COUPLE + _t("intimate", "intimacy", "sport", "skate")),
     _b("photo:girl_golden_outdoor", "Девушка / золотой час", "девушка на улице в тёплом свете",
        {"subject": "girl", "setting": "outdoor", "time": "golden", "color": "warm"},
        [_t("girl", "woman", "long hair", "portrait"), GOLDEN + _t("outdoor")],
@@ -280,10 +300,12 @@ PHOTO_BUCKETS: List[PhotoBucket] = [
        exclude=_t("night", "silhouette", "dark forest", "dark sky", "dark atmosphere", "fire", "castle",
                   "black and white", "glowing", "dim lighting", "rain", "wet road", "city",
                   "alone", "solitude", "lonely")),
+    # iter2: strictly dark color, no glowing/dim/digital (that mixed digital + normal sources).
     _b("photo:couple_moody_dark", "Пара / тёмная", "пара в тёмном/ночном настроении",
        {"subject": "couple", "energy": "moody", "time": "night", "color": "dark"},
        [COUPLE + _t("romance", "romantic", "intimate", "intimacy")],
-       colors=("dark", "cold", "neutral"), people="couple", exclude=()),
+       colors=("dark", "cold"), people="couple",
+       exclude=DIGITAL_STYLE + _t("dim lighting")),
     _b("photo:coastal_couple_warm", "Романтика у воды", "пара у воды на закате",
        {"subject": "couple", "setting": "coast", "time": "golden", "color": "warm"},
        [COAST, COUPLE + _t("romance", "romantic", "walking", "running")],
@@ -291,33 +313,36 @@ PHOTO_BUCKETS: List[PhotoBucket] = [
        exclude=_t("dark atmosphere", "wet road", "night")),
 
     # ---- PEOPLE IN SCENE ----
+    # (removed fashion_street — uncontrollable, always mixed.)
+    # iter2: no warm (dark/cold only).
     _b("photo:street_people_night", "Люди на ночной улице", "люди в ночном городе, стрит",
        {"subject": "people", "setting": "night street", "time": "night", "color": "dark"},
        [CITY + _t("street scene", "sidewalk", "city life"), NIGHT + DARKMOOD],
-       colors=("dark", "cold", "neutral"), people="present",
+       colors=("dark", "cold"), people="present",
        exclude=CAR + NEON + DECAY + COUPLE),
+    # iter2: no warm.
     _b("photo:performance_crowd", "Сцена / толпа", "концерт, клуб, толпа",
        {"subject": "crowd", "setting": "stage/club", "energy": "energetic", "color": "dark"},
        [_t("concert", "performance", "stage", "crowd", "audience", "club", "night club", "party", "rave", "dance floor")],
-       colors=("dark", "cold", "neutral"), people="present",
+       colors=("dark", "cold"), people="present",
        exclude=DECAY + CAR + PORTRAIT + _t("private jet", "jewelry", "street scene", "city life")),
     _b("photo:active_life_night", "Активная жизнь", "движение: скейт/танец/спорт ночью",
        {"subject": "person", "action": "sport/dance", "energy": "energetic", "color": "dark"},
        [_t("skate", "skateboard", "running", "dance", "dancing", "sport", "action", "jump", "cycling", "nightlife")],
        colors=("dark", "cold"), people="present",
        exclude=CAR + DECAY + _t("crowd", "audience")),
-    _b("photo:fashion_street", "Фэшн / стритвир", "стиль, украшения, аутфит",
-       {"subject": "person", "visual_style": "fashion", "people": "present"},
-       [FASHION], people="present", exclude=CROWD),
 
     # ---- VEHICLES ----
+    # iter2: no people — clean car shots only (a "left" driver shot slipped in).
     _b("photo:car_night", "Машины / ночная езда", "авто, ночная езда, интерьер авто",
-       {"subject": "car", "time": "night", "action": "drive"},
+       {"subject": "car", "time": "night", "action": "drive", "people": "none"},
        [CAR + _t("night drive", "driving", "highway", "road trip"), NIGHT + NEON + _t("wet road", "city lights")],
-       exclude=_t("race", "drift", "burnout")),
-    _b("photo:car_race", "Дрифт / гонки", "дрифт, гонки, скорость",
-       {"subject": "car", "action": "race", "energy": "energetic"},
-       [CAR, _t("drift", "racing", "race", "burnout", "speed", "night drift")], exclude=()),
+       people="none", exclude=_t("race", "drift", "burnout")),
+    # iter2: strictly dark/cold — warm split off (dark and warm must not mix).
+    _b("photo:car_race", "Дрифт / гонки", "дрифт, гонки, скорость (тёмный/холодный)",
+       {"subject": "car", "action": "race", "energy": "energetic", "color": "dark/cold"},
+       [CAR, _t("drift", "racing", "race", "burnout", "speed", "night drift")],
+       colors=("dark", "cold"), exclude=()),
 ]
 
 
