@@ -17,6 +17,16 @@ on:
         required: true
         default: true
         type: boolean
+      bot_rollout:
+        description: Select the default renderer exposed by the Telegram bots
+        required: true
+        default: unchanged
+        type: choice
+        options:
+          - unchanged
+          - canary
+          - default-rust
+          - rollback-ae
 
 permissions:
   contents: read
@@ -64,8 +74,14 @@ jobs:
             : "${DEPLOY_PROD_NODE0_SSH_PRIVATE_KEY:?DEPLOY_PROD_NODE0_SSH_PRIVATE_KEY secret is required}"
             : "${DEPLOY_PROD_NODE1_SSH_PRIVATE_KEY:?DEPLOY_PROD_NODE1_SSH_PRIVATE_KEY secret is required}"
           fi
+          if [[ "${{ inputs.bot_rollout }}" != "unchanged" ]]; then
+            test -n "$REPO_DIR"
+            test -d "$REPO_DIR/.git"
+            test -f "$REPO_DIR/.env"
+          fi
 
       - name: Configure SSH
+        if: ${{ inputs.install_manager || inputs.enable_orchestrator }}
         shell: bash
         run: |
           set -euo pipefail
@@ -130,6 +146,7 @@ jobs:
           update_env RUST_GEN_MANAGER_URL "$manager_url"
           update_env RUST_GEN_MANAGER_TOKEN "$manager_token"
           update_env RUST_GEN_CANARY_ENABLED 1
+          update_env RUST_GEN_CANARY_SUBTITLE_MODES "impulse_2nd,scenes_3rd,template_4th,trendy_5th,brat_5th"
           update_env RUST_GEN_BOT_DEFAULT_ENABLED 0
           update_env RUST_GEN_ALLOWED_CHAT_IDS "$manager_chat_id"
           docker compose -f docker-compose.yml -f docker-compose.orchestrator-ha.yml build orchestrator-api
@@ -151,3 +168,44 @@ jobs:
           }
           verify_node "$HOME/.ssh/prod_node0" "$DEPLOY_PROD_NODE0_HOST" "${DEPLOY_PROD_NODE0_USER:-deploy}" "${DEPLOY_PROD_NODE0_PORT:-22}"
           verify_node "$HOME/.ssh/prod_node1" "$DEPLOY_PROD_NODE1_HOST" "${DEPLOY_PROD_NODE1_USER:-deploy}" "${DEPLOY_PROD_NODE1_PORT:-22}"
+
+      - name: Set Telegram bot renderer rollout
+        if: ${{ inputs.bot_rollout != 'unchanged' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$REPO_DIR"
+          git fetch origin main
+          git merge --ff-only origin/main
+
+          update_env() {
+            local key="$1" value="$2" tmp
+            tmp="$(mktemp)"
+            awk -v key="$key" -v value="$value" '$0 ~ "^[[:space:]]*" key "=" { if (!done) { print key "=" value; done=1 }; next } { print } END { if (!done) print key "=" value }' .env > "$tmp"
+            mv "$tmp" .env
+          }
+
+          case "${{ inputs.bot_rollout }}" in
+            canary)
+              update_env RUST_GEN_ENABLED 1
+              update_env RUST_GEN_BOT_DEFAULT_ENABLED 0
+              ;;
+            default-rust)
+              update_env RUST_GEN_ENABLED 1
+              update_env RUST_GEN_BOT_DEFAULT_ENABLED 1
+              ;;
+            rollback-ae)
+              update_env RUST_GEN_ENABLED 0
+              update_env RUST_GEN_BOT_DEFAULT_ENABLED 0
+              ;;
+            *)
+              echo "Unsupported bot rollout mode: ${{ inputs.bot_rollout }}"
+              exit 1
+              ;;
+          esac
+
+          docker compose up -d --pull never --no-build --force-recreate tg-bot tg-bot-public
+          for container in tg-bot tg-bot-public; do
+            test "$(docker inspect "$container" --format '{{.State.Running}}')" = "true"
+            docker exec "$container" python -c 'import os; assert os.environ.get("RUST_GEN_ENABLED") in {"0", "1"}; assert os.environ.get("RUST_GEN_BOT_DEFAULT_ENABLED") in {"0", "1"}'
+          done
