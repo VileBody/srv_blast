@@ -86,7 +86,7 @@ jobs:
           scp -i "$key" -o BatchMode=yes -o StrictHostKeyChecking=accept-new infra/rust-gen/rust-gen-firewall.nft infra/rust-gen/rust-gen-firewall.service "root@$RUST_GEN_DEPLOY_HOST:/tmp/"
           "${ssh_base[@]}" "install -D -m 600 /tmp/rust-gen-firewall.nft /etc/nftables.d/rust-gen-manager.nft; install -m 644 /tmp/rust-gen-firewall.service /etc/systemd/system/rust-gen-firewall.service; rm -f /tmp/rust-gen-firewall.nft /tmp/rust-gen-firewall.service; systemctl daemon-reload; systemctl enable --now rust-gen-firewall.service"
           "${ssh_base[@]}" "set -euo pipefail; id rustgen >/dev/null; install -d -o rustgen -g rustgen -m 700 /home/rustgen/.config/rust-gen /home/rustgen/.config/systemd/user; loginctl enable-linger rustgen; runuser -u rustgen -- env XDG_RUNTIME_DIR=/run/user/\$(id -u rustgen) systemctl --user enable --now podman.socket"
-          printf '%s' "$RUST_GEN_REGISTRY_TOKEN" | "${ssh_base[@]}" "runuser -u rustgen -- podman login --username VileBody --password-stdin ghcr.io"
+          printf '%s' "$RUST_GEN_REGISTRY_TOKEN" | "${ssh_base[@]}" 'uid=$(id -u rustgen); runuser -u rustgen -- env HOME=/home/rustgen XDG_RUNTIME_DIR=/run/user/$uid podman login --username VileBody --password-stdin ghcr.io'
           "${ssh_base[@]}" "install -o rustgen -g rustgen -m 600 /tmp/rust-gen-manager.service /home/rustgen/.config/systemd/user/rust-gen-manager.service; rm -f /tmp/rust-gen-manager.service"
           {
             printf 'RUST_GEN_MANAGER_IMAGE=%s\n' "$RUST_GEN_MANAGER_IMAGE"
