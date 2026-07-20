@@ -27,9 +27,14 @@ on:
           - canary
           - default-rust
           - rollback-ae
+      bot_image_tag:
+        description: Optional prebuilt srv-blast image SHA used while recreating bots
+        required: false
+        type: string
 
 permissions:
   contents: read
+  packages: read
 
 concurrency:
   group: rust-gen-manager-deploy
@@ -56,6 +61,7 @@ jobs:
       RUST_GEN_DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.RUST_GEN_DEPLOY_SSH_PRIVATE_KEY }}
       DEPLOY_PROD_NODE0_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_PROD_NODE0_SSH_PRIVATE_KEY }}
       DEPLOY_PROD_NODE1_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_PROD_NODE1_SSH_PRIVATE_KEY }}
+      GHCR_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
 
@@ -78,6 +84,10 @@ jobs:
             test -n "$REPO_DIR"
             test -d "$REPO_DIR/.git"
             test -f "$REPO_DIR/.env"
+            : "${GHCR_TOKEN:?GitHub token is required for bot image pull}"
+            if [[ -n "${{ inputs.bot_image_tag }}" ]]; then
+              [[ "${{ inputs.bot_image_tag }}" =~ ^[0-9a-f]{40}$ ]]
+            fi
           fi
 
       - name: Configure SSH
@@ -202,6 +212,13 @@ jobs:
               ;;
           esac
 
+          if [[ -n "${{ inputs.bot_image_tag }}" ]]; then
+            update_env BLAST_TG_BOT_IMAGE "ghcr.io/vilebody/srv-blast/tg-bot:${{ inputs.bot_image_tag }}"
+            update_env BLAST_TG_BOT_PUBLIC_IMAGE "ghcr.io/vilebody/srv-blast/tg-bot-public:${{ inputs.bot_image_tag }}"
+          fi
+
+          printf '%s' "$GHCR_TOKEN" | docker login --username "$GITHUB_ACTOR" --password-stdin ghcr.io
+          docker compose pull tg-bot tg-bot-public
           docker compose up -d --pull never --no-build --force-recreate tg-bot tg-bot-public
           for container in tg-bot tg-bot-public; do
             test "$(docker inspect "$container" --format '{{.State.Running}}')" = "true"
