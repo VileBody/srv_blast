@@ -43,6 +43,7 @@ jobs:
       DEPLOY_PROD_NODE1_USER: ${{ vars.DEPLOY_PROD_NODE1_USER }}
       DEPLOY_PROD_NODE1_PORT: ${{ vars.DEPLOY_PROD_NODE1_PORT }}
       DEPLOY_PROD_NODE1_REPO_DIR: ${{ vars.DEPLOY_PROD_NODE1_REPO_DIR }}
+      RUST_GEN_DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.RUST_GEN_DEPLOY_SSH_PRIVATE_KEY }}
       DEPLOY_PROD_NODE0_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_PROD_NODE0_SSH_PRIVATE_KEY }}
       DEPLOY_PROD_NODE1_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_PROD_NODE1_SSH_PRIVATE_KEY }}
     steps:
@@ -57,6 +58,11 @@ jobs:
           if [[ "${{ inputs.install_manager }}" == "true" ]]; then
             test "${RUST_GEN_MANAGER_IMAGE#*@sha256:}" != "$RUST_GEN_MANAGER_IMAGE"
             : "${RUST_GEN_REGISTRY_TOKEN:?RUST_GEN_REGISTRY_TOKEN secret is required}"
+            : "${RUST_GEN_DEPLOY_SSH_PRIVATE_KEY:?RUST_GEN_DEPLOY_SSH_PRIVATE_KEY secret is required}"
+          fi
+          if [[ "${{ inputs.enable_orchestrator }}" == "true" ]]; then
+            : "${DEPLOY_PROD_NODE0_SSH_PRIVATE_KEY:?DEPLOY_PROD_NODE0_SSH_PRIVATE_KEY secret is required}"
+            : "${DEPLOY_PROD_NODE1_SSH_PRIVATE_KEY:?DEPLOY_PROD_NODE1_SSH_PRIVATE_KEY secret is required}"
           fi
 
       - name: Configure SSH
@@ -64,15 +70,17 @@ jobs:
         run: |
           set -euo pipefail
           install -d -m 700 "$HOME/.ssh"
-          printf '%s\n' "$DEPLOY_PROD_NODE0_SSH_PRIVATE_KEY" > "$HOME/.ssh/rust_gen"
-          chmod 600 "$HOME/.ssh/rust_gen"
+          printf '%s\n' "$RUST_GEN_DEPLOY_SSH_PRIVATE_KEY" > "$HOME/.ssh/rust_gen_node"
+          printf '%s\n' "$DEPLOY_PROD_NODE0_SSH_PRIVATE_KEY" > "$HOME/.ssh/prod_node0"
+          printf '%s\n' "$DEPLOY_PROD_NODE1_SSH_PRIVATE_KEY" > "$HOME/.ssh/prod_node1"
+          chmod 600 "$HOME/.ssh/rust_gen_node" "$HOME/.ssh/prod_node0" "$HOME/.ssh/prod_node1"
 
       - name: Install immutable manager image
         if: ${{ inputs.install_manager }}
         shell: bash
         run: |
           set -euo pipefail
-          key="$HOME/.ssh/rust_gen"
+          key="$HOME/.ssh/rust_gen_node"
           ssh_base=(ssh -i "$key" -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 root@"$RUST_GEN_DEPLOY_HOST")
           scp -i "$key" -o BatchMode=yes -o StrictHostKeyChecking=accept-new infra/rust-gen/rust-gen-manager.service "root@$RUST_GEN_DEPLOY_HOST:/tmp/rust-gen-manager.service"
           scp -i "$key" -o BatchMode=yes -o StrictHostKeyChecking=accept-new infra/rust-gen/rust-gen-firewall.nft infra/rust-gen/rust-gen-firewall.service "root@$RUST_GEN_DEPLOY_HOST:/tmp/"
@@ -98,9 +106,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          key="$HOME/.ssh/rust_gen"
           configure_node() {
-            local host="$1" user="$2" port="$3" repo="$4"
+            local key="$1" host="$2" user="$3" port="$4" repo="$5"
             local script
             read -r -d '' script <<'REMOTE' || true
           set -euo pipefail
@@ -129,18 +136,17 @@ jobs:
           REMOTE
             ssh -i "$key" -p "$port" -o BatchMode=yes -o StrictHostKeyChecking=accept-new "$user@$host" "bash -s -- '$repo' 'http://$RUST_GEN_DEPLOY_HOST:8090' '$RUST_GEN_MANAGER_TOKEN'" <<< "$script"
           }
-          configure_node "$DEPLOY_PROD_NODE0_HOST" "${DEPLOY_PROD_NODE0_USER:-deploy}" "${DEPLOY_PROD_NODE0_PORT:-22}" "$DEPLOY_PROD_NODE0_REPO_DIR"
-          configure_node "$DEPLOY_PROD_NODE1_HOST" "${DEPLOY_PROD_NODE1_USER:-deploy}" "${DEPLOY_PROD_NODE1_PORT:-22}" "$DEPLOY_PROD_NODE1_REPO_DIR"
+          configure_node "$HOME/.ssh/prod_node0" "$DEPLOY_PROD_NODE0_HOST" "${DEPLOY_PROD_NODE0_USER:-deploy}" "${DEPLOY_PROD_NODE0_PORT:-22}" "$DEPLOY_PROD_NODE0_REPO_DIR"
+          configure_node "$HOME/.ssh/prod_node1" "$DEPLOY_PROD_NODE1_HOST" "${DEPLOY_PROD_NODE1_USER:-deploy}" "${DEPLOY_PROD_NODE1_PORT:-22}" "$DEPLOY_PROD_NODE1_REPO_DIR"
 
       - name: Verify private manager reachability
         if: ${{ inputs.enable_orchestrator }}
         shell: bash
         run: |
           set -euo pipefail
-          key="$HOME/.ssh/rust_gen"
           verify_node() {
-            local host="$1" user="$2" port="$3"
+            local key="$1" host="$2" user="$3" port="$4"
             ssh -i "$key" -p "$port" -o BatchMode=yes -o StrictHostKeyChecking=accept-new "$user@$host" "curl --fail --silent --connect-timeout 10 http://$RUST_GEN_DEPLOY_HOST:8090/health"
           }
-          verify_node "$DEPLOY_PROD_NODE0_HOST" "${DEPLOY_PROD_NODE0_USER:-deploy}" "${DEPLOY_PROD_NODE0_PORT:-22}"
-          verify_node "$DEPLOY_PROD_NODE1_HOST" "${DEPLOY_PROD_NODE1_USER:-deploy}" "${DEPLOY_PROD_NODE1_PORT:-22}"
+          verify_node "$HOME/.ssh/prod_node0" "$DEPLOY_PROD_NODE0_HOST" "${DEPLOY_PROD_NODE0_USER:-deploy}" "${DEPLOY_PROD_NODE0_PORT:-22}"
+          verify_node "$HOME/.ssh/prod_node1" "$DEPLOY_PROD_NODE1_HOST" "${DEPLOY_PROD_NODE1_USER:-deploy}" "${DEPLOY_PROD_NODE1_PORT:-22}"
