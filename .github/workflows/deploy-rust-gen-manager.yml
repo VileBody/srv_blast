@@ -30,6 +30,7 @@ on:
 
 permissions:
   contents: read
+  packages: read
 
 concurrency:
   group: rust-gen-manager-deploy
@@ -78,6 +79,7 @@ jobs:
             test -n "$REPO_DIR"
             test -d "$REPO_DIR/.git"
             test -f "$REPO_DIR/.env"
+            : "${RUST_GEN_REGISTRY_TOKEN:?RUST_GEN_REGISTRY_TOKEN secret is required}"
           fi
 
       - name: Configure SSH
@@ -202,6 +204,8 @@ jobs:
               ;;
           esac
 
+          printf '%s' "$RUST_GEN_REGISTRY_TOKEN" | docker login --username VileBody --password-stdin ghcr.io
+          docker compose pull tg-bot tg-bot-public
           docker compose up -d --pull never --no-build --force-recreate tg-bot tg-bot-public
           for container in tg-bot tg-bot-public; do
             test "$(docker inspect "$container" --format '{{.State.Running}}')" = "true"
