@@ -62,6 +62,10 @@ def test_render_plan_writes_canonical_native_request_and_ae_payload() -> None:
     assert native["requirements"]["layer_types"] == ["footage"]
     assert native["styleRegistry"]
     assert native["effectRegistry"]
+    assert native["tuningSpec"] == {
+        "profile": "builtin:p0p1-readiness",
+        "overrides": {},
+    }
 
     ae_payload = plan.to_ae_payload()
     assert ae_payload["project"]["mainCompName"] == "Comp 1"
@@ -169,3 +173,22 @@ def test_project_builder_emits_native_request_json(tmp_path: Path, monkeypatch) 
     assert request["schema"] == "ae-native-renderer.render-request.v1"
     assert request["requestId"] == "job-native"
     assert request["visualOps"][0]["type"] == "subtitle.brat.v1"
+    assert request["tuningSpec"]["profile"] == "builtin:p0p1-readiness"
+
+
+def test_render_plan_preserves_per_job_native_tuning_overrides() -> None:
+    plan = _base_plan(
+        subtitle_flow_plan={"segments": [{"text": "x", "start": 0.0, "end": 1.0}]},
+        native_tuning={
+            "profile": "builtin:p0p1-readiness",
+            "overrides": {
+                "effects": {"glow": {"radius_multiplier": 0.8}},
+            },
+        },
+    )
+
+    request = plan.to_native_request()
+    assert request["tuningSpec"]["overrides"] == {
+        "effects": {"glow": {"radius_multiplier": 0.8}},
+    }
+    assert "tuningSpec" not in plan.to_ae_payload()

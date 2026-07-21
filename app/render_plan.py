@@ -58,6 +58,13 @@ class VisualOperationV1(BaseModel):
     required: bool = True
 
 
+class NativeTuningSpecV1(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    profile: Optional[str] = "builtin:p0p1-readiness"
+    overrides: Dict[str, Any] = Field(default_factory=dict)
+
+
 class RenderPlanV1(BaseModel):
     """Canonical Blast-side render plan transported as render-request.v1.
 
@@ -82,6 +89,11 @@ class RenderPlanV1(BaseModel):
     style_registry: List[Dict[str, Any]] = Field(default_factory=list, alias="styleRegistry", serialization_alias="styleRegistry")
     effect_registry: List[Dict[str, Any]] = Field(default_factory=list, alias="effectRegistry", serialization_alias="effectRegistry")
     golden_refs: List[Dict[str, Any]] = Field(default_factory=list, alias="goldenRefs", serialization_alias="goldenRefs")
+    tuning_spec: NativeTuningSpecV1 = Field(
+        default_factory=NativeTuningSpecV1,
+        alias="tuningSpec",
+        serialization_alias="tuningSpec",
+    )
 
     def to_ae_payload(self) -> Dict[str, Any]:
         payload: Dict[str, Any] = {
@@ -151,7 +163,17 @@ def build_render_plan_v1(
         styleRegistry=style_registry,
         effectRegistry=effect_registry,
         goldenRefs=_golden_refs(subtitles_mode, full_edit_config),
+        tuningSpec=_native_tuning_spec(full_edit_config),
     )
+
+
+def _native_tuning_spec(full_edit_config: Dict[str, Any]) -> NativeTuningSpecV1:
+    configured = full_edit_config.get("native_tuning")
+    if configured is None:
+        return NativeTuningSpecV1()
+    if not isinstance(configured, dict):
+        raise ValueError("native_tuning must be an object")
+    return NativeTuningSpecV1.model_validate(configured)
 
 
 def build_visual_ops(
