@@ -607,25 +607,6 @@ def build_full_project(
             replaced,
         )
 
-    # F4 «Движение» motion-hook overlay. If full_edit_config carries an "f4"
-    # block ({device, bpm}) we build the chosen device's injectable JSX and pass
-    # it to the template as a raw block (rendered after addFlashOnCuts, before
-    # save). Absent block => empty string => zero impact on regular jobs.
-    f4_overlay_js = _build_f4_overlay_js(full_edit_config)
-    # F3 «Эффект» overlay (hook/transition/extra + sound + logo). Absent => "".
-    f3_overlay_js = _build_f3_overlay_js(full_edit_config)
-    # F2 «Объект» packaged-combo overlay (shape pre-drop + hook_light + random
-    # F3 transition post-drop). Absent block => empty string => zero impact.
-    f2_overlay_js = _build_f2_overlay_js(full_edit_config)
-    # F1 «Звук» visual combo (hook_light + post-drop random; no pre-drop shapes,
-    # the user's sound plays there). Absent block => "".
-    f1_overlay_js = _build_f1_overlay_js(full_edit_config)
-    # F5 «Мысль» visual combo (hook_light at drop + post-drop random F3). Voice
-    # is injected separately (_apply_f5_if_present). Absent drop => "".
-    f5_overlay_js = _build_f5_overlay_js(full_edit_config)
-    # 5th-template JSX subtitles (trendy/brat). Injected over the main comp; the
-    # script builds the subtitle layers from word-timings. Absent block => "".
-    jsx_subtitles_js = _build_jsx_subtitles_js(full_edit_config)
     # F3 ассет-download list (sound/logo S3-URL'ы + relpath под __APP_DIR/media).
     # render_manifest.collect_media_urls_from_render_payload подцепит и положит
     # в Windows-payload.media[] рядом с футажом. Пусто => без звука/лого.
@@ -640,6 +621,17 @@ def build_full_project(
         f3_media=f3_media,
     )
     payload = render_plan.to_ae_payload()
+    ae_overlay_config = render_plan.to_ae_overlay_config()
+
+    # The compatibility JSX backend is compiled from the same canonical
+    # visualOps that are transported to Rust. The original bot config is not a
+    # parallel source of visual semantics anymore.
+    f4_overlay_js = _build_f4_overlay_js(ae_overlay_config)
+    f3_overlay_js = _build_f3_overlay_js(ae_overlay_config)
+    f2_overlay_js = _build_f2_overlay_js(ae_overlay_config)
+    f1_overlay_js = _build_f1_overlay_js(ae_overlay_config)
+    f5_overlay_js = _build_f5_overlay_js(ae_overlay_config)
+    jsx_subtitles_js = _build_jsx_subtitles_js(ae_overlay_config)
 
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "logs").mkdir(parents=True, exist_ok=True)
