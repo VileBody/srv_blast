@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import unquote
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from core.subtitles_mode import (
     SUBTITLES_MODE_BRAT_5TH,
@@ -65,6 +65,188 @@ class NativeTuningSpecV1(BaseModel):
     overrides: Dict[str, Any] = Field(default_factory=dict)
 
 
+class ProjectSpecV1(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    main_comp_name: str = Field(alias="mainCompName", serialization_alias="mainCompName")
+    subtitles_mode: str = Field(default="", alias="subtitlesMode", serialization_alias="subtitlesMode")
+
+
+class CompositionSpecV1(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    name: str
+    w: int
+    h: int
+    fps: float
+    dur: float
+    pixel_aspect: float = Field(default=1.0, alias="pixelAspect", serialization_alias="pixelAspect")
+    work_area_start: float = Field(default=0.0, alias="workAreaStart", serialization_alias="workAreaStart")
+    work_area_duration: Optional[float] = Field(default=None, alias="workAreaDuration", serialization_alias="workAreaDuration")
+    display_start_time: float = Field(default=0.0, alias="displayStartTime", serialization_alias="displayStartTime")
+    bg_color: List[float] = Field(default_factory=lambda: [0.0, 0.0, 0.0], alias="bgColor", serialization_alias="bgColor")
+    parent_folder_path: Optional[str] = Field(default=None, alias="parentFolderPath", serialization_alias="parentFolderPath")
+
+
+class KeyframeEaseV1(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    speed: float
+    influence: float
+
+
+class KeyframeSpecV1(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    t: float
+    v: Any = None
+    iit: str = "6613"
+    oit: str = "6613"
+    ease_in: List[KeyframeEaseV1] = Field(default_factory=list)
+    ease_out: List[KeyframeEaseV1] = Field(default_factory=list)
+
+
+class PropertySpecV1(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    match_name: Optional[str] = None
+    value: Any = None
+    keyframes: List[KeyframeSpecV1] = Field(default_factory=list)
+    expression: Optional[str] = None
+
+
+class StyleInstructionV1(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    start: int
+    end: int
+    font: str
+    size: float
+    italic: bool = False
+
+
+class LayerSpecV1(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    type: str
+    in_point: float
+    out_point: float
+    z_index: int
+    text: str = ""
+    adjustment_layer: bool = False
+    comp_id: Optional[int] = None
+    comp_name: Optional[str] = None
+    source_rect: Dict[str, Any] = Field(default_factory=dict)
+    props: Dict[str, PropertySpecV1] = Field(default_factory=dict)
+    effects: Dict[str, Dict[str, PropertySpecV1]] = Field(default_factory=dict)
+    style_instructions: List[StyleInstructionV1] = Field(default_factory=list)
+    text_data: Dict[str, Any] = Field(default_factory=dict)
+
+
+class RegistryEffectV1(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    match_name: str = Field(alias="matchName", serialization_alias="matchName")
+    params: Dict[str, Any] = Field(default_factory=dict)
+
+
+class EffectParameterSpecV1(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    type: str
+    default_value: Any = Field(default=None, alias="default", serialization_alias="default")
+    minimum: Optional[float] = Field(default=None, alias="min", serialization_alias="min")
+    maximum: Optional[float] = Field(default=None, alias="max", serialization_alias="max")
+    keyframe: bool = True
+
+
+class StyleRegistryEntryV1(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    style_id: str = Field(alias="styleId", serialization_alias="styleId")
+    version: str = "v1"
+    backend: str = "native_approximation"
+    parity: str = "approximate"
+    fallback_policy: str = Field(
+        default="capability_report",
+        alias="fallbackPolicy",
+        serialization_alias="fallbackPolicy",
+    )
+    effect_graph: List[RegistryEffectV1] = Field(
+        default_factory=list,
+        alias="effectGraph",
+        serialization_alias="effectGraph",
+    )
+    tunables: Dict[str, Any] = Field(default_factory=dict)
+    requirements: Dict[str, List[str]] = Field(default_factory=dict)
+    supported_backends: List[str] = Field(
+        default_factory=lambda: ["native_approximation"],
+        alias="supportedBackends",
+        serialization_alias="supportedBackends",
+    )
+    compatibility: Dict[str, Any] = Field(default_factory=lambda: {"renderPlan": "v1"})
+    golden_fixtures: List[str] = Field(
+        default_factory=list,
+        alias="goldenFixtures",
+        serialization_alias="goldenFixtures",
+    )
+    performance_class: str = Field(
+        default="medium",
+        alias="performanceClass",
+        serialization_alias="performanceClass",
+    )
+    migration_from: List[str] = Field(
+        default_factory=list,
+        alias="migrationFrom",
+        serialization_alias="migrationFrom",
+    )
+
+
+class EffectRegistryEntryV1(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    stable_id: str = Field(alias="stableId", serialization_alias="stableId")
+    ae_match_name: str = Field(alias="aeMatchName", serialization_alias="aeMatchName")
+    backend: str
+    parity: str = "approximate"
+    fallback_policy: str = Field(
+        default="capability_report",
+        alias="fallbackPolicy",
+        serialization_alias="fallbackPolicy",
+    )
+    plugin_identifier: Optional[str] = Field(
+        default=None,
+        alias="pluginIdentifier",
+        serialization_alias="pluginIdentifier",
+    )
+    parameter_schema: Dict[str, EffectParameterSpecV1] = Field(
+        default_factory=dict,
+        alias="parameterSchema",
+        serialization_alias="parameterSchema",
+    )
+    keyframe_support: bool = Field(
+        default=True,
+        alias="keyframeSupport",
+        serialization_alias="keyframeSupport",
+    )
+    alpha_requirements: str = Field(
+        default="straight-rgba8-boundary/premultiplied-float-effects",
+        alias="alphaRequirements",
+        serialization_alias="alphaRequirements",
+    )
+    color_requirements: str = Field(
+        default="unmanaged-srgb-approximation",
+        alias="colorRequirements",
+        serialization_alias="colorRequirements",
+    )
+    deterministic_seed_policy: str = Field(
+        default="not_applicable",
+        alias="deterministicSeedPolicy",
+        serialization_alias="deterministicSeedPolicy",
+    )
+
+
 class RenderPlanV1(BaseModel):
     """Canonical Blast-side render plan transported as render-request.v1.
 
@@ -79,15 +261,15 @@ class RenderPlanV1(BaseModel):
         alias="schemaVersion",
         serialization_alias="schemaVersion",
     )
-    project_spec: Dict[str, Any] = Field(alias="projectSpec", serialization_alias="projectSpec")
-    comps_spec: List[Dict[str, Any]] = Field(alias="compsSpec", serialization_alias="compsSpec")
-    footage_layers: List[Dict[str, Any]] = Field(default_factory=list)
-    text_layers: List[Dict[str, Any]] = Field(default_factory=list)
+    project_spec: ProjectSpecV1 = Field(alias="projectSpec", serialization_alias="projectSpec")
+    comps_spec: List[CompositionSpecV1] = Field(alias="compsSpec", serialization_alias="compsSpec")
+    footage_layers: List[LayerSpecV1] = Field(default_factory=list)
+    text_layers: List[LayerSpecV1] = Field(default_factory=list)
     visual_ops: List[VisualOperationV1] = Field(default_factory=list, alias="visualOps", serialization_alias="visualOps")
     f3_media: List[Dict[str, str]] = Field(default_factory=list)
     requirements: Dict[str, Any] = Field(default_factory=dict)
-    style_registry: List[Dict[str, Any]] = Field(default_factory=list, alias="styleRegistry", serialization_alias="styleRegistry")
-    effect_registry: List[Dict[str, Any]] = Field(default_factory=list, alias="effectRegistry", serialization_alias="effectRegistry")
+    style_registry: List[StyleRegistryEntryV1] = Field(default_factory=list, alias="styleRegistry", serialization_alias="styleRegistry")
+    effect_registry: List[EffectRegistryEntryV1] = Field(default_factory=list, alias="effectRegistry", serialization_alias="effectRegistry")
     golden_refs: List[Dict[str, Any]] = Field(default_factory=list, alias="goldenRefs", serialization_alias="goldenRefs")
     tuning_spec: NativeTuningSpecV1 = Field(
         default_factory=NativeTuningSpecV1,
@@ -95,16 +277,77 @@ class RenderPlanV1(BaseModel):
         serialization_alias="tuningSpec",
     )
 
+    @model_validator(mode="after")
+    def validate_contract(self) -> "RenderPlanV1":
+        if self.schema_version != RENDER_PLAN_SCHEMA_VERSION:
+            raise ValueError(
+                f"unsupported RenderPlan schemaVersion={self.schema_version!r}; expected {RENDER_PLAN_SCHEMA_VERSION!r}"
+            )
+        if not any(comp.name == self.project_spec.main_comp_name for comp in self.comps_spec):
+            raise ValueError(f"main comp {self.project_spec.main_comp_name!r} is absent from compsSpec")
+        return self
+
     def to_ae_payload(self) -> Dict[str, Any]:
         payload: Dict[str, Any] = {
-            "project": dict(self.project_spec),
-            "comps": [dict(comp) for comp in self.comps_spec],
-            "footage_layers": [dict(layer) for layer in self.footage_layers],
-            "text_layers": [dict(layer) for layer in self.text_layers],
+            "project": self.project_spec.model_dump(mode="json", by_alias=True, exclude_none=True),
+            "comps": [comp.model_dump(mode="json", by_alias=True, exclude_none=True) for comp in self.comps_spec],
+            "footage_layers": [layer.model_dump(mode="json", exclude_none=True) for layer in self.footage_layers],
+            "text_layers": [layer.model_dump(mode="json", exclude_none=True) for layer in self.text_layers],
         }
         if self.f3_media:
             payload["f3_media"] = [dict(item) for item in self.f3_media]
         return payload
+
+    def to_ae_overlay_config(self) -> Dict[str, Any]:
+        """Compile canonical visual operations into legacy JSX builder inputs.
+
+        The individual JSX builders remain useful compatibility compilers, but
+        they must not read production semantics from the original bot config.
+        Keeping this adapter on RenderPlan makes visualOps the shared source for
+        both the AE and native backends.
+        """
+        config: Dict[str, Any] = {}
+        for operation in self.visual_ops:
+            params = dict(operation.params)
+            if operation.type in {"subtitle.trendy.v1", "subtitle.brat.v1"}:
+                config["subtitles_jsx"] = {
+                    "mode": params.get("source_mode"),
+                    "word_timings": list(params.get("word_timings") or []),
+                    **({"bpm": params["bpm"]} if params.get("bpm") is not None else {}),
+                }
+            elif operation.type == "hook.f1.sound.v1":
+                config["f1"] = {
+                    "drop_time": params.get("drop_time"),
+                    "seed": params.get("seed"),
+                }
+            elif operation.type == "hook.f2.object.v1":
+                config["f2"] = {
+                    "shape": params.get("shape"),
+                    "drop_time": params.get("drop_time"),
+                    "seed": params.get("seed"),
+                }
+            elif operation.type == "hook.f3.effect.v1":
+                config["f3"] = {
+                    "hook": params.get("hook"),
+                    "transition": params.get("transition"),
+                    "extra": params.get("extra"),
+                    "extra_full": bool(params.get("extra_full")),
+                    "hook_extend": params.get("hook_extend"),
+                    "drop_time": params.get("drop_time"),
+                    "assets": dict(params.get("assets") or {}),
+                }
+            elif operation.type == "hook.f4.motion.v1":
+                config["f4"] = {
+                    "device": params.get("device"),
+                    "bpm": params.get("bpm"),
+                    "drop_time": params.get("drop_time"),
+                }
+            elif operation.type == "hook.f5.cognition.v1":
+                config["f5"] = {
+                    "drop_rel_sec": params.get("drop_time"),
+                    "combo_seed": params.get("seed"),
+                }
+        return config
 
     def to_native_request(
         self,
@@ -188,6 +431,7 @@ def build_visual_ops(
         ops.append(subtitle)
 
     for op in (
+        _semantic_style_operation(full_edit_config),
         _f3_operation(full_edit_config, f3_media),
         _f2_operation(full_edit_config),
         _f4_operation(full_edit_config),
@@ -250,7 +494,7 @@ def _style_registry(
     subtitles_mode: str,
     full_edit_config: Dict[str, Any],
     visual_ops: List[VisualOperationV1],
-) -> List[Dict[str, Any]]:
+) -> List[StyleRegistryEntryV1]:
     style_ids = []
     semantic = _dict(full_edit_config.get("semantic_style"))
     if _clean(semantic.get("style_id")):
@@ -264,15 +508,22 @@ def _style_registry(
         style_ids.append(f"subtitles_mode:{subtitles_mode}")
     out = []
     for style_id in sorted(set(style_ids)):
-        out.append(
-            {
-                "styleId": style_id,
-                "version": "v1",
-                "backend": "native_approximation",
-                "parity": "approximate",
-                "fallbackPolicy": "capability_report",
-            }
-        )
+        effect_graph = _semantic_style_effect_graph(style_id)
+        out.append(StyleRegistryEntryV1(
+            styleId=style_id,
+            effectGraph=effect_graph,
+            tunables={
+                f"{effect.match_name}.{name}": value
+                for effect in effect_graph
+                for name, value in effect.params.items()
+            },
+            requirements={
+                "fonts": _style_fonts(style_id),
+                "assets": [],
+                "plugins": [],
+            },
+            goldenFixtures=_style_golden_fixtures(style_id),
+        ))
     return out
 
 
@@ -280,25 +531,161 @@ def _effect_registry(
     footage_layers: List[Dict[str, Any]],
     text_layers: List[Dict[str, Any]],
     visual_ops: List[VisualOperationV1],
-) -> List[Dict[str, Any]]:
+) -> List[EffectRegistryEntryV1]:
     match_names = {
         _normalize_effect_match_name(effect_name)
         for layer in [*footage_layers, *text_layers]
         for effect_name in _dict(layer.get("effects")).keys()
     }
     match_names.update(_native_effects_for_visual_op(op) for op in visual_ops)
+    for op in visual_ops:
+        if op.type == "style.semantic.v1":
+            style_id = _clean(op.params.get("styleId") or op.params.get("style_id"))
+            match_names.update(effect.match_name for effect in _semantic_style_effect_graph(style_id))
     out = []
     for match_name in sorted(name for name in match_names if name):
-        out.append(
-            {
-                "stableId": _stable_effect_id(match_name),
-                "aeMatchName": match_name,
-                "backend": _effect_backend(match_name),
-                "parity": "approximate",
-                "fallbackPolicy": "capability_report",
-            }
-        )
+        out.append(EffectRegistryEntryV1(
+            stableId=_stable_effect_id(match_name),
+            aeMatchName=match_name,
+            backend=_effect_backend(match_name),
+            pluginIdentifier=_effect_plugin_identifier(match_name),
+            parameterSchema=_effect_parameter_schema(match_name),
+            deterministicSeedPolicy=(
+                "required_from_render_plan"
+                if match_name in {"ANR Analog Glitch", "ANR F3 Stylize", "ANR Shape Overlay"}
+                else "not_applicable"
+            ),
+        ))
     return out
+
+
+def _semantic_style_operation(cfg: Dict[str, Any]) -> Optional[VisualOperationV1]:
+    semantic = _dict(cfg.get("semantic_style"))
+    style_id = _clean(semantic.get("style_id") or semantic.get("styleId"))
+    if not style_id:
+        return None
+    return VisualOperationV1(
+        id=f"semantic_style_{style_id}",
+        kind="style.semantic.v1",
+        params={"styleId": style_id, "version": _clean(semantic.get("version")) or "v1"},
+    )
+
+
+def _semantic_style_effect_graph(style_id: str) -> List[RegistryEffectV1]:
+    recipes: Dict[str, List[Dict[str, Any]]] = {
+        "ftg_al16_default_v1": [
+            {"matchName": "ADBE Gaussian Blur 2", "params": {"blurriness": 3.0}},
+            {"matchName": "ADBE Geometry2", "params": {"rotation": 0.65, "scale_width": 103.0, "scale_height": 103.0}},
+            {"matchName": "ADBE Motion Blur", "params": {"direction": 0.0, "blur_length": 8.0}},
+        ],
+        "txt_soft_v1": [
+            {"matchName": "ADBE Glo2", "params": {"threshold": 120.0, "radius": 28.0, "intensity": 0.55, "operation": "screen"}},
+            {"matchName": "ADBE Geometry2", "params": {"rotation": 0.15, "scale_width": 101.0, "scale_height": 101.0}},
+        ],
+        "txt_punch_v1": [
+            {"matchName": "ADBE Geometry2", "params": {"scale_width": 112.0, "scale_height": 88.0}},
+            {"matchName": "ADBE Motion Blur", "params": {"direction": 0.0, "blur_length": 32.0}},
+        ],
+        "txt_drop_v1": [
+            {"matchName": "ADBE Glo2", "params": {"threshold": 105.0, "radius": 38.0, "intensity": 0.8, "operation": "add"}},
+            {"matchName": "ADBE Geometry2", "params": {"scale_width": 118.0, "scale_height": 82.0}},
+            {"matchName": "ADBE Motion Blur", "params": {"direction": 90.0, "blur_length": 46.0}},
+        ],
+    }
+    return [RegistryEffectV1.model_validate(effect) for effect in recipes.get(style_id, [])]
+
+
+def _style_fonts(style_id: str) -> List[str]:
+    if style_id.startswith("txt_") or style_id.startswith("subtitles_mode:"):
+        return ["Montserrat"]
+    return []
+
+
+def _style_golden_fixtures(style_id: str) -> List[str]:
+    return {
+        "txt_soft_v1": ["trendy_5th_real_job"],
+        "txt_punch_v1": ["brat_5th_real_job"],
+        "txt_drop_v1": ["brat_5th_real_job"],
+    }.get(style_id, [])
+
+
+def _effect_parameter_schema(match_name: str) -> Dict[str, EffectParameterSpecV1]:
+    schemas: Dict[str, Dict[str, Dict[str, Any]]] = {
+        "ADBE Gaussian Blur 2": {
+            "blurriness": {"type": "number", "default": 0.0, "min": 0.0},
+            "repeat_edge_pixels": {"type": "boolean", "default": False},
+        },
+        "ADBE Geometry2": {
+            "anchor": {"type": "vec2", "default": [0.0, 0.0]},
+            "position": {"type": "vec2", "default": [0.0, 0.0]},
+            "scale_width": {"type": "number", "default": 100.0, "min": 0.0},
+            "scale_height": {"type": "number", "default": 100.0, "min": 0.0},
+            "rotation": {"type": "number", "default": 0.0},
+            "opacity": {"type": "number", "default": 100.0, "min": 0.0, "max": 100.0},
+        },
+        "ADBE Motion Blur": {
+            "direction": {"type": "number", "default": 0.0},
+            "blur_length": {"type": "number", "default": 0.0, "min": 0.0},
+        },
+        "ADBE Glo2": {
+            "threshold": {"type": "number", "default": 60.0, "min": 0.0, "max": 255.0},
+            "radius": {"type": "number", "default": 10.0, "min": 0.0},
+            "intensity": {"type": "number", "default": 1.0, "min": 0.0},
+            "operation": {"type": "enum", "default": "add", "keyframe": False},
+        },
+        "ADBE Drop Shadow": {
+            "color": {"type": "color", "default": [0.0, 0.0, 0.0, 1.0]},
+            "opacity": {"type": "number", "default": 100.0, "min": 0.0},
+            "direction": {"type": "number", "default": 135.0},
+            "distance": {"type": "number", "default": 5.0},
+            "softness": {"type": "number", "default": 0.0, "min": 0.0},
+        },
+        "ADBE Minimax": {
+            "operation": {"type": "enum", "default": "maximum", "keyframe": False},
+            "channels": {"type": "enum", "default": "alpha", "keyframe": False},
+            "direction": {"type": "enum", "default": "horizontal_and_vertical", "keyframe": False},
+            "radius": {"type": "number", "default": 0.0, "min": 0.0},
+        },
+        "ANR Analog Glitch": {
+            "contrast": {"type": "number", "default": 1.0, "min": 0.0},
+            "red_gain": {"type": "number", "default": 1.0, "min": 0.0},
+            "wave_amplitude": {"type": "number", "default": 0.0},
+            "wave_width": {"type": "number", "default": 1.0, "min": 0.0},
+            "glow_radius": {"type": "number", "default": 0.0, "min": 0.0},
+        },
+        "ANR F3 Stylize": {
+            "mode": {"type": "enum", "default": "extract", "keyframe": False},
+            "amount": {"type": "number", "default": 1.0, "min": 0.0},
+            "threshold": {"type": "number", "default": 0.5, "min": 0.0, "max": 1.0},
+        },
+        "ANR Shape Overlay": {
+            "shape": {"type": "enum", "default": "ellipse", "keyframe": False},
+            "opacity": {"type": "number", "default": 1.0, "min": 0.0, "max": 1.0},
+            "size": {"type": "number", "default": 100.0, "min": 0.0},
+            "seed": {"type": "integer", "default": 0, "keyframe": False},
+        },
+        "ANR Vertical Gradient": {
+            "top": {"type": "color", "default": [1.0, 1.0, 1.0, 1.0]},
+            "bottom": {"type": "color", "default": [1.0, 1.0, 1.0, 1.0]},
+            "brightness": {"type": "number", "default": 1.0, "min": 0.0},
+            "start_xy": {"type": "vec2", "default": [0.5, 0.0]},
+            "end_xy": {"type": "vec2", "default": [0.5, 1.0]},
+        },
+    }
+    return {
+        name: EffectParameterSpecV1.model_validate(spec)
+        for name, spec in schemas.get(match_name, {}).items()
+    }
+
+
+def _effect_plugin_identifier(match_name: str) -> Optional[str]:
+    if match_name.startswith("S_"):
+        return f"sapphire:{match_name}"
+    if match_name.startswith("BCC ") or match_name.startswith("BCC6"):
+        return f"boris-bcc:{match_name}"
+    if match_name.startswith("VISINF "):
+        return f"visinf:{match_name}"
+    return None
 
 
 def _golden_refs(subtitles_mode: str, full_edit_config: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -383,6 +770,7 @@ def _f3_operation(cfg: Dict[str, Any], f3_media: List[Dict[str, str]]) -> Option
         "transition": transition,
         "extra": extra,
         "extra_full": bool(f3.get("extra_full")),
+        "assets": dict(_dict(f3.get("assets"))),
     }
     if f3.get("drop_time") is not None:
         params["drop_time"] = float(f3["drop_time"])
@@ -617,9 +1005,11 @@ def _plugins_for_layer(layer: Dict[str, Any]) -> List[str]:
     plugins = []
     for effect_name in _dict(layer.get("effects")).keys():
         match_name = _normalize_effect_match_name(effect_name)
+        if match_name in _NATIVE_PROPRIETARY_APPROXIMATIONS:
+            continue
         if match_name.startswith("S_"):
             plugins.append("sapphire")
-        elif match_name.startswith("BCC "):
+        elif match_name.startswith(("BCC ", "BCC6")):
             plugins.append("boris_bcc")
         elif match_name.startswith("VISINF "):
             plugins.append("visinf")
@@ -658,9 +1048,23 @@ def _stable_effect_id(match_name: str) -> str:
 
 
 def _effect_backend(match_name: str) -> str:
-    if match_name.startswith(("S_", "BCC ", "VISINF ")):
+    if match_name in _NATIVE_PROPRIETARY_APPROXIMATIONS:
+        return "native_approximation"
+    if match_name.startswith(("S_", "BCC ", "BCC6", "VISINF ")):
         return "unsupported_external_plugin"
     return "native_approximation"
+
+
+_NATIVE_PROPRIETARY_APPROXIMATIONS = {
+    "S_BlurMotion",
+    "S_DropShadow",
+    "S_Gradient",
+    "S_Glow",
+    "S_GlowEdges",
+    "BCC6LensBlur",
+    "BCC Lens Blur",
+    "VISINF Grain Implant",
+}
 
 
 def _dict(value: Any) -> Dict[str, Any]:

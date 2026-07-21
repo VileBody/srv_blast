@@ -3,6 +3,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+from pydantic import ValidationError
+
 from app.render_plan import build_render_plan_v1
 
 
@@ -136,6 +139,123 @@ def test_hook_visual_ops_preserve_ids_timing_assets_and_audio_roles() -> None:
     request = plan.to_native_request()
     assert sorted(request["requirements"]["asset_roles"]) == ["audio", "tts_audio"]
     assert any(entry["aeMatchName"] == "ANR F3 Stylize" for entry in request["effectRegistry"])
+
+    ae_config = plan.to_ae_overlay_config()
+    assert ae_config["f3"] == {
+        "hook": "hook_light",
+        "transition": "snap_wipe",
+        "extra": "analog_glitch",
+        "extra_full": True,
+        "hook_extend": "after_drop:3",
+        "drop_time": 1.25,
+        "assets": {},
+    }
+    assert ae_config["f2"] == {"shape": "star1", "drop_time": 1.25, "seed": 7}
+    assert ae_config["f4"] == {"device": "tap", "bpm": 130.0, "drop_time": 1.25}
+    assert ae_config["f1"] == {"drop_time": 1.25, "seed": 9}
+    assert ae_config["f5"] == {"drop_rel_sec": 1.25, "combo_seed": 11}
+
+
+def test_ae_overlay_compiler_uses_render_plan_not_mutated_source_config() -> None:
+    cfg = {
+        "f2": {"shape": "star1", "drop_time": 1.25, "seed": 7},
+        "f4": {"device": "tap", "bpm": 130, "drop_time": 1.25},
+    }
+    plan = _base_plan(**cfg)
+    cfg["f2"]["shape"] = "square"
+    cfg["f4"]["device"] = "swipe"
+
+    ae_config = plan.to_ae_overlay_config()
+    assert ae_config["f2"]["shape"] == "star1"
+    assert ae_config["f4"]["device"] == "tap"
+
+
+def test_semantic_style_is_an_operation_with_a_data_driven_effect_graph() -> None:
+    plan = _base_plan(semantic_style={"style_id": "txt_soft_v1", "version": "v1"})
+    request = plan.to_native_request()
+
+    operation = next(op for op in request["visualOps"] if op["type"] == "style.semantic.v1")
+    assert operation["params"] == {"styleId": "txt_soft_v1", "version": "v1"}
+    registry = next(entry for entry in request["styleRegistry"] if entry["styleId"] == "txt_soft_v1")
+    assert [effect["matchName"] for effect in registry["effectGraph"]] == [
+        "ADBE Glo2",
+        "ADBE Geometry2",
+    ]
+    assert {entry["aeMatchName"] for entry in request["effectRegistry"]} >= {
+        "ADBE Glo2",
+        "ADBE Geometry2",
+    }
+    glow = next(entry for entry in request["effectRegistry"] if entry["aeMatchName"] == "ADBE Glo2")
+    assert glow["parameterSchema"]["radius"] == {
+        "type": "number",
+        "default": 10.0,
+        "min": 0.0,
+        "keyframe": True,
+    }
+    assert glow["keyframeSupport"] is True
+    assert glow["alphaRequirements"].startswith("straight-rgba8")
+    assert registry["supportedBackends"] == ["native_approximation"]
+    assert registry["tunables"]["ADBE Glo2.radius"] == 28.0
+    assert registry["goldenFixtures"] == ["trendy_5th_real_job"]
+
+
+def test_native_plugin_approximations_do_not_require_a_plugin_worker() -> None:
+    plan = build_render_plan_v1(
+        main_comp_name="Comp 1",
+        subtitles_mode="impulse_2nd",
+        comps=[{"name": "Comp 1", "w": 64, "h": 64, "fps": 24, "dur": 1}],
+        footage_layers=[{
+            "name": "adjustment",
+            "type": "adjustment",
+            "in_point": 0,
+            "out_point": 1,
+            "z_index": 1,
+            "effects": {
+                "S_DropShadow": {"0052": {"value": 60}},
+                "S_BlurMotion": {"0051": {"value": 12}},
+            },
+        }],
+        text_layers=[],
+        full_edit_config={},
+        f3_media=[],
+    )
+    request = plan.to_native_request()
+
+    assert request["requirements"]["plugins"] == []
+    by_name = {entry["aeMatchName"]: entry for entry in request["effectRegistry"]}
+    assert by_name["S_DropShadow"]["backend"] == "native_approximation"
+    assert by_name["S_BlurMotion"]["backend"] == "native_approximation"
+    assert by_name["S_BlurMotion"]["pluginIdentifier"] == "sapphire:S_BlurMotion"
+
+
+def test_render_plan_rejects_unknown_comp_layer_and_schema_fields() -> None:
+    with pytest.raises(ValidationError, match="unexpectedCompField"):
+        build_render_plan_v1(
+            main_comp_name="Comp 1",
+            subtitles_mode="impulse_2nd",
+            comps=[{
+                "name": "Comp 1", "w": 1080, "h": 1920, "fps": 24, "dur": 1,
+                "unexpectedCompField": True,
+            }],
+            footage_layers=[],
+            text_layers=[],
+            full_edit_config={},
+            f3_media=[],
+        )
+
+    with pytest.raises(ValidationError, match="unexpected_layer_field"):
+        build_render_plan_v1(
+            main_comp_name="Comp 1",
+            subtitles_mode="impulse_2nd",
+            comps=[{"name": "Comp 1", "w": 1080, "h": 1920, "fps": 24, "dur": 1}],
+            footage_layers=[{
+                "name": "clip", "type": "footage", "in_point": 0, "out_point": 1,
+                "z_index": 1, "unexpected_layer_field": True,
+            }],
+            text_layers=[],
+            full_edit_config={},
+            f3_media=[],
+        )
 
 
 def test_project_builder_emits_native_request_json(tmp_path: Path, monkeypatch) -> None:
