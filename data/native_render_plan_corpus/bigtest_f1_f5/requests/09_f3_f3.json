@@ -1,0 +1,167 @@
+{
+  "action": "render",
+  "assetsSpec": {
+    "root": "."
+  },
+  "compsSpec": [
+    {
+      "dur": 8.0,
+      "fps": 24,
+      "h": 1920,
+      "name": "Comp 1",
+      "w": 1080
+    }
+  ],
+  "effectRegistry": [
+    {
+      "aeMatchName": "ANR F3 Stylize",
+      "backend": "native_approximation",
+      "fallbackPolicy": "capability_report",
+      "parity": "approximate",
+      "stableId": "anr.f3.stylize"
+    },
+    {
+      "aeMatchName": "ANR Subtitle Bot",
+      "backend": "native_approximation",
+      "fallbackPolicy": "capability_report",
+      "parity": "approximate",
+      "stableId": "anr.subtitle.bot"
+    }
+  ],
+  "f3_media": [],
+  "footage_layers": [
+    {
+      "in_point": 0.0,
+      "name": "corpus_clip",
+      "out_point": 8.0,
+      "text_data": {
+        "source_footage": {
+          "file_name": "corpus_clip.mp4",
+          "remote_url": "s3://native-renderer-corpus/footage/corpus_clip.mp4"
+        }
+      },
+      "type": "footage",
+      "z_index": 100
+    }
+  ],
+  "goldenRefs": [
+    {
+      "id": "source_job",
+      "jobId": "09_f3_f3"
+    }
+  ],
+  "outputSpec": {
+    "directory": "out/09_f3_f3",
+    "video": "09_f3_f3.mp4",
+    "writeScene": true
+  },
+  "payloadVersion": "render-plan.v1",
+  "policy": {
+    "onUnsupported": "report"
+  },
+  "projectSpec": {
+    "mainCompName": "Comp 1",
+    "subtitlesMode": "impulse_2nd"
+  },
+  "requestId": "09_f3_f3",
+  "requirements": {
+    "asset_roles": [],
+    "audio_required": false,
+    "external_plugins_policy": "unsupported_without_ofx_or_sidecar",
+    "f3_media_count": 0,
+    "fonts": [],
+    "layer_types": [
+      "footage"
+    ],
+    "plugins": []
+  },
+  "schema": "ae-native-renderer.render-request.v1",
+  "schemaVersion": "render-plan.v1.1",
+  "styleRegistry": [
+    {
+      "backend": "native_approximation",
+      "fallbackPolicy": "capability_report",
+      "parity": "approximate",
+      "styleId": "hook.f3.effect.v1",
+      "version": "v1"
+    },
+    {
+      "backend": "native_approximation",
+      "fallbackPolicy": "capability_report",
+      "parity": "approximate",
+      "styleId": "subtitle.bot.impulse_2nd.v1",
+      "version": "v1"
+    },
+    {
+      "backend": "native_approximation",
+      "fallbackPolicy": "capability_report",
+      "parity": "approximate",
+      "styleId": "subtitles_mode:impulse_2nd",
+      "version": "v1"
+    }
+  ],
+  "text_layers": [],
+  "visualOps": [
+    {
+      "assets": [],
+      "id": "subtitles_impulse_2nd",
+      "params": {
+        "segments": [
+          {
+            "end": 2.2,
+            "focusStyle": null,
+            "focusWord": null,
+            "id": 1,
+            "lines": [],
+            "start": 0.5,
+            "text": "native render corpus",
+            "type": "impulse_2nd",
+            "words": [
+              {
+                "end": 0.95,
+                "focus": false,
+                "start": 0.5,
+                "word": "native"
+              },
+              {
+                "end": 1.45,
+                "focus": false,
+                "start": 0.95,
+                "word": "render"
+              },
+              {
+                "end": 2.2,
+                "focus": false,
+                "start": 1.45,
+                "word": "corpus"
+              }
+            ]
+          }
+        ],
+        "source_mode": "impulse_2nd"
+      },
+      "required": true,
+      "target": {},
+      "timing": {},
+      "type": "subtitle.bot.impulse_2nd.v1"
+    },
+    {
+      "assets": [],
+      "id": "hook_f3_effect",
+      "params": {
+        "detected_effect_ids": [
+          "invert_flash"
+        ],
+        "drop_time": 3.2,
+        "extra": "",
+        "extra_full": false,
+        "hook": "",
+        "transition": "invert_flash"
+      },
+      "required": true,
+      "target": {},
+      "timing": {},
+      "type": "hook.f3.effect.v1"
+    }
+  ]
+}

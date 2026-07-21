@@ -12,6 +12,7 @@ from jinja2 import Environment, FileSystemLoader
 
 from app.project_config import AE_PROJECT
 from app.footage_comp import build_footage_layers, resolve_text_duration_sec
+from app.render_plan import build_render_plan_v1
 from app.text_comp import build_text_layers
 from core.subtitles_mode import (
     SUBTITLES_MODE_JSX_5TH,
@@ -584,7 +585,7 @@ def build_full_project(
         main_comp_name=main_name,
     )
 
-    payload: Dict[str, Any] = {
+    ae_payload: Dict[str, Any] = {
         "project": {"mainCompName": main_name, "subtitlesMode": subtitles_mode},
         "comps": [main_comp, text_comp, mine_comp],
         "footage_layers": footage_layers,
@@ -598,7 +599,7 @@ def build_full_project(
             raise RuntimeError(
                 f"SUBTITLES_FORCE_FILL_HEX is set but invalid: {force_fill_hex!r}"
             )
-        replaced = _override_white_fill_colors(payload, target)
+        replaced = _override_white_fill_colors(ae_payload, target)
         LOGGER.info(
             "subtitles_fill_override hex=%s rgb01=%s replacements=%d",
             force_fill_hex,
@@ -629,8 +630,16 @@ def build_full_project(
     # render_manifest.collect_media_urls_from_render_payload подцепит и положит
     # в Windows-payload.media[] рядом с футажом. Пусто => без звука/лого.
     f3_media = _extract_f3_media(full_edit_config)
-    if f3_media:
-        payload["f3_media"] = f3_media
+    render_plan = build_render_plan_v1(
+        main_comp_name=main_name,
+        subtitles_mode=subtitles_mode,
+        comps=[main_comp, text_comp, mine_comp],
+        footage_layers=ae_payload["footage_layers"],
+        text_layers=ae_payload["text_layers"],
+        full_edit_config=full_edit_config,
+        f3_media=f3_media,
+    )
+    payload = render_plan.to_ae_payload()
 
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "logs").mkdir(parents=True, exist_ok=True)
@@ -638,7 +647,19 @@ def build_full_project(
     out_json = out_dir / "final_render_instructions_full.json"
     out_jsx = out_dir / "render_full.jsx"
 
-    out_json.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    request_id = (
+        full_edit_config.get("job_id")
+        or full_edit_config.get("request_id")
+        or full_edit_config.get("project_id")
+    )
+    out_json.write_text(
+        json.dumps(
+            render_plan.to_native_request(request_id=str(request_id) if request_id else None),
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
 
     # ✅ IMPORTANT: add tojson filter so templates can safely embed JSON into JSX
     env = Environment(loader=FileSystemLoader(str(repo_root / "templates")), autoescape=False)
