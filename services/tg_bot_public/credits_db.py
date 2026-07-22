@@ -3052,6 +3052,26 @@ class CreditsDB:
                 2: sum(n for s, n in exact.items() if s >= 2),
                 3: sum(n for s, n in exact.items() if s >= 3)}
 
+    async def filter_warmup_unreached(
+        self, campaign: str, tg_ids: List[int], stage: int, *, is_test: bool,
+    ) -> List[int]:
+        """Return only recipients that have not reached ``stage`` yet."""
+        if stage not in (1, 2, 3):
+            raise ValueError("warmup stage must be 1, 2, or 3")
+        candidates = sorted({int(x) for x in tg_ids})
+        if not candidates:
+            return []
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT tg_id FROM warmup_progress "
+                "WHERE campaign = $1 AND is_test = $2 AND stage >= $3::SMALLINT "
+                "AND tg_id = ANY($4::BIGINT[])",
+                str(campaign)[:80], bool(is_test), int(stage), candidates,
+            )
+        reached = {int(r["tg_id"]) for r in rows}
+        return [tg_id for tg_id in candidates if tg_id not in reached]
+
     async def create_broadcast(
         self,
         *,
@@ -3206,6 +3226,17 @@ class CreditsDB:
             "started_at": _fmt_ts(r["started_at"]),
             "finished_at": _fmt_ts(r["finished_at"]),
         }
+
+    async def get_broadcast_by_title(self, title: str) -> Optional[Dict[str, Any]]:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            bid = await conn.fetchval(
+                "SELECT id FROM broadcasts WHERE title = $1 ORDER BY id DESC LIMIT 1",
+                _norm_text(title, max_len=200),
+            )
+        if not bid:
+            return None
+        return await self.get_broadcast(int(bid))
 
     async def list_broadcasts(self, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
         pool = self._pool_or_fail()
