@@ -170,4 +170,4 @@ def test_build_photo_project_emits_jsx_and_payload(tmp_path: Path) -> None:
     assert payload["photo_job"]["transition"] == "zoom"
     assert payload["photo_job"]["config"]["grow"] == 10
     assert payload["photo_job"]["audio"]["file_name"] == "audio_source.mp3"
-    assert payload["footage_layers"][0]["file_name"] == "audio_source.mp3"
+    assert payload["footage_layers"][0]["text_data"]["source_footage"]["file_name"] == "audio_source.mp3"

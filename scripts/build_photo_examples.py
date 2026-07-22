@@ -20,7 +20,7 @@ sys.path.insert(0, str(_ROOT)); os.environ.setdefault("MODE", "dev")
 
 from mlcore import footage_picker as fp
 from mlcore import footage_bucket_previews as bp
-from mlcore.photo_bucket_catalog import load_photo_catalog, evaluate, _n
+from mlcore.photo_bucket_catalog import load_photo_catalog, evaluate, representative_score
 import scripts.build_bucket_previews as bbp
 
 
@@ -32,15 +32,9 @@ def _mapped_from_snapshot(snapshot: Path):
     return mapped
 
 
-def _score(bucket, a):
-    tags = [_n(t) for t in (a.get("meta_theme_tags") or [])]
-    req = set(bucket.priority_tags)
-    return sum(1 for t in tags if any(r == t or r in t for r in req))
-
-
 def _pick(bucket, mapped, top_n, seed):
     m = [a for a in mapped if evaluate(bucket, a)[0]]
-    m.sort(key=lambda a: (-_score(bucket, a), hashlib.sha256(f"{seed}:{a['file_name']}".encode()).hexdigest()))
+    m.sort(key=lambda a: (-representative_score(bucket, a), hashlib.sha256(f"{seed}:{a['file_name']}".encode()).hexdigest()))
     return m[:top_n]
 
 

@@ -13,15 +13,7 @@ from collections import Counter
 _ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_ROOT)); os.environ.setdefault("MODE", "dev")
 from mlcore import footage_picker as fp
-from mlcore.photo_bucket_catalog import load_photo_catalog, evaluate, _n
-
-
-def _score(bucket, asset):
-    tags = [_n(t) for t in (asset.get("meta_theme_tags") or [])]
-    req = set(bucket.priority_tags)
-    hits = sum(1 for t in tags if any(r == t or r in t for r in req))
-    col = 1 if (bucket.colors and _n(asset.get("meta_color_tone")) in bucket.colors) else 0
-    return hits + 0.5 * col
+from mlcore.photo_bucket_catalog import load_photo_catalog, evaluate, representative_score, _matches, _n
 
 
 def main(argv=None) -> int:
@@ -45,7 +37,7 @@ def main(argv=None) -> int:
     summary = []
     for b in catalog:
         m = [a for a in mapped if evaluate(b, a)[0]]
-        m.sort(key=lambda a: (-_score(b, a), hashlib.sha256(f"{args.seed}:{a['file_name']}".encode()).hexdigest()))
+        m.sort(key=lambda a: (-representative_score(b, a), hashlib.sha256(f"{args.seed}:{a['file_name']}".encode()).hexdigest()))
         picks = m[: args.top_n]
         # extraneous-tag scan: tags on the picks that are NOT part of the bucket's
         # required facet vocabulary — the candidates for the user to prune.
@@ -54,7 +46,7 @@ def main(argv=None) -> int:
         for a in picks:
             for t in (a.get("meta_theme_tags") or []):
                 tn = _n(t)
-                if not any(r == tn or r in tn or tn in r for r in req):
+                if not any(_matches((tn,), r) or _matches((r,), tn) for r in req):
                     foreign[str(t)] += 1
         rec = {
             "bucket_id": b.bucket_id,
