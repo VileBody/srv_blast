@@ -41,8 +41,23 @@ COMP_W = 1080
 COMP_H = 1920
 COMP_FPS = 23.976
 
+# Photo bucket previews: horizontal 1920×1440 (the real photo render geometry) +
+# the founder's cover-fit scale animation. Kept in sync with app/photo_comp.py
+# (PHOTO_COMP_W/H, PHOTO_ANIM) but defined locally so importing this module never
+# drags in the render-side photo pipeline.
+PHOTO_COMP_W = 1920
+PHOTO_COMP_H = 1440
+PHOTO_MONTAGE_ANIM = {
+    "grow": 10,
+    "punch": 20,
+    "punch_frames": 4,
+    "overscan": 1.002,
+    "ease": 33.33,
+}
+
 PREVIEWS_STORE_VERSION = 1
 DEFAULT_PREVIEWS_PATH = "data/footage_bucket_previews.json"
+DEFAULT_PHOTO_PREVIEWS_PATH = "data/photo_bucket_previews.json"
 
 _MOOD_RU = {"minor": "минор", "major": "мажор"}
 
@@ -105,15 +120,23 @@ def select_bucket_clips(
     *,
     seed: str,
     top_n: int = DEFAULT_TOP_N,
+    media_type: str = "video",
 ) -> List[Dict[str, Any]]:
     """Top-N representative clips for a bucket, deterministic by seed.
 
     `mapped_assets` are inventory assets enriched with style metadata
     (meta_theme_tags / meta_color_tone / meta_people_type) via
     footage_picker.map_inventory_assets_with_style_metadata().
+
+    media_type must match the pool being previewed. For photo buckets it has to be
+    "photo" so the picker applies the photo-only anchors/exclusions
+    (PHOTO_REQUIRE_GROUPS / PHOTO_EXCLUDE_TERMS) — otherwise a preview would draw
+    stills the real photo flow would never pick (e.g. beach silhouettes for the
+    digital-silhouette bucket). Passed explicitly rather than read from BG_MODE so
+    an offline preview build does not depend on the ambient env.
     """
     raw_pick = _raw_pick_from_bucket(bucket)
-    pool = fp._build_raw_pool(raw_pick, mapped_assets)
+    pool = fp._build_raw_pool(raw_pick, mapped_assets, media_type=media_type)
     pool.sort(key=lambda it: _clip_sort_key(it, seed=seed))
     n = max(0, int(top_n))
     return pool[:n]
@@ -152,9 +175,14 @@ def build_montage_spec(
     fps: float = COMP_FPS,
     comp_name: str = "Bucket Preview",
     with_label: bool = True,
+    anim: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """The MONTAGE object injected into the montage JSX template."""
-    return {
+    """The MONTAGE object injected into the montage JSX template.
+
+    `anim` (photo montage only) carries the founder's scale-animation constants;
+    the footage montage leaves it out and uses static cover-fit.
+    """
+    spec: Dict[str, Any] = {
         "comp_name": comp_name,
         "width": int(width),
         "height": int(height),
@@ -167,6 +195,32 @@ def build_montage_spec(
             for c in clips
         ],
     }
+    if anim is not None:
+        spec["anim"] = dict(anim)
+    return spec
+
+
+def build_photo_montage_spec(
+    bucket: Bucket,
+    clips: List[Dict[str, Any]],
+    *,
+    seconds_per_clip: float = SECONDS_PER_CLIP,
+    comp_name: str = "Photo Bucket Preview",
+    with_label: bool = True,
+) -> Dict[str, Any]:
+    """MONTAGE spec for a PHOTO bucket preview: horizontal 1920×1440 + the
+    cover-fit scale animation of the real photo render."""
+    return build_montage_spec(
+        bucket,
+        clips,
+        seconds_per_clip=seconds_per_clip,
+        width=PHOTO_COMP_W,
+        height=PHOTO_COMP_H,
+        fps=COMP_FPS,
+        comp_name=comp_name,
+        with_label=with_label,
+        anim=PHOTO_MONTAGE_ANIM,
+    )
 
 
 def render_montage_jsx(spec: Dict[str, Any], template_text: str) -> str:
