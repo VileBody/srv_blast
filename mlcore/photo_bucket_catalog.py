@@ -94,10 +94,13 @@ SNOW = _t("snow", "winter", "ice", "frost", "blizzard", "winter landscape", "sno
 DARKMOOD = _t("dark atmosphere", "dim lighting", "moody", "dramatic lighting", "low light", "shadows", "dark landscape", "dark sky")
 ACTION = _t("skate", "skating", "skateboard", "skateboarding", "running", "sport", "action", "jump", "jumping", "cycling", "bicycle", "bmx")
 PERFORMANCE = _t("concert", "performance", "stage", "live music", "club", "night club", "party", "rave", "dance floor")
-DRIVE = _t("night drive", "driving", "drive", "highway", "road trip", "wet road", "car interior", "car window")
+DRIVE = _t("night drive", "driving", "drive", "highway", "road trip", "wet road", "moving car", "traffic")
 OUTDOOR = _t("outdoor", "outdoors", "landscape", "forest", "mountain", "field", "street", "road", "cityscape", "coast", "beach")
 SOLITUDE = _t("alone", "solo", "solitude", "lonely", "lonely figure", "single person", "sitting alone")
 
+CAR_INTERIOR = _t("car interior", "vehicle interior", "interior", "inside car", "dashboard", "steering wheel", "driver seat", "passenger seat", "cabin", "car window")
+RED_ANY = _t("red", "red light", "red lights", "red lighting", "red glow", "red background", "crimson", "scarlet")
+ANIMALS = _t("animal", "animals", "dog", "dogs", "cat", "cats", "horse", "horses", "deer", "wolf", "wolves", "bird", "birds", "sheep", "cow", "cows")
 # reusable exclude groups (facet-breakers)
 WATER_ANY = _t("water", "ocean", "sea", "coast", "coastal", "beach", "lake", "river", "waves", "waterfront", "beach sunset", "shore")
 KNIGHT = _t("knight", "knights", "wizard", "mage", "medieval", "armor", "warrior", "castle", "fantasy", "sword")
@@ -213,7 +216,7 @@ PHOTO_BUCKETS: List[PhotoBucket] = [
        {"subject": "land nature", "time": "golden", "people": "none", "color": "warm", "energy": "serene"},
        [FOREST + _t("hills", "green hills"), GOLDEN],
        colors=("warm", "light"), people="none",
-       exclude=SILHOUETTE + DECAY + CITY + NIGHT + WATER_ANY + CAR + _t("road", "field", "meadow", "flowers", "wildflowers", "flower field", "dark atmosphere", "dark forest")),
+       exclude=SILHOUETTE + DECAY + CITY + NIGHT + WATER_ANY + CAR + _t("urban setting", "urban area", "urban environment", "architecture", "building", "buildings", "house", "houses", "bridge", "road", "field", "meadow", "flowers", "wildflowers", "flower field", "dark atmosphere", "dark forest")),
     _b("photo:forest_fog_dark", "Тёмный лес / туман", "строго туманный тёмный лес",
        {"subject": "forest", "weather": "fog", "people": "none", "color": "dark"},
        [FOREST, FOG], colors=("dark", "cold"), people="none",
@@ -255,7 +258,7 @@ PHOTO_BUCKETS: List[PhotoBucket] = [
        {"subject": "field", "people": "none", "color": "warm"},
        [_t("field", "meadow", "green field", "open field", "flower field"), _t("flowers", "wildflowers", "flower field")],
        colors=("warm", "light", "neutral"), people="none",
-       exclude=CITY + NIGHT + DECAY + SILHOUETTE + KNIGHT + _t("dark atmosphere")),
+       exclude=CITY + NIGHT + DECAY + SILHOUETTE + KNIGHT + CAR + _t("tractor", "truck", "motorcycle", "parking", "road", "dark atmosphere")),
 
     # ---- URBAN (people=none) ----
     # (removed urban_night_empty — too varied to control.)
@@ -277,7 +280,7 @@ PHOTO_BUCKETS: List[PhotoBucket] = [
     _b("photo:digital_silhouette_cold", "Digital-силуэт / холодный", "неоновый цифровой силуэт человека",
        {"subject": "silhouette", "visual_style": "digital/neon", "color": "cold"},
        [SILHOUETTE, NEON + _t("digital", "abstract")], colors=("dark", "cold"),
-       exclude=PORTRAIT + COUPLE + INTERIOR + COAST + CAR + PERFORMANCE + _t("dance", "dancing", "dance floor", "night club", "field", "water", "stormy weather")),
+       exclude=PORTRAIT + COUPLE + ROMANCE_ANY + RED_ANY + INTERIOR + COAST + CAR + PERFORMANCE + _t("dance", "dancing", "dance floor", "night club", "field", "water", "stormy weather")),
     _b("photo:digital_glitch", "Digital / glitch", "глитч, цифровое искажение",
        {"visual_style": "glitch", "color": "dark"},
        [GLITCH], colors=("dark", "cold"), exclude=()),
@@ -288,7 +291,7 @@ PHOTO_BUCKETS: List[PhotoBucket] = [
     _b("photo:lone_figure_scene", "Одинокий силуэт в кадре", "одинокая фигура/силуэт в пейзаже",
        {"subject": "lone figure", "energy": "moody", "people": "none", "color": "dark/cold"},
        [SILHOUETTE + _t("lonely figure"), OUTDOOR], colors=("dark", "cold", "neutral"), people="none",
-       exclude=DECAY + DIGITAL_STYLE + COUPLE + PORTRAIT + INTERIOR + KNIGHT + ACTION + _t("cape", "flying", "night club", "dance floor")),
+       exclude=DECAY + DIGITAL_STYLE + COUPLE + PORTRAIT + INTERIOR + KNIGHT + ACTION + ANIMALS + _t("cape", "flying", "night club", "dance floor")),
 
     # ---- SOLO PERSON ----
     # iter2: drop all intimacy + indoor setting.
@@ -373,10 +376,10 @@ PHOTO_BUCKETS: List[PhotoBucket] = [
 
     # ---- VEHICLES ----
     # iter2: no people — clean car shots only (a "left" driver shot slipped in).
-    _b("photo:car_night", "Машины / ночная езда", "авто, ночная езда, интерьер авто",
+    _b("photo:car_night", "Машины / ночная езда", "авто снаружи, ночная езда, городские дороги",
        {"subject": "car", "time": "night", "action": "drive", "people": "none"},
        [CAR, DRIVE, NIGHT + _t("city lights", "neon lights")],
-       people="none", exclude=_t("race", "drift", "burnout")),
+       people="none", exclude=CAR_INTERIOR + _t("race", "drift", "burnout")),
     # iter2: strictly dark/cold — warm split off (dark and warm must not mix).
     _b("photo:car_race", "Дрифт / гонки", "дрифт, гонки, скорость (тёмный/холодный)",
        {"subject": "car", "action": "race", "energy": "energetic", "color": "dark/cold"},

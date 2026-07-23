@@ -58,6 +58,19 @@ def test_solitude_requires_explicit_solitude_and_rejects_portraits():
     assert not eligible("photo:solitary_person_dark", portrait)
 
 
+def test_final_review_exclusions_are_hard_contracts():
+    assert not eligible("photo:car_night", asset("car", "car interior", "night"))
+    assert not eligible("photo:digital_silhouette_cold", asset("silhouette", "neon lights", "red glow"))
+    assert not eligible("photo:digital_silhouette_cold", asset("silhouette", "neon lights", "intimacy"))
+    assert not eligible("photo:lone_figure_scene", asset("silhouette", "forest", "dog"))
+    assert not eligible("photo:nature_golden_warm", asset("forest", "golden hour", "urban setting", color="warm"))
+    assert not eligible("photo:warm_field_flowers", asset("flower field", "white car", color="warm"))
+
+
+def test_thin_buckets_are_not_exposed_by_active_catalog():
+    assert RETIRED_THIN_BUCKET_IDS.isdisjoint(BUCKETS)
+
+
 
 def test_representative_score_caps_synonym_bags_per_facet():
     bucket = BUCKETS["photo:urban_rain_night"]
