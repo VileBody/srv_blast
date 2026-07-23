@@ -205,10 +205,14 @@ def _norm_tags(tags: Iterable[Any]) -> set[str]:
 def _preferred_classes(*, theme_tags: Iterable[Any], people_type: Any) -> set[str]:
     tags = _norm_tags(theme_tags)
     text = " ".join(sorted(tags))
-    if any(word in text for word in ("car", "vehicle", "drive", "traffic", "road", "motorcycle", "машин")):
-        return set(VEHICLE_CLASSES)
     people = str(people_type or "").strip().lower()
-    if people not in {"", "none"} or any(word in text for word in ("person", "people", "portrait", "silhouette", "girl", "guy", "couple")):
+    # Explicit human metadata wins over incidental road/vehicle detections.
+    # ``driver`` is the exception: a real car theme should frame the vehicle.
+    if people not in {"", "none", "driver"}:
+        return {"person"}
+    if any(word in text for word in ("car", "vehicle", "night drive", "traffic", "motorcycle", "moving car", "машин")):
+        return set(VEHICLE_CLASSES)
+    if people == "driver" or any(word in text for word in ("person", "people", "portrait", "silhouette", "girl", "guy", "couple", "crowd")):
         return {"person"}
     if any(word in text for word in ("animal", "bird", "cat", "dog", "horse")):
         return set(ANIMAL_CLASSES)
@@ -224,6 +228,8 @@ def choose_subject_detection(
     """Choose one semantic subject, preferring classes implied by photo tags."""
     rows: List[Dict[str, Any]] = []
     preferred = _preferred_classes(theme_tags=theme_tags, people_type=people_type)
+    if not preferred:
+        return None
     for raw in detections or []:
         label = str(raw.get("class") or "")
         bbox = raw.get("bbox")
