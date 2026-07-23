@@ -26,4 +26,8 @@ RUN pip install --no-cache-dir -r /app/requirements.txt
 # project code
 COPY . /app
 
-# по умолчанию ничего не запускаем — compose задаст command
+# Build-time readiness gate: production images always contain the verified
+# OpenCV Zoo YOLOX weights; generation never downloads models at runtime.
+RUN python scripts/download_photo_framing_model.py
+
+# По умолчанию ничего не запускаем — compose задаст command

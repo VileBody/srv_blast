@@ -116,6 +116,15 @@
             // larger of the two ratios fills the frame with no black bars
             return Math.max(W / sw, H / sh) * 100.0 * OVERSCAN;
         }
+        function clamp01(v, fallback) {
+            var n = Number(v);
+            if (!isFinite(n)) n = fallback;
+            return Math.max(0, Math.min(1, n));
+        }
+        function photoFocus(clip) {
+            var framing = (clip && clip.framing) ? clip.framing : {};
+            return [clamp01(framing.focus_x, 0.5), clamp01(framing.focus_y, 0.5)];
+        }
         function easeAllKeys(prop, infl) {
             var e = new KeyframeEase(0, infl);
             var dim = (prop.value instanceof Array) ? prop.value.length : 1;
@@ -145,7 +154,7 @@
             } catch (eImp) {
                 logLine("import skipped (unreadable) " + clip.file_name + ": " + eImp.toString());
             }
-            if (imp) items.push(imp);
+            if (imp) items.push({item: imp, clip: clip});
             else logLine("photo skipped: " + clip.file_name);
         }
         if (!items.length) throw new Error("no importable stills for montage");
@@ -154,7 +163,9 @@
         var comp = app.project.items.addComp(compName, W, H, 1.0, duration, FPS);
 
         for (var k = 0; k < items.length; k++) {
-            var it = items[k];
+            var entry = items[k];
+            var it = entry.item;
+            var clipSpec = entry.clip;
             var layer = comp.layers.add(it);
             var tIn  = snap(k * SPC);
             var tOut = snap((k + 1) * SPC);
@@ -176,7 +187,11 @@
                 scale.setValueAtTime(tOut,   scaleVec(scale, s0 + PUNCH));
                 easeAllKeys(scale, EASE);
             }
-            try { layer.property("Position").setValue([W / 2, H / 2]); } catch (ePos) {}
+            try {
+                var focus = photoFocus(clipSpec);
+                layer.property("Anchor Point").setValue([sw * focus[0], sh * focus[1]]);
+                layer.property("Position").setValue([W / 2, H / 2]);
+            } catch (ePos) {}
         }
 
         // optional label caption — created LAST so it stays on top

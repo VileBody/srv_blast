@@ -71,6 +71,15 @@
     function coverScale(srcW, srcH) {
       return Math.max(COMP_W / srcW, COMP_H / srcH) * 100 * OVERSCAN;
     }
+    function clamp01(v, fallback) {
+      var n = Number(v);
+      if (!isFinite(n)) n = fallback;
+      return Math.max(0, Math.min(1, n));
+    }
+    function photoFocus(seg) {
+      var f = (seg && seg.framing) ? seg.framing : {};
+      return [clamp01(f.focus_x, 0.5), clamp01(f.focus_y, 0.5)];
+    }
     function scaleVec(prop, s) { return (prop.value.length === 3) ? [s, s, 100] : [s, s]; }
     function easeAllKeys(prop, infl) {
       var e = new KeyframeEase(0, infl);
@@ -141,7 +150,8 @@
       var tg = lyr.property("ADBE Transform Group");
       var anchor = tg.property("ADBE Anchor Point");
       var pos = tg.property("ADBE Position");
-      anchor.setValue(anchor.value.length === 3 ? [w / 2, h / 2, 0] : [w / 2, h / 2]);
+      var focus = photoFocus(seg);
+      anchor.setValue(anchor.value.length === 3 ? [w * focus[0], h * focus[1], 0] : [w * focus[0], h * focus[1]]);
       pos.setValue(pos.value.length === 3 ? [COMP_W / 2, COMP_H / 2, 0] : [COMP_W / 2, COMP_H / 2]);
 
       var scale = tg.property("ADBE Scale");

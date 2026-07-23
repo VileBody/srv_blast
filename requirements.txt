@@ -13,6 +13,8 @@ jinja2>=3.1.4
 
 # Models / validation
 pydantic>=2.7.0
+# CPU-only subject detection for one-time PHOTO framing (no Torch/Ultralytics).
+opencv-python-headless==4.10.0.84
 
 # Gemini client (google.genai)
 google-genai>=0.6.0

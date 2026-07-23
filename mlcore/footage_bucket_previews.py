@@ -191,7 +191,14 @@ def build_montage_spec(
         "label": display_label(bucket.label) if with_label else "",
         "label_font": LABEL_FONT,
         "clips": [
-            {"file_name": str(c["file_name"]), "relpath": f"media/video/{c['file_name']}"}
+            {
+                "file_name": str(c["file_name"]),
+                "relpath": f"media/video/{c['file_name']}",
+                **(
+                    {"framing": dict(c.get("meta_framing") or c.get("framing") or {})}
+                    if (c.get("meta_framing") or c.get("framing")) else {}
+                ),
+            }
             for c in clips
         ],
     }

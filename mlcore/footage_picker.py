@@ -1503,6 +1503,7 @@ def pick_footage_clips_by_intervals_deterministic(
                 {
                     "file_name": chosen_name,
                     "fit_mode": fit_mode,
+                    "framing": (all_assets_by_name.get(chosen_name) or {}).get("meta_framing") or None,
                     "in_point": float(a),
                     "out_point": float(b),
                     "source_offset_sec": src_off,
@@ -1687,6 +1688,7 @@ def pick_footage_clips_by_intervals_deterministic(
                 {
                     "file_name": chosen_name,
                     "fit_mode": fit_mode,
+                    "framing": chosen.get("meta_framing") or None,
                     "in_point": float(a),
                     "out_point": float(b),
                     "source_offset_sec": src_off,
@@ -1716,6 +1718,7 @@ def pick_footage_clips_by_intervals_deterministic(
                 {
                     "file_name": chosen_name,
                     "fit_mode": fit_mode,
+                    "framing": (by_name.get(chosen_name) or {}).get("meta_framing") or None,
                     "in_point": float(a),
                     "out_point": float(b),
                     "source_offset_sec": src_off,
@@ -1850,6 +1853,7 @@ def load_footage_style_metadata_rows(
                     "color_tone": color_tone,
                     "people_type": people_type or "none",
                     "theme_tags": tags,
+                    "framing": it.get("framing") if isinstance(it.get("framing"), dict) else {},
                     "source_path": str(p),
                     "source_row": int(idx),
                 }
@@ -1875,6 +1879,7 @@ def merge_footage_style_metadata_rows(
                 "color_tone": str(row.get("color_tone") or "").strip(),
                 "people_type": str(row.get("people_type") or "").strip() or "none",
                 "theme_tags": [],
+                "framing": dict(row.get("framing") or {}),
             }
             merged[clip_id] = current
         else:
@@ -1886,6 +1891,8 @@ def merge_footage_style_metadata_rows(
                 cand_people = str(row.get("people_type") or "").strip()
                 if cand_people:
                     current["people_type"] = cand_people
+            if not current.get("framing") and isinstance(row.get("framing"), dict):
+                current["framing"] = dict(row["framing"])
         seen = {str(x).strip() for x in list(current.get("theme_tags") or []) if str(x).strip()}
         for t in list(row.get("theme_tags") or []):
             tv = str(t).strip()
@@ -1922,6 +1929,7 @@ def map_inventory_assets_with_style_metadata(
                 "meta_color_tone": str(meta.get("color_tone") or "").strip(),
                 "meta_people_type": str(meta.get("people_type") or "").strip() or "none",
                 "meta_theme_tags": list(meta.get("theme_tags") or []),
+                "meta_framing": dict(meta.get("framing") or {}),
             }
         )
     return mapped, unmapped

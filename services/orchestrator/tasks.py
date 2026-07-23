@@ -2674,6 +2674,14 @@ def tag_untagged_footage(self, limit: int = 0, media_type: str = "video") -> Dic
                 limit=int(limit or 0),
                 progress_cb=_progress,
             )
+            from mlcore.photo_tagger import run_photo_framing_batch
+
+            framing_summary = run_photo_framing_batch(
+                bucket=bucket,
+                db_url=db_url,
+                progress_cb=_progress,
+            )
+            summary = {**summary, **framing_summary}
         else:
             from mlcore.footage_tagger import run_tagging_batch
 
@@ -3214,6 +3222,21 @@ def activate_footage_base(self, limit: int = 0, media_type: str = "video") -> Di
                 bucket=bucket, source_prefix=prefix, db_url=db_url,
                 limit=int(limit or 0), progress_cb=_tag_progress,
             )
+            from mlcore.photo_tagger import run_photo_framing_batch
+
+            def _frame_progress(done: int, total: int, written: int) -> None:
+                _publish(
+                    "running", phase="framing", done=int(done),
+                    total=int(total), written=int(written),
+                )
+
+            _publish("running", phase="framing", done=0, total=0, written=0)
+            framing_summary = run_photo_framing_batch(
+                bucket=bucket,
+                db_url=db_url,
+                progress_cb=_frame_progress,
+            )
+            tag_summary = {**tag_summary, **framing_summary}
         else:
             from mlcore.footage_tagger import run_tagging_batch
 

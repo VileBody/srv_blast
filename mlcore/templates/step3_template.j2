@@ -46,6 +46,7 @@
       "src_w": {{ assets_map[c.file_name].src_w }},
       "src_h": {{ assets_map[c.file_name].src_h }},
       "fit_mode": {{ c.fit_mode | tojson }},
+      "framing": {% if c.framing is defined and c.framing %}{{ c.framing | tojson }}{% else %}null{% endif %},
 
       "in_point": {{ c.in_point }},
       "out_point": {% if c.out_point <= c.in_point %}{{ c.in_point + eps }}{% else %}{{ c.out_point }}{% endif %},

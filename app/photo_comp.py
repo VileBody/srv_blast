@@ -23,6 +23,8 @@ from typing import Any, Dict, List, Optional
 
 from core.video_timing import AE_FPS
 
+from mlcore.photo_framing import normalize_framing
+
 # Comp geometry for the photo flow: a standalone horizontal 4:3 render (the
 # founder's reference comp), independent of the vertical footage main comp.
 PHOTO_COMP_W = 1920
@@ -144,10 +146,17 @@ def extract_photos_and_segments_from_footage_cfg(
             continue
         if t_out <= t_in:
             continue
-        segments.append({"in": round(t_in, 6), "out": round(t_out, 6), "file_name": fn})
+        framing = normalize_framing(it.get("framing"))
+        segment = {"in": round(t_in, 6), "out": round(t_out, 6), "file_name": fn}
+        if framing:
+            segment["framing"] = framing
+        segments.append(segment)
         if fn not in seen:
             seen.add(fn)
-            photos.append({"file_name": fn, "remote_url": remote})
+            photo = {"file_name": fn, "remote_url": remote}
+            if framing:
+                photo["framing"] = framing
+            photos.append(photo)
     if not segments:
         raise RuntimeError("no usable photo layers in footage_config (need type=footage with in/out)")
     return photos, segments
@@ -187,10 +196,18 @@ def build_photo_payload(
     if segments is not None:
         if not segments:
             raise RuntimeError("build_photo_payload: explicit segments are empty")
-        segments = [
-            {"in": float(s["in"]), "out": float(s["out"]), "file_name": str(s["file_name"])}
-            for s in segments
-        ]
+        normalized_segments: List[Dict[str, Any]] = []
+        for s in segments:
+            row = {
+                "in": float(s["in"]),
+                "out": float(s["out"]),
+                "file_name": str(s["file_name"]),
+            }
+            framing = normalize_framing(s.get("framing"))
+            if framing:
+                row["framing"] = framing
+            normalized_segments.append(row)
+        segments = normalized_segments
     else:
         segments = build_photo_segments(photos, fps=fps, segment_frames=segment_frames)
 
