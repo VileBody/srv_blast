@@ -161,6 +161,7 @@ def run_photo_framing_batch(
         download_fn = download_from_s3
 
     if fetch_fn is None:
+        from mlcore.footage_assets_db import init_schema as init_assets_schema
         from mlcore.footage_tags_db import fetch_unframed_photo_records, init_schema
         def fetch_fn():
             async def _go():
@@ -168,6 +169,7 @@ def run_photo_framing_batch(
                 conn = await asyncpg.connect(dsn=db_url)
                 try:
                     await init_schema(conn)
+                    await init_assets_schema(conn)
                     return await fetch_unframed_photo_records(conn)
                 finally:
                     await conn.close()
@@ -190,6 +192,7 @@ def run_photo_framing_batch(
         quality_fn = attach_photo_quality
     detector = None
     written = failed = 0
+    failure_reasons: Dict[str, int] = {}
     pending: List[Dict[str, Any]] = []
     for idx, row in enumerate(rows, start=1):
         try:
@@ -215,8 +218,10 @@ def run_photo_framing_batch(
                     if quality_fn is not None:
                         framing = quality_fn(framing, dest)
             pending.append({"clip_id": row["clip_id"], "framing": framing})
-        except Exception:
+        except Exception as exc:
             failed += 1
+            reason = f"{type(exc).__name__}: {str(exc)[:160]}"
+            failure_reasons[reason] = failure_reasons.get(reason, 0) + 1
         if len(pending) >= max(1, flush_every):
             written += update_fn(pending)
             pending = []
@@ -224,11 +229,20 @@ def run_photo_framing_batch(
             progress_cb(idx, len(rows), written + len(pending))
     if pending:
         written += update_fn(pending)
+    ordered_failures = dict(
+        sorted(failure_reasons.items(), key=lambda item: (-item[1], item[0]))
+    )
     if rows and written <= 0:
         raise RuntimeError(
-            f"photo framing backfill produced zero rows: pending={len(rows)} failed={failed}"
+            "photo framing backfill produced zero rows: "
+            f"pending={len(rows)} failed={failed} failure_reasons={ordered_failures}"
         )
-    return {"framing_pending": len(rows), "framing_written": written, "framing_failed": failed}
+    return {
+        "framing_pending": len(rows),
+        "framing_written": written,
+        "framing_failed": failed,
+        "framing_failure_reasons": ordered_failures,
+    }
 
 
 # --------------------------------------------------------------------------- #

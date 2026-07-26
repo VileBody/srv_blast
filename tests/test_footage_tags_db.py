@@ -6,6 +6,7 @@ from mlcore.footage_tags_db import (
     build_tag_record,
     extract_clip_id,
     fetch_all_records,
+    fetch_unframed_photo_records,
     merge_records_by_clip_id,
     pick_snapshot_path,
     snapshot_row_from_record,
@@ -133,3 +134,22 @@ def test_fetch_all_records_does_not_hide_other_database_errors() -> None:
         assert str(exc) == "connection closed"
     else:
         raise AssertionError("database error was unexpectedly swallowed")
+
+def test_fetch_unframed_photo_records_uses_registry_s3_key() -> None:
+    class Connection:
+        def __init__(self) -> None:
+            self.query = ""
+            self.args = ()
+
+        async def fetch(self, query, *args):
+            self.query = query
+            self.args = args
+            return [{"clip_id": "photo:1", "s3_key": "photo_collection/a/1.jpg"}]
+
+    conn = Connection()
+    rows = asyncio.run(fetch_unframed_photo_records(conn))
+
+    assert rows[0]["s3_key"] == "photo_collection/a/1.jpg"
+    assert "LEFT JOIN footage_assets" in conn.query
+    assert "COALESCE(NULLIF(t.s3_key, ''), a.s3_key, '')" in conn.query
+    assert conn.args == ("photo",)

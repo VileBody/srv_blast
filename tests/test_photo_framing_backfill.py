@@ -44,6 +44,7 @@ def test_framing_backfill_updates_without_retagging(tmp_path: Path) -> None:
         "framing_pending": 1,
         "framing_written": 1,
         "framing_failed": 0,
+        "framing_failure_reasons": {},
     }
     assert updated[0]["clip_id"] == "photo:1"
     assert updated[0]["framing"]["focus_y"] == 0.7
@@ -51,7 +52,7 @@ def test_framing_backfill_updates_without_retagging(tmp_path: Path) -> None:
 
 
 def test_framing_backfill_fails_if_every_asset_fails() -> None:
-    with pytest.raises(RuntimeError, match="produced zero rows"):
+    with pytest.raises(RuntimeError, match="OSError: missing"):
         run_photo_framing_batch(
             bucket="bucket",
             db_url="unused",

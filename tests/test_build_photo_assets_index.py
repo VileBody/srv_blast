@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from scripts import build_photo_assets_index as photo_index
 from scripts.build_photo_assets_index import parse_ffprobe_dims
 from scripts.export_footage_tags_snapshot import _parse_args
@@ -57,3 +59,24 @@ def test_export_args_rejects_bad_source() -> None:
 
     with pytest.raises(SystemExit):
         _parse_args(["--source", "audio"])
+
+def test_build_photo_index_preserves_real_s3_key(monkeypatch, tmp_path) -> None:
+    key = "photo_collection/hh/1/353532639512911981.jpg"
+    monkeypatch.setattr(
+        "src.storage.s3.list_s3_objects",
+        lambda *_args, **_kwargs: {
+            "objects": [{"key": key}],
+            "is_truncated": False,
+        },
+    )
+    monkeypatch.setattr(photo_index, "probe_s3_photo_dims", lambda *_args, **_kwargs: (1600, 1200))
+    out = tmp_path / "photo_index.json"
+
+    result = photo_index.build_photo_index(
+        bucket="photos",
+        prefix="photo_collection",
+        out_path=out,
+    )
+
+    assert result["assets_count"] == 1
+    assert json.loads(out.read_text(encoding="utf-8"))["assets"][0]["s3_key"] == key

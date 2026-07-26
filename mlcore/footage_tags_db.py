@@ -336,9 +336,13 @@ async def fetch_all_records(conn: Any, *, source: Optional[str] = None) -> List[
 
 async def fetch_unframed_photo_records(conn: Any) -> List[Dict[str, Any]]:
     recs = await conn.fetch(
-        "SELECT clip_id, file_name, s3_key, people_type, theme_tags, framing "
-        "FROM footage_tags WHERE source = $1 AND "
-        "(framing = '{}'::jsonb OR NOT (framing ? 'quality'))",
+        "SELECT t.clip_id, t.file_name, "
+        "COALESCE(NULLIF(t.s3_key, ''), a.s3_key, '') AS s3_key, "
+        "t.people_type, t.theme_tags, t.framing "
+        "FROM footage_tags t LEFT JOIN footage_assets a "
+        "ON a.clip_id = t.clip_id AND a.source = $1 "
+        "WHERE t.source = $1 AND "
+        "(t.framing = '{}'::jsonb OR NOT (t.framing ? 'quality'))",
         SOURCE_PHOTO,
     )
     return [dict(r) for r in recs]

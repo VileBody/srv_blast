@@ -27,7 +27,12 @@ from __future__ import annotations
 import math
 from typing import Any, Dict, Iterable, List, Optional
 
-from mlcore.footage_tags_db import SOURCE_PHOTO, SOURCE_VIDEO, extract_clip_id
+from mlcore.footage_tags_db import (
+    SOURCE_PHOTO,
+    SOURCE_VIDEO,
+    extract_clip_id,
+    photo_clip_id,
+)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS footage_assets (
@@ -130,7 +135,10 @@ def build_asset_record(raw: Dict[str, Any], *, source: str = SOURCE_VIDEO) -> Op
     # Extract from the BASENAME, never the full s3 key: the key prefix (e.g.
     # .../pins2_1to1_20260323/...) contains an 8-digit date that the clip_id regex
     # would otherwise grab as a bogus id, collapsing every asset onto one PK.
-    clip_id = extract_clip_id(file_name) or extract_clip_id(s3_key.rsplit("/", 1)[-1])
+    if source == SOURCE_PHOTO:
+        clip_id = photo_clip_id(file_name) or photo_clip_id(s3_key.rsplit("/", 1)[-1])
+    else:
+        clip_id = extract_clip_id(file_name) or extract_clip_id(s3_key.rsplit("/", 1)[-1])
     if not clip_id:
         return None
     dom = raw.get("dominant_color")
