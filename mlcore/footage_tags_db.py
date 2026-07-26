@@ -308,12 +308,29 @@ async def upsert_records(conn: Any, records: List[Dict[str, Any]]) -> int:
 
 async def fetch_all_records(conn: Any, *, source: Optional[str] = None) -> List[Dict[str, Any]]:
     """All tag rows. source=None → every pool; source='video'|'photo' → one pool."""
-    cols = ("clip_id, file_name, s3_key, video_key, mood, color_tone, "
-            "people_type, theme_tags, source, framing")
-    if source:
-        recs = await conn.fetch(f"SELECT {cols} FROM footage_tags WHERE source = $1", source)
-    else:
-        recs = await conn.fetch(f"SELECT {cols} FROM footage_tags")
+    base_cols = ("clip_id, file_name, s3_key, video_key, mood, color_tone, "
+                 "people_type, theme_tags, source")
+
+    async def _fetch(cols: str) -> Any:
+        if source:
+            return await conn.fetch(
+                f"SELECT {cols} FROM footage_tags WHERE source = $1",
+                source,
+            )
+        return await conn.fetch(f"SELECT {cols} FROM footage_tags")
+
+    try:
+        recs = await _fetch(f"{base_cols}, framing")
+    except Exception as exc:
+        # Candidate readiness is deliberately read-only. During the first
+        # photo-flow rollout it can therefore encounter the legacy production
+        # schema before the new worker gets a chance to run init_schema().
+        # Treat a missing framing column as empty metadata so video readiness
+        # remains evaluable; photo readiness will still fail closed because its
+        # quality coverage is zero.
+        if getattr(exc, "sqlstate", None) != "42703":
+            raise
+        recs = await _fetch(f"{base_cols}, '{{}}'::jsonb AS framing")
     return [dict(r) for r in recs]
 
 
