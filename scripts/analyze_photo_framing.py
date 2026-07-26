@@ -10,13 +10,14 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import Any, Dict, Iterable
+from typing import Any, Dict, Iterable, Mapping
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from mlcore.photo_framing import OpenCvYoloXDetector, analyze_photo_framing
+from mlcore.photo_quality import attach_photo_quality
 
 
 def _candidate_names(row: Dict[str, Any]) -> Iterable[str]:
@@ -43,7 +44,11 @@ def enrich_snapshot(
     for row in rows:
         if not isinstance(row, dict):
             continue
-        if only_missing and isinstance(row.get("framing"), dict) and row["framing"]:
+        if (
+            only_missing
+            and isinstance(row.get("framing"), dict)
+            and isinstance(row["framing"].get("quality"), dict)
+        ):
             skipped += 1
             continue
         image = next((by_name[name] for name in _candidate_names(row) if name in by_name), None)
@@ -51,12 +56,17 @@ def enrich_snapshot(
             missing_file += 1
             continue
         try:
-            row["framing"] = analyze_photo_framing(
-                image,
-                theme_tags=row.get("theme_tags") or [],
-                people_type=row.get("people_type") or "none",
-                detector=detector,
-            )
+            existing = row.get("framing")
+            if isinstance(existing, Mapping) and existing:
+                framing = dict(existing)
+            else:
+                framing = analyze_photo_framing(
+                    image,
+                    theme_tags=row.get("theme_tags") or [],
+                    people_type=row.get("people_type") or "none",
+                    detector=detector,
+                )
+            row["framing"] = attach_photo_quality(framing, image)
             analyzed += 1
         except Exception:
             failed += 1

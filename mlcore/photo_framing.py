@@ -86,6 +86,13 @@ def normalize_framing(value: Any) -> Dict[str, Any]:
     }
     if bbox:
         out["subject_bbox"] = bbox
+    quality_raw = value.get("quality")
+    if isinstance(quality_raw, Mapping):
+        from mlcore.photo_quality import normalize_photo_quality
+
+        quality = normalize_photo_quality(quality_raw)
+        if quality:
+            out["quality"] = quality
     return out
 
 

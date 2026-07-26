@@ -80,6 +80,8 @@ def test_orchestrator_client_accepts_photo_kwargs():
     sig = inspect.signature(OrchestratorClient.send_audio_s3)
     assert "photo_style" in sig.parameters
     assert "photo_transition" in sig.parameters
+    rank_sig = inspect.signature(OrchestratorClient.rank_buckets)
+    assert "media_type" in rank_sig.parameters
 
 
 def test_photo_ids_match_orchestrator_schema():
@@ -99,3 +101,13 @@ def test_team_and_public_photo_maps_match():
 
     assert team.PHOTO_STYLE_IDS == pub.PHOTO_STYLE_IDS
     assert team.PHOTO_TRANSITION_IDS == pub.PHOTO_TRANSITION_IDS
+
+
+def test_photo_preview_registry_is_separate_and_mirrored():
+    from services.tg_bot_botapi import app as team
+    from services.tg_bot_public import app as public
+
+    assert team._bucket_previews_path("photo").name == "photo_bucket_previews.json"
+    assert public._bucket_previews_path("photo").name == "photo_bucket_previews.json"
+    assert team._bucket_previews_path("video").name == "footage_bucket_previews.json"
+    assert public._bucket_previews_path("video").name == "footage_bucket_previews.json"

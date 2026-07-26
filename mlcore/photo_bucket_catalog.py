@@ -100,7 +100,13 @@ SOLITUDE = _t("alone", "solo", "solitude", "lonely", "lonely figure", "single pe
 
 CAR_INTERIOR = _t("car interior", "vehicle interior", "interior", "inside car", "dashboard", "steering wheel", "driver seat", "passenger seat", "cabin", "car window")
 RED_ANY = _t("red", "red light", "red lights", "red lighting", "red glow", "red background", "crimson", "scarlet")
-ANIMALS = _t("animal", "animals", "dog", "dogs", "cat", "cats", "horse", "horses", "deer", "wolf", "wolves", "bird", "birds", "sheep", "cow", "cows")
+ANIMALS = _t(
+    "animal", "animals", "wildlife", "wild animal",
+    "dog", "dogs", "cat", "cats", "horse", "horses",
+    "deer", "deer silhouette", "stag", "doe", "fawn", "elk", "moose",
+    "reindeer", "antler", "antlers", "wolf", "wolves", "bird", "birds",
+    "sheep", "cow", "cows",
+)
 # reusable exclude groups (facet-breakers)
 WATER_ANY = _t("water", "ocean", "sea", "coast", "coastal", "beach", "lake", "river", "waves", "waterfront", "beach sunset", "shore")
 KNIGHT = _t("knight", "knights", "wizard", "mage", "medieval", "armor", "warrior", "castle", "fantasy", "sword")
@@ -108,6 +114,14 @@ BOATS = _t("boat", "boats", "ship", "ships", "sailboat", "yacht", "fishing boat"
 DIGITAL_STYLE = _t("neon", "neon lights", "glow", "glowing", "led", "red lights", "blue lighting", "purple lighting", "digital art", "abstract", "glitch", "distortion")
 ROMANCE_ANY = _t("romance", "romantic", "romantic moment", "kiss", "hug", "embrace", "intimacy", "intimate", "intimate moment", "love", "couple", "date", "tender")
 PEOPLE_ANY = _t("man", "woman", "guy", "girl", "person", "people", "couple", "crowd", "portrait", "face", "man on sidewalk")
+BUILT_ENVIRONMENT = CITY + _t(
+    "urban setting", "urban area", "urban environment", "suburban", "suburb",
+    "residential", "residential area", "village", "town", "architecture",
+    "building", "buildings", "house", "houses", "home", "homes",
+    "country house", "rural house", "farmhouse", "cottage", "cabin", "hut",
+    "barn", "shed", "road", "roads", "street", "highway", "driveway",
+    "bridge", "railway", "railroad", "power lines", "utility pole",
+)
 
 
 @dataclass(frozen=True)
@@ -120,6 +134,9 @@ class PhotoBucket:
     exclude_terms: Tuple[str, ...] = ()
     colors: Tuple[str, ...] = ()    # allowed meta_color_tone (neutral folds to light)
     people: str = "any"            # any | none | present | girls | guys | couple | crowd
+    require_detected_subjects: Tuple[str, ...] = ()
+    exclude_detected_subjects: Tuple[str, ...] = ()
+    exclude_clip_ids: Tuple[str, ...] = ()
 
     # picker/preview duck-compat
     @property
@@ -159,7 +176,23 @@ def evaluate(bucket: PhotoBucket, asset: Mapping[str, Any]) -> Tuple[bool, str]:
     tags = tuple(_n(x) for x in (asset.get("meta_theme_tags") or asset.get("theme_tags") or []) if _n(x))
     color = _n(asset.get("meta_color_tone") or asset.get("color_tone"))
     people = _n(asset.get("meta_people_type") or asset.get("people_type"))
+    clip_id = Path(str(
+        asset.get("clip_id") or asset.get("video_key") or
+        asset.get("file_name") or asset.get("video_path") or ""
+    )).stem
+    framing_value = asset.get("meta_framing") or asset.get("framing")
+    framing = framing_value if isinstance(framing_value, Mapping) else {}
+    detected_subject = _n(framing.get("subject_class"))
+    quality = framing.get("quality")
 
+    if isinstance(quality, Mapping) and quality.get("reject"):
+        return False, "quality"
+    if clip_id and clip_id in bucket.exclude_clip_ids:
+        return False, "clip_exclude"
+    if bucket.require_detected_subjects and detected_subject not in bucket.require_detected_subjects:
+        return False, "detected_subject"
+    if detected_subject and detected_subject in bucket.exclude_detected_subjects:
+        return False, "detected_subject"
     if any(_matches(tags, x) for x in TEXT_TERMS):
         return False, "visible_text"
     if bucket.colors:
@@ -201,11 +234,17 @@ def representative_score(bucket: PhotoBucket, asset: Mapping[str, Any]) -> float
 # ---------------------------------------------------------------------------- #
 # The catalog. Ordered by family. Each bucket authored facet-coherently.
 # ---------------------------------------------------------------------------- #
-def _b(bucket_id, label, lead, facets, require, colors=(), people="any", exclude=()):
+def _b(
+    bucket_id, label, lead, facets, require, colors=(), people="any", exclude=(),
+    require_detected_subjects=(), exclude_detected_subjects=(), exclude_clip_ids=(),
+):
     return PhotoBucket(
         bucket_id=bucket_id, label=label, lead=lead, facets=facets,
         require_groups=tuple(require), exclude_terms=_t(*exclude),
         colors=tuple(colors), people=people,
+        require_detected_subjects=_t(*require_detected_subjects),
+        exclude_detected_subjects=_t(*exclude_detected_subjects),
+        exclude_clip_ids=tuple(str(x) for x in exclude_clip_ids),
     )
 
 
@@ -216,11 +255,15 @@ PHOTO_BUCKETS: List[PhotoBucket] = [
        {"subject": "land nature", "time": "golden", "people": "none", "color": "warm", "energy": "serene"},
        [FOREST + _t("hills", "green hills"), GOLDEN],
        colors=("warm", "light"), people="none",
-       exclude=SILHOUETTE + DECAY + CITY + NIGHT + WATER_ANY + CAR + _t("urban setting", "urban area", "urban environment", "architecture", "building", "buildings", "house", "houses", "bridge", "road", "field", "meadow", "flowers", "wildflowers", "flower field", "dark atmosphere", "dark forest")),
+       exclude=SILHOUETTE + DECAY + BUILT_ENVIRONMENT + NIGHT + WATER_ANY + CAR + NEON + _t("field", "meadow", "flowers", "wildflowers", "flower field", "dark atmosphere", "dark forest", "american flag", "flag", "tropical", "palm trees"),
+       exclude_detected_subjects=("person",),
+       exclude_clip_ids=("1151373460999954766", "1111896595505880713", "965037026415009952", "381750505936018149")),
     _b("photo:forest_fog_dark", "Тёмный лес / туман", "строго туманный тёмный лес",
        {"subject": "forest", "weather": "fog", "people": "none", "color": "dark"},
        [FOREST, FOG], colors=("dark", "cold"), people="none",
-       exclude=DECAY + MOUNTAIN + CITY + SILHOUETTE + PEOPLE_ANY + CAR + SOLITUDE + _t("road", "alley", "architecture", "bedroom", "dark interior")),
+       exclude=DECAY + MOUNTAIN + BUILT_ENVIRONMENT + SILHOUETTE + PEOPLE_ANY + CAR + SOLITUDE + _t("alley", "bedroom", "dark interior"),
+       exclude_detected_subjects=("person",),
+       exclude_clip_ids=("720716746681049424",)),
     # iter2: no ocean/sea — rain over LAND nature (ocean_storm owns the sea).
     _b("photo:rain_nature_dark", "Дождливая природа", "дождь/непогода в природном пейзаже (без моря)",
        {"subject": "land nature", "weather": "rain", "people": "none", "color": "dark"},
@@ -258,7 +301,9 @@ PHOTO_BUCKETS: List[PhotoBucket] = [
        {"subject": "field", "people": "none", "color": "warm"},
        [_t("field", "meadow", "green field", "open field", "flower field"), _t("flowers", "wildflowers", "flower field")],
        colors=("warm", "light", "neutral"), people="none",
-       exclude=CITY + NIGHT + DECAY + SILHOUETTE + KNIGHT + CAR + _t("tractor", "truck", "motorcycle", "parking", "road", "dark atmosphere")),
+       exclude=BUILT_ENVIRONMENT + NIGHT + DECAY + SILHOUETTE + PEOPLE_ANY + KNIGHT + CAR + WATER_ANY + MOUNTAIN + SNOW + _t("tractor", "truck", "motorcycle", "parking", "dark atmosphere", "waterfall"),
+       exclude_detected_subjects=("person",),
+       exclude_clip_ids=("955185402232149163",)),
 
     # ---- URBAN (people=none) ----
     # (removed urban_night_empty — too varied to control.)
@@ -291,7 +336,8 @@ PHOTO_BUCKETS: List[PhotoBucket] = [
     _b("photo:lone_figure_scene", "Одинокий силуэт в кадре", "одинокая фигура/силуэт в пейзаже",
        {"subject": "lone figure", "energy": "moody", "people": "none", "color": "dark/cold"},
        [SILHOUETTE + _t("lonely figure"), OUTDOOR], colors=("dark", "cold", "neutral"), people="none",
-       exclude=DECAY + DIGITAL_STYLE + COUPLE + PORTRAIT + INTERIOR + KNIGHT + ACTION + ANIMALS + _t("cape", "flying", "night club", "dance floor")),
+       exclude=DECAY + DIGITAL_STYLE + COUPLE + PORTRAIT + INTERIOR + KNIGHT + ACTION + ANIMALS + _t("cape", "flying", "night club", "dance floor"),
+       require_detected_subjects=("person",)),
 
     # ---- SOLO PERSON ----
     # iter2: drop all intimacy + indoor setting.
@@ -387,6 +433,44 @@ PHOTO_BUCKETS: List[PhotoBucket] = [
        colors=("dark", "cold"), exclude=()),
 ]
 
+# Track-theme -> photo vibe expansion. This mirrors the footage visual catalog's
+# theme-first ranker, but only references active photo:* contracts.
+PHOTO_THEME_BUCKETS: Mapping[str, Tuple[str, ...]] = {
+    "romance_major": ("photo:couple_light_warm", "photo:coastal_couple_warm", "photo:girl_golden_outdoor", "photo:nature_golden_warm"),
+    "romance_minor": ("photo:couple_moody_dark", "photo:solitary_person_dark", "photo:lone_figure_scene"),
+    "epic_love_major": ("photo:coastal_couple_warm", "photo:nature_golden_warm", "photo:couple_light_warm"),
+    "epic_love_minor": ("photo:couple_moody_dark", "photo:lone_figure_scene", "photo:forest_fog_dark"),
+    "heartbreak_minor": ("photo:solitary_person_dark", "photo:lone_figure_scene", "photo:forest_fog_dark", "photo:digital_silhouette_cold"),
+    "betrayal_minor": ("photo:solitary_person_dark", "photo:urban_decay_dark", "photo:digital_silhouette_cold"),
+    "jealousy_minor": ("photo:digital_glitch", "photo:couple_moody_dark", "photo:digital_silhouette_cold"),
+    "depression_minor": ("photo:solitary_person_dark", "photo:lone_figure_scene", "photo:forest_fog_dark", "photo:urban_decay_dark"),
+    "self_destruction_minor": ("photo:digital_glitch", "photo:urban_decay_dark", "photo:performance_crowd", "photo:car_night"),
+    "aggression_minor": ("photo:car_night", "photo:digital_glitch", "photo:urban_decay_dark", "photo:performance_crowd"),
+    "motivation_major": ("photo:car_night", "photo:nature_golden_warm", "photo:warm_field_flowers", "photo:girl_golden_outdoor"),
+    "motivation_minor": ("photo:car_night", "photo:urban_rain_night", "photo:solitary_person_dark"),
+    "hustle_minor": ("photo:car_night", "photo:neon_night_city", "photo:performance_crowd"),
+    "sex_major": ("photo:couple_light_warm", "photo:girl_portrait_light", "photo:coastal_couple_warm"),
+    "sex_minor": ("photo:couple_moody_dark", "photo:digital_silhouette_cold", "photo:performance_crowd"),
+    "nostalgia_city_minor": ("photo:urban_rain_night", "photo:neon_night_city", "photo:lone_figure_scene"),
+    "adrenaline_flex_major": ("photo:car_night", "photo:performance_crowd", "photo:neon_night_city"),
+    "escapism_dreams_minor": ("photo:digital_silhouette_cold", "photo:digital_glitch", "photo:forest_fog_dark", "photo:lone_figure_scene"),
+    "loneliness_isolation_minor": ("photo:solitary_person_dark", "photo:lone_figure_scene", "photo:forest_fog_dark", "photo:urban_rain_night"),
+    "youth_rebellion_major": ("photo:performance_crowd", "photo:car_night", "photo:neon_night_city", "photo:girl_golden_outdoor"),
+    "mysticism_fate_minor": ("photo:forest_fog_dark", "photo:digital_silhouette_cold", "photo:lone_figure_scene"),
+    "cyber_alienation_minor": ("photo:digital_glitch", "photo:digital_silhouette_cold", "photo:neon_night_city"),
+    "serene_landscape_major": ("photo:nature_golden_warm", "photo:warm_field_flowers", "photo:coastal_couple_warm"),
+    "nightlife_electro_minor": ("photo:performance_crowd", "photo:neon_night_city", "photo:digital_glitch"),
+    "urban_blocks_minor": ("photo:urban_rain_night", "photo:urban_decay_dark", "photo:neon_night_city"),
+}
+
+
+def load_photo_theme_buckets() -> Dict[str, List[str]]:
+    active = {b.bucket_id for b in load_photo_catalog()}
+    return {
+        theme: [bucket_id for bucket_id in bucket_ids if bucket_id in active]
+        for theme, bucket_ids in PHOTO_THEME_BUCKETS.items()
+    }
+
 # Pools below ten stills cannot sustain a full lyric video without obvious
 # repetition. Keep their contracts in source for future re-tagging, but keep
 # them out of previews and selection until the source base grows.
@@ -413,4 +497,4 @@ def load_photo_catalog() -> List[PhotoBucket]:
     return [b for b in PHOTO_BUCKETS if b.bucket_id not in RETIRED_THIN_BUCKET_IDS]
 
 
-CATALOG_VERSION = "photo-facet-v2-2026-07-22"
+CATALOG_VERSION = "photo-facet-v3-2026-07-23"

@@ -18,6 +18,7 @@ from services.orchestrator.picker_readiness import evaluate_pool
 # require_groups=(URBAN,), colors=(dark, cold), people=none, and it excludes
 # vehicles/interiors — so these fixtures are what a real eligible clip looks like.
 REFERENCE_BUCKET = "visual:urban_solitude_dark"
+PHOTO_REFERENCE_BUCKET = "photo:urban_decay_dark"
 
 
 @pytest.fixture(autouse=True)
@@ -66,7 +67,10 @@ def _snapshot(n: int, *, prefix: str = "900000000", tags=("urban", "city", "nigh
 
 
 def _evaluate(records, snapshot, *, pool="video", pickable=None, **kwargs):
-    kwargs.setdefault("reference_buckets", (REFERENCE_BUCKET,))
+    kwargs.setdefault(
+        "reference_buckets",
+        (PHOTO_REFERENCE_BUCKET,) if pool == "photo" else (REFERENCE_BUCKET,),
+    )
     kwargs.setdefault("min_pool_pickable", 10)
     kwargs.setdefault("min_bucket_candidates", 5)
     kwargs.setdefault("check_timeline", pool == "video")
@@ -179,7 +183,9 @@ def test_photo_readiness_is_independent_of_video_paths_and_env():
                      for r in _records(40, prefix="550000000")]
     photo_snapshot = [
         {**s, "video_key": s["video_key"].replace(".mp4", ".jpg")}
-        for s in _snapshot(40, prefix="550000000")
+        for s in _snapshot(
+            40, prefix="550000000", tags=("abandoned building", "ruins", "derelict"),
+        )
     ]
 
     # Point every VIDEO path at a location that would explode if touched.
@@ -198,7 +204,7 @@ def test_photo_readiness_is_independent_of_video_paths_and_env():
     assert rep.timeline_covered is None
     # The photo-only anchor (night city / nighttime) is required for this bucket,
     # and these fixtures carry it -> proves the photo gate ran, with BG_MODE unset.
-    assert rep.buckets[REFERENCE_BUCKET] >= 5
+    assert rep.buckets[PHOTO_REFERENCE_BUCKET] >= 5
 
 
 def test_cli_exits_nonzero_when_video_pool_is_broken(monkeypatch, capsys):
@@ -274,11 +280,11 @@ def test_cli_photo_pool_does_not_block_the_deploy_by_default(monkeypatch, capsys
     assert pr.main(["--pools", "video,photo", "--photo-required"]) == 1
 
 
-def test_photo_gate_applies_photo_only_anchors_without_bg_mode_env():
+def test_photo_gate_applies_standalone_photo_contract_without_bg_mode_env():
     """Same pool, tags that satisfy the FOOTAGE rule but not the PHOTO anchors:
     video passes, photo rejects. Pins that media_type is explicit, not ambient."""
     # "urban" satisfies visual:urban_solitude_dark for footage, but the photo
-    # variant additionally requires a night-city anchor.
+    # photo canary instead requires explicit abandoned/decay anchors.
     records = _records(40, prefix="660000000")
     snapshot = _snapshot(40, prefix="660000000", tags=("urban", "city"))
 
@@ -286,6 +292,13 @@ def test_photo_gate_applies_photo_only_anchors_without_bg_mode_env():
     assert as_video.buckets[REFERENCE_BUCKET] >= 5, as_video.failures
 
     as_photo = _evaluate(records, snapshot, pool="photo", check_timeline=False)
-    assert as_photo.buckets[REFERENCE_BUCKET] == 0
+    assert as_photo.buckets[PHOTO_REFERENCE_BUCKET] == 0
     assert not as_photo.ok
     assert any("bucket_starved" in f for f in as_photo.failures), as_photo.failures
+
+
+def test_photo_required_canaries_cover_every_selectable_photo_bucket():
+    from mlcore.photo_bucket_catalog import load_photo_catalog
+    from services.orchestrator.picker_readiness import DEFAULT_PHOTO_REFERENCE_BUCKETS
+
+    assert set(DEFAULT_PHOTO_REFERENCE_BUCKETS) == {bucket.bucket_id for bucket in load_photo_catalog()}

@@ -34,6 +34,7 @@ def test_enrich_snapshot_writes_new_file(monkeypatch, tmp_path: Path) -> None:
         "analyze_photo_framing",
         lambda *_args, **_kwargs: {"focus_x": 0.5, "focus_y": 0.7},
     )
+    monkeypatch.setattr(script, "attach_photo_quality", lambda framing, _path: framing)
     summary = script.enrich_snapshot(
         snapshot_path=snapshot,
         images_dir=tmp_path,

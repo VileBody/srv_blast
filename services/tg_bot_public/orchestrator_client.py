@@ -136,6 +136,7 @@ class OrchestratorClient:
         lyrics: str,
         mood: str = "",
         top: int = 0,
+        media_type: str = "video",
     ) -> Dict[str, Any]:
         """Mirror of tg_bot_botapi: footage precision flow ranks the bucket
         catalog by lyrics relevance (one cheap LLM call on the orchestrator with
@@ -146,6 +147,7 @@ class OrchestratorClient:
             "lyrics": str(lyrics or ""),
             "mood": str(mood or "").strip(),
             "top": int(top or 0),
+            "media_type": "photo" if str(media_type).strip().lower() == "photo" else "video",
         }
         resp = await self._client.post(f"{self._base_url}/footage/rank-buckets", json=payload)
         if resp.status_code >= 300:

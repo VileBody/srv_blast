@@ -959,18 +959,38 @@ def _build_raw_pool(
     )
     pool: List[Dict[str, Any]] = []
     visual_contract = None
-    if str(raw_pick.theme or "").strip() == "visual":
+    photo_contract = None
+    contract_theme = str(raw_pick.theme or "").strip()
+    if contract_theme == "visual":
         from mlcore.footage_visual_catalog import load_visual_catalog
         wanted = f"visual:{str(raw_pick.tags_group or '').strip()}"
         visual_contract = next((x for x in load_visual_catalog() if x.bucket_id == wanted), None)
         if visual_contract is None:
             raise RuntimeError(f"unknown visual contract: {wanted}")
+    elif contract_theme == "photo":
+        if effective_media_type != "photo":
+            raise RuntimeError("photo contract requires media_type=photo")
+        from mlcore.photo_bucket_catalog import load_photo_catalog
+        wanted = f"photo:{str(raw_pick.tags_group or '').strip()}"
+        photo_contract = next((x for x in load_photo_catalog() if x.bucket_id == wanted), None)
+        if photo_contract is None:
+            raise RuntimeError(f"unknown photo contract: {wanted}")
     for it in assets:
         if style_genre is not None and style_tag is not None:
             if str(it.get("genre") or "").strip() != str(style_genre).strip():
                 continue
             if str(it.get("tag") or "").strip() != str(style_tag).strip():
                 continue
+        if photo_contract is not None:
+            from mlcore.photo_bucket_catalog import evaluate, representative_score
+            ok, stage = evaluate(photo_contract, it)
+            if not ok:
+                continue
+            row = dict(it)
+            row[_SELECTION_RANK_SCORE_KEY] = representative_score(photo_contract, it)
+            row["_photo_contract"] = {"bucket_id": photo_contract.bucket_id, "stage": stage}
+            pool.append(row)
+            continue
         if visual_contract is not None:
             from mlcore.footage_visual_catalog import evaluate_asset
             ok, stage, diag = evaluate_asset(visual_contract, it, media_type=effective_media_type)

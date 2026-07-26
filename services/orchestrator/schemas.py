@@ -389,6 +389,7 @@ class RankBucketsRequest(BaseModel):
     lyrics: str = ""
     mood: str = ""  # "minor" | "major" | "" (no filter)
     top: int = Field(default=0, ge=0)  # 0 = full ranked list
+    media_type: Literal["video", "photo"] = "video"
 
 
 class RankedBucket(BaseModel):

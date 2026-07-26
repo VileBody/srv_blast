@@ -139,6 +139,8 @@ def tag_photo_from_s3(
             theme_tags=result.get("theme_tags") or [],
             people_type=result.get("people_type") or "none",
         )
+        from mlcore.photo_quality import attach_photo_quality
+        framing = attach_photo_quality(framing, dest)
     return record_from_photo_result(
         s3_key=s3_key, result=result, tagger=TAGGER_VERSION, framing=framing
     )
@@ -200,6 +202,9 @@ def run_photo_framing_batch(
                     people_type=row.get("people_type") or "none",
                     **({"detector": detector} if analyze_fn is None else {}),
                 )
+                if analyze_fn is None:
+                    from mlcore.photo_quality import attach_photo_quality
+                    framing = attach_photo_quality(framing, dest)
             pending.append({"clip_id": row["clip_id"], "framing": framing})
         except Exception:
             failed += 1

@@ -33,7 +33,14 @@ def _mapped_from_snapshot(snapshot: Path):
 
 
 def _pick(bucket, mapped, top_n, seed):
-    m = [a for a in mapped if evaluate(bucket, a)[0]]
+    # Review reels must never silently include legacy photos that have not yet
+    # passed the quality backfill. Production rollout has the same requirement
+    # enforced by the photo readiness gate before the feature is enabled.
+    m = [
+        a for a in mapped
+        if isinstance((a.get("meta_framing") or {}).get("quality"), dict)
+        and evaluate(bucket, a)[0]
+    ]
     m.sort(key=lambda a: (-representative_score(bucket, a), hashlib.sha256(f"{seed}:{a['file_name']}".encode()).hexdigest()))
     return m[:top_n]
 

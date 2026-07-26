@@ -61,9 +61,27 @@ DEFAULT_MIN_BUCKET_CANDIDATES = 5
 # Reference buckets are the canary: broad, always-populated contracts. If these
 # return nothing, the pool/mapping is broken regardless of what the counts say.
 DEFAULT_VIDEO_REFERENCE_BUCKETS: Tuple[str, ...] = ("visual:urban_solitude_dark",)
-# One STRICT photo bucket — it carries PHOTO_REQUIRE_GROUPS anchors on top of the
-# footage rule, so it also proves the photo-only gate still admits real stills.
-DEFAULT_PHOTO_REFERENCE_BUCKETS: Tuple[str, ...] = ("visual:urban_solitude_dark",)
+# Every selectable photo:* bucket is a deploy canary. A single starved exact slot
+# would otherwise pass deployment and fail only after a user selects that vibe.
+DEFAULT_PHOTO_REFERENCE_BUCKETS: Tuple[str, ...] = (
+    "photo:nature_golden_warm",
+    "photo:forest_fog_dark",
+    "photo:warm_field_flowers",
+    "photo:urban_rain_night",
+    "photo:urban_decay_dark",
+    "photo:neon_night_city",
+    "photo:digital_silhouette_cold",
+    "photo:digital_glitch",
+    "photo:lone_figure_scene",
+    "photo:solitary_person_dark",
+    "photo:girl_portrait_light",
+    "photo:girl_golden_outdoor",
+    "photo:couple_light_warm",
+    "photo:couple_moody_dark",
+    "photo:coastal_couple_warm",
+    "photo:performance_crowd",
+    "photo:car_night",
+)
 
 # A short synthetic timeline (seconds). Deliberately tiny: this proves the
 # interval picker can cover cuts from the pool, not that a real track works.
@@ -188,11 +206,14 @@ def _bucket_candidates(
     """Candidates a visual contract yields, via the production picker gate."""
     from mlcore import footage_picker as fp
     from mlcore.footage_bucket_previews import _raw_pick_from_bucket
-    from mlcore.footage_visual_catalog import load_visual_catalog
+    if media_type == POOL_PHOTO:
+        from mlcore.photo_bucket_catalog import load_photo_catalog
+        catalog = load_photo_catalog()
+    else:
+        from mlcore.footage_visual_catalog import load_visual_catalog
+        catalog = load_visual_catalog()
 
-    contract = next(
-        (c for c in load_visual_catalog() if c.bucket_id == bucket_id), None
-    )
+    contract = next((c for c in catalog if c.bucket_id == bucket_id), None)
     if contract is None:
         raise RuntimeError(f"unknown reference bucket: {bucket_id}")
     raw_pick = _raw_pick_from_bucket(contract)
