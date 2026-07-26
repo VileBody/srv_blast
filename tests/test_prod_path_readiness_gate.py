@@ -156,3 +156,8 @@ def test_gate_opt_out_is_explicit_and_skips_the_candidate(gate_env):
     assert "GATE_RC=0" in proc.stdout, (proc.stdout, proc.stderr)
     assert "DISABLED" in proc.stdout
     assert not any("picker_readiness" in c for c in _calls(log)), _calls(log)
+
+def test_photo_readiness_is_required_by_default() -> None:
+    source = _LIB.read_text(encoding="utf-8")
+    assert 'DEPLOY_PICKER_READINESS_PHOTO_REQUIRED:-true' in source
+    assert 'DEPLOY_PICKER_READINESS_PHOTO_REQUIRED:-false' not in source

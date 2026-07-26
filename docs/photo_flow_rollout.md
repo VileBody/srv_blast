@@ -37,7 +37,7 @@ enabling the bot.
 
 ## 3. Fail-closed readiness
 
-Set `DEPLOY_PICKER_READINESS_PHOTO_REQUIRED=true` and run:
+Photo readiness is required by default for every prod-path deploy. Run:
 
 ```bash
 python -m services.orchestrator.picker_readiness \

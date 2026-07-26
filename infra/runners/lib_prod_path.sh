@@ -14,9 +14,9 @@
 # untouched, and the workflow goes red. That is the rollback.
 
 DEPLOY_PICKER_READINESS_ENABLED="${DEPLOY_PICKER_READINESS_ENABLED:-true}"
-# The photo flow is still behind PHOTO_FLOW_ENABLED, so a cold/thin photo pool
-# reports but does not block a deploy until it is accepted.
-DEPLOY_PICKER_READINESS_PHOTO_REQUIRED="${DEPLOY_PICKER_READINESS_PHOTO_REQUIRED:-false}"
+# Photo is production-ready only while the full pool passes its 17-bucket and
+# quality-coverage contract. Explicit override remains available for recovery.
+DEPLOY_PICKER_READINESS_PHOTO_REQUIRED="${DEPLOY_PICKER_READINESS_PHOTO_REQUIRED:-true}"
 # Service whose image + env the readiness candidate borrows (it is the service
 # that would otherwise pick up build jobs).
 PICKER_READINESS_SERVICE="${PICKER_READINESS_SERVICE:-worker-build}"
