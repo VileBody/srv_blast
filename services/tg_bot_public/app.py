@@ -20,7 +20,7 @@ from aiohttp import web
 from aiogram import Bot, Dispatcher, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandStart
-from aiogram.types import BotCommand, CallbackQuery, ChatMemberUpdated, FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, Message, ReplyKeyboardMarkup, ReplyKeyboardRemove, Update
+from aiogram.types import BotCommand, CallbackQuery, ChatMemberUpdated, FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, KeyboardButton, Message, ReplyKeyboardMarkup, ReplyKeyboardRemove, Update
 from core.telegram_api import build_aiogram_session, make_telegram_api
 from core.telegram_polling import run_polling_with_retries
 from core.clip_window import CLIP_WINDOW_RANGE_S_LABEL
@@ -435,6 +435,17 @@ def _hook_preview_file_id(key: str) -> str:
 
 # Onboarding welcome reel (Telegram file_id). Replaces the static banner photo.
 ONBOARDING_VIDEO_FILE_ID = "BAACAgIAAxkBAAEB-glqSiZ4jI6G4bLdR66LPl_X_6uXhAACvpoAAnC7UErgia72fPHcIDwE"
+# How-to cards (Telegram photo file_ids) sent as one album right above the
+# "send a track" prompt — they explain how to prepare a track for a good clip.
+# Order matters: the album reads as a numbered walkthrough.
+SENDTRACK_GUIDE_CARD_FILE_IDS: tuple[str, ...] = (
+    "AgACAgIAAxkBAAECS-lqZjPspIQBAqDSvybIXXwZ_nB0SgAC3htrGwfnMUv1vM-mB64e6AEAAwIAA3kAAz0E",
+    "AgACAgIAAxkBAAECS_NqZjSXzjSakgVAS4p964d5M7OPHgAC4xtrGwfnMUtS4NdyfA-IRgEAAwIAA3kAAz0E",
+    "AgACAgIAAxkBAAECS-9qZjRHVMB5Nwgw_KIpCZMrwJIihQAC4RtrGwfnMUuNna5r7CqE4AEAAwIAA3kAAz0E",
+    "AgACAgIAAxkBAAECS-tqZjQMRqCk_P41Xn7OGfM-GD-_kgAC3xtrGwfnMUsrsrA4vR4-yAEAAwIAA3kAAz0E",
+    "AgACAgIAAxkBAAECS-1qZjQlmC0gtd66VY-xKaZHxjAmnwAC4BtrGwfnMUt2amDNFmpZKAEAAwIAA3kAAz0E",
+    "AgACAgIAAxkBAAECS_FqZjRbRhe4K1jsyhM4aZcElmflNgAC4htrGwfnMUu0PJaaNQ1NEwEAAwIAA3kAAz0E",
+)
 BTN_LETS_GO = "Едем!"
 BTN_SUBSCRIBED = "Подписался!"
 BTN_SEND_TRACK = "Отправить трек"
@@ -2549,6 +2560,35 @@ class BlastBotApp:
         )
         return result
 
+    async def _send_sendtrack_guide_cards(self, *, bot: Any, chat_id: int) -> None:
+        """Send the how-to card album above the "send a track" prompt.
+
+        Best-effort by design: a stale file_id or a Telegram hiccup must never
+        block the prompt itself, so failures are logged and swallowed.
+        """
+        if bot is None or not SENDTRACK_GUIDE_CARD_FILE_IDS:
+            return
+        t0 = time.monotonic()
+        try:
+            await bot.send_media_group(
+                chat_id,
+                media=[InputMediaPhoto(media=fid) for fid in SENDTRACK_GUIDE_CARD_FILE_IDS],
+            )
+        except Exception as exc:
+            log.warning(
+                "tg_out_failed op=sendtrack_guide_cards method=send_media_group chat=%s dur_ms=%d err=%r",
+                int(chat_id),
+                int((time.monotonic() - t0) * 1000.0),
+                exc,
+            )
+            return
+        log.info(
+            "tg_out_ok op=sendtrack_guide_cards method=send_media_group chat=%s cards=%d dur_ms=%d",
+            int(chat_id),
+            len(SENDTRACK_GUIDE_CARD_FILE_IDS),
+            int((time.monotonic() - t0) * 1000.0),
+        )
+
     async def _timed_send_video(self, *, bot: Bot, chat_id: int, video: Any, op: str, **kwargs):
         t0 = time.monotonic()
         try:
@@ -3538,6 +3578,9 @@ class BlastBotApp:
         bal_text = f"\n\nДоступно генераций: {bal}" if bal > 0 else ""
         if track_bal > 0:
             bal_text += f"\nДоступно уникальных треков: {track_bal}"
+        # How-to cards go first so the prompt (with its keyboard) stays the last
+        # message in the chat.
+        await self._send_sendtrack_guide_cards(bot=message.bot, chat_id=chat_id)
         await self._timed_answer(
             message,
             f"Привет. Отправь трек аудио-файлом, и я соберу клип.{bal_text}",
