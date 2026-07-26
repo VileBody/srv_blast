@@ -4,7 +4,8 @@ FROM python:3.13-slim
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    PYTHONPATH=/app
+    PYTHONPATH=/app \
+    PHOTO_FRAMING_MODEL_PATH=/app/models/object_detection_yolox_2022nov.onnx
 
 WORKDIR /app
 
@@ -27,7 +28,8 @@ RUN pip install --no-cache-dir -r /app/requirements.txt
 COPY . /app
 
 # Build-time readiness gate: production images always contain the verified
-# OpenCV Zoo YOLOX weights; generation never downloads models at runtime.
+# OpenCV Zoo YOLOX weights outside /app/data (that path is bind-mounted in
+# production). Generation never downloads models at runtime.
 RUN python scripts/download_photo_framing_model.py
 
 # По умолчанию ничего не запускаем — compose задаст command
