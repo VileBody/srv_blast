@@ -474,6 +474,15 @@ def _env_int(key: str, default: int) -> int:
     return int(raw)
 
 
+def _readiness_dsn(explicit: str = "") -> str:
+    """Use the same CREDITS_DB_URL/POSTGRES_* resolution as the runtime."""
+    if str(explicit or "").strip():
+        return str(explicit).strip()
+    from services.orchestrator.config import _credits_db_url_env
+
+    return _credits_db_url_env().strip()
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(description="Fail-closed picker readiness dry-run.")
     ap.add_argument(
@@ -492,11 +501,15 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--json-out", default="", help="Write the full report JSON here.")
     args = ap.parse_args(argv)
 
-    dsn = (args.dsn or os.environ.get("CREDITS_DB_URL") or "").strip()
+    dsn = _readiness_dsn(args.dsn)
     if not dsn:
         print(
             json.dumps(
-                {"ok": False, "error": "readiness_requires_postgres_dsn (CREDITS_DB_URL)"},
+                {
+                    "ok": False,
+                    "error": "readiness_requires_postgres_dsn "
+                    "(CREDITS_DB_URL or POSTGRES_HOST/USER/DB)",
+                },
                 ensure_ascii=False,
             )
         )

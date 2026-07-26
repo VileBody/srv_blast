@@ -342,3 +342,19 @@ def test_photo_readiness_fails_when_quality_backfill_is_incomplete():
     assert not rep.ok
     assert rep.quality_scored == 0
     assert any("quality_coverage_incomplete" in f for f in rep.failures)
+
+
+def test_readiness_dsn_accepts_postgres_component_env(monkeypatch):
+    from services.orchestrator.picker_readiness import _readiness_dsn
+
+    monkeypatch.delenv("CREDITS_DB_URL", raising=False)
+    monkeypatch.setenv("POSTGRES_HOST", "postgres.internal")
+    monkeypatch.setenv("POSTGRES_PORT", "5433")
+    monkeypatch.setenv("POSTGRES_DB", "blast")
+    monkeypatch.setenv("POSTGRES_USER", "worker")
+    monkeypatch.setenv("POSTGRES_PASSWORD", "p@ss word")
+    monkeypatch.setenv("POSTGRES_SSLMODE", "require")
+
+    dsn = _readiness_dsn()
+    assert dsn.startswith("postgresql://worker:p%40ss+word@postgres.internal:5433/blast")
+    assert dsn.endswith("?sslmode=require")
