@@ -253,9 +253,9 @@ PHOTO_BUCKETS: List[PhotoBucket] = [
     # iter2: exclude water entirely — golden-hour LAND nature only.
     _b("photo:nature_golden_warm", "Природа / золотой час", "тёплый природный пейзаж на закате (без воды)",
        {"subject": "land nature", "time": "golden", "people": "none", "color": "warm", "energy": "serene"},
-       [FOREST + _t("hills", "green hills"), GOLDEN],
+       [FOREST + _t("hills", "green hills", "landscape"), GOLDEN],
        colors=("warm", "light"), people="none",
-       exclude=SILHOUETTE + DECAY + BUILT_ENVIRONMENT + NIGHT + WATER_ANY + CAR + NEON + _t("field", "meadow", "flowers", "wildflowers", "flower field", "dark atmosphere", "dark forest", "american flag", "flag", "tropical", "palm trees"),
+       exclude=SILHOUETTE + DECAY + BUILT_ENVIRONMENT + NIGHT + WATER_ANY + CAR + NEON + SOLITUDE + _t("field", "meadow", "flowers", "wildflowers", "flower field", "dark atmosphere", "dark forest", "american flag", "flag", "tropical", "palm trees", "train", "train window"),
        exclude_detected_subjects=("person",),
        exclude_clip_ids=("1151373460999954766", "1111896595505880713", "965037026415009952", "381750505936018149")),
     _b("photo:forest_fog_dark", "Тёмный лес / туман", "строго туманный тёмный лес",

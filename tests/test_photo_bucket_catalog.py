@@ -72,6 +72,20 @@ def test_final_review_exclusions_are_hard_contracts():
     assert not eligible("photo:warm_field_flowers", asset("flower field", "white car", color="warm"))
 
 
+def test_golden_nature_accepts_clean_landscapes_but_not_transport_or_solitude():
+    assert eligible(
+        "photo:nature_golden_warm",
+        asset("landscape", "grass", "golden hour", color="warm"),
+    )
+    assert not eligible(
+        "photo:nature_golden_warm",
+        asset("landscape", "sunset", "train", color="warm"),
+    )
+    assert not eligible(
+        "photo:nature_golden_warm",
+        asset("landscape", "sunlight", "solo", color="warm"),
+    )
+
 def test_nature_buckets_reject_built_environment_and_people_leaks():
     assert not eligible("photo:forest_fog_dark", asset("foggy forest", "country house", color="cold"))
     assert not eligible("photo:forest_fog_dark", asset("forest", "mist", "road", color="cold"))
