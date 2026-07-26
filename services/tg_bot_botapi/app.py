@@ -3101,6 +3101,17 @@ class BlastBotApp:
             )
             return
         st.subtitles_mode = mode
+        # Photo has its own style/transition controls and renderer. After the
+        # subtitle mode, go directly to versions: normal hook/color overlays are
+        # not part of the photo template contract.
+        if st.bg_mode == "photo":
+            st.hook_enabled = False
+            st.hook_category = ""
+            st.subtitle_color_hex = ""
+            st.accent_color_hex = ""
+            await self.store.set(st)
+            await self._ask_versions(message, st)
+            return
         # Strobe bg: text is forced white + auto-inverts (Difference), so no color
         # customization; and only the cut-transition style — not the full hook flow.
         if st.bg_mode == "solid_strobe":
@@ -4042,9 +4053,8 @@ class BlastBotApp:
             return
         st.photo_transition = tr
         await self.store.set(st)
-        # Photo render is horizontal 1920×1440 — subtitles aren't baked in 4:3, so
-        # skip the subtitles/hook steps and go straight to the version count.
-        await self._ask_versions(message, st)
+        # Photo remains a lyric-video flow: choose subtitle mode before versions.
+        await self._ask_subtitles_mode(message, st)
 
     # ── F3 «Эффект» — 3-step picker (hook -> transition -> extra) + extend ──
     async def _ask_effect_hook(self, message: Message, st: ChatState) -> None:

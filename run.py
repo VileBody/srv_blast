@@ -230,10 +230,20 @@ def main() -> int:
             # the picker was routed to the photo pool). Writes the SAME canonical
             # artifact names as build_full_project (drop-in for the render worker).
             from app.photo_comp import extract_photos_and_segments_from_footage_cfg  # noqa: E402
-            from app.project_builder import build_photo_project  # noqa: E402
+            from app.project_builder import build_full_project, build_photo_project  # noqa: E402
+            from app.project_config import AE_PROJECT  # noqa: E402
 
             footage_cfg = json.loads(footage_config_path.read_text(encoding="utf-8"))
             photos, segments = extract_photos_and_segments_from_footage_cfg(footage_cfg)
+            # Reuse the canonical subtitle renderer instead of maintaining a
+            # second, drifting text implementation for 4:3.
+            subtitle_build_dir = out_dir / "_photo_subtitles"
+            _, subtitle_jsx_path = build_full_project(
+                repo_root=REPO_ROOT,
+                full_edit_config_path=full_edit_config_path,
+                footage_config_path=footage_config_path,
+                out_dir=subtitle_build_dir,
+            )
             out_json, out_jsx = build_photo_project(
                 repo_root=REPO_ROOT,
                 photos=photos,
@@ -241,6 +251,9 @@ def main() -> int:
                 out_dir=out_dir,
                 style=(os.environ.get("PHOTO_STYLE") or "none").strip().lower() or "none",
                 transition=(os.environ.get("PHOTO_TRANSITION") or "flash").strip().lower() or "flash",
+                audio_offset_sec=float(os.environ.get("USER_CLIP_START_SEC") or 0.0),
+                subtitle_project_jsx=subtitle_jsx_path.read_text(encoding="utf-8"),
+                subtitle_comp_name=str(AE_PROJECT["main_comp"]["name"]),
             )
             print("\n[OK] PHOTO project build (4:3):")
             print(f"  - photos: {len(photos)}  segments: {len(segments)}")

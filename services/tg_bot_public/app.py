@@ -4887,9 +4887,8 @@ class BlastBotApp:
             return
         st.photo_transition = tr
         await self.store.set(st)
-        # Photo render is horizontal 1920×1440 — subtitles aren't baked in 4:3,
-        # so skip the subtitles/hook steps and go straight to the version count.
-        await self._proceed_to_versions_or_confirm(message, st)
+        # Photo remains a lyric-video flow: choose subtitle mode before confirmation.
+        await self._ask_subtitles_mode(message, st)
 
     async def _ask_visual_transition(self, message: Message, st: ChatState) -> None:
         st.stage = STAGE_WAIT_VISUAL_TRANSITION
@@ -5965,6 +5964,18 @@ class BlastBotApp:
     async def _handle_wait_confirm_mode(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()
         if text == BTN_CONFIRM_YES:
+            if st.bg_mode == "photo":
+                # Photo style/transition were already selected. Its renderer
+                # supports subtitle modes but not the normal hook/color stack.
+                st.hook_enabled = False
+                st.hook_category = ""
+                st.subtitle_color_hex = ""
+                st.accent_color_hex = ""
+                st.colors_done = True
+                st.visuals_done = True
+                await self.store.set(st)
+                await self._proceed_to_versions_or_confirm(message, st)
+                return
             # Strobe bg: NO hook flow and NO color pickers. The strobe already
             # IS the effect (B/W flip on cuts); text is forced white + auto-
             # inverts. The ONLY strobe setting is the cut-transition style,

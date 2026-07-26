@@ -126,9 +126,56 @@
       var item = project.importFile(new ImportOptions(f));
       var lyr = comp.layers.add(item);
       lyr.name = "MAIN_AUDIO";
-      lyr.startTime = 0;
+      var audioOffset = Number(AUDIO.offset_sec || 0);
+      if (!isFinite(audioOffset) || audioOffset < 0) { throw new Error("invalid photo audio offset: " + String(AUDIO.offset_sec)); }
+      // Source time at comp t=0 becomes audioOffset. Photo intervals and
+      // subtitles are already relative to the selected clip window.
+      lyr.startTime = -audioOffset;
       try { lyr.inPoint = 0; lyr.outPoint = totalDur; lyr.audioEnabled = true; } catch (_) {}
       return lyr;
+    }
+
+    function findCompByName(name) {
+      if (!name) return null;
+      for (var i = 1; i <= project.numItems; i++) {
+        var it = project.item(i);
+        if (it instanceof CompItem && it.name === name) return it;
+      }
+      return null;
+    }
+
+    function addSubtitleOverlay() {
+      var subtitleName = String(photo_job.subtitle_comp_name || "");
+      if (!subtitleName) return null;
+      var subtitleComp = findCompByName(subtitleName);
+      if (!subtitleComp) { throw new Error("photo subtitle comp missing: " + subtitleName); }
+
+      // The canonical main comp also contains source photos/audio. Disable only
+      // file-backed AV and its adjustment layers. AE solids are FootageItems too,
+      // so a broad instanceof check would erase subtitle cards/backgrounds.
+      for (var i = 1; i <= subtitleComp.numLayers; i++) {
+        var srcLayer = subtitleComp.layer(i);
+        try {
+          var isFileBacked = !!(srcLayer.source && srcLayer.source instanceof FootageItem && srcLayer.source.file);
+          if (isFileBacked || srcLayer.adjustmentLayer === true) {
+            srcLayer.enabled = false;
+            srcLayer.audioEnabled = false;
+          }
+        } catch (_) {}
+      }
+
+      var overlay = comp.layers.add(subtitleComp);
+      overlay.name = "SUBTITLES_OVERLAY";
+      overlay.startTime = 0;
+      try { overlay.inPoint = 0; overlay.outPoint = totalDur; overlay.audioEnabled = false; } catch (_) {}
+      var tr = overlay.property("ADBE Transform Group");
+      try { tr.property("ADBE Anchor Point").setValue([subtitleComp.width / 2, subtitleComp.height / 2]); } catch (_) {}
+      try { tr.property("ADBE Position").setValue([COMP_W / 2, COMP_H / 2]); } catch (_) {}
+      // Preserve subtitle font size/geometry; use the central 4:3 crop without
+      // horizontally stretching the text.
+      try { tr.property("ADBE Scale").setValue([100, 100]); } catch (_) {}
+      overlay.moveToBeginning();
+      return overlay;
     }
 
     // ====================================================================
@@ -292,6 +339,7 @@
       for (var j = 0; j < SEGMENTS.length; j++) { addFlash(SEGMENTS[j]); }
     }
     addStyleGrade();
+    addSubtitleOverlay();
 
     // ====================================================================
     // 6) SAVE + STATUS

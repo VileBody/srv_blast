@@ -129,6 +129,24 @@ def test_payload_uses_explicit_segments_from_stage2() -> None:
     assert pl["entry_comp"] == "Photo Render"
 
 
+def test_photo_payload_preserves_audio_clip_offset_and_subtitle_comp() -> None:
+    payload = build_photo_payload(
+        [{"file_name": "a.jpg", "remote_url": "s3://bucket/a.jpg"}],
+        audio_file_name="audio_source.mp3",
+        audio_offset_sec=91.0,
+        subtitle_comp_name="Comp 1",
+    )
+    assert payload["photo_job"]["audio"]["offset_sec"] == 91.0
+    assert payload["photo_job"]["subtitle_comp_name"] == "Comp 1"
+
+
+def test_photo_template_offsets_audio_and_adds_subtitle_overlay() -> None:
+    template = (Path(__file__).resolve().parents[1] / "templates" / "photo_template.j2").read_text(encoding="utf-8")
+    assert "lyr.startTime = -audioOffset" in template
+    assert "addSubtitleOverlay();" in template
+    assert 'overlay.name = "SUBTITLES_OVERLAY"' in template
+
+
 def test_schema_accepts_photo_bg_and_selections() -> None:
     from services.orchestrator.schemas import SendAudioS3Request
 
@@ -160,11 +178,17 @@ def test_build_photo_project_emits_jsx_and_payload(tmp_path: Path) -> None:
     out_json, out_jsx = build_photo_project(
         repo_root=repo_root, photos=_PHOTOS, out_dir=tmp_path,
         style="bw", transition="zoom", audio_file_name="audio_source.mp3",
+        audio_offset_sec=91.0,
+        subtitle_project_jsx="BASE_SUBTITLE_PROJECT_JSX",
+        subtitle_comp_name="Comp 1",
     )
     assert out_json.exists() and out_jsx.exists()
     jsx = out_jsx.read_text(encoding="utf-8")
     assert "Photo Render" in jsx
     assert "1920" in jsx and "1440" in jsx
+    assert jsx.index("BASE_SUBTITLE_PROJECT_JSX") < jsx.index("AE_PHOTO_FLOW_4x3")
+    assert '"offset_sec":91.0' in jsx
+    assert '"subtitle_comp_name":"Comp 1"' in jsx
     payload = json.loads(out_json.read_text(encoding="utf-8"))
     assert payload["photo_job"]["style"] == "bw"
     assert payload["photo_job"]["transition"] == "zoom"

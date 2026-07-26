@@ -175,6 +175,8 @@ def build_photo_payload(
     segments: Optional[List[Dict[str, Any]]] = None,
     audio_file_name: str = "",
     audio_locator: str = "",
+    audio_offset_sec: float = 0.0,
+    subtitle_comp_name: str = "",
 ) -> Dict[str, Any]:
     """Build the full photo render payload (footage_layers + photo_job).
 
@@ -221,6 +223,11 @@ def build_photo_payload(
             raise RuntimeError(f"photo audio locator must stay under media/audio, got {locator!r}")
     elif locator:
         raise RuntimeError("photo audio locator requires audio_file_name")
+    audio_offset = float(audio_offset_sec or 0.0)
+    if audio_offset < 0.0:
+        raise RuntimeError(
+            f"photo audio_offset_sec must be >= 0, got {audio_offset!r}"
+        )
 
     footage_layers: List[Dict[str, Any]] = []
     if audio_name:
@@ -246,7 +253,16 @@ def build_photo_payload(
         "transition": transition,
         "config": dict(anim or PHOTO_ANIM),
         "segments": segments,
-        "audio": ({"file_name": audio_name, "locator": locator} if audio_name else None),
+        "audio": (
+            {
+                "file_name": audio_name,
+                "locator": locator,
+                "offset_sec": audio_offset,
+            }
+            if audio_name
+            else None
+        ),
+        "subtitle_comp_name": str(subtitle_comp_name or "").strip(),
     }
 
     return {
