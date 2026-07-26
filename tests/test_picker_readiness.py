@@ -67,6 +67,20 @@ def _snapshot(n: int, *, prefix: str = "900000000", tags=("urban", "city", "nigh
 
 
 def _evaluate(records, snapshot, *, pool="video", pickable=None, **kwargs):
+    if pool == "photo":
+        snapshot = [
+            {
+                **row,
+                "framing": {
+                    **dict(row.get("framing") or {}),
+                    "quality": (
+                        (row.get("framing") or {}).get("quality")
+                        or {"version": "photo-quality-v1", "reject": False}
+                    ),
+                },
+            }
+            for row in snapshot
+        ]
     kwargs.setdefault(
         "reference_buckets",
         (PHOTO_REFERENCE_BUCKET,) if pool == "photo" else (REFERENCE_BUCKET,),
@@ -302,3 +316,29 @@ def test_photo_required_canaries_cover_every_selectable_photo_bucket():
     from services.orchestrator.picker_readiness import DEFAULT_PHOTO_REFERENCE_BUCKETS
 
     assert set(DEFAULT_PHOTO_REFERENCE_BUCKETS) == {bucket.bucket_id for bucket in load_photo_catalog()}
+
+def test_photo_readiness_fails_when_quality_backfill_is_incomplete():
+    records = [
+        {**r, "source": "photo", "file_name": f"{r['clip_id']}.jpg"}
+        for r in _records(40, prefix="770000000")
+    ]
+    snapshot = [
+        {**s, "video_key": s["video_key"].replace(".mp4", ".jpg")}
+        for s in _snapshot(
+            40, prefix="770000000", tags=("abandoned building", "ruins", "derelict"),
+        )
+    ]
+    rep = evaluate_pool(
+        pool="photo",
+        records=records,
+        snapshot_rows=snapshot,
+        pickable_count=40,
+        reference_buckets=(PHOTO_REFERENCE_BUCKET,),
+        min_pool_pickable=10,
+        min_bucket_candidates=5,
+        check_timeline=False,
+    )
+
+    assert not rep.ok
+    assert rep.quality_scored == 0
+    assert any("quality_coverage_incomplete" in f for f in rep.failures)

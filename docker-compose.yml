@@ -223,6 +223,8 @@ services:
     env_file:
       - .env
     environment:
+      # Team/public switches are intentionally independent.
+      PHOTO_FLOW_ENABLED: ${PHOTO_FLOW_ENABLED_TEAM:-1}
       TG_BOT_API_ENV: ${TG_BOT_API_ENV:-prod}
       TG_TEST_BOT_TOKEN: ${TG_TEST_BOT_TOKEN:-}
       TG_TEST_CREDITS_DB_URL: ${TG_TEST_CREDITS_DB_URL:-}
@@ -246,6 +248,7 @@ services:
     env_file:
       - .env
     environment:
+      PHOTO_FLOW_ENABLED: ${PHOTO_FLOW_ENABLED_PUBLIC:-0}
       TG_BOT_API_ENV: ${TG_BOT_API_ENV:-prod}
       TG_BOT_TOKEN: ${TG_BOT_PUBLIC_TOKEN}
       TG_BOT_USERNAME: ${TG_BOT_USERNAME:-blast808bot}

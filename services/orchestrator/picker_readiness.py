@@ -98,6 +98,8 @@ class PoolReadiness:
     snapshot_rows: int = 0
     mapped_assets: int = 0
     unmapped_assets: int = 0
+    quality_scored: int = 0
+    quality_rejected: int = 0
     pool_pickable: int = 0
     buckets: Dict[str, int] = field(default_factory=dict)
     timeline_covered: Optional[bool] = None
@@ -317,6 +319,15 @@ def evaluate_pool(
         )
         report.mapped_assets = len(mapped)
         report.unmapped_assets = len(unmapped)
+        if pool == POOL_PHOTO:
+            qualities = [
+                ((asset.get("meta_framing") or {}).get("quality"))
+                for asset in mapped
+            ]
+            report.quality_scored = sum(isinstance(q, dict) for q in qualities)
+            report.quality_rejected = sum(
+                isinstance(q, dict) and bool(q.get("reject")) for q in qualities
+            )
 
         if not mapped:
             return _fail(
@@ -324,6 +335,14 @@ def evaluate_pool(
                 f"{pool}_mapped_assets_zero: inventory_assets={len(picker_assets)} "
                 f"snapshot_rows={report.snapshot_rows} metadata_rows={len(metadata_index)} — "
                 "inventory and tags snapshot do not resolve to the same clip ids",
+            )
+
+        if pool == POOL_PHOTO and report.quality_scored != report.mapped_assets:
+            _fail(
+                report,
+                "photo_quality_coverage_incomplete: "
+                f"quality_scored={report.quality_scored} "
+                f"mapped_assets={report.mapped_assets}",
             )
 
         if report.pool_pickable < int(min_pool_pickable):

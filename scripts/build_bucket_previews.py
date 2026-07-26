@@ -52,6 +52,14 @@ from mlcore import footage_bucket_previews as bp  # noqa: E402
 log = logging.getLogger("build_bucket_previews")
 
 
+def _catalog_for_media(media: str):
+    if media == "photo":
+        from mlcore.photo_bucket_catalog import load_photo_catalog
+
+        return load_photo_catalog()
+    return get_bucket_catalog()
+
+
 # --------------------------------------------------------------------------- #
 # Inventory + metadata (reuses the production loaders)
 # --------------------------------------------------------------------------- #
@@ -787,11 +795,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     # Photo previews rank/pick the VISUAL contracts (visual:*) — the same catalog
     # the photo flow's ranker + picker use — not the footage theme catalog.
-    if args.media == "photo":
-        from mlcore.footage_visual_catalog import load_visual_catalog
-        catalog = load_visual_catalog()
-    else:
-        catalog = get_bucket_catalog()
+    catalog = _catalog_for_media(args.media)
     log.info("catalog (%s): %d buckets", args.media, len(catalog))
     targets = _select_buckets(catalog, args)
     # Drop label-duplicate buckets (e.g. lonely_paths under heartbreak+betrayal)

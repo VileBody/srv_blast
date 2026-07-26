@@ -20,7 +20,7 @@ import os
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Mapping, Optional
 
 from mlcore.footage_tagger import (
     TAGGER_VERSION,
@@ -151,7 +151,7 @@ def tag_photo_from_s3(
 # --------------------------------------------------------------------------- #
 def run_photo_framing_batch(
     *, bucket: str, db_url: str, flush_every: int = 20, progress_cb=None,
-    fetch_fn=None, update_fn=None, analyze_fn=None, download_fn=None,
+    fetch_fn=None, update_fn=None, analyze_fn=None, quality_fn=None, download_fn=None,
 ) -> Dict[str, Any]:
     import asyncio as _asyncio
     from mlcore.photo_framing import OpenCvYoloXDetector, analyze_photo_framing
@@ -185,9 +185,10 @@ def run_photo_framing_batch(
             return _asyncio.run(_go())
 
     rows = list(fetch_fn() or [])
-    detector = None if analyze_fn is not None else OpenCvYoloXDetector(
-        os.environ.get("PHOTO_FRAMING_MODEL_PATH") or "data/models/object_detection_yolox_2022nov.onnx"
-    )
+    if quality_fn is None and analyze_fn is None:
+        from mlcore.photo_quality import attach_photo_quality
+        quality_fn = attach_photo_quality
+    detector = None
     written = failed = 0
     pending: List[Dict[str, Any]] = []
     for idx, row in enumerate(rows, start=1):
@@ -196,15 +197,23 @@ def run_photo_framing_batch(
                 suffix = Path(str(row.get("s3_key") or row.get("file_name") or "photo.jpg")).suffix or ".jpg"
                 dest = Path(tmp) / f"photo{suffix}"
                 download_fn(bucket, str(row["s3_key"]), dest)
-                framing = (analyze_fn or analyze_photo_framing)(
-                    dest,
-                    theme_tags=row.get("theme_tags") or [],
-                    people_type=row.get("people_type") or "none",
-                    **({"detector": detector} if analyze_fn is None else {}),
-                )
-                if analyze_fn is None:
-                    from mlcore.photo_quality import attach_photo_quality
-                    framing = attach_photo_quality(framing, dest)
+                existing = row.get("framing")
+                if quality_fn is not None and isinstance(existing, Mapping) and existing:
+                    framing = quality_fn(existing, dest)
+                else:
+                    if analyze_fn is None and detector is None:
+                        detector = OpenCvYoloXDetector(
+                            os.environ.get("PHOTO_FRAMING_MODEL_PATH")
+                            or "data/models/object_detection_yolox_2022nov.onnx"
+                        )
+                    framing = (analyze_fn or analyze_photo_framing)(
+                        dest,
+                        theme_tags=row.get("theme_tags") or [],
+                        people_type=row.get("people_type") or "none",
+                        **({"detector": detector} if analyze_fn is None else {}),
+                    )
+                    if quality_fn is not None:
+                        framing = quality_fn(framing, dest)
             pending.append({"clip_id": row["clip_id"], "framing": framing})
         except Exception:
             failed += 1
