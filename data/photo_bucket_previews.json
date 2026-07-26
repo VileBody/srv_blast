@@ -1,0 +1,192 @@
+{
+  "version": 1,
+  "previews": {
+    "photo:car_night": {
+      "bucket_id": "photo:car_night",
+      "label": "Машины, ночная езда",
+      "description": "Машины / ночная езда: car, cars, sports car, luxury car",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAI1o2pmfZL_aUoQQSfBgPWiHlHwF3i9AALeqgACqNc4S0DliT3dKZ33PQQ",
+      "file_id_public": "BAACAgIAAxkDAAECUXZqZn2WuuQPBQABfnzspyRBDTZ-LMMAApCmAAIH5zlLvCSdkk-SuWo9BA",
+      "clip_ids": [],
+      "status": "ok",
+      "built_at": "2026-07-26T21:35:19Z"
+    },
+    "photo:coastal_couple_warm": {
+      "bucket_id": "photo:coastal_couple_warm",
+      "label": "Романтика у воды",
+      "description": "Романтика у воды: ocean, sea, coast, coastal",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAI1oWpmfYOTz9mHcZVWMRlKW2RuTE8ZAALcqgACqNc4S30NBtY7WJSfPQQ",
+      "file_id_public": "BAACAgIAAxkDAAECUXRqZn2Hc0YaiMiG5bCLTdmPbPrsyAACjaYAAgfnOUtH1wIu4W3yyD0E",
+      "clip_ids": [],
+      "status": "ok",
+      "built_at": "2026-07-26T21:35:04Z"
+    },
+    "photo:couple_light_warm": {
+      "bucket_id": "photo:couple_light_warm",
+      "label": "Пара, светлая",
+      "description": "Пара / светлая: couple, couple walking, couple hug, couple holding hands",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAI1n2pmfXWUfykySAj7ZeY15_nzBVvLAALaqgACqNc4SzdrW7mrFIrjPQQ",
+      "file_id_public": "BAACAgIAAxkDAAECUXJqZn15dq9744lkSTwyTBhlfAhO9wACi6YAAgfnOUsogYmecZD3Kz0E",
+      "clip_ids": [],
+      "status": "ok",
+      "built_at": "2026-07-26T21:34:50Z"
+    },
+    "photo:couple_moody_dark": {
+      "bucket_id": "photo:couple_moody_dark",
+      "label": "Пара, тёмная",
+      "description": "Пара / тёмная: couple, couple walking, couple hug, couple holding hands",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAI1oGpmfXyk6InL8qKG3bRo2eoL0FE8AALbqgACqNc4S8csm10jKZyuPQQ",
+      "file_id_public": "BAACAgIAAxkDAAECUXNqZn2Ah9ToNyA3Jjsy71r19Gh_uwACjKYAAgfnOUsRrLtGk1V9JD0E",
+      "clip_ids": [],
+      "status": "ok",
+      "built_at": "2026-07-26T21:34:57Z"
+    },
+    "photo:digital_glitch": {
+      "bucket_id": "photo:digital_glitch",
+      "label": "Digital, glitch",
+      "description": "Digital / glitch: glitch, distortion, datamosh, distorted",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAI1mmpmfUC_Rlm-xX5fFRKHsH2gWp-hAALVqgACqNc4S8-iku5Y7lqDPQQ",
+      "file_id_public": "BAACAgIAAxkDAAECUW5qZn1D_LL4TXvZSesGD74IYE7kpAACh6YAAgfnOUum1nNiBBEaLT0E",
+      "clip_ids": [],
+      "status": "ok",
+      "built_at": "2026-07-26T21:33:56Z"
+    },
+    "photo:digital_silhouette_cold": {
+      "bucket_id": "photo:digital_silhouette_cold",
+      "label": "Digital-силуэт, холодный",
+      "description": "Digital-силуэт / холодный: silhouette, human silhouette, glowing silhouette, neon silhouette",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAI1mWpmfTnfRk1GdMLCg1wqxqKlXnvDAALTqgACqNc4Swe98hxsaAN2PQQ",
+      "file_id_public": "BAACAgIAAxkDAAECUW1qZn08xO183UWEsRkx5fLHUmePiQAChKYAAgfnOUs5n8eF_jBLBj0E",
+      "clip_ids": [],
+      "status": "ok",
+      "built_at": "2026-07-26T21:33:49Z"
+    },
+    "photo:forest_fog_dark": {
+      "bucket_id": "photo:forest_fog_dark",
+      "label": "Тёмный лес, туман",
+      "description": "Тёмный лес / туман: forest, trees, woods, foggy forest",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAI1lGpmfQ-FtP4dZz0X09CsPnihG9shAALOqgACqNc4S_wPwO73tZGAPQQ",
+      "file_id_public": "BAACAgIAAxkDAAECUWhqZn0YdXs1rAcH_rYoZuYYtJdyoAACf6YAAgfnOUvaihicYqnHaD0E",
+      "clip_ids": [],
+      "status": "ok",
+      "built_at": "2026-07-26T21:33:13Z"
+    },
+    "photo:girl_golden_outdoor": {
+      "bucket_id": "photo:girl_golden_outdoor",
+      "label": "Девушка, золотой час",
+      "description": "Девушка / золотой час: outdoor, outdoors, landscape, forest",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAI1nmpmfW6P2clwJw340UJ_0TRER4alAALZqgACqNc4SzGYjbiIBK03PQQ",
+      "file_id_public": "BAACAgIAAxkDAAECUXFqZn1yHtgZdbiT7_YrNetUOxL5oAACiqYAAgfnOUuQjtGX-UEgbz0E",
+      "clip_ids": [],
+      "status": "ok",
+      "built_at": "2026-07-26T21:34:43Z"
+    },
+    "photo:girl_portrait_light": {
+      "bucket_id": "photo:girl_portrait_light",
+      "label": "Портрет девушки, светлый",
+      "description": "Портрет девушки / светлый: portrait, face, close up, close-up",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAI1pWpmfwimPPCstf2WIPkz2uDuGi91AALnqgACqNc4S-Ln76wUD7SxPQQ",
+      "file_id_public": "BAACAgIAAxkDAAECUXdqZn8LBCbRJnv__SH94-RSnfhIRAACoKYAAgfnOUt7wPWvMBCOrD0E",
+      "clip_ids": [],
+      "status": "ok",
+      "built_at": "2026-07-26T21:41:32Z"
+    },
+    "photo:lone_figure_scene": {
+      "bucket_id": "photo:lone_figure_scene",
+      "label": "Одинокий силуэт в кадре",
+      "description": "Одинокий силуэт в кадре: silhouette, human silhouette, glowing silhouette, neon silhouette",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAI1m2pmfUfqD_9W51K_c3VMM3x8zUPkAALWqgACqNc4S97uvekLJUKgPQQ",
+      "file_id_public": "BAACAgIAAxkDAAECUW9qZn1KT4_51gZqa1eH_DQTzU-JNAACiKYAAgfnOUsFk2cGr19GUT0E",
+      "clip_ids": [],
+      "status": "ok",
+      "built_at": "2026-07-26T21:34:04Z"
+    },
+    "photo:nature_golden_warm": {
+      "bucket_id": "photo:nature_golden_warm",
+      "label": "Природа, золотой час",
+      "description": "Природа / золотой час: forest, trees, woods, foggy forest",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAI1k2pmfQjeU_CpVCDJ-5NX7lZp1V78AALNqgACqNc4S7x521JoTx8aPQQ",
+      "file_id_public": "BAACAgIAAxkDAAECUWdqZn0LNtYjZZBjT5qrRc_kyYPH7wACfqYAAgfnOUuCaoyXuSD2eT0E",
+      "clip_ids": [],
+      "status": "ok",
+      "built_at": "2026-07-26T21:33:01Z"
+    },
+    "photo:neon_night_city": {
+      "bucket_id": "photo:neon_night_city",
+      "label": "Неон, киберпанк-ночь",
+      "description": "Неон / киберпанк-ночь: neon, neon lights, neon glow, neon city",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAI1mGpmfTJeOcqjiUuGw9H9R1aYm-5yAALSqgACqNc4S98PzMxtiH6JPQQ",
+      "file_id_public": "BAACAgIAAxkDAAECUWxqZn015RIVqFdFygYgLqfmUBHtpQACg6YAAgfnOUvjxVfTzEpbiD0E",
+      "clip_ids": [],
+      "status": "ok",
+      "built_at": "2026-07-26T21:33:42Z"
+    },
+    "photo:performance_crowd": {
+      "bucket_id": "photo:performance_crowd",
+      "label": "Сцена, толпа",
+      "description": "Сцена / толпа: crowd, audience, urban crowd, raised hands",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAI1ompmfYviugI84azSNTySl8Yt5ASLAALdqgACqNc4SysoQkQlBjsBPQQ",
+      "file_id_public": "BAACAgIAAxkDAAECUXVqZn2OzoWt7mx2OFZp95zVVNCp5AACjqYAAgfnOUvC35TtEYjtmD0E",
+      "clip_ids": [],
+      "status": "ok",
+      "built_at": "2026-07-26T21:35:12Z"
+    },
+    "photo:solitary_person_dark": {
+      "bucket_id": "photo:solitary_person_dark",
+      "label": "Человек, одиночество",
+      "description": "Человек / одиночество: alone, solo, solitude, lonely",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAI1nGpmfU5FKH4o2rZEXP5aVwUN4BcDAALXqgACqNc4S8cZDbR6BRn9PQQ",
+      "file_id_public": "BAACAgIAAxkDAAECUXBqZn1SBd2fKRn15d-YsFU_ZYACXQACiaYAAgfnOUuKzPoqAoXsZj0E",
+      "clip_ids": [],
+      "status": "ok",
+      "built_at": "2026-07-26T21:34:11Z"
+    },
+    "photo:urban_decay_dark": {
+      "bucket_id": "photo:urban_decay_dark",
+      "label": "Заброшка, распад",
+      "description": "Заброшка / распад: abandoned, abandoned building, ruins, derelict",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAI1l2pmfSvmnSwosdm4vckOpklPk9S8AALRqgACqNc4SwGQvWpoodiFPQQ",
+      "file_id_public": "BAACAgIAAxkDAAECUWtqZn0uL5LgKwWzTWOnwPD7fIPpyAACgqYAAgfnOUsYBTGVJYnbGD0E",
+      "clip_ids": [],
+      "status": "ok",
+      "built_at": "2026-07-26T21:33:35Z"
+    },
+    "photo:urban_rain_night": {
+      "bucket_id": "photo:urban_rain_night",
+      "label": "Дождливый ночной город",
+      "description": "Дождливый ночной город: city, cityscape, urban, urban landscape",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAI1lmpmfSOR6kToztOmI0gx1RYkzLmwAALQqgACqNc4Sxcf79-R-_m9PQQ",
+      "file_id_public": "BAACAgIAAxkDAAECUWpqZn0mnpAUvtIeOkMvImEg5GK5owACgaYAAgfnOUsffa3cYmKndj0E",
+      "clip_ids": [],
+      "status": "ok",
+      "built_at": "2026-07-26T21:33:27Z"
+    },
+    "photo:warm_field_flowers": {
+      "bucket_id": "photo:warm_field_flowers",
+      "label": "Поле, цветы",
+      "description": "Поле / цветы: field, meadow, green field, open field",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAI1lWpmfRs8X2Pa1FxoilvLlSRLrA4sAALPqgACqNc4Sy3Sorjnuua-PQQ",
+      "file_id_public": "BAACAgIAAxkDAAECUWlqZn0fwpBlTP2BfduyZyCXVYGJYQACgKYAAgfnOUscqjX3x_ULjD0E",
+      "clip_ids": [],
+      "status": "ok",
+      "built_at": "2026-07-26T21:33:20Z"
+    }
+  }
+}
