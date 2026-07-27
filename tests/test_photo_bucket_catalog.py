@@ -1,7 +1,16 @@
-from mlcore.photo_bucket_catalog import RETIRED_THIN_BUCKET_IDS, _matches, evaluate, load_photo_catalog, representative_score
+from mlcore.photo_bucket_catalog import (
+    ACTIVE_PHOTO_BUCKET_IDS,
+    PHOTO_BUCKETS,
+    RETIRED_THIN_BUCKET_IDS,
+    _matches,
+    evaluate,
+    load_photo_catalog,
+    representative_score,
+)
 
 
-BUCKETS = {bucket.bucket_id: bucket for bucket in load_photo_catalog()}
+BUCKETS = {bucket.bucket_id: bucket for bucket in PHOTO_BUCKETS}
+ACTIVE_BUCKETS = {bucket.bucket_id: bucket for bucket in load_photo_catalog()}
 
 
 def asset(*tags, color="dark", people="none", detected_subject="", clip_id="", quality=None):
@@ -32,12 +41,12 @@ def test_matcher_uses_token_boundaries_not_arbitrary_substrings():
 
 
 def test_field_and_urban_rain_require_independent_facets():
-    assert eligible("photo:warm_field_flowers", asset("meadow", "wildflowers", color="warm"))
+    assert eligible("photo:warm_field_flowers", asset("meadow", "golden hour", color="warm"))
     assert not eligible("photo:warm_field_flowers", asset("meadow", "grass", color="warm"))
 
-    assert eligible("photo:urban_rain_night", asset("city", "rain", "night"))
-    assert not eligible("photo:urban_rain_night", asset("city", "rain"))
-    assert not eligible("photo:urban_rain_night", asset("city", "train tracks", "night"))
+    assert eligible("photo:urban_rain_night", asset("city", "rain", color="cold"))
+    assert not eligible("photo:urban_rain_night", asset("city", "night", color="cold"))
+    assert not eligible("photo:urban_rain_night", asset("city", "train tracks", color="cold"))
 
 
 def test_performance_requires_both_crowd_and_stage_theme():
@@ -52,7 +61,8 @@ def test_neon_city_and_night_car_have_explicit_ownership():
     assert eligible("photo:neon_night_city", city)
     assert not eligible("photo:neon_night_city", car)
     assert eligible("photo:car_night", car)
-    assert not eligible("photo:car_night", asset("car", "night"))
+    assert eligible("photo:car_night", asset("car", "night"))
+    assert not eligible("photo:car_night", asset("car", "night", "car interior"))
 
 
 def test_solitude_requires_explicit_solitude_and_rejects_portraits():
@@ -65,8 +75,8 @@ def test_solitude_requires_explicit_solitude_and_rejects_portraits():
 
 def test_final_review_exclusions_are_hard_contracts():
     assert not eligible("photo:car_night", asset("car", "car interior", "night"))
-    assert not eligible("photo:digital_silhouette_cold", asset("silhouette", "neon lights", "red glow"))
-    assert not eligible("photo:digital_silhouette_cold", asset("silhouette", "neon lights", "intimacy"))
+    assert not eligible("photo:digital_dark", asset("silhouette", "neon lights", "red glow"))
+    assert not eligible("photo:digital_dark", asset("silhouette", "neon lights", "intimacy"))
     assert not eligible("photo:lone_figure_scene", asset("silhouette", "forest", "dog"))
     assert not eligible("photo:nature_golden_warm", asset("forest", "golden hour", "urban setting", color="warm"))
     assert not eligible("photo:warm_field_flowers", asset("flower field", "white car", color="warm"))
@@ -112,12 +122,18 @@ def test_known_qwen_false_negatives_are_bucket_local_exclusions():
     assert not eligible("photo:warm_field_flowers", asset("flower field", "flowers", color="warm", clip_id="955185402232149163"))
 
 def test_thin_buckets_are_not_exposed_by_active_catalog():
-    assert RETIRED_THIN_BUCKET_IDS.isdisjoint(BUCKETS)
+    assert RETIRED_THIN_BUCKET_IDS.isdisjoint(ACTIVE_BUCKETS)
+    assert set(ACTIVE_BUCKETS) == set(ACTIVE_PHOTO_BUCKET_IDS)
+    # Policy (iter3): many small setting-specific groups beat a few broad ones, so
+    # the count is no longer pinned — but every selectable bucket must still hold
+    # enough stills that a reel does not repeat itself (calibrated >= 20 on the
+    # 2026-07-27 snapshot; thinner themes stay retired until the base grows).
+    assert len(ACTIVE_BUCKETS) >= 15
 
 
 
 def test_representative_score_caps_synonym_bags_per_facet():
-    bucket = BUCKETS["photo:urban_rain_night"]
+    bucket = ACTIVE_BUCKETS["photo:urban_rain_night"]
     clean = asset("city", "rain", "night")
     noisy = asset(
         "city", "urban", "cityscape", "rain", "rainy", "wet street", "night",
@@ -133,17 +149,17 @@ def test_photo_theme_mapping_covers_every_active_bucket():
     from mlcore.photo_bucket_catalog import load_photo_theme_buckets
 
     mapped = {bucket_id for bucket_ids in load_photo_theme_buckets().values() for bucket_id in bucket_ids}
-    assert set(BUCKETS) <= mapped
+    assert set(ACTIVE_BUCKETS) <= mapped
 
 
 def test_photo_catalog_uses_theme_first_ranker_and_returns_only_photo_ids():
     from mlcore.footage_bucket_ranker import rank_buckets
 
-    catalog = list(BUCKETS.values())
+    catalog = list(ACTIVE_BUCKETS.values())
     ranked = rank_buckets(lyrics="ночной город неон клуб", catalog=catalog, llm_call=None)
-    assert set(ranked) == set(BUCKETS)
+    assert set(ranked) == set(ACTIVE_BUCKETS)
     assert all(bucket_id.startswith("photo:") for bucket_id in ranked)
-    assert set(ranked[:3]) & {"photo:performance_crowd", "photo:neon_night_city", "photo:digital_glitch"}
+    assert set(ranked[:3]) & {"photo:neon_night_city", "photo:digital_dark", "photo:urban_night_skyline"}
 
 
 def test_photo_exact_slot_resolver_and_production_pool_use_strict_contract():
@@ -152,8 +168,8 @@ def test_photo_exact_slot_resolver_and_production_pool_use_strict_contract():
 
     raw = resolve_style_raw("photo", "forest_fog_dark")
     clean = {"file_name": "clean.jpg", **asset("forest", "fog", color="cold")}
-    road = {"file_name": "road.jpg", **asset("foggy forest", "road", color="cold")}
-    pool = _build_raw_pool(raw, [clean, road], media_type="photo")
+    city = {"file_name": "city.jpg", **asset("city street", "fog", color="cold")}
+    pool = _build_raw_pool(raw, [clean, city], media_type="photo")
 
     assert [row["file_name"] for row in pool] == ["clean.jpg"]
     assert pool[0]["_photo_contract"]["bucket_id"] == "photo:forest_fog_dark"
@@ -165,4 +181,4 @@ def test_quality_rejected_photo_is_ineligible_for_every_bucket():
         color="cold",
         quality={"version": "photo-quality-v1", "reject": True, "reasons": ["severe_blur"]},
     )
-    assert evaluate(BUCKETS["photo:forest_fog_dark"], row) == (False, "quality")
+    assert evaluate(ACTIVE_BUCKETS["photo:forest_fog_dark"], row) == (False, "quality")
