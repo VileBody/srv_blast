@@ -175,6 +175,31 @@ def build_overlay_jsx(
     parts.append(f'  var __f3_place = "below:{_PLACE_REF}";')
     parts.append(_JS_PRELUDE)
     parts.append("  var __f3_cuts = __f3_detectCuts(__f3_comp);")
+
+    # Effect constants (wipe travel, blur/dilate radii, mosaic block counts) were
+    # authored against the footage comp. Re-target the block at a differently
+    # shaped comp and they read at the wrong physical size — a 340px wipe crosses
+    # 31% of a 1080-wide frame but only 18% of a 1920-wide one.
+    #
+    # The reference is measured from MAIN_COMP at RUNTIME rather than a constant:
+    # the repo disagrees with itself about the footage comp height (project_config
+    # says 1920, the f4 device scripts say 1960 after hitting it visually), and a
+    # wrong constant would silently rescale footage.
+    #
+    # Nothing is emitted on the footage path at all, so that JSX is unchanged
+    # byte-for-byte — the strongest isolation available here.
+    if comp_var != "MAIN_COMP":
+        parts.append("  var __f3_fxs = (function(){")
+        parts.append('    var r = (typeof MAIN_COMP !== "undefined" && MAIN_COMP) ? MAIN_COMP : null;')
+        parts.append("    if (!r || !r.width || !r.height) { return null; }")
+        parts.append("    var x = __f3_comp.width / r.width, y = __f3_comp.height / r.height;")
+        parts.append("    if (!isFinite(x) || !isFinite(y) || x <= 0 || y <= 0) { return null; }")
+        # isotropic features get the area-preserving mean: neither axis wins, and a
+        # pure width factor would blow radii up by 78% on a frame that is shorter.
+        parts.append("    return { x: x, y: y, i: Math.sqrt(x * y) };")
+        parts.append("  })();")
+    # the key itself is omitted on the footage path, so that payload is unchanged
+    _fx_kv = ", fxScale: __f3_fxs" if comp_var != "MAIN_COMP" else ""
     parts.append("  var __f3_used = [];")  # cut-times already given a sound (dedup)
 
     # reusable SFX runner (inlines sound.jsx once, callable many times)
@@ -199,7 +224,7 @@ def build_overlay_jsx(
         extend_js = _js(hook_extend) if (h_eff.get("extendable") and hook_extend) else "null"
         parts.append("  /* -- HOOK -- */")
         parts.append(f"  var __f3_hookDurV = __f3_hookDur(__f3_comp, __f3_drop, __f3_cuts, {_js(base_dur)}, {extend_js});")
-        parts.append("  $.global.__BLAST = { targetCompName: __f3_name, dropTime: __f3_drop, duration: __f3_hookDurV, place: __f3_place, cuts: __f3_cuts };")
+        parts.append("  $.global.__BLAST = { targetCompName: __f3_name, dropTime: __f3_drop, duration: __f3_hookDurV, place: __f3_place, cuts: __f3_cuts" + _fx_kv + " };")
         parts.append("  (function(){")
         parts.append(_read_script(h_eff["script"]))
         parts.append("  })(); $.global.__BLAST = null;")
@@ -226,7 +251,7 @@ def build_overlay_jsx(
     if t_eff:
         t_dur = float(t_eff.get("default_duration") or 0.067)
         parts.append("  /* -- TRANSITION -- */")
-        parts.append(f"  $.global.__BLAST = {{ targetCompName: __f3_name, dropTime: __f3_drop, duration: {_js(t_dur)}, place: __f3_place, cuts: __f3_cuts }};")
+        parts.append(f"  $.global.__BLAST = {{ targetCompName: __f3_name, dropTime: __f3_drop, duration: {_js(t_dur)}, place: __f3_place, cuts: __f3_cuts{_fx_kv} }};")
         parts.append("  (function(){")
         parts.append(_read_script(t_eff["script"]))
         parts.append("  })(); $.global.__BLAST = null;")
@@ -244,7 +269,7 @@ def build_overlay_jsx(
         parts.append("  /* -- EXTRA -- */")
         parts.append(
             "  $.global.__BLAST = { targetCompName: __f3_name, dropTime: __f3_drop, "
-            f"startTime: 0, duration: {_extra_dur_js}, place: __f3_place, cuts: __f3_cuts }};"
+            f"startTime: 0, duration: {_extra_dur_js}, place: __f3_place, cuts: __f3_cuts{_fx_kv} }};"
         )
         parts.append("  (function(){")
         parts.append(_read_script(e_eff["script"]))

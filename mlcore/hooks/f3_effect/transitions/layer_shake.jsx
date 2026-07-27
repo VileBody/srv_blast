@@ -15,6 +15,10 @@ function findComp(){ var a=app.project.activeItem,i,it;
   if(CONFIG.targetCompName){for(i=1;i<=app.project.numItems;i++){it=app.project.item(i);if(it instanceof CompItem&&it.name===CONFIG.targetCompName)return it;}}
   if(CONFIG.placeRef){for(i=1;i<=app.project.numItems;i++){it=app.project.item(i);if(it instanceof CompItem&&findLayer(it,CONFIG.placeRef))return it;}}
   if(a&&a instanceof CompItem)return a; var b=null;for(i=1;i<=app.project.numItems;i++){it=app.project.item(i);if(it instanceof CompItem&&(!b||it.numLayers>b.numLayers))b=it;} return b; }
+function fxS(){ try{ return (CONFIG.fxScale && CONFIG.fxScale.i>0) ? CONFIG.fxScale : null; }catch(e){ return null; } }
+function sx(v){ var s=fxS(); return s? v*s.x : v; }
+function sy(v){ var s=fxS(); return s? v*s.y : v; }
+function si(v){ var s=fxS(); return s? v*s.i : v; }
 function addKey(p,t,v){ p.setValueAtTime(t,v); return p.nearestKeyIndex(t); }
 function setEase(p,idx,iI,oI,iS,oS){ p.setTemporalEaseAtKey(idx,[new KeyframeEase(iS||0,iI||33.33)],[new KeyframeEase(oS||0,oI||33.33)]); }
 function calcTiming(clip){ var i=CFG.intro_dur,o=CFG.outro_dur,h=CFG.min_hold;
@@ -60,7 +64,7 @@ function applyShake(layer,comp){
     addKey(scl,s_out_end,CFG.scale_from); setEase(scl,scl.nearestKeyIndex(s_out_end),0.68,16.67,37333.57,0);
   }
   var pos=tr2.property("ADBE Geometry2-0002");
-  pos.setValueAtTime(s_in,[cx,cy+CFG.pos_y_offset]); var k1=pos.nearestKeyIndex(s_in);
+  pos.setValueAtTime(s_in,[cx,cy+sy(CFG.pos_y_offset)]); var k1=pos.nearestKeyIndex(s_in);
   pos.setSpatialTangentsAtKey(k1,[0,40.33],[0,-40.33]); pos.setTemporalEaseAtKey(k1,[new KeyframeEase(0,16.67)],[new KeyframeEase(5802.19,16.67)]);
   pos.setValueAtTime(s_in+frame,[cx,cy]); var k2=pos.nearestKeyIndex(s_in+frame);
   pos.setSpatialTangentsAtKey(k2,[0,40.33],[0,-40.33]); pos.setTemporalEaseAtKey(k2,[new KeyframeEase(5802.19,16.67)],[new KeyframeEase(0,16.67)]);

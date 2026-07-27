@@ -23,9 +23,10 @@ def test_the_block_binds_to_the_comp_it_is_given() -> None:
 
     assert "var __f3_comp = PHOTO_COMP;" in js
     assert 'typeof PHOTO_COMP === "undefined"' in js
-    # nothing may still reach for the footage comp, or the photo build would
-    # decorate the subtitle comp instead and produce no cuts
-    assert "MAIN_COMP" not in js
+    # the TARGET must not be the footage comp, or the photo build would decorate
+    # the subtitle comp and produce no cuts. MAIN_COMP may still be referenced —
+    # it is measured as the scale reference (see test_f3_effect_scaling).
+    assert "var __f3_comp = MAIN_COMP;" not in js
 
 
 def test_the_footage_render_is_unchanged_by_default() -> None:

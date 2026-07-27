@@ -4,6 +4,10 @@ var SILENT = true;
 if (typeof $!=="undefined" && $.global && $.global.__BLAST){ var __p=$.global.__BLAST; for (var __k in __p){ if (__p[__k]!=null) CONFIG[__k]=__p[__k]; } }
 function log(m){ if(SILENT){try{$.writeln(m);}catch(e){}}else alert(m); }
 function setP(e,m,v){ try{e.property(m).setValue(v);}catch(x){} }
+function fxS(){ try{ return (CONFIG.fxScale && CONFIG.fxScale.i>0) ? CONFIG.fxScale : null; }catch(e){ return null; } }
+function sx(v){ var s=fxS(); return s? v*s.x : v; }
+function sy(v){ var s=fxS(); return s? v*s.y : v; }
+function si(v){ var s=fxS(); return s? v*s.i : v; }
 function findLayer(c,n){ for(var i=1;i<=c.numLayers;i++) if(c.layer(i).name===n) return c.layer(i); return null; }
 function findComp(){ var a=app.project.activeItem,i,it;
   if(CONFIG.targetCompName){for(i=1;i<=app.project.numItems;i++){it=app.project.item(i);if(it instanceof CompItem&&it.name===CONFIG.targetCompName)return it;}}
@@ -14,9 +18,9 @@ function times(){ if(CONFIG.cuts&&CONFIG.cuts.length)return CONFIG.cuts; return 
 function one(comp,t0,ref){
   var L=comp.layers.addSolid([1,1,1],"minimax flash",comp.width,comp.height,1); L.adjustmentLayer=true; L.startTime=0; L.inPoint=t0; L.outPoint=t0+CONFIG.duration;
   var fx=L.property("ADBE Effect Parade");
-  var mm=fx.addProperty("ADBE Minimax"); setP(mm,"ADBE Minimax-0002",50); setP(mm,"ADBE Minimax-0004",2);
+  var mm=fx.addProperty("ADBE Minimax"); setP(mm,"ADBE Minimax-0002",si(50)); setP(mm,"ADBE Minimax-0004",2);
   var lk=fx.addProperty("ADBE Luma Key"); setP(lk,"ADBE Luma Key-0002",100);
-  var sc=fx.addProperty("ADBE Scatter"); setP(sc,"ADBE Scatter-0001",20);
+  var sc=fx.addProperty("ADBE Scatter"); setP(sc,"ADBE Scatter-0001",si(20));
   var ex=fx.addProperty("ADBE Exposure2"); setP(ex,"ADBE Exposure2-0003",0.8);
   if(ref)try{L.moveAfter(ref);}catch(e){}
   return L;

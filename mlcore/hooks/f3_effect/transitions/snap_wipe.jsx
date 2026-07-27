@@ -5,6 +5,10 @@ if (typeof $!=="undefined" && $.global && $.global.__BLAST){ var __p=$.global.__
 var BZ=KeyframeInterpolationType.BEZIER;
 function log(m){ if(SILENT){try{$.writeln(m);}catch(e){}}else alert(m); }
 function setP(e,m,v){ try{e.property(m).setValue(v);}catch(x){} }
+function fxS(){ try{ return (CONFIG.fxScale && CONFIG.fxScale.i>0) ? CONFIG.fxScale : null; }catch(e){ return null; } }
+function sx(v){ var s=fxS(); return s? v*s.x : v; }
+function sy(v){ var s=fxS(); return s? v*s.y : v; }
+function si(v){ var s=fxS(); return s? v*s.i : v; }
 function findLayer(c,n){ for(var i=1;i<=c.numLayers;i++) if(c.layer(i).name===n) return c.layer(i); return null; }
 function findComp(){ var a=app.project.activeItem,i,it;
   if(CONFIG.targetCompName){for(i=1;i<=app.project.numItems;i++){it=app.project.item(i);if(it instanceof CompItem&&it.name===CONFIG.targetCompName)return it;}}
@@ -17,10 +21,10 @@ function one(comp,t0,ref){
   var L=comp.layers.addSolid([1,1,1],"snap wipe",comp.width,comp.height,1); L.adjustmentLayer=true; L.startTime=0; L.inPoint=t0; L.outPoint=t0+dur;
   var fx=L.property("ADBE Effect Parade");
   var geo=fx.addProperty("ADBE Geometry2"); var ap=geo.property("ADBE Geometry2-0001"); // Anchor (горизонт. свайп)
-  ap.setValueAtTime(t0,[cx,cy]); ap.setValueAtTime(t0+dur*0.5,[cx+140,cy]); ap.setValueAtTime(t0+dur,[cx+340,cy]);
+  ap.setValueAtTime(t0,[cx,cy]); ap.setValueAtTime(t0+dur*0.5,[cx+sx(140),cy]); ap.setValueAtTime(t0+dur,[cx+sx(340),cy]);
   for(var k=1;k<=ap.numKeys;k++){ try{ap.setInterpolationTypeAtKey(k,BZ,BZ);}catch(e){} }
   var db=fx.addProperty("ADBE Motion Blur"); setP(db,"ADBE Motion Blur-0001",90); setP(db,"ADBE Motion Blur-0002",100);
-  var mm=fx.addProperty("ADBE Minimax"); setP(mm,"ADBE Minimax-0002",165); setP(mm,"ADBE Minimax-0004",2);
+  var mm=fx.addProperty("ADBE Minimax"); setP(mm,"ADBE Minimax-0002",si(165)); setP(mm,"ADBE Minimax-0004",2);
   var op=fx.addProperty("ADBE Optics Compensation"); setP(op,"ADBE Optics Compensation-0001",120); setP(op,"ADBE Optics Compensation-0002",1);
   if(ref)try{L.moveAfter(ref);}catch(e){}
   return L;
