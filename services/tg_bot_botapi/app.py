@@ -257,28 +257,38 @@ VIBE_PAGE_SIZE = 3
 # Footage bucket previews (precision flow, phase 4): bucket_id -> {file_id,
 # file_id_public, ...}. Rendered + registered offline by scripts/build_bucket_previews.py.
 _BUCKET_PREVIEWS_CACHE: Optional[Dict[str, Dict[str, Any]]] = None
+_PHOTO_BUCKET_PREVIEWS_CACHE: Optional[Dict[str, Dict[str, Any]]] = None
 # Which file_id field this bot sends (team bot -> file_id; public mirror overrides).
 _BUCKET_PREVIEW_FILE_ID_FIELD = "file_id"
 
 
-def _bucket_previews_path() -> Path:
-    return Path(__file__).resolve().parents[2] / "data" / "footage_bucket_previews.json"
+def _bucket_previews_path(media_type: str = "video") -> Path:
+    name = "photo_bucket_previews.json" if media_type == "photo" else "footage_bucket_previews.json"
+    return Path(__file__).resolve().parents[2] / "data" / name
 
 
-def _load_bucket_previews() -> Dict[str, Dict[str, Any]]:
-    global _BUCKET_PREVIEWS_CACHE
-    if _BUCKET_PREVIEWS_CACHE is None:
+def _load_bucket_previews(media_type: str = "video") -> Dict[str, Dict[str, Any]]:
+    global _BUCKET_PREVIEWS_CACHE, _PHOTO_BUCKET_PREVIEWS_CACHE
+    is_photo = media_type == "photo"
+    cache = _PHOTO_BUCKET_PREVIEWS_CACHE if is_photo else _BUCKET_PREVIEWS_CACHE
+    if cache is None:
         try:
-            obj = json.loads(_bucket_previews_path().read_text(encoding="utf-8"))
+            obj = json.loads(_bucket_previews_path(media_type).read_text(encoding="utf-8"))
             prev = obj.get("previews") if isinstance(obj, dict) else None
-            _BUCKET_PREVIEWS_CACHE = prev if isinstance(prev, dict) else {}
+            cache = prev if isinstance(prev, dict) else {}
         except Exception:
-            _BUCKET_PREVIEWS_CACHE = {}
-    return _BUCKET_PREVIEWS_CACHE
+            cache = {}
+        if is_photo:
+            _PHOTO_BUCKET_PREVIEWS_CACHE = cache
+        else:
+            _BUCKET_PREVIEWS_CACHE = cache
+    return cache
 
 
 def _bucket_preview_file_id(bucket_id: str) -> str:
-    e = _load_bucket_previews().get(str(bucket_id or "").strip())
+    bid = str(bucket_id or "").strip()
+    media_type = "photo" if bid.startswith("photo:") else "video"
+    e = _load_bucket_previews(media_type).get(bid)
     if not isinstance(e, dict):
         return ""
     return str(e.get(_BUCKET_PREVIEW_FILE_ID_FIELD) or "").strip()
@@ -2524,11 +2534,21 @@ class BlastBotApp:
 
     async def _run_vibe_ranker_bg(self, *, chat_id: int, lyrics: str, mood: str) -> None:
         """Background runner — must never raise into the asyncio loop."""
+        media_type = "video"
         try:
-            result = await self.orchestrator.rank_buckets(lyrics=lyrics, mood=mood)
+            current = await self.store.get(chat_id)
+            media_type = "photo" if current.bg_mode == "photo" else "video"
+            result = await self.orchestrator.rank_buckets(
+                lyrics=lyrics, mood=mood, media_type=media_type
+            )
             ranked_ids, labels = self._parse_ranked_buckets(result)
             st = await self.store.get(chat_id)
-            # Stale guard: only persist if the user hasn't moved on / re-ranked.
+            # Stale guard: a rank started for footage must never overwrite the
+            # photo shortlist (or vice versa) if the user changed bg_mode meanwhile.
+            current_media_type = "photo" if st.bg_mode == "photo" else "video"
+            if current_media_type != media_type:
+                return
+            # Only persist if the user has not moved on / re-ranked.
             if st.vibe_rank_status not in {"pending", "ready"}:
                 return
             st.vibe_ranked_ids = ranked_ids
@@ -2541,6 +2561,9 @@ class BlastBotApp:
             log.warning("vibe_rank_fail chat=%s err=%r", chat_id, e)
             try:
                 st = await self.store.get(chat_id)
+                current_media_type = "photo" if st.bg_mode == "photo" else "video"
+                if current_media_type != media_type:
+                    return
                 st.vibe_rank_status = "failed"
                 await self.store.set(st)
             except Exception:
@@ -2574,14 +2597,20 @@ class BlastBotApp:
         retry, one bad request permanently strands the chat in the legacy
         artist flow (nothing else re-triggers ranking until new lyrics)."""
         if st.vibe_ranked_ids:
+            expected_prefix = "photo:" if st.bg_mode == "photo" else "visual:"
+            incompatible_ids = [
+                bid for bid in st.vibe_ranked_ids if not bid.startswith(expected_prefix)
+            ]
             legacy_ids = [
                 bid for bid in st.vibe_ranked_ids
                 if bid.split(":", 1)[0].endswith(("_major", "_minor"))
             ]
-            if not legacy_ids:
+            if not incompatible_ids and not legacy_ids:
                 return True
-            log.info("vibe_catalog_migration chat=%s legacy_ids=%d action=rerank",
-                     st.chat_id, len(legacy_ids))
+            log.info(
+                "vibe_catalog_migration chat=%s incompatible_ids=%d legacy_ids=%d action=rerank",
+                st.chat_id, len(incompatible_ids), len(legacy_ids),
+            )
             st.vibe_ranked_ids = []
             st.vibe_labels_by_id = {}
             st.vibe_selected_ids = []
@@ -2592,7 +2621,10 @@ class BlastBotApp:
             if attempt:
                 await asyncio.sleep(0.5 * attempt)
             try:
-                result = await self.orchestrator.rank_buckets(lyrics=lyrics, mood="")
+                result = await self.orchestrator.rank_buckets(
+                    lyrics=lyrics, mood="",
+                    media_type="photo" if st.bg_mode == "photo" else "video",
+                )
                 ranked_ids, labels = self._parse_ranked_buckets(result)
             except Exception as e:
                 last_err = e
@@ -3069,6 +3101,17 @@ class BlastBotApp:
             )
             return
         st.subtitles_mode = mode
+        # Photo has its own style/transition controls and renderer. After the
+        # subtitle mode, go directly to versions: normal hook/color overlays are
+        # not part of the photo template contract.
+        if st.bg_mode == "photo":
+            st.hook_enabled = False
+            st.hook_category = ""
+            st.subtitle_color_hex = ""
+            st.accent_color_hex = ""
+            await self.store.set(st)
+            await self._ask_versions(message, st)
+            return
         # Strobe bg: text is forced white + auto-inverts (Difference), so no color
         # customization; and only the cut-transition style — not the full hook flow.
         if st.bg_mode == "solid_strobe":
@@ -4010,9 +4053,8 @@ class BlastBotApp:
             return
         st.photo_transition = tr
         await self.store.set(st)
-        # Photo render is horizontal 1920×1440 — subtitles aren't baked in 4:3, so
-        # skip the subtitles/hook steps and go straight to the version count.
-        await self._ask_versions(message, st)
+        # Photo remains a lyric-video flow: choose subtitle mode before versions.
+        await self._ask_subtitles_mode(message, st)
 
     # ── F3 «Эффект» — 3-step picker (hook -> transition -> extra) + extend ──
     async def _ask_effect_hook(self, message: Message, st: ChatState) -> None:

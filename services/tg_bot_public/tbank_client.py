@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import logging
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 
@@ -13,6 +13,7 @@ log = logging.getLogger("tbank")
 
 TBANK_INIT_URL = "https://securepay.tinkoff.ru/v2/Init"
 TBANK_CHARGE_URL = "https://securepay.tinkoff.ru/v2/Charge"
+TBANK_GET_CARD_LIST_URL = "https://securepay.tinkoff.ru/v2/GetCardList"
 
 
 class TBankClient:
@@ -246,6 +247,79 @@ class TBankClient:
             if resp.status_code != 200:
                 return None
             return resp.json()
+
+    async def get_card_list(self, customer_key: str) -> List[Dict[str, Any]]:
+        """Call GetCardList — saved cards of a customer, including RebillId.
+
+        This is the only way to obtain a RebillId after the fact: GetState
+        never returns it, and the notification that carries it can be lost
+        (webhook downtime, 5xx, signature mismatch). The card itself stays
+        bound to CustomerKey on the T-Bank side, so the key is recoverable.
+
+        Returns [] on any error — callers treat "no cards" and "call failed"
+        the same way (nothing to recover automatically).
+        """
+        params: Dict[str, Any] = {
+            "TerminalKey": self._terminal_key,
+            "CustomerKey": str(customer_key),
+        }
+        params["Token"] = self._make_token(params)
+
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(TBANK_GET_CARD_LIST_URL, json=params)
+            if resp.status_code != 200:
+                log.error(
+                    "tbank get_card_list failed status=%s body=%s",
+                    resp.status_code, resp.text,
+                )
+                return []
+            try:
+                data = resp.json()
+            except Exception as e:
+                log.error("tbank get_card_list bad json: %s", e)
+                return []
+            # Success returns a bare JSON array; errors return an object.
+            if isinstance(data, dict):
+                log.error(
+                    "tbank get_card_list error: %s %s details=%s",
+                    data.get("ErrorCode"),
+                    data.get("Message"),
+                    data.get("Details"),
+                )
+                return []
+            if not isinstance(data, list):
+                log.error("tbank get_card_list unexpected payload type=%s", type(data).__name__)
+                return []
+            return [c for c in data if isinstance(c, dict)]
+
+    async def find_rebill_id(self, customer_key: str) -> str:
+        """Best saved RebillId for a customer, or "" if the card is not bound.
+
+        Cards with Status="A" (active) win over inactive ones; among equals the
+        most recently bound card (highest numeric CardId) wins, which is the
+        card the customer paid with last. An empty result means the payment
+        never bound a card — SBP/QR, T-Pay or a card that declined binding —
+        and no amount of retrying will produce a key.
+        """
+        cards = await self.get_card_list(customer_key)
+
+        def _card_id(card: Dict[str, Any]) -> int:
+            try:
+                return int(str(card.get("CardId", "0")).strip() or 0)
+            except ValueError:
+                return 0
+
+        usable = [c for c in cards if str(c.get("RebillId", "") or "").strip()]
+        if not usable:
+            log.warning(
+                "tbank find_rebill_id: no bound card with RebillId customer_key=%s cards=%s",
+                customer_key, len(cards),
+            )
+            return ""
+        usable.sort(
+            key=lambda c: (str(c.get("Status", "")).strip().upper() == "A", _card_id(c)),
+        )
+        return str(usable[-1].get("RebillId", "")).strip()
 
     def verify_notification(self, data: Dict[str, Any]) -> bool:
         """Verify Token from T-Bank webhook notification."""

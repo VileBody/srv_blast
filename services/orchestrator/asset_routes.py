@@ -659,6 +659,42 @@ def _iter_zip_from_s3(bucket: str, assets: List[Dict[str, Any]]) -> Iterator[byt
 # Router factory
 # ---------------------------------------------------------------------------
 
+def _photo_preview_targets() -> Dict[str, Any]:
+    """Expected upload filename -> active photo bucket (strict 17-bucket set)."""
+    from mlcore.photo_bucket_catalog import load_photo_catalog
+
+    return {
+        f"{bucket.bucket_id.replace(':', '__')}.mp4": bucket
+        for bucket in load_photo_catalog()
+    }
+
+
+async def _capture_team_preview_file_id(
+    *, token: str, chat_id: str, video_path: Path, file_name: str
+) -> str:
+    """Upload one preview to Telegram without ever exposing the bot token."""
+    import httpx
+
+    try:
+        with video_path.open("rb") as fh:
+            async with httpx.AsyncClient(trust_env=False, timeout=300.0) as client:
+                response = await client.post(
+                    f"https://api.telegram.org/bot{token}/sendVideo",
+                    data={"chat_id": chat_id, "supports_streaming": "true"},
+                    files={"video": (file_name, fh, "video/mp4")},
+                )
+    except Exception as exc:
+        raise RuntimeError(f"telegram preview upload failed: {type(exc).__name__}") from exc
+    if response.status_code >= 400:
+        raise RuntimeError(f"telegram preview upload HTTP {response.status_code}")
+    payload = response.json()
+    video = (payload.get("result") or {}).get("video") or {}
+    file_id = str(video.get("file_id") or "").strip()
+    if not payload.get("ok") or not file_id:
+        raise RuntimeError("telegram preview upload returned no video.file_id")
+    return file_id
+
+
 def create_asset_router(*, prefix: str = "/asset-ui/api") -> APIRouter:
     router = APIRouter(prefix=prefix)
 
@@ -683,6 +719,79 @@ def create_asset_router(*, prefix: str = "/asset-ui/api") -> APIRouter:
         ]
         out.sort(key=lambda x: (str(x["theme_label"]), str(x["label"])))
         return {"buckets": out}
+
+    @router.post("/assets/photo-previews/register")
+    async def register_photo_previews(files: List[UploadFile] = File(...)) -> Dict[str, Any]:
+        """Register the reviewed 17 photo-vibe mp4 files for the team bot."""
+        token = str(os.environ.get("TG_BOT_TOKEN") or "").strip()
+        chat_id = str(
+            os.environ.get("FOOTAGE_PREVIEW_BACKLOG_CHAT_ID")
+            or os.environ.get("MANAGER_CHAT_ID")
+            or ""
+        ).strip()
+        if not token or not chat_id:
+            raise HTTPException(
+                status_code=503,
+                detail="TG_BOT_TOKEN and manager/backlog chat must be configured",
+            )
+
+        import asyncio as _asyncio
+        from mlcore import footage_bucket_previews as bp
+
+        targets = _photo_preview_targets()
+        seen: set[str] = set()
+        store = bp.empty_store()
+        errors: List[Dict[str, str]] = []
+        for upload in files:
+            file_name = Path(upload.filename or "").name
+            bucket = targets.get(file_name)
+            if bucket is None or file_name in seen:
+                errors.append({"file": file_name, "error": "unknown_or_duplicate_preview"})
+                await upload.close()
+                continue
+            seen.add(file_name)
+            tmp_path: Optional[Path] = None
+            try:
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp:
+                    tmp_path = Path(tmp.name)
+                    await _asyncio.to_thread(shutil.copyfileobj, upload.file, tmp)
+                if tmp_path.stat().st_size <= 0:
+                    raise RuntimeError("empty preview")
+                file_id = await _capture_team_preview_file_id(
+                    token=token,
+                    chat_id=chat_id,
+                    video_path=tmp_path,
+                    file_name=file_name,
+                )
+                bp.previews_upsert(
+                    store,
+                    bp.PreviewEntry(
+                        bucket_id=bucket.bucket_id,
+                        label=bp.display_label(bucket.label),
+                        description=bp.build_bucket_description(bucket),
+                        file_id=file_id,
+                        status="ok",
+                        built_at=bp.now_iso(),
+                    ),
+                )
+            except Exception as exc:
+                errors.append({
+                    "file": file_name,
+                    "error": f"{type(exc).__name__}: {str(exc)[:160]}",
+                })
+            finally:
+                await upload.close()
+                if tmp_path is not None:
+                    tmp_path.unlink(missing_ok=True)
+
+        registered = len(store.get("previews") or {})
+        return {
+            "ok": not errors and registered == len(targets),
+            "registered": registered,
+            "expected": len(targets),
+            "errors": errors,
+            "registry": store,
+        }
 
     @router.get("/assets/tags-snapshot")
     def get_tags_snapshot(media_type: str = Query("video")) -> Response:

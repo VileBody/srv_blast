@@ -684,6 +684,9 @@ def build_photo_project(
     segments: Optional[List[Dict[str, Any]]] = None,
     audio_file_name: Optional[str] = None,
     audio_locator: Optional[str] = None,
+    audio_offset_sec: Optional[float] = None,
+    subtitle_project_jsx: str = "",
+    subtitle_comp_name: str = "",
 ) -> Tuple[Path, Path]:
     """Build the standalone 4:3 PHOTO render (photo_template.j2).
 
@@ -721,6 +724,12 @@ def build_photo_project(
         segments=segments,
         audio_file_name=resolved_audio_name,
         audio_locator=resolved_audio_locator,
+        audio_offset_sec=(
+            float(audio_offset_sec)
+            if audio_offset_sec is not None
+            else float(os.environ.get("USER_CLIP_START_SEC") or 0.0)
+        ),
+        subtitle_comp_name=subtitle_comp_name,
     )
 
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -735,7 +744,18 @@ def build_photo_project(
     env = Environment(loader=FileSystemLoader(str(repo_root / "templates")), autoescape=False)
     env.filters["tojson"] = _tojson_filter
     tpl = env.get_template("photo_template.j2")
-    jsx = tpl.render(photo_job=payload["photo_job"], footage_layers=payload["footage_layers"])
+    photo_jsx = tpl.render(
+        photo_job=payload["photo_job"],
+        footage_layers=payload["footage_layers"],
+    )
+    # The canonical project builder owns every subtitle mode (including the JSX
+    # trendy/brat modes). Build it first, then add the standalone 4:3 photo comp
+    # and nest its transparent main comp over the photos.
+    jsx = (
+        str(subtitle_project_jsx).rstrip() + "\n\n" + photo_jsx
+        if str(subtitle_project_jsx).strip()
+        else photo_jsx
+    )
     out_jsx.write_text(jsx, encoding="utf-8")
 
     LOGGER.info(

@@ -16,6 +16,7 @@ thin asyncpg I/O layer.
 """
 from __future__ import annotations
 
+import json
 import re
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -39,12 +40,14 @@ CREATE TABLE IF NOT EXISTS footage_tags (
     theme_tags   TEXT[]    NOT NULL DEFAULT '{}',
     tagger       TEXT      NOT NULL DEFAULT '',
     source       TEXT      NOT NULL DEFAULT 'video',
+    framing      JSONB     NOT NULL DEFAULT '{}'::jsonb,
     updated_at   TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
 -- Idempotent migration for tables created before the photo pool existed:
 -- pre-existing rows are video by definition, so the default keeps them correct.
 ALTER TABLE footage_tags ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'video';
+ALTER TABLE footage_tags ADD COLUMN IF NOT EXISTS framing JSONB NOT NULL DEFAULT '{}'::jsonb;
 
 CREATE INDEX IF NOT EXISTS idx_footage_tags_updated ON footage_tags(updated_at);
 CREATE INDEX IF NOT EXISTS idx_footage_tags_source ON footage_tags(source);
@@ -178,6 +181,7 @@ def build_photo_tag_record(raw: Dict[str, Any], *, tagger: str = "") -> Optional
         "theme_tags": _dedup_tags(raw.get("theme_tags") or []),
         "tagger": str(tagger or ""),
         "source": SOURCE_PHOTO,
+        "framing": dict(raw.get("framing") or {}),
     }
 
 
@@ -223,6 +227,18 @@ def merge_records_by_clip_id(
     return list(chosen.values())
 
 
+def _framing_dict(value: Any) -> Dict[str, Any]:
+    if isinstance(value, dict):
+        return dict(value)
+    if isinstance(value, str) and value.strip():
+        try:
+            parsed = json.loads(value)
+        except (TypeError, ValueError):
+            return {}
+        return dict(parsed) if isinstance(parsed, dict) else {}
+    return {}
+
+
 def snapshot_row_from_record(rec: Dict[str, Any]) -> Dict[str, Any]:
     """Render a footage_tags record back into the legacy video_database shape
     that footage_picker.load_footage_style_metadata_rows() consumes."""
@@ -233,6 +249,7 @@ def snapshot_row_from_record(rec: Dict[str, Any]) -> Dict[str, Any]:
         "color_tone": rec.get("color_tone") or "",
         "people_type": rec.get("people_type") or "none",
         "theme_tags": list(rec.get("theme_tags") or []),
+        "framing": _framing_dict(rec.get("framing")),
     }
 
 
@@ -259,6 +276,7 @@ async def upsert_records(conn: Any, records: List[Dict[str, Any]]) -> int:
             list(r.get("theme_tags") or []),
             r.get("tagger", ""),
             r.get("source", SOURCE_VIDEO) or SOURCE_VIDEO,
+            json.dumps(dict(r.get("framing") or {}), ensure_ascii=False),
         )
         for r in records
         if r.get("clip_id")
@@ -267,8 +285,8 @@ async def upsert_records(conn: Any, records: List[Dict[str, Any]]) -> int:
         """
         INSERT INTO footage_tags
             (clip_id, file_name, s3_key, video_key, mood, color_tone,
-             people_type, theme_tags, tagger, source, updated_at)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, NOW())
+             people_type, theme_tags, tagger, source, framing, updated_at)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb, NOW())
         ON CONFLICT (clip_id) DO UPDATE SET
             file_name   = EXCLUDED.file_name,
             s3_key      = EXCLUDED.s3_key,
@@ -279,6 +297,8 @@ async def upsert_records(conn: Any, records: List[Dict[str, Any]]) -> int:
             theme_tags  = EXCLUDED.theme_tags,
             tagger      = EXCLUDED.tagger,
             source      = EXCLUDED.source,
+            framing     = CASE WHEN EXCLUDED.framing <> '{}'::jsonb
+                               THEN EXCLUDED.framing ELSE footage_tags.framing END,
             updated_at  = NOW()
         """,
         rows,
@@ -288,13 +308,59 @@ async def upsert_records(conn: Any, records: List[Dict[str, Any]]) -> int:
 
 async def fetch_all_records(conn: Any, *, source: Optional[str] = None) -> List[Dict[str, Any]]:
     """All tag rows. source=None → every pool; source='video'|'photo' → one pool."""
-    cols = ("clip_id, file_name, s3_key, video_key, mood, color_tone, "
-            "people_type, theme_tags, source")
-    if source:
-        recs = await conn.fetch(f"SELECT {cols} FROM footage_tags WHERE source = $1", source)
-    else:
-        recs = await conn.fetch(f"SELECT {cols} FROM footage_tags")
+    base_cols = ("clip_id, file_name, s3_key, video_key, mood, color_tone, "
+                 "people_type, theme_tags, source")
+
+    async def _fetch(cols: str) -> Any:
+        if source:
+            return await conn.fetch(
+                f"SELECT {cols} FROM footage_tags WHERE source = $1",
+                source,
+            )
+        return await conn.fetch(f"SELECT {cols} FROM footage_tags")
+
+    try:
+        recs = await _fetch(f"{base_cols}, framing")
+    except Exception as exc:
+        # Candidate readiness is deliberately read-only. During the first
+        # photo-flow rollout it can therefore encounter the legacy production
+        # schema before the new worker gets a chance to run init_schema().
+        # Treat a missing framing column as empty metadata so video readiness
+        # remains evaluable; photo readiness will still fail closed because its
+        # quality coverage is zero.
+        if getattr(exc, "sqlstate", None) != "42703":
+            raise
+        recs = await _fetch(f"{base_cols}, '{{}}'::jsonb AS framing")
     return [dict(r) for r in recs]
+
+
+async def fetch_unframed_photo_records(conn: Any) -> List[Dict[str, Any]]:
+    recs = await conn.fetch(
+        "SELECT t.clip_id, t.file_name, "
+        "COALESCE(NULLIF(t.s3_key, ''), a.s3_key, '') AS s3_key, "
+        "t.people_type, t.theme_tags, t.framing "
+        "FROM footage_tags t LEFT JOIN footage_assets a "
+        "ON a.clip_id = t.clip_id AND a.source = $1 "
+        "WHERE t.source = $1 AND "
+        "(t.framing = '{}'::jsonb OR NOT (t.framing ? 'quality'))",
+        SOURCE_PHOTO,
+    )
+    return [dict(r) for r in recs]
+
+
+async def update_photo_framing(conn: Any, rows: List[Dict[str, Any]]) -> int:
+    values = [
+        (str(r.get("clip_id") or ""), json.dumps(dict(r.get("framing") or {}), ensure_ascii=False))
+        for r in rows if r.get("clip_id") and r.get("framing")
+    ]
+    if not values:
+        return 0
+    await conn.executemany(
+        "UPDATE footage_tags SET framing=$2::jsonb, updated_at=NOW() "
+        "WHERE clip_id=$1 AND source='photo'",
+        values,
+    )
+    return len(values)
 
 
 async def fetch_tagged_clip_ids(conn: Any, *, source: Optional[str] = None) -> set:

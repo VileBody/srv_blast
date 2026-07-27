@@ -8,8 +8,10 @@ gated behind PHOTO_FLOW_ENABLED, but state/client/stages mirror regardless for C
 """
 from __future__ import annotations
 
+import ast
 import inspect
 
+from pathlib import Path
 import typing
 
 
@@ -79,6 +81,8 @@ def test_orchestrator_client_accepts_photo_kwargs():
     sig = inspect.signature(OrchestratorClient.send_audio_s3)
     assert "photo_style" in sig.parameters
     assert "photo_transition" in sig.parameters
+    rank_sig = inspect.signature(OrchestratorClient.rank_buckets)
+    assert "media_type" in rank_sig.parameters
 
 
 def test_photo_ids_match_orchestrator_schema():
@@ -98,3 +102,34 @@ def test_team_and_public_photo_maps_match():
 
     assert team.PHOTO_STYLE_IDS == pub.PHOTO_STYLE_IDS
     assert team.PHOTO_TRANSITION_IDS == pub.PHOTO_TRANSITION_IDS
+
+
+def test_photo_preview_registry_is_separate_and_mirrored():
+    from services.tg_bot_botapi import app as team
+    from services.tg_bot_public import app as public
+
+    assert team._bucket_previews_path("photo").name == "photo_bucket_previews.json"
+    assert public._bucket_previews_path("photo").name == "photo_bucket_previews.json"
+    assert team._bucket_previews_path("video").name == "footage_bucket_previews.json"
+    assert public._bucket_previews_path("video").name == "footage_bucket_previews.json"
+
+def test_photo_transition_routes_to_subtitles_in_both_bots():
+    """Regression: photo used to jump straight to versions and rendered no subtitles."""
+    root = Path(__file__).resolve().parents[1]
+    for rel in (
+        "services/tg_bot_botapi/app.py",
+        "services/tg_bot_public/app.py",
+    ):
+        tree = ast.parse((root / rel).read_text(encoding="utf-8"))
+        fn = next(
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef))
+            and node.name == "_handle_wait_photo_transition"
+        )
+        calls = {
+            node.func.attr
+            for node in ast.walk(fn)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+        }
+        assert "_ask_subtitles_mode" in calls

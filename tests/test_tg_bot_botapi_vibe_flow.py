@@ -32,9 +32,11 @@ def _make_app(monkeypatch, ranked):
     class _Orchestrator:
         def __init__(self):
             self.rank_calls = 0
+            self.media_types = []
 
-        async def rank_buckets(self, *, lyrics, mood="", top=0):
+        async def rank_buckets(self, *, lyrics, mood="", top=0, media_type="video"):
             self.rank_calls += 1
+            self.media_types.append(media_type)
             return {
                 "buckets": [
                     {"bucket_id": b, "theme": b.split(":")[0],
@@ -165,5 +167,25 @@ def test_vibe_auto_picks_top1(monkeypatch):
         assert st.stage == STAGE_WAIT_SUBTITLES_MODE
         slot = await app._resolve_rotation_slot_for_enqueue(st=st, offset=1)
         assert slot[:2] == ("t0", "g0")
+
+    asyncio.run(_run())
+
+
+def test_photo_mode_discards_cached_visual_shortlist_and_reranks_photo(monkeypatch):
+    team, app = _make_app(monkeypatch, ["photo:forest_fog_dark", "photo:lone_figure_scene"])
+    from services.tg_bot_botapi.state_store import ChatState
+
+    async def _run():
+        st = ChatState(
+            chat_id=7,
+            lyrics_text="туман и одиночество",
+            bg_mode="photo",
+            vibe_ranked_ids=["visual:forest_fog_dark"],
+            vibe_rank_status="ready",
+        )
+        await app.store.set(st)
+        assert await app._ensure_vibe_ranked(st)
+        assert st.vibe_ranked_ids == ["photo:forest_fog_dark", "photo:lone_figure_scene"]
+        assert app.orchestrator.media_types[-1] == "photo"
 
     asyncio.run(_run())

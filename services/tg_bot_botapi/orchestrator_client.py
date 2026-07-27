@@ -132,6 +132,7 @@ class OrchestratorClient:
         lyrics: str,
         mood: str = "",
         top: int = 0,
+        media_type: str = "video",
     ) -> Dict[str, Any]:
         """Footage precision flow: rank the footage bucket catalog by relevance
         to the track lyrics. One cheap LLM call (Gemini Flash) on the
@@ -142,6 +143,7 @@ class OrchestratorClient:
             "lyrics": str(lyrics or ""),
             "mood": str(mood or "").strip(),
             "top": int(top or 0),
+            "media_type": "photo" if str(media_type).strip().lower() == "photo" else "video",
         }
         resp = await self._client.post(f"{self._base_url}/footage/rank-buckets", json=payload)
         if resp.status_code >= 300:

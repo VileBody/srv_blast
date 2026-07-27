@@ -1825,6 +1825,11 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
         # the PHOTO pool (same buckets/ranking) and switch the build to the photo
         # template. Hard-validate the two F3-style selections (No Fallback Policy).
         env["BG_MODE"] = "photo"
+        # A build worker may carry a deployment-level subtitle override in its
+        # ambient environment. Photo flow currently skips the color picker, so
+        # make its documented default deterministic instead of inheriting that
+        # unrelated value. An explicit request color still overrides this below.
+        env["SUBTITLES_FORCE_FILL_HEX"] = "#FFFFFF"
         photo_style = str(req.get("photo_style") or "none").strip().lower() or "none"
         photo_transition = str(req.get("photo_transition") or "flash").strip().lower() or "flash"
         _photo_styles = {"none", "warm", "cold", "vintage", "bw", "vhs", "night_vision"}
@@ -2674,6 +2679,14 @@ def tag_untagged_footage(self, limit: int = 0, media_type: str = "video") -> Dic
                 limit=int(limit or 0),
                 progress_cb=_progress,
             )
+            from mlcore.photo_tagger import run_photo_framing_batch
+
+            framing_summary = run_photo_framing_batch(
+                bucket=bucket,
+                db_url=db_url,
+                progress_cb=_progress,
+            )
+            summary = {**summary, **framing_summary}
         else:
             from mlcore.footage_tagger import run_tagging_batch
 
@@ -3214,6 +3227,21 @@ def activate_footage_base(self, limit: int = 0, media_type: str = "video") -> Di
                 bucket=bucket, source_prefix=prefix, db_url=db_url,
                 limit=int(limit or 0), progress_cb=_tag_progress,
             )
+            from mlcore.photo_tagger import run_photo_framing_batch
+
+            def _frame_progress(done: int, total: int, written: int) -> None:
+                _publish(
+                    "running", phase="framing", done=int(done),
+                    total=int(total), written=int(written),
+                )
+
+            _publish("running", phase="framing", done=0, total=0, written=0)
+            framing_summary = run_photo_framing_batch(
+                bucket=bucket,
+                db_url=db_url,
+                progress_cb=_frame_progress,
+            )
+            tag_summary = {**tag_summary, **framing_summary}
         else:
             from mlcore.footage_tagger import run_tagging_batch
 

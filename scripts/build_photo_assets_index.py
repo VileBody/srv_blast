@@ -165,6 +165,7 @@ def build_photo_index(
         cm = color_meta.get(file_name, {})
         return {
             "file_name": file_name,
+            "s3_key": key,
             "genre": genre,
             "tag": tag,
             "src_w": w,

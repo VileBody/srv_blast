@@ -1,0 +1,236 @@
+{
+  "version": 1,
+  "previews": {
+    "photo:car_night": {
+      "bucket_id": "photo:car_night",
+      "label": "Машины / ночная езда",
+      "description": "авто только снаружи, ночная езда и городские огни",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAI2QGpnpnEUlZP2VECu1rHBfCGrcmmgAAJQqwACqNdASyvs0oIHqWhjPQQ",
+      "file_id_public": "BAACAgIAAxkDAAECWJpqZ6Z14Xrna2xTkO_lvRcKpjGCSAACkKoAAgfnQUvtPGU9FyNudT0E",
+      "clip_ids": [],
+      "status": "ok",
+      "built_at": "2026-07-27T18:41:57Z"
+    },
+    "photo:couple_light_warm": {
+      "bucket_id": "photo:couple_light_warm",
+      "label": "Пара / золотой час",
+      "description": "пара в мягком золотом дневном свете",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAI2P2pnpmZ4nmYAAS2AGrP-hDX2bAOyVQACT6sAAqjXQEt-1nc6lYxxJz0E",
+      "file_id_public": "BAACAgIAAxkDAAECWJlqZ6ZpNZvhZJM9P9YFrelshCB_ZQACj6oAAgfnQUtEZg5cmpW71z0E",
+      "clip_ids": [],
+      "status": "ok",
+      "built_at": "2026-07-27T18:41:45Z"
+    },
+    "photo:crowd_club_dark": {
+      "bucket_id": "photo:crowd_club_dark",
+      "label": "Толпа / клуб",
+      "description": "толпа на концерте или в клубе",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAI2RmpnpqYH5bha9-AOrXvSLK1jfT5-AAJXqwACqNdAS9vv8Z-kJKCXPQQ",
+      "file_id_public": "BAACAgIAAxkDAAECWKNqZ6aqrGoMpzzXB4fsTnGWHg23KgACmKoAAgfnQUtrKBgKjDQZyz0E",
+      "clip_ids": [],
+      "status": "ok",
+      "built_at": "2026-07-27T18:42:50Z"
+    },
+    "photo:dark_empty_interior": {
+      "bucket_id": "photo:dark_empty_interior",
+      "label": "Тёмный пустой интерьер",
+      "description": "пустая тёмная комната или коридор",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAI2OWpnpjMW53hDC95MjNAi_Un8cgcMAAJJqwACqNdAS-DsdtZbbYbAPQQ",
+      "file_id_public": "BAACAgIAAxkDAAECWJNqZ6Y30rOmwgAB9YYQ3Jvd0spKsYsAAoeqAAIH50FL_EIxMokwl2g9BA",
+      "clip_ids": [],
+      "status": "ok",
+      "built_at": "2026-07-27T18:40:55Z"
+    },
+    "photo:digital_dark": {
+      "bucket_id": "photo:digital_dark",
+      "label": "Digital / глитч и силуэты",
+      "description": "цифровой тёмный вайб: глитч, неон, силуэты",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAI2OmpnpjvYHHcQpOHaTrho-avXkGJkAAJKqwACqNdAS1oNpV0548kBPQQ",
+      "file_id_public": "BAACAgIAAxkDAAECWJRqZ6Y_T4H_LC_pUaLVs1X7-mpluAACiqoAAgfnQUuKrd6z4PoYez0E",
+      "clip_ids": [],
+      "status": "ok",
+      "built_at": "2026-07-27T18:41:03Z"
+    },
+    "photo:forest_fog_dark": {
+      "bucket_id": "photo:forest_fog_dark",
+      "label": "Тёмный лес / туман",
+      "description": "строго туманный тёмный лес без построек и дорог",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAI2MmpnpXT6XqDDRTSbGbg_IjspotF1AAJAqwACqNdAS2TtanxVzEQ2PQQ",
+      "file_id_public": "BAACAgIAAxkDAAECWIVqZ6V9wDkYtr1MOMppE2CN317tdwACfKoAAgfnQUtZiiCqEx_Zqj0E",
+      "clip_ids": [],
+      "status": "ok",
+      "built_at": "2026-07-27T18:37:49Z"
+    },
+    "photo:girl_car_night": {
+      "bucket_id": "photo:girl_car_night",
+      "label": "Девушка / машина ночью",
+      "description": "девушка в машине / у машины ночью",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAI2Qmpnpn_hqhESBHP8zVB4JKMG-Q_aAAJSqwACqNdAS_jOHUqDyY2HPQQ",
+      "file_id_public": "BAACAgIAAxkDAAECWJxqZ6aDceF5hr8m2ozqErGFAAFdvAcAApKqAAIH50FLG_7JH1v_fU09BA",
+      "clip_ids": [],
+      "status": "ok",
+      "built_at": "2026-07-27T18:42:11Z"
+    },
+    "photo:girl_city_night": {
+      "bucket_id": "photo:girl_city_night",
+      "label": "Девушка / ночной город",
+      "description": "девушка на фоне ночного города",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAI2Q2pnpoecvkWOnJ1ufD4HfZ-8YuHPAAJTqwACqNdAS-HbUcx274PYPQQ",
+      "file_id_public": "BAACAgIAAxkDAAECWKBqZ6aKVE-ZoSn9Unf5HdHGB4Ww9gACk6oAAgfnQUt7S6rWisJ15D0E",
+      "clip_ids": [],
+      "status": "ok",
+      "built_at": "2026-07-27T18:42:18Z"
+    },
+    "photo:girl_golden_outdoor": {
+      "bucket_id": "photo:girl_golden_outdoor",
+      "label": "Девушка / золотой час",
+      "description": "девушка на улице в тёплом свете",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAI2PGpnpkkK8Wnhf3EzyTu45EfNEO5sAAJMqwACqNdASzqOSdGx0U0cPQQ",
+      "file_id_public": "BAACAgIAAxkDAAECWJZqZ6ZNkkWXGSfvdoidQxee1RyIvAACjKoAAgfnQUvevDj4aWOeRD0E",
+      "clip_ids": [],
+      "status": "ok",
+      "built_at": "2026-07-27T18:41:17Z"
+    },
+    "photo:girl_indoor_dark": {
+      "bucket_id": "photo:girl_indoor_dark",
+      "label": "Девушка / тёмный интерьер",
+      "description": "девушка в тёмном помещении (не портрет-крупняк)",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAI2QWpnpnhld3u2_rEKhAPKLFiZHZAGAAJRqwACqNdASwN759TUKGR8PQQ",
+      "file_id_public": "BAACAgIAAxkDAAECWJtqZ6Z7gZzQ7jCUv_QX1F5ijIkxVwACkaoAAgfnQUsM8Zpsav-eLT0E",
+      "clip_ids": [],
+      "status": "ok",
+      "built_at": "2026-07-27T18:42:03Z"
+    },
+    "photo:girl_moody_dark": {
+      "bucket_id": "photo:girl_moody_dark",
+      "label": "Девушка / тёмное настроение",
+      "description": "одинокая девушка или тёмный портрет без digital-стилизации",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAI2PmpnplgU3fPhSVnDhmjCVnHDQwtoAAJOqwACqNdAS9rUiXLLveelPQQ",
+      "file_id_public": "BAACAgIAAxkDAAECWJhqZ6ZcNnhkVPc9MbU6SjW550QZbgACjqoAAgfnQUuwTBSwYa9qxT0E",
+      "clip_ids": [],
+      "status": "ok",
+      "built_at": "2026-07-27T18:41:33Z"
+    },
+    "photo:girl_portrait_light": {
+      "bucket_id": "photo:girl_portrait_light",
+      "label": "Портрет девушки / светлый",
+      "description": "портрет девушки в тёплом свете",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAI2O2pnpkI8cPC7OSmJdejrG8NpnEAwAAJLqwACqNdAS5_xzfnbZXo0PQQ",
+      "file_id_public": "BAACAgIAAxkDAAECWJVqZ6ZGUermp57NwDAlIBcsR4JhfAACi6oAAgfnQUvez4RG7nKC0D0E",
+      "clip_ids": [],
+      "status": "ok",
+      "built_at": "2026-07-27T18:41:10Z"
+    },
+    "photo:girl_silhouette_dark": {
+      "bucket_id": "photo:girl_silhouette_dark",
+      "label": "Девушка / тёмный силуэт",
+      "description": "одинокий женский силуэт в тёмном кадре",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAI2PWpnplC-iOzR9e36qVRu34wmo4bEAAJNqwACqNdAS_J0UVxw9Fa9PQQ",
+      "file_id_public": "BAACAgIAAxkDAAECWJdqZ6ZUm1rzCjJfBsNuIgdKeOSWaQACjaoAAgfnQUu8BgJ07zHrfj0E",
+      "clip_ids": [],
+      "status": "ok",
+      "built_at": "2026-07-27T18:41:24Z"
+    },
+    "photo:guy_car_night": {
+      "bucket_id": "photo:guy_car_night",
+      "label": "Парень / машина ночью",
+      "description": "парень в машине / у машины ночью",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAI2RGpnpo3-Uz3vGz4aFxDNWms9EJvlAAJUqwACqNdASyLwW5YlzkO5PQQ",
+      "file_id_public": "BAACAgIAAxkDAAECWKFqZ6aRNP3Vp3yBLOuyBlhypyJjXAAClKoAAgfnQUtVS3lE1NpBYD0E",
+      "clip_ids": [],
+      "status": "ok",
+      "built_at": "2026-07-27T18:42:25Z"
+    },
+    "photo:guy_city_night": {
+      "bucket_id": "photo:guy_city_night",
+      "label": "Парень / ночной город",
+      "description": "парень на ночной улице",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAI2RWpnpprJebWz7xpedguAwdOU7iaxAAJVqwACqNdAS-0_lK0TwPjbPQQ",
+      "file_id_public": "BAACAgIAAxkDAAECWKJqZ6adzPHZ1O_ivzrzjqj6rGf1TwAClaoAAgfnQUuMK7yr5YY_Mj0E",
+      "clip_ids": [],
+      "status": "ok",
+      "built_at": "2026-07-27T18:42:37Z"
+    },
+    "photo:neon_night_city": {
+      "bucket_id": "photo:neon_night_city",
+      "label": "Неон / киберпанк-ночь",
+      "description": "неоновый ночной город",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAI2N2pnpiTvP1K-_gABJ2goMGgRSXSOpwACR6sAAqjXQEuX5QVQ3sR4Uz0E",
+      "file_id_public": "BAACAgIAAxkDAAECWI1qZ6Yo6BpDdcP3ar1uXGG0kpV9GAAChaoAAgfnQUtAqrnhK0R2AAE9BA",
+      "clip_ids": [],
+      "status": "ok",
+      "built_at": "2026-07-27T18:40:40Z"
+    },
+    "photo:ocean_golden_warm": {
+      "bucket_id": "photo:ocean_golden_warm",
+      "label": "Океан / золотой час",
+      "description": "океан, берег и волны на закате",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAI2NGpnpflYYJheI-f8BG1bmpwaUiP0AAJCqwACqNdAS5h49dfq22CiPQQ",
+      "file_id_public": "BAACAgIAAxkDAAECWIpqZ6X9raHYsaFXQWFOnyeq5N8hvwACgqoAAgfnQUvRZIn6hxrwSD0E",
+      "clip_ids": [],
+      "status": "ok",
+      "built_at": "2026-07-27T18:39:57Z"
+    },
+    "photo:urban_decay_dark": {
+      "bucket_id": "photo:urban_decay_dark",
+      "label": "Заброшка / распад",
+      "description": "заброшенные здания, руины",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAI2NmpnphOldVj7vJrjXimBeY_T5B5-AAJGqwACqNdAS9jL2EY0WqtgPQQ",
+      "file_id_public": "BAACAgIAAxkDAAECWIxqZ6YXQVtHwP1cXuy2yaD7zyAquwAChKoAAgfnQUtBPbOQCDgM5D0E",
+      "clip_ids": [],
+      "status": "ok",
+      "built_at": "2026-07-27T18:40:23Z"
+    },
+    "photo:urban_night_skyline": {
+      "bucket_id": "photo:urban_night_skyline",
+      "label": "Ночной город / skyline",
+      "description": "ночная городская панорама без дождя и неона",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAI2OGpnpiw6YhXNNf8HxN4rDthERFRPAAJIqwACqNdAS7DZO5SdaE66PQQ",
+      "file_id_public": "BAACAgIAAxkDAAECWI9qZ6YvlpgFcNAxpOik6pnoadrxywAChqoAAgfnQUsGdAm4wetMCD0E",
+      "clip_ids": [],
+      "status": "ok",
+      "built_at": "2026-07-27T18:40:47Z"
+    },
+    "photo:urban_rain_night": {
+      "bucket_id": "photo:urban_rain_night",
+      "label": "Дождливый ночной город",
+      "description": "мокрый ночной город, дождь",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAI2NWpnpgHs3JChXK6nHeTosSrpdaL7AAJDqwACqNdAS7ZqrnurlacrPQQ",
+      "file_id_public": "BAACAgIAAxkDAAECWItqZ6YPMcv20bHm8or8zLkmzgsh_AACg6oAAgfnQUvjfeJZ2f0Y5T0E",
+      "clip_ids": [],
+      "status": "ok",
+      "built_at": "2026-07-27T18:40:15Z"
+    },
+    "photo:warm_field_flowers": {
+      "bucket_id": "photo:warm_field_flowers",
+      "label": "Поле / золотой час",
+      "description": "тёплое поле или луг в золотой час",
+      "s3_url": "",
+      "file_id": "BAACAgIAAxkDAAI2M2pnpYBBWWrMZcy8JTMeGhX4Qo9DAAJBqwACqNdAS8NtlpL7YAUOPQQ",
+      "file_id_public": "BAACAgIAAxkDAAECWIZqZ6WEgifLf2ueOBacM38EllothQACfaoAAgfnQUu2WzkUGm9CrT0E",
+      "clip_ids": [],
+      "status": "ok",
+      "built_at": "2026-07-27T18:37:56Z"
+    }
+  }
+}
