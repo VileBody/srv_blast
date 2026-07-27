@@ -8075,21 +8075,45 @@ class BlastBotApp:
                                         f"Пакет «{pkg}» order={order_id}",
                                     )
                                 await self.credits_db.log_event(tg_id, "payment_confirmed", f"{pkg} +{credits_to_add} кредитов")
-                                # Save RebillId and create subscription for recurrent payments
+                                # Save RebillId and create subscription for recurrent payments.
+                                # GetState does NOT carry RebillId — reading it from there was
+                                # the old bug, and it left this path unable to ever start a
+                                # subscription. The key comes from the webhook (already on the
+                                # payment row by now) or, if that notification was lost, from
+                                # GetCardList by CustomerKey (= tg_id).
                                 is_recurrent = pay.get("is_recurrent", False)
-                                if is_recurrent and payment_id and self.tbank:
+                                if is_recurrent and self.tbank:
                                     try:
-                                        gs = await self.tbank.get_state(payment_id)
-                                        rebill_id = str(gs.get("RebillId", "")) if gs else ""
+                                        fresh = await self.credits_db.get_payment(order_id)
+                                        rebill_id = str((fresh or {}).get("rebill_id", "") or "").strip()
+                                        if not rebill_id:
+                                            rebill_id = await self.tbank.find_rebill_id(str(tg_id))
                                         if rebill_id:
                                             await self.credits_db.update_rebill_id(order_id, rebill_id)
-                                            await self.credits_db.create_subscription(
-                                                tg_id, pkg, rebill_id, pay["amount_rub"],
+                                            if not await self.credits_db.get_active_subscription(tg_id):
+                                                await self.credits_db.create_subscription(
+                                                    tg_id, pkg, rebill_id, pay["amount_rub"],
+                                                )
+                                                await self.credits_db.log_event(
+                                                    tg_id, "subscription_created", f"{pkg} rebill=***{rebill_id[-6:]}",
+                                                )
+                                                log.info("subscription created order=%s rebill=***%s", order_id, rebill_id[-6:])
+                                        else:
+                                            log.error(
+                                                "recurrent payment confirmed with no RebillId (webhook + GetCardList) "
+                                                "— no autopay. order=%s tg_id=%s",
+                                                order_id, tg_id,
                                             )
-                                            await self.credits_db.log_event(
-                                                tg_id, "subscription_created", f"{pkg} rebill=***{rebill_id[-6:]}",
+                                            await self._notify_ops_alert(
+                                                title="Подписка без автосписания",
+                                                chat_id=tg_id,
+                                                extra_lines=[
+                                                    f"пакет: {pkg}",
+                                                    f"order: {order_id}",
+                                                    "T-Bank не отдал RebillId (нотификация + GetCardList) — "
+                                                    "карта не привязалась, обычно СБП/QR/T-Pay.",
+                                                ],
                                             )
-                                            log.info("subscription created order=%s rebill=***%s", order_id, rebill_id[-6:])
                                     except Exception as e:
                                         log.warning("subscription create failed order=%s err=%s", order_id, e)
                                 username = ""
