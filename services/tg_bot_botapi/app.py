@@ -294,6 +294,53 @@ def _bucket_preview_file_id(bucket_id: str) -> str:
     return str(e.get(_BUCKET_PREVIEW_FILE_ID_FIELD) or "").strip()
 
 
+def _live_bucket_ids(bg_mode: str) -> set:
+    """Bucket ids the CURRENT catalog offers for this plane.
+
+    Empty set = the catalog could not be read; callers must treat that as "no
+    opinion" and keep whatever the chat already has, never as "everything is
+    stale" (that would re-rank every chat on every message)."""
+    try:
+        if str(bg_mode or "").strip().lower() == "photo":
+            from mlcore.photo_bucket_catalog import load_photo_catalog
+            return {b.bucket_id for b in load_photo_catalog()}
+        from mlcore.footage_visual_catalog import load_visual_catalog
+        return {b.bucket_id for b in load_visual_catalog()}
+    except Exception:
+        log.exception("vibe_catalog_load_failed bg_mode=%s — keeping stored shortlist", bg_mode)
+        return set()
+
+
+def _stale_vibe_shortlist_reason(ranked_ids: List[str], bg_mode: str) -> str:
+    """Why a persisted vibe shortlist must be re-ranked, or "" to keep it.
+
+    The shortlist is the FULL ranked catalog, so it has to match the catalog set
+    exactly. Comparing by id prefix instead (the old check) only caught a shortlist
+    from the wrong plane: re-cutting the photo catalog keeps every id under
+    "photo:", so a chat that ranked before the change passed the check and was
+    served retired buckets forever, never seeing a new one. Bucket sets get
+    re-cut regularly, so this has to be checked against the catalog itself."""
+    stored = [str(b or "").strip() for b in (ranked_ids or []) if str(b or "").strip()]
+    if not stored:
+        return ""
+    if any(bid.split(":", 1)[0].endswith(("_major", "_minor")) for bid in stored):
+        return "legacy_ids"
+
+    live = _live_bucket_ids(bg_mode)
+    if not live:
+        # Catalog unreadable — fall back to the plane check alone rather than
+        # stranding the chat or re-ranking it on a loop.
+        expected_prefix = "photo:" if str(bg_mode or "").strip().lower() == "photo" else "visual:"
+        return "" if all(b.startswith(expected_prefix) for b in stored) else "wrong_plane"
+
+    stored_set = set(stored)
+    if stored_set - live:
+        return "retired_buckets"
+    if live - stored_set:
+        return "new_buckets"
+    return ""
+
+
 def _vibe_display_label(label: str) -> str:
     """Tidy a vibe label for buttons so it matches the on-video caption: '/' -> ','."""
     import re as _re
@@ -2597,19 +2644,12 @@ class BlastBotApp:
         retry, one bad request permanently strands the chat in the legacy
         artist flow (nothing else re-triggers ranking until new lyrics)."""
         if st.vibe_ranked_ids:
-            expected_prefix = "photo:" if st.bg_mode == "photo" else "visual:"
-            incompatible_ids = [
-                bid for bid in st.vibe_ranked_ids if not bid.startswith(expected_prefix)
-            ]
-            legacy_ids = [
-                bid for bid in st.vibe_ranked_ids
-                if bid.split(":", 1)[0].endswith(("_major", "_minor"))
-            ]
-            if not incompatible_ids and not legacy_ids:
+            reason = _stale_vibe_shortlist_reason(st.vibe_ranked_ids, st.bg_mode)
+            if not reason:
                 return True
             log.info(
-                "vibe_catalog_migration chat=%s incompatible_ids=%d legacy_ids=%d action=rerank",
-                st.chat_id, len(incompatible_ids), len(legacy_ids),
+                "vibe_catalog_migration chat=%s reason=%s stored=%d action=rerank",
+                st.chat_id, reason, len(st.vibe_ranked_ids),
             )
             st.vibe_ranked_ids = []
             st.vibe_labels_by_id = {}
