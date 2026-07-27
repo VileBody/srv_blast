@@ -4,6 +4,10 @@ var SILENT = true;
 if (typeof $!=="undefined" && $.global && $.global.__BLAST){ var __p=$.global.__BLAST; for (var __k in __p){ if (__p[__k]!=null) CONFIG[__k]=__p[__k]; } }
 function log(m){ if(SILENT){try{$.writeln(m);}catch(e){}}else alert(m); }
 function setP(e,m,v){ try{e.property(m).setValue(v);}catch(x){} }
+function fxS(){ try{ return (CONFIG.fxScale && CONFIG.fxScale.i>0) ? CONFIG.fxScale : null; }catch(e){ return null; } }
+function sx(v){ var s=fxS(); return s? v*s.x : v; }
+function sy(v){ var s=fxS(); return s? v*s.y : v; }
+function si(v){ var s=fxS(); return s? v*s.i : v; }
 function findLayer(c,n){ for(var i=1;i<=c.numLayers;i++) if(c.layer(i).name===n) return c.layer(i); return null; }
 function findComp(){ var a=app.project.activeItem,i,it;
   if(CONFIG.targetCompName){for(i=1;i<=app.project.numItems;i++){it=app.project.item(i);if(it instanceof CompItem&&it.name===CONFIG.targetCompName)return it;}}
@@ -21,9 +25,9 @@ function place(comp,L){
 function build(comp){
   var L=comp.layers.addSolid([1,1,1],"old camera",comp.width,comp.height,1); L.adjustmentLayer=true; L.startTime=0; L.inPoint=0; L.outPoint=comp.duration;
   var fx=L.property("ADBE Effect Parade");
-  var us=fx.addProperty("ADBE Unsharp Mask2"); setP(us,"ADBE Unsharp Mask2-0001",400); setP(us,"ADBE Unsharp Mask2-0002",3);
-  var mo=fx.addProperty("ADBE Mosaic"); setP(mo,"ADBE Mosaic-0001",500); setP(mo,"ADBE Mosaic-0002",500);
-  var gb=fx.addProperty("ADBE Gaussian Blur"); setP(gb,"ADBE Gaussian Blur-0001",5);
+  var us=fx.addProperty("ADBE Unsharp Mask2"); setP(us,"ADBE Unsharp Mask2-0001",400); setP(us,"ADBE Unsharp Mask2-0002",si(3));
+  var mo=fx.addProperty("ADBE Mosaic"); setP(mo,"ADBE Mosaic-0001",Math.round(sx(500))); setP(mo,"ADBE Mosaic-0002",Math.round(sy(500)));
+  var gb=fx.addProperty("ADBE Gaussian Blur"); setP(gb,"ADBE Gaussian Blur-0001",si(5));
   var pt=fx.addProperty("ADBE Posterize Time"); setP(pt,"ADBE Posterize Time-0001",10);
   var ge=fx.addProperty("ADBE Geometry2"); setP(ge,"ADBE Geometry2-0011",0); setP(ge,"ADBE Geometry2-0004",115);
   try{ var sg=fx.addProperty("S_GlowEdges"); setP(sg,"S_GlowEdges-0050",1.79); setP(sg,"S_GlowEdges-0052",28); }catch(e){}
