@@ -4354,12 +4354,10 @@ class BlastBotApp:
                 pass
             await cb.answer("Готово")
             await cb.message.answer("Вайбы: " + ", ".join(labels))
-            # Photo flow (4:3): after the vibe, ask the two photo picker steps.
-            # Mirror of tg_bot_botapi (gated by PHOTO_FLOW_ENABLED at entry).
-            if st.bg_mode == "photo":
-                await self._ask_photo_style(cb.message, st)
-            else:
-                await self._ask_subtitles_mode(cb.message, st)
+            # Photo is the footage flow with a different background, so it takes
+            # the same route: subtitle mode now, visuals (transition -> style) and
+            # colours later, in the slot _proceed_to_versions_or_confirm owns.
+            await self._ask_subtitles_mode(cb.message, st)
             return
 
         await cb.answer()
@@ -4870,15 +4868,44 @@ class BlastBotApp:
 
     # ── Photo flow (4:3) — 2-step picker (style -> transition). Mirror of team;
     # UX gated behind PHOTO_FLOW_ENABLED, exit goes to public's post-settings. ──
+    async def _ask_photo_transition(self, message: Message, st: ChatState) -> None:
+        st.stage = STAGE_WAIT_PHOTO_TRANSITION
+        await self.store.set(st)
+        await message.answer(
+            "Шаг 1/2: переход на склейках картинок.\n\n"
+            "• Вспышка\n• Слайд\n• Зум\n• Вжух\n\n"
+            "Можно пропустить — тогда резкая склейка.",
+            reply_markup=_kb(
+                [BTN_PHOTO_TR_FLASH, BTN_PHOTO_TR_SLIDE],
+                [BTN_PHOTO_TR_ZOOM, BTN_PHOTO_TR_WHIP],
+                [BTN_PHOTO_TR_NONE],
+                [BTN_BACK],
+            ),
+        )
+
+    async def _handle_wait_photo_transition(self, message: Message, st: ChatState) -> None:
+        text = str(message.text or "").strip()
+        if text == BTN_BACK:
+            await self._ask_subtitles_mode(message, st)
+            return
+        tr = _PHOTO_TRANSITION_BY_BUTTON.get(text)
+        if tr is None:
+            await message.answer("Выбери переход кнопкой ниже.")
+            return
+        st.photo_transition = tr
+        await self.store.set(st)
+        await self._ask_photo_style(message, st)
+
     async def _ask_photo_style(self, message: Message, st: ChatState) -> None:
         st.stage = STAGE_WAIT_PHOTO_STYLE
         await self.store.set(st)
         await message.answer(
-            "Картинки — шаг 1/2: стилизация (грейд на весь ролик).\n"
+            "Шаг 2/2: стилизация картинок.\n\n"
+            "Выбранный эффект применяется ко всему ролику.\n\n"
             "• Тёплый / Холодный — цветовая температура.\n"
             "• Винтаж / Ч/Б / VHS — плёночные луки.\n"
-            "• Night Vision — зелёное ночное видение с шумом и пикселем.\n"
-            "• Без стилизации — оставить как есть.",
+            "• Night Vision — зелёное ночное видение с шумом и пикселем.\n\n"
+            "Можно пропустить — оставить как есть.",
             reply_markup=_kb(
                 [BTN_PHOTO_STYLE_WARM, BTN_PHOTO_STYLE_COLD],
                 [BTN_PHOTO_STYLE_VINTAGE, BTN_PHOTO_STYLE_BW],
@@ -4891,44 +4918,16 @@ class BlastBotApp:
     async def _handle_wait_photo_style(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()
         if text == BTN_BACK:
-            await self._ask_vibe_shortlist(message, st)
+            await self._ask_photo_transition(message, st)
             return
         style = _PHOTO_STYLE_BY_BUTTON.get(text)
         if style is None:
             await message.answer("Выбери стилизацию кнопкой ниже.")
             return
         st.photo_style = style
+        st.visuals_done = True
         await self.store.set(st)
-        await self._ask_photo_transition(message, st)
-
-    async def _ask_photo_transition(self, message: Message, st: ChatState) -> None:
-        st.stage = STAGE_WAIT_PHOTO_TRANSITION
-        await self.store.set(st)
-        await message.answer(
-            "Шаг 2/2: переход между фото.\n"
-            "• Вспышка / Слайд / Зум / Вжух — варианты смены кадра.\n"
-            "• Без перехода — резкая склейка.",
-            reply_markup=_kb(
-                [BTN_PHOTO_TR_FLASH, BTN_PHOTO_TR_SLIDE],
-                [BTN_PHOTO_TR_ZOOM, BTN_PHOTO_TR_WHIP],
-                [BTN_PHOTO_TR_NONE],
-                [BTN_BACK],
-            ),
-        )
-
-    async def _handle_wait_photo_transition(self, message: Message, st: ChatState) -> None:
-        text = str(message.text or "").strip()
-        if text == BTN_BACK:
-            await self._ask_photo_style(message, st)
-            return
-        tr = _PHOTO_TRANSITION_BY_BUTTON.get(text)
-        if tr is None:
-            await message.answer("Выбери переход кнопкой ниже.")
-            return
-        st.photo_transition = tr
-        await self.store.set(st)
-        # Photo remains a lyric-video flow: choose subtitle mode before confirmation.
-        await self._ask_subtitles_mode(message, st)
+        await self._proceed_to_versions_or_confirm(message, st)
 
     async def _ask_visual_transition(self, message: Message, st: ChatState) -> None:
         st.stage = STAGE_WAIT_VISUAL_TRANSITION
@@ -5949,6 +5948,14 @@ class BlastBotApp:
         }:
             await self._ask_visual_transition(message, st)
             return
+        # Photo has its own transition/style vocabulary (its renderer implements
+        # those, not the footage FX), but it belongs in the SAME slot so the two
+        # flows read identically: visuals here, colours next.
+        if st.bg_mode == "photo" and not st.visuals_done and st.stage not in {
+            STAGE_WAIT_PHOTO_TRANSITION, STAGE_WAIT_PHOTO_STYLE
+        }:
+            await self._ask_photo_transition(message, st)
+            return
         if HOOK_FLOW_ENABLED and not st.colors_done:
             await self._ask_subtitle_color(message, st)
             return
@@ -6009,14 +6016,15 @@ class BlastBotApp:
         text = str(message.text or "").strip()
         if text == BTN_CONFIRM_YES:
             if st.bg_mode == "photo":
-                # Photo style/transition were already selected. Its renderer
-                # supports subtitle modes but not the normal hook/color stack.
+                # Only HOOKS are missing for 4:3 — visuals and colours run in the
+                # normal slots, so they must NOT be force-completed here. Both
+                # flags are cleared for the same reason the other branches clear
+                # colors_done: a reused chat would otherwise carry "already asked"
+                # over from its previous run and silently skip the steps.
                 st.hook_enabled = False
                 st.hook_category = ""
-                st.subtitle_color_hex = ""
-                st.accent_color_hex = ""
-                st.colors_done = True
-                st.visuals_done = True
+                st.colors_done = False
+                st.visuals_done = False
                 await self.store.set(st)
                 await self._proceed_to_versions_or_confirm(message, st)
                 return
