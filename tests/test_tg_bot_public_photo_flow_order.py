@@ -93,6 +93,19 @@ def test_photo_still_skips_hooks(bot: str) -> None:
     assert re.search(r'if st\.bg_mode == "photo":\s*\n(?:.*\n)*?\s*st\.hook_enabled = False', src)
 
 
+def test_public_hub_asks_photo_visuals_before_the_colours() -> None:
+    """In the public bot both slots live in one hub, so their ORDER is decided by
+    the order of the guards inside it — asserting the two handlers separately
+    would still pass if the colour guard were moved above the visuals one."""
+    src = _handler_src(BOTS[1], "_proceed_to_versions_or_confirm")
+    calls = _calls(src)
+    assert "_ask_photo_transition" in calls, calls
+    assert "_ask_subtitle_color" in calls, calls
+    assert calls.index("_ask_photo_transition") < calls.index("_ask_subtitle_color")
+    # and photo sits alongside footage in that slot, not on a bypass around it
+    assert calls.index("_ask_visual_transition") < calls.index("_ask_subtitle_color")
+
+
 def test_team_photo_reaches_versions_without_the_hook_step() -> None:
     calls = _calls(_handler_src(BOTS[0], "_handle_wait_accent_color"))
     assert "_ask_versions" in calls
