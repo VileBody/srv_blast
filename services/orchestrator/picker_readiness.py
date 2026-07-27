@@ -63,25 +63,15 @@ DEFAULT_MIN_BUCKET_CANDIDATES = 5
 DEFAULT_VIDEO_REFERENCE_BUCKETS: Tuple[str, ...] = ("visual:urban_solitude_dark",)
 # Every selectable photo:* bucket is a deploy canary. A single starved exact slot
 # would otherwise pass deployment and fail only after a user selects that vibe.
-DEFAULT_PHOTO_REFERENCE_BUCKETS: Tuple[str, ...] = (
-    "photo:nature_golden_warm",
-    "photo:forest_fog_dark",
-    "photo:warm_field_flowers",
-    "photo:urban_rain_night",
-    "photo:urban_decay_dark",
-    "photo:neon_night_city",
-    "photo:digital_silhouette_cold",
-    "photo:digital_glitch",
-    "photo:lone_figure_scene",
-    "photo:solitary_person_dark",
-    "photo:girl_portrait_light",
-    "photo:girl_golden_outdoor",
-    "photo:couple_light_warm",
-    "photo:couple_moody_dark",
-    "photo:coastal_couple_warm",
-    "photo:performance_crowd",
-    "photo:car_night",
-)
+def default_photo_reference_buckets() -> Tuple[str, ...]:
+    """Every SELECTABLE photo bucket is a deploy canary: a single starved exact
+    slot would otherwise pass deployment and only fail once a user picks that
+    vibe. Derived from the catalog rather than hardcoded — a hardcoded copy
+    silently drifted once buckets were merged/retired and would have failed the
+    gate on ids that no longer exist."""
+    from mlcore.photo_bucket_catalog import load_photo_catalog
+
+    return tuple(b.bucket_id for b in load_photo_catalog())
 
 # A short synthetic timeline (seconds). Deliberately tiny: this proves the
 # interval picker can cover cuts from the pool, not that a real track works.
@@ -540,7 +530,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 dsn=dsn,
                 pool=POOL_PHOTO,
                 baseline=baseline.get(POOL_PHOTO),
-                reference_buckets=DEFAULT_PHOTO_REFERENCE_BUCKETS,
+                reference_buckets=default_photo_reference_buckets(),
                 min_pool_pickable=_env_int(
                     "READINESS_MIN_PHOTO_POOL_PICKABLE", DEFAULT_MIN_PHOTO_POOL_PICKABLE
                 ),

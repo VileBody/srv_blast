@@ -45,6 +45,36 @@ def _pick(bucket, mapped, top_n, seed):
     return m[:top_n]
 
 
+def _register(catalog, *, out_dir: Path, store_path: Path, log) -> int:
+    """Publish the reviewed reels to the bots: Telegram file_id per bucket, then
+    rewrite the previews store so it holds EXACTLY the active buckets (stale
+    entries from retired/merged buckets are dropped)."""
+    store = bp.empty_store()
+    sent = missing = 0
+    for b in catalog:
+        mp4 = out_dir / f"{b.bucket_id.replace(':', '__')}.mp4"
+        if not mp4.exists():
+            log.warning("no reel for %s (%s)", b.bucket_id, mp4.name); missing += 1; continue
+        # previews are sent caption-less: the name lives on the video and button
+        file_id, file_id_public = bbp._capture_file_ids(mp4, "")
+        if not file_id and not file_id_public:
+            log.error("no file_id captured for %s — check bot tokens / chat id", b.bucket_id)
+            missing += 1
+            continue
+        bp.previews_upsert(store, bp.PreviewEntry(
+            bucket_id=b.bucket_id, label=b.label, description=b.lead,
+            file_id=file_id, file_id_public=file_id_public,
+            status="ok", built_at=bp.now_iso(),
+        ))
+        bp.save_previews_store(store_path, store)
+        log.info("registered %s file_id=%s public=%s", b.bucket_id,
+                 (file_id[:10] + "…") if file_id else "-",
+                 (file_id_public[:10] + "…") if file_id_public else "-")
+        sent += 1
+    log.info("register done: sent=%d missing=%d -> %s", sent, missing, store_path)
+    return 1 if missing else 0
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--snapshot", default="data/photo_tags_snapshot_real.json")
@@ -57,6 +87,12 @@ def main(argv=None) -> int:
     ap.add_argument("--json-dir", default="data/photo_bucket_examples")
     ap.add_argument("--min-clips", type=int, default=3)
     ap.add_argument("--render-timeout-s", type=float, default=600.0)
+    ap.add_argument("--register", action="store_true",
+                    help="skip rendering: send the already-built reels to the backlog chat, "
+                         "capture Telegram file_id(s) and write the photo previews store "
+                         "(what the bots actually read). Needs TG_BOT_TOKEN / "
+                         "TG_PREVIEW_SOURCE_BOT_TOKEN + FOOTAGE_PREVIEW_BACKLOG_CHAT_ID.")
+    ap.add_argument("--previews-path", default="data/photo_bucket_previews.json")
     args = ap.parse_args(argv)
 
     import logging
@@ -73,6 +109,10 @@ def main(argv=None) -> int:
     auth = (os.environ.get("ASSET_UI_USER", ""), os.environ.get("ASSET_UI_PASS", ""))
     tmpl = (_ROOT / "templates" / "bucket_preview" / "photo_montage_template.jsx").read_text(encoding="utf-8")
     ae_workdir = Path(r"C:\ae_jobs\photo_examples"); ae_workdir.mkdir(parents=True, exist_ok=True)
+
+    if args.register:
+        return _register(catalog, out_dir=_ROOT / args.out_dir,
+                         store_path=_ROOT / args.previews_path, log=log)
 
     built = thin = failed = 0
     for b in catalog:

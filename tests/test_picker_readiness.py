@@ -313,9 +313,10 @@ def test_photo_gate_applies_standalone_photo_contract_without_bg_mode_env():
 
 def test_photo_required_canaries_cover_every_selectable_photo_bucket():
     from mlcore.photo_bucket_catalog import load_photo_catalog
-    from services.orchestrator.picker_readiness import DEFAULT_PHOTO_REFERENCE_BUCKETS
+    from services.orchestrator.picker_readiness import default_photo_reference_buckets
 
-    assert set(DEFAULT_PHOTO_REFERENCE_BUCKETS) == {bucket.bucket_id for bucket in load_photo_catalog()}
+    # derived from the catalog, so merged/retired buckets can never drift here
+    assert set(default_photo_reference_buckets()) == {bucket.bucket_id for bucket in load_photo_catalog()}
 
 def test_photo_readiness_fails_when_quality_backfill_is_incomplete():
     records = [
