@@ -525,14 +525,22 @@ def run_tagging_batch(
 
     if fetch_tagged_fn is None:
         def fetch_tagged_fn() -> set:
-            from mlcore.footage_tags_db import fetch_tagged_clip_ids, init_schema
+            from mlcore.footage_tags_db import (
+                SOURCE_VIDEO,
+                fetch_tagged_clip_ids,
+                init_schema,
+            )
 
             async def _go() -> set:
                 import asyncpg  # type: ignore
                 conn = await asyncpg.connect(dsn=db_url)
                 try:
                     await init_schema(conn)
-                    return await fetch_tagged_clip_ids(conn)
+                    # Scoped to this pool: unscoped, a clip_id tagged only on the
+                    # PHOTO side counts as done and its video never gets tagged.
+                    # That is precisely the 221 clips the old single-column key
+                    # overwrote, i.e. the ones a re-tag is supposed to recover.
+                    return await fetch_tagged_clip_ids(conn, source=SOURCE_VIDEO)
                 finally:
                     await conn.close()
             return _asyncio.run(_go())
