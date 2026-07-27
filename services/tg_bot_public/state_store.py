@@ -58,8 +58,8 @@ STAGE_WAIT_F2_SHAPE = "WAIT_F2_SHAPE"
 STAGE_WAIT_F1_SOUND = "WAIT_F1_SOUND"
 # F1 «Звук» — wait for optional subtitle text (or skip). Mirror of tg_bot_botapi.
 STAGE_WAIT_F1_TEXT = "WAIT_F1_TEXT"
-# Photo flow (bg_mode == "photo", behind PHOTO_FLOW_ENABLED) — two F3-style steps:
-# stylization grade, then transition between photos. Mirror of tg_bot_botapi.
+# Photo flow (bg_mode == "photo", behind PHOTO_FLOW_ENABLED). Same slot as the
+# footage visuals: transition on cuts, then stylization. Mirror of tg_bot_botapi.
 STAGE_WAIT_PHOTO_STYLE = "WAIT_PHOTO_STYLE"
 STAGE_WAIT_PHOTO_TRANSITION = "WAIT_PHOTO_TRANSITION"
 # Hook battery — wait for optional F1 sound. Mirror of tg_bot_botapi.
@@ -170,7 +170,7 @@ class ChatState(BaseModel):
     pending_bg_mode: str = ""
     # Solid background color key when bg_mode == "solid": "white" | "green".
     bg_solid_color: str = ""
-    # Photo flow (bg_mode == "photo") — two F3-style picks, mirror of tg_bot_botapi.
+    # Photo flow (bg_mode == "photo") — transition + stylization, mirror of tg_bot_botapi.
     # photo_style: "" | none | warm | cold | vintage | bw | vhs | night_vision.
     # photo_transition: "" | flash | none | slide | zoom | whip.
     photo_style: str = ""

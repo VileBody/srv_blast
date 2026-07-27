@@ -549,7 +549,8 @@ _F2_SHAPE_BY_BUTTON = {
     BTN_F2_SHAPE_STAR2: "star2",
     BTN_F2_SHAPE_ELIPSE: "elipse",
 }
-# Photo flow (4:3) — two F3-style picker steps. Step 1: stylization grade applied
+# Photo flow (4:3) — transition + stylization, asked where footage asks its
+# own visuals. Stylization is the grade applied
 # over the whole render (button → photo_style id, schema Literal contract). The id
 # set must stay in sync with schemas.SendAudioS3Request.photo_style.
 BTN_PHOTO_STYLE_NONE = "Без стилизации"
@@ -2401,7 +2402,7 @@ class BlastBotApp:
             return
         if text == BTN_BG_PICTURES_PHOTO and _photo_flow_enabled():
             # Photo flow (4:3): reuse the vibe shortlist (PHOTO pool), then the
-            # two F3-style photo picker steps run after the vibe is confirmed.
+            # the photo transition/stylization pair runs later, in the visuals slot.
             st.bg_mode = "photo"
             st.bg_solid_color = ""
             await self.store.set(st)
