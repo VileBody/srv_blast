@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import sys
 import types
 from types import SimpleNamespace
@@ -464,6 +465,48 @@ def test_tbank_notify_creates_subscription_for_recurrent_payment() -> None:
     assert credits_db.rebill_updates == [("ord-1", "rebill-123")]
     assert credits_db.subscriptions == [(777, "Триал", "rebill-123", 149)]
     assert ("subscription_created" in [event for _, event, _ in credits_db.events])
+
+
+def test_tbank_notify_redacts_sensitive_payload_from_logs(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    credits_db = _FakeCreditsDBNotify()
+    credits_db.payment["is_recurrent"] = True
+    settings = SimpleNamespace(
+        admin_panel_password="secret",
+        tg_bot_username="",
+        manager_chat_id=0,
+        admin_panel_port=18080,
+        season_redis_prefix="test:season",
+    )
+    app = build_app(
+        credits_db=credits_db,
+        state_store=_FakeStateStore(),
+        settings=settings,
+        tbank_client=_FakeTBankClient(),
+        bot_ref=[None],
+    )
+
+    with caplog.at_level(logging.INFO):
+        response = TestClient(app).post(
+            "/api/tbank/notify",
+            json={
+                "OrderId": "ord-sensitive",
+                "Status": "CONFIRMED",
+                "PaymentId": "pay-1",
+                "RebillId": "rebill-secret-value",
+                "Pan": "220015******5116",
+                "Token": "notification-token-secret",
+            },
+        )
+
+    messages = "\n".join(record.getMessage() for record in caplog.records)
+    assert response.status_code == 200
+    assert "order=ord-sensitive" in messages
+    assert "rebill_present=True" in messages
+    assert "notification-token-secret" not in messages
+    assert "rebill-secret-value" not in messages
+    assert "220015******5116" not in messages
 
 
 def test_tbank_notify_bootstraps_recurrent_subscription_on_duplicate_confirmed() -> None:

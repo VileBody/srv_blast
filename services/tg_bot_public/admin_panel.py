@@ -4021,7 +4021,13 @@ def build_app(
         except Exception:
             return PlainTextResponse("OK", status_code=200)
 
-        log.info("tbank notify: %s", data)
+        log.info(
+            "tbank notify: order=%s status=%s payment_id=%s rebill_present=%s",
+            str(data.get("OrderId", "")),
+            str(data.get("Status", "")),
+            str(data.get("PaymentId", "")),
+            bool(str(data.get("RebillId", "")).strip()),
+        )
 
         # Verify token — reject if no client configured or invalid signature
         if not tbank_client:
