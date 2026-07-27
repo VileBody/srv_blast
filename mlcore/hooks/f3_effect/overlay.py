@@ -122,12 +122,23 @@ def build_overlay_jsx(
     hook_extend: Optional[str] = None,
     drop_time: float,
     assets: Optional[Dict[str, Any]] = None,
+    comp_var: str = "MAIN_COMP",
 ) -> str:
     """Return the injectable F3 JSX block. Empty selection => "".
 
     assets (all optional, job-relative media paths under media/...):
       hook_sound, transition_sound, extra_sound, logo
+
+    comp_var is the JSX global holding the comp to decorate. It defaults to the
+    footage render's MAIN_COMP; the 4:3 photo render passes PHOTO_COMP, whose
+    photo layers are the cuts. Binding this by name (rather than hardcoding
+    MAIN_COMP) is what lets one effect library serve both renders — pointing the
+    block at a comp with no footage layers silently produces no cuts, and every
+    per-cut effect becomes a no-op.
     """
+    comp_var = str(comp_var or "MAIN_COMP").strip()
+    if not comp_var.isidentifier():
+        raise ValueError(f"comp_var must be a JS identifier, got {comp_var!r}")
     if not (hook or transition or extra):
         return ""
 
@@ -157,8 +168,8 @@ def build_overlay_jsx(
     parts: list[str] = []
     parts.append("/* ===== F3 «Эффект» overlay (injected by build worker) ===== */")
     parts.append("(function(){")
-    parts.append('  if (typeof MAIN_COMP === "undefined" || !MAIN_COMP) { return; }')
-    parts.append("  var __f3_comp = MAIN_COMP;")
+    parts.append(f'  if (typeof {comp_var} === "undefined" || !{comp_var}) {{ return; }}')
+    parts.append(f"  var __f3_comp = {comp_var};")
     parts.append("  var __f3_name = __f3_comp.name;")
     parts.append(f"  var __f3_drop = {_js(drop)};")
     parts.append(f'  var __f3_place = "below:{_PLACE_REF}";')

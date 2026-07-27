@@ -393,7 +393,7 @@ def _build_f2_overlay_js(full_edit_config: Dict[str, Any]) -> str:
     return overlay
 
 
-def _build_f3_overlay_js(full_edit_config: Dict[str, Any]) -> str:
+def _build_f3_overlay_js(full_edit_config: Dict[str, Any], *, comp_var: str = "MAIN_COMP") -> str:
     """
     Если в full_edit_config есть блок "f3" — собирает инъектируемый JSX-блок
     эффектов («Эффект»: хук + переход + грейд + звук + лого). Блок встраивается
@@ -436,10 +436,11 @@ def _build_f3_overlay_js(full_edit_config: Dict[str, Any]) -> str:
         hook_extend=hook_extend,
         drop_time=float(drop_time),
         assets=assets,
+        comp_var=comp_var,
     )
     LOGGER.info(
-        "f3 fx present hook=%s trans=%s extra=%s extra_full=%s extend=%s js_len=%d",
-        hook, transition, extra, extra_full, hook_extend, len(overlay),
+        "f3 fx present hook=%s trans=%s extra=%s extra_full=%s extend=%s comp=%s js_len=%d",
+        hook, transition, extra, extra_full, hook_extend, comp_var, len(overlay),
     )
     return overlay
 
@@ -687,6 +688,7 @@ def build_photo_project(
     audio_offset_sec: Optional[float] = None,
     subtitle_project_jsx: str = "",
     subtitle_comp_name: str = "",
+    f3_overlay_js: str = "",
 ) -> Tuple[Path, Path]:
     """Build the standalone 4:3 PHOTO render (photo_template.j2).
 
@@ -756,6 +758,10 @@ def build_photo_project(
         if str(subtitle_project_jsx).strip()
         else photo_jsx
     )
+    # The effect block goes AFTER the photo template: it binds to PHOTO_COMP,
+    # which that template publishes, and reads the photo layers as its cuts.
+    if str(f3_overlay_js).strip():
+        jsx = jsx.rstrip() + "\n\n" + str(f3_overlay_js).strip() + "\n"
     out_jsx.write_text(jsx, encoding="utf-8")
 
     LOGGER.info(
