@@ -3146,10 +3146,18 @@ class BlastBotApp:
         # feature — the photo build reuses the canonical subtitle project, so
         # SUBTITLES_FORCE_FILL_HEX / focus hex land exactly as for footage.
         if st.bg_mode == "photo":
-            st.hook_enabled = False
-            st.hook_category = ""
+            # Same effect library as footage: the F3 block is bound to PHOTO_COMP
+            # at build time, so these buttons drive the real, proven effects (and
+            # reuse their preview reels). The hook sub-step is skipped — hooks are
+            # the one thing not ported to 4:3.
+            st.hook_enabled = True
+            st.hook_category = "effect"
+            st.effect_hook = ""
+            st.effect_hook_extend = ""
+            st.photo_style = ""
+            st.photo_transition = ""
             await self.store.set(st)
-            await self._ask_photo_transition(message, st)
+            await self._ask_effect_transition(message, st)
             return
         # Strobe bg: text is forced white + auto-inverts (Difference), so no color
         # customization; and only the cut-transition style — not the full hook flow.
@@ -4152,8 +4160,11 @@ class BlastBotApp:
         await self._send_option_previews(
             message, [f"effect_transition:{v}" for v in _FX_TRANSITION_BY_BUTTON.values()]
         )
+        # Photo is offered 2 of the 3 effect steps (no hook), so it counts 1/2.
+        _hdr = "Шаг 1/2" if st.bg_mode == "photo" else "Шаг 2/3"
+        _what = "картинок" if st.bg_mode == "photo" else "футажа"
         await message.answer(
-            "Шаг 2/3: переход на склейках футажа.\n"
+            f"{_hdr}: переход на склейках {_what}.\n"
             "Можно пропустить.",
             reply_markup=_kb(
                 [BTN_FX_TR_SNAP, BTN_FX_TR_MINIMAX],
@@ -4167,6 +4178,10 @@ class BlastBotApp:
     async def _handle_wait_effect_transition(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()
         if text == BTN_BACK:
+            # Photo never saw the hook step, so its BACK goes one further up.
+            if st.bg_mode == "photo":
+                await self._ask_subtitles_mode(message, st)
+                return
             await self._ask_effect_hook(message, st)
             return
         if text == BTN_FX_SKIP:
@@ -4189,7 +4204,9 @@ class BlastBotApp:
             message, [f"effect_extra:{v}" for v in _FX_EXTRA_BY_BUTTON.values()]
         )
         await message.answer(
-            "Шаг 3/3: стилизация футажа до дропа (грейд 00:00 → дроп).\n"
+            f"{'Шаг 2/2' if st.bg_mode == 'photo' else 'Шаг 3/3'}: стилизация "
+            f"{'картинок' if st.bg_mode == 'photo' else 'футажа'} до дропа "
+            "(грейд 00:00 → дроп).\n"
             "Можно пропустить.",
             reply_markup=_kb(
                 [BTN_FX_EX_XEROX, BTN_FX_EX_ANALOG],
@@ -4217,8 +4234,14 @@ class BlastBotApp:
         if not st.effect_extra:
             st.effect_extra_full = False  # no grade → nothing to stretch
         await self.store.set(st)
-        # at least one of hook/transition/extra is required
+        # at least one of hook/transition/extra is required — but photo is only
+        # offered two of the three, so skipping both is a valid "no effects".
         if not (st.effect_hook or st.effect_transition or st.effect_extra):
+            if st.bg_mode == "photo":
+                st.hook_enabled = False
+                await self.store.set(st)
+                await self._ask_subtitle_color(message, st)
+                return
             await message.answer(
                 "Нужно выбрать хотя бы один эффект из трёх. Начнём заново с хука."
             )
@@ -4305,6 +4328,10 @@ class BlastBotApp:
         if st.effect_hook_extend:
             parts.append(f"растяжка «{st.effect_hook_extend}»")
         await message.answer("Ок, «Эффект»: " + ", ".join(parts) + ".")
+        # Photo runs the effects as its visuals slot, so the colours still follow.
+        if st.bg_mode == "photo":
+            await self._ask_subtitle_color(message, st)
+            return
         await self._ask_versions(message, st)
 
     # ── F2 «Объект» — single shape sub-picker (rest of combo is server-side) ──
@@ -5196,17 +5223,11 @@ class BlastBotApp:
                 )
                 else None
             ),
-            # Photo flow (4:3): stylization + transition, only when bg_mode=="photo".
-            photo_style=(
-                str(st.photo_style)
-                if (st.bg_mode == "photo" and st.photo_style)
-                else None
-            ),
-            photo_transition=(
-                str(st.photo_transition)
-                if (st.bg_mode == "photo" and st.photo_transition)
-                else None
-            ),
+            # The 4:3 template still implements its own grade/intro, but nothing
+            # selects them any more: photo picks from the footage effect library
+            # above. Sending nothing leaves both off so the two cannot stack.
+            photo_style=None,
+            photo_transition=None,
             # Strobe bg auto-inverts WHITE text (Difference blend) — ignore any
             # custom subtitle color so the text stays white.
             subtitle_color_hex=(None if st.bg_mode == "solid_strobe" else (str(st.subtitle_color_hex) or None)),

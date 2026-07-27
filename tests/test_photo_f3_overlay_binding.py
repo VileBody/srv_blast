@@ -1,0 +1,77 @@
+# -*- coding: utf-8 -*-
+"""The F3 effect block must bind to the comp that actually holds the photos.
+
+The block decorates cuts, and it finds cuts by scanning the layers of one comp.
+For the footage render that comp is MAIN_COMP. The photo render nests a
+TRANSPARENT subtitle comp over a separate "Photo Render" comp — and MAIN_COMP is
+the subtitle one. Pointed there, __f3_detectCuts finds zero footage layers, so
+every per-cut effect quietly does nothing while the build still reports success.
+That silent no-op is why 4:3 ended up with a bespoke effect set instead.
+"""
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from mlcore.hooks.f3_effect.overlay import build_overlay_jsx
+
+
+def test_the_block_binds_to_the_comp_it_is_given() -> None:
+    js = build_overlay_jsx(transition="snap_wipe", drop_time=8.0, comp_var="PHOTO_COMP")
+
+    assert "var __f3_comp = PHOTO_COMP;" in js
+    assert 'typeof PHOTO_COMP === "undefined"' in js
+    # nothing may still reach for the footage comp, or the photo build would
+    # decorate the subtitle comp instead and produce no cuts
+    assert "MAIN_COMP" not in js
+
+
+def test_the_footage_render_is_unchanged_by_default() -> None:
+    js = build_overlay_jsx(transition="snap_wipe", drop_time=8.0)
+    assert "var __f3_comp = MAIN_COMP;" in js
+
+
+def test_comp_var_must_be_an_identifier() -> None:
+    """It is interpolated straight into JSX, so anything else is an injection."""
+    with pytest.raises(ValueError):
+        build_overlay_jsx(transition="snap_wipe", drop_time=1.0, comp_var='x; alert("hi")')
+
+
+def test_the_photo_template_publishes_that_comp() -> None:
+    tpl = (Path(__file__).resolve().parents[1] / "templates" / "photo_template.j2").read_text(
+        encoding="utf-8"
+    )
+    assert "$.global.PHOTO_COMP = comp;" in tpl
+    # published AFTER the comp exists, otherwise the global would be undefined
+    assert tpl.index("var comp = project.items.addComp") < tpl.index("$.global.PHOTO_COMP")
+
+
+def test_the_photo_build_appends_the_block_after_the_template() -> None:
+    """Order matters: the block reads PHOTO_COMP, which the template defines."""
+    import inspect
+
+    from app import project_builder
+
+    src = inspect.getsource(project_builder.build_photo_project)
+    assert "f3_overlay_js" in src
+    assert src.index("photo_jsx = tpl.render") < src.index("f3_overlay_js).strip()")
+
+
+def test_run_py_rebuilds_the_block_for_the_photo_comp() -> None:
+    """build_full_project already emitted a MAIN_COMP-bound copy for subtitles;
+    the photo branch needs its own copy or the effects never reach the photos."""
+    src = (Path(__file__).resolve().parents[1] / "run.py").read_text(encoding="utf-8")
+    assert 'comp_var="PHOTO_COMP"' in src
+    assert "f3_overlay_js=photo_f3_overlay_js" in src
+
+
+def test_the_orchestrator_no_longer_defaults_the_bespoke_flash_on() -> None:
+    """With F3 owning the cuts, a defaulted 4:3 flash would stack a second one."""
+    src = (
+        Path(__file__).resolve().parents[1]
+        / "services" / "orchestrator" / "tasks.py"
+    ).read_text(encoding="utf-8")
+    assert 'req.get("photo_transition") or "none"' in src
+    assert 'req.get("photo_transition") or "flash"' not in src

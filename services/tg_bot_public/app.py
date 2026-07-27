@@ -4936,7 +4936,7 @@ class BlastBotApp:
             message, [f"effect_transition:{v}" for v in _FX_TRANSITION_BY_BUTTON.values()]
         )
         await message.answer(
-            "Шаг 1/2: переход на склейках футажа.\n\n"
+            f"Шаг 1/2: переход на склейках {'картинок' if st.bg_mode == 'photo' else 'футажа'}.\n\n"
             "• Снап-вайп\n• Минимакс\n• Инверт\n• Экстракт\n• Вспышки\n\n"
             "Можно пропустить.",
             reply_markup=_kb(
@@ -4970,7 +4970,7 @@ class BlastBotApp:
         # state is already WAIT_VISUAL_STYLE, so its buttons are rejected as
         # unknown styles. Reply keyboards persist through the preview messages.
         await message.answer(
-            "Шаг 2/2: стилизация футажа.\n\n"
+            f"Шаг 2/2: стилизация {'картинок' if st.bg_mode == 'photo' else 'футажа'}.\n\n"
             "Выбранный эффект применяется ко всему ролику.\n\n"
             "• Ксерокс\n• Аналог-глитч\n• Неон\n• Старая камера\n"
             "• Ч/Б\n• Crystal Glow\n• Night Vision\n• Wave\n\n"
@@ -5943,18 +5943,14 @@ class BlastBotApp:
         if st.bg_mode in {"solid", "solid_strobe"} and not st.visuals_done and st.stage != STAGE_WAIT_STROBE_CUT:
             await self._ask_strobe_cut(message, st)
             return
-        if st.bg_mode == "footage" and not st.visuals_done and st.stage not in {
+        # Photo uses the SAME effect library as footage — the F3 block is bound to
+        # PHOTO_COMP at build time, so these buttons drive the real, proven
+        # effects (and reuse their preview reels) instead of a parallel 4:3-only
+        # set that nothing else exercises.
+        if st.bg_mode in {"footage", "photo"} and not st.visuals_done and st.stage not in {
             STAGE_WAIT_VISUAL_TRANSITION, STAGE_WAIT_VISUAL_STYLE
         }:
             await self._ask_visual_transition(message, st)
-            return
-        # Photo has its own transition/style vocabulary (its renderer implements
-        # those, not the footage FX), but it belongs in the SAME slot so the two
-        # flows read identically: visuals here, colours next.
-        if st.bg_mode == "photo" and not st.visuals_done and st.stage not in {
-            STAGE_WAIT_PHOTO_TRANSITION, STAGE_WAIT_PHOTO_STYLE
-        }:
-            await self._ask_photo_transition(message, st)
             return
         if HOOK_FLOW_ENABLED and not st.colors_done:
             await self._ask_subtitle_color(message, st)
@@ -7587,17 +7583,11 @@ class BlastBotApp:
                 )
                 else None
             ),
-            # Photo flow (4:3): stylization + transition, only when bg_mode=="photo".
-            photo_style=(
-                str(st.photo_style)
-                if (st.bg_mode == "photo" and st.photo_style)
-                else None
-            ),
-            photo_transition=(
-                str(st.photo_transition)
-                if (st.bg_mode == "photo" and st.photo_transition)
-                else None
-            ),
+            # The 4:3 template still implements its own grade/intro, but nothing
+            # selects them any more: photo picks from the footage effect library
+            # above. Sending nothing leaves both off so the two cannot stack.
+            photo_style=None,
+            photo_transition=None,
             # Strobe bg auto-inverts WHITE text (Difference) — ignore custom color.
             subtitle_color_hex=(None if st.bg_mode == "solid_strobe" else (str(st.subtitle_color_hex) or None)),
             accent_color_hex=(None if st.bg_mode == "solid_strobe" else (str(st.accent_color_hex) or None)),

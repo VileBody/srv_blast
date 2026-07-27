@@ -1831,7 +1831,11 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
         # unrelated value. An explicit request color still overrides this below.
         env["SUBTITLES_FORCE_FILL_HEX"] = "#FFFFFF"
         photo_style = str(req.get("photo_style") or "none").strip().lower() or "none"
-        photo_transition = str(req.get("photo_transition") or "flash").strip().lower() or "flash"
+        # Default OFF, not "flash". Cuts and grade now come from the same F3
+        # library footage uses (effect_transition / effect_extra, bound to
+        # PHOTO_COMP). Defaulting the 4:3 template's own flash to on would stack
+        # a second, different flash on every cut.
+        photo_transition = str(req.get("photo_transition") or "none").strip().lower() or "none"
         _photo_styles = {"none", "warm", "cold", "vintage", "bw", "vhs", "night_vision"}
         _photo_transitions = {"flash", "none", "slide", "zoom", "whip"}
         if photo_style not in _photo_styles:

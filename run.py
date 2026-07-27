@@ -244,6 +244,18 @@ def main() -> int:
                 footage_config_path=footage_config_path,
                 out_dir=subtitle_build_dir,
             )
+            # The F3 effects the user picked (transition on cuts + stylization)
+            # are the SAME library footage uses. build_full_project already
+            # emitted a copy of the block, but bound to MAIN_COMP — for photo
+            # that is the nested subtitle comp, which owns no footage layers, so
+            # that copy finds zero cuts and does nothing. Rebuild it against
+            # PHOTO_COMP, which the photo template publishes.
+            from app.project_builder import _build_f3_overlay_js  # noqa: E402
+
+            photo_f3_overlay_js = _build_f3_overlay_js(
+                json.loads(full_edit_config_path.read_text(encoding="utf-8")),
+                comp_var="PHOTO_COMP",
+            )
             out_json, out_jsx = build_photo_project(
                 repo_root=REPO_ROOT,
                 photos=photos,
@@ -254,6 +266,7 @@ def main() -> int:
                 audio_offset_sec=float(os.environ.get("USER_CLIP_START_SEC") or 0.0),
                 subtitle_project_jsx=subtitle_jsx_path.read_text(encoding="utf-8"),
                 subtitle_comp_name=str(AE_PROJECT["main_comp"]["name"]),
+                f3_overlay_js=photo_f3_overlay_js,
             )
             print("\n[OK] PHOTO project build (4:3):")
             print(f"  - photos: {len(photos)}  segments: {len(segments)}")

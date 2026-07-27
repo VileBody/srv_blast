@@ -101,6 +101,12 @@
 
     var COMP_NAME = "Photo Render";
     var comp = project.items.addComp(COMP_NAME, COMP_W, COMP_H, 1.0, totalDur, FPS);
+    // Published for the F3 effect block appended after this template. It is the
+    // footage render's MAIN_COMP equivalent: the comp whose layers are the cuts.
+    // Without it the block would bind to MAIN_COMP — the nested SUBTITLE comp,
+    // which holds no footage layers, so every per-cut effect would silently do
+    // nothing while still reporting success.
+    $.global.PHOTO_COMP = comp;
     logLine("INFO", "photo comp " + COMP_W + "x" + COMP_H + " dur=" + totalDur + " segs=" + SEGMENTS.length + " style=" + STYLE + " trans=" + TRANSITION);
 
     // ====================================================================
