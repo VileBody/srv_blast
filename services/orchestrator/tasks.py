@@ -2833,10 +2833,20 @@ def _ensure_video_picker_artifacts_from_registry(
                 WHERE source = 'video'
                 """
             )
+            # The tags table is a SECOND source of truth for the picker. Keying the
+            # cache marker on footage_assets alone meant a re-tag left every
+            # already-hydrated node serving its stale snapshot.
+            tags_revision = await conn.fetchval(
+                """
+                SELECT COALESCE(MAX(updated_at)::text, '')
+                FROM footage_tags
+                WHERE source = 'video'
+                """
+            )
             return (
                 records,
                 filter_snapshot_to_pool(snapshot_rows, pool_ids),
-                f"{len(records)}:{str(revision or '')}",
+                f"{len(records)}:{str(revision or '')}:{str(tags_revision or '')}",
             )
         finally:
             await conn.close()
@@ -2962,7 +2972,21 @@ def _ensure_photo_picker_artifacts_from_registry(
                 WHERE source = 'photo'
                 """
             )
-            revision = f"{len(records)}:{str(revision_raw or '')}"
+            # The tags table is a SECOND source of truth for the picker (theme
+            # tags, and for photos the framing/quality backfill). Keying the cache
+            # marker on footage_assets alone meant a re-tag or a framing backfill
+            # left every already-hydrated node serving its stale snapshot.
+            tags_revision_raw = await conn.fetchval(
+                """
+                SELECT COALESCE(MAX(updated_at)::text, '')
+                FROM footage_tags
+                WHERE source = 'photo'
+                """
+            )
+            revision = (
+                f"{len(records)}:{str(revision_raw or '')}"
+                f":{str(tags_revision_raw or '')}"
+            )
             return records, filter_snapshot_to_pool(snapshot_rows, pool_ids), revision
         finally:
             await conn.close()
