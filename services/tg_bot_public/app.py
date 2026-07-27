@@ -162,7 +162,7 @@ FOOTAGE_VIBE_FLOW_ENABLED = (os.environ.get("FOOTAGE_VIBE_FLOW_ENABLED", "1").st
                              in {"1", "true", "yes", "on", "enabled"})
 
 # Photo flow (4:3) toggle. The "Картинки" background routes to bg_mode="photo":
-# the vibe shortlist is reused (PHOTO pool), then two F3-style picker steps
+# the vibe shortlist is reused (PHOTO pool), then the transition/stylization pair
 # (photo_style → photo_transition) run before the version count, and the render
 # uses the 1920×1440 photo template. UX ported 1:1 from tg_bot_botapi but gated
 # OFF here until the team bot validates it; state/client/stages mirror regardless
@@ -244,7 +244,7 @@ VIBE_STAGES = frozenset({
     STAGE_WAIT_VIBE,
 })
 
-# Photo flow (4:3): stage(s) carrying the two F3-style photo picker steps.
+# Photo flow (4:3): stages carrying the transition + stylization picks.
 # Mirror of tg_bot_botapi; routing is gated behind PHOTO_FLOW_ENABLED.
 PHOTO_STAGES = frozenset({
     STAGE_WAIT_PHOTO_STYLE,
@@ -714,7 +714,7 @@ _F2_SHAPE_RU_BY_ID = {v: k for k, v in F2_SHAPE_LABELS_RU.items()}
 _F4_DEVICE_RU_BY_ID = {v: k for k, v in F4_MOTION_DEVICE_LABELS_RU.items()}
 _F5_DEVICE_RU_BY_ID = {v: k for k, v in _HOOK_DEVICE_BY_BUTTON.items()}
 
-# Photo flow (4:3) — two F3-style picker steps. Mirror of tg_bot_botapi; UX is
+# Photo flow (4:3) — transition + stylization. Mirror of tg_bot_botapi; UX is
 # gated behind PHOTO_FLOW_ENABLED but the data layer (buttons/maps/id sets) is
 # mirrored for CI parity. Id sets must stay in sync with the schema Literals.
 BTN_PHOTO_STYLE_NONE = "Без стилизации"
