@@ -30,7 +30,7 @@ _MOOD_ALLOWED = {"major", "minor"}
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS footage_tags (
-    clip_id      TEXT PRIMARY KEY,
+    clip_id      TEXT      NOT NULL,
     file_name    TEXT      NOT NULL DEFAULT '',
     s3_key       TEXT      NOT NULL DEFAULT '',
     video_key    TEXT      NOT NULL DEFAULT '',
@@ -41,7 +41,8 @@ CREATE TABLE IF NOT EXISTS footage_tags (
     tagger       TEXT      NOT NULL DEFAULT '',
     source       TEXT      NOT NULL DEFAULT 'video',
     framing      JSONB     NOT NULL DEFAULT '{}'::jsonb,
-    updated_at   TIMESTAMP NOT NULL DEFAULT NOW()
+    updated_at   TIMESTAMP NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (source, clip_id)
 );
 
 -- Idempotent migration for tables created before the photo pool existed:
@@ -50,6 +51,26 @@ ALTER TABLE footage_tags ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT '
 ALTER TABLE footage_tags ADD COLUMN IF NOT EXISTS framing JSONB NOT NULL DEFAULT '{}'::jsonb;
 
 CREATE INDEX IF NOT EXISTS idx_footage_tags_updated ON footage_tags(updated_at);
+-- Repoint the primary key from clip_id to (source, clip_id). The pools share one
+-- numeric id space (the same Pinterest id can be a .mp4 in the video prefix and a
+-- .jpg in the photo prefix), so with clip_id alone a photo upsert did not collide
+-- with the video row — it OVERWROTE it and flipped `source`, silently dropping the
+-- clip out of the video pool. Only migrates when the PK is still single-column.
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM pg_index i
+        JOIN pg_class c ON c.oid = i.indrelid
+        WHERE c.relname = 'footage_tags'
+          AND i.indisprimary
+          AND array_length(i.indkey::int2[], 1) = 1
+    ) THEN
+        ALTER TABLE footage_tags DROP CONSTRAINT footage_tags_pkey;
+        ALTER TABLE footage_tags ADD PRIMARY KEY (source, clip_id);
+    END IF;
+END $$;
+
 CREATE INDEX IF NOT EXISTS idx_footage_tags_source ON footage_tags(source);
 """
 
@@ -261,7 +282,7 @@ async def init_schema(conn: Any) -> None:
 
 
 async def upsert_records(conn: Any, records: List[Dict[str, Any]]) -> int:
-    """Upsert records (ON CONFLICT clip_id). Returns number written."""
+    """Upsert records (ON CONFLICT (source, clip_id)). Returns number written."""
     if not records:
         return 0
     rows = [
@@ -287,7 +308,7 @@ async def upsert_records(conn: Any, records: List[Dict[str, Any]]) -> int:
             (clip_id, file_name, s3_key, video_key, mood, color_tone,
              people_type, theme_tags, tagger, source, framing, updated_at)
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb, NOW())
-        ON CONFLICT (clip_id) DO UPDATE SET
+        ON CONFLICT (source, clip_id) DO UPDATE SET
             file_name   = EXCLUDED.file_name,
             s3_key      = EXCLUDED.s3_key,
             video_key   = EXCLUDED.video_key,
