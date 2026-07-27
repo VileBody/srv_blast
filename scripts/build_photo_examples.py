@@ -45,18 +45,48 @@ def _pick(bucket, mapped, top_n, seed):
     return m[:top_n]
 
 
-def _register(catalog, *, out_dir: Path, store_path: Path, log) -> int:
+def _register(catalog, *, out_dir: Path, store_path: Path, log, attempts: int = 4) -> int:
     """Publish the reviewed reels to the bots: Telegram file_id per bucket, then
     rewrite the previews store so it holds EXACTLY the active buckets (stale
-    entries from retired/merged buckets are dropped)."""
+    entries from retired/merged buckets are dropped).
+
+    Resumable: buckets already carrying both file_ids are kept as-is, so a run
+    interrupted by a Telegram upload timeout can simply be repeated. Each send is
+    retried with backoff — a ~5MB upload times out intermittently from here even
+    though the API itself is reachable.
+    """
+    import time
+
+    prev = (bp.load_previews_store(store_path).get("previews") or {})
+    active = {b.bucket_id for b in catalog}
     store = bp.empty_store()
-    sent = missing = 0
+    sent = kept = missing = 0
     for b in catalog:
+        done = prev.get(b.bucket_id) or {}
+        if done.get("file_id") and done.get("file_id_public"):
+            bp.previews_upsert(store, bp.PreviewEntry(**{
+                k: done.get(k, "") for k in
+                ("bucket_id", "label", "description", "s3_url", "file_id",
+                 "file_id_public", "status", "built_at")
+            } | {"bucket_id": b.bucket_id, "label": b.label, "description": b.lead,
+                 "status": "ok"}))
+            bp.save_previews_store(store_path, store)
+            log.info("kept %s (already registered)", b.bucket_id)
+            kept += 1
+            continue
         mp4 = out_dir / f"{b.bucket_id.replace(':', '__')}.mp4"
         if not mp4.exists():
             log.warning("no reel for %s (%s)", b.bucket_id, mp4.name); missing += 1; continue
         # previews are sent caption-less: the name lives on the video and button
-        file_id, file_id_public = bbp._capture_file_ids(mp4, "")
+        file_id = file_id_public = ""
+        for attempt in range(1, attempts + 1):
+            try:
+                file_id, file_id_public = bbp._capture_file_ids(mp4, "")
+                break
+            except Exception as e:
+                log.warning("send failed %s (attempt %d/%d): %r", b.bucket_id, attempt, attempts, e)
+                if attempt < attempts:
+                    time.sleep(5 * attempt)
         if not file_id and not file_id_public:
             log.error("no file_id captured for %s — check bot tokens / chat id", b.bucket_id)
             missing += 1
@@ -71,7 +101,7 @@ def _register(catalog, *, out_dir: Path, store_path: Path, log) -> int:
                  (file_id[:10] + "…") if file_id else "-",
                  (file_id_public[:10] + "…") if file_id_public else "-")
         sent += 1
-    log.info("register done: sent=%d missing=%d -> %s", sent, missing, store_path)
+    log.info("register done: sent=%d kept=%d missing=%d -> %s", sent, kept, missing, store_path)
     return 1 if missing else 0
 
 
