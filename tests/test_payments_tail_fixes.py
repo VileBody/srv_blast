@@ -239,7 +239,19 @@ class _FakeCreditsDBSubscriptions:
             "is_recurrent": True,
             "rebill_id": "rebill-recover-123456",
         }
+        # Same package, paid, but T-Bank never handed us the card key.
+        self.payment_no_autopay = {
+            "order_id": "ord-no-autopay",
+            "tg_id": 888,
+            "package": "Бласт",
+            "amount_rub": 1990,
+            "status": "CONFIRMED",
+            "payment_id": "pay-888",
+            "is_recurrent": True,
+            "rebill_id": "",
+        }
         self.created_subscriptions: list[tuple[int, str, str, int]] = []
+        self.rebill_updates: list[tuple[str, str]] = []
         self.events: list[tuple[int, str, str]] = []
         self.audit_events: list[tuple[str, str, str, str]] = []
         self.active_subscription: dict[str, Any] | None = None
@@ -290,9 +302,16 @@ class _FakeCreditsDBSubscriptions:
         ]
 
     async def get_payment(self, order_id: str) -> dict[str, Any] | None:
-        if str(order_id) == self.payment["order_id"]:
-            return dict(self.payment)
+        for row in (self.payment, self.payment_no_autopay):
+            if str(order_id) == row["order_id"]:
+                return dict(row)
         return None
+
+    async def update_rebill_id(self, order_id: str, rebill_id: str) -> None:
+        self.rebill_updates.append((str(order_id), str(rebill_id)))
+        for row in (self.payment, self.payment_no_autopay):
+            if str(order_id) == row["order_id"]:
+                row["rebill_id"] = str(rebill_id)
 
     async def get_active_subscription(self, tg_id: int) -> dict[str, Any] | None:
         if self.active_subscription and int(self.active_subscription["tg_id"]) == int(tg_id):
@@ -326,9 +345,13 @@ class _FailingBot:
 
 
 class _FakeTBankClient:
-    def __init__(self, rebill_id: str = "") -> None:
+    def __init__(self, rebill_id: str = "", card_rebill_id: str = "") -> None:
         self.rebill_id = str(rebill_id)
+        # What GetCardList reports for the customer. Empty by default so the
+        # existing cases keep exercising the "nothing to recover" path.
+        self.card_rebill_id = str(card_rebill_id)
         self.get_state_calls: list[str] = []
+        self.find_rebill_calls: list[str] = []
 
     def verify_notification(self, data: dict[str, Any]) -> bool:
         return True
@@ -336,6 +359,10 @@ class _FakeTBankClient:
     async def get_state(self, payment_id: str) -> dict[str, Any]:
         self.get_state_calls.append(str(payment_id))
         return {"RebillId": self.rebill_id}
+
+    async def find_rebill_id(self, customer_key: str) -> str:
+        self.find_rebill_calls.append(str(customer_key))
+        return self.card_rebill_id
 
 
 def test_tbank_notify_unlocks_state_even_when_user_notify_fails() -> None:
@@ -586,3 +613,135 @@ def test_admin_subscription_recover_creates_subscription_from_saved_rebill() -> 
     assert credits_db.created_subscriptions == [(777, "Бласт", "rebill-recover-123456", 1990)]
     assert credits_db.events and credits_db.events[0][1] == "subscription_created"
     assert credits_db.audit_events and credits_db.audit_events[0][1] == "subscription_recovered"
+
+
+def _subs_settings() -> SimpleNamespace:
+    return SimpleNamespace(
+        admin_panel_password="secret",
+        tg_bot_username="",
+        manager_chat_id=0,
+        admin_panel_port=18080,
+        season_redis_prefix="test:season",
+    )
+
+
+def test_tbank_notify_keeps_rebill_from_authorized_before_confirmed() -> None:
+    """AUTHORIZED carries the key; the CONFIRMED twin may omit it.
+
+    Storing the key only once the row is CONFIRMED loses it outright, and the
+    user then pays without ever getting a chargeable subscription.
+    """
+    credits_db = _FakeCreditsDBNotify()
+    credits_db.payment.update({"is_recurrent": True, "status": "NEW", "payment_id": ""})
+    state_store = _FakeStateStore()
+
+    app = build_app(
+        credits_db=credits_db,
+        state_store=state_store,
+        settings=_subs_settings(),
+        tbank_client=_FakeTBankClient(),
+        bot_ref=[None],
+    )
+    client = TestClient(app)
+
+    authorized = client.post(
+        "/api/tbank/notify",
+        json={
+            "OrderId": "ord-1",
+            "Status": "AUTHORIZED",
+            "PaymentId": "pay-1",
+            "RebillId": "rebill-auth-777",
+            "Token": "ok",
+        },
+    )
+    assert authorized.status_code == 200
+    # Key banked immediately, subscription still withheld until money lands.
+    assert credits_db.rebill_updates == [("ord-1", "rebill-auth-777")]
+    assert credits_db.subscriptions == []
+
+    confirmed = client.post(
+        "/api/tbank/notify",
+        json={
+            "OrderId": "ord-1",
+            "Status": "CONFIRMED",
+            "PaymentId": "pay-1",
+            "Token": "ok",
+        },
+    )
+    assert confirmed.status_code == 200
+    assert credits_db.subscriptions == [(777, "Триал", "rebill-auth-777", 149)]
+
+
+def test_tbank_notify_recovers_rebill_via_card_list_when_notification_lost() -> None:
+    credits_db = _FakeCreditsDBNotify()
+    credits_db.payment.update({"is_recurrent": True, "status": "NEW", "payment_id": ""})
+    tbank_client = _FakeTBankClient(card_rebill_id="rebill-from-cardlist")
+
+    app = build_app(
+        credits_db=credits_db,
+        state_store=_FakeStateStore(),
+        settings=_subs_settings(),
+        tbank_client=tbank_client,
+        bot_ref=[None],
+    )
+
+    resp = TestClient(app).post(
+        "/api/tbank/notify",
+        json={"OrderId": "ord-1", "Status": "CONFIRMED", "PaymentId": "pay-1", "Token": "ok"},
+    )
+
+    assert resp.status_code == 200
+    assert tbank_client.find_rebill_calls == ["777"]
+    assert credits_db.rebill_updates == [("ord-1", "rebill-from-cardlist")]
+    assert credits_db.subscriptions == [(777, "Триал", "rebill-from-cardlist", 149)]
+
+
+def test_admin_fetch_rebill_creates_subscription_from_card_list() -> None:
+    credits_db = _FakeCreditsDBSubscriptions()
+    tbank_client = _FakeTBankClient(card_rebill_id="rebill-card-987654")
+
+    app = build_app(
+        credits_db=credits_db,
+        state_store=_FakeStateStoreWithRedis(),
+        settings=_subs_settings(),
+        tbank_client=tbank_client,
+        bot_ref=[None],
+    )
+
+    resp = TestClient(app).post(
+        "/admin/subscriptions/fetch-rebill",
+        data={"order_id": "ord-no-autopay"},
+        auth=("admin", "secret"),
+        follow_redirects=False,
+    )
+
+    assert resp.status_code == 303
+    assert tbank_client.find_rebill_calls == ["888"]
+    assert credits_db.rebill_updates == [("ord-no-autopay", "rebill-card-987654")]
+    assert credits_db.created_subscriptions == [(888, "Бласт", "rebill-card-987654", 1990)]
+    assert credits_db.audit_events and credits_db.audit_events[0][1] == "subscription_rebill_fetched"
+
+
+def test_admin_fetch_rebill_reports_when_no_card_is_bound() -> None:
+    credits_db = _FakeCreditsDBSubscriptions()
+    tbank_client = _FakeTBankClient()  # GetCardList returns nothing usable
+
+    app = build_app(
+        credits_db=credits_db,
+        state_store=_FakeStateStoreWithRedis(),
+        settings=_subs_settings(),
+        tbank_client=tbank_client,
+        bot_ref=[None],
+    )
+
+    resp = TestClient(app).post(
+        "/admin/subscriptions/fetch-rebill",
+        data={"order_id": "ord-no-autopay"},
+        auth=("admin", "secret"),
+        follow_redirects=False,
+    )
+
+    assert resp.status_code == 303
+    assert "err=" in resp.headers["location"]
+    assert credits_db.created_subscriptions == []
+    assert credits_db.rebill_updates == []

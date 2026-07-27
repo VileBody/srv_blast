@@ -4034,8 +4034,9 @@ def build_app(
         order_id = str(data.get("OrderId", ""))
         status = str(data.get("Status", "")).strip().upper()
         payment_id = str(data.get("PaymentId", ""))
-        # T-Bank sends RebillId only in the notification body for recurrent
-        # payments (it is NOT available via GetState). Capture it here.
+        # For recurrent payments T-Bank puts RebillId in the notification body
+        # (GetState never returns it; GetCardList is the only after-the-fact
+        # source). Capture it here.
         notif_rebill_id = str(data.get("RebillId", "")).strip()
 
         if not order_id:
@@ -4043,12 +4044,45 @@ def build_app(
 
         existing_payment = await credits_db.get_payment(order_id)
 
+        # Persist RebillId the moment it appears, whatever the payment status.
+        # T-Bank puts it in the AUTHORIZED notification; for a one-stage payment
+        # the CONFIRMED one may arrive without it. Waiting for CONFIRMED before
+        # storing the key means an AUTHORIZED-only RebillId is dropped and the
+        # subscription can never be charged. Creating the *subscription* still
+        # waits for CONFIRMED (below) — only the key itself is saved eagerly.
+        if (
+            notif_rebill_id
+            and existing_payment
+            and bool(existing_payment.get("is_recurrent", False))
+            and not str(existing_payment.get("rebill_id", "") or "").strip()
+        ):
+            try:
+                await credits_db.update_rebill_id(order_id, notif_rebill_id)
+                existing_payment = await credits_db.get_payment(order_id)
+                log.info(
+                    "tbank notify: rebill captured order=%s status=%s rebill=***%s",
+                    order_id, status, notif_rebill_id[-6:],
+                )
+            except Exception as e:
+                # Key in hand but unsaved — make T-Bank replay rather than lose
+                # it, same contract as the bootstrap failure below.
+                log.error(
+                    "tbank notify: rebill capture FAILED order=%s err=%s "
+                    "(returning 500 to trigger T-Bank retry)",
+                    order_id, e,
+                )
+                return PlainTextResponse(f"rebill capture failed: {e}", status_code=500)
+
         async def _bootstrap_recurrent_from_rebill(payment_row: dict | None, *, warn_missing: bool = False):
             if not payment_row or not bool(payment_row.get("is_recurrent", False)):
                 return None
             if str(payment_row.get("status", "")).strip().upper() != "CONFIRMED":
                 return None
-            if not notif_rebill_id:
+            # A RebillId already captured from an earlier notification (T-Bank
+            # sends it on AUTHORIZED; the CONFIRMED twin may omit it) is just as
+            # good as one in the body we are handling right now.
+            effective_rebill_id = notif_rebill_id or str(payment_row.get("rebill_id", "") or "").strip()
+            if not effective_rebill_id:
                 if warn_missing:
                     log.warning(
                         "tbank notify: is_recurrent payment confirmed but RebillId absent "
@@ -4061,13 +4095,13 @@ def build_app(
                 tg_id_boot = int(payment_row["tg_id"])
                 pkg_boot = str(payment_row["package"])
                 amount_boot = int(payment_row["amount_rub"])
-                masked_rebill_id = f"***{notif_rebill_id[-6:]}"
+                masked_rebill_id = f"***{effective_rebill_id[-6:]}"
                 if not str(payment_row.get("rebill_id", "")).strip():
-                    await credits_db.update_rebill_id(order_id, notif_rebill_id)
+                    await credits_db.update_rebill_id(order_id, effective_rebill_id)
                 active_sub = await credits_db.get_active_subscription(tg_id_boot)
                 if not active_sub:
                     await credits_db.create_subscription(
-                        tg_id_boot, pkg_boot, notif_rebill_id, amount_boot,
+                        tg_id_boot, pkg_boot, effective_rebill_id, amount_boot,
                     )
                     await credits_db.log_event(
                         tg_id_boot, "subscription_created", f"{pkg_boot} rebill={masked_rebill_id}",
@@ -4170,13 +4204,50 @@ def build_app(
                 order_id=order_id,
             )
             await credits_db.log_event(tg_id, "payment_confirmed", f"{pkg} \u2014 {amount_rub}\u20bd")
-            # Subscription bootstrap for recurrent payments. RebillId is sent
-            # by T-Bank ONLY in this notification body (GetState does NOT
-            # return it \u2014 that was the prior bug). Without saving it here,
-            # the daily rebill loop has no key to charge against.
+            # Subscription bootstrap for recurrent payments. RebillId arrives in
+            # a notification body (GetState never returns it) and can go missing
+            # if a webhook was lost; without it the rebill loop has no key to
+            # charge against, so fall back to GetCardList and \u2014 if even that is
+            # empty \u2014 page the manager instead of failing silently.
             is_recurrent_pay = bool(payment.get("is_recurrent", False))
             if is_recurrent_pay and not notif_rebill_id:
                 await _bootstrap_recurrent_from_rebill(payment, warn_missing=True)
+                if not str((await credits_db.get_payment(order_id) or {}).get("rebill_id", "") or "").strip():
+                    recovered = ""
+                    if tbank_client:
+                        try:
+                            recovered = await tbank_client.find_rebill_id(str(tg_id))
+                        except Exception as e:
+                            log.warning("tbank notify: GetCardList recovery failed order=%s err=%s", order_id, e)
+                    if recovered:
+                        await credits_db.update_rebill_id(order_id, recovered)
+                        refreshed = await credits_db.get_payment(order_id)
+                        await _bootstrap_recurrent_from_rebill(refreshed)
+                        log.info(
+                            "tbank notify: rebill recovered via GetCardList order=%s rebill=***%s",
+                            order_id, recovered[-6:],
+                        )
+                    else:
+                        log.error(
+                            "tbank notify: recurrent payment CONFIRMED with no RebillId anywhere "
+                            "(notification + GetCardList) \u2014 no autopay. order=%s tg_id=%s",
+                            order_id, tg_id,
+                        )
+                        if bot_ref and bot_ref[0] and settings.manager_chat_id:
+                            try:
+                                await bot_ref[0].send_message(
+                                    settings.manager_chat_id,
+                                    "\u26a0\ufe0f \u041f\u043e\u0434\u043f\u0438\u0441\u043a\u0430 \u0431\u0435\u0437 \u0430\u0432\u0442\u043e\u0441\u043f\u0438\u0441\u0430\u043d\u0438\u044f\n\n"
+                                    f"\u041f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044c: {tg_id}\n"
+                                    f"\u041f\u0430\u043a\u0435\u0442: {pkg}\n"
+                                    f"\u0421\u0443\u043c\u043c\u0430: {amount_rub}\u20bd\n"
+                                    f"Order: {order_id}\n\n"
+                                    "\u041e\u043f\u043b\u0430\u0442\u0430 \u043f\u0440\u043e\u0448\u043b\u0430, \u043d\u043e T-Bank \u043d\u0435 \u0434\u0430\u043b RebillId \u2014 \u043a\u0430\u0440\u0442\u0430 \u043d\u0435 \u043f\u0440\u0438\u0432\u044f\u0437\u0430\u043b\u0430\u0441\u044c "
+                                    "(\u043e\u0431\u044b\u0447\u043d\u043e \u0421\u0411\u041f/QR \u0438\u043b\u0438 T-Pay). \u0410\u0432\u0442\u043e\u0441\u043f\u0438\u0441\u0430\u043d\u0438\u044f \u043d\u0435 \u0431\u0443\u0434\u0435\u0442. "
+                                    "\u041f\u0440\u043e\u0432\u0435\u0440\u044c /admin/subscriptions.",
+                                )
+                            except Exception as e:
+                                log.warning("tbank notify: no-rebill alert failed: %s", e)
 
             try:
                 await state_store.reset_to_wait_audio(tg_id)
@@ -5390,7 +5461,12 @@ def build_app(
                     f"<td>{p['amount_rub']}₽</td>"
                     f"<td><code style='font-size:0.75em'>{html_mod.escape(p['order_id'])}</code></td>"
                     f"<td>{html_mod.escape(p['created_at'])}</td>"
-                    f"<td><span class='badge badge-warn'>RebillId пустой</span></td></tr>"
+                    f"<td><span class='badge badge-warn'>RebillId пустой</span></td>"
+                    f"<td><form method='post' action='/admin/subscriptions/fetch-rebill' style='display:inline' "
+                    f"onsubmit=\"return confirm('Запросить RebillId у T-Bank и создать подписку?')\">"
+                    f"<input type='hidden' name='order_id' value='{html_mod.escape(p['order_id'], quote=True)}'>"
+                    f"<button type='submit' class='btn-success' style='font-size:0.8em;padding:4px 8px'>"
+                    f"Найти RebillId в T-Bank</button></form></td></tr>"
                 )
             orphan_cards += f"""
             <div class="card" style="border:2px solid #e67e22">
@@ -5398,10 +5474,12 @@ def build_app(
               <p><b>Это не неоплаченные платежи.</b> Статус платежа <code>CONFIRMED</code>; в этом блоке нет активной
                  подписки, потому что T-Bank не дал <code>RebillId</code>. Чаще всего это QR/SBP или notification без
                  ключа карты. Автосписание по таким строкам не стартует.</p>
-              <p>Варианты: перепослать notification в кабинете T-Bank, если там была оплата картой; иначе попросить
-                 юзера оформить подписку заново через карту.</p>
+              <p>Кнопка <b>«Найти RebillId в T-Bank»</b> спрашивает <code>GetCardList</code> по
+                 <code>CustomerKey</code> юзера: если карта всё-таки привязалась, а потерялась только нотификация —
+                 ключ найдётся и подписка создастся сразу. Если T-Bank отвечает «карт нет» — привязки не было
+                 (СБП/QR/T-Pay), тут поможет только новая оплата картой.</p>
               <div class="table-wrap">
-              <table><tr><th>Юзер</th><th>Пакет</th><th>Сумма</th><th>Order</th><th>Когда оплачено</th><th>Причина</th></tr>
+              <table><tr><th>Юзер</th><th>Пакет</th><th>Сумма</th><th>Order</th><th>Когда оплачено</th><th>Причина</th><th></th></tr>
               {no_autopay_rows}</table>
               </div>
             </div>
@@ -5510,7 +5588,7 @@ def build_app(
         rebill_id = str(payment.get("rebill_id", "") or "").strip()
         if not rebill_id:
             return RedirectResponse(
-                f"/admin/subscriptions?err={quote_plus('У платежа нет RebillId')}",
+                f"/admin/subscriptions?err={quote_plus('У платежа нет RebillId — нажми «Найти RebillId в T-Bank»')}",
                 status_code=303,
             )
 
@@ -5541,6 +5619,108 @@ def build_app(
             log.warning("subscription recover audit failed order=%s err=%s", clean_order_id, e)
         return RedirectResponse(
             f"/admin/subscriptions?ok={quote_plus(f'Подписка восстановлена для {tg_id}')}",
+            status_code=303,
+        )
+
+    @app.post("/admin/subscriptions/fetch-rebill")
+    async def subscriptions_fetch_rebill_from_tbank(
+        order_id: str = Form(...),
+        _user: str = Depends(_check_auth),
+    ) -> RedirectResponse:
+        """Recover a lost RebillId straight from T-Bank via GetCardList.
+
+        Covers the case the recover button cannot: the payment is CONFIRMED but
+        `payments.rebill_id` is empty because the notification carrying the key
+        never landed. The card is still bound to CustomerKey on T-Bank's side,
+        so the key is fetchable — unless no card was ever bound (SBP/QR/T-Pay),
+        in which case only a fresh card payment can start autopay.
+        """
+        clean_order_id = str(order_id or "").strip()
+        if not clean_order_id:
+            return RedirectResponse(
+                f"/admin/subscriptions?err={quote_plus('Order ID пустой')}",
+                status_code=303,
+            )
+        if not tbank_client:
+            return RedirectResponse(
+                f"/admin/subscriptions?err={quote_plus('T-Bank клиент не сконфигурирован')}",
+                status_code=303,
+            )
+
+        payment = await credits_db.get_payment(clean_order_id)
+        if not payment:
+            return RedirectResponse(
+                f"/admin/subscriptions?err={quote_plus('Платёж не найден')}",
+                status_code=303,
+            )
+        if str(payment.get("status", "")).strip().upper() != "CONFIRMED":
+            return RedirectResponse(
+                f"/admin/subscriptions?err={quote_plus('Платёж ещё не CONFIRMED')}",
+                status_code=303,
+            )
+        if not bool(payment.get("is_recurrent", False)):
+            return RedirectResponse(
+                f"/admin/subscriptions?err={quote_plus('Платёж не recurrent')}",
+                status_code=303,
+            )
+
+        tg_id = int(payment["tg_id"])
+        # CustomerKey is the chat id — see _show_purchase_stub in app.py.
+        try:
+            rebill_id = await tbank_client.find_rebill_id(str(tg_id))
+        except Exception as e:
+            log.error("fetch-rebill: GetCardList failed order=%s err=%s", clean_order_id, e)
+            return RedirectResponse(
+                f"/admin/subscriptions?err={quote_plus(f'GetCardList упал: {e}')}",
+                status_code=303,
+            )
+        if not rebill_id:
+            return RedirectResponse(
+                "/admin/subscriptions?err=" + quote_plus(
+                    "T-Bank не вернул привязанных карт для этого юзера — карта не привязывалась "
+                    "(СБП/QR/T-Pay). Автосписание можно завести только новой оплатой картой."
+                ),
+                status_code=303,
+            )
+
+        await credits_db.update_rebill_id(clean_order_id, rebill_id)
+        masked = f"***{rebill_id[-6:]}"
+
+        active_sub = await credits_db.get_active_subscription(tg_id)
+        if active_sub:
+            existing_sub_id = active_sub.get("id", "?")
+            return RedirectResponse(
+                "/admin/subscriptions?ok=" + quote_plus(
+                    f"RebillId {masked} сохранён; активная подписка sub={existing_sub_id} уже была"
+                ),
+                status_code=303,
+            )
+
+        pkg = str(payment.get("package", "") or "")
+        amount_rub = int(payment.get("amount_rub", 0) or 0)
+        await credits_db.create_subscription(tg_id, pkg, rebill_id, amount_rub)
+        await credits_db.log_event(
+            tg_id,
+            "subscription_created",
+            f"{pkg} rebill={masked} tbank_cardlist order={clean_order_id}",
+        )
+        try:
+            await credits_db.audit_log(
+                _user,
+                "subscription_rebill_fetched",
+                target=str(tg_id),
+                details=f"order={clean_order_id} rebill={masked}",
+            )
+        except Exception as e:
+            log.warning("fetch-rebill audit failed order=%s err=%s", clean_order_id, e)
+        log.info(
+            "fetch-rebill: subscription created order=%s tg_id=%s rebill=%s",
+            clean_order_id, tg_id, masked,
+        )
+        return RedirectResponse(
+            "/admin/subscriptions?ok=" + quote_plus(
+                f"RebillId {masked} найден в T-Bank, подписка создана для {tg_id}"
+            ),
             status_code=303,
         )
 
