@@ -1825,6 +1825,11 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
         # the PHOTO pool (same buckets/ranking) and switch the build to the photo
         # template. Hard-validate the two F3-style selections (No Fallback Policy).
         env["BG_MODE"] = "photo"
+        # A build worker may carry a deployment-level subtitle override in its
+        # ambient environment. Photo flow currently skips the color picker, so
+        # make its documented default deterministic instead of inheriting that
+        # unrelated value. An explicit request color still overrides this below.
+        env["SUBTITLES_FORCE_FILL_HEX"] = "#FFFFFF"
         photo_style = str(req.get("photo_style") or "none").strip().lower() or "none"
         photo_transition = str(req.get("photo_transition") or "flash").strip().lower() or "flash"
         _photo_styles = {"none", "warm", "cold", "vintage", "bw", "vhs", "night_vision"}

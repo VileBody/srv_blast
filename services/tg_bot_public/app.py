@@ -4926,9 +4926,10 @@ class BlastBotApp:
     async def _ask_visual_style(self, message: Message, st: ChatState) -> None:
         st.stage = STAGE_WAIT_VISUAL_STYLE
         await self.store.set(st)
-        await self._send_option_previews(
-            message, [f"effect_extra:{v}" for v in _FX_EXTRA_BY_BUTTON.values()]
-        )
+        # Publish the new keyboard before uploading eight preview videos. If the
+        # previews go first, Telegram keeps showing the transition keyboard while
+        # state is already WAIT_VISUAL_STYLE, so its buttons are rejected as
+        # unknown styles. Reply keyboards persist through the preview messages.
         await message.answer(
             "Шаг 2/2: стилизация футажа.\n\n"
             "Выбранный эффект применяется ко всему ролику.\n\n"
@@ -4942,6 +4943,9 @@ class BlastBotApp:
                 [BTN_FX_EX_NIGHT, BTN_FX_EX_WAVE],
                 [BTN_FX_SKIP], [BTN_BACK],
             ),
+        )
+        await self._send_option_previews(
+            message, [f"effect_extra:{v}" for v in _FX_EXTRA_BY_BUTTON.values()]
         )
 
     async def _handle_wait_visual_style(self, message: Message, st: ChatState) -> None:
