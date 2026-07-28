@@ -38,6 +38,13 @@ _MANIFEST_PATH = _F3_DIR / "manifest.json"
 # place ref layer inside MAIN_COMP (the "Текст" precomp layer). Effects go below it.
 _PLACE_REF = "Текст"
 
+# The 4:3 photo comp has no "Текст" layer — the subtitles arrive as a nested comp
+# named SUBTITLES_OVERLAY (templates/photo_template.j2). With the wrong ref the
+# scripts find nothing to move under and every adjustment layer stays where AE
+# put it, at the TOP: crystal_glow then blurred the subtitles instead of the
+# photos. Same contract as footage, different layer name.
+_PHOTO_PLACE_REF = "SUBTITLES_OVERLAY"
+
 # Wired effect ids per group (mirror manifest.json). Used for request/env
 # validation (orchestrator, tasks) and as the source for the bot's 3-step UI.
 F3_HOOKS = ("hook_light", "shutter_effect", "flash_slow_shutter", "negative_zoom")
@@ -172,7 +179,8 @@ def build_overlay_jsx(
     parts.append(f"  var __f3_comp = {comp_var};")
     parts.append("  var __f3_name = __f3_comp.name;")
     parts.append(f"  var __f3_drop = {_js(drop)};")
-    parts.append(f'  var __f3_place = "below:{_PLACE_REF}";')
+    _place_ref = _PLACE_REF if comp_var == "MAIN_COMP" else _PHOTO_PLACE_REF
+    parts.append(f'  var __f3_place = "below:{_place_ref}";')
     parts.append(_JS_PRELUDE)
     parts.append("  var __f3_cuts = __f3_detectCuts(__f3_comp);")
 
