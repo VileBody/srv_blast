@@ -43,10 +43,22 @@ python -m uvicorn main:app --host 0.0.0.0 --port 8000
 - не запускать второй `uvicorn` поверх первого (иначе bind error `10048` и неясный owner порта);
 - не подменять server-side `.env` локальными файлами с dev-машины.
 
-### 2) Работа с уже открытым GUI AE (render-only)
+В `C:\ae_dev\repo\.env` backend задается явно:
 
-Если AE уже открыт под `Administrator` в render-only контексте, это допустимый и
-рекомендуемый режим для сокращения cold-start времени.
+```dotenv
+AE_RENDER_BACKEND=afterfx_queue
+```
+
+На текущей PC-ноде `aerender` зависает после баннера версии, поэтому prod использует
+полный `AfterFX.com`: wrapper запускает builder JSX, открывает сохраненный `.aep` и
+вызывает `app.project.renderQueue.render()`. Неявного переключения между backend-ами
+нет.
+
+### 2) Работа с уже открытым GUI AE
+
+AE работает в обычной GUI-сессии пользователя. Флаг
+`C:\Users\Public\Documents\Adobe\ae_render_only_node.txt` использовать нельзя:
+на этой ноде он ломает плагины и приводит к завершению AE.
 
 Операционные правила:
 1. AE держим прогретым, API не перезапускаем без необходимости.
@@ -56,7 +68,8 @@ python -m uvicorn main:app --host 0.0.0.0 --port 8000
    - появился `work\project.aep`,
    - появился/стабилизировался `work\output.mp4`.
 3. Если в GUI «тишина», triage делаем по job-артефактам и API/poll статусу, а не по окну.
-4. При stuck сначала гасим зависший `aerender`, полный restart AE/uvicorn — второй шаг recovery.
+4. При stuck сначала проверяем `ae_status.txt`, `afterfx.stdout.log` и модальные
+   окна в GUI-сессии; полный restart AE/uvicorn — второй шаг recovery.
 
 Замечание:
 - «ping JSX» smoke подтверждает только базовый запуск AE, но не гарантирует прохождение full render pipeline.
