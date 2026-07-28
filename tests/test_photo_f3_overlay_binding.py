@@ -68,6 +68,46 @@ def test_run_py_rebuilds_the_block_for_the_photo_comp() -> None:
     assert "f3_overlay_js=photo_f3_overlay_js" in src
 
 
+def test_effects_are_placed_under_the_subtitle_layer_of_the_target_comp() -> None:
+    """The scripts move themselves under a layer found BY NAME. The 4:3 comp has
+    no "Текст" layer, so with the footage ref they found nothing, skipped the
+    move, and stayed at the top — crystal_glow blurred the subtitles instead of
+    the photos."""
+    photo = build_overlay_jsx(extra="crystal_glow", drop_time=8.0, comp_var="PHOTO_COMP")
+    assert 'var __f3_place = "below:SUBTITLES_OVERLAY";' in photo
+
+    footage = build_overlay_jsx(extra="crystal_glow", drop_time=8.0)
+    assert 'var __f3_place = "below:Текст";' in footage
+
+
+def test_the_place_ref_matches_the_layer_the_template_creates() -> None:
+    """Ties the two files together: renaming the overlay layer without updating
+    the ref would silently put every effect back on top of the subtitles."""
+    from mlcore.hooks.f3_effect import overlay as f3
+
+    tpl = (Path(__file__).resolve().parents[1] / "templates" / "photo_template.j2").read_text(
+        encoding="utf-8"
+    )
+    assert f'overlay.name = "{f3._PHOTO_PLACE_REF}";' in tpl
+
+
+def test_the_photo_build_forces_the_subtitles_back_on_top() -> None:
+    """Belt and braces: a script that cannot find the ref still leaves its layer
+    on top, so the invariant is restored after the whole block runs."""
+    import inspect
+
+    from app import project_builder
+
+    js = project_builder._PHOTO_SUBTITLES_ON_TOP_JS
+    assert 'L.name === "SUBTITLES_OVERLAY"' in js
+    assert "moveToBeginning()" in js
+    # must not throw when the comp or the layer is absent
+    assert 'typeof PHOTO_COMP === "undefined"' in js
+
+    src = inspect.getsource(project_builder.build_photo_project)
+    assert src.index("f3_overlay_js).strip()") < src.index("_PHOTO_SUBTITLES_ON_TOP_JS")
+
+
 def test_the_orchestrator_no_longer_defaults_the_bespoke_flash_on() -> None:
     """With F3 owning the cuts, a defaulted 4:3 flash would stack a second one."""
     src = (

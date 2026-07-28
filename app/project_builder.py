@@ -393,6 +393,20 @@ def _build_f2_overlay_js(full_edit_config: Dict[str, Any]) -> str:
     return overlay
 
 
+# Subtitles must sit above every effect layer in the 4:3 render. Appended after
+# the F3 block; a no-op when either the comp or the overlay layer is absent.
+_PHOTO_SUBTITLES_ON_TOP_JS = """
+/* ===== photo 4:3: subtitles stay above every effect layer ===== */
+(function(){
+  if (typeof PHOTO_COMP === "undefined" || !PHOTO_COMP) { return; }
+  for (var i = 1; i <= PHOTO_COMP.numLayers; i++) {
+    var L = PHOTO_COMP.layer(i);
+    if (L.name === "SUBTITLES_OVERLAY") { try { L.moveToBeginning(); } catch (e) {} return; }
+  }
+})();
+"""
+
+
 def _build_f3_overlay_js(full_edit_config: Dict[str, Any], *, comp_var: str = "MAIN_COMP") -> str:
     """
     Если в full_edit_config есть блок "f3" — собирает инъектируемый JSX-блок
@@ -762,6 +776,12 @@ def build_photo_project(
     # which that template publishes, and reads the photo layers as its cuts.
     if str(f3_overlay_js).strip():
         jsx = jsx.rstrip() + "\n\n" + str(f3_overlay_js).strip() + "\n"
+        # Belt and braces. Each effect script places itself under the subtitle
+        # layer by NAME, and a script that cannot find it silently leaves its
+        # adjustment layer on top — which is how crystal_glow ended up blurring
+        # the subtitles. This restores the invariant no matter what any single
+        # script did, and costs one layer move.
+        jsx += _PHOTO_SUBTITLES_ON_TOP_JS
     out_jsx.write_text(jsx, encoding="utf-8")
 
     LOGGER.info(
