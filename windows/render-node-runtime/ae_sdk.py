@@ -27,6 +27,8 @@ log = logging.getLogger(__name__)
 
 _RENDER_LOCK = threading.Lock()
 _AUDIO_EXTS = {".wav", ".mp3", ".m4a", ".aac", ".flac", ".ogg"}
+_JPEG_EXTS = {".jpg", ".jpeg"}
+_JPEG_ICC_PREFIX = b"ICC_PROFILE\x00"
 
 
 @dataclass
@@ -62,6 +64,106 @@ class AeJobResult:
 def _is_remote(u: str) -> bool:
     s = (u or "").strip().lower()
     return s.startswith("http://") or s.startswith("https://") or s.startswith("s3://")
+
+
+def _strip_non_rgb_icc_profile_from_jpeg(path: Path) -> str:
+    """Remove an embedded non-RGB ICC profile without re-encoding JPEG pixels.
+
+    After Effects rejects otherwise valid RGB JPEGs when their APP2 metadata
+    incorrectly embeds a GRAY/CMYK/printer profile ("You can only assign RGB
+    profiles"). The pixel stream is already usable, so remove only the
+    ICC_PROFILE APP2 segments and preserve every other byte.
+
+    Returns the stripped ICC color-space signature, or an empty string when the
+    file has no ICC profile or already carries an RGB profile.
+    """
+    if path.suffix.lower() not in _JPEG_EXTS:
+        return ""
+
+    data = path.read_bytes()
+    if not data.startswith(b"\xff\xd8"):
+        raise RuntimeError(f"invalid JPEG SOI: {path}")
+
+    pos = 2
+    icc_spans: List[Tuple[int, int]] = []
+    icc_chunks: Dict[int, bytes] = {}
+    expected_chunks: Optional[int] = None
+
+    while pos < len(data):
+        marker_start = pos
+        if data[pos] != 0xFF:
+            raise RuntimeError(f"invalid JPEG marker at offset={pos}: {path}")
+        while pos < len(data) and data[pos] == 0xFF:
+            pos += 1
+        if pos >= len(data):
+            raise RuntimeError(f"truncated JPEG marker: {path}")
+
+        marker = data[pos]
+        pos += 1
+        if marker == 0xDA:  # Start of scan; metadata segments are before this.
+            break
+        if marker in {0x01, 0xD8, 0xD9} or 0xD0 <= marker <= 0xD7:
+            continue
+        if pos + 2 > len(data):
+            raise RuntimeError(f"truncated JPEG segment length: {path}")
+
+        segment_len = int.from_bytes(data[pos : pos + 2], "big")
+        if segment_len < 2:
+            raise RuntimeError(f"invalid JPEG segment length={segment_len}: {path}")
+        segment_end = pos + segment_len
+        if segment_end > len(data):
+            raise RuntimeError(f"truncated JPEG segment payload: {path}")
+
+        payload = data[pos + 2 : segment_end]
+        if marker == 0xE2 and payload.startswith(_JPEG_ICC_PREFIX):
+            if len(payload) < 14:
+                raise RuntimeError(f"malformed JPEG ICC segment header: {path}")
+            chunk_no = int(payload[12])
+            chunk_count = int(payload[13])
+            if chunk_no < 1 or chunk_count < 1 or chunk_no > chunk_count:
+                raise RuntimeError(
+                    f"invalid JPEG ICC chunk {chunk_no}/{chunk_count}: {path}"
+                )
+            if expected_chunks is not None and chunk_count != expected_chunks:
+                raise RuntimeError(f"inconsistent JPEG ICC chunk count: {path}")
+            if chunk_no in icc_chunks:
+                raise RuntimeError(f"duplicate JPEG ICC chunk={chunk_no}: {path}")
+            expected_chunks = chunk_count
+            icc_chunks[chunk_no] = payload[14:]
+            icc_spans.append((marker_start, segment_end))
+
+        pos = segment_end
+
+    if not icc_spans:
+        return ""
+    if expected_chunks is None or set(icc_chunks) != set(range(1, expected_chunks + 1)):
+        raise RuntimeError(f"incomplete JPEG ICC profile chunks: {path}")
+
+    profile = b"".join(icc_chunks[idx] for idx in range(1, expected_chunks + 1))
+    if len(profile) < 20:
+        raise RuntimeError(f"truncated JPEG ICC profile: {path}")
+    color_space_raw = profile[16:20]
+    if color_space_raw == b"RGB ":
+        return ""
+
+    sanitized = bytearray()
+    cursor = 0
+    for start, end in icc_spans:
+        sanitized.extend(data[cursor:start])
+        cursor = end
+    sanitized.extend(data[cursor:])
+
+    tmp = path.with_name(f"{path.name}.icc-sanitize.tmp")
+    try:
+        tmp.write_bytes(bytes(sanitized))
+        os.replace(tmp, path)
+    finally:
+        try:
+            tmp.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+    return color_space_raw.decode("ascii", errors="replace").strip() or "unknown"
 
 
 def _read_remote_text(url: str) -> str:
@@ -521,6 +623,15 @@ class AeRenderer:
             dest = job_dir / m.relpath
             dest.parent.mkdir(parents=True, exist_ok=True)
             self._download_any(m.url, dest)
+            rel = Path(m.relpath).as_posix().lower()
+            if rel.startswith("media/video/") and dest.suffix.lower() in _JPEG_EXTS:
+                stripped_color_space = _strip_non_rgb_icc_profile_from_jpeg(dest)
+                if stripped_color_space:
+                    log.warning(
+                        "Stripped non-RGB JPEG ICC profile color_space=%s path=%s",
+                        stripped_color_space,
+                        dest,
+                    )
 
         self._patch_project_paths(jsx_path, job_dir)
 
