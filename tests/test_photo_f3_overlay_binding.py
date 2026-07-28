@@ -108,6 +108,34 @@ def test_the_photo_build_forces_the_subtitles_back_on_top() -> None:
     assert src.index("f3_overlay_js).strip()") < src.index("_PHOTO_SUBTITLES_ON_TOP_JS")
 
 
+def test_the_subtitle_project_gets_no_effect_block() -> None:
+    """The subtitle comp is nested into the 4:3 render at 1080 wide, so anything
+    the effect block adds INSIDE it renders as a partial-width overlay — the
+    flash transition appeared as a white rectangle that never reached the frame
+    edges.
+
+    "MAIN_COMP has no photos" is not protection. This build runs BEFORE the photo
+    template disables the footage layers, so the cut detector still sees them,
+    and every transition script falls back to a single instance at the drop even
+    when it finds no cuts at all."""
+    src = (Path(__file__).resolve().parents[1] / "run.py").read_text(encoding="utf-8")
+    assert 'if k != "f3"' in src
+    # the stripped config, not the original, is what builds the subtitles
+    assert "full_edit_config_path=subtitle_cfg_path," in src
+    # ...while the photo comp still gets the real one
+    assert "_build_f3_overlay_js(\n                full_edit_cfg, comp_var=\"PHOTO_COMP\"\n            )" in src
+
+
+def test_every_transition_falls_back_to_one_instance_without_cuts() -> None:
+    """Pins the behaviour the fix above exists for: no cuts does NOT mean no
+    layers. If this ever stops being true the stripping is still correct, but the
+    reasoning in run.py would need revisiting."""
+    tdir = Path(__file__).resolve().parents[1] / "mlcore" / "hooks" / "f3_effect" / "transitions"
+    for name in ("flash_on_cuts", "snap_wipe", "minimax", "invert_flash", "extract_flash"):
+        src = (tdir / f"{name}.jsx").read_text(encoding="utf-8")
+        assert "if(CONFIG.cuts&&CONFIG.cuts.length)return CONFIG.cuts; return [" in src, name
+
+
 def test_the_orchestrator_no_longer_defaults_the_bespoke_flash_on() -> None:
     """With F3 owning the cuts, a defaulted 4:3 flash would stack a second one."""
     src = (
