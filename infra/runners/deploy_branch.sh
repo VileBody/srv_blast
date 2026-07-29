@@ -11,6 +11,7 @@ DEPLOY_USE_PREBUILT_IMAGES="${DEPLOY_USE_PREBUILT_IMAGES:-false}"
 BLAST_IMAGE_REGISTRY="${BLAST_IMAGE_REGISTRY:-ghcr.io}"
 BLAST_IMAGE_REGISTRY_USERNAME="${BLAST_IMAGE_REGISTRY_USERNAME:-}"
 BLAST_IMAGE_REGISTRY_TOKEN="${BLAST_IMAGE_REGISTRY_TOKEN:-}"
+DEPLOY_BUILD_CACHE_MAX_USED_SPACE="${DEPLOY_BUILD_CACHE_MAX_USED_SPACE:-12gb}"
 
 if [[ -n "${REPO_DIR:-}" ]]; then
   SCRIPT_DIR="$REPO_DIR/infra/runners"
@@ -473,7 +474,14 @@ reclaim_disk_for_pull() {
   echo "[deploy] reclaim disk before pull (df before):"
   df -h / 2>/dev/null || true
   docker image prune -af   >/dev/null 2>&1 || true
-  docker builder prune -af >/dev/null 2>&1 || true
+  if [[ "$DEPLOY_STACK" == "infra-ops" ]]; then
+    # blast-ops is also the image builder. Keep a bounded recent cache so the
+    # next commit does not reinstall PyTorch or download the alignment model.
+    docker builder prune -af \
+      --max-used-space "$DEPLOY_BUILD_CACHE_MAX_USED_SPACE" >/dev/null 2>&1 || true
+  else
+    docker builder prune -af >/dev/null 2>&1 || true
+  fi
   echo "[deploy] reclaim disk done (df after):"
   df -h / 2>/dev/null || true
 }
