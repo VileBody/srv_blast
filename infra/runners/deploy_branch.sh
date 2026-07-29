@@ -425,6 +425,7 @@ require_prebuilt_image_env() {
   local key
   for key in \
     BLAST_RUNTIME_IMAGE \
+    BLAST_ALIGNMENT_IMAGE \
     BLAST_TG_BOT_IMAGE \
     BLAST_TG_BOT_PUBLIC_IMAGE \
     BLAST_ASSET_UI_IMAGE \
@@ -503,7 +504,9 @@ deploy_prod_path_services() {
   # currently running containers untouched and fails the deploy.
   if ! is_true "$DEPLOY_ORCHESTRATOR_HA"; then
     PROD_PATH_COMPOSE_ARGS=()
-    PROD_PATH_SERVICES=(orchestrator-api worker-build worker-render worker-render-poll)
+    PROD_PATH_SERVICES=(
+      orchestrator-api alignment-api worker-build worker-render worker-render-poll
+    )
     PROD_PATH_USE_PREBUILT="$DEPLOY_USE_PREBUILT_IMAGES"
     if is_true "$DEPLOY_USE_PREBUILT_IMAGES"; then
       require_prebuilt_image_env
@@ -531,7 +534,7 @@ deploy_prod_path_services() {
   echo "[deploy] orchestrator-ha enabled compose=$compose_ha"
   PROD_PATH_COMPOSE_ARGS=(-f docker-compose.yml -f "$compose_ha")
   PROD_PATH_SERVICES=(
-    orchestrator-api orchestrator-api-2 worker-build worker-render worker-render-poll
+    orchestrator-api orchestrator-api-2 alignment-api worker-build worker-render worker-render-poll
   )
   PROD_PATH_USE_PREBUILT="$DEPLOY_USE_PREBUILT_IMAGES"
   if is_true "$DEPLOY_USE_PREBUILT_IMAGES"; then
@@ -874,7 +877,7 @@ case "$DEPLOY_STACK" in
     mapfile -t services < <(infra_app_services)
     deploy_root_services "${services[@]}"
     if is_true "$DEPLOY_PRUNE_OTHER_STACK"; then
-      remove_root_services orchestrator-api orchestrator-api-2 worker-build worker-render worker-render-poll
+      remove_root_services orchestrator-api orchestrator-api-2 alignment-api worker-build worker-render worker-render-poll
     fi
     ;;
   infra-ops)
@@ -894,7 +897,7 @@ case "$DEPLOY_STACK" in
     deploy_runner_compose_if_present "$RUNNERS_DIR/docker-compose.observability.yml" "$RUNNERS_DIR/.env.observability"
     deploy_github_runner_compose_if_allowed "$RUNNERS_DIR/docker-compose.github-runner.yml" "$RUNNERS_DIR/.env.github-runner"
     if is_true "$DEPLOY_PRUNE_OTHER_STACK"; then
-      remove_root_services orchestrator-api orchestrator-api-2 worker-build worker-render worker-render-poll
+      remove_root_services orchestrator-api orchestrator-api-2 alignment-api worker-build worker-render worker-render-poll
     fi
     ;;
   *)

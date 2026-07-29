@@ -49,6 +49,7 @@ KV_SECRET_RE = re.compile(
 
 TARGET_CONTAINER_PREFIXES: tuple[str, ...] = (
     "orchestrator-api",
+    "alignment-api",
     "worker-build",
     "worker-render",
     "tg-bot",

@@ -39,6 +39,7 @@ jobs:
     outputs:
       registry: ${{ steps.images.outputs.registry }}
       runtime_image: ${{ steps.images.outputs.runtime_image }}
+      alignment_image: ${{ steps.images.outputs.alignment_image }}
       tg_bot_image: ${{ steps.images.outputs.tg_bot_image }}
       tg_bot_public_image: ${{ steps.images.outputs.tg_bot_public_image }}
       asset_ui_image: ${{ steps.images.outputs.asset_ui_image }}
@@ -61,6 +62,7 @@ jobs:
             echo "image_prefix=${prefix}"
             echo "image_tag=${tag}"
             echo "runtime_image=${prefix}/runtime:${tag}"
+            echo "alignment_image=${prefix}/alignment:${tag}"
             echo "tg_bot_image=${prefix}/tg-bot:${tag}"
             echo "tg_bot_public_image=${prefix}/tg-bot-public:${tag}"
             echo "asset_ui_image=${prefix}/asset-ui:${tag}"
@@ -101,6 +103,7 @@ jobs:
       BLAST_IMAGE_REGISTRY_USERNAME: ${{ github.actor }}
       BLAST_IMAGE_REGISTRY_TOKEN: ${{ github.token }}
       BLAST_RUNTIME_IMAGE: ${{ needs.build-images.outputs.runtime_image }}
+      BLAST_ALIGNMENT_IMAGE: ${{ needs.build-images.outputs.alignment_image }}
       BLAST_TG_BOT_IMAGE: ${{ needs.build-images.outputs.tg_bot_image }}
       BLAST_TG_BOT_PUBLIC_IMAGE: ${{ needs.build-images.outputs.tg_bot_public_image }}
       BLAST_ASSET_UI_IMAGE: ${{ needs.build-images.outputs.asset_ui_image }}
@@ -221,6 +224,7 @@ jobs:
       BLAST_IMAGE_REGISTRY_USERNAME: ${{ github.actor }}
       BLAST_IMAGE_REGISTRY_TOKEN: ${{ github.token }}
       BLAST_RUNTIME_IMAGE: ${{ needs.build-images.outputs.runtime_image }}
+      BLAST_ALIGNMENT_IMAGE: ${{ needs.build-images.outputs.alignment_image }}
       BLAST_TG_BOT_IMAGE: ${{ needs.build-images.outputs.tg_bot_image }}
       BLAST_TG_BOT_PUBLIC_IMAGE: ${{ needs.build-images.outputs.tg_bot_public_image }}
       BLAST_ASSET_UI_IMAGE: ${{ needs.build-images.outputs.asset_ui_image }}

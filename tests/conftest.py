@@ -235,6 +235,7 @@ def _install_aiogram_stub() -> None:
     aiogram_exceptions_mod.TelegramRetryAfter = TelegramRetryAfter
     aiogram_filters_mod.CommandStart = _Dummy
     aiogram_filters_mod.Command = _Dummy
+    aiogram_filters_mod.CommandObject = _Dummy
     aiogram_types_mod.FSInputFile = _Dummy
     aiogram_types_mod.BotCommand = _Dummy
     aiogram_types_mod.CallbackQuery = _Dummy

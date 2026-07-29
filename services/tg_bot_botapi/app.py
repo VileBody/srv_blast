@@ -74,6 +74,7 @@ from .state_store import (
     STAGE_WAIT_FOOTAGE_ARTIST,
     STAGE_WAIT_FOOTAGE_GENRE,
     STAGE_WAIT_FRAGMENT_CHOICE,
+    STAGE_WAIT_ALIGNMENT_BACKEND,
     STAGE_WAIT_HOOK_CHOICE,
     STAGE_WAIT_HOOK_DROP,
     STAGE_WAIT_HOOK_DROP_MANUAL,
@@ -210,6 +211,8 @@ BTN_SEND_FRAGMENT = "Отправить интересующий фрагмен�
 BTN_SKIP_FRAGMENT = "На усмотрение ИИ"
 BTN_SET_TIMING = "Указать тайминг"
 BTN_SKIP_TIMING = "Весь трек / на усмотрение ИИ"
+BTN_ALIGN_GEMINI = "Gemini"
+BTN_ALIGN_LOCAL = "Своя модель (beta)"
 BTN_BACK = "Назад"
 # F1 «Звук» — skip the optional subtitle step.
 BTN_F1_NO_SUBS = "Без субтитров"
@@ -614,6 +617,8 @@ _CONTROL_BUTTONS = {
     BTN_SKIP_FRAGMENT,
     BTN_SET_TIMING,
     BTN_SKIP_TIMING,
+    BTN_ALIGN_GEMINI,
+    BTN_ALIGN_LOCAL,
     BTN_BACK,
     BTN_BG_FOOTAGE,
     BTN_BG_SOLID,
@@ -1834,6 +1839,10 @@ class BlastBotApp:
                 await self._handle_wait_timing_input(message, st)
                 return
 
+            if st.stage == STAGE_WAIT_ALIGNMENT_BACKEND:
+                await self._handle_wait_alignment_backend(message, st)
+                return
+
             if st.stage == STAGE_WAIT_SUBTITLE_COLOR:
                 await self._handle_wait_subtitle_color(message, st)
                 return
@@ -2318,6 +2327,7 @@ class BlastBotApp:
         st.stage = STAGE_WAIT_TIMING_CHOICE
         st.user_clip_start_sec = 0.0
         st.user_clip_end_sec = 0.0
+        st.stage1_alignment_backend = "gemini"
         await self.store.set(st)
         await message.answer(
             "Хочешь указать конкретный тайминг трека для клипа?\n"
@@ -2338,6 +2348,7 @@ class BlastBotApp:
         if text == BTN_SKIP_TIMING:
             st.user_clip_start_sec = 0.0
             st.user_clip_end_sec = 0.0
+            st.stage1_alignment_backend = "gemini"
             # No focus clip = no hook analysis (would have to analyze the whole
             # track). User can still enable hook later — they will get
             # algorithmic top-1 on the full track as the default candidate.
@@ -2375,6 +2386,57 @@ class BlastBotApp:
         # finishes lyrics/fragment/bg/footage/subtitles the result is ready.
         await self._trigger_hook_analysis_task(st)
         await self._ask_lyrics_choice(message, st)
+
+    def _can_choose_local_alignment(self, st: ChatState) -> bool:
+        start = float(st.user_clip_start_sec or 0.0)
+        end = float(st.user_clip_end_sec or 0.0)
+        return bool(
+            self.settings.team_local_alignment_enabled
+            and str(st.target_fragment or "").strip()
+            and end > start >= 0.0
+        )
+
+    async def _ask_alignment_backend(self, message: Message, st: ChatState) -> None:
+        if not self._can_choose_local_alignment(st):
+            st.stage1_alignment_backend = "gemini"
+            await self._ask_bg_mode(message, st)
+            return
+        st.stage = STAGE_WAIT_ALIGNMENT_BACKEND
+        st.stage1_alignment_backend = "gemini"
+        await self.store.set(st)
+        await message.answer(
+            "Тайминг текста: Gemini или своя модель (beta)?",
+            reply_markup=_kb([BTN_ALIGN_GEMINI, BTN_ALIGN_LOCAL], [BTN_BACK]),
+        )
+
+    async def _handle_wait_alignment_backend(
+        self,
+        message: Message,
+        st: ChatState,
+    ) -> None:
+        text = str(message.text or "").strip()
+        if text == BTN_BACK:
+            await self._ask_fragment_choice(message, st)
+            return
+        if text == BTN_ALIGN_GEMINI:
+            st.stage1_alignment_backend = "gemini"
+            await self._ask_bg_mode(message, st)
+            return
+        if text == BTN_ALIGN_LOCAL:
+            if not self._can_choose_local_alignment(st):
+                st.stage1_alignment_backend = "gemini"
+                await message.answer(
+                    "Своя модель доступна только для точного фрагмента "
+                    "с заданным таймингом."
+                )
+                await self._ask_bg_mode(message, st)
+                return
+            st.stage1_alignment_backend = "local_ctc"
+            await self._ask_bg_mode(message, st)
+            return
+        await message.answer(
+            "Выбери кнопкой: «Gemini» или «Своя модель (beta)»."
+        )
 
     async def _ask_bg_mode(self, message: Message, st: ChatState) -> None:
         st.stage = STAGE_WAIT_BG_MODE
@@ -3060,6 +3122,7 @@ class BlastBotApp:
         st.prepared_audio_local_path = str(prep.output_path)
         st.lyrics_text = ""
         st.target_fragment = ""
+        st.stage1_alignment_backend = "gemini"
         st.subtitles_mode = SUBTITLES_MODE_LEGACY_BLOCKS
         st.versions_count = 1
         st.batch_id = ""
@@ -3096,6 +3159,7 @@ class BlastBotApp:
         if text == BTN_SKIP_LYRICS:
             st.lyrics_text = ""
             st.target_fragment = ""
+            st.stage1_alignment_backend = "gemini"
             await self._ask_subtitles_mode(message, st)
             return
 
@@ -3112,6 +3176,7 @@ class BlastBotApp:
 
         st.lyrics_text = text
         st.target_fragment = ""
+        st.stage1_alignment_backend = "gemini"
         st.stage = STAGE_WAIT_FRAGMENT_CHOICE
         await self.store.set(st)
         # Phase 2b: kick off the footage-bucket ranker in the background now that
@@ -3137,6 +3202,7 @@ class BlastBotApp:
 
         if text == BTN_SKIP_FRAGMENT:
             st.target_fragment = ""
+            st.stage1_alignment_backend = "gemini"
             await self._ask_bg_mode(message, st)
             return
 
@@ -3152,7 +3218,8 @@ class BlastBotApp:
             return
 
         st.target_fragment = text
-        await self._ask_bg_mode(message, st)
+        st.stage1_alignment_backend = "gemini"
+        await self._ask_alignment_backend(message, st)
 
     async def _handle_wait_subtitles_mode(self, message: Message, st: ChatState) -> None:
         mode = _parse_subtitles_mode_choice(message.text or "")
@@ -4589,7 +4656,9 @@ class BlastBotApp:
         st.stage = STAGE_WAIT_CONFIRM
         await self.store.set(st)
         await message.answer(
-            f"Ок, режим субтитров: {st.subtitles_mode}, версий: {n}. Запустить генерацию?",
+            f"Ок, режим субтитров: {st.subtitles_mode}, "
+            f"тайминг текста: {st.stage1_alignment_backend}, "
+            f"версий: {n}. Запустить генерацию?",
             reply_markup=_kb([BTN_LAUNCH]),
         )
 
@@ -5177,6 +5246,7 @@ class BlastBotApp:
             mode="with_gemini",
             lyrics_text=st.lyrics_text,
             target_fragment=st.target_fragment,
+            stage1_alignment_backend=st.stage1_alignment_backend,
             subtitles_mode=st.subtitles_mode,
             footage_artist_id=st.footage_artist_id,
             user_clip_start_sec=user_clip_start_sec,
@@ -5379,6 +5449,7 @@ class BlastBotApp:
         st.last_job_stage = ""
         st.last_job_error = ""
         st.target_fragment = ""
+        st.stage1_alignment_backend = "gemini"
         st.footage_genre_key = ""
         st.footage_artist_key = ""
         st.footage_artist_id = ""

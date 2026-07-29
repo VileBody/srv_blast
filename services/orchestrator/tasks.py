@@ -89,6 +89,7 @@ _LLM_ENV_KEYS = (
     "JOB_ID",
     "LYRICS_TEXT",
     "TARGET_FRAGMENT",
+    "STAGE1_ALIGNMENT_BACKEND",
     "SUBTITLES_MODE",
     "FOOTAGE_ARTIST_ID",
     "USER_CLIP_START_SEC",
@@ -1468,6 +1469,13 @@ def _seed_resume_state_from_source_job(
     for k in _REUSE_RESUME_STATE_KEYS:
         if k in src_obj:
             dst_obj[k] = src_obj[k]
+    dst_obj["stage1_alignment_backend"] = str(
+        src_obj.get("stage1_alignment_backend") or "gemini"
+    )
+    if isinstance(src_obj.get("stage1_alignment_metadata"), dict):
+        dst_obj["stage1_alignment_metadata"] = src_obj["stage1_alignment_metadata"]
+    else:
+        dst_obj.pop("stage1_alignment_metadata", None)
 
     if destination_clip_window is not None:
         dst_start, dst_end = float(destination_clip_window[0]), float(destination_clip_window[1])
@@ -1657,6 +1665,13 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
     project_id = str(req.get("project_id") or "").strip()
     lyrics_text = str(req.get("lyrics_text") or "")
     target_fragment = str(req.get("target_fragment") or "")
+    stage1_alignment_backend = str(
+        req.get("stage1_alignment_backend") or "gemini"
+    ).strip().lower()
+    if stage1_alignment_backend not in {"gemini", "local_ctc"}:
+        raise RuntimeError(
+            f"invalid stage1_alignment_backend={stage1_alignment_backend!r}"
+        )
     reuse_text_job_id = str(req.get("reuse_text_job_id") or "").strip()
     reuse_stage2_footage = bool(req.get("reuse_stage2_footage"))
     stage2_selection_seed_override = str(req.get("stage2_selection_seed_override") or "").strip()
@@ -1728,6 +1743,15 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
                     f"user_clip_end_sec must be > user_clip_start_sec "
                     f"(got {user_clip_start_sec!r}..{user_clip_end_sec!r})"
                 )
+    if stage1_alignment_backend == "local_ctc":
+        if not target_fragment.strip():
+            raise RuntimeError(
+                "stage1_alignment_backend=local_ctc requires target_fragment"
+            )
+        if user_clip_start_sec is None or user_clip_end_sec is None:
+            raise RuntimeError(
+                "stage1_alignment_backend=local_ctc requires a complete user clip window"
+            )
     if not audio_url:
         raise RuntimeError("missing audio_s3_url")
     if not _is_remote_url(audio_url):
@@ -1745,7 +1769,11 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
     _llm_cache_lock_held = False
     try:
         from . import llm_cache as _llm_cache_mod
-        _asr_mode = "forced_alignment" if str(lyrics_text or "").strip() else "asr"
+        _asr_mode = (
+            "local_ctc"
+            if stage1_alignment_backend == "local_ctc"
+            else ("forced_alignment" if str(lyrics_text or "").strip() else "asr")
+        )
         _user_drop_t_for_cache: Optional[float] = None
         if req.get("user_drop_t") is not None:
             try:
@@ -1758,9 +1786,20 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
             clip_start_sec=user_clip_start_sec,
             clip_end_sec=user_clip_end_sec,
             asr_mode=_asr_mode,
-            lyrics_text=lyrics_text,
+            lyrics_text=(
+                target_fragment
+                if stage1_alignment_backend == "local_ctc"
+                else lyrics_text
+            ),
             subtitles_mode=subtitles_mode,
             user_drop_t=_user_drop_t_for_cache,
+            stage1_alignment_backend=stage1_alignment_backend,
+            alignment_model_revision=str(
+                os.environ.get("ALIGNMENT_MODEL_REVISION") or ""
+            ).strip(),
+            alignment_algorithm_version=str(
+                os.environ.get("ALIGNMENT_ALGORITHM_VERSION") or ""
+            ).strip(),
         )
     except Exception as _ck_err:
         log.warning("llm_cache key_build_failed job=%s err=%r", job_id, _ck_err)
@@ -1794,6 +1833,7 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
     env["LLM_PROVIDER_MODE"] = llm_provider_mode
     env["LYRICS_TEXT"] = lyrics_text
     env["TARGET_FRAGMENT"] = target_fragment
+    env["STAGE1_ALIGNMENT_BACKEND"] = stage1_alignment_backend
     env["SUBTITLES_MODE"] = subtitles_mode
     if footage_artist_id:
         env["FOOTAGE_ARTIST_ID"] = footage_artist_id

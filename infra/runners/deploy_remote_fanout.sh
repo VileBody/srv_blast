@@ -18,7 +18,7 @@ DEPLOY_REMOTE_NODE1_SSH_KEY_PATH="${DEPLOY_REMOTE_NODE1_SSH_KEY_PATH:-}"
 PROD_TG_WEBHOOK_IP_ADDRESS="${PROD_TG_WEBHOOK_IP_ADDRESS:-}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REMOTE_DEPLOY_SCRIPT="$SCRIPT_DIR/deploy_remote_branch.sh"
+REMOTE_DEPLOY_SCRIPT="${DEPLOY_REMOTE_SCRIPT_OVERRIDE:-$SCRIPT_DIR/deploy_remote_branch.sh}"
 
 if [[ -z "$BRANCH" ]]; then
   echo "[deploy-fanout] Branch is not specified."
@@ -43,19 +43,19 @@ deploy_node() {
 
   if [[ -z "$host" ]]; then
     echo "[deploy-fanout] $node_name host is required"
-    exit 1
+    return 1
   fi
   if [[ -z "$repo_dir" ]]; then
     echo "[deploy-fanout] $node_name repo dir is required"
-    exit 1
+    return 1
   fi
   if [[ -z "$key_path" ]]; then
     echo "[deploy-fanout] $node_name ssh key path is required"
-    exit 1
+    return 1
   fi
   if [[ ! -f "$key_path" ]]; then
     echo "[deploy-fanout] $node_name ssh key file not found: $key_path"
-    exit 1
+    return 1
   fi
 
   echo "[deploy-fanout] deploying branch=$BRANCH stack=$DEPLOY_STACK node=$node_name host=$host"
@@ -68,20 +68,44 @@ deploy_node() {
   "$REMOTE_DEPLOY_SCRIPT" "$BRANCH" "$DEPLOY_STACK"
 }
 
-deploy_node \
+failed_nodes=()
+successful_nodes=()
+
+if deploy_node \
   "orchestrator-0" \
   "$DEPLOY_REMOTE_NODE0_HOST" \
   "$DEPLOY_REMOTE_NODE0_USER" \
   "$DEPLOY_REMOTE_NODE0_PORT" \
   "$DEPLOY_REMOTE_NODE0_REPO_DIR" \
-  "$DEPLOY_REMOTE_NODE0_SSH_KEY_PATH"
+  "$DEPLOY_REMOTE_NODE0_SSH_KEY_PATH"; then
+  successful_nodes+=("orchestrator-0")
+else
+  failed_nodes+=("orchestrator-0")
+fi
 
-deploy_node \
+if deploy_node \
   "orchestrator-1" \
   "$DEPLOY_REMOTE_NODE1_HOST" \
   "$DEPLOY_REMOTE_NODE1_USER" \
   "$DEPLOY_REMOTE_NODE1_PORT" \
   "$DEPLOY_REMOTE_NODE1_REPO_DIR" \
-  "$DEPLOY_REMOTE_NODE1_SSH_KEY_PATH"
+  "$DEPLOY_REMOTE_NODE1_SSH_KEY_PATH"; then
+  successful_nodes+=("orchestrator-1")
+else
+  failed_nodes+=("orchestrator-1")
+fi
 
-echo "[deploy-fanout] done"
+if (( ${#successful_nodes[@]} == 0 )); then
+  echo "[deploy-fanout] all nodes failed: ${failed_nodes[*]}"
+  exit 1
+fi
+
+if (( ${#failed_nodes[@]} > 0 )); then
+  message="degraded deploy: successful=${successful_nodes[*]} failed=${failed_nodes[*]}"
+  echo "[deploy-fanout] WARN: $message"
+  if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+    echo "::warning title=Prod deploy degraded::$message"
+  fi
+fi
+
+echo "[deploy-fanout] done: successful=${successful_nodes[*]}"

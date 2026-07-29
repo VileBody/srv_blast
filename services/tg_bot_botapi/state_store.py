@@ -32,6 +32,7 @@ STAGE_WAIT_FOOTAGE_GENRE = "WAIT_FOOTAGE_GENRE"
 STAGE_WAIT_FOOTAGE_ARTIST = "WAIT_FOOTAGE_ARTIST"
 STAGE_WAIT_TIMING_CHOICE = "WAIT_TIMING_CHOICE"
 STAGE_WAIT_TIMING_INPUT = "WAIT_TIMING_INPUT"
+STAGE_WAIT_ALIGNMENT_BACKEND = "WAIT_ALIGNMENT_BACKEND"
 STAGE_WAIT_SUBTITLES_MODE = "WAIT_SUBTITLES_MODE"
 # Hook feature (Phase A-UX). Inserted after subtitles, before versions.
 STAGE_WAIT_HOOK_CHOICE = "WAIT_HOOK_CHOICE"        # yes/no
@@ -116,6 +117,7 @@ class ChatState(BaseModel):
     photo_transition: str = ""
     user_clip_start_sec: float = 0.0
     user_clip_end_sec: float = 0.0
+    stage1_alignment_backend: str = "gemini"
     subtitles_mode: str = SUBTITLES_MODE_LEGACY_BLOCKS
     # Hook feature (Phase A-UX) — analysis is computed by the bot as a
     # background asyncio task right after the user confirms the focus clip

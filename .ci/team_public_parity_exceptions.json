@@ -1,0 +1,16 @@
+{
+  "exceptions": [
+    {
+      "name": "team_local_ctc_alignment",
+      "reason": "The product contract exposes local CTC alignment only in Team bot; Public bot must remain unchanged.",
+      "team_files": [
+        "services/tg_bot_botapi/app.py",
+        "services/tg_bot_botapi/orchestrator_client.py",
+        "services/tg_bot_botapi/state_store.py"
+      ],
+      "required_tests": [
+        "tests/test_tg_bot_botapi_alignment_flow.py"
+      ]
+    }
+  ]
+}

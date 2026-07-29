@@ -19,6 +19,7 @@ BLAST_IMAGE_REGISTRY="${BLAST_IMAGE_REGISTRY:-ghcr.io}"
 BLAST_IMAGE_REGISTRY_USERNAME="${BLAST_IMAGE_REGISTRY_USERNAME:-}"
 BLAST_IMAGE_REGISTRY_TOKEN="${BLAST_IMAGE_REGISTRY_TOKEN:-}"
 BLAST_RUNTIME_IMAGE="${BLAST_RUNTIME_IMAGE:-}"
+BLAST_ALIGNMENT_IMAGE="${BLAST_ALIGNMENT_IMAGE:-}"
 BLAST_TG_BOT_IMAGE="${BLAST_TG_BOT_IMAGE:-}"
 BLAST_TG_BOT_PUBLIC_IMAGE="${BLAST_TG_BOT_PUBLIC_IMAGE:-}"
 BLAST_ASSET_UI_IMAGE="${BLAST_ASSET_UI_IMAGE:-}"
@@ -69,6 +70,7 @@ printf -v q_image_registry '%q' "$BLAST_IMAGE_REGISTRY"
 printf -v q_image_registry_username '%q' "$BLAST_IMAGE_REGISTRY_USERNAME"
 printf -v q_registry_auth_b64 '%q' "$REGISTRY_AUTH_B64"
 printf -v q_runtime_image '%q' "$BLAST_RUNTIME_IMAGE"
+printf -v q_alignment_image '%q' "$BLAST_ALIGNMENT_IMAGE"
 printf -v q_tg_bot_image '%q' "$BLAST_TG_BOT_IMAGE"
 printf -v q_tg_bot_public_image '%q' "$BLAST_TG_BOT_PUBLIC_IMAGE"
 printf -v q_asset_ui_image '%q' "$BLAST_ASSET_UI_IMAGE"
@@ -88,6 +90,7 @@ export BLAST_IMAGE_REGISTRY=$q_image_registry
 export BLAST_IMAGE_REGISTRY_USERNAME=$q_image_registry_username
 export BLAST_IMAGE_REGISTRY_TOKEN=\$(printf '%s' $q_registry_auth_b64 | base64 -d)
 export BLAST_RUNTIME_IMAGE=$q_runtime_image
+export BLAST_ALIGNMENT_IMAGE=$q_alignment_image
 export BLAST_TG_BOT_IMAGE=$q_tg_bot_image
 export BLAST_TG_BOT_PUBLIC_IMAGE=$q_tg_bot_public_image
 export BLAST_ASSET_UI_IMAGE=$q_asset_ui_image

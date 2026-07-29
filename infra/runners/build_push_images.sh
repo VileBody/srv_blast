@@ -152,6 +152,7 @@ fi
 docker_login_if_token
 
 build_push_image "runtime" "Dockerfile" "." "${BLAST_IMAGE_PREFIX}/runtime:${BLAST_IMAGE_TAG}"
+build_push_image "alignment" "Dockerfile.alignment" "." "${BLAST_IMAGE_PREFIX}/alignment:${BLAST_IMAGE_TAG}"
 build_push_image "tg-bot" "Dockerfile.tg-bot" "." "${BLAST_IMAGE_PREFIX}/tg-bot:${BLAST_IMAGE_TAG}"
 build_push_image "tg-bot-public" "Dockerfile.tg-bot-public" "." "${BLAST_IMAGE_PREFIX}/tg-bot-public:${BLAST_IMAGE_TAG}"
 build_push_image "asset-ui" "Dockerfile.asset-ui" "." "${BLAST_IMAGE_PREFIX}/asset-ui:${BLAST_IMAGE_TAG}"
