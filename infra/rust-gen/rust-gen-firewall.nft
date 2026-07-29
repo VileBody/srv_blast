@@ -3,7 +3,7 @@ table inet rust_gen {
     type filter hook input priority 0; policy accept;
 
     iifname "lo" accept
-    tcp dport 8090 ip saddr { 81.17.154.249, 45.144.221.108 } accept
+    tcp dport 8090 ip saddr { 201.24.126.76, 45.144.221.108 } accept
     tcp dport 8090 drop
   }
 }
