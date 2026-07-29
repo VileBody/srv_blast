@@ -36,6 +36,35 @@ def test_text_geometry_is_still_preserved(tpl: str) -> None:
     assert 'tr.property("ADBE Scale").setValue([100, 100]);' in tpl
 
 
+def test_the_whole_nesting_chain_is_collapsed_not_just_the_outer_layer(tpl: str) -> None:
+    """Collapsing only the overlay moved the clip one level down: the subtitles
+    live in a "Текст" precomp, also 1080 wide, INSIDE the subtitle comp. The
+    widest text was still cut at 1080."""
+    assert "function collapseNestedComps(sourceComp, depth)" in tpl
+    assert "collapseNestedComps(subtitleComp, 0);" in tpl
+    # recursive — a precomp can hold further precomps
+    assert "collapseNestedComps(src, depth + 1);" in tpl
+    assert "depth > 3" in tpl  # and bounded, so a cycle cannot hang the build
+
+
+def test_collapse_is_skipped_where_it_would_change_the_look(tpl: str) -> None:
+    """Collapse drops a layer's effects and replaces its blending mode. Losing a
+    deliberate look is worse than trimming a wide word, so those layers keep
+    their raster."""
+    assert 'L.property("ADBE Effect Parade")' in tpl
+    assert "L.blendingMode === BlendingMode.NORMAL" in tpl
+    assert "if (!hasFx && plainBlend)" in tpl
+    # AE refuses collapse on some layer types; asking first avoids a throw
+    assert "L.canSetCollapseTransformation" in tpl
+
+
+def test_adjustment_layers_are_never_collapsed(tpl: str) -> None:
+    """The opposite hazard: a COLLAPSED adjustment layer escapes its comp and
+    starts grading the parent's layers below — here, the photos."""
+    body = tpl[tpl.index("function collapseNestedComps"):tpl.index("function addSubtitleOverlay")]
+    assert "if (L.adjustmentLayer === true) continue;" in body
+
+
 def test_adjustment_layers_inside_the_overlay_are_disabled_before_collapsing(tpl: str) -> None:
     """The one real hazard collapse introduces: an adjustment layer inside a
     COLLAPSED comp stops being contained by it and starts grading the parent
