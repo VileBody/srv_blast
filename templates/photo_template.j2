@@ -150,6 +150,43 @@
       return null;
     }
 
+    // Stop every nested comp on the subtitle chain from rasterizing at its own
+    // width, so text composites straight into the 4:3 frame. Recursive: the text
+    // precomp can itself hold further precomps.
+    //
+    // Collapse REPLACES a layer's blending mode and drops its effects, so a layer
+    // that relies on either is left alone — losing a look is worse than a wide
+    // word being trimmed. Adjustment layers are skipped for the opposite reason:
+    // collapsed, they escape their comp and start grading the photos below.
+    function collapseNestedComps(sourceComp, depth) {
+      if (!sourceComp || depth > 3) return;
+      for (var i = 1; i <= sourceComp.numLayers; i++) {
+        var L = sourceComp.layer(i);
+        var src = null;
+        try { src = L.source; } catch (_) { src = null; }
+        if (!src || !(src instanceof CompItem)) continue;
+        if (L.adjustmentLayer === true) continue;
+        var hasFx = false;
+        try {
+          var fx = L.property("ADBE Effect Parade");
+          hasFx = !!(fx && fx.numProperties > 0);
+        } catch (_) {}
+        var plainBlend = true;
+        try { plainBlend = (L.blendingMode === BlendingMode.NORMAL); } catch (_) {}
+        if (!hasFx && plainBlend) {
+          try {
+            if (L.canSetCollapseTransformation) {
+              L.collapseTransformation = true;
+              logLine("INFO", "collapsed nested comp: " + L.name + " (depth " + depth + ")");
+            }
+          } catch (_) {}
+        } else {
+          logLine("INFO", "kept raster for " + L.name + " (fx=" + hasFx + " blend=" + !plainBlend + ")");
+        }
+        collapseNestedComps(src, depth + 1);
+      }
+    }
+
     function addSubtitleOverlay() {
       var subtitleName = String(photo_job.subtitle_comp_name || "");
       if (!subtitleName) return null;
@@ -190,6 +227,12 @@
       // old boundary. Safe here because the layer carries no effects and no
       // blending mode — those are what collapse would otherwise disable.
       try { overlay.collapseTransformation = true; } catch (_) {}
+      // ...and the chain does not stop there. The subtitles themselves sit in a
+      // "Текст" precomp (also 1080 wide) NESTED inside that comp, so collapsing
+      // only the outer layer just moves the clip one level down. Every nested
+      // comp on the way up has to stop rasterizing, or the widest text — the
+      // jakson focus word — keeps getting cut at 1080.
+      collapseNestedComps(subtitleComp, 0);
       overlay.moveToBeginning();
       return overlay;
     }
