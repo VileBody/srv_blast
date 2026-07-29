@@ -357,6 +357,7 @@ a    { text-decoration: none; color: inherit; }
   font-weight: 400;
   position: relative;
   top: 1px;
+  white-space: nowrap;
   background: linear-gradient(175deg, var(--g-start) 0%, var(--g-end) 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
