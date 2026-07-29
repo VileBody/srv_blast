@@ -43,19 +43,19 @@ deploy_node() {
 
   if [[ -z "$host" ]]; then
     echo "[deploy-fanout] $node_name host is required"
-    exit 1
+    return 1
   fi
   if [[ -z "$repo_dir" ]]; then
     echo "[deploy-fanout] $node_name repo dir is required"
-    exit 1
+    return 1
   fi
   if [[ -z "$key_path" ]]; then
     echo "[deploy-fanout] $node_name ssh key path is required"
-    exit 1
+    return 1
   fi
   if [[ ! -f "$key_path" ]]; then
     echo "[deploy-fanout] $node_name ssh key file not found: $key_path"
-    exit 1
+    return 1
   fi
 
   echo "[deploy-fanout] deploying branch=$BRANCH stack=$DEPLOY_STACK node=$node_name host=$host"
@@ -68,20 +68,31 @@ deploy_node() {
   "$REMOTE_DEPLOY_SCRIPT" "$BRANCH" "$DEPLOY_STACK"
 }
 
-deploy_node \
+failed_nodes=()
+
+if ! deploy_node \
   "orchestrator-0" \
   "$DEPLOY_REMOTE_NODE0_HOST" \
   "$DEPLOY_REMOTE_NODE0_USER" \
   "$DEPLOY_REMOTE_NODE0_PORT" \
   "$DEPLOY_REMOTE_NODE0_REPO_DIR" \
-  "$DEPLOY_REMOTE_NODE0_SSH_KEY_PATH"
+  "$DEPLOY_REMOTE_NODE0_SSH_KEY_PATH"; then
+  failed_nodes+=("orchestrator-0")
+fi
 
-deploy_node \
+if ! deploy_node \
   "orchestrator-1" \
   "$DEPLOY_REMOTE_NODE1_HOST" \
   "$DEPLOY_REMOTE_NODE1_USER" \
   "$DEPLOY_REMOTE_NODE1_PORT" \
   "$DEPLOY_REMOTE_NODE1_REPO_DIR" \
-  "$DEPLOY_REMOTE_NODE1_SSH_KEY_PATH"
+  "$DEPLOY_REMOTE_NODE1_SSH_KEY_PATH"; then
+  failed_nodes+=("orchestrator-1")
+fi
+
+if (( ${#failed_nodes[@]} > 0 )); then
+  echo "[deploy-fanout] failed nodes: ${failed_nodes[*]}"
+  exit 1
+fi
 
 echo "[deploy-fanout] done"
