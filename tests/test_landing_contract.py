@@ -68,3 +68,10 @@ def test_optional_scripts_require_explicit_consent_category() -> None:
     for html_file in LANDING.glob("*.html"):
         for tag in script_pattern.findall(html_file.read_text(encoding="utf-8")):
             assert re.search(r'type=["\']text/plain["\']', tag, re.IGNORECASE), f"Ungated optional script in {html_file.name}: {tag}"
+
+
+def test_hero_badge_text_never_wraps() -> None:
+    styles = (LANDING / "css" / "style.css").read_text(encoding="utf-8")
+    rule = re.search(r"\.hero-badge span\s*\{(?P<body>[^}]*)\}", styles)
+    assert rule is not None
+    assert re.search(r"white-space\s*:\s*nowrap\s*;", rule.group("body"))
