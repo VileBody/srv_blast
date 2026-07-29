@@ -92,6 +92,7 @@ def test_stage1_adapter_keeps_acoustic_timings_and_derives_pauses() -> None:
     ]
     payload = _build_stage1_asr(
         words=words,
+        target_fragment="раз два",
         clip_start_abs=10.0,
         clip_end_abs=12.0,
         pause_min_gap_sec=0.35,
@@ -105,12 +106,17 @@ def test_stage1_adapter_keeps_acoustic_timings_and_derives_pauses() -> None:
     assert payload.selected_fragment is not None
     assert payload.selected_fragment.audio.clip_start_abs == 10.0
     assert payload.selected_fragment.audio.clip_end_abs == 12.0
+    assert payload.selected_fragment.fragment_analytics is not None
+    assert payload.selected_fragment.fragment_analytics.target_fragment == "раз два"
+    assert payload.selected_fragment.fragment_analytics.working_start_abs == 10.0
+    assert payload.selected_fragment.fragment_analytics.working_end_abs == 12.0
 
 
 def test_alignment_json_and_srt_preserve_utf8() -> None:
     words = [AlignedWord("привет", "ПРИВЕТ", 10.1, 10.5, 0.1, 0.5, 0.9)]
     payload = _build_stage1_asr(
         words=words,
+        target_fragment="привет",
         clip_start_abs=10.0,
         clip_end_abs=12.0,
         pause_min_gap_sec=0.35,

@@ -89,7 +89,7 @@ services:
       ALIGNMENT_SERVICE_URL: ${ALIGNMENT_SERVICE_URL:-http://alignment-api:8000}
       ALIGNMENT_TIMEOUT_S: ${ALIGNMENT_TIMEOUT_S:-600}
       ALIGNMENT_MODEL_REVISION: ${ALIGNMENT_MODEL_REVISION:-2329100508896c6d9b157019803ab5601e6f3406}
-      ALIGNMENT_ALGORITHM_VERSION: ${ALIGNMENT_ALGORITHM_VERSION:-local-ctc-viterbi-v1}
+      ALIGNMENT_ALGORITHM_VERSION: ${ALIGNMENT_ALGORITHM_VERSION:-local-ctc-viterbi-v2}
 
       # --- SIGSEGV mitigation for the hook audio analysis (librosa) ---
       # Celery runs prefork (forked children) and the segfault was pinpointed by

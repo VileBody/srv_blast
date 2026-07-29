@@ -422,6 +422,7 @@ def _derive_pause_spans(words: Sequence[AlignedWord], *, min_gap_sec: float) -> 
 def _build_stage1_asr(
     *,
     words: Sequence[AlignedWord],
+    target_fragment: str,
     clip_start_abs: float,
     clip_end_abs: float,
     pause_min_gap_sec: float,
@@ -435,6 +436,10 @@ def _build_stage1_asr(
         for word in words
     ]
     pause_spans = _derive_pause_spans(words, min_gap_sec=pause_min_gap_sec)
+    window_duration = float(clip_end_abs) - float(clip_start_abs)
+    fragment_relation = (
+        "inside_13_18" if window_duration <= 18.0 else "inside_13_30"
+    )
     return Stage1AsrPayload.model_validate(
         {
             "transcript_words": transcript_words,
@@ -448,6 +453,17 @@ def _build_stage1_asr(
                 "transcript_words": transcript_words,
                 "pause_spans": pause_spans,
                 "srt_items": [],
+                "fragment_analytics": {
+                    "target_fragment": str(target_fragment),
+                    "working_fragment": str(target_fragment),
+                    "working_start_abs": float(clip_start_abs),
+                    "working_end_abs": float(clip_end_abs),
+                    "working_start_text": "user_clip_start",
+                    "working_end_text": "user_clip_end",
+                    "relation_to_target": fragment_relation,
+                    "chosen_action": "none",
+                    "rationale": "local_ctc_user_window_is_source_of_truth",
+                },
             },
         }
     )
@@ -526,6 +542,7 @@ def align_target_fragment(
     )
     stage1_asr = _build_stage1_asr(
         words=aligned_words,
+        target_fragment=target_fragment,
         clip_start_abs=float(clip_start_abs),
         clip_end_abs=float(clip_end_abs),
         pause_min_gap_sec=float(pause_min_gap_sec),
