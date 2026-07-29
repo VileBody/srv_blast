@@ -44,6 +44,7 @@ from mlcore.llm_router import (
     normalize_provider_mode,
 )
 from mlcore.openrouter_client import OpenRouterClient, OpenRouterSettings
+from mlcore.alignment.client import request_local_alignment
 from mlcore.footage_picker import (
     FootageIntervalPickerDiagnostics,
     FootageStyleRawAdapterDiagnostics,
@@ -118,6 +119,8 @@ ROOT = Path(__file__).resolve().parent.parent
 MODEL_VALIDATION_IMMEDIATE_RETRIES = 2
 _STRUCTURAL_TAG_TOKEN_RE = re.compile(r"^\[[a-zа-яё0-9_\-:+./]+\]$", flags=re.IGNORECASE)
 _SCENES_3RD_SINGLE_STEP_MODEL = "gemini-2.5-pro"
+_STAGE1_ALIGNMENT_BACKEND_GEMINI = "gemini"
+_STAGE1_ALIGNMENT_BACKEND_LOCAL_CTC = "local_ctc"
 
 # Stage2 timing mode. This is a code-level switch we control via git, NOT a
 # secret and NOT read from env — flipping it is a deploy, not an .env edit.
@@ -2300,6 +2303,21 @@ def build_all_via_gemini_one_call(
         os.environ["FOOTAGE_INVENTORY_JSON"] = _photo_inv
         os.environ["FOOTAGE_STYLE_METADATA_DB_PATHS_JSON"] = json.dumps([_photo_snap])
 
+    stage1_alignment_backend = str(
+        os.environ.get("STAGE1_ALIGNMENT_BACKEND")
+        or _STAGE1_ALIGNMENT_BACKEND_GEMINI
+    ).strip().lower()
+    if stage1_alignment_backend not in {
+        _STAGE1_ALIGNMENT_BACKEND_GEMINI,
+        _STAGE1_ALIGNMENT_BACKEND_LOCAL_CTC,
+    }:
+        raise RuntimeError(
+            f"Unsupported STAGE1_ALIGNMENT_BACKEND={stage1_alignment_backend!r}"
+        )
+    use_local_alignment = (
+        stage1_alignment_backend == _STAGE1_ALIGNMENT_BACKEND_LOCAL_CTC
+    )
+
     gemini_api_key = os.environ.get("GEMINI_API_KEY", "").strip()
     gemini_asr_key = os.environ.get("GEMINI_ASR_KEY", "").strip()
     vertex_ai_api_key = os.environ.get("VERTEX_AI_API_KEY_V1", "").strip()
@@ -2373,7 +2391,7 @@ def build_all_via_gemini_one_call(
         "llm_provider_config mode=%s hedge_delay_s=%s gemini_timeout_s=%s openrouter_timeout_s=%s "
         "timing_mode=%s fast_start_seconds=%.3f gemini_max_output_tokens=%s "
         "gemini_max_thinking_tokens=%s gemini_fallback_model=%s llm_worker_type=%s "
-        "vertex_sdk_mix=%s vertex_location=%s",
+        "vertex_sdk_mix=%s vertex_location=%s stage1_alignment_backend=%s",
         provider_mode,
         hedge_delay_s,
         timeout_s,
@@ -2386,6 +2404,7 @@ def build_all_via_gemini_one_call(
         llm_worker_type,
         str(vertex_sdk_mix_enabled).lower(),
         str(vertex_ai_location or ""),
+        stage1_alignment_backend,
     )
 
     client_stage1_asr: Optional[GeminiClient] = None
@@ -2401,34 +2420,35 @@ def build_all_via_gemini_one_call(
         # vertex_sdk_mix contract:
         # audio-attached stages must use Gemini Developer API (vertexai=False)
         # and GEMINI_ASR_KEY to keep SDK-like upload semantics.
-        client_stage1_asr = _make_client(
-            api_key=gemini_asr_key if vertex_sdk_mix_enabled else shared_api_key,
-            model=model_stage1_asr,
-            fallback_model=model_fallback or None,
-            proxy=proxy,
-            temperature=temperature,
-            timeout_s=timeout_s,
-            logger=logger,
-            max_output_tokens=max_output_tokens,
-            max_thinking_tokens=max_thinking_tokens,
-            vertexai=False if vertex_sdk_mix_enabled else shared_vertexai,
-            vertex_project=None if vertex_sdk_mix_enabled else (vertex_ai_project if shared_vertexai else None),
-            vertex_location=None if vertex_sdk_mix_enabled else (vertex_ai_location if shared_vertexai else None),
-        )
-        client_stage1_forced = _make_client(
-            api_key=gemini_asr_key if vertex_sdk_mix_enabled else shared_api_key,
-            model=model_stage1_asr,
-            fallback_model=model_fallback or None,
-            proxy=proxy,
-            temperature=0.0,
-            timeout_s=timeout_s,
-            logger=logger,
-            max_output_tokens=max_output_tokens,
-            max_thinking_tokens=max_thinking_tokens,
-            vertexai=False,
-            vertex_project=None,
-            vertex_location=None,
-        )
+        if not use_local_alignment:
+            client_stage1_asr = _make_client(
+                api_key=gemini_asr_key if vertex_sdk_mix_enabled else shared_api_key,
+                model=model_stage1_asr,
+                fallback_model=model_fallback or None,
+                proxy=proxy,
+                temperature=temperature,
+                timeout_s=timeout_s,
+                logger=logger,
+                max_output_tokens=max_output_tokens,
+                max_thinking_tokens=max_thinking_tokens,
+                vertexai=False if vertex_sdk_mix_enabled else shared_vertexai,
+                vertex_project=None if vertex_sdk_mix_enabled else (vertex_ai_project if shared_vertexai else None),
+                vertex_location=None if vertex_sdk_mix_enabled else (vertex_ai_location if shared_vertexai else None),
+            )
+            client_stage1_forced = _make_client(
+                api_key=gemini_asr_key if vertex_sdk_mix_enabled else shared_api_key,
+                model=model_stage1_asr,
+                fallback_model=model_fallback or None,
+                proxy=proxy,
+                temperature=0.0,
+                timeout_s=timeout_s,
+                logger=logger,
+                max_output_tokens=max_output_tokens,
+                max_thinking_tokens=max_thinking_tokens,
+                vertexai=False,
+                vertex_project=None,
+                vertex_location=None,
+            )
         client_stage1_scenario = _make_client(
             api_key=shared_api_key,
             model=model_stage1_scenario,
@@ -2508,20 +2528,21 @@ def build_all_via_gemini_one_call(
     openrouter_footage: Optional[OpenRouterClient] = None
     openrouter_timing: Optional[OpenRouterClient] = None
     if provider_mode in {PROVIDER_MODE_OPENROUTER, PROVIDER_MODE_HEDGED}:
-        openrouter_stage1_asr = _make_openrouter_client(
-            api_key=openrouter_api_key,
-            model=_openrouter_model_from_gemini(model_stage1_asr),
-            temperature=temperature,
-            timeout_s=openrouter_timeout_s,
-            logger=logger,
-        )
-        openrouter_stage1_forced = _make_openrouter_client(
-            api_key=openrouter_api_key,
-            model=_openrouter_model_from_gemini(model_stage1_asr),
-            temperature=0.0,
-            timeout_s=openrouter_timeout_s,
-            logger=logger,
-        )
+        if not use_local_alignment:
+            openrouter_stage1_asr = _make_openrouter_client(
+                api_key=openrouter_api_key,
+                model=_openrouter_model_from_gemini(model_stage1_asr),
+                temperature=temperature,
+                timeout_s=openrouter_timeout_s,
+                logger=logger,
+            )
+            openrouter_stage1_forced = _make_openrouter_client(
+                api_key=openrouter_api_key,
+                model=_openrouter_model_from_gemini(model_stage1_asr),
+                temperature=0.0,
+                timeout_s=openrouter_timeout_s,
+                logger=logger,
+            )
         openrouter_stage1_scenario = _make_openrouter_client(
             api_key=openrouter_api_key,
             model=_openrouter_model_from_gemini(model_stage1_scenario),
@@ -2633,7 +2654,7 @@ def build_all_via_gemini_one_call(
     target_fragment = str(os.environ.get("TARGET_FRAGMENT") or "").strip()
     user_clip_window = _optional_user_clip_window_from_env(logger=logger)
     target_fragment_stage1 = target_fragment
-    if user_clip_window is not None and target_fragment:
+    if user_clip_window is not None and target_fragment and not use_local_alignment:
         logger.warning(
             "user_clip_window_override active, stage1 target_fragment branch disabled "
             "target_fragment_chars=%d",
@@ -2646,7 +2667,19 @@ def build_all_via_gemini_one_call(
     )
     footage_artist_id = str(os.environ.get("FOOTAGE_ARTIST_ID") or "").strip()
     use_stage1b_scenario = subtitles_mode == SUBTITLES_MODE_LEGACY_BLOCKS
-    forced_reference_text_raw = lyrics_text or target_fragment
+    if use_local_alignment:
+        if not target_fragment:
+            raise RuntimeError(
+                "STAGE1_ALIGNMENT_BACKEND=local_ctc requires TARGET_FRAGMENT"
+            )
+        if user_clip_window is None:
+            raise RuntimeError(
+                "STAGE1_ALIGNMENT_BACKEND=local_ctc requires "
+                "USER_CLIP_START_SEC and USER_CLIP_END_SEC"
+            )
+        forced_reference_text_raw = target_fragment
+    else:
+        forced_reference_text_raw = lyrics_text or target_fragment
     forced_reference_text, dropped_structural_tags = _strip_structural_tags_from_text(
         forced_reference_text_raw
     )
@@ -2656,15 +2689,23 @@ def build_all_via_gemini_one_call(
             "Reference text for forced alignment is present but empty after tokenization "
             "(LYRICS_TEXT/TARGET_FRAGMENT)."
         )
-    use_forced_alignment = bool(forced_reference_words)
-    stage1a_mode = "forced_alignment" if use_forced_alignment else "asr"
+    use_forced_alignment = bool(forced_reference_words) and not use_local_alignment
+    stage1a_mode = (
+        "local_ctc"
+        if use_local_alignment
+        else ("forced_alignment" if use_forced_alignment else "asr")
+    )
 
-    _emit(progress_cb, "llm_stage1a_asr")
+    _emit(progress_cb, "alignment" if use_local_alignment else "llm_stage1a_asr")
     logger.info(
         "stage1a_start mode=%s model=%s reference_words=%d structural_tags_ignored=%d "
         "subtitles_mode=%s selected_fragment_required=%s",
         stage1a_mode,
-        model_stage1_asr,
+        (
+            str(os.environ.get("ALIGNMENT_MODEL_REVISION") or "").strip()
+            if use_local_alignment
+            else model_stage1_asr
+        ),
         len(forced_reference_words),
         dropped_structural_tags,
         subtitles_mode,
@@ -2674,9 +2715,19 @@ def build_all_via_gemini_one_call(
     # When user_clip_window is set, the user has already chosen the timing window.
     # Don't ask the LLM to pick a selected_fragment — we'll construct it from the
     # user's window after ASR completes.
-    need_llm_selected_fragment = (not use_stage1b_scenario) and (user_clip_window is None)
+    need_llm_selected_fragment = (
+        not use_local_alignment
+        and (not use_stage1b_scenario)
+        and (user_clip_window is None)
+    )
 
-    if use_forced_alignment:
+    if use_local_alignment:
+        stage1a_system = ""
+        stage1a_prompt = ""
+        stage1a_raw = logs_dir / f"local_ctc_stage1_alignment_{stamp}.json"
+        stage1a_sys = logs_dir / f"local_ctc_stage1_alignment_{stamp}.unused"
+        stage1a_user = logs_dir / f"local_ctc_stage1_alignment_{stamp}.unused"
+    elif use_forced_alignment:
         stage1a_system = build_stage1a_forced_alignment_system_instruction()
         stage1a_prompt = build_stage1a_forced_alignment_user_prompt(
             reference_text=forced_reference_text,
@@ -2704,9 +2755,36 @@ def build_all_via_gemini_one_call(
     stage1_asr_cached = resume_state.get("stage1_asr")
     stage1_asr_mode_cached = str(resume_state.get("stage1_asr_mode") or "").strip()
     stage1_asr_reference_cached = str(resume_state.get("stage1_asr_reference_text") or "")
+    stage1_alignment_backend_cached = str(
+        resume_state.get("stage1_alignment_backend")
+        or _STAGE1_ALIGNMENT_BACKEND_GEMINI
+    ).strip().lower()
+    stage1_alignment_metadata_cached = resume_state.get("stage1_alignment_metadata")
+    expected_alignment_revision = str(
+        os.environ.get("ALIGNMENT_MODEL_REVISION") or ""
+    ).strip()
+    expected_alignment_algorithm = str(
+        os.environ.get("ALIGNMENT_ALGORITHM_VERSION") or ""
+    ).strip()
     if isinstance(stage1_asr_cached, dict):
         cache_compatible = True
-        if use_forced_alignment:
+        if stage1_alignment_backend_cached != stage1_alignment_backend:
+            cache_compatible = False
+        if use_local_alignment:
+            if stage1_asr_mode_cached != "local_ctc":
+                cache_compatible = False
+            if stage1_asr_reference_cached != forced_reference_text_raw:
+                cache_compatible = False
+            metadata = (
+                stage1_alignment_metadata_cached
+                if isinstance(stage1_alignment_metadata_cached, dict)
+                else {}
+            )
+            if str(metadata.get("model_revision") or "") != expected_alignment_revision:
+                cache_compatible = False
+            if str(metadata.get("algorithm_version") or "") != expected_alignment_algorithm:
+                cache_compatible = False
+        elif use_forced_alignment:
             if stage1_asr_mode_cached != "forced_alignment":
                 cache_compatible = False
             if stage1_asr_reference_cached != forced_reference_text_raw:
@@ -2723,6 +2801,8 @@ def build_all_via_gemini_one_call(
                 len(forced_reference_text_raw),
             )
             resume_state.pop("stage1_asr", None)
+            resume_state.pop("stage1_alignment_backend", None)
+            resume_state.pop("stage1_alignment_metadata", None)
             stage1_asr_cached = None
 
     if isinstance(stage1_asr_cached, dict):
@@ -2734,7 +2814,9 @@ def build_all_via_gemini_one_call(
                 )
                 stage1_asr = None
                 resume_state.pop("stage1_asr", None)
-            elif user_clip_window is not None and not use_stage1b_scenario:
+            elif user_clip_window is not None and (
+                not use_stage1b_scenario or use_local_alignment
+            ):
                 try:
                     _ensure_stage1a_user_clip_has_words(
                         stage1_asr=stage1_asr,
@@ -2755,11 +2837,55 @@ def build_all_via_gemini_one_call(
             resume_state.pop("stage1_asr", None)
 
     if stage1_asr is None:
-        # Cache MISS: the Stage1 ASR LLM is about to be invoked for real.
-        # Emitted only here (after the resume check), unlike "llm_stage1a_asr"
-        # above which is set unconditionally. The bigtest safety-breaker watches
-        # this stage to halt the batch if a reuse case re-runs ASR.
-        _emit(progress_cb, "llm_stage1a_asr_invoke")
+        if use_local_alignment:
+            _emit(progress_cb, "alignment")
+            assert user_clip_window is not None
+            if not audio_files:
+                raise RuntimeError("local_ctc alignment requires an audio file")
+            local_response = request_local_alignment(
+                service_url=str(
+                    os.environ.get("ALIGNMENT_SERVICE_URL") or ""
+                ).strip(),
+                timeout_s=_float_env("ALIGNMENT_TIMEOUT_S", 600.0),
+                audio_path=audio_files[0],
+                target_fragment=target_fragment,
+                clip_start_abs=float(user_clip_window[0]),
+                clip_end_abs=float(user_clip_window[1]),
+                request_id=str(os.environ.get("JOB_ID") or ""),
+            )
+            stage1_asr = local_response.stage1_asr
+            backend_info = dict(local_response.backend)
+            alignment_metadata = {
+                "backend": "local_ctc",
+                "model_revision": str(
+                    backend_info.get("model_revision")
+                    or expected_alignment_revision
+                ),
+                "algorithm_version": str(
+                    backend_info.get("algorithm_version")
+                    or expected_alignment_algorithm
+                ),
+                "diagnostics": dict(local_response.diagnostics),
+            }
+            resume_state["stage1_alignment_metadata"] = alignment_metadata
+            stage1a_raw.write_text(
+                json.dumps(alignment_metadata, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            logger.info(
+                "stage1a_local_ctc_succeeded words=%d model_revision=%s "
+                "algorithm_version=%s warnings=%d",
+                len(stage1_asr.transcript_words),
+                alignment_metadata["model_revision"],
+                alignment_metadata["algorithm_version"],
+                len(local_response.diagnostics.get("warnings") or []),
+            )
+        else:
+            # Cache MISS: the Stage1 ASR LLM is about to be invoked for real.
+            # Emitted only here (after the resume check), unlike
+            # "llm_stage1a_asr" above which is set unconditionally.
+            _emit(progress_cb, "llm_stage1a_asr_invoke")
+
         if use_forced_alignment:
             stage1_forced_checked_asr: Stage1AsrPayload | None = None
 
@@ -2905,7 +3031,7 @@ def build_all_via_gemini_one_call(
                 json.dumps(stage1_forced.model_dump(mode="json"), ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
-        else:
+        elif not use_local_alignment:
             def _run_stage1_asr_once() -> Stage1AsrPayload:
                 payload = call_stage1_asr_once(
                     client=client_stage1_asr,
@@ -2935,8 +3061,13 @@ def build_all_via_gemini_one_call(
         resume_state["stage1_asr"] = stage1_asr.model_dump(mode="json")
         resume_state["stage1_asr_mode"] = stage1a_mode
         resume_state["stage1_asr_reference_text"] = (
-            forced_reference_text_raw if use_forced_alignment else ""
+            forced_reference_text_raw
+            if (use_forced_alignment or use_local_alignment)
+            else ""
         )
+        resume_state["stage1_alignment_backend"] = stage1_alignment_backend
+        if not use_local_alignment:
+            resume_state.pop("stage1_alignment_metadata", None)
         _save_resume_state(resume_state_path, logger=logger, state=resume_state)
 
     # When user_clip_window is set in non-legacy mode, construct selected_fragment

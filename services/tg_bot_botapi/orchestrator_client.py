@@ -35,6 +35,7 @@ class OrchestratorClient:
         mode: str,
         lyrics_text: str,
         target_fragment: str,
+        stage1_alignment_backend: str = "gemini",
         subtitles_mode: str = SUBTITLES_MODE_LEGACY_BLOCKS,
         footage_artist_id: str = "",
         user_clip_start_sec: float | None = None,
@@ -75,6 +76,9 @@ class OrchestratorClient:
             "mode": str(mode),
             "lyrics_text": str(lyrics_text or ""),
             "target_fragment": str(target_fragment or ""),
+            "stage1_alignment_backend": str(
+                stage1_alignment_backend or "gemini"
+            ).strip(),
             "subtitles_mode": str(subtitles_mode or SUBTITLES_MODE_LEGACY_BLOCKS),
             "footage_artist_id": str(footage_artist_id or ""),
             "user_clip_start_sec": (

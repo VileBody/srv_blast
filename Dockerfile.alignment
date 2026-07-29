@@ -1,0 +1,36 @@
+# syntax=docker/dockerfile:1
+FROM python:3.11-slim
+
+ARG ALIGNMENT_MODEL_ID=jonatasgrosman/wav2vec2-large-xlsr-53-russian
+ARG ALIGNMENT_MODEL_REVISION=2329100508896c6d9b157019803ab5601e6f3406
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PYTHONPATH=/app \
+    HF_HUB_DISABLE_TELEMETRY=1
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    ffmpeg \
+    libsndfile1 \
+  && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.alignment.txt /app/requirements.alignment.txt
+RUN pip install --no-cache-dir \
+      --index-url https://download.pytorch.org/whl/cpu \
+      torch==2.3.1 \
+  && pip install --no-cache-dir -r /app/requirements.alignment.txt
+
+RUN python -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='${ALIGNMENT_MODEL_ID}', revision='${ALIGNMENT_MODEL_REVISION}', local_dir='/opt/models/ru', allow_patterns=['pytorch_model.bin', 'config.json', 'preprocessor_config.json', 'special_tokens_map.json', 'vocab.json', 'alphabet.json'])"
+
+COPY . /app
+
+ENV ALIGNMENT_MODEL_PATH=/opt/models/ru \
+    ALIGNMENT_MODEL_REVISION=${ALIGNMENT_MODEL_REVISION} \
+    HF_HUB_OFFLINE=1 \
+    TRANSFORMERS_OFFLINE=1
+
+CMD ["uvicorn", "mlcore.alignment.api:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]

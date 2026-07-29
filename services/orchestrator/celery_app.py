@@ -58,14 +58,25 @@ class JobBoundTask(Task):
             return "poll"
         return "task"
 
-    def _set_failed(self, job_id: str, *, error: str) -> None:
+    def _set_failed(
+        self,
+        job_id: str,
+        *,
+        error: str,
+        stage: str | None = None,
+    ) -> None:
         try:
             store = JobStore.from_env()
             st = store.get(job_id)
             # Once SUCCEEDED, do not let subsequent task failures overwrite it.
             if st and st.status == "SUCCEEDED":
                 return
-            store.set_status(job_id, "FAILED", stage=self._stage_name(), error=error)
+            store.set_status(
+                job_id,
+                "FAILED",
+                stage=str(stage or self._stage_name()),
+                error=error,
+            )
         except Exception:
             pass
 
@@ -115,7 +126,8 @@ class JobBoundTask(Task):
             tb = ""
         tb_tail = tb[-9000:] if tb else ""
         err = f"celery_failed stage={self._stage_name()} exc={exc!r}\n--- traceback (tail) ---\n{tb_tail}\n"
-        self._set_failed(job_id, error=err)
+        error_stage = str(getattr(exc, "job_stage", "") or self._stage_name())
+        self._set_failed(job_id, error=err, stage=error_stage)
 
 
 celery_app = Celery(

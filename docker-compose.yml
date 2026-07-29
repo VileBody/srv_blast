@@ -30,7 +30,6 @@ services:
       # point mlcore to shared paths
       FOOTAGE_INVENTORY_JSON: /app/data/footage_inventory.json
       DESCRIPTIONS_BUNDLE_PATH: /app/pins/descriptions_bundle_selected.json
-
       # /hook/analyze librosa path: disable numba JIT (fork-unsafe gufunc segfault,
       # see worker-build note) + pin native threads. Mirror of worker-build.
       NUMBA_DISABLE_JIT: "1"
@@ -62,6 +61,9 @@ services:
     container_name: worker-build
     env_file:
       - .env
+    depends_on:
+      alignment-api:
+        condition: service_healthy
     environment:
       WORK_DIR: /app/work
       OUTPUT_DIR: /app/output
@@ -84,6 +86,10 @@ services:
       # point mlcore to shared paths
       FOOTAGE_INVENTORY_JSON: /app/data/footage_inventory.json
       DESCRIPTIONS_BUNDLE_PATH: /app/pins/descriptions_bundle_selected.json
+      ALIGNMENT_SERVICE_URL: ${ALIGNMENT_SERVICE_URL:-http://alignment-api:8000}
+      ALIGNMENT_TIMEOUT_S: ${ALIGNMENT_TIMEOUT_S:-600}
+      ALIGNMENT_MODEL_REVISION: ${ALIGNMENT_MODEL_REVISION:-2329100508896c6d9b157019803ab5601e6f3406}
+      ALIGNMENT_ALGORITHM_VERSION: ${ALIGNMENT_ALGORITHM_VERSION:-local-ctc-viterbi-v1}
 
       # --- SIGSEGV mitigation for the hook audio analysis (librosa) ---
       # Celery runs prefork (forked children) and the segfault was pinpointed by
@@ -112,6 +118,45 @@ services:
       - ./audio:/app/audio:ro
     command: >
       bash -lc "python footage_config.py && celery -A services.orchestrator.celery_app:celery_app worker -l INFO --concurrency=${WORKER_BUILD_CONCURRENCY:-4} -Q ${CELERY_QUEUE_BUILD:-build}"
+    restart: unless-stopped
+
+  alignment-api:
+    image: ${BLAST_ALIGNMENT_IMAGE:-blast_final-alignment:local}
+    build:
+      context: .
+      dockerfile: Dockerfile.alignment
+      network: host
+      args:
+        ALIGNMENT_MODEL_REVISION: ${ALIGNMENT_MODEL_REVISION:-2329100508896c6d9b157019803ab5601e6f3406}
+    container_name: alignment-api
+    env_file:
+      - .env
+    environment:
+      ALIGNMENT_MODEL_PATH: /opt/models/ru
+      ALIGNMENT_MODEL_REVISION: ${ALIGNMENT_MODEL_REVISION:-2329100508896c6d9b157019803ab5601e6f3406}
+      ALIGNMENT_ALLOWED_AUDIO_ROOT: /app/work/jobs
+      ALIGNMENT_TIMEOUT_S: ${ALIGNMENT_TIMEOUT_S:-600}
+      ALIGNMENT_PADDING_LEFT_SEC: ${ALIGNMENT_PADDING_LEFT_SEC:-0.5}
+      ALIGNMENT_PADDING_RIGHT_SEC: ${ALIGNMENT_PADDING_RIGHT_SEC:-0.5}
+      ALIGNMENT_MIN_WORD_CONFIDENCE: ${ALIGNMENT_MIN_WORD_CONFIDENCE:-0.05}
+      ALIGNMENT_PAUSE_MIN_GAP_SEC: ${ALIGNMENT_PAUSE_MIN_GAP_SEC:-0.35}
+      ALIGNMENT_MAX_WINDOW_SEC: ${ALIGNMENT_MAX_WINDOW_SEC:-120}
+      ALIGNMENT_MAX_REFERENCE_WORDS: ${ALIGNMENT_MAX_REFERENCE_WORDS:-400}
+      ALIGNMENT_TORCH_THREADS: ${ALIGNMENT_TORCH_THREADS:-4}
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+    volumes:
+      - ./work:/app/work:ro
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=5)"
+      interval: 15s
+      timeout: 8s
+      retries: 40
+      start_period: 30s
     restart: unless-stopped
 
   worker-render:
@@ -229,6 +274,7 @@ services:
       TG_TEST_BOT_TOKEN: ${TG_TEST_BOT_TOKEN:-}
       TG_TEST_CREDITS_DB_URL: ${TG_TEST_CREDITS_DB_URL:-}
       ORCHESTRATOR_PUBLIC_URL: ${ORCHESTRATOR_PUBLIC_URL:-http://orchestrator-api:8000}
+      TEAM_LOCAL_ALIGNMENT_ENABLED: ${TEAM_LOCAL_ALIGNMENT_ENABLED:-0}
       BOT_POLL_INTERVAL_S: ${BOT_POLL_INTERVAL_S:-5}
       BOT_TMP_DIR: ${BOT_TMP_DIR:-/app/work/tg_tmp}
       BOT_MAX_AUDIO_MB: ${BOT_MAX_AUDIO_MB:-5}

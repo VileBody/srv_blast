@@ -57,7 +57,7 @@ Workflow использует эту переменную, чтобы выпол
 `infra/runners/deploy_branch.sh` поддерживает второй аргумент:
 
 - `all` (по умолчанию): legacy single-node deploy.
-- `prod-path`: `orchestrator-api`, `worker-build`, `worker-render` + опционально `orchestrator-api-2` (если `DEPLOY_ORCHESTRATOR_HA=true`) + Dozzle agent (env создается автоматически) + опционально `promtail-edge`; старый `tg-bot-public` на orchestrator-нoдах останавливается и удаляется.
+- `prod-path`: `orchestrator-api`, `alignment-api`, `worker-build`, `worker-render` + опционально `orchestrator-api-2` (если `DEPLOY_ORCHESTRATOR_HA=true`) + Dozzle agent (env создается автоматически) + опционально `promtail-edge`; старый `tg-bot-public` на orchestrator-нoдах останавливается и удаляется.
 - `infra-apps`: `tg-bot`, `tg-bot-public` в polling-режиме, `tg-bot-public-admin`, `asset-ui`, `finance-bot`.
 - `infra-ops`: `infra-apps` + `dozzle` + `observability` + `github-runner` (если есть соответствующие `.env`).
 

@@ -33,6 +33,7 @@ class SendAudioS3Request(BaseModel):
     idempotency_key: Optional[str] = Field(default=None, min_length=1)
     lyrics_text: str = ""
     target_fragment: str = ""
+    stage1_alignment_backend: Literal["gemini", "local_ctc"] = "gemini"
     # Use the canonical SubtitlesMode (core) so new modes never drift from the
     # API contract (trendy_5th/brat_5th were added there).
     subtitles_mode: SubtitlesMode = SUBTITLES_MODE_LEGACY_BLOCKS
@@ -181,6 +182,15 @@ class SendAudioS3Request(BaseModel):
             raise ValueError("user_clip_start_sec and user_clip_end_sec must be provided together")
         elif float(end) <= float(start):
             raise ValueError("user_clip_end_sec must be > user_clip_start_sec")
+        if self.stage1_alignment_backend == "local_ctc":
+            if not self.target_fragment.strip():
+                raise ValueError(
+                    "stage1_alignment_backend=local_ctc requires target_fragment"
+                )
+            if start is None or end is None:
+                raise ValueError(
+                    "stage1_alignment_backend=local_ctc requires a complete user clip window"
+                )
         # If user picked a drop, it must lie inside the focus clip window.
         if self.user_drop_t is not None and start is not None and end is not None:
             if not (float(start) <= float(self.user_drop_t) <= float(end)):
