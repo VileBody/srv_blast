@@ -126,7 +126,13 @@ class JobBoundTask(Task):
             tb = ""
         tb_tail = tb[-9000:] if tb else ""
         err = f"celery_failed stage={self._stage_name()} exc={exc!r}\n--- traceback (tail) ---\n{tb_tail}\n"
-        error_stage = str(getattr(exc, "job_stage", "") or self._stage_name())
+        error_stage = str(getattr(exc, "job_stage", "") or "")
+        if not error_stage and str(exc).startswith("ALIGNMENT_"):
+            # Celery may normalize an exception class across process
+            # boundaries, but alignment failures retain their explicit code.
+            error_stage = "alignment"
+        if not error_stage:
+            error_stage = self._stage_name()
         self._set_failed(job_id, error=err, stage=error_stage)
 
 

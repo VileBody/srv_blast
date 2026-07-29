@@ -35,3 +35,33 @@ def test_alignment_error_is_persisted_as_alignment_stage(monkeypatch) -> None:
 
     assert calls[-1]["status"] == "FAILED"
     assert calls[-1]["stage"] == "alignment"
+
+
+def test_normalized_alignment_error_is_persisted_as_alignment_stage(monkeypatch) -> None:
+    calls: list[dict] = []
+
+    class _Store:
+        def get(self, _job_id):
+            return SimpleNamespace(status="RUNNING")
+
+        def set_status(self, job_id, status, **kwargs):
+            calls.append({"job_id": job_id, "status": status, **kwargs})
+
+    monkeypatch.setattr(
+        celery_module.JobStore,
+        "from_env",
+        classmethod(lambda _cls: _Store()),
+    )
+    task = celery_module.JobBoundTask()
+    task.name = "orchestrator.build_job_sdk"
+
+    task.on_failure(
+        RuntimeError("ALIGNMENT_INTERNAL_ERROR: service returned 502"),
+        "task-id",
+        ("job-id",),
+        {},
+        SimpleNamespace(traceback="trace"),
+    )
+
+    assert calls[-1]["status"] == "FAILED"
+    assert calls[-1]["stage"] == "alignment"

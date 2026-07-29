@@ -17,7 +17,12 @@ class AlignmentServiceError(RuntimeError):
     def __init__(self, code: str, message: str):
         self.code = str(code or ERROR_INTERNAL)
         self.message = str(message)
-        super().__init__(f"{self.code}: {self.message}")
+        # Keep both constructor arguments in BaseException.args so Celery can
+        # pickle/unpickle the concrete exception without replacing it.
+        super().__init__(self.code, self.message)
+
+    def __str__(self) -> str:
+        return f"{self.code}: {self.message}"
 
 
 @dataclass(frozen=True)
@@ -44,17 +49,19 @@ def request_local_alignment(
             "ALIGNMENT_SERVICE_URL is empty",
         )
     try:
-        response = httpx.post(
-            f"{base_url}/align",
-            json={
-                "audio_path": str(Path(audio_path).resolve()),
-                "target_fragment": str(target_fragment),
-                "clip_start_abs": float(clip_start_abs),
-                "clip_end_abs": float(clip_end_abs),
-                "request_id": str(request_id or ""),
-            },
-            timeout=float(timeout_s),
-        )
+        # This is a Docker-internal service call. Proxy environment variables
+        # are for external egress and must never intercept the private hostname.
+        with httpx.Client(timeout=float(timeout_s), trust_env=False) as client:
+            response = client.post(
+                f"{base_url}/align",
+                json={
+                    "audio_path": str(Path(audio_path).resolve()),
+                    "target_fragment": str(target_fragment),
+                    "clip_start_abs": float(clip_start_abs),
+                    "clip_end_abs": float(clip_end_abs),
+                    "request_id": str(request_id or ""),
+                },
+            )
     except httpx.TimeoutException as exc:
         raise AlignmentServiceError(
             "ALIGNMENT_TIMEOUT",
