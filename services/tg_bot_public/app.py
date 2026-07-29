@@ -4119,18 +4119,28 @@ class BlastBotApp:
             labels[bid] = label
         return ranked_ids, labels
 
-    async def _ensure_vibe_ranked(self, st: ChatState) -> bool:
+    async def _ensure_vibe_ranked(self, st: ChatState, *, force: bool = False) -> bool:
         """Make sure st has a ranked shortlist. If the background ranker hasn't
         finished (or failed), rank synchronously now. Returns False only when
         ranking yields nothing after retries (caller falls back to the legacy
         genre picker).
+
+        force=True re-ranks even when a usable shortlist is stored. The staleness
+        check below compares the SET of buckets, so by construction it cannot see
+        a re-ORDERING — and improving the ranking is exactly a re-ordering. Every
+        chat that had ranked before such a change would otherwise keep its old
+        order forever, since nothing else re-triggers ranking until new lyrics.
+        Ranking is deterministic and LLM-free by default, so re-running it on
+        entry costs one cheap call and removes that whole class of staleness.
 
         Retries a couple of times with a short backoff: the orchestrator
         endpoint is hardened to never 500/empty, so a failure here is a
         transient client-side hiccup (timeout/connection reset) — without a
         retry, one bad request permanently strands the chat in the legacy
         artist flow (nothing else re-triggers ranking until new lyrics)."""
-        if st.vibe_ranked_ids:
+        stored_ids = list(st.vibe_ranked_ids or [])
+        stored_labels = dict(st.vibe_labels_by_id or {})
+        if st.vibe_ranked_ids and not force:
             reason = _stale_vibe_shortlist_reason(st.vibe_ranked_ids, st.bg_mode)
             if not reason:
                 return True
@@ -4168,6 +4178,19 @@ class BlastBotApp:
         log.error(
             "vibe_rank_sync_exhausted chat=%s attempts=3 last_err=%r", st.chat_id, last_err
         )
+        # A forced refresh that could not reach the orchestrator must not cost the
+        # user their shortlist — an older order still beats being dropped into the
+        # legacy genre picker.
+        if stored_ids and not _stale_vibe_shortlist_reason(stored_ids, st.bg_mode):
+            st.vibe_ranked_ids = stored_ids
+            st.vibe_labels_by_id = stored_labels
+            st.vibe_rank_status = "ready"
+            await self.store.set(st)
+            log.warning(
+                "vibe_rank_refresh_failed chat=%s keeping_stored=%d",
+                st.chat_id, len(stored_ids),
+            )
+            return True
         return False
 
     def _vibe_page_count(self, st: ChatState) -> int:
@@ -4237,7 +4260,7 @@ class BlastBotApp:
         st.vibe_selected_ids = []
         st.vibe_page = 0
         await self.store.set(st)
-        ok = await self._ensure_vibe_ranked(st)
+        ok = await self._ensure_vibe_ranked(st, force=True)
         if not ok:
             await message.answer(
                 "Не удалось подобрать вайбы по треку — выбери стиль вручную."
