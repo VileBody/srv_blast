@@ -44,7 +44,7 @@ from mlcore.llm_router import (
     normalize_provider_mode,
 )
 from mlcore.openrouter_client import OpenRouterClient, OpenRouterSettings
-from mlcore.alignment.client import request_local_alignment
+from mlcore.alignment.client import AlignmentServiceError, request_local_alignment
 from mlcore.footage_picker import (
     FootageIntervalPickerDiagnostics,
     FootageStyleRawAdapterDiagnostics,
@@ -3077,6 +3077,7 @@ def build_all_via_gemini_one_call(
     # with its own (wrong) timing even when the prompt does not request it.
     # The user's explicit window MUST take precedence unconditionally.
     if user_clip_window is not None and not use_stage1b_scenario:
+        local_fragment_analytics: Dict[str, Any] | None = None
         if stage1_asr.selected_fragment is not None:
             logger.warning(
                 "user_clip_window_overriding_model_selected_fragment "
@@ -3087,6 +3088,23 @@ def build_all_via_gemini_one_call(
                 float(user_clip_window[1]),
             )
         user_start, user_end = user_clip_window
+        if use_local_alignment:
+            selected = stage1_asr.selected_fragment
+            analytics = selected.fragment_analytics if selected is not None else None
+            if analytics is None:
+                raise AlignmentServiceError(
+                    "ALIGNMENT_INTERNAL_ERROR",
+                    "local_ctc response is missing selected_fragment.fragment_analytics",
+                )
+            if (
+                abs(float(analytics.working_start_abs) - float(user_start)) > 1e-6
+                or abs(float(analytics.working_end_abs) - float(user_end)) > 1e-6
+            ):
+                raise AlignmentServiceError(
+                    "ALIGNMENT_WINDOW_MISMATCH",
+                    "local_ctc fragment analytics do not match the user clip window",
+                )
+            local_fragment_analytics = analytics.model_dump(mode="json")
         frag_words = _words_in_window(
             words=list(stage1_asr.transcript_words),
             start_abs=float(user_start),
@@ -3116,6 +3134,7 @@ def build_all_via_gemini_one_call(
             "transcript_words": [w.model_dump(mode="json") for w in frag_words],
             "pause_spans": [p.model_dump(mode="json") for p in frag_pauses],
             "srt_items": [s.model_dump(mode="json") for s in frag_srt],
+            "fragment_analytics": local_fragment_analytics,
         }
         stage1_asr = Stage1AsrPayload.model_validate(asr_dict)
         logger.info(
