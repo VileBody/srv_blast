@@ -180,6 +180,16 @@
       // Preserve subtitle font size/geometry; use the central 4:3 crop without
       // horizontally stretching the text.
       try { tr.property("ADBE Scale").setValue([100, 100]); } catch (_) {}
+      // The subtitle comp is 1080 wide inside a 1920-wide frame, and a nested
+      // comp CLIPS at its own bounds. Regular lines fit; the jakson focus word
+      // (the red one, ~2.5x the base size) runs past 1080 and was cut off even
+      // though the 4:3 frame has room to spare on both sides.
+      //
+      // Collapsing the transformation removes that intermediate raster, so the
+      // text is composited straight into this comp and simply extends past the
+      // old boundary. Safe here because the layer carries no effects and no
+      // blending mode — those are what collapse would otherwise disable.
+      try { overlay.collapseTransformation = true; } catch (_) {}
       overlay.moveToBeginning();
       return overlay;
     }
