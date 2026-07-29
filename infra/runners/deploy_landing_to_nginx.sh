@@ -56,6 +56,8 @@ sync_local() {
     --exclude '*.rar' \
     --exclude 'tmp/' \
     "$SRC_DIR/" "$DST_DIR/"
+  find "$DST_DIR" -type d -exec chmod 755 {} +
+  find "$DST_DIR" -type f -exec chmod 644 {} +
 }
 
 sync_docker_host() {
@@ -76,6 +78,8 @@ sync_docker_host() {
       cp -a /src/. /dst/
       find /dst -type f -name "*.rar" -delete
       rm -rf /dst/tmp
+      find /dst -type d -exec chmod 755 {} +
+      find /dst -type f -exec chmod 644 {} +
     '
 }
 
