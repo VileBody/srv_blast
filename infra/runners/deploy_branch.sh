@@ -104,7 +104,7 @@ ensure_env_file_value() {
 }
 
 dozzle_remote_agent_default() {
-  printf '%s' "${DOZZLE_REMOTE_AGENT_DEFAULT:-192.168.0.8:7007,192.168.0.11:7007}"
+  printf '%s' "${DOZZLE_REMOTE_AGENT_DEFAULT:-192.168.0.12:7007,192.168.0.11:7007}"
 }
 
 is_remote_reachable_bind_host() {

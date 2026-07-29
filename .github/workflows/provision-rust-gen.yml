@@ -34,7 +34,7 @@ jobs:
       TWC_SERVER_NAME: blast-rust-gen-1
       TWC_ENABLE_PUBLIC_IPV4: "true"
       TWC_SSH_KEY_IDS: "437463"
-      RUST_GEN_MANAGER_API_CIDRS: 81.17.154.249/32,45.144.221.108/32
+      RUST_GEN_MANAGER_API_CIDRS: 201.24.126.76/32,45.144.221.108/32
       TWC_STATE_KEY: terraform/rust-gen-node.tfstate
       TWC_STATE_ENDPOINT: https://s3.twcstorage.ru
       TWC_STATE_REGION: ru-1
