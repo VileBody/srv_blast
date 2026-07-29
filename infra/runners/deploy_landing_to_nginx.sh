@@ -108,12 +108,18 @@ if [[ -n "$LANDING_NGINX_RELOAD_CMD" ]]; then
 fi
 
 if [[ -f "$DST_DIR/index.html" ]]; then
-  if grep -q 'https://www.instagram.com/impulsemarketing/' "$DST_DIR/index.html"; then
-    echo "[landing-nginx] marker OK in deployed index.html"
-  else
-    echo "[landing-nginx] marker missing in deployed index.html"
-    exit 1
-  fi
+  required_markers=(
+    'https://www.instagram.com/impulsemarketing/'
+    'href="terms.html"'
+    'js/i18n.js?v=20260729-i18n1'
+  )
+  for marker in "${required_markers[@]}"; do
+    if ! grep -Fq "$marker" "$DST_DIR/index.html"; then
+      echo "[landing-nginx] marker missing in deployed index.html: $marker"
+      exit 1
+    fi
+  done
+  echo "[landing-nginx] markers OK in deployed index.html"
 fi
 
 echo "[landing-nginx] done"
