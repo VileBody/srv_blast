@@ -483,6 +483,7 @@ BTN_SUB_MODE_BRAT = "Brat"
 # Customization color palette (mirror of tg_bot_botapi). Data layer mirrored for
 # parity; the picker UX lands in public when the hooks/customization flow does.
 BTN_COLOR_DEFAULT = "По умолчанию"
+BTN_COLOR_BATTERY = "🎲 Батарея (5 цветов)"
 _COLOR_PALETTE: dict[str, str] = {
     "Белый": "#FFFFFF",
     # Чёрный убран из палитры текста — сливается с тёмными фонами. Чёрный фон
@@ -496,6 +497,31 @@ _COLOR_PALETTE: dict[str, str] = {
     "Розовый": "#FF2D92",
 }
 COLOR_PALETTE_BUTTONS = list(_COLOR_PALETTE.keys())
+_SUBTITLE_COLOR_BATTERY_BY_BG: dict[str, tuple[tuple[str, str], ...]] = {
+    # Never include the background's own color: every generated variant must
+    # keep the subtitles visible.
+    "white": (
+        ("Красный", _COLOR_PALETTE["Красный"]),
+        ("Оранжевый", _COLOR_PALETTE["Оранжевый"]),
+        ("Зелёный", _COLOR_PALETTE["Зелёный"]),
+        ("Голубой", _COLOR_PALETTE["Голубой"]),
+        ("Фиолетовый", _COLOR_PALETTE["Фиолетовый"]),
+    ),
+    "black": (
+        ("Белый", _COLOR_PALETTE["Белый"]),
+        ("Красный", _COLOR_PALETTE["Красный"]),
+        ("Жёлтый", _COLOR_PALETTE["Жёлтый"]),
+        ("Голубой", _COLOR_PALETTE["Голубой"]),
+        ("Розовый", _COLOR_PALETTE["Розовый"]),
+    ),
+    "green": (
+        ("Белый", _COLOR_PALETTE["Белый"]),
+        ("Красный", _COLOR_PALETTE["Красный"]),
+        ("Оранжевый", _COLOR_PALETTE["Оранжевый"]),
+        ("Голубой", _COLOR_PALETTE["Голубой"]),
+        ("Розовый", _COLOR_PALETTE["Розовый"]),
+    ),
+}
 
 
 def _parse_color_choice(text: str) -> str | None:
@@ -4258,25 +4284,72 @@ class BlastBotApp:
     # Hook flow — ported 1:1 from tg_bot_botapi (behind HOOK_FLOW_ENABLED).
     # Exit goes to _proceed_to_versions_or_confirm (public's post-settings).
     # ====================================================================
-    def _color_kb(self):
+    def _color_kb(self, *, include_battery: bool = False):
         rows = [COLOR_PALETTE_BUTTONS[i:i + 3] for i in range(0, len(COLOR_PALETTE_BUTTONS), 3)]
+        if include_battery:
+            rows.append([BTN_COLOR_BATTERY])
         rows.append([BTN_COLOR_DEFAULT])
         return _kb(*rows)
 
     async def _ask_subtitle_color(self, message: Message, st: ChatState) -> None:
+        st.battery_mode = False
+        st.battery_cases = []
         st.stage = STAGE_WAIT_SUBTITLE_COLOR
         await self.store.set(st)
+        prompt = (
+            "Цвет субтитров? Выбери из палитры, «По умолчанию» или батарею из 5 цветов."
+            if st.bg_mode == "solid"
+            else "Цвет субтитров? Выбери из палитры или «По умолчанию»."
+        )
         await message.answer(
-            "Цвет субтитров? Выбери из палитры или «По умолчанию».",
-            reply_markup=self._color_kb(),
+            prompt,
+            reply_markup=self._color_kb(include_battery=st.bg_mode == "solid"),
         )
 
     async def _handle_wait_subtitle_color(self, message: Message, st: ChatState) -> None:
-        choice = _parse_color_choice(message.text or "")
+        text = str(message.text or "").strip()
+        if st.bg_mode == "solid" and text == BTN_COLOR_BATTERY:
+            battery_palette = _SUBTITLE_COLOR_BATTERY_BY_BG.get(
+                str(st.bg_solid_color or "").strip()
+            )
+            if battery_palette is None:
+                raise RuntimeError(
+                    "subtitle color battery requires bg_solid_color to be "
+                    "'white', 'black', or 'green'"
+                )
+            st.battery_mode = True
+            st.battery_cases = [
+                {"label": label, "subtitle_color_hex": color_hex}
+                for label, color_hex in battery_palette
+            ]
+            st.subtitle_color_hex = battery_palette[0][1]
+            st.accent_color_hex = ""
+            st.colors_done = True
+            st.versions_count = len(st.battery_cases)
+            st.stage = STAGE_WAIT_CONFIRM
+            await self.store.set(st)
+            labels = ", ".join(label.lower() for label, _ in battery_palette)
+            await message.answer(
+                f"🎲 Батарея: 5 видео с цветами субтитров — {labels}.\n\n"
+                "Запустить генерацию?",
+                reply_markup=_kb([BTN_LAUNCH, BTN_RESTART]),
+            )
+            return
+
+        choice = _parse_color_choice(text)
         if choice is None:
-            await message.answer("Выбери цвет кнопкой из палитры или «По умолчанию».")
+            suffix = " или батарею" if st.bg_mode == "solid" else ""
+            await message.answer(
+                f"Выбери цвет кнопкой из палитры, «По умолчанию»{suffix}."
+            )
             return
         st.subtitle_color_hex = choice
+        if st.bg_mode == "solid":
+            st.accent_color_hex = ""
+            st.colors_done = True
+            await self.store.set(st)
+            await self._proceed_to_versions_or_confirm(message, st)
+            return
         await self._ask_accent_color(message, st)
 
     async def _ask_accent_color(self, message: Message, st: ChatState) -> None:
@@ -4825,14 +4898,13 @@ class BlastBotApp:
             "Шаг 2/2: стилизация футажа.\n\n"
             "Выбранный эффект применяется ко всему ролику.\n\n"
             "• Ксерокс\n• Аналог-глитч\n• Неон\n• Старая камера\n"
-            "• Ч/Б\n• Crystal Glow\n• Night Vision\n• Wave\n\n"
-            "Можно пропустить.",
+            "• Ч/Б\n• Crystal Glow\n• Night Vision\n• Wave",
             reply_markup=_kb(
                 [BTN_FX_EX_XEROX, BTN_FX_EX_ANALOG],
                 [BTN_FX_EX_NEON, BTN_FX_EX_OLDCAM],
                 [BTN_FX_EX_BLACKWHITE, BTN_FX_EX_CRYSTAL],
                 [BTN_FX_EX_NIGHT, BTN_FX_EX_WAVE],
-                [BTN_FX_SKIP], [BTN_BACK],
+                [BTN_BACK],
             ),
         )
 
@@ -4841,14 +4913,11 @@ class BlastBotApp:
         if text == BTN_BACK:
             await self._ask_visual_transition(message, st)
             return
-        if text == BTN_FX_SKIP:
-            st.visual_style = ""
-        else:
-            style = _FX_EXTRA_BY_BUTTON.get(text)
-            if style is None:
-                await message.answer("Выбери стилизацию кнопкой ниже или «Пропустить».")
-                return
-            st.visual_style = style
+        style = _FX_EXTRA_BY_BUTTON.get(text)
+        if style is None:
+            await message.answer("Выбери стилизацию кнопкой ниже.")
+            return
+        st.visual_style = style
         st.visuals_done = True
         await self.store.set(st)
         await self._proceed_to_versions_or_confirm(message, st)
@@ -5294,6 +5363,8 @@ class BlastBotApp:
         st.colors_done = False
         st.subtitle_color_hex = ""
         st.accent_color_hex = ""
+        st.battery_mode = False
+        st.battery_cases = []
         st.versions_count = 1
 
     async def _handle_wait_audio(self, message: Message, st: ChatState) -> None:
@@ -5695,9 +5766,11 @@ class BlastBotApp:
         lines.append("")
         lines.append(self._sources_summary_line(st))
         lines.append(f"*Режим субтитров:* «{mode_display}»")
-        # Hook/color echo only when the hook flow is active.
+        # Hook/color echo when the hook flow is active. Solid background has its
+        # own subtitle-color picker even when hooks are disabled.
         if HOOK_FLOW_ENABLED:
             lines.append(self._hook_summary_line(st))
+        if HOOK_FLOW_ENABLED or st.bg_mode == "solid":
             cl = self._color_summary_line(st)
             if cl:
                 lines.append(cl)
@@ -5770,15 +5843,22 @@ class BlastBotApp:
         this redirects into the color pickers once, then comes back here."""
         # Strobe bg: skip color pickers (white auto-invert) + offer ONLY the cut
         # transition style once (not the full hook flow).
-        if st.bg_mode in {"solid", "solid_strobe"} and not st.visuals_done and st.stage != STAGE_WAIT_STROBE_CUT:
+        if st.bg_mode == "solid_strobe" and not st.visuals_done and st.stage != STAGE_WAIT_STROBE_CUT:
             await self._ask_strobe_cut(message, st)
             return
+        # A plain solid background has no footage, so transitions and footage
+        # stylization cannot affect the result. Go directly to subtitle color.
+        if st.bg_mode == "solid" and not st.visuals_done:
+            st.visual_transition = ""
+            st.visual_style = ""
+            st.visuals_done = True
+            await self.store.set(st)
         if st.bg_mode == "footage" and not st.visuals_done and st.stage not in {
             STAGE_WAIT_VISUAL_TRANSITION, STAGE_WAIT_VISUAL_STYLE
         }:
             await self._ask_visual_transition(message, st)
             return
-        if HOOK_FLOW_ENABLED and not st.colors_done:
+        if (HOOK_FLOW_ENABLED or st.bg_mode == "solid") and not st.colors_done:
             await self._ask_subtitle_color(message, st)
             return
         paid = await self.credits_db.has_paid(st.chat_id)
@@ -5807,10 +5887,18 @@ class BlastBotApp:
             # inverts. The ONLY strobe setting is the cut-transition style,
             # asked once by _proceed_to_versions_or_confirm. Routing through the
             # full hook flow here duplicated it (hook prompt + then cut prompt).
-            if st.bg_mode in {"solid", "solid_strobe"}:
+            if st.bg_mode == "solid_strobe":
                 st.colors_done = False
                 await self.store.set(st)
                 await self._proceed_to_versions_or_confirm(message, st)
+                return
+            if st.bg_mode == "solid":
+                st.visual_transition = ""
+                st.visual_style = ""
+                st.visuals_done = True
+                st.colors_done = False
+                await self.store.set(st)
+                await self._ask_subtitle_color(message, st)
                 return
             # Hook flow first; customization (colors) runs after it (see
             # _proceed_to_versions_or_confirm). Legacy path when the flag is off.
@@ -7211,6 +7299,28 @@ class BlastBotApp:
             batch_id=normalized_batch_id,
             version_index=int(version_index),
         )
+        subtitle_color_for_version = str(st.subtitle_color_hex or "")
+        if st.battery_mode:
+            if st.bg_mode != "solid":
+                raise RuntimeError("subtitle color battery requires bg_mode='solid'")
+            cases = list(st.battery_cases or [])
+            if len(cases) != int(versions_total):
+                raise RuntimeError(
+                    "subtitle color battery case count must match versions_total: "
+                    f"cases={len(cases)} versions={int(versions_total)}"
+                )
+            case_index = int(version_index) - 1
+            if case_index < 0 or case_index >= len(cases):
+                raise RuntimeError(
+                    f"subtitle color battery has no case for version {int(version_index)}"
+                )
+            subtitle_color_for_version = str(
+                cases[case_index].get("subtitle_color_hex") or ""
+            ).strip()
+            if not subtitle_color_for_version:
+                raise RuntimeError(
+                    f"subtitle color battery case {int(version_index)} has no color"
+                )
         user_clip_start_sec: float | None = None
         user_clip_end_sec: float | None = None
         start = float(st.user_clip_start_sec or 0.0)
@@ -7358,7 +7468,7 @@ class BlastBotApp:
                 else None
             ),
             # Strobe bg auto-inverts WHITE text (Difference) — ignore custom color.
-            subtitle_color_hex=(None if st.bg_mode == "solid_strobe" else (str(st.subtitle_color_hex) or None)),
+            subtitle_color_hex=(None if st.bg_mode == "solid_strobe" else (subtitle_color_for_version or None)),
             accent_color_hex=(None if st.bg_mode == "solid_strobe" else (str(st.accent_color_hex) or None)),
             render_engine=(
                 "rust-gen"
@@ -7543,6 +7653,8 @@ class BlastBotApp:
         st.next_version_to_enqueue = 1
         st.master_job_id = ""
         st.used_footage_file_names = []
+        st.battery_mode = False
+        st.battery_cases = []
         st.active_job_started_at = 0.0
         st.last_status_msg_at = 0.0
         st.status_message_id = 0
