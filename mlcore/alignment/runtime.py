@@ -16,6 +16,8 @@ from .core import (
     ERROR_WINDOW_MISMATCH,
     align_target_fragment,
 )
+from .contracts import ERROR_SEPARATOR_UNAVAILABLE
+from .separation import DemucsVocalSeparator
 
 
 def _env(name: str, default: str = "") -> str:
@@ -52,6 +54,13 @@ class AlignmentSettings:
     max_window_sec: float
     max_reference_words: int
     torch_threads: int
+    audio_preprocessor: str
+    demucs_model_repo: Path
+    demucs_model_name: str
+    demucs_model_revision: str
+    demucs_package_version: str
+    demucs_segment_sec: float
+    demucs_overlap: float
 
     @classmethod
     def from_env(cls) -> "AlignmentSettings":
@@ -70,6 +79,18 @@ class AlignmentSettings:
             max_window_sec=_float_env("ALIGNMENT_MAX_WINDOW_SEC", 120.0),
             max_reference_words=_int_env("ALIGNMENT_MAX_REFERENCE_WORDS", 400),
             torch_threads=max(1, _int_env("ALIGNMENT_TORCH_THREADS", 4)),
+            audio_preprocessor=_env("ALIGNMENT_AUDIO_PREPROCESSOR", "demucs"),
+            demucs_model_repo=Path(
+                _env("ALIGNMENT_DEMUCS_MODEL_REPO", "/opt/models/demucs")
+            ).resolve(),
+            demucs_model_name=_env("ALIGNMENT_DEMUCS_MODEL_NAME", "htdemucs"),
+            demucs_model_revision=_env("ALIGNMENT_DEMUCS_MODEL_REVISION"),
+            demucs_package_version=_env(
+                "ALIGNMENT_DEMUCS_PACKAGE_VERSION",
+                "4.1.0",
+            ),
+            demucs_segment_sec=_float_env("ALIGNMENT_DEMUCS_SEGMENT_SEC", 7.0),
+            demucs_overlap=_float_env("ALIGNMENT_DEMUCS_OVERLAP", 0.25),
         )
 
 
@@ -81,8 +102,9 @@ class AlignmentRuntime:
         self._processor: Any = None
         self._model: Any = None
         self._torch: Any = None
-        self._soundfile: Any = None
+        self._vocal_separator: DemucsVocalSeparator | None = None
         self._load_error = ""
+        self._load_error_code = ERROR_MODEL_UNAVAILABLE
         self._ready = False
 
     @property
@@ -97,6 +119,11 @@ class AlignmentRuntime:
         return {
             "ready": self.ready,
             "model_revision": self.settings.model_revision,
+            "audio_preprocessor": self.settings.audio_preprocessor,
+            "separator_model": self.settings.demucs_model_name,
+            "separator_revision": self.settings.demucs_model_revision,
+            "separator_package_version": self.settings.demucs_package_version,
+            "load_error_code": self._load_error_code if self.load_error else "",
             "load_error": self.load_error,
         }
 
@@ -120,7 +147,11 @@ class AlignmentRuntime:
                 raise RuntimeError("ALIGNMENT_MODEL_REVISION is empty")
             if not self.settings.model_path.is_dir():
                 raise RuntimeError(f"model directory is missing: {self.settings.model_path}")
-            import soundfile
+            if self.settings.audio_preprocessor != "demucs":
+                raise AlignmentFailure(
+                    ERROR_SEPARATOR_UNAVAILABLE,
+                    "ALIGNMENT_AUDIO_PREPROCESSOR must be explicitly set to 'demucs'",
+                )
             import torch
             from transformers import Wav2Vec2ForCTC, Wav2Vec2Processor
 
@@ -135,15 +166,35 @@ class AlignmentRuntime:
             )
             model.to("cpu")
             model.eval()
+            vocal_separator = DemucsVocalSeparator(
+                model_repo=self.settings.demucs_model_repo,
+                model_name=self.settings.demucs_model_name,
+                model_revision=self.settings.demucs_model_revision,
+                package_version=self.settings.demucs_package_version,
+                segment_sec=self.settings.demucs_segment_sec,
+                overlap=self.settings.demucs_overlap,
+            )
             self._processor = processor
             self._model = model
             self._torch = torch
-            self._soundfile = soundfile
+            self._vocal_separator = vocal_separator
             self._ready = True
+            self._load_error_code = ""
             self._load_error = ""
+        except AlignmentFailure as exc:
+            self._ready = False
+            self._load_error_code = exc.code
+            self._load_error = exc.message
         except Exception as exc:
             self._ready = False
+            self._load_error_code = ERROR_MODEL_UNAVAILABLE
             self._load_error = f"{type(exc).__name__}: {exc}"
+
+    def _not_ready_failure(self) -> AlignmentFailure:
+        return AlignmentFailure(
+            self._load_error_code or ERROR_MODEL_UNAVAILABLE,
+            self.load_error or "alignment model is not ready",
+        )
 
     def resolve_audio_path(self, raw_path: str) -> Path:
         candidate = Path(str(raw_path or "")).expanduser().resolve()
@@ -168,10 +219,7 @@ class AlignmentRuntime:
         clip_end_abs: float,
     ) -> AlignmentResult:
         if not self.ready:
-            raise AlignmentFailure(
-                ERROR_MODEL_UNAVAILABLE,
-                self.load_error or "alignment model is not ready",
-            )
+            raise self._not_ready_failure()
         duration = float(clip_end_abs) - float(clip_start_abs)
         if duration <= 0.0 or duration > float(self.settings.max_window_sec):
             raise AlignmentFailure(
@@ -183,6 +231,11 @@ class AlignmentRuntime:
                 ERROR_WINDOW_MISMATCH,
                 f"reference exceeds {self.settings.max_reference_words} words",
             )
+        if self._vocal_separator is None:
+            raise AlignmentFailure(
+                ERROR_SEPARATOR_UNAVAILABLE,
+                "Demucs separator is not loaded",
+            )
         return align_target_fragment(
             audio_path=self.resolve_audio_path(audio_path),
             target_fragment=target_fragment,
@@ -191,7 +244,7 @@ class AlignmentRuntime:
             processor=self._processor,
             model=self._model,
             torch_module=self._torch,
-            soundfile_module=self._soundfile,
+            vocal_separator=self._vocal_separator,
             model_revision=self.settings.model_revision,
             ffmpeg_bin=self.settings.ffmpeg_bin,
             padding_left_sec=self.settings.padding_left_sec,
@@ -209,10 +262,7 @@ class AlignmentRuntime:
         clip_end_abs: float,
     ) -> AlignmentResult:
         if not self.ready:
-            raise AlignmentFailure(
-                ERROR_MODEL_UNAVAILABLE,
-                self.load_error or "alignment model is not ready",
-            )
+            raise self._not_ready_failure()
         loop = asyncio.get_running_loop()
         future = loop.run_in_executor(
             self._executor,

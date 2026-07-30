@@ -143,6 +143,8 @@ def extract_analysis_crop(
     clip_end_abs: float,
     padding_left_sec: float,
     padding_right_sec: float,
+    sample_rate: int = SAMPLE_RATE,
+    channels: int = 1,
 ) -> tuple[float, float]:
     if clip_start_abs < 0.0 or clip_end_abs <= clip_start_abs:
         raise AlignmentFailure(
@@ -151,6 +153,8 @@ def extract_analysis_crop(
         )
     if padding_left_sec < 0.0 or padding_right_sec < 0.0:
         raise AlignmentFailure(ERROR_INTERNAL, "analysis padding must be non-negative")
+    if sample_rate <= 0 or channels <= 0:
+        raise AlignmentFailure(ERROR_INTERNAL, "analysis audio format is invalid")
     if not audio_path.is_file():
         raise AlignmentFailure(ERROR_INTERNAL, "audio file is unavailable")
 
@@ -173,9 +177,9 @@ def extract_analysis_crop(
             f"{duration:.6f}",
             "-vn",
             "-ac",
-            "1",
+            str(int(channels)),
             "-ar",
-            str(SAMPLE_RATE),
+            str(int(sample_rate)),
             "-c:a",
             "pcm_s16le",
             str(output_path),
@@ -478,7 +482,7 @@ def align_target_fragment(
     processor: Any,
     model: Any,
     torch_module: Any,
-    soundfile_module: Any,
+    vocal_separator: Any,
     model_revision: str,
     ffmpeg_bin: str = "ffmpeg",
     padding_left_sec: float = 0.5,
@@ -497,14 +501,17 @@ def align_target_fragment(
             clip_end_abs=float(clip_end_abs),
             padding_left_sec=float(padding_left_sec),
             padding_right_sec=float(padding_right_sec),
+            sample_rate=int(vocal_separator.input_sample_rate),
+            channels=int(vocal_separator.input_channels),
         )
-        waveform, sample_rate = soundfile_module.read(
-            crop_path,
-            dtype="float32",
-            always_2d=False,
-        )
+        separation = vocal_separator.separate_vocals(crop_path)
+        waveform = separation.waveform
+        sample_rate = int(separation.sample_rate)
         if sample_rate != SAMPLE_RATE or getattr(waveform, "ndim", 0) != 1:
-            raise AlignmentFailure(ERROR_INTERNAL, "ffmpeg produced an invalid analysis crop")
+            raise AlignmentFailure(
+                ERROR_INTERNAL,
+                "source separator produced an invalid analysis waveform",
+            )
         if int(waveform.size) < SAMPLE_RATE // 10:
             raise AlignmentFailure(ERROR_WINDOW_MISMATCH, "analysis crop is too short")
 
@@ -555,6 +562,7 @@ def align_target_fragment(
             "mean_word_confidence": float(np.mean(confidences)),
             "min_word_confidence": float(min(confidences)),
             "warnings": warnings,
+            "source_separation": dict(separation.diagnostics),
             "words": [
                 {
                     "word_index": index,
@@ -569,6 +577,10 @@ def align_target_fragment(
             "type": "local_ctc_viterbi",
             "algorithm_version": ALIGNMENT_ALGORITHM_VERSION,
             "model_revision": str(model_revision),
+            "audio_preprocessor": "demucs",
+            "separator_model": str(vocal_separator.model_name),
+            "separator_revision": str(vocal_separator.model_revision),
+            "separator_package_version": str(vocal_separator.package_version),
             "sample_rate": SAMPLE_RATE,
             "analysis_start_abs": float(analysis_start),
             "requested_analysis_end_abs": float(requested_analysis_end),

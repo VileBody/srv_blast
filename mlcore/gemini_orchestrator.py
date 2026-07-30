@@ -2766,6 +2766,15 @@ def build_all_via_gemini_one_call(
     expected_alignment_algorithm = str(
         os.environ.get("ALIGNMENT_ALGORITHM_VERSION") or ""
     ).strip()
+    expected_separator_model = str(
+        os.environ.get("ALIGNMENT_DEMUCS_MODEL_NAME") or ""
+    ).strip()
+    expected_separator_revision = str(
+        os.environ.get("ALIGNMENT_DEMUCS_MODEL_REVISION") or ""
+    ).strip()
+    expected_separator_package_version = str(
+        os.environ.get("ALIGNMENT_DEMUCS_PACKAGE_VERSION") or ""
+    ).strip()
     if isinstance(stage1_asr_cached, dict):
         cache_compatible = True
         if stage1_alignment_backend_cached != stage1_alignment_backend:
@@ -2783,6 +2792,20 @@ def build_all_via_gemini_one_call(
             if str(metadata.get("model_revision") or "") != expected_alignment_revision:
                 cache_compatible = False
             if str(metadata.get("algorithm_version") or "") != expected_alignment_algorithm:
+                cache_compatible = False
+            if str(metadata.get("audio_preprocessor") or "") != "demucs":
+                cache_compatible = False
+            if str(metadata.get("separator_model") or "") != expected_separator_model:
+                cache_compatible = False
+            if (
+                str(metadata.get("separator_revision") or "")
+                != expected_separator_revision
+            ):
+                cache_compatible = False
+            if (
+                str(metadata.get("separator_package_version") or "")
+                != expected_separator_package_version
+            ):
                 cache_compatible = False
         elif use_forced_alignment:
             if stage1_asr_mode_cached != "forced_alignment":
@@ -2855,16 +2878,31 @@ def build_all_via_gemini_one_call(
             )
             stage1_asr = local_response.stage1_asr
             backend_info = dict(local_response.backend)
+            expected_backend_identity = {
+                "algorithm_version": expected_alignment_algorithm,
+                "model_revision": expected_alignment_revision,
+                "audio_preprocessor": "demucs",
+                "separator_model": expected_separator_model,
+                "separator_revision": expected_separator_revision,
+                "separator_package_version": expected_separator_package_version,
+            }
+            for field, expected_value in expected_backend_identity.items():
+                actual_value = str(backend_info.get(field) or "")
+                if not expected_value:
+                    raise AlignmentServiceError(
+                        "ALIGNMENT_INTERNAL_ERROR",
+                        f"worker alignment identity is empty for {field}",
+                    )
+                if actual_value != expected_value:
+                    raise AlignmentServiceError(
+                        "ALIGNMENT_INTERNAL_ERROR",
+                        "alignment service identity mismatch "
+                        f"field={field} expected={expected_value!r} "
+                        f"actual={actual_value!r}",
+                    )
             alignment_metadata = {
                 "backend": "local_ctc",
-                "model_revision": str(
-                    backend_info.get("model_revision")
-                    or expected_alignment_revision
-                ),
-                "algorithm_version": str(
-                    backend_info.get("algorithm_version")
-                    or expected_alignment_algorithm
-                ),
+                **expected_backend_identity,
                 "diagnostics": dict(local_response.diagnostics),
             }
             resume_state["stage1_alignment_metadata"] = alignment_metadata
@@ -2874,10 +2912,13 @@ def build_all_via_gemini_one_call(
             )
             logger.info(
                 "stage1a_local_ctc_succeeded words=%d model_revision=%s "
-                "algorithm_version=%s warnings=%d",
+                "algorithm_version=%s separator_model=%s "
+                "separator_revision=%s warnings=%d",
                 len(stage1_asr.transcript_words),
                 alignment_metadata["model_revision"],
                 alignment_metadata["algorithm_version"],
+                alignment_metadata["separator_model"],
+                alignment_metadata["separator_revision"],
                 len(local_response.diagnostics.get("warnings") or []),
             )
         else:

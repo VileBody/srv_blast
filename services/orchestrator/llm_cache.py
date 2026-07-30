@@ -128,6 +128,8 @@ class CacheKey:
     stage1_alignment_backend: str = "gemini"
     alignment_model_revision: str = ""
     alignment_algorithm_version: str = ""
+    alignment_separator_model: str = ""
+    alignment_separator_revision: str = ""
 
 
 def _fingerprint(parts: list[str]) -> str:
@@ -145,6 +147,8 @@ def _stage1a_fp(k: CacheKey) -> str:
         k.stage1_alignment_backend,
         k.alignment_model_revision,
         k.alignment_algorithm_version,
+        k.alignment_separator_model,
+        k.alignment_separator_revision,
     ])
 
 
@@ -158,6 +162,8 @@ def _stage1b_fp(k: CacheKey) -> str:
         k.stage1_alignment_backend,
         k.alignment_model_revision,
         k.alignment_algorithm_version,
+        k.alignment_separator_model,
+        k.alignment_separator_revision,
     ])
 
 
@@ -172,6 +178,8 @@ def _stage2_subs_fp(k: CacheKey) -> str:
         k.stage1_alignment_backend,
         k.alignment_model_revision,
         k.alignment_algorithm_version,
+        k.alignment_separator_model,
+        k.alignment_separator_revision,
     ])
 
 
@@ -186,6 +194,8 @@ def _stage2_timing_fp(k: CacheKey) -> str:
         k.stage1_alignment_backend,
         k.alignment_model_revision,
         k.alignment_algorithm_version,
+        k.alignment_separator_model,
+        k.alignment_separator_revision,
     ])
 
 
@@ -202,6 +212,8 @@ def build_cache_key(
     stage1_alignment_backend: str = "gemini",
     alignment_model_revision: str = "",
     alignment_algorithm_version: str = "",
+    alignment_separator_model: str = "",
+    alignment_separator_revision: str = "",
 ) -> CacheKey:
     """Build a CacheKey, reading model IDs and prompt versions from the environment."""
     def _fmt_sec(v: Optional[float]) -> str:
@@ -231,6 +243,14 @@ def build_cache_key(
             raise RuntimeError(
                 "alignment_algorithm_version is required for local_ctc cache keys"
             )
+        if not str(alignment_separator_model or "").strip():
+            raise RuntimeError(
+                "alignment_separator_model is required for local_ctc cache keys"
+            )
+        if not str(alignment_separator_revision or "").strip():
+            raise RuntimeError(
+                "alignment_separator_revision is required for local_ctc cache keys"
+            )
     subtitles_model = (os.environ.get("GEMINI_MODEL_SUBTITLES") or "").strip() or "unknown"
 
     return CacheKey(
@@ -253,6 +273,10 @@ def build_cache_key(
         alignment_model_revision=str(alignment_model_revision or "").strip(),
         alignment_algorithm_version=str(
             alignment_algorithm_version or ""
+        ).strip(),
+        alignment_separator_model=str(alignment_separator_model or "").strip(),
+        alignment_separator_revision=str(
+            alignment_separator_revision or ""
         ).strip(),
     )
 

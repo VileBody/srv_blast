@@ -1800,6 +1800,12 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
             alignment_algorithm_version=str(
                 os.environ.get("ALIGNMENT_ALGORITHM_VERSION") or ""
             ).strip(),
+            alignment_separator_model=str(
+                os.environ.get("ALIGNMENT_DEMUCS_MODEL_NAME") or ""
+            ).strip(),
+            alignment_separator_revision=str(
+                os.environ.get("ALIGNMENT_DEMUCS_MODEL_REVISION") or ""
+            ).strip(),
         )
     except Exception as _ck_err:
         log.warning("llm_cache key_build_failed job=%s err=%r", job_id, _ck_err)

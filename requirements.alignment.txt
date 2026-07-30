@@ -1,3 +1,4 @@
+demucs==4.1.0
 fastapi==0.115.14
 huggingface-hub==0.27.1
 numpy==1.26.4
