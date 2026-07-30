@@ -557,8 +557,10 @@ class RedisChatStateStore:
     async def reset_to_wait_audio(self, chat_id: int) -> ChatState:
         existing = await self.get(chat_id)
         existing.stage = STAGE_WAIT_AUDIO
-        # Clear generation-specific fields but keep user context
-        existing.prepared_audio_local_path = ""
+        # Clear generation-specific fields while keeping the last input reusable.
+        # The audio handler clears audio/text/timing only after a new file has
+        # been prepared successfully, so /sendtrack does not discard the old
+        # track before the user has actually replaced it.
         existing.active_job_id = ""
         existing.active_job_ids = []
         existing.job_order = []
@@ -577,12 +579,9 @@ class RedisChatStateStore:
         existing.last_job_stage = ""
         existing.last_job_error = ""
         existing.last_result_url = ""
-        existing.target_fragment = ""
         existing.footage_genre_key = ""
         existing.footage_artist_key = ""
         existing.footage_artist_id = ""
-        existing.user_clip_start_sec = 0.0
-        existing.user_clip_end_sec = 0.0
         existing.subtitles_mode = ""
         existing.render_engine = ""
         existing.hook_enabled = False
