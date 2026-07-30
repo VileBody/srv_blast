@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import math
-import re
 import subprocess
 import tempfile
 import unicodedata
@@ -16,24 +15,38 @@ from mlcore.models.stage1_asr import Stage1AsrPayload
 
 from .contracts import (
     ALIGNMENT_ALGORITHM_VERSION,
+    AlignmentFailure,
     ERROR_INTERNAL,
     ERROR_MODEL_UNAVAILABLE,
     ERROR_TIMEOUT,
     ERROR_UNSUPPORTED_TEXT,
     ERROR_WINDOW_MISMATCH,
 )
+from .redaction import (
+    ALIGNMENT_WILDCARD,
+    REDACTION_MARKERS,
+    UNIT_WILDCARD,
+    alignment_units,
+    count_wildcards,
+    has_redaction,
+    strip_edge_punctuation,
+)
 
 SAMPLE_RATE = 16_000
 TOKEN_POSTERIOR_RELATIVE_FLOOR = 0.2
 TOKEN_TO_BLANK_ODDS_FLOOR = 0.1
-_EDGE_PUNCTUATION_RE = re.compile(r"^[^\w]+|[^\w]+$", flags=re.UNICODE)
 
+# Placeholder emitted by ``build_targets`` for a redaction wildcard. The real
+# token id only exists once the emission matrix is known, so it is resolved in
+# ``ctc_viterbi_align``.
+WILDCARD_TARGET_ID = -1
 
-class AlignmentFailure(RuntimeError):
-    def __init__(self, code: str, message: str):
-        self.code = str(code)
-        self.message = str(message)
-        super().__init__(f"{self.code}: {self.message}")
+# The wildcard column scores "some non-blank grapheme is emitted in this frame",
+# discounted by this weight. A known grapheme that owns more than this share of
+# the non-blank probability mass in a frame therefore always outbids the
+# wildcard, which keeps the visible letters from being compressed while the
+# wildcard still beats blank on the hidden phonemes.
+WILDCARD_NON_BLANK_WEIGHT = 0.5
 
 
 @dataclass(frozen=True)
@@ -45,6 +58,7 @@ class TokenSpan:
     score: float
     path_start_frame: int
     path_end_frame: int
+    is_wildcard: bool = False
 
 
 @dataclass(frozen=True)
@@ -157,7 +171,7 @@ def reference_words(text: str) -> list[str]:
     for raw in normalized.split():
         if raw.startswith("[") and raw.endswith("]"):
             continue
-        cleaned = _EDGE_PUNCTUATION_RE.sub("", raw).strip()
+        cleaned = strip_edge_punctuation(raw)
         if cleaned:
             words.append(cleaned)
     if not words:
@@ -249,6 +263,37 @@ def extract_analysis_crop(
     return analysis_start, requested_end
 
 
+def wildcard_emission_column(log_probs: np.ndarray, *, blank_id: int) -> np.ndarray:
+    """Log-probability that *some* unknown grapheme is emitted in each frame.
+
+    This is the garbage ("star") model used for redacted letters: the hidden
+    audio is known to be speech but its graphemes are unknown, so the wildcard
+    scores the total non-blank probability mass, discounted by
+    :data:`WILDCARD_NON_BLANK_WEIGHT`. Silence and inter-word gaps stay far
+    cheaper on the blank state, so the wildcard cannot park itself outside the
+    spoken word.
+    """
+    emissions = np.asarray(log_probs, dtype=np.float64)
+    if emissions.ndim != 2:
+        raise ValueError(f"log_probs must have shape [frames, vocab], got {emissions.shape}")
+    frames, vocab_size = emissions.shape
+    if blank_id < 0 or blank_id >= vocab_size:
+        raise ValueError(f"blank_id is outside vocabulary: {blank_id}")
+    if vocab_size < 2:
+        raise AlignmentFailure(
+            ERROR_MODEL_UNAVAILABLE,
+            "model vocabulary has no non-blank tokens for the redaction wildcard",
+        )
+    non_blank = np.delete(emissions, blank_id, axis=1)
+    row_max = np.max(non_blank, axis=1)
+    finite = np.isfinite(row_max)
+    column = np.full(frames, -np.inf, dtype=np.float64)
+    if bool(np.any(finite)):
+        shifted = non_blank[finite] - row_max[finite][:, None]
+        column[finite] = row_max[finite] + np.log(np.sum(np.exp(shifted), axis=1))
+    return column + math.log(WILDCARD_NON_BLANK_WEIGHT)
+
+
 def ctc_viterbi_align(
     log_probs: np.ndarray,
     target_ids: Sequence[int],
@@ -264,7 +309,22 @@ def ctc_viterbi_align(
     targets = [int(token_id) for token_id in target_ids]
     if blank_id < 0 or blank_id >= vocab_size:
         raise ValueError(f"blank_id is outside vocabulary: {blank_id}")
-    if any(token_id < 0 or token_id >= vocab_size for token_id in targets):
+    if any(token_id == WILDCARD_TARGET_ID for token_id in targets):
+        wildcard_token_id = vocab_size
+        emissions = np.concatenate(
+            [
+                emissions,
+                wildcard_emission_column(emissions, blank_id=blank_id)[:, None],
+            ],
+            axis=1,
+        )
+        targets = [
+            wildcard_token_id if token_id == WILDCARD_TARGET_ID else token_id
+            for token_id in targets
+        ]
+    else:
+        wildcard_token_id = -1
+    if any(token_id < 0 or token_id >= emissions.shape[1] for token_id in targets):
         raise ValueError("target token is outside emission vocabulary")
 
     repeated_neighbors = sum(1 for left, right in zip(targets, targets[1:]) if left == right)
@@ -331,25 +391,32 @@ def ctc_viterbi_align(
             )
         token_log_probs = emissions[assigned, token_id]
         blank_log_probs = emissions[assigned, blank_id]
-        # Viterbi can hold a token state through unrelated frames merely to
-        # preserve a path. Keep the connected posterior-supported region around
-        # the strongest token-vs-blank peak as the acoustic timing evidence.
-        log_odds = token_log_probs - blank_log_probs
-        peak_offset = int(np.argmax(log_odds))
-        relative_floor = float(token_log_probs[peak_offset]) + math.log(
-            TOKEN_POSTERIOR_RELATIVE_FLOOR
-        )
-        evidence_mask = (token_log_probs >= relative_floor) & (
-            log_odds >= math.log(TOKEN_TO_BLANK_ODDS_FLOOR)
-        )
-        evidence_mask[peak_offset] = True
-        evidence_start = peak_offset
-        while evidence_start > 0 and bool(evidence_mask[evidence_start - 1]):
-            evidence_start -= 1
-        evidence_end = peak_offset + 1
-        while evidence_end < assigned.size and bool(evidence_mask[evidence_end]):
-            evidence_end += 1
-        evidence_frames = assigned[evidence_start:evidence_end]
+        if token_id == wildcard_token_id:
+            # A wildcard stands for an unknown, possibly multi-phoneme run of
+            # hidden audio, so it has no single posterior peak to trim around.
+            # Its whole occupancy is the timing evidence — that is what makes
+            # the display word cover the masked letters.
+            evidence_frames = assigned
+        else:
+            # Viterbi can hold a token state through unrelated frames merely to
+            # preserve a path. Keep the connected posterior-supported region
+            # around the strongest token-vs-blank peak as the timing evidence.
+            log_odds = token_log_probs - blank_log_probs
+            peak_offset = int(np.argmax(log_odds))
+            relative_floor = float(token_log_probs[peak_offset]) + math.log(
+                TOKEN_POSTERIOR_RELATIVE_FLOOR
+            )
+            evidence_mask = (token_log_probs >= relative_floor) & (
+                log_odds >= math.log(TOKEN_TO_BLANK_ODDS_FLOOR)
+            )
+            evidence_mask[peak_offset] = True
+            evidence_start = peak_offset
+            while evidence_start > 0 and bool(evidence_mask[evidence_start - 1]):
+                evidence_start -= 1
+            evidence_end = peak_offset + 1
+            while evidence_end < assigned.size and bool(evidence_mask[evidence_end]):
+                evidence_end += 1
+            evidence_frames = assigned[evidence_start:evidence_end]
         probabilities = np.exp(emissions[evidence_frames, token_id])
         spans.append(
             TokenSpan(
@@ -360,6 +427,7 @@ def ctc_viterbi_align(
                 score=float(np.mean(probabilities)),
                 path_start_frame=int(assigned[0]),
                 path_end_frame=int(assigned[-1]) + 1,
+                is_wildcard=bool(token_id == wildcard_token_id),
             )
         )
     return spans, total_score
@@ -399,25 +467,25 @@ def _choose_text_case(
         [word.upper() for word in pronunciation_words],
         pronunciation_words,
     )
+
+    def _missing(text: str) -> set[str]:
+        # The wildcard is not a vocabulary grapheme: it is resolved into a
+        # dedicated emission column at CTC time.
+        return {
+            character
+            for character in set(text)
+            if character != ALIGNMENT_WILDCARD and character not in vocab
+        }
+
     for candidate in candidates:
-        if all(character in vocab for character in set("".join(candidate))):
+        if not _missing("".join(candidate)):
             return candidate
 
     best_candidate = min(
         candidates,
-        key=lambda candidate: len(
-            {
-                character
-                for character in "".join(candidate)
-                if character not in vocab
-            }
-        ),
+        key=lambda candidate: len(_missing("".join(candidate))),
     )
-    missing = sorted(
-        character
-        for character in set("".join(best_candidate))
-        if character not in vocab
-    )
+    missing = sorted(_missing("".join(best_candidate)))
     error_display_words = display_words or pronunciation_words
     unsupported_words = [
         str(display_word)
@@ -425,7 +493,7 @@ def _choose_text_case(
             error_display_words,
             best_candidate,
         )
-        if any(character not in vocab for character in pronunciation_word)
+        if _missing(pronunciation_word)
     ]
     raise AlignmentFailure(
         ERROR_UNSUPPORTED_TEXT,
@@ -464,12 +532,24 @@ def build_targets(
     token_word_indexes: list[int] = []
     unk_id = tokenizer.unk_token_id
     for word_index, word in enumerate(normalized_words):
-        encoded = [int(item) for item in tokenizer(word, add_special_tokens=False).input_ids]
-        if not encoded or (unk_id is not None and int(unk_id) in encoded):
-            raise AlignmentFailure(
-                ERROR_UNSUPPORTED_TEXT,
-                f"word contains unsupported model tokens index={word_index}",
-            )
+        encoded: list[int] = []
+        for unit_kind, unit_text in alignment_units(
+            word,
+            display_text=str(display_words[word_index]),
+        ):
+            if unit_kind == UNIT_WILDCARD:
+                encoded.append(WILDCARD_TARGET_ID)
+                continue
+            unit_ids = [
+                int(item)
+                for item in tokenizer(unit_text, add_special_tokens=False).input_ids
+            ]
+            if not unit_ids or (unk_id is not None and int(unk_id) in unit_ids):
+                raise AlignmentFailure(
+                    ERROR_UNSUPPORTED_TEXT,
+                    f"word contains unsupported model tokens index={word_index}",
+                )
+            encoded.extend(unit_ids)
         target_ids.extend(encoded)
         token_word_indexes.extend([word_index] * len(encoded))
         if word_index < len(normalized_words) - 1:
@@ -503,6 +583,14 @@ def aggregate_words(
                 ERROR_WINDOW_MISMATCH,
                 f"word has no aligned spans index={word_index}",
             )
+        # Wildcard spans define the word extent (they carry the masked audio)
+        # but they carry no grapheme evidence, so they stay out of the score.
+        scored_spans = [span for span in word_spans if not span.is_wildcard]
+        if not scored_spans:
+            raise AlignmentFailure(
+                ERROR_INTERNAL,
+                f"word has only wildcard spans index={word_index}",
+            )
         start_frame = min(span.start_frame for span in word_spans)
         end_frame = max(span.end_frame for span in word_spans)
         local_start = float(start_frame) * seconds_per_frame
@@ -515,7 +603,7 @@ def aggregate_words(
                 t_end=float(analysis_start_abs) + local_end,
                 local_start=local_start,
                 local_end=local_end,
-                confidence=float(np.mean([span.score for span in word_spans])),
+                confidence=float(np.mean([span.score for span in scored_spans])),
             )
         )
     return output
@@ -755,6 +843,26 @@ def align_target_fragment(
             "mean_word_confidence": float(np.mean(confidences)),
             "min_word_confidence": float(min(confidences)),
             "warnings": warnings,
+            "redaction": {
+                "markers": sorted(REDACTION_MARKERS),
+                "wildcard_non_blank_weight": float(WILDCARD_NON_BLANK_WEIGHT),
+                "redacted_word_count": sum(
+                    1 for word in display_words if has_redaction(word)
+                ),
+                "wildcard_token_count": sum(
+                    1 for span in token_spans if span.is_wildcard
+                ),
+                "words": [
+                    {
+                        "word_index": index,
+                        "display_text": str(display_word),
+                        "alignment_text": normalized_words[index],
+                        "wildcard_count": count_wildcards(normalized_words[index]),
+                    }
+                    for index, display_word in enumerate(display_words)
+                    if has_redaction(display_word)
+                ],
+            },
             "token_timing_evidence": {
                 "token_count": len(token_spans),
                 "evidence_frame_count": int(evidence_frame_count),
