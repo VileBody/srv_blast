@@ -25,6 +25,10 @@ from .contracts import (
 
 SAMPLE_RATE = 16_000
 _EDGE_PUNCTUATION_RE = re.compile(r"^[^\w]+|[^\w]+$", flags=re.UNICODE)
+_REFERENCE_PRONUNCIATIONS = {
+    "iphone": "айфон",
+    "samson": "самсон",
+}
 
 
 class AlignmentFailure(RuntimeError):
@@ -282,22 +286,47 @@ def ctc_viterbi_align(
 
 
 def _choose_text_case(words: Sequence[str], vocab: dict[str, int]) -> list[str]:
+    pronunciation_words = [
+        _REFERENCE_PRONUNCIATIONS.get(
+            unicodedata.normalize("NFKC", str(word)).casefold(),
+            str(word),
+        )
+        for word in words
+    ]
     candidates = (
-        [word.upper() for word in words],
-        [word.lower() for word in words],
-        list(words),
+        [word.lower() for word in pronunciation_words],
+        [word.upper() for word in pronunciation_words],
+        pronunciation_words,
     )
     for candidate in candidates:
         if all(character in vocab for character in set("".join(candidate))):
             return candidate
+
+    best_candidate = min(
+        candidates,
+        key=lambda candidate: len(
+            {
+                character
+                for character in "".join(candidate)
+                if character not in vocab
+            }
+        ),
+    )
     missing = sorted(
         character
-        for character in set("".join(word.upper() for word in words))
+        for character in set("".join(best_candidate))
         if character not in vocab
     )
+    unsupported_words = [
+        str(display_word)
+        for display_word, pronunciation_word in zip(words, best_candidate)
+        if any(character not in vocab for character in pronunciation_word)
+    ]
     raise AlignmentFailure(
         ERROR_UNSUPPORTED_TEXT,
-        f"reference contains unsupported characters: {missing!r}",
+        "reference contains words unsupported by the Russian CTC vocabulary: "
+        f"{unsupported_words!r}; unsupported characters: {missing!r}; "
+        "add an explicit pronunciation mapping",
     )
 
 
