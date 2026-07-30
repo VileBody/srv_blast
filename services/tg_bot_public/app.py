@@ -3504,13 +3504,13 @@ class BlastBotApp:
         self._broadcast_stop = bc_stop
 
         self._processing_task = asyncio.create_task(self._processing_loop(), name="tg_bot_processing_loop")
-        self._recovery_task = asyncio.create_task(self._recovery_loop(), name="tg_bot_recovery_loop")
         self._reminder_task = asyncio.create_task(self._reminder_loop(), name="tg_bot_reminder_loop")
         self._payment_poll_task = asyncio.create_task(self._payment_poll_loop(), name="tg_bot_payment_poll")
         self._state_cleanup_task = asyncio.create_task(self._state_cleanup_loop(), name="tg_bot_state_cleanup_loop")
         self._fs_cleanup_task = asyncio.create_task(self._fs_cleanup_loop(), name="tg_bot_fs_cleanup_loop")
         self._subscription_charge_task = asyncio.create_task(self._subscription_charge_loop(), name="tg_bot_subscription_charge")
         await self._restore_runtime_processing_states()
+        self._recovery_task = asyncio.create_task(self._recovery_loop(), name="tg_bot_recovery_loop")
         self._outbox_task = asyncio.create_task(self._runtime_outbox_loop(), name="tg_bot_outbox_dispatcher")
         if bool(getattr(self.settings, "tg_auto_startup_maintenance", False)) and not bool(self.settings.tg_maintenance_mode):
             await self._set_startup_maintenance_enabled(
@@ -8140,6 +8140,11 @@ class BlastBotApp:
     async def _recovery_loop(self) -> None:
         while True:
             try:
+                # Admin requeue can revive an orchestrator job after its chat
+                # state was reset. Reconcile incomplete durable runs
+                # periodically so delivery does not depend on a bot restart.
+                await self._restore_runtime_processing_states()
+
                 now = time.time()
                 waiting_states = await self.store.list_waiting_referral()
                 for st in waiting_states:
