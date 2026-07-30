@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import importlib
 import inspect
+from types import SimpleNamespace
 
 
 # --------------------------------------------------------------------------- #
@@ -188,6 +189,7 @@ def _make_app(monkeypatch, ranked):
     app = pub.BlastBotApp.__new__(pub.BlastBotApp)
     app.store = _Store()
     app.orchestrator = _Orchestrator()
+    app.settings = SimpleNamespace(public_stage1_alignment_backend="local_ctc")
     return pub, app
 
 
@@ -365,6 +367,10 @@ def test_reuse_input_routes_to_bg_mode_not_genre(monkeypatch):
             chat_id=7,
             pending_audio_file_id="file123",  # → _can_reuse_input True
             lyrics_text="x",
+            target_fragment="x",
+            target_fragment_explicit=True,
+            user_clip_start_sec=10.0,
+            user_clip_end_sec=20.0,
             footage_artist_id="stale_artist",
             hook_enabled=True,
             hook_category="effect",
@@ -382,6 +388,38 @@ def test_reuse_input_routes_to_bg_mode_not_genre(monkeypatch):
         assert st.effect_transition == ""
         assert st.colors_done is False
         assert st.vibe_selected_ids == []
+
+    asyncio.run(_run())
+
+
+def test_reuse_legacy_fragment_keeps_audio_and_requests_exact_lines(monkeypatch):
+    pub, app = _make_app(monkeypatch, ranked=["t0:g0"])
+    from services.tg_bot_public.state_store import ChatState, STAGE_WAIT_FRAGMENT_TEXT
+
+    async def _run():
+        st = ChatState(
+            chat_id=7,
+            pending_audio_file_id="file123",
+            lyrics_text="legacy full lyrics",
+            target_fragment="legacy full lyrics",
+            target_fragment_explicit=False,
+            user_clip_start_sec=44.0,
+            user_clip_end_sec=62.0,
+        )
+        await app.store.set(st)
+        message = _Msg(text=pub.BTN_REUSE_INPUT)
+
+        await app._handle_wait_audio(message, st)
+
+        saved = await app.store.get(7)
+        assert saved.stage == STAGE_WAIT_FRAGMENT_TEXT
+        assert saved.pending_audio_file_id == "file123"
+        assert saved.lyrics_text == "legacy full lyrics"
+        assert saved.target_fragment == ""
+        assert saved.user_clip_start_sec == 44.0
+        assert saved.user_clip_end_sec == 62.0
+        assert "0:44-1:02" in message.answers[-1][0]
+        assert "точные строки" in message.answers[-1][0]
 
     asyncio.run(_run())
 
@@ -411,7 +449,15 @@ def test_reuse_input_from_wait_next_routes_to_bg_mode(monkeypatch):
     from services.tg_bot_public.state_store import ChatState, STAGE_WAIT_BG_MODE
 
     async def _run():
-        st = ChatState(chat_id=7, pending_audio_file_id="file123", lyrics_text="x")
+        st = ChatState(
+            chat_id=7,
+            pending_audio_file_id="file123",
+            lyrics_text="x",
+            target_fragment="x",
+            target_fragment_explicit=True,
+            user_clip_start_sec=10.0,
+            user_clip_end_sec=20.0,
+        )
         await app.store.set(st)
         await app._handle_wait_next(_Msg(text=pub.BTN_REUSE_INPUT), st)
         st = await app.store.get(7)

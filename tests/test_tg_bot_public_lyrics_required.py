@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import sys
 import types
+from types import SimpleNamespace
 
 # Local test environment may not have runtime deps available.
 if "asyncpg" not in sys.modules:
@@ -61,6 +62,7 @@ def _new_app() -> public_app.BlastBotApp:
     app = object.__new__(public_app.BlastBotApp)
     app.store = _FakeStore()
     app.credits_db = _FailIfCalledCredits()
+    app.settings = SimpleNamespace(public_stage1_alignment_backend="local_ctc")
     return app
 
 
@@ -144,6 +146,7 @@ def test_launch_without_timing_returns_to_timing_before_credit_check() -> None:
             stage=STAGE_WAIT_CONFIRM,
             lyrics_text="полный текст песни",
             target_fragment="точные строки",
+            target_fragment_explicit=True,
             user_clip_start_sec=0.0,
             user_clip_end_sec=0.0,
         )
@@ -153,5 +156,30 @@ def test_launch_without_timing_returns_to_timing_before_credit_check() -> None:
 
         assert st.stage == STAGE_WAIT_TIMING_INPUT
         assert "укажи тайминг" in str(msg.answers[-1]["text"])
+
+    asyncio.run(_run())
+
+
+def test_launch_with_legacy_fragment_requests_exact_lines_before_credit_check() -> None:
+    async def _run() -> None:
+        app = _new_app()
+        st = ChatState(
+            chat_id=1006,
+            stage=STAGE_WAIT_CONFIRM,
+            lyrics_text="полный старый текст",
+            target_fragment="полный старый текст",
+            target_fragment_explicit=False,
+            user_clip_start_sec=44.0,
+            user_clip_end_sec=62.0,
+        )
+        msg = _FakeMessage(text=public_app.BTN_LAUNCH, chat_id=1006)
+
+        await public_app.BlastBotApp._handle_wait_confirm(app, msg, st)
+
+        assert st.stage == STAGE_WAIT_FRAGMENT_TEXT
+        assert st.target_fragment == ""
+        assert st.pending_audio_file_id == ""
+        assert "точные строки" in str(msg.answers[-1]["text"])
+        assert "0:44-1:02" in str(msg.answers[-1]["text"])
 
     asyncio.run(_run())

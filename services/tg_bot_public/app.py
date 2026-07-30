@@ -3771,6 +3771,36 @@ class BlastBotApp:
             and end > start >= 0.0
         )
 
+    def _needs_explicit_local_alignment_fragment(self, st: ChatState) -> bool:
+        backend = str(
+            getattr(self.settings, "public_stage1_alignment_backend", "local_ctc")
+            or ""
+        ).strip().lower()
+        return backend == "local_ctc" and not bool(st.target_fragment_explicit)
+
+    async def _ask_explicit_local_alignment_fragment(
+        self,
+        message: Message,
+        st: ChatState,
+    ) -> None:
+        start = float(st.user_clip_start_sec or 0.0)
+        end = float(st.user_clip_end_sec or 0.0)
+        timing = (
+            f"{self._fmt_timing(start)}-{self._fmt_timing(end)}"
+            if end > start >= 0.0
+            else "выбранном тайминге"
+        )
+        st.target_fragment = ""
+        st.target_fragment_explicit = False
+        st.stage = STAGE_WAIT_FRAGMENT_TEXT
+        await self.store.set(st)
+        await message.answer(
+            "Сохранённый трек готов. Для своей модели пришли только точные "
+            f"строки, которые звучат в {timing}. Полный текст песни повторять "
+            "не нужно.",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+
     async def _ask_timing_choice(self, message: Message, st: ChatState) -> None:
         # No fork: the "let AI decide" option was removed — the timing is now
         # always user-supplied. Go straight to the input step.
@@ -5572,6 +5602,9 @@ class BlastBotApp:
                 return
             st.subtitles_mode = SUBTITLES_MODE_IMPULSE_2ND
             self._reset_reuse_selection(st)
+            if self._needs_explicit_local_alignment_fragment(st):
+                await self._ask_explicit_local_alignment_fragment(message, st)
+                return
             await self._ask_bg_mode(message, st)
             return
         if text == BTN_GENERATE_MORE:
@@ -5673,6 +5706,7 @@ class BlastBotApp:
         self._reset_reuse_selection(st)
         st.lyrics_text = ""
         st.target_fragment = ""
+        st.target_fragment_explicit = False
         st.footage_genre_key = ""
         st.footage_artist_key = ""
         st.footage_artist_id = ""
@@ -5808,6 +5842,7 @@ class BlastBotApp:
 
         st.lyrics_text = text
         st.target_fragment = ""
+        st.target_fragment_explicit = False
         # No fork: go straight to the "paste the lines" step (the "let AI decide"
         # branch was removed — the fragment is now always user-supplied).
         st.stage = STAGE_WAIT_FRAGMENT_TEXT
@@ -5837,6 +5872,7 @@ class BlastBotApp:
 
         if text == BTN_SKIP_FRAGMENT:
             st.target_fragment = ""
+            st.target_fragment_explicit = False
             await self._ask_timing_choice(message, st)
             return
 
@@ -5852,6 +5888,7 @@ class BlastBotApp:
             return
 
         st.target_fragment = text
+        st.target_fragment_explicit = True
         st.stage = STAGE_WAIT_CONFIRM_TEXT
         await self.store.set(st)
 
@@ -5872,6 +5909,7 @@ class BlastBotApp:
         if text == BTN_CONFIRM_BACK:
             st.lyrics_text = ""
             st.target_fragment = ""
+            st.target_fragment_explicit = False
             st.stage = STAGE_WAIT_LYRICS_TEXT
             await self.store.set(st)
             await message.answer(
@@ -6238,6 +6276,9 @@ class BlastBotApp:
                 reply_markup=ReplyKeyboardRemove(),
             )
             return
+        if self._needs_explicit_local_alignment_fragment(st):
+            await self._ask_explicit_local_alignment_fragment(message, st)
+            return
         if not self._has_local_alignment_inputs(st):
             st.stage = STAGE_WAIT_TIMING_INPUT
             await self.store.set(st)
@@ -6486,6 +6527,9 @@ class BlastBotApp:
                 return
             st.subtitles_mode = SUBTITLES_MODE_IMPULSE_2ND
             self._reset_reuse_selection(st)
+            if self._needs_explicit_local_alignment_fragment(st):
+                await self._ask_explicit_local_alignment_fragment(message, st)
+                return
             await self._ask_bg_mode(message, st)
             return
 
