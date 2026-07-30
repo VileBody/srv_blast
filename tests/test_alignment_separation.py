@@ -92,6 +92,29 @@ def test_demucs_separator_requires_local_model_repo(tmp_path: Path) -> None:
     assert exc.value.code == ERROR_SEPARATOR_UNAVAILABLE
 
 
+def test_analysis_crop_times_out_ffmpeg(monkeypatch, tmp_path: Path) -> None:
+    audio_path = tmp_path / "input.mp3"
+    audio_path.write_bytes(b"audio")
+
+    def time_out(command, **_kwargs):
+        raise subprocess.TimeoutExpired(command, timeout=0.01)
+
+    monkeypatch.setattr(subprocess, "run", time_out)
+    with pytest.raises(AlignmentFailure) as exc:
+        extract_analysis_crop(
+            ffmpeg_bin="ffmpeg",
+            audio_path=audio_path,
+            output_path=tmp_path / "crop.wav",
+            clip_start_abs=10.0,
+            clip_end_abs=20.0,
+            padding_left_sec=0.5,
+            padding_right_sec=0.5,
+            timeout_s=0.01,
+        )
+
+    assert exc.value.code == "ALIGNMENT_TIMEOUT"
+
+
 def test_analysis_crop_uses_demucs_audio_format(
     monkeypatch,
     tmp_path: Path,

@@ -9,10 +9,11 @@ import pytest
 from mlcore.alignment.core import (
     AlignedWord,
     AlignmentResult,
+    EmissionTimeline,
     _build_stage1_asr,
     aggregate_words,
+    align_targets_in_window,
     build_targets,
-    clip_aligned_words_to_window,
     ctc_viterbi_align,
     render_word_srt,
     reference_words,
@@ -82,6 +83,89 @@ def test_ctc_viterbi_requires_blank_between_repeated_tokens() -> None:
     )
     spans, _ = ctc_viterbi_align(emissions, [1, 1], blank_id=0)
     assert [(span.start_frame, span.end_frame) for span in spans] == [(0, 1), (2, 3)]
+
+
+def test_emission_timeline_constrains_tokens_to_user_window() -> None:
+    timeline = EmissionTimeline(
+        analysis_start_abs=9.5,
+        sample_rate=16_000,
+        input_samples=11 * 16_000,
+        emission_frames=550,
+        inputs_to_logits_ratio=320,
+    )
+
+    start_frame, end_frame = timeline.constrained_frame_range(
+        clip_start_abs=10.0,
+        clip_end_abs=20.0,
+    )
+
+    assert (start_frame, end_frame) == (25, 525)
+    assert timeline.frame_to_abs(start_frame) == pytest.approx(10.0)
+    assert timeline.frame_to_abs(end_frame) == pytest.approx(20.0)
+
+
+def test_alignment_ignores_stronger_token_peaks_in_context_padding() -> None:
+    emissions = _log_probs(
+        [
+            [0.05, 0.90, 0.03],  # stronger target peak in left context
+            [0.90, 0.05, 0.05],
+            [0.90, 0.05, 0.05],  # user window starts here
+            [0.10, 0.80, 0.10],
+            [0.90, 0.05, 0.05],
+            [0.10, 0.10, 0.80],
+            [0.90, 0.05, 0.05],  # user window ends here
+            [0.03, 0.03, 0.94],  # stronger target peak in right context
+        ]
+    )
+    timeline = EmissionTimeline(
+        analysis_start_abs=9.96,
+        sample_rate=16_000,
+        input_samples=8 * 320,
+        emission_frames=8,
+        inputs_to_logits_ratio=320,
+    )
+
+    spans, _, start_frame, end_frame = align_targets_in_window(
+        emissions,
+        [1, 2],
+        blank_id=0,
+        timeline=timeline,
+        clip_start_abs=10.0,
+        clip_end_abs=10.1,
+    )
+
+    assert (start_frame, end_frame) == (2, 7)
+    assert [(span.start_frame, span.end_frame) for span in spans] == [(1, 2), (3, 4)]
+    absolute = [
+        (
+            timeline.frame_to_abs(start_frame + span.start_frame),
+            timeline.frame_to_abs(start_frame + span.end_frame),
+        )
+        for span in spans
+    ]
+    assert absolute[0] == pytest.approx((10.02, 10.04))
+    assert absolute[1] == pytest.approx((10.06, 10.08))
+
+
+def test_ctc_viterbi_trims_weak_path_occupancy_to_posterior_evidence() -> None:
+    emissions = _log_probs(
+        [
+            [0.05, 0.90, 0.03, 0.02],
+            [0.01, 0.08, 0.01, 0.90],
+            [0.01, 0.08, 0.01, 0.90],
+            [0.01, 0.08, 0.01, 0.90],
+            [0.01, 0.08, 0.01, 0.90],
+            [0.05, 0.02, 0.90, 0.03],
+            [0.90, 0.03, 0.05, 0.02],
+        ]
+    )
+
+    spans, _ = ctc_viterbi_align(emissions, [1, 2], blank_id=0)
+
+    assert spans[0].path_start_frame == 0
+    assert spans[0].path_end_frame > spans[0].end_frame
+    assert (spans[0].start_frame, spans[0].end_frame) == (0, 1)
+    assert (spans[1].start_frame, spans[1].end_frame) == (5, 6)
 
 
 def test_aggregate_words_returns_absolute_timestamps() -> None:
@@ -157,45 +241,6 @@ def test_stage1_adapter_keeps_acoustic_timings_and_derives_pauses() -> None:
     assert payload.selected_fragment.fragment_analytics.target_fragment == "раз два"
     assert payload.selected_fragment.fragment_analytics.working_start_abs == 10.0
     assert payload.selected_fragment.fragment_analytics.working_end_abs == 12.0
-
-
-def test_boundary_words_are_clipped_without_moving_interior_timings() -> None:
-    words = [
-        AlignedWord("раз", "РАЗ", 9.8, 10.4, 0.3, 0.9, 0.9),
-        AlignedWord("два", "ДВА", 10.8, 11.2, 1.3, 1.7, 0.8),
-        AlignedWord("три", "ТРИ", 11.7, 12.3, 2.2, 2.8, 0.7),
-    ]
-
-    clipped, diagnostics = clip_aligned_words_to_window(
-        words=words,
-        clip_start_abs=10.0,
-        clip_end_abs=12.0,
-    )
-
-    assert [(word.t_start, word.t_end) for word in clipped] == [
-        (10.0, 10.4),
-        (10.8, 11.2),
-        (11.7, 12.0),
-    ]
-    assert (clipped[1].local_start, clipped[1].local_end) == (1.3, 1.7)
-    assert clipped[0].local_start == pytest.approx(0.5)
-    assert clipped[0].local_end == pytest.approx(0.9)
-    assert clipped[2].local_start == pytest.approx(2.2)
-    assert clipped[2].local_end == pytest.approx(2.5)
-    assert [item["word_index"] for item in diagnostics] == [0, 2]
-
-
-def test_word_outside_user_window_fails_explicitly() -> None:
-    words = [AlignedWord("раз", "РАЗ", 9.0, 9.8, 0.0, 0.8, 0.9)]
-
-    with pytest.raises(AlignmentFailure) as exc:
-        clip_aligned_words_to_window(
-            words=words,
-            clip_start_abs=10.0,
-            clip_end_abs=12.0,
-        )
-
-    assert exc.value.code == "ALIGNMENT_WINDOW_MISMATCH"
 
 
 def test_alignment_json_and_srt_preserve_utf8() -> None:

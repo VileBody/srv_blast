@@ -46,6 +46,7 @@ class AlignmentSettings:
     model_revision: str
     allowed_audio_root: Path
     ffmpeg_bin: str
+    ffmpeg_timeout_s: float
     timeout_s: float
     padding_left_sec: float
     padding_right_sec: float
@@ -71,6 +72,7 @@ class AlignmentSettings:
                 _env("ALIGNMENT_ALLOWED_AUDIO_ROOT", "/app/work/jobs")
             ).resolve(),
             ffmpeg_bin=_env("ALIGNMENT_FFMPEG_BIN", "ffmpeg"),
+            ffmpeg_timeout_s=_float_env("ALIGNMENT_FFMPEG_TIMEOUT_S", 120.0),
             timeout_s=_float_env("ALIGNMENT_TIMEOUT_S", 600.0),
             padding_left_sec=_float_env("ALIGNMENT_PADDING_LEFT_SEC", 0.5),
             padding_right_sec=_float_env("ALIGNMENT_PADDING_RIGHT_SEC", 0.5),
@@ -106,10 +108,11 @@ class AlignmentRuntime:
         self._load_error = ""
         self._load_error_code = ERROR_MODEL_UNAVAILABLE
         self._ready = False
+        self._timed_out_jobs = 0
 
     @property
     def ready(self) -> bool:
-        return bool(self._ready)
+        return bool(self._ready and self._timed_out_jobs == 0)
 
     @property
     def load_error(self) -> str:
@@ -247,6 +250,7 @@ class AlignmentRuntime:
             vocal_separator=self._vocal_separator,
             model_revision=self.settings.model_revision,
             ffmpeg_bin=self.settings.ffmpeg_bin,
+            ffmpeg_timeout_s=self.settings.ffmpeg_timeout_s,
             padding_left_sec=self.settings.padding_left_sec,
             padding_right_sec=self.settings.padding_right_sec,
             min_word_confidence=self.settings.min_word_confidence,
@@ -274,9 +278,23 @@ class AlignmentRuntime:
             ),
         )
         try:
-            return await asyncio.wait_for(future, timeout=float(self.settings.timeout_s))
+            return await asyncio.wait_for(
+                asyncio.shield(future),
+                timeout=float(self.settings.timeout_s),
+            )
         except asyncio.TimeoutError as exc:
-            raise AlignmentFailure(
-                ERROR_TIMEOUT,
-                f"inference exceeded {self.settings.timeout_s:.1f}s",
-            ) from exc
+            self._timed_out_jobs += 1
+            self._load_error_code = ERROR_TIMEOUT
+            self._load_error = (
+                f"inference exceeded {self.settings.timeout_s:.1f}s; "
+                "runtime is unavailable until the worker finishes"
+            )
+
+            def _recover_after_timeout(_future: Any) -> None:
+                self._timed_out_jobs = max(0, self._timed_out_jobs - 1)
+                if self._ready and self._timed_out_jobs == 0:
+                    self._load_error_code = ""
+                    self._load_error = ""
+
+            future.add_done_callback(_recover_after_timeout)
+            raise AlignmentFailure(ERROR_TIMEOUT, self._load_error) from exc

@@ -24,6 +24,8 @@ from .contracts import (
 )
 
 SAMPLE_RATE = 16_000
+TOKEN_POSTERIOR_RELATIVE_FLOOR = 0.2
+TOKEN_TO_BLANK_ODDS_FLOOR = 0.1
 _EDGE_PUNCTUATION_RE = re.compile(r"^[^\w]+|[^\w]+$", flags=re.UNICODE)
 _REFERENCE_PRONUNCIATIONS = {
     "iphone": "айфон",
@@ -45,6 +47,56 @@ class TokenSpan:
     start_frame: int
     end_frame: int
     score: float
+    path_start_frame: int
+    path_end_frame: int
+
+
+@dataclass(frozen=True)
+class EmissionTimeline:
+    """Exact mapping between absolute audio time and CTC emission frames."""
+
+    analysis_start_abs: float
+    sample_rate: int
+    input_samples: int
+    emission_frames: int
+    inputs_to_logits_ratio: int
+
+    @property
+    def seconds_per_frame(self) -> float:
+        return float(self.inputs_to_logits_ratio) / float(self.sample_rate)
+
+    @property
+    def analysis_end_abs(self) -> float:
+        return float(self.analysis_start_abs) + (
+            float(self.input_samples) / float(self.sample_rate)
+        )
+
+    def frame_to_abs(self, frame_index: int) -> float:
+        return float(self.analysis_start_abs) + (
+            float(frame_index) * self.seconds_per_frame
+        )
+
+    def constrained_frame_range(
+        self,
+        *,
+        clip_start_abs: float,
+        clip_end_abs: float,
+    ) -> tuple[int, int]:
+        """Return a half-open emission range fully contained in the user window."""
+        start_offset = float(clip_start_abs) - float(self.analysis_start_abs)
+        end_offset = float(clip_end_abs) - float(self.analysis_start_abs)
+        frame_seconds = self.seconds_per_frame
+        epsilon = frame_seconds * 1e-6
+        start_frame = int(math.ceil((start_offset - epsilon) / frame_seconds))
+        end_frame = int(math.floor((end_offset + epsilon) / frame_seconds))
+        start_frame = max(0, min(start_frame, int(self.emission_frames)))
+        end_frame = max(0, min(end_frame, int(self.emission_frames)))
+        if end_frame <= start_frame:
+            raise AlignmentFailure(
+                ERROR_WINDOW_MISMATCH,
+                "user window has no complete CTC emission frames",
+            )
+        return start_frame, end_frame
 
 
 @dataclass(frozen=True)
@@ -120,16 +172,23 @@ def reference_words(text: str) -> list[str]:
     return words
 
 
-def _run_checked(command: Sequence[str]) -> None:
-    completed = subprocess.run(
-        list(command),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        check=False,
-    )
+def _run_checked(command: Sequence[str], *, timeout_s: float) -> None:
+    try:
+        completed = subprocess.run(
+            list(command),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+            timeout=float(timeout_s),
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise AlignmentFailure(
+            ERROR_TIMEOUT,
+            f"ffmpeg exceeded {float(timeout_s):.1f}s",
+        ) from exc
     if completed.returncode != 0:
         tail = completed.stderr[-2000:].strip()
         raise AlignmentFailure(
@@ -149,6 +208,7 @@ def extract_analysis_crop(
     padding_right_sec: float,
     sample_rate: int = SAMPLE_RATE,
     channels: int = 1,
+    timeout_s: float = 120.0,
 ) -> tuple[float, float]:
     if clip_start_abs < 0.0 or clip_end_abs <= clip_start_abs:
         raise AlignmentFailure(
@@ -187,7 +247,8 @@ def extract_analysis_crop(
             "-c:a",
             "pcm_s16le",
             str(output_path),
-        ]
+        ],
+        timeout_s=float(timeout_s),
     )
     return analysis_start, requested_end
 
@@ -272,17 +333,63 @@ def ctc_viterbi_align(
                 ERROR_WINDOW_MISMATCH,
                 f"target token has no aligned frames index={target_index}",
             )
-        probabilities = np.exp(emissions[assigned, token_id])
+        token_log_probs = emissions[assigned, token_id]
+        blank_log_probs = emissions[assigned, blank_id]
+        # Viterbi can hold a token state through unrelated frames merely to
+        # preserve a path. Keep the connected posterior-supported region around
+        # the strongest token-vs-blank peak as the acoustic timing evidence.
+        log_odds = token_log_probs - blank_log_probs
+        peak_offset = int(np.argmax(log_odds))
+        relative_floor = float(token_log_probs[peak_offset]) + math.log(
+            TOKEN_POSTERIOR_RELATIVE_FLOOR
+        )
+        evidence_mask = (token_log_probs >= relative_floor) & (
+            log_odds >= math.log(TOKEN_TO_BLANK_ODDS_FLOOR)
+        )
+        evidence_mask[peak_offset] = True
+        evidence_start = peak_offset
+        while evidence_start > 0 and bool(evidence_mask[evidence_start - 1]):
+            evidence_start -= 1
+        evidence_end = peak_offset + 1
+        while evidence_end < assigned.size and bool(evidence_mask[evidence_end]):
+            evidence_end += 1
+        evidence_frames = assigned[evidence_start:evidence_end]
+        probabilities = np.exp(emissions[evidence_frames, token_id])
         spans.append(
             TokenSpan(
                 target_index=target_index,
                 token_id=token_id,
-                start_frame=int(assigned[0]),
-                end_frame=int(assigned[-1]) + 1,
+                start_frame=int(evidence_frames[0]),
+                end_frame=int(evidence_frames[-1]) + 1,
                 score=float(np.mean(probabilities)),
+                path_start_frame=int(assigned[0]),
+                path_end_frame=int(assigned[-1]) + 1,
             )
         )
     return spans, total_score
+
+
+def align_targets_in_window(
+    log_probs: np.ndarray,
+    target_ids: Sequence[int],
+    *,
+    blank_id: int,
+    timeline: EmissionTimeline,
+    clip_start_abs: float,
+    clip_end_abs: float,
+) -> tuple[list[TokenSpan], float, int, int]:
+    """Align target tokens while keeping acoustic context outside the search."""
+    search_start_frame, search_end_frame = timeline.constrained_frame_range(
+        clip_start_abs=float(clip_start_abs),
+        clip_end_abs=float(clip_end_abs),
+    )
+    constrained = np.asarray(log_probs)[search_start_frame:search_end_frame]
+    spans, path_score = ctc_viterbi_align(
+        constrained,
+        target_ids,
+        blank_id=blank_id,
+    )
+    return spans, path_score, search_start_frame, search_end_frame
 
 
 def _choose_text_case(words: Sequence[str], vocab: dict[str, int]) -> list[str]:
@@ -405,56 +512,6 @@ def aggregate_words(
     return output
 
 
-def clip_aligned_words_to_window(
-    *,
-    words: Sequence[AlignedWord],
-    clip_start_abs: float,
-    clip_end_abs: float,
-) -> tuple[list[AlignedWord], list[dict[str, Any]]]:
-    """
-    Keep boundary words that overlap the user window without moving interior
-    acoustic timings. The analysis crop has padding for CTC context, but the
-    Stage 1 contract must not expose timings outside the requested clip.
-    """
-    start = float(clip_start_abs)
-    end = float(clip_end_abs)
-    clipped_words: list[AlignedWord] = []
-    boundary_clips: list[dict[str, Any]] = []
-    for index, word in enumerate(words):
-        clipped_start = max(float(word.t_start), start)
-        clipped_end = min(float(word.t_end), end)
-        if clipped_end <= clipped_start:
-            raise AlignmentFailure(
-                ERROR_WINDOW_MISMATCH,
-                f"aligned word does not overlap user window index={index}",
-            )
-
-        start_delta = clipped_start - float(word.t_start)
-        end_delta = float(word.t_end) - clipped_end
-        if start_delta > 0.0 or end_delta > 0.0:
-            boundary_clips.append(
-                {
-                    "code": "clipped_to_user_window",
-                    "word_index": index,
-                    "original_t_start": float(word.t_start),
-                    "original_t_end": float(word.t_end),
-                    "t_start": clipped_start,
-                    "t_end": clipped_end,
-                }
-            )
-        clipped_words.append(
-            AlignedWord(
-                text=word.text,
-                normalized_text=word.normalized_text,
-                t_start=clipped_start,
-                t_end=clipped_end,
-                local_start=float(word.local_start) + start_delta,
-                local_end=float(word.local_end) - end_delta,
-                confidence=float(word.confidence),
-            )
-        )
-    return clipped_words, boundary_clips
-
 
 def _validate_aligned_words(
     *,
@@ -565,6 +622,7 @@ def align_target_fragment(
     vocal_separator: Any,
     model_revision: str,
     ffmpeg_bin: str = "ffmpeg",
+    ffmpeg_timeout_s: float = 120.0,
     padding_left_sec: float = 0.5,
     padding_right_sec: float = 0.5,
     min_word_confidence: float = 0.05,
@@ -583,6 +641,7 @@ def align_target_fragment(
             padding_right_sec=float(padding_right_sec),
             sample_rate=int(vocal_separator.input_sample_rate),
             channels=int(vocal_separator.input_channels),
+            timeout_s=float(ffmpeg_timeout_s),
         )
         separation = vocal_separator.separate_vocals(crop_path)
         waveform = separation.waveform
@@ -611,20 +670,48 @@ def align_target_fragment(
             log_probs = torch_module.log_softmax(logits, dim=-1).detach().cpu().numpy()
 
     blank_id = int(model.config.pad_token_id)
-    token_spans, path_score = ctc_viterbi_align(log_probs, target_ids, blank_id=blank_id)
-    seconds_per_frame = (float(waveform.size) / SAMPLE_RATE) / float(log_probs.shape[0])
+    inputs_to_logits_ratio = int(
+        getattr(model.config, "inputs_to_logits_ratio", 0) or 0
+    )
+    if inputs_to_logits_ratio <= 0:
+        raise AlignmentFailure(
+            ERROR_MODEL_UNAVAILABLE,
+            "model config has no valid inputs_to_logits_ratio",
+        )
+    timeline = EmissionTimeline(
+        analysis_start_abs=float(analysis_start),
+        sample_rate=SAMPLE_RATE,
+        input_samples=int(waveform.size),
+        emission_frames=int(log_probs.shape[0]),
+        inputs_to_logits_ratio=inputs_to_logits_ratio,
+    )
+    frame_tolerance = timeline.seconds_per_frame
+    if float(clip_end_abs) > timeline.analysis_end_abs + frame_tolerance:
+        raise AlignmentFailure(
+            ERROR_WINDOW_MISMATCH,
+            "user window exceeds available decoded audio "
+            f"clip_end={float(clip_end_abs):.6f} "
+            f"audio_end={timeline.analysis_end_abs:.6f}",
+        )
+    token_spans, path_score, search_start_frame, search_end_frame = (
+        align_targets_in_window(
+            log_probs,
+            target_ids,
+            blank_id=blank_id,
+            timeline=timeline,
+            clip_start_abs=float(clip_start_abs),
+            clip_end_abs=float(clip_end_abs),
+        )
+    )
+    seconds_per_frame = timeline.seconds_per_frame
+    alignment_origin_abs = timeline.frame_to_abs(search_start_frame)
     aligned_words = aggregate_words(
         display_words=display_words,
         normalized_words=normalized_words,
         spans=token_spans,
         token_word_indexes=token_word_indexes,
         seconds_per_frame=seconds_per_frame,
-        analysis_start_abs=analysis_start,
-    )
-    aligned_words, boundary_clips = clip_aligned_words_to_window(
-        words=aligned_words,
-        clip_start_abs=float(clip_start_abs),
-        clip_end_abs=float(clip_end_abs),
+        analysis_start_abs=alignment_origin_abs,
     )
     warnings = _validate_aligned_words(
         words=aligned_words,
@@ -632,7 +719,6 @@ def align_target_fragment(
         clip_end_abs=float(clip_end_abs),
         min_word_confidence=float(min_word_confidence),
     )
-    warnings = [*boundary_clips, *warnings]
     stage1_asr = _build_stage1_asr(
         words=aligned_words,
         target_fragment=target_fragment,
@@ -641,6 +727,13 @@ def align_target_fragment(
         pause_min_gap_sec=float(pause_min_gap_sec),
     )
     confidences = [float(word.confidence) for word in aligned_words]
+    evidence_frame_count = sum(
+        int(span.end_frame) - int(span.start_frame) for span in token_spans
+    )
+    path_frame_count = sum(
+        int(span.path_end_frame) - int(span.path_start_frame) for span in token_spans
+    )
+    path_to_evidence_ratio = float(path_frame_count) / float(evidence_frame_count)
     return AlignmentResult(
         stage1_asr=stage1_asr,
         diagnostics={
@@ -648,7 +741,23 @@ def align_target_fragment(
             "mean_word_confidence": float(np.mean(confidences)),
             "min_word_confidence": float(min(confidences)),
             "warnings": warnings,
-            "boundary_clips": boundary_clips,
+            "token_timing_evidence": {
+                "token_count": len(token_spans),
+                "evidence_frame_count": int(evidence_frame_count),
+                "path_frame_count": int(path_frame_count),
+                "path_to_evidence_ratio": float(path_to_evidence_ratio),
+                "posterior_relative_floor": TOKEN_POSTERIOR_RELATIVE_FLOOR,
+                "token_to_blank_odds_floor": TOKEN_TO_BLANK_ODDS_FLOOR,
+            },
+            "timeline": {
+                "analysis_start_abs": float(timeline.analysis_start_abs),
+                "analysis_end_abs": float(timeline.analysis_end_abs),
+                "search_start_frame": int(search_start_frame),
+                "search_end_frame": int(search_end_frame),
+                "search_start_abs": float(alignment_origin_abs),
+                "search_end_abs": float(timeline.frame_to_abs(search_end_frame)),
+                "inputs_to_logits_ratio": int(inputs_to_logits_ratio),
+            },
             "source_separation": dict(separation.diagnostics),
             "words": [
                 {
@@ -671,8 +780,11 @@ def align_target_fragment(
             "sample_rate": SAMPLE_RATE,
             "analysis_start_abs": float(analysis_start),
             "requested_analysis_end_abs": float(requested_analysis_end),
+            "actual_analysis_end_abs": float(timeline.analysis_end_abs),
             "seconds_per_emission_frame": float(seconds_per_frame),
             "emission_frames": int(log_probs.shape[0]),
+            "search_start_frame": int(search_start_frame),
+            "search_end_frame": int(search_end_frame),
             "target_tokens": len(target_ids),
             "path_log_score": float(path_score),
         },
