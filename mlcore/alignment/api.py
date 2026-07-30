@@ -11,6 +11,12 @@ from pydantic import BaseModel, Field, model_validator
 
 from mlcore.models.stage1_asr import Stage1AsrPayload
 
+from .contracts import (
+    ERROR_MODEL_UNAVAILABLE,
+    ERROR_SEPARATOR_UNAVAILABLE,
+    ERROR_SOURCE_SEPARATION_FAILED,
+    ERROR_TIMEOUT,
+)
 from .core import AlignmentFailure, ERROR_INTERNAL
 from .runtime import AlignmentRuntime, AlignmentSettings
 
@@ -39,10 +45,14 @@ class AlignResponse(BaseModel):
 
 
 def _error_response(exc: AlignmentFailure) -> JSONResponse:
-    status = 503 if exc.code == "ALIGNMENT_MODEL_UNAVAILABLE" else 422
-    if exc.code == "ALIGNMENT_TIMEOUT":
+    status = (
+        503
+        if exc.code in {ERROR_MODEL_UNAVAILABLE, ERROR_SEPARATOR_UNAVAILABLE}
+        else 422
+    )
+    if exc.code == ERROR_TIMEOUT:
         status = 504
-    if exc.code == ERROR_INTERNAL:
+    if exc.code in {ERROR_INTERNAL, ERROR_SOURCE_SEPARATION_FAILED}:
         status = 500
     return JSONResponse(
         status_code=status,

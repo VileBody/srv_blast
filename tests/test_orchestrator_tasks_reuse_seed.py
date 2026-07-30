@@ -61,6 +61,10 @@ def test_seed_resume_state_preserves_local_alignment_metadata(tmp_path: Path) ->
     source["stage1_alignment_metadata"] = {
         "model_revision": "revision-a",
         "algorithm_version": "algorithm-a",
+        "audio_preprocessor": "demucs",
+        "separator_model": "htdemucs",
+        "separator_revision": "separator-a",
+        "separator_package_version": "4.1.0",
     }
     _write_json(
         work_dir / "jobs" / src_job / "data" / "llm_resume_state.json",

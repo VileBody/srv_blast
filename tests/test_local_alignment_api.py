@@ -16,6 +16,10 @@ from mlcore.alignment.core import (
     ERROR_TIMEOUT,
     ERROR_WINDOW_MISMATCH,
 )
+from mlcore.alignment.contracts import (
+    ERROR_SEPARATOR_UNAVAILABLE,
+    ERROR_SOURCE_SEPARATION_FAILED,
+)
 from mlcore.alignment.runtime import AlignmentRuntime, AlignmentSettings
 from mlcore.models.stage1_asr import Stage1AsrPayload
 
@@ -114,6 +118,33 @@ def test_alignment_api_returns_stable_error_code() -> None:
     assert response.json()["error"]["code"] == "ALIGNMENT_UNSUPPORTED_TEXT"
 
 
+@pytest.mark.parametrize(
+    ("code", "expected_status"),
+    [
+        (ERROR_SEPARATOR_UNAVAILABLE, 503),
+        (ERROR_SOURCE_SEPARATION_FAILED, 500),
+    ],
+)
+def test_alignment_api_maps_separator_errors(
+    code: str,
+    expected_status: int,
+) -> None:
+    app = create_app(_FakeRuntime(failure=AlignmentFailure(code, "failed")))
+    with TestClient(app) as client:
+        response = client.post(
+            "/align",
+            json={
+                "audio_path": "/app/work/jobs/a/data/track.mp3",
+                "target_fragment": "тест",
+                "clip_start_abs": 10.0,
+                "clip_end_abs": 20.0,
+            },
+        )
+
+    assert response.status_code == expected_status
+    assert response.json()["error"]["code"] == code
+
+
 def test_alignment_api_readiness_reports_unavailable_weights() -> None:
     app = create_app(_FakeRuntime(ready=False))
     with TestClient(app) as client:
@@ -136,6 +167,13 @@ def _settings(tmp_path: Path, *, timeout_s: float = 5.0) -> AlignmentSettings:
         max_window_sec=120.0,
         max_reference_words=400,
         torch_threads=1,
+        audio_preprocessor="demucs",
+        demucs_model_repo=tmp_path / "demucs",
+        demucs_model_name="htdemucs",
+        demucs_model_revision="separator-rev",
+        demucs_package_version="4.1.0",
+        demucs_segment_sec=7.0,
+        demucs_overlap=0.25,
     )
 
 

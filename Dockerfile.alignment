@@ -3,6 +3,9 @@ FROM python:3.11-slim
 
 ARG ALIGNMENT_MODEL_ID=jonatasgrosman/wav2vec2-large-xlsr-53-russian
 ARG ALIGNMENT_MODEL_REVISION=2329100508896c6d9b157019803ab5601e6f3406
+ARG ALIGNMENT_DEMUCS_MODEL_URL=https://dl.fbaipublicfiles.com/demucs/hybrid_transformer/955717e8-8726e21a.th
+ARG ALIGNMENT_DEMUCS_MODEL_SHA256=8726e21a993978c7ba086d3872e7608d7d5bfca646ca4aca459ffda844faa8b4
+ARG ALIGNMENT_DEMUCS_PACKAGE_VERSION=4.1.0
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -14,6 +17,7 @@ WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
+    curl \
     ffmpeg \
     libsndfile1 \
   && rm -rf /var/lib/apt/lists/*
@@ -26,10 +30,25 @@ RUN pip install --no-cache-dir \
 
 RUN python -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='${ALIGNMENT_MODEL_ID}', revision='${ALIGNMENT_MODEL_REVISION}', local_dir='/opt/models/ru', allow_patterns=['pytorch_model.bin', 'config.json', 'preprocessor_config.json', 'special_tokens_map.json', 'vocab.json', 'alphabet.json'])"
 
+RUN mkdir -p /opt/models/demucs \
+  && curl -fsSL --retry 3 "${ALIGNMENT_DEMUCS_MODEL_URL}" \
+       -o /opt/models/demucs/955717e8-8726e21a.th \
+  && printf '%s  %s\n' \
+       "${ALIGNMENT_DEMUCS_MODEL_SHA256}" \
+       /opt/models/demucs/955717e8-8726e21a.th \
+       | sha256sum -c -
+COPY config/alignment_models/htdemucs.yaml /opt/models/demucs/htdemucs.yaml
+RUN python -c "from pathlib import Path; from demucs.api import Separator; separator = Separator(model='htdemucs', repo=Path('/opt/models/demucs'), device='cpu', shifts=0, split=True, segment=7.0, jobs=0, progress=False); assert 'vocals' in separator.model.sources"
+
 COPY . /app
 
 ENV ALIGNMENT_MODEL_PATH=/opt/models/ru \
     ALIGNMENT_MODEL_REVISION=${ALIGNMENT_MODEL_REVISION} \
+    ALIGNMENT_AUDIO_PREPROCESSOR=demucs \
+    ALIGNMENT_DEMUCS_MODEL_REPO=/opt/models/demucs \
+    ALIGNMENT_DEMUCS_MODEL_NAME=htdemucs \
+    ALIGNMENT_DEMUCS_MODEL_REVISION=${ALIGNMENT_DEMUCS_MODEL_SHA256} \
+    ALIGNMENT_DEMUCS_PACKAGE_VERSION=${ALIGNMENT_DEMUCS_PACKAGE_VERSION} \
     HF_HUB_OFFLINE=1 \
     TRANSFORMERS_OFFLINE=1
 

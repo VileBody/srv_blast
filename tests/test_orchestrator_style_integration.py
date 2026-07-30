@@ -487,6 +487,9 @@ def test_local_ctc_skips_stage1_gemini_clients_and_calls(
     monkeypatch.setenv("ALIGNMENT_SERVICE_URL", "http://alignment-api:8000")
     monkeypatch.setenv("ALIGNMENT_MODEL_REVISION", "rev-test")
     monkeypatch.setenv("ALIGNMENT_ALGORITHM_VERSION", "algo-test")
+    monkeypatch.setenv("ALIGNMENT_DEMUCS_MODEL_NAME", "htdemucs")
+    monkeypatch.setenv("ALIGNMENT_DEMUCS_MODEL_REVISION", "separator-rev-test")
+    monkeypatch.setenv("ALIGNMENT_DEMUCS_PACKAGE_VERSION", "4.1.0")
     _set_stage2_timing_env(monkeypatch)
     monkeypatch.setattr(go, "STAGE2_TIMING_MODE", "prompts")
 
@@ -524,6 +527,10 @@ def test_local_ctc_skips_stage1_gemini_clients_and_calls(
             backend={
                 "model_revision": "rev-test",
                 "algorithm_version": "algo-test",
+                "audio_preprocessor": "demucs",
+                "separator_model": "htdemucs",
+                "separator_revision": "separator-rev-test",
+                "separator_package_version": "4.1.0",
             },
         ),
     )

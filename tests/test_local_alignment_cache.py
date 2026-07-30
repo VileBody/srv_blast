@@ -9,6 +9,8 @@ def _key(
     backend: str,
     revision: str = "",
     algorithm: str = "",
+    separator_model: str = "",
+    separator_revision: str = "",
 ) -> llm_cache.CacheKey:
     monkeypatch.setenv("GEMINI_MODEL_STAGE1", "gemini-stage1")
     monkeypatch.setenv("GEMINI_MODEL_STAGE1_ASR", "gemini-stage1-asr")
@@ -25,6 +27,8 @@ def _key(
         stage1_alignment_backend=backend,
         alignment_model_revision=revision,
         alignment_algorithm_version=algorithm,
+        alignment_separator_model=separator_model,
+        alignment_separator_revision=separator_revision,
     )
 
 
@@ -35,25 +39,39 @@ def test_cache_key_partitions_backend_revision_and_algorithm(monkeypatch) -> Non
         backend="local_ctc",
         revision="revision-a",
         algorithm="algorithm-a",
+        separator_model="htdemucs",
+        separator_revision="separator-a",
     )
     local_b = _key(
         monkeypatch,
         backend="local_ctc",
         revision="revision-b",
         algorithm="algorithm-a",
+        separator_model="htdemucs",
+        separator_revision="separator-a",
     )
     local_c = _key(
         monkeypatch,
         backend="local_ctc",
         revision="revision-a",
         algorithm="algorithm-b",
+        separator_model="htdemucs",
+        separator_revision="separator-a",
+    )
+    local_d = _key(
+        monkeypatch,
+        backend="local_ctc",
+        revision="revision-a",
+        algorithm="algorithm-a",
+        separator_model="htdemucs",
+        separator_revision="separator-b",
     )
 
     paths = {
         llm_cache._stage_s3_keys(key)["stage1_asr"]
-        for key in (gemini, local_a, local_b, local_c)
+        for key in (gemini, local_a, local_b, local_c, local_d)
     }
-    assert len(paths) == 4
+    assert len(paths) == 5
 
 
 def test_stage1_cache_group_preserves_alignment_metadata() -> None:
