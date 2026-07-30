@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -10,6 +11,7 @@ from mlcore.alignment.core import (
     AlignmentResult,
     _build_stage1_asr,
     aggregate_words,
+    build_targets,
     clip_aligned_words_to_window,
     ctc_viterbi_align,
     render_word_srt,
@@ -22,6 +24,27 @@ from mlcore.alignment.core import (
 
 def _log_probs(rows: list[list[float]]) -> np.ndarray:
     return np.log(np.asarray(rows, dtype=np.float64))
+
+
+class _RussianCharacterTokenizer:
+    def __init__(self) -> None:
+        alphabet = "абвгдеёжзийклмнопрстуфхцчшщъыьэюя"
+        self._vocab = {"<unk>": 0, "|": 1}
+        self._vocab.update(
+            {character: index for index, character in enumerate(alphabet, start=2)}
+        )
+        self.word_delimiter_token_id = 1
+        self.word_delimiter_token = "|"
+        self.unk_token_id = 0
+
+    def get_vocab(self) -> dict[str, int]:
+        return dict(self._vocab)
+
+    def __call__(self, text: str, *, add_special_tokens: bool) -> SimpleNamespace:
+        assert add_special_tokens is False
+        return SimpleNamespace(
+            input_ids=[self._vocab.get(character, 0) for character in text]
+        )
 
 
 def test_reference_words_drops_structural_tags_and_edge_punctuation() -> None:
@@ -84,6 +107,29 @@ def test_aggregate_words_returns_absolute_timestamps() -> None:
     assert words[0].t_end == 41.54
     assert words[1].t_start == 41.56
     assert words[1].t_end == 41.58
+
+
+def test_explicit_latin_pronunciations_keep_original_display_words() -> None:
+    normalized, target_ids, token_word_indexes = build_targets(
+        display_words=["на", "iPhone", "Samson"],
+        tokenizer=_RussianCharacterTokenizer(),
+    )
+
+    assert normalized == ["на", "айфон", "самсон"]
+    assert 0 not in target_ids
+    assert set(token_word_indexes) == {-1, 0, 1, 2}
+
+
+def test_unknown_latin_word_fails_with_actionable_word_name() -> None:
+    with pytest.raises(AlignmentFailure) as exc:
+        build_targets(
+            display_words=["на", "Spotify"],
+            tokenizer=_RussianCharacterTokenizer(),
+        )
+
+    assert exc.value.code == ERROR_UNSUPPORTED_TEXT
+    assert "Spotify" in exc.value.message
+    assert "add an explicit pronunciation mapping" in exc.value.message
 
 
 def test_stage1_adapter_keeps_acoustic_timings_and_derives_pauses() -> None:
