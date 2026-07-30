@@ -386,6 +386,25 @@ def test_reuse_input_routes_to_bg_mode_not_genre(monkeypatch):
     asyncio.run(_run())
 
 
+def test_generate_more_offers_saved_track_instead_of_forcing_upload(monkeypatch):
+    """The post-generation CTA must keep the saved-track path discoverable."""
+    pub, app = _make_app(monkeypatch, ranked=["t0:g0"])
+    from services.tg_bot_public.state_store import ChatState
+
+    async def _run():
+        st = ChatState(chat_id=7, pending_audio_file_id="file123")
+        message = _Msg(text=pub.BTN_GENERATE_MORE)
+
+        await app._handle_wait_audio(message, st)
+
+        assert "сохранённый трек" in message.answers[-1][0]
+        markup = message.answers[-1][1]
+        labels = [button.text for row in markup.keyboard for button in row]
+        assert labels == [pub.BTN_SEND_TRACK, pub.BTN_REUSE_INPUT]
+
+    asyncio.run(_run())
+
+
 def test_reuse_input_from_wait_next_routes_to_bg_mode(monkeypatch):
     """Same reuse fix on the post-generation «Сделать следующий» path."""
     pub, app = _make_app(monkeypatch, ranked=["t0:g0"])

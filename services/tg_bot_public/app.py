@@ -3660,7 +3660,7 @@ class BlastBotApp:
         await self._move_to_wait_audio(chat_id, message)
 
     async def _move_to_wait_audio(self, chat_id: int, message: Message) -> None:
-        await self.store.reset_to_wait_audio(chat_id)
+        st = await self.store.reset_to_wait_audio(chat_id)
         bal = await self.credits_db.get_balance(chat_id)
         track_bal = await self.credits_db.get_track_balance(chat_id)
         bal_text = f"\n\nДоступно генераций: {bal}" if bal > 0 else ""
@@ -3673,7 +3673,11 @@ class BlastBotApp:
             message,
             f"Привет. Отправь трек аудио-файлом, и я соберу клип.{bal_text}",
             op="wait_audio_prompt",
-            reply_markup=_kb([BTN_SEND_TRACK]),
+            reply_markup=(
+                self._wait_audio_reuse_kb()
+                if self._can_reuse_input(st)
+                else _kb([BTN_SEND_TRACK])
+            ),
         )
 
     @staticmethod
@@ -5570,7 +5574,16 @@ class BlastBotApp:
             self._reset_reuse_selection(st)
             await self._ask_bg_mode(message, st)
             return
-        if text in (BTN_SEND_TRACK, BTN_GENERATE_MORE):
+        if text == BTN_GENERATE_MORE:
+            if self._can_reuse_input(st):
+                await message.answer(
+                    "Выбери: сделать ролик под сохранённый трек или отправить новый.",
+                    reply_markup=self._wait_audio_reuse_kb(),
+                )
+                return
+            await message.answer("Жду аудио-файл.", reply_markup=ReplyKeyboardRemove())
+            return
+        if text == BTN_SEND_TRACK:
             await message.answer("Жду аудио-файл.", reply_markup=ReplyKeyboardRemove())
             return
 
