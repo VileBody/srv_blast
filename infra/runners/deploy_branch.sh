@@ -510,6 +510,14 @@ deploy_prod_path_services() {
   # out via prod_path_rollout: stage the image, prove the picker pools on a
   # candidate container, and only then start anything. A readiness FAIL leaves the
   # currently running containers untouched and fails the deploy.
+  if is_true "$DEPLOY_ORCHESTRATOR_HA"; then
+    prod_path_queue_affinity_gate \
+      "$(env_file_value ORCHESTRATOR_NODE_NAME)" \
+      "$(env_file_value CELERY_QUEUE_BUILD)" \
+      "$(env_file_value CELERY_QUEUE_RENDER)" \
+      "$(env_file_value CELERY_QUEUE_RENDER_POLL)"
+  fi
+
   if ! is_true "$DEPLOY_ORCHESTRATOR_HA"; then
     PROD_PATH_COMPOSE_ARGS=()
     PROD_PATH_SERVICES=(

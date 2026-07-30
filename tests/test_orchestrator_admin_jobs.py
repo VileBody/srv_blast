@@ -97,6 +97,8 @@ class _FakeStore:
     def __init__(self, jobs: list[JobState]) -> None:
         self._jobs: dict[str, JobState] = {j.job_id: j for j in jobs}
         self._new_job_seq = 0
+        self.r = object()
+        self.key_prefix = "test"
 
     def list_jobs(self) -> list[JobState]:
         return list(self._jobs.values())
@@ -200,7 +202,15 @@ def _job(job_id: str, *, status: str, updated_at: float, project_id: str = "", s
 
 
 def _build_client(monkeypatch, store: _FakeStore) -> TestClient:
+    class _FakeWindowsPool:
+        def __init__(self, **_kwargs) -> None:
+            pass
+
+        def get_active_urls(self, *, default_urls):
+            return list(default_urls)
+
     monkeypatch.setattr(orchestrator_app.JobStore, "from_env", classmethod(lambda cls: store))
+    monkeypatch.setattr(orchestrator_app, "WindowsNodePool", _FakeWindowsPool)
     monkeypatch.setattr(
         orchestrator_app,
         "ensure_descriptions_bundle",
@@ -460,6 +470,42 @@ def test_send_audio_rejects_when_enqueue_disabled(monkeypatch) -> None:
     assert resp.status_code == 503
     body = resp.json()
     assert body["detail"] == "enqueue disabled on node=blast-ops-canary"
+
+
+def test_send_audio_rejects_mismatched_node_queues_before_creating_job(monkeypatch) -> None:
+    store = _FakeStore([])
+    monkeypatch.setattr(
+        orchestrator_app,
+        "SETTINGS",
+        replace(
+            orchestrator_app.SETTINGS,
+            orchestrator_node_name="orchestrator-0",
+            celery_queue_build="build.orchestrator-1",
+            celery_queue_render="render.orchestrator-1",
+            celery_queue_render_poll="render-poll.orchestrator-1",
+            orchestrator_enqueue_enabled=True,
+            system_maintenance_mode=False,
+        ),
+    )
+
+    with _build_client(monkeypatch, store) as client:
+        resp = client.post(
+            "/send_audio_s3",
+            json={
+                "audio_s3_url": "s3://bucket/raw/audio.mp3",
+                "mode": "with_gemini",
+            },
+        )
+
+    assert resp.status_code == 503
+    body = resp.json()
+    assert body["detail"]["code"] == "celery_queue_affinity_mismatch"
+    assert body["detail"]["origin_node"] == "orchestrator-0"
+    assert body["detail"]["mismatches"]["build_queue"] == {
+        "expected": "build.orchestrator-0",
+        "actual": "build.orchestrator-1",
+    }
+    assert store.list_jobs() == []
 
 
 def test_requeue_rejects_when_enqueue_disabled(monkeypatch) -> None:
