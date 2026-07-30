@@ -181,6 +181,14 @@ def build_overlay_jsx(
     parts.append(f"  var __f3_drop = {_js(drop)};")
     _place_ref = _PLACE_REF if comp_var == "MAIN_COMP" else _PHOTO_PLACE_REF
     parts.append(f'  var __f3_place = "below:{_place_ref}";')
+    # Two placement keys are in circulation: the transitions parse CONFIG.place,
+    # the stylizations (blackwhite / crystal_glow / night_vision / wave) read
+    # CONFIG.placeRef directly and default it to "Текст". Only `place` was ever
+    # sent, so on the photo path those four looked for a layer that does not
+    # exist there, found nothing, and silently skipped their move. Sending both
+    # keeps them consistent; for footage the value equals the script default, so
+    # nothing changes there.
+    parts.append(f'  var __f3_place_ref = {_js(_place_ref)};')
     parts.append(_JS_PRELUDE)
     parts.append("  var __f3_cuts = __f3_detectCuts(__f3_comp);")
 
@@ -232,7 +240,7 @@ def build_overlay_jsx(
         extend_js = _js(hook_extend) if (h_eff.get("extendable") and hook_extend) else "null"
         parts.append("  /* -- HOOK -- */")
         parts.append(f"  var __f3_hookDurV = __f3_hookDur(__f3_comp, __f3_drop, __f3_cuts, {_js(base_dur)}, {extend_js});")
-        parts.append("  $.global.__BLAST = { targetCompName: __f3_name, dropTime: __f3_drop, duration: __f3_hookDurV, place: __f3_place, cuts: __f3_cuts" + _fx_kv + " };")
+        parts.append("  $.global.__BLAST = { targetCompName: __f3_name, dropTime: __f3_drop, duration: __f3_hookDurV, place: __f3_place, cuts: __f3_cuts, placeRef: __f3_place_ref" + _fx_kv + " };")
         parts.append("  (function(){")
         parts.append(_read_script(h_eff["script"]))
         parts.append("  })(); $.global.__BLAST = null;")
@@ -259,7 +267,7 @@ def build_overlay_jsx(
     if t_eff:
         t_dur = float(t_eff.get("default_duration") or 0.067)
         parts.append("  /* -- TRANSITION -- */")
-        parts.append(f"  $.global.__BLAST = {{ targetCompName: __f3_name, dropTime: __f3_drop, duration: {_js(t_dur)}, place: __f3_place, cuts: __f3_cuts{_fx_kv} }};")
+        parts.append(f"  $.global.__BLAST = {{ targetCompName: __f3_name, dropTime: __f3_drop, duration: {_js(t_dur)}, place: __f3_place, cuts: __f3_cuts, placeRef: __f3_place_ref{_fx_kv} }};")
         parts.append("  (function(){")
         parts.append(_read_script(t_eff["script"]))
         parts.append("  })(); $.global.__BLAST = null;")
@@ -277,7 +285,7 @@ def build_overlay_jsx(
         parts.append("  /* -- EXTRA -- */")
         parts.append(
             "  $.global.__BLAST = { targetCompName: __f3_name, dropTime: __f3_drop, "
-            f"startTime: 0, duration: {_extra_dur_js}, place: __f3_place, cuts: __f3_cuts{_fx_kv} }};"
+            f"startTime: 0, duration: {_extra_dur_js}, place: __f3_place, cuts: __f3_cuts, placeRef: __f3_place_ref{_fx_kv} }};"
         )
         parts.append("  (function(){")
         parts.append(_read_script(e_eff["script"]))

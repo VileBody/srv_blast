@@ -41,7 +41,13 @@ PHOTO_ANIM = {
     "grow": 10,
     "punch": 20,
     "punch_frames": 4,
-    "overscan": 1.002,
+    # Cover margin. 1.002 leaves ~2px per side at 1920 — less than ANY effect in
+    # the F3 set displaces, so wave (Wave Warp ~6px) and minimax (Scatter ~23px)
+    # dragged the photo edge inward and exposed the comp background on every cut.
+    # Footage has always carried 1.0167 for exactly this reason ("small overscan
+    # to prevent black edges", app/footage_comp.py) and the effects were authored
+    # against that; 1.04 = ~38px per side, which covers the largest of them.
+    "overscan": 1.04,
     "ease": 33.33,
     # Flash adjustment (Brightness & Contrast): peak → 0 → 0 → peak.
     "flash_amount": 30,
