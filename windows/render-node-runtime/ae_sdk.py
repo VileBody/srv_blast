@@ -858,6 +858,10 @@ class AeRenderer:
         return null;
     }
 
+    function normalizedFsName(file) {
+        return String(file && file.fsName ? file.fsName : "").replace(/\//g, "\\").toLowerCase();
+    }
+
     try {
         try { app.beginSuppressDialogs(); } catch (_) {}
 
@@ -875,7 +879,14 @@ class AeRenderer:
         if (!aepFile.exists) {
             throw new Error("AEP does not exist: " + aepFile.fsName);
         }
-        app.open(aepFile);
+
+        // The builder deliberately leaves its saved project open. Reopening
+        // the same AEP causes a visible close/reopen flash and can terminate
+        // the warm AE session before Render Queue starts.
+        var currentProjectFile = app.project && app.project.file ? app.project.file : null;
+        if (!currentProjectFile || normalizedFsName(currentProjectFile) !== normalizedFsName(aepFile)) {
+            throw new Error("builder did not leave the expected AEP open: " + aepFile.fsName);
+        }
 
         var compName = st.compName || CFG.entry_comp;
         var comp = findCompByName(compName);
