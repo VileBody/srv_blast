@@ -125,6 +125,8 @@ def test_alignment_api_returns_stable_error_code() -> None:
         (ERROR_SOURCE_SEPARATION_FAILED, 500),
     ],
 )
+
+
 def test_alignment_api_maps_separator_errors(
     code: str,
     expected_status: int,
@@ -159,6 +161,7 @@ def _settings(tmp_path: Path, *, timeout_s: float = 5.0) -> AlignmentSettings:
         model_revision="rev",
         allowed_audio_root=tmp_path / "jobs",
         ffmpeg_bin="ffmpeg",
+        ffmpeg_timeout_s=120.0,
         timeout_s=timeout_s,
         padding_left_sec=0.5,
         padding_right_sec=0.5,
@@ -218,6 +221,54 @@ def test_alignment_runtime_rejects_window_and_times_out(tmp_path: Path) -> None:
                 clip_end_abs=20.0,
             )
         assert timeout_error.value.code == ERROR_TIMEOUT
+        assert runtime.ready is False
+        assert runtime.status()["load_error_code"] == ERROR_TIMEOUT
+        with pytest.raises(AlignmentFailure) as busy_error:
+            await runtime.align(
+                audio_path="unused",
+                target_fragment="тест",
+                clip_start_abs=10.0,
+                clip_end_abs=20.0,
+            )
+        assert busy_error.value.code == ERROR_TIMEOUT
+        await asyncio.sleep(0.06)
+        assert runtime.ready is True
+        await runtime.close()
+
+    asyncio.run(run())
+
+
+def test_alignment_runtime_stays_unready_until_all_timed_out_jobs_finish(
+    tmp_path: Path,
+) -> None:
+    runtime = AlignmentRuntime(_settings(tmp_path, timeout_s=0.01))
+    runtime._ready = True
+
+    def slow_align(**_kwargs):
+        time.sleep(0.05)
+        return AlignmentResult(_payload(), {}, {})
+
+    runtime._align_sync = slow_align  # type: ignore[method-assign]
+
+    async def run() -> None:
+        async def request() -> AlignmentResult:
+            return await runtime.align(
+                audio_path="unused",
+                target_fragment="test",
+                clip_start_abs=10.0,
+                clip_end_abs=20.0,
+            )
+
+        results = await asyncio.gather(request(), request(), return_exceptions=True)
+        assert all(
+            isinstance(result, AlignmentFailure) and result.code == ERROR_TIMEOUT
+            for result in results
+        )
+        assert runtime.ready is False
+        await asyncio.sleep(0.06)
+        assert runtime.ready is False
+        await asyncio.sleep(0.06)
+        assert runtime.ready is True
         await runtime.close()
 
     asyncio.run(run())
