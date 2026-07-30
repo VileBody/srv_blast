@@ -336,6 +336,9 @@ services:
       # Set to "true" for the softer mode where paying clients keep generating.
       TG_MAINTENANCE_ALLOW_PAID_CLIENTS: ${TG_MAINTENANCE_ALLOW_PAID_CLIENTS:-false}
       ORCHESTRATOR_PUBLIC_URL: ${ORCHESTRATOR_PUBLIC_URL:-http://orchestrator-api:8000}
+      # No user-facing selector in public: every Stage 1 alignment request uses
+      # the explicitly configured backend. Keep local_ctc as the production default.
+      PUBLIC_STAGE1_ALIGNMENT_BACKEND: ${PUBLIC_STAGE1_ALIGNMENT_BACKEND:-local_ctc}
       BOT_POLL_INTERVAL_S: ${BOT_POLL_INTERVAL_S:-5}
       BOT_STATUS_UPDATE_INTERVAL_S: ${BOT_STATUS_UPDATE_INTERVAL_S:-20}
       TG_DELIVERY_MODE: ${TG_DELIVERY_MODE:-polling}

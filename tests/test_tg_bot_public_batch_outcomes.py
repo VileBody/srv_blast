@@ -84,6 +84,10 @@ class _FakeCreditsDB:
         _ = tg_id
         return 0
 
+    async def get_track_balance(self, tg_id: int) -> int:
+        _ = tg_id
+        return 0
+
     async def has_paid(self, tg_id: int) -> bool:
         _ = tg_id
         return False
@@ -109,7 +113,10 @@ class _FakeBot:
 
 def _new_app(*, jobs: dict[str, dict[str, Any]]) -> public_app.BlastBotApp:
     app = object.__new__(public_app.BlastBotApp)
-    app.settings = SimpleNamespace(bot_status_update_interval_s=5.0)
+    app.settings = SimpleNamespace(
+        bot_status_update_interval_s=5.0,
+        tg_force_free_funnel_chat_ids=frozenset(),
+    )
     app.store = _FakeStore()
     app.orchestrator = _FakeOrchestrator(jobs)
     app.credits_db = _FakeCreditsDB()

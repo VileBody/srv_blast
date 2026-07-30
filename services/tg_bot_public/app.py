@@ -1742,6 +1742,10 @@ class BlastBotApp:
         self.store = RedisChatStateStore(settings)
         self.s3 = S3Client(settings)
         self.orchestrator = OrchestratorClient(base_url=settings.orchestrator_public_url, timeout_s=60.0)
+        log.info(
+            "public stage1 alignment backend=%s",
+            settings.public_stage1_alignment_backend,
+        )
         if not settings.credits_db_url:
             raise RuntimeError("CREDITS_DB_URL (or POSTGRES_*) is required for tg_bot_public")
         self.credits_db = CreditsDB(settings.credits_db_url)
@@ -3753,6 +3757,15 @@ class BlastBotApp:
     @staticmethod
     def _has_forced_alignment_reference_text(st: ChatState) -> bool:
         return bool(str(st.lyrics_text or st.target_fragment or "").strip())
+
+    @staticmethod
+    def _has_local_alignment_inputs(st: ChatState) -> bool:
+        start = float(st.user_clip_start_sec or 0.0)
+        end = float(st.user_clip_end_sec or 0.0)
+        return bool(
+            str(st.target_fragment or "").strip()
+            and end > start >= 0.0
+        )
 
     async def _ask_timing_choice(self, message: Message, st: ChatState) -> None:
         # No fork: the "let AI decide" option was removed — the timing is now
@@ -6203,6 +6216,24 @@ class BlastBotApp:
                 reply_markup=ReplyKeyboardRemove(),
             )
             return
+        if not str(st.target_fragment or "").strip():
+            st.stage = STAGE_WAIT_FRAGMENT_TEXT
+            await self.store.set(st)
+            await message.answer(
+                "Для точной синхронизации пришли строки, которые должны попасть "
+                "в выбранный отрывок.",
+                reply_markup=ReplyKeyboardRemove(),
+            )
+            return
+        if not self._has_local_alignment_inputs(st):
+            st.stage = STAGE_WAIT_TIMING_INPUT
+            await self.store.set(st)
+            await message.answer(
+                "Для точной синхронизации укажи тайминг этих строк, например: "
+                "1:20-1:35.",
+                reply_markup=ReplyKeyboardRemove(),
+            )
+            return
 
         try:
             render_capacity = await self.orchestrator.get_render_capacity()
@@ -7652,13 +7683,16 @@ class BlastBotApp:
                 continue
             merged_exclude_seen.add(clean)
             merged_exclude.append(clean)
-        if not self._has_forced_alignment_reference_text(st):
-            raise RuntimeError("public_bot_forced_alignment_requires_reference_text")
+        if not str(st.target_fragment or "").strip():
+            raise RuntimeError("public_bot_local_alignment_requires_target_fragment")
+        if user_clip_start_sec is None or user_clip_end_sec is None:
+            raise RuntimeError("public_bot_local_alignment_requires_clip_window")
         enqueue = await self.orchestrator.send_audio_s3(
             audio_s3_url=audio_s3_url,
             mode="with_gemini",
             lyrics_text=st.lyrics_text,
             target_fragment=st.target_fragment,
+            stage1_alignment_backend=self.settings.public_stage1_alignment_backend,
             subtitles_mode=st.subtitles_mode,
             footage_artist_id=st.footage_artist_id,
             user_clip_start_sec=user_clip_start_sec,

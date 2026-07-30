@@ -4,7 +4,9 @@ import asyncio
 from typing import Any
 
 import httpx
+import pytest
 
+from services.tg_bot_public import config as public_config
 from services.tg_bot_public import orchestrator_client as public_client
 
 
@@ -41,9 +43,68 @@ def test_public_orchestrator_payload_does_not_send_source_bot(monkeypatch) -> No
     assert fake.url == "http://orchestrator/send_audio_s3"
     assert fake.payload is not None
     assert "source_bot" not in fake.payload
+    assert fake.payload.get("stage1_alignment_backend") == "local_ctc"
     # hook_device is part of the F5 («Мысль») mirror; default is None.
     assert fake.payload.get("hook_device") is None
     assert fake.payload.get("render_engine") == "ae"
+
+
+def test_public_orchestrator_payload_forwards_explicit_alignment_backend(
+    monkeypatch,
+) -> None:
+    fake = _FakeAsyncClient()
+    monkeypatch.setattr(public_client.httpx, "AsyncClient", lambda **_: fake)
+    client = public_client.OrchestratorClient(base_url="http://orchestrator")
+
+    asyncio.run(
+        client.send_audio_s3(
+            audio_s3_url="s3://bucket/audio.mp3",
+            mode="with_gemini",
+            lyrics_text="hello",
+            target_fragment="hello",
+            stage1_alignment_backend="gemini",
+        )
+    )
+
+    assert fake.payload is not None
+    assert fake.payload["stage1_alignment_backend"] == "gemini"
+
+
+def test_public_orchestrator_rejects_unknown_alignment_backend(monkeypatch) -> None:
+    fake = _FakeAsyncClient()
+    monkeypatch.setattr(public_client.httpx, "AsyncClient", lambda **_: fake)
+    client = public_client.OrchestratorClient(base_url="http://orchestrator")
+
+    with pytest.raises(ValueError, match="stage1_alignment_backend"):
+        asyncio.run(
+            client.send_audio_s3(
+                audio_s3_url="s3://bucket/audio.mp3",
+                mode="with_gemini",
+                lyrics_text="hello",
+                target_fragment="hello",
+                stage1_alignment_backend="automatic",
+            )
+        )
+
+    assert fake.payload is None
+
+
+def test_public_alignment_backend_config_defaults_to_local_ctc(
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv("PUBLIC_STAGE1_ALIGNMENT_BACKEND", raising=False)
+    assert (
+        public_config._alignment_backend_env("PUBLIC_STAGE1_ALIGNMENT_BACKEND")
+        == "local_ctc"
+    )
+
+
+def test_public_alignment_backend_config_rejects_unknown_value(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("PUBLIC_STAGE1_ALIGNMENT_BACKEND", "automatic")
+    with pytest.raises(RuntimeError, match="PUBLIC_STAGE1_ALIGNMENT_BACKEND"):
+        public_config._alignment_backend_env("PUBLIC_STAGE1_ALIGNMENT_BACKEND")
 
 
 def test_public_orchestrator_payload_forwards_native_render_engine(monkeypatch) -> None:
