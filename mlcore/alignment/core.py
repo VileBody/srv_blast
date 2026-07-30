@@ -376,6 +376,57 @@ def aggregate_words(
     return output
 
 
+def clip_aligned_words_to_window(
+    *,
+    words: Sequence[AlignedWord],
+    clip_start_abs: float,
+    clip_end_abs: float,
+) -> tuple[list[AlignedWord], list[dict[str, Any]]]:
+    """
+    Keep boundary words that overlap the user window without moving interior
+    acoustic timings. The analysis crop has padding for CTC context, but the
+    Stage 1 contract must not expose timings outside the requested clip.
+    """
+    start = float(clip_start_abs)
+    end = float(clip_end_abs)
+    clipped_words: list[AlignedWord] = []
+    boundary_clips: list[dict[str, Any]] = []
+    for index, word in enumerate(words):
+        clipped_start = max(float(word.t_start), start)
+        clipped_end = min(float(word.t_end), end)
+        if clipped_end <= clipped_start:
+            raise AlignmentFailure(
+                ERROR_WINDOW_MISMATCH,
+                f"aligned word does not overlap user window index={index}",
+            )
+
+        start_delta = clipped_start - float(word.t_start)
+        end_delta = float(word.t_end) - clipped_end
+        if start_delta > 0.0 or end_delta > 0.0:
+            boundary_clips.append(
+                {
+                    "code": "clipped_to_user_window",
+                    "word_index": index,
+                    "original_t_start": float(word.t_start),
+                    "original_t_end": float(word.t_end),
+                    "t_start": clipped_start,
+                    "t_end": clipped_end,
+                }
+            )
+        clipped_words.append(
+            AlignedWord(
+                text=word.text,
+                normalized_text=word.normalized_text,
+                t_start=clipped_start,
+                t_end=clipped_end,
+                local_start=float(word.local_start) + start_delta,
+                local_end=float(word.local_end) - end_delta,
+                confidence=float(word.confidence),
+            )
+        )
+    return clipped_words, boundary_clips
+
+
 def _validate_aligned_words(
     *,
     words: Sequence[AlignedWord],
@@ -541,12 +592,18 @@ def align_target_fragment(
         seconds_per_frame=seconds_per_frame,
         analysis_start_abs=analysis_start,
     )
+    aligned_words, boundary_clips = clip_aligned_words_to_window(
+        words=aligned_words,
+        clip_start_abs=float(clip_start_abs),
+        clip_end_abs=float(clip_end_abs),
+    )
     warnings = _validate_aligned_words(
         words=aligned_words,
         clip_start_abs=float(clip_start_abs),
         clip_end_abs=float(clip_end_abs),
         min_word_confidence=float(min_word_confidence),
     )
+    warnings = [*boundary_clips, *warnings]
     stage1_asr = _build_stage1_asr(
         words=aligned_words,
         target_fragment=target_fragment,
@@ -562,6 +619,7 @@ def align_target_fragment(
             "mean_word_confidence": float(np.mean(confidences)),
             "min_word_confidence": float(min(confidences)),
             "warnings": warnings,
+            "boundary_clips": boundary_clips,
             "source_separation": dict(separation.diagnostics),
             "words": [
                 {

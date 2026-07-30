@@ -10,6 +10,7 @@ from mlcore.alignment.core import (
     AlignmentResult,
     _build_stage1_asr,
     aggregate_words,
+    clip_aligned_words_to_window,
     ctc_viterbi_align,
     render_word_srt,
     reference_words,
@@ -110,6 +111,45 @@ def test_stage1_adapter_keeps_acoustic_timings_and_derives_pauses() -> None:
     assert payload.selected_fragment.fragment_analytics.target_fragment == "раз два"
     assert payload.selected_fragment.fragment_analytics.working_start_abs == 10.0
     assert payload.selected_fragment.fragment_analytics.working_end_abs == 12.0
+
+
+def test_boundary_words_are_clipped_without_moving_interior_timings() -> None:
+    words = [
+        AlignedWord("раз", "РАЗ", 9.8, 10.4, 0.3, 0.9, 0.9),
+        AlignedWord("два", "ДВА", 10.8, 11.2, 1.3, 1.7, 0.8),
+        AlignedWord("три", "ТРИ", 11.7, 12.3, 2.2, 2.8, 0.7),
+    ]
+
+    clipped, diagnostics = clip_aligned_words_to_window(
+        words=words,
+        clip_start_abs=10.0,
+        clip_end_abs=12.0,
+    )
+
+    assert [(word.t_start, word.t_end) for word in clipped] == [
+        (10.0, 10.4),
+        (10.8, 11.2),
+        (11.7, 12.0),
+    ]
+    assert (clipped[1].local_start, clipped[1].local_end) == (1.3, 1.7)
+    assert clipped[0].local_start == pytest.approx(0.5)
+    assert clipped[0].local_end == pytest.approx(0.9)
+    assert clipped[2].local_start == pytest.approx(2.2)
+    assert clipped[2].local_end == pytest.approx(2.5)
+    assert [item["word_index"] for item in diagnostics] == [0, 2]
+
+
+def test_word_outside_user_window_fails_explicitly() -> None:
+    words = [AlignedWord("раз", "РАЗ", 9.0, 9.8, 0.0, 0.8, 0.9)]
+
+    with pytest.raises(AlignmentFailure) as exc:
+        clip_aligned_words_to_window(
+            words=words,
+            clip_start_abs=10.0,
+            clip_end_abs=12.0,
+        )
+
+    assert exc.value.code == "ALIGNMENT_WINDOW_MISMATCH"
 
 
 def test_alignment_json_and_srt_preserve_utf8() -> None:
