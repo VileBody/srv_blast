@@ -70,7 +70,7 @@ from .tasks import (
     build_job_vertex_sdk_mix,
 )
 from .backpressure_policy import compute_capacity_policy
-from .config import SETTINGS, derive_render_poll_queue
+from .config import SETTINGS, derive_render_poll_queue, queue_affinity_mismatches
 from .bundle_bootstrap import ensure_descriptions_bundle
 from .asset_routes import create_asset_router
 from .ops_alert_subscribers import OpsAlertBotPoller, OpsAlertSubscriberStore
@@ -111,6 +111,37 @@ def _maintenance_bypass_allowed(req: object) -> bool:
 def _maintenance_message_detail() -> str:
     detail = str(getattr(SETTINGS, "system_maintenance_message", "") or "").strip()
     return detail or "Service is temporarily unavailable due to maintenance."
+
+
+def _settings_queue_affinity_mismatches() -> dict[str, dict[str, str]]:
+    render_queue = str(getattr(SETTINGS, "celery_queue_render", "") or "").strip()
+    render_poll_queue = str(getattr(SETTINGS, "celery_queue_render_poll", "") or "").strip()
+    if not render_poll_queue:
+        render_poll_queue = derive_render_poll_queue(render_queue)
+    return queue_affinity_mismatches(
+        origin_node=str(getattr(SETTINGS, "orchestrator_node_name", "") or ""),
+        build_queue=str(getattr(SETTINGS, "celery_queue_build", "") or ""),
+        render_queue=render_queue,
+        render_poll_queue=render_poll_queue,
+    )
+
+
+def _ensure_queue_affinity(routing: Dict[str, str]) -> None:
+    mismatches = queue_affinity_mismatches(
+        origin_node=routing.get("origin_node", ""),
+        build_queue=routing.get("build_queue", ""),
+        render_queue=routing.get("render_queue", ""),
+        render_poll_queue=routing.get("render_poll_queue", ""),
+    )
+    if mismatches:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "celery_queue_affinity_mismatch",
+                "origin_node": str(routing.get("origin_node") or ""),
+                "mismatches": mismatches,
+            },
+        )
 
 
 def _iter_celery_tasks(raw_tasks: object) -> list[dict[str, Any]]:
@@ -459,6 +490,11 @@ def create_app() -> FastAPI:
             checks["llm_admission_ready"] = False
             details["llm_admission_ready"] = f"runtime_status_error: {exc!r}"
 
+        queue_mismatches = _settings_queue_affinity_mismatches()
+        checks["queue_affinity"] = not queue_mismatches
+        if queue_mismatches:
+            details["queue_affinity"] = str(queue_mismatches)
+
         ok = all(checks.values())
         return {"ok": ok, "checks": checks, "details": details}
 
@@ -624,6 +660,7 @@ def create_app() -> FastAPI:
         _ensure_render_engine_available(request_payload)
         _ensure_render_capacity(request_payload)
         routing = _resolve_job_routing(request_payload=request_payload)
+        _ensure_queue_affinity(routing)
         request_payload.update(routing)
         st, created = store.new_job(
             request=request_payload,
@@ -943,6 +980,14 @@ def create_app() -> FastAPI:
             pinned_render_poll_queue = derive_render_poll_queue(pinned_render_queue or SETTINGS.celery_queue_render)
         if not pinned_render_poll_queue:
             pinned_render_poll_queue = str(SETTINGS.celery_queue_render_poll or "").strip()
+        _ensure_queue_affinity(
+            {
+                "origin_node": pinned_origin_node,
+                "build_queue": pinned_build_queue,
+                "render_queue": pinned_render_queue,
+                "render_poll_queue": pinned_render_poll_queue,
+            }
+        )
         requested_worker_raw = str(payload.llm_worker_type or "").strip()
         current_worker_raw = str(req.get("llm_worker_type") or "").strip()
 

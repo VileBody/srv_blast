@@ -26,6 +26,10 @@ def _settings(**overrides):
         "footage_inventory_json": "data/footage_inventory.json",
         "descriptions_bundle_path": "pins/descriptions_bundle.json",
         "descriptions_bundle_max_assets": "",
+        "orchestrator_node_name": "",
+        "celery_queue_build": "build",
+        "celery_queue_render": "render",
+        "celery_queue_render_poll": "render-poll",
     }
     base.update(overrides)
     return SimpleNamespace(**base)
@@ -94,3 +98,38 @@ def test_health_is_not_green_when_payment_router_enabled_without_db(monkeypatch)
     assert payload["ok"] is False
     assert payload["checks"]["payment_db_ready"] is False
 
+
+def test_health_is_not_green_when_node_queues_point_to_another_node(monkeypatch) -> None:
+    monkeypatch.setattr(
+        orchestrator_app,
+        "SETTINGS",
+        _settings(
+            orchestrator_node_name="orchestrator-0",
+            celery_queue_build="build.orchestrator-1",
+            celery_queue_render="render.orchestrator-1",
+            celery_queue_render_poll="render-poll.orchestrator-1",
+        ),
+    )
+    monkeypatch.setattr(orchestrator_app, "create_asset_router", lambda: APIRouter())
+    monkeypatch.setattr(orchestrator_app.JobStore, "from_env", classmethod(lambda cls: _FakeStore()))
+    monkeypatch.setattr(orchestrator_app, "ensure_config_initialized", lambda store: None)
+    monkeypatch.setattr(
+        orchestrator_app,
+        "ensure_descriptions_bundle",
+        lambda **_: SimpleNamespace(ok=True, action="ok", bundle_path="bundle", reason=""),
+    )
+    monkeypatch.setattr(
+        orchestrator_app,
+        "get_runtime_status",
+        lambda store: {
+            "sdk": SimpleNamespace(enabled=True, weight=1, max_inflight=4),
+        },
+    )
+
+    app = orchestrator_app.create_app()
+    client = TestClient(app)
+    payload = client.get("/health").json()
+
+    assert payload["ok"] is False
+    assert payload["checks"]["queue_affinity"] is False
+    assert "build.orchestrator-0" in payload["details"]["queue_affinity"]

@@ -27,6 +27,46 @@ lib_is_true() {
   [[ "$v" == "1" || "$v" == "true" || "$v" == "yes" || "$v" == "on" ]]
 }
 
+# HA workers use host-local work/output mounts. Build, dispatch, and poll must
+# therefore stay on the same node-specific queue family.
+prod_path_queue_affinity_gate() {
+  local node="${1:-}"
+  local build_queue="${2:-}"
+  local render_queue="${3:-}"
+  local render_poll_queue="${4:-}"
+  local expected_build expected_render expected_poll failed=0
+
+  if [[ -z "$node" ]]; then
+    echo "[deploy] queue affinity FAIL: ORCHESTRATOR_NODE_NAME is empty"
+    return 1
+  fi
+
+  expected_build="build.$node"
+  expected_render="render.$node"
+  expected_poll="render-poll.$node"
+  if [[ -z "$render_poll_queue" ]]; then
+    render_poll_queue="$expected_poll"
+  fi
+
+  if [[ "$build_queue" != "$expected_build" ]]; then
+    echo "[deploy] queue affinity FAIL: CELERY_QUEUE_BUILD=$build_queue expected=$expected_build"
+    failed=1
+  fi
+  if [[ "$render_queue" != "$expected_render" ]]; then
+    echo "[deploy] queue affinity FAIL: CELERY_QUEUE_RENDER=$render_queue expected=$expected_render"
+    failed=1
+  fi
+  if [[ "$render_poll_queue" != "$expected_poll" ]]; then
+    echo "[deploy] queue affinity FAIL: CELERY_QUEUE_RENDER_POLL=$render_poll_queue expected=$expected_poll"
+    failed=1
+  fi
+  if [[ "$failed" -ne 0 ]]; then
+    echo "[deploy] refusing HA rollout: local /app/work and /app/output require node-affine queues"
+    return 1
+  fi
+  echo "[deploy] queue affinity: PASS node=$node"
+}
+
 # Diagnostics an operator/alert needs: which node, which revision, what is
 # currently serving. Printed on FAIL so the red workflow is self-explanatory.
 picker_readiness_report_context() {
