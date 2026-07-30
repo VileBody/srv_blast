@@ -159,6 +159,10 @@ class ChatState(BaseModel):
     prepared_audio_local_path: str = ""
     lyrics_text: str = ""
     target_fragment: str = ""
+    # False for legacy states whose target_fragment may contain the full lyrics
+    # selected by the former Gemini flow. Local CTC requires an explicitly
+    # entered fragment that matches the user clip window.
+    target_fragment_explicit: bool = False
     footage_genre_key: str = ""
     footage_artist_key: str = ""
     footage_artist_id: str = ""

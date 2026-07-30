@@ -286,6 +286,7 @@ def test_reset_to_wait_audio_preserves_reusable_track_input() -> None:
             prepared_audio_local_path="/tmp/prepared-track.mp3",
             lyrics_text="full lyrics",
             target_fragment="exact fragment",
+            target_fragment_explicit=True,
             user_clip_start_sec=44.0,
             user_clip_end_sec=62.0,
             active_job_ids=["job-1"],
@@ -300,6 +301,7 @@ def test_reset_to_wait_audio_preserves_reusable_track_input() -> None:
         assert reset.prepared_audio_local_path == "/tmp/prepared-track.mp3"
         assert reset.lyrics_text == "full lyrics"
         assert reset.target_fragment == "exact fragment"
+        assert reset.target_fragment_explicit is True
         assert reset.user_clip_start_sec == 44.0
         assert reset.user_clip_end_sec == 62.0
         assert reset.active_job_ids == []
