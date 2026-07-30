@@ -59,6 +59,18 @@ def _delivery_mode_env(name: str, default: str = "polling") -> str:
     return mode
 
 
+def _alignment_backend_env(
+    name: str,
+    default: str = "local_ctc",
+) -> str:
+    backend = str(_env(name, default) or "").strip().lower()
+    if backend not in {"gemini", "local_ctc"}:
+        raise RuntimeError(
+            f"{name} must be 'gemini' or 'local_ctc', got {backend!r}"
+        )
+    return backend
+
+
 def _telegram_api_env(name: str = "TG_BOT_API_ENV") -> str:
     return normalize_telegram_api_env(_env(name, "prod"), name=name)
 
@@ -190,6 +202,10 @@ class Settings:
     tg_bot_username: str = _active_tg_bot_username_env()
     tg_file_proxy_url: str = _env("TG_FILE_PROXY_URL", "")
     orchestrator_public_url: str = _env("ORCHESTRATOR_PUBLIC_URL", "http://orchestrator-api:8000")
+    public_stage1_alignment_backend: str = _alignment_backend_env(
+        "PUBLIC_STAGE1_ALIGNMENT_BACKEND",
+        "local_ctc",
+    )
     # Opt-in default for the separate native-renderer bot flow. The
     # orchestrator remains the source of truth and can still refuse it via its
     # own canary gate.

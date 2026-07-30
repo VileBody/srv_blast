@@ -29,6 +29,7 @@ from services.tg_bot_public.state_store import (
     STAGE_WAIT_FRAGMENT_TEXT,
     STAGE_WAIT_LYRICS_CHOICE,
     STAGE_WAIT_LYRICS_TEXT,
+    STAGE_WAIT_TIMING_INPUT,
 )
 
 
@@ -110,5 +111,47 @@ def test_launch_without_reference_text_returns_to_lyrics_input_before_credit_che
 
         assert st.stage == STAGE_WAIT_LYRICS_TEXT
         assert "нужен текст песни" in str(msg.answers[-1]["text"])
+
+    asyncio.run(_run())
+
+
+def test_launch_without_target_fragment_returns_to_fragment_before_credit_check() -> None:
+    async def _run() -> None:
+        app = _new_app()
+        st = ChatState(
+            chat_id=1004,
+            stage=STAGE_WAIT_CONFIRM,
+            lyrics_text="полный текст песни",
+            target_fragment="",
+            user_clip_start_sec=10.0,
+            user_clip_end_sec=20.0,
+        )
+        msg = _FakeMessage(text=public_app.BTN_LAUNCH, chat_id=1004)
+
+        await public_app.BlastBotApp._handle_wait_confirm(app, msg, st)
+
+        assert st.stage == STAGE_WAIT_FRAGMENT_TEXT
+        assert "пришли строки" in str(msg.answers[-1]["text"])
+
+    asyncio.run(_run())
+
+
+def test_launch_without_timing_returns_to_timing_before_credit_check() -> None:
+    async def _run() -> None:
+        app = _new_app()
+        st = ChatState(
+            chat_id=1005,
+            stage=STAGE_WAIT_CONFIRM,
+            lyrics_text="полный текст песни",
+            target_fragment="точные строки",
+            user_clip_start_sec=0.0,
+            user_clip_end_sec=0.0,
+        )
+        msg = _FakeMessage(text=public_app.BTN_LAUNCH, chat_id=1005)
+
+        await public_app.BlastBotApp._handle_wait_confirm(app, msg, st)
+
+        assert st.stage == STAGE_WAIT_TIMING_INPUT
+        assert "укажи тайминг" in str(msg.answers[-1]["text"])
 
     asyncio.run(_run())
