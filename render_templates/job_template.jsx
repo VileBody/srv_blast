@@ -622,16 +622,8 @@
         logLine("JOB ERROR: " + errMsg);
         writeStatus("ERROR", errMsg);
     } finally {
-        // закрываем ПРОЕКТ, но не приложение After Effects
-        try {
-            if (app.project && typeof CloseOptions !== "undefined") {
-                app.project.close(CloseOptions.DO_NOT_SAVE_CHANGES);
-            } else if (app.project) {
-                app.project.close();
-            }
-        } catch (eClose) {
-            logLine("Project close error: " + eClose.toString());
-        }
+        // Keep the saved project open for aerender. The runtime closes it in
+        // post-job cleanup after rendering or a terminal failure completes.
         closeLog();
     }
 })();
