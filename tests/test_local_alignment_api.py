@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 import time
 from pathlib import Path
 
@@ -17,6 +18,7 @@ from mlcore.alignment.core import (
     ERROR_WINDOW_MISMATCH,
 )
 from mlcore.alignment.contracts import (
+    ERROR_PRONUNCIATION_UNAVAILABLE,
     ERROR_SEPARATOR_UNAVAILABLE,
     ERROR_SOURCE_SEPARATION_FAILED,
 )
@@ -122,6 +124,7 @@ def test_alignment_api_returns_stable_error_code() -> None:
     ("code", "expected_status"),
     [
         (ERROR_SEPARATOR_UNAVAILABLE, 503),
+        (ERROR_PRONUNCIATION_UNAVAILABLE, 503),
         (ERROR_SOURCE_SEPARATION_FAILED, 500),
     ],
 )
@@ -177,6 +180,12 @@ def _settings(tmp_path: Path, *, timeout_s: float = 5.0) -> AlignmentSettings:
         demucs_package_version="4.1.0",
         demucs_segment_sec=7.0,
         demucs_overlap=0.25,
+        pronunciation_mode="espeak_en_to_ru",
+        espeak_bin="espeak-ng",
+        espeak_voice="en-us",
+        espeak_expected_version="1.51",
+        espeak_timeout_s=2.0,
+        pronunciation_overrides_path=tmp_path / "pronunciations.json",
     )
 
 
@@ -243,12 +252,21 @@ def test_alignment_runtime_stays_unready_until_all_timed_out_jobs_finish(
 ) -> None:
     runtime = AlignmentRuntime(_settings(tmp_path, timeout_s=0.01))
     runtime._ready = True
+    call_lock = threading.Lock()
+    call_index = 0
+    release_jobs = [threading.Event(), threading.Event()]
+    started_jobs = [threading.Event(), threading.Event()]
 
-    def slow_align(**_kwargs):
-        time.sleep(0.05)
+    def controlled_align(**_kwargs):
+        nonlocal call_index
+        with call_lock:
+            index = call_index
+            call_index += 1
+        started_jobs[index].set()
+        assert release_jobs[index].wait(timeout=2.0)
         return AlignmentResult(_payload(), {}, {})
 
-    runtime._align_sync = slow_align  # type: ignore[method-assign]
+    runtime._align_sync = controlled_align  # type: ignore[method-assign]
 
     async def run() -> None:
         async def request() -> AlignmentResult:
@@ -265,14 +283,20 @@ def test_alignment_runtime_stays_unready_until_all_timed_out_jobs_finish(
             for result in results
         )
         assert runtime.ready is False
-        await asyncio.sleep(0.06)
+
+        release_jobs[0].set()
+        assert await asyncio.to_thread(started_jobs[1].wait, 1.0)
         assert runtime.ready is False
-        await asyncio.sleep(0.06)
+
+        release_jobs[1].set()
+        for _ in range(100):
+            if runtime.ready:
+                break
+            await asyncio.sleep(0.01)
         assert runtime.ready is True
         await runtime.close()
 
     asyncio.run(run())
-
 
 def test_alignment_runtime_fails_when_model_is_not_ready(tmp_path: Path) -> None:
     runtime = AlignmentRuntime(_settings(tmp_path))
