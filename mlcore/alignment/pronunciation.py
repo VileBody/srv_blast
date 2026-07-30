@@ -9,10 +9,16 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from .contracts import (
+    AlignmentFailure,
+    ERROR_FULLY_REDACTED_WORD,
     ERROR_PRONUNCIATION_UNAVAILABLE,
     ERROR_UNSUPPORTED_TEXT,
 )
-from .core import AlignmentFailure
+from .redaction import (
+    ALIGNMENT_WILDCARD,
+    REDACTION_MARKERS,
+    count_wildcards,
+)
 
 
 PRONUNCIATION_MODE = "espeak_en_to_ru"
@@ -96,6 +102,7 @@ class PronunciationWord:
     alignment_text: str
     strategy: str
     ipa: str = ""
+    wildcard_count: int = 0
 
 
 def _strip_ipa_controls(value: str) -> str:
@@ -338,6 +345,7 @@ class EspeakEnglishToRussianNormalizer:
         output: list[str] = []
         ipa_parts: list[str] = []
         strategies: set[str] = set()
+        has_wildcard = False
         position = 0
         while position < len(word):
             cyrillic_match = _CYRILLIC_RE.match(word, position)
@@ -357,6 +365,15 @@ class EspeakEnglishToRussianNormalizer:
                 continue
 
             character = word[position]
+            if character in REDACTION_MARKERS:
+                # A run of markers hides one contiguous unknown audio region and
+                # becomes exactly one CTC wildcard unit. The hidden letters are
+                # never guessed.
+                if output[-1:] != [ALIGNMENT_WILDCARD]:
+                    output.append(ALIGNMENT_WILDCARD)
+                has_wildcard = True
+                position += 1
+                continue
             if character in _IGNORABLE_WORD_SEPARATORS:
                 position += 1
                 continue
@@ -371,16 +388,24 @@ class EspeakEnglishToRussianNormalizer:
                 ERROR_UNSUPPORTED_TEXT,
                 f"reference word {word!r} has no alignable pronunciation",
             )
-        strategy = (
-            next(iter(strategies))
-            if len(strategies) == 1
-            else "mixed_cyrillic_espeak"
-        )
+        if has_wildcard and not alignment_text.strip(ALIGNMENT_WILDCARD):
+            raise AlignmentFailure(
+                ERROR_FULLY_REDACTED_WORD,
+                f"reference word {word!r} is fully masked and has no alignable "
+                "letters; keep at least one visible letter in the word",
+            )
+        if len(strategies) == 1:
+            strategy = next(iter(strategies))
+        else:
+            strategy = "mixed_cyrillic_espeak"
+        if has_wildcard:
+            strategy = f"redacted_{strategy}"
         return PronunciationWord(
             display_text=word,
             alignment_text=alignment_text,
             strategy=strategy,
             ipa=" ".join(ipa_parts),
+            wildcard_count=count_wildcards(alignment_text),
         )
 
     def normalize_words(
