@@ -16,7 +16,15 @@ from .core import (
     ERROR_WINDOW_MISMATCH,
     align_target_fragment,
 )
-from .contracts import ERROR_SEPARATOR_UNAVAILABLE
+from .contracts import (
+    ERROR_PRONUNCIATION_UNAVAILABLE,
+    ERROR_SEPARATOR_UNAVAILABLE,
+)
+from .pronunciation import (
+    PRONUNCIATION_MODE,
+    EspeakEnglishToRussianNormalizer,
+    load_pronunciation_overrides,
+)
 from .separation import DemucsVocalSeparator
 
 
@@ -62,6 +70,12 @@ class AlignmentSettings:
     demucs_package_version: str
     demucs_segment_sec: float
     demucs_overlap: float
+    pronunciation_mode: str
+    espeak_bin: str
+    espeak_voice: str
+    espeak_expected_version: str
+    espeak_timeout_s: float
+    pronunciation_overrides_path: Path
 
     @classmethod
     def from_env(cls) -> "AlignmentSettings":
@@ -93,6 +107,17 @@ class AlignmentSettings:
             ),
             demucs_segment_sec=_float_env("ALIGNMENT_DEMUCS_SEGMENT_SEC", 7.0),
             demucs_overlap=_float_env("ALIGNMENT_DEMUCS_OVERLAP", 0.25),
+            pronunciation_mode=_env("ALIGNMENT_PRONUNCIATION_MODE"),
+            espeak_bin=_env("ALIGNMENT_ESPEAK_BIN", "espeak-ng"),
+            espeak_voice=_env("ALIGNMENT_ESPEAK_VOICE", "en-us"),
+            espeak_expected_version=_env("ALIGNMENT_ESPEAK_EXPECTED_VERSION"),
+            espeak_timeout_s=_float_env("ALIGNMENT_ESPEAK_TIMEOUT_S", 2.0),
+            pronunciation_overrides_path=Path(
+                _env(
+                    "ALIGNMENT_PRONUNCIATION_OVERRIDES_PATH",
+                    "/app/config/alignment_pronunciations.json",
+                )
+            ).resolve(),
         )
 
 
@@ -105,6 +130,7 @@ class AlignmentRuntime:
         self._model: Any = None
         self._torch: Any = None
         self._vocal_separator: DemucsVocalSeparator | None = None
+        self._pronunciation_normalizer: EspeakEnglishToRussianNormalizer | None = None
         self._load_error = ""
         self._load_error_code = ERROR_MODEL_UNAVAILABLE
         self._ready = False
@@ -126,6 +152,12 @@ class AlignmentRuntime:
             "separator_model": self.settings.demucs_model_name,
             "separator_revision": self.settings.demucs_model_revision,
             "separator_package_version": self.settings.demucs_package_version,
+            "pronunciation_mode": self.settings.pronunciation_mode,
+            "pronunciation_engine_version": (
+                self._pronunciation_normalizer.engine_version
+                if self._pronunciation_normalizer is not None
+                else ""
+            ),
             "load_error_code": self._load_error_code if self.load_error else "",
             "load_error": self.load_error,
         }
@@ -155,6 +187,21 @@ class AlignmentRuntime:
                     ERROR_SEPARATOR_UNAVAILABLE,
                     "ALIGNMENT_AUDIO_PREPROCESSOR must be explicitly set to 'demucs'",
                 )
+            if self.settings.pronunciation_mode != PRONUNCIATION_MODE:
+                raise AlignmentFailure(
+                    ERROR_PRONUNCIATION_UNAVAILABLE,
+                    "ALIGNMENT_PRONUNCIATION_MODE must be explicitly set to "
+                    f"{PRONUNCIATION_MODE!r}",
+                )
+            pronunciation_normalizer = EspeakEnglishToRussianNormalizer(
+                espeak_bin=self.settings.espeak_bin,
+                voice=self.settings.espeak_voice,
+                expected_version=self.settings.espeak_expected_version,
+                timeout_s=self.settings.espeak_timeout_s,
+                overrides=load_pronunciation_overrides(
+                    self.settings.pronunciation_overrides_path
+                ),
+            )
             import torch
             from transformers import Wav2Vec2ForCTC, Wav2Vec2Processor
 
@@ -181,6 +228,7 @@ class AlignmentRuntime:
             self._model = model
             self._torch = torch
             self._vocal_separator = vocal_separator
+            self._pronunciation_normalizer = pronunciation_normalizer
             self._ready = True
             self._load_error_code = ""
             self._load_error = ""
@@ -239,6 +287,11 @@ class AlignmentRuntime:
                 ERROR_SEPARATOR_UNAVAILABLE,
                 "Demucs separator is not loaded",
             )
+        if self._pronunciation_normalizer is None:
+            raise AlignmentFailure(
+                ERROR_PRONUNCIATION_UNAVAILABLE,
+                "pronunciation normalizer is not loaded",
+            )
         return align_target_fragment(
             audio_path=self.resolve_audio_path(audio_path),
             target_fragment=target_fragment,
@@ -248,6 +301,7 @@ class AlignmentRuntime:
             model=self._model,
             torch_module=self._torch,
             vocal_separator=self._vocal_separator,
+            pronunciation_normalizer=self._pronunciation_normalizer,
             model_revision=self.settings.model_revision,
             ffmpeg_bin=self.settings.ffmpeg_bin,
             ffmpeg_timeout_s=self.settings.ffmpeg_timeout_s,

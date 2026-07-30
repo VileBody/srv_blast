@@ -13,6 +13,7 @@ from mlcore.models.stage1_asr import Stage1AsrPayload
 
 from .contracts import (
     ERROR_MODEL_UNAVAILABLE,
+    ERROR_PRONUNCIATION_UNAVAILABLE,
     ERROR_SEPARATOR_UNAVAILABLE,
     ERROR_SOURCE_SEPARATION_FAILED,
     ERROR_TIMEOUT,
@@ -47,7 +48,11 @@ class AlignResponse(BaseModel):
 def _error_response(exc: AlignmentFailure) -> JSONResponse:
     status = (
         503
-        if exc.code in {ERROR_MODEL_UNAVAILABLE, ERROR_SEPARATOR_UNAVAILABLE}
+        if exc.code in {
+            ERROR_MODEL_UNAVAILABLE,
+            ERROR_PRONUNCIATION_UNAVAILABLE,
+            ERROR_SEPARATOR_UNAVAILABLE,
+        }
         else 422
     )
     if exc.code == ERROR_TIMEOUT:

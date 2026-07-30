@@ -196,6 +196,7 @@ def test_aggregate_words_returns_absolute_timestamps() -> None:
 def test_explicit_latin_pronunciations_keep_original_display_words() -> None:
     normalized, target_ids, token_word_indexes = build_targets(
         display_words=["на", "iPhone", "Samson"],
+        pronunciation_words=["на", "айфон", "самсон"],
         tokenizer=_RussianCharacterTokenizer(),
     )
 
@@ -208,12 +209,13 @@ def test_unknown_latin_word_fails_with_actionable_word_name() -> None:
     with pytest.raises(AlignmentFailure) as exc:
         build_targets(
             display_words=["на", "Spotify"],
+            pronunciation_words=["на", "spotify"],
             tokenizer=_RussianCharacterTokenizer(),
         )
 
     assert exc.value.code == ERROR_UNSUPPORTED_TEXT
     assert "Spotify" in exc.value.message
-    assert "add an explicit pronunciation mapping" in exc.value.message
+    assert "fix the pronunciation normalizer" in exc.value.message
 
 
 def test_stage1_adapter_keeps_acoustic_timings_and_derives_pauses() -> None:

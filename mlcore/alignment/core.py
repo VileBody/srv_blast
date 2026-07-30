@@ -27,10 +27,6 @@ SAMPLE_RATE = 16_000
 TOKEN_POSTERIOR_RELATIVE_FLOOR = 0.2
 TOKEN_TO_BLANK_ODDS_FLOOR = 0.1
 _EDGE_PUNCTUATION_RE = re.compile(r"^[^\w]+|[^\w]+$", flags=re.UNICODE)
-_REFERENCE_PRONUNCIATIONS = {
-    "iphone": "айфон",
-    "samson": "самсон",
-}
 
 
 class AlignmentFailure(RuntimeError):
@@ -392,14 +388,12 @@ def align_targets_in_window(
     return spans, path_score, search_start_frame, search_end_frame
 
 
-def _choose_text_case(words: Sequence[str], vocab: dict[str, int]) -> list[str]:
-    pronunciation_words = [
-        _REFERENCE_PRONUNCIATIONS.get(
-            unicodedata.normalize("NFKC", str(word)).casefold(),
-            str(word),
-        )
-        for word in words
-    ]
+def _choose_text_case(
+    pronunciation_words: Sequence[str],
+    vocab: dict[str, int],
+    *,
+    display_words: Sequence[str] | None = None,
+) -> list[str]:
     candidates = (
         [word.lower() for word in pronunciation_words],
         [word.upper() for word in pronunciation_words],
@@ -424,26 +418,41 @@ def _choose_text_case(words: Sequence[str], vocab: dict[str, int]) -> list[str]:
         for character in set("".join(best_candidate))
         if character not in vocab
     )
+    error_display_words = display_words or pronunciation_words
     unsupported_words = [
         str(display_word)
-        for display_word, pronunciation_word in zip(words, best_candidate)
+        for display_word, pronunciation_word in zip(
+            error_display_words,
+            best_candidate,
+        )
         if any(character not in vocab for character in pronunciation_word)
     ]
     raise AlignmentFailure(
         ERROR_UNSUPPORTED_TEXT,
-        "reference contains words unsupported by the Russian CTC vocabulary: "
+        "normalized pronunciation contains words unsupported by the Russian "
+        "CTC vocabulary: "
         f"{unsupported_words!r}; unsupported characters: {missing!r}; "
-        "add an explicit pronunciation mapping",
+        "fix the pronunciation normalizer or add an explicit override",
     )
 
 
 def build_targets(
     *,
     display_words: Sequence[str],
+    pronunciation_words: Sequence[str],
     tokenizer: Any,
 ) -> tuple[list[str], list[int], list[int]]:
+    if len(display_words) != len(pronunciation_words):
+        raise AlignmentFailure(
+            ERROR_INTERNAL,
+            "display and pronunciation word counts differ",
+        )
     vocab = tokenizer.get_vocab()
-    normalized_words = _choose_text_case(display_words, vocab)
+    normalized_words = _choose_text_case(
+        pronunciation_words,
+        vocab,
+        display_words=display_words,
+    )
     delimiter_id = tokenizer.word_delimiter_token_id
     if delimiter_id is None:
         delimiter_token = getattr(tokenizer, "word_delimiter_token", None)
@@ -620,6 +629,7 @@ def align_target_fragment(
     model: Any,
     torch_module: Any,
     vocal_separator: Any,
+    pronunciation_normalizer: Any,
     model_revision: str,
     ffmpeg_bin: str = "ffmpeg",
     ffmpeg_timeout_s: float = 120.0,
@@ -654,8 +664,12 @@ def align_target_fragment(
         if int(waveform.size) < SAMPLE_RATE // 10:
             raise AlignmentFailure(ERROR_WINDOW_MISMATCH, "analysis crop is too short")
 
+        pronunciation_words = pronunciation_normalizer.normalize_words(display_words)
         normalized_words, target_ids, token_word_indexes = build_targets(
             display_words=display_words,
+            pronunciation_words=[
+                word.alignment_text for word in pronunciation_words
+            ],
             tokenizer=processor.tokenizer,
         )
         model_inputs = processor(
@@ -758,6 +772,27 @@ def align_target_fragment(
                 "search_end_abs": float(timeline.frame_to_abs(search_end_frame)),
                 "inputs_to_logits_ratio": int(inputs_to_logits_ratio),
             },
+            "pronunciation": {
+                "mode": str(getattr(pronunciation_normalizer, "mode", "")),
+                "engine_version": str(
+                    getattr(pronunciation_normalizer, "engine_version", "")
+                ),
+                "converted_word_count": sum(
+                    word.strategy != "literal_cyrillic"
+                    for word in pronunciation_words
+                ),
+                "words": [
+                    {
+                        "word_index": index,
+                        "display_text": word.display_text,
+                        "alignment_text": normalized_words[index],
+                        "strategy": word.strategy,
+                        "ipa": word.ipa,
+                    }
+                    for index, word in enumerate(pronunciation_words)
+                    if word.strategy != "literal_cyrillic"
+                ],
+            },
             "source_separation": dict(separation.diagnostics),
             "words": [
                 {
@@ -787,5 +822,11 @@ def align_target_fragment(
             "search_end_frame": int(search_end_frame),
             "target_tokens": len(target_ids),
             "path_log_score": float(path_score),
+            "pronunciation_mode": str(
+                getattr(pronunciation_normalizer, "mode", "")
+            ),
+            "pronunciation_engine_version": str(
+                getattr(pronunciation_normalizer, "engine_version", "")
+            ),
         },
     )
