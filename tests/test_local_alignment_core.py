@@ -240,6 +240,76 @@ def test_dynamic_window_expands_edges_and_uses_stable_acoustic_timings() -> None
     assert selection.diagnostics["mode"] == "single_inference_multi_window_consensus"
 
 
+def test_dynamic_window_warns_on_weak_interior_word_without_rejecting() -> None:
+    probabilities = np.full((61, 4), 0.02, dtype=np.float64)
+    probabilities[:, 0] = 0.94
+    probabilities[21] = [0.05, 0.90, 0.025, 0.025]
+    probabilities[30] = [0.80, 0.05, 0.10, 0.05]
+    probabilities[39] = [0.05, 0.025, 0.025, 0.90]
+    timeline = EmissionTimeline(
+        analysis_start_abs=0.0,
+        sample_rate=10,
+        input_samples=61,
+        emission_frames=61,
+        inputs_to_logits_ratio=1,
+    )
+
+    selection = select_dynamic_alignment_window(
+        log_probs=np.log(probabilities),
+        target_ids=[1, 2, 3],
+        token_word_indexes=[0, 1, 2],
+        display_words=["раз", "два", "три"],
+        normalized_words=["раз", "два", "три"],
+        blank_id=0,
+        timeline=timeline,
+        clip_start_abs=2.0,
+        clip_end_abs=4.0,
+        config=_dynamic_window_config(),
+        min_word_confidence=0.5,
+    )
+
+    assert selection.selected.min_word_confidence < 0.5
+    assert selection.selected.boundary_word_confidence >= 0.5
+    assert selection.diagnostics["eligible_candidate_count"] >= 3
+    assert (
+        selection.diagnostics["policy"]["min_boundary_word_confidence"]
+        == 0.5
+    )
+
+
+def test_dynamic_window_rejects_weak_boundary_word() -> None:
+    probabilities = np.full((61, 4), 0.02, dtype=np.float64)
+    probabilities[:, 0] = 0.94
+    probabilities[21] = [0.80, 0.10, 0.05, 0.05]
+    probabilities[30] = [0.05, 0.025, 0.90, 0.025]
+    probabilities[39] = [0.05, 0.025, 0.025, 0.90]
+    timeline = EmissionTimeline(
+        analysis_start_abs=0.0,
+        sample_rate=10,
+        input_samples=61,
+        emission_frames=61,
+        inputs_to_logits_ratio=1,
+    )
+
+    with pytest.raises(AlignmentFailure) as exc:
+        select_dynamic_alignment_window(
+            log_probs=np.log(probabilities),
+            target_ids=[1, 2, 3],
+            token_word_indexes=[0, 1, 2],
+            display_words=["раз", "два", "три"],
+            normalized_words=["раз", "два", "три"],
+            blank_id=0,
+            timeline=timeline,
+            clip_start_abs=2.0,
+            clip_end_abs=4.0,
+            config=_dynamic_window_config(),
+            min_word_confidence=0.5,
+        )
+
+    assert exc.value.code == ERROR_WINDOW_MISMATCH
+    assert "low_boundary_word_confidence" in exc.value.message
+
+
 def test_dynamic_window_rejects_fragment_that_exceeds_user_clip() -> None:
     probabilities = np.full((61, 3), 0.03, dtype=np.float64)
     probabilities[:, 0] = 0.94
