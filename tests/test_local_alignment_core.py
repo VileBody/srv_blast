@@ -202,6 +202,21 @@ def test_dynamic_window_candidates_are_bounded_and_include_boundary_probes() -> 
     assert (12.0, 22.0) in candidates
 
 
+def test_dense_local_window_policy_keeps_three_neighbor_scales() -> None:
+    candidates = generate_dynamic_window_bounds(
+        clip_start_abs=10.0,
+        clip_end_abs=20.0,
+        max_adjust_sec=1.0,
+        step_sec=0.25,
+    )
+
+    assert len(candidates) <= 25
+    assert (9.75, 20.0) in candidates
+    assert (9.5, 20.0) in candidates
+    assert (9.0, 20.0) in candidates
+    assert (9.0, 21.0) in candidates
+
+
 def test_dynamic_window_expands_edges_and_uses_stable_acoustic_timings() -> None:
     probabilities = np.full((61, 3), 0.03, dtype=np.float64)
     probabilities[:, 0] = 0.94

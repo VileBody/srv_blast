@@ -102,11 +102,11 @@ class AlignmentSettings:
             pause_min_gap_sec=_float_env("ALIGNMENT_PAUSE_MIN_GAP_SEC", 0.35),
             dynamic_window_max_adjust_sec=_float_env(
                 "ALIGNMENT_DYNAMIC_WINDOW_MAX_ADJUST_SEC",
-                2.0,
+                1.0,
             ),
             dynamic_window_step_sec=_float_env(
                 "ALIGNMENT_DYNAMIC_WINDOW_STEP_SEC",
-                0.5,
+                0.25,
             ),
             dynamic_window_min_edge_clearance_sec=_float_env(
                 "ALIGNMENT_DYNAMIC_WINDOW_MIN_EDGE_CLEARANCE_SEC",

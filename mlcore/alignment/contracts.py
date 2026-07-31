@@ -1,4 +1,4 @@
-ALIGNMENT_ALGORITHM_VERSION = "local-ctc-viterbi-v11-dynamic-window-redaction-espeak-demucs-4.1.0"
+ALIGNMENT_ALGORITHM_VERSION = "local-ctc-viterbi-v12-dynamic-window-redaction-espeak-demucs-4.1.0"
 
 ERROR_UNSUPPORTED_TEXT = "ALIGNMENT_UNSUPPORTED_TEXT"
 ERROR_FULLY_REDACTED_WORD = "ALIGNMENT_FULLY_REDACTED_WORD"
