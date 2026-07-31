@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import math
+from contextlib import nullcontext
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -9,17 +11,22 @@ import pytest
 from mlcore.alignment.core import (
     AlignedWord,
     AlignmentResult,
+    DynamicWindowConfig,
     EmissionTimeline,
     _build_stage1_asr,
     aggregate_words,
+    align_target_fragment,
     align_targets_in_window,
     build_targets,
     ctc_viterbi_align,
+    generate_dynamic_window_bounds,
     render_word_srt,
     reference_words,
+    select_dynamic_alignment_window,
     serialize_alignment_result,
     AlignmentFailure,
     ERROR_UNSUPPORTED_TEXT,
+    ERROR_WINDOW_MISMATCH,
 )
 
 
@@ -166,6 +173,231 @@ def test_ctc_viterbi_trims_weak_path_occupancy_to_posterior_evidence() -> None:
     assert spans[0].path_end_frame > spans[0].end_frame
     assert (spans[0].start_frame, spans[0].end_frame) == (0, 1)
     assert (spans[1].start_frame, spans[1].end_frame) == (5, 6)
+
+
+def _dynamic_window_config() -> DynamicWindowConfig:
+    return DynamicWindowConfig(
+        max_adjust_sec=2.0,
+        step_sec=0.5,
+        min_edge_clearance_sec=0.15,
+        stability_tolerance_sec=0.11,
+        min_consensus_candidates=3,
+        score_tolerance=0.12,
+        min_boundary_duration_ratio=0.15,
+    )
+
+
+def test_dynamic_window_candidates_are_bounded_and_include_boundary_probes() -> None:
+    candidates = generate_dynamic_window_bounds(
+        clip_start_abs=10.0,
+        clip_end_abs=20.0,
+        max_adjust_sec=2.0,
+        step_sec=0.5,
+    )
+
+    assert len(candidates) <= 25
+    assert (10.0, 20.0) in candidates
+    assert (8.0, 22.0) in candidates
+    assert (8.0, 18.0) in candidates
+    assert (12.0, 22.0) in candidates
+
+
+def test_dynamic_window_expands_edges_and_uses_stable_acoustic_timings() -> None:
+    probabilities = np.full((61, 3), 0.03, dtype=np.float64)
+    probabilities[:, 0] = 0.94
+    probabilities[21] = [0.05, 0.90, 0.05]
+    probabilities[39] = [0.05, 0.05, 0.90]
+    timeline = EmissionTimeline(
+        analysis_start_abs=0.0,
+        sample_rate=10,
+        input_samples=61,
+        emission_frames=61,
+        inputs_to_logits_ratio=1,
+    )
+
+    selection = select_dynamic_alignment_window(
+        log_probs=np.log(probabilities),
+        target_ids=[1, 2],
+        token_word_indexes=[0, 1],
+        display_words=["раз", "два"],
+        normalized_words=["раз", "два"],
+        blank_id=0,
+        timeline=timeline,
+        clip_start_abs=2.0,
+        clip_end_abs=4.0,
+        config=_dynamic_window_config(),
+        min_word_confidence=0.5,
+    )
+
+    assert selection.selected.search_start_abs < 2.0
+    assert selection.selected.search_end_abs > 4.0
+    assert [(word.t_start, word.t_end) for word in selection.selected.words] == [
+        pytest.approx((2.1, 2.2)),
+        pytest.approx((3.9, 4.0)),
+    ]
+    assert selection.diagnostics["consensus_candidate_count"] >= 3
+    assert selection.diagnostics["max_timing_deviation_sec"] <= 0.11
+    assert selection.diagnostics["mode"] == "single_inference_multi_window_consensus"
+
+
+def test_dynamic_window_rejects_fragment_that_exceeds_user_clip() -> None:
+    probabilities = np.full((61, 3), 0.03, dtype=np.float64)
+    probabilities[:, 0] = 0.94
+    probabilities[21] = [0.05, 0.90, 0.05]
+    probabilities[42] = [0.05, 0.05, 0.90]
+    timeline = EmissionTimeline(
+        analysis_start_abs=0.0,
+        sample_rate=10,
+        input_samples=61,
+        emission_frames=61,
+        inputs_to_logits_ratio=1,
+    )
+
+    with pytest.raises(AlignmentFailure) as exc:
+        select_dynamic_alignment_window(
+            log_probs=np.log(probabilities),
+            target_ids=[1, 2],
+            token_word_indexes=[0, 1],
+            display_words=["раз", "два"],
+            normalized_words=["раз", "два"],
+            blank_id=0,
+            timeline=timeline,
+            clip_start_abs=2.0,
+            clip_end_abs=4.0,
+            config=_dynamic_window_config(),
+            min_word_confidence=0.5,
+        )
+
+    assert exc.value.code == ERROR_WINDOW_MISMATCH
+    assert "outside_user_window" in exc.value.message
+
+
+def test_dynamic_window_runs_separator_and_acoustic_model_once(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    probabilities = np.full((61, 4), 0.02, dtype=np.float64)
+    probabilities[:, 0] = 0.94
+    probabilities[21] = [0.04, 0.90, 0.03, 0.03]
+    probabilities[30] = [0.04, 0.03, 0.03, 0.90]
+    probabilities[39] = [0.04, 0.03, 0.90, 0.03]
+
+    class FakeTokenizer:
+        word_delimiter_token_id = 3
+        word_delimiter_token = "|"
+        unk_token_id = None
+
+        def get_vocab(self) -> dict[str, int]:
+            return {"<pad>": 0, "а": 1, "б": 2, "|": 3}
+
+        def __call__(self, text: str, *, add_special_tokens: bool) -> SimpleNamespace:
+            assert add_special_tokens is False
+            return SimpleNamespace(input_ids=[self.get_vocab()[text]])
+
+    class FakeProcessor:
+        tokenizer = FakeTokenizer()
+
+        def __call__(self, *_args, **_kwargs) -> SimpleNamespace:
+            return SimpleNamespace(input_values=object())
+
+    class ArrayTensor:
+        def __init__(self, values: np.ndarray):
+            self.values = values
+
+        def detach(self) -> "ArrayTensor":
+            return self
+
+        def cpu(self) -> "ArrayTensor":
+            return self
+
+        def numpy(self) -> np.ndarray:
+            return self.values
+
+    class FakeTorch:
+        @staticmethod
+        def inference_mode():
+            return nullcontext()
+
+        @staticmethod
+        def log_softmax(_logits, *, dim: int) -> ArrayTensor:
+            assert dim == -1
+            return ArrayTensor(np.log(probabilities))
+
+    class FakeModel:
+        config = SimpleNamespace(pad_token_id=0, inputs_to_logits_ratio=1600)
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def __call__(self, *_args, **_kwargs) -> SimpleNamespace:
+            self.calls += 1
+            return SimpleNamespace(logits=[object()])
+
+    class FakeSeparator:
+        input_sample_rate = 16_000
+        input_channels = 1
+        model_name = "fake-demucs"
+        model_revision = "separator-rev"
+        package_version = "4.1.0"
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def separate_vocals(self, _path: Path) -> SimpleNamespace:
+            self.calls += 1
+            return SimpleNamespace(
+                waveform=np.ones(96_000, dtype=np.float32),
+                sample_rate=16_000,
+                diagnostics={"separator_model": self.model_name},
+            )
+
+    class FakePronunciationNormalizer:
+        mode = "test"
+        engine_version = "test"
+
+        @staticmethod
+        def normalize_words(words: list[str]) -> list[SimpleNamespace]:
+            return [
+                SimpleNamespace(
+                    display_text=word,
+                    alignment_text=word,
+                    strategy="literal_cyrillic",
+                    ipa="",
+                )
+                for word in words
+            ]
+
+    monkeypatch.setattr(
+        "mlcore.alignment.core.extract_analysis_crop",
+        lambda **_kwargs: (0.0, 6.0),
+    )
+    audio_path = tmp_path / "track.wav"
+    audio_path.write_bytes(b"audio")
+    model = FakeModel()
+    separator = FakeSeparator()
+
+    result = align_target_fragment(
+        audio_path=audio_path,
+        target_fragment="а б",
+        clip_start_abs=2.0,
+        clip_end_abs=4.0,
+        processor=FakeProcessor(),
+        model=model,
+        torch_module=FakeTorch(),
+        vocal_separator=separator,
+        pronunciation_normalizer=FakePronunciationNormalizer(),
+        model_revision="model-rev",
+        min_word_confidence=0.5,
+        dynamic_window_max_adjust_sec=2.0,
+        dynamic_window_step_sec=0.5,
+        dynamic_window_min_edge_clearance_sec=0.15,
+        dynamic_window_stability_tolerance_sec=0.11,
+    )
+
+    assert model.calls == 1
+    assert separator.calls == 1
+    assert result.diagnostics["dynamic_window"]["candidate_count"] > 1
+    assert result.diagnostics["dynamic_window"]["consensus_candidate_count"] >= 3
 
 
 def test_aggregate_words_returns_absolute_timestamps() -> None:

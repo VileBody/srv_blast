@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -170,6 +171,13 @@ def _settings(tmp_path: Path, *, timeout_s: float = 5.0) -> AlignmentSettings:
         padding_right_sec=0.5,
         min_word_confidence=0.05,
         pause_min_gap_sec=0.35,
+        dynamic_window_max_adjust_sec=2.0,
+        dynamic_window_step_sec=0.5,
+        dynamic_window_min_edge_clearance_sec=0.12,
+        dynamic_window_stability_tolerance_sec=0.12,
+        dynamic_window_min_consensus_candidates=3,
+        dynamic_window_score_tolerance=0.12,
+        dynamic_window_min_boundary_duration_ratio=0.15,
         max_window_sec=120.0,
         max_reference_words=400,
         torch_threads=1,
@@ -196,11 +204,25 @@ def test_alignment_runtime_reports_missing_model_and_invalid_path(
     runtime._load_model()
     assert runtime.ready is False
     assert "model directory is missing" in runtime.load_error
+    assert runtime.status()["dynamic_window"]["max_adjust_sec"] == 2.0
 
     runtime._ready = True
     with pytest.raises(AlignmentFailure) as path_error:
         runtime.resolve_audio_path(str(tmp_path / "outside.mp3"))
     assert path_error.value.code == ERROR_INTERNAL
+
+
+def test_alignment_runtime_rejects_invalid_dynamic_window_policy(
+    tmp_path: Path,
+) -> None:
+    settings = replace(_settings(tmp_path), dynamic_window_max_adjust_sec=0.0)
+    runtime = AlignmentRuntime(settings)
+
+    runtime._load_model()
+
+    assert runtime.ready is False
+    assert runtime.status()["load_error_code"] == ERROR_INTERNAL
+    assert "max adjustment must be positive" in runtime.load_error
 
 
 def test_alignment_runtime_rejects_window_and_times_out(tmp_path: Path) -> None:

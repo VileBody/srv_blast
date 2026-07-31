@@ -10,6 +10,7 @@ from typing import Any
 from .core import (
     AlignmentFailure,
     AlignmentResult,
+    DynamicWindowConfig,
     ERROR_INTERNAL,
     ERROR_MODEL_UNAVAILABLE,
     ERROR_TIMEOUT,
@@ -60,6 +61,13 @@ class AlignmentSettings:
     padding_right_sec: float
     min_word_confidence: float
     pause_min_gap_sec: float
+    dynamic_window_max_adjust_sec: float
+    dynamic_window_step_sec: float
+    dynamic_window_min_edge_clearance_sec: float
+    dynamic_window_stability_tolerance_sec: float
+    dynamic_window_min_consensus_candidates: int
+    dynamic_window_score_tolerance: float
+    dynamic_window_min_boundary_duration_ratio: float
     max_window_sec: float
     max_reference_words: int
     torch_threads: int
@@ -92,6 +100,34 @@ class AlignmentSettings:
             padding_right_sec=_float_env("ALIGNMENT_PADDING_RIGHT_SEC", 0.5),
             min_word_confidence=_float_env("ALIGNMENT_MIN_WORD_CONFIDENCE", 0.05),
             pause_min_gap_sec=_float_env("ALIGNMENT_PAUSE_MIN_GAP_SEC", 0.35),
+            dynamic_window_max_adjust_sec=_float_env(
+                "ALIGNMENT_DYNAMIC_WINDOW_MAX_ADJUST_SEC",
+                2.0,
+            ),
+            dynamic_window_step_sec=_float_env(
+                "ALIGNMENT_DYNAMIC_WINDOW_STEP_SEC",
+                0.5,
+            ),
+            dynamic_window_min_edge_clearance_sec=_float_env(
+                "ALIGNMENT_DYNAMIC_WINDOW_MIN_EDGE_CLEARANCE_SEC",
+                0.12,
+            ),
+            dynamic_window_stability_tolerance_sec=_float_env(
+                "ALIGNMENT_DYNAMIC_WINDOW_STABILITY_TOLERANCE_SEC",
+                0.12,
+            ),
+            dynamic_window_min_consensus_candidates=_int_env(
+                "ALIGNMENT_DYNAMIC_WINDOW_MIN_CONSENSUS_CANDIDATES",
+                3,
+            ),
+            dynamic_window_score_tolerance=_float_env(
+                "ALIGNMENT_DYNAMIC_WINDOW_SCORE_TOLERANCE",
+                0.12,
+            ),
+            dynamic_window_min_boundary_duration_ratio=_float_env(
+                "ALIGNMENT_DYNAMIC_WINDOW_MIN_BOUNDARY_DURATION_RATIO",
+                0.15,
+            ),
             max_window_sec=_float_env("ALIGNMENT_MAX_WINDOW_SEC", 120.0),
             max_reference_words=_int_env("ALIGNMENT_MAX_REFERENCE_WORDS", 400),
             torch_threads=max(1, _int_env("ALIGNMENT_TORCH_THREADS", 4)),
@@ -158,6 +194,23 @@ class AlignmentRuntime:
                 if self._pronunciation_normalizer is not None
                 else ""
             ),
+            "dynamic_window": {
+                "max_adjust_sec": self.settings.dynamic_window_max_adjust_sec,
+                "step_sec": self.settings.dynamic_window_step_sec,
+                "min_edge_clearance_sec": (
+                    self.settings.dynamic_window_min_edge_clearance_sec
+                ),
+                "stability_tolerance_sec": (
+                    self.settings.dynamic_window_stability_tolerance_sec
+                ),
+                "min_consensus_candidates": (
+                    self.settings.dynamic_window_min_consensus_candidates
+                ),
+                "score_tolerance": self.settings.dynamic_window_score_tolerance,
+                "min_boundary_duration_ratio": (
+                    self.settings.dynamic_window_min_boundary_duration_ratio
+                ),
+            },
             "load_error_code": self._load_error_code if self.load_error else "",
             "load_error": self.load_error,
         }
@@ -178,6 +231,23 @@ class AlignmentRuntime:
 
     def _load_model(self) -> None:
         try:
+            DynamicWindowConfig(
+                max_adjust_sec=self.settings.dynamic_window_max_adjust_sec,
+                step_sec=self.settings.dynamic_window_step_sec,
+                min_edge_clearance_sec=(
+                    self.settings.dynamic_window_min_edge_clearance_sec
+                ),
+                stability_tolerance_sec=(
+                    self.settings.dynamic_window_stability_tolerance_sec
+                ),
+                min_consensus_candidates=(
+                    self.settings.dynamic_window_min_consensus_candidates
+                ),
+                score_tolerance=self.settings.dynamic_window_score_tolerance,
+                min_boundary_duration_ratio=(
+                    self.settings.dynamic_window_min_boundary_duration_ratio
+                ),
+            ).validate()
             if not self.settings.model_revision:
                 raise RuntimeError("ALIGNMENT_MODEL_REVISION is empty")
             if not self.settings.model_path.is_dir():
@@ -309,6 +379,25 @@ class AlignmentRuntime:
             padding_right_sec=self.settings.padding_right_sec,
             min_word_confidence=self.settings.min_word_confidence,
             pause_min_gap_sec=self.settings.pause_min_gap_sec,
+            dynamic_window_max_adjust_sec=(
+                self.settings.dynamic_window_max_adjust_sec
+            ),
+            dynamic_window_step_sec=self.settings.dynamic_window_step_sec,
+            dynamic_window_min_edge_clearance_sec=(
+                self.settings.dynamic_window_min_edge_clearance_sec
+            ),
+            dynamic_window_stability_tolerance_sec=(
+                self.settings.dynamic_window_stability_tolerance_sec
+            ),
+            dynamic_window_min_consensus_candidates=(
+                self.settings.dynamic_window_min_consensus_candidates
+            ),
+            dynamic_window_score_tolerance=(
+                self.settings.dynamic_window_score_tolerance
+            ),
+            dynamic_window_min_boundary_duration_ratio=(
+                self.settings.dynamic_window_min_boundary_duration_ratio
+            ),
         )
 
     async def align(
