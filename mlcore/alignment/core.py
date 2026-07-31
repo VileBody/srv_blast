@@ -1000,8 +1000,10 @@ def select_dynamic_alignment_window(
                 }
             )
 
-    eligible = [candidate for candidate in candidates if not candidate.rejection_reasons]
-    if not eligible:
+    selectable = [
+        candidate for candidate in candidates if not candidate.rejection_reasons
+    ]
+    if not selectable:
         reason_counts: dict[str, int] = {}
         for candidate in candidates:
             for reason in candidate.rejection_reasons:
@@ -1013,7 +1015,14 @@ def select_dynamic_alignment_window(
             f"rejections={reason_counts}",
         )
 
-    eligible.sort(
+    stability_candidates = [
+        candidate
+        for candidate in candidates
+        if not set(candidate.rejection_reasons).difference(
+            {"insufficient_edge_clearance"}
+        )
+    ]
+    stability_candidates.sort(
         key=lambda candidate: (
             -candidate.quality_score,
             candidate.adjustment_sec,
@@ -1021,10 +1030,10 @@ def select_dynamic_alignment_window(
             candidate.search_end_abs,
         )
     )
-    best_score = float(eligible[0].quality_score)
+    best_score = max(float(candidate.quality_score) for candidate in selectable)
     score_pool = [
         candidate
-        for candidate in eligible
+        for candidate in stability_candidates
         if candidate.quality_score >= best_score - float(config.score_tolerance)
     ]
 
@@ -1037,8 +1046,14 @@ def select_dynamic_alignment_window(
             <= float(config.stability_tolerance_sec)
         ]
         clusters.append((anchor, members))
+    selectable_ids = {id(candidate) for candidate in selectable}
+    selectable_clusters = [
+        item
+        for item in clusters
+        if any(id(candidate) in selectable_ids for candidate in item[1])
+    ]
     anchor, consensus = max(
-        clusters,
+        selectable_clusters,
         key=lambda item: (
             len(item[1]),
             float(np.mean([candidate.quality_score for candidate in item[1]])),
@@ -1051,7 +1066,9 @@ def select_dynamic_alignment_window(
             ERROR_WINDOW_MISMATCH,
             "dynamic window timing is unstable "
             f"consensus={len(consensus)}/{config.min_consensus_candidates} "
-            f"eligible={len(eligible)} score_pool={len(score_pool)}",
+            f"selectable={len(selectable)} "
+            f"stability_candidates={len(stability_candidates)} "
+            f"score_pool={len(score_pool)}",
         )
 
     median_starts = np.median(
@@ -1077,8 +1094,11 @@ def select_dynamic_alignment_window(
         ]
         return float(np.mean(deltas))
 
+    selectable_consensus = [
+        candidate for candidate in consensus if id(candidate) in selectable_ids
+    ]
     selected = min(
-        consensus,
+        selectable_consensus,
         key=lambda candidate: (
             _distance_to_median(candidate),
             -candidate.quality_score,
@@ -1138,7 +1158,12 @@ def select_dynamic_alignment_window(
         "candidate_count": len(candidates),
         "failed_candidate_count": len(failed_candidates),
         "failed_candidate_code_counts": failure_code_counts,
-        "eligible_candidate_count": len(eligible),
+        "eligible_candidate_count": len(selectable),
+        "stability_candidate_count": len(stability_candidates),
+        "edge_probe_candidate_count": sum(
+            bool(candidate.rejection_reasons)
+            for candidate in stability_candidates
+        ),
         "rejection_counts": rejection_counts,
         "score_pool_count": len(score_pool),
         "consensus_candidate_count": len(consensus),

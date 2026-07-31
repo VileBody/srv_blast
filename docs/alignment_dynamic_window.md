@@ -1,6 +1,6 @@
 # Dynamic CTC window policy
 
-`local-ctc-viterbi-v10-dynamic-window-redaction-espeak-demucs-4.1.0`
+`local-ctc-viterbi-v11-dynamic-window-redaction-espeak-demucs-4.1.0`
 uses one Demucs pass and one Wav2Vec2 inference over an expanded analysis crop.
 It then evaluates a bounded set of CTC/Viterbi search windows over slices of the
 same emission matrix.
@@ -23,9 +23,11 @@ warnings and lower the candidate score, but do not by themselves reject a
 stable window. Music/vocal separation can produce isolated weak interior words
 even when the acoustic boundaries and timings agree across window probes.
 
-Accepted candidates are grouped by per-word start/end stability. The selected
-candidate is the medoid of the largest high-scoring consensus group. If no
-group reaches the required size, alignment fails explicitly with
+Accepted candidates and edge-limited probes are grouped by per-word start/end
+stability. Edge-limited probes may support consensus when their timings agree,
+but can never be selected as the result. The selected candidate is a fully
+accepted medoid from the largest high-scoring consensus group. If no group
+reaches the required size or contains a selectable candidate, alignment fails explicitly with
 `ALIGNMENT_WINDOW_MISMATCH`; there is no Gemini fallback.
 
 ## Configuration

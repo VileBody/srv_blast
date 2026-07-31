@@ -125,6 +125,6 @@ Masked words also appear in the `pronunciation.words` diagnostics with strategy
 
 ## Version
 
-`ALIGNMENT_ALGORITHM_VERSION=local-ctc-viterbi-v10-dynamic-window-redaction-espeak-demucs-4.1.0`.
+`ALIGNMENT_ALGORITHM_VERSION=local-ctc-viterbi-v11-dynamic-window-redaction-espeak-demucs-4.1.0`.
 The worker verifies the alignment service identity field by field, so
 `.env` / `docker-compose.yml` and the service image must be rolled out together.
