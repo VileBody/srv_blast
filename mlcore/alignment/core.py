@@ -904,8 +904,12 @@ def _build_window_candidate(
         for word in words
     ):
         rejection_reasons.append("outside_user_window")
-    if float(np.min(confidences)) < float(min_word_confidence):
-        rejection_reasons.append("low_word_confidence")
+    # A weak interior word is useful quality telemetry, but it does not prove
+    # that the search window is wrong. Boundary confidence is the relevant
+    # signal here: poor first/last evidence means the window should move,
+    # while interior low-confidence words remain warnings in the final result.
+    if boundary_confidence < float(min_word_confidence):
+        rejection_reasons.append("low_boundary_word_confidence")
     if left_edge_score < 1.0 or right_edge_score < 1.0:
         rejection_reasons.append("insufficient_edge_clearance")
     if boundary_duration_ratio < float(config.min_boundary_duration_ratio):
@@ -1155,7 +1159,7 @@ def select_dynamic_alignment_window(
             "min_boundary_duration_ratio": float(
                 config.min_boundary_duration_ratio
             ),
-            "min_word_confidence": float(min_word_confidence),
+            "min_boundary_word_confidence": float(min_word_confidence),
         },
     }
     return DynamicWindowSelection(selected=selected, diagnostics=diagnostics)

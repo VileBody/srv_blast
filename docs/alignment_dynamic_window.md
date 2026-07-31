@@ -1,6 +1,6 @@
 # Dynamic CTC window policy
 
-`local-ctc-viterbi-v9-dynamic-window-redaction-espeak-demucs-4.1.0`
+`local-ctc-viterbi-v10-dynamic-window-redaction-espeak-demucs-4.1.0`
 uses one Demucs pass and one Wav2Vec2 inference over an expanded analysis crop.
 It then evaluates a bounded set of CTC/Viterbi search windows over slices of the
 same emission matrix.
@@ -14,9 +14,14 @@ This prevents a short clip from compressing the last words into its boundary.
 A candidate must satisfy all of the following:
 
 - every word is fully inside the user clip, within one emission-frame tolerance;
-- every word meets `ALIGNMENT_MIN_WORD_CONFIDENCE`;
+- the first and last words meet `ALIGNMENT_MIN_WORD_CONFIDENCE`;
 - the first and last words have acoustic clearance from adjustable search edges;
 - boundary-word duration per CTC token is not abnormally compressed.
+
+Interior words below `ALIGNMENT_MIN_WORD_CONFIDENCE` remain explicit quality
+warnings and lower the candidate score, but do not by themselves reject a
+stable window. Music/vocal separation can produce isolated weak interior words
+even when the acoustic boundaries and timings agree across window probes.
 
 Accepted candidates are grouped by per-word start/end stability. The selected
 candidate is the medoid of the largest high-scoring consensus group. If no
