@@ -127,6 +127,101 @@ class AlignmentResult:
     backend: dict[str, Any]
 
 
+@dataclass(frozen=True)
+class DynamicWindowConfig:
+    max_adjust_sec: float
+    step_sec: float
+    min_edge_clearance_sec: float
+    stability_tolerance_sec: float
+    min_consensus_candidates: int
+    score_tolerance: float
+    min_boundary_duration_ratio: float
+
+    def validate(self) -> None:
+        if self.max_adjust_sec <= 0.0:
+            raise AlignmentFailure(
+                ERROR_INTERNAL,
+                "dynamic window max adjustment must be positive",
+            )
+        if self.step_sec <= 0.0 or self.step_sec > self.max_adjust_sec:
+            raise AlignmentFailure(
+                ERROR_INTERNAL,
+                "dynamic window step must be positive and not exceed max adjustment",
+            )
+        if self.min_edge_clearance_sec < 0.0:
+            raise AlignmentFailure(
+                ERROR_INTERNAL,
+                "dynamic window edge clearance must be non-negative",
+            )
+        if self.stability_tolerance_sec <= 0.0:
+            raise AlignmentFailure(
+                ERROR_INTERNAL,
+                "dynamic window stability tolerance must be positive",
+            )
+        if self.min_consensus_candidates < 2:
+            raise AlignmentFailure(
+                ERROR_INTERNAL,
+                "dynamic window consensus must require at least two candidates",
+            )
+        if self.score_tolerance < 0.0 or self.score_tolerance > 1.0:
+            raise AlignmentFailure(
+                ERROR_INTERNAL,
+                "dynamic window score tolerance must be in [0, 1]",
+            )
+        if not 0.0 <= self.min_boundary_duration_ratio <= 1.0:
+            raise AlignmentFailure(
+                ERROR_INTERNAL,
+                "dynamic window boundary duration ratio must be in [0, 1]",
+            )
+
+
+@dataclass(frozen=True)
+class WindowAlignmentCandidate:
+    search_start_abs: float
+    search_end_abs: float
+    search_start_frame: int
+    search_end_frame: int
+    token_spans: tuple[TokenSpan, ...]
+    words: tuple[AlignedWord, ...]
+    path_log_score: float
+    mean_word_confidence: float
+    min_word_confidence: float
+    boundary_word_confidence: float
+    path_mean_probability: float
+    left_edge_clearance_sec: float
+    right_edge_clearance_sec: float
+    boundary_duration_ratio: float
+    path_to_evidence_ratio: float
+    adjustment_sec: float
+    quality_score: float
+    rejection_reasons: tuple[str, ...]
+
+    def summary(self) -> dict[str, Any]:
+        return {
+            "search_start_abs": float(self.search_start_abs),
+            "search_end_abs": float(self.search_end_abs),
+            "search_start_frame": int(self.search_start_frame),
+            "search_end_frame": int(self.search_end_frame),
+            "mean_word_confidence": float(self.mean_word_confidence),
+            "min_word_confidence": float(self.min_word_confidence),
+            "boundary_word_confidence": float(self.boundary_word_confidence),
+            "path_mean_probability": float(self.path_mean_probability),
+            "left_edge_clearance_sec": float(self.left_edge_clearance_sec),
+            "right_edge_clearance_sec": float(self.right_edge_clearance_sec),
+            "boundary_duration_ratio": float(self.boundary_duration_ratio),
+            "path_to_evidence_ratio": float(self.path_to_evidence_ratio),
+            "adjustment_sec": float(self.adjustment_sec),
+            "quality_score": float(self.quality_score),
+            "rejection_reasons": list(self.rejection_reasons),
+        }
+
+
+@dataclass(frozen=True)
+class DynamicWindowSelection:
+    selected: WindowAlignmentCandidate
+    diagnostics: dict[str, Any]
+
+
 def serialize_alignment_result(result: AlignmentResult) -> str:
     return json.dumps(
         {
@@ -609,6 +704,463 @@ def aggregate_words(
     return output
 
 
+def generate_dynamic_window_bounds(
+    *,
+    clip_start_abs: float,
+    clip_end_abs: float,
+    max_adjust_sec: float,
+    step_sec: float,
+) -> list[tuple[float, float]]:
+    """Generate a small deterministic set of boundary probes around a clip."""
+    start = float(clip_start_abs)
+    end = float(clip_end_abs)
+    if start < 0.0 or end <= start:
+        raise AlignmentFailure(
+            ERROR_WINDOW_MISMATCH,
+            f"invalid clip window {start:.3f}..{end:.3f}",
+        )
+    if max_adjust_sec <= 0.0 or step_sec <= 0.0 or step_sec > max_adjust_sec:
+        raise AlignmentFailure(ERROR_INTERNAL, "invalid dynamic window search range")
+
+    deltas: list[float] = []
+    value = float(step_sec)
+    while value < float(max_adjust_sec) - 1e-9:
+        deltas.append(value)
+        value += float(step_sec)
+    deltas.append(float(max_adjust_sec))
+
+    # Keep the Viterbi search bounded even when operators choose a very small
+    # step. Coarse, midpoint and maximum probes retain coverage without turning
+    # one alignment request into hundreds of Python DP passes.
+    if len(deltas) > 3:
+        midpoint = min(
+            deltas[1:-1],
+            key=lambda item: abs(item - (float(max_adjust_sec) / 2.0)),
+        )
+        deltas = [deltas[0], midpoint, deltas[-1]]
+
+    variants: set[tuple[float, float]] = {(start, end)}
+    for delta in deltas:
+        variants.update(
+            {
+                (start - delta, end - delta),
+                (start + delta, end + delta),
+                (start - delta, end),
+                (start, end + delta),
+                (start + delta, end),
+                (start, end - delta),
+                (start - delta, end + delta),
+                (start + delta, end - delta),
+            }
+        )
+
+    normalized: set[tuple[float, float]] = set()
+    for raw_start, raw_end in variants:
+        candidate_start = max(0.0, float(raw_start))
+        candidate_end = float(raw_end)
+        if candidate_end <= candidate_start:
+            continue
+        normalized.add((round(candidate_start, 6), round(candidate_end, 6)))
+    return sorted(
+        normalized,
+        key=lambda item: (
+            abs(item[0] - start) + abs(item[1] - end),
+            item[0],
+            item[1],
+        ),
+    )
+
+
+def _candidate_timing_distance(
+    left: WindowAlignmentCandidate,
+    right: WindowAlignmentCandidate,
+) -> float:
+    if len(left.words) != len(right.words):
+        return math.inf
+    return max(
+        max(
+            abs(float(left_word.t_start) - float(right_word.t_start)),
+            abs(float(left_word.t_end) - float(right_word.t_end)),
+        )
+        for left_word, right_word in zip(left.words, right.words)
+    )
+
+
+def _build_window_candidate(
+    *,
+    log_probs: np.ndarray,
+    target_ids: Sequence[int],
+    token_word_indexes: Sequence[int],
+    display_words: Sequence[str],
+    normalized_words: Sequence[str],
+    blank_id: int,
+    timeline: EmissionTimeline,
+    search_start_abs: float,
+    search_end_abs: float,
+    clip_start_abs: float,
+    clip_end_abs: float,
+    config: DynamicWindowConfig,
+    min_word_confidence: float,
+) -> WindowAlignmentCandidate:
+    token_spans, path_score, search_start_frame, search_end_frame = (
+        align_targets_in_window(
+            log_probs,
+            target_ids,
+            blank_id=blank_id,
+            timeline=timeline,
+            clip_start_abs=float(search_start_abs),
+            clip_end_abs=float(search_end_abs),
+        )
+    )
+    actual_start = timeline.frame_to_abs(search_start_frame)
+    actual_end = timeline.frame_to_abs(search_end_frame)
+    words = aggregate_words(
+        display_words=display_words,
+        normalized_words=normalized_words,
+        spans=token_spans,
+        token_word_indexes=token_word_indexes,
+        seconds_per_frame=timeline.seconds_per_frame,
+        analysis_start_abs=actual_start,
+    )
+    confidences = np.asarray(
+        [float(word.confidence) for word in words],
+        dtype=np.float64,
+    )
+    boundary_confidence = min(float(confidences[0]), float(confidences[-1]))
+    left_clearance = max(0.0, float(words[0].t_start) - actual_start)
+    right_clearance = max(0.0, actual_end - float(words[-1].t_end))
+    frame_tolerance = timeline.seconds_per_frame * 1.01
+    left_context_limited = actual_start <= timeline.analysis_start_abs + frame_tolerance
+    right_context_limited = actual_end >= timeline.analysis_end_abs - frame_tolerance
+
+    token_counts = [
+        max(1, sum(1 for item in token_word_indexes if int(item) == word_index))
+        for word_index in range(len(words))
+    ]
+    duration_per_token = np.asarray(
+        [
+            (float(word.t_end) - float(word.t_start)) / float(token_count)
+            for word, token_count in zip(words, token_counts)
+        ],
+        dtype=np.float64,
+    )
+    if len(duration_per_token) > 2:
+        duration_reference = float(np.median(duration_per_token[1:-1]))
+    else:
+        duration_reference = float(np.median(duration_per_token))
+    duration_reference = max(duration_reference, timeline.seconds_per_frame)
+    boundary_duration_ratio = min(
+        1.0,
+        float(min(duration_per_token[0], duration_per_token[-1]))
+        / duration_reference,
+    )
+
+    evidence_frame_count = sum(
+        int(span.end_frame) - int(span.start_frame) for span in token_spans
+    )
+    path_frame_count = sum(
+        int(span.path_end_frame) - int(span.path_start_frame) for span in token_spans
+    )
+    path_to_evidence_ratio = float(path_frame_count) / float(
+        max(1, evidence_frame_count)
+    )
+    search_frame_count = max(1, int(search_end_frame) - int(search_start_frame))
+    path_mean_probability = math.exp(
+        max(-50.0, min(0.0, float(path_score) / float(search_frame_count)))
+    )
+
+    edge_floor = float(config.min_edge_clearance_sec)
+    left_edge_score = (
+        1.0
+        if left_context_limited or edge_floor == 0.0
+        else min(1.0, left_clearance / edge_floor)
+    )
+    right_edge_score = (
+        1.0
+        if right_context_limited or edge_floor == 0.0
+        else min(1.0, right_clearance / edge_floor)
+    )
+    edge_score = min(left_edge_score, right_edge_score)
+    max_total_adjustment = max(1e-9, 2.0 * float(config.max_adjust_sec))
+    adjustment = abs(actual_start - float(clip_start_abs)) + abs(
+        actual_end - float(clip_end_abs)
+    )
+    adjustment_score = 1.0 - min(1.0, adjustment / max_total_adjustment)
+    confidence_p10 = float(np.quantile(confidences, 0.10))
+    quality_score = (
+        0.30 * float(np.mean(confidences))
+        + 0.20 * confidence_p10
+        + 0.20 * boundary_confidence
+        + 0.10 * path_mean_probability
+        + 0.10 * edge_score
+        + 0.07 * boundary_duration_ratio
+        + 0.03 * adjustment_score
+    )
+
+    rejection_reasons: list[str] = []
+    if any(
+        float(word.t_start) < float(clip_start_abs) - frame_tolerance
+        or float(word.t_end) > float(clip_end_abs) + frame_tolerance
+        for word in words
+    ):
+        rejection_reasons.append("outside_user_window")
+    if float(np.min(confidences)) < float(min_word_confidence):
+        rejection_reasons.append("low_word_confidence")
+    if left_edge_score < 1.0 or right_edge_score < 1.0:
+        rejection_reasons.append("insufficient_edge_clearance")
+    if boundary_duration_ratio < float(config.min_boundary_duration_ratio):
+        rejection_reasons.append("boundary_word_compression")
+
+    return WindowAlignmentCandidate(
+        search_start_abs=float(actual_start),
+        search_end_abs=float(actual_end),
+        search_start_frame=int(search_start_frame),
+        search_end_frame=int(search_end_frame),
+        token_spans=tuple(token_spans),
+        words=tuple(words),
+        path_log_score=float(path_score),
+        mean_word_confidence=float(np.mean(confidences)),
+        min_word_confidence=float(np.min(confidences)),
+        boundary_word_confidence=float(boundary_confidence),
+        path_mean_probability=float(path_mean_probability),
+        left_edge_clearance_sec=float(left_clearance),
+        right_edge_clearance_sec=float(right_clearance),
+        boundary_duration_ratio=float(boundary_duration_ratio),
+        path_to_evidence_ratio=float(path_to_evidence_ratio),
+        adjustment_sec=float(adjustment),
+        quality_score=float(quality_score),
+        rejection_reasons=tuple(rejection_reasons),
+    )
+
+
+def select_dynamic_alignment_window(
+    *,
+    log_probs: np.ndarray,
+    target_ids: Sequence[int],
+    token_word_indexes: Sequence[int],
+    display_words: Sequence[str],
+    normalized_words: Sequence[str],
+    blank_id: int,
+    timeline: EmissionTimeline,
+    clip_start_abs: float,
+    clip_end_abs: float,
+    config: DynamicWindowConfig,
+    min_word_confidence: float,
+) -> DynamicWindowSelection:
+    config.validate()
+    requested_bounds = generate_dynamic_window_bounds(
+        clip_start_abs=float(clip_start_abs),
+        clip_end_abs=float(clip_end_abs),
+        max_adjust_sec=float(config.max_adjust_sec),
+        step_sec=float(config.step_sec),
+    )
+    candidates: list[WindowAlignmentCandidate] = []
+    failed_candidates: list[dict[str, Any]] = []
+    seen_frame_ranges: set[tuple[int, int]] = set()
+    for requested_start, requested_end in requested_bounds:
+        bounded_start = max(float(timeline.analysis_start_abs), requested_start)
+        bounded_end = min(float(timeline.analysis_end_abs), requested_end)
+        if bounded_end <= bounded_start:
+            continue
+        try:
+            frame_range = timeline.constrained_frame_range(
+                clip_start_abs=bounded_start,
+                clip_end_abs=bounded_end,
+            )
+            if frame_range in seen_frame_ranges:
+                continue
+            seen_frame_ranges.add(frame_range)
+            candidates.append(
+                _build_window_candidate(
+                    log_probs=log_probs,
+                    target_ids=target_ids,
+                    token_word_indexes=token_word_indexes,
+                    display_words=display_words,
+                    normalized_words=normalized_words,
+                    blank_id=blank_id,
+                    timeline=timeline,
+                    search_start_abs=bounded_start,
+                    search_end_abs=bounded_end,
+                    clip_start_abs=float(clip_start_abs),
+                    clip_end_abs=float(clip_end_abs),
+                    config=config,
+                    min_word_confidence=float(min_word_confidence),
+                )
+            )
+        except AlignmentFailure as exc:
+            failed_candidates.append(
+                {
+                    "search_start_abs": float(bounded_start),
+                    "search_end_abs": float(bounded_end),
+                    "error_code": exc.code,
+                }
+            )
+
+    eligible = [candidate for candidate in candidates if not candidate.rejection_reasons]
+    if not eligible:
+        reason_counts: dict[str, int] = {}
+        for candidate in candidates:
+            for reason in candidate.rejection_reasons:
+                reason_counts[reason] = reason_counts.get(reason, 0) + 1
+        raise AlignmentFailure(
+            ERROR_WINDOW_MISMATCH,
+            "dynamic window search found no acceptable alignment "
+            f"candidates={len(candidates)} failed={len(failed_candidates)} "
+            f"rejections={reason_counts}",
+        )
+
+    eligible.sort(
+        key=lambda candidate: (
+            -candidate.quality_score,
+            candidate.adjustment_sec,
+            candidate.search_start_abs,
+            candidate.search_end_abs,
+        )
+    )
+    best_score = float(eligible[0].quality_score)
+    score_pool = [
+        candidate
+        for candidate in eligible
+        if candidate.quality_score >= best_score - float(config.score_tolerance)
+    ]
+
+    clusters: list[tuple[WindowAlignmentCandidate, list[WindowAlignmentCandidate]]] = []
+    for anchor in score_pool:
+        members = [
+            candidate
+            for candidate in score_pool
+            if _candidate_timing_distance(anchor, candidate)
+            <= float(config.stability_tolerance_sec)
+        ]
+        clusters.append((anchor, members))
+    anchor, consensus = max(
+        clusters,
+        key=lambda item: (
+            len(item[1]),
+            float(np.mean([candidate.quality_score for candidate in item[1]])),
+            -float(np.mean([candidate.adjustment_sec for candidate in item[1]])),
+            item[0].quality_score,
+        ),
+    )
+    if len(consensus) < int(config.min_consensus_candidates):
+        raise AlignmentFailure(
+            ERROR_WINDOW_MISMATCH,
+            "dynamic window timing is unstable "
+            f"consensus={len(consensus)}/{config.min_consensus_candidates} "
+            f"eligible={len(eligible)} score_pool={len(score_pool)}",
+        )
+
+    median_starts = np.median(
+        np.asarray(
+            [[float(word.t_start) for word in candidate.words] for candidate in consensus]
+        ),
+        axis=0,
+    )
+    median_ends = np.median(
+        np.asarray(
+            [[float(word.t_end) for word in candidate.words] for candidate in consensus]
+        ),
+        axis=0,
+    )
+
+    def _distance_to_median(candidate: WindowAlignmentCandidate) -> float:
+        deltas = [
+            max(
+                abs(float(word.t_start) - float(median_starts[index])),
+                abs(float(word.t_end) - float(median_ends[index])),
+            )
+            for index, word in enumerate(candidate.words)
+        ]
+        return float(np.mean(deltas))
+
+    selected = min(
+        consensus,
+        key=lambda candidate: (
+            _distance_to_median(candidate),
+            -candidate.quality_score,
+            candidate.adjustment_sec,
+        ),
+    )
+    word_stability = [
+        {
+            "word_index": index,
+            "median_start_abs": float(median_starts[index]),
+            "median_end_abs": float(median_ends[index]),
+            "max_deviation_sec": max(
+                max(
+                    abs(float(candidate.words[index].t_start) - float(median_starts[index])),
+                    abs(float(candidate.words[index].t_end) - float(median_ends[index])),
+                )
+                for candidate in consensus
+            ),
+        }
+        for index in range(len(selected.words))
+    ]
+    max_timing_deviation = max(
+        float(item["max_deviation_sec"]) for item in word_stability
+    )
+    if max_timing_deviation > float(config.stability_tolerance_sec) + 1e-9:
+        raise AlignmentFailure(
+            ERROR_WINDOW_MISMATCH,
+            "dynamic window consensus exceeds timing tolerance "
+            f"deviation={max_timing_deviation:.6f} "
+            f"tolerance={float(config.stability_tolerance_sec):.6f}",
+        )
+
+    ranked_summaries = [
+        candidate.summary()
+        for candidate in sorted(
+            candidates,
+            key=lambda candidate: (
+                bool(candidate.rejection_reasons),
+                -candidate.quality_score,
+                candidate.adjustment_sec,
+            ),
+        )[:12]
+    ]
+    rejection_counts: dict[str, int] = {}
+    for candidate in candidates:
+        for reason in candidate.rejection_reasons:
+            rejection_counts[reason] = rejection_counts.get(reason, 0) + 1
+    failure_code_counts: dict[str, int] = {}
+    for failure in failed_candidates:
+        code = str(failure["error_code"])
+        failure_code_counts[code] = failure_code_counts.get(code, 0) + 1
+    diagnostics = {
+        "mode": "single_inference_multi_window_consensus",
+        "requested_start_abs": float(clip_start_abs),
+        "requested_end_abs": float(clip_end_abs),
+        "requested_candidate_count": len(requested_bounds),
+        "candidate_count": len(candidates),
+        "failed_candidate_count": len(failed_candidates),
+        "failed_candidate_code_counts": failure_code_counts,
+        "eligible_candidate_count": len(eligible),
+        "rejection_counts": rejection_counts,
+        "score_pool_count": len(score_pool),
+        "consensus_candidate_count": len(consensus),
+        "consensus_anchor_start_abs": float(anchor.search_start_abs),
+        "consensus_anchor_end_abs": float(anchor.search_end_abs),
+        "max_timing_deviation_sec": float(max_timing_deviation),
+        "word_stability": word_stability,
+        "selected": selected.summary(),
+        "top_candidates": ranked_summaries,
+        "failed_candidates": failed_candidates[:12],
+        "policy": {
+            "max_adjust_sec": float(config.max_adjust_sec),
+            "step_sec": float(config.step_sec),
+            "min_edge_clearance_sec": float(config.min_edge_clearance_sec),
+            "stability_tolerance_sec": float(config.stability_tolerance_sec),
+            "min_consensus_candidates": int(config.min_consensus_candidates),
+            "score_tolerance": float(config.score_tolerance),
+            "min_boundary_duration_ratio": float(
+                config.min_boundary_duration_ratio
+            ),
+            "min_word_confidence": float(min_word_confidence),
+        },
+    }
+    return DynamicWindowSelection(selected=selected, diagnostics=diagnostics)
+
+
 
 def _validate_aligned_words(
     *,
@@ -725,8 +1277,27 @@ def align_target_fragment(
     padding_right_sec: float = 0.5,
     min_word_confidence: float = 0.05,
     pause_min_gap_sec: float = 0.35,
+    dynamic_window_max_adjust_sec: float = 2.0,
+    dynamic_window_step_sec: float = 0.5,
+    dynamic_window_min_edge_clearance_sec: float = 0.12,
+    dynamic_window_stability_tolerance_sec: float = 0.12,
+    dynamic_window_min_consensus_candidates: int = 3,
+    dynamic_window_score_tolerance: float = 0.12,
+    dynamic_window_min_boundary_duration_ratio: float = 0.15,
 ) -> AlignmentResult:
     display_words = reference_words(target_fragment)
+    dynamic_window_config = DynamicWindowConfig(
+        max_adjust_sec=float(dynamic_window_max_adjust_sec),
+        step_sec=float(dynamic_window_step_sec),
+        min_edge_clearance_sec=float(dynamic_window_min_edge_clearance_sec),
+        stability_tolerance_sec=float(dynamic_window_stability_tolerance_sec),
+        min_consensus_candidates=int(dynamic_window_min_consensus_candidates),
+        score_tolerance=float(dynamic_window_score_tolerance),
+        min_boundary_duration_ratio=float(
+            dynamic_window_min_boundary_duration_ratio
+        ),
+    )
+    dynamic_window_config.validate()
     with tempfile.TemporaryDirectory(prefix="blast_alignment_") as temp_dir_raw:
         crop_path = Path(temp_dir_raw) / "analysis_crop.wav"
         analysis_start, requested_analysis_end = extract_analysis_crop(
@@ -735,8 +1306,12 @@ def align_target_fragment(
             output_path=crop_path,
             clip_start_abs=float(clip_start_abs),
             clip_end_abs=float(clip_end_abs),
-            padding_left_sec=float(padding_left_sec),
-            padding_right_sec=float(padding_right_sec),
+            padding_left_sec=(
+                float(padding_left_sec) + dynamic_window_config.max_adjust_sec
+            ),
+            padding_right_sec=(
+                float(padding_right_sec) + dynamic_window_config.max_adjust_sec
+            ),
             sample_rate=int(vocal_separator.input_sample_rate),
             channels=int(vocal_separator.input_channels),
             timeout_s=float(ffmpeg_timeout_s),
@@ -795,26 +1370,27 @@ def align_target_fragment(
             f"clip_end={float(clip_end_abs):.6f} "
             f"audio_end={timeline.analysis_end_abs:.6f}",
         )
-    token_spans, path_score, search_start_frame, search_end_frame = (
-        align_targets_in_window(
-            log_probs,
-            target_ids,
-            blank_id=blank_id,
-            timeline=timeline,
-            clip_start_abs=float(clip_start_abs),
-            clip_end_abs=float(clip_end_abs),
-        )
-    )
-    seconds_per_frame = timeline.seconds_per_frame
-    alignment_origin_abs = timeline.frame_to_abs(search_start_frame)
-    aligned_words = aggregate_words(
+    selection = select_dynamic_alignment_window(
+        log_probs=log_probs,
+        target_ids=target_ids,
+        token_word_indexes=token_word_indexes,
         display_words=display_words,
         normalized_words=normalized_words,
-        spans=token_spans,
-        token_word_indexes=token_word_indexes,
-        seconds_per_frame=seconds_per_frame,
-        analysis_start_abs=alignment_origin_abs,
+        blank_id=blank_id,
+        timeline=timeline,
+        clip_start_abs=float(clip_start_abs),
+        clip_end_abs=float(clip_end_abs),
+        config=dynamic_window_config,
+        min_word_confidence=float(min_word_confidence),
     )
+    selected_candidate = selection.selected
+    token_spans = list(selected_candidate.token_spans)
+    path_score = float(selected_candidate.path_log_score)
+    search_start_frame = int(selected_candidate.search_start_frame)
+    search_end_frame = int(selected_candidate.search_end_frame)
+    seconds_per_frame = timeline.seconds_per_frame
+    alignment_origin_abs = float(selected_candidate.search_start_abs)
+    aligned_words = list(selected_candidate.words)
     warnings = _validate_aligned_words(
         words=aligned_words,
         clip_start_abs=float(clip_start_abs),
@@ -843,6 +1419,7 @@ def align_target_fragment(
             "mean_word_confidence": float(np.mean(confidences)),
             "min_word_confidence": float(min(confidences)),
             "warnings": warnings,
+            "dynamic_window": selection.diagnostics,
             "redaction": {
                 "markers": sorted(REDACTION_MARKERS),
                 "wildcard_non_blank_weight": float(WILDCARD_NON_BLANK_WEIGHT),
@@ -928,6 +1505,8 @@ def align_target_fragment(
             "emission_frames": int(log_probs.shape[0]),
             "search_start_frame": int(search_start_frame),
             "search_end_frame": int(search_end_frame),
+            "search_start_abs": float(selected_candidate.search_start_abs),
+            "search_end_abs": float(selected_candidate.search_end_abs),
             "target_tokens": len(target_ids),
             "path_log_score": float(path_score),
             "pronunciation_mode": str(
