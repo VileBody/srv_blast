@@ -59,9 +59,12 @@ def _error_response(exc: AlignmentFailure) -> JSONResponse:
         status = 504
     if exc.code in {ERROR_INTERNAL, ERROR_SOURCE_SEPARATION_FAILED}:
         status = 500
+    error: dict[str, Any] = {"code": exc.code, "message": exc.message}
+    if exc.details:
+        error["details"] = exc.details
     return JSONResponse(
         status_code=status,
-        content={"error": {"code": exc.code, "message": exc.message}},
+        content={"error": error},
     )
 
 
@@ -98,10 +101,11 @@ def create_app(runtime: AlignmentRuntime | None = None) -> FastAPI:
             )
         except AlignmentFailure as exc:
             log.warning(
-                "alignment_failed request_id=%s code=%s elapsed_s=%.3f",
+                "alignment_failed request_id=%s code=%s elapsed_s=%.3f details=%s",
                 req.request_id,
                 exc.code,
                 time.monotonic() - started,
+                exc.details,
             )
             return _error_response(exc)
         except Exception as exc:

@@ -1,4 +1,9 @@
-ALIGNMENT_ALGORITHM_VERSION = "local-ctc-viterbi-v12-dynamic-window-redaction-espeak-demucs-4.1.0"
+from __future__ import annotations
+
+from typing import Any
+
+
+ALIGNMENT_ALGORITHM_VERSION = "local-ctc-viterbi-v13-boundary-evidence-redaction-espeak-demucs-4.1.0"
 
 ERROR_UNSUPPORTED_TEXT = "ALIGNMENT_UNSUPPORTED_TEXT"
 ERROR_FULLY_REDACTED_WORD = "ALIGNMENT_FULLY_REDACTED_WORD"
@@ -16,7 +21,14 @@ class AlignmentFailure(RuntimeError):
     the package (including leaf helpers imported by ``core``) can raise it
     without an import cycle."""
 
-    def __init__(self, code: str, message: str):
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        details: dict[str, Any] | None = None,
+    ):
         self.code = str(code)
         self.message = str(message)
+        self.details = dict(details or {})
         super().__init__(f"{self.code}: {self.message}")

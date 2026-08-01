@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -11,12 +12,22 @@ from mlcore.models.stage1_asr import Stage1AsrPayload
 from .contracts import ERROR_INTERNAL
 
 
+log = logging.getLogger(__name__)
+
+
 class AlignmentServiceError(RuntimeError):
     job_stage = "alignment"
 
-    def __init__(self, code: str, message: str):
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        details: dict[str, Any] | None = None,
+    ):
         self.code = str(code or ERROR_INTERNAL)
         self.message = str(message)
+        self.details = dict(details or {})
         # Keep both constructor arguments in BaseException.args so Celery can
         # pickle/unpickle the concrete exception without replacing it.
         super().__init__(self.code, self.message)
@@ -88,7 +99,20 @@ def request_local_alignment(
             if isinstance(error, dict)
             else f"HTTP {response.status_code}"
         )
-        raise AlignmentServiceError(code, message)
+        details = (
+            dict(error.get("details") or {})
+            if isinstance(error, dict)
+            and isinstance(error.get("details"), dict)
+            else {}
+        )
+        if details:
+            log.warning(
+                "alignment_service_rejected request_id=%s code=%s details=%s",
+                str(request_id or ""),
+                code,
+                details,
+            )
+        raise AlignmentServiceError(code, message, details=details)
     if not isinstance(payload, dict):
         raise AlignmentServiceError(ERROR_INTERNAL, "alignment response is not an object")
     try:

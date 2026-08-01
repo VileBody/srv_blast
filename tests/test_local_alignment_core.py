@@ -13,6 +13,7 @@ from mlcore.alignment.core import (
     AlignmentResult,
     DynamicWindowConfig,
     EmissionTimeline,
+    WindowAlignmentCandidate,
     _build_stage1_asr,
     aggregate_words,
     align_target_fragment,
@@ -185,6 +186,121 @@ def _dynamic_window_config() -> DynamicWindowConfig:
         score_tolerance=0.12,
         min_boundary_duration_ratio=0.15,
     )
+
+
+def _select_with_synthetic_boundary_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    include_right_evidence: bool,
+):
+    timeline = EmissionTimeline(
+        analysis_start_abs=0.0,
+        sample_rate=10,
+        input_samples=61,
+        emission_frames=61,
+        inputs_to_logits_ratio=1,
+    )
+    words = (
+        AlignedWord("one", "one", 2.1, 2.2, 0.0, 0.1, 0.9),
+        AlignedWord("two", "two", 3.8, 3.9, 1.7, 1.8, 0.9),
+    )
+    base_probe = (2.0, 4.0)
+    left_probe = (1.5, 4.0)
+    right_probe = (2.0, 4.5)
+    hard_valid_bounds = {base_probe, left_probe}
+    if include_right_evidence:
+        hard_valid_bounds.add(right_probe)
+
+    def _candidate(**kwargs) -> WindowAlignmentCandidate:
+        bounds = (
+            round(float(kwargs["search_start_abs"]), 1),
+            round(float(kwargs["search_end_abs"]), 1),
+        )
+        hard_valid = bounds in hard_valid_bounds
+        left_supported = bounds == left_probe
+        right_supported = bounds == right_probe and include_right_evidence
+        reasons = (
+            ("insufficient_edge_clearance",)
+            if hard_valid
+            else ("outside_user_window",)
+        )
+        return WindowAlignmentCandidate(
+            search_start_abs=bounds[0],
+            search_end_abs=bounds[1],
+            search_start_frame=int(bounds[0] * 10),
+            search_end_frame=int(bounds[1] * 10),
+            token_spans=(),
+            words=words,
+            path_log_score=-1.0,
+            mean_word_confidence=0.9,
+            min_word_confidence=0.9,
+            boundary_word_confidence=0.9,
+            path_mean_probability=0.9,
+            left_edge_clearance_sec=0.5 if left_supported else 0.0,
+            right_edge_clearance_sec=0.5 if right_supported else 0.0,
+            left_edge_supported=left_supported,
+            right_edge_supported=right_supported,
+            boundary_duration_ratio=1.0,
+            path_to_evidence_ratio=1.0,
+            adjustment_sec=abs(bounds[0] - 2.0) + abs(bounds[1] - 4.0),
+            quality_score=0.9,
+            rejection_reasons=reasons,
+        )
+
+    monkeypatch.setattr("mlcore.alignment.core._build_window_candidate", _candidate)
+    return select_dynamic_alignment_window(
+        log_probs=np.log(np.full((61, 3), 1.0 / 3.0, dtype=np.float64)),
+        target_ids=[1, 2],
+        token_word_indexes=[0, 1],
+        display_words=["one", "two"],
+        normalized_words=["one", "two"],
+        blank_id=0,
+        timeline=timeline,
+        clip_start_abs=2.0,
+        clip_end_abs=4.0,
+        config=DynamicWindowConfig(
+            max_adjust_sec=0.5,
+            step_sec=0.5,
+            min_edge_clearance_sec=0.15,
+            stability_tolerance_sec=0.11,
+            min_consensus_candidates=3,
+            score_tolerance=0.12,
+            min_boundary_duration_ratio=0.15,
+        ),
+        min_word_confidence=0.5,
+    )
+
+
+def test_dynamic_window_combines_independent_boundary_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    selection = _select_with_synthetic_boundary_evidence(
+        monkeypatch,
+        include_right_evidence=True,
+    )
+
+    assert selection.diagnostics["eligible_candidate_count"] == 0
+    assert selection.diagnostics["hard_valid_candidate_count"] == 3
+    assert selection.diagnostics["consensus_candidate_count"] == 3
+    assert selection.diagnostics["boundary_evidence_mode"] == "split_consensus"
+    assert selection.diagnostics["left_boundary_supported_candidate_count"] == 1
+    assert selection.diagnostics["right_boundary_supported_candidate_count"] == 1
+
+
+def test_dynamic_window_rejects_consensus_without_right_boundary_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with pytest.raises(AlignmentFailure) as exc:
+        _select_with_synthetic_boundary_evidence(
+            monkeypatch,
+            include_right_evidence=False,
+        )
+
+    assert exc.value.code == ERROR_WINDOW_MISMATCH
+    assert "incomplete boundary evidence" in exc.value.message
+    assert exc.value.details["hard_valid_candidate_count"] == 2
+    assert exc.value.details["right_boundary_supported_candidate_count"] == 0
+    assert exc.value.details["top_candidates"]
 
 
 def test_dynamic_window_candidates_are_bounded_and_include_boundary_probes() -> None:
