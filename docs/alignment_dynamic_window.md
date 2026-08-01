@@ -1,6 +1,6 @@
 # Dynamic CTC window policy
 
-`local-ctc-viterbi-v13-boundary-evidence-redaction-espeak-demucs-4.1.0`
+`local-ctc-viterbi-v14-censored-boundary-consensus-redaction-espeak-demucs-4.1.0`
 uses one Demucs pass and one Wav2Vec2 inference over an expanded analysis crop.
 It then evaluates a bounded set of CTC/Viterbi search windows over slices of the
 same emission matrix.
@@ -14,8 +14,10 @@ This prevents a short clip from compressing the last words into its boundary.
 A candidate must satisfy all of the following:
 
 - every word is fully inside the user clip, within one emission-frame tolerance;
-- the first and last words meet `ALIGNMENT_MIN_WORD_CONFIDENCE`;
-- the stable consensus independently proves left and right acoustic clearance;
+- the stable consensus independently proves left and right boundary-word
+  confidence;
+- each side has either acoustic clearance or a confident boundary censored by
+  the authoritative user clip;
 - boundary-word duration per CTC token is not abnormally compressed.
 
 Interior words below `ALIGNMENT_MIN_WORD_CONFIDENCE` remain explicit quality
@@ -23,9 +25,13 @@ warnings and lower the candidate score, but do not by themselves reject a
 stable window. Music/vocal separation can produce isolated weak interior words
 even when the acoustic boundaries and timings agree across window probes.
 
-Hard-valid candidates and edge-limited probes are grouped by per-word start/end
-stability. A cluster must contain evidence for both boundaries, but the left
-and right evidence may come from different probes. This matters for dense
+Hard-valid candidates and evidence-limited probes are grouped by per-word
+start/end
+stability. A cluster must contain confidence and spatial evidence for both
+boundaries, but each signal and side may come from different probes. A word
+touching the user clip is treated as a censored observation only when that side
+is acoustically confident; this never permits output outside the user clip.
+This matters for dense
 fragments where expanding both edges admits adjacent lyrics while independent
 one-sided probes still prove stable timings. The selected result is the medoid
 of the largest high-scoring, boundary-supported consensus group. If no group
