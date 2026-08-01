@@ -1052,6 +1052,22 @@ def select_dynamic_alignment_window(
         for reason in candidate.rejection_reasons:
             reason_counts[reason] = reason_counts.get(reason, 0) + 1
 
+    frame_tolerance = timeline.seconds_per_frame * 1.01
+    left_confident_outside_candidates = [
+        candidate
+        for candidate in candidates
+        if candidate.left_confidence_supported
+        and float(candidate.words[0].t_start)
+        < float(clip_start_abs) - frame_tolerance
+    ]
+    right_confident_outside_candidates = [
+        candidate
+        for candidate in candidates
+        if candidate.right_confidence_supported
+        and float(candidate.words[-1].t_end)
+        > float(clip_end_abs) + frame_tolerance
+    ]
+
     # Window containment and non-compressed boundary words are hard validity
     # rules. Edge clearance and per-side acoustic confidence are independent
     # evidence signals: stable probes may prove them with different candidates.
@@ -1093,6 +1109,12 @@ def select_dynamic_alignment_window(
             "rejection_counts": dict(reason_counts),
             "hard_valid_candidate_count": len(hard_valid_candidates),
             "fully_supported_candidate_count": len(fully_supported_candidates),
+            "left_confident_outside_candidate_count": len(
+                left_confident_outside_candidates
+            ),
+            "right_confident_outside_candidate_count": len(
+                right_confident_outside_candidates
+            ),
             "left_edge_supported_candidate_count": sum(
                 candidate.left_edge_supported
                 for candidate in hard_valid_candidates
@@ -1189,8 +1211,23 @@ def select_dynamic_alignment_window(
             right_censored,
         )
 
+    minimum_consensus = int(config.min_consensus_candidates)
+    stable_clusters = [
+        item for item in clusters if len(item[1]) >= minimum_consensus
+    ]
+    if not stable_clusters:
+        largest_consensus = max((len(item[1]) for item in clusters), default=0)
+        raise AlignmentFailure(
+            ERROR_WINDOW_MISMATCH,
+            "dynamic window timing is unstable "
+            f"consensus={largest_consensus}/{minimum_consensus} "
+            f"hard_valid={len(hard_valid_candidates)} "
+            f"score_pool={len(score_pool)}",
+            details=_failure_details(),
+        )
+
     boundary_supported_clusters = []
-    for item in clusters:
+    for item in stable_clusters:
         (
             left_edge,
             right_edge,
@@ -1206,44 +1243,48 @@ def select_dynamic_alignment_window(
             and (right_edge or right_censored)
         ):
             boundary_supported_clusters.append(item)
-    if not boundary_supported_clusters:
-        left_edge = sum(
-            candidate.left_edge_supported for candidate in hard_valid_candidates
-        )
-        right_edge = sum(
-            candidate.right_edge_supported for candidate in hard_valid_candidates
-        )
-        left_confidence = sum(
-            candidate.left_confidence_supported
-            for candidate in hard_valid_candidates
-        )
-        right_confidence = sum(
-            candidate.right_confidence_supported
-            for candidate in hard_valid_candidates
-        )
-        left_censored = sum(
-            candidate.left_user_window_censored
-            and candidate.left_confidence_supported
-            for candidate in hard_valid_candidates
-        )
-        right_censored = sum(
-            candidate.right_user_window_censored
-            and candidate.right_confidence_supported
-            for candidate in hard_valid_candidates
-        )
+
+    # Stable timings across independently shifted windows are acoustic evidence
+    # in their own right. They may replace a weak boundary posterior only when
+    # expanded probes do not confidently place that same boundary outside the
+    # authoritative user window.
+    timing_supported_clusters = []
+    for item in stable_clusters:
+        (
+            _,
+            _,
+            left_confidence,
+            right_confidence,
+            _,
+            _,
+        ) = _cluster_boundary_evidence(item[1])
+        if (
+            (
+                left_confidence
+                or len(left_confident_outside_candidates) < minimum_consensus
+            )
+            and (
+                right_confidence
+                or len(right_confident_outside_candidates) < minimum_consensus
+            )
+        ):
+            timing_supported_clusters.append(item)
+    if not boundary_supported_clusters and not timing_supported_clusters:
         raise AlignmentFailure(
             ERROR_WINDOW_MISMATCH,
-            "dynamic window consensus has incomplete boundary evidence "
-            f"hard_valid={len(hard_valid_candidates)} "
-            f"left_edge={left_edge} right_edge={right_edge} "
-            f"left_confidence={left_confidence} "
-            f"right_confidence={right_confidence} "
-            f"left_censored={left_censored} "
-            f"right_censored={right_censored}",
+            "dynamic window boundary evidence is outside user window "
+            f"left_confident_outside={len(left_confident_outside_candidates)} "
+            f"right_confident_outside={len(right_confident_outside_candidates)} "
+            f"stable_clusters={len(stable_clusters)}",
             details=_failure_details(),
         )
+
+    timing_consensus_used = not boundary_supported_clusters
+    selection_clusters = (
+        boundary_supported_clusters or timing_supported_clusters
+    )
     anchor, consensus = max(
-        boundary_supported_clusters,
+        selection_clusters,
         key=lambda item: (
             len(item[1]),
             float(np.mean([candidate.quality_score for candidate in item[1]])),
@@ -1251,15 +1292,23 @@ def select_dynamic_alignment_window(
             item[0].quality_score,
         ),
     )
-    if len(consensus) < int(config.min_consensus_candidates):
-        raise AlignmentFailure(
-            ERROR_WINDOW_MISMATCH,
-            "dynamic window timing is unstable "
-            f"consensus={len(consensus)}/{config.min_consensus_candidates} "
-            f"hard_valid={len(hard_valid_candidates)} "
-            f"score_pool={len(score_pool)}",
-            details=_failure_details(),
-        )
+    (
+        consensus_left_edge,
+        consensus_right_edge,
+        consensus_left_confidence,
+        consensus_right_confidence,
+        consensus_left_censored,
+        consensus_right_censored,
+    ) = _cluster_boundary_evidence(consensus)
+    boundary_evidence_warnings: list[str] = []
+    if not consensus_left_confidence:
+        boundary_evidence_warnings.append("low_left_boundary_word_confidence")
+    if not consensus_right_confidence:
+        boundary_evidence_warnings.append("low_right_boundary_word_confidence")
+    if not (consensus_left_edge or consensus_left_censored):
+        boundary_evidence_warnings.append("missing_left_edge_clearance")
+    if not (consensus_right_edge or consensus_right_censored):
+        boundary_evidence_warnings.append("missing_right_edge_clearance")
 
     median_starts = np.median(
         np.asarray(
@@ -1350,6 +1399,12 @@ def select_dynamic_alignment_window(
         "eligible_candidate_count": len(fully_supported_candidates),
         "hard_valid_candidate_count": len(hard_valid_candidates),
         "stability_candidate_count": len(hard_valid_candidates),
+        "left_confident_outside_candidate_count": len(
+            left_confident_outside_candidates
+        ),
+        "right_confident_outside_candidate_count": len(
+            right_confident_outside_candidates
+        ),
         "evidence_limited_candidate_count": sum(
             bool(candidate.rejection_reasons)
             for candidate in hard_valid_candidates
@@ -1383,23 +1438,29 @@ def select_dynamic_alignment_window(
             for candidate in hard_valid_candidates
         ),
         "boundary_evidence_mode": (
-            "single_candidate"
-            if any(
-                candidate.left_edge_supported
-                and candidate.right_edge_supported
-                and candidate.left_confidence_supported
-                and candidate.right_confidence_supported
-                for candidate in consensus
-            )
+            "timing_consensus"
+            if timing_consensus_used
             else (
-                "split_consensus"
-                if any(candidate.left_edge_supported for candidate in consensus)
-                and any(candidate.right_edge_supported for candidate in consensus)
-                else "user_window_censored"
+                "single_candidate"
+                if any(
+                    candidate.left_edge_supported
+                    and candidate.right_edge_supported
+                    and candidate.left_confidence_supported
+                    and candidate.right_confidence_supported
+                    for candidate in consensus
+                )
+                else (
+                    "split_consensus"
+                    if any(candidate.left_edge_supported for candidate in consensus)
+                    and any(candidate.right_edge_supported for candidate in consensus)
+                    else "user_window_censored"
+                )
             )
         ),
+        "boundary_evidence_warnings": boundary_evidence_warnings,
         "rejection_counts": reason_counts,
         "score_pool_count": len(score_pool),
+        "stable_cluster_count": len(stable_clusters),
         "consensus_candidate_count": len(consensus),
         "consensus_anchor_start_abs": float(anchor.search_start_abs),
         "consensus_anchor_end_abs": float(anchor.search_end_abs),
