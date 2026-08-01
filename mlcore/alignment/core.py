@@ -187,11 +187,17 @@ class WindowAlignmentCandidate:
     mean_word_confidence: float
     min_word_confidence: float
     boundary_word_confidence: float
+    left_boundary_word_confidence: float
+    right_boundary_word_confidence: float
+    left_confidence_supported: bool
+    right_confidence_supported: bool
     path_mean_probability: float
     left_edge_clearance_sec: float
     right_edge_clearance_sec: float
     left_edge_supported: bool
     right_edge_supported: bool
+    left_user_window_censored: bool
+    right_user_window_censored: bool
     boundary_duration_ratio: float
     path_to_evidence_ratio: float
     adjustment_sec: float
@@ -207,11 +213,21 @@ class WindowAlignmentCandidate:
             "mean_word_confidence": float(self.mean_word_confidence),
             "min_word_confidence": float(self.min_word_confidence),
             "boundary_word_confidence": float(self.boundary_word_confidence),
+            "left_boundary_word_confidence": float(
+                self.left_boundary_word_confidence
+            ),
+            "right_boundary_word_confidence": float(
+                self.right_boundary_word_confidence
+            ),
+            "left_confidence_supported": bool(self.left_confidence_supported),
+            "right_confidence_supported": bool(self.right_confidence_supported),
             "path_mean_probability": float(self.path_mean_probability),
             "left_edge_clearance_sec": float(self.left_edge_clearance_sec),
             "right_edge_clearance_sec": float(self.right_edge_clearance_sec),
             "left_edge_supported": bool(self.left_edge_supported),
             "right_edge_supported": bool(self.right_edge_supported),
+            "left_user_window_censored": bool(self.left_user_window_censored),
+            "right_user_window_censored": bool(self.right_user_window_censored),
             "boundary_duration_ratio": float(self.boundary_duration_ratio),
             "path_to_evidence_ratio": float(self.path_to_evidence_ratio),
             "adjustment_sec": float(self.adjustment_sec),
@@ -830,12 +846,30 @@ def _build_window_candidate(
         [float(word.confidence) for word in words],
         dtype=np.float64,
     )
-    boundary_confidence = min(float(confidences[0]), float(confidences[-1]))
+    left_boundary_confidence = float(confidences[0])
+    right_boundary_confidence = float(confidences[-1])
+    boundary_confidence = min(
+        left_boundary_confidence,
+        right_boundary_confidence,
+    )
+    left_confidence_supported = (
+        left_boundary_confidence >= float(min_word_confidence)
+    )
+    right_confidence_supported = (
+        right_boundary_confidence >= float(min_word_confidence)
+    )
     left_clearance = max(0.0, float(words[0].t_start) - actual_start)
     right_clearance = max(0.0, actual_end - float(words[-1].t_end))
     frame_tolerance = timeline.seconds_per_frame * 1.01
     left_context_limited = actual_start <= timeline.analysis_start_abs + frame_tolerance
     right_context_limited = actual_end >= timeline.analysis_end_abs - frame_tolerance
+    censor_tolerance = max(float(config.min_edge_clearance_sec), frame_tolerance)
+    left_user_window_censored = (
+        float(words[0].t_start) <= float(clip_start_abs) + censor_tolerance
+    )
+    right_user_window_censored = (
+        float(words[-1].t_end) >= float(clip_end_abs) - censor_tolerance
+    )
 
     token_counts = [
         max(1, sum(1 for item in token_word_indexes if int(item) == word_index))
@@ -908,12 +942,13 @@ def _build_window_candidate(
         for word in words
     ):
         rejection_reasons.append("outside_user_window")
-    # A weak interior word is useful quality telemetry, but it does not prove
-    # that the search window is wrong. Boundary confidence is the relevant
-    # signal here: poor first/last evidence means the window should move,
-    # while interior low-confidence words remain warnings in the final result.
-    if boundary_confidence < float(min_word_confidence):
-        rejection_reasons.append("low_boundary_word_confidence")
+    # Interior confidence is quality telemetry. Boundary confidence is tracked
+    # independently per side so a stable consensus can combine evidence from
+    # different probes without allowing a weak side to pass unnoticed.
+    if not left_confidence_supported:
+        rejection_reasons.append("low_left_boundary_word_confidence")
+    if not right_confidence_supported:
+        rejection_reasons.append("low_right_boundary_word_confidence")
     if left_edge_score < 1.0 or right_edge_score < 1.0:
         rejection_reasons.append("insufficient_edge_clearance")
     if boundary_duration_ratio < float(config.min_boundary_duration_ratio):
@@ -930,11 +965,17 @@ def _build_window_candidate(
         mean_word_confidence=float(np.mean(confidences)),
         min_word_confidence=float(np.min(confidences)),
         boundary_word_confidence=float(boundary_confidence),
+        left_boundary_word_confidence=float(left_boundary_confidence),
+        right_boundary_word_confidence=float(right_boundary_confidence),
+        left_confidence_supported=bool(left_confidence_supported),
+        right_confidence_supported=bool(right_confidence_supported),
         path_mean_probability=float(path_mean_probability),
         left_edge_clearance_sec=float(left_clearance),
         right_edge_clearance_sec=float(right_clearance),
         left_edge_supported=bool(left_edge_score >= 1.0 - 1e-9),
         right_edge_supported=bool(right_edge_score >= 1.0 - 1e-9),
+        left_user_window_censored=bool(left_user_window_censored),
+        right_user_window_censored=bool(right_user_window_censored),
         boundary_duration_ratio=float(boundary_duration_ratio),
         path_to_evidence_ratio=float(path_to_evidence_ratio),
         adjustment_sec=float(adjustment),
@@ -1011,21 +1052,28 @@ def select_dynamic_alignment_window(
         for reason in candidate.rejection_reasons:
             reason_counts[reason] = reason_counts.get(reason, 0) + 1
 
-    # Edge clearance is boundary evidence, not a user-window validity gate. A
-    # stable cluster may prove its left and right boundary through different
-    # probes. Outside-window, weak-boundary and compressed-boundary candidates
-    # remain hard failures and never enter the consensus.
+    # Window containment and non-compressed boundary words are hard validity
+    # rules. Edge clearance and per-side acoustic confidence are independent
+    # evidence signals: stable probes may prove them with different candidates.
+    # A boundary touching the authoritative user window is a censored
+    # observation, not automatic evidence that the requested fragment is wrong.
+    evidence_reasons = {
+        "insufficient_edge_clearance",
+        "low_left_boundary_word_confidence",
+        "low_right_boundary_word_confidence",
+    }
     hard_valid_candidates = [
         candidate
         for candidate in candidates
-        if not set(candidate.rejection_reasons).difference(
-            {"insufficient_edge_clearance"}
-        )
+        if not set(candidate.rejection_reasons).difference(evidence_reasons)
     ]
-    fully_clear_candidates = [
+    fully_supported_candidates = [
         candidate
         for candidate in hard_valid_candidates
-        if candidate.left_edge_supported and candidate.right_edge_supported
+        if candidate.left_edge_supported
+        and candidate.right_edge_supported
+        and candidate.left_confidence_supported
+        and candidate.right_confidence_supported
     ]
 
     def _failure_details() -> dict[str, Any]:
@@ -1033,9 +1081,7 @@ def select_dynamic_alignment_window(
             candidates,
             key=lambda candidate: (
                 len(
-                    set(candidate.rejection_reasons).difference(
-                        {"insufficient_edge_clearance"}
-                    )
+                    set(candidate.rejection_reasons).difference(evidence_reasons)
                 ),
                 -candidate.quality_score,
                 candidate.adjustment_sec,
@@ -1046,13 +1092,31 @@ def select_dynamic_alignment_window(
             "failed_candidate_count": len(failed_candidates),
             "rejection_counts": dict(reason_counts),
             "hard_valid_candidate_count": len(hard_valid_candidates),
-            "fully_clear_candidate_count": len(fully_clear_candidates),
-            "left_boundary_supported_candidate_count": sum(
+            "fully_supported_candidate_count": len(fully_supported_candidates),
+            "left_edge_supported_candidate_count": sum(
                 candidate.left_edge_supported
                 for candidate in hard_valid_candidates
             ),
-            "right_boundary_supported_candidate_count": sum(
+            "right_edge_supported_candidate_count": sum(
                 candidate.right_edge_supported
+                for candidate in hard_valid_candidates
+            ),
+            "left_confidence_supported_candidate_count": sum(
+                candidate.left_confidence_supported
+                for candidate in hard_valid_candidates
+            ),
+            "right_confidence_supported_candidate_count": sum(
+                candidate.right_confidence_supported
+                for candidate in hard_valid_candidates
+            ),
+            "left_user_window_censored_candidate_count": sum(
+                candidate.left_user_window_censored
+                and candidate.left_confidence_supported
+                for candidate in hard_valid_candidates
+            ),
+            "right_user_window_censored_candidate_count": sum(
+                candidate.right_user_window_censored
+                and candidate.right_confidence_supported
                 for candidate in hard_valid_candidates
             ),
             "top_candidates": [candidate.summary() for candidate in ranked[:12]],
@@ -1094,25 +1158,88 @@ def select_dynamic_alignment_window(
             <= float(config.stability_tolerance_sec)
         ]
         clusters.append((anchor, members))
-    boundary_supported_clusters = [
-        item
-        for item in clusters
-        if any(candidate.left_edge_supported for candidate in item[1])
-        and any(candidate.right_edge_supported for candidate in item[1])
-    ]
+
+    def _cluster_boundary_evidence(
+        members: Sequence[WindowAlignmentCandidate],
+    ) -> tuple[bool, bool, bool, bool, bool, bool]:
+        left_edge = any(candidate.left_edge_supported for candidate in members)
+        right_edge = any(candidate.right_edge_supported for candidate in members)
+        left_confidence = any(
+            candidate.left_confidence_supported for candidate in members
+        )
+        right_confidence = any(
+            candidate.right_confidence_supported for candidate in members
+        )
+        left_censored = any(
+            candidate.left_user_window_censored
+            and candidate.left_confidence_supported
+            for candidate in members
+        )
+        right_censored = any(
+            candidate.right_user_window_censored
+            and candidate.right_confidence_supported
+            for candidate in members
+        )
+        return (
+            left_edge,
+            right_edge,
+            left_confidence,
+            right_confidence,
+            left_censored,
+            right_censored,
+        )
+
+    boundary_supported_clusters = []
+    for item in clusters:
+        (
+            left_edge,
+            right_edge,
+            left_confidence,
+            right_confidence,
+            left_censored,
+            right_censored,
+        ) = _cluster_boundary_evidence(item[1])
+        if (
+            left_confidence
+            and right_confidence
+            and (left_edge or left_censored)
+            and (right_edge or right_censored)
+        ):
+            boundary_supported_clusters.append(item)
     if not boundary_supported_clusters:
-        left_supported = sum(
+        left_edge = sum(
             candidate.left_edge_supported for candidate in hard_valid_candidates
         )
-        right_supported = sum(
+        right_edge = sum(
             candidate.right_edge_supported for candidate in hard_valid_candidates
+        )
+        left_confidence = sum(
+            candidate.left_confidence_supported
+            for candidate in hard_valid_candidates
+        )
+        right_confidence = sum(
+            candidate.right_confidence_supported
+            for candidate in hard_valid_candidates
+        )
+        left_censored = sum(
+            candidate.left_user_window_censored
+            and candidate.left_confidence_supported
+            for candidate in hard_valid_candidates
+        )
+        right_censored = sum(
+            candidate.right_user_window_censored
+            and candidate.right_confidence_supported
+            for candidate in hard_valid_candidates
         )
         raise AlignmentFailure(
             ERROR_WINDOW_MISMATCH,
             "dynamic window consensus has incomplete boundary evidence "
             f"hard_valid={len(hard_valid_candidates)} "
-            f"left_supported={left_supported} "
-            f"right_supported={right_supported}",
+            f"left_edge={left_edge} right_edge={right_edge} "
+            f"left_confidence={left_confidence} "
+            f"right_confidence={right_confidence} "
+            f"left_censored={left_censored} "
+            f"right_censored={right_censored}",
             details=_failure_details(),
         )
     anchor, consensus = max(
@@ -1160,6 +1287,8 @@ def select_dynamic_alignment_window(
     selected = min(
         consensus,
         key=lambda candidate: (
+            -int(candidate.left_confidence_supported)
+            - int(candidate.right_confidence_supported),
             -int(candidate.left_edge_supported)
             - int(candidate.right_edge_supported),
             _distance_to_median(candidate),
@@ -1218,26 +1347,56 @@ def select_dynamic_alignment_window(
         "candidate_count": len(candidates),
         "failed_candidate_count": len(failed_candidates),
         "failed_candidate_code_counts": failure_code_counts,
-        "eligible_candidate_count": len(fully_clear_candidates),
+        "eligible_candidate_count": len(fully_supported_candidates),
         "hard_valid_candidate_count": len(hard_valid_candidates),
         "stability_candidate_count": len(hard_valid_candidates),
-        "edge_probe_candidate_count": sum(
+        "evidence_limited_candidate_count": sum(
             bool(candidate.rejection_reasons)
             for candidate in hard_valid_candidates
         ),
-        "left_boundary_supported_candidate_count": sum(
+        "edge_probe_candidate_count": sum(
+            "insufficient_edge_clearance" in candidate.rejection_reasons
+            for candidate in hard_valid_candidates
+        ),
+        "left_edge_supported_candidate_count": sum(
             candidate.left_edge_supported for candidate in hard_valid_candidates
         ),
-        "right_boundary_supported_candidate_count": sum(
+        "right_edge_supported_candidate_count": sum(
             candidate.right_edge_supported for candidate in hard_valid_candidates
+        ),
+        "left_confidence_supported_candidate_count": sum(
+            candidate.left_confidence_supported
+            for candidate in hard_valid_candidates
+        ),
+        "right_confidence_supported_candidate_count": sum(
+            candidate.right_confidence_supported
+            for candidate in hard_valid_candidates
+        ),
+        "left_user_window_censored_candidate_count": sum(
+            candidate.left_user_window_censored
+            and candidate.left_confidence_supported
+            for candidate in hard_valid_candidates
+        ),
+        "right_user_window_censored_candidate_count": sum(
+            candidate.right_user_window_censored
+            and candidate.right_confidence_supported
+            for candidate in hard_valid_candidates
         ),
         "boundary_evidence_mode": (
             "single_candidate"
             if any(
-                candidate.left_edge_supported and candidate.right_edge_supported
+                candidate.left_edge_supported
+                and candidate.right_edge_supported
+                and candidate.left_confidence_supported
+                and candidate.right_confidence_supported
                 for candidate in consensus
             )
-            else "split_consensus"
+            else (
+                "split_consensus"
+                if any(candidate.left_edge_supported for candidate in consensus)
+                and any(candidate.right_edge_supported for candidate in consensus)
+                else "user_window_censored"
+            )
         ),
         "rejection_counts": reason_counts,
         "score_pool_count": len(score_pool),
