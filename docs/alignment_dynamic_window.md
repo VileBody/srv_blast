@@ -1,6 +1,6 @@
 # Dynamic CTC window policy
 
-`local-ctc-viterbi-v14-censored-boundary-consensus-redaction-espeak-demucs-4.1.0`
+`local-ctc-viterbi-v15-stable-timing-evidence-redaction-espeak-demucs-4.1.0`
 uses one Demucs pass and one Wav2Vec2 inference over an expanded analysis crop.
 It then evaluates a bounded set of CTC/Viterbi search windows over slices of the
 same emission matrix.
@@ -14,10 +14,9 @@ This prevents a short clip from compressing the last words into its boundary.
 A candidate must satisfy all of the following:
 
 - every word is fully inside the user clip, within one emission-frame tolerance;
-- the stable consensus independently proves left and right boundary-word
-  confidence;
-- each side has either acoustic clearance or a confident boundary censored by
-  the authoritative user clip;
+- at least three high-scoring windows agree on every word boundary;
+- each boundary has direct confidence/clearance evidence or stable timing with
+  no confident counter-evidence outside the authoritative user clip;
 - boundary-word duration per CTC token is not abnormally compressed.
 
 Interior words below `ALIGNMENT_MIN_WORD_CONFIDENCE` remain explicit quality
@@ -26,18 +25,19 @@ stable window. Music/vocal separation can produce isolated weak interior words
 even when the acoustic boundaries and timings agree across window probes.
 
 Hard-valid candidates and evidence-limited probes are grouped by per-word
-start/end
-stability. A cluster must contain confidence and spatial evidence for both
-boundaries, but each signal and side may come from different probes. A word
-touching the user clip is treated as a censored observation only when that side
-is acoustically confident; this never permits output outside the user clip.
-This matters for dense
-fragments where expanding both edges admits adjacent lyrics while independent
-one-sided probes still prove stable timings. The selected result is the medoid
-of the largest high-scoring, boundary-supported consensus group. If no group
-reaches the required size or independently proves both boundaries, alignment
-fails explicitly with
-`ALIGNMENT_WINDOW_MISMATCH`; there is no Gemini fallback.
+start/end stability. Direct confidence and acoustic clearance remain preferred,
+and the left and right evidence may come from different probes. When a boundary
+posterior is weak, a cluster of at least three independent windows may prove it
+through stable timing. This mode is rejected if any expanded probe confidently
+places that same boundary outside the user clip. A word touching the user clip
+is also accepted as a censored observation only when that side is acoustically
+confident. These rules never permit output outside the user clip or compressed
+boundary words.
+
+The selected result is the medoid of the largest high-scoring supported
+consensus group. If timings are unstable, a word is confidently outside the
+user clip, or no hard-valid group reaches the required size, alignment fails
+explicitly with `ALIGNMENT_WINDOW_MISMATCH`; there is no Gemini fallback.
 
 ## Configuration
 

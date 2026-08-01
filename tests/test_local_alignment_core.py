@@ -321,7 +321,7 @@ def test_dynamic_window_rejects_consensus_without_right_boundary_evidence(
         )
 
     assert exc.value.code == ERROR_WINDOW_MISMATCH
-    assert "incomplete boundary evidence" in exc.value.message
+    assert "timing is unstable" in exc.value.message
     assert exc.value.details["hard_valid_candidate_count"] == 2
     assert exc.value.details["right_edge_supported_candidate_count"] == 0
     assert exc.value.details["top_candidates"]
@@ -341,18 +341,21 @@ def test_dynamic_window_accepts_confidence_from_independent_sides(
     assert selection.diagnostics["right_confidence_supported_candidate_count"] == 1
 
 
-def test_dynamic_window_rejects_without_right_confidence_evidence(
+def test_dynamic_window_uses_stable_timing_without_right_confidence_evidence(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    with pytest.raises(AlignmentFailure) as exc:
-        _select_with_synthetic_boundary_evidence(
-            monkeypatch,
-            include_right_evidence=True,
-            include_right_confidence=False,
-        )
+    selection = _select_with_synthetic_boundary_evidence(
+        monkeypatch,
+        include_right_evidence=True,
+        include_right_confidence=False,
+    )
 
-    assert exc.value.code == ERROR_WINDOW_MISMATCH
-    assert exc.value.details["right_confidence_supported_candidate_count"] == 0
+    assert selection.diagnostics["boundary_evidence_mode"] == "timing_consensus"
+    assert selection.diagnostics["right_confidence_supported_candidate_count"] == 0
+    assert (
+        "low_right_boundary_word_confidence"
+        in selection.diagnostics["boundary_evidence_warnings"]
+    )
 
 
 def test_dynamic_window_accepts_confident_user_window_censored_boundary(
@@ -522,7 +525,7 @@ def test_dynamic_window_warns_on_weak_interior_word_without_rejecting() -> None:
     )
 
 
-def test_dynamic_window_rejects_weak_boundary_word() -> None:
+def test_dynamic_window_accepts_stable_weak_boundary_with_warning() -> None:
     probabilities = np.full((61, 4), 0.02, dtype=np.float64)
     probabilities[:, 0] = 0.94
     probabilities[21] = [0.80, 0.10, 0.05, 0.05]
@@ -536,28 +539,26 @@ def test_dynamic_window_rejects_weak_boundary_word() -> None:
         inputs_to_logits_ratio=1,
     )
 
-    with pytest.raises(AlignmentFailure) as exc:
-        select_dynamic_alignment_window(
-            log_probs=np.log(probabilities),
-            target_ids=[1, 2, 3],
-            token_word_indexes=[0, 1, 2],
-            display_words=["раз", "два", "три"],
-            normalized_words=["раз", "два", "три"],
-            blank_id=0,
-            timeline=timeline,
-            clip_start_abs=2.0,
-            clip_end_abs=4.0,
-            config=_dynamic_window_config(),
-            min_word_confidence=0.5,
-        )
-
-    assert exc.value.code == ERROR_WINDOW_MISMATCH
-    assert (
-        exc.value.details["rejection_counts"]
-        ["low_left_boundary_word_confidence"]
-        > 0
+    selection = select_dynamic_alignment_window(
+        log_probs=np.log(probabilities),
+        target_ids=[1, 2, 3],
+        token_word_indexes=[0, 1, 2],
+        display_words=["one", "two", "three"],
+        normalized_words=["one", "two", "three"],
+        blank_id=0,
+        timeline=timeline,
+        clip_start_abs=2.0,
+        clip_end_abs=4.0,
+        config=_dynamic_window_config(),
+        min_word_confidence=0.5,
     )
-    assert exc.value.details["left_confidence_supported_candidate_count"] == 0
+
+    assert selection.diagnostics["boundary_evidence_mode"] == "timing_consensus"
+    assert selection.diagnostics["left_confidence_supported_candidate_count"] == 0
+    assert (
+        "low_left_boundary_word_confidence"
+        in selection.diagnostics["boundary_evidence_warnings"]
+    )
 
 
 def test_dynamic_window_rejects_fragment_that_exceeds_user_clip() -> None:
@@ -589,8 +590,10 @@ def test_dynamic_window_rejects_fragment_that_exceeds_user_clip() -> None:
         )
 
     assert exc.value.code == ERROR_WINDOW_MISMATCH
+    assert "boundary evidence is outside user window" in exc.value.message
     assert exc.value.details["rejection_counts"]["outside_user_window"] > 0
     assert exc.value.details["right_confidence_supported_candidate_count"] == 0
+    assert exc.value.details["right_confident_outside_candidate_count"] >= 3
 
 
 def test_dynamic_window_runs_separator_and_acoustic_model_once(
