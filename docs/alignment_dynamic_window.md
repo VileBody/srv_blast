@@ -1,6 +1,6 @@
 # Dynamic CTC window policy
 
-`local-ctc-viterbi-v12-dynamic-window-redaction-espeak-demucs-4.1.0`
+`local-ctc-viterbi-v13-boundary-evidence-redaction-espeak-demucs-4.1.0`
 uses one Demucs pass and one Wav2Vec2 inference over an expanded analysis crop.
 It then evaluates a bounded set of CTC/Viterbi search windows over slices of the
 same emission matrix.
@@ -15,7 +15,7 @@ A candidate must satisfy all of the following:
 
 - every word is fully inside the user clip, within one emission-frame tolerance;
 - the first and last words meet `ALIGNMENT_MIN_WORD_CONFIDENCE`;
-- the first and last words have acoustic clearance from adjustable search edges;
+- the stable consensus independently proves left and right acoustic clearance;
 - boundary-word duration per CTC token is not abnormally compressed.
 
 Interior words below `ALIGNMENT_MIN_WORD_CONFIDENCE` remain explicit quality
@@ -23,11 +23,14 @@ warnings and lower the candidate score, but do not by themselves reject a
 stable window. Music/vocal separation can produce isolated weak interior words
 even when the acoustic boundaries and timings agree across window probes.
 
-Accepted candidates and edge-limited probes are grouped by per-word start/end
-stability. Edge-limited probes may support consensus when their timings agree,
-but can never be selected as the result. The selected candidate is a fully
-accepted medoid from the largest high-scoring consensus group. If no group
-reaches the required size or contains a selectable candidate, alignment fails explicitly with
+Hard-valid candidates and edge-limited probes are grouped by per-word start/end
+stability. A cluster must contain evidence for both boundaries, but the left
+and right evidence may come from different probes. This matters for dense
+fragments where expanding both edges admits adjacent lyrics while independent
+one-sided probes still prove stable timings. The selected result is the medoid
+of the largest high-scoring, boundary-supported consensus group. If no group
+reaches the required size or independently proves both boundaries, alignment
+fails explicitly with
 `ALIGNMENT_WINDOW_MISMATCH`; there is no Gemini fallback.
 
 ## Configuration
@@ -55,3 +58,5 @@ instead of spending most probes on distant windows that leave the user clip.
 The alignment response contains `diagnostics.dynamic_window` with candidate,
 rejection, consensus, selected-window and timing-deviation metrics. Candidate
 diagnostics contain indexes and scores only, never the reference text.
+Failures return the same safe numeric candidate summaries under
+`error.details`; the client logs them with the request id.

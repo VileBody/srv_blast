@@ -190,6 +190,8 @@ class WindowAlignmentCandidate:
     path_mean_probability: float
     left_edge_clearance_sec: float
     right_edge_clearance_sec: float
+    left_edge_supported: bool
+    right_edge_supported: bool
     boundary_duration_ratio: float
     path_to_evidence_ratio: float
     adjustment_sec: float
@@ -208,6 +210,8 @@ class WindowAlignmentCandidate:
             "path_mean_probability": float(self.path_mean_probability),
             "left_edge_clearance_sec": float(self.left_edge_clearance_sec),
             "right_edge_clearance_sec": float(self.right_edge_clearance_sec),
+            "left_edge_supported": bool(self.left_edge_supported),
+            "right_edge_supported": bool(self.right_edge_supported),
             "boundary_duration_ratio": float(self.boundary_duration_ratio),
             "path_to_evidence_ratio": float(self.path_to_evidence_ratio),
             "adjustment_sec": float(self.adjustment_sec),
@@ -929,6 +933,8 @@ def _build_window_candidate(
         path_mean_probability=float(path_mean_probability),
         left_edge_clearance_sec=float(left_clearance),
         right_edge_clearance_sec=float(right_clearance),
+        left_edge_supported=bool(left_edge_score >= 1.0 - 1e-9),
+        right_edge_supported=bool(right_edge_score >= 1.0 - 1e-9),
         boundary_duration_ratio=float(boundary_duration_ratio),
         path_to_evidence_ratio=float(path_to_evidence_ratio),
         adjustment_sec=float(adjustment),
@@ -1000,29 +1006,69 @@ def select_dynamic_alignment_window(
                 }
             )
 
-    selectable = [
-        candidate for candidate in candidates if not candidate.rejection_reasons
-    ]
-    if not selectable:
-        reason_counts: dict[str, int] = {}
-        for candidate in candidates:
-            for reason in candidate.rejection_reasons:
-                reason_counts[reason] = reason_counts.get(reason, 0) + 1
-        raise AlignmentFailure(
-            ERROR_WINDOW_MISMATCH,
-            "dynamic window search found no acceptable alignment "
-            f"candidates={len(candidates)} failed={len(failed_candidates)} "
-            f"rejections={reason_counts}",
-        )
+    reason_counts: dict[str, int] = {}
+    for candidate in candidates:
+        for reason in candidate.rejection_reasons:
+            reason_counts[reason] = reason_counts.get(reason, 0) + 1
 
-    stability_candidates = [
+    # Edge clearance is boundary evidence, not a user-window validity gate. A
+    # stable cluster may prove its left and right boundary through different
+    # probes. Outside-window, weak-boundary and compressed-boundary candidates
+    # remain hard failures and never enter the consensus.
+    hard_valid_candidates = [
         candidate
         for candidate in candidates
         if not set(candidate.rejection_reasons).difference(
             {"insufficient_edge_clearance"}
         )
     ]
-    stability_candidates.sort(
+    fully_clear_candidates = [
+        candidate
+        for candidate in hard_valid_candidates
+        if candidate.left_edge_supported and candidate.right_edge_supported
+    ]
+
+    def _failure_details() -> dict[str, Any]:
+        ranked = sorted(
+            candidates,
+            key=lambda candidate: (
+                len(
+                    set(candidate.rejection_reasons).difference(
+                        {"insufficient_edge_clearance"}
+                    )
+                ),
+                -candidate.quality_score,
+                candidate.adjustment_sec,
+            ),
+        )
+        return {
+            "candidate_count": len(candidates),
+            "failed_candidate_count": len(failed_candidates),
+            "rejection_counts": dict(reason_counts),
+            "hard_valid_candidate_count": len(hard_valid_candidates),
+            "fully_clear_candidate_count": len(fully_clear_candidates),
+            "left_boundary_supported_candidate_count": sum(
+                candidate.left_edge_supported
+                for candidate in hard_valid_candidates
+            ),
+            "right_boundary_supported_candidate_count": sum(
+                candidate.right_edge_supported
+                for candidate in hard_valid_candidates
+            ),
+            "top_candidates": [candidate.summary() for candidate in ranked[:12]],
+            "failed_candidates": failed_candidates[:12],
+        }
+
+    if not hard_valid_candidates:
+        raise AlignmentFailure(
+            ERROR_WINDOW_MISMATCH,
+            "dynamic window search found no hard-valid alignment "
+            f"candidates={len(candidates)} failed={len(failed_candidates)} "
+            f"rejections={reason_counts}",
+            details=_failure_details(),
+        )
+
+    hard_valid_candidates.sort(
         key=lambda candidate: (
             -candidate.quality_score,
             candidate.adjustment_sec,
@@ -1030,10 +1076,12 @@ def select_dynamic_alignment_window(
             candidate.search_end_abs,
         )
     )
-    best_score = max(float(candidate.quality_score) for candidate in selectable)
+    best_score = max(
+        float(candidate.quality_score) for candidate in hard_valid_candidates
+    )
     score_pool = [
         candidate
-        for candidate in stability_candidates
+        for candidate in hard_valid_candidates
         if candidate.quality_score >= best_score - float(config.score_tolerance)
     ]
 
@@ -1046,14 +1094,29 @@ def select_dynamic_alignment_window(
             <= float(config.stability_tolerance_sec)
         ]
         clusters.append((anchor, members))
-    selectable_ids = {id(candidate) for candidate in selectable}
-    selectable_clusters = [
+    boundary_supported_clusters = [
         item
         for item in clusters
-        if any(id(candidate) in selectable_ids for candidate in item[1])
+        if any(candidate.left_edge_supported for candidate in item[1])
+        and any(candidate.right_edge_supported for candidate in item[1])
     ]
+    if not boundary_supported_clusters:
+        left_supported = sum(
+            candidate.left_edge_supported for candidate in hard_valid_candidates
+        )
+        right_supported = sum(
+            candidate.right_edge_supported for candidate in hard_valid_candidates
+        )
+        raise AlignmentFailure(
+            ERROR_WINDOW_MISMATCH,
+            "dynamic window consensus has incomplete boundary evidence "
+            f"hard_valid={len(hard_valid_candidates)} "
+            f"left_supported={left_supported} "
+            f"right_supported={right_supported}",
+            details=_failure_details(),
+        )
     anchor, consensus = max(
-        selectable_clusters,
+        boundary_supported_clusters,
         key=lambda item: (
             len(item[1]),
             float(np.mean([candidate.quality_score for candidate in item[1]])),
@@ -1066,9 +1129,9 @@ def select_dynamic_alignment_window(
             ERROR_WINDOW_MISMATCH,
             "dynamic window timing is unstable "
             f"consensus={len(consensus)}/{config.min_consensus_candidates} "
-            f"selectable={len(selectable)} "
-            f"stability_candidates={len(stability_candidates)} "
+            f"hard_valid={len(hard_valid_candidates)} "
             f"score_pool={len(score_pool)}",
+            details=_failure_details(),
         )
 
     median_starts = np.median(
@@ -1094,12 +1157,11 @@ def select_dynamic_alignment_window(
         ]
         return float(np.mean(deltas))
 
-    selectable_consensus = [
-        candidate for candidate in consensus if id(candidate) in selectable_ids
-    ]
     selected = min(
-        selectable_consensus,
+        consensus,
         key=lambda candidate: (
+            -int(candidate.left_edge_supported)
+            - int(candidate.right_edge_supported),
             _distance_to_median(candidate),
             -candidate.quality_score,
             candidate.adjustment_sec,
@@ -1129,6 +1191,7 @@ def select_dynamic_alignment_window(
             "dynamic window consensus exceeds timing tolerance "
             f"deviation={max_timing_deviation:.6f} "
             f"tolerance={float(config.stability_tolerance_sec):.6f}",
+            details=_failure_details(),
         )
 
     ranked_summaries = [
@@ -1142,10 +1205,7 @@ def select_dynamic_alignment_window(
             ),
         )[:12]
     ]
-    rejection_counts: dict[str, int] = {}
-    for candidate in candidates:
-        for reason in candidate.rejection_reasons:
-            rejection_counts[reason] = rejection_counts.get(reason, 0) + 1
+
     failure_code_counts: dict[str, int] = {}
     for failure in failed_candidates:
         code = str(failure["error_code"])
@@ -1158,13 +1218,28 @@ def select_dynamic_alignment_window(
         "candidate_count": len(candidates),
         "failed_candidate_count": len(failed_candidates),
         "failed_candidate_code_counts": failure_code_counts,
-        "eligible_candidate_count": len(selectable),
-        "stability_candidate_count": len(stability_candidates),
+        "eligible_candidate_count": len(fully_clear_candidates),
+        "hard_valid_candidate_count": len(hard_valid_candidates),
+        "stability_candidate_count": len(hard_valid_candidates),
         "edge_probe_candidate_count": sum(
             bool(candidate.rejection_reasons)
-            for candidate in stability_candidates
+            for candidate in hard_valid_candidates
         ),
-        "rejection_counts": rejection_counts,
+        "left_boundary_supported_candidate_count": sum(
+            candidate.left_edge_supported for candidate in hard_valid_candidates
+        ),
+        "right_boundary_supported_candidate_count": sum(
+            candidate.right_edge_supported for candidate in hard_valid_candidates
+        ),
+        "boundary_evidence_mode": (
+            "single_candidate"
+            if any(
+                candidate.left_edge_supported and candidate.right_edge_supported
+                for candidate in consensus
+            )
+            else "split_consensus"
+        ),
+        "rejection_counts": reason_counts,
         "score_pool_count": len(score_pool),
         "consensus_candidate_count": len(consensus),
         "consensus_anchor_start_abs": float(anchor.search_start_abs),

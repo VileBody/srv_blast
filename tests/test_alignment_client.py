@@ -20,6 +20,7 @@ def test_internal_alignment_request_ignores_proxy_environment(monkeypatch) -> No
                 "error": {
                     "code": "ALIGNMENT_MODEL_UNAVAILABLE",
                     "message": "not ready",
+                    "details": {"hard_valid_candidate_count": 0},
                 }
             }
 
@@ -43,7 +44,7 @@ def test_internal_alignment_request_ignores_proxy_environment(monkeypatch) -> No
     with pytest.raises(
         alignment_client.AlignmentServiceError,
         match="ALIGNMENT_MODEL_UNAVAILABLE: not ready",
-    ):
+    ) as exc:
         alignment_client.request_local_alignment(
             service_url="http://alignment-api:8000",
             timeout_s=600.0,
@@ -54,6 +55,7 @@ def test_internal_alignment_request_ignores_proxy_environment(monkeypatch) -> No
             request_id="job",
         )
 
+    assert exc.value.details == {"hard_valid_candidate_count": 0}
     assert observed["client_kwargs"] == {"timeout": 600.0, "trust_env": False}
     assert observed["url"] == "http://alignment-api:8000/align"
 

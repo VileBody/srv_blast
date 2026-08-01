@@ -104,6 +104,7 @@ def test_alignment_api_returns_stable_error_code() -> None:
             failure=AlignmentFailure(
                 "ALIGNMENT_UNSUPPORTED_TEXT",
                 "unsupported",
+                details={"hard_valid_candidate_count": 0},
             )
         )
     )
@@ -119,6 +120,9 @@ def test_alignment_api_returns_stable_error_code() -> None:
         )
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "ALIGNMENT_UNSUPPORTED_TEXT"
+    assert response.json()["error"]["details"] == {
+        "hard_valid_candidate_count": 0
+    }
 
 
 @pytest.mark.parametrize(
