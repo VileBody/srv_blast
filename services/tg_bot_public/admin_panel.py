@@ -25,7 +25,11 @@ from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Red
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from core.llm_worker_types import LLM_WORKER_TYPES
 from services.generation_runtime import GenerationRuntimeStore
-from services.orchestrator.alignment_smoke_auth import sign_alignment_smoke_request
+from services.orchestrator.alignment_smoke_auth import (
+    AUTHORIZATION_TTL_S,
+    alignment_smoke_authorization_digest,
+    alignment_smoke_authorization_key,
+)
 from services.orchestrator.windows_node_pool import normalize_windows_urls, runtime_windows_urls_key
 
 from .credits_db import normalize_package_code as _normalize_pkg_code
@@ -1234,14 +1238,17 @@ def build_app(
         base = str(settings.orchestrator_public_url or "").strip().rstrip("/")
         if not base:
             raise RuntimeError("ORCHESTRATOR_PUBLIC_URL is empty")
-        token = str(getattr(settings, "system_maintenance_bypass_token", "") or "").strip()
-        if not token:
-            raise RuntimeError("SYSTEM_MAINTENANCE_BYPASS_TOKEN is empty")
         request_payload = dict(payload)
-        request_payload["auth_timestamp"] = int(time.time())
-        request_payload["auth_signature"] = sign_alignment_smoke_request(
-            request_payload, secret=token
+        auth_nonce = secrets.token_urlsafe(32)
+        request_payload["auth_nonce"] = auth_nonce
+        auth_created = await state_store.redis.set(
+            alignment_smoke_authorization_key(auth_nonce),
+            alignment_smoke_authorization_digest(request_payload),
+            ex=AUTHORIZATION_TTL_S,
+            nx=True,
         )
+        if not auth_created:
+            raise RuntimeError("failed to create alignment smoke authorization")
         async with httpx.AsyncClient(timeout=25.0) as client:
             resp = await client.post(f"{base}/alignment-smoke", json=request_payload)
         if resp.status_code >= 300:

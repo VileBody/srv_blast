@@ -20,7 +20,7 @@ from core.queue_estimate import (
     build_queue_estimate,
     normalize_queue_estimate_window,
 )
-from .alignment_smoke_auth import alignment_smoke_signature_is_valid
+from .alignment_smoke_auth import consume_alignment_smoke_authorization
 from .job_store import JobStore
 from .llm_workers import (
     ensure_config_initialized,
@@ -654,11 +654,16 @@ def create_app() -> FastAPI:
     @app.post("/alignment-smoke", response_model=AlignmentSmokeEnqueueResponse)
     def enqueue_alignment_smoke(req: AlignmentSmokeRequest) -> AlignmentSmokeEnqueueResponse:
         signed_payload = req.model_dump(mode="json", exclude_none=True)
-        if not alignment_smoke_signature_is_valid(
+        auth_nonce = str(signed_payload.pop("auth_nonce", "") or "")
+        if not consume_alignment_smoke_authorization(
+            store.r,
             signed_payload,
-            secret=str(getattr(SETTINGS, "system_maintenance_bypass_token", "") or ""),
+            nonce=auth_nonce,
         ):
-            raise HTTPException(status_code=403, detail="alignment smoke signature is invalid")
+            raise HTTPException(
+                status_code=403,
+                detail="alignment smoke authorization is invalid or expired",
+            )
         if not bool(getattr(SETTINGS, "orchestrator_enqueue_enabled", True)):
             raise HTTPException(status_code=503, detail="enqueue disabled on this orchestrator")
 
@@ -680,8 +685,6 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=422, detail="audio_s3_url is outside raw-audio scope")
 
         request_payload = signed_payload
-        request_payload.pop("auth_timestamp", None)
-        request_payload.pop("auth_signature", None)
         request_payload["job_kind"] = "alignment_smoke"
         routing = _resolve_job_routing(request_payload=request_payload)
         _ensure_queue_affinity(routing)

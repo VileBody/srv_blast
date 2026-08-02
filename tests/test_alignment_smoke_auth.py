@@ -1,10 +1,24 @@
 from services.orchestrator.alignment_smoke_auth import (
-    alignment_smoke_signature_is_valid,
-    sign_alignment_smoke_request,
+    alignment_smoke_authorization_digest,
+    alignment_smoke_authorization_key,
+    consume_alignment_smoke_authorization,
 )
 
 
-def _payload(timestamp: int = 1_800_000_000) -> dict:
+class _FakeRedis:
+    def __init__(self) -> None:
+        self.values: dict[str, str] = {}
+
+    def authorize(self, nonce: str, payload: dict) -> None:
+        self.values[alignment_smoke_authorization_key(nonce)] = (
+            alignment_smoke_authorization_digest(payload)
+        )
+
+    def eval(self, _script: str, _key_count: int, key: str):
+        return self.values.pop(str(key), None)
+
+
+def _payload() -> dict:
     return {
         "audio_s3_url": "s3://media/raw_audio/test.mp3",
         "target_fragment": "exact text",
@@ -12,37 +26,50 @@ def _payload(timestamp: int = 1_800_000_000) -> dict:
         "clip_end_abs": 25.0,
         "request_id": "smoke:batch:run",
         "idempotency_key": "alignment-smoke:batch:run",
-        "auth_timestamp": timestamp,
     }
 
 
-def test_alignment_smoke_signature_accepts_fresh_exact_payload() -> None:
+def test_alignment_smoke_authorization_is_single_use() -> None:
+    redis = _FakeRedis()
     payload = _payload()
-    payload["auth_signature"] = sign_alignment_smoke_request(
-        payload, secret="secret"
-    )
-    assert alignment_smoke_signature_is_valid(
+    nonce = "n" * 32
+    redis.authorize(nonce, payload)
+
+    assert consume_alignment_smoke_authorization(
+        redis,
         payload,
-        secret="secret",
-        now=1_800_000_030,
+        nonce=nonce,
     )
-
-
-def test_alignment_smoke_signature_rejects_tampering() -> None:
-    payload = _payload()
-    payload["auth_signature"] = sign_alignment_smoke_request(
-        payload, secret="secret"
-    )
-    payload["clip_end_abs"] = 26.0
-    assert not alignment_smoke_signature_is_valid(
+    assert not consume_alignment_smoke_authorization(
+        redis,
         payload,
-        secret="secret",
-        now=1_800_000_030,
+        nonce=nonce,
     )
 
 
-def test_alignment_smoke_signature_rejects_expired_request() -> None:
+def test_alignment_smoke_authorization_rejects_tampering_and_is_consumed() -> None:
+    redis = _FakeRedis()
     payload = _payload()
-    payload["auth_signature"] = sign_alignment_smoke_request(
-        payload, secret="secret"
+    nonce = "t" * 32
+    redis.authorize(nonce, payload)
+    tampered = {**payload, "clip_end_abs": 26.0}
+
+    assert not consume_alignment_smoke_authorization(
+        redis,
+        tampered,
+        nonce=nonce,
+    )
+    assert not consume_alignment_smoke_authorization(
+        redis,
+        payload,
+        nonce=nonce,
+    )
+
+
+def test_alignment_smoke_authorization_rejects_missing_nonce() -> None:
+    redis = _FakeRedis()
+    assert not consume_alignment_smoke_authorization(
+        redis,
+        _payload(),
+        nonce="m" * 32,
     )

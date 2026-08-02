@@ -3,9 +3,8 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
-import time
-from typing import Any, Mapping
-
+from collections.abc import Mapping
+from typing import Any
 
 _SIGNED_FIELDS = (
     "audio_s3_url",
@@ -14,8 +13,17 @@ _SIGNED_FIELDS = (
     "clip_end_abs",
     "request_id",
     "idempotency_key",
-    "auth_timestamp",
 )
+
+AUTHORIZATION_TTL_S = 120
+_AUTHORIZATION_KEY_PREFIX = "blast:alignment-smoke:authorization:"
+_CONSUME_AUTHORIZATION_LUA = """
+local value = redis.call('GET', KEYS[1])
+if value then
+  redis.call('DEL', KEYS[1])
+end
+return value
+"""
 
 
 def _canonical_payload(payload: Mapping[str, Any]) -> bytes:
@@ -28,38 +36,27 @@ def _canonical_payload(payload: Mapping[str, Any]) -> bytes:
     ).encode("utf-8")
 
 
-def sign_alignment_smoke_request(
-    payload: Mapping[str, Any],
-    *,
-    secret: str,
-) -> str:
-    key = str(secret or "").strip()
-    if not key:
-        raise RuntimeError("alignment smoke signing secret is empty")
-    return hmac.new(
-        key.encode("utf-8"),
-        _canonical_payload(payload),
-        hashlib.sha256,
-    ).hexdigest()
+def alignment_smoke_authorization_digest(payload: Mapping[str, Any]) -> str:
+    return hashlib.sha256(_canonical_payload(payload)).hexdigest()
 
 
-def alignment_smoke_signature_is_valid(
+def alignment_smoke_authorization_key(nonce: str) -> str:
+    value = str(nonce or "").strip()
+    if not value or len(value) > 128:
+        raise ValueError("invalid alignment smoke authorization nonce")
+    return f"{_AUTHORIZATION_KEY_PREFIX}{value}"
+
+
+def consume_alignment_smoke_authorization(
+    redis_client: Any,
     payload: Mapping[str, Any],
     *,
-    secret: str,
-    max_age_s: int = 120,
-    now: float | None = None,
+    nonce: str,
 ) -> bool:
-    key = str(secret or "").strip()
-    signature = str(payload.get("auth_signature") or "").strip().lower()
-    if not key or len(signature) != 64:
-        return False
-    try:
-        timestamp = int(payload.get("auth_timestamp"))
-    except (TypeError, ValueError):
-        return False
-    current = int(time.time() if now is None else now)
-    if timestamp > current + 15 or current - timestamp > int(max_age_s):
-        return False
-    expected = sign_alignment_smoke_request(payload, secret=key)
-    return hmac.compare_digest(signature, expected)
+    key = alignment_smoke_authorization_key(nonce)
+    stored = redis_client.eval(_CONSUME_AUTHORIZATION_LUA, 1, key)
+    if isinstance(stored, bytes):
+        stored = stored.decode("utf-8", errors="replace")
+    actual = str(stored or "").strip().lower()
+    expected = alignment_smoke_authorization_digest(payload)
+    return len(actual) == 64 and hmac.compare_digest(actual, expected)
