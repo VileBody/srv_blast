@@ -1265,16 +1265,7 @@ def select_dynamic_alignment_window(
     stable_clusters = [
         item for item in clusters if len(item[1]) >= minimum_consensus
     ]
-    if not stable_clusters:
-        largest_consensus = max((len(item[1]) for item in clusters), default=0)
-        raise AlignmentFailure(
-            ERROR_WINDOW_MISMATCH,
-            "dynamic window timing is unstable "
-            f"consensus={largest_consensus}/{minimum_consensus} "
-            f"hard_valid={len(hard_valid_candidates)} "
-            f"score_pool={len(score_pool)}",
-            details=_failure_details(),
-        )
+    largest_consensus = max((len(item[1]) for item in clusters), default=0)
 
     boundary_supported_clusters = []
     for item in stable_clusters:
@@ -1319,29 +1310,48 @@ def select_dynamic_alignment_window(
             )
         ):
             timing_supported_clusters.append(item)
-    if not boundary_supported_clusters and not timing_supported_clusters:
-        raise AlignmentFailure(
-            ERROR_WINDOW_MISMATCH,
-            "dynamic window boundary evidence is outside user window "
-            f"left_confident_outside={len(left_confident_outside_candidates)} "
-            f"right_confident_outside={len(right_confident_outside_candidates)} "
-            f"stable_clusters={len(stable_clusters)}",
-            details=_failure_details(),
-        )
-
+    selection_degraded = False
+    selection_reason = "strict_boundary_consensus"
+    selection_warnings: list[str] = []
     timing_consensus_used = not boundary_supported_clusters
-    selection_clusters = (
-        boundary_supported_clusters or timing_supported_clusters
-    )
-    anchor, consensus = max(
-        selection_clusters,
-        key=lambda item: (
-            len(item[1]),
-            float(np.mean([candidate.quality_score for candidate in item[1]])),
-            -float(np.mean([candidate.adjustment_sec for candidate in item[1]])),
-            item[0].quality_score,
-        ),
-    )
+    selection_clusters = boundary_supported_clusters or timing_supported_clusters
+    if selection_clusters:
+        anchor, consensus = max(
+            selection_clusters,
+            key=lambda item: (
+                len(item[1]),
+                float(np.mean([candidate.quality_score for candidate in item[1]])),
+                -float(np.mean([candidate.adjustment_sec for candidate in item[1]])),
+                item[0].quality_score,
+            ),
+        )
+        if not boundary_supported_clusters:
+            selection_reason = "stable_timing_consensus"
+    elif stable_clusters:
+        # Boundary confidence, edge clearance and expanded-window probes are
+        # quality evidence, not validity constraints. A different probe must
+        # not veto an otherwise contained, non-compressed stable cluster.
+        selection_degraded = True
+        selection_reason = "stable_cluster_with_boundary_counterevidence"
+        selection_warnings.append("boundary_counterevidence_outside_user_window")
+        anchor, consensus = max(
+            stable_clusters,
+            key=lambda item: (
+                len(item[1]),
+                float(np.mean([candidate.quality_score for candidate in item[1]])),
+                -float(np.mean([candidate.adjustment_sec for candidate in item[1]])),
+                item[0].quality_score,
+            ),
+        )
+    else:
+        # The score pool contains only hard-valid candidates. When small CTC
+        # timing jitter prevents the requested strict cluster size, use its
+        # robust medoid deterministically and expose the reduced confidence.
+        selection_degraded = True
+        selection_reason = "hard_valid_medoid_without_strict_consensus"
+        selection_warnings.append("insufficient_timing_consensus")
+        consensus = list(score_pool)
+        anchor = score_pool[0]
     (
         consensus_left_edge,
         consensus_right_edge,
@@ -1386,15 +1396,19 @@ def select_dynamic_alignment_window(
     selected = min(
         consensus,
         key=lambda candidate: (
+            _distance_to_median(candidate),
             -int(candidate.left_confidence_supported)
             - int(candidate.right_confidence_supported),
             -int(candidate.left_edge_supported)
             - int(candidate.right_edge_supported),
-            _distance_to_median(candidate),
             -candidate.quality_score,
             candidate.adjustment_sec,
+            candidate.search_start_abs,
+            candidate.search_end_abs,
         ),
     )
+    if selection_degraded:
+        anchor = selected
     word_stability = [
         {
             "word_index": index,
@@ -1445,17 +1459,11 @@ def select_dynamic_alignment_window(
     if max_interior_deviation > max_interior_outlier + 1e-9:
         stability_failures.append("interior_outlier_too_large")
     if stability_failures:
-        raise AlignmentFailure(
-            ERROR_WINDOW_MISMATCH,
-            "dynamic window robust consensus is unstable "
-            f"failures={stability_failures} "
-            f"left={left_boundary_deviation:.6f}/{left_boundary_limit:.6f} "
-            f"right={right_boundary_deviation:.6f}/{right_boundary_limit:.6f} "
-            f"interior_unstable={unstable_interior_word_count}/"
-            f"{allowed_interior_outliers} "
-            f"interior_max={max_interior_deviation:.6f}/"
-            f"{max_interior_outlier:.6f}",
-            details=_failure_details(),
+        selection_degraded = True
+        if selection_reason == "strict_boundary_consensus":
+            selection_reason = "hard_valid_medoid_with_collective_instability"
+        selection_warnings.extend(
+            f"robust_consensus_{failure}" for failure in stability_failures
         )
 
     ranked_summaries = [
@@ -1524,29 +1532,38 @@ def select_dynamic_alignment_window(
             for candidate in hard_valid_candidates
         ),
         "boundary_evidence_mode": (
-            "timing_consensus"
-            if timing_consensus_used
+            "degraded_hard_valid_medoid"
+            if selection_degraded
             else (
-                "single_candidate"
-                if any(
-                    candidate.left_edge_supported
-                    and candidate.right_edge_supported
-                    and candidate.left_confidence_supported
-                    and candidate.right_confidence_supported
-                    for candidate in consensus
-                )
+                "timing_consensus"
+                if timing_consensus_used
                 else (
-                    "split_consensus"
-                    if any(candidate.left_edge_supported for candidate in consensus)
-                    and any(candidate.right_edge_supported for candidate in consensus)
-                    else "user_window_censored"
+                    "single_candidate"
+                    if any(
+                        candidate.left_edge_supported
+                        and candidate.right_edge_supported
+                        and candidate.left_confidence_supported
+                        and candidate.right_confidence_supported
+                        for candidate in consensus
+                    )
+                    else (
+                        "split_consensus"
+                        if any(candidate.left_edge_supported for candidate in consensus)
+                        and any(candidate.right_edge_supported for candidate in consensus)
+                        else "user_window_censored"
+                    )
                 )
             )
         ),
-        "boundary_evidence_warnings": boundary_evidence_warnings,
+        "boundary_evidence_warnings": list(
+            dict.fromkeys(boundary_evidence_warnings + selection_warnings)
+        ),
+        "degraded_confidence": bool(selection_degraded),
+        "selection_reason": selection_reason,
         "rejection_counts": reason_counts,
         "score_pool_count": len(score_pool),
         "stable_cluster_count": len(stable_clusters),
+        "largest_consensus_candidate_count": int(largest_consensus),
         "consensus_candidate_count": len(consensus),
         "consensus_anchor_start_abs": float(anchor.search_start_abs),
         "consensus_anchor_end_abs": float(anchor.search_end_abs),
