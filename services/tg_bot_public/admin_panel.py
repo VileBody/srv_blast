@@ -3640,6 +3640,15 @@ def build_app(
 
         days = _query_int(request, "days", default=30, min_value=1, max_value=90)
         limit = _query_int(request, "limit", default=100, min_value=1, max_value=300)
+        presign_audio = bool(
+            _query_int(request, "presign_audio", default=0, min_value=0, max_value=1)
+        )
+        presign_ttl_s = _query_int(
+            request, "presign_ttl_s", default=1800, min_value=60, max_value=3600
+        )
+        s3_client = getattr(bot_app, "s3", None) if bot_app is not None else None
+        if presign_audio and s3_client is None:
+            raise HTTPException(503, "S3 presigning is unavailable")
         created_after = datetime.now(timezone.utc) - timedelta(days=days)
         rows = await runtime_store.list_alignment_smoke_candidates(
             surface="public",
@@ -3669,6 +3678,16 @@ def build_app(
             item = by_run_id.get(run_id)
             if item is None:
                 payload = dict(row.get("payload") or {})
+                input_payload = {
+                    key: payload.get(key) for key in allowed_input_fields
+                }
+                audio_s3_url = str(input_payload.get("audio_s3_url") or "")
+                if presign_audio and audio_s3_url.startswith("s3://"):
+                    input_payload["audio_download_url"] = await asyncio.to_thread(
+                        s3_client.generate_presigned_for_s3_url,
+                        s3_url=audio_s3_url,
+                        expires_s=presign_ttl_s,
+                    )
                 item = {
                     "run_id": run_id,
                     "created_at": _iso_datetime(row.get("run_created_at")),
@@ -3677,7 +3696,7 @@ def build_app(
                     "current_stage": str(row.get("current_stage") or ""),
                     "last_error_code": str(row.get("last_error_code") or ""),
                     "last_error_text": str(row.get("last_error_text") or ""),
-                    "input": {key: payload.get(key) for key in allowed_input_fields},
+                    "input": input_payload,
                     "versions": [],
                 }
                 by_run_id[run_id] = item
@@ -3701,6 +3720,8 @@ def build_app(
                 "generated_at": datetime.now(timezone.utc).isoformat(),
                 "days": days,
                 "requested_run_limit": limit,
+                "presigned_audio": presign_audio,
+                "presign_ttl_s": presign_ttl_s if presign_audio else 0,
                 "run_count": len(runs),
                 "runs": runs,
             },

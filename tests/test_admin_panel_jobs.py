@@ -18,6 +18,13 @@ class _DummyPoolAwareCreditsDB:
         return object()
 
 
+class _FakeS3:
+    def generate_presigned_for_s3_url(self, *, s3_url: str, expires_s: int | None = None) -> str:
+        assert s3_url == "s3://private/audio.mp3"
+        assert expires_s == 600
+        return "https://signed.example/audio.mp3?ttl=600"
+
+
 class _DummyStateStore:
     redis = object()
 
@@ -190,7 +197,7 @@ class _FakeRuntimeStore:
                 "payload": {
                     "chat_id": 975769043,
                     "chat_username": "private-user",
-                    "audio_s3_url": "https://media.example/audio.mp3",
+                    "audio_s3_url": "s3://private/audio.mp3",
                     "lyrics_text": "full lyrics",
                     "target_fragment": "target lyrics",
                     "subtitles_mode": "word",
@@ -318,6 +325,7 @@ def _build_client_with_runtime(monkeypatch) -> TestClient:
         settings=settings,  # type: ignore[arg-type]
         tbank_client=None,
         bot_ref=None,
+        bot_app=SimpleNamespace(s3=_FakeS3()),
     )
     return TestClient(app)
 
@@ -385,6 +393,20 @@ def test_runs_export_returns_alignment_inputs_without_user_identity(monkeypatch)
     assert "chat_id" not in resp.text
     assert "chat_username" not in resp.text
     assert "private-user" not in resp.text
+
+
+def test_runs_export_can_presign_audio_with_bounded_ttl(monkeypatch) -> None:
+    with _build_client_with_runtime(monkeypatch) as client:
+        resp = client.get(
+            "/admin/runs-export.json?days=30&limit=50&presign_audio=1&presign_ttl_s=600",
+            auth=("admin", "secret"),
+        )
+
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["presigned_audio"] is True
+    assert payload["presign_ttl_s"] == 600
+    assert payload["runs"][0]["input"]["audio_download_url"] == "https://signed.example/audio.mp3?ttl=600"
 
 
 def test_run_detail_page_shows_versions_outbox_and_events(monkeypatch) -> None:
