@@ -1,6 +1,6 @@
 # Dynamic CTC window policy
 
-`local-ctc-viterbi-v16-robust-word-stability-redaction-espeak-demucs-4.1.0`
+`local-ctc-viterbi-v17-hard-valid-medoid-redaction-espeak-demucs-4.1.0`
 uses one Demucs pass and one Wav2Vec2 inference over an expanded analysis crop.
 It then evaluates a bounded set of CTC/Viterbi search windows over slices of the
 same emission matrix.
@@ -14,11 +14,6 @@ This prevents a short clip from compressing the last words into its boundary.
 A candidate must satisfy all of the following:
 
 - every word is fully inside the user clip, within one emission-frame tolerance;
-- at least three high-scoring windows agree on both boundaries and at least 90%
-  of interior words;
-- isolated interior outliers stay below the derived maximum deviation cap;
-- each boundary has direct confidence/clearance evidence or stable timing with
-  no confident counter-evidence outside the authoritative user clip;
 - boundary-word duration per CTC token is not abnormally compressed.
 
 Interior words below `ALIGNMENT_MIN_WORD_CONFIDENCE` remain explicit quality
@@ -35,19 +30,18 @@ vary only up to the derived cap (`max(3 * tolerance, weak-boundary tolerance)`).
 This prevents a short adlib or interjection from splitting an otherwise stable
 long fragment while still rejecting broad drift.
 
-Direct confidence and acoustic clearance remain preferred, and the left and
-right evidence may come from different probes. When a boundary posterior is
-weak, a cluster of at least three independent windows may prove it through
-stable timing. This mode is rejected when at least three expanded probes
-confidently place that same boundary outside the user clip. A word touching the
-user clip is also accepted as a censored observation only when that side is
-acoustically confident. These rules never permit output outside the user clip
-or compressed boundary words.
+Direct confidence, acoustic clearance, strict timing consensus and outside-
+window probes are quality signals used to rank hard-valid candidates. They do
+not invalidate a contained, monotonic, non-compressed alignment. A word
+touching the user clip is treated as a censored observation. These rules never
+permit selected output outside the user clip or compressed boundary words.
 
-The selected result is the medoid of the largest high-scoring supported
-consensus group. If timings are unstable, a word is confidently outside the
-user clip, or no hard-valid group reaches the required size, alignment fails
-explicitly with `ALIGNMENT_WINDOW_MISMATCH`; there is no Gemini fallback.
+The selected result is the timing medoid of the preferred high-scoring strict
+consensus group. If strict consensus is incomplete, the service deterministically
+selects the medoid of the high-scoring hard-valid pool and reports
+`degraded_confidence`, `selection_reason`, and boundary warnings. Alignment
+fails explicitly with `ALIGNMENT_WINDOW_MISMATCH` only when no hard-valid
+candidate exists; there is no Gemini fallback.
 
 ## Configuration
 
