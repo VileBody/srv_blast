@@ -90,15 +90,31 @@ if "asyncpg" not in sys.modules:
     sys.modules["asyncpg"] = asyncpg_stub
 
 from services.orchestrator import app as orchestrator_app
-from services.orchestrator.alignment_smoke_auth import sign_alignment_smoke_request
+from services.orchestrator.alignment_smoke_auth import (
+    alignment_smoke_authorization_digest,
+    alignment_smoke_authorization_key,
+)
 from services.orchestrator.schemas import JobState
+
+
+class _FakeAuthRedis:
+    def __init__(self) -> None:
+        self.values: dict[str, str] = {}
+
+    def authorize(self, nonce: str, payload: dict) -> None:
+        self.values[alignment_smoke_authorization_key(nonce)] = (
+            alignment_smoke_authorization_digest(payload)
+        )
+
+    def eval(self, _script: str, _key_count: int, key: str):
+        return self.values.pop(str(key), None)
 
 
 class _FakeStore:
     def __init__(self, jobs: list[JobState]) -> None:
         self._jobs: dict[str, JobState] = {j.job_id: j for j in jobs}
         self._new_job_seq = 0
-        self.r = object()
+        self.r = _FakeAuthRedis()
         self.key_prefix = "test"
 
     def list_jobs(self) -> list[JobState]:
@@ -684,7 +700,7 @@ def test_send_audio_rejects_without_render_capacity(monkeypatch) -> None:
     assert store.list_jobs() == []
 
 
-def test_alignment_smoke_requires_token_and_enqueues_without_llm(monkeypatch) -> None:
+def test_alignment_smoke_requires_authorization_and_enqueues_without_llm(monkeypatch) -> None:
     store = _FakeStore([])
     queued: list[dict] = []
     monkeypatch.setenv("S3_BUCKET_RAW_AUDIO", "media")
@@ -694,7 +710,6 @@ def test_alignment_smoke_requires_token_and_enqueues_without_llm(monkeypatch) ->
         "SETTINGS",
         replace(
             orchestrator_app.SETTINGS,
-            system_maintenance_bypass_token="smoke-token",
             system_maintenance_mode=False,
             orchestrator_enqueue_enabled=True,
         ),
@@ -709,18 +724,14 @@ def test_alignment_smoke_requires_token_and_enqueues_without_llm(monkeypatch) ->
         "target_fragment": "exact fragment",
         "clip_start_abs": 12.0,
         "clip_end_abs": 27.0,
-        "auth_timestamp": int(time.time()),
         "request_id": "",
     }
-    signed_payload = dict(payload)
-    signed_payload["auth_signature"] = sign_alignment_smoke_request(
-        signed_payload, secret="smoke-token"
-    )
+    auth_nonce = "a" * 32
+    store.r.authorize(auth_nonce, payload)
+    authorized_payload = {**payload, "auth_nonce": auth_nonce}
     with _build_client(monkeypatch, store) as client:
-        denied = client.post(
-            "/alignment-smoke", json={**payload, "auth_signature": "0" * 64}
-        )
-        accepted = client.post("/alignment-smoke", json=signed_payload)
+        denied = client.post("/alignment-smoke", json={**payload, "auth_nonce": "x" * 32})
+        accepted = client.post("/alignment-smoke", json=authorized_payload)
 
     assert denied.status_code == 403
     assert accepted.status_code == 200
@@ -735,6 +746,5 @@ def test_alignment_smoke_requires_token_and_enqueues_without_llm(monkeypatch) ->
     stored = store.get(body["job_id"])
     assert stored is not None
     assert stored.request["job_kind"] == "alignment_smoke"
-    assert "auth_signature" not in stored.request
-    assert "auth_timestamp" not in stored.request
+    assert "auth_nonce" not in stored.request
     assert "llm_worker_type" not in stored.request

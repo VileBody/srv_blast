@@ -7,7 +7,7 @@ from urllib.parse import unquote_plus
 from fastapi.testclient import TestClient
 
 from services.tg_bot_public import admin_panel
-from services.orchestrator.alignment_smoke_auth import alignment_smoke_signature_is_valid
+from services.orchestrator.alignment_smoke_auth import alignment_smoke_authorization_key
 
 
 class _DummyCreditsDB:
@@ -19,8 +19,21 @@ class _DummyPoolAwareCreditsDB:
         return object()
 
 
+class _DummyAsyncRedis:
+    def __init__(self) -> None:
+        self.values: dict[str, str] = {}
+
+    async def set(self, key: str, value: str, *, ex: int, nx: bool):
+        assert ex == 120
+        assert nx is True
+        if key in self.values:
+            return False
+        self.values[key] = value
+        return True
+
+
 class _DummyStateStore:
-    redis = object()
+    redis = _DummyAsyncRedis()
 
 
 class _FakeResponse:
@@ -153,10 +166,9 @@ class _FakeAsyncClient:
             )
         if url.endswith("/alignment-smoke"):
             payload = dict(json or {})
-            assert alignment_smoke_signature_is_valid(
-                payload, secret="smoke-token"
-            )
-            assert "maintenance_bypass_token" not in payload
+            assert len(str(payload.get("auth_nonce") or "")) >= 32
+            assert alignment_smoke_authorization_key(payload["auth_nonce"]) in _DummyStateStore.redis.values
+            assert "auth_signature" not in payload
             return _FakeResponse(
                 200,
                 {

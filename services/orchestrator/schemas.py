@@ -235,8 +235,7 @@ class AlignmentSmokeRequest(BaseModel):
     clip_end_abs: float = Field(gt=0.0)
     request_id: str = Field(default="", max_length=200)
     idempotency_key: Optional[str] = Field(default=None, min_length=1)
-    auth_timestamp: int = Field(gt=0)
-    auth_signature: str = Field(min_length=64, max_length=64)
+    auth_nonce: str = Field(min_length=32, max_length=128)
 
     @model_validator(mode="after")
     def _validate_window(self) -> "AlignmentSmokeRequest":
