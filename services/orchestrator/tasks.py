@@ -30,6 +30,7 @@ from celery.signals import task_failure
 
 from core.telegram_api import make_telegram_api
 
+from mlcore.alignment.client import AlignmentServiceError, request_local_alignment
 from .artifacts import make_job_paths
 from .celery_app import celery_app
 from .config import SETTINGS
@@ -2574,9 +2575,188 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
     return {"ok": True, "stage": "build_done", "paths": paths.manifest()}
 
 
+def _alignment_smoke_ass_time(seconds: float) -> str:
+    centiseconds = max(0, int(round(float(seconds) * 100.0)))
+    hours, rem = divmod(centiseconds, 360000)
+    minutes, rem = divmod(rem, 6000)
+    secs, cs = divmod(rem, 100)
+    return f"{hours}:{minutes:02d}:{secs:02d}.{cs:02d}"
+
+
+def _alignment_smoke_ass_escape(text: str) -> str:
+    return (
+        str(text or "")
+        .replace("\\", r"\\")
+        .replace("{", r"\{")
+        .replace("}", r"\}")
+        .replace("\n", r"\N")
+    )
+
+
+def _render_alignment_smoke_preview(
+    *,
+    audio_path: Path,
+    output_path: Path,
+    ass_path: Path,
+    words: list,
+    clip_start_abs: float,
+    clip_end_abs: float,
+) -> None:
+    duration = float(clip_end_abs) - float(clip_start_abs)
+    if duration <= 0.0:
+        raise RuntimeError("alignment smoke preview duration must be positive")
+    events: list[str] = []
+    for word in words:
+        start = max(0.0, float(word.t_start) - float(clip_start_abs))
+        end = min(duration, float(word.t_end) - float(clip_start_abs))
+        if end <= start:
+            continue
+        events.append(
+            "Dialogue: 0,"
+            f"{_alignment_smoke_ass_time(start)},"
+            f"{_alignment_smoke_ass_time(end)},"
+            "Default,,0,0,0,,"
+            f"{_alignment_smoke_ass_escape(word.text)}"
+        )
+    if not events:
+        raise RuntimeError("alignment smoke response contains no words inside user window")
+    ass_text = "\n".join(
+        [
+            "[Script Info]",
+            "ScriptType: v4.00+",
+            "PlayResX: 720",
+            "PlayResY: 1280",
+            "WrapStyle: 2",
+            "",
+            "[V4+ Styles]",
+            "Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding",
+            "Style: Default,DejaVu Sans,62,&H00FFFFFF,&H000000FF,&H00000000,&H96000000,-1,0,0,0,100,100,0,0,1,4,1,5,45,45,45,1",
+            "",
+            "[Events]",
+            "Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text",
+            *events,
+            "",
+        ]
+    )
+    ass_path.parent.mkdir(parents=True, exist_ok=True)
+    ass_path.write_text(ass_text, encoding="utf-8")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    ass_filter_path = str(ass_path.resolve()).replace("\\", "/").replace(":", r"\:")
+    proc = subprocess.run(
+        [
+            "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+            "-f", "lavfi", "-i", f"color=c=black:s=720x1280:r=30:d={duration:.3f}",
+            "-ss", f"{float(clip_start_abs):.3f}",
+            "-t", f"{duration:.3f}", "-i", str(audio_path),
+            "-vf", f"ass={ass_filter_path}",
+            "-map", "0:v:0", "-map", "1:a:0?",
+            "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-b:a", "160k", "-shortest", str(output_path),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=max(120.0, duration * 4.0),
+        check=False,
+    )
+    if proc.returncode != 0 or not output_path.is_file():
+        raise RuntimeError(
+            f"alignment smoke preview failed rc={proc.returncode}: {proc.stderr[-2000:]}"
+        )
+
+
+@celery_app.task(name="orchestrator.alignment_smoke_job")
+def alignment_smoke_job(job_id: str) -> Dict[str, Any]:
+    store = JobStore.from_env()
+    state = store.get(job_id)
+    if state is None:
+        raise RuntimeError(f"alignment smoke job not found: {job_id}")
+    req = dict(state.request or {})
+    if str(req.get("job_kind") or "") != "alignment_smoke":
+        raise RuntimeError(f"job {job_id} is not an alignment smoke job")
+    paths = make_job_paths(
+        work_dir=SETTINGS.work_dir,
+        output_dir=SETTINGS.output_dir,
+        job_id=job_id,
+    )
+    audio_path = paths.data_dir / "alignment-smoke-source.mp3"
+    preview_path = paths.out_dir / "alignment-smoke-preview.mp4"
+    ass_path = paths.out_dir / "alignment-smoke-preview.ass"
+    try:
+        store.set_status(job_id, "RUNNING", stage="alignment_smoke_download")
+        _download(str(req.get("audio_s3_url") or ""), audio_path)
+        store.set_status(job_id, "RUNNING", stage="alignment_smoke")
+        aligned = request_local_alignment(
+            service_url=str(os.environ.get("ALIGNMENT_SERVICE_URL") or "").strip(),
+            timeout_s=float(os.environ.get("ALIGNMENT_TIMEOUT_S") or "600"),
+            audio_path=audio_path,
+            target_fragment=str(req.get("target_fragment") or ""),
+            clip_start_abs=float(req.get("clip_start_abs")),
+            clip_end_abs=float(req.get("clip_end_abs")),
+            request_id=str(req.get("request_id") or job_id),
+        )
+        stage1_asr = aligned.stage1_asr
+        selected = stage1_asr.selected_fragment
+        words = list(
+            selected.transcript_words
+            if selected is not None
+            else stage1_asr.transcript_words
+        )
+        _render_alignment_smoke_preview(
+            audio_path=audio_path,
+            output_path=preview_path,
+            ass_path=ass_path,
+            words=words,
+            clip_start_abs=float(req.get("clip_start_abs")),
+            clip_end_abs=float(req.get("clip_end_abs")),
+        )
+        output_bucket = str(os.environ.get("S3_BUCKET_OUTPUT_VIDEO") or "").strip()
+        if not output_bucket:
+            raise RuntimeError("S3_BUCKET_OUTPUT_VIDEO is empty")
+        output_key = f"alignment-smoke/{job_id}/preview.mp4"
+        s3 = _make_s3_client()
+        s3.upload_file(
+            str(preview_path),
+            output_bucket,
+            output_key,
+            ExtraArgs={"ContentType": "video/mp4"},
+        )
+        result = {
+            "output_url": f"s3://{output_bucket}/{output_key}",
+            "stage1_asr": stage1_asr.model_dump(mode="json"),
+            "diagnostics": dict(aligned.diagnostics),
+            "backend": dict(aligned.backend),
+        }
+        store.set_status(job_id, "SUCCEEDED", stage="alignment_smoke", result=result)
+        return {"ok": True, **result}
+    except AlignmentServiceError as exc:
+        store.set_status(
+            job_id,
+            "FAILED",
+            stage="alignment_smoke",
+            error=f"{exc.code}: {exc.message}",
+            result={"alignment_error": {"code": exc.code, "details": exc.details}},
+        )
+        raise
+    except Exception as exc:
+        store.set_status(
+            job_id,
+            "FAILED",
+            stage="alignment_smoke",
+            error=f"{type(exc).__name__}: {exc}",
+        )
+        raise
+    finally:
+        for path in (audio_path, preview_path, ass_path):
+            try:
+                path.unlink(missing_ok=True)
+            except Exception:
+                log.warning("alignment_smoke_cleanup_failed job_id=%s path=%s", job_id, path)
+
+
 # Task names whose first positional arg is the job_id, used by the orphan-reaper
 # below to flip a job to FAILED when its worker dies mid-execution.
 _JOB_ID_FIRST_ARG_TASKS = frozenset({
+    "orchestrator.alignment_smoke_job",
     "orchestrator.build_job",
     "orchestrator.build_job_sdk",
     "orchestrator.build_job_openrouter",

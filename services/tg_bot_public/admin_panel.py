@@ -25,6 +25,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Red
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from core.llm_worker_types import LLM_WORKER_TYPES
 from services.generation_runtime import GenerationRuntimeStore
+from services.orchestrator.alignment_smoke_auth import sign_alignment_smoke_request
 from services.orchestrator.windows_node_pool import normalize_windows_urls, runtime_windows_urls_key
 
 from .credits_db import normalize_package_code as _normalize_pkg_code
@@ -1227,6 +1228,31 @@ def build_app(
         data = resp.json()
         if not isinstance(data, dict):
             raise RuntimeError(f"orchestrator GET /jobs/{jid} returned non-object: {data!r}")
+        return data
+
+    async def _orchestrator_enqueue_alignment_smoke(payload: dict) -> dict:
+        base = str(settings.orchestrator_public_url or "").strip().rstrip("/")
+        if not base:
+            raise RuntimeError("ORCHESTRATOR_PUBLIC_URL is empty")
+        token = str(getattr(settings, "system_maintenance_bypass_token", "") or "").strip()
+        if not token:
+            raise RuntimeError("SYSTEM_MAINTENANCE_BYPASS_TOKEN is empty")
+        request_payload = dict(payload)
+        request_payload["auth_timestamp"] = int(time.time())
+        request_payload["auth_signature"] = sign_alignment_smoke_request(
+            request_payload, secret=token
+        )
+        async with httpx.AsyncClient(timeout=25.0) as client:
+            resp = await client.post(f"{base}/alignment-smoke", json=request_payload)
+        if resp.status_code >= 300:
+            raise RuntimeError(
+                f"orchestrator POST /alignment-smoke failed: {resp.status_code} {resp.text}"
+            )
+        data = resp.json()
+        if not isinstance(data, dict):
+            raise RuntimeError(
+                f"orchestrator POST /alignment-smoke returned non-object: {data!r}"
+            )
         return data
 
     async def _orchestrator_get_metrics() -> dict:
@@ -3620,6 +3646,14 @@ def build_app(
             <label>Limit: <input type="number" name="limit" value="{limit}" min="1" max="300"></label>
             <button type="submit">Refresh</button>
           </form>
+          <form method="post" action="/admin/alignment-smoke/start"
+                style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px">
+            <strong>Alignment smoke:</strong>
+            <label>Days: <input type="number" name="days" value="30" min="1" max="90"></label>
+            <label>Jobs: <input type="number" name="count" value="30" min="1" max="50"></label>
+            <button type="submit">Start on orchestrator</button>
+          </form>
+          <p style="color:#666;font-size:0.88em">Runs only local CTC alignment and uploads lightweight previews; no LLM, credits, footage, or render node.</p>
           <p style="margin-top:8px">Visible runs: <strong>{len(runs)}</strong></p>
           <div class="table-wrap">
             <table>
@@ -3708,6 +3742,142 @@ def build_app(
                 "Content-Disposition": 'attachment; filename="alignment-smoke-inputs.json"',
                 "Cache-Control": "no-store",
             },
+        )
+
+    @app.post("/admin/alignment-smoke/start", response_class=JSONResponse)
+    async def alignment_smoke_start(
+        days: int = Form(30),
+        count: int = Form(30),
+        _user: str = Depends(_check_auth),
+    ) -> JSONResponse:
+        if runtime_store is None:
+            raise HTTPException(503, "Generation runtime store is unavailable")
+        days = max(1, min(int(days), 90))
+        count = max(1, min(int(count), 50))
+        created_after = datetime.now(timezone.utc) - timedelta(days=days)
+        rows = await runtime_store.list_alignment_smoke_candidates(
+            surface="public",
+            created_after=created_after,
+            limit=300,
+        )
+
+        candidates: list[dict[str, Any]] = []
+        seen_runs: set[str] = set()
+        for row in rows:
+            run_id = str(row.get("run_id") or "").strip()
+            if not run_id or run_id in seen_runs:
+                continue
+            payload = dict(row.get("payload") or {})
+            audio_s3_url = str(payload.get("audio_s3_url") or "").strip()
+            target_fragment = str(payload.get("target_fragment") or "").strip()
+            start = payload.get("user_clip_start_sec")
+            end = payload.get("user_clip_end_sec")
+            try:
+                start_f = float(start)
+                end_f = float(end)
+            except (TypeError, ValueError):
+                continue
+            if (
+                not audio_s3_url.lower().startswith("s3://")
+                or not target_fragment
+                or start_f < 0.0
+                or end_f <= start_f
+            ):
+                continue
+            seen_runs.add(run_id)
+            candidates.append(
+                {
+                    "run_id": run_id,
+                    "audio_s3_url": audio_s3_url,
+                    "target_fragment": target_fragment,
+                    "clip_start_abs": start_f,
+                    "clip_end_abs": end_f,
+                }
+            )
+
+        selected = candidates[:count]
+        if not selected:
+            raise HTTPException(409, "No complete s3 alignment inputs found")
+        batch_id = f"{int(time.time())}-{secrets.token_hex(4)}"
+        jobs: list[dict[str, Any]] = []
+        failures: list[dict[str, str]] = []
+        for item in selected:
+            run_id = str(item["run_id"])
+            request_payload = {
+                "audio_s3_url": item["audio_s3_url"],
+                "target_fragment": item["target_fragment"],
+                "clip_start_abs": item["clip_start_abs"],
+                "clip_end_abs": item["clip_end_abs"],
+                "request_id": f"smoke:{batch_id}:{run_id}",
+                "idempotency_key": f"alignment-smoke:{batch_id}:{run_id}",
+            }
+            try:
+                enqueued = await _orchestrator_enqueue_alignment_smoke(request_payload)
+                jobs.append(
+                    {
+                        "run_id": run_id,
+                        "job_id": str(enqueued.get("job_id") or ""),
+                        "status": str(enqueued.get("status") or ""),
+                        "created": bool(enqueued.get("created", True)),
+                        "preview_path": f"/admin/alignment-smoke/{enqueued.get('job_id')}/preview",
+                    }
+                )
+            except Exception as exc:
+                failures.append({"run_id": run_id, "error": str(exc)})
+
+        base = str(settings.orchestrator_public_url or "").strip().rstrip("/")
+        return JSONResponse(
+            {
+                "schema_version": 1,
+                "batch_id": batch_id,
+                "days": days,
+                "requested_count": count,
+                "eligible_count": len(candidates),
+                "enqueued_count": len(jobs),
+                "failed_to_enqueue_count": len(failures),
+                "jobs": jobs,
+                "failures": failures,
+                "poll_url_template": f"{base}/jobs/{{job_id}}",
+            },
+            headers={
+                "Content-Disposition": f'attachment; filename="alignment-smoke-jobs-{batch_id}.json"',
+                "Cache-Control": "no-store",
+            },
+        )
+
+    @app.get("/admin/alignment-smoke/{job_id}/preview")
+    async def alignment_smoke_preview(
+        job_id: str,
+        _user: str = Depends(_check_auth),
+    ) -> RedirectResponse:
+        jid = str(job_id or "").strip()
+        if not jid:
+            raise HTTPException(404, "job_id is empty")
+        state = await _orchestrator_get_job(job_id=jid)
+        if not state:
+            raise HTTPException(404, "Alignment smoke job not found")
+        request_payload = dict(state.get("request") or {})
+        if str(request_payload.get("job_kind") or "") != "alignment_smoke":
+            raise HTTPException(404, "Alignment smoke job not found")
+        if str(state.get("status") or "").upper() != "SUCCEEDED":
+            raise HTTPException(409, "Alignment smoke preview is not ready")
+        result = dict(state.get("result") or {})
+        output_url = str(result.get("output_url") or "").strip()
+        expected_bucket = str(getattr(settings, "s3_bucket_output_video", "") or "").strip()
+        expected_key = f"alignment-smoke/{jid}/preview.mp4"
+        if output_url != f"s3://{expected_bucket}/{expected_key}" or not expected_bucket:
+            raise HTTPException(409, "Alignment smoke preview locator is invalid")
+        from src.storage.s3 import generate_presigned_url
+
+        preview_url = generate_presigned_url(
+            expected_bucket,
+            expected_key,
+            expires_in=900,
+        )
+        return RedirectResponse(
+            url=preview_url,
+            status_code=307,
+            headers={"Cache-Control": "no-store"},
         )
 
     @app.get("/admin/runs/{run_id}", response_class=HTMLResponse)
