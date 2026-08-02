@@ -124,6 +124,39 @@ services:
       bash -lc "python footage_config.py && celery -A services.orchestrator.celery_app:celery_app worker -l INFO --concurrency=${WORKER_BUILD_CONCURRENCY:-4} -Q ${CELERY_QUEUE_BUILD:-build}"
     restart: unless-stopped
 
+  worker-alignment-smoke:
+    image: ${BLAST_RUNTIME_IMAGE:-blast_final-runtime:local}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      network: host
+    container_name: worker-alignment-smoke
+    env_file:
+      - .env
+    depends_on:
+      alignment-api:
+        condition: service_healthy
+    environment:
+      WORK_DIR: /app/work
+      OUTPUT_DIR: /app/output
+      ALIGNMENT_SERVICE_URL: ${ALIGNMENT_SERVICE_URL:-http://alignment-api:8000}
+      ALIGNMENT_TIMEOUT_S: ${ALIGNMENT_TIMEOUT_S:-600}
+      NUMBA_DISABLE_JIT: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      OMP_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      NUMBA_NUM_THREADS: "1"
+      NUMBA_THREADING_LAYER: workqueue
+    volumes:
+      - ./work:/app/work
+      - ./output:/app/output
+    command: >
+      bash -lc "celery -A services.orchestrator.celery_app:celery_app worker
+      -l INFO
+      --concurrency=1
+      -Q ${CELERY_QUEUE_BUILD:-build}.alignment-smoke"
+    restart: unless-stopped
+
   alignment-api:
     image: ${BLAST_ALIGNMENT_IMAGE:-blast_final-alignment:local}
     build:

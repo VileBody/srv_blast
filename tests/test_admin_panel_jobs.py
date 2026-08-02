@@ -150,6 +150,17 @@ class _FakeAsyncClient:
                     "project_id": "tg-975769043-demo",
                 },
             )
+        if url.endswith("/alignment-smoke"):
+            payload = dict(json or {})
+            assert payload["maintenance_bypass_token"] == "smoke-token"
+            return _FakeResponse(
+                200,
+                {
+                    "job_id": "smoke-job-1",
+                    "status": "QUEUED",
+                    "created": True,
+                },
+            )
         raise AssertionError(f"unexpected POST {url}")
 
 
@@ -190,7 +201,7 @@ class _FakeRuntimeStore:
                 "payload": {
                     "chat_id": 975769043,
                     "chat_username": "private-user",
-                    "audio_s3_url": "https://media.example/audio.mp3",
+                    "audio_s3_url": "s3://media/audio.mp3",
                     "lyrics_text": "full lyrics",
                     "target_fragment": "target lyrics",
                     "subtitles_mode": "word",
@@ -311,6 +322,7 @@ def _build_client_with_runtime(monkeypatch) -> TestClient:
         alert_telegram_bot_token="alert-token",
         alert_telegram_chat_id="975769043",
         season_redis_prefix="test:season",
+        system_maintenance_bypass_token="smoke-token",
     )
     app = admin_panel.build_app(
         credits_db=_DummyPoolAwareCreditsDB(),  # type: ignore[arg-type]
@@ -385,6 +397,26 @@ def test_runs_export_returns_alignment_inputs_without_user_identity(monkeypatch)
     assert "chat_id" not in resp.text
     assert "chat_username" not in resp.text
     assert "private-user" not in resp.text
+
+
+def test_alignment_smoke_start_enqueues_server_side_jobs(monkeypatch) -> None:
+    with _build_client_with_runtime(monkeypatch) as client:
+        resp = client.post(
+            "/admin/alignment-smoke/start",
+            auth=("admin", "secret"),
+            data={"days": "30", "count": "20"},
+        )
+
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["eligible_count"] == 1
+    assert payload["enqueued_count"] == 1
+    assert payload["jobs"][0]["job_id"] == "smoke-job-1"
+    assert _FakeAsyncClient.last_post_url.endswith("/alignment-smoke")
+    assert _FakeAsyncClient.last_post_json["audio_s3_url"] == "s3://media/audio.mp3"
+    assert _FakeAsyncClient.last_post_json["target_fragment"] == "target lyrics"
+    assert "lyrics_text" not in _FakeAsyncClient.last_post_json
+    assert resp.headers["cache-control"] == "no-store"
 
 
 def test_run_detail_page_shows_versions_outbox_and_events(monkeypatch) -> None:

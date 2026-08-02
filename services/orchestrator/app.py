@@ -39,6 +39,8 @@ from .runtime_config import (
     set_runtime_config,
 )
 from .schemas import (
+    AlignmentSmokeEnqueueResponse,
+    AlignmentSmokeRequest,
     ActiveJobsResponse,
     ActiveJobSummary,
     HookAnalyzeRequest,
@@ -63,6 +65,7 @@ from .schemas import (
     WindowsNodesUpdateRequest,
 )
 from .tasks import (
+    alignment_smoke_job,
     build_job,
     build_job_hybrid,
     build_job_openrouter,
@@ -644,6 +647,53 @@ def create_app() -> FastAPI:
         raise HTTPException(
             status_code=400,
             detail=f"unsupported mode={selected_mode!r}; expected with_gemini",
+        )
+
+    @app.post("/alignment-smoke", response_model=AlignmentSmokeEnqueueResponse)
+    def enqueue_alignment_smoke(req: AlignmentSmokeRequest) -> AlignmentSmokeEnqueueResponse:
+        if not _maintenance_bypass_allowed(req):
+            raise HTTPException(status_code=403, detail="alignment smoke token is invalid")
+        _ensure_accepting_new_jobs(req)
+        audio_s3_url = str(req.audio_s3_url or "").strip()
+        if not audio_s3_url.lower().startswith("s3://"):
+            raise HTTPException(status_code=422, detail="audio_s3_url must use s3://")
+
+        request_payload = req.model_dump(mode="json", exclude_none=True)
+        request_payload.pop("maintenance_bypass_token", None)
+        request_payload["job_kind"] = "alignment_smoke"
+        routing = _resolve_job_routing(request_payload=request_payload)
+        _ensure_queue_affinity(routing)
+        request_payload.update(routing)
+        st, created = store.new_job(
+            request=request_payload,
+            idempotency_key=req.idempotency_key,
+        )
+        if not created:
+            return AlignmentSmokeEnqueueResponse(
+                job_id=st.job_id, status=st.status, created=False
+            )
+        try:
+            store.set_status(
+                st.job_id,
+                "QUEUED",
+                stage="alignment_smoke",
+                result={"routing": routing},
+            )
+            smoke_queue = f"{routing['build_queue']}.alignment-smoke"
+            alignment_smoke_job.apply_async(
+                args=[st.job_id], queue=smoke_queue
+            )
+        except Exception as exc:
+            store.set_status(
+                st.job_id,
+                "FAILED",
+                stage="alignment_smoke",
+                error=f"queue_failed: {exc!r}",
+            )
+            raise HTTPException(status_code=500, detail="Failed to enqueue alignment smoke job")
+        queued = store.get(st.job_id) or st
+        return AlignmentSmokeEnqueueResponse(
+            job_id=queued.job_id, status=queued.status, created=True
         )
 
     # ==========================================================

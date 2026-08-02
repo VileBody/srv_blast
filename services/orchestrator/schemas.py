@@ -228,6 +228,25 @@ class EnqueueJobResponse(BaseModel):
     created: bool = True
 
 
+class AlignmentSmokeRequest(BaseModel):
+    audio_s3_url: str = Field(min_length=1)
+    target_fragment: str = Field(min_length=1)
+    clip_start_abs: float = Field(ge=0.0)
+    clip_end_abs: float = Field(gt=0.0)
+    request_id: str = Field(default="", max_length=200)
+    idempotency_key: Optional[str] = Field(default=None, min_length=1)
+    maintenance_bypass_token: Optional[str] = Field(default=None, min_length=1)
+
+    @model_validator(mode="after")
+    def _validate_window(self) -> "AlignmentSmokeRequest":
+        if float(self.clip_end_abs) <= float(self.clip_start_abs):
+            raise ValueError("clip_end_abs must be > clip_start_abs")
+        return self
+
+
+AlignmentSmokeEnqueueResponse = EnqueueJobResponse
+
+
 class JobState(BaseModel):
     job_id: str
     status: JobStatus
