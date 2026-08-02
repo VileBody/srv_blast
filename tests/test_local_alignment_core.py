@@ -199,6 +199,7 @@ def _select_with_synthetic_boundary_evidence(
     split_confidence_evidence: bool = False,
     include_right_confidence: bool = True,
     weak_right_timing_jitter: bool = False,
+    force_no_hard_valid: bool = False,
 ):
     timeline = EmissionTimeline(
         analysis_start_abs=0.0,
@@ -215,6 +216,8 @@ def _select_with_synthetic_boundary_evidence(
     left_probe = (1.5, 4.0)
     right_probe = (2.0, 4.5)
     hard_valid_bounds = {base_probe, left_probe}
+    if force_no_hard_valid:
+        hard_valid_bounds.clear()
     if include_right_evidence:
         hard_valid_bounds.add(right_probe)
 
@@ -436,20 +439,38 @@ def test_dynamic_window_combines_independent_boundary_evidence(
     assert selection.diagnostics["right_edge_supported_candidate_count"] == 1
 
 
-def test_dynamic_window_rejects_consensus_without_right_boundary_evidence(
+def test_dynamic_window_uses_degraded_medoid_without_strict_consensus(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    selection = _select_with_synthetic_boundary_evidence(
+        monkeypatch,
+        include_right_evidence=False,
+    )
+
+    assert selection.diagnostics["hard_valid_candidate_count"] == 2
+    assert selection.diagnostics["largest_consensus_candidate_count"] == 2
+    assert selection.diagnostics["degraded_confidence"] is True
+    assert (
+        selection.diagnostics["selection_reason"]
+        == "hard_valid_medoid_without_strict_consensus"
+    )
+    assert "insufficient_timing_consensus" in selection.diagnostics[
+        "boundary_evidence_warnings"
+    ]
+
+
+def test_dynamic_window_still_rejects_without_hard_valid_candidate(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     with pytest.raises(AlignmentFailure) as exc:
         _select_with_synthetic_boundary_evidence(
             monkeypatch,
             include_right_evidence=False,
+            force_no_hard_valid=True,
         )
 
     assert exc.value.code == ERROR_WINDOW_MISMATCH
-    assert "timing is unstable" in exc.value.message
-    assert exc.value.details["hard_valid_candidate_count"] == 2
-    assert exc.value.details["right_edge_supported_candidate_count"] == 0
-    assert exc.value.details["top_candidates"]
+    assert "no hard-valid alignment" in exc.value.message
 
 
 def test_dynamic_window_accepts_confidence_from_independent_sides(
@@ -701,7 +722,7 @@ def test_dynamic_window_accepts_stable_weak_boundary_with_warning() -> None:
     )
 
 
-def test_dynamic_window_rejects_fragment_that_exceeds_user_clip() -> None:
+def test_dynamic_window_keeps_hard_valid_result_despite_outside_counterevidence() -> None:
     probabilities = np.full((61, 3), 0.03, dtype=np.float64)
     probabilities[:, 0] = 0.94
     probabilities[21] = [0.05, 0.90, 0.05]
@@ -714,26 +735,32 @@ def test_dynamic_window_rejects_fragment_that_exceeds_user_clip() -> None:
         inputs_to_logits_ratio=1,
     )
 
-    with pytest.raises(AlignmentFailure) as exc:
-        select_dynamic_alignment_window(
-            log_probs=np.log(probabilities),
-            target_ids=[1, 2],
-            token_word_indexes=[0, 1],
-            display_words=["раз", "два"],
-            normalized_words=["раз", "два"],
-            blank_id=0,
-            timeline=timeline,
-            clip_start_abs=2.0,
-            clip_end_abs=4.0,
-            config=_dynamic_window_config(),
-            min_word_confidence=0.5,
-        )
+    selection = select_dynamic_alignment_window(
+        log_probs=np.log(probabilities),
+        target_ids=[1, 2],
+        token_word_indexes=[0, 1],
+        display_words=["раз", "два"],
+        normalized_words=["раз", "два"],
+        blank_id=0,
+        timeline=timeline,
+        clip_start_abs=2.0,
+        clip_end_abs=4.0,
+        config=_dynamic_window_config(),
+        min_word_confidence=0.5,
+    )
 
-    assert exc.value.code == ERROR_WINDOW_MISMATCH
-    assert "boundary evidence is outside user window" in exc.value.message
-    assert exc.value.details["rejection_counts"]["outside_user_window"] > 0
-    assert exc.value.details["right_confidence_supported_candidate_count"] == 0
-    assert exc.value.details["right_confident_outside_candidate_count"] >= 3
+    assert selection.diagnostics["degraded_confidence"] is True
+    assert (
+        selection.diagnostics["selection_reason"]
+        == "stable_cluster_with_boundary_counterevidence"
+    )
+    assert selection.diagnostics["rejection_counts"]["outside_user_window"] > 0
+    assert selection.diagnostics["right_confidence_supported_candidate_count"] == 0
+    assert selection.diagnostics["right_confident_outside_candidate_count"] >= 3
+    assert "boundary_counterevidence_outside_user_window" in selection.diagnostics[
+        "boundary_evidence_warnings"
+    ]
+    assert selection.selected.words[-1].t_end <= 4.0
 
 
 def test_dynamic_window_runs_separator_and_acoustic_model_once(
