@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from typing import Any, Dict
 
@@ -19,6 +20,7 @@ from core.queue_estimate import (
     build_queue_estimate,
     normalize_queue_estimate_window,
 )
+from .alignment_smoke_auth import alignment_smoke_signature_is_valid
 from .job_store import JobStore
 from .llm_workers import (
     ensure_config_initialized,
@@ -651,15 +653,35 @@ def create_app() -> FastAPI:
 
     @app.post("/alignment-smoke", response_model=AlignmentSmokeEnqueueResponse)
     def enqueue_alignment_smoke(req: AlignmentSmokeRequest) -> AlignmentSmokeEnqueueResponse:
-        if not _maintenance_bypass_allowed(req):
-            raise HTTPException(status_code=403, detail="alignment smoke token is invalid")
-        _ensure_accepting_new_jobs(req)
+        signed_payload = req.model_dump(mode="json", exclude_none=True)
+        if not alignment_smoke_signature_is_valid(
+            signed_payload,
+            secret=str(getattr(SETTINGS, "system_maintenance_bypass_token", "") or ""),
+        ):
+            raise HTTPException(status_code=403, detail="alignment smoke signature is invalid")
+        if not bool(getattr(SETTINGS, "orchestrator_enqueue_enabled", True)):
+            raise HTTPException(status_code=503, detail="enqueue disabled on this orchestrator")
+
         audio_s3_url = str(req.audio_s3_url or "").strip()
         if not audio_s3_url.lower().startswith("s3://"):
             raise HTTPException(status_code=422, detail="audio_s3_url must use s3://")
+        expected_bucket = str(os.environ.get("S3_BUCKET_RAW_AUDIO") or "").strip()
+        expected_prefix = str(os.environ.get("S3_RAW_AUDIO_PREFIX") or "raw_audio").strip("/")
+        if not expected_bucket:
+            raise HTTPException(status_code=503, detail="S3_BUCKET_RAW_AUDIO is empty")
+        s3_tail = audio_s3_url[5:]
+        bucket, separator, key = s3_tail.partition("/")
+        if (
+            not separator
+            or bucket != expected_bucket
+            or not key
+            or (expected_prefix and not key.startswith(f"{expected_prefix}/"))
+        ):
+            raise HTTPException(status_code=422, detail="audio_s3_url is outside raw-audio scope")
 
-        request_payload = req.model_dump(mode="json", exclude_none=True)
-        request_payload.pop("maintenance_bypass_token", None)
+        request_payload = signed_payload
+        request_payload.pop("auth_timestamp", None)
+        request_payload.pop("auth_signature", None)
         request_payload["job_kind"] = "alignment_smoke"
         routing = _resolve_job_routing(request_payload=request_payload)
         _ensure_queue_affinity(routing)

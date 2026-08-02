@@ -7,6 +7,7 @@ from urllib.parse import unquote_plus
 from fastapi.testclient import TestClient
 
 from services.tg_bot_public import admin_panel
+from services.orchestrator.alignment_smoke_auth import alignment_smoke_signature_is_valid
 
 
 class _DummyCreditsDB:
@@ -152,7 +153,10 @@ class _FakeAsyncClient:
             )
         if url.endswith("/alignment-smoke"):
             payload = dict(json or {})
-            assert payload["maintenance_bypass_token"] == "smoke-token"
+            assert alignment_smoke_signature_is_valid(
+                payload, secret="smoke-token"
+            )
+            assert "maintenance_bypass_token" not in payload
             return _FakeResponse(
                 200,
                 {
@@ -201,7 +205,7 @@ class _FakeRuntimeStore:
                 "payload": {
                     "chat_id": 975769043,
                     "chat_username": "private-user",
-                    "audio_s3_url": "s3://media/audio.mp3",
+                    "audio_s3_url": "s3://media/raw_audio/audio.mp3",
                     "lyrics_text": "full lyrics",
                     "target_fragment": "target lyrics",
                     "subtitles_mode": "word",
@@ -323,6 +327,7 @@ def _build_client_with_runtime(monkeypatch) -> TestClient:
         alert_telegram_chat_id="975769043",
         season_redis_prefix="test:season",
         system_maintenance_bypass_token="smoke-token",
+        s3_bucket_output_video="output",
     )
     app = admin_panel.build_app(
         credits_db=_DummyPoolAwareCreditsDB(),  # type: ignore[arg-type]
@@ -413,7 +418,7 @@ def test_alignment_smoke_start_enqueues_server_side_jobs(monkeypatch) -> None:
     assert payload["enqueued_count"] == 1
     assert payload["jobs"][0]["job_id"] == "smoke-job-1"
     assert _FakeAsyncClient.last_post_url.endswith("/alignment-smoke")
-    assert _FakeAsyncClient.last_post_json["audio_s3_url"] == "s3://media/audio.mp3"
+    assert _FakeAsyncClient.last_post_json["audio_s3_url"] == "s3://media/raw_audio/audio.mp3"
     assert _FakeAsyncClient.last_post_json["target_fragment"] == "target lyrics"
     assert "lyrics_text" not in _FakeAsyncClient.last_post_json
     assert resp.headers["cache-control"] == "no-store"

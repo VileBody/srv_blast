@@ -25,6 +25,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Red
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from core.llm_worker_types import LLM_WORKER_TYPES
 from services.generation_runtime import GenerationRuntimeStore
+from services.orchestrator.alignment_smoke_auth import sign_alignment_smoke_request
 from services.orchestrator.windows_node_pool import normalize_windows_urls, runtime_windows_urls_key
 
 from .credits_db import normalize_package_code as _normalize_pkg_code
@@ -1237,7 +1238,10 @@ def build_app(
         if not token:
             raise RuntimeError("SYSTEM_MAINTENANCE_BYPASS_TOKEN is empty")
         request_payload = dict(payload)
-        request_payload["maintenance_bypass_token"] = token
+        request_payload["auth_timestamp"] = int(time.time())
+        request_payload["auth_signature"] = sign_alignment_smoke_request(
+            request_payload, secret=token
+        )
         async with httpx.AsyncClient(timeout=25.0) as client:
             resp = await client.post(f"{base}/alignment-smoke", json=request_payload)
         if resp.status_code >= 300:
@@ -3815,6 +3819,7 @@ def build_app(
                         "job_id": str(enqueued.get("job_id") or ""),
                         "status": str(enqueued.get("status") or ""),
                         "created": bool(enqueued.get("created", True)),
+                        "preview_path": f"/admin/alignment-smoke/{enqueued.get('job_id')}/preview",
                     }
                 )
             except Exception as exc:
@@ -3838,6 +3843,41 @@ def build_app(
                 "Content-Disposition": f'attachment; filename="alignment-smoke-jobs-{batch_id}.json"',
                 "Cache-Control": "no-store",
             },
+        )
+
+    @app.get("/admin/alignment-smoke/{job_id}/preview")
+    async def alignment_smoke_preview(
+        job_id: str,
+        _user: str = Depends(_check_auth),
+    ) -> RedirectResponse:
+        jid = str(job_id or "").strip()
+        if not jid:
+            raise HTTPException(404, "job_id is empty")
+        state = await _orchestrator_get_job(job_id=jid)
+        if not state:
+            raise HTTPException(404, "Alignment smoke job not found")
+        request_payload = dict(state.get("request") or {})
+        if str(request_payload.get("job_kind") or "") != "alignment_smoke":
+            raise HTTPException(404, "Alignment smoke job not found")
+        if str(state.get("status") or "").upper() != "SUCCEEDED":
+            raise HTTPException(409, "Alignment smoke preview is not ready")
+        result = dict(state.get("result") or {})
+        output_url = str(result.get("output_url") or "").strip()
+        expected_bucket = str(getattr(settings, "s3_bucket_output_video", "") or "").strip()
+        expected_key = f"alignment-smoke/{jid}/preview.mp4"
+        if output_url != f"s3://{expected_bucket}/{expected_key}" or not expected_bucket:
+            raise HTTPException(409, "Alignment smoke preview locator is invalid")
+        from src.storage.s3 import generate_presigned_url
+
+        preview_url = generate_presigned_url(
+            expected_bucket,
+            expected_key,
+            expires_in=900,
+        )
+        return RedirectResponse(
+            url=preview_url,
+            status_code=307,
+            headers={"Cache-Control": "no-store"},
         )
 
     @app.get("/admin/runs/{run_id}", response_class=HTMLResponse)

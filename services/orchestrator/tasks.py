@@ -2720,14 +2720,8 @@ def alignment_smoke_job(job_id: str) -> Dict[str, Any]:
             output_key,
             ExtraArgs={"ContentType": "video/mp4"},
         )
-        preview_url = s3.generate_presigned_url(
-            "get_object",
-            Params={"Bucket": output_bucket, "Key": output_key},
-            ExpiresIn=86400,
-        )
         result = {
             "output_url": f"s3://{output_bucket}/{output_key}",
-            "preview_url": preview_url,
             "stage1_asr": stage1_asr.model_dump(mode="json"),
             "diagnostics": dict(aligned.diagnostics),
             "backend": dict(aligned.backend),

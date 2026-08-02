@@ -90,6 +90,7 @@ if "asyncpg" not in sys.modules:
     sys.modules["asyncpg"] = asyncpg_stub
 
 from services.orchestrator import app as orchestrator_app
+from services.orchestrator.alignment_smoke_auth import sign_alignment_smoke_request
 from services.orchestrator.schemas import JobState
 
 
@@ -686,6 +687,8 @@ def test_send_audio_rejects_without_render_capacity(monkeypatch) -> None:
 def test_alignment_smoke_requires_token_and_enqueues_without_llm(monkeypatch) -> None:
     store = _FakeStore([])
     queued: list[dict] = []
+    monkeypatch.setenv("S3_BUCKET_RAW_AUDIO", "media")
+    monkeypatch.setenv("S3_RAW_AUDIO_PREFIX", "raw_audio")
     monkeypatch.setattr(
         orchestrator_app,
         "SETTINGS",
@@ -702,17 +705,22 @@ def test_alignment_smoke_requires_token_and_enqueues_without_llm(monkeypatch) ->
         lambda **kwargs: queued.append(dict(kwargs)),
     )
     payload = {
-        "audio_s3_url": "s3://media/source.mp3",
+        "audio_s3_url": "s3://media/raw_audio/source.mp3",
         "target_fragment": "exact fragment",
         "clip_start_abs": 12.0,
         "clip_end_abs": 27.0,
+        "auth_timestamp": int(time.time()),
+        "request_id": "",
     }
+    signed_payload = dict(payload)
+    signed_payload["auth_signature"] = sign_alignment_smoke_request(
+        signed_payload, secret="smoke-token"
+    )
     with _build_client(monkeypatch, store) as client:
-        denied = client.post("/alignment-smoke", json=payload)
-        accepted = client.post(
-            "/alignment-smoke",
-            json={**payload, "maintenance_bypass_token": "smoke-token"},
+        denied = client.post(
+            "/alignment-smoke", json={**payload, "auth_signature": "0" * 64}
         )
+        accepted = client.post("/alignment-smoke", json=signed_payload)
 
     assert denied.status_code == 403
     assert accepted.status_code == 200
@@ -727,5 +735,6 @@ def test_alignment_smoke_requires_token_and_enqueues_without_llm(monkeypatch) ->
     stored = store.get(body["job_id"])
     assert stored is not None
     assert stored.request["job_kind"] == "alignment_smoke"
-    assert "maintenance_bypass_token" not in stored.request
+    assert "auth_signature" not in stored.request
+    assert "auth_timestamp" not in stored.request
     assert "llm_worker_type" not in stored.request
