@@ -791,18 +791,54 @@ def generate_dynamic_window_bounds(
     )
 
 
-def _candidate_timing_distance(
+def _word_timing_deltas(
     left: WindowAlignmentCandidate,
     right: WindowAlignmentCandidate,
-) -> float:
+) -> list[float]:
     if len(left.words) != len(right.words):
-        return math.inf
-    return max(
+        return []
+    return [
         max(
             abs(float(left_word.t_start) - float(right_word.t_start)),
             abs(float(left_word.t_end) - float(right_word.t_end)),
         )
         for left_word, right_word in zip(left.words, right.words)
+    ]
+
+
+def _candidate_timings_are_stable(
+    left: WindowAlignmentCandidate,
+    right: WindowAlignmentCandidate,
+    *,
+    tolerance_sec: float,
+    weak_boundary_tolerance_sec: float,
+    max_interior_outlier_sec: float,
+) -> bool:
+    deltas = _word_timing_deltas(left, right)
+    if not deltas:
+        return False
+    left_limit = (
+        float(tolerance_sec)
+        if left.left_confidence_supported or right.left_confidence_supported
+        else float(weak_boundary_tolerance_sec)
+    )
+    right_limit = (
+        float(tolerance_sec)
+        if left.right_confidence_supported or right.right_confidence_supported
+        else float(weak_boundary_tolerance_sec)
+    )
+    if deltas[0] > left_limit or deltas[-1] > right_limit:
+        return False
+    interior = deltas[1:-1]
+    if not interior:
+        return True
+    allowed_outliers = int(math.floor(len(interior) * 0.10))
+    unstable_count = sum(
+        delta > float(tolerance_sec) for delta in interior
+    )
+    return (
+        unstable_count <= allowed_outliers
+        and max(interior) <= float(max_interior_outlier_sec)
     )
 
 
@@ -1171,13 +1207,27 @@ def select_dynamic_alignment_window(
         if candidate.quality_score >= best_score - float(config.score_tolerance)
     ]
 
+    stability_tolerance = float(config.stability_tolerance_sec)
+    weak_boundary_tolerance = max(
+        stability_tolerance,
+        float(config.step_sec) + timeline.seconds_per_frame * 1.01,
+    )
+    max_interior_outlier = max(
+        3.0 * stability_tolerance,
+        weak_boundary_tolerance,
+    )
     clusters: list[tuple[WindowAlignmentCandidate, list[WindowAlignmentCandidate]]] = []
     for anchor in score_pool:
         members = [
             candidate
             for candidate in score_pool
-            if _candidate_timing_distance(anchor, candidate)
-            <= float(config.stability_tolerance_sec)
+            if _candidate_timings_are_stable(
+                anchor,
+                candidate,
+                tolerance_sec=stability_tolerance,
+                weak_boundary_tolerance_sec=weak_boundary_tolerance,
+                max_interior_outlier_sec=max_interior_outlier,
+            )
         ]
         clusters.append((anchor, members))
 
@@ -1360,15 +1410,51 @@ def select_dynamic_alignment_window(
         }
         for index in range(len(selected.words))
     ]
-    max_timing_deviation = max(
+    per_word_deviations = [
         float(item["max_deviation_sec"]) for item in word_stability
+    ]
+    max_timing_deviation = max(per_word_deviations)
+    left_boundary_deviation = per_word_deviations[0]
+    right_boundary_deviation = per_word_deviations[-1]
+    left_boundary_limit = (
+        stability_tolerance
+        if consensus_left_confidence
+        else weak_boundary_tolerance
     )
-    if max_timing_deviation > float(config.stability_tolerance_sec) + 1e-9:
+    right_boundary_limit = (
+        stability_tolerance
+        if consensus_right_confidence
+        else weak_boundary_tolerance
+    )
+    interior_deviations = per_word_deviations[1:-1]
+    allowed_interior_outliers = int(
+        math.floor(len(interior_deviations) * 0.10)
+    )
+    unstable_interior_word_count = sum(
+        deviation > stability_tolerance
+        for deviation in interior_deviations
+    )
+    max_interior_deviation = max(interior_deviations, default=0.0)
+    stability_failures: list[str] = []
+    if left_boundary_deviation > left_boundary_limit + 1e-9:
+        stability_failures.append("left_boundary")
+    if right_boundary_deviation > right_boundary_limit + 1e-9:
+        stability_failures.append("right_boundary")
+    if unstable_interior_word_count > allowed_interior_outliers:
+        stability_failures.append("too_many_interior_outliers")
+    if max_interior_deviation > max_interior_outlier + 1e-9:
+        stability_failures.append("interior_outlier_too_large")
+    if stability_failures:
         raise AlignmentFailure(
             ERROR_WINDOW_MISMATCH,
-            "dynamic window consensus exceeds timing tolerance "
-            f"deviation={max_timing_deviation:.6f} "
-            f"tolerance={float(config.stability_tolerance_sec):.6f}",
+            "dynamic window robust consensus is unstable "
+            f"failures={stability_failures} "
+            f"left={left_boundary_deviation:.6f}/{left_boundary_limit:.6f} "
+            f"right={right_boundary_deviation:.6f}/{right_boundary_limit:.6f} "
+            f"interior_unstable={unstable_interior_word_count}/"
+            f"{allowed_interior_outliers} "
+            f"interior_max={max_interior_deviation:.6f}/"
+            f"{max_interior_outlier:.6f}",
             details=_failure_details(),
         )
 
@@ -1465,6 +1551,11 @@ def select_dynamic_alignment_window(
         "consensus_anchor_start_abs": float(anchor.search_start_abs),
         "consensus_anchor_end_abs": float(anchor.search_end_abs),
         "max_timing_deviation_sec": float(max_timing_deviation),
+        "left_boundary_deviation_sec": float(left_boundary_deviation),
+        "right_boundary_deviation_sec": float(right_boundary_deviation),
+        "max_interior_deviation_sec": float(max_interior_deviation),
+        "unstable_interior_word_count": int(unstable_interior_word_count),
+        "allowed_interior_outlier_count": int(allowed_interior_outliers),
         "word_stability": word_stability,
         "selected": selected.summary(),
         "top_candidates": ranked_summaries,
@@ -1474,6 +1565,9 @@ def select_dynamic_alignment_window(
             "step_sec": float(config.step_sec),
             "min_edge_clearance_sec": float(config.min_edge_clearance_sec),
             "stability_tolerance_sec": float(config.stability_tolerance_sec),
+            "weak_boundary_tolerance_sec": float(weak_boundary_tolerance),
+            "max_interior_outlier_sec": float(max_interior_outlier),
+            "max_interior_outlier_ratio": 0.10,
             "min_consensus_candidates": int(config.min_consensus_candidates),
             "score_tolerance": float(config.score_tolerance),
             "min_boundary_duration_ratio": float(

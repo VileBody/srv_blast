@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 
-ALIGNMENT_ALGORITHM_VERSION = "local-ctc-viterbi-v15-stable-timing-evidence-redaction-espeak-demucs-4.1.0"
+ALIGNMENT_ALGORITHM_VERSION = "local-ctc-viterbi-v16-robust-word-stability-redaction-espeak-demucs-4.1.0"
 
 ERROR_UNSUPPORTED_TEXT = "ALIGNMENT_UNSUPPORTED_TEXT"
 ERROR_FULLY_REDACTED_WORD = "ALIGNMENT_FULLY_REDACTED_WORD"

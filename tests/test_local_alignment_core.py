@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 from contextlib import nullcontext
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -15,6 +16,7 @@ from mlcore.alignment.core import (
     EmissionTimeline,
     WindowAlignmentCandidate,
     _build_stage1_asr,
+    _candidate_timings_are_stable,
     aggregate_words,
     align_target_fragment,
     align_targets_in_window,
@@ -196,6 +198,7 @@ def _select_with_synthetic_boundary_evidence(
     left_user_window_censored: bool = False,
     split_confidence_evidence: bool = False,
     include_right_confidence: bool = True,
+    weak_right_timing_jitter: bool = False,
 ):
     timeline = EmissionTimeline(
         analysis_start_abs=0.0,
@@ -238,13 +241,28 @@ def _select_with_synthetic_boundary_evidence(
         if not right_confidence_supported:
             reasons_list.append("low_right_boundary_word_confidence")
         reasons = tuple(reasons_list)
+        candidate_words = words
+        if weak_right_timing_jitter:
+            right_shift = {
+                left_probe: -0.50,
+                base_probe: -0.25,
+                right_probe: 0.0,
+            }.get(bounds, 0.0)
+            last_word = words[-1]
+            candidate_words = words[:-1] + (
+                replace(
+                    last_word,
+                    t_start=last_word.t_start + right_shift,
+                    t_end=last_word.t_end + right_shift,
+                ),
+            )
         return WindowAlignmentCandidate(
             search_start_abs=bounds[0],
             search_end_abs=bounds[1],
             search_start_frame=int(bounds[0] * 10),
             search_end_frame=int(bounds[1] * 10),
             token_spans=(),
-            words=words,
+            words=candidate_words,
             path_log_score=-1.0,
             mean_word_confidence=0.9,
             min_word_confidence=0.9,
@@ -292,6 +310,113 @@ def _select_with_synthetic_boundary_evidence(
             min_boundary_duration_ratio=0.15,
         ),
         min_word_confidence=0.5,
+    )
+
+
+def test_robust_timing_metric_allows_isolated_interior_jitter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base = _select_with_synthetic_boundary_evidence(
+        monkeypatch,
+        include_right_evidence=True,
+    ).selected
+    words = tuple(
+        AlignedWord(
+            f"word-{index}",
+            f"word-{index}",
+            2.0 + index * 0.08,
+            2.05 + index * 0.08,
+            index * 0.08,
+            0.05 + index * 0.08,
+            0.9,
+        )
+        for index in range(22)
+    )
+    shifted_words = list(words)
+    item = shifted_words[10]
+    shifted_words[10] = replace(
+        item,
+        t_start=item.t_start + 0.20,
+        t_end=item.t_end + 0.20,
+    )
+
+    assert _candidate_timings_are_stable(
+        replace(base, words=words),
+        replace(base, words=tuple(shifted_words)),
+        tolerance_sec=0.12,
+        weak_boundary_tolerance_sec=0.27,
+        max_interior_outlier_sec=0.36,
+    )
+
+
+def test_robust_timing_metric_rejects_too_many_interior_outliers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base = _select_with_synthetic_boundary_evidence(
+        monkeypatch,
+        include_right_evidence=True,
+    ).selected
+    words = tuple(
+        AlignedWord(
+            f"word-{index}",
+            f"word-{index}",
+            2.0 + index * 0.08,
+            2.05 + index * 0.08,
+            index * 0.08,
+            0.05 + index * 0.08,
+            0.9,
+        )
+        for index in range(22)
+    )
+    shifted_words = list(words)
+    for index in (8, 10, 12):
+        item = shifted_words[index]
+        shifted_words[index] = replace(
+            item,
+            t_start=item.t_start + 0.20,
+            t_end=item.t_end + 0.20,
+        )
+
+    assert not _candidate_timings_are_stable(
+        replace(base, words=words),
+        replace(base, words=tuple(shifted_words)),
+        tolerance_sec=0.12,
+        weak_boundary_tolerance_sec=0.27,
+        max_interior_outlier_sec=0.36,
+    )
+
+
+def test_robust_timing_metric_relaxes_only_weak_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base = _select_with_synthetic_boundary_evidence(
+        monkeypatch,
+        include_right_evidence=True,
+    ).selected
+    shifted_last = replace(
+        base.words[-1],
+        t_start=base.words[-1].t_start + 0.25,
+        t_end=base.words[-1].t_end + 0.25,
+    )
+    shifted = replace(
+        base,
+        words=base.words[:-1] + (shifted_last,),
+        right_confidence_supported=False,
+    )
+
+    assert _candidate_timings_are_stable(
+        replace(base, right_confidence_supported=False),
+        shifted,
+        tolerance_sec=0.12,
+        weak_boundary_tolerance_sec=0.27,
+        max_interior_outlier_sec=0.36,
+    )
+    assert not _candidate_timings_are_stable(
+        base,
+        shifted,
+        tolerance_sec=0.12,
+        weak_boundary_tolerance_sec=0.27,
+        max_interior_outlier_sec=0.36,
     )
 
 
@@ -356,6 +481,21 @@ def test_dynamic_window_uses_stable_timing_without_right_confidence_evidence(
         "low_right_boundary_word_confidence"
         in selection.diagnostics["boundary_evidence_warnings"]
     )
+
+
+def test_dynamic_window_builds_three_candidate_weak_boundary_consensus(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    selection = _select_with_synthetic_boundary_evidence(
+        monkeypatch,
+        include_right_evidence=True,
+        include_right_confidence=False,
+        weak_right_timing_jitter=True,
+    )
+
+    assert selection.diagnostics["boundary_evidence_mode"] == "timing_consensus"
+    assert selection.diagnostics["consensus_candidate_count"] == 3
+    assert selection.diagnostics["right_boundary_deviation_sec"] <= 0.26
 
 
 def test_dynamic_window_accepts_confident_user_window_censored_boundary(
