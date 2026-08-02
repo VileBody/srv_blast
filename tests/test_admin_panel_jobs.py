@@ -19,7 +19,7 @@ class _DummyPoolAwareCreditsDB:
 
 
 class _DummyStateStore:
-    pass
+    redis = object()
 
 
 class _FakeResponse:
@@ -176,6 +176,38 @@ class _FakeRuntimeStore:
             }
         ]
 
+    async def list_alignment_smoke_candidates(self, *, surface: str, created_after, limit: int = 100):
+        _ = (surface, created_after, limit)
+        return [
+            {
+                "run_id": "run-public-1",
+                "run_status": "succeeded",
+                "current_stage": "completed",
+                "last_error_code": "",
+                "last_error_text": "",
+                "run_created_at": "2026-04-22T20:00:00+00:00",
+                "run_updated_at": "2026-04-22T20:05:00+00:00",
+                "payload": {
+                    "chat_id": 975769043,
+                    "chat_username": "private-user",
+                    "audio_s3_url": "https://media.example/audio.mp3",
+                    "lyrics_text": "full lyrics",
+                    "target_fragment": "target lyrics",
+                    "subtitles_mode": "word",
+                    "user_clip_start_sec": 10.0,
+                    "user_clip_end_sec": 25.0,
+                    "versions_total": 1,
+                },
+                "version_index": 1,
+                "job_id": "job-success",
+                "job_status": "SUCCEEDED",
+                "job_stage": "done",
+                "result_url": "https://media.example/result.mp4",
+                "archive_url": "https://media.example/archive.zip",
+                "version_error_text": "",
+            }
+        ]
+
     async def get_run(self, run_id: str):
         if run_id != "run-public-1":
             return {}
@@ -255,6 +287,7 @@ def _build_client(monkeypatch) -> TestClient:
         tg_bot_token="public-token",
         alert_telegram_bot_token="alert-token",
         alert_telegram_chat_id="975769043",
+        season_redis_prefix="test:season",
     )
     app = admin_panel.build_app(
         credits_db=_DummyCreditsDB(),  # type: ignore[arg-type]
@@ -277,6 +310,7 @@ def _build_client_with_runtime(monkeypatch) -> TestClient:
         tg_bot_token="public-token",
         alert_telegram_bot_token="alert-token",
         alert_telegram_chat_id="975769043",
+        season_redis_prefix="test:season",
     )
     app = admin_panel.build_app(
         credits_db=_DummyPoolAwareCreditsDB(),  # type: ignore[arg-type]
@@ -332,6 +366,25 @@ def test_runs_page_shows_runtime_run_rows(monkeypatch) -> None:
     assert "run-public-1" in resp.text
     assert "batch-xyz" in resp.text
     assert "render" in resp.text
+
+
+def test_runs_export_returns_alignment_inputs_without_user_identity(monkeypatch) -> None:
+    with _build_client_with_runtime(monkeypatch) as client:
+        resp = client.get(
+            "/admin/runs-export.json?days=30&limit=50",
+            auth=("admin", "secret"),
+        )
+
+    assert resp.status_code == 200
+    assert resp.headers["content-disposition"] == 'attachment; filename="alignment-smoke-inputs.json"'
+    assert resp.headers["cache-control"] == "no-store"
+    payload = resp.json()
+    assert payload["run_count"] == 1
+    assert payload["runs"][0]["input"]["target_fragment"] == "target lyrics"
+    assert payload["runs"][0]["versions"][0]["job_id"] == "job-success"
+    assert "chat_id" not in resp.text
+    assert "chat_username" not in resp.text
+    assert "private-user" not in resp.text
 
 
 def test_run_detail_page_shows_versions_outbox_and_events(monkeypatch) -> None:

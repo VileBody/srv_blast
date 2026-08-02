@@ -11,7 +11,7 @@ import shlex
 import sys
 import time
 from collections import deque
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import quote as url_quote, quote_plus
 from typing import Any, Dict, Optional, TYPE_CHECKING
@@ -3631,6 +3631,84 @@ def build_app(
         </div>
         """
         return _page("Runs", body)
+
+    @app.get("/admin/runs-export.json", response_class=JSONResponse)
+    async def runs_export(request: Request, _user: str = Depends(_check_auth)) -> JSONResponse:
+        """Export recent alignment inputs for deterministic, offline smoke testing."""
+        if runtime_store is None:
+            raise HTTPException(503, "Generation runtime store is unavailable")
+
+        days = _query_int(request, "days", default=30, min_value=1, max_value=90)
+        limit = _query_int(request, "limit", default=100, min_value=1, max_value=300)
+        created_after = datetime.now(timezone.utc) - timedelta(days=days)
+        rows = await runtime_store.list_alignment_smoke_candidates(
+            surface="public",
+            created_after=created_after,
+            limit=limit,
+        )
+
+        runs: list[Dict[str, Any]] = []
+        by_run_id: Dict[str, Dict[str, Any]] = {}
+        allowed_input_fields = (
+            "audio_s3_url",
+            "lyrics_text",
+            "target_fragment",
+            "subtitles_mode",
+            "user_clip_start_sec",
+            "user_clip_end_sec",
+            "versions_total",
+        )
+
+        def _iso_datetime(value: object) -> str:
+            if isinstance(value, datetime):
+                return value.isoformat()
+            return str(value or "")
+
+        for row in rows:
+            run_id = str(row.get("run_id") or "")
+            item = by_run_id.get(run_id)
+            if item is None:
+                payload = dict(row.get("payload") or {})
+                item = {
+                    "run_id": run_id,
+                    "created_at": _iso_datetime(row.get("run_created_at")),
+                    "updated_at": _iso_datetime(row.get("run_updated_at")),
+                    "status": str(row.get("run_status") or ""),
+                    "current_stage": str(row.get("current_stage") or ""),
+                    "last_error_code": str(row.get("last_error_code") or ""),
+                    "last_error_text": str(row.get("last_error_text") or ""),
+                    "input": {key: payload.get(key) for key in allowed_input_fields},
+                    "versions": [],
+                }
+                by_run_id[run_id] = item
+                runs.append(item)
+            if row.get("version_index") is not None:
+                item["versions"].append(
+                    {
+                        "version_index": int(row.get("version_index") or 0),
+                        "job_id": str(row.get("job_id") or ""),
+                        "status": str(row.get("job_status") or ""),
+                        "stage": str(row.get("job_stage") or ""),
+                        "result_url": str(row.get("result_url") or ""),
+                        "archive_url": str(row.get("archive_url") or ""),
+                        "error": str(row.get("version_error_text") or ""),
+                    }
+                )
+
+        return JSONResponse(
+            {
+                "schema_version": 1,
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "days": days,
+                "requested_run_limit": limit,
+                "run_count": len(runs),
+                "runs": runs,
+            },
+            headers={
+                "Content-Disposition": 'attachment; filename="alignment-smoke-inputs.json"',
+                "Cache-Control": "no-store",
+            },
+        )
 
     @app.get("/admin/runs/{run_id}", response_class=HTMLResponse)
     async def run_detail(run_id: str, _user: str = Depends(_check_auth)) -> str:
