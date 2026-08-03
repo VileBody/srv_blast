@@ -110,3 +110,33 @@ CapCut template; Impulse 29 990 ₽ / 1 year, unlimited within fair use, 24 trac
   (support@blast808.com) is reachable from the privacy policy without login. It is.
 - Respect unaudited client limits: max 5 users per 24h, accounts private at posting time,
   `SELF_ONLY` viewership.
+
+## After the web app ships — what the current texts do not cover
+
+The published texts are written around the Telegram bot. Once the web app is live they describe
+only one of two channels and must be reworked, not just linked. Concrete gaps:
+
+- **Account.** Registration, e-mail/password or OAuth, sessions, password reset, self-service
+  account deletion. Privacy sec. 3 currently identifies users by Telegram ID; terms sec. 3.1 says
+  access is via a Telegram account and makes the user responsible for that account only.
+- **Cookies.** The cookie policy lists exactly two localStorage keys and states that nothing else is
+  set. An authenticated app adds session/auth cookies — they belong in the "necessary" category
+  with names, purpose and lifetime spelled out.
+- **Personal data set.** E-mail becomes a primary identifier; a billing profile and subscription
+  history in the account area are new categories for privacy sec. 3.2 and consent sec. 4.
+- **Rights.** Privacy sec. 10 routes every request through support e-mail. If the app offers
+  in-product deletion or export, say so — it is the stronger position.
+- **Offer.** Clauses 2.2, 3.1, 6.1 and 6.4 describe intake, acceptance and delivery through the
+  Telegram bot. Payment and delivery on the website need their own wording, including where prices
+  are shown before payment and how delivery is evidenced without a Telegram message.
+- **Terms.** Acceptable use, suspension and termination need an account-level version alongside the
+  bot version; add liability for credential sharing.
+- **Age check.** Both documents claim 18+ (14–18 with representative consent). If registration
+  collects or asserts age, align the wording with the actual control.
+- **Consent wording.** Consent sec. 9.1 already points at registration on blast808.com — verify it
+  matches the real screen (non-pre-ticked, links to both documents, records version and timestamp).
+- **Hosting.** Confirm the web app runs on the same Russian infrastructure the privacy policy
+  describes in sec. 6.1.
+
+The site's own legal pages were written against the previous landing version and must be reconciled
+with these texts rather than kept as a second, diverging set.
