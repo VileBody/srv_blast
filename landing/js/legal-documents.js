@@ -56,7 +56,7 @@
           <h2>5. Способы и перечень действий с персональными данными</h2>
           <p>5.1. Обработка осуществляется с использованием средств автоматизации и без их использования и включает: сбор, запись, систематизацию, накопление, хранение, уточнение (обновление, изменение), извлечение, использование, передачу (предоставление, доступ), обезличивание, блокирование, удаление и уничтожение персональных данных.</p>
           <p>5.2. Оператор не принимает решений, порождающих юридические последствия в отношении пользователя, исключительно на основании автоматизированной обработки персональных данных.</p>
-          <p>5.3. Пользовательские материалы не используются Оператором для обучения собственных моделей машинного обучения. Привлекаемые поставщики технологий обрабатывают материалы по поручению Оператора на условиях корпоративных (платных) программных интерфейсов, исключающих использование переданных данных для обучения моделей поставщика.</p>
+          <p>5.3. Пользовательские материалы не используются для обучения моделей машинного обучения — ни Оператором, ни привлекаемыми им подрядчиками. Автоматическая обработка материалов (расшифровка аудио, разметка субтитров, подбор визуального ряда) выполняется на вычислительной инфраструктуре, размещённой в Российской Федерации.</p>
 
           <h2>6. Место обработки и хранения. Локализация</h2>
           <p>6.1. Запись, систематизация, накопление, хранение, уточнение и извлечение персональных данных граждан Российской Федерации осуществляются с использованием баз данных, расположенных на территории Российской Федерации (ч. 5 ст. 18 Закона № 152-ФЗ). Серверная инфраструктура Сервиса размещена в дата-центрах российского провайдера облачной инфраструктуры.</p>
@@ -65,19 +65,18 @@
           <h2>7. Передача данных третьим лицам</h2>
           <p>7.1. Оператор не продаёт персональные данные и не передаёт их третьим лицам для их собственных целей. Передача осуществляется только в объёме, необходимом для оказания услуг, и только следующим категориям получателей:</p>
           <ul>
-            <li><strong>Telegram</strong> — платформа доставки сообщений и файлов, через которую работает Сервис;</li>
+            <li><strong>Telegram</strong> — канал связи, выбранный самим пользователем: через него передаются сообщения и файлы в рамках его собственной учётной записи;</li>
             <li><strong>АО «Т-Банк»</strong> — приём платежей, возвраты, формирование и направление кассовых чеков;</li>
-            <li><strong>Российский провайдер облачной инфраструктуры</strong> — размещение серверов, объектное хранилище и резервное копирование;</li>
-            <li><strong>Поставщики технологий генеративного искусственного интеллекта</strong> (в том числе Google LLC — Gemini API, и агрегатор доступа к моделям OpenRouter) — автоматическая расшифровка аудио, разметка субтитров и подбор визуального ряда;</li>
+            <li><strong>Российский провайдер облачной инфраструктуры</strong> — размещение серверов, вычислительные мощности для автоматической генерации, объектное хранилище и резервное копирование;</li>
             <li><strong>TikTok и иные подключённые пользователем платформы</strong> — только при добровольном подключении аккаунта и только в объёме, необходимом для запрошенного пользователем действия;</li>
             <li><strong>Государственные органы</strong> — по мотивированным запросам в случаях и порядке, установленных законодательством Российской Федерации.</li>
           </ul>
           <p>7.2. Передача обработчикам осуществляется на основании договоров, содержащих обязанность соблюдать конфиденциальность и требования к безопасности персональных данных (ч. 3 ст. 6 Закона № 152-ФЗ).</p>
 
           <h2>8. Трансграничная передача</h2>
-          <p>8.1. При использовании технологий генеративного искусственного интеллекта и платформы Telegram отдельные операции обработки могут осуществляться на территории иностранных государств. Такая передача является трансграничной в значении ст. 12 Закона № 152-ФЗ и осуществляется с уведомлением уполномоченного органа по защите прав субъектов персональных данных в установленном порядке.</p>
-          <p>8.2. Объём трансграничной передачи ограничен пользовательскими материалами и техническими метаданными, необходимыми для выполнения заказа. Идентификаторы пользователя, платёжные и учётные данные за пределы Российской Федерации Оператором не передаются.</p>
-          <p>8.3. Пользователь, не желающий трансграничной передачи своих материалов, вправе отказаться от использования Сервиса; оказание услуг без такой передачи технически невозможно.</p>
+          <p>8.1. Трансграничная передача персональных данных Оператором не осуществляется. Приём материалов, их автоматическая обработка, хранение результатов, учёт заказов и приём платежей выполняются на территории Российской Федерации.</p>
+          <p>8.2. Telegram используется как канал связи, выбранный самим пользователем: сообщения и файлы передаются через инфраструктуру Telegram по инициативе пользователя и в рамках его собственной учётной записи. Оператор не осуществляет самостоятельной передачи персональных данных иностранным получателям для их обработки в своих интересах.</p>
+          <p>8.3. Если в Сервисе будет запущена интеграция с TikTok и пользователь добровольно подключит свой аккаунт, передача данных такой платформе будет осуществляться в порядке, предусмотренном ст. 12 Закона № 152-ФЗ, с предварительным уведомлением уполномоченного органа; настоящая Политика будет дополнена соответствующими сведениями. До запуска интеграции такая передача не осуществляется.</p>
 
           <h2>9. Сроки обработки и хранения</h2>
           <ul>
@@ -167,7 +166,7 @@
           <h2>5. Processing operations</h2>
           <p>5.1. Processing is carried out with and without automation and includes: collection, recording, systematization, accumulation, storage, updating, retrieval, use, transfer (provision, access), anonymization, blocking, deletion and destruction of personal data.</p>
           <p>5.2. The Controller does not take decisions producing legal effects concerning the user based solely on automated processing of personal data.</p>
-          <p>5.3. User materials are not used by the Controller to train its own machine learning models. Technology providers process materials on the Controller's instructions under enterprise (paid) API terms that exclude the use of submitted data for training the provider's models.</p>
+          <p>5.3. User materials are not used to train machine learning models, either by the Controller or by its contractors. Automated processing of materials (speech recognition, subtitle markup, visual selection) is performed on computing infrastructure located in the Russian Federation.</p>
 
           <h2>6. Place of processing and data localization</h2>
           <p>6.1. Recording, systematization, accumulation, storage, updating and retrieval of personal data of citizens of the Russian Federation are carried out using databases located in the Russian Federation (Art. 18(5) of Law No. 152-FZ). The Service's server infrastructure is hosted in data centres of a Russian cloud provider.</p>
@@ -176,19 +175,18 @@
           <h2>7. Disclosure to third parties</h2>
           <p>7.1. The Controller does not sell personal data and does not transfer it to third parties for their own purposes. Data is shared only to the extent necessary to provide the service and only with the following categories of recipients:</p>
           <ul>
-            <li><strong>Telegram</strong> — the messaging platform through which the Service operates;</li>
+            <li><strong>Telegram</strong> — the communication channel chosen by the user: messages and files are exchanged within the user's own account;</li>
             <li><strong>T-Bank JSC</strong> — payment acceptance, refunds, issuance and delivery of fiscal receipts;</li>
-            <li><strong>A Russian cloud infrastructure provider</strong> — server hosting, object storage and backups;</li>
-            <li><strong>Generative AI technology providers</strong> (including Google LLC — Gemini API — and the model access aggregator OpenRouter) — automatic speech recognition, subtitle markup and visual selection;</li>
+            <li><strong>A Russian cloud infrastructure provider</strong> — server hosting, compute for automated generation, object storage and backups;</li>
             <li><strong>TikTok and other platforms connected by the user</strong> — only upon voluntary account connection and only to the extent required for the action requested by the user;</li>
             <li><strong>Public authorities</strong> — upon reasoned requests in the cases and manner established by Russian law.</li>
           </ul>
           <p>7.2. Transfers to processors are made under agreements imposing confidentiality and personal data security obligations (Art. 6(3) of Law No. 152-FZ).</p>
 
           <h2>8. Cross-border transfers</h2>
-          <p>8.1. When generative AI technologies and the Telegram platform are used, certain processing operations may take place outside the Russian Federation. Such transfers are cross-border within the meaning of Art. 12 of Law No. 152-FZ and are carried out with notification to the competent supervisory authority in the established manner.</p>
-          <p>8.2. Cross-border transfers are limited to user materials and technical metadata required to fulfil an order. User identifiers, payment and accounting data are not transferred outside the Russian Federation by the Controller.</p>
-          <p>8.3. A user who does not wish their materials to be transferred cross-border may decline to use the Service; the service cannot technically be provided without such transfer.</p>
+          <p>8.1. The Controller does not carry out cross-border transfers of personal data. Intake of materials, their automated processing, storage of output, order records and payment acceptance all take place within the Russian Federation.</p>
+          <p>8.2. Telegram is used as the communication channel chosen by the user: messages and files are exchanged through Telegram infrastructure at the user's initiative and within the user's own account. The Controller does not itself transfer personal data to foreign recipients for processing in its own interest.</p>
+          <p>8.3. If a TikTok integration is launched and a user voluntarily connects their account, transfers to that platform will be carried out under Art. 12 of Law No. 152-FZ with prior notification to the supervisory authority, and this Policy will be supplemented accordingly. No such transfer takes place before the integration is launched.</p>
 
           <h2>9. Retention periods</h2>
           <ul>
@@ -499,13 +497,14 @@
     consent: {
       ru: {
         title: 'Согласие на обработку персональных данных',
-        body: `<p>Настоящий документ является формой согласия на обработку персональных данных, предоставляемого в соответствии со ст. 9 Федерального закона от 27.07.2006 № 152-ФЗ «О персональных данных». Согласие предоставляется пользователем путём совершения отдельного подтверждающего действия в интерфейсе Telegram-бота ${botLink} перед началом использования Сервиса.</p>
+        body: `<p>Настоящий документ является формой согласия на обработку персональных данных, предоставляемого в соответствии со ст. 9 Федерального закона от 27.07.2006 № 152-ФЗ «О персональных данных». Согласие предоставляется пользователем путём совершения отдельного подтверждающего действия при регистрации на сайте blast808.com.</p>
+          <p>Обработка данных, необходимая для оказания заказанных услуг, осуществляется на основании договора (п. 5 ч. 1 ст. 6 Закона № 152-ФЗ) и не требует отдельного согласия. Настоящее Согласие охватывает случаи, в которых согласие является самостоятельным правовым основанием.</p>
 
           <h2>1. Оператор, которому предоставляется согласие</h2>
           <p>${operatorRu}<br>Адрес: ${addressRu}<br>E-mail: ${contact}</p>
 
           <h2>2. Субъект персональных данных</h2>
-          <p>Пользователь Сервиса, идентифицируемый по числовому идентификатору аккаунта Telegram (Telegram ID) и имени пользователя (username), с которых осуществляется обращение к Telegram-боту Сервиса.</p>
+          <p>Пользователь Сервиса, идентифицируемый по данным учётной записи, созданной на сайте blast808.com, а при использовании Telegram-бота — по числовому идентификатору аккаунта Telegram (Telegram ID) и имени пользователя (username).</p>
 
           <h2>3. Цели обработки</h2>
           <ul>
@@ -532,18 +531,18 @@
           <p>Согласие предоставляется на сбор, запись, систематизацию, накопление, хранение, уточнение (обновление, изменение), извлечение, использование, передачу (предоставление, доступ) лицам, указанным в разделе 6, обезличивание, блокирование, удаление и уничтожение персональных данных с использованием средств автоматизации и без их использования.</p>
 
           <h2>6. Лица, которым может быть поручена обработка</h2>
-          <p>Обработка может быть поручена: Telegram — в части доставки сообщений и файлов; АО «Т-Банк» — в части приёма платежей и оформления чеков; российскому провайдеру облачной инфраструктуры — в части размещения и хранения данных; поставщикам технологий генеративного искусственного интеллекта (в том числе Google LLC и OpenRouter) — в части автоматической обработки материалов; подключённой пользователем платформе (TikTok) — в части выполнения запрошенных пользователем действий. Перечень и условия передачи раскрыты в <a href="privacy.html" data-keep-language>Политике конфиденциальности</a>.</p>
+          <p>Обработка может быть поручена: российскому провайдеру облачной инфраструктуры — в части размещения, вычислений и хранения данных; АО «Т-Банк» — в части приёма платежей и оформления чеков; Telegram — в части доставки сообщений и файлов в рамках учётной записи пользователя; подключённой пользователем платформе (TikTok) — в части выполнения запрошенных пользователем действий. Перечень и условия передачи раскрыты в <a href="privacy.html" data-keep-language>Политике конфиденциальности</a>.</p>
 
           <h2>7. Трансграничная передача</h2>
-          <p>Согласие включает согласие на трансграничную передачу пользовательских материалов и связанных технических метаданных поставщикам технологий генеративного искусственного интеллекта и платформе Telegram в объёме, необходимом для оказания услуг, в порядке, предусмотренном ст. 12 Закона № 152-ФЗ.</p>
+          <p>Трансграничная передача персональных данных Оператором не осуществляется. Если в дальнейшем она потребуется — в частности при запуске интеграции с TikTok, — она будет осуществляться в порядке ст. 12 Закона № 152-ФЗ, с предварительным уведомлением уполномоченного органа и на основании отдельного согласия пользователя.</p>
 
           <h2>8. Срок действия и порядок отзыва</h2>
           <p>8.1. Согласие действует с момента его предоставления до достижения целей обработки либо до его отзыва пользователем.</p>
-          <p>8.2. Отзыв согласия осуществляется путём направления заявления на ${contact} с указанием Telegram ID или username, использованных при обращении к Сервису.</p>
+          <p>8.2. Отзыв согласия осуществляется путём направления заявления на ${contact} с указанием адреса электронной почты учётной записи либо Telegram ID или username, использованных при обращении к Сервису.</p>
           <p>8.3. После отзыва согласия обработка прекращается, а персональные данные уничтожаются в срок не более 30 дней, за исключением данных, обработка и хранение которых осуществляются на иных законных основаниях (в том числе для исполнения договора и обязанностей, установленных законодательством о бухгалтерском учёте и налогах).</p>
 
           <h2>9. Порядок фиксации согласия</h2>
-          <p>9.1. Согласие предоставляется отдельным подтверждающим действием пользователя, не предустановленным по умолчанию, с одновременным предоставлением доступа к настоящему документу и <a href="privacy.html" data-keep-language>Политике конфиденциальности</a>.</p>
+          <p>9.1. Согласие предоставляется отдельным подтверждающим действием пользователя при регистрации на сайте, не предустановленным по умолчанию, с одновременным предоставлением доступа к настоящему документу и <a href="privacy.html" data-keep-language>Политике конфиденциальности</a>.</p>
           <p>9.2. Оператор фиксирует и хранит сведения о факте предоставления согласия: идентификатор пользователя, версию документа, дату и время подтверждения, а также сведения об отзыве согласия.</p>
 
           <h2>10. Подтверждение</h2>
@@ -551,13 +550,14 @@
       },
       en: {
         title: 'Consent to Personal Data Processing',
-        body: `<p>This document is the form of consent to personal data processing given under Art. 9 of Russian Federal Law No. 152-FZ of 27 July 2006 "On Personal Data". Consent is given by the user through a separate affirmative action in the interface of the Telegram bot ${botLink} before the Service is used.</p>
+        body: `<p>This document is the form of consent to personal data processing given under Art. 9 of Russian Federal Law No. 152-FZ of 27 July 2006 "On Personal Data". Consent is given by the user through a separate affirmative action during registration on blast808.com.</p>
+          <p>Processing necessary to provide the services ordered is carried out on the basis of a contract (Art. 6(1)(5) of Law No. 152-FZ) and does not require separate consent. This Consent covers the cases in which consent is an independent legal basis.</p>
 
           <h2>1. Controller to whom consent is given</h2>
           <p>${operatorEn}<br>Address: ${addressEn}<br>E-mail: ${contact}</p>
 
           <h2>2. Data subject</h2>
-          <p>The user of the Service, identified by the numeric Telegram account identifier (Telegram ID) and username from which the Service's Telegram bot is contacted.</p>
+          <p>The user of the Service, identified by the account created on blast808.com or, when the Telegram bot is used, by the numeric Telegram account identifier (Telegram ID) and username.</p>
 
           <h2>3. Purposes</h2>
           <ul>
@@ -584,18 +584,18 @@
           <p>Consent is given to the collection, recording, systematization, accumulation, storage, updating, retrieval, use, transfer (provision, access) to the persons listed in Section 6, anonymization, blocking, deletion and destruction of personal data, with and without automation.</p>
 
           <h2>6. Persons who may be instructed to process data</h2>
-          <p>Processing may be entrusted to: Telegram — delivery of messages and files; T-Bank JSC — payment acceptance and fiscal receipts; a Russian cloud infrastructure provider — hosting and storage; generative AI technology providers (including Google LLC and OpenRouter) — automated processing of materials; and a platform connected by the user (TikTok) — performing the actions the user requests. The list and terms of transfer are disclosed in the <a href="privacy.html" data-keep-language>Privacy Policy</a>.</p>
+          <p>Processing may be entrusted to: a Russian cloud infrastructure provider — hosting, compute and storage; T-Bank JSC — payment acceptance and fiscal receipts; Telegram — delivery of messages and files within the user's own account; and a platform connected by the user (TikTok) — performing the actions the user requests. The list and terms of transfer are disclosed in the <a href="privacy.html" data-keep-language>Privacy Policy</a>.</p>
 
           <h2>7. Cross-border transfer</h2>
-          <p>This consent includes consent to the cross-border transfer of user materials and related technical metadata to generative AI technology providers and to the Telegram platform, to the extent necessary to provide the services, in the manner provided by Art. 12 of Law No. 152-FZ.</p>
+          <p>The Controller does not carry out cross-border transfers of personal data. Should such a transfer become necessary — in particular when a TikTok integration is launched — it will be carried out under Art. 12 of Law No. 152-FZ, with prior notification to the supervisory authority and on the basis of separate user consent.</p>
 
           <h2>8. Term and withdrawal</h2>
           <p>8.1. Consent is effective from the moment it is given until the purposes of processing are achieved or until it is withdrawn by the user.</p>
-          <p>8.2. Consent is withdrawn by sending a request to ${contact} stating the Telegram ID or username used with the Service.</p>
+          <p>8.2. Consent is withdrawn by sending a request to ${contact} stating the account e-mail address or the Telegram ID or username used with the Service.</p>
           <p>8.3. After withdrawal, processing ceases and personal data is destroyed within no more than 30 days, except for data processed and retained on other lawful grounds (including performance of a contract and obligations under accounting and tax legislation).</p>
 
           <h2>9. How consent is recorded</h2>
-          <p>9.1. Consent is given by a separate, non-pre-ticked affirmative action, with simultaneous access to this document and to the <a href="privacy.html" data-keep-language>Privacy Policy</a>.</p>
+          <p>9.1. Consent is given by a separate, non-pre-ticked affirmative action during registration on the website, with simultaneous access to this document and to the <a href="privacy.html" data-keep-language>Privacy Policy</a>.</p>
           <p>9.2. The Controller records and retains evidence of consent: user identifier, document version, date and time of confirmation, and any withdrawal.</p>
 
           <h2>10. Confirmation</h2>
