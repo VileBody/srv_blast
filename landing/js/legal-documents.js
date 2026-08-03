@@ -82,9 +82,9 @@
           <h2>9. Сроки обработки и хранения</h2>
           <ul>
             <li>Идентификатор и данные профиля Telegram, история заказов — в течение срока использования Сервиса и 12 месяцев после последнего обращения пользователя.</li>
-            <li>Исходные пользовательские материалы (аудио, тексты, изображения) — до 90 дней с даты выполнения заказа.</li>
-            <li>Сгенерированные видеоматериалы — до 90 дней с даты передачи результата пользователю.</li>
-            <li>Технические журналы выполнения заказов и журналы безопасности — до 12 месяцев.</li>
+            <li>Исходные пользовательские материалы (аудио, тексты, изображения) — до 30 дней с даты выполнения заказа.</li>
+            <li>Сгенерированные видеоматериалы — до 30 дней с даты передачи результата пользователю.</li>
+            <li>Технические журналы выполнения заказов и журналы безопасности — до 3 месяцев.</li>
             <li>Переписка с поддержкой — до 12 месяцев с даты закрытия обращения.</li>
             <li>Данные о платежах и документы учёта — 5 лет (ст. 29 Федерального закона от 06.12.2011 № 402-ФЗ, ст. 23 Налогового кодекса РФ).</li>
             <li>Сведения о факте, версии и времени предоставления и отзыва согласия — в течение срока действия согласия и 3 лет после его отзыва.</li>
@@ -193,9 +193,9 @@
           <h2>9. Retention periods</h2>
           <ul>
             <li>Telegram identifier and profile data, order history — for as long as the Service is used and 12 months after the user's last interaction.</li>
-            <li>Source user materials (audio, text, images) — up to 90 days from order fulfilment.</li>
-            <li>Generated videos — up to 90 days from delivery to the user.</li>
-            <li>Order execution and security logs — up to 12 months.</li>
+            <li>Source user materials (audio, text, images) — up to 30 days from order fulfilment.</li>
+            <li>Generated videos — up to 30 days from delivery to the user.</li>
+            <li>Order execution and security logs — up to 3 months.</li>
             <li>Support correspondence — up to 12 months after the request is closed.</li>
             <li>Payment data and accounting records — 5 years (Art. 29 of Federal Law No. 402-FZ of 6 December 2011; Art. 23 of the Russian Tax Code).</li>
             <li>Records of the fact, version and time of consent and its withdrawal — for the term of consent and 3 years thereafter.</li>

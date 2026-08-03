@@ -21,10 +21,10 @@ These values are now published commitments. Change the documents if operations c
 | Support response | 1 business day |
 | Data subject request response | 10 business days (+5 extension) — ст. 20 152-ФЗ |
 | Data deletion after consent withdrawal | 30 days — ст. 21 152-ФЗ |
-| Source audio / lyrics / images retention | 90 days after order fulfilment |
-| Generated videos retention | 90 days after delivery |
+| Source audio / lyrics / images retention | 30 days after order fulfilment |
+| Generated videos retention | 30 days after delivery |
 | Telegram profile + order history | 12 months after last interaction |
-| Logs (execution + security) | 12 months |
+| Logs (execution + security) | 3 months |
 | Support correspondence | 12 months after closure |
 | Payment / accounting records | 5 years — 402-ФЗ, НК РФ |
 | Consent records | term of consent + 3 years |
@@ -51,19 +51,17 @@ CapCut template; Impulse 29 990 ₽ / 1 year, unlimited within fair use, 24 trac
 2. **Consent capture in the bot.** `personal-data-consent.html` states that consent is given by a
    separate, non-pre-ticked affirmative action and that the operator records user id, document
    version and timestamp. This flow does not yet exist in `services/tg_bot_public` — build it.
-3. **Retention enforcement.** The 90-day / 12-month periods above must be enforced by an actual
+3. **Retention enforcement.** The 30-day / 3-month periods above must be enforced by an actual
    cleanup job over S3 objects, Postgres rows and logs. `services/orchestrator/cleanup.py` and the
    bot's tmp reapers cover only short-lived local files today.
-4. **Free trial count.** The landing headline promises 3 free videos; `INITIAL_CREDITS` defaults to
-   `2` (`services/tg_bot_public/config.py`). Set the env to 3 or change the headline — the offer
-   itself no longer hardcodes a number.
-5. **Instagram link in the landing footer.** Under Russian law, a mention of Instagram requires the
-   notice that it belongs to Meta, recognized as an extremist organization and banned in Russia.
-   Either add the notice or drop the link.
-6. **Processor contracts.** ч. 3 ст. 6 152-ФЗ requires written instructions to processors. Confirm
+4. **Free trial count.** Set to 5 everywhere: landing headline, `INITIAL_CREDITS` default and
+   `.env.example`. The production `.env` on the server must be updated too — it overrides the
+   default. Note that the paid `Blast Trial` plan (990 ₽) also delivers 5 videos, so it is now
+   redundant; decide whether to drop it from `_PKG_TEXTS` and from the offer.
+5. **Processor contracts.** ч. 3 ст. 6 152-ФЗ requires written instructions to processors. Confirm
    the T-Bank merchant agreement, the cloud provider contract and the terms under which Gemini /
    OpenRouter are used (paid tier, no training on submitted data — as claimed in clause 5.3).
-7. **Incident procedure.** Clause 12.3 commits to 24h/72h Roskomnadzor notification. Assign an
+6. **Incident procedure.** Clause 12.3 commits to 24h/72h Roskomnadzor notification. Assign an
    owner and write the runbook.
 
 ## Before submitting the TikTok app for review
