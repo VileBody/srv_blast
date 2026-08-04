@@ -6896,7 +6896,7 @@ class BlastBotApp:
         "Импульс": 24,
     }
 
-    async def _show_purchase_stub(self, message: Message, st: ChatState, recurrent: bool = False) -> None:
+    async def _show_purchase_stub(self, message: Message, st: ChatState, recurrent: bool = False) -> bool:
         username = (st.chat_username or "").lstrip("@") or str(st.chat_id)
         pkg = st.selected_package or "не указан"
         event = "purchase_intent_recurrent" if recurrent else "purchase_intent"
@@ -6952,18 +6952,26 @@ class BlastBotApp:
                     )
                     status_label = "Подписка создана" if recurrent else "Создан"
                     await self._notify_manager_payment(username, pkg, price, status_label)
-                    return
+                    return True
+                raise RuntimeError("T-Bank Init did not return PaymentURL")
             except Exception as e:
-                log.warning("tbank payment creation failed: %s", e)
+                log.exception("tbank payment creation failed: %s", e)
+        else:
+            log.error(
+                "tbank payment creation unavailable configured=%s package=%s price=%s",
+                bool(self.tbank), pkg, price,
+            )
 
-        # Fallback: manager contact
         await message.answer(
-            "Рады, что ты решился попробовать. С тобой свяжется наш менеджер и уточнит "
-            "все интересующие моменты по продукту. Отпишем с этого аккаунта: @impulsemanage\n\n"
-            "У нас все официально: прозрачный эквайринг и, конечно, чек об оплате.",
-            reply_markup=ReplyKeyboardRemove(),
+            "Не удалось сформировать ссылку на оплату из-за технической ошибки. "
+            "Попробуй ещё раз через минуту.",
+            reply_markup=(
+                _kb([BTN_CONFIRM], [BTN_BACK])
+                if recurrent
+                else _kb([BTN_PURCHASE], [BTN_TO_TARIFFS])
+            ),
         )
-        await self._notify_manager(username, pkg)
+        return False
 
     # --- Rating first video ---
     async def _handle_rate_video(self, message: Message, st: ChatState) -> None:
@@ -7165,9 +7173,9 @@ class BlastBotApp:
                 # Бласт is subscription-only now (no one-time option).
                 await self._show_subscription_confirm(message, st)
             else:
-                await self._show_purchase_stub(message, st)
-                st.stage = STAGE_WAIT_PAYMENT
-                await self.store.set(st)
+                if await self._show_purchase_stub(message, st):
+                    st.stage = STAGE_WAIT_PAYMENT
+                    await self.store.set(st)
         else:
             await message.answer(
                 "Выбери из кнопок ниже.",
@@ -7189,9 +7197,9 @@ class BlastBotApp:
     async def _handle_purchase_choice(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()
         if text == BTN_BUY_ONCE:
-            await self._show_purchase_stub(message, st)
-            st.stage = STAGE_WAIT_PAYMENT
-            await self.store.set(st)
+            if await self._show_purchase_stub(message, st):
+                st.stage = STAGE_WAIT_PAYMENT
+                await self.store.set(st)
         elif text == BTN_BUY_SUBSCRIPTION:
             await self._show_subscription_confirm(message, st)
         else:
@@ -7224,9 +7232,9 @@ class BlastBotApp:
     async def _handle_subscription_confirm(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()
         if text == BTN_CONFIRM:
-            await self._show_purchase_stub(message, st, recurrent=True)
-            st.stage = STAGE_WAIT_PAYMENT
-            await self.store.set(st)
+            if await self._show_purchase_stub(message, st, recurrent=True):
+                st.stage = STAGE_WAIT_PAYMENT
+                await self.store.set(st)
         elif text == BTN_BACK:
             # No more purchase-choice fork — go back to the packages list.
             await self._show_all_packages(message, st)
@@ -8609,23 +8617,8 @@ class BlastBotApp:
         """Check order status via T-Bank CheckOrder API."""
         if not self.tbank:
             return None
-        params: Dict[str, Any] = {
-            "TerminalKey": self.tbank._terminal_key,
-            "OrderId": order_id,
-        }
-        params["Token"] = self.tbank._make_token(params)
         try:
-            async with httpx.AsyncClient(timeout=15) as client:
-                resp = await client.post("https://securepay.tinkoff.ru/v2/CheckOrder", json=params)
-                if resp.status_code != 200:
-                    return None
-                data = resp.json()
-                if not data.get("Success"):
-                    return None
-                payments = data.get("Payments", [])
-                if not payments:
-                    return None
-                return payments[-1]
+            return await self.tbank.check_order(order_id)
         except Exception as e:
             log.warning("tbank check_order err=%r", e)
             return None
