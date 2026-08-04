@@ -842,6 +842,33 @@ def _candidate_timings_are_stable(
     )
 
 
+def _boundary_compression_is_actionable(
+    *,
+    left_duration_ratio: float,
+    right_duration_ratio: float,
+    minimum_duration_ratio: float,
+    left_edge_supported: bool,
+    right_edge_supported: bool,
+    left_user_window_censored: bool,
+    right_user_window_censored: bool,
+) -> bool:
+    """Return whether a short boundary word is evidence of window clipping.
+
+    CTC emits narrow posterior spikes. A naturally short boundary word can
+    therefore have a much smaller evidence extent per token than a longer word
+    even when it is aligned correctly. Compression is actionable only when the
+    same side is exposed to a search or authoritative user-window boundary.
+    """
+    threshold = float(minimum_duration_ratio)
+    left_exposed = not bool(left_edge_supported) or bool(left_user_window_censored)
+    right_exposed = not bool(right_edge_supported) or bool(right_user_window_censored)
+    return (
+        float(left_duration_ratio) < threshold and left_exposed
+    ) or (
+        float(right_duration_ratio) < threshold and right_exposed
+    )
+
+
 def _build_window_candidate(
     *,
     log_probs: np.ndarray,
@@ -923,10 +950,17 @@ def _build_window_candidate(
     else:
         duration_reference = float(np.median(duration_per_token))
     duration_reference = max(duration_reference, timeline.seconds_per_frame)
-    boundary_duration_ratio = min(
+    left_boundary_duration_ratio = min(
         1.0,
-        float(min(duration_per_token[0], duration_per_token[-1]))
-        / duration_reference,
+        float(duration_per_token[0]) / duration_reference,
+    )
+    right_boundary_duration_ratio = min(
+        1.0,
+        float(duration_per_token[-1]) / duration_reference,
+    )
+    boundary_duration_ratio = min(
+        left_boundary_duration_ratio,
+        right_boundary_duration_ratio,
     )
 
     evidence_frame_count = sum(
@@ -987,7 +1021,15 @@ def _build_window_candidate(
         rejection_reasons.append("low_right_boundary_word_confidence")
     if left_edge_score < 1.0 or right_edge_score < 1.0:
         rejection_reasons.append("insufficient_edge_clearance")
-    if boundary_duration_ratio < float(config.min_boundary_duration_ratio):
+    if _boundary_compression_is_actionable(
+        left_duration_ratio=left_boundary_duration_ratio,
+        right_duration_ratio=right_boundary_duration_ratio,
+        minimum_duration_ratio=float(config.min_boundary_duration_ratio),
+        left_edge_supported=left_edge_score >= 1.0 - 1e-9,
+        right_edge_supported=right_edge_score >= 1.0 - 1e-9,
+        left_user_window_censored=left_user_window_censored,
+        right_user_window_censored=right_user_window_censored,
+    ):
         rejection_reasons.append("boundary_word_compression")
 
     return WindowAlignmentCandidate(
@@ -1484,6 +1526,7 @@ def select_dynamic_alignment_window(
         failure_code_counts[code] = failure_code_counts.get(code, 0) + 1
     diagnostics = {
         "mode": "single_inference_multi_window_consensus",
+        "boundary_duration_gate_mode": "compression_requires_boundary_exposure",
         "requested_start_abs": float(clip_start_abs),
         "requested_end_abs": float(clip_end_abs),
         "requested_candidate_count": len(requested_bounds),

@@ -15,6 +15,7 @@ from mlcore.alignment.core import (
     DynamicWindowConfig,
     EmissionTimeline,
     WindowAlignmentCandidate,
+    _boundary_compression_is_actionable,
     _build_stage1_asr,
     _candidate_timings_are_stable,
     aggregate_words,
@@ -187,6 +188,37 @@ def _dynamic_window_config() -> DynamicWindowConfig:
         min_consensus_candidates=3,
         score_tolerance=0.12,
         min_boundary_duration_ratio=0.15,
+    )
+
+
+def test_boundary_compression_inside_clear_window_is_not_actionable() -> None:
+    assert not _boundary_compression_is_actionable(
+        left_duration_ratio=0.09,
+        right_duration_ratio=1.0,
+        minimum_duration_ratio=0.15,
+        left_edge_supported=True,
+        right_edge_supported=True,
+        left_user_window_censored=False,
+        right_user_window_censored=False,
+    )
+
+
+@pytest.mark.parametrize(
+    ("right_edge_supported", "right_user_window_censored"),
+    [(False, False), (True, True)],
+)
+def test_boundary_compression_exposed_to_window_is_actionable(
+    right_edge_supported: bool,
+    right_user_window_censored: bool,
+) -> None:
+    assert _boundary_compression_is_actionable(
+        left_duration_ratio=1.0,
+        right_duration_ratio=0.09,
+        minimum_duration_ratio=0.15,
+        left_edge_supported=True,
+        right_edge_supported=right_edge_supported,
+        left_user_window_censored=False,
+        right_user_window_censored=right_user_window_censored,
     )
 
 
