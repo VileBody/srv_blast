@@ -32,6 +32,7 @@ STAGE_WAIT_FOOTAGE_GENRE = "WAIT_FOOTAGE_GENRE"
 STAGE_WAIT_FOOTAGE_ARTIST = "WAIT_FOOTAGE_ARTIST"
 STAGE_WAIT_TIMING_CHOICE = "WAIT_TIMING_CHOICE"
 STAGE_WAIT_TIMING_INPUT = "WAIT_TIMING_INPUT"
+STAGE_WAIT_ALIGNMENT_BACKEND = "WAIT_ALIGNMENT_BACKEND"
 STAGE_WAIT_SUBTITLES_MODE = "WAIT_SUBTITLES_MODE"
 # Hook feature (Phase A-UX). Inserted after subtitles, before versions.
 STAGE_WAIT_HOOK_CHOICE = "WAIT_HOOK_CHOICE"        # yes/no
@@ -51,8 +52,8 @@ STAGE_WAIT_F2_SHAPE = "WAIT_F2_SHAPE"
 STAGE_WAIT_F1_SOUND = "WAIT_F1_SOUND"
 # F1 «Звук» — wait for optional subtitle text for the uploaded sound (or skip).
 STAGE_WAIT_F1_TEXT = "WAIT_F1_TEXT"
-# Photo flow (bg_mode == "photo", behind PHOTO_FLOW_ENABLED) — two F3-style steps:
-# (1) stylization grade/look, then (2) transition between photos.
+# Photo flow (bg_mode == "photo", behind PHOTO_FLOW_ENABLED). Same slot as the
+# footage visuals: (1) transition on cuts, then (2) stylization grade/look.
 STAGE_WAIT_PHOTO_STYLE = "WAIT_PHOTO_STYLE"
 STAGE_WAIT_PHOTO_TRANSITION = "WAIT_PHOTO_TRANSITION"
 # Hook battery — wait for the (optional) F1 sound before generating N videos.
@@ -116,6 +117,7 @@ class ChatState(BaseModel):
     photo_transition: str = ""
     user_clip_start_sec: float = 0.0
     user_clip_end_sec: float = 0.0
+    stage1_alignment_backend: str = "gemini"
     subtitles_mode: str = SUBTITLES_MODE_LEGACY_BLOCKS
     # Hook feature (Phase A-UX) — analysis is computed by the bot as a
     # background asyncio task right after the user confirms the focus clip

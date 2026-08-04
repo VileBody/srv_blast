@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import importlib
 import inspect
+from types import SimpleNamespace
 
 
 # --------------------------------------------------------------------------- #
@@ -174,7 +175,7 @@ def _make_app(monkeypatch, ranked):
         def __init__(self):
             self.rank_calls = 0
 
-        async def rank_buckets(self, *, lyrics, mood="", top=0):
+        async def rank_buckets(self, *, lyrics, mood="", top=0, media_type="video"):
             self.rank_calls += 1
             return {
                 "buckets": [
@@ -188,6 +189,7 @@ def _make_app(monkeypatch, ranked):
     app = pub.BlastBotApp.__new__(pub.BlastBotApp)
     app.store = _Store()
     app.orchestrator = _Orchestrator()
+    app.settings = SimpleNamespace(public_stage1_alignment_backend="local_ctc")
     return pub, app
 
 
@@ -307,11 +309,11 @@ def test_ensure_vibe_ranked_retries_transient_failures(monkeypatch):
     calls = {"n": 0}
     real_rank_buckets = app.orchestrator.rank_buckets
 
-    async def _flaky_rank_buckets(*, lyrics, mood="", top=0):
+    async def _flaky_rank_buckets(*, lyrics, mood="", top=0, media_type="video"):
         calls["n"] += 1
         if calls["n"] < 3:
             raise ConnectionError("simulated transient failure")
-        return await real_rank_buckets(lyrics=lyrics, mood=mood, top=top)
+        return await real_rank_buckets(lyrics=lyrics, mood=mood, top=top, media_type=media_type)
 
     app.orchestrator.rank_buckets = _flaky_rank_buckets
 
@@ -336,7 +338,7 @@ def test_ensure_vibe_ranked_gives_up_after_exhausting_retries(monkeypatch):
     async def _immediate():
         return None
 
-    async def _always_fails(*, lyrics, mood="", top=0):
+    async def _always_fails(*, lyrics, mood="", top=0, media_type="video"):
         raise ConnectionError("simulated persistent failure")
 
     app.orchestrator.rank_buckets = _always_fails
@@ -365,6 +367,10 @@ def test_reuse_input_routes_to_bg_mode_not_genre(monkeypatch):
             chat_id=7,
             pending_audio_file_id="file123",  # → _can_reuse_input True
             lyrics_text="x",
+            target_fragment="x",
+            target_fragment_explicit=True,
+            user_clip_start_sec=10.0,
+            user_clip_end_sec=20.0,
             footage_artist_id="stale_artist",
             hook_enabled=True,
             hook_category="effect",
@@ -386,13 +392,72 @@ def test_reuse_input_routes_to_bg_mode_not_genre(monkeypatch):
     asyncio.run(_run())
 
 
+def test_reuse_legacy_fragment_keeps_audio_and_requests_exact_lines(monkeypatch):
+    pub, app = _make_app(monkeypatch, ranked=["t0:g0"])
+    from services.tg_bot_public.state_store import ChatState, STAGE_WAIT_FRAGMENT_TEXT
+
+    async def _run():
+        st = ChatState(
+            chat_id=7,
+            pending_audio_file_id="file123",
+            lyrics_text="legacy full lyrics",
+            target_fragment="legacy full lyrics",
+            target_fragment_explicit=False,
+            user_clip_start_sec=44.0,
+            user_clip_end_sec=62.0,
+        )
+        await app.store.set(st)
+        message = _Msg(text=pub.BTN_REUSE_INPUT)
+
+        await app._handle_wait_audio(message, st)
+
+        saved = await app.store.get(7)
+        assert saved.stage == STAGE_WAIT_FRAGMENT_TEXT
+        assert saved.pending_audio_file_id == "file123"
+        assert saved.lyrics_text == "legacy full lyrics"
+        assert saved.target_fragment == ""
+        assert saved.user_clip_start_sec == 44.0
+        assert saved.user_clip_end_sec == 62.0
+        assert "0:44-1:02" in message.answers[-1][0]
+        assert "точные строки" in message.answers[-1][0]
+
+    asyncio.run(_run())
+
+
+def test_generate_more_offers_saved_track_instead_of_forcing_upload(monkeypatch):
+    """The post-generation CTA must keep the saved-track path discoverable."""
+    pub, app = _make_app(monkeypatch, ranked=["t0:g0"])
+    from services.tg_bot_public.state_store import ChatState
+
+    async def _run():
+        st = ChatState(chat_id=7, pending_audio_file_id="file123")
+        message = _Msg(text=pub.BTN_GENERATE_MORE)
+
+        await app._handle_wait_audio(message, st)
+
+        assert "сохранённый трек" in message.answers[-1][0]
+        markup = message.answers[-1][1]
+        labels = [button.text for row in markup.keyboard for button in row]
+        assert labels == [pub.BTN_SEND_TRACK, pub.BTN_REUSE_INPUT]
+
+    asyncio.run(_run())
+
+
 def test_reuse_input_from_wait_next_routes_to_bg_mode(monkeypatch):
     """Same reuse fix on the post-generation «Сделать следующий» path."""
     pub, app = _make_app(monkeypatch, ranked=["t0:g0"])
     from services.tg_bot_public.state_store import ChatState, STAGE_WAIT_BG_MODE
 
     async def _run():
-        st = ChatState(chat_id=7, pending_audio_file_id="file123", lyrics_text="x")
+        st = ChatState(
+            chat_id=7,
+            pending_audio_file_id="file123",
+            lyrics_text="x",
+            target_fragment="x",
+            target_fragment_explicit=True,
+            user_clip_start_sec=10.0,
+            user_clip_end_sec=20.0,
+        )
         await app.store.set(st)
         await app._handle_wait_next(_Msg(text=pub.BTN_REUSE_INPUT), st)
         st = await app.store.get(7)

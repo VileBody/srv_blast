@@ -274,6 +274,41 @@ def test_list_processing_reads_from_processing_index() -> None:
     asyncio.run(_run())
 
 
+def test_reset_to_wait_audio_preserves_reusable_track_input() -> None:
+    async def _run() -> None:
+        redis = _FakeRedis()
+        store = _make_store(redis)
+        original = ChatState(
+            chat_id=109,
+            stage=STAGE_PROCESSING,
+            pending_audio_file_id="telegram-file-id",
+            pending_audio_filename="track.mp3",
+            prepared_audio_local_path="/tmp/prepared-track.mp3",
+            lyrics_text="full lyrics",
+            target_fragment="exact fragment",
+            target_fragment_explicit=True,
+            user_clip_start_sec=44.0,
+            user_clip_end_sec=62.0,
+            active_job_ids=["job-1"],
+        )
+        await store.set(original)
+
+        reset = await store.reset_to_wait_audio(109)
+
+        assert reset.stage == STAGE_WAIT_AUDIO
+        assert reset.pending_audio_file_id == "telegram-file-id"
+        assert reset.pending_audio_filename == "track.mp3"
+        assert reset.prepared_audio_local_path == "/tmp/prepared-track.mp3"
+        assert reset.lyrics_text == "full lyrics"
+        assert reset.target_fragment == "exact fragment"
+        assert reset.target_fragment_explicit is True
+        assert reset.user_clip_start_sec == 44.0
+        assert reset.user_clip_end_sec == 62.0
+        assert reset.active_job_ids == []
+
+    asyncio.run(_run())
+
+
 def test_list_processing_reads_from_legacy_processing_index() -> None:
     async def _run() -> None:
         redis = _FakeRedis()

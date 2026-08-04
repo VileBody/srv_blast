@@ -230,10 +230,45 @@ def main() -> int:
             # the picker was routed to the photo pool). Writes the SAME canonical
             # artifact names as build_full_project (drop-in for the render worker).
             from app.photo_comp import extract_photos_and_segments_from_footage_cfg  # noqa: E402
-            from app.project_builder import build_photo_project  # noqa: E402
+            from app.project_builder import build_full_project, build_photo_project  # noqa: E402
+            from app.project_config import AE_PROJECT  # noqa: E402
 
             footage_cfg = json.loads(footage_config_path.read_text(encoding="utf-8"))
             photos, segments = extract_photos_and_segments_from_footage_cfg(footage_cfg)
+            # Reuse the canonical subtitle renderer instead of maintaining a
+            # second, drifting text implementation for 4:3.
+            subtitle_build_dir = out_dir / "_photo_subtitles"
+            subtitle_build_dir.mkdir(parents=True, exist_ok=True)
+            full_edit_cfg = json.loads(full_edit_config_path.read_text(encoding="utf-8"))
+
+            # The subtitle project must contribute SUBTITLES ONLY. Its comp is
+            # nested into the 4:3 render at 1080 wide, so anything the effect
+            # block adds inside it renders as a partial-width overlay: the flash
+            # transition showed up as a white rectangle that did not reach the
+            # edges of the frame.
+            #
+            # It is not enough that MAIN_COMP has no photos. This build runs
+            # BEFORE the photo template disables the footage layers, so the cut
+            # detector still sees them — and even with zero cuts every script
+            # falls back to a single instance at the drop. Strip the block.
+            subtitle_cfg_path = subtitle_build_dir / "full_edit_config_subtitles_only.json"
+            subtitle_cfg = {k: v for k, v in full_edit_cfg.items() if k != "f3"}
+            subtitle_cfg_path.write_text(
+                json.dumps(subtitle_cfg, ensure_ascii=False), encoding="utf-8"
+            )
+            _, subtitle_jsx_path = build_full_project(
+                repo_root=REPO_ROOT,
+                full_edit_config_path=subtitle_cfg_path,
+                footage_config_path=footage_config_path,
+                out_dir=subtitle_build_dir,
+            )
+            # The effects the user picked are the SAME library footage uses; they
+            # belong to the comp that owns the photos.
+            from app.project_builder import _build_f3_overlay_js  # noqa: E402
+
+            photo_f3_overlay_js = _build_f3_overlay_js(
+                full_edit_cfg, comp_var="PHOTO_COMP"
+            )
             out_json, out_jsx = build_photo_project(
                 repo_root=REPO_ROOT,
                 photos=photos,
@@ -241,6 +276,10 @@ def main() -> int:
                 out_dir=out_dir,
                 style=(os.environ.get("PHOTO_STYLE") or "none").strip().lower() or "none",
                 transition=(os.environ.get("PHOTO_TRANSITION") or "flash").strip().lower() or "flash",
+                audio_offset_sec=float(os.environ.get("USER_CLIP_START_SEC") or 0.0),
+                subtitle_project_jsx=subtitle_jsx_path.read_text(encoding="utf-8"),
+                subtitle_comp_name=str(AE_PROJECT["main_comp"]["name"]),
+                f3_overlay_js=photo_f3_overlay_js,
             )
             print("\n[OK] PHOTO project build (4:3):")
             print(f"  - photos: {len(photos)}  segments: {len(segments)}")

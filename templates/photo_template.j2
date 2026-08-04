@@ -71,6 +71,15 @@
     function coverScale(srcW, srcH) {
       return Math.max(COMP_W / srcW, COMP_H / srcH) * 100 * OVERSCAN;
     }
+    function clamp01(v, fallback) {
+      var n = Number(v);
+      if (!isFinite(n)) n = fallback;
+      return Math.max(0, Math.min(1, n));
+    }
+    function photoFocus(seg) {
+      var f = (seg && seg.framing) ? seg.framing : {};
+      return [clamp01(f.focus_x, 0.5), clamp01(f.focus_y, 0.5)];
+    }
     function scaleVec(prop, s) { return (prop.value.length === 3) ? [s, s, 100] : [s, s]; }
     function easeAllKeys(prop, infl) {
       var e = new KeyframeEase(0, infl);
@@ -92,6 +101,12 @@
 
     var COMP_NAME = "Photo Render";
     var comp = project.items.addComp(COMP_NAME, COMP_W, COMP_H, 1.0, totalDur, FPS);
+    // Published for the F3 effect block appended after this template. It is the
+    // footage render's MAIN_COMP equivalent: the comp whose layers are the cuts.
+    // Without it the block would bind to MAIN_COMP — the nested SUBTITLE comp,
+    // which holds no footage layers, so every per-cut effect would silently do
+    // nothing while still reporting success.
+    $.global.PHOTO_COMP = comp;
     logLine("INFO", "photo comp " + COMP_W + "x" + COMP_H + " dur=" + totalDur + " segs=" + SEGMENTS.length + " style=" + STYLE + " trans=" + TRANSITION);
 
     // ====================================================================
@@ -117,9 +132,109 @@
       var item = project.importFile(new ImportOptions(f));
       var lyr = comp.layers.add(item);
       lyr.name = "MAIN_AUDIO";
-      lyr.startTime = 0;
+      var audioOffset = Number(AUDIO.offset_sec || 0);
+      if (!isFinite(audioOffset) || audioOffset < 0) { throw new Error("invalid photo audio offset: " + String(AUDIO.offset_sec)); }
+      // Source time at comp t=0 becomes audioOffset. Photo intervals and
+      // subtitles are already relative to the selected clip window.
+      lyr.startTime = -audioOffset;
       try { lyr.inPoint = 0; lyr.outPoint = totalDur; lyr.audioEnabled = true; } catch (_) {}
       return lyr;
+    }
+
+    function findCompByName(name) {
+      if (!name) return null;
+      for (var i = 1; i <= project.numItems; i++) {
+        var it = project.item(i);
+        if (it instanceof CompItem && it.name === name) return it;
+      }
+      return null;
+    }
+
+    // Stop every nested comp on the subtitle chain from rasterizing at its own
+    // width, so text composites straight into the 4:3 frame. Recursive: the text
+    // precomp can itself hold further precomps.
+    //
+    // Collapse REPLACES a layer's blending mode and drops its effects, so a layer
+    // that relies on either is left alone — losing a look is worse than a wide
+    // word being trimmed. Adjustment layers are skipped for the opposite reason:
+    // collapsed, they escape their comp and start grading the photos below.
+    function collapseNestedComps(sourceComp, depth) {
+      if (!sourceComp || depth > 3) return;
+      for (var i = 1; i <= sourceComp.numLayers; i++) {
+        var L = sourceComp.layer(i);
+        var src = null;
+        try { src = L.source; } catch (_) { src = null; }
+        if (!src || !(src instanceof CompItem)) continue;
+        if (L.adjustmentLayer === true) continue;
+        var hasFx = false;
+        try {
+          var fx = L.property("ADBE Effect Parade");
+          hasFx = !!(fx && fx.numProperties > 0);
+        } catch (_) {}
+        var plainBlend = true;
+        try { plainBlend = (L.blendingMode === BlendingMode.NORMAL); } catch (_) {}
+        if (!hasFx && plainBlend) {
+          try {
+            if (L.canSetCollapseTransformation) {
+              L.collapseTransformation = true;
+              logLine("INFO", "collapsed nested comp: " + L.name + " (depth " + depth + ")");
+            }
+          } catch (_) {}
+        } else {
+          logLine("INFO", "kept raster for " + L.name + " (fx=" + hasFx + " blend=" + !plainBlend + ")");
+        }
+        collapseNestedComps(src, depth + 1);
+      }
+    }
+
+    function addSubtitleOverlay() {
+      var subtitleName = String(photo_job.subtitle_comp_name || "");
+      if (!subtitleName) return null;
+      var subtitleComp = findCompByName(subtitleName);
+      if (!subtitleComp) { throw new Error("photo subtitle comp missing: " + subtitleName); }
+
+      // The canonical main comp also contains source photos/audio. Disable only
+      // file-backed AV and its adjustment layers. AE solids are FootageItems too,
+      // so a broad instanceof check would erase subtitle cards/backgrounds.
+      for (var i = 1; i <= subtitleComp.numLayers; i++) {
+        var srcLayer = subtitleComp.layer(i);
+        try {
+          var isFileBacked = !!(srcLayer.source && srcLayer.source instanceof FootageItem && srcLayer.source.file);
+          if (isFileBacked || srcLayer.adjustmentLayer === true) {
+            srcLayer.enabled = false;
+            srcLayer.audioEnabled = false;
+          }
+        } catch (_) {}
+      }
+
+      var overlay = comp.layers.add(subtitleComp);
+      overlay.name = "SUBTITLES_OVERLAY";
+      overlay.startTime = 0;
+      try { overlay.inPoint = 0; overlay.outPoint = totalDur; overlay.audioEnabled = false; } catch (_) {}
+      var tr = overlay.property("ADBE Transform Group");
+      try { tr.property("ADBE Anchor Point").setValue([subtitleComp.width / 2, subtitleComp.height / 2]); } catch (_) {}
+      try { tr.property("ADBE Position").setValue([COMP_W / 2, COMP_H / 2]); } catch (_) {}
+      // Preserve subtitle font size/geometry; use the central 4:3 crop without
+      // horizontally stretching the text.
+      try { tr.property("ADBE Scale").setValue([100, 100]); } catch (_) {}
+      // The subtitle comp is 1080 wide inside a 1920-wide frame, and a nested
+      // comp CLIPS at its own bounds. Regular lines fit; the jakson focus word
+      // (the red one, ~2.5x the base size) runs past 1080 and was cut off even
+      // though the 4:3 frame has room to spare on both sides.
+      //
+      // Collapsing the transformation removes that intermediate raster, so the
+      // text is composited straight into this comp and simply extends past the
+      // old boundary. Safe here because the layer carries no effects and no
+      // blending mode — those are what collapse would otherwise disable.
+      try { overlay.collapseTransformation = true; } catch (_) {}
+      // ...and the chain does not stop there. The subtitles themselves sit in a
+      // "Текст" precomp (also 1080 wide) NESTED inside that comp, so collapsing
+      // only the outer layer just moves the clip one level down. Every nested
+      // comp on the way up has to stop rasterizing, or the widest text — the
+      // jakson focus word — keeps getting cut at 1080.
+      collapseNestedComps(subtitleComp, 0);
+      overlay.moveToBeginning();
+      return overlay;
     }
 
     // ====================================================================
@@ -141,7 +256,8 @@
       var tg = lyr.property("ADBE Transform Group");
       var anchor = tg.property("ADBE Anchor Point");
       var pos = tg.property("ADBE Position");
-      anchor.setValue(anchor.value.length === 3 ? [w / 2, h / 2, 0] : [w / 2, h / 2]);
+      var focus = photoFocus(seg);
+      anchor.setValue(anchor.value.length === 3 ? [w * focus[0], h * focus[1], 0] : [w * focus[0], h * focus[1]]);
       pos.setValue(pos.value.length === 3 ? [COMP_W / 2, COMP_H / 2, 0] : [COMP_W / 2, COMP_H / 2]);
 
       var scale = tg.property("ADBE Scale");
@@ -282,6 +398,7 @@
       for (var j = 0; j < SEGMENTS.length; j++) { addFlash(SEGMENTS[j]); }
     }
     addStyleGrade();
+    addSubtitleOverlay();
 
     // ====================================================================
     // 6) SAVE + STATUS

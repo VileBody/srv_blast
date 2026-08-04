@@ -4,6 +4,10 @@ var SILENT = true;
 if (typeof $!=="undefined" && $.global && $.global.__BLAST){ var __p=$.global.__BLAST; for (var __k in __p){ if (__p[__k]!=null) CONFIG[__k]=__p[__k]; } }
 function log(m){ if(SILENT){try{$.writeln(m);}catch(e){}}else alert(m); }
 function setP(e,m,v){ try{e.property(m).setValue(v);}catch(x){} }
+function fxS(){ try{ return (CONFIG.fxScale && CONFIG.fxScale.i>0) ? CONFIG.fxScale : null; }catch(e){ return null; } }
+function sx(v){ var s=fxS(); return s? v*s.x : v; }
+function sy(v){ var s=fxS(); return s? v*s.y : v; }
+function si(v){ var s=fxS(); return s? v*s.i : v; }
 function findLayer(c,n){ for(var i=1;i<=c.numLayers;i++) if(c.layer(i).name===n) return c.layer(i); return null; }
 function findComp(){ var a=app.project.activeItem,i,it;
   if(CONFIG.targetCompName){for(i=1;i<=app.project.numItems;i++){it=app.project.item(i);if(it instanceof CompItem&&it.name===CONFIG.targetCompName)return it;}}
@@ -24,8 +28,8 @@ function build(comp){
   try{ var gi=fx.addProperty("VISINF Grain Implant"); setP(gi,"VISINF Grain Implant-0021",3); }catch(e){} // Add Grain (плагин)
   try{ fx.addProperty("ADBE CurvesCustom"); }catch(e){}                                                  // Curves (дефолт)
   var th=fx.addProperty("ADBE Threshold2"); setP(th,"ADBE Threshold2-0001",0.23529411764706);
-  var bb=fx.addProperty("ADBE Box Blur2"); setP(bb,"ADBE Box Blur2-0001",0.1);
-  var gl=fx.addProperty("ADBE Glo2"); setP(gl,"ADBE Glo2-0002",178.5); setP(gl,"ADBE Glo2-0003",195);
+  var bb=fx.addProperty("ADBE Box Blur2"); setP(bb,"ADBE Box Blur2-0001",si(0.1));
+  var gl=fx.addProperty("ADBE Glo2"); setP(gl,"ADBE Glo2-0002",178.5); setP(gl,"ADBE Glo2-0003",si(195));
   var no=fx.addProperty("ADBE Noise2"); setP(no,"ADBE Noise2-0001",15); setP(no,"ADBE Noise2-0002",0);
   return L;
 }

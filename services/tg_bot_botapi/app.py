@@ -74,6 +74,7 @@ from .state_store import (
     STAGE_WAIT_FOOTAGE_ARTIST,
     STAGE_WAIT_FOOTAGE_GENRE,
     STAGE_WAIT_FRAGMENT_CHOICE,
+    STAGE_WAIT_ALIGNMENT_BACKEND,
     STAGE_WAIT_HOOK_CHOICE,
     STAGE_WAIT_HOOK_DROP,
     STAGE_WAIT_HOOK_DROP_MANUAL,
@@ -210,6 +211,8 @@ BTN_SEND_FRAGMENT = "Отправить интересующий фрагмен�
 BTN_SKIP_FRAGMENT = "На усмотрение ИИ"
 BTN_SET_TIMING = "Указать тайминг"
 BTN_SKIP_TIMING = "Весь трек / на усмотрение ИИ"
+BTN_ALIGN_GEMINI = "Gemini"
+BTN_ALIGN_LOCAL = "Своя модель (beta)"
 BTN_BACK = "Назад"
 # F1 «Звук» — skip the optional subtitle step.
 BTN_F1_NO_SUBS = "Без субтитров"
@@ -257,31 +260,88 @@ VIBE_PAGE_SIZE = 3
 # Footage bucket previews (precision flow, phase 4): bucket_id -> {file_id,
 # file_id_public, ...}. Rendered + registered offline by scripts/build_bucket_previews.py.
 _BUCKET_PREVIEWS_CACHE: Optional[Dict[str, Dict[str, Any]]] = None
+_PHOTO_BUCKET_PREVIEWS_CACHE: Optional[Dict[str, Dict[str, Any]]] = None
 # Which file_id field this bot sends (team bot -> file_id; public mirror overrides).
 _BUCKET_PREVIEW_FILE_ID_FIELD = "file_id"
 
 
-def _bucket_previews_path() -> Path:
-    return Path(__file__).resolve().parents[2] / "data" / "footage_bucket_previews.json"
+def _bucket_previews_path(media_type: str = "video") -> Path:
+    name = "photo_bucket_previews.json" if media_type == "photo" else "footage_bucket_previews.json"
+    return Path(__file__).resolve().parents[2] / "data" / name
 
 
-def _load_bucket_previews() -> Dict[str, Dict[str, Any]]:
-    global _BUCKET_PREVIEWS_CACHE
-    if _BUCKET_PREVIEWS_CACHE is None:
+def _load_bucket_previews(media_type: str = "video") -> Dict[str, Dict[str, Any]]:
+    global _BUCKET_PREVIEWS_CACHE, _PHOTO_BUCKET_PREVIEWS_CACHE
+    is_photo = media_type == "photo"
+    cache = _PHOTO_BUCKET_PREVIEWS_CACHE if is_photo else _BUCKET_PREVIEWS_CACHE
+    if cache is None:
         try:
-            obj = json.loads(_bucket_previews_path().read_text(encoding="utf-8"))
+            obj = json.loads(_bucket_previews_path(media_type).read_text(encoding="utf-8"))
             prev = obj.get("previews") if isinstance(obj, dict) else None
-            _BUCKET_PREVIEWS_CACHE = prev if isinstance(prev, dict) else {}
+            cache = prev if isinstance(prev, dict) else {}
         except Exception:
-            _BUCKET_PREVIEWS_CACHE = {}
-    return _BUCKET_PREVIEWS_CACHE
+            cache = {}
+        if is_photo:
+            _PHOTO_BUCKET_PREVIEWS_CACHE = cache
+        else:
+            _BUCKET_PREVIEWS_CACHE = cache
+    return cache
 
 
 def _bucket_preview_file_id(bucket_id: str) -> str:
-    e = _load_bucket_previews().get(str(bucket_id or "").strip())
+    bid = str(bucket_id or "").strip()
+    media_type = "photo" if bid.startswith("photo:") else "video"
+    e = _load_bucket_previews(media_type).get(bid)
     if not isinstance(e, dict):
         return ""
     return str(e.get(_BUCKET_PREVIEW_FILE_ID_FIELD) or "").strip()
+
+
+def _live_bucket_ids(bg_mode: str) -> set:
+    """Bucket ids the CURRENT catalog offers for this plane.
+
+    Empty set = the catalog could not be read; callers must treat that as "no
+    opinion" and keep whatever the chat already has, never as "everything is
+    stale" (that would re-rank every chat on every message)."""
+    try:
+        if str(bg_mode or "").strip().lower() == "photo":
+            from mlcore.photo_bucket_catalog import load_photo_catalog
+            return {b.bucket_id for b in load_photo_catalog()}
+        from mlcore.footage_visual_catalog import load_visual_catalog
+        return {b.bucket_id for b in load_visual_catalog()}
+    except Exception:
+        log.exception("vibe_catalog_load_failed bg_mode=%s — keeping stored shortlist", bg_mode)
+        return set()
+
+
+def _stale_vibe_shortlist_reason(ranked_ids: List[str], bg_mode: str) -> str:
+    """Why a persisted vibe shortlist must be re-ranked, or "" to keep it.
+
+    The shortlist is the FULL ranked catalog, so it has to match the catalog set
+    exactly. Comparing by id prefix instead (the old check) only caught a shortlist
+    from the wrong plane: re-cutting the photo catalog keeps every id under
+    "photo:", so a chat that ranked before the change passed the check and was
+    served retired buckets forever, never seeing a new one. Bucket sets get
+    re-cut regularly, so this has to be checked against the catalog itself."""
+    stored = [str(b or "").strip() for b in (ranked_ids or []) if str(b or "").strip()]
+    if not stored:
+        return ""
+    if any(bid.split(":", 1)[0].endswith(("_major", "_minor")) for bid in stored):
+        return "legacy_ids"
+
+    live = _live_bucket_ids(bg_mode)
+    if not live:
+        # Catalog unreadable — fall back to the plane check alone rather than
+        # stranding the chat or re-ranking it on a loop.
+        expected_prefix = "photo:" if str(bg_mode or "").strip().lower() == "photo" else "visual:"
+        return "" if all(b.startswith(expected_prefix) for b in stored) else "wrong_plane"
+
+    stored_set = set(stored)
+    if stored_set - live:
+        return "retired_buckets"
+    if live - stored_set:
+        return "new_buckets"
+    return ""
 
 
 def _vibe_display_label(label: str) -> str:
@@ -492,7 +552,8 @@ _F2_SHAPE_BY_BUTTON = {
     BTN_F2_SHAPE_STAR2: "star2",
     BTN_F2_SHAPE_ELIPSE: "elipse",
 }
-# Photo flow (4:3) — two F3-style picker steps. Step 1: stylization grade applied
+# Photo flow (4:3) — transition + stylization, asked where footage asks its
+# own visuals. Stylization is the grade applied
 # over the whole render (button → photo_style id, schema Literal contract). The id
 # set must stay in sync with schemas.SendAudioS3Request.photo_style.
 BTN_PHOTO_STYLE_NONE = "Без стилизации"
@@ -556,6 +617,8 @@ _CONTROL_BUTTONS = {
     BTN_SKIP_FRAGMENT,
     BTN_SET_TIMING,
     BTN_SKIP_TIMING,
+    BTN_ALIGN_GEMINI,
+    BTN_ALIGN_LOCAL,
     BTN_BACK,
     BTN_BG_FOOTAGE,
     BTN_BG_SOLID,
@@ -1776,6 +1839,10 @@ class BlastBotApp:
                 await self._handle_wait_timing_input(message, st)
                 return
 
+            if st.stage == STAGE_WAIT_ALIGNMENT_BACKEND:
+                await self._handle_wait_alignment_backend(message, st)
+                return
+
             if st.stage == STAGE_WAIT_SUBTITLE_COLOR:
                 await self._handle_wait_subtitle_color(message, st)
                 return
@@ -2260,6 +2327,7 @@ class BlastBotApp:
         st.stage = STAGE_WAIT_TIMING_CHOICE
         st.user_clip_start_sec = 0.0
         st.user_clip_end_sec = 0.0
+        st.stage1_alignment_backend = "gemini"
         await self.store.set(st)
         await message.answer(
             "Хочешь указать конкретный тайминг трека для клипа?\n"
@@ -2280,6 +2348,7 @@ class BlastBotApp:
         if text == BTN_SKIP_TIMING:
             st.user_clip_start_sec = 0.0
             st.user_clip_end_sec = 0.0
+            st.stage1_alignment_backend = "gemini"
             # No focus clip = no hook analysis (would have to analyze the whole
             # track). User can still enable hook later — they will get
             # algorithmic top-1 on the full track as the default candidate.
@@ -2318,6 +2387,57 @@ class BlastBotApp:
         await self._trigger_hook_analysis_task(st)
         await self._ask_lyrics_choice(message, st)
 
+    def _can_choose_local_alignment(self, st: ChatState) -> bool:
+        start = float(st.user_clip_start_sec or 0.0)
+        end = float(st.user_clip_end_sec or 0.0)
+        return bool(
+            self.settings.team_local_alignment_enabled
+            and str(st.target_fragment or "").strip()
+            and end > start >= 0.0
+        )
+
+    async def _ask_alignment_backend(self, message: Message, st: ChatState) -> None:
+        if not self._can_choose_local_alignment(st):
+            st.stage1_alignment_backend = "gemini"
+            await self._ask_bg_mode(message, st)
+            return
+        st.stage = STAGE_WAIT_ALIGNMENT_BACKEND
+        st.stage1_alignment_backend = "gemini"
+        await self.store.set(st)
+        await message.answer(
+            "Тайминг текста: Gemini или своя модель (beta)?",
+            reply_markup=_kb([BTN_ALIGN_GEMINI, BTN_ALIGN_LOCAL], [BTN_BACK]),
+        )
+
+    async def _handle_wait_alignment_backend(
+        self,
+        message: Message,
+        st: ChatState,
+    ) -> None:
+        text = str(message.text or "").strip()
+        if text == BTN_BACK:
+            await self._ask_fragment_choice(message, st)
+            return
+        if text == BTN_ALIGN_GEMINI:
+            st.stage1_alignment_backend = "gemini"
+            await self._ask_bg_mode(message, st)
+            return
+        if text == BTN_ALIGN_LOCAL:
+            if not self._can_choose_local_alignment(st):
+                st.stage1_alignment_backend = "gemini"
+                await message.answer(
+                    "Своя модель доступна только для точного фрагмента "
+                    "с заданным таймингом."
+                )
+                await self._ask_bg_mode(message, st)
+                return
+            st.stage1_alignment_backend = "local_ctc"
+            await self._ask_bg_mode(message, st)
+            return
+        await message.answer(
+            "Выбери кнопкой: «Gemini» или «Своя модель (beta)»."
+        )
+
     async def _ask_bg_mode(self, message: Message, st: ChatState) -> None:
         st.stage = STAGE_WAIT_BG_MODE
         st.bg_mode = "footage"
@@ -2344,7 +2464,7 @@ class BlastBotApp:
             return
         if text == BTN_BG_PICTURES_PHOTO and _photo_flow_enabled():
             # Photo flow (4:3): reuse the vibe shortlist (PHOTO pool), then the
-            # two F3-style photo picker steps run after the vibe is confirmed.
+            # the photo transition/stylization pair runs later, in the visuals slot.
             st.bg_mode = "photo"
             st.bg_solid_color = ""
             await self.store.set(st)
@@ -2524,11 +2644,21 @@ class BlastBotApp:
 
     async def _run_vibe_ranker_bg(self, *, chat_id: int, lyrics: str, mood: str) -> None:
         """Background runner — must never raise into the asyncio loop."""
+        media_type = "video"
         try:
-            result = await self.orchestrator.rank_buckets(lyrics=lyrics, mood=mood)
+            current = await self.store.get(chat_id)
+            media_type = "photo" if current.bg_mode == "photo" else "video"
+            result = await self.orchestrator.rank_buckets(
+                lyrics=lyrics, mood=mood, media_type=media_type
+            )
             ranked_ids, labels = self._parse_ranked_buckets(result)
             st = await self.store.get(chat_id)
-            # Stale guard: only persist if the user hasn't moved on / re-ranked.
+            # Stale guard: a rank started for footage must never overwrite the
+            # photo shortlist (or vice versa) if the user changed bg_mode meanwhile.
+            current_media_type = "photo" if st.bg_mode == "photo" else "video"
+            if current_media_type != media_type:
+                return
+            # Only persist if the user has not moved on / re-ranked.
             if st.vibe_rank_status not in {"pending", "ready"}:
                 return
             st.vibe_ranked_ids = ranked_ids
@@ -2541,6 +2671,9 @@ class BlastBotApp:
             log.warning("vibe_rank_fail chat=%s err=%r", chat_id, e)
             try:
                 st = await self.store.get(chat_id)
+                current_media_type = "photo" if st.bg_mode == "photo" else "video"
+                if current_media_type != media_type:
+                    return
                 st.vibe_rank_status = "failed"
                 await self.store.set(st)
             except Exception:
@@ -2562,26 +2695,35 @@ class BlastBotApp:
             labels[bid] = label
         return ranked_ids, labels
 
-    async def _ensure_vibe_ranked(self, st: ChatState) -> bool:
+    async def _ensure_vibe_ranked(self, st: ChatState, *, force: bool = False) -> bool:
         """Make sure st has a ranked shortlist. If the background ranker hasn't
         finished (or failed), rank synchronously now. Returns False only when
         ranking yields nothing after retries (caller falls back to the legacy
         genre picker).
+
+        force=True re-ranks even when a usable shortlist is stored. The staleness
+        check below compares the SET of buckets, so by construction it cannot see
+        a re-ORDERING — and improving the ranking is exactly a re-ordering. Every
+        chat that had ranked before such a change would otherwise keep its old
+        order forever, since nothing else re-triggers ranking until new lyrics.
+        Ranking is deterministic and LLM-free by default, so re-running it on
+        entry costs one cheap call and removes that whole class of staleness.
 
         Retries a couple of times with a short backoff: the orchestrator
         endpoint is hardened to never 500/empty, so a failure here is a
         transient client-side hiccup (timeout/connection reset) — without a
         retry, one bad request permanently strands the chat in the legacy
         artist flow (nothing else re-triggers ranking until new lyrics)."""
-        if st.vibe_ranked_ids:
-            legacy_ids = [
-                bid for bid in st.vibe_ranked_ids
-                if bid.split(":", 1)[0].endswith(("_major", "_minor"))
-            ]
-            if not legacy_ids:
+        stored_ids = list(st.vibe_ranked_ids or [])
+        stored_labels = dict(st.vibe_labels_by_id or {})
+        if st.vibe_ranked_ids and not force:
+            reason = _stale_vibe_shortlist_reason(st.vibe_ranked_ids, st.bg_mode)
+            if not reason:
                 return True
-            log.info("vibe_catalog_migration chat=%s legacy_ids=%d action=rerank",
-                     st.chat_id, len(legacy_ids))
+            log.info(
+                "vibe_catalog_migration chat=%s reason=%s stored=%d action=rerank",
+                st.chat_id, reason, len(st.vibe_ranked_ids),
+            )
             st.vibe_ranked_ids = []
             st.vibe_labels_by_id = {}
             st.vibe_selected_ids = []
@@ -2592,7 +2734,10 @@ class BlastBotApp:
             if attempt:
                 await asyncio.sleep(0.5 * attempt)
             try:
-                result = await self.orchestrator.rank_buckets(lyrics=lyrics, mood="")
+                result = await self.orchestrator.rank_buckets(
+                    lyrics=lyrics, mood="",
+                    media_type="photo" if st.bg_mode == "photo" else "video",
+                )
                 ranked_ids, labels = self._parse_ranked_buckets(result)
             except Exception as e:
                 last_err = e
@@ -2609,6 +2754,19 @@ class BlastBotApp:
         log.error(
             "vibe_rank_sync_exhausted chat=%s attempts=3 last_err=%r", st.chat_id, last_err
         )
+        # A forced refresh that could not reach the orchestrator must not cost the
+        # user their shortlist — an older order still beats being dropped into the
+        # legacy genre picker.
+        if stored_ids and not _stale_vibe_shortlist_reason(stored_ids, st.bg_mode):
+            st.vibe_ranked_ids = stored_ids
+            st.vibe_labels_by_id = stored_labels
+            st.vibe_rank_status = "ready"
+            await self.store.set(st)
+            log.warning(
+                "vibe_rank_refresh_failed chat=%s keeping_stored=%d",
+                st.chat_id, len(stored_ids),
+            )
+            return True
         return False
 
     def _vibe_page_count(self, st: ChatState) -> int:
@@ -2651,8 +2809,9 @@ class BlastBotApp:
         pages = max(1, self._vibe_page_count(st))
         page = int(st.vibe_page or 0) % pages
         n_sel = len(st.vibe_selected_ids or [])
+        what = "картинок" if st.bg_mode == "photo" else "футажа"
         lines = [
-            "Выбери вайб(ы) для футажа — можно несколько (тап = ✓ в набор).",
+            f"Выбери вайб(ы) для {what} — можно несколько (тап = ✓ в набор).",
             f"Страница {page + 1}/{pages}. Выбрано: {n_sel}.",
             "«Ещё варианты ›» — показать другие вайбы (выбор сохраняется). "
             "«▶️ Готово» — продолжить. «✨ По треку (авто)» — топ-1 по треку.",
@@ -2670,7 +2829,7 @@ class BlastBotApp:
         st.vibe_selected_ids = []
         st.vibe_page = 0
         await self.store.set(st)
-        ok = await self._ensure_vibe_ranked(st)
+        ok = await self._ensure_vibe_ranked(st, force=True)
         if not ok:
             await message.answer(
                 "Не удалось подобрать вайбы по треку — выбери стиль вручную."
@@ -2793,13 +2952,10 @@ class BlastBotApp:
                 pass
             await cb.answer("Готово")
             await cb.message.answer("Вайбы: " + ", ".join(labels))
-            # Photo flow (4:3): after the vibe, ask the two photo picker steps
-            # (stylization → transition) before the version count. Footage/other
-            # bg modes continue to the subtitles step as before.
-            if st.bg_mode == "photo":
-                await self._ask_photo_style(cb.message, st)
-            else:
-                await self._ask_subtitles_mode(cb.message, st)
+            # Photo is the footage flow with a different background and takes the
+            # same route: subtitle mode, then visuals (transition -> style), then
+            # colours. Only hooks are skipped.
+            await self._ask_subtitles_mode(cb.message, st)
             return
 
         await cb.answer()
@@ -2966,6 +3122,7 @@ class BlastBotApp:
         st.prepared_audio_local_path = str(prep.output_path)
         st.lyrics_text = ""
         st.target_fragment = ""
+        st.stage1_alignment_backend = "gemini"
         st.subtitles_mode = SUBTITLES_MODE_LEGACY_BLOCKS
         st.versions_count = 1
         st.batch_id = ""
@@ -3002,6 +3159,7 @@ class BlastBotApp:
         if text == BTN_SKIP_LYRICS:
             st.lyrics_text = ""
             st.target_fragment = ""
+            st.stage1_alignment_backend = "gemini"
             await self._ask_subtitles_mode(message, st)
             return
 
@@ -3018,6 +3176,7 @@ class BlastBotApp:
 
         st.lyrics_text = text
         st.target_fragment = ""
+        st.stage1_alignment_backend = "gemini"
         st.stage = STAGE_WAIT_FRAGMENT_CHOICE
         await self.store.set(st)
         # Phase 2b: kick off the footage-bucket ranker in the background now that
@@ -3043,6 +3202,7 @@ class BlastBotApp:
 
         if text == BTN_SKIP_FRAGMENT:
             st.target_fragment = ""
+            st.stage1_alignment_backend = "gemini"
             await self._ask_bg_mode(message, st)
             return
 
@@ -3058,7 +3218,8 @@ class BlastBotApp:
             return
 
         st.target_fragment = text
-        await self._ask_bg_mode(message, st)
+        st.stage1_alignment_backend = "gemini"
+        await self._ask_alignment_backend(message, st)
 
     async def _handle_wait_subtitles_mode(self, message: Message, st: ChatState) -> None:
         mode = _parse_subtitles_mode_choice(message.text or "")
@@ -3069,6 +3230,25 @@ class BlastBotApp:
             )
             return
         st.subtitles_mode = mode
+        # Photo is the footage flow with a different background: same subtitle
+        # steps, its own transition/style pair, then the same colours. Only hooks
+        # are skipped (not ported to 4:3 yet). Colours are NOT a footage-only
+        # feature — the photo build reuses the canonical subtitle project, so
+        # SUBTITLES_FORCE_FILL_HEX / focus hex land exactly as for footage.
+        if st.bg_mode == "photo":
+            # Same effect library as footage: the F3 block is bound to PHOTO_COMP
+            # at build time, so these buttons drive the real, proven effects (and
+            # reuse their preview reels). The hook sub-step is skipped — hooks are
+            # the one thing not ported to 4:3.
+            st.hook_enabled = True
+            st.hook_category = "effect"
+            st.effect_hook = ""
+            st.effect_hook_extend = ""
+            st.photo_style = ""
+            st.photo_transition = ""
+            await self.store.set(st)
+            await self._ask_effect_transition(message, st)
+            return
         # Strobe bg: text is forced white + auto-inverts (Difference), so no color
         # customization; and only the cut-transition style — not the full hook flow.
         if st.bg_mode == "solid_strobe":
@@ -3165,8 +3345,15 @@ class BlastBotApp:
     async def _ask_accent_color(self, message: Message, st: ChatState) -> None:
         st.stage = STAGE_WAIT_ACCENT_COLOR
         await self.store.set(st)
+        # The shapes are a hook feature, so naming them on the photo path would
+        # promise something that step cannot deliver — hooks are skipped there.
+        what = (
+            "фокус-слово"
+            if st.bg_mode == "photo"
+            else "фигуры «Объект» + фокус-слово"
+        )
         await message.answer(
-            "Акцентный цвет (фигуры «Объект» + фокус-слово)? Палитра или «По умолчанию».",
+            f"Акцентный цвет ({what})? Палитра или «По умолчанию».",
             reply_markup=self._color_kb(),
         )
 
@@ -3177,6 +3364,11 @@ class BlastBotApp:
             return
         st.accent_color_hex = choice
         await self.store.set(st)
+        # Hooks are not ported to the 4:3 photo render yet — the photo flow is
+        # otherwise the footage flow, so it rejoins at the version count.
+        if st.bg_mode == "photo":
+            await self._ask_versions(message, st)
+            return
         await self._ask_hook_choice(message, st)
 
     # ---------- Phase A-UX helpers (lyrics / fragment factoring) ----------
@@ -3952,15 +4144,44 @@ class BlastBotApp:
         await self._ask_versions(message, st)
 
     # ── Photo flow (4:3) — 2-step picker (style -> transition), F3-style ──
+    async def _ask_photo_transition(self, message: Message, st: ChatState) -> None:
+        st.stage = STAGE_WAIT_PHOTO_TRANSITION
+        await self.store.set(st)
+        await message.answer(
+            "Шаг 1/2: переход на склейках картинок.\n\n"
+            "• Вспышка\n• Слайд\n• Зум\n• Вжух\n\n"
+            "Можно пропустить — тогда резкая склейка.",
+            reply_markup=_kb(
+                [BTN_PHOTO_TR_FLASH, BTN_PHOTO_TR_SLIDE],
+                [BTN_PHOTO_TR_ZOOM, BTN_PHOTO_TR_WHIP],
+                [BTN_PHOTO_TR_NONE],
+                [BTN_BACK],
+            ),
+        )
+
+    async def _handle_wait_photo_transition(self, message: Message, st: ChatState) -> None:
+        text = str(message.text or "").strip()
+        if text == BTN_BACK:
+            await self._ask_subtitles_mode(message, st)
+            return
+        tr = _PHOTO_TRANSITION_BY_BUTTON.get(text)
+        if tr is None:
+            await message.answer("Выбери переход кнопкой ниже.")
+            return
+        st.photo_transition = tr
+        await self.store.set(st)
+        await self._ask_photo_style(message, st)
+
     async def _ask_photo_style(self, message: Message, st: ChatState) -> None:
         st.stage = STAGE_WAIT_PHOTO_STYLE
         await self.store.set(st)
         await message.answer(
-            "Картинки — шаг 1/2: стилизация (грейд на весь ролик).\n"
+            "Шаг 2/2: стилизация картинок.\n\n"
+            "Выбранный эффект применяется ко всему ролику.\n\n"
             "• Тёплый / Холодный — цветовая температура.\n"
             "• Винтаж / Ч/Б / VHS — плёночные луки.\n"
-            "• Night Vision — зелёное ночное видение с шумом и пикселем.\n"
-            "• Без стилизации — оставить как есть.",
+            "• Night Vision — зелёное ночное видение с шумом и пикселем.\n\n"
+            "Можно пропустить — оставить как есть.",
             reply_markup=_kb(
                 [BTN_PHOTO_STYLE_WARM, BTN_PHOTO_STYLE_COLD],
                 [BTN_PHOTO_STYLE_VINTAGE, BTN_PHOTO_STYLE_BW],
@@ -3973,8 +4194,7 @@ class BlastBotApp:
     async def _handle_wait_photo_style(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()
         if text == BTN_BACK:
-            # Back lands on the vibe shortlist (the photo flow's previous step).
-            await self._ask_vibe_shortlist(message, st)
+            await self._ask_photo_transition(message, st)
             return
         style = _PHOTO_STYLE_BY_BUTTON.get(text)
         if style is None:
@@ -3982,37 +4202,7 @@ class BlastBotApp:
             return
         st.photo_style = style
         await self.store.set(st)
-        await self._ask_photo_transition(message, st)
-
-    async def _ask_photo_transition(self, message: Message, st: ChatState) -> None:
-        st.stage = STAGE_WAIT_PHOTO_TRANSITION
-        await self.store.set(st)
-        await message.answer(
-            "Шаг 2/2: переход между фото.\n"
-            "• Вспышка / Слайд / Зум / Вжух — варианты смены кадра.\n"
-            "• Без перехода — резкая склейка.",
-            reply_markup=_kb(
-                [BTN_PHOTO_TR_FLASH, BTN_PHOTO_TR_SLIDE],
-                [BTN_PHOTO_TR_ZOOM, BTN_PHOTO_TR_WHIP],
-                [BTN_PHOTO_TR_NONE],
-                [BTN_BACK],
-            ),
-        )
-
-    async def _handle_wait_photo_transition(self, message: Message, st: ChatState) -> None:
-        text = str(message.text or "").strip()
-        if text == BTN_BACK:
-            await self._ask_photo_style(message, st)
-            return
-        tr = _PHOTO_TRANSITION_BY_BUTTON.get(text)
-        if tr is None:
-            await message.answer("Выбери переход кнопкой ниже.")
-            return
-        st.photo_transition = tr
-        await self.store.set(st)
-        # Photo render is horizontal 1920×1440 — subtitles aren't baked in 4:3, so
-        # skip the subtitles/hook steps and go straight to the version count.
-        await self._ask_versions(message, st)
+        await self._ask_subtitle_color(message, st)
 
     # ── F3 «Эффект» — 3-step picker (hook -> transition -> extra) + extend ──
     async def _ask_effect_hook(self, message: Message, st: ChatState) -> None:
@@ -4060,8 +4250,11 @@ class BlastBotApp:
         await self._send_option_previews(
             message, [f"effect_transition:{v}" for v in _FX_TRANSITION_BY_BUTTON.values()]
         )
+        # Photo is offered 2 of the 3 effect steps (no hook), so it counts 1/2.
+        _hdr = "Шаг 1/2" if st.bg_mode == "photo" else "Шаг 2/3"
+        _what = "картинок" if st.bg_mode == "photo" else "футажа"
         await message.answer(
-            "Шаг 2/3: переход на склейках футажа.\n"
+            f"{_hdr}: переход на склейках {_what}.\n"
             "Можно пропустить.",
             reply_markup=_kb(
                 [BTN_FX_TR_SNAP, BTN_FX_TR_MINIMAX],
@@ -4075,6 +4268,10 @@ class BlastBotApp:
     async def _handle_wait_effect_transition(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()
         if text == BTN_BACK:
+            # Photo never saw the hook step, so its BACK goes one further up.
+            if st.bg_mode == "photo":
+                await self._ask_subtitles_mode(message, st)
+                return
             await self._ask_effect_hook(message, st)
             return
         if text == BTN_FX_SKIP:
@@ -4097,7 +4294,9 @@ class BlastBotApp:
             message, [f"effect_extra:{v}" for v in _FX_EXTRA_BY_BUTTON.values()]
         )
         await message.answer(
-            "Шаг 3/3: стилизация футажа до дропа (грейд 00:00 → дроп).\n"
+            f"{'Шаг 2/2' if st.bg_mode == 'photo' else 'Шаг 3/3'}: стилизация "
+            f"{'картинок' if st.bg_mode == 'photo' else 'футажа'} до дропа "
+            "(грейд 00:00 → дроп).\n"
             "Можно пропустить.",
             reply_markup=_kb(
                 [BTN_FX_EX_XEROX, BTN_FX_EX_ANALOG],
@@ -4125,8 +4324,14 @@ class BlastBotApp:
         if not st.effect_extra:
             st.effect_extra_full = False  # no grade → nothing to stretch
         await self.store.set(st)
-        # at least one of hook/transition/extra is required
+        # at least one of hook/transition/extra is required — but photo is only
+        # offered two of the three, so skipping both is a valid "no effects".
         if not (st.effect_hook or st.effect_transition or st.effect_extra):
+            if st.bg_mode == "photo":
+                st.hook_enabled = False
+                await self.store.set(st)
+                await self._ask_subtitle_color(message, st)
+                return
             await message.answer(
                 "Нужно выбрать хотя бы один эффект из трёх. Начнём заново с хука."
             )
@@ -4213,6 +4418,10 @@ class BlastBotApp:
         if st.effect_hook_extend:
             parts.append(f"растяжка «{st.effect_hook_extend}»")
         await message.answer("Ок, «Эффект»: " + ", ".join(parts) + ".")
+        # Photo runs the effects as its visuals slot, so the colours still follow.
+        if st.bg_mode == "photo":
+            await self._ask_subtitle_color(message, st)
+            return
         await self._ask_versions(message, st)
 
     # ── F2 «Объект» — single shape sub-picker (rest of combo is server-side) ──
@@ -4447,7 +4656,9 @@ class BlastBotApp:
         st.stage = STAGE_WAIT_CONFIRM
         await self.store.set(st)
         await message.answer(
-            f"Ок, режим субтитров: {st.subtitles_mode}, версий: {n}. Запустить генерацию?",
+            f"Ок, режим субтитров: {st.subtitles_mode}, "
+            f"тайминг текста: {st.stage1_alignment_backend}, "
+            f"версий: {n}. Запустить генерацию?",
             reply_markup=_kb([BTN_LAUNCH]),
         )
 
@@ -5035,6 +5246,7 @@ class BlastBotApp:
             mode="with_gemini",
             lyrics_text=st.lyrics_text,
             target_fragment=st.target_fragment,
+            stage1_alignment_backend=st.stage1_alignment_backend,
             subtitles_mode=st.subtitles_mode,
             footage_artist_id=st.footage_artist_id,
             user_clip_start_sec=user_clip_start_sec,
@@ -5104,17 +5316,11 @@ class BlastBotApp:
                 )
                 else None
             ),
-            # Photo flow (4:3): stylization + transition, only when bg_mode=="photo".
-            photo_style=(
-                str(st.photo_style)
-                if (st.bg_mode == "photo" and st.photo_style)
-                else None
-            ),
-            photo_transition=(
-                str(st.photo_transition)
-                if (st.bg_mode == "photo" and st.photo_transition)
-                else None
-            ),
+            # The 4:3 template still implements its own grade/intro, but nothing
+            # selects them any more: photo picks from the footage effect library
+            # above. Sending nothing leaves both off so the two cannot stack.
+            photo_style=None,
+            photo_transition=None,
             # Strobe bg auto-inverts WHITE text (Difference blend) — ignore any
             # custom subtitle color so the text stays white.
             subtitle_color_hex=(None if st.bg_mode == "solid_strobe" else (str(st.subtitle_color_hex) or None)),
@@ -5243,6 +5449,7 @@ class BlastBotApp:
         st.last_job_stage = ""
         st.last_job_error = ""
         st.target_fragment = ""
+        st.stage1_alignment_backend = "gemini"
         st.footage_genre_key = ""
         st.footage_artist_key = ""
         st.footage_artist_id = ""

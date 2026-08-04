@@ -307,6 +307,58 @@ class GenerationRuntimeStore:
             rows = await conn.fetch(" ".join(query), *params)
         return [_row_to_dict(row) for row in rows]
 
+    async def list_alignment_smoke_candidates(
+        self,
+        *,
+        surface: str,
+        created_after: datetime,
+        limit: int = 100,
+    ) -> List[Dict[str, Any]]:
+        """Return recent run inputs and version outcomes for offline alignment smoke tests."""
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                WITH candidate_runs AS (
+                    SELECT *
+                    FROM generation_runs
+                    WHERE surface = $1 AND created_at >= $2
+                    ORDER BY created_at DESC
+                    LIMIT $3
+                )
+                SELECT
+                    r.run_id,
+                    r.status AS run_status,
+                    r.current_stage,
+                    r.versions_total,
+                    r.last_error_code,
+                    r.last_error_text,
+                    r.created_at AS run_created_at,
+                    r.updated_at AS run_updated_at,
+                    started.payload,
+                    v.version_index,
+                    v.job_id,
+                    v.job_status,
+                    v.job_stage,
+                    v.result_url,
+                    v.archive_url,
+                    v.last_error_text AS version_error_text
+                FROM candidate_runs r
+                JOIN LATERAL (
+                    SELECT payload
+                    FROM run_events
+                    WHERE run_id = r.run_id AND event_type = 'run_started'
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                ) started ON TRUE
+                LEFT JOIN generation_versions v ON v.run_id = r.run_id
+                ORDER BY r.created_at DESC, v.version_index ASC
+                """,
+                str(surface),
+                created_after,
+                min(300, max(1, int(limit))),
+            )
+        return [_row_to_dict(row) for row in rows]
+
     async def list_incomplete_runs(self, *, surface: str, limit: int = 200) -> List[Dict[str, Any]]:
         async with self._pool.acquire() as conn:
             rows = await conn.fetch(

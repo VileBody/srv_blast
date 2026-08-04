@@ -108,3 +108,16 @@ def test_registry_replacement_rejects_large_shrink_but_allows_explicit_force():
         allow_destructive=True,
     )
     assert result["forced"] is True
+
+def test_photo_registry_uses_namespaced_id_and_keeps_real_s3_key():
+    rec = adb.build_asset_record(
+        _asset(
+            fn="353532639512911981.jpg",
+            s3_key="photo_collection/hh/1/353532639512911981.jpg",
+            dur=1.5,
+        ),
+        source="photo",
+    )
+    assert rec["clip_id"] == "photo:353532639512911981"
+    assert rec["s3_key"] == "photo_collection/hh/1/353532639512911981.jpg"
+    assert rec["source"] == "photo"

@@ -20,7 +20,7 @@ import os
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Mapping, Optional
 
 from mlcore.footage_tagger import (
     TAGGER_VERSION,
@@ -62,6 +62,7 @@ def select_untagged_photo_keys(s3_keys: Iterable[str], tagged_clip_ids: set) -> 
 
 def record_from_photo_result(
     *, s3_key: str, result: Dict[str, Any], tagger: str = TAGGER_VERSION,
+    framing: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
     """Shape a single Qwen Vision result into a footage_tags record (source=photo)."""
     file_name = Path(str(s3_key)).name
@@ -73,6 +74,7 @@ def record_from_photo_result(
         "color_tone": result.get("color_tone"),
         "people_type": result.get("people_type"),
         "theme_tags": result.get("theme_tags") or [],
+        "framing": dict(framing or {}),
     }
     return build_photo_tag_record(raw, tagger=tagger)
 
@@ -129,9 +131,118 @@ def tag_photo_from_s3(
         dest = Path(tmp) / f"photo{suffix}"
         download_from_s3(bucket, s3_key, dest)
         result = tag_photo_file(dest, endpoints=endpoints)
-    if not result:
-        return None
-    return record_from_photo_result(s3_key=s3_key, result=result, tagger=TAGGER_VERSION)
+        if not result:
+            return None
+        from mlcore.photo_framing import analyze_photo_framing
+        framing = analyze_photo_framing(
+            dest,
+            theme_tags=result.get("theme_tags") or [],
+            people_type=result.get("people_type") or "none",
+        )
+        from mlcore.photo_quality import attach_photo_quality
+        framing = attach_photo_quality(framing, dest)
+    return record_from_photo_result(
+        s3_key=s3_key, result=result, tagger=TAGGER_VERSION, framing=framing
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Framing-only backfill (does not call Qwen and does not alter semantic tags)
+# --------------------------------------------------------------------------- #
+def run_photo_framing_batch(
+    *, bucket: str, db_url: str, flush_every: int = 20, progress_cb=None,
+    fetch_fn=None, update_fn=None, analyze_fn=None, quality_fn=None, download_fn=None,
+) -> Dict[str, Any]:
+    import asyncio as _asyncio
+    from mlcore.photo_framing import OpenCvYoloXDetector, analyze_photo_framing
+
+    if download_fn is None:
+        from src.storage.s3 import download_from_s3
+        download_fn = download_from_s3
+
+    if fetch_fn is None:
+        from mlcore.footage_assets_db import init_schema as init_assets_schema
+        from mlcore.footage_tags_db import fetch_unframed_photo_records, init_schema
+        def fetch_fn():
+            async def _go():
+                import asyncpg
+                conn = await asyncpg.connect(dsn=db_url)
+                try:
+                    await init_schema(conn)
+                    await init_assets_schema(conn)
+                    return await fetch_unframed_photo_records(conn)
+                finally:
+                    await conn.close()
+            return _asyncio.run(_go())
+    if update_fn is None:
+        from mlcore.footage_tags_db import update_photo_framing
+        def update_fn(rows):
+            async def _go():
+                import asyncpg
+                conn = await asyncpg.connect(dsn=db_url)
+                try:
+                    return await update_photo_framing(conn, rows)
+                finally:
+                    await conn.close()
+            return _asyncio.run(_go())
+
+    rows = list(fetch_fn() or [])
+    if quality_fn is None and analyze_fn is None:
+        from mlcore.photo_quality import attach_photo_quality
+        quality_fn = attach_photo_quality
+    detector = None
+    written = failed = 0
+    failure_reasons: Dict[str, int] = {}
+    pending: List[Dict[str, Any]] = []
+    for idx, row in enumerate(rows, start=1):
+        try:
+            with tempfile.TemporaryDirectory(prefix="framephoto_") as tmp:
+                suffix = Path(str(row.get("s3_key") or row.get("file_name") or "photo.jpg")).suffix or ".jpg"
+                dest = Path(tmp) / f"photo{suffix}"
+                download_fn(bucket, str(row["s3_key"]), dest)
+                existing = row.get("framing")
+                if quality_fn is not None and isinstance(existing, Mapping) and existing:
+                    framing = quality_fn(existing, dest)
+                else:
+                    if analyze_fn is None and detector is None:
+                        detector = OpenCvYoloXDetector(
+                            os.environ.get("PHOTO_FRAMING_MODEL_PATH")
+                            or "data/models/object_detection_yolox_2022nov.onnx"
+                        )
+                    framing = (analyze_fn or analyze_photo_framing)(
+                        dest,
+                        theme_tags=row.get("theme_tags") or [],
+                        people_type=row.get("people_type") or "none",
+                        **({"detector": detector} if analyze_fn is None else {}),
+                    )
+                    if quality_fn is not None:
+                        framing = quality_fn(framing, dest)
+            pending.append({"clip_id": row["clip_id"], "framing": framing})
+        except Exception as exc:
+            failed += 1
+            reason = f"{type(exc).__name__}: {str(exc)[:160]}"
+            failure_reasons[reason] = failure_reasons.get(reason, 0) + 1
+        if len(pending) >= max(1, flush_every):
+            written += update_fn(pending)
+            pending = []
+        if progress_cb:
+            progress_cb(idx, len(rows), written + len(pending))
+    if pending:
+        written += update_fn(pending)
+    ordered_failures = dict(
+        sorted(failure_reasons.items(), key=lambda item: (-item[1], item[0]))
+    )
+    if rows and written <= 0:
+        raise RuntimeError(
+            "photo framing backfill produced zero rows: "
+            f"pending={len(rows)} failed={failed} failure_reasons={ordered_failures}"
+        )
+    return {
+        "framing_pending": len(rows),
+        "framing_written": written,
+        "framing_failed": failed,
+        "framing_failure_reasons": ordered_failures,
+    }
 
 
 # --------------------------------------------------------------------------- #

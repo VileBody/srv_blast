@@ -27,6 +27,8 @@ log = logging.getLogger(__name__)
 
 _RENDER_LOCK = threading.Lock()
 _AUDIO_EXTS = {".wav", ".mp3", ".m4a", ".aac", ".flac", ".ogg"}
+_JPEG_EXTS = {".jpg", ".jpeg"}
+_JPEG_ICC_PREFIX = b"ICC_PROFILE\x00"
 
 
 @dataclass
@@ -62,6 +64,106 @@ class AeJobResult:
 def _is_remote(u: str) -> bool:
     s = (u or "").strip().lower()
     return s.startswith("http://") or s.startswith("https://") or s.startswith("s3://")
+
+
+def _strip_non_rgb_icc_profile_from_jpeg(path: Path) -> str:
+    """Remove an embedded non-RGB ICC profile without re-encoding JPEG pixels.
+
+    After Effects rejects otherwise valid RGB JPEGs when their APP2 metadata
+    incorrectly embeds a GRAY/CMYK/printer profile ("You can only assign RGB
+    profiles"). The pixel stream is already usable, so remove only the
+    ICC_PROFILE APP2 segments and preserve every other byte.
+
+    Returns the stripped ICC color-space signature, or an empty string when the
+    file has no ICC profile or already carries an RGB profile.
+    """
+    if path.suffix.lower() not in _JPEG_EXTS:
+        return ""
+
+    data = path.read_bytes()
+    if not data.startswith(b"\xff\xd8"):
+        raise RuntimeError(f"invalid JPEG SOI: {path}")
+
+    pos = 2
+    icc_spans: List[Tuple[int, int]] = []
+    icc_chunks: Dict[int, bytes] = {}
+    expected_chunks: Optional[int] = None
+
+    while pos < len(data):
+        marker_start = pos
+        if data[pos] != 0xFF:
+            raise RuntimeError(f"invalid JPEG marker at offset={pos}: {path}")
+        while pos < len(data) and data[pos] == 0xFF:
+            pos += 1
+        if pos >= len(data):
+            raise RuntimeError(f"truncated JPEG marker: {path}")
+
+        marker = data[pos]
+        pos += 1
+        if marker == 0xDA:  # Start of scan; metadata segments are before this.
+            break
+        if marker in {0x01, 0xD8, 0xD9} or 0xD0 <= marker <= 0xD7:
+            continue
+        if pos + 2 > len(data):
+            raise RuntimeError(f"truncated JPEG segment length: {path}")
+
+        segment_len = int.from_bytes(data[pos : pos + 2], "big")
+        if segment_len < 2:
+            raise RuntimeError(f"invalid JPEG segment length={segment_len}: {path}")
+        segment_end = pos + segment_len
+        if segment_end > len(data):
+            raise RuntimeError(f"truncated JPEG segment payload: {path}")
+
+        payload = data[pos + 2 : segment_end]
+        if marker == 0xE2 and payload.startswith(_JPEG_ICC_PREFIX):
+            if len(payload) < 14:
+                raise RuntimeError(f"malformed JPEG ICC segment header: {path}")
+            chunk_no = int(payload[12])
+            chunk_count = int(payload[13])
+            if chunk_no < 1 or chunk_count < 1 or chunk_no > chunk_count:
+                raise RuntimeError(
+                    f"invalid JPEG ICC chunk {chunk_no}/{chunk_count}: {path}"
+                )
+            if expected_chunks is not None and chunk_count != expected_chunks:
+                raise RuntimeError(f"inconsistent JPEG ICC chunk count: {path}")
+            if chunk_no in icc_chunks:
+                raise RuntimeError(f"duplicate JPEG ICC chunk={chunk_no}: {path}")
+            expected_chunks = chunk_count
+            icc_chunks[chunk_no] = payload[14:]
+            icc_spans.append((marker_start, segment_end))
+
+        pos = segment_end
+
+    if not icc_spans:
+        return ""
+    if expected_chunks is None or set(icc_chunks) != set(range(1, expected_chunks + 1)):
+        raise RuntimeError(f"incomplete JPEG ICC profile chunks: {path}")
+
+    profile = b"".join(icc_chunks[idx] for idx in range(1, expected_chunks + 1))
+    if len(profile) < 20:
+        raise RuntimeError(f"truncated JPEG ICC profile: {path}")
+    color_space_raw = profile[16:20]
+    if color_space_raw == b"RGB ":
+        return ""
+
+    sanitized = bytearray()
+    cursor = 0
+    for start, end in icc_spans:
+        sanitized.extend(data[cursor:start])
+        cursor = end
+    sanitized.extend(data[cursor:])
+
+    tmp = path.with_name(f"{path.name}.icc-sanitize.tmp")
+    try:
+        tmp.write_bytes(bytes(sanitized))
+        os.replace(tmp, path)
+    finally:
+        try:
+            tmp.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+    return color_space_raw.decode("ascii", errors="replace").strip() or "unknown"
 
 
 def _read_remote_text(url: str) -> str:
@@ -232,6 +334,29 @@ class AeRenderer:
             return app_dir.parent
         return app_dir
 
+    @staticmethod
+    def _write_jsx_file(path: Path, text: str) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if text.startswith("\ufeff"):
+            text = text[1:]
+        path.write_text(text, encoding="utf-8-sig")
+
+    @staticmethod
+    def _read_jsx_file(path: Path) -> str:
+        return path.read_text(encoding="utf-8-sig")
+
+    @staticmethod
+    def _render_backend() -> str:
+        raw = (os.getenv("AE_RENDER_BACKEND") or "").strip()
+        if not raw:
+            raise RuntimeError("AE_RENDER_BACKEND must be explicitly set to 'afterfx_queue' or 'aerender'")
+        backend = raw.lower()
+        allowed = {"aerender", "afterfx_queue"}
+        if backend not in allowed:
+            raise RuntimeError(f"Unsupported AE_RENDER_BACKEND={backend!r}; expected one of {sorted(allowed)}")
+        return backend
+
+
     def _best_effort_reset_ae_project(self, tag: str) -> None:
         cleanup_jsx = r"""
     (function () {
@@ -253,7 +378,7 @@ class AeRenderer:
 
             # unique file name to avoid rewrite collision on locked file
             jsx_path = cleanup_dir / f"cleanup_{tag}_{int(time.time() * 1000)}.jsx"
-            jsx_path.write_text(cleanup_jsx, encoding="utf-8")
+            self._write_jsx_file(jsx_path, cleanup_jsx)
 
             proc = subprocess.run(
                 [self.afterfx_bin, "-r", str(jsx_path)],
@@ -282,6 +407,11 @@ class AeRenderer:
 
         except Exception as e:
             log.warning("AE cleanup exception tag=%s err=%r", tag, e)
+
+    def _maybe_reset_ae_project(self, tag: str) -> None:
+        if not self._env_bool("AE_PROJECT_CLEANUP_ENABLED", False):
+            return
+        self._best_effort_reset_ae_project(tag=tag)
 
 
     def _upload_job_folder_to_s3(self, *, app_dir: Path, job_id: str) -> Optional[str]:
@@ -323,6 +453,46 @@ class AeRenderer:
             )
 
         return f"s3://{bucket}/{key}"
+
+    def _ensure_ae_scripting_writes_allowed(self) -> None:
+        # AE resets "Allow Scripts to Write Files and Access Network" to disabled on fresh
+        # start. Without it, all ExtendScript file writes (new File() write/append,
+        # system.callSystem) silently fail — ae_status.txt is never created.
+        appdata = Path(os.environ.get("APPDATA", ""))
+        ae_prefs_root = appdata / "Adobe" / "After Effects"
+        if not ae_prefs_root.exists():
+            return
+        for version_dir in ae_prefs_root.iterdir():
+            prefs_file = version_dir / f"Adobe After Effects {version_dir.name} Prefs.txt"
+            if not prefs_file.exists():
+                continue
+            try:
+                content = prefs_file.read_text(encoding="utf-8", errors="ignore")
+                if '"Pref_SCRIPTING_FILE_NETWORK_SECURITY" = "0"' in content:
+                    patched = content.replace(
+                        '"Pref_SCRIPTING_FILE_NETWORK_SECURITY" = "0"',
+                        '"Pref_SCRIPTING_FILE_NETWORK_SECURITY" = "1"',
+                    )
+                    prefs_file.write_text(patched, encoding="utf-8")
+                    log.info("Patched AE prefs %s: enabled script file writes", prefs_file)
+            except Exception as exc:
+                log.warning("Could not patch AE prefs %s: %s", prefs_file, exc)
+
+    def _ensure_ae_render_only_flag(self) -> None:
+        # Render-only mode is disabled on this node by ops: Sapphire errors
+        # out and AE self-terminates when this flag is present, whereas a
+        # normal (non-headless) session renders correctly. run_afterfx_job.ps1
+        # already stopped creating this flag (2026-06-12); this actively
+        # removes it too, in case a stale copy from before that decision (or
+        # anything else) leaves it behind and forces AE into render-only on
+        # its next launch.
+        flag_path = Path("C:/Users/Public/Documents/Adobe/ae_render_only_node.txt")
+        try:
+            if flag_path.exists():
+                flag_path.unlink()
+                log.info("Removed AE render-only flag: %s", flag_path)
+        except Exception as exc:
+            log.warning("Could not remove AE render-only flag: %s", exc)
 
     def _maybe_cleanup_local_job_dir(self, *, app_dir: Path, artifacts_uploaded_ok: bool) -> None:
         """
@@ -369,158 +539,180 @@ class AeRenderer:
         return res
 
     def run_job(self, spec: AeJobSpec) -> AeJobResult:
-        with _RENDER_LOCK:
-            job_dir = self.base_dir / spec.job_id / "app"
-            jsx_path = job_dir / "render.jsx"
-            output_path = job_dir / spec.output_relpath
+        job_dir = self.base_dir / spec.job_id / "app"
+        jsx_path = job_dir / "render.jsx"
+        output_path = job_dir / spec.output_relpath
 
-            log.info("=== AE RENDER START job_id=%s ===", spec.job_id)
-            log.info("Job dir: %s", job_dir)
+        log.info("=== AE RENDER START job_id=%s ===", spec.job_id)
+        log.info("Job dir: %s", job_dir)
 
-            self._best_effort_reset_ae_project(tag=f"{spec.job_id}_pre")
+        message_parts: list[str] = []
+        result: AeJobResult | None = None
 
+        def _fail(msg: str) -> AeJobResult:
+            return AeJobResult(
+                job_id=spec.job_id,
+                success=False,
+                message=str(msg),
+                app_dir=job_dir,
+            )
+
+        try:
+            # 1) prepare files outside the AE lock so downloads can overlap with
+            # the currently rendering job.
             if job_dir.exists():
                 shutil.rmtree(job_dir)
             job_dir.mkdir(parents=True, exist_ok=True)
 
-            message_parts: list[str] = []
-            result: AeJobResult | None = None
-
-            def _fail(msg: str) -> AeJobResult:
-                return AeJobResult(
-                    job_id=spec.job_id,
-                    success=False,
-                    message=str(msg),
-                    app_dir=job_dir,
-                )
-
             try:
-                # 1) prepare files
-                try:
-                    self._prepare_files(
-                        job_dir=job_dir,
-                        jsx_path=jsx_path,
-                        render_jsx=spec.render_jsx,
-                        media_files=spec.media_files,
-                    )
-                except Exception as e:
-                    log.exception("prepare/download error for job %s", spec.job_id)
-                    result = _fail(f"prepare/download error: {e}")
-
-                # debug jsx
-                if result is None and self.debug_jsx_dir:
-                    try:
-                        dbg_dir = Path(self.debug_jsx_dir)
-                        dbg_dir.mkdir(parents=True, exist_ok=True)
-                        dbg_jsx = dbg_dir / f"{spec.job_id}.jsx"
-                        shutil.copy2(jsx_path, dbg_jsx)
-                    except Exception as e:
-                        log.warning("Failed to save debug JSX for job %s: %s", spec.job_id, e)
-
-                # 2) run AfterFX jsx builder
-                if result is None:
-                    try:
-                        self._run_afterfx(
-                            job_dir=job_dir,
-                            jsx_path=jsx_path,
-                            job_id=spec.job_id,
-                            entry_comp=spec.entry_comp,
-                            output_relpath=spec.output_relpath,
-                        )
-                    except Exception as e:
-                        log.exception("AfterFX error for job %s", spec.job_id)
-                        result = _fail(f"AfterFX error: {e}")
-
-                # 3) read ae_status
-                aep_path: Optional[str] = None
-                comp_name: Optional[str] = None
-                if result is None:
-                    ok, aep_path, comp_name, status_msg = self._wait_for_status(job_dir, spec.job_id)
-                    if not ok:
-                        result = _fail(status_msg)
-
-                # 4) run aerender
-                if result is None:
-                    project_path = Path(aep_path).resolve() if aep_path else (job_dir / f"debug_{spec.job_id}.aep").resolve()
-                    if not project_path.exists():
-                        result = _fail(f"AEP file {project_path} not found after OK status")
-                    else:
-                        comp_for_render = comp_name or spec.entry_comp
-                        try:
-                            self._run_aerender(
-                                project_path=project_path,
-                                job_id=spec.job_id,
-                                entry_comp=comp_for_render,
-                                output_path=output_path,
-                                job_dir=job_dir,
-                            )
-                        except Exception as e:
-                            log.exception("aerender error for job %s", spec.job_id)
-                            result = _fail(f"aerender error: {e}")
-
-                # 5) wait output
-                if result is None:
-                    if not self._wait_for_output(output_path):
-                        result = _fail(f"output file {output_path} did not appear or is not stable in time")
-
-                # 6) optional upload rendered mp4
-                if result is None:
-                    s3_url: Optional[str] = None
-                    if spec.output_s3_bucket and spec.output_s3_key and output_path.exists() and output_path.stat().st_size > 0:
-                        try:
-                            upload_file_to_s3(
-                                bucket=spec.output_s3_bucket,
-                                key=spec.output_s3_key,
-                                path=output_path,
-                                content_type="video/mp4",
-                            )
-                            s3_url = generate_presigned_url(
-                                bucket=spec.output_s3_bucket,
-                                key=spec.output_s3_key,
-                                expires_in=3600 * 24,
-                            )
-                            message_parts.append(f"uploaded to {s3_url}")
-                        except Exception as e:
-                            log.exception("s3 upload error for job %s", spec.job_id)
-                            message_parts.append(f"s3 upload error: {e}")
-                    else:
-                        message_parts.append("output file not uploaded (missing bucket/key or file not found)")
-
-                    final_message = "ok" if not message_parts else "ok; " + "; ".join(message_parts)
-                    log.info("=== AE RENDER END job_id=%s ===", spec.job_id)
-
-                    result = AeJobResult(
-                        job_id=spec.job_id,
-                        success=True,
-                        message=final_message,
-                        app_dir=job_dir,
-                        output_path=output_path if output_path.exists() else None,
-                        output_s3_url=s3_url,
-                    )
-
+                self._prepare_files(
+                    job_dir=job_dir,
+                    jsx_path=jsx_path,
+                    render_jsx=spec.render_jsx,
+                    media_files=spec.media_files,
+                )
             except Exception as e:
-                log.exception("Unexpected renderer error for job %s", spec.job_id)
-                result = _fail(f"unexpected renderer error: {e}")
-            finally:
-                # hard reset after every job to avoid project accumulation in AfterFX session
-                self._best_effort_reset_ae_project(tag=f"{spec.job_id}_post")
+                log.exception("prepare/download error for job %s", spec.job_id)
+                result = _fail(f"prepare/download error: {e}")
 
+            # debug jsx
+            if result is None and self.debug_jsx_dir:
+                try:
+                    dbg_dir = Path(self.debug_jsx_dir)
+                    dbg_dir.mkdir(parents=True, exist_ok=True)
+                    dbg_jsx = dbg_dir / f"{spec.job_id}.jsx"
+                    shutil.copy2(jsx_path, dbg_jsx)
+                except Exception as e:
+                    log.warning("Failed to save debug JSX for job %s: %s", spec.job_id, e)
+
+            # 2) serialize only the AE session itself.
             if result is None:
-                result = _fail("unknown renderer failure")
+                backend = self._render_backend()
+                log.info("AE render backend job_id=%s backend=%s", spec.job_id, backend)
+                with _RENDER_LOCK:
+                    self._maybe_reset_ae_project(tag=f"{spec.job_id}_pre")
+                    try:
+                        # run AfterFX jsx builder
+                        try:
+                            run_jsx_path = jsx_path
+                            if backend == "afterfx_queue":
+                                run_jsx_path = self._write_afterfx_queue_wrapper(
+                                    job_dir=job_dir,
+                                    source_jsx_path=jsx_path,
+                                    entry_comp=spec.entry_comp,
+                                    output_relpath=spec.output_relpath,
+                                )
+                            self._run_afterfx(
+                                job_dir=job_dir,
+                                jsx_path=run_jsx_path,
+                                job_id=spec.job_id,
+                                entry_comp=spec.entry_comp,
+                                output_relpath=spec.output_relpath,
+                            )
+                        except Exception as e:
+                            log.exception("AfterFX error for job %s", spec.job_id)
+                            result = _fail(f"AfterFX error: {e}")
 
-            return self._finalize_result_artifacts(result)
+                        # read ae_status
+                        aep_path: Optional[str] = None
+                        comp_name: Optional[str] = None
+                        if result is None:
+                            ok, aep_path, comp_name, status_msg = self._wait_for_status(job_dir, spec.job_id)
+                            if not ok:
+                                result = _fail(status_msg)
+
+                        # run render backend
+                        if result is None and backend == "aerender":
+                            project_path = Path(aep_path).resolve() if aep_path else (job_dir / f"debug_{spec.job_id}.aep").resolve()
+                            if not project_path.exists():
+                                result = _fail(f"AEP file {project_path} not found after OK status")
+                            else:
+                                comp_for_render = comp_name or spec.entry_comp
+                                try:
+                                    self._run_aerender(
+                                        project_path=project_path,
+                                        job_id=spec.job_id,
+                                        entry_comp=comp_for_render,
+                                        output_path=output_path,
+                                        job_dir=job_dir,
+                                    )
+                                except Exception as e:
+                                    log.exception("aerender error for job %s", spec.job_id)
+                                    result = _fail(f"aerender error: {e}")
+
+                        # wait output while AE is still the active owner
+                        if result is None:
+                            if not self._wait_for_output(output_path):
+                                result = _fail(f"output file {output_path} did not appear or is not stable in time")
+                    except Exception as e:
+                        log.exception("Unexpected AE-session error for job %s", spec.job_id)
+                        result = _fail(f"unexpected AE-session error: {e}")
+                    finally:
+                        self._maybe_reset_ae_project(tag=f"{spec.job_id}_post")
+
+            # 3) optional upload rendered mp4 outside the AE lock.
+            if result is None:
+                s3_url: Optional[str] = None
+                if spec.output_s3_bucket and spec.output_s3_key and output_path.exists() and output_path.stat().st_size > 0:
+                    try:
+                        upload_file_to_s3(
+                            bucket=spec.output_s3_bucket,
+                            key=spec.output_s3_key,
+                            path=output_path,
+                            content_type="video/mp4",
+                        )
+                        s3_url = generate_presigned_url(
+                            bucket=spec.output_s3_bucket,
+                            key=spec.output_s3_key,
+                            expires_in=3600 * 24,
+                        )
+                        message_parts.append(f"uploaded to s3://{spec.output_s3_bucket}/{spec.output_s3_key}")
+                    except Exception as e:
+                        log.exception("s3 upload error for job %s", spec.job_id)
+                        message_parts.append(f"s3 upload error: {e}")
+                else:
+                    message_parts.append("output file not uploaded (missing bucket/key or file not found)")
+
+                final_message = "ok" if not message_parts else "ok; " + "; ".join(message_parts)
+                log.info("=== AE RENDER END job_id=%s ===", spec.job_id)
+
+                result = AeJobResult(
+                    job_id=spec.job_id,
+                    success=True,
+                    message=final_message,
+                    app_dir=job_dir,
+                    output_path=output_path if output_path.exists() else None,
+                    output_s3_url=s3_url,
+                )
+        except Exception as e:
+            log.exception("Unexpected renderer error for job %s", spec.job_id)
+            result = _fail(f"unexpected renderer error: {e}")
+
+        if result is None:
+            result = _fail("unknown renderer failure")
+
+        return self._finalize_result_artifacts(result)
 
     def _prepare_files(self, job_dir: Path, jsx_path: Path, render_jsx: str, media_files: List[MediaFileSpec]) -> None:
         (job_dir / "media" / "audio").mkdir(parents=True, exist_ok=True)
         (job_dir / "media" / "video").mkdir(parents=True, exist_ok=True)
         (job_dir / "work").mkdir(parents=True, exist_ok=True)
 
-        jsx_path.write_text(render_jsx, encoding="utf-8")
+        self._write_jsx_file(jsx_path, render_jsx)
 
         for m in media_files:
             dest = job_dir / m.relpath
             dest.parent.mkdir(parents=True, exist_ok=True)
             self._download_any(m.url, dest)
+            rel = Path(m.relpath).as_posix().lower()
+            if rel.startswith("media/video/") and dest.suffix.lower() in _JPEG_EXTS:
+                stripped_color_space = _strip_non_rgb_icc_profile_from_jpeg(dest)
+                if stripped_color_space:
+                    log.warning(
+                        "Stripped non-RGB JPEG ICC profile color_space=%s path=%s",
+                        stripped_color_space,
+                        dest,
+                    )
 
         self._patch_project_paths(jsx_path, job_dir)
 
@@ -569,7 +761,7 @@ class AeRenderer:
         raise RuntimeError(f"HTTP download failed after {max_attempts} attempts: {u} ({last_err!r})")
 
     def _patch_project_paths(self, jsx_path: Path, app_dir: Path) -> None:
-        text = jsx_path.read_text(encoding="utf-8")
+        text = self._read_jsx_file(jsx_path)
         marker = "var PROJECT_DATA"
         idx = text.find(marker)
         if idx == -1:
@@ -591,22 +783,226 @@ class AeRenderer:
 
         new_blob = re.sub(r'"path"\s*:\s*"([^"]*)"', repl, blob)
         if new_blob != blob:
-            jsx_path.write_text(text[:idx] + new_blob + text[end_idx + 2:], encoding="utf-8")
+            self._write_jsx_file(jsx_path, text[:idx] + new_blob + text[end_idx + 2:])
+
+    def _write_afterfx_queue_wrapper(
+        self,
+        *,
+        job_dir: Path,
+        source_jsx_path: Path,
+        entry_comp: str,
+        output_relpath: str,
+    ) -> Path:
+        wrapper_path = job_dir / "work" / "render_queue_wrapper.jsx"
+        wrapper_path.parent.mkdir(parents=True, exist_ok=True)
+        cfg = {
+            "source_jsx_path": str(source_jsx_path),
+            "status_path": str(job_dir / "ae_status.txt"),
+            "entry_comp": entry_comp,
+            "output_path": str(job_dir / output_relpath),
+            "output_module_template": (os.getenv("AE_AFTERFX_QUEUE_OUTPUT_MODULE_TEMPLATE") or "").strip(),
+        }
+        self._write_jsx_file(
+            wrapper_path,
+            r"""
+(function () {
+    var CFG = __CFG__;
+
+    function ensureFolder(folder) {
+        if (folder && !folder.exists) folder.create();
+    }
+
+    function writeText(path, text) {
+        var f = new File(path);
+        ensureFolder(f.parent);
+        f.encoding = "UTF-8";
+        f.open("w");
+        f.lineFeed = "Unix";
+        f.write(text);
+        f.close();
+    }
+
+    function readText(path) {
+        var f = new File(path);
+        if (!f.exists) return "";
+        f.encoding = "UTF-8";
+        f.open("r");
+        var text = f.read();
+        f.close();
+        return text;
+    }
+
+    function writeStatus(status, message) {
+        writeText(CFG.status_path, status + "\n" + (message || "") + "\n");
+    }
+
+    function parseStatus(text) {
+        var lines = String(text || "").split(/\r?\n/);
+        var out = { status: (lines[0] || "").replace(/^\s+|\s+$/g, "").toUpperCase(), aep: "", compName: "", message: "" };
+        var msg = [];
+        for (var i = 1; i < lines.length; i++) {
+            var s = lines[i] || "";
+            msg.push(s);
+            if (s.toLowerCase().indexOf("aep=") === 0) out.aep = s.substring(4).replace(/^\s+|\s+$/g, "");
+            if (s.toLowerCase().indexOf("compname=") === 0) out.compName = s.substring(9).replace(/^\s+|\s+$/g, "");
+        }
+        out.message = msg.join("\n");
+        return out;
+    }
+
+    function findCompByName(name) {
+        for (var i = 1; i <= app.project.numItems; i++) {
+            var item = app.project.item(i);
+            if (item instanceof CompItem && item.name === name) return item;
+        }
+        return null;
+    }
+
+    function normalizedFsName(file) {
+        return String(file && file.fsName ? file.fsName : "").replace(/\//g, "\\").toLowerCase();
+    }
+
+    try {
+        try { app.beginSuppressDialogs(); } catch (_) {}
+
+        writeStatus("RUNNING", "wrapper started");
+        $.evalFile(new File(CFG.source_jsx_path));
+        var st = parseStatus(readText(CFG.status_path));
+        if (st.status !== "OK") {
+            throw new Error("builder status=" + st.status + " " + st.message);
+        }
+        if (!st.aep) {
+            throw new Error("builder OK status has no aep= line");
+        }
+
+        var aepFile = new File(st.aep);
+        if (!aepFile.exists) {
+            throw new Error("AEP does not exist: " + aepFile.fsName);
+        }
+
+        // The builder deliberately leaves its saved project open. Reopening
+        // the same AEP causes a visible close/reopen flash and can terminate
+        // the warm AE session before Render Queue starts.
+        var currentProjectFile = app.project && app.project.file ? app.project.file : null;
+        if (!currentProjectFile || normalizedFsName(currentProjectFile) !== normalizedFsName(aepFile)) {
+            throw new Error("builder did not leave the expected AEP open: " + aepFile.fsName);
+        }
+
+        var compName = st.compName || CFG.entry_comp;
+        var comp = findCompByName(compName);
+        if (!comp) {
+            throw new Error("comp not found for afterfx_queue render: " + compName);
+        }
+
+        writeStatus("RUNNING", "builder OK; rendering comp=" + compName);
+
+        var outFile = new File(CFG.output_path);
+        ensureFolder(outFile.parent);
+
+        var rq = app.project.renderQueue.items.add(comp);
+        if (CFG.output_module_template) {
+            rq.outputModule(1).applyTemplate(CFG.output_module_template);
+        }
+        rq.outputModule(1).file = outFile;
+        app.project.renderQueue.render();
+
+        if (!outFile.exists || outFile.length <= 0) {
+            throw new Error("afterfx_queue output missing or empty: " + outFile.fsName);
+        }
+
+        writeStatus("OK", "aep=" + aepFile.fsName + "\ncompName=" + comp.name + "\noutput=" + outFile.fsName);
+    } catch (e) {
+        writeStatus("ERROR", String(e && e.stack ? e.stack : e));
+    } finally {
+        try { app.endSuppressDialogs(false); } catch (_) {}
+        try {
+            if (app.project && typeof CloseOptions !== "undefined") app.project.close(CloseOptions.DO_NOT_SAVE_CHANGES);
+            else if (app.project) app.project.close();
+        } catch (_) {}
+    }
+})();
+""".replace("__CFG__", json.dumps(cfg, ensure_ascii=False)),
+        )
+        return wrapper_path
 
     def _run_afterfx(self, job_dir: Path, jsx_path: Path, job_id: str, entry_comp: str, output_relpath: str) -> None:
+        self._ensure_ae_scripting_writes_allowed()
+        self._ensure_ae_render_only_flag()
         env = os.environ.copy()
         env["APP_DIR"] = str(job_dir)
         env["JOB_ID"] = job_id
         env["COMP_NAME"] = entry_comp
         env["OUTPUT_REL"] = output_relpath
 
+        logs_dir = job_dir / "logs"
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        stdout_log_path = logs_dir / "afterfx.stdout.log"
+        stderr_log_path = logs_dir / "afterfx.stderr.log"
+        timeout_s = self._env_float("AFTERFX_RUN_TIMEOUT_S", 600.0)
+        startup_timeout_s = self._env_float("AFTERFX_STARTUP_TIMEOUT_S", 0.0)
+        watchdog_poll_s = max(0.1, self._env_float("AFTERFX_WATCHDOG_POLL_S", 2.0))
+
         cmd = [self.afterfx_bin, "-r", str(jsx_path)]
-        proc = subprocess.run(cmd, env=env, capture_output=True, text=True)
-        if proc.returncode != 0:
+        status_path = job_dir / "ae_status.txt"
+        output_path = job_dir / output_relpath
+        project_path = job_dir / "work" / "project.aep"
+        started_at = time.time()
+        rc: int | None = None
+        with open(stdout_log_path, "w", encoding="utf-8", errors="replace") as f_out, open(
+            stderr_log_path, "w", encoding="utf-8", errors="replace"
+        ) as f_err:
+            f_out.write(
+                f"[afterfx] job_id={job_id} started_at={started_at:.3f} "
+                f"timeout_s={timeout_s} startup_timeout_s={startup_timeout_s} poll_s={watchdog_poll_s}\n"
+            )
+            f_out.write(f"[afterfx] cmd={' '.join(cmd)}\n")
+            f_out.flush()
+
+            proc = subprocess.Popen(cmd, env=env, stdout=f_out, stderr=f_err)
+            initial_stdout_sig = self._file_progress_sig(stdout_log_path)
+            initial_stderr_sig = self._file_progress_sig(stderr_log_path)
+            startup_seen = False
+
+            while True:
+                rc = proc.poll()
+                now = time.time()
+
+                if not startup_seen:
+                    stdout_sig = self._file_progress_sig(stdout_log_path)
+                    stderr_sig = self._file_progress_sig(stderr_log_path)
+                    startup_seen = (
+                        status_path.exists()
+                        or project_path.exists()
+                        or output_path.exists()
+                        or stdout_sig != initial_stdout_sig
+                        or stderr_sig != initial_stderr_sig
+                    )
+
+                if rc is not None:
+                    break
+
+                if startup_timeout_s > 0 and (not startup_seen) and (now - started_at) > startup_timeout_s:
+                    self._terminate_process(proc, reason=f"startup_timeout>{startup_timeout_s}s")
+                    raise RuntimeError(
+                        f"AfterFX startup timeout>{startup_timeout_s}s without JSX progress; "
+                        f"logs={stdout_log_path};{stderr_log_path}; status={status_path}"
+                    )
+
+                if timeout_s > 0 and (now - started_at) > timeout_s:
+                    self._terminate_process(proc, reason=f"total_timeout>{timeout_s}s")
+                    raise RuntimeError(
+                        f"AfterFX timeout>{timeout_s}s; logs={stdout_log_path};{stderr_log_path}"
+                    )
+
+                time.sleep(watchdog_poll_s)
+
+            f_out.flush()
+            f_err.flush()
+
+        if rc != 0:
             raise RuntimeError(
-                f"AfterFX failed with code {proc.returncode}\n"
-                f"stdout:\n{proc.stdout}\n"
-                f"stderr:\n{proc.stderr}"
+                f"AfterFX failed with code {rc}; "
+                f"logs={stdout_log_path};{stderr_log_path}"
             )
 
     def _wait_for_status(self, job_dir: Path, job_id: str, timeout_seconds: int = 300) -> Tuple[bool, Optional[str], Optional[str], str]:

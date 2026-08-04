@@ -82,6 +82,44 @@ def test_standalone_visual_picker_state_progression():
     asyncio.run(run())
 
 
+def test_public_style_keyboard_is_sent_before_slow_previews():
+    async def run():
+        events = []
+        app = _App()
+
+        async def previews(*_args, **_kwargs):
+            events.append("previews")
+
+        app._send_option_previews = previews
+        st = ChatState(chat_id=1, bg_mode="footage")
+        msg = _Message()
+        original_answer = msg.answer
+
+        async def answer(*args, **kwargs):
+            events.append("keyboard")
+            return await original_answer(*args, **kwargs)
+
+        msg.answer = answer
+        await public_app.BlastBotApp._ask_visual_style(app, msg, st)
+        assert events == ["keyboard", "previews"]
+
+    asyncio.run(run())
+
+
+def test_public_footage_style_buttons_keep_the_canonical_contract():
+    expected = {
+        "\u041a\u0441\u0435\u0440\u043e\u043a\u0441": "xerox",
+        "\u0410\u043d\u0430\u043b\u043e\u0433-\u0433\u043b\u0438\u0442\u0447": "analog_glitch",
+        "\u041d\u0435\u043e\u043d": "neon_extract",
+        "\u0421\u0442\u0430\u0440\u0430\u044f \u043a\u0430\u043c\u0435\u0440\u0430": "old_camera",
+        "\u0427/\u0411": "blackwhite",
+        "Crystal Glow": "crystal_glow",
+        "Night Vision": "night_vision",
+        "Wave": "wave",
+    }
+    assert public_app._FX_EXTRA_BY_BUTTON == expected
+
+
 async def _noop():
     return None
 

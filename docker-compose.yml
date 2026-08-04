@@ -30,7 +30,6 @@ services:
       # point mlcore to shared paths
       FOOTAGE_INVENTORY_JSON: /app/data/footage_inventory.json
       DESCRIPTIONS_BUNDLE_PATH: /app/pins/descriptions_bundle_selected.json
-
       # /hook/analyze librosa path: disable numba JIT (fork-unsafe gufunc segfault,
       # see worker-build note) + pin native threads. Mirror of worker-build.
       NUMBA_DISABLE_JIT: "1"
@@ -62,6 +61,9 @@ services:
     container_name: worker-build
     env_file:
       - .env
+    depends_on:
+      alignment-api:
+        condition: service_healthy
     environment:
       WORK_DIR: /app/work
       OUTPUT_DIR: /app/output
@@ -84,6 +86,14 @@ services:
       # point mlcore to shared paths
       FOOTAGE_INVENTORY_JSON: /app/data/footage_inventory.json
       DESCRIPTIONS_BUNDLE_PATH: /app/pins/descriptions_bundle_selected.json
+      ALIGNMENT_SERVICE_URL: ${ALIGNMENT_SERVICE_URL:-http://alignment-api:8000}
+      ALIGNMENT_TIMEOUT_S: ${ALIGNMENT_TIMEOUT_S:-600}
+      ALIGNMENT_MODEL_REVISION: ${ALIGNMENT_MODEL_REVISION:-2329100508896c6d9b157019803ab5601e6f3406}
+      ALIGNMENT_ALGORITHM_VERSION: local-ctc-viterbi-v18-contextual-boundary-compression-demucs-4.1.0
+      ALIGNMENT_AUDIO_PREPROCESSOR: demucs
+      ALIGNMENT_DEMUCS_MODEL_NAME: htdemucs
+      ALIGNMENT_DEMUCS_MODEL_REVISION: 8726e21a993978c7ba086d3872e7608d7d5bfca646ca4aca459ffda844faa8b4
+      ALIGNMENT_DEMUCS_PACKAGE_VERSION: 4.1.0
 
       # --- SIGSEGV mitigation for the hook audio analysis (librosa) ---
       # Celery runs prefork (forked children) and the segfault was pinpointed by
@@ -112,6 +122,103 @@ services:
       - ./audio:/app/audio:ro
     command: >
       bash -lc "python footage_config.py && celery -A services.orchestrator.celery_app:celery_app worker -l INFO --concurrency=${WORKER_BUILD_CONCURRENCY:-4} -Q ${CELERY_QUEUE_BUILD:-build}"
+    restart: unless-stopped
+
+  worker-alignment-smoke:
+    image: ${BLAST_RUNTIME_IMAGE:-blast_final-runtime:local}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      network: host
+    container_name: worker-alignment-smoke
+    env_file:
+      - .env
+    depends_on:
+      alignment-api:
+        condition: service_healthy
+    environment:
+      WORK_DIR: /app/work
+      OUTPUT_DIR: /app/output
+      ALIGNMENT_SERVICE_URL: ${ALIGNMENT_SERVICE_URL:-http://alignment-api:8000}
+      ALIGNMENT_TIMEOUT_S: ${ALIGNMENT_TIMEOUT_S:-600}
+      NUMBA_DISABLE_JIT: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      OMP_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      NUMBA_NUM_THREADS: "1"
+      NUMBA_THREADING_LAYER: workqueue
+    volumes:
+      - ./work:/app/work
+      - ./output:/app/output
+    command: >
+      bash -lc "celery -A services.orchestrator.celery_app:celery_app worker
+      -l INFO
+      --concurrency=1
+      -Q ${CELERY_QUEUE_BUILD:-build}.alignment-smoke"
+    restart: unless-stopped
+
+  alignment-api:
+    image: ${BLAST_ALIGNMENT_IMAGE:-blast_final-alignment:local}
+    build:
+      context: .
+      dockerfile: Dockerfile.alignment
+      network: host
+      args:
+        ALIGNMENT_MODEL_REVISION: ${ALIGNMENT_MODEL_REVISION:-2329100508896c6d9b157019803ab5601e6f3406}
+        ALIGNMENT_DEMUCS_MODEL_SHA256: 8726e21a993978c7ba086d3872e7608d7d5bfca646ca4aca459ffda844faa8b4
+        ALIGNMENT_DEMUCS_PACKAGE_VERSION: 4.1.0
+    container_name: alignment-api
+    env_file:
+      - .env
+    environment:
+      ALIGNMENT_MODEL_PATH: /opt/models/ru
+      ALIGNMENT_MODEL_REVISION: ${ALIGNMENT_MODEL_REVISION:-2329100508896c6d9b157019803ab5601e6f3406}
+      ALIGNMENT_AUDIO_PREPROCESSOR: demucs
+      ALIGNMENT_DEMUCS_MODEL_REPO: /opt/models/demucs
+      ALIGNMENT_DEMUCS_MODEL_NAME: htdemucs
+      ALIGNMENT_DEMUCS_MODEL_REVISION: 8726e21a993978c7ba086d3872e7608d7d5bfca646ca4aca459ffda844faa8b4
+      ALIGNMENT_DEMUCS_PACKAGE_VERSION: 4.1.0
+      ALIGNMENT_DEMUCS_SEGMENT_SEC: ${ALIGNMENT_DEMUCS_SEGMENT_SEC:-7.0}
+      ALIGNMENT_DEMUCS_OVERLAP: ${ALIGNMENT_DEMUCS_OVERLAP:-0.25}
+      ALIGNMENT_ALLOWED_AUDIO_ROOT: /app/work/jobs
+      ALIGNMENT_TIMEOUT_S: ${ALIGNMENT_TIMEOUT_S:-600}
+      ALIGNMENT_FFMPEG_TIMEOUT_S: ${ALIGNMENT_FFMPEG_TIMEOUT_S:-120}
+      ALIGNMENT_PADDING_LEFT_SEC: ${ALIGNMENT_PADDING_LEFT_SEC:-0.5}
+      ALIGNMENT_PADDING_RIGHT_SEC: ${ALIGNMENT_PADDING_RIGHT_SEC:-0.5}
+      ALIGNMENT_MIN_WORD_CONFIDENCE: ${ALIGNMENT_MIN_WORD_CONFIDENCE:-0.05}
+      ALIGNMENT_PAUSE_MIN_GAP_SEC: ${ALIGNMENT_PAUSE_MIN_GAP_SEC:-0.35}
+      ALIGNMENT_DYNAMIC_WINDOW_MAX_ADJUST_SEC: ${ALIGNMENT_DYNAMIC_WINDOW_MAX_ADJUST_SEC:-1.0}
+      ALIGNMENT_DYNAMIC_WINDOW_STEP_SEC: ${ALIGNMENT_DYNAMIC_WINDOW_STEP_SEC:-0.25}
+      ALIGNMENT_DYNAMIC_WINDOW_MIN_EDGE_CLEARANCE_SEC: ${ALIGNMENT_DYNAMIC_WINDOW_MIN_EDGE_CLEARANCE_SEC:-0.12}
+      ALIGNMENT_DYNAMIC_WINDOW_STABILITY_TOLERANCE_SEC: ${ALIGNMENT_DYNAMIC_WINDOW_STABILITY_TOLERANCE_SEC:-0.12}
+      ALIGNMENT_DYNAMIC_WINDOW_MIN_CONSENSUS_CANDIDATES: ${ALIGNMENT_DYNAMIC_WINDOW_MIN_CONSENSUS_CANDIDATES:-3}
+      ALIGNMENT_DYNAMIC_WINDOW_SCORE_TOLERANCE: ${ALIGNMENT_DYNAMIC_WINDOW_SCORE_TOLERANCE:-0.12}
+      ALIGNMENT_DYNAMIC_WINDOW_MIN_BOUNDARY_DURATION_RATIO: ${ALIGNMENT_DYNAMIC_WINDOW_MIN_BOUNDARY_DURATION_RATIO:-0.15}
+      ALIGNMENT_MAX_WINDOW_SEC: ${ALIGNMENT_MAX_WINDOW_SEC:-120}
+      ALIGNMENT_MAX_REFERENCE_WORDS: ${ALIGNMENT_MAX_REFERENCE_WORDS:-400}
+      ALIGNMENT_TORCH_THREADS: ${ALIGNMENT_TORCH_THREADS:-4}
+      ALIGNMENT_PRONUNCIATION_MODE: espeak_en_to_ru
+      ALIGNMENT_ESPEAK_BIN: espeak-ng
+      ALIGNMENT_ESPEAK_VOICE: en-us
+      ALIGNMENT_ESPEAK_EXPECTED_VERSION: "1.51"
+      ALIGNMENT_ESPEAK_TIMEOUT_S: ${ALIGNMENT_ESPEAK_TIMEOUT_S:-2}
+      ALIGNMENT_PRONUNCIATION_OVERRIDES_PATH: /app/config/alignment_pronunciations.json
+      OMP_NUM_THREADS: ${ALIGNMENT_TORCH_THREADS:-4}
+      MKL_NUM_THREADS: ${ALIGNMENT_TORCH_THREADS:-4}
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+    volumes:
+      - ./work:/app/work:ro
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=5)"
+      interval: 15s
+      timeout: 8s
+      retries: 40
+      start_period: 30s
     restart: unless-stopped
 
   worker-render:
@@ -223,10 +330,13 @@ services:
     env_file:
       - .env
     environment:
+      # Team/public switches are intentionally independent.
+      PHOTO_FLOW_ENABLED: ${PHOTO_FLOW_ENABLED_TEAM:-1}
       TG_BOT_API_ENV: ${TG_BOT_API_ENV:-prod}
       TG_TEST_BOT_TOKEN: ${TG_TEST_BOT_TOKEN:-}
       TG_TEST_CREDITS_DB_URL: ${TG_TEST_CREDITS_DB_URL:-}
       ORCHESTRATOR_PUBLIC_URL: ${ORCHESTRATOR_PUBLIC_URL:-http://orchestrator-api:8000}
+      TEAM_LOCAL_ALIGNMENT_ENABLED: ${TEAM_LOCAL_ALIGNMENT_ENABLED:-0}
       BOT_POLL_INTERVAL_S: ${BOT_POLL_INTERVAL_S:-5}
       BOT_TMP_DIR: ${BOT_TMP_DIR:-/app/work/tg_tmp}
       BOT_MAX_AUDIO_MB: ${BOT_MAX_AUDIO_MB:-5}
@@ -246,6 +356,10 @@ services:
     env_file:
       - .env
     environment:
+      # Rolled out 2026-07-28, after the public flow was aligned with footage
+      # (subtitle mode -> transition -> stylization -> colours, hooks skipped).
+      # Set PHOTO_FLOW_ENABLED_PUBLIC=0 in .env to pull it back without a deploy.
+      PHOTO_FLOW_ENABLED: ${PHOTO_FLOW_ENABLED_PUBLIC:-1}
       TG_BOT_API_ENV: ${TG_BOT_API_ENV:-prod}
       TG_BOT_TOKEN: ${TG_BOT_PUBLIC_TOKEN}
       TG_BOT_USERNAME: ${TG_BOT_USERNAME:-blast808bot}
@@ -269,6 +383,9 @@ services:
       # Set to "true" for the softer mode where paying clients keep generating.
       TG_MAINTENANCE_ALLOW_PAID_CLIENTS: ${TG_MAINTENANCE_ALLOW_PAID_CLIENTS:-false}
       ORCHESTRATOR_PUBLIC_URL: ${ORCHESTRATOR_PUBLIC_URL:-http://orchestrator-api:8000}
+      # No user-facing selector in public: every Stage 1 alignment request uses
+      # the explicitly configured backend. Keep local_ctc as the production default.
+      PUBLIC_STAGE1_ALIGNMENT_BACKEND: ${PUBLIC_STAGE1_ALIGNMENT_BACKEND:-local_ctc}
       BOT_POLL_INTERVAL_S: ${BOT_POLL_INTERVAL_S:-5}
       BOT_STATUS_UPDATE_INTERVAL_S: ${BOT_STATUS_UPDATE_INTERVAL_S:-20}
       TG_DELIVERY_MODE: ${TG_DELIVERY_MODE:-polling}

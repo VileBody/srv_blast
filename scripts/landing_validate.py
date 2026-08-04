@@ -18,6 +18,27 @@ EXTERNAL_PREFIXES = (
     "data:",
     "javascript:",
 )
+REQUIRED_PUBLIC_FILES = (
+    "index.html",
+    "privacy.html",
+    "terms.html",
+    "cookies.html",
+    "personal-data-consent.html",
+    "offer.html",
+    "contacts.html",
+    "js/i18n.js",
+    "js/cookie-consent.js",
+    "js/legal-documents.js",
+)
+
+REQUIRED_INDEX_MARKERS = (
+    'href="privacy.html"',
+    'href="terms.html"',
+    'href="cookies.html"',
+    'data-cookie-settings',
+    'js/i18n.js',
+    'js/cookie-consent.js',
+)
 
 
 def _strip_ref(raw: str) -> str:
@@ -77,6 +98,17 @@ def validate_landing(root: Path, *, allow_local_rar: bool = False) -> list[str]:
     index_file = root / "index.html"
     if not index_file.exists():
         errors.append(f"missing required file: {index_file}")
+
+    for relative in REQUIRED_PUBLIC_FILES:
+        required_file = root / relative
+        if not required_file.is_file():
+            errors.append(f"missing required public landing file: {relative}")
+
+    if index_file.is_file():
+        index_content = index_file.read_text(encoding="utf-8")
+        for marker in REQUIRED_INDEX_MARKERS:
+            if marker not in index_content:
+                errors.append(f"index.html: missing required marker: {marker}")
 
     rar_files = sorted(str(p.relative_to(root)) for p in root.rglob("*.rar"))
     if rar_files and not allow_local_rar:

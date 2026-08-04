@@ -30,6 +30,7 @@ from celery.signals import task_failure
 
 from core.telegram_api import make_telegram_api
 
+from mlcore.alignment.client import AlignmentServiceError, request_local_alignment
 from .artifacts import make_job_paths
 from .celery_app import celery_app
 from .config import SETTINGS
@@ -89,6 +90,7 @@ _LLM_ENV_KEYS = (
     "JOB_ID",
     "LYRICS_TEXT",
     "TARGET_FRAGMENT",
+    "STAGE1_ALIGNMENT_BACKEND",
     "SUBTITLES_MODE",
     "FOOTAGE_ARTIST_ID",
     "USER_CLIP_START_SEC",
@@ -1468,6 +1470,13 @@ def _seed_resume_state_from_source_job(
     for k in _REUSE_RESUME_STATE_KEYS:
         if k in src_obj:
             dst_obj[k] = src_obj[k]
+    dst_obj["stage1_alignment_backend"] = str(
+        src_obj.get("stage1_alignment_backend") or "gemini"
+    )
+    if isinstance(src_obj.get("stage1_alignment_metadata"), dict):
+        dst_obj["stage1_alignment_metadata"] = src_obj["stage1_alignment_metadata"]
+    else:
+        dst_obj.pop("stage1_alignment_metadata", None)
 
     if destination_clip_window is not None:
         dst_start, dst_end = float(destination_clip_window[0]), float(destination_clip_window[1])
@@ -1657,6 +1666,13 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
     project_id = str(req.get("project_id") or "").strip()
     lyrics_text = str(req.get("lyrics_text") or "")
     target_fragment = str(req.get("target_fragment") or "")
+    stage1_alignment_backend = str(
+        req.get("stage1_alignment_backend") or "gemini"
+    ).strip().lower()
+    if stage1_alignment_backend not in {"gemini", "local_ctc"}:
+        raise RuntimeError(
+            f"invalid stage1_alignment_backend={stage1_alignment_backend!r}"
+        )
     reuse_text_job_id = str(req.get("reuse_text_job_id") or "").strip()
     reuse_stage2_footage = bool(req.get("reuse_stage2_footage"))
     stage2_selection_seed_override = str(req.get("stage2_selection_seed_override") or "").strip()
@@ -1728,6 +1744,15 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
                     f"user_clip_end_sec must be > user_clip_start_sec "
                     f"(got {user_clip_start_sec!r}..{user_clip_end_sec!r})"
                 )
+    if stage1_alignment_backend == "local_ctc":
+        if not target_fragment.strip():
+            raise RuntimeError(
+                "stage1_alignment_backend=local_ctc requires target_fragment"
+            )
+        if user_clip_start_sec is None or user_clip_end_sec is None:
+            raise RuntimeError(
+                "stage1_alignment_backend=local_ctc requires a complete user clip window"
+            )
     if not audio_url:
         raise RuntimeError("missing audio_s3_url")
     if not _is_remote_url(audio_url):
@@ -1745,7 +1770,11 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
     _llm_cache_lock_held = False
     try:
         from . import llm_cache as _llm_cache_mod
-        _asr_mode = "forced_alignment" if str(lyrics_text or "").strip() else "asr"
+        _asr_mode = (
+            "local_ctc"
+            if stage1_alignment_backend == "local_ctc"
+            else ("forced_alignment" if str(lyrics_text or "").strip() else "asr")
+        )
         _user_drop_t_for_cache: Optional[float] = None
         if req.get("user_drop_t") is not None:
             try:
@@ -1758,9 +1787,26 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
             clip_start_sec=user_clip_start_sec,
             clip_end_sec=user_clip_end_sec,
             asr_mode=_asr_mode,
-            lyrics_text=lyrics_text,
+            lyrics_text=(
+                target_fragment
+                if stage1_alignment_backend == "local_ctc"
+                else lyrics_text
+            ),
             subtitles_mode=subtitles_mode,
             user_drop_t=_user_drop_t_for_cache,
+            stage1_alignment_backend=stage1_alignment_backend,
+            alignment_model_revision=str(
+                os.environ.get("ALIGNMENT_MODEL_REVISION") or ""
+            ).strip(),
+            alignment_algorithm_version=str(
+                os.environ.get("ALIGNMENT_ALGORITHM_VERSION") or ""
+            ).strip(),
+            alignment_separator_model=str(
+                os.environ.get("ALIGNMENT_DEMUCS_MODEL_NAME") or ""
+            ).strip(),
+            alignment_separator_revision=str(
+                os.environ.get("ALIGNMENT_DEMUCS_MODEL_REVISION") or ""
+            ).strip(),
         )
     except Exception as _ck_err:
         log.warning("llm_cache key_build_failed job=%s err=%r", job_id, _ck_err)
@@ -1794,6 +1840,7 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
     env["LLM_PROVIDER_MODE"] = llm_provider_mode
     env["LYRICS_TEXT"] = lyrics_text
     env["TARGET_FRAGMENT"] = target_fragment
+    env["STAGE1_ALIGNMENT_BACKEND"] = stage1_alignment_backend
     env["SUBTITLES_MODE"] = subtitles_mode
     if footage_artist_id:
         env["FOOTAGE_ARTIST_ID"] = footage_artist_id
@@ -1825,8 +1872,17 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
         # the PHOTO pool (same buckets/ranking) and switch the build to the photo
         # template. Hard-validate the two F3-style selections (No Fallback Policy).
         env["BG_MODE"] = "photo"
+        # A build worker may carry a deployment-level subtitle override in its
+        # ambient environment. Photo flow currently skips the color picker, so
+        # make its documented default deterministic instead of inheriting that
+        # unrelated value. An explicit request color still overrides this below.
+        env["SUBTITLES_FORCE_FILL_HEX"] = "#FFFFFF"
         photo_style = str(req.get("photo_style") or "none").strip().lower() or "none"
-        photo_transition = str(req.get("photo_transition") or "flash").strip().lower() or "flash"
+        # Default OFF, not "flash". Cuts and grade now come from the same F3
+        # library footage uses (effect_transition / effect_extra, bound to
+        # PHOTO_COMP). Defaulting the 4:3 template's own flash to on would stack
+        # a second, different flash on every cut.
+        photo_transition = str(req.get("photo_transition") or "none").strip().lower() or "none"
         _photo_styles = {"none", "warm", "cold", "vintage", "bw", "vhs", "night_vision"}
         _photo_transitions = {"flash", "none", "slide", "zoom", "whip"}
         if photo_style not in _photo_styles:
@@ -2519,9 +2575,188 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
     return {"ok": True, "stage": "build_done", "paths": paths.manifest()}
 
 
+def _alignment_smoke_ass_time(seconds: float) -> str:
+    centiseconds = max(0, int(round(float(seconds) * 100.0)))
+    hours, rem = divmod(centiseconds, 360000)
+    minutes, rem = divmod(rem, 6000)
+    secs, cs = divmod(rem, 100)
+    return f"{hours}:{minutes:02d}:{secs:02d}.{cs:02d}"
+
+
+def _alignment_smoke_ass_escape(text: str) -> str:
+    return (
+        str(text or "")
+        .replace("\\", r"\\")
+        .replace("{", r"\{")
+        .replace("}", r"\}")
+        .replace("\n", r"\N")
+    )
+
+
+def _render_alignment_smoke_preview(
+    *,
+    audio_path: Path,
+    output_path: Path,
+    ass_path: Path,
+    words: list,
+    clip_start_abs: float,
+    clip_end_abs: float,
+) -> None:
+    duration = float(clip_end_abs) - float(clip_start_abs)
+    if duration <= 0.0:
+        raise RuntimeError("alignment smoke preview duration must be positive")
+    events: list[str] = []
+    for word in words:
+        start = max(0.0, float(word.t_start) - float(clip_start_abs))
+        end = min(duration, float(word.t_end) - float(clip_start_abs))
+        if end <= start:
+            continue
+        events.append(
+            "Dialogue: 0,"
+            f"{_alignment_smoke_ass_time(start)},"
+            f"{_alignment_smoke_ass_time(end)},"
+            "Default,,0,0,0,,"
+            f"{_alignment_smoke_ass_escape(word.text)}"
+        )
+    if not events:
+        raise RuntimeError("alignment smoke response contains no words inside user window")
+    ass_text = "\n".join(
+        [
+            "[Script Info]",
+            "ScriptType: v4.00+",
+            "PlayResX: 720",
+            "PlayResY: 1280",
+            "WrapStyle: 2",
+            "",
+            "[V4+ Styles]",
+            "Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding",
+            "Style: Default,DejaVu Sans,62,&H00FFFFFF,&H000000FF,&H00000000,&H96000000,-1,0,0,0,100,100,0,0,1,4,1,5,45,45,45,1",
+            "",
+            "[Events]",
+            "Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text",
+            *events,
+            "",
+        ]
+    )
+    ass_path.parent.mkdir(parents=True, exist_ok=True)
+    ass_path.write_text(ass_text, encoding="utf-8")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    ass_filter_path = str(ass_path.resolve()).replace("\\", "/").replace(":", r"\:")
+    proc = subprocess.run(
+        [
+            "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+            "-f", "lavfi", "-i", f"color=c=black:s=720x1280:r=30:d={duration:.3f}",
+            "-ss", f"{float(clip_start_abs):.3f}",
+            "-t", f"{duration:.3f}", "-i", str(audio_path),
+            "-vf", f"ass={ass_filter_path}",
+            "-map", "0:v:0", "-map", "1:a:0?",
+            "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-b:a", "160k", "-shortest", str(output_path),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=max(120.0, duration * 4.0),
+        check=False,
+    )
+    if proc.returncode != 0 or not output_path.is_file():
+        raise RuntimeError(
+            f"alignment smoke preview failed rc={proc.returncode}: {proc.stderr[-2000:]}"
+        )
+
+
+@celery_app.task(name="orchestrator.alignment_smoke_job")
+def alignment_smoke_job(job_id: str) -> Dict[str, Any]:
+    store = JobStore.from_env()
+    state = store.get(job_id)
+    if state is None:
+        raise RuntimeError(f"alignment smoke job not found: {job_id}")
+    req = dict(state.request or {})
+    if str(req.get("job_kind") or "") != "alignment_smoke":
+        raise RuntimeError(f"job {job_id} is not an alignment smoke job")
+    paths = make_job_paths(
+        work_dir=SETTINGS.work_dir,
+        output_dir=SETTINGS.output_dir,
+        job_id=job_id,
+    )
+    audio_path = paths.data_dir / "alignment-smoke-source.mp3"
+    preview_path = paths.out_dir / "alignment-smoke-preview.mp4"
+    ass_path = paths.out_dir / "alignment-smoke-preview.ass"
+    try:
+        store.set_status(job_id, "RUNNING", stage="alignment_smoke_download")
+        _download(str(req.get("audio_s3_url") or ""), audio_path)
+        store.set_status(job_id, "RUNNING", stage="alignment_smoke")
+        aligned = request_local_alignment(
+            service_url=str(os.environ.get("ALIGNMENT_SERVICE_URL") or "").strip(),
+            timeout_s=float(os.environ.get("ALIGNMENT_TIMEOUT_S") or "600"),
+            audio_path=audio_path,
+            target_fragment=str(req.get("target_fragment") or ""),
+            clip_start_abs=float(req.get("clip_start_abs")),
+            clip_end_abs=float(req.get("clip_end_abs")),
+            request_id=str(req.get("request_id") or job_id),
+        )
+        stage1_asr = aligned.stage1_asr
+        selected = stage1_asr.selected_fragment
+        words = list(
+            selected.transcript_words
+            if selected is not None
+            else stage1_asr.transcript_words
+        )
+        _render_alignment_smoke_preview(
+            audio_path=audio_path,
+            output_path=preview_path,
+            ass_path=ass_path,
+            words=words,
+            clip_start_abs=float(req.get("clip_start_abs")),
+            clip_end_abs=float(req.get("clip_end_abs")),
+        )
+        output_bucket = str(os.environ.get("S3_BUCKET_OUTPUT_VIDEO") or "").strip()
+        if not output_bucket:
+            raise RuntimeError("S3_BUCKET_OUTPUT_VIDEO is empty")
+        output_key = f"alignment-smoke/{job_id}/preview.mp4"
+        s3 = _make_s3_client()
+        s3.upload_file(
+            str(preview_path),
+            output_bucket,
+            output_key,
+            ExtraArgs={"ContentType": "video/mp4"},
+        )
+        result = {
+            "output_url": f"s3://{output_bucket}/{output_key}",
+            "stage1_asr": stage1_asr.model_dump(mode="json"),
+            "diagnostics": dict(aligned.diagnostics),
+            "backend": dict(aligned.backend),
+        }
+        store.set_status(job_id, "SUCCEEDED", stage="alignment_smoke", result=result)
+        return {"ok": True, **result}
+    except AlignmentServiceError as exc:
+        store.set_status(
+            job_id,
+            "FAILED",
+            stage="alignment_smoke",
+            error=f"{exc.code}: {exc.message}",
+            result={"alignment_error": {"code": exc.code, "details": exc.details}},
+        )
+        raise
+    except Exception as exc:
+        store.set_status(
+            job_id,
+            "FAILED",
+            stage="alignment_smoke",
+            error=f"{type(exc).__name__}: {exc}",
+        )
+        raise
+    finally:
+        for path in (audio_path, preview_path, ass_path):
+            try:
+                path.unlink(missing_ok=True)
+            except Exception:
+                log.warning("alignment_smoke_cleanup_failed job_id=%s path=%s", job_id, path)
+
+
 # Task names whose first positional arg is the job_id, used by the orphan-reaper
 # below to flip a job to FAILED when its worker dies mid-execution.
 _JOB_ID_FIRST_ARG_TASKS = frozenset({
+    "orchestrator.alignment_smoke_job",
     "orchestrator.build_job",
     "orchestrator.build_job_sdk",
     "orchestrator.build_job_openrouter",
@@ -2674,6 +2909,14 @@ def tag_untagged_footage(self, limit: int = 0, media_type: str = "video") -> Dic
                 limit=int(limit or 0),
                 progress_cb=_progress,
             )
+            from mlcore.photo_tagger import run_photo_framing_batch
+
+            framing_summary = run_photo_framing_batch(
+                bucket=bucket,
+                db_url=db_url,
+                progress_cb=_progress,
+            )
+            summary = {**summary, **framing_summary}
         else:
             from mlcore.footage_tagger import run_tagging_batch
 
@@ -2820,10 +3063,20 @@ def _ensure_video_picker_artifacts_from_registry(
                 WHERE source = 'video'
                 """
             )
+            # The tags table is a SECOND source of truth for the picker. Keying the
+            # cache marker on footage_assets alone meant a re-tag left every
+            # already-hydrated node serving its stale snapshot.
+            tags_revision = await conn.fetchval(
+                """
+                SELECT COALESCE(MAX(updated_at)::text, '')
+                FROM footage_tags
+                WHERE source = 'video'
+                """
+            )
             return (
                 records,
                 filter_snapshot_to_pool(snapshot_rows, pool_ids),
-                f"{len(records)}:{str(revision or '')}",
+                f"{len(records)}:{str(revision or '')}:{str(tags_revision or '')}",
             )
         finally:
             await conn.close()
@@ -2949,7 +3202,21 @@ def _ensure_photo_picker_artifacts_from_registry(
                 WHERE source = 'photo'
                 """
             )
-            revision = f"{len(records)}:{str(revision_raw or '')}"
+            # The tags table is a SECOND source of truth for the picker (theme
+            # tags, and for photos the framing/quality backfill). Keying the cache
+            # marker on footage_assets alone meant a re-tag or a framing backfill
+            # left every already-hydrated node serving its stale snapshot.
+            tags_revision_raw = await conn.fetchval(
+                """
+                SELECT COALESCE(MAX(updated_at)::text, '')
+                FROM footage_tags
+                WHERE source = 'photo'
+                """
+            )
+            revision = (
+                f"{len(records)}:{str(revision_raw or '')}"
+                f":{str(tags_revision_raw or '')}"
+            )
             return records, filter_snapshot_to_pool(snapshot_rows, pool_ids), revision
         finally:
             await conn.close()
@@ -3214,6 +3481,21 @@ def activate_footage_base(self, limit: int = 0, media_type: str = "video") -> Di
                 bucket=bucket, source_prefix=prefix, db_url=db_url,
                 limit=int(limit or 0), progress_cb=_tag_progress,
             )
+            from mlcore.photo_tagger import run_photo_framing_batch
+
+            def _frame_progress(done: int, total: int, written: int) -> None:
+                _publish(
+                    "running", phase="framing", done=int(done),
+                    total=int(total), written=int(written),
+                )
+
+            _publish("running", phase="framing", done=0, total=0, written=0)
+            framing_summary = run_photo_framing_batch(
+                bucket=bucket,
+                db_url=db_url,
+                progress_cb=_frame_progress,
+            )
+            tag_summary = {**tag_summary, **framing_summary}
         else:
             from mlcore.footage_tagger import run_tagging_batch
 

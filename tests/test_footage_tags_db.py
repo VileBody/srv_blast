@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import asyncio
+
 from mlcore.footage_tags_db import (
     build_tag_record,
     extract_clip_id,
+    fetch_all_records,
+    fetch_unframed_photo_records,
     merge_records_by_clip_id,
     pick_snapshot_path,
     snapshot_row_from_record,
@@ -94,3 +98,58 @@ def test_snapshot_roundtrip_shape() -> None:
     assert snap["people_type"] == "none"
     assert snap["theme_tags"] == ["fog", "night"]
     assert extract_clip_id(snap["video_key"]) == "12345678"
+
+
+def test_fetch_all_records_reads_legacy_schema_without_framing() -> None:
+    class UndefinedColumnError(Exception):
+        sqlstate = "42703"
+
+    class Connection:
+        def __init__(self) -> None:
+            self.calls = []
+
+        async def fetch(self, query, *args):
+            self.calls.append((query, args))
+            if len(self.calls) == 1:
+                raise UndefinedColumnError("column framing does not exist")
+            return [{"clip_id": "12345678", "source": "video", "framing": {}}]
+
+    conn = Connection()
+    rows = asyncio.run(fetch_all_records(conn, source="video"))
+
+    assert rows == [{"clip_id": "12345678", "source": "video", "framing": {}}]
+    assert conn.calls[0][1] == ("video",)
+    assert "framing" in conn.calls[0][0]
+    assert "'{}'::jsonb AS framing" in conn.calls[1][0]
+
+
+def test_fetch_all_records_does_not_hide_other_database_errors() -> None:
+    class Connection:
+        async def fetch(self, query, *args):
+            raise RuntimeError("connection closed")
+
+    try:
+        asyncio.run(fetch_all_records(Connection()))
+    except RuntimeError as exc:
+        assert str(exc) == "connection closed"
+    else:
+        raise AssertionError("database error was unexpectedly swallowed")
+
+def test_fetch_unframed_photo_records_uses_registry_s3_key() -> None:
+    class Connection:
+        def __init__(self) -> None:
+            self.query = ""
+            self.args = ()
+
+        async def fetch(self, query, *args):
+            self.query = query
+            self.args = args
+            return [{"clip_id": "photo:1", "s3_key": "photo_collection/a/1.jpg"}]
+
+    conn = Connection()
+    rows = asyncio.run(fetch_unframed_photo_records(conn))
+
+    assert rows[0]["s3_key"] == "photo_collection/a/1.jpg"
+    assert "LEFT JOIN footage_assets" in conn.query
+    assert "COALESCE(NULLIF(t.s3_key, ''), a.s3_key, '')" in conn.query
+    assert conn.args == ("photo",)

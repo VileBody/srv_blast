@@ -179,6 +179,34 @@ def test_overlay_brat_injects_bpm():
     assert "$.global.__BLAST_BPM = 128.0" in js
     assert "addBlinker" in js
     assert "INTERACTIVE:     false" in js
+    assert 'fx.addProperty("ADBE Drop Shadow")' not in js
+    assert "addSoftShadow" not in js
+    assert "transitionBlurFrames:    6" in js
+    assert "transitionBlurDirection: 90" in js
+    assert "transitionBlurLength:    50" in js
+    assert 'fx.addProperty("ADBE Motion Blur")' in js
+    assert "function addWordDirectionalBlur" in js
+    assert 'CONFIG.textCompName + " / BRAT WORD "' in js
+    assert "var word = line[wi]" in js
+    assert "frames * frameDuration" in js
+    assert "var gap = line.length > 1 ? (BOX_W - naturalWidth)" in js
+    assert "function cleanupPreviousBrat" in js
+    assert "isGeneratedBratCompName(source.name)" in js
+    assert "source.numLayers === 0" in js
+    assert "CONFIG.emptyTemplateCompName" in js
+    assert "var cleanup = cleanupPreviousBrat(srcComp)" in js
+    assert 'contrastCompName:       "BRAT CONTRAST"' in js
+    assert "function addLineContrastPlate" in js
+    assert "contrastOpacity:        20" in js
+    assert "contrastRadialAmount:   40" in js
+    assert "contrastRadialType:     1" in js
+    assert "contrastRadialAA:       2" in js
+    assert "contrastRadialSeed:     0" in js
+    assert 'fx.addProperty("ADBE Radial Blur")' in js
+    assert 'center.setValue([contrastComp.width / 2, contrastComp.height / 2])' in js
+    assert 'property("ADBE Radial Blur-0005").setValue' not in js
+    assert "var contrastLayer = srcComp.layers.add(contrastComp)" in js
+    assert "var nl = srcComp.layers.add(tcomp); nl.moveToBeginning()" in js
 
 
 def test_project_builder_consumes_subtitles_jsx_block():

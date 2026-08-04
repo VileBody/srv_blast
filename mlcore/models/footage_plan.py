@@ -1,7 +1,7 @@
 # mlcore/models/footage_plan.py
 from __future__ import annotations
 
-from typing import List, Literal
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -31,6 +31,10 @@ class FootageClipPick(BaseModel):
     """
     file_name: str = Field(min_length=1)
     fit_mode: FitMode = "cover"
+
+    # Photo flow only. Video callers omit it; the shared picker/postprocess
+    # path preserves it without changing footage rendering.
+    framing: Optional[Dict[str, Any]] = None
 
     # ABSOLUTE full-track seconds (not comp seconds)
     in_point: float = Field(ge=0.0)

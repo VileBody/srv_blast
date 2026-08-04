@@ -27,11 +27,16 @@ from __future__ import annotations
 import math
 from typing import Any, Dict, Iterable, List, Optional
 
-from mlcore.footage_tags_db import SOURCE_PHOTO, SOURCE_VIDEO, extract_clip_id
+from mlcore.footage_tags_db import (
+    SOURCE_PHOTO,
+    SOURCE_VIDEO,
+    extract_clip_id,
+    photo_clip_id,
+)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS footage_assets (
-    clip_id       TEXT PRIMARY KEY,
+    clip_id       TEXT      NOT NULL,
     s3_key        TEXT      NOT NULL DEFAULT '',
     file_name     TEXT      NOT NULL DEFAULT '',
     genre         TEXT      NOT NULL DEFAULT '',
@@ -41,8 +46,29 @@ CREATE TABLE IF NOT EXISTS footage_assets (
     duration_sec  DOUBLE PRECISION NOT NULL DEFAULT 0,
     dominant_color TEXT     NOT NULL DEFAULT '',
     source        TEXT      NOT NULL DEFAULT 'video',
-    updated_at    TIMESTAMP NOT NULL DEFAULT NOW()
+    updated_at    TIMESTAMP NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (source, clip_id)
 );
+
+-- Repoint the primary key from clip_id to (source, clip_id). The pools share one
+-- numeric id space (the same Pinterest id can be a .mp4 in the video prefix and a
+-- .jpg in the photo prefix), so with clip_id alone a photo upsert did not collide
+-- with the video row — it OVERWROTE it and flipped `source`, silently dropping the
+-- clip out of the video pool. Only migrates when the PK is still single-column.
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM pg_index i
+        JOIN pg_class c ON c.oid = i.indrelid
+        WHERE c.relname = 'footage_assets'
+          AND i.indisprimary
+          AND array_length(i.indkey::int2[], 1) = 1
+    ) THEN
+        ALTER TABLE footage_assets DROP CONSTRAINT footage_assets_pkey;
+        ALTER TABLE footage_assets ADD PRIMARY KEY (source, clip_id);
+    END IF;
+END $$;
 
 CREATE INDEX IF NOT EXISTS idx_footage_assets_source ON footage_assets(source);
 CREATE INDEX IF NOT EXISTS idx_footage_assets_updated ON footage_assets(updated_at);
@@ -130,7 +156,10 @@ def build_asset_record(raw: Dict[str, Any], *, source: str = SOURCE_VIDEO) -> Op
     # Extract from the BASENAME, never the full s3 key: the key prefix (e.g.
     # .../pins2_1to1_20260323/...) contains an 8-digit date that the clip_id regex
     # would otherwise grab as a bogus id, collapsing every asset onto one PK.
-    clip_id = extract_clip_id(file_name) or extract_clip_id(s3_key.rsplit("/", 1)[-1])
+    if source == SOURCE_PHOTO:
+        clip_id = photo_clip_id(file_name) or photo_clip_id(s3_key.rsplit("/", 1)[-1])
+    else:
+        clip_id = extract_clip_id(file_name) or extract_clip_id(s3_key.rsplit("/", 1)[-1])
     if not clip_id:
         return None
     dom = raw.get("dominant_color")
@@ -181,7 +210,7 @@ async def init_schema(conn: Any) -> None:
 
 
 async def upsert_assets(conn: Any, records: List[Dict[str, Any]]) -> int:
-    """Upsert asset records (ON CONFLICT clip_id). Returns number written."""
+    """Upsert asset records (ON CONFLICT (source, clip_id)). Returns number written."""
     rows = [
         (
             r["clip_id"],
@@ -206,7 +235,7 @@ async def upsert_assets(conn: Any, records: List[Dict[str, Any]]) -> int:
             (clip_id, s3_key, file_name, genre, tag, src_w, src_h,
              duration_sec, dominant_color, source, updated_at)
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, NOW())
-        ON CONFLICT (clip_id) DO UPDATE SET
+        ON CONFLICT (source, clip_id) DO UPDATE SET
             s3_key         = EXCLUDED.s3_key,
             file_name      = EXCLUDED.file_name,
             genre          = EXCLUDED.genre,

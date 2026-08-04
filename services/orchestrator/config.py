@@ -82,6 +82,35 @@ def derive_render_poll_queue(render_queue: str) -> str:
     return f"{queue}-poll"
 
 
+def queue_affinity_mismatches(
+    *,
+    origin_node: str,
+    build_queue: str,
+    render_queue: str,
+    render_poll_queue: str,
+) -> dict[str, dict[str, str]]:
+    """Return queue fields that would move local artifacts to another node."""
+    node = str(origin_node or "").strip()
+    if not node:
+        return {}
+
+    expected = {
+        "build_queue": f"build.{node}",
+        "render_queue": f"render.{node}",
+        "render_poll_queue": f"render-poll.{node}",
+    }
+    actual = {
+        "build_queue": str(build_queue or "").strip(),
+        "render_queue": str(render_queue or "").strip(),
+        "render_poll_queue": str(render_poll_queue or "").strip(),
+    }
+    return {
+        key: {"expected": expected_value, "actual": actual[key]}
+        for key, expected_value in expected.items()
+        if actual[key] != expected_value
+    }
+
+
 def _render_poll_queue_env() -> str:
     explicit = _env("CELERY_QUEUE_RENDER_POLL", "")
     if explicit:

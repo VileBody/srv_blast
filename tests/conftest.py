@@ -192,6 +192,19 @@ def _install_aiogram_stub() -> None:
             self.text = kwargs.get("text")
             self.callback_data = kwargs.get("callback_data")
 
+    class _KeyboardButton(_Dummy):
+        def __init__(self, *args, **kwargs) -> None:
+            super().__init__(*args, **kwargs)
+            self.text = kwargs.get("text")
+
+    class _ReplyKeyboardMarkup(_Dummy):
+        def __init__(self, *args, keyboard=None, **kwargs) -> None:
+            super().__init__(*args, **kwargs)
+            self.keyboard = list(keyboard or [])
+
+    class _ReplyKeyboardRemove(_Dummy):
+        keyboard: tuple = ()
+
     class TelegramBadRequest(Exception):
         pass
 
@@ -235,16 +248,18 @@ def _install_aiogram_stub() -> None:
     aiogram_exceptions_mod.TelegramRetryAfter = TelegramRetryAfter
     aiogram_filters_mod.CommandStart = _Dummy
     aiogram_filters_mod.Command = _Dummy
+    aiogram_filters_mod.CommandObject = _Dummy
     aiogram_types_mod.FSInputFile = _Dummy
     aiogram_types_mod.BotCommand = _Dummy
     aiogram_types_mod.CallbackQuery = _Dummy
     aiogram_types_mod.ChatMemberUpdated = _Dummy
-    aiogram_types_mod.KeyboardButton = _Dummy
+    aiogram_types_mod.KeyboardButton = _KeyboardButton
     aiogram_types_mod.Message = _Dummy
-    aiogram_types_mod.ReplyKeyboardMarkup = _Dummy
-    aiogram_types_mod.ReplyKeyboardRemove = _Dummy
+    aiogram_types_mod.ReplyKeyboardMarkup = _ReplyKeyboardMarkup
+    aiogram_types_mod.ReplyKeyboardRemove = _ReplyKeyboardRemove
     aiogram_types_mod.InlineKeyboardMarkup = _InlineKeyboardMarkup
     aiogram_types_mod.InlineKeyboardButton = _InlineKeyboardButton
+    aiogram_types_mod.InputMediaPhoto = _Dummy
     aiogram_types_mod.Update = _Dummy
     aiogram_client_telegram_mod.TelegramAPIServer = TelegramAPIServer
     aiogram_client_session_aiohttp_mod.AiohttpSession = _Dummy

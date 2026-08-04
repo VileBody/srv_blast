@@ -11,7 +11,7 @@ import shlex
 import sys
 import time
 from collections import deque
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import quote as url_quote, quote_plus
 from typing import Any, Dict, Optional, TYPE_CHECKING
@@ -25,6 +25,11 @@ from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Red
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from core.llm_worker_types import LLM_WORKER_TYPES
 from services.generation_runtime import GenerationRuntimeStore
+from services.orchestrator.alignment_smoke_auth import (
+    AUTHORIZATION_TTL_S,
+    alignment_smoke_authorization_digest,
+    alignment_smoke_authorization_key,
+)
 from services.orchestrator.windows_node_pool import normalize_windows_urls, runtime_windows_urls_key
 
 from .credits_db import normalize_package_code as _normalize_pkg_code
@@ -1227,6 +1232,34 @@ def build_app(
         data = resp.json()
         if not isinstance(data, dict):
             raise RuntimeError(f"orchestrator GET /jobs/{jid} returned non-object: {data!r}")
+        return data
+
+    async def _orchestrator_enqueue_alignment_smoke(payload: dict) -> dict:
+        base = str(settings.orchestrator_public_url or "").strip().rstrip("/")
+        if not base:
+            raise RuntimeError("ORCHESTRATOR_PUBLIC_URL is empty")
+        request_payload = dict(payload)
+        auth_nonce = secrets.token_urlsafe(32)
+        request_payload["auth_nonce"] = auth_nonce
+        auth_created = await state_store.redis.set(
+            alignment_smoke_authorization_key(auth_nonce),
+            alignment_smoke_authorization_digest(request_payload),
+            ex=AUTHORIZATION_TTL_S,
+            nx=True,
+        )
+        if not auth_created:
+            raise RuntimeError("failed to create alignment smoke authorization")
+        async with httpx.AsyncClient(timeout=25.0) as client:
+            resp = await client.post(f"{base}/alignment-smoke", json=request_payload)
+        if resp.status_code >= 300:
+            raise RuntimeError(
+                f"orchestrator POST /alignment-smoke failed: {resp.status_code} {resp.text}"
+            )
+        data = resp.json()
+        if not isinstance(data, dict):
+            raise RuntimeError(
+                f"orchestrator POST /alignment-smoke returned non-object: {data!r}"
+            )
         return data
 
     async def _orchestrator_get_metrics() -> dict:
@@ -3620,6 +3653,14 @@ def build_app(
             <label>Limit: <input type="number" name="limit" value="{limit}" min="1" max="300"></label>
             <button type="submit">Refresh</button>
           </form>
+          <form method="post" action="/admin/alignment-smoke/start"
+                style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px">
+            <strong>Alignment smoke:</strong>
+            <label>Days: <input type="number" name="days" value="30" min="1" max="90"></label>
+            <label>Jobs: <input type="number" name="count" value="30" min="1" max="50"></label>
+            <button type="submit">Start on orchestrator</button>
+          </form>
+          <p style="color:#666;font-size:0.88em">Runs only local CTC alignment and uploads lightweight previews; no LLM, credits, footage, or render node.</p>
           <p style="margin-top:8px">Visible runs: <strong>{len(runs)}</strong></p>
           <div class="table-wrap">
             <table>
@@ -3631,6 +3672,220 @@ def build_app(
         </div>
         """
         return _page("Runs", body)
+
+    @app.get("/admin/runs-export.json", response_class=JSONResponse)
+    async def runs_export(request: Request, _user: str = Depends(_check_auth)) -> JSONResponse:
+        """Export recent alignment inputs for deterministic, offline smoke testing."""
+        if runtime_store is None:
+            raise HTTPException(503, "Generation runtime store is unavailable")
+
+        days = _query_int(request, "days", default=30, min_value=1, max_value=90)
+        limit = _query_int(request, "limit", default=100, min_value=1, max_value=300)
+        created_after = datetime.now(timezone.utc) - timedelta(days=days)
+        rows = await runtime_store.list_alignment_smoke_candidates(
+            surface="public",
+            created_after=created_after,
+            limit=limit,
+        )
+
+        runs: list[Dict[str, Any]] = []
+        by_run_id: Dict[str, Dict[str, Any]] = {}
+        allowed_input_fields = (
+            "audio_s3_url",
+            "lyrics_text",
+            "target_fragment",
+            "subtitles_mode",
+            "user_clip_start_sec",
+            "user_clip_end_sec",
+            "versions_total",
+        )
+
+        def _iso_datetime(value: object) -> str:
+            if isinstance(value, datetime):
+                return value.isoformat()
+            return str(value or "")
+
+        for row in rows:
+            run_id = str(row.get("run_id") or "")
+            item = by_run_id.get(run_id)
+            if item is None:
+                payload = dict(row.get("payload") or {})
+                item = {
+                    "run_id": run_id,
+                    "created_at": _iso_datetime(row.get("run_created_at")),
+                    "updated_at": _iso_datetime(row.get("run_updated_at")),
+                    "status": str(row.get("run_status") or ""),
+                    "current_stage": str(row.get("current_stage") or ""),
+                    "last_error_code": str(row.get("last_error_code") or ""),
+                    "last_error_text": str(row.get("last_error_text") or ""),
+                    "input": {key: payload.get(key) for key in allowed_input_fields},
+                    "versions": [],
+                }
+                by_run_id[run_id] = item
+                runs.append(item)
+            if row.get("version_index") is not None:
+                item["versions"].append(
+                    {
+                        "version_index": int(row.get("version_index") or 0),
+                        "job_id": str(row.get("job_id") or ""),
+                        "status": str(row.get("job_status") or ""),
+                        "stage": str(row.get("job_stage") or ""),
+                        "result_url": str(row.get("result_url") or ""),
+                        "archive_url": str(row.get("archive_url") or ""),
+                        "error": str(row.get("version_error_text") or ""),
+                    }
+                )
+
+        return JSONResponse(
+            {
+                "schema_version": 1,
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "days": days,
+                "requested_run_limit": limit,
+                "run_count": len(runs),
+                "runs": runs,
+            },
+            headers={
+                "Content-Disposition": 'attachment; filename="alignment-smoke-inputs.json"',
+                "Cache-Control": "no-store",
+            },
+        )
+
+    @app.post("/admin/alignment-smoke/start", response_class=JSONResponse)
+    async def alignment_smoke_start(
+        days: int = Form(30),
+        count: int = Form(30),
+        _user: str = Depends(_check_auth),
+    ) -> JSONResponse:
+        if runtime_store is None:
+            raise HTTPException(503, "Generation runtime store is unavailable")
+        days = max(1, min(int(days), 90))
+        count = max(1, min(int(count), 50))
+        created_after = datetime.now(timezone.utc) - timedelta(days=days)
+        rows = await runtime_store.list_alignment_smoke_candidates(
+            surface="public",
+            created_after=created_after,
+            limit=300,
+        )
+
+        candidates: list[dict[str, Any]] = []
+        seen_runs: set[str] = set()
+        for row in rows:
+            run_id = str(row.get("run_id") or "").strip()
+            if not run_id or run_id in seen_runs:
+                continue
+            payload = dict(row.get("payload") or {})
+            audio_s3_url = str(payload.get("audio_s3_url") or "").strip()
+            target_fragment = str(payload.get("target_fragment") or "").strip()
+            start = payload.get("user_clip_start_sec")
+            end = payload.get("user_clip_end_sec")
+            try:
+                start_f = float(start)
+                end_f = float(end)
+            except (TypeError, ValueError):
+                continue
+            if (
+                not audio_s3_url.lower().startswith("s3://")
+                or not target_fragment
+                or start_f < 0.0
+                or end_f <= start_f
+            ):
+                continue
+            seen_runs.add(run_id)
+            candidates.append(
+                {
+                    "run_id": run_id,
+                    "audio_s3_url": audio_s3_url,
+                    "target_fragment": target_fragment,
+                    "clip_start_abs": start_f,
+                    "clip_end_abs": end_f,
+                }
+            )
+
+        selected = candidates[:count]
+        if not selected:
+            raise HTTPException(409, "No complete s3 alignment inputs found")
+        batch_id = f"{int(time.time())}-{secrets.token_hex(4)}"
+        jobs: list[dict[str, Any]] = []
+        failures: list[dict[str, str]] = []
+        for item in selected:
+            run_id = str(item["run_id"])
+            request_payload = {
+                "audio_s3_url": item["audio_s3_url"],
+                "target_fragment": item["target_fragment"],
+                "clip_start_abs": item["clip_start_abs"],
+                "clip_end_abs": item["clip_end_abs"],
+                "request_id": f"smoke:{batch_id}:{run_id}",
+                "idempotency_key": f"alignment-smoke:{batch_id}:{run_id}",
+            }
+            try:
+                enqueued = await _orchestrator_enqueue_alignment_smoke(request_payload)
+                jobs.append(
+                    {
+                        "run_id": run_id,
+                        "job_id": str(enqueued.get("job_id") or ""),
+                        "status": str(enqueued.get("status") or ""),
+                        "created": bool(enqueued.get("created", True)),
+                        "preview_path": f"/admin/alignment-smoke/{enqueued.get('job_id')}/preview",
+                    }
+                )
+            except Exception as exc:
+                failures.append({"run_id": run_id, "error": str(exc)})
+
+        base = str(settings.orchestrator_public_url or "").strip().rstrip("/")
+        return JSONResponse(
+            {
+                "schema_version": 1,
+                "batch_id": batch_id,
+                "days": days,
+                "requested_count": count,
+                "eligible_count": len(candidates),
+                "enqueued_count": len(jobs),
+                "failed_to_enqueue_count": len(failures),
+                "jobs": jobs,
+                "failures": failures,
+                "poll_url_template": f"{base}/jobs/{{job_id}}",
+            },
+            headers={
+                "Content-Disposition": f'attachment; filename="alignment-smoke-jobs-{batch_id}.json"',
+                "Cache-Control": "no-store",
+            },
+        )
+
+    @app.get("/admin/alignment-smoke/{job_id}/preview")
+    async def alignment_smoke_preview(
+        job_id: str,
+        _user: str = Depends(_check_auth),
+    ) -> RedirectResponse:
+        jid = str(job_id or "").strip()
+        if not jid:
+            raise HTTPException(404, "job_id is empty")
+        state = await _orchestrator_get_job(job_id=jid)
+        if not state:
+            raise HTTPException(404, "Alignment smoke job not found")
+        request_payload = dict(state.get("request") or {})
+        if str(request_payload.get("job_kind") or "") != "alignment_smoke":
+            raise HTTPException(404, "Alignment smoke job not found")
+        if str(state.get("status") or "").upper() != "SUCCEEDED":
+            raise HTTPException(409, "Alignment smoke preview is not ready")
+        result = dict(state.get("result") or {})
+        output_url = str(result.get("output_url") or "").strip()
+        expected_bucket = str(getattr(settings, "s3_bucket_output_video", "") or "").strip()
+        expected_key = f"alignment-smoke/{jid}/preview.mp4"
+        if output_url != f"s3://{expected_bucket}/{expected_key}" or not expected_bucket:
+            raise HTTPException(409, "Alignment smoke preview locator is invalid")
+        from src.storage.s3 import generate_presigned_url
+
+        preview_url = generate_presigned_url(
+            expected_bucket,
+            expected_key,
+            expires_in=900,
+        )
+        return RedirectResponse(
+            url=preview_url,
+            status_code=307,
+            headers={"Cache-Control": "no-store"},
+        )
 
     @app.get("/admin/runs/{run_id}", response_class=HTMLResponse)
     async def run_detail(run_id: str, _user: str = Depends(_check_auth)) -> str:
@@ -4021,7 +4276,13 @@ def build_app(
         except Exception:
             return PlainTextResponse("OK", status_code=200)
 
-        log.info("tbank notify: %s", data)
+        log.info(
+            "tbank notify: order=%s status=%s payment_id=%s rebill_present=%s",
+            str(data.get("OrderId", "")),
+            str(data.get("Status", "")),
+            str(data.get("PaymentId", "")),
+            bool(str(data.get("RebillId", "")).strip()),
+        )
 
         # Verify token — reject if no client configured or invalid signature
         if not tbank_client:
@@ -4034,8 +4295,9 @@ def build_app(
         order_id = str(data.get("OrderId", ""))
         status = str(data.get("Status", "")).strip().upper()
         payment_id = str(data.get("PaymentId", ""))
-        # T-Bank sends RebillId only in the notification body for recurrent
-        # payments (it is NOT available via GetState). Capture it here.
+        # For recurrent payments T-Bank puts RebillId in the notification body
+        # (GetState never returns it; GetCardList is the only after-the-fact
+        # source). Capture it here.
         notif_rebill_id = str(data.get("RebillId", "")).strip()
 
         if not order_id:
@@ -4043,12 +4305,45 @@ def build_app(
 
         existing_payment = await credits_db.get_payment(order_id)
 
+        # Persist RebillId the moment it appears, whatever the payment status.
+        # T-Bank puts it in the AUTHORIZED notification; for a one-stage payment
+        # the CONFIRMED one may arrive without it. Waiting for CONFIRMED before
+        # storing the key means an AUTHORIZED-only RebillId is dropped and the
+        # subscription can never be charged. Creating the *subscription* still
+        # waits for CONFIRMED (below) — only the key itself is saved eagerly.
+        if (
+            notif_rebill_id
+            and existing_payment
+            and bool(existing_payment.get("is_recurrent", False))
+            and not str(existing_payment.get("rebill_id", "") or "").strip()
+        ):
+            try:
+                await credits_db.update_rebill_id(order_id, notif_rebill_id)
+                existing_payment = await credits_db.get_payment(order_id)
+                log.info(
+                    "tbank notify: rebill captured order=%s status=%s rebill=***%s",
+                    order_id, status, notif_rebill_id[-6:],
+                )
+            except Exception as e:
+                # Key in hand but unsaved — make T-Bank replay rather than lose
+                # it, same contract as the bootstrap failure below.
+                log.error(
+                    "tbank notify: rebill capture FAILED order=%s err=%s "
+                    "(returning 500 to trigger T-Bank retry)",
+                    order_id, e,
+                )
+                return PlainTextResponse(f"rebill capture failed: {e}", status_code=500)
+
         async def _bootstrap_recurrent_from_rebill(payment_row: dict | None, *, warn_missing: bool = False):
             if not payment_row or not bool(payment_row.get("is_recurrent", False)):
                 return None
             if str(payment_row.get("status", "")).strip().upper() != "CONFIRMED":
                 return None
-            if not notif_rebill_id:
+            # A RebillId already captured from an earlier notification (T-Bank
+            # sends it on AUTHORIZED; the CONFIRMED twin may omit it) is just as
+            # good as one in the body we are handling right now.
+            effective_rebill_id = notif_rebill_id or str(payment_row.get("rebill_id", "") or "").strip()
+            if not effective_rebill_id:
                 if warn_missing:
                     log.warning(
                         "tbank notify: is_recurrent payment confirmed but RebillId absent "
@@ -4061,13 +4356,13 @@ def build_app(
                 tg_id_boot = int(payment_row["tg_id"])
                 pkg_boot = str(payment_row["package"])
                 amount_boot = int(payment_row["amount_rub"])
-                masked_rebill_id = f"***{notif_rebill_id[-6:]}"
+                masked_rebill_id = f"***{effective_rebill_id[-6:]}"
                 if not str(payment_row.get("rebill_id", "")).strip():
-                    await credits_db.update_rebill_id(order_id, notif_rebill_id)
+                    await credits_db.update_rebill_id(order_id, effective_rebill_id)
                 active_sub = await credits_db.get_active_subscription(tg_id_boot)
                 if not active_sub:
                     await credits_db.create_subscription(
-                        tg_id_boot, pkg_boot, notif_rebill_id, amount_boot,
+                        tg_id_boot, pkg_boot, effective_rebill_id, amount_boot,
                     )
                     await credits_db.log_event(
                         tg_id_boot, "subscription_created", f"{pkg_boot} rebill={masked_rebill_id}",
@@ -4170,13 +4465,50 @@ def build_app(
                 order_id=order_id,
             )
             await credits_db.log_event(tg_id, "payment_confirmed", f"{pkg} \u2014 {amount_rub}\u20bd")
-            # Subscription bootstrap for recurrent payments. RebillId is sent
-            # by T-Bank ONLY in this notification body (GetState does NOT
-            # return it \u2014 that was the prior bug). Without saving it here,
-            # the daily rebill loop has no key to charge against.
+            # Subscription bootstrap for recurrent payments. RebillId arrives in
+            # a notification body (GetState never returns it) and can go missing
+            # if a webhook was lost; without it the rebill loop has no key to
+            # charge against, so fall back to GetCardList and \u2014 if even that is
+            # empty \u2014 page the manager instead of failing silently.
             is_recurrent_pay = bool(payment.get("is_recurrent", False))
             if is_recurrent_pay and not notif_rebill_id:
                 await _bootstrap_recurrent_from_rebill(payment, warn_missing=True)
+                if not str((await credits_db.get_payment(order_id) or {}).get("rebill_id", "") or "").strip():
+                    recovered = ""
+                    if tbank_client:
+                        try:
+                            recovered = await tbank_client.find_rebill_id(str(tg_id))
+                        except Exception as e:
+                            log.warning("tbank notify: GetCardList recovery failed order=%s err=%s", order_id, e)
+                    if recovered:
+                        await credits_db.update_rebill_id(order_id, recovered)
+                        refreshed = await credits_db.get_payment(order_id)
+                        await _bootstrap_recurrent_from_rebill(refreshed)
+                        log.info(
+                            "tbank notify: rebill recovered via GetCardList order=%s rebill=***%s",
+                            order_id, recovered[-6:],
+                        )
+                    else:
+                        log.error(
+                            "tbank notify: recurrent payment CONFIRMED with no RebillId anywhere "
+                            "(notification + GetCardList) \u2014 no autopay. order=%s tg_id=%s",
+                            order_id, tg_id,
+                        )
+                        if bot_ref and bot_ref[0] and settings.manager_chat_id:
+                            try:
+                                await bot_ref[0].send_message(
+                                    settings.manager_chat_id,
+                                    "\u26a0\ufe0f \u041f\u043e\u0434\u043f\u0438\u0441\u043a\u0430 \u0431\u0435\u0437 \u0430\u0432\u0442\u043e\u0441\u043f\u0438\u0441\u0430\u043d\u0438\u044f\n\n"
+                                    f"\u041f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044c: {tg_id}\n"
+                                    f"\u041f\u0430\u043a\u0435\u0442: {pkg}\n"
+                                    f"\u0421\u0443\u043c\u043c\u0430: {amount_rub}\u20bd\n"
+                                    f"Order: {order_id}\n\n"
+                                    "\u041e\u043f\u043b\u0430\u0442\u0430 \u043f\u0440\u043e\u0448\u043b\u0430, \u043d\u043e T-Bank \u043d\u0435 \u0434\u0430\u043b RebillId \u2014 \u043a\u0430\u0440\u0442\u0430 \u043d\u0435 \u043f\u0440\u0438\u0432\u044f\u0437\u0430\u043b\u0430\u0441\u044c "
+                                    "(\u043e\u0431\u044b\u0447\u043d\u043e \u0421\u0411\u041f/QR \u0438\u043b\u0438 T-Pay). \u0410\u0432\u0442\u043e\u0441\u043f\u0438\u0441\u0430\u043d\u0438\u044f \u043d\u0435 \u0431\u0443\u0434\u0435\u0442. "
+                                    "\u041f\u0440\u043e\u0432\u0435\u0440\u044c /admin/subscriptions.",
+                                )
+                            except Exception as e:
+                                log.warning("tbank notify: no-rebill alert failed: %s", e)
 
             try:
                 await state_store.reset_to_wait_audio(tg_id)
@@ -5390,7 +5722,12 @@ def build_app(
                     f"<td>{p['amount_rub']}₽</td>"
                     f"<td><code style='font-size:0.75em'>{html_mod.escape(p['order_id'])}</code></td>"
                     f"<td>{html_mod.escape(p['created_at'])}</td>"
-                    f"<td><span class='badge badge-warn'>RebillId пустой</span></td></tr>"
+                    f"<td><span class='badge badge-warn'>RebillId пустой</span></td>"
+                    f"<td><form method='post' action='/admin/subscriptions/fetch-rebill' style='display:inline' "
+                    f"onsubmit=\"return confirm('Запросить RebillId у T-Bank и создать подписку?')\">"
+                    f"<input type='hidden' name='order_id' value='{html_mod.escape(p['order_id'], quote=True)}'>"
+                    f"<button type='submit' class='btn-success' style='font-size:0.8em;padding:4px 8px'>"
+                    f"Найти RebillId в T-Bank</button></form></td></tr>"
                 )
             orphan_cards += f"""
             <div class="card" style="border:2px solid #e67e22">
@@ -5398,10 +5735,12 @@ def build_app(
               <p><b>Это не неоплаченные платежи.</b> Статус платежа <code>CONFIRMED</code>; в этом блоке нет активной
                  подписки, потому что T-Bank не дал <code>RebillId</code>. Чаще всего это QR/SBP или notification без
                  ключа карты. Автосписание по таким строкам не стартует.</p>
-              <p>Варианты: перепослать notification в кабинете T-Bank, если там была оплата картой; иначе попросить
-                 юзера оформить подписку заново через карту.</p>
+              <p>Кнопка <b>«Найти RebillId в T-Bank»</b> спрашивает <code>GetCardList</code> по
+                 <code>CustomerKey</code> юзера: если карта всё-таки привязалась, а потерялась только нотификация —
+                 ключ найдётся и подписка создастся сразу. Если T-Bank отвечает «карт нет» — привязки не было
+                 (СБП/QR/T-Pay), тут поможет только новая оплата картой.</p>
               <div class="table-wrap">
-              <table><tr><th>Юзер</th><th>Пакет</th><th>Сумма</th><th>Order</th><th>Когда оплачено</th><th>Причина</th></tr>
+              <table><tr><th>Юзер</th><th>Пакет</th><th>Сумма</th><th>Order</th><th>Когда оплачено</th><th>Причина</th><th></th></tr>
               {no_autopay_rows}</table>
               </div>
             </div>
@@ -5510,7 +5849,7 @@ def build_app(
         rebill_id = str(payment.get("rebill_id", "") or "").strip()
         if not rebill_id:
             return RedirectResponse(
-                f"/admin/subscriptions?err={quote_plus('У платежа нет RebillId')}",
+                f"/admin/subscriptions?err={quote_plus('У платежа нет RebillId — нажми «Найти RebillId в T-Bank»')}",
                 status_code=303,
             )
 
@@ -5541,6 +5880,108 @@ def build_app(
             log.warning("subscription recover audit failed order=%s err=%s", clean_order_id, e)
         return RedirectResponse(
             f"/admin/subscriptions?ok={quote_plus(f'Подписка восстановлена для {tg_id}')}",
+            status_code=303,
+        )
+
+    @app.post("/admin/subscriptions/fetch-rebill")
+    async def subscriptions_fetch_rebill_from_tbank(
+        order_id: str = Form(...),
+        _user: str = Depends(_check_auth),
+    ) -> RedirectResponse:
+        """Recover a lost RebillId straight from T-Bank via GetCardList.
+
+        Covers the case the recover button cannot: the payment is CONFIRMED but
+        `payments.rebill_id` is empty because the notification carrying the key
+        never landed. The card is still bound to CustomerKey on T-Bank's side,
+        so the key is fetchable — unless no card was ever bound (SBP/QR/T-Pay),
+        in which case only a fresh card payment can start autopay.
+        """
+        clean_order_id = str(order_id or "").strip()
+        if not clean_order_id:
+            return RedirectResponse(
+                f"/admin/subscriptions?err={quote_plus('Order ID пустой')}",
+                status_code=303,
+            )
+        if not tbank_client:
+            return RedirectResponse(
+                f"/admin/subscriptions?err={quote_plus('T-Bank клиент не сконфигурирован')}",
+                status_code=303,
+            )
+
+        payment = await credits_db.get_payment(clean_order_id)
+        if not payment:
+            return RedirectResponse(
+                f"/admin/subscriptions?err={quote_plus('Платёж не найден')}",
+                status_code=303,
+            )
+        if str(payment.get("status", "")).strip().upper() != "CONFIRMED":
+            return RedirectResponse(
+                f"/admin/subscriptions?err={quote_plus('Платёж ещё не CONFIRMED')}",
+                status_code=303,
+            )
+        if not bool(payment.get("is_recurrent", False)):
+            return RedirectResponse(
+                f"/admin/subscriptions?err={quote_plus('Платёж не recurrent')}",
+                status_code=303,
+            )
+
+        tg_id = int(payment["tg_id"])
+        # CustomerKey is the chat id — see _show_purchase_stub in app.py.
+        try:
+            rebill_id = await tbank_client.find_rebill_id(str(tg_id))
+        except Exception as e:
+            log.error("fetch-rebill: GetCardList failed order=%s err=%s", clean_order_id, e)
+            return RedirectResponse(
+                f"/admin/subscriptions?err={quote_plus(f'GetCardList упал: {e}')}",
+                status_code=303,
+            )
+        if not rebill_id:
+            return RedirectResponse(
+                "/admin/subscriptions?err=" + quote_plus(
+                    "T-Bank не вернул привязанных карт для этого юзера — карта не привязывалась "
+                    "(СБП/QR/T-Pay). Автосписание можно завести только новой оплатой картой."
+                ),
+                status_code=303,
+            )
+
+        await credits_db.update_rebill_id(clean_order_id, rebill_id)
+        masked = f"***{rebill_id[-6:]}"
+
+        active_sub = await credits_db.get_active_subscription(tg_id)
+        if active_sub:
+            existing_sub_id = active_sub.get("id", "?")
+            return RedirectResponse(
+                "/admin/subscriptions?ok=" + quote_plus(
+                    f"RebillId {masked} сохранён; активная подписка sub={existing_sub_id} уже была"
+                ),
+                status_code=303,
+            )
+
+        pkg = str(payment.get("package", "") or "")
+        amount_rub = int(payment.get("amount_rub", 0) or 0)
+        await credits_db.create_subscription(tg_id, pkg, rebill_id, amount_rub)
+        await credits_db.log_event(
+            tg_id,
+            "subscription_created",
+            f"{pkg} rebill={masked} tbank_cardlist order={clean_order_id}",
+        )
+        try:
+            await credits_db.audit_log(
+                _user,
+                "subscription_rebill_fetched",
+                target=str(tg_id),
+                details=f"order={clean_order_id} rebill={masked}",
+            )
+        except Exception as e:
+            log.warning("fetch-rebill audit failed order=%s err=%s", clean_order_id, e)
+        log.info(
+            "fetch-rebill: subscription created order=%s tg_id=%s rebill=%s",
+            clean_order_id, tg_id, masked,
+        )
+        return RedirectResponse(
+            "/admin/subscriptions?ok=" + quote_plus(
+                f"RebillId {masked} найден в T-Bank, подписка создана для {tg_id}"
+            ),
             status_code=303,
         )
 

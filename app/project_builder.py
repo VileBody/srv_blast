@@ -393,7 +393,21 @@ def _build_f2_overlay_js(full_edit_config: Dict[str, Any]) -> str:
     return overlay
 
 
-def _build_f3_overlay_js(full_edit_config: Dict[str, Any]) -> str:
+# Subtitles must sit above every effect layer in the 4:3 render. Appended after
+# the F3 block; a no-op when either the comp or the overlay layer is absent.
+_PHOTO_SUBTITLES_ON_TOP_JS = """
+/* ===== photo 4:3: subtitles stay above every effect layer ===== */
+(function(){
+  if (typeof PHOTO_COMP === "undefined" || !PHOTO_COMP) { return; }
+  for (var i = 1; i <= PHOTO_COMP.numLayers; i++) {
+    var L = PHOTO_COMP.layer(i);
+    if (L.name === "SUBTITLES_OVERLAY") { try { L.moveToBeginning(); } catch (e) {} return; }
+  }
+})();
+"""
+
+
+def _build_f3_overlay_js(full_edit_config: Dict[str, Any], *, comp_var: str = "MAIN_COMP") -> str:
     """
     Если в full_edit_config есть блок "f3" — собирает инъектируемый JSX-блок
     эффектов («Эффект»: хук + переход + грейд + звук + лого). Блок встраивается
@@ -436,10 +450,11 @@ def _build_f3_overlay_js(full_edit_config: Dict[str, Any]) -> str:
         hook_extend=hook_extend,
         drop_time=float(drop_time),
         assets=assets,
+        comp_var=comp_var,
     )
     LOGGER.info(
-        "f3 fx present hook=%s trans=%s extra=%s extra_full=%s extend=%s js_len=%d",
-        hook, transition, extra, extra_full, hook_extend, len(overlay),
+        "f3 fx present hook=%s trans=%s extra=%s extra_full=%s extend=%s comp=%s js_len=%d",
+        hook, transition, extra, extra_full, hook_extend, comp_var, len(overlay),
     )
     return overlay
 
@@ -684,6 +699,10 @@ def build_photo_project(
     segments: Optional[List[Dict[str, Any]]] = None,
     audio_file_name: Optional[str] = None,
     audio_locator: Optional[str] = None,
+    audio_offset_sec: Optional[float] = None,
+    subtitle_project_jsx: str = "",
+    subtitle_comp_name: str = "",
+    f3_overlay_js: str = "",
 ) -> Tuple[Path, Path]:
     """Build the standalone 4:3 PHOTO render (photo_template.j2).
 
@@ -721,6 +740,12 @@ def build_photo_project(
         segments=segments,
         audio_file_name=resolved_audio_name,
         audio_locator=resolved_audio_locator,
+        audio_offset_sec=(
+            float(audio_offset_sec)
+            if audio_offset_sec is not None
+            else float(os.environ.get("USER_CLIP_START_SEC") or 0.0)
+        ),
+        subtitle_comp_name=subtitle_comp_name,
     )
 
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -735,7 +760,28 @@ def build_photo_project(
     env = Environment(loader=FileSystemLoader(str(repo_root / "templates")), autoescape=False)
     env.filters["tojson"] = _tojson_filter
     tpl = env.get_template("photo_template.j2")
-    jsx = tpl.render(photo_job=payload["photo_job"], footage_layers=payload["footage_layers"])
+    photo_jsx = tpl.render(
+        photo_job=payload["photo_job"],
+        footage_layers=payload["footage_layers"],
+    )
+    # The canonical project builder owns every subtitle mode (including the JSX
+    # trendy/brat modes). Build it first, then add the standalone 4:3 photo comp
+    # and nest its transparent main comp over the photos.
+    jsx = (
+        str(subtitle_project_jsx).rstrip() + "\n\n" + photo_jsx
+        if str(subtitle_project_jsx).strip()
+        else photo_jsx
+    )
+    # The effect block goes AFTER the photo template: it binds to PHOTO_COMP,
+    # which that template publishes, and reads the photo layers as its cuts.
+    if str(f3_overlay_js).strip():
+        jsx = jsx.rstrip() + "\n\n" + str(f3_overlay_js).strip() + "\n"
+        # Belt and braces. Each effect script places itself under the subtitle
+        # layer by NAME, and a script that cannot find it silently leaves its
+        # adjustment layer on top — which is how crystal_glow ended up blurring
+        # the subtitles. This restores the invariant no matter what any single
+        # script did, and costs one layer move.
+        jsx += _PHOTO_SUBTITLES_ON_TOP_JS
     out_jsx.write_text(jsx, encoding="utf-8")
 
     LOGGER.info(

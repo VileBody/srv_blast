@@ -57,7 +57,7 @@ Workflow использует эту переменную, чтобы выпол
 `infra/runners/deploy_branch.sh` поддерживает второй аргумент:
 
 - `all` (по умолчанию): legacy single-node deploy.
-- `prod-path`: `orchestrator-api`, `worker-build`, `worker-render` + опционально `orchestrator-api-2` (если `DEPLOY_ORCHESTRATOR_HA=true`) + Dozzle agent (env создается автоматически) + опционально `promtail-edge`; старый `tg-bot-public` на orchestrator-нoдах останавливается и удаляется.
+- `prod-path`: `orchestrator-api`, `alignment-api`, `worker-build`, `worker-render` + опционально `orchestrator-api-2` (если `DEPLOY_ORCHESTRATOR_HA=true`) + Dozzle agent (env создается автоматически) + опционально `promtail-edge`; старый `tg-bot-public` на orchestrator-нoдах останавливается и удаляется.
 - `infra-apps`: `tg-bot`, `tg-bot-public` в polling-режиме, `tg-bot-public-admin`, `asset-ui`, `finance-bot`.
 - `infra-ops`: `infra-apps` + `dozzle` + `observability` + `github-runner` (если есть соответствующие `.env`).
 
@@ -219,7 +219,7 @@ DOZZLE_AGENT_LEVEL=info
 `DOZZLE_AUTH_PROVIDER=none`, `DOZZLE_BASE=/logs`, `DOZZLE_HOSTNAME=blast-ops`.
 `DOZZLE_BIND_HOST` и `DOZZLE_PORT` остаются обязательными в локальном env.
 Если `DOZZLE_REMOTE_AGENT` пустой, CI/CD заполняет текущий split-prod список:
-`192.168.0.8:7007,192.168.0.11:7007`.
+`192.168.0.12:7007,192.168.0.11:7007`.
 
 Для панели бота аналогично: `https://blast808.com/admin/` (также через Basic Auth).
 `asset-ui` рекомендуется прокинуть в той же зоне: `https://blast808.com/admin/assets/`.

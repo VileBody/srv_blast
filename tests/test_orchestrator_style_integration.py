@@ -8,6 +8,7 @@ from typing import Callable
 import pytest
 
 from mlcore import gemini_orchestrator as go
+from mlcore.alignment.client import LocalAlignmentResponse
 from mlcore.models.footage_style import FootageStylePickPayload
 from mlcore.models.stage1_asr import Stage1AsrPayload
 from mlcore.models.stage1_scenario import Stage1ScenarioPayload
@@ -438,6 +439,155 @@ def test_hedged_mode_wires_openrouter_for_all_stage_calls(monkeypatch, tmp_path:
     assert set(seen.keys()) == {"asr", "scenario", "subtitles", "style", "timing_analysis", "timing_cuts"}
     assert len(gemini_clients) == 7
     assert len(openrouter_clients) == 7
+
+
+def test_local_ctc_skips_stage1_gemini_clients_and_calls(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    audio_path = tmp_path / "audio.mp3"
+    audio_path.write_bytes(b"fake")
+    inv_path = tmp_path / "inventory.json"
+    inv_path.write_text(
+        json.dumps(
+            {
+                "assets": [
+                    {
+                        "file_name": "f1.mp4",
+                        "file_path": (
+                            "s3://bucket/pinterest_collection/"
+                            "Rock/dark_forest/f1.mp4"
+                        ),
+                        "src_w": 720,
+                        "src_h": 1280,
+                        "duration_sec": 15.0,
+                        "genre": "Rock",
+                        "tag": "dark_forest",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MODE", "dev")
+    monkeypatch.setenv("GEMINI_API_KEY", "gk")
+    monkeypatch.setenv("LLM_PROVIDER_MODE", "gemini")
+    monkeypatch.setenv("GEMINI_MODEL_STAGE1", "gemini-2.5-pro")
+    monkeypatch.setenv("GEMINI_MODEL_SUBTITLES", "gemini-3-pro-preview")
+    monkeypatch.setenv("GEMINI_MODEL_FOOTAGE", "gemini-3-flash-preview")
+    monkeypatch.setenv("FOOTAGE_INVENTORY_JSON", str(inv_path))
+    monkeypatch.setenv("OUT_DIR", str(tmp_path / "out"))
+    monkeypatch.setenv("AUDIO_FILE_PATH", str(audio_path))
+    monkeypatch.setenv("AUDIO_DIR", str(audio_path.parent))
+    monkeypatch.setenv("JOB_ID", "job_local_ctc")
+    monkeypatch.setenv("TARGET_FRAGMENT", "a b")
+    monkeypatch.setenv("USER_CLIP_START_SEC", "0")
+    monkeypatch.setenv("USER_CLIP_END_SEC", "14")
+    monkeypatch.setenv("STAGE1_ALIGNMENT_BACKEND", "local_ctc")
+    monkeypatch.setenv("ALIGNMENT_SERVICE_URL", "http://alignment-api:8000")
+    monkeypatch.setenv("ALIGNMENT_MODEL_REVISION", "rev-test")
+    monkeypatch.setenv("ALIGNMENT_ALGORITHM_VERSION", "algo-test")
+    monkeypatch.setenv("ALIGNMENT_DEMUCS_MODEL_NAME", "htdemucs")
+    monkeypatch.setenv("ALIGNMENT_DEMUCS_MODEL_REVISION", "separator-rev-test")
+    monkeypatch.setenv("ALIGNMENT_DEMUCS_PACKAGE_VERSION", "4.1.0")
+    _set_stage2_timing_env(monkeypatch)
+    monkeypatch.setattr(go, "STAGE2_TIMING_MODE", "prompts")
+
+    gemini_clients: list[object] = []
+
+    def _mk_gemini(**_kwargs):
+        client = object()
+        gemini_clients.append(client)
+        return client
+
+    monkeypatch.setattr(go, "_make_client", _mk_gemini)
+    monkeypatch.setattr(go, "pick_audio_files", lambda _audio_dir: [audio_path])
+
+    stage1_asr = Stage1AsrPayload.model_validate(
+        {
+            "transcript_words": [
+                {"text": "a", "t_start": 0.0, "t_end": 0.5},
+                {"text": "b", "t_start": 0.5, "t_end": 1.0},
+            ],
+            "selected_fragment": {
+                "audio": {"clip_start_abs": 0.0, "clip_end_abs": 14.0},
+                "transcript_words": [
+                    {"text": "a", "t_start": 0.0, "t_end": 0.5},
+                    {"text": "b", "t_start": 0.5, "t_end": 1.0},
+                ],
+            },
+        }
+    )
+    monkeypatch.setattr(
+        go,
+        "request_local_alignment",
+        lambda **_kwargs: LocalAlignmentResponse(
+            stage1_asr=stage1_asr,
+            diagnostics={"mean_word_confidence": 0.9, "warnings": []},
+            backend={
+                "model_revision": "rev-test",
+                "algorithm_version": "algo-test",
+                "audio_preprocessor": "demucs",
+                "separator_model": "htdemucs",
+                "separator_revision": "separator-rev-test",
+                "separator_package_version": "4.1.0",
+            },
+        ),
+    )
+
+    def _forbidden(*_args, **_kwargs):
+        raise AssertionError("Stage 1 Gemini must not be called for local_ctc")
+
+    monkeypatch.setattr(go, "call_stage1_asr_once", _forbidden)
+    monkeypatch.setattr(go, "call_stage1_forced_alignment_once", _forbidden)
+    monkeypatch.setattr(
+        go,
+        "call_stage1_scenario_once",
+        lambda **_kwargs: Stage1ScenarioPayload.model_validate(
+            {
+                "audio": {"clip_start_abs": 0.0, "clip_end_abs": 14.0},
+                "draft_blocks": _draft_blocks(),
+                "fragment_analytics": {
+                    "target_fragment": "a b",
+                    "working_fragment": "a b",
+                    "working_start_abs": 0.0,
+                    "working_end_abs": 14.0,
+                    "working_start_text": "a",
+                    "working_end_text": "b",
+                    "relation_to_target": "inside_13_30",
+                    "chosen_action": "none",
+                    "rationale": "exact user window",
+                },
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        go,
+        "call_subtitles_plan_once",
+        lambda **_kwargs: _subtitles_payload(),
+    )
+    monkeypatch.setattr(
+        go,
+        "call_footage_style_once",
+        lambda **_kwargs: FootageStylePickPayload.model_validate(
+            {"genre": "Rock", "tag": "dark_forest"}
+        ),
+    )
+    _patch_stage2_timing_calls(monkeypatch)
+    monkeypatch.setattr(
+        go,
+        "render_all_steps",
+        lambda **_kwargs: {
+            "audio_plan": tmp_path / "audio_plan.json",
+            "full_edit_config": tmp_path / "full_edit_config.json",
+            "footage_config": tmp_path / "footage_config.json",
+        },
+    )
+
+    out = go.build_all_via_gemini_one_call()
+
+    assert set(out) == {"audio_plan", "full_edit_config", "footage_config"}
+    assert len(gemini_clients) == 5
 
 
 def test_resume_state_skips_stage1_llm_calls(monkeypatch, tmp_path: Path) -> None:

@@ -33,6 +33,7 @@ class SendAudioS3Request(BaseModel):
     idempotency_key: Optional[str] = Field(default=None, min_length=1)
     lyrics_text: str = ""
     target_fragment: str = ""
+    stage1_alignment_backend: Literal["gemini", "local_ctc"] = "gemini"
     # Use the canonical SubtitlesMode (core) so new modes never drift from the
     # API contract (trendy_5th/brat_5th were added there).
     subtitles_mode: SubtitlesMode = SUBTITLES_MODE_LEGACY_BLOCKS
@@ -181,6 +182,15 @@ class SendAudioS3Request(BaseModel):
             raise ValueError("user_clip_start_sec and user_clip_end_sec must be provided together")
         elif float(end) <= float(start):
             raise ValueError("user_clip_end_sec must be > user_clip_start_sec")
+        if self.stage1_alignment_backend == "local_ctc":
+            if not self.target_fragment.strip():
+                raise ValueError(
+                    "stage1_alignment_backend=local_ctc requires target_fragment"
+                )
+            if start is None or end is None:
+                raise ValueError(
+                    "stage1_alignment_backend=local_ctc requires a complete user clip window"
+                )
         # If user picked a drop, it must lie inside the focus clip window.
         if self.user_drop_t is not None and start is not None and end is not None:
             if not (float(start) <= float(self.user_drop_t) <= float(end)):
@@ -216,6 +226,25 @@ class EnqueueJobResponse(BaseModel):
     job_id: str
     status: JobStatus
     created: bool = True
+
+
+class AlignmentSmokeRequest(BaseModel):
+    audio_s3_url: str = Field(min_length=1)
+    target_fragment: str = Field(min_length=1)
+    clip_start_abs: float = Field(ge=0.0)
+    clip_end_abs: float = Field(gt=0.0)
+    request_id: str = Field(default="", max_length=200)
+    idempotency_key: Optional[str] = Field(default=None, min_length=1)
+    auth_nonce: str = Field(min_length=32, max_length=128)
+
+    @model_validator(mode="after")
+    def _validate_window(self) -> "AlignmentSmokeRequest":
+        if float(self.clip_end_abs) <= float(self.clip_start_abs):
+            raise ValueError("clip_end_abs must be > clip_start_abs")
+        return self
+
+
+AlignmentSmokeEnqueueResponse = EnqueueJobResponse
 
 
 class JobState(BaseModel):
@@ -389,6 +418,7 @@ class RankBucketsRequest(BaseModel):
     lyrics: str = ""
     mood: str = ""  # "minor" | "major" | "" (no filter)
     top: int = Field(default=0, ge=0)  # 0 = full ranked list
+    media_type: Literal["video", "photo"] = "video"
 
 
 class RankedBucket(BaseModel):

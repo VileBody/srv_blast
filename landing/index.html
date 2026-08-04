@@ -5,8 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Blast — AI-агент для музыкантов</title>
   <meta name="description" content="Blast — AI-агент для артистов: создаёт вирусный контент под трек с нуля за 60 секунд." />
+  <meta property="og:title" content="Blast — AI-агент для музыкантов" />
+  <meta property="og:description" content="Blast — AI-агент для артистов: создаёт вирусный контент под трек с нуля за 60 секунд." />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://blast808.com/" />
   <link rel="icon" type="image/svg+xml" href="assets/logo.svg" />
-  <link rel="stylesheet" href="css/style.css?v=20260328-legalfix1" />
+  <link rel="stylesheet" href="css/style.css?v=20260730-hero1" />
 </head>
 <body>
 
@@ -22,6 +26,13 @@
         <a href="#examples">Примеры</a>
         <a href="#features">Преимущества</a>
       </nav>
+      <div class="language-switch language-switch--desktop" role="group" aria-label="Язык">
+        <button type="button" data-language="ru" aria-label="Выбрать русский язык">RU</button>
+        <button type="button" data-language="en" aria-label="Выбрать английский язык">EN</button>
+      </div>      <div class="language-switch language-switch--mobile" role="group" aria-label="Язык">
+        <button type="button" data-language="ru" aria-label="Выбрать русский язык">RU</button>
+        <button type="button" data-language="en" aria-label="Выбрать английский язык">EN</button>
+      </div>
       <a href="https://t.me/blast808bot" class="navbar-cta" target="_blank" rel="noopener">Попробовать</a>
       <button class="burger" aria-label="Меню" aria-expanded="false">
         <span></span><span></span><span></span>
@@ -32,6 +43,7 @@
       <a href="#examples">Примеры</a>
       <a href="#features">Преимущества</a>
       <a href="https://t.me/blast808bot" class="mobile-cta" target="_blank" rel="noopener">Попробовать</a>
+
     </div>
   </div>
 
@@ -200,7 +212,7 @@
               <video class="example-preview-video" muted loop playsinline preload="none"></video>
               <div class="example-play-btn" aria-label="Смотреть"></div>
             </div>
-            <span class="example-genre">Тape</span>
+            <span class="example-genre">Tape</span>
           </div>
           <div class="example-col">
             <div class="example-slide" data-media-key="example_jakson">
@@ -347,128 +359,42 @@
       </div>
       <div class="footer-legal reveal">
         <p>«Импульс Промо» 2026</p>
-        <a href="#" class="footer-legal-link" data-popup="popup-offer">Оферта</a>
-        <a href="#" class="footer-legal-link" data-popup="popup-privacy">Политика конфиденциальности</a>
-        <a href="#" class="footer-legal-link" data-popup="popup-contacts">Контакты</a>
+        <a href="terms.html" class="footer-legal-link" data-keep-language>Условия использования</a>
+        <a href="privacy.html" class="footer-legal-link" data-keep-language>Политика конфиденциальности</a>
+        <a href="cookies.html" class="footer-legal-link" data-keep-language>Политика cookie</a>
+        <a href="personal-data-consent.html" class="footer-legal-link" data-keep-language>Согласие на обработку данных</a>
+        <a href="offer.html" class="footer-legal-link" data-keep-language>Публичная оферта</a>
+        <a href="contacts.html" class="footer-legal-link" data-keep-language>Контакты</a>
+        <button type="button" class="footer-legal-link footer-cookie-settings" data-cookie-settings>Настроить cookie</button>
       </div>
     </div>
   </footer>
 
-  <!-- LEGAL POPUPS -->
-  <div class="legal-popup" id="popup-offer" aria-hidden="true">
-    <div class="legal-popup-backdrop"></div>
-    <div class="legal-popup-body">
-      <button class="legal-popup-close" aria-label="Закрыть">&#x2715;</button>
-      <h2>Публичная оферта</h2>
-      <div class="legal-popup-content">
-        <p>Индивидуальный предприниматель Чернов Никита Романович (далее — «Исполнитель»), ИНН 623013205426, ОГРНИП 324620000005644, адрес: 390048, Россия, Рязанская обл., г. Рязань, ул. Васильевская, д. 18, кв. 60, предлагает любому физическому или юридическому лицу (далее — «Заказчик») заключить настоящий договор-оферту на оказание услуг по генерации видеоконтента на базе искусственного интеллекта.</p>
+  <section class="cookie-banner" data-cookie-banner hidden aria-label="Настройки cookie">
+    <div class="cookie-banner__copy"><strong>Настройки cookie</strong><p>Мы используем необходимые cookie для работы сайта. Аналитические и маркетинговые cookie включаются только с вашего согласия.</p><a href="cookies.html" data-keep-language>Подробнее</a></div>
+    <div class="cookie-banner__actions">
+      <button type="button" class="cookie-button cookie-button--secondary" data-cookie-reject>Отклонить необязательные</button>
+      <button type="button" class="cookie-button cookie-button--secondary" data-cookie-open-settings>Настройки</button>
+      <button type="button" class="cookie-button cookie-button--primary" data-cookie-accept>Принять все</button>
+    </div>
+  </section>
 
-        <h3>1. Предмет оферты</h3>
-        <p>Исполнитель оказывает Заказчику услуги по автоматизированной генерации видеоконтента на основе предоставленных Заказчиком аудиозаписей, текстов и предпочтений (далее — «Услуги»). Услуги предоставляются дистанционно с использованием Telegram-бота по адресу: <a href="https://t.me/blast808bot" target="_blank">t.me/blast808bot</a>. Страна производителя Услуг — Российская Федерация.</p>
-
-        <h3>2. Тарифные планы и стоимость</h3>
-
-        <h4>2.1. «Blast Trial» — 990 ₽</h4>
-        <p>Пакет включает: анализ предоставленного аудиоматериала и текстовых данных средствами искусственного интеллекта; формирование контент-плана и подборку трендовых концепций для видеороликов; генерацию 5 (пяти) видеороликов на основе аудиоматериала Заказчика. Пакет предназначен для тестирования потенциала единичного трека.</p>
-
-        <h4>2.2. «Blast» — 1 990 ₽/мес.</h4>
-        <p>Ежемесячная подписка включает: анализ предоставленного аудиоматериала и текстовых данных; формирование контент-плана и трендовых концепций; генерацию 15 (пятнадцати) видеороликов на основе аудиоматериала Заказчика. Подписка обеспечивает регулярное наполнение социальных сетей Заказчика контентом.</p>
-
-        <h4>2.3. «Glow» — 7 990 ₽</h4>
-        <p>Расширенный пакет включает: анализ аудиоматериала и текстовых данных; формирование контент-плана и трендовых концепций; генерацию 30 (тридцати) видеороликов; подбор 2 (двух) блогеров для размещения контента с использованием аудиоматериала Заказчика и закупку по одному ролику у каждого.</p>
-
-        <h4>2.4. «Impulse» — 29 990 ₽</h4>
-        <p>Флагманский пакет включает: заключение двустороннего договора; разработку идейной концепции релиза (5 форматов контента); составление индивидуального контент-плана с референсами; генерацию 50 (пятидесяти) видеороликов с последующим тестированием и масштабированием; закупку 10–12 размещений у блогеров.</p>
-
-        <h3>3. Порядок оплаты</h3>
-        <p>Оплата производится в рублях Российской Федерации путём безналичного перевода с использованием банковских карт Visa, MasterCard, МИР через платёжный сервис ПАО «Т-Банк» (<a href="https://tbank.ru" target="_blank" rel="noopener">tbank.ru</a>). Услуга считается оплаченной с момента поступления денежных средств на расчётный счёт Исполнителя.</p>
-
-        <h3>4. Доставка</h3>
-        <p>Результат оказания Услуг (видеоролики) доставляется Заказчику в электронном виде посредством Telegram-бота незамедлительно после завершения генерации. Территория оказания Услуг не ограничена — Услуги доступны из любой страны мира при наличии доступа к сети Интернет и мессенджеру Telegram.</p>
-
-        <h3>5. Условия возврата и отмены</h3>
-        <p>Заказчик вправе отказаться от Услуг и получить полный возврат денежных средств <strong>до момента начала генерации контента</strong>. После начала процесса генерации возврат денежных средств не производится, так как Услуга считается оказанной. Для оформления возврата Заказчик направляет заявку на адрес электронной почты: <a href="mailto:support@blast808.com">support@blast808.com</a>. Возврат осуществляется тем же способом, которым была произведена оплата, в течение 10 (десяти) рабочих дней.</p>
-
-        <h3>6. Ограничения</h3>
-        <p>Ограничения на экспортную деятельность отсутствуют. Услуги предоставляются исключительно в цифровом формате и не подлежат физической доставке или экспорту.</p>
-
-        <h3>7. Акцепт оферты</h3>
-        <p>Акцептом настоящей оферты является факт оплаты любого тарифного плана. С момента акцепта настоящая оферта считается заключённым договором между Исполнителем и Заказчиком.</p>
-
-        <h3>8. Реквизиты Исполнителя</h3>
-        <p>ИП Чернов Никита Романович<br>
-        ИНН: 623013205426<br>
-        ОГРНИП: 324620000005644<br>
-        Адрес: 390048, Россия, Рязанская обл., г. Рязань, ул. Васильевская, д. 18, кв. 60<br>
-        Email: <a href="mailto:support@blast808.com">support@blast808.com</a><br>
-        Телефон: <a href="tel:+79105724967">+7 (910) 572-49-67</a></p>
-      </div>
+  <div class="cookie-dialog" data-cookie-dialog hidden aria-hidden="true">
+    <button type="button" class="cookie-dialog__backdrop" data-cookie-close aria-label="Закрыть настройки cookie"></button>
+    <div class="cookie-dialog__panel" role="dialog" aria-modal="true" aria-labelledby="cookie-dialog-title">
+      <button type="button" class="cookie-dialog__close" data-cookie-close aria-label="Закрыть настройки cookie">&#x2715;</button>
+      <h2 id="cookie-dialog-title">Настройки cookie</h2>
+      <p>Выберите, какие необязательные категории можно использовать. Решение можно изменить в footer.</p>
+      <div class="cookie-preference"><div><strong>Необходимые</strong><span>Нужны для языка, согласия и базовой работы сайта.</span></div><input type="checkbox" checked disabled aria-label="Необходимые cookie всегда включены" /></div>
+      <label class="cookie-preference"><span><strong>Аналитические</strong><span>Помогают понять использование сайта и улучшать его.</span></span><input type="checkbox" data-cookie-category="analytics" /></label>
+      <label class="cookie-preference"><span><strong>Маркетинговые</strong><span>Используются для измерения рекламных кампаний.</span></span><input type="checkbox" data-cookie-category="marketing" /></label>
+      <div class="cookie-dialog__actions"><button type="button" class="cookie-button cookie-button--secondary" data-cookie-reject>Отклонить необязательные</button><button type="button" class="cookie-button cookie-button--primary" data-cookie-save>Сохранить выбор</button></div>
     </div>
   </div>
-
-  <div class="legal-popup" id="popup-privacy" aria-hidden="true">
-    <div class="legal-popup-backdrop"></div>
-    <div class="legal-popup-body">
-      <button class="legal-popup-close" aria-label="Закрыть">&#x2715;</button>
-      <h2>Политика конфиденциальности</h2>
-      <div class="legal-popup-content">
-        <p>Настоящая Политика конфиденциальности определяет порядок обработки и защиты персональных данных пользователей сервиса Blast (blast808.com), принадлежащего ИП Чернов Никита Романович (далее — «Оператор»).</p>
-
-        <h3>1. Собираемые данные</h3>
-        <p>Оператор может собирать следующие персональные данные: имя и контактные данные (адрес электронной почты, номер телефона), предоставленные Пользователем при обращении в службу поддержки; идентификатор пользователя в Telegram; данные об оплате (без хранения реквизитов банковских карт — обработка платежей осуществляется ПАО «Т-Банк»); аудиозаписи и текстовые материалы, загруженные Пользователем для генерации контента; техническая информация (IP-адрес, тип браузера, cookie-файлы).</p>
-
-        <h3>2. Цели обработки</h3>
-        <p>Персональные данные обрабатываются в целях: оказания Услуг по генерации видеоконтента; идентификации Пользователя; осуществления расчётов; направления информационных уведомлений о статусе заказа; улучшения качества сервиса; исполнения обязательств, предусмотренных законодательством РФ.</p>
-
-        <h3>3. Защита данных</h3>
-        <p>Оператор принимает необходимые организационные и технические меры для защиты персональных данных от неправомерного доступа, уничтожения, изменения, блокирования, копирования и распространения. Передача данных между Пользователем и сервисом осуществляется по защищённому протоколу HTTPS с использованием шифрования TLS. Данные банковских карт не передаются Оператору и не хранятся на серверах сервиса — платёжные транзакции обрабатываются непосредственно ПАО «Т-Банк» в соответствии со стандартом PCI DSS.</p>
-
-        <h3>4. Передача данных третьим лицам</h3>
-        <p>Оператор не передаёт персональные данные третьим лицам, за исключением случаев: обработки платежей ПАО «Т-Банк»; выполнения требований законодательства РФ; защиты прав и законных интересов Оператора.</p>
-
-        <h3>5. Хранение данных</h3>
-        <p>Персональные данные хранятся не дольше, чем это необходимо для целей их обработки. Загруженные аудиоматериалы и сгенерированный контент хранятся в течение 30 (тридцати) дней с момента выполнения заказа, после чего автоматически удаляются.</p>
-
-        <h3>6. Права Пользователя</h3>
-        <p>Пользователь вправе: запросить информацию о составе обрабатываемых персональных данных; потребовать уточнения, блокирования или уничтожения своих персональных данных; отозвать согласие на обработку данных, направив запрос на <a href="mailto:support@blast808.com">support@blast808.com</a>.</p>
-
-        <h3>7. Файлы cookie</h3>
-        <p>Сайт blast808.com использует файлы cookie для обеспечения корректной работы сервиса и сбора анонимной статистики посещений. Пользователь может отключить использование cookie в настройках браузера.</p>
-
-        <h3>8. Контактная информация</h3>
-        <p>По вопросам, связанным с обработкой персональных данных:<br>
-        Email: <a href="mailto:support@blast808.com">support@blast808.com</a><br>
-        Телефон: <a href="tel:+79105724967">+7 (910) 572-49-67</a></p>
-      </div>
-    </div>
-  </div>
-
-  <div class="legal-popup" id="popup-contacts" aria-hidden="true">
-    <div class="legal-popup-backdrop"></div>
-    <div class="legal-popup-body">
-      <button class="legal-popup-close" aria-label="Закрыть">&#x2715;</button>
-      <h2>Контакты</h2>
-      <div class="legal-popup-content">
-        <h3>Служба поддержки</h3>
-        <p>Email: <a href="mailto:support@blast808.com">support@blast808.com</a><br>
-        Телефон: <a href="tel:+79105724967">+7 (910) 572-49-67</a><br>
-        Telegram-бот: <a href="https://t.me/blast808bot" target="_blank" rel="noopener">t.me/blast808bot</a></p>
-
-        <h3>Реквизиты</h3>
-        <p>ИП Чернов Никита Романович<br>
-        ИНН: 623013205426<br>
-        ОГРНИП: 324620000005644<br>
-        Адрес: 390048, Россия, Рязанская обл., г. Рязань, ул. Васильевская, д. 18, кв. 60</p>
-
-        <h3>Способы оплаты</h3>
-        <p>Оплата принимается через платёжный сервис ПАО «Т-Банк» (<a href="https://tbank.ru" target="_blank" rel="noopener">tbank.ru</a>).<br>
-        Принимаются карты: Visa, MasterCard, МИР, T-Pay.</p>
-      </div>
-    </div>
-  </div>
-
-<script src="js/media-config.js?v=20260328-legalfix1"></script>
-<script src="js/main.js?v=20260328-legalfix1" defer></script>
+<script src="js/media-config.js?v=20260729-i18n1"></script>
+<script src="js/i18n.js?v=20260729-i18n1" defer></script>
+<script src="js/cookie-consent.js?v=20260729-i18n1" defer></script>
+<script src="js/main.js?v=20260729-i18n1" defer></script>
 
   <!-- VIDEO MODAL -->
   <div class="video-modal" id="videoModal" aria-hidden="true">

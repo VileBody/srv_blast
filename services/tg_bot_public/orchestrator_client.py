@@ -35,6 +35,7 @@ class OrchestratorClient:
         mode: str,
         lyrics_text: str,
         target_fragment: str,
+        stage1_alignment_backend: str = "local_ctc",
         subtitles_mode: str = SUBTITLES_MODE_LEGACY_BLOCKS,
         footage_artist_id: str = "",
         user_clip_start_sec: float | None = None,
@@ -71,11 +72,18 @@ class OrchestratorClient:
         accent_color_hex: str | None = None,
         render_engine: str = "ae",
     ) -> Dict[str, Any]:
+        alignment_backend = str(stage1_alignment_backend or "").strip().lower()
+        if alignment_backend not in {"gemini", "local_ctc"}:
+            raise ValueError(
+                "stage1_alignment_backend must be 'gemini' or 'local_ctc', "
+                f"got {alignment_backend!r}"
+            )
         payload = {
             "audio_s3_url": str(audio_s3_url),
             "mode": str(mode),
             "lyrics_text": str(lyrics_text or ""),
             "target_fragment": str(target_fragment or ""),
+            "stage1_alignment_backend": alignment_backend,
             "subtitles_mode": str(subtitles_mode or SUBTITLES_MODE_LEGACY_BLOCKS),
             "footage_artist_id": str(footage_artist_id or ""),
             "user_clip_start_sec": (
@@ -136,6 +144,7 @@ class OrchestratorClient:
         lyrics: str,
         mood: str = "",
         top: int = 0,
+        media_type: str = "video",
     ) -> Dict[str, Any]:
         """Mirror of tg_bot_botapi: footage precision flow ranks the bucket
         catalog by lyrics relevance (one cheap LLM call on the orchestrator with
@@ -146,6 +155,7 @@ class OrchestratorClient:
             "lyrics": str(lyrics or ""),
             "mood": str(mood or "").strip(),
             "top": int(top or 0),
+            "media_type": "photo" if str(media_type).strip().lower() == "photo" else "video",
         }
         resp = await self._client.post(f"{self._base_url}/footage/rank-buckets", json=payload)
         if resp.status_code >= 300:

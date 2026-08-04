@@ -5,6 +5,7 @@
 .env
 .env.*
 !.env.example
+.grok.keys
 
 .venv/
 __pycache__/
@@ -25,6 +26,7 @@ footage/
 
 # Local artifacts
 repomix-output.xml
+*.zip
 
 # Frontend local dependencies/artifacts
 asset_ui/node_modules/

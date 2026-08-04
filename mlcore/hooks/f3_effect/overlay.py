@@ -38,6 +38,13 @@ _MANIFEST_PATH = _F3_DIR / "manifest.json"
 # place ref layer inside MAIN_COMP (the "Текст" precomp layer). Effects go below it.
 _PLACE_REF = "Текст"
 
+# The 4:3 photo comp has no "Текст" layer — the subtitles arrive as a nested comp
+# named SUBTITLES_OVERLAY (templates/photo_template.j2). With the wrong ref the
+# scripts find nothing to move under and every adjustment layer stays where AE
+# put it, at the TOP: crystal_glow then blurred the subtitles instead of the
+# photos. Same contract as footage, different layer name.
+_PHOTO_PLACE_REF = "SUBTITLES_OVERLAY"
+
 # Wired effect ids per group (mirror manifest.json). Used for request/env
 # validation (orchestrator, tasks) and as the source for the bot's 3-step UI.
 F3_HOOKS = ("hook_light", "shutter_effect", "flash_slow_shutter", "negative_zoom")
@@ -122,12 +129,23 @@ def build_overlay_jsx(
     hook_extend: Optional[str] = None,
     drop_time: float,
     assets: Optional[Dict[str, Any]] = None,
+    comp_var: str = "MAIN_COMP",
 ) -> str:
     """Return the injectable F3 JSX block. Empty selection => "".
 
     assets (all optional, job-relative media paths under media/...):
       hook_sound, transition_sound, extra_sound, logo
+
+    comp_var is the JSX global holding the comp to decorate. It defaults to the
+    footage render's MAIN_COMP; the 4:3 photo render passes PHOTO_COMP, whose
+    photo layers are the cuts. Binding this by name (rather than hardcoding
+    MAIN_COMP) is what lets one effect library serve both renders — pointing the
+    block at a comp with no footage layers silently produces no cuts, and every
+    per-cut effect becomes a no-op.
     """
+    comp_var = str(comp_var or "MAIN_COMP").strip()
+    if not comp_var.isidentifier():
+        raise ValueError(f"comp_var must be a JS identifier, got {comp_var!r}")
     if not (hook or transition or extra):
         return ""
 
@@ -157,13 +175,47 @@ def build_overlay_jsx(
     parts: list[str] = []
     parts.append("/* ===== F3 «Эффект» overlay (injected by build worker) ===== */")
     parts.append("(function(){")
-    parts.append('  if (typeof MAIN_COMP === "undefined" || !MAIN_COMP) { return; }')
-    parts.append("  var __f3_comp = MAIN_COMP;")
+    parts.append(f'  if (typeof {comp_var} === "undefined" || !{comp_var}) {{ return; }}')
+    parts.append(f"  var __f3_comp = {comp_var};")
     parts.append("  var __f3_name = __f3_comp.name;")
     parts.append(f"  var __f3_drop = {_js(drop)};")
-    parts.append(f'  var __f3_place = "below:{_PLACE_REF}";')
+    _place_ref = _PLACE_REF if comp_var == "MAIN_COMP" else _PHOTO_PLACE_REF
+    parts.append(f'  var __f3_place = "below:{_place_ref}";')
+    # Two placement keys are in circulation: the transitions parse CONFIG.place,
+    # the stylizations (blackwhite / crystal_glow / night_vision / wave) read
+    # CONFIG.placeRef directly and default it to "Текст". Only `place` was ever
+    # sent, so on the photo path those four looked for a layer that does not
+    # exist there, found nothing, and silently skipped their move. Sending both
+    # keeps them consistent; for footage the value equals the script default, so
+    # nothing changes there.
+    parts.append(f'  var __f3_place_ref = {_js(_place_ref)};')
     parts.append(_JS_PRELUDE)
     parts.append("  var __f3_cuts = __f3_detectCuts(__f3_comp);")
+
+    # Effect constants (wipe travel, blur/dilate radii, mosaic block counts) were
+    # authored against the footage comp. Re-target the block at a differently
+    # shaped comp and they read at the wrong physical size — a 340px wipe crosses
+    # 31% of a 1080-wide frame but only 18% of a 1920-wide one.
+    #
+    # The reference is measured from MAIN_COMP at RUNTIME rather than a constant:
+    # the repo disagrees with itself about the footage comp height (project_config
+    # says 1920, the f4 device scripts say 1960 after hitting it visually), and a
+    # wrong constant would silently rescale footage.
+    #
+    # Nothing is emitted on the footage path at all, so that JSX is unchanged
+    # byte-for-byte — the strongest isolation available here.
+    if comp_var != "MAIN_COMP":
+        parts.append("  var __f3_fxs = (function(){")
+        parts.append('    var r = (typeof MAIN_COMP !== "undefined" && MAIN_COMP) ? MAIN_COMP : null;')
+        parts.append("    if (!r || !r.width || !r.height) { return null; }")
+        parts.append("    var x = __f3_comp.width / r.width, y = __f3_comp.height / r.height;")
+        parts.append("    if (!isFinite(x) || !isFinite(y) || x <= 0 || y <= 0) { return null; }")
+        # isotropic features get the area-preserving mean: neither axis wins, and a
+        # pure width factor would blow radii up by 78% on a frame that is shorter.
+        parts.append("    return { x: x, y: y, i: Math.sqrt(x * y) };")
+        parts.append("  })();")
+    # the key itself is omitted on the footage path, so that payload is unchanged
+    _fx_kv = ", fxScale: __f3_fxs" if comp_var != "MAIN_COMP" else ""
     parts.append("  var __f3_used = [];")  # cut-times already given a sound (dedup)
 
     # reusable SFX runner (inlines sound.jsx once, callable many times)
@@ -188,7 +240,7 @@ def build_overlay_jsx(
         extend_js = _js(hook_extend) if (h_eff.get("extendable") and hook_extend) else "null"
         parts.append("  /* -- HOOK -- */")
         parts.append(f"  var __f3_hookDurV = __f3_hookDur(__f3_comp, __f3_drop, __f3_cuts, {_js(base_dur)}, {extend_js});")
-        parts.append("  $.global.__BLAST = { targetCompName: __f3_name, dropTime: __f3_drop, duration: __f3_hookDurV, place: __f3_place, cuts: __f3_cuts };")
+        parts.append("  $.global.__BLAST = { targetCompName: __f3_name, dropTime: __f3_drop, duration: __f3_hookDurV, place: __f3_place, cuts: __f3_cuts, placeRef: __f3_place_ref" + _fx_kv + " };")
         parts.append("  (function(){")
         parts.append(_read_script(h_eff["script"]))
         parts.append("  })(); $.global.__BLAST = null;")
@@ -215,7 +267,7 @@ def build_overlay_jsx(
     if t_eff:
         t_dur = float(t_eff.get("default_duration") or 0.067)
         parts.append("  /* -- TRANSITION -- */")
-        parts.append(f"  $.global.__BLAST = {{ targetCompName: __f3_name, dropTime: __f3_drop, duration: {_js(t_dur)}, place: __f3_place, cuts: __f3_cuts }};")
+        parts.append(f"  $.global.__BLAST = {{ targetCompName: __f3_name, dropTime: __f3_drop, duration: {_js(t_dur)}, place: __f3_place, cuts: __f3_cuts, placeRef: __f3_place_ref{_fx_kv} }};")
         parts.append("  (function(){")
         parts.append(_read_script(t_eff["script"]))
         parts.append("  })(); $.global.__BLAST = null;")
@@ -233,7 +285,7 @@ def build_overlay_jsx(
         parts.append("  /* -- EXTRA -- */")
         parts.append(
             "  $.global.__BLAST = { targetCompName: __f3_name, dropTime: __f3_drop, "
-            f"startTime: 0, duration: {_extra_dur_js}, place: __f3_place, cuts: __f3_cuts }};"
+            f"startTime: 0, duration: {_extra_dur_js}, place: __f3_place, cuts: __f3_cuts, placeRef: __f3_place_ref{_fx_kv} }};"
         )
         parts.append("  (function(){")
         parts.append(_read_script(e_eff["script"]))

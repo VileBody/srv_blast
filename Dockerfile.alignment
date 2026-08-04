@@ -1,0 +1,65 @@
+# syntax=docker/dockerfile:1
+FROM python:3.11-slim-bookworm
+
+ARG ALIGNMENT_MODEL_ID=jonatasgrosman/wav2vec2-large-xlsr-53-russian
+ARG ALIGNMENT_MODEL_REVISION=2329100508896c6d9b157019803ab5601e6f3406
+ARG ALIGNMENT_DEMUCS_MODEL_URL=https://dl.fbaipublicfiles.com/demucs/hybrid_transformer/955717e8-8726e21a.th
+ARG ALIGNMENT_DEMUCS_MODEL_SHA256=8726e21a993978c7ba086d3872e7608d7d5bfca646ca4aca459ffda844faa8b4
+ARG ALIGNMENT_DEMUCS_PACKAGE_VERSION=4.1.0
+ARG ALIGNMENT_ESPEAK_PACKAGE_VERSION=1.51+dfsg-10+deb12u2
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PYTHONPATH=/app \
+    HF_HUB_DISABLE_TELEMETRY=1
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    espeak-ng=${ALIGNMENT_ESPEAK_PACKAGE_VERSION} \
+    ffmpeg \
+    libsndfile1 \
+  && rm -rf /var/lib/apt/lists/*
+
+RUN test -n "$(espeak-ng -q --ipa=3 -b 1 -v en-us pretty)"
+
+COPY requirements.alignment.txt /app/requirements.alignment.txt
+RUN pip install --no-cache-dir \
+      --index-url https://download.pytorch.org/whl/cpu \
+      torch==2.3.1 \
+  && pip install --no-cache-dir -r /app/requirements.alignment.txt
+
+RUN python -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='${ALIGNMENT_MODEL_ID}', revision='${ALIGNMENT_MODEL_REVISION}', local_dir='/opt/models/ru', allow_patterns=['pytorch_model.bin', 'config.json', 'preprocessor_config.json', 'special_tokens_map.json', 'vocab.json', 'alphabet.json'])"
+
+RUN mkdir -p /opt/models/demucs \
+  && curl -fsSL --retry 3 "${ALIGNMENT_DEMUCS_MODEL_URL}" \
+       -o /opt/models/demucs/955717e8-8726e21a.th \
+  && printf '%s  %s\n' \
+       "${ALIGNMENT_DEMUCS_MODEL_SHA256}" \
+       /opt/models/demucs/955717e8-8726e21a.th \
+       | sha256sum -c -
+COPY config/alignment_models/htdemucs.yaml /opt/models/demucs/htdemucs.yaml
+RUN python -c "from pathlib import Path; from demucs.api import Separator; separator = Separator(model='htdemucs', repo=Path('/opt/models/demucs'), device='cpu', shifts=0, split=True, segment=7.0, jobs=0, progress=False); assert 'vocals' in separator.model.sources"
+
+COPY . /app
+
+ENV ALIGNMENT_MODEL_PATH=/opt/models/ru \
+    ALIGNMENT_MODEL_REVISION=${ALIGNMENT_MODEL_REVISION} \
+    ALIGNMENT_AUDIO_PREPROCESSOR=demucs \
+    ALIGNMENT_DEMUCS_MODEL_REPO=/opt/models/demucs \
+    ALIGNMENT_DEMUCS_MODEL_NAME=htdemucs \
+    ALIGNMENT_DEMUCS_MODEL_REVISION=${ALIGNMENT_DEMUCS_MODEL_SHA256} \
+    ALIGNMENT_DEMUCS_PACKAGE_VERSION=${ALIGNMENT_DEMUCS_PACKAGE_VERSION} \
+    ALIGNMENT_PRONUNCIATION_MODE=espeak_en_to_ru \
+    ALIGNMENT_ESPEAK_BIN=espeak-ng \
+    ALIGNMENT_ESPEAK_VOICE=en-us \
+    ALIGNMENT_ESPEAK_EXPECTED_VERSION=1.51 \
+    ALIGNMENT_ESPEAK_TIMEOUT_S=2 \
+    ALIGNMENT_PRONUNCIATION_OVERRIDES_PATH=/app/config/alignment_pronunciations.json \
+    HF_HUB_OFFLINE=1 \
+    TRANSFORMERS_OFFLINE=1
+
+CMD ["uvicorn", "mlcore.alignment.api:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]

@@ -58,6 +58,13 @@ def find_bucket(
             if contract.bucket_id == wanted:
                 return contract  # type: ignore[return-value]
         raise RuntimeError(f"visual contract not found: {wanted!r}")
+    if t == "photo":
+        from mlcore.photo_bucket_catalog import load_photo_catalog
+        wanted = f"photo:{g}"
+        for contract in load_photo_catalog():
+            if contract.bucket_id == wanted:
+                return contract  # type: ignore[return-value]
+        raise RuntimeError(f"photo contract not found: {wanted!r}")
     buckets = catalog if catalog is not None else build_buckets()
     for b in buckets:
         if b.theme == t and b.tags_group == g:
@@ -75,12 +82,14 @@ def bucket_to_style_raw(bucket: Bucket) -> FootageStyleRawPayload:
     instead of a silent fallback (No Fallback Policy).
     """
     is_visual = str(bucket.bucket_id).startswith("visual:")
-    if not bucket.mood and not is_visual:
+    is_photo = str(bucket.bucket_id).startswith("photo:")
+    is_contract = is_visual or is_photo
+    if not bucket.mood and not is_contract:
         raise RuntimeError(
             f"deterministic Stage2B: bucket {bucket.bucket_id!r} has no mood "
             "(theme must end in _major/_minor)"
         )
-    people_mode = "any" if is_visual else str(getattr(bucket, "people", "any"))
+    people_mode = str(getattr(bucket, "people", "any"))
     exclude_people = (
         ["girls", "guys", "couple", "crowd", "driver"] if people_mode == "none" else []
     )
@@ -88,7 +97,7 @@ def bucket_to_style_raw(bucket: Bucket) -> FootageStyleRawPayload:
     filters = FootageStyleRawFilters(
         color_priority=list(bucket.color) or ["dark", "light", "warm", "cold"],
         exclude=exclude_people or list(bucket.exclude),
-        exclude_tags=[] if is_visual else list(bucket.exclude_tags),
+        exclude_tags=[] if is_contract else list(bucket.exclude_tags),
         require_people=require_people,
         priority_theme_tags=list(bucket.priority_tags),
     )

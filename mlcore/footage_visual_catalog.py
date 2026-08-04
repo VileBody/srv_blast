@@ -149,12 +149,137 @@ PHOTO_REQUIRE_GROUPS: Mapping[str, Tuple[Tuple[str, ...], ...]] = {
     "visual:digital_human_silhouette_cold": (
         _terms("digital", "glowing", "neon", "abstract", "blue lighting"),
     ),
+    # Same digital anchor as the cold sibling, minus the cold-only "blue lighting".
+    # Calibrated on the 2026-07-17 photo snapshot: without it the warm silhouette
+    # bucket was 118 stills of which 96 were beach/sunset silhouettes (sunset ×72,
+    # golden hour ×69, ocean ×30) — a sunset dumping ground, not digital
+    # silhouettes. The anchor drops it to the ~14 genuine digital-warm silhouettes;
+    # thin-but-honest (grow or drop is a base decision, not a contract one).
+    "visual:digital_human_silhouette_warm": (
+        _terms("digital", "glowing", "neon", "led", "abstract", "light trail"),
+    ),
     "visual:urban_solitude_dark": (
         _terms("night city", "nighttime"),
     ),
     "visual:solitary_person_dark_cold": (
         _terms("alone", "solitude", "lonely figure", "solo"),
         _terms("indoor", "room", "interior", "urban", "city", "night"),
+    ),
+}
+
+# Themes that must stay APART in the photo pool.
+#
+# A still carries no motion, so a tag set that reads unambiguously on footage goes
+# flat on a photo: "nightlife" on a moving clip is people out at night, on a still
+# it is just as often an empty decaying facade; "romance" on a clip is two people
+# interacting, on a still it can be one person in warm light. The footage rules
+# stay untouched — these exclusions apply only when the picker draws stills, and
+# like the photo anchors they are semantic gates a manual source review cannot
+# override.
+DECAY = _terms(
+    "decay", "urban decay", "abandoned", "abandoned building", "derelict",
+    "dilapidated", "ruins", "rubble", "demolition", "wreckage", "rust",
+)
+ROMANCE = _terms("romance", "romantic", "kiss", "hug", "embrace", "intimacy", "love", "date")
+SOLITUDE = _terms("alone", "solitude", "lonely", "lonely figure", "solo", "loneliness")
+PORTRAIT = _terms("portrait", "face", "close up", "close-up", "headshot", "selfie", "plain portrait")
+
+# Per-bucket exclusions calibrated on the 2026-07-17 photo snapshot (2341 stills).
+# For each bucket we picked ONE leading semantic unit (comment) and strip the tags
+# that pull a neighbouring theme in — the goal is one theme leading, not a broad
+# "close enough" pool. Each list was tuned to shed roughly a quarter to a third of
+# the bucket (total ~36%); when a tag was ambiguous we cut it (thin-but-pure beats
+# wide-but-mixed). Substring match (_matches), photo-only, unreviewable-override.
+PHOTO_EXCLUDE_TERMS: Mapping[str, Tuple[str, ...]] = {
+    # warm sunset NATURE landscape (no people): drop human subjects + dark markers
+    "visual:nature_sunset_light_warm": _terms(
+        "silhouette", "lonely figure", "lonely", "alone", "dark forest",
+        "dark atmosphere", "dark sky",
+    ),
+    # a lone PERSON in a dark/cold moody setting: drop coastal / vehicle / romance / fashion
+    "visual:solitary_person_dark_cold": ROMANCE + _terms(
+        "couple", "beach", "ocean", "sea", "coast", "water", "waves",
+        "car interior", "night drive", "night drift", "jewelry",
+    ),
+    # dark empty NORMAL interior (no people): drop decay/industrial + outdoor + digital.
+    # (keep silhouette/dim/shadows — that IS the dark-interior look.)
+    "visual:dark_interior_atmosphere": _terms(
+        "abandoned", "ruins", "derelict", "destruction", "rubble", "tunnel",
+        "control room", "monitor wall", "office", "trees", "forest", "ocean",
+        "mountain", "dark landscape", "night sky", "stars", "wet road",
+        "abstract", "digital art", "distortion", "glitch",
+    ),
+    # cold digital/neon human SILHOUETTE: drop generic portrait / romance / performance /
+    # nature / indoor-domestic / vehicle
+    "visual:digital_human_silhouette_cold": PORTRAIT + _terms(
+        "couple", "intimate", "romance", "night club", "dance floor", "dance",
+        "night beach", "field", "empty road", "bedroom", "dark room",
+        "car interior", "water", "stormy weather",
+    ),
+    # warm digital SILHOUETTE: drop generic portrait + the "two mages" / romance / fire
+    "visual:digital_human_silhouette_warm": PORTRAIT + _terms(
+        "couple", "romance", "romantic", "intimacy", "fire",
+    ),
+    # empty NIGHT CITY (no people): drop decay / coastal-nature / people
+    "visual:urban_solitude_dark": _terms(
+        "abandoned", "ruins", "silhouette", "lonely figure", "alone", "beach",
+        "palm trees", "trees", "waterfront", "airplane",
+    ),
+    # rainy/weathery NIGHT CITY (no people): drop nature
+    "visual:urban_weather_dark": _terms("silhouette", "trees", "palm trees", "forest"),
+    # strictly foggy dark FOREST: drop buildings/decay + other landforms + interior mislabels
+    # (keep forest roads + tree silhouettes — that is the vibe)
+    "visual:forest_fog_dark": _terms(
+        "abandoned", "old architecture", "architecture", "mountain", "bedroom",
+        "dark interior", "ruins",
+    ),
+    # rainy dark NATURAL landscape: drop urban + buildings/decay
+    "visual:rain_nature_dark_cold": _terms(
+        "urban", "city", "street", "building", "abandoned", "architecture",
+        "silhouette", "lonely figure",
+    ),
+    # dark cold MOUNTAINS: drop buildings/decay + sea (snow/forest on a mountain is fine)
+    "visual:mountain_dark_cold": _terms(
+        "castle", "architecture", "ruins", "abandoned", "ocean", "sea",
+        "red lights", "glowing",
+    ),
+    # light warm MOUNTAINS: drop buildings + open sea (a mountain lake is fine)
+    "visual:mountain_light_warm": _terms("castle", "architecture", "ocean", "sea", "coast"),
+    # dark stormy OCEAN: drop other landforms / roads / vehicle
+    "visual:ocean_storm_dark_cold": _terms("mountain", "architecture", "wet road", "night drive"),
+    # dark WINTER nature: drop non-winter sea + urban light glow
+    "visual:winter_nature_dark_cold": _terms("ocean", "coast", "red lights", "glowing"),
+    # NIGHT SKY / stars (sky-dominant): drop foreground interior / buildings / road
+    "visual:night_sky_space_dark_cold": _terms(
+        "dark interior", "interior", "castle", "ruins", "architecture",
+        "abandoned", "night drive", "road",
+    ),
+    # car in motion at night: drop aircraft
+    "visual:vehicle_motion_aesthetic": _terms("airplane", "aircraft"),
+    # warm COUPLE by the water: drop dark/night markers
+    "visual:warm_coastal_romance_light": _terms("dark atmosphere", "wet road", "night"),
+    # LIGHT warm loving COUPLE (daytime/golden): drop solitude + dark/night/fantasy/urban
+    "visual:couple_intimacy_light_warm": SOLITUDE + _terms(
+        "night", "silhouette", "dark forest", "dark sky", "dark atmosphere",
+        "fire", "castle", "black and white", "glowing", "dim lighting", "rain",
+        "wet road", "city",
+    ),
+    # CROWD / stage / club performance: drop decay + solo-portrait / vehicle / luxury / plain street
+    "visual:performance_crowd_dark": DECAY + _terms(
+        "private jet", "car interior", "portrait", "close-up", "close up",
+        "jewelry", "street scene", "city life",
+    ),
+    # a PERSON in motion / nightlife: drop decay + vehicles + pure crowd/audience (crowd bucket)
+    "visual:active_life_dark_cold": DECAY + _terms(
+        "sports car", "car", "cars", "night drift", "vehicle", "crowd", "audience",
+    ),
+    # girl PORTRAIT (light warm): drop silhouette (not a face) + dark leak
+    "visual:girls_portrait_light_warm": _terms(
+        "silhouette", "dark atmosphere", "dark interior", "dim lighting",
+    ),
+    # girl PORTRAIT (dark cold): drop silhouette (hides the face) + romance/couple
+    "visual:girls_portrait_dark_cold": _terms(
+        "silhouette", "intimate", "intimacy", "tender", "couple",
     ),
 }
 
@@ -217,6 +342,9 @@ def evaluate_asset(
             return False, "hard_missing_anchor", {**diag, "matched_groups": hard_matched}
         hard_matched.append(hits[:3])
     if _norm(media_type) == "photo":
+        for term in PHOTO_EXCLUDE_TERMS.get(contract.bucket_id, ()):
+            if _matches(tags, term):
+                return False, "photo_semantic_exclude", {**diag, "matched_term": term}
         photo_matched = []
         for group in PHOTO_REQUIRE_GROUPS.get(contract.bucket_id, ()):
             hits = [x for x in group if _matches(tags, x)]

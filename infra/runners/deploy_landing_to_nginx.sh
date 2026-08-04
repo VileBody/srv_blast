@@ -56,6 +56,8 @@ sync_local() {
     --exclude '*.rar' \
     --exclude 'tmp/' \
     "$SRC_DIR/" "$DST_DIR/"
+  find "$DST_DIR" -type d -exec chmod 755 {} +
+  find "$DST_DIR" -type f -exec chmod 644 {} +
 }
 
 sync_docker_host() {
@@ -68,14 +70,26 @@ sync_docker_host() {
     exit 1
   fi
 
-  docker run --rm \
-    -v "$SRC_DIR:/src:ro" \
+  if ! command -v tar >/dev/null 2>&1; then
+    echo "[landing-nginx] tar is required for sync mode=docker-host"
+    exit 1
+  fi
+
+  # The runner itself may be containerized. In that case SRC_DIR exists only
+  # inside the runner container and cannot be bind-mounted by the host daemon.
+  # Stream the source archive over stdin while binding only the host docroot.
+  tar \
+    --exclude='*.rar' \
+    --exclude='./tmp' \
+    --exclude='./tmp/**' \
+    -C "$SRC_DIR" \
+    -cf - . | docker run --rm -i \
     -v "$DST_DIR:/dst" \
     alpine:3.20 sh -euc '
       find /dst -mindepth 1 -maxdepth 1 -exec rm -rf {} +
-      cp -a /src/. /dst/
-      find /dst -type f -name "*.rar" -delete
-      rm -rf /dst/tmp
+      tar -xf - -C /dst
+      find /dst -type d -exec chmod 755 {} +
+      find /dst -type f -exec chmod 644 {} +
     '
 }
 
@@ -107,13 +121,41 @@ if [[ -n "$LANDING_NGINX_RELOAD_CMD" ]]; then
   eval "$LANDING_NGINX_RELOAD_CMD"
 fi
 
-if [[ -f "$DST_DIR/index.html" ]]; then
-  if grep -q 'https://www.instagram.com/impulsemarketing/' "$DST_DIR/index.html"; then
-    echo "[landing-nginx] marker OK in deployed index.html"
-  else
-    echo "[landing-nginx] marker missing in deployed index.html"
+required_markers=(
+  'https://www.instagram.com/impulsemarketing/'
+  'href="terms.html"'
+  'js/i18n.js?v=20260729-i18n1'
+)
+
+if [[ "$SYNC_MODE" == "docker-host" ]]; then
+  docker run --rm \
+    -v "$DST_DIR:/dst:ro" \
+    alpine:3.20 sh -euc '
+      index=/dst/index.html
+      if [[ ! -f "$index" ]]; then
+        echo "[landing-nginx] deployed index missing: $index"
+        exit 1
+      fi
+      for marker in "$@"; do
+        if ! grep -Fq "$marker" "$index"; then
+          echo "[landing-nginx] marker missing in deployed index.html: $marker"
+          exit 1
+        fi
+      done
+    ' sh "${required_markers[@]}"
+else
+  if [[ ! -f "$DST_DIR/index.html" ]]; then
+    echo "[landing-nginx] deployed index missing: $DST_DIR/index.html"
     exit 1
   fi
+  for marker in "${required_markers[@]}"; do
+    if ! grep -Fq "$marker" "$DST_DIR/index.html"; then
+      echo "[landing-nginx] marker missing in deployed index.html: $marker"
+      exit 1
+    fi
+  done
 fi
+
+echo "[landing-nginx] markers OK in deployed index.html"
 
 echo "[landing-nginx] done"

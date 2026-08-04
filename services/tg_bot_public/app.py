@@ -162,7 +162,7 @@ FOOTAGE_VIBE_FLOW_ENABLED = (os.environ.get("FOOTAGE_VIBE_FLOW_ENABLED", "1").st
                              in {"1", "true", "yes", "on", "enabled"})
 
 # Photo flow (4:3) toggle. The "Картинки" background routes to bg_mode="photo":
-# the vibe shortlist is reused (PHOTO pool), then two F3-style picker steps
+# the vibe shortlist is reused (PHOTO pool), then the transition/stylization pair
 # (photo_style → photo_transition) run before the version count, and the render
 # uses the 1920×1440 photo template. UX ported 1:1 from tg_bot_botapi but gated
 # OFF here until the team bot validates it; state/client/stages mirror regardless
@@ -244,7 +244,7 @@ VIBE_STAGES = frozenset({
     STAGE_WAIT_VIBE,
 })
 
-# Photo flow (4:3): stage(s) carrying the two F3-style photo picker steps.
+# Photo flow (4:3): stages carrying the transition + stylization picks.
 # Mirror of tg_bot_botapi; routing is gated behind PHOTO_FLOW_ENABLED.
 PHOTO_STAGES = frozenset({
     STAGE_WAIT_PHOTO_STYLE,
@@ -374,30 +374,88 @@ log = logging.getLogger("tg_bot")
 # `file_id_public` variant (captured via the public bot). Infra is mirrored for
 # parity; the public vibe shortlist UI is wired separately behind its flag.
 _BUCKET_PREVIEWS_CACHE: Optional[Dict[str, Dict[str, Any]]] = None
+_PHOTO_BUCKET_PREVIEWS_CACHE: Optional[Dict[str, Dict[str, Any]]] = None
+# Which file_id field this bot sends (team bot -> file_id; public mirror overrides).
 _BUCKET_PREVIEW_FILE_ID_FIELD = "file_id_public"
 
 
-def _bucket_previews_path() -> Path:
-    return Path(__file__).resolve().parents[2] / "data" / "footage_bucket_previews.json"
+def _bucket_previews_path(media_type: str = "video") -> Path:
+    name = "photo_bucket_previews.json" if media_type == "photo" else "footage_bucket_previews.json"
+    return Path(__file__).resolve().parents[2] / "data" / name
 
 
-def _load_bucket_previews() -> Dict[str, Dict[str, Any]]:
-    global _BUCKET_PREVIEWS_CACHE
-    if _BUCKET_PREVIEWS_CACHE is None:
+def _load_bucket_previews(media_type: str = "video") -> Dict[str, Dict[str, Any]]:
+    global _BUCKET_PREVIEWS_CACHE, _PHOTO_BUCKET_PREVIEWS_CACHE
+    is_photo = media_type == "photo"
+    cache = _PHOTO_BUCKET_PREVIEWS_CACHE if is_photo else _BUCKET_PREVIEWS_CACHE
+    if cache is None:
         try:
-            obj = json.loads(_bucket_previews_path().read_text(encoding="utf-8"))
+            obj = json.loads(_bucket_previews_path(media_type).read_text(encoding="utf-8"))
             prev = obj.get("previews") if isinstance(obj, dict) else None
-            _BUCKET_PREVIEWS_CACHE = prev if isinstance(prev, dict) else {}
+            cache = prev if isinstance(prev, dict) else {}
         except Exception:
-            _BUCKET_PREVIEWS_CACHE = {}
-    return _BUCKET_PREVIEWS_CACHE
+            cache = {}
+        if is_photo:
+            _PHOTO_BUCKET_PREVIEWS_CACHE = cache
+        else:
+            _BUCKET_PREVIEWS_CACHE = cache
+    return cache
 
 
 def _bucket_preview_file_id(bucket_id: str) -> str:
-    e = _load_bucket_previews().get(str(bucket_id or "").strip())
+    bid = str(bucket_id or "").strip()
+    media_type = "photo" if bid.startswith("photo:") else "video"
+    e = _load_bucket_previews(media_type).get(bid)
     if not isinstance(e, dict):
         return ""
     return str(e.get(_BUCKET_PREVIEW_FILE_ID_FIELD) or "").strip()
+
+
+def _live_bucket_ids(bg_mode: str) -> set:
+    """Bucket ids the CURRENT catalog offers for this plane.
+
+    Empty set = the catalog could not be read; callers must treat that as "no
+    opinion" and keep whatever the chat already has, never as "everything is
+    stale" (that would re-rank every chat on every message)."""
+    try:
+        if str(bg_mode or "").strip().lower() == "photo":
+            from mlcore.photo_bucket_catalog import load_photo_catalog
+            return {b.bucket_id for b in load_photo_catalog()}
+        from mlcore.footage_visual_catalog import load_visual_catalog
+        return {b.bucket_id for b in load_visual_catalog()}
+    except Exception:
+        log.exception("vibe_catalog_load_failed bg_mode=%s — keeping stored shortlist", bg_mode)
+        return set()
+
+
+def _stale_vibe_shortlist_reason(ranked_ids: List[str], bg_mode: str) -> str:
+    """Why a persisted vibe shortlist must be re-ranked, or "" to keep it.
+
+    The shortlist is the FULL ranked catalog, so it has to match the catalog set
+    exactly. Comparing by id prefix instead (the old check) only caught a shortlist
+    from the wrong plane: re-cutting the photo catalog keeps every id under
+    "photo:", so a chat that ranked before the change passed the check and was
+    served retired buckets forever, never seeing a new one. Bucket sets get
+    re-cut regularly, so this has to be checked against the catalog itself."""
+    stored = [str(b or "").strip() for b in (ranked_ids or []) if str(b or "").strip()]
+    if not stored:
+        return ""
+    if any(bid.split(":", 1)[0].endswith(("_major", "_minor")) for bid in stored):
+        return "legacy_ids"
+
+    live = _live_bucket_ids(bg_mode)
+    if not live:
+        # Catalog unreadable — fall back to the plane check alone rather than
+        # stranding the chat or re-ranking it on a loop.
+        expected_prefix = "photo:" if str(bg_mode or "").strip().lower() == "photo" else "visual:"
+        return "" if all(b.startswith(expected_prefix) for b in stored) else "wrong_plane"
+
+    stored_set = set(stored)
+    if stored_set - live:
+        return "retired_buckets"
+    if live - stored_set:
+        return "new_buckets"
+    return ""
 
 
 def _vibe_display_label(label: str) -> str:
@@ -498,6 +556,7 @@ BTN_RENDER_RUST = "Rust"
 # Customization color palette (mirror of tg_bot_botapi). Data layer mirrored for
 # parity; the picker UX lands in public when the hooks/customization flow does.
 BTN_COLOR_DEFAULT = "По умолчанию"
+BTN_COLOR_BATTERY = "🎲 Батарея (5 цветов)"
 _COLOR_PALETTE: dict[str, str] = {
     "Белый": "#FFFFFF",
     # Чёрный убран из палитры текста — сливается с тёмными фонами. Чёрный фон
@@ -511,6 +570,31 @@ _COLOR_PALETTE: dict[str, str] = {
     "Розовый": "#FF2D92",
 }
 COLOR_PALETTE_BUTTONS = list(_COLOR_PALETTE.keys())
+_SUBTITLE_COLOR_BATTERY_BY_BG: dict[str, tuple[tuple[str, str], ...]] = {
+    # Never include the background's own color: every generated variant must
+    # keep the subtitles visible.
+    "white": (
+        ("Красный", _COLOR_PALETTE["Красный"]),
+        ("Оранжевый", _COLOR_PALETTE["Оранжевый"]),
+        ("Зелёный", _COLOR_PALETTE["Зелёный"]),
+        ("Голубой", _COLOR_PALETTE["Голубой"]),
+        ("Фиолетовый", _COLOR_PALETTE["Фиолетовый"]),
+    ),
+    "black": (
+        ("Белый", _COLOR_PALETTE["Белый"]),
+        ("Красный", _COLOR_PALETTE["Красный"]),
+        ("Жёлтый", _COLOR_PALETTE["Жёлтый"]),
+        ("Голубой", _COLOR_PALETTE["Голубой"]),
+        ("Розовый", _COLOR_PALETTE["Розовый"]),
+    ),
+    "green": (
+        ("Белый", _COLOR_PALETTE["Белый"]),
+        ("Красный", _COLOR_PALETTE["Красный"]),
+        ("Оранжевый", _COLOR_PALETTE["Оранжевый"]),
+        ("Голубой", _COLOR_PALETTE["Голубой"]),
+        ("Розовый", _COLOR_PALETTE["Розовый"]),
+    ),
+}
 
 
 def _parse_color_choice(text: str) -> str | None:
@@ -656,7 +740,7 @@ _F2_SHAPE_RU_BY_ID = {v: k for k, v in F2_SHAPE_LABELS_RU.items()}
 _F4_DEVICE_RU_BY_ID = {v: k for k, v in F4_MOTION_DEVICE_LABELS_RU.items()}
 _F5_DEVICE_RU_BY_ID = {v: k for k, v in _HOOK_DEVICE_BY_BUTTON.items()}
 
-# Photo flow (4:3) — two F3-style picker steps. Mirror of tg_bot_botapi; UX is
+# Photo flow (4:3) — transition + stylization. Mirror of tg_bot_botapi; UX is
 # gated behind PHOTO_FLOW_ENABLED but the data layer (buttons/maps/id sets) is
 # mirrored for CI parity. Id sets must stay in sync with the schema Literals.
 BTN_PHOTO_STYLE_NONE = "Без стилизации"
@@ -1658,6 +1742,10 @@ class BlastBotApp:
         self.store = RedisChatStateStore(settings)
         self.s3 = S3Client(settings)
         self.orchestrator = OrchestratorClient(base_url=settings.orchestrator_public_url, timeout_s=60.0)
+        log.info(
+            "public stage1 alignment backend=%s",
+            settings.public_stage1_alignment_backend,
+        )
         if not settings.credits_db_url:
             raise RuntimeError("CREDITS_DB_URL (or POSTGRES_*) is required for tg_bot_public")
         self.credits_db = CreditsDB(settings.credits_db_url)
@@ -3416,13 +3504,13 @@ class BlastBotApp:
         self._broadcast_stop = bc_stop
 
         self._processing_task = asyncio.create_task(self._processing_loop(), name="tg_bot_processing_loop")
-        self._recovery_task = asyncio.create_task(self._recovery_loop(), name="tg_bot_recovery_loop")
         self._reminder_task = asyncio.create_task(self._reminder_loop(), name="tg_bot_reminder_loop")
         self._payment_poll_task = asyncio.create_task(self._payment_poll_loop(), name="tg_bot_payment_poll")
         self._state_cleanup_task = asyncio.create_task(self._state_cleanup_loop(), name="tg_bot_state_cleanup_loop")
         self._fs_cleanup_task = asyncio.create_task(self._fs_cleanup_loop(), name="tg_bot_fs_cleanup_loop")
         self._subscription_charge_task = asyncio.create_task(self._subscription_charge_loop(), name="tg_bot_subscription_charge")
         await self._restore_runtime_processing_states()
+        self._recovery_task = asyncio.create_task(self._recovery_loop(), name="tg_bot_recovery_loop")
         self._outbox_task = asyncio.create_task(self._runtime_outbox_loop(), name="tg_bot_outbox_dispatcher")
         if bool(getattr(self.settings, "tg_auto_startup_maintenance", False)) and not bool(self.settings.tg_maintenance_mode):
             await self._set_startup_maintenance_enabled(
@@ -3572,7 +3660,7 @@ class BlastBotApp:
         await self._move_to_wait_audio(chat_id, message)
 
     async def _move_to_wait_audio(self, chat_id: int, message: Message) -> None:
-        await self.store.reset_to_wait_audio(chat_id)
+        st = await self.store.reset_to_wait_audio(chat_id)
         bal = await self.credits_db.get_balance(chat_id)
         track_bal = await self.credits_db.get_track_balance(chat_id)
         bal_text = f"\n\nДоступно генераций: {bal}" if bal > 0 else ""
@@ -3585,7 +3673,11 @@ class BlastBotApp:
             message,
             f"Привет. Отправь трек аудио-файлом, и я соберу клип.{bal_text}",
             op="wait_audio_prompt",
-            reply_markup=_kb([BTN_SEND_TRACK]),
+            reply_markup=(
+                self._wait_audio_reuse_kb()
+                if self._can_reuse_input(st)
+                else _kb([BTN_SEND_TRACK])
+            ),
         )
 
     @staticmethod
@@ -3669,6 +3761,45 @@ class BlastBotApp:
     @staticmethod
     def _has_forced_alignment_reference_text(st: ChatState) -> bool:
         return bool(str(st.lyrics_text or st.target_fragment or "").strip())
+
+    @staticmethod
+    def _has_local_alignment_inputs(st: ChatState) -> bool:
+        start = float(st.user_clip_start_sec or 0.0)
+        end = float(st.user_clip_end_sec or 0.0)
+        return bool(
+            str(st.target_fragment or "").strip()
+            and end > start >= 0.0
+        )
+
+    def _needs_explicit_local_alignment_fragment(self, st: ChatState) -> bool:
+        backend = str(
+            getattr(self.settings, "public_stage1_alignment_backend", "local_ctc")
+            or ""
+        ).strip().lower()
+        return backend == "local_ctc" and not bool(st.target_fragment_explicit)
+
+    async def _ask_explicit_local_alignment_fragment(
+        self,
+        message: Message,
+        st: ChatState,
+    ) -> None:
+        start = float(st.user_clip_start_sec or 0.0)
+        end = float(st.user_clip_end_sec or 0.0)
+        timing = (
+            f"{self._fmt_timing(start)}-{self._fmt_timing(end)}"
+            if end > start >= 0.0
+            else "выбранном тайминге"
+        )
+        st.target_fragment = ""
+        st.target_fragment_explicit = False
+        st.stage = STAGE_WAIT_FRAGMENT_TEXT
+        await self.store.set(st)
+        await message.answer(
+            "Сохранённый трек готов. Для своей модели пришли только точные "
+            f"строки, которые звучат в {timing}. Полный текст песни повторять "
+            "не нужно.",
+            reply_markup=ReplyKeyboardRemove(),
+        )
 
     async def _ask_timing_choice(self, message: Message, st: ChatState) -> None:
         # No fork: the "let AI decide" option was removed — the timing is now
@@ -4010,11 +4141,21 @@ class BlastBotApp:
 
     async def _run_vibe_ranker_bg(self, *, chat_id: int, lyrics: str, mood: str) -> None:
         """Background runner — must never raise into the asyncio loop."""
+        media_type = "video"
         try:
-            result = await self.orchestrator.rank_buckets(lyrics=lyrics, mood=mood)
+            current = await self.store.get(chat_id)
+            media_type = "photo" if current.bg_mode == "photo" else "video"
+            result = await self.orchestrator.rank_buckets(
+                lyrics=lyrics, mood=mood, media_type=media_type
+            )
             ranked_ids, labels = self._parse_ranked_buckets(result)
             st = await self.store.get(chat_id)
-            # Stale guard: only persist if the user hasn't moved on / re-ranked.
+            # Stale guard: a rank started for footage must never overwrite the
+            # photo shortlist (or vice versa) if the user changed bg_mode meanwhile.
+            current_media_type = "photo" if st.bg_mode == "photo" else "video"
+            if current_media_type != media_type:
+                return
+            # Only persist if the user has not moved on / re-ranked.
             if st.vibe_rank_status not in {"pending", "ready"}:
                 return
             st.vibe_ranked_ids = ranked_ids
@@ -4027,6 +4168,9 @@ class BlastBotApp:
             log.warning("vibe_rank_fail chat=%s err=%r", chat_id, e)
             try:
                 st = await self.store.get(chat_id)
+                current_media_type = "photo" if st.bg_mode == "photo" else "video"
+                if current_media_type != media_type:
+                    return
                 st.vibe_rank_status = "failed"
                 await self.store.set(st)
             except Exception:
@@ -4048,26 +4192,35 @@ class BlastBotApp:
             labels[bid] = label
         return ranked_ids, labels
 
-    async def _ensure_vibe_ranked(self, st: ChatState) -> bool:
+    async def _ensure_vibe_ranked(self, st: ChatState, *, force: bool = False) -> bool:
         """Make sure st has a ranked shortlist. If the background ranker hasn't
         finished (or failed), rank synchronously now. Returns False only when
         ranking yields nothing after retries (caller falls back to the legacy
         genre picker).
+
+        force=True re-ranks even when a usable shortlist is stored. The staleness
+        check below compares the SET of buckets, so by construction it cannot see
+        a re-ORDERING — and improving the ranking is exactly a re-ordering. Every
+        chat that had ranked before such a change would otherwise keep its old
+        order forever, since nothing else re-triggers ranking until new lyrics.
+        Ranking is deterministic and LLM-free by default, so re-running it on
+        entry costs one cheap call and removes that whole class of staleness.
 
         Retries a couple of times with a short backoff: the orchestrator
         endpoint is hardened to never 500/empty, so a failure here is a
         transient client-side hiccup (timeout/connection reset) — without a
         retry, one bad request permanently strands the chat in the legacy
         artist flow (nothing else re-triggers ranking until new lyrics)."""
-        if st.vibe_ranked_ids:
-            legacy_ids = [
-                bid for bid in st.vibe_ranked_ids
-                if bid.split(":", 1)[0].endswith(("_major", "_minor"))
-            ]
-            if not legacy_ids:
+        stored_ids = list(st.vibe_ranked_ids or [])
+        stored_labels = dict(st.vibe_labels_by_id or {})
+        if st.vibe_ranked_ids and not force:
+            reason = _stale_vibe_shortlist_reason(st.vibe_ranked_ids, st.bg_mode)
+            if not reason:
                 return True
-            log.info("vibe_catalog_migration chat=%s legacy_ids=%d action=rerank",
-                     st.chat_id, len(legacy_ids))
+            log.info(
+                "vibe_catalog_migration chat=%s reason=%s stored=%d action=rerank",
+                st.chat_id, reason, len(st.vibe_ranked_ids),
+            )
             st.vibe_ranked_ids = []
             st.vibe_labels_by_id = {}
             st.vibe_selected_ids = []
@@ -4078,7 +4231,10 @@ class BlastBotApp:
             if attempt:
                 await asyncio.sleep(0.5 * attempt)
             try:
-                result = await self.orchestrator.rank_buckets(lyrics=lyrics, mood="")
+                result = await self.orchestrator.rank_buckets(
+                    lyrics=lyrics, mood="",
+                    media_type="photo" if st.bg_mode == "photo" else "video",
+                )
                 ranked_ids, labels = self._parse_ranked_buckets(result)
             except Exception as e:
                 last_err = e
@@ -4095,6 +4251,19 @@ class BlastBotApp:
         log.error(
             "vibe_rank_sync_exhausted chat=%s attempts=3 last_err=%r", st.chat_id, last_err
         )
+        # A forced refresh that could not reach the orchestrator must not cost the
+        # user their shortlist — an older order still beats being dropped into the
+        # legacy genre picker.
+        if stored_ids and not _stale_vibe_shortlist_reason(stored_ids, st.bg_mode):
+            st.vibe_ranked_ids = stored_ids
+            st.vibe_labels_by_id = stored_labels
+            st.vibe_rank_status = "ready"
+            await self.store.set(st)
+            log.warning(
+                "vibe_rank_refresh_failed chat=%s keeping_stored=%d",
+                st.chat_id, len(stored_ids),
+            )
+            return True
         return False
 
     def _vibe_page_count(self, st: ChatState) -> int:
@@ -4164,7 +4333,7 @@ class BlastBotApp:
         st.vibe_selected_ids = []
         st.vibe_page = 0
         await self.store.set(st)
-        ok = await self._ensure_vibe_ranked(st)
+        ok = await self._ensure_vibe_ranked(st, force=True)
         if not ok:
             await message.answer(
                 "Не удалось подобрать вайбы по треку — выбери стиль вручную."
@@ -4281,12 +4450,10 @@ class BlastBotApp:
                 pass
             await cb.answer("Готово")
             await cb.message.answer("Вайбы: " + ", ".join(labels))
-            # Photo flow (4:3): after the vibe, ask the two photo picker steps.
-            # Mirror of tg_bot_botapi (gated by PHOTO_FLOW_ENABLED at entry).
-            if st.bg_mode == "photo":
-                await self._ask_photo_style(cb.message, st)
-            else:
-                await self._ask_subtitles_mode(cb.message, st)
+            # Photo is the footage flow with a different background, so it takes
+            # the same route: subtitle mode now, visuals (transition -> style) and
+            # colours later, in the slot _proceed_to_versions_or_confirm owns.
+            await self._ask_subtitles_mode(cb.message, st)
             return
 
         await cb.answer()
@@ -4321,25 +4488,72 @@ class BlastBotApp:
     # Hook flow — ported 1:1 from tg_bot_botapi (behind HOOK_FLOW_ENABLED).
     # Exit goes to _proceed_to_versions_or_confirm (public's post-settings).
     # ====================================================================
-    def _color_kb(self):
+    def _color_kb(self, *, include_battery: bool = False):
         rows = [COLOR_PALETTE_BUTTONS[i:i + 3] for i in range(0, len(COLOR_PALETTE_BUTTONS), 3)]
+        if include_battery:
+            rows.append([BTN_COLOR_BATTERY])
         rows.append([BTN_COLOR_DEFAULT])
         return _kb(*rows)
 
     async def _ask_subtitle_color(self, message: Message, st: ChatState) -> None:
+        st.battery_mode = False
+        st.battery_cases = []
         st.stage = STAGE_WAIT_SUBTITLE_COLOR
         await self.store.set(st)
+        prompt = (
+            "Цвет субтитров? Выбери из палитры, «По умолчанию» или батарею из 5 цветов."
+            if st.bg_mode == "solid"
+            else "Цвет субтитров? Выбери из палитры или «По умолчанию»."
+        )
         await message.answer(
-            "Цвет субтитров? Выбери из палитры или «По умолчанию».",
-            reply_markup=self._color_kb(),
+            prompt,
+            reply_markup=self._color_kb(include_battery=st.bg_mode == "solid"),
         )
 
     async def _handle_wait_subtitle_color(self, message: Message, st: ChatState) -> None:
-        choice = _parse_color_choice(message.text or "")
+        text = str(message.text or "").strip()
+        if st.bg_mode == "solid" and text == BTN_COLOR_BATTERY:
+            battery_palette = _SUBTITLE_COLOR_BATTERY_BY_BG.get(
+                str(st.bg_solid_color or "").strip()
+            )
+            if battery_palette is None:
+                raise RuntimeError(
+                    "subtitle color battery requires bg_solid_color to be "
+                    "'white', 'black', or 'green'"
+                )
+            st.battery_mode = True
+            st.battery_cases = [
+                {"label": label, "subtitle_color_hex": color_hex}
+                for label, color_hex in battery_palette
+            ]
+            st.subtitle_color_hex = battery_palette[0][1]
+            st.accent_color_hex = ""
+            st.colors_done = True
+            st.versions_count = len(st.battery_cases)
+            st.stage = STAGE_WAIT_CONFIRM
+            await self.store.set(st)
+            labels = ", ".join(label.lower() for label, _ in battery_palette)
+            await message.answer(
+                f"🎲 Батарея: 5 видео с цветами субтитров — {labels}.\n\n"
+                "Запустить генерацию?",
+                reply_markup=_kb([BTN_LAUNCH, BTN_RESTART]),
+            )
+            return
+
+        choice = _parse_color_choice(text)
         if choice is None:
-            await message.answer("Выбери цвет кнопкой из палитры или «По умолчанию».")
+            suffix = " или батарею" if st.bg_mode == "solid" else ""
+            await message.answer(
+                f"Выбери цвет кнопкой из палитры, «По умолчанию»{suffix}."
+            )
             return
         st.subtitle_color_hex = choice
+        if st.bg_mode == "solid":
+            st.accent_color_hex = ""
+            st.colors_done = True
+            await self.store.set(st)
+            await self._proceed_to_versions_or_confirm(message, st)
+            return
         await self._ask_accent_color(message, st)
 
     async def _ask_accent_color(self, message: Message, st: ChatState) -> None:
@@ -4797,15 +5011,44 @@ class BlastBotApp:
 
     # ── Photo flow (4:3) — 2-step picker (style -> transition). Mirror of team;
     # UX gated behind PHOTO_FLOW_ENABLED, exit goes to public's post-settings. ──
+    async def _ask_photo_transition(self, message: Message, st: ChatState) -> None:
+        st.stage = STAGE_WAIT_PHOTO_TRANSITION
+        await self.store.set(st)
+        await message.answer(
+            "Шаг 1/2: переход на склейках картинок.\n\n"
+            "• Вспышка\n• Слайд\n• Зум\n• Вжух\n\n"
+            "Можно пропустить — тогда резкая склейка.",
+            reply_markup=_kb(
+                [BTN_PHOTO_TR_FLASH, BTN_PHOTO_TR_SLIDE],
+                [BTN_PHOTO_TR_ZOOM, BTN_PHOTO_TR_WHIP],
+                [BTN_PHOTO_TR_NONE],
+                [BTN_BACK],
+            ),
+        )
+
+    async def _handle_wait_photo_transition(self, message: Message, st: ChatState) -> None:
+        text = str(message.text or "").strip()
+        if text == BTN_BACK:
+            await self._ask_subtitles_mode(message, st)
+            return
+        tr = _PHOTO_TRANSITION_BY_BUTTON.get(text)
+        if tr is None:
+            await message.answer("Выбери переход кнопкой ниже.")
+            return
+        st.photo_transition = tr
+        await self.store.set(st)
+        await self._ask_photo_style(message, st)
+
     async def _ask_photo_style(self, message: Message, st: ChatState) -> None:
         st.stage = STAGE_WAIT_PHOTO_STYLE
         await self.store.set(st)
         await message.answer(
-            "Картинки — шаг 1/2: стилизация (грейд на весь ролик).\n"
+            "Шаг 2/2: стилизация картинок.\n\n"
+            "Выбранный эффект применяется ко всему ролику.\n\n"
             "• Тёплый / Холодный — цветовая температура.\n"
             "• Винтаж / Ч/Б / VHS — плёночные луки.\n"
-            "• Night Vision — зелёное ночное видение с шумом и пикселем.\n"
-            "• Без стилизации — оставить как есть.",
+            "• Night Vision — зелёное ночное видение с шумом и пикселем.\n\n"
+            "Можно пропустить — оставить как есть.",
             reply_markup=_kb(
                 [BTN_PHOTO_STYLE_WARM, BTN_PHOTO_STYLE_COLD],
                 [BTN_PHOTO_STYLE_VINTAGE, BTN_PHOTO_STYLE_BW],
@@ -4818,44 +5061,15 @@ class BlastBotApp:
     async def _handle_wait_photo_style(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()
         if text == BTN_BACK:
-            await self._ask_vibe_shortlist(message, st)
+            await self._ask_photo_transition(message, st)
             return
         style = _PHOTO_STYLE_BY_BUTTON.get(text)
         if style is None:
             await message.answer("Выбери стилизацию кнопкой ниже.")
             return
         st.photo_style = style
+        st.visuals_done = True
         await self.store.set(st)
-        await self._ask_photo_transition(message, st)
-
-    async def _ask_photo_transition(self, message: Message, st: ChatState) -> None:
-        st.stage = STAGE_WAIT_PHOTO_TRANSITION
-        await self.store.set(st)
-        await message.answer(
-            "Шаг 2/2: переход между фото.\n"
-            "• Вспышка / Слайд / Зум / Вжух — варианты смены кадра.\n"
-            "• Без перехода — резкая склейка.",
-            reply_markup=_kb(
-                [BTN_PHOTO_TR_FLASH, BTN_PHOTO_TR_SLIDE],
-                [BTN_PHOTO_TR_ZOOM, BTN_PHOTO_TR_WHIP],
-                [BTN_PHOTO_TR_NONE],
-                [BTN_BACK],
-            ),
-        )
-
-    async def _handle_wait_photo_transition(self, message: Message, st: ChatState) -> None:
-        text = str(message.text or "").strip()
-        if text == BTN_BACK:
-            await self._ask_photo_style(message, st)
-            return
-        tr = _PHOTO_TRANSITION_BY_BUTTON.get(text)
-        if tr is None:
-            await message.answer("Выбери переход кнопкой ниже.")
-            return
-        st.photo_transition = tr
-        await self.store.set(st)
-        # Photo render is horizontal 1920×1440 — subtitles aren't baked in 4:3,
-        # so skip the subtitles/hook steps and go straight to the version count.
         await self._proceed_to_versions_or_confirm(message, st)
 
     async def _ask_visual_transition(self, message: Message, st: ChatState) -> None:
@@ -4865,7 +5079,7 @@ class BlastBotApp:
             message, [f"effect_transition:{v}" for v in _FX_TRANSITION_BY_BUTTON.values()]
         )
         await message.answer(
-            "Шаг 1/2: переход на склейках футажа.\n\n"
+            f"Шаг 1/2: переход на склейках {'картинок' if st.bg_mode == 'photo' else 'футажа'}.\n\n"
             "• Снап-вайп\n• Минимакс\n• Инверт\n• Экстракт\n• Вспышки\n\n"
             "Можно пропустить.",
             reply_markup=_kb(
@@ -4894,22 +5108,25 @@ class BlastBotApp:
     async def _ask_visual_style(self, message: Message, st: ChatState) -> None:
         st.stage = STAGE_WAIT_VISUAL_STYLE
         await self.store.set(st)
-        await self._send_option_previews(
-            message, [f"effect_extra:{v}" for v in _FX_EXTRA_BY_BUTTON.values()]
-        )
+        # Publish the new keyboard before uploading eight preview videos. If the
+        # previews go first, Telegram keeps showing the transition keyboard while
+        # state is already WAIT_VISUAL_STYLE, so its buttons are rejected as
+        # unknown styles. Reply keyboards persist through the preview messages.
         await message.answer(
-            "Шаг 2/2: стилизация футажа.\n\n"
+            f"Шаг 2/2: стилизация {'картинок' if st.bg_mode == 'photo' else 'футажа'}.\n\n"
             "Выбранный эффект применяется ко всему ролику.\n\n"
             "• Ксерокс\n• Аналог-глитч\n• Неон\n• Старая камера\n"
-            "• Ч/Б\n• Crystal Glow\n• Night Vision\n• Wave\n\n"
-            "Можно пропустить.",
+            "• Ч/Б\n• Crystal Glow\n• Night Vision\n• Wave",
             reply_markup=_kb(
                 [BTN_FX_EX_XEROX, BTN_FX_EX_ANALOG],
                 [BTN_FX_EX_NEON, BTN_FX_EX_OLDCAM],
                 [BTN_FX_EX_BLACKWHITE, BTN_FX_EX_CRYSTAL],
                 [BTN_FX_EX_NIGHT, BTN_FX_EX_WAVE],
-                [BTN_FX_SKIP], [BTN_BACK],
+                [BTN_BACK],
             ),
+        )
+        await self._send_option_previews(
+            message, [f"effect_extra:{v}" for v in _FX_EXTRA_BY_BUTTON.values()]
         )
 
     async def _handle_wait_visual_style(self, message: Message, st: ChatState) -> None:
@@ -4917,14 +5134,11 @@ class BlastBotApp:
         if text == BTN_BACK:
             await self._ask_visual_transition(message, st)
             return
-        if text == BTN_FX_SKIP:
-            st.visual_style = ""
-        else:
-            style = _FX_EXTRA_BY_BUTTON.get(text)
-            if style is None:
-                await message.answer("Выбери стилизацию кнопкой ниже или «Пропустить».")
-                return
-            st.visual_style = style
+        style = _FX_EXTRA_BY_BUTTON.get(text)
+        if style is None:
+            await message.answer("Выбери стилизацию кнопкой ниже.")
+            return
+        st.visual_style = style
         st.visuals_done = True
         await self.store.set(st)
         await self._proceed_to_versions_or_confirm(message, st)
@@ -5370,6 +5584,8 @@ class BlastBotApp:
         st.colors_done = False
         st.subtitle_color_hex = ""
         st.accent_color_hex = ""
+        st.battery_mode = False
+        st.battery_cases = []
         st.versions_count = 1
 
     async def _handle_wait_audio(self, message: Message, st: ChatState) -> None:
@@ -5386,9 +5602,21 @@ class BlastBotApp:
                 return
             st.subtitles_mode = SUBTITLES_MODE_IMPULSE_2ND
             self._reset_reuse_selection(st)
+            if self._needs_explicit_local_alignment_fragment(st):
+                await self._ask_explicit_local_alignment_fragment(message, st)
+                return
             await self._ask_bg_mode(message, st)
             return
-        if text in (BTN_SEND_TRACK, BTN_GENERATE_MORE):
+        if text == BTN_GENERATE_MORE:
+            if self._can_reuse_input(st):
+                await message.answer(
+                    "Выбери: сделать ролик под сохранённый трек или отправить новый.",
+                    reply_markup=self._wait_audio_reuse_kb(),
+                )
+                return
+            await message.answer("Жду аудио-файл.", reply_markup=ReplyKeyboardRemove())
+            return
+        if text == BTN_SEND_TRACK:
             await message.answer("Жду аудио-файл.", reply_markup=ReplyKeyboardRemove())
             return
 
@@ -5478,6 +5706,7 @@ class BlastBotApp:
         self._reset_reuse_selection(st)
         st.lyrics_text = ""
         st.target_fragment = ""
+        st.target_fragment_explicit = False
         st.footage_genre_key = ""
         st.footage_artist_key = ""
         st.footage_artist_id = ""
@@ -5613,6 +5842,7 @@ class BlastBotApp:
 
         st.lyrics_text = text
         st.target_fragment = ""
+        st.target_fragment_explicit = False
         # No fork: go straight to the "paste the lines" step (the "let AI decide"
         # branch was removed — the fragment is now always user-supplied).
         st.stage = STAGE_WAIT_FRAGMENT_TEXT
@@ -5642,6 +5872,7 @@ class BlastBotApp:
 
         if text == BTN_SKIP_FRAGMENT:
             st.target_fragment = ""
+            st.target_fragment_explicit = False
             await self._ask_timing_choice(message, st)
             return
 
@@ -5657,6 +5888,7 @@ class BlastBotApp:
             return
 
         st.target_fragment = text
+        st.target_fragment_explicit = True
         st.stage = STAGE_WAIT_CONFIRM_TEXT
         await self.store.set(st)
 
@@ -5677,6 +5909,7 @@ class BlastBotApp:
         if text == BTN_CONFIRM_BACK:
             st.lyrics_text = ""
             st.target_fragment = ""
+            st.target_fragment_explicit = False
             st.stage = STAGE_WAIT_LYRICS_TEXT
             await self.store.set(st)
             await message.answer(
@@ -5790,9 +6023,11 @@ class BlastBotApp:
         lines.append(self._sources_summary_line(st))
         lines.append(f"*Режим субтитров:* «{mode_display}»")
         lines.append(self._render_engine_summary_line(st))
-        # Hook/color echo only when the hook flow is active.
+        # Hook/color echo when the hook flow is active. Solid background has its
+        # own subtitle-color picker even when hooks are disabled.
         if HOOK_FLOW_ENABLED:
             lines.append(self._hook_summary_line(st))
+        if HOOK_FLOW_ENABLED or st.bg_mode == "solid":
             cl = self._color_summary_line(st)
             if cl:
                 lines.append(cl)
@@ -5865,15 +6100,26 @@ class BlastBotApp:
         this redirects into the color pickers once, then comes back here."""
         # Strobe bg: skip color pickers (white auto-invert) + offer ONLY the cut
         # transition style once (not the full hook flow).
-        if st.bg_mode in {"solid", "solid_strobe"} and not st.visuals_done and st.stage != STAGE_WAIT_STROBE_CUT:
+        if st.bg_mode == "solid_strobe" and not st.visuals_done and st.stage != STAGE_WAIT_STROBE_CUT:
             await self._ask_strobe_cut(message, st)
             return
-        if st.bg_mode == "footage" and not st.visuals_done and st.stage not in {
+        # A plain solid background has no footage, so transitions and footage
+        # stylization cannot affect the result. Go directly to subtitle color.
+        if st.bg_mode == "solid" and not st.visuals_done:
+            st.visual_transition = ""
+            st.visual_style = ""
+            st.visuals_done = True
+            await self.store.set(st)
+        # Photo uses the SAME effect library as footage — the F3 block is bound to
+        # PHOTO_COMP at build time, so these buttons drive the real, proven
+        # effects (and reuse their preview reels) instead of a parallel 4:3-only
+        # set that nothing else exercises.
+        if st.bg_mode in {"footage", "photo"} and not st.visuals_done and st.stage not in {
             STAGE_WAIT_VISUAL_TRANSITION, STAGE_WAIT_VISUAL_STYLE
         }:
             await self._ask_visual_transition(message, st)
             return
-        if HOOK_FLOW_ENABLED and not st.colors_done:
+        if (HOOK_FLOW_ENABLED or st.bg_mode == "solid") and not st.colors_done:
             await self._ask_subtitle_color(message, st)
             return
         if self._render_engine_selector_enabled():
@@ -5932,15 +6178,36 @@ class BlastBotApp:
     async def _handle_wait_confirm_mode(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()
         if text == BTN_CONFIRM_YES:
+            if st.bg_mode == "photo":
+                # Only HOOKS are missing for 4:3 — visuals and colours run in the
+                # normal slots, so they must NOT be force-completed here. Both
+                # flags are cleared for the same reason the other branches clear
+                # colors_done: a reused chat would otherwise carry "already asked"
+                # over from its previous run and silently skip the steps.
+                st.hook_enabled = False
+                st.hook_category = ""
+                st.colors_done = False
+                st.visuals_done = False
+                await self.store.set(st)
+                await self._proceed_to_versions_or_confirm(message, st)
+                return
             # Strobe bg: NO hook flow and NO color pickers. The strobe already
             # IS the effect (B/W flip on cuts); text is forced white + auto-
             # inverts. The ONLY strobe setting is the cut-transition style,
             # asked once by _proceed_to_versions_or_confirm. Routing through the
             # full hook flow here duplicated it (hook prompt + then cut prompt).
-            if st.bg_mode in {"solid", "solid_strobe"}:
+            if st.bg_mode == "solid_strobe":
                 st.colors_done = False
                 await self.store.set(st)
                 await self._proceed_to_versions_or_confirm(message, st)
+                return
+            if st.bg_mode == "solid":
+                st.visual_transition = ""
+                st.visual_style = ""
+                st.visuals_done = True
+                st.colors_done = False
+                await self.store.set(st)
+                await self._ask_subtitle_color(message, st)
                 return
             # Hook flow first; customization (colors) runs after it (see
             # _proceed_to_versions_or_confirm). Legacy path when the flag is off.
@@ -5997,6 +6264,27 @@ class BlastBotApp:
             await self.store.set(st)
             await message.answer(
                 "Для запуска нужен текст песни. Пришли его обычным сообщением.",
+                reply_markup=ReplyKeyboardRemove(),
+            )
+            return
+        if not str(st.target_fragment or "").strip():
+            st.stage = STAGE_WAIT_FRAGMENT_TEXT
+            await self.store.set(st)
+            await message.answer(
+                "Для точной синхронизации пришли строки, которые должны попасть "
+                "в выбранный отрывок.",
+                reply_markup=ReplyKeyboardRemove(),
+            )
+            return
+        if self._needs_explicit_local_alignment_fragment(st):
+            await self._ask_explicit_local_alignment_fragment(message, st)
+            return
+        if not self._has_local_alignment_inputs(st):
+            st.stage = STAGE_WAIT_TIMING_INPUT
+            await self.store.set(st)
+            await message.answer(
+                "Для точной синхронизации укажи тайминг этих строк, например: "
+                "1:20-1:35.",
                 reply_markup=ReplyKeyboardRemove(),
             )
             return
@@ -6239,6 +6527,9 @@ class BlastBotApp:
                 return
             st.subtitles_mode = SUBTITLES_MODE_IMPULSE_2ND
             self._reset_reuse_selection(st)
+            if self._needs_explicit_local_alignment_fragment(st):
+                await self._ask_explicit_local_alignment_fragment(message, st)
+                return
             await self._ask_bg_mode(message, st)
             return
 
@@ -6605,7 +6896,7 @@ class BlastBotApp:
         "Импульс": 24,
     }
 
-    async def _show_purchase_stub(self, message: Message, st: ChatState, recurrent: bool = False) -> None:
+    async def _show_purchase_stub(self, message: Message, st: ChatState, recurrent: bool = False) -> bool:
         username = (st.chat_username or "").lstrip("@") or str(st.chat_id)
         pkg = st.selected_package or "не указан"
         event = "purchase_intent_recurrent" if recurrent else "purchase_intent"
@@ -6617,12 +6908,14 @@ class BlastBotApp:
         if self.tbank and price > 0:
             suffix = "sub" if recurrent else ""
             order_id = f"{st.chat_id}-{pkg.replace(' ', '_')}-{suffix}{uuid.uuid4().hex[:8]}"
+            payment_record_created = False
             try:
                 last_utm = await self.credits_db.get_last_utm(st.chat_id)
                 if recurrent:
                     await self.credits_db.create_recurrent_payment(order_id, st.chat_id, price, pkg, utm=last_utm)
                 else:
                     await self.credits_db.create_payment(order_id, st.chat_id, price, pkg, utm=last_utm)
+                payment_record_created = True
                 pay_url = await self.tbank.create_payment(
                     amount_rub=price,
                     order_id=order_id,
@@ -6661,18 +6954,30 @@ class BlastBotApp:
                     )
                     status_label = "Подписка создана" if recurrent else "Создан"
                     await self._notify_manager_payment(username, pkg, price, status_label)
-                    return
+                    return True
+                raise RuntimeError("T-Bank Init did not return PaymentURL")
             except Exception as e:
-                log.warning("tbank payment creation failed: %s", e)
+                log.exception("tbank payment creation failed: %s", e)
+                if payment_record_created:
+                    updated = await self.credits_db.update_payment_status(order_id, "INIT_FAILED")
+                    if not updated:
+                        log.error("failed to mark T-Bank Init failure order=%s", order_id)
+        else:
+            log.error(
+                "tbank payment creation unavailable configured=%s package=%s price=%s",
+                bool(self.tbank), pkg, price,
+            )
 
-        # Fallback: manager contact
         await message.answer(
-            "Рады, что ты решился попробовать. С тобой свяжется наш менеджер и уточнит "
-            "все интересующие моменты по продукту. Отпишем с этого аккаунта: @impulsemanage\n\n"
-            "У нас все официально: прозрачный эквайринг и, конечно, чек об оплате.",
-            reply_markup=ReplyKeyboardRemove(),
+            "Не удалось сформировать ссылку на оплату из-за технической ошибки. "
+            "Попробуй ещё раз через минуту.",
+            reply_markup=(
+                _kb([BTN_CONFIRM], [BTN_BACK])
+                if recurrent
+                else _kb([BTN_PURCHASE], [BTN_TO_TARIFFS])
+            ),
         )
-        await self._notify_manager(username, pkg)
+        return False
 
     # --- Rating first video ---
     async def _handle_rate_video(self, message: Message, st: ChatState) -> None:
@@ -6874,9 +7179,9 @@ class BlastBotApp:
                 # Бласт is subscription-only now (no one-time option).
                 await self._show_subscription_confirm(message, st)
             else:
-                await self._show_purchase_stub(message, st)
-                st.stage = STAGE_WAIT_PAYMENT
-                await self.store.set(st)
+                if await self._show_purchase_stub(message, st):
+                    st.stage = STAGE_WAIT_PAYMENT
+                    await self.store.set(st)
         else:
             await message.answer(
                 "Выбери из кнопок ниже.",
@@ -6898,9 +7203,9 @@ class BlastBotApp:
     async def _handle_purchase_choice(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()
         if text == BTN_BUY_ONCE:
-            await self._show_purchase_stub(message, st)
-            st.stage = STAGE_WAIT_PAYMENT
-            await self.store.set(st)
+            if await self._show_purchase_stub(message, st):
+                st.stage = STAGE_WAIT_PAYMENT
+                await self.store.set(st)
         elif text == BTN_BUY_SUBSCRIPTION:
             await self._show_subscription_confirm(message, st)
         else:
@@ -6933,9 +7238,9 @@ class BlastBotApp:
     async def _handle_subscription_confirm(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()
         if text == BTN_CONFIRM:
-            await self._show_purchase_stub(message, st, recurrent=True)
-            st.stage = STAGE_WAIT_PAYMENT
-            await self.store.set(st)
+            if await self._show_purchase_stub(message, st, recurrent=True):
+                st.stage = STAGE_WAIT_PAYMENT
+                await self.store.set(st)
         elif text == BTN_BACK:
             # No more purchase-choice fork — go back to the packages list.
             await self._show_all_packages(message, st)
@@ -7356,6 +7661,28 @@ class BlastBotApp:
             batch_id=normalized_batch_id,
             version_index=int(version_index),
         )
+        subtitle_color_for_version = str(st.subtitle_color_hex or "")
+        if st.battery_mode:
+            if st.bg_mode != "solid":
+                raise RuntimeError("subtitle color battery requires bg_mode='solid'")
+            cases = list(st.battery_cases or [])
+            if len(cases) != int(versions_total):
+                raise RuntimeError(
+                    "subtitle color battery case count must match versions_total: "
+                    f"cases={len(cases)} versions={int(versions_total)}"
+                )
+            case_index = int(version_index) - 1
+            if case_index < 0 or case_index >= len(cases):
+                raise RuntimeError(
+                    f"subtitle color battery has no case for version {int(version_index)}"
+                )
+            subtitle_color_for_version = str(
+                cases[case_index].get("subtitle_color_hex") or ""
+            ).strip()
+            if not subtitle_color_for_version:
+                raise RuntimeError(
+                    f"subtitle color battery case {int(version_index)} has no color"
+                )
         user_clip_start_sec: float | None = None
         user_clip_end_sec: float | None = None
         start = float(st.user_clip_start_sec or 0.0)
@@ -7427,13 +7754,16 @@ class BlastBotApp:
                 continue
             merged_exclude_seen.add(clean)
             merged_exclude.append(clean)
-        if not self._has_forced_alignment_reference_text(st):
-            raise RuntimeError("public_bot_forced_alignment_requires_reference_text")
+        if not str(st.target_fragment or "").strip():
+            raise RuntimeError("public_bot_local_alignment_requires_target_fragment")
+        if user_clip_start_sec is None or user_clip_end_sec is None:
+            raise RuntimeError("public_bot_local_alignment_requires_clip_window")
         enqueue = await self.orchestrator.send_audio_s3(
             audio_s3_url=audio_s3_url,
             mode="with_gemini",
             lyrics_text=st.lyrics_text,
             target_fragment=st.target_fragment,
+            stage1_alignment_backend=self.settings.public_stage1_alignment_backend,
             subtitles_mode=st.subtitles_mode,
             footage_artist_id=st.footage_artist_id,
             user_clip_start_sec=user_clip_start_sec,
@@ -7491,19 +7821,13 @@ class BlastBotApp:
                 )
                 else None
             ),
-            # Photo flow (4:3): stylization + transition, only when bg_mode=="photo".
-            photo_style=(
-                str(st.photo_style)
-                if (st.bg_mode == "photo" and st.photo_style)
-                else None
-            ),
-            photo_transition=(
-                str(st.photo_transition)
-                if (st.bg_mode == "photo" and st.photo_transition)
-                else None
-            ),
+            # The 4:3 template still implements its own grade/intro, but nothing
+            # selects them any more: photo picks from the footage effect library
+            # above. Sending nothing leaves both off so the two cannot stack.
+            photo_style=None,
+            photo_transition=None,
             # Strobe bg auto-inverts WHITE text (Difference) — ignore custom color.
-            subtitle_color_hex=(None if st.bg_mode == "solid_strobe" else (str(st.subtitle_color_hex) or None)),
+            subtitle_color_hex=(None if st.bg_mode == "solid_strobe" else (subtitle_color_for_version or None)),
             accent_color_hex=(None if st.bg_mode == "solid_strobe" else (str(st.accent_color_hex) or None)),
             render_engine=self._render_engine_for_state(st),
         )
@@ -7684,6 +8008,8 @@ class BlastBotApp:
         st.next_version_to_enqueue = 1
         st.master_job_id = ""
         st.used_footage_file_names = []
+        st.battery_mode = False
+        st.battery_cases = []
         st.active_job_started_at = 0.0
         st.last_status_msg_at = 0.0
         st.status_message_id = 0
@@ -7828,6 +8154,11 @@ class BlastBotApp:
     async def _recovery_loop(self) -> None:
         while True:
             try:
+                # Admin requeue can revive an orchestrator job after its chat
+                # state was reset. Reconcile incomplete durable runs
+                # periodically so delivery does not depend on a bot restart.
+                await self._restore_runtime_processing_states()
+
                 now = time.time()
                 waiting_states = await self.store.list_waiting_referral()
                 for st in waiting_states:
@@ -8027,21 +8358,45 @@ class BlastBotApp:
                                         f"Пакет «{pkg}» order={order_id}",
                                     )
                                 await self.credits_db.log_event(tg_id, "payment_confirmed", f"{pkg} +{credits_to_add} кредитов")
-                                # Save RebillId and create subscription for recurrent payments
+                                # Save RebillId and create subscription for recurrent payments.
+                                # GetState does NOT carry RebillId — reading it from there was
+                                # the old bug, and it left this path unable to ever start a
+                                # subscription. The key comes from the webhook (already on the
+                                # payment row by now) or, if that notification was lost, from
+                                # GetCardList by CustomerKey (= tg_id).
                                 is_recurrent = pay.get("is_recurrent", False)
-                                if is_recurrent and payment_id and self.tbank:
+                                if is_recurrent and self.tbank:
                                     try:
-                                        gs = await self.tbank.get_state(payment_id)
-                                        rebill_id = str(gs.get("RebillId", "")) if gs else ""
+                                        fresh = await self.credits_db.get_payment(order_id)
+                                        rebill_id = str((fresh or {}).get("rebill_id", "") or "").strip()
+                                        if not rebill_id:
+                                            rebill_id = await self.tbank.find_rebill_id(str(tg_id))
                                         if rebill_id:
                                             await self.credits_db.update_rebill_id(order_id, rebill_id)
-                                            await self.credits_db.create_subscription(
-                                                tg_id, pkg, rebill_id, pay["amount_rub"],
+                                            if not await self.credits_db.get_active_subscription(tg_id):
+                                                await self.credits_db.create_subscription(
+                                                    tg_id, pkg, rebill_id, pay["amount_rub"],
+                                                )
+                                                await self.credits_db.log_event(
+                                                    tg_id, "subscription_created", f"{pkg} rebill=***{rebill_id[-6:]}",
+                                                )
+                                                log.info("subscription created order=%s rebill=***%s", order_id, rebill_id[-6:])
+                                        else:
+                                            log.error(
+                                                "recurrent payment confirmed with no RebillId (webhook + GetCardList) "
+                                                "— no autopay. order=%s tg_id=%s",
+                                                order_id, tg_id,
                                             )
-                                            await self.credits_db.log_event(
-                                                tg_id, "subscription_created", f"{pkg} rebill=***{rebill_id[-6:]}",
+                                            await self._notify_ops_alert(
+                                                title="Подписка без автосписания",
+                                                chat_id=tg_id,
+                                                extra_lines=[
+                                                    f"пакет: {pkg}",
+                                                    f"order: {order_id}",
+                                                    "T-Bank не отдал RebillId (нотификация + GetCardList) — "
+                                                    "карта не привязалась, обычно СБП/QR/T-Pay.",
+                                                ],
                                             )
-                                            log.info("subscription created order=%s rebill=***%s", order_id, rebill_id[-6:])
                                     except Exception as e:
                                         log.warning("subscription create failed order=%s err=%s", order_id, e)
                                 username = ""
@@ -8268,23 +8623,8 @@ class BlastBotApp:
         """Check order status via T-Bank CheckOrder API."""
         if not self.tbank:
             return None
-        params: Dict[str, Any] = {
-            "TerminalKey": self.tbank._terminal_key,
-            "OrderId": order_id,
-        }
-        params["Token"] = self.tbank._make_token(params)
         try:
-            async with httpx.AsyncClient(timeout=15) as client:
-                resp = await client.post("https://securepay.tinkoff.ru/v2/CheckOrder", json=params)
-                if resp.status_code != 200:
-                    return None
-                data = resp.json()
-                if not data.get("Success"):
-                    return None
-                payments = data.get("Payments", [])
-                if not payments:
-                    return None
-                return payments[-1]
+            return await self.tbank.check_order(order_id)
         except Exception as e:
             log.warning("tbank check_order err=%r", e)
             return None

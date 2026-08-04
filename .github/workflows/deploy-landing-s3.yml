@@ -195,6 +195,20 @@ jobs:
               ;;
           esac
 
+      - name: Deploy Landing To Nginx
+        if: ${{ steps.resolve.outputs.mode == 'release_then_promote' || steps.resolve.outputs.mode == 'promote' || steps.resolve.outputs.mode == 'rollback' }}
+        env:
+          BRANCH_NAME: ${{ steps.resolve.outputs.branch_name }}
+          LANDING_NGINX_DEPLOY_ENABLED: ${{ vars.LANDING_NGINX_DEPLOY_ENABLED }}
+          LANDING_NGINX_MAIN_ONLY: ${{ vars.LANDING_NGINX_MAIN_ONLY }}
+          LANDING_NGINX_MAIN_BRANCH: ${{ vars.LANDING_NGINX_MAIN_BRANCH }}
+          LANDING_NGINX_DOCROOT: ${{ vars.LANDING_NGINX_DOCROOT }}
+          LANDING_NGINX_RELOAD_CMD: ${{ vars.LANDING_NGINX_RELOAD_CMD }}
+          LANDING_NGINX_SYNC_MODE: ${{ vars.LANDING_NGINX_SYNC_MODE }}
+        run: |
+          set -euo pipefail
+          REPO_DIR="$GITHUB_WORKSPACE" \
+          bash "$GITHUB_WORKSPACE/infra/runners/deploy_landing_to_nginx.sh" "$BRANCH_NAME"
       - name: Public landing smoke
         env:
           MODE: ${{ steps.resolve.outputs.mode }}
@@ -212,7 +226,9 @@ jobs:
           python scripts/landing_public_check.py \
             --url "$URL_MAIN" \
             --url "$URL_WWW" \
-            --contains 'href="https://www.instagram.com/impulsemarketing/"'
+            --contains 'href="https://www.instagram.com/impulsemarketing/"' \
+            --contains 'href="terms.html"' \
+            --contains 'js/i18n.js?v=20260729-i18n1'
 
       - name: Deployment summary
         env:

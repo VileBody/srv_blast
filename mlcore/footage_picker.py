@@ -920,8 +920,16 @@ def _build_raw_pool(
     *,
     style_genre: Optional[str] = None,
     style_tag: Optional[str] = None,
+    media_type: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    """Build a scored clip pool from a single raw subgroup payload."""
+    """Build a scored clip pool from a single raw subgroup payload.
+
+    media_type selects the visual-contract gate variant ("photo" adds the denser
+    PHOTO_REQUIRE_GROUPS anchors). None = derive from BG_MODE, which is what the
+    build subprocess sets. Callers that evaluate a pool OUT of band (readiness
+    dry-run, bucket reports) must pass it explicitly so they never depend on the
+    ambient env of the process they happen to run in.
+    """
     assets = _apply_tag_overrides(assets)
     global_tag_ov = _load_global_tag_overrides()
     blacklisted = {_normalize_theme_tag(t) for t in global_tag_ov.get("blacklisted_tags", [])}
@@ -944,24 +952,48 @@ def _build_raw_pool(
     color_priority = {_normalize_color_tone(x) for x in list(raw_pick.filters.color_priority or [])}
     color_priority.discard("")
 
+    effective_media_type = (
+        str(media_type).strip().lower()
+        if media_type is not None
+        else ("photo" if (os.environ.get("BG_MODE") or "").strip().lower() == "photo" else "video")
+    )
     pool: List[Dict[str, Any]] = []
     visual_contract = None
-    if str(raw_pick.theme or "").strip() == "visual":
+    photo_contract = None
+    contract_theme = str(raw_pick.theme or "").strip()
+    if contract_theme == "visual":
         from mlcore.footage_visual_catalog import load_visual_catalog
         wanted = f"visual:{str(raw_pick.tags_group or '').strip()}"
         visual_contract = next((x for x in load_visual_catalog() if x.bucket_id == wanted), None)
         if visual_contract is None:
             raise RuntimeError(f"unknown visual contract: {wanted}")
+    elif contract_theme == "photo":
+        if effective_media_type != "photo":
+            raise RuntimeError("photo contract requires media_type=photo")
+        from mlcore.photo_bucket_catalog import load_photo_catalog
+        wanted = f"photo:{str(raw_pick.tags_group or '').strip()}"
+        photo_contract = next((x for x in load_photo_catalog() if x.bucket_id == wanted), None)
+        if photo_contract is None:
+            raise RuntimeError(f"unknown photo contract: {wanted}")
     for it in assets:
         if style_genre is not None and style_tag is not None:
             if str(it.get("genre") or "").strip() != str(style_genre).strip():
                 continue
             if str(it.get("tag") or "").strip() != str(style_tag).strip():
                 continue
+        if photo_contract is not None:
+            from mlcore.photo_bucket_catalog import evaluate, representative_score
+            ok, stage = evaluate(photo_contract, it)
+            if not ok:
+                continue
+            row = dict(it)
+            row[_SELECTION_RANK_SCORE_KEY] = representative_score(photo_contract, it)
+            row["_photo_contract"] = {"bucket_id": photo_contract.bucket_id, "stage": stage}
+            pool.append(row)
+            continue
         if visual_contract is not None:
             from mlcore.footage_visual_catalog import evaluate_asset
-            media_type = "photo" if (os.environ.get("BG_MODE") or "").strip().lower() == "photo" else "video"
-            ok, stage, diag = evaluate_asset(visual_contract, it, media_type=media_type)
+            ok, stage, diag = evaluate_asset(visual_contract, it, media_type=effective_media_type)
             if not ok:
                 continue
             clip_color = _normalize_color_tone(it.get("meta_color_tone"))
@@ -1491,6 +1523,7 @@ def pick_footage_clips_by_intervals_deterministic(
                 {
                     "file_name": chosen_name,
                     "fit_mode": fit_mode,
+                    "framing": (all_assets_by_name.get(chosen_name) or {}).get("meta_framing") or None,
                     "in_point": float(a),
                     "out_point": float(b),
                     "source_offset_sec": src_off,
@@ -1675,6 +1708,7 @@ def pick_footage_clips_by_intervals_deterministic(
                 {
                     "file_name": chosen_name,
                     "fit_mode": fit_mode,
+                    "framing": chosen.get("meta_framing") or None,
                     "in_point": float(a),
                     "out_point": float(b),
                     "source_offset_sec": src_off,
@@ -1704,6 +1738,7 @@ def pick_footage_clips_by_intervals_deterministic(
                 {
                     "file_name": chosen_name,
                     "fit_mode": fit_mode,
+                    "framing": (by_name.get(chosen_name) or {}).get("meta_framing") or None,
                     "in_point": float(a),
                     "out_point": float(b),
                     "source_offset_sec": src_off,
@@ -1838,6 +1873,7 @@ def load_footage_style_metadata_rows(
                     "color_tone": color_tone,
                     "people_type": people_type or "none",
                     "theme_tags": tags,
+                    "framing": it.get("framing") if isinstance(it.get("framing"), dict) else {},
                     "source_path": str(p),
                     "source_row": int(idx),
                 }
@@ -1863,6 +1899,7 @@ def merge_footage_style_metadata_rows(
                 "color_tone": str(row.get("color_tone") or "").strip(),
                 "people_type": str(row.get("people_type") or "").strip() or "none",
                 "theme_tags": [],
+                "framing": dict(row.get("framing") or {}),
             }
             merged[clip_id] = current
         else:
@@ -1874,6 +1911,8 @@ def merge_footage_style_metadata_rows(
                 cand_people = str(row.get("people_type") or "").strip()
                 if cand_people:
                     current["people_type"] = cand_people
+            if not current.get("framing") and isinstance(row.get("framing"), dict):
+                current["framing"] = dict(row["framing"])
         seen = {str(x).strip() for x in list(current.get("theme_tags") or []) if str(x).strip()}
         for t in list(row.get("theme_tags") or []):
             tv = str(t).strip()
@@ -1910,6 +1949,7 @@ def map_inventory_assets_with_style_metadata(
                 "meta_color_tone": str(meta.get("color_tone") or "").strip(),
                 "meta_people_type": str(meta.get("people_type") or "").strip() or "none",
                 "meta_theme_tags": list(meta.get("theme_tags") or []),
+                "meta_framing": dict(meta.get("framing") or {}),
             }
         )
     return mapped, unmapped

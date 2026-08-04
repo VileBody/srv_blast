@@ -69,3 +69,6 @@ infra/timeweb/**/.terraform/
 infra/timeweb/**/.terraform.lock.hcl
 infra/timeweb/**/terraform.tfstate
 infra/timeweb/**/terraform.tfstate.*
+
+# Downloaded and checksum-verified during the runtime image build.
+data/models/

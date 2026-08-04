@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from typing import Any, Dict
 
@@ -19,6 +20,7 @@ from core.queue_estimate import (
     build_queue_estimate,
     normalize_queue_estimate_window,
 )
+from .alignment_smoke_auth import consume_alignment_smoke_authorization
 from .job_store import JobStore
 from .llm_workers import (
     ensure_config_initialized,
@@ -39,6 +41,8 @@ from .runtime_config import (
     set_runtime_config,
 )
 from .schemas import (
+    AlignmentSmokeEnqueueResponse,
+    AlignmentSmokeRequest,
     ActiveJobsResponse,
     ActiveJobSummary,
     HookAnalyzeRequest,
@@ -63,6 +67,7 @@ from .schemas import (
     WindowsNodesUpdateRequest,
 )
 from .tasks import (
+    alignment_smoke_job,
     build_job,
     build_job_hybrid,
     build_job_openrouter,
@@ -70,7 +75,7 @@ from .tasks import (
     build_job_vertex_sdk_mix,
 )
 from .backpressure_policy import compute_capacity_policy
-from .config import SETTINGS, derive_render_poll_queue
+from .config import SETTINGS, derive_render_poll_queue, queue_affinity_mismatches
 from .bundle_bootstrap import ensure_descriptions_bundle
 from .asset_routes import create_asset_router
 from .ops_alert_subscribers import OpsAlertBotPoller, OpsAlertSubscriberStore
@@ -111,6 +116,37 @@ def _maintenance_bypass_allowed(req: object) -> bool:
 def _maintenance_message_detail() -> str:
     detail = str(getattr(SETTINGS, "system_maintenance_message", "") or "").strip()
     return detail or "Service is temporarily unavailable due to maintenance."
+
+
+def _settings_queue_affinity_mismatches() -> dict[str, dict[str, str]]:
+    render_queue = str(getattr(SETTINGS, "celery_queue_render", "") or "").strip()
+    render_poll_queue = str(getattr(SETTINGS, "celery_queue_render_poll", "") or "").strip()
+    if not render_poll_queue:
+        render_poll_queue = derive_render_poll_queue(render_queue)
+    return queue_affinity_mismatches(
+        origin_node=str(getattr(SETTINGS, "orchestrator_node_name", "") or ""),
+        build_queue=str(getattr(SETTINGS, "celery_queue_build", "") or ""),
+        render_queue=render_queue,
+        render_poll_queue=render_poll_queue,
+    )
+
+
+def _ensure_queue_affinity(routing: Dict[str, str]) -> None:
+    mismatches = queue_affinity_mismatches(
+        origin_node=routing.get("origin_node", ""),
+        build_queue=routing.get("build_queue", ""),
+        render_queue=routing.get("render_queue", ""),
+        render_poll_queue=routing.get("render_poll_queue", ""),
+    )
+    if mismatches:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "celery_queue_affinity_mismatch",
+                "origin_node": str(routing.get("origin_node") or ""),
+                "mismatches": mismatches,
+            },
+        )
 
 
 def _iter_celery_tasks(raw_tasks: object) -> list[dict[str, Any]]:
@@ -459,6 +495,11 @@ def create_app() -> FastAPI:
             checks["llm_admission_ready"] = False
             details["llm_admission_ready"] = f"runtime_status_error: {exc!r}"
 
+        queue_mismatches = _settings_queue_affinity_mismatches()
+        checks["queue_affinity"] = not queue_mismatches
+        if queue_mismatches:
+            details["queue_affinity"] = str(queue_mismatches)
+
         ok = all(checks.values())
         return {"ok": ok, "checks": checks, "details": details}
 
@@ -610,6 +651,76 @@ def create_app() -> FastAPI:
             detail=f"unsupported mode={selected_mode!r}; expected with_gemini",
         )
 
+    @app.post("/alignment-smoke", response_model=AlignmentSmokeEnqueueResponse)
+    def enqueue_alignment_smoke(req: AlignmentSmokeRequest) -> AlignmentSmokeEnqueueResponse:
+        signed_payload = req.model_dump(mode="json", exclude_none=True)
+        auth_nonce = str(signed_payload.pop("auth_nonce", "") or "")
+        if not consume_alignment_smoke_authorization(
+            store.r,
+            signed_payload,
+            nonce=auth_nonce,
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail="alignment smoke authorization is invalid or expired",
+            )
+        if not bool(getattr(SETTINGS, "orchestrator_enqueue_enabled", True)):
+            raise HTTPException(status_code=503, detail="enqueue disabled on this orchestrator")
+
+        audio_s3_url = str(req.audio_s3_url or "").strip()
+        if not audio_s3_url.lower().startswith("s3://"):
+            raise HTTPException(status_code=422, detail="audio_s3_url must use s3://")
+        expected_bucket = str(os.environ.get("S3_BUCKET_RAW_AUDIO") or "").strip()
+        expected_prefix = str(os.environ.get("S3_RAW_AUDIO_PREFIX") or "raw_audio").strip("/")
+        if not expected_bucket:
+            raise HTTPException(status_code=503, detail="S3_BUCKET_RAW_AUDIO is empty")
+        s3_tail = audio_s3_url[5:]
+        bucket, separator, key = s3_tail.partition("/")
+        if (
+            not separator
+            or bucket != expected_bucket
+            or not key
+            or (expected_prefix and not key.startswith(f"{expected_prefix}/"))
+        ):
+            raise HTTPException(status_code=422, detail="audio_s3_url is outside raw-audio scope")
+
+        request_payload = signed_payload
+        request_payload["job_kind"] = "alignment_smoke"
+        routing = _resolve_job_routing(request_payload=request_payload)
+        _ensure_queue_affinity(routing)
+        request_payload.update(routing)
+        st, created = store.new_job(
+            request=request_payload,
+            idempotency_key=req.idempotency_key,
+        )
+        if not created:
+            return AlignmentSmokeEnqueueResponse(
+                job_id=st.job_id, status=st.status, created=False
+            )
+        try:
+            store.set_status(
+                st.job_id,
+                "QUEUED",
+                stage="alignment_smoke",
+                result={"routing": routing},
+            )
+            smoke_queue = f"{routing['build_queue']}.alignment-smoke"
+            alignment_smoke_job.apply_async(
+                args=[st.job_id], queue=smoke_queue
+            )
+        except Exception as exc:
+            store.set_status(
+                st.job_id,
+                "FAILED",
+                stage="alignment_smoke",
+                error=f"queue_failed: {exc!r}",
+            )
+            raise HTTPException(status_code=500, detail="Failed to enqueue alignment smoke job")
+        queued = store.get(st.job_id) or st
+        return AlignmentSmokeEnqueueResponse(
+            job_id=queued.job_id, status=queued.status, created=True
+        )
+
     # ==========================================================
     # NEW: correct naming (audio URL -> enqueue pipeline)
     # ==========================================================
@@ -624,6 +735,7 @@ def create_app() -> FastAPI:
         _ensure_render_engine_available(request_payload)
         _ensure_render_capacity(request_payload)
         routing = _resolve_job_routing(request_payload=request_payload)
+        _ensure_queue_affinity(routing)
         request_payload.update(routing)
         st, created = store.new_job(
             request=request_payload,
@@ -699,8 +811,12 @@ def create_app() -> FastAPI:
         # return an empty ranking rather than 500 — a 500 here pushes the bot into
         # the legacy artist-theme fallback (the symptom we're fixing).
         try:
-            from mlcore.footage_visual_catalog import load_visual_catalog
-            catalog = load_visual_catalog()
+            if req.media_type == "photo":
+                from mlcore.photo_bucket_catalog import load_photo_catalog
+                catalog = load_photo_catalog()
+            else:
+                from mlcore.footage_visual_catalog import load_visual_catalog
+                catalog = load_visual_catalog()
         except Exception:
             log.exception("rank-buckets: catalog load failed — empty ranking")
             return RankBucketsResponse(buckets=[], used_llm=False)
@@ -939,6 +1055,14 @@ def create_app() -> FastAPI:
             pinned_render_poll_queue = derive_render_poll_queue(pinned_render_queue or SETTINGS.celery_queue_render)
         if not pinned_render_poll_queue:
             pinned_render_poll_queue = str(SETTINGS.celery_queue_render_poll or "").strip()
+        _ensure_queue_affinity(
+            {
+                "origin_node": pinned_origin_node,
+                "build_queue": pinned_build_queue,
+                "render_queue": pinned_render_queue,
+                "render_poll_queue": pinned_render_poll_queue,
+            }
+        )
         requested_worker_raw = str(payload.llm_worker_type or "").strip()
         current_worker_raw = str(req.get("llm_worker_type") or "").strip()
 

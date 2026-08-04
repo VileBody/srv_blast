@@ -52,6 +52,36 @@ def test_seed_resume_state_from_source_job_copies_whitelist_keys(tmp_path: Path)
     assert out["stage2_subtitles_mode"] == "impulse_2nd"
 
 
+def test_seed_resume_state_preserves_local_alignment_metadata(tmp_path: Path) -> None:
+    work_dir = tmp_path / "work"
+    src_job = "src_local"
+    dst = work_dir / "jobs" / "dst_local" / "data" / "llm_resume_state.json"
+    source = _valid_source_state()
+    source["stage1_alignment_backend"] = "local_ctc"
+    source["stage1_alignment_metadata"] = {
+        "model_revision": "revision-a",
+        "algorithm_version": "algorithm-a",
+        "audio_preprocessor": "demucs",
+        "separator_model": "htdemucs",
+        "separator_revision": "separator-a",
+        "separator_package_version": "4.1.0",
+    }
+    _write_json(
+        work_dir / "jobs" / src_job / "data" / "llm_resume_state.json",
+        source,
+    )
+
+    tasks._seed_resume_state_from_source_job(
+        work_dir=work_dir,
+        source_job_id=src_job,
+        target_resume_state_path=dst,
+    )
+
+    out = json.loads(dst.read_text(encoding="utf-8"))
+    assert out["stage1_alignment_backend"] == "local_ctc"
+    assert out["stage1_alignment_metadata"] == source["stage1_alignment_metadata"]
+
+
 def test_seed_resume_state_from_source_job_fails_when_source_missing(tmp_path: Path) -> None:
     with pytest.raises(RuntimeError, match="reuse_text_source_resume_unavailable"):
         tasks._seed_resume_state_from_source_job(

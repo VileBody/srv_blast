@@ -41,6 +41,8 @@ _STAGE1_ASR_KEYS = frozenset({
     "stage1_asr",
     "stage1_asr_mode",
     "stage1_asr_reference_text",
+    "stage1_alignment_backend",
+    "stage1_alignment_metadata",
 })
 _STAGE1_PLAN_KEYS = frozenset({
     "stage1_plan",
@@ -123,6 +125,11 @@ class CacheKey:
     stage1b_prompt_v: str
     subtitles_prompt_v: str
     timing_prompt_v: str
+    stage1_alignment_backend: str = "gemini"
+    alignment_model_revision: str = ""
+    alignment_algorithm_version: str = ""
+    alignment_separator_model: str = ""
+    alignment_separator_revision: str = ""
 
 
 def _fingerprint(parts: list[str]) -> str:
@@ -137,6 +144,11 @@ def _stage1a_fp(k: CacheKey) -> str:
         k.telegram_id, k.audio_hash, k.clip_start, k.clip_end,
         k.asr_mode, k.ref_text_hash,
         k.stage1_model, asr_prompt,
+        k.stage1_alignment_backend,
+        k.alignment_model_revision,
+        k.alignment_algorithm_version,
+        k.alignment_separator_model,
+        k.alignment_separator_revision,
     ])
 
 
@@ -147,6 +159,11 @@ def _stage1b_fp(k: CacheKey) -> str:
         k.telegram_id, k.audio_hash, k.clip_start, k.clip_end,
         k.asr_mode, k.ref_text_hash,
         k.stage1_model, asr_prompt, k.stage1b_prompt_v,
+        k.stage1_alignment_backend,
+        k.alignment_model_revision,
+        k.alignment_algorithm_version,
+        k.alignment_separator_model,
+        k.alignment_separator_revision,
     ])
 
 
@@ -158,6 +175,11 @@ def _stage2_subs_fp(k: CacheKey) -> str:
         k.asr_mode, k.ref_text_hash,
         k.stage1_model, asr_prompt,
         k.subtitles_mode, k.subtitles_model, k.subtitles_prompt_v,
+        k.stage1_alignment_backend,
+        k.alignment_model_revision,
+        k.alignment_algorithm_version,
+        k.alignment_separator_model,
+        k.alignment_separator_revision,
     ])
 
 
@@ -169,6 +191,11 @@ def _stage2_timing_fp(k: CacheKey) -> str:
         k.asr_mode, k.ref_text_hash,
         k.stage1_model, asr_prompt,
         k.user_drop_t, k.timing_prompt_v,
+        k.stage1_alignment_backend,
+        k.alignment_model_revision,
+        k.alignment_algorithm_version,
+        k.alignment_separator_model,
+        k.alignment_separator_revision,
     ])
 
 
@@ -182,6 +209,11 @@ def build_cache_key(
     lyrics_text: str,
     subtitles_mode: str,
     user_drop_t: Optional[float],
+    stage1_alignment_backend: str = "gemini",
+    alignment_model_revision: str = "",
+    alignment_algorithm_version: str = "",
+    alignment_separator_model: str = "",
+    alignment_separator_revision: str = "",
 ) -> CacheKey:
     """Build a CacheKey, reading model IDs and prompt versions from the environment."""
     def _fmt_sec(v: Optional[float]) -> str:
@@ -192,8 +224,33 @@ def build_cache_key(
             return "none"
         return hashlib.sha256(t.encode("utf-8")).hexdigest()[:16]
 
+    alignment_backend = str(stage1_alignment_backend or "gemini").strip().lower()
+    if alignment_backend not in {"gemini", "local_ctc"}:
+        raise RuntimeError(
+            f"unsupported stage1_alignment_backend={alignment_backend!r}"
+        )
     stage1_model = (os.environ.get("GEMINI_MODEL_STAGE1") or "").strip() or "unknown"
-    stage1_asr_model = (os.environ.get("GEMINI_MODEL_STAGE1_ASR") or stage1_model).strip() or stage1_model
+    stage1_asr_model = (
+        os.environ.get("GEMINI_MODEL_STAGE1_ASR") or stage1_model
+    ).strip() or stage1_model
+    if alignment_backend == "local_ctc":
+        stage1_asr_model = str(alignment_model_revision or "").strip()
+        if not stage1_asr_model:
+            raise RuntimeError(
+                "alignment_model_revision is required for local_ctc cache keys"
+            )
+        if not str(alignment_algorithm_version or "").strip():
+            raise RuntimeError(
+                "alignment_algorithm_version is required for local_ctc cache keys"
+            )
+        if not str(alignment_separator_model or "").strip():
+            raise RuntimeError(
+                "alignment_separator_model is required for local_ctc cache keys"
+            )
+        if not str(alignment_separator_revision or "").strip():
+            raise RuntimeError(
+                "alignment_separator_revision is required for local_ctc cache keys"
+            )
     subtitles_model = (os.environ.get("GEMINI_MODEL_SUBTITLES") or "").strip() or "unknown"
 
     return CacheKey(
@@ -212,6 +269,15 @@ def build_cache_key(
         stage1b_prompt_v=_prompt_version("mlcore.prompts.step1b_scenario_only"),
         subtitles_prompt_v=_subtitles_prompt_version(subtitles_mode),
         timing_prompt_v=_prompt_version("mlcore.prompts.stage2_timing_switches"),
+        stage1_alignment_backend=alignment_backend,
+        alignment_model_revision=str(alignment_model_revision or "").strip(),
+        alignment_algorithm_version=str(
+            alignment_algorithm_version or ""
+        ).strip(),
+        alignment_separator_model=str(alignment_separator_model or "").strip(),
+        alignment_separator_revision=str(
+            alignment_separator_revision or ""
+        ).strip(),
     )
 
 

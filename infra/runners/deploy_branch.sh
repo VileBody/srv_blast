@@ -11,6 +11,7 @@ DEPLOY_USE_PREBUILT_IMAGES="${DEPLOY_USE_PREBUILT_IMAGES:-false}"
 BLAST_IMAGE_REGISTRY="${BLAST_IMAGE_REGISTRY:-ghcr.io}"
 BLAST_IMAGE_REGISTRY_USERNAME="${BLAST_IMAGE_REGISTRY_USERNAME:-}"
 BLAST_IMAGE_REGISTRY_TOKEN="${BLAST_IMAGE_REGISTRY_TOKEN:-}"
+DEPLOY_BUILD_CACHE_MAX_USED_SPACE="${DEPLOY_BUILD_CACHE_MAX_USED_SPACE:-12gb}"
 
 if [[ -n "${REPO_DIR:-}" ]]; then
   SCRIPT_DIR="$REPO_DIR/infra/runners"
@@ -103,7 +104,7 @@ ensure_env_file_value() {
 }
 
 dozzle_remote_agent_default() {
-  printf '%s' "${DOZZLE_REMOTE_AGENT_DEFAULT:-192.168.0.8:7007,192.168.0.11:7007}"
+  printf '%s' "${DOZZLE_REMOTE_AGENT_DEFAULT:-192.168.0.12:7007,192.168.0.11:7007}"
 }
 
 is_remote_reachable_bind_host() {
@@ -398,6 +399,13 @@ fi
 # Deterministic deploy target: exact remote branch revision.
 git_run reset --hard "origin/$BRANCH"
 
+# Sourced only AFTER the checkout: this script is piped in from the CI runner,
+# but SCRIPT_DIR points at the repo ON THE NODE, which carries the previous
+# revision until the reset above. Sourcing earlier would load a stale library (or
+# none at all on the first deploy that introduces it).
+# shellcheck source=infra/runners/lib_prod_path.sh
+. "$SCRIPT_DIR/lib_prod_path.sh"
+
 deploy_root_services() {
   local services=("$@")
   if is_true "$DEPLOY_USE_PREBUILT_IMAGES"; then
@@ -418,6 +426,7 @@ require_prebuilt_image_env() {
   local key
   for key in \
     BLAST_RUNTIME_IMAGE \
+    BLAST_ALIGNMENT_IMAGE \
     BLAST_TG_BOT_IMAGE \
     BLAST_TG_BOT_PUBLIC_IMAGE \
     BLAST_ASSET_UI_IMAGE \
@@ -465,7 +474,14 @@ reclaim_disk_for_pull() {
   echo "[deploy] reclaim disk before pull (df before):"
   df -h / 2>/dev/null || true
   docker image prune -af   >/dev/null 2>&1 || true
-  docker builder prune -af >/dev/null 2>&1 || true
+  if [[ "$DEPLOY_STACK" == "infra-ops" ]]; then
+    # blast-ops is also the image builder. Keep a bounded recent cache so the
+    # next commit does not reinstall PyTorch or download the alignment model.
+    docker builder prune -af \
+      --max-used-space "$DEPLOY_BUILD_CACHE_MAX_USED_SPACE" >/dev/null 2>&1 || true
+  else
+    docker builder prune -af >/dev/null 2>&1 || true
+  fi
   echo "[deploy] reclaim disk done (df after):"
   df -h / 2>/dev/null || true
 }
@@ -489,8 +505,32 @@ deploy_root_services_prebuilt() {
 }
 
 deploy_prod_path_services() {
+  # The prod path is the only stack that attaches Celery workers to user queues,
+  # so it never goes through deploy_root_services (pull+up in one step). It rolls
+  # out via prod_path_rollout: stage the image, prove the picker pools on a
+  # candidate container, and only then start anything. A readiness FAIL leaves the
+  # currently running containers untouched and fails the deploy.
+  if is_true "$DEPLOY_ORCHESTRATOR_HA"; then
+    prod_path_queue_affinity_gate \
+      "$(env_file_value ORCHESTRATOR_NODE_NAME)" \
+      "$(env_file_value CELERY_QUEUE_BUILD)" \
+      "$(env_file_value CELERY_QUEUE_RENDER)" \
+      "$(env_file_value CELERY_QUEUE_RENDER_POLL)"
+  fi
+
   if ! is_true "$DEPLOY_ORCHESTRATOR_HA"; then
-    deploy_root_services orchestrator-api worker-build worker-render worker-render-poll
+    PROD_PATH_COMPOSE_ARGS=()
+    PROD_PATH_SERVICES=(
+      orchestrator-api alignment-api worker-build worker-alignment-smoke
+      worker-render worker-render-poll
+    )
+    PROD_PATH_USE_PREBUILT="$DEPLOY_USE_PREBUILT_IMAGES"
+    if is_true "$DEPLOY_USE_PREBUILT_IMAGES"; then
+      require_prebuilt_image_env
+      docker_registry_login_if_needed
+      reclaim_disk_for_pull
+    fi
+    prod_path_rollout
     remove_root_services tg-bot-public
     return 0
   fi
@@ -509,22 +549,18 @@ deploy_prod_path_services() {
   fi
 
   echo "[deploy] orchestrator-ha enabled compose=$compose_ha"
+  PROD_PATH_COMPOSE_ARGS=(-f docker-compose.yml -f "$compose_ha")
+  PROD_PATH_SERVICES=(
+    orchestrator-api orchestrator-api-2 alignment-api worker-build
+    worker-alignment-smoke worker-render worker-render-poll
+  )
+  PROD_PATH_USE_PREBUILT="$DEPLOY_USE_PREBUILT_IMAGES"
   if is_true "$DEPLOY_USE_PREBUILT_IMAGES"; then
     require_prebuilt_image_env
     docker_registry_login_if_needed
     reclaim_disk_for_pull
-    echo "[deploy] docker compose -f docker-compose.yml -f $compose_ha pull orchestrator-api orchestrator-api-2 worker-build worker-render worker-render-poll"
-    docker compose -f docker-compose.yml -f "$compose_ha" pull \
-      orchestrator-api orchestrator-api-2 worker-build worker-render worker-render-poll
-    echo "[deploy] docker compose -f docker-compose.yml -f $compose_ha up -d --no-build orchestrator-api orchestrator-api-2 worker-build worker-render worker-render-poll"
-    docker compose -f docker-compose.yml -f "$compose_ha" up -d --no-build \
-      orchestrator-api orchestrator-api-2 worker-build worker-render worker-render-poll
-    remove_root_services tg-bot-public
-    return 0
   fi
-  echo "[deploy] docker compose -f docker-compose.yml -f $compose_ha up -d --build orchestrator-api orchestrator-api-2 worker-build worker-render worker-render-poll"
-  docker compose -f docker-compose.yml -f "$compose_ha" up -d --build \
-    orchestrator-api orchestrator-api-2 worker-build worker-render worker-render-poll
+  prod_path_rollout
   remove_root_services tg-bot-public
 }
 
@@ -859,7 +895,7 @@ case "$DEPLOY_STACK" in
     mapfile -t services < <(infra_app_services)
     deploy_root_services "${services[@]}"
     if is_true "$DEPLOY_PRUNE_OTHER_STACK"; then
-      remove_root_services orchestrator-api orchestrator-api-2 worker-build worker-render worker-render-poll
+      remove_root_services orchestrator-api orchestrator-api-2 alignment-api worker-build worker-alignment-smoke worker-render worker-render-poll
     fi
     ;;
   infra-ops)
@@ -879,7 +915,7 @@ case "$DEPLOY_STACK" in
     deploy_runner_compose_if_present "$RUNNERS_DIR/docker-compose.observability.yml" "$RUNNERS_DIR/.env.observability"
     deploy_github_runner_compose_if_allowed "$RUNNERS_DIR/docker-compose.github-runner.yml" "$RUNNERS_DIR/.env.github-runner"
     if is_true "$DEPLOY_PRUNE_OTHER_STACK"; then
-      remove_root_services orchestrator-api orchestrator-api-2 worker-build worker-render worker-render-poll
+      remove_root_services orchestrator-api orchestrator-api-2 alignment-api worker-build worker-alignment-smoke worker-render worker-render-poll
     fi
     ;;
   *)

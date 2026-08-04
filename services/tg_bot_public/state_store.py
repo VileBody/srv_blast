@@ -58,8 +58,8 @@ STAGE_WAIT_F2_SHAPE = "WAIT_F2_SHAPE"
 STAGE_WAIT_F1_SOUND = "WAIT_F1_SOUND"
 # F1 «Звук» — wait for optional subtitle text (or skip). Mirror of tg_bot_botapi.
 STAGE_WAIT_F1_TEXT = "WAIT_F1_TEXT"
-# Photo flow (bg_mode == "photo", behind PHOTO_FLOW_ENABLED) — two F3-style steps:
-# stylization grade, then transition between photos. Mirror of tg_bot_botapi.
+# Photo flow (bg_mode == "photo", behind PHOTO_FLOW_ENABLED). Same slot as the
+# footage visuals: transition on cuts, then stylization. Mirror of tg_bot_botapi.
 STAGE_WAIT_PHOTO_STYLE = "WAIT_PHOTO_STYLE"
 STAGE_WAIT_PHOTO_TRANSITION = "WAIT_PHOTO_TRANSITION"
 # Hook battery — wait for optional F1 sound. Mirror of tg_bot_botapi.
@@ -159,6 +159,10 @@ class ChatState(BaseModel):
     prepared_audio_local_path: str = ""
     lyrics_text: str = ""
     target_fragment: str = ""
+    # False for legacy states whose target_fragment may contain the full lyrics
+    # selected by the former Gemini flow. Local CTC requires an explicitly
+    # entered fragment that matches the user clip window.
+    target_fragment_explicit: bool = False
     footage_genre_key: str = ""
     footage_artist_key: str = ""
     footage_artist_id: str = ""
@@ -170,7 +174,7 @@ class ChatState(BaseModel):
     pending_bg_mode: str = ""
     # Solid background color key when bg_mode == "solid": "white" | "green".
     bg_solid_color: str = ""
-    # Photo flow (bg_mode == "photo") — two F3-style picks, mirror of tg_bot_botapi.
+    # Photo flow (bg_mode == "photo") — transition + stylization, mirror of tg_bot_botapi.
     # photo_style: "" | none | warm | cold | vintage | bw | vhs | night_vision.
     # photo_transition: "" | flash | none | slide | zoom | whip.
     photo_style: str = ""
@@ -557,8 +561,10 @@ class RedisChatStateStore:
     async def reset_to_wait_audio(self, chat_id: int) -> ChatState:
         existing = await self.get(chat_id)
         existing.stage = STAGE_WAIT_AUDIO
-        # Clear generation-specific fields but keep user context
-        existing.prepared_audio_local_path = ""
+        # Clear generation-specific fields while keeping the last input reusable.
+        # The audio handler clears audio/text/timing only after a new file has
+        # been prepared successfully, so /sendtrack does not discard the old
+        # track before the user has actually replaced it.
         existing.active_job_id = ""
         existing.active_job_ids = []
         existing.job_order = []
@@ -577,12 +583,9 @@ class RedisChatStateStore:
         existing.last_job_stage = ""
         existing.last_job_error = ""
         existing.last_result_url = ""
-        existing.target_fragment = ""
         existing.footage_genre_key = ""
         existing.footage_artist_key = ""
         existing.footage_artist_id = ""
-        existing.user_clip_start_sec = 0.0
-        existing.user_clip_end_sec = 0.0
         existing.subtitles_mode = ""
         existing.render_engine = ""
         existing.hook_enabled = False
