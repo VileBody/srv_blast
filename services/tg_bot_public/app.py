@@ -6908,12 +6908,14 @@ class BlastBotApp:
         if self.tbank and price > 0:
             suffix = "sub" if recurrent else ""
             order_id = f"{st.chat_id}-{pkg.replace(' ', '_')}-{suffix}{uuid.uuid4().hex[:8]}"
+            payment_record_created = False
             try:
                 last_utm = await self.credits_db.get_last_utm(st.chat_id)
                 if recurrent:
                     await self.credits_db.create_recurrent_payment(order_id, st.chat_id, price, pkg, utm=last_utm)
                 else:
                     await self.credits_db.create_payment(order_id, st.chat_id, price, pkg, utm=last_utm)
+                payment_record_created = True
                 pay_url = await self.tbank.create_payment(
                     amount_rub=price,
                     order_id=order_id,
@@ -6956,6 +6958,10 @@ class BlastBotApp:
                 raise RuntimeError("T-Bank Init did not return PaymentURL")
             except Exception as e:
                 log.exception("tbank payment creation failed: %s", e)
+                if payment_record_created:
+                    updated = await self.credits_db.update_payment_status(order_id, "INIT_FAILED")
+                    if not updated:
+                        log.error("failed to mark T-Bank Init failure order=%s", order_id)
         else:
             log.error(
                 "tbank payment creation unavailable configured=%s package=%s price=%s",
