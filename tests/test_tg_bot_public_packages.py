@@ -5,7 +5,12 @@ import types
 from pathlib import Path
 
 from services.tg_bot_public import app as public_app
-from services.tg_bot_public.state_store import ChatState, STAGE_ALL_PACKAGES, STAGE_PACKAGE_INFO
+from services.tg_bot_public.state_store import (
+    ChatState,
+    STAGE_ALL_PACKAGES,
+    STAGE_PACKAGE_INFO,
+    STAGE_SUBSCRIPTION_CONFIRM,
+)
 
 
 class _FakeCreditsDB:
@@ -14,6 +19,19 @@ class _FakeCreditsDB:
 
     async def log_event(self, tg_id: int, event: str, detail: str = "") -> None:
         self.events.append((int(tg_id), str(event), str(detail or "")))
+
+
+class _PaymentCreditsDB(_FakeCreditsDB):
+    async def get_last_utm(self, _tg_id: int) -> dict[str, str]:
+        return {}
+
+    async def create_recurrent_payment(self, *_args, **_kwargs) -> None:
+        return None
+
+
+class _FailingTBank:
+    async def create_payment(self, **_kwargs) -> str:
+        raise RuntimeError("TLS unavailable")
 
 
 class _FakeStore:
@@ -113,5 +131,30 @@ def test_package_detail_sends_card_by_file_id(tmp_path: Path) -> None:
         assert len(msg.answers) == 1
         assert "Бласт — 1 990" in str(msg.answers[0]["text"])
         assert app.credits_db.events == [(77, "select_package", public_app.BTN_PKG_BLAST)]
+
+    asyncio.run(_run())
+
+
+def test_subscription_payment_failure_keeps_confirm_stage(tmp_path: Path) -> None:
+    async def _run() -> None:
+        app = _new_app(tmp_path)
+        app.settings.offer_url = ""
+        app.credits_db = _PaymentCreditsDB()
+        app.tbank = _FailingTBank()
+        msg = _FakeMessage(text=public_app.BTN_CONFIRM, chat_id=42)
+        st = ChatState(
+            chat_id=42,
+            chat_username="tester",
+            stage=STAGE_SUBSCRIPTION_CONFIRM,
+            selected_package="Бласт",
+        )
+
+        await public_app.BlastBotApp._handle_subscription_confirm(app, msg, st)
+
+        assert st.stage == STAGE_SUBSCRIPTION_CONFIRM
+        assert len(msg.answers) == 1
+        body = str(msg.answers[0]["text"])
+        assert "Не удалось сформировать ссылку" in body
+        assert "свяжется наш менеджер" not in body
 
     asyncio.run(_run())
