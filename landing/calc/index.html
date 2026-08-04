@@ -421,14 +421,14 @@
                 aria-label="Как считаем выручку с первых оплат"
               >?</button>
               <span class="calc-tip" id="note-first" role="tooltip">
-                Как считаем: охват × конверсия 2–2,5% — столько человек покупает
-                после одного поста. С каждой первой покупки ты получаешь 50% от
-                стоимости.
+                Как считаем: около 5% тех, кто увидел пост, доходит до бота.
+                Из них покупают 2–2,5%. С каждой первой покупки ты получаешь
+                50% от стоимости.
               </span>
             </span>
           </div>
           <p class="calc-value" id="value-first">0 ₽</p>
-          <p class="calc-caption" id="caption-buyers">≈ 0 покупателей с поста</p>
+          <p class="calc-caption" id="caption-visitors">≈ 0 переходов в бота с поста</p>
         </article>
 
         <article class="calc-card">
@@ -443,9 +443,10 @@
                 aria-label="Как считаем выручку с повторных оплат"
               >?</button>
               <span class="calc-tip" id="note-recurring" role="tooltip">
-                Как считаем: в среднем человек остаётся в подписке около 3 месяцев
-                — это первая оплата и ещё 2 продления. С каждого продления тебе
-                идёт 20% от стоимости, и так всё время, пока он платит.
+                Считаем от тех же покупателей. В среднем человек остаётся
+                в подписке около 3 месяцев — это первая оплата и ещё 2 продления.
+                С каждого продления тебе идёт 20% от стоимости, и так всё время,
+                пока он платит.
               </span>
             </span>
           </div>
@@ -490,7 +491,8 @@
     /* ═══════════════════════════════════════════════════════════
        КОНСТАНТЫ РАСЧЁТА — правится здесь, в одном месте
        ═══════════════════════════════════════════════════════════ */
-    var CONV            = 0.0225; // конверсия охвата в первую покупку (середина цели 2–2,5%)
+    var FUNNEL_RATE     = 0.05;   // доля увидевших пост, которая доходит до бота (плановая)
+    var CONV            = 0.0225; // конверсия ИЗ БОТА в первую оплату (середина цели 2–2,5%)
     var PRICE           = 3000;   // ₽, средний чек
     var FIRST_SHARE     = 0.5;    // доля партнёра с первой оплаты
     var RECURRING_SHARE = 0.2;    // доля партнёра с каждой повторной оплаты
@@ -508,7 +510,7 @@
     var input          = document.getElementById('calc-reach');
     var valueFirst     = document.getElementById('value-first');
     var valueRecurring = document.getElementById('value-recurring');
-    var captionBuyers  = document.getElementById('caption-buyers');
+    var captionVisitors = document.getElementById('caption-visitors');
 
     var nf = new Intl.NumberFormat('ru-RU');
 
@@ -516,17 +518,21 @@
       return nf.format(Math.round(value)) + ' ₽';
     }
 
-    function pluralBuyers(n) {
+    // forms = [1 переход, 2 перехода, 5 переходов]
+    function plural(n, forms) {
       var mod10 = n % 10;
       var mod100 = n % 100;
-      if (mod10 === 1 && mod100 !== 11) return 'покупатель';
-      if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return 'покупателя';
-      return 'покупателей';
+      if (mod10 === 1 && mod100 !== 11) return forms[0];
+      if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return forms[1];
+      return forms[2];
     }
 
     function calculate(reach) {
-      var buyers = reach * CONV;
+      // Воронка в два шага: пост увидели → часть дошла до бота → часть из них купила.
+      var visitors = reach * FUNNEL_RATE;
+      var buyers = visitors * CONV;
       return {
+        visitors: visitors,
         buyers: buyers,
         first: buyers * PRICE * FIRST_SHARE,
         recurring: buyers * PRICE * RECURRING_SHARE * RENEWALS
@@ -535,11 +541,12 @@
 
     function render(reach) {
       var result = calculate(reach);
-      var buyersRounded = Math.round(result.buyers);
+      var visitorsRounded = Math.round(result.visitors);
       valueFirst.textContent = formatRub(result.first);
       valueRecurring.textContent = formatRub(result.recurring);
-      captionBuyers.textContent =
-        '≈ ' + nf.format(buyersRounded) + ' ' + pluralBuyers(buyersRounded) + ' с поста';
+      captionVisitors.textContent =
+        '≈ ' + nf.format(visitorsRounded) + ' ' +
+        plural(visitorsRounded, ['переход', 'перехода', 'переходов']) + ' в бота с поста';
     }
 
     // Форматирование ввода с сохранением позиции курсора
