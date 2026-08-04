@@ -1,0 +1,623 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Калькулятор дохода — Blast</title>
+  <meta name="description" content="Посчитай, сколько можно заработать на посте про Blast в своём Telegram-канале." />
+  <link rel="icon" type="image/svg+xml" href="../assets/logo.svg" />
+  <link rel="stylesheet" href="../css/style.css?v=20260730-hero1" />
+  <style>
+    /* ═══════════════════════════════════════════════════════════
+       CALC PAGE — использует переменные и шрифты из css/style.css
+       ═══════════════════════════════════════════════════════════ */
+    .calc-page { padding-bottom: 40px; }
+
+    /* ─── Navbar (упрощённый: лого + CTA) ───────────────────── */
+    .calc-nav-wrap {
+      position: relative;
+      top: 20px;
+      z-index: 200;
+      max-width: var(--container);
+      margin: 0 auto;
+      padding: 0 var(--side);
+    }
+    .calc-nav {
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      height: 80px;
+      padding: 0 30px;
+      background-color: var(--nav-bg);
+      border-radius: var(--r20);
+      overflow: hidden;
+    }
+    .calc-nav-back {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      pointer-events: none;
+      z-index: 0;
+    }
+    .calc-nav-logo,
+    .calc-nav .btn { position: relative; z-index: 1; }
+    .calc-nav .btn { height: 50px; padding: 0 26px; font-size: 18px; }
+
+    /* ─── Hero ───────────────────────────────────────────────── */
+    .calc-hero { padding-top: 80px; text-align: center; }
+    .calc-hero .eyebrow { margin-bottom: 10px; }
+    .calc-h1 {
+      font-size: 56px;
+      font-weight: 400;
+      line-height: 1.1;
+      color: var(--text);
+      max-width: 900px;
+      margin: 0 auto;
+    }
+    .calc-h1 i {
+      font-family: var(--font);
+      font-weight: 500;
+      font-style: italic;
+    }
+    .calc-lead {
+      margin: 24px auto 0;
+      max-width: 620px;
+      font-size: 20px;
+      font-weight: 350;
+      line-height: 1.5;
+      color: var(--text-60);
+    }
+
+    /* ─── Панель с инпутом ───────────────────────────────────── */
+    .calc-panel {
+      max-width: 760px;
+      margin: 50px auto 0;
+      padding: 36px 40px 32px;
+      background-color: var(--nav-bg);
+      border: 1px solid rgba(95, 66, 185, .5);
+      border-radius: var(--r20);
+    }
+    .calc-label {
+      display: block;
+      font-size: 20px;
+      font-weight: 400;
+      color: var(--text);
+      margin-bottom: 14px;
+    }
+    .calc-input-wrap { position: relative; }
+    .calc-input {
+      width: 100%;
+      height: 76px;
+      padding: 0 130px 0 24px;
+      background-color: var(--bg);
+      border: 1px solid rgba(95, 66, 185, .8);
+      border-radius: var(--r15);
+      color: var(--text);
+      font-family: var(--font);
+      font-size: 34px;
+      font-weight: 400;
+      outline: none;
+      transition: border-color .2s, box-shadow .2s;
+      -moz-appearance: textfield;
+    }
+    .calc-input::placeholder { color: var(--text-40); }
+    .calc-input:focus {
+      border-color: var(--pill-border);
+      box-shadow: 0 0 0 4px rgba(139, 111, 230, .15);
+    }
+    .calc-input-suffix {
+      position: absolute;
+      right: 24px;
+      top: 50%;
+      transform: translateY(-50%);
+      font-size: 20px;
+      font-weight: 350;
+      color: var(--text-40);
+      pointer-events: none;
+    }
+    .calc-hint {
+      margin-top: 14px;
+      font-size: 16px;
+      font-weight: 350;
+      line-height: 1.5;
+      color: var(--text-60);
+    }
+
+    /* ─── Результаты ─────────────────────────────────────────── */
+    .calc-results {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+      max-width: 760px;
+      margin: 20px auto 0;
+      /* .load-fade оставляет после себя transform (fill-mode: forwards), а он создаёт
+         стекинг-контекст у каждого блока — из-за этого z-index подсказки работает
+         только внутри .calc-results, и дисклеймер с CTA рисуются поверх неё.
+         Поднимаем весь блок результатов над последующими секциями. */
+      position: relative;
+      z-index: 5;
+    }
+    .calc-card {
+      min-width: 0; /* чтобы 1fr-колонки не разъезжались из-за длинных чисел */
+      padding: 28px 28px 24px;
+      background-color: var(--card-bg);
+      border: 1px solid rgba(95, 66, 185, .35);
+      border-radius: var(--r20);
+      display: flex;
+      flex-direction: column;
+    }
+    .calc-card-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .calc-card-title {
+      font-size: 18px;
+      font-weight: 350;
+      line-height: 1.4;
+      color: var(--text-80);
+    }
+    .calc-help-wrap {
+      position: relative;
+      flex-shrink: 0;
+      line-height: 0; /* чтобы обёртка не добавляла высоту к кнопке */
+    }
+    .calc-help {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 26px;
+      height: 26px;
+      padding: 3px 0 0; /* оптическая компенсация: у «?» нет выносного вниз, паддинг двигает глиф на половину — 1.5px */
+      border-radius: 50%;
+      border: 1px solid rgba(139, 111, 230, .7);
+      background: transparent;
+      color: #8b6fe6;
+      font-family: var(--font);
+      font-size: 15px;
+      line-height: 1;
+      cursor: pointer;
+      transition: background-color .2s, color .2s;
+    }
+    .calc-help:hover,
+    .calc-help[aria-expanded="true"] {
+      background-color: rgba(139, 111, 230, .18);
+      color: var(--text);
+    }
+
+    /* Подсказка «как считаем» — слой поверх, вне потока: не двигает карточки */
+    .calc-tip {
+      position: absolute;
+      top: calc(100% + 10px);
+      right: -6px;
+      z-index: 10;
+      width: 264px;
+      max-width: 78vw;
+      padding: 14px 16px;
+      background-color: var(--nav-bg);
+      border: 1px solid rgba(139, 111, 230, .4);
+      border-radius: var(--r12);
+      box-shadow: 0 12px 30px rgba(0, 0, 0, .45);
+      font-size: 14px;
+      font-weight: 350;
+      line-height: 1.5;
+      color: var(--text-80);
+      text-align: left;
+      opacity: 0;
+      visibility: hidden;
+      transform: translateY(-4px);
+      transition: opacity .18s ease, transform .18s ease, visibility .18s;
+    }
+    /* хвостик к кнопке */
+    .calc-tip::after {
+      content: '';
+      position: absolute;
+      top: -6px;
+      right: 12px;
+      width: 10px;
+      height: 10px;
+      background-color: var(--nav-bg);
+      border-left: 1px solid rgba(139, 111, 230, .4);
+      border-top: 1px solid rgba(139, 111, 230, .4);
+      transform: rotate(45deg);
+    }
+    .calc-tip.is-open {
+      opacity: 1;
+      visibility: visible;
+      transform: translateY(0);
+    }
+    /* наведение — только там, где есть настоящий курсор */
+    @media (hover: hover) and (pointer: fine) {
+      .calc-help-wrap:hover .calc-tip,
+      .calc-help:focus-visible + .calc-tip {
+        opacity: 1;
+        visibility: visible;
+        transform: translateY(0);
+      }
+    }
+    .calc-value {
+      margin-top: 18px;
+      font-size: 46px;
+      font-weight: 400;
+      line-height: 1.1;
+      white-space: nowrap;
+      background: linear-gradient(175deg, var(--g-start) 0%, var(--g-end) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .calc-caption {
+      margin-top: 10px;
+      font-size: 15px;
+      font-weight: 350;
+      color: var(--text-40);
+    }
+    /* ─── Дисклеймер + CTA ───────────────────────────────────── */
+    .calc-disclaimer {
+      max-width: 760px;
+      margin: 20px auto 0;
+      font-size: 14px;
+      font-weight: 350;
+      line-height: 1.5;
+      color: var(--text-40);
+      text-align: center;
+    }
+    .calc-cta {
+      max-width: 760px;
+      margin: 40px auto 0;
+      text-align: center;
+    }
+    .calc-cta p {
+      font-size: 20px;
+      font-weight: 350;
+      color: var(--text-80);
+      margin-bottom: 20px;
+    }
+
+    /* ─── Футер ──────────────────────────────────────────────── */
+    .calc-footer {
+      max-width: var(--container);
+      margin: 80px auto 0;
+      padding: 30px var(--side) 40px;
+      border-top: 1px solid rgba(246, 245, 253, .08);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      flex-wrap: wrap;
+      font-size: 16px;
+      font-weight: 350;
+      color: var(--text-40);
+    }
+    .calc-footer a { color: var(--text-60); }
+    .calc-footer a:hover { color: var(--text); }
+    .calc-footer-links { display: flex; gap: 24px; flex-wrap: wrap; }
+
+    /* ─── Планшет ────────────────────────────────────────────── */
+    @media (max-width: 1280px) {
+      .calc-nav-wrap { padding: 0 40px; }
+      .calc-footer { padding-left: 40px; padding-right: 40px; }
+    }
+
+    /* ─── Мобильный ──────────────────────────────────────────── */
+    @media (max-width: 768px) {
+      .calc-nav-wrap { padding: 0 16px; }
+      .calc-nav { height: 64px; padding: 0 16px; }
+      .calc-nav-logo img { width: 34px; height: 32px; }
+      .calc-nav .btn { height: 42px; padding: 0 18px; font-size: 15px; border-radius: 21px; }
+
+      .calc-hero { padding-top: 44px; }
+      .calc-hero .eyebrow { font-size: 16px; }
+      .calc-h1 { font-size: 32px; }
+      .calc-lead { margin-top: 16px; font-size: 16px; }
+
+      .calc-panel {
+        margin-top: 30px;
+        padding: 24px 20px 22px;
+        border-radius: var(--r15);
+      }
+      .calc-label { font-size: 17px; margin-bottom: 12px; }
+      .calc-input {
+        height: 64px;
+        font-size: 26px;
+        padding: 0 96px 0 18px;
+        border-radius: var(--r12);
+      }
+      .calc-input-suffix { right: 18px; font-size: 15px; }
+      .calc-hint { font-size: 14px; }
+
+      .calc-results { grid-template-columns: 1fr; gap: 14px; margin-top: 14px; }
+      .calc-card { padding: 22px 20px 20px; border-radius: var(--r15); }
+      .calc-card-title { font-size: 16px; }
+      .calc-value { font-size: 34px; margin-top: 14px; }
+      .calc-caption { font-size: 14px; }
+      .calc-tip { font-size: 13px; padding: 12px 14px; width: 250px; }
+
+      .calc-disclaimer { font-size: 13px; padding: 0 4px; }
+      .calc-cta { margin-top: 30px; }
+      .calc-cta p { font-size: 17px; margin-bottom: 16px; }
+      .calc-cta .btn { width: 100%; height: 56px; font-size: 17px; }
+
+      .calc-footer {
+        margin-top: 50px;
+        padding: 24px 20px 30px;
+        font-size: 14px;
+        justify-content: center;
+        text-align: center;
+      }
+      .calc-footer-links { justify-content: center; gap: 16px; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- NAVBAR -->
+  <div class="calc-nav-wrap load-fade load-fade-d1">
+    <header class="calc-nav">
+      <img src="../assets/backforheader.png" class="calc-nav-back" aria-hidden="true" />
+      <a href="../index.html" class="calc-nav-logo" aria-label="Blast — на главную">
+        <img src="../assets/impulselogo.svg" alt="Blast" width="42" height="40" loading="eager" />
+      </a>
+      <a href="https://t.me/impulsemarketing" class="btn" target="_blank" rel="noopener">
+        <img src="../assets/backforbutton.png" class="btn-back" aria-hidden="true" />
+        <span>Стать партнёром</span>
+      </a>
+    </header>
+  </div>
+
+  <main class="calc-page">
+    <div class="container">
+
+      <!-- HERO -->
+      <section class="calc-hero load-fade load-fade-d2">
+        <p class="eyebrow">Калькулятор партнёра</p>
+        <h1 class="calc-h1">
+          Сколько ты заработаешь<br />на одном посте <i>про Blast</i>
+        </h1>
+        <p class="calc-lead">
+          Введи охват своего Telegram-канала — покажем, сколько принесёт размещение:
+          сразу и на дистанции.
+        </p>
+      </section>
+
+      <!-- ИНПУТ -->
+      <section class="calc-panel load-fade load-fade-d3">
+        <label class="calc-label" for="calc-reach">Средний охват одного поста</label>
+        <div class="calc-input-wrap">
+          <input
+            id="calc-reach"
+            class="calc-input"
+            type="text"
+            inputmode="numeric"
+            autocomplete="off"
+            placeholder="1 000"
+            aria-describedby="calc-reach-hint"
+          />
+          <span class="calc-input-suffix">просмотров</span>
+        </div>
+        <p class="calc-hint" id="calc-reach-hint">
+          Это просмотры одного поста, а не число подписчиков. Посмотри статистику
+          последних постов в канале и возьми среднее.
+        </p>
+      </section>
+
+      <!-- РЕЗУЛЬТАТЫ -->
+      <section class="calc-results load-fade load-fade-d4">
+
+        <article class="calc-card">
+          <div class="calc-card-head">
+            <h2 class="calc-card-title">Выручка с первых оплат</h2>
+            <span class="calc-help-wrap">
+              <button
+                class="calc-help"
+                type="button"
+                aria-expanded="false"
+                aria-controls="note-first"
+                aria-label="Как считаем выручку с первых оплат"
+              >?</button>
+              <span class="calc-tip" id="note-first" role="tooltip">
+                Как считаем: около 25% тех, кто увидел пост, доходит до бота —
+                аудитория профильная, артист к артисту. Из них покупают 3–3,5%.
+                С каждой первой покупки ты получаешь 50% от стоимости.
+              </span>
+            </span>
+          </div>
+          <p class="calc-value" id="value-first">0 ₽</p>
+          <p class="calc-caption" id="caption-visitors">≈ 0 переходов в бота с поста</p>
+        </article>
+
+        <article class="calc-card">
+          <div class="calc-card-head">
+            <h2 class="calc-card-title">Выручка с повторных оплат</h2>
+            <span class="calc-help-wrap">
+              <button
+                class="calc-help"
+                type="button"
+                aria-expanded="false"
+                aria-controls="note-recurring"
+                aria-label="Как считаем выручку с повторных оплат"
+              >?</button>
+              <span class="calc-tip" id="note-recurring" role="tooltip">
+                Считаем от тех же покупателей. В среднем человек остаётся
+                в подписке около 3 месяцев — это первая оплата и ещё 2 продления
+                по цене подписки, 1 990 ₽/мес. С каждого продления тебе идёт
+                20%, и так всё время, пока он платит.
+              </span>
+            </span>
+          </div>
+          <p class="calc-value" id="value-recurring">0 ₽</p>
+          <p class="calc-caption">за всё время жизни в подписке</p>
+        </article>
+
+      </section>
+
+      <p class="calc-disclaimer load-fade load-fade-d5">
+        Расчёт построен на средних показателях сервиса и является прогнозом,
+        а не гарантией дохода.
+      </p>
+
+      <!-- CTA -->
+      <section class="calc-cta load-fade load-fade-d5">
+        <p>Готов разместить пост и забрать свою долю?</p>
+        <a href="https://t.me/impulsemarketing" class="btn" target="_blank" rel="noopener">
+          <img src="../assets/backforbutton.png" class="btn-back" aria-hidden="true" />
+          <span>Написать нам</span>
+          <img src="../assets/tgvector2.svg" alt="" width="17" height="15" />
+        </a>
+      </section>
+
+    </div>
+  </main>
+
+  <footer class="calc-footer">
+    <span>«Импульс Промо» 2026</span>
+    <span class="calc-footer-links">
+      <a href="../index.html">На главную</a>
+      <a href="../offer.html">Оферта</a>
+      <a href="../privacy.html">Политика конфиденциальности</a>
+      <a href="../contacts.html">Контакты</a>
+    </span>
+  </footer>
+
+  <script>
+  (function () {
+    'use strict';
+
+    /* ═══════════════════════════════════════════════════════════
+       КОНСТАНТЫ РАСЧЁТА — правится здесь, в одном месте
+       ═══════════════════════════════════════════════════════════ */
+    var FUNNEL_RATE     = 0.25;   // доля увидевших пост, которая доходит до бота (плановая)
+    var CONV            = 0.0325; // конверсия ИЗ БОТА в первую оплату (середина цели 3–3,5%)
+    var FIRST_PRICE     = 3000;   // ₽, средний чек первой оплаты (микс тарифов)
+    var RENEWAL_PRICE   = 1990;   // ₽, продлевается только подписка «Blast» — по её цене
+    var FIRST_SHARE     = 0.5;    // доля партнёра с первой оплаты
+    var RECURRING_SHARE = 0.2;    // доля партнёра с каждой повторной оплаты
+    var LIFETIME_MONTHS = 3;      // сколько месяцев в среднем человек живёт в подписке (с первым)
+
+    var DEFAULT_REACH = 1000;     // что показываем при первом открытии
+    var MAX_REACH     = 10000000; // защита от абсурдных значений
+
+    // Продлений на одного купившего: вся жизнь в подписке минус первая оплата.
+    // При LIFETIME_MONTHS=3 → 2 продления.
+    var RENEWALS = Math.max(0, LIFETIME_MONTHS - 1);
+
+    /* ═══════════════════════════════════════════════════════════ */
+
+    var input          = document.getElementById('calc-reach');
+    var valueFirst     = document.getElementById('value-first');
+    var valueRecurring = document.getElementById('value-recurring');
+    var captionVisitors = document.getElementById('caption-visitors');
+
+    var nf = new Intl.NumberFormat('ru-RU');
+
+    function formatRub(value) {
+      return nf.format(Math.round(value)) + ' ₽';
+    }
+
+    // forms = [1 переход, 2 перехода, 5 переходов]
+    function plural(n, forms) {
+      var mod10 = n % 10;
+      var mod100 = n % 100;
+      if (mod10 === 1 && mod100 !== 11) return forms[0];
+      if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return forms[1];
+      return forms[2];
+    }
+
+    function calculate(reach) {
+      // Воронка в два шага: пост увидели → часть дошла до бота → часть из них купила.
+      var visitors = reach * FUNNEL_RATE;
+      var buyers = visitors * CONV;
+      return {
+        visitors: visitors,
+        buyers: buyers,
+        first: buyers * FIRST_PRICE * FIRST_SHARE,
+        recurring: buyers * RENEWAL_PRICE * RECURRING_SHARE * RENEWALS
+      };
+    }
+
+    function render(reach) {
+      var result = calculate(reach);
+      var visitorsRounded = Math.round(result.visitors);
+      valueFirst.textContent = formatRub(result.first);
+      valueRecurring.textContent = formatRub(result.recurring);
+      captionVisitors.textContent =
+        '≈ ' + nf.format(visitorsRounded) + ' ' +
+        plural(visitorsRounded, ['переход', 'перехода', 'переходов']) + ' в бота с поста';
+    }
+
+    // Форматирование ввода с сохранением позиции курсора
+    function onInput() {
+      var caret = input.selectionStart;
+      var raw = input.value;
+      var digitsBeforeCaret = raw.slice(0, caret).replace(/\D/g, '').length;
+
+      var digits = raw.replace(/\D/g, '').replace(/^0+(?=\d)/, '');
+      var reach = digits ? parseInt(digits, 10) : 0;
+      if (reach > MAX_REACH) {
+        reach = MAX_REACH;
+        digitsBeforeCaret = String(MAX_REACH).length;
+      }
+
+      var formatted = digits ? nf.format(reach) : '';
+      input.value = formatted;
+
+      // вернуть курсор туда же по счёту цифр
+      var pos = 0;
+      var seen = 0;
+      while (pos < formatted.length && seen < digitsBeforeCaret) {
+        if (/\d/.test(formatted.charAt(pos))) seen++;
+        pos++;
+      }
+      try { input.setSelectionRange(pos, pos); } catch (e) { /* не критично */ }
+
+      render(reach);
+    }
+
+    input.addEventListener('input', onInput);
+
+    // Подсказки «как считаем».
+    // На десктопе достаточно наведения (чистый CSS), тап нужен там, где hover нет.
+    var helpButtons = Array.prototype.slice.call(document.querySelectorAll('.calc-help'));
+
+    function closeTips(except) {
+      helpButtons.forEach(function (btn) {
+        if (btn === except) return;
+        var tip = document.getElementById(btn.getAttribute('aria-controls'));
+        if (tip) tip.classList.remove('is-open');
+        btn.setAttribute('aria-expanded', 'false');
+      });
+    }
+
+    helpButtons.forEach(function (btn) {
+      btn.addEventListener('click', function (event) {
+        event.stopPropagation();
+        var tip = document.getElementById(btn.getAttribute('aria-controls'));
+        if (!tip) return;
+        var open = tip.classList.toggle('is-open');
+        btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+        closeTips(btn);
+      });
+
+      var tip = document.getElementById(btn.getAttribute('aria-controls'));
+      // клик по самой подсказке не должен её закрывать
+      if (tip) tip.addEventListener('click', function (event) { event.stopPropagation(); });
+    });
+
+    document.addEventListener('click', function () { closeTips(null); });
+    document.addEventListener('keydown', function (event) {
+      if (event.key === 'Escape' || event.key === 'Esc') closeTips(null);
+    });
+
+    // Стартовое состояние
+    input.value = nf.format(DEFAULT_REACH);
+    render(DEFAULT_REACH);
+  })();
+  </script>
+
+</body>
+</html>
