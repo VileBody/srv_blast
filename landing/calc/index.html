@@ -156,10 +156,18 @@
       line-height: 1.4;
       color: var(--text-80);
     }
-    .calc-help {
+    .calc-help-wrap {
+      position: relative;
       flex-shrink: 0;
+      line-height: 0; /* чтобы обёртка не добавляла высоту к кнопке */
+    }
+    .calc-help {
+      display: flex;
+      align-items: center;
+      justify-content: center;
       width: 26px;
       height: 26px;
+      padding: 3px 0 0; /* оптическая компенсация: у «?» нет выносного вниз, паддинг двигает глиф на половину — 1.5px */
       border-radius: 50%;
       border: 1px solid rgba(139, 111, 230, .7);
       background: transparent;
@@ -174,6 +182,57 @@
     .calc-help[aria-expanded="true"] {
       background-color: rgba(139, 111, 230, .18);
       color: var(--text);
+    }
+
+    /* Подсказка «как считаем» — слой поверх, вне потока: не двигает карточки */
+    .calc-tip {
+      position: absolute;
+      top: calc(100% + 10px);
+      right: -6px;
+      z-index: 10;
+      width: 264px;
+      max-width: 78vw;
+      padding: 14px 16px;
+      background-color: var(--nav-bg);
+      border: 1px solid rgba(139, 111, 230, .4);
+      border-radius: var(--r12);
+      box-shadow: 0 12px 30px rgba(0, 0, 0, .45);
+      font-size: 14px;
+      font-weight: 350;
+      line-height: 1.5;
+      color: var(--text-80);
+      text-align: left;
+      opacity: 0;
+      visibility: hidden;
+      transform: translateY(-4px);
+      transition: opacity .18s ease, transform .18s ease, visibility .18s;
+    }
+    /* хвостик к кнопке */
+    .calc-tip::after {
+      content: '';
+      position: absolute;
+      top: -6px;
+      right: 12px;
+      width: 10px;
+      height: 10px;
+      background-color: var(--nav-bg);
+      border-left: 1px solid rgba(139, 111, 230, .4);
+      border-top: 1px solid rgba(139, 111, 230, .4);
+      transform: rotate(45deg);
+    }
+    .calc-tip.is-open {
+      opacity: 1;
+      visibility: visible;
+      transform: translateY(0);
+    }
+    /* наведение — только там, где есть настоящий курсор */
+    @media (hover: hover) and (pointer: fine) {
+      .calc-help-wrap:hover .calc-tip,
+      .calc-help:focus-visible + .calc-tip {
+        opacity: 1;
+        visibility: visible;
+        transform: translateY(0);
+      }
     }
     .calc-value {
       margin-top: 18px;
@@ -192,18 +251,6 @@
       font-weight: 350;
       color: var(--text-40);
     }
-    .calc-note {
-      display: none;
-      margin-top: 18px;
-      padding-top: 16px;
-      border-top: 1px solid rgba(246, 245, 253, .1);
-      font-size: 15px;
-      font-weight: 350;
-      line-height: 1.55;
-      color: var(--text-60);
-    }
-    .calc-note.is-open { display: block; }
-
     /* ─── Дисклеймер + CTA ───────────────────────────────────── */
     .calc-disclaimer {
       max-width: 760px;
@@ -283,7 +330,7 @@
       .calc-card-title { font-size: 16px; }
       .calc-value { font-size: 34px; margin-top: 14px; }
       .calc-caption { font-size: 14px; }
-      .calc-note { font-size: 14px; margin-top: 14px; padding-top: 14px; }
+      .calc-tip { font-size: 13px; padding: 12px 14px; width: 250px; }
 
       .calc-disclaimer { font-size: 13px; padding: 0 4px; }
       .calc-cta { margin-top: 30px; }
@@ -359,40 +406,45 @@
         <article class="calc-card">
           <div class="calc-card-head">
             <h2 class="calc-card-title">Выручка с первых оплат</h2>
-            <button
-              class="calc-help"
-              type="button"
-              aria-expanded="false"
-              aria-controls="note-first"
-              aria-label="Как считаем выручку с первых оплат"
-            >?</button>
+            <span class="calc-help-wrap">
+              <button
+                class="calc-help"
+                type="button"
+                aria-expanded="false"
+                aria-controls="note-first"
+                aria-label="Как считаем выручку с первых оплат"
+              >?</button>
+              <span class="calc-tip" id="note-first" role="tooltip">
+                Как считаем: охват × конверсия 2–2,5% — столько человек покупает
+                после одного поста. С каждой первой покупки ты получаешь 50% от
+                стоимости.
+              </span>
+            </span>
           </div>
           <p class="calc-value" id="value-first">0 ₽</p>
           <p class="calc-caption" id="caption-buyers">≈ 0 покупателей с поста</p>
-          <p class="calc-note" id="note-first">
-            Как считаем: охват × конверсия 2–2,5% — столько человек покупает после
-            одного поста. С каждой первой покупки ты получаешь 50% от стоимости.
-          </p>
         </article>
 
         <article class="calc-card">
           <div class="calc-card-head">
             <h2 class="calc-card-title">Выручка с повторных оплат</h2>
-            <button
-              class="calc-help"
-              type="button"
-              aria-expanded="false"
-              aria-controls="note-recurring"
-              aria-label="Как считаем выручку с повторных оплат"
-            >?</button>
+            <span class="calc-help-wrap">
+              <button
+                class="calc-help"
+                type="button"
+                aria-expanded="false"
+                aria-controls="note-recurring"
+                aria-label="Как считаем выручку с повторных оплат"
+              >?</button>
+              <span class="calc-tip" id="note-recurring" role="tooltip">
+                Как считаем: в среднем человек остаётся в подписке около 3 месяцев
+                — это первая оплата и ещё 2 продления. С каждого продления тебе
+                идёт 20% от стоимости, и так всё время, пока он платит.
+              </span>
+            </span>
           </div>
           <p class="calc-value" id="value-recurring">0 ₽</p>
           <p class="calc-caption">за всё время жизни в подписке</p>
-          <p class="calc-note" id="note-recurring">
-            Как считаем: в среднем человек остаётся в подписке около 3 месяцев —
-            это первая оплата и ещё 2 продления. С каждого продления тебе идёт
-            20% от стоимости, и так всё время, пока он платит.
-          </p>
         </article>
 
       </section>
@@ -514,14 +566,37 @@
 
     input.addEventListener('input', onInput);
 
-    // Пояснения по клику на «?»
-    Array.prototype.forEach.call(document.querySelectorAll('.calc-help'), function (btn) {
-      btn.addEventListener('click', function () {
-        var note = document.getElementById(btn.getAttribute('aria-controls'));
-        if (!note) return;
-        var open = note.classList.toggle('is-open');
-        btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    // Подсказки «как считаем».
+    // На десктопе достаточно наведения (чистый CSS), тап нужен там, где hover нет.
+    var helpButtons = Array.prototype.slice.call(document.querySelectorAll('.calc-help'));
+
+    function closeTips(except) {
+      helpButtons.forEach(function (btn) {
+        if (btn === except) return;
+        var tip = document.getElementById(btn.getAttribute('aria-controls'));
+        if (tip) tip.classList.remove('is-open');
+        btn.setAttribute('aria-expanded', 'false');
       });
+    }
+
+    helpButtons.forEach(function (btn) {
+      btn.addEventListener('click', function (event) {
+        event.stopPropagation();
+        var tip = document.getElementById(btn.getAttribute('aria-controls'));
+        if (!tip) return;
+        var open = tip.classList.toggle('is-open');
+        btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+        closeTips(btn);
+      });
+
+      var tip = document.getElementById(btn.getAttribute('aria-controls'));
+      // клик по самой подсказке не должен её закрывать
+      if (tip) tip.addEventListener('click', function (event) { event.stopPropagation(); });
+    });
+
+    document.addEventListener('click', function () { closeTips(null); });
+    document.addEventListener('keydown', function (event) {
+      if (event.key === 'Escape' || event.key === 'Esc') closeTips(null);
     });
 
     // Стартовое состояние
