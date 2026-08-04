@@ -22,11 +22,19 @@ class _FakeCreditsDB:
 
 
 class _PaymentCreditsDB(_FakeCreditsDB):
+    def __init__(self) -> None:
+        super().__init__()
+        self.payment_updates: list[tuple[str, str]] = []
+
     async def get_last_utm(self, _tg_id: int) -> dict[str, str]:
         return {}
 
     async def create_recurrent_payment(self, *_args, **_kwargs) -> None:
         return None
+
+    async def update_payment_status(self, order_id: str, status: str) -> bool:
+        self.payment_updates.append((order_id, status))
+        return True
 
 
 class _FailingTBank:
@@ -156,5 +164,7 @@ def test_subscription_payment_failure_keeps_confirm_stage(tmp_path: Path) -> Non
         body = str(msg.answers[0]["text"])
         assert "Не удалось сформировать ссылку" in body
         assert "свяжется наш менеджер" not in body
+        assert len(app.credits_db.payment_updates) == 1
+        assert app.credits_db.payment_updates[0][1] == "INIT_FAILED"
 
     asyncio.run(_run())
