@@ -8,6 +8,7 @@ from services.tg_bot_public.state_store import (
     ChatState,
     STAGE_WAIT_CONFIRM,
     STAGE_WAIT_RENDER_ENGINE,
+    STAGE_WAIT_VERSIONS,
 )
 
 
@@ -26,6 +27,9 @@ class _Credits:
     async def has_paid(self, _chat_id: int) -> bool:
         return self.paid
 
+    async def get_balance(self, _chat_id: int) -> int:
+        return 5
+
 
 class _Message:
     def __init__(self, text: str = "") -> None:
@@ -43,6 +47,7 @@ def _new_app(*, rust_enabled: bool, rust_default: bool = False, paid: bool = Fal
     app.settings = SimpleNamespace(
         rust_gen_enabled=rust_enabled,
         rust_gen_bot_default_enabled=rust_default,
+        initial_credits=5,
     )
     return app
 
@@ -78,9 +83,16 @@ def test_render_engine_rust_choice_reaches_confirm_summary() -> None:
 
         await public_app.BlastBotApp._handle_wait_render_engine(app, msg, st)
 
+        # The engine pick is followed by the version picker (free users get it
+        # too now — see test_tg_bot_public_free_versions_limit).
         assert st.render_engine == "rust-gen"
+        assert st.stage == STAGE_WAIT_VERSIONS
+
+        pick = _Message("1")
+        await public_app.BlastBotApp._handle_wait_versions(app, pick, st)
+
         assert st.stage == STAGE_WAIT_CONFIRM
-        assert "*Рендер:* «Rust»" in msg.answers[-1]
+        assert "*Рендер:* «Rust»" in pick.answers[-1]
 
     asyncio.run(_run())
 
@@ -101,8 +113,13 @@ def test_render_engine_selector_skips_to_ae_when_rust_disabled() -> None:
         await public_app.BlastBotApp._proceed_to_versions_or_confirm(app, msg, st)
 
         assert st.render_engine == "ae"
-        assert st.stage == STAGE_WAIT_CONFIRM
-        assert "Запустить генерацию" in msg.answers[-1]
+        assert st.stage == STAGE_WAIT_VERSIONS
         assert "Выбери движок рендера" not in msg.answers[-1]
+
+        pick = _Message("1")
+        await public_app.BlastBotApp._handle_wait_versions(app, pick, st)
+
+        assert st.stage == STAGE_WAIT_CONFIRM
+        assert "Запустить генерацию" in pick.answers[-1]
 
     asyncio.run(_run())

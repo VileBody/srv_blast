@@ -552,6 +552,25 @@ class CreditsDB:
         )
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_user_tracks_tg_id ON user_tracks(tg_id)")
 
+        # Post-generation survey — one row per user, answers merged into a JSONB
+        # map keyed by question id. Kept out of `users` because it is pure
+        # marketing segmentation data with its own lifecycle.
+        await conn.execute(
+            "CREATE TABLE IF NOT EXISTS survey_responses ("
+            "tg_id BIGINT PRIMARY KEY,"
+            "answers JSONB NOT NULL DEFAULT '{}'::jsonb,"
+            "branch_q2 TEXT NOT NULL DEFAULT '',"
+            "branch_q3 TEXT NOT NULL DEFAULT '',"
+            "completed_at TIMESTAMP,"
+            "created_at TIMESTAMP NOT NULL DEFAULT NOW(),"
+            "updated_at TIMESTAMP NOT NULL DEFAULT NOW()"
+            ")"
+        )
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_survey_responses_completed "
+            "ON survey_responses(completed_at)"
+        )
+
         # One-time migration ledger — guards backfills that must run exactly
         # once (unlike the idempotent CREATE/ALTER statements above).
         await conn.execute(
@@ -1427,6 +1446,97 @@ class CreditsDB:
                 str(event or ""),
                 str(detail or ""),
             )
+
+    async def count_events(self, tg_id: int, event: str) -> int:
+        """How many times `event` was logged for this user (all time).
+
+        The post-generation funnel uses count_events(tg_id, "generation_started")
+        as the "is this the first generation?" counter — that row is written
+        exactly once per launched batch, so no extra flag is needed."""
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            row = await conn.fetchval(
+                "SELECT COUNT(*) FROM activity_log WHERE tg_id = $1 AND event = $2",
+                int(tg_id),
+                str(event or ""),
+            )
+        return int(row or 0)
+
+    # Post-generation survey
+
+    async def save_survey_answer(
+        self,
+        tg_id: int,
+        *,
+        question_id: str,
+        answer_id: str,
+        answer_label: str,
+        branch_q2: str = "",
+        branch_q3: str = "",
+        completed: bool = False,
+    ) -> None:
+        """Merge one answer into the user's survey row (upsert, idempotent).
+
+        Branch fields are only overwritten when a non-empty value is passed, and
+        completed_at is never moved once set — a re-answered question keeps the
+        original completion timestamp."""
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO survey_responses (tg_id, answers, branch_q2, branch_q3, completed_at)
+                VALUES (
+                    $1,
+                    jsonb_build_object(
+                        $2::text,
+                        jsonb_build_object('id', $3::text, 'label', $4::text)
+                    ),
+                    $5, $6,
+                    CASE WHEN $7::boolean THEN NOW() ELSE NULL END
+                )
+                ON CONFLICT (tg_id) DO UPDATE SET
+                    answers      = survey_responses.answers || EXCLUDED.answers,
+                    branch_q2    = CASE WHEN EXCLUDED.branch_q2 <> ''
+                                        THEN EXCLUDED.branch_q2 ELSE survey_responses.branch_q2 END,
+                    branch_q3    = CASE WHEN EXCLUDED.branch_q3 <> ''
+                                        THEN EXCLUDED.branch_q3 ELSE survey_responses.branch_q3 END,
+                    completed_at = COALESCE(survey_responses.completed_at, EXCLUDED.completed_at),
+                    updated_at   = NOW()
+                """,
+                int(tg_id),
+                str(question_id or ""),
+                str(answer_id or ""),
+                _norm_text(answer_label, max_len=200),
+                str(branch_q2 or ""),
+                str(branch_q3 or ""),
+                bool(completed),
+            )
+
+    async def get_survey_response(self, tg_id: int) -> Optional[Dict[str, Any]]:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT tg_id, answers, branch_q2, branch_q3, completed_at, created_at, updated_at "
+                "FROM survey_responses WHERE tg_id = $1",
+                int(tg_id),
+            )
+        if row is None:
+            return None
+        raw_answers = row["answers"]
+        if isinstance(raw_answers, str):
+            try:
+                raw_answers = json.loads(raw_answers)
+            except (TypeError, ValueError):
+                raw_answers = {}
+        return {
+            "tg_id": int(row["tg_id"]),
+            "answers": dict(raw_answers or {}),
+            "branch_q2": str(row["branch_q2"] or ""),
+            "branch_q3": str(row["branch_q3"] or ""),
+            "completed_at": _fmt_ts(row["completed_at"]),
+            "created_at": _fmt_ts(row["created_at"]),
+            "updated_at": _fmt_ts(row["updated_at"]),
+        }
 
     async def get_activity(self, tg_id: int = 0, limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
         pool = self._pool_or_fail()

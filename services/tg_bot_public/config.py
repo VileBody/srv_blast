@@ -307,8 +307,15 @@ class Settings:
     season_redis_prefix: str = _env("SEASON_REDIS_PREFIX", "blast:season")
     admin_panel_enable_donor_restart: bool = _bool_env("ADMIN_PANEL_ENABLE_DONOR_RESTART", False)
     dozzle_base_url: str = _env("DOZZLE_BASE_URL", "")
-    initial_credits: int = _int_env("INITIAL_CREDITS", 2)
+    # Free-tier generation quota. Doubles as the denominator for the free
+    # version-picker warnings (4/5 => 80%, 5/5 => 100%) in marketing_texts.
+    initial_credits: int = _int_env("INITIAL_CREDITS", 5)
     initial_track_credits: int = _int_env("INITIAL_TRACK_CREDITS", 1)
+    # Post-generation methodology: True re-sends the doc on EVERY later
+    # generation, False (default) sends it once more, on the second one.
+    resend_methodology_every_generation: bool = _bool_env(
+        "RESEND_METHODOLOGY_EVERY_GENERATION", False
+    )
     jobstore_prefix: str = _env("JOBSTORE_PREFIX", "blast")
     windows_render_url: str = _env("WINDOWS_RENDER_URL", "")
     windows_donor_host: str = _env("WINDOWS_DONOR_HOST", "")

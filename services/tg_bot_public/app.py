@@ -50,6 +50,23 @@ from .broadcast_sender import start_broadcast_workers
 from .audio_prepare import AudioPrepareResult, prepare_audio_best_effort
 from .config import SETTINGS, Settings
 from .credits_db import CreditsDB
+from .marketing_texts import (
+    BTN_VERSIONS_WARN_CHANGE,
+    BTN_VERSIONS_WARN_CONTINUE,
+    METHODOLOGY_FILE_ID,
+    SURVEY_CB_PREFIX,
+    SURVEY_FIRST_QUESTION_ID,
+    SURVEY_Q2_BRANCH_BY_ANSWER,
+    SURVEY_Q3_BRANCH_BY_ANSWER,
+    SURVEY_QUESTIONS,
+    VERSIONS_INVALID,
+    VERSIONS_PROMPT,
+    VERSIONS_PROMPT_FREE_SUFFIX,
+    VERSIONS_WARN_INVALID,
+    VERSION_CHOICE_BUTTONS,
+    bridge_text_for_branch,
+    versions_warning_text,
+)
 from .tbank_client import TBankClient
 from .warmup_chain import CALLBACK_PREFIX as WARMUP_CALLBACK_PREFIX, CAMPAIGN as WARMUP_CAMPAIGN, callback_progress as warmup_callback_progress, keyboard_for_next as warmup_keyboard, message_for_stage as warmup_message
 from .orchestrator_client import OrchestratorClient
@@ -82,6 +99,7 @@ from .state_store import (
     STAGE_WAIT_RENDER_ENGINE,
     STAGE_WAIT_SUBTITLES_MODE,
     STAGE_WAIT_VERSIONS,
+    STAGE_WAIT_VERSIONS_WARNING,
     # Post-generation stages
     STAGE_RATE_VIDEO,
     STAGE_FEEDBACK_LOW,
@@ -3229,6 +3247,13 @@ class BlastBotApp:
             await callback.answer()
             await self._move_to_wait_audio(chat_id, callback.message)
 
+        @self.router.callback_query(lambda c: c.data and c.data.startswith(SURVEY_CB_PREFIX))
+        async def _on_postgen_survey_callback(callback: CallbackQuery) -> None:
+            # Post-generation survey. Deliberately stage-independent: it runs
+            # while the chat sits in STAGE_PROCESSING and must not interfere
+            # with the render/progress flow.
+            await self._handle_postgen_survey_callback(callback)
+
         @self.router.callback_query(lambda c: c.data and c.data.startswith(VIBE_CB_PREFIX))
         async def _on_vibe_callback(callback: CallbackQuery) -> None:
             # Phase 2b footage precision flow (mirror of tg_bot_botapi). The
@@ -3408,6 +3433,10 @@ class BlastBotApp:
 
             if st.stage == STAGE_WAIT_VERSIONS:
                 await self._handle_wait_versions(message, st)
+                return
+
+            if st.stage == STAGE_WAIT_VERSIONS_WARNING:
+                await self._handle_wait_versions_warning(message, st)
                 return
 
             if st.stage == STAGE_WAIT_CONFIRM:
@@ -6141,23 +6170,23 @@ class BlastBotApp:
         )
 
     async def _proceed_after_render_engine(self, message: Message, st: ChatState) -> None:
+        # Free users get the same 1..5 picker as paying ones — the free quota
+        # is 5 generations, so what caps a pick is the balance check in
+        # _handle_wait_versions, not a narrower UI. Picks that burn >=80% of
+        # the free quota are confirmed once there.
+        await self._ask_versions(message, st)
+
+    def _free_generation_limit(self) -> int:
+        return max(1, int(getattr(self.settings, "initial_credits", 5) or 5))
+
+    async def _ask_versions(self, message: Message, st: ChatState) -> None:
         paid = await self.credits_db.has_paid(st.chat_id)
-        if paid:
-            st.stage = STAGE_WAIT_VERSIONS
-            await self.store.set(st)
-            await message.answer(
-                "Сколько версий сгенерировать?",
-                reply_markup=_kb(["1", "2", "3", "4", "5"]),
-            )
-            return
-        st.versions_count = 1
-        st.stage = STAGE_WAIT_CONFIRM
+        text = VERSIONS_PROMPT
+        if not paid:
+            text += VERSIONS_PROMPT_FREE_SUFFIX.format(limit=self._free_generation_limit())
+        st.stage = STAGE_WAIT_VERSIONS
         await self.store.set(st)
-        await message.answer(
-            self._final_confirm_text(st),
-            parse_mode="Markdown",
-            reply_markup=_kb([BTN_LAUNCH, BTN_RESTART]),
-        )
+        await message.answer(text, reply_markup=_kb(list(VERSION_CHOICE_BUTTONS)))
 
     async def _handle_wait_render_engine(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()
@@ -6226,22 +6255,50 @@ class BlastBotApp:
     async def _handle_wait_versions(self, message: Message, st: ChatState) -> None:
         n = _parse_versions_choice(message.text or "")
         if n is None:
-            await message.answer("Выбери количество версий: 1, 2, 3, 4 или 5.")
+            await message.answer(VERSIONS_INVALID)
             return
         st.versions_count = int(n)
         bal = await self.credits_db.get_balance(st.chat_id)
         if int(n) > bal:
             await message.answer(
                 f"Недостаточно генераций. У тебя {bal}, а выбрано {n}. Выбери меньше.",
-                reply_markup=_kb(["1", "2", "3", "4", "5"]),
+                reply_markup=_kb(list(VERSION_CHOICE_BUTTONS)),
             )
             return
+        # Free tier only: a pick that eats most of the quota is confirmed
+        # explicitly. Paying users have no such quota, so no warning.
+        if not await self.credits_db.has_paid(st.chat_id):
+            warning = versions_warning_text(int(n), self._free_generation_limit())
+            if warning:
+                st.stage = STAGE_WAIT_VERSIONS_WARNING
+                await self.store.set(st)
+                await message.answer(
+                    warning,
+                    reply_markup=_kb([BTN_VERSIONS_WARN_CONTINUE], [BTN_VERSIONS_WARN_CHANGE]),
+                )
+                return
+        await self._show_final_confirm_after_versions(message, st)
+
+    async def _show_final_confirm_after_versions(self, message: Message, st: ChatState) -> None:
         st.stage = STAGE_WAIT_CONFIRM
         await self.store.set(st)
         await message.answer(
-            self._final_confirm_text(st, versions=int(n)),
+            self._final_confirm_text(st, versions=int(st.versions_count or 1)),
             parse_mode="Markdown",
             reply_markup=_kb([BTN_LAUNCH, BTN_RESTART]),
+        )
+
+    async def _handle_wait_versions_warning(self, message: Message, st: ChatState) -> None:
+        text = str(message.text or "").strip()
+        if text == BTN_VERSIONS_WARN_CONTINUE:
+            await self._show_final_confirm_after_versions(message, st)
+            return
+        if text == BTN_VERSIONS_WARN_CHANGE:
+            await self._ask_versions(message, st)
+            return
+        await message.answer(
+            VERSIONS_WARN_INVALID,
+            reply_markup=_kb([BTN_VERSIONS_WARN_CONTINUE], [BTN_VERSIONS_WARN_CHANGE]),
         )
 
     async def _handle_wait_confirm(self, message: Message, st: ChatState) -> None:
@@ -6410,6 +6467,7 @@ class BlastBotApp:
             return
 
         key = self._build_raw_audio_key(chat_id=chat_id, file_name=prepared_path.name)
+        launched = False
         try:
             versions = max(1, min(5, int(st.versions_count or 1)))
             await message.answer("Запускаю генерацию…")
@@ -6476,6 +6534,7 @@ class BlastBotApp:
             st.last_status_text = initial_text
             st.last_status_msg_at = time.time()
             await self.store.set(st)
+            launched = True
         except Exception as e:
             err_text = str(e)
             if deducted_versions > 0:
@@ -6512,6 +6571,134 @@ class BlastBotApp:
             )
             self._reset_processing_state(st, next_stage=STAGE_WAIT_AUDIO)
             await self.store.set(st)
+
+        if launched:
+            # Runs ON TOP of the render, which is already queued: the survey and
+            # the methodology never gate delivery of the finished video, and a
+            # failure here must not touch the generation.
+            await self._start_postgen_marketing_flow(message=message, st=st)
+
+    # ------------------------------------------------------------------
+    # Post-generation marketing flow (survey + methodology)
+    # ------------------------------------------------------------------
+
+    async def _start_postgen_marketing_flow(self, *, message: Message, st: ChatState) -> None:
+        """First generation → survey (then bridge + methodology). Later ones →
+        methodology only, per RESEND_METHODOLOGY_EVERY_GENERATION."""
+        try:
+            # "generation_started" is written exactly once per launched batch
+            # (right above), so count == 1 means this is the first generation.
+            started = await self.credits_db.count_events(st.chat_id, "generation_started")
+        except Exception as exc:
+            log.warning("postgen_flow_count_failed chat=%s err=%s", st.chat_id, str(exc))
+            return
+
+        if int(started) <= 1:
+            await self._send_survey_question(message, SURVEY_FIRST_QUESTION_ID)
+            return
+
+        if not self._should_resend_methodology(int(started)):
+            return
+        await self._send_methodology(message)
+
+    def _should_resend_methodology(self, generations_started: int) -> bool:
+        """Repeat generations: every time, or only the second one (default).
+
+        The spec left this open; the env flag lets marketing flip it without a
+        logic redeploy."""
+        if bool(getattr(self.settings, "resend_methodology_every_generation", False)):
+            return True
+        return int(generations_started) == 2
+
+    async def _send_survey_question(self, message: Message, question_id: str) -> None:
+        question = SURVEY_QUESTIONS.get(str(question_id or ""))
+        if question is None:
+            log.warning("postgen_survey_unknown_question id=%s", question_id)
+            return
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(
+                    text=opt.label,
+                    callback_data=f"{SURVEY_CB_PREFIX}{question.id}:{opt.id}",
+                )]
+                for opt in question.options
+            ]
+        )
+        try:
+            await message.answer(question.text, reply_markup=kb)
+        except Exception as exc:
+            log.warning("postgen_survey_send_failed q=%s err=%s", question.id, str(exc))
+
+    async def _send_methodology(self, message: Message) -> None:
+        try:
+            await message.answer_document(document=METHODOLOGY_FILE_ID)
+        except Exception as exc:
+            log.warning("postgen_methodology_send_failed err=%s", str(exc))
+
+    async def _handle_postgen_survey_callback(self, cb: CallbackQuery) -> None:
+        """Handle pgsurvey:<question_id>:<answer_id> quick answers."""
+        if cb.message is None or cb.message.chat is None:
+            await cb.answer()
+            return
+        chat_id = int(cb.message.chat.id)
+        raw = str(cb.data or "")[len(SURVEY_CB_PREFIX):]
+        try:
+            question_id, answer_id = raw.split(":", 1)
+        except ValueError:
+            await cb.answer()
+            return
+
+        question = SURVEY_QUESTIONS.get(question_id)
+        option = None
+        if question is not None:
+            option = next((o for o in question.options if o.id == answer_id), None)
+        if question is None or option is None:
+            await cb.answer()
+            return
+
+        # Stale keyboard from an already-answered question: acknowledge, do not
+        # re-run the branch (it would re-send the bridge and the document).
+        try:
+            existing = await self.credits_db.get_survey_response(chat_id)
+        except Exception as exc:
+            log.warning("postgen_survey_read_failed chat=%s err=%s", chat_id, str(exc))
+            existing = None
+        if existing and question_id in dict(existing.get("answers") or {}):
+            await cb.answer("Уже ответил.")
+            return
+
+        await cb.answer()
+        try:
+            await cb.message.edit_text(f"{question.text}\n\n✅ {option.label}")
+        except TelegramBadRequest:
+            pass
+
+        try:
+            await self.credits_db.save_survey_answer(
+                chat_id,
+                question_id=question.id,
+                answer_id=option.id,
+                answer_label=option.label,
+                branch_q2=SURVEY_Q2_BRANCH_BY_ANSWER.get(option.id, "") if question.id == "q2" else "",
+                branch_q3=SURVEY_Q3_BRANCH_BY_ANSWER.get(option.id, "") if question.id == "q3" else "",
+                completed=(question.id == "q3"),
+            )
+        except Exception as exc:
+            # Losing an answer must not strand the user mid-survey.
+            log.warning("postgen_survey_save_failed chat=%s q=%s err=%s", chat_id, question.id, str(exc))
+
+        next_id = question.next_by_answer.get(option.id, question.next_default)
+        if next_id:
+            await self._send_survey_question(cb.message, next_id)
+            return
+
+        # Q3 answered → bridge line for the branch, then the methodology.
+        branch = SURVEY_Q3_BRANCH_BY_ANSWER.get(option.id, "")
+        try:
+            await cb.message.answer(bridge_text_for_branch(branch))
+        except Exception as exc:
+            log.warning("postgen_bridge_send_failed chat=%s err=%s", chat_id, str(exc))
+        await self._send_methodology(cb.message)
 
     async def _handle_wait_next(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()
