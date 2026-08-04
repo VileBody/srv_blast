@@ -1,52 +1,142 @@
-# Legal data required before final legal approval
+# Legal documents — status and open items
 
-The published pages are working drafts. A qualified Russian lawyer must review the final texts and the actual data flow before they are treated as final legal documents or submitted for TikTok review.
+Documents in `landing/js/legal-documents.js` (version `1.0`, effective 3 August 2026) are
+substantive final texts, not drafts: the on-page "working draft" banner and all inline
+`[confirm ...]` placeholders were removed. A qualified Russian lawyer should still sign the texts
+off before large-scale traffic, but nothing in them is left blank.
 
-## Operator and contacts
+## MERGE GATE — read before merging to main
 
-- Confirm the operator/contractor name currently present in the repository: ИП Чернов Никита Романович.
-- Confirm INN `623013205426` and OGRNIP `324620000005644`.
-- Confirm the postal/legal address currently present in the repository.
-- Confirm `support@blast808.com`, `+7 (910) 572-49-67`, and `@impulsemarketing` as public support contacts.
-- Confirm who handles privacy and data-subject requests and the expected response process.
+The privacy policy and the consent form now state that **no cross-border transfer of personal data
+is carried out** (privacy sec. 8, consent sec. 7) and no longer name Google LLC or OpenRouter as
+recipients. Merging to `main` publishes these statements on blast808.com. They are not true of the
+pipeline as configured in this repository today, so the following must be done first:
 
-## Service and payments
+1. **User content must stop leaving Russia.** `.env.example` has `LLM_PROVIDER_MODE=gemini` with
+   `GEMINI_MODEL_STAGE1` doing ASR — the user's audio file itself is uploaded to Google. Stage 2
+   subtitles and footage are on Gemini too. OpenRouter is not a fix: it is also a US company.
+   A Russian or self-hosted ASR/LLM path is required.
+2. **F5 TTS.** `GEMINI_MODEL_F5_TTS` must be off or replaced (`F5_HOOK_DEVICE` empty disables it).
+3. **Consent is collected on the website.** Consent sec. 9.1 says the affirmative action happens at
+   registration on blast808.com. Do not merge before that site is live and records user id,
+   document version and timestamp. Deliberate decision: no consent screen is added to the Telegram
+   bot; bot processing relies on contract performance (п. 5 ч. 1 ст. 6), which needs no consent.
+4. **Website legal pages must be synchronized** with these texts — they were written against the
+   previous landing version.
 
-- Confirm whether payments are currently accepted through the site, the Telegram bot, or both.
-- Confirm the legal name of the payment provider (`АО «Т-Банк»` is used in current files), accepted methods, receipt/fiscalization flow and merchant agreement.
-- Confirm current tariffs, deliverables, subscription renewal/cancellation rules and whether taxes are included.
-- Resolve the mismatch between the landing promise of 3 free videos and the existing offer's paid `Blast Trial` plan with 5 videos.
-- Confirm cancellation eligibility, refund method and legally compliant refund timing.
-- Confirm when generation is deemed started and when the service is deemed delivered.
+Telegram remains in the loop. Privacy sec. 8.2 takes the position that Telegram is a communication
+channel chosen by the user rather than an onward transfer by the operator. That position is
+defensible and commonly taken, but it is a position, not a settled point — worth one hour of a
+lawyer's time before merge.
 
-## Personal data and infrastructure
+Only the Art. 22 notification is planned. The Art. 12 cross-border notification becomes mandatory
+again the moment the TikTok integration goes live (TikTok processes in Singapore and the US);
+privacy sec. 8.3 already says so.
 
-- Produce an authoritative data-flow map covering the website, Telegram bot, orchestrator, storage, generation providers, support and payment provider.
-- List every processor/subprocessor, legal entity, processing purpose, hosting country/region and contract or other legal basis.
-- Confirm whether personal data is localized in Russia and whether cross-border transfers occur; document required notifications and legal grounds.
-- Confirm retention and deletion periods for Telegram profile data, source audio, lyrics/text, generated videos, prompts, logs, support correspondence and payment/accounting records.
-- Confirm backup retention and deletion behavior.
-- Confirm security contacts, incident response, access controls and user identity verification for data requests.
-- Determine whether Roskomnadzor notification or updates are required before production processing.
+Documents: `terms.html`, `privacy.html`, `cookies.html`, `personal-data-consent.html`,
+`offer.html`, `contacts.html` — each in RU and EN, switchable via the header language toggle
+and via `?lang=ru|en`.
 
-## Consent and communications
+## Decided and written into the documents
 
-- Add an explicit, unticked consent action at the actual data collection point in the Telegram bot or other user flow.
-- Record consent version, timestamp, user identifier and withdrawal events.
-- Determine whether separate consent for marketing messages is required. No marketing consent flow has been added because the current landing contains no evidence that such messages are sent.
-- Confirm age limits and whether minors may use the service.
+These values are now published commitments. Change the documents if operations change.
 
-## TikTok integration
+| Topic | Published value |
+| --- | --- |
+| Operator | ИП Чернов Никита Романович, ИНН 623013205426, ОГРНИП 324620000005644 |
+| Address | 390048, Рязань, ул. Васильевская, д. 18, кв. 60 |
+| Support / data / claims contact | support@blast808.com, +7 (910) 572-49-67, @impulsemarketing |
+| Support response | 1 business day |
+| Data subject request response | 10 business days (+5 extension) — ст. 20 152-ФЗ |
+| Data deletion after consent withdrawal | 30 days — ст. 21 152-ФЗ |
+| Source audio / lyrics / images retention | 30 days after order fulfilment |
+| Generated videos retention | 30 days after delivery |
+| Telegram profile + order history | 12 months after last interaction |
+| Logs (execution + security) | 3 months |
+| Support correspondence | 12 months after closure |
+| Payment / accounting records | 5 years — 402-ФЗ, НК РФ |
+| Consent records | term of consent + 3 years |
+| Backups | 30 days |
+| TikTok tokens | encrypted; deleted on revoke/disconnect or 12 months inactivity |
+| TikTok data deletion after request | 30 days |
+| Order turnaround | ~60 min typical, 3 business days maximum |
+| Refunds | pro rata to undelivered videos, paid out within 10 calendar days — ст. 31/32 ЗоЗПП |
+| Subscription cancellation | `/cancelsubscription` in the bot, effective end of paid period |
+| Tax regime | УСН, VAT not charged, fiscal receipt via T-Bank (54-ФЗ) |
+| Age | 18+, 14–18 with legal representative consent |
+| Localization | RU databases and compute; no cross-border transfer declared |
+| Processors named | Russian cloud provider, АО «Т-Банк», Telegram (user's own channel) |
 
-- Specify the exact TikTok product(s): Login Kit, Content Posting API, Display API, Share Kit, or other.
-- List requested scopes and justify each one.
-- Document all TikTok data received, storage location, retention, deletion and user revocation flow.
-- Confirm redirect URIs, verified domains/URL prefixes and the public data-deletion procedure.
-- Prepare a working end-to-end integration and review video; the current website alone does not demonstrate a TikTok integration.
-- Verify that the public website meets TikTok's “fully developed website” criterion and is not rejected as a landing-only site.
+Tariffs published in the offer match `services/tg_bot_public/app.py::_PKG_TEXTS`:
+Trial 990 ₽ / 5 videos; Blast 1 990 ₽ per month / 100 videos; Glow 7 990 ₽ / 400 videos, 10 tracks,
+CapCut template; Impulse 29 990 ₽ / 1 year, unlimited within fair use, 24 tracks.
 
-## Cookies and tracking
+## Open items — operations must match the published text
 
-- No analytics or marketing scripts were found in `landing/` at implementation time.
-- Before adding any analytics or marketing vendor, document the vendor, cookie/local-storage names, purpose, lifetime, recipients and countries, then load it only through the matching consent category.
-- Revisit consent when the category list or vendor set changes and increment the consent version.
+1. **Roskomnadzor notification (ст. 22 152-ФЗ).** File before processing continues. The form has a
+   cross-border transfer block — it can only be answered "not carried out" once the merge gate
+   above is satisfied.
+2. **Consent capture on the website.** Record user id, document version (`1.0`) and timestamp, plus
+   a withdrawal record. Cheap safety net for users who reach the bot directly by link: one
+   informational `/start` message linking the policy and the offer — disclosure, not a consent
+   button.
+3. **Retention enforcement.** The 30-day / 3-month periods above must be enforced by an actual
+   cleanup job over S3 objects, Postgres rows and logs. `services/orchestrator/cleanup.py` and the
+   bot's tmp reapers cover only short-lived local files today.
+4. **Free trial count.** Set to 5 everywhere: landing headline, `INITIAL_CREDITS` default and
+   `.env.example`. The production `.env` on the server must be updated too — it overrides the
+   default. Note that the paid `Blast Trial` plan (990 ₽) also delivers 5 videos, so it is now
+   redundant; decide whether to drop it from `_PKG_TEXTS` and from the offer.
+5. **Processor contracts.** ч. 3 ст. 6 152-ФЗ requires written instructions to processors. Confirm
+   the T-Bank merchant agreement, the cloud provider contract and the terms under which Gemini /
+   OpenRouter are used (paid tier, no training on submitted data — as claimed in clause 5.3).
+6. **Incident procedure.** Clause 12.3 commits to 24h/72h Roskomnadzor notification. Assign an
+   owner and write the runbook.
+
+## Before submitting the TikTok app for review
+
+- Specify the exact products (Login Kit, Content Posting API, Display API) and the scope list;
+  the privacy policy names `open_id`, `union_id`, display name, avatar, video list and stats —
+  keep the requested scopes within that list or widen the policy first.
+- Build the integration end to end. TikTok rejects clients whose website does not demonstrate the
+  described integration; the current site describes but does not yet implement it.
+- Implement the UX requirements already promised in `terms.html` clause 8: content preview,
+  editable caption and hashtags, no default privacy or interaction settings, no watermark,
+  commercial content disclosure toggle, and the exact declaration
+  "By posting, you agree to TikTok's Music Usage Confirmation"
+  (with Branded Content Policy added when the branded content toggle is on).
+- Implement account disconnect in the bot — clause 11.6 of the privacy policy promises it.
+- Verify the redirect URI and domain, and check that the public data deletion route
+  (support@blast808.com) is reachable from the privacy policy without login. It is.
+- Respect unaudited client limits: max 5 users per 24h, accounts private at posting time,
+  `SELF_ONLY` viewership.
+
+## After the web app ships — what the current texts do not cover
+
+The published texts are written around the Telegram bot. Once the web app is live they describe
+only one of two channels and must be reworked, not just linked. Concrete gaps:
+
+- **Account.** Registration, e-mail/password or OAuth, sessions, password reset, self-service
+  account deletion. Privacy sec. 3 currently identifies users by Telegram ID; terms sec. 3.1 says
+  access is via a Telegram account and makes the user responsible for that account only.
+- **Cookies.** The cookie policy lists exactly two localStorage keys and states that nothing else is
+  set. An authenticated app adds session/auth cookies — they belong in the "necessary" category
+  with names, purpose and lifetime spelled out.
+- **Personal data set.** E-mail becomes a primary identifier; a billing profile and subscription
+  history in the account area are new categories for privacy sec. 3.2 and consent sec. 4.
+- **Rights.** Privacy sec. 10 routes every request through support e-mail. If the app offers
+  in-product deletion or export, say so — it is the stronger position.
+- **Offer.** Clauses 2.2, 3.1, 6.1 and 6.4 describe intake, acceptance and delivery through the
+  Telegram bot. Payment and delivery on the website need their own wording, including where prices
+  are shown before payment and how delivery is evidenced without a Telegram message.
+- **Terms.** Acceptable use, suspension and termination need an account-level version alongside the
+  bot version; add liability for credential sharing.
+- **Age check.** Both documents claim 18+ (14–18 with representative consent). If registration
+  collects or asserts age, align the wording with the actual control.
+- **Consent wording.** Consent sec. 9.1 already points at registration on blast808.com — verify it
+  matches the real screen (non-pre-ticked, links to both documents, records version and timestamp).
+- **Hosting.** Confirm the web app runs on the same Russian infrastructure the privacy policy
+  describes in sec. 6.1.
+
+The site's own legal pages were written against the previous landing version and must be reconciled
+with these texts rather than kept as a second, diverging set.
