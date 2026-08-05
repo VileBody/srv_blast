@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from jinja2 import Environment, FileSystemLoader
 
 from app.project_config import AE_PROJECT
+from app.render_presets import active_preset, text_precomp_placement
 from app.footage_comp import build_footage_layers, resolve_text_duration_sec
 from app.render_plan import build_render_plan_v1
 from app.text_comp import build_text_layers
@@ -517,6 +518,13 @@ def build_full_project(
     text_comp = dict(AE_PROJECT["text_comp"])
     mine_comp = dict(AE_PROJECT["mine_comp"])
 
+    # Output geometry. Only the MAIN comp changes shape — the text/mine comps stay
+    # 1080x1920 and get re-framed by the placement below, so the subtitle stack is
+    # identical in every preset. Default is vertical => byte-identical to before.
+    render_preset = active_preset()
+    main_comp["w"] = int(render_preset.width)
+    main_comp["h"] = int(render_preset.height)
+
     main_name = str(main_comp["name"])
     text_name = str(text_comp["name"])
     mine_name = str(mine_comp["name"])
@@ -563,7 +571,11 @@ def build_full_project(
         text_comp_name=text_name,
         composition_dur=comp_dur,
         precomp_z_index=int(AE_PROJECT.get("root_precomp_z_index", 9999)),
-        precomp_placement=AE_PROJECT.get("root_precomp_placement"),
+        precomp_placement=(
+            AE_PROJECT.get("root_precomp_placement")
+            if render_preset.name == "vertical"
+            else text_precomp_placement(render_preset)
+        ),
         subtitles_mode=subtitles_mode,
     )
 

@@ -60,8 +60,26 @@ def _s3_photo_prefix() -> str:
     return raw
 
 
+def _s3_collection_prefix() -> str:
+    """Top-level S3 folder of the COLLECTION plane (films / people / cine16x9).
+
+    Kept apart from S3_ASSET_PREFIX on purpose: collections are never tagged, and
+    sharing a prefix with the tag-based pool would put untagged clips one Groq
+    run away from becoming selectable by ordinary vibes.
+    """
+    raw = _env("S3_COLLECTION_PREFIX", "collection_sources").strip().strip("/")
+    if get_runtime_mode() == MODE_PROD and not raw:
+        raise RuntimeError("MODE=prod requires non-empty S3_COLLECTION_PREFIX")
+    return raw
+
+
 def _s3_prefix_for(media_type: str) -> str:
-    return _s3_photo_prefix() if str(media_type) == "photo" else _s3_assets_prefix()
+    mt = str(media_type or "").strip().lower()
+    if mt == "photo":
+        return _s3_photo_prefix()
+    if mt == "collection":
+        return _s3_collection_prefix()
+    return _s3_assets_prefix()
 
 
 def _s3_asset_key(*, file_name: str, genre: str, tag: str, media_type: str = "video") -> str:
@@ -392,6 +410,26 @@ def build_inventory_and_bundle(
         if row.palette_bins:
             obj["palette_bins"] = row.palette_bins
         assets.append(obj)
+
+    # Collection plane only: expose a long upload as N pickable windows. The
+    # picker's no-repeat policy is keyed on file_name, so without this a
+    # five-minute film would contribute exactly one cut to a video. Deliberately
+    # NOT applied to the tag-based pool — those clips are already short, and
+    # expanding them would change every existing job's selection.
+    if str(media_type or "").strip().lower() == "collection":
+        from mlcore.footage_segments import expand_asset_rows
+
+        scene_cuts = {
+            str(a.get("file_name") or ""): list(a.get("scene_cuts") or [])
+            for a in (source_assets or [])
+            if isinstance(a, dict) and a.get("scene_cuts")
+        }
+        before = len(assets)
+        assets = expand_asset_rows(assets, scene_cuts_by_file=scene_cuts)
+        print(
+            f"[collection] segment expansion: {before} sources -> {len(assets)} clips "
+            f"(scene-cut data for {len(scene_cuts)})"
+        )
 
     inv_obj: Dict[str, Any] = {
         "version": "v2",

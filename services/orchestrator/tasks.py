@@ -130,6 +130,11 @@ _LLM_ENV_KEYS = (
     "PHOTO_TRANSITION",
     "PHOTO_INVENTORY_JSON",
     "PHOTO_TAGS_SNAPSHOT_JSON",
+    # output geometry (vertical | wide | square). Absent => vertical.
+    "RENDER_PRESET",
+    # collection plane (untagged, folder-scoped pools)
+    "COLLECTION_INVENTORY_JSON",
+    "FOOTAGE_COLLECTIONS_JSON",
 )
 
 
@@ -2098,6 +2103,31 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
         env["FOOTAGE_ROTATION_THEME"] = rotation_theme
         if rotation_tags_group:
             env["FOOTAGE_ROTATION_GROUP"] = rotation_tags_group
+
+    # Output geometry. Set only when it differs from the default so a vertical
+    # job's build env stays byte-for-byte what it was before presets existed.
+    render_preset = str(req.get("render_preset") or "vertical").strip().lower()
+    if render_preset not in ("vertical", "wide", "square"):
+        raise RuntimeError(
+            f"invalid render_preset={render_preset!r} (expected vertical|wide|square)"
+        )
+    if render_preset != "vertical":
+        env["RENDER_PRESET"] = render_preset
+
+    # Collection plane: an untagged, folder-scoped pool that lives in its OWN
+    # inventory. Pointing the picker at it here is what makes the isolation
+    # physical — a collection job cannot see the tag-based pool, and vice versa,
+    # because they never share an inventory file.
+    if rotation_theme == "collection":
+        collection_inventory = str(
+            os.environ.get("COLLECTION_INVENTORY_JSON")
+            or "data/collection_inventory.json"
+        ).strip()
+        env["FOOTAGE_INVENTORY_JSON"] = collection_inventory
+        # Collections are never tagged, so there is no metadata to merge; an
+        # empty list keeps the picker's mapping step honest instead of letting it
+        # silently pick up the tag-based snapshot.
+        env["FOOTAGE_STYLE_METADATA_DB_PATHS_JSON"] = json.dumps([])
     # Wave 1 Поток B: the picker's global per-bucket cooldown ledger (footage_usage)
     # needs the DSN + the serving chat. Passed explicitly so it doesn't depend on
     # CREDITS_DB_URL being present in the raw subprocess env.

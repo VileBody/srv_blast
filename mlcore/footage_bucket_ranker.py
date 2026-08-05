@@ -229,9 +229,10 @@ def rank_buckets(
     catalog_order = [b.bucket_id for b in cat]
     visual_mode = any(str(x).startswith("visual:") for x in valid_ids)
     photo_mode = any(str(x).startswith("photo:") for x in valid_ids)
+    collection_mode = any(str(x).startswith("collection:") for x in valid_ids)
 
     def _mood_ok(bid: str) -> bool:
-        if visual_mode or photo_mode:
+        if visual_mode or photo_mode or collection_mode:
             return True
         m = _norm(mood)
         return m not in {"major", "minor"} or theme_mood(bid.split(":", 1)[0]) == m
@@ -240,15 +241,22 @@ def rank_buckets(
         return [b for b in catalog_order if _mood_ok(b)]  # no lyrics → catalog order
 
     mapping: Optional[Dict[str, List[str]]] = None
-    if visual_mode or photo_mode:
-        if photo_mode:
+    if visual_mode or photo_mode or collection_mode:
+        if collection_mode:
+            from mlcore.footage_collection_catalog import load_collection_theme_buckets
+            mapping = load_collection_theme_buckets()
+        elif photo_mode:
             from mlcore.photo_bucket_catalog import load_photo_theme_buckets
             mapping = load_photo_theme_buckets()
         else:
             from mlcore.footage_visual_catalog import load_theme_buckets
             mapping = load_theme_buckets()
 
-    themes = candidate_themes("") if (visual_mode or photo_mode) else candidate_themes(mood)
+    themes = (
+        candidate_themes("")
+        if (visual_mode or photo_mode or collection_mode)
+        else candidate_themes(mood)
+    )
     if mapping:
         # candidate_themes() is the FOOTAGE taxonomy. The photo mapping carries
         # six themes of its own (forest_calm, night_ride, party_energy,

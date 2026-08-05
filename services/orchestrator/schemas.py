@@ -143,6 +143,11 @@ class SendAudioS3Request(BaseModel):
     # (theme, tags_group) pair instead of picking from the artist profile.
     rotation_theme: str = ""
     rotation_tags_group: str = ""
+    # Output geometry. Orthogonal to bg_mode (which says WHAT is on the
+    # background) — this says what SHAPE the frame is. Only the main comp changes;
+    # the subtitle comp stays 1080x1920 and is re-framed into it, so the text
+    # stack is identical in all three. Default keeps every existing job vertical.
+    render_preset: Literal["vertical", "wide", "square"] = "vertical"
     # Background mode: "footage" (default) or "solid". When "solid", the AE
     # composition replaces the footage stack with a single solid color layer.
     # Stage 2 footage planning still runs (its picks are simply ignored at
@@ -419,6 +424,12 @@ class RankBucketsRequest(BaseModel):
     mood: str = ""  # "minor" | "major" | "" (no filter)
     top: int = Field(default=0, ge=0)  # 0 = full ranked list
     media_type: Literal["video", "photo"] = "video"
+    # Which catalog plane to rank. "vibes" is the semantic visual:* shortlist
+    # (the default, unchanged). The others are collection planes — untagged,
+    # folder-scoped groups — and are ranked from data/footage_collections.json.
+    # Orthogonal to media_type: that picks video vs photo sources, this picks
+    # which buckets over them are selectable.
+    pool: Literal["vibes", "films", "people", "cine16x9"] = "vibes"
 
 
 class RankedBucket(BaseModel):

@@ -787,7 +787,16 @@ def load_assets_map_from_inventory(footage_inventory_json: Path) -> Dict[str, Di
             sh = it.get("src_h")
             if not fn or not fp or sw is None or sh is None:
                 continue
-            out[fn] = {"file_name": fn, "file_path": fp, "src_w": int(sw), "src_h": int(sh)}
+            out[fn] = {
+                "file_name": fn,
+                "file_path": fp,
+                "src_w": int(sw),
+                "src_h": int(sh),
+                # Virtual segments of one long source share a media file; the
+                # render layer must fetch and import it under the REAL name so
+                # the media manifest dedupes to a single download.
+                "media_file_name": str(it.get("media_file_name") or fn),
+            }
         return out
 
     layers = list(inv.get("layers") or [])
@@ -804,7 +813,13 @@ def load_assets_map_from_inventory(footage_inventory_json: Path) -> Dict[str, Di
         if not fn or not fp or sw is None or sh is None:
             continue
         if fn not in out2:
-            out2[fn] = {"file_name": fn, "file_path": fp, "src_w": int(sw), "src_h": int(sh)}
+            out2[fn] = {
+                "file_name": fn,
+                "file_path": fp,
+                "src_w": int(sw),
+                "src_h": int(sh),
+                "media_file_name": str(it.get("media_file_name") or fn),
+            }
     return out2
 
 
@@ -1019,10 +1034,17 @@ def render_all_steps(
     else:
         audio_file_path = audio_file_path_local
 
+    # Same geometry the AE comp is created at (app.render_presets is the single
+    # source): footage cover-scale is computed from these, so a mismatch would
+    # mis-scale every clip. Default preset is vertical 1080x1920 — unchanged.
+    from app.render_presets import active_preset as _active_render_preset
+
+    _preset = _active_render_preset()
+
     t3 = env.get_template("step3_template.j2")
     footage_str = t3.render(
-        main_comp_w=1080,
-        main_comp_h=1920,
+        main_comp_w=int(_preset.width),
+        main_comp_h=int(_preset.height),
         main_comp_fps=float(AE_FPS),  # ✅ FIX: was missing (caused UndefinedError)
         text_dur_hint=float(comp_dur),
         adjustment_preset=preset,
