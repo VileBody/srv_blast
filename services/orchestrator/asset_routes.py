@@ -74,6 +74,10 @@ def _asset_ui_source_prefix() -> str:
 def _assets_index_path_for(media_type: str) -> Path:
     if media_type == "photo":
         return Path(os.getenv("PHOTO_ASSETS_INDEX_JSON", "data/photo_assets_index_1to1.json"))
+    if media_type == "collection":
+        return Path(
+            os.getenv("COLLECTION_ASSETS_INDEX_JSON", "data/collection_assets_index.json")
+        )
     return Path(os.getenv("STATIC_ASSETS_INDEX_JSON", str(_STATIC_INDEX)))
 
 
@@ -212,6 +216,25 @@ def _asset_ui_photo_source_prefix() -> str:
     return "photo_collection"
 
 
+def _asset_ui_collection_source_prefix() -> str:
+    """Top-level S3 folder the Asset UI browses for the COLLECTION plane."""
+    explicit = _normalize_prefix(os.getenv("ASSET_UI_COLLECTION_SOURCE_PREFIX", ""))
+    if explicit:
+        return explicit
+    collection_prefix = _normalize_prefix(os.getenv("S3_COLLECTION_PREFIX", ""))
+    if collection_prefix:
+        return collection_prefix.split("/", 1)[0]
+    return "collection_sources"
+
+
+def _source_prefix_for(media_type: str) -> str:
+    if media_type == "photo":
+        return _asset_ui_photo_source_prefix()
+    if media_type == "collection":
+        return _asset_ui_collection_source_prefix()
+    return _asset_ui_source_prefix()
+
+
 def _load_assets(media_type: str = "video") -> List[Dict[str, Any]]:
     """Asset list for ONE pool. media_type='photo' browses the photo sources
     (S3_PHOTO_PREFIX + image keys + photo index). Pools never mix; an empty photo
@@ -232,7 +255,7 @@ def _load_assets(media_type: str = "video") -> List[Dict[str, Any]]:
         _assets_cache[media_type] = items
         return items
 
-    source_prefix = _asset_ui_photo_source_prefix() if is_photo else _asset_ui_source_prefix()
+    source_prefix = _source_prefix_for(media_type)
     exts = _IMAGE_EXTENSIONS if is_photo else _VIDEO_EXTENSIONS
     try:
         meta_by_triplet, meta_by_file_name = _load_assets_index_metadata(media_type)
@@ -847,17 +870,31 @@ def create_asset_router(*, prefix: str = "/asset-ui/api") -> APIRouter:
     _ACTIVATION_PROGRESS_KEY = "footage_activation:progress"
     _PHOTO_TAGGING_PROGRESS_KEY = "photo_tagging:progress"
     _PHOTO_ACTIVATION_PROGRESS_KEY = "photo_activation:progress"
+    _COLLECTION_ACTIVATION_PROGRESS_KEY = "collection_activation:progress"
 
     def _norm_media_type(raw: Any) -> str:
         mt = str(raw or "video").strip().lower() or "video"
-        if mt not in ("video", "photo"):
-            raise HTTPException(status_code=422, detail="media_type must be 'video' or 'photo'")
+        if mt not in ("video", "photo", "collection"):
+            raise HTTPException(
+                status_code=422,
+                detail="media_type must be 'video', 'photo' or 'collection'",
+            )
         return mt
 
     def _tagging_key(media_type: str) -> str:
+        if media_type == "collection":
+            # Collections are never tagged — that is the plane's defining
+            # property. Refuse rather than return a key nothing ever writes to,
+            # which would read as "tagging finished instantly".
+            raise HTTPException(
+                status_code=422,
+                detail="collections are never tagged: they are selected by folder, not by tags",
+            )
         return _PHOTO_TAGGING_PROGRESS_KEY if media_type == "photo" else _TAGGING_PROGRESS_KEY
 
     def _activation_key(media_type: str) -> str:
+        if media_type == "collection":
+            return _COLLECTION_ACTIVATION_PROGRESS_KEY
         return _PHOTO_ACTIVATION_PROGRESS_KEY if media_type == "photo" else _ACTIVATION_PROGRESS_KEY
 
     # If a run's progress hasn't been updated within this window we treat it as
@@ -1260,6 +1297,20 @@ def create_asset_router(*, prefix: str = "/asset-ui/api") -> APIRouter:
 
         if is_photo:
             prefix = (os.getenv("S3_PHOTO_PREFIX") or "photo_collection").strip("/")
+        elif mt == "collection":
+            # <prefix>/<kind>/<folder>/<file>: genre carries the kind
+            # (films/people/cine16x9), tag carries the collection folder.
+            prefix = (os.getenv("S3_COLLECTION_PREFIX") or "collection_sources").strip("/")
+            from mlcore.footage_collection_catalog import COLLECTION_KINDS
+
+            if genre_clean.lower() not in COLLECTION_KINDS:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        "collection uploads must target one of "
+                        f"{list(COLLECTION_KINDS)} as genre (got {genre_clean!r})"
+                    ),
+                )
         else:
             prefix = (os.getenv("S3_ASSET_PREFIX") or "pinterest_collection").strip("/")
 

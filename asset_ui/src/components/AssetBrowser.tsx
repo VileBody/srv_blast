@@ -71,11 +71,23 @@ export function AssetBrowser() {
         <button
           className="toolbar-btn"
           title="Пул ассетов для импорта/разметки/активации"
-          onClick={() => setMediaType((m) => (m === 'video' ? 'photo' : 'video'))}
+          onClick={() =>
+            setMediaType((m) =>
+              m === 'video' ? 'photo' : m === 'photo' ? 'collection' : 'video',
+            )
+          }
         >
-          {mediaType === 'photo' ? '🖼 Пул: фото' : '🎞 Пул: видео'}
+          {mediaType === 'photo'
+            ? '🖼 Пул: фото'
+            : mediaType === 'collection'
+              ? '🎬 Пул: коллекции'
+              : '🎞 Пул: видео'}
         </button>
-        <TagUntaggedButton onDone={reload} mediaType={mediaType} />
+        {/* Collections are selected by folder, never by tags — there is nothing
+            for the tagger to add, so the control is absent rather than inert. */}
+        {mediaType !== 'collection' && (
+          <TagUntaggedButton onDone={reload} mediaType={mediaType} />
+        )}
         <ActivateBaseButton onDone={reload} mediaType={mediaType} />
         {mediaType === 'video' && (
           <select

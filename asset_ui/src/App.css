@@ -716,7 +716,8 @@ body {
   letter-spacing: 0.5px;
 }
 
-.bulk-panel-body input[type="text"] {
+.bulk-panel-body input[type="text"],
+.bulk-panel-body select {
   padding: 8px 10px;
   background: #0f0f0f;
   border: 1px solid #2a2a2a;
@@ -724,6 +725,28 @@ body {
   color: #e0e0e0;
   font-size: 14px;
   outline: none;
+}
+
+.bulk-panel-body select:focus {
+  border-color: #446;
+}
+
+.bulk-panel-body select:disabled {
+  opacity: 0.5;
+}
+
+.form-hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #8a8a8a;
+}
+
+.form-hint code {
+  color: #b0b0b0;
+  background: #161616;
+  padding: 1px 5px;
+  border-radius: 3px;
 }
 
 .bulk-panel-body input[type="text"]:focus {
