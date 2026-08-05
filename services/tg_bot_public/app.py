@@ -239,6 +239,14 @@ MIN_REFRAME_CLIP_SEC: float = 7.0
 # F4 drop only with intro ≥ this; else asks for a manual F4 drop.
 F4_MIN_INTRO_SEC: float = 3.0
 
+# Local CTC alignment emits one frame per 20 ms, so a reference text has a hard
+# wall-clock floor. Requests past ALIGNMENT_MAX_REFERENCE_FRAME_BUDGET_RATIO of
+# the window are rejected by the alignment service with
+# ALIGNMENT_TEXT_TOO_LONG_FOR_WINDOW; the bot applies the same budget up front so
+# the user fixes the text instead of losing a paid render. Mirrors tg_bot_botapi.
+_ALIGNMENT_FRAME_SEC: float = 0.02
+_ALIGNMENT_FRAME_BUDGET_RATIO: float = 0.8
+
 HOOK_STAGES = frozenset({
     STAGE_WAIT_HOOK_CHOICE,
     STAGE_WAIT_HOOK_DROP,
@@ -929,6 +937,25 @@ _TG_VIDEO_COMPRESS_CRF_STEPS = (30, 32, 34, 36)
 _GENERATION_FAILED_USER_TEXT = (
     "Увидели ошибку, сейчас с тобой свяжется менеджер и запустит генерацию ролика вручную, "
     "а пока тех. отдел все проверит"
+)
+# Alignment error codes from mlcore.alignment.contracts. Matched as substrings
+# of the job error text ("<CODE>: <message>") the orchestrator stores.
+_ALIGNMENT_ERROR_WINDOW_MISMATCH = "ALIGNMENT_WINDOW_MISMATCH"
+_ALIGNMENT_ERROR_TEXT_TOO_LONG = "ALIGNMENT_TEXT_TOO_LONG_FOR_WINDOW"
+_ALIGNMENT_WINDOW_MISMATCH_USER_TEXT = (
+    "Не получилось разложить присланные строки по выбранному отрезку — "
+    "скорее всего текст и тайминг не совпадают.\n\n"
+    "Credits вернули на баланс. Попробуй ещё раз: пришли ровно те слова, "
+    "которые звучат в отрезке (без лишних строк), и по возможности задай "
+    "тайминг точнее — можно с долями секунды, например 1:20.5-1:33.\n\n"
+    "Нажми «Использовать прошлый трек», чтобы не загружать аудио заново."
+)
+_ALIGNMENT_TEXT_TOO_LONG_USER_TEXT = (
+    "Присланных строк слишком много для выбранного отрезка — они физически "
+    "не успевают прозвучать за это время.\n\n"
+    "Credits вернули на баланс. Сократи текст до тех слов, которые реально "
+    "звучат в отрезке, либо возьми отрезок длиннее.\n\n"
+    "Нажми «Использовать прошлый трек», чтобы не загружать аудио заново."
 )
 _AUDIO_PREPARE_FAILED_USER_TEXT = (
     "Не получилось подготовить трек к генерации. "
@@ -2426,14 +2453,41 @@ class BlastBotApp:
         return {"sent_mode": "manager_alert"}
 
     async def _runtime_dispatch_user_notice(self, item: Dict[str, Any]) -> Dict[str, Any]:
-        _, st, _ = await self._runtime_outbox_context(item)
+        run, st, payload = await self._runtime_outbox_context(item)
         bot = self._require_bot()
+        error_text = str(
+            payload.get("error_text")
+            or run.get("last_error_text")
+            or st.last_job_error
+            or ""
+        )
+        notice = self._alignment_failure_user_text(error_text)
         await bot.send_message(
             st.chat_id,
-            _GENERATION_FAILED_USER_TEXT,
+            notice or _GENERATION_FAILED_USER_TEXT,
             reply_markup=self._wait_audio_reuse_kb(),
         )
-        return {"sent_mode": "user_notice"}
+        return {
+            "sent_mode": "user_notice",
+            "notice_kind": "alignment_window" if notice else "generic",
+        }
+
+    @staticmethod
+    def _alignment_failure_user_text(error_text: str) -> Optional[str]:
+        """Turn an alignment window failure into something the user can act on.
+
+        These are not infrastructure faults: the text and the timing simply do
+        not describe the same piece of audio. Handing back the generic "менеджер
+        свяжется" hides the one thing the user can fix, so the two window codes
+        get their own message and the reuse-track keyboard sends them straight
+        back into the flow with the audio already uploaded.
+        """
+        text = str(error_text or "")
+        if _ALIGNMENT_ERROR_TEXT_TOO_LONG in text:
+            return _ALIGNMENT_TEXT_TOO_LONG_USER_TEXT
+        if _ALIGNMENT_ERROR_WINDOW_MISMATCH in text:
+            return _ALIGNMENT_WINDOW_MISMATCH_USER_TEXT
+        return None
 
     async def _restore_runtime_processing_states(self) -> None:
         store = getattr(self, "runtime_store", None)
@@ -3734,12 +3788,16 @@ class BlastBotApp:
             return None
 
         def _to_sec(raw: str) -> float | None:
-            v = str(raw or "").strip()
+            v = str(raw or "").strip().replace(",", ".")
             if not v:
                 return None
-            m = re.fullmatch(r"(\d{1,3}):(\d{1,2})", v)
+            # Fractional seconds are accepted (1:20.5): a hand-picked window is
+            # what the aligner must contain, and a half-second of slack at the
+            # edge is the difference between a clean fit and a boundary word
+            # hanging outside it.
+            m = re.fullmatch(r"(\d{1,3}):(\d{1,2}(?:\.\d+)?)", v)
             if m:
-                return float(int(m.group(1))) * 60.0 + float(int(m.group(2)))
+                return float(int(m.group(1))) * 60.0 + float(m.group(2))
             try:
                 out = float(v)
             except ValueError:
@@ -3764,6 +3822,63 @@ class BlastBotApp:
         m = int(sec) // 60
         s = int(sec) % 60
         return f"{m}:{s:02d}"
+
+    @staticmethod
+    def _fmt_timing_precise(sec: float) -> str:
+        """``_fmt_timing`` plus fractional seconds when the user gave them.
+
+        Kept separate: ``_fmt_timing`` labels are matched back by equality in
+        ``_parse_hook_drop_label``, so its output must stay stable.
+        """
+        value = round(float(sec), 3)
+        minutes = int(value) // 60
+        seconds = value - float(minutes * 60)
+        if abs(seconds - round(seconds)) < 5e-4:
+            # Round first, then re-derive minutes: 119.9997 is 2:00, not 1:60.
+            return BlastBotApp._fmt_timing(round(value))
+        return f"{minutes}:{seconds:06.3f}".rstrip("0").rstrip(".")
+
+    @staticmethod
+    def _alignment_required_sec(fragment: str) -> float:
+        """Wall-clock floor for singing ``fragment``, mirroring the aligner.
+
+        The CTC path spends at least one emission frame per character plus one
+        per word gap, so the text has a hard minimum duration. Estimated here
+        from the raw string (the service re-derives it exactly after
+        pronunciation normalisation) so an impossible request is caught before
+        the user pays for a render.
+        """
+        cleaned = re.sub(r"[^\w\s]", "", str(fragment or ""), flags=re.UNICODE)
+        words = [word for word in cleaned.split() if word]
+        if not words:
+            return 0.0
+        tokens = sum(len(word) for word in words) + (len(words) - 1)
+        return float(tokens) * _ALIGNMENT_FRAME_SEC
+
+    @classmethod
+    def _alignment_density_error(
+        cls,
+        *,
+        fragment: str,
+        clip_start_sec: float,
+        clip_end_sec: float,
+    ) -> Optional[str]:
+        """User-facing reason the text cannot fit the window, or None."""
+        text = str(fragment or "").strip()
+        window_sec = float(clip_end_sec) - float(clip_start_sec)
+        if not text or window_sec <= 0.0:
+            return None
+        required_sec = cls._alignment_required_sec(text)
+        if required_sec <= window_sec * _ALIGNMENT_FRAME_BUDGET_RATIO:
+            return None
+        min_window_sec = required_sec / _ALIGNMENT_FRAME_BUDGET_RATIO
+        return (
+            f"Текст не поместится в выбранный отрезок: в нём {window_sec:.1f} с, "
+            f"а присланные строки звучат минимум {required_sec:.1f} с.\n\n"
+            f"Что сделать: оставить только те слова, которые реально звучат в "
+            f"этом отрезке, либо взять отрезок длиннее "
+            f"(нужно от {min_window_sec:.0f} с)."
+        )
 
     def _timing_label(self, st: ChatState) -> str:
         start = float(st.user_clip_start_sec or 0.0)
@@ -3827,7 +3942,7 @@ class BlastBotApp:
         await message.answer(
             "Сохранённый трек готов. Для своей модели пришли только точные "
             f"строки, которые звучат в {timing}. Полный текст песни повторять "
-            "не нужно.",
+            "не нужно — каждое лишнее слово сдвигает расшифровку.",
             reply_markup=ReplyKeyboardRemove(),
         )
 
@@ -3841,6 +3956,8 @@ class BlastBotApp:
         await message.answer(
             "Укажи конкретный тайминг трека для клипа следующим образом: "
             "1:20-1:50 (минуты:секунды).\n\n"
+            "Можно точнее — с долями секунды через точку: 1:20.5-1:33.2. "
+            "Так проще поставить границу между словами, а не посреди слова.\n\n"
             "Проверь, что отрывок текста и тайминг — сходятся.\n\n"
             "<b>Максимальный тайминг: 15с.</b> Это строгое ограничение — если "
             "поставишь больше, задача вернётся с ошибкой и придётся заполнять "
@@ -3876,7 +3993,8 @@ class BlastBotApp:
         parsed = self._parse_timing(text)
         if parsed is None:
             await message.answer(
-                "Не удалось распознать тайминг. Формат: 1:20-1:50 или 80-110 (начало-конец в секундах)."
+                "Не удалось распознать тайминг. Формат: 1:20-1:50 или 80-110 "
+                "(начало-конец в секундах). Доли секунды — через точку: 1:20.5-1:33.2."
             )
             return
         start_sec, end_sec = parsed
@@ -3893,6 +4011,17 @@ class BlastBotApp:
                 "покороче, например 1:20-1:33."
             )
             return
+        # The fragment is collected before the timing here, so this is where an
+        # impossible text/window pair is caught: the aligner would reject it
+        # mid-build, after the credits are spent.
+        density_error = self._alignment_density_error(
+            fragment=str(st.target_fragment or ""),
+            clip_start_sec=start_sec,
+            clip_end_sec=end_sec,
+        )
+        if density_error:
+            await message.answer(density_error)
+            return
         st.user_clip_start_sec = round(start_sec, 3)
         st.user_clip_end_sec = round(end_sec, 3)
         await self.store.set(st)
@@ -3901,7 +4030,8 @@ class BlastBotApp:
         if HOOK_FLOW_ENABLED:
             await self._trigger_hook_analysis_task(st)
         await message.answer(
-            f"Тайминг установлен: {self._fmt_timing(start_sec)} - {self._fmt_timing(end_sec)} ({duration:.0f} сек)."
+            f"Тайминг установлен: {self._fmt_timing_precise(start_sec)} - "
+            f"{self._fmt_timing_precise(end_sec)} ({duration:.1f} сек)."
         )
         await self._ask_bg_mode(message, st)
 
@@ -5884,7 +6014,10 @@ class BlastBotApp:
         await message.answer(
             "Скопируй и пришли нужные строки прямо из текста песни — те слова, "
             "которые хочешь видеть в клипе. Например — припев трека, без "
-            "пояснительных слов типа «куплет:» и т.п.",
+            "пояснительных слов типа «куплет:» и т.п.\n\n"
+            "Важно: строки должны точно совпадать с тем, что звучит в отрезке, "
+            "который ты укажешь дальше. Лишние слова сдвинут расшифровку — "
+            "субтитры уедут по таймингу.",
             reply_markup=ReplyKeyboardRemove(),
         )
 
@@ -5895,7 +6028,10 @@ class BlastBotApp:
             await self.store.set(st)
             await message.answer(
                 "Скопируй и пришли нужные строки прямо из текста песни — те слова, которые хочешь видеть в клипе. "
-                "Например — припев трека.",
+                "Например — припев трека.\n\n"
+                "Важно: строки должны точно совпадать с тем, что звучит в "
+                "выбранном отрезке. Лишние слова сдвинут расшифровку — "
+                "субтитры уедут по таймингу.",
                 reply_markup=ReplyKeyboardRemove(),
             )
             return
@@ -5915,6 +6051,15 @@ class BlastBotApp:
             return
         if _is_control_button_text(text):
             await message.answer("Нужны именно строки из текста песни — скопируй их и пришли сообщением.")
+            return
+
+        density_error = self._alignment_density_error(
+            fragment=text,
+            clip_start_sec=float(st.user_clip_start_sec or 0.0),
+            clip_end_sec=float(st.user_clip_end_sec or 0.0),
+        )
+        if density_error:
+            await message.answer(density_error)
             return
 
         st.target_fragment = text
@@ -9386,13 +9531,20 @@ class BlastBotApp:
                 st=st,
                 kind="generation_failed_user_notice",
                 suffix=failed_job_id or "batch",
-                payload={"failed_job_id": failed_job_id},
+                # error_text rides along so the outbox retry can pick the same
+                # notice as this inline send: the run's last_error_text is only
+                # written further down, so a retry would otherwise see nothing.
+                payload={
+                    "failed_job_id": failed_job_id,
+                    "error_text": failed_error,
+                },
             )
             if claimed_user_notice:
                 try:
                     await bot.send_message(
                         st.chat_id,
-                        _GENERATION_FAILED_USER_TEXT,
+                        self._alignment_failure_user_text(failed_error)
+                        or _GENERATION_FAILED_USER_TEXT,
                         reply_markup=self._wait_audio_reuse_kb(),
                     )
                     await self._runtime_mark_outbox_sent(dedupe_key=user_notice_key)

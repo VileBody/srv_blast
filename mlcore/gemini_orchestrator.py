@@ -1472,6 +1472,46 @@ def _build_stage1_plan_from_selected_fragment(
     )
 
 
+def _adopt_alignment_clip_window(
+    *,
+    stage1_asr: Stage1AsrPayload,
+    user_clip_window: Tuple[float, float],
+    logger: logging.Logger,
+) -> Tuple[float, float]:
+    """Widen the user window to the one the aligner actually produced.
+
+    The aligner may keep a boundary syllable that spills a few frames outside
+    the requested window (bounded by
+    ``ALIGNMENT_DYNAMIC_WINDOW_BOUNDARY_OVERFLOW_TOLERANCE_SEC``) and reports
+    the window that contains every aligned word. Everything downstream filters
+    transcript words by full containment in ``user_clip_window``, so without
+    adopting it the tolerated boundary word is dropped from the render.
+
+    Only ever widens: the aligner's window is a superset of the request.
+    """
+    fragment = stage1_asr.selected_fragment
+    if fragment is None:
+        return user_clip_window
+    effective = (
+        min(float(fragment.audio.clip_start_abs), float(user_clip_window[0])),
+        max(float(fragment.audio.clip_end_abs), float(user_clip_window[1])),
+    )
+    left_delta = float(user_clip_window[0]) - effective[0]
+    right_delta = effective[1] - float(user_clip_window[1])
+    if left_delta > 1e-6 or right_delta > 1e-6:
+        logger.info(
+            "alignment_clip_window_widened requested=%.3f..%.3f "
+            "effective=%.3f..%.3f left_delta=%.3f right_delta=%.3f",
+            float(user_clip_window[0]),
+            float(user_clip_window[1]),
+            effective[0],
+            effective[1],
+            left_delta,
+            right_delta,
+        )
+    return effective
+
+
 def _apply_user_clip_window_to_stage1(
     *,
     stage1: Stage1PlanPayload,
@@ -2845,6 +2885,15 @@ def build_all_via_gemini_one_call(
                         stage1_asr=stage1_asr,
                         user_clip_window=user_clip_window,
                     )
+                    if use_local_alignment:
+                        # Same adoption as a fresh alignment, otherwise a
+                        # resumed job silently drops a boundary word the first
+                        # attempt kept.
+                        user_clip_window = _adopt_alignment_clip_window(
+                            stage1_asr=stage1_asr,
+                            user_clip_window=user_clip_window,
+                            logger=logger,
+                        )
                     logger.info("llm_resume_hit stage=stage1a_asr")
                 except _Stage1AUserClipEmptyError as e:
                     logger.warning(
@@ -2877,6 +2926,11 @@ def build_all_via_gemini_one_call(
                 request_id=str(os.environ.get("JOB_ID") or ""),
             )
             stage1_asr = local_response.stage1_asr
+            user_clip_window = _adopt_alignment_clip_window(
+                stage1_asr=stage1_asr,
+                user_clip_window=user_clip_window,
+                logger=logger,
+            )
             backend_info = dict(local_response.backend)
             expected_backend_identity = {
                 "algorithm_version": expected_alignment_algorithm,

@@ -18,6 +18,7 @@ from .contracts import (
     AlignmentFailure,
     ERROR_INTERNAL,
     ERROR_MODEL_UNAVAILABLE,
+    ERROR_TEXT_TOO_LONG_FOR_WINDOW,
     ERROR_TIMEOUT,
     ERROR_UNSUPPORTED_TEXT,
     ERROR_WINDOW_MISMATCH,
@@ -136,6 +137,12 @@ class DynamicWindowConfig:
     min_consensus_candidates: int
     score_tolerance: float
     min_boundary_duration_ratio: float
+    # Bounded amount by which the *first* word may start before the user
+    # window and the *last* word may end after it. Sung syllables routinely
+    # straddle a hand-picked boundary by a few emission frames; rejecting the
+    # whole alignment for that costs the user the render. 0.0 disables the
+    # allowance and restores strict containment.
+    boundary_overflow_tolerance_sec: float = 0.0
 
     def validate(self) -> None:
         if self.max_adjust_sec <= 0.0:
@@ -173,6 +180,17 @@ class DynamicWindowConfig:
                 ERROR_INTERNAL,
                 "dynamic window boundary duration ratio must be in [0, 1]",
             )
+        if self.boundary_overflow_tolerance_sec < 0.0:
+            raise AlignmentFailure(
+                ERROR_INTERNAL,
+                "dynamic window boundary overflow tolerance must be non-negative",
+            )
+        if self.boundary_overflow_tolerance_sec > self.max_adjust_sec:
+            raise AlignmentFailure(
+                ERROR_INTERNAL,
+                "dynamic window boundary overflow tolerance must not exceed "
+                "max adjustment",
+            )
 
 
 @dataclass(frozen=True)
@@ -202,7 +220,16 @@ class WindowAlignmentCandidate:
     path_to_evidence_ratio: float
     adjustment_sec: float
     quality_score: float
+    left_window_overflow_sec: float
+    right_window_overflow_sec: float
     rejection_reasons: tuple[str, ...]
+
+    @property
+    def window_overflow_sec(self) -> float:
+        return max(
+            float(self.left_window_overflow_sec),
+            float(self.right_window_overflow_sec),
+        )
 
     def summary(self) -> dict[str, Any]:
         return {
@@ -232,6 +259,8 @@ class WindowAlignmentCandidate:
             "path_to_evidence_ratio": float(self.path_to_evidence_ratio),
             "adjustment_sec": float(self.adjustment_sec),
             "quality_score": float(self.quality_score),
+            "left_window_overflow_sec": float(self.left_window_overflow_sec),
+            "right_window_overflow_sec": float(self.right_window_overflow_sec),
             "rejection_reasons": list(self.rejection_reasons),
         }
 
@@ -409,6 +438,77 @@ def wildcard_emission_column(log_probs: np.ndarray, *, blank_id: int) -> np.ndar
     return column + math.log(WILDCARD_NON_BLANK_WEIGHT)
 
 
+def minimum_ctc_frames(target_ids: Sequence[int]) -> int:
+    """Shortest CTC path for ``target_ids``: one emission frame per token plus a
+    mandatory blank between repeated neighbours."""
+    targets = [int(token_id) for token_id in target_ids]
+    repeated_neighbors = sum(
+        1 for left, right in zip(targets, targets[1:]) if left == right
+    )
+    return len(targets) + repeated_neighbors
+
+
+def required_alignment_seconds(
+    target_ids: Sequence[int],
+    *,
+    seconds_per_frame: float,
+) -> float:
+    """Wall-clock floor for pronouncing ``target_ids`` at this model's frame rate."""
+    return float(minimum_ctc_frames(target_ids)) * float(seconds_per_frame)
+
+
+def check_reference_fits_window(
+    *,
+    target_ids: Sequence[int],
+    clip_start_abs: float,
+    clip_end_abs: float,
+    seconds_per_frame: float,
+    max_frame_budget_ratio: float,
+    word_count: int,
+) -> None:
+    """Reject a reference that cannot physically be sung inside the window.
+
+    The CTC path needs at least one emission frame per target token, so the
+    text has a hard wall-clock floor. Requests past that floor used to burn a
+    full separation plus inference pass and then surface as an opaque
+    ``no hard-valid candidates``; here they fail immediately with the numbers
+    the user needs to fix the request. ``max_frame_budget_ratio <= 0``
+    disables the check.
+    """
+    if max_frame_budget_ratio <= 0.0:
+        return
+    window_sec = float(clip_end_abs) - float(clip_start_abs)
+    if window_sec <= 0.0:
+        raise AlignmentFailure(
+            ERROR_WINDOW_MISMATCH,
+            "window duration must be positive",
+        )
+    required_sec = required_alignment_seconds(
+        target_ids,
+        seconds_per_frame=float(seconds_per_frame),
+    )
+    budget_sec = window_sec * float(max_frame_budget_ratio)
+    if required_sec <= budget_sec:
+        return
+    raise AlignmentFailure(
+        ERROR_TEXT_TOO_LONG_FOR_WINDOW,
+        "reference text cannot fit the requested window "
+        f"words={int(word_count)} tokens={len(target_ids)} "
+        f"required_sec={required_sec:.3f} window_sec={window_sec:.3f} "
+        f"budget_sec={budget_sec:.3f} ratio={max_frame_budget_ratio:.3f}",
+        details={
+            "word_count": int(word_count),
+            "target_token_count": len(target_ids),
+            "required_sec": round(required_sec, 6),
+            "window_sec": round(window_sec, 6),
+            "budget_sec": round(budget_sec, 6),
+            "max_frame_budget_ratio": float(max_frame_budget_ratio),
+            # What the user has to change, in their own units.
+            "min_window_sec": round(required_sec / float(max_frame_budget_ratio), 6),
+        },
+    )
+
+
 def ctc_viterbi_align(
     log_probs: np.ndarray,
     target_ids: Sequence[int],
@@ -442,8 +542,7 @@ def ctc_viterbi_align(
     if any(token_id < 0 or token_id >= emissions.shape[1] for token_id in targets):
         raise ValueError("target token is outside emission vocabulary")
 
-    repeated_neighbors = sum(1 for left, right in zip(targets, targets[1:]) if left == right)
-    minimum_frames = len(targets) + repeated_neighbors
+    minimum_frames = minimum_ctc_frames(targets)
     if frames < minimum_frames:
         raise AlignmentFailure(
             ERROR_WINDOW_MISMATCH,
@@ -1006,12 +1105,37 @@ def _build_window_candidate(
     )
 
     rejection_reasons: list[str] = []
-    if any(
-        float(word.t_start) < float(clip_start_abs) - frame_tolerance
-        or float(word.t_end) > float(clip_end_abs) + frame_tolerance
-        for word in words
-    ):
+    # Containment is checked per word so a boundary syllable that straddles the
+    # user-picked edge can be told apart from an alignment that genuinely sits
+    # in the wrong place. Only the first word may reach back before the window
+    # and only the last word may reach past its end; anything else means the
+    # path drifted and stays a hard rejection.
+    last_index = len(words) - 1
+    left_window_overflow_sec = max(
+        0.0, float(clip_start_abs) - float(words[0].t_start)
+    )
+    right_window_overflow_sec = max(
+        0.0, float(words[last_index].t_end) - float(clip_end_abs)
+    )
+    interior_outside_window = any(
+        (index != 0 and float(word.t_start) < float(clip_start_abs) - frame_tolerance)
+        or (
+            index != last_index
+            and float(word.t_end) > float(clip_end_abs) + frame_tolerance
+        )
+        for index, word in enumerate(words)
+    )
+    boundary_overflow_sec = max(left_window_overflow_sec, right_window_overflow_sec)
+    overflow_allowance = (
+        float(config.boundary_overflow_tolerance_sec) + frame_tolerance
+    )
+    if interior_outside_window:
         rejection_reasons.append("outside_user_window")
+    elif boundary_overflow_sec > frame_tolerance:
+        if boundary_overflow_sec <= overflow_allowance:
+            rejection_reasons.append("boundary_window_overflow")
+        else:
+            rejection_reasons.append("outside_user_window")
     # Interior confidence is quality telemetry. Boundary confidence is tracked
     # independently per side so a stable consensus can combine evidence from
     # different probes without allowing a weak side to pass unnoticed.
@@ -1058,6 +1182,8 @@ def _build_window_candidate(
         path_to_evidence_ratio=float(path_to_evidence_ratio),
         adjustment_sec=float(adjustment),
         quality_score=float(quality_score),
+        left_window_overflow_sec=float(left_window_overflow_sec),
+        right_window_overflow_sec=float(right_window_overflow_sec),
         rejection_reasons=tuple(rejection_reasons),
     )
 
@@ -1122,6 +1248,7 @@ def select_dynamic_alignment_window(
                     "search_start_abs": float(bounded_start),
                     "search_end_abs": float(bounded_end),
                     "error_code": exc.code,
+                    "message": exc.message,
                 }
             )
 
@@ -1156,11 +1283,31 @@ def select_dynamic_alignment_window(
         "low_left_boundary_word_confidence",
         "low_right_boundary_word_confidence",
     }
-    hard_valid_candidates = [
+    strict_candidates = [
         candidate
         for candidate in candidates
         if not set(candidate.rejection_reasons).difference(evidence_reasons)
     ]
+    # A boundary syllable spilling past the user window by less than the
+    # configured tolerance is admissible evidence, but only when nothing fits
+    # strictly. The strict pool always wins, so an allowance can never change
+    # the outcome of a job that already aligns.
+    overflow_tolerant_candidates = [
+        candidate
+        for candidate in candidates
+        if "boundary_window_overflow" in candidate.rejection_reasons
+        and not set(candidate.rejection_reasons).difference(
+            evidence_reasons | {"boundary_window_overflow"}
+        )
+    ]
+    boundary_overflow_applied = bool(
+        not strict_candidates and overflow_tolerant_candidates
+    )
+    hard_valid_candidates = (
+        list(overflow_tolerant_candidates)
+        if boundary_overflow_applied
+        else list(strict_candidates)
+    )
     fully_supported_candidates = [
         candidate
         for candidate in hard_valid_candidates
@@ -1170,13 +1317,19 @@ def select_dynamic_alignment_window(
         and candidate.right_confidence_supported
     ]
 
+    soft_reasons = evidence_reasons | {"boundary_window_overflow"}
+    window_sec = float(clip_end_abs) - float(clip_start_abs)
+    required_sec = required_alignment_seconds(
+        target_ids,
+        seconds_per_frame=timeline.seconds_per_frame,
+    )
+
     def _failure_details() -> dict[str, Any]:
         ranked = sorted(
             candidates,
             key=lambda candidate: (
-                len(
-                    set(candidate.rejection_reasons).difference(evidence_reasons)
-                ),
+                len(set(candidate.rejection_reasons).difference(soft_reasons)),
+                candidate.window_overflow_sec,
                 -candidate.quality_score,
                 candidate.adjustment_sec,
             ),
@@ -1185,6 +1338,44 @@ def select_dynamic_alignment_window(
             "candidate_count": len(candidates),
             "failed_candidate_count": len(failed_candidates),
             "rejection_counts": dict(reason_counts),
+            # Why the window could not hold the text, in seconds the operator
+            # can act on: how long the reference needs vs how long the user gave.
+            "window_sec": round(window_sec, 6),
+            "required_sec": round(required_sec, 6),
+            # Never non-finite: these details are serialised into the job
+            # result and land in JSONB, which rejects Infinity/NaN.
+            "required_to_window_ratio": (
+                round(required_sec / window_sec, 6) if window_sec > 0.0 else None
+            ),
+            "target_token_count": len(target_ids),
+            "boundary_overflow_tolerance_sec": float(
+                config.boundary_overflow_tolerance_sec
+            ),
+            "overflow_tolerant_candidate_count": len(overflow_tolerant_candidates),
+            "max_left_window_overflow_sec": round(
+                max(
+                    (candidate.left_window_overflow_sec for candidate in candidates),
+                    default=0.0,
+                ),
+                6,
+            ),
+            "max_right_window_overflow_sec": round(
+                max(
+                    (candidate.right_window_overflow_sec for candidate in candidates),
+                    default=0.0,
+                ),
+                6,
+            ),
+            # The tolerance the closest candidate would have needed. 0.0 means
+            # some candidate sat inside the window and failed for another
+            # reason, so overflow is not what killed this job.
+            "min_window_overflow_sec": round(
+                min(
+                    (candidate.window_overflow_sec for candidate in candidates),
+                    default=0.0,
+                ),
+                6,
+            ),
             "hard_valid_candidate_count": len(hard_valid_candidates),
             "fully_supported_candidate_count": len(fully_supported_candidates),
             "left_confident_outside_candidate_count": len(
@@ -1224,12 +1415,17 @@ def select_dynamic_alignment_window(
         }
 
     if not hard_valid_candidates:
+        details = _failure_details()
         raise AlignmentFailure(
             ERROR_WINDOW_MISMATCH,
             "dynamic window search found no hard-valid alignment "
             f"candidates={len(candidates)} failed={len(failed_candidates)} "
-            f"rejections={reason_counts}",
-            details=_failure_details(),
+            f"rejections={reason_counts} "
+            f"window_sec={window_sec:.3f} required_sec={required_sec:.3f} "
+            f"min_overflow_sec={details['min_window_overflow_sec']:.3f} "
+            f"overflow_tolerance_sec="
+            f"{float(config.boundary_overflow_tolerance_sec):.3f}",
+            details=details,
         )
 
     hard_valid_candidates.sort(
@@ -1355,6 +1551,8 @@ def select_dynamic_alignment_window(
     selection_degraded = False
     selection_reason = "strict_boundary_consensus"
     selection_warnings: list[str] = []
+    if boundary_overflow_applied:
+        selection_warnings.append("boundary_window_overflow_tolerated")
     timing_consensus_used = not boundary_supported_clusters
     selection_clusters = boundary_supported_clusters or timing_supported_clusters
     if selection_clusters:
@@ -1604,6 +1802,18 @@ def select_dynamic_alignment_window(
         "degraded_confidence": bool(selection_degraded),
         "selection_reason": selection_reason,
         "rejection_counts": reason_counts,
+        "window_sec": round(window_sec, 6),
+        "required_sec": round(required_sec, 6),
+        "boundary_overflow_tolerance_sec": float(
+            config.boundary_overflow_tolerance_sec
+        ),
+        "boundary_overflow_applied": bool(boundary_overflow_applied),
+        "selected_left_window_overflow_sec": round(
+            float(selected.left_window_overflow_sec), 6
+        ),
+        "selected_right_window_overflow_sec": round(
+            float(selected.right_window_overflow_sec), 6
+        ),
         "score_pool_count": len(score_pool),
         "stable_cluster_count": len(stable_clusters),
         "largest_consensus_candidate_count": int(largest_consensus),
@@ -1704,7 +1914,20 @@ def _build_stage1_asr(
         for word in words
     ]
     pause_spans = _derive_pause_spans(words, min_gap_sec=pause_min_gap_sec)
-    window_duration = float(clip_end_abs) - float(clip_start_abs)
+    # A boundary word tolerated just outside the user window still has to fit
+    # inside the fragment we hand downstream. The payload contract only rejects
+    # words lying *entirely* outside the clip, but the orchestrator filters
+    # transcript words by full containment in the clip window — so without
+    # widening, the tolerated word is silently dropped from the render.
+    effective_start_abs = min(
+        float(clip_start_abs),
+        min(float(word.t_start) for word in words),
+    )
+    effective_end_abs = max(
+        float(clip_end_abs),
+        max(float(word.t_end) for word in words),
+    )
+    window_duration = float(effective_end_abs) - float(effective_start_abs)
     fragment_relation = (
         "inside_13_18" if window_duration <= 18.0 else "inside_13_30"
     )
@@ -1715,8 +1938,8 @@ def _build_stage1_asr(
             "srt_items": [],
             "selected_fragment": {
                 "audio": {
-                    "clip_start_abs": float(clip_start_abs),
-                    "clip_end_abs": float(clip_end_abs),
+                    "clip_start_abs": float(effective_start_abs),
+                    "clip_end_abs": float(effective_end_abs),
                 },
                 "transcript_words": transcript_words,
                 "pause_spans": pause_spans,
@@ -1724,8 +1947,8 @@ def _build_stage1_asr(
                 "fragment_analytics": {
                     "target_fragment": str(target_fragment),
                     "working_fragment": str(target_fragment),
-                    "working_start_abs": float(clip_start_abs),
-                    "working_end_abs": float(clip_end_abs),
+                    "working_start_abs": float(effective_start_abs),
+                    "working_end_abs": float(effective_end_abs),
                     "working_start_text": "user_clip_start",
                     "working_end_text": "user_clip_end",
                     "relation_to_target": fragment_relation,
@@ -1762,6 +1985,8 @@ def align_target_fragment(
     dynamic_window_min_consensus_candidates: int = 3,
     dynamic_window_score_tolerance: float = 0.12,
     dynamic_window_min_boundary_duration_ratio: float = 0.15,
+    dynamic_window_boundary_overflow_tolerance_sec: float = 0.0,
+    max_reference_frame_budget_ratio: float = 0.0,
 ) -> AlignmentResult:
     display_words = reference_words(target_fragment)
     dynamic_window_config = DynamicWindowConfig(
@@ -1774,8 +1999,39 @@ def align_target_fragment(
         min_boundary_duration_ratio=float(
             dynamic_window_min_boundary_duration_ratio
         ),
+        boundary_overflow_tolerance_sec=float(
+            dynamic_window_boundary_overflow_tolerance_sec
+        ),
     )
     dynamic_window_config.validate()
+
+    # Build the CTC target before touching audio: it depends only on the text
+    # and the tokenizer, and it lets an impossible request fail in milliseconds
+    # instead of after a full Demucs pass plus inference.
+    inputs_to_logits_ratio = int(
+        getattr(model.config, "inputs_to_logits_ratio", 0) or 0
+    )
+    if inputs_to_logits_ratio <= 0:
+        raise AlignmentFailure(
+            ERROR_MODEL_UNAVAILABLE,
+            "model config has no valid inputs_to_logits_ratio",
+        )
+    model_seconds_per_frame = float(inputs_to_logits_ratio) / float(SAMPLE_RATE)
+    pronunciation_words = pronunciation_normalizer.normalize_words(display_words)
+    normalized_words, target_ids, token_word_indexes = build_targets(
+        display_words=display_words,
+        pronunciation_words=[word.alignment_text for word in pronunciation_words],
+        tokenizer=processor.tokenizer,
+    )
+    check_reference_fits_window(
+        target_ids=target_ids,
+        clip_start_abs=float(clip_start_abs),
+        clip_end_abs=float(clip_end_abs),
+        seconds_per_frame=model_seconds_per_frame,
+        max_frame_budget_ratio=float(max_reference_frame_budget_ratio),
+        word_count=len(display_words),
+    )
+
     with tempfile.TemporaryDirectory(prefix="blast_alignment_") as temp_dir_raw:
         crop_path = Path(temp_dir_raw) / "analysis_crop.wav"
         analysis_start, requested_analysis_end = extract_analysis_crop(
@@ -1805,14 +2061,6 @@ def align_target_fragment(
         if int(waveform.size) < SAMPLE_RATE // 10:
             raise AlignmentFailure(ERROR_WINDOW_MISMATCH, "analysis crop is too short")
 
-        pronunciation_words = pronunciation_normalizer.normalize_words(display_words)
-        normalized_words, target_ids, token_word_indexes = build_targets(
-            display_words=display_words,
-            pronunciation_words=[
-                word.alignment_text for word in pronunciation_words
-            ],
-            tokenizer=processor.tokenizer,
-        )
         model_inputs = processor(
             waveform,
             sampling_rate=SAMPLE_RATE,
@@ -1825,14 +2073,6 @@ def align_target_fragment(
             log_probs = torch_module.log_softmax(logits, dim=-1).detach().cpu().numpy()
 
     blank_id = int(model.config.pad_token_id)
-    inputs_to_logits_ratio = int(
-        getattr(model.config, "inputs_to_logits_ratio", 0) or 0
-    )
-    if inputs_to_logits_ratio <= 0:
-        raise AlignmentFailure(
-            ERROR_MODEL_UNAVAILABLE,
-            "model config has no valid inputs_to_logits_ratio",
-        )
     timeline = EmissionTimeline(
         analysis_start_abs=float(analysis_start),
         sample_rate=SAMPLE_RATE,

@@ -203,6 +203,15 @@ MIN_REFRAME_CLIP_SEC: float = 7.0
 # manual F4 drop. Mirrored in tg_bot_public for parity.
 F4_MIN_INTRO_SEC: float = 3.0
 
+# Local CTC alignment emits one frame per 20 ms, so a reference text has a hard
+# wall-clock floor. Requests past ALIGNMENT_MAX_REFERENCE_FRAME_BUDGET_RATIO of
+# the window are rejected by the alignment service with
+# ALIGNMENT_TEXT_TOO_LONG_FOR_WINDOW; the bot applies the same budget up front so
+# the user fixes the text instead of losing a paid render. Mirrored in
+# tg_bot_public for parity.
+_ALIGNMENT_FRAME_SEC: float = 0.02
+_ALIGNMENT_FRAME_BUDGET_RATIO: float = 0.8
+
 
 BTN_SEND_TRACK = "Отправить трек"
 BTN_SEND_LYRICS = "Отправить текст"
@@ -2299,12 +2308,16 @@ class BlastBotApp:
             return None
 
         def _to_sec(raw: str) -> float | None:
-            v = str(raw or "").strip()
+            v = str(raw or "").strip().replace(",", ".")
             if not v:
                 return None
-            m = re.fullmatch(r"(\d{1,3}):(\d{1,2})", v)
+            # Fractional seconds are accepted (1:20.5): a hand-picked window is
+            # what the aligner must contain, and a half-second of slack at the
+            # edge is the difference between a clean fit and a boundary word
+            # hanging outside it.
+            m = re.fullmatch(r"(\d{1,3}):(\d{1,2}(?:\.\d+)?)", v)
             if m:
-                return float(int(m.group(1))) * 60.0 + float(int(m.group(2)))
+                return float(int(m.group(1))) * 60.0 + float(m.group(2))
             try:
                 out = float(v)
             except ValueError:
@@ -2323,6 +2336,63 @@ class BlastBotApp:
         s = int(sec) % 60
         return f"{m}:{s:02d}"
 
+    @staticmethod
+    def _fmt_timing_precise(sec: float) -> str:
+        """``_fmt_timing`` plus fractional seconds when the user gave them.
+
+        Kept separate: ``_fmt_timing`` labels are matched back by equality
+        elsewhere, so its output must stay stable.
+        """
+        value = round(float(sec), 3)
+        minutes = int(value) // 60
+        seconds = value - float(minutes * 60)
+        if abs(seconds - round(seconds)) < 5e-4:
+            # Round first, then re-derive minutes: 119.9997 is 2:00, not 1:60.
+            return BlastBotApp._fmt_timing(round(value))
+        return f"{minutes}:{seconds:06.3f}".rstrip("0").rstrip(".")
+
+    @staticmethod
+    def _alignment_required_sec(fragment: str) -> float:
+        """Wall-clock floor for singing ``fragment``, mirroring the aligner.
+
+        The CTC path spends at least one emission frame per character plus one
+        per word gap, so the text has a hard minimum duration. Estimated here
+        from the raw string (the service re-derives it exactly after
+        pronunciation normalisation) so an impossible request is caught before
+        the user pays for a render.
+        """
+        cleaned = re.sub(r"[^\w\s]", "", str(fragment or ""), flags=re.UNICODE)
+        words = [word for word in cleaned.split() if word]
+        if not words:
+            return 0.0
+        tokens = sum(len(word) for word in words) + (len(words) - 1)
+        return float(tokens) * _ALIGNMENT_FRAME_SEC
+
+    @classmethod
+    def _alignment_density_error(
+        cls,
+        *,
+        fragment: str,
+        clip_start_sec: float,
+        clip_end_sec: float,
+    ) -> str | None:
+        """User-facing reason the text cannot fit the window, or None."""
+        text = str(fragment or "").strip()
+        window_sec = float(clip_end_sec) - float(clip_start_sec)
+        if not text or window_sec <= 0.0:
+            return None
+        required_sec = cls._alignment_required_sec(text)
+        if required_sec <= window_sec * _ALIGNMENT_FRAME_BUDGET_RATIO:
+            return None
+        min_window_sec = required_sec / _ALIGNMENT_FRAME_BUDGET_RATIO
+        return (
+            f"Текст не поместится в выбранный отрезок: в нём {window_sec:.1f} с, "
+            f"а присланные строки звучат минимум {required_sec:.1f} с.\n\n"
+            f"Что сделать: оставить только те слова, которые реально звучат в "
+            f"этом отрезке, либо взять отрезок длиннее "
+            f"(нужно от {min_window_sec:.0f} с)."
+        )
+
     async def _ask_timing_choice(self, message: Message, st: ChatState) -> None:
         st.stage = STAGE_WAIT_TIMING_CHOICE
         st.user_clip_start_sec = 0.0
@@ -2331,7 +2401,8 @@ class BlastBotApp:
         await self.store.set(st)
         await message.answer(
             "Хочешь указать конкретный тайминг трека для клипа?\n"
-            "Например: 1:20-1:50 или 80-110 (в секундах).",
+            "Например: 1:20-1:50 или 80-110 (в секундах).\n"
+            "Доли секунды — через точку: 1:20.5-1:33.2.",
             reply_markup=_kb([BTN_SET_TIMING, BTN_SKIP_TIMING]),
         )
 
@@ -2341,7 +2412,9 @@ class BlastBotApp:
             st.stage = STAGE_WAIT_TIMING_INPUT
             await self.store.set(st)
             await message.answer(
-                "Отправь тайминг в формате: 1:20-1:50 или 80-110",
+                "Отправь тайминг в формате: 1:20-1:50 или 80-110.\n"
+                "Можно с долями секунды через точку: 1:20.5-1:33.2 — так "
+                "проще поставить границу между словами, а не посреди слова.",
                 reply_markup=ReplyKeyboardRemove(),
             )
             return
@@ -2366,7 +2439,8 @@ class BlastBotApp:
         parsed = self._parse_timing(text)
         if parsed is None:
             await message.answer(
-                "Не удалось распознать тайминг. Формат: 1:20-1:50 или 80-110 (начало-конец в секундах)."
+                "Не удалось распознать тайминг. Формат: 1:20-1:50 или 80-110 "
+                "(начало-конец в секундах). Доли секунды — через точку: 1:20.5-1:33.2."
             )
             return
         start_sec, end_sec = parsed
@@ -2377,10 +2451,19 @@ class BlastBotApp:
         if duration > 120.0:
             await message.answer("Слишком длинный фрагмент (максимум 120 сек). Попробуй ещё раз.")
             return
+        density_error = self._alignment_density_error(
+            fragment=str(st.target_fragment or ""),
+            clip_start_sec=start_sec,
+            clip_end_sec=end_sec,
+        )
+        if density_error:
+            await message.answer(density_error)
+            return
         st.user_clip_start_sec = round(start_sec, 3)
         st.user_clip_end_sec = round(end_sec, 3)
         await message.answer(
-            f"Тайминг установлен: {self._fmt_timing(start_sec)} – {self._fmt_timing(end_sec)} ({duration:.0f} сек)."
+            f"Тайминг установлен: {self._fmt_timing_precise(start_sec)} – "
+            f"{self._fmt_timing_precise(end_sec)} ({duration:.1f} сек)."
         )
         # Kick off the hook analysis in the background — by the time the user
         # finishes lyrics/fragment/bg/footage/subtitles the result is ready.
@@ -3195,7 +3278,10 @@ class BlastBotApp:
             await self.store.set(st)
             await message.answer(
                 "Пришли интересующий фрагмент текста. "
-                f"Рабочее окно всё равно будет {CLIP_WINDOW_RANGE_S_LABEL}, но модель постарается максимизировать overlap.",
+                f"Рабочее окно всё равно будет {CLIP_WINDOW_RANGE_S_LABEL}, но модель постарается максимизировать overlap.\n\n"
+                "Важно: пришли ровно те слова, которые звучат в выбранном "
+                "тайминге — без лишних строк и пояснений вроде «припев:». "
+                "Каждое лишнее слово смещает расшифровку, и субтитры уедут.",
                 reply_markup=ReplyKeyboardRemove(),
             )
             return
@@ -3215,6 +3301,15 @@ class BlastBotApp:
             return
         if _is_control_button_text(text):
             await message.answer("Нужен именно текст фрагмента сообщением. После этого перейду к следующему шагу.")
+            return
+
+        density_error = self._alignment_density_error(
+            fragment=text,
+            clip_start_sec=float(st.user_clip_start_sec or 0.0),
+            clip_end_sec=float(st.user_clip_end_sec or 0.0),
+        )
+        if density_error:
+            await message.answer(density_error)
             return
 
         st.target_fragment = text
