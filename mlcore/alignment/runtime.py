@@ -68,8 +68,10 @@ class AlignmentSettings:
     dynamic_window_min_consensus_candidates: int
     dynamic_window_score_tolerance: float
     dynamic_window_min_boundary_duration_ratio: float
+    dynamic_window_boundary_overflow_tolerance_sec: float
     max_window_sec: float
     max_reference_words: int
+    max_reference_frame_budget_ratio: float
     torch_threads: int
     audio_preprocessor: str
     demucs_model_repo: Path
@@ -128,8 +130,16 @@ class AlignmentSettings:
                 "ALIGNMENT_DYNAMIC_WINDOW_MIN_BOUNDARY_DURATION_RATIO",
                 0.15,
             ),
+            dynamic_window_boundary_overflow_tolerance_sec=_float_env(
+                "ALIGNMENT_DYNAMIC_WINDOW_BOUNDARY_OVERFLOW_TOLERANCE_SEC",
+                0.2,
+            ),
             max_window_sec=_float_env("ALIGNMENT_MAX_WINDOW_SEC", 120.0),
             max_reference_words=_int_env("ALIGNMENT_MAX_REFERENCE_WORDS", 400),
+            max_reference_frame_budget_ratio=_float_env(
+                "ALIGNMENT_MAX_REFERENCE_FRAME_BUDGET_RATIO",
+                0.8,
+            ),
             torch_threads=max(1, _int_env("ALIGNMENT_TORCH_THREADS", 4)),
             audio_preprocessor=_env("ALIGNMENT_AUDIO_PREPROCESSOR", "demucs"),
             demucs_model_repo=Path(
@@ -210,7 +220,13 @@ class AlignmentRuntime:
                 "min_boundary_duration_ratio": (
                     self.settings.dynamic_window_min_boundary_duration_ratio
                 ),
+                "boundary_overflow_tolerance_sec": (
+                    self.settings.dynamic_window_boundary_overflow_tolerance_sec
+                ),
             },
+            "max_reference_frame_budget_ratio": (
+                self.settings.max_reference_frame_budget_ratio
+            ),
             "load_error_code": self._load_error_code if self.load_error else "",
             "load_error": self.load_error,
         }
@@ -247,7 +263,19 @@ class AlignmentRuntime:
                 min_boundary_duration_ratio=(
                     self.settings.dynamic_window_min_boundary_duration_ratio
                 ),
+                boundary_overflow_tolerance_sec=(
+                    self.settings.dynamic_window_boundary_overflow_tolerance_sec
+                ),
             ).validate()
+            if self.settings.max_reference_frame_budget_ratio < 0.0:
+                raise RuntimeError(
+                    "ALIGNMENT_MAX_REFERENCE_FRAME_BUDGET_RATIO must be "
+                    "non-negative"
+                )
+            if self.settings.max_reference_frame_budget_ratio > 1.0:
+                raise RuntimeError(
+                    "ALIGNMENT_MAX_REFERENCE_FRAME_BUDGET_RATIO must not exceed 1.0"
+                )
             if not self.settings.model_revision:
                 raise RuntimeError("ALIGNMENT_MODEL_REVISION is empty")
             if not self.settings.model_path.is_dir():
@@ -397,6 +425,12 @@ class AlignmentRuntime:
             ),
             dynamic_window_min_boundary_duration_ratio=(
                 self.settings.dynamic_window_min_boundary_duration_ratio
+            ),
+            dynamic_window_boundary_overflow_tolerance_sec=(
+                self.settings.dynamic_window_boundary_overflow_tolerance_sec
+            ),
+            max_reference_frame_budget_ratio=(
+                self.settings.max_reference_frame_budget_ratio
             ),
         )
 

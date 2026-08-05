@@ -321,6 +321,8 @@ def _select_with_synthetic_boundary_evidence(
             path_to_evidence_ratio=1.0,
             adjustment_sec=abs(bounds[0] - 2.0) + abs(bounds[1] - 4.0),
             quality_score=0.9,
+            left_window_overflow_sec=0.0,
+            right_window_overflow_sec=0.0,
             rejection_reasons=reasons,
         )
 
