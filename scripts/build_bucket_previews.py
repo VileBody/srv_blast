@@ -57,6 +57,10 @@ def _catalog_for_media(media: str):
         from mlcore.photo_bucket_catalog import load_photo_catalog
 
         return load_photo_catalog()
+    if media == "collection":
+        from mlcore.footage_collection_catalog import load_collection_catalog
+
+        return load_collection_catalog()
     return get_bucket_catalog()
 
 
@@ -67,6 +71,13 @@ def _resolve_inventory_path(media: str = "video") -> Path:
     if media == "photo":
         env = (os.environ.get("PHOTO_INVENTORY_JSON") or "").strip()
         return Path(env).expanduser().resolve() if env else (ROOT / "data" / "photo_inventory.json").resolve()
+    if media == "collection":
+        env = (os.environ.get("COLLECTION_INVENTORY_JSON") or "").strip()
+        return (
+            Path(env).expanduser().resolve()
+            if env
+            else (ROOT / "data" / "collection_inventory.json").resolve()
+        )
     env = (os.environ.get("FOOTAGE_INVENTORY_JSON") or "").strip()
     if env:
         return Path(env).expanduser().resolve()
@@ -81,7 +92,10 @@ def _ensure_inventory(inv_path: Path, *, media: str = "video") -> Path:
     """
     if inv_path.exists():
         return inv_path
-    static_default = "photo_assets_index.json" if media == "photo" else "static_assets_index_1to1.json"
+    static_default = {
+        "photo": "photo_assets_index.json",
+        "collection": "collection_assets_index.json",
+    }.get(media, "static_assets_index_1to1.json")
     static_index = (ROOT / "data" / static_default).resolve()
     if not static_index.exists():
         raise SystemExit(
@@ -124,11 +138,22 @@ def _build_mapped_assets(inv: Dict[str, Any], *, media: str = "video") -> List[D
     from mlcore.gemini_orchestrator import _resolve_style_metadata_db_paths
 
     picker_assets = fp.load_picker_assets_from_inventory(inv)
-    db_paths = _photo_snapshot_db_paths() if media == "photo" else _resolve_style_metadata_db_paths(root=ROOT)
-    rows = fp.load_footage_style_metadata_rows(db_paths=db_paths)
-    index = fp.merge_footage_style_metadata_rows(rows)
+    if media == "collection":
+        # Collections are never tagged, so there is no metadata to join. Asking
+        # for it would map zero assets and report an empty pool for a folder that
+        # is in fact full.
+        db_paths, rows, index = [], [], {}
+    else:
+        db_paths = (
+            _photo_snapshot_db_paths() if media == "photo"
+            else _resolve_style_metadata_db_paths(root=ROOT)
+        )
+        rows = fp.load_footage_style_metadata_rows(db_paths=db_paths)
+        index = fp.merge_footage_style_metadata_rows(rows)
     mapped, unmapped = fp.map_inventory_assets_with_style_metadata(
-        assets=picker_assets, metadata_index=index
+        assets=picker_assets,
+        metadata_index=index,
+        require_metadata=(media != "collection"),
     )
     log.info(
         "metadata loaded db_files=%d rows=%d merged_ids=%d inventory=%d mapped=%d unmapped=%d",
@@ -525,7 +550,10 @@ def _output_s3_target(media: str = "video") -> Tuple[str, str]:
               or os.environ.get("S3_BUCKET_ASSET_STORAGE") or "").strip()
     if not bucket:
         raise RuntimeError("set FOOTAGE_PREVIEW_S3_BUCKET or S3_BUCKET_ASSET_STORAGE")
-    default_prefix = "photo_bucket_previews" if media == "photo" else "footage_bucket_previews"
+    default_prefix = {
+        "photo": "photo_bucket_previews",
+        "collection": "collection_bucket_previews",
+    }.get(media, "footage_bucket_previews")
     prefix = (os.environ.get("FOOTAGE_PREVIEW_S3_PREFIX") or default_prefix).strip().strip("/")
     return bucket, prefix
 
@@ -605,6 +633,10 @@ def build_one_bucket(
 
     if media == "photo":
         spec = bp.build_photo_montage_spec(bucket, clips)
+    elif media == "collection":
+        spec = bp.build_collection_montage_spec(
+            bucket, clips, render_preset=getattr(args, "render_preset", "wide")
+        )
     else:
         spec = bp.build_montage_spec(bucket, clips)
     render_jsx = bp.render_montage_jsx(spec, _montage_template_text(media))
@@ -736,9 +768,14 @@ def _select_buckets(catalog: List[Bucket], args: argparse.Namespace) -> List[Buc
 
 def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(description="Build footage bucket previews (precision flow, phase 4)")
-    ap.add_argument("--media", choices=("video", "photo"), default="video",
+    ap.add_argument("--media", choices=("video", "photo", "collection"), default="video",
                     help="video = footage previews (default); photo = 4:3 photo bucket previews "
-                         "(visual catalog, photo pool, 1920x1440 montage).")
+                         "(visual catalog, photo pool, 1920x1440 montage); collection = untagged "
+                         "folder-scoped groups (films/people/cine16x9), rendered in the geometry "
+                         "they will be delivered at (see --render-preset).")
+    ap.add_argument("--render-preset", choices=("vertical", "wide", "square"), default="wide",
+                    help="collection previews only: geometry of the example reel. Should match "
+                         "what the user will actually receive, or the preview misrepresents it.")
     ap.add_argument("--only", nargs="*", default=None, help="specific bucket_id(s) to (re)build")
     ap.add_argument("--limit", type=int, default=0, help="build the first N buckets (catalog order)")
     ap.add_argument("--all", action="store_true", help="build ALL buckets (explicit full sweep)")
@@ -800,16 +837,20 @@ def main(argv: Optional[List[str]] = None) -> int:
     targets = _select_buckets(catalog, args)
     # Drop label-duplicate buckets (e.g. lonely_paths under heartbreak+betrayal)
     # so the shortlist never shows the same vibe name twice. Not for --only.
-    if not args.only and not args.no_dedup_labels:
+    # Label-dedup exists because one visual vibe can appear under several themes.
+    # Collections are authored one-per-folder, so two entries sharing a label are
+    # two genuinely different groups and dropping one would hide it for good.
+    if not args.only and not args.no_dedup_labels and args.media != "collection":
         before = len(targets)
         targets = bp.dedup_buckets_by_label(targets)
         if len(targets) != before:
             log.info("label-dedup: %d -> %d buckets", before, len(targets))
     log.info("targets: %d buckets", len(targets))
 
-    previews_path = args.previews_path or (
-        bp.DEFAULT_PHOTO_PREVIEWS_PATH if args.media == "photo" else bp.DEFAULT_PREVIEWS_PATH
-    )
+    previews_path = args.previews_path or {
+        "photo": bp.DEFAULT_PHOTO_PREVIEWS_PATH,
+        "collection": bp.DEFAULT_COLLECTION_PREVIEWS_PATH,
+    }.get(args.media, bp.DEFAULT_PREVIEWS_PATH)
     store_path = (ROOT / previews_path) if not os.path.isabs(previews_path) else Path(previews_path)
 
     # REGISTER-ONLY: no inventory/render — just send the already-rendered mp4s to
