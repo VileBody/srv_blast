@@ -2315,7 +2315,7 @@ class BlastBotApp:
             # what the aligner must contain, and a half-second of slack at the
             # edge is the difference between a clean fit and a boundary word
             # hanging outside it.
-            m = re.fullmatch(r"(\d{1,3}):(\d{1,2}(?:\.\d{1,3})?)", v)
+            m = re.fullmatch(r"(\d{1,3}):(\d{1,2}(?:\.\d+)?)", v)
             if m:
                 return float(int(m.group(1))) * 60.0 + float(m.group(2))
             try:
@@ -2401,7 +2401,8 @@ class BlastBotApp:
         await self.store.set(st)
         await message.answer(
             "Хочешь указать конкретный тайминг трека для клипа?\n"
-            "Например: 1:20-1:50 или 80-110 (в секундах).",
+            "Например: 1:20-1:50 или 80-110 (в секундах).\n"
+            "Доли секунды — через точку: 1:20.5-1:33.2.",
             reply_markup=_kb([BTN_SET_TIMING, BTN_SKIP_TIMING]),
         )
 
@@ -2411,7 +2412,9 @@ class BlastBotApp:
             st.stage = STAGE_WAIT_TIMING_INPUT
             await self.store.set(st)
             await message.answer(
-                "Отправь тайминг в формате: 1:20-1:50 или 80-110",
+                "Отправь тайминг в формате: 1:20-1:50 или 80-110.\n"
+                "Можно с долями секунды через точку: 1:20.5-1:33.2 — так "
+                "проще поставить границу между словами, а не посреди слова.",
                 reply_markup=ReplyKeyboardRemove(),
             )
             return
@@ -2436,7 +2439,8 @@ class BlastBotApp:
         parsed = self._parse_timing(text)
         if parsed is None:
             await message.answer(
-                "Не удалось распознать тайминг. Формат: 1:20-1:50 или 80-110 (начало-конец в секундах)."
+                "Не удалось распознать тайминг. Формат: 1:20-1:50 или 80-110 "
+                "(начало-конец в секундах). Доли секунды — через точку: 1:20.5-1:33.2."
             )
             return
         start_sec, end_sec = parsed

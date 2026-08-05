@@ -3795,7 +3795,7 @@ class BlastBotApp:
             # what the aligner must contain, and a half-second of slack at the
             # edge is the difference between a clean fit and a boundary word
             # hanging outside it.
-            m = re.fullmatch(r"(\d{1,3}):(\d{1,2}(?:\.\d{1,3})?)", v)
+            m = re.fullmatch(r"(\d{1,3}):(\d{1,2}(?:\.\d+)?)", v)
             if m:
                 return float(int(m.group(1))) * 60.0 + float(m.group(2))
             try:
@@ -3956,6 +3956,8 @@ class BlastBotApp:
         await message.answer(
             "Укажи конкретный тайминг трека для клипа следующим образом: "
             "1:20-1:50 (минуты:секунды).\n\n"
+            "Можно точнее — с долями секунды через точку: 1:20.5-1:33.2. "
+            "Так проще поставить границу между словами, а не посреди слова.\n\n"
             "Проверь, что отрывок текста и тайминг — сходятся.\n\n"
             "<b>Максимальный тайминг: 15с.</b> Это строгое ограничение — если "
             "поставишь больше, задача вернётся с ошибкой и придётся заполнять "
@@ -3991,7 +3993,8 @@ class BlastBotApp:
         parsed = self._parse_timing(text)
         if parsed is None:
             await message.answer(
-                "Не удалось распознать тайминг. Формат: 1:20-1:50 или 80-110 (начало-конец в секундах)."
+                "Не удалось распознать тайминг. Формат: 1:20-1:50 или 80-110 "
+                "(начало-конец в секундах). Доли секунды — через точку: 1:20.5-1:33.2."
             )
             return
         start_sec, end_sec = parsed

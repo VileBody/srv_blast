@@ -117,9 +117,28 @@ def test_timing_input_accepts_fractional_seconds() -> None:
         assert parse("1:20.5-1:33.25") == pytest.approx((80.5, 93.25))
         assert parse("1:20,5-1:33") == pytest.approx((80.5, 93.0))
         assert parse("80.5-93.25") == pytest.approx((80.5, 93.25))
+        # More decimals than the 20 ms emission grid can resolve are accepted
+        # rather than rejected as unparseable — the aligner quantises them.
+        assert parse("1:20.5678-1:33") == pytest.approx((80.5678, 93.0))
         # Unchanged behaviour for the formats users already send.
         assert parse("1:20-1:50") == pytest.approx((80.0, 110.0))
         assert parse("нет") is None
+
+
+def test_timing_prompts_advertise_fractional_seconds() -> None:
+    """A format the user is never told about does not exist for them."""
+    import inspect
+
+    team, pub = _apps()
+
+    for module in (team, pub):
+        source = inspect.getsource(module.BlastBotApp)
+        ask = source[source.index("def _ask_timing_choice"):]
+        ask = ask[: ask.index("async def _handle_wait_timing_choice")]
+        assert "1:20.5" in ask, f"{module.__name__} never mentions fractional input"
+        # …and the parse-failure message repeats it, since that is where a user
+        # who guessed the wrong format actually lands.
+        assert "Доли секунды — через точку" in source
 
 
 def test_precise_formatter_keeps_whole_seconds_stable() -> None:
