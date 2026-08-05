@@ -2631,9 +2631,16 @@ def build_all_via_gemini_one_call(
     style_metadata_paths = _resolve_style_metadata_db_paths(root=ROOT)
     style_metadata_rows = load_footage_style_metadata_rows(db_paths=style_metadata_paths)
     style_metadata_index = merge_footage_style_metadata_rows(style_metadata_rows)
+    # Collection jobs run on an untagged pool by design, so "has no metadata"
+    # must not disqualify a clip there — otherwise the mapping empties and
+    # Stage2 dies on style_rotation_requires_mapped_inventory_assets.
+    _collection_plane = (
+        str(os.environ.get("FOOTAGE_ROTATION_THEME") or "").strip() == "collection"
+    )
     mapped_picker_assets, unmapped_picker_file_names = map_inventory_assets_with_style_metadata(
         assets=picker_assets,
         metadata_index=style_metadata_index,
+        require_metadata=not _collection_plane,
     )
 
     out_dir = Path(os.environ.get("OUT_DIR", str(ROOT / "out"))).resolve()
@@ -3786,10 +3793,17 @@ def build_all_via_gemini_one_call(
                 _theme, _group,
             )
         elif (
-            _stage2b_deterministic_enabled()
-            and rotation_theme_override
+            rotation_theme_override
             and rotation_group_override
-            and (not footage_artist_id or rotation_theme_override == "visual")
+            # STAGE2B_DETERMINISTIC rolls the TAG-bucket optimisation back onto
+            # the LLM. A collection has nothing for an LLM to decide — its clips
+            # are the folder — so that rollback must not reach it, or the flag
+            # would turn a deterministic slot into a hallucinated one.
+            and (rotation_theme_override == "collection" or _stage2b_deterministic_enabled())
+            and (
+                not footage_artist_id
+                or rotation_theme_override in ("visual", "collection")
+            )
         ):
             # Exact-slot precision path: build the style filters straight from the
             # bucket catalog — NO Stage2B LLM call. On this path the LLM only

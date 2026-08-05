@@ -130,6 +130,11 @@ _LLM_ENV_KEYS = (
     "PHOTO_TRANSITION",
     "PHOTO_INVENTORY_JSON",
     "PHOTO_TAGS_SNAPSHOT_JSON",
+    # output geometry (vertical | wide | square). Absent => vertical.
+    "RENDER_PRESET",
+    # collection plane (untagged, folder-scoped pools)
+    "COLLECTION_INVENTORY_JSON",
+    "FOOTAGE_COLLECTIONS_JSON",
 )
 
 
@@ -2098,6 +2103,31 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
         env["FOOTAGE_ROTATION_THEME"] = rotation_theme
         if rotation_tags_group:
             env["FOOTAGE_ROTATION_GROUP"] = rotation_tags_group
+
+    # Output geometry. Set only when it differs from the default so a vertical
+    # job's build env stays byte-for-byte what it was before presets existed.
+    render_preset = str(req.get("render_preset") or "vertical").strip().lower()
+    if render_preset not in ("vertical", "wide", "square"):
+        raise RuntimeError(
+            f"invalid render_preset={render_preset!r} (expected vertical|wide|square)"
+        )
+    if render_preset != "vertical":
+        env["RENDER_PRESET"] = render_preset
+
+    # Collection plane: an untagged, folder-scoped pool that lives in its OWN
+    # inventory. Pointing the picker at it here is what makes the isolation
+    # physical — a collection job cannot see the tag-based pool, and vice versa,
+    # because they never share an inventory file.
+    if rotation_theme == "collection":
+        collection_inventory = str(
+            os.environ.get("COLLECTION_INVENTORY_JSON")
+            or "data/collection_inventory.json"
+        ).strip()
+        env["FOOTAGE_INVENTORY_JSON"] = collection_inventory
+        # Collections are never tagged, so there is no metadata to merge; an
+        # empty list keeps the picker's mapping step honest instead of letting it
+        # silently pick up the tag-based snapshot.
+        env["FOOTAGE_STYLE_METADATA_DB_PATHS_JSON"] = json.dumps([])
     # Wave 1 Поток B: the picker's global per-bucket cooldown ledger (footage_usage)
     # needs the DSN + the serving chat. Passed explicitly so it doesn't depend on
     # CREDITS_DB_URL being present in the raw subprocess env.
@@ -2836,6 +2866,9 @@ _FOOTAGE_TAGGING_PROGRESS_KEY = "footage_tagging:progress"
 # footage pool so both can run/poll independently.
 _PHOTO_TAGGING_PROGRESS_KEY = "photo_tagging:progress"
 _PHOTO_ACTIVATION_PROGRESS_KEY = "photo_activation:progress"
+# Collection plane (films / people / cine16x9): its own single-flight key so an
+# ingest there never blocks (or is blocked by) the footage or photo pools.
+_COLLECTION_ACTIVATION_PROGRESS_KEY = "collection_activation:progress"
 
 
 def _footage_tagging_source_prefix() -> str:
@@ -2858,9 +2891,73 @@ def _photo_tagging_source_prefix() -> str:
 
 def _norm_media_type(media_type: Any) -> str:
     mt = str(media_type or "video").strip().lower() or "video"
-    if mt not in ("video", "photo"):
-        raise RuntimeError(f"invalid media_type={mt!r} (expected video|photo)")
+    if mt not in ("video", "photo", "collection"):
+        raise RuntimeError(f"invalid media_type={mt!r} (expected video|photo|collection)")
     return mt
+
+
+def _collection_source_prefix() -> str:
+    """Top-level S3 folder of the collection plane. Separate from the footage and
+    photo prefixes so the three pools can never be scanned into each other."""
+    explicit = (os.environ.get("ASSET_UI_COLLECTION_SOURCE_PREFIX") or "").strip().strip("/")
+    if explicit:
+        return explicit
+    return (os.environ.get("S3_COLLECTION_PREFIX") or "collection_sources").strip().strip("/")
+
+
+def _report_collection_registry(static_index_path: Any) -> Dict[str, Any]:
+    """Reconcile the uploaded folders against the selectable-collection registry.
+
+    Uploading files and making a group selectable are two different acts: the
+    registry carries the RU label and the track themes, which are editorial
+    decisions no scan can infer. Without this report an operator would upload a
+    folder, see the ingest succeed, and never learn that nothing became
+    selectable — the failure mode the reconcile tooling exists to prevent.
+    """
+    from pathlib import Path as _P
+
+    try:
+        data = json.loads(_P(str(static_index_path)).read_text(encoding="utf-8"))
+    except Exception as exc:
+        return {"registry_check_error": str(exc)}
+
+    counts: Dict[str, int] = {}
+    for row in data.get("assets") or []:
+        if not isinstance(row, dict):
+            continue
+        kind = str(row.get("genre") or "").strip().lower()
+        folder = str(row.get("tag") or "").strip().lower()
+        if kind and folder:
+            counts[f"{kind}__{folder}"] = counts.get(f"{kind}__{folder}", 0) + 1
+
+    try:
+        from mlcore.footage_collection_catalog import load_collection_catalog
+
+        registered = {b.slug for b in load_collection_catalog()}
+    except Exception as exc:
+        return {"registry_check_error": str(exc), "folders_found": len(counts)}
+
+    unregistered = sorted(set(counts) - registered)
+    empty = sorted(registered - set(counts))
+    out: Dict[str, Any] = {
+        "folders_found": len(counts),
+        "collections_registered": len(registered),
+        "collections_live": len(set(counts) & registered),
+    }
+    if unregistered:
+        out["unregistered_folders"] = unregistered
+        log.warning(
+            "activate(collection): %d uploaded folder(s) are NOT in the registry and "
+            "will not appear anywhere: %s",
+            len(unregistered), unregistered,
+        )
+    if empty:
+        out["registered_but_empty"] = empty
+        log.warning(
+            "activate(collection): %d registered collection(s) have no files: %s",
+            len(empty), empty,
+        )
+    return out
 
 
 @celery_app.task(name="orchestrator.tag_untagged_footage", bind=True, max_retries=0)
@@ -3386,7 +3483,13 @@ def activate_footage_base(self, limit: int = 0, media_type: str = "video") -> Di
 
     mt = _norm_media_type(media_type)
     is_photo = mt == "photo"
-    progress_key = _PHOTO_ACTIVATION_PROGRESS_KEY if is_photo else _FOOTAGE_ACTIVATION_PROGRESS_KEY
+    is_collection = mt == "collection"
+    if is_photo:
+        progress_key = _PHOTO_ACTIVATION_PROGRESS_KEY
+    elif is_collection:
+        progress_key = _COLLECTION_ACTIVATION_PROGRESS_KEY
+    else:
+        progress_key = _FOOTAGE_ACTIVATION_PROGRESS_KEY
 
     bucket = str(os.environ.get("S3_BUCKET_ASSET_STORAGE") or "").strip()
     db_url = str(getattr(SETTINGS, "credits_db_url", "") or "").strip()
@@ -3413,6 +3516,26 @@ def activate_footage_base(self, limit: int = 0, media_type: str = "video") -> Di
             inventory_out = _Path(os.environ.get("PHOTO_INVENTORY_JSON", str(repo_root / "data" / "photo_inventory.json")))
             bundle_out = _Path(os.environ.get("PHOTO_DESCRIPTIONS_BUNDLE_OUT", str(repo_root / "pins" / "photo_descriptions_bundle.json")))
             prefix = _photo_tagging_source_prefix()
+        elif is_collection:
+            static_index_path = _Path(
+                os.environ.get(
+                    "COLLECTION_ASSETS_INDEX_JSON",
+                    str(repo_root / "data" / "collection_assets_index.json"),
+                )
+            )
+            inventory_out = _Path(
+                os.environ.get(
+                    "COLLECTION_INVENTORY_JSON",
+                    str(repo_root / "data" / "collection_inventory.json"),
+                )
+            )
+            bundle_out = _Path(
+                os.environ.get(
+                    "COLLECTION_DESCRIPTIONS_BUNDLE_OUT",
+                    str(repo_root / "pins" / "collection_descriptions_bundle.json"),
+                )
+            )
+            prefix = _collection_source_prefix()
         else:
             static_index_path = _Path(
                 os.environ.get("STATIC_ASSETS_INDEX_JSON", str(repo_root / "data" / "static_assets_index_1to1.json"))
@@ -3430,6 +3553,21 @@ def activate_footage_base(self, limit: int = 0, media_type: str = "video") -> Di
             from scripts.build_photo_assets_index import build_photo_index
 
             idx = build_photo_index(bucket=bucket, prefix=prefix, out_path=static_index_path, progress_cb=_idx_progress)
+        elif is_collection:
+            from mlcore.footage_segments import min_source_sec
+            from scripts.build_static_assets_index import build_index
+
+            # Collection sources are long by design, so the index also records
+            # where the edits are; the segmenter snaps window boundaries onto
+            # them instead of cutting across a shot change.
+            idx = build_index(
+                bucket=bucket,
+                prefix=prefix,
+                out_path=static_index_path,
+                progress_cb=_idx_progress,
+                detect_scene_cuts=True,
+                scene_cut_min_duration_sec=min_source_sec(),
+            )
         else:
             from scripts.build_static_assets_index import build_index
 
@@ -3468,6 +3606,24 @@ def activate_footage_base(self, limit: int = 0, media_type: str = "video") -> Di
             max_assets_in_bundle=int(max_assets_env) if max_assets_env else None,
             media_type=mt,
         )
+
+        if is_collection:
+            # 3+4) NO tagging, NO tags snapshot — that is the defining property of
+            # this plane, not an omission. A collection's clips are selectable
+            # only through their folder, and tagging them would be both wasted
+            # spend and the one thing that could let them into a vibe bucket.
+            _publish("running", phase="registry_check")
+            summary = {
+                "indexed": idx.get("assets_count"),
+                "index_failed": idx.get("failed"),
+                "tagging": "skipped_by_design",
+                "pool_registered": pool_registry.get("total"),
+                "pool_pruned": pool_registry.get("pruned"),
+                "pool_pickable": pool_registry.get("pickable"),
+                **_report_collection_registry(static_index_path),
+            }
+            _publish("done", **summary)
+            return summary
 
         # 3) tag untagged clips
         def _tag_progress(done: int, total: int, written: int) -> None:

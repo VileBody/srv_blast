@@ -1,0 +1,20 @@
+{
+  "version": "collection-v1",
+  "_schema": {
+    "kind": "films | people | cine16x9 — the reserved first-level S3 folder",
+    "folder": "the upload folder name (second S3 level); one folder = one group",
+    "label": "RU text on the bot button",
+    "description": "RU one-liner shown with the shortlist preview (optional)",
+    "themes": "track themes this collection suits; drives shortlist order. Optional — an unlisted collection still appears, in registry order, at the tail",
+    "formats": "allowed output geometries: wide | square | vertical. Defaults to [wide, square]"
+  },
+  "_example": {
+    "kind": "films",
+    "folder": "interstellar",
+    "label": "Интерстеллар",
+    "description": "космос, масштаб, холодный свет",
+    "themes": ["escapism_dreams_minor", "loneliness_isolation_minor", "epic_love_minor"],
+    "formats": ["wide", "square"]
+  },
+  "collections": []
+}

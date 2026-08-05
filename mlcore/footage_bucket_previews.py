@@ -58,6 +58,10 @@ PHOTO_MONTAGE_ANIM = {
 PREVIEWS_STORE_VERSION = 1
 DEFAULT_PREVIEWS_PATH = "data/footage_bucket_previews.json"
 DEFAULT_PHOTO_PREVIEWS_PATH = "data/photo_bucket_previews.json"
+# Collections keep their own store: the bot shows them in a different branch of
+# the menu, and their previews render in a different geometry, so mixing them
+# into the vibe store would only invite a shortlist to serve the wrong shape.
+DEFAULT_COLLECTION_PREVIEWS_PATH = "data/collection_bucket_previews.json"
 
 _MOOD_RU = {"minor": "минор", "major": "мажор"}
 
@@ -136,7 +140,11 @@ def select_bucket_clips(
     an offline preview build does not depend on the ambient env.
     """
     raw_pick = _raw_pick_from_bucket(bucket)
-    pool = fp._build_raw_pool(raw_pick, mapped_assets, media_type=media_type)
+    # media_type selects the visual-contract gate variant; a collection is made of
+    # ordinary video clips (the plane name is not a media kind), so it maps to
+    # "video" rather than being passed through as an unknown value.
+    effective_media_type = "video" if media_type == "collection" else media_type
+    pool = fp._build_raw_pool(raw_pick, mapped_assets, media_type=effective_media_type)
     pool.sort(key=lambda it: _clip_sort_key(it, seed=seed))
     n = max(0, int(top_n))
     return pool[:n]
@@ -156,6 +164,12 @@ def clip_ids_of(clips: List[Dict[str, Any]]) -> List[str]:
 # --------------------------------------------------------------------------- #
 def build_bucket_description(bucket: Bucket, *, max_tags: int = 4) -> str:
     label = str(bucket.label or bucket.tags_group or bucket.bucket_id).strip()
+    # A collection has no tags and no mood to summarise — its priority_tags hold
+    # only an identity sentinel. The operator's one-liner from the registry is
+    # the description; falling through to the generic path would print that
+    # sentinel at the user.
+    if str(bucket.bucket_id).startswith("collection:"):
+        return str(getattr(bucket, "description", "") or "").strip() or label
     tags = ", ".join([t for t in bucket.priority_tags[:max_tags] if t])
     mood = _MOOD_RU.get(bucket.mood, "")
     base = f"{label}: {tags}" if tags else label
@@ -205,6 +219,36 @@ def build_montage_spec(
     if anim is not None:
         spec["anim"] = dict(anim)
     return spec
+
+
+def build_collection_montage_spec(
+    bucket: Bucket,
+    clips: List[Dict[str, Any]],
+    *,
+    render_preset: str = "wide",
+    seconds_per_clip: float = SECONDS_PER_CLIP,
+    comp_name: str = "Collection Preview",
+    with_label: bool = True,
+) -> Dict[str, Any]:
+    """MONTAGE spec for a COLLECTION preview, in the geometry it will render at.
+
+    A film shown as a 9:16 preview and then delivered as 16:9 would misrepresent
+    the product, so the preview borrows the same preset registry the render uses
+    rather than defaulting to the vertical reel shape.
+    """
+    from app.render_presets import get_preset
+
+    preset = get_preset(render_preset)
+    return build_montage_spec(
+        bucket,
+        clips,
+        seconds_per_clip=seconds_per_clip,
+        width=preset.width,
+        height=preset.height,
+        fps=COMP_FPS,
+        comp_name=comp_name,
+        with_label=with_label,
+    )
 
 
 def build_photo_montage_spec(

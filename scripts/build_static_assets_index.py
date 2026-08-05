@@ -22,6 +22,7 @@ from __future__ import annotations
 import concurrent.futures
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -163,6 +164,93 @@ def _ffprobe_url(url: str, *, ffprobe_bin: str = "ffprobe", timeout: float = 60.
         return None
 
 
+_SHOWINFO_PTS_RE = re.compile(r"pts_time:([0-9]+(?:\.[0-9]+)?)")
+
+
+def detect_scene_cuts_local(
+    path: Path,
+    *,
+    ffmpeg_bin: str = "ffmpeg",
+    threshold: float = 0.4,
+    timeout: float = 600.0,
+) -> List[float]:
+    """Timestamps where the picture changes hard (a cut), via ffmpeg's scene score.
+
+    Used to place virtual segment boundaries on edits instead of on a blind
+    grid — a boundary that lands mid-edit produces a clip containing half of one
+    shot and half of the next.
+
+    The frames are scaled down first: the score is a whole-frame difference, so
+    full resolution buys nothing but decode time. Failure returns [] — the
+    segmenter then falls back to the even grid, which is degraded but correct.
+    """
+    try:
+        proc = subprocess.run(
+            [
+                ffmpeg_bin, "-hide_banner", "-nostats", "-an", "-sn",
+                "-i", str(path),
+                "-filter:v", f"scale=320:-2,select='gt(scene,{float(threshold)})',showinfo",
+                "-f", "null", "-",
+            ],
+            capture_output=True, text=True, check=False, timeout=timeout,
+        )
+    except Exception:
+        return []
+    if proc.returncode != 0:
+        return []
+    seen: List[float] = []
+    for m in _SHOWINFO_PTS_RE.finditer(proc.stderr or ""):
+        try:
+            seen.append(round(float(m.group(1)), 3))
+        except ValueError:
+            continue
+    return sorted(set(seen))
+
+
+def probe_s3_video_ex(
+    bucket: str,
+    key: str,
+    *,
+    ffprobe_bin: str = "ffprobe",
+    ffmpeg_bin: str = "ffmpeg",
+    timeout: float = 60.0,
+    want_scene_cuts: bool = False,
+    scene_cut_threshold: float = 0.4,
+    scene_cut_min_duration_sec: float = 0.0,
+) -> Optional[Dict[str, Any]]:
+    """Geometry + duration (+ optional scene cuts) for one S3 object.
+
+    Both passes reuse the SAME local download — scene detection is only ever
+    requested for long collection sources, and re-fetching a multi-minute file
+    to run a second tool over it would double the ingest's network cost.
+    """
+    from src.storage.s3 import download_from_s3
+
+    suffix = Path(key).suffix.lower() or ".mp4"
+    try:
+        with tempfile.TemporaryDirectory(prefix="video_index_") as td:
+            local_path = Path(td) / f"video{suffix}"
+            download_from_s3(bucket, key, local_path)
+            dims = parse_ffprobe_json(
+                _ffprobe_url(str(local_path), ffprobe_bin=ffprobe_bin, timeout=timeout) or ""
+            )
+            if not dims:
+                return None
+            w, h, dur = dims
+            cuts: List[float] = []
+            # Detection decodes the whole file, so only pay for it where a
+            # boundary will actually be placed: sources long enough to be split
+            # into virtual segments. Gated here, while the file is still local
+            # and the duration is finally known.
+            if want_scene_cuts and dur >= float(scene_cut_min_duration_sec):
+                cuts = detect_scene_cuts_local(
+                    local_path, ffmpeg_bin=ffmpeg_bin, threshold=scene_cut_threshold
+                )
+            return {"src_w": w, "src_h": h, "duration_sec": dur, "scene_cuts": cuts}
+    except Exception:
+        return None
+
+
 def probe_s3_video(
     bucket: str,
     key: str,
@@ -171,18 +259,10 @@ def probe_s3_video(
     timeout: float = 60.0,
 ) -> Optional[Tuple[int, int, float]]:
     """Download a private S3 video through boto, then ffprobe it locally."""
-    from src.storage.s3 import download_from_s3
-
-    suffix = Path(key).suffix.lower() or ".mp4"
-    try:
-        with tempfile.TemporaryDirectory(prefix="video_index_") as td:
-            local_path = Path(td) / f"video{suffix}"
-            download_from_s3(bucket, key, local_path)
-            return parse_ffprobe_json(
-                _ffprobe_url(str(local_path), ffprobe_bin=ffprobe_bin, timeout=timeout) or ""
-            )
-    except Exception:
+    got = probe_s3_video_ex(bucket, key, ffprobe_bin=ffprobe_bin, timeout=timeout)
+    if not got:
         return None
+    return int(got["src_w"]), int(got["src_h"]), float(got["duration_sec"])
 
 
 def build_index(
@@ -192,6 +272,8 @@ def build_index(
     out_path: Path,
     progress_cb=None,
     force_empty: bool = False,
+    detect_scene_cuts: bool = False,
+    scene_cut_min_duration_sec: float = 60.0,
 ) -> Dict[str, Any]:
     """List S3 videos under prefix, ffprobe dims/duration, write the static
     index. Reusable from the activation Celery task. progress_cb(done, total)
@@ -225,17 +307,23 @@ def build_index(
     color_meta = load_existing_color_meta(out_path)
     ffprobe_bin = os.environ.get("FFPROBE_BIN", "ffprobe")
 
+    ffmpeg_bin = os.environ.get("FFMPEG_BIN", "ffmpeg")
+
     def _probe(key: str) -> Optional[Dict[str, Any]]:
         parsed = parse_key(key, prefix)
         if not parsed:
             return None
         file_name, genre, tag = parsed
-        dims = probe_s3_video(bucket, key, ffprobe_bin=ffprobe_bin)
-        if not dims:
+        probe = probe_s3_video_ex(
+            bucket, key, ffprobe_bin=ffprobe_bin, ffmpeg_bin=ffmpeg_bin,
+            want_scene_cuts=bool(detect_scene_cuts),
+            scene_cut_min_duration_sec=float(scene_cut_min_duration_sec),
+        )
+        if not probe:
             return None
-        w, h, dur = dims
+        w, h, dur = int(probe["src_w"]), int(probe["src_h"]), float(probe["duration_sec"])
         cm = color_meta.get(file_name, {})
-        return {
+        row = {
             "file_name": file_name,
             "genre": genre,
             "tag": tag,
@@ -249,6 +337,10 @@ def build_index(
             "dominant_color": cm.get("dominant_color"),
             "palette_bins": cm.get("palette_bins") or [],
         }
+        cuts = list(probe.get("scene_cuts") or [])
+        if cuts:
+            row["scene_cuts"] = cuts
+        return row
 
     assets: List[Dict[str, Any]] = []
     failed: List[str] = []

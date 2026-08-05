@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "asset-ui",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--prefix", "asset_ui"],
+      "port": 5173,
+      "url": "http://localhost:5173"
+    }
+  ]
+}

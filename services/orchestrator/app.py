@@ -811,7 +811,13 @@ def create_app() -> FastAPI:
         # return an empty ranking rather than 500 — a 500 here pushes the bot into
         # the legacy artist-theme fallback (the symptom we're fixing).
         try:
-            if req.media_type == "photo":
+            if req.pool != "vibes":
+                # Collection plane: one upload folder = one selectable group,
+                # scoped to the requested kind so a "Фильмы" shortlist can never
+                # surface a "Личности" group (or a semantic vibe).
+                from mlcore.footage_collection_catalog import collections_for_kind
+                catalog = collections_for_kind(req.pool)
+            elif req.media_type == "photo":
                 from mlcore.photo_bucket_catalog import load_photo_catalog
                 catalog = load_photo_catalog()
             else:
