@@ -59,6 +59,7 @@ from .marketing_texts import (
     SURVEY_Q2_BRANCH_BY_ANSWER,
     SURVEY_Q3_BRANCH_BY_ANSWER,
     SURVEY_QUESTIONS,
+    SURVEY_THANKS,
     VERSIONS_INVALID,
     VERSIONS_PROMPT,
     VERSIONS_PROMPT_FREE_SUFFIX,
@@ -6582,9 +6583,34 @@ class BlastBotApp:
     # Post-generation marketing flow (survey + methodology)
     # ------------------------------------------------------------------
 
+    async def _is_free_funnel_chat(self, chat_id: int) -> bool:
+        """True when this chat should see the free-tier marketing funnels.
+
+        Shared by the post-generation rating/pitch funnel and the survey +
+        methodology flow so both agree on who counts as "free", including the
+        hidden chat_id override that lets a paid account review them."""
+        if not await self.credits_db.has_paid(int(chat_id)):
+            return True
+        if int(chat_id) in self.settings.tg_force_free_funnel_chat_ids:
+            log.info("force_free_funnel_override chat=%s", chat_id)
+            return True
+        return False
+
+    async def _is_free_funnel_user(self, st: ChatState) -> bool:
+        return await self._is_free_funnel_chat(int(st.chat_id))
+
     async def _start_postgen_marketing_flow(self, *, message: Message, st: ChatState) -> None:
         """First generation → survey (then bridge + methodology). Later ones →
-        methodology only, per RESEND_METHODOLOGY_EVERY_GENERATION."""
+        methodology only, per RESEND_METHODOLOGY_EVERY_GENERATION.
+
+        Free tier only — this is conversion material, so paying clients get
+        neither the survey nor the document."""
+        try:
+            if not await self._is_free_funnel_user(st):
+                return
+        except Exception as exc:
+            log.warning("postgen_flow_paid_check_failed chat=%s err=%s", st.chat_id, str(exc))
+            return
         try:
             # "generation_started" is written exactly once per launched batch
             # (right above), so count == 1 means this is the first generation.
@@ -6692,7 +6718,21 @@ class BlastBotApp:
             await self._send_survey_question(cb.message, next_id)
             return
 
-        # Q3 answered → bridge line for the branch, then the methodology.
+        # Q3 answered → bridge line for the branch, then the methodology. If the
+        # user bought a package mid-survey, keep the answer but stop here: the
+        # bridge and the document are conversion material for free users only.
+        try:
+            free = await self._is_free_funnel_chat(chat_id)
+        except Exception as exc:
+            log.warning("postgen_survey_paid_check_failed chat=%s err=%s", chat_id, str(exc))
+            free = False
+        if not free:
+            try:
+                await cb.message.answer(SURVEY_THANKS)
+            except Exception as exc:
+                log.warning("postgen_thanks_send_failed chat=%s err=%s", chat_id, str(exc))
+            return
+
         branch = SURVEY_Q3_BRANCH_BY_ANSWER.get(option.id, "")
         try:
             await cb.message.answer(bridge_text_for_branch(branch))
@@ -9546,13 +9586,7 @@ class BlastBotApp:
         track_bal = await self.credits_db.get_track_balance(st.chat_id)
         log.info("generation_complete chat=%s remaining=%s tracks_remaining=%s", st.chat_id, bal, track_bal)
 
-        paid = await self.credits_db.has_paid(st.chat_id)
-
-        # Hidden test override: force the free funnel for whitelisted chat_ids so
-        # the rating → pitch → referral flow can be reviewed from a paid account.
-        if paid and int(st.chat_id) in self.settings.tg_force_free_funnel_chat_ids:
-            log.info("force_free_funnel_override chat=%s", st.chat_id)
-            paid = False
+        paid = not await self._is_free_funnel_user(st)
 
         # Paid users: no rating/funnel, just loop back to generation
         if paid:

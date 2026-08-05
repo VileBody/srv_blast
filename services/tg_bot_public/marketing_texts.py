@@ -157,6 +157,11 @@ def bridge_text_for_branch(branch: str) -> str:
     return BRIDGE_TEXT_BY_BRANCH.get(str(branch or ""), BRIDGE_TEXT_DEFAULT)
 
 
+# Closing line when the survey is finished but the bridge + methodology are not
+# due — i.e. the user became a paying client while answering.
+SURVEY_THANKS = "Спасибо — учтём это, когда будем докручивать сервис 🙌"
+
+
 # --------------------------------------------------------------------------
 # Methodology document
 # --------------------------------------------------------------------------

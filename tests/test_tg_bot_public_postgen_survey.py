@@ -11,6 +11,7 @@ from services.tg_bot_public.marketing_texts import (
     METHODOLOGY_FILE_ID,
     SURVEY_CB_PREFIX,
     SURVEY_QUESTIONS,
+    SURVEY_THANKS,
 )
 from services.tg_bot_public.state_store import ChatState
 
@@ -18,10 +19,14 @@ from services.tg_bot_public.state_store import ChatState
 class _Credits:
     """In-memory stand-in for the survey/activity tables."""
 
-    def __init__(self, *, generations_started: int = 1) -> None:
+    def __init__(self, *, generations_started: int = 1, paid: bool = False) -> None:
         self.generations_started = int(generations_started)
+        self.paid = bool(paid)
         self.survey: dict[int, dict] = {}
         self.saved_calls: list[dict] = []
+
+    async def has_paid(self, _tg_id: int) -> bool:
+        return self.paid
 
     async def count_events(self, _tg_id: int, event: str) -> int:
         return self.generations_started if event == "generation_started" else 0
@@ -89,10 +94,19 @@ class _Callback:
         self.acks.append(str(text))
 
 
-def _new_app(*, generations_started: int = 1, resend_every: bool = False):
+def _new_app(
+    *,
+    generations_started: int = 1,
+    resend_every: bool = False,
+    paid: bool = False,
+    force_free_chat_ids: frozenset[int] = frozenset(),
+):
     app = object.__new__(public_app.BlastBotApp)
-    app.credits_db = _Credits(generations_started=generations_started)
-    app.settings = SimpleNamespace(resend_methodology_every_generation=resend_every)
+    app.credits_db = _Credits(generations_started=generations_started, paid=paid)
+    app.settings = SimpleNamespace(
+        resend_methodology_every_generation=resend_every,
+        tg_force_free_funnel_chat_ids=force_free_chat_ids,
+    )
     return app
 
 
@@ -164,6 +178,58 @@ def test_resend_flag_repeats_methodology_on_every_generation() -> None:
         )
 
         assert msg.documents == [METHODOLOGY_FILE_ID]
+
+    asyncio.run(_run())
+
+
+def test_paying_client_gets_neither_survey_nor_methodology() -> None:
+    async def _run() -> None:
+        # Both the first generation and a later one: the funnel is conversion
+        # material, clients must never see it.
+        for started in (1, 2):
+            app = _new_app(generations_started=started, paid=True)
+            msg = _Message()
+
+            await public_app.BlastBotApp._start_postgen_marketing_flow(
+                app, message=msg, st=ChatState(chat_id=7)
+            )
+
+            assert msg.answers == []
+            assert msg.documents == []
+
+    asyncio.run(_run())
+
+
+def test_force_free_funnel_override_still_reaches_a_paid_chat() -> None:
+    async def _run() -> None:
+        app = _new_app(paid=True, force_free_chat_ids=frozenset({7}))
+        msg = _Message()
+
+        await public_app.BlastBotApp._start_postgen_marketing_flow(
+            app, message=msg, st=ChatState(chat_id=7)
+        )
+
+        assert msg.answers[-1] == SURVEY_QUESTIONS["q1"].text
+
+    asyncio.run(_run())
+
+
+def test_paid_check_failure_stays_silent() -> None:
+    async def _run() -> None:
+        app = _new_app()
+
+        async def _boom(*_a, **_kw):
+            raise RuntimeError("db down")
+
+        app.credits_db.has_paid = _boom
+        msg = _Message()
+
+        await public_app.BlastBotApp._start_postgen_marketing_flow(
+            app, message=msg, st=ChatState(chat_id=7)
+        )
+
+        assert msg.answers == []
+        assert msg.documents == []
 
     asyncio.run(_run())
 
@@ -296,6 +362,24 @@ def test_repeated_click_does_not_resend_the_branch() -> None:
 
         assert msg.documents == [METHODOLOGY_FILE_ID]
         assert cb.acks == ["Уже ответил."]
+
+    asyncio.run(_run())
+
+
+def test_client_who_paid_mid_survey_keeps_answer_but_gets_no_document() -> None:
+    async def _run() -> None:
+        app = _new_app()
+        msg = _Message()
+
+        await _answer(app, msg, "q1", "1_10")
+        # Bought a package while the survey was open.
+        app.credits_db.paid = True
+        await _answer(app, msg, "q3", "time")
+
+        assert "q3" in app.credits_db.survey[7]["answers"]
+        assert msg.documents == []
+        assert msg.answers[-1] == SURVEY_THANKS
+        assert BRIDGE_TEXT_BY_BRANCH["time"] not in msg.answers
 
     asyncio.run(_run())
 
