@@ -5,6 +5,11 @@ interface Props {
   onClose: () => void;
   onUploaded: () => void;
   mediaType?: MediaType;
+  /** Genre fixed by the active pool tab (collection kind). When set, the field
+   *  is shown read-only: the operator already chose it by opening that tab, and
+   *  letting them pick a different one here would upload into a pool they are
+   *  not looking at. */
+  presetGenre?: string;
 }
 
 function fmtSize(bytes: number): string {
@@ -22,9 +27,14 @@ function isAccepted(name: string, exts: string[]): boolean {
   return exts.some((ext) => lower.endsWith(ext));
 }
 
-export function BulkImport({ onClose, onUploaded, mediaType = 'video' }: Props) {
+export function BulkImport({
+  onClose,
+  onUploaded,
+  mediaType = 'video',
+  presetGenre,
+}: Props) {
   const ACCEPTED_EXT = mediaType === 'photo' ? ACCEPTED_EXT_PHOTO : ACCEPTED_EXT_VIDEO;
-  const [genre, setGenre] = useState('');
+  const [genre, setGenre] = useState(presetGenre ?? '');
   const [tag, setTag] = useState('');
   const isCollection = mediaType === 'collection';
   const [files, setFiles] = useState<File[]>([]);
@@ -121,7 +131,7 @@ export function BulkImport({ onClose, onUploaded, mediaType = 'video' }: Props) 
               <select
                 value={genre}
                 onChange={(e) => setGenre(e.target.value)}
-                disabled={busy}
+                disabled={busy || !!presetGenre}
               >
                 <option value="">— выбери —</option>
                 <option value="films">Фильмы</option>
