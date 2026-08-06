@@ -209,6 +209,30 @@ def test_overlay_brat_injects_bpm():
     assert "var nl = srcComp.layers.add(tcomp); nl.moveToBeginning()" in js
 
 
+def test_overlay_brat_can_disable_blinker_without_removing_subtitles():
+    wt = word_timings_from_transcript([{"text": "бам", "t_start": 0.0, "t_end": 0.4}])
+    js = build_jsx_subtitles_overlay(
+        mode=SUBTITLES_MODE_BRAT_5TH,
+        word_timings=wt,
+        bpm=128.0,
+        brat_blinker_enabled=False,
+    )
+    assert "blinker:         false" in js
+    assert "blinker:         true" not in js
+    assert "addBlinker" in js
+    assert "layers.addText(wordText)" in js
+
+
+def test_overlay_brat_blinker_remains_enabled_by_default():
+    wt = word_timings_from_transcript([{"text": "бам", "t_start": 0.0, "t_end": 0.4}])
+    js = build_jsx_subtitles_overlay(
+        mode=SUBTITLES_MODE_BRAT_5TH,
+        word_timings=wt,
+        bpm=128.0,
+    )
+    assert "blinker:         true" in js
+
+
 def test_project_builder_consumes_subtitles_jsx_block():
     from app.project_builder import _build_jsx_subtitles_js
 
@@ -220,6 +244,9 @@ def test_project_builder_consumes_subtitles_jsx_block():
     js = _build_jsx_subtitles_js(cfg)
     assert "$.global.__BLAST_BPM = 124.0" in js
     assert "addBlinker" in js
+    assert "blinker:         true" in js
+    photo_js = _build_jsx_subtitles_js(cfg, brat_blinker_enabled=False)
+    assert "blinker:         false" in photo_js
     # absent block → no-op
     assert _build_jsx_subtitles_js({}) == ""
 

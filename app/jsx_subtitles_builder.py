@@ -220,6 +220,7 @@ def build_jsx_subtitles_overlay(
     target_comp: str = DEFAULT_TARGET_COMP,
     fill_hex: Optional[str] = None,
     subs_blend: Optional[str] = None,
+    brat_blinker_enabled: bool = True,
 ) -> str:
     """Return an injectable JSX block: prelude ($.global injects) + the script.
 
@@ -239,6 +240,8 @@ def build_jsx_subtitles_overlay(
     # Headless: never pop a file dialog / alert.
     body = _flip_flag_false(body, "INTERACTIVE")
     body = _flip_flag_false(body, "DEBUG")
+    if mode == SUBTITLES_MODE_BRAT_5TH and not brat_blinker_enabled:
+        body = _flip_flag_false(body, "blinker")
 
     payload = json.dumps({"word_timings": word_timings}, ensure_ascii=False)
     target_js = json.dumps(str(target_comp), ensure_ascii=False)

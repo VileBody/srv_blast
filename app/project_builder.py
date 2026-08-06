@@ -314,7 +314,11 @@ def _build_f1_overlay_js(full_edit_config: Dict[str, Any]) -> str:
     return overlay
 
 
-def _build_jsx_subtitles_js(full_edit_config: Dict[str, Any]) -> str:
+def _build_jsx_subtitles_js(
+    full_edit_config: Dict[str, Any],
+    *,
+    brat_blinker_enabled: bool = True,
+) -> str:
     """5th-template JSX subtitle generator (trendy/brat).
 
     Orchestrator emits full_edit_config["subtitles_jsx"] = {mode, word_timings,
@@ -343,10 +347,11 @@ def _build_jsx_subtitles_js(full_edit_config: Dict[str, Any]) -> str:
         bpm=(float(bpm) if bpm is not None else None),
         fill_hex=fill_hex,
         subs_blend=subs_blend,
+        brat_blinker_enabled=brat_blinker_enabled,
     )
     LOGGER.info(
-        "jsx subtitles present mode=%s words=%d bpm=%s js_len=%d",
-        mode, len(word_timings), bpm, len(overlay),
+        "jsx subtitles present mode=%s words=%d bpm=%s brat_blinker_enabled=%s js_len=%d",
+        mode, len(word_timings), bpm, brat_blinker_enabled, len(overlay),
     )
     return overlay
 
@@ -496,6 +501,7 @@ def build_full_project(
     full_edit_config_path: Path,
     footage_config_path: Path,
     out_dir: Path,
+    brat_blinker_enabled: bool = True,
 ) -> Tuple[Path, Path]:
     repo_root = repo_root.resolve()
     full_edit_config_path = full_edit_config_path.resolve()
@@ -658,7 +664,10 @@ def build_full_project(
     f2_overlay_js = _build_f2_overlay_js(ae_overlay_config)
     f1_overlay_js = _build_f1_overlay_js(ae_overlay_config)
     f5_overlay_js = _build_f5_overlay_js(ae_overlay_config)
-    jsx_subtitles_js = _build_jsx_subtitles_js(ae_overlay_config)
+    jsx_subtitles_js = _build_jsx_subtitles_js(
+        ae_overlay_config,
+        brat_blinker_enabled=brat_blinker_enabled,
+    )
 
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "logs").mkdir(parents=True, exist_ok=True)
