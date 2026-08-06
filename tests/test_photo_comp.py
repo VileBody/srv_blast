@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import json
 from pathlib import Path
 
@@ -145,6 +146,15 @@ def test_photo_template_offsets_audio_and_adds_subtitle_overlay() -> None:
     assert "lyr.startTime = -audioOffset" in template
     assert "addSubtitleOverlay();" in template
     assert 'overlay.name = "SUBTITLES_OVERLAY"' in template
+
+
+def test_photo_flow_disables_brat_blinker_in_nested_subtitle_project() -> None:
+    import run
+
+    source = inspect.getsource(run.main)
+    photo_start = source.index('if bg_mode == "photo":')
+    photo_branch = source[photo_start:source.index("        else:", photo_start)]
+    assert "brat_blinker_enabled=False" in photo_branch
 
 
 def test_schema_accepts_photo_bg_and_selections() -> None:
