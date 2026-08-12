@@ -66,6 +66,7 @@ def _normalizer(
         ("ˈælɪks", "эликс"),
         ("mˈuːvɪŋ", "мувинг"),
         ("mjˈuːzɪk", "мьюзик"),
+        ("pˈoː\u200dɹʃ", "порш"),
         ("θˈɪŋk", "синк"),
         ("ðˈɪs", "зис"),
     ],
@@ -122,6 +123,18 @@ def test_full_english_text_and_cache_are_supported() -> None:
     assert [word.alignment_text for word in first] == ["халоу", "уэлд"]
     assert second[0].alignment_text == "халоу"
     assert runner.phoneme_calls == ["Hello", "world"]
+
+
+def test_porsche_espeak_pronunciation_is_normalized() -> None:
+    normalizer, runner = _normalizer({"Porsche": "pˈoː\u200dɹʃ"})
+
+    word = normalizer.normalize_word("Porsche")
+
+    assert word.display_text == "Porsche"
+    assert word.alignment_text == "порш"
+    assert word.strategy == "espeak_en"
+    assert word.ipa == "pˈoː\u200dɹʃ"
+    assert runner.phoneme_calls == ["Porsche"]
 
 
 def test_override_wins_without_invoking_espeak() -> None:
@@ -214,4 +227,3 @@ def test_override_file_is_versioned_and_validated(tmp_path: Path) -> None:
     )
 
     assert load_pronunciation_overrides(path) == {"alyx": "аликс"}
-
