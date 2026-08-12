@@ -58,6 +58,7 @@ _IPA_TO_RUSSIAN: tuple[tuple[str, str], ...] = (
     ("ɜ", "э"),
     ("ɛ", "э"),
     ("e", "э"),
+    ("o", "о"),
     ("ɪ", "и"),
     ("i", "и"),
     ("ᵻ", "и"),
@@ -413,4 +414,3 @@ class EspeakEnglishToRussianNormalizer:
         display_words: Sequence[str],
     ) -> list[PronunciationWord]:
         return [self.normalize_word(word) for word in display_words]
-
