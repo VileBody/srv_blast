@@ -1,0 +1,6 @@
+{
+  "dropTime": 4.2,
+  "hook": "shutter_effect",
+  "transition": "snap_wipe",
+  "extra": "xerox"
+}

@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block body %}
+<div class="mobile-topbar">
+  <a class="mobile-logo" href="/app" aria-label="Blast"><img src="/static/assets/logo-main.svg" alt="" /></a>
+  <button class="icon-button" type="button" data-drawer-open aria-label="Открыть меню">☰</button>
+</div>
+<div class="drawer-overlay" data-drawer-close></div>
+<nav class="mobile-drawer" aria-label="Мобильная навигация">
+  <button class="icon-button drawer-close" type="button" data-drawer-close aria-label="Закрыть меню">×</button>
+  <a href="/app/generate" class="drawer-link {% if page == 'generate' %}active{% endif %}">▶ Генерация</a>
+  <a href="/app/projects" class="drawer-link {% if page == 'projects' %}active{% endif %}">◼ Проекты</a>
+  <a href="/app/stats" class="drawer-link {% if page == 'stats' %}active{% endif %}">▣ Статистика</a>
+  <a href="/app/profile" class="drawer-link {% if page == 'profile' %}active{% endif %}">Профиль</a>
+</nav>
+<div class="app-frame">
+  <aside class="sidebar" aria-label="Главная навигация">
+    <a class="sidebar-logo" href="/app" aria-label="Dashboard"><img src="/static/assets/logo-main.svg" alt="" /></a>
+    <nav class="sidebar-nav">
+      <a class="sidebar-link {% if page == 'generate' %}active{% endif %}" href="/app/generate" aria-label="Генерация" id="nav-generate-link">
+        <span class="job-dot" id="sidebar-job-dot" hidden></span>
+        <span class="asset-icon" style="--icon: url('/static/assets/nav-generate.svg')" aria-hidden="true"></span>
+      </a>
+      <a class="sidebar-link {% if page == 'projects' %}active{% endif %}" href="/app/projects" aria-label="Проекты"><span class="asset-icon" style="--icon: url('/static/assets/nav-projects.svg')" aria-hidden="true"></span></a>
+      <a class="sidebar-link locked {% if page == 'stats' %}active{% endif %}" href="/app/stats" aria-label="Статистика"><span class="asset-icon" style="--icon: url('/static/assets/nav-stats.svg')" aria-hidden="true"></span></a>
+    </nav>
+    <a class="avatar-link {% if page == 'profile' %}active{% endif %}" href="/app/profile" aria-label="Профиль">
+      {% if user.avatarUrl %}<img src="{{ user.avatarUrl }}" alt="" />{% else %}<span>{{ user.name[0] }}{{ user.surname[0] }}</span>{% endif %}
+    </a>
+  </aside>
+  {% block app_body %}{% endblock %}
+</div>
+{% endblock %}

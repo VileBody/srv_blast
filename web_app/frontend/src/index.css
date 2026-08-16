@@ -1,0 +1,512 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@keyframes batch-loading-sweep {
+  from { transform: translateX(-9%); }
+  to { transform: translateX(9%); }
+}
+
+.batch-loading-stripes {
+  background: repeating-linear-gradient(112deg, transparent 0 58px, rgba(139, 111, 230, 0.92) 58px 69px, transparent 69px 136px);
+  animation: batch-loading-sweep 1.35s linear infinite alternate;
+  filter: drop-shadow(0 0 8px rgba(139, 111, 230, 0.18));
+}
+
+/*
+ * Безлимит в «Лимитах» (профиль). Раньше это был обычный прогресс-бар с нулём заливки —
+ * читалось как «сломано» или «ничего не доступно». Теперь полоса залита целиком и градиент
+ * непрерывно течёт: движение = «предела нет», а не «ноль из чего-то».
+ */
+@keyframes limit-unlimited-flow {
+  from { background-position: 0% 50%; }
+  to   { background-position: 200% 50%; }
+}
+
+.limit-unlimited {
+  background-image: linear-gradient(90deg, #6b52c4 0%, #8b6fe6 18%, #c9a7ff 34%, #8b6fe6 50%, #6b52c4 66%, #8b6fe6 82%, #c9a7ff 100%);
+  background-size: 200% 100%;
+  animation: limit-unlimited-flow 6s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .batch-loading-stripes { animation: none; }
+  /* без движения полоса всё равно остаётся залитой — смысл «без предела» не теряется */
+  .limit-unlimited { animation: none; }
+}
+
+:root {
+  --bg:              #05010f;
+  --nav-bg:          #150F25;
+  --card-bg:         #060114;
+  --card-dark-start: #0d0828;
+  --card-dark-mid:   #0a0520;
+  --card-dark-end:   #080318;
+
+  --text:    #f6f5fd;
+  --text-80: rgba(246, 245, 253, 0.80);
+  --text-60: rgba(246, 245, 253, 0.60);
+  --text-40: rgba(246, 245, 253, 0.40);
+  --text-20: rgba(246, 245, 253, 0.20);
+
+  --accent:       #5f42b9;
+  --accent-80:    rgba(95, 66, 185, 0.80);
+  --accent-20:    rgba(95, 66, 185, 0.20);
+  --accent-10:    rgba(95, 66, 185, 0.10);
+  --accent-light: #8b6fe6;
+  --pill-border:  #8b6fe6;
+  --border:       rgba(95, 66, 185, 0.25);
+  --border-hover: rgba(139, 111, 230, 0.50);
+
+  --success:     #22c55e;
+  --success-bg:  rgba(34, 197, 94, 0.15);
+  --error:       #ef4444;
+  --error-bg:    rgba(239, 68, 68, 0.15);
+  --warning:     #f59e0b;
+  --warning-bg:  rgba(245, 158, 11, 0.15);
+  --info:        var(--accent-light);
+  --info-bg:     var(--accent-20);
+  --neutral-bg:  rgba(246,245,253,.08);
+
+  /* Figma: карточки/панели новых макетов (Wireframe 7–17) */
+  --card-2:      #140E24;
+  --dash-accent: #8b6fe6;
+  --dash-white:  rgba(246, 245, 253, 0.95);
+  --dash-white-50: rgba(246, 245, 253, 0.50);
+  --grad-soft-10: linear-gradient(175deg, rgba(139, 111, 230, 0.10) 3.6%, rgba(95, 66, 185, 0.10) 132.9%);
+  /* Фактический цвет контейнеров grad-soft-10 над card-2 (alpha-blend) — в него тают фейды чипов.
+     Фейд обязан совпадать с фоном; grad-soft-10 почти плоский, поэтому одного цвета достаточно. */
+  --fx-container-bg: #1e1535;
+  --grad-soft-20: linear-gradient(175deg, rgba(139, 111, 230, 0.20) 3.6%, rgba(95, 66, 185, 0.20) 132.9%);
+  --sidebar-w: clamp(112px, 13vw, 188px);
+  --rail-pad-y: 60px; /* Figma W37: лого top 60 / аватар bottom 60 (симметрично) */
+
+  --grad-main: linear-gradient(175deg, #8b6fe6 0%, #5f42b9 100%);
+  /* Figma-стиль «whitey»: светлая заливка инпутов/кнопок (W49 760:2587, пагинация W36) */
+  --grad-whitey: linear-gradient(178deg, rgba(246, 245, 253, 0.95) 7.5%, rgb(246, 245, 253) 119.25%);
+  --grad-btn:  linear-gradient(90deg,  #8b6fe6 0%, #5f42b9 100%);
+  --grad-card: linear-gradient(135deg, #0d0828 0%, #0a0520 50%, #080318 100%);
+  --grad-text: linear-gradient(90deg,  #8b6fe6 0%, #5f42b9 100%);
+
+  --font: 'Point', -apple-system, BlinkMacSystemFont, sans-serif;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --space-8: 64px;
+
+  --r40: 40px;
+  --r25: 25px;
+  --r20: 20px;
+  --r15: 15px;
+  --r12: 12px;
+  --r10: 10px;
+  --r9:  9px;
+
+  --t-fast:  0.15s ease;
+  --t-base:  0.25s ease;
+  --t-slow:  0.4s ease;
+
+  --z-base:    1;
+  --z-sticky:  10;
+  --z-sidebar: 100;
+  --z-drawer:  200;
+  --z-overlay: 900;
+  --z-modal:   1000;
+  --z-toast:   1100;
+
+  --plain-white: #ffffff;
+  --plain-black: #000000;
+  --chroma: #00b140;
+
+  /* Figma: превью-панель фона (Wireframe 3/13/14/15) */
+  --overlay-btn-bg: #201837;
+  --scroll-fade: rgb(32, 24, 54);
+}
+
+@font-face { font-family: 'Point'; font-weight: 350; src: url('/fonts/Point-Book.ttf') format('truetype'); font-display: swap; }
+@font-face { font-family: 'Point'; font-weight: 400; src: url('/fonts/Point-Regular.ttf') format('truetype'); font-display: swap; }
+@font-face { font-family: 'Point'; font-weight: 500; font-style: italic; src: url('/fonts/Point-MediumItalic.ttf') format('truetype'); font-display: swap; }
+@font-face { font-family: 'Point'; font-weight: 700; src: url('/fonts/PointBold.ttf') format('truetype'); font-display: swap; }
+
+* { box-sizing: border-box; }
+html { min-height: 100%; background: var(--bg); color: var(--text); }
+body {
+  min-height: 100%; margin: 0; background: radial-gradient(circle at 20% 0%, var(--accent-10), transparent 28%), var(--bg);
+  color: var(--text); font-family: var(--font); font-size: 18px;
+  -webkit-font-smoothing: antialiased; text-rendering: geometricPrecision;
+}
+button, input, textarea, select { font: inherit; }
+a { color: inherit; text-decoration: none; }
+::selection { background: var(--accent-80); color: var(--text); }
+
+:focus-visible { outline: 2px solid var(--accent-light); outline-offset: 2px; }
+
+@media (max-width: 768px) {
+  body { font-size: 14px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes shimmer { 0% { background-position: -200% 0 } 100% { background-position: 200% 0 } }
+@keyframes pulseDot { 0%, 100% { transform: scale(1); opacity: .6; } 50% { transform: scale(1.45); opacity: 1; } }
+@keyframes slideUpFade { from { opacity: 0; transform: translateY(var(--space-3)); } to { opacity: 1; transform: translateY(0); } }
+@keyframes hintPulse { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
+@keyframes strobeFlicker { 0%, 45% { background-color: var(--strobe-color, #8b6fe6); } 50%, 95% { background-color: #000; } 100% { background-color: var(--strobe-color, #8b6fe6); } }
+
+@layer components {
+  .app-frame { display: flex; min-height: 100dvh; }
+  .app-content {
+    flex: 1; min-height: 100dvh; overflow: hidden; padding: var(--space-6);
+    /* Скейлинг (c): контент прилегает к сайдбару и тянется во всю ширину. Старый
+       max-width:1440 + margin auto собирал сайт в островок по центру (на 2780 — 1440 в центре,
+       сайдбар остаётся у левого края). На ≤1627px кап и так не срабатывал → на 1440 без изменений. */
+    max-width: var(--content-max, none); margin-inline: 0;
+    display: flex; flex-direction: column; gap: var(--space-5);
+  }
+  /* Правая колонка визарда/батча (Figma: 472 при контенте 1191 = 39.6%).
+     Минимум нужен только узкому desktop; верхнего cap нет, иначе после 1920 левая
+     колонка снова разъезжается и на 2780 получает неверное соотношение 2.5:1. */
+  .wizard-aside { width: 39.6%; min-width: 340px; }
+  @media (max-width: 1024px) {
+    .wizard-aside { width: 100%; min-width: 0; }
+  }
+  .sidebar {
+    width: var(--sidebar-w); height: 100dvh; position: fixed; left: 0; top: 0;
+    background: transparent; display: flex; flex-direction: column;
+    align-items: center; padding: var(--rail-pad-y) 0; z-index: var(--z-sidebar);
+  }
+  .with-sidebar { margin-left: var(--sidebar-w); }
+  .sidebar-icon {
+    display: flex; align-items: center; justify-content: center; width: 40px;
+    opacity: .85; transition: opacity var(--t-fast), filter var(--t-base), transform var(--t-fast);
+  }
+  .sidebar-icon:hover { opacity: 1; transform: translateY(-1px); }
+  /* Выбранный раздел — иконка светлеет однозначно: полный цвет (не text-60), opacity 1
+     и мягкое свечение. Маска = background:currentColor, поэтому осветляем именно currentColor. */
+  .sidebar-icon-active { opacity: 1 !important; }
+  .sidebar-icon-active .nav-icon-mask {
+    background: var(--text);
+    filter: drop-shadow(0 0 10px var(--accent-light));
+  }
+  .card {
+    background: var(--grad-card); border: 1px solid var(--border); border-radius: var(--r20); padding: var(--space-5);
+  }
+  /* Новый визуальный язык (Figma Wireframe 7–17) */
+  .card-2 { background: var(--card-2); border-radius: var(--r25); }
+  /* Пунктир как в Figma: stroke-dasharray 24 24 (CSS border-dashed слишком частый) */
+  .dash-panel {
+    border-radius: var(--r15);
+    background:
+      linear-gradient(90deg, var(--accent) 0 24px, transparent 24px 48px) top / 48px 2px repeat-x,
+      linear-gradient(90deg, var(--accent) 0 24px, transparent 24px 48px) bottom / 48px 2px repeat-x,
+      linear-gradient(180deg, var(--accent) 0 24px, transparent 24px 48px) left / 2px 48px repeat-y,
+      linear-gradient(180deg, var(--accent) 0 24px, transparent 24px 48px) right / 2px 48px repeat-y,
+      var(--grad-soft-10);
+  }
+  .dash-panel-white {
+    border-radius: var(--r15);
+    background:
+      linear-gradient(90deg, var(--dash-white-50) 0 24px, transparent 24px 48px) top / 48px 2px repeat-x,
+      linear-gradient(90deg, var(--dash-white-50) 0 24px, transparent 24px 48px) bottom / 48px 2px repeat-x,
+      linear-gradient(180deg, var(--dash-white-50) 0 24px, transparent 24px 48px) left / 2px 48px repeat-y,
+      linear-gradient(180deg, var(--dash-white-50) 0 24px, transparent 24px 48px) right / 2px 48px repeat-y,
+      var(--grad-soft-10);
+  }
+  /* r10-вариант: паттерн с rx=10, чтобы углы дэша совпадали со скруглением элемента */
+  .dash-panel-r10 {
+    border-radius: var(--r10);
+    background:
+      linear-gradient(90deg, var(--accent) 0 24px, transparent 24px 48px) top / 48px 2px repeat-x,
+      linear-gradient(90deg, var(--accent) 0 24px, transparent 24px 48px) bottom / 48px 2px repeat-x,
+      linear-gradient(180deg, var(--accent) 0 24px, transparent 24px 48px) left / 2px 48px repeat-y,
+      linear-gradient(180deg, var(--accent) 0 24px, transparent 24px 48px) right / 2px 48px repeat-y,
+      var(--grad-soft-10);
+  }
+  /* Без тонирующего слоя — для сплошной заливки выбранным цветом (Цветной/Строб превью) */
+  .dash-panel-plain {
+    border-radius: var(--r15);
+    background:
+      linear-gradient(90deg, var(--dash-white-50) 0 24px, transparent 24px 48px) top / 48px 2px repeat-x,
+      linear-gradient(90deg, var(--dash-white-50) 0 24px, transparent 24px 48px) bottom / 48px 2px repeat-x,
+      linear-gradient(180deg, var(--dash-white-50) 0 24px, transparent 24px 48px) left / 2px 48px repeat-y,
+      linear-gradient(180deg, var(--dash-white-50) 0 24px, transparent 24px 48px) right / 2px 48px repeat-y;
+  }
+  .soft-btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2);
+    border: 0; border-radius: var(--r15); background: var(--grad-soft-20); color: var(--text-80);
+    font-size: 24px; font-weight: 350; cursor: pointer; white-space: nowrap;
+    transition: box-shadow var(--t-fast), color var(--t-fast), opacity var(--t-fast), transform var(--t-fast);
+  }
+  .soft-btn:hover { color: var(--text); box-shadow: inset 0 0 0 1px var(--border-hover); }
+  .soft-btn:active { transform: scale(.98); }
+  .soft-btn:disabled { opacity: .45; cursor: not-allowed; }
+  .soft-btn-ready { box-shadow: inset 0 0 0 1.5px var(--accent-light); color: var(--text); }
+  .soft-input {
+    height: 60px; width: 121px; border: 0; border-radius: var(--r10);
+    background: var(--grad-soft-20); color: var(--text-80); text-align: center;
+    font-size: 24px; font-weight: 350; outline: none; backdrop-filter: blur(50px);
+    transition: box-shadow var(--t-fast);
+  }
+  /* своя обводка + глобальный focus-visible outline давали ДВОЙНУЮ рамку → гасим внешний outline */
+  .soft-input:focus { box-shadow: inset 0 0 0 1.5px var(--accent-light); }
+  .soft-input:focus-visible { outline: none; }
+  .soft-input::placeholder { color: var(--text-40); }
+  .soft-chip {
+    display: inline-flex; align-items: center; justify-content: center; height: 44px; padding: 0 var(--space-4);
+    border: 1.5px solid var(--accent-light); border-radius: var(--r10); background: var(--grad-soft-20);
+    color: var(--text-80); font-size: 20px; font-weight: 350;
+  }
+  .wizard-h { font-size: 32px; font-weight: 400; color: var(--text); line-height: 1.2; }
+  .wizard-body { font-size: 24px; font-weight: 350; color: var(--text-80); }
+  @media (max-width: 1280px) {
+    .wizard-h { font-size: 26px; }
+    .wizard-body { font-size: 18px; }
+    .soft-btn { font-size: 18px; }
+    .soft-chip { font-size: 16px; height: 38px; }
+    .soft-input { font-size: 18px; width: 100px; height: 52px; }
+  }
+
+  /* Этап «Фон» (Figma Wireframe 12/3/13/14/22/24) */
+  .mode-switch {
+    position: relative; display: grid; grid-template-columns: repeat(3, 1fr);
+    height: 60px; width: 100%; border-radius: var(--r15); background: var(--grad-soft-10);
+  }
+  .mode-switch-thumb {
+    position: absolute; top: 0; left: 0; height: 100%; width: 33.3333%; border-radius: var(--r15);
+    background: var(--grad-soft-20); box-shadow: inset 0 0 0 2px var(--accent-light);
+    transition: transform var(--t-base);
+  }
+  .toggle {
+    position: relative; display: inline-block; width: 60px; height: 30px; flex-shrink: 0;
+    border-radius: var(--r40); border: 0; cursor: pointer; background: rgba(246, 245, 253, 0.15);
+    transition: background var(--t-base);
+  }
+  .toggle::after {
+    content: ''; position: absolute; top: 3px; left: 3px; width: 24px; height: 24px; border-radius: 999px;
+    background: var(--text); transition: transform var(--t-base);
+  }
+  .toggle[aria-checked='true'] { background: var(--accent-light); }
+  .toggle[aria-checked='true']::after { transform: translateX(30px); }
+  .glue-chip {
+    display: inline-flex; align-items: center; gap: var(--space-3); height: 60px; padding: 0 var(--space-5) 0 var(--space-3);
+    flex-shrink: 0; border: 0; border-radius: var(--r15); background: var(--grad-soft-20);
+    color: var(--text-60); font-size: 24px; font-weight: 350; white-space: nowrap; cursor: pointer;
+    transition: color var(--t-fast), box-shadow var(--t-fast), opacity var(--t-base);
+  }
+  .glue-chip:hover { color: var(--text-80); }
+  .glue-chip.is-selected { color: var(--text); box-shadow: inset 0 0 0 2px var(--accent-light); }
+  .glue-chip:disabled { opacity: .4; cursor: not-allowed; }
+  .pool-pill {
+    position: relative; display: inline-flex; align-items: center; height: 60px; flex-shrink: 0;
+    border: 0; border-radius: var(--r15); background: var(--grad-soft-20); cursor: pointer;
+    color: var(--text-80); font-size: 24px; font-weight: 350; white-space: nowrap;
+    padding: 0 var(--space-5) 0 76px; transition: color var(--t-fast);
+  }
+  .pool-pill:hover { color: var(--text); }
+  .pool-pill-count {
+    position: absolute; left: 0; top: 0; display: inline-flex; align-items: center; justify-content: center;
+    width: 60px; height: 60px; border-radius: var(--r15); border: 2px solid var(--accent-light);
+    background: var(--grad-soft-20); color: var(--text-80);
+  }
+  @media (max-width: 1280px) {
+    .glue-chip, .pool-pill { font-size: 17px; height: 48px; }
+    .pool-pill { padding-left: 60px; }
+    .pool-pill-count { width: 48px; height: 48px; }
+  }
+
+  /* Этап «Пул» (Figma W19/W33): мини-пилюли в строках распределения — 25px, r5, обводка 1px.
+     padding-top 1px — компенсация вертикальной метрики шрифта (текст сидел на 1px выше центра) */
+  .mini-pill {
+    display: inline-flex; align-items: center; height: 25px; padding: 1px var(--space-3) 0 33px;
+    position: relative; border-radius: 5px; background: var(--grad-soft-20);
+    color: var(--text-80); font-size: 14px; font-weight: 350; white-space: nowrap; line-height: 1;
+  }
+  .mini-pill-icon {
+    position: absolute; left: 0; top: 0; width: 25px; height: 25px; border-radius: 5px;
+    border: 1px solid var(--accent-light); background: var(--grad-soft-20);
+    display: inline-flex; align-items: center; justify-content: center; font-size: 12px;
+  }
+  /* Кнопки степпера подогнаны к тексту строк: бокс 28, глиф 18, число 18 */
+  .count-stepper {
+    display: inline-flex; align-items: center; gap: var(--space-2);
+  }
+  .count-stepper button {
+    display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px;
+    border: 0; border-radius: 7px; background: var(--grad-soft-20); color: var(--text-80);
+    font-size: 18px; line-height: 0; cursor: pointer; padding-top: 1px; transition: color var(--t-fast), box-shadow var(--t-fast);
+  }
+  .count-stepper button:hover { color: var(--text); box-shadow: inset 0 0 0 1px var(--border-hover); }
+  .count-stepper button:disabled { opacity: .35; cursor: not-allowed; }
+  .count-stepper strong { min-width: 26px; text-align: center; font-size: 18px; font-weight: 400; color: var(--text); }
+  .mode-switch-btn {
+    position: relative; z-index: 1; display: flex; align-items: center; justify-content: center;
+    gap: var(--space-2); font-size: 24px; font-weight: 350; color: var(--text-80); border: 0; background: transparent;
+    cursor: pointer; transition: color var(--t-fast);
+  }
+  .mode-switch-btn.is-active { color: var(--text); }
+  .mode-switch-btn:hover:not(.is-active) { color: var(--text); }
+  @media (max-width: 1280px) {
+    .mode-switch-btn { font-size: 17px; gap: var(--space-1); }
+    .overlay-chip { font-size: 16px; height: 48px; }
+    .overlay-btn { height: 48px; width: 48px; }
+  }
+
+  .media-row {
+    position: relative; display: flex; height: 100%; width: 100%; overflow-x: auto;
+    scrollbar-width: none; touch-action: pan-y;
+  }
+  .media-row::-webkit-scrollbar { display: none; }
+  .media-row-previews { scroll-snap-type: x proximity; scroll-padding-inline: 40px; }
+  .media-row-previews .media-card { scroll-snap-align: start; }
+  .no-scrollbar { scrollbar-width: none; }
+  .no-scrollbar::-webkit-scrollbar { display: none; }
+  .media-card {
+    position: relative; flex-shrink: 0; height: 100%; border-radius: var(--r10); overflow: hidden;
+    cursor: pointer; background: var(--card-2); transition: box-shadow var(--t-fast), filter var(--t-fast);
+  }
+  .media-card:hover { filter: brightness(1.08); }
+  .media-card img, .media-card video { position: absolute; inset: 0; height: 100%; width: 100%; object-fit: cover; }
+  /* 4:3-кадр (фото 1920×1440): размер карточки задаёт ЦЕЛАЯ ширина, высота = ×3/4 тоже целая.
+     На дробном боксе (высота приходила из флекс-ряда) кадр ложился с подпиксельным масштабом:
+     тёмная кромка фона карточки по краю и лишний срез от object-fit: cover. */
+  .media-card--fit { height: auto; }
+  .media-card-fallback {
+    position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: var(--space-2); padding: var(--space-3); text-align: center; background: var(--grad-card);
+    color: var(--text-80); font-size: 13px;
+  }
+  .scroll-fade-l, .scroll-fade-r {
+    position: absolute; top: 0; height: 100%; width: 31px; z-index: 2; pointer-events: none;
+  }
+  .scroll-fade-l { left: 0; background: linear-gradient(90deg, var(--scroll-fade) 0%, transparent 100%); }
+  .scroll-fade-r { right: 0; background: linear-gradient(-90deg, var(--scroll-fade) 0%, transparent 100%); }
+
+  .overlay-btn {
+    display: inline-flex; align-items: center; justify-content: center; height: 60px; width: 60px; flex-shrink: 0;
+    border-radius: var(--r15); background: var(--overlay-btn-bg); border: 2px solid var(--dash-white-50);
+    color: var(--text-80); cursor: pointer; transition: color var(--t-fast), transform var(--t-fast);
+  }
+  .overlay-btn:hover { color: var(--text); }
+  .overlay-btn:active { transform: scale(.96); }
+  .overlay-btn:disabled { opacity: .4; cursor: not-allowed; }
+  .overlay-chip {
+    display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2); height: 60px; padding: 0 var(--space-4);
+    border-radius: var(--r15); background: var(--overlay-btn-bg); border: 2px solid var(--dash-white-50);
+    color: var(--text-80); font-size: 20px; font-weight: 350; white-space: nowrap;
+  }
+
+  .color-slider { position: relative; height: 60px; width: 100%; border-radius: var(--r15); cursor: pointer; }
+  .color-slider-thumb {
+    position: absolute; top: 50%; width: 30px; height: 30px; border-radius: 999px;
+    background: var(--text); box-shadow: 0 0 0 2px var(--dash-white), 0 2px 8px rgba(0,0,0,.4);
+    transform: translate(-50%, -50%); pointer-events: none;
+  }
+  .card-flat {
+    background: var(--card-2); border: 0; border-radius: var(--r25); padding: var(--space-5);
+  }
+  .eyebrow {
+    font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.07em;
+    background: var(--grad-text); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+  }
+  .btn {
+    height: 60px; padding: 0 28px; border-radius: var(--r15); border: 1px solid transparent; display: inline-flex; align-items: center;
+    justify-content: center; gap: var(--space-2); cursor: pointer; white-space: nowrap; color: var(--text-80);
+    font-size: 18px; font-weight: 350; transition: color var(--t-fast), filter var(--t-fast), background var(--t-base), border-color var(--t-base);
+    position: relative; line-height: 1;
+  }
+  .btn-primary { background: var(--grad-main); color: var(--text); }
+  .btn-secondary { background: var(--grad-soft-20); border-color: var(--accent-light); }
+  .btn-ghost { background: var(--grad-soft-10); color: var(--text-80); }
+  .btn-small { height: 40px; padding: 0 var(--space-4); border-radius: var(--r10); font-size: 14px; }
+  .btn:hover { color: var(--text); filter: brightness(1.12); }
+  .btn:active { filter: brightness(.96); }
+  .btn:disabled, .btn[aria-disabled='true'] { opacity: .35; cursor: not-allowed; pointer-events: none; }
+  .btn-loading { cursor: wait; }
+  .spinner {
+    width: 18px; height: 18px; border-radius: 999px; border: 2px solid var(--text-40); border-top-color: var(--text);
+    animation: spin .75s linear infinite;
+  }
+  .input {
+    width: 100%; min-height: 60px; background: var(--grad-soft-10); border: 1px solid var(--text-20); border-radius: var(--r15);
+    color: var(--text); font-family: var(--font); font-size: 16px; font-weight: 350; padding: 14px 20px; transition: border-color var(--t-fast), box-shadow var(--t-fast), opacity var(--t-fast);
+  }
+  .input:hover { border-color: var(--border-hover); }
+  .input:focus { border-color: var(--accent-light); outline: none; box-shadow: 0 0 0 3px var(--accent-10); }
+  .input::placeholder { color: var(--text-40); }
+  .input-error { border-color: var(--error); }
+  .input:disabled { opacity: .4; cursor: not-allowed; }
+  .field-error { color: var(--error); font-size: 13px; margin-top: var(--space-1); }
+  .pill {
+    height: 37px; padding: 0 var(--space-4); border-radius: var(--r9); border: 1px solid var(--pill-border);
+    background: transparent; color: var(--text-80); font-size: 14px; transition: all var(--t-fast); display: inline-flex; align-items: center; justify-content: center;
+  }
+  .pill:hover { border-color: var(--border-hover); transform: translateY(-1px); }
+  .pill-selected { background: var(--accent-20); border-color: var(--accent-light); color: var(--text); }
+  .status-badge {
+    display: inline-flex; align-items: center; gap: var(--space-1); height: 24px; padding: 0 var(--space-3);
+    border-radius: var(--r9); font-size: 13px;
+  }
+  .select-card {
+    border: 1px solid var(--border); border-radius: var(--r12); padding: var(--space-4); cursor: pointer;
+    background: rgba(246,245,253,.035); transition: border-color var(--t-fast), transform var(--t-fast), opacity var(--t-fast);
+    position: relative;
+  }
+  .select-card:hover { border-color: var(--border-hover); transform: translateY(-2px); }
+  .select-card-selected { border: 2px solid var(--accent-light); background: var(--accent-20); }
+  .select-card-disabled { opacity: .4; cursor: not-allowed; pointer-events: none; }
+  .check-corner {
+    position: absolute; top: var(--space-3); right: var(--space-3); width: 22px; height: 22px; border-radius: 999px;
+    background: var(--accent-light); color: var(--bg); display: inline-flex; align-items: center; justify-content: center; font-size: 14px;
+  }
+  .skeleton {
+    background: linear-gradient(90deg, var(--card-bg) 25%, var(--accent-10) 50%, var(--card-bg) 75%);
+    background-size: 200% 100%; animation: shimmer 1.5s infinite;
+  }
+  .modal-overlay { position: fixed; inset: 0; z-index: var(--z-overlay); background: rgba(5,1,15,.78); backdrop-filter: blur(15px); }
+  .modal-panel {
+    position: fixed; inset: auto; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: var(--z-modal);
+    width: min(720px, calc(100vw - var(--space-5) * 2)); max-height: calc(100dvh - var(--space-5) * 2); overflow-y: auto;
+    background: var(--card-2); border: 1px solid var(--accent-20); border-radius: var(--r25); padding: 28px; box-shadow: 0 28px 100px rgba(0,0,0,.5);
+  }
+  .toast-stack { position: fixed; top: 60px; right: 32px; z-index: var(--z-toast); display: flex; width: min(390px, calc(100vw - 40px)); flex-direction: column; gap: 12px; }
+  .toast-item { display: flex; align-items: flex-start; gap: 14px; width: 100%; border-radius: var(--r15); border: 1px solid var(--accent-20); padding: 18px; background: rgba(20,14,36,.96); box-shadow: 0 18px 60px rgba(0,0,0,.42); backdrop-filter: blur(50px); animation: slideUpFade var(--t-base); }
+  /* однострочный тост: маркер-пил и текст выравниваем по центру, иначе текст (22px) съезжает
+     вверх относительно 30px-пила при flex-start. Многострочные остаются top-aligned. */
+  .toast-item--single { align-items: center; }
+  .toast-item-error { border-color: rgba(255,100,116,.45); }
+  .toast-item-warning { border-color: rgba(255,196,92,.42); }
+  .toast-mark { display: flex; height: 30px; width: 30px; flex: 0 0 30px; align-items: center; justify-content: center; border-radius: var(--r10); background: var(--grad-soft-20); color: var(--accent-light); font-size: 16px; line-height: 1; }
+  .toast-item-error .toast-mark { color: #ff8f9a; }
+  .toast-item-warning .toast-mark { color: #ffd37b; }
+  .toast-close { display: flex; height: 30px; width: 30px; flex: 0 0 30px; align-items: center; justify-content: center; border-radius: var(--r10); color: var(--text-40); transition: color var(--t-fast), background var(--t-fast); }
+  .toast-close:hover { background: var(--accent-10); color: var(--text); }
+  .wave-bar { width: 4px; border-radius: var(--r40); background: var(--accent-light); opacity: .72; }
+  .nav-icon-mask { width: 24px; height: 24px; background: currentColor; display: inline-block; mask-position: center; mask-repeat: no-repeat; mask-size: contain; -webkit-mask-position: center; -webkit-mask-repeat: no-repeat; -webkit-mask-size: contain; }
+  .subtle-scroll { scrollbar-width: thin; scrollbar-color: var(--accent-20) transparent; scrollbar-gutter: stable; overscroll-behavior: contain; scroll-behavior: smooth; }
+  .subtle-scroll::-webkit-scrollbar { width: 5px; height: 5px; }
+  .subtle-scroll::-webkit-scrollbar-thumb { background: var(--accent-20); border-radius: var(--r40); }
+}
+
+@media (max-width: 768px) {
+  .app-content { padding: var(--space-4); overflow: visible; min-height: 100dvh; }
+  .with-sidebar { margin-left: 0; }
+  .sidebar { display: none; }
+  .btn { height: 52px; padding: 0 var(--space-5); font-size: 14px; }
+}
+
+@media (max-height: 720px) {
+  .app-content { height: auto; min-height: 100dvh; overflow-y: auto; }
+}

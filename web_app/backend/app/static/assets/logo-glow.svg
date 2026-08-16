@@ -1,0 +1,10 @@
+<svg width="280" height="280" viewBox="0 0 280 280" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Glow">
+  <circle cx="140" cy="140" r="118" stroke="url(#g1)" stroke-width="22" opacity=".52"/>
+  <circle cx="140" cy="140" r="78" stroke="url(#g2)" stroke-width="18" opacity=".42"/>
+  <path d="M158 34 72 151h52l-15 94 99-132h-57l7-79Z" fill="url(#g3)" opacity=".78"/>
+  <defs>
+    <linearGradient id="g1" x1="34" y1="30" x2="244" y2="256"><stop stop-color="#8B6FE6"/><stop offset="1" stop-color="#5F42B9"/></linearGradient>
+    <linearGradient id="g2" x1="76" y1="70" x2="210" y2="212"><stop stop-color="#F6F5FD" stop-opacity=".6"/><stop offset="1" stop-color="#8B6FE6" stop-opacity=".1"/></linearGradient>
+    <linearGradient id="g3" x1="84" y1="38" x2="198" y2="228"><stop stop-color="#F6F5FD"/><stop offset="1" stop-color="#8B6FE6"/></linearGradient>
+  </defs>
+</svg>

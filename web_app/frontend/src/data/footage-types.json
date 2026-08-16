@@ -1,0 +1,10 @@
+{
+  "$schema": "blast.footage_types/1",
+  "_comment": "Единый source of truth по типам футажей (Figma W12, степпер «‹ Личности ›»). Типология пополняется: добавил запись — появился шаг степпера + значение background.footageType в render_job. id стабилен и уходит в render_job; отображение переводится через i18n-ключ footage.type.<id>.",
+  "default": "standard",
+  "types": [
+    { "id": "standard", "vibeTag": null },
+    { "id": "persons", "vibeTag": "persons" },
+    { "id": "movies", "vibeTag": "movies" }
+  ]
+}

@@ -1,0 +1,58 @@
+{% extends "app_shell.html" %}
+{% block app_body %}
+<main class="app-content projects-page">
+  <section class="card current-project-card">
+    <div class="section-head">
+      <div>
+        <p class="eyebrow">Актуальный проект</p>
+        <h1>{{ activeProject.name if activeProject else 'Нет активного проекта' }}</h1>
+      </div>
+      <button class="btn secondary" type="button" data-open-project-modal>+ Новый проект</button>
+    </div>
+    {% if activeProject %}
+    <div class="progress-row">
+      <span>📹 {{ activeProject.generated }} видео</span>
+      <div class="progress-wrap"><div style="width: {{ (activeProject.generated / activeProject.total * 100)|round|int }}%"></div></div>
+      <strong>{{ (activeProject.generated / activeProject.total * 100)|round|int }}%</strong>
+      <span class="muted">{{ activeProject.generated }} из {{ activeProject.total }} сгенерировано</span>
+    </div>
+    {% else %}
+    <p class="muted">Создай проект, чтобы привязать генерации к релизу.</p>
+    {% endif %}
+  </section>
+  <section class="card projects-strip-card fill-rest">
+    <div class="section-head"><h2>Все проекты</h2><span class="muted">{{ projects|length }} проекта</span></div>
+    <div class="project-cards-row">
+      {% for project in projects %}
+      <a class="project-card" href="/app/projects/{{ project.id }}">
+        <img src="{{ project.coverUrl }}" alt="" />
+        <span class="package-badge {{ project.packageType|lower }}">{{ project.packageType }}</span>
+        <h3>{{ project.name }}</h3>
+        <p>{{ project.startedAt[:10] }} — {{ project.endsAt[:10] if project.endsAt else '∞' }}</p>
+        <span class="btn secondary small fake-button">Автопостинг →</span>
+      </a>
+      {% endfor %}
+      <button class="add-project-button" type="button" data-open-project-modal aria-label="Создать проект">+</button>
+    </div>
+  </section>
+</main>
+<div class="modal-backdrop" id="project-modal" hidden>
+  <section class="modal wide" role="dialog" aria-modal="true" aria-labelledby="project-modal-title">
+    <button class="modal-close" type="button" data-close-modal aria-label="Закрыть">×</button>
+    <div class="section-head">
+      <h2 id="project-modal-title">Новый проект</h2>
+      <span class="muted">Активная подписка</span>
+    </div>
+    <form id="project-form" class="project-form">
+      <label>Название проекта<input name="name" placeholder="Название трека" required /></label>
+      <fieldset>
+        <legend>Обложка</legend>
+        <label class="radio-line"><input type="radio" name="coverChoice" value="auto" checked /> Авто (waveform трека)</label>
+        <label class="radio-line"><input type="radio" name="coverChoice" value="upload" /> Загрузить своё <span class="muted">[мок]</span></label>
+      </fieldset>
+      <p class="notice">Тариф: {{ subscription.tier }} · осталось {{ creditsLeft }} из {{ subscription.creditsTotal }} генераций в этом месяце</p>
+      <div class="modal-actions"><button class="btn secondary" type="button" data-close-modal>Отмена</button><button class="btn primary" type="submit">Создать проект →</button></div>
+    </form>
+  </section>
+</div>
+{% endblock %}

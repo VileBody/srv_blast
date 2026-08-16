@@ -1,0 +1,31 @@
+{% extends "app_shell.html" %}
+{% block app_body %}
+<main class="app-content pricing-page">
+  <section class="section-head"><div><p class="eyebrow">Пакеты</p><h1>Тарифы Blast</h1></div></section>
+  <label class="offer-line"><input type="checkbox" id="offer-checkbox" /> Принимаю оферту и соглашаюсь с условиями обработки персональных данных</label>
+  <section class="pricing-grid fill-rest">
+    {% set plans = [
+      {'key':'TRIAL','name':'Trial','price':'990 ₽','videos':'5','type':'разовый','features':['Базовые хуки','5 видео','Разовая покупка']},
+      {'key':'BLAST','name':'Blast','price':'1990 ₽/мес','videos':'15/мес','type':'подписка','features':['Все F1–F5','15 видео в месяц','Таймлайн подписки'], 'popular': True},
+      {'key':'GLOW','name':'Glow','price':'7990 ₽','videos':'30','type':'разовый','features':['Все F1–F5','30 видео','+2 закупки']},
+      {'key':'IMPULSE','name':'Impulse','price':'29990 ₽','videos':'50','type':'разовый','features':['Все F1–F5','50 видео','10–12 посевов','Стратегия релиза']}
+    ] %}
+    {% for plan in plans %}
+    <article class="card plan-card {{ 'popular' if plan.popular else '' }}">
+      {% if plan.popular %}<span class="popular-badge">Популярный</span>{% endif %}
+      <h2>{{ plan.name }}</h2>
+      <strong class="price-text">{{ plan.price }}</strong>
+      <p class="muted">{{ plan.type }} · {{ plan.videos }} видео</p>
+      <ul>
+        {% for feature in plan.features %}<li>✓ {{ feature }}</li>{% endfor %}
+      </ul>
+      {% if subscription.tier == plan.key %}
+        <button class="btn secondary full" disabled>Текущий тариф</button>
+      {% else %}
+        <button class="btn primary full" type="button" data-buy-plan="{{ plan.key }}" disabled>{{ 'Апгрейд до ' + plan.name if plan.key in ['GLOW','IMPULSE'] else 'Выбрать' }}</button>
+      {% endif %}
+    </article>
+    {% endfor %}
+  </section>
+</main>
+{% endblock %}

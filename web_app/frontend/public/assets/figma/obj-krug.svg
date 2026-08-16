@@ -1,0 +1,24 @@
+<svg preserveAspectRatio="none" width="100%" height="100%" overflow="visible" style="display: block;" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g id="Frame 959">
+<g clip-path="url(#clip0_713_1997)">
+<rect id="$ROR632K 1" width="40" height="40" rx="20" fill="var(--fill-0, #5F42B9)"/>
+<g id="Ellipse 374">
+<circle cx="37.5" cy="20.5" r="17.5" fill="url(#paint0_linear_713_1997)"/>
+<circle cx="37.5" cy="20.5" r="17.5" fill="url(#paint1_linear_713_1997)"/>
+</g>
+</g>
+</g>
+<defs>
+<linearGradient id="paint0_linear_713_1997" x1="33.8158" y1="-0.68421" x2="41.1842" y2="44.4474" gradientUnits="userSpaceOnUse">
+<stop stop-color="#5F42B9"/>
+<stop offset="1" stop-color="#8B6FE6"/>
+</linearGradient>
+<linearGradient id="paint1_linear_713_1997" x1="37.5" y1="3" x2="45.375" y2="47.625" gradientUnits="userSpaceOnUse">
+<stop stop-color="#F6F5FD" stop-opacity="0.95"/>
+<stop offset="1" stop-color="#F6F5FD"/>
+</linearGradient>
+<clipPath id="clip0_713_1997">
+<rect width="40" height="40" rx="20" fill="white"/>
+</clipPath>
+</defs>
+</svg>

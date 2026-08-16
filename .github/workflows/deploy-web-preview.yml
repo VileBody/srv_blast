@@ -1,0 +1,46 @@
+name: Deploy Blast Web Preview
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "web_app/**"
+      - "infra/runners/deploy_web_preview.sh"
+      - "infra/runners/nginx/app.blast808.com*.conf"
+      - ".github/workflows/deploy-web-preview.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: blast-web-preview
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, blast-deploy-infra]
+    timeout-minutes: 45
+    env:
+      BLAST_WEB_SESSION_SECRET: ${{ secrets.BLAST_WEB_PREVIEW_SESSION_SECRET }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate deployment contract
+        run: |
+          set -euo pipefail
+          test -n "$BLAST_WEB_SESSION_SECRET"
+          bash -n infra/runners/deploy_web_preview.sh
+          docker compose -f web_app/docker-compose.preview.yml config >/dev/null
+
+      - name: Deploy preview
+        run: bash infra/runners/deploy_web_preview.sh
+
+      - name: External smoke
+        run: |
+          set -euo pipefail
+          curl -fsS --retry 12 --retry-all-errors --retry-delay 5 \
+            https://app.blast808.com/healthz | grep -q '"ok":true'
+          curl -fsS --retry 12 --retry-all-errors --retry-delay 5 \
+            https://app.blast808.com/login | grep -q '<div id="root"></div>'
