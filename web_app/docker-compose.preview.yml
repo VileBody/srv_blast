@@ -1,0 +1,55 @@
+name: blast-web-preview
+
+services:
+  api:
+    image: blast-web-preview-api:${BLAST_WEB_IMAGE_TAG:-local}
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.preview
+    container_name: blast-web-preview-api
+    environment:
+      APP_URL: https://app.blast808.com
+      BLAST_COOKIE_SAMESITE: lax
+      BLAST_COOKIE_SECURE: "1"
+      BLAST_CORS_ORIGINS: https://app.blast808.com
+      BLAST_CSRF: "1"
+      BLAST_DB_PATH: /app/backend/data/blast.db
+      BLAST_DEV_TOOLS: "0"
+      BLAST_PERSIST: "1"
+      BLAST_RATE_LIMIT: "1"
+      BLAST_REQUIRE_AUTH: "1"
+      BLAST_SESSION_SECRET: ${BLAST_WEB_SESSION_SECRET:?BLAST_WEB_SESSION_SECRET is required}
+      NEXTAUTH_URL: https://app.blast808.com
+      TELEGRAM_BOT_TOKEN: ""
+      TELEGRAM_BOT_USERNAME: blast808bot
+    volumes:
+      - blast-web-preview-data:/app/backend/data
+      - blast-web-preview-uploads:/app/backend/app/static/uploads
+    networks:
+      - preview
+    restart: unless-stopped
+
+  web:
+    image: blast-web-preview-frontend:${BLAST_WEB_IMAGE_TAG:-local}
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.preview
+    container_name: blast-web-preview-frontend
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:18190:80"
+    networks:
+      - preview
+    restart: unless-stopped
+
+networks:
+  preview:
+    name: blast-web-preview
+
+volumes:
+  blast-web-preview-data:
+    name: blast-web-preview-data
+  blast-web-preview-uploads:
+    name: blast-web-preview-uploads

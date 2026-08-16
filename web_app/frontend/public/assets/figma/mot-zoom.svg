@@ -1,0 +1,24 @@
+<svg preserveAspectRatio="none" width="100%" height="100%" overflow="visible" style="display: block;" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g id="Frame 959">
+<g clip-path="url(#clip0_713_2013)">
+<rect id="$ROR632K 1" width="40" height="40" rx="20" fill="var(--fill-0, #5F42B9)"/>
+<path id="Line 263" d="M45.4549 51.7718C-15.0502 29.1193 21.2745 25.0428 51.8982 42.6802" stroke="url(#paint0_linear_713_2013)" stroke-opacity="0.6" stroke-width="12"/>
+<foreignObject x="-88.41" y="-95.9178" width="243.494" height="240.561"><div xmlns="http://www.w3.org/1999/xhtml" style="backdrop-filter:blur(50px);height:100%;width:100%"></div></foreignObject><path id="Line 262" data-figma-bg-blur-radius="100" d="M40.8141 40.2926C-6.03502 -4.19509 28.9959 6.24175 50.2969 34.4402" stroke="url(#paint1_linear_713_2013)" stroke-opacity="0.6" stroke-width="12"/>
+<path id="Line 260" d="M40.9322 38.9747C-4.80599 -1.25974 24.9261 4.34624 47.8079 30.096" stroke="var(--stroke-0, #F6F5FD)" stroke-width="2"/>
+<path id="Line 261" d="M38.6431 44.8697C-3.7668 28.0382 18.6159 24.4881 41.2514 36.8729" stroke="var(--stroke-0, #F6F5FD)" stroke-width="2"/>
+</g>
+</g>
+<defs>
+<linearGradient id="paint0_linear_713_2013" x1="22.6455" y1="50.4499" x2="48.9192" y2="23.8082" gradientUnits="userSpaceOnUse">
+<stop stop-color="#8B6FE6"/>
+<stop offset="1" stop-color="#5F42B9"/>
+</linearGradient>
+<linearGradient id="paint1_linear_713_2013" x1="20.3334" y1="30.1658" x2="54.9266" y2="15.9039" gradientUnits="userSpaceOnUse">
+<stop stop-color="#8B6FE6"/>
+<stop offset="1" stop-color="#5F42B9"/>
+</linearGradient>
+<clipPath id="clip0_713_2013">
+<rect width="40" height="40" rx="20" fill="white"/>
+</clipPath>
+</defs>
+</svg>

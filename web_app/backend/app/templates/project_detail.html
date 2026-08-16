@@ -1,0 +1,46 @@
+{% extends "app_shell.html" %}
+{% block app_body %}
+<main class="app-content project-detail-page">
+  <section class="card project-detail-card">
+    <div class="section-head">
+      <h1>{{ project.name }}</h1>
+      <span class="status-badge {{ 'success' if project.status == 'ACTIVE' else 'info' if project.status == 'IN_PROGRESS' else 'neutral' }}">{{ 'Активный' if project.status == 'ACTIVE' else 'В процессе' if project.status == 'IN_PROGRESS' else 'Завершён' }}</span>
+    </div>
+    <div class="progress-block">
+      <div class="section-head"><strong>Прогресс</strong><strong>{{ (project.generated / project.total * 100)|round|int }}%</strong></div>
+      <div class="progress-wrap"><div style="width: {{ (project.generated / project.total * 100)|round|int }}%"></div></div>
+      <p class="muted">{{ project.generated }} из {{ project.total }} сгенерировано</p>
+    </div>
+    <div class="detail-columns two-one">
+      <article>
+        <h2>Контент-план</h2>
+        {% for job in project.jobs %}
+          {% for video in job.videos %}
+          <div class="content-plan-row">
+            <img src="{{ video.thumbnailUrl }}" alt="" />
+            <div>
+              <strong>Версия {{ video.index }}</strong>
+              <p>{{ video.subtitleStyle }} · Хук: {{ video.hook }}</p>
+              <p class="muted">{{ job.createdAt[:10] }} · Готово</p>
+            </div>
+            <div class="row-actions">
+              <a class="btn secondary tiny" href="{{ video.downloadUrl or '#' }}">⬇ Скачать</a>
+              <button class="btn secondary tiny" type="button" data-tiktok-post="{{ video.id }}">▶ TikTok</button>
+            </div>
+          </div>
+          {% endfor %}
+        {% endfor %}
+      </article>
+      <article class="muted-card">
+        <h2>Статистика</h2>
+        {% if tiktok %}
+        <svg class="mini-chart" viewBox="0 0 320 120" aria-hidden="true"><polyline points="0,90 45,78 90,88 135,52 180,64 225,38 270,46 320,22" /></svg>
+        <p>Лучшее видео: Версия 1 · ER 8.4%</p>
+        {% else %}
+        <div class="empty-state mini"><div class="empty-icon">▥</div><h3>Подключи TikTok для статистики</h3><a class="btn primary" href="/app/profile">Подключить TikTok</a></div>
+        {% endif %}
+      </article>
+    </div>
+  </section>
+</main>
+{% endblock %}

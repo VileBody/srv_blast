@@ -1,0 +1,16 @@
+<svg preserveAspectRatio="none" width="100%" height="100%" overflow="visible" style="display: block;" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g id="Group 1994">
+<circle id="Ellipse 380" cx="10" cy="10" r="9.5" stroke="url(#paint0_linear_767_2230)"/>
+<path id="Arrow 85" d="M10.3536 4.64645C10.1583 4.45118 9.84171 4.45118 9.64645 4.64645L6.46447 7.82843C6.2692 8.02369 6.2692 8.34027 6.46447 8.53553C6.65973 8.7308 6.97631 8.7308 7.17157 8.53553L10 5.70711L12.8284 8.53553C13.0237 8.7308 13.3403 8.7308 13.5355 8.53553C13.7308 8.34027 13.7308 8.02369 13.5355 7.82843L10.3536 4.64645ZM10 15L10.5 15L10.5 5L10 5L9.5 5L9.5 15L10 15Z" fill="url(#paint1_linear_767_2230)"/>
+</g>
+<defs>
+<linearGradient id="paint0_linear_767_2230" x1="10" y1="6.26056e-08" x2="12.1479" y2="27.6924" gradientUnits="userSpaceOnUse">
+<stop stop-color="#8B6FE6"/>
+<stop offset="1" stop-color="#5F42B9"/>
+</linearGradient>
+<linearGradient id="paint1_linear_767_2230" x1="10" y1="14.5" x2="14.4239" y2="12.8462" gradientUnits="userSpaceOnUse">
+<stop stop-color="#8B6FE6"/>
+<stop offset="1" stop-color="#A98DFF"/>
+</linearGradient>
+</defs>
+</svg>

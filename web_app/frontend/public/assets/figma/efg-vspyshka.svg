@@ -1,0 +1,19 @@
+<svg preserveAspectRatio="none" width="100%" height="100%" overflow="visible" style="display: block;" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g id="Frame 959">
+<g clip-path="url(#clip0_713_2061)">
+<rect id="$ROR632K 1" width="40" height="40" rx="20" fill="var(--fill-0, #5F42B9)"/>
+<g id="Group 1797">
+<path id="Vector" d="M24.9116 14.2744H15.0886L16.7257 11H23.2745L24.9116 14.2744Z" stroke="var(--stroke-0, #F6F5FD)" stroke-opacity="0.8" stroke-width="2" stroke-miterlimit="10"/>
+<path id="Vector_2" d="M15.0886 25.7256H24.9116L23.2745 29H16.7257L15.0886 25.7256Z" stroke="var(--stroke-0, #F6F5FD)" stroke-opacity="0.8" stroke-width="2" stroke-miterlimit="10"/>
+<path id="Vector_3" d="M25.7256 24.9116V15.0886L29 16.7257V23.2745L25.7256 24.9116Z" stroke="var(--stroke-0, #F6F5FD)" stroke-opacity="0.8" stroke-width="2" stroke-miterlimit="10"/>
+<path id="Vector_4" d="M14.2744 15.0886V24.9116L11 23.2745V16.7257L14.2744 15.0886Z" stroke="var(--stroke-0, #F6F5FD)" stroke-opacity="0.8" stroke-width="2" stroke-miterlimit="10"/>
+<path id="Vector_5" d="M20 22.4515C21.3539 22.4515 22.4515 21.3539 22.4515 20C22.4515 18.6461 21.3539 17.5485 20 17.5485C18.6461 17.5485 17.5485 18.6461 17.5485 20C17.5485 21.3539 18.6461 22.4515 20 22.4515Z" stroke="var(--stroke-0, #F6F5FD)" stroke-opacity="0.8" stroke-width="2" stroke-miterlimit="10"/>
+</g>
+</g>
+</g>
+<defs>
+<clipPath id="clip0_713_2061">
+<rect width="40" height="40" rx="20" fill="white"/>
+</clipPath>
+</defs>
+</svg>

@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block body %}
+<main class="auth-page" data-auth-mode="{{ mode }}">
+  <section class="auth-art" aria-hidden="true">
+    <img class="auth-glow" src="/static/assets/logo-glow.svg" alt="" />
+    <img class="auth-artist" src="/static/assets/artist-placeholder.svg" alt="" />
+  </section>
+  <section class="auth-panel">
+    {% if mode == 'register' %}
+      <h1>Регистрация</h1>
+      <p>Готов продвинуть новый трек с помощью видео-контента?</p>
+      <form class="form-stack" id="register-form">
+        <label>Имя<input name="name" autocomplete="given-name" placeholder="Имя" required /></label>
+        <label>Фамилия<input name="surname" autocomplete="family-name" placeholder="Фамилия" required /></label>
+        <label>Email<input type="email" name="email" autocomplete="email" placeholder="mail@example.com" required /></label>
+        <button class="btn primary full" type="submit" data-loading-text="Создаём...">Зарегистрироваться</button>
+      </form>
+      <div class="divider"><span>или</span></div>
+      <div class="auth-socials">
+        <button class="btn secondary" type="button" data-mock-toast="Telegram OAuth в мок-режиме заменён TG-попапом">Войти через Telegram</button>
+        <button class="btn secondary" type="button" data-mock-toast="Google OAuth подключается в боевом NextAuth, здесь мок">Войти через Google</button>
+      </div>
+      <p class="auth-small">Уже есть аккаунт? <a href="/login">Войти</a></p>
+    {% else %}
+      <h1>Добро пожаловать</h1>
+      <p>Войди в свой аккаунт</p>
+      <form class="form-stack" id="login-form">
+        <label>Email<input type="email" name="email" autocomplete="email" placeholder="demo@blast808.com" required /></label>
+        <label>Пароль<span class="password-field"><input type="password" name="password" autocomplete="current-password" placeholder="••••••••" required /><button type="button" class="ghost-eye" data-toggle-password aria-label="Показать пароль">👁</button></span></label>
+        <button class="btn primary full" type="submit" data-loading-text="Входим...">Войти</button>
+      </form>
+      <div class="divider"><span>или</span></div>
+      <button class="btn secondary full" type="button" data-mock-toast="Google OAuth подключается в боевом NextAuth, здесь мок">Войти через Google</button>
+      <p class="auth-small">Нет аккаунта? <a href="/register">Зарегистрироваться</a></p>
+    {% endif %}
+  </section>
+</main>
+<div class="modal-backdrop" id="tg-modal" hidden>
+  <section class="modal auth-modal" role="dialog" aria-modal="true" aria-labelledby="tg-title">
+    <img src="/static/assets/logo-main.svg" class="modal-logo" alt="" />
+    <h2 id="tg-title">Подпишись на наш канал и запусти бота</h2>
+    <p>Получишь первые бесплатные генерации. После запуска ты автоматически вернёшься сюда.</p>
+    <a class="btn primary full" id="tg-open-link" href="https://t.me/blast808bot" target="_blank" rel="noreferrer">Открыть @blast808bot →</a>
+    <button class="btn secondary full" type="button" id="tg-check-btn">Уже запустил — проверить</button>
+    <p class="hint" id="tg-status">Мок-проверка подтвердится со второй попытки.</p>
+  </section>
+</div>
+{% endblock %}
