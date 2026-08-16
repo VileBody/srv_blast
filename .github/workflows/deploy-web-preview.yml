@@ -40,7 +40,17 @@ jobs:
       - name: External smoke
         run: |
           set -euo pipefail
-          curl -fsS --retry 12 --retry-all-errors --retry-delay 5 \
-            https://app.blast808.com/healthz | grep -q '"ok":true'
-          curl -fsS --retry 12 --retry-all-errors --retry-delay 5 \
-            https://app.blast808.com/login | grep -q '<div id="root"></div>'
+          wait_for_content() {
+            local url="$1"
+            local expected="$2"
+            for attempt in $(seq 1 12); do
+              if curl -fsS --max-time 15 "$url" | grep -q "$expected"; then
+                return 0
+              fi
+              sleep 5
+            done
+            echo "external smoke failed: $url" >&2
+            return 1
+          }
+          wait_for_content https://app.blast808.com/healthz '"ok":true'
+          wait_for_content https://app.blast808.com/login '<div id="root"></div>'
