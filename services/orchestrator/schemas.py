@@ -230,6 +230,31 @@ class SendAudioS3Request(BaseModel):
         # F1 combo pivots on the drop too (audio window [0.5, drop−0.5] + combo).
         if self.f1_sound_url and self.user_drop_t is None:
             raise ValueError("f1_sound_url requires user_drop_t (drop anchor) to be set")
+        # Every hook overlay is authored against a 1080x1920 frame: the F4 device
+        # scripts size their cover solid off the comp but position their artwork
+        # in absolute pixels, the F2 shapes and F3 hook_light carry baked
+        # coordinates, and none of them were re-checked for a wider or square
+        # frame. Rendering one there does not fail — it silently puts the effect
+        # in the wrong place, which is worse. Refuse the combination until the
+        # scripts are reviewed.
+        if self.render_preset != "vertical":
+            requested = [
+                name
+                for name, value in (
+                    ("f1_sound_url", self.f1_sound_url),
+                    ("f2_shape", self.f2_shape),
+                    ("effect_hook", self.effect_hook),
+                    ("f4_device", self.f4_device),
+                    ("hook_device", self.hook_device),
+                )
+                if value
+            ]
+            if requested:
+                raise ValueError(
+                    "hooks are authored for the vertical 1080x1920 frame and are not "
+                    f"supported at render_preset={self.render_preset!r} "
+                    f"(requested: {', '.join(requested)})"
+                )
         return self
 
 
