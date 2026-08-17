@@ -31,6 +31,27 @@ def test_frame_ids_match_the_schema_literal():
         assert f'"{fid}"' in src, fid
 
 
+@pytest.fixture(autouse=True)
+def _reset_frame_cache():
+    catalog.reset_cache()
+    yield
+    catalog.reset_cache()
+
+
+class _FakeS3:
+    """head_object отвечает только на ключи из `present`."""
+
+    def __init__(self, present=()):
+        self.present = set(present)
+        self.head_calls = []
+
+    def head_object(self, *, Bucket, Key):
+        self.head_calls.append((Bucket, Key))
+        if Key not in self.present:
+            raise RuntimeError("404 NoSuchKey")
+        return {"ContentLength": 1}
+
+
 def test_resolve_needs_the_asset_bucket(monkeypatch):
     monkeypatch.delenv("FX_ASSETS_S3_BUCKET", raising=False)
     assert catalog.resolve_frame_asset("rounded") is None
@@ -39,11 +60,34 @@ def test_resolve_needs_the_asset_bucket(monkeypatch):
 def test_resolve_builds_s3_url_and_relpath(monkeypatch):
     monkeypatch.setenv("FX_ASSETS_S3_BUCKET", "fx-bucket")
     monkeypatch.setenv("FX_ASSETS_S3_PREFIX", "fx_assets")
+    fake = _FakeS3({"fx_assets/frames/group_2173.png"})
+    monkeypatch.setattr(catalog, "_make_s3_client", lambda: fake)
     got = catalog.resolve_frame_asset("letterbox")
     assert got == {
         "relpath": "media/img/group_2173.png",
         "url": "s3://fx-bucket/fx_assets/frames/group_2173.png",
     }
+
+
+def test_missing_asset_degrades_to_no_frame(monkeypatch):
+    """Ключа нет на S3 => рамки нет. Иначе нода не скачает файл и провалит
+    ВЕСЬ рендер — упавшая джоба вместо ролика без рамки."""
+    monkeypatch.setenv("FX_ASSETS_S3_BUCKET", "fx-bucket")
+    monkeypatch.setenv("FX_ASSETS_S3_PREFIX", "fx_assets")
+    fake = _FakeS3()  # бакет пуст
+    monkeypatch.setattr(catalog, "_make_s3_client", lambda: fake)
+    assert catalog.resolve_frame_asset("rounded") is None
+    assert fake.head_calls == [("fx-bucket", "fx_assets/frames/exclude.png")]
+
+
+def test_existence_check_is_cached(monkeypatch):
+    monkeypatch.setenv("FX_ASSETS_S3_BUCKET", "fx-bucket")
+    monkeypatch.setenv("FX_ASSETS_S3_PREFIX", "fx_assets")
+    fake = _FakeS3({"fx_assets/frames/exclude.png"})
+    monkeypatch.setattr(catalog, "_make_s3_client", lambda: fake)
+    for _ in range(3):
+        assert catalog.resolve_frame_asset("rounded") is not None
+    assert len(fake.head_calls) == 1
 
 
 @pytest.mark.parametrize("bad", ["", "none", "does_not_exist"])
