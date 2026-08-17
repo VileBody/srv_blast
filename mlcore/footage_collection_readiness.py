@@ -24,9 +24,7 @@ from mlcore.switch_timing_deterministic import SwitchTimingParams
 
 _P = SwitchTimingParams()
 
-# The longest interval the timing can ask a single clip to cover. A clip shorter
-# than this cannot fill such an interval, and the strict no-repeat matcher has no
-# way to substitute a second clip for it.
+# The longest hold the generator would choose on its own.
 MAX_INTERVAL_SEC: float = float(_P.max_hold_sec)
 
 # Cuts outside the drop window sit `default_gap_beats` apart but never tighter
@@ -34,18 +32,48 @@ MAX_INTERVAL_SEC: float = float(_P.max_hold_sec)
 # most cuts = most unique clips needed).
 MIN_GAP_SEC: float = float(_P.default_gap_floor_sec)
 
+# Two cuts are never closer than this. An interval cap below it would mean cuts
+# faster than the renderer will place them — the pool is genuinely unusable then,
+# not merely demanding.
+HARD_FLOOR_SEC: float = float(_P.hard_floor_sec)
+
+# A clip exactly as long as its interval is a rounding error away from not
+# fitting, so the cap leaves this much slack. Mirrors the orchestrator.
+CAP_SLACK_SEC: float = 0.05
+
 # Longest window a user can pick, in seconds. The reel formats top out here, and
 # a collection that covers this covers everything shorter.
 DEFAULT_WINDOW_SEC: float = 60.0
 
 
-def clips_needed_for_window(window_sec: float = DEFAULT_WINDOW_SEC) -> int:
+def interval_cap_for(min_duration_sec: float) -> float:
+    """The longest interval a pool of these clips can actually cover.
+
+    Collection jobs lower the generator's `max_hold_sec` to this, so a pre-cut
+    batch does not have to be re-cut just because the music left a quiet stretch
+    — the cuts land sooner instead of asking for a clip that does not exist.
+    """
+    return max(0.0, float(min_duration_sec) - CAP_SLACK_SEC)
+
+
+def clips_needed_for_window(
+    window_sec: float = DEFAULT_WINDOW_SEC,
+    *,
+    interval_cap_sec: float = 0.0,
+) -> int:
     """Unique clips a job of this length can demand in the worst case.
 
     Every interval needs its OWN clip — the no-repeat policy is strict — so the
-    count is the number of intervals, not a fraction of it.
+    count is the number of intervals, not a fraction of it. Cuts normally land a
+    gap apart; a cap TIGHTER than that gap makes them land more often, and the
+    demand rises with it.
     """
-    return max(1, int(float(window_sec) / MIN_GAP_SEC) + 1)
+    spacing = MIN_GAP_SEC
+    if interval_cap_sec and interval_cap_sec < spacing:
+        spacing = float(interval_cap_sec)
+    if spacing <= 0:
+        return 1
+    return max(1, int(float(window_sec) / spacing) + 1)
 
 
 @dataclass(frozen=True)
@@ -54,12 +82,14 @@ class CollectionReadiness:
     clips: int
     min_duration_sec: float
     median_duration_sec: float
-    clips_covering_longest_interval: int
+    interval_cap_sec: float
     needed_clips: int
 
     @property
-    def can_fill_longest_interval(self) -> bool:
-        return self.clips_covering_longest_interval > 0
+    def cuts_are_watchable(self) -> bool:
+        """A cap under the renderer's own floor means cuts faster than it places
+        them — no amount of clips rescues that."""
+        return self.interval_cap_sec >= HARD_FLOOR_SEC
 
     @property
     def has_enough_clips(self) -> bool:
@@ -67,7 +97,7 @@ class CollectionReadiness:
 
     @property
     def status(self) -> str:
-        if not self.can_fill_longest_interval:
+        if self.clips <= 0 or not self.cuts_are_watchable:
             return "unusable"
         if not self.has_enough_clips:
             return "thin"
@@ -76,10 +106,12 @@ class CollectionReadiness:
     @property
     def note(self) -> str:
         if self.status == "unusable":
+            if self.clips <= 0:
+                return "no clips with a measured duration — has the base been activated?"
             return (
-                f"no clip reaches {MAX_INTERVAL_SEC:.1f}s, so the longest interval "
-                f"cannot be filled (longest clip {self.min_duration_sec:.1f}s+); "
-                "jobs will fail at selection"
+                f"shortest clip {self.min_duration_sec:.2f}s forces cuts closer than "
+                f"the {HARD_FLOOR_SEC:.1f}s floor; these clips are too short to build "
+                "a watchable montage from"
             )
         if self.status == "thin":
             return (
@@ -95,7 +127,7 @@ class CollectionReadiness:
             "clips": self.clips,
             "min_duration_sec": round(self.min_duration_sec, 2),
             "median_duration_sec": round(self.median_duration_sec, 2),
-            "clips_covering_longest_interval": self.clips_covering_longest_interval,
+            "interval_cap_sec": round(self.interval_cap_sec, 2),
             "needed_clips": self.needed_clips,
             "status": self.status,
         }
@@ -125,13 +157,15 @@ def evaluate_collection(
             continue
         if v > 0:
             values.append(v)
+    shortest = min(values) if values else 0.0
+    cap = interval_cap_for(shortest)
     return CollectionReadiness(
         slug=str(slug),
         clips=len(values),
-        min_duration_sec=min(values) if values else 0.0,
+        min_duration_sec=shortest,
         median_duration_sec=_median(values),
-        clips_covering_longest_interval=sum(1 for v in values if v >= MAX_INTERVAL_SEC),
-        needed_clips=clips_needed_for_window(window_sec),
+        interval_cap_sec=cap,
+        needed_clips=clips_needed_for_window(window_sec, interval_cap_sec=cap),
     )
 
 

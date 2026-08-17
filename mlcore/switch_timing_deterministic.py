@@ -92,6 +92,53 @@ def _nearest_in_window(cands: Sequence[float], target: float, lo: float, hi: flo
     return best
 
 
+def enforce_max_interval(
+    switch_points_abs: Sequence[float],
+    *,
+    clip_start: float,
+    clip_end: float,
+    max_interval_sec: float,
+) -> List[float]:
+    """Split any interval longer than `max_interval_sec` by inserting cuts.
+
+    `max_hold_sec` bounds the holds the generator CHOOSES, but two intervals
+    escape it: the `low_far` fallback (taken when there is no beat to land on)
+    and the tail from the last cut to the end of the clip, which no rule bounds
+    at all. Both then ask a single clip to cover more than the pool can offer,
+    and the strict no-repeat matcher cannot substitute a second clip — the job
+    fails outright.
+
+    This is a safety net, not the primary mechanism: the generator is given a
+    lowered max_hold first so the cuts it picks stay musical, and the splits
+    added here only appear where nothing musical was available anyway.
+    """
+    limit = float(max_interval_sec)
+    if limit <= 0:
+        return [float(x) for x in switch_points_abs]
+
+    bounds = [float(clip_start)] + sorted(float(x) for x in switch_points_abs) + [float(clip_end)]
+    out: List[float] = []
+    for lo, hi in zip(bounds, bounds[1:]):
+        if lo > float(clip_start):
+            out.append(round(lo, 3))
+        span = hi - lo
+        if span <= limit:
+            continue
+        # Even split: n pieces each at most `limit` long.
+        pieces = int(span // limit) + (1 if span % limit else 0)
+        step = span / pieces
+        for k in range(1, pieces):
+            out.append(round(lo + k * step, 3))
+    seen: set = set()
+    deduped: List[float] = []
+    for t in sorted(out):
+        if t in seen or not (float(clip_start) < t < float(clip_end)):
+            continue
+        seen.add(t)
+        deduped.append(t)
+    return deduped
+
+
 def generate_switch_points(
     *,
     onsets_classified: Sequence[ClassifiedOnset],

@@ -11,11 +11,13 @@ from __future__ import annotations
 import pytest
 
 from mlcore.footage_collection_readiness import (
+    HARD_FLOOR_SEC,
     MAX_INTERVAL_SEC,
     MIN_GAP_SEC,
     clips_needed_for_window,
     evaluate_collection,
     evaluate_index,
+    interval_cap_for,
 )
 
 
@@ -25,6 +27,7 @@ def test_demand_is_derived_from_the_timing_profile_not_invented() -> None:
     p = SwitchTimingParams()
     assert MAX_INTERVAL_SEC == p.max_hold_sec
     assert MIN_GAP_SEC == p.default_gap_floor_sec
+    assert HARD_FLOOR_SEC == p.hard_floor_sec
 
 
 @pytest.mark.parametrize(
@@ -36,37 +39,47 @@ def test_longer_reels_need_more_unique_clips(window: int, expected_at_least: int
     assert clips_needed_for_window(window) >= expected_at_least
 
 
-def test_clips_shorter_than_the_longest_interval_make_a_collection_unusable() -> None:
-    # The real risk for a pre-cut film batch: plenty of clips, all too short.
+def test_the_delivered_three_second_batch_is_serviceable() -> None:
+    # The real batch. Jobs lower max_hold to the pool's ceiling instead of asking
+    # for a clip that does not exist, so 3s clips are fine — they just cut sooner.
     r = evaluate_collection("films__x", [3.0] * 78)
-    assert r.clips == 78
-    assert r.status == "unusable"
-    assert "3.5" in r.note
-
-
-def test_a_batch_that_clears_the_longest_interval_is_ok() -> None:
-    r = evaluate_collection("films__x", [4.0] * 78)
     assert r.status == "ok"
-    assert r.clips_covering_longest_interval == 78
+    assert r.interval_cap_sec == pytest.approx(2.95)
     assert r.note == ""
 
 
-def test_a_mixed_collection_needs_only_some_long_clips() -> None:
-    # Short clips still fill short intervals; only the longest ones are at risk.
-    r = evaluate_collection("films__x", [2.0] * 70 + [5.0] * 8)
-    assert r.can_fill_longest_interval
-    assert r.clips_covering_longest_interval == 8
+def test_a_cap_looser_than_the_gap_does_not_inflate_demand() -> None:
+    # Cuts already land ~1.6s apart; a 2.95s ceiling only trims the long holds.
+    assert clips_needed_for_window(60, interval_cap_sec=2.95) == clips_needed_for_window(60)
+
+
+def test_a_cap_tighter_than_the_gap_raises_demand() -> None:
+    # Sub-second clips force every interval to be short, so far more are needed.
+    assert clips_needed_for_window(60, interval_cap_sec=0.95) > clips_needed_for_window(60)
+
+
+def test_clips_too_short_to_cut_from_are_unusable() -> None:
+    # Below the renderer's own floor between cuts, no clip count rescues it.
+    r = evaluate_collection("films__x", [0.2] * 500)
+    assert r.status == "unusable"
+    assert "too short" in r.note
+
+
+def test_the_cap_leaves_slack_so_a_clip_is_never_exactly_its_interval() -> None:
+    assert interval_cap_for(3.0) < 3.0
+
+
+def test_the_shortest_clip_sets_the_cap_for_the_whole_collection() -> None:
+    # One short clip lowers the ceiling for everyone: the matcher may hand it any
+    # interval, so the pool can only promise what its weakest member covers.
+    r = evaluate_collection("films__x", [6.0] * 70 + [1.2] * 2)
+    assert r.interval_cap_sec == pytest.approx(1.15)
 
 
 def test_too_few_clips_is_flagged_as_thin() -> None:
     r = evaluate_collection("films__x", [6.0] * 12)
     assert r.status == "thin"
     assert "12 clips" in r.note
-
-
-def test_unusable_outranks_thin_because_it_fails_every_job() -> None:
-    r = evaluate_collection("films__x", [1.0] * 3)
-    assert r.status == "unusable"
 
 
 def test_zero_and_junk_durations_are_ignored_not_counted() -> None:
@@ -78,13 +91,15 @@ def test_zero_and_junk_durations_are_ignored_not_counted() -> None:
 def test_index_evaluation_splits_by_folder() -> None:
     assets = (
         [{"genre": "films", "tag": "брат", "duration_sec": 4.0}] * 40
-        + [{"genre": "films", "tag": "бумер", "duration_sec": 2.0}] * 40
+        + [{"genre": "films", "tag": "бумер", "duration_sec": 0.2}] * 40
         + [{"genre": "films", "tag": "", "duration_sec": 4.0}]  # unfiled, skipped
     )
     rows = {r.slug: r for r in evaluate_index(assets)}
     assert set(rows) == {"films__брат", "films__бумер"}
     assert rows["films__брат"].status == "ok"
     assert rows["films__бумер"].status == "unusable"
+    # Each folder is judged on its own clips, not on the batch average.
+    assert rows["films__брат"].interval_cap_sec != rows["films__бумер"].interval_cap_sec
 
 
 def test_report_shape_is_json_serialisable() -> None:

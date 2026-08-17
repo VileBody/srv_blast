@@ -2972,7 +2972,7 @@ def _report_collection_registry(static_index_path: Any) -> Dict[str, Any]:
     # render for a paying user into a warning for the operator who is still
     # looking at the upload.
     try:
-        from mlcore.footage_collection_readiness import MAX_INTERVAL_SEC, evaluate_index
+        from mlcore.footage_collection_readiness import evaluate_index
 
         rows = evaluate_index(data.get("assets") or [])
         out["readiness"] = [r.as_dict() for r in rows]
@@ -2981,11 +2981,10 @@ def _report_collection_registry(static_index_path: Any) -> Dict[str, Any]:
         if unusable:
             out["unusable_collections"] = [r.slug for r in unusable]
             log.error(
-                "activate(collection): %d collection(s) CANNOT serve a job — no clip "
-                "reaches the longest interval (%.1fs); every job on them will fail at "
-                "selection: %s",
-                len(unusable), MAX_INTERVAL_SEC,
-                [(r.slug, f"median={r.median_duration_sec:.1f}s") for r in unusable],
+                "activate(collection): %d collection(s) CANNOT serve a job — clips too "
+                "short to cut a watchable montage from: %s",
+                len(unusable),
+                [(r.slug, f"shortest={r.min_duration_sec:.2f}s") for r in unusable],
             )
         if thin:
             out["thin_collections"] = [r.slug for r in thin]
