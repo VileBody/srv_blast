@@ -19,21 +19,26 @@
 или из окружения: FX_ASSETS_S3_BUCKET, FX_ASSETS_S3_PREFIX, S3_ENDPOINT_URL,
 S3_REGION, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY.
 
-Проверка после заливки (--verify, включена по умолчанию): рамки адресуются
-фиксированными ключами, и отсутствие файла на S3 = рендер без рамки, поэтому
-скрипт в конце сверяет, что все ожидаемые ключи рамок на месте.
+После заливки сверяет, что каждый залитый объект реально лежит в бакете
+(--no-verify отключает): рамки адресуются фиксированными ключами, и промах =
+молча отрендеренный ролик без рамки.
+
+Запускать там, где есть креды S3, — то есть на сервере (в репо лежит .env) или
+внутри контейнера с S3-переменными. Репозиторные модули скрипт НЕ импортирует,
+поэтому работает и на чекауте до мёржа этой ветки.
 """
 from __future__ import annotations
 
 import argparse
 import mimetypes
 import os
-import sys
+
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+# Только для чтения .env — репозиторные модули скрипт намеренно не импортирует,
+# чтобы запускаться на сервере со старым чекаутом (до мёржа ветки).
 REPO_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(REPO_ROOT))
 
 
 def load_env_file(path: Path) -> None:
@@ -99,10 +104,15 @@ def collect(src: Path) -> List[Tuple[Path, str]]:
     return out
 
 
-def expected_frame_keys(prefix: str) -> List[str]:
-    from mlcore.hooks.frames.catalog import FRAMES
+def verify_uploaded(s3: Any, bucket: str, planned: List[Tuple[str, int]]) -> List[str]:
+    """Сверить, что каждый запланированный ключ реально лежит в бакете.
 
-    return [(prefix + "/" + key).strip("/") for key, _label in FRAMES.values()]
+    Проверяем именно залитое, а не список из mlcore-каталога: скрипт должен
+    запускаться и на сервере со старым чекаутом (до мёржа ветки), где модуля
+    `mlcore.hooks.frames` ещё нет. Заодно нет и дрейфа «константа в скрипте vs
+    каталог» — источник истины один, это сами файлы.
+    """
+    return [key for key, size in planned if head_size(s3, bucket, key) != size]
 
 
 def main() -> int:
@@ -110,7 +120,7 @@ def main() -> int:
     ap.add_argument("--src", required=True, help="локальная папка (её дерево = дерево под префиксом)")
     ap.add_argument("--dry-run", action="store_true", help="только показать план")
     ap.add_argument("--force", action="store_true", help="перезалить даже совпадающие по размеру")
-    ap.add_argument("--no-verify", action="store_true", help="не сверять ключи рамок в конце")
+    ap.add_argument("--no-verify", action="store_true", help="не сверять залитое в конце")
     args = ap.parse_args()
 
     load_env_file(REPO_ROOT / ".env")
@@ -128,10 +138,12 @@ def main() -> int:
 
     s3 = make_client() if not args.dry_run else None
     total = uploaded = skipped = 0
+    planned: List[Tuple[str, int]] = []
     for path, rel in files:
         key = (prefix + "/" + rel).strip("/")
         size = path.stat().st_size
         total += size
+        planned.append((key, size))
         if args.dry_run:
             print(f"PLAN  {size/1048576:7.1f}MB  s3://{bucket}/{key}")
             continue
@@ -152,15 +164,16 @@ def main() -> int:
     if args.dry_run or args.no_verify:
         return 0
 
-    # Рамки адресуются фиксированными ключами: промах = молча рендерим без рамки.
-    missing = [k for k in expected_frame_keys(prefix) if head_size(s3, bucket, k) is None]
+    # Рамки адресуются фиксированными ключами, и промах = молча рендерим без
+    # рамки, поэтому сверяем факт наличия каждого залитого объекта.
+    missing = verify_uploaded(s3, bucket, planned)
     if missing:
-        print("\nВНИМАНИЕ: ожидаемые ключи рамок отсутствуют:")
+        print("\nВНИМАНИЕ: эти ключи не подтвердились в бакете:")
         for k in missing:
             print(f"  s3://{bucket}/{k}")
-        print("Рамки в боте будут выбираться, но в ролик не попадут.")
+        print("Рамки из frames/ будут выбираться в боте, но в ролик не попадут.")
         return 1
-    print("verify: все ключи рамок на месте")
+    print(f"verify: все {len(planned)} объектов на месте")
     return 0
 
 
