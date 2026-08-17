@@ -212,13 +212,22 @@ def load_collection_theme_buckets(
     Built by inverting each collection's ``themes`` list, so the relevance
     statement lives once per collection in the registry instead of being spread
     across a separate mapping that could drift out of sync with it.
+
+    Within one theme, collections are ordered by WHERE that theme sits in their
+    own list: a collection that names a theme first is a better fit for it than
+    one that names it fourth. Without this the order inside a theme fell back to
+    registry order, i.e. alphabetical — so for a night-racing lyric "Великий
+    Гэтсби" outranked "Токийский дрифт" purely because В precedes Т.
     """
     cat = catalog if catalog is not None else load_collection_catalog()
-    out: Dict[str, List[str]] = {}
+    ranked: Dict[str, List[Tuple[int, str]]] = {}
     for b in cat:
-        for theme in b.themes:
-            out.setdefault(theme, []).append(b.bucket_id)
-    return out
+        for position, theme in enumerate(b.themes):
+            ranked.setdefault(theme, []).append((position, b.bucket_id))
+    return {
+        theme: [bid for _, bid in sorted(rows, key=lambda r: (r[0], r[1]))]
+        for theme, rows in ranked.items()
+    }
 
 
 def collections_for_kind(
