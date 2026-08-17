@@ -175,6 +175,20 @@ def _photo_flow_enabled() -> bool:
     }
 
 
+def _frame_flow_enabled() -> bool:
+    """Шаг «Рамка» (PNG-маска поверх всех слоёв) gate.
+
+    Шаг спрашивается у ВСЕХ перед выбором версий и не зависит от хука. Пока
+    рамки не залиты на S3, выбор в боте есть, а в ролике его нет (билд-сайд
+    проверяет наличие ассета и молча рендерит без рамки) — поэтому нужен
+    выключатель, а не только откат кода. Team bot первым; в tg_bot_public
+    зеркалится как default-OFF. Переопределяется FRAME_FLOW_ENABLED.
+    """
+    return os.environ.get("FRAME_FLOW_ENABLED", "1").strip().lower() in {
+        "1", "true", "yes", "on", "enabled",
+    }
+
+
 # /bigtest is available only on the team bot. Set False in tg_bot_public/app.py
 # so parity code is present in both bots but the command is blocked in public.
 BIGTEST_ENABLED: bool = True
@@ -2351,7 +2365,7 @@ class BlastBotApp:
         await self._ask_versions(message, st)
 
     async def _ask_versions(self, message: Message, st: ChatState) -> None:
-        if not st.frame_id:
+        if _frame_flow_enabled() and not st.frame_id:
             await self._ask_frame(message, st)
             return
         st.stage = STAGE_WAIT_VERSIONS

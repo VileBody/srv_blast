@@ -334,6 +334,9 @@ services:
     environment:
       # Team/public switches are intentionally independent.
       PHOTO_FLOW_ENABLED: ${PHOTO_FLOW_ENABLED_TEAM:-1}
+      # Шаг «Рамка». В команде включён сразу; в public — после заливки PNG
+      # на S3 и смоука (FRAME_FLOW_ENABLED_PUBLIC=1), выключается без деплоя.
+      FRAME_FLOW_ENABLED: ${FRAME_FLOW_ENABLED_TEAM:-1}
       TG_BOT_API_ENV: ${TG_BOT_API_ENV:-prod}
       TG_TEST_BOT_TOKEN: ${TG_TEST_BOT_TOKEN:-}
       TG_TEST_CREDITS_DB_URL: ${TG_TEST_CREDITS_DB_URL:-}
@@ -362,6 +365,9 @@ services:
       # (subtitle mode -> transition -> stylization -> colours, hooks skipped).
       # Set PHOTO_FLOW_ENABLED_PUBLIC=0 in .env to pull it back without a deploy.
       PHOTO_FLOW_ENABLED: ${PHOTO_FLOW_ENABLED_PUBLIC:-1}
+      # Рамки: пока PNG не залиты в fx_assets/frames/, шаг был бы виден, а
+      # рамка в ролик не попадала бы — держим OFF до заливки и смоука.
+      FRAME_FLOW_ENABLED: ${FRAME_FLOW_ENABLED_PUBLIC:-0}
       TG_BOT_API_ENV: ${TG_BOT_API_ENV:-prod}
       TG_BOT_TOKEN: ${TG_BOT_PUBLIC_TOKEN}
       TG_BOT_USERNAME: ${TG_BOT_USERNAME:-blast808bot}

@@ -69,6 +69,31 @@ def test_orchestrator_client_accepts_frame_kwarg():
     assert "frame_id" in inspect.signature(Team.send_audio_s3).parameters
 
 
+def test_frame_flow_flag_defaults_team_on_public_off(monkeypatch):
+    """Тот же паттерн, что у photo/vibe: team-бот ведёт, public включается
+    после заливки ассетов и смоука. Флаг нужен именно потому, что без ассета
+    на S3 шаг в боте есть, а рамки в ролике нет.
+
+    Дефолт public читаем из исходника, а не через importlib.reload: перезагрузка
+    модуля бота посреди сюиты подменяет объекты, на которые уже держат ссылки
+    другие тесты (ловилось падением только в полном прогоне).
+    """
+    from pathlib import Path
+
+    from services.tg_bot_botapi import app as team
+
+    # team: читает env на каждом вызове — проверяем поведением
+    monkeypatch.delenv("FRAME_FLOW_ENABLED", raising=False)
+    assert team._frame_flow_enabled() is True
+    monkeypatch.setenv("FRAME_FLOW_ENABLED", "0")
+    assert team._frame_flow_enabled() is False
+
+    # public: константа уровня модуля — проверяем объявленный дефолт
+    pub_src = (Path(__file__).resolve().parents[1]
+               / "services" / "tg_bot_public" / "app.py").read_text(encoding="utf-8")
+    assert 'FRAME_FLOW_ENABLED = (os.environ.get("FRAME_FLOW_ENABLED", "0")' in pub_src
+
+
 def test_versions_step_is_gated_on_the_frame_pick_in_both_bots():
     """Перехват стоит внутри `_ask_versions`, потому что в неё ведут все ветки
     флоу; проверяем, что ни один бот его не потерял."""
@@ -82,6 +107,8 @@ def test_versions_step_is_gated_on_the_frame_pick_in_both_bots():
         )
         src = inspect.getsource(bot_cls._ask_versions)
         assert "st.frame_id" in src and "_ask_frame" in src
+        # и шаг обязан быть выключаемым без отката кода
+        assert "FRAME_FLOW_ENABLED" in src or "_frame_flow_enabled" in src
         # и сам шаг умеет принять отказ
         handler = inspect.getsource(bot_cls._handle_wait_frame)
         assert "none" in handler

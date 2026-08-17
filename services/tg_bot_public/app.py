@@ -190,6 +190,13 @@ FOOTAGE_VIBE_FLOW_ENABLED = (os.environ.get("FOOTAGE_VIBE_FLOW_ENABLED", "1").st
 PHOTO_FLOW_ENABLED = (os.environ.get("PHOTO_FLOW_ENABLED", "0").strip().lower()
                       in {"1", "true", "yes", "on", "enabled"})
 
+# Шаг «Рамка» toggle. Спрашивается у всех перед выбором версий и от хука не
+# зависит. Пока рамки не залиты на S3, выбор в боте был бы, а в ролике — нет
+# (билд-сайд проверяет наличие ассета и рендерит без рамки), поэтому здесь
+# default-OFF до заливки + смоука; в team-боте ON. Override — FRAME_FLOW_ENABLED.
+FRAME_FLOW_ENABLED = (os.environ.get("FRAME_FLOW_ENABLED", "0").strip().lower()
+                      in {"1", "true", "yes", "on", "enabled"})
+
 # /bigtest is a team-bot-only command. Constant is False here so the handler
 # (registered below for parity) immediately rejects the request in production.
 # Parity note: the LLM-reuse roll-forward logic (promoting bigtest_master_job_id
@@ -6390,7 +6397,7 @@ class BlastBotApp:
         await self._ask_versions(message, st)
 
     async def _ask_versions(self, message: Message, st: ChatState) -> None:
-        if not st.frame_id:
+        if FRAME_FLOW_ENABLED and not st.frame_id:
             await self._ask_frame(message, st)
             return
         paid = await self.credits_db.has_paid(st.chat_id)
