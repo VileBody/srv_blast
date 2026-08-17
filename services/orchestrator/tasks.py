@@ -1920,7 +1920,11 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
     else:
         env["BG_MODE"] = "footage"
 
-    if bg_mode != "photo":
+    # A collection job draws from its OWN inventory, so rebuilding the tag-based
+    # one here would be pure waste — and the block below also pins
+    # FOOTAGE_INVENTORY_JSON at the tag pool, which the collection branch further
+    # down would then have to undo.
+    if bg_mode != "photo" and rotation_theme != "collection":
         # Activation is single-flight on orchestrator-0, while builds are routed
         # across both nodes. Generated JSON files are node-local caches; refresh
         # them from Postgres (revision marker makes unchanged pools a cheap no-op).
@@ -2128,6 +2132,13 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
         # empty list keeps the picker's mapping step honest instead of letting it
         # silently pick up the tag-based snapshot.
         env["FOOTAGE_STYLE_METADATA_DB_PATHS_JSON"] = json.dumps([])
+        # Same node-local-cache problem the other two planes solve: activation ran
+        # on one orchestrator, this job may be on the other.
+        _ensure_collection_picker_artifacts_from_registry(
+            repo_root=repo_root,
+            inventory_path=collection_inventory,
+            cache_key=str(job_id),
+        )
     # Wave 1 Поток B: the picker's global per-bucket cooldown ledger (footage_usage)
     # needs the DSN + the serving chat. Passed explicitly so it doesn't depend on
     # CREDITS_DB_URL being present in the raw subprocess env.
@@ -3110,6 +3121,135 @@ def _video_registry_index_obj(records: List[Dict[str, Any]]) -> Dict[str, Any]:
         "media_type": "video",
         "assets_count": len(assets),
         "assets": assets,
+    }
+
+
+def _ensure_collection_picker_artifacts_from_registry(
+    *,
+    repo_root: Path,
+    inventory_path: str,
+    cache_key: str,
+) -> Dict[str, Any]:
+    """Keep every build node's COLLECTION inventory aligned with Postgres.
+
+    Activation is single-flight on one orchestrator while builds are routed across
+    both, so the JSON inventory is a node-local cache. The video and photo planes
+    already rebuild theirs from the durable registry on entry; without the same
+    step here, a collection job that landed on the node which did NOT run the
+    ingest died on a missing inventory file.
+
+    Simpler than its siblings in one way: there is no tags snapshot to rebuild,
+    because collections are never tagged.
+    """
+    root = Path(repo_root).resolve()
+
+    def _path(raw: str) -> Path:
+        p = Path(str(raw or "").strip())
+        return p if p.is_absolute() else root / p
+
+    inv_path = _path(inventory_path)
+    index_path = _path(
+        os.environ.get("COLLECTION_ASSETS_INDEX_JSON") or "data/collection_assets_index.json"
+    )
+    bundle_path = _path(
+        os.environ.get("COLLECTION_DESCRIPTIONS_BUNDLE_OUT")
+        or "pins/collection_descriptions_bundle.json"
+    )
+    marker_path = inv_path.with_name(f".{inv_path.name}.registry.json")
+
+    db_url = str(getattr(SETTINGS, "credits_db_url", "") or "").strip()
+    if not db_url:
+        if inv_path.exists():
+            return {"hydrated": False, "reason": "postgres_not_configured"}
+        raise RuntimeError("collection picker cache missing and Postgres is not configured")
+
+    async def _load() -> tuple[List[Dict[str, Any]], str]:
+        import asyncpg  # type: ignore
+        from mlcore.footage_assets_db import fetch_all_assets
+
+        conn = await asyncpg.connect(dsn=db_url)
+        try:
+            records = await fetch_all_assets(conn, source="collection")
+            revision = await conn.fetchval(
+                """
+                SELECT COALESCE(MAX(updated_at)::text, '')
+                FROM footage_assets
+                WHERE source = 'collection'
+                """
+            )
+            return records, f"{len(records)}:{str(revision or '')}"
+        finally:
+            await conn.close()
+
+    records, revision = asyncio.run(_load())
+    if not records:
+        raise RuntimeError(
+            "collection picker cache missing and the Postgres collection registry is "
+            "empty — run activation for media_type=collection"
+        )
+
+    if inv_path.exists() and marker_path.exists():
+        try:
+            marker = json.loads(marker_path.read_text(encoding="utf-8"))
+            if str(marker.get("revision") or "") == revision:
+                return {"hydrated": False, "revision": revision, "inventory": str(inv_path)}
+        except Exception:
+            pass
+
+    from mlcore.footage_assets_db import index_row_from_record
+
+    index_obj = {
+        "version": "collection-registry-v1",
+        "media_type": "collection",
+        "assets_count": len(records),
+        "assets": [index_row_from_record(r) for r in records if isinstance(r, dict)],
+    }
+
+    safe_key = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(cache_key or "job"))[:80]
+    index_tmp = index_path.with_name(f".{index_path.name}.{safe_key}.tmp")
+    inv_tmp = inv_path.with_name(f".{inv_path.name}.{safe_key}.tmp")
+    bundle_tmp = bundle_path.with_name(f".{bundle_path.name}.{safe_key}.tmp")
+    marker_tmp = marker_path.with_name(f".{marker_path.name}.{safe_key}.tmp")
+    for p in (index_path, inv_path, bundle_path, marker_path):
+        p.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        index_tmp.write_text(
+            json.dumps(index_obj, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        from footage_config import build_inventory_and_bundle
+
+        build_inventory_and_bundle(
+            repo_root=root,
+            footage_dir=Path(os.environ.get("FOOTAGE_DIR", str(root / "footage"))),
+            static_assets_index_path=index_tmp,
+            inventory_out_path=inv_tmp,
+            bundle_out_path=bundle_tmp,
+            media_type="collection",
+        )
+        marker_tmp.write_text(
+            json.dumps({"revision": revision}, ensure_ascii=False), encoding="utf-8"
+        )
+        os.replace(index_tmp, index_path)
+        os.replace(inv_tmp, inv_path)
+        os.replace(bundle_tmp, bundle_path)
+        os.replace(marker_tmp, marker_path)
+    finally:
+        for tmp in (index_tmp, inv_tmp, bundle_tmp, marker_tmp):
+            try:
+                tmp.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+    log.info(
+        "collection picker cache hydrated registry_rows=%d revision=%s inventory=%s",
+        len(records), revision, inv_path,
+    )
+    return {
+        "hydrated": True,
+        "registry_rows": len(records),
+        "revision": revision,
+        "inventory": str(inv_path),
     }
 
 

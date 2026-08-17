@@ -28,6 +28,7 @@ import math
 from typing import Any, Dict, Iterable, List, Optional
 
 from mlcore.footage_tags_db import (
+    SOURCE_COLLECTION,
     SOURCE_PHOTO,
     SOURCE_VIDEO,
     extract_clip_id,
@@ -46,9 +47,18 @@ CREATE TABLE IF NOT EXISTS footage_assets (
     duration_sec  DOUBLE PRECISION NOT NULL DEFAULT 0,
     dominant_color TEXT     NOT NULL DEFAULT '',
     source        TEXT      NOT NULL DEFAULT 'video',
+    scene_cuts    TEXT      NOT NULL DEFAULT '',
     updated_at    TIMESTAMP NOT NULL DEFAULT NOW(),
     PRIMARY KEY (source, clip_id)
 );
+
+-- Scene-cut timestamps (CSV) for long collection sources. They decide where the
+-- virtual segmenter places window boundaries, and the boundaries decide clip
+-- identity — so a node that rehydrated its inventory from this table WITHOUT them
+-- would segment the same file differently and pick different footage than the
+-- node that ran the ingest. Carrying them here keeps every node's inventory
+-- byte-identical. Empty for short clips, which are never segmented.
+ALTER TABLE footage_assets ADD COLUMN IF NOT EXISTS scene_cuts TEXT NOT NULL DEFAULT '';
 
 -- Repoint the primary key from clip_id to (source, clip_id). The pools share one
 -- numeric id space (the same Pinterest id can be a .mp4 in the video prefix and a
@@ -158,6 +168,16 @@ def build_asset_record(raw: Dict[str, Any], *, source: str = SOURCE_VIDEO) -> Op
     # would otherwise grab as a bogus id, collapsing every asset onto one PK.
     if source == SOURCE_PHOTO:
         clip_id = photo_clip_id(file_name) or photo_clip_id(s3_key.rsplit("/", 1)[-1])
+    elif source == SOURCE_COLLECTION:
+        # The digit-run extractor returns None for the delivered names
+        # (clip_003.mp4), so every row was dropped and the pool registry came back
+        # empty — `registry_empty_candidate_guard` then refused the whole upsert.
+        # A collection clip is identified by its folder plus its own name.
+        from mlcore.footage_collection_naming import collection_clip_id
+
+        clip_id = collection_clip_id(
+            _s(raw.get("genre")), _s(raw.get("tag")), file_name or s3_key.rsplit("/", 1)[-1]
+        )
     else:
         clip_id = extract_clip_id(file_name) or extract_clip_id(s3_key.rsplit("/", 1)[-1])
     if not clip_id:
@@ -174,7 +194,35 @@ def build_asset_record(raw: Dict[str, Any], *, source: str = SOURCE_VIDEO) -> Op
         "duration_sec": _float(raw.get("duration_sec")),
         "dominant_color": _s(dom),
         "source": _s(source) or SOURCE_VIDEO,
+        "scene_cuts": _scene_cuts_to_csv(raw.get("scene_cuts")),
     }
+
+
+def _scene_cuts_to_csv(value: Any) -> str:
+    """[1.5, 9.25] -> "1.5,9.25". Stored as CSV rather than JSONB because the
+    column is only ever read back wholesale into a list of floats."""
+    if not isinstance(value, (list, tuple)):
+        return ""
+    out = []
+    for x in value:
+        try:
+            out.append(f"{float(x):.3f}".rstrip("0").rstrip("."))
+        except (TypeError, ValueError):
+            continue
+    return ",".join(out)
+
+
+def scene_cuts_from_csv(value: Any) -> List[float]:
+    out: List[float] = []
+    for part in str(value or "").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            out.append(float(part))
+        except ValueError:
+            continue
+    return out
 
 
 def records_from_index(assets: Iterable[Dict[str, Any]], *, source: str = SOURCE_VIDEO) -> List[Dict[str, Any]]:
@@ -190,7 +238,7 @@ def records_from_index(assets: Iterable[Dict[str, Any]], *, source: str = SOURCE
 
 def index_row_from_record(rec: Dict[str, Any]) -> Dict[str, Any]:
     """A footage_assets row -> the static-index asset shape the picker consumes."""
-    return {
+    out: Dict[str, Any] = {
         "file_name": rec.get("file_name") or "",
         "genre": rec.get("genre") or "",
         "tag": rec.get("tag") or "",
@@ -200,6 +248,13 @@ def index_row_from_record(rec: Dict[str, Any]) -> Dict[str, Any]:
         "dominant_color": (rec.get("dominant_color") or None) or None,
         "s3_key": rec.get("s3_key") or "",
     }
+    # Without these a rehydrated node would place segment boundaries on the even
+    # grid while the ingesting node placed them on edits — different boundaries,
+    # different clip identities, different footage picked for the same job.
+    cuts = scene_cuts_from_csv(rec.get("scene_cuts"))
+    if cuts:
+        out["scene_cuts"] = cuts
+    return out
 
 
 # --------------------------------------------------------------------------- #
@@ -223,6 +278,7 @@ async def upsert_assets(conn: Any, records: List[Dict[str, Any]]) -> int:
             _float(r.get("duration_sec")),
             r.get("dominant_color", "") or "",
             r.get("source", SOURCE_VIDEO) or SOURCE_VIDEO,
+            r.get("scene_cuts", "") or "",
         )
         for r in (records or [])
         if r.get("clip_id")
@@ -233,8 +289,8 @@ async def upsert_assets(conn: Any, records: List[Dict[str, Any]]) -> int:
         """
         INSERT INTO footage_assets
             (clip_id, s3_key, file_name, genre, tag, src_w, src_h,
-             duration_sec, dominant_color, source, updated_at)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, NOW())
+             duration_sec, dominant_color, source, scene_cuts, updated_at)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, NOW())
         ON CONFLICT (source, clip_id) DO UPDATE SET
             s3_key         = EXCLUDED.s3_key,
             file_name      = EXCLUDED.file_name,
@@ -245,6 +301,7 @@ async def upsert_assets(conn: Any, records: List[Dict[str, Any]]) -> int:
             duration_sec   = EXCLUDED.duration_sec,
             dominant_color = EXCLUDED.dominant_color,
             source         = EXCLUDED.source,
+            scene_cuts     = EXCLUDED.scene_cuts,
             updated_at     = NOW()
         """,
         rows,
@@ -334,7 +391,10 @@ async def fetch_pool_clip_ids(conn: Any, *, source: Optional[str] = None) -> set
 
 
 async def fetch_all_assets(conn: Any, *, source: Optional[str] = None) -> List[Dict[str, Any]]:
-    cols = "clip_id, s3_key, file_name, genre, tag, src_w, src_h, duration_sec, dominant_color, source"
+    cols = (
+        "clip_id, s3_key, file_name, genre, tag, src_w, src_h, duration_sec, "
+        "dominant_color, source, scene_cuts"
+    )
     if source:
         recs = await conn.fetch(f"SELECT {cols} FROM footage_assets WHERE source = $1", source)
     else:

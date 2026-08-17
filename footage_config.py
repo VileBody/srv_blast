@@ -22,6 +22,10 @@ class FootageAssetRow:
     tag: str
     dominant_color: Optional[str]
     palette_bins: Optional[List[Dict[str, Any]]]
+    # Name the render node writes this object to disk under. Differs from
+    # file_name only where identity had to be rewritten — collection clips (whose
+    # basenames repeat across folders) and virtual segments (many clips, one file).
+    media_file_name: str = ""
 
 
 def _env(key: str, default: str = "") -> str:
@@ -307,6 +311,22 @@ def build_inventory_and_bundle(
     missing_local_files: List[str] = []
     s3_preflight_rows: List[Tuple[str, str, str, str]] = []
 
+    # Collection clips are delivered as clip_001.mp4 … clip_0NN.mp4 in EVERY
+    # folder, and assets_map below is keyed on the name alone — so without
+    # qualification the folders overwrite each other (the real batch: 939 files
+    # collapsed to 120, eleven of twelve collections silently empty). Identity has
+    # to carry the folder. Only this plane is affected: the tag-based pool has
+    # globally unique basenames, and rewriting them would change every existing
+    # job's selection.
+    from mlcore.footage_collection_naming import (
+        is_enabled_for as _is_collection_plane,
+        qualified_file_name as _qualified_file_name,
+        split_env_override as _qualify_override,
+    )
+
+    _qualify = _is_collection_plane(media_type) and _qualify_override()[0]
+    _collapsed_names = 0
+
     for it in source_assets:
         if not isinstance(it, dict):
             invalid_rows += 1
@@ -325,11 +345,24 @@ def build_inventory_and_bundle(
             invalid_rows += 1
             continue
 
-        if file_name in assets_map:
+        identity = _qualified_file_name(genre, tag, file_name) if _qualify else file_name
+        if identity in assets_map:
+            # Same folder, same name: a genuine duplicate. Across folders this can
+            # no longer happen once qualification is on, so a hit here is real.
+            _collapsed_names += 1
             continue
 
         if mode == "s3":
-            s3_key = _s3_asset_key(file_name=file_name, genre=genre, tag=tag, media_type=media_type)
+            if _qualify:
+                # The identity is NOT a path — build the locator from the key the
+                # scan actually recorded, falling back to the real basename.
+                s3_key = str(it.get("s3_key") or "").strip() or _s3_asset_key(
+                    file_name=file_name, genre=genre, tag=tag, media_type=media_type
+                )
+            else:
+                s3_key = _s3_asset_key(
+                    file_name=file_name, genre=genre, tag=tag, media_type=media_type
+                )
             file_path = f"s3://{_s3_bucket_assets()}/{s3_key}"
             s3_preflight_rows.append((file_name, genre, tag, s3_key))
         else:
@@ -365,8 +398,8 @@ def build_inventory_and_bundle(
                 if changed:
                     color_meta_enriched_rows += 1
 
-        assets_map[file_name] = FootageAssetRow(
-            file_name=file_name,
+        assets_map[identity] = FootageAssetRow(
+            file_name=identity,
             file_path=file_path,
             src_w=src_w,
             src_h=src_h,
@@ -375,6 +408,10 @@ def build_inventory_and_bundle(
             tag=tag,
             dominant_color=dominant_color,
             palette_bins=palette_bins,
+            # ASCII by construction: the folder is Cyrillic ("бойцовский клуб"),
+            # AE fails on non-ASCII local paths, and the media sanitizer only
+            # rewrites Windows-forbidden characters — it passes Cyrillic through.
+            media_file_name=identity if _qualify else "",
         )
 
     if mode == "s3" and s3_preflight_mode == "strict":
@@ -409,6 +446,8 @@ def build_inventory_and_bundle(
             obj["dominant_color"] = row.dominant_color
         if row.palette_bins:
             obj["palette_bins"] = row.palette_bins
+        if row.media_file_name:
+            obj["media_file_name"] = row.media_file_name
         assets.append(obj)
 
     # Collection plane only: expose a long upload as N pickable windows. The
@@ -419,13 +458,28 @@ def build_inventory_and_bundle(
     if str(media_type or "").strip().lower() == "collection":
         from mlcore.footage_segments import expand_asset_rows
 
-        scene_cuts = {
-            str(a.get("file_name") or ""): list(a.get("scene_cuts") or [])
-            for a in (source_assets or [])
-            if isinstance(a, dict) and a.get("scene_cuts")
-        }
+        # Keyed by the IDENTITY the assets now carry, not the raw basename the
+        # index recorded — the segmenter looks cuts up by the row's file_name, and
+        # after qualification those are no longer the same string.
+        scene_cuts: Dict[str, List[float]] = {}
+        for a in source_assets or []:
+            if not isinstance(a, dict) or not a.get("scene_cuts"):
+                continue
+            raw_name = str(a.get("file_name") or "")
+            if not raw_name:
+                continue
+            key = (
+                _qualified_file_name(a.get("genre"), a.get("tag"), raw_name)
+                if _qualify
+                else raw_name
+            )
+            scene_cuts[key] = [float(x) for x in (a.get("scene_cuts") or [])]
         before = len(assets)
         assets = expand_asset_rows(assets, scene_cuts_by_file=scene_cuts)
+        print(
+            f"[collection] identity: {len(source_assets)} indexed -> {before} clips "
+            f"(same-folder duplicates dropped: {_collapsed_names}, qualify={_qualify})"
+        )
         print(
             f"[collection] segment expansion: {before} sources -> {len(assets)} clips "
             f"(scene-cut data for {len(scene_cuts)})"
