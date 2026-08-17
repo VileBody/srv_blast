@@ -228,7 +228,7 @@ export function TikTokPostPage() {
       source: 'Ночной город',
       subtitleStyle: 'Brat',
       hook: 'Молния',
-      thumbnailUrl: '/static/assets/cover-placeholder.svg',
+      thumbnailUrl: '/assets/cover-placeholder.svg',
       downloadUrl: `/qa/video-${index}.mp4`
     }));
   }, [projectQuery.data, qaPost]);

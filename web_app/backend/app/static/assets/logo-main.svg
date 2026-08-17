@@ -1,5 +1,0 @@
-<svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Blast">
-  <path d="M36.8 3.2 10.6 35.1c-1.6 2-.2 5 2.4 5h13.4l-4 20.5c-.5 2.6 2.8 4.1 4.5 2L53.4 29.7c1.6-2 .2-5.1-2.4-5.1H36.7l4.4-19.3c.6-2.7-2.6-4.2-4.3-2.1Z" fill="url(#a)"/>
-  <path d="M29.1 36.7H17.8L34.1 15l-3.2 14.2h15.3L29.5 50.7l3-14h-3.4Z" fill="white" fill-opacity=".22"/>
-  <defs><linearGradient id="a" x1="18" y1="7" x2="47" y2="58" gradientUnits="userSpaceOnUse"><stop stop-color="#8B6FE6"/><stop offset="1" stop-color="#5F42B9"/></linearGradient></defs>
-</svg>

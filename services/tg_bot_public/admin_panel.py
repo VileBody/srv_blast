@@ -4451,9 +4451,9 @@ def build_app(
             # Credits based on package
             credits_map = {
                 "Триал": 5,
-                "Бласт": 15,
-                "Глоу": 30,
-                "Импульс": 50,
+                "Бласт": 100,
+                "Глоу": 400,
+                "Импульс": 100_000,
             }
             credits_to_add = credits_map.get(pkg, 5)
 

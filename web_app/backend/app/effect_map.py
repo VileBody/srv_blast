@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 _REGISTRY_PATH = Path(__file__).resolve().parents[2] / "frontend" / "src" / "data" / "effects-registry.json"
@@ -17,7 +18,9 @@ _REGISTRY_PATH = Path(__file__).resolve().parents[2] / "frontend" / "src" / "dat
 def _load_registry() -> dict:
     try:
         return json.loads(_REGISTRY_PATH.read_text(encoding="utf-8"))
-    except Exception:  # noqa: BLE001 — реестр опционален, есть хардкод-фолбэк
+    except Exception as exc:  # noqa: BLE001
+        if os.getenv("MODE") == "prod":
+            raise RuntimeError(f"effects registry is unavailable: {_REGISTRY_PATH}") from exc
         return {}
 
 

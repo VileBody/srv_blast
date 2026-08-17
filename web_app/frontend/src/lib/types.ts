@@ -178,6 +178,13 @@ export interface VideoVersion {
   /** проставляется бэком после успешной публикации в TikTok */
   postedAt?: string | null;
   tiktokStatus?: string | null;
+  metrics?: {
+    view_count: number;
+    like_count: number;
+    comment_count: number;
+    share_count: number;
+  };
+  metricsSyncedAt?: string | null;
 }
 
 /** Ролик считается опубликованным, если бэк проставил postedAt / статус PUBLISH_COMPLETE */
@@ -242,6 +249,13 @@ export interface MeResponse {
   creditsLeft: number | null;
   /** бот настроен И чат привязан — только тогда можно обещать «пришлём в Telegram» */
   telegramNotifications?: boolean;
+  billingLinkRequired?: boolean;
+  capabilities?: {
+    customSources: boolean;
+    analyzedDrops: boolean;
+    remoteCompositePreviews: boolean;
+    subscriptionBonuses: boolean;
+  };
   mock?: boolean;
 }
 

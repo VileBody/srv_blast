@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
@@ -69,10 +69,12 @@ function Hint({ text }: { text: string }) {
 }
 
 /** Карта тарифа 357×736 r15 (Figma 752:338). `current` — этот тариф уже куплен. */
-function PlanCard({ plan, agreed, onAgree, onBuy, busy, current }: {
+function PlanCard({ plan, agreed, onAgree, recurrentAgreed, onRecurrentAgree, onBuy, busy, current }: {
   plan: Plan;
   agreed: boolean;
   onAgree: (v: boolean) => void;
+  recurrentAgreed: boolean;
+  onRecurrentAgree: (v: boolean) => void;
   onBuy: () => void;
   busy?: boolean;
   /** тариф уже куплен: карта помечена, купить его повторно нельзя */
@@ -82,6 +84,7 @@ function PlanCard({ plan, agreed, onAgree, onBuy, busy, current }: {
   const [hoverPrice, setHoverPrice] = useState(false);
   const [attention, setAttention] = useState(false);
   const [numImgBroken, setNumImgBroken] = useState(false);
+  const purchaseAllowed = agreed && (plan.kind !== 'subscription' || recurrentAgreed);
 
   return (
     <div className="relative h-[736px] min-w-[357px] overflow-hidden rounded-r15 bg-grad-soft-20">
@@ -215,6 +218,18 @@ function PlanCard({ plan, agreed, onAgree, onBuy, busy, current }: {
       </label>
       )}
 
+      {!current && plan.kind === 'subscription' && (
+        <label className="absolute left-[28px] top-[620px] flex w-[calc(100%-56px)] cursor-pointer items-center gap-[12px]">
+          <input type="checkbox" className="sr-only" checked={recurrentAgreed} onChange={(event) => onRecurrentAgree(event.target.checked)} />
+          <span className={cn('flex h-[20px] w-[20px] shrink-0 items-center justify-center rounded-[5px] border border-text transition-all', recurrentAgreed && 'bg-text', attention && !recurrentAgreed && 'border-accent-light shadow-[0_0_14px_rgba(139,111,230,.9)]')} aria-hidden="true">
+            {recurrentAgreed && (
+              <svg viewBox="0 0 12 10" width="11" height="9" fill="none" aria-hidden="true"><path d="M1 5l3.2 3.2L11 1.4" stroke="#05010f" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
+            )}
+          </span>
+          <span className="text-[13px] leading-[16px] text-text-80">{t('pricing.recurrentConsent')}</span>
+        </label>
+      )}
+
       {/* кнопка цены 301×60; W50: по ховеру цена → «Купить», фон = --grad-main.
           На купленном тарифе кнопка становится статусом и не покупает повторно. */}
       {current ? (
@@ -226,9 +241,9 @@ function PlanCard({ plan, agreed, onAgree, onBuy, busy, current }: {
       <button
         type="button"
         disabled={busy}
-        aria-disabled={!agreed || busy}
+        aria-disabled={!purchaseAllowed || busy}
         onClick={() => {
-          if (!agreed) {
+          if (!purchaseAllowed) {
             setAttention(true);
             window.setTimeout(() => setAttention(false), 1600);
             return;
@@ -237,7 +252,7 @@ function PlanCard({ plan, agreed, onAgree, onBuy, busy, current }: {
         }}
         onMouseEnter={() => setHoverPrice(true)}
         onMouseLeave={() => setHoverPrice(false)}
-        title={agreed ? undefined : t('pricing.agreeFirst')}
+        title={purchaseAllowed ? undefined : t('pricing.agreeFirst')}
         /*
          * Ховер работает ВСЕГДА, даже без галочки: раньше без неё кнопка вообще не отвечала,
          * и человек не понимал, что она вообще покупает. Теперь «Купить» показывается, но
@@ -245,13 +260,13 @@ function PlanCard({ plan, agreed, onAgree, onBuy, busy, current }: {
          */
         className={cn(
           'absolute inset-x-[28px] bottom-[28px] flex h-[60px] items-center justify-center rounded-r15 border border-accent-light transition disabled:cursor-wait disabled:opacity-60',
-          hoverPrice ? (agreed ? 'bg-grad-main' : 'cursor-not-allowed bg-grad-soft-20') : 'bg-grad-soft-10'
+          hoverPrice ? (purchaseAllowed ? 'bg-grad-main' : 'cursor-not-allowed bg-grad-soft-20') : 'bg-grad-soft-10'
         )}
       >
         {hoverPrice ? (
-          <span className={cn('flex items-center gap-[10px] text-[24px] font-[400] leading-none', agreed ? 'text-transparent' : 'text-text-40')} style={agreed ? gradLight : undefined}>
+          <span className={cn('flex items-center gap-[10px] text-[24px] font-[400] leading-none', purchaseAllowed ? 'text-transparent' : 'text-text-40')} style={purchaseAllowed ? gradLight : undefined}>
             {t('pricing.buy')}
-            {!agreed && <span className="text-[14px] leading-none text-text-40">{t('pricing.agreeFirst')}</span>}
+            {!purchaseAllowed && <span className="text-[14px] leading-none text-text-40">{t('pricing.agreeFirst')}</span>}
           </span>
         ) : (
           <span className="flex translate-y-px items-center gap-[8px]">
@@ -274,8 +289,24 @@ function PlanCard({ plan, agreed, onAgree, onBuy, busy, current }: {
 export function PricingPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const queryClient = useQueryClient();
   const { push } = useToast();
   const [agreed, setAgreed] = useState<Record<string, boolean>>({});
+  const [recurrentAgreed, setRecurrentAgreed] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    const payment = searchParams.get('payment');
+    if (!payment) return;
+    push({
+      variant: payment === 'success' ? 'success' : 'error',
+      title: t(payment === 'success' ? 'pricing.paymentSuccess' : 'pricing.paymentFailed')
+    });
+    if (payment === 'success') void queryClient.invalidateQueries({ queryKey: ['me'] });
+    const next = new URLSearchParams(searchParams);
+    next.delete('payment');
+    setSearchParams(next, { replace: true });
+  }, [push, queryClient, searchParams, setSearchParams, t]);
 
   // Просмотр тарифов — отдельный шаг воронки: без него не понять, доходят ли люди до
   // цены вообще, или отваливаются раньше. Ошибку трекинга глушим: она не должна ломать экран.
@@ -283,17 +314,17 @@ export function PricingPage() {
     void api.trackEvent('pricing_viewed').catch(() => {});
   }, []);
 
-  const queryClient = useQueryClient();
   // какой тариф уже куплен: TRIAL — «бесплатный», его на этой странице нет
   const meQuery = useQuery({ queryKey: ['me'], queryFn: api.me, staleTime: 15_000 });
   const subscription = meQuery.data?.subscription;
   const currentTier = subscription && subscription.isActive && subscription.tier !== 'TRIAL' ? subscription.tier : null;
   const orderMutation = useMutation({
-    mutationFn: (packageType: PackageType) => api.createOrder({ packageType }),
-    onSuccess: async (data) => {
-      // «оплата» активировала план на бэке — перечитываем подписку/лимиты
-      await queryClient.invalidateQueries({ queryKey: ['me'] });
-      push({ variant: 'success', title: t('pricing.orderCreated'), text: `Mock order ${data.orderId}` });
+    mutationFn: (packageType: PackageType) => api.createOrder({
+      packageType,
+      recurrentAccepted: packageType === 'BLAST' ? Boolean(recurrentAgreed.BLAST) : false
+    }),
+    onSuccess: (data) => {
+      window.location.assign(data.paymentUrl);
     },
     onError: () => push({ variant: 'error', title: t('pricing.orderFailed') })
   });
@@ -338,7 +369,7 @@ export function PricingPage() {
   ];
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col md:h-[calc(100dvh_-_2*var(--space-6))] md:flex-none md:py-[calc(var(--rail-pad-y)_-_var(--space-6))]">
+    <div className="flex min-h-0 flex-1 flex-col md:h-[calc(100dvh_-_2*var(--space-6))] md:flex-none">
       <div className="card-2 relative flex min-h-0 flex-1 flex-col p-[40px]">
         <div className="flex shrink-0 items-center gap-[20px]">
           <button
@@ -359,6 +390,8 @@ export function PricingPage() {
               plan={plan}
               agreed={Boolean(agreed[plan.type])}
               onAgree={(v) => setAgreed((s) => ({ ...s, [plan.type]: v }))}
+              recurrentAgreed={Boolean(recurrentAgreed[plan.type])}
+              onRecurrentAgree={(v) => setRecurrentAgreed((state) => ({ ...state, [plan.type]: v }))}
               busy={orderMutation.isPending}
               current={currentTier === plan.type}
               onBuy={() => orderMutation.mutate(plan.type)}

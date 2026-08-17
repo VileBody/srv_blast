@@ -9,6 +9,8 @@ export type HookKind = 'sound' | 'object' | 'effects' | 'motion' | 'thought';
 /** Конфигурация одного хука (Figma W24–W34) */
 export interface HookConfig {
   sound?: string;
+  soundUrl?: string;
+  soundPlaybackUrl?: string;
   object?: string;
   effectHook?: string;
   effectGlue?: string;
@@ -112,7 +114,7 @@ export function backgroundVariations(bg: WizardStateData['background']): number 
  */
 export function hookComplete(kind: HookKind, config?: HookConfig): boolean {
   if (!config) return false;
-  const own = kind === 'sound' ? Boolean(config.sound)
+  const own = kind === 'sound' ? Boolean(config.sound && config.soundUrl)
     : kind === 'object' ? Boolean(config.object)
       : kind === 'effects' ? Boolean(config.effectHook)
         : kind === 'motion' ? Boolean(config.motion)
@@ -141,6 +143,7 @@ interface WizardStore extends WizardStateData {
   reset: (projectId?: string | null) => void;
   /** Новый батч по тому же треку: сбрасывает только выбор, вводные трека остаются. */
   newBatch: (projectId?: string | null) => void;
+  restoreSession: (projectId: string | null | undefined, stage: number, data: Record<string, unknown>) => void;
   stageData: () => Record<string, unknown>;
 }
 
@@ -219,6 +222,31 @@ export const useWizardStore = create<WizardStore>()(
           timingFrom: state.timingFrom,
           timingTo: state.timingTo,
           stage: 1
+        };
+      }),
+      restoreSession: (projectId, stage, raw) => set((state) => {
+        // Browser state is newer and wins. The server copy is for a cleared
+        // browser or a second device, not for overwriting an active draft.
+        if (state.track || state.lyrics.trim()) return state;
+        const fresh = initialData(projectId);
+        const timing = (raw.timing ?? {}) as Record<string, unknown>;
+        const fragment = typeof raw.fragment === 'string' ? raw.fragment : '';
+        return {
+          ...fresh,
+          projectId,
+          track: (raw.track as SavedTrack | null | undefined) ?? null,
+          lyrics: typeof raw.lyrics === 'string' ? raw.lyrics : '',
+          fragmentEnabled: Boolean(fragment),
+          fragmentLyrics: fragment,
+          timingMode: timing.mode === 'ai' ? 'ai' : 'manual',
+          timingFrom: typeof timing.from === 'string' ? timing.from : '',
+          timingTo: typeof timing.to === 'string' ? timing.to : '',
+          background: { ...fresh.background, ...((raw.background as Partial<WizardStateData['background']>) ?? {}) },
+          hooks: { ...fresh.hooks, ...((raw.hooks as Partial<WizardStateData['hooks']>) ?? {}) },
+          subtitles: { ...fresh.subtitles, ...((raw.subtitles as Partial<WizardStateData['subtitles']>) ?? {}) },
+          allocation: { ...fresh.allocation, ...((raw.allocation as Partial<WizardStateData['allocation']>) ?? {}) },
+          final: { ...fresh.final, ...((raw.final as Partial<WizardStateData['final']>) ?? {}) },
+          stage: Math.max(1, Math.min(5, Number(stage) || 1))
         };
       }),
       stageData: () => {

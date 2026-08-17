@@ -95,6 +95,8 @@ class TBankClient:
         email: str = "",
         recurrent: bool = False,
         customer_key: str = "",
+        success_url: str = "",
+        fail_url: str = "",
     ) -> Optional[str]:
         """Call Init endpoint. Returns PaymentURL or None on error.
 
@@ -122,6 +124,10 @@ class TBankClient:
             params["DATA"] = {"OperationInitiatorType": "1"}
         if self._notify_url:
             params["NotificationURL"] = self._notify_url
+        if success_url:
+            params["SuccessURL"] = success_url
+        if fail_url:
+            params["FailURL"] = fail_url
 
         params["Token"] = self._make_token(params)
 

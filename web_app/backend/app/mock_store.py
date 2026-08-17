@@ -92,6 +92,7 @@ def _empty_workspace(user_id: str, profile: dict[str, Any] | None = None) -> Wor
             "artistNick": profile.get("artistNick"),
             "avatarUrl": None,
             "tgUserId": profile.get("tgUserId"),
+            "tgChatId": profile.get("tgChatId"),
             "tgVerified": bool(profile.get("tgVerified")),
             "createdAt": iso(utcnow()),
         },
@@ -325,7 +326,7 @@ def _seed_demo_workspace() -> Workspace:
             "id": "project_1",
             "userId": DEMO_USER_ID,
             "name": "Ночной город",
-            "coverUrl": "/static/assets/cover-placeholder.svg",
+            "coverUrl": "/assets/cover-placeholder.svg",
             "packageType": "TRIAL",
             "status": "ACTIVE",
             "startedAt": iso(utcnow() - timedelta(days=18)),
@@ -339,7 +340,7 @@ def _seed_demo_workspace() -> Workspace:
             "id": "project_2",
             "userId": DEMO_USER_ID,
             "name": "Неоновый вайб",
-            "coverUrl": "/static/assets/cover-placeholder.svg",
+            "coverUrl": "/assets/cover-placeholder.svg",
             "packageType": "TRIAL",
             "status": "IN_PROGRESS",
             "startedAt": iso(utcnow() - timedelta(days=41)),
@@ -795,7 +796,7 @@ def create_project(name: str, package_type: str = "TRIAL", cover_choice: str = "
         "id": pid,
         "userId": space.user["id"],
         "name": name or "Новый проект",
-        "coverUrl": "/static/assets/cover-placeholder.svg",
+        "coverUrl": "/assets/cover-placeholder.svg",
         "packageType": package_type,
         # Новый проект пуст: ACTIVE здесь — стадия «создан, генераций ещё не было»,
         # а не «текущий» (текущий живёт в Workspace.active_project_id)
@@ -860,7 +861,7 @@ def _new_video(job_id: str, index: int, source: str, style: str, hook: str) -> d
         "source": source,
         "subtitleStyle": style,
         "hook": hook,
-        "thumbnailUrl": "/static/assets/cover-placeholder.svg",
+        "thumbnailUrl": "/assets/cover-placeholder.svg",
         "downloadUrl": None,
     }
 
@@ -870,6 +871,8 @@ def create_job(
     stage_data: dict[str, Any],
     videos_to_generate: int,
     idempotency_key: str | None = None,
+    *,
+    enqueue_mock: bool = True,
 ) -> dict[str, Any]:
     space = ws()
     # Повтор того же сабмита (дабл-клик, ретрай сети) не должен плодить джобы и жечь кредиты.
@@ -888,7 +891,7 @@ def create_job(
         "id": jid,
         "projectId": project_id,
         "userId": space.user["id"],
-        "orchestratorJobId": f"mock_orch_{jid}",
+        "orchestratorJobId": f"mock_orch_{jid}" if enqueue_mock else None,
         "stageData": stage_data,
         "renderJob": render_job,
         "status": "PROCESSING",
@@ -898,7 +901,7 @@ def create_job(
         "createdAt": iso(utcnow()),
         "completedAt": None,
         "videos": videos,
-        "mock": True,
+        "mock": enqueue_mock,
     }
     JOBS[jid] = job
     if idempotency_key:
@@ -913,11 +916,38 @@ def create_job(
         # («В процессе» или «Завершён») решает _display_status по времени последней
         # генерации у соседей: к проекту всегда можно вернуться и добавить батч.
         project["status"] = "IN_PROGRESS"
-    # ставим в рендер-очередь (store) и будим воркера — он прогонит по 3 слоям
-    from . import render_store, render_worker
-    render_worker.ensure_started()
-    render_store.get_store().enqueue(job)
+    if enqueue_mock:
+        # Development-only timer worker. Production is enqueued explicitly via
+        # production_backend and never reaches this branch.
+        from . import render_store, render_worker
+        render_worker.ensure_started()
+        render_store.get_store().enqueue(job)
     return deepcopy(job)
+
+
+def rollback_job_creation(job_id: str) -> bool:
+    """Remove a job that could not be enqueued and restore its local quota.
+
+    This is valid only before any external orchestrator job was created.  A
+    partially enqueued batch must stay persisted so an idempotent retry can
+    continue from the first missing variation.
+    """
+    space = ws()
+    job = JOBS.get(job_id)
+    if not job or job.get("userId") != space.user["id"]:
+        return False
+    if any(video.get("orchestratorJobId") for video in job.get("videos", [])):
+        raise ValueError("cannot roll back a partially enqueued job")
+    JOBS.pop(job_id, None)
+    for key, value in list(JOB_IDEMPOTENCY.items()):
+        if value == job_id:
+            JOB_IDEMPOTENCY.pop(key, None)
+    spent = len(job.get("videos") or [])
+    space.subscription["creditsUsed"] = max(
+        0,
+        int(space.subscription.get("creditsUsed") or 0) - spent,
+    )
+    return True
 
 
 def find_video(video_id: str) -> tuple[dict[str, Any], dict[str, Any]] | None:
@@ -993,17 +1023,26 @@ def tracks_left() -> int | None:
     return max(0, total - space.subscription.get("tracksUsed", 0))
 
 
-def save_track(filename: str, file_path: Path, duration_s: float = 204.0) -> dict[str, Any]:
+def save_track(
+    filename: str,
+    file_path: Path | None = None,
+    duration_s: float = 204.0,
+    *,
+    s3_url: str | None = None,
+    playback_url: str | None = None,
+    audio_hash: str | None = None,
+) -> dict[str, Any]:
     space = ws()
     item = {
         "id": f"track_{uuid4().hex[:8]}",
         "userId": space.user["id"],
-        "s3Key": f"{BASE_S3}/tracks/{space.user['id']}/{uuid4().hex[:8]}/source.mp3",
+        "s3Key": s3_url or f"{BASE_S3}/tracks/{space.user['id']}/{uuid4().hex[:8]}/source.mp3",
         "filename": filename,
         "durationS": duration_s,
-        "localUrl": f"/static/uploads/tracks/{file_path.name}",
+        "localUrl": playback_url or (f"/static/uploads/tracks/{file_path.name}" if file_path else None),
         "createdAt": iso(utcnow()),
-        "expiresAt": iso(utcnow() + timedelta(days=7)),
+        "expiresAt": iso(utcnow() + timedelta(days=30)),
+        "audioHash": audio_hash,
     }
     space.saved_tracks.insert(0, item)
     # Лимит считается по загруженным трекам: повторный выбор уже сохранённого трека
@@ -1012,15 +1051,21 @@ def save_track(filename: str, file_path: Path, duration_s: float = 204.0) -> dic
     return deepcopy(item)
 
 
-def save_source(filename: str, file_path: Path) -> dict[str, Any]:
+def save_source(
+    filename: str,
+    file_path: Path | None = None,
+    *,
+    s3_url: str | None = None,
+    playback_url: str | None = None,
+) -> dict[str, Any]:
     """Свой исходник (Figma W39/W49): имя = ключ в background.uploads → render_job."""
     space = ws()
     item = {
         "id": f"src_{uuid4().hex[:8]}",
         "userId": space.user["id"],
-        "s3Key": f"{BASE_S3}/sources/{space.user['id']}/{uuid4().hex[:8]}/{file_path.name}",
+        "s3Key": s3_url or f"{BASE_S3}/sources/{space.user['id']}/{uuid4().hex[:8]}/{file_path.name if file_path else 'source.mp4'}",
         "name": filename,
-        "localUrl": f"/static/uploads/sources/{file_path.name}",
+        "localUrl": playback_url or (f"/static/uploads/sources/{file_path.name}" if file_path else None),
         "createdAt": iso(utcnow()),
     }
     space.user_sources.insert(0, item)

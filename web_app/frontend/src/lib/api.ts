@@ -181,7 +181,7 @@ export const api = {
     return request<{ coverUrl: string }>(`/api/projects/${projectId}/cover`, { method: 'POST', body: form });
   },
 
-  createOrder: (payload: { packageType: string; projectId?: string; name?: string; coverChoice?: string }) =>
+  createOrder: (payload: { packageType: string; projectId?: string; name?: string; coverChoice?: string; recurrentAccepted?: boolean }) =>
     request<{ orderId: string; paymentUrl: string; project?: Project | null }>('/api/payments/create-order', {
       method: 'POST',
       body: JSON.stringify(payload)
@@ -220,9 +220,12 @@ export const api = {
     form.append('file', file);
     return request<{ source: UserSource }>('/api/wizard/upload-source', { method: 'POST', body: form });
   },
-  analyzeTrack: (s3Key?: string) => request<{ jobId: string; status: string }>('/api/wizard/analyze-track', { method: 'POST', body: JSON.stringify({ s3Key }) }),
+  uploadHookSound: (file: File) => {
+    const form = new FormData();
+    form.append('file', file);
+    return request<{ name: string; url: string; playbackUrl: string; mock: boolean }>('/api/wizard/upload-hook-sound', { method: 'POST', body: form });
+  },
   drops: () => request<{ status: string; bpm: number; drops: DropCandidate[] }>('/api/wizard/drops'),
-  rankVibes: (lyrics: string) => request<{ jobId: string; status: string }>('/api/wizard/rank-vibes', { method: 'POST', body: JSON.stringify({ lyrics }) }),
   vibes: () => request<{ status: string; vibes: Vibe[] }>('/api/wizard/vibes'),
   photos: () => request<{ status: string; photos: Vibe[] }>('/api/wizard/photos'),
   subtitleStyles: () => request<{ status: string; styles: { id: string; name: string; previewUrl: string }[] }>('/api/wizard/subtitle-styles'),
@@ -232,12 +235,6 @@ export const api = {
   submitWizard: (payload: { projectId?: string | null; stageData: Record<string, unknown>; videosToGenerate: number; idempotencyKey: string }) =>
     request<{ job: GenerationJob; redirectTo: string }>('/api/wizard/submit', { method: 'POST', body: JSON.stringify(payload) }),
 
-  subtitlePreview: (style: string, audioKey?: string, lyrics?: string) => {
-    const params = new URLSearchParams({ style });
-    if (audioKey) params.set('audioKey', audioKey);
-    if (lyrics) params.set('lyrics', lyrics);
-    return request<{ previewUrl: string; style: string }>(`/api/preview/subtitle?${params.toString()}`);
-  },
   compositePreview: (style: string, hook: string) => {
     const params = new URLSearchParams({ style, hook });
     return request<{ previewUrl: string }>(`/api/preview/composite?${params.toString()}`);
@@ -248,12 +245,15 @@ export const api = {
   rateJob: (jobId: string, payload: { rating: string | number; feedback?: string }) =>
     request<{ ok: boolean; job: GenerationJob }>(`/api/jobs/${jobId}/rate`, { method: 'POST', body: JSON.stringify(payload) }),
   iterations: (projectId: string) => request<{ iterations: ContentIteration[]; analysis: IterationAnalysis }>(`/api/projects/${projectId}/iterations`),
-  analyzeIterations: (projectId: string) => request<{ analysis: IterationAnalysis }>(`/api/projects/${projectId}/iterations/analyze`, { method: 'POST' }),
   createIteration: (projectId: string, payload: { videosToGenerate: number; testParameter: 'subtitles' | 'hooks' | 'background' }) =>
     request<{ iteration: ContentIteration; job: GenerationJob; redirectTo: string }>(`/api/projects/${projectId}/iterations`, { method: 'POST', body: JSON.stringify(payload) }),
 
   updateProfile: (payload: { name?: string; surname?: string; artistNick?: string }) =>
     request<MeResponse['user'] extends infer _ ? { user: MeResponse['user'] } : never>('/api/profile', { method: 'PATCH', body: JSON.stringify(payload) }),
+  deleteAccount: () => request<{ ok: true; deleted: { identities: number; projects: number; jobs: number } }>('/api/profile', {
+    method: 'DELETE',
+    body: JSON.stringify({ confirmation: 'DELETE' })
+  }),
   uploadAvatar: (file: File) => {
     const form = new FormData();
     form.append('file', file);

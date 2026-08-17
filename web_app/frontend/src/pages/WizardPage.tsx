@@ -81,6 +81,12 @@ function StageOne({ creditsLeft, maxSegmentSeconds, paidPlan }: { creditsLeft: n
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [playing, setPlaying] = useState(false);
   const [dragOver, setDragOver] = useState(false);
+  const previousQuery = useQuery({
+    queryKey: ['wizard-previous-track'],
+    queryFn: api.previousTrack,
+    enabled: !track,
+    staleTime: 30_000
+  });
 
   const uploadMutation = useMutation({
     mutationFn: api.uploadTrack,
@@ -204,27 +210,44 @@ function StageOne({ creditsLeft, maxSegmentSeconds, paidPlan }: { creditsLeft: n
 
       <input ref={fileInputRef} className="sr-only" type="file" accept="audio/*" onChange={onUpload} />
       {!track ? (
-        <button
-          type="button"
-          onClick={() => fileInputRef.current?.click()}
-          onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-          onDragLeave={() => setDragOver(false)}
-          onDrop={onDrop}
-          className={cn('dash-panel mt-space-6 flex h-[100px] w-full items-center justify-center gap-space-5 px-space-7 transition max-lg:px-space-5', dragOver && 'brightness-150')}
-        >
-          <span className="flex h-[40px] w-[40px] shrink-0 items-center justify-center rounded-r10 bg-text">
-            <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
-              <defs>
-                <linearGradient id="plusGrad" x1="0" y1="0" x2="1" y2="1">
-                  <stop offset="0" stopColor="#8b6fe6" />
-                  <stop offset="1" stopColor="#5f42b9" />
-                </linearGradient>
-              </defs>
-              <path d="M12 4v16M4 12h16" stroke="url(#plusGrad)" strokeWidth="2.4" strokeLinecap="round" />
-            </svg>
-          </span>
-          <span className="wizard-body">{uploadMutation.isPending ? t('wizard.track.uploading') : t('wizard.track.dropHint')}</span>
-        </button>
+        <div className="mt-space-6 grid gap-space-3">
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={onDrop}
+            className={cn('dash-panel flex h-[100px] w-full items-center justify-center gap-space-5 px-space-7 transition max-lg:px-space-5', dragOver && 'brightness-150')}
+          >
+            <span className="flex h-[40px] w-[40px] shrink-0 items-center justify-center rounded-r10 bg-text">
+              <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+                <defs>
+                  <linearGradient id="plusGrad" x1="0" y1="0" x2="1" y2="1">
+                    <stop offset="0" stopColor="#8b6fe6" />
+                    <stop offset="1" stopColor="#5f42b9" />
+                  </linearGradient>
+                </defs>
+                <path d="M12 4v16M4 12h16" stroke="url(#plusGrad)" strokeWidth="2.4" strokeLinecap="round" />
+              </svg>
+            </span>
+            <span className="wizard-body">{uploadMutation.isPending ? t('wizard.track.uploading') : t('wizard.track.dropHint')}</span>
+          </button>
+          {previousQuery.data?.track && (
+            <button
+              type="button"
+              className="flex h-[56px] items-center justify-between rounded-r15 bg-grad-soft-10 px-space-5 text-left transition hover:brightness-125"
+              onClick={() => {
+                const previous = previousQuery.data.track;
+                if (!previous) return;
+                setTrack(previous);
+                setAudioUrl(previous.localUrl || previous.s3Key);
+              }}
+            >
+              <span className="truncate text-[16px] text-text-80">{t('wizard.track.previous')}</span>
+              <span className="ml-space-4 truncate text-[16px] text-text">{previousQuery.data.track.filename}</span>
+            </button>
+          )}
+        </div>
       ) : (
         <button
           type="button"
@@ -318,6 +341,8 @@ export function WizardPage() {
   const state = useWizardStore();
   const meQuery = useQuery({ queryKey: ['me'], queryFn: api.me });
   const projectsQuery = useQuery({ queryKey: ['projects'], queryFn: api.projects });
+  const wizardSessionQuery = useQuery({ queryKey: ['wizard-session'], queryFn: api.wizardSession });
+  const restoredServerDraft = useRef(false);
   const qaStage = import.meta.env.DEV ? Number(params.get('qaStage') || 0) : 0;
   useEffect(() => {
     if (qaStage < 1 || qaStage > 5) return;
@@ -350,6 +375,13 @@ export function WizardPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [qaStage]);
 
+  useEffect(() => {
+    const session = wizardSessionQuery.data?.session;
+    if (!session || restoredServerDraft.current || qaStage) return;
+    restoredServerDraft.current = true;
+    state.restoreSession(session.projectId, session.stage, session.data);
+  }, [qaStage, state, wizardSessionQuery.data?.session]);
+
   // Без ?project генерируем в ТЕКУЩИЙ проект. Раньше брали projects[0] — самый новый
   // по startedAt, который не обязан быть текущим: визард и «Проекты» расходились в том,
   // над каким проектом идёт работа.
@@ -374,8 +406,6 @@ export function WizardPage() {
     }
   }, [params, projectId, projectsQuery.data?.activeProject?.id, projectsQuery.data?.projects, setProjectId]);
 
-  const analyzeMutation = useMutation({ mutationFn: () => api.analyzeTrack(state.track?.s3Key) });
-  const rankMutation = useMutation({ mutationFn: () => api.rankVibes(state.lyrics) });
   const saveSessionMutation = useMutation({ mutationFn: () => api.saveWizardSession({ projectId, stage, data: state.stageData() }) });
   const submitMutation = useMutation({
     mutationFn: () => api.submitWizard({ projectId, stageData: state.stageData(), videosToGenerate: safeVideosToGenerate, idempotencyKey: state.final.idempotencyKey }),
@@ -467,10 +497,6 @@ export function WizardPage() {
   const next = async () => {
     if (!canContinue) return;
     await saveSessionMutation.mutateAsync();
-    if (stage === 1) {
-      analyzeMutation.mutate();
-      rankMutation.mutate();
-    }
     const idx = STAGE_ORDER.indexOf(stage);
     if (idx < STAGE_ORDER.length - 1) setStage(STAGE_ORDER[idx + 1]);
     else submitMutation.mutate();

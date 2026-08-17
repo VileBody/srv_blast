@@ -11,6 +11,7 @@ import { FigIcon } from '../components/ui/FigIcon';
 import { BillingCard } from '../components/billing/BillingCard';
 import { useToast } from '../contexts/ToastContext';
 import { SvgMaskIcon } from '../components/layout/SvgMaskIcon';
+import { Modal } from '../components/ui/Modal';
 
 /*
  * Личный кабинет: Figma W43 (фришник) и W44 (подписчик Blast) — одна страница, два состояния.
@@ -222,23 +223,31 @@ function ImpulseValidity({ expiresAt }: { expiresAt?: string | null }) {
     return fallback;
   })();
   const dateStr = end.toLocaleDateString(i18n.language.startsWith('en') ? 'en-GB' : 'ru-RU');
+  const managerName = String(import.meta.env.VITE_MANAGER_NAME || 'Blast Support');
+  const managerUrl = String(import.meta.env.VITE_MANAGER_URL || 'mailto:support@blast808.com');
+  const managerInitials = managerName
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join('') || 'BS';
   return (
     <div className="mt-[40px] flex flex-col gap-[16px]">
       <p className="text-[20px] font-[400] leading-none text-transparent" style={gradSoft}>{t('profile.validUntil', { date: dateStr })}</p>
       <div className="flex w-full items-center gap-[16px] rounded-r15 bg-grad-soft-20 px-[30px] py-[20px]">
-        <span className="flex h-[60px] w-[60px] shrink-0 items-center justify-center rounded-full bg-accent-20 text-[20px] font-[400] text-text">АК</span>
+        <span className="flex h-[60px] w-[60px] shrink-0 items-center justify-center rounded-full bg-accent-20 text-[20px] font-[400] text-text">{managerInitials}</span>
         <div className="min-w-0 flex-1">
           <p className="truncate text-[16px] leading-none text-text-60">{t('profile.yourManager')}</p>
-          <p className="mt-[6px] truncate text-[24px] leading-none text-text">{t('profile.managerName')}</p>
+          <p className="mt-[6px] truncate text-[24px] leading-none text-text">{managerName}</p>
         </div>
-        <button type="button" className="soft-btn h-[44px] shrink-0 px-[20px] text-[16px] font-[400]">{t('profile.writeManager')}</button>
+        <a href={managerUrl} className="soft-btn flex h-[44px] shrink-0 items-center px-[20px] text-[16px] font-[400]">{t('profile.writeManager')}</a>
       </div>
     </div>
   );
 }
 
 /** Нижняя зона тарифа зависит от продукта: Blast — прогресс подписки, Glow/Impulse — своё */
-function PaidTariff({ tier, videosTotal, tracksTotal, startedAt, expiresAt, claimed, onClaim, claiming }: {
+function PaidTariff({ tier, videosTotal, tracksTotal, startedAt, expiresAt, claimed, onClaim, claiming, showBonuses }: {
   tier: string;
   videosTotal: number | null;
   tracksTotal: number | null;
@@ -247,6 +256,7 @@ function PaidTariff({ tier, videosTotal, tracksTotal, startedAt, expiresAt, clai
   claimed: number;
   onClaim: () => void;
   claiming?: boolean;
+  showBonuses: boolean;
 }) {
   const { t } = useTranslation();
   // 3-й пункт состава зависит от плана: Blast — безлимит роликов, Glow — CapCut-шаблон
@@ -264,7 +274,7 @@ function PaidTariff({ tier, videosTotal, tracksTotal, startedAt, expiresAt, clai
       </div>
 
       {/* Glow — продукт без прогресса: нижняя зона пустая; Impulse — срок+менеджер; Blast — прогресс */}
-      {tier === 'IMPULSE' ? <ImpulseValidity expiresAt={expiresAt} /> : tier === 'GLOW' ? null : (
+      {tier === 'IMPULSE' ? <ImpulseValidity expiresAt={expiresAt} /> : tier === 'GLOW' || !showBonuses ? null : (
         <BlastProgress startedAt={startedAt} claimed={claimed} onClaim={onClaim} claiming={claiming} />
       )}
     </>
@@ -285,6 +295,8 @@ export function ProfilePage() {
   const meQuery = useQuery({ queryKey: ['me'], queryFn: api.me });
   const [nick, setNick] = useState<string | null>(null);
   const [editingNick, setEditingNick] = useState(false);
+  const [disconnectOpen, setDisconnectOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const nickInputRef = useRef<HTMLInputElement>(null);
 
   /*
@@ -382,6 +394,25 @@ export function ProfilePage() {
       push({ variant: 'success', title: t('profile.claimOk') });
     },
     onError: () => push({ variant: 'error', title: t('profile.claimFail') })
+  });
+
+  const disconnectMutation = useMutation({
+    mutationFn: api.disconnectTiktok,
+    onSuccess: async () => {
+      setDisconnectOpen(false);
+      await queryClient.invalidateQueries({ queryKey: ['me'] });
+      push({ variant: 'info', title: t('profile.tiktokDisconnected') });
+    },
+    onError: () => push({ variant: 'error', title: t('simple.error') })
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: api.deleteAccount,
+    onSuccess: () => {
+      queryClient.clear();
+      navigate('/register', { replace: true });
+    },
+    onError: () => push({ variant: 'error', title: t('profile.deleteFailed') })
   });
 
   const onAvatar = (event: ChangeEvent<HTMLInputElement>) => {
@@ -529,7 +560,10 @@ export function ProfilePage() {
          * кнопкой той же ширины, что и подключение TikTok, и тянула на себя внимание.
          */}
         <div className="flex shrink-0 items-center gap-[12px]">
-          <TiktokButton connected={Boolean(tiktok) || paidPreview} />
+          <TiktokButton
+            connected={Boolean(tiktok) || paidPreview}
+            onClick={tiktok && !paidPreview ? () => setDisconnectOpen(true) : undefined}
+          />
 
           {googleLinked ? (
             <button
@@ -618,12 +652,39 @@ export function ProfilePage() {
             claimed={subscription.bonusesClaimed ?? 0}
             onClaim={() => claimMutation.mutate()}
             claiming={claimMutation.isPending}
+            showBonuses={Boolean(meQuery.data?.capabilities?.subscriptionBonuses)}
           />
         ) : <FreeTariff />}
       </section>
 
       {/* Состояние оплаты и отмена подписки — на платном плане, сразу под тарифом */}
       <BillingCard subscription={subscription} />
+
+      <section className="card-2 flex shrink-0 items-center justify-between gap-[24px] p-[40px]">
+        <div>
+          <h2 className="text-[24px] font-[400] text-text">{t('profile.deleteTitle')}</h2>
+          <p className="mt-[8px] max-w-[720px] text-[16px] leading-[22px] text-text-60">{t('profile.deleteText')}</p>
+        </div>
+        <button type="button" className="soft-btn h-[52px] shrink-0 px-[22px] text-[16px] text-[var(--warning)]" onClick={() => setDeleteOpen(true)}>
+          {t('profile.deleteAction')}
+        </button>
+      </section>
+
+      <Modal open={disconnectOpen} title={t('profile.disconnectTiktokTitle')} onClose={() => setDisconnectOpen(false)}>
+        <p className="text-[18px] leading-[25px] text-text-60">{t('profile.disconnectTiktokText')}</p>
+        <div className="mt-[28px] flex justify-end gap-[12px]">
+          <button type="button" className="soft-btn h-[52px] px-[22px]" onClick={() => setDisconnectOpen(false)}>{t('common.cancel')}</button>
+          <button type="button" className="soft-btn h-[52px] px-[22px] text-[var(--warning)]" disabled={disconnectMutation.isPending} onClick={() => disconnectMutation.mutate()}>{t('profile.disconnectTiktokAction')}</button>
+        </div>
+      </Modal>
+
+      <Modal open={deleteOpen} title={t('profile.deleteTitle')} onClose={() => setDeleteOpen(false)}>
+        <p className="text-[18px] leading-[25px] text-text-60">{t('profile.deleteConfirm')}</p>
+        <div className="mt-[28px] flex justify-end gap-[12px]">
+          <button type="button" className="soft-btn h-[52px] px-[22px]" onClick={() => setDeleteOpen(false)}>{t('common.cancel')}</button>
+          <button type="button" className="soft-btn h-[52px] px-[22px] text-[var(--warning)]" disabled={deleteMutation.isPending} onClick={() => deleteMutation.mutate()}>{t('profile.deleteAction')}</button>
+        </div>
+      </Modal>
     </div>
   );
 }

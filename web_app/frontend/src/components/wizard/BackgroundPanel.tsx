@@ -321,6 +321,7 @@ export function StageBackground() {
   const background = useWizardStore((state) => state.background);
   const setBackground = useWizardStore((state) => state.setBackground);
   const toggleVibe = useWizardStore((state) => state.toggleVibe);
+  const meQuery = useQuery({ queryKey: ['me'], queryFn: api.me, staleTime: 15_000 });
   const vibesQuery = useQuery({ queryKey: ['vibes'], queryFn: api.vibes, enabled: background.mode === 'footage' });
   const photosQuery = useQuery({ queryKey: ['photos'], queryFn: api.photos, enabled: background.mode === 'photo' });
   const cardsScroll = useDragScroll();
@@ -376,7 +377,7 @@ export function StageBackground() {
           <BgSquaresIcon color="var(--accent-light)" />
           {heading}
         </h2>
-        {isMedia && (
+        {isMedia && meQuery.data?.capabilities?.customSources && (
           <button
             type="button"
             onClick={() => setSourcesOpen(true)}

@@ -32,6 +32,14 @@ def configured() -> bool:
     return bool(BOT_TOKEN)
 
 
+def healthcheck() -> None:
+    if not configured():
+        raise RuntimeError("telegram_auth: TELEGRAM_BOT_TOKEN is not configured")
+    result = _api("getMe", {})
+    if not result.get("ok"):
+        raise RuntimeError("telegram_auth: getMe returned an unsuccessful response")
+
+
 def deep_link(token: str) -> str:
     return f"https://t.me/{BOT_USERNAME}?start={token}"
 

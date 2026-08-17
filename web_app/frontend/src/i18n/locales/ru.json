@@ -223,7 +223,9 @@
     "posted": "Выложено",
     "postedHint": "Ролик уже опубликован в TikTok",
     "postAllProgress": "Выложить все ({{done}}/{{total}})",
-    "previewEmpty": "Ролики появятся здесь после первой генерации"
+    "previewEmpty": "Ролики появятся здесь после первой генерации",
+    "ratingPrompt": "Оцени качество батча",
+    "ratingThanks": "Спасибо за оценку"
   },
   "stats": {
     "title": "Статистика",
@@ -306,6 +308,7 @@
       "reset": "Сбросить",
       "uploading": "Загружаем…",
       "dropHint": "Перетащи или загрузи MP3, WAV",
+      "previous": "Использовать предыдущий трек",
       "replaceFile": "Заменить файл",
       "timing": "Тайминг отрывка",
       "play": "Прослушать",
@@ -387,6 +390,7 @@
       "chooseBelow": "Выбери вариант ниже",
       "loadSound": "Загрузи свой звук:",
       "soundFormats": "MP3, WAV",
+      "soundUploadFailed": "Не удалось загрузить звук",
       "listenSound": "Прослушать звук",
       "deleteSound": "Удалить звук",
       "chooseObject": "Выбери объект:",
@@ -696,6 +700,10 @@
     "tiktokGuardError": "Подключение не состоялось",
     "tiktokGuardErrorText": "Не смогли проверить, не использовался ли этот аккаунт TikTok раньше. Попробуй ещё раз через минуту.",
     "tiktokError": "Не удалось подключить TikTok",
+    "tiktokDisconnected": "TikTok отключён",
+    "disconnectTiktokTitle": "Отключить TikTok?",
+    "disconnectTiktokText": "Публикация и синхронизация статистики остановятся. Подключить аккаунт снова можно в любой момент.",
+    "disconnectTiktokAction": "Отключить",
     "packVideosUnlimited": "безлимит видео",
     "claimed": "получено",
     "claim": "получить",
@@ -704,7 +712,6 @@
     "validUntil": "действует до {{date}}",
     "yourManager": "Персональный менеджер",
     "writeManager": "Написать",
-    "managerName": "Аня Ковалёва",
     "perkManagement": "Менеджмент",
     "availableIn": "доступно в {{month}}",
     "logout": "Выйти",
@@ -720,7 +727,12 @@
     "googleUnlinked": "Google отключён",
     "googleLastProvider": "Это единственный способ войти — отключить нельзя",
     "googleWhy": "Второй способ входа: зайдёшь в тот же аккаунт с той же почтой",
-    "googleNotConfigured": "Google не настроен: в backend/.env нет ключей GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET (видно только в деве)"
+    "googleNotConfigured": "Google не настроен: в backend/.env нет ключей GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET (видно только в деве)",
+    "deleteTitle": "Удаление аккаунта",
+    "deleteText": "Удалим профиль, проекты, черновики, загруженные файлы и историю генераций.",
+    "deleteConfirm": "Это действие нельзя отменить. Оплаченные услуги и созданные материалы восстановить не получится.",
+    "deleteAction": "Удалить аккаунт",
+    "deleteFailed": "Не удалось удалить аккаунт"
   },
   "pricing": {
     "title": "Расширить возможности",
@@ -735,6 +747,8 @@
     "offer": "офертой",
     "orderCreated": "Платёж создан",
     "orderFailed": "Не удалось создать платёж",
+    "paymentSuccess": "Платёж принят. Баланс обновится после подтверждения банка",
+    "paymentFailed": "Платёж не завершён",
     "blastTitle": "Контент артиста на автопилоте",
     "blastB1": "100 видео",
     "blastB2": "до 4 треков",
@@ -753,7 +767,8 @@
     "yourPlan": "Твой тариф",
     "yourPlanNote": "Он уже подключён. Управление оплатой — в профиле.",
     "toBilling": "К оплате в профиле",
-    "agreeFirst": "— отметь согласие"
+    "agreeFirst": "— отметь согласия",
+    "recurrentConsent": "Согласен на ежемесячное автосписание 1 990 ₽ до отмены"
   },
   "flow": {
     "title": "Прохождение",

@@ -196,7 +196,10 @@ export function GenerationsCard({
   postAll,
   postOne,
   onEmptyAction,
-  loading
+  loading,
+  rating,
+  onRate,
+  ratingPending
 }: {
   videos: VideoVersion[];
   postAll?: () => void;
@@ -205,6 +208,9 @@ export function GenerationsCard({
   /** Пустой триал не подделываем демо-роликами: ведём в реальный визард создания батча. */
   onEmptyAction?: () => void;
   loading?: boolean;
+  rating?: number | string | null;
+  onRate?: (rating: number) => void;
+  ratingPending?: boolean;
 }) {
   const { t } = useTranslation();
   const postedCount = videos.filter(isVideoPosted).length;
@@ -281,6 +287,30 @@ export function GenerationsCard({
         <div className="pointer-events-none absolute inset-x-0 -top-[10px] h-[24px]" style={{ background: 'linear-gradient(180deg, #140e24, rgba(20,14,36,0))' }} />
         <div className="pointer-events-none absolute inset-x-0 bottom-0 h-[24px]" style={{ background: 'linear-gradient(0deg, #140e24, rgba(20,14,36,0))' }} />
       </div>
+      {onRate && (
+        <div className="mt-[18px] flex shrink-0 items-center justify-between gap-[16px] border-t border-[rgba(246,245,253,0.12)] pt-[18px]">
+          <span className="text-[15px] text-text-60">
+            {rating ? t('projectDetail.ratingThanks') : t('projectDetail.ratingPrompt')}
+          </span>
+          <div className="flex h-[34px] shrink-0 overflow-hidden rounded-[8px] border border-accent-light" role="group" aria-label={t('projectDetail.ratingPrompt')}>
+            {[1, 2, 3, 4, 5].map((value) => (
+              <button
+                key={value}
+                type="button"
+                disabled={ratingPending}
+                aria-pressed={Number(rating) === value}
+                onClick={() => onRate(value)}
+                className={cn(
+                  'h-[32px] w-[36px] border-r border-accent-light text-[15px] transition last:border-r-0 disabled:cursor-wait',
+                  Number(rating) === value ? 'bg-accent text-white' : 'bg-grad-soft-10 text-text-80 hover:bg-grad-soft-20'
+                )}
+              >
+                {value}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
     </section>
   );
 }
