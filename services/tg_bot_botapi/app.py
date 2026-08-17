@@ -563,6 +563,11 @@ _F2_SHAPE_BY_BUTTON = {
     BTN_F2_SHAPE_ELIPSE: "elipse",
 }
 
+# Стилизации, которые всегда идут на ВЕСЬ ролик: спрашивать «до дропа или на
+# весь» у них бессмысленно — build-side всё равно форсит полное окно
+# (manifest.full_window). Держим зеркалом с mlcore/hooks/f3_effect/manifest.json.
+FX_EXTRA_ALWAYS_FULL = frozenset({"blackwhite"})
+
 # Рамка — PNG-маска поверх ВСЕХ слоёв (чёрные поля с прозрачным окном).
 # Не хук: шаг идёт перед выбором версий и доступен на любом пути, дроп не нужен.
 # id-сет зеркалит mlcore/hooks/frames/catalog.py (боты слим — mlcore не тянут).
@@ -4489,6 +4494,12 @@ class BlastBotApp:
             await self._ask_effect_hook(message, st)
             return
         # grade chosen → ask whether to stretch it over the whole video
+        if st.effect_extra in FX_EXTRA_ALWAYS_FULL:
+            # окно не выбирается — эффект по определению на весь ролик
+            st.effect_extra_full = True
+            await self.store.set(st)
+            await self._after_effect_extra(message, st)
+            return
         if st.effect_extra:
             await self._ask_effect_extra_full(message, st)
             return

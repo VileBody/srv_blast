@@ -157,7 +157,7 @@ def test_relpath_prefix_split_audio_vs_image(monkeypatch):
 
 
 def test_blackwhite_glitch_clip_pool(monkeypatch):
-    """blackwhite declares clips{pool:glitch_video,count:4} -> extra_clips list."""
+    """blackwhite declares clips{pool:glitch_video,count:N} -> extra_clips list."""
     _set_env(monkeypatch)
     fake = _FakeS3Client({
         "fx_assets/video/glitch/": [
@@ -172,8 +172,16 @@ def test_blackwhite_glitch_clip_pool(monkeypatch):
     out = asset_picker.resolve_assets(hook=None, transition=None, extra="blackwhite", seed="job-bw")
 
     clips = out["assets"]["extra_clips"]
-    assert isinstance(clips, list) and len(clips) == 4
-    assert len(set(clips)) == 4, "clips must be distinct"
+    # ровно столько, сколько просит манифест, и все разные
+    import json as _json
+    from pathlib import Path as _Path
+    _manifest = _json.loads(
+        (_Path(__file__).resolve().parents[1]
+         / "mlcore" / "hooks" / "f3_effect" / "manifest.json").read_text(encoding="utf-8")
+    )
+    want = next(e for e in _manifest["effects"] if e["id"] == "blackwhite")["clips"]["count"]
+    assert isinstance(clips, list) and len(clips) == want
+    assert len(set(clips)) == want, "clips must be distinct"
     for rel in clips:
         assert rel.startswith("media/video/") and rel.endswith(".mp4")
     # every clip is in the node download list

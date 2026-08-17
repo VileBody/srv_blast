@@ -299,7 +299,11 @@ def build_overlay_jsx(
     # comp (the same "no-drop" path the script already handles), so the stylize
     # (e.g. xerox) runs over the ENTIRE video to bump uniqueness.
     if e_eff:
-        _extra_dur_js = "null" if extra_full else "(__f3_drop>0?__f3_drop:null)"
+        # full_window в манифесте = грейд всегда на весь ролик, что бы ни прислал
+        # бот. Так помечен blackwhite: он не «приём до дропа», а стиль ролика —
+        # ЧБ, обрывающееся на дропе, читается как баг, а не как приём.
+        _full = extra_full or bool(e_eff.get("full_window"))
+        _extra_dur_js = "null" if _full else "(__f3_drop>0?__f3_drop:null)"
         # Video overlays for the grade (blackwhite glitches). Absent slot => the
         # script sees clips:null and renders the grade alone.
         _clips_js = _asset_list_js("extra_clips")

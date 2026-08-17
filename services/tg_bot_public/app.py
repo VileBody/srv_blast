@@ -341,6 +341,11 @@ F2_SHAPE_LABELS_RU = {
     "Эллипс": "elipse",
 }
 
+# Стилизации, которые всегда идут на ВЕСЬ ролик: спрашивать «до дропа или на
+# весь» у них бессмысленно — build-side всё равно форсит полное окно
+# (manifest.full_window). Держим зеркалом с mlcore/hooks/f3_effect/manifest.json.
+FX_EXTRA_ALWAYS_FULL = frozenset({"blackwhite"})
+
 # Рамка — PNG-маска поверх ВСЕХ слоёв. НЕ хук: шаг спрашивается перед выбором
 # версий на любом пути и не гейтится HOOK_FLOW_ENABLED (дроп ему не нужен).
 # id-сет зеркалит mlcore/hooks/frames/catalog.py + schemas.frame_id Literal.
@@ -5445,6 +5450,12 @@ class BlastBotApp:
         if not (st.effect_hook or st.effect_transition or st.effect_extra):
             await message.answer("Нужно выбрать хотя бы один эффект из трёх. Начнём заново с хука.")
             await self._ask_effect_hook(message, st)
+            return
+        if st.effect_extra in FX_EXTRA_ALWAYS_FULL:
+            # окно не выбирается — эффект по определению на весь ролик
+            st.effect_extra_full = True
+            await self.store.set(st)
+            await self._after_effect_extra(message, st)
             return
         if st.effect_extra:
             await self._ask_effect_extra_full(message, st)
