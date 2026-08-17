@@ -335,6 +335,9 @@ class RenderPlanV1(BaseModel):
                     "hook_extend": params.get("hook_extend"),
                     "drop_time": params.get("drop_time"),
                     "assets": dict(params.get("assets") or {}),
+                    # ключ появляется только когда seed реально есть — иначе
+                    # round-trip конфига перестал бы совпадать сам с собой
+                    **({"seed": params["seed"]} if params.get("seed") else {}),
                 }
             elif operation.type == "hook.f4.motion.v1":
                 config["f4"] = {
@@ -346,6 +349,11 @@ class RenderPlanV1(BaseModel):
                 config["f5"] = {
                     "drop_rel_sec": params.get("drop_time"),
                     "combo_seed": params.get("seed"),
+                }
+            elif operation.type == "overlay.frame.v1":
+                config["frame"] = {
+                    "frame_id": params.get("frame_id"),
+                    "relpath": params.get("relpath"),
                 }
         return config
 
@@ -437,6 +445,7 @@ def build_visual_ops(
         _f4_operation(full_edit_config),
         _f1_operation(full_edit_config),
         _f5_operation(full_edit_config),
+        _frame_operation(full_edit_config),
     ):
         if op is not None:
             ops.append(op)
@@ -776,6 +785,10 @@ def _f3_operation(cfg: Dict[str, Any], f3_media: List[Dict[str, str]]) -> Option
         params["drop_time"] = float(f3["drop_time"])
     if _clean(f3.get("hook_extend")):
         params["hook_extend"] = _clean(f3.get("hook_extend"))
+    # seed фиксирует порядок мульти-клип слотов (глитчи blackwhite). Без него
+    # оверлей соберётся на константе — детерминированно, но одинаково у всех джоб.
+    if _clean(f3.get("seed")):
+        params["seed"] = _clean(f3.get("seed"))
     assets = [
         VisualOperationAsset(
             role=("audio" if item.get("relpath", "").startswith("media/audio/") else "overlay"),
@@ -786,6 +799,25 @@ def _f3_operation(cfg: Dict[str, Any], f3_media: List[Dict[str, str]]) -> Option
         if str(item.get("relpath") or "").strip()
     ]
     return VisualOperationV1(id="hook_f3_effect", kind="hook.f3.effect.v1", params=params, assets=assets)
+
+
+def _frame_operation(cfg: Dict[str, Any]) -> Optional[VisualOperationV1]:
+    """Рамка — не хук: PNG-маска поверх всего кадра, выбирается отдельным шагом.
+
+    Ассет уже разрезолвен оркестратором (S3-url + relpath), сюда доезжает
+    только relpath — им оверлей соберёт абсолютный путь на ноде.
+    """
+    frame = _dict(cfg.get("frame"))
+    frame_id = _clean(frame.get("frame_id"))
+    relpath = _clean(frame.get("relpath"))
+    if not frame_id or not relpath:
+        return None
+    return VisualOperationV1(
+        id="overlay_frame",
+        kind="overlay.frame.v1",
+        params={"frame_id": frame_id, "relpath": relpath},
+        assets=[VisualOperationAsset(role="overlay", path=relpath, optional=True)],
+    )
 
 
 def _f2_operation(cfg: Dict[str, Any]) -> Optional[VisualOperationV1]:

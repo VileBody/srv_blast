@@ -112,6 +112,12 @@ class SendAudioS3Request(BaseModel):
     f2_shape: Optional[
         Literal["rhomb", "square", "star1", "star2", "elipse"]
     ] = None
+    # Рамка — PNG-маска поверх всех слоёв (чёрные поля с прозрачным окном).
+    # Отдельный шаг бота, НЕ хук: работает на любом пути и не требует дропа.
+    # Едет как FRAME_ID; оркестратор резолвит ассет и кладёт
+    # full_edit_config["frame"], project_builder инжектит оверлей последним.
+    # None => без рамки.
+    frame_id: Optional[Literal["rounded", "soft_bars", "letterbox"]] = None
     # F1 «Звук» packaged-combo: S3/HTTP URL of the user-uploaded sound that plays
     # in the pre-drop window [0.5, drop−0.5]. When set, the bot threads it here;
     # the orchestrator emits full_edit_config["f1"] (audio layer + F2-style visual

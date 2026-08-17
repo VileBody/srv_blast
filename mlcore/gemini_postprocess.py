@@ -862,6 +862,7 @@ def render_all_steps(
     f3_block: Dict[str, Any] | None = None,
     f2_block: Dict[str, Any] | None = None,
     f1_block: Dict[str, Any] | None = None,
+    frame_block: Dict[str, Any] | None = None,
     jsx_subtitles_block: Dict[str, Any] | None = None,
 ) -> Dict[str, Path]:
     repo_root = repo_root.resolve()
@@ -1084,6 +1085,13 @@ def render_all_steps(
     # -------------------------
     if f3_block:
         full_edit_obj["f3"] = f3_block
+
+    # -------------------------
+    # Рамка: отдельный шаг бота (не хук). Блок {frame_id, relpath, url} —
+    # project_builder кладёт PNG поверх всех слоёв и добавляет url в media[].
+    # -------------------------
+    if frame_block:
+        full_edit_obj["frame"] = frame_block
 
     # -------------------------
     # F2 «Объект» packaged-combo overlay: если оркестратор сгенерировал блок

@@ -148,6 +148,7 @@ from .state_store import (
     STAGE_WAIT_VISUAL_TRANSITION,
     STAGE_WAIT_VISUAL_STYLE,
     STAGE_WAIT_F2_SHAPE,
+    STAGE_WAIT_FRAME,
     STAGE_WAIT_F1_SOUND,
     STAGE_WAIT_F1_TEXT,
     STAGE_WAIT_PHOTO_STYLE,
@@ -339,6 +340,22 @@ F2_SHAPE_LABELS_RU = {
     "Звезда-5": "star2",
     "Эллипс": "elipse",
 }
+
+# Рамка — PNG-маска поверх ВСЕХ слоёв. НЕ хук: шаг спрашивается перед выбором
+# версий на любом пути и не гейтится HOOK_FLOW_ENABLED (дроп ему не нужен).
+# id-сет зеркалит mlcore/hooks/frames/catalog.py + schemas.frame_id Literal.
+BTN_FRAME_ROUNDED = "Скруглённое окно"
+BTN_FRAME_SOFT_BARS = "Мягкие шторки"
+BTN_FRAME_LETTERBOX = "Чёрные полосы"
+BTN_FRAME_NONE = "Без рамки"
+FRAME_IDS = frozenset({"rounded", "soft_bars", "letterbox"})
+FRAME_LABELS_RU = {
+    BTN_FRAME_ROUNDED: "rounded",
+    BTN_FRAME_SOFT_BARS: "soft_bars",
+    BTN_FRAME_LETTERBOX: "letterbox",
+}
+_FRAME_BY_BUTTON = dict(FRAME_LABELS_RU)
+_FRAME_BY_BUTTON[BTN_FRAME_NONE] = "none"
 # Reference BPM the F4 device keyframes were authored under. Mirrored for parity
 # (the public picker UX is gated behind HOOK_FLOW_ENABLED).
 #
@@ -3486,6 +3503,10 @@ class BlastBotApp:
                 await self._handle_wait_f1_text(message, st)
                 return
 
+            if st.stage == STAGE_WAIT_FRAME:
+                await self._handle_wait_frame(message, st)
+                return
+
             if st.stage == STAGE_WAIT_VERSIONS:
                 await self._handle_wait_versions(message, st)
                 return
@@ -6325,7 +6346,42 @@ class BlastBotApp:
     def _free_generation_limit(self) -> int:
         return max(1, int(getattr(self.settings, "initial_credits", 5) or 5))
 
+    # ── Рамка — шаг перед версиями (не хук, спрашиваем на любом пути) ──
+    # Перехват стоит ВНУТРИ _ask_versions: в версии ведут все ветки, и одна
+    # точка входа гарантирует, что шаг не потеряется ни на одной из них.
+    async def _ask_frame(self, message: Message, st: ChatState) -> None:
+        st.stage = STAGE_WAIT_FRAME
+        await self.store.set(st)
+        await message.answer(
+            "Добавить рамку поверх видео?\n"
+            "• Скруглённое окно — поля со всех сторон.\n"
+            "• Мягкие шторки — растушёванные затемнения сверху и снизу.\n"
+            "• Чёрные полосы — киношный леттербокс.",
+            reply_markup=_kb(
+                [BTN_FRAME_ROUNDED],
+                [BTN_FRAME_SOFT_BARS, BTN_FRAME_LETTERBOX],
+                [BTN_FRAME_NONE],
+            ),
+        )
+
+    async def _handle_wait_frame(self, message: Message, st: ChatState) -> None:
+        text = str(message.text or "").strip()
+        frame = _FRAME_BY_BUTTON.get(text)
+        if frame is None:
+            await message.answer("Выбери рамку кнопкой ниже или нажми «Без рамки».")
+            return
+        st.frame_id = frame
+        await self.store.set(st)
+        if frame == "none":
+            await message.answer("Ок, без рамки.")
+        else:
+            await message.answer(f"Ок, рамка: «{text}».")
+        await self._ask_versions(message, st)
+
     async def _ask_versions(self, message: Message, st: ChatState) -> None:
+        if not st.frame_id:
+            await self._ask_frame(message, st)
+            return
         paid = await self.credits_db.has_paid(st.chat_id)
         text = VERSIONS_PROMPT
         if not paid:
@@ -8176,6 +8232,13 @@ class BlastBotApp:
             f2_shape=(
                 str(st.f2_shape)
                 if (st.hook_enabled and st.hook_category == "object" and st.f2_shape)
+                else None
+            ),
+            # Рамка не привязана к хуку: шлём всегда, кроме явного отказа
+            # ("none") и ещё не пройденного шага ("").
+            frame_id=(
+                str(st.frame_id)
+                if (st.frame_id and st.frame_id != "none")
                 else None
             ),
             f1_sound_url=(
