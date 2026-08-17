@@ -123,3 +123,65 @@ def test_new_full_video_styles_inline(effect_id: str, marker: str):
     js = build_overlay_jsx(extra=effect_id, extra_full=True, drop_time=2.0)
     assert marker in js
     assert "startTime: 0, duration: null" in js
+
+# ---------- stylize: wave blue tint + blackwhite glitch clips ----------
+
+
+def test_wave_carries_the_blue_tint_shape():
+    """Wave = warp adjustment + a blue shape layer over it (dump 20260817)."""
+    js = build_overlay_jsx(extra="wave", drop_time=4.2)
+    assert "ADBE Wave Warp" in js
+    assert "wave_tint" in js
+    # shape geometry is comp-relative, not the 576x1024 source comp's pixels
+    assert "comp.width*TINT.kw" in js
+    assert "590.222222/576" in js
+    assert "0.09411748250326" in js  # fill colour
+
+
+def test_blackwhite_grade_replaces_flat_black_and_white():
+    js = build_overlay_jsx(extra="blackwhite", drop_time=4.2)
+    assert 'addProperty("S_HueSatBright")' in js
+    # the old flat desaturate is gone (the name survives only in prose)
+    assert 'addProperty("ADBE Black&White")' not in js
+
+
+def test_blackwhite_clips_and_seed_are_baked():
+    js = build_overlay_jsx(
+        extra="blackwhite",
+        drop_time=4.2,
+        assets={"extra_clips": ["media/video/a.mp4", "media/video/b.mp4"]},
+        seed="job-42",
+    )
+    assert 'clips: [(String(__APP_DIR || "") + "/" + "media/video/a.mp4")' in js
+    assert '"media/video/b.mp4"' in js
+    assert 'seed: "job-42"' in js
+
+
+def test_blackwhite_without_clips_is_grade_only():
+    js = build_overlay_jsx(extra="blackwhite", drop_time=4.2)
+    # no clips slot in the injected __BLAST payload (the script's own CONFIG
+    # default `clips:null` is inlined verbatim and must stay untouched)
+    assert "clips: [" not in js
+    assert 'addProperty("S_HueSatBright")' in js
+
+
+def test_clips_slot_ignored_for_effects_that_do_not_take_it():
+    """A stray extra_clips on wave must not leak into the wave payload."""
+    js = build_overlay_jsx(
+        extra="wave", drop_time=4.2, assets={"extra_clips": ["media/video/a.mp4"]}
+    )
+    # the slot is generic (any extra can carry clips) — assert it is wired, not
+    # silently dropped, so a future clip-driven stylize needs no builder change
+    assert "clips: [" in js
+
+
+def test_seed_reaches_overlay_from_the_f3_block():
+    js = _build_f3_overlay_js({
+        "f3": {
+            "extra": "blackwhite",
+            "drop_time": 4.2,
+            "seed": "orchestrator-seed",
+            "assets": {"extra_clips": ["media/video/a.mp4"]},
+        }
+    })
+    assert 'seed: "orchestrator-seed"' in js

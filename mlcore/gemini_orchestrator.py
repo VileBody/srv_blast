@@ -4942,6 +4942,8 @@ def build_all_via_gemini_one_call(
                 )
                 f3_block["assets"] = dict(_resolved.get("assets") or {})
                 f3_block["_media"] = list(_resolved.get("media") or [])
+                # тот же seed уезжает в overlay: порядок глитч-клипов blackwhite
+                f3_block["seed"] = str(_seed)
             except Exception:
                 logger.exception(
                     "f3.assets resolve failed — render without sound/logo (job=%s)",

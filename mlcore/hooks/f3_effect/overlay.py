@@ -129,12 +129,16 @@ def build_overlay_jsx(
     hook_extend: Optional[str] = None,
     drop_time: float,
     assets: Optional[Dict[str, Any]] = None,
+    seed: str = "f3",
     comp_var: str = "MAIN_COMP",
 ) -> str:
     """Return the injectable F3 JSX block. Empty selection => "".
 
     assets (all optional, job-relative media paths under media/...):
-      hook_sound, transition_sound, extra_sound, logo
+      hook_sound, transition_sound, extra_sound, logo — one relpath each;
+      extra_clips — a LIST of relpaths: video overlays the extra script tiles
+      across its window (blackwhite's glitches). `seed` fixes their order, so
+      re-running the same job lands the same sequence.
 
     comp_var is the JSX global holding the comp to decorate. It defaults to the
     footage render's MAIN_COMP; the 4:3 photo render passes PHOTO_COMP, whose
@@ -234,6 +238,20 @@ def build_overlay_jsx(
         # absolute path on node = __APP_DIR + "/" + relpath
         return f'(String(__APP_DIR || "") + "/" + {_js(rel)})'
 
+    def _asset_list_js(slot: str) -> Optional[str]:
+        """JS array literal of absolute paths for a multi-file slot (extra_clips)."""
+        rels = assets.get(slot)
+        if not isinstance(rels, (list, tuple)) or not rels:
+            return None
+        items = []
+        for rel in rels:
+            rel = str(rel or "").strip().strip("/")
+            if rel:
+                items.append(f'(String(__APP_DIR || "") + "/" + {_js(rel)})')
+        if not items:
+            return None
+        return "[" + ", ".join(items) + "]"
+
     # ---------------- HOOK ----------------
     if h_eff:
         base_dur = float(h_eff.get("default_duration") or 0.5)
@@ -282,10 +300,14 @@ def build_overlay_jsx(
     # (e.g. xerox) runs over the ENTIRE video to bump uniqueness.
     if e_eff:
         _extra_dur_js = "null" if extra_full else "(__f3_drop>0?__f3_drop:null)"
+        # Video overlays for the grade (blackwhite glitches). Absent slot => the
+        # script sees clips:null and renders the grade alone.
+        _clips_js = _asset_list_js("extra_clips")
+        _clips_kv = f", clips: {_clips_js}, seed: {_js(str(seed))}" if _clips_js else ""
         parts.append("  /* -- EXTRA -- */")
         parts.append(
             "  $.global.__BLAST = { targetCompName: __f3_name, dropTime: __f3_drop, "
-            f"startTime: 0, duration: {_extra_dur_js}, place: __f3_place, cuts: __f3_cuts, placeRef: __f3_place_ref{_fx_kv} }};"
+            f"startTime: 0, duration: {_extra_dur_js}, place: __f3_place, cuts: __f3_cuts, placeRef: __f3_place_ref{_fx_kv}{_clips_kv} }};"
         )
         parts.append("  (function(){")
         parts.append(_read_script(e_eff["script"]))

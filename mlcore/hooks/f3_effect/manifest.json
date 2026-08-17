@@ -55,6 +55,11 @@
     "user_sound": { "handled": false, "note": "Юзерский звук — отдельный формат, в этом разделе не трогаем." }
   },
 
+  "clip_pools": {
+    "_note": "Видео-пулы для эффектов, которые кладут видеоряд ПОВЕРХ футажа (не звук). Пути — S3-keys относительно FX_ASSETS_S3_PREFIX, доставка тем же media[]-транспортом.",
+    "glitch_video": "video/glitch"
+  },
+
   "effects": [
     { "id": "hook_light", "label": "Hook Light", "group": "hook", "apply_mode": "adjustment",
       "script": "hooks/rebuild_light.jsx", "needs_aep": false, "needs_plugin": ["Sapphire"],
@@ -138,9 +143,10 @@
       "desc": "Старая камера: Unsharp + Mosaic + Gaussian + Posterize + Transform + S_GlowEdges." },
 
     { "id": "blackwhite", "label": "Black & White", "group": "extra", "apply_mode": "adjustment",
-      "script": "extra/rebuild_blackwhite.jsx", "needs_aep": false, "needs_plugin": [],
+      "script": "extra/rebuild_blackwhite.jsx", "needs_aep": false, "needs_plugin": ["Sapphire"],
       "sound": { "pool": null, "optional": true }, "default_duration": null, "placement": "below:Текст",
-      "desc": "Чёрно-белая стилизация с холодным оттенком." },
+      "clips": { "pool": "glitch_video", "count": 4 },
+      "desc": "ЧБ-грейд ш3 (S_HueSatBright: Sat 0 / Bright .5 / Offset Darks -.5) + глитч-клипы поверх футажа, тайлятся по окну в seeded-random порядке. Без FX_ASSETS_S3_BUCKET — только грейд." },
 
     { "id": "crystal_glow", "label": "Crystal Glow", "group": "extra", "apply_mode": "adjustment",
       "script": "extra/rebuild_crystal_glow.jsx", "needs_aep": false, "needs_plugin": ["Sapphire"],

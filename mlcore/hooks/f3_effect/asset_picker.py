@@ -49,6 +49,8 @@ _F3_DIR = Path(__file__).resolve().parent
 _MANIFEST_PATH = _F3_DIR / "manifest.json"
 _AUDIO_EXTS = {".wav", ".mp3", ".m4a", ".aac", ".flac", ".aif", ".aiff", ".ogg"}
 _IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
+# Видео-оверлеи (глитчи для blackwhite) — тот же media[]-транспорт, что звук/лого.
+_VIDEO_EXTS = {".mp4", ".mov", ".webm", ".mkv"}
 
 
 def _asset_root() -> Tuple[str, str]:
@@ -110,7 +112,7 @@ def _list_pool_cached(bucket: str, root_prefix: str, pool_key: str) -> Tuple[Tup
                 continue
             file_name = key.rsplit("/", 1)[-1]
             ext = Path(file_name).suffix.lower()
-            if ext not in _AUDIO_EXTS and ext not in _IMAGE_EXTS:
+            if ext not in _AUDIO_EXTS and ext not in _IMAGE_EXTS and ext not in _VIDEO_EXTS:
                 continue
             out.append((key, file_name))
         if not resp.get("IsTruncated"):
@@ -136,7 +138,12 @@ def _s3_url(bucket: str, key: str) -> str:
 
 def _slot_relpath(file_name: str) -> str:
     ext = Path(file_name).suffix.lower()
-    sub = "audio" if ext in _AUDIO_EXTS else "img"
+    if ext in _AUDIO_EXTS:
+        sub = "audio"
+    elif ext in _VIDEO_EXTS:
+        sub = "video"
+    else:
+        sub = "img"
     return f"media/{sub}/{file_name}"
 
 
@@ -158,6 +165,32 @@ def _pick_pool(pool_key: str, *, seed: str) -> Optional[Dict[str, str]]:
     }
 
 
+def _pick_pool_many(pool_key: str, *, count: int, seed: str) -> List[Dict[str, str]]:
+    """Deterministically pick up to `count` DISTINCT files from a pool prefix.
+
+    Used for clip pools (blackwhite glitch overlays), where the effect needs a
+    handful of sources to tile, not a single file. Pool smaller than `count` =>
+    everything it has (the AE side cycles through whatever it gets).
+    """
+    bucket, _ = _asset_root()
+    if not bucket or count <= 0:
+        return []
+    pool = _list_pool(pool_key)
+    if not pool:
+        LOGGER.warning("f3.asset_picker clip pool empty pool=%s", pool_key)
+        return []
+    rnd = random.Random(seed)
+    picked = rnd.sample(list(pool), min(count, len(pool)))
+    return [
+        {
+            "s3_url": _s3_url(bucket, key),
+            "file_name": file_name,
+            "relpath": _slot_relpath(file_name),
+        }
+        for key, file_name in picked
+    ]
+
+
 def _pick_file(rel_key: str) -> Optional[Dict[str, str]]:
     """Resolve a specific S3 key (no listing). For singletons like
     sounds/light_sound/myinstants.mp3 or logo/group_1245.png. Returns None if
@@ -171,7 +204,7 @@ def _pick_file(rel_key: str) -> Optional[Dict[str, str]]:
     full_key = (root_prefix + "/" + cleaned).strip("/")
     file_name = full_key.rsplit("/", 1)[-1]
     ext = Path(file_name).suffix.lower()
-    if not file_name or (ext not in _AUDIO_EXTS and ext not in _IMAGE_EXTS):
+    if not file_name or (ext not in _AUDIO_EXTS and ext not in _IMAGE_EXTS and ext not in _VIDEO_EXTS):
         return None
     return {
         "s3_url": _s3_url(bucket, full_key),
@@ -212,10 +245,11 @@ def resolve_assets(
         if isinstance(e, dict) and e.get("id")
     }
     pools = (manifest.get("sounds") or {}).get("pools") or {}
+    clip_pools = manifest.get("clip_pools") or {}
     branding = manifest.get("branding") or {}
     logo_key = str(branding.get("logo_default") or "").strip()
 
-    assets: Dict[str, str] = {}
+    assets: Dict[str, Any] = {}
     media: List[Dict[str, str]] = []
     seen_relpath: set[str] = set()
 
@@ -250,9 +284,46 @@ def resolve_assets(
             return
         _add(slot, _pick_pool(str(pool_key), seed=f"{seed}:{seed_suffix}"))
 
+    def _resolve_clips(slot: str, eff_id: Optional[str], seed_suffix: str) -> None:
+        """Video-clip pool for effects that overlay footage (blackwhite glitches).
+
+        Manifest shape:  "clips": {"pool": "<clip_pools key>", "count": N}
+        Result: assets[slot] = [relpath, ...] (list, unlike the single-file slots).
+        """
+        if not eff_id:
+            return
+        eff = effects.get(eff_id)
+        if not eff:
+            return
+        spec = eff.get("clips") or {}
+        pool_name = str(spec.get("pool") or "").strip()
+        if not pool_name:
+            return
+        pool_key = clip_pools.get(pool_name)
+        if not pool_key:
+            LOGGER.warning("f3.asset_picker unknown clip pool name=%s (slot=%s)", pool_name, slot)
+            return
+        try:
+            count = int(spec.get("count") or 0)
+        except (TypeError, ValueError):
+            LOGGER.warning("f3.asset_picker bad clip count for %s: %r", eff_id, spec.get("count"))
+            return
+        picked = _pick_pool_many(str(pool_key), count=count, seed=f"{seed}:{seed_suffix}")
+        rels: List[str] = []
+        for p in picked:
+            rel = p["relpath"]
+            rels.append(rel)
+            if rel in seen_relpath:
+                continue
+            seen_relpath.add(rel)
+            media.append({"url": p["s3_url"], "relpath": rel})
+        if rels:
+            assets[slot] = rels
+
     _resolve_sound("hook_sound", hook, "hook")
     _resolve_sound("transition_sound", transition, "trans")
     _resolve_sound("extra_sound", extra, "extra")
+    _resolve_clips("extra_clips", extra, "extra_clips")
 
     # Logo: only when the chosen hook needs a stamp (branding=true/built_in).
     if hook:

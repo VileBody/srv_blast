@@ -445,6 +445,9 @@ def _build_f3_overlay_js(full_edit_config: Dict[str, Any], *, comp_var: str = "M
     hook_extend = (str(f3_block.get("hook_extend") or "").strip() or None)
     extra_full = bool(f3_block.get("extra_full"))
     assets = f3_block.get("assets") if isinstance(f3_block.get("assets"), dict) else {}
+    # seed фиксирует порядок мульти-клип слотов (глитчи blackwhite). Оркестратор
+    # кладёт тот же seed, что уходит в asset_picker; нет блока — стабильная строка.
+    seed = str(f3_block.get("seed") or "f3")
 
     from mlcore.hooks.f3_effect.overlay import build_overlay_jsx
 
@@ -456,6 +459,7 @@ def _build_f3_overlay_js(full_edit_config: Dict[str, Any], *, comp_var: str = "M
         hook_extend=hook_extend,
         drop_time=float(drop_time),
         assets=assets,
+        seed=seed,
         comp_var=comp_var,
     )
     LOGGER.info(
