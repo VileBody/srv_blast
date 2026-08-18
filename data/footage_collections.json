@@ -16,7 +16,7 @@
       "label": "Бойцовский клуб",
       "description": "тёмная агрессия, распад, подвалы и неон",
       "themes": ["self_destruction_minor", "aggression_minor", "cyber_alienation_minor", "urban_blocks_minor"],
-      "formats": ["wide", "square"]
+      "formats": ["vertical"]
     },
     {
       "kind": "films",
@@ -24,7 +24,7 @@
       "label": "Брат",
       "description": "90-е, серый город, холодная решимость",
       "themes": ["aggression_minor", "urban_blocks_minor", "nostalgia_city_minor", "youth_rebellion_major"],
-      "formats": ["wide", "square"]
+      "formats": ["vertical"]
     },
     {
       "kind": "films",
@@ -32,7 +32,7 @@
       "label": "Бумер",
       "description": "дорога, трасса, пацанская романтика 2000-х",
       "themes": ["nostalgia_city_minor", "youth_rebellion_major", "urban_blocks_minor", "aggression_minor"],
-      "formats": ["wide", "square"]
+      "formats": ["vertical"]
     },
     {
       "kind": "films",
@@ -40,7 +40,7 @@
       "label": "Великий Гэтсби",
       "description": "роскошь, вечеринки, недостижимая любовь",
       "themes": ["adrenaline_flex_major", "epic_love_major", "nightlife_electro_minor", "romance_major"],
-      "formats": ["wide", "square"]
+      "formats": ["vertical"]
     },
     {
       "kind": "films",
@@ -48,7 +48,7 @@
       "label": "Волк с Уолл-стрит",
       "description": "деньги, кураж, безудержный подъём",
       "themes": ["hustle_minor", "adrenaline_flex_major", "motivation_major", "sex_major"],
-      "formats": ["wide", "square"]
+      "formats": ["vertical"]
     },
     {
       "kind": "films",
@@ -56,7 +56,7 @@
       "label": "До встречи с тобой",
       "description": "светлая нежность и расставание",
       "themes": ["romance_major", "epic_love_major", "heartbreak_minor"],
-      "formats": ["wide", "square"]
+      "formats": ["vertical"]
     },
     {
       "kind": "films",
@@ -64,7 +64,7 @@
       "label": "Дом Gucci",
       "description": "богатство, интриги, ревность",
       "themes": ["betrayal_minor", "jealousy_minor", "adrenaline_flex_major", "sex_major"],
-      "formats": ["wide", "square"]
+      "formats": ["vertical"]
     },
     {
       "kind": "films",
@@ -72,7 +72,7 @@
       "label": "Дьявол носит Прада",
       "description": "карьера, стиль, город и амбиции",
       "themes": ["motivation_major", "hustle_minor", "adrenaline_flex_major"],
-      "formats": ["wide", "square"]
+      "formats": ["vertical"]
     },
     {
       "kind": "films",
@@ -80,7 +80,7 @@
       "label": "Жмурки",
       "description": "чёрный юмор, криминал, 90-е",
       "themes": ["aggression_minor", "urban_blocks_minor", "youth_rebellion_major"],
-      "formats": ["wide", "square"]
+      "formats": ["vertical"]
     },
     {
       "kind": "films",
@@ -88,7 +88,7 @@
       "label": "Проект Х",
       "description": "вечеринка без тормозов, молодость",
       "themes": ["youth_rebellion_major", "nightlife_electro_minor", "adrenaline_flex_major"],
-      "formats": ["wide", "square"]
+      "formats": ["vertical"]
     },
     {
       "kind": "films",
@@ -96,7 +96,7 @@
       "label": "Реквием по мечте",
       "description": "распад, зависимость, ускользающая мечта",
       "themes": ["self_destruction_minor", "depression_minor", "escapism_dreams_minor", "loneliness_isolation_minor"],
-      "formats": ["wide", "square"]
+      "formats": ["vertical"]
     },
     {
       "kind": "films",
@@ -104,7 +104,7 @@
       "label": "Токийский дрифт",
       "description": "ночные гонки, дрифт, огни Токио",
       "themes": ["adrenaline_flex_major", "youth_rebellion_major", "nostalgia_city_minor", "motivation_major"],
-      "formats": ["wide", "square"]
+      "formats": ["vertical"]
     }
   ]
 }

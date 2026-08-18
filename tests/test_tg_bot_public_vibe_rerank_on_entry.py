@@ -51,7 +51,12 @@ def test_a_failed_refresh_keeps_the_stored_shortlist(bot: str) -> None:
     assert "stored_ids = list(st.vibe_ranked_ids or [])" in src
     assert "keeping_stored" in src
     # ...but a stored list that is genuinely stale must NOT be resurrected
-    assert "if stored_ids and not _stale_vibe_shortlist_reason(stored_ids, st.bg_mode):" in src
+    # The plane is part of the check: a films shortlist is stale for a 9:16
+    # job and vice versa, and the two catalogs share no bucket ids.
+    assert (
+        "if stored_ids and not _stale_vibe_shortlist_reason("
+        "stored_ids, st.bg_mode, st.footage_kind):"
+    ) in src
 
 
 @pytest.mark.parametrize("bot", BOTS)
