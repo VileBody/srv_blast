@@ -50,6 +50,7 @@ class OrchestratorClient:
         variants_total: int | None = None,
         maintenance_bypass_token: str | None = None,
         rotation_theme: str = "",
+        render_preset: str = "vertical",
         rotation_tags_group: str = "",
         bg_mode: str = "footage",
         bg_solid_color: str = "",
@@ -109,6 +110,9 @@ class OrchestratorClient:
             "variants_total": int(variants_total) if variants_total is not None else None,
             "maintenance_bypass_token": str(maintenance_bypass_token or "") or None,
             "rotation_theme": str(rotation_theme or "").strip(),
+            # Output geometry. Orthogonal to bg_mode: this says what SHAPE
+            # the frame is. "vertical" keeps every existing caller as-is.
+            "render_preset": str(render_preset or "vertical").strip() or "vertical",
             "rotation_tags_group": str(rotation_tags_group or "").strip(),
             "bg_mode": str(bg_mode or "footage").strip() or "footage",
             "bg_solid_color": str(bg_solid_color or "").strip(),

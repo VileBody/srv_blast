@@ -361,6 +361,26 @@ def _pool_for_footage_kind(kind: str) -> str:
     return _POOL_BY_FOOTAGE_KIND.get(str(kind or "").strip(), "vibes")
 
 
+def _render_preset_for_bucket(theme: str, tags_group: str) -> str:
+    """Output geometry the chosen bucket asks for.
+
+    Only collections carry one — a 16:9 group delivered into a vertical frame
+    is centre-cropped to a third of its width, which is not what anyone picking
+    "16:9" is asking for. Everything else stays vertical, which is also the
+    fallback whenever the catalog cannot be read: a wrong geometry is far worse
+    than the historical one.
+    """
+    if str(theme or "").strip() != "collection":
+        return "vertical"
+    try:
+        from mlcore.footage_collection_catalog import find_collection
+
+        return str(find_collection(str(tags_group or "").strip()).default_format)
+    except Exception:
+        log.exception("render_preset_lookup_failed group=%s — falling back to vertical", tags_group)
+        return "vertical"
+
+
 def _live_bucket_ids(bg_mode: str, footage_kind: str = FOOTAGE_KIND_VERTICAL) -> set:
     """Bucket ids the CURRENT catalog offers for this plane.
 
@@ -3788,7 +3808,42 @@ class BlastBotApp:
             except Exception:
                 pass
 
+    def _selected_bucket_slot(self, st: ChatState) -> tuple:
+        """(theme, tags_group) of the bucket this chat would enqueue on.
+
+        Read from the SELECTION rather than from footage_kind: a multi-select
+        is single-plane, so the first pick answers for the batch, and an empty
+        selection means the legacy artist path, which is vertical.
+        """
+        selected = [s for s in (getattr(st, "vibe_selected_ids", None) or []) if ":" in s]
+        if not selected:
+            return "", ""
+        try:
+            from mlcore.footage_batch_distribution import resolve_bucket_slot
+
+            return resolve_bucket_slot(selected[0], catalog=[])
+        except Exception:
+            return "", ""
+
     async def _ask_hook_choice(self, message: Message, st: ChatState) -> None:
+        # Every hook overlay is drawn against a 1080x1920 frame with baked
+        # coordinates, and the API refuses the combination outright — so on a
+        # horizontally rendered plane the step is skipped rather than offered
+        # and then rejected at enqueue, after the user has already chosen.
+        if _render_preset_for_bucket(*self._selected_bucket_slot(st)) != "vertical":
+            st.hook_enabled = False
+            st.hook_drop_t = None
+            st.hook_category = ""
+            st.hook_device = ""
+            st.f2_shape = ""
+            st.f1_sound_url = ""
+            st.f1_sound_text = ""
+            st.battery_mode = False
+            st.battery_cases = []
+            st.battery_f4_drop = None
+            await self.store.set(st)
+            await self._ask_versions(message, st)
+            return
         st.stage = STAGE_WAIT_HOOK_CHOICE
         await self.store.set(st)
         # If the background analysis exists, hint at it; otherwise stay neutral.
@@ -5553,6 +5608,7 @@ class BlastBotApp:
             variants_total=int(versions_total),
             rotation_theme=rotation_theme,
             rotation_tags_group=rotation_group,
+            render_preset=_render_preset_for_bucket(rotation_theme, rotation_group),
             bg_mode=str(st.bg_mode or "footage"),
             bg_solid_color=str(st.bg_solid_color or ""),
             hook_enabled=bool(st.hook_enabled),

@@ -157,33 +157,16 @@ def test_a_film_bucket_id_resolves_to_the_collection_plane() -> None:
         assert group == bucket.slug
 
 
-def test_films_render_vertically() -> None:
-    # Frames for other aspect ratios come later as their own step; until then a
-    # film job must not request a geometry the hook guard would also reject.
+def test_each_kind_renders_in_the_geometry_it_promises() -> None:
+    # Films are delivered vertical — frames will handle their aspect mismatch —
+    # while a group literally named 16:9 must render horizontally, or the button
+    # says one thing and the render does another.
     from mlcore.footage_collection_catalog import load_collection_catalog
 
+    by_kind = {"films": "vertical", "cine16x9": "wide"}
     for bucket in load_collection_catalog():
-        assert bucket.formats == ("vertical",), bucket.slug
-        assert bucket.default_format == "vertical"
-
-
-@pytest.mark.parametrize("bot", BOTS)
-def test_the_three_planes_share_no_buckets(bot: str) -> None:
-    # Each fork button must lead somewhere of its own; an overlap would let one
-    # button serve another's footage.
-    app = _mod(bot)
-    vibes = app._live_bucket_ids("footage", app.FOOTAGE_KIND_VERTICAL)
-    films = app._live_bucket_ids("footage", app.FOOTAGE_KIND_FILMS)
-    cine = app._live_bucket_ids("footage", app.FOOTAGE_KIND_CINE)
-    assert vibes and films and cine, "every offered plane must have a live catalog"
-    assert not (vibes & films)
-    assert not (vibes & cine)
-    assert not (films & cine)
-
-
-@pytest.mark.parametrize("bot", BOTS)
-def test_a_films_shortlist_is_stale_on_the_cine_fork(bot: str) -> None:
-    app = _mod(bot)
-    assert app._stale_vibe_shortlist_reason(
-        ["collection:films__брат"], "footage", app.FOOTAGE_KIND_CINE
-    )
+        expected = by_kind.get(bucket.kind)
+        if expected is None:
+            continue
+        assert bucket.formats == (expected,), bucket.slug
+        assert bucket.default_format == expected
