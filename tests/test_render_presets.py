@@ -72,13 +72,22 @@ def test_subtitles_are_centred_in_the_frame(name: str) -> None:
     ]
 
 
-def test_only_a_wider_than_1080_frame_collapses_the_nested_comp() -> None:
-    # Collapsing exists to stop the 1080-wide text comp clipping wide text inside
-    # a wider frame. At 1080 the frame is the limit anyway, so it stays off and
-    # vertical/square keep the exact rasterization they always had.
-    assert get_preset("wide").collapse_text_precomp is True
-    assert get_preset("vertical").collapse_text_precomp is False
-    assert get_preset("square").collapse_text_precomp is False
+def test_no_geometry_collapses_the_nested_text_comp() -> None:
+    """Collapsing dissolves the precomp's isolation, and that costs the footage.
+
+    Adjustment layers inside a collapsed comp stop being confined to it and apply
+    to everything beneath them in the parent. On the first 16:9 render the jakson
+    text animators squeezed the FOOTAGE into the text comp's 1080x1080 bounds the
+    moment a subtitle appeared.
+
+    Clipping wide text at 1080 is what production already does: in the vertical
+    frame the comp is exactly as wide as the picture. Keeping that identical in a
+    wider frame costs nothing that has ever existed.
+    """
+    from app.render_presets import get_preset
+
+    for name in ("vertical", "wide", "square"):
+        assert get_preset(name).collapse_text_precomp is False, name
 
 
 def _footage_cfg(comp_w: int, comp_h: int) -> dict:
@@ -154,3 +163,4 @@ def test_square_text_behaves_exactly_like_vertical() -> None:
     assert sq["anchor"] == ver["anchor"]
     assert sq["scale"] == ver["scale"]
     assert sq["collapseTransformation"] == ver["collapseTransformation"]
+    assert sq["collapseTransformation"] is False
