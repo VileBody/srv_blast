@@ -36,8 +36,8 @@ export function FullscreenZone({
 
   const columns = (
     <>
-      <div className="flex w-[390px] shrink-0 flex-col">{left}</div>
-      <div className="flex w-[373px] shrink-0 flex-col">{right}</div>
+      <div className="flex w-[390px] max-w-full shrink-0 flex-col">{left}</div>
+      <div className="flex w-[373px] max-w-full shrink-0 flex-col">{right}</div>
     </>
   );
 
@@ -48,7 +48,7 @@ export function FullscreenZone({
      * Фигмовский блок 783px остаётся центрированным: контролы не растягиваются
      * и не меняют размер на 1920/2560/2780, растёт только защитная зона вокруг них.
      */
-    <div ref={frameRef} className={`pointer-events-auto fixed inset-y-[var(--rail-pad-y)] left-[calc(var(--sidebar-w)_+_var(--space-6))] right-space-6 z-[55] rounded-r25 border border-accent-light bg-[rgba(5,1,15,0.9)] backdrop-blur-[50px] max-lg:inset-0 max-lg:rounded-none ${responsiveScale ? 'flex items-center justify-center overflow-hidden' : 'grid place-items-center overflow-auto subtle-scroll'}`}>
+    <div ref={frameRef} className={`pointer-events-auto fixed inset-y-[var(--rail-pad-y)] left-[calc(var(--sidebar-w)_+_var(--space-6))] right-space-6 z-[55] rounded-r25 border border-accent-light bg-[rgba(5,1,15,0.9)] backdrop-blur-[50px] max-lg:inset-0 max-lg:rounded-none ${responsiveScale ? 'flex items-center justify-center overflow-hidden max-lg:block max-lg:overflow-y-auto' : 'grid place-items-center overflow-auto subtle-scroll'}`}>
       {/* подсказка «Свернуть» — тот же стиль, что «Развернуть»: подложка иконки = высоте подсказки (37px) */}
       <button
         type="button"
@@ -62,11 +62,16 @@ export function FullscreenZone({
 
       {/* 80px сверху/снизу дают точную композицию 905px; на низком окне зона скроллится, а не обрезает колонки. */}
       {responsiveScale ? (
-        <div className="relative shrink-0" style={{ width: 783 * scale, height: 745 * scale }}>
-          <div className="absolute left-0 top-0 flex h-[745px] w-[783px] gap-[20px]" style={{ transform: `scale(${scale})`, transformOrigin: 'top left' }}>
+        <>
+          <div className="relative shrink-0 max-lg:hidden" style={{ width: 783 * scale, height: 745 * scale }}>
+            <div className="absolute left-0 top-0 flex h-[745px] w-[783px] gap-[20px]" style={{ transform: `scale(${scale})`, transformOrigin: 'top left' }}>
+              {columns}
+            </div>
+          </div>
+          <div className="no-scrollbar hidden min-h-full w-full flex-col items-center gap-[20px] overflow-y-auto px-[8px] pb-[40px] pt-[88px] max-lg:flex">
             {columns}
           </div>
-        </div>
+        </>
       ) : (
         // grid place-items-center центрирует по обеим осям; my-[80px] — минимальный зазор,
         // чтобы на низком окне зона скроллилась, а не обрезала колонки (Figma: поля 80).

@@ -111,8 +111,14 @@ class RuntimeSettings:
             "TIKTOK_CLIENT_SECRET",
             "TIKTOK_REDIRECT_URI",
             "TIKTOK_TOKEN_KEY",
+            "TIKTOK_UPLOAD_SOURCE",
         ):
             _required(name)
+        if _required("TIKTOK_UPLOAD_SOURCE").upper() != "FILE_UPLOAD":
+            raise RuntimeError(
+                "web_runtime_config: production requires TIKTOK_UPLOAD_SOURCE=FILE_UPLOAD "
+                "until a Blast-owned media domain is verified by TikTok"
+            )
         for origin in self.cors_origins:
             if not origin.startswith("https://"):
                 raise RuntimeError(

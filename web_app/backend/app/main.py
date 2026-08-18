@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import secrets
+import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -20,6 +22,9 @@ from . import mock_store as store
 from . import analytics, auth_store, fraud_guard, google_auth, persistence, security, telegram_bot
 from . import tiktok_api, tiktok_config, tiktok_token_store
 from .runtime import SETTINGS as RUNTIME
+
+
+logger = logging.getLogger(__name__)
 
 
 def _production_backend():
@@ -278,8 +283,11 @@ class TiktokPostPayload(BaseModel):
     videoId: str
     caption: str = Field(default="", max_length=2200)
     privacy: str
-    comments: bool = True
-    duet: bool = True
+    comments: bool = False
+    duet: bool = False
+    stitch: bool = False
+    brandOrganic: bool = False
+    brandContent: bool = False
     cover: bool = False
     coverFrame: int | None = Field(default=None, ge=0, le=7)
     coverTimestampMs: int = Field(default=0, ge=0)
@@ -1312,44 +1320,91 @@ def api_tiktok_post(payload: TiktokPostPayload) -> dict[str, Any]:
     if not video_url:
         raise HTTPException(status_code=409, detail="Rendered video file is unavailable")
 
-    cfg = tiktok_config.load()
-    if not cfg.configured:
-        publish_id = f"mock_tt_{uuid4().hex[:8]}"
-        video.update({"tiktokPublishId": publish_id, "tiktokStatus": "PUBLISH_COMPLETE", "postedAt": datetime.now(timezone.utc).isoformat()})
-        analytics.track("video_posted", store.current_user_id(), {"videoId": payload.videoId, "projectId": payload.projectId, "mock": True})
-        return {"ok": True, "status": "PUBLISH_COMPLETE", "publishId": publish_id, "mock": True}
-
     privacy = {
         "all": "PUBLIC_TO_EVERYONE",
+        "followers": "FOLLOWER_OF_CREATOR",
         "friends": "MUTUAL_FOLLOW_FRIENDS",
         "self": "SELF_ONLY",
     }.get(payload.privacy)
     if not privacy:
         raise HTTPException(status_code=422, detail="Unsupported TikTok privacy level")
-    token = _access_token()
+    cfg = tiktok_config.load()
     try:
-        creator = tiktok_api.query_creator_info(token)
-        allowed = creator.get("privacy_level_options") or []
-        if allowed and privacy not in allowed:
-            raise HTTPException(status_code=422, detail="The selected privacy level is unavailable for this TikTok account")
-        post_info = {
-            "title": payload.caption,
-            "privacy_level": privacy,
-            "disable_duet": not payload.duet,
-            "disable_stitch": True,
-            "disable_comment": not payload.comments,
-            "video_cover_timestamp_ms": payload.coverTimestampMs,
-            "brand_content_toggle": False,
-            "brand_organic_toggle": False,
-            "is_aigc": True,
-        }
-        if str(video_url).startswith("https://"):
+        if cfg.configured:
+            token = _access_token()
+            creator = tiktok_api.query_creator_info(token)
+        else:
+            token = ""
+            creator = {
+                "privacy_level_options": [
+                    "PUBLIC_TO_EVERYONE",
+                    "MUTUAL_FOLLOW_FRIENDS",
+                    "SELF_ONLY",
+                ],
+                "comment_disabled": False,
+                "duet_disabled": False,
+                "stitch_disabled": False,
+            }
+        tiktok_api.validate_video_post_settings(
+            creator,
+            privacy_level=privacy,
+            comments=payload.comments,
+            duet=payload.duet,
+            stitch=payload.stitch,
+            brand_content=payload.brandContent,
+        )
+        post_info = tiktok_api.build_video_post_info(
+            title=payload.caption,
+            privacy_level=privacy,
+            comments=payload.comments,
+            duet=payload.duet,
+            stitch=payload.stitch,
+            cover_timestamp_ms=payload.coverTimestampMs,
+            brand_content=payload.brandContent,
+            brand_organic=payload.brandOrganic,
+        )
+        # Do not log captions or media URLs. These booleans are enough to audit
+        # the Content Posting payload, including the deliberate absence of AIGC.
+        logger.info(
+            "tiktok_post_settings privacy=%s disable_comment=%s disable_duet=%s "
+            "disable_stitch=%s brand_content=%s brand_organic=%s is_aigc_sent=%s",
+            privacy,
+            post_info["disable_comment"],
+            post_info["disable_duet"],
+            post_info["disable_stitch"],
+            post_info["brand_content_toggle"],
+            post_info["brand_organic_toggle"],
+            "is_aigc" in post_info,
+        )
+        if not cfg.configured:
+            publish_id = f"mock_tt_{uuid4().hex[:8]}"
+            video.update({"tiktokPublishId": publish_id, "tiktokStatus": "PUBLISH_COMPLETE", "postedAt": datetime.now(timezone.utc).isoformat()})
+            analytics.track("video_posted", store.current_user_id(), {"videoId": payload.videoId, "projectId": payload.projectId, "mock": True})
+            return {"ok": True, "status": "PUBLISH_COMPLETE", "publishId": publish_id, "mock": True}
+
+        if cfg.upload_source == "PULL_FROM_URL":
             result = tiktok_api.init_direct_post_pull(token, post_info, str(video_url))
         elif str(video_url).startswith("/static/"):
             local_path = STATIC_DIR / str(video_url).removeprefix("/static/")
             result = tiktok_api.init_direct_post_file(token, post_info, local_path)
+        elif RUNTIME.production:
+            with tempfile.TemporaryDirectory(prefix="blast-tiktok-") as temp_dir:
+                local_path = Path(temp_dir) / f"{payload.videoId}.mp4"
+                try:
+                    _production_backend().download_video(str(video_url), local_path)
+                except Exception as exc:
+                    raise _production_error(exc) from exc
+                result = tiktok_api.init_direct_post_file(token, post_info, local_path)
         else:
-            raise HTTPException(status_code=422, detail="Video must be an HTTPS URL or a local rendered MP4")
+            raise HTTPException(
+                status_code=422,
+                detail="FILE_UPLOAD requires a local rendered MP4 outside production",
+            )
+    except tiktok_api.TikTokPostValidationError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": exc.code, "message": str(exc)},
+        ) from exc
     except tiktok_api.TikTokApiError as exc:
         raise HTTPException(status_code=exc.status or 502, detail={"code": exc.code, "message": str(exc)}) from exc
     publish_id = result.get("publish_id")
@@ -1476,7 +1531,12 @@ def api_tiktok_disconnect() -> dict[str, Any]:
 def api_tiktok_status() -> dict[str, Any]:
     """Готовы ли ключи. Фронту нужно, чтобы честно сказать «идёт мок-подключение»."""
     cfg = tiktok_config.load()
-    return {"configured": cfg.configured, "scopes": cfg.scopes, "redirectUri": cfg.redirect_uri}
+    return {
+        "configured": cfg.configured,
+        "scopes": cfg.scopes,
+        "redirectUri": cfg.redirect_uri,
+        "uploadSource": cfg.upload_source,
+    }
 
 
 @app.patch("/api/profile", tags=["profile"])

@@ -69,6 +69,7 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 | `GOOGLE_CLIENT_SECRET` | оттуда же |
 | `GOOGLE_REDIRECT_URI` | должен совпадать с консолью буква в букву; Google требует https везде, кроме `http://localhost` |
 | `APP_URL` | куда вернуть пользователя после входа |
+| `TIKTOK_UPLOAD_SOURCE` | `FILE_UPLOAD` в production; `PULL_FROM_URL` допустим только после верификации собственного media-домена в TikTok |
 | `TELEGRAM_BOT_TOKEN` | без него бот-верификация выключена, работает дев-фолбэк |
 | `BLAST_GEO_HEADER` | заголовок прокси со страной, по умолчанию `CF-IPCountry` |
 | `BLAST_GOOGLE_BLOCKED_COUNTRIES` | где не предлагать Google, по умолчанию `RU` |

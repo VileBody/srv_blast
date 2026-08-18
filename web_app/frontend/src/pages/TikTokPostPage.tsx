@@ -19,25 +19,33 @@ import { useWizardStore } from '../stores/wizardStore';
  */
 
 type PostStage = 'draft' | 'uploading' | 'posted';
-type Privacy = 'all' | 'friends' | 'self';
+type Privacy = 'all' | 'followers' | 'friends' | 'self';
 
-const PRIVACY_ORDER: Privacy[] = ['all', 'friends', 'self'];
+const PRIVACY_ORDER: Privacy[] = ['all', 'followers', 'friends', 'self'];
+const PRIVACY_API_VALUE: Record<Privacy, string> = {
+  all: 'PUBLIC_TO_EVERYONE',
+  followers: 'FOLLOWER_OF_CREATOR',
+  friends: 'MUTUAL_FOLLOW_FRIENDS',
+  self: 'SELF_ONLY'
+};
 /** Пока кнопка «Видео в Тик-Токе» держит статус, потом сменяется на «к следующему видео» (W56→W57) */
 const POSTED_STATUS_MS = 2500;
 const COVER_FRAME_COUNT = 8;
 
 /** Тумблер 24×12 (Figma 764:3856) */
-function MiniToggle({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label: string }) {
+function MiniToggle({ checked, onChange, label, disabled = false }: { checked: boolean; onChange: (v: boolean) => void; label: string; disabled?: boolean }) {
   return (
     <button
       type="button"
       role="switch"
       aria-checked={checked}
       aria-label={label}
+      disabled={disabled}
       onClick={() => onChange(!checked)}
       className={cn(
         'relative h-[12px] w-[24px] shrink-0 rounded-full transition-colors',
-        checked ? 'bg-accent-light' : 'bg-[rgba(246,245,253,0.3)]'
+        checked ? 'bg-accent-light' : 'bg-[rgba(246,245,253,0.3)]',
+        disabled && 'cursor-not-allowed opacity-50'
       )}
     >
       <span className={cn('absolute top-[1px] h-[10px] w-[10px] rounded-full bg-[#f6f5fd] transition-all', checked ? 'left-[13px]' : 'left-[1px]')} />
@@ -61,14 +69,15 @@ function PrivacyRadio({ checked }: { checked: boolean }) {
 }
 
 /** Чекбокс прав (Figma 764:3892), 20×20 r5. `size` — компактный вариант для служебных галок */
-function RightsCheckbox({ checked, onChange, label, size = 20 }: { checked: boolean; onChange: (v: boolean) => void; label: string; size?: number }) {
+function RightsCheckbox({ checked, onChange, label, size = 20, disabled = false }: { checked: boolean; onChange: (v: boolean) => void; label: string; size?: number; disabled?: boolean }) {
   return (
     <button
       type="button"
       role="checkbox"
       aria-checked={checked}
+      disabled={disabled}
       onClick={() => onChange(!checked)}
-      className="flex min-w-0 items-center gap-[10px] text-left"
+      className={cn('flex min-w-0 items-center gap-[10px] text-left', disabled && 'cursor-not-allowed opacity-50')}
     >
       <span
         style={{ width: size, height: size }}
@@ -244,8 +253,13 @@ export function TikTokPostPage() {
   const [showNext, setShowNext] = useState(qaPost === 'next');
   const [caption, setCaption] = useState(qaPost && qaPost !== 'empty' ? 'Новый сниппет уже в TikTok' : '');
   const [privacy, setPrivacy] = useState<Privacy | null>(qaPost && qaPost !== 'empty' ? 'all' : null);
-  const [comments, setComments] = useState(true);
-  const [duet, setDuet] = useState(true);
+  // TikTok requires every interaction to be enabled manually; none is preselected.
+  const [comments, setComments] = useState(false);
+  const [duet, setDuet] = useState(false);
+  const [stitch, setStitch] = useState(false);
+  const [commercialContent, setCommercialContent] = useState(false);
+  const [brandOrganic, setBrandOrganic] = useState(false);
+  const [brandContent, setBrandContent] = useState(false);
   // По умолчанию первый кадр (0) уже выбран как обложка → можно публиковать, не «дёргая» пикер.
   const [coverFrame, setCoverFrame] = useState<number | null>(qaPost && qaPost !== 'empty' ? 3 : 0);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -279,7 +293,8 @@ export function TikTokPostPage() {
   });
 
   // Требования гайдлайнов: без прав и без явного выбора приватности публиковать нельзя
-  const valid = caption.trim().length > 0 && privacy !== null && coverFrame !== null && rights;
+  const brandTypeValid = !commercialContent || brandOrganic || brandContent;
+  const valid = caption.trim().length > 0 && privacy !== null && coverFrame !== null && rights && brandTypeValid;
 
   /*
    * Чего не хватает для публикации. Раньше кнопка просто стояла серой: четыре независимых
@@ -289,7 +304,8 @@ export function TikTokPostPage() {
     !caption.trim().length && t('tiktok.needCaption'),
     privacy === null && t('tiktok.needPrivacy'),
     coverFrame === null && t('tiktok.needCover'),
-    !rights && t('tiktok.needRights')
+    !rights && t('tiktok.needRights'),
+    !brandTypeValid && t('tiktok.needBrandType')
   ].filter(Boolean) as string[];
 
   useEffect(() => {
@@ -316,7 +332,24 @@ export function TikTokPostPage() {
   useEffect(() => {
     if (creatorQuery.data?.comment_disabled) setComments(false);
     if (creatorQuery.data?.duet_disabled) setDuet(false);
-  }, [creatorQuery.data?.comment_disabled, creatorQuery.data?.duet_disabled]);
+    if (creatorQuery.data?.stitch_disabled) setStitch(false);
+  }, [creatorQuery.data?.comment_disabled, creatorQuery.data?.duet_disabled, creatorQuery.data?.stitch_disabled]);
+
+  useEffect(() => {
+    if (commercialContent) return;
+    setBrandOrganic(false);
+    setBrandContent(false);
+  }, [commercialContent]);
+
+  useEffect(() => {
+    if (brandContent && privacy === 'self') setPrivacy(null);
+  }, [brandContent, privacy]);
+
+  useEffect(() => {
+    const allowed = creatorQuery.data?.privacy_level_options;
+    if (!privacy || !allowed?.length) return;
+    if (!allowed.includes(PRIVACY_API_VALUE[privacy])) setPrivacy(null);
+  }, [creatorQuery.data?.privacy_level_options, privacy]);
 
   const startBatch = () => {
     resetWizard(id);
@@ -397,6 +430,9 @@ export function TikTokPostPage() {
         privacy,
         comments,
         duet,
+        stitch,
+        brandOrganic,
+        brandContent,
         cover: coverFrame !== null,
         coverFrame,
         coverTimestampMs: coverFrame !== null && videoRef.current && Number.isFinite(videoRef.current.duration)
@@ -449,13 +485,20 @@ export function TikTokPostPage() {
     if (!applyToAll) {
       setCaption('');
       setPrivacy(null);
+      setComments(false);
+      setDuet(false);
+      setStitch(false);
+      setCommercialContent(false);
+      setBrandOrganic(false);
+      setBrandContent(false);
     }
     // права подтверждаем на каждый ролик отдельно — требование гайдлайнов TikTok
     setRights(false);
   };
 
   const user = meQuery.data?.user;
-  const handle = meQuery.data?.tiktok?.handle ?? user?.artistNick ?? user?.name ?? '';
+  const handle = creatorQuery.data?.creator_username ?? creatorQuery.data?.creator_nickname ?? meQuery.data?.tiktok?.handle ?? user?.artistNick ?? user?.name ?? '';
+  const creatorAvatar = creatorQuery.data?.creator_avatar_url ?? user?.avatarUrl;
 
   const left = (
     <div className="card-2 no-scrollbar flex h-full flex-col overflow-y-auto px-[28px] pb-[40px] pt-[28px]">
@@ -463,7 +506,7 @@ export function TikTokPostPage() {
           при пяти роликах человек терял счёт, какой он сейчас публикует. */}
       <div className="flex h-[40px] shrink-0 items-center gap-[16px]">
         <span className="h-[40px] w-[40px] shrink-0 overflow-hidden rounded-full bg-accent-20">
-          {user?.avatarUrl && <img src={user.avatarUrl} alt="" className="h-full w-full object-cover" />}
+          {creatorAvatar && <img src={creatorAvatar} alt="" className="h-full w-full object-cover" />}
         </span>
         <span className="min-w-0 flex-1 truncate text-[24px] font-[350] leading-none text-text">@{handle}</span>
         {videos.length > 1 && (
@@ -535,13 +578,15 @@ export function TikTokPostPage() {
       {/* приватность 334×175 — без предвыбранного значения (требование TikTok).
           Отступы симметричны (padding 20 сверху/снизу, зазор заголовок↔список ≈ 18):
           leading-[19px] у заголовка не даёт 2-й строке раздувать блок и толкать список вниз. */}
-      <div className="mt-[20px] flex h-[157px] shrink-0 flex-col rounded-r15 bg-grad-soft-10 p-[20px]" role="radiogroup" aria-label={t('tiktok.privacyTitle')}>
+      <div className="mt-[20px] flex h-[187px] shrink-0 flex-col rounded-r15 bg-grad-soft-10 p-[20px]" role="radiogroup" aria-label={t('tiktok.privacyTitle')}>
         <p className="w-[228px] text-[16px] leading-[19px] text-text">{t('tiktok.privacyTitle')}</p>
         <div className="mt-[18px] flex flex-col gap-[10px]">
           {PRIVACY_ORDER.map((value) => (
             (() => {
-              const apiValue = value === 'all' ? 'PUBLIC_TO_EVERYONE' : value === 'friends' ? 'MUTUAL_FOLLOW_FRIENDS' : 'SELF_ONLY';
-              const unavailable = Boolean(creatorQuery.data?.privacy_level_options?.length) && !creatorQuery.data!.privacy_level_options.includes(apiValue);
+              const apiValue = PRIVACY_API_VALUE[value];
+              const accountUnavailable = Boolean(creatorQuery.data?.privacy_level_options?.length) && !creatorQuery.data!.privacy_level_options.includes(apiValue);
+              const brandedPrivate = value === 'self' && brandContent;
+              const unavailable = accountUnavailable || brandedPrivate;
               return (
             <button
               key={value}
@@ -550,6 +595,7 @@ export function TikTokPostPage() {
               aria-checked={privacy === value}
               onClick={() => !unavailable && setPrivacy(value)}
               disabled={unavailable}
+              title={brandedPrivate ? t('tiktok.brandedPrivateUnavailable') : undefined}
               className={cn('flex h-[20px] items-center justify-between text-[16px] leading-none text-text-80 transition hover:text-text', unavailable && 'cursor-not-allowed opacity-35')}
             >
               {t(`tiktok.privacy.${value}`)}
@@ -561,25 +607,62 @@ export function TikTokPostPage() {
         </div>
       </div>
 
-      {/* настройки конфиденциальности 334×146 */}
-      <div className="relative mt-[20px] h-[134px] shrink-0 rounded-r15 bg-grad-soft-10 p-[20px]">
+      {/* Все interaction controls обязательны для Direct Post review. */}
+      <div className="relative mt-[20px] h-[174px] shrink-0 rounded-r15 bg-grad-soft-10 p-[20px]">
         <p className="text-[16px] leading-none text-text">{t('tiktok.privacySettings')}</p>
         <div className="mt-[20px] flex flex-col gap-[17px]">
-          <div className="flex items-start justify-between gap-[10px]">
+          <div className={cn('flex items-start justify-between gap-[10px]', creatorQuery.data?.comment_disabled && 'opacity-50')}>
             <span className="flex items-start gap-[10px]">
               <span className="relative mt-px h-[12px] w-[15px] shrink-0 overflow-hidden"><img src="/assets/figma/tt-privacy-icons.svg" width="15" height="44" alt="" aria-hidden className="absolute left-0 top-0 max-w-none" /></span>
               <span className="text-[16px] leading-none text-text-80">{t('tiktok.allowComments')}</span>
             </span>
-            <MiniToggle checked={creatorQuery.data?.comment_disabled ? false : comments} onChange={setComments} label={t('tiktok.allowComments')} />
+            <MiniToggle checked={creatorQuery.data?.comment_disabled ? false : comments} onChange={setComments} label={t('tiktok.allowComments')} disabled={Boolean(creatorQuery.data?.comment_disabled) || stage !== 'draft'} />
           </div>
-          <div className="flex items-start justify-between gap-[10px]">
+          <div className={cn('flex items-start justify-between gap-[10px]', creatorQuery.data?.duet_disabled && 'opacity-50')}>
             <span className="flex items-start gap-[10px]">
               <span className="relative mt-px h-[18px] w-[15px] shrink-0 overflow-hidden"><img src="/assets/figma/tt-privacy-icons.svg" width="15" height="44" alt="" aria-hidden className="absolute left-0 top-[-26px] max-w-none" /></span>
               <span className="w-[199px] text-[16px] leading-[19px] text-text-80">{t('tiktok.allowDuet')}</span>
             </span>
-            <MiniToggle checked={creatorQuery.data?.duet_disabled ? false : duet} onChange={setDuet} label={t('tiktok.allowDuet')} />
+            <MiniToggle checked={creatorQuery.data?.duet_disabled ? false : duet} onChange={setDuet} label={t('tiktok.allowDuet')} disabled={Boolean(creatorQuery.data?.duet_disabled) || stage !== 'draft'} />
+          </div>
+          <div className={cn('flex items-start justify-between gap-[10px]', creatorQuery.data?.stitch_disabled && 'opacity-50')}>
+            <span className="flex items-start gap-[10px]">
+              <span className="h-[15px] w-[15px] shrink-0" aria-hidden="true" />
+              <span className="text-[16px] leading-none text-text-80">{t('tiktok.allowStitch')}</span>
+            </span>
+            <MiniToggle checked={creatorQuery.data?.stitch_disabled ? false : stitch} onChange={setStitch} label={t('tiktok.allowStitch')} disabled={Boolean(creatorQuery.data?.stitch_disabled) || stage !== 'draft'} />
           </div>
         </div>
+      </div>
+
+      {/* TikTok Commercial Content Disclosure: off by default; once enabled,
+          at least one disclosure type is mandatory and both may be selected. */}
+      <div className="mt-[20px] shrink-0 rounded-r15 bg-grad-soft-10 p-[20px]">
+        <div className="flex items-start justify-between gap-[12px]">
+          <span className="max-w-[250px] text-[16px] leading-[19px] text-text">{t('tiktok.commercialTitle')}</span>
+          <MiniToggle checked={commercialContent} onChange={setCommercialContent} label={t('tiktok.commercialTitle')} disabled={stage !== 'draft'} />
+        </div>
+        {commercialContent && (
+          <div className="mt-[18px] flex flex-col gap-[16px] border-t border-border pt-[16px]">
+            <div>
+              <RightsCheckbox checked={brandOrganic} onChange={setBrandOrganic} label={t('tiktok.yourBrand')} size={16} disabled={stage !== 'draft'} />
+              {brandOrganic && <p className="ml-[26px] mt-[7px] text-[13px] leading-[16px] text-text-60">{t('tiktok.yourBrandHint')}</p>}
+            </div>
+            <div>
+              <RightsCheckbox
+                checked={brandContent}
+                onChange={(checked) => {
+                  setBrandContent(checked);
+                  if (checked && privacy === 'self') setPrivacy(null);
+                }}
+                label={t('tiktok.brandedContent')}
+                size={16}
+                disabled={stage !== 'draft'}
+              />
+              {brandContent && <p className="ml-[26px] mt-[7px] text-[13px] leading-[16px] text-text-60">{t('tiktok.brandedContentHint')}</p>}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Время публикации 334×39. Поля «21:00 | 15/07» были обманом: бэк их не читал,
@@ -599,7 +682,7 @@ export function TikTokPostPage() {
 
   const right = (
     <div className="flex h-full flex-col">
-      <div className="group relative h-[665px] shrink-0 overflow-hidden rounded-r15 bg-grad-soft-10">
+      <div className="group relative h-[600px] shrink-0 overflow-hidden rounded-r15 bg-grad-soft-10">
         {video?.thumbnailUrl && <img src={video.thumbnailUrl} alt="" className="h-full w-full object-cover" />}
 
         {stage !== 'posted' && (
@@ -633,7 +716,7 @@ export function TikTokPostPage() {
         <button
           type="button"
           onClick={nextVideo}
-          className="mt-[20px] flex h-[60px] shrink-0 items-center justify-center gap-[16px] rounded-r15 border border-accent-light bg-grad-soft-20 text-[24px] font-[350] leading-none text-text-80 transition hover:text-text"
+            className="mt-[12px] flex h-[60px] shrink-0 items-center justify-center gap-[16px] rounded-r15 border border-accent-light bg-grad-soft-20 text-[24px] font-[350] leading-none text-text-80 transition hover:text-text"
         >
           {batchDone ? t('tiktok.toStats') : t('tiktok.nextVideo')}
           <img src="/assets/figma/pd-arrow-right.svg" width="25" height="15" alt="" aria-hidden />
@@ -647,7 +730,7 @@ export function TikTokPostPage() {
             aria-describedby={missing.length ? 'publish-missing' : undefined}
             title={missing.length ? `${t('tiktok.needTitle')} ${missing.join(', ')}` : undefined}
             className={cn(
-              'mt-[20px] flex h-[60px] shrink-0 items-center justify-center gap-[12px] rounded-r15 bg-grad-soft-20 text-[24px] font-[350] leading-none text-text-80 transition',
+              'mt-[12px] flex h-[60px] shrink-0 items-center justify-center gap-[12px] rounded-r15 bg-grad-soft-20 text-[24px] font-[350] leading-none text-text-80 transition',
               stage === 'draft' && valid && 'border border-accent-light hover:text-text',
               stage === 'draft' && !valid && 'cursor-not-allowed'
             )}
@@ -661,6 +744,20 @@ export function TikTokPostPage() {
             />
             {stage === 'draft' ? t('tiktok.publish') : stage === 'uploading' ? t('tiktok.uploading') : t('tiktok.posted')}
           </button>
+          <p className="mt-[8px] shrink-0 text-center text-[12px] leading-[16px] text-text-60">
+            {t('tiktok.musicConsent')}{' '}
+            <a href="https://www.tiktok.com/legal/page/global/music-usage-confirmation/en" target="_blank" rel="noreferrer" className="text-accent-light underline decoration-accent-light/50 underline-offset-2 hover:text-text">
+              {t('tiktok.musicConsentLink')}
+            </a>
+            {brandContent && (
+              <>
+                <span aria-hidden="true"> · </span>
+                <a href="https://www.tiktok.com/legal/page/global/bc-policy/en" target="_blank" rel="noreferrer" className="text-accent-light underline decoration-accent-light/50 underline-offset-2 hover:text-text">
+                  {t('tiktok.brandedPolicyLink')}
+                </a>
+              </>
+            )}
+          </p>
           {stage === 'draft' && missing.length > 0 && (
             <p id="publish-missing" className="mt-[10px] shrink-0 text-center text-[15px] leading-[19px] text-text-60">
               {t('tiktok.needTitle')} {missing.join(', ')}

@@ -198,8 +198,10 @@ export const api = {
 
   /** Старт подключения TikTok: уходим на бэк, он редиректит на TikTok (или мокает без ключей) */
   tiktokAuthUrl: () => `${API_BASE}/api/tiktok/auth`,
-  tiktokStatus: () => request<{ configured: boolean; scopes: string; redirectUri: string }>('/api/tiktok/status'),
+  tiktokStatus: () => request<{ configured: boolean; scopes: string; redirectUri: string; uploadSource: 'FILE_UPLOAD' | 'PULL_FROM_URL' }>('/api/tiktok/status'),
   tiktokCreatorInfo: () => request<{
+    creator_avatar_url?: string;
+    creator_username?: string;
     creator_nickname?: string;
     privacy_level_options: string[];
     duet_disabled?: boolean;

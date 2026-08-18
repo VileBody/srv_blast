@@ -51,6 +51,7 @@ class TiktokConfig:
     client_secret: str
     redirect_uri: str
     scopes: str
+    upload_source: str
 
     @property
     def configured(self) -> bool:
@@ -60,9 +61,15 @@ class TiktokConfig:
 
 def load() -> TiktokConfig:
     load_env()
+    upload_source = os.getenv("TIKTOK_UPLOAD_SOURCE", "FILE_UPLOAD").strip().upper()
+    if upload_source not in {"FILE_UPLOAD", "PULL_FROM_URL"}:
+        raise RuntimeError(
+            "tiktok_config: TIKTOK_UPLOAD_SOURCE must be FILE_UPLOAD or PULL_FROM_URL"
+        )
     return TiktokConfig(
         client_key=os.getenv("TIKTOK_CLIENT_KEY", ""),
         client_secret=os.getenv("TIKTOK_CLIENT_SECRET", ""),
         redirect_uri=os.getenv("TIKTOK_REDIRECT_URI", "http://localhost:5173/app/profile/tiktok/callback"),
         scopes=os.getenv("TIKTOK_SCOPES", "user.info.basic,video.publish,video.list"),
+        upload_source=upload_source,
     )

@@ -68,10 +68,15 @@ def _config(module: Any, *, stage1_backend: str = "gemini"):
 class _FakeS3:
     def __init__(self) -> None:
         self.presigns: list[dict[str, Any]] = []
+        self.downloads: list[dict[str, str]] = []
 
     def generate_presigned_url(self, operation: str, *, Params: dict[str, Any], ExpiresIn: int):
         self.presigns.append({"operation": operation, "params": Params, "expires": ExpiresIn})
         return "https://signed.example/download"
+
+    def download_file(self, bucket: str, key: str, filename: str) -> None:
+        self.downloads.append({"bucket": bucket, "key": key, "filename": filename})
+        Path(filename).write_bytes(b"video")
 
 
 class _Response:
@@ -187,6 +192,33 @@ def test_unknown_https_output_is_not_a_download_fallback(monkeypatch: pytest.Mon
 
     with pytest.raises(module.ProductionBackendError, match="configured S3 endpoint"):
         backend.download_url("https://cdn.example/result.mp4", "video-1")
+
+
+def test_tiktok_file_upload_downloads_only_from_configured_s3(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = _module(monkeypatch)
+    backend = _backend(module, _config(module))
+    destination = tmp_path / "post.mp4"
+
+    result = backend.download_video(
+        "https://s3.twcstorage.ru/output-bucket/jobs/result.mp4?signature=secret",
+        destination,
+    )
+
+    assert result == destination
+    assert destination.read_bytes() == b"video"
+    assert backend._s3.downloads == [
+        {
+            "bucket": "output-bucket",
+            "key": "jobs/result.mp4",
+            "filename": str(destination),
+        }
+    ]
+
+    with pytest.raises(module.ProductionBackendError, match="configured S3 endpoint"):
+        backend.download_video("https://cdn.example/result.mp4", destination)
 
 
 def test_preview_catalog_presigns_s3_and_keeps_explicit_https(monkeypatch: pytest.MonkeyPatch) -> None:

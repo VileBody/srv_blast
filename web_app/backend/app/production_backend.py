@@ -532,6 +532,43 @@ class ProductionBackend:
         bucket, key = value[5:].split("/", 1)
         return self._presign(bucket, key, filename=f"{filename}.mp4", attachment=True)
 
+    def download_video(self, value: str, destination: str | Path) -> Path:
+        """Download a rendered S3 object for TikTok FILE_UPLOAD.
+
+        Resolve only the configured S3 endpoint. This keeps the API from
+        turning an internal video URL into an arbitrary server-side request.
+        """
+        if value.startswith("s3://"):
+            bucket, key = self._parse_s3_locator(value)
+        elif value.startswith("https://"):
+            endpoint = urlparse(self.config.s3_endpoint_url)
+            parsed = urlparse(value)
+            bucket = ""
+            key = ""
+            if parsed.hostname == endpoint.hostname:
+                path = parsed.path.lstrip("/")
+                if "/" in path:
+                    bucket, key = path.split("/", 1)
+            elif endpoint.hostname and parsed.hostname and parsed.hostname.endswith(
+                f".{endpoint.hostname}"
+            ):
+                bucket = parsed.hostname[: -(len(endpoint.hostname) + 1)]
+                key = parsed.path.lstrip("/")
+            if not bucket or not key:
+                raise ProductionBackendError(
+                    "TikTok source HTTPS URL is not in the configured S3 endpoint"
+                )
+            bucket, key = unquote(bucket), unquote(key)
+        else:
+            raise ProductionBackendError(f"unsupported TikTok video URL {value!r}")
+
+        target = Path(destination)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        self._s3.download_file(bucket, key, str(target))
+        if not target.is_file() or target.stat().st_size <= 0:
+            raise ProductionBackendError("downloaded TikTok video is empty")
+        return target
+
     @staticmethod
     def _parse_s3_locator(value: str) -> tuple[str, str]:
         if not value.startswith("s3://") or "/" not in value[5:]:
