@@ -87,6 +87,7 @@ from .state_store import (
     STAGE_WAIT_BG_COLOR,
     STAGE_WAIT_STROBE_CUT,
     STAGE_WAIT_BG_MODE,
+    STAGE_WAIT_FOOTAGE_KIND,
     STAGE_WAIT_BG_INFO,
     STAGE_WAIT_FOOTAGE_ARTIST,
     STAGE_WAIT_FOOTAGE_GENRE,
@@ -467,13 +468,31 @@ def _bucket_preview_file_id(bucket_id: str) -> str:
     return str(e.get(_BUCKET_PREVIEW_FILE_ID_FIELD) or "").strip()
 
 
-def _live_bucket_ids(bg_mode: str) -> set:
+FOOTAGE_KIND_VERTICAL = "vertical"
+FOOTAGE_KIND_FILMS = "films"
+# Kind -> the `pool` the ranker should rank. "vibes" is the semantic 9:16
+# catalog; anything else is a folder-scoped collection kind.
+_POOL_BY_FOOTAGE_KIND = {
+    FOOTAGE_KIND_VERTICAL: "vibes",
+    FOOTAGE_KIND_FILMS: "films",
+}
+
+
+def _pool_for_footage_kind(kind: str) -> str:
+    return _POOL_BY_FOOTAGE_KIND.get(str(kind or "").strip(), "vibes")
+
+
+def _live_bucket_ids(bg_mode: str, footage_kind: str = FOOTAGE_KIND_VERTICAL) -> set:
     """Bucket ids the CURRENT catalog offers for this plane.
 
     Empty set = the catalog could not be read; callers must treat that as "no
     opinion" and keep whatever the chat already has, never as "everything is
     stale" (that would re-rank every chat on every message)."""
     try:
+        pool = _pool_for_footage_kind(footage_kind)
+        if pool != "vibes":
+            from mlcore.footage_collection_catalog import collections_for_kind
+            return {b.bucket_id for b in collections_for_kind(pool)}
         if str(bg_mode or "").strip().lower() == "photo":
             from mlcore.photo_bucket_catalog import load_photo_catalog
             return {b.bucket_id for b in load_photo_catalog()}
@@ -484,7 +503,9 @@ def _live_bucket_ids(bg_mode: str) -> set:
         return set()
 
 
-def _stale_vibe_shortlist_reason(ranked_ids: List[str], bg_mode: str) -> str:
+def _stale_vibe_shortlist_reason(
+    ranked_ids: List[str], bg_mode: str, footage_kind: str = FOOTAGE_KIND_VERTICAL
+) -> str:
     """Why a persisted vibe shortlist must be re-ranked, or "" to keep it.
 
     The shortlist is the FULL ranked catalog, so it has to match the catalog set
@@ -499,11 +520,16 @@ def _stale_vibe_shortlist_reason(ranked_ids: List[str], bg_mode: str) -> str:
     if any(bid.split(":", 1)[0].endswith(("_major", "_minor")) for bid in stored):
         return "legacy_ids"
 
-    live = _live_bucket_ids(bg_mode)
+    live = _live_bucket_ids(bg_mode, footage_kind)
     if not live:
         # Catalog unreadable — fall back to the plane check alone rather than
         # stranding the chat or re-ranking it on a loop.
-        expected_prefix = "photo:" if str(bg_mode or "").strip().lower() == "photo" else "visual:"
+        if _pool_for_footage_kind(footage_kind) != "vibes":
+            expected_prefix = "collection:"
+        elif str(bg_mode or "").strip().lower() == "photo":
+            expected_prefix = "photo:"
+        else:
+            expected_prefix = "visual:"
         return "" if all(b.startswith(expected_prefix) for b in stored) else "wrong_plane"
 
     stored_set = set(stored)
@@ -575,6 +601,10 @@ BTN_CONFIRM_YES = "Да"
 BTN_CONFIRM_BACK = "Вернуться назад"
 BTN_BACK = "Назад"
 BTN_BG_FOOTAGE = "Футажи"
+# Footage plane fork. Only these two are live: the rest of the collection
+# kinds (16:9, Личности) exist in the catalog but are not offered yet.
+BTN_FOOTAGE_KIND_VERTICAL = "9:16"
+BTN_FOOTAGE_KIND_FILMS = "Фильмы"
 BTN_BG_SOLID = "Цветной фон"
 BTN_BG_STROBE = "Строб Ч/Б"
 BTN_BG_INFO_NEXT = "Продолжить"
@@ -3416,6 +3446,10 @@ class BlastBotApp:
                 await self._handle_wait_bg_mode(message, st)
                 return
 
+            if st.stage == STAGE_WAIT_FOOTAGE_KIND:
+                await self._handle_wait_footage_kind(message, st)
+                return
+
             if st.stage == STAGE_WAIT_BG_INFO:
                 await self._handle_wait_bg_info(message, st)
                 return
@@ -4128,7 +4162,9 @@ class BlastBotApp:
         await self.store.set(st)
         if mode == "footage":
             if FOOTAGE_VIBE_FLOW_ENABLED:
-                await self._ask_vibe_shortlist(message, st)
+                # Which plane the shortlist draws from is now an explicit
+                # step: the 9:16 vibes or a film collection.
+                await self._ask_footage_kind(message, st)
             else:
                 await self._ask_footage_genre(message, st)
             return
@@ -4335,11 +4371,17 @@ class BlastBotApp:
     async def _run_vibe_ranker_bg(self, *, chat_id: int, lyrics: str, mood: str) -> None:
         """Background runner — must never raise into the asyncio loop."""
         media_type = "video"
+        footage_kind = FOOTAGE_KIND_VERTICAL
         try:
             current = await self.store.get(chat_id)
             media_type = "photo" if current.bg_mode == "photo" else "video"
+            # This runs when the lyrics arrive, BEFORE the footage plane is
+            # chosen, so it ranks whatever the chat is on now. Picking a
+            # different plane later re-ranks with force=True.
+            footage_kind = str(current.footage_kind or FOOTAGE_KIND_VERTICAL)
             result = await self.orchestrator.rank_buckets(
-                lyrics=lyrics, mood=mood, media_type=media_type
+                lyrics=lyrics, mood=mood, media_type=media_type,
+                pool=_pool_for_footage_kind(footage_kind),
             )
             ranked_ids, labels = self._parse_ranked_buckets(result)
             st = await self.store.get(chat_id)
@@ -4347,6 +4389,8 @@ class BlastBotApp:
             # photo shortlist (or vice versa) if the user changed bg_mode meanwhile.
             current_media_type = "photo" if st.bg_mode == "photo" else "video"
             if current_media_type != media_type:
+                return
+            if str(st.footage_kind or FOOTAGE_KIND_VERTICAL) != footage_kind:
                 return
             # Only persist if the user has not moved on / re-ranked.
             if st.vibe_rank_status not in {"pending", "ready"}:
@@ -4407,7 +4451,7 @@ class BlastBotApp:
         stored_ids = list(st.vibe_ranked_ids or [])
         stored_labels = dict(st.vibe_labels_by_id or {})
         if st.vibe_ranked_ids and not force:
-            reason = _stale_vibe_shortlist_reason(st.vibe_ranked_ids, st.bg_mode)
+            reason = _stale_vibe_shortlist_reason(st.vibe_ranked_ids, st.bg_mode, st.footage_kind)
             if not reason:
                 return True
             log.info(
@@ -4427,6 +4471,7 @@ class BlastBotApp:
                 result = await self.orchestrator.rank_buckets(
                     lyrics=lyrics, mood="",
                     media_type="photo" if st.bg_mode == "photo" else "video",
+                    pool=_pool_for_footage_kind(st.footage_kind),
                 )
                 ranked_ids, labels = self._parse_ranked_buckets(result)
             except Exception as e:
@@ -4447,7 +4492,7 @@ class BlastBotApp:
         # A forced refresh that could not reach the orchestrator must not cost the
         # user their shortlist — an older order still beats being dropped into the
         # legacy genre picker.
-        if stored_ids and not _stale_vibe_shortlist_reason(stored_ids, st.bg_mode):
+        if stored_ids and not _stale_vibe_shortlist_reason(stored_ids, st.bg_mode, st.footage_kind):
             st.vibe_ranked_ids = stored_ids
             st.vibe_labels_by_id = stored_labels
             st.vibe_rank_status = "ready"
@@ -4514,6 +4559,49 @@ class BlastBotApp:
             "3. «Назад» — выбрать другой тип фона.",
         ]
         return "\n".join(lines)
+
+    async def _ask_footage_kind(self, message: Message, st: ChatState) -> None:
+        """Which footage plane the shortlist should draw from.
+
+        Two live options for now. The other collection kinds (16:9, Личности)
+        exist in the catalog but are deliberately not offered — showing a button
+        for an empty pool would strand the user on an empty shortlist.
+        """
+        st.stage = STAGE_WAIT_FOOTAGE_KIND
+        await self.store.set(st)
+        await message.answer(
+            "Какой футаж подобрать?\n\n"
+            "• 9:16 — вертикальные футажи под настроение трека\n"
+            "• Фильмы — нарезки из конкретного фильма",
+            reply_markup=_kb(
+                [BTN_FOOTAGE_KIND_VERTICAL], [BTN_FOOTAGE_KIND_FILMS], [BTN_BACK]
+            ),
+        )
+
+    async def _handle_wait_footage_kind(self, message: Message, st: ChatState) -> None:
+        text = str(message.text or "").strip()
+        if text == BTN_BACK:
+            await self._ask_bg_mode(message, st)
+            return
+        if text == BTN_FOOTAGE_KIND_VERTICAL:
+            kind = FOOTAGE_KIND_VERTICAL
+        elif text == BTN_FOOTAGE_KIND_FILMS:
+            kind = FOOTAGE_KIND_FILMS
+        else:
+            await message.answer(
+                f"Выбери кнопкой: «{BTN_FOOTAGE_KIND_VERTICAL}» или «{BTN_FOOTAGE_KIND_FILMS}»."
+            )
+            return
+        # Changing the plane invalidates the shortlist: it holds ids from the
+        # catalog that was ranked, and the two catalogs share no ids at all.
+        if str(st.footage_kind or FOOTAGE_KIND_VERTICAL) != kind:
+            st.vibe_ranked_ids = []
+            st.vibe_labels_by_id = {}
+            st.vibe_selected_ids = []
+            st.vibe_page = 0
+        st.footage_kind = kind
+        await self.store.set(st)
+        await self._ask_vibe_shortlist(message, st)
 
     async def _ask_vibe_shortlist(self, message: Message, st: ChatState) -> None:
         st.stage = STAGE_WAIT_VIBE
@@ -4608,7 +4696,10 @@ class BlastBotApp:
             except TelegramBadRequest:
                 pass
             await cb.answer()
-            await self._ask_bg_mode(cb.message, st)
+            # Back from the shortlist lands on the plane fork, not on the
+            # background menu: the likely intent is "wrong footage type",
+            # not "wrong background".
+            await self._ask_footage_kind(cb.message, st)
             return
         if action == "more":
             pages = max(1, self._vibe_page_count(st))

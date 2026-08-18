@@ -61,6 +61,9 @@ STAGE_WAIT_BATTERY_SOUND = "WAIT_BATTERY_SOUND"
 STAGE_WAIT_BATTERY_F4_DROP = "WAIT_BATTERY_F4_DROP"
 # Footage precision flow (Phase 2b): ranked-shortlist vibe picker (multi-select).
 # Replaces the genre/artist footage stages when FOOTAGE_VIBE_FLOW_ENABLED is on.
+# Which footage plane the vibe shortlist should draw from: the semantic 9:16
+# vibes, or one folder-scoped collection kind (films / …).
+STAGE_WAIT_FOOTAGE_KIND = "WAIT_FOOTAGE_KIND"
 STAGE_WAIT_VIBE = "WAIT_VIBE"
 # Рамка: PNG-маска поверх всех слоёв. Отдельный шаг (не хук) — идёт
 # непосредственно перед выбором числа версий, доступен на любом пути.
@@ -179,6 +182,10 @@ class ChatState(BaseModel):
     #   vibe_page         — current page into vibe_ranked_ids (3 buckets/page); "Обновить" pages.
     #   vibe_selected_ids — multi-select set, PERSISTS across pages (combine vibes).
     #   vibe_rank_status  — "" | "pending" | "ready" | "failed".
+    # Footage plane behind the shortlist: "vertical" = the 9:16 vibe catalog,
+    # "films" = the untagged film collections. Decides which catalog is ranked
+    # and, downstream, whether the job runs on the collection inventory.
+    footage_kind: str = "vertical"
     vibe_ranked_ids: List[str] = Field(default_factory=list)
     vibe_labels_by_id: Dict[str, str] = Field(default_factory=dict)
     vibe_page: int = 0

@@ -2966,6 +2966,36 @@ def _report_collection_registry(static_index_path: Any) -> Dict[str, Any]:
         "collections_registered": len(registered),
         "collections_live": len(set(counts) & registered),
     }
+
+    # Whether a collection can actually serve a job is decided by facts known
+    # right now — clip count and clip length. Reporting it here turns a failed
+    # render for a paying user into a warning for the operator who is still
+    # looking at the upload.
+    try:
+        from mlcore.footage_collection_readiness import evaluate_index
+
+        rows = evaluate_index(data.get("assets") or [])
+        out["readiness"] = [r.as_dict() for r in rows]
+        unusable = [r for r in rows if r.status == "unusable"]
+        thin = [r for r in rows if r.status == "thin"]
+        if unusable:
+            out["unusable_collections"] = [r.slug for r in unusable]
+            log.error(
+                "activate(collection): %d collection(s) CANNOT serve a job — clips too "
+                "short to cut a watchable montage from: %s",
+                len(unusable),
+                [(r.slug, f"shortest={r.min_duration_sec:.2f}s") for r in unusable],
+            )
+        if thin:
+            out["thin_collections"] = [r.slug for r in thin]
+            log.warning(
+                "activate(collection): %d collection(s) may exhaust the no-repeat pool "
+                "on a fast track: %s",
+                len(thin), [(r.slug, f"{r.clips}/{r.needed_clips}") for r in thin],
+            )
+    except Exception as exc:
+        out["readiness_error"] = str(exc)
+        log.warning("activate(collection): readiness evaluation failed: %r", exc)
     if unregistered:
         out["unregistered_folders"] = unregistered
         log.warning(

@@ -4267,6 +4267,35 @@ def build_all_via_gemini_one_call(
                 float(hook_analysis.drop_candidates[0].t)
                 if hook_analysis.drop_candidates else None
             )
+            # A collection is a fixed set of PRE-CUT clips, so the pool has a hard
+            # ceiling on how long one shot can run. The timing must respect it:
+            # every interval is covered by exactly one clip, and the strict
+            # no-repeat matcher cannot stitch two short clips into a long
+            # interval — an interval longer than the shortest clip fails the job
+            # outright ("no asset can cover interval"). Capping the hold keeps the
+            # cuts musical (still chosen on beats, just sooner).
+            _timing_params = None
+            _interval_cap = 0.0
+            if _collection_plane:
+                _durs = [
+                    float(a.get("duration_sec") or 0.0)
+                    for a in picker_assets
+                    if float(a.get("duration_sec") or 0.0) > 0.0
+                ]
+                if _durs:
+                    from mlcore.switch_timing_deterministic import SwitchTimingParams
+
+                    # Leave a frame of slack: a clip exactly as long as the
+                    # interval is a rounding error away from not fitting.
+                    _interval_cap = max(0.5, min(_durs) - 0.05)
+                    _defaults = SwitchTimingParams()
+                    if _interval_cap < _defaults.max_hold_sec:
+                        _timing_params = SwitchTimingParams(max_hold_sec=_interval_cap)
+                        logger.info(
+                            "stage2_collection_interval_cap max_hold=%.2fs "
+                            "(shortest clip %.2fs, pool=%d)",
+                            _interval_cap, min(_durs), len(_durs),
+                        )
             _det = generate_switch_points(
                 onsets_classified=_onsets,
                 beats=[float(b) for b in hook_analysis.beats],
@@ -4274,6 +4303,7 @@ def build_all_via_gemini_one_call(
                 drop_t=_drop_t,
                 clip_start=clip_start_abs,
                 clip_end=clip_end_abs,
+                params=_timing_params,
             )
             switch_points = normalize_switch_points(
                 raw_cut_timings=list(_det.switch_points_abs),
@@ -4283,6 +4313,25 @@ def build_all_via_gemini_one_call(
                 min_segment_sec=0.3,
                 compact_short_segments=True,
             )
+            if _interval_cap > 0.0:
+                # max_hold only bounds the holds the generator CHOOSES. The tail
+                # from the last cut to the end of the clip is bounded by nothing,
+                # and normalize_ can merge cuts back together — so enforce the
+                # ceiling on the final points.
+                from mlcore.switch_timing_deterministic import enforce_max_interval
+
+                _before = len(switch_points)
+                switch_points = enforce_max_interval(
+                    switch_points,
+                    clip_start=clip_start_abs,
+                    clip_end=clip_end_abs,
+                    max_interval_sec=_interval_cap,
+                )
+                if len(switch_points) != _before:
+                    logger.info(
+                        "stage2_collection_interval_split cuts=%d -> %d (cap=%.2fs)",
+                        _before, len(switch_points), _interval_cap,
+                    )
             logger.info(
                 "stage2_deterministic_cuts cuts=%d bpm=%.1f drop=%s",
                 len(switch_points), float(_det.bpm),
