@@ -419,9 +419,19 @@ def validate_style_pick_in_groups(style_pick: FootageStylePickPayload, style_gro
             pool_keys.add((g, t))
     key = (str(style_pick.genre).strip(), str(style_pick.tag).strip())
     if key not in pool_keys:
+        near = sorted(
+            f"{g}/{t}"
+            for g, t in pool_keys
+            if g.lower() == key[0].lower() or t.lower() == key[1].lower()
+        )[:5]
+        # The pick is not always an LLM answer any more — the precision and
+        # collection paths resolve it deterministically — so do not name a
+        # culprit. Casing is the usual cause (S3 folders get re-uploaded
+        # capitalised), and a case-insensitive near miss says so outright.
         raise RuntimeError(
-            "Gemini style pick is not present in style pool: "
+            "style pick is not present in style pool: "
             f"genre={style_pick.genre!r} tag={style_pick.tag!r}"
+            + (f" — case-insensitive matches in pool: {near}" if near else "")
         )
 
 
@@ -2067,8 +2077,15 @@ def _resolve_collection_pick(
         )
 
     duration = sum(min(_effective_asset_duration(it), _MAX_SWITCH_SEC) for it in members)
+    # Name the folder exactly as the INVENTORY spells it, not as the registry
+    # does. Membership above is matched case-insensitively (S3 folders get
+    # re-uploaded with different casing), but everything downstream — the
+    # pool filter and validate_style_pick_in_groups — compares the pick
+    # against groups built from these very assets, with exact strings.
+    actual_genre = str(members[0].get("genre") or "").strip()
+    actual_tag = str(members[0].get("tag") or "").strip()
     pick = FootageStylePickPayload.model_validate(
-        {"genre": bucket.kind, "tag": bucket.folder}
+        {"genre": actual_genre, "tag": actual_tag}
     )
     diag = FootageStyleRawAdapterDiagnostics(
         total_assets=int(total),
@@ -2078,8 +2095,8 @@ def _resolve_collection_pick(
         mood_filtered_out=0,
         exclude_filtered_out=0,
         scored_assets=int(len(members)),
-        selected_genre=bucket.kind,
-        selected_tag=bucket.folder,
+        selected_genre=actual_genre,
+        selected_tag=actual_tag,
         selected_group_score=0.0,
         selected_group_duration_sec=float(duration),
         selected_group_assets_count=int(len(members)),
