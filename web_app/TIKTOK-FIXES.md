@@ -22,7 +22,8 @@
 
 **Надо:** третий тумблер рядом с Comment и Duet, значение уходит в payload.
 
-- фронт: состояние `stitch`, по умолчанию `true` (как у comment/duet);
+- фронт: состояние `stitch`, по умолчанию `false`, как у comment/duet. Актуальные
+  Content Sharing Guidelines требуют, чтобы пользователь вручную включал каждое взаимодействие;
 - payload: `stitch: boolean` → бэк: `"disable_stitch": not payload.stitch`;
 - модель `TiktokPostPayload` — добавить поле `stitch: bool = True`.
 
@@ -136,7 +137,9 @@
   нужно верифицировать домен, **с которого отдаётся файл** (сейчас S3 `s3.twcstorage.ru`),
   а не только сайт. Если верифицировать чужой домен нельзя — переключиться на `FILE_UPLOAD`
   (уже реализован: `tiktok_api.init_direct_post_file`) либо проксировать mp4 со своего домена.
-  **Решить до записи демо-видео.**
+  **Решено:** production использует `FILE_UPLOAD`; API скачивает только объект из настроенного
+  Timeweb S3 через серверные credentials и загружает его в TikTok. `PULL_FROM_URL` в production
+  запрещён runtime-контрактом, пока у Blast нет верифицированного media-домена.
 - **Боевые домены.** `TIKTOK_REDIRECT_URI` (сейчас дефолт `http://localhost:5173/...`) и
   `APP_URL` — на боевой домен, тот же URI прописать в кабинете разработчика.
 - **Футер лендинга:** прямые ссылки на Privacy Policy и Terms должны быть видны без
@@ -149,16 +152,16 @@
 Пройти экран выкладки и убедиться:
 
 ```
-[ ] Три тумблера: Comment, Duet, Stitch
-[ ] Тумблер, запрещённый аккаунтом, серый и не нажимается
-[ ] Приватность по умолчанию не выбрана
-[ ] Тумблер коммерческого контента выключен по умолчанию
-[ ] При включении требуется Your Brand или Branded Content
-[ ] При Branded Content «Только я» недоступна
-[ ] Под кнопкой публикации — текст Music Usage Confirmation со ссылкой
-[ ] При Branded Content добавляется ссылка на Branded Content Policy
-[ ] В запросе уходят: disable_stitch, brand_organic_toggle, brand_content_toggle
-[ ] is_aigc НЕ отправляется (мы не генерируем контент нейросетями — см. §6)
+[x] Три тумблера: Comment, Duet, Stitch; по умолчанию выключены
+[x] Тумблер, запрещённый аккаунтом, серый и не нажимается
+[x] Приватность по умолчанию не выбрана
+[x] Тумблер коммерческого контента выключен по умолчанию
+[x] При включении требуется Your Brand или Branded Content
+[x] При Branded Content «Только я» недоступна
+[x] Под кнопкой публикации — текст Music Usage Confirmation со ссылкой
+[x] При Branded Content добавляется ссылка на Branded Content Policy
+[x] В запросе уходят: disable_stitch, brand_organic_toggle, brand_content_toggle
+[x] is_aigc НЕ отправляется (мы не генерируем контент нейросетями — см. §6)
 ```
 
 Последний пункт удобно смотреть в логах бэка на моке — ключи TikTok для этого не нужны.

@@ -1,14 +1,6 @@
 name: Deploy Blast Web Preview
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - "web_app/**"
-      - "infra/runners/deploy_web_preview.sh"
-      - "infra/runners/nginx/app.blast808.com*.conf"
-      - ".github/workflows/deploy-web-preview.yml"
   workflow_dispatch:
 
 permissions:

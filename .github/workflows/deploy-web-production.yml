@@ -1,0 +1,47 @@
+name: Deploy Blast Web Production
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "web_app/**"
+      - "services/tg_bot_public/credits_db.py"
+      - "services/tg_bot_public/tbank_client.py"
+      - "services/tg_bot_public/admin_panel.py"
+      - "infra/runners/deploy_web_production.sh"
+      - "infra/runners/nginx/app.blast808.com.conf"
+      - ".github/workflows/deploy-web-production.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: blast-web-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.event_name == 'workflow_dispatch' || vars.BLAST_WEB_PROD_AUTO_DEPLOY == 'true'
+    runs-on: [self-hosted, blast-deploy-infra]
+    timeout-minutes: 60
+    env:
+      BLAST_WEB_PRODUCTION_ENV_B64: ${{ secrets.BLAST_WEB_PRODUCTION_ENV_B64 }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate deployment contract
+        run: |
+          set -euo pipefail
+          test -n "$BLAST_WEB_PRODUCTION_ENV_B64"
+          bash -n infra/runners/deploy_web_production.sh
+
+      - name: Deploy production
+        run: bash infra/runners/deploy_web_production.sh
+
+      - name: External smoke
+        run: |
+          set -euo pipefail
+          curl -fsS --max-time 20 https://app.blast808.com/healthz | grep -F '"backend":"production"'
+          curl -fsS --max-time 20 https://app.blast808.com/login | grep -F '<div id="root"></div>'

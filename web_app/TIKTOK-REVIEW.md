@@ -57,15 +57,11 @@ Web → официальный сайт `https://<домен>`.
 - Scope: `video.list`
 
 ### 2.4 URL properties (верификация домена)
-Нужна, потому что мы публикуем через `PULL_FROM_URL` — TikTok сам забирает mp4 по ссылке
-(`tiktok_api.init_direct_post_pull`). Без верификации домена/префикса этот путь не работает.
-
-Верифицировать нужно **домен, откуда отдаются mp4** — то есть S3-бакет
-(`s3.twcstorage.ru/...`), а не только сайт. Если верификация чужого домена невозможна —
-переключиться на `FILE_UPLOAD` (он уже реализован: `tiktok_api.init_direct_post_file`)
-либо отдавать mp4 со своего домена через прокси.
-
-**Это решение нужно принять ДО подачи** — от него зависит демо-видео.
+Production использует `FILE_UPLOAD`: backend забирает готовый MP4 напрямую из настроенного
+Timeweb S3 и загружает его по выданному TikTok `upload_url`. URL чужого S3-домена TikTok не
+получает, поэтому URL property для `s3.twcstorage.ru` не требуется. Runtime требует
+`TIKTOK_UPLOAD_SOURCE=FILE_UPLOAD` и не даст случайно включить `PULL_FROM_URL` в production,
+пока у Blast нет собственного верифицированного media-домена.
 
 ---
 
@@ -123,18 +119,18 @@ Web → официальный сайт `https://<домен>`.
 
 | # | Требование | Как сейчас | Файл |
 |---|---|---|---|
-| 1 | Тумблер **Stitch** обязателен для видео | ❌ нет: есть только Comment и Duet | `TikTokPostPage.tsx` ~573–580 |
-| 2 | Отключённые аккаунтом взаимодействия должны быть **disabled и серые** | ⚠️ значение выставляем в false, но тумблер остаётся кликабельным | `MiniToggle` (стр. 30) не принимает `disabled` |
-| 3 | Блок **Commercial content disclosure**: тумблер (по умолчанию выкл) + чекбоксы «Your Brand» / «Branded Content», хотя бы один при включённом тумблере | ❌ нет вообще | `TikTokPostPage.tsx` |
-| 4 | Branded content ⇒ приватность только public/friends, «Only me» блокируется | ❌ нет | там же |
-| 5 | Текст согласия: **«By posting, you agree to TikTok's Music Usage Confirmation»** со ссылкой; при branded content — плюс ссылка на Branded Content Policy | ⚠️ у нас «Я имею АП на музыку и контент» — не то и без ссылок | ключ `tiktok.rights` |
+| 1 | Тумблер **Stitch** обязателен для видео | ✅ есть; Comment/Duet/Stitch выключены по умолчанию | `TikTokPostPage.tsx` |
+| 2 | Отключённые аккаунтом взаимодействия должны быть **disabled и серые** | ✅ UI блокирует; backend отклоняет обходной запрос | `MiniToggle`, `validate_video_post_settings` |
+| 3 | Блок **Commercial content disclosure**: тумблер (по умолчанию выкл) + чекбоксы «Your Brand» / «Branded Content», хотя бы один при включённом тумблере | ✅ | `TikTokPostPage.tsx` |
+| 4 | Branded content ⇒ приватность только public/friends, «Only me» блокируется | ✅ UI сбрасывает выбор; backend валидирует | frontend + `tiktok_api.py` |
+| 5 | Текст согласия: **«By posting, you agree to TikTok's Music Usage Confirmation»** со ссылкой; при branded content — плюс ссылка на Branded Content Policy | ✅ | i18n + `TikTokPostPage.tsx` |
 | 6 | Ник создателя из `creator_info` | ✅ есть | |
 | 7 | Селектор приватности без значения по умолчанию | ✅ есть (`privacy = null`) | |
 | 8 | Превью ролика | ✅ есть | |
 | 9 | Уведомление о времени обработки + polling статуса | ✅ есть | |
-| 10 | Ссылки Privacy/Terms доступны на сайте без навигации | ⚠️ на лендинге есть, проверить футер после деплоя | |
-| 11 | Домен для `PULL_FROM_URL` верифицирован (или переход на `FILE_UPLOAD`) | ❌ решение не принято | §2.4 |
-| 12 | Сайт работает на боевом домене по HTTPS, не localhost | ❌ | `TIKTOK_REDIRECT_URI`, `APP_URL` |
+| 10 | Ссылки Privacy/Terms доступны на сайте без навигации | ✅ есть в футере и проверяются CI-контрактом | `landing/index.html` |
+| 11 | Домен для `PULL_FROM_URL` верифицирован (или переход на `FILE_UPLOAD`) | ✅ выбран `FILE_UPLOAD` | §2.4 |
+| 12 | Сайт работает на боевом домене по HTTPS, не localhost | ⚠️ код и env-контракт готовы; нужен production deploy с реальными secrets | `TIKTOK_REDIRECT_URI`, `APP_URL` |
 
 Пункты 1–5 — это правки одного экрана `TikTokPostPage.tsx`. По объёму — один заход.
 
@@ -184,8 +180,8 @@ Web → официальный сайт `https://<домен>`.
 ```
 [ ] Боевой домен + HTTPS, приложение открывается
 [ ] Футер лендинга: прямые ссылки Privacy Policy и Terms
-[ ] §4 пункты 1–5 сделаны и видны на экране выкладки
-[ ] Решено: PULL_FROM_URL (+верификация домена) или FILE_UPLOAD
+[x] §4 пункты 1–5 сделаны и видны на экране выкладки
+[x] Решено: FILE_UPLOAD
 [ ] TIKTOK_REDIRECT_URI / APP_URL переведены на боевой домен и совпадают с кабинетом
 [ ] Иконка 1024×1024 готова
 [ ] Тексты §3 вставлены в поля

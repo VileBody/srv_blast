@@ -31,6 +31,8 @@ def _key() -> bytes:
     configured = os.getenv("TIKTOK_TOKEN_KEY", "").strip().encode("ascii")
     if configured:
         return configured
+    if os.getenv("MODE") == "prod":
+        raise RuntimeError("tiktok_tokens: TIKTOK_TOKEN_KEY is required in production")
     RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
     if KEY_PATH.exists():
         return KEY_PATH.read_bytes().strip()
@@ -48,8 +50,10 @@ def _read_all() -> dict[str, dict[str, Any]]:
         raw = Fernet(_key()).decrypt(STORE_PATH.read_bytes())
         data = json.loads(raw.decode("utf-8"))
         return data if isinstance(data, dict) else {}
-    except (InvalidToken, ValueError, json.JSONDecodeError):
+    except (InvalidToken, ValueError, json.JSONDecodeError) as exc:
         # A key mismatch must not leak ciphertext or silently expose tokens.
+        if os.getenv("MODE") == "prod":
+            raise RuntimeError("tiktok_tokens: stored token data cannot be decrypted") from exc
         return {}
 
 
@@ -60,6 +64,13 @@ def _write_all(data: dict[str, dict[str, Any]]) -> None:
     temp = STORE_PATH.with_suffix(".tmp")
     temp.write_bytes(encrypted)
     temp.replace(STORE_PATH)
+
+
+def healthcheck() -> None:
+    """Validate the configured key without exposing or rewriting token data."""
+    Fernet(_key())
+    if STORE_PATH.exists():
+        _read_all()
 
 
 def save(user_id: str, record: dict[str, Any]) -> None:

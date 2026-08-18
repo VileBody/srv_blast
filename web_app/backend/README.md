@@ -1,14 +1,25 @@
-# Blast FastAPI Mock
+# Blast Web API
 
-Самодостаточный мок-прототип Blast Web App по ТЗ: FastAPI раздаёт страницы, статические ассеты и JSON-ручки `/api/*`. Реальные PostgreSQL, TBank, TikTok, S3 и оркестратор заменены in-memory моками.
+FastAPI API для SPA Blast. Vite SPA отдаёт nginx; старый параллельный Jinja-сайт удалён.
+Режим запуска выбирается только явно: `MODE=dev` + `BLAST_BACKEND_MODE=mock` для
+локальной разработки или `MODE=prod` + `BLAST_BACKEND_MODE=production` для прода.
+
+Production env, deploy workflow и приёмочный smoke описаны в
+[`../../PRE-DEPLOY.md`](../../PRE-DEPLOY.md). Пример полного env-контракта:
+[`./.env.production.example`](./.env.production.example).
 
 ## Быстрый запуск
 
 ```bash
-cd blast_fastapi_mock
+cd web_app/backend
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+export MODE=dev
+export BLAST_BACKEND_MODE=mock
+export APP_URL=http://localhost:5173
+export BLAST_CORS_ORIGINS=http://localhost:5173
+export BLAST_SESSION_SECRET=local-development-only
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
@@ -58,6 +69,7 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 | `GOOGLE_CLIENT_SECRET` | оттуда же |
 | `GOOGLE_REDIRECT_URI` | должен совпадать с консолью буква в букву; Google требует https везде, кроме `http://localhost` |
 | `APP_URL` | куда вернуть пользователя после входа |
+| `TIKTOK_UPLOAD_SOURCE` | `FILE_UPLOAD` в production; `PULL_FROM_URL` допустим только после верификации собственного media-домена в TikTok |
 | `TELEGRAM_BOT_TOKEN` | без него бот-верификация выключена, работает дев-фолбэк |
 | `BLAST_GEO_HEADER` | заголовок прокси со страной, по умолчанию `CF-IPCountry` |
 | `BLAST_GOOGLE_BLOCKED_COUNTRIES` | где не предлагать Google, по умолчанию `RU` |
@@ -76,9 +88,8 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 осознанно мягкая проверка: без VPN сервис из России и так недоступен, а с VPN адрес будет
 не российским. Для жёсткой блокировки нужен прокси, который заголовок проставляет.
 
-**Известное ограничение:** аккаунты Telegram лежат в реестре под ключом `tg:<chat_id>` и
-почты не имеют, поэтому один человек, зашедший обоими способами, получит два разных аккаунта.
-Привязка второго способа в профиле не сделана.
+Если пользователь сначала вошёл разными способами, это две разные личности. Чтобы второй
+способ вёл в тот же аккаунт, его нужно привязать в профиле до отдельной регистрации.
 
 ## Безопасность
 
@@ -116,8 +127,8 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 уедет в общее хранилище, иначе каждый воркер считает свой лимит и суммарный оказывается
 кратно больше заявленного. Окно в Redis фиксированное (`INCR` + `EXPIRE` на интервал),
 в памяти — скользящее; разница для защиты от перебора несущественна. Если библиотеки
-`redis` нет или сервер недоступен, лимит молча считается в памяти: моргнувший Redis не
-должен закрывать вход всем.
+`redis` нет или сервер недоступен, production healthcheck падает: общий лимит нельзя
+незаметно заменить отдельными счётчиками процессов. In-memory limiter разрешён только в dev.
 
 ## Анти-фрод: один аккаунт TikTok — один бесплатный лимит
 
@@ -164,19 +175,19 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 ### Страницы
 
-- `/register` — регистрация с TG-verification modal и моковым polling.
-- `/login` — вход с mock credentials.
+- `/register` — регистрация с Telegram verification modal.
+- `/login` — passwordless-вход через Telegram или Google.
 - `/app` — dashboard с hero, проектами и блоком статистики.
 - `/app/projects` — список проектов и modal создания проекта.
-- `/app/projects/{id}` — детали проекта, прогресс, контент-план, TikTok mock action.
-- `/app/profile` — профиль, avatar upload mock, TikTok connect/disconnect mock, подписка.
+- `/app/projects/{id}` — детали проекта, прогресс, контент-план и оценка батча.
+- `/app/profile` — профиль, OAuth-связи, TikTok, подписка и удаление аккаунта.
 - `/app/pricing` — 4 тарифа с обязательным чекбоксом оферты перед оплатой.
-- `/app/stats` — coming soon-заглушка.
+- `/app/stats` — TikTok Display API метрики и разбор итераций контента.
 - `/app/generate` — 5-шаговый wizard: трек → фон → хук → титры → финал.
 - `/app/processing/{jobId}` — polling прогресса генерации и inline rating card.
 - `/not-found`, `/error` — системные страницы.
 
-### Моковые ручки
+### Основные ручки
 
 Auth:
 
@@ -189,17 +200,16 @@ Wizard:
 
 - `POST /api/wizard/upload-track`
 - `GET /api/wizard/previous-track`
-- `POST /api/wizard/analyze-track`
 - `GET /api/wizard/drops`
-- `POST /api/wizard/rank-vibes`
 - `GET /api/wizard/vibes`
+- `GET /api/wizard/photos`
+- `GET /api/wizard/subtitle-styles`
 - `GET /api/wizard/session`
 - `POST /api/wizard/session`
 - `POST /api/wizard/submit`
 
 Preview:
 
-- `GET /api/preview/subtitle`
 - `GET /api/preview/composite`
 
 Jobs:

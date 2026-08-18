@@ -18,6 +18,7 @@ import os
 import sys
 import threading
 from dataclasses import asdict
+from pathlib import Path
 from typing import Any
 
 from . import analytics, auth_store, db
@@ -182,6 +183,74 @@ def delete_user(key: str) -> None:
     _guarded("delete_user", write)
 
 
+def delete_account(user_id: str) -> dict[str, int]:
+    """Delete all user-owned product data atomically.
+
+    TikTok anti-fraud history is deliberately retained: it contains only the
+    service user id and TikTok open id and prevents account deletion from
+    resetting the one-account rule.
+    """
+    uid = str(user_id or "").strip()
+    if not uid:
+        raise ValueError("user_id is empty")
+
+    keys = [key for key, user in auth_store.USERS.items() if user.get("id") == uid]
+    space = store.WORKSPACES.get(uid)
+    project_ids = [
+        project.get("id")
+        for project in (space.projects if space else [])
+        if project.get("id")
+    ]
+    owned_jobs = [
+        job_id for job_id, job in store.JOBS.items() if job.get("userId") == uid
+    ]
+
+    if space:
+        upload_root = (Path(__file__).resolve().parent / "static" / "uploads").resolve()
+        for item in [*space.saved_tracks, *space.user_sources]:
+            local_url = str(item.get("localUrl") or "")
+            marker = "/static/uploads/"
+            if marker not in local_url:
+                continue
+            target = (upload_root / local_url.split(marker, 1)[1]).resolve()
+            if upload_root in target.parents:
+                target.unlink(missing_ok=True)
+
+    db.migrate()
+    with _lock, db.transaction() as cursor:
+        for project_id in project_ids:
+            cursor.execute(
+                db.sql("DELETE FROM iterations WHERE project_id = %s"),
+                (project_id,),
+            )
+        cursor.execute(db.sql("DELETE FROM jobs WHERE user_id = %s"), (uid,))
+        cursor.execute(db.sql("DELETE FROM workspaces WHERE user_id = %s"), (uid,))
+        cursor.execute(db.sql("DELETE FROM analytics_events WHERE user_id = %s"), (uid,))
+        for key in keys:
+            cursor.execute(db.sql("DELETE FROM auth_tokens WHERE email = %s"), (key,))
+        cursor.execute(db.sql("DELETE FROM app_users WHERE user_id = %s"), (uid,))
+
+    store.WORKSPACES.pop(uid, None)
+    for job_id in owned_jobs:
+        store.JOBS.pop(job_id, None)
+    for key, job_id in list(store.JOB_IDEMPOTENCY.items()):
+        if job_id in owned_jobs:
+            store.JOB_IDEMPOTENCY.pop(key, None)
+    for project_id in project_ids:
+        store.ITERATIONS.pop(project_id, None)
+    analytics.EVENTS[:] = [
+        event for event in analytics.EVENTS if event.get("userId") != uid
+    ]
+    for key in keys:
+        auth_store.USERS.pop(key, None)
+
+    return {
+        "identities": len(keys),
+        "projects": len(project_ids),
+        "jobs": len(owned_jobs),
+    }
+
+
 def _guarded(action: str, fn: Any) -> None:
     """Выполнить запись, не роняя запрос.
 
@@ -195,6 +264,8 @@ def _guarded(action: str, fn: Any) -> None:
         db.migrate()
         fn()
     except Exception as exc:  # noqa: BLE001
+        if os.getenv("MODE") == "prod":
+            raise RuntimeError(f"persistence: {action} failed: {exc}") from exc
         print(f"[persistence] {action} failed: {exc}", file=sys.stderr)
 
 

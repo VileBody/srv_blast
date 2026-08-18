@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
 import { useChip } from '../../i18n/useChip';
 import { api } from '../../lib/api';
+import { useToast } from '../../contexts/ToastContext';
 import { cn } from '../../lib/cn';
 import { SvgMaskIcon } from '../layout/SvgMaskIcon';
 import { ArrowRight, useDragScroll } from './BackgroundPanel';
@@ -165,7 +166,12 @@ export function StageHooks() {
   const hooks = useWizardStore((state) => state.hooks);
   const setHooks = useWizardStore((state) => state.setHooks);
   const track = useWizardStore((state) => state.track);
-  const dropsQuery = useQuery({ queryKey: ['drops'], queryFn: api.drops });
+  const meQuery = useQuery({ queryKey: ['me'], queryFn: api.me, staleTime: 15_000 });
+  const dropsQuery = useQuery({
+    queryKey: ['drops'],
+    queryFn: api.drops,
+    enabled: meQuery.isSuccess && Boolean(meQuery.data.capabilities?.analyzedDrops),
+  });
   const [customDrop, setCustomDrop] = useState(false);
   const [hint, setHint] = useState<HookKind | null>(null);
 
@@ -375,10 +381,11 @@ interface FullscreenSoundControls {
  */
 function EffectPreview({ style, hook, lyrics }: { style: string; hook?: string; lyrics?: string }) {
   const [broken, setBroken] = useState(false);
+  const meQuery = useQuery({ queryKey: ['me'], queryFn: api.me, staleTime: 15_000 });
   const previewQuery = useQuery({
     queryKey: ['composite-preview', style, hook],
     queryFn: () => api.compositePreview(style, hook!),
-    enabled: Boolean(hook),
+    enabled: Boolean(hook) && Boolean(meQuery.data?.capabilities?.remoteCompositePreviews),
     staleTime: Infinity,
     retry: false
   });
@@ -601,6 +608,7 @@ export function HooksWorkZone({ ready, canContinue, loading, onBack, onNext }: {
   const subtitleStyle = useWizardStore((state) => state.subtitles.pool[0] ?? 'Impulse');
   const lyrics = useWizardStore((state) => state.fragmentLyrics || state.lyrics);
   const setHooks = useWizardStore((state) => state.setHooks);
+  const { push } = useToast();
   const pillsScroll = useDragScroll();
   const soundInputRef = useRef<HTMLInputElement>(null);
   const [step, setStep] = useState(0);
@@ -630,15 +638,31 @@ export function HooksWorkZone({ ready, canContinue, loading, onBack, onNext }: {
   const soundUrlRef = useRef<string | null>(null);
   const [soundPlaying, setSoundPlaying] = useState(false);
 
-  const onSoundUpload = (event: ChangeEvent<HTMLInputElement>) => {
+  useEffect(() => {
+    soundUrlRef.current = config.soundPlaybackUrl ?? null;
+  }, [config.soundPlaybackUrl]);
+
+  const onSoundUpload = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
     soundAudioRef.current?.pause();
     soundAudioRef.current = null;
     setSoundPlaying(false);
-    if (soundUrlRef.current) URL.revokeObjectURL(soundUrlRef.current);
-    soundUrlRef.current = URL.createObjectURL(file);
-    setHooks({ config: { sound: file.name.replace(/\.[^.]+$/, '') } });
+    try {
+      const uploaded = await api.uploadHookSound(file);
+      soundUrlRef.current = uploaded.playbackUrl;
+      setHooks({ config: {
+        sound: file.name.replace(/\.[^.]+$/, ''),
+        soundUrl: uploaded.url,
+        soundPlaybackUrl: uploaded.playbackUrl
+      } });
+    } catch {
+      soundUrlRef.current = null;
+      setHooks({ config: { sound: undefined, soundUrl: undefined, soundPlaybackUrl: undefined } });
+      push({ variant: 'error', title: t('wizard.fx.soundUploadFailed') });
+    } finally {
+      event.target.value = '';
+    }
   };
 
   const toggleSoundPlay = () => {
@@ -660,10 +684,9 @@ export function HooksWorkZone({ ready, canContinue, loading, onBack, onNext }: {
     soundAudioRef.current?.pause();
     soundAudioRef.current = null;
     setSoundPlaying(false);
-    if (soundUrlRef.current) URL.revokeObjectURL(soundUrlRef.current);
     soundUrlRef.current = null;
     // Без звука хук «Звук» перестаёт быть настроенным — пилюля уходит сама
-    setHooks({ config: { sound: undefined } });
+    setHooks({ config: { sound: undefined, soundUrl: undefined, soundPlaybackUrl: undefined } });
   };
 
   /*

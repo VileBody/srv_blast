@@ -9,6 +9,8 @@ services:
     container_name: blast-web-preview-api
     environment:
       APP_URL: https://app.blast808.com
+      MODE: dev
+      BLAST_BACKEND_MODE: mock
       BLAST_COOKIE_SAMESITE: lax
       BLAST_COOKIE_SECURE: "1"
       BLAST_CORS_ORIGINS: https://app.blast808.com

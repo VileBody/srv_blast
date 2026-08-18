@@ -24,6 +24,10 @@ export function ProjectDetailPage() {
   const setStage = useWizardStore((state) => state.setStage);
   const project = projectQuery.data?.project;
   const videos = useMemo(() => project?.jobs?.flatMap((job) => job.videos) ?? [], [project]);
+  const rateableJob = useMemo(
+    () => [...(project?.jobs ?? [])].reverse().find((job) => job.status === 'COMPLETED'),
+    [project]
+  );
 
   const activateMutation = useMutation({
     mutationFn: () => api.activateProject(id ?? ''),
@@ -33,6 +37,15 @@ export function ProjectDetailPage() {
         queryClient.invalidateQueries({ queryKey: ['projects'] })
       ]);
       push({ variant: 'success', title: t('projectDetail.madeCurrent') });
+    },
+    onError: () => push({ variant: 'error', title: t('simple.error') })
+  });
+
+  const ratingMutation = useMutation({
+    mutationFn: (rating: number) => api.rateJob(rateableJob?.id ?? '', { rating }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['project', id] });
+      push({ variant: 'success', title: t('projectDetail.ratingThanks') });
     },
     onError: () => push({ variant: 'error', title: t('simple.error') })
   });
@@ -95,6 +108,9 @@ export function ProjectDetailPage() {
               : undefined}
             postOne={(index) => navigate(`/app/projects/${id}/post?video=${index}`)}
             onEmptyAction={addBatch}
+            rating={rateableJob?.rating}
+            onRate={rateableJob ? (rating) => ratingMutation.mutate(rating) : undefined}
+            ratingPending={ratingMutation.isPending}
           />
         </>
       }

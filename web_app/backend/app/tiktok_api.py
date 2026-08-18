@@ -44,6 +44,79 @@ class TikTokApiError(RuntimeError):
         self.status = status
 
 
+class TikTokPostValidationError(ValueError):
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
+
+
+def validate_video_post_settings(
+    creator: dict[str, Any],
+    *,
+    privacy_level: str,
+    comments: bool,
+    duet: bool,
+    stitch: bool,
+    brand_content: bool,
+) -> None:
+    """Validate settings against the latest creator_info response.
+
+    The frontend mirrors these restrictions, but Direct Post must reject a
+    hand-crafted request instead of silently changing the creator's choices.
+    """
+    allowed = creator.get("privacy_level_options") or []
+    if allowed and privacy_level not in allowed:
+        raise TikTokPostValidationError(
+            "privacy_unavailable",
+            "The selected privacy level is unavailable for this TikTok account",
+        )
+    requested_interactions = {
+        "comment": (comments, "comment_disabled"),
+        "duet": (duet, "duet_disabled"),
+        "stitch": (stitch, "stitch_disabled"),
+    }
+    for interaction, (requested, creator_flag) in requested_interactions.items():
+        if requested and bool(creator.get(creator_flag)):
+            raise TikTokPostValidationError(
+                f"{interaction}_unavailable",
+                f"{interaction.title()} is disabled for this TikTok account",
+            )
+    if brand_content and privacy_level == "SELF_ONLY":
+        raise TikTokPostValidationError(
+            "branded_content_private",
+            "Branded content visibility cannot be set to private",
+        )
+
+
+def build_video_post_info(
+    *,
+    title: str,
+    privacy_level: str,
+    comments: bool,
+    duet: bool,
+    stitch: bool,
+    cover_timestamp_ms: int,
+    brand_content: bool,
+    brand_organic: bool,
+) -> dict[str, Any]:
+    """Build the exact Direct Post payload audited by TikTok.
+
+    `is_aigc` is deliberately absent. Blast assembles artist-provided and
+    licensed media; if generative media is added later, the caller must add an
+    explicit per-video AIGC decision instead of changing this default.
+    """
+    return {
+        "title": title,
+        "privacy_level": privacy_level,
+        "disable_duet": not duet,
+        "disable_stitch": not stitch,
+        "disable_comment": not comments,
+        "video_cover_timestamp_ms": cover_timestamp_ms,
+        "brand_content_toggle": bool(brand_content),
+        "brand_organic_toggle": bool(brand_organic),
+    }
+
+
 def new_pkce() -> tuple[str, str]:
     """(code_verifier, code_challenge) — PKCE S256, обязателен для web-флоу TikTok."""
     verifier = base64.urlsafe_b64encode(secrets.token_bytes(48)).decode().rstrip("=")

@@ -11,16 +11,13 @@
 - **Проверка файлов.** `content_type` приходит от клиента и ничего не гарантирует —
   под видом mp3 можно было залить что угодно. Смотрим на первые байты.
 
-Счётчики частоты по умолчанию живут в памяти процесса — этого хватает одному инстансу.
-При нескольких воркерах задайте `REDIS_URL`: счёт уедет в общее хранилище, иначе каждый
-воркер считает свой лимит и суммарный оказывается кратно больше заявленного. Redis
-недоступен или библиотеки нет — молча возвращаемся к памяти (см. `_redis_hit`).
+В dev счётчики могут жить в памяти процесса. В production `REDIS_URL` обязателен:
+недоступность общего счётчика является ошибкой, а не поводом незаметно ослабить лимиты.
 """
 from __future__ import annotations
 
 import os
 import secrets
-import sys
 import threading
 import time
 from collections import deque
@@ -128,7 +125,7 @@ _redis_lock = threading.Lock()
 
 
 def _redis() -> Any:
-    """Клиент Redis или None. Нет библиотеки / нет REDIS_URL / упал — работаем на памяти."""
+    """Клиент Redis или None в dev; production fails closed."""
     global _redis_client, _redis_broken
     if _redis_broken:
         return None
@@ -136,6 +133,8 @@ def _redis() -> Any:
         return _redis_client
     url = (os.getenv("REDIS_URL") or "").strip()
     if not url:
+        if os.getenv("MODE") == "prod":
+            raise RuntimeError("security_rate_limit: REDIS_URL is required in production")
         _redis_broken = True
         return None
     with _redis_lock:
@@ -146,7 +145,8 @@ def _redis() -> Any:
                 _redis_client = redis.Redis.from_url(url, socket_timeout=0.2, socket_connect_timeout=0.2)
                 _redis_client.ping()
             except Exception as exc:  # noqa: BLE001
-                print(f"[security] Redis недоступен, лимиты считаются в памяти: {exc}", file=sys.stderr)
+                if os.getenv("MODE") == "prod":
+                    raise RuntimeError(f"security_rate_limit: Redis unavailable: {exc}") from exc
                 _redis_broken = True
                 return None
     return _redis_client
@@ -155,9 +155,8 @@ def _redis() -> Any:
 def _redis_hit(name: str, key: str, limit: int, window: int) -> int | None:
     """0 / сколько ждать — либо None, если общего счётчика нет и решает память.
 
-    Падение Redis НЕ роняет запрос и не закрывает вход: возвращаем None, и лимит считается
-    в памяти процесса. Для ограничителя частоты это правильный компромисс — при моргнувшем
-    Redis не должен встать вход для всех.
+    В dev падение Redis возвращает None и включает память. В production лимиты должны
+    оставаться общими между процессами, поэтому сбой Redis является явной ошибкой.
     """
     client = _redis()
     if client is None:
@@ -173,8 +172,18 @@ def _redis_hit(name: str, key: str, limit: int, window: int) -> int | None:
             return max(1, window - (now % window))
         return 0
     except Exception as exc:  # noqa: BLE001
-        print(f"[security] Redis сбойнул на лимите, считаем в памяти: {exc}", file=sys.stderr)
+        if os.getenv("MODE") == "prod":
+            raise RuntimeError(f"security_rate_limit: Redis operation failed: {exc}") from exc
         return None
+
+
+def healthcheck() -> None:
+    """Verify the shared limiter store before accepting production traffic."""
+    client = _redis()
+    if os.getenv("MODE") == "prod" and client is None:
+        raise RuntimeError("security_rate_limit: Redis client is unavailable")
+    if client is not None:
+        client.ping()
 
 
 def _limit_from_env(name: str, default: int) -> int:
@@ -189,7 +198,13 @@ _UPLOAD_BUCKET = _Bucket(_limit_from_env("BLAST_RATE_UPLOAD", 20), 60, "upload")
 
 # Ручки, где ограничение обязательно: вход шлёт сообщения в Telegram, загрузки пишут на диск
 _AUTH_PATHS = ("/api/auth/",)
-_UPLOAD_PATHS = ("/api/wizard/upload-track", "/api/wizard/upload-source", "/api/profile/avatar", "/cover")
+_UPLOAD_PATHS = (
+    "/api/wizard/upload-track",
+    "/api/wizard/upload-source",
+    "/api/wizard/upload-hook-sound",
+    "/api/profile/avatar",
+    "/cover",
+)
 
 
 def rate_limit_enabled() -> bool:

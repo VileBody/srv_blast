@@ -1,24 +1,71 @@
 from __future__ import annotations
 
-import json
+import hashlib
+import logging
 import os
 import secrets
+import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 from starlette.middleware.sessions import SessionMiddleware
+from starlette.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import mock_store as store
 from . import analytics, auth_store, fraud_guard, google_auth, persistence, security, telegram_bot
 from . import tiktok_api, tiktok_config, tiktok_token_store
+from .runtime import SETTINGS as RUNTIME
+
+
+logger = logging.getLogger(__name__)
+
+
+def _production_backend():
+    from .production_backend import get_backend
+
+    return get_backend()
+
+
+def _production_error(exc: Exception) -> HTTPException:
+    return HTTPException(
+        status_code=503,
+        detail={"code": "production_backend_unavailable", "message": str(exc)},
+    )
+
+
+def _billing_backend():
+    from .billing_backend import get_billing
+
+    return get_billing()
+
+
+def _telegram_chat_id() -> int:
+    value = auth_store.chat_id_for_user(store.current_user_id()) or store.ws().user.get("tgChatId")
+    try:
+        return int(value)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "telegram_required",
+                "message": "Привяжи Telegram, чтобы использовать общий баланс и оплату.",
+            },
+        ) from exc
+
+
+async def _sync_billing_bundle(data: dict[str, Any]) -> dict[str, Any]:
+    snapshot = await _billing_backend().snapshot(_telegram_chat_id())
+    subscription = data["subscription"]
+    subscription.update({key: value for key, value in snapshot.items() if key not in {"creditsLeft", "tracksLeft"}})
+    data["creditsLeft"] = snapshot["creditsLeft"]
+    return data
 
 ROOT = Path(__file__).resolve().parent
 STATIC_DIR = ROOT / "static"
@@ -28,18 +75,14 @@ SOURCE_DIR = STATIC_DIR / "uploads" / "sources"
 SOURCE_DIR.mkdir(parents=True, exist_ok=True)
 
 app = FastAPI(
-    title="Blast Web App Mock",
-    version="0.1.0",
-    description="FastAPI prototype with mocked SaaS pages and mocked Blast API endpoints.",
+    title="Blast Web App",
+    version="1.0.0",
+    description="Blast web application API.",
 )
 # Список origin-ов — из окружения: в проде фронт живёт на своём домене, и хардкод
 # localhost:5173 означал бы либо неработающий прод, либо правку кода на каждый домен.
 # Пустой BLAST_CORS_ORIGINS = дев-значение по умолчанию.
-CORS_ORIGINS = [
-    origin.strip()
-    for origin in (os.getenv("BLAST_CORS_ORIGINS") or "http://localhost:5173,http://127.0.0.1:5173").split(",")
-    if origin.strip()
-]
+CORS_ORIGINS = list(RUNTIME.cors_origins)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
@@ -48,17 +91,18 @@ app.add_middleware(
     # Заголовки перечислены явно: с "*" браузер не пустил бы X-CSRF-Token при credentials
     allow_headers=["Content-Type", "Authorization", security.CSRF_HEADER],
 )
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
-templates = Jinja2Templates(directory=str(ROOT / "templates"))
+# The SPA is served by nginx. FastAPI only exposes development uploads under
+# this narrow mount; the retired Jinja site and its assets are not routable.
+app.mount("/static/uploads", StaticFiles(directory=STATIC_DIR / "uploads"), name="uploads")
 
 
 # Гард авторизации. Выключается только явно (BLAST_REQUIRE_AUTH=0) — например, чтобы
 # погонять моки локально без Telegram-бота.
-REQUIRE_AUTH = os.getenv("BLAST_REQUIRE_AUTH", "1") != "0"
+REQUIRE_AUTH = RUNTIME.require_auth
 
 # DEV-ручки (`/api/dev/*`) умеют входить под ЛЮБЫМ аккаунтом и переписывать состояние,
 # поэтому включаются явным флагом. В проде их быть не должно.
-DEV_TOOLS = os.getenv("BLAST_DEV_TOOLS", "1") == "1"
+DEV_TOOLS = RUNTIME.dev_tools
 
 # Открытые префиксы: сам вход, OAuth-возврат TikTok, dev-ручки и healthcheck.
 PUBLIC_API_PREFIXES = ("/api/auth/", "/api/dev/", "/api/tiktok/auth", "/api/tiktok/callback", "/api/tiktok/status")
@@ -131,10 +175,9 @@ async def bind_workspace(request: Request, call_next):
 # Секрет сессии — только из окружения. Фолбэк на случайный ключ означает, что без
 # BLAST_SESSION_SECRET сессии не переживут рестарт: это заметно в деве и безопасно в проде
 # (захардкоженный ключ позволял бы подделать cookie любому, кто видел исходники).
-SESSION_SECRET = os.getenv("BLAST_SESSION_SECRET") or secrets.token_urlsafe(32)
 app.add_middleware(
     SessionMiddleware,
-    secret_key=SESSION_SECRET,
+    secret_key=RUNTIME.session_secret,
     # https_only и same_site — из окружения: в проде обязательно BLAST_COOKIE_SECURE=1,
     # локально по http Secure-cookie браузер бы просто выбросил (см. security.cookie_*).
     same_site=security.cookie_samesite(),
@@ -143,13 +186,32 @@ app.add_middleware(
 
 
 @app.on_event("startup")
-def _restore_state() -> None:
+async def _restore_state() -> None:
     """Поднять сохранённое состояние. До этого рестарт стирал проекты, батчи и подписку."""
     persistence.load_all()
     auth_store.purge_expired_tokens()
     # Бот поднимается СРАЗУ, а не по первому «Войти через Telegram». Раньше между выдачей
     # ссылки и стартом поллинга был зазор, и первые нажатия /start просто не доходили.
     telegram_bot.ensure_started()
+    if RUNTIME.backend == "production":
+        # A production process that cannot reach its queue or object storage is
+        # unhealthy.  Do not accept uploads and silently leave jobs stranded.
+        await run_in_threadpool(_production_backend().healthcheck)
+        await _billing_backend().init()
+        await _billing_backend().healthcheck()
+        await run_in_threadpool(security.healthcheck)
+        await run_in_threadpool(telegram_bot.healthcheck)
+        await run_in_threadpool(tiktok_token_store.healthcheck)
+
+
+@app.on_event("shutdown")
+async def _close_dependencies() -> None:
+    if RUNTIME.backend == "production":
+        from .production_backend import close_backend
+        from .billing_backend import close_billing
+
+        close_backend()
+        await close_billing()
 
 
 class ProjectPayload(BaseModel):
@@ -169,20 +231,13 @@ class PaymentPayload(BaseModel):
     projectId: str | None = None
     name: str | None = None
     coverChoice: str = "auto"
+    recurrentAccepted: bool = False
 
 
 class WizardSessionPayload(BaseModel):
     projectId: str | None = None
     stage: int = 1
     data: dict[str, Any] = Field(default_factory=dict)
-
-
-class AnalyzePayload(BaseModel):
-    s3Key: str | None = None
-
-
-class VibePayload(BaseModel):
-    lyrics: str | None = None
 
 
 class SubmitPayload(BaseModel):
@@ -219,13 +274,20 @@ class ProfilePayload(BaseModel):
     artistNick: str | None = None
 
 
+class DeleteAccountPayload(BaseModel):
+    confirmation: str
+
+
 class TiktokPostPayload(BaseModel):
     projectId: str
     videoId: str
     caption: str = Field(default="", max_length=2200)
     privacy: str
-    comments: bool = True
-    duet: bool = True
+    comments: bool = False
+    duet: bool = False
+    stitch: bool = False
+    brandOrganic: bool = False
+    brandContent: bool = False
     cover: bool = False
     coverFrame: int | None = Field(default=None, ge=0, le=7)
     coverTimestampMs: int = Field(default=0, ge=0)
@@ -240,114 +302,9 @@ class IterationPayload(BaseModel):
     testParameter: str = Field(default="subtitles", pattern="^(subtitles|hooks|background)$")
 
 
-def ctx(request: Request, **extra: Any) -> dict[str, Any]:
-    bundle = store.get_user_bundle()
-    data = {
-        "request": request,
-        "user": bundle["user"],
-        "subscription": bundle["subscription"],
-        "creditsLeft": bundle["creditsLeft"],
-        "tiktok": bundle["tiktok"],
-    }
-    data.update(extra)
-    return data
-
-
-def render(request: Request, template: str, **extra: Any) -> HTMLResponse:
-    status_code = int(extra.pop("status_code", 200))
-    # Современная сигнатура Starlette: (request, name, context). Старый 2-арг вариант
-    # трактовал первый позиционный как request → context-dict уходил как имя шаблона.
-    return templates.TemplateResponse(request, template, ctx(request, **extra), status_code=status_code)
-
-
-@app.get("/", include_in_schema=False)
-def root() -> RedirectResponse:
-    # Лендинг по ТЗ не трогаем; в мок-прототипе уводим сразу в приложение.
-    return RedirectResponse("/app", status_code=302)
-
-
-@app.get("/register", response_class=HTMLResponse, tags=["pages"])
-def register_page(request: Request) -> HTMLResponse:
-    return render(request, "auth.html", mode="register", page_title="Регистрация")
-
-
-@app.get("/login", response_class=HTMLResponse, tags=["pages"])
-def login_page(request: Request) -> HTMLResponse:
-    return render(request, "auth.html", mode="login", page_title="Вход")
-
-
-@app.get("/app", response_class=HTMLResponse, tags=["pages"])
-def dashboard_page(request: Request) -> HTMLResponse:
-    projects = store.list_projects()
-    return render(request, "dashboard.html", page="dashboard", projects=projects["projects"], activeProject=projects["activeProject"])
-
-
-@app.get("/app/projects", response_class=HTMLResponse, tags=["pages"])
-def projects_page(request: Request) -> HTMLResponse:
-    projects = store.list_projects()
-    return render(request, "projects.html", page="projects", projects=projects["projects"], activeProject=projects["activeProject"])
-
-
-@app.get("/app/projects/{project_id}", response_class=HTMLResponse, tags=["pages"])
-def project_detail_page(request: Request, project_id: str) -> HTMLResponse:
-    project = store.get_project(project_id)
-    if not project:
-        return render(request, "simple.html", page_title="404", headline="404 — Проект не найден", text="Такого проекта нет в моковых данных.", cta="← К проектам", cta_href="/app/projects", is_app=True, status_code=404)
-    return render(request, "project_detail.html", page="projects", project=project)
-
-
-@app.get("/app/profile", response_class=HTMLResponse, tags=["pages"])
-def profile_page(request: Request) -> HTMLResponse:
-    return render(request, "profile.html", page="profile")
-
-
-@app.get("/app/pricing", response_class=HTMLResponse, tags=["pages"])
-def pricing_page(request: Request) -> HTMLResponse:
-    return render(request, "pricing.html", page="pricing")
-
-
-@app.get("/app/stats", response_class=HTMLResponse, tags=["pages"])
-def stats_page(request: Request) -> HTMLResponse:
-    return render(request, "stats.html", page="stats")
-
-
-@app.get("/app/generate", response_class=HTMLResponse, tags=["pages"])
-def generate_page(request: Request, project: str | None = None) -> HTMLResponse:
-    projects = store.list_projects()["projects"]
-    project_id = project or (projects[0]["id"] if projects else None)
-    return render(request, "wizard.html", page="generate", projects=projects, projectId=project_id)
-
-
-@app.get("/app/processing/{job_id}", response_class=HTMLResponse, tags=["pages"])
-def processing_page(request: Request, job_id: str) -> HTMLResponse:
-    job = store.get_job(job_id)
-    if not job:
-        return render(request, "simple.html", page_title="404", headline="404 — Джоб не найден", text="Такого jobId нет в моковых данных.", cta="← На дашборд", cta_href="/app", is_app=True, status_code=404)
-    project = store.get_project(job["projectId"])
-    return render(request, "processing.html", page="generate", job=job, project=project)
-
-
-@app.get("/not-found", response_class=HTMLResponse, tags=["pages"])
-def not_found_page(request: Request) -> HTMLResponse:
-    return render(request, "simple.html", page_title="404", headline="404 — Страница не найдена", text="Похоже, этот адрес не входит в мок-прототип.", cta="← Вернуться на главную", cta_href="/app", is_app=False, status_code=404)
-
-
-@app.get("/error", response_class=HTMLResponse, tags=["pages"])
-def error_page(request: Request) -> HTMLResponse:
-    return render(request, "simple.html", page_title="Ошибка", headline="Что-то пошло не так", text="Попробуй обновить страницу или вернись позже.", cta="Обновить ↺", cta_href="javascript:location.reload()", secondary_cta="← На главную", secondary_href="/app", is_app=False, status_code=500)
-
-
 @app.exception_handler(404)
 def custom_404(request: Request, exc: Exception):
-    # API-роуты отдают JSON (фронт ждёт {detail}), страницы — HTML-заглушку.
-    if request.url.path.startswith("/api/"):
-        return JSONResponse({"detail": getattr(exc, "detail", "Not found")}, status_code=404)
-    return templates.TemplateResponse(
-        request,
-        "simple.html",
-        ctx(request, page_title="404", headline="404 — Страница не найдена", text="Похоже, этот адрес не входит в мок-прототип.", cta="← Вернуться на главную", cta_href="/app", is_app=False),
-        status_code=404,
-    )
+    return JSONResponse({"detail": getattr(exc, "detail", "Not found")}, status_code=404)
 
 
 # ------------------------- Mock API: auth -------------------------
@@ -365,6 +322,7 @@ def _sync_current_user(user: dict[str, Any]) -> None:
         "surname": user.get("surname"),
         "artistNick": user.get("artistNick"),
         "tgVerified": True,
+        "tgChatId": user.get("tgChatId"),
     })
     space.user["email"] = email
     # вход через Telegram: email ещё не задан, имя берём из профиля TG
@@ -379,6 +337,7 @@ def _sync_current_user(user: dict[str, Any]) -> None:
     # заведённый через Google, выглядел бы подтверждённым в Telegram.
     space.user["authProvider"] = user.get("authProvider") or "telegram"
     space.user["tgVerified"] = bool(user.get("tgVerified"))
+    space.user["tgChatId"] = user.get("tgChatId")
     # почта привязанного Google — по ней профиль показывает, подключён ли второй способ
     space.user["googleEmail"] = user.get("googleEmail") or (
         user.get("email") if user.get("authProvider") == "google" else None
@@ -576,14 +535,29 @@ def api_tg_verify(request: Request, token: str | None = None) -> dict[str, Any]:
 
 
 @app.get("/api/me", tags=["profile"])
-def api_me() -> dict[str, Any]:
+async def api_me() -> dict[str, Any]:
     data = store.get_user_bundle()
+    if RUNTIME.backend == "production":
+        try:
+            await _sync_billing_bundle(data)
+        except HTTPException:
+            # Google-only accounts can browse and link Telegram.  Payment and
+            # generation remain explicitly blocked by _telegram_chat_id().
+            data["billingLinkRequired"] = True
+        except Exception as exc:
+            raise _production_error(exc) from exc
     # Экран ожидания обещает «пришлём в Telegram» — обещать это можно только когда бот
     # реально настроен И у юзера есть привязанный чат. Иначе фронт молчит про уведомления.
     data["telegramNotifications"] = bool(
         telegram_bot.configured() and auth_store.chat_id_for_user(store.current_user_id() or "")
     )
-    data["mock"] = True
+    data["mock"] = RUNTIME.backend == "mock"
+    data["capabilities"] = {
+        "customSources": RUNTIME.backend == "mock",
+        "analyzedDrops": RUNTIME.backend == "mock",
+        "remoteCompositePreviews": RUNTIME.backend == "mock",
+        "subscriptionBonuses": RUNTIME.backend == "mock",
+    }
     return data
 
 
@@ -639,7 +613,28 @@ def api_delete_project(project_id: str) -> dict[str, Any]:
 # ------------------------- Mock API: payments -------------------------
 
 @app.post("/api/payments/create-order", tags=["payments"])
-def api_create_order(payload: PaymentPayload) -> dict[str, Any]:
+async def api_create_order(payload: PaymentPayload) -> dict[str, Any]:
+    if RUNTIME.backend == "production":
+        tg_id = _telegram_chat_id()
+        try:
+            order = await _billing_backend().create_order(
+                tg_id=tg_id,
+                package_type=payload.packageType,
+                email=str(store.USER.get("email") or store.USER.get("googleEmail") or ""),
+                recurrent_accepted=payload.recurrentAccepted,
+            )
+        except Exception as exc:
+            raise HTTPException(
+                status_code=502,
+                detail={"code": "payment_init_failed", "message": str(exc)},
+            ) from exc
+        analytics.track(
+            "payment_link_created",
+            store.current_user_id(),
+            {"tier": payload.packageType.upper(), "orderId": order["orderId"]},
+        )
+        return {**order, "project": None, "mock": False}
+
     order_id = f"order_{uuid4().hex[:8]}"
     project = None
     if payload.name:
@@ -659,6 +654,11 @@ def api_create_order(payload: PaymentPayload) -> dict[str, Any]:
 @app.post("/api/payments/claim-bonus", tags=["payments"])
 def api_claim_bonus() -> dict[str, Any]:
     """Забрать бонус со шкалы месяцев: +1 трек, за третий месяц — снятие лимита треков."""
+    if RUNTIME.backend == "production":
+        raise HTTPException(
+            status_code=501,
+            detail={"code": "bonus_claim_unavailable", "message": "Бонусы ещё не подключены к общему балансу."},
+        )
     try:
         subscription = store.claim_bonus()
     except ValueError:
@@ -669,34 +669,63 @@ def api_claim_bonus() -> dict[str, Any]:
 
 @app.post("/api/payments/webhook", tags=["payments"])
 def api_payment_webhook(payload: dict[str, Any]) -> dict[str, Any]:
+    if RUNTIME.backend == "production":
+        # Production notifications are verified and processed by the public
+        # bot's existing T-Bank endpoint configured in TBANK_NOTIFY_URL.
+        raise HTTPException(status_code=404, detail="Not found")
     return {"ok": True, "signatureVerified": True, "received": payload, "mock": True}
 
 
 @app.post("/api/payments/cancel-sub", tags=["payments"])
-def api_cancel_sub(immediate: bool = False) -> dict[str, Any]:
+async def api_cancel_sub(immediate: bool = False) -> dict[str, Any]:
     """Отмена подписки. По умолчанию — с конца оплаченного периода.
 
     Отменить можно в любой момент, в том числе при неудачном списании: право на отмену —
     обязательное условие оферты, и запирать юзера в `past_due` нельзя.
     """
-    sub = store.cancel_subscription(at_period_end=not immediate)
+    if RUNTIME.backend == "production":
+        if immediate:
+            raise HTTPException(status_code=422, detail="Immediate cancellation is not supported")
+        if not await _billing_backend().cancel(_telegram_chat_id()):
+            raise HTTPException(status_code=409, detail="Active subscription not found")
+        data = await _sync_billing_bundle(store.get_user_bundle())
+        sub = data["subscription"]
+    else:
+        sub = store.cancel_subscription(at_period_end=not immediate)
     analytics.track("subscription_canceled", store.current_user_id(), {"tier": sub["tier"], "immediate": immediate})
-    return {"ok": True, "subscription": sub, "mock": True}
+    return {"ok": True, "subscription": sub, "mock": RUNTIME.backend == "mock"}
 
 
 @app.post("/api/payments/retry", tags=["payments"])
-def api_payment_retry() -> dict[str, Any]:
+async def api_payment_retry() -> dict[str, Any]:
     """Повторить списание после неудачной оплаты (в моке — всегда успешно).
 
     Реальный провайдер здесь вернёт ссылку на оплату; контракт ответа не изменится.
     """
+    if RUNTIME.backend == "production":
+        data = await _sync_billing_bundle(store.get_user_bundle())
+        tier = str(data["subscription"].get("tier") or "")
+        if tier != "BLAST":
+            raise HTTPException(status_code=409, detail="No BLAST subscription to retry")
+        order = await _billing_backend().create_order(
+            tg_id=_telegram_chat_id(),
+            package_type=tier,
+            email=str(store.USER.get("email") or store.USER.get("googleEmail") or ""),
+            recurrent_accepted=True,
+        )
+        return {"ok": True, "subscription": data["subscription"], "paymentUrl": order["paymentUrl"], "mock": False}
     sub = store.mark_payment_ok()
     return {"ok": True, "subscription": sub, "paymentUrl": None, "mock": True}
 
 
 @app.post("/api/payments/resume", tags=["payments"])
-def api_payment_resume() -> dict[str, Any]:
+async def api_payment_resume() -> dict[str, Any]:
     """Отменить запланированную отмену — вернуть автопродление."""
+    if RUNTIME.backend == "production":
+        if not await _billing_backend().resume(_telegram_chat_id()):
+            raise HTTPException(status_code=409, detail="Canceled recurrent subscription not found")
+        data = await _sync_billing_bundle(store.get_user_bundle())
+        return {"ok": True, "subscription": data["subscription"], "mock": False}
     sub = store.ws().subscription
     if sub.get("cancelAtPeriodEnd"):
         sub.update({"cancelAtPeriodEnd": False, "billingStatus": "active"})
@@ -713,8 +742,18 @@ async def api_upload_track(file: UploadFile = File(...)) -> dict[str, Any]:
     security.check_audio(content, max_mb=200)
     # Лимит треков — то, чем реально ограничен тариф (роликов на подключённом TikTok безлимит).
     # Раньше tracksUsed не рос вообще и лимит не работал ни на одном плане.
+    audio_hash = hashlib.sha256(content).hexdigest()
     left = store.tracks_left()
-    if left is not None and left <= 0:
+    if RUNTIME.backend == "production":
+        try:
+            allowed = await _billing_backend().can_upload_track(_telegram_chat_id(), audio_hash)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise _production_error(exc) from exc
+    else:
+        allowed = left is None or left > 0
+    if not allowed:
         analytics.track("limit_hit", store.current_user_id(), {"limit": "tracks"})
         raise HTTPException(
             status_code=402,
@@ -724,16 +763,43 @@ async def api_upload_track(file: UploadFile = File(...)) -> dict[str, Any]:
     # можно положить «..» или исполняемый суффикс.
     ext = security.safe_extension(file.filename, {".mp3", ".wav", ".m4a", ".ogg", ".flac"}, ".mp3")
     safe_name = f"{uuid4().hex}{ext}"
-    target = UPLOAD_DIR / safe_name
-    target.write_bytes(content)
-    track = store.save_track(security.sanitize_filename(file.filename, safe_name), target)
+    display_name = security.sanitize_filename(file.filename, safe_name)
+    if RUNTIME.backend == "production":
+        try:
+            uploaded = await run_in_threadpool(
+                _production_backend().upload_track,
+                content=content,
+                user_id=store.current_user_id(),
+                filename=display_name,
+                content_type=file.content_type,
+            )
+        except Exception as exc:  # dependency failure is explicit, never a local-file fallback
+            raise _production_error(exc) from exc
+        track = store.save_track(
+            display_name,
+            s3_url=uploaded["s3_url"],
+            playback_url=uploaded["playback_url"],
+            audio_hash=audio_hash,
+        )
+    else:
+        target = UPLOAD_DIR / safe_name
+        target.write_bytes(content)
+        track = store.save_track(display_name, target, audio_hash=audio_hash)
     analytics.track("track_uploaded", store.current_user_id(), {"trackId": track["id"]})
-    return {"track": track, "tracksLeft": store.tracks_left(), "mock": True}
+    return {"track": track, "tracksLeft": store.tracks_left(), "mock": RUNTIME.backend == "mock"}
 
 
 @app.post("/api/wizard/upload-source", tags=["wizard"])
 async def api_upload_source(file: UploadFile = File(...)) -> dict[str, Any]:
     """Свои исходники пользователя (Figma W39/W49) — видео-футаж вместо библиотечного."""
+    if RUNTIME.backend == "production":
+        raise HTTPException(
+            status_code=501,
+            detail={
+                "code": "custom_sources_not_supported",
+                "message": "Текущий orchestrator contract не принимает пользовательские видео-исходники.",
+            },
+        )
     content = await file.read()
     if not content:
         raise HTTPException(status_code=422, detail="Пустой файл")
@@ -743,58 +809,124 @@ async def api_upload_source(file: UploadFile = File(...)) -> dict[str, Any]:
     # расширений и размером; распознавание кодека делает уже рендер-нода.
     ext = security.safe_extension(file.filename, {".mp4", ".mov", ".webm", ".m4v"}, ".mp4")
     safe_name = f"{uuid4().hex}{ext}"
+    display_name = security.sanitize_filename(file.filename, safe_name)
+    if RUNTIME.backend == "production":
+        try:
+            uploaded = await run_in_threadpool(
+                _production_backend().upload_source,
+                content=content,
+                user_id=store.current_user_id(),
+                filename=display_name,
+                content_type=file.content_type,
+            )
+        except Exception as exc:
+            raise _production_error(exc) from exc
+        source = store.save_source(
+            display_name,
+            s3_url=uploaded["s3_url"],
+            playback_url=uploaded["playback_url"],
+        )
+    else:
+        target = SOURCE_DIR / safe_name
+        target.write_bytes(content)
+        source = store.save_source(display_name, target)
+    return {"source": source, "mock": RUNTIME.backend == "mock"}
+
+
+@app.post("/api/wizard/upload-hook-sound", tags=["wizard"])
+async def api_upload_hook_sound(file: UploadFile = File(...)) -> dict[str, Any]:
+    content = await file.read()
+    security.check_audio(content, max_mb=20)
+    ext = security.safe_extension(file.filename, {".mp3", ".wav", ".m4a", ".ogg", ".flac"}, ".mp3")
+    safe_name = f"{uuid4().hex}{ext}"
+    display_name = security.sanitize_filename(file.filename, safe_name)
+    if RUNTIME.backend == "production":
+        try:
+            uploaded = await run_in_threadpool(
+                _production_backend().upload_hook_sound,
+                content=content,
+                user_id=store.current_user_id(),
+                filename=display_name,
+                content_type=file.content_type,
+            )
+        except Exception as exc:
+            raise _production_error(exc) from exc
+        return {
+            "name": display_name,
+            "url": uploaded["s3_url"],
+            "playbackUrl": uploaded["playback_url"],
+            "mock": False,
+        }
     target = SOURCE_DIR / safe_name
     target.write_bytes(content)
-    return {"source": store.save_source(security.sanitize_filename(file.filename, safe_name), target), "mock": True}
+    return {
+        "name": display_name,
+        "url": f"/static/uploads/sources/{safe_name}",
+        "playbackUrl": f"/static/uploads/sources/{safe_name}",
+        "mock": True,
+    }
 
 
 @app.get("/api/wizard/previous-track", tags=["wizard"])
 def api_previous_track() -> dict[str, Any]:
-    return {"track": store.previous_track(), "mock": True}
-
-
-@app.post("/api/wizard/analyze-track", tags=["wizard"])
-def api_analyze_track(payload: AnalyzePayload) -> dict[str, Any]:
-    return {"jobId": f"analysis_{uuid4().hex[:8]}", "status": "PROCESSING", "etaSeconds": 2, "mock": True}
+    return {"track": store.previous_track(), "mock": RUNTIME.backend == "mock"}
 
 
 @app.get("/api/wizard/drops", tags=["wizard"])
 def api_drops() -> dict[str, Any]:
+    if RUNTIME.backend == "production":
+        raise HTTPException(
+            status_code=501,
+            detail={"code": "drop_analysis_not_configured"},
+        )
     return {"status": "COMPLETED", "bpm": 142, "drops": store.DROPS, "mock": True}
-
-
-@app.post("/api/wizard/rank-vibes", tags=["wizard"])
-def api_rank_vibes(payload: VibePayload) -> dict[str, Any]:
-    return {"jobId": f"vibes_{uuid4().hex[:8]}", "status": "PROCESSING", "etaSeconds": 2, "mock": True}
 
 
 @app.get("/api/wizard/vibes", tags=["wizard"])
 def api_vibes() -> dict[str, Any]:
+    if RUNTIME.backend == "production":
+        try:
+            vibes = _production_backend().preview_catalog("footage")
+        except Exception as exc:
+            raise _production_error(exc) from exc
+        return {"status": "COMPLETED", "vibes": vibes, "mock": False}
     return {"status": "COMPLETED", "vibes": store.VIBES, "mock": True}
 
 
 @app.get("/api/wizard/photos", tags=["wizard"])
 def api_photos() -> dict[str, Any]:
+    if RUNTIME.backend == "production":
+        try:
+            photos = _production_backend().preview_catalog("photo")
+        except Exception as exc:
+            raise _production_error(exc) from exc
+        return {"status": "COMPLETED", "photos": photos, "mock": False}
     return {"status": "COMPLETED", "photos": store.PHOTOS, "mock": True}
 
 
 @app.get("/api/wizard/subtitle-styles", tags=["wizard"])
 def api_subtitle_styles() -> dict[str, Any]:
+    if RUNTIME.backend == "production":
+        try:
+            styles = _production_backend().preview_catalog("subtitle")
+        except Exception as exc:
+            raise _production_error(exc) from exc
+        return {"status": "COMPLETED", "styles": styles, "mock": False}
     return {"status": "COMPLETED", "styles": store.SUBTITLE_STYLES, "mock": True}
 
 
 @app.get("/api/wizard/session", tags=["wizard"])
 def api_get_wizard_session() -> dict[str, Any]:
-    return {"session": store.get_wizard_session(), "mock": True}
+    return {"session": store.get_wizard_session(), "mock": RUNTIME.backend == "mock"}
 
 
 @app.post("/api/wizard/session", tags=["wizard"])
 def api_save_wizard_session(payload: WizardSessionPayload) -> dict[str, Any]:
-    return {"session": store.set_wizard_session(payload.model_dump()), "mock": True}
+    return {"session": store.set_wizard_session(payload.model_dump()), "mock": RUNTIME.backend == "mock"}
 
 
 @app.post("/api/wizard/submit", tags=["wizard"])
-def api_submit_wizard(payload: SubmitPayload) -> dict[str, Any]:
+async def api_submit_wizard(payload: SubmitPayload) -> dict[str, Any]:
     # Трек и текст — обязательные вводные: без них рендерить lyric-video нечего.
     # Фронт не пускает дальше этапа «Трек», но ручка не должна полагаться на это.
     stage_data = payload.stageData or {}
@@ -820,30 +952,70 @@ def api_submit_wizard(payload: SubmitPayload) -> dict[str, Any]:
     credits_total = store.video_limit()
     # Повтор по тому же ключу возвращает уже созданный джоб — и не должен упираться в лимит
     replay = payload.idempotencyKey and payload.idempotencyKey in store.JOB_IDEMPOTENCY
-    if credits_total is not None and not replay:
+    if RUNTIME.backend == "mock" and credits_total is not None and not replay:
         credits_left = credits_total - store.SUBSCRIPTION["creditsUsed"]
         if payload.videosToGenerate > credits_left:
             analytics.track("limit_hit", store.current_user_id(), {"limit": "videos", "left": credits_left})
             raise HTTPException(status_code=402, detail=f"Доступно {credits_left} генераций")
-    job = store.create_job(project_id, stage_data, payload.videosToGenerate, payload.idempotencyKey)
+    job = store.create_job(
+        project_id,
+        stage_data,
+        payload.videosToGenerate,
+        payload.idempotencyKey,
+        enqueue_mock=RUNTIME.backend == "mock",
+    )
+    if RUNTIME.backend == "production":
+        live_job = store.JOBS[job["id"]]
+        tg_id = _telegram_chat_id()
+        track_hash = str((stage_data.get("track") or {}).get("audioHash") or "")
+        if not track_hash:
+            store.rollback_job_creation(live_job["id"])
+            raise HTTPException(status_code=422, detail="Uploaded track has no content hash")
+        try:
+            await _billing_backend().reserve(tg_id, live_job["id"], len(live_job.get("videos") or []))
+            await _billing_backend().consume_track(tg_id, track_hash)
+            await run_in_threadpool(_production_backend().enqueue_job, live_job)
+        except Exception as exc:
+            from .billing_backend import InsufficientCredits, TrackQuotaExhausted
+
+            if isinstance(exc, InsufficientCredits):
+                store.rollback_job_creation(live_job["id"])
+                raise HTTPException(status_code=402, detail=f"Доступно {exc.available} генераций") from exc
+            if isinstance(exc, TrackQuotaExhausted):
+                await _billing_backend().refund(
+                    tg_id, live_job["id"], len(live_job.get("videos") or [])
+                )
+                store.rollback_job_creation(live_job["id"])
+                raise HTTPException(status_code=402, detail="Лимит уникальных треков исчерпан") from exc
+            partial = any(
+                video.get("orchestratorJobId")
+                for video in live_job.get("videos", [])
+            )
+            if partial:
+                live_job["enqueueError"] = str(exc)[:2000]
+                persistence.save_job(live_job["id"])
+            else:
+                await _billing_backend().refund(
+                    tg_id, live_job["id"], len(live_job.get("videos") or [])
+                )
+                store.rollback_job_creation(live_job["id"])
+            raise _production_error(exc) from exc
+        live_job.pop("enqueueError", None)
+        persistence.save_job(live_job["id"])
+        job = store.get_job(live_job["id"]) or live_job
     analytics.track("generation_started", store.current_user_id(), {"jobId": job["id"], "videos": job["versions"], "projectId": project_id})
-    return {"job": job, "redirectTo": f"/app/processing/{job['id']}", "mock": True}
+    return {"job": job, "redirectTo": f"/app/processing/{job['id']}", "mock": RUNTIME.backend == "mock"}
 
 
 # ------------------------- Mock API: preview -------------------------
 
-@app.get("/api/preview/subtitle", tags=["preview"])
-def api_preview_subtitle(style: str = "Impulse", audioKey: str | None = None, lyrics: str | None = None) -> dict[str, Any]:
-    return {
-        "previewUrl": f"{store.BASE_S3}/previews/subtitles/{style.lower()}/mock.mp4",
-        "style": style,
-        "lyrics": lyrics or "Первая строка трека",
-        "mock": True,
-    }
-
-
 @app.get("/api/preview/composite", tags=["preview"])
 def api_preview_composite(style: str = "Impulse", hook: str = "none") -> dict[str, Any]:
+    if RUNTIME.backend == "production":
+        raise HTTPException(
+            status_code=501,
+            detail={"code": "preview_not_configured", "message": "Composite preview is not configured."},
+        )
     return {
         "previewUrl": f"{store.BASE_S3}/previews/composite/{style.lower()}-{hook}.mp4",
         "style": style,
@@ -855,26 +1027,55 @@ def api_preview_composite(style: str = "Impulse", hook: str = "none") -> dict[st
 # ------------------------- Mock API: jobs -------------------------
 
 @app.get("/api/jobs/active", tags=["jobs"])
-def api_active_job() -> dict[str, Any]:
-    return {"job": store.active_job(), "mock": True}
+async def api_active_job() -> dict[str, Any]:
+    job = store.active_job()
+    if job and RUNTIME.backend == "production":
+        try:
+            live_job = store.JOBS[job["id"]]
+            await run_in_threadpool(_production_backend().sync_job, live_job)
+            await _refund_terminal_failures(live_job)
+            persistence.save_job(live_job["id"])
+            job = store.get_job(live_job["id"])
+        except Exception as exc:
+            raise _production_error(exc) from exc
+    return {"job": job, "mock": RUNTIME.backend == "mock"}
 
 
 @app.get("/api/jobs/{job_id}", tags=["jobs"])
-def api_job(job_id: str) -> dict[str, Any]:
+async def api_job(job_id: str) -> dict[str, Any]:
     job = store.get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
-    return {"job": job, "mock": True}
+    if RUNTIME.backend == "production":
+        try:
+            live_job = store.JOBS[job_id]
+            await run_in_threadpool(_production_backend().sync_job, live_job)
+            await _refund_terminal_failures(live_job)
+            persistence.save_job(job_id)
+            job = store.get_job(job_id) or live_job
+        except Exception as exc:
+            raise _production_error(exc) from exc
+    return {"job": job, "mock": RUNTIME.backend == "mock"}
+
+
+async def _refund_terminal_failures(job: dict[str, Any]) -> None:
+    if job.get("status") != "FAILED" or job.get("failedCreditsRefunded"):
+        return
+    failed = sum(1 for video in job.get("videos", []) if video.get("status") == "FAILED")
+    if failed:
+        await _billing_backend().refund(_telegram_chat_id(), job["id"], failed)
+    job["failedCreditsRefunded"] = failed
 
 
 @app.post("/api/jobs/{job_id}/rate", tags=["jobs"])
 def api_rate_job(job_id: str, payload: RatePayload) -> dict[str, Any]:
     job = store.JOBS.get(job_id)
-    if not job:
+    if not job or job.get("userId") != store.current_user_id():
         raise HTTPException(status_code=404, detail="Job not found")
     job["rating"] = payload.rating
     job["feedback"] = payload.feedback
-    return {"ok": True, "job": store.get_job(job_id), "mock": True}
+    persistence.save_job(job_id)
+    return {"ok": True, "job": store.get_job(job_id), "mock": RUNTIME.backend == "mock"}
 
 
 # ------------------------- Content iterations -------------------------
@@ -888,13 +1089,6 @@ def api_iterations(project_id: str) -> dict[str, Any]:
         "analysis": store.analyze_iterations(project_id),
         "mock": True,
     }
-
-
-@app.post("/api/projects/{project_id}/iterations/analyze", tags=["iterations"])
-def api_analyze_iterations(project_id: str) -> dict[str, Any]:
-    if not store.get_project(project_id):
-        raise HTTPException(status_code=404, detail="Project not found")
-    return {"analysis": store.analyze_iterations(project_id), "mock": True}
 
 
 @app.post("/api/projects/{project_id}/iterations", tags=["iterations"])
@@ -923,9 +1117,8 @@ def api_create_iteration(project_id: str, payload: IterationPayload) -> dict[str
 # чтобы флоу «подключил аккаунт → безлимит в рамках трека» гонялся локально.
 
 def _app_url() -> str:
-    """Куда вернуть пользователя после OAuth (из .env, дефолт — локальный фронт)."""
-    tiktok_config.load_env()
-    return os.getenv("APP_URL", "http://localhost:5173")
+    """Куда вернуть пользователя после OAuth."""
+    return RUNTIME.app_url
 
 
 MOCK_SHARED_OPEN_ID = "mock_open_id_shared"
@@ -1127,44 +1320,91 @@ def api_tiktok_post(payload: TiktokPostPayload) -> dict[str, Any]:
     if not video_url:
         raise HTTPException(status_code=409, detail="Rendered video file is unavailable")
 
-    cfg = tiktok_config.load()
-    if not cfg.configured:
-        publish_id = f"mock_tt_{uuid4().hex[:8]}"
-        video.update({"tiktokPublishId": publish_id, "tiktokStatus": "PUBLISH_COMPLETE", "postedAt": datetime.now(timezone.utc).isoformat()})
-        analytics.track("video_posted", store.current_user_id(), {"videoId": payload.videoId, "projectId": payload.projectId, "mock": True})
-        return {"ok": True, "status": "PUBLISH_COMPLETE", "publishId": publish_id, "mock": True}
-
     privacy = {
         "all": "PUBLIC_TO_EVERYONE",
+        "followers": "FOLLOWER_OF_CREATOR",
         "friends": "MUTUAL_FOLLOW_FRIENDS",
         "self": "SELF_ONLY",
     }.get(payload.privacy)
     if not privacy:
         raise HTTPException(status_code=422, detail="Unsupported TikTok privacy level")
-    token = _access_token()
+    cfg = tiktok_config.load()
     try:
-        creator = tiktok_api.query_creator_info(token)
-        allowed = creator.get("privacy_level_options") or []
-        if allowed and privacy not in allowed:
-            raise HTTPException(status_code=422, detail="The selected privacy level is unavailable for this TikTok account")
-        post_info = {
-            "title": payload.caption,
-            "privacy_level": privacy,
-            "disable_duet": not payload.duet,
-            "disable_stitch": True,
-            "disable_comment": not payload.comments,
-            "video_cover_timestamp_ms": payload.coverTimestampMs,
-            "brand_content_toggle": False,
-            "brand_organic_toggle": False,
-            "is_aigc": True,
-        }
-        if str(video_url).startswith("https://"):
+        if cfg.configured:
+            token = _access_token()
+            creator = tiktok_api.query_creator_info(token)
+        else:
+            token = ""
+            creator = {
+                "privacy_level_options": [
+                    "PUBLIC_TO_EVERYONE",
+                    "MUTUAL_FOLLOW_FRIENDS",
+                    "SELF_ONLY",
+                ],
+                "comment_disabled": False,
+                "duet_disabled": False,
+                "stitch_disabled": False,
+            }
+        tiktok_api.validate_video_post_settings(
+            creator,
+            privacy_level=privacy,
+            comments=payload.comments,
+            duet=payload.duet,
+            stitch=payload.stitch,
+            brand_content=payload.brandContent,
+        )
+        post_info = tiktok_api.build_video_post_info(
+            title=payload.caption,
+            privacy_level=privacy,
+            comments=payload.comments,
+            duet=payload.duet,
+            stitch=payload.stitch,
+            cover_timestamp_ms=payload.coverTimestampMs,
+            brand_content=payload.brandContent,
+            brand_organic=payload.brandOrganic,
+        )
+        # Do not log captions or media URLs. These booleans are enough to audit
+        # the Content Posting payload, including the deliberate absence of AIGC.
+        logger.info(
+            "tiktok_post_settings privacy=%s disable_comment=%s disable_duet=%s "
+            "disable_stitch=%s brand_content=%s brand_organic=%s is_aigc_sent=%s",
+            privacy,
+            post_info["disable_comment"],
+            post_info["disable_duet"],
+            post_info["disable_stitch"],
+            post_info["brand_content_toggle"],
+            post_info["brand_organic_toggle"],
+            "is_aigc" in post_info,
+        )
+        if not cfg.configured:
+            publish_id = f"mock_tt_{uuid4().hex[:8]}"
+            video.update({"tiktokPublishId": publish_id, "tiktokStatus": "PUBLISH_COMPLETE", "postedAt": datetime.now(timezone.utc).isoformat()})
+            analytics.track("video_posted", store.current_user_id(), {"videoId": payload.videoId, "projectId": payload.projectId, "mock": True})
+            return {"ok": True, "status": "PUBLISH_COMPLETE", "publishId": publish_id, "mock": True}
+
+        if cfg.upload_source == "PULL_FROM_URL":
             result = tiktok_api.init_direct_post_pull(token, post_info, str(video_url))
         elif str(video_url).startswith("/static/"):
             local_path = STATIC_DIR / str(video_url).removeprefix("/static/")
             result = tiktok_api.init_direct_post_file(token, post_info, local_path)
+        elif RUNTIME.production:
+            with tempfile.TemporaryDirectory(prefix="blast-tiktok-") as temp_dir:
+                local_path = Path(temp_dir) / f"{payload.videoId}.mp4"
+                try:
+                    _production_backend().download_video(str(video_url), local_path)
+                except Exception as exc:
+                    raise _production_error(exc) from exc
+                result = tiktok_api.init_direct_post_file(token, post_info, local_path)
         else:
-            raise HTTPException(status_code=422, detail="Video must be an HTTPS URL or a local rendered MP4")
+            raise HTTPException(
+                status_code=422,
+                detail="FILE_UPLOAD requires a local rendered MP4 outside production",
+            )
+    except tiktok_api.TikTokPostValidationError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": exc.code, "message": str(exc)},
+        ) from exc
     except tiktok_api.TikTokApiError as exc:
         raise HTTPException(status_code=exc.status or 502, detail={"code": exc.code, "message": str(exc)}) from exc
     publish_id = result.get("publish_id")
@@ -1183,6 +1423,8 @@ def api_tiktok_post_status(publish_id: str) -> dict[str, Any]:
     status = result.get("status")
     if status == "PUBLISH_COMPLETE":
         for job in store.JOBS.values():
+            if job.get("userId") != store.current_user_id():
+                continue
             video = next((item for item in job.get("videos", []) if item.get("tiktokPublishId") == publish_id), None)
             if video:
                 video.update({
@@ -1190,6 +1432,7 @@ def api_tiktok_post_status(publish_id: str) -> dict[str, Any]:
                     "postedAt": datetime.now(timezone.utc).isoformat(),
                     "tiktokPostIds": result.get("publicaly_available_post_id") or [],
                 })
+                persistence.save_job(str(job["id"]))
                 break
     return {"publishId": publish_id, **result, "mock": False}
 
@@ -1199,6 +1442,8 @@ def api_tiktok_creator_info() -> dict[str, Any]:
     if store.TIKTOK is None:
         raise HTTPException(status_code=409, detail="TikTok is not connected")
     if not tiktok_config.load().configured:
+        if RUNTIME.production:
+            raise HTTPException(status_code=503, detail={"code": "tiktok_not_configured"})
         return {
             "creator_nickname": store.TIKTOK.get("handle"),
             "privacy_level_options": ["PUBLIC_TO_EVERYONE", "MUTUAL_FOLLOW_FRIENDS", "SELF_ONLY"],
@@ -1218,6 +1463,8 @@ def api_tiktok_videos(days: int = 30) -> dict[str, Any]:
     if store.TIKTOK is None:
         raise HTTPException(status_code=409, detail="TikTok is not connected")
     if not tiktok_config.load().configured:
+        if RUNTIME.production:
+            raise HTTPException(status_code=503, detail={"code": "tiktok_not_configured"})
         posted = [video for job in store.JOBS.values() for video in job.get("videos", []) if video.get("tiktokStatus") == "PUBLISH_COMPLETE"]
         videos = [{
             "id": video["id"], "create_time": int(datetime.now(timezone.utc).timestamp()),
@@ -1243,6 +1490,32 @@ def api_tiktok_videos(days: int = 30) -> dict[str, Any]:
                 has_more = False
     except tiktok_api.TikTokApiError as exc:
         raise HTTPException(status_code=exc.status or 502, detail={"code": exc.code, "message": str(exc)}) from exc
+    by_id = {str(item.get("id")): item for item in videos if item.get("id")}
+    current_user = store.current_user_id()
+    for job in store.JOBS.values():
+        if job.get("userId") != current_user:
+            continue
+        changed = False
+        for video in job.get("videos", []):
+            matched = next(
+                (by_id.get(str(post_id)) for post_id in video.get("tiktokPostIds", []) if by_id.get(str(post_id))),
+                None,
+            )
+            if not matched:
+                continue
+            video["metrics"] = {
+                "view_count": int(matched.get("view_count") or 0),
+                "like_count": int(matched.get("like_count") or 0),
+                "comment_count": int(matched.get("comment_count") or 0),
+                "share_count": int(matched.get("share_count") or 0),
+            }
+            if matched.get("cover_image_url"):
+                video["thumbnailUrl"] = matched["cover_image_url"]
+            video["tiktokShareUrl"] = matched.get("share_url")
+            video["metricsSyncedAt"] = datetime.now(timezone.utc).isoformat()
+            changed = True
+        if changed:
+            persistence.save_job(str(job["id"]))
     return {"videos": videos, "hasMore": has_more, "retentionAvailable": False, "mock": False}
 
 
@@ -1258,7 +1531,12 @@ def api_tiktok_disconnect() -> dict[str, Any]:
 def api_tiktok_status() -> dict[str, Any]:
     """Готовы ли ключи. Фронту нужно, чтобы честно сказать «идёт мок-подключение»."""
     cfg = tiktok_config.load()
-    return {"configured": cfg.configured, "scopes": cfg.scopes, "redirectUri": cfg.redirect_uri}
+    return {
+        "configured": cfg.configured,
+        "scopes": cfg.scopes,
+        "redirectUri": cfg.redirect_uri,
+        "uploadSource": cfg.upload_source,
+    }
 
 
 @app.patch("/api/profile", tags=["profile"])
@@ -1272,6 +1550,24 @@ def api_profile(payload: ProfilePayload) -> dict[str, Any]:
     return {"user": user, "mock": True}
 
 
+@app.delete("/api/profile", tags=["profile"])
+def api_delete_account(request: Request, payload: DeleteAccountPayload) -> dict[str, Any]:
+    if payload.confirmation != "DELETE":
+        raise HTTPException(status_code=422, detail="confirmation must equal DELETE")
+    user_id = str(request.session.get("user_id") or "")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    if RUNTIME.backend == "production":
+        try:
+            _production_backend().delete_user_objects(user_id)
+        except Exception as exc:
+            raise _production_error(exc) from exc
+    tiktok_token_store.delete(user_id)
+    deleted = persistence.delete_account(user_id)
+    request.session.clear()
+    return {"ok": True, "deleted": deleted}
+
+
 @app.post("/api/profile/avatar", tags=["profile"])
 async def api_avatar(file: UploadFile = File(...)) -> dict[str, Any]:
     content = await file.read()
@@ -1280,10 +1576,24 @@ async def api_avatar(file: UploadFile = File(...)) -> dict[str, Any]:
     security.check_image(content, max_mb=8)
     ext = security.safe_extension(file.filename, {".png", ".jpg", ".jpeg"}, ".jpg")
     safe_name = f"avatar_{uuid4().hex}{ext}"
-    target = STATIC_DIR / "uploads" / safe_name
-    target.write_bytes(content)
-    store.USER["avatarUrl"] = f"/static/uploads/{safe_name}"
-    return {"avatarUrl": store.USER["avatarUrl"], "mock": True}
+    if RUNTIME.backend == "production":
+        try:
+            uploaded = await run_in_threadpool(
+                _production_backend().upload_user_image,
+                content=content,
+                user_id=store.current_user_id(),
+                filename=safe_name,
+                content_type=file.content_type,
+                kind="avatars",
+            )
+        except Exception as exc:
+            raise _production_error(exc) from exc
+        store.USER["avatarUrl"] = uploaded["playback_url"]
+    else:
+        target = STATIC_DIR / "uploads" / safe_name
+        target.write_bytes(content)
+        store.USER["avatarUrl"] = f"/static/uploads/{safe_name}"
+    return {"avatarUrl": store.USER["avatarUrl"], "mock": RUNTIME.backend == "mock"}
 
 
 @app.get("/api/videos/{video_id}/frames", tags=["videos"])
@@ -1318,10 +1628,24 @@ async def api_project_cover(project_id: str, file: UploadFile = File(...)) -> di
     security.check_image(content, max_mb=8)
     ext = security.safe_extension(file.filename, {".png", ".jpg", ".jpeg"}, ".jpg")
     safe_name = f"cover_{uuid4().hex}{ext}"
-    (STATIC_DIR / "uploads" / safe_name).write_bytes(content)
-    project["coverUrl"] = f"/static/uploads/{safe_name}"
+    if RUNTIME.backend == "production":
+        try:
+            uploaded = await run_in_threadpool(
+                _production_backend().upload_user_image,
+                content=content,
+                user_id=store.current_user_id(),
+                filename=safe_name,
+                content_type=file.content_type,
+                kind="covers",
+            )
+        except Exception as exc:
+            raise _production_error(exc) from exc
+        project["coverUrl"] = uploaded["playback_url"]
+    else:
+        (STATIC_DIR / "uploads" / safe_name).write_bytes(content)
+        project["coverUrl"] = f"/static/uploads/{safe_name}"
     project["coverChoice"] = "upload"
-    return {"coverUrl": project["coverUrl"], "mock": True}
+    return {"coverUrl": project["coverUrl"], "mock": RUNTIME.backend == "mock"}
 
 
 @app.post("/api/dev/login", tags=["system"])
@@ -1477,5 +1801,14 @@ def api_dev_reset(empty: bool = False) -> dict[str, Any]:
 
 
 @app.get("/healthz", tags=["system"])
-def healthz() -> dict[str, Any]:
-    return {"ok": True, "mock": True}
+async def healthz() -> dict[str, Any]:
+    if RUNTIME.backend == "production":
+        try:
+            await run_in_threadpool(_production_backend().healthcheck)
+            await _billing_backend().healthcheck()
+        except Exception as exc:
+            raise HTTPException(
+                status_code=503,
+                detail={"code": "dependency_unhealthy", "message": str(exc)},
+            ) from exc
+    return {"ok": True, "mode": RUNTIME.mode, "backend": RUNTIME.backend, "mock": RUNTIME.backend == "mock"}
