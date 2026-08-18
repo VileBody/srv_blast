@@ -5,19 +5,20 @@ ROOT_DIR="${GITHUB_WORKSPACE:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd
 COMPOSE_FILE="$ROOT_DIR/web_app/docker-compose.production.yml"
 PREVIEW_COMPOSE_FILE="$ROOT_DIR/web_app/docker-compose.preview.yml"
 NGINX_CONF="$ROOT_DIR/infra/runners/nginx/app.blast808.com.conf"
-ENV_FILE="$ROOT_DIR/web_app/backend/.env.production"
+ENV_FILE="${BLAST_WEB_PRODUCTION_ENV_FILE:-$ROOT_DIR/web_app/backend/.env.production}"
 DOMAIN="app.blast808.com"
 HOST_PORT="18190"
 
-: "${BLAST_WEB_PRODUCTION_ENV_B64:?BLAST_WEB_PRODUCTION_ENV_B64 is required}"
+if [[ ! -s "$ENV_FILE" ]]; then
+  echo "production env is missing or empty: $ENV_FILE" >&2
+  exit 1
+fi
 
-cleanup() {
-  rm -f "$ENV_FILE"
-}
-trap cleanup EXIT
-
-printf '%s' "$BLAST_WEB_PRODUCTION_ENV_B64" | base64 --decode > "$ENV_FILE"
-chmod 600 "$ENV_FILE"
+env_mode="$(stat -c '%a' "$ENV_FILE")"
+if (( (8#$env_mode & 077) != 0 )); then
+  echo "production env must not be readable by group/others: $ENV_FILE mode=$env_mode" >&2
+  exit 1
+fi
 
 required=(
   MODE BLAST_BACKEND_MODE APP_URL BLAST_CORS_ORIGINS BLAST_SESSION_SECRET
