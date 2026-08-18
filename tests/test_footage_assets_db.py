@@ -121,3 +121,57 @@ def test_photo_registry_uses_namespaced_id_and_keeps_real_s3_key():
     assert rec["clip_id"] == "photo:353532639512911981"
     assert rec["s3_key"] == "photo_collection/hh/1/353532639512911981.jpg"
     assert rec["source"] == "photo"
+
+
+# --------------------------------------------------------------------------- #
+# Регрессия: читатели таблицы обязаны применять схему до запроса
+# --------------------------------------------------------------------------- #
+# `fetch_all_assets` читала колонки (включая добавленную позже `scene_cuts`), но
+# единственная из читателей НЕ звала init_schema. На проде колонки не оказалось →
+# UndefinedColumnError в deploy-гейте готовности пикера → main перестал
+# выкатываться. DDL идемпотентный, так что ensure перед чтением — норма модуля.
+
+
+class _FakeConn:
+    """Пишет порядок вызовов: execute(SCHEMA) должен идти перед fetch."""
+
+    def __init__(self, rows=()):
+        self.calls: list[str] = []
+        self._rows = list(rows)
+
+    async def execute(self, sql, *args):
+        self.calls.append("execute")
+        return "OK"
+
+    async def fetch(self, sql, *args):
+        self.calls.append("fetch")
+        return self._rows
+
+    async def fetchval(self, sql, *args):
+        self.calls.append("fetchval")
+        return 0
+
+
+@pytest.mark.parametrize(
+    "fn_name",
+    ["fetch_all_assets", "fetch_pool_clip_ids", "pool_health"],
+)
+def test_readers_ensure_schema_before_querying(fn_name):
+    import asyncio
+    import inspect
+
+    fn = getattr(adb, fn_name)
+    conn = _FakeConn()
+    result = fn(conn)
+    if inspect.isawaitable(result):
+        asyncio.run(_drain(result))
+
+    assert conn.calls, f"{fn_name} не обратилась к соединению"
+    assert conn.calls[0] == "execute", (
+        f"{fn_name} должна применить схему (init_schema) ДО запроса, "
+        f"иначе падает на ноде без свежей колонки; порядок вызовов: {conn.calls}"
+    )
+
+
+async def _drain(awaitable):
+    return await awaitable
