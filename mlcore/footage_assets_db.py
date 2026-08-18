@@ -391,6 +391,12 @@ async def fetch_pool_clip_ids(conn: Any, *, source: Optional[str] = None) -> set
 
 
 async def fetch_all_assets(conn: Any, *, source: Optional[str] = None) -> List[Dict[str, Any]]:
+    # Как и у всех остальных читателей этой таблицы (fetch_pool_clip_ids,
+    # pool_health): схема применяется ДО запроса. Без этого функция падает на
+    # ноде, где колонка ещё не заведена — так `scene_cuts` (добавленная в список
+    # колонок отдельно от ensure-вызова) уронила deploy-гейт готовности пикера
+    # с UndefinedColumnError, и main перестал выкатываться. DDL идемпотентный.
+    await init_schema(conn)
     cols = (
         "clip_id, s3_key, file_name, genre, tag, src_w, src_h, duration_sec, "
         "dominant_color, source, scene_cuts"
