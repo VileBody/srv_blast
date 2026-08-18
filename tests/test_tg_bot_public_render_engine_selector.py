@@ -78,6 +78,8 @@ def test_render_engine_rust_choice_reaches_confirm_summary() -> None:
             visuals_done=True,
             lyrics_text="hello",
             target_fragment="hello",
+            # шаг «Рамка» уже пройден — тест про движок и версии
+            frame_id="none",
         )
         msg = _Message(public_app.BTN_RENDER_RUST)
 
@@ -107,7 +109,7 @@ def test_render_engine_ae_choice_overrides_rust_default() -> None:
 def test_render_engine_selector_skips_to_ae_when_rust_disabled() -> None:
     async def _run() -> None:
         app = _new_app(rust_enabled=False)
-        st = ChatState(chat_id=7, bg_mode="footage", visuals_done=True)
+        st = ChatState(chat_id=7, bg_mode="footage", visuals_done=True, frame_id="none")
         msg = _Message()
 
         await public_app.BlastBotApp._proceed_to_versions_or_confirm(app, msg, st)

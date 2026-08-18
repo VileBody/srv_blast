@@ -445,6 +445,9 @@ def _build_f3_overlay_js(full_edit_config: Dict[str, Any], *, comp_var: str = "M
     hook_extend = (str(f3_block.get("hook_extend") or "").strip() or None)
     extra_full = bool(f3_block.get("extra_full"))
     assets = f3_block.get("assets") if isinstance(f3_block.get("assets"), dict) else {}
+    # seed фиксирует порядок мульти-клип слотов (глитчи blackwhite). Оркестратор
+    # кладёт тот же seed, что уходит в asset_picker; нет блока — стабильная строка.
+    seed = str(f3_block.get("seed") or "f3")
 
     from mlcore.hooks.f3_effect.overlay import build_overlay_jsx
 
@@ -456,6 +459,7 @@ def _build_f3_overlay_js(full_edit_config: Dict[str, Any], *, comp_var: str = "M
         hook_extend=hook_extend,
         drop_time=float(drop_time),
         assets=assets,
+        seed=seed,
         comp_var=comp_var,
     )
     LOGGER.info(
@@ -463,6 +467,41 @@ def _build_f3_overlay_js(full_edit_config: Dict[str, Any], *, comp_var: str = "M
         hook, transition, extra, extra_full, hook_extend, comp_var, len(overlay),
     )
     return overlay
+
+
+def _build_frame_overlay_js(full_edit_config: Dict[str, Any], *, comp_var: str = "MAIN_COMP") -> str:
+    """
+    Блок "frame" (= {"frame_id": ..., "relpath": "media/img/..."}) → JSX-оверлей
+    PNG-рамки поверх всех слоёв. Нет блока / нет ассета => пустая строка.
+
+    Рамка выбирается отдельным шагом бота и не зависит от хуков, поэтому живёт
+    своим ключом, а не внутри f3.
+    """
+    block = full_edit_config.get("frame") if isinstance(full_edit_config, dict) else None
+    if not block or not isinstance(block, dict):
+        return ""
+    frame_id = str(block.get("frame_id") or "").strip().lower()
+    relpath = str(block.get("relpath") or "").strip()
+    if not frame_id or not relpath:
+        return ""
+
+    from mlcore.hooks.frames.overlay import build_overlay_jsx as _build_frame_jsx
+
+    overlay = _build_frame_jsx(frame_id=frame_id, asset_relpath=relpath, comp_var=comp_var)
+    LOGGER.info("frame overlay present id=%s relpath=%s js_len=%d", frame_id, relpath, len(overlay))
+    return overlay
+
+
+def _extract_frame_media(full_edit_config: Dict[str, Any]) -> List[Dict[str, str]]:
+    """Download-запись рамки для media[] ноды. Нет блока / нет url => []."""
+    block = full_edit_config.get("frame") if isinstance(full_edit_config, dict) else None
+    if not isinstance(block, dict):
+        return []
+    url = str(block.get("url") or "").strip()
+    rel = str(block.get("relpath") or "").strip().strip("/")
+    if not url or not rel:
+        return []
+    return [{"url": url, "relpath": rel}]
 
 
 def _extract_f3_media(full_edit_config: Dict[str, Any]) -> List[Dict[str, str]]:
@@ -643,7 +682,10 @@ def build_full_project(
     # F3 ассет-download list (sound/logo S3-URL'ы + relpath под __APP_DIR/media).
     # render_manifest.collect_media_urls_from_render_payload подцепит и положит
     # в Windows-payload.media[] рядом с футажом. Пусто => без звука/лого.
-    f3_media = _extract_f3_media(full_edit_config)
+    # payload["f3_media"] — общий download-список fx-ассетов ноды (звук/лого/
+    # глитчи/рамка), не только f3; ключ оставлен как есть, чтобы не ломать
+    # контракт с рендер-нодой.
+    f3_media = _extract_f3_media(full_edit_config) + _extract_frame_media(full_edit_config)
     render_plan = build_render_plan_v1(
         main_comp_name=main_name,
         subtitles_mode=subtitles_mode,
@@ -664,6 +706,7 @@ def build_full_project(
     f2_overlay_js = _build_f2_overlay_js(ae_overlay_config)
     f1_overlay_js = _build_f1_overlay_js(ae_overlay_config)
     f5_overlay_js = _build_f5_overlay_js(ae_overlay_config)
+    frame_overlay_js = _build_frame_overlay_js(ae_overlay_config)
     jsx_subtitles_js = _build_jsx_subtitles_js(
         ae_overlay_config,
         brat_blinker_enabled=brat_blinker_enabled,
@@ -701,6 +744,7 @@ def build_full_project(
         f2_overlay_js=f2_overlay_js,
         f1_overlay_js=f1_overlay_js,
         f5_overlay_js=f5_overlay_js,
+        frame_overlay_js=frame_overlay_js,
         jsx_subtitles_js=jsx_subtitles_js,
     )
     out_jsx.write_text(jsx, encoding="utf-8")

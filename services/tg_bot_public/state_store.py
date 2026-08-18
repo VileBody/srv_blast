@@ -71,6 +71,9 @@ STAGE_WAIT_VIBE = "WAIT_VIBE"
 # Customization color pickers. Mirror of tg_bot_botapi.
 STAGE_WAIT_SUBTITLE_COLOR = "WAIT_SUBTITLE_COLOR"
 STAGE_WAIT_ACCENT_COLOR = "WAIT_ACCENT_COLOR"
+# Рамка: PNG-маска поверх всех слоёв. Отдельный шаг (не хук) — идёт
+# непосредственно перед выбором числа версий, доступен на любом пути.
+STAGE_WAIT_FRAME = "WAIT_FRAME"
 STAGE_WAIT_VERSIONS = "WAIT_VERSIONS"
 # Free tier only: a pick that burns >=80% of the free quota needs an explicit
 # confirmation before it reaches the final confirm screen.
@@ -213,6 +216,9 @@ class ChatState(BaseModel):
     # Single shape pick — the rest of the combo (hook_light at drop + seeded-random
     # F3 transition on post-drop cuts) is forced server-side.
     f2_shape: str = ""           # "" | rhomb | square | star1 | star2 | elipse
+    # Рамка (шаг перед версиями, не хук). "" => ещё не спрашивали;
+    # "none" => юзер явно отказался; иначе id из каталога рамок.
+    frame_id: str = ""           # "" | none | rounded | soft_bars | letterbox
     # F1 «Звук»: S3/HTTP URL of user-uploaded pre-drop sound. Mirror of tg_bot_botapi.
     f1_sound_url: str = ""
     # F1 «Звук»: optional subtitle text for the sound. Mirror of tg_bot_botapi.

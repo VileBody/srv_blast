@@ -86,6 +86,7 @@ from .state_store import (
     STAGE_WAIT_EFFECT_EXTRA_FULL,
     STAGE_WAIT_EFFECT_EXTEND,
     STAGE_WAIT_F2_SHAPE,
+    STAGE_WAIT_FRAME,
     STAGE_WAIT_F1_SOUND,
     STAGE_WAIT_F1_TEXT,
     STAGE_WAIT_PHOTO_STYLE,
@@ -170,6 +171,20 @@ def _photo_flow_enabled() -> bool:
     Overridable via PHOTO_FLOW_ENABLED for both bots.
     """
     return os.environ.get("PHOTO_FLOW_ENABLED", "1").strip().lower() in {
+        "1", "true", "yes", "on", "enabled",
+    }
+
+
+def _frame_flow_enabled() -> bool:
+    """Шаг «Рамка» (PNG-маска поверх всех слоёв) gate.
+
+    Шаг спрашивается у ВСЕХ перед выбором версий и не зависит от хука. Пока
+    рамки не залиты на S3, выбор в боте есть, а в ролике его нет (билд-сайд
+    проверяет наличие ассета и молча рендерит без рамки) — поэтому нужен
+    выключатель, а не только откат кода. Team bot первым; в tg_bot_public
+    зеркалится как default-OFF. Переопределяется FRAME_FLOW_ENABLED.
+    """
+    return os.environ.get("FRAME_FLOW_ENABLED", "1").strip().lower() in {
         "1", "true", "yes", "on", "enabled",
     }
 
@@ -561,6 +576,26 @@ _F2_SHAPE_BY_BUTTON = {
     BTN_F2_SHAPE_STAR2: "star2",
     BTN_F2_SHAPE_ELIPSE: "elipse",
 }
+
+# Стилизации, которые всегда идут на ВЕСЬ ролик: спрашивать «до дропа или на
+# весь» у них бессмысленно — build-side всё равно форсит полное окно
+# (manifest.full_window). Держим зеркалом с mlcore/hooks/f3_effect/manifest.json.
+FX_EXTRA_ALWAYS_FULL = frozenset({"blackwhite"})
+
+# Рамка — PNG-маска поверх ВСЕХ слоёв (чёрные поля с прозрачным окном).
+# Не хук: шаг идёт перед выбором версий и доступен на любом пути, дроп не нужен.
+# id-сет зеркалит mlcore/hooks/frames/catalog.py (боты слим — mlcore не тянут).
+BTN_FRAME_ROUNDED = "Скруглённое окно"
+BTN_FRAME_SOFT_BARS = "Мягкие шторки"
+BTN_FRAME_LETTERBOX = "Чёрные полосы"
+BTN_FRAME_NONE = "Без рамки"
+_FRAME_BY_BUTTON = {
+    BTN_FRAME_ROUNDED: "rounded",
+    BTN_FRAME_SOFT_BARS: "soft_bars",
+    BTN_FRAME_LETTERBOX: "letterbox",
+    BTN_FRAME_NONE: "none",
+}
+FRAME_IDS = ("rounded", "soft_bars", "letterbox")
 # Photo flow (4:3) — transition + stylization, asked where footage asks its
 # own visuals. Stylization is the grade applied
 # over the whole render (button → photo_style id, schema Literal contract). The id
@@ -1932,6 +1967,10 @@ class BlastBotApp:
                 await self._handle_wait_battery_f4_drop(message, st)
                 return
 
+            if st.stage == STAGE_WAIT_FRAME:
+                await self._handle_wait_frame(message, st)
+                return
+
             if st.stage == STAGE_WAIT_VERSIONS:
                 await self._handle_wait_versions(message, st)
                 return
@@ -2292,7 +2331,43 @@ class BlastBotApp:
         )
         await message.answer("Пришли аудио (audio/document).")
 
+    # ── Рамка — последний шаг перед версиями (не хук, спрашиваем всегда) ──
+    # Гейт живёт ВНУТРИ _ask_versions, а не на десятке её callsite'ов: в
+    # версии ведут все ветки (хук/без хука, фото, батарея), и перехват в одной
+    # точке гарантирует, что шаг не потеряется ни на одной из них.
+    async def _ask_frame(self, message: Message, st: ChatState) -> None:
+        st.stage = STAGE_WAIT_FRAME
+        await self.store.set(st)
+        await message.answer(
+            "Добавить рамку поверх видео?\n"
+            "• Скруглённое окно — поля со всех сторон.\n"
+            "• Мягкие шторки — растушёванные затемнения сверху и снизу.\n"
+            "• Чёрные полосы — киношный леттербокс.",
+            reply_markup=_kb(
+                [BTN_FRAME_ROUNDED],
+                [BTN_FRAME_SOFT_BARS, BTN_FRAME_LETTERBOX],
+                [BTN_FRAME_NONE],
+            ),
+        )
+
+    async def _handle_wait_frame(self, message: Message, st: ChatState) -> None:
+        text = str(message.text or "").strip()
+        frame = _FRAME_BY_BUTTON.get(text)
+        if frame is None:
+            await message.answer("Выбери рамку кнопкой ниже или нажми «Без рамки».")
+            return
+        st.frame_id = frame
+        await self.store.set(st)
+        if frame == "none":
+            await message.answer("Ок, без рамки.")
+        else:
+            await message.answer(f"Ок, рамка: «{text}».")
+        await self._ask_versions(message, st)
+
     async def _ask_versions(self, message: Message, st: ChatState) -> None:
+        if _frame_flow_enabled() and not st.frame_id:
+            await self._ask_frame(message, st)
+            return
         st.stage = STAGE_WAIT_VERSIONS
         await self.store.set(st)
         await message.answer(
@@ -4433,6 +4508,12 @@ class BlastBotApp:
             await self._ask_effect_hook(message, st)
             return
         # grade chosen → ask whether to stretch it over the whole video
+        if st.effect_extra in FX_EXTRA_ALWAYS_FULL:
+            # окно не выбирается — эффект по определению на весь ролик
+            st.effect_extra_full = True
+            await self.store.set(st)
+            await self._after_effect_extra(message, st)
+            return
         if st.effect_extra:
             await self._ask_effect_extra_full(message, st)
             return
@@ -5394,6 +5475,13 @@ class BlastBotApp:
             f2_shape=(
                 str(st.f2_shape)
                 if (st.hook_enabled and st.hook_category == "object" and st.f2_shape)
+                else None
+            ),
+            # Рамка не привязана к хуку: шлём всегда, кроме явного отказа
+            # ("none") и ещё не пройденного шага ("").
+            frame_id=(
+                str(st.frame_id)
+                if (st.frame_id and st.frame_id != "none")
                 else None
             ),
             f1_sound_url=(

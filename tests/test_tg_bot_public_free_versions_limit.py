@@ -74,7 +74,9 @@ def test_free_tier_default_limit_is_five() -> None:
 def test_free_user_gets_full_version_picker() -> None:
     async def _run() -> None:
         app = _new_app(paid=False)
-        st = ChatState(chat_id=7)
+        # frame_id="none" = шаг «Рамка» уже пройден: он вклинивается перед
+        # версиями, а этот тест — про сам селектор версий.
+        st = ChatState(chat_id=7, frame_id="none")
         msg = _Message()
 
         await public_app.BlastBotApp._proceed_after_render_engine(app, msg, st)
@@ -89,7 +91,7 @@ def test_free_user_gets_full_version_picker() -> None:
 def test_paid_user_picker_has_no_free_limit_hint() -> None:
     async def _run() -> None:
         app = _new_app(paid=True)
-        st = ChatState(chat_id=7)
+        st = ChatState(chat_id=7, frame_id="none")
         msg = _Message()
 
         await public_app.BlastBotApp._proceed_after_render_engine(app, msg, st)
@@ -182,7 +184,9 @@ def test_warning_continue_reaches_final_confirm() -> None:
 def test_warning_change_returns_to_picker() -> None:
     async def _run() -> None:
         app = _new_app(paid=False)
-        st = ChatState(chat_id=7, stage=STAGE_WAIT_VERSIONS_WARNING, versions_count=5)
+        st = ChatState(
+            chat_id=7, stage=STAGE_WAIT_VERSIONS_WARNING, versions_count=5, frame_id="none"
+        )
         msg = _Message(BTN_VERSIONS_WARN_CHANGE)
 
         await public_app.BlastBotApp._handle_wait_versions_warning(app, msg, st)

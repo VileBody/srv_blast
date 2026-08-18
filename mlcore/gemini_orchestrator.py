@@ -4934,6 +4934,8 @@ def build_all_via_gemini_one_call(
                     or os.environ.get("JOB_ID")
                     or out_dir.name
                 )
+                # тот же seed уезжает в overlay: порядок глитч-клипов blackwhite
+                f3_block["seed"] = str(_seed)
                 _resolved = _f3_resolve_assets(
                     hook=_f3_hook or None,
                     transition=_f3_trans or None,
@@ -4958,6 +4960,34 @@ def build_all_via_gemini_one_call(
                 os.environ.get("JOB_ID") or out_dir.name,
             )
             f3_block = None
+
+    # ── Рамка: PNG-маска поверх всех слоёв. НЕ хук — отдельный шаг бота,
+    #    доступен на любом пути. Env FRAME_ID (id из каталога рамок); пусто или
+    #    "none" => блока нет. Ассет резолвится в S3-url + relpath (media[]).
+    frame_block = None
+    _frame_id = (os.environ.get("FRAME_ID") or "").strip().lower()
+    if _frame_id and _frame_id != "none":
+        try:
+            from mlcore.hooks.frames.catalog import FRAME_IDS, resolve_frame_asset
+            if _frame_id not in FRAME_IDS:
+                raise RuntimeError(f"unknown FRAME_ID={_frame_id!r}")
+            _asset = resolve_frame_asset(_frame_id)
+            if _asset:
+                frame_block = {
+                    "frame_id": _frame_id,
+                    "relpath": _asset["relpath"],
+                    "url": _asset["url"],
+                }
+                logger.info("frame block id=%s relpath=%s", _frame_id, _asset["relpath"])
+            else:
+                # нет FX_ASSETS_S3_BUCKET — рамку положить нечем
+                logger.warning("frame skipped: asset unresolved (id=%s)", _frame_id)
+        except Exception:
+            logger.exception(
+                "frame FAILED — render without frame (job=%s)",
+                os.environ.get("JOB_ID") or out_dir.name,
+            )
+            frame_block = None
 
     # ── F2 «Объект»: packaged-combo overlay (shape на pre-drop склейках +
     #    hook_light на дропе + рандомный F3-переход на post-drop склейках).
@@ -5128,6 +5158,7 @@ def build_all_via_gemini_one_call(
         f3_block=f3_block,
         f2_block=f2_block,
         f1_block=f1_block,
+        frame_block=frame_block,
         jsx_subtitles_block=jsx_subtitles_block,
     )
 

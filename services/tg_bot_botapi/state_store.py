@@ -62,6 +62,9 @@ STAGE_WAIT_BATTERY_F4_DROP = "WAIT_BATTERY_F4_DROP"
 # Footage precision flow (Phase 2b): ranked-shortlist vibe picker (multi-select).
 # Replaces the genre/artist footage stages when FOOTAGE_VIBE_FLOW_ENABLED is on.
 STAGE_WAIT_VIBE = "WAIT_VIBE"
+# Рамка: PNG-маска поверх всех слоёв. Отдельный шаг (не хук) — идёт
+# непосредственно перед выбором числа версий, доступен на любом пути.
+STAGE_WAIT_FRAME = "WAIT_FRAME"
 STAGE_WAIT_VERSIONS = "WAIT_VERSIONS"
 # Customization: subtitle color + accent color (shapes/focus) palette pickers.
 STAGE_WAIT_SUBTITLE_COLOR = "WAIT_SUBTITLE_COLOR"
@@ -146,6 +149,9 @@ class ChatState(BaseModel):
     # — the rest of the combo (hook_light at drop + seeded-random F3 transition
     # on post-drop cuts) is forced server-side. None/"" => no F2.
     f2_shape: str = ""           # "" | rhomb | square | star1 | star2 | elipse
+    # Рамка (шаг перед версиями, не хук). "" => ещё не спрашивали;
+    # "none" => юзер явно отказался; иначе id из каталога рамок.
+    frame_id: str = ""           # "" | none | rounded | soft_bars | letterbox
     # F1 «Звук» selection when hook_category == "object"... no — == "sound".
     # S3/HTTP URL of the user-uploaded pre-drop sound. The rest of the combo
     # (hook_light at drop + seeded-random F3 transition post-drop) is forced

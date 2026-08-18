@@ -120,6 +120,8 @@ _LLM_ENV_KEYS = (
     "F2_SEED",
     "F1_SOUND_URL",
     "F1_SOUND_TEXT",
+    # рамка (не хук, но тот же env-мост в in-process оркестратор)
+    "FRAME_ID",
     "BG_MODE",
     "BG_SOLID_COLOR_HEX",
     "SUBTITLES_FORCE_FILL_HEX",
@@ -2086,6 +2088,15 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
                 f"invalid f2_shape={_f2_shape_raw!r}; allowed={sorted(_f2_allowed_shapes)}"
             )
         env["F2_SHAPE"] = _f2_shape
+    # Рамка (не хук): id из каталога рамок. Дропа не требует, применима всегда.
+    _frame_raw = req.get("frame_id")
+    if _frame_raw is not None and str(_frame_raw).strip():
+        from mlcore.hooks.frames.catalog import FRAME_IDS as _FRAME_IDS
+
+        _frame = str(_frame_raw).strip().lower()
+        if _frame not in _FRAME_IDS:
+            raise RuntimeError(f"invalid frame_id={_frame_raw!r}; allowed={sorted(_FRAME_IDS)}")
+        env["FRAME_ID"] = _frame
     # F1 «Звук» pass-through: S3/HTTP URL of the user-uploaded pre-drop sound.
     # Set => orchestrator emits full_edit_config["f1"] (audio + visual combo).
     # Requires USER_DROP_T; absent => no F1.

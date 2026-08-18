@@ -154,3 +154,87 @@ def test_relpath_prefix_split_audio_vs_image(monkeypatch):
     out = asset_picker.resolve_assets(hook="shutter_effect", transition=None, extra=None, seed="s")
     # branded => logo relpath under media/img/
     assert out["assets"].get("logo") == "media/img/group_1245.png"
+
+
+def test_blackwhite_glitch_clip_pool(monkeypatch):
+    """blackwhite declares clips{pool:glitch_video,count:N} -> extra_clips list."""
+    _set_env(monkeypatch)
+    fake = _FakeS3Client({
+        "fx_assets/video/glitch/": [
+            "fx_assets/video/glitch/crt_glitch_3.mp4",
+            "fx_assets/video/glitch/crt_glitch_4.mp4",
+            "fx_assets/video/glitch/crt_glitch_5.mp4",
+            "fx_assets/video/glitch/glitches.mp4",
+            "fx_assets/video/glitch/tewnj_1.mp4",
+        ],
+    })
+    _patch_client(monkeypatch, fake)
+    out = asset_picker.resolve_assets(hook=None, transition=None, extra="blackwhite", seed="job-bw")
+
+    clips = out["assets"]["extra_clips"]
+    # ровно столько, сколько просит манифест, и все разные
+    import json as _json
+    from pathlib import Path as _Path
+    _manifest = _json.loads(
+        (_Path(__file__).resolve().parents[1]
+         / "mlcore" / "hooks" / "f3_effect" / "manifest.json").read_text(encoding="utf-8")
+    )
+    want = next(e for e in _manifest["effects"] if e["id"] == "blackwhite")["clips"]["count"]
+    assert isinstance(clips, list) and len(clips) == want
+    assert len(set(clips)) == want, "clips must be distinct"
+    for rel in clips:
+        assert rel.startswith("media/video/") and rel.endswith(".mp4")
+    # every clip is in the node download list
+    assert {m["relpath"] for m in out["media"]} == set(clips)
+    for m in out["media"]:
+        assert m["url"].startswith("s3://fx-bucket/fx_assets/video/glitch/")
+
+
+def test_blackwhite_clip_pick_is_deterministic(monkeypatch):
+    _set_env(monkeypatch)
+    keys = [f"fx_assets/video/glitch/g_{i:02d}.mp4" for i in range(8)]
+    fake = _FakeS3Client({"fx_assets/video/glitch/": keys})
+    _patch_client(monkeypatch, fake)
+
+    first = asset_picker.resolve_assets(hook=None, transition=None, extra="blackwhite", seed="same")
+    asset_picker.reset_cache()
+    second = asset_picker.resolve_assets(hook=None, transition=None, extra="blackwhite", seed="same")
+    asset_picker.reset_cache()
+    other = asset_picker.resolve_assets(hook=None, transition=None, extra="blackwhite", seed="other")
+
+    assert first["assets"]["extra_clips"] == second["assets"]["extra_clips"]
+    assert first["assets"]["extra_clips"] != other["assets"]["extra_clips"]
+
+
+def test_clip_pool_smaller_than_count(monkeypatch):
+    """Pool with 2 files and count=4 -> both, no crash (AE side cycles them)."""
+    _set_env(monkeypatch)
+    fake = _FakeS3Client({
+        "fx_assets/video/glitch/": [
+            "fx_assets/video/glitch/a.mp4",
+            "fx_assets/video/glitch/b.mp4",
+        ],
+    })
+    _patch_client(monkeypatch, fake)
+    out = asset_picker.resolve_assets(hook=None, transition=None, extra="blackwhite", seed="s")
+    assert len(out["assets"]["extra_clips"]) == 2
+
+
+def test_empty_clip_pool_leaves_grade_only(monkeypatch):
+    _set_env(monkeypatch)
+    fake = _FakeS3Client({"fx_assets/video/glitch/": []})
+    _patch_client(monkeypatch, fake)
+    out = asset_picker.resolve_assets(hook=None, transition=None, extra="blackwhite", seed="s")
+    assert "extra_clips" not in out["assets"]
+    assert out["media"] == []
+
+
+def test_extra_without_clip_spec_has_no_clips(monkeypatch):
+    """wave declares no clips{} -> slot absent even with the pool populated."""
+    _set_env(monkeypatch)
+    fake = _FakeS3Client({
+        "fx_assets/video/glitch/": ["fx_assets/video/glitch/a.mp4"],
+    })
+    _patch_client(monkeypatch, fake)
+    out = asset_picker.resolve_assets(hook=None, transition=None, extra="wave", seed="s")
+    assert "extra_clips" not in out["assets"]

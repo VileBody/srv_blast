@@ -1642,6 +1642,17 @@
       logErr("f4 overlay raise failed", eF4z);
     }
 
+    // ==========================================================
+    // 5.12) Рамка (injected by build worker) — PNG-маска поверх ВСЕГО.
+    // Пустая строка без выбора рамки => no-op. Идёт последним из оверлеев:
+    // после субтитров и после подъёма F4, иначе они легли бы поверх рамки.
+    // ==========================================================
+    try {
+      {{ frame_overlay_js }}
+    } catch(eFrame) {
+      logErr("frame overlay injection failed", eFrame);
+    }
+
     if (__SUPPRESSED_UI_CALLS.length > 0) {
       logLine("WARN", "suppressed_ui_calls=" + safeJson(__SUPPRESSED_UI_CALLS, 2000));
     }
