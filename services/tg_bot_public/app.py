@@ -470,11 +470,13 @@ def _bucket_preview_file_id(bucket_id: str) -> str:
 
 FOOTAGE_KIND_VERTICAL = "vertical"
 FOOTAGE_KIND_FILMS = "films"
+FOOTAGE_KIND_CINE = "cine16x9"
 # Kind -> the `pool` the ranker should rank. "vibes" is the semantic 9:16
 # catalog; anything else is a folder-scoped collection kind.
 _POOL_BY_FOOTAGE_KIND = {
     FOOTAGE_KIND_VERTICAL: "vibes",
     FOOTAGE_KIND_FILMS: "films",
+    FOOTAGE_KIND_CINE: "cine16x9",
 }
 
 
@@ -601,10 +603,11 @@ BTN_CONFIRM_YES = "Да"
 BTN_CONFIRM_BACK = "Вернуться назад"
 BTN_BACK = "Назад"
 BTN_BG_FOOTAGE = "Футажи"
-# Footage plane fork. Only these two are live: the rest of the collection
-# kinds (16:9, Личности) exist in the catalog but are not offered yet.
+# Footage plane fork. «Личности» exists in the catalog but has no uploads yet,
+# so it is not offered — a button for an empty pool strands the user.
 BTN_FOOTAGE_KIND_VERTICAL = "9:16"
 BTN_FOOTAGE_KIND_FILMS = "Фильмы"
+BTN_FOOTAGE_KIND_CINE = "16:9"
 BTN_BG_SOLID = "Цветной фон"
 BTN_BG_STROBE = "Строб Ч/Б"
 BTN_BG_INFO_NEXT = "Продолжить"
@@ -4572,9 +4575,13 @@ class BlastBotApp:
         await message.answer(
             "Какой футаж подобрать?\n\n"
             "• 9:16 — вертикальные футажи под настроение трека\n"
+            "• 16:9 — киношные горизонтальные съёмки\n"
             "• Фильмы — нарезки из конкретного фильма",
             reply_markup=_kb(
-                [BTN_FOOTAGE_KIND_VERTICAL], [BTN_FOOTAGE_KIND_FILMS], [BTN_BACK]
+                [BTN_FOOTAGE_KIND_VERTICAL],
+                [BTN_FOOTAGE_KIND_CINE],
+                [BTN_FOOTAGE_KIND_FILMS],
+                [BTN_BACK],
             ),
         )
 
@@ -4585,11 +4592,14 @@ class BlastBotApp:
             return
         if text == BTN_FOOTAGE_KIND_VERTICAL:
             kind = FOOTAGE_KIND_VERTICAL
+        elif text == BTN_FOOTAGE_KIND_CINE:
+            kind = FOOTAGE_KIND_CINE
         elif text == BTN_FOOTAGE_KIND_FILMS:
             kind = FOOTAGE_KIND_FILMS
         else:
             await message.answer(
-                f"Выбери кнопкой: «{BTN_FOOTAGE_KIND_VERTICAL}» или «{BTN_FOOTAGE_KIND_FILMS}»."
+                f"Выбери кнопкой: «{BTN_FOOTAGE_KIND_VERTICAL}», "
+                f"«{BTN_FOOTAGE_KIND_CINE}» или «{BTN_FOOTAGE_KIND_FILMS}»."
             )
             return
         # Changing the plane invalidates the shortlist: it holds ids from the
