@@ -303,6 +303,19 @@ PY
   echo "[deploy] set TG_WEBHOOK_IP_ADDRESS=$ip for Telegram webhook DNS pin"
 }
 
+bootstrap_prod_fx_assets_env() {
+  local bucket
+  bucket="$(env_file_value S3_BUCKET_ASSET_STORAGE)"
+  if [[ -z "$bucket" ]]; then
+    echo "[deploy] S3_BUCKET_ASSET_STORAGE is required to configure FX assets"
+    return 1
+  fi
+
+  set_env_file_value "$REPO_DIR/.env" FX_ASSETS_S3_BUCKET "$bucket"
+  set_env_file_value "$REPO_DIR/.env" FX_ASSETS_S3_PREFIX "fx_assets/"
+  echo "[deploy] configured FX assets bucket and prefix for prod-path"
+}
+
 if [[ -z "$BRANCH" ]]; then
   echo "Branch is not specified. Pass it as the first argument."
   exit 1
@@ -874,6 +887,7 @@ case "$DEPLOY_STACK" in
     ;;
   prod-path)
     bootstrap_tg_webhook_ip_env
+    bootstrap_prod_fx_assets_env
     deploy_prod_path_services
     dozzle_agent_status=0
     dozzle_agent_env_is_ready || dozzle_agent_status=$?
