@@ -1,9 +1,12 @@
-/*** blackwhite — грейд Sapphire + глитч-оверлеи (дамп ш3 20260817) ***/
-/* Грейд: S_HueSatBright(Sat 0, Bright .5, Offset Darks -.5) — тот же приём, что
-   в ш3 на слое «ЦК на видос»: обесцвечивает и вжигает чёрные, вместо плоского
-   ADBE Black&White. Sapphire на ноде есть (его же тянет hook_light).
+/*** blackwhite — штатный ЧБ + глитч-оверлеи (дамп ш3 20260817) ***/
+/* Грейд: ADBE Black&White с холодным тинтом — как было до 2026-08-18.
+   Sapphire-грейд из ш3 (S_HueSatBright) отсюда убран: его Brightness — это
+   МНОЖИТЕЛЬ (дефолт 1), поэтому 0.5 резал яркость вдвое, а Offset Darks -0.5
+   добивал тени — картинка уезжала в накатную темноту. В ш3 это работало, потому
+   что там был свой исходник; на нашем футаже — нет.
    Глитчи: клипы из CONFIG.clips тайлятся по окну эффекта в seeded-random
-   порядке, blend 5220 + тот же грейд (Bright .75). Нет клипов => только грейд. */
+   порядке, blend 5220. Они лежат ПОД аджастментом, поэтому обесцвечиваются тем
+   же самым ЧБ — отдельный грейд на них не нужен. Нет клипов => только ЧБ. */
 var CONFIG = { targetCompName:null, placeRef:"Текст", startTime:null, duration:null, place:"below:Текст", clips:null, seed:"blackwhite" };
 var SILENT = true;
 if (typeof $!=="undefined" && $.global && $.global.__BLAST){ var __p=$.global.__BLAST; for (var __k in __p){ if (__p[__k]!=null) CONFIG[__k]=__p[__k]; } }
@@ -13,15 +16,15 @@ function findComp(){ var a=app.project.activeItem,i,it; if(CONFIG.targetCompName
 function place(comp,L){ var ref=findLayer(comp,CONFIG.placeRef); if(ref)try{L.moveAfter(ref);}catch(e){} var t=(CONFIG.startTime!=null)?CONFIG.startTime:0; L.startTime=0; L.inPoint=t; L.outPoint=(CONFIG.duration!=null)?Math.min(comp.duration,t+CONFIG.duration):comp.duration; }
 function setP(e,n,v){ try{var p=e.property(n);if(p)p.setValue(v);}catch(x){} }
 
-/* Грейд ш3: Saturation / Brightness / Offset Darks у S_HueSatBright. */
-function addGrade(L, bright){
+/* Штатный ЧБ AE + холодный тинт (параметры исходного скрипта). */
+function addGrade(L){
   var fx=L.property("ADBE Effect Parade");
-  var g=fx.addProperty("S_HueSatBright");
-  if(!g) throw new Error("blackwhite: Sapphire S_HueSatBright unavailable");
-  setP(g,"S_HueSatBright-0052",0);        // Saturation -> ЧБ
-  setP(g,"S_HueSatBright-0053",bright);   // Brightness
-  setP(g,"S_HueSatBright-0055",-0.5);     // Offset Darks -> вжечь чёрные
-  return g;
+  var bw=fx.addProperty("ADBE Black&White");
+  if(!bw) throw new Error("blackwhite: ADBE Black&White unavailable");
+  setP(bw,"ADBE Black&White-0006",-100);
+  setP(bw,"ADBE Black&White-0007",1);
+  setP(bw,"ADBE Black&White-0008",[0.0078160008,0.006920415,0.019607844,1]);
+  return bw;
 }
 
 /* mulberry32 от строкового сида — детерминированный порядок глитчей.
@@ -71,9 +74,10 @@ function addGlitches(comp, anchorLayer, t0, t1){
     L.outPoint=Math.min(t1, cursor+src.duration);
     try{ L.audioEnabled=false; }catch(eA){}
     setP(L.property("ADBE Transform Group"),"ADBE Scale",coverScale(comp,src));
-    addGrade(L,0.75);
     try{ L.blendingMode=5220; }catch(eB){}   // сырой код енама из дампа ш3
-    try{ L.moveBefore(anchorLayer); }catch(eM){}
+    // ПОД аджастмент: ЧБ-слой красит всё, что ниже, значит глитчи получают тот
+    // же грейд, что и футаж, и своего им не требуется.
+    try{ L.moveAfter(anchorLayer); }catch(eM){}
     cursor=L.outPoint; made++;
   }
   return made;
@@ -83,7 +87,7 @@ function addGlitches(comp, anchorLayer, t0, t1){
   app.beginUndoGroup("blackwhite");
   try{
     var L=comp.layers.addSolid([1,1,1],"blackwhite",comp.width,comp.height,1); L.adjustmentLayer=true;
-    addGrade(L,0.5);
+    addGrade(L);
     place(comp,L);
     var n=addGlitches(comp, L, L.inPoint, L.outPoint);
     log("blackwhite -> "+comp.name+" (glitch tiles: "+n+")");
