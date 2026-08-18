@@ -27,14 +27,14 @@ jobs:
     runs-on: [self-hosted, blast-deploy-infra]
     timeout-minutes: 60
     env:
-      BLAST_WEB_PRODUCTION_ENV_B64: ${{ secrets.BLAST_WEB_PRODUCTION_ENV_B64 }}
+      BLAST_WEB_PRODUCTION_ENV_FILE: /home/deploy/blast_final/web_app/backend/.env.production
     steps:
       - uses: actions/checkout@v4
 
       - name: Validate deployment contract
         run: |
           set -euo pipefail
-          test -n "$BLAST_WEB_PRODUCTION_ENV_B64"
+          test -s "$BLAST_WEB_PRODUCTION_ENV_FILE"
           bash -n infra/runners/deploy_web_production.sh
 
       - name: Deploy production

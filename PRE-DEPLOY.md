@@ -6,7 +6,7 @@
 ## Статус
 
 Код production-контура готов к первому деплою, но переключать домен с preview на
-production пока нельзя: в GitHub нет production env, а у оператора ещё нет полного
+production пока нельзя: на blast-ops ещё нет полного production env, а у оператора нет полного
 набора Google/TikTok/Telegram credentials и реальных web-preview объектов.
 
 Деплой устроен fail-closed: при неполной конфигурации, недоступном Postgres/Redis,
@@ -81,17 +81,25 @@ orchestrator/S3, неверном OAuth redirect URI или отсутствую
    - `app.blast808.com` указывает на blast-ops;
    - сертификаты существуют в `/etc/letsencrypt/live/app.blast808.com/`.
 
-## GitHub
+## Хранение production env
 
-Подготовить env и записать его одним secret:
+Production env хранится только на `blast-ops`:
 
 ```bash
-base64 < web_app/backend/.env.production | tr -d '\n' \
-  | gh secret set BLAST_WEB_PRODUCTION_ENV_B64
+install -m 600 /dev/null /home/deploy/blast_final/web_app/backend/.env.production
+# заполнить файл по web_app/backend/.env.production.example
 ```
 
-Первый деплой запускать вручную из `Deploy Blast Web Production`. После полного E2E
-включить автодеплой:
+Workflow читает файл по постоянному пути
+`/home/deploy/blast_final/web_app/backend/.env.production`; `actions/checkout` его не
+создаёт и не удаляет. Файл игнорируется Git и переживает обычный prod/infra deploy.
+
+Локальная резервная копия лежит по тому же относительному пути
+`web_app/backend/.env.production`, имеет права `600` и также игнорируется Git. После
+изменения одной копии вторую обновлять вручную по защищённому каналу.
+
+Первый деплой запускать вручную из `Deploy Blast Web Production`. GitHub secrets для
+web env не используются. После полного E2E при необходимости включить автодеплой:
 
 ```bash
 gh variable set BLAST_WEB_PROD_AUTO_DEPLOY --body true
@@ -155,7 +163,7 @@ docker compose -f web_app/docker-compose.production.yml build --pull
 
 Production включается только когда одновременно выполнены четыре условия:
 
-- заполнен и сохранён `BLAST_WEB_PRODUCTION_ENV_B64`;
+- заполнен серверный `/home/deploy/blast_final/web_app/backend/.env.production`;
 - загружены и проверены все preview objects;
 - Google/TikTok callbacks подтверждены во внешних кабинетах;
 - ручной E2E дошёл до готового Windows-render и подтверждённой тестовой оплаты.
