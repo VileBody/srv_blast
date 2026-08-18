@@ -143,11 +143,11 @@
       "desc": "Старая камера: Unsharp + Mosaic + Gaussian + Posterize + Transform + S_GlowEdges." },
 
     { "id": "blackwhite", "label": "Black & White", "group": "extra", "apply_mode": "adjustment",
-      "script": "extra/rebuild_blackwhite.jsx", "needs_aep": false, "needs_plugin": ["Sapphire"],
+      "script": "extra/rebuild_blackwhite.jsx", "needs_aep": false, "needs_plugin": [],
       "sound": { "pool": null, "optional": true }, "default_duration": null, "placement": "below:Текст",
       "clips": { "pool": "glitch_video", "count": 3 },
       "full_window": true,
-      "desc": "ЧБ-грейд ш3 (S_HueSatBright: Sat 0 / Bright .5 / Offset Darks -.5) + глитч-клипы поверх футажа, тайлятся по окну в seeded-random порядке. Без FX_ASSETS_S3_BUCKET — только грейд." },
+      "desc": "Штатный ЧБ (ADBE Black&White + холодный тинт) + глитч-клипы поверх футажа, тайлятся по окну в seeded-random порядке. Глитчи лежат под ЧБ-аджастментом, поэтому обесцвечиваются вместе с картинкой. Без FX_ASSETS_S3_BUCKET — только ЧБ." },
 
     { "id": "crystal_glow", "label": "Crystal Glow", "group": "extra", "apply_mode": "adjustment",
       "script": "extra/rebuild_crystal_glow.jsx", "needs_aep": false, "needs_plugin": ["Sapphire"],

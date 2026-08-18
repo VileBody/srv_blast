@@ -138,11 +138,23 @@ def test_wave_carries_the_blue_tint_shape():
     assert "0.09411748250326" in js  # fill colour
 
 
-def test_blackwhite_grade_replaces_flat_black_and_white():
+def test_blackwhite_uses_the_flat_ae_grade_not_sapphire():
+    """Sapphire-грейд из ш3 убран: его Brightness — множитель (дефолт 1), 0.5
+    резал яркость вдвое и картинка уезжала в накатную темноту."""
     js = build_overlay_jsx(extra="blackwhite", drop_time=4.2)
-    assert 'addProperty("S_HueSatBright")' in js
-    # the old flat desaturate is gone (the name survives only in prose)
-    assert 'addProperty("ADBE Black&White")' not in js
+    assert 'addProperty("ADBE Black&White")' in js
+    # имя пережило только в комментарии-объяснении, применяться не должно
+    assert 'addProperty("S_HueSatBright")' not in js
+
+
+def test_blackwhite_glitches_sit_under_the_grade():
+    """Глитчи кладутся ПОД аджастмент, поэтому обесцвечиваются тем же ЧБ и
+    своего грейда не требуют — иначе они остались бы цветными поверх ЧБ."""
+    js = build_overlay_jsx(
+        extra="blackwhite", drop_time=4.2, assets={"extra_clips": ["media/video/a.mp4"]}
+    )
+    assert "L.moveAfter(anchorLayer)" in js
+    assert "L.moveBefore(anchorLayer)" not in js
 
 
 def test_blackwhite_clips_and_seed_are_baked():
@@ -162,7 +174,7 @@ def test_blackwhite_without_clips_is_grade_only():
     # no clips slot in the injected __BLAST payload (the script's own CONFIG
     # default `clips:null` is inlined verbatim and must stay untouched)
     assert "clips: [" not in js
-    assert 'addProperty("S_HueSatBright")' in js
+    assert 'addProperty("ADBE Black&White")' in js
 
 
 def test_clips_slot_ignored_for_effects_that_do_not_take_it():
