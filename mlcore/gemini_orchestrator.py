@@ -401,6 +401,30 @@ def _build_interval_line_tags(
         return None
 
 
+def _collection_plane_active() -> bool:
+    """True when this job draws from a folder-scoped collection.
+
+    Read from the rotation theme rather than a flag of its own so it cannot drift
+    from what actually routes the picker.
+    """
+    return str(os.environ.get("FOOTAGE_ROTATION_THEME") or "").strip() == "collection"
+
+
+def load_style_metadata_index(*, root: Path, collection_plane: bool) -> Dict[str, Any]:
+    """Tag metadata for the picker, or an empty index on the collection plane.
+
+    Collections are never tagged — the folder is the whole selector — so there is
+    nothing to load. The job env says so by carrying an EMPTY db-path list, but
+    `_resolve_style_metadata_db_paths` treats an empty list as a misconfigured
+    env and raises; that guard is right for the tagged pools and must stay, so
+    the collection plane skips the resolver instead of loosening it.
+    """
+    if collection_plane:
+        return {}
+    paths = _resolve_style_metadata_db_paths(root=root)
+    return merge_footage_style_metadata_rows(load_footage_style_metadata_rows(db_paths=paths))
+
+
 def _resolve_style_metadata_db_paths(*, root: Path) -> List[Path]:
     raw = (os.environ.get("FOOTAGE_STYLE_METADATA_DB_PATHS_JSON") or "").strip()
     if raw:
@@ -2628,14 +2652,12 @@ def build_all_via_gemini_one_call(
     inv = _load_footage_inventory(inv_path)
     picker_assets = load_picker_assets_from_inventory(inv)
     style_groups = build_style_groups_from_assets(picker_assets)
-    style_metadata_paths = _resolve_style_metadata_db_paths(root=ROOT)
-    style_metadata_rows = load_footage_style_metadata_rows(db_paths=style_metadata_paths)
-    style_metadata_index = merge_footage_style_metadata_rows(style_metadata_rows)
     # Collection jobs run on an untagged pool by design, so "has no metadata"
     # must not disqualify a clip there — otherwise the mapping empties and
     # Stage2 dies on style_rotation_requires_mapped_inventory_assets.
-    _collection_plane = (
-        str(os.environ.get("FOOTAGE_ROTATION_THEME") or "").strip() == "collection"
+    _collection_plane = _collection_plane_active()
+    style_metadata_index = load_style_metadata_index(
+        root=ROOT, collection_plane=_collection_plane
     )
     mapped_picker_assets, unmapped_picker_file_names = map_inventory_assets_with_style_metadata(
         assets=picker_assets,
@@ -2650,19 +2672,19 @@ def build_all_via_gemini_one_call(
 
     if not mapped_picker_assets:
         logger.warning(
-            "style_metadata_empty_mapping inventory_assets=%d metadata_rows=%d db_files=%s",
+            "style_metadata_empty_mapping inventory_assets=%d merged_ids=%d collection=%s",
             len(picker_assets),
-            len(style_metadata_rows),
-            [str(p) for p in style_metadata_paths],
+            len(style_metadata_index),
+            _collection_plane,
         )
     logger.info(
-        "style_metadata_loaded db_files=%s rows=%d merged_ids=%d inventory_assets=%d mapped=%d unmapped=%d",
-        [str(p) for p in style_metadata_paths],
-        len(style_metadata_rows),
+        "style_metadata_loaded merged_ids=%d inventory_assets=%d mapped=%d unmapped=%d "
+        "collection_plane=%s",
         len(style_metadata_index),
         len(picker_assets),
         len(mapped_picker_assets),
         len(unmapped_picker_file_names),
+        _collection_plane,
     )
     resume_state = _load_resume_state(resume_state_path, logger=logger)
     if resume_state:
