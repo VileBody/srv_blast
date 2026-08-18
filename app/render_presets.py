@@ -32,15 +32,29 @@ class RenderPreset:
 
     @property
     def collapse_text_precomp(self) -> bool:
-        """Whether the nested subtitle comp must stop rasterizing at its bounds.
+        """Always False. Collapsing this precomp is not survivable.
 
-        A nested comp CLIPS at its own width. When the frame is WIDER than the
-        1080-wide text comp, wide text (the jakson focus word runs to ~2.5x the
-        base size) gets cut at 1080 even though the frame has room on both sides.
-        Collapsing removes that intermediate raster. At or below 1080 wide the
-        frame itself is the limit, so collapsing would change nothing.
+        Collapse Transformations was tempting here: a nested comp CLIPS at its own
+        bounds, so inside a frame wider than the 1080-wide text comp the widest
+        text (the jakson focus word runs to ~2.5x the base size) is cut even
+        though the frame has room. Collapsing removes that intermediate raster.
+
+        But it also dissolves the precomp's ISOLATION. Adjustment layers inside a
+        collapsed comp stop being confined to it and apply to everything beneath
+        them in the parent — so the jakson text animators started squeezing the
+        FOOTAGE into the text comp's 1080x1080 bounds the moment a subtitle
+        appeared. Observed on the first 16:9 render; vertical never collapsed and
+        never showed it.
+
+        Clipping at 1080 is the authored behaviour anyway: in the vertical frame
+        the comp is exactly as wide as the picture, so a word that overflows is
+        already cut there. Keeping that identical in a wider frame costs nothing
+        that production has ever had, while collapsing costs the footage.
+
+        (The 4:3 photo render does collapse, and can: it composites stills with no
+        adjustment layers under the subtitles.)
         """
-        return self.width > TEXT_COMP_W
+        return False
 
     @property
     def text_precomp_position(self) -> List[float]:
