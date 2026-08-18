@@ -291,19 +291,27 @@ VIBE_PAGE_SIZE = 3
 # file_id_public, ...}. Rendered + registered offline by scripts/build_bucket_previews.py.
 _BUCKET_PREVIEWS_CACHE: Optional[Dict[str, Dict[str, Any]]] = None
 _PHOTO_BUCKET_PREVIEWS_CACHE: Optional[Dict[str, Dict[str, Any]]] = None
+_COLLECTION_BUCKET_PREVIEWS_CACHE: Optional[Dict[str, Dict[str, Any]]] = None
 # Which file_id field this bot sends (team bot -> file_id; public mirror overrides).
 _BUCKET_PREVIEW_FILE_ID_FIELD = "file_id"
 
 
 def _bucket_previews_path(media_type: str = "video") -> Path:
-    name = "photo_bucket_previews.json" if media_type == "photo" else "footage_bucket_previews.json"
+    name = {
+        "photo": "photo_bucket_previews.json",
+        "collection": "collection_bucket_previews.json",
+    }.get(media_type, "footage_bucket_previews.json")
     return Path(__file__).resolve().parents[2] / "data" / name
 
 
 def _load_bucket_previews(media_type: str = "video") -> Dict[str, Dict[str, Any]]:
     global _BUCKET_PREVIEWS_CACHE, _PHOTO_BUCKET_PREVIEWS_CACHE
-    is_photo = media_type == "photo"
-    cache = _PHOTO_BUCKET_PREVIEWS_CACHE if is_photo else _BUCKET_PREVIEWS_CACHE
+    global _COLLECTION_BUCKET_PREVIEWS_CACHE
+    caches = {
+        "photo": _PHOTO_BUCKET_PREVIEWS_CACHE,
+        "collection": _COLLECTION_BUCKET_PREVIEWS_CACHE,
+    }
+    cache = caches.get(media_type, _BUCKET_PREVIEWS_CACHE)
     if cache is None:
         try:
             obj = json.loads(_bucket_previews_path(media_type).read_text(encoding="utf-8"))
@@ -311,8 +319,10 @@ def _load_bucket_previews(media_type: str = "video") -> Dict[str, Dict[str, Any]
             cache = prev if isinstance(prev, dict) else {}
         except Exception:
             cache = {}
-        if is_photo:
+        if media_type == "photo":
             _PHOTO_BUCKET_PREVIEWS_CACHE = cache
+        elif media_type == "collection":
+            _COLLECTION_BUCKET_PREVIEWS_CACHE = cache
         else:
             _BUCKET_PREVIEWS_CACHE = cache
     return cache
@@ -320,7 +330,15 @@ def _load_bucket_previews(media_type: str = "video") -> Dict[str, Dict[str, Any]
 
 def _bucket_preview_file_id(bucket_id: str) -> str:
     bid = str(bucket_id or "").strip()
-    media_type = "photo" if bid.startswith("photo:") else "video"
+    # Each plane keeps its own store, so the id prefix picks the file. A
+    # collection id looked up in the footage store silently finds nothing —
+    # the shortlist would then show buttons with no preview at all.
+    if bid.startswith("photo:"):
+        media_type = "photo"
+    elif bid.startswith("collection:"):
+        media_type = "collection"
+    else:
+        media_type = "video"
     e = _load_bucket_previews(media_type).get(bid)
     if not isinstance(e, dict):
         return ""
