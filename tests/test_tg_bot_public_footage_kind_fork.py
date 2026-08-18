@@ -42,17 +42,20 @@ def test_the_stage_and_state_field_exist(bot: str) -> None:
 
 
 @pytest.mark.parametrize("bot", BOTS)
-def test_exactly_two_options_are_offered(bot: str) -> None:
+def test_the_filled_kinds_are_offered_and_the_empty_one_is_not(bot: str) -> None:
     app = _mod(bot)
     src = _src(app, "_ask_footage_kind")
     keyboard = src.split("reply_markup=", 1)[1]
     assert "BTN_FOOTAGE_KIND_VERTICAL" in keyboard
+    assert "BTN_FOOTAGE_KIND_CINE" in keyboard
     assert "BTN_FOOTAGE_KIND_FILMS" in keyboard
-    # The unfilled kinds must not be reachable yet — the docstring may
-    # name them, the keyboard may not.
+    # «Личности» has no uploads, so it must stay unreachable — a button for an
+    # empty pool strands the user on an empty shortlist. The docstring may name
+    # it, the keyboard may not.
     assert "Личности" not in keyboard
-    assert "cine16x9" not in keyboard
+    assert "people" not in keyboard
     assert app.BTN_FOOTAGE_KIND_VERTICAL == "9:16"
+    assert app.BTN_FOOTAGE_KIND_CINE == "16:9"
     assert app.BTN_FOOTAGE_KIND_FILMS == "Фильмы"
 
 
@@ -60,6 +63,7 @@ def test_exactly_two_options_are_offered(bot: str) -> None:
 def test_the_handler_accepts_both_and_rejects_anything_else(bot: str) -> None:
     src = _src(_mod(bot), "_handle_wait_footage_kind")
     assert "FOOTAGE_KIND_VERTICAL" in src
+    assert "FOOTAGE_KIND_CINE" in src
     assert "FOOTAGE_KIND_FILMS" in src
     assert "await self._ask_vibe_shortlist(message, st)" in src
 
@@ -89,6 +93,7 @@ def test_kind_maps_to_the_ranker_pool(bot: str) -> None:
     app = _mod(bot)
     assert app._pool_for_footage_kind(app.FOOTAGE_KIND_VERTICAL) == "vibes"
     assert app._pool_for_footage_kind(app.FOOTAGE_KIND_FILMS) == "films"
+    assert app._pool_for_footage_kind(app.FOOTAGE_KIND_CINE) == "cine16x9"
     # An unknown kind must fall back to the vibes catalog, never to a collection
     # pool the chat did not choose.
     assert app._pool_for_footage_kind("") == "vibes"
@@ -160,3 +165,25 @@ def test_films_render_vertically() -> None:
     for bucket in load_collection_catalog():
         assert bucket.formats == ("vertical",), bucket.slug
         assert bucket.default_format == "vertical"
+
+
+@pytest.mark.parametrize("bot", BOTS)
+def test_the_three_planes_share_no_buckets(bot: str) -> None:
+    # Each fork button must lead somewhere of its own; an overlap would let one
+    # button serve another's footage.
+    app = _mod(bot)
+    vibes = app._live_bucket_ids("footage", app.FOOTAGE_KIND_VERTICAL)
+    films = app._live_bucket_ids("footage", app.FOOTAGE_KIND_FILMS)
+    cine = app._live_bucket_ids("footage", app.FOOTAGE_KIND_CINE)
+    assert vibes and films and cine, "every offered plane must have a live catalog"
+    assert not (vibes & films)
+    assert not (vibes & cine)
+    assert not (films & cine)
+
+
+@pytest.mark.parametrize("bot", BOTS)
+def test_a_films_shortlist_is_stale_on_the_cine_fork(bot: str) -> None:
+    app = _mod(bot)
+    assert app._stale_vibe_shortlist_reason(
+        ["collection:films__брат"], "footage", app.FOOTAGE_KIND_CINE
+    )

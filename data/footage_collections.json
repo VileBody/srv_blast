@@ -15,96 +15,192 @@
       "folder": "бойцовский клуб",
       "label": "Бойцовский клуб",
       "description": "тёмная агрессия, распад, подвалы и неон",
-      "themes": ["self_destruction_minor", "aggression_minor", "cyber_alienation_minor", "urban_blocks_minor"],
-      "formats": ["vertical"]
+      "themes": [
+        "self_destruction_minor",
+        "aggression_minor",
+        "cyber_alienation_minor",
+        "urban_blocks_minor"
+      ],
+      "formats": [
+        "vertical"
+      ]
     },
     {
       "kind": "films",
       "folder": "брат",
       "label": "Брат",
       "description": "90-е, серый город, холодная решимость",
-      "themes": ["aggression_minor", "urban_blocks_minor", "nostalgia_city_minor", "youth_rebellion_major"],
-      "formats": ["vertical"]
+      "themes": [
+        "aggression_minor",
+        "urban_blocks_minor",
+        "nostalgia_city_minor",
+        "youth_rebellion_major"
+      ],
+      "formats": [
+        "vertical"
+      ]
     },
     {
       "kind": "films",
       "folder": "бумер",
       "label": "Бумер",
       "description": "дорога, трасса, пацанская романтика 2000-х",
-      "themes": ["nostalgia_city_minor", "youth_rebellion_major", "urban_blocks_minor", "aggression_minor"],
-      "formats": ["vertical"]
+      "themes": [
+        "nostalgia_city_minor",
+        "youth_rebellion_major",
+        "urban_blocks_minor",
+        "aggression_minor"
+      ],
+      "formats": [
+        "vertical"
+      ]
     },
     {
       "kind": "films",
       "folder": "великий гэтсби",
       "label": "Великий Гэтсби",
       "description": "роскошь, вечеринки, недостижимая любовь",
-      "themes": ["adrenaline_flex_major", "epic_love_major", "nightlife_electro_minor", "romance_major"],
-      "formats": ["vertical"]
+      "themes": [
+        "adrenaline_flex_major",
+        "epic_love_major",
+        "nightlife_electro_minor",
+        "romance_major"
+      ],
+      "formats": [
+        "vertical"
+      ]
     },
     {
       "kind": "films",
       "folder": "волк с уолл-стрит",
       "label": "Волк с Уолл-стрит",
       "description": "деньги, кураж, безудержный подъём",
-      "themes": ["hustle_minor", "adrenaline_flex_major", "motivation_major", "sex_major"],
-      "formats": ["vertical"]
+      "themes": [
+        "hustle_minor",
+        "adrenaline_flex_major",
+        "motivation_major",
+        "sex_major"
+      ],
+      "formats": [
+        "vertical"
+      ]
     },
     {
       "kind": "films",
       "folder": "до встречи с тобой",
       "label": "До встречи с тобой",
       "description": "светлая нежность и расставание",
-      "themes": ["romance_major", "epic_love_major", "heartbreak_minor"],
-      "formats": ["vertical"]
+      "themes": [
+        "romance_major",
+        "epic_love_major",
+        "heartbreak_minor"
+      ],
+      "formats": [
+        "vertical"
+      ]
     },
     {
       "kind": "films",
       "folder": "дом gucci",
       "label": "Дом Gucci",
       "description": "богатство, интриги, ревность",
-      "themes": ["betrayal_minor", "jealousy_minor", "adrenaline_flex_major", "sex_major"],
-      "formats": ["vertical"]
+      "themes": [
+        "betrayal_minor",
+        "jealousy_minor",
+        "adrenaline_flex_major",
+        "sex_major"
+      ],
+      "formats": [
+        "vertical"
+      ]
     },
     {
       "kind": "films",
       "folder": "дьявол носит прада",
       "label": "Дьявол носит Прада",
       "description": "карьера, стиль, город и амбиции",
-      "themes": ["motivation_major", "hustle_minor", "adrenaline_flex_major"],
-      "formats": ["vertical"]
+      "themes": [
+        "motivation_major",
+        "hustle_minor",
+        "adrenaline_flex_major"
+      ],
+      "formats": [
+        "vertical"
+      ]
     },
     {
       "kind": "films",
       "folder": "жмурки",
       "label": "Жмурки",
       "description": "чёрный юмор, криминал, 90-е",
-      "themes": ["aggression_minor", "urban_blocks_minor", "youth_rebellion_major"],
-      "formats": ["vertical"]
+      "themes": [
+        "aggression_minor",
+        "urban_blocks_minor",
+        "youth_rebellion_major"
+      ],
+      "formats": [
+        "vertical"
+      ]
     },
     {
       "kind": "films",
       "folder": "проект х",
       "label": "Проект Х",
       "description": "вечеринка без тормозов, молодость",
-      "themes": ["youth_rebellion_major", "nightlife_electro_minor", "adrenaline_flex_major"],
-      "formats": ["vertical"]
+      "themes": [
+        "youth_rebellion_major",
+        "nightlife_electro_minor",
+        "adrenaline_flex_major"
+      ],
+      "formats": [
+        "vertical"
+      ]
     },
     {
       "kind": "films",
       "folder": "реквием по мечте",
       "label": "Реквием по мечте",
       "description": "распад, зависимость, ускользающая мечта",
-      "themes": ["self_destruction_minor", "depression_minor", "escapism_dreams_minor", "loneliness_isolation_minor"],
-      "formats": ["vertical"]
+      "themes": [
+        "self_destruction_minor",
+        "depression_minor",
+        "escapism_dreams_minor",
+        "loneliness_isolation_minor"
+      ],
+      "formats": [
+        "vertical"
+      ]
     },
     {
       "kind": "films",
       "folder": "токийский дрифт",
       "label": "Токийский дрифт",
       "description": "ночные гонки, дрифт, огни Токио",
-      "themes": ["adrenaline_flex_major", "youth_rebellion_major", "nostalgia_city_minor", "motivation_major"],
-      "formats": ["vertical"]
+      "themes": [
+        "adrenaline_flex_major",
+        "youth_rebellion_major",
+        "nostalgia_city_minor",
+        "motivation_major"
+      ],
+      "formats": [
+        "vertical"
+      ]
+    },
+    {
+      "kind": "cine16x9",
+      "folder": "New_York",
+      "label": "Нью-Йорк",
+      "description": "город, улицы, огни, движение",
+      "themes": [
+        "hustle_minor",
+        "urban_blocks_minor",
+        "nostalgia_city_minor",
+        "motivation_major",
+        "nightlife_electro_minor"
+      ],
+      "formats": [
+        "vertical"
+      ]
     }
   ]
 }
