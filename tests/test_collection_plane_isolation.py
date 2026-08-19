@@ -126,3 +126,20 @@ def test_collection_env_keys_reach_the_build_subprocess() -> None:
     # silently disabled every hook once already (see CLAUDE.md 2026-06-05).
     for key in ("RENDER_PRESET", "COLLECTION_INVENTORY_JSON", "FOOTAGE_COLLECTIONS_JSON"):
         assert key in tasks._LLM_ENV_KEYS
+
+
+def test_a_registered_collection_counts_whatever_its_folder_casing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The registry spells folders however the operator typed them, S3 however they
+    # were uploaded. The picker matches without regard to case, so the report must
+    # too — it was calling a working collection unregistered.
+    idx = _index(tmp_path, [{"genre": "cine16x9", "tag": "New_York", "file_name": "a.mp4"}])
+    _registry(
+        tmp_path,
+        [{"kind": "cine16x9", "folder": "New_York", "label": "Нью-Йорк"}],
+        monkeypatch,
+    )
+    out = tasks._report_collection_registry(idx)
+    assert out["collections_live"] == 1
+    assert "unregistered_folders" not in out

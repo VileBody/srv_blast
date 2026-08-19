@@ -5018,10 +5018,18 @@ class BlastBotApp:
         # horizontally rendered plane the step is skipped rather than offered
         # and then rejected at enqueue, after the user has already chosen.
         if _render_preset_for_bucket(*self._selected_bucket_slot(st)) != "vertical":
-            st.hook_enabled = False
+            # Only the DROP-ANCHORED hooks are unavailable here — their
+            # artwork carries baked 1080x1920 coordinates and the API
+            # refuses them outside vertical. Transitions and grades are
+            # bound to the comp and scale with it, so the cut-style and
+            # stylization steps stay: dropping them left this flow with no
+            # visual choices at all. Same shape the 4:3 photo flow uses.
+            st.hook_enabled = True
+            st.hook_category = "effect"
             st.hook_drop_t = None
-            st.hook_category = ""
             st.hook_device = ""
+            st.effect_hook = ""
+            st.effect_hook_extend = ""
             st.f2_shape = ""
             st.f1_sound_url = ""
             st.f1_sound_text = ""
@@ -5029,7 +5037,7 @@ class BlastBotApp:
             st.battery_cases = []
             st.battery_f4_drop = None
             await self.store.set(st)
-            await self._ask_versions(message, st)
+            await self._ask_effect_transition(message, st)
             return
         st.stage = STAGE_WAIT_HOOK_CHOICE
         await self.store.set(st)
@@ -6571,7 +6579,11 @@ class BlastBotApp:
         await self._ask_versions(message, st)
 
     async def _ask_versions(self, message: Message, st: ChatState) -> None:
-        if FRAME_FLOW_ENABLED and not st.frame_id:
+        # The frame is a fixed 1080x1920 PNG mask laid over every layer, so it
+        # only means anything in a vertical frame. Offering it elsewhere would
+        # letterbox a wide render with a portrait mask.
+        vertical = _render_preset_for_bucket(*self._selected_bucket_slot(st)) == "vertical"
+        if FRAME_FLOW_ENABLED and vertical and not st.frame_id:
             await self._ask_frame(message, st)
             return
         paid = await self.credits_db.has_paid(st.chat_id)

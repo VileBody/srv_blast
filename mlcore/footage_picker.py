@@ -865,11 +865,92 @@ def _deterministic_file_name_order(
     return [head, *rest_sorted]
 
 
+# Clips delivered as clip_001..clip_NNN are cut SEQUENTIALLY out of one source,
+# so neighbouring ordinals are neighbouring moments of the same shot. Unique
+# file names therefore do not guarantee a visible cut: clip-041 followed by
+# clip-042 reads as the same frame twice. Keep picked ordinals this far apart
+# when the pool exposes them.
+_COLLECTION_KINDS = frozenset({"films", "people", "cine16x9"})
+_SOURCE_NEIGHBOUR_MIN_GAP = 4
+_ORDINAL_RE = re.compile(r"(\d+)(?!.*\d)")
+
+
+def _source_ordinal(file_name: str) -> Optional[int]:
+    """Trailing number of a sequentially-cut clip, or None if it has none."""
+    m = _ORDINAL_RE.search(str(file_name or "").rsplit(".", 1)[0])
+    if not m:
+        return None
+    try:
+        return int(m.group(1))
+    except ValueError:
+        return None
+
+
+def _is_collection_pool(pool: List[Dict[str, Any]]) -> bool:
+    """True when this pool is a folder-scoped collection.
+
+    Read off the assets rather than passed down: the tagged pool's ids are
+    18-digit Pinterest numbers, where a trailing-number 'ordinal' is
+    meaningless and the separation would be noise.
+    """
+    for it in pool or []:
+        if str(it.get("genre") or "").strip().lower() in _COLLECTION_KINDS:
+            return True
+    return False
+
+
+def _separate_source_neighbours(
+    names: List[str],
+    *,
+    pool_names: List[str],
+    min_gap: int = _SOURCE_NEIGHBOUR_MIN_GAP,
+) -> List[str]:
+    """Reorder the assigned clips so consecutive ones are not neighbouring moments.
+
+    Rebuilt greedily rather than repaired in place: swapping one offending pair
+    tends to create another, and a single pass then leaves the order worse than
+    it looks. Walking the sequence and taking, at each step, the first remaining
+    clip far enough from the one just emitted converges in one go.
+
+    Only the ORDER changes — every name stays used exactly once, so the no-repeat
+    guarantee holds. Safe here because a collection's clips are interchangeable in
+    length (they were cut to the same size), which is why this is not applied to
+    the tagged pool, where a clip is chosen for the interval it fits.
+
+    When nothing is far enough, the furthest available is taken: a small gap beats
+    dropping the interval.
+    """
+    ordinals = {n: _source_ordinal(n) for n in pool_names}
+    if not any(v is not None for v in ordinals.values()):
+        return list(names)
+
+    def _gap(a: Optional[str], b: str) -> float:
+        if a is None:
+            return float("inf")
+        oa, ob = ordinals.get(a), ordinals.get(b)
+        if oa is None or ob is None:
+            return float("inf")
+        return float(abs(oa - ob))
+
+    remaining = list(names)
+    out: List[str] = []
+    prev: Optional[str] = None
+    while remaining:
+        pick = next((n for n in remaining if _gap(prev, n) >= min_gap), None)
+        if pick is None:
+            pick = max(remaining, key=lambda n: (_gap(prev, n), n))
+        remaining.remove(pick)
+        out.append(pick)
+        prev = pick
+    return out
+
+
 def _assign_unique_file_names_for_intervals(
     *,
     intervals: List[Tuple[float, float]],
     pool: List[Dict[str, Any]],
     seed_value: int,
+    separate_source_neighbours: bool = False,
 ) -> List[str]:
     if not intervals:
         raise RuntimeError("No intervals were built from switch points")
@@ -934,6 +1015,8 @@ def _assign_unique_file_names_for_intervals(
         out[i] = nm
     if any(not x for x in out):
         raise RuntimeError("internal matching failure for strict no-repeat policy")
+    if separate_source_neighbours:
+        out = _separate_source_neighbours(out, pool_names=list(by_name.keys()))
     return out
 
 
@@ -1720,6 +1803,10 @@ def pick_footage_clips_by_intervals_deterministic(
                 intervals=intervals,
                 pool=pool,
                 seed_value=seed_value,
+                # Collection folders are cut sequentially out of one
+                # source, so neighbouring ordinals are neighbouring
+                # moments — unique names alone do not make a visible cut.
+                separate_source_neighbours=_is_collection_pool(pool),
             )
         except RuntimeError as e:
             assignment_err = str(e)

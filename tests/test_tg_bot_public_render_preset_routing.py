@@ -110,12 +110,15 @@ def test_the_selected_bucket_decides_the_slot(bot: str) -> None:
 
 
 @pytest.mark.parametrize("bot", BOTS)
-def test_the_hook_step_is_skipped_when_the_render_is_horizontal(bot: str) -> None:
-    # Offering hooks there and having the API reject them at enqueue would waste
-    # the user's choices after they had already made them.
+def test_the_hook_question_is_not_asked_when_the_render_is_horizontal(bot: str) -> None:
+    # Offering the drop-anchored hooks there and having the API reject them at
+    # enqueue would waste the choices after the user had already made them, so
+    # the branch is taken before the question is ever put.
     src = inspect.getsource(_mod(bot).BlastBotApp._ask_hook_choice)
     assert '_render_preset_for_bucket(*self._selected_bucket_slot(st)) != "vertical"' in src
-    assert "await self._ask_versions(message, st)" in src
+    guard, _, question = src.partition("STAGE_WAIT_HOOK_CHOICE")
+    assert "await self._ask_effect_transition(message, st)" in guard
+    assert question, "the vertical path must still ask the hook question"
 
 
 @pytest.mark.parametrize("bot", BOTS)
@@ -142,3 +145,57 @@ def test_the_api_would_indeed_reject_that_combination() -> None:
             f2_shape="rhomb",
             render_preset="wide",
         )
+
+
+# --------------------------------------------------------------------------- #
+# what the horizontal flow keeps and what it drops
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize("bot", BOTS)
+def test_the_horizontal_flow_keeps_cut_style_and_stylization(bot: str) -> None:
+    """Only the DROP-ANCHORED hooks are unavailable outside vertical.
+
+    Transitions and grades are bound to the comp and scale with it, so skipping
+    the whole hook branch left the 16:9 flow with no visual choices at all — the
+    cut style and the stylization disappeared with it. Same shape the 4:3 photo
+    flow already uses: hook_category="effect" with an empty effect_hook.
+    """
+    src = inspect.getsource(_mod(bot).BlastBotApp._ask_hook_choice)
+    assert 'st.hook_category = "effect"' in src
+    assert 'st.effect_hook = ""' in src
+    assert "await self._ask_effect_transition(message, st)" in src
+
+
+@pytest.mark.parametrize("bot", BOTS)
+def test_the_frame_step_is_vertical_only(bot: str) -> None:
+    # The frame is a fixed 1080x1920 PNG mask over every layer; on a wide render
+    # it would letterbox the picture with a portrait mask.
+    src = inspect.getsource(_mod(bot).BlastBotApp._ask_versions)
+    assert '_render_preset_for_bucket(*self._selected_bucket_slot(st)) == "vertical"' in src
+    assert "vertical and not st.frame_id" in src
+
+
+@pytest.mark.parametrize("bot", BOTS)
+def test_the_drop_anchored_hooks_are_still_cleared(bot: str) -> None:
+    # Keeping the effect branch must not leave a drop-anchored choice behind: the
+    # API rejects those outside vertical, and a leftover would be sent anyway.
+    src = inspect.getsource(_mod(bot).BlastBotApp._ask_hook_choice)
+    for field in ("st.hook_drop_t = None", 'st.f2_shape = ""', 'st.f1_sound_url = ""',
+                  'st.hook_device = ""', "st.battery_mode = False"):
+        assert field in src, field
+
+
+def test_transitions_and_grades_are_not_refused_by_the_api() -> None:
+    # Pins the split the flow relies on: the guard names the drop-anchored hooks
+    # only, so a wide job may still carry a transition and a grade.
+    from services.orchestrator.schemas import SendAudioS3Request
+
+    req = SendAudioS3Request(
+        audio_s3_url="s3://b/a.mp3",
+        user_clip_start_sec=0.0,
+        user_clip_end_sec=30.0,
+        render_preset="wide",
+        effect_transition="snap_wipe",
+        effect_extra="analog_glitch",
+    )
+    assert req.render_preset == "wide"
+    assert req.effect_transition == "snap_wipe"
