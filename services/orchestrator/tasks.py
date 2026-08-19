@@ -2955,7 +2955,11 @@ def _report_collection_registry(static_index_path: Any) -> Dict[str, Any]:
     try:
         from mlcore.footage_collection_catalog import load_collection_catalog
 
-        registered = {b.slug for b in load_collection_catalog()}
+        # Compare case-insensitively: the registry spells folders however the
+        # operator typed them, S3 however they were uploaded, and the picker
+        # already matches without regard to case. Without this the report
+        # called a working collection unregistered.
+        registered = {b.slug.lower() for b in load_collection_catalog()}
     except Exception as exc:
         return {"registry_check_error": str(exc), "folders_found": len(counts)}
 

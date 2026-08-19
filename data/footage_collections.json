@@ -201,6 +201,66 @@
       "formats": [
         "wide"
       ]
+    },
+    {
+      "kind": "cine16x9",
+      "folder": "Asaka",
+      "label": "Осака",
+      "description": "японский город, неон, узкие улицы",
+      "themes": [
+        "nostalgia_city_minor",
+        "cyber_alienation_minor",
+        "urban_blocks_minor",
+        "escapism_dreams_minor"
+      ],
+      "formats": [
+        "wide"
+      ]
+    },
+    {
+      "kind": "cine16x9",
+      "folder": "Kyoto",
+      "label": "Киото",
+      "description": "храмы, сады, тихая созерцательность",
+      "themes": [
+        "serene_landscape_major",
+        "mysticism_fate_minor",
+        "escapism_dreams_minor",
+        "nostalgia_city_minor"
+      ],
+      "formats": [
+        "wide"
+      ]
+    },
+    {
+      "kind": "cine16x9",
+      "folder": "Los_Angels",
+      "label": "Лос-Анджелес",
+      "description": "пальмы, шоссе, закатное золото",
+      "themes": [
+        "adrenaline_flex_major",
+        "hustle_minor",
+        "motivation_major",
+        "youth_rebellion_major"
+      ],
+      "formats": [
+        "wide"
+      ]
+    },
+    {
+      "kind": "cine16x9",
+      "folder": "Miami",
+      "label": "Майами",
+      "description": "океан, неон, ночная жизнь",
+      "themes": [
+        "nightlife_electro_minor",
+        "adrenaline_flex_major",
+        "sex_major",
+        "romance_major"
+      ],
+      "formats": [
+        "wide"
+      ]
     }
   ]
 }
