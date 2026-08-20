@@ -48,14 +48,6 @@ from .admin_commands import make_admin_router
 from .admin_panel import start_admin_panel
 from .broadcast_sender import start_broadcast_workers
 from .audio_prepare import AudioPrepareResult, prepare_audio_best_effort
-from mlcore.hooks.f6_video.inject import F6_LEAD_PAD_SEC, F6_TAIL_PAD_SEC
-
-from .video_prepare import (
-    F6_MAX_VIDEO_SEC,
-    F6_MIN_VIDEO_SEC,
-    VideoPrepareResult,
-    normalize_video_for_ae,
-)
 from .config import SETTINGS, Settings
 from .credits_db import CreditsDB
 from .marketing_texts import (
@@ -78,7 +70,7 @@ from .marketing_texts import (
 )
 from .tbank_client import TBankClient
 from .warmup_chain import CALLBACK_PREFIX as WARMUP_CALLBACK_PREFIX, CAMPAIGN as WARMUP_CAMPAIGN, callback_progress as warmup_callback_progress, keyboard_for_next as warmup_keyboard, message_for_stage as warmup_message
-from .orchestrator_client import OrchestratorClient, OrchestratorHTTPError
+from .orchestrator_client import OrchestratorClient
 from .s3_client import S3Client, make_s3_url
 from services.generation_runtime import GenerationRuntimeStore
 from .state_store import (
@@ -158,11 +150,8 @@ from .state_store import (
     STAGE_WAIT_VISUAL_STYLE,
     STAGE_WAIT_F2_SHAPE,
     STAGE_WAIT_FRAME,
-    STAGE_WAIT_WARMUP_KIND,
     STAGE_WAIT_F1_SOUND,
     STAGE_WAIT_F1_TEXT,
-    STAGE_WAIT_F6_VIDEO,
-    STAGE_WAIT_F6_YT_RANGE,
     STAGE_WAIT_PHOTO_STYLE,
     STAGE_WAIT_PHOTO_TRANSITION,
     STAGE_WAIT_VIBE,
@@ -281,11 +270,8 @@ HOOK_STAGES = frozenset({
     STAGE_WAIT_VISUAL_TRANSITION,
     STAGE_WAIT_VISUAL_STYLE,
     STAGE_WAIT_F2_SHAPE,
-    STAGE_WAIT_WARMUP_KIND,
     STAGE_WAIT_F1_SOUND,
     STAGE_WAIT_F1_TEXT,
-    STAGE_WAIT_F6_VIDEO,
-    STAGE_WAIT_F6_YT_RANGE,
 })
 
 # Footage precision flow (Phase 2b): stage(s) carrying the vibe multi-select.
@@ -545,12 +531,9 @@ def _live_bucket_ids(bg_mode: str, footage_kind: str = FOOTAGE_KIND_VERTICAL) ->
     try:
         pool = _pool_for_footage_kind(footage_kind)
         if pool != "vibes":
-            # No opinion, deliberately. Collections auto-register from the
-            # folders that exist, and that index lives with the orchestrator —
-            # the bots mount no data volume and see only the committed
-            # registry. Judging staleness against that partial view would
-            # declare every auto-registered group "retired" and re-rank on
-            # every message. The caller falls back to the plane check.
+            # Collection inventory is authoritative on the orchestrator. Bots
+            # only have the committed registry, so they cannot judge whether
+            # an auto-registered collection shortlist is stale.
             return set()
         if str(bg_mode or "").strip().lower() == "photo":
             from mlcore.photo_bucket_catalog import load_photo_catalog
@@ -757,21 +740,17 @@ BTN_HOOK_YES = "Сделать хук"
 BTN_HOOK_NO = "Без хука"
 BTN_HOOK_DROP_NONE = "В отрывке нет дропа"
 BTN_HOOK_DROP_MANUAL = "Ввести вручную"
-BTN_HOOK_CAT_WARMUP = "Прогрев"
-# «Прогрев» — две ветки одной кнопки: свой звук (F1) или своя видео-вырезка
-# (F6). Категория хука в обоих случаях "sound". Mirror of tg_bot_botapi.
-BTN_WARMUP_SOUND = "Звук (mp3)"
-BTN_WARMUP_VIDEO = "Видео (mp4)"
+BTN_HOOK_CAT_SOUND = "Звук"
 BTN_HOOK_CAT_OBJECT = "Объект"
 BTN_HOOK_CAT_EFFECT = "Эффект"
 BTN_HOOK_CAT_MOTION = "Движение"
 BTN_HOOK_CAT_THOUGHT = "Мысль"
 HOOK_CATEGORY_BUTTONS = [
-    BTN_HOOK_CAT_WARMUP, BTN_HOOK_CAT_OBJECT, BTN_HOOK_CAT_EFFECT,
+    BTN_HOOK_CAT_SOUND, BTN_HOOK_CAT_OBJECT, BTN_HOOK_CAT_EFFECT,
     BTN_HOOK_CAT_MOTION, BTN_HOOK_CAT_THOUGHT,
 ]
 _HOOK_CATEGORY_BY_BUTTON = {
-    BTN_HOOK_CAT_WARMUP: "sound",
+    BTN_HOOK_CAT_SOUND: "sound",
     BTN_HOOK_CAT_OBJECT: "object",
     BTN_HOOK_CAT_EFFECT: "effect",
     BTN_HOOK_CAT_MOTION: "motion",
@@ -1144,42 +1123,6 @@ def _extract_audio_spec(message: Message) -> Optional[Tuple[str, str]]:
             return file_id, file_name
 
     return None
-
-
-_VIDEO_EXTS = {".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi"}
-
-
-def _extract_video_spec(message: Message) -> Optional[Tuple[str, str]]:
-    """(file_id, file_name) для F6-прогрева. Mirror of tg_bot_botapi."""
-    if getattr(message, "video", None) is not None:
-        return str(message.video.file_id), str(message.video.file_name or "warmup.mp4")
-
-    if getattr(message, "video_note", None) is not None:
-        return str(message.video_note.file_id), "warmup_note.mp4"
-
-    if getattr(message, "animation", None) is not None:
-        return str(message.animation.file_id), str(message.animation.file_name or "warmup.mp4")
-
-    if message.document:
-        file_id = str(message.document.file_id)
-        mime = str(message.document.mime_type or "").lower()
-        file_name = str(message.document.file_name or "warmup.bin")
-        ext = Path(file_name).suffix.lower()
-        if mime.startswith("video/") or ext in _VIDEO_EXTS:
-            return file_id, file_name
-
-    return None
-
-
-def _reset_f6(st) -> None:
-    """Сбросить выбор F6-прогрева. Модульная функция, а не метод: хендлеры
-    зовут её и на стаб-объектах в тестах."""
-    st.f6_video_url = ""
-    st.f6_video_width = 0
-    st.f6_video_height = 0
-    st.f6_video_duration = 0.0
-    st.f6_video_has_audio = True
-    st.f6_source_url = ""
 
 
 def _is_tg_file_too_big_error(err: Exception) -> bool:
@@ -3642,17 +3585,8 @@ class BlastBotApp:
             if st.stage == STAGE_WAIT_PHOTO_TRANSITION:
                 await self._handle_wait_photo_transition(message, st)
                 return
-            if st.stage == STAGE_WAIT_WARMUP_KIND:
-                await self._handle_wait_warmup_kind(message, st)
-                return
             if st.stage == STAGE_WAIT_F1_SOUND:
                 await self._handle_wait_f1_sound(message, st)
-                return
-            if st.stage == STAGE_WAIT_F6_VIDEO:
-                await self._handle_wait_f6_video(message, st)
-                return
-            if st.stage == STAGE_WAIT_F6_YT_RANGE:
-                await self._handle_wait_f6_yt_range(message, st)
                 return
             if st.stage == STAGE_WAIT_F1_TEXT:
                 await self._handle_wait_f1_text(message, st)
@@ -5101,8 +5035,6 @@ class BlastBotApp:
             st.f2_shape = ""
             st.f1_sound_url = ""
             st.f1_sound_text = ""
-            st.warmup_kind = ""
-            _reset_f6(st)
             st.battery_mode = False
             st.battery_cases = []
             st.battery_f4_drop = None
@@ -5138,8 +5070,6 @@ class BlastBotApp:
             st.f2_shape = ""
             st.f1_sound_url = ""
             st.f1_sound_text = ""
-            st.warmup_kind = ""
-            _reset_f6(st)
             st.effect_hook = ""
             st.effect_transition = ""
             st.effect_extra = ""
@@ -5270,7 +5200,7 @@ class BlastBotApp:
             "💭 Мысль — голос-ИИ перед дропом\n\n"
             "Выбери тип ↓",
             reply_markup=_kb(
-                [BTN_HOOK_CAT_WARMUP, BTN_HOOK_CAT_OBJECT],
+                [BTN_HOOK_CAT_SOUND, BTN_HOOK_CAT_OBJECT],
                 [BTN_HOOK_CAT_EFFECT, BTN_HOOK_CAT_MOTION],
                 [BTN_HOOK_CAT_THOUGHT],
                 [BTN_BACK],
@@ -5295,26 +5225,24 @@ class BlastBotApp:
             await self.store.set(st)
             await self._ask_f2_shape(message, st)
             return
-        if text == BTN_HOOK_CAT_WARMUP:
+        if text == BTN_HOOK_CAT_SOUND:
             if st.hook_drop_t is None:
-                await message.answer("Для «Прогрева» нужен момент дропа — вернись и выбери его.")
+                await message.answer("Для «Звука» нужен момент дропа — вернись и выбери его.")
                 await self._ask_hook_drop(message, st)
                 return
             _clip_start = float(st.user_clip_start_sec or 0.0)
             if (float(st.hook_drop_t) - _clip_start) <= 1.0:
                 await message.answer(
-                    "Дроп слишком близко к началу отрывка: для «Прогрева» нужно ≥1с "
-                    "до дропа (вставка играет в окне до хука). Выбери дроп позже."
+                    "Дроп слишком близко к началу отрывка: для «Звука» нужно ≥1с "
+                    "до дропа (звук играет в окне до хука). Выбери дроп позже."
                 )
                 await self._ask_hook_drop(message, st)
                 return
             st.hook_category = "sound"
-            st.warmup_kind = ""
             st.f1_sound_url = ""
             st.f1_sound_text = ""
-            _reset_f6(st)
             await self.store.set(st)
-            await self._ask_warmup_kind(message, st)
+            await self._ask_f1_sound(message, st)
             return
         if text == BTN_HOOK_CAT_EFFECT:
             if st.hook_drop_t is None:
@@ -5846,248 +5774,6 @@ class BlastBotApp:
         )
         await self._proceed_to_versions_or_confirm(message, st)
 
-    # ── «Прогрев»: звук (F1) или видео (F6). Mirror of tg_bot_botapi. ──
-    async def _ask_warmup_kind(self, message: Message, st: ChatState) -> None:
-        st.stage = STAGE_WAIT_WARMUP_KIND
-        await self.store.set(st)
-        await message.answer(
-            "«Прогрев»: что поставим перед дропом?\n\n"
-            f"• *{BTN_WARMUP_SOUND}* — твой звук (разгон, риз, голос) поверх футажа.\n"
-            f"• *{BTN_WARMUP_VIDEO}* — твоя вырезка (кусок интервью, мем) во весь "
-            "кадр со своим звуком; трек на это время уходит на фон.\n\n"
-            "В обоих случаях на дропе бьёт молния, а после — резкий переход.",
-            parse_mode="Markdown",
-            reply_markup=_kb([BTN_WARMUP_SOUND, BTN_WARMUP_VIDEO], [BTN_BACK]),
-        )
-
-    async def _handle_wait_warmup_kind(self, message: Message, st: ChatState) -> None:
-        text = str(message.text or "").strip()
-        if text == BTN_BACK:
-            await self._ask_hook_type(message, st)
-            return
-        if text == BTN_WARMUP_SOUND:
-            st.warmup_kind = "sound"
-            _reset_f6(st)
-            await self.store.set(st)
-            await self._ask_f1_sound(message, st)
-            return
-        if text == BTN_WARMUP_VIDEO:
-            st.warmup_kind = "video"
-            st.f1_sound_url = ""
-            st.f1_sound_text = ""
-            await self.store.set(st)
-            await self._ask_f6_video(message, st)
-            return
-        await message.answer("Выбери кнопкой: звук или видео.")
-
-    async def _ask_f6_video(self, message: Message, st: ChatState) -> None:
-        st.stage = STAGE_WAIT_F6_VIDEO
-        await self.store.set(st)
-        await message.answer(
-            "«Прогрев видео»: пришли вырезку, которая сыграет ДО дропа — "
-            "кусок интервью, мем, что угодно цепляющее.\n"
-            f"Длина {F6_MIN_VIDEO_SEC:.0f}–{F6_MAX_VIDEO_SEC:.0f}с (длиннее — обрежу "
-            "по началу), вес до 20 МБ.\n"
-            "Видео встанет во весь кадр со своим звуком, трек на это время уйдёт "
-            "на фон, а на дропе сработает молния."
-            + (
-                "\n\nМожно и ссылкой: пришли ссылку на YouTube, а следующим "
-                "сообщением — тайминги нужного куска."
-                if self.settings.external_video_source_enabled else ""
-            ),
-            reply_markup=_kb([BTN_BACK]),
-        )
-
-    async def _ask_f6_yt_range(self, message: Message, st: ChatState) -> None:
-        st.stage = STAGE_WAIT_F6_YT_RANGE
-        await self.store.set(st)
-        await message.answer(
-            "Ссылку принял. Теперь пришли тайминги нужного куска: "
-            "1:20-1:35 или 80-95 (в секундах), доли — через точку.\n"
-            f"Длина куска — {F6_MIN_VIDEO_SEC:.0f}–{F6_MAX_VIDEO_SEC:.0f}с: "
-            "именно он сыграет перед дропом.",
-            reply_markup=_kb([BTN_BACK]),
-        )
-
-    async def _handle_wait_f6_yt_range(self, message: Message, st: ChatState) -> None:
-        text = str(message.text or "").strip()
-        if text == BTN_BACK:
-            st.f6_source_url = ""
-            await self.store.set(st)
-            await self._ask_f6_video(message, st)
-            return
-
-        # Общий парсер режет строку по ПЕРВОМУ пробелу, поэтому «0:12 - 0:19»
-        # он не понимает — а люди пишут именно так. Схлопываем пробелы вокруг
-        # тире локально, не трогая парсер основного флоу выбора отрывка.
-        normalized = re.sub(r"\s*[-\u2013\u2014]\s*", "-", text)
-        parsed = self._parse_timing(normalized)
-        if parsed is None:
-            await message.answer(
-                "Не разобрал тайминги. Формат: 1:20-1:35 или 80-95 (в секундах). "
-                "Доли секунды — через точку."
-            )
-            return
-        start_sec, end_sec = parsed
-        span = float(end_sec) - float(start_sec)
-        if span < F6_MIN_VIDEO_SEC or span > F6_MAX_VIDEO_SEC:
-            await message.answer(
-                f"Кусок должен быть от {F6_MIN_VIDEO_SEC:.0f} до "
-                f"{F6_MAX_VIDEO_SEC:.0f} секунд, а вышло {span:.1f}с. Пришли другие тайминги."
-            )
-            return
-
-        await message.answer("Вырезаю кусок из ролика… это займёт до минуты.")
-        try:
-            got = await self.orchestrator.fetch_external_video(
-                url=str(st.f6_source_url), start_sec=start_sec, end_sec=end_sec,
-            )
-        except OrchestratorHTTPError as e:
-            log.warning(
-                "f6_youtube_fetch_failed chat=%s status=%s detail=%s",
-                st.chat_id, e.status_code, e.detail,
-            )
-            if e.status_code == 422:
-                await message.answer(f"Не получилось: {e.detail}\nПопробуй другие тайминги.")
-                return
-            await message.answer(
-                "Не удалось достать видео по ссылке. Пришли файл сообщением — "
-                "так надёжнее."
-            )
-            await self._ask_f6_video(message, st)
-            return
-        except Exception as e:
-            log.exception("f6_youtube_fetch_crashed chat=%s err=%s", st.chat_id, e)
-            await message.answer(
-                "Не удалось достать видео по ссылке. Пришли файл сообщением."
-            )
-            await self._ask_f6_video(message, st)
-            return
-
-        st.f6_video_url = str(got.get("video_url") or "")
-        st.f6_video_width = int(got.get("width") or 0)
-        st.f6_video_height = int(got.get("height") or 0)
-        st.f6_video_duration = float(got.get("duration_sec") or 0.0)
-        st.f6_video_has_audio = bool(got.get("has_audio", True))
-        st.hook_type = "standard"
-        await self.store.set(st)
-        if not (st.f6_video_url and st.f6_video_width and st.f6_video_height):
-            await message.answer(
-                "Источник вернул неполные данные о видео. Пришли файл сообщением."
-            )
-            await self._ask_f6_video(message, st)
-            return
-
-        note = "" if st.f6_video_has_audio else " (в куске нет звука — трек не приглушаю)"
-        await message.answer(
-            f"Готово: {st.f6_video_duration:.1f}с, "
-            f"{st.f6_video_width}×{st.f6_video_height}{note}.\n"
-            "Кусок сыграет прямо перед дропом, на дропе — молния."
-        )
-        await self._proceed_to_versions_or_confirm(message, st)
-
-    async def _handle_wait_f6_video(self, message: Message, st: ChatState) -> None:
-        text = str(message.text or "").strip()
-        if text == BTN_BACK:
-            await self._ask_warmup_kind(message, st)
-            return
-
-        spec = _extract_video_spec(message)
-        if spec is None:
-            # Ссылка вместо файла: ветка YouTube. Гейт — общий флаг
-            # EXTERNAL_VIDEO_SOURCE_ENABLED (его же читает оркестратор), чтобы
-            # не звать заведомо выключенный эндпоинт и не обещать в тексте то,
-            # чего сейчас нет. Mirror of tg_bot_botapi.
-            if text and self.settings.external_video_source_enabled:
-                from mlcore.media.external_video import is_supported_url
-
-                if is_supported_url(text):
-                    st.f6_source_url = text
-                    await self.store.set(st)
-                    await self._ask_f6_yt_range(message, st)
-                    return
-            await message.answer(
-                "Нужен видео-файл для «Прогрева». Пришли mp4/mov сообщением "
-                "или нажми «Назад»."
-            )
-            return
-        if message.chat is None:
-            return
-        if st.hook_drop_t is None:
-            await message.answer("Для «Прогрева» нужен момент дропа — вернись и выбери его.")
-            await self._ask_hook_drop(message, st)
-            return
-
-        chat_id = int(message.chat.id)
-        file_id, original_name = spec
-        incoming_dir = self.settings.tmp_dir / str(chat_id) / "hook_video"
-        incoming_dir.mkdir(parents=True, exist_ok=True)
-        src_name = f"{_now_tag()}_{uuid.uuid4().hex[:8]}_{_safe_name(original_name)}"
-        src_path = incoming_dir / src_name
-
-        try:
-            await message.answer("Загружаю видео…")
-            await self._download_telegram_audio_with_retry(
-                bot=message.bot,
-                file_id=file_id,
-                dest=src_path,
-                chat_id=chat_id,
-                original_name=original_name,
-            )
-            # Перекодируем ВСЕГДА: HEVC/VP9 из Telegram AE на ноде не откроет.
-            prep: VideoPrepareResult = await asyncio.to_thread(
-                normalize_video_for_ae,
-                src=src_path,
-                work_dir=incoming_dir / "prepared",
-                ffmpeg_bin=self.settings.ffmpeg_bin,
-                ffprobe_bin=self.settings.ffprobe_bin,
-            )
-            key = self._build_raw_audio_key(
-                chat_id=chat_id, file_name=f"f6hook_{prep.output_path.name}"
-            )
-            video_url = await asyncio.to_thread(
-                self.s3.upload_file,
-                path=prep.output_path,
-                bucket=self.settings.s3_bucket_raw_audio,
-                key=key,
-                content_type="video/mp4",
-            )
-        except TelegramBadRequest as e:
-            log.exception("f6_video_tg_bad_request chat=%s file_id=%s err=%s", chat_id, file_id, e)
-            if _is_tg_file_too_big_error(e):
-                await message.answer(
-                    "Telegram не даёт скачать этот файл — он тяжелее 20 МБ. "
-                    "Пришли кусок покороче или пожми его перед отправкой."
-                )
-            else:
-                await message.answer(f"Не удалось скачать видео из Telegram: {e}")
-            return
-        except Exception as e:
-            log.exception("f6_video_prepare_failed chat=%s file_id=%s err=%s", chat_id, file_id, e)
-            await message.answer(f"Не удалось подготовить видео: {e}. Попробуй ещё раз или «Назад».")
-            return
-
-        st.f6_video_url = str(video_url)
-        st.f6_video_width = int(prep.width)
-        st.f6_video_height = int(prep.height)
-        st.f6_video_duration = float(prep.duration_sec)
-        st.f6_video_has_audio = bool(prep.has_audio)
-        st.hook_type = "standard"
-        await self.store.set(st)
-
-        notes = []
-        if prep.trimmed:
-            notes.append(f"обрезал до {F6_MAX_VIDEO_SEC:.0f}с")
-        if not prep.has_audio:
-            notes.append("в файле нет звука — трек оставлю на полной громкости")
-        suffix = (" (" + "; ".join(notes) + ")") if notes else ""
-        await message.answer(
-            f"Ок, «Прогрев видео»: {prep.duration_sec:.1f}с, "
-            f"{prep.width}×{prep.height}{suffix}.\n"
-            "Вырезка сыграет прямо перед дропом, на дропе — молния, после — переход."
-        )
-        await self._proceed_to_versions_or_confirm(message, st)
-
     async def _ask_f1_sound(self, message: Message, st: ChatState) -> None:
         st.stage = STAGE_WAIT_F1_SOUND
         await self.store.set(st)
@@ -6277,12 +5963,6 @@ class BlastBotApp:
         st.visuals_done = False
         st.f1_sound_url = ""
         st.f1_sound_text = ""
-        st.warmup_kind = ""
-        st.f6_video_url = ""
-        st.f6_video_width = 0
-        st.f6_video_height = 0
-        st.f6_video_duration = 0.0
-        st.f6_video_has_audio = True
         st.f2_shape = ""
         st.colors_done = False
         st.subtitle_color_hex = ""
@@ -8684,25 +8364,6 @@ class BlastBotApp:
             if user_clip_end_sec is None or user_clip_end_sec <= new_start:
                 user_clip_end_sec = float(end)
 
-        # F6 «Прогрев видео»: окно клипа подгоняется под ДЛИНУ вырезки, чтобы она
-        # легла встык к дропу — clip_start := drop − (dur + пады), clip_end стоит.
-        # Пады те же, что у инъекции слоя, иначе окно и слой разъедутся.
-        # Ранний дроп → clip_start клампится в 0, AE подрежет хвост вырезки.
-        # (Parity mirror.)
-        if (
-            st.hook_enabled
-            and st.hook_category == "sound"
-            and st.warmup_kind == "video"
-            and st.f6_video_url
-        ):
-            if st.hook_drop_t is None:
-                raise RuntimeError("F6 video warm-up requires a drop (hook_drop_t)")
-            lead_f6 = float(st.f6_video_duration or 0.0) + F6_LEAD_PAD_SEC + F6_TAIL_PAD_SEC
-            new_start = max(0.0, float(st.hook_drop_t) - lead_f6)
-            user_clip_start_sec = new_start
-            if user_clip_end_sec is None or user_clip_end_sec <= new_start:
-                user_clip_end_sec = float(end)
-
         maintenance_bypass_token = ""
         allow_bypass = self._allow_maintenance_bypass_for_state(st)
         if (
@@ -8789,12 +8450,7 @@ class BlastBotApp:
             ),
             f1_sound_url=(
                 str(st.f1_sound_url)
-                if (
-                    st.hook_enabled
-                    and st.hook_category == "sound"
-                    and st.warmup_kind != "video"
-                    and st.f1_sound_url
-                )
+                if (st.hook_enabled and st.hook_category == "sound" and st.f1_sound_url)
                 else None
             ),
             f1_sound_text=(
@@ -8802,26 +8458,11 @@ class BlastBotApp:
                 if (
                     st.hook_enabled
                     and st.hook_category == "sound"
-                    and st.warmup_kind != "video"
                     and st.f1_sound_url
                     and st.f1_sound_text
                 )
                 else None
             ),
-            f6_video_url=(
-                str(st.f6_video_url)
-                if (
-                    st.hook_enabled
-                    and st.hook_category == "sound"
-                    and st.warmup_kind == "video"
-                    and st.f6_video_url
-                )
-                else None
-            ),
-            f6_video_width=(int(st.f6_video_width) if st.f6_video_url else None),
-            f6_video_height=(int(st.f6_video_height) if st.f6_video_url else None),
-            f6_video_duration=(float(st.f6_video_duration) if st.f6_video_url else None),
-            f6_video_has_audio=bool(st.f6_video_has_audio),
             # The 4:3 template still implements its own grade/intro, but nothing
             # selects them any more: photo picks from the footage effect library
             # above. Sending nothing leaves both off so the two cannot stack.

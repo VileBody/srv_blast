@@ -85,6 +85,19 @@ jobs:
           set -euo pipefail
           bash infra/runners/build_push_images.sh
 
+      - name: Smoke Telegram bot image imports
+        env:
+          TG_BOT_IMAGE: ${{ steps.images.outputs.tg_bot_image }}
+          TG_BOT_PUBLIC_IMAGE: ${{ steps.images.outputs.tg_bot_public_image }}
+        run: |
+          set -euo pipefail
+          docker pull "$TG_BOT_IMAGE"
+          docker pull "$TG_BOT_PUBLIC_IMAGE"
+          docker run --rm --entrypoint python "$TG_BOT_IMAGE" \
+            -c 'import services.tg_bot_botapi.app'
+          docker run --rm --entrypoint python "$TG_BOT_PUBLIC_IMAGE" \
+            -c 'import services.tg_bot_public.app'
+
   deploy-prod-path:
     needs:
       - build-images
