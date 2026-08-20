@@ -52,10 +52,16 @@ def test_missing_registry_is_an_empty_plane_not_an_error(tmp_path: Path) -> None
     assert load_collection_catalog(tmp_path / "nope.json") == []
 
 
-def test_formats_default_to_wide_and_square(tmp_path: Path) -> None:
+def test_formats_default_to_what_the_kind_is_delivered_at(tmp_path: Path) -> None:
+    # Films are delivered vertical (frames handle their aspect mismatch);
+    # cinematic 16:9 material is delivered horizontally, which is the point of
+    # that kind. A single shared default got one of the two wrong.
     row = {k: v for k, v in _ROW.items() if k != "formats"}
     (b,) = load_collection_catalog(_registry(tmp_path, [row]))
-    assert b.formats == ("wide", "square")
+    assert b.formats == ("vertical",)
+    wide_row = {**row, "kind": "cine16x9", "folder": "Boston", "label": "Бостон"}
+    (w,) = load_collection_catalog(_registry(tmp_path, [wide_row]))
+    assert w.formats == ("wide",)
 
 
 @pytest.mark.parametrize(

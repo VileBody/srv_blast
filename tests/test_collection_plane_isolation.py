@@ -78,16 +78,17 @@ def _registry(tmp_path: Path, rows: list, monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setenv("FOOTAGE_COLLECTIONS_JSON", str(p))
 
 
-def test_uploaded_but_unregistered_folder_is_reported(
+def test_a_folder_without_an_entry_is_live_but_flagged_as_auto_named(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Uploading files and making a group selectable are separate acts; without
-    # this report the operator sees a green ingest and an empty bot menu.
+    # Uploading is now enough to make a group selectable; the registry only adds
+    # the Russian label and the track themes. The report says which folders are
+    # still running on a derived name rather than calling them broken.
     idx = _index(tmp_path, [{"genre": "films", "tag": "dune", "file_name": "a.mp4"}])
     _registry(tmp_path, [], monkeypatch)
     out = tasks._report_collection_registry(idx)
-    assert out["unregistered_folders"] == ["films__dune"]
-    assert out["collections_live"] == 0
+    assert out["auto_named_folders"] == ["films__dune"]
+    assert out["collections_live"] == 1
 
 
 def test_registered_but_empty_collection_is_reported(
@@ -114,7 +115,7 @@ def test_a_matched_folder_reports_clean(
     )
     out = tasks._report_collection_registry(idx)
     assert out["collections_live"] == 1
-    assert "unregistered_folders" not in out
+    assert "auto_named_folders" not in out
     assert "registered_but_empty" not in out
 
 
@@ -142,4 +143,4 @@ def test_a_registered_collection_counts_whatever_its_folder_casing(
     )
     out = tasks._report_collection_registry(idx)
     assert out["collections_live"] == 1
-    assert "unregistered_folders" not in out
+    assert "auto_named_folders" not in out

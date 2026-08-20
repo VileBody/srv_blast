@@ -120,6 +120,11 @@ _LLM_ENV_KEYS = (
     "F2_SEED",
     "F1_SOUND_URL",
     "F1_SOUND_TEXT",
+    "F6_VIDEO_URL",
+    "F6_VIDEO_WIDTH",
+    "F6_VIDEO_HEIGHT",
+    "F6_VIDEO_DURATION",
+    "F6_VIDEO_HAS_AUDIO",
     # рамка (не хук, но тот же env-мост в in-process оркестратор)
     "FRAME_ID",
     "BG_MODE",
@@ -2112,6 +2117,30 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
         _f1_text_raw = req.get("f1_sound_text")
         if _f1_text_raw is not None and str(_f1_text_raw).strip():
             env["F1_SOUND_TEXT"] = str(_f1_text_raw).strip()
+    # F6 «Видео» pass-through: S3/HTTP URL нормализованного mp4-прогрева +
+    # метаданные ffprobe. Set => оркестратор кладёт full_edit_config["f6"].
+    # Требует USER_DROP_T; без размеров cover-скейл не запечь.
+    _f6_video_raw = req.get("f6_video_url")
+    if _f6_video_raw is not None and str(_f6_video_raw).strip():
+        _f6_video = str(_f6_video_raw).strip()
+        if not _is_remote_url(_f6_video):
+            raise RuntimeError(
+                f"f6_video_url must be remote (http/https/s3). got={_f6_video!r}"
+            )
+        _f6_w = req.get("f6_video_width")
+        _f6_h = req.get("f6_video_height")
+        if not _f6_w or not _f6_h:
+            raise RuntimeError(
+                "f6_video_url requires f6_video_width and f6_video_height (ffprobe)"
+            )
+        env["F6_VIDEO_URL"] = _f6_video
+        env["F6_VIDEO_WIDTH"] = str(int(_f6_w))
+        env["F6_VIDEO_HEIGHT"] = str(int(_f6_h))
+        _f6_dur = req.get("f6_video_duration")
+        if _f6_dur:
+            env["F6_VIDEO_DURATION"] = str(float(_f6_dur))
+        if req.get("f6_video_has_audio") is False:
+            env["F6_VIDEO_HAS_AUDIO"] = "0"
     if exclude_file_names:
         env["FOOTAGE_EXCLUDE_FILE_NAMES_JSON"] = json.dumps(exclude_file_names, ensure_ascii=False)
     if rotation_theme:
@@ -2963,12 +2992,16 @@ def _report_collection_registry(static_index_path: Any) -> Dict[str, Any]:
     except Exception as exc:
         return {"registry_check_error": str(exc), "folders_found": len(counts)}
 
-    unregistered = sorted(set(counts) - registered)
+    unnamed = sorted(set(counts) - registered)
     empty = sorted(registered - set(counts))
     out: Dict[str, Any] = {
         "folders_found": len(counts),
         "collections_registered": len(registered),
-        "collections_live": len(set(counts) & registered),
+        # Every uploaded folder is selectable on its own now; the registry only
+        # supplies the Russian label and the track themes. So "live" is the
+        # folder count, and the number worth reading is how many still run
+        # under a name derived from the folder.
+        "collections_live": len(counts),
     }
 
     # Whether a collection can actually serve a job is decided by facts known
@@ -3000,12 +3033,13 @@ def _report_collection_registry(static_index_path: Any) -> Dict[str, Any]:
     except Exception as exc:
         out["readiness_error"] = str(exc)
         log.warning("activate(collection): readiness evaluation failed: %r", exc)
-    if unregistered:
-        out["unregistered_folders"] = unregistered
-        log.warning(
-            "activate(collection): %d uploaded folder(s) are NOT in the registry and "
-            "will not appear anywhere: %s",
-            len(unregistered), unregistered,
+    if unnamed:
+        out["auto_named_folders"] = unnamed
+        log.info(
+            "activate(collection): %d folder(s) are selectable under a name derived "
+            "from the folder — add a registry entry to give them a Russian label "
+            "and the track themes they suit: %s",
+            len(unnamed), unnamed,
         )
     if empty:
         out["registered_but_empty"] = empty

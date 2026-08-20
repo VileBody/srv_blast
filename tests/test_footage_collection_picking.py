@@ -113,6 +113,15 @@ def test_empty_collection_folder_fails_loudly(registry: Path) -> None:
         )
 
 
-def test_unknown_collection_fails_loudly(registry: Path) -> None:
-    with pytest.raises(RuntimeError, match="collection not found"):
-        resolve_style_raw("collection", "films__does_not_exist")
+def test_a_slug_from_an_auto_registered_folder_still_resolves(registry: Path) -> None:
+    # Folders auto-register from the index, which lives with the orchestrator —
+    # a process without it (the bots) must not choke on a slug it cannot look
+    # up. The slug carries the kind and the folder, which is all identity needs.
+    raw = resolve_style_raw("collection", "films__does_not_exist")
+    assert raw.theme == "collection"
+    assert raw.tags_group == "films__does_not_exist"
+
+
+def test_a_slug_that_names_no_kind_fails_loudly(registry: Path) -> None:
+    with pytest.raises(RuntimeError, match="not resolvable"):
+        resolve_style_raw("collection", "nonsense")
