@@ -193,8 +193,8 @@ def _pick_pool_many(pool_key: str, *, count: int, seed: str) -> List[Dict[str, s
 
 def _pick_file(rel_key: str) -> Optional[Dict[str, str]]:
     """Resolve a specific S3 key (no listing). For singletons like
-    sounds/light_sound/myinstants.mp3 or logo/group_1245.png. Returns None if
-    the env is not configured or the key is malformed."""
+    sounds/light_sound/myinstants.mp3 or logo/group_1245.png. A missing
+    optional singleton is logged and skipped; other S3 failures remain fatal."""
     bucket, root_prefix = _asset_root()
     if not bucket:
         return None
@@ -206,6 +206,32 @@ def _pick_file(rel_key: str) -> Optional[Dict[str, str]]:
     ext = Path(file_name).suffix.lower()
     if not file_name or (ext not in _AUDIO_EXTS and ext not in _IMAGE_EXTS and ext not in _VIDEO_EXTS):
         return None
+
+    try:
+        _make_s3_client().head_object(Bucket=bucket, Key=full_key)
+    except Exception as exc:
+        response = getattr(exc, "response", None)
+        error_code = ""
+        http_status = 0
+        if isinstance(response, dict):
+            error = response.get("Error")
+            if isinstance(error, dict):
+                error_code = str(error.get("Code") or "").strip().lower()
+            metadata = response.get("ResponseMetadata")
+            if isinstance(metadata, dict):
+                try:
+                    http_status = int(metadata.get("HTTPStatusCode") or 0)
+                except (TypeError, ValueError):
+                    http_status = 0
+        if error_code in {"404", "notfound", "nosuchkey"} or http_status == 404:
+            LOGGER.warning(
+                "f3.asset_picker singleton missing bucket=%s key=%s",
+                bucket,
+                full_key,
+            )
+            return None
+        raise
+
     return {
         "s3_url": _s3_url(bucket, full_key),
         "file_name": file_name,
