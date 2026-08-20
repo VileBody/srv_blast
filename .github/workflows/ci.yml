@@ -82,6 +82,11 @@ jobs:
             scripts/migrate_credits_sqlite_to_postgres.py \
             scripts/logs_pipeline.py
 
+      - name: Import Telegram bot entrypoints
+        run: |
+          set -euo pipefail
+          python -c 'import services.tg_bot_botapi.app; import services.tg_bot_public.app'
+
       - name: Run Telegram test environment contract tests
         run: |
           set -euo pipefail
