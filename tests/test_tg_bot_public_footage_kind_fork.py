@@ -116,13 +116,17 @@ def test_the_background_ranker_will_not_overwrite_another_plane(bot: str) -> Non
 
 
 @pytest.mark.parametrize("bot", BOTS)
-def test_films_shortlist_is_validated_against_the_collection_catalog(bot: str) -> None:
+def test_the_bot_defers_catalog_authority_for_collections(bot: str) -> None:
+    """Collections auto-register from the folders that exist, and that index
+    lives with the orchestrator — the bots mount no data volume. Judging a
+    shortlist against the bot's partial registry copy would call every
+    auto-registered group "retired" and re-rank on every message, so the bot
+    returns no opinion and the plane check decides."""
     app = _mod(bot)
-    live = app._live_bucket_ids("footage", app.FOOTAGE_KIND_FILMS)
-    assert live, "the shipped registry should expose film collections"
-    assert all(b.startswith("collection:") for b in live)
-    # And it must not be confused with the vibe catalog.
-    assert not (live & app._live_bucket_ids("footage", app.FOOTAGE_KIND_VERTICAL))
+    for kind in (app.FOOTAGE_KIND_FILMS, app.FOOTAGE_KIND_CINE):
+        assert app._live_bucket_ids("footage", kind) == set()
+    # The vibe catalog ships in full and stays authoritative.
+    assert app._live_bucket_ids("footage", app.FOOTAGE_KIND_VERTICAL)
 
 
 @pytest.mark.parametrize("bot", BOTS)
