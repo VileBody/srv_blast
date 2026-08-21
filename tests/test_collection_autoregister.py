@@ -67,6 +67,22 @@ def test_the_registry_overrides_what_it_names(index, registry) -> None:
     assert by_slug["cine16x9__JDM"].themes == ()
 
 
+def test_shared_registry_folders_can_replace_the_node_local_index(index, registry) -> None:
+    index([_clip("cine16x9", "Only_On_This_Node")])
+    registry([{"kind": "cine16x9", "folder": "Boston", "label": "Бостон"}])
+
+    by_slug = {
+        b.slug: b
+        for b in cat.load_collection_catalog(
+            discovered_folders=[("cine16x9", "Boston"), ("cine16x9", "JDM")]
+        )
+    }
+
+    assert set(by_slug) == {"cine16x9__Boston", "cine16x9__JDM"}
+    assert by_slug["cine16x9__Boston"].label == "Бостон"
+    assert by_slug["cine16x9__JDM"].label == "JDM"
+
+
 def test_the_curated_ones_come_first(index, registry) -> None:
     # Registry order is the editorial order; discovered folders follow it.
     index([_clip("cine16x9", "Zurich"), _clip("cine16x9", "Boston")])
