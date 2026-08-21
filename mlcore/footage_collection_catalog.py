@@ -29,7 +29,7 @@ import json
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Tuple
 
 CATALOG_VERSION = "collection-v1-2026-08-05"
 
@@ -233,7 +233,11 @@ def registry_path() -> Path:
     return Path(raw) if raw else _REGISTRY_PATH
 
 
-def load_collection_catalog(path: Path | None = None) -> List[CollectionBucket]:
+def load_collection_catalog(
+    path: Path | None = None,
+    *,
+    discovered_folders: Iterable[Tuple[Any, Any]] | None = None,
+) -> List[CollectionBucket]:
     """Every selectable collection: the folders that exist, named by the registry.
 
     A folder found in the index is selectable on its own — uploading it is what
@@ -248,7 +252,14 @@ def load_collection_catalog(path: Path | None = None) -> List[CollectionBucket]:
     A MISSING registry is normal. A registry that exists but is malformed raises:
     that is operator error, not an empty state.
     """
-    discovered = {b.slug.lower(): b for b in discover_collections()}
+    if discovered_folders is None:
+        discovered_rows = discover_collections()
+    else:
+        discovered_rows = []
+        for kind, folder in discovered_folders:
+            if _n(kind) in COLLECTION_KINDS and str(folder or "").strip():
+                discovered_rows.append(synthesize_collection(kind, folder))
+    discovered = {b.slug.lower(): b for b in discovered_rows}
 
     p = path if path is not None else registry_path()
     rows: List[Any] = []

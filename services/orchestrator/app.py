@@ -815,8 +815,12 @@ def create_app() -> FastAPI:
                 # Collection plane: one upload folder = one selectable group,
                 # scoped to the requested kind so a "Фильмы" shortlist can never
                 # surface a "Личности" group (or a semantic vibe).
-                from mlcore.footage_collection_catalog import collections_for_kind
-                catalog = collections_for_kind(req.pool)
+                from .collection_catalog_source import load_collection_catalog_from_postgres
+
+                catalog = load_collection_catalog_from_postgres(
+                    req.pool,
+                    db_url=str(getattr(SETTINGS, "credits_db_url", "") or "").strip(),
+                )
             elif req.media_type == "photo":
                 from mlcore.photo_bucket_catalog import load_photo_catalog
                 catalog = load_photo_catalog()
