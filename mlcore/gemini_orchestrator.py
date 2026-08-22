@@ -72,6 +72,7 @@ from mlcore.models.subtitles_flow import SubtitleFlowPlan, SubtitleFlowSegment
 from mlcore.models.subtitles_tokens import ClipWindow as _JsxClipWindow
 from mlcore.models.subtitles_tokens import BlocksTokensPayload
 from mlcore.subtitles_flow import SubtitlesPlannerFactory
+from mlcore.subtitles_deterministic import build_subtitles_deterministic
 from mlcore.models.switch_timing import (
     Stage2TimingAnalysisPayload,
     Stage2TimingCutsPayload,
@@ -121,6 +122,7 @@ _STRUCTURAL_TAG_TOKEN_RE = re.compile(r"^\[[a-zа-яё0-9_\-:+./]+\]$", flags=re
 _SCENES_3RD_SINGLE_STEP_MODEL = "gemini-2.5-pro"
 _STAGE1_ALIGNMENT_BACKEND_GEMINI = "gemini"
 _STAGE1_ALIGNMENT_BACKEND_LOCAL_CTC = "local_ctc"
+_STAGE2_SUBTITLES_ENGINE_VERSION = "rules_v1"
 
 # Stage2 timing mode. This is a code-level switch we control via git, NOT a
 # secret and NOT read from env — flipping it is a deploy, not an .env edit.
@@ -3550,19 +3552,13 @@ def build_all_via_gemini_one_call(
         if subtitles_mode in SUBTITLES_MODE_JSX_5TH
         else SubtitlesPlannerFactory.create(subtitles_mode)
     )
-    subtitles_model_effective = (
-        _SCENES_3RD_SINGLE_STEP_MODEL
-        if subtitles_mode == SUBTITLES_MODE_SCENES_3RD_SINGLE_STEP
-        else model_subtitles
-    )
     subtitles_schema_name = (
         "jsx_passthrough"
         if subtitles_planner is None
         else subtitles_planner.schema_model.__name__
     )
     logger.info(
-        "stage2_start subtitles_model=%s footage_style_model=%s timing_model=%s timing_mode=%s style_groups=%d subtitles_mode=%s subtitles_schema=%s",
-        subtitles_model_effective,
+        "stage2_start subtitles=no_llm footage_style_model=%s timing_model=%s timing_mode=%s style_groups=%d subtitles_mode=%s subtitles_schema=%s",
         model_footage,
         model_stage1_base,
         timing_mode,
@@ -3665,55 +3661,9 @@ def build_all_via_gemini_one_call(
                 segments=[_seg],
             )
 
-        if subtitles_planner is None:
-            raise RuntimeError(f"subtitles planner missing for non-JSX mode={subtitles_mode!r}")
-        subtitles_audio_paths = list(audio_files) if subtitles_planner.attach_audio_for_stage2 else []
-        subtitles_client = (
-            client_subtitles_single_step
-            if subtitles_mode == SUBTITLES_MODE_SCENES_3RD_SINGLE_STEP
-            else client_subtitles
-        )
-        subtitles_openrouter_client = (
-            openrouter_subtitles_single_step
-            if subtitles_mode == SUBTITLES_MODE_SCENES_3RD_SINGLE_STEP
-            else openrouter_subtitles
-        )
-        if subtitles_planner.use_tokens_structured:
-            raw_payload = call_subtitles_plan_once(
-                client=subtitles_client,
-                openrouter_client=subtitles_openrouter_client,
-                provider_mode=provider_mode,
-                hedge_delay_s=hedge_delay_s,
-                logger=logger,
-                system_instruction=sub_system,
-                user_prompt=str(sub_prompt),
-                audio_paths=subtitles_audio_paths,
-                raw_response_path=sub_raw,
-                cache_path=cache_path,
-                prompt_dump_path=sub_user,
-                system_dump_path=sub_sys,
-            )
-        else:
-            raw_payload = call_subtitles_plan_model_once(
-                client=subtitles_client,
-                schema_model=subtitles_planner.schema_model,
-                openrouter_client=subtitles_openrouter_client,
-                provider_mode=provider_mode,
-                hedge_delay_s=hedge_delay_s,
-                logger=logger,
-                system_instruction=sub_system,
-                user_prompt=str(sub_prompt),
-                audio_paths=subtitles_audio_paths,
-                raw_response_path=sub_raw,
-                cache_path=cache_path,
-                prompt_dump_path=sub_user,
-                system_dump_path=sub_sys,
-                stage_name=f"stage2_subtitles_{subtitles_mode}",
-            )
-
-        payload = subtitles_planner.normalize_payload(
-            payload=raw_payload,
+        payload = build_subtitles_deterministic(
             stage1=stage1,
+            subtitles_mode=subtitles_mode,
             logger=logger,
         )
 
@@ -3736,11 +3686,8 @@ def build_all_via_gemini_one_call(
         return payload
 
     def _run_subtitles() -> BlocksTokensPayload | SubtitleFlowPlan:
-        return _run_stage_with_model_validation_retries(
-            stage_name="stage2_subtitles",
-            logger=logger,
-            fn=_run_subtitles_once,
-        )
+        # A deterministic failure repeats identically; do not model-retry it.
+        return _run_subtitles_once()
 
     style_raw_payload: Optional[FootageStyleRawPayload] = None
     style_adapter_diag: Optional[FootageStyleRawAdapterDiagnostics] = None
@@ -3980,17 +3927,27 @@ def build_all_via_gemini_one_call(
     style_from_resume = False
     subtitles_cached = resume_state.get("stage2_subtitles")
     subtitles_cached_mode = str(resume_state.get("stage2_subtitles_mode") or "").strip()
+    subtitles_cached_engine = str(resume_state.get("stage2_subtitles_engine") or "").strip()
     if isinstance(subtitles_cached, dict):
         try:
+            if subtitles_cached_engine != _STAGE2_SUBTITLES_ENGINE_VERSION:
+                raise RuntimeError(
+                    "subtitle resume engine mismatch "
+                    f"({subtitles_cached_engine or '<legacy>'!r} != {_STAGE2_SUBTITLES_ENGINE_VERSION!r})"
+                )
             if subtitles_cached_mode and subtitles_cached_mode != subtitles_mode:
                 raise RuntimeError(
                     f"subtitles mode mismatch in resume state ({subtitles_cached_mode!r} != {subtitles_mode!r})"
                 )
-            subtitles_payload = subtitles_planner.validate_resume_payload(subtitles_cached)
+            subtitles_payload = (
+                SubtitleFlowPlan.model_validate(subtitles_cached)
+                if subtitles_mode in SUBTITLES_MODE_JSX_5TH
+                else subtitles_planner.validate_resume_payload(subtitles_cached)
+            )
             subtitles_from_resume = True
-            logger.info("llm_resume_hit stage=stage2_subtitles")
+            logger.info("resume_hit stage=stage2_subtitles engine=%s", subtitles_cached_engine)
         except Exception as e:
-            logger.warning("llm_resume_bad stage=stage2_subtitles err=%s", str(e))
+            logger.warning("resume_bad stage=stage2_subtitles err=%s", str(e))
             resume_state.pop("stage2_subtitles", None)
             resume_state.pop("stage2_subtitles_mode", None)
 
@@ -4064,6 +4021,7 @@ def build_all_via_gemini_one_call(
     if subtitles_payload is not None and not subtitles_from_resume:
         resume_state["stage2_subtitles"] = subtitles_payload.model_dump(mode="json")
         resume_state["stage2_subtitles_mode"] = subtitles_mode
+        resume_state["stage2_subtitles_engine"] = _STAGE2_SUBTITLES_ENGINE_VERSION
         state_dirty = True
     if style_payload is not None and not style_from_resume:
         resume_state["stage2_style"] = style_payload.model_dump(mode="json")
