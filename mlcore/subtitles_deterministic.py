@@ -279,20 +279,35 @@ def _build_impulse_raw(stage1: Stage1PlanPayload) -> Impulse2ndRawPayload:
         else:
             peeled.append(group)
 
-    segments: list[dict] = []
-    previous_short = False
+    short_candidates: list[tuple[tuple[int, float, float], int]] = []
     for i, group in enumerate(peeled):
         first, last = group[0], group[-1]
         is_repeat = len(group) == 1 and id(first) in repeated_ids
         next_start = peeled[i + 1][0].start if i + 1 < len(peeled) else None
         hold = (next_start - first.start) if next_start is not None else (last.end + 0.5 - first.start)
-        candidate = (
-            len(group) <= 2
+        if is_repeat or (
+            len(group) == 1
             and first.duration >= threshold
             and hold >= 0.4
             and _is_content_word(first)
-        )
-        is_short = is_repeat or (candidate and not previous_short)
+        ):
+            short_candidates.append(((1 if is_repeat else 0, first.duration, hold), i))
+
+    short_quota = max(1, (len(peeled) + 5) // 10)
+    selected_short: set[int] = set()
+    for _, index in sorted(short_candidates, reverse=True):
+        if len(selected_short) >= short_quota:
+            break
+        if any(abs(index - other) == 1 for other in selected_short):
+            continue
+        selected_short.add(index)
+
+    segments: list[dict] = []
+    for i, group in enumerate(peeled):
+        first, last = group[0], group[-1]
+        is_repeat = len(group) == 1 and id(first) in repeated_ids
+        next_start = peeled[i + 1][0].start if i + 1 < len(peeled) else None
+        is_short = i in selected_short
         kind = "short" if is_short else "long"
         reason = "refrain" if is_repeat else ("timing_emphasis" if is_short else "timing_or_quota")
         out_abs = next_start if next_start is not None else last.end + 0.5
@@ -309,7 +324,6 @@ def _build_impulse_raw(stage1: Stage1PlanPayload) -> Impulse2ndRawPayload:
                 ],
             }
         )
-        previous_short = is_short and not is_repeat
 
     return Impulse2ndRawPayload.model_validate(
         {
@@ -356,6 +370,7 @@ def _build_scenes_raw(stage1: Stage1PlanPayload, *, single_step: bool):
     scenes: list[dict] = []
     type4_non_hook_count = 0
 
+    type6_count = 0
     for i, group in enumerate(groups, start=1):
         texts = [word.text for word in group]
         duration = group[-1].end - group[0].start
@@ -380,9 +395,9 @@ def _build_scenes_raw(stage1: Stage1PlanPayload, *, single_step: bool):
             focus_style = "red"
             reason = "repeating_hook_3plus"
             lines = [texts]
-        elif len(group) <= 2 and duration >= 0.44 and type4_non_hook_count == 0:
+        elif len(group) <= 2 and duration >= 0.44 and type4_non_hook_count < 2:
             scene_type = "TYPE_4"
-            focus_word = " ".join(texts)
+            focus_word = peak.text
             focus_style = "red"
             reason = "isolated_timed_phrase"
             lines = [texts]
@@ -403,9 +418,19 @@ def _build_scenes_raw(stage1: Stage1PlanPayload, *, single_step: bool):
             split = peak_idx + 1
             if 0 < split < len(group):
                 lines = [texts[:split], texts[split:]]
-        elif len(group) in {3, 4, 5} and 1.5 <= duration <= 4.0 and max_gap < 0.25 and len(lines) == 2:
+        elif (
+            type6_count == 0
+            and len(group) in {3, 4, 5}
+            and 2.5 <= duration <= 4.0
+            and max_gap < 0.2
+            and len(lines) == 2
+            and abs(
+                len(" ".join(lines[0])) - len(" ".join(lines[1]))
+            ) <= 2
+        ):
             scene_type = "TYPE_6"
             reason = "even_two_line_groups"
+            type6_count += 1
 
         if len(scenes) >= 3 and all(scene["type"] == scene_type for scene in scenes[-3:]):
             scene_type = "TYPE_1"
@@ -444,21 +469,10 @@ def _build_scenes_raw(stage1: Stage1PlanPayload, *, single_step: bool):
 
 def _build_template4_raw(stage1: Stage1PlanPayload) -> Template4Payload:
     words = _words_in_clip(stage1, clean=True)
-    groups = _split_words(words, max_words=4, max_chars=25)
-    threshold = mean(word.duration for word in words)
-    focus_ids = {
-        id(word) for word in words if word.duration > threshold and _is_content_word(word)
-    }
-    # The visual contract requires at least one focus word in each pair of
-    # subtitles. Select the longest timed content word when the strict
-    # above-average rule produced none for that pair.
-    for start in range(0, len(groups), 2):
-        pair = groups[start : start + 2]
-        if any(id(word) in focus_ids for group in pair for word in group):
-            continue
-        candidates = [word for group in pair for word in group if _is_content_word(word)]
-        if not candidates:
-            candidates = [word for group in pair for word in group]
+    groups = _split_words(words, max_words=3, max_chars=19)
+    focus_ids: set[int] = set()
+    for group in groups:
+        candidates = [word for word in group if _is_content_word(word)] or list(group)
         selected = max(candidates, key=lambda word: (word.duration, len(word.text), -word.start))
         focus_ids.add(id(selected))
 
