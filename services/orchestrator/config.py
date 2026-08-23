@@ -207,6 +207,10 @@ class Settings:
     windows_render_api_mode: str = _windows_render_api_mode_env()
     windows_timeout_s: float = float(_env("WINDOWS_TIMEOUT_S", "30") or "30")
     windows_node_lease_ttl_s: int = int(_env("WINDOWS_NODE_LEASE_TTL_S", "7200") or "7200")
+    windows_node_max_inflight: int = max(
+        1,
+        int(_env("WINDOWS_NODE_MAX_INFLIGHT", "2") or "2"),
+    )
     windows_node_disable_after_dispatch_errors: int = int(
         _env("WINDOWS_NODE_DISABLE_AFTER_DISPATCH_ERRORS", "3") or "3"
     )

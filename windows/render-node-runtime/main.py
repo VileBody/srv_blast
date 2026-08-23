@@ -7,6 +7,7 @@ import os
 import threading
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -44,6 +45,11 @@ AFTERFX_BIN = os.getenv("AFTERFX_BIN")
 
 HOST = os.getenv("AE_NODE_HOST", "0.0.0.0")
 PORT = int(os.getenv("AE_NODE_PORT", "8000"))
+RENDER_MAX_WORKERS = max(1, int(os.getenv("AE_NODE_RENDER_MAX_WORKERS", "2") or "2"))
+RENDER_MAX_PENDING = max(
+    RENDER_MAX_WORKERS,
+    int(os.getenv("AE_NODE_RENDER_MAX_PENDING", "8") or "8"),
+)
 
 renderer = AeRenderer(
     base_dir=AE_JOBS_BASE_DIR,
@@ -147,11 +153,22 @@ class JobConflictError(RuntimeError):
     pass
 
 
+class RenderQueueFullError(RuntimeError):
+    pass
+
+
 class RenderTaskManager:
-    def __init__(self) -> None:
+    def __init__(self, *, max_workers: int, max_pending: int) -> None:
         self._lock = threading.Lock()
         self._states: Dict[str, _RenderState] = {}
         self._render_id_by_job_id: Dict[str, str] = {}
+        self._max_workers = max(1, int(max_workers))
+        self._max_pending = max(self._max_workers, int(max_pending))
+        self._unfinished = 0
+        self._executor = ThreadPoolExecutor(
+            max_workers=self._max_workers,
+            thread_name_prefix="render",
+        )
 
     @staticmethod
     def _payload_hash(payload: Dict[str, Any]) -> str:
@@ -190,6 +207,12 @@ class RenderTaskManager:
                     )
                 return st
 
+            if self._unfinished >= self._max_pending:
+                raise RenderQueueFullError(
+                    "render_queue_full: "
+                    f"unfinished={self._unfinished} max_pending={self._max_pending}"
+                )
+
             render_id = uuid.uuid4().hex
             now = time.time()
             st = _RenderState(
@@ -205,14 +228,16 @@ class RenderTaskManager:
             )
             self._states[render_id] = st
             self._render_id_by_job_id[job_id] = render_id
+            self._unfinished += 1
 
-        t = threading.Thread(
-            target=self._run,
-            args=(render_id, spec),
-            name=f"render-{render_id[:8]}",
-            daemon=True,
-        )
-        t.start()
+        try:
+            self._executor.submit(self._run, render_id, spec)
+        except Exception:
+            with self._lock:
+                self._unfinished = max(0, self._unfinished - 1)
+                self._states.pop(render_id, None)
+                self._render_id_by_job_id.pop(job_id, None)
+            raise
         return st
 
     def _run(self, render_id: str, spec) -> None:
@@ -240,6 +265,9 @@ class RenderTaskManager:
                 st.finished_at = now
                 st.status = "failed"
                 st.error = f"unexpected render worker error: {e}"
+        finally:
+            with self._lock:
+                self._unfinished = max(0, self._unfinished - 1)
 
     def get(self, render_id: str) -> Optional[_RenderState]:
         with self._lock:
@@ -258,13 +286,46 @@ class RenderTaskManager:
                 error=st.error,
             )
 
+    def stats(self) -> Dict[str, int | bool]:
+        with self._lock:
+            running = sum(1 for st in self._states.values() if st.status == "running")
+            accepted = sum(1 for st in self._states.values() if st.status == "accepted")
+            unfinished = self._unfinished
+            return {
+                "running": running,
+                "queued": accepted,
+                "unfinished": unfinished,
+                "max_workers": self._max_workers,
+                "max_pending": self._max_pending,
+                "available_slots": max(0, self._max_pending - unfinished),
+                "ready": unfinished < self._max_pending,
+            }
 
-manager = RenderTaskManager()
+    def shutdown(self, *, wait: bool = True) -> None:
+        self._executor.shutdown(wait=wait, cancel_futures=False)
+
+
+manager = RenderTaskManager(
+    max_workers=RENDER_MAX_WORKERS,
+    max_pending=RENDER_MAX_PENDING,
+)
 
 
 @app.get("/health")
 def health() -> dict:
-    return {"status": "ok"}
+    return {"status": "ok", "render": manager.stats()}
+
+
+@app.get("/ready")
+def ready() -> dict:
+    stats = manager.stats()
+    if not bool(stats["ready"]):
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "render_queue_full", "render": stats},
+            headers={"Retry-After": "15"},
+        )
+    return {"status": "ready", "render": stats}
 
 
 @app.post("/jobs", response_model=JobResponse)
@@ -294,6 +355,12 @@ def create_render(req: CreateJobRequest) -> RenderAcceptedResponse:
         st = manager.submit(payload)
     except JobConflictError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
+    except RenderQueueFullError as e:
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "render_queue_full", "message": str(e)},
+            headers={"Retry-After": "15"},
+        ) from e
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"invalid render payload: {e}") from e
 

@@ -95,6 +95,8 @@ def _patch_common(
             work_dir="/tmp/work",
             output_dir="/tmp/output",
             windows_node_lease_ttl_s=7200,
+            windows_node_max_inflight=2,
+            windows_dispatch_max_retries=30,
             windows_timeout_s=300.0,
             windows_poll_interval_s=2.0,
             windows_render_api_mode=api_mode,
@@ -206,3 +208,52 @@ def test_dispatch_render_mode_rejects_sync_like_response(
     with pytest.raises(RuntimeError, match="windows_dispatch_contract_mismatch"):
         tasks.dispatch_to_windows.run(job_id)
     assert poll_calls == []
+
+
+def test_dispatch_waits_without_calling_windows_when_pool_is_saturated(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    job_id = "job_waiting_for_windows_capacity"
+    store = _FakeStore(job_id=job_id, request={"audio_s3_url": "s3://bucket/raw/audio.mp3"})
+    _patch_common(monkeypatch, tmp_path=tmp_path, store=store, api_mode="render")
+
+    class _SaturatedPool(_FakeNodePool):
+        def reserve_best(self, remaining):
+            raise tasks.WindowsNodePoolSaturated(
+                urls=remaining,
+                max_inflight_per_node=2,
+            )
+
+        def inflight_snapshot(self, urls):
+            return {str(url): 2 for url in urls}
+
+    monkeypatch.setattr(tasks, "WindowsNodePool", _SaturatedPool)
+
+    class _RetryRaised(RuntimeError):
+        pass
+
+    retry_call: dict[str, Any] = {}
+
+    def _retry(**kwargs):
+        retry_call.update(kwargs)
+        raise _RetryRaised(str(kwargs.get("exc")))
+
+    monkeypatch.setattr(tasks.dispatch_to_windows, "retry", _retry)
+
+    class _NeverCalledWindowsClient:
+        def __init__(self, *args, **kwargs) -> None:
+            raise AssertionError((args, kwargs))
+
+    monkeypatch.setattr(tasks, "WindowsRenderClient", _NeverCalledWindowsClient)
+
+    with pytest.raises(_RetryRaised, match="windows_node_pool_saturated"):
+        tasks.dispatch_to_windows.run(job_id)
+
+    assert retry_call["countdown"] >= 15.0
+    assert "max_retries" not in retry_call
+    st = store.get(job_id)
+    assert st.stage == "render_wait_capacity"
+    assert st.result["windows_capacity"] == {
+        "inflight": {"http://win-node:8000": 2},
+        "max_inflight_per_node": 2,
+    }

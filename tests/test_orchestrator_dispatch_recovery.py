@@ -111,6 +111,23 @@ def _patch_dispatch_common(
     monkeypatch.setattr(tasks, "_windows_default_urls", lambda: ["http://win-node:8000"])
     monkeypatch.setattr(tasks, "build_windows_job_payload", lambda **kwargs: {"job_id": kwargs["job_id"]})
     monkeypatch.setattr(tasks, "_s3_head_exists", lambda **kwargs: output_exists)
+    monkeypatch.setattr(
+        tasks,
+        "SETTINGS",
+        SimpleNamespace(
+            work_dir="/tmp/work",
+            output_dir="/tmp/output",
+            windows_node_lease_ttl_s=7200,
+            windows_node_max_inflight=2,
+            windows_timeout_s=300.0,
+            windows_poll_interval_s=2.0,
+            windows_render_api_mode="render",
+            windows_dispatch_max_retries=30,
+            windows_node_disable_after_dispatch_errors=3,
+            celery_queue_render="render",
+            celery_queue_render_poll="render_poll",
+        ),
+    )
 
     class _FailingWindowsClient:
         def __init__(

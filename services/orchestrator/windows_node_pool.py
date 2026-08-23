@@ -107,6 +107,7 @@ if n <= 0 then
 end
 
 local cursor = tonumber(redis.call("GET", KEYS[1]) or "0") or 0
+local max_inflight = tonumber(ARGV[2]) or 0
 if cursor < 0 then
   cursor = 0
 end
@@ -117,12 +118,18 @@ for offset = 1, n do
   local idx = ((cursor + offset - 1) % n) + 1
   local key = KEYS[idx + 1]
   local val = tonumber(redis.call("GET", key) or "0") or 0
-  if (min_val == nil) or (val < min_val) then
-    min_val = val
-    best = {idx}
-  elseif val == min_val then
-    table.insert(best, idx)
+  if max_inflight <= 0 or val < max_inflight then
+    if (min_val == nil) or (val < min_val) then
+      min_val = val
+      best = {idx}
+    elseif val == min_val then
+      table.insert(best, idx)
+    end
   end
+end
+
+if #best == 0 then
+  return {0, max_inflight}
 end
 
 local chosen = best[1]
@@ -165,12 +172,30 @@ return new_val
 """
 
 
+class WindowsNodePoolSaturated(RuntimeError):
+    def __init__(self, *, urls: Sequence[str], max_inflight_per_node: int):
+        self.urls = tuple(urls)
+        self.max_inflight_per_node = int(max_inflight_per_node)
+        super().__init__(
+            "windows_node_pool_saturated: "
+            f"nodes={len(self.urls)} max_inflight_per_node={self.max_inflight_per_node}"
+        )
+
+
 class WindowsNodePool:
-    def __init__(self, *, redis_client: Any, key_prefix: str, lease_ttl_s: int = 7200):
+    def __init__(
+        self,
+        *,
+        redis_client: Any,
+        key_prefix: str,
+        lease_ttl_s: int = 7200,
+        max_inflight_per_node: int = 0,
+    ):
         self._r = redis_client
         self._prefix = str(key_prefix or "blast").strip()
         ttl = int(lease_ttl_s or 0)
         self._lease_ttl_s = ttl if ttl > 0 else 7200
+        self._max_inflight_per_node = max(0, int(max_inflight_per_node or 0))
 
     @property
     def runtime_key(self) -> str:
@@ -335,7 +360,13 @@ class WindowsNodePool:
             return ""
         keys = [self.cursor_key] + [self._inflight_key(u) for u in urls]
         try:
-            resp = self._r.eval(_LUA_RESERVE_BEST, len(keys), *keys, str(self._lease_ttl_s))
+            resp = self._r.eval(
+                _LUA_RESERVE_BEST,
+                len(keys),
+                *keys,
+                str(self._lease_ttl_s),
+                str(self._max_inflight_per_node),
+            )
         except Exception:
             return ""
         if not isinstance(resp, (list, tuple)) or not resp:
@@ -344,6 +375,11 @@ class WindowsNodePool:
             idx = int(resp[0]) - 1
         except Exception:
             return ""
+        if idx < 0 and self._max_inflight_per_node > 0:
+            raise WindowsNodePoolSaturated(
+                urls=urls,
+                max_inflight_per_node=self._max_inflight_per_node,
+            )
         if idx < 0 or idx >= len(urls):
             return ""
         return urls[idx]

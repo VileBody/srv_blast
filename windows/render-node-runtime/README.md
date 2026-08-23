@@ -10,12 +10,17 @@
   - `status=accepted|running|succeeded|failed`
   - при `succeeded` приходит `output_url`/`output_path`
 - `POST /jobs` — explicit sync-режим (legacy/compat), оставлен как отдельный контракт.
+- `GET /health` — liveness и фактические `running/queued/available_slots`.
+- `GET /ready` — `200`, пока очередь принимает задачи; `503 render_queue_full`,
+  когда достигнут admission limit.
 
 Важно:
 
 - Идемпотентность в async-режиме по `job_id`.
 - Повторный `POST /render` с тем же `job_id` и тем же payload возвращает тот же `render_id`.
 - Повторный `POST /render` с тем же `job_id`, но другим payload возвращает `409`.
+- Новая задача сверх `AE_NODE_RENDER_MAX_PENDING` возвращает `503` и не создаёт поток.
+- Исполнение идёт через фиксированный `ThreadPoolExecutor`, а не через поток на каждый request.
 
 ## Запуск
 
@@ -47,6 +52,8 @@ python -m uvicorn main:app --host 0.0.0.0 --port 8000
 
 ```dotenv
 AE_RENDER_BACKEND=afterfx_queue
+AE_NODE_RENDER_MAX_WORKERS=2
+AE_NODE_RENDER_MAX_PENDING=8
 ```
 
 На текущей PC-ноде `aerender` зависает после баннера версии, поэтому prod использует
