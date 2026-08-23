@@ -61,6 +61,66 @@ def _canonical(text: str) -> str:
     return str(text or "").strip(_EDGE_PUNCTUATION).casefold()
 
 
+@dataclass(frozen=True)
+class _ContextProfile:
+    word_counts: dict[str, int]
+    line_end_words: frozenset[str]
+    repeated_words: frozenset[str]
+    target_words: frozenset[str]
+
+
+def _text_words(text: str) -> list[str]:
+    return [
+        match.group(0).casefold()
+        for match in re.finditer(r"[0-9A-Za-zА-Яа-яЁё]+", str(text or ""))
+    ]
+
+
+def _context_profile(*, lyrics_text: str, target_fragment: str) -> _ContextProfile:
+    lines = [_text_words(line) for line in str(lyrics_text or "").splitlines()]
+    lines = [line for line in lines if line]
+    counts: dict[str, int] = {}
+    line_counts: dict[tuple[str, ...], int] = {}
+    for line in lines:
+        line_counts[tuple(line)] = line_counts.get(tuple(line), 0) + 1
+        for word in line:
+            counts[word] = counts.get(word, 0) + 1
+    repeated = {
+        word
+        for line in lines
+        if line_counts.get(tuple(line), 0) >= 2
+        for word in line
+    }
+    return _ContextProfile(
+        word_counts=counts,
+        line_end_words=frozenset(line[-1] for line in lines),
+        repeated_words=frozenset(repeated),
+        target_words=frozenset(_text_words(target_fragment)),
+    )
+
+
+def _context_score(
+    word: _Word,
+    *,
+    profile: _ContextProfile,
+    duration_scale: float,
+    is_segment_last: bool,
+    following_gap: float,
+    position_weight: float,
+) -> float:
+    key = _canonical(word.text)
+    rarity = 1.0 / max(1, profile.word_counts.get(key, 1))
+    return (
+        word.duration / max(0.05, duration_scale)
+        + 0.32 * float(key in profile.line_end_words)
+        + 0.16 * rarity
+        + 0.15 * float(key in profile.repeated_words)
+        + 0.08 * float(key in profile.target_words)
+        + 0.03 * min(1.0, max(0.0, following_gap) / 0.4)
+        + position_weight * float(is_segment_last)
+    )
+
+
 def _clean_word(text: str, *, lowercase: bool = False) -> str:
     raw = str(text or "").strip()
     if not raw or _BRACKETED_RE.fullmatch(raw):
@@ -243,7 +303,11 @@ def _consecutive_repeat_indexes(words: Sequence[_Word]) -> set[int]:
     return repeated
 
 
-def _build_impulse_raw(stage1: Stage1PlanPayload) -> Impulse2ndRawPayload:
+def _build_impulse_raw(
+    stage1: Stage1PlanPayload,
+    *,
+    profile: _ContextProfile,
+) -> Impulse2ndRawPayload:
     words = _words_in_clip(stage1, clean=True, lowercase=True)
     anchor = words[0].start
     repeated_indexes = _consecutive_repeat_indexes(words)
@@ -291,7 +355,15 @@ def _build_impulse_raw(stage1: Stage1PlanPayload) -> Impulse2ndRawPayload:
             and hold >= 0.4
             and _is_content_word(first)
         ):
-            short_candidates.append(((1 if is_repeat else 0, first.duration, hold), i))
+            context_score = _context_score(
+                first,
+                profile=profile,
+                duration_scale=threshold,
+                is_segment_last=True,
+                following_gap=max(0.0, (next_start - last.end) if next_start is not None else 0.5),
+                position_weight=0.04,
+            )
+            short_candidates.append(((1 if is_repeat else 0, context_score, first.duration), i))
 
     short_quota = max(1, (len(peeled) + 5) // 10)
     selected_short: set[int] = set()
@@ -362,7 +434,7 @@ def _hook_group_keys(groups: Sequence[Sequence[_Word]]) -> set[tuple[str, ...]]:
     return {key for key, count in counts.items() if key and count >= 3}
 
 
-def _build_scenes_raw(stage1: Stage1PlanPayload, *, single_step: bool):
+def _build_scenes_raw(stage1: Stage1PlanPayload, *, single_step: bool, profile: _ContextProfile):
     words = _words_in_clip(stage1, clean=True)
     groups = _split_words(words, max_words=5, max_chars=27)
     hook_keys = _hook_group_keys(groups)
@@ -379,7 +451,22 @@ def _build_scenes_raw(stage1: Stage1PlanPayload, *, single_step: bool):
         last_gap = gaps[-1] if gaps else 0.0
         even = all(gap < 0.2 for gap in gaps)
         hook = tuple(_canonical(word.text) for word in group) in hook_keys
-        peak_idx = max(range(len(group)), key=lambda j: (group[j].duration, len(group[j].text), -j))
+        peak_idx = max(
+            range(len(group)),
+            key=lambda j: (
+                _context_score(
+                    group[j],
+                    profile=profile,
+                    duration_scale=threshold,
+                    is_segment_last=j == len(group) - 1,
+                    following_gap=(group[j + 1].start - group[j].end) if j + 1 < len(group) else 0.4,
+                    position_weight=0.06,
+                ),
+                group[j].duration,
+                len(group[j].text),
+                -j,
+            ),
+        )
         peak = group[peak_idx]
         standout = peak.duration >= threshold and _is_content_word(peak)
 
@@ -467,13 +554,29 @@ def _build_scenes_raw(stage1: Stage1PlanPayload, *, single_step: bool):
     )
 
 
-def _build_template4_raw(stage1: Stage1PlanPayload) -> Template4Payload:
+def _build_template4_raw(stage1: Stage1PlanPayload, *, profile: _ContextProfile) -> Template4Payload:
     words = _words_in_clip(stage1, clean=True)
     groups = _split_words(words, max_words=3, max_chars=19)
     focus_ids: set[int] = set()
+    duration_scale = mean(word.duration for word in words)
     for group in groups:
         candidates = [word for word in group if _is_content_word(word)] or list(group)
-        selected = max(candidates, key=lambda word: (word.duration, len(word.text), -word.start))
+        selected = max(
+            candidates,
+            key=lambda word: (
+                _context_score(
+                    word,
+                    profile=profile,
+                    duration_scale=duration_scale,
+                    is_segment_last=False,
+                    following_gap=0.0,
+                    position_weight=0.0,
+                ),
+                word.duration,
+                len(word.text),
+                -word.start,
+            ),
+        )
         focus_ids.add(id(selected))
 
     return Template4Payload.model_validate(
@@ -504,28 +607,32 @@ def build_subtitles_deterministic(
     stage1: Stage1PlanPayload,
     subtitles_mode: str,
     logger: logging.Logger,
+    lyrics_text: str = "",
+    target_fragment: str = "",
 ) -> BlocksTokensPayload | SubtitleFlowPlan:
     """Build and validate the Stage-2 subtitle payload without any LLM call."""
 
     mode = normalize_subtitles_mode(subtitles_mode)
+    profile = _context_profile(lyrics_text=lyrics_text, target_fragment=target_fragment)
     if mode == SUBTITLES_MODE_LEGACY_BLOCKS:
         result: BlocksTokensPayload | SubtitleFlowPlan = _build_legacy(stage1)
     elif mode == SUBTITLES_MODE_IMPULSE_2ND:
         planner = SubtitlesPlannerFactory.create(mode)
-        result = planner.normalize_payload(payload=_build_impulse_raw(stage1), stage1=stage1, logger=logger)
+        result = planner.normalize_payload(payload=_build_impulse_raw(stage1, profile=profile), stage1=stage1, logger=logger)
     elif mode in {SUBTITLES_MODE_SCENES_3RD, SUBTITLES_MODE_SCENES_3RD_SINGLE_STEP}:
         planner = SubtitlesPlannerFactory.create(mode)
         result = planner.normalize_payload(
             payload=_build_scenes_raw(
                 stage1,
                 single_step=mode == SUBTITLES_MODE_SCENES_3RD_SINGLE_STEP,
+                profile=profile,
             ),
             stage1=stage1,
             logger=logger,
         )
     elif mode == SUBTITLES_MODE_TEMPLATE_4TH:
         planner = SubtitlesPlannerFactory.create(mode)
-        result = planner.normalize_payload(payload=_build_template4_raw(stage1), stage1=stage1, logger=logger)
+        result = planner.normalize_payload(payload=_build_template4_raw(stage1, profile=profile), stage1=stage1, logger=logger)
     else:
         raise RuntimeError(
             "stage2 subtitles deterministic called for a mode without this stage: "

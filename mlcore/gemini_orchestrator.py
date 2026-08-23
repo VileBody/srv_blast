@@ -3664,6 +3664,8 @@ def build_all_via_gemini_one_call(
         payload = build_subtitles_deterministic(
             stage1=stage1,
             subtitles_mode=subtitles_mode,
+            lyrics_text=lyrics_text,
+            target_fragment=target_fragment,
             logger=logger,
         )
 

@@ -167,6 +167,35 @@ def test_template4_focus_is_present_in_every_subtitle_pair() -> None:
         assert any(token.focus for segment in pair for token in segment.tokens)
 
 
+def test_template4_uses_lyrics_context_only_as_focus_tie_break() -> None:
+    stage1 = _stage1(0)
+    baseline = build_subtitles_deterministic(
+        stage1=stage1,
+        subtitles_mode="template_4th",
+        logger=logging.getLogger("test"),
+    )
+    contextual = build_subtitles_deterministic(
+        stage1=stage1,
+        subtitles_mode="template_4th",
+        logger=logging.getLogger("test"),
+        lyrics_text="alpha beta\nalpha beta\ngamma delta",
+        target_fragment="beta",
+    )
+    assert isinstance(baseline, SubtitleFlowPlan)
+    assert isinstance(contextual, SubtitleFlowPlan)
+    assert [segment.text for segment in contextual.segments] == [
+        segment.text for segment in baseline.segments
+    ]
+    baseline_focus = [
+        token.text for segment in baseline.segments for token in segment.tokens if token.focus
+    ]
+    contextual_focus = [
+        token.text for segment in contextual.segments for token in segment.tokens if token.focus
+    ]
+    assert baseline_focus[0] == "gamma"
+    assert contextual_focus[0] == "beta"
+
+
 @pytest.mark.parametrize("mode", ["trendy_5th", "brat_5th"])
 def test_jsx_modes_do_not_enter_deterministic_stage2(mode: str) -> None:
     with pytest.raises(RuntimeError, match="without this stage"):
