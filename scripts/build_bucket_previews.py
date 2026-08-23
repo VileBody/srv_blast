@@ -28,6 +28,7 @@ design. A full 59-bucket sweep requires the explicit --all flag.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
 import os
@@ -640,7 +641,10 @@ def build_one_bucket(
     else:
         spec = bp.build_montage_spec(bucket, clips)
     render_jsx = bp.render_montage_jsx(spec, _montage_template_text(media))
-    job_id = f"bucketprev_{bucket.bucket_id.replace(':', '__')}"
+    # Windows/AE job paths must remain ASCII; collection ids can be Cyrillic.
+    job_identity = f"{bucket.bucket_id}:{args.seed}"
+    bucket_digest = hashlib.sha256(job_identity.encode("utf-8")).hexdigest()[:20]
+    job_id = f"bucketprev_{bucket_digest}"
     caption = f"{bucket.label} — {description}\nbucket: {bucket.bucket_id}"
 
     if local_mode:

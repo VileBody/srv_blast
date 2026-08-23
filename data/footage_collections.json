@@ -261,6 +261,76 @@
       "formats": [
         "wide"
       ]
+    },
+    {
+      "kind": "cine16x9",
+      "folder": "BMW",
+      "label": "BMW",
+      "description": "",
+      "themes": [],
+      "formats": [
+        "wide"
+      ]
+    },
+    {
+      "kind": "cine16x9",
+      "folder": "Boston",
+      "label": "Boston",
+      "description": "",
+      "themes": [],
+      "formats": [
+        "wide"
+      ]
+    },
+    {
+      "kind": "cine16x9",
+      "folder": "JDM",
+      "label": "JDM",
+      "description": "",
+      "themes": [],
+      "formats": [
+        "wide"
+      ]
+    },
+    {
+      "kind": "cine16x9",
+      "folder": "Lisbon",
+      "label": "Lisbon",
+      "description": "",
+      "themes": [],
+      "formats": [
+        "wide"
+      ]
+    },
+    {
+      "kind": "cine16x9",
+      "folder": "Paris",
+      "label": "Paris",
+      "description": "",
+      "themes": [],
+      "formats": [
+        "wide"
+      ]
+    },
+    {
+      "kind": "cine16x9",
+      "folder": "Porsche",
+      "label": "Porsche",
+      "description": "",
+      "themes": [],
+      "formats": [
+        "wide"
+      ]
+    },
+    {
+      "kind": "cine16x9",
+      "folder": "Sqd",
+      "label": "Sqd",
+      "description": "",
+      "themes": [],
+      "formats": [
+        "wide"
+      ]
     }
   ]
 }
