@@ -122,7 +122,13 @@ _STRUCTURAL_TAG_TOKEN_RE = re.compile(r"^\[[a-zа-яё0-9_\-:+./]+\]$", flags=re
 _SCENES_3RD_SINGLE_STEP_MODEL = "gemini-2.5-pro"
 _STAGE1_ALIGNMENT_BACKEND_GEMINI = "gemini"
 _STAGE1_ALIGNMENT_BACKEND_LOCAL_CTC = "local_ctc"
-_STAGE2_SUBTITLES_ENGINE_VERSION = "rules_v1"
+_STAGE2_SUBTITLES_ENGINE_DETERMINISTIC = "deterministic"
+_STAGE2_SUBTITLES_ENGINE_OPENROUTER = "openrouter"
+_STAGE2_SUBTITLES_ENGINE_VALUES = {
+    _STAGE2_SUBTITLES_ENGINE_DETERMINISTIC,
+    _STAGE2_SUBTITLES_ENGINE_OPENROUTER,
+}
+_STAGE2_SUBTITLES_RULES_VERSION = "rules_v2_context"
 
 # Stage2 timing mode. This is a code-level switch we control via git, NOT a
 # secret and NOT read from env — flipping it is a deploy, not an .env edit.
@@ -2452,6 +2458,41 @@ def build_all_via_gemini_one_call(
         raise RuntimeError(
             "Missing OPENROUTER_API_KEY in env for LLM_PROVIDER_MODE=openrouter|hedged"
         )
+    stage2_subtitles_engine = str(
+        os.environ.get("STAGE2_SUBTITLES_ENGINE")
+        or _STAGE2_SUBTITLES_ENGINE_DETERMINISTIC
+    ).strip().lower()
+    if stage2_subtitles_engine not in _STAGE2_SUBTITLES_ENGINE_VALUES:
+        raise RuntimeError(
+            f"Invalid STAGE2_SUBTITLES_ENGINE={stage2_subtitles_engine!r}; "
+            f"allowed={sorted(_STAGE2_SUBTITLES_ENGINE_VALUES)}"
+        )
+    stage2_openrouter_model = str(
+        os.environ.get("OPENROUTER_MODEL_SUBTITLES") or ""
+    ).strip()
+    stage2_openrouter_subtitles: Optional[OpenRouterClient] = None
+    if stage2_subtitles_engine == _STAGE2_SUBTITLES_ENGINE_OPENROUTER:
+        if not openrouter_api_key:
+            raise RuntimeError(
+                "Missing OPENROUTER_API_KEY for STAGE2_SUBTITLES_ENGINE=openrouter"
+            )
+        if not stage2_openrouter_model:
+            raise RuntimeError(
+                "Missing OPENROUTER_MODEL_SUBTITLES for "
+                "STAGE2_SUBTITLES_ENGINE=openrouter"
+            )
+        stage2_openrouter_subtitles = _make_openrouter_client(
+            api_key=openrouter_api_key,
+            model=stage2_openrouter_model,
+            temperature=0.0,
+            timeout_s=openrouter_timeout_s,
+            logger=logger,
+        )
+    stage2_subtitles_engine_version = (
+        f"openrouter:{stage2_openrouter_model}:full_plan_strict_v1"
+        if stage2_subtitles_engine == _STAGE2_SUBTITLES_ENGINE_OPENROUTER
+        else _STAGE2_SUBTITLES_RULES_VERSION
+    )
 
     logger.info(
         "llm_provider_config mode=%s hedge_delay_s=%s gemini_timeout_s=%s openrouter_timeout_s=%s "
@@ -3558,7 +3599,12 @@ def build_all_via_gemini_one_call(
         else subtitles_planner.schema_model.__name__
     )
     logger.info(
-        "stage2_start subtitles=no_llm footage_style_model=%s timing_model=%s timing_mode=%s style_groups=%d subtitles_mode=%s subtitles_schema=%s",
+        "stage2_start subtitles_engine=%s subtitles_model=%s footage_style_model=%s "
+        "timing_model=%s timing_mode=%s style_groups=%d subtitles_mode=%s subtitles_schema=%s",
+        stage2_subtitles_engine,
+        stage2_openrouter_model
+        if stage2_subtitles_engine == _STAGE2_SUBTITLES_ENGINE_OPENROUTER
+        else _STAGE2_SUBTITLES_RULES_VERSION,
         model_footage,
         model_stage1_base,
         timing_mode,
@@ -3661,13 +3707,42 @@ def build_all_via_gemini_one_call(
                 segments=[_seg],
             )
 
-        payload = build_subtitles_deterministic(
-            stage1=stage1,
-            subtitles_mode=subtitles_mode,
-            lyrics_text=lyrics_text,
-            target_fragment=target_fragment,
-            logger=logger,
-        )
+        if stage2_subtitles_engine == _STAGE2_SUBTITLES_ENGINE_DETERMINISTIC:
+            payload = build_subtitles_deterministic(
+                stage1=stage1,
+                subtitles_mode=subtitles_mode,
+                lyrics_text=lyrics_text,
+                target_fragment=target_fragment,
+                logger=logger,
+            )
+        else:
+            if subtitles_planner is None or stage2_openrouter_subtitles is None:
+                raise RuntimeError("OpenRouter subtitles planner/client is not initialized")
+            subtitles_audio_paths = (
+                list(audio_files) if subtitles_planner.attach_audio_for_stage2 else []
+            )
+            sub_sys.write_text(sub_system, encoding="utf-8")
+            sub_user.write_text(str(sub_prompt), encoding="utf-8")
+            if subtitles_planner.use_tokens_structured:
+                raw_payload = stage2_openrouter_subtitles.generate_tokens_structured(
+                    prompt=str(sub_prompt),
+                    system_instruction=sub_system,
+                    audio_paths=subtitles_audio_paths,
+                    raw_response_path=sub_raw,
+                )
+            else:
+                raw_payload = stage2_openrouter_subtitles.generate_structured(
+                    schema_model=subtitles_planner.schema_model,
+                    prompt=str(sub_prompt),
+                    system_instruction=sub_system,
+                    audio_paths=subtitles_audio_paths,
+                    raw_response_path=sub_raw,
+                )
+            payload = subtitles_planner.normalize_payload(
+                payload=raw_payload,
+                stage1=stage1,
+                logger=logger,
+            )
 
         if isinstance(payload, BlocksTokensPayload):
             _log_subtitles_token_metrics(payload)
@@ -3688,8 +3763,14 @@ def build_all_via_gemini_one_call(
         return payload
 
     def _run_subtitles() -> BlocksTokensPayload | SubtitleFlowPlan:
-        # A deterministic failure repeats identically; do not model-retry it.
-        return _run_subtitles_once()
+        if stage2_subtitles_engine == _STAGE2_SUBTITLES_ENGINE_DETERMINISTIC:
+            # A deterministic failure repeats identically; do not model-retry it.
+            return _run_subtitles_once()
+        return _run_stage_with_model_validation_retries(
+            stage_name="stage2_subtitles_openrouter",
+            logger=logger,
+            fn=_run_subtitles_once,
+        )
 
     style_raw_payload: Optional[FootageStyleRawPayload] = None
     style_adapter_diag: Optional[FootageStyleRawAdapterDiagnostics] = None
@@ -3932,10 +4013,10 @@ def build_all_via_gemini_one_call(
     subtitles_cached_engine = str(resume_state.get("stage2_subtitles_engine") or "").strip()
     if isinstance(subtitles_cached, dict):
         try:
-            if subtitles_cached_engine != _STAGE2_SUBTITLES_ENGINE_VERSION:
+            if subtitles_cached_engine != stage2_subtitles_engine_version:
                 raise RuntimeError(
                     "subtitle resume engine mismatch "
-                    f"({subtitles_cached_engine or '<legacy>'!r} != {_STAGE2_SUBTITLES_ENGINE_VERSION!r})"
+                    f"({subtitles_cached_engine or '<legacy>'!r} != {stage2_subtitles_engine_version!r})"
                 )
             if subtitles_cached_mode and subtitles_cached_mode != subtitles_mode:
                 raise RuntimeError(
@@ -4023,7 +4104,7 @@ def build_all_via_gemini_one_call(
     if subtitles_payload is not None and not subtitles_from_resume:
         resume_state["stage2_subtitles"] = subtitles_payload.model_dump(mode="json")
         resume_state["stage2_subtitles_mode"] = subtitles_mode
-        resume_state["stage2_subtitles_engine"] = _STAGE2_SUBTITLES_ENGINE_VERSION
+        resume_state["stage2_subtitles_engine"] = stage2_subtitles_engine_version
         state_dirty = True
     if style_payload is not None and not style_from_resume:
         resume_state["stage2_style"] = style_payload.model_dump(mode="json")
