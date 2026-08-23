@@ -19,7 +19,7 @@ from mlcore.models import BlocksTokensPayload
 class OpenRouterSettings:
     api_key: str
     model: str
-    temperature: float = 0.0
+    temperature: Optional[float] = 0.0
     timeout_s: float = 120.0
     base_url: str = "https://openrouter.ai/api/v1"
 
@@ -35,7 +35,9 @@ class OpenRouterClient:
         self._logger = logger or logging.getLogger("mlcore.openrouter_client")
         self._api_key = (settings.api_key or "").strip()
         self._model = (settings.model or "").strip()
-        self._temperature = float(settings.temperature)
+        self._temperature = (
+            None if settings.temperature is None else float(settings.temperature)
+        )
         self._timeout_s = float(settings.timeout_s)
         self._base_url = (settings.base_url or "").rstrip("/")
         self._request_func = request_func or httpx.post
@@ -190,7 +192,6 @@ class OpenRouterClient:
     ) -> str:
         payload = {
             "model": self._model,
-            "temperature": self._temperature,
             "messages": self._messages(
                 prompt=prompt,
                 system_instruction=system_instruction,
@@ -199,6 +200,8 @@ class OpenRouterClient:
             "response_format": self._response_format(schema_model=schema_model),
             "provider": self._provider_payload(),
         }
+        if self._temperature is not None:
+            payload["temperature"] = self._temperature
         self._logger.info("openrouter_call model=%s timeout_s=%s", self._model, self._timeout_s)
         obj = self._post_chat_completion(payload)
         text = self._extract_text(obj)

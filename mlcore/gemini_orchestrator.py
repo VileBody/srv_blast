@@ -493,7 +493,7 @@ def _make_openrouter_client(
     *,
     api_key: str,
     model: str,
-    temperature: float,
+    temperature: Optional[float],
     timeout_s: float,
     logger: logging.Logger,
 ) -> OpenRouterClient:
@@ -2484,7 +2484,10 @@ def build_all_via_gemini_one_call(
         stage2_openrouter_subtitles = _make_openrouter_client(
             api_key=openrouter_api_key,
             model=stage2_openrouter_model,
-            temperature=0.0,
+            # Gemini 3.7 Vertex supports strict structured outputs but does not
+            # advertise the temperature parameter. Omitting it is required when
+            # OpenRouter provider.require_parameters=true.
+            temperature=None,
             timeout_s=openrouter_timeout_s,
             logger=logger,
         )
