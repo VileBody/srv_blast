@@ -414,6 +414,8 @@ class WindowsNodesStatusResponse(BaseModel):
     effective_urls: List[str] = Field(default_factory=list)
     nodes: List[WindowsNodeState] = Field(default_factory=list)
     inflight: Dict[str, int] = Field(default_factory=dict)
+    max_inflight_per_node: int = 1
+    available_slots: Dict[str, int] = Field(default_factory=dict)
 
 
 # ---- Backward-compatible aliases (so old clients don't break) ----

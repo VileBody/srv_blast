@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from services.orchestrator.windows_node_pool import (
     WindowsNodePool,
+    WindowsNodePoolSaturated,
     normalize_windows_nodes,
     normalize_windows_urls,
     parse_windows_urls_csv,
@@ -45,6 +48,7 @@ class _FakeRedis:
         # reserve script: KEYS[1]=cursor, KEYS[2..]=inflight
         cursor_key = keys[0]
         inflight_keys = keys[1:]
+        max_inflight = int(argv[1]) if len(argv) > 1 else 0
         n = len(inflight_keys)
         if n <= 0:
             return [0, 0]
@@ -58,11 +62,16 @@ class _FakeRedis:
             idx = ((cursor + offset - 1) % n) + 1
             key = inflight_keys[idx - 1]
             val = int(self._data.get(key, "0") or 0)
+            if max_inflight > 0 and val >= max_inflight:
+                continue
             if min_val is None or val < min_val:
                 min_val = val
                 best = [idx]
             elif val == min_val:
                 best.append(idx)
+
+        if not best:
+            return [0, max_inflight]
 
         chosen = best[0]
         if len(best) > 1:
@@ -174,6 +183,25 @@ def test_reserve_round_robin_and_release() -> None:
     snap2 = pool.inflight_snapshot(urls)
     assert snap2[urls[0]] == 0
     assert snap2[urls[1]] == 1
+
+
+def test_reserve_stops_when_every_node_reaches_hard_limit() -> None:
+    r = _FakeRedis()
+    pool = WindowsNodePool(
+        redis_client=r,
+        key_prefix="blast",
+        lease_ttl_s=3600,
+        max_inflight_per_node=1,
+    )
+    urls = ["http://10.0.0.10:8000", "http://10.0.0.11:8000"]
+
+    assert pool.reserve_best(urls) == urls[0]
+    assert pool.reserve_best(urls) == urls[1]
+    with pytest.raises(WindowsNodePoolSaturated, match="max_inflight_per_node=1"):
+        pool.reserve_best(urls)
+
+    assert pool.release(urls[0]) == 0
+    assert pool.reserve_best(urls) == urls[0]
 
 
 # ── env fallback when runtime pool has no ENABLED node (fix: one disabled node

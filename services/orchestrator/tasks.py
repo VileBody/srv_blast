@@ -51,7 +51,11 @@ from .render_manifest import build_rust_gen_job_payload, build_windows_job_paylo
 from .rust_gen_client import RustGenClient
 from .runtime_config import get_runtime_values
 from .windows_client import WindowsRenderClient
-from .windows_node_pool import WindowsNodePool, parse_windows_urls_csv
+from .windows_node_pool import (
+    WindowsNodePool,
+    WindowsNodePoolSaturated,
+    parse_windows_urls_csv,
+)
 from services.generation_runtime.store import resume_state_checksum
 from core.llm_worker_types import (
     LLM_WORKER_TYPE_HYBRID,
@@ -159,6 +163,14 @@ def _is_remote_url(u: str) -> bool:
 def _windows_default_urls() -> list[str]:
     # Keep a deterministic merged list from WINDOWS_RENDER_URL + WINDOWS_RENDER_URLS.
     return parse_windows_urls_csv((SETTINGS.windows_base_url + "," + SETTINGS.windows_base_urls_csv).strip(","))
+
+
+def _windows_node_max_inflight() -> int:
+    return max(1, int(getattr(SETTINGS, "windows_node_max_inflight", 2) or 2))
+
+
+def _windows_dispatch_max_retries() -> int:
+    return max(1, int(getattr(SETTINGS, "windows_dispatch_max_retries", 30) or 30))
 
 
 def _requested_render_engine(req: Dict[str, Any]) -> str:
@@ -3873,7 +3885,7 @@ def activate_footage_base(self, limit: int = 0, media_type: str = "video") -> Di
     return summary
 
 
-@celery_app.task(name="orchestrator.dispatch_to_windows", bind=True, max_retries=10)
+@celery_app.task(name="orchestrator.dispatch_to_windows", bind=True, max_retries=None)
 def dispatch_to_windows(self, job_id: str) -> Dict[str, Any]:
     store = JobStore.from_env()
     st = store.get(job_id)
@@ -3884,6 +3896,7 @@ def dispatch_to_windows(self, job_id: str) -> Dict[str, Any]:
         redis_client=store.r,
         key_prefix=store.key_prefix,
         lease_ttl_s=SETTINGS.windows_node_lease_ttl_s,
+        max_inflight_per_node=_windows_node_max_inflight(),
     )
     active_urls = pool.get_active_urls(default_urls=_windows_default_urls())
     if not active_urls:
@@ -3953,7 +3966,32 @@ def dispatch_to_windows(self, job_id: str) -> Dict[str, Any]:
         )
 
     while remaining:
-        candidate = pool.reserve_best(remaining)
+        try:
+            candidate = pool.reserve_best(remaining)
+        except WindowsNodePoolSaturated as exc:
+            attempt = int(getattr(self.request, "retries", 0)) + 1
+            backoff = _retry_backoff_s(attempt=attempt, base_s=15.0, cap_s=120.0)
+            inflight = pool.inflight_snapshot(remaining)
+            store.set_status(
+                job_id,
+                "RUNNING",
+                stage="render_wait_capacity",
+                result={
+                    "windows_capacity": {
+                        "inflight": inflight,
+                        "max_inflight_per_node": _windows_node_max_inflight(),
+                    }
+                },
+            )
+            _obs_event(
+                "render_capacity_wait",
+                job_id=job_id,
+                attempt=attempt,
+                backoff_s=backoff,
+                nodes=len(remaining),
+                max_inflight_per_node=_windows_node_max_inflight(),
+            )
+            raise self.retry(countdown=backoff, exc=RuntimeError(str(exc)))
         if not candidate:
             break
         node = _node_label(candidate)
@@ -4009,7 +4047,6 @@ def dispatch_to_windows(self, job_id: str) -> Dict[str, Any]:
             pool.release(candidate)
             errors_by_node.append(f"{candidate}: {e!r}")
             remaining = [u for u in remaining if u != candidate]
-            fail_streak = _inc_dispatch_fail_streak(store, node_url=candidate)
 
             is_transient = _is_transient_windows_error(e)
             code = 0
@@ -4019,7 +4056,21 @@ def dispatch_to_windows(self, job_id: str) -> Dict[str, Any]:
                 except Exception:
                     code = 0
             is_contract_404 = code == 404
-            err_outcome = "contract_404" if is_contract_404 else ("transient_error" if is_transient else "non_transient_error")
+            is_capacity_rejection = code in {429, 503}
+            if is_capacity_rejection:
+                _reset_dispatch_fail_streak(store, node_url=candidate)
+                fail_streak = 0
+            else:
+                fail_streak = _inc_dispatch_fail_streak(store, node_url=candidate)
+            err_outcome = (
+                "capacity_rejected"
+                if is_capacity_rejection
+                else (
+                    "contract_404"
+                    if is_contract_404
+                    else ("transient_error" if is_transient else "non_transient_error")
+                )
+            )
             _inc_labeled_metric(
                 store,
                 metric="dispatch_attempt_total",
@@ -4047,7 +4098,7 @@ def dispatch_to_windows(self, job_id: str) -> Dict[str, Any]:
             elif not is_transient:
                 should_disable = True
                 disable_reason = "dispatch_non_transient_error"
-            elif disable_threshold > 0 and fail_streak >= disable_threshold:
+            elif not is_capacity_rejection and disable_threshold > 0 and fail_streak >= disable_threshold:
                 should_disable = True
                 disable_reason = f"dispatch_transient_streak_{fail_streak}"
             if should_disable:
@@ -4097,6 +4148,7 @@ def dispatch_to_windows(self, job_id: str) -> Dict[str, Any]:
                     )
                     raise self.retry(
                         countdown=backoff,
+                        max_retries=_windows_dispatch_max_retries(),
                         exc=RuntimeError(f"windows_dispatch_transient: all_nodes_failed={errors_by_node!r}"),
                     )
                 _inc_labeled_metric(
@@ -4212,6 +4264,7 @@ def poll_windows_render(self, job_id: str, render_id: str) -> Dict[str, Any]:
         redis_client=store.r,
         key_prefix=store.key_prefix,
         lease_ttl_s=SETTINGS.windows_node_lease_ttl_s,
+        max_inflight_per_node=_windows_node_max_inflight(),
     )
     active_urls = pool.get_active_urls(default_urls=_windows_default_urls())
 

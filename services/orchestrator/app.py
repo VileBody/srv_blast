@@ -308,10 +308,12 @@ def create_app() -> FastAPI:
         return parse_windows_urls_csv(raw)
 
     def _windows_pool() -> WindowsNodePool:
+        max_inflight = max(1, int(getattr(SETTINGS, "windows_node_max_inflight", 2) or 2))
         return WindowsNodePool(
             redis_client=store.r,
             key_prefix=store.key_prefix,
             lease_ttl_s=SETTINGS.windows_node_lease_ttl_s,
+            max_inflight_per_node=max_inflight,
         )
 
     def _build_windows_nodes_status(*, runtime_nodes: list[dict[str, Any]]) -> WindowsNodesStatusResponse:
@@ -328,6 +330,7 @@ def create_app() -> FastAPI:
             if bool(node.get("enabled", True)) and str(node.get("url") or "").strip()
         ]
         inflight = _windows_pool().inflight_snapshot(effective_urls)
+        max_inflight = max(1, int(getattr(SETTINGS, "windows_node_max_inflight", 2) or 2))
         return WindowsNodesStatusResponse(
             source="runtime" if runtime_nodes else "env",
             default_urls=default_urls,
@@ -335,6 +338,11 @@ def create_app() -> FastAPI:
             effective_urls=effective_urls,
             nodes=effective_nodes,
             inflight=inflight,
+            max_inflight_per_node=max_inflight,
+            available_slots={
+                url: max(0, max_inflight - int(inflight.get(url, 0) or 0))
+                for url in effective_urls
+            },
         )
 
     def _render_capacity_snapshot() -> Dict[str, Any]:
