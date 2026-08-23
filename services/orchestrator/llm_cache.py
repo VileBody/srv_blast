@@ -51,6 +51,7 @@ _STAGE1_PLAN_KEYS = frozenset({
 _STAGE2_SUBS_KEYS = frozenset({
     "stage2_subtitles",
     "stage2_subtitles_mode",
+    "stage2_subtitles_engine",
 })
 _STAGE2_TIMING_KEYS = frozenset({
     "stage2_switch_timestamps",
@@ -251,7 +252,19 @@ def build_cache_key(
             raise RuntimeError(
                 "alignment_separator_revision is required for local_ctc cache keys"
             )
-    subtitles_model = (os.environ.get("GEMINI_MODEL_SUBTITLES") or "").strip() or "unknown"
+    subtitles_engine = (
+        os.environ.get("STAGE2_SUBTITLES_ENGINE") or "deterministic"
+    ).strip().lower()
+    if subtitles_engine == "openrouter":
+        subtitles_model = (
+            os.environ.get("OPENROUTER_MODEL_SUBTITLES") or ""
+        ).strip() or "unknown"
+    elif subtitles_engine == "deterministic":
+        subtitles_model = "deterministic:rules_v2_context"
+    else:
+        raise RuntimeError(
+            f"unsupported STAGE2_SUBTITLES_ENGINE={subtitles_engine!r}"
+        )
 
     return CacheKey(
         telegram_id=str(telegram_id or "anon").strip() or "anon",
