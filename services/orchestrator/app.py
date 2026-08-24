@@ -80,6 +80,7 @@ from .bundle_bootstrap import ensure_descriptions_bundle
 from .asset_routes import create_asset_router
 from .ops_alert_subscribers import OpsAlertBotPoller, OpsAlertSubscriberStore
 from .render_capacity import probe_render_capacity
+from . import render_priority
 from .windows_node_pool import WindowsNodePool, parse_windows_urls_csv
 from services.tg_bot_botapi.user_store import UserStore
 
@@ -1435,6 +1436,15 @@ def create_app() -> FastAPI:
             "render_backlog": int(render_backlog),
             "build_backlog": int(build_backlog),
             "capacity_policy": capacity_policy,
+            "render_priority": {
+                "enabled": bool(render_priority.priority_enabled()),
+                "interactive_waiting": int(
+                    render_priority.interactive_waiting(store.r, key_prefix=store.key_prefix)
+                ),
+                "waiting_job_ids": list(
+                    render_priority.waiting_job_ids(store.r, key_prefix=store.key_prefix)
+                ),
+            },
             "queue_topology": {
                 "build_queue_default": str(SETTINGS.celery_queue_build or "").strip(),
                 "render_queue_default": str(SETTINGS.celery_queue_render or "").strip(),

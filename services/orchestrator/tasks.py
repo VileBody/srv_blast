@@ -50,6 +50,7 @@ from .ops_alert_subscribers import (
 from .render_manifest import build_rust_gen_job_payload, build_windows_job_payload
 from .rust_gen_client import RustGenClient
 from .runtime_config import get_runtime_values
+from . import render_priority
 from .windows_client import WindowsRenderClient
 from .windows_node_pool import (
     WindowsNodePool,
@@ -171,6 +172,18 @@ def _windows_node_max_inflight() -> int:
 
 def _windows_dispatch_max_retries() -> int:
     return max(1, int(getattr(SETTINGS, "windows_dispatch_max_retries", 30) or 30))
+
+
+def _clear_render_priority_wait(
+    store: JobStore,
+    job_id: str,
+    job_class: str,
+    priority_on: bool,
+) -> None:
+    """Drop this job's interactive-wait registration once it stops waiting."""
+    if not priority_on or job_class != render_priority.CLASS_INTERACTIVE:
+        return
+    render_priority.clear_waiting(store.r, key_prefix=store.key_prefix, job_id=job_id)
 
 
 def _requested_render_engine(req: Dict[str, Any]) -> str:
@@ -3965,12 +3978,57 @@ def dispatch_to_windows(self, job_id: str) -> Dict[str, Any]:
             "(set WINDOWS_RENDER_API_MODE=render; /jobs sync dispatch is disabled)"
         )
 
+    job_class = render_priority.classify_job(req)
+    priority_on = render_priority.priority_enabled()
+
     while remaining:
+        # Live user traffic gets the next free slot: while any interactive job
+        # is registered as waiting, batch jobs yield instead of reserving.
+        if priority_on and job_class == render_priority.CLASS_BATCH:
+            waiting = render_priority.interactive_waiting(
+                store.r, key_prefix=store.key_prefix
+            )
+            if waiting > 0:
+                attempt = int(getattr(self.request, "retries", 0)) + 1
+                base_s, cap_s = render_priority.batch_defer_backoff_s()
+                backoff = _retry_backoff_s(attempt=attempt, base_s=base_s, cap_s=cap_s)
+                store.set_status(
+                    job_id,
+                    "RUNNING",
+                    stage="render_wait_priority",
+                    result={
+                        "render_priority": {
+                            "job_class": job_class,
+                            "interactive_waiting": waiting,
+                        }
+                    },
+                )
+                _obs_event(
+                    "render_priority_defer",
+                    job_id=job_id,
+                    attempt=attempt,
+                    backoff_s=backoff,
+                    interactive_waiting=waiting,
+                )
+                raise self.retry(
+                    countdown=backoff,
+                    exc=RuntimeError(f"render_priority_deferred: interactive_waiting={waiting}"),
+                )
+
         try:
             candidate = pool.reserve_best(remaining)
         except WindowsNodePoolSaturated as exc:
             attempt = int(getattr(self.request, "retries", 0)) + 1
-            backoff = _retry_backoff_s(attempt=attempt, base_s=15.0, cap_s=120.0)
+            if priority_on and job_class == render_priority.CLASS_INTERACTIVE:
+                # Announce the wait before backing off, so batch jobs waking up
+                # in the meantime step aside instead of taking the freed slot.
+                render_priority.mark_waiting(
+                    store.r, key_prefix=store.key_prefix, job_id=job_id
+                )
+                base_s, cap_s = render_priority.interactive_backoff_s()
+            else:
+                base_s, cap_s = 15.0, 120.0
+            backoff = _retry_backoff_s(attempt=attempt, base_s=base_s, cap_s=cap_s)
             inflight = pool.inflight_snapshot(remaining)
             store.set_status(
                 job_id,
@@ -3980,7 +4038,8 @@ def dispatch_to_windows(self, job_id: str) -> Dict[str, Any]:
                     "windows_capacity": {
                         "inflight": inflight,
                         "max_inflight_per_node": _windows_node_max_inflight(),
-                    }
+                    },
+                    "render_priority": {"job_class": job_class},
                 },
             )
             _obs_event(
@@ -3990,10 +4049,13 @@ def dispatch_to_windows(self, job_id: str) -> Dict[str, Any]:
                 backoff_s=backoff,
                 nodes=len(remaining),
                 max_inflight_per_node=_windows_node_max_inflight(),
+                job_class=job_class,
             )
             raise self.retry(countdown=backoff, exc=RuntimeError(str(exc)))
         if not candidate:
             break
+        # The slot is ours — stop holding the batch back.
+        _clear_render_priority_wait(store, job_id, job_class, priority_on)
         node = _node_label(candidate)
         _inc_labeled_metric(
             store,
@@ -4168,12 +4230,15 @@ def dispatch_to_windows(self, job_id: str) -> Dict[str, Any]:
                     api_mode="render",
                     errors=len(errors_by_node),
                 )
+                _clear_render_priority_wait(store, job_id, job_class, priority_on)
                 raise RuntimeError(f"windows_dispatch_failed: all_nodes_failed={errors_by_node!r}") from e
 
             if not is_transient and not is_contract_404:
+                _clear_render_priority_wait(store, job_id, job_class, priority_on)
                 raise
 
     if not selected_url or res is None:
+        _clear_render_priority_wait(store, job_id, job_class, priority_on)
         _inc_labeled_metric(
             store,
             metric="dispatch_attempt_total",
