@@ -4307,6 +4307,7 @@ def poll_windows_render(self, job_id: str, render_id: str) -> Dict[str, Any]:
                 job_id=job_id,
                 render_id=render_id,
             )
+        pool.release(windows_url)
         raise RuntimeError(f"windows_poll_timeout render_id={render_id}")
 
     try:
@@ -4348,7 +4349,28 @@ def poll_windows_render(self, job_id: str, render_id: str) -> Dict[str, Any]:
                         job_id=job_id,
                         render_id=render_id,
                     )
+                pool.release(windows_url)
                 raise RuntimeError(f"windows_poll_timeout(render_status) render_id={render_id}") from e
+            retries_used = int(getattr(self.request, "retries", 0))
+            max_retries = getattr(self, "max_retries", None)
+            if max_retries is not None and retries_used >= int(max_retries):
+                pool.release(windows_url)
+                _inc_labeled_metric(
+                    store,
+                    metric="render_poll_total",
+                    labels={"node": node, "outcome": "retry_exhausted"},
+                )
+                _observe_stage_duration(store, stage="poll", started_at=started_at, outcome="retry_exhausted")
+                _obs_event(
+                    "poll_retry_exhausted",
+                    job_id=job_id,
+                    node=node,
+                    attempts=retries_used,
+                    render_id=render_id,
+                )
+                raise RuntimeError(
+                    f"windows_poll_retry_exhausted render_id={render_id} retries={retries_used}: {e!r}"
+                ) from e
             backoff = _retry_backoff_s(attempt=attempt, base_s=2.0, cap_s=30.0)
             backoff = min(backoff, max(1.0, remaining))
             _obs_event(

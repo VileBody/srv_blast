@@ -151,8 +151,14 @@ def test_poll_timeout_auto_disables_node(monkeypatch: pytest.MonkeyPatch) -> Non
         },
     )
 
+    released_urls: list[str] = []
+
+    class _TrackingNodePool(_FakeNodePool):
+        def release(self, url: str) -> None:
+            released_urls.append(url)
+
     monkeypatch.setattr(tasks.JobStore, "from_env", classmethod(lambda cls: store))
-    monkeypatch.setattr(tasks, "WindowsNodePool", _FakeNodePool)
+    monkeypatch.setattr(tasks, "WindowsNodePool", _TrackingNodePool)
     monkeypatch.setattr(tasks, "_windows_default_urls", lambda: ["http://win-node:8000"])
     monkeypatch.setattr(tasks, "time", SimpleNamespace(time=lambda: 200.0))
 
@@ -182,6 +188,64 @@ def test_poll_timeout_auto_disables_node(monkeypatch: pytest.MonkeyPatch) -> Non
     assert len(auto_disable_calls) == 1
     assert auto_disable_calls[0]["node_url"] == "http://win-node:8000"
     assert auto_disable_calls[0]["reason"] == "poll_timeout_before_poll"
+    assert released_urls == ["http://win-node:8000"]
+
+
+def test_poll_retry_exhaustion_releases_node_slot(monkeypatch: pytest.MonkeyPatch) -> None:
+    job_id = "job_poll_retry_exhausted"
+    render_id = "rid_missing_after_agent_restart"
+    store = _FakeStore(
+        job_id=job_id,
+        request={"render_poll_queue": "render-poll.orchestrator-1"},
+        result={
+            "dispatch": {"windows_url": "http://win-node:8000"},
+            "poll_started_at": 100.0,
+        },
+    )
+    released_urls: list[str] = []
+
+    class _TrackingNodePool(_FakeNodePool):
+        def release(self, url: str) -> None:
+            released_urls.append(url)
+
+    class _MissingRenderClient:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        def get_render_status(self, _render_id: str):
+            raise urllib.error.HTTPError(
+                "http://win-node:8000/render/missing",
+                404,
+                "Not Found",
+                hdrs=None,
+                fp=None,
+            )
+
+    monkeypatch.setattr(tasks.JobStore, "from_env", classmethod(lambda cls: store))
+    monkeypatch.setattr(tasks, "WindowsNodePool", _TrackingNodePool)
+    monkeypatch.setattr(tasks, "WindowsRenderClient", _MissingRenderClient)
+    monkeypatch.setattr(tasks, "_windows_default_urls", lambda: ["http://win-node:8000"])
+    monkeypatch.setattr(tasks, "_inc_labeled_metric", lambda *args, **kwargs: None)
+    monkeypatch.setattr(tasks, "_observe_stage_duration", lambda *args, **kwargs: None)
+    monkeypatch.setattr(tasks, "_obs_event", lambda *args, **kwargs: None)
+    monkeypatch.setattr(tasks, "time", SimpleNamespace(time=lambda: 110.0))
+    monkeypatch.setattr(
+        tasks,
+        "SETTINGS",
+        SimpleNamespace(
+            windows_node_lease_ttl_s=7200,
+            windows_timeout_s=30.0,
+            windows_poll_timeout_s=300.0,
+            windows_poll_interval_s=2.0,
+            windows_node_disable_on_poll_timeout=True,
+        ),
+    )
+    monkeypatch.setattr(tasks.poll_windows_render, "max_retries", 0, raising=False)
+
+    with pytest.raises(RuntimeError, match="windows_poll_retry_exhausted"):
+        tasks.poll_windows_render.run(job_id, render_id)
+
+    assert released_urls == ["http://win-node:8000"]
 
 
 # ── pool-exhaustion alert: disabling the LAST enabled node must fire an alert ──
