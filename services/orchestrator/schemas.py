@@ -176,6 +176,11 @@ class SendAudioS3Request(BaseModel):
     photo_transition: Optional[
         Literal["flash", "none", "slide", "zoom", "whip"]
     ] = None
+    # Render-slot admission class. Live bot traffic ("interactive") is given the
+    # next free Windows slot ahead of operator batches ("batch"). Left unset the
+    # orchestrator infers it from the idempotency key, so callers that predate
+    # this field keep working.
+    job_priority: Optional[Literal["interactive", "batch"]] = None
     # Internal routing pinning metadata.
     # Public callers should not set these fields directly.
     origin_node: Optional[str] = None

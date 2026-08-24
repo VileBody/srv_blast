@@ -214,7 +214,15 @@ def test_dispatch_waits_without_calling_windows_when_pool_is_saturated(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     job_id = "job_waiting_for_windows_capacity"
-    store = _FakeStore(job_id=job_id, request={"audio_s3_url": "s3://bucket/raw/audio.mp3"})
+    # Batch-class key: live bot traffic waits on a shorter countdown, see
+    # tests/test_render_priority.py.
+    store = _FakeStore(
+        job_id=job_id,
+        request={
+            "audio_s3_url": "s3://bucket/raw/audio.mp3",
+            "idempotency_key": "operator-batch-v1",
+        },
+    )
     _patch_common(monkeypatch, tmp_path=tmp_path, store=store, api_mode="render")
 
     class _SaturatedPool(_FakeNodePool):
