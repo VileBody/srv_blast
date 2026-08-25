@@ -56,6 +56,10 @@ from .windows_node_pool import (
     WindowsNodePoolSaturated,
     parse_windows_urls_csv,
 )
+from .windows_dispatch_priority import (
+    WindowsDispatchPriorityGate,
+    normalize_windows_dispatch_priority,
+)
 from services.generation_runtime.store import resume_state_checksum
 from core.llm_worker_types import (
     LLM_WORKER_TYPE_HYBRID,
@@ -171,6 +175,34 @@ def _windows_node_max_inflight() -> int:
 
 def _windows_dispatch_max_retries() -> int:
     return max(1, int(getattr(SETTINGS, "windows_dispatch_max_retries", 30) or 30))
+
+
+def _windows_dispatch_wait_is_active(store: JobStore, job_id: str) -> bool:
+    st = store.get(job_id)
+    if not st or st.status not in {"NEW", "QUEUED", "RUNNING"}:
+        return False
+    return str(st.stage or "").strip().lower() in {
+        "dispatch",
+        "dispatch_retry",
+        "render_wait_capacity",
+        "render_wait_priority",
+    }
+
+
+def _remove_windows_dispatch_wait(
+    gate: WindowsDispatchPriorityGate,
+    job_id: str,
+) -> None:
+    try:
+        gate.remove(job_id)
+    except Exception as exc:
+        # The persisted job stage is authoritative. A later admission pass will
+        # prune this member once the job is terminal or polling.
+        log.warning(
+            "windows_dispatch_priority_cleanup_failed job_id=%s err=%r",
+            job_id,
+            exc,
+        )
 
 
 def _requested_render_engine(req: Dict[str, Any]) -> str:
@@ -3965,6 +3997,71 @@ def dispatch_to_windows(self, job_id: str) -> Dict[str, Any]:
             "(set WINDOWS_RENDER_API_MODE=render; /jobs sync dispatch is disabled)"
         )
 
+    dispatch_priority = normalize_windows_dispatch_priority(req.get("render_priority"))
+    priority_gate = WindowsDispatchPriorityGate(
+        redis_client=store.r,
+        key_prefix=store.key_prefix,
+    )
+    store.set_status(
+        job_id,
+        "RUNNING",
+        stage="render_wait_priority",
+        result={"render_priority": {"class": dispatch_priority}},
+    )
+    try:
+        priority_gate.register(
+            job_id,
+            priority=dispatch_priority,
+            enqueued_at=float(getattr(st, "created_at", 0.0) or time.time()),
+        )
+        is_turn, turn_job_id, turn_priority = priority_gate.is_turn(
+            job_id,
+            is_active=lambda candidate_job_id: _windows_dispatch_wait_is_active(
+                store, candidate_job_id
+            ),
+        )
+        priority_counts = priority_gate.counts()
+    except Exception as exc:
+        attempt = int(getattr(self.request, "retries", 0)) + 1
+        backoff = _retry_backoff_s(attempt=attempt, base_s=2.0, cap_s=30.0)
+        raise self.retry(
+            countdown=backoff,
+            exc=RuntimeError(f"windows_dispatch_priority_redis_error: {exc!r}"),
+        )
+
+    if not is_turn:
+        attempt = int(getattr(self.request, "retries", 0)) + 1
+        backoff = _retry_backoff_s(attempt=attempt, base_s=5.0, cap_s=120.0)
+        store.set_status(
+            job_id,
+            "QUEUED",
+            stage="render_wait_priority",
+            result={
+                "render_priority": {
+                    "class": dispatch_priority,
+                    "waiting": priority_counts,
+                    "turn_job_id": turn_job_id,
+                    "turn_priority": turn_priority,
+                }
+            },
+        )
+        _obs_event(
+            "render_priority_wait",
+            job_id=job_id,
+            priority=dispatch_priority,
+            turn_priority=turn_priority,
+            backoff_s=backoff,
+            **{f"waiting_{key}": value for key, value in priority_counts.items()},
+        )
+        raise self.retry(
+            countdown=backoff,
+            exc=RuntimeError(
+                "windows_dispatch_priority_wait: "
+                f"priority={dispatch_priority} turn={turn_job_id!r} "
+                f"turn_priority={turn_priority!r} waiting={priority_counts!r}"
+            ),
+        )
+
     while remaining:
         try:
             candidate = pool.reserve_best(remaining)
@@ -4118,6 +4215,7 @@ def dispatch_to_windows(self, job_id: str) -> Dict[str, Any]:
                         errors_by_node=errors_by_node,
                     )
                     if recovered is not None:
+                        _remove_windows_dispatch_wait(priority_gate, job_id)
                         _observe_stage_duration(
                             store,
                             stage="dispatch",
@@ -4168,12 +4266,14 @@ def dispatch_to_windows(self, job_id: str) -> Dict[str, Any]:
                     api_mode="render",
                     errors=len(errors_by_node),
                 )
+                _remove_windows_dispatch_wait(priority_gate, job_id)
                 raise RuntimeError(f"windows_dispatch_failed: all_nodes_failed={errors_by_node!r}") from e
 
             if not is_transient and not is_contract_404:
                 raise
 
     if not selected_url or res is None:
+        _remove_windows_dispatch_wait(priority_gate, job_id)
         _inc_labeled_metric(
             store,
             metric="dispatch_attempt_total",
@@ -4189,6 +4289,7 @@ def dispatch_to_windows(self, job_id: str) -> Dict[str, Any]:
 
     if str(res.get("_api") or "").strip().lower() != "render":
         pool.release(selected_url)
+        _remove_windows_dispatch_wait(priority_gate, job_id)
         _inc_labeled_metric(
             store,
             metric="dispatch_attempt_total",
@@ -4205,6 +4306,7 @@ def dispatch_to_windows(self, job_id: str) -> Dict[str, Any]:
     render_id = str(res.get("render_id") or "").strip()
     if not render_id:
         pool.release(selected_url)
+        _remove_windows_dispatch_wait(priority_gate, job_id)
         _inc_labeled_metric(
             store,
             metric="dispatch_attempt_total",
@@ -4230,7 +4332,6 @@ def dispatch_to_windows(self, job_id: str) -> Dict[str, Any]:
         api_mode="render",
         render_id=render_id,
     )
-
     # Start poll timeout clock from HERE (not from build start).
     store.set_status(
         job_id,
@@ -4250,6 +4351,7 @@ def dispatch_to_windows(self, job_id: str) -> Dict[str, Any]:
     if render_queue:
         kwargs["queue"] = render_queue
     poll_windows_render.apply_async(**kwargs)
+    _remove_windows_dispatch_wait(priority_gate, job_id)
     return {"ok": True, "mode": "async_render", "render_id": render_id, "windows": res}
 
 

@@ -69,6 +69,24 @@ class _FakeNodePool:
         return None
 
 
+class _PassPriorityGate:
+    def __init__(self, *args, **kwargs) -> None:
+        _ = (args, kwargs)
+
+    def register(self, *args, **kwargs) -> None:
+        _ = (args, kwargs)
+
+    def is_turn(self, job_id: str, **kwargs):
+        _ = kwargs
+        return True, str(job_id), "live"
+
+    def counts(self):
+        return {"live": 1, "bulk": 0}
+
+    def remove(self, _job_id: str) -> None:
+        return None
+
+
 def _make_paths(tmp_path: Path) -> _FakePaths:
     out_dir = tmp_path / "output"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -89,6 +107,7 @@ def test_dispatch_auto_disables_node_on_transient_streak(
 
     monkeypatch.setattr(tasks.JobStore, "from_env", classmethod(lambda cls: store))
     monkeypatch.setattr(tasks, "WindowsNodePool", _FakeNodePool)
+    monkeypatch.setattr(tasks, "WindowsDispatchPriorityGate", _PassPriorityGate)
     monkeypatch.setattr(tasks, "make_job_paths", lambda **kwargs: paths)
     monkeypatch.setattr(tasks, "_windows_default_urls", lambda: ["http://win-node:8000"])
     monkeypatch.setattr(tasks, "build_windows_job_payload", lambda **kwargs: {"job_id": kwargs["job_id"]})

@@ -64,6 +64,24 @@ class _FakeNodePool:
         return None
 
 
+class _PassPriorityGate:
+    def __init__(self, *args, **kwargs) -> None:
+        _ = (args, kwargs)
+
+    def register(self, *args, **kwargs) -> None:
+        _ = (args, kwargs)
+
+    def is_turn(self, job_id: str, **kwargs):
+        _ = kwargs
+        return True, str(job_id), "live"
+
+    def counts(self):
+        return {"live": 1, "bulk": 0}
+
+    def remove(self, _job_id: str) -> None:
+        return None
+
+
 def _make_paths(tmp_path: Path) -> _FakePaths:
     out_dir = tmp_path / "output"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -84,6 +102,7 @@ def _patch_common(
     paths = _make_paths(tmp_path)
     monkeypatch.setattr(tasks.JobStore, "from_env", classmethod(lambda cls: store))
     monkeypatch.setattr(tasks, "WindowsNodePool", _FakeNodePool)
+    monkeypatch.setattr(tasks, "WindowsDispatchPriorityGate", _PassPriorityGate)
     monkeypatch.setattr(tasks, "make_job_paths", lambda **kwargs: paths)
     monkeypatch.setattr(tasks, "_windows_default_urls", lambda: ["http://win-node:8000"])
     monkeypatch.setattr(tasks, "build_windows_job_payload", lambda **kwargs: {"job_id": kwargs["job_id"]})
@@ -256,4 +275,54 @@ def test_dispatch_waits_without_calling_windows_when_pool_is_saturated(
     assert st.result["windows_capacity"] == {
         "inflight": {"http://win-node:8000": 2},
         "max_inflight_per_node": 2,
+    }
+
+
+def test_bulk_dispatch_waits_while_a_live_job_has_priority(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    job_id = "bulk_job_waiting_for_live"
+    store = _FakeStore(
+        job_id=job_id,
+        request={
+            "audio_s3_url": "s3://bucket/raw/audio.mp3",
+            "render_priority": "bulk",
+        },
+    )
+    _patch_common(monkeypatch, tmp_path=tmp_path, store=store, api_mode="render")
+
+    class _BlockedPriorityGate(_PassPriorityGate):
+        def is_turn(self, job_id: str, **kwargs):
+            _ = (job_id, kwargs)
+            return False, "live_job", "live"
+
+        def counts(self):
+            return {"live": 1, "bulk": 1}
+
+    class _NeverReservePool(_FakeNodePool):
+        def reserve_best(self, remaining):
+            raise AssertionError(f"bulk job must not reserve Windows: {remaining!r}")
+
+    monkeypatch.setattr(tasks, "WindowsDispatchPriorityGate", _BlockedPriorityGate)
+    monkeypatch.setattr(tasks, "WindowsNodePool", _NeverReservePool)
+
+    class _RetryRaised(RuntimeError):
+        pass
+
+    def _retry(**kwargs):
+        raise _RetryRaised(str(kwargs.get("exc")))
+
+    monkeypatch.setattr(tasks.dispatch_to_windows, "retry", _retry)
+
+    with pytest.raises(_RetryRaised, match="windows_dispatch_priority_wait"):
+        tasks.dispatch_to_windows.run(job_id)
+
+    st = store.get(job_id)
+    assert st.status == "QUEUED"
+    assert st.stage == "render_wait_priority"
+    assert st.result["render_priority"] == {
+        "class": "bulk",
+        "waiting": {"live": 1, "bulk": 1},
+        "turn_job_id": "live_job",
+        "turn_priority": "live",
     }

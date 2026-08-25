@@ -10,6 +10,7 @@ from core.subtitles_mode import SUBTITLES_MODE_LEGACY_BLOCKS, SubtitlesMode
 
 LLMWorkerTypeLiteral = Literal["sdk", "openrouter", "hybrid", "vertex_sdk_mix"]
 RenderEngineLiteral = Literal["ae", "rust-gen"]
+RenderPriorityLiteral = Literal["live", "bulk"]
 
 
 JobStatus = Literal["NEW", "QUEUED", "RUNNING", "SUCCEEDED", "FAILED"]
@@ -29,6 +30,9 @@ class SendAudioS3Request(BaseModel):
     # Explicit renderer choice. "ae" stays the production default while the
     # native worker is rolled out behind the Rust Gen canary controls.
     render_engine: RenderEngineLiteral = "ae"
+    # Live bot traffic must be able to pass operator backfills waiting for the
+    # single Windows render slot. Regular API submissions are live by default.
+    render_priority: RenderPriorityLiteral = "live"
     llm_worker_type: Optional[LLMWorkerTypeLiteral] = None
     idempotency_key: Optional[str] = Field(default=None, min_length=1)
     lyrics_text: str = ""
@@ -382,6 +386,7 @@ class KillJobResponse(BaseModel):
 class RequeueJobRequest(BaseModel):
     reason: str = Field(default="admin_requeue_stuck", min_length=1, max_length=500)
     llm_worker_type: str = Field(default="", max_length=50)
+    render_priority: RenderPriorityLiteral = "bulk"
 
 
 class RequeueJobResponse(BaseModel):

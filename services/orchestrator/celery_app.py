@@ -87,6 +87,22 @@ class JobBoundTask(Task):
             # Once SUCCEEDED, do not let retries move it back to RUNNING.
             if st and st.status == "SUCCEEDED":
                 return
+            if "windows_dispatch_priority_wait" in error:
+                store.set_status(
+                    job_id,
+                    "QUEUED",
+                    stage="render_wait_priority",
+                    error=error,
+                )
+                return
+            if "windows_node_pool_saturated" in error:
+                store.set_status(
+                    job_id,
+                    "QUEUED",
+                    stage="render_wait_capacity",
+                    error=error,
+                )
+                return
             store.set_status(job_id, "RUNNING", stage=f"{self._stage_name()}_retry", error=error)
         except Exception:
             pass

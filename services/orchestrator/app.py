@@ -1143,6 +1143,7 @@ def create_app() -> FastAPI:
                     "build_queue": pinned_build_queue,
                     "render_queue": pinned_render_queue,
                     "render_poll_queue": pinned_render_poll_queue,
+                    "render_priority": payload.render_priority,
                 },
             )
             result_payload: Dict[str, Any] = {
@@ -1156,6 +1157,7 @@ def create_app() -> FastAPI:
                 "admin_requeue_attempt": requeue_attempt,
                 "admin_requeue_reason": reason,
                 "admin_requeue_revoked_task_ids": revoked_task_ids,
+                "render_priority": payload.render_priority,
             }
             if selected_worker:
                 result_payload["llm_worker_type"] = selected_worker
