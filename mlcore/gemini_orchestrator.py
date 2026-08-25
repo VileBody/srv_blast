@@ -5149,6 +5149,62 @@ def build_all_via_gemini_one_call(
             )
             f1_block = None
 
+    # ── F6 «Видео»: pre-drop прогрев из видео юзера + то же визуал-комбо, что
+    #    у F1. Env F6_VIDEO_URL — S3/HTTP ссылка на нормализованный (h264+aac)
+    #    mp4; F6_VIDEO_WIDTH/HEIGHT/DURATION — метаданные ffprobe с бота (нужны,
+    #    чтобы запечь cover-скейл числами и подрезать окно по факту). drop_time
+    #    COMP-relative (= USER_DROP_T − clip_start). Любая ошибка → лог + рендер
+    #    БЕЗ f6 (ролик выйдет обычным, а не упадёт).
+    f6_block = None
+    _f6_video = (os.environ.get("F6_VIDEO_URL") or "").strip()
+    if _f6_video:
+        try:
+            _cs = _hook_clip_start
+            _udt = (os.environ.get("USER_DROP_T") or "").strip()
+            if not _udt:
+                raise RuntimeError("F6 video requires USER_DROP_T (drop anchor)")
+            _drop_rel_f6 = float(_udt) - _cs
+            # Нужно место под окно [0.5, drop−0.5] + реальный post-drop.
+            if not (_drop_rel_f6 > 1.0):
+                raise RuntimeError(
+                    f"F6 drop_rel must be > 1.0 (USER_DROP_T={_udt}, clip_start={_cs})"
+                )
+            _f6_w = int(float((os.environ.get("F6_VIDEO_WIDTH") or "0").strip() or 0))
+            _f6_h = int(float((os.environ.get("F6_VIDEO_HEIGHT") or "0").strip() or 0))
+            if _f6_w <= 0 or _f6_h <= 0:
+                raise RuntimeError(
+                    f"F6 requires F6_VIDEO_WIDTH/HEIGHT from ffprobe (got {_f6_w}x{_f6_h})"
+                )
+            _f6_dur_raw = (os.environ.get("F6_VIDEO_DURATION") or "").strip()
+            _f6_dur = float(_f6_dur_raw) if _f6_dur_raw else None
+            if _f6_dur is not None and _f6_dur <= 0.0:
+                raise RuntimeError(f"F6_VIDEO_DURATION must be > 0 (got {_f6_dur_raw!r})")
+            _seed_env_f6 = (os.environ.get("F2_SEED") or "").strip()
+            if _seed_env_f6:
+                _f6_seed = int(_seed_env_f6) & 0xFFFFFFFF
+            else:
+                _seed_src_f6 = os.environ.get("JOB_ID") or out_dir.name
+                _f6_seed = zlib.crc32(("f6:" + str(_seed_src_f6)).encode("utf-8")) & 0xFFFFFFFF
+            f6_block = {
+                "video_url": _f6_video,
+                "drop_time": _drop_rel_f6,
+                "seed": int(_f6_seed),
+                "source_width": _f6_w,
+                "source_height": _f6_h,
+                "duration": _f6_dur,
+                "has_audio": (os.environ.get("F6_VIDEO_HAS_AUDIO") or "1").strip() != "0",
+            }
+            logger.info(
+                "f6.video block url=%s drop_rel=%.3f seed=%d src=%dx%d dur=%s",
+                _f6_video[:80], _drop_rel_f6, _f6_seed, _f6_w, _f6_h, _f6_dur,
+            )
+        except Exception:
+            logger.exception(
+                "f6.video FAILED — render without f6 (job=%s)",
+                os.environ.get("JOB_ID") or out_dir.name,
+            )
+            f6_block = None
+
     # ── 5th-template JSX subtitles (trendy/brat): raw ASR word-timings →
     #    injected AE generator (NO LLM subtitle stage). Comp-relative to the
     #    render clip window (_hook_clip_start). brat uses the stage2 `bpm`.
@@ -5201,6 +5257,23 @@ def build_all_via_gemini_one_call(
                     "jsx_subtitles voice-spliced window=%.2f..%.2f phrase=%r",
                     _voice_win[0], _voice_win[1], _voice_win[2][:40],
                 )
+            # F6 «Видео»: кадр в pre-drop окне занят чужой вырезкой — слова
+            # трека там не рисуем (в text_layers-режимах это делает
+            # clear_track_subtitles_under_video, здесь — по word-timings).
+            if f6_block:
+                from app.jsx_subtitles_builder import clear_words_in_window
+                from mlcore.hooks.f6_video.inject import f6_video_window
+                _f6_in, _f6_out = f6_video_window(
+                    float(f6_block["drop_time"]), f6_block.get("duration"),
+                )
+                _before = len(_word_timings)
+                _word_timings = clear_words_in_window(
+                    _word_timings, window_start=_f6_in, window_end=_f6_out,
+                )
+                logger.info(
+                    "jsx_subtitles f6-cleared window=%.2f..%.2f words %d→%d",
+                    _f6_in, _f6_out, _before, len(_word_timings),
+                )
             jsx_subtitles_block = {
                 "mode": subtitles_mode,
                 "word_timings": _word_timings,
@@ -5229,6 +5302,7 @@ def build_all_via_gemini_one_call(
         f3_block=f3_block,
         f2_block=f2_block,
         f1_block=f1_block,
+        f6_block=f6_block,
         frame_block=frame_block,
         jsx_subtitles_block=jsx_subtitles_block,
     )

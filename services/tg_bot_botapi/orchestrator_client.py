@@ -6,6 +6,30 @@ import httpx
 from core.subtitles_mode import SUBTITLES_MODE_LEGACY_BLOCKS
 
 
+class OrchestratorHTTPError(RuntimeError):
+    """HTTP-ошибка оркестратора с сохранённым кодом.
+
+    Код нужен вызывающей стороне, чтобы отличить «фича выключена» (503) от
+    «поправь ссылку» (422) и от «источник не отдал» (502) — тексты для юзера
+    в этих случаях разные.
+    """
+
+    def __init__(self, status_code: int, detail: str):
+        super().__init__(f"orchestrator returned {status_code}: {detail}")
+        self.status_code = int(status_code)
+        self.detail = str(detail)
+
+
+def _detail_of(resp) -> str:
+    try:
+        body = resp.json()
+    except Exception:
+        return (resp.text or "").strip()[:400]
+    if isinstance(body, dict) and body.get("detail"):
+        return str(body["detail"])
+    return str(body)[:400]
+
+
 class OrchestratorClient:
     def __init__(self, *, base_url: str, timeout_s: float = 60.0):
         self._base_url = (base_url or "").rstrip("/")
@@ -67,6 +91,11 @@ class OrchestratorClient:
         frame_id: str | None = None,
         f1_sound_url: str | None = None,
         f1_sound_text: str | None = None,
+        f6_video_url: str | None = None,
+        f6_video_width: int | None = None,
+        f6_video_height: int | None = None,
+        f6_video_duration: float | None = None,
+        f6_video_has_audio: bool = True,
         photo_style: str | None = None,
         photo_transition: str | None = None,
         subtitle_color_hex: str | None = None,
@@ -122,6 +151,11 @@ class OrchestratorClient:
             "frame_id": (str(frame_id).strip() or None) if frame_id is not None else None,
             "f1_sound_url": (str(f1_sound_url).strip() or None) if f1_sound_url is not None else None,
             "f1_sound_text": (str(f1_sound_text).strip() or None) if f1_sound_text is not None else None,
+            "f6_video_url": (str(f6_video_url).strip() or None) if f6_video_url is not None else None,
+            "f6_video_width": int(f6_video_width) if f6_video_width else None,
+            "f6_video_height": int(f6_video_height) if f6_video_height else None,
+            "f6_video_duration": float(f6_video_duration) if f6_video_duration else None,
+            "f6_video_has_audio": bool(f6_video_has_audio),
             "photo_style": (str(photo_style).strip() or None) if photo_style is not None else None,
             "photo_transition": (str(photo_transition).strip() or None) if photo_transition is not None else None,
             "subtitle_color_hex": (str(subtitle_color_hex).strip() or None) if subtitle_color_hex is not None else None,
@@ -193,6 +227,37 @@ class OrchestratorClient:
         out = resp.json()
         if not isinstance(out, dict):
             raise RuntimeError(f"orchestrator /hook/analyze returned non-object: {out!r}")
+        return out
+
+    async def fetch_external_video(
+        self,
+        *,
+        url: str,
+        start_sec: float,
+        end_sec: float,
+        timeout_s: float = 300.0,
+    ) -> Dict[str, Any]:
+        """F6 «Прогрев видео», ветка ссылки: попросить оркестратор вытащить
+        отрезок с YouTube и вернуть {video_url, width, height, duration_sec,
+        has_audio, trimmed}. yt-dlp и сетевой доступ к источнику живут там —
+        слим-образ бота их не тянет.
+
+        Ошибки не глотаем: 503 = ветка выключена флагом, 422 = юзеру есть что
+        поправить в ссылке/таймингах, 502 = источник не отдал видео.
+        """
+        payload = {
+            "url": str(url),
+            "start_sec": float(start_sec),
+            "end_sec": float(end_sec),
+        }
+        resp = await self._client.post(
+            f"{self._base_url}/media/fetch_external", json=payload, timeout=float(timeout_s),
+        )
+        if resp.status_code >= 300:
+            raise OrchestratorHTTPError(int(resp.status_code), _detail_of(resp))
+        out = resp.json()
+        if not isinstance(out, dict):
+            raise RuntimeError(f"orchestrator /media/fetch_external returned non-object: {out!r}")
         return out
 
     async def get_job(self, job_id: str) -> Dict[str, Any]:

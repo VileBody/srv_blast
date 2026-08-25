@@ -48,8 +48,14 @@ STAGE_WAIT_EFFECT_EXTRA_FULL = "WAIT_EFFECT_EXTRA_FULL"
 STAGE_WAIT_EFFECT_EXTEND = "WAIT_EFFECT_EXTEND"
 # F2 «Объект» — single sub-picker (5 shape buttons).
 STAGE_WAIT_F2_SHAPE = "WAIT_F2_SHAPE"
+# «Прогрев» — развилка: звук (F1) или видео (F6) в окне до дропа.
+STAGE_WAIT_WARMUP_KIND = "WAIT_WARMUP_KIND"
 # F1 «Звук» — wait for the user to upload a sound file for the pre-drop window.
 STAGE_WAIT_F1_SOUND = "WAIT_F1_SOUND"
+# F6 «Видео» — wait for the user to upload the warm-up clip for the same window.
+STAGE_WAIT_F6_VIDEO = "WAIT_F6_VIDEO"
+# F6 «Видео», ветка ссылки — ждём тайминги нужного отрезка ролика.
+STAGE_WAIT_F6_YT_RANGE = "WAIT_F6_YT_RANGE"
 # F1 «Звук» — wait for optional subtitle text for the uploaded sound (or skip).
 STAGE_WAIT_F1_TEXT = "WAIT_F1_TEXT"
 # Photo flow (bg_mode == "photo", behind PHOTO_FLOW_ENABLED). Same slot as the
@@ -162,6 +168,21 @@ class ChatState(BaseModel):
     f1_sound_url: str = ""
     # F1 «Звук» optional subtitle text (what the sound "says"). "" => no subtitle.
     f1_sound_text: str = ""
+    # «Прогрев» — что именно юзер кладёт в окно до дропа: "" (ещё не спросили),
+    # "sound" (F1, mp3) или "video" (F6, mp4). Категория хука в обоих случаях
+    # остаётся "sound" — это одна кнопка меню с двумя рукавами.
+    warmup_kind: str = ""        # "" | sound | video
+    # F6 «Видео»: S3/HTTP URL НОРМАЛИЗОВАННОЙ (h264+aac) вырезки + её фактические
+    # параметры с ffprobe. Размеры нужны build-стороне, чтобы запечь cover-скейл
+    # числами; длительность — чтобы подрезать окно и сдвинуть clip_start. "" => no F6.
+    f6_video_url: str = ""
+    f6_video_width: int = 0
+    f6_video_height: int = 0
+    f6_video_duration: float = 0.0
+    # Есть ли звук в вырезке. Немая (gif) => трек не глушим.
+    f6_video_has_audio: bool = True
+    # Ссылка на источник, пока ждём тайминги отрезка. "" => грузили файлом.
+    f6_source_url: str = ""
     # Customization colors (hex like "#FF2D55"). "" => default.
     subtitle_color_hex: str = ""   # subtitle text fill (all modes)
     accent_color_hex: str = ""     # F2 shape + focus/accent word color

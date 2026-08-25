@@ -128,6 +128,21 @@ class SendAudioS3Request(BaseModel):
     # "says"). When present, the orchestrator renders it as a track-type subtitle
     # over the sound window (same machinery as F5). Empty/None => no subtitle.
     f1_sound_text: Optional[str] = Field(default=None, max_length=2000)
+    # F6 «Видео» packaged-combo: S3/HTTP ссылка на НОРМАЛИЗОВАННЫЙ (h264+aac)
+    # mp4 — прогрев, который играет во весь кадр в pre-drop окне [0.5, drop−0.5]
+    # со своим звуком; трек под ним приглушается. Визуал — то же комбо, что у F1.
+    # Требует user_drop_t и размеров исходника (ffprobe на боте): по ним
+    # запекается cover-скейл, потому что выражения в headless aerender ненадёжны.
+    # None => без F6.
+    f6_video_url: Optional[str] = Field(default=None, max_length=2048)
+    f6_video_width: Optional[int] = Field(default=None, gt=0, le=8192)
+    f6_video_height: Optional[int] = Field(default=None, gt=0, le=8192)
+    # Фактическая длительность вырезки (секунды) — окно подрезается по ней,
+    # чтобы не остался замороженный хвост, если бот отдал окно шире видео.
+    f6_video_duration: Optional[float] = Field(default=None, gt=0.0, le=600.0)
+    # Есть ли в вырезке звуковая дорожка. False (немой gif/animation) => трек
+    # НЕ приглушается, иначе вместо прогрева получится тишина.
+    f6_video_has_audio: bool = True
     # Customization colors (hex '#RRGGBB'). subtitle = text fill (all modes);
     # accent = F2 shape + focus/accent word. None/empty => script default.
     subtitle_color_hex: Optional[str] = Field(default=None, pattern=r"^#?[0-9a-fA-F]{6}$")
@@ -230,6 +245,15 @@ class SendAudioS3Request(BaseModel):
         # F1 combo pivots on the drop too (audio window [0.5, drop−0.5] + combo).
         if self.f1_sound_url and self.user_drop_t is None:
             raise ValueError("f1_sound_url requires user_drop_t (drop anchor) to be set")
+        # F6 pivots on the drop as well, and its cover scale is baked from the
+        # source size — without both the block cannot be built.
+        if self.f6_video_url:
+            if self.user_drop_t is None:
+                raise ValueError("f6_video_url requires user_drop_t (drop anchor) to be set")
+            if not (self.f6_video_width and self.f6_video_height):
+                raise ValueError(
+                    "f6_video_url requires f6_video_width and f6_video_height (ffprobe)"
+                )
         # Every hook overlay is authored against a 1080x1920 frame: the F4 device
         # scripts size their cover solid off the comp but position their artwork
         # in absolute pixels, the F2 shapes and F3 hook_light carry baked
@@ -242,6 +266,7 @@ class SendAudioS3Request(BaseModel):
                 name
                 for name, value in (
                     ("f1_sound_url", self.f1_sound_url),
+                    ("f6_video_url", self.f6_video_url),
                     ("f2_shape", self.f2_shape),
                     ("effect_hook", self.effect_hook),
                     ("f4_device", self.f4_device),
@@ -448,6 +473,35 @@ class HookDropCandidate(BaseModel):
 class HookAnalyzeResponse(BaseModel):
     bpm: float
     drop_candidates: List[HookDropCandidate] = Field(default_factory=list)
+
+
+class FetchExternalVideoRequest(BaseModel):
+    """Запрос на вырезку по ссылке (YouTube) для F6-прогрева.
+
+    Границы отрезка задаёт юзер в боте; окно валидируется и здесь, и в
+    mlcore.media.external_video — сеть дорогая, отказать лучше до неё.
+    """
+
+    url: str = Field(min_length=1, max_length=2048)
+    start_sec: float = Field(ge=0.0, le=86400.0)
+    end_sec: float = Field(gt=0.0, le=86400.0)
+
+    @model_validator(mode="after")
+    def _validate_window(self) -> "FetchExternalVideoRequest":
+        if float(self.end_sec) <= float(self.start_sec):
+            raise ValueError("end_sec must be > start_sec")
+        return self
+
+
+class FetchExternalVideoResponse(BaseModel):
+    """Готовая вырезка: S3-URL + то, что build-стороне нужно для cover-скейла."""
+
+    video_url: str
+    width: int
+    height: int
+    duration_sec: float
+    has_audio: bool
+    trimmed: bool = False
 
 
 class RankBucketsRequest(BaseModel):

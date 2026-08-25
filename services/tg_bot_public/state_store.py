@@ -54,8 +54,14 @@ STAGE_WAIT_VISUAL_TRANSITION = "WAIT_VISUAL_TRANSITION"
 STAGE_WAIT_VISUAL_STYLE = "WAIT_VISUAL_STYLE"
 # F2 «Объект» single sub-picker (5 shape buttons). Mirror of tg_bot_botapi.
 STAGE_WAIT_F2_SHAPE = "WAIT_F2_SHAPE"
+# «Прогрев» — развилка звук/видео. Mirror of tg_bot_botapi.
+STAGE_WAIT_WARMUP_KIND = "WAIT_WARMUP_KIND"
 # F1 «Звук» — wait for user-uploaded pre-drop sound. Mirror of tg_bot_botapi.
 STAGE_WAIT_F1_SOUND = "WAIT_F1_SOUND"
+# F6 «Видео» — wait for the user-uploaded warm-up clip. Mirror of tg_bot_botapi.
+STAGE_WAIT_F6_VIDEO = "WAIT_F6_VIDEO"
+# F6 «Видео», ветка ссылки — тайминги отрезка. Mirror of tg_bot_botapi.
+STAGE_WAIT_F6_YT_RANGE = "WAIT_F6_YT_RANGE"
 # F1 «Звук» — wait for optional subtitle text (or skip). Mirror of tg_bot_botapi.
 STAGE_WAIT_F1_TEXT = "WAIT_F1_TEXT"
 # Photo flow (bg_mode == "photo", behind PHOTO_FLOW_ENABLED). Same slot as the
@@ -226,6 +232,19 @@ class ChatState(BaseModel):
     f1_sound_url: str = ""
     # F1 «Звук»: optional subtitle text for the sound. Mirror of tg_bot_botapi.
     f1_sound_text: str = ""
+    # «Прогрев»: что юзер кладёт в окно до дропа — "sound" (F1) или "video"
+    # (F6). Категория хука в обоих случаях "sound". Mirror of tg_bot_botapi.
+    warmup_kind: str = ""
+    # F6 «Видео»: URL нормализованной вырезки + параметры ffprobe (размеры для
+    # cover-скейла, длительность для окна). Mirror of tg_bot_botapi.
+    f6_video_url: str = ""
+    f6_video_width: int = 0
+    f6_video_height: int = 0
+    f6_video_duration: float = 0.0
+    # Есть ли звук в вырезке. Немая (gif) => трек не глушим.
+    f6_video_has_audio: bool = True
+    # Ссылка на источник, пока ждём тайминги отрезка. "" => грузили файлом.
+    f6_source_url: str = ""
     # Customization colors (hex). Mirror of tg_bot_botapi.
     subtitle_color_hex: str = ""
     accent_color_hex: str = ""

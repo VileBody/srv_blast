@@ -862,6 +862,7 @@ def render_all_steps(
     f3_block: Dict[str, Any] | None = None,
     f2_block: Dict[str, Any] | None = None,
     f1_block: Dict[str, Any] | None = None,
+    f6_block: Dict[str, Any] | None = None,
     frame_block: Dict[str, Any] | None = None,
     jsx_subtitles_block: Dict[str, Any] | None = None,
 ) -> Dict[str, Path]:
@@ -1112,6 +1113,15 @@ def render_all_steps(
     # -------------------------
     if f1_block:
         full_edit_obj["f1"] = f1_block
+
+    # -------------------------
+    # F6 «Видео» combo: pre-drop прогрев из видео юзера + визуал как у F1.
+    # Блок {video_url, drop_time, seed, source_width, source_height, duration}.
+    # project_builder кладёт footage-слой со звуком, глушит трек и вписывает
+    # визуальный JSX. Нет блока → full_edit_config без изменений (обычный job).
+    # -------------------------
+    if f6_block:
+        full_edit_obj["f6"] = f6_block
 
     # -------------------------
     # 5th-template JSX subtitles (trendy/brat): {mode, word_timings, bpm}.

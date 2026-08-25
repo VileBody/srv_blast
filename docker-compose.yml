@@ -38,6 +38,18 @@ services:
       MKL_NUM_THREADS: "1"
       NUMBA_NUM_THREADS: "1"
       NUMBA_THREADING_LAYER: workqueue
+
+      # F6 «Прогрев видео», ветка ссылки на YouTube (/media/fetch_external).
+      # Выключено по умолчанию: без прокси датацентровый IP ловит бот-детект
+      # сразу же, и юзер получал бы только ошибки.
+      EXTERNAL_VIDEO_SOURCE_ENABLED: ${EXTERNAL_VIDEO_SOURCE_ENABLED:-0}
+      # Резидентный прокси. Без него ветку включать бессмысленно.
+      YTDLP_PROXY: ${YTDLP_PROXY:-}
+      # Сайдкар-генератор PO-токенов (см. сервис ytdlp-pot ниже). С 2025 YouTube
+      # требует proof-of-origin: без токена — 403 или пустой список форматов.
+      YTDLP_POT_BASE_URL: ${YTDLP_POT_BASE_URL:-http://ytdlp-pot:4416}
+      YTDLP_COOKIES_FILE: ${YTDLP_COOKIES_FILE:-}
+      YTDLP_TIMEOUT_S: ${YTDLP_TIMEOUT_S:-300}
     volumes:
       - ./work:/app/work
       - ./output:/app/output
@@ -337,6 +349,13 @@ services:
       # Шаг «Рамка». В команде включён сразу; в public — после заливки PNG
       # на S3 и смоука (FRAME_FLOW_ENABLED_PUBLIC=1), выключается без деплоя.
       FRAME_FLOW_ENABLED: ${FRAME_FLOW_ENABLED_TEAM:-1}
+      # Видео-рукав «Прогрева» (F6). В команде — на смоук; в public включаем
+      # после него (WARMUP_VIDEO_ENABLED_PUBLIC=1), без деплоя.
+      WARMUP_VIDEO_ENABLED: ${WARMUP_VIDEO_ENABLED_TEAM:-1}
+      # F6 «Прогрев видео», ветка ссылки на YouTube. Здесь флаг решает только,
+      # предлагать ли юзеру ссылку; реальный гейт — тот же env у оркестратора,
+      # где живёт yt-dlp. Держать их врозь = обещать в UI то, чего нет.
+      EXTERNAL_VIDEO_SOURCE_ENABLED: ${EXTERNAL_VIDEO_SOURCE_ENABLED:-0}
       TG_BOT_API_ENV: ${TG_BOT_API_ENV:-prod}
       TG_TEST_BOT_TOKEN: ${TG_TEST_BOT_TOKEN:-}
       TG_TEST_CREDITS_DB_URL: ${TG_TEST_CREDITS_DB_URL:-}
@@ -368,6 +387,10 @@ services:
       # Рамки: пока PNG не залиты в fx_assets/frames/, шаг был бы виден, а
       # рамка в ролик не попадала бы — держим OFF до заливки и смоука.
       FRAME_FLOW_ENABLED: ${FRAME_FLOW_ENABLED_PUBLIC:-0}
+      WARMUP_VIDEO_ENABLED: ${WARMUP_VIDEO_ENABLED_PUBLIC:-0}
+      # F6, ветка ссылки на YouTube. В public включаем ПОСЛЕ прокси и смоука
+      # в команде: без прокси юзер получит только ошибку.
+      EXTERNAL_VIDEO_SOURCE_ENABLED: ${EXTERNAL_VIDEO_SOURCE_ENABLED_PUBLIC:-0}
       TG_BOT_API_ENV: ${TG_BOT_API_ENV:-prod}
       TG_BOT_TOKEN: ${TG_BOT_PUBLIC_TOKEN}
       TG_BOT_USERNAME: ${TG_BOT_USERNAME:-blast808bot}
@@ -522,6 +545,18 @@ services:
       - ./finance_bot_data:/app/data
     ports:
       - "127.0.0.1:18082:8080"
+    restart: unless-stopped
+
+  # Генератор PO-токенов для yt-dlp (F6, ветка ссылки на YouTube). Отдельный
+  # контейнер, потому что токены считает JS-рантайм botguard — тащить его в
+  # питоновский образ незачем. Профиль: поднимается только когда ветка нужна.
+  ytdlp-pot:
+    image: brainicism/bgutil-ytdlp-pot-provider:latest
+    container_name: ytdlp-pot
+    init: true
+    profiles: ["youtube"]
+    expose:
+      - "4416"
     restart: unless-stopped
 
   minio:

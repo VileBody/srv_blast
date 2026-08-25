@@ -22,6 +22,11 @@ BASE = {
 
 HOOKS = [
     {"f1_sound_url": "s3://bucket/hook.mp3"},
+    {
+        "f6_video_url": "s3://bucket/hook.mp4",
+        "f6_video_width": 1080,
+        "f6_video_height": 1920,
+    },
     {"f2_shape": "rhomb"},
     {"effect_hook": "hook_light"},
     {"f4_device": "tap"},

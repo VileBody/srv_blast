@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import uuid
 import time
 from typing import Any, Dict
 
@@ -45,6 +46,8 @@ from .schemas import (
     AlignmentSmokeRequest,
     ActiveJobsResponse,
     ActiveJobSummary,
+    FetchExternalVideoRequest,
+    FetchExternalVideoResponse,
     HookAnalyzeRequest,
     HookAnalyzeResponse,
     JobState,
@@ -952,6 +955,100 @@ def create_app() -> FastAPI:
             for c in (result.drop_candidates or [])[:3]
         ]
         return HookAnalyzeResponse(bpm=float(result.bpm), drop_candidates=cands)
+
+    @app.post("/media/fetch_external", response_model=FetchExternalVideoResponse)
+    def fetch_external_video(req: FetchExternalVideoRequest) -> FetchExternalVideoResponse:
+        """Достать отрезок по ссылке, нормализовать под AE и положить в S3.
+
+        Живёт здесь, а не в боте, по двум причинам: у ботов слим-образ без
+        yt-dlp и без тяжёлого ffmpeg-профиля, и держать сетевой доступ к
+        YouTube (прокси, токен-провайдер) в одном месте гораздо дешевле, чем в
+        двух ботах сразу.
+        """
+        import tempfile
+
+        from mlcore.media.external_video import (
+            ExternalClipRequest,
+            ExternalFetchBlocked,
+            ExternalFetchError,
+            external_source_enabled,
+            video_id,
+        )
+        from mlcore.media.video_normalize import normalize_video_for_ae
+
+        if not external_source_enabled():
+            raise HTTPException(
+                status_code=503,
+                detail="external video source is disabled (EXTERNAL_VIDEO_SOURCE_ENABLED)",
+            )
+
+        bucket = str(os.environ.get("S3_BUCKET_RAW_AUDIO") or "").strip()
+        if not bucket:
+            raise HTTPException(status_code=503, detail="S3_BUCKET_RAW_AUDIO is empty")
+        prefix = str(os.environ.get("S3_RAW_AUDIO_PREFIX") or "raw_audio").strip("/")
+
+        clip_req = ExternalClipRequest(
+            url=str(req.url).strip(),
+            start_sec=float(req.start_sec),
+            end_sec=float(req.end_sec),
+        )
+
+        from mlcore.media.external_video import fetch_section, validate_request
+
+        try:
+            validate_request(clip_req)
+        except ExternalFetchError as e:
+            # Кривая ссылка/окно — это ошибка юзера, а не сбой: 422, чтобы бот
+            # показал текст как есть и не ретраил.
+            raise HTTPException(status_code=422, detail=str(e))
+
+        try:
+            from src.storage.s3 import upload_file_to_s3
+
+            with tempfile.TemporaryDirectory(prefix="ext_video_") as td:
+                raw = fetch_section(clip_req, work_dir=Path(td))
+                prepared = normalize_video_for_ae(
+                    src=raw,
+                    work_dir=Path(td) / "prepared",
+                    ffmpeg_bin=str(os.environ.get("FFMPEG_BIN") or "ffmpeg"),
+                    ffprobe_bin=str(os.environ.get("FFPROBE_BIN") or "ffprobe"),
+                )
+                key = (
+                    f"{prefix}/external_video/{video_id(clip_req.url) or 'clip'}_"
+                    f"{uuid.uuid4().hex[:10]}.mp4"
+                )
+                upload_file_to_s3(
+                    bucket=bucket,
+                    key=key,
+                    path=prepared.output_path,
+                    content_type="video/mp4",
+                )
+        except ExternalFetchBlocked as e:
+            # Отдельный код: это не «ссылка плохая», а «нас забанили» — повод
+            # для алерта и для переключения на managed-провайдера.
+            log.warning("fetch_external blocked url=%s err=%s", clip_req.url[:80], e)
+            raise HTTPException(status_code=502, detail=str(e))
+        except ExternalFetchError as e:
+            log.warning("fetch_external failed url=%s err=%s", clip_req.url[:80], e)
+            raise HTTPException(status_code=502, detail=str(e))
+        except Exception as e:
+            log.exception("fetch_external crashed url=%s", clip_req.url[:80])
+            raise HTTPException(status_code=500, detail=f"external fetch failed: {e}")
+
+        video_url = f"s3://{bucket}/{key}"
+        log.info(
+            "fetch_external ok url=%s -> %s %dx%d dur=%.2f audio=%s",
+            clip_req.url[:80], video_url, prepared.width, prepared.height,
+            prepared.duration_sec, prepared.has_audio,
+        )
+        return FetchExternalVideoResponse(
+            video_url=video_url,
+            width=int(prepared.width),
+            height=int(prepared.height),
+            duration_sec=float(prepared.duration_sec),
+            has_audio=bool(prepared.has_audio),
+            trimmed=bool(prepared.trimmed),
+        )
 
     @app.get("/jobs/active", response_model=ActiveJobsResponse)
     def list_active_jobs(min_age_seconds: int = 900, limit: int = 100) -> ActiveJobsResponse:
