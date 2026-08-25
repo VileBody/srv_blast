@@ -314,6 +314,116 @@ def _build_f1_overlay_js(full_edit_config: Dict[str, Any]) -> str:
     return overlay
 
 
+def _apply_f6_if_present(
+    *,
+    full_edit_config: Dict[str, Any],
+    footage_layers: List[Dict[str, Any]],
+    text_layers: List[Dict[str, Any]],
+    main_comp_name: str,
+    comp_width: int,
+    comp_height: int,
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """
+    Если в full_edit_config есть блок "f6" — кладёт видео-прогрев пользователя
+    в окно [0.5, drop−0.5] поверх футажа (со звуком), приглушает ТРЕК под ним и
+    убирает трек-субтитры, перекрытые видео. Визуал (hook_light + post-drop
+    random) идёт отдельно через токен f6_overlay_js. Нет блока => без изменений.
+    """
+    f6_block = full_edit_config.get("f6") if isinstance(full_edit_config, dict) else None
+    if not f6_block or not isinstance(f6_block, dict):
+        return footage_layers, text_layers
+
+    video_url = str(f6_block.get("video_url") or "").strip()
+    if not video_url:
+        raise RuntimeError("f6 block present but 'video_url' is empty")
+    drop_time = f6_block.get("drop_time")
+    if drop_time is None:
+        raise RuntimeError("f6 block present but 'drop_time' is missing")
+    drop_time = float(drop_time)
+    source_width = f6_block.get("source_width")
+    source_height = f6_block.get("source_height")
+    if not source_width or not source_height:
+        raise RuntimeError(
+            "f6 block present but source size is missing "
+            f"(source_width={source_width!r}, source_height={source_height!r})"
+        )
+    duration = f6_block.get("duration")
+
+    from mlcore.hooks.f5_cognition.inject import inject_track_duck
+    from mlcore.hooks.f6_video.inject import (
+        F6_TRACK_DUCK_FROM_PCT,
+        F6_TRACK_DUCK_TO_PCT,
+        clear_track_subtitles_under_video,
+        f6_video_window,
+        inject_f6_video,
+    )
+
+    # 1) Приглушаем ТРЕК под вырезку — до того, как добавим её слой, чтобы duck
+    #    попал только в реальное аудио трека (та же последовательность, что у F1).
+    video_in, _video_out = f6_video_window(drop_time, duration)
+    has_audio = bool(f6_block.get("has_audio", True))
+    if has_audio:
+        footage_layers = inject_track_duck(
+            footage_layers,
+            duck_from_sec=video_in,
+            duck_to_sec=drop_time,
+            from_pct=F6_TRACK_DUCK_FROM_PCT,
+            to_pct=F6_TRACK_DUCK_TO_PCT,
+        )
+    else:
+        # Немая вырезка (gif/animation): приглушать трек не под что — получилась
+        # бы просто тишина в первые секунды.
+        LOGGER.info("f6 clip has no audio track — track left at full volume")
+
+    # 2) Само видео.
+    footage_layers = inject_f6_video(
+        footage_layers,
+        video_url=video_url,
+        drop_time=drop_time,
+        source_width=float(source_width),
+        source_height=float(source_height),
+        comp_width=int(comp_width),
+        comp_height=int(comp_height),
+        duration=(float(duration) if duration else None),
+        target_comp_name=main_comp_name,
+    )
+
+    # 3) Трек-субтитры под чужим кадром не нужны.
+    text_layers = clear_track_subtitles_under_video(
+        text_layers, drop_time=drop_time, duration=(float(duration) if duration else None),
+    )
+
+    LOGGER.info(
+        "f6 present video=%s drop_time=%s duration=%s src=%sx%s audio=%s",
+        video_url[:80], drop_time, duration, source_width, source_height, has_audio,
+    )
+    return footage_layers, text_layers
+
+
+def _build_f6_overlay_js(full_edit_config: Dict[str, Any]) -> str:
+    """
+    Если в full_edit_config есть блок "f6" — собирает визуальный JSX combo
+    (hook_light на дропе + рандомный F3-переход на post-drop склейках; pre-drop
+    визуала нет — там играет видео). Нет блока => пустая строка.
+    """
+    f6_block = full_edit_config.get("f6") if isinstance(full_edit_config, dict) else None
+    if not f6_block or not isinstance(f6_block, dict):
+        return ""
+
+    drop_time = f6_block.get("drop_time")
+    if drop_time is None:
+        raise RuntimeError("f6 block present but 'drop_time' is missing")
+    seed = f6_block.get("seed")
+    if seed is None:
+        raise RuntimeError("f6 block present but 'seed' is missing")
+
+    from mlcore.hooks.f6_video.overlay import build_overlay_jsx
+
+    overlay = build_overlay_jsx(drop_time=float(drop_time), seed=int(seed))
+    LOGGER.info("f6 overlay present drop_time=%s seed=%s js_len=%d", drop_time, seed, len(overlay))
+    return overlay
+
+
 def _build_jsx_subtitles_js(
     full_edit_config: Dict[str, Any],
     *,
@@ -657,6 +767,18 @@ def build_full_project(
         main_comp_name=main_name,
     )
 
+    # 2.7) F6 «Видео» hook: если в config есть блок "f6" — кладём видео-прогрев
+    #      юзера поверх футажа в окне [0.5, drop−0.5] (со звуком, трек под ним
+    #      приглушён). Визуал идёт через токен f6_overlay_js.
+    footage_layers, text_layers = _apply_f6_if_present(
+        full_edit_config=full_edit_config,
+        footage_layers=footage_layers,
+        text_layers=text_layers,
+        main_comp_name=main_name,
+        comp_width=int(main_comp["w"]),
+        comp_height=int(main_comp["h"]),
+    )
+
     ae_payload: Dict[str, Any] = {
         "project": {"mainCompName": main_name, "subtitlesMode": subtitles_mode},
         "comps": [main_comp, text_comp, mine_comp],
@@ -705,6 +827,7 @@ def build_full_project(
     f3_overlay_js = _build_f3_overlay_js(ae_overlay_config)
     f2_overlay_js = _build_f2_overlay_js(ae_overlay_config)
     f1_overlay_js = _build_f1_overlay_js(ae_overlay_config)
+    f6_overlay_js = _build_f6_overlay_js(ae_overlay_config)
     f5_overlay_js = _build_f5_overlay_js(ae_overlay_config)
     frame_overlay_js = _build_frame_overlay_js(ae_overlay_config)
     jsx_subtitles_js = _build_jsx_subtitles_js(
@@ -743,6 +866,7 @@ def build_full_project(
         f3_overlay_js=f3_overlay_js,
         f2_overlay_js=f2_overlay_js,
         f1_overlay_js=f1_overlay_js,
+        f6_overlay_js=f6_overlay_js,
         f5_overlay_js=f5_overlay_js,
         frame_overlay_js=frame_overlay_js,
         jsx_subtitles_js=jsx_subtitles_js,

@@ -320,6 +320,11 @@ class RenderPlanV1(BaseModel):
                     "drop_time": params.get("drop_time"),
                     "seed": params.get("seed"),
                 }
+            elif operation.type == "hook.f6.video.v1":
+                config["f6"] = {
+                    "drop_time": params.get("drop_time"),
+                    "seed": params.get("seed"),
+                }
             elif operation.type == "hook.f2.object.v1":
                 config["f2"] = {
                     "shape": params.get("shape"),
@@ -444,6 +449,7 @@ def build_visual_ops(
         _f2_operation(full_edit_config),
         _f4_operation(full_edit_config),
         _f1_operation(full_edit_config),
+        _f6_operation(full_edit_config),
         _f5_operation(full_edit_config),
         _frame_operation(full_edit_config),
     ):
@@ -881,6 +887,38 @@ def _f1_operation(cfg: Dict[str, Any]) -> Optional[VisualOperationV1]:
     )
 
 
+def _f6_operation(cfg: Dict[str, Any]) -> Optional[VisualOperationV1]:
+    f6 = _dict(cfg.get("f6"))
+    video_url = _clean(f6.get("video_url"))
+    if not video_url:
+        return None
+    drop_time = float(f6.get("drop_time") or 0.0)
+    start = 0.5
+    end = max(start, drop_time - 0.5)
+    if f6.get("duration"):
+        end = min(end, start + float(f6["duration"]))
+    duration = max(0.0, end - start)
+    params: Dict[str, Any] = {
+        "drop_time": drop_time,
+        "impactAt": start,
+        "duration": duration,
+        "fadeOut": 0.1,
+        "duck": {"amountDb": -16.0, "attack": 0.05, "release": 0.25},
+    }
+    for key in ("source_width", "source_height"):
+        if f6.get(key) is not None:
+            params[key] = int(f6[key])
+    if f6.get("seed") is not None:
+        params["seed"] = int(f6["seed"])
+    return VisualOperationV1(
+        id="hook_f6_video",
+        kind="hook.f6.video.v1",
+        timing=VisualOperationTiming(start=start, duration=duration, anchor="drop"),
+        params=params,
+        assets=[VisualOperationAsset(role="video", path=_video_local_path(video_url), optional=False)],
+    )
+
+
 def _f5_operation(cfg: Dict[str, Any]) -> Optional[VisualOperationV1]:
     f5 = _dict(cfg.get("f5"))
     audio_url = _clean(f5.get("audio_url"))
@@ -1033,6 +1071,12 @@ def _audio_local_path(url: str) -> str:
     return f"media/audio/{Path(file_name).name}"
 
 
+def _video_local_path(url: str) -> str:
+    raw_name = (str(url).split("?", 1)[0].rstrip("/").split("/")[-1] or "video.mp4").strip()
+    file_name = unquote(raw_name) or raw_name
+    return f"media/video/{Path(file_name).name}"
+
+
 def _plugins_for_layer(layer: Dict[str, Any]) -> List[str]:
     plugins = []
     for effect_name in _dict(layer.get("effects")).keys():
@@ -1057,6 +1101,7 @@ def _native_effects_for_visual_op(op: VisualOperationV1) -> str:
         "hook.f3.effect.v1": "ANR F3 Stylize",
         "hook.f4.motion.v1": "ANR Hook F4 Motion",
         "hook.f5.cognition.v1": "ANR Hook F5 Cognition",
+        "hook.f6.video.v1": "ANR Hook F6 Video",
     }.get(op.type, "")
     if mapped:
         return mapped

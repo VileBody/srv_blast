@@ -1591,6 +1591,18 @@
     }
 
     // ==========================================================
+    // 5.8b) F6 «Видео» visual combo (injected by build worker)
+    // Empty string when no f6 block => no-op. Same combo as F1: F3 hook_light at
+    // the drop + seeded-random F3 transition on post-drop cuts. The pre-drop
+    // region carries the user's video warm-up (footage layer with audio).
+    // ==========================================================
+    try {
+      {{ f6_overlay_js }}
+    } catch(eF6) {
+      logErr("f6 overlay injection failed", eF6);
+    }
+
+    // ==========================================================
     // 5.9) F5 «Мысль» visual combo (injected by build worker)
     // Empty string when no f5 drop => no-op. Same combo as F1: F3 hook_light at
     // the drop + seeded-random F3 transition on post-drop cuts. The TTS voice

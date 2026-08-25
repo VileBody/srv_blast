@@ -155,6 +155,29 @@ def trim_phrase_to_spoken(phrase: str, *, audio_ms: float, tts_ms: float) -> str
     return phrase if keep >= len(words) else " ".join(words[:keep])
 
 
+def clear_words_in_window(
+    word_timings: list[dict[str, Any]],
+    *,
+    window_start: float,
+    window_end: float,
+    margin: float = 0.08,
+) -> list[dict[str, Any]]:
+    """Drop the clip words inside [window_start, window_end] without putting
+    anything in their place (F6 «Видео»: the frame is fully taken by the user's
+    warm-up clip, so the track's own lyrics must not run over it).
+
+    Comp-relative seconds. Returns a new list (input not mutated).
+    """
+    ws, we = float(window_start), float(window_end)
+    if we <= ws:
+        return list(word_timings)
+    lo, hi = ws - float(margin), we + float(margin)
+    return [
+        w for w in (word_timings or [])
+        if not (float(w.get("start", 0.0)) < hi and float(w.get("end", 0.0)) > lo)
+    ]
+
+
 def splice_voice_phrase(
     word_timings: list[dict[str, Any]],
     *,
