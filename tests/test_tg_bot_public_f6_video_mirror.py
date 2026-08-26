@@ -250,6 +250,28 @@ def test_video_arm_routes_to_the_f6_upload_and_drops_the_sound():
     assert st.f1_sound_text == ""
 
 
+def test_both_f6_prompts_render_without_unary_plus_crash():
+    import asyncio
+    from types import SimpleNamespace
+
+    from services.tg_bot_botapi import app as team
+    from services.tg_bot_botapi.state_store import ChatState as TeamState
+    from services.tg_bot_public import app as pub
+    from services.tg_bot_public.state_store import ChatState as PublicState
+
+    async def run(method, state_cls):
+        app = _App()
+        app.settings = SimpleNamespace(external_video_source_enabled=False)
+        msg = _Message()
+        st = state_cls(chat_id=1)
+        await method(app, msg, st)
+        assert msg.answers
+        assert "Прогрев видео" in msg.answers[0][0]
+
+    asyncio.run(run(team.BlastBotApp._ask_f6_video, TeamState))
+    asyncio.run(run(pub.BlastBotApp._ask_f6_video, PublicState))
+
+
 def test_unknown_answer_stays_on_the_fork():
     from services.tg_bot_public import app as pub
 

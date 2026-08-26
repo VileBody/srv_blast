@@ -5910,6 +5910,8 @@ class BlastBotApp:
             f"Длина {F6_MIN_VIDEO_SEC:.0f}–{F6_MAX_VIDEO_SEC:.0f}с (длиннее — обрежу "
             "по началу), вес до 20 МБ.\n"
             "Видео встанет во весь кадр со своим звуком, трек на это время уйдёт "
+            # Mirror team bot: keep the optional paragraph inside the same text
+            # argument; a comma before '+' becomes unary-plus on str at runtime.
             "на фон, а на дропе сработает молния."
             + (
                 "\n\nМожно и ссылкой: пришли ссылку на YouTube, а следующим "

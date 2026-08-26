@@ -4983,7 +4983,9 @@ class BlastBotApp:
             "по началу), вес до 20 МБ: Telegram не даёт ботам скачивать файлы "
             "тяжелее.\n"
             "Видео встанет во весь кадр со своим звуком, трек на это время уйдёт "
-            "на фон, а на дропе сработает молния.",
+            # This optional paragraph is part of the same positional text arg.
+            # A comma before '+' turns it into unary-plus on str at runtime.
+            "на фон, а на дропе сработает молния."
             + (
                 "\n\nМожно и ссылкой: пришли ссылку на YouTube, а следующим "
                 "сообщением — тайминги нужного куска."
