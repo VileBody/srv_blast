@@ -8733,11 +8733,10 @@ class BlastBotApp:
             if user_clip_end_sec is None or user_clip_end_sec <= new_start:
                 user_clip_end_sec = float(end)
 
-        # F6 «Прогрев видео»: окно клипа подгоняется под ДЛИНУ вырезки, чтобы она
-        # легла встык к дропу — clip_start := drop − (dur + пады), clip_end стоит.
-        # Пады те же, что у инъекции слоя, иначе окно и слой разъедутся.
-        # Ранний дроп → clip_start клампится в 0, AE подрежет хвост вырезки.
-        # (Parity mirror.)
+        # F6 «Прогрев видео»: сохраняем исходное пользовательское окно трека.
+        # Backend сам добавляет timeline pre-roll под полную длину видео и
+        # отдельно расширяет источник аудио назад. Если передвинуть clip_start
+        # здесь, subtitle flow потеряет величину компенсации.
         if (
             st.hook_enabled
             and st.hook_category == "sound"
@@ -8746,11 +8745,8 @@ class BlastBotApp:
         ):
             if st.hook_drop_t is None:
                 raise RuntimeError("F6 video warm-up requires a drop (hook_drop_t)")
-            lead_f6 = float(st.f6_video_duration or 0.0) + F6_LEAD_PAD_SEC + F6_TAIL_PAD_SEC
-            new_start = max(0.0, float(st.hook_drop_t) - lead_f6)
-            user_clip_start_sec = new_start
-            if user_clip_end_sec is None or user_clip_end_sec <= new_start:
-                user_clip_end_sec = float(end)
+            if user_clip_start_sec is None or user_clip_end_sec is None:
+                raise RuntimeError("F6 video warm-up requires the original clip window")
 
         maintenance_bypass_token = ""
         allow_bypass = self._allow_maintenance_bypass_for_state(st)

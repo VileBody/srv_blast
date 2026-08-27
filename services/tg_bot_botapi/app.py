@@ -5969,14 +5969,10 @@ class BlastBotApp:
             if user_clip_end_sec is None or user_clip_end_sec <= new_start:
                 user_clip_end_sec = float(end)
 
-        # F6 «Прогрев видео»: окно клипа подгоняется под ДЛИНУ вырезки, чтобы она
-        # легла встык к дропу — clip_start := drop − (dur + пады), clip_end не
-        # трогаем. Без этого вырезка играла бы от нулевой секунды клипа, а дроп
-        # приходил бы позже (или раньше) на произвольную дельту. Пады те же, что
-        # использует инъекция слоя, — иначе окно и слой разъедутся на 1с.
-        # РАННИЙ ДРОП: если места до дропа меньше, чем длится вырезка, clip_start
-        # клампится в 0 (не ошибка) — AE подрежет хвост вырезки, как это делает
-        # F4 со своим интро.
+        # F6 «Прогрев видео»: сохраняем исходное пользовательское окно трека.
+        # Backend сам добавляет timeline pre-roll под полную длину видео и
+        # отдельно расширяет источник аудио назад. Если передвинуть clip_start
+        # здесь, subtitle flow потеряет величину компенсации.
         if (
             st.hook_enabled
             and st.hook_category == "sound"
@@ -5985,11 +5981,8 @@ class BlastBotApp:
         ):
             if st.hook_drop_t is None:
                 raise RuntimeError("F6 video warm-up requires a drop (hook_drop_t)")
-            lead_f6 = float(st.f6_video_duration or 0.0) + F6_LEAD_PAD_SEC + F6_TAIL_PAD_SEC
-            new_start = max(0.0, float(st.hook_drop_t) - lead_f6)
-            user_clip_start_sec = new_start
-            if user_clip_end_sec is None or user_clip_end_sec <= new_start:
-                user_clip_end_sec = float(end)
+            if user_clip_start_sec is None or user_clip_end_sec is None:
+                raise RuntimeError("F6 video warm-up requires the original clip window")
 
         rotation_theme, rotation_group, rotation_history = (
             await self._resolve_rotation_slot_for_enqueue(st=st, offset=int(version_index))

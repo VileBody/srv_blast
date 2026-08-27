@@ -982,12 +982,17 @@ def render_all_steps(
         # Never fail Stage3 due to diagnostics.
         pass
 
+    # Keep subtitle authoring on the user's selected window, but fill the F6
+    # timeline extension with the immediately preceding track audio when it
+    # exists. These are deliberately separate coordinate systems.
+    audio_source_start = max(0.0, clip_start - pre_roll)
+    audio_layer_in = max(0.0, pre_roll - clip_start)
     audio_obj = {
         "audio": {
-            "clip_start_abs": clip_start,
+            "clip_start_abs": audio_source_start,
             "clip_end_abs": clip_end,
-            "layer_start_time": pre_roll - clip_start,
-            "layer_in_point": pre_roll,
+            "layer_start_time": audio_layer_in - audio_source_start,
+            "layer_in_point": audio_layer_in,
             "layer_out_point": float(clip_dur),
             "moment_of_interest_sec": plan.audio.moment_of_interest_sec,
         }
