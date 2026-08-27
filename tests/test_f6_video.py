@@ -264,6 +264,34 @@ def test_project_builder_f6_starts_track_ramp_after_silent_preroll():
     assert duck["duck_to_s"] == pytest.approx(10.0)
 
 
+def test_straddling_subtitle_segment_keeps_only_post_f6_tokens():
+    from mlcore.gemini_postprocess import trim_subtitle_flow_across_f6_boundary
+    from mlcore.models.subtitles_flow import SubtitleFlowPlan
+
+    flow = SubtitleFlowPlan.model_validate({
+        "mode": "scenes_3rd",
+        "clip": {"start": 0.0, "end": 20.0},
+        "segments": [{
+            "id": "cross", "text": "Я помню мама говорила",
+            "in_point": 9.98, "out_point": 11.28, "style_tag": "default",
+            "lines": ["Я помню мама говорила"],
+            "tokens": [
+                {"text": "Я", "t_start": 9.98, "t_end": 10.18},
+                {"text": "помню", "t_start": 10.18, "t_end": 10.48},
+                {"text": "мама", "t_start": 10.58, "t_end": 10.88},
+                {"text": "говорила", "t_start": 10.88, "t_end": 11.28},
+            ],
+        }],
+    })
+    trimmed = trim_subtitle_flow_across_f6_boundary(
+        flow, video_end_sec=10.33, margin_sec=0.15,
+    )
+    seg = trimmed.segments[0]
+    assert seg.text == "мама говорила"
+    assert seg.in_point == pytest.approx(10.58)
+    assert [t.text for t in seg.tokens] == ["мама", "говорила"]
+
+
 def test_project_builder_f6_requires_source_size():
     from app.project_builder import _apply_f6_if_present
 

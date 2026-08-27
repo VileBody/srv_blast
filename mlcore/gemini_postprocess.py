@@ -703,6 +703,46 @@ def normalize_subtitle_flow_to_clip_zero(
     )
 
 
+def trim_subtitle_flow_across_f6_boundary(
+    flow: SubtitleFlowPlan,
+    *,
+    video_end_sec: float,
+    margin_sec: float,
+) -> SubtitleFlowPlan:
+    """Keep post-F6 tokens from segments that straddle the video boundary.
+
+    Fully covered segments are intentionally left intact: the existing layer
+    cleanup removes them later. Only a straddling segment needs rebuilding;
+    deleting it wholesale also deletes valid words after the drop.
+    """
+    threshold = float(video_end_sec) + max(0.0, float(margin_sec))
+    segments: List[Dict[str, Any]] = []
+    for seg in flow.segments:
+        raw = seg.model_dump(mode="json", by_alias=True)
+        if float(seg.in_point) < threshold < float(seg.out_point):
+            kept = [t for t in seg.tokens if float(t.t_start) >= threshold - 1e-6]
+            if kept:
+                text = " ".join(str(t.text).strip() for t in kept if str(t.text).strip())
+                raw.update({
+                    "text": text,
+                    "lines": [text],
+                    "in_point": float(kept[0].t_start),
+                    "out_point": float(kept[-1].t_end),
+                    "tokens": [t.model_dump(mode="json") for t in kept],
+                    "focus_word": (
+                        seg.focus_word
+                        if seg.focus_word and any(t.text == seg.focus_word for t in kept)
+                        else None
+                    ),
+                })
+        segments.append(raw)
+    return SubtitleFlowPlan.model_validate({
+        "mode": flow.mode,
+        "clip": flow.clip.model_dump(mode="json"),
+        "segments": segments,
+    })
+
+
 # -------------------------
 # Footage: absolute -> clip-zero (comp) + coverage checks
 # -------------------------
@@ -983,6 +1023,19 @@ def render_all_steps(
             clip_start_abs=clip_start - pre_roll,
             clip_end_abs=clip_end,
         )
+        if f6_block:
+            from mlcore.hooks.f6_video.inject import (
+                F6_SUBTITLE_CLEAR_MARGIN_SEC,
+                f6_video_window,
+            )
+            _f6_in, _f6_out = f6_video_window(
+                float(f6_block["drop_time"]), f6_block.get("duration"),
+            )
+            flow_clip_zero = trim_subtitle_flow_across_f6_boundary(
+                flow_clip_zero,
+                video_end_sec=_f6_out,
+                margin_sec=F6_SUBTITLE_CLEAR_MARGIN_SEC,
+            )
         comp_dur = float(clip_dur)
         full_edit_obj = {
             "composition": {
