@@ -4947,7 +4947,7 @@ class BlastBotApp:
             f"• *{BTN_WARMUP_SOUND}* — твой звук (разгон, риз, голос) поверх футажа.\n"
             f"• *{BTN_WARMUP_VIDEO}* — твоя вырезка (кусок интервью, мем) во весь "
             "кадр со своим звуком; трек на это время уходит на фон.\n\n"
-            "В обоих случаях на дропе бьёт молния, а после — резкий переход.",
+            "Для звука на дропе бьёт молния; видео сменяется монтажом без молнии.",
             parse_mode="Markdown",
             reply_markup=_kb([BTN_WARMUP_SOUND, BTN_WARMUP_VIDEO], [BTN_BACK]),
         )
@@ -4985,7 +4985,7 @@ class BlastBotApp:
             "Видео встанет во весь кадр со своим звуком, трек на это время уйдёт "
             # This optional paragraph is part of the same positional text arg.
             # A comma before '+' turns it into unary-plus on str at runtime.
-            "на фон, а на дропе сработает молния."
+            "на фон и сменится основным монтажом ровно на дропе."
             + (
                 "\n\nМожно и ссылкой: пришли ссылку на YouTube, а следующим "
                 "сообщением — тайминги нужного куска."
@@ -5079,7 +5079,7 @@ class BlastBotApp:
         await message.answer(
             f"Готово: {st.f6_video_duration:.1f}с, "
             f"{st.f6_video_width}×{st.f6_video_height}{note}.\n"
-            "Кусок сыграет прямо перед дропом, на дропе — молния."
+            "Кусок сыграет с первого кадра и сменится основным монтажом на дропе."
         )
         await self._ask_versions(message, st)
 
@@ -5182,7 +5182,7 @@ class BlastBotApp:
         await message.answer(
             f"Ок, «Прогрев видео»: {prep.duration_sec:.1f}с, "
             f"{prep.width}×{prep.height}{suffix}.\n"
-            "Вырезка сыграет прямо перед дропом, на дропе — молния, после — переход."
+            "Вырезка сыграет с первого кадра и сменится основным монтажом на дропе."
         )
         await self._ask_versions(message, st)
 

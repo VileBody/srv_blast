@@ -27,13 +27,13 @@ def test_window_formula_matches_f1():
 def test_window_clamped_by_actual_duration():
     # Окно шире вырезки → out_point режется по факту, а не морозит последний кадр.
     _in, out_sec = f6_video_window(10.0, duration=3.0)
-    assert out_sec == pytest.approx(3.5)
+    assert out_sec == pytest.approx(3.0)
 
 
 def test_window_ignores_duration_longer_than_the_gap():
     # Вырезка длиннее окна → AE подрежет её сам, окно остаётся до дропа.
     _in, out_sec = f6_video_window(6.0, duration=30.0)
-    assert out_sec == pytest.approx(5.5)
+    assert out_sec == pytest.approx(6.0)
 
 
 def test_window_rejects_non_positive_duration():
@@ -83,8 +83,8 @@ def test_inject_adds_a_remote_video_layer():
     L = layers[0]
     assert L["type"] == "footage"
     assert L["name"] == "f6_hook_video"
-    assert L["in_point"] == 0.5
-    assert L["out_point"] == pytest.approx(5.5)
+    assert L["in_point"] == 0.0
+    assert L["out_point"] == pytest.approx(6.0)
     src = L["text_data"]["source_footage"]
     assert src["remote_url"] == "s3://bucket/hooks/interview.mp4"
     assert src["file_name"] == "interview.mp4"
@@ -95,7 +95,7 @@ def test_inject_keeps_the_clip_audio_on():
     meta = _inject()[0]["text_data"]["layer_meta"]
     assert meta["audioEnabled"] is True
     assert meta["enabled"] is True
-    assert meta["startTime"] == 0.5
+    assert meta["startTime"] == 0.0
 
 
 def test_inject_sits_above_footage_and_below_subtitles():
@@ -126,7 +126,7 @@ def test_inject_does_not_mutate_input():
 
 def test_inject_rejects_non_positive_window():
     with pytest.raises(ValueError, match="non-positive window"):
-        _inject(drop_time=0.8)
+        _inject(drop_time=0.0)
 
 
 def test_inject_rejects_empty_url():
@@ -160,10 +160,11 @@ def test_subtitle_clearing_respects_the_clamped_window():
 
 # ---------- визуал-комбо ----------
 
-def test_overlay_is_the_f1_combo():
+def test_overlay_has_post_drop_transitions_without_lightning():
     js = f6_overlay(drop_time=6.0, seed=7)
     assert "PRE-DROP shape transitions" not in js
-    assert "DROP: F3 hook_light" in js
+    assert "DROP: F3 hook_light" not in js
+    assert "POST-DROP: seeded-random transition per cut" in js
     assert "var __f2_seed = 7" in js
 
 
@@ -190,7 +191,7 @@ def test_project_builder_f6_dispatch():
 
     cfg = _cfg()
     js = _build_f6_overlay_js(cfg)
-    assert "DROP: F3 hook_light" in js
+    assert "DROP: F3 hook_light" not in js
     assert "var __f2_seed = 99" in js
 
     footage, text = _apply_f6_if_present(
@@ -217,7 +218,7 @@ def test_project_builder_f6_ducks_the_track():
         main_comp_name="Comp 1", comp_width=1080, comp_height=1960,
     )
     duck = next(L for L in footage if L["name"] == "audio_track")["text_data"]["audio_envelope"]
-    assert duck["duck_from_s"] == 0.5 and duck["duck_to_s"] == 6.0
+    assert duck["duck_from_s"] == 0.0 and duck["duck_to_s"] == 6.0
     # под интервью трек глушится сильнее, чем под F5-голос
     assert duck["duck_from_pct"] == F6_TRACK_DUCK_FROM_PCT
 

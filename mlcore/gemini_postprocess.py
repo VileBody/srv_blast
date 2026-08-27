@@ -1115,7 +1115,7 @@ def render_all_steps(
         full_edit_obj["f1"] = f1_block
 
     # -------------------------
-    # F6 «Видео» combo: pre-drop прогрев из видео юзера + визуал как у F1.
+    # F6 «Видео»: pre-drop прогрев + post-drop переходы без молнии на дропе.
     # Блок {video_url, drop_time, seed, source_width, source_height, duration}.
     # project_builder кладёт footage-слой со звуком, глушит трек и вписывает
     # визуальный JSX. Нет блока → full_edit_config без изменений (обычный job).
