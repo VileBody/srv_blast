@@ -148,28 +148,16 @@ def test_reset_clears_f6_in_both_bots():
         assert st.f6_video_has_audio is True
 
 
-def test_both_bots_reframe_the_clip_onto_the_warm_up_length():
-    """Окно подгоняется под вырезку: clip_start = drop − (dur + пады).
-
-    Пады обязаны совпадать с теми, по которым build-сторона ставит слой, иначе
-    вырезка не встанет встык к дропу — ровно тот класс рассинхрона, который
-    ловили на F4.
-    """
-    import re
-
-    from mlcore.hooks.f6_video.inject import F6_LEAD_PAD_SEC, F6_TAIL_PAD_SEC
-
-    expected = "float(st.f6_video_duration or 0.0) + F6_LEAD_PAD_SEC + F6_TAIL_PAD_SEC"
+def test_both_bots_preserve_original_clip_window_for_f6():
+    """Backend needs the original start to calculate subtitle compensation."""
     for path in (
         "services/tg_bot_botapi/app.py",
         "services/tg_bot_public/app.py",
     ):
         with open(path, encoding="utf-8") as fh:
             src = fh.read()
-        assert expected in src, path
-        assert re.search(r"lead_f6\s*=", src), path
-
-    assert F6_LEAD_PAD_SEC == F6_TAIL_PAD_SEC == 0.0
+        assert "lead_f6 =" not in src, path
+        assert "F6 video warm-up requires the original clip window" in src, path
 
 
 # ---- поведение развилки (публичный бот, стаб-приложение) ----
