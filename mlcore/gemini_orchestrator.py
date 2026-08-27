@@ -1212,11 +1212,18 @@ def _words_in_window(
     start_abs: float,
     end_abs: float,
 ) -> List[TranscriptWord]:
+    # API/JSON round-trips can move the same hand-picked boundary by a few
+    # microseconds (54.869 -> 54.869002 in a real F6 job). One millisecond is
+    # far below a video frame and prevents a boundary word being discarded.
+    boundary_tolerance_sec = 0.001
     out: List[TranscriptWord] = []
     for w in words:
         ts = float(w.t_start)
         te = float(w.t_end)
-        if ts >= float(start_abs) - 1e-6 and te <= float(end_abs) + 1e-6:
+        if (
+            ts >= float(start_abs) - boundary_tolerance_sec
+            and te <= float(end_abs) + boundary_tolerance_sec
+        ):
             out.append(w)
     return out
 
@@ -3246,8 +3253,8 @@ def build_all_via_gemini_one_call(
         )
         frag_srt = [
             s for s in stage1_asr.srt_items
-            if float(s.start) >= float(user_start) - 1e-6
-            and float(s.end) <= float(user_end) + 1e-6
+            if float(s.start) >= float(user_start) - 0.001
+            and float(s.end) <= float(user_end) + 0.001
         ]
         asr_dict = stage1_asr.model_dump(mode="json")
         asr_dict["selected_fragment"] = {
@@ -4873,28 +4880,30 @@ def build_all_via_gemini_one_call(
     #    Хук — опциональное усиление, НЕ должен ронять основной рендер. Любая
     #    ошибка F5 (Gemini 5xx, короткий TTS, focal out-of-bounds, S3, ffmpeg…)
     #    логируется с трейсбеком, и джоб рендерится БЕЗ хука (f5_block=None).
-    _emit(progress_cb, "f5_hook")
     f5_block = None
-    try:
-        from mlcore.hooks.f5_cognition.orchestrator_hook import build_f5_block_if_requested
+    _f5_device = (os.environ.get("F5_HOOK_DEVICE") or "").strip()
+    if _f5_device:
+        _emit(progress_cb, "f5_hook")
+        try:
+            from mlcore.hooks.f5_cognition.orchestrator_hook import build_f5_block_if_requested
 
-        f5_block = build_f5_block_if_requested(
-            track_path=str(audio_files[0]) if audio_files else "",
-            lyrics=str(stage1_json.get("lyrics_text") or ""),
-            clip_start_abs_sec=_hook_clip_start,
-            out_dir=out_dir,
-            job_tag=(os.environ.get("JOB_ID") or out_dir.name),
-            transcript_words=stage1_json.get("transcript_words"),
-            is_prod=(mode == MODE_PROD),
-        )
-    except Exception:
-        logger.exception(
-            "f5.hook FAILED — продолжаю рендер БЕЗ хука "
-            "(device=%s job=%s)",
-            os.environ.get("F5_HOOK_DEVICE") or "<none>",
-            os.environ.get("JOB_ID") or out_dir.name,
-        )
-        f5_block = None
+            f5_block = build_f5_block_if_requested(
+                track_path=str(audio_files[0]) if audio_files else "",
+                lyrics=str(stage1_json.get("lyrics_text") or ""),
+                clip_start_abs_sec=_hook_clip_start,
+                out_dir=out_dir,
+                job_tag=(os.environ.get("JOB_ID") or out_dir.name),
+                transcript_words=stage1_json.get("transcript_words"),
+                is_prod=(mode == MODE_PROD),
+            )
+        except Exception:
+            logger.exception(
+                "f5.hook FAILED — продолжаю рендер БЕЗ хука "
+                "(device=%s job=%s)",
+                _f5_device,
+                os.environ.get("JOB_ID") or out_dir.name,
+            )
+            f5_block = None
 
     # ── F4 Cognition («Движение»): visual engagement-bait overlay. If env
     #    F4_HOOK_DEVICE is set, emit a block {device, bpm} that

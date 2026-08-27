@@ -24,6 +24,8 @@ google-genai>=0.6.0
 # (installed in the base Dockerfile). NOT in requirements.infra.txt — the slim
 # bots don't run F5.
 pydub>=0.25.1
+# Python 3.13 removed stdlib audioop; pydub imports this compatibility module.
+audioop-lts>=0.2.1; python_version >= "3.13"
 
 # Retries
 tenacity>=8.2.3
