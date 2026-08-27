@@ -169,7 +169,7 @@ def test_both_bots_reframe_the_clip_onto_the_warm_up_length():
         assert expected in src, path
         assert re.search(r"lead_f6\s*=", src), path
 
-    assert F6_LEAD_PAD_SEC == F6_TAIL_PAD_SEC == 0.5
+    assert F6_LEAD_PAD_SEC == F6_TAIL_PAD_SEC == 0.0
 
 
 # ---- поведение развилки (публичный бот, стаб-приложение) ----

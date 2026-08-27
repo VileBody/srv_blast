@@ -159,6 +159,7 @@ def build_overlay_jsx(
     seed: int,
     post_drop_pool: tuple[str, ...] = F2_POST_DROP_TRANSITION_POOL,
     shape_fill_hex: Optional[str] = None,
+    include_drop_hook: bool = True,
 ) -> str:
     """Return the injectable F2 combo JSX block.
 
@@ -236,13 +237,14 @@ def build_overlay_jsx(
         parts.append("    })(); $.global.__BLAST = null;")
         parts.append("  }")
 
-    # ---------------- (2) DROP: F3 hook_light ----------------
-    hook_light_src = _read_f3_script(_F3_HOOK_LIGHT_SCRIPT)
-    parts.append("  /* -- (2) DROP: F3 hook_light -- */")
-    parts.append("  $.global.__BLAST = { targetCompName: __f2_name, dropTime: __f2_drop, place: __f2_place, cuts: __f2_cuts };")
-    parts.append("  (function(){")
-    parts.append(hook_light_src)
-    parts.append("  })(); $.global.__BLAST = null;")
+    # ---------------- (2) DROP: optional F3 hook_light ----------------
+    if include_drop_hook:
+        hook_light_src = _read_f3_script(_F3_HOOK_LIGHT_SCRIPT)
+        parts.append("  /* -- (2) DROP: F3 hook_light -- */")
+        parts.append("  $.global.__BLAST = { targetCompName: __f2_name, dropTime: __f2_drop, place: __f2_place, cuts: __f2_cuts };")
+        parts.append("  (function(){")
+        parts.append(hook_light_src)
+        parts.append("  })(); $.global.__BLAST = null;")
 
     # ---------------- (3) POST-DROP: seeded-random transition per cut ----------------
     parts.append("  /* -- (3) POST-DROP: seeded-random transition per cut -- */")
