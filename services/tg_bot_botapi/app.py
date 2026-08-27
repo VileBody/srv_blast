@@ -52,8 +52,6 @@ from config.styles.theme_groups import (
 
 from .audio_prepare import AudioPrepareResult, prepare_audio_best_effort
 from mlcore.hooks.f6_video.inject import (
-    F6_LEAD_PAD_SEC,
-    F6_TAIL_PAD_SEC,
     f6_leading_gap_sec,
 )
 
