@@ -5172,11 +5172,10 @@ def build_all_via_gemini_one_call(
             _udt = (os.environ.get("USER_DROP_T") or "").strip()
             if not _udt:
                 raise RuntimeError("F6 video requires USER_DROP_T (drop anchor)")
-            _drop_rel_f6 = float(_udt) - _cs
-            # Нужно место под окно [0.5, drop−0.5] + реальный post-drop.
-            if not (_drop_rel_f6 > 1.0):
+            _source_drop_rel_f6 = float(_udt) - _cs
+            if not (_source_drop_rel_f6 > 0.0):
                 raise RuntimeError(
-                    f"F6 drop_rel must be > 1.0 (USER_DROP_T={_udt}, clip_start={_cs})"
+                    f"F6 source drop_rel must be > 0 (USER_DROP_T={_udt}, clip_start={_cs})"
                 )
             _f6_w = int(float((os.environ.get("F6_VIDEO_WIDTH") or "0").strip() or 0))
             _f6_h = int(float((os.environ.get("F6_VIDEO_HEIGHT") or "0").strip() or 0))
@@ -5188,6 +5187,14 @@ def build_all_via_gemini_one_call(
             _f6_dur = float(_f6_dur_raw) if _f6_dur_raw else None
             if _f6_dur is not None and _f6_dur <= 0.0:
                 raise RuntimeError(f"F6_VIDEO_DURATION must be > 0 (got {_f6_dur_raw!r})")
+            # If the track has less room before the drop than the uploaded
+            # video, keep the whole video by adding silent composition pre-roll.
+            # The source audio still starts at t=0; every authored visual timing
+            # is shifted right by this amount during deterministic postprocess.
+            from mlcore.hooks.f6_video.inject import f6_timeline_with_preroll
+            _f6_pre_roll, _drop_rel_f6 = f6_timeline_with_preroll(
+                _source_drop_rel_f6, _f6_dur,
+            )
             _seed_env_f6 = (os.environ.get("F2_SEED") or "").strip()
             if _seed_env_f6:
                 _f6_seed = int(_seed_env_f6) & 0xFFFFFFFF
@@ -5201,11 +5208,15 @@ def build_all_via_gemini_one_call(
                 "source_width": _f6_w,
                 "source_height": _f6_h,
                 "duration": _f6_dur,
+                "pre_roll_sec": _f6_pre_roll,
+                "source_drop_time": _source_drop_rel_f6,
                 "has_audio": (os.environ.get("F6_VIDEO_HAS_AUDIO") or "1").strip() != "0",
             }
             logger.info(
-                "f6.video block url=%s drop_rel=%.3f seed=%d src=%dx%d dur=%s",
-                _f6_video[:80], _drop_rel_f6, _f6_seed, _f6_w, _f6_h, _f6_dur,
+                "f6.video block url=%s source_drop_rel=%.3f pre_roll=%.3f "
+                "drop_rel=%.3f seed=%d src=%dx%d dur=%s",
+                _f6_video[:80], _source_drop_rel_f6, _f6_pre_roll, _drop_rel_f6,
+                _f6_seed, _f6_w, _f6_h, _f6_dur,
             )
         except Exception:
             logger.exception(
@@ -5273,7 +5284,8 @@ def build_all_via_gemini_one_call(
                 from app.jsx_subtitles_builder import clear_words_in_window
                 from mlcore.hooks.f6_video.inject import f6_video_window
                 _f6_in, _f6_out = f6_video_window(
-                    float(f6_block["drop_time"]), f6_block.get("duration"),
+                    float(f6_block.get("source_drop_time", f6_block["drop_time"])),
+                    f6_block.get("duration"),
                 )
                 _before = len(_word_timings)
                 _word_timings = clear_words_in_window(

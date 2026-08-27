@@ -272,6 +272,37 @@ def test_both_f6_prompts_render_without_unary_plus_crash():
     asyncio.run(run(pub.BlastBotApp._ask_f6_video, PublicState))
 
 
+def test_both_bots_block_short_f6_before_versions():
+    import asyncio
+
+    from services.tg_bot_botapi import app as team
+    from services.tg_bot_botapi.state_store import ChatState as TeamState
+    from services.tg_bot_public import app as pub
+    from services.tg_bot_public.state_store import ChatState as PublicState
+
+    async def run(method, state_cls):
+        app = _App()
+        routed = {"video": 0}
+
+        async def ask_f6_video(_message, _state):
+            routed["video"] += 1
+
+        app._ask_f6_video = ask_f6_video
+        st = state_cls(
+            chat_id=1, hook_enabled=True, hook_category="sound", warmup_kind="video",
+            hook_drop_t=10.0, user_clip_start_sec=0.0,
+            f6_video_url="s3://bucket/short.mp4", f6_video_duration=5.0,
+        )
+        msg = _Message()
+        await method(app, msg, st)
+        assert routed["video"] == 1
+        assert "зазор 5.0с" in msg.answers[0][0]
+        assert "не меньше 10.0с" in msg.answers[0][0]
+
+    asyncio.run(run(team.BlastBotApp._ask_versions, TeamState))
+    asyncio.run(run(pub.BlastBotApp._ask_versions, PublicState))
+
+
 def test_unknown_answer_stays_on_the_fork():
     from services.tg_bot_public import app as pub
 

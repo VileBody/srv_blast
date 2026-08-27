@@ -348,6 +348,7 @@ def _apply_f6_if_present(
             f"(source_width={source_width!r}, source_height={source_height!r})"
         )
     duration = f6_block.get("duration")
+    pre_roll_sec = max(0.0, float(f6_block.get("pre_roll_sec") or 0.0))
 
     from mlcore.hooks.f5_cognition.inject import inject_track_duck
     from mlcore.hooks.f6_video.inject import (
@@ -365,7 +366,7 @@ def _apply_f6_if_present(
     if has_audio:
         footage_layers = inject_track_duck(
             footage_layers,
-            duck_from_sec=video_in,
+            duck_from_sec=max(video_in, pre_roll_sec),
             duck_to_sec=drop_time,
             from_pct=F6_TRACK_DUCK_FROM_PCT,
             to_pct=F6_TRACK_DUCK_TO_PCT,

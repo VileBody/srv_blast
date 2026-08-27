@@ -48,7 +48,11 @@ from .admin_commands import make_admin_router
 from .admin_panel import start_admin_panel
 from .broadcast_sender import start_broadcast_workers
 from .audio_prepare import AudioPrepareResult, prepare_audio_best_effort
-from mlcore.hooks.f6_video.inject import F6_LEAD_PAD_SEC, F6_TAIL_PAD_SEC
+from mlcore.hooks.f6_video.inject import (
+    F6_LEAD_PAD_SEC,
+    F6_TAIL_PAD_SEC,
+    f6_leading_gap_sec,
+)
 
 from .video_prepare import (
     F6_MAX_VIDEO_SEC,
@@ -6924,6 +6928,28 @@ class BlastBotApp:
         await self._ask_versions(message, st)
 
     async def _ask_versions(self, message: Message, st: ChatState) -> None:
+        if (
+            st.hook_enabled
+            and st.hook_category == "sound"
+            and st.warmup_kind == "video"
+            and st.f6_video_url
+            and st.hook_drop_t is not None
+        ):
+            required = max(0.0, float(st.hook_drop_t) - float(st.user_clip_start_sec or 0.0))
+            gap = f6_leading_gap_sec(
+                clip_start=float(st.user_clip_start_sec or 0.0),
+                drop_time=float(st.hook_drop_t),
+                duration=float(st.f6_video_duration or 0.0),
+            )
+            if gap > 0.0:
+                await message.answer(
+                    f"До видео останется незакрытый зазор {gap:.1f}с — в него попадёт "
+                    "случайный футаж, поэтому запуск остановлен.\n\n"
+                    f"Загрузи видео длиной не меньше {required:.1f}с либо вернись назад "
+                    "и измени начало фрагмента или момент дропа."
+                )
+                await self._ask_f6_video(message, st)
+                return
         # The frame is a fixed 1080x1920 PNG mask laid over every layer, so it
         # only means anything in a vertical frame. Offering it elsewhere would
         # letterbox a wide render with a portrait mask.
