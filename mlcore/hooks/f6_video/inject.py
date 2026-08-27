@@ -51,6 +51,16 @@ F6_TRACK_DUCK_TO_PCT = 100.0
 
 # Запас, с которым гасятся трек-субтитры, перекрытые видео (секунды).
 F6_SUBTITLE_CLEAR_MARGIN_SEC = 0.15
+F6_GAP_TOLERANCE_SEC = 0.10
+
+
+def f6_leading_gap_sec(
+    *, clip_start: float, drop_time: float, duration: float,
+) -> float:
+    """Uncovered pre-F6 time when the uploaded clip is shorter than the intro."""
+    available_lead = max(0.0, float(drop_time) - float(clip_start))
+    gap = available_lead - float(duration)
+    return gap if gap > F6_GAP_TOLERANCE_SEC else 0.0
 
 
 def f6_video_window(drop_time: float, duration: float | None = None) -> tuple[float, float]:
@@ -63,6 +73,23 @@ def f6_video_window(drop_time: float, duration: float | None = None) -> tuple[fl
             raise ValueError(f"f6 video: duration must be > 0 (got {duration!r})")
         out_sec = min(out_sec, in_sec + dur)
     return in_sec, out_sec
+
+
+def f6_timeline_with_preroll(
+    source_drop_time: float,
+    duration: float | None,
+) -> tuple[float, float]:
+    """Return ``(pre_roll_sec, effective_drop_time)`` for a full F6 clip."""
+    source_drop = float(source_drop_time)
+    if source_drop <= 0.0:
+        raise ValueError(f"f6 video: source_drop_time must be > 0 (got {source_drop!r})")
+    if duration is None:
+        return 0.0, source_drop
+    dur = float(duration)
+    if dur <= 0.0:
+        raise ValueError(f"f6 video: duration must be > 0 (got {duration!r})")
+    pre_roll = max(0.0, dur - source_drop)
+    return pre_roll, source_drop + pre_roll
 
 
 def cover_scale_percent(

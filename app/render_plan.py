@@ -324,6 +324,7 @@ class RenderPlanV1(BaseModel):
                 config["f6"] = {
                     "drop_time": params.get("drop_time"),
                     "seed": params.get("seed"),
+                    "pre_roll_sec": params.get("pre_roll_sec", 0.0),
                 }
             elif operation.type == "hook.f2.object.v1":
                 config["f2"] = {
@@ -893,8 +894,8 @@ def _f6_operation(cfg: Dict[str, Any]) -> Optional[VisualOperationV1]:
     if not video_url:
         return None
     drop_time = float(f6.get("drop_time") or 0.0)
-    start = 0.5
-    end = max(start, drop_time - 0.5)
+    start = 0.0
+    end = max(start, drop_time)
     if f6.get("duration"):
         end = min(end, start + float(f6["duration"]))
     duration = max(0.0, end - start)
@@ -905,6 +906,8 @@ def _f6_operation(cfg: Dict[str, Any]) -> Optional[VisualOperationV1]:
         "fadeOut": 0.1,
         "duck": {"amountDb": -16.0, "attack": 0.05, "release": 0.25},
     }
+    if f6.get("pre_roll_sec") is not None:
+        params["pre_roll_sec"] = max(0.0, float(f6["pre_roll_sec"]))
     for key in ("source_width", "source_height"):
         if f6.get(key) is not None:
             params[key] = int(f6[key])

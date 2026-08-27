@@ -119,6 +119,55 @@ def test_stage3_overlay_forced_disabled_even_if_enabled_in_env(monkeypatch, tmp_
     assert len(overlays) == 0
 
 
+def test_f6_early_drop_adds_silent_preroll_and_shifts_authored_timeline(
+    monkeypatch, tmp_path: Path,
+) -> None:
+    repo_root = Path(__file__).resolve().parent.parent
+    dummy_audio = tmp_path / "audio.mp3"
+    dummy_audio.write_bytes(b"fake")
+    inv_path = tmp_path / "inv.json"
+    inv_path.write_text(json.dumps({"assets": [{
+        "file_name": "clip1.mp4", "file_path": "/tmp/clip1.mp4",
+        "src_w": 720, "src_h": 1280,
+    }]}), encoding="utf-8")
+    monkeypatch.setenv("MODE", "dev")
+    monkeypatch.setenv("AUDIO_FILE_PATH", str(dummy_audio))
+    monkeypatch.setenv("AUDIO_DIR", str(dummy_audio.parent))
+    monkeypatch.setenv("AUDIO_FILE_NAME", "audio_source.mp3")
+
+    out_dir = tmp_path / "out-preroll"
+    render_all_steps(
+        repo_root=repo_root,
+        plan=_plan(0.0, 15.0),
+        footage_inventory_json=inv_path,
+        out_dir=out_dir,
+        data_dir=tmp_path / "data-preroll",
+        f6_block={
+            "video_url": "s3://bucket/f6.mp4", "drop_time": 10.0,
+            "source_drop_time": 3.0, "pre_roll_sec": 7.0,
+            "duration": 10.0, "source_width": 720, "source_height": 1280,
+            "seed": 1, "has_audio": True,
+        },
+    )
+
+    audio = json.loads((out_dir / "audio_plan.json").read_text(encoding="utf-8"))["audio"]
+    assert audio["clip_start_abs"] == 0.0
+    assert audio["layer_start_time"] == pytest.approx(7.0)
+    assert audio["layer_in_point"] == pytest.approx(7.0)
+    assert audio["layer_out_point"] == pytest.approx(22.0)
+
+    full = json.loads((out_dir / "full_edit_config.json").read_text(encoding="utf-8"))
+    assert full["composition"]["dur"] == pytest.approx(22.0)
+    assert full["f6"]["drop_time"] == pytest.approx(10.0)
+
+    footage = json.loads((out_dir / "footage_config.json").read_text(encoding="utf-8"))
+    video = [x for x in footage["layers"] if x.get("type") == "footage"]
+    assert video[0]["in_point"] == pytest.approx(0.0)
+    assert video[0]["out_point"] == pytest.approx(7.0)
+    assert video[1]["in_point"] == pytest.approx(7.0)
+    assert video[1]["out_point"] == pytest.approx(22.0)
+
+
 def test_stage3_overlay_inventory_requirement_is_skipped_when_globally_disabled(monkeypatch, tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parent.parent
     dummy_audio = tmp_path / "audio.mp3"

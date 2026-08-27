@@ -11,6 +11,8 @@ from mlcore.hooks.f6_video.inject import (
     clear_track_subtitles_under_video,
     cover_scale_percent,
     f6_video_window,
+    f6_timeline_with_preroll,
+    f6_leading_gap_sec,
     inject_f6_video,
 )
 from mlcore.hooks.f6_video.overlay import build_overlay_jsx as f6_overlay
@@ -39,6 +41,26 @@ def test_window_ignores_duration_longer_than_the_gap():
 def test_window_rejects_non_positive_duration():
     with pytest.raises(ValueError, match="duration must be > 0"):
         f6_video_window(6.0, duration=0.0)
+
+
+def test_timeline_extends_track_left_when_source_audio_exists():
+    pre_roll, drop = f6_timeline_with_preroll(3.0, duration=10.0)
+    assert pre_roll == pytest.approx(7.0)
+    assert drop == pytest.approx(10.0)
+
+
+def test_timeline_needs_no_preroll_when_track_has_enough_lead():
+    pre_roll, drop = f6_timeline_with_preroll(10.0, duration=10.0)
+    assert pre_roll == 0.0
+    assert drop == pytest.approx(10.0)
+
+
+def test_short_video_reports_uncovered_leading_gap():
+    assert f6_leading_gap_sec(clip_start=0.0, drop_time=10.0, duration=5.0) == 5.0
+
+
+def test_long_video_has_no_uncovered_leading_gap():
+    assert f6_leading_gap_sec(clip_start=60.0, drop_time=63.0, duration=10.0) == 0.0
 
 
 # ---------- cover scale ----------
@@ -221,6 +243,25 @@ def test_project_builder_f6_ducks_the_track():
     assert duck["duck_from_s"] == 0.0 and duck["duck_to_s"] == 6.0
     # под интервью трек глушится сильнее, чем под F5-голос
     assert duck["duck_from_pct"] == F6_TRACK_DUCK_FROM_PCT
+
+
+def test_project_builder_f6_starts_track_ramp_after_silent_preroll():
+    from app.project_builder import _apply_f6_if_present
+
+    track = {
+        "name": "audio_track", "type": "footage", "in_point": 7.0, "out_point": 22.0,
+        "z_index": 2,
+        "text_data": {"layer_meta": {"audioEnabled": True, "comp_name_target": "Comp 1"},
+                      "audio_envelope": {}},
+    }
+    cfg = _cfg(drop_time=10.0, duration=10.0, pre_roll_sec=7.0)
+    footage, _ = _apply_f6_if_present(
+        full_edit_config=cfg, footage_layers=[track], text_layers=[],
+        main_comp_name="Comp 1", comp_width=1080, comp_height=1960,
+    )
+    duck = next(L for L in footage if L["name"] == "audio_track")["text_data"]["audio_envelope"]
+    assert duck["duck_from_s"] == pytest.approx(7.0)
+    assert duck["duck_to_s"] == pytest.approx(10.0)
 
 
 def test_project_builder_f6_requires_source_size():

@@ -711,10 +711,12 @@ def _shift_footage_to_clip_zero(
     *,
     clip_start_abs: float,
     clip_end_abs: float,
+    timeline_pre_roll_sec: float = 0.0,
 ) -> FootageSelectionPayload:
     cs = float(clip_start_abs)
     ce = float(clip_end_abs)
-    dur = ce - cs
+    pre_roll = max(0.0, float(timeline_pre_roll_sec))
+    dur = ce - cs + pre_roll
     if dur <= 0:
         raise ValueError(f"Invalid clip window for footage shift: {cs}..{ce}")
 
@@ -723,8 +725,8 @@ def _shift_footage_to_clip_zero(
 
     shifted_clips: List[Dict[str, Any]] = []
     for c in clips_in:
-        in0 = float(c.in_point) - cs
-        out0 = float(c.out_point) - cs
+        in0 = float(c.in_point) - cs + pre_roll
+        out0 = float(c.out_point) - cs + pre_roll
 
         if in0 < -1e-6 or out0 > dur + 1e-6:
             raise ValueError(
@@ -743,6 +745,19 @@ def _shift_footage_to_clip_zero(
                 "start_time": in0 - src_off,
             }
         )
+
+    if pre_roll > 0.0 and shifted_clips:
+        # F6 fully covers this filler. Keeping deterministic footage coverage
+        # avoids teaching the rest of the render pipeline about legal gaps.
+        first = shifted_clips[0]
+        shifted_clips.insert(0, {
+            "file_name": first["file_name"],
+            "fit_mode": first["fit_mode"],
+            "in_point": 0.0,
+            "out_point": pre_roll,
+            "source_offset_sec": first["source_offset_sec"],
+            "start_time": -float(first["source_offset_sec"]),
+        })
 
     payload = {
         "clips": shifted_clips,
@@ -907,7 +922,8 @@ def render_all_steps(
         clip_start = float(flow_abs.clip.start)
         clip_end = float(flow_abs.clip.end)
 
-    clip_dur = clip_end - clip_start
+    pre_roll = max(0.0, float((f6_block or {}).get("pre_roll_sec") or 0.0))
+    clip_dur = clip_end - clip_start + pre_roll
     if clip_dur <= 0:
         raise ValueError(f"Invalid subtitles clip window: {clip_start}..{clip_end}")
 
@@ -930,8 +946,8 @@ def render_all_steps(
         "audio": {
             "clip_start_abs": clip_start,
             "clip_end_abs": clip_end,
-            "layer_start_time": -clip_start,
-            "layer_in_point": 0.0,
+            "layer_start_time": pre_roll - clip_start,
+            "layer_in_point": pre_roll,
             "layer_out_point": float(clip_dur),
             "moment_of_interest_sec": plan.audio.moment_of_interest_sec,
         }
@@ -945,7 +961,7 @@ def render_all_steps(
             raise RuntimeError("legacy subtitles payload is empty at stage3")
         subs_clip_zero = normalize_subtitles_to_clip_zero(
             subs_abs_legacy,
-            clip_start_abs=clip_start,
+            clip_start_abs=clip_start - pre_roll,
             clip_end_abs=clip_end,
         )
 
@@ -964,7 +980,7 @@ def render_all_steps(
             raise RuntimeError("subtitle flow payload is empty at stage3")
         flow_clip_zero = normalize_subtitle_flow_to_clip_zero(
             flow_abs,
-            clip_start_abs=clip_start,
+            clip_start_abs=clip_start - pre_roll,
             clip_end_abs=clip_end,
         )
         comp_dur = float(clip_dur)
@@ -985,6 +1001,7 @@ def render_all_steps(
         plan.footage,
         clip_start_abs=clip_start,
         clip_end_abs=clip_end,
+        timeline_pre_roll_sec=pre_roll,
     )
 
     # -------------------------
@@ -1129,7 +1146,17 @@ def render_all_steps(
     # normal text_layers are skipped in these modes. Нет блока → обычный job.
     # -------------------------
     if jsx_subtitles_block:
-        full_edit_obj["subtitles_jsx"] = jsx_subtitles_block
+        shifted_jsx = dict(jsx_subtitles_block)
+        if pre_roll > 0.0:
+            shifted_jsx["word_timings"] = [
+                {
+                    **dict(word),
+                    "start": float(word["start"]) + pre_roll,
+                    "end": float(word["end"]) + pre_roll,
+                }
+                for word in (jsx_subtitles_block.get("word_timings") or [])
+            ]
+        full_edit_obj["subtitles_jsx"] = shifted_jsx
 
     # -------------------------
     # Write to DATA_DIR + mirror to OUT_DIR
