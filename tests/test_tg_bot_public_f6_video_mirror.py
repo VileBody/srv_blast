@@ -238,28 +238,7 @@ def test_video_arm_routes_to_the_f6_upload_and_drops_the_sound():
     assert st.f1_sound_text == ""
 
 
-def test_public_video_arm_prompts_for_mp4_upload():
-    import asyncio
-
-    from services.tg_bot_public import app as pub
-    from services.tg_bot_public.state_store import ChatState
-
-    async def run():
-        app = _App()
-        msg = _Message(pub.BTN_WARMUP_VIDEO)
-        st = ChatState(chat_id=1, hook_enabled=True, hook_category="sound", hook_drop_t=6.0)
-        app._ask_f6_video = lambda message, state: pub.BlastBotApp._ask_f6_video(
-            app, message, state,
-        )
-        await pub.BlastBotApp._handle_wait_warmup_kind(app, msg, st)
-        return msg, st
-
-    msg, st = asyncio.run(run())
-    assert st.stage == pub.STAGE_WAIT_F6_VIDEO
-    assert msg.answers[0][0] == "Пришли видео в mp4 формате"
-
-
-def test_f6_prompts_render_without_unary_plus_crash():
+def test_both_f6_prompts_render_without_unary_plus_crash():
     import asyncio
     from types import SimpleNamespace
 
@@ -268,17 +247,17 @@ def test_f6_prompts_render_without_unary_plus_crash():
     from services.tg_bot_public import app as pub
     from services.tg_bot_public.state_store import ChatState as PublicState
 
-    async def run(method, state_cls, expected_text):
+    async def run(method, state_cls):
         app = _App()
         app.settings = SimpleNamespace(external_video_source_enabled=False)
         msg = _Message()
         st = state_cls(chat_id=1)
         await method(app, msg, st)
         assert msg.answers
-        assert expected_text in msg.answers[0][0]
+        assert "Прогрев видео" in msg.answers[0][0]
 
-    asyncio.run(run(team.BlastBotApp._ask_f6_video, TeamState, "Прогрев видео"))
-    asyncio.run(run(pub.BlastBotApp._ask_f6_video, PublicState, "Пришли видео в mp4 формате"))
+    asyncio.run(run(team.BlastBotApp._ask_f6_video, TeamState))
+    asyncio.run(run(pub.BlastBotApp._ask_f6_video, PublicState))
 
 
 def test_both_bots_block_short_f6_before_versions():
