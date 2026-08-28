@@ -5909,19 +5909,7 @@ class BlastBotApp:
         st.stage = STAGE_WAIT_F6_VIDEO
         await self.store.set(st)
         await message.answer(
-            "«Прогрев видео»: пришли вырезку, которая сыграет ДО дропа — "
-            "кусок интервью, мем, что угодно цепляющее.\n"
-            f"Длина {F6_MIN_VIDEO_SEC:.0f}–{F6_MAX_VIDEO_SEC:.0f}с (длиннее — обрежу "
-            "по началу), вес до 20 МБ.\n"
-            "Видео встанет во весь кадр со своим звуком, трек на это время уйдёт "
-            # Mirror team bot: keep the optional paragraph inside the same text
-            # argument; a comma before '+' becomes unary-plus on str at runtime.
-            "на фон и сменится основным монтажом ровно на дропе."
-            + (
-                "\n\nМожно и ссылкой: пришли ссылку на YouTube, а следующим "
-                "сообщением — тайминги нужного куска."
-                if self.settings.external_video_source_enabled else ""
-            ),
+            "Пришли видео в mp4 формате",
             reply_markup=_kb([BTN_BACK]),
         )
 
