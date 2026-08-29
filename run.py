@@ -225,7 +225,7 @@ def main() -> int:
     if not args.skip_ae:
         bg_mode = (os.environ.get("BG_MODE") or "footage").strip().lower()
         if bg_mode == "photo":
-            # Photo flow (4:3): build the standalone photo render from the stage2
+            # Photo flow: build the standalone photo render from the stage2
             # picks (footage_config now holds PHOTO picks + interval timing, since
             # the picker was routed to the photo pool). Writes the SAME canonical
             # artifact names as build_full_project (drop-in for the render worker).
@@ -236,13 +236,13 @@ def main() -> int:
             footage_cfg = json.loads(footage_config_path.read_text(encoding="utf-8"))
             photos, segments = extract_photos_and_segments_from_footage_cfg(footage_cfg)
             # Reuse the canonical subtitle renderer instead of maintaining a
-            # second, drifting text implementation for 4:3.
+            # second, drifting text implementation for each output geometry.
             subtitle_build_dir = out_dir / "_photo_subtitles"
             subtitle_build_dir.mkdir(parents=True, exist_ok=True)
             full_edit_cfg = json.loads(full_edit_config_path.read_text(encoding="utf-8"))
 
             # The subtitle project must contribute SUBTITLES ONLY. Its comp is
-            # nested into the 4:3 render at 1080 wide, so anything the effect
+            # nested into the photo render, so anything the effect
             # block adds inside it renders as a partial-width overlay: the flash
             # transition showed up as a white rectangle that did not reach the
             # edges of the frame.
@@ -282,7 +282,7 @@ def main() -> int:
                 subtitle_comp_name=str(AE_PROJECT["main_comp"]["name"]),
                 f3_overlay_js=photo_f3_overlay_js,
             )
-            print("\n[OK] PHOTO project build (4:3):")
+            print("\n[OK] PHOTO project build:")
             print(f"  - photos: {len(photos)}  segments: {len(segments)}")
         else:
             from app.project_builder import build_full_project  # noqa: E402
