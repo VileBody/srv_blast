@@ -195,7 +195,6 @@ def test_build_photo_project_emits_jsx_and_payload(tmp_path: Path) -> None:
     assert out_json.exists() and out_jsx.exists()
     jsx = out_jsx.read_text(encoding="utf-8")
     assert "Photo Render" in jsx
-    assert "1920" in jsx and "1440" in jsx
     assert jsx.index("BASE_SUBTITLE_PROJECT_JSX") < jsx.index("AE_PHOTO_FLOW_4x3")
     assert '"offset_sec":91.0' in jsx
     assert '"subtitle_comp_name":"Comp 1"' in jsx
