@@ -5158,8 +5158,8 @@ def build_all_via_gemini_one_call(
             )
             f1_block = None
 
-    # ── F6 «Видео»: pre-drop прогрев из видео юзера + то же визуал-комбо, что
-    #    у F1. Env F6_VIDEO_URL — S3/HTTP ссылка на нормализованный (h264+aac)
+    # ── F6 «Видео»: pre-drop прогрев из видео юзера + переходы после дропа.
+    #    Env F6_VIDEO_URL — S3/HTTP ссылка на нормализованный (h264+aac)
     #    mp4; F6_VIDEO_WIDTH/HEIGHT/DURATION — метаданные ffprobe с бота (нужны,
     #    чтобы запечь cover-скейл числами и подрезать окно по факту). drop_time
     #    COMP-relative (= USER_DROP_T − clip_start). Любая ошибка → лог + рендер
@@ -5173,9 +5173,9 @@ def build_all_via_gemini_one_call(
             if not _udt:
                 raise RuntimeError("F6 video requires USER_DROP_T (drop anchor)")
             _source_drop_rel_f6 = float(_udt) - _cs
-            if not (_source_drop_rel_f6 > 0.0):
+            if _source_drop_rel_f6 < 0.0:
                 raise RuntimeError(
-                    f"F6 source drop_rel must be > 0 (USER_DROP_T={_udt}, clip_start={_cs})"
+                    f"F6 source drop_rel must be >= 0 (USER_DROP_T={_udt}, clip_start={_cs})"
                 )
             _f6_w = int(float((os.environ.get("F6_VIDEO_WIDTH") or "0").strip() or 0))
             _f6_h = int(float((os.environ.get("F6_VIDEO_HEIGHT") or "0").strip() or 0))

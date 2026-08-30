@@ -104,9 +104,10 @@ def test_video_layer_reaches_the_final_payload(built):
     f6 = next(L for L in layers if L["name"] == "f6_hook_video")
     assert f6["text_data"]["source_footage"]["remote_url"] == "s3://raw-audio/hooks/interview.mp4"
     assert f6["text_data"]["layer_meta"]["audioEnabled"] is True
-    # окно = [0.5, 0.5+dur], подрезано по фактической длине вырезки
-    assert f6["in_point"] == pytest.approx(0.5)
-    assert f6["out_point"] == pytest.approx(4.5)
+    # F6 без искусственного lead pad: окно начинается с нуля и подрезается
+    # по фактической длине присланного видео.
+    assert f6["in_point"] == pytest.approx(0.0)
+    assert f6["out_point"] == pytest.approx(4.0)
 
 
 def test_video_sits_above_the_footage_in_the_final_payload(built):
@@ -124,9 +125,11 @@ def test_track_is_ducked_under_the_warm_up(built):
     payload, _jsx, _p = built
     track = next(L for L in payload["footage_layers"] if L["name"] == "audio_track")
     env = track["text_data"]["audio_envelope"]
-    assert env["duck_from_s"] == pytest.approx(0.5)
+    assert env["duck_from_s"] == pytest.approx(0.0)
     assert env["duck_to_s"] == pytest.approx(5.0)
-    assert env["duck_from_pct"] == pytest.approx(15.0)
+    assert env["duck_from_pct"] == pytest.approx(10.0)
+    assert env["duck_ramp_start_s"] == pytest.approx(4.0)
+    assert env["duck_curve"] == "soft"
 
 
 def test_track_subtitles_under_the_video_are_gone(built):
@@ -139,7 +142,8 @@ def test_track_subtitles_under_the_video_are_gone(built):
 def test_jsx_carries_the_f6_visual_combo(built):
     _payload, jsx, _p = built
     assert "F6 «Видео» visual combo" in jsx
-    assert "DROP: F3 hook_light" in jsx
+    assert "DROP: F3 hook_light" not in jsx
+    assert "POST-DROP: seeded-random transition per cut" in jsx
     assert "var __f2_seed = 12345" in jsx
 
 

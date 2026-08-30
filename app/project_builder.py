@@ -352,7 +352,9 @@ def _apply_f6_if_present(
 
     from mlcore.hooks.f5_cognition.inject import inject_track_duck
     from mlcore.hooks.f6_video.inject import (
+        F6_TRACK_DUCK_CURVE,
         F6_TRACK_DUCK_FROM_PCT,
+        F6_TRACK_RAMP_SEC,
         F6_TRACK_DUCK_TO_PCT,
         clear_track_subtitles_under_video,
         f6_video_window,
@@ -370,6 +372,8 @@ def _apply_f6_if_present(
             duck_to_sec=drop_time,
             from_pct=F6_TRACK_DUCK_FROM_PCT,
             to_pct=F6_TRACK_DUCK_TO_PCT,
+            ramp_start_sec=max(pre_roll_sec, drop_time - F6_TRACK_RAMP_SEC),
+            curve=F6_TRACK_DUCK_CURVE,
         )
     else:
         # Немая вырезка (gif/animation): приглушать трек не под что — получилась

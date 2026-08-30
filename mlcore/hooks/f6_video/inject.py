@@ -44,10 +44,12 @@ F6_AUDIO_ENVELOPE = {
     "min_db": -48.0,
 }
 
-# Насколько приглушается ТРЕК под звук вырезки. Жёстче, чем у F5/F1 (25%→100%):
-# под интервью трек должен быть фоном, иначе речь не разобрать.
-F6_TRACK_DUCK_FROM_PCT = 15.0
+# Под видео трек держится тихим фоном и начинает мягко нарастать только в
+# последнюю секунду перед дропом.
+F6_TRACK_DUCK_FROM_PCT = 10.0
 F6_TRACK_DUCK_TO_PCT = 100.0
+F6_TRACK_RAMP_SEC = 1.0
+F6_TRACK_DUCK_CURVE = "soft"
 
 # Запас, с которым гасятся трек-субтитры, перекрытые видео (секунды).
 F6_SUBTITLE_CLEAR_MARGIN_SEC = 0.15
@@ -81,8 +83,8 @@ def f6_timeline_with_preroll(
 ) -> tuple[float, float]:
     """Return ``(pre_roll_sec, effective_drop_time)`` for a full F6 clip."""
     source_drop = float(source_drop_time)
-    if source_drop <= 0.0:
-        raise ValueError(f"f6 video: source_drop_time must be > 0 (got {source_drop!r})")
+    if source_drop < 0.0:
+        raise ValueError(f"f6 video: source_drop_time must be >= 0 (got {source_drop!r})")
     if duration is None:
         return 0.0, source_drop
     dur = float(duration)

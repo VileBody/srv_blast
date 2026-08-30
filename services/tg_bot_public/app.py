@@ -1180,10 +1180,10 @@ def _warmup_video_enabled() -> bool:
     Категория «Прогрев» есть у всех, а вот развилка «звук / видео» — только там,
     где рукав включён. Выключен → «Прогрев» ведёт сразу на загрузку звука, то
     есть ровно в старое поведение F1, и юзер даже не узнаёт, что развилка
-    существует. Team bot первым, в tg_bot_public — default-OFF до смоука.
-    Переопределяется WARMUP_VIDEO_ENABLED.
+    существует. В public включён по умолчанию; WARMUP_VIDEO_ENABLED=0 остаётся
+    явным аварийным выключателем.
     """
-    return os.environ.get("WARMUP_VIDEO_ENABLED", "0").strip().lower() in {
+    return os.environ.get("WARMUP_VIDEO_ENABLED", "1").strip().lower() in {
         "1", "true", "yes", "on", "enabled",
     }
 
@@ -5280,12 +5280,12 @@ class BlastBotApp:
         # per-category one-liner sits next to its button (full descriptions live
         # in core.hook_intros for the team bot / future on-demand expansion).
         await message.answer(
-            "Хук — приём в первые секунды, который цепляет зрителя.\n\n"
-            "🔊 Звук — свой звук до дропа + вспышка-молния\n"
-            "🟦 Объект — фигура в такт на склейке до дропа\n"
-            "✨ Эффект — визуальные FX: хук, переход, грейд\n"
-            "👆 Движение — engagement-байт: рука/голова в такт\n"
-            "💭 Мысль — голос-ИИ перед дропом\n\n"
+            "Хук — акцент вокруг выбранного дропа, который удерживает внимание.\n\n"
+            "🔥 Прогрев — свой звук или видео перед дропом; основной трек временно уходит на фон\n"
+            "🟦 Объект — фигура появляется в такт на склейках до дропа\n"
+            "✨ Эффект — FX на дропе, переходы между клипами и стилизация\n"
+            "👆 Движение — жест рукой или головой, который зритель повторяет в такт\n"
+            "💭 Мысль — короткая ИИ-реплика перед дропом\n\n"
             "Выбери тип ↓",
             reply_markup=_kb(
                 [BTN_HOOK_CAT_WARMUP, BTN_HOOK_CAT_OBJECT],
@@ -5316,14 +5316,6 @@ class BlastBotApp:
         if text == BTN_HOOK_CAT_WARMUP:
             if st.hook_drop_t is None:
                 await message.answer("Для «Прогрева» нужен момент дропа — вернись и выбери его.")
-                await self._ask_hook_drop(message, st)
-                return
-            _clip_start = float(st.user_clip_start_sec or 0.0)
-            if (float(st.hook_drop_t) - _clip_start) <= 1.0:
-                await message.answer(
-                    "Дроп слишком близко к началу отрывка: для «Прогрева» нужно ≥1с "
-                    "до дропа (вставка играет в окне до хука). Выбери дроп позже."
-                )
                 await self._ask_hook_drop(message, st)
                 return
             st.hook_category = "sound"

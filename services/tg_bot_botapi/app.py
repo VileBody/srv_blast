@@ -976,8 +976,8 @@ def _warmup_video_enabled() -> bool:
     Категория «Прогрев» есть у всех, а вот развилка «звук / видео» — только там,
     где рукав включён. Выключен → «Прогрев» ведёт сразу на загрузку звука, то
     есть ровно в старое поведение F1, и юзер даже не узнаёт, что развилка
-    существует. Team bot первым, в tg_bot_public — default-OFF до смоука.
-    Переопределяется WARMUP_VIDEO_ENABLED.
+    существует. В обоих ботах развилка включена по умолчанию; флаг остаётся
+    явным аварийным выключателем. Переопределяется WARMUP_VIDEO_ENABLED.
     """
     return os.environ.get("WARMUP_VIDEO_ENABLED", "1").strip().lower() in {
         "1", "true", "yes", "on", "enabled",
@@ -4467,14 +4467,6 @@ class BlastBotApp:
             if st.hook_drop_t is None:
                 await message.answer(
                     "Для «Прогрева» нужен момент дропа — вернись и выбери его."
-                )
-                await self._ask_hook_drop(message, st)
-                return
-            _clip_start = float(st.user_clip_start_sec or 0.0)
-            if (float(st.hook_drop_t) - _clip_start) <= 1.0:
-                await message.answer(
-                    "Дроп слишком близко к началу отрывка: для «Прогрева» нужно ≥1с "
-                    "до дропа (вставка играет в окне до хука). Выбери дроп позже."
                 )
                 await self._ask_hook_drop(message, st)
                 return

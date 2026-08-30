@@ -386,7 +386,7 @@ services:
       PHOTO_FLOW_ENABLED: ${PHOTO_FLOW_ENABLED_PUBLIC:-1}
       # Рамки включены в public; явный 0 оставляет аварийный kill switch.
       FRAME_FLOW_ENABLED: ${FRAME_FLOW_ENABLED_PUBLIC:-1}
-      WARMUP_VIDEO_ENABLED: ${WARMUP_VIDEO_ENABLED_PUBLIC:-0}
+      WARMUP_VIDEO_ENABLED: ${WARMUP_VIDEO_ENABLED_PUBLIC:-1}
       # F6, ветка ссылки на YouTube. В public включаем ПОСЛЕ прокси и смоука
       # в команде: без прокси юзер получит только ошибку.
       EXTERNAL_VIDEO_SOURCE_ENABLED: ${EXTERNAL_VIDEO_SOURCE_ENABLED_PUBLIC:-0}
