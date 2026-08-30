@@ -9,19 +9,11 @@ import pytest
 _PHOTOS = [{"file_name": "a.jpg", "remote_url": "s3://bucket/a.jpg"}]
 
 
-@pytest.mark.parametrize(
-    ("preset_name", "expected_size"),
-    [
-        ("vertical", (1080, 1920)),
-        ("wide", (1920, 1080)),
-        ("square", (1080, 1080)),
-    ],
-)
-def test_photo_project_uses_the_requested_render_preset(
+@pytest.mark.parametrize("preset_name", ["vertical", "wide", "square"])
+def test_photo_project_stays_4_by_3_independent_of_render_preset(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     preset_name: str,
-    expected_size: tuple[int, int],
 ) -> None:
     from app.project_builder import build_photo_project
 
@@ -35,10 +27,10 @@ def test_photo_project_uses_the_requested_render_preset(
     )
 
     payload = json.loads(out_json.read_text(encoding="utf-8"))
-    assert (payload["photo_job"]["comp_w"], payload["photo_job"]["comp_h"]) == expected_size
+    assert (payload["photo_job"]["comp_w"], payload["photo_job"]["comp_h"]) == (1920, 1440)
 
 
-def test_vertical_photo_request_cannot_silently_render_as_4_by_3(
+def test_vertical_photo_request_does_not_override_photo_geometry(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -54,5 +46,4 @@ def test_vertical_photo_request_cannot_silently_render_as_4_by_3(
     )
 
     payload = json.loads(out_json.read_text(encoding="utf-8"))
-    assert (payload["photo_job"]["comp_w"], payload["photo_job"]["comp_h"]) == (1080, 1920)
-    assert (payload["photo_job"]["comp_w"], payload["photo_job"]["comp_h"]) != (1920, 1440)
+    assert (payload["photo_job"]["comp_w"], payload["photo_job"]["comp_h"]) == (1920, 1440)

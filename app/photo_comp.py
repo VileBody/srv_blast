@@ -25,9 +25,8 @@ from core.video_timing import AE_FPS
 
 from mlcore.photo_framing import normalize_framing
 
-# Legacy/reference geometry for direct build_photo_payload callers. Production
-# build_photo_project passes the explicit active render preset instead of using
-# these defaults.
+# Comp geometry for the photo flow: a standalone horizontal 4:3 render (the
+# founder's reference comp), independent of the footage render preset.
 PHOTO_COMP_W = 1920
 PHOTO_COMP_H = 1440
 

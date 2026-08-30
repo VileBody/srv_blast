@@ -894,7 +894,7 @@ def build_photo_project(
     subtitle_comp_name: str = "",
     f3_overlay_js: str = "",
 ) -> Tuple[Path, Path]:
-    """Build the standalone PHOTO render in the active output geometry.
+    """Build the standalone 4:3 PHOTO render (photo_template.j2).
 
     Parallel to build_full_project but for the photo flow: it does NOT touch the
     footage template/comp. Emits photo_render.jsx + the payload JSON; the photo
@@ -906,6 +906,8 @@ def build_photo_project(
     """
     from app.photo_comp import (
         DEFAULT_SEGMENT_FRAMES,
+        PHOTO_COMP_H,
+        PHOTO_COMP_W,
         build_photo_payload,
     )
     from core.video_timing import AE_FPS
@@ -917,15 +919,14 @@ def build_photo_project(
     if not resolved_audio_name:
         raise RuntimeError("Photo Render requires AUDIO_FILE_NAME or audio_file_name")
     resolved_audio_locator = str(audio_locator or f"media/audio/{resolved_audio_name}").strip()
-    render_preset = active_preset()
     payload = build_photo_payload(
         photos,
         style=style,
         transition=transition,
         fps=float(fps) if fps is not None else float(AE_FPS),
         segment_frames=int(segment_frames) if segment_frames is not None else DEFAULT_SEGMENT_FRAMES,
-        comp_w=int(render_preset.width),
-        comp_h=int(render_preset.height),
+        comp_w=PHOTO_COMP_W,
+        comp_h=PHOTO_COMP_H,
         segments=segments,
         audio_file_name=resolved_audio_name,
         audio_locator=resolved_audio_locator,
@@ -954,7 +955,7 @@ def build_photo_project(
         footage_layers=payload["footage_layers"],
     )
     # The canonical project builder owns every subtitle mode (including the JSX
-    # trendy/brat modes). Build it first, then add the standalone photo comp
+    # trendy/brat modes). Build it first, then add the standalone 4:3 photo comp
     # and nest its transparent main comp over the photos.
     jsx = (
         str(subtitle_project_jsx).rstrip() + "\n\n" + photo_jsx
