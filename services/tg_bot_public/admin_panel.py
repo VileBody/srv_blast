@@ -32,7 +32,10 @@ from services.orchestrator.alignment_smoke_auth import (
 )
 from services.orchestrator.windows_node_pool import normalize_windows_urls, runtime_windows_urls_key
 
-from .credits_db import normalize_package_code as _normalize_pkg_code
+from .credits_db import (
+    normalize_package_code as _normalize_pkg_code,
+    package_video_credits,
+)
 from .render_node_pool import (
     list_render_servers,
     probe_render_node,
@@ -4387,6 +4390,17 @@ def build_app(
                 return PlainTextResponse(f"bootstrap failed: {e}", status_code=500)
             return None
 
+        # Resolve the entitlement before persisting CONFIRMED.  Unknown package
+        # values must be retried/inspected, never silently credited as an old
+        # five-video tariff.
+        confirmed_credits = None
+        if status == "CONFIRMED" and existing_payment:
+            try:
+                confirmed_credits = package_video_credits(existing_payment["package"])
+            except ValueError as exc:
+                log.error("tbank notify: %s order=%s", exc, order_id)
+                return PlainTextResponse(str(exc), status_code=500)
+
         # Dedup check
         if payment_id and await credits_db.is_payment_processed(payment_id, status):
             log.info("tbank notify: duplicate payment_id=%s status=%s", payment_id, status)
@@ -4448,14 +4462,11 @@ def build_app(
 
         # On confirmed payment — grant credits & redirect to generation
         if should_apply_status and effective_status == "CONFIRMED" and current_status != "CONFIRMED" and payment:
-            # Credits based on package
-            credits_map = {
-                "Триал": 5,
-                "Бласт": 100,
-                "Глоу": 400,
-                "Импульс": 100_000,
-            }
-            credits_to_add = credits_map.get(pkg, 5)
+            credits_to_add = (
+                confirmed_credits
+                if confirmed_credits is not None
+                else package_video_credits(pkg)
+            )
 
             await credits_db.add_credits(
                 tg_id, credits_to_add,

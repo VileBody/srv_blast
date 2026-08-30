@@ -117,7 +117,10 @@ def test_the_hook_question_is_not_asked_when_the_render_is_horizontal(bot: str) 
     src = inspect.getsource(_mod(bot).BlastBotApp._ask_hook_choice)
     assert '_render_preset_for_bucket(*self._selected_bucket_slot(st)) != "vertical"' in src
     guard, _, question = src.partition("STAGE_WAIT_HOOK_CHOICE")
-    assert "await self._ask_effect_transition(message, st)" in guard
+    if bot == "services.tg_bot_public.app":
+        assert "await self._ask_visual_transition(message, st)" in guard
+    else:
+        assert "await self._ask_effect_transition(message, st)" in guard
     assert question, "the vertical path must still ask the hook question"
 
 
@@ -150,19 +153,18 @@ def test_the_api_would_indeed_reject_that_combination() -> None:
 # --------------------------------------------------------------------------- #
 # what the horizontal flow keeps and what it drops
 # --------------------------------------------------------------------------- #
-@pytest.mark.parametrize("bot", BOTS)
-def test_the_horizontal_flow_keeps_cut_style_and_stylization(bot: str) -> None:
+def test_the_public_horizontal_flow_uses_the_visual_picker_once() -> None:
     """Only the DROP-ANCHORED hooks are unavailable outside vertical.
 
-    Transitions and grades are bound to the comp and scale with it, so skipping
-    the whole hook branch left the 16:9 flow with no visual choices at all — the
-    cut style and the stylization disappeared with it. Same shape the 4:3 photo
-    flow already uses: hook_category="effect" with an empty effect_hook.
+    Transitions and grades are bound to the comp and scale with it.  The public
+    bot must enter its shared visual picker directly so those two questions are
+    kept but never repeated by the legacy effect flow.
     """
-    src = inspect.getsource(_mod(bot).BlastBotApp._ask_hook_choice)
-    assert 'st.hook_category = "effect"' in src
+    src = inspect.getsource(_mod("services.tg_bot_public.app").BlastBotApp._ask_hook_choice)
+    assert 'st.hook_category = ""' in src
     assert 'st.effect_hook = ""' in src
-    assert "await self._ask_effect_transition(message, st)" in src
+    assert "await self._ask_visual_transition(message, st)" in src
+    assert "await self._ask_effect_transition(message, st)" not in src
 
 
 @pytest.mark.parametrize("bot", BOTS)

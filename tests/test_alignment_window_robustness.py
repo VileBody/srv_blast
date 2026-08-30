@@ -26,10 +26,34 @@ from mlcore.alignment.core import (
     EmissionTimeline,
     _build_stage1_asr,
     check_reference_fits_window,
+    clamp_clip_end_to_decoded_audio,
     minimum_ctc_frames,
     required_alignment_seconds,
     select_dynamic_alignment_window,
 )
+
+
+def test_requested_end_is_clamped_to_decoded_audio_end(caplog) -> None:
+    with caplog.at_level(logging.WARNING):
+        actual = clamp_clip_end_to_decoded_audio(
+            clip_start_abs=0.0,
+            clip_end_abs=18.0,
+            audio_end_abs=17.319125,
+        )
+
+    assert actual == pytest.approx(17.319125)
+    assert "requested_clip_end=18.000000 audio_end=17.319125" in caplog.text
+
+
+def test_window_entirely_after_decoded_audio_still_fails() -> None:
+    with pytest.raises(AlignmentFailure) as excinfo:
+        clamp_clip_end_to_decoded_audio(
+            clip_start_abs=18.0,
+            clip_end_abs=20.0,
+            audio_end_abs=17.319125,
+        )
+
+    assert excinfo.value.code == ERROR_WINDOW_MISMATCH
 
 
 def _timeline() -> EmissionTimeline:

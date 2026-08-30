@@ -251,6 +251,29 @@ def normalize_package_code(value: str) -> str:
     return ""
 
 
+_PACKAGE_VIDEO_CREDITS = {
+    "5": 5,
+    "15": 100,
+    "30": 400,
+    # The current bot represents the unlimited annual tariff with a high
+    # sentinel so the existing integer balance contract remains unchanged.
+    "50": 100_000,
+}
+
+
+def package_video_credits(value: str) -> int:
+    """Return the current video allowance for any persisted package spelling.
+
+    Payment rows created by older bot versions contain numeric tariff codes,
+    while current rows contain Russian labels.  Unknown products fail loudly:
+    silently granting the old five-credit default would under-credit a sale.
+    """
+    code = normalize_package_code(value)
+    if not code:
+        raise ValueError(f"unknown payment package: {value!r}")
+    return _PACKAGE_VIDEO_CREDITS[code]
+
+
 def _clean_utm(utm: Optional[Dict[str, str]]) -> Dict[str, str]:
     src = dict(utm or {})
     payload = _norm_text(src.get("payload", ""), max_len=512)

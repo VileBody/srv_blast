@@ -209,6 +209,23 @@ def test_overlay_brat_injects_bpm():
     assert "var nl = srcComp.layers.add(tcomp); nl.moveToBeginning()" in js
 
 
+def test_brat_words_share_a_row_baseline_instead_of_glyph_box_centres() -> None:
+    """Descenders must not move one word vertically within the same row."""
+    from pathlib import Path
+
+    src = (
+        Path(__file__).resolve().parents[1]
+        / "5th_template"
+        / "brat_subtitles.jsx"
+    ).read_text(encoding="utf-8")
+
+    assert "top: mr.top" in src
+    assert "bottom: mr.top + mr.height" in src
+    assert "var baselineHalfH = Math.max(ascent, descent) + pad;" in src
+    assert 'setValue([wr.left + wr.width / 2, 0, 0])' in src
+    assert "wr.top + wr.height / 2" not in src
+
+
 def test_overlay_brat_can_disable_blinker_without_removing_subtitles():
     wt = word_timings_from_transcript([{"text": "бам", "t_start": 0.0, "t_end": 0.4}])
     js = build_jsx_subtitles_overlay(
