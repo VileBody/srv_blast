@@ -3,17 +3,17 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Калькулятор дохода — Blast</title>
+  <title>Калькулятор дохода | Blast</title>
   <meta name="description" content="Посчитай, сколько можно заработать на посте про Blast в своём Telegram-канале." />
   <link rel="icon" type="image/svg+xml" href="../assets/logo.svg" />
   <link rel="stylesheet" href="../css/style.css?v=20260730-hero1" />
   <style>
     /* ═══════════════════════════════════════════════════════════
-       CALC PAGE — использует переменные и шрифты из css/style.css
+       CALC PAGE - использует переменные и шрифты из css/style.css
        ═══════════════════════════════════════════════════════════ */
     .calc-page { padding-bottom: 40px; }
 
-    /* ─── Navbar (упрощённый: лого + CTA) ───────────────────── */
+    /* ─── Navbar (упрощённый: только логотип) ───────────────── */
     .calc-nav-wrap {
       position: relative;
       top: 20px;
@@ -43,9 +43,7 @@
       pointer-events: none;
       z-index: 0;
     }
-    .calc-nav-logo,
-    .calc-nav .btn { position: relative; z-index: 1; }
-    .calc-nav .btn { height: 50px; padding: 0 26px; font-size: 18px; }
+    .calc-nav-logo { position: relative; z-index: 1; }
 
     /* ─── Hero ───────────────────────────────────────────────── */
     .calc-hero { padding-top: 80px; text-align: center; }
@@ -135,7 +133,7 @@
       max-width: 760px;
       margin: 20px auto 0;
       /* .load-fade оставляет после себя transform (fill-mode: forwards), а он создаёт
-         стекинг-контекст у каждого блока — из-за этого z-index подсказки работает
+         стекинг-контекст у каждого блока, из-за этого z-index подсказки работает
          только внутри .calc-results, и дисклеймер с CTA рисуются поверх неё.
          Поднимаем весь блок результатов над последующими секциями. */
       position: relative;
@@ -168,12 +166,11 @@
       line-height: 0; /* чтобы обёртка не добавляла высоту к кнопке */
     }
     .calc-help {
-      display: flex;
-      align-items: center;
-      justify-content: center;
+      display: grid;
+      place-items: center;
       width: 26px;
       height: 26px;
-      padding: 3px 0 0; /* оптическая компенсация: у «?» нет выносного вниз, паддинг двигает глиф на половину — 1.5px */
+      padding: 0;
       border-radius: 50%;
       border: 1px solid rgba(139, 111, 230, .7);
       background: transparent;
@@ -184,13 +181,21 @@
       cursor: pointer;
       transition: background-color .2s, color .2s;
     }
+    .calc-help-glyph {
+      display: block;
+      transform: translateY(-1px);
+    }
     .calc-help:hover,
     .calc-help[aria-expanded="true"] {
       background-color: rgba(139, 111, 230, .18);
       color: var(--text);
     }
+    .calc-help:focus-visible {
+      outline: 2px solid var(--pill-border);
+      outline-offset: 3px;
+    }
 
-    /* Подсказка «как считаем» — слой поверх, вне потока: не двигает карточки */
+    /* Подсказка «как считаем»: слой поверх, вне потока, не двигает карточки */
     .calc-tip {
       position: absolute;
       top: calc(100% + 10px);
@@ -213,6 +218,11 @@
       transform: translateY(-4px);
       transition: opacity .18s ease, transform .18s ease, visibility .18s;
     }
+    .calc-tip-formula {
+      display: block;
+      margin-top: 8px;
+      color: var(--text-60);
+    }
     /* хвостик к кнопке */
     .calc-tip::after {
       content: '';
@@ -231,7 +241,7 @@
       visibility: visible;
       transform: translateY(0);
     }
-    /* наведение — только там, где есть настоящий курсор */
+    /* наведение только там, где есть настоящий курсор */
     @media (hover: hover) and (pointer: fine) {
       .calc-help-wrap:hover .calc-tip,
       .calc-help:focus-visible + .calc-tip {
@@ -309,8 +319,6 @@
       .calc-nav-wrap { padding: 0 16px; }
       .calc-nav { height: 64px; padding: 0 16px; }
       .calc-nav-logo img { width: 34px; height: 32px; }
-      .calc-nav .btn { height: 42px; padding: 0 18px; font-size: 15px; border-radius: 21px; }
-
       .calc-hero { padding-top: 44px; }
       .calc-hero .eyebrow { font-size: 16px; }
       .calc-h1 { font-size: 32px; }
@@ -360,12 +368,8 @@
   <div class="calc-nav-wrap load-fade load-fade-d1">
     <header class="calc-nav">
       <img src="../assets/backforheader.png" class="calc-nav-back" aria-hidden="true" />
-      <a href="../index.html" class="calc-nav-logo" aria-label="Blast — на главную">
+      <a href="../index.html" class="calc-nav-logo" aria-label="Blast, на главную">
         <img src="../assets/impulselogo.svg" alt="Blast" width="42" height="40" loading="eager" />
-      </a>
-      <a href="https://t.me/impulsemarketing" class="btn" target="_blank" rel="noopener">
-        <img src="../assets/backforbutton.png" class="btn-back" aria-hidden="true" />
-        <span>Стать партнёром</span>
       </a>
     </header>
   </div>
@@ -380,7 +384,7 @@
           Сколько ты заработаешь<br />на одном посте <i>про Blast</i>
         </h1>
         <p class="calc-lead">
-          Введи охват своего Telegram-канала — покажем, сколько принесёт размещение:
+          Введи охват своего Telegram-канала. Покажем, сколько принесёт размещение:
           сразу и на дистанции.
         </p>
       </section>
@@ -419,11 +423,11 @@
                 aria-expanded="false"
                 aria-controls="note-first"
                 aria-label="Как считаем выручку с первых оплат"
-              >?</button>
+              ><span class="calc-help-glyph" aria-hidden="true">?</span></button>
               <span class="calc-tip" id="note-first" role="tooltip">
-                Как считаем: около 25% тех, кто увидел пост, доходит до бота —
-                аудитория профильная, артист к артисту. Из них покупают 3–3,5%.
-                С каждой первой покупки ты получаешь 50% от стоимости.
+                Из охвата поста в бота переходит 25%. Из перешедших оплачивают
+                3,25%. Средний чек первой оплаты 3 000 ₽, твоя доля 50%.
+                <span class="calc-tip-formula">Расчёт: охват × 25% × 3,25% × 3 000 ₽ × 50%.</span>
               </span>
             </span>
           </div>
@@ -441,12 +445,11 @@
                 aria-expanded="false"
                 aria-controls="note-recurring"
                 aria-label="Как считаем выручку с повторных оплат"
-              >?</button>
+              ><span class="calc-help-glyph" aria-hidden="true">?</span></button>
               <span class="calc-tip" id="note-recurring" role="tooltip">
-                Считаем от тех же покупателей. В среднем человек остаётся
-                в подписке около 3 месяцев — это первая оплата и ещё 2 продления
-                по цене подписки, 1 990 ₽/мес. С каждого продления тебе идёт
-                20%, и так всё время, пока он платит.
+                Считаем тех же покупателей. В среднем после первой оплаты каждый
+                делает ещё 2 продления по 1 990 ₽. Твоя доля с каждого продления 20%.
+                <span class="calc-tip-formula">Расчёт: покупатели × 2 × 1 990 ₽ × 20%.</span>
               </span>
             </span>
           </div>
@@ -489,12 +492,12 @@
     'use strict';
 
     /* ═══════════════════════════════════════════════════════════
-       КОНСТАНТЫ РАСЧЁТА — правится здесь, в одном месте
+       КОНСТАНТЫ РАСЧЁТА - правятся здесь, в одном месте
        ═══════════════════════════════════════════════════════════ */
     var FUNNEL_RATE     = 0.25;   // доля увидевших пост, которая доходит до бота (плановая)
-    var CONV            = 0.0325; // конверсия ИЗ БОТА в первую оплату (середина цели 3–3,5%)
+    var CONV            = 0.0325; // конверсия ИЗ БОТА в первую оплату (точка расчёта 3,25%)
     var FIRST_PRICE     = 3000;   // ₽, средний чек первой оплаты (микс тарифов)
-    var RENEWAL_PRICE   = 1990;   // ₽, продлевается только подписка «Blast» — по её цене
+    var RENEWAL_PRICE   = 1990;   // ₽, продлевается только подписка «Blast» по её цене
     var FIRST_SHARE     = 0.5;    // доля партнёра с первой оплаты
     var RECURRING_SHARE = 0.2;    // доля партнёра с каждой повторной оплаты
     var LIFETIME_MONTHS = 3;      // сколько месяцев в среднем человек живёт в подписке (с первым)
