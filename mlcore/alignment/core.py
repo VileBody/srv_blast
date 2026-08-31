@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 import subprocess
 import tempfile
@@ -41,6 +42,32 @@ TOKEN_TO_BLANK_ODDS_FLOOR = 0.1
 # token id only exists once the emission matrix is known, so it is resolved in
 # ``ctc_viterbi_align``.
 WILDCARD_TARGET_ID = -1
+
+log = logging.getLogger(__name__)
+
+
+def clamp_clip_end_to_decoded_audio(
+    *, clip_start_abs: float, clip_end_abs: float, audio_end_abs: float
+) -> float:
+    """Cap a user window at the last timestamp that actually decoded."""
+    requested_end = float(clip_end_abs)
+    available_end = float(audio_end_abs)
+    if requested_end <= available_end:
+        return requested_end
+    log.warning(
+        "alignment clip end clamped to decoded audio "
+        "requested_clip_end=%.6f audio_end=%.6f",
+        requested_end,
+        available_end,
+    )
+    if available_end <= float(clip_start_abs):
+        raise AlignmentFailure(
+            ERROR_WINDOW_MISMATCH,
+            "user window starts after available decoded audio "
+            f"clip_start={float(clip_start_abs):.6f} "
+            f"audio_end={available_end:.6f}",
+        )
+    return available_end
 
 # The wildcard column scores "some non-blank grapheme is emitted in this frame",
 # discounted by this weight. A known grapheme that owns more than this share of
@@ -2080,14 +2107,15 @@ def align_target_fragment(
         emission_frames=int(log_probs.shape[0]),
         inputs_to_logits_ratio=inputs_to_logits_ratio,
     )
-    frame_tolerance = timeline.seconds_per_frame
-    if float(clip_end_abs) > timeline.analysis_end_abs + frame_tolerance:
-        raise AlignmentFailure(
-            ERROR_WINDOW_MISMATCH,
-            "user window exceeds available decoded audio "
-            f"clip_end={float(clip_end_abs):.6f} "
-            f"audio_end={timeline.analysis_end_abs:.6f}",
-        )
+    # Containers and lossy codecs commonly decode a fraction of a second
+    # shorter than the duration shown to the user.  The requested end is only
+    # an upper bound, so keep the valid part of the window instead of failing
+    # an otherwise usable job (for example 00:00-00:18 over 17.319 s audio).
+    clip_end_abs = clamp_clip_end_to_decoded_audio(
+        clip_start_abs=float(clip_start_abs),
+        clip_end_abs=float(clip_end_abs),
+        audio_end_abs=timeline.analysis_end_abs,
+    )
     selection = select_dynamic_alignment_window(
         log_probs=log_probs,
         target_ids=target_ids,

@@ -8,6 +8,9 @@ from mlcore.hooks.f6_video.inject import (
     F6_LEAD_PAD_SEC,
     F6_TAIL_PAD_SEC,
     F6_VIDEO_Z_INDEX,
+    F6_TRACK_DUCK_CURVE,
+    F6_TRACK_DUCK_FROM_PCT,
+    F6_TRACK_RAMP_SEC,
     clear_track_subtitles_under_video,
     cover_scale_percent,
     f6_video_window,
@@ -53,6 +56,12 @@ def test_timeline_needs_no_preroll_when_track_has_enough_lead():
     pre_roll, drop = f6_timeline_with_preroll(10.0, duration=10.0)
     assert pre_roll == 0.0
     assert drop == pytest.approx(10.0)
+
+
+def test_timeline_accepts_drop_on_the_first_frame_of_the_track_excerpt():
+    pre_roll, drop = f6_timeline_with_preroll(0.0, duration=6.0)
+    assert pre_roll == pytest.approx(6.0)
+    assert drop == pytest.approx(6.0)
 
 
 def test_short_video_reports_uncovered_leading_gap():
@@ -227,7 +236,6 @@ def test_project_builder_f6_dispatch():
 
 def test_project_builder_f6_ducks_the_track():
     from app.project_builder import _apply_f6_if_present
-    from mlcore.hooks.f6_video.inject import F6_TRACK_DUCK_FROM_PCT
 
     track = {
         "name": "audio_track", "type": "footage", "in_point": 0.0, "out_point": 30.0,
@@ -241,8 +249,10 @@ def test_project_builder_f6_ducks_the_track():
     )
     duck = next(L for L in footage if L["name"] == "audio_track")["text_data"]["audio_envelope"]
     assert duck["duck_from_s"] == 0.0 and duck["duck_to_s"] == 6.0
-    # под интервью трек глушится сильнее, чем под F5-голос
     assert duck["duck_from_pct"] == F6_TRACK_DUCK_FROM_PCT
+    assert duck["duck_from_pct"] == 10.0
+    assert duck["duck_ramp_start_s"] == pytest.approx(6.0 - F6_TRACK_RAMP_SEC)
+    assert duck["duck_curve"] == F6_TRACK_DUCK_CURVE == "soft"
 
 
 def test_project_builder_f6_starts_track_ramp_after_silent_preroll():

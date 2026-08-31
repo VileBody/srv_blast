@@ -61,7 +61,7 @@ from .video_prepare import (
     normalize_video_for_ae,
 )
 from .config import SETTINGS, Settings
-from .credits_db import CreditsDB
+from .credits_db import CreditsDB, package_video_credits
 from .marketing_texts import (
     BTN_VERSIONS_WARN_CHANGE,
     BTN_VERSIONS_WARN_CONTINUE,
@@ -207,10 +207,9 @@ PHOTO_FLOW_ENABLED = (os.environ.get("PHOTO_FLOW_ENABLED", "0").strip().lower()
                       in {"1", "true", "yes", "on", "enabled"})
 
 # Шаг «Рамка» toggle. Спрашивается у всех перед выбором версий и от хука не
-# зависит. Пока рамки не залиты на S3, выбор в боте был бы, а в ролике — нет
-# (билд-сайд проверяет наличие ассета и рендерит без рамки), поэтому здесь
-# default-OFF до заливки + смоука; в team-боте ON. Override — FRAME_FLOW_ENABLED.
-FRAME_FLOW_ENABLED = (os.environ.get("FRAME_FLOW_ENABLED", "0").strip().lower()
+# зависит. В public включён по умолчанию; FRAME_FLOW_ENABLED=0 остаётся явным
+# аварийным выключателем.
+FRAME_FLOW_ENABLED = (os.environ.get("FRAME_FLOW_ENABLED", "1").strip().lower()
                       in {"1", "true", "yes", "on", "enabled"})
 
 # /bigtest is a team-bot-only command. Constant is False here so the handler
@@ -678,7 +677,7 @@ BTN_BG_INFO_NEXT = "Продолжить"
 BTN_BG_PICTURES = "Картинки (скоро)"
 # Photo flow (4:3) ready button — shown instead of the stub when PHOTO_FLOW_ENABLED.
 # Mirror of tg_bot_botapi; selecting it sets bg_mode="photo".
-BTN_BG_PICTURES_PHOTO = "🖼 Картинки"
+BTN_BG_PICTURES_PHOTO = "Фото"
 # Vibe shortlist (inline) control buttons + callback-data prefix. Mirror of team.
 VIBE_CB_PREFIX = "vibe:"          # vibe:tog:<idx> | vibe:more | vibe:done | vibe:auto
 BTN_VIBE_REFRESH = "Ещё варианты ›"
@@ -1181,10 +1180,10 @@ def _warmup_video_enabled() -> bool:
     Категория «Прогрев» есть у всех, а вот развилка «звук / видео» — только там,
     где рукав включён. Выключен → «Прогрев» ведёт сразу на загрузку звука, то
     есть ровно в старое поведение F1, и юзер даже не узнаёт, что развилка
-    существует. Team bot первым, в tg_bot_public — default-OFF до смоука.
-    Переопределяется WARMUP_VIDEO_ENABLED.
+    существует. В public включён по умолчанию; WARMUP_VIDEO_ENABLED=0 остаётся
+    явным аварийным выключателем.
     """
-    return os.environ.get("WARMUP_VIDEO_ENABLED", "0").strip().lower() in {
+    return os.environ.get("WARMUP_VIDEO_ENABLED", "1").strip().lower() in {
         "1", "true", "yes", "on", "enabled",
     }
 
@@ -5104,14 +5103,12 @@ class BlastBotApp:
         # horizontally rendered plane the step is skipped rather than offered
         # and then rejected at enqueue, after the user has already chosen.
         if _render_preset_for_bucket(*self._selected_bucket_slot(st)) != "vertical":
-            # Only the DROP-ANCHORED hooks are unavailable here — their
-            # artwork carries baked 1080x1920 coordinates and the API
-            # refuses them outside vertical. Transitions and grades are
-            # bound to the comp and scale with it, so the cut-style and
-            # stylization steps stay: dropping them left this flow with no
-            # visual choices at all. Same shape the 4:3 photo flow uses.
-            st.hook_enabled = True
-            st.hook_category = "effect"
+            # Only the DROP-ANCHORED hooks are unavailable here.  Route wide
+            # footage directly into the shared two-step visual picker; sending
+            # it through the legacy effect picker first caused transition and
+            # stylization to be asked twice.
+            st.hook_enabled = False
+            st.hook_category = ""
             st.hook_drop_t = None
             st.hook_device = ""
             st.effect_hook = ""
@@ -5124,8 +5121,11 @@ class BlastBotApp:
             st.battery_mode = False
             st.battery_cases = []
             st.battery_f4_drop = None
+            st.visual_transition = ""
+            st.visual_style = ""
+            st.visuals_done = False
             await self.store.set(st)
-            await self._ask_effect_transition(message, st)
+            await self._ask_visual_transition(message, st)
             return
         st.stage = STAGE_WAIT_HOOK_CHOICE
         await self.store.set(st)
@@ -5280,12 +5280,12 @@ class BlastBotApp:
         # per-category one-liner sits next to its button (full descriptions live
         # in core.hook_intros for the team bot / future on-demand expansion).
         await message.answer(
-            "Хук — приём в первые секунды, который цепляет зрителя.\n\n"
-            "🔊 Звук — свой звук до дропа + вспышка-молния\n"
-            "🟦 Объект — фигура в такт на склейке до дропа\n"
-            "✨ Эффект — визуальные FX: хук, переход, грейд\n"
-            "👆 Движение — engagement-байт: рука/голова в такт\n"
-            "💭 Мысль — голос-ИИ перед дропом\n\n"
+            "Хук — акцент вокруг выбранного дропа, который удерживает внимание.\n\n"
+            "🔥 Прогрев — свой звук или видео перед дропом; основной трек временно уходит на фон\n"
+            "🟦 Объект — фигура появляется в такт на склейках до дропа\n"
+            "✨ Эффект — FX на дропе, переходы между клипами и стилизация\n"
+            "👆 Движение — жест рукой или головой, который зритель повторяет в такт\n"
+            "💭 Мысль — короткая ИИ-реплика перед дропом\n\n"
             "Выбери тип ↓",
             reply_markup=_kb(
                 [BTN_HOOK_CAT_WARMUP, BTN_HOOK_CAT_OBJECT],
@@ -5316,14 +5316,6 @@ class BlastBotApp:
         if text == BTN_HOOK_CAT_WARMUP:
             if st.hook_drop_t is None:
                 await message.answer("Для «Прогрева» нужен момент дропа — вернись и выбери его.")
-                await self._ask_hook_drop(message, st)
-                return
-            _clip_start = float(st.user_clip_start_sec or 0.0)
-            if (float(st.hook_drop_t) - _clip_start) <= 1.0:
-                await message.answer(
-                    "Дроп слишком близко к началу отрывка: для «Прогрева» нужно ≥1с "
-                    "до дропа (вставка играет в окне до хука). Выбери дроп позже."
-                )
                 await self._ask_hook_drop(message, st)
                 return
             st.hook_category = "sound"
@@ -9379,7 +9371,7 @@ class BlastBotApp:
                             if status == "CONFIRMED":
                                 pkg = pay["package"]
                                 tg_id = pay["tg_id"]
-                                credits_to_add = self._PKG_CREDITS.get(pkg, 5)
+                                credits_to_add = package_video_credits(pkg)
                                 await self.credits_db.update_payment_status(order_id, "CONFIRMED", payment_id)
                                 await self.credits_db.add_credits(
                                     tg_id,
@@ -9537,8 +9529,8 @@ class BlastBotApp:
 
         success, err = await self.tbank.charge(payment_id, rebill_id)
         if success:
+            credits_to_add = package_video_credits(pkg)
             await self.credits_db.update_payment_status(order_id, "confirmed", payment_id)
-            credits_to_add = self._PKG_CREDITS.get(pkg, 5)
             await self.credits_db.add_credits(tg_id, credits_to_add, "subscription", f"Подписка «{pkg}»")
             # First track-eligible charge grants the tariff base; renewals +1.
             track_base = self._PKG_TRACKS.get(pkg, 0)

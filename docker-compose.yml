@@ -384,10 +384,9 @@ services:
       # (subtitle mode -> transition -> stylization -> colours, hooks skipped).
       # Set PHOTO_FLOW_ENABLED_PUBLIC=0 in .env to pull it back without a deploy.
       PHOTO_FLOW_ENABLED: ${PHOTO_FLOW_ENABLED_PUBLIC:-1}
-      # Рамки: пока PNG не залиты в fx_assets/frames/, шаг был бы виден, а
-      # рамка в ролик не попадала бы — держим OFF до заливки и смоука.
-      FRAME_FLOW_ENABLED: ${FRAME_FLOW_ENABLED_PUBLIC:-0}
-      WARMUP_VIDEO_ENABLED: ${WARMUP_VIDEO_ENABLED_PUBLIC:-0}
+      # Рамки включены в public; явный 0 оставляет аварийный kill switch.
+      FRAME_FLOW_ENABLED: ${FRAME_FLOW_ENABLED_PUBLIC:-1}
+      WARMUP_VIDEO_ENABLED: ${WARMUP_VIDEO_ENABLED_PUBLIC:-1}
       # F6, ветка ссылки на YouTube. В public включаем ПОСЛЕ прокси и смоука
       # в команде: без прокси юзер получит только ошибку.
       EXTERNAL_VIDEO_SOURCE_ENABLED: ${EXTERNAL_VIDEO_SOURCE_ENABLED_PUBLIC:-0}

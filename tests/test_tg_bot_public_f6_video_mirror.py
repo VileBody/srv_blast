@@ -486,17 +486,22 @@ def test_a_blocked_source_sends_the_user_back_to_the_file_upload():
     assert st.f6_video_url == ""
 
 
-# ---- гейт видео-рукава (team ON / public OFF) ----
+# ---- гейт видео-рукава (team/public ON, явный kill switch) ----
 
-def test_video_arm_defaults_on_in_team_and_off_in_public(monkeypatch):
-    """Публичный бот показывает хук-флоу (HOOK_FLOW_ENABLED=1 в compose), поэтому
-    без отдельного гейта видео-рукав уехал бы к живым юзерам вместе с мёржем."""
+def test_video_arm_defaults_on_in_both_bots(monkeypatch):
     from services.tg_bot_botapi import app as team
     from services.tg_bot_public import app as pub
 
     monkeypatch.delenv("WARMUP_VIDEO_ENABLED", raising=False)
     assert team._warmup_video_enabled() is True
-    assert pub._warmup_video_enabled() is False
+    assert pub._warmup_video_enabled() is True
+
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    compose = (root / "docker-compose.yml").read_text(encoding="utf-8")
+    env_example = (root / ".env.example").read_text(encoding="utf-8")
+    assert "WARMUP_VIDEO_ENABLED: ${WARMUP_VIDEO_ENABLED_PUBLIC:-1}" in compose
+    assert "WARMUP_VIDEO_ENABLED_PUBLIC=1" in env_example
 
 
 def test_the_gate_is_overridable_without_a_deploy(monkeypatch):
@@ -508,7 +513,7 @@ def test_the_gate_is_overridable_without_a_deploy(monkeypatch):
     assert pub._warmup_video_enabled() is False
 
 
-def _run_category_pick(monkeypatch, *, enabled):
+def _run_category_pick(monkeypatch, *, enabled, drop=6.0, clip_start=0.0):
     import asyncio
 
     from services.tg_bot_public import app as pub
@@ -528,8 +533,8 @@ def _run_category_pick(monkeypatch, *, enabled):
 
         app._ask_warmup_kind = ask_fork
         app._ask_f1_sound = ask_sound
-        st = ChatState(chat_id=1, hook_enabled=True, hook_drop_t=6.0,
-                       user_clip_start_sec=0.0)
+        st = ChatState(chat_id=1, hook_enabled=True, hook_drop_t=drop,
+                       user_clip_start_sec=clip_start, user_clip_end_sec=20.0)
         await pub.BlastBotApp._handle_wait_hook_type(
             app, _Message(pub.BTN_HOOK_CAT_WARMUP), st,
         )
@@ -549,3 +554,9 @@ def test_gate_on_opens_the_fork(monkeypatch):
     seen, st = _run_category_pick(monkeypatch, enabled=True)
     assert seen == {"fork": 1, "sound": 0}
     assert st.warmup_kind == ""
+
+
+def test_drop_at_the_first_frame_still_opens_the_sound_video_fork(monkeypatch):
+    seen, st = _run_category_pick(monkeypatch, enabled=True, drop=5.0, clip_start=5.0)
+    assert seen == {"fork": 1, "sound": 0}
+    assert st.hook_category == "sound"

@@ -480,12 +480,15 @@ def inject_track_duck(
     duck_to_sec: float,
     from_pct: float = F5_TRACK_DUCK_FROM_PCT,
     to_pct: float = F5_TRACK_DUCK_TO_PCT,
+    ramp_start_sec: float | None = None,
+    curve: str = "linear",
 ) -> list[dict[str, Any]]:
     """
     Приглушает основной ТРЕК под F5-голос: на duck_from_sec громкость падает до
-    from_pct%, затем линейно растёт до to_pct% к duck_to_sec (= дропу), дальше
-    100%. Реализуется через duck_* поля в audio_envelope трек-слоя (выражение на
-    ADBE Audio Levels в шаблоне). Pure (исходный список не мутируется).
+    from_pct%, затем растёт до to_pct% к duck_to_sec (= дропу), дальше 100%.
+    По умолчанию рост линейный на всём окне. ramp_start_sec удерживает фон на
+    from_pct до указанного момента, curve="soft" включает мягкую Bezier-кривую.
+    Pure (исходный список не мутируется).
     """
     if not (duck_to_sec > duck_from_sec):
         logger.info(
@@ -505,12 +508,19 @@ def inject_track_duck(
             env["duck_to_s"] = float(duck_to_sec)
             env["duck_from_pct"] = float(from_pct)
             env["duck_to_pct"] = float(to_pct)
+            if ramp_start_sec is not None:
+                env["duck_ramp_start_s"] = min(
+                    float(duck_to_sec), max(float(duck_from_sec), float(ramp_start_sec))
+                )
+            if str(curve or "linear") != "linear":
+                env["duck_curve"] = str(curve)
             td["audio_envelope"] = env
             out.append(L)
             ducked += 1
             logger.info(
-                "f5.duck track=%s window=[%.3f..%.3f] %.0f%%->%.0f%%",
+                "f5.duck track=%s window=[%.3f..%.3f] %.0f%%->%.0f%% ramp_start=%s curve=%s",
                 L.get("name"), duck_from_sec, duck_to_sec, from_pct, to_pct,
+                ramp_start_sec, curve,
             )
         else:
             out.append(layer)

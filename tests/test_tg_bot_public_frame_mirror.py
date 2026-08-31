@@ -69,10 +69,8 @@ def test_orchestrator_client_accepts_frame_kwarg():
     assert "frame_id" in inspect.signature(Team.send_audio_s3).parameters
 
 
-def test_frame_flow_flag_defaults_team_on_public_off(monkeypatch):
-    """Тот же паттерн, что у photo/vibe: team-бот ведёт, public включается
-    после заливки ассетов и смоука. Флаг нужен именно потому, что без ассета
-    на S3 шаг в боте есть, а рамки в ролике нет.
+def test_frame_flow_flag_defaults_on_in_both_bots(monkeypatch):
+    """Рамка включена по умолчанию в обоих ботах, но сохраняет kill switch.
 
     Дефолт public читаем из исходника, а не через importlib.reload: перезагрузка
     модуля бота посреди сюиты подменяет объекты, на которые уже держат ссылки
@@ -91,7 +89,12 @@ def test_frame_flow_flag_defaults_team_on_public_off(monkeypatch):
     # public: константа уровня модуля — проверяем объявленный дефолт
     pub_src = (Path(__file__).resolve().parents[1]
                / "services" / "tg_bot_public" / "app.py").read_text(encoding="utf-8")
-    assert 'FRAME_FLOW_ENABLED = (os.environ.get("FRAME_FLOW_ENABLED", "0")' in pub_src
+    assert 'FRAME_FLOW_ENABLED = (os.environ.get("FRAME_FLOW_ENABLED", "1")' in pub_src
+
+    compose_src = (Path(__file__).resolve().parents[1] / "docker-compose.yml").read_text(encoding="utf-8")
+    env_example_src = (Path(__file__).resolve().parents[1] / ".env.example").read_text(encoding="utf-8")
+    assert "FRAME_FLOW_ENABLED: ${FRAME_FLOW_ENABLED_PUBLIC:-1}" in compose_src
+    assert "FRAME_FLOW_ENABLED_PUBLIC=1" in env_example_src
 
 
 def test_versions_step_is_gated_on_the_frame_pick_in_both_bots():

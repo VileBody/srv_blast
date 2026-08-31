@@ -1163,6 +1163,8 @@
       var duckTo = Number(cfg.duck_to_s);
       var duckFromPct = Number(cfg.duck_from_pct);
       var duckToPct = Number(cfg.duck_to_pct);
+      var duckRampStart = Number(cfg.duck_ramp_start_s);
+      var duckCurve = String(cfg.duck_curve || "linear").toLowerCase();
       var duckOn = (isFinite(duckFrom) && isFinite(duckTo) && isFinite(duckFromPct)
                     && isFinite(duckToPct) && duckTo > duckFrom);
 
@@ -1181,7 +1183,12 @@
           try { lv.expression = ""; } catch(_e0) {}
           try { while (lv.numKeys > 0) lv.removeKey(1); } catch(_e1) {}
           lv.setValueAtTime(duckFrom, [fromDb, fromDb]);
+          var rampStart = (isFinite(duckRampStart) && duckRampStart > duckFrom && duckRampStart < duckTo)
+            ? duckRampStart : duckFrom;
+          if (rampStart > duckFrom) lv.setValueAtTime(rampStart, [fromDb, fromDb]);
           lv.setValueAtTime(duckTo,   [toDb,   toDb]);
+          var rampStartKey = (rampStart > duckFrom) ? 2 : 1;
+          var rampEndKey = rampStartKey + 1;
           var endT = outPoint;
           if (fadeOut > 0 && (endT - fadeOut) > duckTo) {
             lv.setValueAtTime(endT - fadeOut, [toDb,  toDb]);
@@ -1191,10 +1198,25 @@
             for (var ki = 1; ki <= lv.numKeys; ki++) {
               lv.setInterpolationTypeAtKey(ki, KeyframeInterpolationType.LINEAR, KeyframeInterpolationType.LINEAR);
             }
+            if (duckCurve === "soft") {
+              lv.setInterpolationTypeAtKey(rampStartKey, KeyframeInterpolationType.BEZIER, KeyframeInterpolationType.BEZIER);
+              lv.setInterpolationTypeAtKey(rampEndKey, KeyframeInterpolationType.BEZIER, KeyframeInterpolationType.BEZIER);
+              lv.setTemporalEaseAtKey(
+                rampStartKey,
+                [new KeyframeEase(0, 75), new KeyframeEase(0, 75)],
+                [new KeyframeEase(0, 75), new KeyframeEase(0, 75)]
+              );
+              lv.setTemporalEaseAtKey(
+                rampEndKey,
+                [new KeyframeEase(0, 33.333333), new KeyframeEase(0, 33.333333)],
+                [new KeyframeEase(0, 33.333333), new KeyframeEase(0, 33.333333)]
+              );
+            }
           } catch(_e2) {}
           logLine("INFO", "audio duck keyframes layer=" + layer.name
             + " " + fmtNum(duckFrom) + "s->" + fmtNum(duckTo) + "s "
-            + fmtNum(fromDb) + "dB->" + fmtNum(toDb) + "dB");
+            + fmtNum(fromDb) + "dB->" + fmtNum(toDb) + "dB"
+            + " ramp=" + fmtNum(rampStart) + " curve=" + duckCurve);
         } else {
           var expr = ""
             + "var fadeIn=" + String(fadeIn) + ";\n"

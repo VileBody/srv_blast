@@ -167,6 +167,9 @@ def test_template_audio_envelope_expr_supports_track_duck():
     # not an expression.
     assert "audio duck keyframes" in tpl
     assert "setValueAtTime(duckFrom" in tpl
+    assert "duck_ramp_start_s" in tpl
+    assert 'duckCurve === "soft"' in tpl
+    assert "KeyframeInterpolationType.BEZIER" in tpl
 
 
 def _track_audio_layer():
@@ -193,6 +196,8 @@ def test_inject_track_duck_sets_duck_fields_on_track():
     assert env["duck_to_s"] == 4.0
     assert env["duck_from_pct"] == 25.0
     assert env["duck_to_pct"] == 100.0
+    assert "duck_ramp_start_s" not in env
+    assert "duck_curve" not in env
     # existing fades preserved
     assert env["fade_in_s"] == 0.5
 
