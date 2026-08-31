@@ -46,6 +46,7 @@ STAGE_WAIT_EFFECT_TRANSITION = "WAIT_EFFECT_TRANSITION"
 STAGE_WAIT_EFFECT_EXTRA = "WAIT_EFFECT_EXTRA"
 STAGE_WAIT_EFFECT_EXTRA_FULL = "WAIT_EFFECT_EXTRA_FULL"
 STAGE_WAIT_EFFECT_EXTEND = "WAIT_EFFECT_EXTEND"
+STAGE_WAIT_STYLE_SKIP_CONFIRM = "WAIT_STYLE_SKIP_CONFIRM"
 # F2 «Объект» — single sub-picker (5 shape buttons).
 STAGE_WAIT_F2_SHAPE = "WAIT_F2_SHAPE"
 # «Прогрев» — развилка: звук (F1) или видео (F6) в окне до дропа.
@@ -154,6 +155,8 @@ class ChatState(BaseModel):
     effect_extra: str = ""       # "" | xerox | analog_glitch | neon_extract | old_camera
     effect_extra_full: bool = False  # stretch the grade over the whole video (not just pre-drop)
     effect_hook_extend: str = "" # "" | to_end | after_drop:N (only for extendable hooks, e.g. flash_slow_shutter)
+    # Public-bot UX routing field mirrored here so ChatState remains portable.
+    style_skip_origin: str = ""
     # F2 «Объект» selection when hook_category == "object". Single shape pick
     # — the rest of the combo (hook_light at drop + seeded-random F3 transition
     # on post-drop cuts) is forced server-side. None/"" => no F2.

@@ -160,6 +160,7 @@ from .state_store import (
     STAGE_WAIT_EFFECT_EXTEND,
     STAGE_WAIT_VISUAL_TRANSITION,
     STAGE_WAIT_VISUAL_STYLE,
+    STAGE_WAIT_STYLE_SKIP_CONFIRM,
     STAGE_WAIT_F2_SHAPE,
     STAGE_WAIT_FRAME,
     STAGE_WAIT_WARMUP_KIND,
@@ -958,6 +959,22 @@ BTN_PURCHASE = "Приобрести"
 BTN_BUY_ONCE = "Купить разово"
 BTN_BUY_SUBSCRIPTION = "Купить по подписке"
 BTN_CONFIRM = "Подтвердить"
+
+STYLE_SKIP_ORIGIN_VISUAL = "visual"
+STYLE_SKIP_ORIGIN_PHOTO = "photo"
+STYLE_SKIP_ORIGIN_EFFECT_EXTRA = "effect_extra"
+STYLE_SKIP_WARNING = (
+    "⚠️ Пропустить стилизацию?\n\n"
+    "Без дополнительной стилизации ролик будет сильнее похож на исходные "
+    "материалы. Он станет менее уникальным, поэтому риск ограничений или "
+    "блокировки именно этого ролика может увеличиться.\n\n"
+    "Если решишь продолжить без стилизации, убедись, что субтитры перекрывают "
+    "по времени все использованные фрагменты. Также рекомендуем дополнительно "
+    "обработать ролик в CapCut или другом редакторе: добавить эффекты, "
+    "цветокоррекцию, кадрирование, зум или другие визуальные изменения, чтобы "
+    "сделать исходники менее узнаваемыми.\n\n"
+    "Продолжить без стилизации?"
+)
 
 BTN_NO_RELEASE = "Нет актуального релиза"
 BTN_NO_MONEY = "Пока не хватает финансов"
@@ -3647,6 +3664,9 @@ class BlastBotApp:
             if st.stage == STAGE_WAIT_VISUAL_STYLE:
                 await self._handle_wait_visual_style(message, st)
                 return
+            if st.stage == STAGE_WAIT_STYLE_SKIP_CONFIRM:
+                await self._handle_wait_style_skip_confirm(message, st)
+                return
             if st.stage == STAGE_WAIT_EFFECT_EXTEND:
                 await self._handle_wait_effect_extend(message, st)
                 return
@@ -5519,7 +5539,7 @@ class BlastBotApp:
                 [BTN_PHOTO_STYLE_WARM, BTN_PHOTO_STYLE_COLD],
                 [BTN_PHOTO_STYLE_VINTAGE, BTN_PHOTO_STYLE_BW],
                 [BTN_PHOTO_STYLE_VHS, BTN_PHOTO_STYLE_NIGHT],
-                [BTN_PHOTO_STYLE_NONE],
+                [BTN_FX_SKIP],
                 [BTN_BACK],
             ),
         )
@@ -5528,6 +5548,9 @@ class BlastBotApp:
         text = str(message.text or "").strip()
         if text == BTN_BACK:
             await self._ask_photo_transition(message, st)
+            return
+        if text in {BTN_FX_SKIP, BTN_PHOTO_STYLE_NONE}:
+            await self._ask_style_skip_confirm(message, st, STYLE_SKIP_ORIGIN_PHOTO)
             return
         style = _PHOTO_STYLE_BY_BUTTON.get(text)
         if style is None:
@@ -5588,6 +5611,7 @@ class BlastBotApp:
                 [BTN_FX_EX_NEON, BTN_FX_EX_OLDCAM],
                 [BTN_FX_EX_BLACKWHITE, BTN_FX_EX_CRYSTAL],
                 [BTN_FX_EX_NIGHT, BTN_FX_EX_WAVE],
+                [BTN_FX_SKIP],
                 [BTN_BACK],
             ),
         )
@@ -5599,6 +5623,9 @@ class BlastBotApp:
         text = str(message.text or "").strip()
         if text == BTN_BACK:
             await self._ask_visual_transition(message, st)
+            return
+        if text == BTN_FX_SKIP:
+            await self._ask_style_skip_confirm(message, st, STYLE_SKIP_ORIGIN_VISUAL)
             return
         style = _FX_EXTRA_BY_BUTTON.get(text)
         if style is None:
@@ -5717,7 +5744,10 @@ class BlastBotApp:
             await self._ask_effect_transition(message, st)
             return
         if text == BTN_FX_SKIP:
-            st.effect_extra = ""
+            await self._ask_style_skip_confirm(
+                message, st, STYLE_SKIP_ORIGIN_EFFECT_EXTRA
+            )
+            return
         else:
             ex = _FX_EXTRA_BY_BUTTON.get(text)
             if ex is None:
@@ -5741,6 +5771,83 @@ class BlastBotApp:
             await self._ask_effect_extra_full(message, st)
             return
         await self._after_effect_extra(message, st)
+
+    async def _ask_style_skip_confirm(
+        self, message: Message, st: ChatState, origin: str
+    ) -> None:
+        if origin not in {
+            STYLE_SKIP_ORIGIN_VISUAL,
+            STYLE_SKIP_ORIGIN_PHOTO,
+            STYLE_SKIP_ORIGIN_EFFECT_EXTRA,
+        }:
+            raise ValueError(f"unknown style skip origin: {origin!r}")
+        st.style_skip_origin = origin
+        st.stage = STAGE_WAIT_STYLE_SKIP_CONFIRM
+        await self.store.set(st)
+        await message.answer(
+            STYLE_SKIP_WARNING,
+            reply_markup=_kb([BTN_CONFIRM], [BTN_BACK]),
+        )
+
+    async def _handle_wait_style_skip_confirm(
+        self, message: Message, st: ChatState
+    ) -> None:
+        text = str(message.text or "").strip()
+        origin = str(st.style_skip_origin or "")
+
+        if text == BTN_BACK:
+            st.style_skip_origin = ""
+            await self.store.set(st)
+            if origin == STYLE_SKIP_ORIGIN_VISUAL:
+                await self._ask_visual_style(message, st)
+                return
+            if origin == STYLE_SKIP_ORIGIN_PHOTO:
+                await self._ask_photo_style(message, st)
+                return
+            if origin == STYLE_SKIP_ORIGIN_EFFECT_EXTRA:
+                await self._ask_effect_extra(message, st)
+                return
+            await message.answer("Не удалось восстановить шаг стилизации. Выбери настройки заново.")
+            await self._ask_hook_choice(message, st)
+            return
+
+        if text != BTN_CONFIRM:
+            await message.answer(
+                "Выбери «Подтвердить» или «Назад».",
+                reply_markup=_kb([BTN_CONFIRM], [BTN_BACK]),
+            )
+            return
+
+        st.style_skip_origin = ""
+        if origin == STYLE_SKIP_ORIGIN_VISUAL:
+            st.visual_style = ""
+            st.visuals_done = True
+            await self.store.set(st)
+            await self._proceed_to_versions_or_confirm(message, st)
+            return
+
+        if origin == STYLE_SKIP_ORIGIN_PHOTO:
+            st.photo_style = "none"
+            st.visuals_done = True
+            await self.store.set(st)
+            await self._proceed_to_versions_or_confirm(message, st)
+            return
+
+        if origin == STYLE_SKIP_ORIGIN_EFFECT_EXTRA:
+            st.effect_extra = ""
+            st.effect_extra_full = False
+            await self.store.set(st)
+            if not (st.effect_hook or st.effect_transition):
+                await message.answer(
+                    "Нужно выбрать хотя бы один эффект из трёх. Начнём заново с хука."
+                )
+                await self._ask_effect_hook(message, st)
+                return
+            await self._after_effect_extra(message, st)
+            return
+
+        await message.answer("Не удалось подтвердить пропуск. Выбери стилизацию заново.")
+        await self._ask_hook_choice(message, st)
 
     async def _ask_effect_extra_full(self, message: Message, st: ChatState) -> None:
         st.stage = STAGE_WAIT_EFFECT_EXTRA_FULL
