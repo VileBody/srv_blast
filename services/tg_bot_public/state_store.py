@@ -52,6 +52,7 @@ STAGE_WAIT_EFFECT_EXTRA_FULL = "WAIT_EFFECT_EXTRA_FULL"
 STAGE_WAIT_EFFECT_EXTEND = "WAIT_EFFECT_EXTEND"
 STAGE_WAIT_VISUAL_TRANSITION = "WAIT_VISUAL_TRANSITION"
 STAGE_WAIT_VISUAL_STYLE = "WAIT_VISUAL_STYLE"
+STAGE_WAIT_STYLE_SKIP_CONFIRM = "WAIT_STYLE_SKIP_CONFIRM"
 # F2 «Объект» single sub-picker (5 shape buttons). Mirror of tg_bot_botapi.
 STAGE_WAIT_F2_SHAPE = "WAIT_F2_SHAPE"
 # «Прогрев» — развилка звук/видео. Mirror of tg_bot_botapi.
@@ -221,6 +222,9 @@ class ChatState(BaseModel):
     visual_transition: str = ""
     visual_style: str = ""
     visuals_done: bool = False
+    # Temporary origin while the user confirms skipping a stylization step.
+    # Values are internal routing ids, never sent to the render pipeline.
+    style_skip_origin: str = ""
     # F2 «Объект» selection when hook_category == "object" (mirror of tg_bot_botapi).
     # Single shape pick — the rest of the combo (hook_light at drop + seeded-random
     # F3 transition on post-drop cuts) is forced server-side.
