@@ -110,6 +110,13 @@ def _extract_text(payload: dict[str, Any]) -> str:
     raise F5OpenRouterError("OpenRouter F5 text response is empty")
 
 
+def _is_expected_audio_limit_error(error: Any) -> bool:
+    if not isinstance(error, dict):
+        return False
+    message = str(error.get("message") or "").lower()
+    return "max_tokens" in message or "model output limit was reached" in message
+
+
 def generate_voice_spec_text(
     system_prompt: str,
     user_prompt: str,
@@ -233,6 +240,13 @@ def synthesize_pcm16(
                             "OpenRouter F5 TTS returned invalid SSE JSON"
                         ) from exc
                     if isinstance(event, dict) and event.get("error"):
+                        if pcm_size > 0 and _is_expected_audio_limit_error(event["error"]):
+                            logger.info(
+                                "f5.openrouter.tts completed at configured token limit "
+                                "pcm_bytes=%d",
+                                pcm_size,
+                            )
+                            break
                         raise F5OpenRouterError(
                             f"OpenRouter F5 TTS stream error: {event['error']!r}"
                         )
