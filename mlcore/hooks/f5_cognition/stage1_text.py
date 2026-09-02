@@ -1,12 +1,11 @@
 # mlcore/hooks/f5_cognition/stage1_text.py
 """
-Stage 1 — генерация текста вставки и voice spec через Gemini text mode.
+Stage 1 — генерация текста вставки и voice spec через выбранный LLM provider.
 
 Возвращает VoiceSpec (см. models.py). Stage 1 НЕ выбирает устройство —
 оно приходит из бота во F5Request.device.
 
-Скелет: фактический gemini-вызов помечен TODO — подключаем когда определимся
-с используемым клиентом (либо google.genai напрямую, либо через mlcore.gemini_client).
+Провайдер выбирается явно через F5_TEXT_PROVIDER; автоматического fallback нет.
 """
 from __future__ import annotations
 
@@ -17,6 +16,7 @@ import re
 from typing import Any
 
 from mlcore.hooks.f5_cognition._gemini import make_client
+from mlcore.hooks.f5_cognition._openrouter import generate_voice_spec_text
 from mlcore.hooks.f5_cognition.errors import F5GeminiTimeout, F5Stage1ParseError
 from mlcore.hooks.f5_cognition.models import F5Request, VoiceSpec
 from mlcore.hooks.f5_cognition.prompts import build_system_prompt, build_user_prompt
@@ -116,6 +116,41 @@ def _call_gemini_text(system_prompt: str, user_prompt: str, *, model: str, seed:
     return text
 
 
+def _call_openrouter_text(
+    system_prompt: str,
+    user_prompt: str,
+    *,
+    model: str,
+    seed: int | None,
+) -> str:
+    return generate_voice_spec_text(
+        system_prompt,
+        user_prompt,
+        model=model,
+        seed=seed,
+    )
+
+
+def _provider() -> str:
+    provider = (os.environ.get("F5_TEXT_PROVIDER") or "gemini").strip().lower()
+    if provider not in {"gemini", "openrouter"}:
+        raise RuntimeError(
+            f"unsupported F5_TEXT_PROVIDER={provider!r}; expected gemini|openrouter"
+        )
+    return provider
+
+
+def _model(provider: str) -> str:
+    if provider == "gemini":
+        return os.getenv("GEMINI_MODEL_F5_TEXT", "gemini-2.5-flash").strip()
+    model = (os.environ.get("OPENROUTER_MODEL_F5_TEXT") or "").strip()
+    if not model:
+        raise RuntimeError(
+            "OPENROUTER_MODEL_F5_TEXT is required when F5_TEXT_PROVIDER=openrouter"
+        )
+    return model
+
+
 def run_stage1(req: F5Request) -> VoiceSpec:
     """
     Главная точка входа Stage 1.
@@ -128,14 +163,28 @@ def run_stage1(req: F5Request) -> VoiceSpec:
     system_prompt = build_system_prompt(req.device)
     user_prompt = build_user_prompt(req)
 
-    model = os.getenv("GEMINI_MODEL_F5_TEXT", "gemini-2.5-flash")
+    provider = _provider()
+    model = _model(provider)
 
     logger.info(
-        "f5.stage1 start device=%s model=%s focal_ms=%d",
-        req.device.value, model, req.focal_start_ms,
+        "f5.stage1 start device=%s provider=%s model=%s focal_ms=%d",
+        req.device.value, provider, model, req.focal_start_ms,
     )
 
-    raw = _call_gemini_text(system_prompt, user_prompt, model=model, seed=req.seed)
+    if provider == "openrouter":
+        raw = _call_openrouter_text(
+            system_prompt,
+            user_prompt,
+            model=model,
+            seed=req.seed,
+        )
+    else:
+        raw = _call_gemini_text(
+            system_prompt,
+            user_prompt,
+            model=model,
+            seed=req.seed,
+        )
     spec = _parse_voice_spec(raw)
 
     logger.info(
