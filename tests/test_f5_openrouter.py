@@ -244,6 +244,62 @@ def test_openrouter_tts_stream_is_hard_capped(monkeypatch):
         assert reader.getnframes() == 240
 
 
+def test_openrouter_tts_accepts_token_limit_after_audio(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    pcm = b"\x01\x02" * 120
+    audio_event = {
+        "choices": [{
+            "delta": {"audio": {"data": base64.b64encode(pcm).decode("ascii")}}
+        }]
+    }
+    limit_event = {
+        "error": {
+            "code": 502,
+            "message": "Could not finish because max_tokens or model output limit was reached",
+        }
+    }
+    lines = [
+        f"data: {json.dumps(audio_event)}",
+        f"data: {json.dumps(limit_event)}",
+    ]
+    monkeypatch.setattr(
+        f5_openrouter,
+        "_client",
+        lambda: _StreamClient(_StreamResponse(lines), {}),
+    )
+
+    wav = f5_openrouter.synthesize_pcm16(
+        "speak",
+        model="openai/gpt-audio-mini",
+        voice="alloy",
+        sample_rate=24000,
+    )
+
+    with wave.open(io.BytesIO(wav), "rb") as reader:
+        assert reader.readframes(reader.getnframes()) == pcm
+
+
+def test_openrouter_tts_rejects_unexpected_stream_error(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    error_event = {"error": {"code": 503, "message": "provider unavailable"}}
+    monkeypatch.setattr(
+        f5_openrouter,
+        "_client",
+        lambda: _StreamClient(
+            _StreamResponse([f"data: {json.dumps(error_event)}"]),
+            {},
+        ),
+    )
+
+    with pytest.raises(F5OpenRouterError, match="provider unavailable"):
+        f5_openrouter.synthesize_pcm16(
+            "speak",
+            model="openai/gpt-audio-mini",
+            voice="alloy",
+            sample_rate=24000,
+        )
+
+
 def test_stage2_selects_openrouter_without_calling_gemini(monkeypatch):
     monkeypatch.setenv("F5_TTS_PROVIDER", "openrouter")
     monkeypatch.setenv("OPENROUTER_MODEL_F5_TTS", "openai/gpt-audio-mini")
