@@ -5060,6 +5060,39 @@ class CreditsDB:
             )
         return int(val or 0)
 
+    async def partner_activity(self, partner_id: int, limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
+        """Event feed across every user attributed to this partner."""
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT a.id, a.tg_id, a.event, a.detail, a.created_at, u.username "
+                "FROM activity_log a JOIN users u ON u.tg_id = a.tg_id "
+                "WHERE u.partner_id = $1 "
+                "ORDER BY a.created_at DESC, a.id DESC LIMIT $2 OFFSET $3",
+                int(partner_id), int(limit), int(offset),
+            )
+        return [
+            {
+                "id": int(r["id"]),
+                "tg_id": int(r["tg_id"]),
+                "username": str(r["username"] or ""),
+                "event": str(r["event"] or ""),
+                "detail": str(r["detail"] or ""),
+                "created_at": _fmt_ts(r["created_at"]),
+            }
+            for r in rows
+        ]
+
+    async def count_partner_activity(self, partner_id: int) -> int:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            val = await conn.fetchval(
+                "SELECT COUNT(*) FROM activity_log a JOIN users u ON u.tg_id = a.tg_id "
+                "WHERE u.partner_id = $1",
+                int(partner_id),
+            )
+        return int(val or 0)
+
     async def partner_jobs_summary(self, partner_id: int) -> Dict[str, int]:
         pool = self._pool_or_fail()
         async with pool.acquire() as conn:

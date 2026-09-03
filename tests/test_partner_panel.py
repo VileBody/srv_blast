@@ -93,7 +93,13 @@ class _DummyCreditsDB:
         return [{"event": "start", "detail": "", "created_at": "2026-09-01"}]
 
     async def partner_jobs_summary(self, partner_id):
-        return {"succeeded": 1}
+        return {"succeeded": 1, "running": 2}
+
+    async def partner_activity(self, partner_id, limit=50, offset=0):
+        return [{"id": 1, "tg_id": 111, "username": "john", "event": "start", "detail": "", "created_at": "2026-09-01"}]
+
+    async def count_partner_activity(self, partner_id):
+        return 1
 
     async def count_partner_jobs(self, partner_id, active_only=False):
         return 1
@@ -157,8 +163,7 @@ def test_partner_cabinet_pages_render_after_login():
         "/partner/links",
         "/partner/users",
         "/partner/users/111",
-        "/partner/jobs",
-        "/partner/jobs?active=1",
+        "/partner/activity",
         "/partner/payouts",
     ):
         resp = client.get(path)
