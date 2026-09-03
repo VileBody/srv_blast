@@ -196,11 +196,11 @@ _NAV_ITEMS = [
 
 
 def _nav_html(active: str) -> str:
-    links = "".join(
-        f'<a href="{href}"{" class=\"active\"" if href == active else ""}>{label}</a>'
-        for href, label in _NAV_ITEMS
-    )
-    return links
+    parts = []
+    for href, label in _NAV_ITEMS:
+        cls = ' class="active"' if href == active else ""
+        parts.append(f'<a href="{href}"{cls}>{label}</a>')
+    return "".join(parts)
 
 
 def _page(title: str, body: str, *, active: str = "", partner_name: str = "") -> str:
