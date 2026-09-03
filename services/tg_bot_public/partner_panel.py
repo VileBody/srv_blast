@@ -5,7 +5,7 @@ Mounted onto the same FastAPI app/process as the admin panel (see
 ``admin_panel.build_app``) under ``/partner/*``, but with its own
 cookie-session auth so a partner login can never double as an admin
 credential. Partners see only their own attributed users (enforced in the
-credits_db query layer, not just in the UI) and cannot act on them — no
+credits_db query layer, not just in the UI) and cannot act on them: no
 credit grants, no messaging, no resets. Analysis only.
 """
 
@@ -14,6 +14,7 @@ from __future__ import annotations
 import html as html_mod
 import json
 import logging
+import re
 import secrets
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 from urllib.parse import quote as url_quote
@@ -32,6 +33,7 @@ _COOKIE_NAME = "partner_sid"
 _SESSION_PREFIX = "partner:session:"
 _SESSION_TTL_S = 30 * 24 * 3600
 _LINK_PREFIX = "p_"
+_SLUG_RE = re.compile(r"^[a-z0-9_]{2,40}$")
 
 _FUNNEL_ORDER = [
     "start", "subscription_ok", "audio_uploaded", "generation_started",
@@ -51,192 +53,331 @@ _FUNNEL_LABELS = {
     "subscription_charged": "Подписка списана",
 }
 _FUNNEL_COLORS = [
-    "#8b6fe6", "#7a63d6", "#38bdf8", "#34d399", "#22c19d",
-    "#fbbf24", "#fb923c", "#f97316", "#34d399", "#22c19d",
+    "#8b6fe6", "#7f63e0", "#7358d9", "#5f8fe0", "#4fa3d8",
+    "#4fb8c0", "#5cc39c", "#6cc47f", "#34d399", "#2fc98d",
 ]
+
+_EVENT_LABELS = {
+    "start": "Старт бота",
+    "utm_touch": "Переход по ссылке",
+    "subscription_ok": "Подписка подтверждена",
+    "audio_uploaded": "Аудио загружено",
+    "generation_started": "Генерация запущена",
+    "generation_done": "Генерация завершена",
+    "generation_failed": "Генерация с ошибкой",
+    "rate_video": "Оценка видео",
+    "sales_pitch": "Просмотр питча",
+    "view_packages": "Просмотр пакетов",
+    "select_package": "Выбор пакета",
+    "purchase_intent": "Заявка на покупку",
+    "purchase_intent_recurrent": "Заявка на подписку",
+    "payment_confirmed": "Оплата подтверждена",
+    "subscription_charged": "Подписка списана",
+    "referral_sent": "Реферал отправлен",
+    "referral_matched": "Реферал сработал",
+    "survey_opened": "Открыл форму",
+    "survey_done": "Прошёл форму",
+    "no_credits": "Кончились генерации",
+    "initial_grant": "Стартовые генерации",
+}
+
+_RATING_BUCKETS = ["low", "mid_low", "high"]
 _RATING_LABELS = {"low": "1-4", "mid_low": "5-6", "high": "7-10"}
 _RATING_COLORS = {"low": "#fb7185", "mid_low": "#fbbf24", "high": "#34d399"}
 
-_JOB_STATUS_LABELS = {
-    "queued": "В очереди",
-    "running": "В процессе",
-    "build": "Сборка",
-    "render": "Рендер",
-    "succeeded": "Готово",
-    "failed": "Ошибка",
-    "cancelled": "Отменено",
-}
 
+# ── Theme ────────────────────────────────────────────────────────────────
+# Brand tokens come from the public landing (landing/css/style.css) so the
+# cabinet reads as the same product. Everything else here is dashboard
+# craft: tabular numerals, sentence-case labels, one accent, semantic
+# colour reserved for real state.
 
-# ── Theme (mirrors services/tg_bot_public/admin_panel.py _BASE_HEAD tokens
-# so /admin and /partner read as one product; duplicated rather than
-# imported to keep this module a self-contained, independently testable
-# surface). ──────────────────────────────────────────────────────────────
-
-_PARTNER_STYLE = """
+_STYLE = """
 @font-face { font-family:'Point'; src:url('/admin/static/fonts/Point-Regular.ttf') format('truetype'); font-weight:400; font-style:normal; font-display:swap; }
 @font-face { font-family:'Point'; src:url('/admin/static/fonts/Point-Book.ttf') format('truetype'); font-weight:350; font-style:normal; font-display:swap; }
-@font-face { font-family:'Point'; src:url('/admin/static/fonts/PointBold.ttf') format('truetype'); font-weight:700; font-style:normal; font-display:swap; }
 @font-face { font-family:'Point'; src:url('/admin/static/fonts/Point-SemiBold.ttf') format('truetype'); font-weight:600; font-style:normal; font-display:swap; }
+@font-face { font-family:'Point'; src:url('/admin/static/fonts/PointBold.ttf') format('truetype'); font-weight:700; font-style:normal; font-display:swap; }
 
 :root {
-  --bg: #05010f; --surface: #120b26; --surface-2: #150f25;
-  --border: rgba(139,111,230,.16); --border-strong: rgba(139,111,230,.34);
-  --text: #f6f5fd; --text-70: rgba(246,245,253,.72); --text-50: rgba(246,245,253,.52); --text-35: rgba(246,245,253,.35);
-  --g-start: #8b6fe6; --g-end: #5f42b9; --accent: #8b6fe6; --accent-soft: rgba(139,111,230,.14);
-  --ok: #34d399; --ok-bg: rgba(52,211,153,.14);
-  --warn: #fbbf24; --warn-bg: rgba(251,191,36,.14);
-  --danger: #fb7185; --danger-bg: rgba(251,113,133,.14);
-  --info: #38bdf8; --info-bg: rgba(56,189,248,.14);
-  --r-card: 16px; --r-btn: 10px; --r-input: 8px; --r-badge: 6px;
-  --shadow: 0 12px 32px rgba(5,1,15,.45);
+  --bg: #05010f;
+  --surface: #0e0822;
+  --surface-2: #151029;
+  --surface-3: #1b1436;
+  --line: rgba(139,111,230,.14);
+  --line-strong: rgba(139,111,230,.28);
+  --text: #f6f5fd;
+  --muted: rgba(246,245,253,.62);
+  --faint: rgba(246,245,253,.38);
+  --accent: #8b6fe6;
+  --accent-2: #5f42b9;
+  --accent-soft: rgba(139,111,230,.12);
+  --ok: #34d399;
+  --warn: #fbbf24;
+  --danger: #fb7185;
+  --r-card: 18px;
+  --r-ctrl: 10px;
+  --shadow: 0 18px 44px rgba(3,0,10,.55);
+  --wrap: 1120px;
 }
+
 * { box-sizing: border-box; }
 html { color-scheme: dark; }
-body { font-family: 'Point', system-ui, sans-serif; max-width: 1200px; margin: 0 auto; padding: 0 1.25rem 2.5rem; background: var(--bg); color: var(--text); -webkit-font-smoothing: antialiased; }
-h1 { margin: 1.75rem 0 1.1rem; font-weight: 700; letter-spacing: -0.01em; }
-h2 { margin: 1.6rem 0 0.6rem; font-weight: 600; font-size: 1.15em; }
-h3 { margin: 1.2rem 0 0.5rem; color: var(--text-70); font-weight: 600; font-size: 1em; }
-p { color: var(--text-70); }
-code { font-family: ui-monospace, monospace; }
+body {
+  margin: 0; padding: 0 0 64px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Point', system-ui, -apple-system, sans-serif;
+  font-size: 15px; line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+.wrap { max-width: var(--wrap); margin: 0 auto; padding: 0 24px; }
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
+h1 { font-size: 1.6rem; font-weight: 700; letter-spacing: -.02em; margin: 28px 0 20px; }
+h2 { font-size: 1.02rem; font-weight: 600; letter-spacing: -.01em; margin: 0; }
+p { margin: 0 0 10px; color: var(--muted); }
+code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: .9em; }
+.num { font-variant-numeric: tabular-nums; }
 
-@keyframes fadeUp { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: no-preference) {
-  .card, .stat-tile { animation: fadeUp .45s ease both; }
-  .header a, button, .btn, tr, input, .copy-btn { transition: background .16s ease, color .16s ease, transform .12s ease, opacity .16s ease, border-color .16s ease; }
+  .card, .tile { animation: rise .4s cubic-bezier(.22,.68,.36,1) both; }
+  .card:nth-child(2), .tile:nth-child(2) { animation-delay: .04s; }
+  .card:nth-child(3) { animation-delay: .08s; }
+  a, button, .btn, tr, .navlink, .copy { transition: background .16s ease, color .16s ease, border-color .16s ease, transform .1s ease, opacity .16s ease; }
 }
 
-.header { background: var(--surface-2); padding: 0.85rem 1.4rem; margin: 0 -1.25rem; display: flex; align-items: center; flex-wrap: wrap; gap: 0.35rem; border-radius: 0 0 var(--r-card) var(--r-card); border-bottom: 1px solid var(--border); }
-.header .brand { font-weight: 700; font-size: 1.15em; margin-right: 1.25rem; text-decoration: none; background: linear-gradient(90deg, var(--g-start), var(--g-end)); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
-.header a { color: var(--text-70); text-decoration: none; padding: 6px 11px; border-radius: 999px; font-size: 0.85em; }
-.header a:hover { background: var(--accent-soft); color: var(--text); }
-.header a.active { background: var(--accent-soft); color: var(--text); box-shadow: inset 0 0 0 1px var(--border-strong); }
-.header .spacer { margin-left: auto; }
-.header .partner-name { color: var(--text-50); font-size: 0.85em; padding: 6px 4px; }
+/* Top bar, aligned edge-to-edge with the content below it */
+.topbar { margin: 20px auto 0; }
+.topbar-inner {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  background: var(--surface-2); border: 1px solid var(--line);
+  border-radius: var(--r-card); padding: 10px 14px;
+}
+.brand {
+  font-weight: 700; font-size: 1.02rem; letter-spacing: -.01em; margin-right: 14px;
+  background: linear-gradient(92deg, var(--accent), var(--accent-2));
+  -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+}
+.brand:hover { text-decoration: none; opacity: .85; }
+.navlink { color: var(--muted); padding: 7px 13px; border-radius: 999px; font-size: .9rem; }
+.navlink:hover { background: var(--accent-soft); color: var(--text); text-decoration: none; }
+.navlink.active { background: var(--accent-soft); color: var(--text); box-shadow: inset 0 0 0 1px var(--line-strong); }
+.topbar-tail { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+.whoami { color: var(--faint); font-size: .85rem; }
 
-.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-card); padding: 1.3rem 1.5rem; margin: 1rem 0; box-shadow: var(--shadow); }
+/* Cards */
+.card {
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--r-card); padding: 20px 22px; box-shadow: var(--shadow);
+  margin-bottom: 16px;
+}
+.card-head { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 16px; }
+.card-head .sub { color: var(--faint); font-size: .85rem; }
 
-.stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin: 0.5rem 0 1rem; }
-.stat-tile { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-card); padding: 1rem 1.2rem; }
-.stat-tile .stat-label { color: var(--text-50); font-size: 0.78em; text-transform: uppercase; letter-spacing: .04em; margin-bottom: 6px; }
-.stat-tile .stat-value { font-size: 1.7em; font-weight: 700; }
-.stat-tile .stat-sub { color: var(--text-50); font-size: 0.8em; margin-top: 4px; }
-.stat-tile.accent .stat-value { background: linear-gradient(90deg, var(--g-start), var(--g-end)); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+/* Hero stat tiles */
+.hero { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; margin-bottom: 16px; }
+.tile {
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--r-card); padding: 22px 24px; box-shadow: var(--shadow);
+  position: relative; overflow: hidden;
+}
+.tile::before {
+  content: ""; position: absolute; inset: 0 0 auto 0; height: 2px;
+  background: linear-gradient(90deg, var(--accent), transparent 70%);
+}
+.tile-label { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: .95rem; margin-bottom: 10px; }
+.tile-value { font-size: clamp(2.2rem, 5vw, 3rem); font-weight: 700; letter-spacing: -.03em; line-height: 1.05; font-variant-numeric: tabular-nums; }
+.tile-value.grad { background: linear-gradient(92deg, var(--accent), var(--accent-2)); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+.tile-foot { color: var(--faint); font-size: .85rem; margin-top: 8px; }
 
-.table-wrap { overflow-x: auto; }
-table { border-collapse: collapse; width: 100%; margin: 0.5rem 0; }
-th, td { border-bottom: 1px solid var(--border); padding: 9px 12px; text-align: left; font-size: 0.9em; }
-th { color: var(--text-50); font-weight: 600; text-transform: uppercase; font-size: 0.72em; letter-spacing: .04em; border-bottom: 1px solid var(--border-strong); }
-tr:hover td { background: rgba(139,111,230,.06); }
+/* Hover hint pill */
+.hint {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px; border-radius: 999px; cursor: help;
+  background: var(--accent-soft); color: var(--accent);
+  border: 1px solid var(--line-strong); font-size: .72rem; font-weight: 700;
+  position: relative;
+}
+.hint-pop {
+  position: absolute; bottom: calc(100% + 9px); left: 50%; transform: translateX(-50%);
+  width: 268px; padding: 11px 13px; border-radius: 12px;
+  background: var(--surface-3); border: 1px solid var(--line-strong);
+  color: var(--text); font-size: .82rem; font-weight: 400; line-height: 1.45;
+  box-shadow: var(--shadow); opacity: 0; visibility: hidden; z-index: 20; text-align: left;
+}
+.hint:hover .hint-pop, .hint:focus-visible .hint-pop { opacity: 1; visibility: visible; }
 
-form { display: inline; }
-input[type=text], input[type=password], input[type=number] { padding: 9px 12px; border: 1px solid var(--border); border-radius: var(--r-input); font-size: 0.9em; background: var(--surface); color: var(--text); font-family: inherit; }
-input::placeholder { color: var(--text-35); }
-input:focus-visible, button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-button, .btn { padding: 9px 18px; cursor: pointer; border: none; border-radius: var(--r-btn); font-size: 0.9em; font-family: inherit; font-weight: 500; background: linear-gradient(90deg, var(--g-start), var(--g-end)); color: #fff; }
-button:hover, .btn:hover { opacity: .88; }
-button:active, .btn:active { transform: scale(.98); }
-.copy-btn { background: var(--surface); border: 1px solid var(--border); color: var(--text-70); padding: 6px 12px; font-size: 0.82em; }
-.copy-btn:hover { background: var(--accent-soft); opacity: 1; color: var(--text); }
+/* Funnel */
+.funnel { display: flex; flex-direction: column; gap: 9px; }
+.frow { display: grid; grid-template-columns: minmax(120px, 168px) 1fr auto; align-items: center; gap: 14px; }
+.flabel { color: var(--muted); font-size: .88rem; }
+.ftrack { height: 26px; background: var(--surface-2); border-radius: 7px; overflow: hidden; }
+.ffill { height: 100%; border-radius: 7px; min-width: 3px; }
+.fval { font-variant-numeric: tabular-nums; font-weight: 600; font-size: .9rem; min-width: 76px; text-align: right; }
+.fval .pct { color: var(--faint); font-weight: 400; margin-left: 5px; }
 
-.badge { display: inline-block; padding: 3px 9px; border-radius: var(--r-badge); font-size: 0.82em; font-weight: 600; }
-.badge-ok { background: var(--ok-bg); color: var(--ok); }
-.badge-warn { background: var(--warn-bg); color: var(--warn); }
-.badge-zero { background: var(--danger-bg); color: var(--danger); }
-.badge-stage { background: var(--accent-soft); color: #c9b8f5; }
+/* Charts */
+.legend { display: flex; gap: 14px; align-items: center; }
+.legend-item { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: .84rem; }
+.legend-dot { width: 9px; height: 9px; border-radius: 3px; }
+.donut-wrap { display: flex; flex-direction: column; align-items: center; gap: 12px; }
+.donut-wrap canvas { max-width: 190px; max-height: 190px; }
+/* Chart.js with maintainAspectRatio:false sizes itself from the parent, so
+   the parent needs an explicit height or the canvas grows every frame. */
+.chart-h { position: relative; height: 260px; }
+.donut-note { color: var(--faint); font-size: .84rem; }
+.two-col { display: grid; grid-template-columns: 1.45fr 1fr; gap: 16px; align-items: start; }
+@media (max-width: 900px) { .two-col { grid-template-columns: 1fr; } }
 
-.funnel-bar-wrap { text-align: center; margin: 4px 0; }
-.funnel-bar { display: inline-flex; justify-content: space-between; align-items: center; padding: 7px 18px; border-radius: var(--r-btn); color: #fff; font-size: 0.88em; min-width: 160px; font-weight: 500; box-shadow: 0 4px 14px rgba(5,1,15,.35); }
-.funnel-bar .flabel { text-align: left; }
-.funnel-bar .fcount { font-weight: 700; margin-left: 12px; white-space: nowrap; }
+/* Tables */
+.table-wrap { overflow-x: auto; margin: 0 -6px; }
+table { border-collapse: collapse; width: 100%; }
+th, td { text-align: left; padding: 11px 12px; font-size: .9rem; border-bottom: 1px solid var(--line); }
+th { color: var(--faint); font-weight: 500; font-size: .82rem; border-bottom: 1px solid var(--line-strong); }
+tbody tr:last-child td { border-bottom: none; }
+tbody tr:hover td { background: rgba(139,111,230,.05); }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 
-.chart-row { display: flex; flex-wrap: wrap; gap: 1.5rem; align-items: flex-start; }
-.chart-box { flex: 0 0 260px; }
-.chart-box canvas { max-width: 260px; max-height: 260px; }
-.funnel-box { flex: 1; min-width: 320px; }
-.trend-box canvas { max-height: 220px; }
+/* Controls */
+input[type=text], input[type=password] {
+  background: var(--surface-2); border: 1px solid var(--line); color: var(--text);
+  border-radius: var(--r-ctrl); padding: 11px 13px; font: inherit; font-size: .92rem; width: 100%;
+}
+input::placeholder { color: var(--faint); }
+input:focus-visible, button:focus-visible, a:focus-visible, .hint:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button, .btn {
+  font: inherit; font-size: .92rem; font-weight: 500; cursor: pointer; border: none;
+  border-radius: var(--r-ctrl); padding: 11px 20px; color: #fff;
+  background: linear-gradient(92deg, var(--accent), var(--accent-2));
+}
+button:hover, .btn:hover { opacity: .88; text-decoration: none; }
+button:active, .btn:active { transform: translateY(1px); }
+.copy {
+  background: var(--surface-2); border: 1px solid var(--line); color: var(--muted);
+  padding: 6px 12px; font-size: .8rem; border-radius: 8px;
+}
+.copy:hover { background: var(--accent-soft); color: var(--text); opacity: 1; }
 
-.info-box { background: var(--accent-soft); border-left: 3px solid var(--accent); padding: 1rem 1.2rem; border-radius: 0 var(--r-input) var(--r-input) 0; margin: 1rem 0; font-size: 0.9em; line-height: 1.65; color: var(--text-70); }
-.info-box code { background: rgba(139,111,230,.18); color: var(--text); padding: 2px 6px; border-radius: 4px; font-size: 0.9em; }
+/* Link generator */
+.gen { display: flex; gap: 10px; align-items: stretch; flex-wrap: wrap; }
+.gen-field {
+  display: flex; align-items: center; flex: 1; min-width: 320px;
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-ctrl);
+  padding-left: 13px; overflow: hidden;
+}
+.gen-prefix { color: var(--faint); font-family: ui-monospace, monospace; font-size: .86rem; white-space: nowrap; }
+.gen-field input { border: none; background: transparent; padding-left: 2px; font-family: ui-monospace, monospace; font-size: .86rem; }
+.gen-field input:focus-visible { outline: none; }
+.gen-field:focus-within { border-color: var(--line-strong); }
 
-.flash { padding: .7rem 1rem; border-radius: var(--r-input); margin: .75rem 0; font-size: .9em; }
-.flash-ok { background: var(--ok-bg); color: var(--ok); }
-.flash-err { background: var(--danger-bg); color: var(--danger); }
+/* Badges + notes */
+.badge { display: inline-block; padding: 3px 10px; border-radius: 7px; font-size: .8rem; font-weight: 600; }
+.badge-ok { background: rgba(52,211,153,.13); color: var(--ok); }
+.badge-zero { background: rgba(251,113,133,.13); color: var(--danger); }
+.badge-soft { background: var(--accent-soft); color: #c9b8f5; }
+.note { background: var(--accent-soft); border-left: 2px solid var(--accent); border-radius: 0 10px 10px 0; padding: 13px 16px; color: var(--muted); font-size: .88rem; line-height: 1.6; }
+.note code { background: rgba(139,111,230,.16); color: var(--text); padding: 2px 6px; border-radius: 5px; }
+.flash { padding: 12px 15px; border-radius: var(--r-ctrl); margin-bottom: 16px; font-size: .9rem; }
+.flash-err { background: rgba(251,113,133,.12); color: var(--danger); border: 1px solid rgba(251,113,133,.3); }
+.empty { text-align: center; padding: 26px 20px; color: var(--faint); }
 
-.pagination { display: flex; gap: 4px; align-items: center; margin: 1rem 0; flex-wrap: wrap; }
-.pagination a, .pagination span { padding: 5px 11px; border-radius: var(--r-input); font-size: 0.9em; }
-.pagination a { background: var(--surface); color: var(--text-70); border: 1px solid var(--border); }
-.pagination a:hover { background: var(--accent-soft); text-decoration: none; }
-.pagination .current { background: linear-gradient(90deg, var(--g-start), var(--g-end)); color: #fff; font-weight: 600; }
+/* User card */
+.ucard { background: var(--surface-2); border: 1px solid var(--line); border-radius: 14px; padding: 18px 20px; }
+.ucard.sample { border-style: dashed; opacity: .72; }
+.ucard-top { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+.avatar { width: 42px; height: 42px; border-radius: 999px; background: linear-gradient(140deg, var(--accent), var(--accent-2)); display: flex; align-items: center; justify-content: center; font-weight: 700; color: #fff; }
+.avatar.blank { background: var(--surface-3); color: var(--faint); }
+.ucard-name { font-weight: 600; }
+.ucard-sub { color: var(--faint); font-size: .84rem; }
+.ucard-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 12px; }
+.ucard-item .k { color: var(--faint); font-size: .8rem; margin-bottom: 3px; }
+.ucard-item .v { font-weight: 600; font-variant-numeric: tabular-nums; }
 
-.login-wrap { max-width: 380px; margin: 14vh auto 0; }
-.login-wrap .card { text-align: center; }
-.login-wrap form { display: flex; flex-direction: column; gap: 12px; margin-top: 1rem; }
-.login-wrap input { width: 100%; }
-.login-wrap .brand { display: block; font-weight: 700; font-size: 1.4em; margin-bottom: .2rem; background: linear-gradient(90deg, var(--g-start), var(--g-end)); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+/* Pagination */
+.pager { display: flex; gap: 6px; align-items: center; margin-top: 16px; }
+.pager a, .pager span { padding: 7px 13px; border-radius: 9px; font-size: .88rem; }
+.pager a { background: var(--surface-2); color: var(--muted); border: 1px solid var(--line); }
+.pager a:hover { background: var(--accent-soft); color: var(--text); text-decoration: none; }
+.pager .cur { color: var(--faint); }
 
-@media (max-width: 768px) {
-  body { padding: 0 0.75rem 1.5rem; }
-  .header { padding: 0.6rem; margin: 0 -0.75rem; border-radius: 0; }
-  .chart-row { flex-direction: column; }
-  .chart-box { flex: auto; width: 100%; }
-  th, td { padding: 6px 8px; font-size: 0.8em; }
+/* Login */
+.login { max-width: 380px; margin: 15vh auto 0; }
+.login .card { padding: 30px 28px; }
+.login .brand { display: block; font-size: 1.35rem; margin: 0 0 4px; }
+.login form { display: flex; flex-direction: column; gap: 11px; margin-top: 18px; }
+
+@media (max-width: 700px) {
+  .wrap { padding: 0 14px; }
+  .frow { grid-template-columns: 104px 1fr auto; gap: 9px; }
+  .flabel { font-size: .8rem; }
+  .card { padding: 17px 15px; }
 }
 """
 
-_NAV_ITEMS = [
+_NAV = [
     ("/partner/", "Дашборд"),
     ("/partner/links", "Ссылки"),
     ("/partner/users", "Пользователи"),
-    ("/partner/jobs", "Джобы"),
+    ("/partner/activity", "Задачи"),
     ("/partner/payouts", "Выплаты"),
 ]
 
-
-def _nav_html(active: str) -> str:
-    parts = []
-    for href, label in _NAV_ITEMS:
-        cls = ' class="active"' if href == active else ""
-        parts.append(f'<a href="{href}"{cls}>{label}</a>')
-    return "".join(parts)
+_COMMISSION_HINT = (
+    "50% с первой покупки приведённого пользователя и 20% с каждой следующей. "
+    "Автосписания по подписке считаются как отдельные покупки."
+)
 
 
-def _page(title: str, body: str, *, active: str = "", partner_name: str = "") -> str:
-    nav = _nav_html(active)
-    name_html = f'<span class="partner-name">{html_mod.escape(partner_name)}</span>' if partner_name else ""
+def _esc(value: Any) -> str:
+    return html_mod.escape(str(value if value is not None else ""))
+
+
+def _rub(amount: Any) -> str:
+    return f"{int(amount or 0):,}".replace(",", " ")
+
+
+def _chrome(title: str, body: str, *, active: str, who: str) -> str:
+    nav = "".join(
+        f'<a href="{href}" class="navlink{" active" if href == active else ""}">{label}</a>'
+        for href, label in _NAV
+    )
     return f"""<!DOCTYPE html><html lang="ru"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Партнёрский кабинет — Blast</title>
+<title>{_esc(title)} — Blast Partners</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
-<style>{_PARTNER_STYLE}</style></head><body>
-<div class="header">
-  <a href="/partner/" class="brand">Blast Partners</a>
-  {nav}
-  <div class="spacer"></div>
-  {name_html}
-  <a href="/partner/logout">Выйти</a>
+<style>{_STYLE}</style></head><body>
+<div class="topbar wrap">
+  <div class="topbar-inner">
+    <a href="/partner/" class="brand">Blast Partners</a>
+    {nav}
+    <div class="topbar-tail">
+      <span class="whoami">{_esc(who)}</span>
+      <a href="/partner/logout" class="navlink">Выйти</a>
+    </div>
+  </div>
 </div>
-<h1>{title}</h1>
+<main class="wrap">
+<h1>{_esc(title)}</h1>
 {body}
+</main>
 </body></html>"""
 
 
-def _login_page(*, error: str = "") -> str:
-    err_html = f'<div class="flash flash-err">{html_mod.escape(error)}</div>' if error else ""
+def _login_html(error: str = "") -> str:
+    err = f'<div class="flash flash-err">{_esc(error)}</div>' if error else ""
     return f"""<!DOCTYPE html><html lang="ru"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Вход — Blast Partners</title>
-<style>{_PARTNER_STYLE}</style></head><body>
-<div class="login-wrap">
+<style>{_STYLE}</style></head><body>
+<div class="login wrap">
   <div class="card">
     <span class="brand">Blast Partners</span>
-    <p>Кабинет для партнёров по трафику</p>
-    {err_html}
+    <p>Кабинет партнёра по трафику</p>
+    {err}
     <form method="post" action="/partner/login">
-      <input type="text" name="login" placeholder="Логин" required autofocus>
-      <input type="password" name="password" placeholder="Пароль" required>
+      <input type="text" name="login" placeholder="Логин" required autofocus autocomplete="username">
+      <input type="password" name="password" placeholder="Пароль" required autocomplete="current-password">
       <button type="submit">Войти</button>
     </form>
   </div>
@@ -244,32 +385,49 @@ def _login_page(*, error: str = "") -> str:
 </body></html>"""
 
 
-def _fmt_rub(amount: int) -> str:
-    return f"{int(amount):,}".replace(",", " ")
-
-
-def _pagination_html(page: int, total_pages: int, base_url: str) -> str:
+def _pager(page: int, total_pages: int, base: str) -> str:
     if total_pages <= 1:
         return ""
-    sep = "&" if "?" in base_url else "?"
-    parts = []
+    sep = "&" if "?" in base else "?"
+    out = []
     if page > 1:
-        parts.append(f'<a href="{base_url}{sep}page={page - 1}">&laquo; Назад</a>')
-    parts.append(f'<span class="current">{page} / {total_pages}</span>')
+        out.append(f'<a href="{base}{sep}page={page - 1}">Назад</a>')
+    out.append(f'<span class="cur">Страница {page} из {total_pages}</span>')
     if page < total_pages:
-        parts.append(f'<a href="{base_url}{sep}page={page + 1}">Вперёд &raquo;</a>')
-    return f'<div class="pagination">{"".join(parts)}</div>'
+        out.append(f'<a href="{base}{sep}page={page + 1}">Вперёд</a>')
+    return f'<div class="pager">{"".join(out)}</div>'
+
+
+def _funnel_html(counts: Dict[str, int]) -> str:
+    if not counts:
+        return '<div class="empty">Данных пока нет. Приведите первого пользователя по своей ссылке.</div>'
+    top = max(counts.values()) or 1
+    base = counts.get(_FUNNEL_ORDER[0], 0) or 1
+    rows = ""
+    for i, event in enumerate(_FUNNEL_ORDER):
+        cnt = counts.get(event, 0)
+        width = (cnt / top * 100) if top else 0
+        conv = (cnt / base * 100) if base else 0
+        color = _FUNNEL_COLORS[i] if i < len(_FUNNEL_COLORS) else "#8b6fe6"
+        rows += (
+            f'<div class="frow">'
+            f'<div class="flabel">{_FUNNEL_LABELS.get(event, event)}</div>'
+            f'<div class="ftrack"><div class="ffill" style="width:{width:.1f}%;background:{color}"></div></div>'
+            f'<div class="fval">{cnt}<span class="pct">{conv:.0f}%</span></div>'
+            f'</div>'
+        )
+    return f'<div class="funnel">{rows}</div>'
 
 
 def build_router(credits_db: "CreditsDB", state_store: "StateStore", settings: "Settings") -> APIRouter:
     router = APIRouter()
 
-    async def _create_session(partner_id: int) -> str:
+    async def _new_session(partner_id: int) -> str:
         token = secrets.token_urlsafe(32)
         await state_store.redis.set(f"{_SESSION_PREFIX}{token}", str(partner_id), ex=_SESSION_TTL_S)
         return token
 
-    async def _resolve_session(token: str) -> Optional[int]:
+    async def _session_partner_id(token: str) -> Optional[int]:
         if not token:
             return None
         raw = await state_store.redis.get(f"{_SESSION_PREFIX}{token}")
@@ -281,8 +439,7 @@ def build_router(credits_db: "CreditsDB", state_store: "StateStore", settings: "
             return None
 
     async def _current_partner(request: Request) -> Dict[str, Any]:
-        token = request.cookies.get(_COOKIE_NAME, "")
-        partner_id = await _resolve_session(token)
+        partner_id = await _session_partner_id(request.cookies.get(_COOKIE_NAME, ""))
         if partner_id is None:
             raise HTTPException(status_code=303, headers={"Location": "/partner/login"})
         partner = await credits_db.get_partner(partner_id)
@@ -290,12 +447,19 @@ def build_router(credits_db: "CreditsDB", state_store: "StateStore", settings: "
             raise HTTPException(status_code=303, headers={"Location": "/partner/login"})
         return partner
 
+    def _who(partner: Dict[str, Any]) -> str:
+        return str(partner.get("name") or partner.get("login") or "")
+
+    def _bot_username() -> str:
+        return str(getattr(settings, "tg_bot_username", "") or "blast808bot")
+
+    # ── Auth ────────────────────────────────────────────────────────
+
     @router.get("/partner/login", response_class=HTMLResponse)
     async def login_form(request: Request) -> str:
-        token = request.cookies.get(_COOKIE_NAME, "")
-        if await _resolve_session(token) is not None:
+        if await _session_partner_id(request.cookies.get(_COOKIE_NAME, "")) is not None:
             raise HTTPException(status_code=303, headers={"Location": "/partner/"})
-        return _login_page()
+        return _login_html()
 
     @router.post("/partner/login", response_class=HTMLResponse)
     async def login_submit(login: str = Form(...), password: str = Form(...)):
@@ -303,10 +467,10 @@ def build_router(credits_db: "CreditsDB", state_store: "StateStore", settings: "
 
         partner = await credits_db.get_partner_by_login(login)
         if not partner or not verify_partner_password(password, str(partner["password_hash"])):
-            return HTMLResponse(_login_page(error="Неверный логин или пароль"), status_code=401)
+            return HTMLResponse(_login_html("Неверный логин или пароль"), status_code=401)
         if str(partner.get("status", "")) != "active":
-            return HTMLResponse(_login_page(error="Доступ приостановлен, обратитесь к менеджеру"), status_code=403)
-        token = await _create_session(int(partner["id"]))
+            return HTMLResponse(_login_html("Доступ приостановлен, напишите менеджеру"), status_code=403)
+        token = await _new_session(int(partner["id"]))
         resp = RedirectResponse("/partner/", status_code=303)
         resp.set_cookie(
             _COOKIE_NAME, token, max_age=_SESSION_TTL_S, httponly=True, samesite="lax",
@@ -323,306 +487,410 @@ def build_router(credits_db: "CreditsDB", state_store: "StateStore", settings: "
         resp.delete_cookie(_COOKIE_NAME)
         return resp
 
-    # ── Dashboard ──────────────────────────────────────────────────
+    # ── Dashboard ───────────────────────────────────────────────────
 
     @router.get("/partner/", response_class=HTMLResponse)
     async def dashboard(partner: Dict[str, Any] = Depends(_current_partner)) -> str:
-        partner_id = int(partner["id"])
-        tg_ids = await credits_db.list_partner_user_ids(partner_id)
+        pid = int(partner["id"])
+        tg_ids = await credits_db.list_partner_user_ids(pid)
         funnel_raw = await credits_db.funnel_reach_counts_for_users(tg_ids) if tg_ids else []
         rating_raw = await credits_db.rating_distribution_for_users(tg_ids) if tg_ids else []
-        commission = await credits_db.partner_commission_summary(partner_id)
-        trend = await credits_db.partner_revenue_timeseries(partner_id, days=30)
-        top_links = (await credits_db.partner_link_stats(partner_id))[:5]
+        money = await credits_db.partner_commission_summary(pid)
+        trend = await credits_db.partner_revenue_timeseries(pid, days=30)
+        links = (await credits_db.partner_link_stats(pid))[:5]
 
-        funnel_map = {r["event"]: r["count"] for r in funnel_raw}
-        max_funnel = max(funnel_map.values()) if funnel_map else 1
-        first_cnt = funnel_map.get(_FUNNEL_ORDER[0], 0) or 1
-        funnel_html = ""
-        for i, event in enumerate(_FUNNEL_ORDER):
-            cnt = funnel_map.get(event, 0)
-            pct = max(15, cnt / max_funnel * 100) if max_funnel > 0 else 15
-            conv = (cnt / first_cnt * 100) if first_cnt else 0
-            color = _FUNNEL_COLORS[i] if i < len(_FUNNEL_COLORS) else "#8b6fe6"
-            label = _FUNNEL_LABELS.get(event, event)
-            funnel_html += (
-                f'<div class="funnel-bar-wrap"><div class="funnel-bar" style="width:{pct:.0f}%;background:{color}">'
-                f'<span class="flabel">{label}</span><span class="fcount">{cnt} <small>({conv:.0f}%)</small></span>'
-                f'</div></div>\n'
-            )
+        funnel_counts = {r["event"]: r["count"] for r in funnel_raw}
+        ratings = {r["rating"]: r["count"] for r in rating_raw}
+        rating_total = sum(ratings.values())
 
-        rating_map = {r["rating"]: r["count"] for r in rating_raw}
-        rating_keys = ["low", "mid_low", "high"]
-        rating_total = sum(rating_map.values())
-        rating_labels_js = json.dumps([_RATING_LABELS[k] for k in rating_keys])
-        rating_data_js = json.dumps([rating_map.get(k, 0) for k in rating_keys])
-        rating_colors_js = json.dumps([_RATING_COLORS[k] for k in rating_keys])
+        donut_data = [ratings.get(k, 0) for k in _RATING_BUCKETS] if rating_total else [1]
+        donut_colors = [_RATING_COLORS[k] for k in _RATING_BUCKETS] if rating_total else ["#1b1436"]
+        donut_labels = [_RATING_LABELS[k] for k in _RATING_BUCKETS] if rating_total else ["Нет оценок"]
 
-        trend_days_js = json.dumps([t["day"][5:] for t in trend])
-        trend_starts_js = json.dumps([t["starts"] for t in trend])
-        trend_purchases_js = json.dumps([t["purchases"] for t in trend])
+        rating_legend = "".join(
+            f'<span class="legend-item"><span class="legend-dot" style="background:{_RATING_COLORS[k]}"></span>'
+            f'{_RATING_LABELS[k]}</span>'
+            for k in _RATING_BUCKETS
+        )
 
-        links_rows = "".join(
-            f"<tr><td>{html_mod.escape(l['label'] or l['code'])}</td>"
-            f"<td>{l['starts_count']}</td><td>{l['paying_users']}</td>"
-            f"<td><strong>{_fmt_rub(l['commission_rub'])} &#8381;</strong></td></tr>"
-            for l in top_links
+        link_rows = "".join(
+            f"<tr><td>{_esc(l['label'] or l['code'])}</td>"
+            f"<td class='num'>{l['starts_count']}</td>"
+            f"<td class='num'>{l['paying_users']}</td>"
+            f"<td class='num'>{_rub(l['commission_rub'])} &#8381;</td></tr>"
+            for l in links
         )
 
         body = f"""
-        <div class="stat-grid">
-          <div class="stat-tile accent"><div class="stat-label">Заработано</div><div class="stat-value">{_fmt_rub(commission['earned_rub'])} &#8381;</div>
-            <div class="stat-sub">{commission['first_count']} первых + {commission['repeat_count']} повторных покупок</div></div>
-          <div class="stat-tile"><div class="stat-label">Выплачено</div><div class="stat-value">{_fmt_rub(commission['paid_rub'])} &#8381;</div></div>
-          <div class="stat-tile"><div class="stat-label">К выплате</div><div class="stat-value" style="color:var(--ok)">{_fmt_rub(commission['due_rub'])} &#8381;</div></div>
-          <div class="stat-tile"><div class="stat-label">Приведено пользователей</div><div class="stat-value">{len(tg_ids)}</div></div>
+        <div class="hero">
+          <div class="tile">
+            <div class="tile-label">Приведено пользователей</div>
+            <div class="tile-value">{len(tg_ids)}</div>
+            <div class="tile-foot">Закреплены за вами навсегда</div>
+          </div>
+          <div class="tile">
+            <div class="tile-label">Заработано
+              <span class="hint" tabindex="0" role="note" aria-label="Условия по продажам">?<span class="hint-pop">{_COMMISSION_HINT}</span></span>
+            </div>
+            <div class="tile-value grad">{_rub(money['earned_rub'])} &#8381;</div>
+            <div class="tile-foot">К выплате {_rub(money['due_rub'])} &#8381; из них</div>
+          </div>
         </div>
 
-        <div class="card">
-          <h2>Условия по продажам</h2>
-          <p style="margin:0">50% с первой покупки пользователя и 20% с каждой следующей — включая автосписания по подписке (каждое списание учитывается отдельно).</p>
-        </div>
-
-        <div class="card">
-          <div class="chart-row">
-            <div class="funnel-box"><h2>Воронка</h2>{funnel_html if funnel_html else '<p>Пока нет данных — приведите первого пользователя по своей ссылке.</p>'}</div>
-            <div class="chart-box"><h3>Оценки видео</h3>
-              {'<p>Нет данных</p>' if rating_total == 0 else '<canvas id="ratingChart"></canvas>'}
+        <div class="two-col">
+          <div class="card">
+            <div class="card-head"><h2>Воронка</h2><span class="sub">по вашим пользователям</span></div>
+            {_funnel_html(funnel_counts)}
+          </div>
+          <div class="card">
+            <div class="card-head"><h2>Оценки видео</h2><div class="legend">{rating_legend}</div></div>
+            <div class="donut-wrap">
+              <canvas id="donut"></canvas>
+              <span class="donut-note">{"Всего оценок: " + str(rating_total) if rating_total else "Оценок пока нет"}</span>
             </div>
           </div>
         </div>
 
-        <div class="card trend-box">
-          <h2>Динамика за 30 дней</h2>
-          <canvas id="trendChart"></canvas>
+        <div class="card">
+          <div class="card-head">
+            <h2>Динамика за 30 дней</h2>
+            <div class="legend">
+              <span class="legend-item"><span class="legend-dot" style="background:#8b6fe6"></span>Старты</span>
+              <span class="legend-item"><span class="legend-dot" style="background:#34d399"></span>Покупки</span>
+            </div>
+          </div>
+          <div class="chart-h"><canvas id="trend"></canvas></div>
         </div>
 
         <div class="card">
-          <h2>Лучшие ссылки</h2>
+          <div class="card-head"><h2>Лучшие ссылки</h2><a href="/partner/links" class="sub">Все ссылки</a></div>
           <div class="table-wrap">
-          <table><tr><th>Ссылка</th><th>Переходов</th><th>Купили</th><th>Комиссия</th></tr>
-          {links_rows if links_rows else '<tr><td colspan="4">Ссылок пока нет — <a href="/partner/links">создайте первую</a>.</td></tr>'}
+          <table>
+            <thead><tr><th>Ссылка</th><th class="num">Переходов</th><th class="num">Купили</th><th class="num">Комиссия</th></tr></thead>
+            <tbody>{link_rows if link_rows else '<tr><td colspan="4"><div class="empty">Ссылок пока нет. <a href="/partner/links">Создайте первую</a>.</div></td></tr>'}</tbody>
           </table>
           </div>
         </div>
 
         <script>
-        {'' if rating_total == 0 else f'''
-        new Chart(document.getElementById("ratingChart"), {{
+        Chart.defaults.font.family = "Point, system-ui, sans-serif";
+        Chart.defaults.color = "rgba(246,245,253,.45)";
+        new Chart(document.getElementById("donut"), {{
           type: "doughnut",
-          data: {{ labels: {rating_labels_js}, datasets: [{{ data: {rating_data_js}, backgroundColor: {rating_colors_js}, borderWidth: 2, borderColor: "#120b26" }}] }},
-          options: {{ responsive: true, plugins: {{ legend: {{ position: "bottom", labels: {{ color: "#f6f5fd", padding: 14, font: {{ size: 12 }} }} }} }} }}
+          data: {{ labels: {json.dumps(donut_labels, ensure_ascii=False)},
+                   datasets: [{{ data: {json.dumps(donut_data)}, backgroundColor: {json.dumps(donut_colors)},
+                                 borderWidth: 0, cutout: "68%" }}] }},
+          options: {{ responsive: true, plugins: {{ legend: {{ display: false }},
+                      tooltip: {{ enabled: {"true" if rating_total else "false"} }} }} }}
         }});
-        '''}
-        new Chart(document.getElementById("trendChart"), {{
+        new Chart(document.getElementById("trend"), {{
           type: "line",
           data: {{
-            labels: {trend_days_js},
+            labels: {json.dumps([t["day"][5:] for t in trend])},
             datasets: [
-              {{ label: "Старты", data: {trend_starts_js}, borderColor: "#8b6fe6", backgroundColor: "rgba(139,111,230,.18)", tension: .3, fill: true }},
-              {{ label: "Покупки", data: {trend_purchases_js}, borderColor: "#34d399", backgroundColor: "rgba(52,211,153,.18)", tension: .3, fill: true }}
+              {{ label: "Старты", data: {json.dumps([t["starts"] for t in trend])},
+                 borderColor: "#8b6fe6", backgroundColor: "rgba(139,111,230,.14)",
+                 borderWidth: 2, tension: .35, fill: true, pointRadius: 0, pointHoverRadius: 4 }},
+              {{ label: "Покупки", data: {json.dumps([t["purchases"] for t in trend])},
+                 borderColor: "#34d399", backgroundColor: "rgba(52,211,153,.14)",
+                 borderWidth: 2, tension: .35, fill: true, pointRadius: 0, pointHoverRadius: 4 }}
             ]
           }},
           options: {{
-            responsive: true,
+            responsive: true, maintainAspectRatio: false,
+            interaction: {{ mode: "index", intersect: false }},
+            plugins: {{ legend: {{ display: false }} }},
             scales: {{
-              x: {{ ticks: {{ color: "#9a90bf" }}, grid: {{ color: "rgba(139,111,230,.08)" }} }},
-              y: {{ ticks: {{ color: "#9a90bf" }}, grid: {{ color: "rgba(139,111,230,.08)" }}, beginAtZero: true }}
-            }},
-            plugins: {{ legend: {{ labels: {{ color: "#f6f5fd" }} }} }}
+              x: {{ grid: {{ display: false }}, ticks: {{ maxTicksLimit: 8, font: {{ size: 12 }} }} }},
+              y: {{ beginAtZero: true, border: {{ display: false }},
+                    grid: {{ color: "rgba(139,111,230,.07)" }},
+                    ticks: {{ precision: 0, maxTicksLimit: 5, font: {{ size: 12 }} }} }}
+            }}
           }}
         }});
         </script>
         """
-        return _page("Дашборд", body, active="/partner/", partner_name=str(partner.get("name") or partner.get("login") or ""))
+        return _chrome("Дашборд", body, active="/partner/", who=_who(partner))
 
-    # ── Links ──────────────────────────────────────────────────────
+    # ── Links ───────────────────────────────────────────────────────
 
     @router.get("/partner/links", response_class=HTMLResponse)
     async def links_page(request: Request, partner: Dict[str, Any] = Depends(_current_partner)) -> str:
-        partner_id = int(partner["id"])
-        links = await credits_db.list_partner_links(partner_id)
-        bot_username = getattr(settings, "tg_bot_username", "") or "blast808bot"
-        err = html_mod.escape(str(request.query_params.get("err", "")).strip())
+        pid = int(partner["id"])
+        stats = await credits_db.partner_link_stats(pid)
+        bot = _bot_username()
+        err = str(request.query_params.get("err", "")).strip()
+
         rows = ""
-        for l in links:
-            deep_link = f"https://t.me/{bot_username}?start={url_quote(l['code'])}"
+        for s in stats:
+            url = f"https://t.me/{bot}?start={s['code']}"
+            conv = (s["paying_users"] / s["starts_count"] * 100) if s["starts_count"] else 0
             rows += (
-                f"<tr><td>{html_mod.escape(l['label'] or '(без названия)')}</td>"
-                f"<td><code>{html_mod.escape(deep_link)}</code> "
-                f"<button type=\"button\" class=\"copy-btn\" onclick=\"navigator.clipboard.writeText('{deep_link}')\">Копировать</button></td>"
-                f"<td>{l['starts_count']}</td></tr>"
+                f"<tr><td>{_esc(s['label'] or s['code'])}</td>"
+                f"<td><code>{_esc(url)}</code> "
+                f"<button type=\"button\" class=\"copy\" data-url=\"{_esc(url)}\">Копировать</button></td>"
+                f"<td class='num'>{s['starts_count']}</td>"
+                f"<td class='num'>{s['paying_users']}</td>"
+                f"<td class='num'>{conv:.0f}%</td>"
+                f"<td class='num'>{_rub(s['commission_rub'])} &#8381;</td></tr>"
             )
-        err_html = f'<div class="flash flash-err">{err}</div>' if err else ""
+
+        err_html = f'<div class="flash flash-err">{_esc(err)}</div>' if err else ""
         body = f"""
         {err_html}
         <div class="card">
-          <h2>Новая ссылка</h2>
-          <p>Ссылка ведёт в бот с вашей UTM-меткой. Всё, что придёт по ней, закрепляется за вами навсегда — включая повторные покупки.</p>
-          <form method="post" action="/partner/links/new" style="display:flex;gap:10px;flex-wrap:wrap;margin-top:.75rem">
-            <input type="text" name="label" placeholder="Название (например: Instagram Reels)" required style="flex:1;min-width:220px">
-            <button type="submit">Создать ссылку</button>
+          <div class="card-head"><h2>Новая ссылка</h2><span class="sub">название придумываете сами</span></div>
+          <form method="post" action="/partner/links/new" class="gen">
+            <div class="gen-field">
+              <span class="gen-prefix">https://t.me/{_esc(bot)}?start={_LINK_PREFIX}</span>
+              <input type="text" name="slug" placeholder="instagram_reels" required
+                     pattern="[a-zA-Z0-9_]{{2,40}}" title="Латиница, цифры и подчёркивания, от 2 до 40 символов">
+            </div>
+            <button type="submit">Создать</button>
           </form>
+          <div class="note" style="margin-top:14px">
+            То, что вы впишете, и станет вашей ссылкой: по ней считается вся статистика.
+            Латиница, цифры и подчёркивания, до 40 символов. Пользователь закрепляется за вами
+            при первом переходе и остаётся закреплённым навсегда, включая все будущие покупки.
+          </div>
         </div>
+
         <div class="card">
-          <h2>Мои ссылки</h2>
+          <div class="card-head"><h2>Мои ссылки</h2><span class="sub">всего {len(stats)}</span></div>
           <div class="table-wrap">
-          <table><tr><th>Название</th><th>Ссылка</th><th>Переходов</th></tr>
-          {rows if rows else '<tr><td colspan="3">Пока нет ни одной ссылки</td></tr>'}
+          <table>
+            <thead><tr><th>Название</th><th>Ссылка</th><th class="num">Переходов</th><th class="num">Купили</th><th class="num">Конверсия</th><th class="num">Комиссия</th></tr></thead>
+            <tbody>{rows if rows else '<tr><td colspan="6"><div class="empty">Ссылок пока нет</div></td></tr>'}</tbody>
           </table>
           </div>
         </div>
+        <script>
+        document.querySelectorAll(".copy").forEach(function (b) {{
+          b.addEventListener("click", function () {{
+            navigator.clipboard.writeText(b.dataset.url);
+            var t = b.textContent; b.textContent = "Скопировано";
+            setTimeout(function () {{ b.textContent = t; }}, 1400);
+          }});
+        }});
+        </script>
         """
-        return _page("Ссылки", body, active="/partner/links", partner_name=str(partner.get("name") or partner.get("login") or ""))
+        return _chrome("Ссылки", body, active="/partner/links", who=_who(partner))
 
     @router.post("/partner/links/new")
-    async def create_link(partner: Dict[str, Any] = Depends(_current_partner), label: str = Form(...)):
-        partner_id = int(partner["id"])
-        base_slug = "".join(c for c in label.lower().replace(" ", "_") if c.isalnum() or c == "_")[:24] or "link"
-        for _ in range(5):
-            code = f"{_LINK_PREFIX}{base_slug}_{secrets.token_hex(3)}"
-            existing = await credits_db.get_partner_link_by_code(code)
-            if not existing:
-                await credits_db.create_partner_link(partner_id, code, label)
-                return RedirectResponse("/partner/links", status_code=303)
-        return RedirectResponse("/partner/links?err=" + url_quote("Не удалось создать ссылку, попробуйте другое название"), status_code=303)
+    async def create_link(partner: Dict[str, Any] = Depends(_current_partner), slug: str = Form(...)):
+        pid = int(partner["id"])
+        clean = str(slug or "").strip().lower().replace(" ", "_")
+        if not _SLUG_RE.match(clean):
+            msg = "Название: латиница, цифры и подчёркивания, от 2 до 40 символов"
+            return RedirectResponse("/partner/links?err=" + url_quote(msg), status_code=303)
+        code = f"{_LINK_PREFIX}{clean}"
+        if await credits_db.get_partner_link_by_code(code):
+            msg = f"Ссылка {code} уже занята, придумайте другое название"
+            return RedirectResponse("/partner/links?err=" + url_quote(msg), status_code=303)
+        await credits_db.create_partner_link(pid, code, clean)
+        return RedirectResponse("/partner/links", status_code=303)
 
-    # ── Users (read-only) ────────────────────────────────────────────
+    # ── Users (read-only) ───────────────────────────────────────────
 
     @router.get("/partner/users", response_class=HTMLResponse)
     async def users_page(request: Request, partner: Dict[str, Any] = Depends(_current_partner)) -> str:
-        partner_id = int(partner["id"])
+        pid = int(partner["id"])
         try:
             page = max(1, int(str(request.query_params.get("page", "1"))))
         except ValueError:
             page = 1
         per_page = 50
-        total = await credits_db.count_partner_users(partner_id)
-        users = await credits_db.partner_users(partner_id, limit=per_page, offset=(page - 1) * per_page)
+        total = await credits_db.count_partner_users(pid)
+        users = await credits_db.partner_users(pid, limit=per_page, offset=(page - 1) * per_page)
+
         rows = "".join(
-            f"<tr><td><a href='/partner/users/{u['tg_id']}'>{html_mod.escape(u['username'] or str(u['tg_id']))}</a></td>"
-            f"<td><span class='badge {'badge-ok' if u['credits'] > 0 else 'badge-zero'}'>{u['credits']}</span></td>"
-            f"<td>{html_mod.escape(u['partner_link_code'])}</td>"
-            f"<td>{u['created_at']}</td></tr>"
+            f"<tr><td><a href='/partner/users/{u['tg_id']}'>{_esc(u['username'] or u['tg_id'])}</a></td>"
+            f"<td class='num'><span class='badge {'badge-ok' if u['credits'] > 0 else 'badge-zero'}'>{u['credits']}</span></td>"
+            f"<td>{_esc(u['partner_link_code'])}</td>"
+            f"<td>{_esc(u['created_at'])}</td></tr>"
             for u in users
         )
-        total_pages = max(1, (total + per_page - 1) // per_page)
+
+        sample = """
+        <div class="card">
+          <div class="card-head"><h2>Как выглядит карточка</h2><span class="sub">пример</span></div>
+          <div class="ucard sample">
+            <div class="ucard-top">
+              <div class="avatar blank">?</div>
+              <div>
+                <div class="ucard-name">username</div>
+                <div class="ucard-sub">tg_id, дата регистрации</div>
+              </div>
+            </div>
+            <div class="ucard-grid">
+              <div class="ucard-item"><div class="k">Генераций осталось</div><div class="v">0</div></div>
+              <div class="ucard-item"><div class="k">Пришёл по ссылке</div><div class="v">p_your_link</div></div>
+              <div class="ucard-item"><div class="k">Закреплён</div><div class="v">дата</div></div>
+            </div>
+          </div>
+        </div>
+        """ if not users else ""
+
         body = f"""
         <div class="card">
-          <p style="margin:0">Только просмотр — без действий над аккаунтами. Всего пользователей: <strong>{total}</strong>.</p>
+          <div class="card-head"><h2>Ваши пользователи</h2><span class="sub">всего {total}</span></div>
+          <p style="margin:0">Только просмотр: действий над аккаунтами в кабинете нет.</p>
         </div>
         <div class="card">
           <div class="table-wrap">
-          <table><tr><th>Пользователь</th><th>Кредиты</th><th>Ссылка</th><th>Дата регистрации</th></tr>
-          {rows if rows else '<tr><td colspan="4">Пока нет пользователей</td></tr>'}
+          <table>
+            <thead><tr><th>Пользователь</th><th class="num">Генераций</th><th>Ссылка</th><th>Регистрация</th></tr></thead>
+            <tbody>{rows if rows else '<tr><td colspan="4"><div class="empty">Пользователей пока нет</div></td></tr>'}</tbody>
           </table>
           </div>
-          {_pagination_html(page, total_pages, '/partner/users')}
+          {_pager(page, max(1, (total + per_page - 1) // per_page), '/partner/users')}
         </div>
+        {sample}
         """
-        return _page("Пользователи", body, active="/partner/users", partner_name=str(partner.get("name") or partner.get("login") or ""))
+        return _chrome("Пользователи", body, active="/partner/users", who=_who(partner))
 
     @router.get("/partner/users/{tg_id}", response_class=HTMLResponse)
     async def user_detail(tg_id: int, partner: Dict[str, Any] = Depends(_current_partner)) -> str:
-        partner_id = int(partner["id"])
-        user = await credits_db.get_partner_user(partner_id, tg_id)
+        pid = int(partner["id"])
+        user = await credits_db.get_partner_user(pid, tg_id)
         if not user:
             raise HTTPException(status_code=404, detail="Пользователь не найден")
         activity = await credits_db.get_activity(tg_id=tg_id, limit=30)
+        name = user["username"] or str(user["tg_id"])
+        initial = (user["username"][:1] or "#").upper()
+
         rows = "".join(
-            f"<tr><td>{html_mod.escape(str(a.get('event', '')))}</td>"
-            f"<td>{html_mod.escape(str(a.get('detail', '')))}</td>"
-            f"<td>{html_mod.escape(str(a.get('created_at', '')))}</td></tr>"
+            f"<tr><td>{_esc(_EVENT_LABELS.get(a.get('event', ''), a.get('event', '')))}</td>"
+            f"<td>{_esc(a.get('detail', ''))}</td>"
+            f"<td>{_esc(a.get('created_at', ''))}</td></tr>"
             for a in activity
         )
+
         body = f"""
-        <p><a href="/partner/users">&laquo; Все пользователи</a></p>
+        <p><a href="/partner/users">Назад к списку</a></p>
         <div class="card">
-          <h2>{html_mod.escape(user['username'] or str(user['tg_id']))}</h2>
-          <p>tg_id: <code>{user['tg_id']}</code> &nbsp;|&nbsp; Кредиты: <strong>{user['credits']}</strong>
-          &nbsp;|&nbsp; Регистрация: {user['created_at']} &nbsp;|&nbsp; По ссылке: <code>{html_mod.escape(user['partner_link_code'])}</code></p>
+          <div class="ucard">
+            <div class="ucard-top">
+              <div class="avatar">{_esc(initial)}</div>
+              <div>
+                <div class="ucard-name">{_esc(name)}</div>
+                <div class="ucard-sub">tg_id {user['tg_id']} · с {_esc(user['created_at'])}</div>
+              </div>
+            </div>
+            <div class="ucard-grid">
+              <div class="ucard-item"><div class="k">Генераций осталось</div><div class="v">{user['credits']}</div></div>
+              <div class="ucard-item"><div class="k">Пришёл по ссылке</div><div class="v">{_esc(user['partner_link_code'] or '-')}</div></div>
+              <div class="ucard-item"><div class="k">Закреплён</div><div class="v">{_esc(user['partner_attributed_at'] or '-')}</div></div>
+            </div>
+          </div>
         </div>
         <div class="card">
-          <h2>Активность</h2>
+          <div class="card-head"><h2>Активность</h2><span class="sub">последние 30 событий</span></div>
           <div class="table-wrap">
-          <table><tr><th>Событие</th><th>Детали</th><th>Когда</th></tr>
-          {rows if rows else '<tr><td colspan="3">Активности пока нет</td></tr>'}
+          <table>
+            <thead><tr><th>Событие</th><th>Детали</th><th>Когда</th></tr></thead>
+            <tbody>{rows if rows else '<tr><td colspan="3"><div class="empty">Активности пока нет</div></td></tr>'}</tbody>
           </table>
           </div>
         </div>
         """
-        return _page("Пользователь", body, active="/partner/users", partner_name=str(partner.get("name") or partner.get("login") or ""))
+        return _chrome(name, body, active="/partner/users", who=_who(partner))
 
-    # ── Jobs ───────────────────────────────────────────────────────
+    # ── Задачи (activity feed) ──────────────────────────────────────
 
-    @router.get("/partner/jobs", response_class=HTMLResponse)
-    async def jobs_page(request: Request, partner: Dict[str, Any] = Depends(_current_partner)) -> str:
-        partner_id = int(partner["id"])
+    @router.get("/partner/jobs")
+    async def jobs_redirect():
+        return RedirectResponse("/partner/activity", status_code=308)
+
+    @router.get("/partner/activity", response_class=HTMLResponse)
+    async def activity_page(request: Request, partner: Dict[str, Any] = Depends(_current_partner)) -> str:
+        pid = int(partner["id"])
         try:
             page = max(1, int(str(request.query_params.get("page", "1"))))
         except ValueError:
             page = 1
-        active_only = str(request.query_params.get("active", "")).strip() == "1"
-        per_page = 30
-        summary = await credits_db.partner_jobs_summary(partner_id)
-        total_jobs = await credits_db.count_partner_jobs(partner_id, active_only=active_only)
-        jobs = await credits_db.partner_jobs(partner_id, active_only=active_only, limit=per_page, offset=(page - 1) * per_page)
-        chips = "".join(
-            f'<div class="stat-tile"><div class="stat-label">{_JOB_STATUS_LABELS.get(status, status)}</div><div class="stat-value">{cnt}</div></div>'
-            for status, cnt in sorted(summary.items(), key=lambda kv: -kv[1])
-        )
+        per_page = 50
+        total = await credits_db.count_partner_activity(pid)
+        events = await credits_db.partner_activity(pid, limit=per_page, offset=(page - 1) * per_page)
+        jobs = await credits_db.partner_jobs_summary(pid)
+
+        done = int(jobs.get("succeeded", 0))
+        running = sum(v for k, v in jobs.items() if k not in ("succeeded", "failed", "cancelled"))
+
         rows = "".join(
-            f"<tr><td>{html_mod.escape(j['username'] or str(j['tg_id']))}</td>"
-            f"<td><span class='badge badge-stage'>{_JOB_STATUS_LABELS.get(j['status'], j['status'])}</span></td>"
-            f"<td>{j['versions_total']}</td><td>{html_mod.escape(j['current_stage'])}</td>"
-            f"<td>{j['updated_at']}</td></tr>"
-            for j in jobs
+            f"<tr><td>{_esc(_EVENT_LABELS.get(e['event'], e['event']))}</td>"
+            f"<td><a href='/partner/users/{e['tg_id']}'>{_esc(e['username'] or e['tg_id'])}</a></td>"
+            f"<td>{_esc(e['detail'])}</td>"
+            f"<td>{_esc(e['created_at'])}</td></tr>"
+            for e in events
         )
-        toggle_href = "/partner/jobs" if active_only else "/partner/jobs?active=1"
-        toggle_label = "Показать все" if active_only else "Только активные"
+
         body = f"""
-        <div class="stat-grid">{chips if chips else '<div class="stat-tile"><div class="stat-label">Джобов пока нет</div><div class="stat-value">0</div></div>'}</div>
-        <div class="card">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.5rem">
-            <h2 style="margin:0">{'Активные джобы' if active_only else 'Все джобы'}</h2>
-            <a href="{toggle_href}" class="btn">{toggle_label}</a>
+        <div class="hero">
+          <div class="tile">
+            <div class="tile-label">Видео готово</div>
+            <div class="tile-value">{done}</div>
+            <div class="tile-foot">Завершённые генерации ваших пользователей</div>
           </div>
+          <div class="tile">
+            <div class="tile-label">Сейчас в работе</div>
+            <div class="tile-value">{running}</div>
+            <div class="tile-foot">Задачи в очереди и в рендере</div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-head"><h2>Лента событий</h2><span class="sub">всего {total}</span></div>
           <div class="table-wrap">
-          <table><tr><th>Пользователь</th><th>Статус</th><th>Версий</th><th>Стадия</th><th>Обновлено</th></tr>
-          {rows if rows else '<tr><td colspan="5">Джобов нет</td></tr>'}
+          <table>
+            <thead><tr><th>Событие</th><th>Пользователь</th><th>Детали</th><th>Когда</th></tr></thead>
+            <tbody>{rows if rows else '<tr><td colspan="4"><div class="empty">Событий пока нет</div></td></tr>'}</tbody>
           </table>
           </div>
-          {_pagination_html(page, max(1, (total_jobs + per_page - 1) // per_page), f'/partner/jobs{"?active=1" if active_only else ""}')}
+          {_pager(page, max(1, (total + per_page - 1) // per_page), '/partner/activity')}
         </div>
         """
-        return _page("Джобы", body, active="/partner/jobs", partner_name=str(partner.get("name") or partner.get("login") or ""))
+        return _chrome("Задачи", body, active="/partner/activity", who=_who(partner))
 
-    # ── Payouts ────────────────────────────────────────────────────
+    # ── Payouts ─────────────────────────────────────────────────────
 
     @router.get("/partner/payouts", response_class=HTMLResponse)
     async def payouts_page(partner: Dict[str, Any] = Depends(_current_partner)) -> str:
-        partner_id = int(partner["id"])
-        commission = await credits_db.partner_commission_summary(partner_id)
-        payouts = await credits_db.list_partner_payouts(partner_id)
+        pid = int(partner["id"])
+        money = await credits_db.partner_commission_summary(pid)
+        payouts = await credits_db.list_partner_payouts(pid)
+
         rows = "".join(
-            f"<tr><td>{_fmt_rub(p['amount_rub'])} &#8381;</td><td>{html_mod.escape(p['note'])}</td><td>{p['created_at']}</td></tr>"
+            f"<tr><td>{_esc(p['created_at'])}</td>"
+            f"<td>{_esc(p['note'] or '-')}</td>"
+            f"<td class='num'>{_rub(p['amount_rub'])} &#8381;</td></tr>"
             for p in payouts
         )
+
         body = f"""
-        <div class="stat-grid">
-          <div class="stat-tile accent"><div class="stat-label">Заработано всего</div><div class="stat-value">{_fmt_rub(commission['earned_rub'])} &#8381;</div></div>
-          <div class="stat-tile"><div class="stat-label">Выплачено</div><div class="stat-value">{_fmt_rub(commission['paid_rub'])} &#8381;</div></div>
-          <div class="stat-tile"><div class="stat-label">К выплате</div><div class="stat-value" style="color:var(--ok)">{_fmt_rub(commission['due_rub'])} &#8381;</div></div>
+        <div class="hero">
+          <div class="tile">
+            <div class="tile-label">К выплате
+              <span class="hint" tabindex="0" role="note" aria-label="Условия по продажам">?<span class="hint-pop">{_COMMISSION_HINT}</span></span>
+            </div>
+            <div class="tile-value grad">{_rub(money['due_rub'])} &#8381;</div>
+            <div class="tile-foot">Заработано {_rub(money['earned_rub'])} &#8381;, выплачено {_rub(money['paid_rub'])} &#8381;</div>
+          </div>
+          <div class="tile">
+            <div class="tile-label">Покупок засчитано</div>
+            <div class="tile-value">{money['first_count'] + money['repeat_count']}</div>
+            <div class="tile-foot">{money['first_count']} первых по 50%, {money['repeat_count']} повторных по 20%</div>
+          </div>
         </div>
         <div class="card">
-          <h2>История выплат</h2>
+          <div class="card-head"><h2>История выплат</h2><span class="sub">всего {len(payouts)}</span></div>
           <div class="table-wrap">
-          <table><tr><th>Сумма</th><th>Комментарий</th><th>Дата</th></tr>
-          {rows if rows else '<tr><td colspan="3">Выплат пока не было</td></tr>'}
+          <table>
+            <thead><tr><th>Дата</th><th>Комментарий</th><th class="num">Сумма</th></tr></thead>
+            <tbody>{rows if rows else '<tr><td colspan="3"><div class="empty">Выплат пока не было</div></td></tr>'}</tbody>
           </table>
           </div>
         </div>
         """
-        return _page("Выплаты", body, active="/partner/payouts", partner_name=str(partner.get("name") or partner.get("login") or ""))
+        return _chrome("Выплаты", body, active="/partner/payouts", who=_who(partner))
 
     return router
