@@ -1072,6 +1072,10 @@ _CONTROL_BUTTONS = {
 
 _AUDIO_EXTS = {".wav", ".mp3", ".m4a", ".aac", ".flac", ".ogg"}
 _UTM_FIELDS = ("source", "medium", "campaign", "content", "term")
+# Partner cabinet deep-link codes are namespaced with this prefix so they
+# never collide with regular UTM start-args (which keep flowing through the
+# existing record_utm_touch/set_user_source path unchanged).
+_PARTNER_LINK_PREFIX = "p_"
 _RE_CELERY_RETRIES = re.compile(r"\bretries=(\d+)\b")
 _TG_AUDIO_DOWNLOAD_RETRIES = 3
 _TG_AUDIO_DOWNLOAD_TIMEOUT_S = 180.0
@@ -3140,6 +3144,11 @@ class BlastBotApp:
                 )
 
             start_payload = _extract_start_payload(message)
+            if start_payload and start_payload.startswith(_PARTNER_LINK_PREFIX):
+                try:
+                    await self.credits_db.attribute_partner_from_code(chat_id, start_payload)
+                except Exception:
+                    log.exception("partner attribution failed chat=%s code=%s", chat_id, start_payload)
             if start_payload:
                 utm = _parse_utm_payload(start_payload)
                 await self.credits_db.record_utm_touch(chat_id, raw_start_arg=start_payload, utm=utm)
