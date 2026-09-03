@@ -152,7 +152,10 @@ code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: .9em; 
 .topbar-inner {
   display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
   background: var(--surface-2); border: 1px solid var(--line);
-  border-radius: var(--r-card); padding: 10px 14px;
+  border-radius: var(--r-card);
+  /* Point sits high in its em box, so symmetric padding reads as
+     top-aligned. The extra top padding centres it optically. */
+  padding: 13px 14px 9px;
 }
 .brand {
   font-weight: 700; font-size: 1.02rem; letter-spacing: -.01em; margin-right: 14px;
@@ -179,32 +182,30 @@ code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: .9em; 
 .hero { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; margin-bottom: 16px; }
 .tile {
   background: var(--surface); border: 1px solid var(--line);
-  border-radius: var(--r-card); padding: 22px 24px; box-shadow: var(--shadow);
-  position: relative; overflow: hidden;
+  border-radius: var(--r-card); padding: 24px 26px 26px; box-shadow: var(--shadow);
+  position: relative;
 }
-.tile::before {
-  content: ""; position: absolute; inset: 0 0 auto 0; height: 2px;
-  background: linear-gradient(90deg, var(--accent), transparent 70%);
-}
-.tile-label { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: .95rem; margin-bottom: 10px; }
-.tile-value { font-size: clamp(2.2rem, 5vw, 3rem); font-weight: 700; letter-spacing: -.03em; line-height: 1.05; font-variant-numeric: tabular-nums; }
+.tile-label { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: .95rem; margin-bottom: 12px; }
+.tile-value { font-size: clamp(2.8rem, 6vw, 3.9rem); font-weight: 700; letter-spacing: -.035em; line-height: 1; font-variant-numeric: tabular-nums; }
 .tile-value.grad { background: linear-gradient(92deg, var(--accent), var(--accent-2)); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
-.tile-foot { color: var(--faint); font-size: .85rem; margin-top: 8px; }
 
 /* Hover hint pill */
 .hint {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 18px; height: 18px; border-radius: 999px; cursor: help;
+  width: 19px; height: 19px; border-radius: 999px; cursor: help;
   background: var(--accent-soft); color: var(--accent);
   border: 1px solid var(--line-strong); font-size: .72rem; font-weight: 700;
-  position: relative;
+  position: relative; line-height: 1; padding-top: 2px;
 }
+/* Opens downward: the tiles sit at the top of the page, so an upward
+   popover would be cut off by the viewport. */
 .hint-pop {
-  position: absolute; bottom: calc(100% + 9px); left: 50%; transform: translateX(-50%);
-  width: 268px; padding: 11px 13px; border-radius: 12px;
+  position: absolute; top: calc(100% + 9px); left: 0;
+  width: 280px; padding: 12px 14px; border-radius: 12px;
   background: var(--surface-3); border: 1px solid var(--line-strong);
-  color: var(--text); font-size: .82rem; font-weight: 400; line-height: 1.45;
-  box-shadow: var(--shadow); opacity: 0; visibility: hidden; z-index: 20; text-align: left;
+  color: var(--text); font-size: .82rem; font-weight: 400; line-height: 1.5;
+  box-shadow: var(--shadow); opacity: 0; visibility: hidden; z-index: 30;
+  text-align: left; padding-top: 12px;
 }
 .hint:hover .hint-pop, .hint:focus-visible .hint-pop { opacity: 1; visibility: visible; }
 
@@ -262,11 +263,13 @@ button:active, .btn:active { transform: translateY(1px); }
 /* Link generator */
 .gen { display: flex; gap: 10px; align-items: stretch; flex-wrap: wrap; }
 .gen-field {
-  display: flex; align-items: center; flex: 1; min-width: 320px;
+  display: flex; align-items: center; flex: 1; min-width: 320px; cursor: text;
   background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-ctrl);
   padding-left: 13px; overflow: hidden;
 }
-.gen-prefix { color: var(--faint); font-family: ui-monospace, monospace; font-size: .86rem; white-space: nowrap; }
+/* Brighter than the placeholder so the fixed part reads as "already
+   yours" and the editable part as the thing to fill in. */
+.gen-prefix { color: var(--text); font-family: ui-monospace, monospace; font-size: .86rem; white-space: nowrap; user-select: none; }
 .gen-field input { border: none; background: transparent; padding-left: 2px; font-family: ui-monospace, monospace; font-size: .86rem; }
 .gen-field input:focus-visible { outline: none; }
 .gen-field:focus-within { border-color: var(--line-strong); }
@@ -399,9 +402,10 @@ def _pager(page: int, total_pages: int, base: str) -> str:
 
 
 def _funnel_html(counts: Dict[str, int]) -> str:
-    if not counts:
-        return '<div class="empty">Данных пока нет. Приведите первого пользователя по своей ссылке.</div>'
-    top = max(counts.values()) or 1
+    # Always render every step, zeros included: a partner should see the whole
+    # path their traffic has to walk, not an empty card.
+    top = max(counts.values()) if counts else 0
+    top = top or 1
     base = counts.get(_FUNNEL_ORDER[0], 0) or 1
     rows = ""
     for i, event in enumerate(_FUNNEL_ORDER):
@@ -526,14 +530,12 @@ def build_router(credits_db: "CreditsDB", state_store: "StateStore", settings: "
           <div class="tile">
             <div class="tile-label">Приведено пользователей</div>
             <div class="tile-value">{len(tg_ids)}</div>
-            <div class="tile-foot">Закреплены за вами навсегда</div>
           </div>
           <div class="tile">
             <div class="tile-label">Заработано
-              <span class="hint" tabindex="0" role="note" aria-label="Условия по продажам">?<span class="hint-pop">{_COMMISSION_HINT}</span></span>
+              <span class="hint" tabindex="0" role="note" aria-label="Как считается заработок">?<span class="hint-pop">{_COMMISSION_HINT}</span></span>
             </div>
             <div class="tile-value grad">{_rub(money['earned_rub'])} &#8381;</div>
-            <div class="tile-foot">К выплате {_rub(money['due_rub'])} &#8381; из них</div>
           </div>
         </div>
 
@@ -641,11 +643,11 @@ def build_router(credits_db: "CreditsDB", state_store: "StateStore", settings: "
         <div class="card">
           <div class="card-head"><h2>Новая ссылка</h2><span class="sub">название придумываете сами</span></div>
           <form method="post" action="/partner/links/new" class="gen">
-            <div class="gen-field">
+            <label class="gen-field">
               <span class="gen-prefix">https://t.me/{_esc(bot)}?start={_LINK_PREFIX}</span>
               <input type="text" name="slug" placeholder="instagram_reels" required
                      pattern="[a-zA-Z0-9_]{{2,40}}" title="Латиница, цифры и подчёркивания, от 2 до 40 символов">
-            </div>
+            </label>
             <button type="submit">Создать</button>
           </form>
           <div class="note" style="margin-top:14px">
@@ -702,6 +704,8 @@ def build_router(credits_db: "CreditsDB", state_store: "StateStore", settings: "
         per_page = 50
         total = await credits_db.count_partner_users(pid)
         users = await credits_db.partner_users(pid, limit=per_page, offset=(page - 1) * per_page)
+        money = await credits_db.partner_commission_summary(pid)
+        buyers = int(money["first_count"])
 
         rows = "".join(
             f"<tr><td><a href='/partner/users/{u['tg_id']}'>{_esc(u['username'] or u['tg_id'])}</a></td>"
@@ -731,10 +735,17 @@ def build_router(credits_db: "CreditsDB", state_store: "StateStore", settings: "
         </div>
         """ if not users else ""
 
+        conv = (buyers / total * 100) if total else 0
         body = f"""
-        <div class="card">
-          <div class="card-head"><h2>Ваши пользователи</h2><span class="sub">всего {total}</span></div>
-          <p style="margin:0">Только просмотр: действий над аккаунтами в кабинете нет.</p>
+        <div class="hero">
+          <div class="tile">
+            <div class="tile-label">Всего пользователей</div>
+            <div class="tile-value">{total}</div>
+          </div>
+          <div class="tile">
+            <div class="tile-label">Из них купили</div>
+            <div class="tile-value">{buyers}<span style="font-size:.4em;font-weight:500;color:var(--faint);margin-left:10px">{conv:.0f}%</span></div>
+          </div>
         </div>
         <div class="card">
           <div class="table-wrap">
@@ -830,12 +841,10 @@ def build_router(credits_db: "CreditsDB", state_store: "StateStore", settings: "
           <div class="tile">
             <div class="tile-label">Видео готово</div>
             <div class="tile-value">{done}</div>
-            <div class="tile-foot">Завершённые генерации ваших пользователей</div>
           </div>
           <div class="tile">
             <div class="tile-label">Сейчас в работе</div>
             <div class="tile-value">{running}</div>
-            <div class="tile-foot">Задачи в очереди и в рендере</div>
           </div>
         </div>
         <div class="card">
@@ -870,15 +879,13 @@ def build_router(credits_db: "CreditsDB", state_store: "StateStore", settings: "
         <div class="hero">
           <div class="tile">
             <div class="tile-label">К выплате
-              <span class="hint" tabindex="0" role="note" aria-label="Условия по продажам">?<span class="hint-pop">{_COMMISSION_HINT}</span></span>
+              <span class="hint" tabindex="0" role="note" aria-label="Как считается заработок">?<span class="hint-pop">{_COMMISSION_HINT}</span></span>
             </div>
             <div class="tile-value grad">{_rub(money['due_rub'])} &#8381;</div>
-            <div class="tile-foot">Заработано {_rub(money['earned_rub'])} &#8381;, выплачено {_rub(money['paid_rub'])} &#8381;</div>
           </div>
           <div class="tile">
-            <div class="tile-label">Покупок засчитано</div>
-            <div class="tile-value">{money['first_count'] + money['repeat_count']}</div>
-            <div class="tile-foot">{money['first_count']} первых по 50%, {money['repeat_count']} повторных по 20%</div>
+            <div class="tile-label">Уже выплачено</div>
+            <div class="tile-value">{_rub(money['paid_rub'])} &#8381;</div>
           </div>
         </div>
         <div class="card">
@@ -886,7 +893,7 @@ def build_router(credits_db: "CreditsDB", state_store: "StateStore", settings: "
           <div class="table-wrap">
           <table>
             <thead><tr><th>Дата</th><th>Комментарий</th><th class="num">Сумма</th></tr></thead>
-            <tbody>{rows if rows else '<tr><td colspan="3"><div class="empty">Выплат пока не было</div></td></tr>'}</tbody>
+            <tbody>{rows if rows else '<tr><td colspan="3"><div class="empty">Выплаты формирует менеджер на основе статистики, по любым вопросам — обращайтесь к нему</div></td></tr>'}</tbody>
           </table>
           </div>
         </div>
