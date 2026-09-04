@@ -4185,7 +4185,7 @@ class BlastBotApp:
             "поставишь больше, задача вернётся с ошибкой и придётся заполнять "
             "заново.",
             parse_mode="HTML",
-            reply_markup=ReplyKeyboardRemove(),
+            reply_markup=_kb([BTN_BACK]),
         )
 
     async def _handle_wait_timing_choice(self, message: Message, st: ChatState) -> None:
@@ -4209,6 +4209,18 @@ class BlastBotApp:
 
     async def _handle_wait_timing_input(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()
+        if text == BTN_BACK:
+            # Тайминг и строки должны совпадать, поэтому назад ведёт к строкам.
+            st.target_fragment = ""
+            st.target_fragment_explicit = False
+            st.stage = STAGE_WAIT_FRAGMENT_TEXT
+            await self.store.set(st)
+            await message.answer(
+                "Пришли строки из текста песни ещё раз — те слова, которые "
+                "хочешь видеть в клипе.",
+                reply_markup=ReplyKeyboardRemove(),
+            )
+            return
         if not text:
             await message.answer("Отправь тайминг текстом, например: 1:20-1:50")
             return
@@ -4934,11 +4946,13 @@ class BlastBotApp:
     # Hook flow — ported 1:1 from tg_bot_botapi (behind HOOK_FLOW_ENABLED).
     # Exit goes to _proceed_to_versions_or_confirm (public's post-settings).
     # ====================================================================
-    def _color_kb(self, *, include_battery: bool = False):
+    def _color_kb(self, *, include_battery: bool = False, include_back: bool = False):
         rows = [COLOR_PALETTE_BUTTONS[i:i + 3] for i in range(0, len(COLOR_PALETTE_BUTTONS), 3)]
         if include_battery:
             rows.append([BTN_COLOR_BATTERY])
         rows.append([BTN_COLOR_DEFAULT])
+        if include_back:
+            rows.append([BTN_BACK])
         return _kb(*rows)
 
     async def _ask_subtitle_color(self, message: Message, st: ChatState) -> None:
@@ -4953,11 +4967,41 @@ class BlastBotApp:
         )
         await message.answer(
             prompt,
-            reply_markup=self._color_kb(include_battery=st.bg_mode == "solid"),
+            reply_markup=self._color_kb(
+                include_battery=st.bg_mode == "solid", include_back=True
+            ),
         )
+
+    async def _back_from_subtitle_color(self, message: Message, st: ChatState) -> None:
+        """«Назад» из палитры субтитров — на шаг, который реально шёл перед ней.
+
+        Цвета спрашиваются последними в блоке настроек, поэтому предыдущий шаг
+        зависит от ветки: у сплошного фона это режим субтитров, у футажа/фото —
+        хук/визуал. Возврат сбрасывает флаги «уже спрошено», иначе ветка
+        проскочит назад к подтверждению вместо своих шагов."""
+        st.colors_done = False
+        st.subtitle_color_hex = ""
+        st.accent_color_hex = ""
+        st.battery_mode = False
+        st.battery_cases = []
+        if st.bg_mode == "solid":
+            await self.store.set(st)
+            await self._ask_subtitles_mode(message, st)
+            return
+        st.visuals_done = False
+        st.visual_transition = ""
+        st.visual_style = ""
+        await self.store.set(st)
+        if HOOK_FLOW_ENABLED:
+            await self._ask_hook_choice(message, st)
+            return
+        await self._ask_visual_transition(message, st)
 
     async def _handle_wait_subtitle_color(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()
+        if text == BTN_BACK:
+            await self._back_from_subtitle_color(message, st)
+            return
         if st.bg_mode == "solid" and text == BTN_COLOR_BATTERY:
             battery_palette = _SUBTITLE_COLOR_BATTERY_BY_BG.get(
                 str(st.bg_solid_color or "").strip()
@@ -5007,11 +5051,17 @@ class BlastBotApp:
         await self.store.set(st)
         await message.answer(
             "Выбери акцентный цвет для фигур и фокус-слов: палитра или «По умолчанию».",
-            reply_markup=self._color_kb(),
+            reply_markup=self._color_kb(include_back=True),
         )
 
     async def _handle_wait_accent_color(self, message: Message, st: ChatState) -> None:
-        choice = _parse_color_choice(message.text or "")
+        text = str(message.text or "").strip()
+        if text == BTN_BACK:
+            st.accent_color_hex = ""
+            await self.store.set(st)
+            await self._ask_subtitle_color(message, st)
+            return
+        choice = _parse_color_choice(text)
         if choice is None:
             await message.answer("Выбери цвет кнопкой из палитры или «По умолчанию».")
             return
@@ -5172,11 +5222,14 @@ class BlastBotApp:
         await message.answer(
             "Сделать хук в ролик? Хук — это короткий FX-акцент на дропе, "
             "помогает удерживать зрителя." + note,
-            reply_markup=_kb([BTN_HOOK_YES, BTN_HOOK_NO]),
+            reply_markup=_kb([BTN_HOOK_YES, BTN_HOOK_NO], [BTN_BACK]),
         )
 
     async def _handle_wait_hook_choice(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()
+        if text == BTN_BACK:
+            await self._ask_subtitles_mode(message, st)
+            return
         if text == BTN_HOOK_NO:
             st.hook_enabled = False
             st.hook_drop_t = None
@@ -6382,6 +6435,7 @@ class BlastBotApp:
                 [BTN_SUB_MODE_SCENES],
                 [BTN_SUB_MODE_4TH],
                 [BTN_SUB_MODE_TRENDY, BTN_SUB_MODE_BRAT],
+                [BTN_BACK],
             ),
         )
 
@@ -6773,6 +6827,9 @@ class BlastBotApp:
         await message.answer("Выбери: «Да» или «Вернуться назад».", reply_markup=_kb([BTN_CONFIRM_YES, BTN_CONFIRM_BACK]))
 
     async def _handle_wait_subtitles_mode(self, message: Message, st: ChatState) -> None:
+        if str(message.text or "").strip() == BTN_BACK:
+            await self._ask_bg_mode(message, st)
+            return
         mode = _parse_subtitles_mode_choice(message.text or "")
         if mode is None:
             await message.answer(
@@ -7018,11 +7075,33 @@ class BlastBotApp:
                 [BTN_FRAME_ROUNDED],
                 [BTN_FRAME_SOFT_BARS, BTN_FRAME_LETTERBOX],
                 [BTN_FRAME_NONE],
+                [BTN_BACK],
             ),
         )
 
+    async def _back_before_frame(self, message: Message, st: ChatState) -> None:
+        """«Назад» с рамки/версий — на последний шаг настроек этой ветки."""
+        if self._render_engine_selector_enabled():
+            await self._ask_render_engine(message, st)
+            return
+        if st.bg_mode == "solid_strobe":
+            # У строба палитра не спрашивается: последний шаг — стиль склейки.
+            st.visuals_done = False
+            await self.store.set(st)
+            await self._ask_strobe_cut(message, st)
+            return
+        if HOOK_FLOW_ENABLED or st.bg_mode == "solid":
+            await self._ask_subtitle_color(message, st)
+            return
+        await self._ask_subtitles_mode(message, st)
+
     async def _handle_wait_frame(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()
+        if text == BTN_BACK:
+            st.frame_id = ""
+            await self.store.set(st)
+            await self._back_before_frame(message, st)
+            return
         frame = _FRAME_BY_BUTTON.get(text)
         if frame is None:
             await message.answer("Выбери рамку кнопкой ниже или нажми «Без рамки».")
@@ -7071,7 +7150,9 @@ class BlastBotApp:
             text += VERSIONS_PROMPT_FREE_SUFFIX.format(limit=self._free_generation_limit())
         st.stage = STAGE_WAIT_VERSIONS
         await self.store.set(st)
-        await message.answer(text, reply_markup=_kb(list(VERSION_CHOICE_BUTTONS)))
+        await message.answer(
+            text, reply_markup=_kb(list(VERSION_CHOICE_BUTTONS), [BTN_BACK])
+        )
 
     async def _handle_wait_render_engine(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()
@@ -7138,6 +7219,16 @@ class BlastBotApp:
         await message.answer("Выбери: «Да» или «Вернуться назад».", reply_markup=_kb([BTN_CONFIRM_YES, BTN_CONFIRM_BACK]))
 
     async def _handle_wait_versions(self, message: Message, st: ChatState) -> None:
+        if str(message.text or "").strip() == BTN_BACK:
+            # Рамку спрашивают прямо перед версиями: если она уже выбрана,
+            # шаг назад ведёт к ней, иначе — к последнему шагу настроек.
+            if st.frame_id:
+                st.frame_id = ""
+                await self.store.set(st)
+                await self._ask_frame(message, st)
+                return
+            await self._back_before_frame(message, st)
+            return
         n = _parse_versions_choice(message.text or "")
         if n is None:
             await message.answer(VERSIONS_INVALID)
@@ -7147,7 +7238,7 @@ class BlastBotApp:
         if int(n) > bal:
             await message.answer(
                 f"Недостаточно генераций. У тебя {bal}, а выбрано {n}. Выбери меньше.",
-                reply_markup=_kb(list(VERSION_CHOICE_BUTTONS)),
+                reply_markup=_kb(list(VERSION_CHOICE_BUTTONS), [BTN_BACK]),
             )
             return
         # Free tier only: a pick that eats most of the quota is confirmed

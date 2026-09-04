@@ -82,7 +82,7 @@ def test_free_user_gets_full_version_picker() -> None:
         await public_app.BlastBotApp._proceed_after_render_engine(app, msg, st)
 
         assert st.stage == STAGE_WAIT_VERSIONS
-        assert _button_texts(msg.markups[-1]) == ["1", "2", "3", "4", "5"]
+        assert _button_texts(msg.markups[-1]) == ["1", "2", "3", "4", "5", public_app.BTN_BACK]
         assert "бесплатном тарифе" in msg.answers[-1]
 
     asyncio.run(_run())
@@ -97,7 +97,7 @@ def test_paid_user_picker_has_no_free_limit_hint() -> None:
         await public_app.BlastBotApp._proceed_after_render_engine(app, msg, st)
 
         assert st.stage == STAGE_WAIT_VERSIONS
-        assert _button_texts(msg.markups[-1]) == ["1", "2", "3", "4", "5"]
+        assert _button_texts(msg.markups[-1]) == ["1", "2", "3", "4", "5", public_app.BTN_BACK]
         assert "бесплатном тарифе" not in msg.answers[-1]
 
     asyncio.run(_run())
@@ -192,7 +192,7 @@ def test_warning_change_returns_to_picker() -> None:
         await public_app.BlastBotApp._handle_wait_versions_warning(app, msg, st)
 
         assert st.stage == STAGE_WAIT_VERSIONS
-        assert _button_texts(msg.markups[-1]) == ["1", "2", "3", "4", "5"]
+        assert _button_texts(msg.markups[-1]) == ["1", "2", "3", "4", "5", public_app.BTN_BACK]
 
     asyncio.run(_run())
 
