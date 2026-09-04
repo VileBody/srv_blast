@@ -63,6 +63,9 @@ class _DummyCreditsDB:
             "earned_rub": 500, "paid_rub": 0, "due_rub": 500,
         }
 
+    async def partner_period_totals(self, partner_id, *, days, shift=0):
+        return {"starts": 3, "purchases": 1, "earned_rub": 500}
+
     async def partner_revenue_timeseries(self, partner_id, days=30):
         return [{"day": "2026-09-01", "starts": 1, "purchases": 0}]
 
