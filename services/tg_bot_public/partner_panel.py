@@ -224,11 +224,15 @@ code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: .9em; 
 .legend-dot { width: 9px; height: 9px; border-radius: 3px; }
 .donut-wrap { display: flex; flex-direction: column; align-items: center; gap: 12px; }
 .donut-wrap canvas { max-width: 190px; max-height: 190px; }
+/* The ratings card stretches to the funnel's height (grid row default),
+   and the donut centres itself in whatever space is left below the head. */
+.two-col > .card { margin-bottom: 0; display: flex; flex-direction: column; }
+.two-col > .card > .donut-wrap { flex: 1; justify-content: center; }
 /* Chart.js with maintainAspectRatio:false sizes itself from the parent, so
    the parent needs an explicit height or the canvas grows every frame. */
 .chart-h { position: relative; height: 260px; }
 .donut-note { color: var(--faint); font-size: .84rem; }
-.two-col { display: grid; grid-template-columns: 1.45fr 1fr; gap: 16px; align-items: start; }
+.two-col { display: grid; grid-template-columns: 1.45fr 1fr; gap: 16px; margin-bottom: 16px; }
 @media (max-width: 900px) { .two-col { grid-template-columns: 1fr; } }
 
 /* Tables */
