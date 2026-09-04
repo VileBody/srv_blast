@@ -231,6 +231,22 @@ code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: .9em; 
 /* Chart.js with maintainAspectRatio:false sizes itself from the parent, so
    the parent needs an explicit height or the canvas grows every frame. */
 .chart-h { position: relative; height: 260px; }
+
+/* Period switch */
+.seg { display: inline-flex; gap: 2px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 999px; padding: 3px; }
+.seg a { padding: 5px 13px; border-radius: 999px; font-size: .82rem; color: var(--muted); }
+.seg a:hover { color: var(--text); text-decoration: none; }
+.seg a.on { background: var(--accent-soft); color: var(--text); box-shadow: inset 0 0 0 1px var(--line-strong); }
+.head-tools { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+
+/* Period totals above the chart */
+.pstats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 16px; margin-bottom: 20px; }
+.pstat .k { color: var(--faint); font-size: .84rem; margin-bottom: 5px; }
+.pstat .v { font-size: 1.55rem; font-weight: 700; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.delta { font-size: .8rem; font-weight: 600; margin-left: 9px; letter-spacing: 0; }
+.delta.up { color: var(--ok); }
+.delta.down { color: var(--danger); }
+.delta.flat { color: var(--faint); }
 .donut-note { color: var(--faint); font-size: .84rem; }
 .two-col { display: grid; grid-template-columns: 1.45fr 1fr; gap: 16px; margin-bottom: 16px; }
 @media (max-width: 900px) { .two-col { grid-template-columns: 1fr; } }
@@ -392,6 +408,28 @@ def _login_html(error: str = "") -> str:
 </body></html>"""
 
 
+_PERIODS = (7, 30, 90)
+
+
+def _delta_html(current: int, previous: int) -> str:
+    """Change against the previous period. Growth from zero has no meaningful
+    percentage, so it stays a dash rather than a fake +100%."""
+    if previous == 0:
+        return '<span class="delta flat">-</span>' if current == 0 else '<span class="delta up">новое</span>'
+    pct = (current - previous) / previous * 100
+    if abs(pct) < 1:
+        return '<span class="delta flat">без изменений</span>'
+    cls = "up" if pct > 0 else "down"
+    return f'<span class="delta {cls}">{pct:+.0f}%</span>'
+
+
+def _period_stat(label: str, value: str, current: int, previous: int) -> str:
+    return (
+        f'<div class="pstat"><div class="k">{label}</div>'
+        f'<div class="v">{value}{_delta_html(current, previous)}</div></div>'
+    )
+
+
 def _pager(page: int, total_pages: int, base: str) -> str:
     if total_pages <= 1:
         return ""
@@ -498,13 +536,22 @@ def build_router(credits_db: "CreditsDB", state_store: "StateStore", settings: "
     # ── Dashboard ───────────────────────────────────────────────────
 
     @router.get("/partner/", response_class=HTMLResponse)
-    async def dashboard(partner: Dict[str, Any] = Depends(_current_partner)) -> str:
+    async def dashboard(request: Request, partner: Dict[str, Any] = Depends(_current_partner)) -> str:
         pid = int(partner["id"])
+        try:
+            days = int(str(request.query_params.get("days", "30")))
+        except ValueError:
+            days = 30
+        if days not in _PERIODS:
+            days = 30
+
         tg_ids = await credits_db.list_partner_user_ids(pid)
         funnel_raw = await credits_db.funnel_reach_counts_for_users(tg_ids) if tg_ids else []
         rating_raw = await credits_db.rating_distribution_for_users(tg_ids) if tg_ids else []
         money = await credits_db.partner_commission_summary(pid)
-        trend = await credits_db.partner_revenue_timeseries(pid, days=30)
+        trend = await credits_db.partner_revenue_timeseries(pid, days=days)
+        now_totals = await credits_db.partner_period_totals(pid, days=days, shift=0)
+        prev_totals = await credits_db.partner_period_totals(pid, days=days, shift=1)
         links = (await credits_db.partner_link_stats(pid))[:5]
 
         funnel_counts = {r["event"]: r["count"] for r in funnel_raw}
@@ -519,6 +566,18 @@ def build_router(credits_db: "CreditsDB", state_store: "StateStore", settings: "
             f'<span class="legend-item"><span class="legend-dot" style="background:{_RATING_COLORS[k]}"></span>'
             f'{_RATING_LABELS[k]}</span>'
             for k in _RATING_BUCKETS
+        )
+
+        period_links = "".join(
+            f'<a href="/partner/?days={d}" class="{"on" if d == days else ""}">{d} дней</a>'
+            for d in _PERIODS
+        )
+        has_trend = any(t["starts"] or t["purchases"] for t in trend)
+        trend_block = (
+            '<div class="chart-h"><canvas id="trend"></canvas></div>'
+            if has_trend else
+            '<div class="empty">Данные появятся после первых переходов по вашей ссылке.'
+            ' <a href="/partner/links">Создать ссылку</a></div>'
         )
 
         link_rows = "".join(
@@ -559,13 +618,21 @@ def build_router(credits_db: "CreditsDB", state_store: "StateStore", settings: "
 
         <div class="card">
           <div class="card-head">
-            <h2>Динамика за 30 дней</h2>
-            <div class="legend">
-              <span class="legend-item"><span class="legend-dot" style="background:#8b6fe6"></span>Старты</span>
-              <span class="legend-item"><span class="legend-dot" style="background:#34d399"></span>Покупки</span>
+            <h2>Динамика</h2>
+            <div class="head-tools">
+              <div class="legend">
+                <span class="legend-item"><span class="legend-dot" style="background:#8b6fe6"></span>Старты</span>
+                <span class="legend-item"><span class="legend-dot" style="background:#34d399"></span>Покупки</span>
+              </div>
+              <div class="seg">{period_links}</div>
             </div>
           </div>
-          <div class="chart-h"><canvas id="trend"></canvas></div>
+          <div class="pstats">
+            {_period_stat("Старты", str(now_totals["starts"]), now_totals["starts"], prev_totals["starts"])}
+            {_period_stat("Покупки", str(now_totals["purchases"]), now_totals["purchases"], prev_totals["purchases"])}
+            {_period_stat("Заработок", _rub(now_totals["earned_rub"]) + " &#8381;", now_totals["earned_rub"], prev_totals["earned_rub"])}
+          </div>
+          {trend_block}
         </div>
 
         <div class="card">
@@ -589,31 +656,31 @@ def build_router(credits_db: "CreditsDB", state_store: "StateStore", settings: "
           options: {{ responsive: true, plugins: {{ legend: {{ display: false }},
                       tooltip: {{ enabled: {"true" if rating_total else "false"} }} }} }}
         }});
-        new Chart(document.getElementById("trend"), {{
-          type: "line",
-          data: {{
-            labels: {json.dumps([t["day"][5:] for t in trend])},
-            datasets: [
-              {{ label: "Старты", data: {json.dumps([t["starts"] for t in trend])},
-                 borderColor: "#8b6fe6", backgroundColor: "rgba(139,111,230,.14)",
-                 borderWidth: 2, tension: .35, fill: true, pointRadius: 0, pointHoverRadius: 4 }},
-              {{ label: "Покупки", data: {json.dumps([t["purchases"] for t in trend])},
-                 borderColor: "#34d399", backgroundColor: "rgba(52,211,153,.14)",
-                 borderWidth: 2, tension: .35, fill: true, pointRadius: 0, pointHoverRadius: 4 }}
-            ]
-          }},
-          options: {{
-            responsive: true, maintainAspectRatio: false,
-            interaction: {{ mode: "index", intersect: false }},
-            plugins: {{ legend: {{ display: false }} }},
-            scales: {{
-              x: {{ grid: {{ display: false }}, ticks: {{ maxTicksLimit: 8, font: {{ size: 12 }} }} }},
-              y: {{ beginAtZero: true, border: {{ display: false }},
-                    grid: {{ color: "rgba(139,111,230,.07)" }},
-                    ticks: {{ precision: 0, maxTicksLimit: 5, font: {{ size: 12 }} }} }}
+        if (document.getElementById("trend")) {{
+          new Chart(document.getElementById("trend"), {{
+            type: "bar",
+            data: {{
+              labels: {json.dumps([t["day"][5:] for t in trend])},
+              datasets: [
+                {{ label: "Старты", data: {json.dumps([t["starts"] for t in trend])},
+                   backgroundColor: "#8b6fe6", borderRadius: 3, maxBarThickness: 22 }},
+                {{ label: "Покупки", data: {json.dumps([t["purchases"] for t in trend])},
+                   backgroundColor: "#34d399", borderRadius: 3, maxBarThickness: 22 }}
+              ]
+            }},
+            options: {{
+              responsive: true, maintainAspectRatio: false,
+              interaction: {{ mode: "index", intersect: false }},
+              plugins: {{ legend: {{ display: false }} }},
+              scales: {{
+                x: {{ grid: {{ display: false }}, ticks: {{ maxTicksLimit: 10, font: {{ size: 12 }} }} }},
+                y: {{ beginAtZero: true, border: {{ display: false }},
+                      grid: {{ color: "rgba(139,111,230,.07)" }},
+                      ticks: {{ precision: 0, maxTicksLimit: 5, font: {{ size: 12 }} }} }}
+              }}
             }}
-          }}
-        }});
+          }});
+        }}
         </script>
         """
         return _chrome("Дашборд", body, active="/partner/", who=_who(partner))

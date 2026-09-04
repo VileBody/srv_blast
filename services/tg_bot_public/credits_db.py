@@ -4995,6 +4995,43 @@ class CreditsDB:
             )
         return [{"day": r["day"].isoformat(), "starts": int(r["starts"]), "purchases": int(r["purchases"])} for r in rows]
 
+    async def partner_period_totals(self, partner_id: int, *, days: int, shift: int = 0) -> Dict[str, int]:
+        """Starts / purchases / commission for a window of `days`, shifted back
+        by `shift` whole windows (shift=1 is the preceding period, used for the
+        change indicators).
+
+        The 50/20 split is ranked over each user's FULL payment history and only
+        then filtered to the window, so a repeat purchase inside the window is
+        still charged at 20% even when the first one happened before it.
+        """
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "WITH bounds AS ("
+                "  SELECT (CURRENT_DATE - ($2::int * ($3::int + 1) - 1))::timestamp AS lo,"
+                "         (CURRENT_DATE - ($2::int * $3::int) + 1)::timestamp AS hi"
+                "), ranked AS ("
+                "  SELECT p.amount_rub, p.created_at,"
+                "         ROW_NUMBER() OVER (PARTITION BY p.tg_id ORDER BY p.created_at ASC) AS rn"
+                "  FROM payments p JOIN users u ON u.tg_id = p.tg_id"
+                "  WHERE u.partner_id = $1 AND UPPER(p.status) = 'CONFIRMED'"
+                ") "
+                "SELECT "
+                "  (SELECT COUNT(*) FROM users u, bounds b "
+                "    WHERE u.partner_id = $1 AND u.created_at >= b.lo AND u.created_at < b.hi)::BIGINT AS starts,"
+                "  (SELECT COUNT(*) FROM ranked r, bounds b "
+                "    WHERE r.created_at >= b.lo AND r.created_at < b.hi)::BIGINT AS purchases,"
+                "  (SELECT COALESCE(SUM(CASE WHEN r.rn = 1 THEN r.amount_rub * 0.5 ELSE r.amount_rub * 0.2 END), 0) "
+                "    FROM ranked r, bounds b "
+                "    WHERE r.created_at >= b.lo AND r.created_at < b.hi)::BIGINT AS earned_rub",
+                int(partner_id), int(days), int(shift),
+            )
+        return {
+            "starts": int(row["starts"]),
+            "purchases": int(row["purchases"]),
+            "earned_rub": int(row["earned_rub"]),
+        }
+
     async def add_partner_payout(self, partner_id: int, amount_rub: int, note: str = "", created_by: str = "") -> int:
         pool = self._pool_or_fail()
         async with pool.acquire() as conn:
