@@ -1,4 +1,5 @@
 import { useTranslation } from 'react-i18next';
+import { useQuery } from '@tanstack/react-query';
 import { api } from '../../lib/api';
 import { cn } from '../../lib/cn';
 import { FigIcon } from './FigIcon';
@@ -9,7 +10,12 @@ import { FigIcon } from './FigIcon';
  * Два состояния одной кнопки: «Подключить» (нет аккаунта) / «Подключен» (есть).
  *
  * Клик по «Подключить» = старт OAuth: уходим ПОЛНЫМ редиректом на бэк (он ведёт на TikTok),
- * потому что авторизация — это уход со страницы, а не fetch. Без ключей бэк мокает подключение.
+ * потому что авторизация — это уход со страницы, а не fetch.
+ *
+ * ТРЕТЬЕ состояние — «скоро», когда ключей TikTok на бэке нет (`/api/tiktok/status` →
+ * `configured:false`). Без него бэк молча МОКАЛ подключение: человек жал «Подключить»,
+ * получал «Подключен» и безлимит, которого на самом деле нет. Проверка стоит здесь, в
+ * единственной кнопке, а не на четырёх экранах, которые её используют.
  */
 export function TiktokButton({
   connected,
@@ -21,13 +27,20 @@ export function TiktokButton({
   className?: string;
 }) {
   const { t } = useTranslation();
+  const statusQuery = useQuery({ queryKey: ['tiktok-status'], queryFn: api.tiktokStatus, staleTime: 5 * 60_000 });
+  // пока статус не приехал — кнопка неактивна: лучше секунда ожидания, чем мок-подключение
+  const configured = statusQuery.data?.configured ?? false;
+  const locked = !connected && !configured;
   const connect = () => { window.location.href = api.tiktokAuthUrl(); };
   return (
     <button
       type="button"
-      onClick={onClick ?? (connected ? undefined : connect)}
+      disabled={locked}
+      title={locked ? t('tiktok.soonHint') : undefined}
+      onClick={locked ? undefined : (onClick ?? (connected ? undefined : connect))}
       className={cn(
-        'flex h-[60px] w-[240px] shrink-0 items-center justify-center gap-[15px] rounded-r15 border bg-grad-soft-20 backdrop-blur-[15px] transition hover:brightness-125',
+        'flex h-[60px] w-[240px] shrink-0 items-center justify-center gap-[15px] rounded-r15 border bg-grad-soft-20 backdrop-blur-[15px] transition',
+        locked ? 'cursor-not-allowed opacity-45' : 'hover:brightness-125',
         connected ? 'border-accent' : 'border-transparent',
         className
       )}
@@ -41,7 +54,7 @@ export function TiktokButton({
           backgroundClip: 'text'
         }}
       >
-        {connected ? t('tiktok.connected') : t('tiktok.connect')}
+        {connected ? t('tiktok.connected') : locked ? t('tiktok.soon') : t('tiktok.connect')}
       </span>
     </button>
   );

@@ -161,8 +161,10 @@ a { color: inherit; text-decoration: none; }
 
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes shimmer { 0% { background-position: -200% 0 } 100% { background-position: 200% 0 } }
-@keyframes pulseDot { 0%, 100% { transform: scale(1); opacity: .6; } 50% { transform: scale(1.45); opacity: 1; } }
 @keyframes slideUpFade { from { opacity: 0; transform: translateY(var(--space-3)); } to { opacity: 1; transform: translateY(0); } }
+/* Пульс иконки визарда, пока идёт генерация. Раньше вместо этого рядом с иконкой
+   мигала отдельная точка 8px — лишняя сущность, читалась как уведомление. */
+@keyframes navBusyPulse { 0%, 100% { transform: scale(1); opacity: .55; } 50% { transform: scale(1.12); opacity: 1; } }
 @keyframes hintPulse { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
 @keyframes strobeFlicker { 0%, 45% { background-color: var(--strobe-color, #8b6fe6); } 50%, 95% { background-color: #000; } 100% { background-color: var(--strobe-color, #8b6fe6); } }
 

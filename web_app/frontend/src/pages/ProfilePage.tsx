@@ -208,12 +208,15 @@ function BlastProgress({ startedAt, claimed, onClaim, claiming }: {
 }
 
 /**
- * Impulse (продукт на год): срок действия + карточка персонального менеджера.
+ * Impulse (продукт на год): срок действия.
  *
  * Полосы «сколько года прошло» здесь больше нет: она заполнялась захардкоженными 12% и
  * ничего не отражала — человек видел прогресс-бар, значение которого невозможно объяснить.
- * Дата окончания уже сказана словами, этого достаточно; карточка менеджера занимает всю
- * ширину (единственное живое действие в этой зоне).
+ *
+ * Карточки персонального менеджера тоже нет (правка владельца): менеджера за ней пока не
+ * стоит, кнопка «Написать» вела в никуда, а обещание в ЛК — это обязательство. Вернуть =
+ * вернуть этот блок и дать `VITE_MANAGER_NAME` / `VITE_MANAGER_URL` живые значения;
+ * ключи `profile.yourManager|managerName|writeManager` в локалях оставлены на месте.
  */
 function ImpulseValidity({ expiresAt }: { expiresAt?: string | null }) {
   const { t, i18n } = useTranslation();
@@ -223,25 +226,9 @@ function ImpulseValidity({ expiresAt }: { expiresAt?: string | null }) {
     return fallback;
   })();
   const dateStr = end.toLocaleDateString(i18n.language.startsWith('en') ? 'en-GB' : 'ru-RU');
-  const managerName = String(import.meta.env.VITE_MANAGER_NAME || 'Blast Support');
-  const managerUrl = String(import.meta.env.VITE_MANAGER_URL || 'mailto:support@blast808.com');
-  const managerInitials = managerName
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase())
-    .join('') || 'BS';
   return (
     <div className="mt-[40px] flex flex-col gap-[16px]">
       <p className="text-[20px] font-[400] leading-none text-transparent" style={gradSoft}>{t('profile.validUntil', { date: dateStr })}</p>
-      <div className="flex w-full items-center gap-[16px] rounded-r15 bg-grad-soft-20 px-[30px] py-[20px]">
-        <span className="flex h-[60px] w-[60px] shrink-0 items-center justify-center rounded-full bg-accent-20 text-[20px] font-[400] text-text">{managerInitials}</span>
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-[16px] leading-none text-text-60">{t('profile.yourManager')}</p>
-          <p className="mt-[6px] truncate text-[24px] leading-none text-text">{managerName}</p>
-        </div>
-        <a href={managerUrl} className="soft-btn flex h-[44px] shrink-0 items-center px-[20px] text-[16px] font-[400]">{t('profile.writeManager')}</a>
-      </div>
     </div>
   );
 }

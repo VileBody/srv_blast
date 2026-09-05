@@ -28,10 +28,15 @@ type VerifyResult = { token: string; deepLink: string; viaTelegram?: boolean };
  * фирменной фиолетовой фигурой. Растёт по ширине страницы (flex-1 от базы 732), зазоры
  * до краёв и до формы одинаковые (60). Фигура preserveAspectRatio="none" — задаём И
  * width, И height из viewBox. Фото артиста убрано.
+ *
+ * `max-w` обязателен: рост был ничем не ограничен, и на широком мониторе визуал
+ * растягивался на всю свободную ширину, а форма фиксированных 528 улетала к правому
+ * краю — страница переставала читаться как макет. Излишек ширины теперь уходит во
+ * ВНЕШНИЕ поля (`justify-center` у main), то есть форма подтягивается к центру.
  */
 function AuthVisual() {
   return (
-    <aside className="relative hidden basis-[732px] grow overflow-hidden rounded-r15 bg-card-2 lg:block">
+    <aside className="relative hidden basis-[732px] grow overflow-hidden rounded-r15 bg-card-2 lg:block xl:max-w-[880px]">
       <span aria-hidden="true" className="absolute left-0 top-0 h-[980px] w-[980px] rounded-r15 bg-card-2" />
       <img
         aria-hidden="true"
@@ -286,7 +291,12 @@ export function AuthPage({ mode }: { mode: Mode }) {
 
   return (
     // Figma W38: паддинг 60, слева визуал-контейнер (растёт по ширине), зазор 60, колонка формы 528.
-    <main className="flex min-h-dvh items-stretch gap-[60px] bg-bg p-[60px] max-lg:p-space-5">
+    /*
+      `justify-center`: излишек ширины сверх (визуал 880 + 60 + форма 528) уходит в равные
+      внешние поля, а не в бесконечный рост левой колонки. На 1440 картина ровно как в
+      макете (визуал 732, поля и зазор по 60), на 1920+ форма подтягивается к центру.
+    */
+    <main className="flex min-h-dvh items-stretch justify-center gap-[60px] bg-bg p-[60px] max-lg:p-space-5">
       <AuthVisual />
       <section className="flex min-w-0 flex-1 items-center justify-center lg:flex-none lg:basis-[528px]">
         <form className="w-full max-w-[528px]" onSubmit={onSubmit} noValidate>

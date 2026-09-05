@@ -60,10 +60,21 @@ function Sidebar({ activeJobId, userName, avatarUrl }: { activeJobId?: string; u
               item.locked && !isActive && 'opacity-40'
             )}
           >
-            <SvgMaskIcon src={item.icon} style={{ width: item.size ?? 34, height: item.size ?? 34 }} />
-            {item.href === '/app/generate' && activeJobId && (
-              <span className="absolute -right-[2px] -top-[2px] h-[8px] w-[8px] rounded-full bg-accent-light" style={{ animation: 'pulseDot 1.2s ease infinite' }} />
-            )}
+            {/*
+              Идёт генерация — пульсирует САМА иконка визарда. Раньше рядом висела отдельная
+              мигающая точка: лишняя сущность, которая читалась как «уведомление/ошибка» и
+              липла к краю иконки. Пульс на иконке говорит ровно то же — «здесь что-то идёт».
+            */}
+            <SvgMaskIcon
+              src={item.icon}
+              style={{
+                width: item.size ?? 34,
+                height: item.size ?? 34,
+                ...(item.href === '/app/generate' && activeJobId
+                  ? { animation: 'navBusyPulse 1.4s ease-in-out infinite' }
+                  : null)
+              }}
+            />
           </NavLink>
         ))}
       </nav>
