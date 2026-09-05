@@ -168,10 +168,13 @@ class ProductionConfig:
     footage_catalog: tuple[dict[str, Any], ...]
     photo_catalog: tuple[dict[str, Any], ...]
     subtitle_catalog: tuple[dict[str, Any], ...]
-    # name -> selector записи каталога (rotationTheme/rotationTagsGroup/renderPreset/bgMode).
+    # background_mode -> name -> selector записи каталога. Карта РАЗДЕЛЕНА по режиму
+    # фона намеренно: у футажа и фото есть одинаковые подписи («Тёмный лес / туман»,
+    # «Портрет девушки / светлый»), и в общем словаре фото затирало бы футаж — выбор
+    # футажа уезжал бы в фото-рендер (bg_mode=photo, геометрия 4:3).
     # С дефолтами: конфиг собирают и тесты, и старые артистовые каталоги — им эти
     # поля не нужны, и требовать их значило бы ломать обратную совместимость.
-    selector_by_name: dict[str, dict[str, Any]] = field(default_factory=dict)
+    selector_by_mode: dict[str, dict[str, dict[str, Any]]] = field(default_factory=dict)
     # базовый профиль артиста: с закреплённой парой rotation он больше не выбирает
     # бакет, но Stage 2 без него не планирует футаж (в т.ч. на solid-фоне)
     default_artist_id: str = ""
@@ -198,17 +201,19 @@ class ProductionConfig:
         # больше не решает, из чего брать клипы. Требуем маппинг только у записей
         # СТАРОГО, артистового формата — иначе фильмы и коллекции 16:9 просто
         # невозможно было бы завести (в карте артистов их нет и быть не может).
-        selector_by_name: dict[str, dict[str, Any]] = {}
-        for item in (*footage_catalog, *photo_catalog):
-            selector = item.get("selector")
-            if isinstance(selector, dict) and selector:
-                selector_by_name[str(item["name"])] = dict(selector)
+        selector_by_mode: dict[str, dict[str, dict[str, Any]]] = {"footage": {}, "photo": {}}
+        for mode, catalog in (("footage", footage_catalog), ("photo", photo_catalog)):
+            for item in catalog:
+                selector = item.get("selector")
+                if isinstance(selector, dict) and selector:
+                    selector_by_mode[mode][str(item["name"])] = dict(selector)
         missing_artists = sorted(
             {
                 str(item["name"])
-                for item in (*footage_catalog, *photo_catalog)
+                for mode, catalog in (("footage", footage_catalog), ("photo", photo_catalog))
+                for item in catalog
                 if str(item["name"]) not in footage_artists
-                and str(item["name"]) not in selector_by_name
+                and str(item["name"]) not in selector_by_mode[mode]
             }
         )
         if missing_artists:
@@ -253,7 +258,7 @@ class ProductionConfig:
             footage_catalog=footage_catalog,
             photo_catalog=photo_catalog,
             subtitle_catalog=subtitle_catalog,
-            selector_by_name=selector_by_name,
+            selector_by_mode=selector_by_mode,
             default_artist_id=default_artist_id,
         )
 
@@ -737,7 +742,10 @@ class ProductionBackend:
             if not groups:
                 raise ProductionBackendError("footage/photo variation has no selected group")
             group_name = str(groups[0])
-            selector = dict(self.config.selector_by_name.get(group_name) or {})
+            # Ищем в карте СВОЕГО режима: одинаковые подписи есть и у футажа, и у фото.
+            selector = dict(
+                self.config.selector_by_mode.get(background_mode, {}).get(group_name) or {}
+            )
             artist_id = self.config.footage_artists.get(group_name, "") or self.config.default_artist_id
             if not selector and not artist_id:
                 raise ProductionBackendError(f"no footage mapping for {group_name!r}")
