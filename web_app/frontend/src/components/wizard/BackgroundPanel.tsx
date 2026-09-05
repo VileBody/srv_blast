@@ -15,7 +15,7 @@ import { PillsFooter } from './WizardFrame';
 import { PreviewPlayer } from '../ui/PreviewPlayer';
 import { useFragmentAudio } from './useFragmentAudio';
 import { SourcesModal } from './SourcesModal';
-import { footageTypeKey, stepFootageType } from '../../data/footageTypes';
+import { footageTypeKey, footageTypePlane, stepFootageType } from '../../data/footageTypes';
 import { BackgroundMode, backgroundPills, backgroundVariations, useWizardStore } from '../../stores/wizardStore';
 
 /** Стили фото (Figma W13/W30) — те же, что «стиль» у эффектов-хука */
@@ -322,7 +322,13 @@ export function StageBackground() {
   const setBackground = useWizardStore((state) => state.setBackground);
   const toggleVibe = useWizardStore((state) => state.toggleVibe);
   const meQuery = useQuery({ queryKey: ['me'], queryFn: api.me, staleTime: 15_000 });
-  const vibesQuery = useQuery({ queryKey: ['vibes'], queryFn: api.vibes, enabled: background.mode === 'footage' });
+  // План — часть ключа: переключил тип футажей → пришёл другой список примеров.
+  const footagePlane = footageTypePlane(background.footageType);
+  const vibesQuery = useQuery({
+    queryKey: ['vibes', footagePlane],
+    queryFn: () => api.vibes(footagePlane),
+    enabled: background.mode === 'footage'
+  });
   const photosQuery = useQuery({ queryKey: ['photos'], queryFn: api.photos, enabled: background.mode === 'photo' });
   const cardsScroll = useDragScroll();
   const gluesScroll = useDragScroll();
@@ -501,7 +507,13 @@ export function BackgroundWorkZone({ ready, canContinue, loading, onBack, onNext
   const chip = useChip();
   const background = useWizardStore((state) => state.background);
   const setBackground = useWizardStore((state) => state.setBackground);
-  const vibesQuery = useQuery({ queryKey: ['vibes'], queryFn: api.vibes, enabled: background.mode === 'footage' });
+  // План — часть ключа: переключил тип футажей → пришёл другой список примеров.
+  const footagePlane = footageTypePlane(background.footageType);
+  const vibesQuery = useQuery({
+    queryKey: ['vibes', footagePlane],
+    queryFn: () => api.vibes(footagePlane),
+    enabled: background.mode === 'footage'
+  });
   const photosQuery = useQuery({ queryKey: ['photos'], queryFn: api.photos, enabled: background.mode === 'photo' });
   const [index, setIndex] = useState(0);
   const [broken, setBroken] = useState<Record<string, boolean>>({});

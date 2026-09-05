@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import mimetypes
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote, unquote, urlparse
@@ -119,6 +119,13 @@ class ProductionConfig:
     footage_catalog: tuple[dict[str, Any], ...]
     photo_catalog: tuple[dict[str, Any], ...]
     subtitle_catalog: tuple[dict[str, Any], ...]
+    # name -> selector записи каталога (rotationTheme/rotationTagsGroup/renderPreset/bgMode).
+    # С дефолтами: конфиг собирают и тесты, и старые артистовые каталоги — им эти
+    # поля не нужны, и требовать их значило бы ломать обратную совместимость.
+    selector_by_name: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # базовый профиль артиста: с закреплённой парой rotation он больше не выбирает
+    # бакет, но Stage 2 без него не планирует футаж (в т.ч. на solid-фоне)
+    default_artist_id: str = ""
 
     @classmethod
     def load(cls) -> "ProductionConfig":
@@ -137,17 +144,36 @@ class ProductionConfig:
         photo_catalog = _json_catalog("WEB_PHOTO_CATALOG_JSON")
         subtitle_catalog = _json_catalog("WEB_SUBTITLE_CATALOG_JSON")
 
+        # Запись каталога может нести `selector` — точную пару (theme, tags_group),
+        # которой закрепляется бакет. Такой записи карта артистов не нужна: артист
+        # больше не решает, из чего брать клипы. Требуем маппинг только у записей
+        # СТАРОГО, артистового формата — иначе фильмы и коллекции 16:9 просто
+        # невозможно было бы завести (в карте артистов их нет и быть не может).
+        selector_by_name: dict[str, dict[str, Any]] = {}
+        for item in (*footage_catalog, *photo_catalog):
+            selector = item.get("selector")
+            if isinstance(selector, dict) and selector:
+                selector_by_name[str(item["name"])] = dict(selector)
         missing_artists = sorted(
             {
                 str(item["name"])
                 for item in (*footage_catalog, *photo_catalog)
                 if str(item["name"]) not in footage_artists
+                and str(item["name"]) not in selector_by_name
             }
         )
         if missing_artists:
             raise ProductionBackendError(
-                "production_backend: preview catalog names missing from "
-                f"WEB_FOOTAGE_ARTIST_MAP_JSON: {missing_artists}"
+                "production_backend: preview catalog entries have neither a "
+                f"selector nor a WEB_FOOTAGE_ARTIST_MAP_JSON mapping: {missing_artists}"
+            )
+        default_artist_id = str(os.getenv("WEB_DEFAULT_FOOTAGE_ARTIST_ID") or "").strip()
+        if not default_artist_id and footage_artists:
+            default_artist_id = str(next(iter(footage_artists.values())))
+        if not default_artist_id:
+            raise ProductionBackendError(
+                "production_backend: set WEB_DEFAULT_FOOTAGE_ARTIST_ID or provide "
+                "WEB_FOOTAGE_ARTIST_MAP_JSON — Stage 2 needs a base artist profile"
             )
         missing_subtitles = sorted(
             {
@@ -178,6 +204,8 @@ class ProductionConfig:
             footage_catalog=footage_catalog,
             photo_catalog=photo_catalog,
             subtitle_catalog=subtitle_catalog,
+            selector_by_name=selector_by_name,
+            default_artist_id=default_artist_id,
         )
 
 
@@ -213,6 +241,31 @@ class ProductionBackend:
             if locator.startswith("s3://"):
                 bucket, key = self._parse_s3_locator(locator)
                 self._s3.head_object(Bucket=bucket, Key=key)
+
+    def analyze_hook(
+        self, *, audio_s3_url: str, clip_start_sec: float, clip_end_sec: float
+    ) -> dict[str, Any]:
+        """Кандидаты дропа + bpm для выбранного отрывка.
+
+        Ровно та же ручка, что зовёт бот: librosa и `analyze_focus_clip` живут в
+        оркестраторе, клиенты забирают готовый пикер (см. комментарий у
+        `HookAnalyzeRequest` в `services/orchestrator/schemas.py`). Считать дроп
+        на своей стороне нельзя — разошлись бы не только числа, но и то, к
+        какому биту он приснапан.
+        """
+        response = self._http.post(
+            f"{self.config.orchestrator_url}/hook/analyze",
+            json={
+                "audio_s3_url": str(audio_s3_url),
+                "clip_start_sec": float(clip_start_sec),
+                "clip_end_sec": float(clip_end_sec),
+            },
+        )
+        if response.status_code >= 300:
+            raise ProductionBackendError(
+                f"orchestrator /hook/analyze failed status={response.status_code}"
+            )
+        return dict(response.json())
 
     def preview_catalog(self, kind: str) -> list[dict[str, Any]]:
         source = {
@@ -630,17 +683,24 @@ class ProductionBackend:
         groups = list(background.get("groups") or [])
         background_mode = str(background.get("mode") or "footage")
         artist_id = ""
+        selector: dict[str, Any] = {}
         if background_mode in {"footage", "photo"}:
             if not groups:
                 raise ProductionBackendError("footage/photo variation has no selected group")
-            artist_id = self.config.footage_artists.get(str(groups[0]), "")
-            if not artist_id:
-                raise ProductionBackendError(f"no footage artist mapping for {groups[0]!r}")
+            group_name = str(groups[0])
+            selector = dict(self.config.selector_by_name.get(group_name) or {})
+            artist_id = self.config.footage_artists.get(group_name, "") or self.config.default_artist_id
+            if not selector and not artist_id:
+                raise ProductionBackendError(f"no footage mapping for {group_name!r}")
 
         bg_mode = "photo" if background_mode == "photo" else "footage"
         bg_solid_color = ""
         if background_mode == "color":
             bg_mode = "solid"
+            # Solid всё равно требует валидный artist_id: Stage 2 планирует футаж,
+            # даже когда его не видно (см. SendAudioS3Request.bg_mode). Бот в этом
+            # случае подставляет первый ключ из пресетов — делаем то же.
+            artist_id = artist_id or self.config.default_artist_id
             color = str(background.get("color") or "").lower()
             color_map = {"#ffffff": "white", "#fff": "white", "#00ff00": "green", "#0f0": "green"}
             bg_solid_color = color_map.get(color, "")
@@ -722,7 +782,15 @@ class ProductionBackend:
             "f2_shape": f2_shape,
             "subtitle_color_hex": variation.get("subtitle", {}).get("color"),
             "accent_color_hex": stage_data.get("final", {}).get("accentColor"),
-            "bg_mode": bg_mode,
+            "bg_mode": str(selector.get("bgMode") or bg_mode),
+            # Пара rotation — это точное указание группы: когда обе непусты,
+            # оркестратор берёт клипы РОВНО из неё вместо выбора по профилю
+            # артиста. Без неё выбор бакета на сайте ни на что не влиял.
+            "rotation_theme": str(selector.get("rotationTheme") or ""),
+            "rotation_tags_group": str(selector.get("rotationTagsGroup") or ""),
+            # Геометрия выдачи: у коллекций 16:9 она wide, иначе кадр
+            # центр-кропается в треть ширины (см. _render_preset_for_bucket в боте).
+            "render_preset": str(selector.get("renderPreset") or "vertical"),
             "bg_solid_color": bg_solid_color,
             "photo_style": background.get("photoStyle"),
             "variant_index": index,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import importlib
 import sys
 from pathlib import Path
@@ -273,6 +274,80 @@ def test_f1_and_f5_hooks_use_orchestrator_contract(monkeypatch: pytest.MonkeyPat
     )
     assert payload["f1_sound_url"] == "s3://assets/app/blast808/sound.wav"
     assert payload["reuse_text_job_id"] == "orch-1"
+
+
+def test_bucket_selector_pins_rotation_and_geometry(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Выбор бакета на сайте должен закреплять группу и формат, а не только артиста.
+
+    Пара rotation_theme/rotation_tags_group — единственный способ сказать
+    оркестратору «бери клипы РОВНО из этой группы»; без неё Stage 2 выбирает по
+    профилю артиста, и выбор в визарде ни на что не влияет. render_preset обязан
+    приезжать из записи каталога: у коллекций 16:9 он wide, и вертикальный кадр
+    обрезал бы их в треть ширины.
+    """
+    module = _module(monkeypatch)
+    config = _config(module)
+    config = dataclasses.replace(
+        config,
+        footage_catalog=(
+            {
+                "id": "collection:cine16x9__New_York",
+                "name": "Нью-Йорк",
+                "previewUrl": "s3://assets/previews/ny.mp4",
+                "score": 1.0,
+                "selector": {
+                    "rotationTheme": "collection",
+                    "rotationTagsGroup": "New_York",
+                    "renderPreset": "wide",
+                    "bgMode": "footage",
+                },
+            },
+        ),
+        selector_by_name={
+            "Нью-Йорк": {
+                "rotationTheme": "collection",
+                "rotationTagsGroup": "New_York",
+                "renderPreset": "wide",
+                "bgMode": "footage",
+            }
+        },
+        default_artist_id="electro_synthwave",
+    )
+    backend = _backend(module, config)
+    job = _job()
+    variation = job["renderJob"]["variations"][0]
+    variation["background"] = {"mode": "footage", "groups": ["Нью-Йорк"]}
+
+    payload = backend._request_payload(job=job, variation=variation, index=1, total=1, master_id=None)
+
+    assert payload["rotation_theme"] == "collection"
+    assert payload["rotation_tags_group"] == "New_York"
+    assert payload["render_preset"] == "wide"
+    assert payload["bg_mode"] == "footage"
+    # Профиль артиста всё ещё нужен Stage 2, даже когда группа закреплена.
+    assert payload["footage_artist_id"] == "electro_synthwave"
+
+
+def test_vertical_stays_vertical_without_selector(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Каталог старого, артистового формата обязан продолжать работать.
+
+    Без selector пара rotation пустая (оркестратор сам выбирает подгруппу), а
+    геометрия — vertical: неверный формат хуже исторического.
+    """
+    module = _module(monkeypatch)
+    backend = _backend(module, _config(module))
+    job = _job()
+    variation = job["renderJob"]["variations"][0]
+    variation["background"] = {"mode": "footage", "groups": ["Неон"]}
+
+    payload = backend._request_payload(job=job, variation=variation, index=1, total=1, master_id=None)
+
+    # Пустые поля payload вычищаются: закреплять «никакую» группу нельзя, иначе
+    # оркестратор получил бы половину пары и не понял бы, чего от него хотят.
+    assert "rotation_theme" not in payload
+    assert "rotation_tags_group" not in payload
+    assert payload["render_preset"] == "vertical"
+    assert payload["footage_artist_id"] == "electro_synthwave"
 
 
 def test_web_tariffs_match_public_payment_credit_grants(monkeypatch: pytest.MonkeyPatch) -> None:

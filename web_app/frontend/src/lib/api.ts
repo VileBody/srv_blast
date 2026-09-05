@@ -227,8 +227,17 @@ export const api = {
     form.append('file', file);
     return request<{ name: string; url: string; playbackUrl: string; mock: boolean }>('/api/wizard/upload-hook-sound', { method: 'POST', body: form });
   },
-  drops: () => request<{ status: string; bpm: number; drops: DropCandidate[] }>('/api/wizard/drops'),
-  vibes: () => request<{ status: string; vibes: Vibe[] }>('/api/wizard/vibes'),
+  // Окно отрывка обязательно: кандидаты дропа ищутся ВНУТРИ него, как в боте.
+  // Без окна прод отвечает status:'NEEDS_CLIP' (не ошибкой — это нормальное
+  // состояние визарда до выбора отрывка).
+  drops: (clipFrom = '', clipTo = '') =>
+    request<{ status: string; bpm: number; drops: DropCandidate[] }>(
+      `/api/wizard/drops?clipFrom=${encodeURIComponent(clipFrom)}&clipTo=${encodeURIComponent(clipTo)}`
+    ),
+  // plane — план подбора (vibes 9:16 / cine16x9 / films). Без него степпер типов
+  // футажей листался, а список примеров не менялся.
+  vibes: (plane = 'vibes') =>
+    request<{ status: string; vibes: Vibe[] }>(`/api/wizard/vibes?plane=${encodeURIComponent(plane)}`),
   photos: () => request<{ status: string; photos: Vibe[] }>('/api/wizard/photos'),
   subtitleStyles: () => request<{ status: string; styles: { id: string; name: string; previewUrl: string }[] }>('/api/wizard/subtitle-styles'),
   wizardSession: () => request<{ session: WizardSession | null }>('/api/wizard/session'),

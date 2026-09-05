@@ -1,10 +1,16 @@
 {
-  "$schema": "blast.footage_types/1",
-  "_comment": "Единый source of truth по типам футажей (Figma W12, степпер «‹ Личности ›»). Типология пополняется: добавил запись — появился шаг степпера + значение background.footageType в render_job. id стабилен и уходит в render_job; отображение переводится через i18n-ключ footage.type.<id>.",
-  "default": "standard",
+  "$schema": "blast.footage_types/2",
+  "_comment": "Типы футажей = ПЛАНЫ подбора, ровно те три, что показывает бот (_POOL_BY_FOOTAGE_KIND в services/tg_bot_public/app.py): вертикальные вайбы 9:16, кинематографичные коллекции 16:9 и фильмы. Прошлая версия реестра (standard/persons/movies с vibeTag) не соответствовала ничему в подборе — степпер переключался, а список примеров не менялся. id уходит в стор (background.footageType); plane — имя плана в каталоге превью и в RankBucketsRequest.pool; renderPreset — геометрия выдачи (у 16:9 она wide, иначе кадр центр-кропается в треть ширины).",
+  "default": "vertical",
   "types": [
-    { "id": "standard", "vibeTag": null },
-    { "id": "persons", "vibeTag": "persons" },
-    { "id": "movies", "vibeTag": "movies" }
-  ]
+    { "id": "vertical", "plane": "vibes", "renderPreset": "vertical" },
+    { "id": "cine16x9", "plane": "cine16x9", "renderPreset": "wide" },
+    { "id": "films", "plane": "films", "renderPreset": "vertical" }
+  ],
+  "_aliases_comment": "Миграция сохранённых черновиков: в сторе v4 лежат id прошлой версии. Отдельного плана «Личности» в боте нет (kind=people зарезервирован, коллекций 0), поэтому он сводится к вертикальным.",
+  "aliases": {
+    "standard": "vertical",
+    "persons": "vertical",
+    "movies": "films"
+  }
 }

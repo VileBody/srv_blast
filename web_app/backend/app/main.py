@@ -20,6 +20,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from . import mock_store as store
 from . import analytics, auth_store, fraud_guard, google_auth, persistence, security, telegram_bot
+from . import render_job as render_job_builder
 from . import tiktok_api, tiktok_config, tiktok_token_store
 from .runtime import SETTINGS as RUNTIME
 
@@ -554,7 +555,9 @@ async def api_me() -> dict[str, Any]:
     data["mock"] = RUNTIME.backend == "mock"
     data["capabilities"] = {
         "customSources": RUNTIME.backend == "mock",
-        "analyzedDrops": RUNTIME.backend == "mock",
+        # Кандидаты дропа есть в обоих режимах: в моке — фикстура, в проде —
+        # `POST /hook/analyze` оркестратора (та же ручка, что у бота).
+        "analyzedDrops": True,
         "remoteCompositePreviews": RUNTIME.backend == "mock",
         "subscriptionBonuses": RUNTIME.backend == "mock",
     }
@@ -873,24 +876,81 @@ def api_previous_track() -> dict[str, Any]:
 
 
 @app.get("/api/wizard/drops", tags=["wizard"])
-def api_drops() -> dict[str, Any]:
-    if RUNTIME.backend == "production":
-        raise HTTPException(
-            status_code=501,
-            detail={"code": "drop_analysis_not_configured"},
+async def api_drops(clipFrom: str = "", clipTo: str = "") -> dict[str, Any]:
+    """Кандидаты дропа для выбранного отрывка — то же, что показывает бот.
+
+    Бот не хранит три фиксированных тайминга: он зовёт `POST /hook/analyze`
+    оркестратора (там librosa и `analyze_focus_clip`) и рисует топ-3 кандидата с
+    процентом уверенности, помечая первый как лучший — см.
+    `services/tg_bot_botapi/app.py::_ask_hook_drop`. Здесь то же самое: сайт —
+    такой же тонкий клиент этой ручки.
+
+    Окно отрывка приходит от визарда в 'mm:ss' (тот же формат, что уходит в
+    render_job через `render_job._segment`). Без окна анализировать нечего:
+    кандидаты ищутся ВНУТРИ отрывка, а не по всему треку.
+    """
+    if RUNTIME.backend != "production":
+        return {"status": "COMPLETED", "bpm": 142, "drops": store.DROPS, "mock": True}
+
+    start = render_job_builder.mmss_seconds(clipFrom)
+    end = render_job_builder.mmss_seconds(clipTo)
+    if start is None or end is None or end <= start:
+        # Не 5xx: это нормальное состояние визарда до выбора отрывка. Фронт
+        # показывает «выбери отрывок», а не «сервер прилёг».
+        return {"status": "NEEDS_CLIP", "bpm": 0, "drops": [], "mock": False}
+
+    track = store.previous_track() or {}
+    audio_s3_url = str(track.get("s3Key") or "").strip()
+    if not audio_s3_url:
+        return {"status": "NEEDS_TRACK", "bpm": 0, "drops": [], "mock": False}
+
+    try:
+        result = await run_in_threadpool(
+            _production_backend().analyze_hook,
+            audio_s3_url=audio_s3_url,
+            clip_start_sec=start,
+            clip_end_sec=end,
         )
-    return {"status": "COMPLETED", "bpm": 142, "drops": store.DROPS, "mock": True}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise _production_error(exc) from exc
+
+    # Показываем топ-3, как бот: остальной пул нужен только батарее.
+    drops = []
+    for index, candidate in enumerate(result.get("drop_candidates") or []):
+        seconds = float(candidate.get("t"))
+        drops.append(
+            {
+                "time": f"{int(seconds // 60):02d}:{int(seconds % 60):02d}",
+                "seconds": seconds,
+                "best": index == 0,
+                "confidence": float(candidate.get("confidence") or 0.0),
+            }
+        )
+        if len(drops) == 3:
+            break
+    return {"status": "COMPLETED", "bpm": float(result.get("bpm") or 0.0), "drops": drops, "mock": False}
 
 
 @app.get("/api/wizard/vibes", tags=["wizard"])
-def api_vibes() -> dict[str, Any]:
+def api_vibes(plane: str = "vibes") -> dict[str, Any]:
+    """Примеры футажа выбранного ПЛАНА подбора.
+
+    Планов три, как у бота: `vibes` (вертикальные 9:16), `cine16x9` и `films`.
+    Записи каталога без поля `plane` считаются вертикальными — так фикстуры мока
+    и любые старые каталоги остаются валидными.
+    """
     if RUNTIME.backend == "production":
         try:
             vibes = _production_backend().preview_catalog("footage")
         except Exception as exc:
             raise _production_error(exc) from exc
-        return {"status": "COMPLETED", "vibes": vibes, "mock": False}
-    return {"status": "COMPLETED", "vibes": store.VIBES, "mock": True}
+    else:
+        vibes = store.VIBES
+    wanted = str(plane or "vibes").strip() or "vibes"
+    vibes = [item for item in vibes if str(item.get("plane") or "vibes") == wanted]
+    return {"status": "COMPLETED", "vibes": vibes, "mock": RUNTIME.backend == "mock"}
 
 
 @app.get("/api/wizard/photos", tags=["wizard"])
