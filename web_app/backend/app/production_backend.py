@@ -71,15 +71,64 @@ def _json_catalog(name: str) -> tuple[dict[str, Any], ...]:
                 f"production_backend: {name}[{index}].previewUrl must use s3:// or https://"
             )
         seen_ids.add(item_id)
-        items.append(
-            {
-                "id": item_id,
-                "name": item_name,
-                "previewUrl": locator,
-                "score": float(value.get("score", 1.0)),
-            }
-        )
+        item: dict[str, Any] = {
+            "id": item_id,
+            "name": item_name,
+            "previewUrl": locator,
+            "score": float(value.get("score", 1.0)),
+        }
+        selector = value.get("selector")
+        if selector is not None:
+            if not isinstance(selector, dict):
+                raise ProductionBackendError(
+                    f"production_backend: {name}[{index}].selector must be an object"
+                )
+            item["selector"] = _catalog_selector(f"{name}[{index}]", selector)
+        items.append(item)
     return tuple(items)
+
+
+_RENDER_PRESETS = {"vertical", "wide", "square"}
+_BG_MODES = {"footage", "photo", "solid", "solid_strobe"}
+
+
+def _catalog_selector(where: str, raw: dict[str, Any]) -> dict[str, str]:
+    """Разобрать `selector` записи каталога.
+
+    Запись каталога — это единственное место, где сайт узнаёт, ЧЕМ является
+    выбранный бакет: пару (theme, tags_group) он передаёт оркестратору, а
+    render_preset задаёт геометрию выдачи. Раньше эти поля молча терялись при
+    разборе, и выбор бакета в визарде ни на что не влиял.
+
+    Проверяем строго: пара rotation нужна целиком (половина пары оркестратору
+    ничего не скажет), а неизвестная геометрия хуже исторической — 16:9 в
+    вертикальном кадре центр-кропается в треть ширины.
+    """
+    out: dict[str, str] = {}
+    theme = str(raw.get("rotationTheme") or "").strip()
+    group = str(raw.get("rotationTagsGroup") or "").strip()
+    if bool(theme) != bool(group):
+        raise ProductionBackendError(
+            f"production_backend: {where}.selector needs both rotationTheme and rotationTagsGroup"
+        )
+    if theme:
+        out["rotationTheme"] = theme
+        out["rotationTagsGroup"] = group
+    preset = str(raw.get("renderPreset") or "").strip()
+    if preset:
+        if preset not in _RENDER_PRESETS:
+            raise ProductionBackendError(
+                f"production_backend: {where}.selector.renderPreset must be one of {sorted(_RENDER_PRESETS)}"
+            )
+        out["renderPreset"] = preset
+    bg_mode = str(raw.get("bgMode") or "").strip()
+    if bg_mode:
+        if bg_mode not in _BG_MODES:
+            raise ProductionBackendError(
+                f"production_backend: {where}.selector.bgMode must be one of {sorted(_BG_MODES)}"
+            )
+        out["bgMode"] = bg_mode
+    return out
 
 
 def _time_value(value: Any) -> float | None:
