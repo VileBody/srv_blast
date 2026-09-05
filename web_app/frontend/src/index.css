@@ -170,7 +170,7 @@ a { color: inherit; text-decoration: none; }
 @layer components {
   .app-frame { display: flex; height: 100dvh; min-height: 100dvh; }
   .app-content {
-    flex: 1; height: 100%; min-height: 0; overflow-x: hidden; overflow-y: auto; padding: var(--space-6);
+    flex: 1; height: 100%; min-width: 0; min-height: 0; overflow-x: hidden; overflow-y: auto; padding: var(--space-6);
     /* Скейлинг (c): контент прилегает к сайдбару и тянется во всю ширину. Старый
        max-width:1440 + margin auto собирал сайт в островок по центру (на 2780 — 1440 в центре,
        сайдбар остаётся у левого края). На ≤1627px кап и так не срабатывал → на 1440 без изменений. */
