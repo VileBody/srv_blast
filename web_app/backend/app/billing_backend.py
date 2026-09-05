@@ -118,6 +118,8 @@ class BillingBackend:
         await self.ensure_user(tg_id)
         balance = await self._db.get_balance(tg_id)
         track_balance = await self._db.get_track_balance(tg_id)
+        track_unlimited = await self._db.is_track_unlimited(tg_id)
+        bonuses_claimed = await self._db.count_web_subscription_bonuses(tg_id)
         tracks_used = await self._db.count_user_tracks(tg_id)
         payments = await self._db.get_payments(tg_id=tg_id, limit=100)
         confirmed = next(
@@ -143,7 +145,7 @@ class BillingBackend:
             tracks_total = plan.tracks
             plan_kind = plan.kind
             billing_status = "active"
-            started_at = (confirmed or {}).get("created_at")
+            started_at = (active_sub or latest_sub or {}).get("created_at") or (confirmed or {}).get("created_at")
             renews_at = _iso((active_sub or {}).get("next_charge_at"))
             cancel_at_period_end = bool(
                 plan.kind == "subscription"
@@ -167,7 +169,7 @@ class BillingBackend:
             "creditsTotal": total,
             "creditsUsed": 0 if total is None else max(0, total - balance),
             "creditsLeft": balance,
-            "tracksTotal": max(tracks_total, tracks_used + track_balance),
+            "tracksTotal": None if track_unlimited else max(tracks_total, tracks_used + track_balance),
             "tracksUsed": tracks_used,
             "tracksLeft": track_balance,
             "isActive": True,
@@ -178,12 +180,19 @@ class BillingBackend:
             "renewsAt": renews_at,
             "expiresAt": expires_at,
             "lastPaymentError": None,
+            "bonusesClaimed": bonuses_claimed,
         }
 
     async def can_upload_track(self, tg_id: int, audio_hash: str) -> bool:
         if await self._db.has_track_hash(int(tg_id), audio_hash):
             return True
+        if await self._db.is_track_unlimited(int(tg_id)):
+            return True
         return await self._db.get_track_balance(int(tg_id)) > 0
+
+    async def claim_bonus(self, tg_id: int) -> dict[str, Any]:
+        await self._db.claim_web_subscription_bonus(int(tg_id))
+        return await self.snapshot(int(tg_id))
 
     async def consume_track(self, tg_id: int, audio_hash: str) -> str:
         result = await self._db.consume_track_slot(int(tg_id), audio_hash)
@@ -354,7 +363,7 @@ class BillingBackend:
         pool = self._db._pool_or_fail()
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
-                "SELECT status, next_charge_at, cancelled_at FROM subscriptions "
+                "SELECT package, status, next_charge_at, cancelled_at, created_at FROM subscriptions "
                 "WHERE tg_id = $1 ORDER BY id DESC LIMIT 1",
                 int(tg_id),
             )

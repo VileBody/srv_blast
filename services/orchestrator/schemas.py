@@ -15,6 +15,13 @@ RenderEngineLiteral = Literal["ae", "rust-gen"]
 JobStatus = Literal["NEW", "QUEUED", "RUNNING", "SUCCEEDED", "FAILED"]
 
 
+class CustomFootageSource(BaseModel):
+    url: str = Field(min_length=8, max_length=2048, pattern=r"^s3://[^/]+/.+")
+    width: int = Field(ge=360, le=4096)
+    height: int = Field(ge=360, le=4096)
+    duration: float = Field(ge=1.0, le=600.0, allow_inf_nan=False)
+
+
 class SendAudioS3Request(BaseModel):
     """
     Minimal payload:
@@ -38,6 +45,7 @@ class SendAudioS3Request(BaseModel):
     # API contract (trendy_5th/brat_5th were added there).
     subtitles_mode: SubtitlesMode = SUBTITLES_MODE_LEGACY_BLOCKS
     footage_artist_id: Optional[str] = None
+    custom_footage_sources: list[CustomFootageSource] = Field(default_factory=list, max_length=50)
     user_clip_start_sec: Optional[float] = Field(default=None, ge=0.0)
     user_clip_end_sec: Optional[float] = Field(default=None, ge=0.0)
     # Hook feature (Phase A-UX). When `hook_enabled` is true the orchestrator

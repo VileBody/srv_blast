@@ -121,6 +121,7 @@ _LLM_ENV_KEYS = (
     "F1_SOUND_URL",
     "F1_SOUND_TEXT",
     "F6_VIDEO_URL",
+    "CUSTOM_FOOTAGE_SOURCES_JSON",
     "F6_VIDEO_WIDTH",
     "F6_VIDEO_HEIGHT",
     "F6_VIDEO_DURATION",
@@ -2120,6 +2121,13 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
     # F6 «Видео» pass-through: S3/HTTP URL нормализованного mp4-прогрева +
     # метаданные ffprobe. Set => оркестратор кладёт full_edit_config["f6"].
     # Требует USER_DROP_T; без размеров cover-скейл не запечь.
+    custom_sources = req.get("custom_footage_sources")
+    if custom_sources:
+        from .schemas import CustomFootageSource
+        checked = [CustomFootageSource.model_validate(item).model_dump() for item in custom_sources]
+        if req.get("bg_mode", "footage") != "footage":
+            raise RuntimeError("custom footage requires bg_mode=footage")
+        env["CUSTOM_FOOTAGE_SOURCES_JSON"] = json.dumps(checked)
     _f6_video_raw = req.get("f6_video_url")
     if _f6_video_raw is not None and str(_f6_video_raw).strip():
         _f6_video = str(_f6_video_raw).strip()

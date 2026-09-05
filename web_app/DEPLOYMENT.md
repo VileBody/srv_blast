@@ -1,16 +1,19 @@
-# Blast Web Preview
+# Blast Web Production
 
-The archive application is deployed as an isolated preview at
-`https://app.blast808.com`. It does not replace the marketing landing and does
-not use the production bot/orchestrator/payment paths.
+The React application at `https://app.blast808.com` is the production product.
+It uses the production orchestrator, Windows render nodes, Timeweb S3, the
+public bot credit database and the existing verified T-Bank webhook.
 
 Runtime:
 
-- `blast-web-preview-frontend`: built Vite SPA, exposed on host loopback port 18190.
-- `blast-web-preview-api`: FastAPI mock backend, internal Docker network only.
-- `blast-web-preview-data`: persistent SQLite and auth state.
-- `blast-web-preview-uploads`: persistent user uploads.
+- `blast-web-frontend`: built Vite SPA, exposed on host loopback port 18190.
+- `blast-web-api`: FastAPI production adapter, internal Docker network only.
+- web state is stored in Postgres; credits and subscription state use the
+  public bot's Postgres database.
+- user media and render output are stored in Timeweb S3.
 
-Production-safety preview flags are explicit: secure cookies, CSRF and rate
-limits are enabled, while `/api/dev/*` is disabled. The session signing secret
-comes from the GitHub Actions secret `BLAST_WEB_PREVIEW_SESSION_SECRET`.
+The canonical deployment is `.github/workflows/deploy-web-production.yml` with
+`infra/runners/deploy_web_production.sh`. Its environment file stays on the
+deployment host at `/home/deploy/blast_final/web_app/backend/.env.production`
+with mode `600`. Secure cookies, CSRF and shared Redis rate limits are enabled;
+`/api/dev/*` is disabled.

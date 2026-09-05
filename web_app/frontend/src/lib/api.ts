@@ -217,15 +217,23 @@ export const api = {
     form.append('file', file);
     return request<{ track: SavedTrack }>('/api/wizard/upload-track', { method: 'POST', body: form });
   },
-  uploadSource: (file: File) => {
+  sources: (projectId: string) => request<{ sources: UserSource[] }>(`/api/wizard/sources?projectId=${encodeURIComponent(projectId)}`),
+  deleteSource: (id: string) => request(`/api/wizard/sources/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  uploadLink: (projectId: string, format: string) => request<{ url: string; expiresAt: number; qrSvg: string }>(`/api/wizard/upload-link?projectId=${encodeURIComponent(projectId)}&format=${encodeURIComponent(format)}`, { method: 'POST' }),
+  uploadSource: (file: File, projectId: string, format: string) => {
     const form = new FormData();
     form.append('file', file);
-    return request<{ source: UserSource }>('/api/wizard/upload-source', { method: 'POST', body: form });
+    return request<{ source: UserSource }>(`/api/wizard/upload-source?projectId=${encodeURIComponent(projectId)}&format=${encodeURIComponent(format)}`, { method: 'POST', body: form });
+  },
+  fxPreviews: () => request<{ previews: { id: string; name: string; previewUrl: string }[] }>('/api/wizard/fx-previews'),
+  uploadHookVideo: (file: File) => {
+    const form = new FormData(); form.append('file', file);
+    return request<{ name: string; url: string; playbackUrl: string; duration: number; width: number; height: number; hasAudio: boolean }>('/api/wizard/upload-hook-video', { method: 'POST', body: form });
   },
   uploadHookSound: (file: File) => {
     const form = new FormData();
     form.append('file', file);
-    return request<{ name: string; url: string; playbackUrl: string; mock: boolean }>('/api/wizard/upload-hook-sound', { method: 'POST', body: form });
+    return request<{ name: string; url: string; playbackUrl: string; duration: number; width?: number; height?: number; hasAudio?: boolean; mock: boolean }>('/api/wizard/upload-hook-sound', { method: 'POST', body: form });
   },
   // Окно отрывка обязательно: кандидаты дропа ищутся ВНУТРИ него, как в боте.
   // Без окна прод отвечает status:'NEEDS_CLIP' (не ошибкой — это нормальное

@@ -19,7 +19,7 @@ export type LegalDoc = { title: string; intro: string; sections: LegalSection[] 
 export type LegalKind = 'policy' | 'offer';
 
 /** Дата последней редакции документов. Менять при каждой правке текста. */
-export const LEGAL_UPDATED = '2026-07-30';
+export const LEGAL_UPDATED = '2026-09-05';
 
 /**
  * Реквизиты оператора — те же, что опубликованы на лендинге
@@ -111,7 +111,7 @@ const POLICY_RU: LegalDoc = {
           'выбранный тариф, история оплат и остаток лимитов.'
         ],
         'Материалы, которые вы загружаете для генерации: аудиофайл трека, текст песни, ' +
-          'изображения (обложки, фото), а также настройки генерации — выбранный футаж, стиль ' +
+          'изображения (обложки, фото), видеоисходники, а также настройки генерации — выбранный футаж, стиль ' +
           'субтитров, эффекты. Готовые видео мы храним, чтобы вы могли их скачать и опубликовать.',
         'При подключении TikTok:',
         [
@@ -356,8 +356,8 @@ const OFFER_RU: LegalDoc = {
       body: [
         'Актуальные составы и цены — на странице тарифов Сервиса. На момент этой редакции:',
         [
-          '«Blast» — 1 990 ₽ в месяц, подписка: 100 роликов, до 4 треков, каждый третий месяц ' +
-            'без лимита роликов;',
+          '«Blast» — 1 990 ₽ в месяц, подписка: 100 роликов, до 4 треков; после первого и ' +
+            'второго полного месяца добавляется по одному треку, после третьего снимается лимит треков;',
           '«Glow» — 7 990 ₽, разовая покупка: 400 роликов, до 10 треков, шаблон CapCut ' +
             'под ваш трек;',
           '«Impulse» — 29 990 ₽, разовая покупка на год: ролики без лимита, до 24 треков, ' +
@@ -546,7 +546,7 @@ const POLICY_EN: LegalDoc = {
           'artist nickname and the avatar you upload;',
           'your plan, payment history and remaining limits.'
         ],
-        'The material you upload for generation: the audio track, song lyrics, images, and ' +
+        'The material you upload for generation: the audio track, song lyrics, images, source videos, and ' +
           'generation settings — chosen footage, subtitle style, effects. We store the finished ' +
           'videos so you can download and publish them.',
         'When you connect TikTok:',
@@ -792,8 +792,8 @@ const OFFER_EN: LegalDoc = {
       body: [
         'Current contents and prices are on the pricing page. As of this revision:',
         [
-          '“Blast” — RUB 1,990 per month, subscription: 100 clips, up to 4 tracks, every third ' +
-            'month without a clip limit;',
+          '“Blast” — RUB 1,990 per month, subscription: 100 clips and up to 4 tracks; one track ' +
+            'is added after each of the first two full months, and the track limit is removed after the third;',
           '“Glow” — RUB 7,990, one-off purchase: 400 clips, up to 10 tracks, a CapCut template ' +
             'for your track;',
           '“Impulse” — RUB 29,990, one-off purchase for a year: unlimited clips, up to 24 ' +

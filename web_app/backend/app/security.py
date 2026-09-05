@@ -202,6 +202,9 @@ _UPLOAD_PATHS = (
     "/api/wizard/upload-track",
     "/api/wizard/upload-source",
     "/api/wizard/upload-hook-sound",
+    "/api/wizard/upload-hook-video",
+    "/api/wizard/upload-link",
+    "/api/mobile-upload",
     "/api/profile/avatar",
     "/cover",
 )
@@ -244,6 +247,9 @@ def _rate_failure(request: Request) -> JSONResponse | None:
 
 def guard(request: Request) -> JSONResponse | None:
     """Единая точка входа для middleware: CSRF, затем частота."""
+    # Phone upload uses an explicit short-lived capability header, never cookies.
+    if request.url.path == "/api/mobile-upload":
+        return _rate_failure(request)
     return _csrf_failure(request) or _rate_failure(request)
 
 

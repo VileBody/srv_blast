@@ -138,7 +138,7 @@ async def bind_workspace(request: Request, call_next):
         return JSONResponse({"detail": "Not found"}, status_code=404)
 
     if REQUIRE_AUTH and not user_id:
-        if path.startswith("/api/") and not path.startswith(PUBLIC_API_PREFIXES):
+        if path.startswith("/api/") and path != "/api/mobile-upload" and not path.startswith(PUBLIC_API_PREFIXES):
             # code — машинный маркер: фронт уводит на /login только по нему, потому что
             # 401 может прилететь и от TikTok (протухший токен), и это не разлогин юзера
             return JSONResponse({"detail": "Требуется вход", "code": "auth_required"}, status_code=401)
@@ -554,12 +554,12 @@ async def api_me() -> dict[str, Any]:
     )
     data["mock"] = RUNTIME.backend == "mock"
     data["capabilities"] = {
-        "customSources": RUNTIME.backend == "mock",
+        "customSources": True,
         # Кандидаты дропа есть в обоих режимах: в моке — фикстура, в проде —
         # `POST /hook/analyze` оркестратора (та же ручка, что у бота).
         "analyzedDrops": True,
         "remoteCompositePreviews": RUNTIME.backend == "mock",
-        "subscriptionBonuses": RUNTIME.backend == "mock",
+        "subscriptionBonuses": True,
     }
     return data
 
@@ -607,10 +607,25 @@ def api_update_project(project_id: str, payload: ProjectUpdatePayload) -> dict[s
 def api_delete_project(project_id: str) -> dict[str, Any]:
     """Удаление вместе с батчами. Лимит треков не возвращается — он считается
     по загруженным трекам, а не по проектам."""
-    if not store.delete_project(project_id):
+    if not store.get_project(project_id):
         raise HTTPException(status_code=404, detail="Project not found")
+    from . import upload_store
+    owner = store.current_user_id()
+    assets = upload_store.assets(owner, project_id)
+    try:
+        if RUNTIME.backend == "production":
+            backend = _production_backend()
+            for asset in assets:
+                backend.delete_uploaded_asset(asset["s3Key"])
+        else:
+            for asset in assets:
+                (SOURCE_DIR / Path(asset["s3Key"]).name).unlink(missing_ok=True)
+    except Exception as exc:
+        raise _production_error(exc) from exc
+    upload_store.remove_project(owner, project_id)
+    store.delete_project(project_id)
     analytics.track("project_deleted", store.current_user_id(), {"projectId": project_id})
-    return {"ok": True, "mock": True}
+    return {"ok": True, "mock": RUNTIME.backend == "mock"}
 
 
 # ------------------------- Mock API: payments -------------------------
@@ -655,13 +670,17 @@ async def api_create_order(payload: PaymentPayload) -> dict[str, Any]:
 
 
 @app.post("/api/payments/claim-bonus", tags=["payments"])
-def api_claim_bonus() -> dict[str, Any]:
+async def api_claim_bonus() -> dict[str, Any]:
     """Забрать бонус со шкалы месяцев: +1 трек, за третий месяц — снятие лимита треков."""
     if RUNTIME.backend == "production":
-        raise HTTPException(
-            status_code=501,
-            detail={"code": "bonus_claim_unavailable", "message": "Бонусы ещё не подключены к общему балансу."},
-        )
+        try:
+            snapshot = await _billing_backend().claim_bonus(_telegram_chat_id())
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail="Бонус ещё не заработан") from exc
+        data = await _sync_billing_bundle(store.get_user_bundle())
+        subscription = data["subscription"]
+        analytics.track("bonus_claimed", store.current_user_id(), {"claimed": snapshot["bonusesClaimed"]})
+        return {"ok": True, "subscription": subscription, "mock": False}
     try:
         subscription = store.claim_bonus()
     except ValueError:
@@ -792,82 +811,115 @@ async def api_upload_track(file: UploadFile = File(...)) -> dict[str, Any]:
     return {"track": track, "tracksLeft": store.tracks_left(), "mock": RUNTIME.backend == "mock"}
 
 
+def _upload_project(project_id: str) -> str:
+    if not project_id or not any(p["id"] == project_id for p in store.list_projects()["projects"]):
+        raise HTTPException(404, detail="Проект не найден")
+    return project_id
+
+
 @app.post("/api/wizard/upload-source", tags=["wizard"])
-async def api_upload_source(file: UploadFile = File(...)) -> dict[str, Any]:
-    """Свои исходники пользователя (Figma W39/W49) — видео-футаж вместо библиотечного."""
-    if RUNTIME.backend == "production":
-        raise HTTPException(
-            status_code=501,
-            detail={
-                "code": "custom_sources_not_supported",
-                "message": "Текущий orchestrator contract не принимает пользовательские видео-исходники.",
-            },
-        )
-    content = await file.read()
-    if not content:
-        raise HTTPException(status_code=422, detail="Пустой файл")
-    if len(content) > 500 * 1024 * 1024:
-        raise HTTPException(status_code=413, detail="Source is larger than 500 MB")
-    # Видео-контейнеров много, сигнатуры по ним ненадёжны — ограничиваемся белым списком
-    # расширений и размером; распознавание кодека делает уже рендер-нода.
-    ext = security.safe_extension(file.filename, {".mp4", ".mov", ".webm", ".m4v"}, ".mp4")
-    safe_name = f"{uuid4().hex}{ext}"
-    display_name = security.sanitize_filename(file.filename, safe_name)
-    if RUNTIME.backend == "production":
-        try:
-            uploaded = await run_in_threadpool(
-                _production_backend().upload_source,
-                content=content,
-                user_id=store.current_user_id(),
-                filename=display_name,
-                content_type=file.content_type,
-            )
-        except Exception as exc:
-            raise _production_error(exc) from exc
-        source = store.save_source(
-            display_name,
-            s3_url=uploaded["s3_url"],
-            playback_url=uploaded["playback_url"],
-        )
-    else:
-        target = SOURCE_DIR / safe_name
-        target.write_bytes(content)
-        source = store.save_source(display_name, target)
+async def api_upload_source(file: UploadFile = File(...), projectId: str = "", format: str = "9:16") -> dict[str, Any]:
+    from .source_uploads import upload
+    _upload_project(projectId)
+    if format not in {"9:16", "16:9"}:
+        raise HTTPException(422, detail="Выберите формат 9:16 или 16:9")
+    source = await upload(file, user_id=store.current_user_id(), project_id=projectId, kind="source", format=format,
+                          local_dir=SOURCE_DIR, backend=_production_backend() if RUNTIME.backend == "production" else None)
     return {"source": source, "mock": RUNTIME.backend == "mock"}
+
+
+@app.get("/api/wizard/sources", tags=["wizard"])
+def api_sources(projectId: str = "") -> dict[str, Any]:
+    from . import upload_store
+    _upload_project(projectId)
+    sources = [item for item in upload_store.assets(store.current_user_id(), projectId) if item["kind"] == "source"]
+    if RUNTIME.backend == "production":
+        for item in sources:
+            item["localUrl"] = _production_backend()._preview_url(item["s3Key"], filename=item["name"])
+    return {"sources": sources}
+
+
+@app.delete("/api/wizard/sources/{source_id}", tags=["wizard"])
+def api_delete_source(source_id: str) -> dict[str, Any]:
+    from . import upload_store
+    owner = store.current_user_id()
+    asset = next((item for item in upload_store.assets(owner) if item["id"] == source_id), None)
+    if not asset:
+        raise HTTPException(404, detail="Исходник не найден")
+    if RUNTIME.backend == "production":
+        _production_backend().delete_uploaded_asset(asset["s3Key"])
+    else:
+        path = SOURCE_DIR / Path(asset["s3Key"]).name
+        path.unlink(missing_ok=True)
+    upload_store.remove(owner, source_id)
+    return {"ok": True}
 
 
 @app.post("/api/wizard/upload-hook-sound", tags=["wizard"])
 async def api_upload_hook_sound(file: UploadFile = File(...)) -> dict[str, Any]:
-    content = await file.read()
-    security.check_audio(content, max_mb=20)
-    ext = security.safe_extension(file.filename, {".mp3", ".wav", ".m4a", ".ogg", ".flac"}, ".mp3")
-    safe_name = f"{uuid4().hex}{ext}"
-    display_name = security.sanitize_filename(file.filename, safe_name)
-    if RUNTIME.backend == "production":
-        try:
-            uploaded = await run_in_threadpool(
-                _production_backend().upload_hook_sound,
-                content=content,
-                user_id=store.current_user_id(),
-                filename=display_name,
-                content_type=file.content_type,
-            )
-        except Exception as exc:
-            raise _production_error(exc) from exc
-        return {
-            "name": display_name,
-            "url": uploaded["s3_url"],
-            "playbackUrl": uploaded["playback_url"],
-            "mock": False,
-        }
-    target = SOURCE_DIR / safe_name
-    target.write_bytes(content)
-    return {
-        "name": display_name,
-        "url": f"/static/uploads/sources/{safe_name}",
-        "playbackUrl": f"/static/uploads/sources/{safe_name}",
-        "mock": True,
-    }
+    return await _upload_warmup(file, "warmup-audio")
+
+
+@app.post("/api/wizard/upload-hook-video", tags=["wizard"])
+async def api_upload_hook_video(file: UploadFile = File(...)) -> dict[str, Any]:
+    return await _upload_warmup(file, "warmup-video")
+
+
+async def _upload_warmup(file: UploadFile, kind: str) -> dict[str, Any]:
+    from .source_uploads import upload
+    asset = await upload(file, user_id=store.current_user_id(), project_id="", kind=kind, format=None,
+                         local_dir=SOURCE_DIR, backend=_production_backend() if RUNTIME.backend == "production" else None)
+    return {**asset, "url": asset["s3Key"], "playbackUrl": asset["localUrl"], "mock": RUNTIME.backend == "mock"}
+
+
+@app.post("/api/wizard/upload-link", tags=["wizard"])
+def api_upload_link(projectId: str = "", format: str = "9:16") -> dict[str, Any]:
+    from . import upload_store
+    from io import BytesIO
+    import qrcode
+    import qrcode.image.svg
+    _upload_project(projectId)
+    try:
+        token, expires = upload_store.make_link(store.current_user_id(), projectId, format)
+    except ValueError as exc:
+        raise HTTPException(422, detail=str(exc)) from exc
+    # Fragment is never sent in HTTP access logs or Referer headers.
+    url = f"{RUNTIME.app_url.rstrip('/')}/upload/#{token}"
+    svg = BytesIO()
+    qrcode.make(url, image_factory=qrcode.image.svg.SvgPathImage).save(svg)
+    return {"url": url, "expiresAt": expires, "qrSvg": svg.getvalue().decode("utf-8")}
+
+
+def _phone_link(request: Request, consume: bool = False) -> dict[str, Any]:
+    from . import upload_store
+    try:
+        link = upload_store.link(request.headers.get("X-Upload-Token", ""), consume=consume)
+    except ValueError as exc:
+        raise HTTPException(410, detail=str(exc)) from exc
+    if fraud_guard.ban_status(link["userId"]) is not None:
+        raise HTTPException(403, detail="Загрузка недоступна")
+    return link
+
+
+@app.get("/api/mobile-upload")
+def api_phone_status(request: Request) -> dict[str, Any]:
+    link = _phone_link(request)
+    return {key: link[key] for key in ("format", "expiresAt", "remaining")}
+
+
+@app.post("/api/mobile-upload")
+async def api_phone_upload(request: Request, file: UploadFile = File(...)) -> dict[str, Any]:
+    from . import upload_store
+    from .source_uploads import upload
+    token = request.headers.get("X-Upload-Token", "")
+    link = _phone_link(request, consume=True)
+    try:
+        asset = await upload(file, user_id=link["userId"], project_id=link["projectId"], kind="source", format=link["format"],
+                             local_dir=SOURCE_DIR, backend=_production_backend() if RUNTIME.backend == "production" else None)
+    except Exception:
+        upload_store.restore_link(token)
+        raise
+    return {"name": asset["name"], "uploaded": True}
 
 
 @app.get("/api/wizard/previous-track", tags=["wizard"])
@@ -964,6 +1016,16 @@ def api_photos() -> dict[str, Any]:
     return {"status": "COMPLETED", "photos": store.PHOTOS, "mock": True}
 
 
+@app.get("/api/wizard/fx-previews", tags=["wizard"])
+def api_fx_previews() -> dict[str, Any]:
+    if RUNTIME.backend == "production":
+        try:
+            return {"previews": _production_backend().preview_catalog("fx"), "mock": False}
+        except Exception as exc:
+            raise _production_error(exc) from exc
+    return {"previews": [], "mock": True}
+
+
 @app.get("/api/wizard/subtitle-styles", tags=["wizard"])
 def api_subtitle_styles() -> dict[str, Any]:
     if RUNTIME.backend == "production":
@@ -995,12 +1057,6 @@ async def api_submit_wizard(payload: SubmitPayload) -> dict[str, Any]:
     if not str(stage_data.get("lyrics") or "").strip():
         raise HTTPException(status_code=422, detail="Не заполнен текст трека")
 
-    # projectId приходит от клиента и раньше принимался на веру. Черновик визарда лежит
-    # в localStorage вместе с projectId, и если проект успели удалить (или аккаунт
-    # сбросили), батч уезжал в НЕСУЩЕСТВУЮЩИЙ проект: страница проекта отдавала 404,
-    # автопереход с экрана рендера не срабатывал, а готовые ролики оставались сиротами —
-    # их нельзя было ни найти, ни выложить. Проверяем принадлежность и молча падаем на
-    # текущий проект, а если проектов нет — заводим новый.
     projects = store.list_projects()["projects"]
     requested = payload.projectId if any(p["id"] == payload.projectId for p in projects) else None
     project_id = (
@@ -1008,6 +1064,44 @@ async def api_submit_wizard(payload: SubmitPayload) -> dict[str, Any]:
         or store.current_project_id()
         or (projects[0]["id"] if projects else store.create_project("Новый проект")["id"])
     )
+
+    from . import upload_store
+    bg = stage_data.get("background") or {}
+    owned = upload_store.assets(store.current_user_id())
+    by_id = {item["id"]: item for item in owned}
+    sources = []
+    for source_id in bg.get("uploads") or []:
+        item = by_id.get(source_id)
+        if not item or item["kind"] != "source" or item["projectId"] != project_id:
+            raise HTTPException(422, detail="Исходник не принадлежит этому проекту. Загрузите файл заново.")
+        sources.append(item)
+    if sources:
+        formats = {item["format"] for item in sources}
+        if len(formats) != 1:
+            raise HTTPException(422, detail="Нельзя смешивать форматы исходников")
+        bg["sourceFormat"] = next(iter(formats))
+    bg["sourceAssets"] = sources
+    by_url = {item["s3Key"]: item for item in owned}
+    hooks = stage_data.get("hooks") or {}
+    configs = hooks.get("configs") or {}
+    for family in ("sound", "warmup"):
+        cfg = configs.get(family)
+        if not cfg: continue
+        video = cfg.get("warmupKind") == "video"
+        url = cfg.get("videoUrl" if video else "soundUrl")
+        asset = by_url.get(url)
+        if not asset or asset["kind"] != ("warmup-video" if video else "warmup-audio"):
+            raise HTTPException(422, detail="Загрузите файл прогрева заново")
+        if video:
+            cfg.update(videoDuration=asset["duration"], videoWidth=asset["width"], videoHeight=asset["height"], videoHasAudio=asset["hasAudio"])
+        else:
+            cfg["soundDuration"] = asset["duration"]
+    if RUNTIME.backend == "production":
+        try:
+            _production_backend().validate_stage(stage_data)
+        except ValueError as exc:
+            raise HTTPException(422, detail=str(exc)) from exc
+
     # Лимит роликов производный: 5 на триале без TikTok, безлимит (None) — с подключённым
     credits_total = store.video_limit()
     # Повтор по тому же ключу возвращает уже созданный джоб — и не должен упираться в лимит
@@ -1026,6 +1120,11 @@ async def api_submit_wizard(payload: SubmitPayload) -> dict[str, Any]:
     )
     if RUNTIME.backend == "production":
         live_job = store.JOBS[job["id"]]
+        try:
+            _production_backend().validate_job(live_job)
+        except (ValueError, RuntimeError) as exc:
+            store.rollback_job_creation(live_job["id"])
+            raise HTTPException(422, detail=str(exc)) from exc
         tg_id = _telegram_chat_id()
         track_hash = str((stage_data.get("track") or {}).get("audioHash") or "")
         if not track_hash:
@@ -1622,6 +1721,11 @@ def api_delete_account(request: Request, payload: DeleteAccountPayload) -> dict[
             _production_backend().delete_user_objects(user_id)
         except Exception as exc:
             raise _production_error(exc) from exc
+    from . import upload_store
+    if RUNTIME.backend != "production":
+        for asset in upload_store.assets(user_id):
+            (SOURCE_DIR / Path(asset["s3Key"]).name).unlink(missing_ok=True)
+    upload_store.remove_account(user_id)
     tiktok_token_store.delete(user_id)
     deleted = persistence.delete_account(user_id)
     request.session.clear()

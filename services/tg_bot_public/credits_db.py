@@ -7,7 +7,7 @@ import json
 import logging
 import secrets
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, AsyncIterator, Dict, List, Optional
 
 import asyncpg
@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS users (
     username            TEXT      NOT NULL DEFAULT '',
     credits             INTEGER   NOT NULL DEFAULT 0,
     track_credits       INTEGER   NOT NULL DEFAULT 0,
+    track_unlimited     BOOLEAN   NOT NULL DEFAULT FALSE,
     created_at          TIMESTAMP NOT NULL DEFAULT NOW(),
     updated_at          TIMESTAMP NOT NULL DEFAULT NOW(),
     source              TEXT      NOT NULL DEFAULT '',
@@ -178,6 +179,13 @@ CREATE TABLE IF NOT EXISTS user_tracks (
 );
 
 CREATE INDEX IF NOT EXISTS idx_user_tracks_tg_id ON user_tracks(tg_id);
+
+CREATE TABLE IF NOT EXISTS web_subscription_bonuses (
+    tg_id       BIGINT    NOT NULL,
+    bonus_index INTEGER   NOT NULL CHECK (bonus_index BETWEEN 1 AND 3),
+    claimed_at  TIMESTAMP NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (tg_id, bonus_index)
+);
 """
 
 
@@ -187,6 +195,21 @@ def _fmt_ts(value: Any) -> str:
     if isinstance(value, datetime):
         return value.strftime("%Y-%m-%d %H:%M:%S")
     return str(value)
+
+
+def completed_subscription_months(started_at: datetime, now: datetime | None = None) -> int:
+    """Return completed calendar months, capped at the three loyalty rewards."""
+    current = now or datetime.now(timezone.utc)
+    if started_at.tzinfo is None:
+        started_at = started_at.replace(tzinfo=timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    started_at = started_at.astimezone(timezone.utc)
+    current = current.astimezone(timezone.utc)
+    months = (current.year - started_at.year) * 12 + current.month - started_at.month
+    if current.day < started_at.day:
+        months -= 1
+    return max(0, min(3, months))
 
 
 def _rowcount_from_tag(tag: str) -> int:
@@ -327,6 +350,7 @@ class CreditsDB:
         # Keep old databases compatible when tables were created before UTM columns existed.
         await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT ''")
         await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS track_credits INTEGER NOT NULL DEFAULT 0")
+        await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS track_unlimited BOOLEAN NOT NULL DEFAULT FALSE")
         await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS first_utm_source TEXT NOT NULL DEFAULT ''")
         await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS first_utm_medium TEXT NOT NULL DEFAULT ''")
         await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS first_utm_campaign TEXT NOT NULL DEFAULT ''")
@@ -1028,6 +1052,72 @@ class CreditsDB:
             bal = await conn.fetchval("SELECT track_credits FROM users WHERE tg_id = $1", int(tg_id))
             return int(bal) if bal is not None else 0
 
+    async def is_track_unlimited(self, tg_id: int) -> bool:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            return bool(await conn.fetchval("SELECT track_unlimited FROM users WHERE tg_id = $1", int(tg_id)))
+
+    async def count_web_subscription_bonuses(self, tg_id: int) -> int:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            value = await conn.fetchval(
+                "SELECT COUNT(*) FROM web_subscription_bonuses WHERE tg_id = $1",
+                int(tg_id),
+            )
+        return int(value or 0)
+
+    async def claim_web_subscription_bonus(self, tg_id: int) -> int:
+        """Claim the next earned Blast loyalty bonus and return claimed count.
+
+        Eligibility is based on full paid subscription months. The row lock and
+        unique key make browser retries and concurrent claims idempotent.
+        """
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                subscription = await conn.fetchrow(
+                    "SELECT package, status, created_at, next_charge_at FROM subscriptions "
+                    "WHERE tg_id = $1 ORDER BY id DESC LIMIT 1 FOR UPDATE",
+                    int(tg_id),
+                )
+                if not subscription or normalize_package_code(str(subscription["package"])) != "15":
+                    raise ValueError("no_active_blast_subscription")
+                status = str(subscription["status"] or "")
+                next_charge_at = subscription["next_charge_at"]
+                if next_charge_at is not None and next_charge_at.tzinfo is None:
+                    next_charge_at = next_charge_at.replace(tzinfo=timezone.utc)
+                if status != "active" and not (
+                    status == "cancelled"
+                    and next_charge_at is not None
+                    and next_charge_at > datetime.now(timezone.utc)
+                ):
+                    raise ValueError("no_active_blast_subscription")
+                started = subscription["created_at"]
+                earned = completed_subscription_months(started)
+                claimed = int(await conn.fetchval(
+                    "SELECT COUNT(*) FROM web_subscription_bonuses WHERE tg_id = $1",
+                    int(tg_id),
+                ) or 0)
+                if claimed >= earned or claimed >= 3:
+                    raise ValueError("no_bonus_available")
+                bonus_index = claimed + 1
+                await conn.execute(
+                    "INSERT INTO web_subscription_bonuses (tg_id, bonus_index) VALUES ($1, $2)",
+                    int(tg_id), bonus_index,
+                )
+                if bonus_index == 3:
+                    await conn.execute(
+                        "UPDATE users SET track_unlimited = TRUE, updated_at = NOW() WHERE tg_id = $1",
+                        int(tg_id),
+                    )
+                else:
+                    await conn.execute(
+                        "UPDATE users SET track_credits = track_credits + 1, updated_at = NOW() WHERE tg_id = $1",
+                        int(tg_id),
+                    )
+        await self.log_event(tg_id, "web_subscription_bonus_claimed", f"bonus={bonus_index}")
+        return bonus_index
+
     async def count_confirmed_track_payments(self, tg_id: int) -> int:
         """Count CONFIRMED payments for track-eligible tariffs (Бласт/Глоу/Импульс).
 
@@ -1097,6 +1187,12 @@ class CreditsDB:
                     )
                     if inserted is None:
                         return "known"
+                    unlimited = bool(await conn.fetchval(
+                        "SELECT track_unlimited FROM users WHERE tg_id = $1 FOR UPDATE",
+                        int(tg_id),
+                    ))
+                    if unlimited:
+                        return "consumed"
                     row = await conn.fetchrow(
                         "UPDATE users SET track_credits = track_credits - 1, updated_at = NOW() "
                         "WHERE tg_id = $1 AND track_credits >= 1 RETURNING tg_id",

@@ -1064,10 +1064,12 @@ def save_source(
     *,
     s3_url: str | None = None,
     playback_url: str | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Свой исходник (Figma W39/W49): имя = ключ в background.uploads → render_job."""
+    """Saved source: stable id plus server-inspected media metadata."""
     space = ws()
     item = {
+        **(metadata or {}),
         "id": f"src_{uuid4().hex[:8]}",
         "userId": space.user["id"],
         "s3Key": s3_url or f"{BASE_S3}/sources/{space.user['id']}/{uuid4().hex[:8]}/{file_path.name if file_path else 'source.mp4'}",

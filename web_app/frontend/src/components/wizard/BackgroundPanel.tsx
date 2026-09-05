@@ -4,6 +4,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { useChip } from '../../i18n/useChip';
 import { useToast } from '../../contexts/ToastContext';
 import { api } from '../../lib/api';
+import { isVideoUrl } from '../../lib/media';
 import { cn } from '../../lib/cn';
 import { HUE_GRADIENT, hueAt } from '../../lib/color';
 import type { Vibe } from '../../lib/types';
@@ -14,9 +15,9 @@ import { ChipIcon } from './HookPanel';
 import { PillsFooter } from './WizardFrame';
 import { PreviewPlayer } from '../ui/PreviewPlayer';
 import { useFragmentAudio } from './useFragmentAudio';
-import { SourcesModal } from './SourcesModal';
+import { SourcesModal } from './SourcesEditor';
 import { footageTypeKey, footageTypePlane, stepFootageType } from '../../data/footageTypes';
-import { BackgroundMode, backgroundPills, backgroundVariations, useWizardStore } from '../../stores/wizardStore';
+import { BackgroundMode, backgroundFormats, backgroundPills, backgroundVariations, useWizardStore } from '../../stores/wizardStore';
 
 /** Стили фото (Figma W13/W30) — те же, что «стиль» у эффектов-хука */
 const PHOTO_STYLES = ['Ксерокс', 'Глитч', 'Неон', 'Старая камера'];
@@ -214,10 +215,10 @@ export function Toggle({ checked, onChange, label }: { checked: boolean; onChang
 /** Ширина фото-карточки: кратна 4, чтобы высота 4:3 (×3/4) вышла целым числом пикселей. */
 const PHOTO_CARD_W = 348;
 
-function MediaCard({ item, selected, wide, onToggle }: { item: Vibe; selected: boolean; wide?: boolean; onToggle: () => void }) {
+function MediaCard({ item, selected, wide, format, onToggle }: { item: Vibe; selected: boolean; wide?: boolean; format: string; onToggle: () => void }) {
   const chip = useChip();
   const [broken, setBroken] = useState(false);
-  const isVideo = /\.(mp4|webm|mov)$/i.test(item.previewUrl);
+  const isVideo = isVideoUrl(item.previewUrl);
   /*
    * Размер обеих карточек задаёт ВЫСОТА РЯДА, ширину выводит aspect-ratio: фото 4:3
    * (кадр 1920×1440), футаж — вертикаль 142:253.
@@ -228,11 +229,12 @@ function MediaCard({ item, selected, wide, onToggle }: { item: Vibe; selected: b
    * обрезался угол вместе с меткой выбора. Чистый CSS пересчитывается синхронно с версткой
    * и разъехаться не может; возможная полупиксельная кромка — цена меньшая, чем битый ряд.
    */
-  const sizing: CSSProperties = wide
-    ? { height: '100%', aspectRatio: '4 / 3', flexShrink: 0 }
+  const sizing: CSSProperties = wide || format === '16:9'
+    ? { height: '100%', aspectRatio: format === '16:9' ? '16 / 9' : '4 / 3', flexShrink: 0 }
     : { aspectRatio: '142 / 253' };
   return (
-    <button type="button" onClick={onToggle} aria-pressed={selected} className={cn('media-card', wide ? 'media-card--fit' : 'h-full')} style={sizing}>
+    <button type="button" onClick={onToggle} aria-pressed={selected} className={cn('media-card', wide || format === '16:9' ? 'media-card--fit' : 'h-full')} style={sizing}>
+      <span className="absolute left-2 top-2 z-10 rounded bg-black/60 px-2 py-1 text-xs text-white">{format}</span>
       {!broken && (isVideo
         ? <video src={item.previewUrl} muted loop playsInline autoPlay onError={() => setBroken(true)} />
         : <img src={item.previewUrl} alt="" onError={() => setBroken(true)} />)}
@@ -345,29 +347,23 @@ export function StageBackground() {
     row.scrollTo({ left: 0, behavior: 'smooth' });
   }, [background.mode, background.footageType, cardsScroll.ref]);
 
-  // Ссылка для загрузки с телефона (её же кодирует QR). Одноразовый токен выдаст бэкенд — эндпоинта пока нет.
-  const shareUrl = `${window.location.origin}/upload`;
-
-  const uploadSource = useMutation({
-    mutationFn: api.uploadSource,
-    onSuccess: (data) => {
-      const uploads = background.uploads.includes(data.source.name) ? background.uploads : [...background.uploads, data.source.name];
-      setBackground({ uploads });
-      push({ variant: 'success', title: t('wizard.sources.uploaded'), text: data.source.name });
-    },
-    onError: () => push({ variant: 'error', title: t('wizard.sources.uploadFail') })
-  });
-
-  const onSourceFiles = (files: FileList | null) => {
-    Array.from(files ?? []).forEach((file) => uploadSource.mutate(file));
-  };
-
   const isMedia = background.mode !== 'color';
   const listQuery = background.mode === 'photo' ? photosQuery : vibesQuery;
   const list = background.mode === 'photo' ? photosQuery.data?.photos : vibesQuery.data?.vibes;
   const loading = listQuery.isLoading;
   const selected = background.mode === 'photo' ? background.photo : background.footage;
 
+  const format = background.mode === 'photo' ? '4:3' : background.footageType === 'cine16x9' && background.mode === 'footage' ? '16:9' : '9:16';
+  const pickVibe = (name: string) => {
+    if (!selected.includes(name) && backgroundFormats(background).some(value => value !== format)) {
+      push({ variant: 'error', title: t('wizard.bg.mixedFormat') });
+      return;
+    }
+    if (background.uploads.length) {
+      push({ variant: 'error', title: t('wizard.sources.clearFirst') }); return;
+    }
+    toggleVibe(name, format);
+  };
   const heading = loading && isMedia ? t('wizard.bg.headingShort') : t('wizard.bg.heading');
   const panelTitle = {
     footage: t('wizard.bg.typeFootage'),
@@ -383,14 +379,14 @@ export function StageBackground() {
           <BgSquaresIcon color="var(--accent-light)" />
           {heading}
         </h2>
-        {isMedia && meQuery.data?.capabilities?.customSources && (
+        {background.mode === 'footage' && meQuery.data?.capabilities?.customSources && (
           <button
             type="button"
             onClick={() => setSourcesOpen(true)}
             className="wizard-body flex shrink-0 items-center gap-[10px] whitespace-nowrap transition hover:text-text"
           >
             <SvgMaskIcon src="/assets/figma/bg-upload.svg" style={{ width: 20, height: 20, color: WHITE80 }} />
-            {background.mode === 'photo' ? t('wizard.bg.uploadPhoto') : t('wizard.bg.uploadFootage')}
+            {t('wizard.bg.uploadFootage')}
           </button>
         )}
       </div>
@@ -401,9 +397,7 @@ export function StageBackground() {
 
       <SourcesModal
         open={sourcesOpen}
-        shareUrl={shareUrl}
         onClose={() => setSourcesOpen(false)}
-        onFiles={onSourceFiles}
       />
 
       <div className="relative mt-[40px] flex min-h-[382px] w-full flex-1 flex-col overflow-hidden rounded-r15 bg-grad-soft-10 pb-[40px] pt-[40px]">
@@ -424,6 +418,7 @@ export function StageBackground() {
           )}
         </div>
 
+        <p className="mt-2 px-[40px] text-xs text-text-60">{t('wizard.bg.formatHint', { format })}</p>
         {isMedia ? (
           loading ? (
             <div className="flex flex-1 items-center justify-center">
@@ -448,8 +443,9 @@ export function StageBackground() {
                     key={item.id}
                     item={item}
                     wide={background.mode === 'photo'}
+                    format={format}
                     selected={selected.includes(item.name)}
-                    onToggle={() => { if (!cardsScroll.moved()) toggleVibe(item.name); }}
+                    onToggle={() => { if (!cardsScroll.moved()) pickVibe(item.name); }}
                   />
                 ))}
               </div>
@@ -542,7 +538,7 @@ export function BackgroundWorkZone({ ready, canContinue, loading, onBack, onNext
   };
 
   useEffect(() => setIndex(0), [background.mode, selectedNames.join('|')]);
-  const isVideo = current ? /\.(mp4|webm|mov)$/i.test(current.previewUrl) : false;
+  const isVideo = current ? isVideoUrl(current.previewUrl) : false;
 
   const nextMode = MODE_ORDER[MODE_ORDER.indexOf(background.mode) + 1];
 

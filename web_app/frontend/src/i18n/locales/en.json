@@ -373,7 +373,9 @@
       "prevType": "Previous footage type",
       "nextType": "Next footage type",
       "chosenCount": "Backgrounds chosen: {{count}}",
-      "pillCount": "chosen: {{count}}"
+      "pillCount": "chosen: {{count}}",
+      "formatHint": "Output: {{format}}. One format per batch.",
+      "mixedFormat": "Create another batch for this format or remove the current selection."
     },
     "fx": {
       "title": "FX",
@@ -385,7 +387,7 @@
       "empty": "FX will appear here",
       "configureThree": "Set the three steps below",
       "chooseBelow": "Choose an option below",
-      "loadSound": "Upload your sound:",
+      "loadSound": "Choose warm-up",
       "soundFormats": "MP3, WAV",
       "soundUploadFailed": "Could not upload the sound",
       "listenSound": "Play sound",
@@ -469,7 +471,36 @@
       "copied": "Link copied",
       "qrPending": "QR appears once the backend issues an upload link",
       "uploaded": "Source uploaded",
-      "uploadFail": "Could not upload source"
+      "uploadFail": "Could not upload source",
+      "close": "Close",
+      "rules": "{{format}} video, 1–600 seconds. Up to 200 MB per file, 50 files / 2 GB per account.",
+      "qrAlt": "Phone upload QR",
+      "expires": "Link expires in 10 minutes, up to 10 files. Uploads will appear here.",
+      "listFailed": "Could not load files",
+      "order": "Source order",
+      "selectionHint": "Clips play in order; the last clip is trimmed to the video length. Your set replaces the library.",
+      "up": "Move up",
+      "down": "Move down",
+      "remove": "Remove from set",
+      "total": "Selected: {{seconds}} s",
+      "delete": "Delete file",
+      "done": "Done",
+      "phoneDone": "Files uploaded. Return to your computer and add them to the set.",
+      "clearFirst": "Remove your sources from the set before selecting the library."
+    },
+    "preview": {
+      "unavailable": "Video example unavailable",
+      "example": "Recorded example. Your text and color appear in the rendered video.",
+      "subtitles": "Subtitles",
+      "effect": "Effect"
+    },
+    "warmup": {
+      "title": "Warm-up",
+      "audio": "Audio",
+      "video": "Video",
+      "upload": "Upload file",
+      "processing": "Processing…",
+      "tooLarge": "File exceeds 200 MB"
     }
   },
   "chip": {
@@ -710,7 +741,7 @@
     "month2": "feb",
     "month3": "mar",
     "bonusTrack": "+1 track to limit",
-    "bonusUnlimited": "unlimited video",
+    "bonusUnlimited": "unlimited tracks",
     "tiktokConnected": "TikTok connected",
     "tiktokMock": "Mock mode: TikTok keys are not set in .env",
     "tiktokDenied": "Access denied",

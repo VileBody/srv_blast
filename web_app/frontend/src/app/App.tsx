@@ -1,3 +1,4 @@
+import { MobileUploadPage } from '../pages/MobileUploadPage';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { AppShell } from '../components/layout/AppShell';
 import { AdminAnalyticsPage } from '../pages/AdminAnalyticsPage';
@@ -18,6 +19,7 @@ import { WizardPage } from '../pages/WizardPage';
 export function App() {
   return (
     <Routes>
+      <Route path="/upload/" element={<MobileUploadPage />} />
       <Route path="/" element={<Navigate to="/app" replace />} />
       <Route path="/login" element={<AuthPage mode="login" />} />
       <Route path="/register" element={<AuthPage mode="register" />} />

@@ -327,6 +327,61 @@ def test_catalog_parsing_keeps_and_validates_selector(monkeypatch: pytest.Monkey
         module._json_catalog("WEB_FOOTAGE_CATALOG_JSON")
 
 
+def test_fx_catalog_requires_one_supported_selector(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _module(monkeypatch)
+    monkeypatch.setenv("WEB_FX_CATALOG_JSON", json.dumps([{
+        "id": "effect_hook__hook_light",
+        "name": "Молния",
+        "plane": "fx",
+        "previewUrl": "s3://assets/previews/fx/light.mp4",
+        "selector": {"effectHook": "hook_light"},
+    }], ensure_ascii=False))
+    item = module._json_catalog("WEB_FX_CATALOG_JSON")[0]
+    assert item["plane"] == "fx"
+    assert item["selector"] == {"effectHook": "hook_light"}
+
+    monkeypatch.setenv("WEB_FX_CATALOG_JSON", json.dumps([{
+        "id": "bad", "name": "Bad", "previewUrl": "s3://assets/bad.mp4",
+        "selector": {"effectHook": "hook_light", "unknown": "x"},
+    }]))
+    with pytest.raises(module.ProductionBackendError, match="exactly one supported FX field"):
+        module._json_catalog("WEB_FX_CATALOG_JSON")
+
+
+def test_warmup_video_and_custom_sources_reach_orchestrator(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _module(monkeypatch)
+    config = dataclasses.replace(_config(module), default_artist_id="electro_synthwave")
+    backend = _backend(module, config)
+    job = _job()
+    job["renderJob"]["track"]["segment"] = {"from": 10.0, "to": 20.0}
+    variation = job["renderJob"]["variations"][0]
+    variation["background"] = {
+        "mode": "footage",
+        "groups": [],
+        "sourceFormat": "9:16",
+        "sourceAssets": [
+            {"s3Key": "s3://assets/users/a.mp4", "width": 1080, "height": 1920, "duration": 15.0},
+        ],
+    }
+    variation["hook"] = {
+        "family": "warmup",
+        "dropTime": 15.0,
+        "resolved": {},
+        "config": {
+            "warmupKind": "video", "videoUrl": "s3://assets/users/intro.mp4",
+            "videoWidth": 1080, "videoHeight": 1920, "videoDuration": 3.0,
+            "videoHasAudio": True,
+        },
+    }
+
+    payload = backend._request_payload(job=job, variation=variation, index=1, total=1, master_id=None)
+    assert payload["f6_video_url"] == "s3://assets/users/intro.mp4"
+    assert payload["custom_footage_sources"] == [{
+        "url": "s3://assets/users/a.mp4", "width": 1080, "height": 1920, "duration": 15.0,
+    }]
+    assert payload["render_preset"] == "vertical"
+
+
 def test_bucket_selector_pins_rotation_and_geometry(monkeypatch: pytest.MonkeyPatch) -> None:
     """Выбор бакета на сайте должен закреплять группу и формат, а не только артиста.
 
@@ -446,13 +501,10 @@ def test_same_label_in_footage_and_photo_does_not_cross_wire(monkeypatch: pytest
 def test_web_tariffs_match_public_payment_credit_grants(monkeypatch: pytest.MonkeyPatch) -> None:
     _module(monkeypatch)
     billing = importlib.import_module("app.billing_backend")
+    credits = importlib.import_module("services.tg_bot_public.credits_db")
     assert billing.PLANS["BLAST"].credits == 100
     assert billing.PLANS["GLOW"].credits == 400
     assert billing.PLANS["IMPULSE"].credits is None
-
-    admin_source = (REPO_ROOT / "services" / "tg_bot_public" / "admin_panel.py").read_text(
-        encoding="utf-8"
-    )
-    assert '"Бласт": 100' in admin_source
-    assert '"Глоу": 400' in admin_source
-    assert '"Импульс": 100_000' in admin_source
+    assert credits.package_video_credits("15") == 100
+    assert credits.package_video_credits("30") == 400
+    assert credits.package_video_credits("50") == 100_000

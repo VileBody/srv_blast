@@ -18,6 +18,7 @@ import { HOOK_LABELS, HookKind, hookPills, useWizardStore, WizardStateData } fro
 
 /** Ключ юнита — стабильный (идёт в allocation), подпись собирается через i18n при рендере. */
 function backgroundUnits(bg: WizardStateData['background']): { key: string; labelKey: string; name: string; icon: 'tag' | 'photo'; noHook: boolean }[] {
+  if (bg.uploads.length) return [{ key: '__uploads__', labelKey: 'wizard.pool.vibeUnit', name: 'Свои исходники', icon: 'tag', noHook: false }];
   return [
     ...bg.footage.map((vibe) => ({ key: `footage:${vibe}`, labelKey: 'wizard.pool.vibeUnit', name: vibe, icon: 'tag' as const, noHook: false })),
     ...bg.photo.map((vibe) => ({ key: `photo:${vibe}`, labelKey: 'wizard.pool.photoUnit', name: vibe, icon: 'photo' as const, noHook: true }))
@@ -78,7 +79,7 @@ const strobeIcon = (size = 13) => <SvgMaskIcon src="/assets/figma/icon-strobe.sv
 const tIcon = (size = 13) => <em className="font-bold italic leading-none" style={{ color: WHITE, fontSize: size, marginTop: 1 }}>T</em>;
 
 const HOOK_ICON_SRC: Record<HookKind, string> = {
-  sound: '/assets/figma/hook-sound.svg',
+  warmup: '/assets/figma/hook-sound.svg',
   object: '/assets/figma/hook-object.svg',
   effects: '/assets/figma/hook-effects.svg',
   motion: '/assets/figma/hook-motion.svg',

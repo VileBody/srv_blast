@@ -121,7 +121,7 @@ def build_render_job(batch_id: str, project_id: str | None, user_id: str,
     # per-variation, а не один на батч; имя группы — то, что после префикса.
     mode = bg.get("mode", "footage")
     bg_groups_all = [f"footage:{v}" for v in (bg.get("footage") or [])] + [f"photo:{v}" for v in (bg.get("photo") or [])]
-    bg_fallback = bg_groups_all or (["__color__"] if bg.get("color") else ["__default__"])
+    bg_fallback = (["__uploads__"] if bg.get("uploads") else bg_groups_all) or (["__color__"] if bg.get("color") else ["__default__"])
     sub_fallback = subs.get("pool") or ["Impulse"]
     hook_fallback = [hooks["kind"]] if hooks.get("kind") else []
 
@@ -164,6 +164,8 @@ def build_render_job(batch_id: str, project_id: str | None, user_id: str,
                 "footageType": bg.get("footageType") if v_mode == "footage" else None,
                 # свои исходники (Figma W39/W49) — вместо библиотечного футажа
                 "uploads": list(bg.get("uploads") or []),
+                "sourceAssets": list(bg.get("sourceAssets") or []),
+                "sourceFormat": bg.get("sourceFormat"),
                 "color": bg.get("color") if v_mode == "color" else None,
                 "strobe": bool(bg.get("strobe")),
                 "photoStyle": bg.get("photoStyle") if v_mode == "photo" else None,
@@ -178,7 +180,7 @@ def build_render_job(batch_id: str, project_id: str | None, user_id: str,
             },
             "branding": {"enabled": bool(branding.get("enabled")),
                           "style": branding.get("style")},
-            "sound": {"userSound": (cfg.get("sound") if v_kind == "sound" else None)},
+            "sound": {"userSound": (cfg.get("sound") if v_kind in {"sound", "warmup"} else None)},
         })
 
     return {
@@ -206,5 +208,5 @@ def variation_label(variation: dict[str, Any]) -> dict[str, str]:
     source = groups[0].split(":", 1)[-1] if groups else ("Цвет" if mode == "color" else "Футаж")
     hook = variation["hook"]["family"]
     hook_label = {"effects": "Эффекты", "object": "Объект", "motion": "Движение",
-                  "sound": "Звук", "thought": "Мысль"}.get(hook, "Без хука")
+                  "sound": "Прогрев", "warmup": "Прогрев", "thought": "Мысль"}.get(hook, "Без хука")
     return {"source": source, "subtitleStyle": variation["subtitle"]["style"], "hook": hook_label}

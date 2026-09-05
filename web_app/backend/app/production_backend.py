@@ -77,13 +77,23 @@ def _json_catalog(name: str) -> tuple[dict[str, Any], ...]:
             "previewUrl": locator,
             "score": float(value.get("score", 1.0)),
         }
+        if value.get("plane"):
+            item["plane"] = str(value["plane"])
         selector = value.get("selector")
         if selector is not None:
             if not isinstance(selector, dict):
                 raise ProductionBackendError(
                     f"production_backend: {name}[{index}].selector must be an object"
                 )
-            item["selector"] = _catalog_selector(f"{name}[{index}]", selector)
+            if name == "WEB_FX_CATALOG_JSON":
+                allowed = {"effectHook", "effectTransition", "effectExtra", "f4Device", "f2Shape"}
+                if len(selector) != 1 or not set(selector).issubset(allowed):
+                    raise ProductionBackendError(
+                        f"production_backend: {name}[{index}].selector must contain exactly one supported FX field"
+                    )
+                item["selector"] = {key: str(value) for key, value in selector.items()}
+            else:
+                item["selector"] = _catalog_selector(f"{name}[{index}]", selector)
         items.append(item)
     return tuple(items)
 
@@ -178,6 +188,7 @@ class ProductionConfig:
     # базовый профиль артиста: с закреплённой парой rotation он больше не выбирает
     # бакет, но Stage 2 без него не планирует футаж (в т.ч. на solid-фоне)
     default_artist_id: str = ""
+    fx_catalog: tuple[dict[str, Any], ...] = ()
 
     @classmethod
     def load(cls) -> "ProductionConfig":
@@ -195,6 +206,7 @@ class ProductionConfig:
         footage_catalog = _json_catalog("WEB_FOOTAGE_CATALOG_JSON")
         photo_catalog = _json_catalog("WEB_PHOTO_CATALOG_JSON")
         subtitle_catalog = _json_catalog("WEB_SUBTITLE_CATALOG_JSON")
+        fx_catalog = _json_catalog("WEB_FX_CATALOG_JSON")
 
         # Запись каталога может нести `selector` — точную пару (theme, tags_group),
         # которой закрепляется бакет. Такой записи карта артистов не нужна: артист
@@ -260,6 +272,7 @@ class ProductionConfig:
             subtitle_catalog=subtitle_catalog,
             selector_by_mode=selector_by_mode,
             default_artist_id=default_artist_id,
+            fx_catalog=fx_catalog,
         )
 
 
@@ -290,6 +303,7 @@ class ProductionBackend:
             *self.config.footage_catalog,
             *self.config.photo_catalog,
             *self.config.subtitle_catalog,
+            *self.config.fx_catalog,
         ):
             locator = str(item["previewUrl"])
             if locator.startswith("s3://"):
@@ -326,6 +340,7 @@ class ProductionBackend:
             "footage": self.config.footage_catalog,
             "photo": self.config.photo_catalog,
             "subtitle": self.config.subtitle_catalog,
+            "fx": self.config.fx_catalog,
         }.get(kind)
         if source is None:
             raise ProductionBackendError(f"unsupported preview catalog {kind!r}")
@@ -477,15 +492,27 @@ class ProductionBackend:
                 if keys:
                     self._s3.delete_objects(Bucket=bucket, Delete={"Objects": keys, "Quiet": True})
 
-    def enqueue_job(self, job: dict[str, Any]) -> dict[str, Any]:
-        if any(
-            variation.get("background", {}).get("uploads")
-            for variation in job.get("renderJob", {}).get("variations", [])
-        ):
-            raise ProductionBackendError(
-                "custom source uploads are not supported by the production orchestrator contract"
-            )
+    def delete_uploaded_asset(self, locator: str) -> None:
+        """Delete one server-owned upload after its ownership was checked in the DB."""
+        bucket, key = self._parse_s3_locator(locator)
+        if bucket != self.config.asset_bucket or not key.startswith(f"{self.config.asset_prefix}/users/"):
+            raise ProductionBackendError("upload locator is outside the managed asset prefix")
+        self._s3.delete_object(Bucket=bucket, Key=key)
 
+    def validate_stage(self, stage: dict[str, Any]) -> str:
+        from .batch_geometry import selected_geometry
+        catalogs = {mode: {item["name"]: item for item in source} for mode, source in (
+            ("footage", self.config.footage_catalog), ("photo", self.config.photo_catalog))}
+        return selected_geometry(stage, catalogs)
+
+    def validate_job(self, job: dict[str, Any]) -> None:
+        variations = job["renderJob"].get("variations") or []
+        if not variations:
+            raise ProductionBackendError("Empty render batch")
+        for index, variation in enumerate(variations, 1):
+            self._request_payload(job=job, variation=variation, index=index, total=len(variations), master_id=None)
+
+    def enqueue_job(self, job: dict[str, Any]) -> dict[str, Any]:
         self._enqueue_next(job)
         job["status"] = "PROCESSING"
         job["mock"] = False
@@ -738,7 +765,11 @@ class ProductionBackend:
         background_mode = str(background.get("mode") or "footage")
         artist_id = ""
         selector: dict[str, Any] = {}
-        if background_mode in {"footage", "photo"}:
+        custom_sources = background.get("sourceAssets") or []
+        if custom_sources:
+            artist_id = self.config.default_artist_id
+            selector = {"renderPreset": {"9:16": "vertical", "16:9": "wide"}[background["sourceFormat"]]}
+        elif background_mode in {"footage", "photo"}:
             if not groups:
                 raise ProductionBackendError("footage/photo variation has no selected group")
             group_name = str(groups[0])
@@ -804,10 +835,30 @@ class ProductionBackend:
                     f"unsupported thought hook {hook_config.get('thought')!r}"
                 )
         f1_sound_url = None
-        if family == "sound":
+        if family in {"sound", "warmup"} and hook_config.get("warmupKind") != "video":
             f1_sound_url = str(hook_config.get("soundUrl") or "").strip()
             if not f1_sound_url:
                 raise ProductionBackendError("sound hook requires an uploaded sound URL")
+
+        f6_fields: dict[str, Any] = {}
+        if family == "warmup" and hook_config.get("warmupKind") == "video":
+            if not hook_config.get("videoUrl") or not hook_config.get("videoDuration") or not hook_config.get("videoWidth") or not hook_config.get("videoHeight"):
+                raise ProductionBackendError("Загрузите видео для прогрева заново")
+            if start is None or end is None or hook.get("dropTime") is None:
+                raise ProductionBackendError("Для прогрева нужны отрывок и тайминг дропа")
+            f6_fields = {"f6_video_url": hook_config["videoUrl"], "f6_video_width": hook_config["videoWidth"],
+                "f6_video_height": hook_config["videoHeight"], "f6_video_duration": hook_config["videoDuration"],
+                "f6_video_has_audio": hook_config.get("videoHasAudio", True)}
+        # `sound` is the legacy persisted family. Keep its established payload
+        # contract so old drafts/jobs remain renderable. New uploads use
+        # `warmup` and carry probe metadata required by the UI contract.
+        if f1_sound_url and family == "warmup":
+            duration = hook_config.get("soundDuration")
+            drop = hook.get("dropTime")
+            if not duration or drop is None or start is None or end is None:
+                raise ProductionBackendError("Для звукового прогрева загрузите файл и выберите дроп")
+            if float(drop) <= float(start) or float(drop) >= float(end):
+                raise ProductionBackendError("Дроп должен находиться внутри выбранного отрывка")
 
         target_fragment = str(render_job.get("lyrics", {}).get("fragment") or "").strip()
         lyrics = str(render_job.get("lyrics", {}).get("full") or "").strip()
@@ -816,6 +867,7 @@ class ProductionBackend:
         if not target_fragment:
             target_fragment = lyrics
         payload: dict[str, Any] = {
+            **f6_fields,
             "audio_s3_url": str(track.get("s3Key") or ""),
             "project_id": str(job.get("projectId") or ""),
             "mode": "with_gemini",
@@ -854,7 +906,15 @@ class ProductionBackend:
             "variants_total": total,
             "reuse_text_job_id": master_id,
         }
-        return {key: value for key, value in payload.items() if value not in {None, ""}}
+        if custom_sources:
+            if start is None or end is None:
+                raise ProductionBackendError("Для своих исходников нужен точный отрывок")
+            preroll = max(0.0, float(hook_config.get("videoDuration") or 0) - (float(hook.get("dropTime") or 0)-float(start))) if f6_fields else 0.0
+            needed = float(end)-float(start)+preroll
+            if sum(float(item["duration"]) for item in custom_sources) + 0.001 < needed:
+                raise ProductionBackendError(f"Исходников недостаточно: нужно {needed:.1f} с. Добавьте видео.")
+            payload["custom_footage_sources"] = [{"url": item["s3Key"], "width": item["width"], "height": item["height"], "duration": item["duration"]} for item in custom_sources]
+        return {key: value for key, value in payload.items() if value is not None and value != ""}
 
 
 _BACKEND: ProductionBackend | None = None

@@ -13,7 +13,7 @@ import { QueryError, queryDown } from '../components/ui/ErrorState';
 import { StatusBadge } from '../components/ui/StatusBadge';
 import { backgroundVariations, BackgroundWorkZone, StageBackground } from '../components/wizard/BackgroundPanel';
 import { HooksWorkZone, StageHooks } from '../components/wizard/HookPanel';
-import { hasTrackInput, hookPills } from '../stores/wizardStore';
+import { backgroundFormats, hasTrackInput, hookPills } from '../stores/wizardStore';
 import { SliceWorkZone, StageSlice } from '../components/wizard/SlicePanel';
 import { StageSubtitles, SubtitlesWorkZone } from '../components/wizard/SubtitlesPanel';
 import { TextPanel } from '../components/wizard/TextPanel';
@@ -357,7 +357,7 @@ export function WizardPage() {
     state.setField('timingFrom', '00:10:00');
     state.setField('timingTo', '00:22:00');
     state.setBackground({ mode: 'footage', footage: ['Ночной город', 'Неон'], photo: ['Крупный план'], color: '#8b6fe6', strobe: false, glue: 'Щелчок' });
-    state.setHooks({ dropTime: '00:15:00', kind: 'sound', config: { sound: 'Звук' } });
+    state.setHooks({ dropTime: '00:15:00', kind: 'warmup', config: { sound: 'Звук' } });
     state.setHooks({ kind: 'object', config: { object: 'Квадрат' } });
     state.setHooks({ kind: 'effects', config: { effectHook: 'Молния', effectGlue: 'Щелчок', effectStyle: 'Глитч' } });
     state.setHooks({ kind: 'motion', config: { motion: 'Зум' } });
@@ -501,6 +501,10 @@ export function WizardPage() {
 
   const next = async () => {
     if (!canContinue) return;
+    if (stage !== 1 && backgroundFormats(state.background).length > 1) {
+      push({ variant: 'error', title: t('wizard.bg.mixedFormat') });
+      return;
+    }
     await saveSessionMutation.mutateAsync();
     const idx = STAGE_ORDER.indexOf(stage);
     if (idx < STAGE_ORDER.length - 1) setStage(STAGE_ORDER[idx + 1]);

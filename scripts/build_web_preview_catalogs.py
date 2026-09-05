@@ -518,6 +518,7 @@ def build(entries: list[Entry], uploader: Uploader | None, *, force: bool) -> tu
             {
                 "id": entry.id,
                 "name": entry.name,
+                "plane": entry.plane,
                 "previewUrl": preview_url,
                 "selector": entry.selector,
                 "score": 1.0,

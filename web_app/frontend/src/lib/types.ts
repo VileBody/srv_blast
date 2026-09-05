@@ -208,6 +208,11 @@ export interface GenerationJob {
 
 /** Свой исходник пользователя (Figma W39/W49) */
 export interface UserSource {
+  duration: number;
+  width: number;
+  height: number;
+  format: string;
+  bytes: number;
   id: string;
   userId: string;
   s3Key: string;

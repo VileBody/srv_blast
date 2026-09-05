@@ -199,9 +199,9 @@ _FUNNEL_COLORS = [
 # Package definitions
 _PACKAGES = {
     "5": "Триал (5 генераций)",
-    "15": "Бласт (15 генераций)",
-    "30": "Глоу (30 генераций)",
-    "50": "Импульс (50 генераций)",
+    "15": "Бласт (100 генераций)",
+    "30": "Глоу (400 генераций)",
+    "50": "Импульс (безлимит)",
 }
 
 # Unique-track allowance granted on manual package activation. Mirrors

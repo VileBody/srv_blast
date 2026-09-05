@@ -1133,6 +1133,10 @@ def render_all_steps(
         audio_file_path=audio_file_path,
     )
     footage_obj = json.loads(footage_str)
+    custom_sources_raw = os.environ.get("CUSTOM_FOOTAGE_SOURCES_JSON", "")
+    if custom_sources_raw:
+        from mlcore.custom_sources import apply_custom_sources
+        apply_custom_sources(footage_obj, json.loads(custom_sources_raw), float(comp_dur))
 
     # -------------------------
     # F5 Cognition hook («Мысль»): если оркестратор сгенерировал блок —

@@ -9,7 +9,6 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 
 _REGISTRY_PATH = Path(__file__).resolve().parents[2] / "frontend" / "src" / "data" / "effects-registry.json"
@@ -17,11 +16,12 @@ _REGISTRY_PATH = Path(__file__).resolve().parents[2] / "frontend" / "src" / "dat
 
 def _load_registry() -> dict:
     try:
-        return json.loads(_REGISTRY_PATH.read_text(encoding="utf-8"))
+        registry = json.loads(_REGISTRY_PATH.read_text(encoding="utf-8"))
     except Exception as exc:  # noqa: BLE001
-        if os.getenv("MODE") == "prod":
-            raise RuntimeError(f"effects registry is unavailable: {_REGISTRY_PATH}") from exc
-        return {}
+        raise RuntimeError(f"effects registry is unavailable: {_REGISTRY_PATH}") from exc
+    if not isinstance(registry, dict) or not all(registry.get(group) for group in ("hook", "glue", "style")):
+        raise RuntimeError(f"effects registry has no required hook/glue/style groups: {_REGISTRY_PATH}")
+    return registry
 
 
 _REG = _load_registry()
@@ -49,17 +49,6 @@ for _e in _REG.get("hook", []):
         HOOK_BRANDING[_e["manifestId"]] = {"enabled": True, "style": _b if isinstance(_b, str) else "stamp_flash"}
     else:
         HOOK_BRANDING[_e["manifestId"]] = {"enabled": False}
-
-# --- фолбэк, если реестр не прочитался (например, отдельный деплой бэка) ---
-if not HOOK_MAP:
-    HOOK_MAP = {"Молния": "hook_light", "Затвор": "shutter_effect",
-                "Слоу-шаттер": "flash_slow_shutter", "Негатив зум": "negative_zoom"}
-if not GLUE_MAP:
-    GLUE_MAP = {"Щелчок": "snap_wipe", "Минимакс": "minimax", "Экстракт": "extract_flash",
-                "Инверт": "invert_flash", "Вспышка": "flash_on_cuts",
-                "snap-wipe": "snap_wipe", "minimax": "minimax", "extract": "extract_flash", "invert": "invert_flash"}
-if not STYLE_MAP:
-    STYLE_MAP = {"Ксерокс": "xerox", "Глитч": "analog_glitch", "Неон": "neon_extract", "Старая камера": "old_camera"}
 
 # object/motion — не идут в run_job, зовутся отдельными скриптами (spec §4.4)
 OBJECT_SCRIPT: dict[str, str] = {

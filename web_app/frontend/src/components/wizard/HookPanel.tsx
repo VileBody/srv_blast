@@ -1,9 +1,9 @@
-import { ChangeEvent, type RefObject, useEffect, useRef, useState } from 'react';
+import { WarmupInput } from './WarmupInput';
+import { ChangeEvent, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
 import { useChip } from '../../i18n/useChip';
 import { api } from '../../lib/api';
-import { useToast } from '../../contexts/ToastContext';
 import { cn } from '../../lib/cn';
 import { SvgMaskIcon } from '../layout/SvgMaskIcon';
 import { ArrowRight, useDragScroll } from './BackgroundPanel';
@@ -11,7 +11,7 @@ import { FullscreenZone } from '../ui/FullscreenZone';
 import { PillsFooter } from './WizardFrame';
 import { HookConfig, HookKind, HOOK_LABELS, hookComplete, hookPills, useWizardStore } from '../../stores/wizardStore';
 import effectsRegistry from '../../data/effects-registry.json';
-import { SubtitlePreview } from './SubtitlePreview';
+import { CatalogMedia, SubtitleCatalogPreview } from './CatalogPreview';
 
 /*
  * Этап «Хук» (Figma W18 → W24/32 → W25/34 → W26/28/29/30 → W27 → W31):
@@ -21,7 +21,7 @@ import { SubtitlePreview } from './SubtitlePreview';
  */
 
 const HOOK_TYPES: { kind: HookKind; icon: string; iconW: number; iconH: number; hint: string }[] = [
-  { kind: 'sound', icon: '/assets/figma/hook-sound.svg', iconW: 16, iconH: 18, hint: 'wizard.fx.hintSound' },
+  { kind: 'warmup', icon: '/assets/figma/hook-sound.svg', iconW: 16, iconH: 18, hint: 'wizard.fx.hintSound' },
   { kind: 'object', icon: '/assets/figma/hook-object.svg', iconW: 18, iconH: 18, hint: 'wizard.fx.hintObject' },
   { kind: 'effects', icon: '/assets/figma/hook-effects.svg', iconW: 16, iconH: 17, hint: 'wizard.fx.hintEffects' },
   { kind: 'motion', icon: '/assets/figma/hook-motion.svg', iconW: 16, iconH: 18, hint: 'wizard.fx.hintMotion' },
@@ -131,7 +131,7 @@ const STYLE_STEP: HookStep = { key: 'effectStyle', title: 'wizard.fx.stepStyle',
 
 /** Первый шаг зависит от типа хука, два следующих общие. */
 const FIRST_STEP: Record<HookKind, HookStep> = {
-  sound: { key: 'sound', title: 'wizard.fx.loadSound', options: [] },
+  warmup: { key: 'sound', title: 'wizard.fx.loadSound', options: [] },
   object: { key: 'object', title: 'wizard.fx.chooseObject', options: OBJECTS },
   effects: { key: 'effectHook', title: 'wizard.fx.stepFx', options: EFFECT_HOOKS },
   motion: { key: 'motion', title: 'wizard.fx.chooseMotion', options: MOTIONS },
@@ -175,7 +175,7 @@ export function StageHooks() {
   // всегда — здесь это состояние «сначала выбери отрывок»).
   const clipReady = timingMode === 'manual' && Boolean(timingFrom) && Boolean(timingTo);
   const dropsQuery = useQuery({
-    queryKey: ['drops', timingFrom, timingTo],
+    queryKey: ['drops', track?.id, timingFrom, timingTo],
     queryFn: () => api.drops(timingFrom, timingTo),
     enabled: meQuery.isSuccess && Boolean(meQuery.data.capabilities?.analyzedDrops) && clipReady,
   });
@@ -223,7 +223,7 @@ export function StageHooks() {
             )}
             onClick={() => { setCustomDrop(false); setHooks({ dropTime: drop.time }); }}
           >
-            {drop.time}
+            <span>{drop.time}<small className="ml-2 text-xs opacity-70">{Math.round(drop.confidence * 100)}%{drop.best ? ' ★' : ''}</small></span>
           </button>
         ))}
         {customDrop ? (
@@ -368,7 +368,7 @@ function ChipRow({ options, value, onPick, rightGap = 0, edgePad = 0 }: {
   );
 }
 
-const KIND_ORDER: HookKind[] = ['sound', 'object', 'effects', 'motion', 'thought'];
+const KIND_ORDER: HookKind[] = ['warmup', 'object', 'effects', 'motion', 'thought'];
 
 /** Подпись выбранного варианта в рабочей зоне. Звук — имя файла юзера, его не переводим. */
 function hookPickLabel(config: HookConfig, chip: (label: string) => string): string | undefined {
@@ -390,51 +390,33 @@ function nextFreeKind(hooks: { configs: Partial<Record<HookKind, HookConfig>> },
  * то есть у каждого хука своя пара — это и даёт уникальность вариаций.
  * Геометрия: контейнеры 390×160 и 390×175 (шаг 195), плеер 373×665 + «Продолжить» 373×60.
  */
-interface FullscreenSoundControls {
-  inputRef: RefObject<HTMLInputElement>;
-  playing: boolean;
-  canPlay: boolean;
-  onToggle: () => void;
-  onRemove: () => void;
-}
-
 /**
- * Плеер использует только заранее подготовленный composite preview. Никаких AE/LLM-вызовов
- * из интерактива: если файла для комбинации ещё нет, остаётся нейтральный Figma-fallback.
+ * Preview uses pre-rendered catalog videos. Subtitle and effect samples are
+ * separate because the catalog has no render for every possible combination.
  */
-function EffectPreview({ style, hook, lyrics }: { style: string; hook?: string; lyrics?: string }) {
-  const [broken, setBroken] = useState(false);
-  const meQuery = useQuery({ queryKey: ['me'], queryFn: api.me, staleTime: 15_000 });
-  const previewQuery = useQuery({
-    queryKey: ['composite-preview', style, hook],
-    queryFn: () => api.compositePreview(style, hook!),
-    enabled: Boolean(hook) && Boolean(meQuery.data?.capabilities?.remoteCompositePreviews),
-    staleTime: Infinity,
-    retry: false
-  });
-
-  useEffect(() => setBroken(false), [previewQuery.data?.previewUrl]);
-
-  return (
-    <>
-      {hook && previewQuery.data?.previewUrl && !broken && (
-        <video key={previewQuery.data.previewUrl} src={previewQuery.data.previewUrl} className="absolute inset-0 h-full w-full object-cover" muted loop playsInline autoPlay preload="metadata" onError={() => setBroken(true)} />
-      )}
-      {(!previewQuery.data?.previewUrl || broken) && <SubtitlePreview className="absolute inset-0" styleName={style} lyrics={lyrics} effect={hook} />}
-    </>
-  );
+function EffectPreview({ style, hook }: { style: string; hook?: string; lyrics?: string }) {
+  const { t } = useTranslation();
+  const query = useQuery({ queryKey: ['fx-previews'], queryFn: api.fxPreviews });
+  const effect = query.data?.previews.find(item => item.name === hook || item.id === hook);
+  const [view, setView] = useState<'subtitle' | 'effect'>('subtitle');
+  return <div className="absolute inset-0 flex flex-col">
+    <div className="z-10 flex shrink-0 justify-center gap-2 p-2">
+      <button type="button" className="rounded-lg bg-accent-20 px-3 py-2 text-xs" aria-pressed={view === 'subtitle'} onClick={() => setView('subtitle')}>{t('wizard.preview.subtitles')}</button>
+      <button type="button" className="rounded-lg bg-accent-20 px-3 py-2 text-xs" aria-pressed={view === 'effect'} onClick={() => setView('effect')}>{t('wizard.preview.effect')}</button>
+    </div>
+    {view === 'subtitle' ? <SubtitleCatalogPreview name={style} className="min-h-0 flex-1" />
+      : <CatalogMedia url={effect?.previewUrl} className="min-h-0 w-full flex-1" />}
+  </div>;
 }
 
 function HooksFullscreen({
   onCollapse,
   canContinue,
-  onNext,
-  soundControls
+  onNext
 }: {
   onCollapse: () => void;
   canContinue: boolean;
   onNext: () => void;
-  soundControls: FullscreenSoundControls;
 }) {
   const { t } = useTranslation();
   const chip = useChip();
@@ -545,40 +527,8 @@ function HooksFullscreen({
       </div>
 
       {first ? section(t(first.title), 0, first.options, first.key) : (
-        <div className={cn('h-[175px] shrink-0 rounded-r15 bg-grad-soft-10 p-[28px]', step === 0 && 'shadow-[inset_0_0_0_1px_var(--accent-light)]')}>
-          <p className="wizard-body leading-[29px]">{t('wizard.fx.loadSound')}</p>
-          <div className="mt-[28px]">
-            {config.sound ? (
-              <div className="dash-panel-r10 flex h-[60px] w-full items-center gap-space-3 px-space-4 text-[18px] text-text-80">
-                <button
-                  type="button"
-                  disabled={!soundControls.canPlay}
-                  aria-label={soundControls.playing ? t('wizard.track.pause') : t('wizard.fx.listenSound')}
-                  onClick={soundControls.onToggle}
-                  className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-full bg-accent-light leading-[0] text-text transition hover:opacity-85 disabled:opacity-40"
-                >
-                  {soundControls.playing ? (
-                    <span className="flex gap-[3px]" aria-hidden="true"><span className="h-[9px] w-[2.5px] rounded-[1px] bg-text" /><span className="h-[9px] w-[2.5px] rounded-[1px] bg-text" /></span>
-                  ) : (
-                    <svg viewBox="0 0 12 12" width="10" height="10" aria-hidden="true"><path d="M3.5 1.8v8.4L10.5 6 3.5 1.8Z" fill="currentColor" /></svg>
-                  )}
-                </button>
-                <button type="button" className="min-w-0 flex-1 truncate text-left transition hover:text-text" title={t('wizard.track.replaceFile')} onClick={() => soundControls.inputRef.current?.click()}>
-                  {config.sound}
-                </button>
-                <button type="button" aria-label={t('wizard.fx.deleteSound')} onClick={soundControls.onRemove} className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-full text-text-60 transition hover:bg-accent-20 hover:text-text">
-                  <svg viewBox="0 0 12 12" width="11" height="11" aria-hidden="true"><path d="M2.5 2.5l7 7M9.5 2.5l-7 7" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>
-                </button>
-              </div>
-            ) : (
-              <button type="button" className="dash-panel-r10 flex h-[60px] w-full items-center justify-center gap-space-3 text-[18px] text-text-80 transition hover:brightness-125" onClick={() => soundControls.inputRef.current?.click()}>
-                <span aria-hidden="true" className="flex h-[26px] w-[26px] items-center justify-center rounded-full bg-accent-light leading-[0] text-text">
-                  <svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true"><path d="M6 2v8M2 6h8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>
-                </span>
-                {t('wizard.fx.soundFormats')}
-              </button>
-            )}
-          </div>
+        <div className={cn('min-h-[175px] shrink-0 rounded-r15 bg-grad-soft-10 p-[28px]', step === 0 && 'shadow-[inset_0_0_0_1px_var(--accent-light)]')}>
+          <WarmupInput />
         </div>
       )}
       {section(t(steps[1].title), 1, steps[1].options, steps[1].key)}
@@ -631,9 +581,7 @@ export function HooksWorkZone({ ready, canContinue, loading, onBack, onNext }: {
   const subtitleStyle = useWizardStore((state) => state.subtitles.pool[0] ?? 'Impulse');
   const lyrics = useWizardStore((state) => state.fragmentLyrics || state.lyrics);
   const setHooks = useWizardStore((state) => state.setHooks);
-  const { push } = useToast();
   const pillsScroll = useDragScroll();
-  const soundInputRef = useRef<HTMLInputElement>(null);
   const [step, setStep] = useState(0);
   const [fullscreen, setFullscreen] = useState(false);
 
@@ -655,62 +603,6 @@ export function HooksWorkZone({ ready, canContinue, loading, onBack, onNext }: {
     ? [...configuredPills, { kind, label: HOOK_LABELS[kind] }]
     : configuredPills;
   const nextKind = nextFreeKind(hooks, kind);
-
-  // Прослушивание загруженного звука (правка ревью): blob живёт в ref до замены/удаления
-  const soundAudioRef = useRef<HTMLAudioElement | null>(null);
-  const soundUrlRef = useRef<string | null>(null);
-  const [soundPlaying, setSoundPlaying] = useState(false);
-
-  useEffect(() => {
-    soundUrlRef.current = config.soundPlaybackUrl ?? null;
-  }, [config.soundPlaybackUrl]);
-
-  const onSoundUpload = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    soundAudioRef.current?.pause();
-    soundAudioRef.current = null;
-    setSoundPlaying(false);
-    try {
-      const uploaded = await api.uploadHookSound(file);
-      soundUrlRef.current = uploaded.playbackUrl;
-      setHooks({ config: {
-        sound: file.name.replace(/\.[^.]+$/, ''),
-        soundUrl: uploaded.url,
-        soundPlaybackUrl: uploaded.playbackUrl
-      } });
-    } catch {
-      soundUrlRef.current = null;
-      setHooks({ config: { sound: undefined, soundUrl: undefined, soundPlaybackUrl: undefined } });
-      push({ variant: 'error', title: t('wizard.fx.soundUploadFailed') });
-    } finally {
-      event.target.value = '';
-    }
-  };
-
-  const toggleSoundPlay = () => {
-    if (!soundUrlRef.current) return;
-    if (!soundAudioRef.current) {
-      soundAudioRef.current = new Audio(soundUrlRef.current);
-      soundAudioRef.current.onended = () => setSoundPlaying(false);
-    }
-    if (soundPlaying) {
-      soundAudioRef.current.pause();
-      setSoundPlaying(false);
-    } else {
-      void soundAudioRef.current.play();
-      setSoundPlaying(true);
-    }
-  };
-
-  const removeSound = () => {
-    soundAudioRef.current?.pause();
-    soundAudioRef.current = null;
-    setSoundPlaying(false);
-    soundUrlRef.current = null;
-    // Без звука хук «Звук» перестаёт быть настроенным — пилюля уходит сама
-    setHooks({ config: { sound: undefined, soundUrl: undefined, soundPlaybackUrl: undefined } });
-  };
 
   /*
    * Единый мастер настройки хука: шаг 1 — сам хук, шаг 2 — склейка, шаг 3 — стиль.
@@ -737,46 +629,7 @@ export function HooksWorkZone({ ready, canContinue, loading, onBack, onNext }: {
   );
 
   /** Шаг «Звук» — не выбор из списка, а загрузка своего файла. */
-  const soundStep = (
-    <>
-      <input ref={soundInputRef} type="file" accept="audio/*" className="sr-only" onChange={onSoundUpload} />
-      {config.sound ? (
-        <div className="dash-panel-r10 flex h-[52px] w-full items-center gap-space-3 px-space-4 text-[18px] text-text-80">
-          {/* Плей/пауза загруженного звука (правка ревью) */}
-          <button
-            type="button"
-            aria-label={soundPlaying ? t('wizard.track.pause') : t('wizard.fx.listenSound')}
-            onClick={toggleSoundPlay}
-            className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-full bg-accent-light leading-[0] text-text transition hover:opacity-85"
-          >
-            {soundPlaying ? (
-              <span className="flex gap-[3px]" aria-hidden="true"><span className="h-[9px] w-[2.5px] rounded-[1px] bg-text" /><span className="h-[9px] w-[2.5px] rounded-[1px] bg-text" /></span>
-            ) : (
-              <svg viewBox="0 0 12 12" width="10" height="10" aria-hidden="true"><path d="M3.5 1.8v8.4L10.5 6 3.5 1.8Z" fill="currentColor" /></svg>
-            )}
-          </button>
-          <button type="button" className="min-w-0 flex-1 truncate text-left transition hover:text-text" title={t('wizard.track.replaceFile')} onClick={() => soundInputRef.current?.click()}>
-            {config.sound}
-          </button>
-          {/* Крестик: удаляет звук и отменяет хук (правка ревью) */}
-          <button type="button" aria-label={t('wizard.fx.deleteSound')} onClick={removeSound} className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-full text-text-60 transition hover:bg-accent-20 hover:text-text">
-            <svg viewBox="0 0 12 12" width="11" height="11" aria-hidden="true"><path d="M2.5 2.5l7 7M9.5 2.5l-7 7" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>
-          </button>
-        </div>
-      ) : (
-        <button
-          type="button"
-          className="dash-panel-r10 flex h-[52px] w-full items-center justify-center gap-space-3 text-[18px] text-text-80 transition hover:brightness-125"
-          onClick={() => soundInputRef.current?.click()}
-        >
-          <span aria-hidden="true" className="flex h-[26px] w-[26px] items-center justify-center rounded-full bg-accent-light leading-[0] text-text">
-            <svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true"><path d="M6 2v8M2 6h8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>
-          </span>
-          {t('wizard.fx.soundFormats')}
-        </button>
-      )}
-    </>
-  );
+  const soundStep = <WarmupInput />;
 
   const settings = kind && stepDef && (
     <div className="shrink-0 rounded-r15 bg-grad-soft-10 p-space-5">
@@ -812,13 +665,6 @@ export function HooksWorkZone({ ready, canContinue, loading, onBack, onNext }: {
           onCollapse={() => setFullscreen(false)}
           canContinue={canContinue}
           onNext={onNext}
-          soundControls={{
-            inputRef: soundInputRef,
-            playing: soundPlaying,
-            canPlay: Boolean(soundUrlRef.current),
-            onToggle: toggleSoundPlay,
-            onRemove: removeSound
-          }}
         />
       )}
       <div className="card-2 flex min-h-0 flex-1 flex-col gap-space-5 px-space-6 py-space-6 max-lg:px-space-5">
