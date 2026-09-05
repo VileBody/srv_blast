@@ -359,12 +359,19 @@ def _seed_demo_workspace() -> Workspace:
 
 WORKSPACES[DEMO_USER_ID] = _seed_demo_workspace()
 
+# Фикстуры трёх планов подбора — тех же, что у бота (vibes 9:16 / cine16x9 / films).
+# Планы нужны и в моке: без них степпер типов футажей нечем проверить, а именно на
+# нём и вылезло, что переключение ничего не меняло.
 VIBES: list[dict[str, Any]] = [
-    {"id": "night-city", "name": "Ночной город", "score": 0.93, "previewUrl": f"{BASE_S3}/vibes/night-city/preview.mp4"},
-    {"id": "neon", "name": "Неон", "score": 0.89, "previewUrl": f"{BASE_S3}/vibes/neon/preview.mp4"},
-    {"id": "sunset", "name": "Закат", "score": 0.76, "previewUrl": f"{BASE_S3}/vibes/sunset/preview.mp4"},
-    {"id": "backstage", "name": "Бэкстейдж", "score": 0.71, "previewUrl": f"{BASE_S3}/vibes/backstage/preview.mp4"},
-    {"id": "street", "name": "Улица", "score": 0.68, "previewUrl": f"{BASE_S3}/vibes/street/preview.mp4"},
+    {"id": "night-city", "name": "Ночной город", "plane": "vibes", "score": 0.93, "previewUrl": f"{BASE_S3}/vibes/night-city/preview.mp4"},
+    {"id": "neon", "name": "Неон", "plane": "vibes", "score": 0.89, "previewUrl": f"{BASE_S3}/vibes/neon/preview.mp4"},
+    {"id": "sunset", "name": "Закат", "plane": "vibes", "score": 0.76, "previewUrl": f"{BASE_S3}/vibes/sunset/preview.mp4"},
+    {"id": "backstage", "name": "Бэкстейдж", "plane": "vibes", "score": 0.71, "previewUrl": f"{BASE_S3}/vibes/backstage/preview.mp4"},
+    {"id": "street", "name": "Улица", "plane": "vibes", "score": 0.68, "previewUrl": f"{BASE_S3}/vibes/street/preview.mp4"},
+    {"id": "cine-new-york", "name": "Нью-Йорк", "plane": "cine16x9", "score": 0.88, "previewUrl": f"{BASE_S3}/vibes/cine-new-york/preview.mp4"},
+    {"id": "cine-tokyo", "name": "Киото", "plane": "cine16x9", "score": 0.74, "previewUrl": f"{BASE_S3}/vibes/cine-tokyo/preview.mp4"},
+    {"id": "film-brat", "name": "Брат", "plane": "films", "score": 0.9, "previewUrl": f"{BASE_S3}/vibes/film-brat/preview.mp4"},
+    {"id": "film-bumer", "name": "Бумер", "plane": "films", "score": 0.72, "previewUrl": f"{BASE_S3}/vibes/film-bumer/preview.mp4"},
 ]
 
 PHOTOS: list[dict[str, Any]] = [

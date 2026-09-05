@@ -232,6 +232,15 @@ export interface Vibe {
   name: string;
   score: number;
   previewUrl: string;
+  /** план подбора (vibes | cine16x9 | films | photo) — есть только в production-каталоге */
+  plane?: string;
+  /** поля SendAudioS3Request, в которые раскладывается выбор бакета */
+  selector?: {
+    rotationTheme?: string;
+    rotationTagsGroup?: string;
+    renderPreset?: string;
+    bgMode?: string;
+  };
 }
 
 export interface DropCandidate {

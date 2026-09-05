@@ -7,6 +7,7 @@ import type { Vibe } from '../lib/types';
 import { Button } from '../components/ui/Button';
 import { Card, FlatCard } from '../components/ui/Card';
 import { FieldError, Input, Textarea } from '../components/ui/Input';
+import { Modal } from '../components/ui/Modal';
 import { Skeleton } from '../components/ui/Skeleton';
 import { QueryError, queryDown } from '../components/ui/ErrorState';
 import { StatusBadge } from '../components/ui/StatusBadge';
@@ -409,7 +410,11 @@ export function WizardPage() {
   const saveSessionMutation = useMutation({ mutationFn: () => api.saveWizardSession({ projectId, stage, data: state.stageData() }) });
   const submitMutation = useMutation({
     mutationFn: () => api.submitWizard({ projectId, stageData: state.stageData(), videosToGenerate: safeVideosToGenerate, idempotencyKey: state.final.idempotencyKey }),
-    onSuccess: (data) => { push({ variant: 'success', title: t('wizard.page.genStarted') }); state.reset(projectId); navigate(data.redirectTo); },
+    // newBatch, а НЕ reset: трек, текст и тайминги — вводные проекта, а не батча.
+    // reset стирал их вместе с настройками батча, и «+» на втором батче уводил
+    // человека обратно на загрузку файла — хотя ProjectDetailPage.addBatch
+    // рассчитывает найти их в сторе и открыть сразу этап «Фон».
+    onSuccess: (data) => { push({ variant: 'success', title: t('wizard.page.genStarted') }); state.newBatch(projectId); state.ackCarriedOver(); navigate(data.redirectTo); },
     // 402 — упёрлись в лимит роликов: причина + путь к решению, а не общий «не удалось»
     onError: (error) => {
       const limitReached = error instanceof ApiError && error.status === 402;
@@ -528,6 +533,20 @@ export function WizardPage() {
   // из-за чего ужимался не так, как остальные страницы.
   return (
     <div className="flex min-h-0 flex-1 gap-[20px] max-lg:h-auto max-lg:flex-col md:h-[calc(100dvh_-_2*var(--space-6))] md:flex-none md:py-[calc(var(--rail-pad-y)_-_var(--space-6))]">
+      {/*
+        Новый батч наследует трек, текст и тайминги прошлого — но молча подменять
+        вводные нельзя: человек либо не заметит, что генерит по старому отрывку,
+        либо решит, что визард потерял шаг. Спрашиваем один раз, при входе.
+      */}
+      <Modal open={state.carriedOverInputs} title={t('wizard.page.carriedTitle')} onClose={() => state.ackCarriedOver()}>
+        <p className="text-text-80">{t('wizard.page.carriedText')}</p>
+        <div className="mt-space-5 flex flex-wrap gap-space-3">
+          <Button onClick={() => state.ackCarriedOver()}>{t('wizard.page.carriedKeep')}</Button>
+          <Button variant="ghost" onClick={() => { state.ackCarriedOver(); setStage(1); }}>
+            {t('wizard.page.carriedEdit')}
+          </Button>
+        </div>
+      </Modal>
       <section className="flex min-w-0 flex-1 flex-col gap-[20px]">
         <WizardHeaderCard
           title={headerTitle}

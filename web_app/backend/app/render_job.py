@@ -46,11 +46,15 @@ def _segment(timing: dict[str, Any] | None) -> dict[str, float] | None:
     frm, to = timing.get("from"), timing.get("to")
     if not frm and not to:
         return None
-    return {"from": _mmss(frm), "to": _mmss(to)}
+    return {"from": mmss_seconds(frm), "to": mmss_seconds(to)}
 
 
-def _mmss(v: str | None) -> float | None:
-    """'mm:ss' окно трека → сек."""
+def mmss_seconds(v: str | None) -> float | None:
+    """'mm:ss' окно трека → сек.
+
+    Публичная: тот же разбор нужен ручке кандидатов дропа (`main.api_drops`) —
+    окно отрывка приходит с фронта в этом же формате, и второй парсер рядом
+    гарантированно разъехался бы с этим."""
     if not v:
         return None
     parts = [p for p in str(v).split(":") if p != ""]

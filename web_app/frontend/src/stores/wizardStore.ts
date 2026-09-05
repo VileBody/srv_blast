@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { SavedTrack } from '../lib/types';
-import { DEFAULT_FOOTAGE_TYPE } from '../data/footageTypes';
+import { DEFAULT_FOOTAGE_TYPE, normalizeFootageType } from '../data/footageTypes';
 
 export type BackgroundMode = 'footage' | 'photo' | 'color';
 export type HookKind = 'sound' | 'object' | 'effects' | 'motion' | 'thought';
@@ -36,6 +36,8 @@ export interface WizardStateData {
   timingMode: 'ai' | 'manual';
   timingFrom: string;
   timingTo: string;
+  /** вводные трека перенесены из прошлого батча — визард один раз это проговаривает */
+  carriedOverInputs: boolean;
   /**
    * Разделы фона настраиваются параллельно; пилюли пула — производные от настроенности.
    * «+» в футере не коммитит, а переводит к следующему разделу (правка UX).
@@ -143,6 +145,8 @@ interface WizardStore extends WizardStateData {
   reset: (projectId?: string | null) => void;
   /** Новый батч по тому же треку: сбрасывает только выбор, вводные трека остаются. */
   newBatch: (projectId?: string | null) => void;
+  /** закрыть подсказку «вводные перенесены из прошлого батча» */
+  ackCarriedOver: () => void;
   restoreSession: (projectId: string | null | undefined, stage: number, data: Record<string, unknown>) => void;
   stageData: () => Record<string, unknown>;
 }
@@ -161,6 +165,7 @@ const initialData = (projectId?: string | null): WizardStateData => ({
   timingMode: 'ai',
   timingFrom: '',
   timingTo: '',
+  carriedOverInputs: false,
   background: { mode: 'footage', footage: [], footageType: DEFAULT_FOOTAGE_TYPE, uploads: [], photo: [], photoEffects: false, photoStyle: undefined, color: undefined, strobe: false, glue: undefined },
   hooks: { dropTime: undefined, kind: undefined, configs: {} },
   subtitles: { color: '#f6f5fd', pool: [] },
@@ -212,6 +217,7 @@ export const useWizardStore = create<WizardStore>()(
         // Трек/текст/тайминг — это вводные проекта, а не батча: переспрашивать их незачем.
         // Всё остальное (фон, хуки, субтитры, распределение) собирается заново.
         const fresh = initialData(projectId);
+        const carried = hasTrackInput(state);
         return {
           ...fresh,
           track: state.track,
@@ -221,9 +227,14 @@ export const useWizardStore = create<WizardStore>()(
           timingMode: state.timingMode,
           timingFrom: state.timingFrom,
           timingTo: state.timingTo,
+          // Человеку надо СКАЗАТЬ, что вводные переехали из прошлого батча, и дать
+          // их поменять — иначе он либо не заметит подмену, либо решит, что визард
+          // потерял шаг. Флаг разовый и в localStorage не уезжает.
+          carriedOverInputs: carried,
           stage: 1
         };
       }),
+      ackCarriedOver: () => set({ carriedOverInputs: false }),
       restoreSession: (projectId, stage, raw) => set((state) => {
         // Browser state is newer and wins. The server copy is for a cleared
         // browser or a second device, not for overwriting an active draft.
@@ -241,7 +252,14 @@ export const useWizardStore = create<WizardStore>()(
           timingMode: timing.mode === 'ai' ? 'ai' : 'manual',
           timingFrom: typeof timing.from === 'string' ? timing.from : '',
           timingTo: typeof timing.to === 'string' ? timing.to : '',
-          background: { ...fresh.background, ...((raw.background as Partial<WizardStateData['background']>) ?? {}) },
+          background: (() => {
+            const merged = { ...fresh.background, ...((raw.background as Partial<WizardStateData['background']>) ?? {}) };
+            // Черновик мог быть сохранён на прошлой версии реестра типов футажей
+            // (standard/persons/movies). Приводим здесь, иначе id уедет в render_job
+            // как есть и подбор не найдёт такой план.
+            merged.footageType = normalizeFootageType(merged.footageType);
+            return merged;
+          })(),
           hooks: { ...fresh.hooks, ...((raw.hooks as Partial<WizardStateData['hooks']>) ?? {}) },
           subtitles: { ...fresh.subtitles, ...((raw.subtitles as Partial<WizardStateData['subtitles']>) ?? {}) },
           allocation: { ...fresh.allocation, ...((raw.allocation as Partial<WizardStateData['allocation']>) ?? {}) },

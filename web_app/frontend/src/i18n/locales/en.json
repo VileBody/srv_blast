@@ -408,7 +408,10 @@
       "configuring": "Setting: {{step}}",
       "nameFx": "fx",
       "nameGlue": "transition",
-      "nameStyle": "style"
+      "nameStyle": "style",
+      "dropNeedsClip": "Pick a fragment of the track first — drop candidates are found inside it.",
+      "dropAnalyzing": "Analysing drop moments in the fragment…",
+      "dropManualOnly": "No automatic candidates — set the drop timing manually."
     },
     "subs": {
       "title": "Subtitles",
@@ -450,7 +453,11 @@
       "genStarted": "Generation started",
       "limitReached": "Generation limit reached",
       "genFail": "Failed to start generation",
-      "genFailText": "Check your balance and project."
+      "genFailText": "Check your balance and project.",
+      "carriedTitle": "Use the same inputs?",
+      "carriedText": "The track, lyrics and timings carried over from the previous batch — you can go straight to the settings. Pick another fragment or text if you need a different take.",
+      "carriedKeep": "Continue",
+      "carriedEdit": "Change inputs"
     },
     "sources": {
       "title": "Upload your own sources:",
@@ -517,9 +524,9 @@
   },
   "footage": {
     "type": {
-      "standard": "Standard",
-      "persons": "People",
-      "movies": "Movies"
+      "vertical": "Vertical 9:16",
+      "cine16x9": "Cinematic 16:9",
+      "films": "Movies"
     }
   },
   "limits": {
@@ -673,7 +680,9 @@
     "hashtagsEmpty": "Every suggestion is already in the caption",
     "publishNow": "Right after you publish",
     "publishNowHint": "TikTok posts the video immediately — scheduled publishing is not available yet.",
-    "hashtagBase": "music,newmusic,fyp,foryou,newrelease,artist"
+    "hashtagBase": "music,newmusic,fyp,foryou,newrelease,artist",
+    "soon": "Soon",
+    "soonHint": "TikTok connection is not open yet — it turns on once TikTok review is passed."
   },
   "profile": {
     "update": "Update",

@@ -18,6 +18,12 @@ def _required(name: str) -> str:
     return value
 
 
+def _optional(name: str) -> str:
+    """Значение или пустая строка. Отдельно от `_required`, чтобы «не задано»
+    было явным состоянием, а не отловленным исключением."""
+    return str(os.getenv(name) or "").strip()
+
+
 def _flag(name: str, default: str = "0") -> bool:
     value = str(os.getenv(name, default)).strip()
     if value not in {"0", "1"}:
@@ -100,39 +106,64 @@ class RuntimeSettings:
         if not _required("DATABASE_URL").lower().startswith(("postgres://", "postgresql://")):
             raise RuntimeError("web_runtime_config: prod DATABASE_URL must be PostgreSQL")
         _required("REDIS_URL")
-        for name in (
-            "CREDITS_DB_URL",
-            "TELEGRAM_BOT_TOKEN",
-            "TELEGRAM_BOT_USERNAME",
-            "GOOGLE_CLIENT_ID",
-            "GOOGLE_CLIENT_SECRET",
-            "GOOGLE_REDIRECT_URI",
-            "TIKTOK_CLIENT_KEY",
-            "TIKTOK_CLIENT_SECRET",
-            "TIKTOK_REDIRECT_URI",
-            "TIKTOK_TOKEN_KEY",
-            "TIKTOK_UPLOAD_SOURCE",
-        ):
+        # Ядро: без этого продукта нет. Вход через Telegram — единственный
+        # обязательный способ входа, кредиты и оплата живут в общей БД бота.
+        for name in ("CREDITS_DB_URL", "TELEGRAM_BOT_TOKEN", "TELEGRAM_BOT_USERNAME"):
             _required(name)
-        if _required("TIKTOK_UPLOAD_SOURCE").upper() != "FILE_UPLOAD":
-            raise RuntimeError(
-                "web_runtime_config: production requires TIKTOK_UPLOAD_SOURCE=FILE_UPLOAD "
-                "until a Blast-owned media domain is verified by TikTok"
-            )
         for origin in self.cors_origins:
             if not origin.startswith("https://"):
                 raise RuntimeError(
                     "web_runtime_config: prod CORS origins must use HTTPS"
                 )
-        expected_callbacks = {
-            "GOOGLE_REDIRECT_URI": f"{self.app_url}/api/auth/google/callback",
-            "TIKTOK_REDIRECT_URI": f"{self.app_url}/api/tiktok/callback",
-        }
-        for name, expected in expected_callbacks.items():
-            if _required(name) != expected:
-                raise RuntimeError(
-                    f"web_runtime_config: {name} must be {expected!r}"
-                )
+        self._validate_optional_provider(
+            "Google",
+            required=("GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_REDIRECT_URI"),
+            callback=("GOOGLE_REDIRECT_URI", f"{self.app_url}/api/auth/google/callback"),
+        )
+        self._validate_optional_provider(
+            "TikTok",
+            required=(
+                "TIKTOK_CLIENT_KEY",
+                "TIKTOK_CLIENT_SECRET",
+                "TIKTOK_REDIRECT_URI",
+                "TIKTOK_TOKEN_KEY",
+                "TIKTOK_UPLOAD_SOURCE",
+            ),
+            callback=("TIKTOK_REDIRECT_URI", f"{self.app_url}/api/tiktok/callback"),
+        )
+        if _optional("TIKTOK_CLIENT_KEY") and _optional("TIKTOK_UPLOAD_SOURCE").upper() != "FILE_UPLOAD":
+            raise RuntimeError(
+                "web_runtime_config: production requires TIKTOK_UPLOAD_SOURCE=FILE_UPLOAD "
+                "until a Blast-owned media domain is verified by TikTok"
+            )
+
+    @staticmethod
+    def _validate_optional_provider(
+        title: str, *, required: tuple[str, ...], callback: tuple[str, str]
+    ) -> None:
+        """Google и TikTok — необязательные провайдеры прода.
+
+        Их кабинеты проходят ревью месяцами, и держать из-за этого весь сайт на
+        preview дороже, чем выкатиться без них: вход есть через Telegram, а
+        подключение TikTok на фронте само гаснет по `/api/tiktok/status`
+        (`configured:false`) и по `/api/auth/providers` (`google:false`).
+
+        Но ПОЛОВИНА конфигурации хуже, чем её отсутствие: кнопка появится и
+        приведёт человека на ошибку провайдера. Поэтому либо все переменные
+        группы, либо ни одной — и redirect URI сверяется только когда группа есть.
+        """
+        present = [name for name in required if _optional(name)]
+        if not present:
+            return
+        missing = [name for name in required if not _optional(name)]
+        if missing:
+            raise RuntimeError(
+                f"web_runtime_config: {title} configured partially — missing {missing}. "
+                f"Set all of {list(required)} or none of them."
+            )
+        name, expected = callback
+        if _optional(name) != expected:
+            raise RuntimeError(f"web_runtime_config: {name} must be {expected!r}")
 
 
 SETTINGS = RuntimeSettings.load()

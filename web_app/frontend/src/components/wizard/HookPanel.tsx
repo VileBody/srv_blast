@@ -166,11 +166,18 @@ export function StageHooks() {
   const hooks = useWizardStore((state) => state.hooks);
   const setHooks = useWizardStore((state) => state.setHooks);
   const track = useWizardStore((state) => state.track);
+  const timingMode = useWizardStore((state) => state.timingMode);
+  const timingFrom = useWizardStore((state) => state.timingFrom);
+  const timingTo = useWizardStore((state) => state.timingTo);
   const meQuery = useQuery({ queryKey: ['me'], queryFn: api.me, staleTime: 15_000 });
+  // Окно отрывка — часть ключа: выбрал другой кусок трека → другие кандидаты дропа.
+  // На «ai»-тайминге окна ещё нет, и анализировать нечего (в боте фокус-клип известен
+  // всегда — здесь это состояние «сначала выбери отрывок»).
+  const clipReady = timingMode === 'manual' && Boolean(timingFrom) && Boolean(timingTo);
   const dropsQuery = useQuery({
-    queryKey: ['drops'],
-    queryFn: api.drops,
-    enabled: meQuery.isSuccess && Boolean(meQuery.data.capabilities?.analyzedDrops),
+    queryKey: ['drops', timingFrom, timingTo],
+    queryFn: () => api.drops(timingFrom, timingTo),
+    enabled: meQuery.isSuccess && Boolean(meQuery.data.capabilities?.analyzedDrops) && clipReady,
   });
   const [customDrop, setCustomDrop] = useState(false);
   const [hint, setHint] = useState<HookKind | null>(null);
@@ -187,6 +194,22 @@ export function StageHooks() {
         </h2>
         <span className="wizard-body">{t('wizard.fx.chooseDrop')}</span>
       </div>
+
+      {/*
+        Пока кандидатов нет, ряд состоит из одной кнопки «свой тайминг», и это
+        читается как сломанный экран. Строка ниже объясняет, ЧТО происходит:
+        считаем / нужен отрывок / анализ не удался — во всех случаях руками
+        тайминг ввести можно, и это надо сказать вслух.
+      */}
+      {drops.length === 0 && (
+        <p className="mt-[20px] shrink-0 text-[16px] leading-[1.3] text-text-60">
+          {!clipReady
+            ? t('wizard.fx.dropNeedsClip')
+            : dropsQuery.isFetching
+              ? t('wizard.fx.dropAnalyzing')
+              : t('wizard.fx.dropManualOnly')}
+        </p>
+      )}
 
       {/* Тайминг дропа (Figma 606:217): панель 620×60, активный чип — пил во всю высоту */}
       <div className="mt-[20px] flex h-[60px] shrink-0 items-stretch rounded-r15 bg-grad-soft-10">

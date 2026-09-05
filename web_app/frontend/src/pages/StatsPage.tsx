@@ -404,12 +404,19 @@ export function StatsPage() {
         <div className="flex items-start justify-between gap-space-4">
           <div>
             <h1 className="text-[32px] font-[400] leading-none text-text">{t('stats.title')}</h1>
-            <span className="mt-[16px] flex items-center gap-[10px]">
-              <span className="h-[21px] w-[21px] shrink-0 overflow-hidden rounded-full bg-accent-20">
-                {meQuery.data?.user.avatarUrl && <img src={meQuery.data.user.avatarUrl} alt="" className="h-full w-full object-cover" />}
+            {/*
+              Строка «@ник» — это ПОДПИСЬ ПОДКЛЮЧЁННОГО TikTok-аккаунта, поэтому без него её нет.
+              Раньше здесь стоял фолбэк на artistNick/name, и на экране статистики висел «@»
+              с ником из аккаунта Blast — читалось как «подключён чужой тикток».
+            */}
+            {tiktok?.handle && (
+              <span className="mt-[16px] flex items-center gap-[10px]">
+                <span className="h-[21px] w-[21px] shrink-0 overflow-hidden rounded-full bg-accent-20">
+                  {meQuery.data?.user.avatarUrl && <img src={meQuery.data.user.avatarUrl} alt="" className="h-full w-full object-cover" />}
+                </span>
+                <span className="text-[16px] font-[400] leading-none text-text-80">@{tiktok.handle}</span>
               </span>
-              <span className="text-[16px] font-[400] leading-none text-text-80">@{tiktok?.handle || meQuery.data?.user.artistNick || meQuery.data?.user.name || '—'}</span>
-            </span>
+            )}
           </div>
           {/* без подключённого TikTok цифр нет в принципе — предлагаем подключить */}
           {hasStats ? (

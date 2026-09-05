@@ -107,7 +107,11 @@ export function SourcesModal({
     return () => window.removeEventListener('keydown', onKey);
   }, [open, onClose]);
 
-  useEffect(() => { if (open) { setTab('qr'); setCopied(false); } }, [open]);
+  // Открываемся на вкладке «с ПК»: это единственный путь, который сейчас реально
+  // грузит файл. Вкладка QR держит геометрию макета, но ссылка в ней — заглушка
+  // (одноразовый токен загрузки с телефона бэкенд пока не выдаёт), и стартовать
+  // с неё значит показывать человеку нерабочую ссылку первым экраном.
+  useEffect(() => { if (open) { setTab('pc'); setCopied(false); } }, [open]);
 
   if (!open) return null;
 
@@ -147,8 +151,10 @@ export function SourcesModal({
           {tab === 'qr' ? <QrSlot url={shareUrl} /> : <DropSlot onFiles={onFiles} />}
         </div>
 
-        {/* инпут ссылки 320×60 r10 «whitey» + копи-кнопка 60×60 (Figma 760:2586) */}
-        <div className="mt-[40px] flex h-[60px] w-[320px] shrink-0 items-center gap-[3px]">
+        {/* инпут ссылки 320×60 r10 «whitey» + копи-кнопка 60×60 (Figma 760:2586).
+            Пока эндпоинта одноразовой ссылки нет, показываем её только на вкладке QR
+            и подписываем как недоступную — копировать нерабочий адрес незачем. */}
+        <div className="mt-[40px] flex h-[60px] w-[320px] shrink-0 items-center gap-[3px]" hidden={tab === 'pc'}>
           <div className="flex h-full min-w-0 flex-1 items-center rounded-r10 bg-grad-whitey px-[17px]">
             <input
               readOnly
