@@ -37,7 +37,10 @@ def test_public_app_has_safe_test_and_explicit_production_entrypoints() -> None:
     assert 'Command("warmup_stats")' in src
     assert 'Command("warmup_send")' in src
     assert 'command_parts[1].strip().upper() == "CONFIRM"' in src
-    assert "warmup_stage_1_failed" in src
+    assert "filter_warmup_unreached" in src
+    assert "seed_broadcast_deliveries" in src
+    assert 'created_by=f"warmup:{WARMUP_CAMPAIGN}"' in src
+    assert 'asyncio.create_task(_run(), name="warmup_broadcast_stage_1")' not in src
 
 
 def test_progress_is_separated_between_test_and_production() -> None:
@@ -47,3 +50,12 @@ def test_progress_is_separated_between_test_and_production() -> None:
     assert "GREATEST(warmup_progress.stage, EXCLUDED.stage)" in src
     assert "VALUES ($1, $2, $3, $4::SMALLINT," in src
     assert "CASE WHEN $4::SMALLINT >= 3 THEN NOW() END" in src
+    assert "async def filter_warmup_unreached" in src
+    assert "async def get_broadcast_by_title" in src
+
+
+def test_broadcast_sender_supports_warmup_callback_buttons_and_progress() -> None:
+    src = Path("services/tg_bot_public/broadcast_sender.py").read_text(encoding="utf-8")
+    assert 'callback_data = str(btn.get("callback_data", "")).strip()' in src
+    assert 'bc.get("created_by") == f"warmup:{WARMUP_CAMPAIGN}"' in src
+    assert "await self._db.advance_warmup_stage(" in src
