@@ -117,11 +117,13 @@ class RuntimeSettings:
                 )
         self._validate_optional_provider(
             "Google",
+            credentials=("GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"),
             required=("GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_REDIRECT_URI"),
             callback=("GOOGLE_REDIRECT_URI", f"{self.app_url}/api/auth/google/callback"),
         )
         self._validate_optional_provider(
             "TikTok",
+            credentials=("TIKTOK_CLIENT_KEY", "TIKTOK_CLIENT_SECRET"),
             required=(
                 "TIKTOK_CLIENT_KEY",
                 "TIKTOK_CLIENT_SECRET",
@@ -139,7 +141,11 @@ class RuntimeSettings:
 
     @staticmethod
     def _validate_optional_provider(
-        title: str, *, required: tuple[str, ...], callback: tuple[str, str]
+        title: str,
+        *,
+        credentials: tuple[str, ...],
+        required: tuple[str, ...],
+        callback: tuple[str, str],
     ) -> None:
         """Google и TikTok — необязательные провайдеры прода.
 
@@ -151,9 +157,14 @@ class RuntimeSettings:
         Но ПОЛОВИНА конфигурации хуже, чем её отсутствие: кнопка появится и
         приведёт человека на ошибку провайдера. Поэтому либо все переменные
         группы, либо ни одной — и redirect URI сверяется только когда группа есть.
+
+        «Группа задана» определяется по `credentials` — тому, что выдают в
+        кабинете, — а НЕ по всему списку. Redirect URI, scopes и Fernet-ключ
+        заполняются заранее и вместе с шаблоном env: считать их признаком
+        включённого провайдера значило бы требовать client_id у всех, кто просто
+        подготовил файл.
         """
-        present = [name for name in required if _optional(name)]
-        if not present:
+        if not any(_optional(name) for name in credentials):
             return
         missing = [name for name in required if not _optional(name)]
         if missing:
