@@ -229,6 +229,7 @@ class ProjectUpdatePayload(BaseModel):
 
 class PaymentPayload(BaseModel):
     packageType: str = "BLAST"
+    idempotencyKey: str = Field(min_length=32, max_length=128)
     projectId: str | None = None
     name: str | None = None
     coverChoice: str = "auto"
@@ -637,6 +638,8 @@ def api_delete_project(project_id: str) -> dict[str, Any]:
 @app.post("/api/payments/create-order", tags=["payments"])
 async def api_create_order(payload: PaymentPayload) -> dict[str, Any]:
     if RUNTIME.backend == "production":
+        from .billing_backend import PaymentInitError
+
         tg_id = _telegram_chat_id()
         try:
             order = await _billing_backend().create_order(
@@ -644,7 +647,13 @@ async def api_create_order(payload: PaymentPayload) -> dict[str, Any]:
                 package_type=payload.packageType,
                 email=str(store.USER.get("email") or store.USER.get("googleEmail") or ""),
                 recurrent_accepted=payload.recurrentAccepted,
+                idempotency_key=payload.idempotencyKey,
             )
+        except PaymentInitError as exc:
+            raise HTTPException(
+                status_code=exc.status_code,
+                detail={"code": exc.code, "message": str(exc)},
+            ) from exc
         except Exception as exc:
             raise HTTPException(
                 status_code=502,

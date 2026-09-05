@@ -6,17 +6,24 @@ and tables, keyed by the verified Telegram chat id.
 """
 from __future__ import annotations
 
+import hashlib
 import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
-from uuid import uuid4
 
 from .runtime import SETTINGS
 
 
 class BillingError(RuntimeError):
     pass
+
+
+class PaymentInitError(BillingError):
+    def __init__(self, code: str, message: str, *, status_code: int) -> None:
+        super().__init__(message)
+        self.code = str(code)
+        self.status_code = int(status_code)
 
 
 class InsufficientCredits(BillingError):
@@ -297,6 +304,7 @@ class BillingBackend:
         package_type: str,
         email: str,
         recurrent_accepted: bool,
+        idempotency_key: str,
     ) -> dict[str, str]:
         plan = PLANS.get(str(package_type or "").upper())
         if plan is None:
@@ -304,14 +312,49 @@ class BillingBackend:
         recurrent = plan.kind == "subscription"
         if recurrent and not recurrent_accepted:
             raise BillingError("recurrent payment consent is required for BLAST")
-        order_id = f"{int(tg_id)}-{plan.payment_name}-web{'sub' if recurrent else ''}{uuid4().hex[:8]}"
-        if recurrent:
-            await self._db.create_recurrent_payment(
-                order_id, int(tg_id), plan.price_rub, plan.payment_name
+        clean_key = str(idempotency_key or "").strip()
+        if not clean_key:
+            raise PaymentInitError(
+                "payment_idempotency_required",
+                "payment idempotency key is required",
+                status_code=422,
             )
-        else:
-            await self._db.create_payment(
-                order_id, int(tg_id), plan.price_rub, plan.payment_name
+        digest = hashlib.sha256(f"{int(tg_id)}:{clean_key}".encode("utf-8")).hexdigest()[:16]
+        order_id = f"{int(tg_id)}-{plan.code.lower()}-web-{digest}"
+        intent, created = await self._db.claim_web_payment_intent(
+            order_id=order_id,
+            tg_id=int(tg_id),
+            amount_rub=plan.price_rub,
+            package=plan.payment_name,
+            recurrent=recurrent,
+            idempotency_key=clean_key,
+        )
+        if (
+            int(intent.get("tg_id", 0)) != int(tg_id)
+            or int(intent.get("amount_rub", 0)) != plan.price_rub
+            or str(intent.get("package") or "") != plan.payment_name
+            or bool(intent.get("is_recurrent", False)) != recurrent
+        ):
+            raise PaymentInitError(
+                "payment_idempotency_conflict",
+                "payment idempotency key was already used for another order",
+                status_code=409,
+            )
+        if not created:
+            saved_url = str(intent.get("payment_url") or "").strip()
+            if saved_url:
+                return {"orderId": str(intent["order_id"]), "paymentUrl": saved_url}
+            status = str(intent.get("status") or "").strip().upper()
+            code = {
+                "INIT_IN_PROGRESS": "payment_init_in_progress",
+                "INIT_FAILED": "payment_init_failed",
+                "INIT_UNKNOWN": "payment_init_unknown",
+            }.get(status, "payment_init_unknown")
+            status_code = 409 if status == "INIT_IN_PROGRESS" else 503
+            raise PaymentInitError(
+                code,
+                f"payment order {intent['order_id']} has no reusable payment URL (status={status or 'UNKNOWN'})",
+                status_code=status_code,
             )
         try:
             url = await self._tbank.create_payment(
@@ -328,12 +371,41 @@ class BillingBackend:
                 success_url=f"{SETTINGS.app_url}/app/pricing?payment=success",
                 fail_url=f"{SETTINGS.app_url}/app/pricing?payment=failed",
             )
-        except Exception:
-            await self._db.update_payment_status(order_id, "INIT_FAILED")
-            raise
+        except Exception as exc:
+            # A transport failure is ambiguous: T-Bank may have accepted Init
+            # before our client lost the response.  Keep this exact order for
+            # reconciliation and never create a second one implicitly.
+            await self._db.mark_web_payment_init(order_id, "INIT_UNKNOWN", str(exc))
+            raise PaymentInitError(
+                "payment_init_unknown",
+                f"T-Bank Init outcome is unknown for order {order_id}",
+                status_code=503,
+            ) from exc
         if not url:
-            await self._db.update_payment_status(order_id, "INIT_FAILED")
-            raise BillingError("T-Bank Init did not return PaymentURL")
+            await self._db.mark_web_payment_init(
+                order_id,
+                "INIT_FAILED",
+                "T-Bank Init did not return PaymentURL",
+            )
+            raise PaymentInitError(
+                "payment_init_failed",
+                "T-Bank Init did not return PaymentURL",
+                status_code=502,
+            )
+        try:
+            saved = await self._db.complete_web_payment_init(order_id, url)
+        except Exception as exc:
+            raise PaymentInitError(
+                "payment_init_unknown",
+                f"payment link could not be persisted for order {order_id}",
+                status_code=503,
+            ) from exc
+        if not saved:
+            raise PaymentInitError(
+                "payment_init_unknown",
+                f"payment order {order_id} changed before its link was persisted",
+                status_code=409,
+            )
         return {"orderId": order_id, "paymentUrl": url}
 
     async def cancel(self, tg_id: int) -> bool:

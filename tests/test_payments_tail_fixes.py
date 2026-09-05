@@ -155,6 +155,35 @@ class _FakeCreditsDBNotify:
             self.payment["payment_id"] = str(payment_id)
         return True
 
+    async def confirm_payment_once(
+        self,
+        order_id: str,
+        payment_id: str,
+        *,
+        actor: str,
+    ) -> dict[str, Any]:
+        if str(self.payment["status"]).upper() == "CONFIRMED":
+            return {**self.payment, "applied": False, "credits_added": 0, "tracks_added": 0}
+        self.payment["status"] = "CONFIRMED"
+        self.payment["payment_id"] = str(payment_id)
+        credits = {"Триал": 5, "Бласт": 100, "Глоу": 400, "Импульс": 100_000}[self.payment["package"]]
+        self.add_calls.append(
+            {
+                "tg_id": int(self.payment["tg_id"]),
+                "amount": credits,
+                "reason": "payment",
+                "admin_note": f"order={order_id}",
+                "actor": str(actor),
+                "order_id": str(order_id),
+            }
+        )
+        return {
+            **self.payment,
+            "applied": True,
+            "credits_added": credits,
+            "tracks_added": 0,
+        }
+
     async def get_payment(self, order_id: str) -> dict[str, Any]:
         return dict(self.payment)
 

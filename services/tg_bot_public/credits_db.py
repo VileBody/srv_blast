@@ -112,6 +112,9 @@ CREATE TABLE IF NOT EXISTS payments (
     package       TEXT      NOT NULL DEFAULT '',
     status        TEXT      NOT NULL DEFAULT 'NEW',
     payment_id    TEXT      NOT NULL DEFAULT '',
+    payment_url   TEXT      NOT NULL DEFAULT '',
+    idempotency_key TEXT    NOT NULL DEFAULT '',
+    init_error    TEXT      NOT NULL DEFAULT '',
 
     utm_source    TEXT      NOT NULL DEFAULT '',
     utm_medium    TEXT      NOT NULL DEFAULT '',
@@ -381,6 +384,16 @@ class CreditsDB:
         # Recurrent payments support
         await conn.execute("ALTER TABLE payments ADD COLUMN IF NOT EXISTS rebill_id TEXT NOT NULL DEFAULT ''")
         await conn.execute("ALTER TABLE payments ADD COLUMN IF NOT EXISTS is_recurrent BOOLEAN NOT NULL DEFAULT FALSE")
+        # Web checkout persists its Init result.  The partial unique index makes
+        # one browser attempt map to one acquiring order without changing the
+        # Telegram bot's existing rows, whose idempotency_key stays empty.
+        await conn.execute("ALTER TABLE payments ADD COLUMN IF NOT EXISTS payment_url TEXT NOT NULL DEFAULT ''")
+        await conn.execute("ALTER TABLE payments ADD COLUMN IF NOT EXISTS idempotency_key TEXT NOT NULL DEFAULT ''")
+        await conn.execute("ALTER TABLE payments ADD COLUMN IF NOT EXISTS init_error TEXT NOT NULL DEFAULT ''")
+        await conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_pay_web_idempotency "
+            "ON payments(tg_id, idempotency_key) WHERE idempotency_key <> ''"
+        )
 
         await conn.execute("CREATE TABLE IF NOT EXISTS utm_touches ("
                            "id BIGSERIAL PRIMARY KEY,"
@@ -1751,6 +1764,93 @@ class CreditsDB:
 
     # Payments
 
+    async def claim_web_payment_intent(
+        self,
+        *,
+        order_id: str,
+        tg_id: int,
+        amount_rub: int,
+        package: str,
+        recurrent: bool,
+        idempotency_key: str,
+    ) -> tuple[Dict[str, Any], bool]:
+        """Create or retrieve the one payment row for a web checkout attempt.
+
+        The INSERT and conflict lookup share a transaction.  A concurrent
+        request with the same (tg_id, idempotency_key) waits for the winner and
+        receives that exact row; it never creates another acquiring order.
+        """
+        clean_key = _norm_text(idempotency_key, max_len=128)
+        if not clean_key:
+            raise ValueError("web payment idempotency key is required")
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                row = await conn.fetchrow(
+                    "INSERT INTO payments "
+                    "(order_id, tg_id, amount_rub, package, status, is_recurrent, idempotency_key) "
+                    "VALUES ($1, $2, $3, $4, 'INIT_IN_PROGRESS', $5, $6) "
+                    "ON CONFLICT DO NOTHING "
+                    "RETURNING id, order_id, tg_id, amount_rub, package, status, payment_id, "
+                    "rebill_id, is_recurrent, payment_url, idempotency_key, init_error, "
+                    "created_at, updated_at",
+                    str(order_id),
+                    int(tg_id),
+                    int(amount_rub),
+                    str(package or ""),
+                    bool(recurrent),
+                    clean_key,
+                )
+                created = row is not None
+                if row is None:
+                    row = await conn.fetchrow(
+                        "SELECT id, order_id, tg_id, amount_rub, package, status, payment_id, "
+                        "rebill_id, is_recurrent, payment_url, idempotency_key, init_error, "
+                        "created_at, updated_at FROM payments "
+                        "WHERE tg_id = $1 AND idempotency_key = $2 FOR UPDATE",
+                        int(tg_id),
+                        clean_key,
+                    )
+                if row is None:
+                    raise RuntimeError("web payment intent conflict row is unavailable")
+                return dict(row), created
+
+    async def complete_web_payment_init(self, order_id: str, payment_url: str) -> bool:
+        """Persist the successful Init response before it reaches the browser."""
+        clean_url = str(payment_url or "").strip()
+        if not clean_url:
+            raise ValueError("payment URL is required")
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            tag = await conn.execute(
+                "UPDATE payments SET status = 'NEW', payment_url = $1, init_error = '', updated_at = NOW() "
+                "WHERE order_id = $2 AND status = 'INIT_IN_PROGRESS'",
+                clean_url,
+                str(order_id),
+            )
+        return _rowcount_from_tag(tag) == 1
+
+    async def mark_web_payment_init(
+        self,
+        order_id: str,
+        status: str,
+        error: str = "",
+    ) -> bool:
+        """Record an explicit failed or ambiguous Init outcome."""
+        clean_status = str(status or "").strip().upper()
+        if clean_status not in {"INIT_FAILED", "INIT_UNKNOWN"}:
+            raise ValueError(f"invalid web payment init status: {status!r}")
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            tag = await conn.execute(
+                "UPDATE payments SET status = $1, init_error = $2, updated_at = NOW() "
+                "WHERE order_id = $3 AND status = 'INIT_IN_PROGRESS'",
+                clean_status,
+                _norm_text(error, max_len=512),
+                str(order_id),
+            )
+        return _rowcount_from_tag(tag) == 1
+
     async def create_payment(
         self,
         order_id: str,
@@ -1803,7 +1903,7 @@ class CreditsDB:
         async with pool.acquire() as conn:
             r = await conn.fetchrow(
                 "SELECT id, order_id, tg_id, amount_rub, package, status, payment_id, "
-                "rebill_id, is_recurrent, "
+                "rebill_id, is_recurrent, payment_url, idempotency_key, init_error, "
                 "utm_source, utm_medium, utm_campaign, utm_content, utm_term, utm_payload, "
                 "created_at, updated_at "
                 "FROM payments WHERE order_id = $1",
@@ -1821,6 +1921,9 @@ class CreditsDB:
             "payment_id": str(r["payment_id"] or ""),
             "rebill_id": str(r["rebill_id"] or ""),
             "is_recurrent": bool(r["is_recurrent"]),
+            "payment_url": str(r["payment_url"] or ""),
+            "idempotency_key": str(r["idempotency_key"] or ""),
+            "init_error": str(r["init_error"] or ""),
             "utm_source": str(r["utm_source"] or ""),
             "utm_medium": str(r["utm_medium"] or ""),
             "utm_campaign": str(r["utm_campaign"] or ""),
@@ -1830,6 +1933,129 @@ class CreditsDB:
             "created_at": _fmt_ts(r["created_at"]),
             "updated_at": _fmt_ts(r["updated_at"]),
         }
+
+    async def confirm_payment_once(
+        self,
+        order_id: str,
+        payment_id: str,
+        *,
+        actor: str,
+    ) -> Dict[str, Any]:
+        """Confirm one acquiring payment and grant all entitlements atomically.
+
+        Webhook delivery and the polling loop can observe CONFIRMED at the same
+        time.  Locking the payment row keeps the status transition, video
+        credits, and unique-track quota in one transaction, so only the winner
+        applies the grant.  The return value always describes the committed
+        payment and balances; ``applied`` is false for a replay.
+        """
+        clean_order_id = _norm_text(order_id, max_len=128)
+        clean_payment_id = _norm_text(payment_id, max_len=128)
+        clean_actor = _norm_text(actor, max_len=64)
+        if not clean_order_id:
+            raise ValueError("payment order id is required")
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                payment = await conn.fetchrow(
+                    "SELECT id, order_id, tg_id, amount_rub, package, status, payment_id, "
+                    "rebill_id, is_recurrent, payment_url, idempotency_key, init_error, "
+                    "created_at, updated_at FROM payments WHERE order_id = $1 FOR UPDATE",
+                    clean_order_id,
+                )
+                if payment is None:
+                    raise ValueError(f"unknown payment order: {clean_order_id}")
+
+                tg_id = int(payment["tg_id"])
+                package = str(payment["package"] or "")
+                current_status = str(payment["status"] or "").strip().upper()
+                credits_to_add = package_video_credits(package)
+                package_code = normalize_package_code(package)
+                track_base = {"15": 4, "30": 10, "50": 24}.get(package_code, 0)
+
+                await conn.execute(
+                    "INSERT INTO users (tg_id, username) VALUES ($1, '') ON CONFLICT (tg_id) DO NOTHING",
+                    tg_id,
+                )
+                if current_status == "CONFIRMED":
+                    balances = await conn.fetchrow(
+                        "SELECT credits, track_credits FROM users WHERE tg_id = $1",
+                        tg_id,
+                    )
+                    result = dict(payment)
+                    result.update(
+                        {
+                            "applied": False,
+                            "credits_added": 0,
+                            "tracks_added": 0,
+                            "credits_balance": int(balances["credits"] or 0),
+                            "track_balance": int(balances["track_credits"] or 0),
+                        }
+                    )
+                    return result
+
+                if current_status in {
+                    "REJECTED",
+                    "REFUNDED",
+                    "PARTIAL_REFUNDED",
+                    "REVERSED",
+                    "DEADLINE_EXPIRED",
+                    "CANCELED",
+                }:
+                    raise ValueError(
+                        f"cannot confirm terminal payment order {clean_order_id} from {current_status}"
+                    )
+
+                prior_track_payments = 0
+                if track_base:
+                    prior_track_payments = int(
+                        await conn.fetchval(
+                            "SELECT COUNT(*) FROM payments "
+                            "WHERE tg_id = $1 AND UPPER(status) = 'CONFIRMED' "
+                            "AND package IN ('15', 'Бласт', '30', 'Глоу', '50', 'Импульс')",
+                            tg_id,
+                        )
+                        or 0
+                    )
+                tracks_to_add = track_base if track_base and prior_track_payments == 0 else (1 if track_base else 0)
+
+                await conn.execute(
+                    "UPDATE payments SET status = 'CONFIRMED', payment_id = $1, updated_at = NOW() "
+                    "WHERE order_id = $2",
+                    clean_payment_id,
+                    clean_order_id,
+                )
+                balances = await conn.fetchrow(
+                    "UPDATE users SET credits = credits + $1, "
+                    "track_credits = track_credits + $2, updated_at = NOW() "
+                    "WHERE tg_id = $3 RETURNING credits, track_credits",
+                    int(credits_to_add),
+                    int(tracks_to_add),
+                    tg_id,
+                )
+                await conn.execute(
+                    "INSERT INTO transactions "
+                    "(tg_id, amount, reason, admin_note, actor, context_order_id) "
+                    "VALUES ($1, $2, 'payment', $3, $4, $5)",
+                    tg_id,
+                    int(credits_to_add),
+                    f"pkg={package} order={clean_order_id} amount={int(payment['amount_rub'])}₽",
+                    clean_actor,
+                    clean_order_id,
+                )
+                result = dict(payment)
+                result.update(
+                    {
+                        "status": "CONFIRMED",
+                        "payment_id": clean_payment_id,
+                        "applied": True,
+                        "credits_added": int(credits_to_add),
+                        "tracks_added": int(tracks_to_add),
+                        "credits_balance": int(balances["credits"] or 0),
+                        "track_balance": int(balances["track_credits"] or 0),
+                    }
+                )
+                return result
 
     async def get_payments(self, tg_id: int = 0, limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
         pool = self._pool_or_fail()

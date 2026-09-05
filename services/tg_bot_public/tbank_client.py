@@ -26,6 +26,10 @@ TBANK_CA_CERT_PATHS = (
 )
 
 
+class TBankTransportError(RuntimeError):
+    """The acquiring server did not provide a conclusive Init response."""
+
+
 class TBankClient:
     def __init__(self, terminal_key: str, password: str, notify_url: str = "") -> None:
         self._terminal_key = terminal_key
@@ -135,7 +139,7 @@ class TBankClient:
             resp = await client.post(TBANK_INIT_URL, json=params)
             if resp.status_code != 200:
                 log.error("tbank init failed status=%s body=%s", resp.status_code, resp.text)
-                return None
+                raise TBankTransportError(f"T-Bank Init returned HTTP {resp.status_code}")
             data = resp.json()
             if not data.get("Success"):
                 log.error(

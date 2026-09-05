@@ -4638,9 +4638,23 @@ def build_app(
 
         current_status = str(existing_payment.get("status", "")).strip().upper() if existing_payment else ""
         should_apply_status = _should_apply_payment_status_update(current_status, status)
+        confirmation = None
         if should_apply_status:
-            await credits_db.update_payment_status(order_id, status, payment_id)
-            payment = await credits_db.get_payment(order_id)
+            if status == "CONFIRMED":
+                try:
+                    confirmation = await credits_db.confirm_payment_once(
+                        order_id,
+                        payment_id,
+                        actor="tbank_webhook",
+                    )
+                except ValueError as exc:
+                    log.error("tbank notify: confirmation failed order=%s err=%s", order_id, exc)
+                    return PlainTextResponse(str(exc), status_code=500)
+                should_apply_status = bool(confirmation.get("applied", False))
+                payment = await credits_db.get_payment(order_id)
+            else:
+                await credits_db.update_payment_status(order_id, status, payment_id)
+                payment = await credits_db.get_payment(order_id)
         else:
             payment = existing_payment
             log.info(
@@ -4662,7 +4676,7 @@ def build_app(
         amount_rub = payment["amount_rub"] if payment else 0
 
         # Notify manager about every status change
-        if bot_ref and bot_ref[0] and settings.manager_chat_id and payment:
+        if should_apply_status and bot_ref and bot_ref[0] and settings.manager_chat_id and payment:
             status_labels = {
                 "CONFIRMED": "Оплачено",
                 "AUTHORIZED": "Авторизовано",
@@ -4689,18 +4703,10 @@ def build_app(
 
         # On confirmed payment — grant credits & redirect to generation
         if should_apply_status and effective_status == "CONFIRMED" and current_status != "CONFIRMED" and payment:
-            credits_to_add = (
-                confirmed_credits
-                if confirmed_credits is not None
-                else package_video_credits(pkg)
-            )
-
-            await credits_db.add_credits(
-                tg_id, credits_to_add,
-                reason="payment",
-                admin_note=f"pkg={pkg} order={order_id} amount={amount_rub}\u20bd",
-                actor="tbank_webhook",
-                order_id=order_id,
+            credits_to_add = int(
+                confirmation.get("credits_added", confirmed_credits or 0)
+                if confirmation
+                else (confirmed_credits or 0)
             )
             await credits_db.log_event(tg_id, "payment_confirmed", f"{pkg} \u2014 {amount_rub}\u20bd")
             # Subscription bootstrap for recurrent payments. RebillId arrives in

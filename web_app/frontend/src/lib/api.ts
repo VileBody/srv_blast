@@ -187,7 +187,7 @@ export const api = {
     return request<{ coverUrl: string }>(`/api/projects/${projectId}/cover`, { method: 'POST', body: form });
   },
 
-  createOrder: (payload: { packageType: string; projectId?: string; name?: string; coverChoice?: string; recurrentAccepted?: boolean }) =>
+  createOrder: (payload: { packageType: string; idempotencyKey: string; projectId?: string; name?: string; coverChoice?: string; recurrentAccepted?: boolean }) =>
     request<{ orderId: string; paymentUrl: string; project?: Project | null }>('/api/payments/create-order', {
       method: 'POST',
       body: JSON.stringify(payload)

@@ -165,6 +165,6 @@ def test_subscription_payment_failure_keeps_confirm_stage(tmp_path: Path) -> Non
         assert "Не удалось сформировать ссылку" in body
         assert "свяжется наш менеджер" not in body
         assert len(app.credits_db.payment_updates) == 1
-        assert app.credits_db.payment_updates[0][1] == "INIT_FAILED"
+        assert app.credits_db.payment_updates[0][1] == "INIT_UNKNOWN"
 
     asyncio.run(_run())
