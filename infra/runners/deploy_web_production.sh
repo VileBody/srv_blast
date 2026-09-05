@@ -103,6 +103,16 @@ docker run --rm -v /etc/nginx/sites-enabled:/dst alpine:3.20 \
 host_exec nginx -t
 host_exec systemctl reload nginx
 
+# Компоуз preview требует BLAST_WEB_SESSION_SECRET — это секрет preview-workflow,
+# и в production-прогоне его нет. Здесь preview зовётся ТОЛЬКО для stop/start/down,
+# то есть для команд жизненного цикла уже созданных контейнеров: значение переменной
+# в них не участвует и в конфиг контейнера не попадает. Без заглушки `set -e` ронял
+# деплой на первом же обращении к preview — раньше, чем production успевал подняться,
+# и (что хуже) тем же способом сломался бы откат.
+preview_compose() {
+  BLAST_WEB_SESSION_SECRET="${BLAST_WEB_SESSION_SECRET:-lifecycle-only-unused}"     docker compose --project-name blast-web-preview -f "$PREVIEW_COMPOSE_FILE" "$@"
+}
+
 export BLAST_WEB_IMAGE_TAG="${GITHUB_SHA:-local}"
 export BLAST_WEB_ENV_FILE="$ENV_FILE"
 docker compose --project-name blast-web -f "$COMPOSE_FILE" config >/dev/null
@@ -111,13 +121,13 @@ docker compose --project-name blast-web -f "$COMPOSE_FILE" build --pull
 preview_running=0
 if docker inspect -f '{{.State.Running}}' blast-web-preview-frontend 2>/dev/null | grep -qx true; then
   preview_running=1
-  docker compose --project-name blast-web-preview -f "$PREVIEW_COMPOSE_FILE" stop web
+  preview_compose stop web
 fi
 
 rollback_preview() {
   if [[ "$preview_running" == "1" ]]; then
     docker compose --project-name blast-web -f "$COMPOSE_FILE" stop web api || true
-    docker compose --project-name blast-web-preview -f "$PREVIEW_COMPOSE_FILE" start api web || true
+    preview_compose start api web || true
   fi
 }
 
@@ -142,6 +152,6 @@ if [[ "$dev_status" != "404" ]]; then
 fi
 
 wait_http "https://${DOMAIN}/healthz" '"backend":"production"' 30
-docker compose --project-name blast-web-preview -f "$PREVIEW_COMPOSE_FILE" down --remove-orphans || true
+preview_compose down --remove-orphans || true
 docker compose --project-name blast-web -f "$COMPOSE_FILE" ps
 echo "[web-production] ready url=https://${DOMAIN}"
