@@ -281,7 +281,7 @@ def test_catalog_parsing_keeps_and_validates_selector(monkeypatch: pytest.Monkey
     """`selector` обязан пережить разбор каталога.
 
     Разбор пересобирает запись из белого списка полей, и selector в нём сначала
-    отсутствовал — карта selector_by_name получалась пустой, ProductionConfig.load
+    отсутствовал — карта selector_by_mode получалась пустой, ProductionConfig.load
     падал на «ни selector, ни маппинга артиста», а если бы не падал, выбор бакета
     снова ни на что не влиял бы. Ловим это на уровне парсера, а не на проде.
     """
@@ -354,13 +354,16 @@ def test_bucket_selector_pins_rotation_and_geometry(monkeypatch: pytest.MonkeyPa
                 },
             },
         ),
-        selector_by_name={
-            "Нью-Йорк": {
-                "rotationTheme": "collection",
-                "rotationTagsGroup": "New_York",
-                "renderPreset": "wide",
-                "bgMode": "footage",
-            }
+        selector_by_mode={
+            "footage": {
+                "Нью-Йорк": {
+                    "rotationTheme": "collection",
+                    "rotationTagsGroup": "New_York",
+                    "renderPreset": "wide",
+                    "bgMode": "footage",
+                }
+            },
+            "photo": {},
         },
         default_artist_id="electro_synthwave",
     )
@@ -399,6 +402,45 @@ def test_vertical_stays_vertical_without_selector(monkeypatch: pytest.MonkeyPatc
     assert "rotation_tags_group" not in payload
     assert payload["render_preset"] == "vertical"
     assert payload["footage_artist_id"] == "electro_synthwave"
+
+
+def test_same_label_in_footage_and_photo_does_not_cross_wire(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Одинаковая подпись в двух каталогах не должна уводить выбор в чужой рендер.
+
+    В боевом каталоге такие есть: «Тёмный лес / туман» и «Портрет девушки /
+    светлый» встречаются и в футаже, и в фото. В общем словаре по имени фото
+    затирало футаж, и выбор футажа уезжал бы в фото-флоу (bg_mode=photo,
+    геометрия 4:3) — молча, без единой ошибки.
+    """
+    module = _module(monkeypatch)
+    shared = "Тёмный лес / туман"
+    config = dataclasses.replace(
+        _config(module),
+        selector_by_mode={
+            "footage": {shared: {
+                "rotationTheme": "visual", "rotationTagsGroup": "forest_fog_dark",
+                "renderPreset": "vertical", "bgMode": "footage",
+            }},
+            "photo": {shared: {
+                "rotationTheme": "photo", "rotationTagsGroup": "forest_fog_dark",
+                "renderPreset": "vertical", "bgMode": "photo",
+            }},
+        },
+        default_artist_id="electro_synthwave",
+    )
+    backend = _backend(module, config)
+
+    job = _job()
+    variation = job["renderJob"]["variations"][0]
+    variation["background"] = {"mode": "footage", "groups": [shared]}
+    payload = backend._request_payload(job=job, variation=variation, index=1, total=1, master_id=None)
+    assert payload["bg_mode"] == "footage"
+    assert payload["rotation_theme"] == "visual"
+
+    variation["background"] = {"mode": "photo", "groups": [shared]}
+    payload = backend._request_payload(job=job, variation=variation, index=1, total=1, master_id=None)
+    assert payload["bg_mode"] == "photo"
+    assert payload["rotation_theme"] == "photo"
 
 
 def test_web_tariffs_match_public_payment_credit_grants(monkeypatch: pytest.MonkeyPatch) -> None:
