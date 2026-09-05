@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import dataclasses
 import importlib
+import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -274,6 +275,56 @@ def test_f1_and_f5_hooks_use_orchestrator_contract(monkeypatch: pytest.MonkeyPat
     )
     assert payload["f1_sound_url"] == "s3://assets/app/blast808/sound.wav"
     assert payload["reuse_text_job_id"] == "orch-1"
+
+
+def test_catalog_parsing_keeps_and_validates_selector(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`selector` обязан пережить разбор каталога.
+
+    Разбор пересобирает запись из белого списка полей, и selector в нём сначала
+    отсутствовал — карта selector_by_name получалась пустой, ProductionConfig.load
+    падал на «ни selector, ни маппинга артиста», а если бы не падал, выбор бакета
+    снова ни на что не влиял бы. Ловим это на уровне парсера, а не на проде.
+    """
+    module = _module(monkeypatch)
+    good = json.dumps([
+        {
+            "id": "collection:cine16x9__New_York",
+            "name": "Нью-Йорк",
+            "previewUrl": "s3://assets/previews/ny.mp4",
+            "selector": {
+                "rotationTheme": "collection",
+                "rotationTagsGroup": "New_York",
+                "renderPreset": "wide",
+                "bgMode": "footage",
+            },
+        }
+    ], ensure_ascii=False)
+    monkeypatch.setenv("WEB_FOOTAGE_CATALOG_JSON", good)
+    parsed = module._json_catalog("WEB_FOOTAGE_CATALOG_JSON")
+    assert parsed[0]["selector"]["rotationTagsGroup"] == "New_York"
+    assert parsed[0]["selector"]["renderPreset"] == "wide"
+
+    # Половина пары rotation оркестратору ничего не скажет.
+    half = json.dumps([
+        {
+            "id": "x", "name": "X", "previewUrl": "s3://assets/x.mp4",
+            "selector": {"rotationTheme": "collection"},
+        }
+    ], ensure_ascii=False)
+    monkeypatch.setenv("WEB_FOOTAGE_CATALOG_JSON", half)
+    with pytest.raises(module.ProductionBackendError, match="rotationTheme and rotationTagsGroup"):
+        module._json_catalog("WEB_FOOTAGE_CATALOG_JSON")
+
+    # Неизвестная геометрия хуже исторической: 16:9 в вертикали режется в треть.
+    bad_preset = json.dumps([
+        {
+            "id": "x", "name": "X", "previewUrl": "s3://assets/x.mp4",
+            "selector": {"renderPreset": "portrait"},
+        }
+    ], ensure_ascii=False)
+    monkeypatch.setenv("WEB_FOOTAGE_CATALOG_JSON", bad_preset)
+    with pytest.raises(module.ProductionBackendError, match="renderPreset"):
+        module._json_catalog("WEB_FOOTAGE_CATALOG_JSON")
 
 
 def test_bucket_selector_pins_rotation_and_geometry(monkeypatch: pytest.MonkeyPatch) -> None:
