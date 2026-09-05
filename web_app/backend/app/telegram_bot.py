@@ -3,7 +3,9 @@
 Активен ТОЛЬКО если в `backend/.env` задан `TELEGRAM_BOT_TOKEN`. Без токена — no-op,
 а верификацию в деве двигает мок-фолбэк в `/api/auth/tg-verify`.
 
-Клиент на stdlib `urllib` (в окружении нет сети под pip). Long-polling `getUpdates` в фоне:
+Клиент на stdlib `urllib` (в окружении нет сети под pip); если задан `TELEGRAM_PROXY_URL`,
+запросы к Bot API идут через него — из контейнера прод-инфраструктуры Telegram напрямую
+недоступен. Long-polling `getUpdates` в фоне:
 на `/start <token>` подтверждаем токен в auth_store и шлём пользователю ответ.
 Токен и username берём из окружения — сами значения кладёт владелец в .env, в коде их нет.
 """
@@ -44,10 +46,30 @@ def deep_link(token: str) -> str:
     return f"https://t.me/{BOT_USERNAME}?start={token}"
 
 
+# Прокси ТОЛЬКО для api.telegram.org. Из контейнера прямой запрос падает с
+# `[Errno 101] Network is unreachable`, хотя с хоста проходит: в этой инфраструктуре
+# контейнеры ходят в Telegram через прокси на гейтвее (то же самое стоит у всех
+# tg-bot-*). Отдельная переменная, а не общий http_proxy/https_proxy, намеренно:
+# общий прокси увёл бы туда же выгрузки в S3 и вызовы оркестратора, которым он не
+# нужен и вреден. Пусто — ходим напрямую (дев, локальный запуск).
+TELEGRAM_PROXY_URL = os.getenv("TELEGRAM_PROXY_URL", "").strip()
+
+_opener: urllib.request.OpenerDirector | None = None
+
+
+def _http() -> urllib.request.OpenerDirector:
+    """Опенер для Bot API: с прокси, если он задан, и всегда мимо системного."""
+    global _opener
+    if _opener is None:
+        proxies = {"http": TELEGRAM_PROXY_URL, "https": TELEGRAM_PROXY_URL} if TELEGRAM_PROXY_URL else {}
+        _opener = urllib.request.build_opener(urllib.request.ProxyHandler(proxies))
+    return _opener
+
+
 def _api(method: str, params: dict) -> dict:
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/{method}"
     data = urllib.parse.urlencode(params).encode()
-    with urllib.request.urlopen(urllib.request.Request(url, data=data), timeout=35) as resp:
+    with _http().open(urllib.request.Request(url, data=data), timeout=35) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
 
