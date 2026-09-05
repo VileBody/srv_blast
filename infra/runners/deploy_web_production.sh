@@ -27,8 +27,8 @@ required=(
   S3_BUCKET_RAW_AUDIO S3_RAW_AUDIO_PREFIX S3_BUCKET_ASSET_STORAGE S3_WEB_ASSET_PREFIX
   TBANK_TERMINAL_KEY TBANK_PASSWORD TBANK_NOTIFY_URL
   TELEGRAM_BOT_TOKEN TELEGRAM_BOT_USERNAME
-  GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET GOOGLE_REDIRECT_URI
-  TIKTOK_CLIENT_KEY TIKTOK_CLIENT_SECRET TIKTOK_REDIRECT_URI TIKTOK_TOKEN_KEY TIKTOK_UPLOAD_SOURCE
+  GOOGLE_REDIRECT_URI
+  TIKTOK_REDIRECT_URI TIKTOK_TOKEN_KEY TIKTOK_UPLOAD_SOURCE
   WEB_STAGE1_ALIGNMENT_BACKEND WEB_SUBTITLE_MODE_MAP_JSON WEB_FOOTAGE_ARTIST_MAP_JSON
   WEB_FOOTAGE_CATALOG_JSON WEB_PHOTO_CATALOG_JSON WEB_SUBTITLE_CATALOG_JSON
 )
@@ -39,6 +39,26 @@ for name in "${required[@]}"; do
     exit 1
   fi
 done
+
+# Google и TikTok — необязательные провайдеры: их кабинеты проходят ревью
+# месяцами, а вход работает через Telegram, и кнопки на фронте гаснут сами по
+# /api/auth/providers и /api/tiktok/status. Но ПОЛОВИНА конфигурации хуже её
+# отсутствия — кнопка появится и приведёт человека на ошибку провайдера,
+# поэтому либо обе переменные пары, либо ни одной. Тот же гейт, что в
+# web_app/backend/app/runtime.py::_validate_optional_provider; разъехаться им
+# нельзя, иначе деплой пропустит конфиг, на котором приложение не поднимется.
+check_optional_pair() {
+  local title="$1" first="$2" second="$3" have_first=0 have_second=0
+  grep -Eq "^${first}=.+" "$ENV_FILE" && have_first=1
+  grep -Eq "^${second}=.+" "$ENV_FILE" && have_second=1
+  if (( have_first != have_second )); then
+    echo "production env configures ${title} partially: set both ${first} and ${second}, or neither" >&2
+    exit 1
+  fi
+}
+
+check_optional_pair Google GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET
+check_optional_pair TikTok TIKTOK_CLIENT_KEY TIKTOK_CLIENT_SECRET
 
 if ! grep -Eq '^MODE=prod$' "$ENV_FILE" || ! grep -Eq '^BLAST_BACKEND_MODE=production$' "$ENV_FILE"; then
   echo "production env must explicitly select MODE=prod and BLAST_BACKEND_MODE=production" >&2
