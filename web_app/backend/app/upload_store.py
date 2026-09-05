@@ -4,6 +4,7 @@ import hashlib
 import json
 import secrets
 import time
+from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 from . import db
@@ -25,7 +26,8 @@ def release(user_id: str) -> None:
 
 
 def save(user_id: str, project_id: str, kind: str, metadata: dict[str, Any]) -> dict[str, Any]:
-    asset = {**metadata, 'id': 'src_' + uuid4().hex, 'projectId': project_id, 'kind': kind}
+    asset = {**metadata, 'id': 'src_' + uuid4().hex, 'userId': user_id, 'projectId': project_id,
+             'kind': kind, 'createdAt': datetime.now(timezone.utc).isoformat()}
     with db.transaction() as cur:
         cur.execute(db.sql('INSERT INTO web_upload_assets (id,user_id,project_id,kind,metadata) VALUES (%s,%s,%s,%s,%s)'),
                     (asset['id'], user_id, project_id, kind, json.dumps(asset)))

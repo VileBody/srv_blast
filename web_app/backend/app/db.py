@@ -19,6 +19,7 @@ import os
 import re
 import sqlite3
 import threading
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
@@ -30,6 +31,12 @@ DEFAULT_SQLITE_PATH = BACKEND_ROOT / "data" / "blast.db"
 _lock = threading.RLock()
 _local = threading.local()
 _ready = False
+
+# Production Postgres closes idle sessions (`idle_session_timeout`).  A single
+# request thread can outlive that timeout, so checking only `connection.closed`
+# is insufficient: psycopg reports the server-side close on the next query.
+# Keep the check bounded to avoid an extra round-trip for every cursor created.
+_POSTGRES_HEALTHCHECK_SEC = 60.0
 
 
 def database_url() -> str:
@@ -67,6 +74,30 @@ def _connection():
     if conn is None:
         conn = _new_connection()
         _local.conn = conn
+        _local.db_health_checked_at = time.monotonic()
+    elif dialect() == "postgres":
+        checked_at = float(getattr(_local, "db_health_checked_at", 0.0))
+        if time.monotonic() - checked_at >= _POSTGRES_HEALTHCHECK_SEC:
+            try:
+                if getattr(conn, "closed", False):
+                    raise RuntimeError("postgres connection is closed")
+                with conn.cursor() as cursor:
+                    cursor.execute("SELECT 1")
+                # `_new_connection` uses an explicit transaction.  Finish the
+                # health-check transaction before handing the connection out.
+                conn.commit()
+                _local.db_health_checked_at = time.monotonic()
+            except Exception:
+                # Discard exactly this broken session.  Reconnect is explicit
+                # and bounded: if the new connection cannot be established, the
+                # caller receives the real database error instead of a loop.
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+                conn = _new_connection()
+                _local.conn = conn
+                _local.db_health_checked_at = time.monotonic()
     return conn
 
 
@@ -202,6 +233,10 @@ def reset_for_tests() -> None:
     global _ready
     conn = getattr(_local, "conn", None)
     if conn is not None:
-        conn.close()
+        try:
+            conn.close()
+        except Exception:
+            pass
         _local.conn = None
+        _local.db_health_checked_at = 0.0
     _ready = False

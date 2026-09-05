@@ -6,6 +6,12 @@ import { DEFAULT_FOOTAGE_TYPE, normalizeFootageType } from '../data/footageTypes
 export type BackgroundMode = 'footage' | 'photo' | 'color';
 export type HookKind = 'warmup' | 'object' | 'effects' | 'motion' | 'thought';
 
+export interface SourceVideoPlan {
+  id: string;
+  format: '9:16' | '16:9';
+  sourceIds: string[];
+}
+
 /** Конфигурация одного хука (Figma W24–W34) */
 export interface HookConfig {
   warmupKind?: 'audio' | 'video';
@@ -63,6 +69,8 @@ export interface WizardStateData {
     footageType: string;
     /** Свои исходники пользователя (Figma W39/W49) — имена загруженных файлов */
     uploads: string[];
+    /** Один пункт = одно будущее видео; sourceIds задают порядок клипов в монтаже. */
+    sourceVideos: SourceVideoPlan[];
     photo: string[];
     photoEffects: boolean;
     photoStyle?: string;
@@ -97,14 +105,6 @@ export interface WizardStateData {
   };
 }
 
-export function backgroundFormats(bg: WizardStateData['background']): string[] {
-  return [...new Set([
-    ...bg.footage.map(name => bg.footageFormats?.[name] ?? (bg.footageType === 'cine16x9' ? '16:9' : '9:16')),
-    ...(bg.photo.length ? ['4:3'] : []), ...(bg.color ? ['9:16'] : []),
-    ...(bg.uploads.length && bg.sourceFormat ? [bg.sourceFormat] : [])
-  ])];
-}
-
 /** Explicit migration of browser and server drafts from the old sound family. */
 export function migrateHooks(raw: Record<string, any>): WizardStateData['hooks'] {
   const configs = { ...(raw.configs ?? {}) };
@@ -117,6 +117,8 @@ export function migrateHooks(raw: Record<string, any>): WizardStateData['hooks']
 
 /** Пилюли фона — производные от настроенных разделов */
 export interface BackgroundPill {
+  /** Stable UI key; mode alone is not unique when own videos and library footage coexist. */
+  key: string;
   mode: BackgroundMode;
   label: string;
   count: number;
@@ -124,15 +126,15 @@ export interface BackgroundPill {
 
 export function backgroundPills(bg: WizardStateData['background']): BackgroundPill[] {
   const pills: BackgroundPill[] = [];
-  if (bg.uploads.length) return [{ mode: 'footage', label: 'Свои исходники', count: bg.uploads.length }];
-  if (bg.footage.length) pills.push({ mode: 'footage', label: 'Футажи', count: bg.footage.length });
-  if (bg.photo.length) pills.push({ mode: 'photo', label: 'Фото', count: bg.photo.length });
-  if (bg.color) pills.push({ mode: 'color', label: bg.strobe ? 'Строб' : 'Цвет', count: 1 });
+  if (bg.sourceVideos.length) pills.push({ key: 'uploads', mode: 'footage', label: 'Свои видео', count: bg.sourceVideos.length });
+  if (bg.footage.length) pills.push({ key: 'footage', mode: 'footage', label: 'Футажи', count: bg.footage.length });
+  if (bg.photo.length) pills.push({ key: 'photo', mode: 'photo', label: 'Фото', count: bg.photo.length });
+  if (bg.color) pills.push({ key: 'color', mode: 'color', label: bg.strobe ? 'Строб' : 'Цвет', count: 1 });
   return pills;
 }
 
 export function backgroundVariations(bg: WizardStateData['background']): number {
-  return bg.uploads.length ? 1 : bg.footage.length + bg.photo.length + (bg.color ? 1 : 0);
+  return bg.sourceVideos.length + bg.footage.length + bg.photo.length + (bg.color ? 1 : 0);
 }
 
 /**
@@ -194,7 +196,7 @@ const initialData = (projectId?: string | null): WizardStateData => ({
   timingFrom: '',
   timingTo: '',
   carriedOverInputs: false,
-  background: { mode: 'footage', footage: [], footageType: DEFAULT_FOOTAGE_TYPE, uploads: [], photo: [], photoEffects: false, photoStyle: undefined, color: undefined, strobe: false, glue: undefined },
+  background: { mode: 'footage', footage: [], footageType: DEFAULT_FOOTAGE_TYPE, uploads: [], sourceVideos: [], photo: [], photoEffects: false, photoStyle: undefined, color: undefined, strobe: false, glue: undefined },
   hooks: { dropTime: undefined, kind: undefined, configs: {} },
   subtitles: { color: '#f6f5fd', pool: [] },
   allocation: { total: 0, background: {}, subtitles: {}, hooks: {}, strobeFont: undefined, colorFont: undefined, seeded: false },
@@ -286,6 +288,9 @@ export const useWizardStore = create<WizardStore>()(
             // (standard/persons/movies). Приводим здесь, иначе id уедет в render_job
             // как есть и подбор не найдёт такой план.
             merged.footageType = normalizeFootageType(merged.footageType);
+            if (!merged.sourceVideos.length && merged.uploads.length) {
+              merged.sourceVideos = [{ id: 'source-video-legacy', format: merged.sourceFormat === '16:9' ? '16:9' : '9:16', sourceIds: [...merged.uploads] }];
+            }
             return merged;
           })(),
           hooks: migrateHooks({ ...fresh.hooks, ...((raw.hooks as Partial<WizardStateData['hooks']>) ?? {}) }),
@@ -312,9 +317,16 @@ export const useWizardStore = create<WizardStore>()(
     }),
     {
       name: 'blast-wizard-v4',
-      version: 1,
-      migrate: (raw: any) => ({ ...raw, hooks: migrateHooks(raw.hooks ?? {}), allocation: { ...raw.allocation,
-        hooks: Object.fromEntries(Object.entries(raw.allocation?.hooks ?? {}).map(([key, value]) => [key === 'sound' ? 'warmup' : key, value])) } }),
+      version: 2,
+      migrate: (raw: any) => {
+        const background = { ...raw.background };
+        if (!background.sourceVideos?.length && background.uploads?.length) background.sourceVideos = [{
+          id: 'source-video-legacy', format: background.sourceFormat === '16:9' ? '16:9' : '9:16', sourceIds: [...background.uploads]
+        }];
+        background.sourceVideos ??= [];
+        return { ...raw, background, hooks: migrateHooks(raw.hooks ?? {}), allocation: { ...raw.allocation,
+          hooks: Object.fromEntries(Object.entries(raw.allocation?.hooks ?? {}).map(([key, value]) => [key === 'sound' ? 'warmup' : key, value])) } };
+      },
       partialize: (state) => ({
         projectId: state.projectId,
         track: state.track,

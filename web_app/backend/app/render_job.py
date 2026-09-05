@@ -101,6 +101,8 @@ def _split_bg_key(key: str, default_mode: str) -> tuple[str, str]:
     for m in ("footage", "photo"):
         if key.startswith(f"{m}:"):
             return m, key[len(m) + 1:]
+    if key.startswith("upload:"):
+        return "upload", key[len("upload:"):]
     return ("color" if key == "__color__" else default_mode), key
 
 
@@ -120,8 +122,25 @@ def build_render_job(batch_id: str, project_id: str | None, user_id: str,
     # (SlicePanel.backgroundUnits). Батч может СМЕШИВАТЬ футаж и фото, поэтому mode берём из ключа
     # per-variation, а не один на батч; имя группы — то, что после префикса.
     mode = bg.get("mode", "footage")
-    bg_groups_all = [f"footage:{v}" for v in (bg.get("footage") or [])] + [f"photo:{v}" for v in (bg.get("photo") or [])]
-    bg_fallback = (["__uploads__"] if bg.get("uploads") else bg_groups_all) or (["__color__"] if bg.get("color") else ["__default__"])
+    source_plans = list(bg.get("sourceVideos") or [])
+    if not source_plans and bg.get("uploads"):
+        source_plans = [{"id": "source-video-legacy", "format": bg.get("sourceFormat") or "9:16", "sourceIds": list(bg["uploads"])}]
+    for plan in source_plans:
+        if not isinstance(plan, dict) or not plan.get("id") or plan.get("format") not in {"9:16", "16:9"}:
+            raise ValueError("Личное видео имеет повреждённый формат или идентификатор")
+        if not isinstance(plan.get("sourceIds"), list) or not plan["sourceIds"]:
+            raise ValueError("Личное видео не содержит исходников")
+    source_assets = {}
+    for item in (bg.get("sourceAssets") or []):
+        if not isinstance(item, dict) or not item.get("id"):
+            raise ValueError("Личное видео содержит повреждённый исходник")
+        source_assets[str(item["id"])] = item
+    bg_groups_all = (
+        [f"upload:{plan['id']}" for plan in source_plans]
+        + [f"footage:{v}" for v in (bg.get("footage") or [])]
+        + [f"photo:{v}" for v in (bg.get("photo") or [])]
+    )
+    bg_fallback = bg_groups_all or (["__color__"] if bg.get("color") else ["__default__"])
     sub_fallback = subs.get("pool") or ["Impulse"]
     hook_fallback = [hooks["kind"]] if hooks.get("kind") else []
 
@@ -144,6 +163,17 @@ def build_render_job(batch_id: str, project_id: str | None, user_id: str,
     for i in range(total):
         group_key = bg_seq[i % len(bg_seq)] if bg_seq else "__default__"
         v_mode, group = _split_bg_key(group_key, mode)
+        source_plan = next((plan for plan in source_plans if plan["id"] == group), None) if v_mode == "upload" else None
+        if v_mode == "upload" and source_plan is None:
+            raise ValueError(f"Неизвестное личное видео: {group}")
+        source_ids = list((source_plan or {}).get("sourceIds") or [])
+        missing_source_ids = [source_id for source_id in source_ids if source_id not in source_assets]
+        if missing_source_ids:
+            raise ValueError(
+                "Личное видео содержит отсутствующие исходники: "
+                + ", ".join(missing_source_ids[:5])
+            )
+        variation_sources = [source_assets[source_id] for source_id in source_ids]
         style = sub_seq[i % len(sub_seq)] if sub_seq else "Impulse"
         v_kind = hook_seq[i % len(hook_seq)] if hook_seq else None
         cfg = configs.get(v_kind) or {} if v_kind else {}
@@ -159,13 +189,17 @@ def build_render_job(batch_id: str, project_id: str | None, user_id: str,
             },
             "background": {
                 "mode": v_mode,
-                "groups": [] if group.startswith("__") else [group],
+                "groups": [] if group.startswith("__") or v_mode == "upload" else [group],
                 # тип футажей (Figma W12) — из какой библиотеки берём группы; id из footage-types.json
                 "footageType": bg.get("footageType") if v_mode == "footage" else None,
                 # свои исходники (Figma W39/W49) — вместо библиотечного футажа
-                "uploads": list(bg.get("uploads") or []),
-                "sourceAssets": list(bg.get("sourceAssets") or []),
-                "sourceFormat": bg.get("sourceFormat"),
+                "uploads": list((source_plan or {}).get("sourceIds") or []),
+                "sourceAssets": variation_sources,
+                "sourceFormat": (source_plan or {}).get("format"),
+                "sourceLabel": (
+                    f"Своё видео {source_plans.index(source_plan) + 1} · {source_plan['format']}"
+                    if source_plan in source_plans else None
+                ),
                 "color": bg.get("color") if v_mode == "color" else None,
                 "strobe": bool(bg.get("strobe")),
                 "photoStyle": bg.get("photoStyle") if v_mode == "photo" else None,
@@ -205,7 +239,9 @@ def variation_label(variation: dict[str, Any]) -> dict[str, str]:
     groups = variation["background"]["groups"]
     mode = variation["background"]["mode"]
     # groups уже без префикса режима (_split_bg_key), но старые джобы могли сохранить «photo:Имя»
-    source = groups[0].split(":", 1)[-1] if groups else ("Цвет" if mode == "color" else "Футаж")
+    source = groups[0].split(":", 1)[-1] if groups else (
+        variation["background"].get("sourceLabel") or ("Цвет" if mode == "color" else "Футаж")
+    )
     hook = variation["hook"]["family"]
     hook_label = {"effects": "Эффекты", "object": "Объект", "motion": "Движение",
                   "sound": "Прогрев", "warmup": "Прогрев", "thought": "Мысль"}.get(hook, "Без хука")

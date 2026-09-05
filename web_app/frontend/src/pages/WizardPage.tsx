@@ -13,7 +13,7 @@ import { QueryError, queryDown } from '../components/ui/ErrorState';
 import { StatusBadge } from '../components/ui/StatusBadge';
 import { backgroundVariations, BackgroundWorkZone, StageBackground } from '../components/wizard/BackgroundPanel';
 import { HooksWorkZone, StageHooks } from '../components/wizard/HookPanel';
-import { backgroundFormats, hasTrackInput, hookPills } from '../stores/wizardStore';
+import { hasTrackInput, hookPills } from '../stores/wizardStore';
 import { SliceWorkZone, StageSlice } from '../components/wizard/SlicePanel';
 import { StageSubtitles, SubtitlesWorkZone } from '../components/wizard/SubtitlesPanel';
 import { TextPanel } from '../components/wizard/TextPanel';
@@ -407,7 +407,14 @@ export function WizardPage() {
     }
   }, [params, projectId, projectsQuery.data?.activeProject?.id, projectsQuery.data?.projects, setProjectId]);
 
-  const saveSessionMutation = useMutation({ mutationFn: () => api.saveWizardSession({ projectId, stage, data: state.stageData() }) });
+  const saveSessionMutation = useMutation({
+    mutationFn: () => api.saveWizardSession({ projectId, stage, data: state.stageData() }),
+    onError: () => {
+      // A failed persistence write must stop the stage transition.  Moving on
+      // would leave the next panel rendered from a draft the server never saw.
+      push({ variant: 'error', title: t('wizard.page.saveFail'), text: t('wizard.page.saveFailText') });
+    }
+  });
   const submitMutation = useMutation({
     mutationFn: () => api.submitWizard({ projectId, stageData: state.stageData(), videosToGenerate: safeVideosToGenerate, idempotencyKey: state.final.idempotencyKey }),
     // newBatch, а НЕ reset: трек, текст и тайминги — вводные проекта, а не батча.
@@ -501,11 +508,11 @@ export function WizardPage() {
 
   const next = async () => {
     if (!canContinue) return;
-    if (stage !== 1 && backgroundFormats(state.background).length > 1) {
-      push({ variant: 'error', title: t('wizard.bg.mixedFormat') });
+    try {
+      await saveSessionMutation.mutateAsync();
+    } catch {
       return;
     }
-    await saveSessionMutation.mutateAsync();
     const idx = STAGE_ORDER.indexOf(stage);
     if (idx < STAGE_ORDER.length - 1) setStage(STAGE_ORDER[idx + 1]);
     else submitMutation.mutate();

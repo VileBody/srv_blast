@@ -172,7 +172,13 @@ def _handle_start(chat_id: object, token: str, profile: dict[str, Any]) -> None:
     # allow_create=False: по кнопке «Войти» аккаунт не заводим (см. auth_store.confirm_token)
     result = auth_store.confirm_token(token, chat_id, profile, allow_create=False)
     if result == "ok":
-        _send(chat_id, "✅ Аккаунт Blast подтверждён. Возвращайтесь на сайт.", _back_button())
+        _send(
+            chat_id,
+            "✅ Аккаунт Blast подтверждён.\n"
+            "Ролики можно генерировать и в Telegram-боте: @blast808bot\n"
+            "Возвращайтесь на сайт.",
+            _back_button(),
+        )
         return
     if result == "no_account":
         _send(chat_id, "Аккаунта Blast с этим Telegram ещё нет. Нажми «Зарегистрироваться» — "

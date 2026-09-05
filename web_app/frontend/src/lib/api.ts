@@ -90,11 +90,17 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
 
   if (!response.ok) {
-    let detail: unknown = response.statusText;
-    try {
-      detail = await response.json();
-    } catch {
-      detail = await response.text();
+    // A Response body is a one-shot stream.  Reading json() and then text()
+    // in the catch path used to turn every non-JSON backend error into the
+    // misleading "body stream already read" message.
+    let detail: unknown = response.statusText || `Request failed (${response.status})`;
+    const body = await response.text().catch(() => '');
+    if (body) {
+      try {
+        detail = JSON.parse(body) as unknown;
+      } catch {
+        detail = body;
+      }
     }
     /*
      * Сессия кончилась или её не было — уводим на вход, а не показываем пустой экран.

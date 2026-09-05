@@ -17,7 +17,7 @@ import { PreviewPlayer } from '../ui/PreviewPlayer';
 import { useFragmentAudio } from './useFragmentAudio';
 import { SourcesModal } from './SourcesEditor';
 import { footageTypeKey, footageTypePlane, stepFootageType } from '../../data/footageTypes';
-import { BackgroundMode, backgroundFormats, backgroundPills, backgroundVariations, useWizardStore } from '../../stores/wizardStore';
+import { BackgroundMode, backgroundPills, backgroundVariations, useWizardStore } from '../../stores/wizardStore';
 
 /** Стили фото (Figma W13/W30) — те же, что «стиль» у эффектов-хука */
 const PHOTO_STYLES = ['Ксерокс', 'Глитч', 'Неон', 'Старая камера'];
@@ -355,13 +355,6 @@ export function StageBackground() {
 
   const format = background.mode === 'photo' ? '4:3' : background.footageType === 'cine16x9' && background.mode === 'footage' ? '16:9' : '9:16';
   const pickVibe = (name: string) => {
-    if (!selected.includes(name) && backgroundFormats(background).some(value => value !== format)) {
-      push({ variant: 'error', title: t('wizard.bg.mixedFormat') });
-      return;
-    }
-    if (background.uploads.length) {
-      push({ variant: 'error', title: t('wizard.sources.clearFirst') }); return;
-    }
     toggleVibe(name, format);
   };
   const heading = loading && isMedia ? t('wizard.bg.headingShort') : t('wizard.bg.heading');
@@ -524,12 +517,15 @@ export function BackgroundWorkZone({ ready, canContinue, loading, onBack, onNext
   const selected = list.filter((item) => selectedNames.includes(item.name));
   const safeIndex = selected.length ? Math.min(index, selected.length - 1) : 0;
   const current = selected.length ? selected[safeIndex] : null;
+  const currentFormat = current && background.mode === 'footage'
+    ? background.footageFormats?.[current.name] ?? (background.footageType === 'cine16x9' ? '16:9' : '9:16')
+    : background.mode === 'photo' ? '4:3' : '9:16';
   const activeColor = background.mode === 'color' ? background.color : undefined;
   const variations = backgroundVariations(background);
   const pills = backgroundPills(background);
   const footerPills = pills.length > 0
     ? pills
-    : [{ mode: background.mode, label: modes.find((item) => item.value === background.mode)?.label ?? 'wizard.bg.modeFootage', count: 0 }];
+    : [{ key: background.mode, mode: background.mode, label: modes.find((item) => item.value === background.mode)?.label ?? 'wizard.bg.modeFootage', count: 0 }];
 
   const emptyText = { footage: t('wizard.bg.emptyFootage'), photo: t('wizard.bg.emptyPhoto'), color: t('wizard.bg.emptyColor') }[background.mode];
   const step = (delta: number) => {
@@ -660,6 +656,22 @@ export function BackgroundWorkZone({ ready, canContinue, loading, onBack, onNext
               </div>
             </div>
           </div>
+        ) : currentFormat === '16:9' && background.mode === 'footage' ? (
+          <div className="flex min-h-0 flex-1 items-center justify-center">
+            <PreviewPlayer
+              key={current?.id ?? 'empty-wide'}
+              className="w-full rounded-r15 bg-grad-soft-10"
+              {...playerProps}
+              showSteps={playerProps.showSteps && Boolean(current)}
+              onTogglePlay={current ? playerProps.onTogglePlay : undefined}
+            >
+              <div className="relative w-full" style={{ aspectRatio: '16 / 9' }}>
+                {current ? renderMedia(current) : <div className="flex h-full items-center justify-center"><p className="wizard-body">{emptyText}</p></div>}
+                {current && <span className="absolute bottom-space-4 left-0 right-0 text-center text-[20px] text-text" style={{ textShadow: '0 1px 6px rgba(0,0,0,.8)' }}>{chip(current.name)}</span>}
+              </div>
+              <span className="dash-panel-plain pointer-events-none absolute inset-0 z-[3]" aria-hidden="true" />
+            </PreviewPlayer>
+          </div>
         ) : (
           <PreviewPlayer
             className={cn('min-h-0 flex-1 rounded-r15', !activeColor && 'bg-grad-soft-10')}
@@ -687,15 +699,18 @@ export function BackgroundWorkZone({ ready, canContinue, loading, onBack, onNext
 
       <PillsFooter
         pills={footerPills.map((pill) => ({
-          key: pill.mode,
+          key: pill.key,
           label: pill.label.startsWith('wizard.') ? t(pill.label) : chip(pill.label),
           // Figma W22: счётчик выбранных стейтов. Было «Хn» — читалось как код, а не как
           // «столько выбрано»; оставили голое число и подписали его в title.
           icon: <span className="text-[20px] font-[350] text-text-80" title={t('wizard.bg.pillCount', { count: pill.count })}>{pill.count}</span>
         }))}
-        activeKey={background.mode}
+        activeKey={background.mode === 'footage' ? 'footage' : background.mode}
         emptyLabel={t('wizard.bg.addNew')}
-        onPill={(key) => setBackground({ mode: key as BackgroundMode })}
+        onPill={(key) => {
+          if (key === 'uploads') { setBackground({ mode: 'footage' }); return; }
+          setBackground({ mode: key as BackgroundMode });
+        }}
         onPlus={() => { if (nextMode) setBackground({ mode: nextMode }); }}
         plusDisabled={!nextMode}
         ready={ready}

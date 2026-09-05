@@ -547,6 +547,10 @@ async def api_me() -> dict[str, Any]:
             data["billingLinkRequired"] = True
         except Exception as exc:
             raise _production_error(exc) from exc
+        # Не показываем старую persisted mock-запись как реальное подключение,
+        # если TikTok credentials отключены на production-инстансе.
+        if not tiktok_config.load().configured:
+            data["tiktok"] = None
     # Экран ожидания обещает «пришлём в Telegram» — обещать это можно только когда бот
     # реально настроен И у юзера есть привязанный чат. Иначе фронт молчит про уведомления.
     data["telegramNotifications"] = bool(
@@ -564,7 +568,7 @@ async def api_me() -> dict[str, Any]:
     return data
 
 
-# ------------------------- Mock API: projects -------------------------
+# ------------------------- Projects -------------------------
 
 @app.get("/api/projects", tags=["projects"])
 def api_projects() -> dict[str, Any]:
@@ -575,7 +579,7 @@ def api_projects() -> dict[str, Any]:
 def api_create_project(payload: ProjectPayload) -> dict[str, Any]:
     project = store.create_project(payload.name, payload.packageType, payload.coverChoice)
     analytics.track("project_created", store.current_user_id(), {"projectId": project["id"]})
-    return {"project": project, "redirectTo": f"/app/projects/{project['id']}", "mock": True}
+    return {"project": project, "redirectTo": f"/app/projects/{project['id']}", "mock": RUNTIME.backend == "mock"}
 
 
 @app.get("/api/projects/{project_id}", tags=["projects"])
@@ -583,7 +587,7 @@ def api_project(project_id: str) -> dict[str, Any]:
     project = store.get_project(project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
-    return {"project": project, "mock": True}
+    return {"project": project, "mock": RUNTIME.backend == "mock"}
 
 
 @app.patch("/api/projects/{project_id}", tags=["projects"])
@@ -600,7 +604,7 @@ def api_update_project(project_id: str, payload: ProjectUpdatePayload) -> dict[s
         project = store.set_project_archived(project_id, payload.archived)
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
-    return {"project": project, "mock": True}
+    return {"project": project, "mock": RUNTIME.backend == "mock"}
 
 
 @app.delete("/api/projects/{project_id}", tags=["projects"])
@@ -646,11 +650,18 @@ async def api_create_order(payload: PaymentPayload) -> dict[str, Any]:
                 status_code=502,
                 detail={"code": "payment_init_failed", "message": str(exc)},
             ) from exc
-        analytics.track(
-            "payment_link_created",
-            store.current_user_id(),
-            {"tier": payload.packageType.upper(), "orderId": order["orderId"]},
-        )
+        # T-Bank Init is an external side effect.  A best-effort analytics
+        # write must never turn a successfully created payment into a 500:
+        # the browser would retry and create a second order.  Persistence
+        # failures remain visible in logs and are repaired separately.
+        try:
+            analytics.track(
+                "payment_link_created",
+                store.current_user_id(),
+                {"tier": payload.packageType.upper(), "orderId": order["orderId"]},
+            )
+        except Exception:
+            logger.exception("payment_link_created analytics write failed order_id=%s", order["orderId"])
         return {**order, "project": None, "mock": False}
 
     order_id = f"order_{uuid4().hex[:8]}"
@@ -1069,17 +1080,40 @@ async def api_submit_wizard(payload: SubmitPayload) -> dict[str, Any]:
     bg = stage_data.get("background") or {}
     owned = upload_store.assets(store.current_user_id())
     by_id = {item["id"]: item for item in owned}
-    sources = []
-    for source_id in bg.get("uploads") or []:
-        item = by_id.get(source_id)
-        if not item or item["kind"] != "source" or item["projectId"] != project_id:
-            raise HTTPException(422, detail="Исходник не принадлежит этому проекту. Загрузите файл заново.")
-        sources.append(item)
-    if sources:
-        formats = {item["format"] for item in sources}
-        if len(formats) != 1:
-            raise HTTPException(422, detail="Нельзя смешивать форматы исходников")
-        bg["sourceFormat"] = next(iter(formats))
+    raw_plans = bg.get("sourceVideos") or []
+    if not raw_plans and bg.get("uploads"):
+        raw_plans = [{"id": "source-video-legacy", "format": bg.get("sourceFormat") or "9:16", "sourceIds": bg["uploads"]}]
+    plans: list[dict[str, Any]] = []
+    sources: list[dict[str, Any]] = []
+    seen_plan_ids: set[str] = set()
+    seen_source_ids: set[str] = set()
+    if not isinstance(raw_plans, list):
+        raise HTTPException(422, detail="Пересоберите личные видео: набор должен быть списком")
+    for raw_plan in raw_plans:
+        if not isinstance(raw_plan, dict):
+            raise HTTPException(422, detail="Пересоберите личные видео: найден повреждённый пункт")
+        plan_id = str(raw_plan.get("id") or "")
+        source_ids = [str(value) for value in raw_plan.get("sourceIds") or []]
+        plan_format = str(raw_plan.get("format") or "")
+        if (not plan_id or plan_id in seen_plan_ids or plan_format not in {"9:16", "16:9"}
+                or not source_ids or len(source_ids) != len(set(source_ids))):
+            raise HTTPException(422, detail="Пересоберите личные видео: найден пустой или повреждённый набор")
+        if seen_source_ids.intersection(source_ids):
+            raise HTTPException(422, detail="Один исходник нельзя добавить в несколько личных видео")
+        seen_plan_ids.add(plan_id)
+        seen_source_ids.update(source_ids)
+        plan_assets = []
+        for source_id in source_ids:
+            item = by_id.get(source_id)
+            if not item or item["kind"] != "source" or item["projectId"] != project_id:
+                raise HTTPException(422, detail="Исходник не принадлежит этому проекту. Загрузите файл заново.")
+            if item.get("format") != plan_format:
+                raise HTTPException(422, detail="В одном личном видео нельзя смешивать 9:16 и 16:9")
+            plan_assets.append(item)
+        plans.append({"id": plan_id, "format": plan_format, "sourceIds": source_ids})
+        sources.extend(plan_assets)
+    bg["sourceVideos"] = plans
+    bg["uploads"] = list(dict.fromkeys(item["id"] for item in sources))
     bg["sourceAssets"] = sources
     by_url = {item["s3Key"]: item for item in owned}
     hooks = stage_data.get("hooks") or {}
@@ -1272,8 +1306,9 @@ def api_create_iteration(project_id: str, payload: IterationPayload) -> dict[str
 
 
 # ------------------------- TikTok (Login Kit) and profile -------------------------
-# Ключи — только из окружения (.env, он в .gitignore). Нет ключей → мок-подключение,
-# чтобы флоу «подключил аккаунт → безлимит в рамках трека» гонялся локально.
+# Ключи — только из окружения (.env, он в .gitignore). Мок-подключение разрешено
+# только в dev; production без ключей должен завершаться понятным состоянием
+# «провайдер не настроен», чтобы не выдавать пользователю фиктивный безлимит.
 
 def _app_url() -> str:
     """Куда вернуть пользователя после OAuth."""
@@ -1423,6 +1458,8 @@ def api_tiktok_auth(request: Request, reuse: bool = False) -> RedirectResponse:
     """Старт OAuth: уводим на TikTok. state и PKCE-verifier кладём в серверную сессию."""
     cfg = tiktok_config.load()
     if not cfg.configured:
+        if RUNTIME.production:
+            return RedirectResponse(f"{_app_url()}/app/profile?tiktok=not_configured", status_code=302)
         return _finish_tiktok_connect(handle="808max", open_id=_mock_open_id(reuse), mock=True)
 
     state = secrets.token_urlsafe(24)
@@ -1438,6 +1475,8 @@ def api_tiktok_callback(request: Request, code: str | None = None, state: str | 
     """Возврат от TikTok: сверяем state (CSRF), меняем code на токен, тянем профиль."""
     cfg = tiktok_config.load()
     if not cfg.configured:
+        if RUNTIME.production:
+            return RedirectResponse(f"{_app_url()}/app/profile?tiktok=not_configured", status_code=302)
         return _finish_tiktok_connect(handle="808max", open_id=_mock_open_id(reuse), mock=True)
 
     if error:
@@ -1488,6 +1527,8 @@ def api_tiktok_post(payload: TiktokPostPayload) -> dict[str, Any]:
     if not privacy:
         raise HTTPException(status_code=422, detail="Unsupported TikTok privacy level")
     cfg = tiktok_config.load()
+    if not cfg.configured and RUNTIME.production:
+        raise HTTPException(status_code=503, detail={"code": "tiktok_not_configured"})
     try:
         if cfg.configured:
             token = _access_token()
@@ -1574,6 +1615,8 @@ def api_tiktok_post(payload: TiktokPostPayload) -> dict[str, Any]:
 @app.get("/api/tiktok/post/{publish_id}", tags=["tiktok"])
 def api_tiktok_post_status(publish_id: str) -> dict[str, Any]:
     if not tiktok_config.load().configured:
+        if RUNTIME.production:
+            raise HTTPException(status_code=503, detail={"code": "tiktok_not_configured"})
         return {"publishId": publish_id, "status": "PUBLISH_COMPLETE", "mock": True}
     try:
         result = tiktok_api.fetch_publish_status(_access_token(), publish_id)
@@ -1706,7 +1749,7 @@ def api_profile(payload: ProfilePayload) -> dict[str, Any]:
     # ФИО обязательны: очистить их через профиль нельзя
     if not (user.get("name") or "").strip():
         raise HTTPException(status_code=422, detail="Имя обязательно")
-    return {"user": user, "mock": True}
+    return {"user": user, "mock": RUNTIME.backend == "mock"}
 
 
 @app.delete("/api/profile", tags=["profile"])

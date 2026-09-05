@@ -397,11 +397,11 @@ export function StatsPage() {
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden md:h-[calc(100dvh_-_2*var(--space-6))] md:flex-none md:py-[calc(var(--rail-pad-y)_-_var(--space-6))]">
+    <div className="flex min-h-0 flex-1 flex-col lg:min-h-[calc(100dvh_-_2*var(--space-6))] lg:flex-none lg:py-[calc(var(--rail-pad-y)_-_var(--space-6))]">
       <div className="flex min-h-0 flex-1 flex-col gap-[20px]">
       {/* «Статистика» 1192×379 */}
-      <section className="card-2 h-[379px] shrink-0 p-[40px]">
-        <div className="flex items-start justify-between gap-space-4">
+      <section className="card-2 h-auto min-h-[379px] shrink-0 p-[24px] sm:p-[32px] lg:h-[379px] lg:p-[40px]">
+        <div className="flex flex-col items-start justify-between gap-[20px] sm:flex-row sm:gap-space-4">
           <div>
             <h1 className="text-[32px] font-[400] leading-none text-text">{t('stats.title')}</h1>
             {/*
@@ -457,14 +457,14 @@ export function StatsPage() {
           )}
         </div>
 
-        <div className="mt-[28px] flex gap-[20px]">
-          <StatCard icon="st-views.svg" title={t('stats.viewsTitle')} value={previewData ? '122' : tiktok ? fmtViews(views) : '—'} unit={t('stats.thousand')} trend={previewData ? '37.8%' : tiktok ? trend(views, previousViews) : undefined} />
-          <StatCard icon="st-views.svg" title={t('stats.engagement')} value={previewData ? '3.6' : tiktok ? engagement.toFixed(engagement >= 10 ? 0 : 1) : '—'} unit="%" trend={previewData ? '1.8%' : undefined} />
+        <div className="mt-[28px] flex flex-col gap-[20px] lg:flex-row">
+          <StatCard icon="home-eye.svg" title={t('stats.viewsTitle')} value={previewData ? '122' : tiktok ? fmtViews(views) : '—'} unit={t('stats.thousand')} trend={previewData ? '37.8%' : tiktok ? trend(views, previousViews) : undefined} />
+          <StatCard icon="icon-bolt.svg" title={t('stats.engagement')} value={previewData ? '3.6' : tiktok ? engagement.toFixed(engagement >= 10 ? 0 : 1) : '—'} unit="%" trend={previewData ? '1.8%' : undefined} />
           {/* «Опубликовано» — только реально выложенное. Без подключённого TikTok показываем
               прочерк, а не число сгенерированных: генерация ≠ публикация, и подстановка
               `created` превращала счётчик в неправду. */}
           <StatCard
-            icon="st-views.svg"
+            icon="tt-posted.svg"
             title={t('stats.videos')}
             value={previewData ? '123' : tiktok ? String(currentVideos.length) : '—'}
             unit={t('stats.pieces')}
@@ -474,7 +474,7 @@ export function StatsPage() {
       </section>
 
       {/* «Эволюция контента» 1192×505 */}
-      <section className="card-2 min-h-0 flex-1 p-[40px]">
+      <section className="card-2 min-h-[505px] flex-none p-[24px] sm:p-[32px] lg:flex-1 lg:p-[40px]">
         <h2 className="text-[32px] font-[400] leading-none text-text">{t('stats.evolution')}</h2>
 
         {/* таб-бар итераций: номер берётся из реальных итераций проекта (был захардкожен «№1»);

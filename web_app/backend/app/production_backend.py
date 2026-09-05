@@ -499,7 +499,7 @@ class ProductionBackend:
             raise ProductionBackendError("upload locator is outside the managed asset prefix")
         self._s3.delete_object(Bucket=bucket, Key=key)
 
-    def validate_stage(self, stage: dict[str, Any]) -> str:
+    def validate_stage(self, stage: dict[str, Any]) -> set[str]:
         from .batch_geometry import selected_geometry
         catalogs = {mode: {item["name"]: item for item in source} for mode, source in (
             ("footage", self.config.footage_catalog), ("photo", self.config.photo_catalog))}
@@ -768,7 +768,13 @@ class ProductionBackend:
         custom_sources = background.get("sourceAssets") or []
         if custom_sources:
             artist_id = self.config.default_artist_id
-            selector = {"renderPreset": {"9:16": "vertical", "16:9": "wide"}[background["sourceFormat"]]}
+            source_format = str(background.get("sourceFormat") or "")
+            render_preset = {"9:16": "vertical", "16:9": "wide"}.get(source_format)
+            if render_preset is None:
+                raise ProductionBackendError(
+                    f"unsupported personal-source geometry {source_format!r}; expected 9:16 or 16:9"
+                )
+            selector = {"renderPreset": render_preset}
         elif background_mode in {"footage", "photo"}:
             if not groups:
                 raise ProductionBackendError("footage/photo variation has no selected group")

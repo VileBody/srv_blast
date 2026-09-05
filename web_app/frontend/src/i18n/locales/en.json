@@ -374,8 +374,7 @@
       "nextType": "Next footage type",
       "chosenCount": "Backgrounds chosen: {{count}}",
       "pillCount": "chosen: {{count}}",
-      "formatHint": "Output: {{format}}. One format per batch.",
-      "mixedFormat": "Create another batch for this format or remove the current selection."
+      "formatHint": "This background stays {{format}}. A batch may contain different formats."
     },
     "fx": {
       "title": "FX",
@@ -449,6 +448,7 @@
       "nextCombo": "Next combination",
       "generate": "Generate",
       "vibeUnit": "Vibe — {{name}}",
+      "ownVideoUnit": "Your video — {{name}}",
       "photoUnit": "Photo — {{name}}"
     },
     "page": {
@@ -456,6 +456,8 @@
       "limitReached": "Generation limit reached",
       "genFail": "Failed to start generation",
       "genFailText": "Check your balance and project.",
+      "saveFail": "Failed to save this step",
+      "saveFailText": "Check your connection and try again. The transition was stopped and your data is safe.",
       "carriedTitle": "Use the same inputs?",
       "carriedText": "The track, lyrics and timings carried over from the previous batch — you can go straight to the settings. Pick another fragment or text if you need a different take.",
       "carriedKeep": "Continue",
@@ -486,7 +488,15 @@
       "delete": "Delete file",
       "done": "Done",
       "phoneDone": "Files uploaded. Return to your computer and add them to the set.",
-      "clearFirst": "Remove your sources from the set before selecting the library."
+      "editorHint": "Build one or more videos. Clips play from top to bottom inside each video; every video appears separately in the Pool and consumes the number of renders assigned there.",
+      "chooseFormat": "Upload format:",
+      "videoPlans": "Your videos",
+      "videoPlansHint": "Drag clips to reorder them or split a clip into a separate video.",
+      "videoTitle": "Video {{n}}",
+      "split": "Separate video",
+      "tooShort": "{{selected}} s of {{required}} s required",
+      "noPlans": "Upload the first clip and a video will be created automatically.",
+      "unused": "Uploaded files outside videos"
     },
     "preview": {
       "unavailable": "Video example unavailable",

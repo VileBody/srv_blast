@@ -109,7 +109,7 @@ function Hero({ name, resume, onCreate, onResume }: {
 }) {
   const { t } = useTranslation();
   return (
-    <section className="card-2 relative flex min-h-[300px] items-center justify-center overflow-hidden md:min-h-0 md:flex-1">
+    <section className="card-2 relative flex min-h-[300px] items-center justify-center overflow-hidden lg:min-h-0 lg:flex-1">
       <img
         src="/assets/figma/home-lines.svg"
         alt=""
@@ -360,7 +360,7 @@ export function DashboardPage() {
       : null;
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-[20px] md:h-[calc(100dvh_-_2*var(--space-6))] md:flex-none md:py-[calc(var(--rail-pad-y)_-_var(--space-6))]">
+    <div className="flex min-h-0 flex-1 flex-col gap-[20px] lg:h-[calc(100dvh_-_2*var(--space-6))] lg:flex-none lg:py-[calc(var(--rail-pad-y)_-_var(--space-6))]">
       {/* «Создать проект» именно создаёт проект: раньше кнопка вела в визард уже существующего,
           а на нулевом аккаунте упиралась в гард «Сначала создай активный проект». */}
       <Hero
@@ -375,15 +375,15 @@ export function DashboardPage() {
       />
       <CreateProjectModal open={createOpen} onClose={() => setCreateOpen(false)} />
 
-      <section className="grid shrink-0 gap-[20px] md:h-[379px] md:grid-cols-2">
+      <section className="grid shrink-0 gap-[20px] lg:h-[379px] lg:grid-cols-2">
         {/* API упал (или сеть пропала и запрос встал на паузу) — вместо вечного скелетона
             показываем причину и кнопку повтора */}
         {queryDown(projectsQuery) ? (
-          <QueryError query={projectsQuery} className="md:col-span-2" />
+          <QueryError query={projectsQuery} className="lg:col-span-2" />
         ) : projectsQuery.isLoading ? (
           <>
-            <Skeleton className="min-h-[379px]" />
-            <Skeleton className="min-h-[379px]" />
+            <Skeleton className="min-h-[300px] lg:min-h-[379px]" />
+            <Skeleton className="min-h-[300px] lg:min-h-[379px]" />
           </>
         ) : (
           <>

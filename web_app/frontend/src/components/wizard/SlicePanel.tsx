@@ -18,8 +18,8 @@ import { HOOK_LABELS, HookKind, hookPills, useWizardStore, WizardStateData } fro
 
 /** Ключ юнита — стабильный (идёт в allocation), подпись собирается через i18n при рендере. */
 function backgroundUnits(bg: WizardStateData['background']): { key: string; labelKey: string; name: string; icon: 'tag' | 'photo'; noHook: boolean }[] {
-  if (bg.uploads.length) return [{ key: '__uploads__', labelKey: 'wizard.pool.vibeUnit', name: 'Свои исходники', icon: 'tag', noHook: false }];
   return [
+    ...bg.sourceVideos.map((plan, index) => ({ key: `upload:${plan.id}`, labelKey: 'wizard.pool.ownVideoUnit', name: `${index + 1} · ${plan.format}`, icon: 'tag' as const, noHook: false })),
     ...bg.footage.map((vibe) => ({ key: `footage:${vibe}`, labelKey: 'wizard.pool.vibeUnit', name: vibe, icon: 'tag' as const, noHook: false })),
     ...bg.photo.map((vibe) => ({ key: `photo:${vibe}`, labelKey: 'wizard.pool.photoUnit', name: vibe, icon: 'photo' as const, noHook: true }))
   ];
@@ -265,6 +265,7 @@ export function SliceWorkZone({ ready, canContinue, loading, onBack, onNext }: {
   const chip = useChip();
   const state = useWizardStore();
   const alloc = state.allocation;
+  const units = useMemo(() => backgroundUnits(state.background), [state.background]);
   const fragmentAudio = useFragmentAudio();
   const [index, setIndex] = useState(0);
   const pillsScroll = useDragScroll();
@@ -289,7 +290,7 @@ export function SliceWorkZone({ ready, canContinue, loading, onBack, onNext }: {
     Object.entries(alloc.hooks)
   );
   // имя бакета хранится по-русски (по нему матчит бэк) — показываем через словарь
-  const bgLabel = combo.bg ? chip(combo.bg.split(':')[1]) : undefined;
+  const bgLabel = combo.bg ? (units.find(unit => unit.key === combo.bg)?.name ?? chip(combo.bg.split(':')[1])) : undefined;
   const hookLabel = combo.hook ? chip(HOOK_LABELS[combo.hook as HookKind]) : undefined;
 
   // Стрелки клавиатуры листают комбинации, пока фокус внутри панели

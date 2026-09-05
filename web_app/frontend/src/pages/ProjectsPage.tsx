@@ -159,7 +159,7 @@ function CurrentProjectCard({ active, onCreate }: { active?: Project | null; onC
   const unlimited = active != null && active.total == null;
   const remaining: number | string = unlimited ? t('limits.noLimit') : Math.max(0, (active?.total ?? 0) - generated);
   return (
-    <section className="card-2 relative shrink-0 overflow-hidden p-[40px] md:h-[379px]">
+    <section className="card-2 relative shrink-0 overflow-hidden p-[24px] sm:p-[32px] lg:h-[379px] lg:p-[40px]">
       <img src="/assets/figma/proj-lines.svg" alt="" aria-hidden className="pointer-events-none absolute right-[-378px] top-[-20px] h-[509px] w-[835px] max-w-none rotate-[-16.44deg] select-none" />
       <div className="relative">
         <h1 className="text-[32px] font-[400] leading-none text-transparent" style={gradLight}>{active?.name ?? t('projects.noActive')}</h1>
@@ -239,10 +239,10 @@ export function ProjectsPage() {
   if (query.isLoading) return <Skeleton className="h-full min-h-[560px]" />;
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-[20px] md:h-[calc(100dvh_-_2*var(--space-6))] md:flex-none md:py-[calc(var(--rail-pad-y)_-_var(--space-6))]">
+    <div className="flex min-h-0 flex-1 flex-col gap-[20px] lg:h-[calc(100dvh_-_2*var(--space-6))] lg:flex-none lg:py-[calc(var(--rail-pad-y)_-_var(--space-6))]">
       <CurrentProjectCard active={active} onCreate={() => setModalOpen(true)} />
 
-      <section className="card-2 relative flex min-h-0 flex-col overflow-hidden p-[40px] md:flex-1">
+      <section className="card-2 relative flex min-h-[420px] flex-col overflow-hidden p-[24px] sm:p-[32px] lg:min-h-0 lg:flex-1 lg:p-[40px]">
         <div className="flex items-center justify-between gap-space-4">
           <h2 className="text-[32px] font-[400] leading-none text-transparent" style={gradLight}>{t('projects.allProjects')}</h2>
           {archivedCount > 0 && (
