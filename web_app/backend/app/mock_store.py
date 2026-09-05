@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import math
 from collections import defaultdict
 from contextvars import ContextVar
@@ -1083,7 +1084,26 @@ def save_source(
 
 def previous_track() -> dict[str, Any] | None:
     tracks = ws().saved_tracks
-    return deepcopy(tracks[0]) if tracks else None
+    return _track_with_identity(tracks[0]) if tracks else None
+
+
+def saved_track(track_id: str) -> dict[str, Any] | None:
+    """Resolve a track only inside the current user's workspace.
+
+    The browser is not trusted to provide its S3 locator or content hash. Legacy
+    records created before audioHash existed receive a stable, namespaced identity
+    derived from their owned S3 object, so the same stored track remains reusable.
+    """
+    item = next((track for track in ws().saved_tracks if track.get("id") == track_id), None)
+    return _track_with_identity(item) if item else None
+
+
+def _track_with_identity(item: dict[str, Any]) -> dict[str, Any]:
+    if not str(item.get("audioHash") or "").strip():
+        locator = str(item.get("s3Key") or "").strip()
+        if locator:
+            item["audioHash"] = "legacy-s3:" + hashlib.sha256(locator.encode("utf-8")).hexdigest()
+    return deepcopy(item)
 
 
 def set_wizard_session(payload: dict[str, Any]) -> dict[str, Any]:

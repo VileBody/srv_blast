@@ -77,8 +77,24 @@ def _json_catalog(name: str) -> tuple[dict[str, Any], ...]:
             "previewUrl": locator,
             "score": float(value.get("score", 1.0)),
         }
-        if value.get("plane"):
-            item["plane"] = str(value["plane"])
+        plane = str(value.get("plane") or "").strip()
+        if name == "WEB_FOOTAGE_CATALOG_JSON":
+            # Explicit migration for the first production catalog. Its collection
+            # ids and render presets were correct, but the `plane` field was
+            # omitted, so the API classified all 47 items as vertical vibes.
+            if not plane:
+                if item_id.startswith("collection:cine16x9__"):
+                    plane = "cine16x9"
+                elif item_id.startswith("collection:films__"):
+                    plane = "films"
+                else:
+                    plane = "vibes"
+            if plane not in {"vibes", "cine16x9", "films"}:
+                raise ProductionBackendError(
+                    f"production_backend: {name}[{index}].plane has unsupported value {plane!r}"
+                )
+        if plane:
+            item["plane"] = plane
         selector = value.get("selector")
         if selector is not None:
             if not isinstance(selector, dict):
@@ -207,6 +223,28 @@ class ProductionConfig:
         photo_catalog = _json_catalog("WEB_PHOTO_CATALOG_JSON")
         subtitle_catalog = _json_catalog("WEB_SUBTITLE_CATALOG_JSON")
         fx_catalog = _json_catalog("WEB_FX_CATALOG_JSON")
+
+        missing_footage_planes = sorted(
+            {"vibes", "cine16x9", "films"}
+            - {str(item.get("plane") or "") for item in footage_catalog}
+        )
+        if missing_footage_planes:
+            raise ProductionBackendError(
+                "production_backend: WEB_FOOTAGE_CATALOG_JSON has no entries for "
+                + ", ".join(missing_footage_planes)
+            )
+        required_fx_groups = {
+            "effect_hook__", "effect_transition__", "effect_extra__", "motion__", "shape__"
+        }
+        missing_fx_groups = sorted(
+            prefix for prefix in required_fx_groups
+            if not any(str(item.get("id") or "").startswith(prefix) for item in fx_catalog)
+        )
+        if missing_fx_groups:
+            raise ProductionBackendError(
+                "production_backend: WEB_FX_CATALOG_JSON has no entries for "
+                + ", ".join(missing_fx_groups)
+            )
 
         # Запись каталога может нести `selector` — точную пару (theme, tags_group),
         # которой закрепляется бакет. Такой записи карта артистов не нужна: артист
@@ -499,6 +537,14 @@ class ProductionBackend:
             raise ProductionBackendError("upload locator is outside the managed asset prefix")
         self._s3.delete_object(Bucket=bucket, Key=key)
 
+    def delete_uploaded_track(self, locator: str, *, user_id: str) -> None:
+        """Remove only a raw-audio object created by this web user."""
+        bucket, key = self._parse_s3_locator(locator)
+        owned_prefix = f"{self.config.raw_audio_prefix}/web/{quote(user_id, safe='')}/"
+        if bucket != self.config.raw_audio_bucket or not key.startswith(owned_prefix):
+            raise ProductionBackendError("track locator is outside the managed user prefix")
+        self._s3.delete_object(Bucket=bucket, Key=key)
+
     def validate_stage(self, stage: dict[str, Any]) -> set[str]:
         from .batch_geometry import selected_geometry
         catalogs = {mode: {item["name"]: item for item in source} for mode, source in (
@@ -749,6 +795,9 @@ class ProductionBackend:
         render_job = job["renderJob"]
         stage_data = job["stageData"]
         track = render_job["track"]
+        audio_s3_url = str(track.get("s3Key") or "").strip()
+        if not audio_s3_url.startswith("s3://"):
+            raise ProductionBackendError("selected track has no valid S3 audio locator")
         segment = track.get("segment") or {}
         start = segment.get("from")
         end = segment.get("to")
@@ -874,7 +923,7 @@ class ProductionBackend:
             target_fragment = lyrics
         payload: dict[str, Any] = {
             **f6_fields,
-            "audio_s3_url": str(track.get("s3Key") or ""),
+            "audio_s3_url": audio_s3_url,
             "project_id": str(job.get("projectId") or ""),
             "mode": "with_gemini",
             "render_engine": "ae",

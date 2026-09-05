@@ -55,6 +55,19 @@ function parseTime(value: string): number | null {
   return Number(match[1]) * 60 + Number(match[2]);
 }
 
+function apiErrorText(error: unknown): string | undefined {
+  if (!(error instanceof ApiError)) return undefined;
+  if (typeof error.detail === 'string') return error.detail;
+  if (error.detail && typeof error.detail === 'object') {
+    const detail = (error.detail as { detail?: unknown }).detail;
+    if (typeof detail === 'string') return detail;
+    if (detail && typeof detail === 'object' && typeof (detail as { message?: unknown }).message === 'string') {
+      return String((detail as { message: string }).message);
+    }
+  }
+  return undefined;
+}
+
 /** Максимальная длина отрывка: 15 с на триале, 30 с на платном тарифе. */
 export const SEGMENT_SECONDS = { trial: 15, paid: 30 } as const;
 
@@ -178,6 +191,7 @@ function StageOne({ creditsLeft, maxSegmentSeconds, paidPlan }: { creditsLeft: n
       setField('fragmentEnabled', false);
       push({ variant: 'warning', title: t('wizard.text.resetTitle'), text: t('wizard.text.resetText') });
     }
+    setField('timingMode', 'manual');
     setField(field, next);
     return true;
   };
@@ -428,9 +442,7 @@ export function WizardPage() {
       push({
         variant: 'error',
         title: limitReached ? t('wizard.page.limitReached') : t('wizard.page.genFail'),
-        text: limitReached
-          ? String((error.detail as { detail?: string })?.detail ?? '')
-          : t('wizard.page.genFailText'),
+        text: apiErrorText(error) ?? t('wizard.page.genFailText'),
         action: limitReached ? { label: t('wizard.track.limitCta'), href: '/app/pricing' } : undefined
       });
     }
@@ -468,13 +480,13 @@ export function WizardPage() {
 
   // «Продолжить» подсвечивается только при непустом выборе; кликабельность — отдельно
   const ready = useMemo(() => {
-    if (stage === 1) return trackReady && !segmentInvalid;
+    if (stage === 1) return trackReady && timingReady && !segmentInvalid;
     if (stage === 2) return backgroundVariations(state.background) > 0;
     if (stage === 3) return hookPills(state.hooks).length > 0;
     if (stage === 4) return state.subtitles.pool.length > 0;
     if (stage === 5) return allocBalanced && trackReady;
     return false;
-  }, [allocBalanced, segmentInvalid, stage, state.background, state.hooks, state.subtitles.pool, trackReady]);
+  }, [allocBalanced, segmentInvalid, stage, state.background, state.hooks, state.subtitles.pool, timingReady, trackReady]);
 
   const canContinue = useMemo(() => {
     // Хук опционален — с этапа можно уйти без выбора

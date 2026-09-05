@@ -327,6 +327,19 @@ def test_catalog_parsing_keeps_and_validates_selector(monkeypatch: pytest.Monkey
         module._json_catalog("WEB_FOOTAGE_CATALOG_JSON")
 
 
+def test_legacy_footage_catalog_ids_restore_their_planes(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _module(monkeypatch)
+    monkeypatch.setenv("WEB_FOOTAGE_CATALOG_JSON", json.dumps([
+        {"id": "visual:forest", "name": "Forest", "previewUrl": "s3://assets/v.mp4"},
+        {"id": "collection:cine16x9__NY", "name": "NY", "previewUrl": "s3://assets/w.mp4"},
+        {"id": "collection:films__drive", "name": "Drive", "previewUrl": "s3://assets/f.mp4"},
+    ]))
+
+    parsed = module._json_catalog("WEB_FOOTAGE_CATALOG_JSON")
+
+    assert [item["plane"] for item in parsed] == ["vibes", "cine16x9", "films"]
+
+
 def test_fx_catalog_requires_one_supported_selector(monkeypatch: pytest.MonkeyPatch) -> None:
     module = _module(monkeypatch)
     monkeypatch.setenv("WEB_FX_CATALOG_JSON", json.dumps([{
@@ -457,6 +470,16 @@ def test_vertical_stays_vertical_without_selector(monkeypatch: pytest.MonkeyPatc
     assert "rotation_tags_group" not in payload
     assert payload["render_preset"] == "vertical"
     assert payload["footage_artist_id"] == "electro_synthwave"
+
+
+def test_submit_payload_requires_server_audio_locator(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _module(monkeypatch)
+    backend = _backend(module, _config(module))
+    job = _job()
+    job["renderJob"]["track"]["s3Key"] = ""
+
+    with pytest.raises(module.ProductionBackendError, match="valid S3 audio locator"):
+        backend.validate_job(job)
 
 
 def test_same_label_in_footage_and_photo_does_not_cross_wire(monkeypatch: pytest.MonkeyPatch) -> None:

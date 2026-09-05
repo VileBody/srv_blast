@@ -1,4 +1,4 @@
-import { ReactNode } from 'react';
+import { CSSProperties, ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { cn } from '../../lib/cn';
 
@@ -22,7 +22,8 @@ export function PreviewPlayer({
   onPrev,
   onNext,
   showSteps = true,
-  className
+  className,
+  style
 }: {
   children: ReactNode;
   /** Плей не рисуем вовсе, если играть нечего (нет трека/ролика) */
@@ -34,12 +35,13 @@ export function PreviewPlayer({
   onNext?: () => void;
   showSteps?: boolean;
   className?: string;
+  style?: CSSProperties;
 }) {
   const { t } = useTranslation();
   const arrow = 'absolute top-1/2 z-[4] flex h-[44px] w-[44px] -translate-y-1/2 items-center justify-center '
     + 'rounded-full bg-[rgba(5,1,15,0.55)] text-text-80 backdrop-blur-[8px] transition hover:text-text';
   return (
-    <div className={cn('relative overflow-hidden', className)}>
+    <div className={cn('relative overflow-hidden', className)} style={style}>
       {children}
       {showSteps && onPrev && onNext && (
         <>

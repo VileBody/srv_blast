@@ -807,6 +807,7 @@ async def api_upload_track(file: UploadFile = File(...)) -> dict[str, Any]:
     safe_name = f"{uuid4().hex}{ext}"
     display_name = security.sanitize_filename(file.filename, safe_name)
     if RUNTIME.backend == "production":
+        uploaded: dict[str, str] | None = None
         try:
             uploaded = await run_in_threadpool(
                 _production_backend().upload_track,
@@ -815,8 +816,27 @@ async def api_upload_track(file: UploadFile = File(...)) -> dict[str, Any]:
                 filename=display_name,
                 content_type=file.content_type,
             )
+            # Track quota is spent when the track is successfully uploaded, which
+            # matches the UI and mock contract. Submit then sees this hash as
+            # `known`; an enqueue failure cannot consume a hidden extra slot.
+            await _billing_backend().consume_track(_telegram_chat_id(), audio_hash)
         except Exception as exc:  # dependency failure is explicit, never a local-file fallback
+            from .billing_backend import TrackQuotaExhausted
+
+            if uploaded:
+                try:
+                    await run_in_threadpool(
+                        _production_backend().delete_uploaded_track,
+                        uploaded["s3_url"],
+                        user_id=store.current_user_id(),
+                    )
+                except Exception:
+                    logger.exception("failed to clean up rejected uploaded track")
+            if isinstance(exc, TrackQuotaExhausted):
+                analytics.track("limit_hit", store.current_user_id(), {"limit": "tracks"})
+                raise HTTPException(status_code=402, detail="Лимит уникальных треков исчерпан") from exc
             raise _production_error(exc) from exc
+        assert uploaded is not None
         track = store.save_track(
             display_name,
             s3_url=uploaded["s3_url"],
@@ -948,7 +968,7 @@ def api_previous_track() -> dict[str, Any]:
 
 
 @app.get("/api/wizard/drops", tags=["wizard"])
-async def api_drops(clipFrom: str = "", clipTo: str = "") -> dict[str, Any]:
+async def api_drops(trackId: str = "", clipFrom: str = "", clipTo: str = "") -> dict[str, Any]:
     """Кандидаты дропа для выбранного отрывка — то же, что показывает бот.
 
     Бот не хранит три фиксированных тайминга: он зовёт `POST /hook/analyze`
@@ -971,7 +991,9 @@ async def api_drops(clipFrom: str = "", clipTo: str = "") -> dict[str, Any]:
         # показывает «выбери отрывок», а не «сервер прилёг».
         return {"status": "NEEDS_CLIP", "bpm": 0, "drops": [], "mock": False}
 
-    track = store.previous_track() or {}
+    # Analyze the track selected in this draft. `previous_track()` is not enough:
+    # after uploading a replacement it can differ from a restored browser draft.
+    track = store.saved_track(str(trackId or "")) or {}
     audio_s3_url = str(track.get("s3Key") or "").strip()
     if not audio_s3_url:
         return {"status": "NEEDS_TRACK", "bpm": 0, "drops": [], "mock": False}
@@ -1021,7 +1043,14 @@ def api_vibes(plane: str = "vibes") -> dict[str, Any]:
     else:
         vibes = store.VIBES
     wanted = str(plane or "vibes").strip() or "vibes"
+    if wanted not in {"vibes", "cine16x9", "films"}:
+        raise HTTPException(status_code=422, detail=f"Неизвестный тип футажей: {wanted}")
     vibes = [item for item in vibes if str(item.get("plane") or "vibes") == wanted]
+    if not vibes:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Каталог футажей {wanted} пуст. Сообщите поддержке — это ошибка конфигурации.",
+        )
     return {"status": "COMPLETED", "vibes": vibes, "mock": RUNTIME.backend == "mock"}
 
 
@@ -1076,6 +1105,14 @@ async def api_submit_wizard(payload: SubmitPayload) -> dict[str, Any]:
         raise HTTPException(status_code=422, detail="Не выбран трек")
     if not str(stage_data.get("lyrics") or "").strip():
         raise HTTPException(status_code=422, detail="Не заполнен текст трека")
+    if RUNTIME.backend == "production":
+        track_id = str((stage_data.get("track") or {}).get("id") or "")
+        owned_track = store.saved_track(track_id)
+        if not owned_track:
+            raise HTTPException(status_code=422, detail="Трек не найден в вашем аккаунте. Загрузите его заново.")
+        # Use the server-owned locator/hash even when the browser draft is stale
+        # or has been edited. This also upgrades pre-audioHash saved tracks.
+        stage_data["track"] = owned_track
 
     projects = store.list_projects()["projects"]
     requested = payload.projectId if any(p["id"] == payload.projectId for p in projects) else None

@@ -244,9 +244,9 @@ export const api = {
   // Окно отрывка обязательно: кандидаты дропа ищутся ВНУТРИ него, как в боте.
   // Без окна прод отвечает status:'NEEDS_CLIP' (не ошибкой — это нормальное
   // состояние визарда до выбора отрывка).
-  drops: (clipFrom = '', clipTo = '') =>
+  drops: (trackId: string, clipFrom = '', clipTo = '') =>
     request<{ status: string; bpm: number; drops: DropCandidate[] }>(
-      `/api/wizard/drops?clipFrom=${encodeURIComponent(clipFrom)}&clipTo=${encodeURIComponent(clipTo)}`
+      `/api/wizard/drops?trackId=${encodeURIComponent(trackId)}&clipFrom=${encodeURIComponent(clipFrom)}&clipTo=${encodeURIComponent(clipTo)}`
     ),
   // plane — план подбора (vibes 9:16 / cine16x9 / films). Без него степпер типов
   // футажей листался, а список примеров не менялся.

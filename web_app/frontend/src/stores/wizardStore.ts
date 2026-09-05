@@ -192,7 +192,7 @@ const initialData = (projectId?: string | null): WizardStateData => ({
   lyrics: '',
   fragmentEnabled: false,
   fragmentLyrics: '',
-  timingMode: 'ai',
+  timingMode: 'manual',
   timingFrom: '',
   timingTo: '',
   carriedOverInputs: false,
@@ -279,7 +279,7 @@ export const useWizardStore = create<WizardStore>()(
           lyrics: typeof raw.lyrics === 'string' ? raw.lyrics : '',
           fragmentEnabled: Boolean(fragment),
           fragmentLyrics: fragment,
-          timingMode: timing.mode === 'ai' ? 'ai' : 'manual',
+          timingMode: 'manual',
           timingFrom: typeof timing.from === 'string' ? timing.from : '',
           timingTo: typeof timing.to === 'string' ? timing.to : '',
           background: (() => {
@@ -306,7 +306,12 @@ export const useWizardStore = create<WizardStore>()(
           track: state.track,
           lyrics: state.lyrics,
           fragment: state.fragmentEnabled ? state.fragmentLyrics : null,
-          timing: state.timingMode === 'manual' ? { from: state.timingFrom, to: state.timingTo } : { mode: 'ai' },
+          // The web UI always asks for an explicit window. Persisted drafts used
+          // to keep timingMode='ai' even after both fields were filled, which
+          // dropped the visible values from the production payload.
+          timing: state.timingFrom && state.timingTo
+            ? { from: state.timingFrom, to: state.timingTo }
+            : { mode: state.timingMode },
           background: state.background,
           hooks: state.hooks,
           subtitles: state.subtitles,

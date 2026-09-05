@@ -667,31 +667,32 @@ export function BackgroundWorkZone({ ready, canContinue, loading, onBack, onNext
             >
               <div className="relative w-full" style={{ aspectRatio: '16 / 9' }}>
                 {current ? renderMedia(current) : <div className="flex h-full items-center justify-center"><p className="wizard-body">{emptyText}</p></div>}
-                {current && <span className="absolute bottom-space-4 left-0 right-0 text-center text-[20px] text-text" style={{ textShadow: '0 1px 6px rgba(0,0,0,.8)' }}>{chip(current.name)}</span>}
+              </div>
+              <span className="dash-panel-plain pointer-events-none absolute inset-0 z-[3]" aria-hidden="true" />
+            </PreviewPlayer>
+          </div>
+        ) : background.mode === 'footage' ? (
+          <div className="flex min-h-0 flex-1 justify-center">
+            <PreviewPlayer
+              className="h-full w-auto max-w-full rounded-r15 bg-grad-soft-10"
+              style={{ aspectRatio: '9 / 16' }}
+              {...playerProps}
+              showSteps={playerProps.showSteps && Boolean(current)}
+              onTogglePlay={current ? playerProps.onTogglePlay : undefined}
+            >
+              <div className="absolute inset-0">
+                {current ? renderMedia(current) : (
+                  <div className="flex h-full items-center justify-center p-space-5">
+                    <p className="wizard-body max-w-[223px] text-center">{emptyText}</p>
+                  </div>
+                )}
               </div>
               <span className="dash-panel-plain pointer-events-none absolute inset-0 z-[3]" aria-hidden="true" />
             </PreviewPlayer>
           </div>
         ) : (
-          <PreviewPlayer
-            className={cn('min-h-0 flex-1 rounded-r15', !activeColor && 'bg-grad-soft-10')}
-            {...playerProps}
-            showSteps={playerProps.showSteps && Boolean(current)}
-            onTogglePlay={isMedia && current ? playerProps.onTogglePlay : undefined}
-          >
-            <div className="absolute inset-0" style={fillStyle}>
-              {background.mode === 'footage' && current && (
-                <>
-                  {renderMedia(current)}
-                  <span className="absolute bottom-space-6 left-0 right-0 text-center text-[22px] text-text" style={{ textShadow: '0 1px 6px rgba(0,0,0,.8)' }}>{chip(current.name)}</span>
-                </>
-              )}
-              {!current && !activeColor && (
-                <div className="flex h-full items-center justify-center p-space-5">
-                  <p className="wizard-body max-w-[223px] text-center">{emptyText}</p>
-                </div>
-              )}
-            </div>
+          <PreviewPlayer className="min-h-0 flex-1 rounded-r15" {...playerProps} showSteps={false} onTogglePlay={undefined}>
+            <div className="absolute inset-0" style={fillStyle} />
             <span className="dash-panel-plain pointer-events-none absolute inset-0 z-[3]" aria-hidden="true" />
           </PreviewPlayer>
         )}

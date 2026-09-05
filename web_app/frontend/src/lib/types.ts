@@ -230,6 +230,8 @@ export interface SavedTrack {
   localUrl?: string;
   createdAt: string;
   expiresAt: string;
+  /** SHA-256 content identity; legacy server records may be upgraded on read. */
+  audioHash?: string;
 }
 
 export interface Vibe {

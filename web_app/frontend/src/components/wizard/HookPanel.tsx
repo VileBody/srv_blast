@@ -11,7 +11,7 @@ import { FullscreenZone } from '../ui/FullscreenZone';
 import { PillsFooter } from './WizardFrame';
 import { HookConfig, HookKind, HOOK_LABELS, hookComplete, hookPills, useWizardStore } from '../../stores/wizardStore';
 import effectsRegistry from '../../data/effects-registry.json';
-import { CatalogMedia, SubtitleCatalogPreview } from './CatalogPreview';
+import { CatalogMedia } from './CatalogPreview';
 
 /*
  * Этап «Хук» (Figma W18 → W24/32 → W25/34 → W26/28/29/30 → W27 → W31):
@@ -37,6 +37,21 @@ const EFFECT_GLUES = effectsRegistry.glue.map((e) => e.label);
 const EFFECT_STYLES = effectsRegistry.style.map((e) => e.label);
 const MOTIONS = ['Свайп', 'Тап', 'Зум', 'Задержи', 'Голова'];
 const THOUGHTS = ['Панчлайн', 'Пропущенное слово', 'Эхо', 'Вопрос', 'Инверсия'];
+
+const OBJECT_PREVIEW_IDS: Record<string, string> = {
+  'Круг': 'shape__elipse',
+  'Квадрат': 'shape__square',
+  'Ромб': 'shape__rhomb',
+  'Звезда-5': 'shape__star2',
+  'Звезда-10': 'shape__star1'
+};
+const MOTION_PREVIEW_IDS: Record<string, string> = {
+  'Свайп': 'motion__swipe',
+  'Тап': 'motion__tap',
+  'Зум': 'motion__pinch',
+  'Задержи': 'motion__holdfinger',
+  'Голова': 'motion__head'
+};
 
 /*
  * Иконки чипов из Figma. baked — SVG уже содержит фиолетовый круг 40×40;
@@ -142,6 +157,28 @@ export function hookSteps(kind: HookKind): HookStep[] {
   return [FIRST_STEP[kind], GLUE_STEP, STYLE_STEP];
 }
 
+/** Stable S3 catalog id for the exact option edited at this step. */
+function previewIdFor(key: keyof HookConfig, value?: string): string | undefined {
+  if (!value) return undefined;
+  if (key === 'object') return OBJECT_PREVIEW_IDS[value];
+  if (key === 'motion') return MOTION_PREVIEW_IDS[value];
+  const group = key === 'effectHook' ? 'hook' : key === 'effectGlue' ? 'glue' : key === 'effectStyle' ? 'style' : null;
+  if (!group) return undefined;
+  const item = effectsRegistry[group].find((entry) => entry.label === value);
+  const prefix = key === 'effectHook' ? 'effect_hook' : key === 'effectGlue' ? 'effect_transition' : 'effect_extra';
+  return item ? `${prefix}__${item.manifestId}` : undefined;
+}
+
+function configuredPreviewId(kind: HookKind, config: HookConfig, active?: HookStep): string | undefined {
+  if (active) {
+    const selected = previewIdFor(active.key, config[active.key] as string | undefined);
+    if (selected) return selected;
+  }
+  return hookSteps(kind)
+    .map((step) => previewIdFor(step.key, config[step.key] as string | undefined))
+    .find(Boolean);
+}
+
 function maskTiming(raw: string): string {
   const digits = raw.replace(/\D/g, '').slice(0, 6);
   return digits.replace(/(\d{2})(?=\d)/g, '$1:');
@@ -176,8 +213,8 @@ export function StageHooks() {
   const clipReady = timingMode === 'manual' && Boolean(timingFrom) && Boolean(timingTo);
   const dropsQuery = useQuery({
     queryKey: ['drops', track?.id, timingFrom, timingTo],
-    queryFn: () => api.drops(timingFrom, timingTo),
-    enabled: meQuery.isSuccess && Boolean(meQuery.data.capabilities?.analyzedDrops) && clipReady,
+    queryFn: () => api.drops(track!.id, timingFrom, timingTo),
+    enabled: meQuery.isSuccess && Boolean(meQuery.data.capabilities?.analyzedDrops) && Boolean(track) && clipReady,
   });
   const [customDrop, setCustomDrop] = useState(false);
   const [hint, setHint] = useState<HookKind | null>(null);
@@ -390,23 +427,12 @@ function nextFreeKind(hooks: { configs: Partial<Record<HookKind, HookConfig>> },
  * то есть у каждого хука своя пара — это и даёт уникальность вариаций.
  * Геометрия: контейнеры 390×160 и 390×175 (шаг 195), плеер 373×665 + «Продолжить» 373×60.
  */
-/**
- * Preview uses pre-rendered catalog videos. Subtitle and effect samples are
- * separate because the catalog has no render for every possible combination.
- */
-function EffectPreview({ style, hook }: { style: string; hook?: string; lyrics?: string }) {
-  const { t } = useTranslation();
+/** The selected hook/shape/motion sample is already rendered and stored in S3. */
+function EffectPreview({ previewId }: { previewId?: string }) {
   const query = useQuery({ queryKey: ['fx-previews'], queryFn: api.fxPreviews });
-  const effect = query.data?.previews.find(item => item.name === hook || item.id === hook);
-  const [view, setView] = useState<'subtitle' | 'effect'>('subtitle');
-  return <div className="absolute inset-0 flex flex-col">
-    <div className="z-10 flex shrink-0 justify-center gap-2 p-2">
-      <button type="button" className="rounded-lg bg-accent-20 px-3 py-2 text-xs" aria-pressed={view === 'subtitle'} onClick={() => setView('subtitle')}>{t('wizard.preview.subtitles')}</button>
-      <button type="button" className="rounded-lg bg-accent-20 px-3 py-2 text-xs" aria-pressed={view === 'effect'} onClick={() => setView('effect')}>{t('wizard.preview.effect')}</button>
-    </div>
-    {view === 'subtitle' ? <SubtitleCatalogPreview name={style} className="min-h-0 flex-1" />
-      : <CatalogMedia url={effect?.previewUrl} className="min-h-0 w-full flex-1" />}
-  </div>;
+  if (!previewId || query.isLoading) return null;
+  const effect = query.data?.previews.find(item => item.id === previewId);
+  return <CatalogMedia url={effect?.previewUrl} className="absolute inset-0 h-full w-full" />;
 }
 
 function HooksFullscreen({
@@ -421,8 +447,6 @@ function HooksFullscreen({
   const { t } = useTranslation();
   const chip = useChip();
   const hooks = useWizardStore((state) => state.hooks);
-  const subtitleStyle = useWizardStore((state) => state.subtitles.pool[0] ?? 'Impulse');
-  const lyrics = useWizardStore((state) => state.fragmentLyrics || state.lyrics);
   const setHooks = useWizardStore((state) => state.setHooks);
   const [step, setStep] = useState(0);
   const pillsScroll = useDragScroll();
@@ -469,10 +493,7 @@ function HooksFullscreen({
   const steps = hookSteps(kind);
   const first = steps[0].options.length > 0 ? steps[0] : null;
   const currentDef = steps[Math.min(step, steps.length - 1)];
-  const previewHook = (currentDef && config[currentDef.key] as string | undefined)
-    ?? config.effectHook
-    ?? hookPickLabel(config, (label) => label)
-    ?? HOOK_LABELS[kind];
+  const previewId = configuredPreviewId(kind, config, currentDef);
 
   /** Стрелки плеера листают варианты ВНУТРИ активной группы, не переключая группы. */
   const cycleVariant = (delta: number) => {
@@ -539,7 +560,7 @@ function HooksFullscreen({
   const right = (
     <div className="flex h-full flex-col">
       <div className="group relative h-[665px] shrink-0 overflow-hidden rounded-r15 bg-grad-soft-10">
-        <EffectPreview style={subtitleStyle} hook={previewHook} lyrics={lyrics} />
+        <EffectPreview previewId={previewId} />
         <span className="dash-panel-plain pointer-events-none absolute inset-0 z-[3]" aria-hidden="true" />
         {/* стрелки: пролистывание вариантов активной группы (Figma 746:1412) */}
         <button type="button" aria-label={t('wizard.fx.prevStep')} disabled={!currentDef} onClick={() => cycleVariant(-1)} className="absolute left-[25px] top-1/2 z-[4] -translate-y-1/2 text-text opacity-0 transition-opacity group-hover:opacity-100 disabled:opacity-30">
@@ -554,9 +575,6 @@ function HooksFullscreen({
           <span className="h-[20px] w-[5px] rounded-[2px] bg-text" />
         </span>
 
-        <span className="absolute bottom-[40px] left-0 right-0 z-[4] text-center text-[16px] font-[400] leading-[19px] text-text-60">
-          {currentDef && config[currentDef.key] ? chip(config[currentDef.key] as string) : t('wizard.fx.chooseBelow')}
-        </span>
       </div>
 
       <button
@@ -578,8 +596,6 @@ export function HooksWorkZone({ ready, canContinue, loading, onBack, onNext }: {
   const { t } = useTranslation();
   const chip = useChip();
   const hooks = useWizardStore((state) => state.hooks);
-  const subtitleStyle = useWizardStore((state) => state.subtitles.pool[0] ?? 'Impulse');
-  const lyrics = useWizardStore((state) => state.fragmentLyrics || state.lyrics);
   const setHooks = useWizardStore((state) => state.setHooks);
   const pillsScroll = useDragScroll();
   const [step, setStep] = useState(0);
@@ -614,6 +630,7 @@ export function HooksWorkZone({ ready, canContinue, loading, onBack, onNext }: {
   const stepIndex = Math.min(step, Math.max(0, steps.length - 1));
   const stepDef = steps[stepIndex];
   const stepValue = stepDef ? (config[stepDef.key] as string | undefined) : undefined;
+  const previewId = kind ? configuredPreviewId(kind, config, stepDef) : undefined;
   const canAdvance = Boolean(stepValue) && stepIndex < steps.length - 1;
 
   const confirmButton = canAdvance && (
@@ -684,30 +701,13 @@ export function HooksWorkZone({ ready, canContinue, loading, onBack, onNext }: {
         </div>
 
         <div className="relative min-h-0 flex-1 overflow-hidden rounded-r15 bg-grad-soft-10">
-          <EffectPreview
-            style={subtitleStyle}
-            lyrics={lyrics}
-            hook={config.effectHook ?? hookPickLabel(config, (label) => label) ?? (kind ? HOOK_LABELS[kind] : undefined)}
-          />
+          {kind && <EffectPreview previewId={previewId} />}
           <span className="dash-panel-plain pointer-events-none absolute inset-0 z-[3]" aria-hidden="true" />
           {!kind ? (
             <div className="flex h-full items-center justify-center p-space-5">
               <p className="wizard-body max-w-[223px] text-center">{t('wizard.fx.empty')}</p>
             </div>
-          ) : (
-            <div className="flex h-full flex-col items-center justify-center gap-space-3 p-space-5 text-center">
-              <SvgMaskIcon
-                src={HOOK_TYPES.find((item) => item.kind === kind)!.icon}
-                style={{ width: 42, height: 46, color: 'var(--accent-light)' }}
-              />
-              <p className="wizard-body">{chip(HOOK_LABELS[kind])}</p>
-              <p className="text-[15px] text-text-60">
-                {kind === 'effects'
-                  ? [config.effectHook, config.effectGlue, config.effectStyle].filter(Boolean).map((v) => chip(v as string)).join(' · ') || t('wizard.fx.configureThree')
-                  : hookPickLabel(config, chip) ?? t('wizard.fx.chooseBelow')}
-              </p>
-            </div>
-          )}
+          ) : null}
         </div>
 
         {settings}

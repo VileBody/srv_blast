@@ -71,6 +71,8 @@ if ! grep -Eq '^TIKTOK_UPLOAD_SOURCE=FILE_UPLOAD$' "$ENV_FILE"; then
   exit 1
 fi
 
+python3 "$ROOT_DIR/scripts/validate_web_preview_catalog_env.py" "$ENV_FILE"
+
 wait_http() {
   local url="$1"
   local expected="$2"
