@@ -264,6 +264,67 @@ class _Pool:
         return _Acquire(self.conn)
 
 
+class _GenerationConn:
+    def __init__(self) -> None:
+        self.balance = 20
+        self.transactions: list[dict[str, Any]] = []
+
+    def transaction(self) -> _Tx:
+        return _Tx()
+
+    async def fetchval(self, query: str, *args: Any) -> int | None:
+        if "SELECT amount FROM transactions" in query:
+            reason = "web_generation_refund" if "web_generation_refund" in query else "web_generation_reserve"
+            row = next((item for item in self.transactions if item["reason"] == reason and item["context"] == str(args[1])), None)
+            return int(row["amount"]) if row else None
+        if "SELECT credits FROM users" in query:
+            return self.balance
+        raise AssertionError(f"unexpected fetchval: {query}")
+
+    async def fetchrow(self, query: str, *args: Any) -> dict[str, int] | None:
+        if query.startswith("UPDATE users SET credits = credits + $1"):
+            self.balance += int(args[0])
+            return {"credits": self.balance}
+        raise AssertionError(f"unexpected fetchrow: {query}")
+
+    async def execute(self, query: str, *args: Any) -> str:
+        if query.startswith("INSERT INTO users"):
+            return "INSERT 0 0"
+        if query.startswith("UPDATE users SET credits = $1"):
+            self.balance = int(args[0])
+            return "UPDATE 1"
+        if query.startswith("INSERT INTO transactions"):
+            context = str(args[3])
+            if any(item["context"] == context for item in self.transactions):
+                raise AssertionError("duplicate global context_order_id")
+            reason = "web_generation_refund" if "web_generation_refund" in query else "web_generation_reserve"
+            self.transactions.append({"reason": reason, "amount": int(args[1]), "context": context})
+            return "INSERT 0 1"
+        raise AssertionError(f"unexpected execute: {query}")
+
+
+class _GenerationDB:
+    def __init__(self, conn: _GenerationConn) -> None:
+        self.pool = _Pool(conn)
+
+    def _pool_or_fail(self) -> _Pool:
+        return self.pool
+
+    async def get_balance(self, _tg_id: int) -> int:
+        return self.pool.conn.balance
+
+
+def test_generation_refund_uses_distinct_global_ledger_context() -> None:
+    conn = _GenerationConn()
+    backend = BillingBackend.__new__(BillingBackend)
+    backend._db = _GenerationDB(conn)
+
+    assert asyncio.run(backend.reserve(777, "job-one", 11)) == 9
+    assert asyncio.run(backend.refund(777, "job-one", 11)) == 20
+    assert asyncio.run(backend.refund(777, "job-one", 11)) == 20
+    assert [item["context"] for item in conn.transactions] == ["job-one", "job-one:refund"]
+
+
 def test_payment_confirmation_grants_video_and_track_limits_once() -> None:
     conn = _ConfirmConn()
     db = CreditsDB("postgresql://example")

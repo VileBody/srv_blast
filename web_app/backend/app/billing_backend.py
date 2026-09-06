@@ -258,6 +258,10 @@ class BillingBackend:
         amount = int(amount)
         if amount < 1:
             return await self._db.get_balance(tg_id)
+        # The shared ledger has a global uniqueness constraint on non-empty
+        # context_order_id. Reserve and refund are two distinct transactions,
+        # so their ledger identities must also be distinct.
+        refund_context = f"{job_id}:refund"
         pool = self._db._pool_or_fail()
         async with pool.acquire() as conn:
             async with conn.transaction():
@@ -265,7 +269,7 @@ class BillingBackend:
                     "SELECT amount FROM transactions WHERE tg_id = $1 "
                     "AND reason = 'web_generation_refund' AND context_order_id = $2",
                     tg_id,
-                    job_id,
+                    refund_context,
                 )
                 if existing is not None:
                     return int(await conn.fetchval("SELECT credits FROM users WHERE tg_id = $1", tg_id) or 0)
@@ -293,7 +297,7 @@ class BillingBackend:
                     tg_id,
                     amount,
                     f"web job={job_id}",
-                    job_id,
+                    refund_context,
                 )
                 return int(row["credits"])
 
