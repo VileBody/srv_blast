@@ -140,17 +140,62 @@ def build_render_job(batch_id: str, project_id: str | None, user_id: str,
         + [f"footage:{v}" for v in (bg.get("footage") or [])]
         + [f"photo:{v}" for v in (bg.get("photo") or [])]
     )
-    bg_fallback = bg_groups_all or (["__color__"] if bg.get("color") else ["__default__"])
+    has_color = bool(bg.get("color"))
+    bg_fallback = bg_groups_all or (["__color__"] if has_color else ["__default__"])
     sub_fallback = subs.get("pool") or ["Impulse"]
     hook_fallback = [hooks["kind"]] if hooks.get("kind") else []
 
-    bg_keys = _slice_keys(alloc.get("background") or {}, bg_fallback)
-    sub_keys = _slice_keys(alloc.get("subtitles") or {}, sub_fallback)
-    hook_keys = _slice_keys(alloc.get("hooks") or {}, hook_fallback)
+    bg_allocation = alloc.get("background") or {}
+    if bg_allocation:
+        bg_seq = _expand(bg_allocation)
+        if has_color:
+            bg_seq.append("__color__")
+    elif has_color and not bg_groups_all:
+        bg_seq = ["__color__"]
+    else:
+        regular_total = total - (1 if has_color else 0)
+        bg_seq = _expand(distribute(bg_groups_all or bg_fallback, regular_total))
+        if has_color:
+            bg_seq.append("__color__")
+    if len(bg_seq) != total:
+        raise ValueError(
+            f"Пул фонов содержит {len(bg_seq)} вариаций вместо {total}"
+        )
 
-    bg_seq = _expand(alloc.get("background") or distribute(bg_keys, total))
-    sub_seq = _expand(alloc.get("subtitles") or distribute(sub_keys, total))
-    hook_seq = _expand(alloc.get("hooks") or distribute(hook_keys, total)) if hook_keys else []
+    expanded_backgrounds: list[tuple[str, str, dict[str, Any] | None, bool]] = []
+    footage_formats = bg.get("footageFormats") or {}
+    for group_key in bg_seq:
+        v_mode, group = _split_bg_key(group_key, mode)
+        source_plan = next((plan for plan in source_plans if plan["id"] == group), None) if v_mode == "upload" else None
+        if v_mode == "upload" and source_plan is None:
+            raise ValueError(f"Неизвестное личное видео: {group}")
+        hook_allowed = not (
+            v_mode in {"photo", "color"}
+            or (v_mode == "upload" and (source_plan or {}).get("format") == "16:9")
+            or (
+                v_mode == "footage"
+                and footage_formats.get(
+                    group,
+                    "16:9" if bg.get("footageType") == "cine16x9" else "9:16",
+                ) == "16:9"
+            )
+        )
+        expanded_backgrounds.append((v_mode, group, source_plan, hook_allowed))
+
+    non_color_total = sum(1 for v_mode, _, _, _ in expanded_backgrounds if v_mode != "color")
+    sub_keys = _slice_keys(alloc.get("subtitles") or {}, sub_fallback)
+    sub_seq = _expand(alloc.get("subtitles") or distribute(sub_keys, non_color_total))
+    if len(sub_seq) != non_color_total:
+        raise ValueError(
+            f"Пул субтитров содержит {len(sub_seq)} вариаций вместо {non_color_total}"
+        )
+    hook_keys = _slice_keys(alloc.get("hooks") or {}, hook_fallback)
+    hook_target = sum(1 for _, _, _, allowed in expanded_backgrounds if allowed)
+    hook_seq = _expand(alloc.get("hooks") or distribute(hook_keys, hook_target)) if hook_keys else []
+    if hook_keys and len(hook_seq) != hook_target:
+        raise ValueError(
+            f"Пул хуков содержит {len(hook_seq)} вариаций, а совместимых вертикальных фонов — {hook_target}"
+        )
 
     # общие резолвы фона (одни на батч)
     bg_glue_id = em.map_glue(bg.get("glue"))
@@ -160,12 +205,9 @@ def build_render_job(batch_id: str, project_id: str | None, user_id: str,
     configs = hooks.get("configs") or {}
 
     variations: list[dict[str, Any]] = []
-    for i in range(total):
-        group_key = bg_seq[i % len(bg_seq)] if bg_seq else "__default__"
-        v_mode, group = _split_bg_key(group_key, mode)
-        source_plan = next((plan for plan in source_plans if plan["id"] == group), None) if v_mode == "upload" else None
-        if v_mode == "upload" and source_plan is None:
-            raise ValueError(f"Неизвестное личное видео: {group}")
+    subtitle_index = 0
+    hook_index = 0
+    for i, (v_mode, group, source_plan, hook_allowed) in enumerate(expanded_backgrounds):
         source_ids = list((source_plan or {}).get("sourceIds") or [])
         missing_source_ids = [source_id for source_id in source_ids if source_id not in source_assets]
         if missing_source_ids:
@@ -174,8 +216,14 @@ def build_render_job(batch_id: str, project_id: str | None, user_id: str,
                 + ", ".join(missing_source_ids[:5])
             )
         variation_sources = [source_assets[source_id] for source_id in source_ids]
-        style = sub_seq[i % len(sub_seq)] if sub_seq else "Impulse"
-        v_kind = hook_seq[i % len(hook_seq)] if hook_seq else None
+        if v_mode == "color":
+            style = alloc.get("strobeFont" if bg.get("strobe") else "colorFont") or sub_fallback[0]
+        else:
+            style = sub_seq[subtitle_index] if sub_seq else sub_fallback[0]
+            subtitle_index += 1
+        v_kind = hook_seq[hook_index] if hook_allowed and hook_seq else None
+        if hook_allowed and hook_seq:
+            hook_index += 1
         cfg = configs.get(v_kind) or {} if v_kind else {}
         resolved, family_script = _resolve_hook(v_kind, cfg, bg_glue_id, bg_style_id)
 

@@ -17,12 +17,29 @@ import { HOOK_LABELS, HookKind, hookPills, useWizardStore, WizardStateData } fro
  */
 
 /** Ключ юнита — стабильный (идёт в allocation), подпись собирается через i18n при рендере. */
-function backgroundUnits(bg: WizardStateData['background']): { key: string; labelKey: string; name: string; icon: 'tag' | 'photo'; noHook: boolean }[] {
+export function backgroundUnits(bg: WizardStateData['background']): { key: string; labelKey: string; name: string; icon: 'tag' | 'photo'; noHook: boolean }[] {
   return [
-    ...bg.sourceVideos.map((plan, index) => ({ key: `upload:${plan.id}`, labelKey: 'wizard.pool.ownVideoUnit', name: `${index + 1} · ${plan.format}`, icon: 'tag' as const, noHook: false })),
-    ...bg.footage.map((vibe) => ({ key: `footage:${vibe}`, labelKey: 'wizard.pool.vibeUnit', name: vibe, icon: 'tag' as const, noHook: false })),
+    ...bg.sourceVideos.map((plan, index) => ({ key: `upload:${plan.id}`, labelKey: 'wizard.pool.ownVideoUnit', name: `${index + 1} · ${plan.format}`, icon: 'tag' as const, noHook: plan.format === '16:9' })),
+    ...bg.footage.map((vibe) => ({
+      key: `footage:${vibe}`,
+      labelKey: 'wizard.pool.vibeUnit',
+      name: vibe,
+      icon: 'tag' as const,
+      noHook: (bg.footageFormats?.[vibe] ?? (bg.footageType === 'cine16x9' ? '16:9' : '9:16')) === '16:9'
+    })),
     ...bg.photo.map((vibe) => ({ key: `photo:${vibe}`, labelKey: 'wizard.pool.photoUnit', name: vibe, icon: 'photo' as const, noHook: true }))
   ];
+}
+
+export function compatibleHookTarget(
+  bg: WizardStateData['background'],
+  allocation: Record<string, number>
+): number {
+  const units = backgroundUnits(bg);
+  return Object.entries(allocation).reduce((total, [key, count]) => {
+    const unit = units.find((candidate) => candidate.key === key);
+    return total + (unit && !unit.noHook ? count : 0);
+  }, 0);
 }
 
 function distribute(keys: string[], total: number): Record<string, number> {
@@ -109,7 +126,17 @@ export function StageSlice() {
     const unitKeys = units.map((u) => u.key);
     const known = Object.keys(alloc.background);
     const sameKeys = unitKeys.length === known.length && unitKeys.every((key) => known.includes(key));
-    if (alloc.seeded && sameKeys) return;
+    if (alloc.seeded && sameKeys) {
+      const hookKinds = hooksInPool.map((pill) => pill.kind);
+      const allocatedHookKinds = Object.keys(alloc.hooks);
+      const sameHookKinds = hookKinds.length === allocatedHookKinds.length
+        && hookKinds.every((kind) => allocatedHookKinds.includes(kind));
+      const hookTarget = compatibleHookTarget(state.background, alloc.background);
+      const hookSum = Object.values(alloc.hooks).reduce((sum, count) => sum + count, 0);
+      if (sameHookKinds && hookSum === hookTarget) return;
+      setAllocation({ hooks: distribute(hookKinds, hookTarget) });
+      return;
+    }
     setAllocation({
       seeded: true,
       total: unitKeys.length + fixedCount,
@@ -129,10 +156,7 @@ export function StageSlice() {
   const subsSum = Object.values(alloc.subtitles).reduce((a, b) => a + b, 0);
   const subsRest = bgTarget - subsSum;
 
-  const hookTarget = Object.entries(alloc.background).reduce((acc, [key, count]) => {
-    const unit = units.find((u) => u.key === key);
-    return acc + (unit && !unit.noHook ? count : 0);
-  }, 0);
+  const hookTarget = compatibleHookTarget(state.background, alloc.background);
   const hooksSum = Object.values(alloc.hooks).reduce((a, b) => a + b, 0);
   const hooksRest = hookTarget - hooksSum;
 
@@ -248,15 +272,32 @@ export function StageSlice() {
   );
 }
 
-function combinationAt(index: number, bg: [string, number][], subs: [string, number][], hooks: [string, number][]): { bg?: string; sub?: string; hook?: string } {
+function combinationAt(
+  index: number,
+  bg: [string, number][],
+  subs: [string, number][],
+  hooks: [string, number][],
+  units: ReturnType<typeof backgroundUnits>,
+  hasColor: boolean,
+  colorStyle?: string
+): { bg?: string; sub?: string; hook?: string } {
   const expand = (pairs: [string, number][]) => pairs.flatMap(([key, count]) => Array.from({ length: count }, () => key));
   const bgList = expand(bg);
+  if (hasColor) bgList.push('__color__');
   const subList = expand(subs);
   const hookList = expand(hooks);
+  const bgKey = bgList[index];
+  const unit = units.find((candidate) => candidate.key === bgKey);
+  const hookAllowed = Boolean(unit && !unit.noHook);
+  const nonColorIndex = bgList.slice(0, index).filter((key) => key !== '__color__').length;
+  const hookIndex = bgList.slice(0, index).filter((key) => {
+    const previous = units.find((candidate) => candidate.key === key);
+    return previous && !previous.noHook;
+  }).length;
   return {
-    bg: bgList[index % Math.max(1, bgList.length)],
-    sub: subList.length ? subList[index % subList.length] : undefined,
-    hook: hookList.length ? hookList[index % hookList.length] : undefined
+    bg: bgKey,
+    sub: bgKey === '__color__' ? colorStyle : subList[nonColorIndex],
+    hook: hookAllowed ? hookList[hookIndex] : undefined
   };
 }
 
@@ -283,14 +324,22 @@ export function SliceWorkZone({ ready, canContinue, loading, onBack, onNext }: {
 
   const total = Math.max(1, alloc.total);
   const safeIndex = Math.min(index, total - 1);
+  const colorStyle = state.background.color
+    ? (state.background.strobe ? alloc.strobeFont : alloc.colorFont) ?? state.subtitles.pool[0]
+    : undefined;
   const combo = combinationAt(
     safeIndex,
     Object.entries(alloc.background),
     Object.entries(alloc.subtitles),
-    Object.entries(alloc.hooks)
+    Object.entries(alloc.hooks),
+    units,
+    Boolean(state.background.color),
+    colorStyle
   );
   // имя бакета хранится по-русски (по нему матчит бэк) — показываем через словарь
-  const bgLabel = combo.bg ? (units.find(unit => unit.key === combo.bg)?.name ?? chip(combo.bg.split(':')[1])) : undefined;
+  const bgLabel = combo.bg === '__color__'
+    ? chip(state.background.strobe ? 'Строб' : 'Цвет')
+    : combo.bg ? (units.find(unit => unit.key === combo.bg)?.name ?? chip(combo.bg.split(':')[1])) : undefined;
   const hookLabel = combo.hook ? chip(HOOK_LABELS[combo.hook as HookKind]) : undefined;
 
   // Стрелки клавиатуры листают комбинации, пока фокус внутри панели
@@ -358,7 +407,7 @@ export function SliceWorkZone({ ready, canContinue, loading, onBack, onNext }: {
               {/* Пилюли комбинации: скругление r10 при высоте 44 (r15 выглядел слишком круглым) */}
               {bgLabel && (
                 <span className="pool-pill !h-[44px] !rounded-r10 !pl-[56px] !text-[17px]">
-                  <span className="pool-pill-count !h-[44px] !w-[44px] !rounded-r10">{combo.bg?.startsWith('photo') ? photoIcon(20) : tagIcon(20)}</span>
+                  <span className="pool-pill-count !h-[44px] !w-[44px] !rounded-r10">{combo.bg === '__color__' ? strobeIcon(20) : combo.bg?.startsWith('photo') ? photoIcon(20) : tagIcon(20)}</span>
                   {bgLabel}
                 </span>
               )}
@@ -368,7 +417,7 @@ export function SliceWorkZone({ ready, canContinue, loading, onBack, onNext }: {
                   {combo.sub}
                 </span>
               )}
-              {hookLabel && !combo.bg?.startsWith('photo') && (
+              {hookLabel && (
                 <span className="pool-pill !h-[44px] !rounded-r10 !pl-[56px] !text-[17px]">
                   <span className="pool-pill-count !h-[44px] !w-[44px] !rounded-r10">{hookKindIcon(combo.hook as HookKind, 20)}</span>
                   {hookLabel}

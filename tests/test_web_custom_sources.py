@@ -146,6 +146,105 @@ def test_personal_video_is_a_separate_pool_variation_with_its_own_order() -> Non
     assert photo["background"]["mode"] == "photo"
 
 
+def test_wide_background_keeps_geometry_and_receives_no_vertical_hook() -> None:
+    stage = {
+        "background": {
+            "mode": "footage",
+            "footage": ["Wide", "Vertical"],
+            "footageFormats": {"Wide": "16:9", "Vertical": "9:16"},
+        },
+        "subtitles": {"pool": ["Impulse"]},
+        "hooks": {"kind": "motion", "configs": {"motion": {"motion": "Зум"}}},
+        "allocation": {
+            "total": 2,
+            "background": {"footage:Wide": 1, "footage:Vertical": 1},
+            "subtitles": {"Impulse": 2},
+            "hooks": {"motion": 1},
+        },
+        "track": {"s3Key": "s3://audio/track.wav", "durationS": 20},
+        "timing": {"from": "00:00", "to": "00:10"},
+        "lyrics": "line",
+        "final": {},
+    }
+
+    wide, vertical = build_render_job("batch", "project", "user", stage, 2)["variations"]
+    assert wide["background"]["groups"] == ["Wide"]
+    assert wide["hook"]["family"] is None
+    assert vertical["background"]["groups"] == ["Vertical"]
+    assert vertical["hook"]["family"] == "motion"
+
+
+def test_pool_rejects_more_hooks_than_compatible_vertical_backgrounds() -> None:
+    stage = {
+        "background": {
+            "mode": "footage",
+            "footage": ["Wide", "Vertical"],
+            "footageFormats": {"Wide": "16:9", "Vertical": "9:16"},
+        },
+        "subtitles": {"pool": ["Impulse"]},
+        "hooks": {"kind": "motion", "configs": {"motion": {"motion": "Зум"}}},
+        "allocation": {
+            "total": 2,
+            "background": {"footage:Wide": 1, "footage:Vertical": 1},
+            "subtitles": {"Impulse": 2},
+            "hooks": {"motion": 2},
+        },
+        "track": {"s3Key": "s3://audio/track.wav", "durationS": 20},
+        "timing": {"from": "00:00", "to": "00:10"},
+        "lyrics": "line",
+        "final": {},
+    }
+    with pytest.raises(ValueError, match="совместимых вертикальных"):
+        build_render_job("batch", "project", "user", stage, 2)
+
+
+def test_mixed_pool_zips_exact_counts_and_keeps_color_last() -> None:
+    stage = {
+        "background": {
+            "mode": "footage",
+            "footage": ["Wide", "Vertical"],
+            "footageFormats": {"Wide": "16:9", "Vertical": "9:16"},
+            "photo": ["Still"],
+            "color": "#120b20",
+        },
+        "subtitles": {"pool": ["Impulse", "Trendy"]},
+        "hooks": {
+            "kind": "motion",
+            "configs": {
+                "motion": {"motion": "Зум"},
+                "thought": {"thought": "Эхо строки"},
+            },
+        },
+        "allocation": {
+            "total": 7,
+            "background": {
+                "footage:Wide": 2,
+                "footage:Vertical": 3,
+                "photo:Still": 1,
+            },
+            "subtitles": {"Impulse": 4, "Trendy": 2},
+            "hooks": {"motion": 2, "thought": 1},
+            "colorFont": "Trendy",
+        },
+        "track": {"s3Key": "s3://audio/track.wav", "durationS": 20},
+        "timing": {"from": "00:00", "to": "00:10"},
+        "lyrics": "line",
+        "final": {},
+    }
+
+    variations = build_render_job("batch", "project", "user", stage, 7)["variations"]
+    assert len(variations) == 7
+    assert [item["background"]["mode"] for item in variations] == [
+        "footage", "footage", "footage", "footage", "footage", "photo", "color"
+    ]
+    assert [item["hook"]["family"] for item in variations] == [
+        None, None, "motion", "motion", "thought", None, None
+    ]
+    assert [item["subtitle"]["style"] for item in variations] == [
+        "Impulse", "Impulse", "Impulse", "Impulse", "Trendy", "Trendy", "Trendy"
+    ]
+
+
 def test_personal_video_does_not_silently_drop_missing_source() -> None:
     stage = {
         "background": {
