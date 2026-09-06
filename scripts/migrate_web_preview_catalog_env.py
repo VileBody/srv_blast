@@ -29,14 +29,18 @@ FX_FIELDS = {
 def migrate_values(values: dict[str, str], previews: dict[str, Any]) -> dict[str, str]:
     footage = json.loads(values["WEB_FOOTAGE_CATALOG_JSON"])
     for item in footage:
-        if item.get("plane"):
-            continue
         item_id = str(item.get("id") or "")
-        item["plane"] = (
-            "cine16x9" if item_id.startswith("collection:cine16x9__")
-            else "films" if item_id.startswith("collection:films__")
-            else "vibes"
-        )
+        if not item.get("plane"):
+            item["plane"] = (
+                "cine16x9" if item_id.startswith("collection:cine16x9__")
+                else "films" if item_id.startswith("collection:films__")
+                else "vibes"
+            )
+        if item_id.startswith("collection:"):
+            selector = dict(item.get("selector") or {})
+            selector["rotationTheme"] = "collection"
+            selector["rotationTagsGroup"] = item_id.split(":", 1)[1]
+            item["selector"] = selector
 
     fx = json.loads(values["WEB_FX_CATALOG_JSON"])
     by_id = {str(item.get("id") or ""): item for item in fx}

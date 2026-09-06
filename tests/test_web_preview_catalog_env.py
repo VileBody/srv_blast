@@ -9,8 +9,16 @@ from scripts.migrate_web_preview_catalog_env import migrate_values
 def test_production_preview_catalog_requires_all_visible_sections() -> None:
     footage = [
         {"id": "v", "plane": "vibes"},
-        {"id": "w", "plane": "cine16x9"},
-        {"id": "f", "plane": "films"},
+        {
+            "id": "collection:cine16x9__NY",
+            "plane": "cine16x9",
+            "selector": {"rotationTheme": "collection", "rotationTagsGroup": "cine16x9__NY"},
+        },
+        {
+            "id": "collection:films__drive",
+            "plane": "films",
+            "selector": {"rotationTheme": "collection", "rotationTagsGroup": "films__drive"},
+        },
     ]
     fx = [
         {"id": "effect_hook__a"},
@@ -36,6 +44,14 @@ def test_production_preview_catalog_requires_all_visible_sections() -> None:
         validate({
             "WEB_FOOTAGE_CATALOG_JSON": json.dumps(footage),
             "WEB_FX_CATALOG_JSON": json.dumps([item for item in fx if not item["id"].startswith("motion__")]),
+        })
+
+    broken = [dict(item) for item in footage]
+    broken[1] = {**broken[1], "selector": {"rotationTheme": "collection", "rotationTagsGroup": "NY"}}
+    with pytest.raises(ValueError, match="cine16x9__NY"):
+        validate({
+            "WEB_FOOTAGE_CATALOG_JSON": json.dumps(broken),
+            "WEB_FX_CATALOG_JSON": json.dumps(fx),
         })
 
 
@@ -66,5 +82,13 @@ def test_catalog_migration_restores_planes_and_s3_fx_records() -> None:
     fx = json.loads(updated["WEB_FX_CATALOG_JSON"])
 
     assert [item["plane"] for item in footage] == ["vibes", "cine16x9", "films"]
+    assert footage[1]["selector"] == {
+        "rotationTheme": "collection",
+        "rotationTagsGroup": "cine16x9__NY",
+    }
+    assert footage[2]["selector"] == {
+        "rotationTheme": "collection",
+        "rotationTagsGroup": "films__drive",
+    }
     assert next(item for item in fx if item["id"] == "motion__swipe")["selector"] == {"f4Device": "swipe"}
     assert next(item for item in fx if item["id"] == "shape__square")["previewUrl"].endswith("/shape__square.mp4")

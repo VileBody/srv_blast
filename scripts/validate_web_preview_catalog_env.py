@@ -32,6 +32,23 @@ def validate(values: dict[str, str]) -> None:
     if missing_planes:
         raise ValueError("footage catalog lacks explicit planes: " + ", ".join(missing_planes))
 
+    for item in footage:
+        if not isinstance(item, dict):
+            continue
+        item_id = str(item.get("id") or "")
+        if not item_id.startswith("collection:"):
+            continue
+        selector = item.get("selector") or {}
+        expected_group = item_id.split(":", 1)[1]
+        if (
+            selector.get("rotationTheme") != "collection"
+            or selector.get("rotationTagsGroup") != expected_group
+        ):
+            raise ValueError(
+                f"collection catalog selector for {item_id!r} must use "
+                f"rotationTheme='collection' and rotationTagsGroup={expected_group!r}"
+            )
+
     ids = [str(item.get("id") or "") for item in fx if isinstance(item, dict)]
     prefixes = {"effect_hook__", "effect_transition__", "effect_extra__", "motion__", "shape__"}
     missing_fx = sorted(prefix for prefix in prefixes if not any(item.startswith(prefix) for item in ids))
