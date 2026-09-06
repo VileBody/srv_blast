@@ -1108,7 +1108,7 @@ def _track_with_identity(item: dict[str, Any]) -> dict[str, Any]:
 
 def set_wizard_session(payload: dict[str, Any]) -> dict[str, Any]:
     space = ws()
-    data = preserve_explicit_timing(
+    data = normalize_web_stage_data(
         payload.get("data", {}),
         project_id=payload.get("projectId"),
     )
@@ -1154,6 +1154,27 @@ def preserve_explicit_timing(
     stored_explicit = all(isinstance(stored_timing.get(key), str) and stored_timing[key] for key in ("from", "to"))
     if not incoming_explicit and stored_explicit:
         data["timing"] = deepcopy(stored_timing)
+    return data
+
+
+def normalize_web_stage_data(
+    incoming: dict[str, Any],
+    *,
+    project_id: str | None,
+) -> dict[str, Any]:
+    """Normalize the web track step into the production alignment contract."""
+    data = preserve_explicit_timing(incoming, project_id=project_id)
+    timing = data.get("timing") or {}
+    explicit_window = all(
+        isinstance(timing.get(key), str) and timing[key]
+        for key in ("from", "to")
+    )
+    lyrics = str(data.get("lyrics") or "").strip()
+    # The current web form asks for the exact text heard inside the selected
+    # window. Older clients only named that value `lyrics`; local CTC receives
+    # the same user-authored value as its explicit target fragment.
+    if explicit_window and lyrics and not str(data.get("fragment") or "").strip():
+        data["fragment"] = lyrics
     return data
 
 

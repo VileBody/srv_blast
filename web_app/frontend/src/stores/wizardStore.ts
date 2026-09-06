@@ -305,7 +305,10 @@ export const useWizardStore = create<WizardStore>()(
         return {
           track: state.track,
           lyrics: state.lyrics,
-          fragment: state.fragmentEnabled ? state.fragmentLyrics : null,
+          // The track-step textarea contains the exact lyrics heard inside the
+          // selected window. Production local CTC needs that value explicitly
+          // as target_fragment; legacy selection mode can still override it.
+          fragment: state.fragmentEnabled ? state.fragmentLyrics : state.lyrics,
           // The web UI always asks for an explicit window. Persisted drafts used
           // to keep timingMode='ai' even after both fields were filled, which
           // dropped the visible values from the production payload.

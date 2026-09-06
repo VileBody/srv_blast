@@ -46,9 +46,10 @@ def test_stale_wizard_client_cannot_erase_explicit_timing() -> None:
         saved = store.set_wizard_session({
             "projectId": "project-one",
             "stage": 5,
-            "data": stale,
+            "data": {**stale, "lyrics": "Как сюжеты старой киноленты"},
         })
         assert saved["data"]["timing"] == {"from": "01:31:00", "to": "01:48:00"}
+        assert saved["data"]["fragment"] == "Как сюжеты старой киноленты"
 
         other_track = store.preserve_explicit_timing(
             {"track": {"id": "track-two"}, "timing": {"mode": "ai"}},

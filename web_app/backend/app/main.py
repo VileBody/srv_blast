@@ -1100,7 +1100,7 @@ def api_save_wizard_session(payload: WizardSessionPayload) -> dict[str, Any]:
 async def api_submit_wizard(payload: SubmitPayload) -> dict[str, Any]:
     # Трек и текст — обязательные вводные: без них рендерить lyric-video нечего.
     # Фронт не пускает дальше этапа «Трек», но ручка не должна полагаться на это.
-    stage_data = store.preserve_explicit_timing(
+    stage_data = store.normalize_web_stage_data(
         payload.stageData or {},
         project_id=payload.projectId,
     )
