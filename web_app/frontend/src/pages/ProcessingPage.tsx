@@ -44,6 +44,18 @@ export function ProcessingPage() {
 
   const videos = job?.videos ?? [];
   const done = videos.filter((video) => video.status === 'COMPLETED');
+  const failedVideos = videos.filter((video) => video.status === 'FAILED');
+  const rootFailure = failedVideos.find((video) => video.stage !== 'skipped') ?? failedVideos[0];
+  const rawFailure = rootFailure?.error?.split('\n')[0].trim() ?? '';
+  const failureReason = rawFailure.includes('stage2_style_rotation_missing_artist_id')
+    ? t('processing.reasonSourceMetadata')
+    : rawFailure.includes('collection not found')
+      ? t('processing.reasonCollectionMissing')
+      : rawFailure.includes('solid backgrounds')
+        ? t('processing.reasonSolidColor')
+        : rawFailure
+          ? t('processing.reasonStage', { stage: rootFailure?.stage || 'render' })
+          : t('processing.reasonUnknown');
   const allDone = videos.length > 0 && done.length === videos.length;
   const project = projectQuery.data?.project;
 
@@ -101,7 +113,24 @@ export function ProcessingPage() {
       <div className="card-2 flex flex-1 flex-col items-center justify-center gap-space-4 p-[40px] text-center">
         <h1 className="text-[32px] font-[400]">{t('processing.failed')}</h1>
         <p className="max-w-[420px] text-[18px] leading-[23px] text-text-60">{t('processing.failedText')}</p>
+        <div className="max-w-[620px] rounded-r15 border border-[rgba(246,245,253,0.16)] bg-grad-soft-10 px-[24px] py-[18px] text-left">
+          <p className="text-[17px] leading-[22px] text-text">{failureReason}</p>
+          <p className="mt-[8px] text-[15px] text-text-60">
+            {t('processing.failedProgress', { done: done.length, total: videos.length, failed: failedVideos.length })}
+          </p>
+          {rawFailure && (
+            <details className="mt-[12px] text-[14px] text-text-60">
+              <summary className="cursor-pointer text-accent-light">{t('processing.technicalReason')}</summary>
+              <code className="mt-[8px] block max-h-[96px] overflow-auto whitespace-pre-wrap break-words">{rawFailure}</code>
+            </details>
+          )}
+        </div>
         <div className="flex flex-wrap items-center justify-center gap-space-3">
+          {job?.projectId && done.length > 0 && (
+            <button type="button" className="soft-btn h-[60px] px-space-6 text-[20px]" onClick={() => navigate(`/app/projects/${job.projectId}`)}>
+              {t('processing.openReady')}
+            </button>
+          )}
           {job?.projectId && (
             <button type="button" className="soft-btn h-[60px] px-space-6 text-[20px]" onClick={() => navigate(`/app/generate?project=${job.projectId}`)}>
               {t('processing.retry')}
@@ -123,7 +152,10 @@ export function ProcessingPage() {
           <GenerationsCard
             videos={done}
             loading={!allDone}
-            postOne={project ? (index) => navigate(`/app/projects/${project.id}/post?video=${index}`) : undefined}
+            postOne={project ? (video) => {
+              const index = done.findIndex((item) => item.id === video.id);
+              navigate(`/app/projects/${project.id}/post?batch=${job?.id}&video=${Math.max(0, index)}`);
+            } : undefined}
           />
         </>
       }

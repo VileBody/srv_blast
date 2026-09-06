@@ -637,6 +637,8 @@ class ProductionBackend:
                     status="COMPLETED",
                     stage="done",
                     progress=100,
+                    outputLocator=output_url,
+                    playbackUrl=self.playback_url(output_url, video.get("id") or "video.mp4"),
                     downloadUrl=self.download_url(output_url, video.get("id") or "video.mp4"),
                 )
             elif status == "FAILED":
@@ -681,6 +683,12 @@ class ProductionBackend:
         return job
 
     def download_url(self, value: str, filename: str) -> str | None:
+        return self._output_url(value, filename, attachment=True)
+
+    def playback_url(self, value: str, filename: str) -> str | None:
+        return self._output_url(value, filename, attachment=False)
+
+    def _output_url(self, value: str, filename: str, *, attachment: bool) -> str | None:
         if not value:
             return None
         if value.startswith("https://"):
@@ -705,12 +713,19 @@ class ProductionBackend:
                 unquote(bucket),
                 unquote(key),
                 filename=f"{filename}.mp4",
-                attachment=True,
+                attachment=attachment,
+                content_type=None if attachment else "video/mp4",
             )
         if not value.startswith("s3://") or "/" not in value[5:]:
             raise ProductionBackendError(f"unsupported output URL {value!r}")
         bucket, key = value[5:].split("/", 1)
-        return self._presign(bucket, key, filename=f"{filename}.mp4", attachment=True)
+        return self._presign(
+            bucket,
+            key,
+            filename=f"{filename}.mp4",
+            attachment=attachment,
+            content_type=None if attachment else "video/mp4",
+        )
 
     def download_video(self, value: str, destination: str | Path) -> Path:
         """Download a rendered S3 object for TikTok FILE_UPLOAD.
@@ -770,11 +785,21 @@ class ProductionBackend:
             attachment=False,
         )
 
-    def _presign(self, bucket: str, key: str, *, filename: str, attachment: bool) -> str:
+    def _presign(
+        self,
+        bucket: str,
+        key: str,
+        *,
+        filename: str,
+        attachment: bool,
+        content_type: str | None = None,
+    ) -> str:
         params: dict[str, Any] = {"Bucket": bucket, "Key": key}
         if attachment:
             clean_name = Path(filename).name.replace('"', "")
             params["ResponseContentDisposition"] = f'attachment; filename="{clean_name}"'
+        if content_type:
+            params["ResponseContentType"] = content_type
         return str(
             self._s3.generate_presigned_url(
                 "get_object",
@@ -835,10 +860,11 @@ class ProductionBackend:
             artist_id = self.config.footage_artists.get(group_name, "") or self.config.default_artist_id
             if not selector and not artist_id:
                 raise ProductionBackendError(f"no footage mapping for {group_name!r}")
-            # Folder-scoped collections are the exact source pool. An artist id
-            # belongs to the legacy tag pool and makes Stage 2 demand metadata
-            # that collection clips intentionally do not carry.
-            if selector.get("rotationTheme") == "collection":
+            # A pinned rotation pair is already the exact source pool. Sending
+            # a legacy artist profile as well makes Stage 2 require artist
+            # metadata on every clip in that bucket and rejects valid catalog
+            # clips with stage2_style_rotation_missing_artist_id.
+            if selector.get("rotationTheme") and selector.get("rotationTagsGroup"):
                 artist_id = ""
 
         bg_mode = "photo" if background_mode == "photo" else "footage"

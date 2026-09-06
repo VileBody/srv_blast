@@ -157,6 +157,10 @@ def test_variations_are_enqueued_sequentially(monkeypatch: pytest.MonkeyPatch) -
     assert len(backend._http.posts) == 2
     assert backend._http.posts[1]["reuse_text_job_id"] == "orch-1"
     assert job["videos"][1]["orchestratorJobId"] == "orch-2"
+    assert job["videos"][0]["outputLocator"] == "s3://outputs/jobs/one.mp4"
+    assert job["videos"][0]["playbackUrl"] == "https://signed.example/download"
+    assert backend._s3.presigns[-2]["params"]["ResponseContentType"] == "video/mp4"
+    assert "ResponseContentDisposition" not in backend._s3.presigns[-2]["params"]
 
 
 def test_local_ctc_requires_exact_fragment_and_window(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -186,6 +190,24 @@ def test_timeweb_https_output_is_resigned_as_attachment(monkeypatch: pytest.Monk
     assert params["Bucket"] == "output-bucket"
     assert params["Key"] == "jobs/result.mp4"
     assert params["ResponseContentDisposition"] == 'attachment; filename="video-1.mp4"'
+
+
+def test_timeweb_output_has_separate_inline_playback_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _module(monkeypatch)
+    backend = _backend(module, _config(module))
+
+    url = backend.playback_url(
+        "https://s3.twcstorage.ru/output-bucket/jobs/result.mp4?old=signature",
+        "video-1",
+    )
+
+    assert url == "https://signed.example/download"
+    params = backend._s3.presigns[-1]["params"]
+    assert params == {
+        "Bucket": "output-bucket",
+        "Key": "jobs/result.mp4",
+        "ResponseContentType": "video/mp4",
+    }
 
 
 def test_unknown_https_output_is_not_a_download_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -542,11 +564,13 @@ def test_same_label_in_footage_and_photo_does_not_cross_wire(monkeypatch: pytest
     payload = backend._request_payload(job=job, variation=variation, index=1, total=1, master_id=None)
     assert payload["bg_mode"] == "footage"
     assert payload["rotation_theme"] == "visual"
+    assert "footage_artist_id" not in payload
 
     variation["background"] = {"mode": "photo", "groups": [shared]}
     payload = backend._request_payload(job=job, variation=variation, index=1, total=1, master_id=None)
     assert payload["bg_mode"] == "photo"
     assert payload["rotation_theme"] == "photo"
+    assert "footage_artist_id" not in payload
 
 
 def test_web_tariffs_match_public_payment_credit_grants(monkeypatch: pytest.MonkeyPatch) -> None:

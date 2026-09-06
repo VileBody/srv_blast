@@ -63,7 +63,11 @@ export function GenerationRow({ video, onPost }: { video: VideoVersion; onPost?:
         <TagChip icon="hook" label={chip(video.hook)} />
       </div>
       {/* Figma W36: звезда заменена на постинг в TikTok (18×20), скачивание рядом (gap 12) */}
-      {posted ? (
+      {video.status === 'FAILED' ? (
+        <span className="ml-[8px] shrink-0 whitespace-nowrap text-[14px] leading-none text-warning" title={video.error ?? undefined}>
+          {t('processing.failedShort')}
+        </span>
+      ) : posted ? (
         <span className="ml-[8px] flex shrink-0 items-center gap-[6px] whitespace-nowrap text-[14px] leading-none text-success" title={t('projectDetail.postedHint')}>
           <FigIcon name="pd-tiktok.svg" h={16} />
           {t('projectDetail.posted')}
@@ -142,22 +146,45 @@ export function TrackCard({
   );
 }
 
-/** Трек батчей (W36): «+»-пил уходит ПОД пил батча (нахлёст 33px), «+» ведёт в визард на этап фона. */
-export function BatchTrack({ onAddBatch }: { onAddBatch: () => void }) {
+/** Переключатель сохранённых батчей проекта; «+» ведёт в визард на этап фона. */
+export function BatchTrack({
+  batches,
+  selectedId,
+  onSelect,
+  onAddBatch
+}: {
+  batches: { id: string; number: number }[];
+  selectedId?: string;
+  onSelect: (id: string) => void;
+  onAddBatch: () => void;
+}) {
   const { t } = useTranslation();
   return (
-    <div className="flex h-[60px] items-stretch rounded-[15px]" style={{ background: 'var(--grad-soft-10)' }}>
-      <span
-        className="relative z-10 flex items-center whitespace-nowrap rounded-[15px] border-2 border-accent-light px-[21px] text-[24px] font-[350] leading-none text-text [backdrop-filter:blur(40px)]"
-        style={{ background: 'var(--grad-soft-20)' }}
-      >
-        {t('projectDetail.batchVideo')}
-      </span>
+    <div className="no-scrollbar flex h-[60px] items-stretch overflow-x-auto rounded-[15px]" style={{ background: 'var(--grad-soft-10)' }}>
+      {(batches.length ? batches : [{ id: 'empty', number: 1 }]).map((batch) => {
+        const selected = batches.length === 0 || batch.id === selectedId;
+        return (
+          <button
+            key={batch.id}
+            type="button"
+            disabled={batches.length === 0}
+            onClick={() => onSelect(batch.id)}
+            aria-pressed={selected}
+            className={cn(
+              'relative z-10 flex shrink-0 items-center whitespace-nowrap rounded-[15px] border-2 px-[21px] text-[24px] font-[350] leading-none transition [backdrop-filter:blur(40px)]',
+              selected ? 'border-accent-light text-text' : 'border-transparent text-text-60 hover:text-text'
+            )}
+            style={{ background: selected ? 'var(--grad-soft-20)' : 'transparent' }}
+          >
+            {t('projectDetail.batchVideo', { n: batch.number })}
+          </button>
+        );
+      })}
       <button
         type="button"
         onClick={onAddBatch}
         aria-label={t('projects.addBatch')}
-        className="relative z-0 -ml-[33px] flex w-[78px] items-center justify-center rounded-[15px] border-2 border-[var(--accent)] pl-[33px] text-[24px] leading-none text-text-80 transition hover:text-text"
+        className="relative z-0 flex w-[78px] shrink-0 items-center justify-center rounded-[15px] border-2 border-[var(--accent)] text-[24px] leading-none text-text-80 transition hover:text-text"
         style={{ background: 'var(--grad-soft-20)' }}
       >
         +
@@ -204,7 +231,7 @@ export function GenerationsCard({
   videos: VideoVersion[];
   postAll?: () => void;
   /** постинг одного ролика: индекс в списке (Figma W36 — иконка TikTok в строке) */
-  postOne?: (index: number) => void;
+  postOne?: (video: VideoVersion) => void;
   /** Пустой триал не подделываем демо-роликами: ведём в реальный визард создания батча. */
   onEmptyAction?: () => void;
   loading?: boolean;
@@ -213,7 +240,8 @@ export function GenerationsCard({
   ratingPending?: boolean;
 }) {
   const { t } = useTranslation();
-  const postedCount = videos.filter(isVideoPosted).length;
+  const ready = videos.filter((video) => video.status === 'COMPLETED');
+  const postedCount = ready.filter(isVideoPosted).length;
   const downloadable = videos.filter((video) => video.downloadUrl);
   // Браузер блокирует пачку одновременных скачиваний — разносим по времени
   const downloadAll = () => {
@@ -244,8 +272,8 @@ export function GenerationsCard({
             )}
           >
             <FigIcon name="pd-tiktok.svg" h={20} />
-            {postedCount > 0 && videos.length > 0
-              ? t('projectDetail.postAllProgress', { done: postedCount, total: videos.length })
+            {postedCount > 0 && ready.length > 0
+              ? t('projectDetail.postAllProgress', { done: postedCount, total: ready.length })
               : t('projectDetail.postAll')}
           </button>
           {/* Скачивание всего батча: раньше ролики можно было забрать только по одному */}
@@ -276,10 +304,9 @@ export function GenerationsCard({
               )}
             </div>
           ) : (
-            videos.map((v, i) => {
-              const postIndex = videos.slice(0, i + 1).filter((item) => item.status === 'COMPLETED').length - 1;
-              return <GenerationRow key={v.id} video={v} onPost={postOne && v.status === 'COMPLETED' ? () => postOne(postIndex) : undefined} />;
-            })
+            videos.map((v) => (
+              <GenerationRow key={v.id} video={v} onPost={postOne && v.status === 'COMPLETED' ? () => postOne(v) : undefined} />
+            ))
           )}
           {loading && <LoadingRow />}
         </div>
@@ -325,10 +352,12 @@ export function PreviewColumn({ videos, onBack }: { videos: VideoVersion[]; onBa
   const video = videos[current - 1];
   const videoRef = useRef<HTMLVideoElement>(null);
   const [playing, setPlaying] = useState(false);
+  const [previewError, setPreviewError] = useState(false);
 
   // смена ролика — всегда с начала и на паузе, иначе звук едет из предыдущего
   useEffect(() => {
     setPlaying(false);
+    setPreviewError(false);
     const element = videoRef.current;
     if (element) element.pause();
   }, [current]);
@@ -373,20 +402,25 @@ export function PreviewColumn({ videos, onBack }: { videos: VideoVersion[]; onBa
         onNext={() => step(1)}
         showSteps={total > 1}
       >
-        {video?.downloadUrl ? (
+        {video && (video.playbackUrl || video.downloadUrl) && !previewError ? (
           <video
             ref={videoRef}
             key={video.id}
-            src={video.downloadUrl}
+            src={video.playbackUrl ?? video.downloadUrl ?? undefined}
             poster={video.thumbnailUrl ?? undefined}
             playsInline
+            preload="metadata"
+            onError={() => setPreviewError(true)}
             onEnded={() => setPlaying(false)}
-            className="absolute inset-0 h-full w-full rounded-r15 object-cover"
+            className="absolute inset-0 h-full w-full rounded-r15 bg-black object-contain"
           />
         ) : (
-          <span className="absolute inset-0 flex items-center justify-center px-space-5 text-center text-[16px] text-text-60">
+          <span className="absolute inset-0 flex flex-col items-center justify-center gap-[14px] px-space-5 text-center text-[16px] text-text-60">
             {/* Пустой проект и ролик без файла — разные вещи, и текст у них разный */}
-            {videos.length === 0 ? t('projectDetail.previewEmpty') : t('projectDetail.videoN', { n: current })}
+            {previewError ? t('projectDetail.previewFailed') : videos.length === 0 ? t('projectDetail.previewEmpty') : t('projectDetail.videoN', { n: current })}
+            {previewError && video?.downloadUrl && (
+              <a href={video.downloadUrl} className="text-accent-light underline underline-offset-4">{t('common.download')}</a>
+            )}
           </span>
         )}
       </PreviewPlayer>

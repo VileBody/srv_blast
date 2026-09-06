@@ -174,7 +174,12 @@ export interface VideoVersion {
   subtitleStyle: string;
   hook: string;
   thumbnailUrl?: string | null;
+  /** Inline media URL without attachment disposition; use downloadUrl for saving the file. */
+  playbackUrl?: string | null;
   downloadUrl?: string | null;
+  /** Renderer diagnostic for a failed variation. */
+  error?: string | null;
+  stage?: string | null;
   /** проставляется бэком после успешной публикации в TikTok */
   postedAt?: string | null;
   tiktokStatus?: string | null;

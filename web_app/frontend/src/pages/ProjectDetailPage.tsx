@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -23,11 +23,15 @@ export function ProjectDetailPage() {
   const newBatch = useWizardStore((state) => state.newBatch);
   const setStage = useWizardStore((state) => state.setStage);
   const project = projectQuery.data?.project;
-  const videos = useMemo(() => project?.jobs?.flatMap((job) => job.videos) ?? [], [project]);
-  const rateableJob = useMemo(
-    () => [...(project?.jobs ?? [])].reverse().find((job) => job.status === 'COMPLETED'),
+  const jobs = useMemo(
+    () => [...(project?.jobs ?? [])].sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id)),
     [project]
   );
+  const [selectedJobId, setSelectedJobId] = useState<string>();
+  const selectedJob = jobs.find((job) => job.id === selectedJobId) ?? jobs[jobs.length - 1];
+  const videos = selectedJob?.videos ?? [];
+  const completedVideos = videos.filter((video) => video.status === 'COMPLETED');
+  const rateableJob = selectedJob?.status === 'COMPLETED' ? selectedJob : undefined;
 
   const activateMutation = useMutation({
     mutationFn: () => api.activateProject(id ?? ''),
@@ -98,15 +102,23 @@ export function ProjectDetailPage() {
             current={project.isCurrent}
             onMakeCurrent={() => activateMutation.mutate()}
           >
-            <BatchTrack onAddBatch={addBatch} />
+            <BatchTrack
+              batches={jobs.map((job, index) => ({ id: job.id, number: index + 1 }))}
+              selectedId={selectedJob?.id}
+              onSelect={setSelectedJobId}
+              onAddBatch={addBatch}
+            />
           </TrackCard>
           <GenerationsCard
             videos={videos}
             // «Выложить все» стартует с первого ещё НЕ опубликованного ролика (уже выложенные пропускаем)
-            postAll={videos.length > 0 && videos.every((video) => video.status === 'COMPLETED')
-              ? () => { const start = Math.max(0, videos.findIndex((v) => !isVideoPosted(v))); navigate(`/app/projects/${id}/post?video=${start}`); }
+            postAll={selectedJob && completedVideos.length > 0
+              ? () => { const start = Math.max(0, completedVideos.findIndex((v) => !isVideoPosted(v))); navigate(`/app/projects/${id}/post?batch=${selectedJob.id}&video=${start}`); }
               : undefined}
-            postOne={(index) => navigate(`/app/projects/${id}/post?video=${index}`)}
+            postOne={(video) => {
+              const index = completedVideos.findIndex((item) => item.id === video.id);
+              navigate(`/app/projects/${id}/post?batch=${selectedJob?.id}&video=${Math.max(0, index)}`);
+            }}
             onEmptyAction={addBatch}
             rating={rateableJob?.rating}
             onRate={rateableJob ? (rating) => ratingMutation.mutate(rating) : undefined}
@@ -114,7 +126,7 @@ export function ProjectDetailPage() {
           />
         </>
       }
-      right={<PreviewColumn videos={videos} onBack={() => navigate('/app/projects')} />}
+      right={<PreviewColumn videos={completedVideos} onBack={() => navigate('/app/projects')} />}
     />
   );
 }

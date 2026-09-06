@@ -588,6 +588,35 @@ def api_project(project_id: str) -> dict[str, Any]:
     project = store.get_project(project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
+    if RUNTIME.backend == "production":
+        try:
+            backend = _production_backend()
+            changed_jobs: set[str] = set()
+            for live_job in store.JOBS.values():
+                if (
+                    live_job.get("projectId") != project_id
+                    or live_job.get("userId") != store.current_user_id()
+                ):
+                    continue
+                for video in live_job.get("videos", []):
+                    if video.get("status") != "COMPLETED":
+                        continue
+                    locator = str(video.get("outputLocator") or video.get("downloadUrl") or "")
+                    if not locator:
+                        continue
+                    video["playbackUrl"] = backend.playback_url(
+                        locator, video.get("id") or "video.mp4"
+                    )
+                    video["downloadUrl"] = backend.download_url(
+                        locator, video.get("id") or "video.mp4"
+                    )
+                    changed_jobs.add(str(live_job["id"]))
+            for job_id in changed_jobs:
+                persistence.save_job(job_id)
+            if changed_jobs:
+                project = store.get_project(project_id) or project
+        except Exception as exc:
+            raise _production_error(exc) from exc
     return {"project": project, "mock": RUNTIME.backend == "mock"}
 
 
