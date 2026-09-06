@@ -1100,7 +1100,10 @@ def api_save_wizard_session(payload: WizardSessionPayload) -> dict[str, Any]:
 async def api_submit_wizard(payload: SubmitPayload) -> dict[str, Any]:
     # Трек и текст — обязательные вводные: без них рендерить lyric-video нечего.
     # Фронт не пускает дальше этапа «Трек», но ручка не должна полагаться на это.
-    stage_data = payload.stageData or {}
+    stage_data = store.preserve_explicit_timing(
+        payload.stageData or {},
+        project_id=payload.projectId,
+    )
     if not (stage_data.get("track") or {}):
         raise HTTPException(status_code=422, detail="Не выбран трек")
     if not str(stage_data.get("lyrics") or "").strip():

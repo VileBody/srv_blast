@@ -1108,12 +1108,16 @@ def _track_with_identity(item: dict[str, Any]) -> dict[str, Any]:
 
 def set_wizard_session(payload: dict[str, Any]) -> dict[str, Any]:
     space = ws()
+    data = preserve_explicit_timing(
+        payload.get("data", {}),
+        project_id=payload.get("projectId"),
+    )
     space.wizard_session = {
         "id": "session_1",
         "userId": space.user["id"],
         "projectId": payload.get("projectId"),
         "stage": payload.get("stage", 1),
-        "data": payload.get("data", {}),
+        "data": data,
         "updatedAt": iso(utcnow()),
     }
     return deepcopy(space.wizard_session)
@@ -1121,6 +1125,36 @@ def set_wizard_session(payload: dict[str, Any]) -> dict[str, Any]:
 
 def get_wizard_session() -> dict[str, Any] | None:
     return deepcopy(ws().wizard_session)
+
+
+def preserve_explicit_timing(
+    incoming: dict[str, Any],
+    *,
+    project_id: str | None,
+) -> dict[str, Any]:
+    """Keep an explicit saved clip when an older open client sends ``mode=ai``.
+
+    A previous frontend displayed ``from/to`` fields but omitted them from both
+    session saves and submit payloads. Once an explicit window has reached the
+    server, a stale tab must not erase it. We only reuse the exact stored values
+    for the same project and track; no timing is guessed.
+    """
+    data = deepcopy(incoming) if isinstance(incoming, dict) else {}
+    current = ws().wizard_session
+    if not current or current.get("projectId") != project_id:
+        return data
+    stored_data = current.get("data") or {}
+    current_track = str((data.get("track") or {}).get("id") or "")
+    stored_track = str((stored_data.get("track") or {}).get("id") or "")
+    if not current_track or current_track != stored_track:
+        return data
+    incoming_timing = data.get("timing") or {}
+    stored_timing = stored_data.get("timing") or {}
+    incoming_explicit = all(isinstance(incoming_timing.get(key), str) and incoming_timing[key] for key in ("from", "to"))
+    stored_explicit = all(isinstance(stored_timing.get(key), str) and stored_timing[key] for key in ("from", "to"))
+    if not incoming_explicit and stored_explicit:
+        data["timing"] = deepcopy(stored_timing)
+    return data
 
 
 def register_user(payload: dict[str, Any]) -> dict[str, Any]:
