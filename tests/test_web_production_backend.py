@@ -443,7 +443,7 @@ def test_bucket_selector_pins_rotation_and_geometry(monkeypatch: pytest.MonkeyPa
                 "score": 1.0,
                 "selector": {
                     "rotationTheme": "collection",
-                    "rotationTagsGroup": "New_York",
+                    "rotationTagsGroup": "cine16x9__New_York",
                     "renderPreset": "wide",
                     "bgMode": "footage",
                 },
@@ -453,7 +453,7 @@ def test_bucket_selector_pins_rotation_and_geometry(monkeypatch: pytest.MonkeyPa
             "footage": {
                 "Нью-Йорк": {
                     "rotationTheme": "collection",
-                    "rotationTagsGroup": "New_York",
+                    "rotationTagsGroup": "cine16x9__New_York",
                     "renderPreset": "wide",
                     "bgMode": "footage",
                 }
@@ -470,11 +470,12 @@ def test_bucket_selector_pins_rotation_and_geometry(monkeypatch: pytest.MonkeyPa
     payload = backend._request_payload(job=job, variation=variation, index=1, total=1, master_id=None)
 
     assert payload["rotation_theme"] == "collection"
-    assert payload["rotation_tags_group"] == "New_York"
+    assert payload["rotation_tags_group"] == "cine16x9__New_York"
     assert payload["render_preset"] == "wide"
     assert payload["bg_mode"] == "footage"
-    # Профиль артиста всё ещё нужен Stage 2, даже когда группа закреплена.
-    assert payload["footage_artist_id"] == "electro_synthwave"
+    # Коллекция сама задаёт точный пул. Артист из тегового флоу здесь заставил
+    # бы Stage 2 искать отсутствующий artist_id у коллекционных клипов.
+    assert "footage_artist_id" not in payload
 
 
 def test_vertical_stays_vertical_without_selector(monkeypatch: pytest.MonkeyPatch) -> None:

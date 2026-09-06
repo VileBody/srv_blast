@@ -835,6 +835,11 @@ class ProductionBackend:
             artist_id = self.config.footage_artists.get(group_name, "") or self.config.default_artist_id
             if not selector and not artist_id:
                 raise ProductionBackendError(f"no footage mapping for {group_name!r}")
+            # Folder-scoped collections are the exact source pool. An artist id
+            # belongs to the legacy tag pool and makes Stage 2 demand metadata
+            # that collection clips intentionally do not carry.
+            if selector.get("rotationTheme") == "collection":
+                artist_id = ""
 
         bg_mode = "photo" if background_mode == "photo" else "footage"
         bg_solid_color = ""
