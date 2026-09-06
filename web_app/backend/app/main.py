@@ -1167,7 +1167,10 @@ async def api_submit_wizard(payload: SubmitPayload) -> dict[str, Any]:
     by_url = {item["s3Key"]: item for item in owned}
     hooks = stage_data.get("hooks") or {}
     configs = hooks.get("configs") or {}
+    selected_hook_families = render_job_builder.selected_hook_families(stage_data)
     for family in ("sound", "warmup"):
+        if family not in selected_hook_families:
+            continue
         cfg = configs.get(family)
         if not cfg: continue
         video = cfg.get("warmupKind") == "video"

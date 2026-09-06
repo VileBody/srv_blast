@@ -4,7 +4,7 @@ import pytest
 
 from mlcore.custom_sources import apply_custom_sources
 from web_app.backend.app.batch_geometry import selected_geometry
-from web_app.backend.app.render_job import build_render_job
+from web_app.backend.app.render_job import build_render_job, selected_hook_families
 
 
 def test_custom_sources_preserve_user_order_and_cover_timeline() -> None:
@@ -32,6 +32,20 @@ def test_custom_sources_preserve_user_order_and_cover_timeline() -> None:
     ]
     assert [(layer["in_point"], layer["out_point"]) for layer in footage] == [(0.0, 4.0), (4.0, 10.0)]
     assert config["layers"][-1]["layer_id"] == "audio_ref"
+
+
+def test_only_allocated_hook_drafts_are_validated() -> None:
+    stage = {
+        "hooks": {
+            "kind": "thought",
+            "configs": {
+                "warmup": {"warmupKind": "video"},
+                "thought": {"thought": "Пропущенное слово"},
+            },
+        },
+        "allocation": {"hooks": {"thought": 2}},
+    }
+    assert selected_hook_families(stage) == {"thought"}
 
 
 def test_custom_sources_fail_instead_of_looping_or_cropping() -> None:

@@ -234,6 +234,20 @@ def build_render_job(batch_id: str, project_id: str | None, user_id: str,
     }
 
 
+def selected_hook_families(stage_data: dict[str, Any]) -> set[str]:
+    """Hook configs that will actually be expanded into batch variations."""
+    hooks = stage_data.get("hooks") or {}
+    allocated = (stage_data.get("allocation") or {}).get("hooks") or {}
+    selected = {
+        str(family)
+        for family, count in allocated.items()
+        if isinstance(count, (int, float)) and count > 0
+    }
+    if not selected and hooks.get("kind"):
+        selected.add(str(hooks["kind"]))
+    return selected
+
+
 def variation_label(variation: dict[str, Any]) -> dict[str, str]:
     """Короткие подписи для чипов W36 (source / subtitleStyle / hook)."""
     groups = variation["background"]["groups"]
