@@ -376,6 +376,13 @@ def _pool_for_footage_kind(kind: str) -> str:
     return _POOL_BY_FOOTAGE_KIND.get(str(kind or "").strip(), "vibes")
 
 
+def _pool_for_background(bg_mode: str, footage_kind: str) -> str:
+    """Keep a previous video-plane choice from leaking into the photo flow."""
+    if str(bg_mode or "").strip().lower() == "photo":
+        return "vibes"
+    return _pool_for_footage_kind(footage_kind)
+
+
 def _render_preset_for_bucket(theme: str, tags_group: str) -> str:
     """Output geometry the chosen bucket asks for.
 
@@ -2817,6 +2824,9 @@ class BlastBotApp:
             # the photo transition/stylization pair runs later, in the visuals slot.
             st.bg_mode = "photo"
             st.bg_solid_color = ""
+            # This field belongs to the video fork. Persisting 16:9/films here
+            # would make the ranker load a collection catalog instead of photos.
+            st.footage_kind = FOOTAGE_KIND_VERTICAL
             await self.store.set(st)
             await self._ask_vibe_shortlist(message, st)
             return
@@ -3007,7 +3017,7 @@ class BlastBotApp:
             footage_kind = str(current.footage_kind or FOOTAGE_KIND_VERTICAL)
             result = await self.orchestrator.rank_buckets(
                 lyrics=lyrics, mood=mood, media_type=media_type,
-                pool=_pool_for_footage_kind(footage_kind),
+                pool=_pool_for_background(current.bg_mode, footage_kind),
             )
             ranked_ids, labels = self._parse_ranked_buckets(result)
             st = await self.store.get(chat_id)
@@ -3097,7 +3107,7 @@ class BlastBotApp:
                 result = await self.orchestrator.rank_buckets(
                     lyrics=lyrics, mood="",
                     media_type="photo" if st.bg_mode == "photo" else "video",
-                    pool=_pool_for_footage_kind(st.footage_kind),
+                    pool=_pool_for_background(st.bg_mode, st.footage_kind),
                 )
                 ranked_ids, labels = self._parse_ranked_buckets(result)
             except Exception as e:
