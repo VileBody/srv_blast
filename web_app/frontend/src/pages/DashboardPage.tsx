@@ -360,7 +360,7 @@ export function DashboardPage() {
       : null;
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-[20px] lg:h-[calc(100dvh_-_2*var(--space-6))] lg:flex-none lg:py-[calc(var(--rail-pad-y)_-_var(--space-6))]">
+    <div className="flex min-h-0 flex-1 flex-col gap-[20px] lg:h-[var(--app-page-h)] lg:flex-none lg:py-[calc(var(--rail-pad-y)_-_var(--space-6))]">
       {/* «Создать проект» именно создаёт проект: раньше кнопка вела в визард уже существующего,
           а на нулевом аккаунте упиралась в гард «Сначала создай активный проект». */}
       <Hero

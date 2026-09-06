@@ -12,6 +12,42 @@ import { useToast } from '../../contexts/ToastContext';
 import { SvgMaskIcon } from './SvgMaskIcon';
 import { LanguageSwitcher } from './LanguageSwitcher';
 
+const DESKTOP_LAYOUT_WIDTH = 1280;
+const DESKTOP_LAYOUT_HEIGHT = 800;
+const MIN_DESKTOP_SCALE = 0.72;
+
+function desktopScale(width: number, height: number): number {
+  if (width <= 1024) return 1;
+  return Math.max(
+    MIN_DESKTOP_SCALE,
+    Math.min(1, width / DESKTOP_LAYOUT_WIDTH, height / DESKTOP_LAYOUT_HEIGHT)
+  );
+}
+
+function useAppViewport() {
+  const [viewport, setViewport] = useState(() => ({ width: window.innerWidth, height: window.innerHeight }));
+
+  useEffect(() => {
+    let frame = 0;
+    const update = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => setViewport({ width: window.innerWidth, height: window.innerHeight }));
+    };
+    window.addEventListener('resize', update);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener('resize', update);
+    };
+  }, []);
+
+  const scale = desktopScale(viewport.width, viewport.height);
+  return {
+    scale,
+    layoutWidth: viewport.width / scale,
+    layoutHeight: viewport.height / scale
+  };
+}
+
 const nav = [
   { href: '/app/projects', label: 'nav.projects', icon: '/assets/figma/nav-projects.svg', size: 37 },
   { href: '/app/generate', label: 'nav.generate', icon: '/assets/figma/nav-generate.svg', size: 34 },
@@ -137,6 +173,7 @@ export function AppShell() {
   const activeJob = activeJobQuery.data?.job;
   const [lastCompletedJob, setLastCompletedJob] = useState<string | null>(null);
   const notifiedJob = useRef<string | null>(null);
+  const viewport = useAppViewport();
 
   useEffect(() => {
     if (!activeJobQuery.data || activeJob) return;
@@ -155,33 +192,43 @@ export function AppShell() {
   }, [activeJobQuery.data?.job, push]);
 
   const userName = meQuery.data?.user.name;
+  const frameStyle = {
+    width: `${viewport.layoutWidth}px`,
+    height: `${viewport.layoutHeight}px`,
+    transform: `scale(${viewport.scale})`,
+    '--app-layout-w': `${viewport.layoutWidth}px`,
+    '--app-layout-h': `${viewport.layoutHeight}px`,
+    '--app-page-h': `${viewport.layoutHeight - 2 * 32}px`
+  } as React.CSSProperties;
 
   return (
-    <div className="app-frame">
-      <Sidebar activeJobId={activeJob?.id} userName={userName} avatarUrl={meQuery.data?.user.avatarUrl ?? undefined} />
-      <Drawer open={drawerOpen} onClose={() => setDrawerOpen(false)} activeJobId={activeJob?.id} />
-      {/* вход через Telegram не спрашивает ФИО — добираем их до первого экрана */}
-      <ProfileSetupGate open={meQuery.isSuccess && meQuery.data.user.profileComplete === false} />
-      <main className="with-sidebar min-w-0 flex-1">
-        <div className="app-content">
-          <MobileHeader onOpen={() => setDrawerOpen(true)} />
-          {meQuery.isLoading ? (
-            <Skeleton className="h-[120px]" />
-          ) : meQuery.error ? (
-            <div className="card flex items-center justify-between gap-space-4">
-              <div>
-                <h1 className="text-[28px] font-bold">API недоступен</h1>
-                <p className="mt-space-2 text-text-60">Проверь, что FastAPI запущен на 8000 порту.</p>
+    <div className="app-scale-viewport">
+      <div className="app-frame" style={frameStyle}>
+        <Sidebar activeJobId={activeJob?.id} userName={userName} avatarUrl={meQuery.data?.user.avatarUrl ?? undefined} />
+        <Drawer open={drawerOpen} onClose={() => setDrawerOpen(false)} activeJobId={activeJob?.id} />
+        {/* вход через Telegram не спрашивает ФИО — добираем их до первого экрана */}
+        <ProfileSetupGate open={meQuery.isSuccess && meQuery.data.user.profileComplete === false} />
+        <main className="with-sidebar min-w-0 flex-1">
+          <div className="app-content">
+            <MobileHeader onOpen={() => setDrawerOpen(true)} />
+            {meQuery.isLoading ? (
+              <Skeleton className="h-[120px]" />
+            ) : meQuery.error ? (
+              <div className="card flex items-center justify-between gap-space-4">
+                <div>
+                  <h1 className="text-[28px] font-bold">API недоступен</h1>
+                  <p className="mt-space-2 text-text-60">Проверь, что FastAPI запущен на 8000 порту.</p>
+                </div>
+                <Button onClick={() => navigate('/login')}>К логину</Button>
               </div>
-              <Button onClick={() => navigate('/login')}>К логину</Button>
-            </div>
-          ) : (
-            <ErrorBoundary>
-              <Outlet />
-            </ErrorBoundary>
-          )}
-        </div>
-      </main>
+            ) : (
+              <ErrorBoundary>
+                <Outlet />
+              </ErrorBoundary>
+            )}
+          </div>
+        </main>
+      </div>
     </div>
   );
 }

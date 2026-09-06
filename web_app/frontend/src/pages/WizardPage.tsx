@@ -555,7 +555,7 @@ export function WizardPage() {
   // низ = аватар. Раньше визард жил на своём паттерне (-m-space-6 + h-dvh) и вставал по 32px,
   // из-за чего ужимался не так, как остальные страницы.
   return (
-    <div className="flex min-h-0 flex-1 gap-[20px] max-lg:h-auto max-lg:flex-col md:h-[calc(100dvh_-_2*var(--space-6))] md:flex-none md:py-[calc(var(--rail-pad-y)_-_var(--space-6))]">
+    <div className="flex min-h-0 flex-1 gap-[20px] max-lg:h-auto max-lg:flex-col md:h-[var(--app-page-h)] md:flex-none md:py-[calc(var(--rail-pad-y)_-_var(--space-6))]">
       {/*
         Новый батч наследует трек, текст и тайминги прошлого — но молча подменять
         вводные нельзя: человек либо не заметит, что генерит по старому отрывку,

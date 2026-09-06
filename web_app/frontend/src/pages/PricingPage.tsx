@@ -405,7 +405,7 @@ export function PricingPage() {
   ];
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col md:h-[calc(100dvh_-_2*var(--space-6))] md:flex-none">
+    <div className="flex min-h-0 flex-1 flex-col md:h-[var(--app-page-h)] md:flex-none">
       <div className="card-2 relative flex min-h-0 flex-1 flex-col p-[40px]">
         <div className="flex shrink-0 items-center gap-[20px]">
           <button

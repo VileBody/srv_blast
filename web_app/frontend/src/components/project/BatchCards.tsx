@@ -469,7 +469,7 @@ export function ProcessingAside({ done, total, telegram, onBack }: { done: numbe
 /** Общий каркас страницы батча (W36/W51): две колонки, fill-height по сайдбару. */
 export function BatchLayout({ left, right }: { left: ReactNode; right: ReactNode }) {
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-[20px] md:h-[calc(100dvh_-_2*var(--space-6))] md:flex-none md:flex-row md:py-[calc(var(--rail-pad-y)_-_var(--space-6))]">
+    <div className="flex min-h-0 flex-1 flex-col gap-[20px] md:h-[var(--app-page-h)] md:flex-none md:flex-row md:py-[calc(var(--rail-pad-y)_-_var(--space-6))]">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-[25px]">{left}</div>
       {right}
     </div>

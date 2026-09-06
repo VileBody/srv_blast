@@ -239,7 +239,7 @@ export function ProjectsPage() {
   if (query.isLoading) return <Skeleton className="h-full min-h-[560px]" />;
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-[20px] lg:h-[calc(100dvh_-_2*var(--space-6))] lg:flex-none lg:py-[calc(var(--rail-pad-y)_-_var(--space-6))]">
+    <div className="flex min-h-0 flex-1 flex-col gap-[20px] lg:h-[var(--app-page-h)] lg:flex-none lg:py-[calc(var(--rail-pad-y)_-_var(--space-6))]">
       <CurrentProjectCard active={active} onCreate={() => setModalOpen(true)} />
 
       <section className="card-2 relative flex min-h-[420px] flex-col overflow-hidden p-[24px] sm:p-[32px] lg:min-h-0 lg:flex-1 lg:p-[40px]">

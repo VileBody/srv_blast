@@ -397,7 +397,7 @@ export function StatsPage() {
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col lg:min-h-[calc(100dvh_-_2*var(--space-6))] lg:flex-none lg:py-[calc(var(--rail-pad-y)_-_var(--space-6))]">
+    <div className="flex min-h-0 flex-1 flex-col lg:min-h-[var(--app-page-h)] lg:flex-none lg:py-[calc(var(--rail-pad-y)_-_var(--space-6))]">
       <div className="flex min-h-0 flex-1 flex-col gap-[20px]">
       {/* «Статистика» 1192×379 */}
       <section className="card-2 h-auto min-h-[379px] shrink-0 p-[24px] sm:p-[32px] lg:h-[379px] lg:p-[40px]">

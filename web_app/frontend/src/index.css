@@ -78,7 +78,7 @@
      Фейд обязан совпадать с фоном; grad-soft-10 почти плоский, поэтому одного цвета достаточно. */
   --fx-container-bg: #1e1535;
   --grad-soft-20: linear-gradient(175deg, rgba(139, 111, 230, 0.20) 3.6%, rgba(95, 66, 185, 0.20) 132.9%);
-  --sidebar-w: clamp(112px, 13vw, 188px);
+  --sidebar-w: clamp(112px, calc(var(--app-layout-w, 100vw) * .13), 188px);
   --rail-pad-y: 60px; /* Figma W37: лого top 60 / аватар bottom 60 (симметрично) */
 
   --grad-main: linear-gradient(175deg, #8b6fe6 0%, #5f42b9 100%);
@@ -168,7 +168,11 @@ a { color: inherit; text-decoration: none; }
 @keyframes strobeFlicker { 0%, 45% { background-color: var(--strobe-color, #8b6fe6); } 50%, 95% { background-color: #000; } 100% { background-color: var(--strobe-color, #8b6fe6); } }
 
 @layer components {
-  .app-frame { display: flex; height: 100dvh; min-height: 100dvh; }
+  .app-scale-viewport { position: fixed; inset: 0; overflow: hidden; background: var(--bg); }
+  .app-frame {
+    display: flex; min-height: var(--app-layout-h, 100dvh);
+    transform-origin: top left; will-change: transform;
+  }
   .app-content {
     flex: 1; height: 100%; min-width: 0; min-height: 0; overflow-x: hidden; overflow-y: auto; padding: var(--space-6);
     /* Скейлинг (c): контент прилегает к сайдбару и тянется во всю ширину. Старый
@@ -185,7 +189,7 @@ a { color: inherit; text-decoration: none; }
     .wizard-aside { width: 100%; min-width: 0; }
   }
   .sidebar {
-    width: var(--sidebar-w); height: 100dvh; position: fixed; left: 0; top: 0;
+    width: var(--sidebar-w); height: var(--app-layout-h, 100dvh); position: fixed; left: 0; top: 0;
     background: transparent; display: flex; flex-direction: column;
     align-items: center; padding: var(--rail-pad-y) 0; z-index: var(--z-sidebar);
   }
