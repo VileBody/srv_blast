@@ -845,7 +845,15 @@ class ProductionBackend:
             # случае подставляет первый ключ из пресетов — делаем то же.
             artist_id = artist_id or self.config.default_artist_id
             color = str(background.get("color") or "").lower()
-            color_map = {"#ffffff": "white", "#fff": "white", "#00ff00": "green", "#0f0": "green"}
+            # The web palette uses the product's near-white/near-black design
+            # tokens, while the renderer names the corresponding solid planes.
+            # Keep this mapping explicit: arbitrary slider colors are rejected
+            # until the orchestrator contract supports an exact hex plane.
+            color_map = {
+                "#ffffff": "white", "#fff": "white", "#f6f5fd": "white",
+                "#000000": "black", "#000": "black", "#05010f": "black",
+                "#00ff00": "green", "#0f0": "green",
+            }
             bg_solid_color = color_map.get(color, "")
             if not bg_solid_color:
                 raise ProductionBackendError(
