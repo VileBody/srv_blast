@@ -12,9 +12,13 @@ import { useToast } from '../../contexts/ToastContext';
 import { SvgMaskIcon } from './SvgMaskIcon';
 import { LanguageSwitcher } from './LanguageSwitcher';
 
-const DESKTOP_LAYOUT_WIDTH = 1280;
-const DESKTOP_LAYOUT_HEIGHT = 800;
-const MIN_DESKTOP_SCALE = 0.72;
+// The desktop screens were laid out for a 1600x900 canvas. Scaling from 1280x800
+// left a 1280x720 laptop at 90%, while the same page at browser zoom 80% got the
+// intended 1600x900 CSS viewport. Keep that geometry inside the app so users do
+// not have to change browser zoom themselves.
+const DESKTOP_LAYOUT_WIDTH = 1600;
+const DESKTOP_LAYOUT_HEIGHT = 900;
+const MIN_DESKTOP_SCALE = 0.64;
 
 function desktopScale(width: number, height: number): number {
   // Tailwind's max-lg rules end below 1024px. At exactly 1024px the desktop
