@@ -101,9 +101,26 @@ def test_kind_maps_to_the_ranker_pool(bot: str) -> None:
 
 
 @pytest.mark.parametrize("bot", BOTS)
+def test_photo_never_inherits_a_collection_pool(bot: str) -> None:
+    app = _mod(bot)
+    for kind in (app.FOOTAGE_KIND_VERTICAL, app.FOOTAGE_KIND_CINE, app.FOOTAGE_KIND_FILMS):
+        assert app._pool_for_background("photo", kind) == "vibes"
+    assert app._pool_for_background("footage", app.FOOTAGE_KIND_CINE) == "cine16x9"
+    assert app._pool_for_background("footage", app.FOOTAGE_KIND_FILMS) == "films"
+
+
+@pytest.mark.parametrize("bot", BOTS)
 def test_the_ranker_is_asked_for_the_chosen_pool(bot: str) -> None:
     src = _src(_mod(bot), "_ensure_vibe_ranked")
-    assert "pool=_pool_for_footage_kind(st.footage_kind)" in src
+    assert "pool=_pool_for_background(st.bg_mode, st.footage_kind)" in src
+
+
+@pytest.mark.parametrize("bot", BOTS)
+def test_selecting_photo_clears_a_previous_video_plane(bot: str) -> None:
+    app = _mod(bot)
+    handler = "_handle_wait_bg_info" if bot.endswith("tg_bot_public.app") else "_handle_wait_bg_mode"
+    src = _src(app, handler)
+    assert "st.footage_kind = FOOTAGE_KIND_VERTICAL" in src
 
 
 @pytest.mark.parametrize("bot", BOTS)
