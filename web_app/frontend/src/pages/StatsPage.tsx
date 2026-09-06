@@ -71,7 +71,7 @@ function StatCard({ icon, title, value, unit, trend }: {
   trend?: string;
 }) {
   return (
-    <div className="relative h-[192px] min-w-0 flex-1 rounded-r15 bg-grad-soft-20">
+    <div className="taste-metric relative h-[192px] min-w-0 flex-1 rounded-r15 bg-grad-soft-20">
       <span className="absolute left-[28px] top-[28px] flex items-center gap-[8px]">
         <FigIcon name={icon} h={14} />
         <span className="whitespace-nowrap text-[24px] font-[350] leading-none text-transparent" style={gradLight}>{title}</span>
